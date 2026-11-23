@@ -45,7 +45,7 @@ app.post('/api/runs/:id/answer', (req, res) => {
   const runId = req.params.id;
   const entry = runs.get(runId);
   if (!entry) return res.status(404).json({ error: 'unknown run' });
-  const { id, decision, feedback, perspectives, edits, approveEach, source, openObjections } = req.body || {};
+  const { id, decision, feedback, perspectives, edits, approveEach, agreedSeqs, decisions, conflicts, source, openObjections } = req.body || {};
   const pq = entry.pendingQuestion;
   if (!pq || pq.kind !== PLAN_ASK_KIND || !id || pq.id !== id) {
     return res.status(409).json({ error: 'no plan approval with that id is waiting on this run' });
@@ -56,6 +56,9 @@ app.post('/api/runs/:id/answer', (req, res) => {
       ...(edits !== undefined ? { edits } : {}),
       ...(approveEach !== undefined ? { approveEach } : {}),
       ...(openObjections !== undefined ? { openObjections } : {}),     // small runs B4: the Split kept its open objections
+      ...(agreedSeqs !== undefined ? { agreedSeqs } : {}),
+      ...(decisions !== undefined ? { decisions } : {}),
+      ...(conflicts !== undefined ? { conflicts } : {}),
       ...(source !== undefined ? { source } : {}) }, actorOf(req));
     res.json({ ok: true, ...(out && out.held ? { held: true } : {}) });
   } catch (err) {

@@ -90,7 +90,7 @@ test('A11: a completed mock run round-trips prompt/projectKey/status/cost throug
   // values equal to the live terminal state, read straight from the DB columns
   // (bypassing rowToState's `?? 0` fallback) so a NULL clobber could not hide as 0.
   const rawRow = getDb()
-    .prepare('SELECT prompt, project_key, status, total_cost_usd, total_active_ms FROM pipelines WHERE id = ?')
+    .prepare('SELECT prompt, project_key, status, total_cost_usd, total_active_ms, elapsed_ms, elapsed_since FROM pipelines WHERE id = ?')
     .get(id);
   assert.notEqual(rawRow.prompt, null, 'prompt column is not NULL in the DB');
   assert.notEqual(rawRow.project_key, null, 'project_key column is not NULL in the DB');
@@ -100,6 +100,11 @@ test('A11: a completed mock run round-trips prompt/projectKey/status/cost throug
   assert.equal(rawRow.total_active_ms, live.totalActiveMs, 'persisted active-ms equals the live terminal value');
   // A real run accrues active time; this proves a MUTATED value round-tripped (not a default).
   assert.ok(rawRow.total_active_ms > 0, 'active-ms accrued and persisted (mutated value survived)');
+  // The run clock: the finished row stores exactly the live terminal figure, folded (no anchor left).
+  assert.equal(rawRow.elapsed_ms, Math.round(live.elapsedMs), 'raw row elapsed_ms equals the live state');
+  assert.ok(rawRow.elapsed_ms > 0, 'the run clock ran');
+  assert.equal(rawRow.elapsed_since, null, 'a finished run keeps no running anchor');
+  assert.equal(st.elapsedMs, rawRow.elapsed_ms, 'the saved state reads the same figure');
 });
 
 test('a step\'s skills round-trips through writeState -> readPipeline; absent reads back as []', async () => {

@@ -29,7 +29,7 @@ test('safeAttachmentName: nothing leaves the folder or collides, on any OS', () 
     ['logo-final-1.png', 'evil.png', 'win.png', 'file-con.png', 'logo-final-1-2.png', 'logo-final-1-3.png', 'file.png', 'file.env', 'a.b.c.txt', 'x'.repeat(60) + '.png']);
 });
 test('copyThreadAttachments: uploads only, stable across rounds, names returned', async () => {
-  const t = createThread({ mode: 'design', title: 'x' });
+  const t = createThread({ title: 'x' });
   const m = appendMessage(t.id, { role: 'user', text: 'x' });
   addAttachment(t.id, m.id, { name: 'Logo.png', kind: 'image', mime: 'image/png', data: Buffer.from('a') });
   addAttachment(t.id, m.id, { name: 'logo.png', kind: 'image', mime: 'image/png', data: Buffer.from('b') });
@@ -54,7 +54,7 @@ function rig(over = {}) {
   return { a, calls, posted, rows, holds };
 }
 const withPlan = (d) => writeFileSync(join(designWorkDir(d.id), 'plan.json'), JSON.stringify({ v: 1, kind: 'web', title: 'T', canvas: { w: 1440 }, notes: '', sections: [{ id: 'hero', job: 'Hero', brief: 'b', parts: ['html'], estHeight: 600 }] }));   // createDesign made work/; web sections need estHeight
-const made = (kind = 'web') => { const d = createDesign({ kind, title: 'ShipRadar' }, { by: 'local' }); const t = createThread({ mode: 'design', title: d.title }); updateDesign(d.id, { threadId: t.id }); return { d, t }; };
+const made = (kind = 'web') => { const d = createDesign({ kind, title: 'ShipRadar' }, { by: 'local' }); const t = createThread({ title: d.title }); updateDesign(d.id, { threadId: t.id }); return { d, t }; };
 
 test('a start hands over the brief and returns a running receipt', async () => {
   const { d, t } = made(); const { a, calls, posted } = rig();
@@ -230,7 +230,7 @@ test('safeAttachmentName: accents fold to ASCII, a cut never ends on a separator
   ['cafe-menu.png', 'resume.pdf', 'pic.png', 'a'.repeat(59) + '.png', 'y'.repeat(60) + '.png', 'file-con.tar.gz']);
 });
 test('copyThreadAttachments: a body that is gone is skipped; a link at a name is replaced, a linked folder refused', { skip: process.platform === 'win32' }, async () => {
-  const t = createThread({ mode: 'design', title: 'x' });
+  const t = createThread({ title: 'x' });
   const m = appendMessage(t.id, { role: 'user', text: 'x' });
   const gone = addAttachment(t.id, m.id, { name: 'gone.md', text: 'lost' });
   rmSync(attachmentPath(t.id, gone.id));
@@ -327,7 +327,7 @@ test('M-1: a folder planted at an upload\'s name is a taken name, and a link at 
 
 /** A thread with one upload `brief.md` and a source folder whose `assets/att` exists. */
 function oneUpload() {
-  const t = createThread({ mode: 'design', title: 'x' });
+  const t = createThread({ title: 'x' });
   addAttachment(t.id, appendMessage(t.id, { role: 'user', text: 'x' }).id, { name: 'brief.md', text: 'hello' });
   const work = mkdtempSync(join(tmpdir(), 'dca-'));
   after(() => rmSync(work, { recursive: true, force: true }));

@@ -14,6 +14,7 @@
 // on error/done. Core module: no Express, no orchestrator import — driven by a
 // bare EventEmitter in tests.
 import { fmtMs, fmtRunCost } from '../chat/renderers.mjs';
+import { runHeadlineMs } from '../../shared/run-elapsed.mjs';
 
 const MAX_QUESTION_NOTICES = 3;
 
@@ -44,7 +45,7 @@ export function attachRunFollower(orch, {
     const state = snapshot();
     const name = runName();
     const parts = [`Run finished — "${name}" · ${status}`];
-    const dur = fmtMs(state.totalActiveMs);
+    const dur = fmtMs(runHeadlineMs(state));
     if (dur) parts.push(dur);
     const cost = fmtRunCost(state.runEngine, state.totalCostUsd);
     if (cost) parts.push(cost);

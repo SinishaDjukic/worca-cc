@@ -1059,7 +1059,7 @@ test('History opens on Overview, one level: page title, status line, facts; the 
 // keeps only the PR controls (slice 2: its ⋯ joined the bar's), and the glance card carries no run control. Run 3 (D13): the bar ends
 // with its own ⋯ (Save as preset and Terminal fold into it; CSS hides the two). Run after stays a quick button beside
 // Resume and Stop, so ⋯ does not repeat it.
-const HD_BAR_ORDER = ['hd-save-preset', 'hd-after', 'rd-actions', 'hd-resume-split', 'hd-pause', 'hd-stop', 'term-opener', 'hd-bar-more', 'run-menu-carriers'];
+const HD_BAR_ORDER = ['hd-save-preset', 'hd-after', 'rd-actions', 'hd-resume-split', 'hd-pause', 'hd-stop', 'tool-icons', 'hd-bar-more', 'run-menu-carriers'];
 // A step in flight: the one run model reads a running run with no step as Starting, which offers no Pause (slice 4).
 const STEPPING = { steps: [{ executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, cycle: 1, kind: 'cycle', status: 'start',
   startedAt: '2026-01-01T00:00:00Z' }], active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }] };
@@ -2204,7 +2204,7 @@ test('Running actions: when the open page\'s row cannot take focus (not shown), 
   stop.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true, detail: 0 }));
   await settle(ctx.window, 4);
   assert.equal(doc.getElementById('side-actions').hidden, true);
-  assert.equal(doc.activeElement, doc.getElementById('topnav-new'), 'New run shows at every level and every width');
+  assert.equal(doc.activeElement, doc.getElementById('topnav-activity'), 'Activity shows at every level and every width');
 });
 
 test('Running actions: a row whose run loses its saved row keeps keyboard focus in that row (its Stop), never on another row\'s name', async () => {

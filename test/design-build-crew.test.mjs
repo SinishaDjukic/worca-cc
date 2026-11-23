@@ -101,15 +101,24 @@ test('never more than the cap at once, and the queue is plan order', async () =>
   assert.deepEqual(order.slice(0, 5), ['hero', 'features', 'pricing', 'faq', 'team']);
 });
 
-// The stagger spaces the global slots on performance.now(); a spawn reaches runClaude a few ms after its slot (the spend
-// gates are async, and a timer can fire a hair early), and that lag differs per spawn. So the gaps are read on the same
-// clock with a quarter of the stagger as slack: a missing stagger gives gaps of a few ms, far below it.
+// The stagger spaces the global slots on performance.now(); a spawn reaches runClaude some ms after its slot (the spend
+// gates are async), and that lag differs per spawn: on a loaded machine one spawn's lag ate 40 ms of the gap after it
+// (gaps 144, 61), and a late first spawn shrinks every distance measured from it. So each spawn is measured from the
+// moment the first one took the global slot, which is at or before the first stagger slot: spawn i can never be earlier
+// than i × staggerMs after it, however late any spawn runs, and a missing stagger puts it a few ms after. The 5 ms of
+// slack is for a timer that fires a hair early.
 test('spawns are staggered', async () => {
   const at = [];
-  const { build } = newBuild(newDesign(), { brief: 'MOCK_SECTIONS=3', deps: { staggerMs: 100, runClaude: (o) => { if (o.cwd.includes('sections')) at.push(performance.now()); return runClaude({ ...o, mock: true }); } } });
+  let first = null;
+  const { build } = newBuild(newDesign(), { brief: 'MOCK_SECTIONS=3', deps: {
+    staggerMs: 100,
+    acquireGlobal: async () => { first ??= performance.now(); },
+    runClaude: (o) => { if (o.cwd.includes('sections')) at.push(performance.now()); return runClaude({ ...o, mock: true }); },
+  } });
   await build.run();
-  const gaps = [at[1] - at[0], at[2] - at[1]].map((g) => Math.round(g));
-  assert.ok(gaps.every((g) => g >= 75), `gaps ${gaps.join(', ')} ms, staggerMs 100`);
+  const after = at.map((t) => Math.round(t - first));
+  assert.equal(after.length, 3);
+  assert.ok(after.every((ms, i) => ms >= i * 100 - 5), `spawns ${after.join(', ')} ms after the first slot, staggerMs 100`);
 });
 
 test('M7: setFast raises the cap for the next spawn and never kills', async () => {

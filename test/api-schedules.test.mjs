@@ -3,7 +3,7 @@
 // start path (mock mode), stamps provenance on the pipeline row, and feeds notifications.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
@@ -69,7 +69,7 @@ before(async () => {
   const mod = await import('../ui/server.mjs'); // imported => no port bind, no scheduler timer
   ({ runs, schedulerTick } = mod);
   ({ getDb } = await import('../src/core/db.mjs'));
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
   dir = gitDir('sched-api');

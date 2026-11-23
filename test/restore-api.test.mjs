@@ -6,7 +6,7 @@
 // unknown, 409 live) while clearing `archived_at` and writing the audit line.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,7 +27,7 @@ before(async () => {
   prevHome = process.env.WORCA_HOME; process.env.WORCA_HOME = home; // store.mjs appends '.worca-cc'
   _resetForTests();                                                 // DB singleton opens under this home
   seededProjectDir = await mkdtemp(join(tmpdir(), 'worca-cc-restore-proj-'));
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
 import { ICONS, icon, iconSvg } from '../ui/public/icons.mjs';
 import { HOME_ICONS, homeIcon } from '../ui/public/chat/home-icons.mjs';
 
@@ -54,4 +55,12 @@ test('the set has the Marketplace glyphs (marketplace CONTRACT §3.2); cube is t
   assert.equal(ICONS.none, '<rect x="5" y="5" width="14" height="14" rx="3" stroke-dasharray="3 3"></rect>');
   assert.equal(ICONS.tray, '<path d="M4 13h4l1.5 2.5h5L16 13h4"></path><path d="M5.5 5h13L21 13v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5z"></path>');
   assert.equal(ICONS.bag, '<path d="M5 8h14l-1.2 12H6.2L5 8z"></path><path d="M9 10V6.5a3 3 0 0 1 6 0V10"></path>');
+});
+
+test('no icon key is written twice (a later one would silently replace the earlier glyph)', () => {
+  const src = readFileSync(new URL('../ui/public/icons.mjs', import.meta.url), 'utf8');
+  const body = src.slice(src.indexOf('export const ICONS = Object.freeze({'), src.indexOf('});', src.indexOf('export const ICONS')));
+  const keys = [...body.matchAll(/^ {2}(?:'([\w-]+)'|(\w+)):/gm)].map((m) => m[1] || m[2]);
+  assert.ok(keys.length > 20);
+  assert.deepEqual(keys.filter((k, i) => keys.indexOf(k) !== i), []);
 });

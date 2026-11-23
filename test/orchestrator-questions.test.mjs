@@ -311,7 +311,8 @@ test('composite slices never gate: several run at once, so no slice is primed', 
   assert.equal(res.status, 'done', res.error);
   assert.deepEqual(gated, [], 'no slice ever gates the user');
   for (const s of slices) assert.deepEqual(s, { id: s.id, enabled: false, file: null }, `${s.id} not primed`);
-  assert.deepEqual(slices.map((s) => s.id), ['p1t1', 'p1t2', 'p2t1'], 'one pass per slice, no resume rounds');
+  // Phase-mates start side by side (each first snapshots the work tree), so their order is not fixed.
+  assert.deepEqual(slices.map((s) => s.id).sort(), ['p1t1', 'p1t2', 'p2t1'], 'one pass per slice, no resume rounds');
   assert.deepEqual(readStepQuestions(orch.getState().id), []);
 });
 

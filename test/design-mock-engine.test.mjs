@@ -327,3 +327,20 @@ test('a video lead writes scenes\' words: MOCK_SAY by position, MOCK_SAY_LONG=<i
   assert.deepEqual([skipped.touch, skipped.remove], [[{ id: 'hero', brief: 'Mock touch' }], ['features']], 'an id the round removes or the plan lacks is skipped');
   assert.deepEqual((await round('MOCK_ROUND_SAY=hero:new-words-here MOCK_ROUND_SAY=features:x', '')).touch, [{ id: 'hero', brief: 'Mock touch' }], 'a round of another kind writes no words');
 });
+test('WORCA_MOCK_DESIGN_DEMO: a web page builds as a believable site and keeps the line a change edits', async () => {
+  const was = process.env.WORCA_MOCK_DESIGN_DEMO;
+  process.env.WORCA_MOCK_DESIGN_DEMO = '1';
+  try {
+    const w = mkdtemp();
+    await run('design-lead', w, 'MOCK_SECTIONS=2');
+    assert.match(readFileSync(join(w, 'global.css'), 'utf8'), /\.mk-btn\{/);
+    for (const id of ['hero', 'features']) {
+      const s = join(w, 'sections', id); mkdirSync(s, { recursive: true });
+      await run('design-builder', s, `Section: ${id}`);
+      const html = readFileSync(join(s, 'index.html'), 'utf8');
+      assert.match(html, new RegExp(`^<section data-section="${id}"><div class="mk">`));
+      assert.match(html, new RegExp(`Mock ${id}\\.`));
+    }
+    assert.match(readFileSync(join(w, 'sections', 'hero', 'index.html'), 'utf8'), /<h1 class="t">/);
+  } finally { if (was === undefined) delete process.env.WORCA_MOCK_DESIGN_DEMO; else process.env.WORCA_MOCK_DESIGN_DEMO = was; }
+});

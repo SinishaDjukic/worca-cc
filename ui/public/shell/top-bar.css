@@ -20,8 +20,6 @@
 .side-toggle svg{width:20px;height:20px;flex:none;}
 .side-toggle .side-toggle-fill,.side-toggle[aria-expanded="false"] .side-toggle-line{display:none;}
 .side-toggle[aria-expanded="false"] .side-toggle-fill{display:inline;}
-.topnav-new{flex:none;white-space:nowrap;}
-.topnav-new svg{width:14px;height:14px;flex:none;}
 /* Activity (#topnav-activity, activity-menu.mjs): an outlined pill with one badge, the amber
    Needs-you count in the Runs badge's colours, else the running count in blue. Its popover
    hangs fixed under it (side-flyout.mjs 'down') at the sidebar popups' layer, 43: three tabs,

@@ -65,13 +65,6 @@
               <span class="topnav-badge" id="topnav-activity-n" hidden></span>
             </button>
             <div class="activity-pop" id="activity-pop" role="dialog" aria-label="Activity" hidden></div>
-            <!-- New run: the way to the #new page, at every interface mode and every width (the
-                 sidebar has no row for it). app.js routes it like a nav row; it is never lit as
-                 the open page (no data-nav). -->
-            <button type="button" class="btn btn-primary topnav-new" id="topnav-new" data-min-level="simple" aria-label="New run">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4.5v15a1 1 0 0 0 1.5.9l12-7.5a1 1 0 0 0 0-1.8l-12-7.5A1 1 0 0 0 6 4.5Z"></path></svg>
-              <span class="topnav-new-label">New run</span>
-            </button>
           </div>
         </header>
       <!-- Ask worca beside the page: the row lays main.main and the side column side by side under the bar; the column
@@ -88,4 +81,7 @@
           <span class="level-banner-text" id="level-banner-text"></span>
           <button type="button" class="btn btn-sm" id="level-banner-switch" data-mode-set=""></button>
         </div>
+
+        <!-- The interface-mode suggestion a new worca level earns (worca-level/mode-suggestion.mjs). Empty until one is due. -->
+        <div id="mode-suggest-host"></div>
 

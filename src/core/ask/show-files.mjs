@@ -12,12 +12,16 @@ import { basename, join, relative, sep } from 'node:path';
 import { refusePathShape, isInside, sniffMime, decodePlainText } from '../ask-files.mjs';
 import { isProtectedBasename } from './tools.mjs';
 import { GUARDRAIL_PRESETS } from '../guardrails.mjs';
+import { OFFICE_EXTENSIONS, mimeForPath } from '../../shared/artifact-kinds.mjs';
 
 const MiB = 1024 * 1024;
 const HEAD_BYTES = 4096;
 const TEXT_MIMES = Object.freeze(['text/plain', 'application/json', 'text/x-diff']);
 /** Mimes sniffMime derives from a text probe: decided on the WHOLE body, never on a head cut mid-character. */
 const TEXT_SNIFFED = new Set([...TEXT_MIMES, 'image/svg+xml']);
+/** The Office mimes, by extension (artifact-kinds.mjs's own table). */
+const OFFICE_MIMES = Object.freeze(OFFICE_EXTENSIONS.map((e) => mimeForPath(`x${e}`)));
+const isZip = (buf) => buf.length >= 4 && buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04;
 
 /**
  * sniffed mime (+ extension, for text) → kind → caps → how it is stored. First match wins, so the extension-keyed
@@ -31,6 +35,7 @@ export const SHOW_FILE_KINDS = Object.freeze([
   { kind: 'pdf', mimes: ['application/pdf'], store: 'binary', maxBytes: 50 * MiB },
   { kind: 'video', mimes: ['video/mp4', 'video/webm'], store: 'binary', maxBytes: 100 * MiB },
   { kind: 'audio', mimes: ['audio/mpeg', 'audio/wav', 'audio/ogg'], store: 'binary', maxBytes: 50 * MiB },
+  { kind: 'office', mimes: OFFICE_MIMES, exts: OFFICE_EXTENSIONS, store: 'binary', maxBytes: 50 * MiB },
   { kind: 'markdown', mimes: TEXT_MIMES, exts: ['.md', '.markdown'], store: 'text', label: 'text/markdown', maxBytes: MiB },
   { kind: 'csv', mimes: TEXT_MIMES, exts: ['.csv', '.tsv'], store: 'text', label: 'text/csv', maxBytes: MiB },
   { kind: 'html', mimes: TEXT_MIMES, exts: ['.html', '.htm'], store: 'text', label: 'text/html', maxBytes: MiB },
@@ -51,11 +56,34 @@ export function showFileKindFor(mime, name) {
 }
 
 /**
+ * The card kind (a SHOW_FILE_KINDS `kind`, what itemOf put on the card) of a stored show_files copy, from its
+ * attachment row's storage kind, mime and name. A binary or image copy keeps its sniffed mime, so the table decides
+ * again; a text copy stores its entry's label as its mime (an older or odd mime falls back to the name's extension,
+ * then to plain text). Pure; junk → null, never throws.
+ */
+export function shownKindOf(row) {
+  const { kind, mime, name } = row && typeof row === 'object' ? row : {};
+  if (kind === 'image' || kind === 'binary') return showFileKindFor(mime, name)?.kind ?? null;
+  if (kind !== 'text') return null;
+  const texts = SHOW_FILE_KINDS.filter((k) => k.store === 'text');
+  const ext = extOf(name);
+  return (texts.find((k) => k.label === mime) || texts.find((k) => k.exts && ext && k.exts.includes(ext)))?.kind ?? 'text';
+}
+
+/**
  * Sniff the bytes that were read, look the kind up and apply its cap. Magic bytes are judged on the head; text (and
  * SVG, which is text) on the WHOLE body, so it is capped before it is decoded. sniffMime refuses markup whose root is
  * not <svg> (an HTML page): here such a body is still TEXT, shown as source. → { mime, entry } | { error }.
  */
 export function kindOf(buf, name, limits) {
+  // An Office document is a zip: sniffMime (shared with uploads, which keep refusing zips) has no arm for it. The name
+  // says which format, the magic that it is one — a .docx of plain text stays text below.
+  if (isZip(buf) && OFFICE_EXTENSIONS.includes(extOf(name))) {
+    const mime = mimeForPath(name);
+    const entry = showFileKindFor(mime, name);
+    if (buf.length > entry.maxBytes) return { error: `${entry.kind} files over ${mib(entry.maxBytes)} are not shown` };
+    return { mime, entry };
+  }
   let mime = sniffMime(buf.subarray(0, HEAD_BYTES));
   if (!mime || TEXT_SNIFFED.has(mime)) {
     if (buf.length > limits.textBytes) {

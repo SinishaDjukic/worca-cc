@@ -61,9 +61,10 @@ test('the pill: Sets · N with N = servers + skills that start next turn; shown 
     { name: 'Sets · 7 (4 servers + 3 skills), the sets-pill class and title', run: async () => {
       const { ctx } = setup();
       ctx.panel.open(); await settle(ctx);
-      assert.equal(btn(ctx).textContent.trim(), 'Sets · 7');
+      assert.equal(btn(ctx).textContent.trim(), '7');
       assert.ok(btn(ctx).classList.contains('ask-sets-btn'));
-      assert.equal(btn(ctx).title, 'Sets for this chat');
+      assert.equal(btn(ctx).dataset.tip, 'Sets for this chat: 7 start next turn');
+      assert.equal(btn(ctx).getAttribute('aria-label'), 'Sets for this chat: 7 start next turn');
       assert.equal(btn(ctx).hidden, false);
       ctx.panel.destroy();
     } },
@@ -71,7 +72,7 @@ test('the pill: Sets · N with N = servers + skills that start next turn; shown 
       const { ctx } = setup({ preview: { ...PREVIEW, sets: [{ id: 'general', name: 'General', group: 'general', routes: [], members: 0, started: 0, skills: 1, startedSkills: 1 }], copies: [], started: 0 } });
       ctx.panel.open(); await settle(ctx);
       assert.equal(btn(ctx).hidden, false);
-      assert.equal(btn(ctx).textContent.trim(), 'Sets · 3');
+      assert.equal(btn(ctx).textContent.trim(), '3');
       ctx.panel.destroy();
     } },
     { name: 'no member and no skill anywhere hides it; a failed preview reads Sets · ?', run: async () => {
@@ -80,7 +81,7 @@ test('the pill: Sets · N with N = servers + skills that start next turn; shown 
       assert.equal(btn(ctx).hidden, true);
       state.preview = null;
       ctx.window.dispatchEvent(new ctx.window.Event('hashchange')); await settle(ctx);
-      assert.equal(btn(ctx).textContent.trim(), 'Sets · ?');
+      assert.equal(btn(ctx).textContent.trim(), '?');
       ctx.panel.destroy();
     } },
   ]);
@@ -107,7 +108,7 @@ test('level 1: "N servers · N skills · route" under the set name, started/tota
       const line = pop(ctx).querySelector('.ask-pop-empty').textContent;
       assert.equal(line, `skills from sets not loaded: ${text}`);
       assert.equal(line.split('skills from sets not loaded').length, 2, 'never the prefix twice');
-      assert.equal(btn(ctx).textContent.trim(), 'Sets · 4');
+      assert.equal(btn(ctx).textContent.trim(), '4');
       ctx.panel.destroy();
     } },
     { name: 'no set in play, or a failed preview, says so in the Sets wording', run: async () => {

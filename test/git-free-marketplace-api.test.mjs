@@ -1,7 +1,7 @@
 // test/git-free-marketplace-api.test.mjs — /api/marketplaces* and plugin install/update without git (P6 Task 5).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -32,7 +32,7 @@ const get = (p) => fetch(`${base}${p}`);
 const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(b) });
 before(async () => {
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

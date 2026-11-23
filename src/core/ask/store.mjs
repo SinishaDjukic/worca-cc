@@ -8,7 +8,7 @@
 // user-supplied name. Text kinds stay `.txt`/utf8; binary kinds (#398) keep the
 // extension of their SNIFFED mime and raw bytes.
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, lstatSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getDb, prepare, tx } from '../db.mjs';
 import { worcaHome } from '../projects.mjs';
@@ -17,7 +17,7 @@ import { claimForAgent } from '../agent-user.mjs';
 import { currentOwner } from '../billing.mjs';
 import { extensionForAttachment } from './attachment-kind.mjs';
 import { mergeContexts } from './contexts.mjs';
-import { isSurfaceMode, SURFACE_MODES } from './thread-modes.mjs';
+import { isSurfaceMode } from './thread-modes.mjs';
 
 export const ASK_ID_RE = /^[a-z]+_[0-9a-f]{8}$/;
 const ROLES = new Set(['user', 'assistant', 'system']);
@@ -43,6 +43,15 @@ export function attachmentsDir(threadId) {
 export function askOutDir(threadId) {
   if (typeof threadId !== 'string' || !ASK_ID_RE.test(threadId)) throw new Error('askOutDir: refusing a thread id the store never minted');
   return join(askRoot(), threadId, 'out');
+}
+/** The chat's output folder as a Files tab root (the tool routes' spec 'out', issue 1064 D7): the folder (lstat: a link
+ *  in its place is not the folder), else ROOT_GONE (409 on the tool routes). */
+export function askOutRoot(threadId) {
+  const dir = askOutDir(threadId);
+  let isDir = false;
+  try { isDir = lstatSync(dir).isDirectory(); } catch { isDir = false; }
+  if (!isDir) return { error: 'This chat has saved no output files yet.', code: 'ROOT_GONE' };
+  return { roots: [{ kind: 'dir', dir, root: 'out', member: null, label: 'Chat output' }], root: 'out', label: 'Chat output' };
 }
 
 /** 1.4: a chat's folder (its attachments, worktrees, skill mounts, output) belongs to the agent user of the person
@@ -150,12 +159,9 @@ const searchText = (query) => (typeof query === 'string' ? query.trim() : '');
  *  blocks (a NULL here would drop every plain user message). */
 const SEARCHED_MESSAGE = `NOT (m.role = 'user' AND COALESCE(m.blocks, '') LIKE '%"synthetic":true%')`;
 
-/** The surface modes as an SQL list for listWhere's "not in": built from constants, never from a request. */
-const SURFACE_LIST = SURFACE_MODES.map((m) => `'${m}'`).join(', ');
-
 /** WHERE for a thread list: the owner filter (shared deployments) AND the surface (D9): a surface mode (thread-modes.mjs)
- *  lists only its own threads, any other mode only plain chats. `mode: 'any'` (the History "Delete all" count, which
- *  deletes composer and design chats too) skips the surface filter. A `query` (the History search) also
+ *  lists only its own threads; null and 'plain' (the browser extension) list plain chats, chats with a design included.
+ *  `mode: 'any'` (the History "Delete all" count, which deletes composer chats too) skips the surface filter. A `query` (the History search) also
  *  keeps only chats whose title OR any message's text holds it — case-insensitive (SQLite's LIKE folds ASCII only).
  *  `alias` must name the threads table: the message subquery has an `id` of its own. */
 function listWhere(visibleTo, mode, alias, query, { show = null, ids = null } = {}) {
@@ -164,7 +170,7 @@ function listWhere(visibleTo, mode, alias, query, { show = null, ids = null } = 
   if (visibleTo) { where.push(`(${alias}created_by IS NULL OR ${alias}created_by = ?)`); args.push(visibleTo); }
   if (mode !== 'any') {
     if (isSurfaceMode(mode)) { where.push(`${alias}mode = ?`); args.push(mode); }
-    else where.push(`(${alias}mode IS NULL OR ${alias}mode NOT IN (${SURFACE_LIST}))`);
+    else where.push(`${alias}mode IS NULL`);
   }
   // #948 s2: 'all' = not archived, 'archived' = archived only; null (every caller before s2) = both.
   if (show === 'all') where.push(`${alias}archived_at IS NULL`);
@@ -205,7 +211,8 @@ const LIST_FACTS_SQL = `(SELECT count(*) FROM ask_run_links l WHERE l.thread_id 
            EXISTS (SELECT 1 FROM ask_messages m, json_each(CASE WHEN json_valid(m.blocks) THEN m.blocks END) b
                    WHERE m.thread_id = t.id AND m.blocks LIKE '%"type":"workflow%' AND json_extract(b.value, '$.kind') = 'card'
                      AND json_extract(b.value, '$.card.type') IN ('workflow', 'workflow-build')) AS workflow_card,
-           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees`;
+           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees,
+           (SELECT d.id FROM designs d WHERE d.thread_id = t.id LIMIT 1) AS design_id`;
 
 /** A list row: the thread without its composer canvas, its link counts and, for a message hit, the excerpt. */
 function toListRow(r, q) {
@@ -215,7 +222,7 @@ function toListRow(r, q) {
     : r.group_hit != null ? { match: { group: r.group_hit } }
     : r.hit_text != null ? { match: { snippet: excerptAround(r.hit_text, q) } } : {};
   return { ...t, runLinks: r.run_links, startedRuns: r.started_runs, trackedRuns: r.tracked_runs, hasWorkflowCard: !!r.workflow_card,
-    worktrees: r.worktrees, ...match };
+    worktrees: r.worktrees, ...(r.design_id ? { designId: r.design_id } : {}), ...match };
 }
 
 export function listThreads({ limit = 50, visibleTo = null, mode = null, query = '' } = {}) {
@@ -591,7 +598,7 @@ export function deleteThread(id) {
 }
 
 /** Boot sweep (spec §6.2.1): threads that never received a message and are older than the cutoff, except threads a chat conversation (v85) is bound to
- *  and design threads (their design points at them, used or not). */
+ *  and chats with a design (their design points at them, used or not). */
 export function sweepEmptyThreads({ olderThanMs = 24 * 60 * 60 * 1000, now: nowMs = Date.now() } = {}) {
   getDb();
   const cutoff = new Date(nowMs - olderThanMs).toISOString();
@@ -599,7 +606,7 @@ export function sweepEmptyThreads({ olderThanMs = 24 * 60 * 60 * 1000, now: nowM
     SELECT t.id FROM ask_threads t
     WHERE t.created_at < ? AND NOT EXISTS (SELECT 1 FROM ask_messages m WHERE m.thread_id = t.id)
       AND NOT EXISTS (SELECT 1 FROM chat_conversations c WHERE c.ask_thread_id = t.id)
-      AND (t.mode IS NULL OR t.mode <> 'design')
+      AND NOT EXISTS (SELECT 1 FROM designs d WHERE d.thread_id = t.id)
   `).all(cutoff).map((r) => r.id);
   let removed = 0;
   for (const id of ids) if (deleteThread(id)) removed += 1;   // a row deleteThread refuses is not counted as swept

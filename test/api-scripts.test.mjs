@@ -1,7 +1,7 @@
 // test/api-scripts.test.mjs — GET /api/scripts + /api/scripts/:key (spec §8.4).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,7 +24,7 @@ before(async () => {
   // A user-layer script that collides with an agent key is dropped (D16).
   await writeFile(join(user, 'reviewer.meta.json'), JSON.stringify({ key: 'reviewer', metaVersion: 2, runtime: 'shell', command: 'true', inputs: [], outputs: [] }));
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

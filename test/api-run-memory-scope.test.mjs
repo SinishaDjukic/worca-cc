@@ -1,7 +1,7 @@
 // test/api-run-memory-scope.test.mjs — POST /api/run's memoryScope gate (agent-memory-design.md §7.3): 400s, the 409, a mock start.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -42,7 +42,7 @@ before(async () => {
   process.env.WORCA_MOCK = '1';
   const mod = await import('../ui/server.mjs');   // imported ⇒ no port bind
   ({ runs, _testing } = mod);
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

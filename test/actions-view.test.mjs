@@ -1101,3 +1101,17 @@ test('controller: the selection survives a re-render, and a NOT_AFFECTED refusal
   assert.ok(calls.filter((c) => c[0] === 'GET').length >= 2, 'it refetched the model');
   ctl.destroy();
 });
+
+test('running action rows: a globe opens the service in a Browser tab (issue 1064), only for a safe address', () => {
+  const run = { instanceId: 'i', runId: 'ab12cd34', label: 'Run', kind: 'service', status: 'ready', ports: { PORT: 4417 }, url: 'http://localhost:4417', histKey: 'k' };
+  const got = [];
+  const rows = renderRunningActionRows([run, { ...run, instanceId: 'j', url: 'javascript:alert(1)' }], { doc, onOpen: () => {}, onBrowse: (s) => got.push(s.instanceId) });
+  const [a, b] = rows.querySelectorAll('.act-srow');
+  assert.deepEqual([...a.children].map((c) => c.className), ['pdot', 'act-srow-name', 'act-srow-open', 'act-stop']);
+  assert.equal(a.querySelector('.act-srow-open').getAttribute('aria-label'), 'Open Run in a Browser tab');
+  a.querySelector('.act-srow-open').click();
+  assert.deepEqual(got, ['i']);
+  assert.equal(b.querySelector('.act-srow-open'), null, 'an unsafe address gets no globe');
+  assert.equal(renderRunningActionRows([run], { doc }).querySelector('.act-srow-open'), null, 'no onBrowse: no globe');
+  assert.equal(renderRunningActionRows([run], { doc, onBrowse: () => {}, menu: true }).querySelector('.act-srow-open').getAttribute('role'), 'menuitem');
+});

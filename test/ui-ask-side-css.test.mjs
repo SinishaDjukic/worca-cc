@@ -95,7 +95,7 @@ test('the dock beside the Chats column: the dropdown comes after the column rule
   const meter = at('.chat-page[data-host="dock"] [data-ask-meter]');
   assert.equal(decl(ALL[meter], 'display'), 'flex', 'the head meter hides in the column (the hide list): the composer\'s shows');
   assert.ok(meter > at('.chat-page[data-chats="on"] [data-ask-meter]'), 'later than the rule that hides it on the Chat page');
-  assert.ok(meter < ALL.findIndex((r) => r.sel === '.chat-page .ask-composer-row > .ask-meter' && r.media.startsWith('@container')), 'a narrow column still drops it');
+  assert.ok(meter < ALL.findIndex((r) => r.sel === '.chat-page .ask-composer-row > .ask-meter' && r.media.startsWith('@container')), 'the narrow-column rule comes later (the compact row\'s fit tiers decide the ring now)');
   assert.equal(decl(rule('.ask-side-recent-when'), 'font-weight'), '700', 'the recent rows keep their meter look');
   assert.equal(decl(rule('.ask-side-recent-fill.is-ctx-high'), 'color'), 'var(--red-ink)');
 });

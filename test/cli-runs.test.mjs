@@ -177,6 +177,10 @@ test('detail by full id and by unique prefix', async () => {
   assert.match(r.stdout, /changes\s+\+8 -0/, 'the persisted diff summary reads from results.json');
   assert.match(r.stdout, /duration\s+1m03s · 1 execution · 2 loop deliveries/, "the web UI's DURATION sub-line counts");
   assert.match(r.stdout, /started\s+\d+[hd] ago \(\w{3} \w{3} \d+, \d{2}:\d{2}\)/, 'relative age with the absolute stamp in parens');
+  // The run clock: `duration` prints the elapsed time when the row has it (the summed time above otherwise).
+  getDb().prepare('UPDATE pipelines SET elapsed_ms = 45000 WHERE id = ?').run('aaa10001');
+  assert.match((await run(['runs', 'aaa10001'])).stdout, /duration\s+45s · 1 execution/, 'elapsed wins over the 1m03s sum');
+  getDb().prepare('UPDATE pipelines SET elapsed_ms = 0 WHERE id = ?').run('aaa10001');
   assert.match(r.stdout, /cost\s+\$1\.50 · across 1 step/, "the web UI's COST sub-line wording");
   assert.doesNotMatch(r.stdout, /by\s+/, 'no person line when nobody started it');
   r = await run(['runs', 'bbb2']);

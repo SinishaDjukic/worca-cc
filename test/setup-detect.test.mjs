@@ -3,7 +3,7 @@
 // onboarding's detectClaude (D21), and the route (agent refusal, the probes override).
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 
@@ -139,7 +139,7 @@ before(async () => {
   process.env.WORCA_MOCK = '1';
   const mod = await import('../ui/server.mjs');
   testing = mod._testing;
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

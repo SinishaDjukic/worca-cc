@@ -23,7 +23,21 @@ is saved. Advanced mode, with the Marketplace page. For GitHub Issues a project 
 
 ## What a run does
 
-The run's ticket moves by the rule of its project, else All projects, and Worca's one comment on the ticket ends with what
+A run that writes back posts a separate comment on its ticket for each of these events:
+
+- **Started**: the run took its slot and began working. A resumed run does not post it again.
+- **Paused or errored**: the run paused itself (an error, a usage or cost limit, a stopped process). A pause you make
+  yourself posts nothing.
+- **Failed or stopped**: the run ended without finishing.
+- **Completed**: the run finished. The comment says **Completed — no PR opened yet.** or **Completed — PR opened:** with
+  the PR's link.
+- **PR opened**: Worca opened a pull request for the run (Ship it, PR when done, an automation). Linking a PR that already
+  exists posts nothing.
+
+A run with write-back turned off posts none of them. Only the completion comment moves the ticket. The started, paused,
+failed and PR-opened comments never move it.
+
+The run's ticket moves by the rule of its project, else All projects, and the completion comment ends with what
 happened: `Moved to Resolved.`, `Already in Closed.`, `Moved to Done, Resolution: Done.`, or a `Not moved: …` line saying
 why (the tracker's own reason when it refused the move, or "<Tracker> gave no reason."). The outcome is in the ticket's comment and in
 the run's history line (`Result reported back to the task source: “Moved to Resolved.”`); the results view does not repeat

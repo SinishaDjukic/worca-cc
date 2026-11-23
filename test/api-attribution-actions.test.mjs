@@ -4,7 +4,7 @@
 // thread ownership, and per-person notification read state. Mock runs, no network.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -37,7 +37,7 @@ before(async () => {
   const mod = await import('../ui/server.mjs');
   ({ runs } = mod);
   ({ readPipeline } = await import('../src/core/artifacts.mjs'));
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

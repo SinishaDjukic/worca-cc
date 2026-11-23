@@ -1,7 +1,7 @@
 // The Design chat's Plan list (ui/public/design/plan-list.mjs, L4.12): the mock's Plan card (`planCard()`), then a
 // Retry row per stopped section (`stoppedRows`, M12) and a recovery card per failed section (`FAIL_CARD`, M8), all in
 // one `div.dz-plan-wrap` the chat mounts. It paints the plain object `selectPlanRows` gives:
-// `{count, noun, rows:[{key, name, n, state, who:[{agentId, crew}]}], stopped:[{id, name}],
+// `{count, noun, one, rows:[{key, name, n, state, who:[{agentId, crew}]}], stopped:[{id, name}],
 //   failed:[{id, name, agentId}], canRetry}`.
 // Retry shows only while P2's `continue` would accept it (L4.13): a stopped row is left out until then, and a failed
 // card's Retry stays disabled with its reason. A Retry is disabled while its call is out, and a refusal reads
@@ -57,6 +57,7 @@ function setTitle(node, text) {
  * @returns {{el: HTMLElement, paint: (model: object) => void, destroy: () => void}}
  */
 export function createPlanList({ doc, onRetry, onDetails }) {
+  let unit = 'section';   // the stage's noun for one section (the model's `one`): a row's count reads "5 sections"
   const el = make(doc, 'div', 'dz-plan-wrap');
   el.hidden = true;
   const meta = make(doc, 'span', 'dz-meta');
@@ -96,7 +97,7 @@ export function createPlanList({ doc, onRetry, onDetails }) {
     const cls = Object.hasOwn(STATE_CLASS, r.state) ? STATE_CLASS[r.state] : '';
     e.row.className = cls ? `dz-plan-row ${cls}` : 'dz-plan-row';
     e.name.textContent = str(r.name);
-    e.n.textContent = Number.isFinite(r.n) ? String(r.n) : '';
+    e.n.textContent = Number.isFinite(r.n) ? `${r.n} ${r.n === 1 ? unit : `${unit}s`}` : '';   // "5 sections", "1 slide"
     const who = list(r.who);
     const sig = who.map((w) => `${str(w?.agentId)}=${str(w?.crew)}`).join('|');
     if (sig === e.whoSig) return;
@@ -244,6 +245,7 @@ export function createPlanList({ doc, onRetry, onDetails }) {
       const planRows = list(m.rows);
       const canRetry = m.canRetry === true;
       canRetryNow = canRetry;
+      unit = str(m.one) || 'section';
       el.hidden = planRows.length === 0;
       meta.textContent = `${Number.isFinite(m.count) ? m.count : 0} ${str(m.noun) || 'sections'}`;
 

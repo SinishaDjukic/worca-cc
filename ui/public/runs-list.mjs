@@ -20,7 +20,7 @@
 // The state words of liveRowState / histRowState / schedRowState stay for ⌘K and the Activity menu; the list reads
 // none of them (D1).
 import { icon } from './icons.mjs';
-import { originMark } from './chat-origin.mjs';
+import { chatMark } from './chat-origin.mjs';
 import { glanceCopy } from './run-glance.mjs';
 import { splitShown, matchesLabels } from '../../src/shared/run-labels.mjs';
 import { labelChip } from './label-picker.mjs';
@@ -1025,7 +1025,7 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   // it needs a person for its own reason, and the round line comes second.
   const stack = !!(r.rounds && r.rounds.length);
   const title = textEl(doc, 'span', 'runs-row-title', position ? `${position} · ${r.title}` : r.title);
-  const mark = r.kind === 'chat' ? originMark(doc, r.origin) : null;   // a chat a chat integration opened: its platform's logo
+  const mark = r.kind === 'chat' ? chatMark(doc, r) : null;   // a chat a chat integration opened: its platform's logo; a design chat: Design's
   if (mark) title.prepend(mark);
   const lab = level === 'top' ? rowLabels(doc, r.labels) : null;
   a.append(...[title, lab, right, stack && !r.roundsOwnLine ? null : textEl(doc, 'span', 'runs-row-sub', line)].filter(Boolean));

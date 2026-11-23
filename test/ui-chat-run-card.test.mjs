@@ -2753,3 +2753,37 @@ test('D2 (D6): a marked card\'s members are ol.run-members.is-one-line, one dot 
     for (const l of pl) assert.equal(l.classList.contains('is-one-line'), false, 'an unmarked card keeps dev\'s rows');
   } finally { forgetAnswer('run-uuid-1', ONE_PQ.outline.id); }
 });
+
+test('chat run card: a feature run links its feature title to the feature page; a card without one is unchanged', async () => {
+  await checkRows([
+    { name: 'progressIdent copies feature from a progress card', run: async () => {
+      const feature = { seq: 7, id: 'feat-id', title: 'Dark mode' };
+      assert.deepEqual(progressIdent({ id: 'card_f', card: { type: 'progress', pipelineId: 'abcd1234', runId: 'r', projectKey: 'p', title: 'T', label: 'L', feature } }).feature, feature);
+      assert.equal('feature' in progressIdent({ id: 'card_g', card: { type: 'progress', pipelineId: 'abcd1234' } }), false);
+    } },
+    { name: 'feature present: link text is the title, href is the feature page route', run: async () => {
+      const t = mk({ ident: { feature: { seq: 7, id: 'feat-id', title: 'Dark mode' } } });
+      t.card.update(live());
+      const a = t.$('.chat-rc-feature-link');
+      assert.equal(a.hidden, false);
+      assert.equal(a.textContent, 'Dark mode');
+      assert.equal(a.getAttribute('href'), '#requirements/feature/7');
+    } },
+    { name: 'feature absent: no visible link, the head and sub-line are as before', run: async () => {
+      const t = mk();
+      t.card.update(live());
+      assert.equal(t.$('.chat-rc-feature-link').hidden, true);
+      assert.equal(t.$('.ask-rc-title').textContent, 'Fix login');
+      assert.equal(t.$('.chat-rc-where').textContent, 'proj');
+    } },
+    { name: 'a markup title stays literal text', run: async () => {
+      const title = '<img src=x onerror=alert(1)>';
+      const t = mk({ ident: { feature: { seq: 3, id: 'f', title } } });
+      t.card.update(live());
+      const a = t.$('.chat-rc-feature-link');
+      assert.equal(a.textContent, title);
+      assert.equal(a.querySelector('*'), null, 'no element was created from the title');
+      assert.equal(t.$('.ask-rc-sub img'), null);
+    } },
+  ]);
+});

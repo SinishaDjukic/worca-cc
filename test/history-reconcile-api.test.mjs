@@ -1,7 +1,7 @@
 // test/history-reconcile-api.test.mjs
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,7 +23,7 @@ before(async () => {
   // A stale running row (no branch -> no git calls on delete).
   seedPipelineRow({ id: 'pp', projectKey: KEY, title: 'Stuck', status: 'running',
                     startedAt: OLD, updatedAt: OLD });
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

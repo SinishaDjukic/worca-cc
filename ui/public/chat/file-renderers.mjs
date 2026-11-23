@@ -3,8 +3,9 @@
 // An entry says which viewer preview opens the file (artifacts/preview.mjs renders it) and, optionally, how to draw
 // its inline tile. 'html' is deliberately NOT a preview kind here: no renderer can frame a file the chat shows.
 
-/** The artifact viewer preview kinds a file may open as (artifacts/common.mjs previewKindFor's answers minus html/c4). */
-export const FILE_PREVIEW_KINDS = Object.freeze(new Set(['markdown', 'json', 'diff', 'text', 'code', 'csv', 'image', 'pdf', 'audio', 'video', 'none']));
+/** The artifact viewer preview kinds a file may open as (artifacts/common.mjs previewKindFor's answers minus html/c4),
+ *  plus office, which the viewer frames as its PDF form. */
+export const FILE_PREVIEW_KINDS = Object.freeze(new Set(['markdown', 'json', 'diff', 'text', 'code', 'csv', 'image', 'pdf', 'audio', 'video', 'office', 'none']));
 
 const RENDERERS = new Map();
 

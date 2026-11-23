@@ -3,7 +3,7 @@
 // jump to expert once the install stops being "fresh"), and POST /api/settings stores and validates it.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, mkdir, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,7 +18,7 @@ before(async () => {
   process.env.HOME = home; process.env.USERPROFILE = home; process.env.WORCA_HOME = join(home, '.worca-cc');
   ({ settingsFile } = await import('../src/core/settings.mjs'));
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

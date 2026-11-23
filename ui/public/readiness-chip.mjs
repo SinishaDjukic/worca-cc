@@ -7,6 +7,10 @@ export const CHIP_WORDS = Object.freeze({ ready: 'Agent-ready', partial: 'Partly
 /** Label words per tool level (popover rows, settings card). */
 export const LEVEL_WORDS = Object.freeze({ ready: 'Ready', partial: 'Partly ready', 'not-ready': 'Not ready', unused: 'Not used' });
 
+/** The shared chip's tone per level (`.badge` green / amber / red; no tone is the grey chip). */
+export const LEVEL_TONES = Object.freeze({ ready: 'green', partial: 'amber', 'not-ready': 'red', unused: '' });
+const chipClass = (base, level) => ['badge', base, LEVEL_TONES[level]].filter(Boolean).join(' ');
+
 /** "1 must fix, 1 should fix. 5 of 9 checks pass." Zero counts are left out. */
 export function chipTooltip(s) {
   const parts = [s.mustFix && `${s.mustFix} must fix`, s.shouldFix && `${s.shouldFix} should fix`].filter(Boolean);
@@ -17,7 +21,7 @@ export function chipTooltip(s) {
 export function renderReadinessChip(summary, { doc = globalThis.document } = {}) {
   if (!summary || !CHIP_WORDS[summary.level]) return null;
   const span = doc.createElement('span');
-  span.className = `pl-rd rd-${summary.level}`;
+  span.className = chipClass('pl-rd', summary.level);
   span.append(doc.createTextNode(CHIP_WORDS[summary.level]));
   const n = summary.level === 'ready' ? 0 : summary.failingCount;
   if (n > 0) span.append(Object.assign(doc.createElement('span'), { className: 'rd-n', textContent: String(n) }));
@@ -27,9 +31,9 @@ export function renderReadinessChip(summary, { doc = globalThis.document } = {})
   return span;
 }
 
-/** A level label: words on a tinted pill. */
+/** A level label: the words on the shared chip. */
 export function renderLevelLabel(level, { doc = globalThis.document } = {}) {
-  return Object.assign(doc.createElement('span'), { className: `rd-lbl rd-${level}`, textContent: LEVEL_WORDS[level] || '' });
+  return Object.assign(doc.createElement('span'), { className: chipClass('rd-lbl', level), textContent: LEVEL_WORDS[level] || '' });
 }
 
 /** Everything the popover paints, from a final report: the used tools (run engine first), the tools not judged,

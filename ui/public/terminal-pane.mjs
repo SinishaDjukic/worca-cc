@@ -1,42 +1,21 @@
-// ui/public/terminal-pane.mjs — the terminal pane on the right of every page (issue #573). The shell
-// runs on the worca server (src/core/terminal/manager.mjs); this pane draws it with xterm.js over /ws
-// (term-* frames), follows the page (a run's folder, a project's own folder: opening the pane starts or
-// reattaches that shell). The server records each command for the audit log; the pane does not list them.
-// Ask Worca's terminals (agent mode, #574) are shared: their tabs show on every page. A command Ask starts never
-// opens or switches the pane; its tab waits here, and a click on the command card's folder shows it (showSession).
-// Built in JS and appended to <body>, like the Ask dock: index.html is untouched.
-import { icon } from './icons.mjs';
+// ui/public/terminal-pane.mjs — the Terminal tool of the tool panel (issues 573, 1064). The shell runs on the worca
+// server (src/core/terminal/manager.mjs); this draws it with xterm.js over /ws (term-* frames). One xterm serves every
+// terminal tab: the panel mounts a tab, and this attaches that tab's shell, or starts one in the tab's folder (a run
+// member's, a project's own, a chat's). A tab that is not on screen keeps its shell running on the server.
+// Chat's agent-mode terminals (#574) are tabs of the chat that started them (tool-tabs.mjs sessionScope). A command the
+// chat starts never opens or switches the panel; a click on the command card's folder shows its tab (panel showSession).
+// The server records each command for the audit log; the tool does not list them.
 import { createLineEditor } from './terminal-line.mjs';
+import { runQuery } from './tool-tabs.mjs';
 
-const OPEN_KEY = 'worca-cc.terminal.open';
-const WIDTH_KEY = 'worca-cc.terminal.width';
-const MIN_W = 320;
-const DEFAULT_W = 460;
 // xterm's 16 ANSI colours, each read from a --term-ansi-* token (style.css), so both themes stay readable.
 const ANSI = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
   'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite'];
 const ansiToken = (name) => `--term-ansi-${name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
-
-/**
- * What the pane opens for this page: a run, a project (its own folder), or nothing new. The run id is the
- * pipeline id (`/api/runs/:id` resolves it; `ctx.runId` is the live in-memory key). A live run gets its
- * pipeline id a moment after it starts: until then the target is `pending`.
- */
-export function paneTargetOf(ctx = {}) {
-  if (ctx.view === 'running' && !ctx.pipelineId && ctx.runId) return { kind: 'pending' };
-  if ((ctx.view === 'running' || ctx.view === 'history-detail') && ctx.pipelineId) {
-    const ws = ctx.workspaceId ? String(ctx.workspaceId).replace(/^workspaces\//, '') : '';   // the server wants the bare id
-    const scope = ws ? { workspaceId: ws }
-      : ctx.projectKey ? { projectKey: ctx.projectKey }
-        : ctx.projectDir ? { projectDir: ctx.projectDir } : null;
-    if (scope) return { kind: 'run', runId: ctx.pipelineId, query: new URLSearchParams(scope).toString() };
-  }
-  if (ctx.view === 'project-detail' && ctx.projectKey) return { kind: 'project', projectKey: ctx.projectKey };
-  return { kind: 'other' };
-}
+const LIVE_WARNING = 'This pipeline is still running and changing these files.';
 
 let xtermPromise = null;
-/** xterm.js + the fit addon, loaded on first use: pages that never open the pane never pay for it. */
+/** xterm.js + the fit addon, loaded on first use: pages that never show a terminal never pay for it. */
 export function defaultLoadXterm(doc) {
   if (!doc.querySelector('link[data-xterm-css]')) {
     const l = doc.createElement('link');
@@ -49,41 +28,27 @@ export function defaultLoadXterm(doc) {
   return xtermPromise;
 }
 
-/** `confirm({ title, message, confirmLabel })` resolves true to go ahead (app.js passes its confirmModal). */
-export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, confirm = null, storage = null, loadXterm = null }) {
+/**
+ * The Terminal tool. `kind` is its tool panel registration (tool-kinds.mjs). `onSessions(list)` hears the server's
+ * sessions after each change, once the first list loaded (the panel keeps one tab per live shell). It is held while a
+ * tab's shell is starting, so that start's own term-status frame never makes a second tab for it.
+ * `confirm({ title, message, confirmLabel })` resolves true to go ahead (app.js passes its confirmModal).
+ */
+export function createTerminalTool({ doc, win, fetch, sendWs, confirm = null, loadXterm = null, onSessions = null }) {
   const load = loadXterm || (() => defaultLoadXterm(doc));
-  const st = { open: false, enabled: true, pty: { available: true, reason: null }, sessions: new Map(), current: null, lastSeq: 0,
-    target: { kind: 'other' }, targetKey: '', ctx: null, ctxGen: 0, term: null,
-    fit: null, line: null, bootId: null, member: '', note: '', busy: '', online: true, destroyed: false,
+  const st = { enabled: true, pty: { available: true, reason: null }, sessions: new Map(), current: null, lastSeq: 0,
+    infoOk: false, info: null, api: null, tabId: null, member: '', ctx: null, ctxGen: 0,
+    term: null, fit: null, line: null, bootId: null, note: '', busy: '', online: true, destroyed: false, replaying: null,
     warnings: new Map(),         // session id → the warning its open returned (a detached branch copy): shown while attached
-    tried: new Set(),            // start keys auto-started since the pane opened: each at most once (D3)
-    starting: null,              // the start key whose shell is being made
+    starting: new Set(),         // tab ids whose shell is being made: one start per tab at a time
     closing: new Set(),          // session ids whose close (a tab's ×) is under way
-    restartKey: null,            // Enter starts a new shell for this start key (the last one exited, or never started)
-    why: null, focusNext: false, pendingTimer: null };
-  const drawn = { tabs: '', context: '' };     // what the tabs and the context bar show: unchanged → not rebuilt (an open select stays open)
-
+    restartFor: null,            // Enter starts a new shell for this tab (its last one ended, or none started)
+    why: null };
+  const drawn = { context: '' };   // what the context line shows: unchanged → not rebuilt (an open select stays open)
   const make = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
-  const button = (label, cls, onClick, base = 'btn ') => { const b = make('button', `${base}${cls}`.trim(), label); b.type = 'button'; b.addEventListener('click', onClick); return b; };
-  const readStore = (k) => { try { return storage ? storage.getItem(k) : null; } catch { return null; } };
-  const writeStore = (k, v) => { try { if (storage) storage.setItem(k, v); } catch { /* private mode */ } };
 
-  // ── DOM ──────────────────────────────────────────────────────────────────────────────────────────
-  const root = make('aside', 'term-pane');
-  root.hidden = true;
-  root.setAttribute('aria-label', 'Terminal');
-  const resizer = make('div', 'term-resize');
-  const head = make('div', 'term-head');
-  const hideBtn = button(null, 'btn btn-sm btn-quiet btn-icon term-icon term-hide', () => close(), '');
-  hideBtn.append(icon(doc, 'x', 14));
-  hideBtn.setAttribute('aria-label', 'Hide the terminal pane');
-  hideBtn.title = 'Hide (the shell keeps running)';
-  head.append(make('span', 'term-title', 'Terminal'), hideBtn);
-  // One tab per open terminal of this page, then a small (+) tab that starts another shell in the same folder.
-  const tabs = make('div', 'term-tabs');
-  tabs.setAttribute('role', 'tablist');
-  tabs.setAttribute('aria-label', 'Terminals');
-  tabs.hidden = true;
+  // ── DOM: a terminal tab's body. The panel moves it into its own body whenever a terminal tab shows. ──
+  const el = make('div', 'term-body');
   const context = make('div', 'term-context');
   const banners = make('div', 'term-banners');
   const screen = make('div', 'term-screen');
@@ -97,12 +62,8 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
   // parent's computed height and width, and under border-box those would include the frame's.
   const host = make('div', 'term-host');
   screen.append(probe, ...ansiProbes.map(([, p]) => p), host);
-  root.append(resizer, head, tabs, context, banners, screen);
-  // The openers are the pages' own header buttons (.term-opener in index.html): only a run or a project
-  // page has a folder of its own. Ctrl+` opens the pane anywhere. Each opener says whether it is open.
-  const syncOpeners = () => { for (const b of doc.querySelectorAll('.term-opener')) b.setAttribute('aria-expanded', String(st.open)); };
+  el.append(context, banners, screen);
 
-  // ── network ──────────────────────────────────────────────────────────────────────────────────────
   async function api(method, url, body) {
     const r = await fetch(url, { method, headers: body ? { 'content-type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined });
     let j = null;
@@ -119,195 +80,135 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
     return ok;
   }
 
-  // ── open / close / width ─────────────────────────────────────────────────────────────────────────
-  function applyWidth(px) {
-    const max = Math.round((win.innerWidth || 1600) * 0.6);
-    const w = Math.max(MIN_W, Math.min(Number(px) || DEFAULT_W, max));
-    doc.body.style.setProperty('--term-w', `${w}px`);
-    return w;
+  function emitSessions() {
+    if (st.infoOk && !st.starting.size && typeof onSessions === 'function') onSessions([...st.sessions.values()]);
   }
-  /** `focus`: a person opened it (the edge tab, Ctrl+`): their next keys go to the shell. */
-  async function open({ focus = false } = {}) {
-    st.open = true;
-    st.focusNext = focus;
-    root.hidden = false;
-    doc.body.classList.add('term-open');
-    syncOpeners();
-    writeStore(OPEN_KEY, '1');
-    await refreshInfo();
-    await refreshContext(true);
-    if (st.focusNext && st.current && st.term) { st.focusNext = false; focusTerm(); }
-  }
-  /** Hides the pane. The shell keeps running and stays attached; the next open may start one again. */
-  function close() {
-    st.open = false;
-    root.hidden = true;
-    doc.body.classList.remove('term-open');
-    syncOpeners();
-    writeStore(OPEN_KEY, '0');
-    st.tried.clear();
-    win.clearTimeout(st.pendingTimer);
-  }
-  const toggle = () => (st.open ? close() : open({ focus: true }));
-  const focusTerm = () => { try { st.term?.focus?.(); } catch { /* not drawn */ } };
-
   async function refreshInfo() {
     try {
       const info = await api('GET', '/api/terminal');
       st.enabled = !!info.enabled;
       st.pty = info.pty || st.pty;
-      // The server's list is the truth: sessions it no longer has leave the picker. The attached one stays.
+      // The server's list is the truth. The attached one stays in the map, marked ended, so its tab can offer Enter.
       const keep = st.current && st.sessions.get(st.current);
       st.sessions = new Map((info.sessions || []).map((s) => [s.id, s]));
-      if (keep && !st.sessions.has(keep.id)) st.sessions.set(keep.id, keep);
-    } catch (e) { st.note = e.message; }
+      if (keep && !st.sessions.has(keep.id)) st.sessions.set(keep.id, keep.status === 'running' ? { ...keep, status: 'closed' } : keep);
+      st.infoOk = true;
+    } catch (e) { st.note = e.message; st.info = null; }
+    render();
+    emitSessions();
   }
+  const ensureInfo = () => (st.info ||= refreshInfo());
 
-  const newestFirst = (a, z) => String(z.createdAt || '').localeCompare(String(a.createdAt || ''));
-  const isAsk = (s) => String(s?.createdBy || '').startsWith('ask:');
-  /** This page's own terminals: what follow() reattaches or starts. */
-  function pageSessions() {
-    const all = [...st.sessions.values()];
-    if (st.target.kind === 'run') return all.filter((s) => s.runId === st.target.runId && (!st.member || s.member === st.member));
-    if (st.target.kind === 'project') return all.filter((s) => s.scope === 'project' && s.projectKey === st.target.projectKey);
-    if (st.target.kind === 'pending') return [];
-    return all;
-  }
-  /** The tabs: this page's terminals plus Ask's, which are shared with the user on every page. */
-  function sessionsForTarget() {
-    const own = pageSessions();
-    return [...own, ...[...st.sessions.values()].filter((s) => isAsk(s) && !own.includes(s))];
-  }
   const memberNow = () => st.ctx?.members?.find((x) => x.projectKey === st.member) || st.ctx?.members?.[0] || null;
-  /** What a new shell on this page would be: one per run member, or the project's own folder. null: none here. */
-  function startKey() {
-    if (st.target.kind === 'run') {
-      const m = memberNow();
-      return m && m.state !== 'unavailable' ? `${st.targetKey}|${m.projectKey}` : null;
-    }
-    if (st.target.kind === 'project') return st.ctx ? st.targetKey : null;
-    return null;
-  }
-
-  // A live run gets its pipeline id a moment after it starts: look again until it has one.
-  function schedulePending() {
-    win.clearTimeout(st.pendingTimer);
-    if (st.target.kind !== 'pending' || !st.open || st.destroyed) return;
-    st.pendingTimer = win.setTimeout(() => {
-      if (st.destroyed) return;
-      refreshContext();
-      if (st.target.kind === 'pending') schedulePending();
-    }, 1500);
-  }
-
-  async function refreshContext(force = false) {
-    const target = paneTargetOf(getPageContext ? getPageContext() : {});
-    const key = JSON.stringify(target);
-    if (!force && key === st.targetKey) return;
-    const changed = key !== st.targetKey;
-    const navigated = changed && st.targetKey !== '';   // the user moved to another page (not the pane's first look)
-    const gen = ++st.ctxGen;                             // a later page change wins over this one's fetch
-    st.targetKey = key;
-    st.target = target;
-    st.ctx = null;
-    st.note = '';
-    if (changed) st.restartKey = null;
-    // A new page whose terminals do not include the attached one: let go of it now, so no keystroke reaches
-    // a shell other than the one the context bar shows (its own running session is reattached below).
-    if (changed && st.current && !sessionsForTarget().some((s) => s.id === st.current)) detachCurrent();
-    schedulePending();
-    if (!st.open || !st.enabled) { render(); return; }
+  /** A run tab's members (folders, checkout state, warning): what its context line and its start read. */
+  async function loadRunCtx(scope) {
+    const gen = ++st.ctxGen;
     let ctx = null;
-    try {
-      if (target.kind === 'run') ctx = await api('GET', `/api/runs/${encodeURIComponent(target.runId)}/terminal?${target.query}`);
-      else if (target.kind === 'project') ctx = await api('GET', `/api/projects/${encodeURIComponent(target.projectKey)}/terminal`);
-    } catch (e) { if (gen === st.ctxGen) st.note = e.message; }
-    if (gen !== st.ctxGen) return;
+    try { ctx = await api('GET', `/api/runs/${encodeURIComponent(scope.id)}/terminal?${runQuery(scope)}`); }
+    catch (e) { if (gen === st.ctxGen) st.note = e.message; }
+    if (gen !== st.ctxGen) return null;
     st.ctx = ctx;
-    for (const s of ctx?.sessions || []) st.sessions.set(s.id, s);
-    if (target.kind === 'run' && ctx && !ctx.members.some((m) => m.projectKey === st.member)) st.member = ctx.members[0]?.projectKey || '';
-    render();
-    await follow({ navigated });
-    render();
+    for (const s of ctx?.sessions || []) if (!st.sessions.has(s.id)) st.sessions.set(s.id, s);
+    if (ctx && !ctx.members.some((m) => m.projectKey === st.member)) st.member = ctx.members[0]?.projectKey || '';
+    return ctx;
   }
+  const endedWhy = (s) => (s.status === 'closed' ? 'terminal closed' : `shell exited${s.exitCode == null ? '' : ` with code ${s.exitCode}`}`);
 
-  /**
-   * D3: the pane shows this page's shell. Its running session is reattached; with none, one is started,
-   * at most once per start key while the pane is open (a later one needs Enter, see promptRestart).
-   * Other pages start nothing: they keep the attached shell, or attach the newest running one.
-   * An Ask tab a command card's click attached stays until the user moves to another page or project.
-   */
-  async function follow({ navigated = false } = {}) {
-    const cur = st.sessions.get(st.current);
-    const live = pageSessions().filter((s) => s.status === 'running').sort(newestFirst);
-    if (st.target.kind === 'other') {
-      if (!(cur && cur.status === 'running') && live[0]) await attach(live[0].id);
-      return;
-    }
-    const key = startKey();
-    if (key && live.length) st.tried.add(key);            // this page has had its shell: a later one needs Enter
-    if (cur && cur.status === 'running' && ((isAsk(cur) && !navigated) || live.some((s) => s.id === cur.id))) return;
-    if (live[0]) { await attach(live[0].id); return; }
-    if (!key || st.starting === key) return;
-    if (st.tried.has(key)) { promptRestart(key); return; }
-    st.tried.add(key);
-    await start(key);
+  // ── mount / unmount: the panel shows one tab at a time ────────────────────────────────────────────
+  /** Shows `tab`: its running shell is attached; a tab with none starts one (D4: the tab was opened to get a shell);
+   *  a tab whose shell ended offers Enter, never a new shell on its own. */
+  async function mount(tab, kindApi) {
+    st.api = kindApi;
+    if (st.tabId !== tab.id) { st.note = ''; st.busy = ''; st.ctx = null; st.restartFor = null; drawn.context = ''; }
+    st.tabId = tab.id;
+    st.member = typeof tab.state.member === 'string' ? tab.state.member : '';
+    render();
+    await ensureInfo();
+    if (st.tabId !== tab.id) return;
+    if (!st.enabled) { render(); return; }               // hosted and off: the context line says how to turn it on
+    const scope = kindApi.scopeFor(tab);
+    if (scope.type === 'run') { await loadRunCtx(scope); if (st.tabId !== tab.id) return; render(); }
+    const sid = tab.state.sessionId;
+    const s = sid ? st.sessions.get(sid) : null;
+    if (s && s.status === 'running') { await attach(s.id); return; }
+    if (sid) { detachCurrent(); promptRestart(tab.id, st.why || (s ? endedWhy(s) : 'terminal closed')); render(); return; }
+    // A run with no folder (or whose lookup failed) starts nothing: the context line says why, and Enter does nothing.
+    const m = scope.type === 'run' ? memberNow() : null;
+    if (scope.type === 'run' && (!m || m.state === 'unavailable')) { render(); return; }
+    await startTab(tab);
   }
-
-  /** A dim line in the terminal; Enter (that keypress only) then starts a new shell for `key`. Never on its own. */
-  function promptRestart(key, why = st.why) {
-    st.why = null;
-    if (st.restartKey === key) return;
-    st.restartKey = key;
-    const text = why ? `[${why}. Press Enter for a new one]` : '[no shell here. Press Enter to start one]';
-    ensureTerm().then((t) => { if (st.restartKey === key) t.write(`\r\n\x1b[2m${text}\x1b[0m\r\n`); }).catch(() => {});
+  /** The tab leaves the screen: let go of its shell (it keeps running), so no keystroke reaches it. */
+  function unmount() {
+    detachCurrent();
+    st.tabId = null;
+    st.ctx = null;
+    st.ctxGen += 1;
+    st.restartFor = null;
+    render();
   }
 
   // ── sessions ─────────────────────────────────────────────────────────────────────────────────────
   async function termSize() {
     try { await ensureTerm(); return { cols: st.term.cols, rows: st.term.rows }; } catch { return { cols: 100, rows: 30 }; }
   }
-  /** Starts this page's shell. Attached only if the page still wants it; otherwise it waits in the picker. */
-  async function start(key) {
-    st.starting = key;
-    st.restartKey = null;
+  /** Starts the tab's shell in its scope's folder and binds it to the tab; attached only if the tab is still shown. */
+  async function startTab(tab) {
+    if (!st.enabled || !st.online || st.starting.has(tab.id)) return;
+    st.starting.add(tab.id);
+    st.restartFor = null;
     render();
     let r = null;
     try {
-      r = st.target.kind === 'run' ? await startRun(key) : await startProject();
+      const scope = st.api.scopeFor(tab);
+      r = scope.type === 'run' ? await startRun(tab, scope)
+        : scope.type === 'chat' ? await startIn(`/api/ask/threads/${encodeURIComponent(scope.id)}/terminal`)
+          : await startIn(`/api/projects/${encodeURIComponent(scope.id)}/terminal`);
     } finally {
-      if (st.starting === key) st.starting = null;
+      st.starting.delete(tab.id);
       st.busy = '';
     }
-    if (!r) { if (startKey() === key) promptRestart(key); render(); return; }
-    st.sessions.set(r.session.id, r.session);
-    if (r.warning) st.warnings.set(r.session.id, r.warning);
-    if (startKey() === key) { st.note = ''; await attach(r.session.id); }
-    render();
+    if (r) {
+      st.sessions.set(r.session.id, r.session);
+      if (r.warning) st.warnings.set(r.session.id, r.warning);
+      st.api.setTabState(tab.id, { sessionId: r.session.id, ...(r.session.member ? { member: r.session.member } : {}) });
+    }
+    emitSessions();                                      // held while this start was in flight
+    if (st.tabId !== tab.id) { render(); return; }
+    if (!r) { promptRestart(tab.id); render(); return; }
+    st.note = '';
+    await attach(r.session.id);
   }
-  async function startRun(key) {
-    const t = st.target;
+  async function startIn(url) {
+    const size = await termSize();
+    return api('POST', url, size).catch(showError);
+  }
+  async function startRun(tab, scope) {
     const m = memberNow();
+    if (!m) { st.note ||= 'This run has no folder.'; return null; }
+    if (m.state === 'unavailable') { st.note = m.reason || 'This run has no folder.'; return null; }
+    const q = runQuery(scope);
     // A finished run with no checkout: the start makes one server-side. Never POST /checkout for it —
     // that route refuses a member the run did not change, and "No changes in this project" is no answer
     // to "give me a shell". Say what is happening while the folder is made.
     const fresh = m.state === 'needs-checkout';
     if (fresh) { st.busy = 'Making a checkout of this run…'; render(); }
     const size = await termSize();
-    if (startKey() !== key) return null;
-    const r = await api('POST', `/api/runs/${encodeURIComponent(t.runId)}/terminal?${t.query}`, { member: m.projectKey, ...size }).catch(showError);
+    const r = await api('POST', `/api/runs/${encodeURIComponent(scope.id)}/terminal?${q}`, { member: m.projectKey, ...size }).catch(showError);
     // That start made a checkout, so the picker's 'needs-checkout' is stale: read the context again.
-    if (r && fresh && startKey() === key) {
-      const ctx = await api('GET', `/api/runs/${encodeURIComponent(t.runId)}/terminal?${t.query}`).catch(() => null);
-      if (ctx && startKey() === key) st.ctx = ctx;
+    if (r && fresh && st.tabId === tab.id) {
+      const ctx = await api('GET', `/api/runs/${encodeURIComponent(scope.id)}/terminal?${q}`).catch(() => null);
+      if (ctx && st.tabId === tab.id) st.ctx = ctx;
     }
     return r;
   }
-  async function startProject() {
-    const size = await termSize();
-    return api('POST', `/api/projects/${encodeURIComponent(st.target.projectKey)}/terminal`, size).catch(showError);
+  /** A dim line in the terminal; Enter (that keypress only) then starts a new shell for this tab. Never on its own. */
+  function promptRestart(tabId, why = st.why) {
+    st.why = null;
+    if (st.restartFor === tabId) return;
+    st.restartFor = tabId;
+    const text = why ? `[${why}. Press Enter for a new one]` : '[no shell here. Press Enter to start one]';
+    ensureTerm().then((t) => { if (st.restartFor === tabId && st.tabId === tabId) t.write(`\r\n\x1b[2m${text}\x1b[0m\r\n`); }).catch(() => {});
   }
-
   /** Forgets the attached session: the screen and any half-typed line. */
   function resetCurrent() {
     st.current = null;
@@ -320,12 +221,11 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
     if (st.current) send({ type: 'term-detach', sessionId: st.current });
     resetCurrent();
   }
-
   async function attach(id) {
     if (st.current && st.current !== id) send({ type: 'term-detach', sessionId: st.current });
     resetCurrent();
     st.current = id;
-    st.restartKey = null;
+    st.restartFor = null;
     const s = st.sessions.get(id);
     st.line = s && s.mode === 'pipes' ? createLineEditor() : null;
     try {
@@ -336,66 +236,41 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
     if (!s || s.status === 'running') send({ type: 'term-attach', sessionId: id });
     render();
     fitNow();                                            // the width may have changed since the session started
-    if (st.focusNext && st.open) { st.focusNext = false; focusTerm(); }
   }
   function stopCurrent() {
     if (st.current) api('POST', `/api/terminal/sessions/${encodeURIComponent(st.current)}/stop`).catch(showError);
   }
   /**
-   * Shows one terminal (an Ask session) because the user asked to (a click on a command card's folder): attaches
-   * it, opens the pane and focuses it, even after the user closed the pane. Resolves false when there is no shell
-   * to show (it closed: idle, or Worca restarted), so the card can say so instead of doing nothing.
+   * A tab's × (the panel calls this before it drops the tab): closes that shell. One that has run a command asks first.
+   * Resolves false to keep the tab (No, or a failed close, which the context line explains).
    */
-  async function showSession(id) {
-    if (st.destroyed) return false;
-    if (st.sessions.get(id)?.status !== 'running') await refreshInfo();
-    const s = st.sessions.get(id);
-    if (!st.enabled || !s || s.status !== 'running') return false;
-    st.focusNext = true;
-    if (st.current !== id) await attach(id);
-    if (!st.open) await open({ focus: true });
-    else { st.focusNext = false; focusTerm(); }
+  async function close(tab) {
+    const id = tab.state.sessionId;
+    const x = id ? st.sessions.get(id) : null;
+    if (!x || x.status !== 'running') return true;     // never started, or already ended: the tab just leaves
+    if (st.closing.has(id)) return false;
+    if (x.commands > 0) {
+      const name = title(tab);
+      const n = x.commands === 1 ? 'A command has' : `${x.commands} commands have`;
+      const busy = x.currentBlock ? ` ${x.currentBlock.command} is still running and stops.` : '';
+      const ask = { title: 'Close this terminal?', message: `${n} run in ${name}. Closing it ends the shell.${busy}`, confirmLabel: 'Close terminal' };
+      const ok = confirm ? await confirm(ask) : win.confirm(`${ask.title}\n${ask.message}`);
+      if (!ok) return false;
+      if (st.sessions.get(id)?.status !== 'running') return true;
+    }
+    st.closing.add(id);                                  // a second click while it closes does nothing
+    const done = await api('DELETE', `/api/terminal/sessions/${encodeURIComponent(id)}`).catch(showError).finally(() => st.closing.delete(id));
+    if (!done) return false;
+    const now = st.sessions.get(id);                    // its 'closed' status usually came first
+    if (now?.status === 'running') st.sessions.set(id, { ...now, status: 'closed' });
+    if (id === st.current) detachCurrent();
     return true;
   }
-  /**
-   * A tab's ×: closes that terminal (an ended one just leaves). One that has run a command asks first. The
-   * attached one then hands over to the page's next open terminal, or to the Enter line.
-   */
-  async function closeTab(id, name) {
-    const x = st.sessions.get(id);
-    if (!x || st.closing.has(id)) return;
-    if (x.status === 'running') {
-      if (x.commands > 0) {
-        const n = x.commands === 1 ? 'A command has' : `${x.commands} commands have`;
-        const busy = x.currentBlock ? ` ${x.currentBlock.command} is still running and stops.` : '';
-        const ask = { title: 'Close this terminal?', message: `${n} run in ${name}. Closing it ends the shell.${busy}`,
-          confirmLabel: 'Close terminal' };
-        const ok = confirm ? await confirm(ask) : win.confirm(`${ask.title}\n${ask.message}`);
-        if (!ok || st.sessions.get(id)?.status !== 'running') return;
-      }
-      st.closing.add(id);                                // a second click while it closes does nothing
-      const done = await api('DELETE', `/api/terminal/sessions/${encodeURIComponent(id)}`).catch(showError).finally(() => st.closing.delete(id));
-      if (!done) return;
-      const now = st.sessions.get(id);                  // its 'closed' status usually came first
-      if (now?.status === 'running') st.sessions.set(id, { ...now, status: 'closed' });
-    }
-    if (id !== st.current) { render(); return; }
-    detachCurrent();
-    const next = tabSessions().find((s) => s.status === 'running');
-    if (next) { st.focusNext = true; await attach(next.id); return; }
-    const key = startKey();
-    st.restartKey = null;
-    if (key) promptRestart(key, 'terminal closed');
-    render();
+  function title(tab) {
+    const s = tab.state.sessionId ? st.sessions.get(tab.state.sessionId) : null;
+    return s?.label || 'Terminal';
   }
-  /** The (+) tab: another shell for this page, next to the ones it has. */
-  function addShell() {
-    const key = startKey();
-    if (!key || st.starting || !st.online) return;
-    st.tried.add(key);
-    st.focusNext = true;
-    start(key);
-  }
+
   // ── xterm ────────────────────────────────────────────────────────────────────────────────────────
   function themeNow() {
     const cs = win.getComputedStyle(screen);
@@ -422,18 +297,22 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
   }
   let fitTimer = null;
   function fitNow() {
-    if (!st.fit || root.hidden) return;
+    if (!st.fit || !el.isConnected) return;               // not on screen: FitAddon would measure nothing
     try { st.fit.fit(); } catch { return; }
     win.clearTimeout(fitTimer);
     fitTimer = win.setTimeout(() => {
       if (st.current && st.term) send({ type: 'term-resize', sessionId: st.current, cols: st.term.cols, rows: st.term.rows });
     }, 100);
   }
+  const focusTerm = () => { try { st.term?.focus?.(); } catch { /* not drawn */ } };
   function onKeys(data) {
     const s = st.sessions.get(st.current);
     if (!s || s.status !== 'running') {
-      // No shell: Enter starts a new one for this page (and is not sent anywhere); other keys do nothing.
-      if (st.restartKey && st.online && /[\r\n]/.test(data) && st.restartKey === startKey() && !st.starting) start(st.restartKey);
+      // No shell: Enter starts a new one for this tab (and is not sent anywhere); other keys do nothing.
+      if (st.restartFor && st.restartFor === st.tabId && st.online && /[\r\n]/.test(data) && !st.starting.has(st.tabId)) {
+        const tab = st.api?.tab(st.tabId);
+        if (tab) startTab(tab);
+      }
       return;
     }
     if (!st.online) return;                              // reconnecting: the banner says keys are not sent
@@ -451,12 +330,11 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
       st.sessions.set(msg.snapshot.id, msg.snapshot);
       if (msg.snapshot.id === st.current && prev?.status === 'running' && msg.snapshot.status !== 'running' && st.term) {
         // `exit`, a crash or a close: say so, and never start another shell unasked (Enter does).
-        const why = msg.snapshot.status === 'closed' ? 'terminal closed'
-          : `shell exited${msg.snapshot.exitCode == null ? '' : ` with code ${msg.snapshot.exitCode}`}`;
-        const key = startKey();
-        if (key) { st.restartKey = null; promptRestart(key, why); } else st.term.write(`\r\n\x1b[2m[${why}]\x1b[0m\r\n`);
+        const why = endedWhy(msg.snapshot);
+        if (st.tabId) { st.restartFor = null; promptRestart(st.tabId, why); } else st.term.write(`\r\n\x1b[2m[${why}]\x1b[0m\r\n`);
       }
-      if (st.open) render();
+      render();
+      emitSessions();
       return;
     }
     if (msg.sessionId !== st.current) return;
@@ -510,84 +388,36 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
       resetCurrent();
       st.sessions.clear();
       if (had) st.why = 'the worca server restarted';
-      const say = () => {
-        if (!had || st.current) return;
+      if (!st.infoOk) { render(); return; }              // never loaded: the first open loads the list
+      st.info = null;
+      ensureInfo().then(() => {
+        if (!had || st.current || !st.tabId) return;
         st.note = 'The worca server restarted, which closed its terminals. Press Enter in the terminal for a new one.';
-        const key = startKey();
-        if (key) promptRestart(key);
-        st.why = null;
+        promptRestart(st.tabId);
         render();
-      };
-      if (st.open) refreshInfo().then(() => refreshContext(true)).then(say);
-      else { render(); say(); }
+      });
       return;
     }
     if (st.current && st.sessions.get(st.current)?.status === 'running') send({ type: 'term-attach', sessionId: st.current });
     if (wasOffline) renderBanners();
+    // Frames sent while /ws was down are lost: read the list again, so tabs follow the shells that opened or closed meanwhile.
+    if (wasOffline && st.infoOk) { st.info = null; ensureInfo(); }
   }
-  /** app.js tells the pane when /ws drops; onHello says it is back. */
+  /** app.js tells the tool when /ws drops; onHello says it is back. */
   function onConnection(up) {
     if (!!up === st.online) return;
     st.online = !!up;
     renderBanners();
   }
-  const onContextChange = () => { win.setTimeout(() => { if (!st.destroyed) refreshContext(); }, 0); };   // after showView syncs the hash
 
   // ── render ───────────────────────────────────────────────────────────────────────────────────────
-  function render() {
-    renderTabs();
-    renderContext();
-    renderBanners();
-  }
-  /** This page's open (running) terminals and the attached one, oldest first: a new shell's tab lands on the right. */
-  function tabSessions() {
-    const list = sessionsForTarget().filter((x) => x.status === 'running');
-    const cur = st.sessions.get(st.current);
-    if (cur && !list.includes(cur)) list.push(cur);
-    return list.sort((a, z) => newestFirst(z, a));
-  }
-  function renderTabs() {
-    const list = tabSessions();
-    const canAdd = st.enabled && !!startKey() && !st.starting;
-    const key = JSON.stringify([st.current, canAdd, list.map((x) => [x.id, x.label, x.status])]);
-    if (key === drawn.tabs) return;
-    drawn.tabs = key;
-    tabs.replaceChildren();
-    tabs.hidden = !list.length && !canAdd;
-    const seen = new Map();                              // shells of one folder share a label: the second is "… 2"
-    for (const x of list) {
-      const base = x.label || x.id;
-      const n = (seen.get(base) || 0) + 1;
-      seen.set(base, n);
-      const text = n > 1 ? `${base} ${n}` : base;
-      // The tab and its × are sibling buttons in one frame: a button cannot hold another.
-      const item = make('span', 'term-tab-item');
-      const t = button(text, 'term-tab', () => { if (x.id !== st.current) { st.focusNext = true; attach(x.id); } else focusTerm(); }, '');
-      t.setAttribute('role', 'tab');
-      t.setAttribute('aria-selected', String(x.id === st.current));
-      t.title = x.status === 'running' ? text : `${text} (${x.status})`;
-      if (x.status !== 'running') item.classList.add('term-tab-ended');
-      const shut = button(null, 'term-tab-close', () => closeTab(x.id, text), '');
-      shut.append(icon(doc, 'x', 12));
-      shut.setAttribute('aria-label', `Close ${text}`);
-      shut.title = x.status === 'running' ? 'Close this terminal' : 'Remove this tab';
-      item.append(t, shut);
-      tabs.append(item);
-    }
-    if (canAdd) {
-      const add = button('+', 'term-tab term-tab-add', () => addShell(), '');
-      add.setAttribute('aria-label', 'New terminal');
-      add.title = 'New terminal in this folder';
-      tabs.append(add);
-    }
-  }
-  const LIVE_WARNING = 'This pipeline is still running and changing these files.';
+  function render() { renderContext(); renderBanners(); }
   /** The amber line of the attached shell: a live run's (while it runs), or what its open returned. */
   function sessionWarning(s) {
     if (s.scope === 'run') return s.status === 'running' && s.runLive ? (st.warnings.get(s.id) || LIVE_WARNING) : null;
     return st.warnings.get(s.id) || null;
   }
-  /** What the context line shows, as data: it is rebuilt only when this changes (an open select stays open). */
+  /** What the context line shows, as data: rebuilt only when this changes (an open select stays open). */
   function contextParts() {
     if (!st.enabled) return [['note', 'The terminal is turned off on this hosted deployment. An administrator can enable it with WORCA_TERMINAL_REMOTE=1.']];
     const parts = [];
@@ -595,15 +425,13 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
     if (st.busy) parts.push(['note', st.busy]);
     const s = st.sessions.get(st.current);
     const c = st.ctx;
-    const m = st.target.kind === 'run' ? memberNow() : null;
-    if (m && c.members.length > 1) parts.push(['members', c.members.map((x) => [x.projectKey, x.projectName]), st.member]);
+    const m = c ? memberNow() : null;
+    if (c && c.members.length > 1) parts.push(['members', c.members.map((x) => [x.projectKey, x.projectName]), s?.member || st.member]);
     if (m && m.state === 'unavailable' && !s) parts.push(['note', m.reason || 'This run has no folder.']);
-    const folder = s?.cwd || m?.cwd || (st.target.kind === 'project' ? c?.dir : null);
+    const folder = s?.cwd || m?.cwd || null;
     if (folder) parts.push(['folder', folder]);
     const warn = s ? sessionWarning(s) : m?.warning;
     if (warn) parts.push(['warn', warn]);
-    if (st.target.kind === 'pending') parts.push(['note', 'This run is starting. Its terminal opens in a moment.']);
-    if (st.target.kind === 'other' && !s) parts.push(['note', 'Open a run or a project to start a terminal.']);
     return parts;
   }
   function renderContext() {
@@ -617,13 +445,15 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
         const sel = make('select', 'term-member');
         sel.setAttribute('aria-label', 'Project');
         for (const [k, name] of value) { const o = make('option', null, name); o.value = k; o.selected = k === chosen; sel.append(o); }
+        // Another member: a running shell keeps its own folder, so that member's shell opens in a new tab.
         sel.addEventListener('change', () => {
+          const tab = st.api?.tab(st.tabId);
+          if (!tab) return;
+          const s = st.sessions.get(st.current);
+          if (s && s.status === 'running' && s.member !== sel.value) { st.api.openTab('terminal', tab.scope, { member: sel.value }); return; }
           st.member = sel.value;
-          st.restartKey = null;
-          // this project's shell, never the other's: let go first, then follow (attach or start once)
-          if (st.current && !sessionsForTarget().some((x) => x.id === st.current)) detachCurrent();
-          render();
-          follow({ navigated: true }).then(render);
+          st.api.setTabState(tab.id, { member: sel.value });
+          if (!st.starting.has(tab.id)) { detachCurrent(); startTab(tab); }
         });
         context.append(sel);
       } else if (kind === 'folder') {
@@ -635,12 +465,11 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
       }
     }
   }
-
   function renderBanners() {
     banners.replaceChildren();
     const s = st.sessions.get(st.current);
-    if (!st.online && st.open) banners.append(make('p', 'term-warn term-offline', 'Reconnecting to the worca server. Keys typed now are not sent.'));
-    root.classList.toggle('term-is-offline', !st.online);
+    if (!st.online && st.tabId) banners.append(make('p', 'term-warn term-offline', 'Reconnecting to the worca server. Keys typed now are not sent.'));
+    el.classList.toggle('term-is-offline', !st.online);
     if (!s) return;
     if (s.mode === 'pipes') banners.append(make('p', 'term-banner', `Full-screen programs (vim, top, less) do not work here: ${st.pty.reason || 'node-pty is not available on this server'}. Commands and Ctrl+C still work.`));
     if (s.folder === 'gone') banners.append(make('p', 'term-banner', 'This folder was removed when the run finished. Type exit, then press Enter for a new terminal on the run.'));
@@ -648,39 +477,26 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
   }
 
   // ── global listeners ─────────────────────────────────────────────────────────────────────────────
-  // Capture phase (D16): inside the pane xterm takes Ctrl+` as a keystroke (NUL) and stops the event, so a
-  // bubbling listener would never see it there.
-  const onDocKey = (e) => {
-    if (e.ctrlKey && !e.metaKey && !e.altKey && (e.key === '`' || e.code === 'Backquote')) { e.preventDefault(); e.stopPropagation(); toggle(); }
-  };
   const onTheme = () => { if (st.term) st.term.options.theme = themeNow(); };
-  const onHash = () => onContextChange();
-  doc.addEventListener('keydown', onDocKey, true);
   doc.addEventListener('worca:theme', onTheme);
-  win.addEventListener('hashchange', onHash);
-  resizer.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    const move = (ev) => { applyWidth((win.innerWidth || 0) - ev.clientX); fitNow(); };
-    const up = () => {
-      doc.removeEventListener('pointermove', move);
-      doc.removeEventListener('pointerup', up);
-      writeStore(WIDTH_KEY, String(parseInt(doc.body.style.getPropertyValue('--term-w'), 10) || DEFAULT_W));
-    };
-    doc.addEventListener('pointermove', move);
-    doc.addEventListener('pointerup', up);
-  });
-
-  applyWidth(readStore(WIDTH_KEY));
-  if (readStore(OPEN_KEY) === '1') open();
-
   function destroy() {
     st.destroyed = true;
-    win.clearTimeout(st.pendingTimer);
-    doc.removeEventListener('keydown', onDocKey, true);
+    win.clearTimeout(fitTimer);
     doc.removeEventListener('worca:theme', onTheme);
-    win.removeEventListener('hashchange', onHash);
     try { st.term?.dispose(); } catch { /* already gone */ }
   }
 
-  return { root, open, close, toggle, syncOpeners, isOpen: () => st.open, showSession, onFrame, onHello, onConnection, onContextChange, destroy };
+  const kind = Object.freeze({
+    kind: 'terminal', label: 'Terminal', icon: 'terminal', order: 10,
+    shortcut: Object.freeze({ code: 'Backquote', key: '`', ctrl: true, label: 'Ctrl+`' }),
+    unavailable: () => (st.enabled ? null : 'The terminal is turned off on this hosted deployment.'),
+    title,
+    mount: (tab, hostEl, kindApi) => { hostEl.append(el); return mount(tab, kindApi); },
+    unmount: () => unmount(),
+    close,
+    focus: () => focusTerm(),
+  });
+
+  return { el, kind, sessions: () => [...st.sessions.values()], refreshInfo: () => { st.info = refreshInfo(); return st.info; },
+    onFrame, onHello, onConnection, destroy };
 }

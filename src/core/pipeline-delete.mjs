@@ -748,7 +748,8 @@ export async function purgePipeline({ projectDir = null, key = null, workspaceKe
   if (!report) return null;            // archivePipeline found no row for this scope: the bulk wrapper reports "run not found"
   const ts = new Date().toISOString();
   tx(() => {
-    db.prepare(`UPDATE pipelines SET title = 'deleted run', prompt = NULL, started_by = NULL,
+    db.prepare(`UPDATE pipelines SET title = 'deleted run', prompt = NULL,
+      credit_key = COALESCE(credit_key, LOWER(started_by)), started_by = NULL,
       archived_at = COALESCE(archived_at, ?), deleted_at = ? WHERE id = ?`).run(ts, ts, String(id));
     db.prepare('DELETE FROM run_tags WHERE pipeline_id = ?').run(String(id));
     db.prepare('DELETE FROM run_labels WHERE pipeline_id = ?').run(String(id));

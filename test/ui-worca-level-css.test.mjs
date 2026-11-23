@@ -10,7 +10,7 @@ import { cssRules } from './helpers/css-rules.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const ALL = cssRules(readStyleCss());
-const LEVEL_RULES = ALL.filter((r) => /\.(?:wl-|worca-hover-card|worca-dlg|gs-level)|data-worca-level/.test(r.sel));
+const LEVEL_RULES = ALL.filter((r) => /\.(?:wl-|worca-dlg|gs-level)|data-worca-level/.test(r.sel));
 const LITERAL = /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(|(?<![-\w])(?:white|black)(?![-\w])/i;
 const read = (rel) => readFileSync(fileURLToPath(new URL(`../${rel}`, import.meta.url)), 'utf8');
 
@@ -25,7 +25,7 @@ const ALIASES = {
   '--wl-chip-reached-bg': 'var(--green-bg)',
   '--wl-chip-reached-ink': 'var(--green-ink-strong)',
 };
-const CELEBRATE = 'light-dark(oklch(0.96 0.025 var(--wl-hue)), oklch(0.3 0.05 var(--wl-hue)))';
+const CELEBRATE = 'oklch(0.92 0.04 var(--wl-hue))';
 const squash = (v) => v.replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim();
 
 function aliasValues(name) {
@@ -52,6 +52,17 @@ test('the celebration tint is declared on the element that receives --wl-hue (.w
   assert.match(read('ui/public/worca-level/dialogs.mjs'), /art\.style\.setProperty\('--wl-hue'/);
 });
 
+test('celebrate bg equals the disc tint in light and dark', () => {
+  const disc = /oklch\(0\.92 0\.04 var\(--wl-hue\)\)/;
+  assert.match(read('ui/public/assets/worca-levels/hooked.svg'), /fill="oklch\(0\.92 0\.04 295\)"/, 'the SVG disc tint');
+  const got = aliasValues('--wl-celebrate-bg');
+  assert.ok(got.length > 0);
+  for (const v of got) {
+    assert.doesNotMatch(v, /light-dark/, 'one tint for both colour schemes');
+    assert.match(v, disc);
+  }
+});
+
 test('--wl-* colour aliases live on .wl-* rules, never on :root', () => {
   const onRoot = ALL.filter((r) => /(?:^|,)\s*:root\b/.test(r.sel) && /--wl-(?:seg|dot|link|chip|celebrate)/.test(r.body));
   assert.deepEqual(onRoot.map((r) => r.sel), []);
@@ -72,15 +83,15 @@ test('each level key tints with a hue number', () => {
   }
 });
 
-test('the segment row, card, hover card, hero, reach list and dialog all have rules', () => {
-  for (const sel of ['.wl-seg', '.wl-seg-i', '.wl-card', '.worca-hover-card', '.wl-hero', '.wl-reach', '.wl-level', '.wl-dot', '.worca-dlg', '.gs-level-line']) {
+test('the segment row, menu card, hero, reach list and dialog all have rules', () => {
+  for (const sel of ['.wl-seg', '.wl-seg-i', '.wl-card', '.wl-hero', '.wl-reach', '.wl-level', '.wl-dot', '.worca-dlg', '.gs-level-line']) {
     assert.ok(ALL.some((r) => r.sel.split(',').some((s) => s.trim().startsWith(sel))), `${sel} has a rule`);
   }
 });
 
 test('every wl-* class the level markup emits has a rule', () => {
   const css = ALL.map((r) => r.sel).join(' ');
-  const files = ['ui/public/worca-level/hover-card.mjs', 'ui/public/worca-level/profile-view.mjs', 'ui/public/worca-level/segments.mjs', 'ui/public/account-menu.mjs'];
+  const files = ['ui/public/worca-level/level-card.mjs', 'ui/public/worca-level/profile-view.mjs', 'ui/public/worca-level/segments.mjs', 'ui/public/account-menu.mjs'];
   const used = new Set(files.flatMap((f) => [...read(f).matchAll(/'((?:[\w-]+ )*wl-[\w-]+(?: [\w-]+)*)'/g)].flatMap((m) => m[1].split(' ').filter((c) => c.startsWith('wl-')))));
   assert.ok(used.size > 30, 'the markup classes were found');
   const missing = [...used].filter((c) => !new RegExp(`\\.${c}(?![\\w-])`).test(css));

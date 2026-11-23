@@ -136,3 +136,56 @@ test('popover: follows the streaming fill without reopening', async () => {
   assert.equal(pop.querySelector('.ask-pop-caption-meter').textContent, '250.0k / 1M (25%)');
   ctx.panel.destroy();
 });
+
+// ── the one Context renderer (issue 1064 Overview, D4) ───────────────────────────────────────────────────────
+test('renderContextDetails menu:false: same stats, no menuitems, topic → actions', async () => {
+  const { JSDOM } = await import('jsdom');
+  const { renderContextDetails } = await import('../ui/public/ask-context-view.mjs');
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  const data = { ctx: 120400, win: 1000000, turns: 1, contexts: [{ kind: 'project', id: 'p1', label: 'P' }, { kind: 'run', id: 'r1', label: 'R' }],
+    agents: [], worktrees: [{ worktreeId: 'w1', projectKey: 'app', ref: 'dev', commit: 'abcdef123', path: '/w/app', createdAt: null }], showAgents: true, showWorktrees: true };
+  const picked = [];
+  const actions = { openTopic: (href) => picked.push(['topic', href]), removeWorktree: (w) => picked.push(['rm', w.worktreeId]), copyPath: (p) => picked.push(['copy', p]) };
+  const menu = doc.createElement('div');
+  const plain = doc.createElement('div');
+  plain.append(doc.createElement('i'));
+  renderContextDetails(doc, menu, data, actions, { menu: true });
+  renderContextDetails(doc, plain, data, actions, { menu: false });
+  assert.equal(plain.querySelector('i'), null, 'the host is emptied first');
+  assert.deepEqual(stats(plain), stats(menu));
+  assert.equal(stats(plain).length, 3);
+  assert.ok(menu.querySelector('.ask-ctx-topic[role="menuitem"]'), 'the popover keeps its menu rows');
+  assert.equal(plain.querySelector('[role="menuitem"]'), null);
+  const topic = plain.querySelector('button.ask-ctx-topic');
+  assert.equal(topic.tabIndex, 0, 'a plain button is a tab stop');
+  topic.click();
+  plain.querySelector('.ask-wt-path').click();
+  plain.querySelector('.ask-thread-trash').click();
+  assert.deepEqual(picked, [['topic', '#projects/p1'], ['copy', '/w/app'], ['rm', 'w1']]);
+  assert.equal(plain.querySelectorAll('.ask-ctx-topic').length, 2, 'a run with no home is a plain row');
+  const off = doc.createElement('div');
+  renderContextDetails(doc, off, { ...data, showAgents: false, showWorktrees: false }, actions, { menu: false });
+  assert.equal(off.querySelector('.ask-ctx-agents'), null);
+  assert.equal(off.querySelector('.ask-ctx-worktrees'), null);
+});
+
+test('no context DOM literals left in ask-panel.mjs (one renderer, no copy)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../ui/public/ask-panel.mjs', import.meta.url), 'utf8');
+  for (const lit of ['ask-ctx-bar', 'ask-ctx-stat', 'ask-ctx-topic', 'ask-ctx-agents', 'ask-ctx-worktrees', 'ask-wt-row', 'ask-ctx-ring-arc']) {
+    assert.equal(src.includes(lit), false, lit);
+  }
+});
+
+test('head-meter popover rebuilds on setContexts (an ask-done with topics), before any flush', async () => {
+  const ctx = makePanel({ fetchHandler: handler({ thread: thread() }) });
+  await openThread(ctx);
+  ctx.doc.querySelector('.chat-head-meter').click();
+  const pop = ctx.doc.querySelector('.ask-pop-ctx');
+  assert.ok(pop, 'no openOverview dep: the head meter opens the popover');
+  assert.equal(pop.querySelector('.ask-ctx-topic'), null);
+  ctx.panel.pushServerFrame({ type: 'ask-start', threadId: TID, messageId: 'msg_00000002', seq: 1, userMessageId: 'msg_00000001', model: 'm', effort: 'high', startedAt: 't' });
+  ctx.panel.pushServerFrame({ type: 'ask-done', threadId: TID, messageId: 'msg_00000002', seq: 2, status: 'done', contexts: [{ kind: 'project', id: 'p9', label: 'Nine' }] });
+  assert.deepEqual([...pop.querySelectorAll('.ask-ctx-topic-name')].map((n) => n.textContent), ['Nine']);
+  ctx.panel.destroy();
+});

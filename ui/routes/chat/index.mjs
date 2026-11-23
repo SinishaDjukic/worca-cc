@@ -6,10 +6,11 @@ import * as m_chat_threads from './threads.mjs';
 import * as m_chat_thread_turns from './thread-turns.mjs';
 import * as m_chat_groups from './groups.mjs';
 import * as m_chat_pinpoint from './pinpoint.mjs';
+import * as m_chat_feature_run_card from './feature-run-card.mjs';
 import * as m_chat_status from './status.mjs';
 export const SEGMENTS = Object.freeze([
   Object.freeze([]),   // before app.use('/api/automations', requireFlag('gitAutomations'));
-  Object.freeze([m_chat_thread_cards, m_chat_ask, m_chat_threads, m_chat_thread_turns, m_chat_groups, m_chat_pinpoint]),   // before app.use('/api/mcp', (req, res, next) => {
+  Object.freeze([m_chat_thread_cards, m_chat_ask, m_chat_threads, m_chat_thread_turns, m_chat_groups, m_chat_pinpoint, m_chat_feature_run_card]),   // before app.use('/api/mcp', (req, res, next) => {
   Object.freeze([]),   // before app.use((req, res, next) => {
   Object.freeze([]),   // before app.use('/api/skills', (req, res, next) => {
   Object.freeze([m_chat_status]),   // before the SPA fallback

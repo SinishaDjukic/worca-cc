@@ -76,11 +76,11 @@ export async function decideAsk(q, env) {
         rationale: r.decision === 'retry' ? `retry ${attempts + 1} of ${RECOVERY_MAX_AUTO_ATTEMPTS} after a pause` : `the step failed ${attempts + 1} times; worca does not retry further while you are away`, reversible: true, meta: { cls } } };
     }
     case 'plan': {
-      // A person answers what to build, Away handles how: planRule says which plan asks wait.
-      const r = planRule(q);
+      // On a Shaper run every stop is answered the way a person may; elsewhere the rule is unchanged (planRule).
+      const r = planRule(q, { shaped: env.shaped === true });
       if (!r) return null;
-      return { payload: r.payload, record: { choice: 'approve', strategy: 'rule', confidence: null, flagged: r.flagged, rationale: r.reason,
-        reversible: false, meta: { ask: r.ask } } };
+      return { payload: r.payload, record: { choice: r.payload.decision, strategy: 'rule', confidence: null, flagged: r.flagged, rationale: r.reason,
+        reversible: r.payload.decision !== 'approve', ...(r.questions ? { questions: r.questions } : {}), meta: { ask: r.ask } } };
     }
     case 'care': {
       // Shaper small runs B2 (D19): Away takes Worca's Care pick; the server re-derives the rest of the record.

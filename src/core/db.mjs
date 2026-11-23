@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 97;
+export const SCHEMA_VERSION = 102;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -271,6 +271,8 @@ CREATE TABLE pipelines (
   updated_at      TEXT,
   total_cost_usd  REAL NOT NULL DEFAULT 0,
   total_active_ms INTEGER NOT NULL DEFAULT 0,
+  elapsed_ms      INTEGER NOT NULL DEFAULT 0,  -- the run clock, folded ms; 0 with a NULL elapsed_since = no figure (an old run)
+  elapsed_since   INTEGER,                     -- epoch ms the run clock has been running since; NULL = parked or no figure
   prompt          TEXT,
   branch          TEXT,  -- JSON: { source, feature, worktreeDir, reusedExisting, ... }
   workspace_meta  TEXT,  -- JSON: { workspaceId, workspaceName, projectKeys, projects[], checkpointRefs, branches, workspaceDescription }
@@ -840,14 +842,15 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
-  designs:                { models_json: 'TEXT', pictures: 'INTEGER NOT NULL DEFAULT 1', sound_json: 'TEXT' },   // v93: the design's own lead and builder picks ({lead?, builder?}); NULL = the Models page's; v94: the design's Pictures switch, 1 = on; v95: the design's sound choice
+  designs:                { models_json: 'TEXT', pictures: 'INTEGER NOT NULL DEFAULT 1', sound_json: 'TEXT', origin_thread_id: 'TEXT' },   // v93: the design's own lead and builder picks ({lead?, builder?}); NULL = the Models page's; v94: the design's Pictures switch, 1 = on; v95: the design's sound choice; v98: the chat that asked for the design (NULL = none, or made before v98)
   req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER',
                             engine: 'TEXT', step: 'TEXT', cost_kind: 'TEXT', input_tokens: 'INTEGER', output_tokens: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13); v89: 9c (engine, step, billed|estimated|unknown, tokens)
   req_features:           { early_start_reason: 'TEXT', model_json: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none; v89: the feature's { engine, model, effort } (9c D2); NULL = before 9c
   req_turns:              { engine: 'TEXT', notices_json: 'TEXT' },   // v89: the harness a step ran on, its D12 notices (9c)
   req_helper_messages:    { engine: 'TEXT', notices_json: 'TEXT' },   // v89: as req_turns
   req_briefs:             { engine: 'TEXT', made_cost_usd: 'REAL', made_cost_kind: 'TEXT' },   // v89: the harness that made the brief (9c D18); NULL = Claude; the cost of its last make and its kind (billed | estimated | unknown); NULL = not booked (before 9c, a mock make)
-  req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
+  req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'",   // v77: the files a start sent (A8 D14)
+                            note: 'TEXT', note_overrides: 'INTEGER NOT NULL DEFAULT 0' },   // v96: the run's note (null when empty); 1 when started anyway after a contradiction warning
   run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
   req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v88: where the link came from, 'export' | 'import' (A6.1 D11, D13)
   req_attachments:        { fetch_json: 'TEXT', read_engine: 'TEXT' },   // v88: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload; v89: the harness that read the file (9c)
@@ -864,6 +867,9 @@ const INCREMENTAL_COLUMNS = {
                             shape_stats: 'TEXT',  // JSON: the shaped run's measurements; NULL = not a shaped run
                             run_size: 'TEXT',     // small|medium|large from the run's changed lines/files; NULL = unknown
                             review_stats: 'TEXT', // #990 s6, no version of its own: JSON RunSummary of src/shared/review/quality.mjs; NULL = no role reviews
+                            // The run clock, no version of their own; reconcileSchema adds them
+                            elapsed_ms: 'INTEGER NOT NULL DEFAULT 0',   // folded elapsed ms; 0 with a NULL elapsed_since = no figure (an old run)
+                            elapsed_since: 'INTEGER',                   // epoch ms the clock has been running since; NULL = parked or no figure
                             run_setup: 'TEXT',  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start or a scan
                             deleted_at: 'TEXT',   // v65: Delete (runs redesign §3.2) keeps an anonymised row for Statistics
                             pr_verdict: 'TEXT',   // v65: the PR chip's CI verdict (JSON), runs redesign §2.1a
@@ -872,7 +878,9 @@ const INCREMENTAL_COLUMNS = {
                             release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
                             release_url: 'TEXT',      // v66: the draft release's URL
                             release_error: 'TEXT',    // v66: why creating it failed (not retried)
-                            pr_auto: 'TEXT' },        // v87: the run's PR-when-done decision and its outcome (JSON, src/core/pr-auto.mjs); NULL = before v87 or a CLI start
+                            pr_auto: 'TEXT',          // v87: the run's PR-when-done decision and its outcome (JSON, src/core/pr-auto.mjs); NULL = before v87 or a CLI start
+                            finished_at: 'TEXT',      // v100: when the run first reached done (set once, a rename never moves it); NULL = not done yet or before v100, readers use COALESCE(finished_at, updated_at)
+                            credit_key: 'TEXT' },     // v100: the run's level-credit key, written once credit is booked; NULL = none
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -918,10 +926,10 @@ const INCREMENTAL_COLUMNS = {
                             pr_slices: 'TEXT',        // v87: 'each' | 'one'
                             pr_source: 'TEXT',        // v87: JSON { open, slices } — where the values came from
                             pr_outcome: 'TEXT',       // v87: JSON outcome of the automatic one-PR attempt; NULL = none yet
-                            care: "TEXT NOT NULL DEFAULT 'balanced'",           // v96 (Shaper small runs A2): the feature's Care position, 'lean' | 'balanced' | 'thorough'
-                            care_chosen_by: "TEXT NOT NULL DEFAULT 'default'",  // v96 (Shaper small runs A2): who chose it, 'default' | 'person' (the person is created_by)
-                            care_worca_pick: 'TEXT',  // v96 (Shaper small runs A2): the position Worca suggested; NULL = no pick
-                            requirement_kinds: 'TEXT' },   // v96 (Shaper small runs A2): JSON { 'R-po-1': {kind:'owned'} | {kind:'confirmed', role} }; NULL = every requirement owned by its run
+                            care: "TEXT NOT NULL DEFAULT 'balanced'",           // v101 (Shaper small runs A2): the feature's Care position, 'lean' | 'balanced' | 'thorough'
+                            care_chosen_by: "TEXT NOT NULL DEFAULT 'default'",  // v101 (Shaper small runs A2): who chose it, 'default' | 'person' (the person is created_by)
+                            care_worca_pick: 'TEXT',  // v101 (Shaper small runs A2): the position Worca suggested; NULL = no pick
+                            requirement_kinds: 'TEXT' },   // v101 (Shaper small runs A2): JSON { 'R-po-1': {kind:'owned'} | {kind:'confirmed', role} }; NULL = every requirement owned by its run
   shape_feature_slices:   { draft_pr_url: 'TEXT',      // v58 (D24): the PR openSliceDraft opened as a draft
                             kind: 'TEXT' },            // v67 (Shaper s5): 'extra' | 'follow-up' (appendFeatureRun); NULL = from the outline
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
@@ -942,6 +950,7 @@ const INCREMENTAL_COLUMNS = {
                             resume_pipeline_id: 'TEXT',   // v44: a one-off "resume this paused run" ticket (NULL = starts a new run)
                             preset_id: 'TEXT' },   // v63: the run preset this run follows (read at fire time); NULL = none
   projects:               { vcs: 'TEXT' },   // v69: 'git' | 'none' (CONTRACT §1); NULL reads as 'git'
+  tool_tabs:              { target: 'TEXT' },   // #1064 chat links: a Files tab's target — heals a tool_tabs table an earlier numbering (v84, v87) made without it
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -1095,6 +1104,25 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
   created_at TEXT NOT NULL,
   FOREIGN KEY (pr_url) REFERENCES pr_watches(pr_url) ON DELETE CASCADE,
   FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE SET NULL
+);
+`;
+
+// v97 (#1064 slice 3; first written as v84, then v87, then v96): the tool panel's chat and project tabs, mirrored by the page (PUT /api/tools/tabs) so the chat's
+// tab tools work with no page open; the assistant's open_tab adds rows here first (delivered = 0). The worca server is
+// the only writer (src/core/tool-tabs-mirror.mjs).
+const TOOL_TABS_DDL = `
+CREATE TABLE IF NOT EXISTS tool_tabs (
+  owner     TEXT NOT NULL DEFAULT '',     -- the signed-in person on a shared deployment, '' otherwise
+  scope     TEXT NOT NULL,                -- chat:<threadId> | project:<projectKey>
+  id        TEXT NOT NULL,                -- tab_… (ui/public/tool-tabs.mjs)
+  kind      TEXT NOT NULL,                -- browser | terminal | files | changes | …
+  url       TEXT,                         -- a Browser tab's address
+  target    TEXT,                         -- a Files tab's file or folder: JSON { path, dir?, line?, endLine?, root?, member? }
+  opened_by TEXT NOT NULL DEFAULT 'user', -- user | assistant
+  delivered INTEGER NOT NULL DEFAULT 1,   -- 0: the assistant opened it and no page has taken it in yet
+  at        INTEGER NOT NULL,
+  pos       INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (owner, scope, id)
 );
 `;
 
@@ -1583,7 +1611,7 @@ CREATE TABLE IF NOT EXISTS designs (
   project_key TEXT, thread_id TEXT, engine TEXT, status TEXT NOT NULL DEFAULT 'empty',
   current_build TEXT, version INTEGER NOT NULL DEFAULT 0,
   created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, models_json TEXT,
-  pictures INTEGER NOT NULL DEFAULT 1, sound_json TEXT);
+  pictures INTEGER NOT NULL DEFAULT 1, sound_json TEXT, origin_thread_id TEXT);
 CREATE INDEX IF NOT EXISTS designs_updated ON designs(updated_at);
 CREATE TABLE IF NOT EXISTS design_builds (
   id TEXT PRIMARY KEY, design_id TEXT NOT NULL, round INTEGER NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
@@ -1603,7 +1631,7 @@ CREATE TABLE IF NOT EXISTS design_cost_ledger (
 CREATE INDEX IF NOT EXISTS design_cost_ledger_ts ON design_cost_ledger(ts);
 `;
 
-// v97 (Shaper small runs A4): one row per finished feature, its Care position and its figures (JSON). Rewritten each
+// v102 (Shaper small runs A4): one row per finished feature, its Care position and its figures (JSON). Rewritten each
 // time the feature finishes again; no foreign key (like run_group_members). Only src/core/shape/measure.mjs writes it.
 const SHAPE_FIGURES_DDL = `
 CREATE TABLE IF NOT EXISTS shape_feature_figures (
@@ -1690,7 +1718,8 @@ const INCREMENTAL_TABLES = {
   design_agents:      DESIGN_DDL,  // v92
   design_cost_ledger: DESIGN_DDL,  // v92
   design_pictures:    DESIGN_PICTURES_DDL,  // v94
-  shape_feature_figures: SHAPE_FIGURES_DDL,  // v97 (Shaper small runs A4)
+  tool_tabs: TOOL_TABS_DDL,  // v97 (#1064)
+  shape_feature_figures: SHAPE_FIGURES_DDL,  // v102 (Shaper small runs A4)
 };
 
 /**
@@ -2893,9 +2922,19 @@ export function migrate(db) {
     if (current < 94) db.exec(DESIGN_PICTURES_DDL);
     // v95 Design sound: designs.sound_json (the design's sound choice, D2) — INCREMENTAL_COLUMNS, added by the hoisted
     // repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB). First written as v92.
-    // v96 (Shaper small runs A2): shape_features.care, care_chosen_by, care_worca_pick, requirement_kinds — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
-    // v97 (Shaper small runs A4): shape_feature_figures, one row per finished feature
-    if (current < 97) db.exec(SHAPE_FIGURES_DDL);
+    // v96 Requirements run note: req_starts.note + req_starts.note_overrides — INCREMENTAL_COLUMNS, added by the hoisted
+    // repairSchemaGaps (a v95 DB); the base DDL does not carry them.
+    if (current < 97) db.exec(TOOL_TABS_DDL);   // v97 the tool panel's tab mirror (#1064 slice 3; first written as v84, then v87, then v96)
+    // v98: designs.origin_thread_id (the plain chat that asked for the design; the design's own chat stays thread_id) —
+    // INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB).
+    // v99: chats with a design are plain chats — a design chat from before (mode 'design') keeps its design (designs.thread_id).
+    // A DB stamped v98 by an earlier build of #1064 already ran the reset; running it again changes nothing.
+    if (current < 99) db.exec("UPDATE ask_threads SET mode = NULL WHERE mode = 'design'");
+    // v100 Levels: pipelines.finished_at and pipelines.credit_key — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // (comment-only rung, applySchemaV30's shape). First written as v96, then v97.
+    // v101 (Shaper small runs A2): shape_features.care, care_chosen_by, care_worca_pick, requirement_kinds — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v102 (Shaper small runs A4): shape_feature_figures, one row per finished feature
+    if (current < 102) db.exec(SHAPE_FIGURES_DDL);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

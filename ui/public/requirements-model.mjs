@@ -216,7 +216,7 @@ export function otherHarnessPrivacy(modelLabel, harnessName) {
 
 /** The chip after the cost chip (board 3): a button that names the model and harness and opens the dialog. */
 export function modelChip(doc, f, onOpen = () => {}) {
-  const b = node(doc, 'button', 'chip req-model-chip');
+  const b = node(doc, 'button', 'btn btn-sm req-model-chip');
   b.type = 'button';
   b.setAttribute('aria-haspopup', 'dialog');
   b.setAttribute('data-ui', 'model-chip');

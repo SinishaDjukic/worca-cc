@@ -10,7 +10,7 @@ import { recordDesignCostDelta } from '../src/core/cost-budget.mjs';
 import { DesignError, DESIGN_ID_RE } from '../src/core/design/ids.mjs';
 import { designRoot, designDir, designWorkDir } from '../src/core/design/paths.mjs';
 import {
-  createDesign, getDesign, requireDesign, listDesigns, updateDesign, deleteDesign,
+  createDesign, getDesign, requireDesign, listDesigns, listDesignsByOrigin, updateDesign, deleteDesign,
 } from '../src/core/design/store.mjs';
 
 useTempHome(after);
@@ -33,6 +33,18 @@ test('createDesign: row, folders and defaults; bad input leaves nothing', () => 
   const p = createDesign({ kind: 'pitch', title: '  Line\none  ', fast: false });
   assert.deepEqual([p.title, p.fast], ['Line one', false], 'Build fast is on unless the caller turns it off');
   assert.equal(createDesign({ kind: 'web', title: ' \n\t ' }).title, 'Untitled design', 'blank falls back');
+});
+
+test('originThreadId: stored on create, listed by origin (not by the design chat), never patched', () => {
+  const a = createDesign({ kind: 'web', threadId: 'design-chat-1', originThreadId: ' chat-a ' });
+  const b = createDesign({ kind: 'web', originThreadId: 'chat-a' });
+  const c = createDesign({ kind: 'web', threadId: 'chat-a' });
+  assert.deepEqual([a.originThreadId, a.threadId, c.originThreadId], ['chat-a', 'design-chat-1', null]);
+  updateDesign(a.id, { title: 'Newer', originThreadId: 'chat-b' });
+  assert.equal(getDesign(a.id).originThreadId, 'chat-a', 'not a patchable field');
+  assert.deepEqual(listDesignsByOrigin('chat-a').map((d) => d.id).sort(), [a.id, b.id].sort());
+  assert.deepEqual([listDesignsByOrigin('chat-b'), listDesignsByOrigin(''), listDesignsByOrigin(null)], [[], [], []]);
+  assert.throws(() => createDesign({ kind: 'web', originThreadId: 7 }), bad('BAD_REQUEST'));
 });
 
 test('updateDesign patches only its fields; an unknown id is NOT_FOUND', () => {

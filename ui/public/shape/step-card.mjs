@@ -21,8 +21,8 @@ export function stepKind(pq) {
   return k === 'plan' && pq.plan && pq.plan.outline ? 'outline' : k;
 }
 
-/** The Requirements step's ask: a `plan` kind carrying the criteria check or its load error (the plan ask carries neither). */
-export const isRequirementsAsk = (pq) => !!pq && askKindOf(pq) === 'plan' && !!pq.plan && !!(pq.plan.criteria || pq.plan.error);
+/** The Requirements step's ask: a `plan` kind carrying the criteria check, its load error or the attached features (the plan ask carries none). */
+export const isRequirementsAsk = (pq) => !!pq && askKindOf(pq) === 'plan' && !!pq.plan && !!(pq.plan.criteria || pq.plan.error || pq.plan.attached);
 
 /** Which asks draw as step cards: care (B2's Start step), plan, gate and recovery always; Clarify only for a shaping run
  *  with the gate on. */
