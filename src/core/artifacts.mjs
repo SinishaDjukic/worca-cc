@@ -2290,11 +2290,20 @@ export function baseCheckSummary(c) {
   return { status: c.status, base: c.base ?? null, behind: Number.isFinite(c.behind) ? c.behind : null,
     fileCount: c.fileCount | 0, kind: c.kind ?? null, stale: !!c.stale, at: c.at ?? null };
 }
-/** The worst member's summary (a workspace row), else the run's own. */
+const PR_FINAL = new Set(['MERGED', 'CLOSED']);
+const prFinal = (pr) => !!pr?.url && PR_FINAL.has(String(pr.state || '').toUpperCase());
+/** The worst member's summary (a workspace row), else the run's own. A branch whose recorded PR is merged or closed
+ *  is final and has no summary: after a squash merge its check would always read "base moved". */
 export function baseCheckSummaryFor(row) {
   const branch = typeof row.branch === 'string' ? j(row.branch, null) : row.branch;
   const wm = typeof row.workspace_meta === 'string' ? j(row.workspace_meta, null) : row.workspace_meta;
-  const recs = row.target === 'workspace' && wm?.branches ? Object.values(wm.branches).map((b) => b?.baseCheck) : [branch?.baseCheck];
+  let recs;
+  if (row.target === 'workspace' && wm?.branches) {
+    const prs = row.id ? readMemberPrStates(row.id) : {};
+    recs = Object.entries(wm.branches).filter(([key]) => !prFinal(prs[key])).map(([, b]) => b?.baseCheck);
+  } else {
+    recs = prFinal({ url: row.pr_url, state: row.pr_state }) ? [] : [branch?.baseCheck];
+  }
   return recs.map(baseCheckSummary).filter(Boolean)
     .sort((a, b) => (BASE_RANK[b.status] ?? 0) - (BASE_RANK[a.status] ?? 0))[0] || null;
 }
@@ -2688,7 +2697,7 @@ async function listPipelinesNow(projectDir, opts, workspaceKey) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
            elapsed_ms, elapsed_since, heartbeat_at,
-           branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url,
+           branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, pr_state,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
@@ -2740,7 +2749,7 @@ async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
            total_cost_usd, total_active_ms, elapsed_ms, elapsed_since, heartbeat_at,
-           branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, archived_at,
+           branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, pr_state, archived_at,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,

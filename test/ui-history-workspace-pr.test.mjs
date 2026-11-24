@@ -271,6 +271,16 @@ test('detail header lists every member repo with its status', async () => {
   assert.equal(hdPrLink(ctx.window).hidden, true, 'never the single-PR link');
 });
 
+test('a member whose PR is merged or closed has no mergeability pill; an open member still has one', async () => {
+  const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([
+    member(API, 'api', { pr: { state: 'MERGED', url: 'https://x/api/pull/1' } }),
+    member(WEB, 'web', { pr: { state: 'OPEN', url: 'https://x/web/pull/2' } }),
+    member(DOC, 'doc', { pr: { state: 'CLOSED', url: 'https://x/doc/pull/3' } })])] });
+  await openDetail(ctx, wksDetailHash);
+  const pills = [...hdRepos(ctx.window).querySelectorAll('.hd-pr-repo')].map((li) => [li.dataset.memberKey, !!li.querySelector('.hist-merge')]);
+  assert.deepEqual(pills, [[API, false], [WEB, true], [DOC, false]]);
+});
+
 test('dialog lists affected repos (ticked), says which were skipped, loads remotes per member', async () => {
   const ctx = await bootShip({ detail: WS_DETAIL, rows: [wsRow([member(API, 'api'), member(WEB, 'web'), member(DOC, 'doc', { affected: false })])] });
   await openDetail(ctx, wksDetailHash);
