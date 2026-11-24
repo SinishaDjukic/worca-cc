@@ -36,6 +36,7 @@ import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
 import { insertRunTags, readRunTags, readTagsFor } from './run-tags-store.mjs';
 import { insertRunLabels, readLabelsFor, readRunLabels } from './run-labels-store.mjs';
 import { workInBase } from './in-base.mjs';
+import { readNightDecisions } from './night/store.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -653,7 +654,9 @@ export function readPipelineExtras(pipelineId) {
       ...(Array.isArray(v.checklist) ? { checklist: v.checklist } : {}),
     };
   });
-  return { clarify, reviews, stepQuestions: readStepQuestions(pipelineId) };
+  // Away mode's stored answers, for the Q&A tab (only when it gave any: the shape stays as it was otherwise).
+  const awayAnswers = readNightDecisions(pipelineId);
+  return { clarify, reviews, stepQuestions: readStepQuestions(pipelineId), ...(awayAnswers.length ? { awayAnswers } : {}) };
 }
 
 /**
@@ -1192,6 +1195,7 @@ export async function readPromptFile(projectDir, promptFile) {
  * @param {string} [opts.guardrailsId] the run's selected guardrail set id (per-run)
  * @param {string|null} [opts.runSetup] JSON of the run's setup (pipelines.run_setup, v62); never on the state object
  * @param {object|null} [opts.prAuto] the run's PR-when-done decision (pipelines.pr_auto, v86); same rule as runSetup
+ * @param {string|null} [opts.rerunOf] the id of the run this one was copied from (pipelines.rerun_of); same rule as runSetup
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
@@ -1205,7 +1209,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null, prAuto = null,
+    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null, prAuto = null, rerunOf = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -1357,7 +1361,7 @@ export async function createPipeline(projectDir, opts = {}) {
   // no more state.json on disk. writeState also seeds the dir->id cache
   // (rememberDir) so appendAudit resolves this run without any call-site change
   // (A4). recordArtifact runs AFTER the row exists (FK -> pipelines).
-  await writeState(dir, state, { prWatchRunId, runSetup, prAuto });
+  await writeState(dir, state, { prWatchRunId, runSetup, prAuto, rerunOf, extrasNames: [...new Set(copiedExtras.map((rel) => basename(rel)))] });   // two sources with one name share one file
   // Run tags (#718): written once, after the row exists (FK) and after writeState's tx has
   // committed (tx cannot nest). writeState updates never touch them.
   insertRunTags(id, tags);
@@ -1465,7 +1469,7 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * @param {object} stateObj
  * @returns {Promise<object>}
  */
-export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null, prAuto = null } = {}) {
+export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null, prAuto = null, rerunOf = null, extrasNames = null } = {}) {
   const obj = { ...stateObj, updatedAt: new Date().toISOString() };
   const id = obj.id;
   if (!id) return obj; // pre-id state (constructor default): nothing to persist yet
@@ -1475,26 +1479,34 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, pr_auto)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, pr_auto, rerun_of, extras_names,
+        elapsed_ms, elapsed_since, finished_at)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@pr_auto)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@pr_auto,@rerun_of,@extras_names,
+        COALESCE(@elapsed_ms, 0),@elapsed_since,
+        CASE WHEN @status = 'done' THEN @updated_at END)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
         total_active_ms=excluded.total_active_ms, human_hours=excluded.human_hours,
+        elapsed_ms=COALESCE(@elapsed_ms, elapsed_ms),
+        elapsed_since=CASE WHEN @elapsed_ms IS NULL THEN elapsed_since ELSE excluded.elapsed_since END,
         branch=excluded.branch,
         workspace_meta=excluded.workspace_meta, stepper=excluded.stepper,
         tools=excluded.tools,
         resume_point=excluded.resume_point,
         outcome=excluded.outcome,
+        finished_at=CASE WHEN excluded.status='done' THEN COALESCE(pipelines.finished_at, excluded.updated_at) ELSE pipelines.finished_at END,
         shape_stats=COALESCE(excluded.shape_stats, shape_stats),
         review_stats=COALESCE(excluded.review_stats, review_stats),
         run_size=COALESCE(excluded.run_size, run_size),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
-    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null, pr_auto: prAuto ? JSON.stringify(prAuto) : null });
+    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null, pr_auto: prAuto ? JSON.stringify(prAuto) : null,
+      rerun_of: typeof rerunOf === 'string' ? rerunOf : null,
+      extras_names: Array.isArray(extrasNames) ? JSON.stringify(extrasNames) : null });
 
     // A Watch PR fix run (#619): ownership lands in the same transaction that creates the row.
     if (prWatchRunId) attachWatchPipeline(prWatchRunId, id, obj.updatedAt);
@@ -2046,6 +2058,10 @@ function toPipelineRow(o) {
     updated_at: o.updatedAt ?? null,
     total_cost_usd: Number.isFinite(o.totalCostUsd) ? o.totalCostUsd : 0,
     total_active_ms: Number.isFinite(o.totalActiveMs) ? o.totalActiveMs : 0,
+    // The run clock. A writer without the figure (a partial writer, a seed) binds NULL and writeState
+    // then keeps BOTH stored columns; a writer that has it writes both, and a null anchor clears it.
+    elapsed_ms: Number.isFinite(o.elapsedMs) ? Math.round(o.elapsedMs) : null,
+    elapsed_since: Number.isFinite(o.elapsedMs) && Number.isFinite(o.elapsedSince) ? o.elapsedSince : null,
     human_hours: Number.isFinite(o.humanHours) ? o.humanHours : 0,
     prompt: o.prompt ?? null,
     branch: s(o.branch),
@@ -2108,6 +2124,22 @@ export function totalsFor(row) {
     ? row.total_active_ms
     : (agg.ca ? (agg.sa || 0) : null);
   return { cost, active };
+}
+
+/**
+ * A row's elapsed run time (the run clock), or null when the row carries no figure (a run saved
+ * before the clock existed: elapsed_ms 0 and no anchor), so readers fall back to the summed time.
+ * A row whose clock still runs (its process is alive, or died mid-work) is credited up to its last
+ * heartbeat, else its last write. A function of the row only: it never reads the current time, so
+ * a dead row's figure does not grow.
+ * @param {object} row a pipelines DB row (elapsed_ms, elapsed_since, heartbeat_at, updated_at)
+ * @returns {number|null}
+ */
+export function rowElapsedMs(row) {
+  const ms = Number(row.elapsed_ms) || 0;
+  if (row.elapsed_since == null) return ms > 0 ? ms : null;
+  const seen = Date.parse(row.heartbeat_at || row.updated_at);
+  return ms + (Number.isFinite(seen) ? Math.max(0, seen - row.elapsed_since) : 0);
 }
 
 /** [[projectKey, branchRecord]] of a pipelines row: every workspace member's, else the single run's own.
@@ -2542,6 +2574,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     files: resultsFilesCount(results),
     totalCostUsd: cost,
     totalActiveMs: active,
+    elapsedMs: rowElapsedMs(row),
     mtime: row.updated_at ? (Date.parse(row.updated_at) || 0) : 0,
   };
   // A round of another run (Runs list fold, plan D1): the key only when the marker is valid.
@@ -2636,6 +2669,7 @@ async function listPipelinesNow(projectDir, opts, workspaceKey) {
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
+           elapsed_ms, elapsed_since, heartbeat_at,
            branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
@@ -2684,7 +2718,8 @@ export function listAllPipelines(opts = {}, cfg = {}) {
 async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
-           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, archived_at,
+           total_cost_usd, total_active_ms, elapsed_ms, elapsed_since, heartbeat_at,
+           branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, archived_at,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
@@ -2922,6 +2957,27 @@ function stepRowToStep(r) {
 }
 
 /**
+ * The bare `wks-…` id of a workspace row, else null. Live rows store it bare. Rows from the legacy fs→DB migration can
+ * hold the composite `workspaces/<dir>` and even `target = 'project'` (migrate-fs-to-db.mjs:360-374), so any row with a
+ * workspace_key counts.
+ */
+export const bareWorkspaceKey = (row) => (row.workspace_key ? String(row.workspace_key).replace(/^workspaces\//, '') : null);
+
+/**
+ * Rerun: the run a rerun was copied from, as the run page links it. `exists` is false for a deleted run (its row is
+ * anonymised, so no title or key is given) and for an id with no row; an archived source still exists and opens.
+ * @param {string|null} id  pipelines.rerun_of
+ * @returns {{id:string, key:string|null, title:string|null, exists:boolean}|null}
+ */
+export function resolveRerunOf(id) {
+  if (typeof id !== 'string' || !id) return null;
+  const row = findPipelineRowById(id);
+  if (!row || row.deleted_at) return { id, key: null, title: null, exists: false };
+  const ws = bareWorkspaceKey(row);
+  return { id: row.id, key: ws ? `workspaces/${ws}` : row.project_key, title: row.title ?? null, exists: true };
+}
+
+/**
  * Reconstruct the full state object (the old state.json shape the UI consumed)
  * from a pipelines row + its pipeline_steps rows. Inverse of toPipelineRow + the
  * step INSERT. projectDir is recovered from the project's store_meta row (the old
@@ -2943,6 +2999,7 @@ function rowToState(row) {
     updatedAt: row.updated_at ?? null,
     totalCostUsd: row.total_cost_usd ?? 0,
     totalActiveMs: row.total_active_ms ?? 0,
+    elapsedMs: rowElapsedMs(row),   // null = no figure (an old run); no anchor on the wire: a saved state never ticks
     humanHours: Number(row.human_hours || 0),
     prompt: row.prompt ?? null,
     baseName: row.base_name ?? null,
@@ -2985,6 +3042,7 @@ function rowToState(row) {
   state.runEngine = runEngineOfRow(row);
   // Shaper D28: only a shaped run carries shapeStats (run_size is write-only: Statistics reads the column)
   if (row.shape_stats) state.shapeStats = j(row.shape_stats, null);
+  if (row.rerun_of) state.rerunOf = resolveRerunOf(row.rerun_of);   // one lookup, only for a rerun; a source never lists its reruns
   const outcome = j(row.outcome, null);
   if (outcome) {
     state.engine = 2;

@@ -5,7 +5,7 @@
 // Ask frames reach only their thread owner's sockets. Mock runs, git/gh faked, no network.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -43,7 +43,7 @@ before(async () => {
   ({ readPipeline } = await import('../src/core/artifacts.mjs'));
   ({ getDb } = await import('../src/core/db.mjs'));
   ({ _testing: gitInfo } = await import('../src/core/git-info.mjs'));
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

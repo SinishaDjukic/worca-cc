@@ -5,6 +5,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -75,7 +76,7 @@ async function boot({ now, renderDoc, enabled, inlineDefault } = {}) {
   const app = express();
   app.use('/design-preview', gate);
   app.use((_q, s) => s.status(599).send('fell through'));
-  const server = http.createServer(app);
+  const server = appServer(app);
   servers.push(server);
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
   const { port } = server.address();

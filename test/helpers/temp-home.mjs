@@ -15,6 +15,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../../src/core/db.mjs';
 
+let quarantine = null;
+/** Where late writes land once a file's home is gone: one folder per test process, removed when the process exits,
+ *  so it never grows across runs. */
+function quarantineHome() {
+  if (!quarantine) {
+    quarantine = mkdtempSync(join(tmpdir(), 'worca-cc-test-quarantine-'));
+    const dir = quarantine;
+    process.once('exit', () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
+  }
+  return quarantine;
+}
+
 /**
  * Isolate WORCA_HOME for the current test file.
  *
@@ -35,7 +47,6 @@ import { _resetForTests } from '../../src/core/db.mjs';
  * @returns {string} the isolated home dir
  */
 export function useTempHome(after, prefix = 'worca-cc-home-') {
-  const prev = process.env.WORCA_HOME;
   const home = mkdtempSync(join(tmpdir(), prefix));
   process.env.WORCA_HOME = home;
   _resetForTests(); // db reopens at this home on the next getDb()
@@ -43,12 +54,12 @@ export function useTempHome(after, prefix = 'worca-cc-home-') {
     // NEVER re-expose the real ~/.worca-cc. node:test runs after-hooks FIFO, so
     // this cleanup can fire BEFORE a suite's own after() that stops background
     // orch.run() work — and a late status write re-resolves worcaHome() at
-    // write time. If there was no outer sandbox (direct `node --test file.mjs`
-    // run without the npm-test WORCA_HOME wrapper), park the env on a
-    // quarantine path under tmpdir instead of deleting it: late writes land in
-    // throwaway /tmp junk, not the user's real store.
-    process.env.WORCA_HOME =
-      prev === undefined ? join(tmpdir(), 'worca-cc-test-quarantine') : prev;
+    // write time. So park the env on a quarantine path under tmpdir instead of
+    // restoring the previous value: late writes land in throwaway /tmp junk.
+    // Never restore `prev` — a direct `node --test file.mjs` inherits the
+    // shell's WORCA_HOME, which may be a live store (an agent run under
+    // `WORCA_HOME=… worca ui` left its mock runs in that store's database).
+    process.env.WORCA_HOME = quarantineHome();
     _resetForTests(); // next getDb() reopens against the restored home
     // Throwaway tmp: on Windows a lingering handle (Defender, a just-closed
     // sqlite file) EPERMs the delete — retry, and never fail the file over it.

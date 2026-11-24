@@ -314,6 +314,67 @@ test('#555 Actions: a low port above the high port flags both ports and posts no
   ]);
 });
 
+test('Actions › Preview ports: All local ports by default, posted on Save, cleared by Reset; locked to the range on a hosted Worca', async () => {
+  await checkRows([
+    { name: 'local: the default is All local ports and Save posts the pick', run: async () => {
+      const { window } = await boot();
+      const posts = recordSettingsPosts(window);
+      await go(window, 'settings/runs');
+      await ticks();
+      const doc = window.document;
+      const sel = doc.getElementById('act-preview-ports');
+      assert.deepEqual([...sel.options].map((o) => [o.value, o.textContent]), [['all', 'All local ports'], ['range', 'Actions range only']]);
+      assert.equal(sel.value, 'all');
+      assert.equal(sel.disabled, false);
+      sel.value = 'range';
+      sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+      doc.getElementById('act-save').click();
+      await ticks();
+      assert.equal(posts.at(-1).actions.previewPorts, 'range');
+      doc.getElementById('act-reset').click();
+      await ticks();
+      assert.equal(posts.at(-1).actions.previewPorts, null, 'Reset clears it back to the default');
+    } },
+    { name: 'local: a stored Actions range only paints selected and enabled', run: async () => {
+      const { window } = await boot();
+      const base = globalThis.fetch;
+      globalThis.fetch = window.fetch = (u, opts = {}) => (String(u).includes('/api/settings') && (opts.method || 'GET').toUpperCase() === 'GET'
+        ? Promise.resolve({ ok: true, status: 200, json: async () => ({ root: '/tmp/x', default: '/tmp/x',
+          actions: { keep: 'never', portLow: 4400, portHigh: 4499, editor: '', terminal: '', maxCheckouts: null, previewPorts: 'range' },
+          actionsGate: { remote: false, enabled: true, previewPorts: 'range', previewPortsLocked: false } }) })
+        : base(u, opts));
+      await go(window, 'settings/runs');
+      await ticks();
+      const sel = window.document.getElementById('act-preview-ports');
+      assert.equal(sel.value, 'range');
+      assert.equal(sel.disabled, false);
+      assert.equal(window.document.getElementById('act-preview-ports-note').textContent, '');
+    } },
+    { name: 'hosted: the select shows Actions range only, disabled, says why, and Save never sends it', run: async () => {
+      const { window } = await boot();
+      const base = globalThis.fetch;
+      globalThis.fetch = window.fetch = (u, opts = {}) => (String(u).includes('/api/settings') && (opts.method || 'GET').toUpperCase() === 'GET'
+        ? Promise.resolve({ ok: true, status: 200, json: async () => ({ root: '/tmp/x', default: '/tmp/x',
+          actions: { keep: 'never', portLow: 4400, portHigh: 4499, editor: '', terminal: '', maxCheckouts: null, previewPorts: 'all' },
+          actionsGate: { remote: true, enabled: true, previewPorts: 'range', previewPortsLocked: true } }) })
+        : base(u, opts));
+      const posts = recordSettingsPosts(window);
+      await go(window, 'settings/runs');
+      await ticks();
+      const doc = window.document;
+      const sel = doc.getElementById('act-preview-ports');
+      assert.equal(sel.value, 'range');
+      assert.equal(sel.disabled, true);
+      assert.equal(doc.getElementById('act-preview-ports-note').textContent, 'This hosted Worca previews only the Actions range and running Actions.');
+      edit(window, doc.getElementById('act-max'), '5');
+      doc.getElementById('act-save').click();
+      await ticks();
+      assert.equal(posts.length, 1);
+      assert.equal('previewPorts' in posts[0].actions, false, 'a locked choice is never posted');
+    } },
+  ]);
+});
+
 test('#555 Away: unsaved edits stay dirty when another card\'s save fires settings-changed', async () => {
   const { window } = await boot();
   await go(window, 'settings/runs');

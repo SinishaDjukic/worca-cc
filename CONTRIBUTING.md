@@ -103,7 +103,9 @@ This runs the full `node:test` suite (`test/*.mjs`) against an isolated
 `WORCA_HOME`. No network, no Claude, no API keys needed.
 
 One full suite runs at a time on a machine: a second `npm test` (another
-worktree, a Worca agent) waits for the first and says so; `WORCA_TEST_NO_LOCK=1`
+worktree, a Worca run) waits for the first and says so. The lock is
+`/tmp/worca-cc-full-suite-<uid>.lock` (on Windows, the temp folder), so runs with their own
+`TMPDIR` share it; `WORCA_TEST_LOCK_FILE` moves it and `WORCA_TEST_NO_LOCK=1`
 skips the wait. A suite is stopped after 60 minutes
 (`WORCA_TEST_SUITE_TIMEOUT_MIN`). Workers default to all cores but one;
 `--concurrency N` or `WORCA_TEST_CONCURRENCY` (Worca sets it in its agents'

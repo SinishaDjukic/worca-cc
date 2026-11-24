@@ -71,9 +71,10 @@ test('the attach button sits right after the scope pill and says how many are at
   const { ctx, input } = rig();
   const btn = ctx.doc.querySelector('.ask-composer-row .ask-scope-btn').nextElementSibling;
   assert.equal(btn.hidden, false);
-  assert.equal(btn.textContent, 'Pull from Requirements');
+  assert.equal(btn.getAttribute('aria-label'), 'Pull from Requirements');
   await attachViaHash(ctx, input);
-  assert.equal(btn.textContent, '1 feature');
+  assert.deepEqual([btn.querySelector('.ask-bar-n').textContent, btn.getAttribute('aria-label')], ['1', '1 feature from Requirements']);
+  assert.equal(btn.classList.contains('is-bare'), false, 'with a count it is no longer a bare square');
 });
 
 test('flag off: the button is hidden and # opens nothing', async () => {

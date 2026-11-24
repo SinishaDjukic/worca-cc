@@ -2,7 +2,7 @@
 // list; the detail view has it). A workspace row reports its worst member at the top and each member's own.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -37,7 +37,7 @@ before(async () => {
   ({ id: wsId } = await seedWorkspacePipeline(apiDir, 'wks-hbc-00000001', { title: 'WS', status: 'done', projects,
     projectKeys: projects.map((p) => p.projectKey), branches, branch: { ...branches['api-00000001'] } }, projects));
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

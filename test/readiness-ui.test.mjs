@@ -261,3 +261,69 @@ describe('readiness UI: one fact once (jsdom)', () => {
     } finally { window.close(); }
   });
 });
+
+describe('readiness UI: the popover is built from the shared pieces (jsdom)', () => {
+  it('level chips are .badge, a failing check leads with .issue-sev, the boxes are .disclosure with icons', async () => {
+    const { JSDOM } = await import('jsdom');
+    const { pathToFileURL, fileURLToPath } = await import('node:url');
+    const { readIndexHtml } = await import('../src/core/read-index-html.mjs');
+    const report = JSON.parse(readFileSync(new URL('./fixtures/readiness-report-not-ready.json', import.meta.url), 'utf8'));
+    // One failing repository check per severity, and one ignored, so every mark is drawn.
+    const set = (id, o) => Object.assign(report.checks.find((c) => c.id === id), o);
+    set('deps.lockfile', { status: 'fail', fix: 'Commit the lockfile.' });
+    set('commands.build', { status: 'fail', fix: 'Add a build script.' });
+    set('commands.lint', { status: 'ignored' });
+    report.checks.push({ id: 'x.blocker', scope: 'repository', status: 'fail', severity: 'blocker', title: 'A blocker', fix: 'Fix it.' });
+    const KEY = 'alpha-00000001';
+    const dom = new JSDOM(readIndexHtml(), { url: 'http://localhost:4321/' });
+    const { window } = dom;
+    try {
+      window.Element.prototype.scrollIntoView = function () {};
+      window.WebSocket = class { addEventListener() {} send() {} close() {} };
+      window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+      const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
+      const summary = { level: report.level, failingCount: report.counts.mustFix + report.counts.shouldFix, ...report.counts };
+      window.fetch = (url) => {
+        const u = String(url);
+        if (u.includes(`/api/projects/${KEY}/readiness`)) return ok({ readiness: report });
+        if (u.includes(`/api/projects/${KEY}/settings`)) return ok({ own: {}, effective: {} });
+        if (u.includes('/api/projects')) return ok({ projects: [{ name: 'alpha', path: '/p/alpha', exists: true, key: KEY, readiness: summary }] });
+        if (u.includes('/api/history')) return ok({ pipelines: [], ghAvailable: false });
+        return ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [], branches: [], workspaces: [], agents: [], channels: [] });
+      };
+      for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator', 'requestAnimationFrame']) {
+        try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
+      }
+      const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
+      await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
+      const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)); };
+      window.location.hash = `projects/${KEY}`;
+      await settle();
+      const chip = window.document.querySelector('#proj-detail .pd-rd-slot .pl-rd');
+      assert.ok(chip.classList.contains('badge'), 'the header chip is the shared chip');
+      chip.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 }));
+      await settle();
+      const pop = [...window.document.querySelectorAll('.readiness-pop')].find((m) => !m.hidden);
+      assert.ok(pop, 'the popover is open');
+      const labels = [...pop.querySelectorAll('.rd-lbl')];
+      assert.ok(labels.length > 0 && labels.every((l) => l.classList.contains('badge')), 'level labels are .badge');
+      const rows = [...pop.querySelectorAll('.rp-chk')];
+      assert.equal(rows.length, 3, 'one failing repository check per severity');
+      const SEV = { 'Must fix': 'sev-critical', 'Should fix': 'sev-minor', Advice: 'sev-suggestion' };
+      for (const row of rows) {
+        const sev = row.querySelectorAll('.issue-sev');
+        assert.equal(sev.length, 1, 'one severity chip per failing check');
+        assert.ok(row.classList.contains(SEV[sev[0].textContent]), `${sev[0].textContent} tints the chip through ${SEV[sev[0].textContent]}`);
+      }
+      const boxes = [...pop.querySelectorAll('details.rp-more')];
+      assert.equal(boxes.length, 2, 'the passed and the ignored box');
+      for (const d of boxes) {
+        assert.ok(d.classList.contains('disclosure'), 'the box is the shared .disclosure');
+        assert.ok(d.querySelector(':scope > summary > .ic.rp-lead > svg'), 'the box leads with an icons.mjs icon');
+      }
+      assert.ok(boxes[0].querySelector('summary .rp-lead.is-check'), 'the passed box leads with the check icon');
+      assert.ok(boxes[1].querySelector('summary .rp-lead.is-none'), 'the ignored box leads with the none icon');
+      assert.equal(pop.querySelector('.rp-sevdot, .rp-chev, .rp-tick, .rp-gdot'), null, 'no hand-drawn marks');
+    } finally { window.close(); }
+  });
+});

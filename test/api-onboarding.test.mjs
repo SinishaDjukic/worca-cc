@@ -4,7 +4,7 @@
 // the app imported INSIDE before(), an ephemeral http server and real fetch.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -22,7 +22,7 @@ const post = (b) => fetch(`${base}/api/onboarding`, { method: 'POST', headers: J
 before(async () => {
   process.env.WORCA_MOCK = '1';
   const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });
@@ -91,6 +91,41 @@ test('POST writes ONLY the stored flags (Show again keeps welcomeSeen) and refus
       }
       const s = await (await get()).json();
       assert.deepEqual([s.hidden, s.welcomeSeen], [false, true], 'unchanged');
+    } },
+  ]);
+});
+
+test('POST setupFinished:true stores it and emits onboarding-changed; setupChecked / setupFinished:false are refused and write nothing', async () => {
+  const { onboardingPrefs } = await import('../src/core/settings.mjs');
+  const { WebSocket } = await import('ws');
+  const { server: wsServer } = await import('../ui/server.mjs');
+  await new Promise((r) => wsServer.listen(0, '127.0.0.1', r));   // the ws endpoint rides the exported server
+  const wsPort = wsServer.address().port;
+  await checkRows([
+    { name: 'POST setupFinished:true stores it and emits onboarding-changed', run: async () => {
+      const events = [];
+      const ws = new WebSocket(`ws://127.0.0.1:${wsPort}/ws`, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
+      ws.on('message', (m) => { try { events.push(JSON.parse(String(m))); } catch { /* not json */ } });
+      await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
+      const r = await post({ setupFinished: true });
+      assert.equal(r.status, 200);
+      const s = await r.json();
+      assert.equal(s.setupFinished, true);
+      assert.equal(onboardingPrefs().setupFinished, true);
+      assert.equal((await (await get()).json()).setupFinished, true, 'persisted');
+      for (let i = 0; i < 40 && !events.some((e) => JSON.stringify(e).includes('onboarding-changed')); i++) await new Promise((res) => setTimeout(res, 25));
+      ws.close();
+      await new Promise((r) => wsServer.close(r));
+      assert.ok(events.some((e) => JSON.stringify(e).includes('onboarding-changed')), 'onboarding-changed broadcast');
+    } },
+    { name: 'setupChecked and setupFinished:false are refused with ONBOARDING_BAD_FLAG, nothing written', run: async () => {
+      const before = JSON.stringify(onboardingPrefs());
+      for (const body of [{ setupChecked: true }, { setupChecked: false }, { setupFinished: false }, { hidden: true, setupFinished: false }, { hidden: true, setupChecked: true }]) {
+        const r = await post(body);
+        assert.equal(r.status, 400, JSON.stringify(body));
+        assert.deepEqual(await r.json(), { error: 'setupFinished can only be set to true', code: 'ONBOARDING_BAD_FLAG' });
+      }
+      assert.equal(JSON.stringify(onboardingPrefs()), before, 'nothing written, even alongside a valid flag');
     } },
   ]);
 });

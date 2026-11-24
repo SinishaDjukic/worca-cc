@@ -28,7 +28,7 @@ import {
   createPipeline, updatePipelineTitle, appendAudit, writeState, artifactPaths, slugify, today,
   recordArtifact, writeClarify, readPipelineExtras, claimPipelineOwnership, touchHeartbeat,
   clearPipelineOwnership, HEARTBEAT_INTERVAL_MS, upsertSubAgent, newestPlanPath, pipelineRowStamp,
-  claimPausedForStop, claimForResume, findPipelineRowById, readPipelineForResume,
+  claimPausedForStop, claimForResume, findPipelineRowById, readPipelineForResume, resolveRerunOf,
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch, untrackedFiles, untrackedPatch } from './git-info.mjs';
 import { clearStaleGitLocks, staleGitLockNote } from './git-lock.mjs';
@@ -54,7 +54,7 @@ import {
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   memoryCaps,
 } from './settings.mjs';
-import { hasProjectSetting, utilityModelFor } from './settings-cascade.mjs';
+import { hasProjectSetting, utilityModelFor, resolveSetting } from './settings-cascade.mjs';
 import { withRole, roleModelFor, jobSlot } from './model-roles.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY, memoryLoadedPath, readFrozenSet, frozenManifest, writeFrozenCopies, renderRoleNotes } from './memory-sync.mjs';
 import { captureProposals } from './memory-proposals.mjs';
@@ -105,7 +105,7 @@ import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4
 import { classifyError, rateLimitHint, brokerHint, freeDailyHint, limitResetAt, untilText } from './recoverable-error.mjs';
 import { CODEX_DEFAULT_MODEL, CODEX_COMMAND_RULE_REACH } from './engines/codex.mjs';
 import { ENGINE_PROJECT_FILES, ALL_PROJECT_FILES, worcaOwnsProjectFile, excludeLine } from './engines/project-files.mjs';
-import { helperEngineFor } from './model-env.mjs';
+import { helperEngineFor, OPENCODE_ZEN_RE } from './model-env.mjs';
 import { hasCodexEndpoint } from './engines/codex-endpoint.mjs';
 import { hostGuardEnabled } from './host-guard.mjs';
 import { isNormalized } from './engines/events.mjs';
@@ -362,6 +362,20 @@ export function sumStepActive(steps) {
     if (Number.isFinite(s?.activeMs)) sum += s.activeMs;
   }
   return sum;
+}
+
+/**
+ * The run clock a resumed run continues from. A row with no figure (a run saved before the
+ * clock existed) continues from its summed step time, so its headline does not restart near 0.
+ * Otherwise the folded figure plus the tail a crash never folded: work up to `anchor` (the last
+ * heartbeat, or the pause stamp), never past `now`; the rest of the gap was parked.
+ * @param {{elapsedMs?:number, elapsedSince?:number|null, anchor:number, now:number, stepSum:number}} p
+ * @returns {number}
+ */
+export function resumedElapsedMs({ elapsedMs, elapsedSince, anchor, now, stepSum }) {
+  if (!(elapsedMs > 0) && elapsedSince == null) return stepSum;
+  const tail = elapsedSince != null && Number.isFinite(anchor) ? Math.max(0, Math.min(anchor, now) - elapsedSince) : 0;
+  return (elapsedMs || 0) + tail;
 }
 
 export function isAbort(err) {
@@ -1109,6 +1123,7 @@ export class RunHarness extends EventEmitter {
       if (reason) throw new Error(reason);
     }
     this.pendingQuestion = null; // { id, resolve, reject, kind }
+    this._asksWaiting = 0;       // asks parked on a person right now; the run clock stands while it is > 0
     this._recovery = null;      // class -> in-flight Promise<'retry'|'pause'> (same-class dedupe)
     this._askTail = null;       // serializes _ask: ONE prompt open at a time (recovery + step questions)
     this._recoverySeq = 0;      // monotonic id source for recovery prompts (determinism-safe)
@@ -1176,6 +1191,8 @@ export class RunHarness extends EventEmitter {
       pipelineDir: null,
       totalCostUsd: 0,  // cumulative actual spend (sum of steps[].costUsd)
       totalActiveMs: 0, // cumulative active processing time (sum of steps[].activeMs)
+      elapsedMs: 0,       // the run clock, folded: 1 s per real second while the run works, parallel work counted once
+      elapsedSince: null, // epoch ms the run clock has been running since; null while parked (question, pause, ended)
       branch: this.workMode !== 'git' ? { workMode: this.workMode, runRootMode: 'detached' } : null,     // { source, feature, worktreeDir, reusedExisting } after _setupRunRoot
       // Per-member maps, initialized HERE (not lazily) so getState()'s snapshot
       // shape is stable across modes and targets. Without this a single-project
@@ -1564,6 +1581,9 @@ export class RunHarness extends EventEmitter {
       //    run before then, and the run page's clock and status line read it.
       this.state.setupStage = 'Checking the setup';   // the bookend's own state emit carries it
       this._bookend('preflight', 'start');
+      // A run on OpenCode without a model names worca's default OpenCode model before the step models and the
+      // run-start check resolve, so every spawn names a model (see _ensureOpencodeDefaultModel).
+      await this._ensureOpencodeDefaultModel();
       const [agentPrompts, tools, stepModels] = await Promise.all([
         this._loadAgentPrompts(),
         detectTools(this.projectDir),
@@ -1644,6 +1664,7 @@ export class RunHarness extends EventEmitter {
         labels: this.opts.labels || [],
         runSetup: typeof this.opts.runSetup === 'string' ? this.opts.runSetup : null,
         prAuto: this.opts.prAuto ?? null,
+        rerunOf: typeof this.opts.rerunOf === 'string' ? this.opts.rerunOf : null,
         ...(this.workMode === 'none' ? { id: this.opts.pipelineId } : {}),
         ...(this.isWorkspace ? {} : { projectKey: this.members[0].projectKey, ...(this.workMode !== 'git' ? { workMode: this.workMode } : {}) }),
         ...(this.isWorkspace ? {
@@ -1675,6 +1696,9 @@ export class RunHarness extends EventEmitter {
       this.state.guardrailsId = this.guardrailsId;
       // Who started it (identity.mjs): creation-immutable too, mirrored for the same reason.
       this.state.startedBy = this.opts.startedBy || null;
+      // Rerun: the source as rowToState shows it, so a live rerun's page links back without reading the saved run.
+      // toPipelineRow keeps no such key: rerun_of was written by createPipeline above.
+      if (typeof this.opts.rerunOf === 'string') this.state.rerunOf = resolveRerunOf(this.opts.rerunOf);
       // Workspace: mirror the §5.2 superset onto the live state and FREEZE the
       // description now (read from the pipeline's frozen state.json snapshot, never
       // re-read from workspaces.json), so later registry edits never alter this run.
@@ -2039,12 +2063,18 @@ export class RunHarness extends EventEmitter {
         return { ...s, activeMs: (s.activeMs || 0) + Math.max(0, Math.min(anchor, now) - s.runningSince), runningSince: null };
       });
       this.state.totalActiveMs = sumStepActive(this.state.steps);
+      // The run clock continues from the saved figure (the same anchor credits a crashed tail);
+      // it stays parked here, and the _setStatus('running') below starts it.
+      this.state.elapsedMs = resumedElapsedMs({ elapsedMs: row.elapsed_ms, elapsedSince: row.elapsed_since, anchor, now, stepSum: this.state.totalActiveMs });
+      this.state.elapsedSince = null;
       // The total is Σ steps (I2): rehydrate it with them, or the first persist of a resumed run writes
       // $0 and a resumed run that books nothing new finishes at $0 while its ledger keeps the spend.
       this.state.totalCostUsd = sumStepCosts(this.state.steps);
       // Session groups (Task 47): the session summaries the row holds (outcome.sessionHosts) stay the run's; a resumed
       // SessionHost then folds its trace on top, and a kill-switch resume keeps the history it does not extend.
       if (saved.state?.sessionHosts && typeof saved.state.sessionHosts === 'object') this.state.sessionHosts = saved.state.sessionHosts;
+      // Rerun: the link run() mirrors at start, so a resumed rerun's live page still links back.
+      if (row.rerun_of) this.state.rerunOf = resolveRerunOf(row.rerun_of);
       this.baseName = row.base_name;
       this.planDatePrefix = row.date_prefix;
       this.pipeline = { id: row.id, dir: rp.pipelineDir, promptText: row.prompt || '' };
@@ -3654,6 +3684,10 @@ export class RunHarness extends EventEmitter {
   async _engineEarlyRefusal(guardrailsId, gateNodes) {
     const name = this.claude.engine || 'claude';
     if (name === 'claude') return null;
+    // An OpenCode run with no model auto-names worca's default before the refusal reads whether a spawn
+    // names no model, so this gate no longer refuses it (and the same orchestrator runs with the model
+    // _run()'s own call would name; _ensureOpencodeDefaultModel is a no-op when the model is already set).
+    await this._ensureOpencodeDefaultModel();
     let args, mcp;
     try {
       const { id, rules, projectRules } = await this._engineSetRules(guardrailsId, { quiet: true });
@@ -3750,6 +3784,46 @@ export class RunHarness extends EventEmitter {
     } catch {
       return true;
     }
+  }
+
+  /**
+   * A run on OpenCode names no model (no run model, step slot or team role): auto-name it — the person's OpenCode
+   * chat (ask) model, which folds an unset slot into the OpenCode everyday role (`models.modelRoles.opencode.everyday`),
+   * else the catalogue's only OpenCode-capable model. Named on `this.claude.model`, every spawn rides it and the
+   * run-start check finds no spawn unnamed, so the run never falls to OpenCode's own default (possibly a free OpenCode
+   * Zen model, DEFAULT_MODEL_RISK) and never needs the opt-in. With several catalogue models and no role, worca does
+   * not choose (their order says nothing about price or fit): the model is left as it was, the refusal stays, and the
+   * log names the choices. Never throws. */
+  async _ensureOpencodeDefaultModel() {
+    const engine = this.claude.engine;
+    if (engine !== 'opencode' || (typeof this.claude.model === 'string' && this.claude.model.trim())) return null;
+    let model = null;
+    try {
+      const chat = withRole(resolveSetting('models.opencode.ask').value, 'opencode', 'askModels');
+      if (chat && typeof chat.model === 'string' && chat.model.trim()) model = chat.model;
+    } catch { model = null; }
+    // Never OpenCode Zen (opencode/…), from the chat slot either: that is exactly the default this gate exists to avoid
+    // sending code to opencode.ai.
+    if (model && (OPENCODE_ZEN_RE.test(model) || !modelForEngine(model, 'opencode', { projectDir: this.projectDir }))) model = null;
+    if (!model) {
+      try {
+        const rows = await listModels(this.projectDir || '');
+        // An auto-picked run model must run on the person's own provider or endpoint.
+        const own = (Array.isArray(rows) ? rows : []).filter((m) => m && typeof m.id === 'string'
+          && Array.isArray(m.harnesses) && m.harnesses.includes('opencode') && !OPENCODE_ZEN_RE.test(m.id));
+        if (own.length === 1) model = own[0].id;
+        else if (own.length > 1) {
+          this._log('orchestrator', 'warn',
+            `engine opencode: this run names no model and the catalogue has ${own.length} OpenCode models (${own.slice(0, 5).map((m) => m.id).join(', ')}${own.length > 5 ? ', …' : ''}) — pick one for the run, or set the OpenCode everyday role (models.modelRoles.opencode.everyday)`);
+        }
+      } catch { model = null; }
+    }
+    if (model) {
+      this.claude.model = model;
+      this._log('orchestrator', 'info',
+        `engine opencode: this run names no model, so it runs on worca's default OpenCode model ${model} — pick a model (or set models.opencode roles) to choose`);
+    }
+    return model;
   }
 
   /** The models this run's spawns on `engine` name, each in the engine's own id: the run's model, each step's and
@@ -6572,6 +6646,7 @@ export class RunHarness extends EventEmitter {
     });
     this._metricsIv.questions += 1;
 
+    let parked = false;   // this ask stopped the run clock (a person must answer); released in the finally
     try {
       // A night-eligible --yes run hands the ask to night mode: it is answered through the
       // same pendingQuestion + answer() path below (delay 0), so it is attributed and audited.
@@ -6608,6 +6683,12 @@ export class RunHarness extends EventEmitter {
           ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } } : {}),
           ...(plan && plan.attached ? { plan: { attached: true } } : {}),
           ...(concern ? { concern: true } : {}) };
+        // A person must answer: the run clock stands until the last waiting ask is released.
+        parked = true;
+        this._asksWaiting += 1;
+        this._runClockPause();
+        this._emit('state', this.getState());
+        this._persist().catch(() => {});
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
         const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, form, version, answerSchema, autoValues, nodeId, agent, origin };
@@ -6632,8 +6713,15 @@ export class RunHarness extends EventEmitter {
       const stillRunning = ['stopped', 'error', 'pausing', 'paused'].includes(this.state.status)
         ? []
         : frozen.filter((key) => this.state.steps.find((s) => s.key === key)?.status === 'start');
-      if (stillRunning.length) {
-        for (const key of stillRunning) this._clockResume(key);
+      // The run clock restarts with the LAST waiting ask, and only on a run that still runs
+      // (a stop or pause already folded it); before the step clocks, so no step runs without it.
+      let restarted = false;
+      if (parked) {
+        this._asksWaiting -= 1;
+        if (this._asksWaiting === 0 && this.state.status === 'running') { this._runClockResume(); restarted = true; }
+      }
+      for (const key of stillRunning) this._clockResume(key);
+      if (restarted || stillRunning.length) {
         this._emit('state', this.getState());
         this._persist().catch(() => {});
       }
@@ -6666,13 +6754,13 @@ export class RunHarness extends EventEmitter {
     } catch { return false; }
   }
 
-  /** A person answers what to build, Away handles how: the plan asks planRule declines, and Clarify on a shaped run.
+  /** The plan asks planRule declines: on a Shaper run only a Requirements hold whose check still fails; elsewhere the
+   *  ones it always declined.
    *  Decided at arm time, so such an ask never counts down, never starts the away stretch and cannot hit a limit's pause.
    *  Never under --yes: that run's asks go the way they always did. */
   _nightLeavesToPerson(q) {
     if (this.auto) return false;
-    if (q.kind === PLAN_ASK_KIND) return planRule(q) === null;
-    return Boolean(this.runShape) && (q.kind === 'clarify' || (q.kind === 'form' && q.origin === 'clarify'));
+    return q.kind === PLAN_ASK_KIND && planRule(q, { shaped: Boolean(this.runShape) }) === null;
   }
 
   /** Schedule (or re-schedule) the decision for the open question. `q` = a newly opened ask. */
@@ -6799,6 +6887,7 @@ export class RunHarness extends EventEmitter {
       config,
       analyze: (qs) => this._nightAnalyze(qs, q, analysis),
       gateCyclesUsed: (wireId) => (this.pipeline?.id ? nightGateCycles(this.pipeline.id, wireId) : 0),
+      shaped: Boolean(this.runShape),
       budget: config.spendCapUsd != null ? { spent: this._nightSpentUsd(config), cap: config.spendCapUsd } : null,
       // sleepAbortable RESOLVES early on a pause; pause() has then nulled pendingQuestion, so
       // the check below drops the decision.
@@ -7649,12 +7738,13 @@ export class RunHarness extends EventEmitter {
    * Repository-local hooks and config commands never run (git-guard.mjs, security G2), except the
    * project's hooks for `hooks: true` (the end-of-run commit), with every host credential stripped.
    */
-  async _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS, hooks = false } = {}) {
+  async _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS, hooks = false, env: extraEnv = null } = {}) {
     if (!gitAvailable()) return gitMissingResult();
     let env;
     try {
       env = await guardedGitEnv(cwd || this.projectDir, hooks ? { hooks, env: stripHostCredentials(process.env) } : {});
     } catch (err) { return { ok: false, code: -1, stdout: '', stderr: err.message }; }
+    if (extraEnv) env = { ...env, ...extraEnv };   // e.g. GIT_INDEX_FILE for a throwaway index (slice-worktree.mjs)
     return new Promise((resolveP) => {
       let child;
       try {
@@ -7833,11 +7923,32 @@ export class RunHarness extends EventEmitter {
     return sum;
   }
 
+  /** Start (resume) the run clock, idempotently. */
+  _runClockResume() {
+    if (this.state.elapsedSince == null) this.state.elapsedSince = Date.now();
+  }
+
+  /** Park the run clock, folding the stretch it ran into elapsedMs. No-op when parked. */
+  _runClockPause() {
+    if (this.state.elapsedSince == null) return;
+    this.state.elapsedMs += Math.max(0, Date.now() - this.state.elapsedSince);
+    this.state.elapsedSince = null;
+  }
+
+  /** Live elapsed = folded elapsedMs + the running tail. Test/diagnostic, twin of liveActiveMs. */
+  liveElapsedMs() {
+    const since = this.state.elapsedSince;
+    return this.state.elapsedMs + (since != null ? Math.max(0, Date.now() - since) : 0);
+  }
+
   _setStatus(status) {
     this.state.status = status;
     if (status === 'done' || status === 'stopped' || status === 'error' || status === 'paused') {
       this._clockPauseAll();
       this.state.totalActiveMs = sumStepActive(this.state.steps);
+      this._runClockPause();
+    } else if (status === 'running' && this._asksWaiting === 0) {
+      this._runClockResume();
     }
     this.state.updatedAt = new Date().toISOString();
     this._emit('state', this.getState());

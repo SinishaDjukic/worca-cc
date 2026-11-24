@@ -1,7 +1,7 @@
 // test/team-metrics-api.test.mjs
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,7 +33,7 @@ useGitSandbox(before, after);
 before(async () => {
   mod = await import('../ui/server.mjs');
   sync = await import('../src/core/metrics/sync.mjs');
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

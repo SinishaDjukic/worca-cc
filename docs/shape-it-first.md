@@ -368,27 +368,35 @@ This holds for a round on the same PR and for a follow-up run after the PR merge
 
 ## Away mode on a Shaper run
 
-A person answers what to build. Away mode handles how to build it. While Away is active on a Shaper run:
+When you're away, you're away: Away mode answers every question a Shaper run asks, the way you could, and flags each
+answer that decides what to build *please check*. While Away is active on a Shaper run:
 
 | Stop | What happens |
 |---|---|
-| Clarify | Waits for you. A normal run's Clarify is still answered |
-| Requirements hold (first run, or a requirements-first Changes run) | Waits for you |
+| Clarify | Away answers, as on any run |
+| Requirements hold (first run, or a requirements-first Changes run) whose check passed | Away agrees to the requirements as written; each decision takes its recommended option. Flagged *please check* |
+| Requirements hold whose check failed | Away asks for changes once, with the check's findings. If the check still fails, it waits for you: a failing Requirements check cannot be approved |
+| Attached requirements to agree to | Away agrees to them as written, flagged *please check* |
 | Agents' questions, review gates, failed steps | Away answers, as on any run |
 | Slice outline whose check passed | Away approves it, with **Ask me before each run** as shown. If it leaves an agreed requirement out of every slice, Away flags it *please check* and names the requirement |
+| Slice outline whose check failed | Away asks for changes once, with the check's findings. If the check still fails, it approves the outline, flagged |
 | Plan approval whose checks passed, slice 1 included | Away approves it |
-| Later slice's plan | Continues by itself when its check passed |
-| Later run held by **Ask me before each run** | Stays held; the card shows Needs you and Start now until you press it |
+| Plan whose shape check or coverage failed, or could not be read | Away asks for changes once, with the checks' findings. If they still fail, it approves the plan, flagged |
+| Later slice's plan | Continues by itself when its check passed; otherwise as above |
+| The planner's outline change, or notes from the chat | Away approves the plan as written, flagged. The planner already had the notes |
 | Requirement concern or plan concern | Away approves it, keeps the requirement or plan as written, and flags it *please check* |
-| A failed check: shape, outline, coverage, or a check that errored | Waits for you |
-| The planner's outline change, or notes from the chat | Waits for you |
-| A card showing an error | Waits for you |
+| A card showing an error | Away tries again, flagged |
+| Later run held by **Ask me before each run** | Stays held; the card shows Needs you and Start now until you press it. You set that hold yourself |
 
 Reviewer conflicts left open do not stop Away: it approves with no picks, as you may, and flags the answer.
 
-Away's usual rules apply to every approval: which runs, away hours, delay and limits. Each one is a rule, so it costs
-nothing and appears in *Answered for you*; the feature's log says `by Away mode`. A question that waits shows no countdown
-and does not count against the limits.
+Away's usual rules apply to every answer: which runs, away hours, delay and limits. Each Shaper stop is a rule, so it
+costs nothing. Every answer is on record in the run's **Q&A** tab: the stop it answered, what Away did, why, and a row
+per decision it took; the feature's log says `by Away mode`. A question that waits shows no countdown and does not count
+against the limits. *Always wait for me on…* keeps Clarify for you; the other Shaper stops have no tick there, so to keep
+them, set *Never on this run* or pause Away mode.
+
+Only a Shaper run works this way. On any other run, Away answers a plan approval only when its checks passed, as before.
 
 **Which runs.** Marking a run reaches its later slices, as long as you mark it before the outline is approved: a slice
 already planned to start keeps what it was given, and waits for you. *Never on this run* stays on that one run, because

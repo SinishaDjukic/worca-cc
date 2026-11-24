@@ -12,7 +12,7 @@
 import { basename } from 'node:path';
 
 import { getDb } from '../core/db.mjs';
-import { listAllPipelines, readPipelineByKey, readStoreMeta } from '../core/artifacts.mjs';
+import { listAllPipelines, readPipelineByKey, readStoreMeta, rowElapsedMs } from '../core/artifacts.mjs';
 import { readRunTags } from '../core/run-tags-store.mjs';
 import { readUiInstance } from '../core/ui-instance.mjs';
 import { fmtDur, executionCount, loopDeliveries, formatResumeHints } from './render.mjs';
@@ -197,7 +197,7 @@ async function runsShow(argv, { out, c, fail, unknownVerb = false }) {
   // for the detail view. pauseReason/pauseDetail live in the resume_point JSON.
   const row = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, phase, cycle,
-           started_at, updated_at, total_cost_usd, total_active_ms, started_by, prompt, branch,
+           started_at, updated_at, total_cost_usd, total_active_ms, elapsed_ms, elapsed_since, heartbeat_at, started_by, prompt, branch,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
     FROM pipelines WHERE id = ?
@@ -282,7 +282,7 @@ async function runsShow(argv, { out, c, fail, unknownVerb = false }) {
   const counts = [];
   if (executions != null) counts.push(`${executions} execution${executions === 1 ? '' : 's'}`);
   if (loops != null) counts.push(`${loops} loop deliver${loops === 1 ? 'y' : 'ies'}`);
-  out(`  duration ${fmtDur(row.total_active_ms)}${counts.length ? ` · ${counts.join(' · ')}` : ''}`);
+  out(`  duration ${fmtDur(rowElapsedMs(row) ?? row.total_active_ms)}${counts.length ? ` · ${counts.join(' · ')}` : ''}`);
   // COST's sub-line, the web UI's wording (app.js: `across ${steps.length} steps`).
   const steps = Array.isArray(st.steps) ? st.steps : [];
   out(`  cost     ${runCostLabel(st.runEngine, row.total_cost_usd, usd)}${steps.length ? ` · across ${steps.length} step${steps.length === 1 ? '' : 's'}` : ''}`);

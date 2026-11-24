@@ -86,7 +86,7 @@ test('the model cannot consent', async () => {
   const { ASK_LIMITS } = await import('../src/core/ask/limits.mjs');
   const { defaultDesignDeps } = await import('../src/core/ask/design-deps.mjs');
   const { threadId } = (await post({ kind: 'web' })).body;
-  const tools = createAskTools({ limits: ASK_LIMITS, redact: (s) => s, askMode: 'design', ...defaultDesignDeps({ threadId }) });
+  const tools = createAskTools({ limits: ASK_LIMITS, redact: (s) => s, ...defaultDesignDeps({ threadId }) });
   assert.equal(tools.list().find((t) => t.name === 'start_design_build').inputSchema.additionalProperties, false);
   const r = await tools.call('start_design_build', { brief: 'x', allowUnguarded: true, engine: 'codex' });
   assert.deepEqual(r.requested, { kind: 'design-start', brief: 'x' });

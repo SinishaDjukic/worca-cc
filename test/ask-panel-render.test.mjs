@@ -557,6 +557,35 @@ test('ask-panel-render: a stored files card replays on thread open, inline, and 
   }
 });
 
+/** A PDF files card replayed on thread open with these chatDeps; → where the name click went. */
+async function pdfNameClick(chatDeps) {
+  registerFilesCard();
+  try {
+    const item = { attId: 'att_00000001', name: 'report.pdf', kind: 'pdf', mime: 'application/pdf', bytes: 120 };
+    const snap = snapBody([asstRow('askm_00000001', 1, { text: 'Here.', blocks: [{ kind: 'card', id: 'card_00000001', state: 'shown', card: { type: 'files', title: 'report.pdf', items: [item] } }] })]);
+    const ctx = makePanel({ fetchHandler: handlerFor(snap), deps: { chatDeps } });
+    await openThread(ctx);
+    ctx.doc.querySelector('.ask-msg-assistant .ask-filescard .ask-filescard-name').click();
+  } finally {
+    _resetChatExtensions();
+    _resetFileRenderers();
+  }
+}
+
+test('ask-panel-render: a PDF card name opens the panel when the host has openInPanel and no linksInPanel dep', async () => {
+  const panel = [];
+  const popup = [];
+  await pdfNameClick({ openInPanel: (o) => panel.push(o.item.attId), openFiles: (o) => popup.push(o.index) });
+  assert.deepEqual(panel, ['att_00000001'], 'cardCtx: an absent linksInPanel dep counts as on (D1)');
+  assert.deepEqual(popup, []);
+});
+
+test('ask-panel-render: a host with no openInPanel dep: the PDF name opens the pop-up', async () => {
+  const popup = [];
+  await pdfNameClick({ openFiles: (o) => popup.push(o.index) });
+  assert.deepEqual(popup, [0], 'D3: no panel, the click is never swallowed');
+});
+
 test('#958: a structural flush (a new row, a resync) keeps every row element connected — the column is never emptied', async () => {
   const snap = snapBody([userRow('askm_u0000001', 1, 'hi'), asstRow('askm_00000001', 2), userRow('askm_u0000002', 3, 'more'), asstRow('askm_00000002', 4)]);
   const ctx = makePanel({ fetchHandler: handlerFor(snap) });

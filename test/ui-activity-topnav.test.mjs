@@ -1,5 +1,5 @@
 // test/ui-activity-topnav.test.mjs — the top bar's Activity button and popover in the REAL index.html
-// and style.css: where they sit (the right slot, before New run), how they look (an outlined pill,
+// and style.css: where they sit (the right slot, last), how they look (an outlined pill,
 // one badge, a 440px dialog; tokens only) and what a phone keeps (the icon and its badge).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,9 +23,9 @@ function phoneBlock() {
   return tiers.slice(at, tiers.indexOf('\n}\n', at));
 }
 
-test('Activity sits in the bar\'s right slot before New run: a quiet button with its icon, a hidden badge and a hidden dialog, at every level', () => {
+test('Activity sits last in the bar\'s right slot: a quiet button with its icon, a hidden badge and a hidden dialog, at every level', () => {
   const doc = new JSDOM(html).window.document;
-  assert.deepEqual([...doc.querySelector('#topnav > .topnav-r').children].map((n) => n.id), ['topnav-ask', 'topnav-activity', 'activity-pop', 'topnav-new']);
+  assert.deepEqual([...doc.querySelector('#topnav > .topnav-r').children].map((n) => n.id), ['topnav-ask', 'topnav-activity', 'activity-pop'], 'New run is on the Runs page, not here');
   const b = doc.getElementById('topnav-activity');
   assert.deepEqual([b.tagName, b.type, b.className], ['BUTTON', 'button', 'btn btn-quiet topnav-act']);
   for (const [k, v] of [['aria-haspopup', 'dialog'], ['aria-expanded', 'false'], ['aria-controls', 'activity-pop'], ['aria-label', 'Activity'], ['data-min-level', 'simple']]) {
@@ -50,7 +50,7 @@ test('Activity sits in the bar\'s right slot before New run: a quiet button with
   // The time, the line under the title and an empty tab's text carry information: --ink-2 (4.5:1 and up on --panel
   // and --hover in both themes), not the --ink-3 of labels (2.8:1 on white).
   for (const sel of ['.activity-row-time', '.activity-row-sub', '.activity-empty']) assert.match(ruleBody(sel), /color:var\(--ink-2\);/, sel);
-  const last = css.indexOf('.topnav-new svg{width:14px;height:14px;flex:none;}');
+  const last = css.indexOf('.side-toggle[aria-expanded=\"false\"] .side-toggle-fill{display:inline;}');
   assert.ok(last > 0 && css.indexOf('\n.topnav-act{') > last && css.indexOf('\n.topnav-act{') < css.indexOf('\n.topbar{'),
     'the Activity rules follow the top bar\'s');
 });
@@ -61,7 +61,7 @@ test('phones: Activity turns icon-only and keeps its badge; the popover spans th
   assert.match(block, /\n {2}\.topnav-act-label\{display:none;\}/);
   assert.match(block, /\n {2}\.activity-pop\{width:calc\(100vw - 16px\);\}/);
   assert.doesNotMatch(block, /\.topnav-badge[^{]*\{[^}]*display:none/, 'the badge stays');
-  assert.ok(block.indexOf('.topnav-act-label{display:none;}') > block.indexOf('.topnav-new-label{display:none;}'), 'after the bar\'s own phone rules');
+  assert.ok(block.indexOf('.topnav-act-label{display:none;}') > block.indexOf('.topnav{grid-template-columns:'), 'after the bar\'s own phone rules');
 });
 
 test('Ask worca sits left of Activity, hidden until a route shows it, and controls the side column beside main.main', () => {

@@ -39,6 +39,12 @@ test('scopeIcon: a decorative stroke icon per kind — dashed circle, folder, gr
     { name: 'project', run: () => assert.deepEqual(shape(scopeIcon(doc, 'project')), ['path:M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z']) },
     { name: 'workspace', run: () => assert.deepEqual(shape(scopeIcon(doc, 'workspace')), ['rect:3', 'rect:14', 'rect:3', 'path:M17.5 14v7M14 17.5h7']) },
     { name: 'add', run: () => assert.deepEqual(shape(scopeIcon(doc, 'add')), ['path:M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z', 'path:M12 11v6M9 14h6']) },
+    { name: 'unset: the folder, dashed (the composer bar\'s No project)', run: () => {
+      const s = scopeIcon(doc, 'unset', 16);
+      assert.equal(s.getAttribute('width'), '16');
+      assert.deepEqual([...s.children].map((n) => [n.tagName, n.getAttribute('d'), n.getAttribute('stroke-dasharray')]),
+        [['path', 'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z', '2.6 3.2']]);
+    } },
     { name: 'unknown → none', run: () => assert.deepEqual(shape(scopeIcon(doc, 'bogus')), ['circle:3 3']) },
   ]);
 });

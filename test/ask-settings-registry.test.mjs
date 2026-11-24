@@ -544,3 +544,7 @@ test('change_setting project scope writes chat.verbosity and refuses an unknown 
   assert.match(bad.error, /chat\.verbosity must be one of detailed \| normal \| concise \| terse \| caveman/);
   assert.equal(patches.length, 1, 'a refused change writes nothing');
 });
+
+test('extra: chatLinksInPanel is excluded from the chat', () => {
+  assert.ok(SETTING_EXCLUSIONS.some((e) => e.match.includes('chatLinksInPanel') && e.what === 'Open chat links in the panel'));
+});

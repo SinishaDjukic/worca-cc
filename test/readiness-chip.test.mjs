@@ -8,12 +8,16 @@ const doc = () => new JSDOM().window.document;
 const summary = (o) => ({ level: 'not-ready', failingCount: 2, mustFix: 1, shouldFix: 1, passed: 5, applicable: 9, ...o });
 
 describe('renderReadinessChip v2', () => {
-  it('not-ready: words, a count disc, no dot', () => {
+  it('not-ready: words, a count disc, no dot, on the shared red chip', () => {
     const chip = renderReadinessChip(summary(), { doc: doc() });
-    assert.equal(chip.className, 'pl-rd rd-not-ready');
+    assert.equal(chip.className, 'badge pl-rd red');
     assert.equal(chip.firstChild.textContent, 'Not agent-ready');
     assert.equal(chip.querySelector('.rd-n').textContent, '2');
     assert.equal(chip.querySelector('.rd-dot'), null);
+  });
+  it('each level is a tone of the shared chip', () => {
+    assert.equal(renderReadinessChip(summary({ level: 'ready' }), { doc: doc() }).className, 'badge pl-rd green');
+    assert.equal(renderReadinessChip(summary({ level: 'partial' }), { doc: doc() }).className, 'badge pl-rd amber');
   });
   it('ready has no number even with advice failing', () => {
     const chip = renderReadinessChip(summary({ level: 'ready', failingCount: 0, mustFix: 0, shouldFix: 0, passed: 7 }), { doc: doc() });
@@ -97,9 +101,10 @@ describe('renderReadinessChip edge cases', () => {
       assert.ok(chip.textContent.startsWith('Not agent-ready'));
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
-  it('a level label is plain words on a tinted pill', () => {
+  it('a level label is plain words on the shared chip (grey when not used)', () => {
+    assert.equal(renderLevelLabel('not-ready', { doc: doc() }).className, 'badge rd-lbl red');
     const l = renderLevelLabel('unused', { doc: doc() });
-    assert.equal(l.className, 'rd-lbl rd-unused');
+    assert.equal(l.className, 'badge rd-lbl');
     assert.equal(l.textContent, 'Not used');
   });
 });

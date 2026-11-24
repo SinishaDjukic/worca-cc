@@ -6,6 +6,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { createRequire } from 'node:module';
 
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -21,7 +22,7 @@ before(async () => {
   process.env.WORCA_MOCK = '1';
   const mod = await import('../ui/server.mjs'); // imported => no port bind, uiControl empty
   ({ uiControl, bearerMatches } = mod._testing);
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

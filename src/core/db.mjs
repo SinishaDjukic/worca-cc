@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 97;
+export const SCHEMA_VERSION = 102;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -271,6 +271,8 @@ CREATE TABLE pipelines (
   updated_at      TEXT,
   total_cost_usd  REAL NOT NULL DEFAULT 0,
   total_active_ms INTEGER NOT NULL DEFAULT 0,
+  elapsed_ms      INTEGER NOT NULL DEFAULT 0,  -- the run clock, folded ms; 0 with a NULL elapsed_since = no figure (an old run)
+  elapsed_since   INTEGER,                     -- epoch ms the run clock has been running since; NULL = parked or no figure
   prompt          TEXT,
   branch          TEXT,  -- JSON: { source, feature, worktreeDir, reusedExisting, ... }
   workspace_meta  TEXT,  -- JSON: { workspaceId, workspaceName, projectKeys, projects[], checkpointRefs, branches, workspaceDescription }
@@ -840,7 +842,7 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
-  designs:                { models_json: 'TEXT', pictures: 'INTEGER NOT NULL DEFAULT 1', sound_json: 'TEXT' },   // v93: the design's own lead and builder picks ({lead?, builder?}); NULL = the Models page's; v94: the design's Pictures switch, 1 = on; v95: the design's sound choice
+  designs:                { models_json: 'TEXT', pictures: 'INTEGER NOT NULL DEFAULT 1', sound_json: 'TEXT', origin_thread_id: 'TEXT' },   // v93: the design's own lead and builder picks ({lead?, builder?}); NULL = the Models page's; v94: the design's Pictures switch, 1 = on; v95: the design's sound choice; v98: the chat that asked for the design (NULL = none, or made before v98)
   req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER',
                             engine: 'TEXT', step: 'TEXT', cost_kind: 'TEXT', input_tokens: 'INTEGER', output_tokens: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13); v89: 9c (engine, step, billed|estimated|unknown, tokens)
   req_features:           { early_start_reason: 'TEXT', model_json: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none; v89: the feature's { engine, model, effort } (9c D2); NULL = before 9c
@@ -865,7 +867,10 @@ const INCREMENTAL_COLUMNS = {
                             shape_stats: 'TEXT',  // JSON: the shaped run's measurements; NULL = not a shaped run
                             run_size: 'TEXT',     // small|medium|large from the run's changed lines/files; NULL = unknown
                             review_stats: 'TEXT', // #990 s6, no version of its own: JSON RunSummary of src/shared/review/quality.mjs; NULL = no role reviews
-                            run_setup: 'TEXT',  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start or a scan
+                            // The run clock, no version of their own; reconcileSchema adds them
+                            elapsed_ms: 'INTEGER NOT NULL DEFAULT 0',   // folded elapsed ms; 0 with a NULL elapsed_since = no figure (an old run)
+                            elapsed_since: 'INTEGER',                   // epoch ms the clock has been running since; NULL = parked or no figure
+                            run_setup: 'TEXT',  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start, a scan, or a No-project run started before Rerun
                             deleted_at: 'TEXT',   // v65: Delete (runs redesign §3.2) keeps an anonymised row for Statistics
                             pr_verdict: 'TEXT',   // v65: the PR chip's CI verdict (JSON), runs redesign §2.1a
                             release_version: 'TEXT',  // v66 (Shaper s4): the Ship it dialog's draft release tag; NULL = none
@@ -873,7 +878,11 @@ const INCREMENTAL_COLUMNS = {
                             release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
                             release_url: 'TEXT',      // v66: the draft release's URL
                             release_error: 'TEXT',    // v66: why creating it failed (not retried)
-                            pr_auto: 'TEXT' },        // v87: the run's PR-when-done decision and its outcome (JSON, src/core/pr-auto.mjs); NULL = before v87 or a CLI start
+                            pr_auto: 'TEXT',          // v87: the run's PR-when-done decision and its outcome (JSON, src/core/pr-auto.mjs); NULL = before v87 or a CLI start
+                            finished_at: 'TEXT',      // v100: when the run first reached done (set once, a rename never moves it); NULL = not done yet or before v100, readers use COALESCE(finished_at, updated_at)
+                            credit_key: 'TEXT',       // v100: the run's level-credit key, written once credit is booked; NULL = none
+                            rerun_of: 'TEXT',         // Rerun, no version of its own: the id of the run this one was copied from (set at insert, never changed); NULL = not a rerun
+                            extras_names: 'TEXT' },   // Rerun: JSON array of the basenames of the files attached at the start (archive wipes the artifacts rows); NULL = before this column (an archived run's attachments are then unknown); '[]' = none attached
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -891,7 +900,8 @@ const INCREMENTAL_COLUMNS = {
                             // v70: where a copy found under a run's or project's folder came from, for Show in folder's
                             // fallback once a run's worktree is gone; NULL = out folder, worktree or an older row
                             source_run_id: 'TEXT', source_project_key: 'TEXT', source_rel: 'TEXT' },
-  ask_messages:           { engine: 'TEXT' },        // v83 (#943): the engine a reply ran on; NULL = a user/system row or before v83
+  ask_messages:           { engine: 'TEXT', superseded_by: 'TEXT' },        // v83 (#943): the engine a reply ran on; NULL = a user/system row or before v83
+                                                // v101: the user message id that replaced this row (a voice merge); NULL = shown
   chat_conversations:     { header_new_off: 'INTEGER NOT NULL DEFAULT 0' },   // v86: 1 = a scope pick retired the header's New conversation for good
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
@@ -906,7 +916,7 @@ const INCREMENTAL_COLUMNS = {
                             archived_at: 'TEXT',     // v75 (#948 s2): when the chat was archived; NULL = not archived
                             pinned_at: 'TEXT',       // v75 (#948 s2): when the chat was pinned; NULL = not pinned
                             group_id: 'TEXT',        // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
-                            verbosity: 'TEXT' },     // v97 (#1230): the chat's reply-style override; NULL = follow settings
+                            verbosity: 'TEXT' },     // v102 (#1230): the chat's reply-style override; NULL = follow settings
   shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
                             ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
                             shipped_at: 'TEXT',       // v58: when Ship as ran
@@ -940,6 +950,7 @@ const INCREMENTAL_COLUMNS = {
                             resume_pipeline_id: 'TEXT',   // v44: a one-off "resume this paused run" ticket (NULL = starts a new run)
                             preset_id: 'TEXT' },   // v63: the run preset this run follows (read at fire time); NULL = none
   projects:               { vcs: 'TEXT' },   // v69: 'git' | 'none' (CONTRACT §1); NULL reads as 'git'
+  tool_tabs:              { target: 'TEXT' },   // #1064 chat links: a Files tab's target — heals a tool_tabs table an earlier numbering (v84, v87) made without it
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -1093,6 +1104,25 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
   created_at TEXT NOT NULL,
   FOREIGN KEY (pr_url) REFERENCES pr_watches(pr_url) ON DELETE CASCADE,
   FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE SET NULL
+);
+`;
+
+// v97 (#1064 slice 3; first written as v84, then v87, then v96): the tool panel's chat and project tabs, mirrored by the page (PUT /api/tools/tabs) so the chat's
+// tab tools work with no page open; the assistant's open_tab adds rows here first (delivered = 0). The worca server is
+// the only writer (src/core/tool-tabs-mirror.mjs).
+const TOOL_TABS_DDL = `
+CREATE TABLE IF NOT EXISTS tool_tabs (
+  owner     TEXT NOT NULL DEFAULT '',     -- the signed-in person on a shared deployment, '' otherwise
+  scope     TEXT NOT NULL,                -- chat:<threadId> | project:<projectKey>
+  id        TEXT NOT NULL,                -- tab_… (ui/public/tool-tabs.mjs)
+  kind      TEXT NOT NULL,                -- browser | terminal | files | changes | …
+  url       TEXT,                         -- a Browser tab's address
+  target    TEXT,                         -- a Files tab's file or folder: JSON { path, dir?, line?, endLine?, root?, member? }
+  opened_by TEXT NOT NULL DEFAULT 'user', -- user | assistant
+  delivered INTEGER NOT NULL DEFAULT 1,   -- 0: the assistant opened it and no page has taken it in yet
+  at        INTEGER NOT NULL,
+  pos       INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (owner, scope, id)
 );
 `;
 
@@ -1581,7 +1611,7 @@ CREATE TABLE IF NOT EXISTS designs (
   project_key TEXT, thread_id TEXT, engine TEXT, status TEXT NOT NULL DEFAULT 'empty',
   current_build TEXT, version INTEGER NOT NULL DEFAULT 0,
   created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, models_json TEXT,
-  pictures INTEGER NOT NULL DEFAULT 1, sound_json TEXT);
+  pictures INTEGER NOT NULL DEFAULT 1, sound_json TEXT, origin_thread_id TEXT);
 CREATE INDEX IF NOT EXISTS designs_updated ON designs(updated_at);
 CREATE TABLE IF NOT EXISTS design_builds (
   id TEXT PRIMARY KEY, design_id TEXT NOT NULL, round INTEGER NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
@@ -1675,6 +1705,7 @@ const INCREMENTAL_TABLES = {
   design_agents:      DESIGN_DDL,  // v92
   design_cost_ledger: DESIGN_DDL,  // v92
   design_pictures:    DESIGN_PICTURES_DDL,  // v94
+  tool_tabs: TOOL_TABS_DDL,  // v97 (#1064)
 };
 
 /**
@@ -2879,7 +2910,19 @@ export function migrate(db) {
     // repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB). First written as v92.
     // v96 Requirements run note: req_starts.note + req_starts.note_overrides — INCREMENTAL_COLUMNS, added by the hoisted
     // repairSchemaGaps (a v95 DB); the base DDL does not carry them.
-    // v97 Chat reply style (#1230): ask_threads.verbosity — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps.
+    if (current < 97) db.exec(TOOL_TABS_DDL);   // v97 the tool panel's tab mirror (#1064 slice 3; first written as v84, then v87, then v96)
+    // v98: designs.origin_thread_id (the plain chat that asked for the design; the design's own chat stays thread_id) —
+    // INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB).
+    // v99: chats with a design are plain chats — a design chat from before (mode 'design') keeps its design (designs.thread_id).
+    // A DB stamped v98 by an earlier build of #1064 already ran the reset; running it again changes nothing.
+    if (current < 99) db.exec("UPDATE ask_threads SET mode = NULL WHERE mode = 'design'");
+    // v100 Levels: pipelines.finished_at and pipelines.credit_key — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // (comment-only rung, applySchemaV30's shape). First written as v96, then v97.
+    // v101: ask_messages.superseded_by (a voice merge hides the turn it replaces) — INCREMENTAL_COLUMNS, added by the hoisted
+    // repairSchemaGaps. First written as v89, then v96, v97 and v100 (Requirements 9c took 89; Stillhet and Design took 90–95;
+    // the Requirements run note took 96; the tool panel and design chats took 97–99; Levels took 100).
+    // v102 Chat reply style (#1230): ask_threads.verbosity — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps.
+    // First written as v97 (the tool panel, design chats, Levels and the voice merge took 97–101).
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

@@ -7,6 +7,7 @@ import { FIELD_LABELS as AWAY_LABELS } from '../shared/away-mode/labels.mjs';
 
 /** Visible labels, keyed by body path. Each must equal the text the Settings UI shows. */
 export const SETTINGS_FIELD_LABELS = Object.freeze({
+  chatLinksInPanel: 'Open chat links in the panel',
   root: 'Worca root folder',
   projectsRoot: 'Projects root folder',
   pipelineCostLimitUsd: 'Per-pipeline cost limit',
@@ -76,6 +77,7 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   'actions.maxCheckouts': 'Keep at most',
   'actions.editor': 'Editor',
   'actions.terminal': 'Terminal',
+  'actions.previewPorts': 'Preview ports',
   nightMode: 'Away mode',
   ...Object.fromEntries(Object.entries(AWAY_LABELS).map(([k, v]) => [`nightMode.${k}`, v.label])),
   nightModeToggle: 'Away mode',
@@ -111,6 +113,7 @@ const ALIASES = { scheduleGraceMin: 'schedule.graceMin', scheduleIfMissed: 'sche
 
 // Whole-message rewrites: [regex, field | (m) => field | null (= ctx), text | (m) => text].
 const SPECIAL = [
+  [/^actions\.previewPorts stays "Actions range only" on a hosted Worca$/, 'actions.previewPorts', 'Preview ports stays "Actions range only" on a hosted Worca.'],
   [/^askMaxBudgetUsd must be null \(no cap\) or a number between 0\.1 and 100$/, 'askMaxBudgetUsd',
     '“Per-turn cost cap” must be a number from 0.1 to 100, or tick No cap.'],
   [/^actions: the low port must not be above the high port$/, 'actions.portRange', 'The low port can’t be higher than the high port.'],

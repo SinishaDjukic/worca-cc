@@ -29,6 +29,12 @@ export const ASK_LIMITS = Object.freeze({
     threadBytes: 500 * 1024 * 1024,          // ALL of a thread's attachment bytes (uploads included) before show_files refuses
     textBytes: 1024 * 1024,                  // a text kind (and SVG) is sniffed and redacted whole: past this it is refused
   }),
+  tabs: Object.freeze({                      // the tool panel's tab tools (issue 1064 slice 3, src/core/tab-tools.mjs)
+    opensPerTurn: 3,                         // open_tab calls that open or bring forward a tab, per turn (sub-agents share it)
+    headerTabs: 6,                           // tabs on the [worca context] block's tool tabs line (the block is 1024 chars)
+    textDefaultChars: 20_000,                // read_tab page
+    textMaxChars: 30_000,                    // …and its cap
+  }),
   contextHeaderMaxChars: 1024,             // [worca context] block
   inlineAttachmentsMaxBytes: 24 * 1024,    // inlined into the turn prompt
   restoredMaxChars: 30_000,                // DB-replay fallback prompt

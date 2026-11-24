@@ -3,6 +3,12 @@
 Chat (Ask Worca) is Worca's home page. It answers from Worca's own records, and any change it suggests comes as a
 card you confirm. To drive runs from Telegram, Slack, Discord or Teams, see [Plugins](plugins.md).
 
+## Which engine answers
+
+A chat runs on the model you pick. The composer's model button lists each engine that has models. An engine with
+none yet (Gemini CLI, Goose, OpenCode, Qwen Code) sits under **More harnesses**: pick one to open `Add model` on it in
+[Models > Catalogue](models.md#the-catalogue-tab). Once it has a model it gets its own row and a chat can move to it.
+
 ## A chat that is the home page
 
 Open **Chat** from the first sidebar row or the worca logo. It's also the last row of the top bar's search (⌘K /
@@ -26,7 +32,8 @@ widen it.
 
 ## One scope per chat
 
-The composer's scope pill sets **No project**, a project or a workspace, at every interface level. Changes act only
+The composer's project button (a folder icon; its tooltip names the scope) sets **No project**, a project or a
+workspace, at every interface level. Changes act only
 there.
 
 When a No-project message is clearly about one of your projects, Ask asks with a card: **Switch to <name>** or

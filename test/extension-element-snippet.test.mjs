@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { cssSelector, htmlSnippet, elementUnder, cssEscape, SNIPPET_MAX, SELECTOR_MAX } from '../extension/src/element-snippet.mjs';
+import { cssSelector, htmlSnippet, elementUnder, cssEscape, SNIPPET_MAX, SELECTOR_MAX, snippetSource } from '../src/shared/element-snippet.mjs';
 
 const dom = (body) => new JSDOM(`<!doctype html><html><body>${body}</body></html>`).window.document;
 
@@ -100,4 +100,19 @@ test('htmlSnippet never deep-clones the selection: a huge subtree is serialised 
 test('htmlSnippet escapes text and attribute values as outerHTML does, and keeps void elements unclosed', () => {
   const doc = dom('<div id="e" title="a &quot;b&quot; &amp; c">1 &lt; 2 &amp; <b>bold</b><br><img src="x.png" alt="x"></div>');
   assert.equal(htmlSnippet(doc.getElementById('e')), doc.getElementById('e').outerHTML);
+});
+
+test('snippetSource() runs in a page and names an element exactly as cssSelector/htmlSnippet do', () => {
+  assert.match(snippetSource(), /^[\x00-\x7f]*$/, 'ASCII only: the preview proxy sends pages as latin1');
+  const long = 'x'.repeat(SNIPPET_MAX + 50);
+  const html = `<body><main><ul><li>a</li><li id="x y">b</li><li><b onclick="z()">c</b></li><li>${long}</li></ul></main></body>`;
+  const dom = new JSDOM(html, { runScripts: 'outside-only' });
+  const w = dom.window;
+  w.eval(`${snippetSource()}\nwindow.__sel = cssSelector; window.__snip = htmlSnippet;`);
+  for (const el of w.document.querySelectorAll('li, b')) {
+    assert.equal(w.__sel(el), cssSelector(el));
+    assert.equal(w.__snip(el), htmlSnippet(el));
+  }
+  assert.doesNotMatch(w.__snip(w.document.querySelector('b')), /onclick/);
+  assert.match(w.__snip(w.document.querySelectorAll('li')[3]), /\u2026/, 'the escaped cut marker still reads as one');
 });

@@ -7,7 +7,7 @@
 // carries are content-derived/minted (A15(3)) — use the RETURNED key/id (module vars).
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -50,7 +50,7 @@ before(async () => {
     branch: { source: 'main', feature: 'worca-cc/my-feature-pp', branchKept: true, commit: 'abc' } });
   betaId = seeded.id; betaKey = seeded.key;
   writeStoreMeta(betaKey, 'project', { key: betaKey, name: 'Beta', path: betaRepo });
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

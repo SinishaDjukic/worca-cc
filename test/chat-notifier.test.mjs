@@ -53,6 +53,14 @@ test('done, question and error events fan out to outbound notifyChatIds with the
       assert.ok(sent.every((s) => s.plugin === 'tg-chat'));
       assert.match(sent[0].message.body[0].value, /\*9999[\s\S]*completed/);
       assert.match(sent[0].message.body[0].value, /Notify me/, 'title read from the entry at send time');
+      assert.match(sent[0].message.body[0].value, /\*\*Duration:\*\* 1m00s/, 'no elapsed figure: the summed time');
+    } },
+    { name: 'Duration prints the elapsed run time when the run has it', run: async () => {
+      const { orch, sent, settle } = fixture();
+      orch.state = { totalCostUsd: 0.5, totalActiveMs: 60000, elapsedMs: 45000, elapsedSince: null };
+      orch.emit('done', { status: 'done' });
+      await settle();
+      assert.match(sent[0].message.body[0].value, /\*\*Duration:\*\* 45s/);
     } },
     { name: 'question and error events render their specific messages', run: async () => {
       const { orch, sent, settle } = fixture();

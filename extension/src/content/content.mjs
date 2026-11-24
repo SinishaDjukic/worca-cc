@@ -9,7 +9,7 @@ import { createPortFetch } from './port-fetch.mjs';
 import { SELECTION_MAX } from '../page-context.mjs';
 import { TEST_BUILD } from '../ext-api.mjs';
 import { startCapture as mountCapture } from './capture-overlay.mjs';
-import { cssSelector, elementUnder, htmlSnippet } from '../element-snippet.mjs';
+import { cssSelector, elementUnder, htmlSnippet } from '../../../src/shared/element-snippet.mjs';
 import SHADOW_CSS from 'worca:shadow-css';   // tools/build-extension.mjs inlines the generated shadow CSS
 
 (() => {

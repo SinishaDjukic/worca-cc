@@ -3,6 +3,7 @@
 // hands a member's unchanged runOpts to `host.run(opts, member)` (Task 45). A turn's frames go through the demux
 // (session-demux.mjs), its dollars through the harness port (Task 42), and every fact lands in the session trace
 // (session-trace.mjs), never a prompt.
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { runClaude, mockEnabled } from './claude-runner.mjs';
 import { runMockSession, mockRestoresCutCost } from './engines/mock-session.mjs';
 import { SessionHostError, HOST_MAX_TURNS, HOST_TOOLS_MODE, dispatchIdFor, turnIdFor, dispatchMessage, memberDefinition, hostFlagsFor,
@@ -308,7 +309,9 @@ export class SessionHost {
     if (this.closed) return Promise.reject(this._refusal());
     if (this.mode === 'separate') return this._plain(o, m);                  // C30: degraded, as ungrouped
     return new Promise((resolve, reject) => {
-      const entry = { opts: o, member: m, enqueuedAt: Date.now(), resolve, reject, onAbort: null, waited: false };
+      // `inCaller`: the caller's async context (the executor's spawn-pid watch, agent-tree.mjs; the billing owner). A queued
+      // turn starts from the previous turn's settle, whose context is the previous member's, so it re-enters its own.
+      const entry = { opts: o, member: m, enqueuedAt: Date.now(), resolve, reject, onAbort: null, waited: false, inCaller: AsyncLocalStorage.snapshot() };
       if (o.signal) {
         // A waiter whose signal fires leaves the queue at once: no record, no turn, no attempt, and its executor returns,
         // which frees its agent-pool slot (scheduler.mjs settle). A started dispatch hears the abort through its turn.
@@ -337,7 +340,7 @@ export class SessionHost {
     if (entry.waited) this._queued(entry.member.executionId, false);
     const queueMs = Date.now() - entry.enqueuedAt;
     this.inflight = Promise.resolve()
-      .then(() => this._dispatch(entry.opts, entry.member, { queueMs, waited: entry.waited }))
+      .then(() => entry.inCaller(() => this._dispatch(entry.opts, entry.member, { queueMs, waited: entry.waited })))
       .then((value) => ({ value }), (error) => ({ error, failed: true }))
       .then((r) => {
         // Free the host BEFORE the caller hears back: a caller that runs again at once (the executor's sideload retry, its
@@ -356,12 +359,12 @@ export class SessionHost {
       if (entry.onAbort) entry.opts.signal.removeEventListener('abort', entry.onAbort);
       if (entry.waited) this._queued(entry.member.executionId, false);
       Promise.resolve()
-        .then(() => {
+        .then(() => entry.inCaller(() => {
           if (entry.opts.signal?.aborted) throw abortError();
           if (this.closed) throw this._refusal();
           if (entry.waited) this.port.checkCostLimits?.();
           return this._plain(entry.opts, entry.member);
-        })
+        }))
         .then(entry.resolve, entry.reject);
     }
   }

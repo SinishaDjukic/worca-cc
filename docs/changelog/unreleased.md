@@ -3,6 +3,68 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Chat composer bar, compact
+
+**A compact bottom bar.**
+
+Icons for project, Requirements and Sets; the harness mark on the model button; the Design gear beside the model; one voice control.
+
+Chips: Chat · Design · Voice
+
+Read it: [Chat](../chat.md)
+
+Pull requests (add each number when it opens):
+
+- Chat: the compact composer bar (#1546)
+
+## Protected files stay protected on Windows
+
+**On Windows, `.env` files, `secrets.json` and Worca's own data are now refused by Worca's file tools and by Gemini and Cursor runs.**
+
+Worca's rules for files protected wherever they sit (`.env*`, `secrets.json`, `worca-cc.db*`, the `.worca-cc` store, logs and settings) never matched a Windows path, because a Windows path starts with a drive letter. They now match `C:\…` on any drive, network shares, and long paths such as `\\?\C:\…`. The rules for your home folder (`.ssh`, `.claude`, `AppData` and the rest) match those forms too.
+
+- **Worca's own file tools:** chats on every harness other than Claude Code, and Requirements code looks, Night analysis and the Auto classifier when they run on another harness.
+- **Gemini runs:** the rules Worca hands Gemini match either kind of slash, any drive and long paths. They also match a relative path such as `sub\.env`, and either letter case on Windows and macOS.
+- **Cursor runs:** Cursor compares a rule with the whole path as Windows writes it, so on Windows Worca now writes its rules with backslashes.
+
+Claude Code chats and runs were not affected: Claude Code applies the same rules itself.
+
+Upgrading: a few Cursor and Gemini rules now refuse more than before, on every platform. On Cursor, a rule relative to the project (`./.env`, `/src/secret.txt`, a bare `*.pem`) used to match nothing; it now refuses that name in any folder. A `?` in a Cursor rule now acts as `*`. On Gemini, a rule for a file at any depth also matches a relative path, and on macOS letter case is ignored.
+
+Chips: Windows · .env and secrets.json refused · Worca's file tools · Gemini and Cursor runs
+
+Pull requests (add each number when it opens):
+
+- Apply the protected-file rules to Windows drive paths (#1526)
+
+## Rerun a finished run
+
+**Start a run again from its page, with everything it had.**
+
+**⋯ › Rerun** on a done, stopped or failed run opens New run filled in from it: task, title, target, workflow, agent picks, guardrails, Away mark and attached files. Change what you like, then start it. A setting that no longer exists is named and holds Start until you reset it, and a file that is gone is listed without stopping the run. The new run links back with **Rerun of …**.
+
+Chips: ⋯ › Rerun · prefilled New run · nothing created until Start · files copied · gone settings named · Rerun of … link
+
+Read it: [Runs › Rerun a finished run](../runs.md#rerun-a-finished-run)
+
+Pull requests (add each number when it opens):
+
+- Rerun a finished run from its ⋯ menu (#1519)
+
+## A run's tests stay out of your runs list
+
+**A run that builds worca no longer leaves mock "again" runs in the worca that started it.**
+
+Agents no longer receive the server's `WORCA_HOME`: each agent gets a throwaway home under the system temp folder instead, removed when the server stops, so a test or `worca` command an agent runs writes there, not into your runs. This holds whether the server uses a custom `WORCA_HOME` or the default `~/.worca-cc`. The test helper that gives each test file its own home now parks late writes in a throwaway folder when the file ends, instead of handing them back to whatever `WORCA_HOME` the shell had; that folder belongs to the test process and is removed when it exits. Before, a run started from `WORCA_HOME=… worca ui` that ran a test file directly could add that test's mock runs to your runs list.
+
+Chips: agents get a throwaway WORCA_HOME · late test writes go to a throwaway folder
+
+Read it: [Runs](../runs.md)
+
+Pull requests (add each number when it opens):
+
+- Agents and tests never write to the live store (#1516)
+
 ## Chat reply style
 
 **Make Chat's answers as long or as short as you like, from Detailed to Caveman.**
@@ -150,6 +212,42 @@ Read it: [Built-in workflows take their models from the Models page](../models.m
 Pull requests (add each number when it opens):
 
 - Built-in workflow models live on the Models page
+
+## The assistant works with your tool panel tabs
+
+**Chat can open, look at and read the Browser tabs beside it.**
+
+In a chat with a project, the assistant can open a tab for you (`open_tab`: a local preview, an allowlisted site, a Terminal, Files or Changes tab), marked as opened by the assistant. It can screenshot a Browser tab into its reply (`screenshot_tab`) and read the page's text and console errors (`read_tab`), from a fresh headless load on the Worca server. It reaches only this chat's tabs and its project's, and other sites follow the chat's web allowlist. **Pick element** in the Browser tab's toolbar puts a screenshot of the element you click, and its selector, into the chat composer.
+
+## The tool panel opens on an Overview
+
+**A run, chat or project shows what it holds before you pick a tab.**
+
+The tool panel's first icon is the Overview: for a chat, its project and model, its context window (also from the composer's meter), the runs it started with their pull requests, the files it showed and saved, and the commands and Actions still running, each with Stop. A run shows its status, branch, checkout, pull request and artifacts; a project its recent runs. The **+** page still opens a new tool.
+
+Pull requests (add each number when it opens):
+
+- Tool panel Overview
+
+## Chat file cards open in a tab
+
+**With "Open chat links in the panel" on, a file the chat showed opens in a Files tab.**
+
+A click on a file card's name opens its stored copy in a Files tab of the chat, and its small icon becomes **Quick look** (the pop-up). Images keep the pop-up and get **Open in panel**. A file that is already open comes forward instead of opening twice. With the setting off, every card opens the pop-up as before.
+
+## Chat links open in the tool panel
+
+**File paths and web links in the chat's answers open in tabs beside the chat.**
+
+A file path the chat names (`src/app.js:120`, or a bare `app.js` when only one file has that name) becomes a link once worca confirms it exists in the chat's folder or followed run, and opens a Files tab at that line; an archived run's files open from its branch. Web links open in a Browser tab of the chat, unless the site refuses being framed: then they open a new browser tab inside the click, and a server-side check spots sites that refuse. The assistant can open files too (`open_tab` with a path and line, 3 per turn), and an open file or address is brought forward instead of opened twice. A `show_files` card gains **Open in panel**. Settings › Chat › Links in answers turns it off.
+
+Chips: file links · web links · open_tab files · framing check · Open in panel · Settings › Chat
+
+Read it: [Terminal › Links from the chat](../terminal.md#links-from-the-chat)
+
+Pull requests (add each number when it opens):
+
+- Chat links in the tool panel (issue 1064)
 
 ## Requirements (experimental)
 

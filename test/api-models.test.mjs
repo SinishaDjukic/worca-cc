@@ -6,7 +6,7 @@
 // HOME (settings.json) and opts into the catalog guard.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -48,7 +48,7 @@ before(async () => {
   _resetForTests();
   proj = await mkdtemp(join(tmpdir(), 'worca-cc-apimodels-proj-'));
   const { app } = await import('../ui/server.mjs'); // imported => does not bind a port
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });
@@ -727,6 +727,23 @@ test('no exported list is mutated', async () => {
   assert.equal(PREDEFINED_MODELS[0].testable, undefined);
   assert.ok(PREDEFINED_MODELS.every((m) => !('testable' in m)), 'no Claude built-in gains testable');
   assert.ok([...CODEX_BUILTIN_MODELS, ...COPILOT_BUILTIN_MODELS].every((m) => !('testable' in m)));
+});
+
+test('an OpenCode Zen entry advertises no efforts — a Zen model takes no reasoning variant, so pickers and the spawn must not offer one', async () => {
+  await checkRows([
+    { name: 'POST an engine:opencode Zen model (`opencode/*`): its efforts come back empty', run: async () => {
+      const r = await post('/api/models', { id: 'opencode/big-pickle', label: 'Big Pickle (Zen)', engine: 'opencode', efforts: ['low', 'high'] });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.deepEqual(r.body.model.efforts, [], 'a Zen free model advertises no efforts (it takes no variant)');
+      assert.deepEqual(listGlobalModels().find((m) => m.id === 'opencode/big-pickle').efforts, []);
+    } },
+    { name: 'POST an engine:opencode model of another provider keeps its chosen efforts', run: async () => {
+      const r = await post('/api/models', { id: 'openrouter/z-ai/glm-5.3-prime', label: 'GLM', engine: 'opencode', efforts: ['low', 'high'] });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.deepEqual(r.body.model.efforts, ['low', 'high']);
+      assert.deepEqual(listGlobalModels().find((m) => m.id === 'openrouter/z-ai/glm-5.3-prime').efforts, ['low', 'high']);
+    } },
+  ]);
 });
 
 // ── the pricing override over HTTP (what the editor form actually sends) ──────

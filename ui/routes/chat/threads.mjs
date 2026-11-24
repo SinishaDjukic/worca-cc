@@ -7,12 +7,16 @@ import { validateModelEffort } from '../../../src/core/ask/models.mjs';
 import { chatScopeOf, sameScope } from '../../../src/core/ask/scope.mjs';
 import { revealTargetFor as askRevealTargetFor } from '../../../src/core/ask/show-files-deps.mjs';
 import { isSurfaceMode } from '../../../src/core/ask/thread-modes.mjs';
-import { THREAD_SORTS, attachmentPath as askAttachmentPath, countThreads as askCountThreads, createThread as askCreateThread, getAttachment as askGetAttachment, getThread as askGetThread, listAttachments as askListAttachments, listMessages as askListMessages, listRunLinks as askListRunLinks, listThreadIds as askListThreadIds, listThreads as askListThreads, listThreadsPage as askListThreadsPage, readAttachmentText as askReadAttachmentText, setArchived as askSetArchived, setPinned as askSetPinned, updateThread as askUpdateThread } from '../../../src/core/ask/store.mjs';
+import { THREAD_SORTS, attachmentPath as askAttachmentPath, countThreads as askCountThreads, createThread as askCreateThread, getAttachment as askGetAttachment, getThread as askGetThread, listAttachments as askListAttachments, listMessages as askListMessages, listRunLinks as askListRunLinks, listThreadIds as askListThreadIds, listThreads as askListThreads, listThreadsPage as askListThreadsPage, readAttachmentText as askReadAttachmentText, setArchived as askSetArchived, setPinned as askSetPinned, updateThread as askUpdateThread, askOutDir, findCard as askFindCard, attachmentSourcePath as askAttachmentSourcePath } from '../../../src/core/ask/store.mjs';
 import { removeAskWorktree as askRemoveWorktree } from '../../../src/core/ask/worktrees.mjs';
+import { buildThreadOverview } from '../../../src/core/ask/overview.mjs';
+import { roundsOf } from '../../../src/core/shape/rounds.mjs';
+import { findPipelineRowById, readPrState } from '../../../src/core/artifacts.mjs';
+import { getDb } from '../../../src/core/db.mjs';
 import { chatOrigins } from '../../../src/core/chat/conversations.mjs';
-import { createDesignThread } from '../../../src/core/design/chat-thread.mjs';
+import { createDesignThread, designIdForThread } from '../../../src/core/design/chat-thread.mjs';
 import { DESIGN_ID_RE } from '../../../src/core/design/ids.mjs';
-import { getDesign, updateDesign } from '../../../src/core/design/store.mjs';
+import { getDesign, listDesignsByOrigin, updateDesign } from '../../../src/core/design/store.mjs';
 import { flagEnabled } from '../../../src/core/flags.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
 import { attachmentDisposition } from '../../../src/core/download-filename.mjs';
@@ -21,7 +25,23 @@ import { CHAT_BUSY } from '../../../src/shared/chat-busy.mjs';
 import { isVerbosity, VERBOSITY_HINT } from '../../../src/shared/chat-verbosity.mjs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, REMOTE_MODE, SETTLED_RUN, agentMayBeCaller, askBusyReason, askChatEngine, askCommands, askFollowers, askIdParam, askInFlight, askTrackingCount, askValidateScope, askViewer, askWorktreesEnvelope, badRequest, broadcast, builtins, channelHost, deleteAskThreadFully, emitAskWorktrees, emitChanged, liveRunEntry, requireTerminal, switchThreadScope } from '../../server.mjs';
+import { ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, REMOTE_MODE, SETTLED_RUN, agentMayBeCaller, askBusyReason, askChatEngine, askCommands, askFollowers, askIdParam, askInFlight, askLinkIsPrFix, askTrackingCount, askValidateScope, askViewer, askWorktreesEnvelope, badRequest, broadcast, builtins, channelHost, chatToolFolder, closeChatTerminals, deleteAskThreadFully, emitAskWorktrees, emitChanged, followedRunOf, liveRunEntry, rejectRawTerminalFields, requireTerminal, sendOfficePdf, switchThreadScope, terminalError, terminals, toolTabs } from '../../server.mjs';
+import { currentBranch } from '../../../src/core/worktree.mjs';
+import { tabScope } from '../../../src/core/tool-tabs-mirror.mjs';
+import { isOfficePath } from '../../../src/shared/artifact-kinds.mjs';
+import fsp from 'node:fs/promises';
+
+/** The runs a chat's recurring schedules fired (D8: materializeNext never links them to the chat), newest first. */
+function scheduleRunIds(threadId, limit) {
+  return getDb().prepare(`SELECT id FROM pipelines WHERE schedule_id IN (SELECT id FROM schedules WHERE ask_thread_id = ?)
+    AND deleted_at IS NULL ORDER BY started_at DESC LIMIT ?`).all(threadId, limit).map((r) => r.id);
+}
+
+/** A PR fix-run card's `card.fix` (askPostPrFixCards: { prUrl, memberKey, originPipelineId, … }), or null. */
+function prFixOf(link) {
+  if (!link || !link.cardId) return null;
+  try { const fix = askFindCard(link.threadId, link.cardId)?.block?.card?.fix; return fix && typeof fix === 'object' ? fix : null; } catch { return null; }
+}
 
 export function register(app) {
 
@@ -34,6 +54,22 @@ app.get('/api/ask/threads/:id/commands/:blockId', (req, res) => {
   const view = askCommands.view(req.params.blockId);
   if (!view) return res.status(404).json({ error: 'block not found' });
   res.json(view);
+});
+
+// A shell in a chat's folder (issue 1064): its worktree, else its project's own folder. Scope 'chat' and the chat's id
+// (in memory only, D11), so the tool panel shows it among that chat's tabs.
+app.post('/api/ask/threads/:id/terminal', async (req, res) => {
+  if (!requireTerminal(req, res) || !rejectRawTerminalFields(req, res)) return;
+  const id = askIdParam(res, req.params.id, 'thread'); if (!id) return;
+  try {
+    const f = await chatToolFolder(id, req);
+    if (f.gone) return res.status(404).json({ error: 'thread not found', code: 'SCOPE_GONE' });
+    if (f.error) return res.status(409).json({ error: f.error, code: f.code });
+    const branch = await currentBranch(f.dir);
+    const session = await terminals.open({ cwd: f.dir, scope: 'chat', chatId: id, label: !f.worktree && branch ? `${f.label} · ${branch}` : f.label,
+      projectKey: f.projectKey, branch, by: actorOf(req), cols: req.body?.cols, rows: req.body?.rows });
+    res.status(201).json({ session, warning: null });
+  } catch (e) { terminalError(res, e); }
 });
 
 /** worca Chat (the History column's amber dot): how many of this chat's followed, unsettled runs wait on a question
@@ -55,8 +91,8 @@ app.get('/api/ask/threads', (req, res) => {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
     const visibleTo = askViewer(req);
-    // Browser extension: never lists composer (Workflows editor) or design threads.
-    const mode = !req.worcaExtension && isSurfaceMode(req.query.mode) ? req.query.mode : null;
+    // Plain chats (chats with a design among them); never composer (Workflows editor) threads, which only their own list asks for.
+    const mode = isSurfaceMode(req.query.mode) && !req.worcaExtension ? req.query.mode : 'plain';
     // q = the History column's search (title or any message's text); the owner and surface filters above still apply.
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     // origin = the chat integration that opened the thread (null = started in the app), one lookup per page.
@@ -180,7 +216,8 @@ app.get('/api/ask/threads/:id', (req, res) => {
     res.json({
       // `engine`: the lock the server enforces (D12), so the panel locks on the same answer even when the chat's model
       // has left the catalog.
-      thread: { ...thread, engine: askChatEngine(id, thread) },
+      // `designId`: the chat's design (designs.thread_id), so the Chat page mounts its design and its Design tab.
+      thread: { ...thread, engine: askChatEngine(id, thread), ...(designIdForThread(id) ? { designId: designIdForThread(id) } : {}) },
       messages: askListMessages(id),
       // show_files copies (message_id null, docs/show-files.md) are not uploads: they never join the run card's @ picker.
       attachments: askListAttachments(id).filter((a) => a.messageId != null),
@@ -190,6 +227,28 @@ app.get('/api/ask/threads/:id', (req, res) => {
       worktrees: askWorktreesEnvelope(id),
       inFlight: job && job.messageId ? { messageId: job.messageId } : null, // null while the slot is only reserved
     });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// The tool panel's Overview (issue 1064): the chat's started runs with their PR watch fix runs, the runs it only
+// mentioned, the started runs' PRs and its applied PR cards, the files it showed and saved, the followed run's branch. Another person's chat is a 404 (the askThreadVisible middleware).
+app.get('/api/ask/threads/:id/overview', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    const thread = askGetThread(id);
+    if (!thread || thread.archivedAt) return res.status(404).json({ error: 'thread not found' });
+    res.json(await buildThreadOverview(id, {
+      listRunLinks: askListRunLinks, isPrFix: askLinkIsPrFix, findPipelineRowById, scheduleRunIds, readPrState,
+      listMessages: askListMessages, listAttachments: askListAttachments, outDir: askOutDir, followedRunOf,
+      sourcePathOf: askAttachmentSourcePath, prFixOf, roundsOf,
+      // Artifacts › designs: only the designs this viewer may see (listDesigns' rule: unowned, or theirs).
+      designOfThread: (tid) => designIdForThread(tid),
+      originDesignIds: (tid) => listDesignsByOrigin(tid).map((d) => d.id),
+      getDesign: (did) => { const d = getDesign(did); const who = askViewer(req); return d && (!who || !d.createdBy || d.createdBy === who) ? d : null; },
+    }));
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -214,6 +273,7 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
         if (reason) return res.status(409).json({ error: CHAT_BUSY[reason], code: 'CHAT_BUSY', reason });
       }
       if (body.archived !== undefined) askSetArchived(id, body.archived);
+      if (body.archived === true) { await closeChatTerminals(id, 'chat archived'); toolTabs.dropScope(tabScope('chat', id)); }
       if (body.pinned !== undefined) askSetPinned(id, body.pinned);
       return res.json({ thread: askGetThread(id) });
     }
@@ -305,7 +365,7 @@ app.delete('/api/ask/threads/:id/worktrees/:wtId', async (req, res) => {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
-app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
+app.get('/api/ask/threads/:id/attachments/:attId', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   const attId = askIdParam(res, req.params.attId, 'attachment');
@@ -336,6 +396,10 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
       if (!r) return res.status(404).json({ error: 'not found' });
       res.set('Cache-Control', 'private, no-store');
       return res.json({ text: r.text });
+    }
+    if (req.query.as === 'pdf') {
+      if (att.kind === 'text' || !isOfficePath(att.name)) return res.status(415).json({ error: 'Only Office documents convert to PDF.', code: 'NOT_OFFICE' });
+      return await sendOfficePdf(res, { name: att.name, open: () => fsp.open(file, 'r').catch(() => null), notFound: 'attachment not found' });
     }
     // Streamed, not readFileSync + send: a body is immutable under its
     // store-minted id, so a stat-based ETag/Last-Modified plus a year-long
