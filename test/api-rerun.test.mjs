@@ -327,3 +327,18 @@ test('resolveRerunOf: a rerun of a rerun names its direct source; an archived so
   assert.equal(resolveRerunOf(null), null);
   assert.equal(resolveRerunOf('nope0000').exists, false);
 });
+
+test('workflow tests: a test try is not rerun as a run, on the read routes or at start, and no row is written', async () => {
+  const src = await seed();
+  db.prepare('UPDATE pipelines SET is_test = 1 WHERE id = ?').run(src);
+  const { RERUN_TEST_TRY } = await import('../src/shared/run-rerun.mjs');
+  const read = await fetch(`${base}/api/pipelines/${src}/rerun`);
+  assert.equal(read.status, 409);
+  assert.deepEqual(await read.json(), { error: 'rerun-test-try', message: RERUN_TEST_TRY });
+  const n = count();
+  const start = await post('/api/run', { ...START(), rerunOf: src });
+  assert.equal(start.status, 409);
+  assert.equal((await start.json()).error, 'rerun-test-try');
+  assert.equal(count(), n, 'no run was started from it');
+});
+

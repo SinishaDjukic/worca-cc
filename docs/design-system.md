@@ -16,7 +16,7 @@ a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`,
 | amber | `--amber*` | needs you, attention, waiting; a PR problem | a brand mark, "not installed", "built-in" |
 | red | `--red*` | failed, destructive | a warning that needs no action |
 | blue | `--blue*` | information (the Beta chip), in-progress text, links | a status dot (except the route's with-reviewers circle `.rd-route-dot.is-review`), a bar, team policy |
-| violet | `--violet*` | Labs only (the merged status dot, the merged run orb and the run page route's merged circle `.rd-route-dot.is-merged` and merged words `.rd-fact-tx.is-merged` are the named exceptions; the Marketplace chat kind tile and dot follow its kind colours, › Marketplace exceptions) | sources, "Official", policy, a badge, a chart series |
+| violet | `--violet*` | Labs only (the merged status dot, the merged run orb and the run page route's merged circle `.rd-route-dot.is-merged` and merged words `.rd-fact-tx.is-merged` are the named exceptions, as is workflow tests' "Can be checked exactly" line under a criterion `.wft-crit-meta.is-exact` and the "Worca suggests" box `.wft-sugg` with its tag `.wft-sugg-tag`, and the "Can be checked exactly" pill `.wft-exact` in Compare by criterion (an exact check, without AI); the Marketplace chat kind tile and dot follow its kind colours, › Marketplace exceptions) | sources, "Official", policy, a badge, a chart series |
 | slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
 Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
 Working and needs you must read as two states at dot size; `--peach` stays one orange.

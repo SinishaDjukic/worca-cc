@@ -94,3 +94,16 @@ test('the stored developer rate prices the hours; an empty window is an honest n
     await setHumanRateUsdPerHour('');
   }
 });
+
+test('a test try\'s spend counts in the spending limit but not in Saved (the Statistics tile leaves it out too)', async () => {
+  const before = budgetStatus(NOW);
+  const savedBefore = budgetWindowSavings(before).windowSavedUsd;
+  const { id: t } = await seedPipeline('/tmp/p', { status: 'done', humanHours: 0 });
+  setStarted(t, iso(2026, 8, 5));
+  getDb().prepare('UPDATE pipelines SET is_test = 1 WHERE id = ?').run(t);
+  recordCostDelta({ pipelineId: t, amountUsd: 2, tsMs: +new Date(2026, 7, 5, 10) });
+  const after = budgetStatus(NOW);
+  assert.equal(after.windowSpendUsd, before.windowSpendUsd + 2, 'the budget still counts the try');
+  assert.equal(budgetWindowSavings(after).windowSavedUsd, savedBefore, 'Saved is not lowered by the try');
+  assert.equal(budgetWindowSavings(after).windowSavedUsd, getStats({ range: 'month', now: NOW }).totals.savedUsd);
+});
