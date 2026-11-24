@@ -1,0 +1,25 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.2.0, pluggy-1.7.0
+rootdir: /home/tomica/tool-formats/x/py
+collected 5 items
+
+test_x.py xXE.s                                                          [100%]
+
+==================================== ERRORS ====================================
+__________________________ ERROR at setup of test_err __________________________
+
+    @pytest.fixture
+>   def boom(): raise RuntimeError("x")
+                ^^^^^^^^^^^^^^^^^^^^^^^
+E   RuntimeError: x
+
+test_x.py:7: RuntimeError
+==================================== PASSES ====================================
+=================================== XPASSES ====================================
+=========================== short test summary info ============================
+PASSED test_x.py::test_slow
+SKIPPED [1] test_x.py:10: cond
+XFAIL test_x.py::test_xf - known
+XPASS test_x.py::test_xp - known
+ERROR test_x.py::test_err - RuntimeError: x
+========= 1 passed, 1 skipped, 1 xfailed, 1 xpassed, 1 error in 1.22s ==========

@@ -2,13 +2,8 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-
-const SIGN_IN_ENV_KEYS = new Set([
-  'CLAUDE_CODE_OAUTH_TOKEN', 'NODE_EXTRA_CA_CERTS', 'CLOUD_ML_REGION', 'GOOGLE_APPLICATION_CREDENTIALS',
-  'CLAUDE_CODE_CLIENT_CERT', 'CLAUDE_CODE_CLIENT_KEY',
-]);
-const isSignInEnvKey = (k) => SIGN_IN_ENV_KEYS.has(k) || /^https?_proxy$/i.test(k) || k.startsWith('ANTHROPIC_')
-  || k.startsWith('CLAUDE_CODE_USE_') || k.startsWith('AWS_');
+// The key rule (A1.1 D6) lives with the sign-in a Pretend workflow-test try carries (workflow tests 3b, D71).
+import { isSignInEnvKey } from './engines/claude-sign-in.mjs';
 
 /**
  * Whether the user-level Claude Code settings carry sign-in or network configuration (A1.1 D6): a

@@ -2,14 +2,12 @@
 // navigation, close paths) in a bare jsdom, then the Workspaces page flows in a full app.js boot.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { confirmDialog } from './helpers/confirm-modal.mjs';
-import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { bootApp as bootShared, WS_ONE } from './helpers/onboarding-app-boot.mjs';
 import { changeOrder } from '../src/shared/workspace-map/order.mjs';
-import { GETTING_STARTED_STEPS } from '../ui/public/getting-started.mjs';
 import {
   WORKSPACE_GUIDE_STEPS, SAMPLE_PROJECTS, SAMPLE_LINKS, sampleChangeOrder, shouldAutoOpenWorkspaceGuide, openWorkspaceGuide,
 } from '../ui/public/workspace-guide.mjs';
@@ -158,56 +156,12 @@ test('shouldAutoOpenWorkspaceGuide: only a KNOWN unseen flag with no workspace',
 
 // ---- part 2: the Workspaces page, full app.js boot (pattern: test/ui-workspaces.test.mjs:54-79) ----
 
-const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-const WS_ONE = [{ id: 'wks-alpha-00000001', name: 'Alpha WS', description: '', projectPaths: ['/a/svc-iam', '/a/svc-ui'], projectKeys: ['k1', 'k2'], exists: [true, true], createdAt: 'x', updatedAt: 'x' }];
-const PROJECTS = [{ name: 'svc-iam', path: '/a/svc-iam', exists: true, key: 'k1' }, { name: 'svc-ui', path: '/a/svc-ui', exists: true, key: 'k2' }];
-class WSStub { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} }
-const onboarding = (seen) => ({
-  steps: Object.fromEntries(GETTING_STARTED_STEPS.map((s) => [s.id, s.id === 'project'])), done: 1, total: GETTING_STARTED_STEPS.length,
-  claude: { bin: 'claude', hint: null, auth: 'signed-in' }, hidden: false, welcomeSeen: true, workspaceGuideSeen: seen, fresh: false,
-});
-
-async function bootApp({ seen = false, workspaces = [], onboardingDown = false } = {}) {
-  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
-  const { window } = dom;
-  const posts = [];
-  let current = seen;
-  let list = structuredClone(workspaces);
-  const json = (status, body) => Promise.resolve({ ok: status < 400, status, json: async () => body });
-  window.Element.prototype.scrollIntoView = function () {};
-  window.WebSocket = WSStub;
-  window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
-  window.fetch = (url, opts = {}) => {
-    const u = String(url);
-    if (u.includes('/api/onboarding')) {
-      if (onboardingDown) return json(500, { error: 'down' });
-      if (opts.method === 'POST') {
-        const body = JSON.parse(opts.body);
-        posts.push(body);
-        if (typeof body.workspaceGuideSeen === 'boolean') current = body.workspaceGuideSeen;
-      }
-      return json(200, onboarding(current));
-    }
-    if (/\/api\/workspaces\/[^/?]+$/.test(u) && opts.method === 'DELETE') {
-      list = list.filter((w) => !u.endsWith(w.id));
-      if (!list.length) current = false;                  // what the server's reset does
-      return json(200, { ok: true, warnings: [] });
-    }
-    if (u.includes('/api/projects')) return json(200, { projects: PROJECTS });
-    if (u.endsWith('/api/workspaces') || u.includes('/api/workspaces?')) return json(200, { workspaces: structuredClone(list) });
-    return json(200, { config: { steps: {}, customModels: [] }, models: [], efforts: [] });
-  };
-  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator', 'requestAnimationFrame']) {
-    try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
-  }
-  globalThis.window = window; globalThis.document = window.document;
-  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
-  await settle();
-  const show = async (hash = 'workspaces') => { window.location.hash = hash; window.dispatchEvent(new window.Event('hashchange')); await settle(); };
-  const doc = window.document;
-  const guide = () => doc.getElementById('workspace-guide-modal');
-  const finish = () => { for (let i = 0; i < WORKSPACE_GUIDE_STEPS.length; i++) click(window, guide().querySelector('.wg-next')); };
-  return { window, doc, show, posts, guide, finish };
+// The boot harness is shared (test/helpers/onboarding-app-boot.mjs); this adds the walkthrough's `finish`.
+async function bootApp(opts = {}) {
+  const ctx = await bootShared({ trackDom, ...opts });
+  const guide = ctx.guide;
+  const finish = () => { for (let i = 0; i < WORKSPACE_GUIDE_STEPS.length; i++) click(ctx.window, guide().querySelector('.wg-next')); };
+  return { ...ctx, finish };
 }
 
 test('first Create with no workspace: the walkthrough first, then the wizard (R-po-1, R-po-9, R-po-11, R-po-16)', async () => {
@@ -215,7 +169,9 @@ test('first Create with no workspace: the walkthrough first, then the wizard (R-
   await show('workspaces');
   assert.equal(guide(), null, 'R-po-11: opening the page opens nothing');
   const howto = doc.getElementById('ws-howto-btn');
-  assert.equal(howto.textContent.trim(), 'How workspaces work');
+  const label = howto.cloneNode(true);
+  label.querySelector('.howto-new')?.remove();
+  assert.equal(label.textContent.trim(), 'How workspaces work', 'the words are unchanged; the mark is a separate span');
   assert.equal(howto.closest('.ws-top-actions'), doc.getElementById('ws-create-btn').closest('.ws-top-actions'), 'R-po-16: beside Create workspace');
   click(window, doc.getElementById('ws-create-btn'));
   await settle();
@@ -316,4 +272,90 @@ test('the wizard and a workspace page offer no way to open the walkthrough (R-po
   assert.doesNotMatch(page.textContent, /How workspaces work/);
   assert.equal(doc.querySelectorAll('#ws-howto-btn').length, 1, 'one entry point, on the list screen');
   assert.ok(doc.getElementById('ws-howto-btn').closest('.ws-screen-list'));
+});
+
+// ---- part 3: the tour button and the "new" mark (D-5, D-9, I-7, A-8) ----
+
+const mark = (doc) => doc.getElementById('ws-howto-btn').querySelector('.howto-new');
+const toLastScreen = (window, doc) => {
+  const m = doc.getElementById('workspace-guide-modal');
+  for (let i = 0; i < WORKSPACE_GUIDE_STEPS.length - 1; i++) click(window, m.querySelector('.wg-next'));
+  return m;
+};
+
+test('learn mode last screen: "Done" then "Show me in the product", the tour being the primary action (D-9)', async () => {
+  const { window, doc, show } = await bootApp({ seen: true, workspaces: WS_ONE });
+  await show('workspaces');
+  click(window, doc.getElementById('ws-howto-btn'));
+  await settle();
+  const m = toLastScreen(window, doc);
+  const next = m.querySelector('.wg-next');
+  const tour = m.querySelector('.wg-tour');
+  assert.equal(next.textContent, 'Done');
+  assert.equal(next.classList.contains('btn-primary'), false, 'the shell gives the primary look to the tour here');
+  assert.equal(tour.textContent, 'Show me in the product');
+  assert.ok(tour.classList.contains('btn-primary'));
+  assert.ok(next.compareDocumentPosition(tour) & window.Node.DOCUMENT_POSITION_FOLLOWING, 'Done comes first');
+});
+
+test('create mode last screen: "Create workspace" stays primary, Show me is a secondary button before it (D-9)', async () => {
+  const { window, doc, show } = await bootApp({ seen: false });
+  await show('workspaces');
+  click(window, doc.getElementById('ws-create-btn'));
+  await settle();
+  const m = toLastScreen(window, doc);
+  const next = m.querySelector('.wg-next');
+  const tour = m.querySelector('.wg-tour');
+  assert.equal(next.textContent, 'Create workspace');
+  assert.ok(next.classList.contains('btn-primary'));
+  assert.equal(tour.textContent, 'Show me in the product');
+  assert.equal(tour.classList.contains('btn-primary'), false, 'secondary, not primary');
+  assert.ok(tour.compareDocumentPosition(next) & window.Node.DOCUMENT_POSITION_FOLLOWING, 'the tour button comes before Create workspace');
+});
+
+test('"Show me in the product" starts the workspace tour and does not route to the wizard (I-7)', async () => {
+  for (const [name, open] of [['learn', async ({ window, doc }) => click(window, doc.getElementById('ws-howto-btn'))],
+    ['create', async ({ window, doc }) => click(window, doc.getElementById('ws-create-btn'))]]) {
+    const ctx = await bootApp({ seen: name === 'learn', workspaces: name === 'learn' ? WS_ONE : [] });
+    await ctx.show('workspaces');
+    await open(ctx);
+    await settle();
+    const m = toLastScreen(ctx.window, ctx.doc);
+    assert.equal(ctx.doc.querySelector('.guide-layer'), null, `${name}: no tour yet`);
+    click(ctx.window, m.querySelector('.wg-tour'));
+    await settle();
+    assert.equal(ctx.guide(), null, `${name}: the walkthrough is gone`);
+    assert.ok(ctx.doc.querySelector('.guide-layer'), `${name}: the workspace tour started`);
+    assert.notEqual(ctx.window.location.hash, '#workspace-create', `${name}: not routed to the wizard`);
+  }
+});
+
+test('the mark: shown until the first open, gone after it (D-5)', async () => {
+  const { window, doc, show, posts } = await bootApp({ seen: false });
+  await show('workspaces');
+  assert.equal(mark(doc).hidden, false, 'new before it is ever opened');
+  assert.equal(doc.getElementById('ws-howto-btn').dataset.new, 'true');
+  click(window, doc.getElementById('ws-howto-btn'));
+  await settle();
+  assert.deepEqual(posts.at(-1), { workspaceGuideSeen: true });
+  assert.equal(mark(doc).hidden, true, 'gone once opened');
+  assert.equal(doc.getElementById('ws-howto-btn').dataset.new, 'false');
+});
+
+test('seen before this release (only workspaceGuideSeen:true, no map entry) shows no mark (A-8, D-5)', async () => {
+  const { doc, show, server } = await bootApp({ seen: true, guidesSeen: {} });
+  assert.deepEqual(server.guidesSeen, {});
+  await show('workspaces');
+  assert.equal(mark(doc).hidden, true);
+  assert.equal(doc.getElementById('ws-howto-btn').dataset.new, 'false');
+});
+
+test('auto-open from Create clears the mark (A-8)', async () => {
+  const { window, doc, show, guide } = await bootApp({ seen: false });
+  await show('workspaces');
+  assert.equal(mark(doc).hidden, false);
+  click(window, doc.getElementById('ws-create-btn'));
+  await settle();
+  assert.ok(guide(), 'the walkthrough auto-opened');
+  assert.equal(mark(doc).hidden, true, 'the mark is gone after the auto-open');
 });

@@ -74,6 +74,7 @@ import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
 import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
+import { isGuideAreaId } from '../shared/how-it-works/areas.mjs';
 import { normalizePins, storedPins } from '../shared/home-pins.mjs';
 import { DEFAULT_PATTERN, DEFAULT_TYPES, TYPE_RE, patternProblem } from '../shared/naming/pattern.mjs';
 import { IMAGE_SERVICES, IMAGE_SHAPES, originOf } from '../shared/image-services.mjs';
@@ -3253,38 +3254,79 @@ export async function writeStoredFlags(map) {
 }
 
 // ── Getting started (onboarding) ─────────────────────────────────────────────
-// Five machine-wide flags, nothing more: which steps are DONE is derived from
-// product state by src/core/onboarding.mjs and never stored. `hidden` is the
-// checklist's Hide (Settings › General › Getting started shows it again);
-// `welcomeSeen` is the one-time welcome dialog; `workspaceGuideSeen` is the
-// "How workspaces work" walkthrough (FEAT-7) — set on every open, cleared when
-// the last workspace is deleted. `setupFinished` records that the Setup Assistant was completed
-// (install-wide, like the setup); `setupChecked` is the boot marker that credits an install that
-// predates it exactly once (onboarding.mjs#ensureSetupMarker). All absent = all false.
+// Machine-wide, nothing derivable: which steps are DONE is computed from product
+// state by src/core/onboarding.mjs and never stored. `hidden` is the checklist's
+// Hide (Settings › General › Getting started shows it again); `welcomeSeen` is the
+// one-time welcome dialog; `workspaceGuideSeen` is the legacy "How workspaces work"
+// flag, cleared when the last workspace is deleted. `setupFinished` records that the
+// Setup Assistant was completed (install-wide, like the setup); `setupChecked` is the
+// boot marker that credits an install that predates it exactly once
+// (onboarding.mjs#ensureSetupMarker). `guidesSeen` maps a how-it-works area id
+// (src/shared/how-it-works/areas.mjs) to true once that area's guide has been opened;
+// `guidesReset` is a write-only command that clears the map and workspaceGuideSeen.
+// All absent = all false and an empty map.
 const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'setupFinished', 'setupChecked']);
+const ONBOARDING_KEYS = Object.freeze([...ONBOARDING_FLAGS, 'guidesSeen', 'guidesReset']);
+const SEEN_ONLY_KEYS = Object.freeze(['guidesSeen', 'workspaceGuideSeen']);
+
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// Only known area ids holding exactly true survive a read; anything else stored is ignored.
+function storedGuidesSeen(raw) {
+  if (!isPlainObject(raw)) return {};
+  return Object.fromEntries(Object.entries(raw).filter(([k, v]) => isGuideAreaId(k) && v === true));
+}
 
 export function onboardingPrefs() {
   const o = readSettings().onboarding;
-  const obj = o && typeof o === 'object' && !Array.isArray(o) ? o : {};
-  return Object.fromEntries(ONBOARDING_FLAGS.map((k) => [k, obj[k] === true]));
+  const obj = isPlainObject(o) ? o : {};
+  return {
+    ...Object.fromEntries(ONBOARDING_FLAGS.map((k) => [k, obj[k] === true])),
+    guidesSeen: storedGuidesSeen(obj.guidesSeen),
+  };
 }
 
-/** @throws {Error} unless every present key is a known flag holding a boolean. */
+/** @throws {Error} unless every present key is a known flag holding a boolean, or a valid guidesSeen / guidesReset. */
 export function assertOnboardingPrefsInput(patch) {
-  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('onboarding prefs must be an object');
+  if (!isPlainObject(patch)) throw new Error('onboarding prefs must be an object');
   for (const [k, v] of Object.entries(patch)) {
-    if (!ONBOARDING_FLAGS.includes(k)) throw new Error(`unknown onboarding key ${JSON.stringify(k)}`);
-    if (typeof v !== 'boolean') throw new Error(`onboarding.${k} must be true or false`);
+    if (!ONBOARDING_KEYS.includes(k)) throw new Error(`unknown onboarding key ${JSON.stringify(k)}`);
+    if (k === 'guidesSeen') {
+      if (!isPlainObject(v)) throw new Error('onboarding.guidesSeen must be an object');
+      for (const [area, seen] of Object.entries(v)) {
+        if (!isGuideAreaId(area)) throw new Error(`unknown how-it-works area ${JSON.stringify(area)}`);
+        if (typeof seen !== 'boolean') throw new Error(`onboarding.guidesSeen.${area} must be true or false`);
+      }
+    } else if (typeof v !== 'boolean') {
+      throw new Error(`onboarding.${k} must be true or false`);
+    }
   }
 }
 
-/** Merge `patch` over the stored flags; a store with every flag false drops the key. */
+/** True when the patch only records that a guide was opened (it must not pin the interface mode). */
+export function isSeenOnlyPatch(patch) {
+  if (!isPlainObject(patch)) return false;
+  const keys = Object.keys(patch);
+  return keys.length > 0 && keys.every((k) => SEEN_ONLY_KEYS.includes(k));
+}
+
+/** Merge `patch` over the stored prefs (validated whole first); a store with every flag false and no guide seen drops the key. */
 export async function setOnboardingPrefs(patch = {}) {
   assertOnboardingPrefsInput(patch);
   const { onboarding: _previous, ...rest } = readSettings();
-  const next = { ...onboardingPrefs(), ...patch };
-  const allFalse = ONBOARDING_FLAGS.every((k) => !next[k]);
-  await persistSettings(allFalse ? rest : { ...rest, onboarding: next });
+  const current = onboardingPrefs();
+  const reset = patch.guidesReset === true;
+  const base = reset ? { ...current, workspaceGuideSeen: false, guidesSeen: {} } : current;
+  const flags = { ...base };
+  for (const k of ONBOARDING_FLAGS) if (k in patch) flags[k] = patch[k];
+  const guidesSeen = { ...base.guidesSeen };
+  for (const [area, seen] of Object.entries(patch.guidesSeen || {})) {
+    if (seen) guidesSeen[area] = true; else delete guidesSeen[area];
+  }
+  const { guidesSeen: _map, ...flagsOnly } = flags;
+  const empty = ONBOARDING_FLAGS.every((k) => !flagsOnly[k]) && Object.keys(guidesSeen).length === 0;
+  const next = Object.keys(guidesSeen).length ? { ...flagsOnly, guidesSeen } : flagsOnly;
+  await persistSettings(empty ? rest : { ...rest, onboarding: next });
   return onboardingPrefs();
 }
 

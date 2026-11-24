@@ -1,0 +1,42 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv5.1.0 [39m[90m/home/tomica/tool-formats/vt[39m
+
+ [32m✓[39m b.test.js [2m([22m[2m5 tests[22m[2m | [22m[33m1 skipped[39m[2m)[22m[32m 6[2mms[22m[39m
+ [31m❯[39m a.test.js [2m([22m[2m6 tests[22m[2m | [22m[31m1 failed[39m[2m | [22m[33m1 skipped[39m[2m)[22m[32m 13[2mms[22m[39m
+   [31m❯[39m outer a [2m(5)[22m
+     [32m✓[39m passes a[32m 2[2mms[22m[39m
+     [32m✓[39m inner a [2m(2)[22m
+       [32m✓[39m it's a "quoted" name with spaces a[32m 0[2mms[22m[39m
+       [2m[90m↓[39m[22m skipped a
+     [32m✓[39m second inner a [2m(1)[22m
+       [32m✓[39m another a[32m 0[2mms[22m[39m
+[31m     [31m×[31m fails a[39m[32m 8[2mms[22m[39m
+   [32m✓[39m top level a[32m 0[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m a.test.js[2m > [22mouter a[2m > [22mfails a
+[31m[1mAssertionError[22m: expected 1 to be 2 // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 2[39m
+[31m+ 1[39m
+
+[36m [2m❯[22m a.test.js:[2m11:37[22m[39m
+    [90m  9|[39m     [34mtest[39m([32m'another a'[39m[33m,[39m () [33m=>[39m {})[33m;[39m
+    [90m 10|[39m   })[33m;[39m
+    [90m 11|[39m   [34mtest[39m([32m'fails a'[39m[33m,[39m () [33m=>[39m { [34mexpect[39m([34m1[39m)[33m.[39m[34mtoBe[39m([34m2[39m)[33m;[39m })[33m;[39m
+    [90m   |[39m                                     [31m^[39m
+    [90m 12|[39m })[33m;[39m
+    [90m 13|[39m [34mtest[39m([32m'top level a'[39m[33m,[39m () [33m=>[39m {})[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m1 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m8 passed[39m[22m[2m | [22m[33m2 skipped[39m[90m (11)[39m
+[2m   Start at [22m 17:13:21
+[2m   Duration [22m 261ms[2m (import 38%, worker 25%, tests 20%, transform 16%, environment 1%)[22m
+
