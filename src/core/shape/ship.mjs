@@ -24,7 +24,7 @@ export function onePrBody(slices, keptUrl = null, { maxChars = Infinity } = {}) 
 
 /**
  * @param {{feature:{id,title,slices:Array<{index,title,pipelineId,pr:{url}|null, summary?:string, checklistMd?:string}>},
- *   mode:'stacked'|'one', maxBody?:number}} input
+ *   mode:'stacked'|'one', maxBody?:number, headPipelineId?:string|null}} input
  * @param {{commitChangelog(pipelineId, update):Promise<{ok,error?,kind?}>, push(pipelineId):Promise<{ok,error?}>,
  *   openOnePr({pipelineId, title, body}):Promise<{ok,url?,existed?,error?}>, adoptOnePr({url, pipelineId, body}):Promise<{ok,error?}>,
  *   markReady(prUrl):Promise<{ok,error?}>, close(prUrl, comment, pipelineId):Promise<{ok,error?}>,
@@ -33,11 +33,12 @@ export function onePrBody(slices, keptUrl = null, { maxChars = Infinity } = {}) 
  *   closed (mode 'one'): how many drafts were closed. The one PR replaces the last row's PR, so the rows cannot tell.
  *   One: slices may have no PR (the one ship flow opens none per slice); stacked needs every slice's PR.
  */
-export async function shipFeature({ feature, mode, maxBody = Infinity }, deps) {
+export async function shipFeature({ feature, mode, maxBody = Infinity, headPipelineId = null }, deps) {
   if (!SHIP_MODES.includes(mode)) return { ok: false, status: 400, error: 'mode must be stacked or one' };
   // A PR already closed (a withdrawn earlier ship) is no draft: nothing to close or to list.
   const slices = feature.slices.map((s) => (s.pr && s.pr.state === 'CLOSED' ? { ...s, pr: null } : s));
-  const last = slices[slices.length - 1];
+  // Shaper small runs: the slice whose branch ships (the latest finished); else the last row.
+  const last = (headPipelineId && slices.find((s) => s.pipelineId === headPipelineId)) || slices[slices.length - 1];
   // One ship flow: stacked marks every slice PR ready, so each needs one; One makes its own and closes only those that exist.
   const missing = mode === 'stacked' && slices.find((s) => !s.pr || !s.pr.url);
   if (missing) return { ok: false, status: 409, error: `slice ${missing.index} has no pull request yet` };

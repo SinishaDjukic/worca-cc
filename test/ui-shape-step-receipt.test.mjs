@@ -11,11 +11,13 @@ const OUTLINE = { why: 'too big', slices: [
   { id: 's3', title: 'Three', goal: 'g3', estimate: 'S', acceptance: [], dependsOn: [], inScope: [], outOfScope: [] },
 ] };
 const SPLIT = { id: 'o1', kind: 'plan', plan: { round: 1, revisable: true, outline: OUTLINE } };
+const SPLIT_SR = { id: 'o1', kind: 'plan', plan: { round: 1, revisable: true, outline: OUTLINE, smallRuns: true, challenge: { roles: [], challenger: true, rounds: 1, open: 2 } } };
 const REQUIREMENTS = { id: 'q1', kind: 'plan', plan: { round: 1, revisable: true, criteria: { ok: true, passed: 8, total: 8, items: [], criteria: [] }, decisions: [] } };
 const REQ_ERROR = { id: 'q2', kind: 'plan', plan: { round: 1, revisable: true, error: { message: 'boom' } } };
 const GATE = { id: 'g1', kind: 'gate', issues: [] };
 const RECOVERY = { id: 'r1', kind: 'recovery', recovery: { cls: 'auth', options: [{ id: 'retry' }, { id: 'pause' }] } };
 const CLARIFY = { id: 'c1', kind: 'questions', questions: [{ id: 'a', question: 'Where?' }, { id: 'b', question: 'Who?' }] };
+const CARE = { id: 'care-1', kind: 'care', care: { pick: { position: 'thorough', reason: 'r' } } };
 const TWO = { answers: [{ id: 'a', question: 'Where?', choice: 'Chat' }, { id: 'b', question: 'Who?', choice: 'Admins' }] };
 
 const ROWS = [
@@ -31,12 +33,17 @@ const ROWS = [
   ['outline of 3, approve', SPLIT, { decision: 'approve', approveEach: false }, {}, 'Split into 3 runs'],
   ['outline of 3, approve after a merge', SPLIT, { decision: 'approve', edits: [{ op: 'merge', id: 's1' }] }, {}, 'Split into 2 runs'],
   ['outline, flat', SPLIT, { decision: 'flat' }, {}, 'Not split · planned as one run'],
+  ['small runs Split, approve keeping 2 objections', SPLIT_SR, { decision: 'approve', approveEach: false, openObjections: 'kept' }, {}, 'Runs approved · 2 objections kept'],
+  ['small runs Split, approve', SPLIT_SR, { decision: 'approve', approveEach: false }, {}, 'Runs approved'],
+  ['small runs Split, revise', SPLIT_SR, { decision: 'revise', feedback: 'x' }, {}, 'Changes asked · Runs'],
   ['gate, another', GATE, { decision: 'another' }, {}, 'Another cycle started'],
   ['gate, continue', GATE, { decision: 'continue' }, {}, 'Accepted as is'],
   ['recovery, retry', RECOVERY, { decision: 'retry' }, {}, 'Retried'],
   ['recovery, pause', RECOVERY, { decision: 'pause' }, {}, 'Paused'],
   ['recovery, abort', RECOVERY, { decision: 'abort' }, {}, 'Aborted'],
   ['clarify, shaping, 2 of 2', CLARIFY, TWO, { shaping: true }, 'Clarify · 2 answers'],
+  ['care below the pick (B2)', CARE, { care: { position: 'lean' } }, {}, 'Care: Lean · your choice · Worca recommended Thorough'],
+  ['care at the pick (B2)', CARE, { care: { position: 'thorough' } }, {}, "Care: Thorough · Worca's pick"],
 ];
 
 for (const [name, pq, payload, opts, want] of ROWS) {

@@ -573,6 +573,47 @@ test('one-level run page: the Requirements card is answered on the card; the hea
   assert.deepEqual(posts.map((p) => p.decision), ['approve'], 'the card\'s primary approves');
 });
 
+// Finding 6: the Chat side panel's bar drew the step's primary a second time. Under the small-runs marker it is plain.
+async function openPanelRun(pendingQuestion, route = 'chat/new/run/run-rr') {
+  const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', []) });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [reqRun(pendingQuestion)] });
+  ctx.go(route);
+  await ctx.settle(6);
+  const doc = ctx.window.document;
+  const screen = route.startsWith('chat/') ? doc.querySelector('[data-chat-panel] .crp-host > .rd') : doc.querySelector('#run-detail');
+  return { ctx, screen, bar: screen.querySelector('.rd-actions') };
+}
+const visiblePrimaries = (root) => [...root.querySelectorAll('.btn-primary')].filter((b) => !b.closest('[hidden], .hidden'));
+
+test('Chat side panel, small-runs Requirements: the bar\'s step button is plain, the step\'s Agree is the one primary', async () => {
+  const { screen, bar } = await openPanelRun(REQ_ASK({ smallRuns: true }));
+  assert.equal(screen.dataset.presentation, 'panel');
+  assert.deepEqual(barReads(barAnswer(bar)), ['Agree requirements', false]);
+  const primaries = visiblePrimaries(screen);
+  assert.equal(primaries.length, 1, primaries.map((b) => b.textContent).join(' | '));
+  assert.ok(primaries[0].classList.contains('plan-approve'));
+});
+
+test('Chat side panel, no small-runs marker: the bar keeps dev\'s primary', async () => {
+  const { screen, bar } = await openPanelRun(REQ_ASK());
+  assert.equal(screen.dataset.presentation, 'panel');
+  assert.deepEqual(barReads(barAnswer(bar)), ['Agree and plan', true]);
+});
+
+test('Chat side panel, the Care ask (only asked on a small-runs run): the bar\'s answer is not a primary', async () => {
+  const { screen, bar } = await openPanelRun({ id: 'care-1', kind: 'care', care: { pick: { position: 'thorough', reason: 'r' } } });
+  assert.equal(screen.dataset.presentation, 'panel');
+  assert.ok(barAnswer(bar), 'the bar keeps its step button');
+  assert.equal(barAnswer(bar).classList.contains('btn-primary'), false);
+});
+
+test('full run page, small-runs Requirements: still no bar answer', async () => {
+  const { screen, bar } = await openPanelRun(REQ_ASK({ smallRuns: true }), 'running/run-rr');
+  assert.notEqual(screen.dataset.presentation, 'panel');
+  assert.equal(barAnswer(bar), null);
+});
+
 test('Chat run card, Ask for changes open: Answer is not a primary and its click reaches the field; Cancel restores it', async () => {
   const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', []) });
   ctx.wsBox.ws.dispatch('open', {});

@@ -389,7 +389,8 @@ import { renderReleaseRow } from './shape/release-row.mjs';
 import { featureFocusOf, focusFeatureControl, featureMenuItems } from './shape/feature-actions.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
-import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget, answerFieldOpen } from './shape/step-card.mjs';
+import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget, answerFieldOpen, smallRunsAsk } from './shape/step-card.mjs';
+import { renderCareStart } from './shape/proposal.mjs';
 import { installInputMode } from './input-mode.mjs';
 import { noteAnswer, forgetAnswer } from './shape/step-receipt.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
@@ -6959,6 +6960,17 @@ registerAskRenderer('workflow', {
   title: (pq) => `Auto proposes a workflow · round ${(pq.workflow && pq.workflow.round) || 1}`,
   count: () => 'workflow',
   render: (panel, pq, ctx) => renderWorkflowBody(ctx.run, panel, pq),
+});
+// Shaper small runs B2: the Start step (the Care ask) of a marked planning run; a 422 paints under the dial.
+registerAskRenderer('care', {
+  title: () => 'Your turn: how much care?',
+  render: (panel, pq, ctx) => {
+    const body = renderCareStart(ctx.doc || document, pq, { ...stepDeps(ctx, pq), submit: (p) => stepPost(ctx.run, p) });
+    panel.__care = body;
+    body.render(panel);
+  },
+  collect: (panel) => (panel && panel.__care ? panel.__care.collect() : null),
+  setErrors: (panel, errors) => { if (panel && panel.__care) panel.__care.setErrors(errors); },
 });
 // Shape it first (S4): registered ungated: the only way to answer a run still held when the gate goes off.
 // title/count fill the hidden .qpanel-head (F28); askHeading is what people read. Kept for completeness.
@@ -38257,7 +38269,8 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
     labels: { answer: answerLabelOf(screen.querySelector('.rd-questions')) },
-    plain: answerFieldOpen(screen.querySelector('.rd-questions')) ? ['answer'] : [],
+    // Small runs: the step's own button is the one primary (the chat card's `plain: … (oneNow && painted)`).
+    plain: answerFieldOpen(screen.querySelector('.rd-questions')) || smallRunsAsk(r.pendingQuestion) ? ['answer'] : [],
     onAction: (id, b) => runAction({ runId: r.runId, pipelineId: r.pipelineId, title: r.title, status: st, workspaceId: r.workspaceId || null }, id, b, m),
   });
   if (split) split.hidden = !!pause && pause.hidden;      // the split wrapper follows its button

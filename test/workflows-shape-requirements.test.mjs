@@ -209,3 +209,43 @@ test('the requirements refiner asks for persona and reason, real questions, and 
   assert.match(text, /^3\. .*Do not also list that conflict in the decisions file\./m);
   assert.doesNotMatch(text, /When you turn a conflict into a decision/);
 });
+
+// Small runs B3 (D2, D7): Compliance as a perspective or a lead only with the flag.
+test('resolveShapeRequest: compliance as a perspective or as shape.lead is refused off and admitted on', () => {
+  const off = resolveShapeRequest({ shape: { perspectives: ['compliance'] } });
+  assert.equal(off.ok, false);
+  assert.match(off.error, /unknown perspective\(s\): compliance/);
+  const on = resolveShapeRequest({ shape: { perspectives: ['compliance'] } }, { smallRuns: true });
+  assert.equal(on.ok, true);
+  assert.deepEqual(on.shape.perspectives, ['product', 'compliance']);
+  const leadOff = resolveShapeRequest({ shape: { lead: 'compliance' } });
+  assert.equal(leadOff.ok, false);
+  assert.doesNotMatch(leadOff.error, /compliance, /);
+  assert.equal(leadOff.error, 'shape.lead must be one of product, architect, ux, qa, security, devops');
+  const leadOn = resolveShapeRequest({ shape: { lead: 'compliance', size: 'large' } }, { smallRuns: true });
+  assert.equal(leadOn.ok, true);
+  assert.equal(leadOn.shape.lead, 'compliance');
+  assert.ok(leadOn.shape.perspectives.includes('compliance'));
+  assert.equal(leadOn.workflowId, 'wf_shape_req');
+});
+
+// Small runs B3, owner direction: POST /api/run's shape fills a missing lead from the saved profile, else Product.
+test('resolveShapeStart: no lead takes the saved lead, else Product; a given lead, a slice or the flag off keep today\'s result', async () => {
+  const { resolveShapeStart } = await import('../src/core/shape/run.mjs');
+  const asked = [];
+  const deps = (on, lead) => ({ smallRunsOn: () => on, profileFor: (person, opts) => { asked.push([person, opts]); return { lead }; } });
+  const saved = resolveShapeStart({ shape: { size: 'large' } }, { person: 'ana', deps: deps(true, 'ux') });
+  assert.equal(saved.shape.lead, 'ux');
+  assert.equal(saved.workflowId, 'wf_shape_ux_req', 'the lead joins the perspectives, as a card lead does');
+  assert.deepEqual(asked, [['ana', { smallRuns: true }]]);
+  assert.equal(resolveShapeStart({ shape: { size: 'large' } }, { deps: deps(true, null) }).shape.lead, 'product');
+  assert.equal(resolveShapeStart({ shape: { size: 'large', lead: 'qa' } }, { deps: deps(true, 'ux') }).shape.lead, 'qa');
+  assert.equal(resolveShapeStart({ shape: { size: 'large' } }, { deps: deps(false, 'ux') }).shape.lead, undefined);
+  assert.deepEqual(resolveShapeStart({ shape: { size: 'large' } }, { deps: deps(false, 'ux') }), resolveShapeRequest({ shape: { size: 'large' } }));
+  assert.equal(resolveShapeStart({ shape: { perspectives: ['nope'] } }, { deps: deps(true, 'ux') }).ok, false);
+  assert.equal(asked.length, 2, 'a given lead or the flag off reads no profile');
+  const small = resolveShapeStart({ shape: { size: 'small' } }, { deps: deps(true, 'security') });
+  assert.deepEqual(small, resolveShapeRequest({ shape: { size: 'small' } }, { smallRuns: true }), 'a run with no Requirements step keeps its shape');
+  assert.ok(!small.shape.perspectives.includes('security'), 'and gains no reviewer');
+  assert.equal(asked.length, 2, 'a run with no Requirements step reads no profile');
+});

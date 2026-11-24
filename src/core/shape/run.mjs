@@ -5,11 +5,14 @@ import {
   SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID, SHAPE_SLICE_REQ_WORKFLOW_IDS,
 } from '../graph/builtin-workflows.mjs';
 import { shapeRequirementsEligible } from '../../shared/shape/requirements.mjs';
-import { isAnswererLead, ANSWERER_LEAD_KEYS } from '../../shared/answerer.mjs';
+import { isAnswererLead, answererLeadKeys } from '../../shared/answerer.mjs';
 import { normalizePerspectives, DEFAULT_PERSPECTIVES } from '../../shared/shape/perspectives.mjs';
 import { normalizeOutline, normalizeEdits, applyOutlineEdits, sliceRequirementIds } from '../../shared/shape/slices.mjs';
 import { normalizePicks } from '../../shared/review/findings.mjs';
 import { validateDecisionPicks } from '../../shared/review/decisions.mjs';
+import { splitRulesOptions, shaperSmallRunsOn } from './small-runs.mjs';
+import { answererProfileFor } from '../settings.mjs';
+import { splitApprovable, splitRefusedMessage } from './split-step.mjs';
 
 export const PLAN_ASK_KIND = 'plan';
 export const PLAN_FEEDBACK_MAX = 8000;
@@ -18,10 +21,17 @@ const SHAPE_INTERNAL_FIELDS = new Set(['slice', 'replaces', 'requirementsFirst']
 const SLICES_MODES = new Set(['auto', 'off']);
 const SIZES = new Set(['small', 'medium', 'large']);
 
-/** shape.slice of a slice ticket (L3); null when malformed. */
+const DEV_STORED_SLICES_MAX = 12;   // dev's normalizeOutline never keeps more, so a larger ref was stored under small runs
+
+/** A stored ref made under small runs: over dev's 12 slices, or carrying small runs' `confirmed` key. */
+const storedSmallRuns = (raw) => raw.total > DEV_STORED_SLICES_MAX
+  || (Array.isArray(raw.outline?.slices) && raw.outline.slices.length > DEV_STORED_SLICES_MAX)
+  || Array.isArray(raw.outline?.confirmed);
+
+/** shape.slice of a slice ticket (L3); null when malformed. A ref stored under small runs keeps its rules with the flag off. */
 function normalizeSliceRef(raw) {
   if (!raw || typeof raw !== 'object') return null;
-  const o = normalizeOutline(raw.outline);
+  const o = normalizeOutline(raw.outline, { ...splitRulesOptions(), ...(storedSmallRuns(raw) ? { smallRuns: true } : {}) });
   const { feature, index, total } = raw;
   if (typeof feature !== 'string' || !feature || !o.ok || !Number.isInteger(index) || index < 1
     || total !== o.outline.slices.length || index > total) return null;
@@ -40,7 +50,7 @@ export const isShapeWorkflowId = (id) => id === SHAPE_WORKFLOW_ID || id === SHAP
  * Shaper workflow: the requirements variant is chosen when the run starts.
  * @returns {{ok:true, shape:null|{perspectives:string[], slices?:string, size?:string, slice?:object, replaces?:string}, workflowId:string|null}|{ok:false, error:string}}
  */
-export function resolveShapeRequest({ shape, workflowId }, { internal = false, proposal = false } = {}) {
+export function resolveShapeRequest({ shape, workflowId }, { internal = false, proposal = false, smallRuns = false } = {}) {
   const named = typeof workflowId === 'string' && workflowId.trim() ? workflowId.trim() : null;
   if (shape === undefined && !isShapeWorkflowId(named)) return { ok: true, shape: null, workflowId: named };
   if (shape !== undefined && (shape === null || typeof shape !== 'object' || Array.isArray(shape))) {
@@ -52,11 +62,11 @@ export function resolveShapeRequest({ shape, workflowId }, { internal = false, p
   if (named && !isShapeWorkflowId(named)) {
     return { ok: false, error: `a shaped run uses the Shaper workflow (${SHAPE_WORKFLOW_ID}), not "${named}"` };
   }
-  if (shape?.lead !== undefined && !isAnswererLead(shape.lead)) {
-    return { ok: false, error: `shape.lead must be one of ${ANSWERER_LEAD_KEYS.join(', ')}` };
+  if (shape?.lead !== undefined && !isAnswererLead(shape.lead, { smallRuns })) {
+    return { ok: false, error: `shape.lead must be one of ${answererLeadKeys({ smallRuns }).join(', ')}` };
   }
   const askedP = shape?.perspectives ?? [...DEFAULT_PERSPECTIVES];
-  const p = normalizePerspectives(shape?.lead && Array.isArray(askedP) ? [...askedP, shape.lead] : askedP);
+  const p = normalizePerspectives(shape?.lead && Array.isArray(askedP) ? [...askedP, shape.lead] : askedP, { smallRuns });
   if (!p.ok) return { ok: false, error: p.error };
   if (shape?.slices !== undefined && !SLICES_MODES.has(shape.slices)) return { ok: false, error: 'shape.slices must be "auto" or "off"' };
   if (shape?.size !== undefined && !SIZES.has(shape.size)) return { ok: false, error: 'shape.size must be small, medium or large' };
@@ -102,17 +112,35 @@ export function resolveShapeRequest({ shape, workflowId }, { internal = false, p
   };
 }
 
+/**
+ * POST /api/run's shape: resolveShapeRequest under the live `shaperSmallRuns` flag. Small runs B3 (owner): a shaped run
+ * started without a lead (the API, the CLI, a re-plan) leads as `person`'s saved lead, else Product; nothing is asked.
+ * Only a run with a Requirements step takes it; a small run or a slice ticket keeps its shape as fired. `deps` are test seams.
+ */
+export function resolveShapeStart({ shape, workflowId }, { internal = false, person = null, deps = {} } = {}) {
+  const smallRuns = (deps.smallRunsOn || shaperSmallRunsOn)();
+  const req = resolveShapeRequest({ shape, workflowId }, { internal, smallRuns });
+  if (!req.ok || !smallRuns || !req.shape || req.shape.lead !== undefined || req.shape.slice || !shapeRequirementsEligible(req.shape)) return req;
+  const lead = (deps.profileFor || answererProfileFor)(person, { smallRuns }).lead || 'product';
+  return resolveShapeRequest({ shape: { ...(shape || {}), lead }, workflowId }, { internal, smallRuns });
+}
+
 /** The `plan` ask's validator (RunHarness.answer → 422 on {ok:false}). `conflicts` are the asked round's conflicts:
  *  an optional `raw.conflicts` holds the person's picks for them, on any decision. `decisions` (a criteria hold) are
  *  the hold's decisions: `raw.decisions` picks are checked against them and every decision gets a pick. `error` (an ask
  *  whose files could not be read) admits `retry` and refuses approve. A failing `criteria` check refuses approve too. */
-export function validatePlanAnswer(raw, { revisable = false, perspectives = null, conflicts = [], decisions = null, error = false, criteria = null } = {}) {
+export function validatePlanAnswer(raw, { revisable = false, perspectives = null, conflicts = [], decisions = null, error = false, criteria = null, smallRuns = false } = {}) {
   const bad = (message) => ({ ok: false, errors: [{ path: 'decision', code: 'invalid', message }] });
   const d = raw && typeof raw === 'object' ? raw.decision : undefined;
   if (error && d === 'retry') return { ok: true, payload: { decision: 'retry' } };
   if (d !== 'approve' && d !== 'stop' && d !== 'revise') return bad('decision must be approve, revise or stop');
   if (error && d === 'approve') return bad('nothing to approve: try again or ask for changes');
   if (criteria && criteria.ok === false && d === 'approve') {
+    const failing = (criteria.items || []).filter((i) => !i.pass);
+    // Small runs B3 (D12): when every failing row is a missing example, say so.
+    if (failing.length && failing.every((i) => i.code === 'no-example')) {
+      return bad(`${failing.length === 1 ? '1 requirement has' : `${failing.length} requirements have`} no example yet: ask for changes`);
+    }
     return bad(`the requirements check has ${criteria.total - criteria.passed} to fix: ask for changes`);
   }
   const picks = raw.conflicts === undefined ? null : normalizePicks(raw.conflicts, conflicts);
@@ -133,7 +161,7 @@ export function validatePlanAnswer(raw, { revisable = false, perspectives = null
   }
   const payload = { decision: 'revise', feedback, ...(source === 'check' ? { source } : {}) };
   if (raw.perspectives !== undefined) {
-    const p = normalizePerspectives(raw.perspectives);
+    const p = normalizePerspectives(raw.perspectives, { smallRuns });
     if (!p.ok) return { ok: false, errors: [{ path: 'perspectives', code: 'invalid', message: p.error }] };
     const had = Array.isArray(perspectives) ? perspectives : DEFAULT_PERSPECTIVES;
     if (had.includes('ux') !== p.perspectives.includes('ux')) {
@@ -145,9 +173,13 @@ export function validatePlanAnswer(raw, { revisable = false, perspectives = null
   return { ok: true, payload: withPicks(payload) };
 }
 
-/** The outline ask's validator (L4). `outline` is the one asked about; edits are re-applied to it, never trusted. */
-export function validateOutlineAnswer(raw, { outline, revisable = false } = {}) {
+/** The outline ask's validator (L4). `outline` is the one asked about; edits are re-applied to it, never trusted.
+ *  Small runs B4: `rules` are the run's split rules (`splitRules`). With `rules.smallRuns` the `confirm` edit is
+ *  accepted, an approve is refused when a `waivable: false` row fails on the server's outline plus the edits (D12),
+ *  `approveEach` is forced false (D15), and `openObjections: 'kept'` is taken only when `open` objections remain (D14). */
+export function validateOutlineAnswer(raw, { outline, revisable = false, rules = {}, open = 0 } = {}) {
   const bad = (path, message) => ({ ok: false, errors: [{ path, code: 'invalid', message }] });
+  const smallRuns = rules?.smallRuns === true;
   const d = raw && typeof raw === 'object' ? raw.decision : undefined;
   if (d === 'flat' || d === 'stop') return { ok: true, payload: { decision: d } };
   if (d === 'revise') {
@@ -158,13 +190,25 @@ export function validateOutlineAnswer(raw, { outline, revisable = false } = {}) 
     return { ok: true, payload: { decision: 'revise', feedback } };
   }
   if (d !== 'approve') return bad('decision', 'decision must be approve, flat, revise or stop');
-  const e = normalizeEdits(raw.edits);
+  const e = normalizeEdits(raw.edits, { confirm: smallRuns });
   if (!e.ok) return bad('edits', e.error);
   const applied = applyOutlineEdits(outline, e.edits);
   if (!applied.ok) return bad('edits', applied.error);
   if (raw.approveEach !== undefined && typeof raw.approveEach !== 'boolean') return bad('approveEach', 'approveEach must be true or false');
-  return { ok: true, payload: { decision: 'approve', ...(e.edits.length ? { edits: e.edits } : {}), approveEach: raw.approveEach === true } };
+  if (raw.openObjections !== undefined && (raw.openObjections !== 'kept' || !smallRuns || !(open > 0))) {
+    return bad('openObjections', 'openObjections can only be "kept", and only while objections are open');
+  }
+  if (smallRuns) {
+    const gate = splitApprovable(outline, e.edits, rules);
+    if (!gate.ok) return { ok: false, errors: [{ path: 'decision', code: SPLIT_REFUSED_CODE, message: splitRefusedMessage(gate.failing) }] };
+  }
+  return { ok: true, payload: { decision: 'approve', ...(e.edits.length ? { edits: e.edits } : {}), approveEach: !smallRuns && raw.approveEach === true,
+    ...(raw.openObjections === 'kept' ? { openObjections: 'kept' } : {}) } };
 }
+
+export const SPLIT_REFUSED_CODE = 'split-not-approvable';
+
+export { splitRefusedMessage };
 
 /** state.shaping of a shaped run; `saved` is the resume point's copy (a resumed run keeps its versions). */
 export function initialShaping(shape, saved = null) {

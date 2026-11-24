@@ -4,9 +4,10 @@
 import { askKindOf } from '../ask/registry.mjs';
 import { isShapingRun } from './plan-text.mjs';
 import { buildRoleFold } from './role-rows.mjs';
+import { splitBlockers } from '../../../src/shared/shape/slices.mjs';
 
 export const SEND_FAILED = 'Could not send your answer. Try again.';
-const CHIP = { clarify: 'Clarify', plan: 'Plan', outline: 'Runs', gate: 'Gate', recovery: 'Recovery' };
+const CHIP = { care: 'Start', clarify: 'Clarify', plan: 'Plan', outline: 'Runs', gate: 'Gate', recovery: 'Recovery' };
 
 /** 'outline' for a plan ask carrying an outline (the Split card), else the registry kind. */
 export function stepKind(pq) {
@@ -17,10 +18,11 @@ export function stepKind(pq) {
 /** The Requirements step's ask: a `plan` kind carrying the criteria check, its load error or the attached features (the plan ask carries none). */
 export const isRequirementsAsk = (pq) => !!pq && askKindOf(pq) === 'plan' && !!pq.plan && !!(pq.plan.criteria || pq.plan.error || pq.plan.attached);
 
-/** Which asks draw as step cards: plan, gate and recovery always; Clarify only for a shaping run with the gate on. */
+/** Which asks draw as step cards: care (B2's Start step), plan, gate and recovery always; Clarify only for a shaping run
+ *  with the gate on. */
 export function isStepCard(pq, run, gateOn) {
   const k = askKindOf(pq);
-  if (k === 'plan' || k === 'gate' || k === 'recovery') return true;
+  if (k === 'care' || k === 'plan' || k === 'gate' || k === 'recovery') return true;
   return k === 'clarify' && !!gateOn && isShapingRun(run);
 }
 
@@ -33,13 +35,23 @@ export function stepChip(pq, run) {
   return CHIP[k] || '';
 }
 
+export const SPLIT_APPROVE_TITLE = 'Your turn: approve the runs';
+export const SPLIT_FIX_TITLE = 'Your turn: fix the split';
+/** Small runs B4 (D12): whether a small-runs Split fails a rule nobody can waive (ownership, coverage, confirmRole): the
+ *  server's own gate (`splitBlockers`), on the outline plus the card's edits. */
+export function splitRefused(outline, care, edits = []) {
+  if (!outline || !Array.isArray(outline.slices)) return false;
+  return !splitBlockers(outline, edits, { smallRuns: true, care }).ok;
+}
+
 /** The visible title; `who` is the step label (nodeLabel), '' when unknown. */
 export function stepTitle(pq, who = '') {
   if (isRequirementsAsk(pq)) return 'Your turn: agree the requirements';
   switch (stepKind(pq)) {
+    case 'care': return 'Your turn: how much care?';
     case 'clarify': return 'A few questions before the plan';
     case 'plan': return 'Your turn: approve the plan';
-    case 'outline': return 'Your turn: approve the runs';
+    case 'outline': return pq.plan.smallRuns === true && splitRefused(pq.plan.outline, pq.plan.care) ? SPLIT_FIX_TITLE : SPLIT_APPROVE_TITLE;
     case 'gate': return who ? `${who} needs a decision` : 'A decision is needed';
     case 'recovery': return who ? `${who} failed` : 'A step failed';
     default: return '';
@@ -47,8 +59,14 @@ export function stepTitle(pq, who = '') {
 }
 
 /** The waiting card has hidden its foot for its open Ask for changes field (the Requirements card): the field's Send
- *  changes is the only primary, so the host's bar must not draw Answer as one. */
-export const answerFieldOpen = (root) => !!root && !!root.querySelector('.qpanel:not(.hidden) .plan-actions[hidden]');
+ *  changes is the only primary, so the host's bar must not draw Answer as one. A refused Split (small runs B4) has no
+ *  primary at all and marks its foot `data-no-primary`: the bar draws none either. */
+export const answerFieldOpen = (root) => !!root && !!root.querySelector('.qpanel:not(.hidden) .plan-actions[hidden], .qpanel:not(.hidden) .plan-actions[data-no-primary]');
+
+/** The small-runs marker, read from the open ask alone, never from the live flag: the orchestrator stamps
+ *  `plan.smallRuns` on a marked run's plan, requirements and split asks, and asks Care only on a marked run. Under it
+ *  the step draws its own primary, so a host's bar draws its step button plain (as the chat card's `oneNow`). */
+export const smallRunsAsk = (pq) => !!pq && (pq.kind === 'care' || (!!pq.plan && pq.plan.smallRuns === true));
 
 /** Run 4 (D4): the control a waiting question takes the focus on — the card's own primary (Approve 2 runs, Approve and
  *  build) when it has an enabled one in a foot that shows, else its open Ask for changes field, else its first control
@@ -92,11 +110,11 @@ export function stepSender(deps, err, { after = () => {} } = {}) {
   };
 }
 
-const errLine = (doc) => {
+export const errLine = (doc) => {
   const err = doc.createElement('div'); err.className = 'plan-err'; err.hidden = true; err.setAttribute('role', 'alert');
   return err;
 };
-const ownButton = (doc, cls, text, onClick) => {
+export const ownButton = (doc, cls, text, onClick) => {
   const b = doc.createElement('button'); b.type = 'button'; b.className = `btn ${cls}`; b.textContent = text;
   b.addEventListener('click', (e) => { e.stopPropagation(); if (!b.disabled) onClick(); });
   return b;

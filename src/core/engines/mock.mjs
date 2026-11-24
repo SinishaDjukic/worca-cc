@@ -602,6 +602,12 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
   }
 
   let text = `[mock] role ${role} complete`;
+  // B4 (D17): a Split challenge round is marked by its output file, whatever agent runs it.
+  if (m.MOCK_SPLIT_CHALLENGE) {
+    text = await mockSplitChallenge(m, cycle, onEvent);
+    safeEmit(onEvent, { type: 'result', costUsd: 0, raw: { mock: true, type: 'result', total_cost_usd: 0 } });
+    return { text, exitCode: 0 };
+  }
   switch (role) {
     case MOCK_ROLE_CLARIFY:
       text = await mockClarify(m, cycle, onEvent);
@@ -1008,6 +1014,41 @@ function mockOutlineRequirements(outline, requirementsText) {
   return { ...outline, slices, leftOut: [{ id: ids.at(-1), reason: 'Moved to a later feature' }] };
 }
 
+/** Shaper small runs B4 (D17): `WORCA_MOCK_SPLIT_OUTLINE=pass|ownership|coverage|confirmRole` shapes the small-runs
+ *  outline: one run per agreed id but the last (within every Care's cap), and the last id confirmed by Security.
+ *  `ownership` also gives run 2 the first id, `coverage` drops the confirmation, `confirmRole` names Legal. */
+function mockSplitOutline(mode, requirementsText) {
+  const ids = criteriaList(requirementsText).map((c) => c.id);
+  if (ids.length < 3) return null;
+  const owned = ids.slice(0, -1);
+  const slices = owned.map((id, i) => ({
+    id: `s${i + 1}`, title: `Deliver ${id}`, goal: `People get what ${id} asks for.`, inScope: [id], outOfScope: [],
+    acceptance: [`GET /api/x/${i + 1} returns 200`], dependsOn: i ? [`s${i}`] : [], estimate: 'medium',
+    requirements: mode === 'ownership' && i === 1 ? [id, owned[0]] : [id],
+  }));
+  const confirmed = mode === 'coverage' ? [] : [{ id: ids.at(-1), role: mode === 'confirmRole' ? 'Legal' : 'Security' }];
+  return { why: 'One requirement per run, each building on the last.', slices, leftOut: [], confirmed };
+}
+
+/** B4 (D17): one Split challenge round. `WORCA_MOCK_SPLIT_CHALLENGE` is a JSON list of objections `{role, fix, severity?,
+ *  status?, ids?}` raised every round, or a list of such lists, one per round; unset = no objections. */
+async function mockSplitChallenge(m, cycle, onEvent) {
+  let table = [];
+  try { table = JSON.parse(process.env.WORCA_MOCK_SPLIT_CHALLENGE || '[]') || []; } catch { table = []; }
+  const list = Array.isArray(table[0]) ? (table[cycle - 1] || []) : table;
+  const roles = new Map();
+  (Array.isArray(list) ? list : []).forEach((o, i) => {
+    if (!o || typeof o.role !== 'string') return;
+    roles.set(o.role, [...(roles.get(o.role) || []), { id: o.id || `c${cycle}-${i + 1}`, severity: o.severity || 'major',
+      fix: o.fix || 'Merge the first two runs', status: o.status || 'open', ...(o.reason ? { reason: o.reason } : {}), ids: o.ids || [] }]);
+  });
+  const body = { roles: [...roles].map(([key, findings]) => ({ key, findings })) };
+  await ensureDir(m.MOCK_SPLIT_CHALLENGE);
+  await writeFile(m.MOCK_SPLIT_CHALLENGE, JSON.stringify(body, null, 2) + '\n', 'utf8');
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_SPLIT_CHALLENGE}`, raw: { mock: true, file: m.MOCK_SPLIT_CHALLENGE } });
+  return `[mock] split challenge round ${cycle}: ${list.length || 0} objection(s)`;
+}
+
 async function mockPlannerPlan(m, onEvent, prompt = '') {
   const out = m.MOCK_OUT;
   const base = m.MOCK_BASE || 'feature';
@@ -1025,7 +1066,10 @@ async function mockPlannerPlan(m, onEvent, prompt = '') {
       return `[mock] planner-plan: outline edited at ${m.MOCK_SLICES}`;
     }
     const fixed = /\bplan this in 3 slices\b/i.test(prompt) ? MOCK_OUTLINE_3 : MOCK_OUTLINE;
-    const outline = m.MOCK_REQUIREMENTS ? mockOutlineRequirements(fixed, await readFile(m.MOCK_REQUIREMENTS, 'utf8').catch(() => '')) : fixed;
+    const reqText = m.MOCK_REQUIREMENTS ? await readFile(m.MOCK_REQUIREMENTS, 'utf8').catch(() => '') : '';
+    const splitMode = process.env.WORCA_MOCK_SPLIT_OUTLINE;
+    const split = m.MOCK_REQUIREMENTS && ['pass', 'ownership', 'coverage', 'confirmRole'].includes(splitMode) ? mockSplitOutline(splitMode, reqText) : null;
+    const outline = split || (m.MOCK_REQUIREMENTS ? mockOutlineRequirements(fixed, reqText) : fixed);
     await ensureDir(m.MOCK_SLICES);
     await writeFile(m.MOCK_SLICES, JSON.stringify(outline, null, 2) + '\n', 'utf8');
     safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_SLICES}`, raw: { mock: true, file: m.MOCK_SLICES } });
@@ -1105,11 +1149,16 @@ export const MOCK_REQUIREMENTS_DECISIONS = Object.freeze({ decisions: [
 /** Agreed `- **R-po-N** …` lines of the task text (a Requirements spec start), kept unchanged. */
 const specCriteria = (text) => [...String(text || '').matchAll(/^- \*\*(R-po-\d+)\*\* (.+)$/gm)].map((x) => [x[1], x[2]]);
 
+/** Small runs B3 (D13): every requirement carries one indented `Example:` line, except the ids listed in
+ *  WORCA_MOCK_NO_EXAMPLE (a comma list, for tests). */
 function mockRequirementsMarkdown(spec = []) {
   const have = new Set(spec.map(([id]) => id));
   const rows = [...spec, ...MOCK_REQUIREMENTS_CRITERIA.filter(([id]) => !have.has(id))];
-  return `# Requirements\n\n${rows.map(([id, text]) => `- **${id}** ${text}`).join('\n')}\n`;
+  const bare = new Set(String(process.env.WORCA_MOCK_NO_EXAMPLE || '').split(',').map((x) => x.trim()).filter(Boolean));
+  const row = ([id, text]) => `- **${id}** ${text}${bare.has(id) ? '' : `\n  Example: ${mockExample(id)}`}`;
+  return `# Requirements\n\n${rows.map(row).join('\n')}\n`;
 }
+const mockExample = (id) => `a person with two runs exports them and checks ${id} on the result`;
 
 /** One `Covers:` line per criterion of the bound requirements, except the ids in WORCA_MOCK_UNCOVERED. */
 function mockDeliveryLines(requirementsText) {
@@ -1270,7 +1319,11 @@ async function mockDispositions(findingsText) {
   if (!path) return null;
   const knob = (name) => { try { return JSON.parse(process.env[name] || 'null'); } catch { return null; } };
   const table = knob('WORCA_MOCK_DISPOSITIONS') || {};
-  const conflicts = knob('WORCA_MOCK_CONFLICTS');
+  // An entry may name the `round` it is raised in (the findings' ids carry it); one without a round goes in every round.
+  const round = Math.max(0, ...[...findingsText.matchAll(FINDING_ID_RE)].map(([, id]) => Number(id.split('-')[1]) || 0));
+  const rawConflicts = knob('WORCA_MOCK_CONFLICTS');
+  const conflicts = Array.isArray(rawConflicts)
+    ? rawConflicts.filter((c) => c?.round === undefined || c.round === round).map(({ round: _r, ...c }) => c) : null;
   const dispositions = [];
   for (const [, id] of findingsText.matchAll(FINDING_ID_RE)) {
     const status = table[id] || 'fixed';
@@ -1439,21 +1492,24 @@ export function fitDuplicates(planText, briefText) {
 }
 
 /** Role mode (spec §3): `WORCA_MOCK_ROLE_REVIEW='{"ux":{"1":"critical"}}'` picks a role's severity per round;
- *  'none' = no issue. Default: one minor finding (non-blocking), so mock shape runs do one round unless a test asks.
+ *  'none' = no issue. An object value's `findings` (2–4) raises that many findings (small runs B3 conflict tests). Default: one minor finding (non-blocking), so mock shape runs do one round unless a test asks.
  *  An object value `{"severity":"major","requirement":"R-po-1"}` also names the agreed requirement the finding
  *  concerns (Shaper requirements s3, D15). */
 function roleSeverity(role, cycle) {
   let table = {};
   try { table = JSON.parse(process.env.WORCA_MOCK_ROLE_REVIEW || '{}') || {}; } catch { table = {}; }
   const v = table?.[role]?.[String(cycle)];
-  if (v && typeof v === 'object') return { severity: v.severity || 'minor', requirement: typeof v.requirement === 'string' ? v.requirement : null };
-  return { severity: v || 'minor', requirement: null };
+  if (v && typeof v === 'object') {
+    return { severity: v.severity || 'minor', requirement: typeof v.requirement === 'string' ? v.requirement : null,
+      count: Number.isInteger(v.findings) && v.findings > 1 ? Math.min(v.findings, 4) : 1 };
+  }
+  return { severity: v || 'minor', requirement: null, count: 1 };
 }
 
 async function mockPlanReview(m, cycle, onEvent, prompt = '', { planChecklist = false } = {}) {
   const role = m.MOCK_PERSPECTIVE || null;
   if (role) {
-    const { severity, requirement } = roleSeverity(role, cycle);
+    const { severity, requirement, count } = roleSeverity(role, cycle);
     const blocking = severity === 'critical' || severity === 'major';
     const ids = String(m.MOCK_CHECKLIST || '').split(',').map((s) => s.trim()).filter(Boolean);
     // Project fit (slice 3): a plan that adds a second copy of a component the house brief lists.
@@ -1480,8 +1536,8 @@ async function mockPlanReview(m, cycle, onEvent, prompt = '', { planChecklist = 
       }
       : {
         summary: `[mock] ${role} review, round ${cycle}`,
-        issues: severity === 'none' ? [] : [{ severity, title: `${role}: mock finding`, section: 'Testing', fix: 'Add the missing case.', detail: 'mock',
-          ...(requirement ? { requirement } : {}) }],
+        issues: severity === 'none' ? [] : Array.from({ length: count }, (_, i) => ({ severity, title: `${role}: mock finding${i ? ` ${i + 1}` : ''}`,
+          section: 'Testing', fix: 'Add the missing case.', detail: 'mock', ...(requirement ? { requirement } : {}) })),
         checklist: ids.map((id) => ({ id, status: blocking ? 'unmet' : 'met', evidence: 'mock' })),
       };
     if (planChecklist && role !== 'requirements') review.checklist = [...review.checklist, ...((await planChecklistReport(m, cycle)) || [])];

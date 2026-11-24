@@ -69,16 +69,27 @@ export function normalizeDecisions(raw) {
 
 const slug = (s) => oneLine(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, VALUE_MAX) || 'option';
 
+const CRITERION_SECTION_RE = /^R-[a-z]{1,8}-[1-9]\d*$/;   // coverage.mjs CRITERION_ID_RE (this module imports nothing)
+
 /** Role conflicts (findings.mjs normalizeConflicts) as decisions, numbered after `after` existing ones within the cap.
  *  Option i is roles[i]'s side, and names it as its `persona`; when one side is the lead's role, that option is
- *  recommended (the lead's final say), else the first. */
-export function conflictDecisions(conflicts, { lead = null, after = 0 } = {}) {
+ *  recommended (the lead's final say), else the first. `onePerPair` (small runs B3): one disagreement between two roles
+ *  is one question, the first conflict of each unordered role pair, and a decision on a criterion names it in `criteria`. */
+export function conflictDecisions(conflicts, { lead = null, after = 0, onePerPair = false } = {}) {
   const out = [];
+  const pairs = new Set();
   for (const c of Array.isArray(conflicts) ? conflicts : []) {
     if (after + out.length >= DECISIONS_MAX) break;
     const labels = (Array.isArray(c?.options) ? c.options : []).map(oneLine).filter(Boolean).slice(0, OPTIONS_MAX);
     if (labels.length < OPTIONS_MIN || !oneLine(c?.question)) continue;
     const roles = Array.isArray(c.roles) ? c.roles.map(String) : [];
+    if (onePerPair) {
+      const pair = [...roles].sort().join('\n');
+      if (pairs.has(pair)) continue;
+      pairs.add(pair);
+    }
+    const section = oneLine(c.section);
+    const criteria = onePerPair && CRITERION_SECTION_RE.test(section) ? { criteria: [section] } : {};
     const used = new Set();
     const options = labels.map((label, i) => {
       let value = slug(label);
@@ -89,7 +100,7 @@ export function conflictDecisions(conflicts, { lead = null, after = 0 } = {}) {
     const side = lead ? roles.indexOf(lead) : -1;
     out.push({
       id: `d-${after + out.length + 1}`, text: oneLine(c.question), options,
-      recommended: options[side >= 0 && side < options.length ? side : 0].value, ...(roles.length ? { from: roles } : {}),
+      recommended: options[side >= 0 && side < options.length ? side : 0].value, ...criteria, ...(roles.length ? { from: roles } : {}),
     });
   }
   return out;

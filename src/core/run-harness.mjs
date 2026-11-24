@@ -97,8 +97,10 @@ import { writeReadinessSnapshot } from './repo-readiness/snapshot.mjs';
 import { serialQueue } from './graph/human-evidence.mjs';
 import { deriveBranchName, uniqueBranch } from './naming.mjs';
 import { flagEnabled } from './flags.mjs';
-import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit } from './git-sync.mjs';
+import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit, checkBaseMerge } from './git-sync.mjs';
 import { featureBase } from './shape/features.mjs';
+import { shaperSmallRunsOn, smallRunsAtStart, smallRunsOfFeature } from './shape/small-runs.mjs';
+import { latestFinishedSource } from './shape/chain.mjs';
 import { cleanOutcome } from './shape/rounds.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
@@ -172,6 +174,7 @@ import { nightState, decideDelayMs, nightAnchorMs, runAllowed } from './night/ac
 import { decideAsk } from './night/decider.mjs';
 import { planRule } from './night/strategies.mjs';
 import { PLAN_ASK_KIND, initialShaping } from './shape/run.mjs';
+import { outlineKeptNote, outlineKeptStub } from '../shared/shape/feature-log.mjs';
 import { runNightAnalysis, readMemoryText } from './night/analysis.mjs';
 import { resolveDeciderPair } from './night/decider-model.mjs';
 import { writeNightDecision, countNightDecisions, nightCounts, nightGateCycles, nightSpendSinceUsd } from './night/store.mjs';
@@ -422,6 +425,12 @@ export function safeParse(text) {
  *  no slice, a workspace run, or a reused checkout never does. */
 export function mergesFeatureBase({ slice, freshStart, isWorkspace }) {
   return !!(slice && slice.index >= 2 && freshStart && !isWorkspace);
+}
+
+/** Shaper small runs (D9): a resumed slice run first merges the feature's latest finished work. Single project, flag on
+ *  (`smallRuns` = shaperSmallRunsOn()). */
+export function mergesLatestOnResume({ slice, isWorkspace, smallRuns }) {
+  return !!(slice && !isWorkspace && smallRuns);
 }
 
 export function firstLine(text) {
@@ -800,6 +809,12 @@ export function autoChoice(q) {
   return opts[0] || 'auto';
 }
 
+/** Shaper small runs B2 (D18): the audit line of a Care answer (the stored record); null for anything else. */
+export function careAuditLine(care) {
+  if (!care || typeof care !== 'object' || typeof care.position !== 'string') return null;
+  return `Care **${care.position}** · Worca's pick **${care.worcaPick || 'none'}**`;
+}
+
 /**
  * The answer `--yes` would give an ask, as an `answer()`-valid payload. Night mode uses it
  * as the last-resort fallback in a night-owned `--yes` run, which must never hang. Mirrors
@@ -812,6 +827,7 @@ export function autoAnswerPayload(q) {
     case 'form': return { form: q.form, version: q.version, values: q.autoValues || {} };
     case 'recovery': return { decision: 'pause' };
     case 'workflow': return { decision: 'accept', name: q.workflow?.name, nodes: {} };
+    case 'care': return { care: { position: q.care?.pick?.position } };   // Shaper small runs B2 (D19): Worca's pick
     default: return { decision: 'continue' };
   }
 }
@@ -1129,6 +1145,11 @@ export class RunHarness extends EventEmitter {
     // Shaper D28: the recorded half of shapeStats (questions, revises, score); null on an unshaped run.
     // A resumed run reads it back from its row (shape_stats).
     this._shapeRec = this.runShape ? shapeRecordFrom(safeParse(this.resumeOpts?.row?.shape_stats)) : null;
+    // Shaper small runs B1 (D1): a new planning run is stamped when it starts (the flag, or the marked feature a re-plan
+    // replaces, and only that: an unmarked feature's re-plan keeps dev's card whatever the flag says now); a resume reads
+    // the stamp back from its row above and never re-reads the flag. Slice runs never are.
+    if (this._shapeRec && !this.resumeOpts?.row && !this.runShape.slice
+      && (this.runShape.replaces ? smallRunsOfFeature(this.runShape.replaces) : smallRunsAtStart())) this._shapeRec.smallRuns = true;
     {
       const wf = this.resumeOpts?.resumePoint?.workflowId || this.workflowId;
       const reason = validateMemoryScope({ workflowId: wf, memoryScope: this.memoryScope, isWorkspace: this.isWorkspace });
@@ -1434,9 +1455,12 @@ export class RunHarness extends EventEmitter {
     else if (pq.kind === 'gate') line = `Gate **${d || 'answered'}**`;
     else if (pq.kind === 'recovery') line = `Recovery decision **${d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND && pq.plan?.attached) line = `Attached requirements **${d === 'approve' ? 'agreed' : d || 'answered'}**`;
-    else if (pq.kind === PLAN_ASK_KIND && pq.plan?.outline) line = `Slice outline **${d || 'answered'}** (round ${pq.plan.round || 1})`;
+    else if (pq.kind === PLAN_ASK_KIND && pq.plan?.outline) line = `Slice outline **${d || 'answered'}** (round ${pq.plan.round || 1}${outlineKeptNote(pq.plan, d, value)})`;
     else if (pq.kind === PLAN_ASK_KIND && pq.concern) line = `Plan concern **${d === 'revise' ? 'accepted' : d === 'approve' ? 'overridden' : d || 'answered'}**`;
+    // B1 (D6): a marked run's requirements approval names its own step ("Requirements agreed" on the one card).
+    else if (pq.kind === PLAN_ASK_KIND && pq.plan?.requirements && this._shapeRec?.smallRuns) line = `Requirements approval **${d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND) line = `Plan approval **${d || 'answered'}**`;
+    else if (pq.kind === 'care') line = careAuditLine(value);
     if (!line) return;
     appendAudit(this.pipeline.dir, `${line}${byActor(by)}.`, { actor: by }).catch(() => {});
   }
@@ -2217,6 +2241,16 @@ export class RunHarness extends EventEmitter {
         // The replay (re)wrote the run manifest; the re-assembly below reads it.
         if (this.runRootMode === 'detached') resumeManifest = await readRunManifest(this.runRoot);
       }
+      // Shaper small runs (D9): a resumed slice takes in the feature's latest finished work first (the reattach above
+      // restored injectedPaths). baseTip prefers refs/remotes/origin/<base> over the local branch: a finished run's
+      // last push is its final state. Never the resume's outcome.
+      try {
+        const sl = this.runShape && this.runShape.slice;
+        if (this.branchInfo && mergesLatestOnResume({ slice: sl, isWorkspace: this.isWorkspace, smallRuns: shaperSmallRunsOn() })) {
+          const src = latestFinishedSource(sl.feature, { exclude: this.pipeline?.id || null });
+          if (src && src.sourceBranch) await this._mergeFeatureBase(this.members[0], this.branchInfo, sl, { base: src.sourceBranch, onResume: true });
+        }
+      } catch (err) { this._log('worktree', 'warn', `resume: could not take in the latest finished work: ${err?.message || err}`); }
       // A run paused while its graph was still building (the build stops with the run) gets it now:
       // reused when that build had finished, else rebuilt in the background. The replay above did it already.
       if (rp.setupIncomplete !== true) {
@@ -6817,7 +6851,7 @@ export class RunHarness extends EventEmitter {
    * @returns {Promise<any>} the answer payload
    */
   async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow, plan,
-    concern, askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
+    concern, care, askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
     this._checkAbort();
     // No interactive prompt may OPEN on a pausing run. pause() rejects only the
     // prompt that is currently open; a queued ask (a parallel sibling's questions
@@ -6851,6 +6885,7 @@ export class RunHarness extends EventEmitter {
       ...(workflow !== undefined ? { workflow } : {}),
       ...(plan !== undefined ? { plan } : {}),
       ...(concern ? { concern } : {}),            // #990 s5: the implementer's plan concern (kind stays 'plan')
+      ...(care ? { care } : {}),                  // Shaper small runs B2: the Start step's Care ask body
       // The ask-form envelope (spec §4, ruling X1) rides the EXISTING 'question'
       // frame — no new transport, no new slot. `id` (already emitted above) is the
       // ANSWER token; `askId` is the route-safe file token and they are never
@@ -6891,15 +6926,22 @@ export class RunHarness extends EventEmitter {
           this._log('orchestrator', 'info', `auto-answering ${kind} ${id}`);
           return { answers: (questions || []).map((q) => ({ id: q.id, choice: autoChoice(q) })) };
         }
+        if (kind === 'care') {
+          // Shaper small runs B2 (D19): --yes takes Worca's Care pick; nothing blocks.
+          this._log('orchestrator', 'info', `auto-answering care ${id} -> ${care?.pick?.position}`);
+          return autoAnswerPayload({ kind, care });
+        }
         this._log('orchestrator', 'info', `auto-answering gate ${id} -> continue`);
         return { decision: 'continue' };
       }
       return await new Promise((resolveP, rejectP) => {
-        // An outline ask keeps its marker and round, so _auditDecision can word its answer (F38).
+        // An outline ask keeps its marker and round, so _auditDecision can word its answer (F38); a requirements ask its
+        // marker (B1, D6: isRequirementsAsk's predicate).
         this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null,
-          ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } } : {}),
-          ...(plan && plan.attached ? { plan: { attached: true } } : {}),
-          ...(concern ? { concern: true } : {}) };
+          ...(plan && plan.outline ? { plan: { outline: true, round: plan.round, ...outlineKeptStub(plan) } }
+            : plan && plan.attached ? { plan: { attached: true } }
+            : plan && (plan.criteria || plan.error) ? { plan: { requirements: true } } : {}),
+          ...(concern ? { concern: true } : {}), ...(care ? { care } : {}) };
         // A person must answer: the run clock stands until the last waiting ask is released.
         parked = true;
         this._asksWaiting += 1;
@@ -6908,7 +6950,7 @@ export class RunHarness extends EventEmitter {
         this._persist().catch(() => {});
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
-        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, form, version, answerSchema, autoValues, nodeId, agent, origin };
+        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, care, form, version, answerSchema, autoValues, nodeId, agent, origin };
         if (kind !== PLAN_ASK_KIND || !this.auto) {
           try { this._nightArm(nq); } catch (err) { this._nightFailed(nq, `Away mode could not get ready for ${kind} ${id}: ${err?.message || err}`); }
         }
@@ -10110,8 +10152,13 @@ export class RunHarness extends EventEmitter {
   }
 
   /** Shaper s5 (D14): merge the feature's base into this run's fresh branch when it moved; move the diff base to the
-   *  merge commit, so the base's commits never count as this run's changes. */
-  async _mergeFeatureBase(m, info, sl) {
+   *  merge commit, so the base's commits never count as this run's changes.
+   *  Shaper small runs (D8): `{base, onResume}` merges `base` (the latest finished run's branch) into a resumed run's
+   *  branch. Its uncommitted tracked work is committed first (as teardown would; never while worca's CLAUDE.md fence is in it); the
+   *  merged base tip is recorded in `baseRefs`, so _refreshMergeBases keeps the merged commits out of this run's diff
+   *  while its own commits stay in. A merge that cannot run is recorded and audited; the run goes on. */
+  async _mergeFeatureBase(m, info, sl, opts = null) {
+    if (opts && opts.onResume) return this._mergeLatestOnResume(m, info, opts.base);
     let base = null;
     try { base = featureBase(sl.feature); } catch { base = null; }
     if (!base || base === info.branch) return;
@@ -10124,6 +10171,40 @@ export class RunHarness extends EventEmitter {
       this.state.branches[m.projectKey] = { ...rec, baseSha: r.to, diffBase: r.to, startHead: r.to, baseMerged: { base, behind: r.behind } };
       this.checkpointRefs[m.projectKey] = r.to;     // dev's commits are never this run's changes
     }
+  }
+
+  async _mergeLatestOnResume(m, info, base) {
+    if (!base || base === info.branch || !info.worktreeDir) return;
+    const key = m.projectKey;
+    // Nothing newer to take in (already merged, or no such branch): no WIP commit, no audit line, baseMerged kept.
+    const NOTHING = new Set(['up-to-date', 'no-branch']);
+    const pre = await checkBaseMerge(resolve(m.projectDir), { base, feature: info.branch }).catch(() => null);
+    if (pre && NOTHING.has(pre.status)) return;
+    const gitOpts = { cwd: info.worktreeDir, ignoreAbort: true };
+    const st = await this._git(['status', '--porcelain', '--untracked-files=no'], gitOpts);
+    // worca's CLAUDE.md fence lives in a tracked file: an exclude pathspec would commit that file's deletion
+    // (_commitWork unstages excluded paths), and teardown strips the fence only at the end. A checkout whose fence file
+    // is dirty is left uncommitted, so the merge below reads it as dirty and the resume is recorded, not merged.
+    const fence = new Set((this.injectedPaths?.[key] ?? []).filter((e) => e && e.kind === 'claudeMdSection' && e.path).map((e) => e.path));
+    const dirty = st.ok ? st.stdout.split('\n').filter(Boolean).map((l) => l.slice(3)) : [];
+    if (dirty.length && !dirty.some((p) => fence.has(p))) {
+      const ec = await this._engineConfigState(info.worktreeDir, { ignoreAbort: true });
+      await this._commitWork(info, this.state.branch,
+        { excludePathspecs: this._excludePathspecs(key), forcePaths: ec.forced, unstagePaths: ec.owned });
+    }
+    const r = await mergeBaseBeforeRun(resolve(m.projectDir), { base, feature: info.branch })
+      .catch((err) => ({ merged: false, status: 'error', behind: 0, files: [], error: err?.message }));
+    if (NOTHING.has(r.status)) return;
+    const status = r.error === 'dirty' ? 'dirty' : r.status;   // mergeBaseInto refused a checkout with uncommitted work
+    const line = baseMovedAudit(base, info.branch, r) || (r.merged ? null : `Resumed · could not take in the latest finished work (${status}).`);
+    if (line) await appendAudit(this.pipeline.dir, line).catch(() => {});
+    const tip = r.merged && r.to ? await commitOf(info.worktreeDir, `${r.to}^2`) : null;
+    const baseMerged = { base, behind: r.behind || 0, merged: !!tip, onResume: true, ...(tip ? {} : { status }) };
+    const patch = (rec) => (rec ? { ...rec, ...(tip ? { baseRefs: { ...(rec.baseRefs || {}), [base]: tip } } : {}), baseMerged } : rec);
+    if (this.state.branch) this.state.branch = patch(this.state.branch);
+    if (this.state.branches?.[key]) this.state.branches[key] = patch(this.state.branches[key]);
+    if (tip) await this._refreshMergeBases();
+    await this._persist();
   }
 
   /**

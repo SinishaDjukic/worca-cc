@@ -4,12 +4,13 @@
 // postAnswer BEFORE its POST (question-resolved can land before the 200).
 import { applyOutlineEdits } from '../../../src/shared/shape/slices.mjs';
 import { askKindOf } from '../ask/registry.mjs';
-import { clarifyText, planApprovedText, splitText, gateText, NOT_SPLIT_TEXT } from '../../../src/shared/shape/feature-log.mjs';
+import { clarifyText, planApprovedText, splitText, gateText, NOT_SPLIT_TEXT, REQUIREMENTS_AGREED, runsApprovedText } from '../../../src/shared/shape/feature-log.mjs';
 import { planApprovedLine } from '../log-line.mjs';
 import { isRequirementsAsk } from './step-card.mjs';
+import { careRecordLine } from '../../../src/shared/shape/feature-record.mjs';
 
-/** The receipt of an agreed Requirements step; the chat run card's fallback says the same. */
-export const REQUIREMENTS_AGREED = 'Requirements agreed';
+/** The receipt of an agreed Requirements step; the chat run card's fallback says the same. One source: feature-log (B1). */
+export { REQUIREMENTS_AGREED };
 
 const NAMED = new Map();          // `${runId}|${questionId}` → { text, answers }
 const NAMED_MAX = 200;
@@ -20,6 +21,12 @@ export function stepReceipt(pq, payload, { shaping = false } = {}) {
   const p = payload || {};
   const d = p.decision;
   const kind = askKindOf(pq);
+  if (kind === 'care') {
+    // B2 (D18): the fixed fact Care reads as after Start; who chose it is the server's rule (the pick is the default).
+    const position = p.care && p.care.position;
+    const pick = pq.care && pq.care.pick ? pq.care.pick.position : null;
+    return position ? careRecordLine({ position, worcaPick: pick, chosenBy: position === pick ? 'default' : 'person' }) : null;
+  }
   if (kind === 'gate') return gateText(d);
   if (kind === 'recovery') return d === 'retry' ? 'Retried' : d === 'abort' ? 'Aborted' : 'Paused';
   if (kind === 'plan') {
@@ -32,6 +39,8 @@ export function stepReceipt(pq, payload, { shaping = false } = {}) {
       if (d === 'approve') {
         const r = applyOutlineEdits(plan.outline, Array.isArray(p.edits) ? p.edits : []);
         const n = (r.ok ? r.outline : plan.outline).slices.length;
+    // Small runs B4 (D20): the one card's words, as the lasting decision log has them.
+    if (plan.smallRuns === true) return runsApprovedText(p.openObjections === 'kept' ? (plan.challenge && plan.challenge.open) || 0 : 0);
         return splitText(n);
       }
       if (d === 'flat') return NOT_SPLIT_TEXT;

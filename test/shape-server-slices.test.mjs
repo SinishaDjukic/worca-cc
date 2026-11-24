@@ -4,7 +4,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,9 +15,9 @@ import { gitDir } from './helpers/git-dir.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { createThread, linkRun as askLinkRun, listMessages } from '../src/core/ask/store.mjs';
-import { createSliceFeature, featureView, recordShapePlan, retireFeaturesOf } from '../src/core/shape/features.mjs';
-import { getTicket } from '../src/core/scheduler.mjs';
+import { createThread, linkRun as askLinkRun, listMessages, appendMessage as askAppendMessage } from '../src/core/ask/store.mjs';
+import { createSliceFeature, featureView, recordShapePlan, recordShip, retireFeaturesOf, featureThread, currentFeatureId } from '../src/core/shape/features.mjs';
+import { getTicket, requestRunNow, cancelTicket } from '../src/core/scheduler.mjs';
 import { nightModeToggle } from '../src/core/settings.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
 import { featureCardModel } from '../ui/public/shape/feature-card.mjs';
@@ -148,6 +148,30 @@ test('GET feature: the view, 404 for an unknown id, and the re-plan successor wi
   assert.equal(viaA.id, b.id);
   assert.equal(viaA.replanOf, a.id);
   assert.equal((await view(b.id)).replanOf, null);
+});
+
+// Shaper small runs A2: flag off is dev's exact body; on adds the record's 2 keys (test/fixtures/shaper/dev-feature-view-keys.json).
+test("GET feature and the card's feature: dev's exact keys with small runs off, plus care and requirementKinds with it on", async () => {
+  const DEV = JSON.parse(readFileSync(new URL('./fixtures/shaper/dev-feature-view-keys.json', import.meta.url), 'utf8'));
+  const RECORD = ['care', 'requirementKinds'];
+  const { id, pid } = mk(2);                                     // running: not ready to ship, so no ship.hint
+  const keys = async () => {
+    const api = await view(id);
+    const card = await (await get(`/api/shape/pipelines/${pid}/card`)).json();
+    return { api, card: card.feature };
+  };
+  const off = await withEnvVars({ WORCA_FLAGS: undefined }, keys);
+  assert.deepEqual(Object.keys(off.api), DEV.api);
+  assert.deepEqual(Object.keys(off.card), DEV.view);
+  assert.deepEqual(Object.keys(off.api.slices[0]), DEV.slice);
+  assert.deepEqual(Object.keys(off.api.ship), DEV.ship);
+  const on = await withEnvVars({ WORCA_FLAGS: 'shaperSmallRuns' }, keys);
+  assert.deepEqual(Object.keys(on.api).sort(), [...DEV.api, ...RECORD].sort());
+  assert.deepEqual(Object.keys(on.card), [...DEV.view, ...RECORD]);
+  assert.deepEqual([on.api.care, on.api.requirementKinds], [{ position: 'balanced', chosenBy: 'default', worcaPick: null }, []]);
+  assert.deepEqual([on.card.care, on.card.requirementKinds], [on.api.care, on.api.requirementKinds]);
+  // Everything dev returns is the same with the flag on.
+  for (const k of DEV.api) assert.deepEqual(on.api[k], off.api[k], k);
 });
 
 test('GET feature: a settled entry is ignored (the pipelines row decides), a paused or plan-asking one is shown (F26)', async () => {
@@ -1110,4 +1134,250 @@ reqShipT('one: a held feature ships when the last requirement is marked over HTT
   assert.equal((await featureOutcome(w.f.id)).status, 'opened');
   assert.equal(ghCalls(seen, 'create').length, 1);
   assert.equal((await view(w.f.id)).ship.mode, 'one');
+});
+
+// ── Shaper small runs A4: a finished feature's figures, recorded on settle and on an acceptance save ────────────────
+const SMALL_ON = { WORCA_FLAGS: 'shaperSmallRuns' };
+const SMALL_OFF = { WORCA_FLAGS: undefined };
+const figureRows = (fid) => getDb().prepare('SELECT figures FROM shape_feature_figures WHERE feature_id = ?').all(fid).map((r) => JSON.parse(r.figures));
+const plainSettle = (pid) => ({ runShape: null, getState: () => ({ status: 'done', id: pid }) });
+
+reqShipT('figures: the last slice settling done records 1 row, a round after Ship re-records it; the flag off records none', async () => {
+  const seen = []; stubGh(seen);
+  await withEnvVars(SMALL_ON, async () => {
+    const a = stackedFeature();
+    setPipe(a.p2, 'running');
+    await testing.afterRunSettled(plainSettle(a.p1));
+    assert.equal(figureRows(a.f.id).length, 0, 'slice 2 still running');
+    setPipe(a.p2, 'done');
+    await testing.afterRunSettled(plainSettle(a.p2));
+    assert.deepEqual(figureRows(a.f.id).map((f) => f.changesAfterShip), [0]);
+    recordShip(a.f.id, { mode: 'one', now: Date.now() - 3_600_000 });
+    const r = nextId();
+    seedPipelineRow({ id: r, projectKey: projectKey(project), status: 'done', title: r, startedAt: new Date().toISOString(),
+      branch: { source: 'main', feature: `feat/${r}`, roundOf: { pipelineId: a.p1, round: 2 } } });
+    await testing.afterRunSettled(plainSettle(r));
+    assert.deepEqual(figureRows(a.f.id).map((f) => f.changesAfterShip), [1]);
+  });
+  await withEnvVars(SMALL_OFF, async () => {
+    const b = stackedFeature();
+    await testing.afterRunSettled(plainSettle(b.p1));
+    await testing.afterRunSettled(plainSettle(b.p2));
+    assert.equal(figureRows(b.f.id).length, 0);
+  });
+});
+
+reqShipT('figures: PUT acceptance answers the same with the flag on and off; on, the stored requirementsMet follows the marks', async () => {
+  const seen = []; stubGh(seen);
+  const on = stackedFeature(); withAgreed(on.f.id);
+  const off = stackedFeature(); withAgreed(off.f.id);
+  const answer = async (env, fid, entries) => withEnvVars(env, async () => { const r = await putMarks(fid, entries); return { status: r.status, body: await r.json() }; });
+  const marks = [{ id: 'R-po-1', mark: 'met' }];
+  const a = await answer(SMALL_ON, on.f.id, marks);
+  const b = await answer(SMALL_OFF, off.f.id, marks);
+  assert.equal(a.status, 200);
+  assert.deepEqual(a, b);
+  assert.deepEqual(figureRows(on.f.id).map((f) => f.requirementsMet), [{ met: 1, total: 2 }]);
+  await answer(SMALL_ON, on.f.id, [{ id: 'R-ops-1', mark: 'met' }]);
+  assert.deepEqual(figureRows(on.f.id).map((f) => f.requirementsMet), [{ met: 2, total: 2 }]);
+  assert.equal(figureRows(off.f.id).length, 0);
+});
+
+// ── Shaper small runs A5: runs start from the latest finished work ───────────────────────────────────────────────────
+const sliceTicket = (fid, k) => getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(fid, k).ticket_id;
+/** Slice k of a shipWorld has not run yet: its ticket waits again, with no pipeline. */
+const unrun = (fid, k) => getDb().prepare("UPDATE scheduled_runs SET status = 'scheduled', pipeline_id = NULL WHERE id = ?").run(sliceTicket(fid, k));
+/** Only `keep` may fire on the next tick: every other waiting ticket in this file is canceled. */
+const quietBut = (...keep) => getDb().prepare(`UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'
+  AND id NOT IN (${keep.map(() => '?').join(', ')})`).run(...keep);
+const branchOf = (pid) => JSON.parse(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(pid)?.branch || 'null');
+const tickUntil = async (pred) => { for (let i = 0; i < 100; i++) { await schedulerTick(); if (pred()) return; await sleep(20); } };
+const isAncestor = (dir, a, b) => spawnSync('git', ['merge-base', '--is-ancestor', a, b], { cwd: dir }).status === 0;
+/** The run a fired ticket became: wait for its worktree, read its head, then stop it. → { pid, branch, head } */
+async function firedRun(ticketId, ms = 60000) {
+  const t0 = Date.now();
+  let pid = null; let branch = null; let head = null;
+  while (Date.now() - t0 < ms) {
+    pid = runs.get(ticketId)?.pipelineId || getTicket(ticketId)?.pipelineId || null;
+    branch = pid ? branchOf(pid) : null;
+    if (branch && branch.worktreeDir) break;
+    await sleep(50);
+  }
+  if (branch && branch.worktreeDir) head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: branch.worktreeDir, encoding: 'utf8' }).stdout.trim();
+  const e = runs.get(ticketId);
+  if (e && !['done', 'stopped', 'error'].includes(String(e.status))) await post('/api/stop', { runId: ticketId });
+  for (let i = 0; i < 400 && runs.get(ticketId) && !['done', 'stopped', 'error', 'paused', 'interrupted'].includes(String(runs.get(ticketId).status)); i++) await sleep(25);
+  return { pid, branch, head };
+}
+
+test("small runs: schedulerTick starts slice 4 from slice 2's branch while slice 3 is stopped", () => withEnvVars(SMALL_ON, async () => {
+  const w = shipWorld({ slices: 4, prs: false });
+  setPipe(w.pids[2], 'stopped');
+  unrun(w.f.id, 4);
+  const t4 = sliceTicket(w.f.id, 4);
+  quietBut(t4);
+  await tickUntil(() => getTicket(t4).status !== 'scheduled');
+  assert.equal(getTicket(t4).status, 'fired', getTicket(t4).failReason || '');
+  const run = await firedRun(t4);
+  assert.equal(run.branch.source, `feat/${w.pids[1]}`);
+}));
+
+test('small runs, stop 3 of 5: runs 4 and 5 finish, Resume on the feature restarts run 3 from run 5\'s branch', () => withEnvVars(SMALL_ON, async () => {
+  const w = shipWorld({ slices: 5, prs: false });
+  setPipe(w.pids[2], 'stopped');
+  const res = await post(`/api/shape/features/${w.f.id}/resume`, {});
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+  assert.equal(body.action, 'restart');
+  quietBut(body.ticketId);
+  await tickUntil(() => getTicket(body.ticketId).status !== 'scheduled');
+  assert.equal(getTicket(body.ticketId).status, 'fired', getTicket(body.ticketId).failReason || '');
+  const run = await firedRun(body.ticketId);
+  assert.equal(run.branch.source, `feat/${w.pids[4]}`);
+  assert.ok(run.head, 'the restarted run 3 has a checkout');
+  assert.ok(isAncestor(w.dir, `feat/${w.pids[3]}`, run.head), "run 4's commits are in run 3's branch");
+  assert.ok(isAncestor(w.dir, `feat/${w.pids[4]}`, run.head), "run 5's commits are in run 3's branch");
+}));
+
+test('small runs: Run now on a slice whose builds-on is unfinished is refused as still going', () => withEnvVars(SMALL_ON, async () => {
+  const w = shipWorld({ slices: 3, prs: false });
+  const f = getDb().prepare('SELECT outline FROM shape_features WHERE id = ?').get(w.f.id);
+  const outline = JSON.parse(f.outline);
+  outline.slices[2].dependsOn = ['s2'];
+  getDb().prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify(outline), w.f.id);
+  setPipe(w.pids[1], 'stopped');
+  unrun(w.f.id, 3);
+  const t3 = sliceTicket(w.f.id, 3);
+  requestRunNow(t3);
+  const out = await testing.fireTicket(getTicket(t3, { withRequest: true }));
+  assert.deepEqual(out, { ok: false, error: 'the run before it is still going', transient: true });
+  cancelTicket(t3);
+}));
+
+/** A one-PR world whose last slice (3) was rebuilt on `from`'s branch as feat/<tag>, finishing last. */
+const rebuildLast = (w, from, tag, k = 3) => {
+  git(w.dir, 'checkout', '-q', '-b', `feat/${tag}`, from);
+  writeFileSync(join(w.dir, `${tag}.txt`), tag); git(w.dir, 'add', '-A'); git(w.dir, 'commit', '-qm', tag);
+  git(w.dir, 'checkout', '-q', 'main');
+  getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify({ source: from, feature: `feat/${tag}` }), '2099-01-01T00:00:00.000Z', w.pids[k - 1]);
+  return `feat/${tag}`;
+};
+
+shipT('small runs: one PR pushes the latest finished slice', () => withEnvVars(SMALL_ON, async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld({ slices: 4, prs: false });
+  // Run 3 finished last, started from run 4's branch: it holds every finished run's work.
+  const head = rebuildLast(w, `feat/${w.pids[3]}`, `x${w.pids[2]}`);
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.ok(seen.some((a) => a[0] === 'git' && a[1] === 'push' && a.includes(head)), 'the latest finished branch is pushed');
+  assert.ok(!seen.some((a) => a[0] === 'git' && a[1] === 'push' && a.includes(w.last)));
+  assert.match(git(w.dir, 'show', `${head}:CHANGELOG.md`), /### Charts/);
+  assert.equal(argOf(ghCalls(seen, 'create')[0], '--base'), 'main');
+}));
+
+shipT("small runs: one PR is refused 409 HEAD_MISSING_WORK when the head lacks a done slice's tip", () => withEnvVars(SMALL_ON, async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld({ slices: 3, prs: false });
+  rebuildLast(w, `feat/${w.pids[0]}`, `y${w.pids[2]}`);   // run 3 lacks run 2's work
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 409);
+  assert.deepEqual(await r.json(), { code: 'HEAD_MISSING_WORK', error: "run 2's work is not in the branch one PR would ship: create one PR per run" });
+  assert.equal(ghCalls(seen, 'create').length, 0);
+  assert.ok(!seen.some((a) => a[0] === 'git' && a[1] === 'push'));
+  assert.equal((await view(w.f.id)).ship.mode, null, 'nothing recorded');
+}));
+
+shipT('small runs off: the one-PR ship makes no ancestor check and ships the last row', () => withEnvVars(SMALL_OFF, async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld({ slices: 3, prs: false });
+  const head = rebuildLast(w, `feat/${w.pids[0]}`, `z${w.pids[2]}`);   // the same head that lacks run 2's work
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.ok(seen.some((a) => a[0] === 'git' && a[1] === 'push' && a.includes(head)), "dev's last row ships");
+}));
+
+test('small runs off: the same tick misses slice 4 as dev does', () => withEnvVars(SMALL_OFF, async () => {
+  const w = shipWorld({ slices: 4, prs: false });
+  setPipe(w.pids[2], 'stopped');
+  unrun(w.f.id, 4);
+  const t4 = sliceTicket(w.f.id, 4);
+  quietBut(t4);
+  await tickUntil(() => getTicket(t4).status !== 'scheduled');
+  assert.equal(getTicket(t4).status, 'missed');
+  assert.equal(getTicket(t4).failReason, 'The run before it was stopped.');
+}));
+
+// ── Shaper small runs B1 (D8, Invariant 5): one card per marked feature; Chat posts no Ship card for it ──
+shipT('B1: a marked feature\'s thread holds one card block; no Ship card is posted, and a re-plan adds none', async () => {
+  const seen = []; stubShip(seen, { describe: 'v1.11.0' });
+  const w = shipWorld();
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), w.pids[0]);
+  const thread = createThread({ title: 'charts' });
+  // The started run card the Chat thread holds for the planning run (its proposal block, now the live run card).
+  askAppendMessage(thread.id, { role: 'assistant', text: '', status: 'done',
+    blocks: [{ kind: 'card', id: 'card_b1', state: 'started', card: { type: 'run', pipelineId: w.pids[0], title: 'Charts' } }] });
+  askLinkRun(thread.id, { runId: 'run-b1', pipelineId: w.pids[0], cardId: 'card_b1' });
+  /** The card blocks of the feature's thread that name this feature or its origin run. */
+  const cardBlocks = (fid) => {
+    const th = featureThread(fid);
+    assert.equal(th && th.threadId, thread.id);
+    return listMessages(th.threadId).flatMap((m) => m.blocks || [])
+      .filter((b) => b.kind === 'card' && b.card && (b.card.pipelineId === w.pids[0] || (b.card.featureId && currentFeatureId(b.card.featureId) === fid)));
+  };
+  assert.equal(cardBlocks(w.f.id).length, 1, 'before ship-ready');
+  const c = await collector();
+  try {
+    assert.equal(await testing.offerShipCard(w.pids[2]), null, 'no Ship card for a marked feature');
+    await sleep(100);
+    assert.equal(c.frames('ask-message').length, 0, 'nothing broadcast');
+  } finally { c.close(); }
+  assert.equal(cardBlocks(w.f.id).length, 1, 'after ship-ready');
+  // A re-plan: the successor feature reaches the same thread through `replaces` and posts no card of its own.
+  const pidR = pipe('running');
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), pidR);
+  const succ = createSliceFeature({ pipelineId: pidR, projectDir: w.dir, title: 'Charts', outline: outlineOf(2), perspectives: ['product'],
+    workflowId: 'wf_shape', startedBy: 'ann', replaces: w.f.id });
+  assert.equal(currentFeatureId(w.f.id), succ.id);
+  assert.equal(cardBlocks(succ.id).length, 1, 'after a re-plan');
+});
+
+// Small runs B4 (D12): both answer routes refuse an approve of a split failing a non-waivable rule, through the real
+// validator of a real mock run held at the Split (WORCA_MOCK_SPLIT_OUTLINE picks the broken rule).
+test('B4: POST /api/answer and /api/runs/:id/answer answer 422 split-not-approvable per Care × rule; the Split stays open, no feature', async () => {
+  const { createOrchestrator } = await import('../src/core/orchestrator.mjs');
+  const { resolveShapeRequest } = await import('../src/core/shape/run.mjs');
+  for (const position of ['lean', 'balanced', 'thorough']) {
+    for (const outline of ['coverage', 'ownership', 'confirmRole']) {
+      await withEnvVars({ WORCA_FLAGS: 'shaperSmallRuns', WORCA_MOCK_SPLIT_OUTLINE: outline }, async () => {
+        const req = resolveShapeRequest({ shape: { size: 'large', lead: 'security' } }, { smallRuns: true });
+        const orch = createOrchestrator({ projectDir: gitDir('b4-server'), workflowId: req.workflowId, prompt: 'Plan this in slices: demo',
+          claude: { mock: true }, shape: req.shape });
+        const held = new Promise((resolve) => orch.on('question', (q) => {
+          if (q.kind === 'care') setImmediate(() => orch.answer(q.id, { care: { position } }));
+          else if (q.kind === 'plan' && q.plan?.outline) resolve(q);
+          else if (q.kind === 'plan') setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
+          else setImmediate(() => orch.answer(q.id, { answers: [] }));
+        }));
+        const done = orch.run();
+        const q = await held;
+        const runId = `b4-${position}-${outline}`;
+        runs.set(runId, { id: runId, kind: 'run', status: 'running', events: [], orch, pendingQuestion: q });
+        try {
+          for (const r of [await post('/api/answer', { runId, id: q.id, payload: { decision: 'approve' } }),
+            await post(`/api/runs/${runId}/answer`, { id: q.id, decision: 'approve' })]) {
+            assert.equal(r.status, 422, `${position} ${outline}`);
+            const body = await r.json();
+            assert.equal(body.errors[0].code, 'split-not-approvable', `${position} ${outline}`);
+            assert.match(body.errors[0].message, new RegExp(`${outline} R-`));
+          }
+          assert.equal(orch.pendingQuestion?.id, q.id, 'the Split stays open');
+          assert.equal(getDb().prepare('SELECT id FROM shape_features WHERE origin_pipeline_id = ?').get(orch.getState().id), undefined);
+          orch.answer(q.id, { decision: 'stop' });
+          assert.equal((await done).status, 'stopped');
+        } finally { runs.delete(runId); }
+      });
+    }
+  }
 });

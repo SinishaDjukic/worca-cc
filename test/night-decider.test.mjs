@@ -80,3 +80,10 @@ test('neverDecide clarify/questions also covers a form the clarifier or an agent
   assert.equal(await decideAsk(f('questions'), { config: { ...cfg, neverDecide: ['questions'] } }), null);
   assert.notEqual(await decideAsk(f('questions'), { config: { ...cfg, neverDecide: ['clarify'] } }), null, 'only the matching origin');
 });
+
+test('care (Shaper small runs B2): Worca\'s Care pick, nothing blocks', async () => {
+  const r = await decideAsk({ kind: 'care', id: 'care-1', care: { pick: { position: 'thorough', reason: 'Worca picks Thorough: it touches payments' } } }, { config: cfg });
+  assert.deepEqual(r.payload, { care: { position: 'thorough' } });
+  assert.equal(r.record.choice, 'thorough');
+  assert.equal(r.record.rationale, 'Worca picks Thorough: it touches payments');
+});

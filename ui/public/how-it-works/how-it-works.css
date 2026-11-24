@@ -11,9 +11,10 @@
 #how-it-works-modal .wg-art ul,#how-it-works-modal .wg-art ol{margin:0;padding-left:22px;}
 #how-it-works-modal .wg-art li{margin:2px 0;color:var(--ink);}
 #how-it-works-modal .wg-caption{margin-top:6px;}
-/* Phone: the same tier as responsive-nav.css. The top-bar button is icon only, like .topnav-act-label; the
-   words stay in the button (font-size:0 hides them without removing the accessible name "How it works"). */
+/* Phone: the same tier as responsive-nav.css. The top-bar button is icon only, like .topnav-act-label; its
+   aria-label keeps the name "How it works". */
 @media (max-width:760px){
-  .topnav-howto{min-width:32px;padding:0 8px;gap:0;justify-content:center;font-size:0;}
+  .topnav-howto{min-width:32px;padding:0 8px;gap:0;justify-content:center;}
+  .topnav-howto .howto-label{display:none;}
   .topnav-howto svg{width:16px;height:16px;}
 }

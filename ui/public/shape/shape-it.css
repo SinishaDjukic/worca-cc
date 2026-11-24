@@ -82,6 +82,85 @@
 .shape-reqs-agreed dt{padding:3px 0;font-size:var(--fs-meta);color:var(--ink-2);}
 .shape-reqs-agreed dd{container:shape-reqs-rows / inline-size;margin:0;}
 .shape-reqs-agreed :is(.plan-check-label,.plan-check-detail){overflow-wrap:anywhere;}
+/* Owner direction d5c0afe48: ONE row layout for every list on the small-runs card, never per-list rules: the role folds
+   and their requirement rows (B3), the Split's run, check and challenge rows (B4) and the run rows (B1, their 16px
+   column restated below under .chat-rc-members). A row: the mark in a fixed 16px box centred on the first text line (a `?`
+   glyph and an SVG check share one centre), gap 8, [the role icon in an 18px box, gap 8,] the id in one fixed tabular
+   column, gap 8, the text, then the chevron or action in its own column at the far right. One-line rows are 32px, with
+   no margin between siblings; a longer row grows from the top and its mark stays on the first line. */
+.srows{--row-mark:16px;--row-gap:8px;--row-line:20px;--row-id:5.4em;}
+.srows :is(.plan-check-row,.shape-role-fold-head,.outline-run-row){display:flex;flex-wrap:nowrap;align-items:flex-start;gap:var(--row-gap);
+  box-sizing:border-box;width:100%;min-height:32px;margin:0;padding:6px 0;line-height:var(--row-line);text-align:left;white-space:normal;}
+.srows .plan-checks{gap:0;padding-left:0;}
+.srows .plan-check-mark{flex:none;display:inline-flex;align-items:center;justify-content:center;width:var(--row-mark);height:var(--row-line);line-height:1;}
+.srows .plan-check-mark > svg{display:block;}
+.srows .plan-check-id{flex:none;width:var(--row-id);color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.srows .plan-check-text{flex:1 1 0;min-width:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:0 var(--row-gap);}
+.srows .plan-check-text > :is(.plan-check-label,.plan-check-detail){flex:0 0 auto;max-width:100%;min-width:0;overflow-wrap:anywhere;}
+.srows .plan-check-label{font-weight:400;color:var(--ink);}   /* a check is a sentence: 600 is for role and run names only */
+.srows .plan-check-row > .split-objection-state{flex:none;margin-left:auto;color:var(--ink-2);white-space:nowrap;}
+.srows :is(.plan-check-row,.shape-role-fold-head,.outline-run-row) > :is(.plan-chev,.btn:not(.plan-fold)){flex:none;margin-left:auto;}
+.srows .plan-chev{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-block:calc((var(--row-line) - 16px) / 2);}   /* square: it turns in place */
+.srows :is(.plan-check-row,.outline-run-row) > .btn-sm:not(.plan-fold){margin-block:-4px;}   /* an action keeps the row at 32px */
+/* A row with an action: the text keeps at least 12em; on a narrow card the action wraps under it, still right-aligned. */
+.srows .plan-check-row:has(> .btn){flex-wrap:wrap;row-gap:4px;}
+.srows .plan-check-row:has(> .btn) > .plan-check-text{flex-basis:12em;}
+/* Role folds (B3): mark · icon · name · summary, the chevron at the far right; the requirement rows start under the icon. */
+.shape-role-fold .plan-check-mark.ok{color:var(--green-ink);}
+.shape-role-fold-ic{display:inline-flex;align-items:center;justify-content:center;flex:none;box-sizing:border-box;width:18px;height:18px;margin-top:1px;border:1px solid var(--line);border-radius:var(--r-xs);font:600 11px/1 var(--sans);color:var(--ink-2);}
+.shape-role-fold-name{color:var(--ink);font-weight:600;}
+.shape-role-fold-lead{font-weight:400;color:var(--ink-2);}
+.srows .shape-role-fold > .plan-checks{padding-left:calc(var(--row-mark) + var(--row-gap));}
+@media (max-width:480px){
+  .srows .shape-role-fold-head{flex-wrap:wrap;}
+  .srows .shape-role-fold-head .plan-fold-text{order:1;flex:1 0 100%;padding-left:calc(var(--row-mark) + 18px + 2 * var(--row-gap));}
+}
+/* The Split's runs (B4, prototype splitRow): a flat list of one-line rows; the fold button holds the number (id column),
+   the title, the R-ids right-aligned and the chevron; the row ⋯ sits beside it. The facts start under the number. */
+.srows .split-runs{gap:0;counter-reset:none;}
+.srows .split-runs > .outline-slice{gap:0;padding:0;border:0;border-radius:0;background:none;}
+.srows .outline-run-fold{flex:1 1 0;min-width:0;display:flex;align-items:flex-start;justify-content:flex-start;gap:var(--row-gap);height:auto;padding:0;white-space:normal;
+  font:400 var(--fs-body)/var(--row-line) var(--sans);color:var(--ink);text-align:left;}
+.srows .outline-run-fold .outline-slice-title{font-weight:600;}
+.srows .outline-run-fold .outline-slice-title::before{content:none;}
+.srows .outline-run-ids{flex:none;margin-left:auto;color:var(--ink-2);white-space:nowrap;}
+.srows .outline-run-fold > .plan-chev{flex:none;}
+.srows .outline-run-facts{padding-left:calc(var(--row-mark) + var(--row-gap));}
+.srows .outline-own .plan-check-detail{color:var(--ink-2);}
+/* The Split's fold lines (checks, challenge) wrap their text inside the card instead of running past it on a phone. */
+.srows > .plan-check-line{max-width:100%;white-space:normal;text-align:left;}
+.srows > .plan-check-line .plan-fold-text{min-width:0;overflow-wrap:anywhere;}
+@media (max-width:480px){
+  .srows .outline-run-fold{flex-wrap:wrap;}
+  .srows .outline-run-ids{order:3;flex:1 0 100%;margin-left:0;padding-left:calc(var(--row-id) + var(--row-gap));white-space:normal;}
+}
+/* The run rows (B1): the same 16px mark column and 8px gap. Every rule is scoped under the chat card's member host, the
+   only place one-line rows are drawn, so it outranks the runs/group-page.css rule it replaces whatever the file order,
+   and that file stays dev's. The columns restate dev's list per width (base, the 480px chat container, the 600px phone,
+   the 360px chat container) with 16px for dev's 12px. The chat container queries are range forms (`width > 480px` after
+   the base, `width <= 360px`): the design-language gates read group-page.css's first max-width blocks by their text. */
+.chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content 16px;column-gap:8px;}
+@container chat-rc-members (width > 480px){
+  .chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content 64px 16px;}
+}
+/* 1px top border + 5 + 20 + 6 = 32px; the text starts 6px below the border-box top, as in the other rows. */
+.chat-rc-members .run-members.is-table.is-one-line > .run-member{align-items:start;min-height:32px;box-sizing:border-box;padding:5px 0 6px;line-height:20px;}
+.chat-rc-members .run-members.is-one-line > .run-member > .status-dot{justify-self:center;margin-top:6px;}
+/* Title, then the short state right-aligned on the same line; a Requirements fold wraps under. */
+.chat-rc-members .run-members.is-one-line .run-member-main{flex-direction:row;flex-wrap:wrap;align-items:center;column-gap:8px;}
+.chat-rc-members .run-members.is-one-line .run-member-title{flex:1 1 0;min-width:0;}
+.chat-rc-members .run-members.is-one-line .run-member-main > :not(.run-member-title, .run-member-state){flex-basis:100%;}
+.chat-rc-members .run-member-state{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
+/* A narrow row with no PR chip and no cost keeps one grid row: the stacked ". . pr cost" row and its gap would add 9px. */
+@media (max-width:600px){
+  .chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty){grid-template-areas:"dot num main go";}
+}
+@container chat-rc-members (width <= 360px){
+  .chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty){grid-template-areas:"dot num main main";}
+}
+.chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty) > :is(.run-member-pr, .run-member-cost){display:none;}
 /* Too narrow for a failing row's words side by side: its detail goes under its label. */
 @container shape-reqs-rows (max-width:320px){
   .shape-reqs .plan-check-row:has(.plan-check-detail){display:grid;grid-template-columns:1em minmax(0,1fr);}
