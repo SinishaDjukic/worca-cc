@@ -55,6 +55,8 @@ export const ASK_LIMITS = Object.freeze({
   gitCaptureMaxBytes: 8_000_000,           // stdout CAPTURE cap per spawn — past it the child is killed and the output marked capped
   worktreesPerThread: 5,                   // P4 D9
   worktreesGlobal: 15,                     // P4 D9
+  worktreeIdleMs: 7 * 24 * 60 * 60_000,    // a checkout untouched this long may be freed at boot / by Free idle (worktree-idle.mjs)
+  worktreeGitCheckMs: 15_000,              // timeout of ONE git probe of that classification
   attachmentReadDefaultBytes: 32_000,
   attachmentReadMaxBytes: 200_000,
   artifactsListMaxLimit: 200,

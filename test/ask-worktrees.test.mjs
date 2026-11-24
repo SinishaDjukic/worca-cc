@@ -348,3 +348,32 @@ test('#527 open_worktree: origin/<name> pushed since the last fetch is fetched a
     } },
   ]);
 });
+
+test('global cap error names the chats that hold slots and what to do, and removes nothing', async () => {
+  const repo = await freshRepo();
+  const p = (await addProject({ name: 'awt-holders', path: repo })).find((x) => x.name === 'awt-holders');
+  const longTitle = 'T'.repeat(60);
+  const chats = [createThread({ title: longTitle }), ...Array.from({ length: 6 }, (_, i) => createThread({ title: `chat ${i}` }))];
+  // 7 chats hold the 15 slots (3 + 2 + 2 + 2 + 2 + 2 + 2); rows are seeded directly — only the cap check reads them
+  const per = [3, 2, 2, 2, 2, 2, 2];
+  const ts = new Date().toISOString();
+  chats.forEach((c, ci) => {
+    for (let i = 0; i < per[ci]; i++) {
+      prepare(`INSERT INTO ask_worktrees (id, thread_id, project_key, project_dir, ref, resolved_commit, run_id, worktree_dir, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'main', '', NULL, ?, ?, ?)`)
+        .run(`wt_${ci}${i}000000`.slice(0, 11), c.id, p.key, repo, join(repo, `nope-${ci}-${i}`), ts, ts);
+    }
+  });
+  const asker = createThread({ title: 'asker' });
+  const err = await openAskWorktree({ threadId: asker.id, projectKey: p.key, ref: 'main' }).then(() => null, (e) => e);
+  assert.ok(err instanceof AskWorktreeError);
+  assert.match(err.message, /^global worktree cap reached \(15\)\. Held by: "T{39}…" \(3\), /);
+  assert.match(err.message, /, … \(\+2 more chats\)\. Free slots in Settings › Chat › Chat checkouts \(safe ones are listed\), or remove one with remove_worktree in the chat that holds it\.$/);
+  assert.equal((err.message.match(/\(\d\)/g) || []).length, 5);
+  assert.equal(prepare('SELECT count(*) AS n FROM ask_worktrees').get().n, ASK_LIMITS.worktreesGlobal);   // nothing was removed
+  // the per-thread message is unchanged; plain errors carry no code
+  assert.equal(new AskWorktreeError('x').code, undefined);
+  assert.equal(new AskWorktreeError('x', 'C', { a: 1 }).detail.a, 1);
+  assert.equal(new AskWorktreeError('x').name, 'AskWorktreeError');
+  prepare('DELETE FROM ask_worktrees').run();
+});
