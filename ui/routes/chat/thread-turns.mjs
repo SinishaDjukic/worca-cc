@@ -33,7 +33,7 @@ import { listProjects } from '../../../src/core/projects.mjs';
 import { changesCard, landingFacts, landingFactsOfFeature } from '../../../src/core/shape/changes.mjs';
 import { isGenericBinary } from '../../../src/shared/artifact-kinds.mjs';
 import { chatAttachRefusal, chatSwitchChanges, engineLabel } from '../../../src/shared/engine-switch.mjs';
-import { askChatEngine, askChatEngineGate, askContextTokens, askCredentialGate, askDeleting, askEngineSwitchText, askIdParam, askInFlight, askRunningCount, askSignedIn, askSupersedePrecheck, askSwitchTranscript, askTurnEngine, askViewer, badRequest, broadcast, brokerStartRefusal, factDeps, flipCard, liveRunEntry, postDirection, startAskTurn, switchThreadScope } from '../../server.mjs';
+import { askChatEngine, askChatEngineGate, askContextTokens, askCredentialGate, askCheckoutRemoving, askDeleting, CHECKOUT_REMOVING, askEngineSwitchText, askIdParam, askInFlight, askRunningCount, askSignedIn, askSupersedePrecheck, askSwitchTranscript, askTurnEngine, askViewer, badRequest, broadcast, brokerStartRefusal, factDeps, flipCard, liveRunEntry, postDirection, startAskTurn, switchThreadScope } from '../../server.mjs';
 
 /** A message typed in a design chat closes the chat's open clarifying cards (L5.9): every `design-questions` card still
  *  `asking` reads `closed` (Not answered), so a late answer gets 409 instead of starting an event turn on stale context.
@@ -220,6 +220,7 @@ app.post('/api/ask/threads/:id/engine', async (req, res) => {
  *  turn meanwhile. `startAskTurn` repeats them, in the same tick as the writes. */
 function askTurnRefusal(id) {
   if (askDeleting.has(id)) return { status: 409, body: { error: 'thread is being deleted' } };
+  if (askCheckoutRemoving.has(id)) return { status: 409, body: CHECKOUT_REMOVING };
   if (askInFlight(id)) return { status: 409, body: { error: 'turn in flight' } };
   // Budget gate (F6), same figure /api/run enforces: Ask spend is folded into the
   // total window (cost-budget.mjs totalWindowSpendUsd), so chat must stop at

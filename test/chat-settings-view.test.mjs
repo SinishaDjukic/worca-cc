@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields } from '../ui/public/chat-settings-view.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
+import { readFileSync } from 'node:fs';
 import { checkRows } from './helpers/rows.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
@@ -183,4 +184,108 @@ test('Summarise commands: on by default, a Beta chip, collects its value (#911)'
   assert.deepEqual(collectSummariesToggle(host), { summariseCommands: false });
   host.replaceChildren(renderSummariesToggle({ prefs: { summariseCommands: false } }, { doc }));
   assert.equal(host.querySelector('input.ask-summaries').checked, false);
+});
+
+// ── Settings › Chat › Chat checkouts ─────────────────────────────────────────────
+const NOW = Date.parse('2026-11-24T12:00:00Z');
+const ago = (days) => new Date(NOW - days * 24 * 60 * 60_000).toISOString();
+const co = (over = {}) => ({
+  worktreeId: 'wt_00000001', threadId: 'ask_00000001', title: 'Fix the login', createdBy: null, projectKey: 'proj', ref: 'main',
+  createdAt: ago(20), lastTouchedAt: ago(12), inUse: false, loss: 'none', dirty: false, ownCommits: false, recent: false,
+  missingDir: false, safe: true, lost: { dirtyFiles: [], commits: [], truncated: false, fingerprint: 'f' }, canDiscard: true, own: true, ...over,
+});
+
+test('chipFor: one table from separate verdict fields, most urgent first', async () => {
+  const { chipFor } = await import('../ui/public/chat-settings-view.mjs');
+  const label = (over) => chipFor(co(over)).label;
+  assert.equal(label({ inUse: 'terminal', safe: false, dirty: true }), 'In use');
+  assert.equal(label({ inUse: 'unknown', safe: false }), 'In use');
+  assert.equal(label({ loss: 'unknown', safe: false }), 'Check failed');
+  assert.equal(label({ loss: 'work', dirty: true, ownCommits: true, safe: false }), 'Uncommitted changes');
+  assert.equal(label({ loss: 'work', ownCommits: true, safe: false }), 'Commits not on any branch');
+  assert.match(chipFor(co({ loss: 'work', ownCommits: true, safe: false })).tip, /branch that was since deleted/);
+  assert.equal(label({ recent: true, safe: false }), 'Used recently');
+  assert.equal(label({}), 'Safe to remove');
+  assert.equal(chipFor(co({})).tone, 'green');
+});
+
+test('renderCheckoutsList: rows, chips, the owner only on a shared payload, disabled Remove with a reason, empty state', async () => {
+  const { renderCheckoutsList, checkoutsSummary } = await import('../ui/public/chat-settings-view.mjs');
+  const payload = { capacity: 15, used: 3, items: [
+    co(),
+    co({ worktreeId: 'wt_00000002', threadId: 'ask_00000002', title: 'Busy chat', inUse: 'replying', safe: false }),
+    co({ worktreeId: 'wt_00000003', threadId: 'ask_00000003', title: null, loss: 'work', dirty: true, safe: false, canDiscard: false, createdBy: 'bob@example.com' }),
+  ] };
+  const el = renderCheckoutsList(payload, { doc, now: NOW });
+  const rows = [...el.querySelectorAll('.checkout-row')];
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0].querySelector('.checkout-title').textContent, 'Fix the login');
+  assert.match(rows[0].querySelector('.checkout-meta').textContent, /proj · main · last used 12 days ago/);
+  assert.match(rows[0].querySelector('.checkout-chip').className, /green/);
+  assert.equal(rows[0].querySelector('.checkout-remove').disabled, false);
+  assert.equal(rows[0].querySelector('.checkout-remove').dataset.wt, 'wt_00000001');
+  assert.equal(rows[1].querySelector('.checkout-remove').disabled, true);
+  assert.match(rows[1].querySelector('.checkout-remove').title, /In use by a live turn, command, run or terminal/);
+  assert.equal(rows[2].querySelector('.checkout-title').textContent, 'Untitled chat');
+  assert.equal(rows[2].querySelector('.checkout-remove').disabled, true);
+  assert.match(rows[2].querySelector('.checkout-remove').title, /someone else's chat and isn't safe to remove/);
+  assert.match(rows[2].querySelector('.checkout-meta').textContent, /^bob@example\.com · /, 'two owners: shared payload shows who');
+  assert.match(rows[0].querySelector('.checkout-meta').textContent, /^No owner · /);
+  // one owner (a local install): no owner column
+  const local = renderCheckoutsList({ items: [co(), co({ worktreeId: 'wt_00000009' })] }, { doc, now: NOW });
+  assert.doesNotMatch(local.querySelector('.checkout-meta').textContent, /No owner|@/);
+  // the owner may still discard their own non-safe row
+  const mine = renderCheckoutsList({ items: [co({ loss: 'work', dirty: true, safe: false, canDiscard: true })] }, { doc, now: NOW });
+  assert.equal(mine.querySelector('.checkout-remove').disabled, false);
+  assert.equal(renderCheckoutsList({ items: [] }, { doc }).textContent, 'No chat checkouts.');
+  assert.equal(checkoutsSummary({ capacity: 15, used: 12, items: [co(), co(), co({ safe: false })] }), '12 of 15 slots used · 2 safe to remove');
+});
+
+test('checkoutConfirmMessage: lists the first 10 files plus "and N more", the commits, and the unknown case', async () => {
+  const { checkoutConfirmMessage } = await import('../ui/public/chat-settings-view.mjs');
+  const files = Array.from({ length: 13 }, (_, i) => `src/f${i}.js`);
+  const msg = checkoutConfirmMessage(co({ loss: 'work', dirty: true, ownCommits: true, safe: false,
+    lost: { dirtyFiles: files, commits: [{ sha: 'abcdef0123456789', subject: 'my work' }], truncated: false, fingerprint: 'x' } }));
+  assert.match(msg, /Uncommitted changes \(13\):/);
+  assert.match(msg, /• src\/f9\.js/);
+  assert.doesNotMatch(msg, /src\/f10\.js/);
+  assert.match(msg, /and 3 more/);
+  assert.match(msg, /• abcdef0 my work/);
+  assert.match(msg, /This cannot be undone\. The chat stays and can open a fresh checkout later\.$/);
+  assert.match(checkoutConfirmMessage(co({ loss: 'unknown', safe: false })), /the check could not run|check could not run/);
+});
+
+test('createCheckoutsRefresher: pokes coalesce into one trailing load; nothing while hidden; a load in flight is not restarted', async () => {
+  const { createCheckoutsRefresher } = await import('../ui/public/chat-settings-view.mjs');
+  const timers = [];
+  const setTimer = (fn) => { timers.push(fn); return timers.length; };
+  const clearTimer = (id) => { timers[id - 1] = null; };
+  let calls = 0;
+  let release;
+  let visible = true;
+  const load = () => { calls += 1; return calls === 1 ? new Promise((r) => { release = r; }) : Promise.resolve(); };
+  const r = createCheckoutsRefresher({ load, visible: () => visible, setTimer, clearTimer });
+  r.poke(); r.poke(); r.poke();
+  assert.equal(timers.filter(Boolean).length, 1, 'three pokes, one timer');
+  const fire = timers.find(Boolean);
+  timers[timers.indexOf(fire)] = null;                  // a fired timer is spent
+  const first = fire();                                 // the load starts
+  assert.equal(calls, 1);
+  r.poke();                                             // during the load: remembered, not restarted
+  assert.equal(calls, 1);
+  release(); await first;
+  assert.equal(timers.filter(Boolean).length, 1, 'one more run is queued after the load');
+  const next = timers.find(Boolean);
+  timers[timers.indexOf(next)] = null;
+  await next();
+  assert.equal(calls, 2);
+  visible = false;
+  const n = timers.length;
+  r.poke();
+  assert.equal(timers.length, n, 'hidden: no timer');
+});
+
+test('settings.html carries the Chat checkouts row ids the app wires', () => {
+  const src = readFileSync(new URL('../ui/public/settings/settings.html', import.meta.url), 'utf8');
+  for (const id of ['askCheckoutsSummary', 'askCheckoutsList', 'askCheckoutsMsg', 'askCheckoutsFree']) assert.match(src, new RegExp(`id="${id}"`), id);
 });
