@@ -332,6 +332,19 @@ test('groupHead: a feature with unmarked requirements locks every Create PR (dis
   assert.deepEqual(groupHead({ state: 'ready', prs: [], unmarked: 0 }).cta, { state: 'create' }, 'every row marked: as before');
 });
 
+test('groupHead with ship (a small-runs feature): Create N PRs, locked with the ledger\'s reason in place of the count', () => {
+  const pr = (n) => ({ key: `p${n}`, name: `Run ${n}`, number: n, url: `u${n}`, open: true, merged: false });
+  const why = 'Waiting for Compliance to confirm R-comp-4';
+  const blocked = { n: 3, blocked: true, reason: why };
+  assert.deepEqual(groupHead({ state: 'ready', prs: [], unmarked: 1, ship: blocked }).cta, { state: 'create', label: 'Create 3 PRs', disabled: true, quiet: true, title: why });
+  assert.deepEqual(groupHead({ state: 'ready', prs: [], ship: { n: 3, blocked: false, reason: null } }).cta, { state: 'create', label: 'Create 3 PRs' });
+  const after = (ship) => groupHead({ state: 'ready', prs: [pr(1)], ship }).after.map((b) => [b.id, b.label, !!b.primary, !!b.disabled, b.title || '']);
+  assert.deepEqual(after(blocked), [['ship', 'Create 3 PRs', false, true, why]]);
+  assert.deepEqual(after({ ...blocked, blocked: false }), [['ship', 'Create 3 PRs', true, false, '']]);
+  for (const ship of [null, undefined]) assert.deepEqual(groupHead({ state: 'ready', prs: [], ship }), groupHead({ state: 'ready', prs: [] }));
+  assert.equal(groupHead({ state: 'working', prs: [], ship: blocked }).cta, null);
+});
+
 test('prMenuItems with onWatchAll / onCopyAll: each PR as today, then Watch PRs (Advanced) and Copy PR links', () => {
   const prs = [{ key: 'a', name: 'Run 1', number: 12, url: 'u1', open: true, watch: null },
     { key: 'b', name: 'Run 2', number: 13, url: 'u2', open: true, watch: null, conflicts: true }];
@@ -437,6 +450,16 @@ test('route: every mocked case returns its rows, states, status lines, fold and 
   // 14 mocked cases + 7b, 7c, 8b, the chain run and the group-still-loading case: a dropped case fails here.
   assert.equal(Object.keys(ROUTE_CASES).length, 19);
   for (const [name, [f, want]] of Object.entries(ROUTE_CASES)) assert.deepEqual(shape(routeModel(f)), want, name);
+});
+
+test('route: a Verifier run (PR-exempt as verify) promises no pull request, live or finished, and lands nowhere', () => {
+  const why = 'The Verifier checks the feature; it opens no PR of its own';
+  const live = shape(routeModel(F({ m: M('working'), branch: 'feat/verify', prExempt: 'verify' })));
+  assert.deepEqual(live.rows, [['branch', 'working', 'feat/verify', "This run's branch · the agents are working here"], ['pr', 'future', 'Pull request', why]]);
+  const done = shape(routeModel(F({ m: M('ready'), branch: 'feat/verify', prExempt: 'verify', canCreatePr: false })));
+  assert.deepEqual(done.rows.map((r) => r[3]), ["This run's branch · changes done", why]);
+  // Another exemption keeps today's route.
+  assert.equal(shape(routeModel(F({ m: M('working'), branch: 'feat/x', prExempt: 'round' }))).rows.length, 3);
 });
 
 test('route: edge rows — a live workspace, a discarded folder, a failed folder run, a stacked PR with no previous run', () => {

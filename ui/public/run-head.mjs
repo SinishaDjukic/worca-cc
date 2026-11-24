@@ -4,8 +4,9 @@
 // fetch.
 import { icon } from './icons.mjs';
 import { copyButton } from './copy-button.mjs';
-import { CREATE_PR_LABEL, VIEW_PRS_LABEL, viewPrLabel } from './ship-words.mjs';
+import { CREATE_PR_LABEL, createPrLabel, VIEW_PRS_LABEL, viewPrLabel } from './ship-words.mjs';
 import { isSafeHref } from './actions-view.mjs';
+import { prExemptText } from '../../src/shared/pr-auto.mjs';
 
 // Watch PR (#619), moved from app.js: the route and the Overview's PR rows read one wording.
 export const HD_PR_WATCH_ACTIVE = new Set(['starting', 'fixing', 'publishing']);
@@ -227,16 +228,18 @@ function workspaceHead(f) {
 /** One ship flow (slice 2): a feature's or a chain's head, in workspaceHead's shape. `state`: groupModel's; `prs`:
  *  groupPrList(row). Create PR while no run has a PR; View PR ▾ for one PR, View PRs ▾ for several; while the group
  *  is still ready (a partly shipped chain) Create PR stays as a head button beside them. Shaper requirements s3:
- *  `unmarked` (a feature's unmarked agreed requirements) locks every Create PR, as the Ship card's ledger does. */
-export function groupHead({ state, prs, unmarked = 0 }) {
+ *  `unmarked` (a feature's unmarked agreed requirements) locks every Create PR, as the Ship card's ledger does. `ship`
+ *  (a small-runs feature: {n, blocked, reason} of its ledger) names the N PRs and locks with the ledger's reason instead. */
+export function groupHead({ state, prs, unmarked = 0, ship = null }) {
   const ready = state === 'ready';
-  const lock = unmarked > 0 ? `Mark every requirement before you create the PR · ${unmarked} left` : '';
-  if (!prs.length) return { ...NONE, key: 'group', cta: ready ? { state: 'create', ...(lock ? { disabled: true, quiet: true, title: lock } : {}) } : null };
+  const label = ship ? createPrLabel(ship.n) : CREATE_PR_LABEL;
+  const lock = ship ? (ship.blocked ? ship.reason || '' : '') : unmarked > 0 ? `Mark every requirement before you create the PR · ${unmarked} left` : '';
+  if (!prs.length) return { ...NONE, key: 'group', cta: ready ? { state: 'create', ...(ship ? { label } : {}), ...(lock ? { disabled: true, quiet: true, title: lock } : {}) } : null };
   const cta = prs.length === 1
     ? { state: prs[0].merged ? 'merged' : 'view', href: prs[0].url, menu: true }
     : { state: 'view', label: VIEW_PRS_LABEL, menu: true, ws: true };
   return { ...NONE, key: 'group', cta,
-    after: ready ? [btn('ship', CREATE_PR_LABEL, lock ? { disabled: true, title: lock, icon: 'pr-create' } : { primary: true, icon: 'pr-create' })] : [] };
+    after: ready ? [btn('ship', label, lock ? { disabled: true, title: lock, icon: 'pr-create' } : { primary: true, icon: 'pr-create' })] : [] };
 }
 
 /** The route's Watch words (D16): status only; the ▾ menu edits Watch. */
@@ -374,6 +377,8 @@ function prRoute(f) {
   const merged = s === 'MERGED' || (!pr && m.state === 'merged' && !(g && g.buildsOn !== false) && !(!g && f.groupPending));
   const stackedOn = !!pr && !!g && g.shipMode === 'stacked' && g.buildsOn && !!g.prev && !g.prevPrMerged;
   const rows = [branchRow(f)];
+  // C5: the Verifier opens no PR and lands nothing; its route says why instead of promising a pull request.
+  if (!pr && f.prExempt === 'verify') return finish([...rows, row('pr', 'future', txt('Pull request'), txt(prExemptText(f.prExempt)))]);
   if (pr) {
     const one = !!g && g.shipMode === 'one';
     const note = one ? txt(`carries all ${g.total} runs`) : stackedOn ? txt(`stacked on ${g.prev.label}'s pull request`) : [];

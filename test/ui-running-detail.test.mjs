@@ -11,6 +11,8 @@ import { useAppTimers } from './helpers/app-timers.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { ASK_IN_CHAT } from '../ui/public/run-head.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
+import { careRunPlan } from '../src/shared/shape/feature-record.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -144,6 +146,8 @@ async function bootRunning({ budget = okBudget(), rows = [HISTORY_ROW] } = {}) {
       if (box.slice && /\/api\/shape\/pipelines\/[^/]+\/slice$/.test(url)) return ok(box.slice);
       // The run's saved state (rdLoadData), only when a test sets box.runData.
       if (box.runData && url.startsWith('/api/runs/p1?')) return ok(box.runData);
+      // C5: the run's PR-when-done answer, only when a test sets box.prAuto.
+      if (box.prAuto && url.endsWith('/api/pipelines/p-verify/pr-auto')) return ok({ prAuto: box.prAuto });
       return null;
     },
   });
@@ -1265,6 +1269,18 @@ test('a live run\'s route ends at its base branch, where the work lands once the
   assert.equal(R.querySelector('.rd-route-fold'), null);
 });
 
+test('C5: a live Verifier run (PR-exempt as verify) says why it opens no PR, once its pr-auto answer lands; no "Lands here"', async () => {
+  const ctx = await bootRunning();
+  ctx.box.prAuto = { exempt: 'verify' };
+  // Its own pipeline id: pr-auto-view's answer cache is shared by every app boot in this file (p1 is asked elsewhere).
+  const rd = await openGlance(ctx, 'running/r1', { id: 'p-verify', branch: { source: 'main', feature: 'worca-cc/verify-p1', worktreeDir: '/tmp/wt' } });
+  await settle(ctx.window, 6);
+  const rows = [...rd.querySelectorAll('.rd-route .rd-route-row')];
+  assert.equal(rows.length, 2, 'the branch and the PR row; nothing lands');
+  assert.equal(rows[1].querySelector('.rd-route-second').textContent, 'The Verifier checks the feature; it opens no PR of its own');
+  assert.ok(!/Opens when the changes are done|Lands here/.test(rd.querySelector('.rd-route').textContent));
+});
+
 test('needle (c): at Advanced and Expert the ▾ lists one Watch switch, whose click POSTs /api/pr/watch', async () => {
   await checkRows(['advanced', 'expert'].map((level) => ({ name: level, run: async () => {
     const { ctx, calls, menu, openMenu } = await prGlance({ level });
@@ -2031,6 +2047,52 @@ const openRdMore = (ctx) => {
 };
 const rdLabel = (b) => b.querySelector('.wfv-menu-l').textContent;
 
+test('Rerun, live page: greyed with its visible hint while the run runs, enabled once it has ended; inert when greyed', async () => {
+  const ctx = await bootRunning({ rows: [liveRow()] });
+  await openGlance(ctx, 'running/r1', { status: 'running' });
+  const running = openRdMore(ctx).find((b) => rdLabel(b) === 'Rerun');
+  assert.ok(running, 'offered on a run with a pipeline id');
+  assert.equal(running.disabled, true);
+  assert.equal(running.querySelector('.wfv-menu-hint').textContent, 'after it ends');
+  assert.equal(running.title, 'Rerun is available once the run has ended.');
+  running.click();
+  await settle(ctx.window, 4);
+  assert.equal(ctx.calls.filter((c) => /\/rerun$/.test(c.url)).length, 0, 'nothing is fetched');
+  ctx.window.document.querySelector('body > .wfv-menu')?.remove();
+
+  const ended = await bootRunning({ rows: [liveRow()] });
+  await openGlance(ended, 'running/r1', { status: 'stopped', active: [] });
+  const items = openRdMore(ended);
+  const rerun = items.find((b) => rdLabel(b) === 'Rerun');
+  assert.equal(rerun.disabled, false);
+  assert.equal(rerun.querySelector('.wfv-menu-hint'), null);
+  assert.ok(items.map(rdLabel).indexOf('Rerun') < items.map(rdLabel).indexOf('Terminal'));
+  assert.deepEqual(items.map(rdLabel).slice(-2), ['Report this run', 'Archive']);
+});
+
+test('Rerun of …: the live page links the run it was copied from (from its state, no saved-run read), or says it is gone, as text only', async () => {
+  const ctx = await bootRunning();
+  const rd = await openGlance(ctx, 'running/r1', { rerunOf: { id: 'src00001', key: KEY, title: 'Old <b>run</b>', exists: true } });
+  assert.equal(ctx.calls.filter((c) => c.url.startsWith('/api/runs/p1?')).length, 0, 'a live run never reads its saved run for the link');
+  const row = rd.querySelector('.rd-kv [data-fact="rerun"]');
+  assert.equal(row.hidden, false);
+  const a = row.querySelector('a');
+  assert.equal(a.getAttribute('href'), `#history/${KEY}/src00001`);
+  assert.equal(a.textContent, 'Rerun of Old <b>run</b>');
+  assert.equal(row.querySelector('b'), null);
+
+  const gone = await bootRunning();
+  const rd2 = await openGlance(gone, 'running/r1', { rerunOf: { id: 'src00001', key: null, title: null, exists: false } });
+  const row2 = rd2.querySelector('.rd-kv [data-fact="rerun"]');
+  assert.equal(row2.hidden, false);
+  assert.equal(row2.querySelector('a'), null);
+  assert.equal(row2.querySelector('.rd-kv-v').textContent, 'Copied from a run that no longer exists');
+
+  const plain = await bootRunning();
+  const rd3 = await openGlance(plain, 'running/r1');
+  assert.equal(rd3.querySelector('.rd-kv [data-fact="rerun"]').hidden, true, 'a run that is no rerun has no row');
+});
+
 test('needle (e), live: a stopped run has one Archive, in ⋯; confirming archives it and shows the list', async () => {
   const ctx = await bootRunning({ rows: [liveRow()] });
   const rd = await openGlance(ctx, 'running/r1', { status: 'stopped', active: [] });
@@ -2312,6 +2374,139 @@ test('the run page shows Resuming… at the Resume click, and a refusal that ask
       } finally { hold.restore(); }
     } },
   ]);
+});
+
+// ── Shaper small runs D2 (D11, D16): one Agents place, the run's facts, the done-key refetch ─────────────────────────
+const d2Agent = (id, key) => ({ id, kind: 'agent', key, x: 0, y: 0, label: key, ports: { inputs: [], outputs: [] } });
+const d2Manifest = (careRun) => ({ version: 2, template: { id: 'wf_shape_slice_req' },
+  graph: { nodes: [['n_clarify', 'clarify'], ['n_plan', 'planner'], ['n_refine', 'refiner'], ['n_impl', 'implementer'], ['n_review', 'reviewer'],
+    ['n_roles', 'planReviewer'], ['n_tests', 'testWriter']].map(([id, key]) => d2Agent(id, key)), wires: [] }, ...(careRun ? { careRun } : {}) });
+const d2Row = (nodeId, status = 'done') => ({ key: `x:${nodeId}:1`, executionId: `x:${nodeId}:1`, nodeId, ordinal: 1, cycle: 1, status, startedAt: '2026-11-21T10:00:00Z' });
+const D2_CARE = careRunPlan('balanced', { runRoles: ['product', 'architect'] });
+const d2Steps = (done = ['n_clarify', 'n_plan', 'n_roles', 'n_refine'], live = 'n_tests') => done.map((id) => d2Row(id)).concat(live ? [d2Row(live, 'start')] : []);
+const D2_SLICE = { featureId: 'feat_d2', title: 'Charts everywhere', index: 2, total: 3, sliceTitle: 'Export', state: 'running', next: null, threadId: null,
+  owns: [{ id: 'R-po-1', text: 'Export the report', pass: null }, { id: 'R-arch-10', text: 'It stays fast', pass: true }],
+  startsFrom: { kind: 'run', run: 1, branch: 'f/1', text: 'the latest finished run (run 1)' },
+  stored: { planVersion: 2, planReviewed: true, tests: null } };
+const sliceGets = (ctx) => ctx.calls.filter((c) => /\/api\/shape\/pipelines\/p1\/slice$/.test(c.url)).length;
+const visibleAgentsPlaces = (window) => {
+  const d = window.document;
+  const box = [...d.querySelectorAll('#run-detail .rd-run-agents')].filter((x) => !x.hidden && !x.closest('[hidden]'));
+  const tab = [...d.querySelectorAll('#run-detail .rd-tab[data-sec="agents"]')].filter((x) => !x.hidden);
+  return box.length + tab.length;
+};
+async function openCareRun({ flag = true, slice = D2_SLICE, careRun = D2_CARE, route = 'running/r1', state = {} } = {}) {
+  const ctx = await bootRunning();
+  if (flag) applyFlags({ shaperSmallRuns: true }, ctx.window.document);
+  if (slice !== undefined) ctx.box.slice = slice;
+  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Export', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  // careRun null: no manifest yet (the client swaps a manifest only when its node ids change, so careRun comes with it).
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', ...(careRun ? { stepper: d2Manifest(careRun) } : {}), steps: d2Steps(),
+    active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }], subAgents: SUBS(),
+    branch: { source: 'main', feature: 'f/2', worktreeDir: '/tmp/wt' }, ...state });
+  go(ctx.window, route);
+  await settle(ctx.window, 8);
+  return ctx;
+}
+
+test('D2 (D11): flag on, a Care run at Expert: the Agents tab is hidden, one visible .rd-run-agents with an expert .rd-run-subagents of dev\'s groups', async () => {
+  const ctx = await openCareRun();
+  const { window } = ctx;
+  assert.equal(tabOf(window, 'agents').hidden, true);
+  assert.equal(visibleAgentsPlaces(window), 1);
+  const sub = window.document.querySelector('#run-detail .rd-run-agents > .rd-run-subagents');
+  assert.ok(sub, 'dev\'s sub-agent detail is reachable');
+  assert.equal(sub.dataset.minLevel, 'expert');
+  assert.ok(sub.querySelector('.rd-ag-group'), 'dev\'s own groups');
+  assert.equal(sub.previousElementSibling.classList.contains('run-agents'), true, 'under the rows');
+});
+
+test('D2 (D11): a frame without careRun (no manifest yet), then one with it: 1 Agents place; an active, focused Agents tab hands over to Overview', async () => {
+  const ctx = await openCareRun({ careRun: null, route: 'running/r1/details/agents' });
+  const { window } = ctx;
+  assert.equal(visibleAgentsPlaces(window), 1, 'no careRun: dev\'s tab, no box');
+  assert.ok(tabOf(window, 'agents').classList.contains('active'));
+  tabOf(window, 'agents').focus();
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE), steps: d2Steps(),
+    active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }], subAgents: SUBS() });
+  await settle(window, 8);
+  assert.equal(tabOf(window, 'agents').hidden, true);
+  assert.ok(tabOf(window, 'overview').classList.contains('active'));
+  assert.equal(window.document.activeElement, tabOf(window, 'overview'));
+  assert.equal(visibleAgentsPlaces(window), 1);
+});
+
+test('D2 (D11): #running/ID/details/agents with the flag on lands on a visible Overview (active tab overview)', async () => {
+  const ctx = await openCareRun({ route: 'running/r1/details/agents' });
+  const { window } = ctx;
+  const active = window.document.querySelector('#run-detail .rd-tab.active');
+  assert.equal(active.dataset.sec, 'overview');
+  assert.equal(secOf(window, 'overview').hidden, false);
+  assert.equal(secOf(window, 'agents').hidden, true);
+});
+
+test('D2 (D10, D16): the facts paint from /slice once each; a done-key change asks again exactly once, an identical frame never', async () => {
+  const ctx = await openCareRun();
+  const { window } = ctx;
+  const d = window.document;
+  const facts = d.querySelectorAll('#run-detail .rd-run-facts');
+  assert.equal(facts.length, 1);
+  assert.equal(facts[0].nextElementSibling, d.querySelector('#run-detail .rd-run-agents'), 'before the Agents box');
+  const ov = secOf(window, 'overview').closest('.rd') || d.querySelector('#run-detail');
+  assert.equal((ov.textContent.match(/Starts from/g) || []).length, 1);
+  for (const id of ['R-po-1', 'R-arch-10']) assert.equal([...ov.querySelectorAll('.plan-check-id')].filter((x) => x.textContent === id).length, 1, id);
+  const planner = [...d.querySelectorAll('#run-detail .run-agents .plan-check-row')].find((r) => r.querySelector('.plan-check-label').textContent === 'Planner');
+  assert.equal(planner.querySelector('.plan-check-detail').textContent, 'plan v2 · after the plan review');
+  const before = sliceGets(ctx);
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE), steps: d2Steps(),
+    active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }], subAgents: SUBS() });
+  await settle(window, 8);
+  assert.equal(sliceGets(ctx), before, 'an identical frame asks nothing');
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE),
+    steps: d2Steps(['n_clarify', 'n_plan', 'n_roles', 'n_refine', 'n_tests'], 'n_impl'), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }], subAgents: SUBS() });
+  await settle(window, 8);
+  assert.equal(sliceGets(ctx), before + 1, 'a done-key change asks once');
+  assert.equal(d.querySelectorAll('#run-detail .rd-run-facts').length, 1);
+});
+
+test('D2 (D16): a /slice 500 creates no facts node; flag on, an unmarked feature or a dev run: no node, no refetch on done keys', async () => {
+  const fail = await bootRunning();
+  applyFlags({ shaperSmallRuns: true }, fail.window.document);
+  const boot500 = fail;
+  boot500.box.slice = null;
+  const orig = boot500.window.fetch;
+  boot500.window.fetch = (u, o) => (/\/slice$/.test(String(u)) ? (boot500.calls.push({ url: String(u) }), Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) })) : orig(u, o));
+  globalThis.fetch = boot500.window.fetch;
+  frame(boot500, { type: 'run-created', runId: 'r1', title: 'Export', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(boot500, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE), steps: d2Steps(), active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }] });
+  go(boot500.window, 'running/r1');
+  await settle(boot500.window, 8);
+  assert.ok(sliceGets(boot500) >= 1, 'it asked');
+  assert.equal(boot500.window.document.querySelector('#run-detail .rd-run-facts'), null);
+
+  const { owns, startsFrom, stored, ...unmarked } = D2_SLICE;
+  assert.ok(owns && startsFrom && stored);
+  for (const slice of [unmarked, null]) {
+    const ctx = await openCareRun({ slice });
+    const before = sliceGets(ctx);
+    assert.equal(ctx.window.document.querySelector('#run-detail .rd-run-facts'), null);
+    frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE),
+      steps: d2Steps(['n_clarify', 'n_plan', 'n_roles', 'n_refine', 'n_tests'], 'n_impl'), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }] });
+    await settle(ctx.window, 8);
+    assert.equal(sliceGets(ctx), before, 'no refetch for a run without owns');
+    assert.equal(ctx.window.document.querySelector('#run-detail .rd-run-facts'), null);
+  }
+});
+
+test('D2: flag off: no .rd-run-facts, no /slice ask from the Overview, dev\'s Agents tab and tab order', async () => {
+  const ctx = await openCareRun({ flag: false });
+  const { window } = ctx;
+  assert.equal(window.document.querySelector('#run-detail .rd-run-facts'), null);
+  assert.equal(window.document.querySelector('#run-detail .rd-run-subagents'), null);
+  assert.equal(tabOf(window, 'agents').hidden, false);
+  assert.equal(visibleAgentsPlaces(window), 2, 'dev: the tab and C2\'s box');
+  assert.deepEqual([...window.document.querySelectorAll('#run-detail .rd-tab')].map((b) => b.dataset.sec),
+    ['overview', 'task', 'diff', 'artifacts', 'actions', 'workflow', 'qa', 'logs', 'agents']);
 });
 
 // --- The run time is the engine's elapsed clock; the summed step time is "agent time" ----------

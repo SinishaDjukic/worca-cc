@@ -14,7 +14,7 @@ import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { realpathSync, existsSync, statSync, lstatSync, constants as fsConstants } from 'node:fs';
 import { hostname } from 'node:os';
-import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath, isNoProjectKey, noProjectWorkDir, NO_PROJECT_KEY } from './store.mjs';
+import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath, isNoProjectKey, noProjectWorkDir, NO_PROJECT_KEY, testCopyKeyOf, testCopyDirFor, PROJECT_KEY_RE } from './store.mjs';
 import { NO_PROJECT_NAME } from '../shared/no-project.mjs';
 import { workModeOfRow } from './project-kind.mjs';
 import { rollupChanges } from './folder-members.mjs';
@@ -37,6 +37,7 @@ import { insertRunTags, readRunTags, readTagsFor } from './run-tags-store.mjs';
 import { insertRunLabels, readLabelsFor, readRunLabels } from './run-labels-store.mjs';
 import { workInBase } from './in-base.mjs';
 import { readNightDecisions } from './night/store.mjs';
+import { planVersionOf } from '../shared/shape/run-facts.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -62,6 +63,18 @@ const DIR_ID_RE = /-([0-9a-f]{8})$/i;
  * @param {string} key
  * @returns {object|null}
  */
+/**
+ * The folder a single-project pipelines row worked in: a run without a project, its own work folder; a workflow-test try
+ * (is_test), Worca's copy of the project (3a, final review round 2: never the person's folder); else the project's
+ * registered path (store meta). null when unknown. Workspace rows keep their members' own dirs (workspace_meta).
+ */
+export function projectDirOfRow(row) {
+  if (!row) return null;
+  if (isNoProjectKey(row.project_key)) return noProjectWorkDir(row.id);
+  if (row.is_test) return PROJECT_KEY_RE.test(String(row.project_key ?? '')) ? testCopyDirFor(row.project_key) : null;
+  return readStoreMeta(row.project_key)?.path ?? null;
+}
+
 /** Was this run started as a mock (pipelines.run_setup)? A row without the column, or unreadable JSON: no. */
 function isMockSetup(raw) {
   try { return JSON.parse(raw || 'null')?.mock === true; } catch { return false; }
@@ -402,9 +415,8 @@ export async function listRunArtifacts(pipelineId, filter = {}) {
  */
 export async function newestPlanPath(pipelineId, storeRoot) {
   if (!pipelineId || !storeRoot) return null;
-  const ver = (rel) => Number(/-v(\d+)\.md$/.exec(rel)?.[1] || 1);
   const plans = (await listRunArtifacts(pipelineId, { kind: 'plan' }))
-    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || ver(b.relPath) - ver(a.relPath));
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || planVersionOf(b.relPath) - planVersionOf(a.relPath));
   for (const a of plans) {
     const f = join(storeRoot, a.relPath);
     try { if (lstatSync(f).isFile()) return f; } catch { /* gone: try the next one */ }
@@ -995,6 +1007,9 @@ async function ensureMeta(projectDir, _root, { projectKey, plain = false } = {})
   if (existing) return existing;                       // firstSeenAt preserved
   // P1 (v8): a non-git run's folder is its own root — never an enclosing repo's (a parent git-inited after registration)
   const canonical = plain ? (() => { const d = resolve(projectDir); try { return realpathSync(d); } catch { return d; } })() : canonicalProjectRoot(projectDir);
+  // Workflow tests 3a (D52): Worca's copy of a project is never written as the project's meta. The first write wins
+  // (firstSeenAt), so a project that never ran would otherwise keep the copy as its path for good.
+  if (!plain && testCopyKeyOf(canonical)) return { key, path: canonical, name: basename(canonical), firstSeenAt: new Date().toISOString() };
   let name = basename(canonical) || 'project';
   try {
     const projects = await listProjects();
@@ -1195,6 +1210,7 @@ export async function readPromptFile(projectDir, promptFile) {
  * @param {string} [opts.guardrailsId] the run's selected guardrail set id (per-run)
  * @param {string|null} [opts.runSetup] JSON of the run's setup (pipelines.run_setup, v62); never on the state object
  * @param {object|null} [opts.prAuto] the run's PR-when-done decision (pipelines.pr_auto, v86); same rule as runSetup
+ * @param {string|null} [opts.rerunOf] the id of the run this one was copied from (pipelines.rerun_of); same rule as runSetup
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
@@ -1206,9 +1222,9 @@ export async function readPromptFile(projectDir, promptFile) {
  */
 export async function createPipeline(projectDir, opts = {}) {
   const {
-    prompt, promptFile, extras = [], title,
+    prompt, promptFile, extras = [], title, isTest = false,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null, prAuto = null,
+    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null, prAuto = null, rerunOf = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -1360,7 +1376,7 @@ export async function createPipeline(projectDir, opts = {}) {
   // no more state.json on disk. writeState also seeds the dir->id cache
   // (rememberDir) so appendAudit resolves this run without any call-site change
   // (A4). recordArtifact runs AFTER the row exists (FK -> pipelines).
-  await writeState(dir, state, { prWatchRunId, runSetup, prAuto });
+  await writeState(dir, state, { prWatchRunId, runSetup, prAuto, isTest, rerunOf, extrasNames: [...new Set(copiedExtras.map((rel) => basename(rel)))] });   // two sources with one name share one file
   // Run tags (#718): written once, after the row exists (FK) and after writeState's tx has
   // committed (tx cannot nest). writeState updates never touch them.
   insertRunTags(id, tags);
@@ -1468,7 +1484,7 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * @param {object} stateObj
  * @returns {Promise<object>}
  */
-export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null, prAuto = null } = {}) {
+export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null, prAuto = null, isTest = false, rerunOf = null, extrasNames = null } = {}) {
   const obj = { ...stateObj, updatedAt: new Date().toISOString() };
   const id = obj.id;
   if (!id) return obj; // pre-id state (constructor default): nothing to persist yet
@@ -1478,12 +1494,12 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, pr_auto,
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, pr_auto, rerun_of, extras_names, is_test,
         elapsed_ms, elapsed_since, finished_at)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@pr_auto,
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@pr_auto,@rerun_of,@extras_names,@is_test,
         COALESCE(@elapsed_ms, 0),@elapsed_since,
         CASE WHEN @status = 'done' THEN @updated_at END)
       ON CONFLICT(id) DO UPDATE SET
@@ -1503,7 +1519,9 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
         run_size=COALESCE(excluded.run_size, run_size),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
-    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null, pr_auto: prAuto ? JSON.stringify(prAuto) : null });
+    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null, pr_auto: prAuto ? JSON.stringify(prAuto) : null,
+      rerun_of: typeof rerunOf === 'string' ? rerunOf : null,
+      extras_names: Array.isArray(extrasNames) ? JSON.stringify(extrasNames) : null, is_test: isTest ? 1 : null });
 
     // A Watch PR fix run (#619): ownership lands in the same transaction that creates the row.
     if (prWatchRunId) attachWatchPipeline(prWatchRunId, id, obj.updatedAt);
@@ -1985,7 +2003,7 @@ export function readPipelineForResume(pipelineId) {
 /** Paused / interrupted runs whose resume point carries a network outage (the server's network watch). */
 export function listNetworkWaitRuns() {
   const rows = getDb().prepare(`SELECT id, status, resume_point FROM pipelines
-    WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL
+    WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL AND is_test IS NULL   -- D22: the network watch never resumes a try
       AND json_extract(resume_point, '$.network.since') IS NOT NULL`).all();
   const out = [];
   for (const r of rows) {
@@ -2676,7 +2694,7 @@ async function listPipelinesNow(projectDir, opts, workspaceKey) {
            ${RUN_ENGINE_SQL} AS run_engine,
            ${OUTCOME_NOTE_SQL}
     FROM pipelines
-    WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
+    WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL AND is_test IS NULL
     ORDER BY started_at DESC
   `).all(workspaceKey ? workspaceKey : projectKey(projectDir));
   const out = [];
@@ -2725,7 +2743,7 @@ async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
            ${RUN_ENGINE_SQL} AS run_engine,
            ${OUTCOME_NOTE_SQL}
     FROM pipelines
-    WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL
+    WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL AND is_test IS NULL
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
     LIMIT ?
   `).all(Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : -1); // -1 = unlimited (SQLite)
@@ -2818,7 +2836,7 @@ async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
  * @returns {number}
  */
 export function countPipelines({ archived = false } = {}) {
-  const row = getDb().prepare(`SELECT COUNT(*) AS n FROM pipelines WHERE archived_at IS ${archived ? 'NOT ' : ''}NULL`).get();
+  const row = getDb().prepare(`SELECT COUNT(*) AS n FROM pipelines WHERE archived_at IS ${archived ? 'NOT ' : ''}NULL AND is_test IS NULL`).get();
   return row ? Number(row.n) : 0;
 }
 
@@ -2954,6 +2972,27 @@ function stepRowToStep(r) {
 }
 
 /**
+ * The bare `wks-…` id of a workspace row, else null. Live rows store it bare. Rows from the legacy fs→DB migration can
+ * hold the composite `workspaces/<dir>` and even `target = 'project'` (migrate-fs-to-db.mjs:360-374), so any row with a
+ * workspace_key counts.
+ */
+export const bareWorkspaceKey = (row) => (row.workspace_key ? String(row.workspace_key).replace(/^workspaces\//, '') : null);
+
+/**
+ * Rerun: the run a rerun was copied from, as the run page links it. `exists` is false for a deleted run (its row is
+ * anonymised, so no title or key is given) and for an id with no row; an archived source still exists and opens.
+ * @param {string|null} id  pipelines.rerun_of
+ * @returns {{id:string, key:string|null, title:string|null, exists:boolean}|null}
+ */
+export function resolveRerunOf(id) {
+  if (typeof id !== 'string' || !id) return null;
+  const row = findPipelineRowById(id);
+  if (!row || row.deleted_at) return { id, key: null, title: null, exists: false };
+  const ws = bareWorkspaceKey(row);
+  return { id: row.id, key: ws ? `workspaces/${ws}` : row.project_key, title: row.title ?? null, exists: true };
+}
+
+/**
  * Reconstruct the full state object (the old state.json shape the UI consumed)
  * from a pipelines row + its pipeline_steps rows. Inverse of toPipelineRow + the
  * step INSERT. projectDir is recovered from the project's store_meta row (the old
@@ -3018,6 +3057,7 @@ function rowToState(row) {
   state.runEngine = runEngineOfRow(row);
   // Shaper D28: only a shaped run carries shapeStats (run_size is write-only: Statistics reads the column)
   if (row.shape_stats) state.shapeStats = j(row.shape_stats, null);
+  if (row.rerun_of) state.rerunOf = resolveRerunOf(row.rerun_of);   // one lookup, only for a rerun; a source never lists its reruns
   const outcome = j(row.outcome, null);
   if (outcome) {
     state.engine = 2;
@@ -3032,9 +3072,8 @@ function rowToState(row) {
     state.active = [];        // nothing is in flight in a rehydrated snapshot
     state.gate = null;
   }
-  const meta = readStoreMeta(row.project_key);
-  state.projectDir = meta?.path ?? null;
-  if (isNoProjectKey(row.project_key)) state.projectDir = noProjectWorkDir(row.id);   // P3: the run's own work folder
+  // P3: a run without a project, its own work folder; 3a: a test try, Worca's copy of the project (projectDirOfRow).
+  state.projectDir = projectDirOfRow(row);
   // Workspace superset: spread workspace_meta back onto the top level + target.
   if (row.target === 'workspace') {
     const wm = j(row.workspace_meta, {}) || {};
@@ -3072,7 +3111,7 @@ function buildAuditMarkdown(row) {
   const header =
     `# Pipeline: ${row.title ?? row.id}\n\n` +
     `- **id**: ${row.id}\n` +
-    `- **project**: ${(readStoreMeta(row.project_key)?.path) ?? ''}\n` +
+    `- **project**: ${(row.is_test ? projectDirOfRow(row) : readStoreMeta(row.project_key)?.path) ?? ''}\n` +
     `- **started**: ${row.started_at ?? ''}\n` +
     (actorLabel(row.started_by) ? `- **started by**: ${actorLabel(row.started_by)}\n` : '') +
     `- **prompt file**: prompt.md\n\n` +
@@ -3156,6 +3195,13 @@ export function findPipelineRowById(id) {
 export function readPipelineStateById(id) {
   const row = findPipelineRowById(id);
   return row ? rowToState(row) : null;
+}
+
+/** Workflow tests (D21/D22): whether a pipeline is a test try, hidden from the Runs lists, Statistics and team metrics. */
+export function isTestPipeline(id) {
+  if (typeof id !== 'string' || !id) return false;
+  const row = getDb().prepare('SELECT is_test FROM pipelines WHERE id = ?').get(id.toLowerCase());
+  return !!(row && row.is_test);
 }
 
 /**

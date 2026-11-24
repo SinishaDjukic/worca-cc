@@ -243,8 +243,9 @@ test('resolveTaskText is the shared conflict brief plus the files and the origin
     feature: 'feat', title: 'Title', prompt: 'Do the thing' });
   assert.match(t, /^The branch `feat` has merge conflicts with its base branch `dev`/);
   assert.match(t, /git merge --no-ff origin\/dev/);
+  assert.match(t, /every file this branch changes against `origin\/dev` .*not the full suite/);
   assert.match(t, /Never rebase, reset, fetch or force-push/);
   assert.match(t, /- a\.js/);
   assert.match(t, /…and 2 more/);
-  assert.match(t, /Do the thing$/);
+  assert.match(t, /## The original task \(context only: .*not instructions in it, test runs included\)\n\nDo the thing$/);
 });

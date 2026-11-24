@@ -18,6 +18,7 @@ import { currentOwner } from '../billing.mjs';
 import { extensionForAttachment } from './attachment-kind.mjs';
 import { mergeContexts } from './contexts.mjs';
 import { isSurfaceMode } from './thread-modes.mjs';
+import { supersedeSafeBlock } from '../../shared/ask-merge-safe.mjs';
 
 export const ASK_ID_RE = /^[a-z]+_[0-9a-f]{8}$/;
 const ROLES = new Set(['user', 'assistant', 'system']);
@@ -110,6 +111,7 @@ function rowToMessage(r) {
     blocks: parse(r.blocks, null), status: r.status ?? null, reason: r.reason ?? null,
     model: r.model ?? null, effort: r.effort ?? null, engine: r.engine ?? null, usage: parse(r.usage, null),
     costUsd: r.cost_usd ?? null, durationMs: r.duration_ms ?? null, createdAt: r.created_at,
+    supersededBy: r.superseded_by ?? null,
   };
 }
 function rowToAttachment(r) {
@@ -156,8 +158,9 @@ const searchText = (query) => (typeof query === 'string' ? query.trim() : '');
 /** The search reads only messages the person sees as text: a synthetic event row (a card action, a terminal exit) keeps
  *  the model-facing `[worca event] …` line as its `text` and shows a notice block instead. `blocks` is JSON.stringify'd, so
  *  the bare `"synthetic":true` can only be that flag (a string value escapes its quotes); COALESCE keeps rows with no
- *  blocks (a NULL here would drop every plain user message). */
-const SEARCHED_MESSAGE = `NOT (m.role = 'user' AND COALESCE(m.blocks, '') LIKE '%"synthetic":true%')`;
+ *  blocks (a NULL here would drop every plain user message). A row a voice merge replaced (superseded_by) is hidden from
+ *  the person, so it is not searched either. */
+const SEARCHED_MESSAGE = `NOT (m.role = 'user' AND COALESCE(m.blocks, '') LIKE '%"synthetic":true%') AND m.superseded_by IS NULL`;
 
 /** WHERE for a thread list: the owner filter (shared deployments) AND the surface (D9): a surface mode (thread-modes.mjs)
  *  lists only its own threads; null and 'plain' (the browser extension) list plain chats, chats with a design included.
@@ -663,6 +666,70 @@ export function switchThreadEngine(threadId, { engine, model, effort, text, bloc
   });
 }
 
+// ── a voice merge replaces the turn just sent (docs/speech.md) ─────────────────────────────────────────────
+/** A stale id never hides old history: only a user message this recent can be replaced. */
+export const SUPERSEDE_MAX_AGE_MS = 120_000;
+const SUPERSEDE_ERROR = 'the earlier message cannot be replaced';
+
+/** Why `userMessageId` cannot be superseded now (null = it can). Read-only; runs inside the caller's tx when there is one. */
+function supersedeCheck(threadId, userMessageId, nowMs) {
+  const refuse = (reason) => ({ code: 'supersede-refused', error: `${SUPERSEDE_ERROR}: ${reason}` });
+  const r = prepare('SELECT * FROM ask_messages WHERE id = ?').get(userMessageId);
+  if (!r || r.thread_id !== threadId) return refuse('it is not a message of this chat');
+  const m = rowToMessage(r);
+  if (m.role !== 'user') return refuse('it is not a user message');
+  if (Array.isArray(m.blocks) && m.blocks.some((b) => b && b.kind === 'notice' && b.synthetic === true)) return refuse('it is an event, not a message');
+  if (m.supersededBy) return refuse('it was already replaced');
+  // Hiding the fragment must not hide what it carried: the merged message holds the words only. A voice fragment has at
+  // most its page's where block; an attachment, a chat-context block or a leading quote (Pinpoint) keeps the row.
+  if ((Array.isArray(m.blocks) && m.blocks.some((b) => !b || b.kind !== 'where')) || /^>( |$)/.test(m.text || '')) return refuse('it carried a file or a quote');
+  const at = Date.parse(m.createdAt);
+  if (!Number.isFinite(at) || nowMs - at > SUPERSEDE_MAX_AGE_MS) return refuse('it is too old');
+  const later = prepare('SELECT * FROM ask_messages WHERE thread_id = ? AND seq > ? AND superseded_by IS NULL ORDER BY seq')
+    .all(threadId, m.seq).map(rowToMessage);
+  for (const x of later) {
+    if (x.role === 'user') return refuse('it is not the newest message');
+    if (x.role !== 'assistant') return refuse('something happened in the chat after it');
+    if (x.status === 'streaming') return refuse('its reply is still running');
+    if ((x.blocks || []).some((b) => !supersedeSafeBlock(b))) return refuse('its reply changed something or is waiting on a card');
+  }
+  return null;
+}
+
+/**
+ * May a merged voice message replace `userMessageId` (the newest user message of the chat, with finished, read-only
+ * replies only)? null = yes; else `{ code: 'supersede-refused', error }`. Read-only.
+ */
+export function supersedeRefusal(threadId, userMessageId, { now: nowMs = Date.now() } = {}) {
+  getDb();
+  return supersedeCheck(threadId, userMessageId, nowMs);
+}
+
+/**
+ * Append the merged user message and hide the turn it replaces (the fragment and every row after it) in ONE tx.
+ * The safety check runs again inside the tx: a refusal throws (`.code = 'supersede-refused'`) and writes nothing.
+ * Rows are never deleted: they keep `superseded_by` = the new message's id. → { message, superseded: ids in seq order }.
+ * No `supersedesId`: a plain appendMessage, `superseded: []` (startAskTurn writes every user row through here).
+ * `now`: the instant the age is judged at; the route passes its pre-check's, so the two checks cannot disagree.
+ */
+export function appendSupersedingMessage(threadId, { role = 'user', text = '', blocks = null } = {}, supersedesId = null, { now: nowMs = Date.now() } = {}) {
+  if (!supersedesId) return { message: appendMessage(threadId, { role, text, blocks }), superseded: [] };
+  return tx(() => {
+    const why = supersedeCheck(threadId, supersedesId, nowMs);
+    if (why) { const err = new Error(why.error); err.code = why.code; throw err; }
+    const from = prepare('SELECT seq FROM ask_messages WHERE id = ?').get(supersedesId).seq;
+    const t = now();
+    const id = insertMessage(threadId, { role, text, blocks }, t);
+    const to = prepare('SELECT seq FROM ask_messages WHERE id = ?').get(id).seq;
+    const superseded = prepare('SELECT id FROM ask_messages WHERE thread_id = ? AND seq >= ? AND seq < ? AND superseded_by IS NULL ORDER BY seq')
+      .all(threadId, from, to).map((x) => x.id);
+    prepare('UPDATE ask_messages SET superseded_by = ? WHERE thread_id = ? AND seq >= ? AND seq < ? AND superseded_by IS NULL')
+      .run(id, threadId, from, to);
+    prepare('UPDATE ask_threads SET updated_at = ? WHERE id = ?').run(t, threadId);
+    return { message: getMessage(id), superseded };
+  });
+}
+
 export function getMessage(id) {
   getDb();
   const r = prepare('SELECT * FROM ask_messages WHERE id = ?').get(id);
@@ -758,7 +825,7 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
         || b.card.type === 'policy' || b.card.type === 'schedule' || b.card.type === 'model' || b.card.type === 'clone' || b.card.type === 'web'
         || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'mcp' || b.card.type === 'away' || b.card.type === 'proxy'
         || b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request' || b.card.type === 'ship'
-        || b.card.type === 'changes' || b.card.type === 'route'
+        || b.card.type === 'changes' || b.card.type === 'route' || b.card.type === 'req-change'
         || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'
         || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'command' || b.card.type === 'script-approval'
         || (b.card.type === 'progress' && !!b.card.fix) || b.card.type === 'question'

@@ -172,6 +172,36 @@ None of the checks blocks approval. On the card:
   does so for the failing checks. The outline is revised at most 3 times.
 - **Stop**, in ⋯, ends the run.
 
+**The Split step, with small runs on.** A run started with the `shaperSmallRuns` flag asks three times before it
+builds: Start (Care), Requirements, and the Split; the Prototype may also ask, before the Split.
+Before the Split is shown, the roles challenge the cut once per run:
+the run's roles and, at Balanced and Thorough, the **Challenger** (the Devil's advocate perspective). Each round is
+one spawn of the plan review step's agent. The objections go back to the Planner's own session, which refines the
+outline once per round that raised any. Care sets the rounds and the run size:
+
+| Care | Challenge rounds | Challenger | Requirements per run |
+| --- | --- | --- | --- |
+| Lean | 1 | no | 1 to 3 |
+| Balanced | 1 | yes | 1 to 3 |
+| Thorough | up to 3, stopping on a round with no objection | yes | 1 to 2 |
+
+A workflow with no plan review step is not challenged, and the card says `Not challenged: no review step in this
+workflow`. The card shows each run as one fold row: its title and requirement ids, then **Owns**, **Starts from** and
+**Checked by** when unfolded. The checks fold and one challenge fold follow (`Challenged by 3 roles and the Challenger ·
+1 change`), then the Care chosen at the start. There is no "Ask me before each run" switch: runs follow one after
+another. Objections still open after the last round are one question, **Keep the split** or **Ask for changes**, and
+approving over them is recorded as `Runs approved · 2 objections kept`.
+
+Three rules cannot be waived: every requirement owned by one run only (ownership), owned or confirmed by a person
+(coverage), and every confirmation naming an allowed role (confirmRole). When one fails, the card reads `Your turn: fix
+the split`, the failing rows (one per rule and requirement) lead the open checks fold, and there is no Approve, on the
+card or in the bar. A confirmRole row offers **Ask the role to confirm**, a menu of the roles that confirm at Ship.
+Coverage and ownership clear only through **Ask for changes**. The server refuses such an approve too, from the card,
+Away mode or the API: `422` with `errors[0].code` `split-not-approvable` and a message naming the rules and ids. A
+refused split stays revisable for 5 rounds; after that the card says `Too many rounds: plan it as one or stop`. Away mode
+waits while objections are open. Once the Split is approved, run 1 continues with no plan approval unless its plan
+check fails, the chat added notes, or a reviewer raised a requirement concern.
+
 **One run, branch and PR per slice.** Approving the outline creates the feature and
 one scheduled run for each later slice. Each slice runs the same shaped workflow on
 its own: plan, your approval, build, review. Slice k starts from slice k-1's branch
@@ -191,7 +221,8 @@ when you approve the outline, and every slice reads them from there:
   the last slice's branch into the feature's base, with the feature's changelog entry, like **Ship as one PR**. A
   follow-up run (it starts from the base, so the last branch does not hold every run's work) stops it: Worca tells you
   in the thread and you ship from the Ship card. With **Requirements** on, it waits until every agreed requirement is
-  marked, tells you once, and opens the PR when the last one is marked.
+  marked, tells you once, and opens the PR when the last one is marked. A small-runs feature opens nothing this way: it
+  ships from its Ship card.
 
 A re-planned feature keeps the setting it had. A person's own Create PR and Ship as are unchanged. Each PR is opened as the
 person who started the run, and a run that errored or stopped opens nothing (its log says why; a resume that ends done
@@ -289,7 +320,8 @@ PR counts as every run's PR, so the group page reads `In review · 1 PR`. In the
 puts the card away; the feature still ships from its page. Until every run is done,
 the group page says when the card will come. Either way, one entry for the feature
 goes into the project's `CHANGELOG.md` under `## Unreleased`, committed on the last
-slice's branch, so it ships with the feature.
+slice's branch, so it ships with the feature. A small-runs feature ships stacked only:
+see [Small runs](#small-runs-shapersmallruns).
 
 A Run-after chain ships the same way, without Shaper: once every run in it is done,
 its group page reads `Ready to ship · 2 of 2 done` with **Create PR** on the status
@@ -357,7 +389,8 @@ diff". The chat card and the feature page save the same marks.
 While a row is unmarked, **Create PR** is not the main button and is disabled, and the card reads "Mark every
 requirement before you create the PR · 1 left". Worca checks the marks again when the PR is created, so a stale card
 is refused too. Once shipped, the card shows each requirement with its mark in words. A re-plan starts a new feature,
-and its marks start empty.
+and its marks start empty. With small runs, only the requirements a person confirms are marked: see
+[Small runs](#small-runs-shapersmallruns).
 
 ### Changes after ship
 
@@ -514,6 +547,18 @@ Shaper's Requirements step is a hold, like the plan approval, and it has its own
   becomes the primary, and **Agree and plan** is a plain, blocked button. If the requirements cannot be changed any more,
   there is no primary and the foot says `1 to fix`. Agree and plan is also off, with the reason beside it, when no
   requirement was written. If the requirements could not be loaded the card says so and **Try again** is the primary.
+
+  With small runs on (the `shaperSmallRuns` flag, decided when the run starts), the card differs. One fold per role
+  replaces the single fold, in a fixed order: Product, Engineering, Design, DevOps, Security, Compliance, QA, then
+  Release when it wrote requirements. Each fold head reads ✓ or `?`, the role (`(you ask as)` on your lead), what the
+  role did (`wrote 4`, `added 2 · 1 fixed`, `nothing added`), and the chevron. A clean role is closed; a role with a
+  question, an open objection or a requirement with no example is open. Every requirement has an example, shown as
+  `e.g. …`; one without reads `no example yet`, **Agree requirements** is blocked with `1 requirement has no example
+  yet: ask for changes`, and the server refuses the approval too. A disagreement between two roles is one question,
+  and the requirements it is about read `in question: the decision above`. Care sets the review rounds: Lean one round
+  by your lead's role and Product, Balanced one round by every picked role, Thorough up to 3 rounds, stopping early on a
+  clean round. Compliance can be picked as a perspective and as your lead. A run started without a lead (the API or
+  the CLI) leads as your saved lead, else Product.
 - **The plan card.** A **Requirements 7/8 · 1 to fix** fold sits above **Shape** and opens when a requirement has no
   step that delivers it; the row reads `R-ops-1 · <the requirement>` and `not covered by any step`. While any row fails,
   **Fix all** is the primary and **Approve and build** is a plain button; when everything is covered, **Approve and
@@ -544,6 +589,144 @@ GitHub account opens nothing: the outcome says why and you get a notification. W
 API: `pr: { open?, slices? }` in the `POST /api/run` body (a bad value is a 400 and starts nothing), `pr` in
 `GET /api/run-defaults` (the setting with its source; `?workspaceId=` for a workspace), `GET /api/pipelines/:id/pr-auto`
 (the run's saved value and outcome, read-only) and `GET`/`PATCH /api/workspaces/:id/settings` (`{ "pr.open": value | null }`).
+
+## Small runs (`shaperSmallRuns`)
+
+With the `shaperSmallRuns` flag on, a Shaper feature is built as small runs: each run owns at most a few requirements,
+and the feature ships as one PR per run. The flag is read when the planning run starts, and that run carries a
+small-runs marker. The Split and its Care table are in [Plan in slices](#plan-in-slices), and the role folds of the
+Requirements card in [Requirements first](#requirements-first).
+
+### The card's steps
+
+The feature has one card, and its step heads read as the card shows them:
+
+1. **Start**: the Care position.
+2. **Requirements**: the roles agree the requirements.
+3. **Prototype**: asked when a requirement is about a screen and Design is on. Lean picks **Skip the
+   prototype**, Balanced and Thorough **Build prototype**; the other choice is in ⋯. With no screen requirement, or with
+   Design off, the step is skipped without asking. A skipped step says why (`Prototype skipped · Design is turned off`).
+4. **Runs**: the Split step; its chip reads "Runs".
+5. **Ship**.
+
+Between Runs and Ship the card shows two states, not steps. **Build** goes run by run: the Planner, the role plan
+review, a Test writer separate from the Implementer when Care asks for one, the Implementer and the reviewers. The
+**Verifier** then checks the feature as a whole. While a gap it found is being built, the card reads "Working"; once a
+check is clean, or you choose to ship with the gap, it reads "Ready to ship".
+
+### Care and its record
+
+Start offers Lean, Balanced and Thorough, with Worca's pick and its reason. A position other than the pick is recorded as
+your choice ("Worca recommended …"). Care is fixed after Start: pausing and resuming keep it. It is recorded as one line,
+`Care: Balanced · Worca's pick`, shown on the Ship card, in each PR body and in the feature page's Decisions. Once the
+feature is finished, the line adds the outcome (requirements met, gaps found at the end, changes after ship). Without a
+finished outcome, no figures are shown.
+
+### Owned and confirmed requirements
+
+Each requirement is owned by exactly one run, or confirmed by a person in a named role: Product, Engineering, Design,
+DevOps, Security, Compliance or QA. A run-owned requirement is checked by its run and the Verifier. A confirmed one gets
+one of three marks: Met, Not met or Dropped. Not met and Dropped need a one-line reason of at most 300 characters. Only
+Met counts as met. The mark is stored with the role the server records, never one the client sends. The role says
+who should confirm; Worca does not check that the person marking holds it. It records who marked and when.
+
+The approved split is what decides: a requirement it confirms is stored with its role, after the person's edits on the
+Split card. **Re-plan the rest** (with the flag on) carries every agreed requirement no finished run owns into the new
+feature's split, as its agreed list. One a person confirms keeps its role, unless the person changes it on the Split
+card. Its mark is not carried: the role marks it again, and Ship waits for it. A requirement a finished run owns stays
+with that run, also while a gap or change run of it is still waiting (Re-plan cancels that run). A re-plan that ends
+with Don't slice carries nothing into a feature: it is planned and reviewed without the list, as before.
+
+### Ship
+
+Ship is stacked only: Ship with `one` is refused with `STACKED_ONLY`. It opens one PR per run, run 1 (the planning run)
+included, in the order the runs finished. Each PR is based on the branch of the run that finished before it, or on the
+feature's base when it is first or that run's PR is merged. With `pr.slices` `each` and `pr.open` on, a run still opens
+its own PR when it finishes, before these blocks. Ship is blocked:
+
+- with `ACCEPTANCE_INCOMPLETE` while a confirmed requirement is unmarked; the Ship card reads
+  "Waiting for Compliance to confirm R-comp-4";
+- with `ACCEPTANCE_INCOMPLETE` while an agreed requirement is owned by no run and confirmed by no person (with the flag
+  on). The reason names it ("R-ops-1 is owned by no run and confirmed by no person"), no mark opens Ship, and the feature
+  reads "Waiting" instead of "Ready to ship" everywhere. Re-plan the rest is the way out;
+- with `NOT_READY` until the rule below holds. It is checked again when you press Ship, before anything is pushed.
+
+With the flag on, one rule decides: a small-runs feature is ready to ship only when a Verifier check with a clean result is
+on record for the exact head it would ship, and nothing of the feature is live, finishing, interrupted or pending. The
+exact head is the commit of the latest finished run's branch, and it must be the commit the Verifier read. Choosing to ship
+with the gap counts as clean. What follows from it:
+
+- With no check on record, Ship is not ready. If the last run finished while the flag was off, or Worca was stopped
+  during its cleanup, the card reads "Stopped" ten minutes after the run's last write, and its **Resume** starts the check.
+- A round that ended (done, stopped or failed) is over: the check still starts when the last run or round settles. A
+  round that is interrupted or has not ended holds both the check and Ship, until you resume or archive it.
+- A commit after the check, by a run or a round, needs a new check on the new head: a new series, round 1. It starts when
+  that run or round settles, or, for a commit made while a check was verifying, when that check is done. The other runs'
+  branches ship too, so a commit on one of them also needs a new check. The Verifier reads the head's branch, so it does
+  not see a round on an earlier run's branch until that work is in the head. For a commit made outside Worca the card
+  reads "Stopped" and **Resume** starts the check.
+- The changelog commit Ship itself makes keeps the check, so a Ship that failed part-way can go on.
+- While the feature is shipping, nothing of it starts: a round, an appended run, a requirement change, a re-plan and
+  **Resume** are refused with `SHIPPING`. The rule is asked again before each pull request Ship opens and after the
+  changelog commit, and once more when the feature would be recorded as shipped. If it no longer holds, Ship stops with
+  `NOT_READY`, names the pull requests made so far and pushes nothing more. Ship again once the Verifier has checked the
+  work, or **Resume**, if the card reads "Stopped".
+
+Each PR body has exactly one `Care: …` line, then one line per requirement marked Not met or Dropped
+(`Not met: R-comp-4 · the reason`).
+
+### Runs stop, change and the Verifier
+
+A run stops for one of three reasons: a check failed, a role objects, or a requirement would have to change. Finished
+work is never rewritten: when a changed requirement's owner has finished, the change arrives as a new small run. When
+the Verifier finds a gap, the gap becomes a small run too, and the Verifier checks again once it is done. After Care's
+fix cycles it stops adding runs by itself and asks you: **Add a run for the gap** or **Ship with the gap**.
+
+### The four places
+
+- **The Runs list group row**: one group per feature, the planning run as run 1, the state word, the runs done of N and
+  the cost, once.
+- **The run panel and the Expert run page**: what the run owns, what it starts from, and one Agents place. With the flag
+  off, the Agents tab and Overview stay as today. A stopped run's page names the stop and links where it is answered
+  (the feature's card in Chat, or the feature page for a feature no chat started); it has no answer controls.
+- **The feature page**: Runs, Requirements (each with its owner run or confirming role, and its status) and Decisions
+  with the Care line. Its run rows are one line with the same short words as the card and the Runs list ("waiting for
+  you", "waits for run 8", "done"). Its head button reads "Create N PRs" and follows the Ship card: until the
+  feature is ready to ship (the Verifier still checks, or waits for your answer) and while the ledger blocks it, it is
+  off and the status line says why. An open stop shows its own head and primary, and the page offers no Re-plan beside
+  it; the Verifier's stop is asked here too.
+
+### Off
+
+Some parts follow the marker and stay with the feature; the rest follow the flag as it is now.
+
+**The flag, read live.** While it is on, these apply to every sliced feature, also for a feature with no marker: a run
+waits only for the runs it builds on, so an independent run starts while an earlier one is stopped, failed or waiting
+(one run of a feature at a time); a run starts from the feature's latest finished run; a resumed run first merges the
+latest finished work; a finished feature's figures are recorded on this machine; and one PR ships the latest finished
+run's branch, or is refused with `HEAD_MISSING_WORK` when that branch does not hold every run's work.
+
+**A feature with the marker, flag off.** It keeps its one card, its Care and the Care row on its Ship card, its run
+stops, the stacked-only Ship and the marks that block it. It loses what the flag drives:
+
+- no Verifier check starts, neither when a run finishes nor from **Resume** (a stopped or failed check offers none), and
+  no check's result is recorded. A feature with no check is ready once its runs are done, so its Ship opens with no
+  Verifier check, and a commit after a clean check is not checked. A check already open, or with a gap, keeps Ship at `NOT_READY`. If the check, or the last run for its
+  gap, finished while the flag was off, turning the flag on again starts nothing by itself: ten minutes after that run's
+  last write the card reads "Stopped", never while Worca is still committing or cleaning up after a run, and its
+  **Resume** starts a fresh check. A check that had stopped or failed offers **Resume** at once;
+- no figures are recorded, so there is no new Care outcome;
+- a requirement owned by no run and confirmed by no person does not block Ship, and a re-plan pressed with the flag off
+  carries no requirements;
+- the Runs list group row, what a run owns and starts from, a stopped run's head and link, and the feature page's
+  Requirements tab, Care line, one-line rows and head button go back to the classic ones.
+
+**Every feature, flag off.** A run started with the flag off gets no marker, except one that re-plans a marked feature.
+Existing features continue by the linear chain (each run after the one before it), no figures are recorded, figures
+already recorded are kept and stay readable, and nothing is migrated. One PR ships the last run's branch of an unmarked
+feature: one whose runs went out of order while the flag was on is not checked, so ship it as one PR per run.
+
+The Requirements page is not changed, on or off.
 
 ## Limits
 

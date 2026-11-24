@@ -38,6 +38,7 @@ import { runClaude } from '../src/core/claude-runner.mjs';
 import { generateTitle } from '../src/core/title.mjs';
 import { addGlobalModel, updateProvider } from '../src/core/settings.mjs';
 import { stopBridge } from '../src/core/bridge/server.mjs';
+import { agentHome } from '../src/core/engines/spawn.mjs';
 
 const POSIX = process.platform === 'win32'
   ? { skip: 'the fake claude is a node script with a shebang (no .exe stand-in on Windows)' } : {};
@@ -174,6 +175,7 @@ function scrubber(extra = []) {
     ...extra,
     [process.execPath, '<NODE>'],
     [worcaHome(), '<WORCA_HOME>'],
+    [agentHome(), '<AGENT_HOME>'],   // the throwaway WORCA_HOME every agent gets (a per-process temp folder)
     [pipelineDir, '<PIPELINE_DIR>'],
     [projectDir, '<PROJECT_DIR>'],
     [projectKey(projectDir), '<STORE_KEY>'],
@@ -243,13 +245,13 @@ async function spawnNode(key, opts = {}) {
 
 // ── the cases ────────────────────────────────────────────────────────────────
 
-test('the pin covers exactly the 35 shipped builtins', () => {
+test('the pin covers exactly the 37 shipped builtins', () => {
   assert.deepEqual(BUILTIN_KEYS, [
     'architect', 'architectSetup', 'clarify', 'deckAudit', 'deckBuilder', 'deckClarify', 'deckExport', 'deckNarrative', 'deckOutputs',
-    'deckReviewer', 'deckSystem', 'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting',
+    'deckReviewer', 'deckSystem', 'decomposer', 'featureVerifier', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting',
     'memoryDefragmenter', 'planReviewer', 'planner',
     'promoCapture', 'promoExplorer', 'promoMascot', 'promoReview', 'promoScenes', 'promoSetup', 'promoVoice', 'promoWriter',
-    'refiner', 'requirementsDrafter', 'requirementsRefiner', 'requirementsReviewer', 'reviewer', 'workspaceReviewer', 'workspaceScanner',
+    'refiner', 'requirementsDrafter', 'requirementsRefiner', 'requirementsReviewer', 'reviewer', 'testWriter', 'workspaceReviewer', 'workspaceScanner',
     'workspaceSynthesizer', 'workspaceUsageMapper',
   ]);
 });

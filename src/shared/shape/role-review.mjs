@@ -19,7 +19,7 @@ export const roleItems = (key, planMarkdown) => extractChecklist(planMarkdown ||
 /** The roles one round reviews, by perspective key (the engine's rolesForRound over Shaper's picked perspectives).
  *  Round 1: every picked perspective. Round 2+: drop a clean, fully met role (spec §3 "Cost"). */
 export function rolesForRound(perspectives, round, lastRound = null) {
-  const n = normalizePerspectives(perspectives);
+  const n = normalizePerspectives(perspectives, { smallRuns: true });   // a stored list: Compliance only if the run had it
   const keys = n.ok ? n.perspectives : ['product'];
   return engineRolesForRound(keys.map(asRole), round, lastRound).map(({ key, skip }) => ({ key, skip }));
 }
@@ -62,9 +62,11 @@ export const PERSPECTIVE_ROLE_CHECKLIST = Object.freeze({
   roles: () => PERSPECTIVES.map(({ key, label }) => ({ key, label })),
   normalizePicked(raw) {
     if (raw === null || raw === undefined) return [...DEFAULT_PERSPECTIVES];
-    const n = normalizePerspectives(raw);
+    const n = normalizePerspectives(raw, { smallRuns: true });   // a stored list: Compliance only if the run had it
     return n.ok ? n.perspectives : ['product'];
   },
+  /** A picked role `roles()` lacks (Compliance under small runs), as runningRoles appends it; null for an unknown key. */
+  pickedRole: (key) => { const p = perspectiveByKey(key); return p ? { key: p.key, label: p.label } : null; },
   items: (key, planText) => roleItems(key, planText).map((i) => i.id),
   brief: (key, planText, { houseBrief } = {}) => roleBriefBlock(key, planText) + houseBriefBlock(key, houseBrief),
   wantsHouseBrief: (key) => key === FIT_KEY,
@@ -90,10 +92,11 @@ export function currentPass(roleReviews, { target = 'plan', node } = {}) {
 }
 
 /** A run question with the role reviews its step card reads, attached in place: a plan ask (not an outline) gets the
- *  current plan pass on `plan.roleReviews` (D1), a gate gets its node's current pass on `roleReviews` (D8). */
+ *  current plan pass on `plan.roleReviews` (D1), or its `plan.roleNode`'s pass when it names one (small runs B3: the
+ *  requirements review), a gate gets its node's current pass on `roleReviews` (D8). */
 export function attachRoleReviews(event, roleReviews) {
   if (event?.kind === 'plan' && event.plan && !event.plan.outline) {
-    const rr = currentPass(roleReviews);
+    const rr = typeof event.plan.roleNode === 'string' ? currentPass(roleReviews, { node: event.plan.roleNode }) : currentPass(roleReviews);
     if (rr) event.plan = { ...event.plan, roleReviews: rr };
   } else if (event?.kind === 'gate' && event.nodeId) {
     const rr = currentPass(roleReviews, { node: event.nodeId });

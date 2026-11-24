@@ -40,13 +40,15 @@ const ready = async () => ({});
  *   modelProblem(id)    why a model of this engine cannot run a chat (a provider that is itself an agent CLI, one that
  *                       refuses a request without the shell), or null; the picker leaves such a model out
  *   ownFolder           a chat runs in a folder of its own under the scratch dir (the engine keeps sessions per folder)
+ *   threadServerAlias   the engine names MCP tools by the alias a chat attaches worca's server under, and a resumed
+ *                       session keeps calling the names it learned: the alias is seeded by the thread (OpenCode)
  *   signIn(model, env)  the env names (a trailing `_` = a prefix) the engine signs in with for `model`: handed on to
  *                       worca's own MCP child too (chatSignInEnv), whose Auto classifier runs on the chat's engine
  */
 export function makeChatDescriptor({
   engine, lockdown, askSupport = ready, selfTest = null, preflight = ready, listRates = null, resumeNotFound = never,
   docsAnchor, setupLabel, noLockdownMessage, shellTrippedMessage, titles = true, suggestionModel = CHAT_MODEL, prompt = {},
-  notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false, turnImages = false, signIn = () => [],
+  notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false, turnImages = false, threadServerAlias = false, signIn = () => [],
 }) {
   const label = engineLabel(engine);
   const chat = ENGINES[engine]?.chat || { images: false, pdfs: false };
@@ -66,6 +68,7 @@ export function makeChatDescriptor({
     metaTools: Object.freeze([...metaTools]),
     modelProblem: typeof modelProblem === 'function' ? modelProblem : () => null,
     ownFolder: ownFolder === true,
+    threadServerAlias: threadServerAlias === true,
     signIn: typeof signIn === 'function' ? signIn : () => [],
     suggestionModel: typeof suggestionModel === 'string' && suggestionModel ? suggestionModel : null,
     prompt: Object.freeze({

@@ -61,3 +61,9 @@ test('a failed profile is not cached; a late answer after the timeout is ignored
   await new Promise((r) => setTimeout(r, 10));
   assert.deepEqual(await p, { lead: null });
 });
+
+// Small runs B3 (D6): the labels come from the one role mapping; Compliance reads through its perspective.
+test('LEAD_LABELS deep-equals the checkpoint labels; leadLabel(compliance) is Compliance', () => {
+  assert.deepEqual(LEAD_LABELS, { product: 'Product', architect: 'Engineering', ux: 'Design', qa: 'QA', security: 'Security', devops: 'DevOps' });
+  assert.equal(leadLabel('compliance'), 'Compliance');
+});

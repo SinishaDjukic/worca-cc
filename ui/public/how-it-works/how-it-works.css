@@ -1,0 +1,20 @@
+/* "How it works" (every area): the top-bar button's new mark and the explainer dialog. The walkthrough
+   shell shares workspace-guide.css's wg- classes; this file adds only what the area explainers need. */
+/* Above the spotlight tour (.guide-layer 72–73): the dialog can be opened from the tour's own button. */
+#how-it-works-modal.viewer-modal{z-index:75;}
+#how-it-works-modal .wg-card{width:min(640px,100%);}
+/* The "new" mark: the same small round dot and token as the Ask Worca one (.topnav-ask-dot), hidden once the area is seen. */
+.topnav-howto,.wfv-howto,#ws-howto-btn{position:relative;}
+.howto-new{position:absolute;top:4px;right:4px;width:6px;height:6px;clip-path:circle(50%);background:var(--slate);}
+.howto-new[hidden]{display:none;}
+/* The sample list inside an explainer screen: plain rows with the same quiet caption as the workspace map's. */
+#how-it-works-modal .wg-art ul,#how-it-works-modal .wg-art ol{margin:0;padding-left:22px;}
+#how-it-works-modal .wg-art li{margin:2px 0;color:var(--ink);}
+#how-it-works-modal .wg-caption{margin-top:6px;}
+/* Phone: the same tier as responsive-nav.css. The top-bar button is icon only, like .topnav-act-label; its
+   aria-label keeps the name "How it works". */
+@media (max-width:760px){
+  .topnav-howto{min-width:32px;padding:0 8px;gap:0;justify-content:center;}
+  .topnav-howto .howto-label{display:none;}
+  .topnav-howto svg{width:16px;height:16px;}
+}

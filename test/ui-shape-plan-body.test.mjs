@@ -706,3 +706,13 @@ test('U11 scope: with no coverage and a failing shape row the foot is today\'s (
   assert.equal(lines(empty.$).length, 1, 'a coverage with no items draws nothing');
   assert.deepEqual(primaries(empty.$), ['Approve and build']);
 });
+
+// Small runs B3 (D22): the run's snapshot on the ask (`plan.smallRuns`) decides whether the chips offer Compliance.
+test('perspective chips show Compliance only when pq.plan.smallRuns is true', () => {
+  for (const [smallRuns, n] of [[undefined, 0], [false, 0], [true, 1]]) {
+    const { $$ } = setup({ pq: ask(smallRuns === undefined ? {} : { smallRuns }) });
+    assert.equal($$('.shape-chip[data-perspective="compliance"]').length, n, `smallRuns ${smallRuns}`);
+  }
+  const { $ } = setup({ pq: ask({ smallRuns: true, perspectives: ['architect', 'compliance'] }) });
+  assert.equal($('.plan-persp-names').textContent, 'Product · Architect · Compliance');
+});

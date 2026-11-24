@@ -419,7 +419,7 @@ export function renderShapeSection() {
     'propose_run takes `shape: { perspectives }` to start the run on the Shaper workflow: it asks at most 3 questions, writes the plan for the picked perspectives, and the run waits for the user to approve the plan before anything is built. Use it when the message starts with "Shape this task first", or when the user asks to plan or agree on the work before it is built. perspectives: product (always on) plus the 2–4 of architect, qa, ux, security, devops, release that fit. Never give workflowId, when, every or after with shape.',
     'A large shaped task may be planned in slices (separate pull requests, one after another): keep `slices: \'auto\'` (or leave it out) when the user asks for that or the task is large, and give `slices: \'off\'` when they ask to keep it as one.',
     'On every propose_run for a coding task, shaped or not, give `assess: { size, openDecisions, perspectives }` (on a shaped run only its size is read: it tells the run the task was judged large): size as you judged it (rule 4); openDecisions = the decisions the brief leaves open that change what gets built and that the repo cannot answer (short phrases, at most 6, [] when none). The card uses it to offer Shaper; do not ask the user these decisions yourself.',
-    'In a chat that follows a run or a feature (the `feature` or `followed run` line of the context), two more tools may be listed. propose_changes puts a Changes card in the chat when the user asks to change a finished run or a finished feature; worca picks where it lands (a new round on the same branch and PR, before Ship, or a follow-up run). route_message puts a "Where does this go?" card when the user brings a new idea while the feature still has runs to go, with your guess (add, own or save) and a one-line reason. Every other message is answered as usual: a question, a summary, thanks or "open the PR" never takes either tool. An open Plan or Split step is answered on its step card, never by these tools.',
+    'In a chat that follows a run or a feature (the `feature` or `followed run` line of the context), two more tools may be listed. propose_changes puts a Changes card in the chat when the user asks to change a finished run or a finished feature; worca picks where it lands (a new round on the same branch and PR, before Ship, or a follow-up run). route_message puts a "Where does this go?" card when the user brings a new idea while the feature still has runs to go, with your guess (add, own or save) and a one-line reason. An edit to the text of an agreed requirement (an R-id) takes change_requirement when it is listed; a new idea takes route_message. Every other message is answered as usual: a question, a summary, thanks or "open the PR" never takes either tool. An open Plan or Split step is answered on its step card, never by these tools.',
   ].join('\n');
 }
 
@@ -725,7 +725,7 @@ export function buildContextHeader(ctx = {}, { maxChars = ASK_LIMITS.contextHead
         ? `workflow ${label(c.id)} ${label(c.state)} "${clip(c.name || '', titleMax)}"${c.workflowId ? ` → ${label(c.workflowId)}` : ''} (on ${clip(c.targetName, titleMax)})`
         : c.type === 'metrics' || c.type === 'policy' || c.type === 'schedule' || c.type === 'clone' || c.type === 'web' || c.type === 'workspace' || c.type === 'actions' || c.type === 'mcp' || c.type === 'away' || c.type === 'proxy'
           || c.type === 'canvas-edit' || c.type === 'workflow-build' || c.type === 'agent-draft' || c.type === 'script-draft'
-          || c.type === 'receipt' || c.type === 'run-stop' || c.type === 'pull-request' || c.type === 'ship' || c.type === 'changes' || c.type === 'route'
+          || c.type === 'receipt' || c.type === 'run-stop' || c.type === 'pull-request' || c.type === 'ship' || c.type === 'changes' || c.type === 'route' || c.type === 'req-change'
           || c.type === 'scope-switch' || c.type === 'project' || c.type === 'design-round' || c.type === 'design-questions' || c.type === 'design-sound'
           ? `${c.type} ${label(c.id)} ${label(c.state)} "${clip(c.summary || '', titleMax)}"${c.type === 'workflow-build' && c.workflowId ? ` → ${label(c.workflowId)}` : ''}`
           : `${label(c.id)} ${label(c.state)} (${label(c.workflowId)} on ${clip(c.targetName, titleMax)})${c.task ? ` task ${clip(c.task, 80)}` : ''}${c.schedule ? ` ${clip(c.schedule, 80)}` : ''}`);
@@ -817,12 +817,33 @@ function fenceFor(text) {
   return '`'.repeat(Math.max(4, max + 1));
 }
 
-export function buildTurnPrompt(header, text, inlined = [], chatContext = '', attachedRequirements = '') {
+// Hands-free voice turns only (per turn, never in the cached system prompt): the model opens its answer with a short
+// version for listening. The turn reducer splits it out (spoken.mjs); it is read aloud, never shown, never stored.
+export const SPOKEN_TURN_RULE = [
+  '[voice reply]',
+  'The person is talking to you hands-free and hears your answer read aloud.',
+  'For this message only, start your answer with a short spoken version between <spoken> and </spoken>: two or three short, plain, conversational sentences that give the answer itself.',
+  'No markdown, code, lists, tables, links or file paths inside it.',
+  'Then write your full reply as usual. It is shown as text and is not read aloud.',
+  'If you use tools first, put the block at the start of the answer you write after them. Write it once.',
+].join('\n');
+
+// A voice merge (docs/speech.md): the person kept talking after a half sentence was sent, and the merged message
+// replaces that turn (hidden in the chat). Per turn only, never in the cached system prompt; the session is kept.
+export const SUPERSEDE_TURN_RULE = [
+  '[replaces previous message]',
+  "The user's previous message was cut off mid-sentence and your reply to it was not wanted.",
+  'This message replaces it: answer only this one, and do not mention the earlier fragment or your earlier reply.',
+].join('\n');
+
+export function buildTurnPrompt(header, text, inlined = [], chatContext = '', attachedRequirements = '', { spoken = false, supersedes = false } = {}) {
   let out = header ? `${header}\n\n${text}` : String(text ?? '');
   // Freeform chat: the quoted context comes AFTER the person's words (renderChatContextPrompt), before their files.
   if (chatContext) out += `\n\n${chatContext}`;
   // Attached requirements (FEAT-21): the started specs follow the person's words, never the 1 KB context header.
   if (attachedRequirements) out += `\n\n${attachedRequirements}`;
+  if (supersedes === true) out += `\n\n${SUPERSEDE_TURN_RULE}`;
+  if (spoken === true) out += `\n\n${SPOKEN_TURN_RULE}`;
   for (const a of inlined) {
     // store.mjs sanitises the name with basename() only, which keeps backticks and
     // newlines — and the name goes in the fence's INFO line. A newline there ends

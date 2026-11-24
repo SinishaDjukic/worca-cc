@@ -4,8 +4,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
-import { SEND_FAILED, stepChip, stepTitle, stepKind, isStepCard, isRequirementsAsk, stepSender, stepHead, renderGateCard, renderRecoveryCard, questionFocusTarget }
+import { SEND_FAILED, smallRunsAsk, stepChip, stepTitle, stepKind, isStepCard, isRequirementsAsk, stepSender, stepHead, renderGateCard, renderRecoveryCard, questionFocusTarget }
   from '../ui/public/shape/step-card.mjs';
+import { gateStop, planStop, concernStop } from '../src/shared/shape/run-stops.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -233,4 +234,170 @@ test('U10: a requirements ask (plan.criteria or plan.error) is titled "Your turn
   for (const pq of [PLAN, SPLIT, GATE, CLARIFY, null]) assert.equal(isRequirementsAsk(pq), false);
   assert.equal(stepTitle(PLAN), 'Your turn: approve the plan');
   assert.equal(stepChip(PLAN, SHAPING), 'Plan');
+});
+
+test('B2: the care ask is a step card: chip Start, title "Your turn: how much care?"', () => {
+  const CARE = { id: 'care-1', kind: 'care', care: { pick: { position: 'balanced' } } };
+  assert.equal(isStepCard(CARE, {}, false), true);
+  assert.equal(stepChip(CARE, {}), 'Start');
+  assert.equal(stepTitle(CARE), 'Your turn: how much care?');
+  assert.equal(stepKind(CARE), 'care');
+});
+
+test('smallRunsAsk: the small-runs marker is read from the open ask alone (Care, or a plan stamped smallRuns)', () => {
+  assert.equal(smallRunsAsk({ kind: 'care' }), true);
+  assert.equal(smallRunsAsk({ kind: 'plan', plan: { smallRuns: true } }), true);
+  assert.equal(smallRunsAsk({ kind: 'plan', plan: {} }), false);
+  assert.equal(smallRunsAsk({ kind: 'clarify', questions: [] }), false);
+  assert.equal(smallRunsAsk(null), false);
+  assert.equal(smallRunsAsk(undefined), false);
+});
+
+test('C1: the prototype chip and titles; a prototype ask is a step card and a small-runs ask', () => {
+  const pq = (moment) => ({ id: 'proto-1', kind: 'prototype', prototype: { moment } });
+  assert.equal(stepChip(pq('offered'), {}), 'Prototype');
+  assert.equal(isStepCard(pq('offered'), {}, false), true);
+  assert.equal(smallRunsAsk(pq('built')), true);
+  assert.deepEqual(['offered', 'built', 'remark', 'failed'].map((m) => stepTitle(pq(m))),
+    ['Prototype the screens first?', 'Your turn: look, remark, confirm', 'Change the requirement?', 'The prototype did not build']);
+});
+
+// ── Small runs C3 (D11–D13): a stop is one question on the card, its findings only in the panel ──────────────────
+const G_STOP = { ...GATE, id: 'gate-w9-3', stop: gateStop({ run: 8, issues: GATE.issues, fixCycles: 3, nodeId: 'n_review' }) };
+const P_STOP = { id: 'plan-n_refine-2', kind: 'plan', plan: { round: 2, check: { ok: false, passed: 3, total: 5, items: [{ label: 'Has tests', pass: false, detail: 'none' }, { label: 'Ok', pass: true }] } },
+  stop: planStop({ run: 4, check: { ok: false, passed: 3, total: 5, items: [] } }) };
+const C_STOP = { id: 'plan-concern-n_impl-c2', kind: 'plan', concern: { title: 'Use the DB' }, plan: { round: 2 },
+  stop: concernStop({ run: 5, concern: { title: 'Use the DB' }, decidedBefore: true }) };
+function mountStop(pq, extra = {}, submit = async () => true) {
+  const parent = doc.createElement('div');
+  const panel = doc.createElement('div');
+  panel.className = 'qpanel';
+  parent.appendChild(panel);
+  doc.body.appendChild(parent);
+  const posts = [];
+  renderGateCard(panel, pq, { doc, title: stepTitle(pq), chip: stepChip(pq), tagLevel: () => {}, submit: (p) => { posts.push(p); return submit(p); }, ...extra });
+  return { panel, posts, $: (s) => panel.querySelector(s), $$: (s) => [...panel.querySelectorAll(s)] };
+}
+const runCount = (panel) => {
+  // Per text node: the log row's run span and text sit side by side, so the whole textContent reads "Run 8another …".
+  const walk = panel.ownerDocument.createTreeWalker(panel, 4);
+  let n = 0;
+  for (let t = walk.nextNode(); t; t = walk.nextNode()) n += (t.data.match(/Run 8\b/g) || []).length;
+  return n;
+};
+
+test('C3: a stop title is its head and its chip names no run, for a gate and a plan stop', () => {
+  assert.equal(stepTitle(G_STOP, 'Review'), 'Run 8 · Code review objects');
+  assert.equal(stepChip(G_STOP, { shaping: { feature: { id: 'f', index: 8 } } }), 'Gate');
+  assert.equal(stepTitle(P_STOP), 'Run 4 · the plan check did not pass');
+  assert.equal(stepChip(P_STOP, { shaping: { feature: { id: 'f', index: 4 } } }), 'Plan');
+  assert.ok(smallRunsAsk(G_STOP));
+});
+
+test('C3: the stop card: one primary naming the pick, two option rows with sub, the pick preset and recommended, focus on the primary', () => {
+  for (const pq of [G_STOP, P_STOP, C_STOP]) {
+    const { panel, $, $$ } = mountStop(pq);
+    const prim = $$('.btn-primary');
+    assert.equal(prim.length, 1, pq.id);
+    const pick = pq.stop.options.find((o) => o.value === pq.stop.pick);
+    assert.equal(prim[0].textContent, pick.go);
+    assert.equal($$('.qopt').length, 2);
+    assert.equal($$('.chat-q-opt-sub').length, 2);
+    assert.deepEqual($$('.qopt[data-preset="1"]').map((t) => t.dataset.value), [pq.stop.pick]);
+    assert.deepEqual($$('.qopt .qrec').map((r) => r.closest('.qopt').dataset.value), [pq.stop.pick]);
+    assert.equal(questionFocusTarget(panel), prim[0]);
+    const other = $$('.qopt').find((t) => t.dataset.value !== pq.stop.pick);
+    other.click();
+    assert.equal(prim[0].textContent, pq.stop.options.find((o) => o.value === other.dataset.value).go);
+    assert.equal($('.qanswered').textContent, '1 of 1 answered');
+  }
+});
+
+test('C3: picking Accept as is posts continue; the card says run, finding and cycles once', async () => {
+  const { panel, $, $$, posts } = mountStop(G_STOP);
+  assert.equal(runCount(panel), 1);
+  assert.equal((panel.textContent.match(/3 fix cycles/g) || []).length, 1);
+  assert.equal((panel.textContent.match(/Code review: Flaky test/g) || []).length, 1, 'who objects to what, once');
+  $$('.qopt').find((t) => t.dataset.value === 'continue').click();
+  $('.btn-primary').click();
+  await flush();
+  assert.deepEqual(posts, [{ decision: 'continue' }]);
+});
+
+test('C3: a refused answer re-enables the tiles and primary and shows the reason once', async () => {
+  const { $, $$ } = mountStop(G_STOP, {}, async () => 'not one of the options');
+  $('.btn-primary').click();
+  await flush(); await flush();
+  const err = $('.chat-rc-q-err');
+  assert.equal(err.hidden, false);
+  assert.equal(err.textContent, 'Not sent: not one of the options');
+  assert.equal($$('.chat-rc-q-err:not([hidden])').length, 1);
+  assert.ok($$('.qopt').every((t) => !t.disabled));
+  assert.equal($('.btn-primary').disabled, false);
+});
+
+test('C3: a held answer draws the one answered line as a finished-step row: no head, chip, box or control', () => {
+  const { $$, panel } = mountStop(G_STOP, { held: { value: 'another' } });
+  assert.equal($$('button').length, 0);
+  assert.equal($$('.step-head, .ask-mcard-head, .ask-mcard-chip').length, 0, 'no head and no chip');
+  assert.equal($$('.chat-rc-receipt').length, 0, 'no receipt box');
+  const rows = $$('ol.chat-rc-log > li.chat-rc-log-row');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].querySelector('.chat-rc-log-run').textContent, 'Run 8');
+  assert.equal(rows[0].querySelector('.chat-rc-log-text').textContent, 'another cycle · decided by you', 'drawn like the delivered row');
+  assert.equal(runCount(panel), 1, 'the row is the only "Run 8" in the stop area');
+});
+
+test('C3: readOnly (the side panel) draws 0 buttons, no question and exactly one findings list', () => {
+  for (const pq of [G_STOP, P_STOP, C_STOP]) {
+    const { $$, panel } = mountStop(pq, { readOnly: true });
+    assert.equal($$('button').length, 0, pq.id);
+    assert.equal($$('.qopt').length, 0);
+    assert.equal(panel.textContent.includes(pq.stop.text), false, 'no question text');
+    assert.equal($$('.issues, .plan-checks').length, 1);
+    assert.equal(runCount(panel), 0, 'the run number is on the card');
+  }
+});
+
+test('C5: readOnly (the side panel) draws the Verifier stop\'s gaps as its one findings list', async () => {
+  const { verifyStop } = await import('../src/shared/shape/verifier.mjs');
+  const gaps = [{ id: 'R-po-2', why: 'sign-up never calls the email service' }, { id: 'R-po-3', why: 'the export skips empty charts' }];
+  const pq = { id: 'verify-3', kind: 'gate', nodeId: 'n_verify', issues: [], stop: verifyStop({ gaps, round: 3, fixCycles: 2 }) };
+  const { $$ } = mountStop(pq, { readOnly: true });
+  assert.equal($$('button').length, 0);
+  assert.equal($$('.issues, .plan-checks').length, 1);
+  assert.deepEqual($$('.verify-gaps .plan-check-id').map((e) => e.textContent), ['R-po-2', 'R-po-3']);
+});
+
+// The run page of a stopped run (item 5): it says what stopped and where it is answered, and offers no control.
+test('the run page (readOnly, runPage): the stop\'s head, one line with its link, then the findings; no control', async () => {
+  const { verifyStop } = await import('../src/shared/shape/verifier.mjs');
+  const V_STOP = { id: 'verify-3', kind: 'gate', nodeId: 'n_verify', issues: [], stop: verifyStop({ gaps: [{ id: 'R-po-2', why: 'no email' }], round: 3, fixCycles: 2 }) };
+  for (const pq of [G_STOP, P_STOP, C_STOP, V_STOP]) {
+    const { panel, $$, $ } = mountStop(pq, { readOnly: true, runPage: true, home: { href: '#chat/ask_1', text: "the feature's card in Chat" } });
+    assert.equal($('.ask-mcard-title').textContent, pq.stop.head, pq.id);
+    assert.equal($$('.ask-mcard-title').length, 1);
+    const links = $$('a.rd-fact-link');
+    assert.deepEqual(links.map((a) => [a.getAttribute('href'), a.textContent]), [['#chat/ask_1', "the feature's card in Chat"]]);
+    assert.equal($('.stop-home').textContent, "This run waits for your answer on the feature's card in Chat");
+    assert.equal($$('button, .qopt').length, 0);
+    assert.equal(panel.textContent.includes(pq.stop.text), false, 'no question text');
+    assert.equal($$('.issues, .plan-checks').length, 1, 'the one findings list');
+    const order = [...panel.children].map((c) => (c.matches('.stop-home') ? 'line' : c.matches('.issues, .plan-checks') ? 'findings' : 'head'));
+    assert.deepEqual(order, ['head', 'line', 'findings']);
+  }
+  const waiting = mountStop(P_STOP, { readOnly: true, runPage: true, home: null });
+  assert.equal(waiting.$$('a').length, 0, 'the home is not known yet: no line');
+  assert.equal(waiting.$('.ask-mcard-title').textContent, P_STOP.stop.head);
+  assert.ok([...waiting.panel.children].some((c) => 'stop' in c.dataset), 'one column before the home is known (shape-it.css)');
+  assert.equal(mountStop(P_STOP, {}).panel.querySelector(':scope > [data-stop]'), null);
+  const held = mountStop(G_STOP, { readOnly: true, runPage: true, home: { href: '#feature/f1', text: 'the feature page' }, held: { value: 'another' } });
+  assert.equal(held.$$('.ask-mcard-title, .stop-home, button').length, 0);
+  assert.equal(held.$('.chat-rc-log-text').textContent, 'another cycle · decided by you');
+  assert.equal(held.$$('.issues, .plan-checks').length, 1);
+});
+
+test('C3: a gate without stop still draws the two dev buttons; renderRecoveryCard is unchanged', () => {
+  const { $$ } = mountStop(GATE);
+  assert.deepEqual($$('.qpanel-foot button').map((b) => b.textContent), ['Accept as is', 'Run another cycle']);
 });

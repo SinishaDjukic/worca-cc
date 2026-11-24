@@ -860,7 +860,9 @@ span.req-file-name{color:var(--ink)}
 .req-new-fallback,.req-new-default,.req-new-harness{margin:8px 0 0}
 /* 9c boards 3, 4, 9: the feature's model button and dialog, the brief's box and Refresh dialog. The model and cost
    buttons are the shared .btn .btn-sm (like Feature chat and Export); they sit at their 28px in the chip row. */
-.req-model-chip,.req-cost-chip{align-self:center}
+.req-model-btn,.req-cost-btn{align-self:center}
+.req-model-btn{min-width:0;max-width:100%}
+.req-model-btn-label{min-width:0;padding:3px 0;overflow:hidden;text-overflow:ellipsis}   /* the padding keeps the descenders inside the clipped box */
 .req-dlg-wrap .card.req-dialog.req-model-dialog{width:min(520px,100%)}
 .req-dlg-wrap .card.req-dialog.req-brief-refresh{width:min(600px,100%)}
 .req-model-dialog .req-who-box,.req-brief-refresh .req-who-box{display:flex;flex-direction:column;gap:0}

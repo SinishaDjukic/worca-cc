@@ -49,6 +49,8 @@ export function askKindOf(pq) {
   if (pq.kind === 'recovery') return 'recovery';
   if (pq.kind === 'form') return 'form';
   if (pq.kind === 'plan') return 'plan';
+  if (pq.kind === 'care') return 'care';        // Shaper small runs B2: the Start step
+  if (pq.kind === 'prototype') return 'prototype';   // Shaper small runs C1: the Prototype step
   if (pq.kind === 'gate' || Array.isArray(pq.issues)) return 'gate';
   return 'clarify';
 }
