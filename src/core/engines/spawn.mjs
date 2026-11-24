@@ -20,6 +20,7 @@ import { agentGroupsDir, createGroupTracker } from '../agent-groups.mjs';
 import { noteSpawned } from '../agent-tree.mjs';
 import { isWithin } from '../fs-scope.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
+import { withTryGuardEnv } from '../workflow-tests/try-guard-env.mjs';
 import { withoutProxyLogin } from '../env-proxy.mjs';
 import { testWorkerCap } from '../settings.mjs';
 
@@ -114,8 +115,10 @@ export function agentHome() {
 /**
  * The final child env, in the order the claude runner always applied it: the
  * scrubbed env (undefined when scrub is off -> process.env), the run-level env
- * (cleanRunEnv) over it, the adapter's overlay (the model env) merged LAST so it
- * survives scrub and wins collisions, WORCA_HOST_PID after that, no GitHub
+ * (cleanRunEnv) over it, the person's carried sign-in (workflow tests 3b, D71) over the run env and under the overlay,
+ * the adapter's overlay (the model env) merged LAST so it
+ * survives scrub and wins collisions (D71b, `signInOverModel`: the carried sign-in goes over the overlay instead, where a
+ * normal run puts the user settings' env), WORCA_HOST_PID after that, no GitHub
  * or Azure DevOps credential in any tier (host-credentials.mjs), never the credential broker's own secret, the
  * host's WORCA_HOME replaced by a throwaway one (agentHome; a raw run env that sets it on purpose wins — an MCP
  * server's own env, e.g. an Ask chat's worca server on codex — while cleanRunEnv and a model overlay never carry it), and no
@@ -124,7 +127,7 @@ export function agentHome() {
  * no run env and no overlay the env is otherwise identical to the scrub result.
  * @returns {{env: Record<string,string>, scrubbed: boolean}}
  */
-export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, overlay, hostPid } = {}) {
+export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, overlay, hostPid, tryGuard = null, signInEnv = null, signInOverModel = false } = {}) {
   const scrubbedEnv = buildSpawnEnv(envScrub, envAllowlist, prefixes);
   // Never the host's store: a test or `worca` command the agent runs would otherwise write into the live database
   // (a run's own `node --test` file restored this home in teardown and left runs in it). Replaced before the run env
@@ -132,11 +135,20 @@ export function composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv, over
   // (codexMcpOverrides: an Ask chat's worca server keeps the chat's home).
   let env = { ...(scrubbedEnv ?? process.env), WORCA_HOME: agentHome() };
   if (runEnv) env = { ...env, ...runEnv };
+  // Workflow tests 3b (D71): a Pretend try's carried sign-in (string values of sign-in keys only, readUserSignIn): over the
+  // ambient and run env. Task 5 (I3, D71b): over the model env too (`signInOverModel`), where a normal every-source run puts
+  // the user settings' env, so the person's own gateway credentials never go to a model profile's endpoint; under it only
+  // for Worca's in-process bridge (claude.mjs carryOverModelEnv).
+  const carried = signInEnv && Object.keys(signInEnv).length ? signInEnv : null;
+  if (carried && !signInOverModel) env = { ...env, ...carried };
   if (overlay) env = { ...env, ...overlay };
+  if (carried && signInOverModel) env = { ...env, ...carried };
   if (hostPid != null) env = { ...env, WORCA_HOST_PID: String(hostPid) };
   env = stripHostCredentials(env);
   delete env.WORCA_BROKER_SECRET;
   delete env.WORCA_BROKER_SECRET_FILE;
+  // Workflow tests 3a (D56): a try's outward guard (PATH stand-ins, git that cannot sign in). Absent: byte-identical.
+  if (tryGuard) env = withTryGuardEnv(env, tryGuard);
   env = withNoGitPath(withoutProxyLogin(env));
   // The per-run test-worker cap (Settings › Runs › Machine load): a test runner that reads it (this repo's
   // tools/test-run.mjs) leaves cores for the run's other work and for other runs. A value already set wins.
@@ -251,7 +263,9 @@ export function superviseSpawn(o) {
     };
     // Agent isolation (agent-user.mjs): the same command under the agent's uid, via sudo, in its
     // own process group so a stuck agent can still be SIGKILLed through sudo.
-    const agentId = asAgent ? agentIdentityFor(currentOwner()) : null;   // the owner's pool user (agent-pool.mjs)
+    // Task 5 (security review M2): a lookup that throws still runs the cleanup (the staging folder goes).
+    let agentId = null;
+    try { agentId = asAgent ? agentIdentityFor(currentOwner()) : null; } catch (err) { cleanup(); rejectP(err); return; }   // the owner's pool user
     // E3: our own process group (POSIX). The agent user's sudo spawn already has one (killAgentGroup).
     const ownGroup = !agentId && process.platform !== 'win32';
     let child;

@@ -367,3 +367,18 @@ test('resume --confirm-model: refused when nothing is pending, on a mismatch, an
   const ok = await run(['resume', pending.id, '--mock', '--yes', '--confirm-model', 'claude-fable-5-2']);
   assert.doesNotMatch(ok.stderr, /confirm/i, 'a matching confirmation passes the check (it stops later, at the missing work folder)');
 });
+
+// Workflow tests 3a (final review round 2): `worca resume` refuses a test try, as the server does; it would otherwise resolve
+// the try's project key to the person's folder.
+test('resume refuses a workflow-test try: exit 1, before any project is resolved', async () => {
+  const projDir = await realpath(await mkdtemp(join(tmpdir(), 'worca-cc-cliresume-try-')));
+  try {
+    const { id } = await seedPipeline(projDir, { title: 'Test: x · try 1', status: 'paused', resumePoint: graphResumePoint({ pipelineDir: projDir }) });
+    getDb().prepare('UPDATE pipelines SET is_test = 1 WHERE id = ?').run(id);
+    const r = await run(['resume', id, '--mock', '--yes'], { cwd: projDir });
+    assert.equal(r.code, 1, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+    assert.match(r.stderr, /a test try cannot be resumed/i, `stderr: ${r.stderr}`);
+  } finally {
+    await rm(projDir, { recursive: true, force: true });
+  }
+});

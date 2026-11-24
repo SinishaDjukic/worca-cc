@@ -44,6 +44,7 @@ import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
 import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureClarify, featureNotes } from './shape/features.mjs';
 import { fileSha, planOutputOf } from './shape/outline-file.mjs';
+import { splitRulesOptions } from './shape/small-runs.mjs';
 import { readRunPrAuto } from './pr-auto.mjs';
 import { checkSlices, applyOutlineEdits, normalizeOutline, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
 import { onlyCriteria } from '../shared/review/requirements-coverage.mjs';
@@ -224,6 +225,7 @@ export class GraphOrchestrator extends RunHarness {
     const hasWires = Object.keys(overlayWires).length > 0;
     const overlay = hasNodes || hasWires ? { ...(hasNodes ? { nodes: overlayNodes } : {}), ...(hasWires ? { wires: overlayWires } : {}) } : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
+      use: this.opts && this.opts.workflowUse !== undefined ? this.opts.workflowUse : 'live',
       engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
       ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}), claudeAuth: this._resolveClaudeAuth(),
     });
@@ -278,6 +280,8 @@ export class GraphOrchestrator extends RunHarness {
     // What THIS run was told to use over the project's settings, beside the cells it resolved to (the run page marks
     // those pills "this run only"; resume reads the cells, never this).
     if (overlay) manifest.runOverlay = structuredClone(overlay);
+    // D8: the named version this run used (plans/workflow-tests-plan.md); absent = the workflow's row.
+    if (Number.isInteger(resolved.versionNo)) manifest.workflowVersion = { no: resolved.versionNo };
     return {
       manifest,
       agentKeys: new Set(this.resolved.agentKeys),
@@ -668,8 +672,11 @@ export class GraphOrchestrator extends RunHarness {
     const overlayNodes = {};
     for (const [nodeId, sel] of Object.entries(tunables || {})) overlayNodes[nodeId] = { ...sel };
     for (const [nodeId, sel] of Object.entries(answer.nodes || {})) overlayNodes[nodeId] = { ...(overlayNodes[nodeId] || {}), ...sel };
+    // I2: run exactly the graph the twin was matched on. autoCandidates offers a versioned row as its version in use
+    // (runnableOf); pinning that number keeps the node ids the tunables were remapped onto, even if Use moved meanwhile.
+    const use = match && Number.isInteger(match.candidate.versionNo) ? match.candidate.versionNo : 'live';
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
-      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
+      use, engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
       claudeAuth: this._autoAuthState && this._resolveClaudeAuth() ? async () => ({ state: this._autoAuthState }) : this._resolveClaudeAuth(),
     });
     if (!this.humanInLoop) {
@@ -688,6 +695,8 @@ export class GraphOrchestrator extends RunHarness {
     manifest.auto = fallback
       ? { status: 'decided', via: 'fallback', saved: via, reason: fallback, rounds: round, humanInLoop: this.humanInLoop, workflowId }
       : { status: 'decided', via, rounds: round, humanInLoop: this.humanInLoop, workflowId };
+    // D8: the named version this run used, as the non-Auto path records it (_buildManifest).
+    if (Number.isInteger(resolved.versionNo)) manifest.workflowVersion = { no: resolved.versionNo };
     this._preflightAgentKeys(this.resolved.agentKeys);
     this._preflightScriptKeys(this.resolved.scriptKeys);
     await this._preflightScriptRuntimes();
@@ -1762,7 +1771,8 @@ export class GraphOrchestrator extends RunHarness {
       // A file left from an earlier spawn must not be read as this Planner's outline. Keep it once a round was
       // asked (the loop re-asks that outline after a pause, F25) or when the paused session resumes.
       if (!rounds.length && !resuming) await rm(file, { force: true });
-      out.shapeSlicing = { file, size: this.runShape?.size || null, ...(ctx.bindings?.requirements?.path ? { requirements: true } : {}) };
+      out.shapeSlicing = { file, size: this.runShape?.size || null, ...(ctx.bindings?.requirements?.path ? { requirements: true } : {}),
+        ...splitRulesOptions() };
       // A pause during a revise spawn: put the person's feedback back, and the asked round's baseline (D11).
       const last = rounds[rounds.length - 1];
       if (last?.decision === 'revise') out.shapeSlicing.baseline = this._outlineBaseline();
@@ -1820,6 +1830,8 @@ export class GraphOrchestrator extends RunHarness {
     let carriedEach = null;                                 // and its Ask me before each run choice
     let retry = 0;
     const agreed = await this._outlineAgreed(ctx);
+    // A3: the split rules the Planner's prompt named (read once per spawn, into ctx.shapeSlicing), so they never disagree.
+    const rules = ctx.shapeSlicing.smallRuns ? { smallRuns: true, care: ctx.shapeSlicing.care } : {};
     let classified = null;                                  // the spawn result whose outlineState was acted on
     for (;;) {
       this._checkAbort();
@@ -1844,7 +1856,7 @@ export class GraphOrchestrator extends RunHarness {
         }
         raw = { error: err?.message || String(err) };
       }
-      const read = normalizeOutline(raw, { agreed });
+      const read = normalizeOutline(raw, { agreed, ...rules });
       if (!read.ok || read.outline.slices.length < 2) {
         await appendAudit(this.pipeline.dir, `${label}: ${read.ok ? 'a one-slice outline' : `an unreadable outline (${read.error})`} — planning the whole task.`).catch(() => {});
         this._retireOrphanFeature();
@@ -1859,7 +1871,7 @@ export class GraphOrchestrator extends RunHarness {
       const reasked = Boolean(last && last.decision == null);
       const round = reasked ? last.round : rounds.length + 1;
       const revisable = round < OUTLINE_ROUNDS_MAX;
-      const check = checkSlices(outline);
+      const check = checkSlices(outline, rules);
       const id = `plan-outline-${ctx.nodeId}-${round}${retry ? `-e${retry}` : ''}`;
       // D9: what was asked, so a revise spawn can tell an edited outline from an untouched one and a fresh plan from a stale one.
       this._shapingOutlineRound({ round, outline, check, sha: await fileSha(file), planSha: await fileSha(planOutputOf(ctx.outputs)) });
@@ -2472,6 +2484,12 @@ export class GraphOrchestrator extends RunHarness {
       mcpEnv: this.mcpLayer?.env,
       mcpRedact: this.mcpLayer?.redact,
       mcpDisallowed: this.mcpLayer?.disallowed,
+      // Workflow tests (D35): a pretend try loads only its mcp.json; a script step learns it runs in a test. 3b (D70): a pretend
+      // try's spawns load no user settings either (runOpts: the run's sources minus user, D70a; the sign-in is carried over).
+      ...(this._testConnectors() ? { testConnectors: this._testConnectors(), mcpStrict: this._testConnectors() === 'pretend',
+        ...(this._testConnectors() === 'pretend' ? { pluginsOff: true } : {}) } : {}),
+      // Workflow tests 3a (D56): nothing leaves a try: its spawns carry the hook and the guard env, its script steps the env.
+      ...(this._tryGuard() ? { tryGuard: this._tryGuard() } : {}),
       // Skills registry (design §4.3): one --plugin-dir per set plugin of the run; undefined without
       // set skills, [] once the layer is blocked — runOpts emits nothing for either.
       skillPluginDirs: this.skillLayer?.pluginDirs,
@@ -2821,7 +2839,9 @@ export class GraphOrchestrator extends RunHarness {
       await this._refreshMergeBases();
       return await measureCodeCursor({
         workDirs: this.workDirs, checkpointRefs: this.checkpointRefs,
-        excludeFor: (k) => this._excludePathspecs(k), numstat: diffNumstat,
+        excludeFor: (k) => this._excludePathspecs(k),
+        // Workflow tests 3a (final review I2): a try's measure runs no fsmonitor of the copy, under the guard.
+        numstat: (d, b, h, p) => diffNumstat(d, b, h, p, this._tryGitEnv() ? { env: this._tryGitEnv() } : {}),
         stage: () => this._stageWorkingTree({ ignoreAbort: true, refreshFolders: false }),
       });
     } catch { return null; }

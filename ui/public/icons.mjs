@@ -37,6 +37,7 @@ export const ICONS = Object.freeze({
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"></path>',
   question: '<path d="M9.2 9.2a2.9 2.9 0 1 1 4.2 2.6c-.9.5-1.4 1.1-1.4 2v.4"></path><path d="M12 17.6h.01"></path>',
   alert: '<path d="M12 6.8v6.6"></path><path d="M12 17.6h.01"></path>',
+  info: '<circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 7.5h.01"></path>',
   'pull-request': '<circle cx="6" cy="6" r="2.2"></circle><circle cx="6" cy="18" r="2.2"></circle><circle cx="18" cy="18" r="2.2"></circle><path d="M6 8.2v7.6"></path><path d="M18 15.8V9a3 3 0 0 0-3-3h-4"></path><path d="M13 3.5 10.5 6 13 8.5"></path>',
   // A pull request with a plus where its head will be: Create PR.
   'pr-create': '<circle cx="6" cy="6" r="2.5"></circle><path d="M6 8.5V21M13 6h3a2 2 0 0 1 2 2v3M18 15v6M15 18h6"></path>',
@@ -61,6 +62,8 @@ export const ICONS = Object.freeze({
   eye: '<path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="2.8"></circle>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"></path><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path>',
   shield: '<path d="M12 3l8 3v6c0 4.5-3.4 7.6-8 9-4.6-1.4-8-4.5-8-9V6l8-3z"></path><path d="M9 12l2 2 4-4"></path>',
+  lock: '<rect x="5" y="10.5" width="14" height="9.5" rx="2"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path>',
+  stop: '<circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.5h5v5h-5z"></path>',   // board 35: a test that stopped (the setup failed)
   pulse: '<path d="M3 12h4l2-5 4 10 2-5h6"></path>',
   // The account menu's Settings cog (shell/sidebar.html #acct-settings), for a settings button elsewhere.
   settings: '<path d="M10.06 3.93L10.39 1.22A10.9 10.9 0 0 1 13.61 1.22L13.94 3.93A8.3 8.3 0 0 1 16.34 4.92L18.48 3.24A10.9 10.9 0 0 1 20.76 5.52L19.08 7.66A8.3 8.3 0 0 1 20.07 10.06L22.78 10.39A10.9 10.9 0 0 1 22.78 13.61L20.07 13.94A8.3 8.3 0 0 1 19.08 16.34L20.76 18.48A10.9 10.9 0 0 1 18.48 20.76L16.34 19.08A8.3 8.3 0 0 1 13.94 20.07L13.61 22.78A10.9 10.9 0 0 1 10.39 22.78L10.06 20.07A8.3 8.3 0 0 1 7.66 19.08L5.52 20.76A10.9 10.9 0 0 1 3.24 18.48L4.92 16.34A8.3 8.3 0 0 1 3.93 13.94L1.22 13.61A10.9 10.9 0 0 1 1.22 10.39L3.93 10.06A8.3 8.3 0 0 1 4.92 7.66L3.24 5.52A10.9 10.9 0 0 1 5.52 3.24L7.66 4.92A8.3 8.3 0 0 1 10.06 3.93z"></path><circle cx="12" cy="12" r="3"></circle>',
@@ -77,6 +80,7 @@ export const ICONS = Object.freeze({
   layers: '<path d="M12 3l9 4.5-9 4.5-9-4.5z"></path><path d="M3 12l9 4.5 9-4.5"></path><path d="M3 16.5l9 4.5 9-4.5"></path>',
   summary: '<rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M8 9.5h8M8 13h8M8 16.5h5"></path>',
   none: '<rect x="5" y="5" width="14" height="14" rx="3" stroke-dasharray="3 3"></rect>',
+  off: '<circle cx="12" cy="12" r="8.5"></circle><path d="M6 18L18 6"></path>',   // switched off (board 34)
   // The Design stage (ui/public/design/): the hide-cursors toggle, the viewport switch, and an agent's Stop.
   cursor: '<path d="M5 3.5l5.2 16.5 2.7-6.7 6.6-2.7z"></path>',
   'cursor-off': '<path d="M5 3.5l5.2 16.5 2.7-6.7 6.6-2.7z"></path><path d="M3.5 3.5l17 17"></path>',

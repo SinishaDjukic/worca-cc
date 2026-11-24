@@ -615,8 +615,17 @@ try {
   await ev('window.fetch=window.__realFetch;delete window.__realFetch;0');
 
   // ---- the History detail --------------------------------------------------
-  const hist = await api('/api/history');
-  const rec = (hist.body.pipelines || []).find((p) => p.id === entry.pipelineId);
+  // The post-run base check (#620) lands a moment after `done`. One that lands after the
+  // History detail opened makes the next /api/history row newer than the loaded detail, so
+  // refreshHdFromRow re-opens the page and drops the review strip (3) expands. Wait for it,
+  // bounded: a run without a base check has nothing to land.
+  let hist, rec;
+  for (let i = 0; i < 50; i += 1) {
+    hist = await api('/api/history');
+    rec = (hist.body.pipelines || []).find((p) => p.id === entry.pipelineId);
+    if (rec && rec.baseCheck) break;
+    await sleep(200);
+  }
   if (!rec) throw new Error(`pipeline ${entry.pipelineId} is not in /api/history`);
   const HD = '#hist-detail .hd-graph .run-flow-wrap';
   await go(`history/${rec.projectKey}/${rec.id}/details/workflow`);   // the graph lives in Details › Workflow

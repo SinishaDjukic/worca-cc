@@ -123,7 +123,7 @@ export async function writeBenchInputs(inDir, ports, inputs) {
  * given: ONE cycle, ordinal 1, the run's own allocator against the bench's
  * `pipeline/`, and `bench: true` so the envelope and the shell env carry W12.
  */
-export function buildBenchCtx({ id, meta, resolved, ports, bindings, dirs, cwd, checkpointRef = null, signal = null, onEvent = () => {} }) {
+export function buildBenchCtx({ id, meta, resolved, ports, bindings, dirs, cwd, checkpointRef = null, signal = null, onEvent = () => {}, tryGuard = null }) {
   const node = { id: 'bench', kind: 'script', key: meta.key };
   const runCtx = { pipelineDir: dirs.pipeline, projectDir: cwd, baseName: 'bench' };
   // W1: outputs, verdict and envelope live in the BENCH's folder, never in a
@@ -171,6 +171,8 @@ export function buildBenchCtx({ id, meta, resolved, ports, bindings, dirs, cwd, 
     },
     claudeOpts: { mock: false },                                   // W13: always run the program
     bench: true,                                                   // W12
+    // Workflow tests 3a (final review I1, D56): a try's Library check runs under the try's outward guard. Absent otherwise.
+    ...(tryGuard ? { tryGuard } : {}),
     signal,
     onEvent,
   };
@@ -470,6 +472,7 @@ class Bench extends EventEmitter {
       id: this.id, meta, resolved: { file, command, params, timeoutMs }, ports, bindings, dirs, cwd, checkpointRef,
       signal: this.abort.signal,
       onEvent: (e) => { if (e && e.type === 'text') this._line(caseId, e.text); },
+      ...(this.deps.tryGuard ? { tryGuard: this.deps.tryGuard } : {}),   // a try's check only (runScriptCheck); never from the server
     });
     return { meta, ports, ctx, dirs, draftPath, draft: plan.draft, expect: kase ? kase.expect : null };
   }

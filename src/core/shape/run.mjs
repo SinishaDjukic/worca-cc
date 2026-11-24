@@ -10,6 +10,7 @@ import { normalizePerspectives, DEFAULT_PERSPECTIVES } from '../../shared/shape/
 import { normalizeOutline, normalizeEdits, applyOutlineEdits, sliceRequirementIds } from '../../shared/shape/slices.mjs';
 import { normalizePicks } from '../../shared/review/findings.mjs';
 import { validateDecisionPicks } from '../../shared/review/decisions.mjs';
+import { splitRulesOptions } from './small-runs.mjs';
 
 export const PLAN_ASK_KIND = 'plan';
 export const PLAN_FEEDBACK_MAX = 8000;
@@ -18,10 +19,17 @@ const SHAPE_INTERNAL_FIELDS = new Set(['slice', 'replaces', 'requirementsFirst']
 const SLICES_MODES = new Set(['auto', 'off']);
 const SIZES = new Set(['small', 'medium', 'large']);
 
-/** shape.slice of a slice ticket (L3); null when malformed. */
+const DEV_STORED_SLICES_MAX = 12;   // dev's normalizeOutline never keeps more, so a larger ref was stored under small runs
+
+/** A stored ref made under small runs: over dev's 12 slices, or carrying small runs' `confirmed` key. */
+const storedSmallRuns = (raw) => raw.total > DEV_STORED_SLICES_MAX
+  || (Array.isArray(raw.outline?.slices) && raw.outline.slices.length > DEV_STORED_SLICES_MAX)
+  || Array.isArray(raw.outline?.confirmed);
+
+/** shape.slice of a slice ticket (L3); null when malformed. A ref stored under small runs keeps its rules with the flag off. */
 function normalizeSliceRef(raw) {
   if (!raw || typeof raw !== 'object') return null;
-  const o = normalizeOutline(raw.outline);
+  const o = normalizeOutline(raw.outline, { ...splitRulesOptions(), ...(storedSmallRuns(raw) ? { smallRuns: true } : {}) });
   const { feature, index, total } = raw;
   if (typeof feature !== 'string' || !feature || !o.ok || !Number.isInteger(index) || index < 1
     || total !== o.outline.slices.length || index > total) return null;

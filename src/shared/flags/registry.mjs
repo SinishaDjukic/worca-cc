@@ -76,6 +76,18 @@ export const FLAGS = Object.freeze([
     docs: 'docs/requirements.md',
   }),
   entry({
+    key: 'workflowTests',
+    title: 'Workflow versions and tests',
+    description: 'Save named versions of a workflow, choose which version new runs use, and restore any earlier save. Test a version on your own examples and compare it with another before runs use it.',
+    stage: 'experimental',
+    default: false,
+    owner: 'TomicaB',
+    since: '1.15.0',
+    added: '2026-10-25',
+    reviewBy: '2027-01-22',
+    docs: 'docs/workflow-tests.md',
+  }),
+  entry({
     key: 'runTelemetry',
     title: 'Run telemetry',
     description: 'Runs record detailed statistics: context size, tokens and timing of every model call, tool time, retries and compactions per agent, plus how long Worca\'s own saves and live updates take. Shown on the run page\'s Agents tab. Recording only: runs behave the same.',
@@ -148,6 +160,18 @@ export const FLAGS = Object.freeze([
     added: '2026-11-19',
     reviewBy: '2027-02-16',
     docs: 'docs/terminal.md',
+  }),
+  entry({
+    key: 'shaperSmallRuns',
+    title: 'Shaper small runs',
+    description: "Groundwork for Shaper's small runs (a Care position per feature, at most 3 requirements per run, runs that start from the latest finished work). While it is being built, turning it on changes nothing you can see.",
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.19.0',
+    added: '2026-11-20',
+    reviewBy: '2027-02-18',
+    docs: 'docs/feature-flags.md',
   }),
 ]);
 

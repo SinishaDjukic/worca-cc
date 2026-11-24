@@ -509,7 +509,8 @@ export const SLICE_SCOPE_AGENT_KEYS = PERSPECTIVE_AGENT_KEYS;
 function slicingPromptBlock(ctx) {
   if (ctx.shapeOutlineNote?.decision === 'flat') return FLAT_NOTE;
   if (!ctx.shapeSlicing) return '';
-  return slicingBlock({ file: ctx.shapeSlicing.file, size: ctx.shapeSlicing.size || null, requirements: ctx.shapeSlicing.requirements === true })
+  return slicingBlock({ file: ctx.shapeSlicing.file, size: ctx.shapeSlicing.size || null, requirements: ctx.shapeSlicing.requirements === true,
+    smallRuns: ctx.shapeSlicing.smallRuns === true, care: ctx.shapeSlicing.care })
     + (ctx.shapeOutlineNote?.decision === 'revise' ? outlineFeedbackBlock(ctx.shapeOutlineNote.feedback) : '')
     + mockMarkers({ MOCK_SLICES: ctx.shapeSlicing.file }) + '\n\n';
 }
@@ -644,7 +645,7 @@ export function buildAgentPrompt(ctx) {
     slicing +
     concern +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed, investigator: !!ctxSubagentEffort(ctx), engine: node?.engine }) +
+    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed, investigator: !!ctxSubagentEffort(ctx), engine: node?.engine, personalOff: ctx?.pluginsOff === true }) +
     workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative, endpointRouted: routed, serial: node?.noSubagents === true }) +
     (siblings ? siblings + '\n' : '') +
     portIoBlock({ node, ports, bindings, outputs, verdict, ctx }) +
