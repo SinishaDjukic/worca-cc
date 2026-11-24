@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Repeating schedules made from a Chat card start (#1567)
+
+- A repeating schedule made from a Chat run card (a `propose_run` with `every`) now starts each occurrence, and **Run now** on the card works. Before, every start was refused with "could not start: card is scheduled" and the schedule paused itself after three failures. The card keeps following the series: it stays scheduled with the next occurrence's time, each run is linked to the chat, and a failed occurrence is the thread's notice and the schedule's failure streak, never a failed card. Series that already exist are repaired too, with nothing to redo. A Start by hand on a scheduled card now says what to do instead of just "card is scheduled".
+
 ### Remotes through an SSH Host alias (#1476)
 
 - A remote through a `~/.ssh/config` Host alias (`git@github-work:me/repo.git`) now counts as the host the alias names: Worca asks `ssh -G` (no connection) and re-parses the URL with the real host, so a pull request from a fork cloned that way goes to `upstream` instead of failing with "Head ref must be a branch", and an Azure DevOps alias gets its org and project. git keeps the URL as written. ssh missing, failing or slow keeps the alias host, and the next lookup asks again; real answers are cached per process.
