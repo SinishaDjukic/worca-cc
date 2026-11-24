@@ -23,7 +23,7 @@
       "required": false,
       "loop": true,
       "as": "fix-review",
-      "directive": "## Fix cycle\n\nAddress EVERY critical and major finding in the review named below. Edit deck/deck.html and deck/proof.html in place; keep slides the review did not mention byte-identical; list what changed in deck-manifest.md under \"Changed this cycle\"."
+      "directive": "## Fix cycle\n\nAddress EVERY critical and major finding in the review named below. Edit deck/deck.html and deck/proof.html in place; fix the same defect on every slide that has it, and keep every other slide byte-identical; list what changed in deck-manifest.md under \"Changed this cycle\"."
     }
   ],
   "outputs": [

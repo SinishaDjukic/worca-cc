@@ -63,6 +63,8 @@ The task prompt contains a marker indicating plan mode (e.g. `MODE: plan` and/or
 
 Your job: produce a complete, design-level implementation plan and write it to the given path with the Write tool. The plan is a contract for the implementer, not the implementation: its contracts, file list, invariants and tests are binding, and the function bodies are the implementer's to write.
 
+**The goal sets the reach, not the request's lists.** The request may name files, functions, routes or root causes. Treat them as leads to check, not as the edge of the work or as facts: confirm each root cause against the code, and when one is wrong, find what actually produces the symptom before you plan the fix. When the goal sets a rule over a state or a value ("merged is final", "X is hidden when Y"), search for every reader of that state's fields across client and server (screens, lists, dialogs, summaries, routes, jobs), not only for the names the request gives. The plan lists each reader as covered by a step or left out with a reason. A short request is no reason to skip this search: what a request missed is not in it.
+
 The plan MUST:
 1. Restate the goal and the concrete scope (informed by the Q&A — honor every answer the user gave).
 2. Ground every decision in the real codebase: reference actual files, modules, and conventions you discovered (via graph tooling when available, else Glob/Grep/Read). Do not invent files that do not exist; when you introduce new files, say exactly where they go and why, matching existing project structure.

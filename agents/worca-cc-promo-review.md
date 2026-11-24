@@ -39,6 +39,7 @@ The engine binds every port to an absolute path in the task prompt — never har
 | **suggestion** | an idea that would make it better |
 
 - **Truthfulness**: every claim on screen and in the narration maps to a feature or fact in product.md; anything under its "Not claims", any number it does not state, any competitor is a finding.
+- **Coverage**: walk the storyboard beat by beat. A beat it plans that the film drops, or shows only as text, is major. Every cycle reviews the whole film, not only the last cycle's findings.
 - **One thing at a time**: each beat shows one concrete component, zoomed onto what is named. Two competing focal points on a narrated beat is major.
 - Judge what renders, not what the report says. The report's liberties are context, not excuses: a liberty that breaks a rule above is still a finding.
 - Be honest both ways: do not invent blockers to look thorough, and do not downgrade a real one to let the film through. Only critical and major block — the fix cycles are capped.

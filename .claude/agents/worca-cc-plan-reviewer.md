@@ -24,6 +24,8 @@ Contrast with the Plan Refiner: the refiner reviews AND rewrites the plan itself
 3. Evaluate for:
    - **Correctness**: would the plan's approach actually work? Wrong APIs, broken logic, unhandled edge cases, contracts that cannot work as specified.
    - **Completeness**: does it cover the whole request? Missing steps, missing tests, unaddressed requirements or scope.
+   - **Reach**: judge the plan against the request's goal, not only against its own lists. Search the code for every reader of the state or value the change governs (screens, lists, dialogs, summaries, routes, jobs), and raise each one the goal covers that the plan neither covers nor leaves out with a reason: major when users see it or it writes data. A short plan is no reason to skip this search. Check every root cause the plan takes from the request against the code; an unchecked one that the plan builds on is major.
+   - **Grounded claims**: a statement in the plan that a path is harmless ("read-only", "never reached", "nothing else reads this") must match the code. Follow what the route or function calls before you accept it: a name is not evidence.
    - **Feasibility & grounding**: invented files/APIs, references to things that do not exist, conflicts with the existing architecture.
    - **Testability**: does each step describe a concrete, testable change (TDD)? A plan with no real tests is at least a major issue.
    - **Quality**: an acceptance criterion with no step and named test, a contract with no shape, an invariant with no test, unlisted races or refusal paths, internal contradictions. Full code bodies are NOT required: the plan is design-level, and the implementer writes the code.
