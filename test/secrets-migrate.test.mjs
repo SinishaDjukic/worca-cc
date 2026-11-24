@@ -203,6 +203,15 @@ test('no-key: one key is created, every literal moves, and references resolve in
   assert.equal(resolveProviderSecret(readSettings().providers.openai.apiKey, process.env, 'providers.openai.apiKey'), secretSlots()[0].value);
 });
 
+test('folders under plugins/ that are not plugin names (.cache, Uppercase) do not stop the move', async () => {
+  const c = fresh();
+  for (const d of ['.cache', 'Not-A-Plugin', '1abc']) mkdirSync(join(c.worca, 'plugins', d), { recursive: true });
+  writeFileSync(join(c.worca, 'plugins', 'marketplaces.json'), '{}');
+  const r = await migrate();
+  assert.equal(r.state, 'done', JSON.stringify(r));
+  assert.ok(Object.values(r.moved).reduce((a, b) => a + b, 0) > 0);
+});
+
 test('a key ready before the run: the read-back passes and everything moves', async () => {
   const c = fresh({ fake: { state: 'available' }, seed: false });
   await (await vaultForHome({ home: c.worca })).put({ store: 'settings', field: 'providers.sound.apiKey', value: 'already-vaulted' });
