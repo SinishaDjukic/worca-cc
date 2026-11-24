@@ -187,7 +187,7 @@ function boot({ status = { guidesSeen: {} }, postResult = {} } = {}) {
 }
 
 describe('howto button', () => {
-  test('is a design-system button with a question icon, the sr-only New mark and the min-level hook', () => {
+  test('is a design-system button with a question icon, the New mark (said in the accessible name) and the min-level hook', () => {
     const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
     const doc = dom.window.document;
     doc.body.innerHTML = howtoButtonHtml({ id: 'x-btn', cls: 'x-cls' });
@@ -198,13 +198,25 @@ describe('howto button', () => {
     assert.ok(b.querySelector('svg'));
     assert.ok(b.textContent.includes('How it works'));
     assert.equal(b.querySelector('.howto-new').hidden, true);
-    assert.equal(b.querySelector('.howto-new .sr-only').textContent, 'New');
+    // No text in the dot: it would be a fourth word of the label and text on the dot's slate.
+    assert.equal(b.querySelector('.howto-new').textContent, '');
+    assert.equal(b.querySelector('.howto-new').getAttribute('aria-hidden'), 'true');
+    assert.equal(b.querySelector('.howto-label').textContent, 'How it works');
+    assert.equal(b.getAttribute('aria-label'), 'How it works');
     paintHowtoMark(b, true);
     assert.equal(b.dataset.new, 'true');
     assert.equal(b.querySelector('.howto-new').hidden, false);
+    assert.equal(b.getAttribute('aria-label'), 'How it works, new');
     paintHowtoMark(b, false);
     assert.equal(b.dataset.new, 'false');
     assert.equal(b.querySelector('.howto-new').hidden, true);
+    assert.equal(b.getAttribute('aria-label'), 'How it works');
+    // The icon form (the Workflows editor bar): a quiet icon button, no words, the same name.
+    doc.body.innerHTML = howtoButtonHtml({ id: 'i-btn', icon: true });
+    const i = doc.getElementById('i-btn');
+    assert.ok(i.classList.contains('btn-icon') && i.classList.contains('btn-quiet') && !i.classList.contains('btn-sm'));
+    assert.equal(i.querySelector('.howto-label'), null);
+    assert.equal(i.getAttribute('aria-label'), 'How it works');
     assert.doesNotThrow(() => paintHowtoMark(null, true));
   });
 });
