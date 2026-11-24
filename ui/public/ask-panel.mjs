@@ -2776,14 +2776,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.page.dataset.chats = 'on';
     el.listNew = newChatPlus();   // New chat on top of the chats list (the head's own shows only while the list is folded)
     el.listNew.classList.add('chat-list-new');
+    const currentId = () => (typeof st.wantThread === 'string' ? st.wantThread : st.threadId);
+    const openChat = (id) => {
+      const overlay = historyOverlayOpen();
+      if (overlay) setHistoryOpen(false, { persist: false });   // the overlay gives the chat its room
+      showThread(id);
+      route(id);
+      if (overlay) focusComposer();                // the picked row is hidden now: focus goes to the chat
+    };
     chatsCol = mountChatsColumn({ host: el.history, newButton: el.listNew, fetch, storage, win, now, level: () => currentLevel(doc),
-      scopeName: (sc) => chatDep('scopeName', sc) || '', currentId: () => (typeof st.wantThread === 'string' ? st.wantThread : st.threadId),
-      onOpen: (id) => {
-        const overlay = historyOverlayOpen();
-        if (overlay) setHistoryOpen(false, { persist: false });   // the overlay gives the chat its room
-        showThread(id);
-        route(id);
-        if (overlay) focusComposer();                // the picked row is hidden now: focus goes to the chat
+      scopeName: (sc) => chatDep('scopeName', sc) || '', currentId,
+      onOpen: openChat,
+      // A run under its chat (View › Runs › Under chats): its Runs list row, and a click opens the chat, then the run beside it.
+      runRows: (refs) => chatDep('chatRunRows', refs) || [],
+      onOpenRun: (ref, chatId) => {
+        if (chatId && chatId !== currentId()) openChat(chatId);
+        else if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
+        chatDep('openRunPanel', ref);
       },
       onRename: (r) => { void renameThread(r); }, onDelete: (r) => { void deleteThread({ id: r.id, title: r.title }); },
       onHelp: (opener) => openChatKeys(opener),
@@ -8565,6 +8574,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     },
     setHost,                                        // Ask worca beside the page: 'page' (the Chat section) or 'dock' (the side column)
     host: () => st.host,
+    runsChanged: () => { if (chatsCol) chatsCol.runsChanged(); },   // a run moved: the runs under the chats repaint
     appendToComposer,
     addFiles: (files) => addFiles(files),           // Pick element (issue 1064 slice 3): files the "+" checks take, as chips
     setQuote,
