@@ -10,6 +10,12 @@ import { compileDefinition, formFromDefinition, blankDefinitionForm, createDefin
 import { splitMessage } from './feedback.mjs';
 import { openSkillImport, inspectionSummary, consentNode } from './skill-import.mjs';
 import { openMcpImport } from './mcp-server-import.mjs';
+import { chip } from './marketplace/kinds.mjs';
+import { openMenu } from './workflows/menu.mjs';
+import { renderTabs, renderHead, renderToolbar, renderLoadError, renderEmpty, emptyLine, moveInList, sourceOptions,
+  filterServers, serverChipCounts, serverSource, filterSkills, skillChipCounts, skillSource } from './mcp-servers/connectors-shell.mjs';
+import { addBtn, renderSetRail, renderSetHead, renderMemberRow, renderSkillMemberRow, renderSection, renderServerRow, renderSkillRow,
+  renderSkillSheetBody } from './mcp-servers/connectors-rows.mjs';
 
 const enc = encodeURIComponent;
 function h(doc, tag, cls, text) {
@@ -24,8 +30,6 @@ function button(doc, cls, label, data = {}) {
   Object.assign(b.dataset, data);
   return b;
 }
-// One "Add …" button: the shared plus icon, never a typed "+" (docs/design-system.md › Button).
-const addBtn = (doc, label, data) => { const b = button(doc, 'btn btn-sm', label, data); b.prepend(icon(doc, 'plus', 14)); return b; };
 
 // ── routes: #connectors (General), #connectors/sets/<id>, #connectors/servers, #connectors/skills ──
 // The Skills view has its own constant: a set may be named "Skills", and mcpRoute('skills') is that set.
@@ -133,9 +137,11 @@ export function collectFieldInputs(root) {
 }
 
 // ── the Connectors page controller ──────────────────────────────────────────────────────────────────
-export function createMcpView({ host, api, navigate, confirm, modal, doc = globalThis.document, now = () => Date.now(), notify = null }) {
+export function createMcpView({ host, api, navigate, confirm, modal, sheet = null, doc = globalThis.document, now = () => Date.now(), notify = null }) {
   const st = { view: 'sets', setId: 'general', sets: null, set: null, servers: null, skills: null, testing: new Set(), msg: '', msgKind: '',
-    md: new Map(), mdOpen: new Set() };   // SKILL.md drawers: the text (or error) per skill id, and the ids shown open
+    md: new Map(),   // SKILL.md: the text (or error) per skill id
+    open: new Map(), loadErr: null,   // a server row's fold (`set|server` → open?); the list that could not be read
+    filters: { servers: { q: '', chip: 'all', source: '' }, skills: { q: '', chip: 'all', source: '' }, sets: { q: '' } } };
   // #555: a result is a toast; 'err-inline' (what load() reports) stays on the page's .form-msg line.
   const say = (text, kind = '') => {
     if (kind && kind !== 'err-inline' && text && notify) { notify({ tone: kind, ...splitMessage(text) }); text = ''; kind = ''; }
@@ -156,368 +162,148 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   let loadSeq = 0;
   async function load() {
     const seq = ++loadSeq;
-    if (st.view === 'servers') {
-      const [r, s] = await Promise.all([api('GET', '/api/mcp/servers'), st.sets ? null : api('GET', '/api/mcp/sets')]);
-      if (seq !== loadSeq) return;
-      st.servers = r.ok ? r.data.servers : [];
-      if (s) st.sets = s.ok ? s.data.sets : [];
-      if (!r.ok) failInline(r);
-      else if (r.data.newer) say('MCP registry files need a newer Worca', 'err-inline');
-    } else if (st.view === 'skills') {
-      const [r, s] = await Promise.all([api('GET', '/api/skills'), st.sets ? null : api('GET', '/api/mcp/sets')]);
-      if (seq !== loadSeq) return;
-      st.skills = r.ok ? r.data.skills : [];
-      st.folderImports = !(r.ok && r.data.folderImports === false);   // a hosted Worca imports from a git URL or a paste only
-      if (s) st.sets = s.ok ? s.data.sets : [];
-      const lib = (r.ok && r.data.library) || {};
-      if (!r.ok) failInline(r);
-      else if (r.data.newer) say('MCP registry files need a newer Worca', 'err-inline');
-      else if (lib.newer || lib.damaged) {   // P1 reads no imported skill then: say why none is listed
-        say(lib.newer ? 'The skill library needs a newer Worca: imported skills are not listed'
-          : 'The skill library file skills/library.json is damaged (fix it or remove it): imported skills are not listed', 'err-inline');
+    // Every view shows all three tab counts: the lists a view does not paint are read once and reused (D11).
+    const fresh = (k) => st.view === k || !st[k];
+    const [srv, skl, lst, one] = await Promise.all([
+      fresh('servers') ? api('GET', '/api/mcp/servers') : null, fresh('skills') ? api('GET', '/api/skills') : null,
+      st.view === 'sets' || !st.sets ? api('GET', '/api/mcp/sets') : null, st.view === 'sets' ? api('GET', setPath(st.setId)) : null]);
+    if (seq !== loadSeq) return;
+    st.loadErr = null;
+    const errOf = (r) => `${(r.data && r.data.error) || `HTTP ${r.status}`}.`;
+    if (srv) {
+      if (srv.ok && Array.isArray(srv.data.servers)) st.servers = srv.data.servers; else if (st.view === 'servers') st.servers = [];
+      if (st.view === 'servers') {
+        if (!srv.ok) { failInline(srv); st.loadErr = { what: 'servers', cause: errOf(srv) }; }
+        else if (srv.data.newer) say('MCP registry files need a newer Worca', 'err-inline');
       }
-    } else {
-      const [l, s] = await Promise.all([api('GET', '/api/mcp/sets'), api('GET', setPath(st.setId))]);
-      if (seq !== loadSeq) return;
-      st.sets = l.ok ? l.data.sets : [];
-      st.set = s.ok ? s.data : null;
-      if (!s.ok) failInline(s);
-      else if (l.data.newer) say('MCP registry files need a newer Worca', 'err-inline');
+    }
+    if (skl) {
+      if (skl.ok && Array.isArray(skl.data.skills)) st.skills = skl.data.skills; else if (st.view === 'skills') st.skills = [];
+      if (skl.ok) st.folderImports = skl.data.folderImports !== false;   // a hosted Worca imports from a git URL or a paste only
+      if (st.view === 'skills') {
+        const lib = (skl.ok && skl.data.library) || {};
+        if (!skl.ok) { failInline(skl); st.loadErr = { what: 'skills', cause: errOf(skl) }; }
+        else if (skl.data.newer) say('MCP registry files need a newer Worca', 'err-inline');
+        else if (lib.newer || lib.damaged) {   // P1 reads no imported skill then: say why none is listed
+          say(lib.newer ? 'The skill library needs a newer Worca: imported skills are not listed'
+            : 'The skill library file skills/library.json is damaged (fix it or remove it): imported skills are not listed', 'err-inline');
+        }
+      }
+    }
+    if (lst) st.sets = lst.ok ? lst.data.sets : [];
+    if (one) {
+      st.set = one.ok ? one.data : null;
+      if (!one.ok) failInline(one);
+      else if (lst && lst.ok && lst.data.newer) say('MCP registry files need a newer Worca', 'err-inline');
     }
     paint();
   }
 
-  function topbar() {
-    const bar = h(doc, 'div', 'topbar');
-    const title = h(doc, 'div');
-    title.append(h(doc, 'div', 'sub page-intro', 'MCP servers and skills worca’s agents and Chat get, grouped in sets attached to projects'));
-    const seg = h(doc, 'div', 'seg');
-    seg.setAttribute('role', 'group');
-    seg.setAttribute('aria-label', 'View');
-    for (const [v, label] of [['sets', 'Sets'], ['servers', 'Servers'], ['skills', 'Skills']]) {
-      const b = button(doc, st.view === v ? 'on' : '', label, { mcpView: v });
-      b.setAttribute('aria-pressed', String(st.view === v));
-      seg.appendChild(b);
-    }
-    const primary = st.view === 'sets' ? button(doc, 'btn btn-primary', 'New set', { act: 'new-set' })
-      : st.view === 'servers' ? button(doc, 'btn btn-primary', 'Add MCP server', { act: 'add-server' })
-        : button(doc, 'btn btn-primary', 'Import skill', { act: 'import-skill' });
-    const importBtn = button(doc, 'btn', 'Import from other tools', { act: 'import-servers' });
-    bar.append(title, seg, ...(st.view === 'servers' ? [importBtn] : []), primary);
-    return bar;
+  const rctx = () => ({ st, now, stateText: memberStateText, skillStateText, skillCountsText, hasShellScripts,
+    hooksText: SKILL_HOOKS_TEXT, mcpRoute });
+  const counts = () => ({ sets: st.sets ? st.sets.length : undefined, servers: st.servers ? st.servers.length : undefined,
+    skills: st.skills ? st.skills.length : undefined });
+
+  function headActions() {
+    if (st.view === 'sets') return [button(doc, 'btn btn-primary', 'New set', { act: 'new-set' })];
+    if (st.view === 'servers') return [button(doc, 'btn', 'Import from other tools', { act: 'import-servers' }), button(doc, 'btn btn-primary', 'Add MCP server', { act: 'add-server' })];
+    return [button(doc, 'btn btn-primary', 'Import skill', { act: 'import-skill' })];
   }
 
-  function usedByText(s) {
-    if (s.group === 'general') return `Chat · ${s.usedBy.length} project${s.usedBy.length === 1 ? '' : 's'}`;
-    if (s.greyed) return `no project here follows ${s.home}`;
-    return s.usedBy.length ? s.usedBy.map((p) => p.name).join(', ') : 'no projects';
-  }
-
-  function setList() {
-    const list = h(doc, 'div', 'card mcp-setlist');
-    for (const s of st.sets || []) {
-      const row = button(doc, `mcp-setrow${s.id === (st.set ? st.set.set.id : st.setId) ? ' on' : ''}${s.greyed ? ' greyed' : ''}`, null, { set: s.id });
-      const head = h(doc, 'span', 'mcp-setrow-head');
-      head.appendChild(h(doc, 'b', '', s.name));
-      if (s.group === 'general') head.appendChild(h(doc, 'span', 'badge', 'Built in'));
-      if (s.problem) { const dot = h(doc, 'span', 'mcp-dot'); dot.setAttribute('aria-label', 'Has a problem'); head.appendChild(dot); }
-      const skills = s.skillCount ? ` · ${plural(s.skillCount, 'skill')}` : '';   // a set without skills reads as before
-      row.append(head, h(doc, 'small', 'hint', `${s.serverCount} server${s.serverCount === 1 ? '' : 's'}${skills} · ${usedByText(s)}`));
-      list.appendChild(row);
-    }
-    return list;
-  }
-
-  function memberCard(set, m) {
-    const team = set.group === 'team';
-    const card = h(doc, 'div', 'card mcp-member');
-    card.dataset.server = m.serverId;
-    const head = h(doc, 'div', 'pl-head');
-    const sw = h(doc, 'label', 'pl-enable');
-    const cb = h(doc, 'input', 'sw-input');
-    cb.type = 'checkbox';
-    cb.checked = m.enabled;
-    cb.dataset.toggle = m.serverId;
-    cb.disabled = team && !m.team.consented;
-    cb.setAttribute('aria-label', `Use ${m.copy} in ${set.name}`);
-    sw.append(cb, h(doc, 'span', 'switch'));
-    if (team && !m.team.consented) sw.appendChild(h(doc, 'span', 'switch-why', 'Allow it in Connectors first'));
-    head.append(sw, h(doc, 'b', 'mono', m.copy));
-    if (m.provisional) head.appendChild(h(doc, 'span', 'badge amber', 'name provisional'));
-    head.appendChild(h(doc, 'span', 'badge', m.sourceLabel));
-    head.appendChild(h(doc, 'span', 'mono hint', m.type || ''));
-    head.appendChild(h(doc, 'span', 'hint', m.description));
-    const test = button(doc, 'btn btn-sm', 'Test', { test: m.serverId });
-    test.disabled = team && !m.team.consented;
-    head.appendChild(test);
-    if (!team) head.appendChild(button(doc, 'btn btn-sm', 'Remove', { remove: m.serverId }));
-    card.appendChild(head);
-    if (team && !m.team.consented) card.appendChild(h(doc, 'small', 'hint', 'Turn on in the team checklist'));
-    for (const f of m.fields) {
-      const row = h(doc, 'div', 'mcp-fld');
-      row.appendChild(h(doc, 'label', 'mcp-fl', f.label));
-      if (f.secret) {
-        const box = h(doc, 'div', 'mcp-secret');
-        if (f.state.set) {
-          box.appendChild(h(doc, 'span', 'mono', f.state.env ? `$${f.state.env}` : '••••••••'));
-          if (f.oauth) box.appendChild(h(doc, 'span', 'badge', 'OAuth'));
-          box.appendChild(h(doc, 'span', `badge${f.state.old ? ' amber' : ''}`, `set · updated ${relTime(f.state.updatedAt, now())}`));
-          box.appendChild(button(doc, 'btn btn-sm', 'Replace', { secret: f.key, server: m.serverId }));
-        } else {
-          box.appendChild(h(doc, 'span', 'hint err', 'not set'));
-          box.appendChild(button(doc, 'btn btn-primary btn-sm', 'Set', { secret: f.key, server: m.serverId }));
-        }
-        row.appendChild(box);
-      } else {
-        const inp = h(doc, 'input', 'input mono');
-        Object.assign(inp, { type: 'text', value: f.value, placeholder: f.default || '' });
-        inp.dataset.field = f.key;
-        inp.dataset.server = m.serverId;
-        inp.dataset.saved = f.value;   // what the set holds: a change or a focusout saves only a different value
-        inp.setAttribute('aria-label', f.label);
-        row.appendChild(inp);
-      }
-      card.appendChild(row);
-      const tip = team && m.team.suggests.find((x) => x.key === f.key);
-      if (tip) {
-        const note = h(doc, 'small', 'hint mcp-suggest', `Team suggests ${tip.value} · `);
-        note.appendChild(button(doc, 'btn btn-sm btn-quiet', 'Use team value', { useTeam: f.key, server: m.serverId, value: tip.value }));
-        card.appendChild(note);
-      }
-    }
-    const state = memberStateText({ ...m, testing: st.testing.has(`${set.id}|${m.serverId}`) }, now());
-    card.appendChild(h(doc, 'div', `mcp-state hint${state.tone ? ` ${state.tone}` : ''}`, state.text));
-    return card;
-  }
-
-  /** "skills load as billing:" — or, when an installed Claude Code plugin holds the slug, the renamed prefix (spec §4.1). */
-  function pluginPrefix(set) {
-    if (!set.renamedPlugin) {
-      const n = h(doc, 'span', 'hint sk-prefix', 'skills load as ');
-      n.appendChild(h(doc, 'span', 'mono', `${set.pluginName}:`));
-      return n;
-    }
-    const w = h(doc, 'span', 'sk-prefix');
-    w.append(h(doc, 'span', 'badge amber', `loads as ${set.pluginName}:`),
-      h(doc, 'span', 'hint', `because a Claude Code plugin named ${set.pluginName.replace(/-set(?:-\d+)?$/, '')} is installed`));
-    return w;
-  }
-  function skillCard(set, m) {
-    const team = isTeam(set);
-    const card = h(doc, 'div', 'card sk-member');
-    card.dataset.skill = m.skillId;
-    const head = h(doc, 'div', 'pl-head');
-    const sw = h(doc, 'label', 'pl-enable');
-    const cb = h(doc, 'input', 'sw-input');
-    cb.type = 'checkbox';
-    cb.checked = !!m.enabled;
-    cb.dataset.skillToggle = m.skillId;
-    const missing = m.reason === 'missing-skill';   // no catalog entry: nothing to count, no SKILL.md to read
-    // A never-consented Team skill turns on only in the checklist; a skill no longer installed cannot be switched at all
-    // (P2's PUT needs a catalog entry: 404) — only removed.
-    cb.disabled = missing || (team && !(m.team && m.team.consented));
-    cb.setAttribute('aria-label', `Use ${m.qualifiedName} in ${set.name}`);
-    sw.append(cb, h(doc, 'span', 'switch'));
-    if (!missing && team && !(m.team && m.team.consented)) sw.appendChild(h(doc, 'span', 'switch-why', 'Allow it in Connectors first'));
-    head.append(sw, h(doc, 'b', 'mono', m.qualifiedName), sourceBadge(m), h(doc, 'span', 'hint', m.description || ''));
-    if (!missing) head.appendChild(mdButton(m.skillId));
-    if (!team) head.appendChild(button(doc, 'btn btn-sm', 'Remove', { skillRemove: m.skillId }));
-    card.appendChild(head);
-    if (m.hooks) {   // SkillMemberView.hooks: the catalog entry's frontmatter.hooks
-      const note = h(doc, 'small', 'hint err sk-hooks');   // the badge, then the rest of SKILL_HOOKS_TEXT (not its first words twice)
-      note.append(h(doc, 'span', 'badge red', 'declares hooks'), ` ${SKILL_HOOKS_TEXT.replace(/^declares hooks — /, '')}`);
-      card.appendChild(note);
-    }
-    if (!missing) {
-      const facts = h(doc, 'small', 'hint sk-facts', skillCountsText(m));
-      if (hasShellScripts(m)) facts.appendChild(h(doc, 'span', 'badge amber', 'shell scripts (may not run on Windows)'));
-      card.appendChild(facts);
-      if (st.mdOpen.has(m.skillId)) card.appendChild(mdDrawer(m));
-    }
-    const state = skillStateText(m);
-    card.appendChild(h(doc, 'div', `mcp-state hint${state.tone ? ` ${state.tone}` : ''}`, state.text));
-    return card;
-  }
-  /** The Skills section of a set (spec §6.2). Team skills come from policy: no Add, no Remove. */
   function skillSection(set, skills) {
-    const head = h(doc, 'div', 'mcp-usedby sk-head');
-    head.appendChild(h(doc, 'span', 'label', 'Skills'));
-    if (!isTeam(set)) head.appendChild(addBtn(doc, 'Add skill', { act: 'add-skill' }));
-    head.appendChild(h(doc, 'span', 'hint', `agents call /${set.pluginName || 'general'}:<name> · no values, no secrets, no Test`));
-    const out = [head];
-    // A Team set lists the required skills installed here (a required plugin not installed yet brings none): the policy may
-    // still require some — its setup checklist knows.
-    if (!skills.length) out.push(h(doc, 'div', 'hist-empty', isTeam(set)
-      ? 'No skill this team policy requires is installed here. Its setup checklist lists what it requires.' : 'No skills in this set yet.'));
-    for (const m of skills) out.push(skillCard(set, m));
-    return out;
+    const team = isTeam(set);
+    return renderSection(doc, { title: 'Skills', label: `Skills in ${set.name}`,
+      hint: `agents call /${set.pluginName || 'general'}:<name> · no values, no secrets, no Test`,
+      add: team ? null : addBtn(doc, 'Add skill', { act: 'add-skill' }), rows: skills.map((m) => renderSkillMemberRow(doc, rctx(), set, m)),
+      empty: team ? 'No skill this team policy requires is installed here. Its setup checklist lists what it requires.' : 'No skills in this set yet.' });
   }
 
   function setDetail() {
-    const card = h(doc, 'section', 'card mcp-set');
-    if (!st.set) { card.appendChild(h(doc, 'div', 'hist-empty', 'No such set.')); return card; }
+    const box = h(doc, 'div', 'cx-detail');
+    if (!st.set) { box.appendChild(emptyLine(doc, 'No such set.')); return box; }
     const { set, members } = st.set;
-    const user = set.group === 'set';
-    const head = h(doc, 'div', 'card-head');
-    const title = h(doc, 'div', 'sk-title');
-    title.appendChild(h(doc, 'h2', '', set.name));
-    if (set.pluginName && !set.greyed) title.appendChild(pluginPrefix(set));
-    head.appendChild(title);
-    const acts = h(doc, 'div', 'pl-actions');
-    if (user) acts.appendChild(button(doc, 'btn btn-sm', 'Rename', { act: 'rename' }));
-    if (!set.greyed) acts.appendChild(button(doc, 'btn btn-sm', 'Duplicate', { act: 'duplicate' }));
-    if (user) acts.appendChild(button(doc, 'btn btn-sm', 'Delete', { act: 'delete' }));
-    if (set.greyed) acts.appendChild(button(doc, 'btn btn-sm', 'Forget', { act: 'forget' }));
-    head.appendChild(acts);
-    card.appendChild(head);
-    if (set.greyed) {
-      card.appendChild(h(doc, 'p', 'hint', `No project here follows ${set.home}. Forget drops this Team set's values, secrets and test results.`));
-      return card;
-    }
-    const used = h(doc, 'div', 'mcp-usedby');
-    used.appendChild(h(doc, 'span', 'label', 'Used by'));
-    for (const p of set.usedBy) {
-      const chip = h(doc, 'span', 'chip', p.name);
-      if (!isTeam(set)) {
-        const x = button(doc, 'btn btn-sm btn-quiet btn-icon mcp-x', null, { unassign: p.key });
-        x.append(icon(doc, 'x', 12));
-        x.title = set.group === 'general' ? `Turn Include General off for ${p.name}` : `Remove ${set.name} from ${p.name}`;
-        x.setAttribute('aria-label', x.title);
-        chip.appendChild(x);
-      }
-      used.appendChild(chip);
-    }
-    if (set.group === 'general') used.appendChild(h(doc, 'span', 'chip', 'Chat'));
-    if (!isTeam(set)) used.appendChild(addBtn(doc, 'Add project', { act: 'add-project' }));
-    card.appendChild(used);
-    const sh = h(doc, 'div', 'mcp-usedby');
-    sh.appendChild(h(doc, 'span', 'label', 'Servers'));
-    if (!isTeam(set)) sh.appendChild(addBtn(doc, 'Add server', { act: 'add-member' }));
-    card.appendChild(sh);
-    if (!members.length) card.appendChild(h(doc, 'div', 'hist-empty', 'No servers in this set yet.'));
-    for (const m of members) card.appendChild(memberCard(set, m));
-    if (Array.isArray(st.set.skills)) card.append(...skillSection(set, st.set.skills));
-    return card;
-  }
-
-  function serverRow(s) {
-    const row = h(doc, 'div', 'card mcp-server-row');
-    row.dataset.server = s.id;
-    const head = h(doc, 'div', 'pl-head');
-    head.append(h(doc, 'b', 'mono', s.base), h(doc, 'span', 'badge', s.sourceLabel), h(doc, 'span', 'mono hint', s.type));
-    const badges = [[s.provisional, 'name provisional'], [s.pluginDisabled, 'plugin disabled'],
-      [s.inClaudeConfig, 'also in your Claude Code config'], [s.retired, `no longer required by ${s.retired}`]];
-    for (const [on, text] of badges) if (on) head.appendChild(h(doc, 'span', 'badge amber', text));
-    row.append(head, h(doc, 'small', 'hint', s.description));
-    const sets = h(doc, 'div', 'mcp-usedby');
-    sets.appendChild(h(doc, 'span', 'label', 'In sets'));
-    if (!s.inSets.length) sets.appendChild(h(doc, 'span', 'hint', 'not in a set'));
-    for (const x of s.inSets) {
-      const a = h(doc, 'a', 'chip', x.name);
-      a.href = `#${mcpRoute(x.id)}`;
-      sets.appendChild(a);
-    }
-    sets.appendChild(h(doc, 'span', 'hint', s.tools == null ? '— tools' : `${s.tools} tools`));
-    row.appendChild(sets);
-    const acts = h(doc, 'div', 'pl-actions');
-    acts.appendChild(button(doc, 'btn btn-sm', 'Add to set', { addTo: s.id }));
-    if (s.source === 'manual') acts.appendChild(button(doc, 'btn btn-sm', 'Edit definition', { edit: s.id }));
-    if (s.source === 'manual' || s.retired) acts.appendChild(button(doc, 'btn btn-sm', 'Remove', { removeServer: s.id }));
-    row.appendChild(acts);
-    return row;
-  }
-
-  // ── skills: source badge, origin, the read-only SKILL.md drawer, the Skills view's rows (spec §6.2, §6.3) ──
-  function sourceBadge(x) {
-    const plugin = x.source === 'plugin';
-    return h(doc, 'span', plugin ? 'badge slate' : 'badge', x.sourceLabel || (plugin ? x.plugin : 'Imported'));
-  }
-  function originText(e) {
-    if (e.source === 'plugin') return e.code === 'linked' ? 'linked' : e.code ? `@ ${e.code}` : '';
-    const o = e.origin;
-    if (!o) return 'pasted';
-    return o.kind === 'git' ? `git · ${o.ref || 'default branch'}` : o.kind === 'home' ? 'from your Claude Code skills' : 'folder';
-  }
-  function mdButton(id) {
-    const open = st.mdOpen.has(id);
-    const b = button(doc, 'btn btn-sm', open ? 'Hide SKILL.md' : 'View SKILL.md', { skillMd: id });
-    b.setAttribute('aria-expanded', String(open));
-    return b;
-  }
-  function mdDrawer(x) {
-    const id = x.skillId || x.id;
-    const box = h(doc, 'div', 'sk-drawer');
-    box.setAttribute('aria-label', 'SKILL.md, read-only');
-    const head = h(doc, 'div', 'sk-drawer-head');
-    head.append(h(doc, 'span', 'mono', 'SKILL.md'), h(doc, 'span', '', x.source === 'plugin'
-      ? `read-only · ships with ${x.plugin || x.sourceLabel}` : 'read-only · edit the folder and import it again'));
-    box.appendChild(head);
-    const got = st.md.get(id);
-    if (!got) box.appendChild(h(doc, 'small', 'hint', 'loading…'));
-    else if (got.error) box.appendChild(h(doc, 'small', 'hint err', got.error));
-    else box.appendChild(h(doc, 'pre', 'sk-md', got.text));
+    box.appendChild(renderSetHead(doc, rctx(), st.set));
+    if (set.greyed) return box;
+    box.appendChild(renderSection(doc, { title: 'Servers', label: `Servers in ${set.name}`,
+      add: isTeam(set) ? null : addBtn(doc, 'Add server', { act: 'add-member' }),
+      rows: members.map((m) => renderMemberRow(doc, rctx(), set, m)), empty: 'No servers in this set yet.' }));
+    if (Array.isArray(st.set.skills)) box.appendChild(skillSection(set, st.set.skills));
     return box;
   }
+
+  /** The Servers and Skills tabs: toolbar over one row list (Models Catalogue grammar); filters live in `st.filters`. */
+  function catalogBody(kind) {
+    const servers = kind === 'servers';
+    const all = (servers ? st.servers : st.skills) || [];
+    const body = h(doc, 'div', `cx-${kind}`);
+    if (st.loadErr) { body.appendChild(renderLoadError(doc, st.loadErr)); return body; }
+    if (!all.length) {
+      body.appendChild(servers
+        ? renderEmpty(doc, { title: 'No MCP servers yet', line: 'Add one by hand or import them from your other tools.', action: addBtn(doc, 'Add MCP server', { act: 'add-server' }) })
+        : renderEmpty(doc, { title: 'No skills yet', line: 'Install a plugin that ships some, or import your own.', glyph: 'skill', tone: 'skill', action: addBtn(doc, 'Import skill', { act: 'import-skill' }) }));
+      return body;
+    }
+    const f = st.filters[kind];
+    const sourceOf = servers ? serverSource : skillSource;
+    body.appendChild(renderToolbar(doc, { kind, filters: f, sources: sourceOptions(all, sourceOf),
+      counts: (servers ? serverChipCounts : skillChipCounts)(all, f) }));
+    const shown = (servers ? filterServers : filterSkills)(all, f);
+    if (!shown.length) {
+      const clear = button(doc, 'btn btn-sm', 'Clear filters', { act: 'clear-filters' });
+      body.appendChild(emptyLine(doc, `No ${kind} match.`, clear));
+      return body;
+    }
+    const list = h(doc, 'div', 'card drows cx-list');
+    list.setAttribute('role', 'list');
+    list.setAttribute('aria-label', servers ? 'MCP servers' : 'Skills');
+    list.append(...shown.map((x) => (servers ? renderServerRow : renderSkillRow)(doc, rctx(), x)));
+    if (list.firstChild) list.firstChild.tabIndex = 0;
+    body.appendChild(list);
+    return body;
+  }
+
+  // ── skills: the read-only SKILL.md sheet (spec §6.2, §6.3) ──
   async function fetchMd(id) {
     const r = await api('GET', `/api/skills/${enc(id)}/skill-md`);
     st.md.set(id, r.ok ? { text: r.data.text } : { error: (r.data && r.data.error) || `HTTP ${r.status}` });
-    paint();
   }
-  async function toggleMd(id) {
-    if (st.mdOpen.has(id)) { st.mdOpen.delete(id); paint(); return; }
-    st.mdOpen.add(id);
-    paint();
-    if (st.md.has(id) && !st.md.get(id).error) return;
-    await fetchMd(id);
-  }
-  function skillRow(e) {
-    const row = h(doc, 'div', 'card sk-row');
-    row.dataset.skill = e.id;
-    const head = h(doc, 'div', 'pl-head');
-    head.append(h(doc, 'b', 'mono', e.name), sourceBadge(e), h(doc, 'span', 'mono hint', originText(e)));
-    const pluginRoot = !!(e.frontmatter && e.frontmatter.pluginRootRefs);
-    const badges = [[e.pluginEnabled === false, 'plugin disabled'], [e.updateAvailable, 'update available'],
-      [hasShellScripts(e), 'shell scripts (may not run on Windows)'], [pluginRoot, 'plugin-root refs']];
-    for (const [on, text] of badges) if (on) head.appendChild(h(doc, 'span', 'badge amber', text));
-    if (e.valid === false) head.appendChild(h(doc, 'span', 'badge red', 'invalid'));
-    const hooks = !!(e.frontmatter && e.frontmatter.hooks);
-    if (hooks) head.appendChild(h(doc, 'span', 'badge red', 'declares hooks'));
-    row.append(head, h(doc, 'small', 'hint', [e.description, skillCountsText(e)].filter(Boolean).join(' · ')));
-    if (e.valid === false) row.appendChild(h(doc, 'small', 'hint err', `invalid: ${(e.problems || []).join('; ')} · never mounted`));
-    if (pluginRoot) row.appendChild(h(doc, 'small', 'hint warn', 'references its plugin’s other files, so it may not work from a set'));
-    if (hooks) row.appendChild(h(doc, 'small', 'hint err', SKILL_HOOKS_TEXT));
-    const sets = h(doc, 'div', 'mcp-usedby');
-    sets.appendChild(h(doc, 'span', 'label', 'In sets'));
-    if (!(e.inSets || []).length) sets.appendChild(h(doc, 'span', 'hint', 'not in a set'));
-    for (const x of e.inSets || []) {
-      const a = h(doc, 'a', 'chip', x.name);
-      a.href = `#${mcpRoute(x.id)}`;
-      sets.appendChild(a);
+  const skillEntry = (id) => (st.skills || []).find((x) => x.id === id) || ((st.set && st.set.skills) || []).find((x) => x.skillId === id);
+  async function openMd(id) {
+    const x = skillEntry(id);
+    if (!x) return;
+    const box = h(doc, 'div');
+    const fill = () => box.replaceChildren(renderSkillSheetBody(doc, rctx(), x, st.md.get(id)));
+    const read = async () => {
+      st.md.delete(id);
+      fill();
+      await fetchMd(id);
+      if (typeof layer().shows !== 'function' || layer().shows(box)) fill();
+    };
+    box.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('[data-act="retry-md"]')) void read(); });   // the sheet is outside `host`
+    const foot = [['Close', 'btn', () => layer().close()]];
+    if (st.view === 'skills') {   // the catalog's own actions; a set's member row is read-only here
+      if (x.source === 'library') foot.unshift(['Remove', 'btn btn-quiet btn-danger', () => { layer().close(); void removeSkillEntry(x); }]);
+      if (x.source === 'library' && x.origin) foot.unshift(['Check for updates', 'btn', () => { layer().close(); void checkUpdate(id); }]);
+      foot.unshift(['Add to set', 'btn', () => { layer().close(); addSkillTo(id); }]);
     }
-    row.appendChild(sets);
-    const actions = h(doc, 'div', 'pl-actions');
-    const add = button(doc, 'btn btn-sm', 'Add to set', { skillAddTo: e.id });
-    add.disabled = e.valid === false;
-    actions.appendChild(add);
-    if (e.source === 'library' && e.origin) {
-      actions.appendChild(e.updateAvailable ? button(doc, 'btn btn-primary btn-sm', 'Update…', { skillUpdate: e.id })
-        : button(doc, 'btn btn-sm', 'Check for updates', { skillUpdate: e.id }));
-    }
-    if (e.source === 'library') actions.appendChild(button(doc, 'btn btn-sm', 'Remove', { skillDelete: e.id }));
-    actions.appendChild(mdButton(e.id));
-    row.appendChild(actions);
-    if (st.mdOpen.has(e.id)) row.appendChild(mdDrawer(e));
-    return row;
+    fill();
+    layer().open(`${x.name || x.qualifiedName} · SKILL.md`, box, foot, { kind: 'viewer', width: 'lg' });
+    if (!st.md.has(id) || st.md.get(id).error) await read();
   }
+  const layer = () => sheet || modal;
 
   let painted = null;   // the view and set of the last paint: a kept input never crosses to another set
+  const FOCUSABLE_KEYED = '[data-field], [data-toggle], [data-skill-toggle], [data-skill-md], [data-test], [data-cx-search], [data-cx-chip], [data-cx-source], #cx-set-find, [data-focus-key]';
+  function keyOf(el) {
+    const d = el.dataset;
+    return d.field ? `f|${d.server}|${d.field}` : d.toggle ? `t|${d.toggle}` : d.skillToggle ? `s|${d.skillToggle}` : d.skillMd ? `m|${d.skillMd}`
+      : d.test ? `b|${d.test}` : d.cxSearch != null ? `q|${d.cxSearch}` : d.cxChip ? `c|${d.cxChip}` : d.cxSource != null ? 'o|' : el.id === 'cx-set-find' ? 'rq'
+        : d.focusKey ? `k|${d.focusKey}` : null;
+  }
   function paint() {
-    // Every save repaints the pane: the input the user is in (Tab to the next field, Enter, a switch) keeps its
-    // text, caret and focus, or the next keystrokes land nowhere and an unsaved value is wiped.
+    // Every save repaints the pane: the control the user is in (a field, a switch, the search box, a chip, a row button)
+    // keeps its text, caret and focus, or the next keystrokes land nowhere and an unsaved value is wiped.
     const a = doc.activeElement;
-    const keyOf = (el) => (el.dataset.field ? `f|${el.dataset.server}|${el.dataset.field}` : el.dataset.toggle ? `t|${el.dataset.toggle}`
-      : el.dataset.skillToggle ? `s|${el.dataset.skillToggle}` : el.dataset.skillMd ? `m|${el.dataset.skillMd}`
-        : el.dataset.test ? `b|${el.dataset.test}` : null);
     const where = `${st.view}|${st.set ? st.set.set.id : ''}`;
     const keep = where === painted && a && a !== doc.body && host.contains(a) ? { key: keyOf(a), value: a.value, from: a.selectionStart, to: a.selectionEnd } : null;
     const strip = h(doc, 'div', 'mcp-req-strip');
@@ -525,22 +311,15 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     strip.hidden = true;
     const msg = h(doc, 'p', `form-msg${st.msgKind ? ` ${st.msgKind}` : ''}`, st.msg);
     msg.setAttribute('aria-live', 'polite');
-    const body = h(doc, 'div', st.view === 'servers' ? 'run-list mcp-servers' : st.view === 'skills' ? 'run-list sk-skills' : 'mcp-sets');
-    if (st.view === 'servers') {
-      for (const s of st.servers || []) body.appendChild(serverRow(s));
-      if (!(st.servers || []).length) body.appendChild(h(doc, 'div', 'hist-empty', 'No MCP servers yet. Install a plugin that ships some, or Add MCP server.'));
-    } else if (st.view === 'skills') {
-      for (const e of st.skills || []) body.appendChild(skillRow(e));
-      if (!(st.skills || []).length) body.appendChild(h(doc, 'div', 'hist-empty', 'No skills yet. Install a plugin that ships some, or Import skill.'));
-    } else {
-      body.append(setList(), setDetail());
-    }
-    host.replaceChildren(topbar(), strip, msg, body);
+    const body = st.view === 'sets' ? h(doc, 'div', 'cx-sets-page mk-browse') : catalogBody(st.view);
+    if (st.view === 'sets') body.append(renderSetRail(doc, { sets: st.sets || [], setId: st.set ? st.set.set.id : st.setId, q: st.filters.sets.q }), setDetail());
+    const head = renderHead(doc, { tabs: renderTabs(doc, { view: st.view, counts: counts() }), actions: headActions() });
+    host.replaceChildren(head, strip, msg, body);
     painted = where;
-    const again = keep && keep.key && [...host.querySelectorAll('[data-field], [data-toggle], [data-skill-toggle], [data-skill-md], [data-test]')]
-      .find((x) => keyOf(x) === keep.key);
+    const again = keep && keep.key && [...host.querySelectorAll(FOCUSABLE_KEYED)].find((x) => keyOf(x) === keep.key);
     if (again) {
-      if (again.dataset.field) { again.value = keep.value; again.focus(); again.setSelectionRange(keep.from, keep.to); } else again.focus();
+      again.focus();
+      if (keep.from != null && again.matches('input[type="text"], input[type="search"]')) { again.value = keep.value; again.setSelectionRange(keep.from, keep.to); }
     }
     if (stripRenderer) stripRenderer(strip);
   }
@@ -642,30 +421,62 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     return write('PUT', `/api/mcp/projects/${enc(key)}`, { sets: a.sets.map((s) => s.id ?? s), includeGeneral: a.includeGeneral }, '', msgEl);
   }
 
+  async function removeSkillEntry(e) {
+    const leaves = (e.inSets || []).length ? ` It leaves ${e.inSets.map((x) => x.name).join(', ')}.` : '';
+    const ok = await confirm({ title: `Remove ${e.name}?`, message: `Remove ${e.name} from worca?${leaves} Its files go from the library.`, confirmLabel: 'Remove', danger: true });
+    if (ok && await write('DELETE', `/api/skills/${enc(e.id)}`, undefined, 'Skill removed')) { st.md.delete(e.id); await load(); }
+  }
+
   async function onClick(e) {
+    const tab = e.target.closest && e.target.closest('a[data-mcp-view]');
+    if (tab && host.contains(tab)) {   // a plain click navigates in place; a modified one is the browser's link
+      if (!e.button && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        const v = tab.dataset.mcpView;
+        navigate(v === 'servers' ? mcpRoute(null) : v === 'skills' ? MCP_SKILLS_ROUTE : mcpRoute(st.setId || 'general'));
+      }
+      return;
+    }
     const b = e.target.closest && e.target.closest('button');
     if (!b || !host.contains(b)) return;
-    const d = b.dataset;
+    if (b.dataset.more) { openMore(b); return; }
+    return onAction(b.dataset, b);
+  }
+
+  /** The row's ⋯: each item carries the dataset its old button had, so it runs through onAction unchanged. */
+  function openMore(b) {
+    let items = [];
+    try { items = JSON.parse(b.dataset.more); } catch { return; }
+    b.setAttribute('aria-expanded', 'true');
+    openMenu({ doc, anchor: b, align: 'end', label: b.getAttribute('aria-label') || 'More',
+      items: items.map(([label, data, danger]) => ({ label, danger: !!danger, onSelect: () => { void onAction({ ...data }, b); } })) });
+  }
+
+  async function onAction(d, b) {
     // The set these cards were painted from, read before any await: Back/Forward while a prompt, a confirm or a
     // fetch is pending paints another set, and the answer must still act on this one.
     const cur = st.set ? st.set.set : null;
-    if (d.mcpView) return navigate(d.mcpView === 'servers' ? mcpRoute(null) : d.mcpView === 'skills' ? MCP_SKILLS_ROUTE : mcpRoute(st.setId || 'general'));
-    if (d.skillMd) return toggleMd(d.skillMd);
+    if (d.fold) { st.open.set(d.fold, b.getAttribute('aria-expanded') !== 'true'); paint(); return; }
+    if (d.cxChip) { st.filters[st.view].chip = d.cxChip; paint(); return; }
+    if (d.act === 'retry') return load();
+    if (d.act === 'clear-filters') {
+      st.filters[st.view] = { q: '', chip: 'all', source: '' };
+      paint();
+      const box = host.querySelector('[data-cx-search]');
+      if (box) box.focus();
+      return;
+    }
+    if (d.skillMd) return openMd(d.skillMd);
     if (d.skillAddTo) return addSkillTo(d.skillAddTo);
     if (d.skillUpdate) return checkUpdate(d.skillUpdate);
     if (d.skillRemove) {
       const m = st.set.skills.find((x) => x.skillId === d.skillRemove);
-      const ok = await confirm({ title: 'Remove from set', message: `Remove ${m.qualifiedName} from ${cur.name}? Runs and chats that use ${cur.name} stop getting it.`, confirmLabel: 'Remove', danger: true });
+      const ok = await confirm({ title: `Remove ${m.qualifiedName} from ${cur.name}?`, message: `Remove ${m.qualifiedName} from ${cur.name}? Runs and chats that use ${cur.name} stop getting it.`,
+        keep: `${m.qualifiedName} stays in Skills and in other sets.`, confirmLabel: 'Remove', danger: true });
       if (ok && await write('DELETE', skillMemberPath(cur.id, d.skillRemove), undefined, 'Skill removed')) await load();
       return;
     }
-    if (d.skillDelete) {
-      const e = st.skills.find((x) => x.id === d.skillDelete);
-      const leaves = (e.inSets || []).length ? ` It leaves ${e.inSets.map((x) => x.name).join(', ')}.` : '';
-      const ok = await confirm({ title: 'Remove skill', message: `Remove ${e.name} from worca?${leaves} Its files go from the library.`, confirmLabel: 'Remove', danger: true });
-      if (ok && await write('DELETE', `/api/skills/${enc(e.id)}`, undefined, 'Skill removed')) { st.mdOpen.delete(e.id); st.md.delete(e.id); await load(); }
-      return;
-    }
+    if (d.skillDelete) return removeSkillEntry(st.skills.find((x) => x.id === d.skillDelete));
     if (d.set) return navigate(mcpRoute(d.set));
     if (d.act === 'new-set') {
       const v = await promptName('New set', '');
@@ -709,7 +520,8 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     if (d.test) return runTest(cur.id, d.test);
     if (d.remove) {
       const m = st.set.members.find((x) => x.serverId === d.remove);
-      const ok = await confirm({ title: 'Remove from set', message: `Remove ${m.copy} from ${cur.name}? Its values, secrets and test result go.`, confirmLabel: 'Remove', danger: true });
+      const ok = await confirm({ title: `Remove ${m.copy} from ${cur.name}?`, message: `Remove ${m.copy} from ${cur.name}? Its values, secrets and test result go.`,
+        lose: [...m.fields.map((f) => `${f.label}${f.secret ? ' (secret)' : ''}`), 'Its test result'], keep: `${m.copy} stays in Servers and in other sets.`, confirmLabel: 'Remove', danger: true });
       if (ok && await write('DELETE', memberPath(cur.id, d.remove), undefined, 'Server removed')) await load();
       return;
     }
@@ -726,7 +538,8 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     if (d.removeServer) {
       const s = st.servers.find((x) => x.id === d.removeServer);
       const leaves = s.inSets.length ? ` It leaves ${s.inSets.map((x) => x.name).join(', ')}.` : '';
-      const ok = await confirm({ title: 'Remove MCP server', message: `Remove ${s.base} from worca?${leaves} Its values, secrets and test results go.`, confirmLabel: 'Remove', danger: true });
+      const ok = await confirm({ title: `Remove ${s.base}?`, message: `Remove ${s.base} from worca?${leaves} Its values, secrets and test results go.`,
+        lose: s.inSets.length ? [`It leaves ${s.inSets.map((x) => x.name).join(', ')}`] : [], confirmLabel: 'Remove', danger: true });
       if (ok && await write('DELETE', `/api/mcp/servers/${enc(s.id)}`, undefined, 'Server removed')) await load();
     }
   }
@@ -734,6 +547,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   async function onChange(e) {
     const t = e.target;
     if (!host.contains(t)) return;
+    if (t.dataset.cxSource != null) { st.filters[st.view].source = t.value; paint(); return; }
     if (t.dataset.skillToggle) {
       if (await write('PUT', skillMemberPath(st.set.set.id, t.dataset.skillToggle), { enabled: t.checked })) await load();
       else t.checked = !t.checked;
@@ -790,7 +604,20 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     const { id: setId, group, name, usedBy } = st.set.set;   // before the await (see onClick's `cur`)
     const r = await api('GET', '/api/projects');
     const used = new Set(usedBy.map((p) => p.key));
-    const projects = (r.ok ? r.data.projects : []).filter((p) => !used.has(p.key));
+    const all = r.ok ? r.data.projects : [];
+    const projects = all.filter((p) => !used.has(p.key));
+    if (!projects.length) {
+      const note = h(doc, 'p', 'hint');
+      if (all.length) note.textContent = `Every project already uses ${name}.`;
+      else {
+        const a = h(doc, 'a', '', 'Projects');
+        a.href = '#projects';
+        a.addEventListener('click', () => modal.close());
+        note.append('No projects defined. Add some first at: ', a);
+      }
+      modal.open(`Use ${name} in a project`, note, [['Close', 'btn btn-sm', () => modal.close()]]);
+      return;
+    }
     pickModal(`Use ${name} in a project`, 'Project', projects.map((p) => ({ value: p.key, label: p.name })), {
       label: 'Add', fn: async (key, _slot, msg) => {
         const a = await assignment(key);
@@ -828,15 +655,15 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       const r = edit ? await write('PUT', `/api/mcp/servers/${enc(server.id)}`, def, `Saved ${name} · re-testing its sets`, msg)
         : await write('POST', '/api/mcp/servers', { name, ...def }, `Added ${name}`, msg);
       if (!r) return;
-      modal.close();
+      layer().close();
       st.servers = null;
       if (st.view !== 'servers') navigate(mcpRoute(null));
       await load();
       if (thenAdd) await addMember({ serverId: `manual:${name}` });
     };
-    const list = [['Cancel', 'btn btn-sm', () => modal.close()], ['Save', 'btn btn-sm', () => save(false)]];
+    const list = [['Cancel', 'btn btn-sm', () => layer().close()], ['Save', 'btn btn-sm', () => save(false)]];
     if (!edit) list.push(['Save to set', 'btn btn-primary btn-sm', () => save(true)]);
-    modal.open(edit ? `Edit definition · ${server.base}` : 'Add MCP server', wrap, list);
+    layer().open(edit ? `Edit definition · ${server.base}` : 'Add MCP server', wrap, list, { kind: 'form', width: 'lg' });
   }
 
   /** Import skill (skill-import.mjs): a finished import lands on the Skills view, read again. */
@@ -848,10 +675,21 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     } });
   }
 
-  /** Servers view › Import from other tools (mcp-server-import.mjs): the new Manual servers join no set; the list is read again. */
+  /** Servers view › Import from other tools (mcp-server-import.mjs): the picked "Into set" takes the new Manual servers; the list is read again. */
   function importServers() {
-    openMcpImport({ api, modal, doc,
-      onDone: async ({ detail }) => { say(detail, 'ok'); st.servers = null; await load(); },
+    const into = (st.sets || []).filter((x) => x.group !== 'team');
+    openMcpImport({ api, modal, doc, sets: into.map((x) => ({ id: x.id, name: x.name })), initialSet: st.view === 'sets' ? st.setId : 'general',
+      onDone: async ({ detail, names = [], set = null }) => {
+        // The import adds definitions only: the picked set takes each new server (no values yet; a secret shows as Needs setup).
+        const put = set ? await Promise.all(names.map((n) => api('PUT', memberPath(set, `manual:${n}`), { enabled: true, values: {}, secrets: {} }))) : [];
+        const setName = (into.find((x) => x.id === set) || {}).name;
+        const failed = names.filter((_, i) => !put[i] || !put[i].ok);
+        if (set && failed.length) {
+          const why = ((put.find((r) => r && !r.ok) || {}).data || {}).error;
+          say(`Imported ${names.join(', ')}; could not add ${failed.join(', ')} to ${setName}${why ? `: ${why}` : ''}. Turn it on from the set.`, 'err');
+        } else say(set && put.length ? `Imported ${names.join(', ')} into ${setName}` : detail, 'ok');
+        st.servers = null; await load();
+      },
       onChanged: async () => { st.servers = null; await load(); } });
   }
 
@@ -889,7 +727,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       Object.assign(radio, { type: 'radio', name: 'sk-pick', value: e.id, disabled: !!why });
       if (!why && !first) { radio.checked = true; first = e; }
       const warn = !why && e.pluginEnabled === false;
-      row.append(radio, h(doc, 'span', 'mono', e.name), sourceBadge(e),
+      row.append(radio, h(doc, 'span', 'mono', e.name), chip(doc, 'n', e.sourceLabel || (e.source === 'plugin' ? e.plugin : 'Imported')),
         h(doc, 'span', `hint${why === 'invalid' ? ' err' : warn ? ' warn' : ''}`, why || (warn ? 'plugin disabled' : skillCountsText(e))));
       list.appendChild(row);
     }
@@ -968,7 +806,6 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
         st.md.delete(skillId);
         modal.close();
         await load();
-        if (st.mdOpen.has(skillId)) await fetchMd(skillId);   // an open SKILL.md drawer shows the new text
       }],
     ]);
     if (modal.afterClose) modal.afterClose(cancel);   // the dialog's own Close is Cancel: the stage goes, the badge is read again
@@ -977,6 +814,28 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
 
   host.addEventListener('click', (e) => { void onClick(e); });
   host.addEventListener('change', (e) => { void onChange(e); });
+  host.addEventListener('input', (e) => {
+    const t = e.target;
+    if (t.dataset && t.dataset.cxSearch) { st.filters[t.dataset.cxSearch].q = t.value; paint(); }
+    else if (t.id === 'cx-set-find') { st.filters.sets.q = t.value; paint(); }
+  });
+  // One Tab stop per list; ↑/↓ (Home/End) move between its items, Enter on a server or skill row opens its main action.
+  host.addEventListener('keydown', (e) => {
+    const list = e.target.closest && e.target.closest('.cx-rail, .cx-list');
+    if (!list || !host.contains(list)) return;
+    const items = [...list.querySelectorAll(list.classList.contains('cx-rail') ? '.mk-facet' : '.cx-row')];
+    if (!items.includes(e.target)) return;
+    if (e.key === 'Enter' && !list.classList.contains('cx-rail')) {
+      const go = e.target.querySelector('[data-add-to], [data-skill-md]');
+      if (go) { e.preventDefault(); go.click(); }
+      return;
+    }
+    const next = moveInList(e, items, e.target);
+    if (!next) return;
+    e.preventDefault();
+    for (const i of items) i.tabIndex = i === next ? 0 : -1;
+    next.focus();
+  });
   host.addEventListener('focusout', (e) => { if (e.target.dataset && e.target.dataset.field) void onChange(e); });
 
   return {
@@ -987,7 +846,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
       if (r.setId) st.setId = r.setId;
       st.msg = '';
       st.md.clear();       // each entry reads SKILL.md again: a plugin update or an Update may have changed it
-      st.mdOpen.clear();
+      if (r.server) st.filters.servers = { q: '', chip: 'all', source: '' };   // the routed row must be on the page
       return load();
     },
   };

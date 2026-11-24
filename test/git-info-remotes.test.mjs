@@ -8,7 +8,7 @@ import {
   pushBranch, createPr, ghRepoAccess, ghForkRepo, prMergeable, findPrForBranch, prLifecycleState, prProviderFor, prHostsAvailable, anyPrHost,
   markPrReady, closePr, _testing as gitInfo,
 } from '../src/core/git-info.mjs';
-import { forgeOf, forgeOfPrUrl, prNumberFromUrl, prIdentity, parsePrRef, prRefMatches } from '../src/core/forge.mjs';
+import { forgeOf, forgeOfPrUrl, prNumberFromUrl, prIdentity, parsePrRef, prRefMatches, sshUrlHost } from '../src/core/forge.mjs';
 import * as azurePr from '../src/core/pr/azure.mjs';
 import * as bitbucketPr from '../src/core/pr/bitbucket.mjs';
 import { execFileSync } from 'node:child_process';
@@ -48,6 +48,25 @@ test('remote URL helpers: parseRemoteUrl forms/nulls, remoteRepoSlug, sameRepo, 
     { name: 'parseRemoteUrl returns null for local paths and junk', run: () => {
       for (const u of ['', '/srv/git/repo.git', '../other', 'C:\\repos\\x', 'C:/repos/x', 'file:///srv/git/repo.git', 'https://github.com/only-owner', null]) {
         assert.equal(parseRemoteUrl(u), null, String(u));
+      }
+    } },
+    { name: 'sshUrlHost finds the host of ssh URLs only and swaps it in place', run: () => {
+      const rows = [
+        ['git@github-me:o/r.git', 'github-me', 'git@github.com:o/r.git'],
+        ['github-me:o/r', 'github-me', 'github.com:o/r'],
+        ['git@github-me:/o/r.git', 'github-me', 'git@github.com:/o/r.git'],
+        ['ssh://git@gh-work/o/r.git', 'gh-work', 'ssh://git@github.com/o/r.git'],
+        ['ssh://git@gh-work:2222/o/r.git', 'gh-work', 'ssh://git@github.com:2222/o/r.git'],
+        ['git+ssh://git@gh-work/o/r', 'gh-work', 'git+ssh://git@github.com/o/r'],
+        ['ssh+git://gh-work/o/r', 'gh-work', 'ssh+git://github.com/o/r'],
+      ];
+      for (const [url, host, swapped] of rows) {
+        const got = sshUrlHost(url);
+        assert.equal(got?.host, host, url);
+        assert.equal(got.withHost('github.com'), swapped, url);
+      }
+      for (const u of ['https://github.com/o/r.git', 'git://host/o/r.git', 'file:///srv/r.git', 'C:/repos/x', 'C:\\repos\\x', '/srv/git/r.git', '', null]) {
+        assert.equal(sshUrlHost(u), null, String(u));
       }
     } },
     { name: 'remoteRepoSlug omits github.com and keeps other hosts; sameRepo is case-insensitive', run: () => {
@@ -110,6 +129,87 @@ test('listRemotes: parses git remote -v (push URL wins); empty output and git fa
       gitInfo.setRunner(() => fail('fatal: not a git repository', 128));
       assert.deepEqual(await listRemotes('/nope'), { ok: false, remotes: [], error: 'fatal: not a git repository' });
       assert.deepEqual(await listRemotes(''), { ok: false, remotes: [], error: 'projectDir is required' });
+    } },
+  ]);
+});
+
+test('listRemotes: an ~/.ssh/config Host alias names the real host (ssh -G); never spawned for a known host', async () => {
+  /** A runner answering `git remote -v` with `lines` and `ssh -G` from `hostnames` (alias → HostName); records ssh calls. */
+  const scripted = (lines, hostnames = {}, sshCalls = []) => (cmd, args) => {
+    if (cmd === 'ssh') {
+      sshCalls.push(args);
+      const host = args[args.length - 1];
+      return okOut(`user git\nhostname ${hostnames[host] ?? host.toLowerCase()}\nport 22\n`);
+    }
+    return okOut([...lines, ''].join('\n'));
+  };
+  await checkRows([
+    { name: 'scp-style and ssh:// aliases resolve to GitHub; the URLs stay as written', run: async () => {
+      const sshCalls = [];
+      gitInfo.setRunner(scripted([
+        'origin\tgit@github-me:me/repo.git (fetch)',
+        'origin\tgit@github-me:me/repo.git (push)',
+        'work\tssh://git@gh-work:22/acme/api.git (fetch)',
+        'work\tssh://git@gh-work:22/acme/api.git (push)',
+      ], { 'github-me': 'github.com', 'gh-work': 'github.com' }, sshCalls));
+      const { remotes } = await listRemotes('/repo');
+      assert.deepEqual(remotes.map((r) => [r.name, r.host, r.slug, r.forge]),
+        [['origin', 'github.com', 'me/repo', 'github'], ['work', 'github.com', 'acme/api', 'github']]);
+      assert.equal(remotes[0].pushUrl, 'git@github-me:me/repo.git', 'git keeps pushing through the alias');
+      assert.deepEqual(sshCalls, [['-G', '--', 'github-me'], ['-G', '--', 'gh-work']]);
+    } },
+    { name: 'an Azure DevOps alias re-parses with the real host (org/project/repo)', run: async () => {
+      gitInfo.setRunner(scripted([
+        'origin\tgit@ado-me:v3/acme/Shop/api (fetch)',
+        'origin\tgit@ado-me:v3/acme/Shop/api (push)',
+      ], { 'ado-me': 'ssh.dev.azure.com' }));
+      const [r] = (await listRemotes('/repo')).remotes;
+      assert.deepEqual([r.forge, r.org, r.project, r.repo], ['azure', 'acme', 'Shop', 'api']);
+    } },
+    { name: 'https URLs, known forge hosts and non-hosted remotes never spawn ssh', run: async () => {
+      const sshCalls = [];
+      gitInfo.setRunner(scripted([
+        'a\thttps://ghe.corp/o/r.git (fetch)', 'a\thttps://ghe.corp/o/r.git (push)',
+        'b\tgit@github.com:o/r.git (fetch)', 'b\tgit@github.com:o/r.git (push)',
+        'c\t/srv/git/repo.git (fetch)', 'c\t/srv/git/repo.git (push)',
+      ], {}, sshCalls));
+      await listRemotes('/repo');
+      assert.deepEqual(sshCalls, []);
+    } },
+    { name: 'a host that is not an alias, an ssh failure or a junk answer keeps the host as written', run: async () => {
+      gitInfo.setRunner(scripted(['g\tgit@ghe.corp:o/r.git (fetch)', 'g\tgit@ghe.corp:o/r.git (push)']));
+      assert.equal((await listRemotes('/repo')).remotes[0].slug, 'ghe.corp/o/r');
+      gitInfo.setRunner((cmd) => (cmd === 'ssh' ? fail('ssh: not found', 127) : okOut('o\tgit@gh-x:o/r.git (fetch)\no\tgit@gh-x:o/r.git (push)\n')));
+      assert.equal((await listRemotes('/repo')).remotes[0].host, 'gh-x');
+      gitInfo.setRunner((cmd) => (cmd === 'ssh' ? okOut('hostname -oProxyCommand=x\n') : okOut('o\tgit@gh-y:o/r.git (fetch)\no\tgit@gh-y:o/r.git (push)\n')));
+      assert.equal((await listRemotes('/repo')).remotes[0].host, 'gh-y', 'a HostName that is not a host name is ignored');
+    } },
+    { name: 'a host shaped like an option is never passed to ssh', run: async () => {
+      const sshCalls = [];
+      gitInfo.setRunner(scripted(['x\tgit@-oProxyCommand=evil:o/r.git (fetch)', 'x\tgit@-oProxyCommand=evil:o/r.git (push)'], {}, sshCalls));
+      await listRemotes('/repo');
+      assert.deepEqual(sshCalls, []);
+    } },
+    { name: 'a failed or timed-out lookup is not cached: the next call asks again', run: async () => {
+      let sshCalls = 0;
+      let sshUp = false;
+      gitInfo.setRunner((cmd) => {
+        if (cmd !== 'ssh') return okOut('o\tgit@github-me:me/repo.git (fetch)\no\tgit@github-me:me/repo.git (push)\n');
+        sshCalls++;
+        return sshUp ? okOut('hostname github.com\n') : fail('timed out', null);
+      });
+      assert.equal((await listRemotes('/repo')).remotes[0].host, 'github-me');
+      sshUp = true;
+      assert.equal((await listRemotes('/repo')).remotes[0].host, 'github.com');
+      await listRemotes('/repo');
+      assert.equal(sshCalls, 2, 'the real answer is kept');
+    } },
+    { name: 'each alias is asked once per process (until reset)', run: async () => {
+      const sshCalls = [];
+      gitInfo.setRunner(scripted(['o\tgit@github-me:me/repo.git (fetch)', 'o\tgit@github-me:me/repo.git (push)'], { 'github-me': 'github.com' }, sshCalls));
+      await listRemotes('/repo');
+      await listRemotes('/other');
+      assert.equal(sshCalls.length, 1);
     } },
   ]);
 });

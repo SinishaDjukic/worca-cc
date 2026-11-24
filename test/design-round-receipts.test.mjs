@@ -15,7 +15,7 @@ useTempHome(after);
 const frame = (status, stats = {}) => ({ type: 'design-build', designId: 'd_0123456789ab', buildId: 'b_0123456789ab', seq: 1, ts: 1, status, round: 2, kind: 'change', reason: null, waiting: 0, stats });
 const STATS = { agentsTotal: 12, costUsd: 4.2, costKnown: true, elapsedMs: 374000 };
 function rig({ card = true } = {}) {
-  const t = createThread({ mode: 'design', title: 'x' });
+  const t = createThread({ title: 'x' });
   const addCard = () => appendMessage(t.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_00000001', state: 'running', card: { type: 'design-round', buildId: 'b_0123456789ab', baseVersion: 1, summary: 's' } }] });
   if (card) addCard();
   let flips = 0;
@@ -65,7 +65,7 @@ test('other frames and a design with no chat are ignored', () => {
   assert.equal(flips(), 0);
 });
 test('Review Focus 1: at boot each running or paused receipt takes its build row\'s state; other cards stay', () => {
-  const t = createThread({ mode: 'design', title: 'boot' });   // own builds: earlier tests left running cards of b_0123456789ab
+  const t = createThread({ title: 'boot' });   // own builds: earlier tests left running cards of b_0123456789ab
   const add = (id, card) => appendMessage(t.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id, state: 'running', card }] });
   add('card_00000001', { type: 'design-round', buildId: 'b_00000000aa01' });
   add('card_00000002', { type: 'other', buildId: 'b_00000000aa01' });
@@ -75,7 +75,7 @@ test('Review Focus 1: at boot each running or paused receipt takes its build row
   assert.deepEqual(['card_00000001', 'card_00000003', 'card_00000002'].map((id) => findCard(t.id, id).block.state), ['interrupted', 'paused', 'running']);
 });
 test('the facts: the cost adds the live estimate, an unknown cost stays unknown, the reason rides along, Resume keeps them', () => {
-  const t = createThread({ mode: 'design', title: 'facts' });
+  const t = createThread({ title: 'facts' });
   const add = (id, buildId) => appendMessage(t.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id, state: 'running', card: { type: 'design-round', buildId } }] });
   add('card_00000001', 'b_00000000bb01');
   add('card_00000002', 'b_00000000bb02');
@@ -91,7 +91,7 @@ test('the facts: the cost adds the live estimate, an unknown cost stays unknown,
   assert.equal(findCard(t.id, 'card_00000001').block.state, 'running', 'a frame flips only its own build\'s receipt');
 });
 test('the scan skips text rows and other cards of the same build; an unknown status flips nothing', () => {
-  const t = createThread({ mode: 'design', title: 'scan' });
+  const t = createThread({ title: 'scan' });
   appendMessage(t.id, { role: 'user', text: 'make it' });
   appendMessage(t.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_00000009', state: 'running', card: { type: 'other', buildId: 'b_0123456789ab' } }] });
   appendMessage(t.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_00000001', state: 'running', card: { type: 'design-round', buildId: 'b_0123456789ab' } }] });
@@ -119,7 +119,7 @@ test('a terminal frame drops its build from the cache: the next frame reads the 
   assert.deepEqual([state().state, flips()], ['done', 2]);
 });
 test('the boot sweep: a paused receipt can close, a settled one never moves, an equal state is no change, poison rows are skipped', () => {
-  const t = createThread({ mode: 'design', title: 'boot 2' });
+  const t = createThread({ title: 'boot 2' });
   const add = (id, state, buildId) => appendMessage(t.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id, state, card: { type: 'design-round', buildId } }] });
   add('card_00000001', 'paused', 'b_00000000cc01');
   add('card_00000002', 'done', 'b_00000000cc02');
@@ -139,7 +139,7 @@ test('in the real app: a design-build frame lands on its receipt, and boot recon
   const mod = await import('../ui/server.mjs');
   const card = (tid, id, buildId, state = 'running') => appendMessage(tid, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id, state, card: { type: 'design-round', buildId, baseVersion: 0, summary: 's' } }] });
   const at = (tid, id) => findCard(tid, id).block;
-  const t1 = createThread({ mode: 'design', title: 'one' }).id;
+  const t1 = createThread({ title: 'one' }).id;
   const d1 = createDesign({ kind: 'web', title: 'one', threadId: t1 });
   updateDesign(d1.id, { version: 3 });
   const b1 = createBuild({ designId: d1.id, kind: 'first', brief: 'b' });
@@ -150,7 +150,7 @@ test('in the real app: a design-build frame lands on its receipt, and boot recon
   updateBuild(b1.id, { status: 'done' });
   const b2 = createBuild({ designId: d1.id, kind: 'change', brief: 'b' });   // open and not live: boot recovery closes it
   card(t1, 'card_00000002', b2.id);
-  const t2 = createThread({ mode: 'design', title: 'two' }).id;
+  const t2 = createThread({ title: 'two' }).id;
   const d2 = createDesign({ kind: 'web', title: 'two', threadId: t2 });
   const b3 = createBuild({ designId: d2.id, kind: 'first', brief: 'b' });
   updateBuild(b3.id, { status: 'paused', reason: 'drain' });

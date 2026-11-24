@@ -32,8 +32,6 @@
   .side-close{display:flex;flex:0 0 auto;}
   .side-close svg{width:20px;height:20px;}
   .topnav{grid-template-columns:minmax(0,1fr) auto auto;gap:8px;}
-  #topnav-new{width:32px;padding:0;}   /* icon only: an id, so the .topnav-new hook stays layout only */
-  .topnav-new-label{display:none;}
   .topnav-act{min-width:32px;padding:0 8px;gap:5px;justify-content:center;}
   .topnav-act-label{display:none;}
   .activity-pop{width:calc(100vw - 16px);}

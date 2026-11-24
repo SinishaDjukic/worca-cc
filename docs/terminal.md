@@ -1,6 +1,6 @@
 # Terminal
 
-A terminal pane on the right side of every Worca page. The shell runs on the Worca server, in the
+A terminal in the tool panel on the right side of every Worca page. The shell runs on the Worca server, in the
 folder of what you are looking at, and every command you run is recorded with its output, exit code,
 duration, who ran it and when.
 
@@ -9,32 +9,207 @@ duration, who ran it and when.
 
 ## Where it opens
 
-Open the pane with the terminal button in a run's top bar or next to a project's name, or with Ctrl+\` on
-any page. On a run or a project page it shows a live shell right away: it reattaches the page's running terminal, or starts one.
+Open a terminal with the Terminal icon in a run's or a chat's header, the terminal button next to a project's
+name, or Ctrl+\` on any page. It focuses the newest terminal tab of the page, or opens one: that reattaches the
+page's running shell, or starts one.
 
 | Page | Folder |
 | --- | --- |
-| A running run | its live worktree. The pane warns that the pipeline is still changing those files. |
+| A running run | its live worktree. The terminal warns that the pipeline is still changing those files. |
 | A finished run | its checkout (see [Actions](actions.md)). With none yet, Worca makes the checkout first. |
-| A workspace run | one terminal per member; the select next to the folder picks the member. |
+| A workspace run | one terminal per member; the select next to the folder picks the member and opens its shell in a new tab. |
 | A run with No project | its own `work/` folder while it runs or is paused; once it ends there is none (its files are its Artifacts). |
+| A chat | the chat's newest worktree of its project if it still exists, else the project's own folder. A chat with No project, or one scoped to a workspace, has no terminal (its icons are disabled with the reason), and neither has a chat before its first message. |
 | A project page | your own checkout of the project (the folder you registered), on whatever is checked out there. |
-| Any other page | no new terminal: the pane shows the most recent one that is still running. |
+| Any other page | no new terminal: the panel keeps the tabs of the last run, chat or project you looked at. |
 
-The header holds the title and **×**, which hides the pane: the shell keeps running, and opening the
-pane again on the same page reattaches it. Below it is a tab for each open terminal of the page (and each
-of Chat's, on every page: see [below](#chat-agent-mode)), then a
-small **+** tab that starts another shell in the same folder (a second shell of a folder is numbered,
-like `demo · main 2`). Click a tab to switch. The **×** on a tab closes that terminal, or type `exit` in
-it. A terminal that has run a command asks first; one that has not closes at once. In a shell without
-recorded commands (sh, fish, cmd.exe) any line you submitted counts. Closing the shown terminal switches
-to the page's next one, or leaves the line that starts a new one on Enter. Below it is the terminal's folder, with a warning or the member select when they apply. Worca starts a shell for a page at
-most once each time you open the pane. When the shell ends (you typed `exit`, or it died) or Worca
-restarts, the terminal says so and starts a new one only when you press Enter.
+### The tool panel
+
+The panel holds tabs of four kinds: **Terminal**, **Browser** (a web page, see below), **Files** (a read-only
+browser of the folder; a file opens in the same viewer as run artifacts: markdown rendered with a Preview / Source
+switch each tab remembers, highlighted code, tables, images, PDF, audio and video, HTML in a sandbox, LikeC4, and
+Office documents as PDF when LibreOffice is installed, else as a simplified in-browser preview with Download) and **Changes** (the uncommitted changes of a project or chat folder, `git diff HEAD` plus
+new files; a run shows its own diff). Several tabs of one kind can be open. Each shell is its own tab.
+
+Two more kinds open only from a chat: **Design** (a design chat's stage, see docs/design.md) and **Run**: a run opened
+from a chat (its card's Open, a link) shows in a Run tab beside the chat, the run page's own screen with its tabs and
+**Open full page**, instead of a panel of its own. A chat has one Run tab, which follows the run its address names
+(`#chat/<thread>/run/<id>/<tab>`): another run reuses it under its own title. Picking another tab (or the Overview)
+steps the address back to the chat and keeps the Run tab in the strip; picking it again reopens its run. Escape, Back
+or the tab's × close it. A new chat with no thread yet keeps the run beside the conversation until its first send.
+
+- **Header icons.** Run and chat pages show the Overview icon, then four tool icons: Terminal, Browser, Files and
+  Changes. A tool icon focuses the newest tab of that kind on the page, or opens one; Shift-click always opens another.
+  Shortcuts: Ctrl+\` Terminal, Ctrl+Shift+F Browser, Ctrl+Shift+E Files, Ctrl+Shift+G Changes. Ctrl+\` on a
+  terminal tab hides the panel again.
+- **Suggested.** The **+** page also lists the page's running Actions services, recent addresses and the
+  project's repository on GitHub (that one opens in a window of its own: GitHub refuses to be framed).
+- **Tabs belong to what was in view.** A tab opened on a run belongs to that run, on a chat to that chat, on a
+  project page to the project. The panel shows the page's project tabs, a thin divider, then the run's or chat's
+  tabs. Right-click a tab (or its menu key) for **Move to project**, which keeps it beside every run and chat of
+  that project. A workspace run or chat has no single project, so Move to project is off there. Tabs of other
+  pages are hidden, not stopped: the **+** page lists every kind with its shortcut and counts the tabs in other
+  chats and runs.
+- **Keys and order.** Arrow keys move between tabs, Delete closes one, Shift+Arrow (or a drag) moves it.
+- **Closing.** The **×** on a terminal tab closes that terminal, or type `exit` in it. A terminal that has run a
+  command asks first; one that has not closes at once. In a shell without recorded commands (sh, fish, cmd.exe)
+  any line you submitted counts. Hide (the panel's own **×**) keeps every shell running; opening the panel again
+  reattaches them.
+- **Size.** Drag the panel's edge to resize it, or maximize it over the whole window. Below 880 px wide it is a
+  full-screen sheet. The open tabs, the width and maximize are kept per browser.
+- **Archiving** a run or a chat closes its shells and its tabs.
+
+#### Overview
+
+The **Overview** is what the panel shows for a run, chat or project page while no tab is selected. It is not a tab:
+the first header icon always comes back to it, and closing the last tab lands on it. It is a quiet list of sections,
+each with a count; a click on a section's label folds it (the choice holds until the page reloads), and a section with
+nothing in it is hidden. Arrow keys, Home and End move between its rows.
+
+- **Chat:** Environment (the project or workspace, the engine and model, the branch of the run it follows),
+  Context (folded at first; the context window, topics, agents and worktrees, the same as the composer's
+  context popover), Runs the chat started (live status and cost; a click opens the run), Pull requests (their
+  state; a click opens the pull request), Artifacts (the files the chat showed and the files it saved in its output
+  folder, newest first, 5 then **Show all**) and Background (its running commands and its runs' running Actions,
+  each with **Stop**).
+- **Run:** its status, branch, project and whether it is checked out; its pull request, artifacts and running Actions.
+- **Project:** its recent runs and their pull requests.
+
+On the Chat page the composer's context meter opens the Overview with Context unfolded. In the side column, and in a
+new chat before its first message, it opens the context popover as before. A new chat and a starting run have no
+Overview (the icon says why); a chat without a project has one, while its tools stay off.
+
+`GET /api/ask/threads/:id/overview` answers the chat's started runs (a run card's run, or one of its schedules',
+never a run it only follows and never a PR fix run), their pull requests and the chat's applied pull request cards,
+its shown and saved files (at most 50 each, newest first) and the followed run's branch. A saved file opens in a
+Files tab through `root=out` (the chat's output folder; links in it are never followed).
+
+A second shell of a folder is numbered, like `demo · main 2`. A shell opened in a branch folder (see below) is a
+project tab named `<project> · <branch>`. Below the terminal is its folder, with a warning or the member select
+when they apply. When the shell ends (you typed `exit`, or it died) or Worca restarts, the terminal says so and
+starts a new one only when you press Enter.
+
+### Browser tabs
+
+A Browser tab has Back, Forward, Reload, an address bar and **Open in your browser**. A **local address**
+(`localhost:5173`, `127.0.0.1`, `[::1]`; `:5173` alone works too) opens through Worca's preview proxy,
+`/preview/<port>/<token>/`, so on a hosted Worca it shows the dev server on the *server's* machine. Any other
+address loads directly.
+
+- **Which ports.** Any port on this machine's loopback by default, never Worca's own port. Settings › Runs › Actions ›
+  **Preview ports** can narrow this to *Actions range only* (the Actions port range, default 4400–4499, and the ports
+  of running Actions). A hosted Worca is always *Actions range only*, and the choice shows locked there: on a server,
+  any loopback port would reach its internal services. Hosted Worca previews only when Actions are on
+  (`WORCA_ACTIONS_REMOTE=1`).
+- **Isolation.** The page runs in a sandboxed frame without its own origin: it cannot read Worca's pages or call
+  its API, and it has no cookies, local storage or service workers. Each tab gets a token for its port; Reload
+  and a Worca restart mint a new one.
+- **Addresses the page builds itself.** The proxy moves root-relative URLs in the HTML (`src`, `href`, `action`,
+  `srcset`, CSS `url()`) under the prefix, adds an import map for module imports, and a small script for URLs
+  made in JavaScript (WebSocket, fetch, XMLHttpRequest, EventSource, script, link and image `src`, `setAttribute`
+  of a URL attribute, `innerHTML`, and the text of a `<style>`). Stylesheets (`text/css`) get their `url()` and
+  `@import` moved too. That covers the dev-server assets, fonts and HMR sockets of Vite and Next (checked with a
+  real Vite 5 and Next 14 dev server, HMR included). HTML a script fetches (htmx, Turbo) gets its URLs moved,
+  without a second script. Not covered: `location` set to a root-relative path, `srcset` set from a script,
+  workers, an app's own client-side router (it sees the `/preview/…` prefix: give it a base path, or open it
+  externally), a page whose Content-Security-Policy blocks inline scripts, an answer compressed although the proxy
+  asks for none (it passes unrewritten), and https dev servers. Next may log a hydration warning about the moved
+  `src` of server-rendered images; it is harmless.
+- **Sites that refuse framing.** A proxied page sent with `X-Frame-Options` or a `frame-ancestors` that leaves
+  Worca out shows "This site cannot be shown here" with **Open externally**. For other sites the browser does not
+  tell Worca (it shows its own error page, which loads like any page), so after a few seconds the tab says the site
+  may not allow being shown here, with Open externally; the bar's button is always there. An Action whose Open
+  link goes to another site keeps opening it in your browser's own tab.
+- **Open externally** opens the address itself when Worca runs on your machine, else the proxied page in a new
+  browser tab.
+- **Dev server.** An empty Browser tab lists the running services of its run or project and, while the project
+  has no service Action, offers its dev server from `package.json` (`dev`, else `start`): "Dev server:
+  `npm run dev`, on a free Actions port — **Use this**". Use this saves it as a project Action (`PORT` auto, opened at
+  `http://localhost:{PORT}`, ready when the port answers), adds the tool's port flag when it ignores `PORT` (Vite,
+  Astro, Angular, webpack, Parcel, Gatsby, Storybook, Wrangler, Eleventy, React Router, VitePress:
+  `npm run dev -- --port {PORT}`). A
+  workspace runner (`turbo dev`, `pnpm --filter web dev`) may not pass `PORT` on to the server: if its ready check
+  never passes, edit the saved Action's command (Project page › Actions). A script that names its own
+  port keeps it ("port 3001"), and so does a tool the flag cannot reach (behind `concurrently`, a pipe or a
+  background `&`): the Action holds that tool's default port. A script pinned below port 1024 is not offered. A run's
+  checkout has no `node_modules`, so when `package.json` declares dependencies and the project has no setup command,
+  Use this sets one too (`npm ci` with a lock file, else `npm install`; `pnpm install`, `yarn install`, `bun install`);
+  the offer says so. A workspace run's tab offers nothing: add the dev server to a member project's Actions. Use this then starts it (in a run tab in
+  that run's checkout; elsewhere in the project's newest finished run, like the editor's **Try**) and opens it
+  once it is ready. Open on a running service (its run's Actions tab, the Overview strip, the sidebar's Running
+  actions globe) opens a Browser tab too; Ctrl- or middle-click keeps your browser's own tab.
+- **Pick element.** The cursor button on a local preview. Click it, then click an element in the page: the chat
+  composer gets `element-<time>.png` (a fresh server-side load of the page, clipped to the element) and
+  `picked-element-<time>.md` (address, selector, box, HTML snippet; untrusted page data). Esc cancels. The button is
+  disabled with a tooltip on other sites and before a page loads. When the element is not on a fresh load (after
+  clicks or a sign-in), only the `.md` goes, and a note says why.
+- **The chat's tab tools.** `open_tab`, `screenshot_tab` and `read_tab` reach this chat's tabs and its project's tabs,
+  never another chat's or a run's. The panel mirrors those lists to the server (the `tool_tabs` table), so the tools
+  work from Discord or the CLI too. A tab the assistant opens carries a mark and joins the strip when the chat is next
+  on screen. Captures run in a headless Chrome on the Worca server (`WORCA_CHROME` overrides the browser) through
+  the same preview rules, on a fresh load: what you clicked or signed into is not in them. Other sites follow the
+  chat's web allowlist. The tools are off under agent isolation and in the Workflows chat.
+
+### Links from the chat
+
+File paths and web links in the chat's answers open in tabs of the panel, in the chat's own tab group. Settings ›
+Chat › **Links in answers** › *Open chat links in the panel* (default on) turns this off: then web links open a new
+browser tab, as before, and file paths stay text. The chat cannot change this setting.
+
+- **File links.** A repository path (`ui/public/app.js`, `src/core/`), with a line (`:120`, `:120-140`, `#L120`,
+  `#L120-L140`), or a bare file name (`app.js`) becomes a link only when the server confirms it exists in the chat's
+  root (`POST /api/ask/files/resolve`, in batches); anything else stays text. A bare name links only when exactly one
+  file of the root has that name. A click opens a Files tab at the line (a line past the end goes to the last line),
+  or brings the tab forward when that file is already open. A markdown file opened at a line shows its Source view.
+  Links are buttons: Tab reaches them and they announce "File src/a.js, line 120, opens in the panel".
+- **The root.** A chat that follows a run (its newest run link whose run still exists) resolves against that run:
+  per member, its live or checked-out folder, else its feature branch when the folder is gone (an archived or
+  finished run), read from git. A chat that follows no run resolves against the folder its Files tab shows (its
+  newest worktree of the pinned project, else the project checkout). Branch files above 25 MiB are not previewed
+  or downloaded from the panel.
+- **Refused.** Absolute paths, `~`, drive letters, UNC paths, `..`, control characters, `.git`, symlinks leaving the
+  folder (and any symlink on a branch), credential files (the rule `show_files` uses: keys, `.env`-style files,
+  `.ssh`, `.aws`, `.gnupg`, `.kube`, `.docker`, `.azure`, `.worca-cc`, worca's databases) and worca's own files
+  (`.claude/rules/worca/`, `.claude/skills/readiness-rubric/`). A refused path is never a link, the same as one that
+  is not there.
+- **Web links.** A plain click on an `http(s)` link opens a Browser tab of the chat (or brings forward the tab
+  already showing that address). These keep the browser's own new tab: a click with Ctrl, Cmd, Shift or Alt, or a
+  middle click; `mailto:` and `tel:`; an address with a login; worca's own pages other than its home page (an
+  artifact, an API file, a preview); a loopback port the preview would refuse (a notice says "Port 5173 is not
+  previewed here"); sites known to refuse being framed; and sites found refusing earlier in this browser session.
+  worca's own home page (with any `#…` route) opens in place. `javascript:`, `data:`, `file:` and `blob:` links do
+  nothing. A local address (`localhost:5173`) goes through the preview proxy as above. The answer labels each web
+  link "…, opens in the panel" or "…, opens in a new tab".
+- **Known refusers.** github.com, gitlab.com, bitbucket.org, google.com, youtube.com, gmail.com, facebook.com,
+  instagram.com, x.com, twitter.com, linkedin.com, microsoftonline.com, live.com, outlook.com, office.com,
+  microsoft365.com, sharepoint.com, dev.azure.com, visualstudio.com, atlassian.net, atlassian.com, slack.com,
+  discord.com, notion.so, figma.com, stackoverflow.com, stackexchange.com, reddit.com, amazon.com, npmjs.com,
+  apple.com, icloud.com, paypal.com, stripe.com, openai.com, chatgpt.com, claude.ai, anthropic.com, okta.com,
+  auth0.com (and their subdomains), and any host whose first label is `accounts`, `login`, `signin`, `sign-in`,
+  `auth`, `sso`, `oauth` or `identity`.
+- **The framing check.** Before framing another site, the Browser tab asks `POST /api/tools/frame-check`. The server
+  sends one HEAD (GET on 405/501, body never read) without cookies and reads only `X-Frame-Options` and CSP
+  `frame-ancestors`. It asks only public hosts on their default port, checks every DNS answer when it connects,
+  never goes through a proxy, re-checks each redirect (at most 3) and gives up after 4 s. Verdicts are kept per
+  origin for an hour (an unknown answer for a minute). On a hosted worca the chat's web access and allowlist apply:
+  web off or a host not allowed means no request. A site that refuses shows "This site cannot be shown here" with
+  **Open externally**, and the browser remembers the origin for the session (later clicks open it outside). With no
+  verdict the tab frames the page and keeps the few-seconds hint.
+- **The address.** A Browser tab shows the real host beside the address bar; an international name (`xn--…`) is
+  marked and its tooltip gives the real address.
+- **open_tab for files.** The assistant can open `open_tab {kind: 'files', path, line?, endLine?}`: that file or
+  folder of the chat's root, at the line. A missing or refused path, or a bad line (past the end, on a folder or a
+  binary file, `endLine` before `line`), is an error the assistant sees. A file or address already open is brought
+  forward instead (every page holding the tab takes the new line). At most 3 `open_tab` calls per turn open or
+  bring forward a tab, sub-agents included; refused calls do not count.
+- **Limits.** A site that refuses only on GET, or only on some paths, can still show the browser's error page: the
+  hint with Open externally stays. A refusal found after an answer rendered changes its link label only on the next
+  render (the click is right at once). A proxy-only network gets no verdicts. A loopback port the page could not
+  foresee as refused shows the proxy's refusal with Open externally.
 
 ### Branch folders (API only)
 
-The pane no longer offers them, but `POST /api/projects/<key>/terminal` with a `branch` still opens a
+The panel does not offer them, but `POST /api/projects/<key>/terminal` with a `branch` still opens a
 terminal in `~/.worca-cc/terminal/worktrees/<project>/…`, a worktree of that branch. Without `branch` it
 opens in the project's own folder, which Worca never removes. If the branch is checked out somewhere
 else (often your own checkout), the branch folder is a **detached** copy of its latest commit, and
@@ -47,7 +222,7 @@ remote or tag reaches, is never removed automatically; the DELETE needs `force: 
 ## Sessions
 
 Each terminal has an id, a folder, a status (`running`, `exited`, `closed`, `interrupted`), an exit
-code and its output. It survives a page reload: the pane replays the last 512 KB. It ends when the
+code and its output. It survives a page reload: its tab comes back and replays the last 512 KB. It ends when the
 shell exits (type `exit`), when its tab's **×** or `DELETE /api/terminal/sessions/<id>` closes it, or when Worca stops. A terminal left running by a
 Worca that crashed is stopped on the next start and shows as `interrupted`. At most 16 run at once.
 
@@ -60,7 +235,7 @@ the run's commit. To keep your own changes apart, wait for the run to finish and
 
 In bash and zsh, Worca loads your own `~/.bashrc` / `.zshrc` and adds a few lines that mark where each
 command starts and ends. Each command is recorded for the audit log as a block: the command, its exit
-code, duration and output (the last 256 KB), who ran it and when. The pane does not show them; read
+code, duration and output (the last 256 KB), who ran it and when. The panel does not show them; read
 them through the API: `GET /api/terminal/sessions/<id>` lists a terminal's newest commands, and
 `GET /api/terminal/sessions/<id>/blocks/<n>` returns one with its output. Other shells (sh, fish,
 cmd.exe, PowerShell) work, but their commands are not recorded. A command typed with a leading space is
@@ -78,10 +253,10 @@ typed in a shell you start inside the terminal (`bash`, `ssh`, `docker exec`) ar
 command's block, not blocks of their own.
 
 Keys you type in the terminal are the shell's: Escape and Ctrl+K never act on the Worca page around it.
-Ctrl+\` shows and hides the pane from anywhere.
+Ctrl+\` shows and hides the terminal from anywhere.
 
 If a command prints faster than the page can draw it (`yes`, a large `cat`), Worca skips ahead: the
-pane jumps to the latest output instead of queueing everything. The recorded block still keeps its last 256 KB.
+terminal jumps to the latest output instead of queueing everything. The recorded block still keeps its last 256 KB.
 
 ## Environment
 
@@ -101,7 +276,7 @@ another home (the Docker image uses `/worca`), run `export WORCA_HOME=/worca` fi
 ## Stop
 
 Ctrl+C typed in the terminal stops the running command. With node-pty it reaches the program as in any
-terminal. Without node-pty (see below) the pane calls the stop API instead
+terminal. Without node-pty (see below) the terminal calls the stop API instead
 (`POST /api/terminal/sessions/<id>/stop`, which is also there for scripts): it sends Ctrl+C to the
 running command and, if that command is still running 3 seconds later, kills every process the
 terminal started, including jobs you put in the background with `&`. There is no foreground job to aim
@@ -112,7 +287,40 @@ send: Stop ends the command after the 3 seconds (see Windows).
 
 To end a terminal, type `exit` or press its tab's **×**; `DELETE /api/terminal/sessions/<id>` closes it from outside. The stop
 and close APIs always work, even when the terminal is turned off. Discarding a run's checkout closes
-the terminals open in it, as it stops the run's Actions.
+the terminals open in it, as it stops the run's Actions. Archiving a run closes its terminals; archiving or
+deleting a chat closes the chat's terminals, Ask's and the ones you opened from it.
+
+## API
+
+The tool panel uses these routes. They are for pages served by this Worca only (same origin, never a caller
+that could be an agent). The browser never names a folder: it sends ids, and Worca resolves the folder.
+
+- `POST /api/ask/threads/<id>/terminal` starts a shell in the chat's folder (see the table above).
+- `GET /api/tools/files?scope=…&path=` lists one folder level (at most 2000 entries).
+- `GET /api/tools/file?scope=…&path=` reads one file as text (the first 512 KB; a binary file is shown as a note, with no text).
+- `GET /api/tools/changes?scope=…` returns the changes: a run's diff, or `git diff HEAD` plus new files of a
+  project or chat folder.
+- `POST /api/preview/sessions {port}` mints a Browser tab's token: `201 {port, token, base}`. Refused with
+  `403 PORT_NOT_ALLOWED` (Preview ports set to *Actions range only*, or a hosted Worca, and the port is outside the range and running Actions), `403 SELF`, `400 BAD_PORT`,
+  `409 WORCA_INSTANCE` (another Worca answers on that port), and `403 ACTIONS_DISABLED` where Actions are off.
+- `GET|POST|… /preview/<port>/<token>/<path>` and WebSocket upgrades on it: the proxy, to `127.0.0.1` then
+  `::1`. Its own answers (an expired token, nothing listening, a page that refuses framing) are small sandboxed
+  pages that tell the tab their code.
+- `GET /api/projects/<key>/dev-server` answers `{suggestion}` (null once the project has a service Action);
+  `POST` saves it as a project Action: `201 {action, config}`, `409 HAS_SERVICE`, `404 NO_DEV_SCRIPT`. The body
+  carries no command.
+- `GET /api/tools/tabs?scope=chat&threadId=<id>` (or `scope=project&projectKey=<key>`) answers the scope's mirrored
+  tabs, the assistant's undelivered ones included; `PUT` with `{tabs, seen}` replaces the list. A tab the assistant
+  opened and the page has not seen stays. Run scopes are refused (`400`), a gone or archived chat is `404 SCOPE_GONE`.
+- `POST /api/tools/browser/pick {url, selector, viewport}` renders a local preview on a fresh load and answers the
+  element's screenshot `{png, width, height}` (base64); `409 NOT_LOCAL` / `NOT_FOUND` otherwise.
+- `POST /api/ask/tabs {op, input}` is the chat tools' bridge: loopback callers only, with the turn's own token in
+  `x-worca-ask-tabs` (it lives as long as the turn and is never written to disk).
+
+`scope` is `project&projectKey=<key>`, `run&runId=<id>` (with `projectKey`, `workspaceId` or `projectDir`, and
+`member` on a workspace run) or `chat&threadId=<id>`. A path never leaves the folder: `..`, absolute paths and
+any `.git` folder are refused, and a link pointing outside the folder (or to `.git`) is listed but cannot be
+opened.
 
 ## Audit log
 
@@ -132,6 +340,19 @@ time. Blocks and audit rows are kept. `GET /api/terminal/audit?runId=<id>` lists
 - Only pages served by this Worca can use it. A page on another port of the same machine (another dev
   server, or a service an Action started) is refused with `403 TERMINAL_CROSS_ORIGIN` and sees no terminal
   traffic.
+- **The preview proxy** reaches this machine's loopback only, on the allowed ports (see Browser tabs); the
+  address carries no host. It strips Worca's and the identity proxy's credentials (cookies, Authorization,
+  `cf-*`, the identity headers of oauth2-proxy, Google IAP, AWS ALB, Pomerium and Azure App Service, forwarded
+  headers) from what it sends, gives the dev server the app's own `Origin` only for the preview page itself
+  (another site's `Origin` goes up as sent, for the dev server's own check), and `Set-Cookie`, `Clear-Site-Data`, HSTS and reporting
+  headers (`NEL`, `Report-To`) from what comes back. Every page it serves carries `Content-Security-Policy: sandbox` without `allow-same-origin`, so a previewed
+  app runs in an opaque origin even when opened in a tab of its own. Because the frame's opaque requests reach the
+  dev server with the app's own `Origin`, the app cannot tell its own pages from content it sandboxes itself; so a
+  port where another Worca answers (a run's Action of worca itself) is never previewed: its sandboxed HTML artifacts
+  would pass that Worca's origin check. The proxy asks again each time it re-resolves a port (every few seconds),
+  so a tab's link minted for a dev server stops working once a Worca answers on that port instead. Open such a Worca in a browser tab of its own. Behind an identity proxy (Cloudflare Access,
+  an issuer) the frame's requests carry no `SameSite=Lax` cookie: set the access cookie to `SameSite=None`, or the
+  frame shows the sign-in page.
 
 ## Chat (agent mode)
 
@@ -141,14 +362,14 @@ and file changes through commands when you ask for them. It runs in a run's fold
 scope, or a member of its workspace); another project's folder is refused until you change the chat's scope.
 
 - **A shared terminal.** Ask opens its own terminals, labeled `Ask · <chat title> · <folder>`, at most 3
-  per chat. Their tabs show in this pane on every page, next to the page's own terminal, with the same
-  live output, and you can type in them. Ask never types into a terminal you opened.
-  - **Ask's tab waits for you.** A command Ask starts never opens the pane, never switches its tab and
-    never takes the keyboard: it shows live in the chat, and its tab is in this pane when you open it.
+  per chat. They are tabs of their chat in the tool panel (hidden on other pages, and counted on the **+**
+  page), with the same live output, and you can type in them. Ask never types into a terminal you opened.
+  - **Ask's tab waits for you.** A command Ask starts never opens the panel, never switches its tab and
+    never takes the keyboard: it shows live in the chat, and its tab is in the panel when you open it.
     Click the folder on a command card (Show in terminal on a summarised one) to show its tab and type
     there. Once that shell has closed (idle close, or a Worca restart) the click says so: the control
     turns to a disabled **Shell closed** with the reason as its tooltip, and the output stays in the
-    card. Moving to another page brings back that page's own terminal; Ask's tab stays a tab.
+    card. Moving to another page shows that page's own tabs; Ask's tab stays with its chat.
   - **Your commands in Ask's tab.** They never wake the chat. Your next message carries a line in its
     context listing what you ran there since then (command, exit code, block id, redacted like other
     command text, the newest 3), so "I ran the migration, continue" works, and Ask can read the output.
@@ -201,7 +422,7 @@ scope, or a member of its workspace); another project's folder is refused until 
 The terminal uses `node-pty`, an optional native module: prebuilt on macOS and Windows, compiled on
 Linux (it needs python3, make and a C++ compiler; the `-full` Docker image has them). Without it,
 terminals run over plain pipes: commands, blocks and Stop work, but full-screen programs (vim, top,
-less) and arrow-key history do not, and the pane says so. Ctrl+D on an empty line closes the
+less) and arrow-key history do not, and the terminal says so. Ctrl+D on an empty line closes the
 shell's input: the program reading it gets end-of-input, and the shell then exits too.
 `WORCA_TERMINAL_PTY=0` forces this mode.
 node-pty 1.1.0's macOS package ships its `spawn-helper` without the execute bit; Worca sets it the

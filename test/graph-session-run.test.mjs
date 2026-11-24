@@ -185,13 +185,23 @@ test('v4 — a failure that pauses the run while a member\'s host turn is in fli
   mockT.behave = ({ agentType }) => (agentType.startsWith('worca-x-n_impl-1-') ? 'hang' : null);
   const orch = createOrchestrator({ projectDir: gitDir('sessfailcut'), workflowId: 'wf_sess_run', prompt: 'demo', auto: true, claude: { mock: true } });
   // A non-terminal failure while the member works: an ask the night fallback refuses aborts the scheduler (_schedulerAsk).
-  mockT.onMemberStart = ({ agentType }) => { if (agentType.startsWith('worca-x-n_impl-1-')) queueMicrotask(() => orch._scheduler?.abort()); };
+  // "At once" is timed from the failure, not from the run's start: the steps before the member take seconds of their own
+  // on a loaded machine, and a clock started with the run spent its 10 s there.
   let timer;
+  let stillRunning;
+  const cut = new Promise((r) => { stillRunning = r; });
+  // A run that never reaches the member is stopped too, before the test's own timeout leaves it running.
+  const never = setTimeout(() => stillRunning({ status: 'still running' }), 90000);
+  mockT.onMemberStart = ({ agentType }) => {
+    if (!agentType.startsWith('worca-x-n_impl-1-')) return;
+    queueMicrotask(() => orch._scheduler?.abort());
+    timer = setTimeout(() => stillRunning({ status: 'still running' }), 10000);
+  };
   let res;
   try {
-    res = await Promise.race([orch.run(), new Promise((r) => { timer = setTimeout(() => r({ status: 'still running' }), 10000); })]);
+    res = await Promise.race([orch.run(), cut]);
     if (res.status === 'still running') orch.stop();
-  } finally { clearTimeout(timer); mockT.onMemberStart = null; }
+  } finally { clearTimeout(timer); clearTimeout(never); mockT.onMemberStart = null; }
   assert.equal(res.status, 'paused', 'the run pauses at once, as the ungrouped run does');
   const st = orch.getState();
   // The failure's own reason, as ungrouped; a plain AbortError would re-pause the run with the detail 'aborted'.

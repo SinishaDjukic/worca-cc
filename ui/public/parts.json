@@ -47,6 +47,7 @@
     "projects/readiness.css",
     "workspace-map/workspaces-shell.css",
     "workspace-map/workspace-guide.css",
+    "how-it-works/how-it-works.css",
     "guardrails/guardrail-rows.css",
     "projects/confirm-add.css",
     "marketplace/plugins-view.css",
@@ -110,6 +111,7 @@
     "workflows/save-dialog.css",
     "runs/run-graph.css",
     "artifacts/per-step.css",
+    "artifacts/office-lite.css",
     "runs/report-modal.css",
     "team-policy/team-policy.css",
     "mcp-servers/server-sets.css",
@@ -151,6 +153,7 @@
     "network-proxy/proxy-settings.css",
     "settings/away-screensaver.css",
     "design/design.css",
+    "chat/composer-bar.css",
     "chat/card-nesting.css"
   ],
   "html": [

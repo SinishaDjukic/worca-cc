@@ -42,7 +42,7 @@ import {
   enrichPipelinesPr, reconcileStaleRunning, foreignActiveWorkspaceRuns, readPipelineForResume, persistPrState, readPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify, newPipelineId,
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
-  folderApplyRetainFor,
+  folderApplyRetainFor, bareWorkspaceKey,
   resolveIndexedArtifactFileForRow, openArtifactUnder, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates, readPipelineExtras,
   checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts, readRunResultsForRow,
@@ -50,7 +50,8 @@ import {
 import { FolderApplyError, folderMemberTarget, readFolderChanges, planFolderApply, applyFolderChanges, discardFolderChanges, releaseFolderCopy } from '../src/core/folder-apply.mjs';
 import { releaseFolderMember } from '../src/core/folder-members.mjs';
 import { readChangesFile, readRegularText, checkFolderSize } from '../src/core/folder-copy.mjs';
-import { mimeForPath, viewerKindFor } from '../src/shared/artifact-kinds.mjs';
+import { mimeForPath, viewerKindFor, isOfficePath } from '../src/shared/artifact-kinds.mjs';
+import { officePdf, OfficePreviewError, OFFICE_LIMITS } from '../src/core/office-preview.mjs';
 import { attachmentDisposition } from '../src/core/download-filename.mjs';
 import { appendDirection, DIRECTION_MAX_CHARS, DIRECTIONS_KIND, DIRECTIONS_FILE, DIRECTIONS_CLOSED } from '../src/core/directions.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
@@ -110,6 +111,7 @@ import {
   runLimits, assertRunLimitsInput, setRunLimits, autoTestWorkers,
   networkProxySettings, networkProxyEnabled, migrateCorporateProxyFlag,
   keepAwakeEnabled, setKeepAwake, assertKeepAwakeInput, migrateKeepAwakeFlag,
+  chatLinksInPanel, setChatLinksInPanel, assertChatLinksInPanelInput,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels, setDesignModels,
   modelRolesSetting, assertModelRolesInput, setModelRoles,
@@ -153,7 +155,7 @@ import {
   renameChatGroup as askRenameChatGroup, addToChatGroup as askAddToChatGroup, removeFromChatGroup as askRemoveFromChatGroup,
   deleteChatGroup as askDeleteChatGroup, chatGroupThreadIds as askChatGroupThreadIds, firstUserText as askFirstUserText,
   snapshotChatGroups as askSnapshotChatGroups, restoreChatGroups as askRestoreChatGroups,
-  ChatGroupError, switchThreadEngine as askSwitchThreadEngine,
+  ChatGroupError, switchThreadEngine as askSwitchThreadEngine, askOutRoot, supersedeRefusal as askSupersedeRefusal, appendSupersedingMessage as askAppendSupersedingMessage,
 } from '../src/core/ask/store.mjs';
 import { isSurfaceMode, turnHelperFlags } from '../src/core/ask/thread-modes.mjs';
 import { CHAT_BUSY, chatBusyReason, chatGroupBusyText } from '../src/shared/chat-busy.mjs';
@@ -169,13 +171,13 @@ import {
   buildSystemPrompt as askBuildSystemPrompt, buildComposerSystemPrompt as askBuildComposerSystemPrompt, buildContextHeader as askBuildContextHeader,
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt, renderChatContextPrompt as askRenderChatContextPrompt, renderAttachedRequirementsPrompt as askRenderAttachedRequirementsPrompt,
   buildHandoffPrompt as askBuildHandoffPrompt, handoffBudgetChars as askHandoffBudgetChars, needsHandoff as askNeedsHandoff,
-  selectInlineAttachments as askSelectInlineAttachments, validateClientContext, buildDesignSystemPrompt,
+  selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
 import { askScriptPromptInput, scriptToolsEnabled, defaultScriptDeps as askScriptDeps } from '../src/core/ask/script-deps.mjs';
 import { applyScriptCard, scriptEventPrompt, scriptNoticeText } from '../src/core/ask/script-approval.mjs';
 import { validateComposerPayload, isComposerCard, composerCardPatch, composerHeaderCard } from '../src/core/ask/composer-payload.mjs';
 import { composerPromptBlock } from '../src/core/ask/composer-deps.mjs';
-import { designPromptBlock } from '../src/core/ask/design-deps.mjs';
+import { designPromptBlock, designPicturesReady } from '../src/core/ask/design-deps.mjs';
 import { validateAttachmentUploads } from '../src/core/attachment-upload.mjs';
 import {
   listAskWorktrees as askListWorktrees,
@@ -251,6 +253,14 @@ import { detectBuiltins, builtinLaunch, revealLaunch, copyCommandText, findOnPat
 import { buildLauncherCommand, launchAndWatch, installedLaunchers, launcherExamples, launcherWarning, lineForPickedApp } from '../src/core/actions/launcher.mjs';
 import { assertNoRawCommand, normalizeStacks, memberAliases, SETUP_ACTION_ID, ActionConfigError } from '../src/core/actions/model.mjs';
 import { parsePortRange } from '../src/core/actions/ports.mjs';
+import { createPreviewProxy, createPreviewTokens, portRefusal, previewPrefix, sendPreviewNote } from '../src/core/preview-proxy.mjs';
+import { createToolTabsMirror, tabScope, isTabScope } from '../src/core/tool-tabs-mirror.mjs';
+import { createTabTools, modelPortRefusal, TabToolError } from '../src/core/tab-tools.mjs';
+import { createChatLinks, ChatLinkError } from '../src/core/chat-links.mjs';
+import { createFrameCheck } from '../src/core/frame-check.mjs';
+import { FILE_REFS_MAX, FILE_PATH_MAX } from '../src/shared/file-refs.mjs';
+import { createPageCapture } from '../src/core/page-capture.mjs';
+import { detectDevServer, devServerAction } from '../src/core/dev-server.mjs';
 import { checkoutRun, checkoutRunUnderLock, discardCheckout, membersOfRow, checkoutPathFor, setSetupState, markInterruptedSetups,
   enforceCheckoutCap, releaseKeptCheckouts, updateBranchRecords, withRunLock, freeBranchCheckout, canon } from '../src/core/checkout.mjs';
 import { checkRunBase, settleResolutions, updateRunBranch, pickBaseMember, baseMembersOfRow, assertFinishedRow, assertNotResolving,
@@ -304,7 +314,7 @@ import { detectSetup, defaultProbes } from '../src/core/setup/detect.mjs';
 import { teamSetupState, buildTeamSetup, SHARE_SETTING_KEYS } from '../src/core/setup/team-file.mjs';
 import { planSetupApply, commitSetupPlan, runSetupSteps, SetupFieldError, SetupConflictError } from '../src/core/setup/apply.mjs';
 import {
-  DEFAULT_UI_PORT, UI_HEALTH_NAME, UI_TOKEN_HEADER, newUiToken, writeUiInstance, removeUiInstance, uiUrl, keepIdleConnections,
+  DEFAULT_UI_PORT, UI_HEALTH_NAME, UI_TOKEN_HEADER, newUiToken, writeUiInstance, removeUiInstance, uiUrl, keepIdleConnections, probeUi,
 } from '../src/core/ui-instance.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
@@ -351,6 +361,7 @@ import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeR
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
+import { isRealRun } from '../src/core/real-run.mjs';
 import {
   registerRequirementsRoutes, requirementsChangeNotifier, REQUIREMENTS_UPLOAD_ROUTES, REQUIREMENTS_UPLOAD_JSON_LIMIT, requirementsUploadSlots,
   STATUS as REQUIREMENTS_STATUS,
@@ -374,7 +385,7 @@ import { createDesignChatActions } from '../src/core/design/chat-actions.mjs';
 import { cardStart, createSoundCards } from '../src/core/design/sound-cards.mjs';
 import { stageDesignKit } from '../src/core/design/kit.mjs';
 import { designWorkDir } from '../src/core/design/paths.mjs';
-import { designIdForThread } from '../src/core/design/chat-thread.mjs';
+import { designIdForThread, designToolFolder } from '../src/core/design/chat-thread.mjs';
 import { listVersions, restoreVersion, snapshotVersion } from '../src/core/design/versions.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -493,7 +504,7 @@ import {
 import { memoryCaps } from '../src/core/settings.mjs';
 import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
 import { settingsErrorReply, asSettingsField } from '../src/core/settings-errors.mjs';
-import { configuredClaudeBin, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
+import { configuredClaudeBin, ensureSetupMarker, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { probeClaudeAuth, CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../src/core/preflight.mjs';
 import { failedBecauseSignedOut, claudeChatSignedOut, claudeRunSignedOut } from '../src/core/claude-auth.mjs';
 import { createAgentGen, resolveAgentGenModel } from '../src/core/agent-gen.mjs';
@@ -537,7 +548,7 @@ import { TokenBucket } from '../src/core/chat/rate-limiter.mjs';
 import { renderTest } from '../src/core/chat/renderers.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { normalizeManifest, validatePluginDir, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
-import { listTaskSources, retryWriteback, resolveTaskInput, sourcePlaceholderTitle } from '../src/core/sources.mjs';
+import { announcePrOpened, listTaskSources, retryWriteback, resolveTaskInput, sourcePlaceholderTitle } from '../src/core/sources.mjs';
 import {
   createTicket, getTicket, listTickets, updateTicket, cancelTicket, requestRunNow, setTicketPipeline,
   createSchedule, getSchedule, listSchedules, updateSchedule, pauseSchedule, resumeSchedule, skipNext,
@@ -720,6 +731,10 @@ const ASK_VENDOR_ASSETS = {
   marked: resolveEsmAsset('marked'),
   dompurify: resolveEsmAsset('dompurify'),
 };
+// The Office preview fallback's UMD builds (artifacts/office-lite.mjs), resolved through the package folders: docx-preview's
+// exports map hides dist/*.min.js from a subpath resolve. A missing package leaves its route unregistered (the 404 tail).
+const officeVendorFile = (spec, rel) => { const d = resolveVendorDir(spec, undefined, undefined, 'office preview'); return d ? path.join(d, rel) : null; };
+const OFFICE_VENDOR_ASSETS = { jszip: officeVendorFile('jszip', '../dist/jszip.min.js'), docx: officeVendorFile('docx-preview', 'docx-preview.min.js') };
 
 // Ask Worca voice mode (docs/speech.md): the Silero VAD (@ricky0123/vad-web) and
 // its onnxruntime-web wasm runtime, served from node_modules like marked above.
@@ -888,12 +903,12 @@ const FINISHED_RUN_CAP = 20;   // finished (done / stopped / error) pipeline ent
 /** A run ended: its buffered `state` frames go (each is a full deep copy; replayEntry sends a fresh snapshot after
  *  the replay), and beyond FINISHED_RUN_CAP the oldest finished pipeline entries leave the runs Map, as a restart
  *  would: History, the run page and every route read a finished run from its saved row. Paused and interrupted
- *  entries are never evicted (they resume from here). */
+ *  entries are never evicted (they resume from here), nor is one whose teardown still runs (archive waits on it). */
 function settleRunEntry(entry) {
   entry.events = entry.events.filter((ev) => ev.type !== 'state');
   entry.endedAt = Date.now();
   const finished = [...runs.values()].filter((r) => r.orch && (r.kind == null || r.kind === 'run' || r.kind === 'workspace-run')
-    && ['done', 'stopped', 'error'].includes(r.status)).sort((a, b) => (a.endedAt || 0) - (b.endedAt || 0));
+    && ['done', 'stopped', 'error'].includes(r.status) && r.settled).sort((a, b) => (a.endedAt || 0) - (b.endedAt || 0));
   for (const r of finished.slice(0, Math.max(0, finished.length - FINISHED_RUN_CAP))) runs.delete(r.id);
 }
 
@@ -988,8 +1003,10 @@ function extensionSocketAuth(req) {
   return extensionPairing.verify(origin, offered.find((p) => p.startsWith(TOKEN_PREFIX)) || null) || 'refuse';
 }
 
+// noServer: one 'upgrade' listener below routes /ws here and /preview/ to the Browser tab's proxy (issue 1064); with
+// `server`, ws answered every other upgrade path with 400 itself.
 const wss = new WebSocketServer({
-  server,
+  noServer: true,
   path: '/ws',
   verifyClient: (info, done) => {
     if (!isTrustedPeer(info.req)) return done(false, 403);   // G4: before the extension gate, as for HTTP
@@ -1018,6 +1035,16 @@ const wss = new WebSocketServer({
 // stack trace; the http server's own handler (isMain below) is the one that
 // reports it, so this side of the pair only has to not throw.
 wss.on('error', () => {});
+server.on('upgrade', (req, socket, head) => {
+  // Node takes the http server's 'error' listener off an upgraded socket; ws's handleUpgrade adds its own, the 400 below
+  // and a gate's refusal in upgradePreview would not: a client that resets mid-answer (EPIPE) would end Worca.
+  socket.on('error', () => socket.destroy());
+  const path = String(req.url || '').split('?')[0];
+  if (path === '/ws') { wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req)); return; }
+  // No unhandledRejection handler here (F29): a throw inside the upgrade path must end only this socket.
+  if (path.startsWith('/preview/')) { upgradePreview(req, socket, head).catch(() => socket.destroy()); return; }
+  socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n', () => socket.destroy());
+});
 
 /** All currently connected sockets. */
 const sockets = new Set();
@@ -1058,6 +1085,8 @@ heartbeat.unref();
   const httpClose = server.close.bind(server);
   server.close = (cb) => {
     for (const ws of sockets) { try { ws.terminate(); } catch { /* already gone */ } }
+    closePreviewSockets();   // proxied dev-server WebSockets are upgraded sockets too (issue 1064)
+    void pageCapture.close();   // the headless Chrome of the tab tools (issue 1064 slice 3)
     return httpClose(cb);
   };
 }
@@ -1276,7 +1305,7 @@ function askFrameOwner(obj) {
 
 // Browser extension: a surface thread's frames (thread-modes.mjs: a composer or a design chat) never reach an extension
 // socket — they would leak its id and streamed text. A mode is fixed at creation and ids are random: never a stale cache.
-const ASK_MODE_CACHE = new Map();   // threadId -> the thread's raw mode ('composer', 'design') | null
+const ASK_MODE_CACHE = new Map();   // threadId -> the thread's raw mode ('composer') | null
 function askFrameComposer(obj) {
   if (!obj || typeof obj.threadId !== 'string') return false;
   if (ASK_MODE_CACHE.has(obj.threadId)) return isSurfaceMode(ASK_MODE_CACHE.get(obj.threadId));
@@ -1670,6 +1699,9 @@ function wireRun(entry) {
         } catch (err) { console.error(`[worca-ui] round frame failed: ${err && err.message ? err.message : err}`); }
       }
 
+      // The run-finished message: the client cannot tell a demo or $0 run from a real one, so the done frame says
+      // (additive field). The row is persisted before the harness emits `done`; any other ending is never real.
+      if (name === 'done') event.real = entry.status === 'done' && isRealRun(entry.pipelineId);
       record(event);
       if (name === 'done') settleRunEntry(entry);
       // Only the events that can change status or pendingQuestion; log/token frames are far too
@@ -1926,9 +1958,10 @@ app.use('/design-preview', createPreviewGate({
 }));
 
 app.use((req, res, next) => {
-  if (!req.worcaExtensionRoute && !isLocalRequest(req)) {   // S1 itself is unchanged for every other request
-    return res.status(403).json({ error: HOST_FORBIDDEN });
-  }
+  // A Browser tab's preview page runs in an opaque origin (Origin: null) by design: /preview/ requests are held to the
+  // Host check here and to their per-tab token in the proxy (issue 1064). S1 itself is unchanged for every other request.
+  const previewOk = isPreviewPath(req.path) && previewHostOk(req);
+  if (!previewOk && !req.worcaExtensionRoute && !isLocalRequest(req)) return res.status(403).json({ error: HOST_FORBIDDEN });
   next();
 });
 
@@ -2000,6 +2033,9 @@ app.use((req, res, next) => {
   if (admitThisBoxCaller(req)) return next();
   res.status(403).json({ error: AGENT_CALLER_BLOCKED, code: 'AGENT_CALLER_BLOCKED' });
 });
+// The Browser tab's preview proxy (issue 1064): after the peer, host, identity and agent gates, before any body parser
+// (a proxied POST streams through unread) and the static files.
+app.use((req, res, next) => (isPreviewPath(req.path) ? handlePreview(req, res) : next()));
 
 // Ask threads have an owner (ask_threads.created_by). On a shared deployment (a real per-person
 // sign-in, identity.mjs#isSharedIdentity) a person reaches only their own threads and ownerless
@@ -2120,6 +2156,8 @@ if (ASK_VENDOR_ASSETS.marked) {
 if (ASK_VENDOR_ASSETS.dompurify) {
   app.get('/vendor/dompurify/purify.es.mjs', sendEsmModule(ASK_VENDOR_ASSETS.dompurify));
 }
+if (OFFICE_VENDOR_ASSETS.jszip) app.get('/vendor/jszip/jszip.min.js', sendEsmModule(OFFICE_VENDOR_ASSETS.jszip));
+if (OFFICE_VENDOR_ASSETS.docx) app.get('/vendor/docx-preview/docx-preview.min.js', sendEsmModule(OFFICE_VENDOR_ASSETS.docx));
 for (const { prefix, dir, files } of VOICE_VENDOR) {
   if (!dir) continue;
   for (const [name, type] of Object.entries(files)) {
@@ -3186,7 +3224,8 @@ const startRunHandler = async (req, res) => {
         ...(nightMode ? { nightMode: true } : {}),
         tags,
         ...(shape ? { shape } : {}),
-        ...(attachedRequirements.length ? { attachedRequirements } : {}),
+        ...(attachedRequirements.length ? { attachedRequirements } : {}), ...(typeof body.rerunOf === 'string' ? { rerunOf: body.rerunOf } : {}),
+        ...(scanTarget || memoryScope ? {} : { runSetup: await runSetupOf({ ...body, workflowId, guardrailsId }, {}) }),   // as the other arms: Rerun copies it
       });
       entry = {
         id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,
@@ -3338,7 +3377,7 @@ const startRunHandler = async (req, res) => {
         labels,
         ...(shape ? { shape } : {}),
         ...(attachedRequirements.length ? { attachedRequirements } : {}),
-        ...(runSetup ? { runSetup } : {}),
+        ...(runSetup ? { runSetup } : {}), ...(typeof body.rerunOf === 'string' ? { rerunOf: body.rerunOf } : {}),
       });
 
       entry = {
@@ -3516,7 +3555,7 @@ const startRunHandler = async (req, res) => {
         labels,
         ...(shape ? { shape } : {}),
         ...(attachedRequirements.length ? { attachedRequirements } : {}),
-        ...(runSetup ? { runSetup } : {}),
+        ...(runSetup ? { runSetup } : {}), ...(typeof body.rerunOf === 'string' ? { rerunOf: body.rerunOf } : {}),
       });
 
       entry = {
@@ -3635,7 +3674,7 @@ import * as runSkillHost from '../src/core/skills-registry/host.mjs';
 import * as runSkillTexts from '../src/core/skills-registry/texts.mjs';
 import * as runSkillPolicy from '../src/core/policy/effective.mjs';
 import { ROUTE_SEGMENTS } from './routes/index.mjs';
-import { askCardRoute } from './routes/chat/thread-cards.mjs';
+import { askCardRoute, askDesignHandoff } from './routes/chat/thread-cards.mjs';
 import { isPublicPart, publicRelPath } from '../src/core/public-assets.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { readStyleCssEntry } from '../src/core/read-style-css.mjs';
@@ -3846,7 +3885,7 @@ async function validateResumeTarget(pipelineId) {
 async function storedRequestOf(body, stageId, projectDir, startedBy = null, preset = null) {
   const request = { ...body };
   // presetId: the link lives in the ticket's preset_id column (v63), never in the replayed body.
-  for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal', 'presetId']) delete request[k];
+  for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal', 'presetId', ...(body.repeat ? ['rerunOf'] : [])]) delete request[k];   // a one-off fire keeps rerunOf; a repeat's fires are not reruns
   // Text the user authored is part of the request: a prompt FILE is frozen now, so a
   // file deleted or half-edited overnight cannot fail an unattended run.
   if (request.source && request.source.type === 'markdown' && request.source.promptFile && !request.source.promptText) {
@@ -4244,6 +4283,19 @@ export async function schedulerTick({ now = Date.now() } = {}) {
 const RETENTION_EVERY_MS = 24 * 3600_000;
 let _retentionTimer = null;
 let _retentionBusy = false;
+/** One sweep: archive the finished runs older than `days`, and close their shells (issue 1064: a run's tool panel
+ *  terminals go with it, as on every other archive path). Returns pruneOldRuns' report; never throws. */
+async function sweepRunRetention(days) {
+  try {
+    const out = await pruneOldRuns({ days });
+    for (const id of out.archived) await terminals.closeWhere((s) => s.runId === id, 'system', 'run archived').catch(() => {});
+    if (out.archived.length) {
+      console.log(`[worca-ui] retention: archived ${out.archived.length} run(s) older than ${days} day(s)${out.skipped.length ? `, kept ${out.skipped.length}` : ''}`);
+      emitChanged('pipelines-changed', 'updated');
+    }
+    return out;
+  } catch (err) { console.warn(`[worca-ui] retention: ${err?.message || err}`); return { archived: [], skipped: [] }; }
+}
 function scheduleRunRetention(delayMs = 5000) {
   clearTimeout(_retentionTimer);
   _retentionTimer = setTimeout(async () => {
@@ -4251,14 +4303,7 @@ function scheduleRunRetention(delayMs = 5000) {
     const days = runLimits().keepRunsDays;
     if (days && !_retentionBusy) {
       _retentionBusy = true;
-      try {
-        const { archived, skipped } = await pruneOldRuns({ days });
-        if (archived.length) {
-          console.log(`[worca-ui] retention: archived ${archived.length} run(s) older than ${days} day(s)${skipped.length ? `, kept ${skipped.length}` : ''}`);
-          emitChanged('pipelines-changed', 'updated');
-        }
-      } catch (err) { console.warn(`[worca-ui] retention: ${err?.message || err}`); }
-      finally { _retentionBusy = false; }
+      try { await sweepRunRetention(days); } finally { _retentionBusy = false; }
     }
     scheduleRunRetention(RETENTION_EVERY_MS);
   }, delayMs);
@@ -5664,19 +5709,15 @@ async function serveAskFile(res, runDir, askId, index) {
 const ARTIFACT_RAW_MAX_BYTES = 25 * 1024 * 1024;   // the text route caps at 2 MB; why-worca.standalone.html is 7 MB
 const safeFilename = (rel) => String(rel).split('/').pop().replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || 'artifact';
 
-/** Stream one indexed artifact's bytes. `rel` only SELECTS among the run's
- *  indexed rows (never a filesystem path); a stored `..` row is unreachable.
- *  `download` (the routes' `?download=1`, the viewer's and the browser's Download)
- *  is always an `attachment` under a Windows-safe name, takes any extension (no
- *  known type -> application/octet-stream) and has no preview ceiling: sendFile
- *  streams it, nothing is buffered. The preview form keeps its 415, and its 25 MB
- *  413 for every kind EXCEPT audio/video: a player streams and seeks with HTTP
- *  Range (send's default, on both forms), so a long video plays inline at any size
- *  without the file ever being buffered. */
-async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
-  const hit = await resolveIndexedArtifactFileForRow(row, rel);
-  if (!hit) return res.status(404).json({ error: 'artifact not found' });
-  const mime = mimeForPath(hit.rel);
+/** Stream one file's bytes under the raw-route rules (formerly sendArtifactRaw's body; the Files tab's route shares it).
+ *  `open()` → the file handle the CALLER's path guard opened (never a path opened here), or null → 404 `notFound`.
+ *  `download` (`?download=1`): always an `attachment` under a Windows-safe name, any extension, no preview ceiling.
+ *  `asPdf` (`?as=pdf`): an Office document as its PDF preview (src/core/office-preview.mjs). Otherwise the preview form
+ *  keeps its 415 for unknown types and its 25 MB 413 for every kind EXCEPT audio/video (players stream and seek with
+ *  HTTP Range). */
+async function sendRawFile(res, { rel, open, download = false, asPdf = false, notFound = 'artifact not found' }) {
+  if (asPdf) return sendOfficePdf(res, { name: rel, open, notFound });
+  const mime = mimeForPath(rel);
   // V16: the shell's CSP `script-src 'self'` admits any script on this origin. Agent-written JS is served
   // from here, so a script load from the worca origin itself is refused, and the JS is a script only for a
   // deck's sandboxed frame (an opaque origin: cross-site). Anything else gets it as text, which nosniff never
@@ -5688,10 +5729,10 @@ async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
     return res.status(403).json({ error: 'artifact scripts do not run in the worca page' });
   }
   const servedMime = isScript && fetchHeader('sec-fetch-site') !== 'cross-site' ? 'text/plain; charset=utf-8' : mime;
-  if (!mime && !download) return res.status(415).json({ error: 'no preview for this file type', rel: hit.rel });
-  // Served from the file the link check passed, never by path again (V9: openArtifactUnder).
-  const fh = await openArtifactUnder(hit.base, hit.rel);
-  if (!fh) return res.status(404).json({ error: 'artifact not found' });
+  if (!mime && !download) return res.status(415).json({ error: 'no preview for this file type', rel });
+  // The caller's guard opened it (V9: openArtifactUnder for artifacts); never by path again here.
+  const fh = await open();
+  if (!fh) return res.status(404).json({ error: notFound });
   let streaming = false;
   try {
     const st = await fh.stat();
@@ -5703,9 +5744,9 @@ async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
     if ((ifMatch && ifMatch !== '*') || (Number.isFinite(unmodifiedSince) && Math.floor(st.mtimeMs / 1000) * 1000 > unmodifiedSince)) {
       return res.status(412).end();
     }
-    const kind = viewerKindFor(hit.rel);
+    const kind = viewerKindFor(rel);
     const anySize = download || kind === 'audio' || kind === 'video';
-    if (!anySize && size > ARTIFACT_RAW_MAX_BYTES) return res.status(413).json({ error: 'artifact too large to preview', rel: hit.rel, size });
+    if (!anySize && size > ARTIFACT_RAW_MAX_BYTES) return res.status(413).json({ error: 'artifact too large to preview', rel, size });
     res.set('Accept-Ranges', 'bytes');
     // One byte range for the players' seeks (express's req.range); a Range the file cannot satisfy is a 416
     // with Content-Range, never the artifact's type or name. Several ranges get the whole file.
@@ -5724,8 +5765,8 @@ async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
     res.set('Content-Length', String(size ? end - start + 1 : 0));
     res.set('Content-Type', servedMime || 'application/octet-stream');
     res.set('X-Content-Type-Options', 'nosniff');
-    res.set('Content-Disposition', download ? attachmentDisposition(hit.rel)
-      : `${kind === 'binary' ? 'attachment' : 'inline'}; filename="${safeFilename(hit.rel)}"`);
+    res.set('Content-Disposition', download ? attachmentDisposition(rel)
+      : `${kind === 'binary' || kind === 'office' ? 'attachment' : 'inline'}; filename="${safeFilename(rel)}"`);
     res.set('Cache-Control', 'no-store');                       // artifacts are mutable while a run is live
     // Defense in depth for scriptable markup: even opened in a top-level tab the
     // document runs in an opaque origin. The viewer's <iframe sandbox> is the primary guard.
@@ -5756,6 +5797,46 @@ async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
   } finally {
     if (!streaming) await fh.close().catch(() => {});
   }
+}
+
+/** Stream one indexed artifact's bytes. `rel` only SELECTS among the run's indexed rows (never a filesystem path); a
+ *  stored `..` row is unreachable. Served from the file the link check passed (V9: openArtifactUnder). */
+async function sendArtifactRaw(res, row, rel, { download = false, asPdf = false } = {}) {
+  const hit = await resolveIndexedArtifactFileForRow(row, rel);
+  if (!hit) return res.status(404).json({ error: 'artifact not found' });
+  return sendRawFile(res, { rel: hit.rel, open: () => openArtifactUnder(hit.base, hit.rel), download, asPdf });
+}
+/** A raw route's query flags. */
+const rawOpts = (req) => ({ download: req.query.download === '1', asPdf: req.query.as === 'pdf' });
+
+const OFFICE_PDF_STATUS = Object.freeze({ NOT_OFFICE: 415, TOO_LARGE: 413, NO_CONVERTER: 501, CONVERT_FAILED: 422, TIMEOUT: 422 });
+/** An Office document's PDF preview (inline, nosniff, no-store; the PDF itself is cached by content hash). HEAD converts
+ *  too, so the viewer's probe and the frame's GET share one conversion (the second reads the cache). */
+async function sendOfficePdf(res, { name, open, notFound = 'file not found' }) {
+  if (!isOfficePath(name)) return res.status(415).json({ error: 'Only Office documents convert to PDF.', code: 'NOT_OFFICE' });
+  const fh = await open();
+  if (!fh) return res.status(404).json({ error: notFound });
+  let buf;
+  try {
+    const st = await fh.stat();
+    if (!st.isFile()) return res.status(404).json({ error: notFound });
+    if (st.size > OFFICE_LIMITS.maxBytes) return res.status(413).json({ error: 'This document is too large to preview.', code: 'TOO_LARGE' });
+    buf = await fh.readFile();
+  } finally { await fh.close().catch(() => {}); }
+  let pdf;
+  try { pdf = await officePdf(buf, name); } catch (e) {
+    if (e instanceof OfficePreviewError) return res.status(OFFICE_PDF_STATUS[e.code] || 422).json({ error: e.message, code: e.code });
+    throw e;
+  }
+  const base = String(name).split('/').pop().replace(/\.[^.]+$/, '') || 'document';
+  res.status(200).set({
+    'Content-Type': 'application/pdf', 'Content-Length': String(pdf.size), 'X-Content-Type-Options': 'nosniff',
+    'Content-Disposition': `inline; filename="${safeFilename(`${base}.pdf`)}"`, 'Cache-Control': 'no-store',
+  });
+  if (res.req?.method === 'HEAD') return res.end();
+  const stream = fs.createReadStream(pdf.path);
+  stream.on('error', () => res.destroy());
+  stream.pipe(res);
 }
 
 /** The run dir behind a LIVE id: the pipeline id (what /api/runs/:id/artifact
@@ -6167,13 +6248,14 @@ actions.on('status', (snap) => {
   emitChanged('actions-changed', snap.status);
 });
 
-/**
- * The bare `wks-…` id of a workspace row, else null. Live rows store it bare. Rows from the legacy fs→DB
- * migration can hold the composite `workspaces/<dir>` and even `target = 'project'`
- * (migrate-fs-to-db.mjs:360-374), which is why artifacts.mjs reads `target === 'workspace' || !!workspace_key`.
- */
-const bareWorkspaceKey = (row) =>
-  (row.target === 'workspace' || row.workspace_key) && row.workspace_key ? String(row.workspace_key).replace(/^workspaces\//, '') : null;
+function runRowForScope(req, res) {
+  const scope = resolveRunScope(req, res);          // query params; answers 400/404 itself
+  if (!scope) return null;
+  const row = findPipelineRowById(req.params.id);
+  const matches = row && (scope.workspaceId ? bareWorkspaceKey(row) === scope.workspaceId : (row.project_key === (scope.projectKey || projectKey(scope.projectDir))));
+  if (!matches || row.archived_at) { res.status(404).json({ error: 'pipeline not found' }); return null; }
+  return row;
+}
 const isLiveRun = (id) => liveRunIds().includes(id);
 /**
  * D30: this process is still inside the run's orch.run()/orch.resume() promise. liveRunIds() drops a run
@@ -6610,6 +6692,91 @@ const askCommands = createAskCommands({
   onFinish: (threadId, block) => { startTerminalEventTurn(threadId, block).catch((e) => console.warn(`[worca-ui] ask: terminal event for ${threadId}: ${e?.message || e}`)); },
 });
 
+/** A chat's tool folder: its newest worktree of its pinned project that still exists, else that project's own folder.
+ *  { gone } for a chat that is missing, archived or someone else's; { error, code } for a chat with no single project. */
+async function chatToolFolder(threadId, req, { trusted = false } = {}) {
+  const t = askGetThread(threadId);
+  if (!t || t.archivedAt || (!trusted && !askThreadVisible(t, req))) return { gone: true };
+  const scope = chatScopeOf(t.context);
+  if (!scope || !scope.projectKey) return designToolFolder(threadId) || { error: 'This chat has no project. Pick one in the chat to use its tools.', code: 'NO_PROJECT' };
+  const p = (await listProjects()).find((x) => x.key === scope.projectKey);
+  if (!p) return { error: `No project ${scope.projectKey}.`, code: 'NO_PROJECT' };
+  const wt = askListWorktrees(threadId)
+    .filter((w) => w.projectKey === p.key && w.path && fs.existsSync(w.path))
+    .sort((a, z) => String(z.updatedAt).localeCompare(String(a.updatedAt)))[0] || null;
+  return wt ? { dir: wt.path, label: `${p.name} · ${wt.ref}`, projectKey: p.key, worktree: true }
+    : { dir: p.path, label: p.name, projectKey: p.key, worktree: false };
+}
+
+// ── Chat links (issue 1064 §1–§2): the root a chat's file links resolve against ───────────────────────────────────────
+const chatLinks = createChatLinks();
+const RUN_ROOT_RE = /^run:([0-9a-f]{8})$/;
+/** The run a chat follows, as the root spec chatLinkRoots parses (`run:<id>`, never the bare id), or null: its newest
+ *  run link with a saved, not deleted run (there is no "follows" field; D1). An archived run still counts: its
+ *  branch is read (D2). */
+function followedRunOf(threadId) {
+  for (const l of askListRunLinks(threadId)) {
+    if (typeof l.pipelineId !== 'string' || !/^[0-9a-f]{8}$/.test(l.pipelineId)) continue;
+    const row = findPipelineRowById(l.pipelineId);
+    if (row && !row.deleted_at) return `run:${l.pipelineId}`;
+  }
+  return null;
+}
+/** A run's link roots, one per member: its folder while it has one (worktree, checkout), else its feature branch. */
+async function runLinkRoots(pid) {
+  const row = findPipelineRowById(pid);
+  if (!row || row.deleted_at) return { error: 'This run is gone.', code: 'ROOT_GONE' };
+  const root = `run:${pid}`;
+  const label = row.title || pid;
+  const targets = row.archived_at ? null : terminalTargets(row, { isLive: isLiveRun });
+  const roots = [];
+  for (const m of membersOfRow(row)) {
+    const member = row.workspace_key ? m.projectKey : null;
+    const t = targets?.members.find((x) => x.projectKey === m.projectKey);
+    if (t?.cwd && fs.existsSync(t.cwd)) { roots.push({ kind: 'dir', dir: t.cwd, root, member, label }); continue; }
+    const feature = m.br?.feature;
+    if (feature && m.projectDir && await branchExists(m.projectDir, feature)) {
+      roots.push({ kind: 'branch', repoDir: m.projectDir, ref: `refs/heads/${feature}`, root, member, label });
+    }
+  }
+  return roots.length ? { roots, root, label } : { error: "This run's files are gone: it has no folder and no branch.", code: 'ROOT_GONE' };
+}
+/** A chat's link roots: { roots, root, label } | { gone } | { error, code }. `spec` undefined = the default (the followed
+ *  run, else the chat's folder); '' = that folder; 'run:<id>' = a run it links; 'out' = its output folder. `trusted`: the tab bridge. */
+async function chatLinkRoots(threadId, req, { spec, trusted = false } = {}) {
+  const t = askGetThread(threadId);
+  if (!t || t.archivedAt || (!trusted && !askThreadVisible(t, req))) return { gone: true };
+  if (spec === 'out') return askOutRoot(threadId);   // issue 1064 D7: no project needed (the Overview's saved files)
+  const want = spec === undefined ? followedRunOf(threadId) : spec;
+  if (want) {
+    const pid = RUN_ROOT_RE.exec(String(want))?.[1];
+    if (!pid || !askListRunLinks(threadId).some((l) => l.pipelineId === pid)) return { error: 'This chat does not follow that run.', code: 'ROOT_REFUSED' };
+    const r = await runLinkRoots(pid);
+    // A default root that is gone falls back to the chat's folder; an explicit one answers why.
+    if (!r.error || spec !== undefined) return r;
+  }
+  const f = await chatToolFolder(threadId, req, { trusted });
+  if (f.gone || f.error) return f;
+  return { roots: [{ kind: 'dir', dir: f.dir, root: null, member: null, label: f.label }], root: null, label: f.label };
+}
+
+// A run keeps its run diff (live while it runs, the saved one after); a project's or chat's folder shows its
+// uncommitted work against its last commit.
+/** Run statuses whose Changes tab reads the saved diff (app.js RD_TERMINAL's ended ones). */
+const TOOL_RUN_ENDED = new Set(['done', 'stopped', 'error']);
+
+// The Browser tab's framing check (issue 1064 §3, src/core/frame-check.mjs). A remote Worca follows the chat's web
+// policy (no chat = web off: nothing is asked); a local one asks for the person at the keyboard; none behind the egress proxy.
+const frameCheck = createFrameCheck({ proxied: () => (egressNow()?.status || 'off') !== 'off' });
+
+/** Archiving or deleting a chat closes its shells: its agent-mode ones (askCommands) and the ones its tabs opened. */
+function closeChatTerminals(threadId, reason) {
+  return Promise.allSettled([
+    askCommands.closeThread(threadId),
+    terminals.closeWhere((s) => s.chatId === threadId, 'system', reason),
+  ]);
+}
+
 /** The folder an Ask command runs in: a run member's terminal target, or
  *  a project's folder only inside the chat scope (P4): the named member of its workspace, else the chat's project.
  *  The person routes' logic without their `res`; no folder ever comes from the model. */
@@ -6737,14 +6904,23 @@ function sendCheckoutError(res, e) {
     ...(e?.holder ? { holder: e.holder, projectKey: e.projectKey || null } : {}) });
 }
 
-/** Start now, or, while setup is pending/running/interrupted, queue behind it (D25). */
+/** Re-running `npm ci` under a live dev server would pull node_modules out from under it. */
+const liveActionsOf = (runId, pk) => actions.listFor(runId)
+  .some((s) => s.member === pk && s.actionId !== SETUP_ACTION_ID && ['starting', 'running', 'ready'].includes(s.status));
+/** A setup command saved after this checkout ran with none (Use this adds one) runs before its next start: never in a
+ *  linked folder (the person's own clone runs setup only when asked) and never under a live action of that member. */
+const setupLate = (rec, runId, pk) => rec.setup?.status === 'none' && !rec.external && !!readProjectActions(pk).setup
+  && !liveActionsOf(runId, pk);
+
+/** Start now, or, while setup is pending/running/interrupted (or added since, `setupLate`), queue behind it (D25). */
 async function startOrQueue(req, res, row, m, action, extra = {}) {
   const rec = checkoutRecOf(row.id, m.projectKey);
   if (!rec) return res.status(409).json({ error: 'Check out the run first.', code: 'NOT_CHECKED_OUT' });
   const setup = rec.setup?.status;
   if (setup === 'failed') return res.status(409).json({ error: 'The setup command failed. Fix it and run setup again.', code: 'SETUP_FAILED' });
   const spec = { runId: row.id, member: m.projectKey, worktreeDir: rec.worktreeDir, branch: rec.branch, action };
-  if (['pending', 'running', 'interrupted'].includes(setup) || setupJobs.has(`${row.id}:${m.projectKey}`)) {
+  const late = setupLate(rec, row.id, m.projectKey);
+  if (late || ['pending', 'running', 'interrupted'].includes(setup) || setupJobs.has(`${row.id}:${m.projectKey}`)) {
     const instanceId = instanceIdFor(row.id, m.projectKey, action.id);
     // A queued start that cannot start must say so; nobody is waiting on the HTTP answer any more.
     const report = (text) => {
@@ -6756,7 +6932,7 @@ async function startOrQueue(req, res, row, m, action, extra = {}) {
       recordActionFrame(instanceId, { type: 'action-status', snapshot: null, error: text });
       emitChanged('actions-changed', 'queued-failed');
     };
-    ensureSetup(row.id, m.projectKey, { enabled: true, rerun: setup === 'interrupted' })   // every caller passed requireActions
+    ensureSetup(row.id, m.projectKey, { enabled: true, rerun: setup === 'interrupted' || late })   // every caller passed requireActions
       .then((ok) => (ok ? actions.start(spec) : report('Not started: the setup command did not finish successfully.')))
       .catch((e) => report(`Not started: ${e?.message || e}`));
     return res.status(202).json({ ...extra, queued: true, instanceId });
@@ -6768,6 +6944,126 @@ async function startOrQueue(req, res, row, m, action, extra = {}) {
     res.status(status).json({ error: e.message, code: e.code || 'ERROR' });
   }
 }
+
+// ── The Browser tab's preview proxy (issue 1064, src/core/preview-proxy.mjs) ─────────────────────────────────────────
+// /preview/<port>/<token>/… forwards to 127.0.0.1 (then ::1) only. Allowed ports: every loopback port by default, or
+// the Actions range and running instances' ports (Settings › Runs › Actions › Preview ports); a hosted Worca is always
+// "Actions range only" — any loopback port there reaches the server's own internal services. Never Worca's own port.
+// Same gates as the Actions routes: hosted Worca proxies only with WORCA_ACTIONS_REMOTE=1. A token is minted per tab
+// (POST below, an exact-origin /api request) and names one port; the frame's own requests carry no cookie (opaque
+// origin), so the token is their auth.
+const isPreviewPath = (p) => typeof p === 'string' && p.startsWith('/preview/');
+/** The host guard without its Origin half: a preview page's Origin is `null` on purpose. */
+const previewHostOk = (req) => hostGuard({ headers: { host: req.headers.host } });
+const previewTokens = createPreviewTokens();
+/** 'all' | 'range' — what the proxy applies. Hosted is ENFORCED to 'range': no stored setting can lift it. */
+const previewPortMode = () => (REMOTE_MODE ? 'range' : actionsSettings().previewPorts);
+const previewRefusal = (port, { model = false } = {}) => portRefusal(port, { all: !model && previewPortMode() === 'all',
+  range: parsePortRange(actionsSettings()), held: actions.running().flatMap((s) => Object.values(s.ports || {})), self: updatePort() });
+const previewProxy = createPreviewProxy({
+  tokens: previewTokens,
+  refuse: previewRefusal,
+  pageOrigins: (req) => (req.headers.host ? [`http://${req.headers.host}`, `https://${req.headers.host}`] : []),
+  drop: () => [UI_TOKEN_HEADER, String(process.env.WORCA_IDENTITY_HEADER || '').trim()],
+  // Another Worca (a run's Action of worca itself): asked again whenever the proxy re-resolves a port's host, so a token
+  // minted for a dev server is refused once a Worca answers on that port instead.
+  isWorca: async (host, port) => (await probeUi({ host, port, timeoutMs: 1000 })).state === 'worca',
+});
+const PREVIEW_ACTIONS_OFF = 'Actions are turned off on this hosted deployment, and local previews with them. An administrator can enable them with WORCA_ACTIONS_REMOTE=1.';
+function handlePreview(req, res) {
+  if (!actionsEnabledHere(req)) return sendPreviewNote(res, 403, 'ACTIONS_DISABLED', PREVIEW_ACTIONS_OFF);
+  previewProxy.handle(req, res).catch((e) => {
+    console.warn(`[worca-ui] preview: ${e?.message || e}`);
+    if (!res.headersSent) sendPreviewNote(res, 502, 'UPSTREAM', 'The preview failed.');
+  });
+}
+/** A /preview/ WebSocket upgrade (dev-server HMR): upgrades bypass express, so the HTTP gates run here by hand. */
+async function upgradePreview(req, socket, head) {
+  const refuse = (status, text) => { socket.end(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, () => socket.destroy()); };
+  socket.on('error', () => socket.destroy());
+  if (!isTrustedPeer(req)) return refuse(403, 'Forbidden');
+  dropUntrustedIdentityHeader(req);
+  if (!previewHostOk(req)) return refuse(403, 'Forbidden');
+  let who = null;
+  try { who = await requestIdentity(req); } catch { return refuse(503, 'Service Unavailable'); }
+  if (!who) return refuse(401, 'Unauthorized');
+  req.worcaUser = who;
+  if (!admitThisBoxCaller(req, { ws: true }) || !actionsEnabledHere(req)) return refuse(403, 'Forbidden');
+  return previewProxy.upgrade(req, socket, head);
+}
+function closePreviewSockets() { previewProxy.closeAll(); }
+const PREVIEW_REFUSED = {
+  BAD_PORT: [400, () => 'port must be a whole number from 1 to 65535.'],
+  SELF: [403, () => 'Worca does not preview itself.'],
+  PORT_NOT_ALLOWED: [403, (port) => {
+    const r = parsePortRange(actionsSettings());
+    return REMOTE_MODE
+      ? `Port ${port} is outside the ports Worca previews on this hosted deployment: ${r.low}–${r.high} and running Actions.`
+      : `Port ${port} is outside the ports Worca previews: ${r.low}–${r.high} and running Actions. Choose "All local ports" under Preview ports in Settings › Runs › Actions, or widen the range.`;
+  }],
+};
+
+// ── The tool panel's tabs for the chat (issue 1064 slice 3, src/core/tab-tools.mjs) ───────────────────────────────
+// The page mirrors its chat and project tabs (PUT /api/tools/tabs); open_tab adds the assistant's; screenshot_tab,
+// read_tab and Pick element load a page in headless Chrome through the same preview rules the Browser tab follows.
+const toolTabs = createToolTabsMirror();
+let pageCapture = createPageCapture();
+/** Who owns a chat's mirrored tabs: its creator on a shared deployment, '' otherwise (askViewer(req) on the page side). */
+const tabOwnerOf = (t) => (askSharedOwner(t) ? t.createdBy : '');
+const PREVIEW_ACTIONS_OFF_SHORT = 'Actions are turned off on this hosted deployment, and local previews with them.';
+const tabTools = createTabTools({
+  mirror: toolTabs,
+  thread: (threadId) => {
+    const t = askGetThread(threadId);
+    if (!t || t.archivedAt) return null;
+    return { owner: tabOwnerOf(t), projectKey: chatScopeOf(t.context)?.projectKey || null };
+  },
+  web: (threadId) => askWebAccessFor(threadId, askGetThread(threadId)?.context),
+  previewRefusal: async (port, { model = false } = {}) => {
+    if (!actionsEnabledHere(null)) return PREVIEW_ACTIONS_OFF_SHORT;
+    const why = previewRefusal(port, { model });
+    if (why) return model && why === 'PORT_NOT_ALLOWED' ? modelPortRefusal(port, parsePortRange(actionsSettings())) : PREVIEW_REFUSED[why][1](port);
+    if (await previewProxy.worcaAt(port)) return 'This port runs a Worca. Open it in a browser tab of its own.';
+    return null;
+  },
+  // Headless Chrome on THIS machine reaches Worca's own loopback listener (the command bridge's address). The token
+  // is the capture's own and is revoked when the capture ends (done), so captures never evict a live tab's token.
+  previewBase: async (port) => {
+    const token = previewTokens.issue(port);
+    return { origin: `http://127.0.0.1:${updatePort()}`, prefix: previewPrefix(port, token), done: () => previewTokens.revoke(token) };
+  },
+  capture: (o) => pageCapture.capture(o),
+  saveImage: (threadId, { name, png }) => {
+    const used = askListAttachments(threadId).reduce((n, a) => n + (Number(a.bytes) || 0), 0);
+    if (used + png.length > ASK_LIMITS.showFiles.threadBytes) {
+      throw new TabToolError(`screenshot_tab: this chat's files would pass ${Math.round(ASK_LIMITS.showFiles.threadBytes / 1048576)} MiB`, 'BUDGET');
+    }
+    const att = askAddAttachment(threadId, null, { name, kind: 'image', mime: 'image/png', data: png });
+    return { id: att.id, name: att.name, bytes: att.bytes };
+  },
+  notify: (threadId, extra = {}) => broadcast({ type: 'ask-tool-tabs', threadId, ...extra }),   // ask-*: askFrameOwner keeps it to the chat's owner
+  // open_tab files (issue 1064 §1): the chat's link root, checked by chat-links.mjs; its refusals reach the assistant.
+  fileTarget: async (threadId, input) => {
+    const r = await chatLinkRoots(threadId, null, { trusted: true });
+    if (r.gone) throw new TabToolError('open_tab: this chat is gone', 'NOT_FOUND');
+    if (r.error) throw new TabToolError(`open_tab: ${r.error}`, r.code || 'NO_ROOT');
+    try { return await chatLinks.target(r.roots, input); }
+    catch (e) { if (e instanceof ChatLinkError) throw new TabToolError(`open_tab: ${e.message}`, e.code); throw e; }
+  },
+});
+
+// The tab bridge (classic mode only: relay mode is agent isolation, where the preview proxy refuses agent callers).
+const askTabsEnabled = () => !agentIdentity(), toolPanelOn = () => flagEnabled('toolPanel');   // toolPanel: the tab tools (Labs)
+const askTabBridges = new Map();   // token -> threadId (one per turn, dropped when the turn ends)
+function askTabBridge({ threadId }) {
+  const design = askDesignHandoff(threadId), tabs = toolPanelOn(); if (!askTabsEnabled() || (!tabs && !design)) return null;
+  const token = randomBytes(24).toString('base64url');
+  askTabBridges.set(token, threadId);
+  const port = server.address()?.port || PORT;
+  return { url: `http://127.0.0.1:${port}/api/ask/tabs`, token, ...(tabs ? { tabs: true } : {}), ...(design ? { design: true } : {}), dispose: () => { askTabBridges.delete(token); tabTools.endTurn(token); } };
+}
+const tabFailure = (res, e) => res.status(e instanceof TabToolError || e?.name === 'CaptureError' ? 409 : 500)
+  .json({ error: e?.message || String(e), code: e?.code || null });
 
 // ---------------------------------------------------------------------------
 // PR remotes (fork support). The ship-it dialog picks (1) the remote the feature
@@ -7032,6 +7328,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
     // Who shipped it (the footer names who STARTED the run). No actor: worca opened it (a slice's draft).
     const where = memberKey ? ` in \`${target.memberName}\`` : '';
     appendAuditById(pipelineIdForPr, `PR ${pr.existed ? 'linked' : (newDraft ? 'created (draft)' : 'created')}${where}${byActor(actor)}: ${pr.url}`, { actor });
+    if (!pr.existed) announcePrOpened(pipelineIdForPr, { prUrl: pr.url, draft: newDraft, memberName: memberKey ? target.memberName : null });
   }
   return { ok: true, pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr, closes: !!closing || !!workItemId };
 }
@@ -7353,7 +7650,7 @@ registerRequirementsRoutes(app, { broadcast, server, deps: {
   startRun: (body, opts) => invokeStartRun(body, null, opts),   // D6: through the run handler, as PR watch does
   runSummary: requirementsRunSummary,
 } });
-registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal, deleteThread: deleteAskThreadFully, dropGrants: (id) => previewGrants.revokeDesign(id), versions: { list: listVersions, restore: (id, n) => restoreVersion({ designId: id, n }) }, postSystemNotice: postAskSystemNotice, thumbs: designThumbs, soundCards } });
+const designApi = registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal, renameThread: (id, title, from) => { try { if (askGetThread(id)?.title === String(from).slice(0, 120)) askUpdateThread(id, { title: String(title).slice(0, 120) }); } catch { /* the chat went */ } }, dropGrants: (id) => previewGrants.revokeDesign(id), versions: { list: listVersions, restore: (id, n) => restoreVersion({ designId: id, n }) }, postSystemNotice: postAskSystemNotice, thumbs: designThumbs, soundCards } });
 registerPreviewTokenRoute(app, { flagGate: requireFlag('design'), grants: previewGrants, getDesign, viewerOf: askViewer });
 /** These routes push notes off the machine or rewrite them: a browser page must be served by THIS Worca —
  *  isLocalRequest checks the hostname, never the port, and a body-less POST needs no CORS preflight (decision E8).
@@ -8061,6 +8358,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasSmartNaming = has('smartNaming');      // null clears the stored block
   const hasDebugSpawnKey = has('debugSpawnEnabled');
   const hasKeepAwakeKey = has('keepAwake');
+  const hasChatLinksKey = has('chatLinksInPanel');
   const hasLimitResumeKey = has('resumeAfterUsageLimit');
   const hasAutoPrDescKey = has('autoGeneratePrDescription');
   const hasUpdateCheckKey = has('updateCheck');
@@ -8194,7 +8492,13 @@ async function applySettingsPatch(body, { person = null } = {}) {
     });
     if (has('nightModeToggle')) asSettingsField('nightModeToggle', () => assertNightModeToggleInput(body.nightModeToggle));
     if (hasActionsKey) asSettingsField('actions', () => assertActionsInput(body.actions));
+    if (hasActionsKey && REMOTE_MODE) asSettingsField('actions', () => {
+      if (body.actions && typeof body.actions === 'object' && body.actions.previewPorts === 'all') {
+        throw new Error('actions.previewPorts stays "Actions range only" on a hosted Worca');
+      }
+    });
     if (hasKeepAwakeKey) asSettingsField('keepAwake', () => assertKeepAwakeInput(body.keepAwake));
+    if (hasChatLinksKey) asSettingsField('chatLinksInPanel', () => assertChatLinksInPanelInput(body.chatLinksInPanel));
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
     if (hasNetworkWaitKey) asSettingsField('networkWait', () => assertNetworkWaitInput(body.networkWait));
     if (hasRunLimitsKey) asSettingsField('runLimits', () => assertRunLimitsInput(body.runLimits));
@@ -8228,6 +8532,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasSmartNaming) await setSmartNaming(body.smartNaming);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
     if (hasKeepAwakeKey) { await setKeepAwake(body.keepAwake); syncKeepAwake(); }
+    if (hasChatLinksKey) await setChatLinksInPanel(body.chatLinksInPanel);
     if (hasLimitResumeKey) await setResumeAfterUsageLimit(body.resumeAfterUsageLimit);
     if (hasAutoPrDescKey) await setAutoGeneratePrDescription(body.autoGeneratePrDescription);
     if (hasUpdateCheckKey) {
@@ -8269,7 +8574,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasHideEnginesKey || hasThemeKey || hasScreensaverKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasDesignModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasChatLinksKey || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasHideEnginesKey || hasThemeKey || hasScreensaverKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasDesignModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -8372,13 +8677,11 @@ async function snapshotFor(setup, basis) {
   return completeSnapshot({ ...setup, overlay: parsed.overlay || undefined }, resolved);
 }
 
-/**
- * The run's setup for pipelines.run_setup (v62): the normalized body's preset keys as full picks for the run's own
- * target — the value Save setup as preset stores. Never blocks a start: any failure (or > 32 KB) keeps nothing.
- */
+/** The run's setup for pipelines.run_setup (v62): the normalized body's preset keys as full picks for the run's own target
+ *  (none: a No-project run's global setup, no branch keys) — what Save setup as preset stores. Never blocks a start: a failure or > 32 KB keeps nothing. */
 async function runSetupOf(normalized, basis) {
   try {
-    const setup = setupFromBody(normalized, { scope: basis.workspaceId ? 'workspace' : 'project' });
+    const setup = setupFromBody(normalized, { scope: basis.workspaceId ? 'workspace' : basis.projectDir ? 'project' : 'global' });
     const json = JSON.stringify(await snapshotFor(setup, basis));
     return Buffer.byteLength(json) <= PRESET_LIMITS.setupBytes ? json : null;
   } catch (err) {
@@ -8700,7 +9003,9 @@ async function deleteAskThreadFully(id) {
   // Outside the `if (job)` block below: a thread deleted while it had a queued
   // event turn but no live job entry would otherwise keep its queue forever.
   askDeferred.delete(id);
-  await askCommands.closeThread(id).catch(() => {});        // #574: its Ask terminal sessions
+  await closeChatTerminals(id, 'chat deleted');        // #574: its Ask terminal sessions
+  // Issue 1064 slice 3: its mirrored tool panel tabs. Best-effort: a throw here must not leave the id in askDeleting.
+  try { toolTabs.dropScope(tabScope('chat', id)); } catch { /* the rows stay; no chat reaches them once it is gone */ }
   try {
     const stopJob = () => {
       const job = askJobs.get(id);
@@ -8791,9 +9096,9 @@ function askWebAccessFor(threadId, ctx) {
  *  (`edits`) — with the runtimes this host actually has (the python probe, cached 60 s); plus the web section when `web`
  *  (askWebAccess() for this turn) is on, and the MCP servers section when the turn has registry copies (`mcp`,
  *  askMcpPromptInput()). Memory is mounted, not rendered. */
-async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude', chat = null } = {}) {
+async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude', chat = null, tabs = false, design = false, designChat = false } = {}) {
   const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
-  return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, git: gitAvailable(),
+  return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, tabs, design, designChat, git: gitAvailable(),
     ...(engine !== 'claude' ? { engine } : {}), shape: true, ...(chat ? { chat } : {}) });
 }
 
@@ -8802,11 +9107,6 @@ async function askComposerSystemPromptFor(catalog, { web = null, engine = 'claud
   // `enabled: true`: draft_script is ALWAYS a composer tool, so its program contract ("Scripts you can create") must
   // be in the prompt even when Ask's "Create and run scripts" setting is off (that setting gates test_script only).
   return askBuildComposerSystemPrompt(catalog, { scripts: await askScriptPromptInput({ enabled: true }), web, ...(engine !== 'claude' ? { engine } : {}) });
-}
-
-/** The Design chat's system prompt (Design P5): its own rules + the web section — no catalog, MCP, commands or hosting rule. */
-async function askDesignSystemPromptFor({ web = null, engine = 'claude' } = {}) {
-  return buildDesignSystemPrompt({ web, ...(engine !== 'claude' ? { engine } : {}) });
 }
 
 /** "scheduled Sat Sep 19, 02:00 (run 1a2b…)" / "repeats: Every weekday at 02:00 (sch_…)" / "proposes: …" — or ''. */
@@ -9127,7 +9427,10 @@ function askSignedIn(req) {
   return who.source === 'local' ? null : who.name;
 }
 
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null, scopeNote = null }, { features = [] } = {}) {
+/** The voice-merge pre-check startAskTurn runs (tests swap it to reach the write's own in-tx refusal). */
+let askSupersedePrecheck = askSupersedeRefusal;
+
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, handsFree = false, client = null, onUserRow = null, chatContext = null, scopeNote = null, supersedes = null }, { features = [] } = {}) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -9136,8 +9439,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   // any of those readers ever becomes genuinely async: it is synchronous —
   // check-and-set cannot interleave — and runs BEFORE the first write, so a
   // loser leaves no rows.
-  if (askDeleting.has(id)) return { ok: false, status: 409, error: 'thread is being deleted' };
-  if (askInFlight(id)) return { ok: false, status: 409, error: 'turn in flight' };
+  const supersedeAt = Date.now();   // one instant for the pre-check and the write's re-check: they cannot disagree on age
+  const busy = askDeleting.has(id) ? { error: 'thread is being deleted' } : askInFlight(id) ? { error: 'turn in flight' } : supersedes ? askSupersedePrecheck(id, supersedes, { now: supersedeAt }) : null;   // + a voice merge (docs/speech.md); its write re-checks in the tx
+  if (busy) return { ok: false, status: 409, error: busy.error, ...(busy.code ? { code: busy.code } : {}) };
   // #943: an engine switch can commit while the caller awaited after reading `thread` (a scope change, askEventPick).
   // A turn from that snapshot would run on the engine the chat just left, resume its session and store it again.
   const live = askGetThread(id);
@@ -9145,8 +9449,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     return { ok: false, status: 409, error: 'this chat moved to another engine meanwhile: send your message again', code: 'engine-changed' };
   }
   const composerMode = thread.mode === 'composer';
-  const designMode = thread.mode === 'design';   // Design P5: a design's own chat
-  const surfaceMode = composerMode || designMode;   // a page's own chat: no MCP registry, skills, commands or join notice
+  const dChat = flagEnabled('design') ? designIdForThread(id) : null;   // a chat with a design (designs.thread_id): Ask plus the design kit
+  const surfaceMode = composerMode;   // a page's own chat: no MCP registry, skills, commands or join notice
   // D5 backstop, before anything is stored: an engine Ask does not run on (Cursor). The catalog filter
   // (ask/models.mjs) already makes such a model unknown to validateModelEffort.
   const modelEngine = model ? askTurnEngine(id, thread, model) : null;
@@ -9170,13 +9474,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
 
   let asstMsg = null;
   let turn;
-  let echoAttachments = [];
+  let echoAttachments = [], superseded = [], userMsg;
   try {
-    // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8).
-    // `ctx` (pin-merged) rather than cv.context: the stored row is what restores
-    // the selector on reopen and what the MCP child reads for tool defaulting.
-    // The engine is stored with the model (#635): a chat stays on it even if its model later leaves the catalog.
-    askUpdateThread(id, { context: ctx, model, effort, engine: modelEngine || 'claude', ...(mcpOff !== undefined ? { mcpOff } : {}), ...(agentMode !== undefined ? { agentMode } : {}) });
     // §7.4 — NOTHING is stamped on the row before the 202: the thread stays
     // untitled (the header reads "Ask Worca") until the D13 background title
     // announces itself. titleWasAuto gates that call: a title given at THREAD
@@ -9191,9 +9490,15 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // message or an event turn. whereOf is pure, so the row is still written before the first await.
     const where = synthetic ? null : whereOf(ctx);
     const whereBlocks = where ? [{ kind: 'where', label: where.label, icon: where.icon }] : [];
-    const userMsg = askAppendMessage(id, synthetic
+    ({ message: userMsg, superseded } = askAppendSupersedingMessage(id, synthetic   // supersedes null = a plain append
       ? { role: 'user', text, blocks: [{ kind: 'notice', synthetic: true, ...(synthetic.quiet ? { quiet: true } : {}), text: synthetic.notice }] }
-      : { role: 'user', text, ...(whereBlocks.length ? { blocks: whereBlocks } : {}) });
+      : { role: 'user', text, ...(whereBlocks.length ? { blocks: whereBlocks } : {}) }, supersedes, { now: supersedeAt }));
+    // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8), AFTER the user row: a voice merge
+    // the write's re-check refuses then leaves the thread as it was.
+    // `ctx` (pin-merged) rather than cv.context: the stored row is what restores
+    // the selector on reopen and what the MCP child reads for tool defaulting.
+    // The engine is stored with the model (#635): a chat stays on it even if its model later leaves the catalog.
+    askUpdateThread(id, { context: ctx, model, effort, engine: modelEngine || 'claude', ...(mcpOff !== undefined ? { mcpOff } : {}), ...(agentMode !== undefined ? { agentMode } : {}) });
     job.userMessageId = userMsg.id;
     // Freeform chat (M4): the caller records where this row came from BEFORE any listener can see it — the broadcast
     // below wakes the chat bridge's reconciler on another queue, and enqueueChatWork runs an idle queue on the next
@@ -9232,7 +9537,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         ...featureBlocks,
       ]);
     }
-    broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); // echo for other tabs
+    broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); if (superseded.length) broadcast({ type: 'ask-superseded', threadId: id, messageIds: superseded, by: userMsg.id });   // echo for other tabs, then the rows a voice merge hid (not replay-buffered)
     asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model, effort, engine: modelEngine || 'claude' });   // #943: per-reply engine
     job.messageId = asstMsg.id;
 
@@ -9265,11 +9570,10 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // can attach (ask/mcp.mjs mcpForEngine): a locked-down chat's lockdown allows them by name beside worca's own server.
     const engine = ASK_ENGINES.includes(modelEngine) ? modelEngine : 'claude';
     const lockedDown = engine !== 'claude';
-    // Design P8 (L8.13): every Design chat turn claims its design for the turn's person's agent (a turn with none: the
+    // Design P8 (L8.13): every turn of a chat with a design claims it for the turn's person's agent (a turn with none: the
     // design's maker's). A refused claim throws its own safe text, which the catch below answers.
-    const dChat = designMode ? designIdForThread(id) : null;   // null: the design row went before its thread
     if (dChat) designBuilds.claim(dChat, { owner: currentOwner() ?? getDesign(dChat)?.createdBy ?? null });
-    // Design P8 (L8.10): a locked-down Design chat reads its design with worca's file tools: work/ first, then its project.
+    // Design P8 (L8.10): a locked-down chat with a design reads its design with worca's file tools: work/ first, then its project.
     const did = lockedDown ? dChat : null;
     const dKey = did ? getDesign(did)?.projectKey : null;
     const dProj = dKey ? (await listProjects()).find((p) => p.key === dKey)?.path : null;
@@ -9281,20 +9585,24 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // Agent mode (#574; worca Chat R5): an Ask chat is ALWAYS in agent mode where the host allows commands at all.
     // The thread's agentMode column and a message's agentMode are still validated and stored — never read here.
     const agentOn = !surfaceMode && chatAgentModeFor(id, chatBound);
-    const systemPrompt = designMode ? await askDesignSystemPromptFor({ web, engine }) : composerMode
-      ? await askComposerSystemPromptFor(catalog, { web, engine })
-      : await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn, engine,
-        chat: chatConv ? { platform: chatConv.platform } : null });
+    // Issue 1064 slice 3: the tab tools. Like agent mode, never in a chat bound to a platform conversation: no page or
+    // tool panel takes its tabs.
+    const tabsOn = !surfaceMode && !chatBound && askTabsEnabled();
+    const systemPrompt = composerMode ? await askComposerSystemPromptFor(catalog, { web, engine })
+      : await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn, engine, tabs: tabsOn && toolPanelOn(), design: tabsOn && askDesignHandoff(id),
+        designChat: !!dChat, designPictures: designPicturesReady(), chat: chatConv ? { platform: chatConv.platform } : null });
     // Shared terminal: what the user ran in this chat's Ask tabs since its last user turn (their commands never wake
     // the chat; an event turn leaves them for the next user turn).
     if (!synthetic && !chatBound && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
+    if (tabsOn && toolPanelOn()) headerCtx.tabs = tabTools.headerTabs(id);
     const header = askBuildContextHeader(headerCtx);
-    // The open canvas rides the composer chat's turn prompt (never the 1 KB context header, which clips); a design chat's
-    // [design chat] block (the design, its plan, the open build and the pins) rides it the same way.
-    const composerBlock = designMode ? await designPromptBlock(askGetThread(id)) : composerMode ? await composerPromptBlock(askGetThread(id)) : '';
+    // The open canvas rides the composer chat's turn prompt (never the 1 KB context header, which clips); a chat with a
+    // design gets its [design chat] block (the design, its plan, the open build and the pins) the same way.
+    const composerBlock = dChat ? await designPromptBlock(askGetThread(id)) : composerMode ? await composerPromptBlock(askGetThread(id)) : '';
     const prompt = askBuildTurnPrompt(composerBlock ? `${header}\n\n${composerBlock}` : header, text, inline,
-      chatBlock ? askRenderChatContextPrompt(chatBlock) : '', askRenderAttachedRequirementsPrompt(featureBlocks));
-    const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
+      chatBlock ? askRenderChatContextPrompt(chatBlock) : '', askRenderAttachedRequirementsPrompt(featureBlocks),
+      { spoken: handsFree === true && !synthetic, supersedes: superseded.length > 0 });
+    const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq && !m.supersededBy);   // rows a voice merge hid stay out
     const restoredPrompt = askBuildRestoredPrompt(prior, prompt);
     // #943: no provider session but replies already — the first turn after an engine switch, or after a failed resume
     // cleared the session — starts fresh WITH the transcript (text plus one line per tool call, card, run, attachment;
@@ -9308,8 +9616,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // A shared sign-in's name: the MCP child reads/marks notifications per person (step 3); Away mode
     // switches are attributed to it.
     const turnReader = reader || (thread.createdBy && askSharedOwner(thread) ? thread.createdBy : null);
-    // No hidden AI (L30): a design chat makes no title call and no suggestion call; an event turn makes neither.
-    const helpers = turnHelperFlags({ mode: thread.mode || null, synthetic: !!synthetic, userSeq: userMsg.seq, titleWasAuto });
+    // An event turn makes no title call and no suggestion call; a title the person or a design gave is never replaced.
+    const helpers = turnHelperFlags({ synthetic: !!synthetic, userSeq: userMsg.seq, titleWasAuto });
     turn = createAskTurn({
       threadId: id, assistantMessageId: asstMsg.id, userMessageId: userMsg.id,
       reader: turnReader,
@@ -9325,7 +9633,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       skills: skills.result,
       agentMode: agentOn,
       composer: composerMode ? ((askGetThread(id) || {}).composer || null) : null,
-      design: designMode,
+      design: !!dChat,
       ...(designRoots ? { designRoots } : {}),
       suggest: helpers.suggest,                     // ask-suggestion: a user's message only — an event turn suggests nothing
       ...(lockedDown ? {
@@ -9344,6 +9652,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         agentRelay: agentIdentity() ? (o) => askAgentRelay({ ...o, engine }) : null,
         commandBridge: askCommandBridge,                     // #574: null unless agent mode can work here
         proxyBridge: askProxyBridge,                         // the corporate proxy bridge: null for an agent caller
+        tabsBridge: tabsOn ? askTabBridge : null,   // issue 1064 slice 3: the tab tools
         onFrame: stampAskFrames(id, job),
         onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
         onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
@@ -9365,7 +9674,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         // set_away_now / set_run_away_mode and (worca Chat P2) the chat's act-then-undo tools: askChatTurnDeps.
         ...askChatTurnDeps(turnReader),
         // Design P5: a start_design_build / change_design result hands over to the engine, billed to the chat's person.
-        ...(designMode ? { designAction: (req, o = {}) => designChatActions.apply(req, { ...o, by: turnReader || thread.createdBy || 'local' }) } : {}),
+        ...(dChat ? { designAction: (req, o = {}) => designChatActions.apply(req, { ...o, by: turnReader || thread.createdBy || 'local' }) } : {}),
         resolveMentions: resolveAskMentions,
         // pause / resume / skip / mark-read in the MCP child: the Schedules page and the badges repaint.
         onScheduleMutation: () => { emitChanged('schedules-changed', 'ask'); emitChanged('notifications-changed'); },
@@ -9384,7 +9693,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         });
       } catch { /* thread gone */ }
     }
-    return { ok: false, status: 500, error: err && err.message ? err.message : String(err) };
+    return { ok: false, status: err?.code === 'supersede-refused' ? 409 : 500, error: err && err.message ? err.message : String(err), ...(err?.code === 'supersede-refused' ? { code: err.code } : {}) };   // 409: the supersede re-check in the write's tx refused, nothing written
   }
   const settleJob = (status) => {
     if (askJobs.get(id) !== job) return;
@@ -9406,7 +9715,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       console.error(`[worca-ui] ask turn crashed: ${err && err.message ? err.message : err}`);
       settleJob('error');
     });
-  return { ok: true, job, userMessageId: job.userMessageId, assistantMessageId: job.messageId, attachments: echoAttachments };
+  return { ok: true, job, userMessageId: job.userMessageId, assistantMessageId: job.messageId, attachments: echoAttachments, superseded };
 }
 /** The text of the system row that marks a switch (and that the handoff transcript then carries). */
 const askEngineSwitchText = (from, to) => `Switched from ${engineLabel(from)} to ${engineLabel(to)}`;
@@ -9422,7 +9731,7 @@ async function askContextTokens(model) {
 /** The turns the first turn after a switch leaves out of its transcript, counted WITH the switch's own row (that turn
  *  sees it). Synchronous, so the commit can recount with no await before its transaction. */
 function askSwitchTranscript(id, { from, to, budget }) {
-  const rows = [...askListMessages(id), { role: 'system', text: askEngineSwitchText(from, to), blocks: [] }];
+  const rows = [...askListMessages(id).filter((m) => !m.supersededBy), { role: 'system', text: askEngineSwitchText(from, to), blocks: [] }];   // rows a voice merge hid are not turns
   const hand = askBuildHandoffPrompt(rows, '', { to, maxChars: budget });
   return { totalTurns: hand.totalTurns, droppedTurns: hand.droppedTurns };
 }
@@ -10463,6 +10772,7 @@ if (isMain) {
     }).then(() => { wroteInstanceFile = true; }, (err) => {
       console.error(`[worca-ui] could not write the instance file (\`worca ui stop\` cannot stop this server — use Ctrl+C): ${err && err.message ? err.message : err}`);
     });
+    ensureSetupMarker({ isFresh: isFreshInstall() }).catch((err) => console.error(`[worca-ui] setup marker at boot failed: ${err && err.message ? err.message : err}`));
     try { channelHost.start(); } catch (err) {
       console.error(`[worca-ui] chat channel host failed to start: ${err && err.message ? err.message : err}`);
     }
@@ -10529,12 +10839,15 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, attachAskFollower, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, soundCards, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
+export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STOPS_IN_FLIGHT, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSupersedePrecheck, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, attachAskFollower, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, soundCards, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy, invokeStartRun, prWatcherDeps, PREVIEW_REFUSED, TOOL_RUN_ENDED, askTabBridges, askTabsEnabled, toolPanelOn, chatLinkRoots, chatLinks, chatToolFolder, closeChatTerminals, frameCheck, liveActionsOf, previewPortMode, previewProxy, previewRefusal, previewTokens, rawOpts, runRowForScope, sendOfficePdf, sendRawFile, setupLate, tabFailure, tabOwnerOf, tabTools, toolTabs, askLinkIsPrFix, followedRunOf, designApi };
 export const _testing = {
+  toolTabs, tabTools, askTabBridge, previewTokens, setPageCapture: (c) => { pageCapture = c || createPageCapture(); },
   chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity,
   updateChecker,
   // Chat context: tests never reach a CDN (null = the real fetch again).
   setChatFileFetch: (fn) => { chatFileFetch = typeof fn === 'function' ? fn : defaultChatFileFetch; },
+  // Voice merge: swap startAskTurn's pre-check (null = the real one again) to reach the write's in-tx refusal.
+  setSupersedePrecheck: (fn) => { askSupersedePrecheck = typeof fn === 'function' ? fn : askSupersedeRefusal; },
   // The startEgressPolicy() result the /api/proxy routes read, or a startLiveEgress() that also applies saves.
   setEgress: (e) => { EGRESS = e; },
   setLiveEgress: (l) => { EGRESS_LIVE = l; },
@@ -10566,7 +10879,7 @@ export const _testing = {
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
   openMemberPr, stackedBaseFor, chainRootFor, shipChainNow, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,
-  startAutoRescan,
+  startAutoRescan, sweepRunRetention,
   networkWatchTick: () => networkWatch().tick(),
   setNetworkProbe(fn) { _networkProbe = fn; },
   setAutoRescan(on) { autoRescanOn = on !== false; },

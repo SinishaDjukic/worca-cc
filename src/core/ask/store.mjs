@@ -8,7 +8,7 @@
 // user-supplied name. Text kinds stay `.txt`/utf8; binary kinds (#398) keep the
 // extension of their SNIFFED mime and raw bytes.
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, lstatSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getDb, prepare, tx } from '../db.mjs';
 import { worcaHome } from '../projects.mjs';
@@ -17,7 +17,8 @@ import { claimForAgent } from '../agent-user.mjs';
 import { currentOwner } from '../billing.mjs';
 import { extensionForAttachment } from './attachment-kind.mjs';
 import { mergeContexts } from './contexts.mjs';
-import { isSurfaceMode, SURFACE_MODES } from './thread-modes.mjs';
+import { isSurfaceMode } from './thread-modes.mjs';
+import { supersedeSafeBlock } from '../../shared/ask-merge-safe.mjs';
 
 export const ASK_ID_RE = /^[a-z]+_[0-9a-f]{8}$/;
 const ROLES = new Set(['user', 'assistant', 'system']);
@@ -43,6 +44,15 @@ export function attachmentsDir(threadId) {
 export function askOutDir(threadId) {
   if (typeof threadId !== 'string' || !ASK_ID_RE.test(threadId)) throw new Error('askOutDir: refusing a thread id the store never minted');
   return join(askRoot(), threadId, 'out');
+}
+/** The chat's output folder as a Files tab root (the tool routes' spec 'out', issue 1064 D7): the folder (lstat: a link
+ *  in its place is not the folder), else ROOT_GONE (409 on the tool routes). */
+export function askOutRoot(threadId) {
+  const dir = askOutDir(threadId);
+  let isDir = false;
+  try { isDir = lstatSync(dir).isDirectory(); } catch { isDir = false; }
+  if (!isDir) return { error: 'This chat has saved no output files yet.', code: 'ROOT_GONE' };
+  return { roots: [{ kind: 'dir', dir, root: 'out', member: null, label: 'Chat output' }], root: 'out', label: 'Chat output' };
 }
 
 /** 1.4: a chat's folder (its attachments, worktrees, skill mounts, output) belongs to the agent user of the person
@@ -101,6 +111,7 @@ function rowToMessage(r) {
     blocks: parse(r.blocks, null), status: r.status ?? null, reason: r.reason ?? null,
     model: r.model ?? null, effort: r.effort ?? null, engine: r.engine ?? null, usage: parse(r.usage, null),
     costUsd: r.cost_usd ?? null, durationMs: r.duration_ms ?? null, createdAt: r.created_at,
+    supersededBy: r.superseded_by ?? null,
   };
 }
 function rowToAttachment(r) {
@@ -147,15 +158,13 @@ const searchText = (query) => (typeof query === 'string' ? query.trim() : '');
 /** The search reads only messages the person sees as text: a synthetic event row (a card action, a terminal exit) keeps
  *  the model-facing `[worca event] …` line as its `text` and shows a notice block instead. `blocks` is JSON.stringify'd, so
  *  the bare `"synthetic":true` can only be that flag (a string value escapes its quotes); COALESCE keeps rows with no
- *  blocks (a NULL here would drop every plain user message). */
-const SEARCHED_MESSAGE = `NOT (m.role = 'user' AND COALESCE(m.blocks, '') LIKE '%"synthetic":true%')`;
-
-/** The surface modes as an SQL list for listWhere's "not in": built from constants, never from a request. */
-const SURFACE_LIST = SURFACE_MODES.map((m) => `'${m}'`).join(', ');
+ *  blocks (a NULL here would drop every plain user message). A row a voice merge replaced (superseded_by) is hidden from
+ *  the person, so it is not searched either. */
+const SEARCHED_MESSAGE = `NOT (m.role = 'user' AND COALESCE(m.blocks, '') LIKE '%"synthetic":true%') AND m.superseded_by IS NULL`;
 
 /** WHERE for a thread list: the owner filter (shared deployments) AND the surface (D9): a surface mode (thread-modes.mjs)
- *  lists only its own threads, any other mode only plain chats. `mode: 'any'` (the History "Delete all" count, which
- *  deletes composer and design chats too) skips the surface filter. A `query` (the History search) also
+ *  lists only its own threads; null and 'plain' (the browser extension) list plain chats, chats with a design included.
+ *  `mode: 'any'` (the History "Delete all" count, which deletes composer chats too) skips the surface filter. A `query` (the History search) also
  *  keeps only chats whose title OR any message's text holds it — case-insensitive (SQLite's LIKE folds ASCII only).
  *  `alias` must name the threads table: the message subquery has an `id` of its own. */
 function listWhere(visibleTo, mode, alias, query, { show = null, ids = null } = {}) {
@@ -164,7 +173,7 @@ function listWhere(visibleTo, mode, alias, query, { show = null, ids = null } = 
   if (visibleTo) { where.push(`(${alias}created_by IS NULL OR ${alias}created_by = ?)`); args.push(visibleTo); }
   if (mode !== 'any') {
     if (isSurfaceMode(mode)) { where.push(`${alias}mode = ?`); args.push(mode); }
-    else where.push(`(${alias}mode IS NULL OR ${alias}mode NOT IN (${SURFACE_LIST}))`);
+    else where.push(`${alias}mode IS NULL`);
   }
   // #948 s2: 'all' = not archived, 'archived' = archived only; null (every caller before s2) = both.
   if (show === 'all') where.push(`${alias}archived_at IS NULL`);
@@ -205,7 +214,8 @@ const LIST_FACTS_SQL = `(SELECT count(*) FROM ask_run_links l WHERE l.thread_id 
            EXISTS (SELECT 1 FROM ask_messages m, json_each(CASE WHEN json_valid(m.blocks) THEN m.blocks END) b
                    WHERE m.thread_id = t.id AND m.blocks LIKE '%"type":"workflow%' AND json_extract(b.value, '$.kind') = 'card'
                      AND json_extract(b.value, '$.card.type') IN ('workflow', 'workflow-build')) AS workflow_card,
-           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees`;
+           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees,
+           (SELECT d.id FROM designs d WHERE d.thread_id = t.id LIMIT 1) AS design_id`;
 
 /** A list row: the thread without its composer canvas, its link counts and, for a message hit, the excerpt. */
 function toListRow(r, q) {
@@ -215,7 +225,7 @@ function toListRow(r, q) {
     : r.group_hit != null ? { match: { group: r.group_hit } }
     : r.hit_text != null ? { match: { snippet: excerptAround(r.hit_text, q) } } : {};
   return { ...t, runLinks: r.run_links, startedRuns: r.started_runs, trackedRuns: r.tracked_runs, hasWorkflowCard: !!r.workflow_card,
-    worktrees: r.worktrees, ...match };
+    worktrees: r.worktrees, ...(r.design_id ? { designId: r.design_id } : {}), ...match };
 }
 
 export function listThreads({ limit = 50, visibleTo = null, mode = null, query = '' } = {}) {
@@ -596,7 +606,7 @@ export function deleteThread(id) {
 }
 
 /** Boot sweep (spec §6.2.1): threads that never received a message and are older than the cutoff, except threads a chat conversation (v85) is bound to
- *  and design threads (their design points at them, used or not). */
+ *  and chats with a design (their design points at them, used or not). */
 export function sweepEmptyThreads({ olderThanMs = 24 * 60 * 60 * 1000, now: nowMs = Date.now() } = {}) {
   getDb();
   const cutoff = new Date(nowMs - olderThanMs).toISOString();
@@ -604,7 +614,7 @@ export function sweepEmptyThreads({ olderThanMs = 24 * 60 * 60 * 1000, now: nowM
     SELECT t.id FROM ask_threads t
     WHERE t.created_at < ? AND NOT EXISTS (SELECT 1 FROM ask_messages m WHERE m.thread_id = t.id)
       AND NOT EXISTS (SELECT 1 FROM chat_conversations c WHERE c.ask_thread_id = t.id)
-      AND (t.mode IS NULL OR t.mode <> 'design')
+      AND NOT EXISTS (SELECT 1 FROM designs d WHERE d.thread_id = t.id)
   `).all(cutoff).map((r) => r.id);
   let removed = 0;
   for (const id of ids) if (deleteThread(id)) removed += 1;   // a row deleteThread refuses is not counted as swept
@@ -659,6 +669,70 @@ export function switchThreadEngine(threadId, { engine, model, effort, text, bloc
       .run(engine, model, effort, JSON.stringify(totals), t, threadId);
     const id = insertMessage(threadId, { role: 'system', text, blocks }, t);
     return { thread: getThread(threadId), message: getMessage(id) };
+  });
+}
+
+// ── a voice merge replaces the turn just sent (docs/speech.md) ─────────────────────────────────────────────
+/** A stale id never hides old history: only a user message this recent can be replaced. */
+export const SUPERSEDE_MAX_AGE_MS = 120_000;
+const SUPERSEDE_ERROR = 'the earlier message cannot be replaced';
+
+/** Why `userMessageId` cannot be superseded now (null = it can). Read-only; runs inside the caller's tx when there is one. */
+function supersedeCheck(threadId, userMessageId, nowMs) {
+  const refuse = (reason) => ({ code: 'supersede-refused', error: `${SUPERSEDE_ERROR}: ${reason}` });
+  const r = prepare('SELECT * FROM ask_messages WHERE id = ?').get(userMessageId);
+  if (!r || r.thread_id !== threadId) return refuse('it is not a message of this chat');
+  const m = rowToMessage(r);
+  if (m.role !== 'user') return refuse('it is not a user message');
+  if (Array.isArray(m.blocks) && m.blocks.some((b) => b && b.kind === 'notice' && b.synthetic === true)) return refuse('it is an event, not a message');
+  if (m.supersededBy) return refuse('it was already replaced');
+  // Hiding the fragment must not hide what it carried: the merged message holds the words only. A voice fragment has at
+  // most its page's where block; an attachment, a chat-context block or a leading quote (Pinpoint) keeps the row.
+  if ((Array.isArray(m.blocks) && m.blocks.some((b) => !b || b.kind !== 'where')) || /^>( |$)/.test(m.text || '')) return refuse('it carried a file or a quote');
+  const at = Date.parse(m.createdAt);
+  if (!Number.isFinite(at) || nowMs - at > SUPERSEDE_MAX_AGE_MS) return refuse('it is too old');
+  const later = prepare('SELECT * FROM ask_messages WHERE thread_id = ? AND seq > ? AND superseded_by IS NULL ORDER BY seq')
+    .all(threadId, m.seq).map(rowToMessage);
+  for (const x of later) {
+    if (x.role === 'user') return refuse('it is not the newest message');
+    if (x.role !== 'assistant') return refuse('something happened in the chat after it');
+    if (x.status === 'streaming') return refuse('its reply is still running');
+    if ((x.blocks || []).some((b) => !supersedeSafeBlock(b))) return refuse('its reply changed something or is waiting on a card');
+  }
+  return null;
+}
+
+/**
+ * May a merged voice message replace `userMessageId` (the newest user message of the chat, with finished, read-only
+ * replies only)? null = yes; else `{ code: 'supersede-refused', error }`. Read-only.
+ */
+export function supersedeRefusal(threadId, userMessageId, { now: nowMs = Date.now() } = {}) {
+  getDb();
+  return supersedeCheck(threadId, userMessageId, nowMs);
+}
+
+/**
+ * Append the merged user message and hide the turn it replaces (the fragment and every row after it) in ONE tx.
+ * The safety check runs again inside the tx: a refusal throws (`.code = 'supersede-refused'`) and writes nothing.
+ * Rows are never deleted: they keep `superseded_by` = the new message's id. → { message, superseded: ids in seq order }.
+ * No `supersedesId`: a plain appendMessage, `superseded: []` (startAskTurn writes every user row through here).
+ * `now`: the instant the age is judged at; the route passes its pre-check's, so the two checks cannot disagree.
+ */
+export function appendSupersedingMessage(threadId, { role = 'user', text = '', blocks = null } = {}, supersedesId = null, { now: nowMs = Date.now() } = {}) {
+  if (!supersedesId) return { message: appendMessage(threadId, { role, text, blocks }), superseded: [] };
+  return tx(() => {
+    const why = supersedeCheck(threadId, supersedesId, nowMs);
+    if (why) { const err = new Error(why.error); err.code = why.code; throw err; }
+    const from = prepare('SELECT seq FROM ask_messages WHERE id = ?').get(supersedesId).seq;
+    const t = now();
+    const id = insertMessage(threadId, { role, text, blocks }, t);
+    const to = prepare('SELECT seq FROM ask_messages WHERE id = ?').get(id).seq;
+    const superseded = prepare('SELECT id FROM ask_messages WHERE thread_id = ? AND seq >= ? AND seq < ? AND superseded_by IS NULL ORDER BY seq')
+      .all(threadId, from, to).map((x) => x.id);
+    prepare('UPDATE ask_messages SET superseded_by = ? WHERE thread_id = ? AND seq >= ? AND seq < ? AND superseded_by IS NULL')
+      .run(id, threadId, from, to);
+    prepare('UPDATE ask_threads SET updated_at = ? WHERE id = ?').run(t, threadId);
+    return { message: getMessage(id), superseded };
   });
 }
 

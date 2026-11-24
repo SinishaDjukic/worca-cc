@@ -539,7 +539,7 @@ test('Add-ons inner rows land on their row or card and flash it', async () => {
       await searchPickLoaded(ctx, 'linear', 'linear');
       await settle(ctx.window, 8);
       assert.equal(ctx.window.location.hash, '#connectors/servers/manual%3Alinear');
-      assert.ok(isFound(ctx.doc.querySelector('.mcp-server-row[data-server="manual:linear"]')));
+      assert.ok(isFound(ctx.doc.querySelector('.cx-row[data-server="manual:linear"]')));
     } },
     { name: 'your own model → #models/model/my-gpt: the catalogue search the user left is cleared and the row flashed', run: async () => {
       const MODEL = { id: 'my-gpt', label: 'My GPT', efforts: ['high'], engine: 'claude', env: {} };

@@ -1,5 +1,5 @@
 /* ---------- Worca level ---------- */
-/* The hover card beside the account corner, the account-menu level card, the welcome / celebration dialogs,
+/* The account-menu level card, the welcome / celebration dialogs,
    the Profile level page and the Getting started line. Display only. Colour comes from the theme tokens, so
    dark mode needs nothing of its own: the --wl-* names below are local aliases on these rules, never global tokens.
    The section marker above is mapped to the worca-levels feature in tools/split-by-feature/feature-map.json. */
@@ -12,14 +12,14 @@
 [data-worca-level=council]{--wl-hue:150;}
 
 /* Aliases, one place: done is ink, to-do is the quiet line, a link is the strong blue ink. */
-.wl-seg,.wl-dot,.wl-chip,.wl-card,.worca-hover-card,.wl-hero,.wl-reach,.wl-levels,.worca-dlg,.gs-level-line{
+.wl-seg,.wl-dot,.wl-chip,.wl-card,.wl-hero,.wl-reach,.wl-levels,.worca-dlg,.gs-level-line{
   --wl-seg-done:var(--ink);--wl-dot-done:var(--ink);
   --wl-seg-todo:var(--line-2);--wl-dot-todo:var(--ink-3);
   --wl-link:var(--blue-ink-strong);--wl-chip-next-ink:var(--blue-ink-strong);--wl-chip-next-bg:var(--blue-bg);
   --wl-chip-reached-bg:var(--green-bg);--wl-chip-reached-ink:var(--green-ink-strong);}
 /* The celebration tint reads --wl-hue, so it is declared on the art element that carries the hue (inline), not on
    .worca-dlg: a var() inside a custom property is substituted where the property is declared. */
-.worca-dlg-art{--wl-celebrate-bg:light-dark(oklch(0.96 0.025 var(--wl-hue)), oklch(0.3 0.05 var(--wl-hue)));}
+.worca-dlg-art{--wl-celebrate-bg:oklch(0.92 0.04 var(--wl-hue));}
 
 /* The segment bar: one span per step. `sm` is 4px, `lg` is 6px; a dense small bar tightens its gap to 2px. */
 .wl-seg{display:flex;gap:3px;}
@@ -29,36 +29,11 @@
 .wl-seg[data-size="lg"] .wl-seg-i{height:6px;}
 .wl-seg-i[data-done]{background:var(--wl-seg-done);}
 
-/* The hover card: a non-modal popover that hover-card.mjs places next to the corner (position:fixed, z-index set inline). */
-.worca-hover-card{position:fixed;z-index:44;box-sizing:border-box;width:280px;max-width:calc(100vw - 24px);padding:14px;
-  display:flex;flex-direction:column;gap:12px;
-  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu);
-  color:var(--ink);font-size:var(--fs-meta);line-height:1.4;}
-.wl-hc-head{display:flex;align-items:center;gap:10px;}
-.wl-hc-ava{flex:none;width:40px;height:40px;border-radius:50%;object-fit:cover;background:var(--line-2);}
-.wl-hc-who{display:flex;flex-direction:column;gap:2px;min-width:0;}
-.wl-hc-name{font-size:var(--fs-body);font-weight:600;color:var(--ink);}
-.wl-hc-level{font-size:var(--fs-caption);color:var(--ink-2);}
-.wl-hc-next{color:var(--ink-2);}
-.wl-hc-next strong{font-weight:600;color:var(--ink);}
-.wl-hc-prog{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;}
-.wl-top{margin:0;color:var(--ink-2);}
-.wl-hc-tries{display:flex;flex-direction:column;gap:2px;padding-top:10px;border-top:1px solid var(--line-2);}
-.wl-hc-k{margin-bottom:4px;font-size:var(--fs-caption);font-weight:500;color:var(--ink-2);}
-.wl-try{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;margin:0 -8px;padding:7px 8px;border-radius:var(--r-sm);
-  color:var(--ink);text-decoration:none;}
-.wl-try:hover{background:var(--hover);}
-.wl-try:focus-visible,.wl-profile-link:focus-visible,.wl-card:focus-visible,.worca-dlg-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.wl-try-t{font-size:var(--fs-meta);font-weight:500;}
-.wl-try-go{color:var(--wl-link);}
-.wl-try-h{grid-column:1 / -1;font-size:var(--fs-caption);line-height:1.4;color:var(--ink-2);}
-.wl-profile-link{font-size:var(--fs-meta);font-weight:500;color:var(--wl-link);text-decoration:none;}
-.wl-profile-link:hover{text-decoration:underline;}
-
-/* The account-menu level card: avatar, name and "View level", then the way to the next level. */
+/* The account-menu level card (level-card.mjs): avatar, name and "View level", then the way to the next level. */
 .wl-card{display:flex;flex-direction:column;gap:8px;width:100%;box-sizing:border-box;margin:0;padding:10px;text-align:left;font:inherit;
   background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);color:var(--ink);cursor:pointer;}
 .wl-card:hover{background:var(--hover);}
+.wl-card:focus-visible,.wl-menu-act:focus-visible,.worca-dlg-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* In the account menu it is flat on the --panel sheet, its text in the rows' 9px icon column. The :hover
    rule is repeated: both selectors weigh (0,2,0), so the transparent fill would otherwise win. */
 .acct-menu > .wl-card{padding:6px 9px;background:transparent;border:0;border-radius:var(--r-sm);}
@@ -71,6 +46,16 @@
 .wl-card-top{font-size:var(--fs-meta);color:var(--ink-2);}
 .wl-card-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:var(--fs-meta);color:var(--ink-2);}
 .wl-card-prog{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;}
+/* The no-level variant: a div, not a button. A small initials circle and the prompt, then one action. */
+.wl-card-none{cursor:default;gap:4px;}
+.acct-menu > .wl-card.wl-card-none:hover{background:transparent;}
+.wl-card-none .wl-menu-ava{width:22px;height:22px;font-size:var(--fs-caption);}
+.wl-menu-ava{flex:none;display:grid;place-items:center;width:40px;height:40px;border-radius:50%;background:var(--line-2);
+  color:var(--ink);font-size:var(--fs-body);font-weight:600;}
+.wl-top{margin:0;color:var(--ink-2);}
+.wl-menu-act{align-self:flex-start;margin:0;padding:4px 0;border:0;background:transparent;font:inherit;font-size:var(--fs-meta);
+  font-weight:500;color:var(--wl-link);cursor:pointer;}
+.wl-menu-act:hover{text-decoration:underline;}
 
 /* The dialogs sit in the shared .viewer-modal and .card; these rules centre the content and size the art. */
 .worca-dlg .worca-dlg-card{width:min(440px,100%);text-align:center;}
@@ -148,3 +133,9 @@
 .gs-level-line{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:0 0 12px;color:var(--ink-2);font-size:var(--fs-meta);}
 .gs-level-avatar{width:16px;height:16px;border-radius:50%;object-fit:cover;}
 .gs-level-link{color:var(--wl-link);font-weight:600;}
+
+/* The interface-mode suggestion banner (mode-suggestion.mjs): the page-above-the-mode banner's look, with a dismiss X. */
+.wl-mode-suggest{display:flex;align-items:center;gap:10px 12px;margin:0 0 18px;padding:10px 14px;border-radius:var(--r-card);background:var(--canvas-2);border:1px solid var(--line-2);font-size:13px;color:var(--ink-2);}
+.wl-mode-suggest-text{flex:1 1 auto;min-width:0;}
+.wl-mode-suggest svg{width:16px;height:16px;}
+body.view-runs .wl-mode-suggest,body.view-projects .wl-mode-suggest,body.view-workspaces .wl-mode-suggest{margin:12px 32px 0;}

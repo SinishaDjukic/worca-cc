@@ -76,6 +76,35 @@ A run with **No project** works in its own folder. It opens on **Artifacts** at 
 
 ![A finished run, "CSV export for contacts", on its Diff tab: 4 files changed (+36 −0) in a file tree beside the highlighted patch of src/routes/contacts.js, with the run's worca-cc/ branch, its time and cost, and the Create PR and Publish branch buttons](screenshots/run-detail.png)
 
+## Rerun a finished run
+
+Open **⋯ › Rerun** on a run that is done, stopped or in error (an archived one too). **New run** opens filled in from
+that run: its task and title, project or workspace, workflow, engine, guardrails, agent picks, Away mark, tags and the
+files you attached. Nothing is created until you start it, so you can change anything first, and leaving the form
+creates no run. The run you started from is never touched and never lists its reruns.
+
+The new run's page has a **Rerun of …** row that links to the run it was copied from. If that run was deleted, the row
+says so in plain text. A rerun of a rerun links to the run it was opened from, not the first one. A rerun you schedule
+once keeps the link when it starts later; the runs of a repeating schedule are not linked. If the earlier run is
+removed before you press **Start**, the form says so and keeps everything you filled in; press **Start** again to start
+it as a new run, without the link.
+
+On a run that is still going, paused or interrupted, **Rerun** is greyed with the reason; use **Resume** to continue
+those.
+
+What a rerun does not copy:
+
+- The **feature branch** is not kept, so the form suggests a fresh one.
+- Only the plain task text is copied, not a Markdown handoff or where the task came from.
+- A run from before Worca kept run setups, a CLI start or a scan has no recorded settings: the form fills in the task
+  and files, restores the run's workflow and guardrail set when they still exist, and says that the other settings are
+  defaults.
+- Files attached to a run that was **archived before** this feature cannot be recovered: Archive removes them, and the
+  names were not kept. Later runs keep the names, so the form lists each file that is gone and starts without it.
+
+If a model, workflow or guardrail set of the earlier run no longer exists, or its project is gone, the form names it and
+holds Start until you use **Reset to default** or pick another project.
+
 ## Running, pausing and shipping
 
 ### A deterministic engine

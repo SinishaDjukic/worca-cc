@@ -1,7 +1,7 @@
 // test/folder-apply.test.mjs — the server in-process + real mock folder runs.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, renameSync, readdirSync, chmodSync, statSync, lstatSync, symlinkSync, readlinkSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -22,7 +22,7 @@ after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true });
 let srv, base;
 before(async () => {
   const { app } = await import('../ui/server.mjs');               // imported, not run as main: binds no port of its own
-  srv = http.createServer(app); await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  srv = appServer(app); await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });
 after(async () => { if (srv) await new Promise((r) => srv.close(r)); });

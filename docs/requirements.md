@@ -192,8 +192,8 @@ a call's cost is known only once the model reports it.
 answers you can submit answers, edit the spec, add files or start a round. Only what you accept or submit reaches the
 interview. **Send**, **Accept** and **Clear chat** wait while Worca answers.
 
-**Using a feature in another chat.** The Ask panel's **Pull from Requirements** (see [Pull from Requirements](#pull-from-requirements))
-attaches a started feature's spec to a message, so a chat can use it without leaving the chat. It is not the same as **Feature chat**,
+**Using a feature in another chat.** The Ask panel's Requirements icon button (its tooltip reads **Pull from Requirements**; see
+[Pull from Requirements](#pull-from-requirements)) attaches a started feature's spec to a message, so a chat can use it without leaving the chat. It is not the same as **Feature chat**,
 which talks about a feature and its interview; the attached text is context only.
 
 **Clear chat** (⋯) deletes the feature's chat; changes you accepted stay in the spec. An archived feature's chat can be read,
@@ -240,13 +240,13 @@ and says "Gemini CLI keeps its own copy of this step in its history on this comp
 Worca stores no more of it than before.
 
 **Cost words.** "$0.03" is billed, "≈$0.04" is estimated from list prices because that harness reports none ("Cost estimated:
-Gemini CLI reports none."), and "cost unknown" means no price is known: never "$0.00". The feature's chip shows ≈ as soon as any
+Gemini CLI reports none."), and "cost unknown" means no price is known: never "$0.00". The feature's cost button shows ≈ as soon as any
 part is estimated, and "Cost unknown so far" when every step's cost is unknown; the dialog's total then reads "cost unknown".
 Estimated costs count toward the Requirements budget; steps with cost unknown cannot. The dialog's budget line says so ("The
 Requirements budget counts nothing of $50.00 this month; the step with cost unknown is not counted."), and the list's line says
 "plus N steps with cost unknown".
 
-**Changing a running feature.** The chip after the cost chip names the model and harness; it opens **Model for this feature**
+**Changing a running feature.** The button after the cost button names the model and harness; it opens **Model for this feature**
 with the same three selects. A change applies from the next step: a step already running keeps its model, and steps already done
 keep their answers and their cost. When the new choice loses something, or sends your text to another company, Worca asks first
 ("Switch this feature to Gemini CLI?", with what changes) and saves nothing if you cancel. A harness that is not signed in stops
@@ -265,7 +265,7 @@ Every step on the feature page (a round, the code look, a Feature chat reply) na
 "Opus 5.5 on Claude · $0.19" (billed), "≈$0.04" (estimated from list prices) or "cost unknown", never $0.00. The code look is a
 step of its own ("Code look · 3 files", with its first sentence and **Show what it found**). What a step could not do, such as
 the repo it could not read or a file it skipped, is listed under it in grey. A harness that is not signed in stops the step with
-**Change the model** and **Try again**; Worca never switches to Claude by itself. The **so far** chip in the header opens
+**Change the model** and **Try again**; Worca never switches to Claude by itself. The **so far** button in the header opens
 **Cost of this feature**: each step, what it ran on and its cost, with what the Requirements budget counts and the steps with
 cost unknown (counted apart, not against the limit).
 
@@ -347,15 +347,16 @@ nothing. The features go along when you click **Send** or **Run**.
 - **New run**: **Pull from Requirements** (next to the Source switch) opens a picker with a search box, a checkbox on each feature and
   **Attach N**. It lists the active features of the project or workspace you picked as the Target. With no Target yet, the picker has a
   project chooser inside it.
-- **Chat**: **Pull from Requirements** (next to the project button in the composer) does the same for the chat's project or workspace.
+- **Chat**: the Requirements icon button (its tooltip reads **Pull from Requirements**; next to the project button in the composer)
+  does the same for the chat's project or workspace.
   A chat with no project asks for one in the picker.
 - **`#` in the box**: type `#` at the start of a word, or after a space, and a list of the scope's features opens. Keep typing to
   search by title or `FEAT-7`. The arrows move, **Enter** attaches the highlighted feature (it never sends or starts), **Tab** cycles the
   project and **Esc** closes. Only the `#` and what you typed after it are removed from your text. A Markdown heading (`# ` followed by a
   space) is left alone.
 
-Each attached feature shows as a card under the box with its title, ID and number of criteria, and an **x** to remove it. The button
-reads **N features** while some are attached. You can attach up to 10. Features you attach are kept when you leave the page and come
+Each attached feature shows as a card under the box with its title, ID and number of criteria, and an **x** to remove it. On New
+run the button reads **N features** while some are attached; in Chat the icon shows the count. You can attach up to 10. Features you attach are kept when you leave the page and come
 back, and checked again when you return.
 
 **Context only.** The feature's spec text goes into the message or the run's task. Nothing else travels: no files or brief documents,

@@ -62,6 +62,7 @@ import { homedir, availableParallelism } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import {
   EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
+  OPENCODE_ZEN_RE,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
   isUpstreamBaseUrl, REASONING_EFFORT_LEVELS, OPENROUTER_SORTS,
@@ -73,6 +74,7 @@ import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
 import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
+import { isGuideAreaId } from '../shared/how-it-works/areas.mjs';
 import { normalizePins, storedPins } from '../shared/home-pins.mjs';
 import { DEFAULT_PATTERN, DEFAULT_TYPES, TYPE_RE, patternProblem } from '../shared/naming/pattern.mjs';
 import { IMAGE_SERVICES, IMAGE_SHAPES, originOf } from '../shared/image-services.mjs';
@@ -1210,11 +1212,14 @@ export async function setPythonPath(input) {
 
 // ── Actions (issue #529) ─────────────────────────────────────────────────────
 // One nested key `actions`: the keep policy for finished-run checkouts, the
-// `auto` port range, the editor/terminal overrides of the built-ins, and the
-// checkout cap. editor/terminal are command paths the built-ins route spawns as
+// `auto` port range, the editor/terminal overrides of the built-ins, the
+// checkout cap, and the Browser tab's preview-port mode. editor/terminal are command paths the built-ins route spawns as
 // the server user, so POST /api/settings refuses an `actions` key from agent callers.
 export const ACTIONS_KEEP = ['never', 'on-success', 'until-pr'];
-export const DEFAULT_ACTIONS_SETTINGS = Object.freeze({ keep: 'never', portLow: 4400, portHigh: 4499, editor: '', terminal: '', maxCheckouts: null });
+/** Settings › Runs › Actions › Preview ports: every loopback port, or the Actions range and running Actions only.
+ *  The server forces 'range' on a hosted Worca whatever is stored here (ui/server.mjs previewPortMode). */
+export const PREVIEW_PORT_MODES = ['all', 'range'];
+export const DEFAULT_ACTIONS_SETTINGS = Object.freeze({ keep: 'never', portLow: 4400, portHigh: 4499, editor: '', terminal: '', maxCheckouts: null, previewPorts: 'all' });
 const isPort = (v) => Number.isSafeInteger(v) && v >= 1024 && v <= 65535;
 const isCap = (v) => Number.isSafeInteger(v) && v >= 1 && v <= 100;
 
@@ -1229,6 +1234,7 @@ export function actionsSettings() {
     editor: typeof s.editor === 'string' ? s.editor.trim() : '',
     terminal: typeof s.terminal === 'string' ? s.terminal.trim() : '',
     maxCheckouts: isCap(s.maxCheckouts) ? s.maxCheckouts : null,
+    previewPorts: PREVIEW_PORT_MODES.includes(s.previewPorts) ? s.previewPorts : DEFAULT_ACTIONS_SETTINGS.previewPorts,
   };
 }
 
@@ -1238,6 +1244,9 @@ export function assertActionsInput(patch) {
   const has = (k) => Object.hasOwn(patch, k);
   const clear = (v) => v === '' || v === null || v === undefined;
   if (has('keep') && !clear(patch.keep) && !ACTIONS_KEEP.includes(patch.keep)) throw new Error(`actions.keep must be one of ${ACTIONS_KEEP.join(' | ')}`);
+  if (has('previewPorts') && !clear(patch.previewPorts) && !PREVIEW_PORT_MODES.includes(patch.previewPorts)) {
+    throw new Error(`actions.previewPorts must be one of ${PREVIEW_PORT_MODES.join(' | ')}`);
+  }
   for (const k of ['portLow', 'portHigh']) if (has(k) && !clear(patch[k]) && !isPort(patch[k])) throw new Error(`actions.${k} must be a whole number from 1024 to 65535`);
   const cur = actionsSettings();
   const low = has('portLow') && !clear(patch.portLow) ? patch.portLow : cur.portLow;
@@ -1275,6 +1284,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'smartNaming',                             // Smart run naming { suggestTitle, suggestBranch, pattern, types, trigger, addRunId }
   'debugSpawnEnabled',
   'keepAwake',                               // the account menu's Keep awake switch (default on)
+  'chatLinksInPanel',                        // Settings › Chat: open chat links in the panel (default on, issue 1064)
   'resumeAfterUsageLimit',
   'updateCheck',                             // Settings › About: check npm for a newer stable Worca (#841)
   'titleModel', 'hideBuiltinModels',
@@ -1298,7 +1308,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'sync',                                    // sync before run (#527) { beforeRun, remote, refreshMinutes, onDiverged }
   'networkWait',                             // Settings › Runs › Wait for the network {enabled, maxWaitMin}
   'runLimits',                               // Settings › Runs › Machine load { maxConcurrentRuns, testWorkers, keepRunsDays }
-  'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
+  'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts, previewPorts }
   'runEngine', 'stepModels', 'utilityModels',
   'modelRoles',                              // Models › Jobs › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
   'requirementsInterview',                  // Models › Jobs › Helper jobs: the requirements interview { model, effort }
@@ -2122,6 +2132,25 @@ export async function migrateKeepAwakeFlag() {
   try { await persistSettings(r.settings); return true; } catch { return false; }   // keepAwakeEnabled still reads the flag
 }
 
+// ── Open chat links in the panel (issue 1064 §4) ──────────────────────────────
+// File paths and web links in the chat's answers open in tabs of the tool panel. Default ON; only `false` is stored.
+export const DEFAULT_CHAT_LINKS_IN_PANEL = true;
+export function assertChatLinksInPanelInput(input) {
+  if (!isBool(input)) throw new Error('chatLinksInPanel must be true or false');
+}
+export function chatLinksInPanel(settings = readSettings()) {
+  const s = settings && typeof settings === 'object' ? settings : {};
+  return isBool(s.chatLinksInPanel) ? s.chatLinksInPanel : DEFAULT_CHAT_LINKS_IN_PANEL;
+}
+export async function setChatLinksInPanel(input) {
+  assertChatLinksInPanelInput(input);
+  const settings = readSettings();
+  if (input === DEFAULT_CHAT_LINKS_IN_PANEL) delete settings.chatLinksInPanel;
+  else settings.chatLinksInPanel = input;
+  await persistSettings(settings);
+  return { chatLinksInPanel: chatLinksInPanel() };
+}
+
 // ── Resume after a usage limit (opt-in) ──────────────────────────────────────
 export const DEFAULT_RESUME_AFTER_USAGE_LIMIT = false;
 
@@ -2273,10 +2302,13 @@ function sanitizeGlobalModel(raw) {
       for (const k of Object.keys(env)) if (upstreamEnvConflict({ [k]: env[k] })) delete env[k];
     }
   }
+  // OpenCode Zen's free models (`opencode/…`) take no reasoning variant — OpenCode 2.3.1+ refuses a `#variant`
+  // outright — so a Zen entry advertises no efforts (pickers offer none, and a pick's effort never spawns).
+  const zen = engine === 'opencode' && OPENCODE_ZEN_RE.test(id);
   return {
     id,
     label,
-    efforts: effortsForEngine(engine).length ? (efforts.length ? efforts : [...effortsForEngine(engine)]) : [],
+    efforts: zen ? [] : (effortsForEngine(engine).length ? (efforts.length ? efforts : [...effortsForEngine(engine)]) : []),
     ...(engine !== 'claude' ? { engine } : {}),
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),
@@ -2790,8 +2822,8 @@ export async function updateProvider(name, patch = {}, { dryRun = false, expectC
 // the catalog or /api/models. Keys are literal or a whole-value ${VAR}, resolved at
 // use time by resolveProviderSecret like every provider key.
 const SPEECH_DEFAULTS = Object.freeze({
-  // pause: seconds of silence that end an utterance (the voice detector's wait), any engine.
-  stt: Object.freeze({ engine: 'browser', baseUrl: 'http://127.0.0.1:8080/v1', model: 'whisper-1', language: 'auto', pause: 1.2 }),
+  // pause: pause after a finished sentence; unfinished sentences wait 2.5× (browser STT).
+  stt: Object.freeze({ engine: 'browser', baseUrl: 'http://127.0.0.1:8080/v1', model: 'whisper-1', language: 'auto', pause: 0.7 }),
   tts: Object.freeze({ engine: 'browser', baseUrl: '', model: 'tts-1', voice: 'af_heart', speed: 1 }),
 });
 const SPEECH_FIELDS = Object.freeze({
@@ -3222,36 +3254,79 @@ export async function writeStoredFlags(map) {
 }
 
 // ── Getting started (onboarding) ─────────────────────────────────────────────
-// Three machine-wide flags, nothing more: which steps are DONE is derived from
-// product state by src/core/onboarding.mjs and never stored. `hidden` is the
-// checklist's Hide (Settings › General › Getting started shows it again);
-// `welcomeSeen` is the one-time welcome dialog; `workspaceGuideSeen` is the
-// "How workspaces work" walkthrough (FEAT-7) — set on every open, cleared when
-// the last workspace is deleted. All absent = all false.
-const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen']);
+// Machine-wide, nothing derivable: which steps are DONE is computed from product
+// state by src/core/onboarding.mjs and never stored. `hidden` is the checklist's
+// Hide (Settings › General › Getting started shows it again); `welcomeSeen` is the
+// one-time welcome dialog; `workspaceGuideSeen` is the legacy "How workspaces work"
+// flag, cleared when the last workspace is deleted. `setupFinished` records that the
+// Setup Assistant was completed (install-wide, like the setup); `setupChecked` is the
+// boot marker that credits an install that predates it exactly once
+// (onboarding.mjs#ensureSetupMarker). `guidesSeen` maps a how-it-works area id
+// (src/shared/how-it-works/areas.mjs) to true once that area's guide has been opened;
+// `guidesReset` is a write-only command that clears the map and workspaceGuideSeen.
+// All absent = all false and an empty map.
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'setupFinished', 'setupChecked']);
+const ONBOARDING_KEYS = Object.freeze([...ONBOARDING_FLAGS, 'guidesSeen', 'guidesReset']);
+const SEEN_ONLY_KEYS = Object.freeze(['guidesSeen', 'workspaceGuideSeen']);
+
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// Only known area ids holding exactly true survive a read; anything else stored is ignored.
+function storedGuidesSeen(raw) {
+  if (!isPlainObject(raw)) return {};
+  return Object.fromEntries(Object.entries(raw).filter(([k, v]) => isGuideAreaId(k) && v === true));
+}
 
 export function onboardingPrefs() {
   const o = readSettings().onboarding;
-  const obj = o && typeof o === 'object' && !Array.isArray(o) ? o : {};
-  return Object.fromEntries(ONBOARDING_FLAGS.map((k) => [k, obj[k] === true]));
+  const obj = isPlainObject(o) ? o : {};
+  return {
+    ...Object.fromEntries(ONBOARDING_FLAGS.map((k) => [k, obj[k] === true])),
+    guidesSeen: storedGuidesSeen(obj.guidesSeen),
+  };
 }
 
-/** @throws {Error} unless every present key is a known flag holding a boolean. */
+/** @throws {Error} unless every present key is a known flag holding a boolean, or a valid guidesSeen / guidesReset. */
 export function assertOnboardingPrefsInput(patch) {
-  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('onboarding prefs must be an object');
+  if (!isPlainObject(patch)) throw new Error('onboarding prefs must be an object');
   for (const [k, v] of Object.entries(patch)) {
-    if (!ONBOARDING_FLAGS.includes(k)) throw new Error(`unknown onboarding key ${JSON.stringify(k)}`);
-    if (typeof v !== 'boolean') throw new Error(`onboarding.${k} must be true or false`);
+    if (!ONBOARDING_KEYS.includes(k)) throw new Error(`unknown onboarding key ${JSON.stringify(k)}`);
+    if (k === 'guidesSeen') {
+      if (!isPlainObject(v)) throw new Error('onboarding.guidesSeen must be an object');
+      for (const [area, seen] of Object.entries(v)) {
+        if (!isGuideAreaId(area)) throw new Error(`unknown how-it-works area ${JSON.stringify(area)}`);
+        if (typeof seen !== 'boolean') throw new Error(`onboarding.guidesSeen.${area} must be true or false`);
+      }
+    } else if (typeof v !== 'boolean') {
+      throw new Error(`onboarding.${k} must be true or false`);
+    }
   }
 }
 
-/** Merge `patch` over the stored flags; a store with every flag false drops the key. */
+/** True when the patch only records that a guide was opened (it must not pin the interface mode). */
+export function isSeenOnlyPatch(patch) {
+  if (!isPlainObject(patch)) return false;
+  const keys = Object.keys(patch);
+  return keys.length > 0 && keys.every((k) => SEEN_ONLY_KEYS.includes(k));
+}
+
+/** Merge `patch` over the stored prefs (validated whole first); a store with every flag false and no guide seen drops the key. */
 export async function setOnboardingPrefs(patch = {}) {
   assertOnboardingPrefsInput(patch);
   const { onboarding: _previous, ...rest } = readSettings();
-  const next = { ...onboardingPrefs(), ...patch };
-  const allFalse = ONBOARDING_FLAGS.every((k) => !next[k]);
-  await persistSettings(allFalse ? rest : { ...rest, onboarding: next });
+  const current = onboardingPrefs();
+  const reset = patch.guidesReset === true;
+  const base = reset ? { ...current, workspaceGuideSeen: false, guidesSeen: {} } : current;
+  const flags = { ...base };
+  for (const k of ONBOARDING_FLAGS) if (k in patch) flags[k] = patch[k];
+  const guidesSeen = { ...base.guidesSeen };
+  for (const [area, seen] of Object.entries(patch.guidesSeen || {})) {
+    if (seen) guidesSeen[area] = true; else delete guidesSeen[area];
+  }
+  const { guidesSeen: _map, ...flagsOnly } = flags;
+  const empty = ONBOARDING_FLAGS.every((k) => !flagsOnly[k]) && Object.keys(guidesSeen).length === 0;
+  const next = Object.keys(guidesSeen).length ? { ...flagsOnly, guidesSeen } : flagsOnly;
+  await persistSettings(empty ? rest : { ...rest, onboarding: next });
   return onboardingPrefs();
 }
 

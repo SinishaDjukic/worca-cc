@@ -74,3 +74,50 @@ test('duration: the saved run\'s glance shows the total active time; durByNode b
     } },
   ]);
 });
+
+// ── The run time is the saved elapsed clock; the summed step time is "agent time" ──
+const AGENT_TIP = 'Total time of all agents, parallel work added up';
+const KEY2 = 'proj-a1b2c3d4';
+async function openSaved(state) {
+  const row = { id: 'p1', projectKey: KEY2, title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: state.totalActiveMs, elapsedMs: state.elapsedMs ?? null };
+  const detail = { state: { id: 'p1', title: 'Run', status: 'done', startedAt: row.startedAt, steps: [], ...state } };
+  const ctx = await boot({
+    fetchHandler: (url) => (url.endsWith(`/api/history/${KEY2}/p1`) ? ok(detail)
+      : url.endsWith('/api/history') ? runsList([row]) : null),
+  });
+  ctx.showDetail(KEY2, 'p1');
+  await ctx.settle(5);
+  return ctx;
+}
+const hdDur = (window) => window.document.querySelector('#hist-detail .hd-meta .hd-dur').textContent;
+const agentTile = (window) => [...window.document.querySelectorAll('#hist-detail .rd-facts .rd-stats > div')]
+  .find((t) => t.querySelector('span').textContent === 'agent time') || null;
+
+test('History shows the saved elapsed time in header and tile', async () => {
+  const ctx = await openSaved({ totalActiveMs: 200_000, elapsedMs: 83_000 });
+  assert.equal(factTiles(ctx.window).time, '1m 23s', 'the tile reads elapsed, not the 3m 20s sum');
+  assert.equal(hdDur(ctx.window), '1m 23s', 'the header reads the same figure');
+});
+
+test('History shows agent time with its tooltip only when it is larger', async () => {
+  const par = await openSaved({ totalActiveMs: 200_000, elapsedMs: 83_000 });
+  const tile = agentTile(par.window);
+  assert.ok(tile, 'parallel work: the summed time is larger');
+  assert.equal(tile.querySelector('b').textContent, '3m 20s');
+  assert.equal(tile.title, AGENT_TIP);
+  assert.equal(tile.querySelector('b').classList.contains('run-agent-time'), false, 'a saved run does not tick');
+  const tiles = [...par.window.document.querySelectorAll('#hist-detail .rd-facts .rd-stats > div')];
+  assert.equal(tiles.indexOf(tile), 1, 'right after the time tile');
+
+  const seq = await openSaved({ totalActiveMs: 60_000, elapsedMs: 83_000 });
+  assert.equal(agentTile(seq.window), null, 'a sequential run: not larger');
+  const same = await openSaved({ totalActiveMs: 83_400, elapsedMs: 83_000 });
+  assert.equal(agentTile(same.window), null, 'larger, but both read 1m 23s: the fact shows once');
+});
+
+test('a run without an elapsed figure shows its summed time and no agent time tile', async () => {
+  const ctx = await openSaved({ totalActiveMs: 83_000, elapsedMs: null });
+  assert.equal(factTiles(ctx.window).time, '1m 23s');
+  assert.equal(hdDur(ctx.window), '1m 23s');
+  assert.equal(agentTile(ctx.window), null);
+});

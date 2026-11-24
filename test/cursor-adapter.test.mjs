@@ -85,10 +85,69 @@ test('capabilities: declared honestly, cost is false', () => {
 });
 
 test('rule plan: single-word commands and path rules are partial, the rest unenforced', () => {
-  const p = cursorRulePlan({ deny: ['Bash', 'Bash(curl)', 'Bash(curl:*)', 'Bash(git push:*)', 'Read(./.env)', 'Read(/src/secret.txt)', 'Edit(//etc/**)', 'Read(~/.ssh/**)', 'WebFetch', 'mcp__github__delete_repo'] });
-  assert.deepEqual(p.deny, ['Shell(*)', 'Shell(curl)', 'Read(./.env)', 'Read(./src/secret.txt)', 'Write(/etc/**)', 'Read(~/.ssh/**)']);
+  const p = cursorRulePlan({ deny: ['Bash', 'Bash(curl)', 'Bash(curl:*)', 'Bash(git push:*)', 'Read(./.env)', 'Read(/src/secret.txt)', 'Edit(//etc/**)', 'Read(~/.ssh/**)', 'WebFetch', 'mcp__github__delete_repo'] }, { platform: 'linux' });
+  assert.deepEqual(p.deny, ['Shell(*)', 'Shell(curl)', 'Read(**/.env)', 'Read(**/src/secret.txt)', 'Write(/etc/**)', 'Read(~/.ssh/**)']);
   assert.deepEqual(p.partial, ['Bash', 'Bash(curl)', 'Bash(curl:*)', 'Read(./.env)', 'Read(/src/secret.txt)', 'Edit(//etc/**)', 'Read(~/.ssh/**)']);
   assert.deepEqual(p.unenforced, ['Bash(git push:*)', 'WebFetch', 'mcp__github__delete_repo']);
+});
+
+// Cursor 2026.11.11 (index.js `fe`): a deny glob is an anchored regex, `*` any characters, every other character literal,
+// tested against the path.resolve()d absolute path with its native separators.
+const cursorMatches = (glob, path) => new RegExp(`^${glob.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\*/g, '.*')}$`).test(path);
+const globOf = (token) => /^\w+\((.*)\)$/.exec(token)[1];
+
+test('rule plan: on Windows, // and ~/ path rules are written with backslashes, so they match a C:\\ path', () => {
+  const rules = ['Read(//**/.env*)', 'Edit(//**/secrets.json)', 'Edit(//etc/**)', 'Read(~/.ssh/**)'];
+  const p = cursorRulePlan({ deny: rules }, { platform: 'win32' });
+  assert.deepEqual(p.deny, [String.raw`Read(**\.env*)`, String.raw`Write(**\secrets.json)`, String.raw`Write(*:\etc\**)`, String.raw`Read(~\.ssh\**)`]);
+  assert.deepEqual(p.partial, rules);
+  const [env, secrets, etc, ssh] = p.deny.map(globOf);
+  for (const v of [String.raw`C:\repo\sub\.env.local`, String.raw`D:\w\.env`, String.raw`\\server\share\.env`]) assert.ok(cursorMatches(env, v), v);
+  assert.ok(!cursorMatches(env, String.raw`C:\repo\environment.md`));
+  assert.ok(cursorMatches(secrets, String.raw`C:\w\plugins\p\data\secrets.json`));
+  assert.ok(cursorMatches(etc, String.raw`C:\etc\hosts`) && !cursorMatches(etc, String.raw`C:\w\etc\hosts`));
+  // Cursor expands a leading `~` before `/` or `\` to the home.
+  assert.ok(cursorMatches(ssh.replace(/^~/, String.raw`C:\Users\zed`), String.raw`C:\Users\zed\.ssh\id_ed25519`));
+  // The POSIX form never matches a Windows path, which is why win32 gets its own.
+  assert.ok(!cursorMatches(globOf(cursorRulePlan({ deny: ['Read(//**/.env*)'] }, { platform: 'linux' }).deny[0]), String.raw`C:\repo\.env`));
+});
+
+test('rule plan: off Windows, a //**/ rule stays one absolute POSIX glob', () => {
+  const p = cursorRulePlan({ deny: ['Read(//**/.env*)'] }, { platform: 'darwin' });
+  assert.deepEqual(p.deny, ['Read(/**/.env*)']);
+  assert.ok(cursorMatches(globOf(p.deny[0]), '/w/repo/.env'));
+});
+
+test('rule plan: /rel, ./rel and bare rules match the resolved path inside the checkout; ../ stays unenforced', () => {
+  const rules = ['Read(/src/secret.txt)', 'Read(./.env)', 'Edit(*.pem)', 'Read(**/id_rsa)', 'Read(../sibling/x)', 'Read(./)'];
+  const posix = cursorRulePlan({ deny: rules }, { platform: 'linux' });
+  assert.deepEqual(posix.deny, ['Read(**/src/secret.txt)', 'Read(**/.env)', 'Write(**/*.pem)', 'Read(**/id_rsa)']);
+  assert.deepEqual(posix.unenforced, ['Read(../sibling/x)', 'Read(./)']);
+  const [secret, env, pem, key] = posix.deny.map(globOf);
+  assert.ok(cursorMatches(secret, '/w/checkout/src/secret.txt') && !cursorMatches(secret, '/w/checkout/src/secret.txt.md'));
+  assert.ok(cursorMatches(env, '/w/checkout/.env') && !cursorMatches(env, '/w/checkout/.envrc'));
+  assert.ok(cursorMatches(pem, '/w/checkout/certs/a.pem') && cursorMatches(key, '/w/checkout/.ssh/id_rsa'));
+  // The glob as Claude writes it never matches Cursor's absolute path: why it is rewritten.
+  assert.ok(!cursorMatches('./.env', '/w/checkout/.env') && !cursorMatches('src/secret.txt', '/w/checkout/src/secret.txt'));
+  const win = cursorRulePlan({ deny: rules }, { platform: 'win32' });
+  assert.deepEqual(win.deny, [String.raw`Read(**\src\secret.txt)`, String.raw`Read(**\.env)`, String.raw`Write(**\*.pem)`, String.raw`Read(**\id_rsa)`]);
+  assert.ok(cursorMatches(globOf(win.deny[0]), String.raw`C:\w\checkout\src\secret.txt`));
+  assert.ok(cursorMatches(globOf(win.deny[1]), String.raw`C:\w\checkout\.env`));
+});
+
+test('rule plan: a ? (one character) is written as *, since Cursor reads ? as a literal question mark', () => {
+  const rules = ['Read(//**/id_rsa?)', 'Read(//etc/ssh/ssh_host_?sa_key)', 'Read(~/.aws/credential?)', 'Read(conf/a?.json)'];
+  const hits = {
+    linux: ['/w/repo/id_rsa2', '/etc/ssh/ssh_host_rsa_key', null, '/w/checkout/conf/a1.json'],
+    win32: [String.raw`C:\w\repo\id_rsa2`, String.raw`C:\etc\ssh\ssh_host_rsa_key`, String.raw`C:\Users\zed\.aws\credentials`, String.raw`C:\w\checkout\conf\a1.json`],
+  };
+  for (const [platform, paths] of Object.entries(hits)) {
+    const deny = cursorRulePlan({ deny: rules }, { platform }).deny.map(globOf);
+    assert.ok(deny.every((g) => !g.includes('?')), `${platform}: ${deny.join(' ')}`);
+    paths.forEach((v, i) => { if (v) assert.ok(cursorMatches(deny[i].replace(/^~/, String.raw`C:\Users\zed`), v), `${platform}: ${rules[i]} must deny ${v}`); });
+  }
+  // Written as is, the ? never matched: why it is rewritten.
+  assert.ok(!cursorMatches('/etc/ssh/ssh_host_?sa_key', '/etc/ssh/ssh_host_rsa_key'));
 });
 
 test('preflight: missing binary refuses; signed out refuses; CURSOR_API_KEY accepts; signed in passes', POSIX, async () => {

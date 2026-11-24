@@ -7,6 +7,7 @@ import { registerChatCard } from './extensions.mjs';
 import { registerFileRenderer, fileRendererFor, filePreviewOf } from './file-renderers.mjs';
 import { langForPath } from '../syntax-highlight.mjs';
 import { formatBytes } from '../artifacts/common.mjs';
+import { fileCardAction } from '../chat-link-route.mjs';
 
 export const FILES_CARD_TYPE = 'files';
 
@@ -24,7 +25,7 @@ export function filesForViewer(items) {
 /** The viewer's urls contract ({text, raw, download}) over the attachment route. */
 export function fileViewerUrls(threadId) {
   const at = (rel) => attachmentUrl(threadId, String(rel).split('/')[0]);
-  return { raw: at, download: at, text: (rel) => `${at(rel)}?as=text` };
+  return { raw: at, download: at, text: (rel) => `${at(rel)}?as=text`, pdf: (rel) => `${at(rel)}?as=pdf` };
 }
 
 const make = (doc, tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
@@ -33,6 +34,8 @@ const make = (doc, tag, cls, text) => { const n = doc.createElement(tag); if (cl
 const GLYPH = {
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 19h14"/>',
   folder: '<path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4.6l2 2.5H19a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/>',
+  panel: '<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M14 4.5v15"/>',
+  eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.75"/>',
 };
 function glyph(doc, body) {
   const s = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -43,10 +46,30 @@ function glyph(doc, body) {
   return s;
 }
 
-/** A file's icon buttons: Show in folder (a show_files copy with a `source`, once ctx.revealInfo says this worca can
- *  open a folder here) and Download. Show in folder starts hidden, so a hosted worca never shows it. */
-function fileActions(doc, item, href, ctx, tid) {
+/** A file's icon buttons: Open in panel, or Quick look when the click itself opens the panel (`quick`: the pop-up at
+ *  this file); Show in folder (a show_files copy with a `source`, once ctx.revealInfo says this worca can open a folder
+ *  here) and Download. Show in folder starts hidden, so a hosted worca never shows it. */
+function fileActions(doc, item, href, ctx, tid, quick = null) {
   const box = make(doc, 'span', 'ask-filescard-acts');
+  if (quick) {
+    // The name opens the panel (issue 1064, "Open chat links in the panel" on): the small icon is the pop-up.
+    const qb = make(doc, 'button', 'btn btn-sm btn-quiet btn-icon ask-filescard-ib ask-filescard-quick');
+    qb.type = 'button';
+    qb.title = 'Quick look';
+    qb.setAttribute('aria-label', `Quick look at ${item.name}`);
+    qb.appendChild(glyph(doc, GLYPH.eye));
+    qb.addEventListener('click', (e) => { e.stopPropagation(); quick(); });
+    box.appendChild(qb);
+  } else if (tid && item.attId && typeof ctx.openInPanel === 'function') {
+    // Open in panel (issue 1064 §2): the chat's stored copy in a Files tab of the chat; the tab says it is a copy.
+    const pb = make(doc, 'button', 'btn btn-sm btn-quiet btn-icon ask-filescard-ib ask-filescard-panel');
+    pb.type = 'button';
+    pb.title = 'Open in panel';
+    pb.setAttribute('aria-label', `Open ${item.name} in the panel`);
+    pb.appendChild(glyph(doc, GLYPH.panel));
+    pb.addEventListener('click', (e) => { e.stopPropagation(); ctx.openInPanel({ threadId: tid, item }); });
+    box.appendChild(pb);
+  }
   if (item.source === true && tid && typeof ctx.revealFile === 'function' && typeof ctx.revealInfo === 'function') {
     const fb = make(doc, 'button', 'btn btn-sm btn-quiet btn-icon ask-filescard-ib ask-filescard-reveal');
     fb.type = 'button';
@@ -91,6 +114,7 @@ export function registerBuiltinFileRenderers() {
   registerFileRenderer('pdf', { label: 'PDF', preview: 'pdf' });
   registerFileRenderer('video', { label: 'Video', preview: 'video' });
   registerFileRenderer('audio', { label: 'Audio', preview: 'audio' });
+  registerFileRenderer('office', { label: 'Document', preview: 'office' });
   registerFileRenderer('markdown', { label: 'Markdown', preview: 'markdown' });
   registerFileRenderer('json', { label: 'JSON', preview: 'json' });
   registerFileRenderer('diff', { label: 'Diff', preview: 'diff' });
@@ -99,15 +123,15 @@ export function registerBuiltinFileRenderers() {
   registerFileRenderer('text', { label: 'Text', preview: (item) => (langForPath(item.name) ? 'code' : 'text') });
 }
 
-function fileRow(doc, item, r, href, onOpen, ctx, tid) {
+function fileRow(doc, item, r, href, onOpen, ctx, tid, { toPanel = false, quick = null } = {}) {
   const row = make(doc, 'div', 'ask-filescard-file');
   const name = make(doc, 'button', 'ask-filescard-name', item.name);
   name.type = 'button';
-  name.title = `Open ${item.name}`;
+  name.title = toPanel ? `Open ${item.name} in the panel` : `Open ${item.name}`;
   name.addEventListener('click', onOpen);
   const meta = make(doc, 'span', 'ask-filescard-meta', `${r.label} · ${formatBytes(item.bytes)}`);
   row.append(name, meta);
-  const acts = fileActions(doc, item, href, ctx, tid);
+  const acts = fileActions(doc, item, href, ctx, tid, toPanel ? quick : null);
   if (acts.childElementCount) row.appendChild(acts);
   return row;
 }
@@ -127,6 +151,14 @@ export function buildFilesCard(block, ctx) {
   head.append(make(doc, 'span', 'ask-mcard-title', title), make(doc, 'span', 'ask-mcard-kind', 'Files'));
   root.appendChild(head);
   const open = (index) => { if (tid && typeof ctx.openFiles === 'function') ctx.openFiles({ threadId: tid, items, index }); };
+  // Issue 1064: with "Open chat links in the panel" on (on unless the setting is explicitly off), a file that is not an
+  // image opens its copy in a Files tab of the chat (fileCardAction). Read when the card is built (which icon shows) and
+  // again on every click (where it goes); the panel rebuilds the files cards when the setting changes.
+  const panelOk = (item) => !!tid && !!item.attId && typeof ctx.openInPanel === 'function';
+  const routeOf = (item) => (panelOk(item)
+    ? fileCardAction({ preview: filePreviewOf(item), enabled: !(typeof ctx.linksInPanel === 'function' && ctx.linksInPanel() === false) })
+    : 'popup');
+  const activate = (item, index) => { if (routeOf(item) === 'panel') ctx.openInPanel({ threadId: tid, item }); else open(index); };
   const grid = make(doc, 'div', 'ask-filescard-grid');
   const list = make(doc, 'div', 'ask-filescard-list');
   items.forEach((item, index) => {
@@ -139,7 +171,7 @@ export function buildFilesCard(block, ctx) {
       b.title = item.name;
       b.setAttribute('aria-label', `Open ${item.name}`);
       b.appendChild(tile);
-      b.addEventListener('click', () => open(index));
+      b.addEventListener('click', () => activate(item, index));
       // The tile and its icon buttons are siblings: a button never sits inside another button.
       const cell = make(doc, 'div', 'ask-filescard-tile');
       cell.appendChild(b);
@@ -147,7 +179,8 @@ export function buildFilesCard(block, ctx) {
       if (acts.childElementCount) cell.appendChild(acts);
       grid.appendChild(cell);
     } else {
-      list.appendChild(fileRow(doc, item, r, url(item), () => open(index), ctx, tid));
+      const toPanel = routeOf(item) === 'panel';
+      list.appendChild(fileRow(doc, item, r, url(item), () => activate(item, index), ctx, tid, { toPanel, quick: () => open(index) }));
     }
   });
   if (grid.childElementCount === 1) grid.classList.add('is-single');

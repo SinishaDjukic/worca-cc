@@ -7,11 +7,12 @@ import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 const cols = (db, t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
 const version = (db) => db.prepare('PRAGMA user_version').get().user_version;
 
-test('fresh DB: ask_messages.engine is last', () => {
+test('fresh DB: ask_messages.engine follows created_at (v100 superseded_by comes after it)', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
   assert.ok(SCHEMA_VERSION >= 83);
-  assert.equal(cols(db, 'ask_messages').at(-1), 'engine');
+  const c = cols(db, 'ask_messages');
+  assert.equal(c[c.indexOf('created_at') + 1], 'engine');
 });
 
 test('a DB stamped 82 without it gets it, keeps its rows, and is stamped current', () => {

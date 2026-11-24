@@ -19,6 +19,7 @@ import {
   attachmentPath, attachmentSourcePath, attachmentSourceOrigin,
   linkRun, updateRunLink, listRunLinks,
   listThreadsPage, setArchived, setPinned, THREAD_SORTS, switchThreadEngine,
+  supersedeRefusal, appendSupersedingMessage, firstUserText, SUPERSEDE_MAX_AGE_MS,
 } from '../src/core/ask/store.mjs';
 
 const HOME = useTempHome(after);
@@ -852,4 +853,129 @@ test('a generic binary keeps its original extension on disk; attachmentPath and 
   assert.ok(existsSync(join(attachmentsDir(t.id), `${bare.id}.bin`)));
   assert.equal(attachmentPath(t.id, z.id), join(attachmentsDir(t.id), `${z.id}.zip`));
   assert.deepEqual(readAttachmentRaw(t.id, z.id).buffer, data);
+});
+
+// ---- a voice merge replaces the fragment turn (docs/speech.md): hidden with a flag, never deleted ----
+function fragmentThread({ replyBlocks = [{ kind: 'tool', id: 'toolu_1', name: 'mcp__worca__list_runs', status: 'done' }], status = 'done' } = {}) {
+  const t = createThread();
+  const first = appendMessage(t.id, { role: 'user', text: 'earlier question' });
+  appendMessage(t.id, { role: 'assistant', text: 'earlier answer', status: 'done' });
+  const frag = appendMessage(t.id, { role: 'user', text: 'Do you know how' });
+  const reply = appendMessage(t.id, { role: 'assistant', text: '', status: 'streaming' });
+  if (status !== 'streaming') finishMessage(reply.id, { text: 'I know many things.', blocks: replyBlocks, status, reason: null, usage: null, costUsd: null, durationMs: 5 });
+  else if (replyBlocks.length) setMessageBlocks(reply.id, replyBlocks);
+  return { t, first, frag, reply };
+}
+const merged = { role: 'user', text: 'Do you know how to bake bread?' };
+const flags = (id) => listMessages(id).map((m) => [m.id, m.supersededBy]);
+
+test('appendSupersedingMessage: the fragment and its reply get superseded_by = the new id, in seq order; nothing is deleted', () => {
+  const { t, first, frag, reply } = fragmentThread();
+  assert.equal(supersedeRefusal(t.id, frag.id), null);
+  const r = appendSupersedingMessage(t.id, merged, frag.id);
+  assert.equal(r.message.role, 'user');
+  assert.equal(r.message.text, merged.text);
+  assert.equal(r.message.supersededBy, null);
+  assert.deepEqual(r.superseded, [frag.id, reply.id]);
+  const rows = listMessages(t.id);
+  assert.equal(rows.length, 5, 'listMessages returns hidden rows too');
+  assert.deepEqual(rows.map((m) => m.supersededBy), [null, null, r.message.id, r.message.id, null]);
+  assert.equal(getMessage(frag.id).supersededBy, r.message.id);
+  assert.equal(firstUserText(t.id), first.text);
+});
+
+test('supersedeRefusal / appendSupersedingMessage refuse and write nothing (S1, S5)', async () => {
+  const refused = (t, id, opts, reason = /./) => {
+    const before = flags(t.id);
+    const why = supersedeRefusal(t.id, id, opts);
+    assert.ok(why, 'refused');
+    assert.equal(why.code, 'supersede-refused');
+    assert.match(why.error, /^the earlier message cannot be replaced: /);
+    assert.match(why.error, reason);
+    if (!opts) {
+      assert.throws(() => appendSupersedingMessage(t.id, merged, id), (e) => e.code === 'supersede-refused');
+      assert.deepEqual(flags(t.id), before, 'no row, no flag');
+    }
+  };
+  await checkRows([
+    { name: 'not the newest user row', run: () => { const { t, first } = fragmentThread(); refused(t, first.id, undefined, /not the newest/); } },
+    { name: 'a row of another thread', run: () => { const a = fragmentThread(); const b = fragmentThread(); refused(b.t, a.frag.id); } },
+    { name: 'a missing id', run: () => { const { t } = fragmentThread(); refused(t, 'askm_00000000'); } },
+    { name: 'an assistant id', run: () => { const { t, reply } = fragmentThread(); refused(t, reply.id); } },
+    { name: 'a synthetic event row', run: () => {
+      const t = createThread();
+      const ev = appendMessage(t.id, { role: 'user', text: '[worca event] x', blocks: [{ kind: 'notice', synthetic: true, text: 'Saved.' }] });
+      refused(t, ev.id);
+    } },
+    { name: 'a fragment that carried a file', run: () => {
+      const { t, frag } = fragmentThread();
+      setMessageBlocks(frag.id, [{ kind: 'where', label: 'Projects', icon: 'project' }, { kind: 'attachment', id: 'askatt_1', name: 'a.md', bytes: 2, attKind: 'text', mime: 'text/markdown' }]);
+      refused(t, frag.id, undefined, /carried a file or a quote/);
+    } },
+    { name: 'a fragment that carried a quote', run: () => {
+      const t = createThread();
+      const frag = appendMessage(t.id, { role: 'user', text: '> the quoted line\n\nlook at this and' });
+      appendMessage(t.id, { role: 'assistant', text: 'ok', status: 'done' });
+      refused(t, frag.id, undefined, /carried a file or a quote/);
+    } },
+    { name: 'a fragment with only its where block may be replaced', run: () => {
+      const { t, frag } = fragmentThread();
+      setMessageBlocks(frag.id, [{ kind: 'where', label: 'Projects', icon: 'project' }]);
+      assert.equal(supersedeRefusal(t.id, frag.id), null);
+    } },
+    { name: 'already superseded', run: () => {
+      const { t, frag } = fragmentThread();
+      const r = appendSupersedingMessage(t.id, merged, frag.id);
+      appendMessage(t.id, { role: 'assistant', text: 'bread', status: 'done' });
+      refused(t, frag.id, undefined, /already replaced/);
+      assert.equal(supersedeRefusal(t.id, r.message.id), null, 'the merged message itself may be replaced again');
+    } },
+    { name: 'a reply still streaming', run: () => { const { t, frag } = fragmentThread({ status: 'streaming', replyBlocks: [] }); refused(t, frag.id); } },
+    { name: 'a card block', run: () => { const { t, frag } = fragmentThread({ replyBlocks: [{ kind: 'card', id: 'card_1', state: 'proposed', card: { type: 'run' } }] }); refused(t, frag.id); } },
+    { name: 'a write tool (mcp__worca__propose_run)', run: () => { const { t, frag } = fragmentThread({ replyBlocks: [{ kind: 'tool', id: 'toolu_2', name: 'mcp__worca__propose_run', status: 'done' }] }); refused(t, frag.id); } },
+    { name: 'an agent block', run: () => { const { t, frag } = fragmentThread({ replyBlocks: [{ kind: 'agent', id: 'a1', name: 'Task', status: 'done' }] }); refused(t, frag.id); } },
+    { name: 'a system row between (an engine switch)', run: () => {
+      const { t, frag } = fragmentThread();
+      appendMessage(t.id, { role: 'system', text: 'Switched', blocks: [{ kind: 'notice', text: 'Switched' }] });
+      refused(t, frag.id, undefined, /something happened/);
+    } },
+    { name: 'older than SUPERSEDE_MAX_AGE_MS', run: () => {
+      assert.equal(SUPERSEDE_MAX_AGE_MS, 120_000);
+      const { t, frag } = fragmentThread();
+      assert.equal(supersedeRefusal(t.id, frag.id, { now: Date.parse(frag.createdAt) + 119_000 }), null);
+      refused(t, frag.id, { now: Date.parse(frag.createdAt) + 121_000 });
+    } },
+  ]);
+});
+
+test('re-check inside the tx (S2): a block that turns unsafe after the check makes the write refuse and write nothing', () => {
+  const { t, frag, reply } = fragmentThread();
+  assert.equal(supersedeRefusal(t.id, frag.id), null);
+  setMessageBlocks(reply.id, [{ kind: 'tool', id: 'toolu_9', name: 'mcp__worca__remember', status: 'done' }]);
+  const before = flags(t.id);
+  assert.throws(() => appendSupersedingMessage(t.id, merged, frag.id), (e) => e.code === 'supersede-refused' && /cannot be replaced/.test(e.message));
+  assert.deepEqual(flags(t.id), before);
+});
+
+test('appendSupersedingMessage takes the caller\'s now: a re-check at the same instant cannot disagree with the pre-check', () => {
+  const { t, frag } = fragmentThread();
+  const at = Date.parse(frag.createdAt) + 119_999;
+  assert.equal(supersedeRefusal(t.id, frag.id, { now: at }), null);
+  const r = appendSupersedingMessage(t.id, merged, frag.id, { now: at });
+  assert.equal(getMessage(frag.id).supersededBy, r.message.id);
+  const late = fragmentThread();
+  assert.throws(() => appendSupersedingMessage(late.t.id, merged, late.frag.id, { now: Date.parse(late.frag.createdAt) + 121_000 }),
+    (e) => e.code === 'supersede-refused' && /too old/.test(e.message));
+});
+
+test('hidden rows are skipped by firstUserText and the History search (S4)', () => {
+  const tag = `sup${Date.now().toString(36)}`;
+  const t = createThread();
+  const frag = appendMessage(t.id, { role: 'user', text: `${tag}fragment how` });
+  appendMessage(t.id, { role: 'assistant', text: `${tag}reply text`, status: 'done' });
+  appendSupersedingMessage(t.id, { role: 'user', text: 'the whole question' }, frag.id);
+  assert.equal(firstUserText(t.id), 'the whole question');
+  assert.equal(listThreads({ query: `${tag}fragment` }).length, 0);
+  assert.equal(listThreads({ query: `${tag}reply` }).length, 0);
+  assert.equal(countThreads({ query: `${tag}reply` }), 0);
 });

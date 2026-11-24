@@ -4,7 +4,8 @@
 // PATH — and never written by the client: finishing a step ticks it on its own,
 // Restart / Show again are trivially safe, and an established install meets a
 // checklist that already knows what it has done. The only stored flags are the
-// flags in settings.mjs#onboardingPrefs (hidden, welcomeSeen, workspaceGuideSeen).
+// prefs in settings.mjs#onboardingPrefs (hidden, welcomeSeen, workspaceGuideSeen,
+// setupFinished, setupChecked, guidesSeen).
 import { getDb } from './db.mjs';
 import { countProjects } from './projects.mjs';
 import { countWorkspaces } from './workspaces.mjs';
@@ -14,6 +15,9 @@ import { probeClaudeAuth } from './preflight.mjs';
 import { cliReady, configuredClaudeBin } from './cli-resolve.mjs';
 import { CLAUDE_CLI } from './engines/cli-specs.mjs';
 import { onboardingPrefs, setOnboardingPrefs } from './settings.mjs';
+import { anyProviderSignedIn } from './provider-signin.mjs';
+import { REAL_RUN_SQL } from './real-run.mjs';
+import { NO_PROJECT_KEY } from '../shared/no-project.mjs';
 
 /** Step ids in shelf order. The UI (ui/public/getting-started.mjs) carries the
  *  copy and artwork for each; this list is the contract between the two. */
@@ -49,19 +53,25 @@ export async function detectClaude({ recheck = false, ready = claudeReady, probe
 }
 
 /**
- * The nine ticks plus the two stored flags, in one call. The Claude step needs
+ * The nine ticks plus the stored prefs, in one call. The Claude step needs
  * the CLI found AND not signed out (`auth` is preflight's probeClaudeAuth state;
  * 'unknown' — mock, an older CLI — never un-ticks it). `recheck` skips the
  * probe's remembered answer (the Connect dialog's Check again).
- * @param {{recheck?:boolean, detect?:typeof detectClaude}} [opts]  `detect`: a test seam
- * @returns {Promise<{steps:Record<string,boolean>, done:number, total:number,
+ * The step is "Connect a model": it ticks for Claude Code OR any other signed-in provider
+ * (provider-signin.mjs), so a Copilot-only install is not stuck on it.
+ * @param {{recheck?:boolean, detect?:typeof detectClaude, signedIn?:typeof anyProviderSignedIn}} [opts]  `detect`, `signedIn`: test seams
+ * @returns {Promise<{steps:Record<string,boolean>, done:number, total:number, providerSignedIn:boolean,
  *   claude:{bin:string, hint:string|null, auth:'signed-in'|'signed-out'|'unknown'|null, configDirectory:string|null},
- *   hidden:boolean, welcomeSeen:boolean, workspaceGuideSeen:boolean}>}
+ *   hidden:boolean, welcomeSeen:boolean, workspaceGuideSeen:boolean, setupFinished:boolean, setupChecked:boolean,
+ *   guidesSeen:Record<string,true>}>}
  */
-export async function onboardingStatus({ recheck = false, detect = detectClaude } = {}) {
+export async function onboardingStatus({ recheck = false, detect = detectClaude, signedIn = anyProviderSignedIn } = {}) {
   const db = getDb();
-  const count = (sql) => { const row = db.prepare(sql).get(); return row ? Number(row.n) : 0; };
+  const count = (sql, ...params) => { const row = db.prepare(sql).get(...params); return row ? Number(row.n) : 0; };
+  const realRunCount = (excludeKey = null) => count(
+    `SELECT COUNT(*) AS n FROM pipelines p WHERE ${REAL_RUN_SQL('p')} AND (? IS NULL OR p.project_key != ?)`, excludeKey, excludeKey);
   const claude = await detect({ recheck });
+  const providerSignedIn = (await signedIn({ claudeConnected: claude.connected })).signedIn;
   let teamMetrics = false;
   // Cached status only (no discovery): this is read at boot and after every change
   // broadcast, and the Team metrics page owns the expensive refresh.
@@ -71,10 +81,12 @@ export async function onboardingStatus({ recheck = false, detect = detectClaude 
   let teamPolicy = false;
   try { teamPolicy = !!(await listPolicyScopes()).anyEnabled; } catch { /* offline / no git: not enabled */ }
   const steps = {
-    claude: claude.connected,
+    claude: claude.connected || providerSignedIn,
     project: countProjects() > 0,
-    run: count("SELECT COUNT(*) AS n FROM pipelines WHERE status = 'done'") > 0,
-    realRun: count('SELECT COUNT(*) AS n FROM pipelines WHERE total_cost_usd > 0') > 0,
+    // One rule for both (real-run.mjs): a finished, non-demo run that cost something. deleted_at is not
+    // filtered, so a deleted run still counts. `run` is install-wide; `realRun` needs a real project.
+    run: realRunCount() > 0,
+    realRun: realRunCount(NO_PROJECT_KEY) > 0,
     // An answer landed: a thread whose only turn failed (signed out, say) has not shown the step.
     ask: count("SELECT COUNT(*) AS n FROM ask_messages WHERE role = 'assistant' AND status = 'done'") > 0,
     // The New pipeline picker persists a choice per project (PATCH /api/config
@@ -86,7 +98,7 @@ export async function onboardingStatus({ recheck = false, detect = detectClaude 
     teamPolicy,
   };
   const done = ONBOARDING_STEPS.filter((id) => steps[id]).length;
-  return { steps, done, total: ONBOARDING_STEPS.length, claude: { bin: claude.bin, hint: claude.hint, auth: claude.auth, configDirectory: claude.configDirectory }, ...onboardingPrefs() };
+  return { steps, done, total: ONBOARDING_STEPS.length, providerSignedIn, claude: { bin: claude.bin, hint: claude.hint, auth: claude.auth, configDirectory: claude.configDirectory }, ...onboardingPrefs() };
 }
 
 /**
@@ -94,11 +106,26 @@ export async function onboardingStatus({ recheck = false, detect = detectClaude 
  * again. Writes only when there is something to undo — the flag is set and no workspace is
  * left — so a delete that leaves workspaces, or an install that never opened the walkthrough,
  * touches no file.
- * @returns {Promise<boolean>} true when the flag was cleared
+ * @returns {Promise<boolean>} true when the flag was cleared (guidesSeen.workspaces is set in the same write)
  */
 export async function resetWorkspaceGuideIfNoWorkspaces() {
   if (countWorkspaces() > 0) return false;
   if (!onboardingPrefs().workspaceGuideSeen) return false;
-  await setOnboardingPrefs({ workspaceGuideSeen: false });
+  // The same write keeps the workspaces area seen in guidesSeen (D-5): only the legacy flag is cleared.
+  await setOnboardingPrefs({ workspaceGuideSeen: false, guidesSeen: { workspaces: true } });
   return true;
+}
+
+/**
+ * Boot marker for "setup finished" (install-wide). Called once at server start with the install's
+ * freshness: an install that already has activity predates the Setup Assistant and is credited with
+ * having finished it; a fresh install is left unfinished. Writes only while `setupChecked` is unset,
+ * so it never rewrites after the first boot and a user's own answer is never overturned.
+ * @param {{isFresh:boolean}} opts
+ * @returns {Promise<'written'|'unchanged'>}
+ */
+export async function ensureSetupMarker({ isFresh }) {
+  if (onboardingPrefs().setupChecked) return 'unchanged';
+  await setOnboardingPrefs({ setupChecked: true, setupFinished: onboardingPrefs().setupFinished || !isFresh });
+  return 'written';
 }

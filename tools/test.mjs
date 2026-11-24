@@ -9,7 +9,7 @@
 // took 2-3x as long and tripped the timing budgets, perf audit T1), and every run has a whole-suite
 // timeout, so no test can hold `npm test` open forever (process audit §8c).
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,9 @@ const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const PER_FILE_S = 0.5; // process spawn + imports per file (measured 2026-10-04: ~0.54 s)
 const SUITE_TIMEOUT_MIN = 60; // the slowest suite seen took 23 min, at load 49 on 12 cores
 const LOCK_POLL_MS = 2000;
+// A suite is stopped at its time limit, so a lock or a temp folder twice the default limit old belongs to none still
+// running, whatever its pid looks like from here (a pid taken again; a sandbox with its own pid numbers).
+const SUITE_STALE_MS = 2 * SUITE_TIMEOUT_MIN * 60_000;
 
 const readJson = (rel, dflt) => { try { return JSON.parse(readFileSync(join(ROOT, rel), 'utf8')); } catch { return dflt; } };
 const globRe = (g) => new RegExp('^' + g.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*') + '$');
@@ -99,8 +102,9 @@ const alive = (pid) => {
 };
 
 /**
- * Take the full-suite lock file, or report who holds it. A holder whose process is gone, or a file nobody
- * could parse for 10 s, is stale and is taken over.
+ * Take the full-suite lock file, or report who holds it. A holder whose process is gone or that took the lock more
+ * than SUITE_STALE_MS ago, or a file nobody could parse for 10 s, is stale and is taken over. A stale lock that cannot
+ * be removed (another account's file or folder at the name) is run past: no lock beats waiting for ever.
  * @returns {{ ok: true } | { ok: false, holder: { pid:number, cwd:string, at:number } | null }}
  */
 export function tryFullSuiteLock(file, me = { pid: process.pid, cwd: ROOT, at: Date.now() }) {
@@ -110,8 +114,8 @@ export function tryFullSuiteLock(file, me = { pid: process.pid, cwd: ROOT, at: D
     try { holder = JSON.parse(readFileSync(file, 'utf8')); } catch { /* mid-write, or junk */ }
     let fresh = false;
     try { fresh = Date.now() - statSync(file).mtimeMs < 10_000; } catch { continue; }   // gone already: retry
-    if (holder ? alive(holder.pid) : fresh) return { ok: false, holder };
-    rmSync(file, { force: true });
+    if (holder ? alive(holder.pid) && Date.now() - holder.at < SUITE_STALE_MS : fresh) return { ok: false, holder };
+    try { rmSync(file, { force: true }); } catch { return { ok: true }; }
   }
   return { ok: false, holder: null };
 }
@@ -119,6 +123,16 @@ export function tryFullSuiteLock(file, me = { pid: process.pid, cwd: ROOT, at: D
 /** Release the lock only when it is still ours (a takeover after a stale read must not be undone). */
 export function releaseFullSuiteLock(file, pid = process.pid) {
   try { if (JSON.parse(readFileSync(file, 'utf8')).pid === pid) rmSync(file, { force: true }); } catch { /* gone */ }
+}
+
+/**
+ * The machine-wide full-suite lock file (one per user account). Not under tmpdir(): a Worca run sets TMPDIR to its own scratch folder,
+ * so a lock there would be one per run and parallel runs' suites would never wait for each other.
+ */
+export function fullSuiteLockFile(env = process.env, platform = process.platform, uid = process.getuid?.()) {
+  if (env.WORCA_TEST_LOCK_FILE) return env.WORCA_TEST_LOCK_FILE;
+  // Per user: /tmp is shared and sticky, so another account's stale lock could be neither taken over nor removed.
+  return platform === 'win32' ? join(tmpdir(), 'worca-cc-full-suite.lock') : `/tmp/worca-cc-full-suite-${uid}.lock`;
 }
 
 /** Whether this run waits for the machine-wide full-suite lock: an unscoped run on a developer machine. */
@@ -133,7 +147,7 @@ async function waitForFullSuiteLock(file) {
     if (r.ok) return;
     if (!told) {
       const h = r.holder;
-      console.log(`waiting for another full test suite to finish${h ? ` (pid ${h.pid} in ${h.cwd}, started ${new Date(h.at).toTimeString().slice(0, 8)})` : ''}: one full suite runs at a time on this machine; WORCA_TEST_NO_LOCK=1 skips the wait`);
+      console.log(`waiting for another full test suite to finish${h ? ` (pid ${h.pid} in ${h.cwd}, started ${new Date(h.at).toTimeString().slice(0, 8)})` : ''}: one full suite runs at a time on this machine. Let this run wait, or stop this run (never the other suite) and run only the related tests (node tools/test.mjs --related)`);
       told = true;
     }
     await new Promise((r) => setTimeout(r, LOCK_POLL_MS));
@@ -162,6 +176,27 @@ function runSuite(args, opts, timeoutMs) {
   });
 }
 
+/**
+ * A temp folder outside Worca's state for the suite when `tmp` lies inside a `.worca-cc` folder (a run's scratch),
+ * else null. POSIX only: Windows' temp folder is never a run's. A run's teardown never sees this folder, so a suite
+ * that was killed leaves it behind: the name carries the runner's pid, and each start removes our own folders whose
+ * runner is gone and that are `minAgeMs` old (a live runner in a sandbox with its own pid numbers looks gone from
+ * here; none outlives its time limit). A `root` we cannot write to gives null too (the suite then stays in tmpdir()).
+ * Exported for tests.
+ */
+export function suiteTmpOutsideWorca(tmp, { platform = process.platform, root = '/tmp', pid = process.pid, uid = process.getuid?.(), minAgeMs = SUITE_STALE_MS } = {}) {
+  if (platform === 'win32' || !/(^|\/)\.worca-cc\//.test(`${tmp}/`)) return null;
+  let names = [];
+  try { names = readdirSync(root); } catch { /* unreadable: nothing to sweep */ }
+  for (const name of names) {
+    const m = /^worca-cc-test-tmp-(\d+)-/.exec(name);
+    if (!m || alive(Number(m[1]))) continue;
+    const p = join(root, name);
+    try { const st = lstatSync(p); if (st.isDirectory() && st.uid === uid && Date.now() - st.birthtimeMs >= minAgeMs) rmSync(p, { recursive: true, force: true }); } catch { /* another user's, or gone */ }
+  }
+  try { return mkdtempSync(join(root, `worca-cc-test-tmp-${pid}-`)); } catch { return null; }
+}
+
 async function main() {
   let o;
   try { o = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(2); }
@@ -187,14 +222,19 @@ async function main() {
   }
   if (!files.length) { console.error('no test files selected'); process.exit(2); }
 
-  const lockFile = process.env.WORCA_TEST_LOCK_FILE || join(tmpdir(), 'worca-cc-full-suite.lock');
+  const lockFile = fullSuiteLockFile();
   const locked = needsFullSuiteLock(o);
   if (locked) {
     await waitForFullSuiteLock(lockFile);
     process.on('exit', () => releaseFullSuiteLock(lockFile));
   }
-  const home = mkdtempSync(join(tmpdir(), 'worca-cc-test-home-'));
-  const work = mkdtempSync(join(tmpdir(), 'worca-cc-test-run-'));
+  // Inside a Worca run TMPDIR is the run's scratch folder, under <home>/runs/: Ask's deny rules refuse every path there
+  // (src/core/ask/deny-rules.mjs), so each file-tool fixture made in it reads as protected. The suite's temp files
+  // then go to a folder of their own outside Worca's state, removed at the end.
+  const outsideTmp = suiteTmpOutsideWorca(tmpdir());
+  const tmpBase = outsideTmp ?? tmpdir();
+  const home = mkdtempSync(join(tmpBase, 'worca-cc-test-home-'));
+  const work = mkdtempSync(join(tmpBase, 'worca-cc-test-run-'));
   // A file subset gets its own WORCA_HOME: the shared .worca-cc-test may belong to a full run
   // in progress, and wiping it would turn that run red.
   const scoped = o.files.length > 0;
@@ -214,6 +254,11 @@ async function main() {
   env.WORCA_GIT ??= '1'; // P0 (S1): git forced on (no probe) unless the caller set it; rows that need "missing" use test/helpers/git-off.mjs
   delete env.CLAUDE_CONFIG_DIR; // skillHostFacts reads it (skills registry §4.1): a test never sees the developer's Claude config
   delete env.NODE_TEST_CONTEXT; // set inside a node:test file; run() would then skip every file
+  if (outsideTmp) env.TMPDIR = outsideTmp;
+  // HOME is the suite's own, so git's global config is too: a caller's GIT_CONFIG_GLOBAL (a developer's url.insteadOf
+  // rewrites a remote a test pins), GIT_CONFIG_SYSTEM, XDG_CONFIG_HOME (git reads <it>/git/config beside the global
+  // file) or injected config never reaches the tests.
+  for (const k of Object.keys(env)) if (/^(GIT_CONFIG_(GLOBAL|SYSTEM|PARAMETERS|COUNT|KEY_\d+|VALUE_\d+)|XDG_CONFIG_HOME)$/.test(k)) delete env[k];
   // A developer's own Azure DevOps / Bitbucket / push-as-person settings must not open host-lookup gates in tests
   // (D6/D7/D20): tests that need them set them with withEnv.
   for (const k of ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN',
@@ -237,6 +282,7 @@ async function main() {
   }
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  if (outsideTmp) rmSync(outsideTmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   process.exit(code);
 }
 

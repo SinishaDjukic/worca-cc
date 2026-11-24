@@ -4,7 +4,7 @@
 // override write. Real bare origin; HOME sandboxed before the server import.
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,7 +28,7 @@ before(async () => {
   ({ seedPipeline } = await import('./helpers/db-seed.mjs'));
   ({ readCostCapOverride } = await import('../src/core/cost-budget.mjs'));
   ({ getDb } = await import('../src/core/db.mjs'));
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

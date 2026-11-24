@@ -12,6 +12,8 @@
 // executionId. There is no separate executions[] array.
 import { join, isAbsolute, extname, dirname, basename, sep } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { worktreeTree, treeChanges, idsAt, workLost, earlierContents } from './slice-worktree.mjs';
 import { runScratchDir } from './run-manifest.mjs';
 import { rm, readFile, readdir, access, stat, writeFile, mkdir, realpath } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
@@ -993,8 +995,17 @@ export class GraphOrchestrator extends RunHarness {
       onSnapshot: (snap) => {
         // Freeze at the last CLEAN completion once a pause is requested: the
         // executions this pause kills must stay NON-TERMINAL in the persisted
-        // point so the scheduler re-invokes them on resume.
-        if (this.pauseRequested) return;
+        // point so the scheduler re-invokes them on resume. A decomposition task that
+        // still FINISHES while the run pauses is kept, though: its row moves into the
+        // frozen point so the resume skips it (scheduler runSlice) instead of re-running it.
+        if (this.pauseRequested) {
+          const merged = withFinishedSlices(this._graphSnapshot, snap);
+          if (merged === this._graphSnapshot) return;
+          this._graphSnapshot = merged;
+          this.state.resumePoint = this._buildResumePoint(merged);
+          void this._persist();
+          return;
+        }
         this._graphSnapshot = snap;
         // Keep a resumable point on the row at all times: a crash-reconciled
         // ('interrupted') v2 run is then resumable from its last clean snapshot.
@@ -1011,6 +1022,12 @@ export class GraphOrchestrator extends RunHarness {
       onAsk: (q) => this._schedulerAsk(q),
       // The scheduler's log is ONE-ARG (`log(QUIESCENCE_WARNING)`, scheduler.mjs:936).
       log: (line, attrs = null) => this._log('orchestrator', 'warn', String(line), attrs),
+      onSliceSkip: ({ nodeId, taskId, title, executionId }) => {
+        const line = `${nodeId}: task "${title || taskId}" already finished in the earlier attempt — not run again.`;
+        this._log('orchestrator', 'info', line, { nodeId, executionId });
+        void appendAudit(this.pipeline.dir, line).catch(() => {});
+      },
+      sliceWorkKept: (row) => this._sliceWorkKept(row),
       // Shape it first (spec D2/D12): node approval stops are armed only for a run that carries `shape`.
       approvalStops: Boolean(this.runShape),
       // 4.1: a failure or stop waits for siblings to take their SIGTERM→SIGKILL before teardown.
@@ -1458,7 +1475,7 @@ export class GraphOrchestrator extends RunHarness {
       const perspectives = this._shapePerspectives();
       return this._enqueueAsk(() => this._ask({
         id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId, ...(concern ? { concern } : {}),
-        // coverage: null = it could not be read, which is not "no coverage configured"; Away waits on it (planRule).
+        // coverage: null = it could not be read, which is not "no coverage configured"; Away sends it back (planRule).
         plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(spec?.coverage ? { coverage } : {}), ...(outlineChange ? { outlineChange } : {}), ...(notes.length ? { notes } : {}),
           ...(conflicts.length ? { openConflicts: conflicts.length } : {}) },
         validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives, conflicts }),
@@ -1769,7 +1786,7 @@ export class GraphOrchestrator extends RunHarness {
    * Spec §3.8, L1: in slicing mode the Planner either writes its plan (no outline: it chose not to slice) or writes
    * slices.json and stops. Ask a person, then resume the SAME session (as _questionsLoop does): slice 1's plan, the
    * whole task (flat), or a rewritten outline (revise, at most OUTLINE_ROUNDS_MAX rounds). --yes never answers it (F3);
-   * Away mode approves one whose check passed (planRule).
+   * Away mode answers it (planRule).
    */
   async _outlineLoop(nc, ctx, firstResult) {
     let result = firstResult;
@@ -2181,7 +2198,7 @@ export class GraphOrchestrator extends RunHarness {
     // without `phases` (it falls to runUnexpanded) and runPhase ignores the
     // `phase` answers (scheduler.mjs:447/:469), so for those two the pause lands
     // one call later, at the next ordinary execute's _checkPause() — the shell
-    // row ends 'paused' either way and the whole fan-out re-runs on resume.
+    // row ends 'paused' either way and the fan-out re-runs on resume (finished tasks skipped).
     if (args.composite) {
       try {
         const role = roleReviewOf(node.config) !== null;
@@ -2226,6 +2243,8 @@ export class GraphOrchestrator extends RunHarness {
       this._checkAbort();
       this._checkPause();
       if (!KEYED_KINDS.includes(node.kind)) return await this._runFlow(ctx);
+      // A decomposition task records what it changes in the working tree, so a resume can tell whether that work survived the pause.
+      const sliceBefore = ctx.slice && !ctx.role ? await this._sliceTrees() : null;
       // P1: a Folder run's cwd is still the run's own copy — a link the agent swapped in would take the engine's
       // per-spawn files (Cursor's .cursor/) and every later node. A throw here pauses the run.
       // P5: a mixed workspace (a git run) checks its Folder members' copies too — fan-out agents work in them.
@@ -2265,6 +2284,7 @@ export class GraphOrchestrator extends RunHarness {
       this._sessions?.noteVerdict(ctx.executionId, verdictSummary(result?.verdict));
       await this._afterExecution(nc, ctx, result);
       await this._reconcileDirections(ctx);
+      if (sliceBefore) result = { ...result, worktree: await this._sliceWorktree(sliceBefore) };
       return result;
     } catch (err) {
       if (isPause(err) || (this.pauseRequested && (isAbort(err) || this.pauseAbort.signal.aborted))) {
@@ -2323,8 +2343,8 @@ export class GraphOrchestrator extends RunHarness {
     } finally {
       if (endMark !== 'paused') await this._humanEstimate(ctx);
       this._execStep(ctx, endMark);
-      // A PAUSED slice stays 'running': the resume re-runs the whole composite,
-      // and a task that never finished must not read as done.
+      // A PAUSED slice stays 'running': the resume runs it again (only finished
+      // tasks are skipped), and a task that never finished must not read as done.
       if (ctx.slice && !ctx.role && endMark !== 'paused') {
         updateTaskStatus(this.pipeline.id, ctx.slice.id, endMark === 'stopped' ? 'error' : endMark, new Date().toISOString());
       }
@@ -2593,9 +2613,60 @@ export class GraphOrchestrator extends RunHarness {
     return { resumeSessionId: undefined, coldRedispatch: true };
   }
 
+  /** Per git member work tree, the tree `git add -A` would stage right now (null where git failed). */
+  async _sliceTrees() {
+    const trees = {};
+    for (const [key, dir] of this.workDirs.entries()) {
+      if (this._memberWorkMode(key) !== 'git') continue;
+      const ex = await this._addableExcludes(this._excludePathspecs(key), { cwd: dir });
+      trees[key] = await worktreeTree((a, o = {}) => this._git(a, { ...o, cwd: dir }), dir, ex);
+    }
+    return trees;
+  }
+
+  /** What a decomposition task changed since `before` (_sliceTrees), per member key: the slice row's `worktree`.
+   *  null when a tree could not be read, which makes a resume run the task again. */
+  async _sliceWorktree(before) {
+    const after = await this._sliceTrees();
+    const changes = {};
+    for (const [key, from] of Object.entries(before)) {
+      const dir = this.workDirs.get(key);
+      if (!from || !after[key] || !dir) return null;
+      changes[key] = await treeChanges((a, o = {}) => this._git(a, { ...o, cwd: dir }), from, after[key]);
+      if (!changes[key]) return null;
+    }
+    return changes;
+  }
+
+  /** Scheduler `sliceWorkKept`: a finished task the resume would skip runs again when its work left the working
+   *  tree during the pause (slice-worktree.mjs workLost), or when it has no record of that work. The working tree
+   *  is read ONCE, before any task of this attempt runs, so a task re-run here cannot hide a later task's loss. */
+  async _sliceWorkKept(row) {
+    if (!row?.worktree) return false;
+    this._sliceWorkNow ??= this._sliceWorkCheck();
+    const check = await this._sliceWorkNow;
+    return Boolean(check) && !workLost(row.worktree, check.earlier, check.current);
+  }
+
+  async _sliceWorkCheck() {
+    const rows = (this._resumeSnapshot?.execs || []).filter((e) => e?.kind === 'task' && e.status === 'done' && e.worktree);
+    const earlier = earlierContents(rows);
+    const current = new Map();
+    for (const [key, paths] of earlier) {
+      const dir = this.workDirs.get(key);
+      if (!dir) return null;
+      const git = (a, o = {}) => this._git(a, { ...o, cwd: dir });
+      const tree = await worktreeTree(git, dir, await this._addableExcludes(this._excludePathspecs(key), { cwd: dir }));
+      const ids = tree ? await idsAt(git, tree, [...paths.keys()]) : null;
+      if (!ids) return null;
+      current.set(key, ids);
+    }
+    return { earlier, current };
+  }
+
   /** ONE-SHOT session re-attach: an executionId is consumed the first time it is
    *  asked for, so a recovery retry or a fix cycle never re-attaches a stale
-   *  session. Composite slices re-run whole and are never in the map. */
+   *  session. Composite slices are never in the map: one that runs again starts cold. */
   _takeResumeSession(executionId) {
     if (!this._resumeSessions?.has(executionId)) return undefined;
     const id = this._resumeSessions.get(executionId);
@@ -3339,14 +3410,21 @@ export class GraphOrchestrator extends RunHarness {
         + 'running one normal execution with that input unbound.').catch(() => {});
       return { phases: [] };
     }
-    const resolved = phases.map((ph) => ({
+    // Each task carries its file's content digest: a resume skips a slice that finished before the
+    // pause only while its task file is unchanged (scheduler runSlice). An unreadable file gets none.
+    const resolved = await Promise.all(phases.map(async (ph) => ({
       ordinal: ph.ordinal,
-      tasks: ph.tasks.map((t) => ({
-        ...t,
-        nodeId: sliceExecutionId(args.executionId, t.id),
-        path: isAbsolute(t.file || '') ? t.file : join(this.pipeline.dir, t.file || ''),
+      tasks: await Promise.all(ph.tasks.map(async (t) => {
+        const path = isAbsolute(t.file || '') ? t.file : join(this.pipeline.dir, t.file || '');
+        const text = t.file ? await readFile(path).catch(() => null) : null;
+        return {
+          ...t,
+          nodeId: sliceExecutionId(args.executionId, t.id),
+          path,
+          digest: text ? createHash('sha256').update(text).digest('hex') : null,
+        };
       })),
-    }));
+    })));
     writeDecomposition(this.pipeline.id, resolved);
     const count = resolved.reduce((n, ph) => n + ph.tasks.length, 0);
     // Run progress (P2): the decomposition's whole size. A slice row's taskTotal is its phase's only.
@@ -3691,7 +3769,7 @@ export class GraphOrchestrator extends RunHarness {
     }
     // One-shot session re-attach: only executions the pause left PAUSED. The map
     // is consumed entry-by-entry in _execCtx, so a fix cycle (a NEW executionId)
-    // never re-attaches, and a composite slice re-runs whole.
+    // never re-attaches, and a composite slice that runs again starts cold.
     this._resumeSessions = new Map(
       (this.resumeOpts?.steps || [])
         .filter((s) => s.status === 'paused' && s.sessionId)
@@ -3703,6 +3781,22 @@ export class GraphOrchestrator extends RunHarness {
 /** A role-review role's label as the node declares it; the key when it declares none. */
 function declaredRoleLabel(nc, key) {
   return roleReviewOf(nc.config)?.roles?.find((r) => r.key === key)?.label || key;
+}
+
+/**
+ * The frozen pause point with the decomposition tasks `snap` has `done` copied in (added or
+ * replaced by executionId). Only `kind:'task'` rows move: a slice publishes nothing and touches
+ * no tokens, consumed counts or ordinals, so the rest of the frozen point stays exactly as the
+ * pause left it. Returns `frozen` itself when nothing new finished (or there is no frozen point).
+ */
+function withFinishedSlices(frozen, snap) {
+  if (!frozen || !Array.isArray(frozen.execs)) return frozen;
+  const have = new Map(frozen.execs.map((e) => [e.executionId, e]));
+  const done = (Array.isArray(snap?.execs) ? snap.execs : [])
+    .filter((e) => e?.kind === 'task' && e.status === 'done' && have.get(e.executionId)?.status !== 'done');
+  if (!done.length) return frozen;
+  for (const e of done) have.set(e.executionId, { ...e });
+  return { ...frozen, execs: [...have.values()] };
 }
 
 /** C5: a verdict as the session trace keeps it, counts only. A step without a verdict file reads 'none'. */

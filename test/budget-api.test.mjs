@@ -1,7 +1,7 @@
 // test/budget-api.test.mjs
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,7 +34,7 @@ before(async () => {
   // Any real directory works as a run/seed target: POST /api/run never consults
   // the projects registry, and the resume gates below fire before its lookup.
   seededProjectDir = await mkdtemp(join(tmpdir(), 'worca-cc-budget-proj-'));
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });

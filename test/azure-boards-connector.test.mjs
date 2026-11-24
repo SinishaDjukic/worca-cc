@@ -169,6 +169,11 @@ test('reportResult: comment always; Completed-category state only when completed
       await createTaskSource(makeCtx({ closeOnComplete: 'yes' }), { fetch }).reportResult('acme/Shop#12', { ...result, status: 'failed' });
       assert.deepEqual(fetch.calls.map((c) => c.method), ['POST']);
     } },
+    ...['started', 'pr-opened'].map((status) => ({ name: `yes + ${status} (a run event, #1456) → comment only`, run: async () => {
+      const fetch = fakeFetch(routes());
+      await createTaskSource(makeCtx({ closeOnComplete: 'yes' }), { fetch }).reportResult('acme/Shop#12', { ...result, status });
+      assert.deepEqual(fetch.calls.map((c) => c.method), ['POST']);
+    } })),
     { name: 'already in the Completed category → no PATCH', run: async () => {
       const fetch = fakeFetch(routes('Closed'));
       await createTaskSource(makeCtx({ closeOnComplete: 'yes' }), { fetch }).reportResult('acme/Shop#12', result);

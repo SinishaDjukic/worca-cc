@@ -43,6 +43,7 @@ function stackOf(doc) {
 /** Position a fixed popup next to its trigger, clamped to the viewport (margin px from every edge).
  *  mode 'side'  : left = right edge of the closest `.sidebar` (or the trigger) + gap; top = trigger.top - 30
  *  mode 'up'    : left = trigger.left; top = trigger.top - menu height - gap (opens upward)
+ *  mode 'up-end': left = trigger.right - menu width (right edges aligned); top = trigger.top - menu height - gap (opens upward)
  *  mode 'beside': left = parent.right + 4, or parent.left - width - 4 when there is no room; top = trigger.top - 5
  *  mode 'down'  : left = trigger.right - menu width (right edges aligned); top = trigger.bottom + gap (opens downward)
  *  mode 'below' : 'down' left-aligned (left = trigger.left), with `fit` always on
@@ -64,6 +65,9 @@ export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win =
   let top;
   if (mode === 'up') {
     left = t.left;
+    top = t.top - h - gap;
+  } else if (mode === 'up-end') {
+    left = t.right - w;
     top = t.top - h - gap;
   } else if (mode === 'down') {
     left = t.right - w;

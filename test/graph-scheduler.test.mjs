@@ -104,7 +104,7 @@ const TPL = (nodes, wires) => ({ id: 'wf_t', name: 'T', version: 2, domain: 'cod
  * the pins are written against), tracks agent concurrency, and answers unscripted
  * calls with `{}`.
  */
-function harness({ template, script = {}, maxParallel, onAsk, onGate }) {
+function harness({ template, script = {}, maxParallel, onAsk, onGate, sliceWorkKept }) {
   const events = []; const snapshots = []; const calls = []; const asks = []; const gates = [];
   let inFlight = 0; let maxInFlight = 0;
 
@@ -124,7 +124,7 @@ function harness({ template, script = {}, maxParallel, onAsk, onGate }) {
     return Promise.resolve(out).then((v) => { release(); return v; }, (e) => { release(); throw e; });
   };
 
-  const logs = [];
+  const logs = []; const skips = [];
   const scheduler = createScheduler({
     template,
     portsFn,
@@ -135,10 +135,12 @@ function harness({ template, script = {}, maxParallel, onAsk, onGate }) {
     onAsk: onAsk || (async (a) => { asks.push(a); return a.kind === 'gate' ? 'continue' : []; }),
     onGate: onGate || ((g) => gates.push(g)),
     log: (text) => logs.push(String(text)),
+    onSliceSkip: (x) => skips.push(x),
+    ...(sliceWorkKept ? { sliceWorkKept } : {}),
   });
 
   return {
-    scheduler, events, snapshots, calls, asks, gates, logs,
+    scheduler, events, snapshots, calls, asks, gates, logs, skips,
     maxInFlight: () => maxInFlight,
     execEvents: () => events.filter((e) => e.name === 'exec'),
     tokenEvents: () => events.filter((e) => e.name === 'token'),
@@ -1141,6 +1143,74 @@ test('31 pause mid-composite: the shell stays non-terminal, publishes nothing, a
   assert.ok(c.some((x) => x.slice?.id === 'p1t1' && x.executionId === 'x:n_work:1:p1t1'), 'the same slice ids are re-minted');
   assert.equal(second.tokenEvents().filter((e) => e.from.node === 'n_work').length, 1, 'ONE publish, after finish');
   assert.equal(second.scheduler.getState().endReached, true);
+});
+
+// ── resume skips the slices a pause left finished ───────────────────────────
+
+/** PHASES with a content digest per task (the adapter stamps one on expand). */
+const withDigests = (over = {}) => PHASES.map((ph) => ({
+  ...ph, tasks: ph.tasks.map((t) => ({ ...t, digest: over[t.id] ?? `d-${t.id}` })),
+}));
+
+/** First run: p1t1 is cancelled by a pause, p1t2 finishes (answering `p1t2Res`). Returns the snapshot. */
+async function pausedWithOneSliceDone(phases, p1t2Res = {}) {
+  const hold = deferred();
+  const first = harness({
+    template: FANOUT,
+    script: {
+      n_make: () => md('/p/plan.md'),
+      n_split: manifest,
+      n_work: compositeWorker({ phases, onSlice: (a) => (a.slice.id === 'p1t1' ? hold.promise.then(() => ({ paused: true })) : p1t2Res) }),
+    },
+  });
+  const run = first.scheduler.run();
+  await tick(); await tick();
+  first.scheduler.pause();
+  hold.resolve();
+  assert.equal(await run, 'paused');
+  const snap = first.last();
+  assert.equal(snap.execs.find((e) => e.executionId === 'x:n_work:1:p1t2').status, 'done');
+  return snap;
+}
+
+const resumeSlices = async (snap, phases, sliceWorkKept) => {
+  const second = harness({ template: FANOUT, script: { n_work: compositeWorker({ phases }), n_check: () => ({ verdict: CLEAN }) }, sliceWorkKept });
+  second.scheduler.reattach(snap);
+  assert.equal(await second.scheduler.run(), 'done');
+  return { second, ids: second.callsFor('n_work').filter((c) => c.slice).map((c) => c.slice.id) };
+};
+
+test('31b resume skips a slice that finished before the pause, and re-runs the paused one', { timeout: 5000 }, async () => {
+  const snap = await pausedWithOneSliceDone(withDigests());
+  const { second, ids } = await resumeSlices(snap, withDigests());
+  assert.deepEqual(ids.sort(), ['p1t1', 'p2t1'], 'p1t2 is not run again');
+  assert.deepEqual(second.skips, [{ nodeId: 'n_work', taskId: 'p1t2', title: 'Two', executionId: 'x:n_work:1:p1t2' }], 'the skip is reported');
+  assert.equal(second.logs.some((l) => /p1t2|"Two"/.test(l)), false, 'not as a warning');
+  assert.ok(second.callsFor('n_work').some((c) => c.composite === 'phase' && c.phase === 1 && c.phaseStatus === 'done'));
+  assert.equal(second.tokenEvents().filter((e) => e.from.node === 'n_work').length, 1, 'ONE publish, after finish');
+});
+
+test('31c resume re-runs a finished slice whose task file changed', { timeout: 5000 }, async () => {
+  const snap = await pausedWithOneSliceDone(withDigests());
+  const { ids } = await resumeSlices(snap, withDigests({ p1t2: 'd-changed' }));
+  assert.deepEqual(ids.sort(), ['p1t1', 'p1t2', 'p2t1']);
+});
+
+test('31d resume re-runs a finished slice that carries no digest', { timeout: 5000 }, async () => {
+  const snap = await pausedWithOneSliceDone(PHASES);
+  const { ids } = await resumeSlices(snap, PHASES);
+  assert.deepEqual(ids.sort(), ['p1t1', 'p1t2', 'p2t1']);
+});
+
+test('31e a finished slice whose work the adapter says is gone runs again; its row keeps the adapter\'s worktree record', { timeout: 5000 }, async () => {
+  const worktree = { proj: [['app.txt', 'a0', 'a1']] };
+  const snap = await pausedWithOneSliceDone(withDigests(), { worktree });
+  assert.deepEqual(snap.execs.find((e) => e.executionId === 'x:n_work:1:p1t2').worktree, worktree);
+  const asked = [];
+  const { ids, second } = await resumeSlices(snap, withDigests(), async (row) => { asked.push(row.executionId); return false; });
+  assert.deepEqual(asked, ['x:n_work:1:p1t2'], 'asked only for the finished slice, with its restored row');
+  assert.deepEqual(ids.sort(), ['p1t1', 'p1t2', 'p2t1']);
+  assert.deepEqual(second.skips, []);
 });
 
 // ── MIN-25: the End drain cuts a composite short — that is `skipped`, not `done` ──

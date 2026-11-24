@@ -4,17 +4,15 @@
 // Styling lives in worca-level.css.
 import { isHashHref, setAvatarSrc } from './model.mjs';
 import { renderSegments } from './segments.mjs';
-import { WORCA_LEVELS, WORCA_LEVEL_COUNT, WORCA_THRESHOLDS } from '../../../src/shared/worca-levels.mjs';
+import { WORCA_LEVELS, WORCA_LEVEL_COUNT } from '../../../src/shared/worca-levels.mjs';
 
 const HERO_SIZE = 104;
 const CARD_SIZE = 52;
 const CHIP_TEXT = { reached: 'Reached', current: 'You are here', next: 'Next', later: 'Later' };
-const COUNT_UNIT = Object.freeze({
-  teamMetrics: ` of ${WORCA_THRESHOLDS.teamMetricsRuns} runs in Team metrics`,
-  councilStreak: ` of ${WORCA_THRESHOLDS.councilDays} days`,
-});
 const INTRO =
   'Your level shows how much you know about orchestrating agents in Worca. Worca keeps track as you work. Only you can see it.';
+const NO_LEVEL_SETUP = 'Finish setup to earn your first level.';
+const NO_LEVEL_PROVIDER = 'Sign in to a model provider to earn your first level.';
 const TOP_TEXT = "You've reached the top level. There is no next level to work toward.";
 
 function make(doc, tag, cls, text) {
@@ -42,9 +40,18 @@ function formatDate(iso) {
   return d.toLocaleDateString(undefined, opts);
 }
 
+/** The level held; 0 for a person with no level yet. */
+const heldIndex = (view) => (view.level ? view.level.index : 0);
+
 function nextLevelOf(view) {
   if (view.nextLevel && view.nextLevel.name) return view.nextLevel;
-  return view.ladder.find((l) => l.index === view.level.index + 1) || null;
+  return view.ladder.find((l) => l.index === heldIndex(view) + 1) || null;
+}
+
+/** What a person with no level yet still has to do, from `setup.missing`. */
+function noLevelAsk(view) {
+  const missing = view.setup && Array.isArray(view.setup.missing) ? view.setup.missing : [];
+  return missing.length === 1 && missing[0] === 'provider' ? NO_LEVEL_PROVIDER : NO_LEVEL_SETUP;
 }
 
 const descriptionOf = (index) => WORCA_LEVELS.find((l) => l.index === index)?.description ?? '';
@@ -63,6 +70,20 @@ function nextPanel(doc, view) {
   panel.appendChild(row);
   if (view.progress) panel.appendChild(renderSegments(doc, view.progress, { size: 'lg' }));
   return panel;
+}
+
+/** The hero of a person with no level yet: initials in place of an avatar, and what earns the first level. */
+function noLevelHero(doc, view, initials) {
+  const section = make(doc, 'section', 'wl-hero');
+  const who = make(doc, 'div', 'wl-hero-who');
+  who.appendChild(make(doc, 'span', 'wl-menu-ava', initials));
+  const text = make(doc, 'div', 'wl-hero-text');
+  text.appendChild(make(doc, 'span', 'wl-hero-kicker', `Your level · none yet of ${WORCA_LEVEL_COUNT}`));
+  text.appendChild(make(doc, 'span', 'wl-hero-desc', noLevelAsk(view)));
+  who.appendChild(text);
+  section.appendChild(who);
+  if (view.progress) section.appendChild(nextPanel(doc, view));
+  return section;
 }
 
 function hero(doc, view) {
@@ -87,9 +108,9 @@ function statusDot(doc, done) {
 }
 
 function countText(action) {
-  const unit = COUNT_UNIT[action.id];
-  if (!unit || action.done === true || action.count == null) return null;
-  return `${action.count}${unit}`;
+  if (action.done === true || action.count == null || action.of == null) return null;
+  const unit = Array.isArray(action.unit) ? ` ${action.unit[action.of === 1 ? 0 : 1]}` : '';
+  return `${action.count} of ${action.of}${unit}`;
 }
 
 function itemEnd(doc, action) {
@@ -147,6 +168,30 @@ function levelState(entry, current) {
   return entry.index === current + 1 ? 'next' : 'later';
 }
 
+/** "Reached · Oct 14", "Reached" when the date is missing, "Not reached yet" for a level not held. */
+function reachedLine(entry, state) {
+  const held = state === 'reached' || state === 'current';
+  if (!held && !entry.reachedAt) return 'Not reached yet';
+  const date = formatDate(entry.reachedAt);
+  return date ? `Reached · ${date}` : 'Reached';
+}
+
+function levelItem(doc, action) {
+  const li = make(doc, 'li', 'wl-item-hint');
+  li.dataset.done = String(action.done === true);
+  li.appendChild(make(doc, 'span', null, action.label));
+  const date = action.done === true ? formatDate(action.doneAt) : null;
+  const note = action.done === true ? (date ? `Done · ${date}` : 'Done') : countText(action);
+  if (note) li.appendChild(make(doc, 'span', 'wl-item-count', ` · ${note}`));
+  return li;
+}
+
+function levelItems(doc, items) {
+  const list = make(doc, 'ul', 'wl-list');
+  for (const action of items) list.appendChild(levelItem(doc, action));
+  return list;
+}
+
 function levelCard(doc, entry, current) {
   const state = levelState(entry, current);
   const card = make(doc, 'div', 'wl-level');
@@ -157,6 +202,8 @@ function levelCard(doc, entry, current) {
   card.appendChild(head);
   card.appendChild(make(doc, 'b', 'wl-level-name', entry.name));
   card.appendChild(make(doc, 'span', 'wl-level-desc', entry.description || descriptionOf(entry.index)));
+  card.appendChild(make(doc, 'span', 'wl-level-desc', reachedLine(entry, state)));
+  if (Array.isArray(entry.items) && entry.items.length) card.appendChild(levelItems(doc, entry.items));
   return card;
 }
 
@@ -164,18 +211,18 @@ function levelsGrid(doc, view) {
   const section = make(doc, 'section', 'wl-levels');
   section.appendChild(make(doc, 'h2', null, 'All levels'));
   const grid = make(doc, 'div', 'wl-grid');
-  for (const entry of view.ladder) grid.appendChild(levelCard(doc, entry, view.level.index));
+  for (const entry of view.ladder) grid.appendChild(levelCard(doc, entry, heldIndex(view)));
   section.appendChild(grid);
   return section;
 }
 
 /** Paint the level view into `host`, replacing whatever it held. */
-export function renderProfileLevel(host, view) {
+export function renderProfileLevel(host, view, { initials = '' } = {}) {
   const doc = host.ownerDocument;
   const isTop = view.top === true;
   host.replaceChildren(
     make(doc, 'p', 'wl-intro', INTRO),
-    hero(doc, view),
+    view.level ? hero(doc, view) : noLevelHero(doc, view, initials),
     isTop ? top(doc) : reach(doc, view),
     levelsGrid(doc, view),
   );
