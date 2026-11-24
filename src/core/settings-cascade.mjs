@@ -63,9 +63,6 @@ const SCALARS = [
   // Watch PR: reviewer logins (bots or people who are not collaborators; a Bitbucket account UUID) whose review feedback on a watched PR
   // may start a fix run, in addition to collaborators and the PR author. Project-only, like watchNewPrs.
   scalar({ id: 'watch.trustedReviewers', path: ['watch', 'trustedReviewers'], check: SETTING_CHECKS.stringArray, def: [], hint: 'must be an array of reviewer login strings', readUser: () => undefined }),
-  // Watch PR: the text a listed reviewer's PR-level comment must open with to start a fix run ("## AI Review").
-  // Empty: PR-level comments never do. Project-only.
-  scalar({ id: 'watch.reviewCommentPrefix', path: ['watch', 'reviewCommentPrefix'], check: (value) => typeof value === 'string' && value.length <= 200, def: '', hint: 'must be text of at most 200 characters', readUser: () => undefined }),
   scalar({ id: 'runUserClaudeSettings', check: (value) => typeof value === 'boolean', def: false, hint: 'must be true or false' }),
   scalar({ id: 'memory.softBytesPerFile', path: ['memory', 'softBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_SOFT_BYTES_PER_FILE }),
   scalar({ id: 'memory.maxBytesPerFile', path: ['memory', 'maxBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_HARD_BYTES_PER_FILE }),

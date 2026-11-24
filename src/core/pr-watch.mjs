@@ -146,11 +146,6 @@ function isListedLogin(item, trustedLogins) {
   return trustedLogins.some((x) => typeof x === 'string' && normLogin(x) === want);
 }
 
-/** A PR-level comment counts only when it opens with the project's marker text (watch.reviewCommentPrefix,
- *  "## AI Review" say): review bots also post notices ("review skipped", "rate limit") and placeholders on the
- *  PR, and those are not feedback. No marker set: PR-level comments never start a run. */
-const hasPrefix = (body, prefix) => typeof prefix === 'string' && prefix.trim() !== ''
-  && String(body || '').trimStart().startsWith(prefix.trim());
 /** A PR-level comment's version: when it was last edited, else when it was posted. An edit is a new version
  *  (a bot that replaces "processing…" with its findings, or refreshes one summary comment after each push). */
 const commentVersion = (c) => c.lastEditedAt || c.createdAt;
@@ -164,6 +159,9 @@ const postedSince = (c, since) => since == null || Date.parse(commentVersion(c))
  *  posting never starts a run of its own. */
 export const COMMENT_SETTLE_MS = 2 * 60_000;
 const commentSettled = (c, nowMs) => nowMs - Date.parse(c.updatedAt || commentVersion(c)) >= COMMENT_SETTLE_MS;
+/** How long a PR-level comment whose check failed (the helper model unreachable, an unreadable reply) waits
+ *  before it is checked again. */
+export const TRIAGE_RETRY_MS = 10 * 60_000;
 const commentKey = (c) => `issue-comment:${c.databaseId}@${commentVersion(c)}`;
 
 // A failure is its check's name at the PR head: a CI re-run gets new job ids, never a new key.
@@ -189,7 +187,7 @@ const passing = (c) => c.type === 'status' || c.__typename === 'StatusContext'
  *     batch on the conflict path (`conflict.why: 'behind'`), once per check name;
  *   - anything else is the PR's own and is fixed by hand.
  */
-export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false, baseWaitOver = false, trustedLogins = [], commentPrefix = '', commentsSince = null, now = Date.now() } = {}) {
+export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false, baseWaitOver = false, trustedLogins = [], commentsSince = null, now = Date.now() } = {}) {
   const seen = new Set(alreadyHandled);
   const none = { fire: false, checksSettled: false, failures: [], threads: [], comments: [], reviews: [], reviewOnlyComment: false, conflict: null,
     handledKeys: [], skipped: [], waitingOnBase: [], reruns: [] };
@@ -239,12 +237,12 @@ export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false,
   const reviews = (pr.reviews || []).filter((r) => String(r.state).toUpperCase() === 'CHANGES_REQUESTED'
     && !seen.has(`review:${r.databaseId}`) && trusted(r));
   // PR-level feedback that lands as an issue comment (a reviewer's verdict posted on the PR, not an inline
-  // thread). Only the listed reviewer logins count, and only comments that open with the project's marker
-  // text: the PR author's and collaborators' PR comments are discussion, a bot's notices are not feedback,
-  // and starting a run on every "LGTM" costs money. Issue comments have their own id space, hence their own key, one per version;
+  // thread). Only the listed reviewer logins count: the PR author's and collaborators' PR comments are
+  // discussion, and starting a run on every "LGTM" costs money. The watcher still asks deps.triageComment
+  // whether each one asks for changes (a bot's notices and placeholders do not). Issue comments have their own id space, hence their own key, one per version;
   // a comment hidden on GitHub (minimized) is left alone, and one still changing waits until it settles.
   const comments = (pr.comments || []).filter((c) => !c.isMinimized && !seen.has(commentKey(c))
-    && !String(c.body || '').includes(WATCH_MARKER) && isListedLogin(c, trustedLogins) && hasPrefix(c.body, commentPrefix)
+    && !String(c.body || '').includes(WATCH_MARKER) && isListedLogin(c, trustedLogins)
     && postedSince(c, commentsSince) && commentSettled(c, now));
   const handledKeys = [
     ...failures.map(keyOf),
@@ -441,14 +439,45 @@ export function createPrWatcher(deps = {}) {
     try { const list = deps.trustedLogins?.(origin); return Array.isArray(list) ? list.filter((x) => typeof x === 'string') : []; }
     catch { return []; }
   };
-  /** The text a PR-level comment must open with to count (deps.commentPrefix), or '' (none count). */
-  const commentPrefixOf = (origin) => {
-    try { const v = deps.commentPrefix?.(origin); return typeof v === 'string' ? v : ''; }
-    catch { return ''; }
-  };
-  /** The options every watch-loop collectTriggers call shares: the reviewer list and comment marker (read
-   *  once per call site) and when the watch began taking PR-level comments. */
-  const triggerOpts = (w, origin, extra = {}) => ({ trustedLogins: trustedLoginsOf(origin), commentPrefix: commentPrefixOf(origin), commentsSince: w.retryState?.commentsSince ?? null, now: now(), ...extra });
+  /** Verdicts of deps.triageComment by comment version, kept while the process runs: a "yes" whose run could not
+   *  start yet (a busy checkout) is not asked again; a failed check waits TRIAGE_RETRY_MS before the next try. */
+  const verdicts = new Map();
+  const triageRetryAt = new Map();
+  /** Drops the PR-level comments that do not ask for code changes (marked handled, one audit line each) and the
+   *  ones that could not be checked yet (left for a later tick). No deps.triageComment: every comment counts. */
+  async function triageComments(w, origin, triggers) {
+    if (!triggers.comments?.length || typeof deps.triageComment !== 'function') return { w, triggers };
+    const keep = []; const skip = []; const later = [];
+    for (const c of triggers.comments) {
+      const key = commentKey(c);
+      let verdict = verdicts.get(key);
+      if (verdict === undefined) {
+        if ((triageRetryAt.get(key) || 0) > now()) { later.push(key); continue; }
+        try {
+          verdict = await deps.triageComment({ origin, comment: c, prUrl: w.prUrl });
+          if (typeof verdict !== 'boolean') throw new Error('no verdict');
+          triageRetryAt.delete(key);
+        } catch (err) {
+          if (!triageRetryAt.has(key)) deps.log?.(`pr-watch: ${w.prUrl}: could not check PR comment ${c.databaseId}: ${err?.message || err}`);
+          triageRetryAt.set(key, now() + TRIAGE_RETRY_MS);
+          later.push(key); continue;
+        }
+        if (verdict) verdicts.set(key, true);
+      }
+      if (verdict) { keep.push(c); continue; }
+      skip.push(key);
+      const who = c.author?.login || c.authorLogin || 'a reviewer';
+      try { deps.audit?.(origin.pipelineId, `Watch PR skipped a PR comment from \`${who}\`: it does not ask for code changes.`); } catch { /* best effort */ }
+    }
+    if (skip.length) w = transition(w, { handled: [...w.handled, ...skip] });
+    const drop = new Set([...skip, ...later]);
+    if (!drop.size) return { w, triggers };
+    const handledKeys = triggers.handledKeys.filter((k) => !drop.has(k));
+    return { w, triggers: { ...triggers, comments: keep, handledKeys, fire: handledKeys.length > 0 } };
+  }
+  /** The options every watch-loop collectTriggers call shares: the reviewer list (read once per call site)
+   *  and when the watch began taking PR-level comments. */
+  const triggerOpts = (w, origin, extra = {}) => ({ trustedLogins: trustedLoginsOf(origin), commentsSince: w.retryState?.commentsSince ?? null, now: now(), ...extra });
   const fixRun = (event) => {
     try { deps.onFixRun?.(event); } catch { /* the chat is told best effort; never ownership */ }
   };
@@ -526,6 +555,7 @@ export function createPrWatcher(deps = {}) {
       w = resetRetry(w, 'read');
       if (snap.pr.state !== 'OPEN') return endWatch(w, snap.pr.state);
       pr = snap.pr; triggers = collectTriggers(pr, w.handled, triggerOpts(w, origin, { conflictOnly: once, baseWaitOver: baseWaitOver(w) }));
+      ({ w, triggers } = await triageComments(w, origin, triggers));
       if (!triggers.fire || triggers.reruns.length) return w;
       pre = await preflight(w, origin, pr);
     }
@@ -765,7 +795,8 @@ export function createPrWatcher(deps = {}) {
     const opts = triggerOpts(w, origin);
     const first = collectTriggers(snap.pr, w.handled, opts);
     w = trackBaseWait(w, first.waitingOnBase.length > 0);
-    const triggers = first.waitingOnBase.length && baseWaitOver(w) ? collectTriggers(snap.pr, w.handled, { ...opts, baseWaitOver: true }) : first;
+    let triggers = first.waitingOnBase.length && baseWaitOver(w) ? collectTriggers(snap.pr, w.handled, { ...opts, baseWaitOver: true }) : first;
+    ({ w, triggers } = await triageComments(w, origin, triggers));
     // A re-run uses no fix run, so it is tried even when the cap is reached.
     if (triggers.reruns.length) return rerunChecks(w, origin, triggers.reruns);
     if (!triggers.fire) return w;

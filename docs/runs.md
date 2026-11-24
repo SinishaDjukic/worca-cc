@@ -195,15 +195,16 @@ or a review that requests changes from the PR author or a collaborator. A review
 review bot, usually) counts too once its login is listed in the project's Settings under **Pull requests ›
 Reviewers that may trigger a fix**.
 
-On GitHub, a PR-level comment from a listed reviewer can count too. Set **Pull requests › PR comment starts with**
-to the text your review bot opens its verdict with (`## AI Review`, say). A listed reviewer's PR-level comment that
-begins with that text, posted after Watch PR was turned on, starts a fix run: Worca quotes it in the run and
-replies with the result on the PR. Review bots also post notices ("review skipped", "rate limit exceeded") and
-placeholders on the PR; those don't begin with the text and start nothing. A placeholder later edited into a
-verdict that does counts then. Worca waits until the comment has not changed for two minutes, so a verdict still
-being written starts one run, on the finished text. Editing the comment later (a bot that refreshes one summary
-comment after each push) counts as new feedback. With the setting empty, PR-level comments never start a run.
-Comments from anyone not listed, and comments hidden on GitHub, never do.
+On GitHub, a PR-level comment from a listed reviewer counts too, if it was posted after Watch PR was turned on
+and asks for code changes. Review bots also post notices ("review skipped", "rate limit exceeded"), placeholders
+and summaries on the PR, so before starting a run Worca asks a small helper model (the project's classifier
+helper) whether the comment requests changes; this costs well under a cent. A comment that doesn't is skipped
+and noted in the run's activity log. A comment that does starts a fix run: Worca quotes it in the run and replies
+with the result on the PR. Worca waits until the comment has not changed for two minutes, so a verdict still being
+written is checked once it is finished. Editing the comment later (a bot that refreshes one summary comment after
+each push, or turns a placeholder into findings) counts as a new comment and is checked again. Comments from
+anyone not listed, and comments hidden on GitHub, never start a run. If the check can't run (the helper model is
+unreachable), Worca tries again ten minutes later.
 
 The reviewer list takes GitHub login names; on Bitbucket, list the account UUID (`{…}`). Azure DevOps already
 counts every reviewer.
