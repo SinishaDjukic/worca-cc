@@ -250,8 +250,8 @@ export function renderSpeechRow(providers, { doc = globalThis.document } = {}) {
     }
     if (kind === 'stt') {
       box.appendChild(speechInput(doc, kind, 'language', 'Language', 'auto, or an ISO code such as bg', s));
-      // How long a silence ends what you are saying — raise it if you get cut off mid-sentence.
-      box.appendChild(speechInput(doc, kind, 'pause', 'Pause before sending (seconds)', '1.2 (raise it if you get cut off)', s));
+      // The silence that sends a finished sentence; unfinished ones wait 2.5× as long (browser speech-to-text).
+      box.appendChild(speechInput(doc, kind, 'pause', 'Pause before sending (seconds)', '0.7 (after a finished sentence; unfinished ones wait longer)', s));
     }
     for (const [field, label, placeholder] of SPEECH_FIELDS[kind]) server.appendChild(speechInput(doc, kind, field, label, placeholder, s));
     const btns = h(doc, 'div', 'mv-pv-btns');
@@ -993,6 +993,69 @@ export function renderImportSheet(models, { doc = globalThis.document } = {}) {
       if (m.inCatalog) status.push('In catalogue');
       if (m.preview) status.push('preview');
       if (disabled) status.push('disabled: enable it in your GitHub Copilot settings');
+      tr.appendChild(h(doc, 'td', 'mvi-status', status.join(' · ') || '—'));
+      tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);
+    root.appendChild(tbl);
+  }
+  const msg = h(doc, 'p', 'form-msg mvi-msg');
+  msg.setAttribute('aria-live', 'polite');
+  root.appendChild(msg);
+  const btns = h(doc, 'div', 'mv-editor-btns');
+  const go = h(doc, 'button', 'btn btn-primary mvi-go', 'Import selected');
+  go.type = 'button'; go.disabled = !list.length;
+  const cancel = h(doc, 'button', 'btn mvi-cancel', 'Cancel');
+  cancel.type = 'button';
+  btns.appendChild(go); btns.appendChild(cancel);
+  root.appendChild(btns);
+  return root;
+}
+
+/** The import sheet over GET /api/providers/opencode/models (§8.4's Copilot import): what YOUR installed opencode can
+ *  run, as `opencode models` lists it. Same chrome and same checkbox contract as the Copilot sheet — collectImportSheet
+ *  reads both — with the columns the CLI itself gives: the model id (provider/model, its provider shown beside it) and
+ *  the catalogue status. Each entry runs on the OpenCode harness, its id as opencode takes it. */
+export function renderOpencodeSheet(models, { doc = globalThis.document } = {}) {
+  const list = Array.isArray(models) ? models : [];
+  const root = h(doc, 'section', 'card mv-editor mvi');
+  root.dataset.source = 'opencode';
+  root.appendChild(h(doc, 'h3', 'mv-editor-title', 'Import from OpenCode'));
+  root.appendChild(h(doc, 'small', 'hint',
+    'The models your installed opencode can run — its configured provider keys and sign-ins, plus the free OpenCode Zen models. Each is added as an OpenCode model under the id above, so a run (or chat) on OpenCode calls it exactly as `opencode models` lists it.'));
+  if (!list.length) {
+    root.appendChild(h(doc, 'div', 'hist-empty', 'opencode lists no models.'));
+  } else {
+    const tbl = h(doc, 'table', 'tm-tbl mvi-tbl');
+    const thead = h(doc, 'thead');
+    const hr = h(doc, 'tr');
+    const allTh = h(doc, 'th');
+    const all = h(doc, 'input', 'mvi-all'); all.type = 'checkbox'; all.title = 'Select all importable';
+    allTh.appendChild(all);
+    hr.appendChild(allTh);
+    for (const t of ['Model', 'Provider', 'Status']) hr.appendChild(h(doc, 'th', null, t));
+    thead.appendChild(hr);
+    tbl.appendChild(thead);
+    const tbody = h(doc, 'tbody');
+    for (const m of list) {
+      const tr = h(doc, 'tr');
+      tr.dataset.id = m.id;
+      const cbTd = h(doc, 'td');
+      const cb = h(doc, 'input', 'mvi-cb'); cb.type = 'checkbox'; cb.value = m.id;
+      cbTd.appendChild(cb);
+      tr.appendChild(cbTd);
+      const nameTd = h(doc, 'td');
+      const nameRow = h(doc, 'div', 'mdl-sheet-name');
+      nameRow.appendChild(sheetMark(doc, m));
+      const nameTx = h(doc, 'span', 'mdl-sheet-name-tx');
+      nameTx.appendChild(h(doc, 'b', null, m.name || m.id));
+      nameTx.appendChild(h(doc, 'small', 'hint mvi-id', m.id || ''));
+      nameRow.appendChild(nameTx);
+      nameTd.appendChild(nameRow);
+      tr.appendChild(nameTd);
+      tr.appendChild(h(doc, 'td', null, m.provider || '—'));
+      const status = [];
+      if (m.inCatalog) status.push('In catalogue');
       tr.appendChild(h(doc, 'td', 'mvi-status', status.join(' · ') || '—'));
       tbody.appendChild(tr);
     }

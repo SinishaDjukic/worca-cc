@@ -12,7 +12,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async () => { for (let i = 0; i < 10; i += 1) await tick(); };
 after(() => window.close());
 const { createRequirementsView } = await import('../ui/public/requirements-view.mjs');
-const { whoInterviews, recommendationNote, defaultLine, fallbackLine, modelChip, switchConfirm, sentTo, costSentence } = await import('../ui/public/requirements-model.mjs');
+const { whoInterviews, recommendationNote, defaultLine, fallbackLine, modelButton, switchConfirm, sentTo, costSentence } = await import('../ui/public/requirements-model.mjs');
 const { setEngineLocks } = await import('../ui/public/engine-locks.mjs');
 
 const text = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : null);
@@ -379,7 +379,7 @@ test('styles: the new rules sit inside the Requirements block and use tokens onl
   assert.ok(lines.every((l) => !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)), 'tokens only');
 });
 
-// ── 9c boards 3, 4, 9: the feature's model chip and dialog, the switch confirm, the brief's box and Refresh dialog ──
+// ── 9c boards 3, 4, 9: the feature's model button and dialog, the switch confirm, the brief's box and Refresh dialog ──
 
 const H9 = [
   H('claude', 'Claude Code', { files: true, company: 'Anthropic' }),
@@ -395,14 +395,15 @@ const BRIEF_EST = (usdv, rec) => ({ brief: usdv && typeof usdv === 'object' ? us
 const FILES = [{ name: 'notes.txt', kind: 'text', bytes: 900 }, { name: 'spec.pdf', kind: 'pdf', bytes: 90000 },
   { name: 'mockup.png', kind: 'image', bytes: 5000 }, { name: 'big.txt', kind: 'text', bytes: 60000 }];
 
-test('modelChip: a .btn .btn-sm with aria-haspopup=dialog, the label and a chevron', () => {
+test('modelButton: a .btn .btn-sm with aria-haspopup=dialog, the label and a chevron', () => {
   let opened = 0;
-  const b = modelChip(document, { modelLabel: 'GPT-5.6 Sol on OpenAI Codex' }, () => { opened += 1; });
+  const b = modelButton(document, { modelLabel: 'GPT-5.6 Sol on OpenAI Codex' }, () => { opened += 1; });
   assert.equal(b.tagName, 'BUTTON');
   assert.equal(b.type, 'button');
   assert.ok(b.classList.contains('btn') && b.classList.contains('btn-sm') && !b.classList.contains('chip'), 'the shared small button, not a chip');
   assert.equal(b.getAttribute('aria-haspopup'), 'dialog');
   assert.equal(text(b), 'GPT-5.6 Sol on OpenAI Codex');
+  assert.equal(text(b.querySelector('.req-model-btn-label')), 'GPT-5.6 Sol on OpenAI Codex', 'the label has its own box, so it can end in … on a narrow page');
   assert.equal(b.querySelector('svg').getAttribute('aria-hidden'), 'true');
   b.click();
   assert.equal(opened, 1);
@@ -539,7 +540,7 @@ const dialogEl = () => document.querySelector('[role="dialog"][aria-labelledby]'
 const putCalls = (calls) => calls.filter((c) => c.method === 'PUT');
 const chipsOf = (host) => [...host.querySelectorAll('.req-chips > *')];   // the chips and the cost and model buttons, in row order
 
-test('feature page: the model chip follows the cost chip, names the model and harness; the cost chip says ≈ when estimated', async () => {
+test('feature page: the model button follows the cost button, names the model and harness; the cost button says ≈ when estimated', async () => {
   const { host } = await openFeature();
   const chips = chipsOf(host);
   const at = chips.findIndex((c) => /so far/.test(c.textContent));
@@ -551,12 +552,12 @@ test('feature page: the model chip follows the cost chip, names the model and ha
   const est = await openFeature({ f: F9({ anyEstimated: true }) });
   assert.equal(text(chipsOf(est.host).find((c) => /so far/.test(c.textContent))), '≈$0.21 so far');
   const none = await openFeature({ f: F9({ modelLabel: null, model: null }) });
-  assert.equal(none.host.querySelector('[data-ui="model-chip"]'), null, 'no chip when the model cannot be told');
+  assert.equal(none.host.querySelector('[data-ui="model-btn"]'), null, 'no button when the model cannot be told');
 });
 
-test('feature page: the chip opens "Model for this feature" with its parts; Cancel saves nothing and gives the focus back', async () => {
+test('feature page: the model button opens "Model for this feature" with its parts; Cancel saves nothing and gives the focus back', async () => {
   const { host, calls, asked } = await openFeature();
-  const chip = host.querySelector('[data-ui="model-chip"]');
+  const chip = host.querySelector('[data-ui="model-btn"]');
   chip.focus();
   chip.click();
   await settle();
@@ -580,12 +581,12 @@ test('feature page: the chip opens "Model for this feature" with its parts; Canc
   assert.equal(dialogEl(), null);
   assert.equal(putCalls(calls).length, 0);
   assert.equal(asked.length, 0);
-  assert.equal(document.activeElement.getAttribute('data-ui'), 'model-chip', 'the focus goes back to the chip');
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'model-btn', 'the focus goes back to the button');
 });
 
 test('feature page: Escape closes the dialog; focus moves into it on open', async () => {
   const { host, calls } = await openFeature();
-  host.querySelector('[data-ui="model-chip"]').click();
+  host.querySelector('[data-ui="model-btn"]').click();
   await settle();
   assert.ok(dialogEl().contains(document.activeElement), 'focus moved in');
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -596,7 +597,7 @@ test('feature page: Escape closes the dialog; focus moves into it on open', asyn
 
 test('feature page: Save to Gemini asks the switch confirm first; Cancel on it saves nothing, OK puts the model and repaints the chip', async () => {
   const no = await openFeature({ confirm: () => false });
-  no.host.querySelector('[data-ui="model-chip"]').click();
+  no.host.querySelector('[data-ui="model-btn"]').click();
   await settle();
   await pickValue(dialogEl().querySelector('.req-who-harness'), 'gemini');
   dialogEl().querySelector('[data-ui="model-save"]').click();
@@ -607,20 +608,20 @@ test('feature page: Save to Gemini asks the switch confirm first; Cancel on it s
   assert.equal(putCalls(no.calls).length, 0, 'Cancel saves nothing');
   assert.ok(dialogEl(), 'the dialog stays for another choice');
   const yes = await openFeature();
-  yes.host.querySelector('[data-ui="model-chip"]').click();
+  yes.host.querySelector('[data-ui="model-btn"]').click();
   await settle();
   await pickValue(dialogEl().querySelector('.req-who-harness'), 'gemini');
   dialogEl().querySelector('[data-ui="model-save"]').click();
   await settle();
   assert.deepEqual(putCalls(yes.calls).map((c) => c.body), [{ engine: 'gemini', model: 'gem-flash', effort: null }]);
   assert.equal(dialogEl(), null);
-  assert.equal(text(yes.host.querySelector('[data-ui="model-chip"]')), 'Gemini Flash on gemini');
-  assert.equal(document.activeElement, yes.host.querySelector('[data-ui="model-chip"]'), 'the focus is on the new chip, not <body>');
+  assert.equal(text(yes.host.querySelector('[data-ui="model-btn"]')), 'Gemini Flash on gemini');
+  assert.equal(document.activeElement, yes.host.querySelector('[data-ui="model-btn"]'), 'the focus is on the new button, not <body>');
 });
 
 test('feature page: Claude to Gemini lists the skipped files in the confirm', async () => {
   const { host, asked } = await openFeature({ f: F9({ model: { engine: 'claude', model: 'claude-opus-5-5', effort: null }, modelLabel: 'Opus 5.5 on Claude Code' }) });
-  host.querySelector('[data-ui="model-chip"]').click();
+  host.querySelector('[data-ui="model-btn"]').click();
   await settle();
   await pickValue(dialogEl().querySelector('.req-who-harness'), 'gemini');
   dialogEl().querySelector('[data-ui="model-save"]').click();
@@ -631,13 +632,13 @@ test('feature page: Claude to Gemini lists the skipped files in the confirm', as
 
 test('feature page: Claude to another Claude model asks nothing and saves; the same pick just closes', async () => {
   const { host, calls, asked } = await openFeature({ f: F9({ model: { engine: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' }, modelLabel: 'Sonnet 5.5 on Claude Code' }) });
-  host.querySelector('[data-ui="model-chip"]').click();
+  host.querySelector('[data-ui="model-btn"]').click();
   await settle();
   dialogEl().querySelector('[data-ui="model-save"]').click();
   await settle();
   assert.equal(putCalls(calls).length, 0, 'unchanged: nothing is sent');
   assert.equal(dialogEl(), null);
-  host.querySelector('[data-ui="model-chip"]').click();
+  host.querySelector('[data-ui="model-btn"]').click();
   await settle();
   await pickValue(dialogEl().querySelector('.req-who-model'), 'claude-opus-5-5');
   dialogEl().querySelector('[data-ui="model-save"]').click();
@@ -650,7 +651,7 @@ test('feature page: a refused save (409) says why inside the dialog and keeps it
   const { host } = await openFeature();
   const inner = globalThis.fetch;
   globalThis.fetch = async (u, o = {}) => (o.method === 'PUT' ? { ok: false, status: 409, json: async () => ({ error: 'Worca is working on this feature.' }) } : inner(u, o));
-  host.querySelector('[data-ui="model-chip"]').click();
+  host.querySelector('[data-ui="model-btn"]').click();
   await settle();
   await pickValue(dialogEl().querySelector('.req-who-model'), 'gpt-lite');
   dialogEl().querySelector('[data-ui="model-save"]').click();
@@ -770,15 +771,15 @@ test('brief page, made: Cancel on the Refresh dialog posts nothing; "Use the def
   assert.equal(dialogEl(), null);
 });
 
-test('styles: the model chip, the dialog and the brief box rules sit inside the Requirements block with tokens only', () => {
+test('styles: the model button, the dialog and the brief box rules sit inside the Requirements block with tokens only', () => {
   const css = readStyleCss();
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const end = css.indexOf('/* ── marketplace P3 ── */');
-  for (const s of ['.req-model-chip', '.req-brief-who']) {
+  for (const s of ['.req-model-btn', '.req-brief-who']) {
     const at = css.indexOf(s);
     assert.ok(at > start && at < end, `${s} inside the Requirements block`);
   }
-  const lines = css.slice(start, end).split('\n').filter((l) => /req-model-chip|req-model-dialog|req-brief-who|req-model-applies/.test(l));
+  const lines = css.slice(start, end).split('\n').filter((l) => /req-model-btn|req-model-dialog|req-brief-who|req-model-applies/.test(l));
   assert.ok(lines.length > 0);
   assert.ok(lines.every((l) => !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)), 'tokens only');
 });
@@ -941,9 +942,9 @@ const COSTS = (o = {}) => ({ rows: [
   { step: 'read', label: 'File read · notes.txt', ranOn: 'qwen3-coder-plus on Qwen Code', usd: null, kind: 'unknown' }],
 billedUsd: 0.21, estimatedUsd: 0.04, unknownSteps: 1, totalUsd: 0.25, anyEstimated: true, limitUsd: 5, resetPeriod: 'monthly', ...o });
 
-test('cost chip: a button that opens "Cost of this feature" with the table, the So far row and the sentence', async () => {
+test('cost button: a button that opens "Cost of this feature" with the table, the So far row and the sentence', async () => {
   const { host, calls } = await openFeature({ f: F9({ anyEstimated: true, costUsd: 0.25 }), extra: { 'GET /api/requirements/4/costs': COSTS() } });
-  const chip = host.querySelector('[data-ui="cost-chip"]');
+  const chip = host.querySelector('[data-ui="cost-btn"]');
   assert.equal(chip.tagName, 'BUTTON');
   assert.equal(chip.getAttribute('aria-haspopup'), 'dialog');
   assert.equal(text(chip), '≈$0.25 so far');
@@ -962,7 +963,7 @@ test('cost chip: a button that opens "Cost of this feature" with the table, the 
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await settle();
   assert.equal(dialogEl(), null, 'Escape closes it');
-  assert.equal(document.activeElement, chip, 'and the focus goes back to the chip');
+  assert.equal(document.activeElement, chip, 'and the focus goes back to the button');
 });
 
 test('costSentence: billed only, estimated only, unknown only, weekly, with no limit', () => {
@@ -976,10 +977,10 @@ test('costSentence: billed only, estimated only, unknown only, weekly, with no l
     '1 step with cost unknown. The Requirements budget counts nothing this month; the step with cost unknown is not counted.');
 });
 
-test('cost chip: plain "$0.25 so far" without an estimate; a costs read that fails says so and opens nothing', async () => {
+test('cost button: plain "$0.25 so far" without an estimate; a costs read that fails says so and opens nothing', async () => {
   const { host, msgEl } = await openFeature({ f: F9({ anyEstimated: false, costUsd: 0.25 }) });
-  assert.equal(text(host.querySelector('[data-ui="cost-chip"]')), '$0.25 so far');
-  host.querySelector('[data-ui="cost-chip"]').click();
+  assert.equal(text(host.querySelector('[data-ui="cost-btn"]')), '$0.25 so far');
+  host.querySelector('[data-ui="cost-btn"]').click();
   await settle();
   assert.equal(dialogEl(), null);
   assert.equal(text(msgEl), 'The costs could not be loaded. Try again.');
@@ -1008,7 +1009,7 @@ test('styles: the step rows, notices, error and cost dialog rules sit inside the
   const css = readStyleCss();
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const end = css.indexOf('/* ── marketplace P3 ── */');
-  for (const s of ['.req-step-meta', '.req-step-notices', '.req-error-title', '.req-cost-dialog', '.req-cost-chip']) {
+  for (const s of ['.req-step-meta', '.req-step-notices', '.req-error-title', '.req-cost-dialog', '.req-cost-btn']) {
     const at = css.indexOf(s);
     assert.ok(at > start && at < end, `${s} inside the Requirements block`);
   }
@@ -1017,8 +1018,8 @@ test('styles: the step rows, notices, error and cost dialog rules sit inside the
   assert.ok(lines.every((l) => !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)), 'tokens only');
 });
 
-test('cost chip: "Cost unknown so far" when every step is unknown; money with unknown parts keeps the money; no steps keeps $0.00', async () => {
-  const chip = async (o) => text((await openFeature({ f: F9(o) })).host.querySelector('[data-ui="cost-chip"]'));
+test('cost button: "Cost unknown so far" when every step is unknown; money with unknown parts keeps the money; no steps keeps $0.00', async () => {
+  const chip = async (o) => text((await openFeature({ f: F9(o) })).host.querySelector('[data-ui="cost-btn"]'));
   assert.equal(await chip({ costUsd: 0, unknownSteps: 2 }), 'Cost unknown so far');
   assert.equal(await chip({ costUsd: 0.25, unknownSteps: 1, anyEstimated: true }), '≈$0.25 so far');
   assert.equal(await chip({ costUsd: 0.1, unknownSteps: 1 }), '$0.10 so far');
@@ -1028,7 +1029,7 @@ test('cost chip: "Cost unknown so far" when every step is unknown; money with un
 test('cost dialog: "So far" says "cost unknown" when the total is 0 and steps are unknown', async () => {
   const data = COSTS({ rows: [{ step: 'round', label: 'Round 1', ranOn: 'GPT-5.6 Sol on OpenAI Codex', usd: null, kind: 'unknown' }], billedUsd: 0, estimatedUsd: 0, unknownSteps: 1, totalUsd: 0, anyEstimated: false });
   const { host } = await openFeature({ f: F9({ costUsd: 0, unknownSteps: 1 }), extra: { 'GET /api/requirements/4/costs': data } });
-  host.querySelector('[data-ui="cost-chip"]').click();
+  host.querySelector('[data-ui="cost-btn"]').click();
   await settle();
   const last = [...dialogEl().querySelectorAll('tbody tr')].at(-1);
   assert.deepEqual([...last.children].map((c) => text(c)), ['So far', 'cost unknown']);

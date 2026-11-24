@@ -38,7 +38,7 @@ export async function openBrowser() {
 export const SEEDED_RANDOM = `(() => { let a = 919; Math.random = () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a);
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })()`;
 /** An init script: a repeating timer of 1 s or more never fires (time does not pass in a crawled page, as with the fixed
- *  clock). Chat home's rotating placeholder (chat/intent.mjs EXAMPLE_MS) otherwise showed whichever example the wall
+ *  clock). Chat home's rotating placeholder (older builds) otherwise showed whichever example the wall
  *  clock had reached. Short intervals and setTimeout run as usual. */
 export const FROZEN_INTERVALS = `(() => { const orig = setInterval; let n = 0;
   globalThis.setInterval = (fn, ms, ...a) => (Number(ms) >= 1000 ? -(++n) : orig(fn, ms, ...a)); })()`;

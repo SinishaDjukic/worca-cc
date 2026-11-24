@@ -57,6 +57,11 @@ export function helperEngineFor(engine) { return RUN_ENGINES.includes(engine) &&
 export const OWN_SIGNIN_ENGINES = [...SIGN_IN_ENGINE_NAMES];
 const OWN_SIGNIN_NOTE = Object.freeze({ cursor: 'cursor-agent connects with its own sign-in', gemini: 'gemini connects with its own sign-in',
   goose: 'Goose connects through its own providers', opencode: 'OpenCode connects through its own providers', qwen: 'qwen connects with its own sign-in' });
+/** OpenCode Zen's provider: its free models (`opencode/…`, served by opencode.ai) accept no reasoning
+ *  variant at all — OpenCode 2.3.1+ refuses a `#variant` outright (`Variant unavailable for opencode/<id>: …`),
+ *  where 1.x ignored it. Shared by engines/opencode.mjs (spawn argv), run-harness.mjs (never the run's default model) and settings.mjs (a Zen catalog entry
+ *  advertises no efforts, so pickers and the spawn never attach a variant). */
+export const OPENCODE_ZEN_RE = /^opencode\//i;
 /** 'a cursor model' / 'an opencode model', for the messages that name an engine's catalog entry. */
 export function aModelOf(engine) { return `${/^[aeiou]/i.test(String(engine)) ? 'an' : 'a'} ${engine} model`; }
 /** How an OWN_SIGNIN_ENGINES model connects, for the messages that refuse its env or upstream. */

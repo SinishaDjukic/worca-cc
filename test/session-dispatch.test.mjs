@@ -138,3 +138,19 @@ test('v5 — tool lists are de-duplicated in order and keep only names; a host s
   assert.deepEqual(h.allowedTools, ['Agent', 'Task', 'Read']);
   assert.deepEqual(h.spawnEnv, { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1', X: '1' }, 'Global Constraints: always on host spawns');
 });
+
+// Workflow tests 3b, Task 5 (security review M5): a host spawn of a Pretend try keeps what makes it a Pretend spawn.
+test('M5: the Pretend try fields reach the host unchanged (plugins off, sources, try guard, strict MCP, extra settings)', () => {
+  const PRETEND = { pluginsOff: true, settingSources: ['project'], runLoadsUserSettings: true, tryGuard: { logFile: '/run/connector-calls.ndjson' },
+    strictMcpConfig: true, extraSettings: { autoMemoryEnabled: false } };
+  const h = hostSpawnOpts({ cwd: '/w', ...PRETEND }, { definitions: DEFS, dispatchText: 'D' });
+  for (const [k, v] of Object.entries(PRETEND)) assert.deepEqual(h[k], v, k);
+});
+
+test("flag-off review: an ordinary host keeps its own settings; only a Pretend try's host takes the member's lean ones", () => {
+  const LEAN = { settingSources: ['project'], strictMcpConfig: true, extraSettings: { autoMemoryEnabled: false } };
+  const h = hostSpawnOpts({ cwd: '/w', ...LEAN }, { definitions: DEFS, dispatchText: 'D' });
+  for (const k of Object.keys(LEAN)) assert.equal(h[k], undefined, k);
+  const g = hostSpawnOpts({ cwd: '/w', ...LEAN, tryGuard: { logFile: '/l' } }, { definitions: DEFS, dispatchText: 'D' });
+  for (const [k, v] of Object.entries(LEAN)) assert.deepEqual(g[k], v, k);
+});

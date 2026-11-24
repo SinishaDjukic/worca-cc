@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { effortOn } from '../shared/connections.mjs';
 
 import { getDb, prepare, tx } from './db.mjs';
+import { runnableOf, readRunnableWorkflow, rowChanges, snapshotBeforeWrite } from './workflow-tests/runnable.mjs';
 import { worcaHome } from './projects.mjs';
 import { resolveRunConfig, readConfig, EFFORTS, stepSlotDefaults, modelForEngine, projectRolesFor, modelConnection, modelHasBaseUrlRouting, resolveModelEnv, listModels } from './config.mjs';
 import { claudeAuthFromEnv } from './preflight.mjs';
@@ -47,7 +48,7 @@ import {
   SHAPE_VERIFY_WORKFLOW_ID, GRAPH_SHAPE_VERIFY_WORKFLOW, SHAPE_VERIFY_WORKFLOW_IDS,
   GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID,
 } from './graph/builtin-workflows.mjs';
-export { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId };
+export { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId, runnableOf, readRunnableWorkflow };
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { resolveRoleModel, roleOf, MODEL_ROLES } from './model-roles.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
@@ -311,7 +312,7 @@ export async function writeWorkflow(tpl) {
  * upsert; the API's save path is the one caller that turns it on.
  *
  * @param {{id?:string, name:string, domain?:string, origin?:string, nodes:Array, wires:Array, canvas?:object, codeGraph?:false, sessions?:object}} tpl
- * @param {{rejectCollision?:boolean}} [opts]
+ * @param {{rejectCollision?:boolean, revisionSource?:string, by?:string|null}} [opts]
  * @throws {Error} code 'RESERVED_NAME' (the name slugs onto wf_default) or,
  *   with rejectCollision, code 'ID_TAKEN' + `.id` (the minted id is in use)
  */
@@ -357,6 +358,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   }
   const createdAt = (typeof tpl?.createdAt === 'string' && tpl.createdAt) || existing?.created_at || now;
   tx(() => {
+    snapshotBeforeWrite(id, (p) => rowChanges(p, { name, domain, graph }), { source: opts?.revisionSource || 'save', by: opts?.by ?? null, now });
     prepare(`
       INSERT INTO workflows (id, name, version, domain, steps, feedbacks, graph, archived_at, created_at, updated_at, origin)
       VALUES (?, ?, 2, ?, '[]', '[]', ?, NULL, ?, ?, ?)
@@ -468,13 +470,13 @@ function assertValidGraph(tpl, registry, scripts) {
  *  `checkGraph:false` is the READ escape hatch (GET /api/workflows/:id): a
  *  stale template must still open in the Composer, or it can never be repaired.
  *  @param {string} id
- *  @param {{registry?:Record<string,object>, scripts?:Record<string,object>, checkGraph?:boolean}} [opts]
+ *  @param {{registry?:Record<string,object>, scripts?:Record<string,object>, checkGraph?:boolean, use?:'live'|'draft'|number}} [opts]
  */
-export async function assertRunnableWorkflow(id, { registry, scripts, checkGraph = true } = {}) {
+export async function assertRunnableWorkflow(id, { registry, scripts, checkGraph = true, use } = {}) {
   const wanted = typeof id === 'string' && id.trim() ? id.trim() : GRAPH_DEFAULT_WORKFLOW.id;
   // The Auto entry has no graph to check: the run decides one (spec §5.1).
   if (wanted === AUTO_WORKFLOW_ID) return AUTO_WORKFLOW_STUB;
-  const live = await readWorkflow(wanted);
+  const live = await readRunnableWorkflow(wanted, { use: use ?? (checkGraph ? 'live' : 'draft') }); // D2
   if (live) {
     // A disabled plugin's template is neither runnable nor openable: its agents
     // are withdrawn with the plugin. Same posture as ARCHIVED — a coded refusal
@@ -537,6 +539,7 @@ export async function setWorkflowNodeDefaults(id, map) {
     });
     const now = new Date().toISOString();
     tx(() => {
+      snapshotBeforeWrite(id, (p) => p.graph !== JSON.stringify({ nodes, wires: tpl.wires, ...pickTemplateExtras(tpl, nodes) }), { source: 'defaults', now });
       prepare('UPDATE workflows SET graph = ?, updated_at = ? WHERE id = ?')
         .run(JSON.stringify({ nodes, wires: tpl.wires, ...pickTemplateExtras(tpl, nodes) }), now, id);
     });
@@ -575,6 +578,7 @@ export async function deleteWorkflow(id) {
   getDb();
   let changed = 0;
   tx(() => {
+    snapshotBeforeWrite(id, () => true, { source: 'delete' });
     changed = prepare('DELETE FROM workflows WHERE id = ?').run(id).changes;
   });
   return changed > 0;
@@ -694,7 +698,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   if (workflowId === AUTO_WORKFLOW_ID) {
     throw new Error('the Auto workflow is decided per run — resolveGraph needs the adopted workflow id');
   }
-  const stored = await readWorkflow(workflowId);
+  const stored = await readRunnableWorkflow(workflowId, { use: opts.use ?? 'live' });
   if (!stored) throw new Error(`unknown workflowId "${workflowId}"`);
   if (stored.version !== 2) throw new Error('template is not a graph — runs on the v1 engine');
   // The RESOLVED template: a private deep copy (the alias row spreads a deep-frozen
@@ -842,7 +846,11 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     const legacy = stepsCfg[authored] || {};
     const cfg = node.config && typeof node.config === 'object' ? node.config : {};
     const selO = owned(sel);
-    const legacyO = engine === 'claude' ? owned(legacy) : NO_PICK;
+    // The legacy per-role layer (wf_default's storage) applies on ANY engine: `owned` already keeps a pick only when
+    // the run's engine runs it, so a Claude pick on an opencode/codex run (and vice versa) is dropped exactly like a
+    // node pick, while a pick the engine CAN run is honored. Before multi-engine, this was claude-only, which silently
+    // discarded per-role picks the run window's Advanced → Agents rows save on other engines.
+    const legacyO = owned(legacy);
     const selP = selO.pick;
     const legacyP = legacyO.pick;
     const teamSkipped = !!(selP.model || selP.effort || legacyP.model || legacyP.effort);
@@ -901,7 +909,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     const ownSel = cleanPick(over.nodes?.[node.id]);
     const layerWanted = pair ? null : wantedOf([
       [sel, selO, (field) => (ownSel?.[field] ? 'run' : 'project')],
-      [engine === 'claude' ? legacy : null, legacyO, 'project'],
+      [legacy, legacyO, 'project'],
       [teamSkipped ? null : slotDefaults[authored], teamO, 'slot'],
       [cfgEff, cfgO, factoryApplied ? factorySource : 'template'],
       [roleO.raw, roleO, 'slot'],
@@ -1048,6 +1056,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     template: tpl, ports: portsFn, loops, nodes, wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys,
     ...(factoryNotes.length ? { factoryNotes } : {}), ...(signInBlocked.length ? { signInBlocked } : {}),
     ...(fillNotes ? { fillNotes } : {}),
+    ...(Number.isInteger(stored.versionNo) ? { versionNo: stored.versionNo } : {}), // the named version that runs, only when one does
   };
 }
 

@@ -603,3 +603,35 @@ test('a refused switch offers the next step: a new preview when more turns now d
   act.click();
   assert.deepEqual(opened, [['https://docs.example.test/claude', '_blank', 'noopener']]);
 });
+
+const harnessRows = (ctx) => [...ctx.doc.querySelectorAll('.ask-pop-model [data-ask-harness]')].map((n) => n.textContent.replace(/›$/, ''));
+
+test('More harnesses: one row lists the chat engines with no models; each opens Add model on that harness', async () => {
+  const added = [];
+  const ctx = makePanel({ fetchHandler: handler(), deps: { openAddModel: (engine) => added.push(engine) } });
+  ctx.panel.open(); await ctx.tick(); await ctx.tick();
+  ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
+  assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-engine-group="opencode"]'), null, 'an engine with no models has no section of its own');
+  const more = ctx.doc.querySelector('.ask-pop-model [data-ask-more-harnesses]');
+  assert.equal(more.textContent.replace(/›$/, ''), 'More harnesses');
+  more.click(); await ctx.tick();
+  assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').textContent, '‹ More harnesses');
+  assert.deepEqual(harnessRows(ctx), ['Gemini CLI (beta)', 'Goose (beta)', 'OpenCode (beta)', 'Qwen Code (beta)']);
+  assert.deepEqual(names(ctx), [], 'the pane lists harnesses, never a model');
+  ctx.doc.querySelector('.ask-pop-model [data-ask-harness="opencode"]').click(); await ctx.tick();
+  assert.deepEqual(added, ['opencode'], 'the row opens Add model on the harness');
+  assert.equal(ctx.doc.querySelector('.ask-pop-model'), null, 'the menu closes on the way to Models');
+});
+
+test('More harnesses: back returns to the models; the row is left out when Add model is not wired', async () => {
+  const ctx = makePanel({ fetchHandler: handler(), deps: { openAddModel: () => {} } });
+  ctx.panel.open(); await ctx.tick(); await ctx.tick();
+  ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
+  ctx.doc.querySelector('.ask-pop-model [data-ask-more-harnesses]').click(); await ctx.tick();
+  ctx.doc.querySelector('.ask-pop-model [data-ask-pane-back]').click(); await ctx.tick();
+  assert.deepEqual(names(ctx), ['Opus 5.5']);
+  const bare = makePanel({ fetchHandler: handler() });
+  bare.panel.open(); await bare.tick(); await bare.tick();
+  bare.doc.querySelector('[data-ask-model-btn]').click(); await bare.tick();
+  assert.equal(bare.doc.querySelector('.ask-pop-model [data-ask-more-harnesses]'), null);
+});
