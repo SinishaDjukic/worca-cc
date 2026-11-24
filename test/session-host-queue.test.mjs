@@ -357,3 +357,19 @@ test('v5 — defaultTransport takes the mock from WORCA_MOCK alone (no opts.mock
     for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 });
+
+test('a queued member\'s turn spawns in its own async context, not the previous member\'s (agent-tree spawn watch)', async () => {
+  const { watchSpawns, noteSpawned } = await import('../src/core/agent-tree.mjs');
+  const g = gatedTransport();
+  let pid = 100;
+  const transport = (...a) => { noteSpawned(++pid); return g.transport(...a); };
+  const hosts = createSessionHosts({ specs: [spec()], decisions: decisions(), port: fakePort(), transport });
+  const host = hosts.hostFor('n_a');
+  const seen = { a: [], b: [] };
+  const p1 = watchSpawns((p) => seen.a.push(p), () => host.run(memberOpts({ executionId: 'x:n_a:1' }), member('n_a')));
+  const p2 = watchSpawns((p) => seen.b.push(p), () => host.run(memberOpts({ executionId: 'x:n_b:1' }), member('n_b')));
+  await tick();
+  g.ok(0); await p1; await tick();
+  g.ok(1); await p2;
+  assert.deepEqual(seen, { a: [101], b: [102] });
+});

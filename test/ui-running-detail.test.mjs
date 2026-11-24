@@ -2047,6 +2047,52 @@ const openRdMore = (ctx) => {
 };
 const rdLabel = (b) => b.querySelector('.wfv-menu-l').textContent;
 
+test('Rerun, live page: greyed with its visible hint while the run runs, enabled once it has ended; inert when greyed', async () => {
+  const ctx = await bootRunning({ rows: [liveRow()] });
+  await openGlance(ctx, 'running/r1', { status: 'running' });
+  const running = openRdMore(ctx).find((b) => rdLabel(b) === 'Rerun');
+  assert.ok(running, 'offered on a run with a pipeline id');
+  assert.equal(running.disabled, true);
+  assert.equal(running.querySelector('.wfv-menu-hint').textContent, 'after it ends');
+  assert.equal(running.title, 'Rerun is available once the run has ended.');
+  running.click();
+  await settle(ctx.window, 4);
+  assert.equal(ctx.calls.filter((c) => /\/rerun$/.test(c.url)).length, 0, 'nothing is fetched');
+  ctx.window.document.querySelector('body > .wfv-menu')?.remove();
+
+  const ended = await bootRunning({ rows: [liveRow()] });
+  await openGlance(ended, 'running/r1', { status: 'stopped', active: [] });
+  const items = openRdMore(ended);
+  const rerun = items.find((b) => rdLabel(b) === 'Rerun');
+  assert.equal(rerun.disabled, false);
+  assert.equal(rerun.querySelector('.wfv-menu-hint'), null);
+  assert.ok(items.map(rdLabel).indexOf('Rerun') < items.map(rdLabel).indexOf('Terminal'));
+  assert.deepEqual(items.map(rdLabel).slice(-2), ['Report this run', 'Archive']);
+});
+
+test('Rerun of …: the live page links the run it was copied from (from its state, no saved-run read), or says it is gone, as text only', async () => {
+  const ctx = await bootRunning();
+  const rd = await openGlance(ctx, 'running/r1', { rerunOf: { id: 'src00001', key: KEY, title: 'Old <b>run</b>', exists: true } });
+  assert.equal(ctx.calls.filter((c) => c.url.startsWith('/api/runs/p1?')).length, 0, 'a live run never reads its saved run for the link');
+  const row = rd.querySelector('.rd-kv [data-fact="rerun"]');
+  assert.equal(row.hidden, false);
+  const a = row.querySelector('a');
+  assert.equal(a.getAttribute('href'), `#history/${KEY}/src00001`);
+  assert.equal(a.textContent, 'Rerun of Old <b>run</b>');
+  assert.equal(row.querySelector('b'), null);
+
+  const gone = await bootRunning();
+  const rd2 = await openGlance(gone, 'running/r1', { rerunOf: { id: 'src00001', key: null, title: null, exists: false } });
+  const row2 = rd2.querySelector('.rd-kv [data-fact="rerun"]');
+  assert.equal(row2.hidden, false);
+  assert.equal(row2.querySelector('a'), null);
+  assert.equal(row2.querySelector('.rd-kv-v').textContent, 'Copied from a run that no longer exists');
+
+  const plain = await bootRunning();
+  const rd3 = await openGlance(plain, 'running/r1');
+  assert.equal(rd3.querySelector('.rd-kv [data-fact="rerun"]').hidden, true, 'a run that is no rerun has no row');
+});
+
 test('needle (e), live: a stopped run has one Archive, in ⋯; confirming archives it and shows the list', async () => {
   const ctx = await bootRunning({ rows: [liveRow()] });
   const rd = await openGlance(ctx, 'running/r1', { status: 'stopped', active: [] });

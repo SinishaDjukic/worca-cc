@@ -3,7 +3,7 @@
 // tiles updated in place and destroyed on leave, routing (following chat, else the run on Q&A / Workflow), lists,
 // promos, switches, and findFollowingThread.
 import { test, afterEach } from 'node:test';
-import { VERB_HOLD_MS, HERO_VERBS } from '../ui/public/chat/home-verbs.mjs';
+import { VERB_HOLD_MS, FADE_MS, HERO_VERBS } from '../ui/public/chat/home-verbs.mjs';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
@@ -637,31 +637,35 @@ test('update({ workflows }) hands the new list to the row', async () => {
   assert.ok(s.host.querySelector('.chat-home-act[data-pin="wf_pay"]'));
 });
 
-test('the hero: one steady sentence for screen readers; the verb is typed and deleted behind a cursor through create, design, research, fix, analyse, test, in a slot that never changes width; "do" with reduced motion', async () => {
+test('the hero: one steady sentence for screen readers; whole verbs fade one into the next, slowly, through create, design, research, fix, analyse, test, in a slot that never changes width; "do" with reduced motion', async () => {
   const s = setup();
   await settle(s.window);
   s.home.destroy();
   const due = [];
-  const timers = { setInterval: () => 0, clearInterval() {}, setTimeout: (fn) => { due.push(fn); return due.length; }, clearTimeout() {} };
+  const waits = [];
+  const timers = { setInterval: () => 0, clearInterval() {}, setTimeout: (fn, ms) => { due.push(fn); waits.push(ms); return due.length; }, clearTimeout() {} };
   const home = createChatHome({ doc: s.doc, host: s.host, heroSlot: s.doc.querySelector('[data-chat-hero-slot]'), timers, deps: {
     runs: () => RUNS(), threads: async () => [], workflows: async () => ({ list: [], portsFn: null }),
     flags: async () => ({ scripts: true, tasks: false }), threadForRun: async () => null, openThread() {}, openRunPanel() {},
     setIntent() {}, prefill() {}, navigate() {}, level: () => 'expert' } });
   const h1 = s.host.querySelector('h1.chat-home-title');
-  const typed = () => h1.querySelector('.chat-home-verb-typed').textContent;
+  const word = () => h1.querySelector('.chat-home-verb-word').textContent;
+  const line = h1.querySelector('.chat-home-verb-line');
   assert.equal(h1.getAttribute('aria-label'), 'What should worca do?');
   assert.equal(h1.querySelector('.chat-home-verb').getAttribute('aria-hidden'), 'true');
   assert.equal(h1.querySelector('.chat-home-verb-size').textContent, 'research?', 'the slot is sized by the widest verb: the sentence never moves');
-  assert.equal(h1.querySelector('.chat-home-cursor').hidden, false);
-  const states = [typed()];
-  for (let n = 0; n < 200 && states.filter((t) => t === HERO_VERBS[0]).length < 2; n += 1) { due.shift()(); if (typed() !== states.at(-1)) states.push(typed()); }
-  const whole = states.filter((t) => HERO_VERBS.includes(t));
-  assert.deepEqual([...new Set(whole)], [...HERO_VERBS], 'each verb in turn, then round again');
-  assert.ok(states.includes('cr') && states.includes('desig') && states.includes(''), 'typed a letter at a time, and deleted back to nothing');
+  assert.equal(h1.querySelector('.chat-home-cursor'), null, 'no blinking cursor');
+  const states = [word()];
+  for (let n = 0; n < 200 && states.filter((t) => t === HERO_VERBS[0]).length < 2; n += 1) {
+    due.shift()();
+    if (word() !== states.at(-1)) { states.push(word()); assert.equal(line.classList.contains('is-out'), false, 'a new verb shows faded in'); }
+  }
+  assert.deepEqual(states, [...HERO_VERBS, HERO_VERBS[0]], 'whole verbs only, each in turn, then round again');
+  assert.ok(waits.every((ms) => ms === VERB_HOLD_MS || ms === FADE_MS) && waits.includes(FADE_MS), 'held, then faded');
+  assert.ok(VERB_HOLD_MS >= 3000, 'each verb stays a few seconds');
   home.destroy();
   const r = setup({ reducedMotion: true });
   await settle(r.window);
-  assert.equal(r.host.querySelector('.chat-home-verb-typed').textContent, 'do', 'reduced motion: the plain sentence');
-  assert.equal(r.host.querySelector('.chat-home-cursor:not(.chat-home-verb-size *)').hidden, true, 'and no cursor');
+  assert.equal(r.host.querySelector('.chat-home-verb-word').textContent, 'do', 'reduced motion: the plain sentence');
   r.home.destroy();
 });

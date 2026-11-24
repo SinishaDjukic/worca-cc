@@ -389,6 +389,8 @@ test('a finished run drops its buffered state frames; past the cap the oldest fi
       e.orch.emit('state', { status: 'running', stepper: [] });
       e.orch.emit('log', { line: 'x' });
       e.orch.emit('done', { status: i % 2 ? 'done' : 'stopped' });
+      // The launch's .finally settles an entry after its teardown, which runs after done. uuid-CAP-1's never ends.
+      if (i !== 1) e.settled = true;
       if (i === 24) {
         assert.deepEqual(e.events.map((ev) => ev.type).filter((t) => t !== 'question-resolved'), ['log', 'done'], 'no state frame kept');
       }
@@ -396,8 +398,11 @@ test('a finished run drops its buffered state frames; past the cap the oldest fi
     const left = ids.filter((id) => runs.has(id));
     assert.ok(left.includes('uuid-CAP-paused'), 'a paused entry is never evicted');
     assert.ok(!runs.has('uuid-CAP-0') && runs.has('uuid-CAP-24'), 'the oldest finished go first');
+    assert.ok(runs.has('uuid-CAP-1'), 'an entry still in its teardown is never evicted (archive waits on it)');
     const finishedInHello = _testing.summarizeRuns().filter((r) => ['done', 'stopped', 'error'].includes(r.status));
-    assert.ok(finishedInHello.length <= 20, `hello carries at most 20 finished runs, got ${finishedInHello.length}`);
+    // The cap counts settled entries only: CAP-1 (its teardown never ends) and CAP-24 (not yet settled when its own
+    // done evicted the rest) ride on top of the 20.
+    assert.ok(finishedInHello.length <= 22, `hello carries at most 20 settled finished runs + the 2 in teardown, got ${finishedInHello.length}`);
   } finally {
     for (const id of ids) runs.delete(id);
   }

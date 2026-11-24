@@ -60,7 +60,12 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
     const url = String(u);
     const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
     if (url.includes('/api/onboarding')) {
-      if (init.method === 'POST') { const b = JSON.parse(init.body); posts.push(b); current = { ...current, ...b }; }
+      if (init.method === 'POST') {
+        const { guidesReset, ...b } = JSON.parse(init.body);
+        posts.push(guidesReset ? { guidesReset, ...b } : b);
+        // The server's reset: every How it works area is unseen again, Workspaces' legacy flag included.
+        current = { ...current, ...b, ...(guidesReset ? { guidesSeen: {}, workspaceGuideSeen: false } : {}) };
+      }
       if (init.method !== 'POST') ob.gets += 1;
       if (init.method !== 'POST' && ob.down) return Promise.reject(new TypeError(ob.down));
       if (init.method !== 'POST' && (ob.hold || ob.fail)) {
@@ -192,11 +197,50 @@ test('Hide posts {hidden:true} and removes the pill (the page stays); Settings �
   assert.match(doc.getElementById('gsSettingsMsg').textContent, /^Hidden from the sidebar · 1 of 9 done/);
   click(window, btn);
   await settle();
-  assert.deepEqual(posts, [{ hidden: true }, { hidden: false }]);
+  assert.deepEqual(posts, [{ hidden: true }, { guidesReset: true, hidden: false }]);
   assert.equal(doc.querySelector('.view[data-view="getting-started"]').classList.contains('hidden'), false, 'opens the page');
   assert.equal(doc.getElementById('getting-started-host').hidden, false, 'shelf painted');
   assert.equal(doc.querySelector('.gs-pill-host').hidden, false);
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), true, 'ONLY the checklist returns — the welcome stays seen');
+});
+
+test('Settings › Show again posts only {guidesReset:true} when the checklist is not hidden — "Open checklist" resets the explainers too', async () => {
+  const { doc, window, posts } = await boot({ onboarding: status(['claude'], { welcomeSeen: true, hidden: false }) });
+  window.location.hash = 'settings';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await settle();
+  const btn = doc.getElementById('gsShowAgain');
+  assert.equal(btn.textContent, 'Open checklist');
+  click(window, btn);
+  await settle();
+  assert.deepEqual(posts, [{ guidesReset: true }], 'no hidden key when nothing was hidden');
+  assert.equal(doc.querySelector('.view[data-view="getting-started"]').classList.contains('hidden'), false, 'opens the page');
+});
+
+test('Settings › Show again brings every How it works mark back, Workspaces included', async () => {
+  const seen = { chat: true, runs: true, stats: true, workspaces: true };
+  const { doc, window, posts } = await boot({ onboarding: status(['claude'], { welcomeSeen: true, hidden: true, guidesSeen: seen, workspaceGuideSeen: true }) });
+  const markOf = (id) => doc.getElementById(id)?.dataset.new;
+  window.location.hash = 'runs';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await settle();
+  assert.equal(markOf('howto-btn'), 'false', 'precondition: Runs is seen');
+  window.location.hash = 'workspaces';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await settle();
+  assert.equal(markOf('ws-howto-btn'), 'false', 'precondition: Workspaces is seen');
+  window.location.hash = 'settings';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await settle();
+  assert.match(doc.querySelector('#getting-started-card .gs-settings-text').textContent, /How it works/, 'the card says it brings the marks back');
+  click(window, doc.getElementById('gsShowAgain'));
+  await settle();
+  assert.deepEqual(posts, [{ guidesReset: true, hidden: false }]);
+  assert.equal(markOf('ws-howto-btn'), 'true', 'Workspaces mark is back');
+  window.location.hash = 'runs';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await settle();
+  assert.equal(markOf('howto-btn'), 'true', 'Runs mark is back');
 });
 
 test('Connect Claude Code re-checks on open: a page that loaded while signed out does not keep saying so', async () => {

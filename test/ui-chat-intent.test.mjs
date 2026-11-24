@@ -1,14 +1,14 @@
 // test/ui-chat-intent.test.mjs — worca Chat P6: the composer's intent chip (a CONTRACT §2 composer add-on). A quick
 // action arms it (icon + label + ✕, the placeholder follows); the chip exists only while an intent is set (P1 hides
 // the empty lead row); Backspace in an empty composer removes it; on send ONE plain sentence goes in front of the
-// text and the intent lasts until the message lands; it never wipes another add-on's placeholder; the home rotates
-// example placeholders while idle.
+// text and the intent lasts until the message lands; it never wipes another add-on's placeholder; the home's resting
+// placeholder never rotates.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import {
-  createIntentAddon, installIntentAddon, intentText, splitIntentLead, INTENTS, EXAMPLES, EXAMPLE_MS, INTENT_ADDON_ID,
+  createIntentAddon, installIntentAddon, intentText, splitIntentLead, INTENTS, INTENT_ADDON_ID,
 } from '../ui/public/chat/intent.mjs';
 import { composerAddons, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
 
@@ -22,8 +22,6 @@ function setup({ view = 'home', onSend = null } = {}) {
   const doc = dom.window.document;
   const input = doc.querySelector('.ask-input');
   input.placeholder = DEFAULT_PH;
-  const timers = { fn: null, ms: 0, cleared: false };
-  const win = { setInterval: (fn, ms) => { timers.fn = fn; timers.ms = ms; return 7; }, clearInterval: (id) => { if (id === 7) timers.cleared = true; } };
   const ph = [];
   const focus = [];
   const said = [];
@@ -34,11 +32,11 @@ function setup({ view = 'home', onSend = null } = {}) {
     setPlaceholder: (t) => { ph.push(t); input.placeholder = typeof t === 'string' && t ? t : DEFAULT_PH; },
     focus: () => focus.push(1), announce: (t) => said.push(t),
   };
-  const ctl = createIntentAddon({ win, onSend });
+  const ctl = createIntentAddon({ onSend });
   const lead = doc.querySelector('[data-chat-composer-lead]');
   const handle = ctl.addon.mount(lead, ctx);
   return {
-    doc, ctl, handle, lead, ph, focus, said, timers, win, input,
+    doc, ctl, handle, lead, ph, focus, said, input,
     page: doc.querySelector('[data-chat-page]'),
     chip: () => lead.querySelector('.chat-intent'),
     setThread: (t) => { thread = t; },
@@ -205,43 +203,18 @@ test('Shaper (Shape it first): it arms and the send leads with its sentence', ()
   assert.equal(sent, `${INTENTS.shape.lead}\n\nUploads fail on large files`);
 });
 
-test('examples rotate on the home while idle; they stop when typing, with an intent, or on a thread — never over an intent', () => {
+test('the home placeholder never changes on its own: no timer, the resting placeholder stays', () => {
   const s = setup();
-  assert.equal(s.timers.ms, EXAMPLE_MS);
-  assert.equal(EXAMPLE_MS, 3500);
-  s.timers.fn();
-  assert.equal(s.ph.at(-1), EXAMPLES[0]);
-  s.timers.fn();
-  assert.equal(s.ph.at(-1), EXAMPLES[1]);
-  s.input.value = 'x';
-  s.timers.fn();
-  assert.equal(s.ph.at(-1), null, 'typing drops the example');
-  const n = s.ph.length;
-  s.timers.fn();
-  assert.equal(s.ph.length, n, 'nothing more while the composer has text');
-  s.input.value = '';
-  s.timers.fn();
-  assert.equal(s.ph.at(-1), EXAMPLES[0]);
-  s.ctl.set('run');
-  assert.equal(s.ph.at(-1), 'Describe the task…');
-  s.timers.fn();
-  assert.equal(s.ph.at(-1), 'Describe the task…', 'never over an intent');
-  s.ctl.clear();
-  s.timers.fn();
-  assert.equal(s.ph.at(-1), EXAMPLES[0]);
-  s.page.dataset.view = 'thread';
+  assert.deepEqual(s.ph, [], 'mounting touches no placeholder');
+  assert.equal(s.input.placeholder, DEFAULT_PH);
   s.handle.update({ id: 'ask_00000001', messages: [] });
-  assert.equal(s.ph.at(-1), null, 'the dock never keeps a home example');
-  const m = s.ph.length;
-  s.timers.fn();
-  assert.equal(s.ph.length, m, 'no rotation on a thread');
+  assert.deepEqual(s.ph, [], 'a render sets none either');
 });
 
-test('destroy stops the timer, the Backspace and address listeners and removes the chip', () => {
+test('destroy stops the Backspace and address listeners and removes the chip', () => {
   const s = setup();
   s.ctl.set('run');
   s.handle.destroy();
-  assert.equal(s.timers.cleared, true);
   assert.equal(s.lead.querySelector('.chat-intent'), null);
   const e = key(s.doc, s.input, 'Backspace');
   assert.equal(e.defaultPrevented, false);
@@ -264,26 +237,21 @@ test('a composer mounted while an intent is set shows it at once', () => {
 
 test('installIntentAddon registers ONE composer add-on with id "intent" (a re-install replaces it)', () => {
   _resetChatExtensions();
-  const win = { setInterval: () => 1, clearInterval: () => {} };
-  const a = installIntentAddon({ win });
-  installIntentAddon({ win });
+  const a = installIntentAddon();
+  installIntentAddon();
   const list = composerAddons().filter((x) => x.id === 'intent');
   assert.equal(list.length, 1);
   assert.notEqual(list[0], a.addon, 'the last install wins');
   _resetChatExtensions();
 });
 
-test('Backspace inside an IME composition, or with the browser tab hidden: the chip and the examples stay put', () => {
+test('Backspace inside an IME composition: the chip stays put', () => {
   const s = setup();
   s.ctl.set('run');
   const e = new s.doc.defaultView.KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true, isComposing: true });
   s.input.dispatchEvent(e);
   assert.equal(e.defaultPrevented, false);
   assert.equal(s.ctl.current(), 'run');
-  const h = setup();
-  Object.defineProperty(h.doc, 'visibilityState', { value: 'hidden', configurable: true });
-  h.timers.fn();
-  assert.deepEqual(h.ph, [], 'no rotation in a hidden tab');
 });
 
 test('New chat drops the intent — set, riding a send in flight, or refused: the next chat starts clean', () => {
@@ -321,15 +289,6 @@ test('leaving the chat a send created, by address (the logo, the Chat row, Back)
   assert.equal(s.chip(), null);
   assert.equal(s.input.placeholder, DEFAULT_PH);
   assert.equal(s.handle.transformSend('what time is it'), 'what time is it', 'the next chat’s first message goes out as typed');
-});
-
-test('the examples rotate through every one of them, then start over', () => {
-  const s = setup();
-  for (const ex of [...EXAMPLES, EXAMPLES[0]]) {
-    s.timers.fn();
-    assert.equal(s.ph.at(-1), ex);
-  }
-  assert.equal(EXAMPLES.length, 4);
 });
 
 test('splitIntentLead: the Shaper lead is for the model only (D21)', () => {

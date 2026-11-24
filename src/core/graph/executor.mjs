@@ -61,6 +61,7 @@ import { planConcernBlock, planConcernOverrideBlock, requirementConcernBlock } f
 import { criterionIds } from '../../shared/review/coverage.mjs';
 import { outlineFileState, planOutputOf } from '../shape/outline-file.mjs';
 import { runScriptExecution } from './script-runner.mjs';
+import { BUSY_PROBE_MS, treeBusy, watchSpawns } from '../agent-tree.mjs';
 // Skills registry §4.1: the CLI's refusal of `--plugin-dir` under managed `disableSideloadFlags` (P3's one regex).
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
 
@@ -650,7 +651,7 @@ export function buildAgentPrompt(ctx) {
     concern +
     prototype +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed, investigator: !!ctxSubagentEffort(ctx), engine: node?.engine }) +
+    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed, investigator: !!ctxSubagentEffort(ctx), engine: node?.engine, personalOff: ctx?.pluginsOff === true }) +
     workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative, endpointRouted: routed, serial: node?.noSubagents === true }) +
     (siblings ? siblings + '\n' : '') +
     portIoBlock({ node, ports, bindings, outputs, verdict, ctx }) +
@@ -745,7 +746,7 @@ async function prepare(ctx) {
 }
 
 /** Test seam: `runClaude` stands in for the runner on every agent spawn (the sideload safety net's tests). */
-export const _testing = { runClaude: null };
+export const _testing = { runClaude: null, treeBusy: null };
 
 /** The member a SessionHost dispatches (session groups, Task 45): its ids, the label its definition and dispatch line
  *  carry, and its own model and effort (`_nodeModelPair`, through claudeOpts: `null` when the node pins none — C26). */
@@ -794,7 +795,7 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
   // The seam (Task 45): a session member's unchanged runOpts go to its SessionHost, which runs them as one host turn.
   const run = full.sessionHost ? (o) => full.sessionHost.run(o, memberInfo(full)) : (_testing.runClaude || runClaude);
   try {
-    const { text } = await run(opts);
+    const { text } = await watchSpawns(limit.watch, () => run(opts));
     return { text, sessionId, scope: scope.result({ sessionId }) };
   } catch (err) {
     outcome = 'error'; failure = limit.error || err;
@@ -802,7 +803,7 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
     if (!opts.pluginDirs?.length || sawInit || !SIDELOAD_REFUSED_RE.test([String(err?.message || err), ...said].join('\n'))) throw err;
     if (typeof full.onSkillSideloadRefused === 'function') full.onSkillSideloadRefused();
     try {
-      const { text } = await run({ ...opts, pluginDirs: undefined });
+      const { text } = await watchSpawns(limit.watch, () => run({ ...opts, pluginDirs: undefined }));
       outcome = 'ok'; failure = null;
       return { text, sessionId, scope: scope.result({ sessionId }) };
     } catch (again) { failure = limit.error || again; throw failure; }
@@ -843,6 +844,9 @@ const fmtMinutes = (ms) => (ms >= 60000 ? `${Math.round(ms / 60000)} min` : `${M
  * Abort the spawn when a limit hits. `signal` combines the run's own (Stop/Pause) with the
  * limit's; `touch()` resets the idle timer on every stream event; `error` is the limit's
  * error once one hit (class `time_limit`, which the failure policy pauses on).
+ * `watch(pid)` names the agent's process: when the idle timer fires, a tree still burning CPU
+ * (a background test suite the agent waits on) gets another idle window instead of a stop
+ * (agent-tree.mjs#treeBusy). The wall-clock limit still caps it.
  */
 function timeLimitGuard({ wallMs, idleMs }, outer, nodeId) {
   const ac = new AbortController();
@@ -859,11 +863,29 @@ function timeLimitGuard({ wallMs, idleMs }, outer, nodeId) {
   const wall = setTimeout(() => hit('NODE_TIME_LIMIT', `ran past its ${fmtMinutes(wallMs)} time limit`), wallMs).unref();
   let idle = null;
   let stopped = false;
-  guard.touch = () => {
+  let pid = null;
+  let armed = 0;   // bumped by every arm: output during the busy probe wins over its answer
+  let lastOutput = Date.now();
+  // The probe takes a quarter of a short idle limit, at most a minute: a 1 min limit is not stretched to 2.
+  const probeMs = Math.min(BUSY_PROBE_MS, Math.max(1000, Math.round(idleMs / 4)));
+  const arm = () => {
     if (stopped) return;   // an event after the spawn ended re-arms nothing
+    armed++;
     if (idle) clearTimeout(idle);
-    idle = setTimeout(() => hit('NODE_IDLE_LIMIT', `no output for ${fmtMinutes(idleMs)} (idle limit)`), idleMs).unref();
+    idle = setTimeout(() => void idleHit(), idleMs).unref();
   };
+  const idleHit = async () => {
+    const at = armed;
+    if (pid != null) {
+      let busy = false;
+      try { busy = await (_testing.treeBusy || treeBusy)(pid, { signal: guard.signal, probeMs }); } catch { /* not busy */ }
+      if (stopped || at !== armed) return;
+      if (busy) { arm(); return; }
+    }
+    hit('NODE_IDLE_LIMIT', `no output for ${fmtMinutes(Date.now() - lastOutput)} (idle limit ${fmtMinutes(idleMs)})`);
+  };
+  guard.touch = () => { if (!stopped) lastOutput = Date.now(); arm(); };
+  guard.watch = (p) => { pid = p; };
   guard.touch();
   guard.stop = () => { stopped = true; clearTimeout(wall); if (idle) clearTimeout(idle); };
   return guard;

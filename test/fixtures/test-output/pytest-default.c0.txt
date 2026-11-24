@@ -1,0 +1,19 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.2.0, pluggy-1.7.0
+rootdir: /home/tomica/tool-formats/py
+collected 8 items
+
+test_a.py .Fs...                                                         [ 75%]
+test_b.py ..                                                             [100%]
+
+=================================== FAILURES ===================================
+________________________________ test_top_fail _________________________________
+
+    def test_top_fail():
+>       assert 1 == 2
+E       assert 1 == 2
+
+test_a.py:7: AssertionError
+=========================== short test summary info ============================
+FAILED test_a.py::test_top_fail - assert 1 == 2
+==================== 1 failed, 6 passed, 1 skipped in 0.02s ====================
