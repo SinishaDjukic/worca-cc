@@ -12,6 +12,7 @@ import { getDb, dbPath, SCHEMA_VERSION, _resetForTests } from '../src/core/db.mj
 import { projectKey } from '../src/core/store.mjs';
 import { shaperSmallRunsOn } from '../src/core/shape/small-runs.mjs';
 import { CRITERION_ID_RE } from '../src/shared/review/coverage.mjs';
+import { careOfRow } from '../src/shared/shape/feature-record.mjs';
 import { writeReview, writeClarify, appendAuditById } from '../src/core/artifacts.mjs';
 import { createThread, linkRun } from '../src/core/ask/store.mjs';
 import { getTicket, runDueTickets, updateTicket, createTicket, requestRunNow } from '../src/core/scheduler.mjs';
@@ -23,7 +24,7 @@ import {
   stackedPrBase, recordShapePlan, listShapePlans, featuresOfTickets, featureClarify, chainFeature, sliceOfPipeline, slicePrPreamble,
   recordShip, clearShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
   liveSliceFrom, shaperCard, featureThread, featureRootSource, sliceOfTicket, busySliceOf, sliceGateState,
-  addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf, setFeatureAcceptance,
+  addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf, setFeatureAcceptance, chatShipCardOffered,
 } from '../src/core/shape/features.mjs';
 
 useTempHome(after, 'worca-shape-features-');
@@ -1427,4 +1428,103 @@ test('small runs: resume or restart while another slice is going is refused 409 
   assert.equal(resumeFeature(b.id, { live }).status, 409);
   // Flag off: the same paused slice resumes.
   withSmallRuns(false, () => assert.equal(resumeFeature(b.id, { live }).action, 'resume'));
+}));
+
+// ---- Shaper small runs B1: the marker saved on the planning run decides the card, never the live flag -------------------
+const mark = (pid) => getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?')
+  .run(JSON.stringify({ questions: { asked: 0, skipped: 0 }, revises: [], shapeScore: null, smallRuns: true }), pid);
+
+test('B1: a marked run keeps the one card with the flag off (smallRuns: true, last), before and after the split', () => withSmallRuns(false, () => {
+  const solo = pipe('running');
+  mark(solo);
+  appendAuditById(solo, 'Requirements approval **approve**.');
+  assert.deepEqual(shaperCard(solo, { shaped: (p) => p === solo }),
+    { pipelineId: solo, feature: null, log: [{ key: 'p-0', run: null, text: 'Requirements agreed', detail: [] }], smallRuns: true });
+  const { id, pid } = mk(2);
+  mark(pid);
+  const c = shaperCard(pid);
+  assert.equal(c.feature.id, id);
+  assert.deepEqual(Object.keys(c), ['pipelineId', 'feature', 'log', 'smallRuns']);
+  assert.equal(c.smallRuns, true);
+}));
+
+test('B1: an unmarked run stays dev\'s with the flag on: shaperCard has no smallRuns key', () => withSmallRuns(true, () => {
+  const solo = pipe('running');
+  appendAuditById(solo, 'Plan approval **approve**.');
+  assert.deepEqual(shaperCard(solo, { shaped: () => true }), { pipelineId: solo, feature: null, log: [{ key: 'p-0', run: null, text: 'Plan approved', detail: [] }] });
+  const { pid } = mk(2);
+  assert.deepEqual(Object.keys(shaperCard(pid)), ['pipelineId', 'feature', 'log']);
+}));
+
+test('B1: a re-plan of a marked feature reads marked (its re-plan run inherits the stamp)', () => withSmallRuns(false, () => {
+  const a = mk(2);
+  mark(a.pid);
+  const pidR = pipe('running');
+  mark(pidR);                                         // the harness stamps a re-plan run of a marked feature (replacesMarked)
+  const b = mk(2, { pipelineId: pidR, replaces: a.id });
+  assert.equal(currentFeatureId(a.id), b.id);
+  assert.equal(shaperCard(a.pid).feature.id, b.id);
+  assert.equal(shaperCard(a.pid).smallRuns, true);
+}));
+
+test('B1/B2 (D20): a marked feature with the flag off: shaperCard has smallRuns, featureView reads the marker for its care key', () => withSmallRuns(false, () => {
+  const { id, pid } = mk(2);
+  mark(pid);
+  assert.equal(shaperCard(pid).smallRuns, true);
+  assert.deepEqual(featureView(id).care, { position: 'balanced', chosenBy: 'default', worcaPick: null });
+  assert.deepEqual(Object.keys(featureView(id)), [...DEV_KEYS.view, 'care', 'requirementKinds']);
+  const other = mk(2);
+  assert.deepEqual(Object.keys(featureView(other.id)), DEV_KEYS.view, 'an unmarked feature stays dev\'s');
+}));
+
+test('B1: the one card\'s log words the split "Runs approved"; featureView without oneCard keeps dev\'s log', () => withSmallRuns(false, () => {
+  const { id, pid } = mk(2);
+  mark(pid);
+  appendAuditById(pid, 'Requirements approval **approve**.');
+  appendAuditById(pid, 'Plan approval **approve**.');
+  appendAuditById(pid, 'Slice outline **approve** (round 1).');
+  assert.deepEqual(featureView(id).log.map((l) => l.text), ['Plan approved', 'Plan approved', 'Split into 2 runs'], 'the feature page: dev\'s words');
+  assert.deepEqual(featureView(id, { oneCard: true }).log.map((l) => l.text), ['Requirements agreed', 'Plan approved', 'Runs approved']);
+  const c = shaperCard(pid);
+  assert.deepEqual(c.log.map((l) => l.text), ['Requirements agreed', 'Plan approved', 'Runs approved']);
+  assert.equal(c.log, c.feature.log);
+}));
+
+test('B1: chatShipCardOffered is false for a marked feature, true otherwise', () => withSmallRuns(true, () => {
+  const a = mk(2);
+  const b = mk(2);
+  mark(b.pid);
+  assert.equal(chatShipCardOffered(featureView(a.id)), true);
+  assert.equal(chatShipCardOffered(featureView(b.id)), false);
+}));
+
+// ---- Shaper small runs B2: the Care saved at the Start step -----------------------------------------------------------
+const START_CARE = { position: 'lean', chosenBy: 'person', worcaPick: 'thorough', reason: 'Worca picks Thorough: it touches payments',
+  facts: { touches: ['payments'], requirements: 3, subsystems: [], screens: false, size: 'small' }, at: '2026-11-21T10:00:00.000Z' };
+const markWithCare = (pid) => getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?')
+  .run(JSON.stringify({ questions: { asked: 0, skipped: 0 }, revises: [], shapeScore: null, smallRuns: true, care: START_CARE }), pid);
+
+test('B2: shaperCard returns care for a marked run with saved Care, before and after the split; none for an unmarked run', () => withSmallRuns(true, () => {
+  const solo = pipe('running');
+  markWithCare(solo);
+  const c = shaperCard(solo, { shaped: () => true });
+  assert.deepEqual(c.care, START_CARE);
+  assert.deepEqual(Object.keys(c), ['pipelineId', 'feature', 'log', 'smallRuns', 'care']);
+  const { pid } = mk(2);
+  markWithCare(pid);
+  assert.deepEqual(shaperCard(pid).care, START_CARE);
+  const plain = pipe('running');
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ care: START_CARE }), plain);
+  assert.equal('care' in shaperCard(plain, { shaped: () => true }), false, 'unmarked: no care key');
+  const bare = pipe('running');
+  mark(bare);
+  assert.equal('care' in shaperCard(bare, { shaped: () => true }), false, 'marked, no Care yet');
+}));
+
+test('B2: createSliceFeature with smallRuns writes Care with the flag off; smallRuns omitted with the flag off writes none', () => withSmallRuns(false, () => {
+  const careRow = (fid) => careOfRow(getDb().prepare('SELECT care, care_chosen_by, care_worca_pick FROM shape_features WHERE id = ?').get(fid));
+  const a = mk(2, { care: START_CARE, smallRuns: true });
+  assert.deepEqual(careRow(a.id), { position: 'lean', chosenBy: 'person', worcaPick: 'thorough' });
+  const b = mk(2, { care: START_CARE });
+  assert.deepEqual(careRow(b.id), { position: 'balanced', chosenBy: 'default', worcaPick: null });
 }));

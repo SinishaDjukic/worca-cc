@@ -8,7 +8,7 @@ import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } f
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
 import { normalizeCare, normalizeRequirementKinds, careOfRow, requirementKindsOf } from '../../shared/shape/feature-record.mjs';
-import { shaperSmallRunsOn } from './small-runs.mjs';
+import { shaperSmallRunsOn, smallRunsOfFeature, smallRunsOfPipeline, careOfPipeline } from './small-runs.mjs';
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
@@ -74,13 +74,14 @@ function featureRecord({ care, requirementKinds, replaces, outline }) {
 
 /** L5: the feature row, its slice rows and the chained tickets for slices 2..N, in one transaction. Idempotent per
  *  slice-1 pipeline: an earlier active feature of the same run is cancelled and marked replanned (§5.3 note).
- *  `care` and `requirementKinds` (Shaper small runs A2) are read only with the flag on; a refused one throws before the tx. */
+ *  `care` and `requirementKinds` (Shaper small runs A2) are read only when `smallRuns` is true: the live flag by default,
+ *  the origin run's marker when the orchestrator splits (B2 D10, d-3); a refused one throws before the tx. */
 // node:sqlite refuses to bind `undefined`: every bound value has a default.
 export function createSliceFeature({ pipelineId, projectDir, title, outline, proposed = null, merges = 0, removals = 0,
   approveEach = false, perspectives, workflowId, base = {}, replaces = null, startedBy = null, pr = null, care = null,
-  requirementKinds = null, now = Date.now() }) {
+  requirementKinds = null, smallRuns = shaperSmallRunsOn(), now = Date.now() }) {
   const db = getDb();
-  const record = shaperSmallRunsOn() ? featureRecord({ care, requirementKinds, replaces, outline }) : null;
+  const record = smallRuns === true ? featureRecord({ care, requirementKinds, replaces, outline }) : null;
   const id = `feat_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
   const ts = iso(now);
   const total = outline.slices.length;
@@ -263,8 +264,9 @@ function clarifyOf(pid) {
   return { questions: Array.isArray(r.questions?.questions) ? r.questions.questions : [], answers: Array.isArray(r.answers?.answers) ? r.answers.answers : [] };
 }
 /** D7: the feature card's step log, from the origin run's clarify row and audit lines, each later run's audit lines,
- *  and (while re-planning) every run after the last done one: replanBrief re-plans the halted run with the canceled. */
-function featureLog(f, slices) {
+ *  and (while re-planning) every run after the last done one: replanBrief re-plans the halted run with the canceled.
+ *  `oneCard` (B1, D7): the one card's receipt words; the feature page keeps dev's. */
+function featureLog(f, slices, oneCard = false) {
   const lastDone = Math.max(0, ...slices.filter((s) => s.state === 'done').map((s) => s.index));
   const replan = f.status === 'replanning' || f.status === 'replanned'
     ? slices.filter((s) => s.index > lastDone).map((s) => s.index) : null;
@@ -277,6 +279,7 @@ function featureLog(f, slices) {
     }),
     replan,
     rounds: slices.flatMap((s) => (s.rounds || []).map((r) => ({ run: s.index, ...r }))),
+    oneCard,
   });
 }
 
@@ -288,7 +291,7 @@ function sliceRequirements(f, r) {
   return { ids, check: last ? requirementsCheck(ids, texts, last.issues) : null };
 }
 
-export function featureView(id, { live = () => null } = {}) {
+export function featureView(id, { live = () => null, oneCard = false } = {}) {
   const f = featureRow(id);
   if (!f) return null;
   let ask = null;
@@ -346,9 +349,10 @@ export function featureView(id, { live = () => null } = {}) {
     open: slices.some((s) => ['planned', 'missed', 'held'].includes(s.state)),
     held: held ? { index: held.index, ticketId: held.ticketId } : null,
     replacedBy: f.replaced_by || null, replan, slices, ship,
-    originPipelineId: f.origin_pipeline_id, ask, log: featureLog(f, slices), notes: { ideas },
-    // Shaper small runs A2: the record's 2 keys, last, and only with the flag on (off is dev's exact shape).
-    ...(shaperSmallRunsOn() ? { care: careOfRow(f), requirementKinds: requirementKindsOf(j(f.requirement_kinds, null), f.outline) } : {}),
+    originPipelineId: f.origin_pipeline_id, ask, log: featureLog(f, slices, oneCard), notes: { ideas },
+    // Shaper small runs A2: the record's 2 keys, last, only with the flag on or (B2, D20) for a marked feature; an unmarked
+    // feature with the flag off is dev's exact shape.
+    ...(shaperSmallRunsOn() || smallRunsOfFeature(f.id) ? { care: careOfRow(f), requirementKinds: requirementKindsOf(j(f.requirement_kinds, null), f.outline) } : {}),
   };
 }
 
@@ -514,14 +518,29 @@ export function featureRootSource(featureId) {
 
 /** Shaper s2 (D10): what the Chat feature card reads for the run its thread started — the feature view (log and open
  *  ask included) once the outline is approved, else, for a run `shaped(pid)` names (its runs-map entry carries
- *  orch.state.shaping), the run's own decision log. null for an unknown run and for a plain one. */
+ *  orch.state.shaping), the run's own decision log. null for an unknown run and for a plain one.
+ *  Shaper small runs B1 (D1, D3): `smallRuns: true`, last, when the marker saved on the feature's origin run (before the
+ *  split, on the run itself) is set, with the one card's log words; without it the answer is dev's exact shape. */
 export function shaperCard(pipelineId, { live = () => null, shaped = () => false } = {}) {
   const pid = String(pipelineId);
   if (!getDb().prepare('SELECT 1 FROM pipelines WHERE id = ?').get(pid)) return null;
   const at = featureOfPipeline(pid);
-  const feature = at ? featureView(currentFeatureId(at.featureId), { live }) : null;
+  const fid = at ? currentFeatureId(at.featureId) : null;
+  const featureMarked = !!fid && smallRunsOfFeature(fid);
+  const feature = fid ? featureView(fid, { live, oneCard: featureMarked }) : null;
   if (!feature && !shaped(pid)) return null;
-  return { pipelineId: pid, feature, log: feature ? feature.log : buildDecisionLog({ clarify: clarifyOf(pid), origin: auditTexts(pid) }) };
+  const marked = feature ? featureMarked : smallRunsOfPipeline(pid);
+  // B2 (D18): the Care saved at the Start step, for a marked run; absent until Start is answered.
+  const care = marked ? careOfPipeline(feature ? feature.originPipelineId : pid) : null;
+  return { pipelineId: pid, feature,
+    log: feature ? feature.log : buildDecisionLog({ clarify: clarifyOf(pid), origin: auditTexts(pid), oneCard: marked }),
+    ...(marked ? { smallRuns: true } : {}), ...(care ? { care } : {}) };
+}
+
+/** B1 (D8): whether Chat posts the feature's Ship card. A marked feature ships from its feature page until the one card
+ *  draws Ship (Feature D). */
+export function chatShipCardOffered(view) {
+  return !smallRunsOfFeature(view && view.id);
 }
 
 /** Shaper s2 (D14): the Chat thread that started a feature — its origin run's link row — walking `replaces` back

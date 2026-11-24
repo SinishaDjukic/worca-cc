@@ -128,13 +128,22 @@ export function roleReviewOf(config) {
 export const roleChecklistOf = (spec) => (spec?.checklist ? ROLE_CHECKLISTS[spec.checklist] || null : null);
 
 /** The roles that run: every declared role, or (source `picked`) the declared roles the run picked, in DECLARED order.
- *  An empty result falls back to the first declared role. */
+ *  A picked role the provider keeps but the node does not declare follows, in picked order, as the provider's optional
+ *  `pickedRole(key)` names it. An empty result falls back to the first declared role. */
 export function runningRoles(spec, picked) {
   const roles = Array.isArray(spec?.roles) ? spec.roles : [];
   if (spec?.source !== 'picked') return roles;
   const provider = roleChecklistOf(spec);
-  const keys = new Set(provider ? provider.normalizePicked(picked) : (Array.isArray(picked) ? picked.map(String) : []));
+  const kept = provider ? provider.normalizePicked(picked) : (Array.isArray(picked) ? picked.map(String) : []);
+  const keys = new Set(kept);
   const out = roles.filter((r) => keys.has(r.key));
+  if (typeof provider?.pickedRole === 'function') {
+    const declared = new Set(roles.map((r) => r.key));
+    for (const key of kept) {
+      const role = declared.has(key) ? null : provider.pickedRole(key);
+      if (role) out.push(role);
+    }
+  }
   return out.length ? out : roles.slice(0, 1);
 }
 

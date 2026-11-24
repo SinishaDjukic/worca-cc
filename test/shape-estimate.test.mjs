@@ -5,7 +5,7 @@ import { mkdtemp, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { estimateGraph, estimateChoices, stepHistory, ESTIMATE_MIN_SAMPLES, PLANNING_AGENTS } from '../src/core/shape/estimate.mjs';
+import { estimateGraph, estimateChoices, stepHistory, careEstimates, ESTIMATE_MIN_SAMPLES, PLANNING_AGENTS } from '../src/core/shape/estimate.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, GRAPH_SHAPE_REQ_WORKFLOW, AUTO_WORKFLOW_STUB,
@@ -156,4 +156,15 @@ test('stepHistory({ pipelineIds }): only the listed runs, old ones too, and [] i
   assert.deepEqual(stepHistory({ now, pipelineIds: ['a', 'old'] }).get('implementer').cost.sort((x, y) => x - y), [2, 5]);
   assert.equal(stepHistory({ now, pipelineIds: [] }).size, 0);
   assert.deepEqual(stepHistory({ now }).get('implementer').cost.sort((x, y) => x - y), [2, 7], 'no options: the old run stays out, b stays in');
+});
+
+test('careEstimates: runs per position times the per-run figure; null without a per-run figure; one run without a size', () => {
+  const perRun = { costUsd: 2.5, planningUsd: 1, buildUsd: 1.5, minutes: 7, samples: 3 };
+  const got = careEstimates({ requirements: 16, perRun });
+  assert.deepEqual(got.lean, { costUsd: Math.ceil(16 / 3) * 2.5, minutes: Math.ceil(16 / 3) * 7, perRun: 2.5 });
+  assert.deepEqual(got.balanced, got.lean);
+  assert.deepEqual(got.thorough, { costUsd: Math.ceil(16 / 2) * 2.5, minutes: Math.ceil(16 / 2) * 7, perRun: 2.5 });
+  assert.deepEqual(careEstimates({ requirements: 16, perRun: null }), { lean: null, balanced: null, thorough: null });
+  const one = careEstimates({ requirements: null, perRun });
+  for (const p of ['lean', 'balanced', 'thorough']) assert.deepEqual(one[p], { costUsd: 2.5, minutes: 7, perRun: 2.5 });
 });

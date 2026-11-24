@@ -3,13 +3,21 @@
 // buildChatQuestion, Worca's pick pre-picked, each answer saying which persona wants it and why) · the agreed requirements
 // folded, grouped by persona (check-row.mjs) · the foot. It adds no control of its own: every part is an existing builder.
 // The decisions are worded for the lead (src/shared/answerer.mjs) and are built only once the lead is known.
+// Small runs B3 (`plan.smallRuns`): one fold per role (role-rows.mjs buildRequirementRoleFolds) in the fixed
+// CONFIRM_ROLES order instead of the one persona fold, each row with its example, and "Agree requirements".
 import { buildChatQuestion } from '../chat/question.mjs';
 import { buildCheckFold, buildCheckRows, swapOpen } from './check-row.mjs';
 import { stepHead, stepSender } from './step-card.mjs';
 import { buildFeedbackRow } from './feedback-row.mjs';
 import { loadAnswerer, leadLabel } from '../answerer.mjs';
-import { plainWords, wordsFor } from '../../../src/shared/answerer.mjs';
+import { plainWords, wordsFor, isPlainLead } from '../../../src/shared/answerer.mjs';
 import { criterionPerspective } from '../../../src/shared/shape/requirements.mjs';
+import { CONFIRM_ROLES, roleOfPerspective, perspectiveOfRole } from '../../../src/shared/shape/feature-record.mjs';
+import { roleSummaries, countsText } from '../../../src/shared/shape/role-review.mjs';
+import { buildRequirementRoleFolds } from './role-rows.mjs';
+
+const BLOCKING = new Set(['critical', 'major']);
+const RELEASE = Object.freeze({ key: 'release', label: 'Release' });
 
 let whySeq = 0;
 
@@ -33,6 +41,9 @@ function subOf(o, lead) {
   const reason = reasonOf(o, lead);
   return name && reason ? `${name}: ${reason}` : name || reason;
 }
+
+/** Small runs: the plain wording (no lead yet, or a plain-register lead) leaves the requirement ids out. */
+const plainLead = (lead) => !lead || isPlainLead(lead);
 
 /** An item's label without its `R-x-n · ` prefix. */
 const wordsOfItem = (it) => {
@@ -72,6 +83,56 @@ function personaGroups(rows, lead) {
   }
   const rank = (g) => (!g.persona ? 2 : g.persona === lead ? 0 : 1);
   return [...groups.values()].sort((a, b) => rank(a) - rank(b));
+}
+
+/** Small runs B3 (D17–D19): the role folds' groups. One per role in CONFIRM_ROLES order, then "Release" when it wrote
+ *  rows, drawn for every role that reviewed (the requirements pass's roles) and every role with rows. A role asks when it
+ *  is in a decision's `from`, owns a row in a decision's `criteria`, has an open blocking finding, or owns a requirement with no example. */
+function roleFoldGroups(criteria, plan, decisions, lead) {
+  const items = criteria && Array.isArray(criteria.items) ? criteria.items : [];
+  const texts = new Map((criteria && Array.isArray(criteria.criteria) ? criteria.criteria : []).map((c) => [c.id, c.text]));
+  const byId = new Map();
+  for (const it of items) {
+    if (!it.id) continue;
+    let row = byId.get(it.id);
+    if (!row) { row = { id: it.id, text: texts.get(it.id) || wordsOfItem(it) || it.id, pass: true, details: [], example: null, noExample: false }; byId.set(it.id, row); }
+    if (typeof it.example === 'string' && it.example) row.example = it.example;
+    if (it.pass) continue;
+    row.pass = false;
+    if (it.code === 'no-example') row.noExample = true; else row.details.push(wordsOfItem(it));
+  }
+  const inQuestion = new Set(decisions.flatMap((d) => (Array.isArray(d.criteria) ? d.criteria : [])));
+  const asking = new Set(decisions.flatMap((d) => (Array.isArray(d.from) ? d.from : [])));
+  const summaries = typeof plan.roleNode === 'string' ? roleSummaries(plan.roleReviews, { node: plan.roleNode }) : [];
+  const roleOf = (id) => roleOfPerspective(criterionPerspective(id, { smallRuns: true }));
+  const rowOf = (r) => {
+    const eg = r.example ? `e.g. ${r.example}` : 'no example yet';
+    const asked = inQuestion.has(r.id);
+    const note = [...new Set(r.details)].concat(asked ? [`in question: the decision above · ${eg}`] : [eg]).join(' · ');
+    return { id: r.id, idCol: true, label: r.text, pass: r.pass, note, tip: r.example ? `${r.id} · ${eg}` : r.id, ...(asked ? { mark: '?', ariaLabel: 'in question' } : {}) };
+  };
+  const group = (role, perspective, rows) => {
+    const sum = perspective ? summaries.find((x) => x.key === perspective) : null;
+    const findings = sum ? sum.findings.filter((f) => f.status === 'open' && BLOCKING.has(f.severity)) : [];
+    const asked = rows.filter((r) => inQuestion.has(r.id)).length;
+    const agreed = rows.filter((r) => r.pass && !inQuestion.has(r.id)).length;
+    const isLead = !!perspective && perspective === lead;
+    const parts = asked ? [`${agreed} agreed`, `${asked} in question`]
+      : [...(rows.length ? [`${isLead ? 'wrote' : 'added'} ${rows.length}`] : []), ...(sum && sum.counts.raised ? [countsText(sum.counts)] : [])];
+    const state = asked || (perspective && asking.has(perspective)) ? 'asks' : findings.length ? 'open' : rows.some((r) => r.noExample) ? 'example' : 'clean';
+    return { key: role.key, perspective, label: role.label, lead: isLead, summary: parts.join(' · ') || 'nothing added', state, findings, rows: rows.map(rowOf) };
+  };
+  const all = [...byId.values()];
+  const reviewed = new Set(summaries.map((x) => x.key));
+  const out = [];
+  for (const role of CONFIRM_ROLES) {
+    const perspective = perspectiveOfRole(role.key);
+    const rows = all.filter((r) => roleOf(r.id) === role.key);
+    if (rows.length || reviewed.has(perspective)) out.push(group(role, perspective, rows));
+  }
+  const release = all.filter((r) => !roleOf(r.id));
+  if (release.length) out.push(group(RELEASE, 'release', release));
+  return out;
 }
 
 export function renderRequirementsBody(panel, pq, deps) {
@@ -116,6 +177,8 @@ export function renderRequirementsBody(panel, pq, deps) {
 
   let lead = plan.lead || null;
   let agreedFold = null;
+  let roleFolds = null;                            // small runs: the role folds
+  const smallRuns = plan.smallRuns === true;
   if (error) {
     const line = h('div', 'empty-line is-err');
     line.setAttribute('role', 'alert');
@@ -126,6 +189,10 @@ export function renderRequirementsBody(panel, pq, deps) {
     const line = h('div', 'empty-line');
     line.appendChild(h('span', 'el-t', 'No requirements were written.'));
     body.appendChild(line);
+  } else if (smallRuns) {
+    roleFolds = buildRequirementRoleFolds(doc, roleFoldGroups(criteria, plan, decisions, lead));
+    roleFolds.setPlain(plainLead(lead));
+    body.appendChild(roleFolds.el);
   } else {
     const foldText = () => [
       `${agreed} agreed`, ...(failing ? [`${failing} to fix`] : []),
@@ -172,9 +239,14 @@ export function renderRequirementsBody(panel, pq, deps) {
     retry.addEventListener('click', (e) => { e.stopPropagation(); send({ decision: 'retry' }); });
     foot.appendChild(retry);
   } else {
-    agree = btn(`${failing ? '' : 'btn-primary '}plan-approve`, 'Agree and plan');
+    agree = btn(`${failing ? '' : 'btn-primary '}plan-approve`, smallRuns ? 'Agree requirements' : 'Agree and plan');
     const hint = typed ? ': ask for changes' : '';
-    const reason = !agreed && !failing ? `Nothing to agree yet${hint}` : failing ? `${failing} to fix${hint}` : '';
+    // Small runs B3 (D20): when every failing row lacks only its example, the reason says so, on one visible line.
+    const failingItems = (criteria && Array.isArray(criteria.items) ? criteria.items : []).filter((i) => !i.pass);
+    const noExample = smallRuns && failingItems.length > 0 && failingItems.every((i) => i.code === 'no-example') ? failingItems.length : 0;
+    const reason = !agreed && !failing ? `Nothing to agree yet${hint}`
+      : noExample ? `${noExample === 1 ? '1 requirement has' : `${noExample} requirements have`} no example yet${hint}`
+        : failing ? `${failing} to fix${hint}` : '';
     // aria-disabled, not disabled: it stays in the tab order, keeps its words, and setPanelBusy cannot re-enable it
     let waiting = decisions.length > 0;            // the decisions are not on screen yet
     const syncAgree = () => {
@@ -183,7 +255,7 @@ export function renderRequirementsBody(panel, pq, deps) {
       if (shown) { agree.title = shown; agree.setAttribute('aria-describedby', note.id); } else { agree.removeAttribute('title'); agree.removeAttribute('aria-describedby'); }
       note.textContent = shown;
       // A failing card that can be revised says why in Ask for changes being the primary; the note only describes the button.
-      note.hidden = !shown || (failing > 0 && !!typed);
+      note.hidden = !shown || (failing > 0 && !!typed && !noExample);
     };
     agree.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -200,12 +272,19 @@ export function renderRequirementsBody(panel, pq, deps) {
   primaryChanged();
   panel.__plan = { setErrors };
 
+  // Small runs: once the lead is known, only "(you ask as)" moves; the folds keep their order and open state.
+  const moveLead = (known) => {
+    for (const f of roleFolds.folds) f.setLead(!!known && f.key === roleOfPerspective(known));
+    roleFolds.setPlain(plainLead(known));
+  };
+  if (roleFolds && !plan.lead && !decisions.length) loadAnswerer(deps.fetch).then((p) => { lead = p.lead; paintSub(lead); moveLead(lead); });
   if (!decisions.length || error) return;
   const paintDecisions = (known) => {
     if (list) return;
     lead = known;
     paintSub(lead);
     if (agreedFold) agreedFold.update(criteria);
+    if (roleFolds) moveLead(lead);
     list = buildChatQuestion(doc, {
       id: `req-${pq.id || 'q'}`,
       heading: 'Decisions',

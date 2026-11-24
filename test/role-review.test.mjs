@@ -249,3 +249,15 @@ test('attachRoleReviews: a plan ask gets the plan pass, a gate its node\'s pass;
   assert.equal(attachRoleReviews(ev, undefined), ev, 'in place; no state, no change');
   assert.equal('roleReviews' in ev, false);
 });
+
+// Small runs B3: a stored picked list keeps Compliance in every reader; roles() stays as at the checkpoint.
+test('PERSPECTIVE_ROLE_CHECKLIST keeps a stored Compliance; rolesForRound reviews it in round 1; roles() is unchanged', async () => {
+  const { PERSPECTIVE_ROLE_CHECKLIST } = await import('../src/shared/shape/role-review.mjs');
+  const { PERSPECTIVES } = await import('../src/shared/shape/perspectives.mjs');
+  assert.deepEqual(PERSPECTIVE_ROLE_CHECKLIST.normalizePicked(['product', 'ux', 'compliance']), ['product', 'ux', 'compliance']);
+  assert.deepEqual(rolesForRound(['product', 'ux', 'compliance'], 1).map((r) => r.key), ['product', 'ux', 'compliance']);
+  assert.deepEqual(PERSPECTIVE_ROLE_CHECKLIST.roles(), PERSPECTIVES.map(({ key, label }) => ({ key, label })));
+  assert.equal(PERSPECTIVE_ROLE_CHECKLIST.roles().some((r) => r.key === 'compliance'), false);
+  assert.deepEqual(PERSPECTIVE_ROLE_CHECKLIST.pickedRole('compliance'), { key: 'compliance', label: 'Compliance' });
+  assert.equal(PERSPECTIVE_ROLE_CHECKLIST.pickedRole('nope'), null);
+});

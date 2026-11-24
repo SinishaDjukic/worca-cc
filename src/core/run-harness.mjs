@@ -99,7 +99,7 @@ import { deriveBranchName, uniqueBranch } from './naming.mjs';
 import { flagEnabled } from './flags.mjs';
 import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit, checkBaseMerge } from './git-sync.mjs';
 import { featureBase } from './shape/features.mjs';
-import { shaperSmallRunsOn } from './shape/small-runs.mjs';
+import { shaperSmallRunsOn, smallRunsAtStart, smallRunsOfFeature } from './shape/small-runs.mjs';
 import { latestFinishedSource } from './shape/chain.mjs';
 import { cleanOutcome } from './shape/rounds.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
@@ -174,6 +174,7 @@ import { nightState, decideDelayMs, nightAnchorMs, runAllowed } from './night/ac
 import { decideAsk } from './night/decider.mjs';
 import { planRule } from './night/strategies.mjs';
 import { PLAN_ASK_KIND, initialShaping } from './shape/run.mjs';
+import { outlineKeptNote, outlineKeptStub } from '../shared/shape/feature-log.mjs';
 import { runNightAnalysis, readMemoryText } from './night/analysis.mjs';
 import { resolveDeciderPair } from './night/decider-model.mjs';
 import { writeNightDecision, countNightDecisions, nightCounts, nightGateCycles, nightSpendSinceUsd } from './night/store.mjs';
@@ -807,6 +808,12 @@ export function autoChoice(q) {
   return opts[0] || 'auto';
 }
 
+/** Shaper small runs B2 (D18): the audit line of a Care answer (the stored record); null for anything else. */
+export function careAuditLine(care) {
+  if (!care || typeof care !== 'object' || typeof care.position !== 'string') return null;
+  return `Care **${care.position}** · Worca's pick **${care.worcaPick || 'none'}**`;
+}
+
 /**
  * The answer `--yes` would give an ask, as an `answer()`-valid payload. Night mode uses it
  * as the last-resort fallback in a night-owned `--yes` run, which must never hang. Mirrors
@@ -819,6 +826,7 @@ export function autoAnswerPayload(q) {
     case 'form': return { form: q.form, version: q.version, values: q.autoValues || {} };
     case 'recovery': return { decision: 'pause' };
     case 'workflow': return { decision: 'accept', name: q.workflow?.name, nodes: {} };
+    case 'care': return { care: { position: q.care?.pick?.position } };   // Shaper small runs B2 (D19): Worca's pick
     default: return { decision: 'continue' };
   }
 }
@@ -1136,6 +1144,11 @@ export class RunHarness extends EventEmitter {
     // Shaper D28: the recorded half of shapeStats (questions, revises, score); null on an unshaped run.
     // A resumed run reads it back from its row (shape_stats).
     this._shapeRec = this.runShape ? shapeRecordFrom(safeParse(this.resumeOpts?.row?.shape_stats)) : null;
+    // Shaper small runs B1 (D1): a new planning run is stamped when it starts (the flag, or the marked feature a re-plan
+    // replaces, and only that: an unmarked feature's re-plan keeps dev's card whatever the flag says now); a resume reads
+    // the stamp back from its row above and never re-reads the flag. Slice runs never are.
+    if (this._shapeRec && !this.resumeOpts?.row && !this.runShape.slice
+      && (this.runShape.replaces ? smallRunsOfFeature(this.runShape.replaces) : smallRunsAtStart())) this._shapeRec.smallRuns = true;
     {
       const wf = this.resumeOpts?.resumePoint?.workflowId || this.workflowId;
       const reason = validateMemoryScope({ workflowId: wf, memoryScope: this.memoryScope, isWorkspace: this.isWorkspace });
@@ -1432,9 +1445,12 @@ export class RunHarness extends EventEmitter {
     else if (pq.kind === 'gate') line = `Gate **${d || 'answered'}**`;
     else if (pq.kind === 'recovery') line = `Recovery decision **${d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND && pq.plan?.attached) line = `Attached requirements **${d === 'approve' ? 'agreed' : d || 'answered'}**`;
-    else if (pq.kind === PLAN_ASK_KIND && pq.plan?.outline) line = `Slice outline **${d || 'answered'}** (round ${pq.plan.round || 1})`;
+    else if (pq.kind === PLAN_ASK_KIND && pq.plan?.outline) line = `Slice outline **${d || 'answered'}** (round ${pq.plan.round || 1}${outlineKeptNote(pq.plan, d, value)})`;
     else if (pq.kind === PLAN_ASK_KIND && pq.concern) line = `Plan concern **${d === 'revise' ? 'accepted' : d === 'approve' ? 'overridden' : d || 'answered'}**`;
+    // B1 (D6): a marked run's requirements approval names its own step ("Requirements agreed" on the one card).
+    else if (pq.kind === PLAN_ASK_KIND && pq.plan?.requirements && this._shapeRec?.smallRuns) line = `Requirements approval **${d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND) line = `Plan approval **${d || 'answered'}**`;
+    else if (pq.kind === 'care') line = careAuditLine(value);
     if (!line) return;
     appendAudit(this.pipeline.dir, `${line}${byActor(by)}.`, { actor: by }).catch(() => {});
   }
@@ -6825,7 +6841,7 @@ export class RunHarness extends EventEmitter {
    * @returns {Promise<any>} the answer payload
    */
   async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow, plan,
-    concern, askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
+    concern, care, askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
     this._checkAbort();
     // No interactive prompt may OPEN on a pausing run. pause() rejects only the
     // prompt that is currently open; a queued ask (a parallel sibling's questions
@@ -6859,6 +6875,7 @@ export class RunHarness extends EventEmitter {
       ...(workflow !== undefined ? { workflow } : {}),
       ...(plan !== undefined ? { plan } : {}),
       ...(concern ? { concern } : {}),            // #990 s5: the implementer's plan concern (kind stays 'plan')
+      ...(care ? { care } : {}),                  // Shaper small runs B2: the Start step's Care ask body
       // The ask-form envelope (spec §4, ruling X1) rides the EXISTING 'question'
       // frame — no new transport, no new slot. `id` (already emitted above) is the
       // ANSWER token; `askId` is the route-safe file token and they are never
@@ -6899,15 +6916,22 @@ export class RunHarness extends EventEmitter {
           this._log('orchestrator', 'info', `auto-answering ${kind} ${id}`);
           return { answers: (questions || []).map((q) => ({ id: q.id, choice: autoChoice(q) })) };
         }
+        if (kind === 'care') {
+          // Shaper small runs B2 (D19): --yes takes Worca's Care pick; nothing blocks.
+          this._log('orchestrator', 'info', `auto-answering care ${id} -> ${care?.pick?.position}`);
+          return autoAnswerPayload({ kind, care });
+        }
         this._log('orchestrator', 'info', `auto-answering gate ${id} -> continue`);
         return { decision: 'continue' };
       }
       return await new Promise((resolveP, rejectP) => {
-        // An outline ask keeps its marker and round, so _auditDecision can word its answer (F38).
+        // An outline ask keeps its marker and round, so _auditDecision can word its answer (F38); a requirements ask its
+        // marker (B1, D6: isRequirementsAsk's predicate).
         this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null,
-          ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } } : {}),
-          ...(plan && plan.attached ? { plan: { attached: true } } : {}),
-          ...(concern ? { concern: true } : {}) };
+          ...(plan && plan.outline ? { plan: { outline: true, round: plan.round, ...outlineKeptStub(plan) } }
+            : plan && plan.attached ? { plan: { attached: true } }
+            : plan && (plan.criteria || plan.error) ? { plan: { requirements: true } } : {}),
+          ...(concern ? { concern: true } : {}), ...(care ? { care } : {}) };
         // A person must answer: the run clock stands until the last waiting ask is released.
         parked = true;
         this._asksWaiting += 1;
@@ -6916,7 +6940,7 @@ export class RunHarness extends EventEmitter {
         this._persist().catch(() => {});
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
-        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, form, version, answerSchema, autoValues, nodeId, agent, origin };
+        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, care, form, version, answerSchema, autoValues, nodeId, agent, origin };
         if (kind !== PLAN_ASK_KIND || !this.auto) {
           try { this._nightArm(nq); } catch (err) { this._nightFailed(nq, `Away mode could not get ready for ${kind} ${id}: ${err?.message || err}`); }
         }

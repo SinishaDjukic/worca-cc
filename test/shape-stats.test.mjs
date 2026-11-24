@@ -49,3 +49,41 @@ test('role reviews: n_roles slice rows are shaping cost, and shaping + building 
   const total = withRoles.reduce((n, s) => n + (s.costUsd || 0), 0);
   assert.equal(cost.shaping + cost.building, total);
 });
+
+test('B1 marker: shapeRecordFrom and buildShapeStats keep smallRuns only when it is true, last, and change no other key', () => {
+  const stored = { questions: { asked: 1, skipped: 0 }, revises: [], shapeScore: null, smallRuns: true };
+  const rec = shapeRecordFrom(stored);
+  assert.deepEqual(rec, { questions: { asked: 1, skipped: 0 }, revises: [], shapeScore: null, smallRuns: true });
+  const out = buildShapeStats(rec, []);
+  assert.equal(out.smallRuns, true);
+  assert.equal(Object.keys(out).at(-1), 'smallRuns');
+  for (const v of [false, 'true', 1, null]) {
+    const r = shapeRecordFrom({ ...stored, smallRuns: v });
+    assert.equal('smallRuns' in r, false, `stored ${JSON.stringify(v)}`);
+    assert.equal('smallRuns' in buildShapeStats(r, []), false);
+  }
+  const { smallRuns, ...rest } = out;
+  assert.deepEqual(rest, buildShapeStats(shapeRecordFrom({ ...stored, smallRuns: undefined }), []), 'no other key moves');
+  // A round trip (a resume reads the stored stats back) keeps the stamp.
+  assert.equal(shapeRecordFrom(JSON.parse(JSON.stringify(out))).smallRuns, true);
+});
+
+test('B2 Care: shapeRecordFrom and buildShapeStats keep a valid care, drop an invalid one, and change no other key', () => {
+  const care = { position: 'lean', chosenBy: 'person', worcaPick: 'thorough', reason: 'Worca picks Thorough: it touches payments',
+    facts: { touches: ['payments'], requirements: 3, subsystems: [], screens: false, size: 'small' }, at: '2026-11-21T10:00:00.000Z' };
+  const stored = { questions: { asked: 1, skipped: 0 }, revises: [], shapeScore: null, smallRuns: true };
+  const rec = shapeRecordFrom({ ...stored, care });
+  assert.deepEqual(rec.care, care);
+  const out = buildShapeStats(rec, steps);
+  assert.deepEqual(out.care, care);
+  const { care: _c, ...rest } = out;
+  assert.deepEqual(rest, buildShapeStats(shapeRecordFrom(stored), steps), 'no other key moves');
+  assert.deepEqual(shapeRecordFrom(JSON.parse(JSON.stringify(out))).care, care, 'a round trip keeps it');
+  for (const bad of [{ ...care, position: 'max' }, { ...care, facts: null }, 'lean', null]) {
+    const r = shapeRecordFrom({ ...stored, care: bad });
+    assert.equal('care' in r, false, JSON.stringify(bad));
+    assert.equal('care' in buildShapeStats(r, []), false);
+  }
+  rec.care = { ...care, position: 'max' };
+  assert.equal('care' in buildShapeStats(rec, []), false, 'buildShapeStats checks it too');
+});

@@ -7,7 +7,7 @@ import { buildPerspectiveChips } from './chips.mjs';
 import { planStats, perspectiveChangeFeedback, fixAllFeedback, sectionOwners, planSummary, unmetLine,
   planApproveLabel, displayCoverage } from './plan-text.mjs';
 import { openBlocking } from '../../../src/shared/shape/role-review.mjs';
-import { perspectiveByKey, PERSPECTIVES, chipsHiddenFor } from '../../../src/shared/shape/perspectives.mjs';
+import { perspectiveByKey, perspectivesFor, chipsHiddenFor } from '../../../src/shared/shape/perspectives.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
 import { icon } from '../icons.mjs';
@@ -139,14 +139,16 @@ export function renderPlanBody(panel, pq, deps) {
   if (decisions) body.appendChild(decisions.el);
 
   // perspectives as a line; "edit" opens today's chips + Update plan in place (D31) — the gate on only
-  const was = PERSPECTIVES.map((p) => p.key).filter((k) => k === 'product' || perspectives.includes(k));
+  // Small runs B3 (D22): the run's snapshot, carried on the ask, offers Compliance.
+  const smallRuns = plan.smallRuns === true;
+  const was = perspectivesFor({ smallRuns }).map((p) => p.key).filter((k) => k === 'product' || perspectives.includes(k));
   const pline = h('div', 'plan-persp-line');
   pline.appendChild(h('span', 'plan-persp-names', was.map(labelOf).join(' · ')));
   body.appendChild(pline);
   if (deps.extras && plan.revisable) {
     const update = btn('plan-update', 'Update plan'); update.disabled = true;
     const same = (v) => v.length === was.length && v.every((k) => was.includes(k));   // order-free
-    const chips = buildPerspectiveChips(doc, { picked: perspectives, fixed: ['ux'], hidden: chipsHiddenFor(perspectives), collapsed: false,
+    const chips = buildPerspectiveChips(doc, { picked: perspectives, fixed: ['ux'], hidden: chipsHiddenFor(perspectives), collapsed: false, smallRuns,
       onChange: (v) => { update.disabled = same(v); } });
     afterSubmit = () => { update.disabled = same(chips.value()); };
     update.addEventListener('click', (e) => {

@@ -276,3 +276,17 @@ test('secondOpinion: names a declared role (or a provider role); normalized only
   assert.equal(roleReviewOf({ roleReview: { ...picked, secondOpinion: 'product' } }).secondOpinion, 'product', 'a provider role');
   assert.match(roleReviewIssues({ roleReview: { ...picked, secondOpinion: 'nobody' } })[0], /^roleReview\.secondOpinion "nobody" names no role of this review \(roles: product, /);
 });
+
+// Small runs B3 (D5): a picked role the node does not declare still runs when the provider names it.
+test('runningRoles: wf_shape_req requirements review runs a picked Compliance; without it, or without pickedRole, as today', async () => {
+  const { GRAPH_SHAPE_REQ_WORKFLOW } = await import('../src/core/graph/builtin-workflows.mjs');
+  const node = GRAPH_SHAPE_REQ_WORKFLOW.nodes.find((n) => n.config?.roleReview?.target === 'requirements');
+  const spec = roleReviewOf(node.config);
+  assert.deepEqual(runningRoles(spec, ['product', 'compliance']).map((r) => [r.key, r.label]), [['product', 'Product'], ['compliance', 'Compliance']]);
+  assert.deepEqual(runningRoles(spec, ['product']).map((r) => r.key), ['product']);
+  assert.equal(typeof ROLE_CHECKLISTS.requirements.pickedRole, 'function');
+  // A provider without pickedRole (the coverage checklist) and no provider at all: the declared roles only, as today.
+  assert.equal(ROLE_CHECKLISTS.coverage.pickedRole, undefined);
+  const declared = { roles: [{ key: 'product', label: 'Product' }], source: 'picked', target: 'requirements', sink: 'refiner' };
+  assert.deepEqual(runningRoles(declared, ['product', 'compliance']).map((r) => r.key), ['product'], 'no provider: declared roles only');
+});

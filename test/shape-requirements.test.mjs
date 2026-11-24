@@ -83,3 +83,46 @@ test('shapeRequirementsEligible: requirementsFirst, a slice included; it wins ov
   assert.deepEqual(fire({ perspectives: ['product'], requirementsFirst: 'yes' }), { ok: false, error: 'shape.requirementsFirst must be true' });
   assert.match(resolveShapeRequest({ shape: { requirementsFirst: true } }).error, /unknown field\(s\): requirementsFirst/, 'internal only');
 });
+
+// Small runs B3: Compliance's prefix and ask under the flag; Care sets the review rounds.
+test('requirementPrefixes: off deep-equals REQUIREMENT_PREFIX; on adds compliance:comp; R-comp-1 is Compliance only on', async () => {
+  const { requirementPrefixes } = await import('../src/shared/shape/requirements.mjs');
+  assert.deepEqual(requirementPrefixes(), REQUIREMENT_PREFIX);
+  assert.deepEqual(REQUIREMENT_PREFIX, { product: 'po', architect: 'arch', qa: 'qa', ux: 'ux', security: 'sec', devops: 'ops', release: 'rel' });
+  assert.deepEqual(requirementPrefixes({ smallRuns: true }), { ...REQUIREMENT_PREFIX, compliance: 'comp' });
+  assert.equal(criterionPerspective('R-comp-1'), null);
+  assert.equal(criterionPerspective('R-comp-1', { smallRuns: true }), 'compliance');
+});
+
+test('the requirements provider keeps a stored Compliance, briefs it with R-comp, and its roles() is unchanged', () => {
+  assert.deepEqual(REQUIREMENTS_ROLE_CHECKLIST.normalizePicked(['product', 'compliance']), ['product', 'compliance']);
+  assert.deepEqual(REQUIREMENTS_ROLE_CHECKLIST.roles().map((r) => r.key), ['product', 'architect', 'qa', 'ux', 'security', 'devops', 'release']);
+  const brief = REQUIREMENTS_ROLE_CHECKLIST.brief('compliance', '- **R-comp-1** Keep the audit log\n- **R-po-1** Export', {});
+  assert.match(brief, /Compliance/);
+  assert.match(brief, /R-comp/);
+  assert.match(brief, /`R-comp-1`: Keep the audit log/);
+  assert.doesNotMatch(brief, /R-po-1/);
+  assert.deepEqual(REQUIREMENTS_ROLE_CHECKLIST.items('compliance', '- **R-comp-1** Keep\n- **R-po-1** Export'), ['R-comp-1']);
+  assert.deepEqual(REQUIREMENTS_ROLE_CHECKLIST.pickedRole('compliance'), { key: 'compliance', label: 'Compliance' });
+  assert.equal(REQUIREMENTS_ROLE_CHECKLIST.pickedRole('fit'), null);
+});
+
+test('requirementsAsks words the brief for the lead: the lead leads, another role supports it', () => {
+  assert.match(requirementsAsks('compliance', { lead: 'compliance' }), /^You lead\. Ask: Which rules apply \(personal data, retention, audit\), and what proof must be kept\?.*`R-comp`/);
+  assert.match(requirementsAsks('security', { lead: 'compliance' }), /^You support Compliance, who leads\./);
+  assert.match(requirementsAsks('compliance', { lead: 'architect' }), /^You support Architect, who leads\..*`R-comp`/);
+});
+
+test('requirementRoundPlan: rounds 1/1/3 for lean/balanced/thorough; lean is the lead plus Product; unknown is balanced', async () => {
+  const { requirementRoundPlan, REQUIREMENT_ROUNDS_MAX } = await import('../src/shared/shape/requirements.mjs');
+  const picked = ['product', 'architect', 'qa', 'compliance'];
+  assert.equal(REQUIREMENT_ROUNDS_MAX, 3);
+  assert.deepEqual(['lean', 'balanced', 'thorough'].map((p) => requirementRoundPlan(p, { picked, lead: 'architect' }).rounds), [1, 1, 3]);
+  assert.deepEqual(requirementRoundPlan('lean', { picked, lead: 'architect' }).roles, ['architect', 'product']);
+  assert.deepEqual(requirementRoundPlan('lean', { picked, lead: 'product' }).roles, ['product']);
+  assert.deepEqual(requirementRoundPlan('lean', { picked, lead: null }).roles, ['product']);
+  assert.deepEqual(requirementRoundPlan('balanced', { picked, lead: 'architect' }).roles, picked);
+  assert.deepEqual(requirementRoundPlan('thorough', { picked, lead: 'architect' }).roles, picked);
+  assert.deepEqual(requirementRoundPlan('nope', { picked, lead: 'qa' }), requirementRoundPlan('balanced', { picked, lead: 'qa' }));
+  for (const p of ['lean', 'balanced', 'thorough', undefined]) assert.ok(requirementRoundPlan(p, { picked }).rounds <= REQUIREMENT_ROUNDS_MAX);
+});

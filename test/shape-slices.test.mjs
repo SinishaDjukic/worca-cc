@@ -510,6 +510,44 @@ test("smallRuns: role 'Legal' fails confirmRole; 'Compliance' passes", () => {
   assert.equal(checkSlices({ ...o, confirmed: [{ id: 'R-ops-1', role: 'Compliance' }] }, on()).ok, true);
 });
 
+test('smallRuns B4: ownership, coverage and confirmRole list one failure per failing id; every wrong role is named', () => {
+  const o = perRun([1, 1, 1]);
+  o.slices[1].requirements = ['R-po-2', 'R-po-1'];
+  o.slices[2].requirements = ['R-po-3', 'R-po-1', 'R-po-2'];
+  o.agreed.push({ id: 'R-ops-1', text: 'ops' }, { id: 'R-ops-2', text: 'ops 2' }, { id: 'R-sec-1', text: 's' }, { id: 'R-sec-2', text: 's2' });
+  o.confirmed = [{ id: 'R-sec-1', role: 'Legal' }, { id: 'R-sec-2', role: 'Board' }];
+  const item = (id) => checkSlices(o, on()).items.find((i) => i.id === id);
+  assert.deepEqual(item('ownership').failures, [
+    { id: 'R-po-1', text: 'R-po-1 is owned by s1, s2 and s3' }, { id: 'R-po-2', text: 'R-po-2 is owned by s2 and s3' }]);
+  assert.equal(item('ownership').detail, 'R-po-1 is owned by s1, s2 and s3; R-po-2 is owned by s2 and s3');
+  assert.deepEqual(item('coverage').failures.map((f) => f.id), ['R-ops-1', 'R-ops-2']);
+  assert.equal(item('coverage').failures[0].text, 'R-ops-1 is not owned by a slice or confirmed by a person');
+  assert.deepEqual(item('confirmRole').failures.map((f) => f.id), ['R-sec-1', 'R-sec-2']);
+  assert.match(item('confirmRole').failures[1].text, /^R-sec-2: "Board" cannot confirm a requirement\./);
+  assert.equal(item('confirmRole').detail, item('confirmRole').failures.map((f) => f.text).join('; '));
+  const ok = checkSlices(perRun([1, 1]), on()).items;
+  for (const id of ['ownership', 'coverage', 'confirmRole']) assert.deepEqual(ok.find((i) => i.id === id).failures, [], id);
+  assert.ok(checkSlices(perRun([1, 1])).items.every((i) => !('failures' in i)), 'dev items unchanged');
+});
+
+test('smallRuns B4: the confirm edit only with the option; it replaces the role of a confirmed id', () => {
+  const edit = { op: 'confirm', id: 'R-ops-1', role: 'Security' };
+  assert.equal(normalizeEdits([edit]).ok, false);
+  assert.deepEqual(normalizeEdits([edit, { op: 'merge', id: 's1', x: 1 }], { confirm: true }),
+    { ok: true, edits: [edit, { op: 'merge', id: 's1' }] });
+  assert.equal(normalizeEdits([{ op: 'confirm', id: 'R-ops-1' }], { confirm: true }).ok, false);
+  const o = { ...perRun([1, 1]), confirmed: [{ id: 'R-ops-1', role: 'Legal' }] };
+  o.agreed.push({ id: 'R-ops-1', text: 'ops' });
+  const r = applyOutlineEdits(o, [edit]);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.outline.confirmed, [{ id: 'R-ops-1', role: 'Security' }]);
+  assert.deepEqual(o.confirmed, [{ id: 'R-ops-1', role: 'Legal' }], 'input not mutated');
+  assert.equal(checkSlices(r.outline, on()).ok, true);
+  assert.equal(applyOutlineEdits(o, [{ ...edit, id: 'R-po-1' }]).ok, false, 'agreed but not confirmed');
+  assert.equal(applyOutlineEdits(o, [{ ...edit, id: 'R-zz-9' }]).ok, false, 'not agreed');
+  assert.equal(applyOutlineEdits(o, [{ ...edit, role: 'Legal' }]).ok, false, 'not a role');
+});
+
 test('smallRuns: a self and a forward builds-on each fail buildsOnEarlier', () => {
   const self = perRun([1, 1]);
   self.slices[1].dependsOn = ['s2'];

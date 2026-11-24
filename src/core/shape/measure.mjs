@@ -166,11 +166,14 @@ export function summarizeFigures(list) {
 }
 
 /** The figures per Care position; a position with fewer than `minFeatures` recorded features says so instead. Positions
- *  never mix: each reads only its own rows. Readable with the flag off. */
-export function figuresByCare({ minFeatures = MEASURE_MIN_FEATURES } = {}) {
-  const q = getDb().prepare('SELECT care, figures FROM shape_feature_figures WHERE care = ?');
+ *  never mix: each reads only its own rows. `projectDir` (B2) keeps only that project's features. Readable with the flag off. */
+export function figuresByCare({ minFeatures = MEASURE_MIN_FEATURES, projectDir = null } = {}) {
+  const q = projectDir
+    ? getDb().prepare(`SELECT g.care, g.figures FROM shape_feature_figures g JOIN shape_features f ON f.id = g.feature_id
+      WHERE g.care = ? AND f.project_dir = ?`)
+    : getDb().prepare('SELECT care, figures FROM shape_feature_figures WHERE care = ?');
   return Object.fromEntries(CARE_POSITIONS.map((care) => {
-    const list = q.all(care).map((r) => parse(r.figures)).filter(Boolean);
+    const list = (projectDir ? q.all(care, String(projectDir)) : q.all(care)).map((r) => parse(r.figures)).filter(Boolean);
     const n = list.length;
     return [care, n < minFeatures ? { care, features: n, enough: false, note: NOT_ENOUGH_HISTORY }
       : { care, features: n, enough: true, figures: summarizeFigures(list) }];

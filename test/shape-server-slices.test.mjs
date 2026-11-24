@@ -15,8 +15,8 @@ import { gitDir } from './helpers/git-dir.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { createThread, linkRun as askLinkRun, listMessages } from '../src/core/ask/store.mjs';
-import { createSliceFeature, featureView, recordShapePlan, recordShip, retireFeaturesOf } from '../src/core/shape/features.mjs';
+import { createThread, linkRun as askLinkRun, listMessages, appendMessage as askAppendMessage } from '../src/core/ask/store.mjs';
+import { createSliceFeature, featureView, recordShapePlan, recordShip, retireFeaturesOf, featureThread, currentFeatureId } from '../src/core/shape/features.mjs';
 import { getTicket, requestRunNow, cancelTicket } from '../src/core/scheduler.mjs';
 import { nightModeToggle } from '../src/core/settings.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
@@ -1308,3 +1308,76 @@ test('small runs off: the same tick misses slice 4 as dev does', () => withEnvVa
   assert.equal(getTicket(t4).status, 'missed');
   assert.equal(getTicket(t4).failReason, 'The run before it was stopped.');
 }));
+
+// ── Shaper small runs B1 (D8, Invariant 5): one card per marked feature; Chat posts no Ship card for it ──
+shipT('B1: a marked feature\'s thread holds one card block; no Ship card is posted, and a re-plan adds none', async () => {
+  const seen = []; stubShip(seen, { describe: 'v1.11.0' });
+  const w = shipWorld();
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), w.pids[0]);
+  const thread = createThread({ title: 'charts' });
+  // The started run card the Chat thread holds for the planning run (its proposal block, now the live run card).
+  askAppendMessage(thread.id, { role: 'assistant', text: '', status: 'done',
+    blocks: [{ kind: 'card', id: 'card_b1', state: 'started', card: { type: 'run', pipelineId: w.pids[0], title: 'Charts' } }] });
+  askLinkRun(thread.id, { runId: 'run-b1', pipelineId: w.pids[0], cardId: 'card_b1' });
+  /** The card blocks of the feature's thread that name this feature or its origin run. */
+  const cardBlocks = (fid) => {
+    const th = featureThread(fid);
+    assert.equal(th && th.threadId, thread.id);
+    return listMessages(th.threadId).flatMap((m) => m.blocks || [])
+      .filter((b) => b.kind === 'card' && b.card && (b.card.pipelineId === w.pids[0] || (b.card.featureId && currentFeatureId(b.card.featureId) === fid)));
+  };
+  assert.equal(cardBlocks(w.f.id).length, 1, 'before ship-ready');
+  const c = await collector();
+  try {
+    assert.equal(await testing.offerShipCard(w.pids[2]), null, 'no Ship card for a marked feature');
+    await sleep(100);
+    assert.equal(c.frames('ask-message').length, 0, 'nothing broadcast');
+  } finally { c.close(); }
+  assert.equal(cardBlocks(w.f.id).length, 1, 'after ship-ready');
+  // A re-plan: the successor feature reaches the same thread through `replaces` and posts no card of its own.
+  const pidR = pipe('running');
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), pidR);
+  const succ = createSliceFeature({ pipelineId: pidR, projectDir: w.dir, title: 'Charts', outline: outlineOf(2), perspectives: ['product'],
+    workflowId: 'wf_shape', startedBy: 'ann', replaces: w.f.id });
+  assert.equal(currentFeatureId(w.f.id), succ.id);
+  assert.equal(cardBlocks(succ.id).length, 1, 'after a re-plan');
+});
+
+// Small runs B4 (D12): both answer routes refuse an approve of a split failing a non-waivable rule, through the real
+// validator of a real mock run held at the Split (WORCA_MOCK_SPLIT_OUTLINE picks the broken rule).
+test('B4: POST /api/answer and /api/runs/:id/answer answer 422 split-not-approvable per Care × rule; the Split stays open, no feature', async () => {
+  const { createOrchestrator } = await import('../src/core/orchestrator.mjs');
+  const { resolveShapeRequest } = await import('../src/core/shape/run.mjs');
+  for (const position of ['lean', 'balanced', 'thorough']) {
+    for (const outline of ['coverage', 'ownership', 'confirmRole']) {
+      await withEnvVars({ WORCA_FLAGS: 'shaperSmallRuns', WORCA_MOCK_SPLIT_OUTLINE: outline }, async () => {
+        const req = resolveShapeRequest({ shape: { size: 'large', lead: 'security' } }, { smallRuns: true });
+        const orch = createOrchestrator({ projectDir: gitDir('b4-server'), workflowId: req.workflowId, prompt: 'Plan this in slices: demo',
+          claude: { mock: true }, shape: req.shape });
+        const held = new Promise((resolve) => orch.on('question', (q) => {
+          if (q.kind === 'care') setImmediate(() => orch.answer(q.id, { care: { position } }));
+          else if (q.kind === 'plan' && q.plan?.outline) resolve(q);
+          else if (q.kind === 'plan') setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
+          else setImmediate(() => orch.answer(q.id, { answers: [] }));
+        }));
+        const done = orch.run();
+        const q = await held;
+        const runId = `b4-${position}-${outline}`;
+        runs.set(runId, { id: runId, kind: 'run', status: 'running', events: [], orch, pendingQuestion: q });
+        try {
+          for (const r of [await post('/api/answer', { runId, id: q.id, payload: { decision: 'approve' } }),
+            await post(`/api/runs/${runId}/answer`, { id: q.id, decision: 'approve' })]) {
+            assert.equal(r.status, 422, `${position} ${outline}`);
+            const body = await r.json();
+            assert.equal(body.errors[0].code, 'split-not-approvable', `${position} ${outline}`);
+            assert.match(body.errors[0].message, new RegExp(`${outline} R-`));
+          }
+          assert.equal(orch.pendingQuestion?.id, q.id, 'the Split stays open');
+          assert.equal(getDb().prepare('SELECT id FROM shape_features WHERE origin_pipeline_id = ?').get(orch.getState().id), undefined);
+          orch.answer(q.id, { decision: 'stop' });
+          assert.equal((await done).status, 'stopped');
+        } finally { runs.delete(runId); }
+      });
+    }
+  }
+});
