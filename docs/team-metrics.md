@@ -100,7 +100,7 @@ workspace runs follow that switch).
 ## Cost
 
 The Overview tab opens with three chips: **Overview** (the
-page as before), **By person** (the By actor table on its own) and **Cost**. Cost is the same Cost and
+page as before), **By person** (the leaderboard and the By actor table) and **Cost**. Cost is the same Cost and
 value report as Statistics › Cost (see [statistics.md](./statistics.md)): KPIs, a filter bar,
 Allocate by → then by, a stacked area chart, one expandable table, saved views and Download CSV, over
 every team record in the range. The chosen chip, the report's choices and its saved views are kept in
@@ -125,6 +125,37 @@ without `client`.
 **Download CSV** saves `team-metrics-<scope>-<range>-cost-<key>.csv` with the Statistics report's
 columns: the dimension(s), `spendUsd`, `runs`, `finished`, `stopped`, `failed`, `running`, `paused`,
 `prsOpened`, `prsMerged`, `humanHours`, `savedUsd`, `usdPerHour`.
+
+## Leaderboard and Worca levels
+
+**By person** opens with a **Leaderboard** card: a friendly competition between the people who ran runs on
+the team. Its period has its own buttons (All time, This year, This quarter, Last month, This month; This
+month is the default and the choice is kept in this browser) and ignores the page's range, tag and row
+filters. Periods are calendar periods in UTC, the same as the page's range chips.
+
+**Score.** Out of 100: merged runs 35, success rate 35, runs 15, spend per run 15. Each part is compared with
+the best person on the team in the same period (a person's runs divided by the most runs anyone has, and so
+on; for spend per run, lower is better), so the score says how close someone is to the best of the team, not
+how big the team is. A card row shows each part as "points / weight" with the raw number under it.
+Runs without a recorded cost are left out of spend per run only (the card says "N of M costed").
+
+**Who is ranked.** A person needs at least 3 runs started in the period; people with 1 or 2 are listed under
+**Not eligible yet** with "needs N more run(s)", and people with no run in the period are not listed. Equal
+scores (to one decimal) share a rank and are joint winners. An open period says **Leading so far** and
+"Ends in N days, ranking can still change"; a closed one (Last month) says **Winner** and the date it
+closed; All time says **All-time leader**. With no runs the card says "No winner yet", and when nobody has 3
+runs it says "No winner for this period".
+
+**Merged runs** are matched to pull requests exactly as the [Timeline](#timeline) does (the Action's
+events, this machine's runs, GitHub through `gh`, and the cache). The card paints first with "Checking merged
+pull requests…" and repaints when the answer arrives. When GitHub cannot be reached, runs whose pull
+request could not be checked count as not merged and the card says so.
+
+**Levels.** Each person in the By actor table (Overview and By person) and on the leaderboard shows a Worca
+level badge. A Worca level is worked out on each person's own machine and is private, so Team metrics only
+shows the real level (name and icon) for **you**; everyone else shows **Level unknown** with a neutral icon.
+You are found by your signed-in name, or, on a single-person install, by your git name or the key of your git
+email on the records. If you have not reached a level yet the badge says "No level yet".
 
 ## Timeline
 

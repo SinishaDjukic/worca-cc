@@ -381,3 +381,125 @@ test('Team metrics › Cost: Download CSV names the scope, range and key; chip c
   assert.ok(window.localStorage.getItem('worca-cc.teamMetrics.cost.v1'));
   assert.equal(window.localStorage.getItem('worca-cc.stats.cost.v1'), null);
 });
+
+// ── By person: Worca levels and the leaderboard ────────────────────────────────────────────────────
+const LEVEL = { level: { index: 3, key: 'builder', name: 'Builder', avatar: '/assets/worca-levels/builder.svg' } };
+const monthStart = (back = 0) => { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - back, 1); };
+const lbRec = (id, actor, startedAt, extra = {}) => ({ ...makeRecord({ id, startedAt, actor }), ...extra });
+function lbData({ viewer = { names: ['Ana'], actorKey: null }, records } = {}) {
+  const recent = new Date().toISOString();
+  return { ...TM_DATA, viewer, records: records || [
+    lbRec('a1', 'Ana', recent), lbRec('a2', 'Ana', recent), lbRec('a3', 'Ana', recent),
+    lbRec('b1', 'Bo', recent), lbRec('b2', 'Bo', recent), lbRec('b3', 'Bo', recent, { result: 'failed' }),
+  ] };
+}
+function lbHandler(data, { level = LEVEL, prs = (body) => respond({ prs: {}, status: { gh: 'ok' } }), log = [] } = {}) {
+  const tm = tmHandler({ scopes: SCOPES_ON, data });
+  return (u, o) => {
+    if (u.includes('/api/worca-level')) return respond(level);
+    if (u.includes('/api/team-metrics/prs')) { const body = JSON.parse(o.body); log.push(body); return prs(body); }
+    return tm(u, o);
+  };
+}
+const openPerson = async (opts) => {
+  const ctx = await openTm(opts);
+  ctx.window.document.querySelector('#tm-view [data-tm-view="person"]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  return ctx;
+};
+const lbRow = (doc, name) => doc.querySelector(`#tm-body .tm-lb tr[data-lb-key="${name}"]`);
+const tableRow = (doc, name) => [...doc.querySelectorAll('#tm-body table[data-dim="actor"] tbody tr')].find((tr) => tr.querySelector('.tm-person')?.textContent === name);
+
+test('levels on overview and by person: the viewer (matched by name) shows the served level, teammates "Level unknown"', async () => {
+  const { window, tick } = await openTm({ fetchHandler: lbHandler(lbData()) });
+  const doc = window.document;
+  for (let i = 0; i < 4; i++) await tick();
+  const ana = tableRow(doc, 'Ana').querySelector('.tm-level');
+  assert.equal(ana.dataset.levelState, 'known');
+  assert.equal(ana.querySelector('img').getAttribute('src'), LEVEL.level.avatar);
+  assert.equal(ana.querySelector('img').alt, 'Builder');
+  assert.equal(tableRow(doc, 'Bo').querySelector('.tm-level').dataset.levelState, 'unknown');
+  assert.match(tableRow(doc, 'Bo').textContent, /Level unknown/);
+  doc.querySelector('#tm-view [data-tm-view="person"]').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.equal(lbRow(doc, 'Ana').querySelector('.tm-level').outerHTML, tableRow(doc, 'Ana').querySelector('.tm-level').outerHTML, 'one badge everywhere');
+  assert.equal(lbRow(doc, 'Bo').querySelector('.tm-level').dataset.levelState, 'unknown');
+});
+
+test('the viewer is also found by actor key, and without a level yet shows "No level yet"', async () => {
+  const recent = new Date().toISOString();
+  const records = ['a1', 'a2', 'a3'].map((id) => lbRec(id, 'Ana B.', recent, { actorKey: '0123456789abcdef' }));
+  const keyed = await openPerson({ fetchHandler: lbHandler(lbData({ viewer: { names: [], actorKey: '0123456789abcdef' }, records })) });
+  assert.equal(lbRow(keyed.window.document, 'Ana B.').querySelector('.tm-level').dataset.levelState, 'known');
+  const none = await openPerson({ fetchHandler: lbHandler(lbData(), { level: { level: null } }) });
+  assert.match(lbRow(none.window.document, 'Ana').textContent, /No level yet/);
+  assert.match(lbRow(none.window.document, 'Bo').textContent, /Level unknown/);
+  const stranger = await openPerson({ fetchHandler: lbHandler(lbData({ viewer: { names: [], actorKey: null } })) });
+  assert.equal(stranger.window.document.querySelector('#tm-body .tm-lb .tm-level[data-level-state="known"]'), null, 'nobody is guessed');
+});
+
+test('a failing level read never breaks the page', async () => {
+  const ctx = await openPerson({ fetchHandler: (u, o) => (u.includes('/api/worca-level') ? respond({ error: 'no' }, 500) : lbHandler(lbData())(u, o)) });
+  assert.ok(ctx.window.document.querySelector('#tm-body .tm-lb'));
+});
+
+test('switching the leaderboard period re-ranks and persists', async () => {
+  const lastMonth = new Date(monthStart(1) + 9 * 86_400_000).toISOString();
+  const recs = [...lbData().records.slice(0, 3), ...['c1', 'c2', 'c3'].map((id) => lbRec(id, 'Cy', lastMonth))];
+  const { window, tick } = await openPerson({ fetchHandler: lbHandler(lbData({ records: recs })) });
+  const doc = window.document;
+  const winners = () => doc.querySelector('#tm-body .tm-lb-banner').textContent;
+  assert.match(winners(), /Leading so far: Ana/);
+  assert.equal(doc.querySelector('#tm-body .tm-lb [data-lb-range="this-month"]').getAttribute('aria-pressed'), 'true');
+  doc.querySelector('#tm-body .tm-lb [data-lb-range="last-month"]').click();
+  await tick();
+  assert.match(winners(), /Winner: Cy/);
+  assert.equal(window.localStorage.getItem('worca.teamMetrics.lbRange'), 'last-month');
+  const again = await openPerson({ fetchHandler: lbHandler(lbData({ records: recs })), storage: { 'worca.teamMetrics.lbRange': 'last-month' } });
+  assert.match(again.window.document.querySelector('#tm-body .tm-lb-banner').textContent, /Winner: Cy/, 'the period is remembered');
+});
+
+test('merged runs come from the PR lookup: asked once per run, the count rises after the repaint', async () => {
+  const log = [];
+  const prs = () => respond({ prs: { a1: [{ state: 'MERGED' }], a2: [{ state: 'MERGED' }], a3: [{ state: 'OPEN' }] }, status: { gh: 'ok' } });
+  const { window, tick } = await openPerson({ fetchHandler: lbHandler(lbData(), { prs, log }) });
+  const doc = window.document;
+  assert.equal(log.length, 1);
+  assert.deepEqual(log[0].runs.map((r) => r.id).sort(), ['a1', 'a2', 'a3', 'b1', 'b2', 'b3']);
+  assert.match(lbRow(doc, 'Ana').querySelectorAll('td')[5].textContent, /^35\.0 \/ 352$/);
+  assert.match(lbRow(doc, 'Bo').querySelectorAll('td')[5].textContent, /^0\.0 \/ 350$/);
+  assert.equal(doc.querySelector('#tm-body .tm-lb-merged-note'), null);
+  doc.querySelector('#tm-body .tm-lb [data-lb-range="all"]').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.equal(log.length, 1, 'the same runs are never asked twice');
+});
+
+test('a failing PR lookup leaves merged at 0, says so, and shows no toast', async () => {
+  const { window } = await openPerson({ fetchHandler: lbHandler(lbData(), { prs: () => respond({ error: 'gh down' }, 502) }) });
+  const doc = window.document;
+  assert.match(doc.querySelector('#tm-body .tm-lb-merged-note').textContent, /GitHub could not be reached/);
+  assert.match(lbRow(doc, 'Ana').querySelectorAll('td')[5].textContent, /^0\.0 \/ 350$/);
+  assert.equal(doc.querySelector('.toast, [data-toast]'), null);
+});
+
+test('leaving for the Timeline mid-lookup: the person view is not repainted and no run is asked twice', async () => {
+  const log = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const prs = (body) => (log.length === 1 ? gate.then(() => respond({ prs: { a1: [{ state: 'MERGED' }] }, status: { gh: 'ok' } })) : respond({ prs: {}, status: { gh: 'ok' } }));
+  const ctx = await openTm({ fetchHandler: lbHandler(lbData(), { prs, log }) });
+  const { window, tick } = ctx;
+  const doc = window.document;
+  doc.querySelector('#tm-view [data-tm-view="person"]').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.equal(log.length, 1);
+  assert.match(doc.querySelector('#tm-body .tm-lb-merged-note').textContent, /Checking merged pull requests/);
+  const personBody = doc.querySelector('#tm-body .tm-lb');
+  window.location.hash = 'team-metrics/timeline'; window.dispatchEvent(new window.Event('hashchange'));
+  for (let i = 0; i < 4; i++) await tick();
+  release();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.equal(doc.querySelector('#tm-body .tm-lb'), personBody, 'the hidden person view was not repainted');
+  const ids = log.flatMap((b) => b.runs.map((r) => r.id));
+  assert.equal(new Set(ids).size, ids.length, 'each run asked once across both surfaces');
+});

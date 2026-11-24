@@ -78,7 +78,7 @@ test('enable (here) → scopes lists the project → GET /api/team-metrics shape
   const r = await get(`/api/team-metrics?scope=project:${gwKey}&range=this-month`);
   assert.equal(r.status, 200);
   const j = await r.json();
-  assert.deepEqual(Object.keys(j).sort(), ['aggregate', 'fetchError', 'humanRateUsd', 'records', 'refresh', 'scope', 'stats', 'sync']);
+  assert.deepEqual(Object.keys(j).sort(), ['aggregate', 'fetchError', 'humanRateUsd', 'records', 'refresh', 'scope', 'stats', 'sync', 'viewer']);
   assert.equal(j.humanRateUsd, 35);
   assert.equal(typeof j.aggregate.kpis.savedUsd, 'number');
   assert.equal(j.scope.slug, 'gateway');
@@ -86,6 +86,26 @@ test('enable (here) → scopes lists the project → GET /api/team-metrics shape
   assert.equal(j.aggregate.kpis.runs, 1); assert.equal(j.aggregate.kpis.spendUsd, 2.5);
   assert.deepEqual(j.stats, { files: 1, malformed: 0, unknownV: 0 });
   assert.equal(j.sync[0].pending, 0);
+});
+
+test('viewer: a local install names the git user and their actor key; a per-person sign-in names nobody', { skip }, async () => {
+  const local = (await (await get(`/api/team-metrics?scope=project:${gwKey}&range=this-month`)).json()).viewer;
+  assert.deepEqual(local.names, ['m dev']);
+  assert.match(local.actorKey, /^[0-9a-f]{16}$/);
+  const prev = { h: process.env.WORCA_IDENTITY_HEADER, t: process.env.WORCA_IDENTITY_TRUSTED_PROXIES };
+  process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';
+  try {
+    const shared = await (await fetch(`${base}/api/team-metrics?scope=project:${gwKey}&range=this-month`, { headers: { 'x-test-user': 'ada@example.com' } })).json();
+    assert.deepEqual(shared.viewer, { names: [], actorKey: null });
+    process.env.WORCA_IDENTITY_NAME = 'Operator Olga';
+    delete process.env.WORCA_IDENTITY_HEADER;
+    const operator = (await (await get(`/api/team-metrics?scope=project:${gwKey}&range=this-month`)).json()).viewer;
+    assert.deepEqual(operator.names, ['Operator Olga', 'm dev']);
+  } finally {
+    delete process.env.WORCA_IDENTITY_NAME;
+    for (const [k, v] of [['WORCA_IDENTITY_HEADER', prev.h], ['WORCA_IDENTITY_TRUSTED_PROXIES', prev.t]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
 });
 
 test('defer=1: the page read answers from the worktree and reports refresh.pending for the fetch it left running', { skip }, async () => {

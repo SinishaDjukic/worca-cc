@@ -305,6 +305,7 @@ import { mcpRunsLabel, renderMcpRunsPop, renderRunSkills } from './mcp-run-picke
 import { aggregate, toCsv, recordTags } from '../../src/shared/team-metrics/aggregate.mjs';
 import { recordFacts, heatGrid, missingKeyTodos } from '../../src/shared/team-metrics/cost-facts.mjs';
 import { buildWorkItems, prLookupFor } from '../../src/shared/team-metrics/timeline.mjs';
+import { buildLeaderboard, mergedRunIds, leaderboardRecords, LEADERBOARD_RANGES } from '../../src/shared/team-metrics/leaderboard.mjs';
 import { renderTimeline, renderTimelinePopover, timelineWindow, shiftAnchor, TL_MODES, TL_ZOOMS } from './team-metrics-timeline.mjs';
 import {
   renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
@@ -1778,6 +1779,7 @@ async function loadWhoami() {
     paintAccount();
     paintIdentityCard(document.getElementById('acct-id'), acctState.account);
     if (viewer.shared) repaintPeople();
+    if (viewer.shared && tmState.data && currentView() === 'team-metrics') renderTeamMetrics();   // the viewer's row knows its level now
   } catch { /* nobody is shown */ }
 }
 
@@ -23921,6 +23923,7 @@ async function paintPooledBudgetTile(scopeId, records) {
  *  tmState: tmState's initialiser reads it, and a const read above its declaration throws. */
 const TM_RUN_PAGE = 50;
 const TM_VIEW_KEY = 'worca.teamMetrics.view';
+const TM_LB_RANGE_KEY = 'worca.teamMetrics.lbRange';
 const TM_VIEW_CHIPS = ['overview', 'person', 'cost'];
 // 'tag' was the By cost tag chip (#718 slice 4); the Cost and value report replaced it (labels-cost-tags s4).
 const storedTmView = () => { const v = storedChoice(TM_VIEW_KEY, [...TM_VIEW_CHIPS, 'tag'], 'overview'); return v === 'tag' ? 'cost' : v; };
@@ -23937,6 +23940,10 @@ const tmState = {
   cache: new Map(),                 // scopeId → last payload this session: switching back paints at once
   tab: 'overview',                  // 'overview' | 'timeline' — the hash param (#team-metrics/timeline)
   view: storedTmView(),             // the Overview tab's chip (#718 slice 4)
+  lbRange: storedChoice(TM_LB_RANGE_KEY, LEADERBOARD_RANGES, 'this-month'),   // the By person leaderboard's own period
+  viewerLevel: undefined,           // the viewer's Worca level: undefined = not asked yet, null = none, else { key, name, avatar }
+  viewerLevelLoading: false,
+  viewerMatch: null,                // { data, labels }: the actor labels that are the viewer, per loaded payload
   // Timeline: calendar position, grouping (kept per viewer) and the tile filter.
   tl: {
     zoom: 'month', anchor: Date.now(), filter: null,
@@ -24159,11 +24166,21 @@ async function ensureTmPrs() {
     return t >= lo && t < win.e && !pr.asked.has(r.id);
   });
   if (!need.length) return;
+  await askTmPrs(scopeId, need, renderTmTimeline);
+  repaintTmAfterPrs(scopeId);
+}
+
+/**
+ * One lookup of the pull requests behind `need` (records), shared by the Timeline and the By person
+ * leaderboard. Asked once per run per session, answer or not: a failing lookup must not loop
+ * (render → ask → fail → render). Refresh clears the set and tries again. `onStart` paints the
+ * "checking" state once the records are marked asked. Callers repaint with repaintTmAfterPrs.
+ */
+async function askTmPrs(scopeId, need, onStart) {
+  const pr = tmPrsFor(scopeId);
   pr.inflight = true; pr.loading = true;
-  // Asked once per session, answer or not: a failing lookup must not loop (render → ask → fail →
-  // render). Refresh clears the set and tries again.
   for (const r of need) pr.asked.add(r.id);
-  renderTmTimeline();
+  onStart();
   try {
     for (let i = 0; i < need.length; i += TL_PR_CHUNK) {
       const chunk = need.slice(i, i + TL_PR_CHUNK);
@@ -24178,7 +24195,66 @@ async function ensureTmPrs() {
   } finally {
     pr.inflight = false; pr.loading = false;
   }
-  if (tmState.scopeId === scopeId && tmState.tab === 'timeline' && currentView() === 'team-metrics') { tmState.tlKeepScroll = true; renderTmTimeline(); }
+}
+
+/** After a lookup: repaint the surface that is on screen for that scope (the repaint asks for whatever is still unasked). */
+function repaintTmAfterPrs(scopeId) {
+  if (tmState.scopeId !== scopeId || currentView() !== 'team-metrics') return;
+  if (tmState.tab === 'timeline') { tmState.tlKeepScroll = true; renderTmTimeline(); }
+  else if (tmState.view === 'person') renderTeamMetrics();
+}
+
+/** The By person leaderboard's merged runs: asks for the pull requests of the card's window, like the Timeline does. */
+async function ensureTmLeaderboardPrs() {
+  const scopeId = tmState.scopeId;
+  const pr = tmPrsFor(scopeId);
+  if (pr.inflight || !tmState.data || tmState.tab === 'timeline' || tmState.view !== 'person') return;
+  const need = leaderboardRecords(tmState.data.records, tmState.lbRange, Date.now()).filter((r) => !pr.asked.has(r.id));
+  if (!need.length) return;
+  await askTmPrs(scopeId, need, renderTeamMetrics);
+  repaintTmAfterPrs(scopeId);
+}
+
+/** Does this actor label name the viewer? A shared sign-in knows its name; otherwise the server's names and the viewer's actor key decide. */
+function tmIsViewerLabel(label) {
+  if (!label) return false;
+  if (viewer.shared) return isViewer(label);
+  const data = tmState.data;
+  if (!data) return false;
+  if (tmState.viewerMatch?.data !== data) {
+    const who = data.viewer || {};
+    const labels = new Set((who.names || []).map((n) => String(n).toLowerCase()));
+    if (who.actorKey) for (const r of data.records || []) if (r.actor && r.actorKey === who.actorKey) labels.add(r.actor.toLowerCase());
+    tmState.viewerMatch = { data, labels };
+  }
+  return tmState.viewerMatch.labels.has(String(label).toLowerCase());
+}
+
+/** The one level source for every person on the page: the viewer's own level, "Level unknown" for everyone else (levels are private to a machine). */
+function tmLevelFor(label) {
+  if (!tmIsViewerLabel(label)) return { state: 'unknown' };
+  return tmState.viewerLevel ? { state: 'known', ...tmState.viewerLevel } : { state: 'none' };
+}
+
+/** The viewer's level, once per page session; a failure leaves "No level yet" without a toast. */
+async function loadTmViewerLevel() {
+  if (tmState.viewerLevel !== undefined || tmState.viewerLevelLoading) return;
+  tmState.viewerLevelLoading = true;
+  let level = null;
+  try {
+    const l = (await fetchWorcaLevel()).level;
+    if (l && l.key) level = { key: l.key, name: l.name, avatar: l.avatar };
+  } catch { /* no level shown */ }
+  tmState.viewerLevelLoading = false;
+  tmState.viewerLevel = level;
+  if (level && tmState.data && currentView() === 'team-metrics') renderTeamMetrics();
+}
+
+/** 'loading' until every run in the card's window has been asked about; 'unreachable' when GitHub could not answer. */
+function tmMergedState(pr, windowRecords) {
+  if (pr.loading || windowRecords.some((r) => !pr.asked.has(r.id))) return 'loading';
+  const st = pr.status;
+  return st?.ghError || st?.gh === 'missing' || st?.gh === 'unauthenticated' ? 'unreachable' : 'ok';
 }
 
 function closeTlPopover() { document.querySelectorAll('.tl-pop').forEach((p) => p.remove()); }
@@ -24294,14 +24370,25 @@ function renderTeamMetrics() {
     });
     costEl = r.el;
   }
+  // By person: the leaderboard card, always over every loaded record (its own period, not the page's range or filters).
+  let leaderboard = null;
+  let mergedState = 'ok';
+  if (view === 'person' && tmState.tab !== 'timeline') {
+    const now = Date.now();
+    const pr = tmPrsFor(tmState.scopeId);
+    leaderboard = buildLeaderboard(data.records, { range: tmState.lbRange, now, mergedRunIds: mergedRunIds(pr.map, data.records) });
+    mergedState = tmMergedState(pr, leaderboardRecords(data.records, tmState.lbRange, now));
+  }
   body.classList.remove('is-loading');
-  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims, view, costEl }));
+  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims, view, costEl, levelFor: tmLevelFor, leaderboard, lbRange: tmState.lbRange, mergedState }));
   tmState.lastAgg = agg;
   // The #tm-tag select, beside the range controls (replaced on every render; hidden with the flag off).
   const tagSel = renderTagFilterSelect(data.records || [], tmState.tag, { doc: document });
   if (tmState.tab === 'timeline' || view === 'cost') tagSel.hidden = true;
   const oldTag = document.getElementById('tm-tag');
   oldTag?.replaceWith(tagSel);
+  void loadTmViewerLevel();
+  void ensureTmLeaderboardPrs();
   void paintPooledBudgetTile(tmState.scopeId, data.records || []);   // team policy (design board 10): advisory tile, when the scope's policy sets one
   const chips = document.getElementById('tm-filters');
   const active = Object.entries(tmState.filter).filter(([, v]) => v != null);
@@ -24361,6 +24448,15 @@ if (tmSection) {
       tmState.view = viewBtn.dataset.tmView;
       storeChoice(TM_VIEW_KEY, tmState.view);
       renderTeamMetrics();
+      return;
+    }
+    const lbBtn = e.target.closest('[data-lb-range]');
+    if (lbBtn) {
+      if (LEADERBOARD_RANGES.includes(lbBtn.dataset.lbRange)) {
+        tmState.lbRange = lbBtn.dataset.lbRange;
+        storeChoice(TM_LB_RANGE_KEY, tmState.lbRange);
+        renderTeamMetrics();
+      }
       return;
     }
     if (e.target.closest('#tm-timeline')) { onTimelineClick(e); return; }

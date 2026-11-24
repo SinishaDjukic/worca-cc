@@ -211,3 +211,139 @@ test('renderMissingTagsStrip: who, how many runs, how much; nothing without requ
   assert.match(renderMissingTagsStrip({ keys: ['client'], rows: [] }, { doc, dims }).textContent, /Every run in this view carries/);
   assert.equal(renderMissingTagsStrip({ keys: [], rows: [] }, { doc, dims }), null);
 });
+
+// ── Leaderboard card and Level column ──────────────────────────────────────────────────────────────
+import { buildLeaderboard } from '../src/shared/team-metrics/leaderboard.mjs';
+import { renderLeaderboardCard, renderPeriodSelector, leaderboardBanner, renderLevelBadge } from '../ui/public/team-metrics-leaderboard.mjs';
+import { renderBreakdownTable } from '../ui/public/team-metrics-view.mjs';
+
+let lbSeq = 0;
+const lbRuns = (actor, count, opts = {}) => Array.from({ length: count }, () => makeRecord({ id: `lb${++lbSeq}`, actor, startedAt: '2026-09-10T10:00:00Z', ...opts }));
+const board = (records, range = 'this-month', extra = {}) => buildLeaderboard(records, { range, now: NOW, ...extra });
+const unknown = () => ({ state: 'unknown' });
+
+test('leaderboard banner: leading so far / joint / closed / all-time / empty states', () => {
+  const lead = leaderboardBanner(board([...lbRuns('Ana', 4), ...lbRuns('Bo', 3)]), { now: NOW });
+  assert.equal(lead.kind, 'leading');
+  assert.equal(lead.headline, 'Leading so far: Ana');
+  assert.equal(lead.detail, 'Ends in 15 days, ranking can still change');
+  const joint = leaderboardBanner(board([...lbRuns('Ana', 3), ...lbRuns('Bo', 3)]), { now: NOW });
+  assert.equal(joint.headline, 'Joint leaders so far: Ana, Bo');
+  const closed = leaderboardBanner(board([...lbRuns('Ana', 3, { startedAt: '2026-08-10T10:00:00Z' })], 'last-month'), { now: NOW });
+  assert.equal(closed.headline, 'Winner: Ana');
+  assert.equal(closed.detail, 'Closed Aug 31, 2026, final ranking');
+  const allTime = leaderboardBanner(board([...lbRuns('Ana', 3)], 'all'), { now: NOW });
+  assert.equal(allTime.headline, 'All-time leader: Ana');
+  assert.match(leaderboardBanner(board([]), { now: NOW }).headline, /^No winner yet/);
+  assert.match(leaderboardBanner(board(lbRuns('Ana', 2)), { now: NOW }).headline, /^No winner for this period/);
+});
+
+test('leaderboard card: ranked row shows the score and the four parts as points / weight with raw values', () => {
+  const recs = [...lbRuns('Ana', 3, { usd: 2 }), ...lbRuns('Ana', 1, { usd: null }), ...lbRuns('Bo', 3, { usd: 4 })];
+  const card = renderLeaderboardCard(board(recs, 'this-month', { mergedRunIds: new Set([recs[0].id]) }), { doc, levelFor: unknown, now: NOW, lbRange: 'this-month' });
+  const tr = card.querySelector('tr[data-lb-key="Ana"]');
+  const cells = [...tr.querySelectorAll('td')].map((td) => td.textContent);
+  assert.equal(cells[0], '1');
+  assert.match(cells[1], /Ana/);
+  assert.match(cells[3], /15\.0 \/ 15.*4/);
+  assert.match(cells[4], /15\.0 \/ 15.*\$2\.00 per run.*3 of 4 costed/);
+  assert.match(cells[5], /35\.0 \/ 35.*1/);
+  assert.match(cells[6], /35\.0 \/ 35.*100%/);
+  assert.match(card.textContent, /merged 35, success 35, runs 15, spend per run 15/);
+  assert.equal(card.querySelector('.tm-lb-merged-note'), null);
+});
+
+test('leaderboard card: merged-state notes (loading, unreachable)', () => {
+  const b = board(lbRuns('Ana', 3));
+  assert.match(renderLeaderboardCard(b, { doc, levelFor: unknown, now: NOW, mergedState: 'loading' }).textContent, /Checking merged pull requests…/);
+  assert.match(renderLeaderboardCard(b, { doc, levelFor: unknown, now: NOW, mergedState: 'unreachable' }).textContent, /GitHub could not be reached/);
+});
+
+test('leaderboard card: not-eligible list has a badge and "needs N more run", and no rank cell', () => {
+  const card = renderLeaderboardCard(board([...lbRuns('Ana', 3), ...lbRuns('Bo', 2)]), { doc, levelFor: unknown, now: NOW });
+  const todo = card.querySelector('.tm-lb-todo');
+  assert.match(todo.textContent, /Not eligible yet/);
+  assert.match(todo.textContent, /Bo/);
+  assert.match(todo.textContent, /needs 1 more run\b/);
+  assert.ok(todo.querySelector('.tm-level'));
+  assert.equal(card.querySelectorAll('tbody tr').length, 1, 'Bo is not in the ranked table');
+  assert.equal(todo.querySelector('td'), null);
+});
+
+test('period selector offers exactly the five periods and marks the current one', () => {
+  const seg = renderPeriodSelector('quarter', { doc });
+  assert.deepEqual([...seg.querySelectorAll('button')].map((b) => [b.dataset.lbRange, b.textContent]),
+    [['all', 'All time'], ['year', 'This year'], ['quarter', 'This quarter'], ['last-month', 'Last month'], ['this-month', 'This month']]);
+  assert.deepEqual([...seg.querySelectorAll('button')].filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.dataset.lbRange), ['quarter']);
+});
+
+test('level badge: known (img alt + tint), none and unknown (neutral glyph)', () => {
+  const known = renderLevelBadge({ state: 'known', key: 'builder', name: 'Builder', avatar: '/assets/worca-levels/builder.svg' }, { doc });
+  assert.equal(known.dataset.levelState, 'known');
+  assert.equal(known.dataset.worcaLevel, 'builder');
+  assert.equal(known.querySelector('img').alt, 'Builder');
+  assert.equal(known.querySelector('img').getAttribute('src'), '/assets/worca-levels/builder.svg');
+  assert.match(known.textContent, /Builder/);
+  const none = renderLevelBadge({ state: 'none' }, { doc });
+  assert.equal(none.dataset.levelState, 'none');
+  assert.match(none.textContent, /No level yet/);
+  const unk = renderLevelBadge({ state: 'unknown' }, { doc });
+  assert.equal(unk.dataset.levelState, 'unknown');
+  assert.equal(unk.dataset.worcaLevel, undefined);
+  assert.equal(unk.querySelector('img'), null);
+  assert.match(unk.textContent, /Level unknown/);
+});
+
+test('actor table shows a level cell on every person row; the same badge as the leaderboard', () => {
+  const recs = [...lbRuns('Ana', 3), ...lbRuns('Bo', 3), makeRecord({ id: 'x', actor: null, startedAt: '2026-09-10T10:00:00Z' })];
+  const agg = aggregate(recs, { range: 'this-month', now: NOW });
+  const levelFor = (label) => (label === 'Ana' ? { state: 'known', key: 'builder', name: 'Builder', avatar: '/a.svg' } : { state: 'unknown' });
+  const table = renderBreakdownTable('actor', agg.breakdowns.actor, { doc, levelFor });
+  const ths = [...table.querySelectorAll('th')];
+  const level = ths.find((th) => th.textContent === 'Level');
+  assert.equal(ths[1], level, 'right after the label');
+  assert.equal(level.dataset.sort, undefined);
+  assert.equal(level.getAttribute('role'), null);
+  const rowOf = (name) => [...table.querySelectorAll('tbody tr')].find((tr) => tr.querySelector('.tm-person')?.textContent === name);
+  assert.equal(rowOf('Ana').querySelector('.tm-level').dataset.levelState, 'known');
+  assert.equal(rowOf('Bo').querySelector('.tm-level').dataset.levelState, 'unknown');
+  assert.equal(rowOf('Ana').querySelectorAll('td')[1].dataset.label, 'Level');
+  const none = [...table.querySelectorAll('tbody tr')].find((tr) => tr.classList.contains('dim'));
+  assert.equal(none.querySelectorAll('td')[1].textContent, '—');
+  assert.equal(none.querySelector('.tm-level'), null);
+  const card = renderLeaderboardCard(board(recs), { doc, levelFor, now: NOW });
+  assert.equal(card.querySelector('tr[data-lb-key="Ana"] .tm-level').outerHTML, rowOf('Ana').querySelector('.tm-level').outerHTML);
+});
+
+test('actor table without levelFor is unchanged: no Level column', () => {
+  const agg = aggregate(lbRuns('Ana', 3), { range: 'this-month', now: NOW });
+  const table = renderBreakdownTable('actor', agg.breakdowns.actor, { doc });
+  assert.ok(![...table.querySelectorAll('th')].some((th) => th.textContent === 'Level'));
+  assert.equal(table.querySelector('.tm-level'), null);
+});
+
+test('person view prepends the leaderboard, also when no actor table exists; overview has the level column', () => {
+  const recs = lbRuns('Ana', 3);
+  const agg = aggregate(recs, { range: 'this-month', now: NOW });
+  const leaderboard = board(recs);
+  const body = renderTeamMetricsBody(agg, { doc, now: NOW, view: 'person', levelFor: unknown, leaderboard, lbRange: 'this-month' });
+  const kids = [...body.children];
+  assert.ok(kids[1].classList.contains('tm-lb'), 'the card sits right under the view chips');
+  assert.ok(body.querySelector('.tm-breakdown .tm-level'));
+  const noActor = aggregate([makeRecord({ id: 'z', actor: null, startedAt: '2026-09-10T10:00:00Z' })], { range: 'this-month', now: NOW });
+  noActor.breakdowns.actor = null;
+  assert.ok(renderTeamMetricsBody(noActor, { doc, now: NOW, view: 'person', levelFor: unknown, leaderboard: board([]) }).querySelector('.tm-lb'));
+  const overview = renderTeamMetricsBody(agg, { doc, now: NOW, view: 'overview', levelFor: unknown });
+  assert.ok(overview.querySelector('table[data-dim="actor"] .tm-level'));
+  assert.equal(overview.querySelector('.tm-lb'), null);
+});
+
+test('record-sourced names stay text in the leaderboard and the level column', () => {
+  const evil = '<img src=x onerror=alert(1)>';
+  const recs = lbRuns(evil, 3);
+  const card = renderLeaderboardCard(board(recs), { doc, levelFor: unknown, now: NOW });
+  assert.equal(card.querySelector('img'), null);
+  assert.ok(card.textContent.includes(evil));
+  const agg = aggregate(recs, { range: 'this-month', now: NOW });
+  assert.equal(renderBreakdownTable('actor', agg.breakdowns.actor, { doc, levelFor: unknown }).querySelector('img'), null);
+});

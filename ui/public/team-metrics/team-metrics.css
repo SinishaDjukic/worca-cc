@@ -288,3 +288,26 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .tm-route-list{list-style:none;padding:0;margin:8px 0 0;} .tm-route-list li.failed{color:var(--red-ink);}
 .tm-route-list .tm-stderr{white-space:pre-wrap;margin:4px 0 0;}
 
+
+/* Team metrics → By person: the Worca level badge and the Leaderboard card (docs/team-metrics.md "Leaderboard").
+   Colour comes from the theme tokens; a known level tints through [data-worca-level] (--wl-hue, worca-level.css).
+   No .hint on a <td>: .hint{display:block} would take the cell out of table layout. */
+.tm-level{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);white-space:nowrap;}
+.tm-level-ava{width:20px;height:20px;border-radius:50%;flex:none;}
+.tm-level-glyph{display:inline-flex;align-items:center;justify-content:center;
+  background:var(--line);color:var(--ink-3);font-size:11px;font-weight:700;}
+.tm-level[data-level-state="known"]{color:var(--ink);}
+.tm-level[data-worca-level] .tm-level-ava{box-shadow:0 0 0 2px oklch(0.9 0.06 var(--wl-hue,235));}
+.tm-lb{margin-bottom:14px;}
+.tm-lb .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.tm-lb-banner{margin:4px 0 10px;font-size:13px;}
+.tm-lb-banner[data-kind="none"]{color:var(--ink-2);}
+.tm-lb-tbl td .tm-lb-pts{display:block;}
+.tm-lb-tbl td small{display:block;font-size:11px;color:var(--ink-2);}
+.tm-lb-tbl tr[data-winner] td:first-child,.tm-lb-tbl tr[data-winner] .tm-person{font-weight:700;}
+.tm-lb-score{font-weight:700;}
+.tm-lb-todo{margin-top:12px;}
+.tm-lb-todo h3{font-size:12px;font-weight:700;margin:0 0 6px;color:var(--ink-2);}
+.tm-lb-todo-list{list-style:none;padding:0;margin:0;}
+.tm-lb-todo-row{display:flex;align-items:center;gap:10px;padding:4px 0;flex-wrap:wrap;}
+.tm-lb-foot{display:block;margin-top:12px;color:var(--ink-2);}

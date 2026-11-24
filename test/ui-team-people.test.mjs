@@ -24,6 +24,16 @@ test('team actors and the policy publisher render as text (never markup), clippe
       const wf = renderBreakdownTable('workflow', [{ key: 'wf', label: 'Quick fix', runs: 1, usd: 1, perRunUsd: 1, successRate: 1, share: 1 }], { doc });
       assert.equal(wf.querySelector('tbody td span').className, '');
     } },
+    { name: 'By actor with a Level column: the clipped label is unchanged and the level cell sits after it', run: async () => {
+      const rows = [{ key: EMAIL, label: EMAIL, runs: 3, usd: 1.5, perRunUsd: 0.5, successRate: 1, overrides: 0 }];
+      const t = renderBreakdownTable('actor', rows, { doc, levelFor: () => ({ state: 'unknown' }) });
+      const cells = t.querySelectorAll('tbody td');
+      const lab = cells[0].querySelector('span');
+      assert.equal(lab.className, 'tm-person');
+      assert.equal(lab.title, EMAIL);
+      assert.match(cells[1].textContent, /Level unknown/);
+      assert.equal(cells[1].dataset.label, 'Level');
+    } },
     { name: 'runs table: the actor cell is clipped with a tooltip; no actor shows a dash', run: async () => {
       const base = { title: 't', result: 'done', usd: 1, wallMs: 1, reviewCycles: null, pr: null, startedAt: '2026-09-10T10:00:00Z' };
       const t = renderRunsTable([{ id: 'a', ...base, actor: '<b>x</b>' + EMAIL }, { id: 'b', ...base, actor: null }], { doc, total: 2 });
