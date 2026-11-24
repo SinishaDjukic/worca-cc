@@ -5,6 +5,7 @@ import { parseRemoteUrl, forgeOf } from './forge.mjs';
 import { githubEnv, stripGithubCredentials, readGithubCredentials, asPersonMode } from './github-credentials.mjs';
 import { azureEnv, stripAzureCredentials, readAzureCredentials } from './azure-credentials.mjs';
 import { bitbucketEnv, stripBitbucketCredentials, readBitbucketCredentials } from './bitbucket-credentials.mjs';
+import { bitbucketServerEnv, stripBitbucketServerCredentials, readBitbucketServerCredentials } from './bitbucket-server-credentials.mjs';
 
 /**
  * Tracker tokens worca never hands to a child: the documented {"$env":…} targets of task-source plugin token
@@ -36,7 +37,7 @@ export function registerHostSecretEnv(re) {
 }
 export const isBackendSecret = (k) => BACKEND_SECRET_ENV.some((re) => re.test(k));
 export function stripHostCredentials(env) {
-  const out = stripTrackerTokens(stripBitbucketCredentials(stripAzureCredentials(stripGithubCredentials(env))));
+  const out = stripTrackerTokens(stripBitbucketServerCredentials(stripBitbucketCredentials(stripAzureCredentials(stripGithubCredentials(env)))));
   for (const k of Object.keys(out)) if (isBackendSecret(k)) delete out[k];
   return out;
 }
@@ -57,6 +58,7 @@ export function hostLookupNeeded({ push = false, env = process.env } = {}) {
   return readGithubCredentials(env).mode === 'app'
     || readAzureCredentials(env).mode !== 'none'
     || readBitbucketCredentials(env).mode !== 'none'
+    || readBitbucketServerCredentials(env).mode !== 'none'
     || (push && asPersonMode(env) !== null);
 }
 
@@ -76,6 +78,7 @@ export async function gitEnvFor(role, remoteUrl, { base, githubEnvImpl = githubE
     }
     case 'azure': return { env: stripTrackerTokens(stripBitbucketCredentials(azureEnv(role, env0))), error: null };
     case 'bitbucket': return { env: stripTrackerTokens(bitbucketEnv(role, env0)), error: null };
+    case 'bitbucket-server': return { env: stripTrackerTokens(bitbucketServerEnv(role, p.host, env0)), error: null };
     default: return { env: stripHostCredentials(env0), error: null };
   }
 }

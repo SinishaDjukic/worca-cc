@@ -20,6 +20,8 @@ import { parseAzurePrUrl } from '../shared/azure-remote.mjs';
 import * as bitbucketPr from './pr/bitbucket.mjs';
 import { readBitbucketCredentials } from './bitbucket-credentials.mjs';
 import { parseBitbucketPrUrl } from '../shared/bitbucket-remote.mjs';
+import * as bbServerPr from './pr/bitbucket-server.mjs';
+import { readBitbucketServerCredentials } from './bitbucket-server-credentials.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
 import { guardedGitEnv } from './git-guard.mjs';
 export { parseRemoteUrl, remoteRepoSlug, sameRepo } from './forge.mjs';
@@ -1037,11 +1039,13 @@ export async function ghItemSummaries({ repo, numbers, timeout = GH_CHIP_TIMEOUT
 
 // ── PR providers (dispatch by forge) ────────────────────────────────────────
 // The GitHub provider is the gh code above (so _testing.setRunner keeps intercepting it); Azure DevOps goes to
-// pr/azure.mjs and Bitbucket Cloud to pr/bitbucket.mjs, which export the same names. Only those two divert — GHE and
-// unknown hosts keep gh (D4).
+// pr/azure.mjs, Bitbucket Cloud to pr/bitbucket.mjs and a self-hosted Bitbucket Server to pr/bitbucket-server.mjs,
+// which export the same names. Only those divert — GHE and unknown hosts keep gh (D4).
 const REST = {
   azure: { pr: azurePr, parse: parseAzurePrUrl, configured: () => readAzureCredentials().mode !== 'none' },
   bitbucket: { pr: bitbucketPr, parse: parseBitbucketPrUrl, configured: () => readBitbucketCredentials().mode !== 'none' },
+  // worca: a self-hosted Bitbucket Server (hosts from WORCA_BB_SERVER_HOSTS, see bitbucket-server-credentials.mjs).
+  'bitbucket-server': { pr: bbServerPr, parse: bbServerPr.parseBitbucketServerPrUrl, configured: () => readBitbucketServerCredentials().mode !== 'none' },
 };
 const restFor = (forge) => (typeof forge === 'string' && Object.hasOwn(REST, forge) ? REST[forge] : null);
 const restCredential = () => Object.values(REST).some((r) => r.configured());
@@ -1051,15 +1055,16 @@ const PROVIDERS = {
     available: async () => ((await hasGh()) ? { ok: true } : { ok: false, reason: 'GitHub CLI (gh) is not available' }) },
   azure: { forge: 'azure', label: FORGE_LABEL.azure, available: () => azurePr.available() },
   bitbucket: { forge: 'bitbucket', label: FORGE_LABEL.bitbucket, available: () => bitbucketPr.available() },
+  'bitbucket-server': { forge: 'bitbucket-server', label: FORGE_LABEL['bitbucket-server'], available: () => bbServerPr.available() },
 };
-/** The PR provider for a base remote (a listRemotes entry). Azure DevOps and Bitbucket divert; every other host keeps gh (D4). */
+/** The PR provider for a base remote (a listRemotes entry). Azure DevOps, Bitbucket and a self-hosted Bitbucket Server divert; every other host keeps gh (D4). */
 export const prProviderFor = (remote) => PROVIDERS[restFor(forgeOf(remote)) ? forgeOf(remote) : 'github'];
 
 /** Which PR hosts worca can talk to right now (no network). */
 export async function prHostsAvailable() {
-  return { github: await hasGh(), azure: REST.azure.configured(), bitbucket: REST.bitbucket.configured() };
+  return { github: await hasGh(), azure: REST.azure.configured(), bitbucket: REST.bitbucket.configured(), 'bitbucket-server': REST['bitbucket-server'].configured() };
 }
-export async function anyPrHost() { const h = await prHostsAvailable(); return h.github || h.azure || h.bitbucket; }
+export async function anyPrHost() { const h = await prHostsAvailable(); return h.github || h.azure || h.bitbucket || h['bitbucket-server']; }
 
 /** The remote a project's PRs target with no stored PR URL: upstream, else origin, else the first (gh's own guess). */
 async function prBaseRemote(projectDir) {
