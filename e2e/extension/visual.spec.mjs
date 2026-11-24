@@ -10,6 +10,11 @@ const PROPS = ['font-family', 'font-size', 'font-weight', 'line-height', 'color'
   'border-top-left-radius', 'border-bottom-right-radius', 'padding-top', 'padding-left', 'padding-bottom', 'padding-right'];
 const STYLE_TARGETS = ['.ask-msg-user .ask-user-bubble', '.ask-msg-assistant .ask-answer', '.ask-user-pills .ask-attachment-pill',
   '.ask-composer-box', 'textarea.ask-input', '.ask-send', '.ask-model-btn', '.ask-scope-btn'];
+// The app's composer row is the compact bar (chat/composer-bar.css): its model button and project pill are narrower.
+// The sidebar keeps its worded buttons, so their side padding differs on purpose; everything else must still match.
+const BAR_BUTTONS = ['.ask-model-btn', '.ask-scope-btn'];
+const BAR_OWN = ['padding-left', 'padding-right'];
+const comparable = (s, o) => (o && BAR_BUTTONS.includes(s) ? Object.fromEntries(Object.entries(o).filter(([p]) => !BAR_OWN.includes(p))) : o);
 const styleOf = ([sels, props]) => Object.fromEntries(sels.map((s) => {
   const e = [...document.querySelectorAll(s)].at(-1);
   if (!e) return [s, null];
@@ -64,7 +69,7 @@ for (const scheme of ['light', 'dark']) {
     const got = await sidebar.evaluate(styleOf, [STYLE_TARGETS, PROPS]);
     for (const s of STYLE_TARGETS) {
       expect(want[s], `worca rendered ${s}`).not.toBeNull();
-      expect(got[s], `sidebar rendered ${s}`).toEqual(want[s]);
+      expect(comparable(s, got[s]), `sidebar rendered ${s}`).toEqual(comparable(s, want[s]));
     }
     await ui.bringToFront();
     // A triple-click extends the selection's focus past the answer, and the Chat page's Pinpoint wants anchor and focus

@@ -20,6 +20,19 @@ repo (stdin closed: with stdin open and not a TTY, `run` waits for it).
 | `error-free-tier.jsonl` | a Zen free model refusing a request whose tool list lacks the shell (`bash` denied outright): `APIError`, `statusCode` 403 |
 | `stderr-session-not-found.txt` | `-s` with an unknown session id: plain stderr, exit 1, no JSON |
 
+## OpenCode 2 fixtures
+
+Captured from **opencode 2.3.2** (Homebrew arm64) on 2026-11-20 against a stub OpenAI-compatible endpoint on 127.0.0.1
+with an isolated `HOME`/`XDG_*` and a scratch `git` repo; paths sanitized to `/tmp/oc2`. Command shape:
+`opencode run --standalone --format json --auto -m probe/m` with the prompt on stdin. Every `cost` is 0.
+
+| file | what it is |
+|---|---|
+| `v2-bash-and-text.jsonl` | a `bash` call aliased to `shell` (the call id is `part.id`, not `callID`), then `DONE`: `step_start`, `tool_use`, `step_finish` with `reason` and `tokens`, `text` |
+| `v2-subagent.jsonl` | a `subagent` call: it returns at once (`state.status: "completed"`) while the child runs, its session id hangs off `state.metadata.metadata.sessionID`, and the child's final text is relayed into the parent stream |
+| `v2-session-export.json` | `opencode session export <sub-session id>`: `{info, messages}` with the session's `cost`, `tokens`, `outcome: "succeeded"` and `time.idle` |
+| `v2-error-no-route.jsonl` | an unknown model: `error` with `type: "provider.no-route"` (no `name`, no `statusCode`) |
+
 ## Plugins and the step limit (checked 2026-10-20 on 1.18.23, scratch HOME)
 
 A marker plugin that writes a file when it loads, run with `opencode run --format json -m nosuch/model` (the run fails at model lookup, after plugins load):

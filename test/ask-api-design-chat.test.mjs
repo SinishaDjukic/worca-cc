@@ -136,6 +136,21 @@ test('M6: a refusal that lands after the route\'s awaits leaves the pins and the
   } finally { for (const [k, v] of others) if (jobs.get(k) === v) jobs.delete(k); }
   assert.deepEqual([pinsNow(), stateOf('card_0000a001')], [['P1'], 'asking'], 'the cap filled meanwhile: nothing written');
 });
+test('a design message whose supersede cannot apply is refused 409 by the pre-check and leaves the pins and the open card', async () => {
+  const d = await designThread('Supersede');
+  const tid = d.threadId;
+  const { appendMessage, getThread, listMessages } = await import('../src/core/ask/store.mjs');
+  const pin = (text) => ({ id: 'hero', path: 'main > h1', tag: 'h1', text, html: `<h1>${text}</h1>` });
+  assert.equal((await call('POST', `/api/ask/threads/${tid}/messages`, { text: 'MOCK_DESIGN_CHAT one', ...MODEL, design: { designId: d.design.id, pins: [pin('P1')] } })).status, 202);
+  await replyOf(tid);
+  appendMessage(tid, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_0000b001', state: 'asking', card: { type: 'design-questions', heading: 'Pick', questions: [], summary: 'Pick' } }] });
+  const stateOf = (id) => listMessages(tid).flatMap((m) => m.blocks || []).find((b) => b.id === id)?.state;
+  const pinsNow = () => getThread(tid).composer.pins.map((p) => p.text);
+  const r = await call('POST', `/api/ask/threads/${tid}/messages`, { text: 'MOCK_DESIGN_CHAT two', ...MODEL, design: { designId: d.design.id, pins: [pin('P2')] }, supersedes: 'askm_00000001' });
+  // A chat with a design is a plain chat: the read-only pre-check refuses the supersede before the pins are written.
+  assert.deepEqual([r.status, r.body.code], [409, 'supersede-refused'], JSON.stringify(r.body));
+  assert.deepEqual([pinsNow(), stateOf('card_0000b001')], [['P1'], 'asking'], 'a refused supersede writes nothing');
+});
 test('the [worca context] cards of a design chat carry a design card\'s type, state and summary', async () => {
   const d = await designThread('Header');
   const { appendMessage } = await import('../src/core/ask/store.mjs');

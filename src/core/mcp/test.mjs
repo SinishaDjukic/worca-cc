@@ -4,7 +4,8 @@
 // through the MCP SDK with a 2-minute bound (timeouts.mjs), kill the whole process tree, and store the result. The
 // connect runs outside the store lock; recordTest re-reads under it and writes only this entry.
 import { spawn, spawnSync } from 'node:child_process';
-import { McpStoreError, recordTest } from './store.mjs';
+import { McpStoreError, recordTest, toolNameOf } from './store.mjs';
+import { flagEnabled } from '../flags.mjs';
 import { keepListEnv } from './keep-list.mjs';
 import { copyName } from './identity.mjs';
 import { materializeCopy, skipReasonText } from './registry.mjs';
@@ -19,6 +20,16 @@ export const TEST_TIMEOUT_MS = MCP_STARTUP_MS.test;
 const MAX_TOOLS = 10000;   // a tools/list that pages past this fails the Test (a cursor that never ends fills the heap)
 const REF_RE = /\$\{(MCPSECRET_[0-9A-F]{8})\}/g;
 const own = (o, k) => !!o && Object.hasOwn(o, k);
+const SCHEMA_MAX = 20000;   // a tool's input schema is kept up to 20 KB of JSON: tests.json holds every membership's last Test
+/** What a Test keeps of one listed tool: its name, and for the workflow-test stand-ins (D35) its description, input
+ *  schema and annotations. */
+export function toolRecord(x) {
+  const out = { name: String((x && x.name) ?? '') };
+  if (x && typeof x.description === 'string' && x.description) out.description = x.description.slice(0, 2000);
+  if (x && x.inputSchema && typeof x.inputSchema === 'object' && JSON.stringify(x.inputSchema).length <= SCHEMA_MAX) out.inputSchema = x.inputSchema;
+  if (x && x.annotations && typeof x.annotations === 'object') out.annotations = x.annotations;
+  return out;
+}
 
 /** One membership as a spawn would start it (P3 materializeCopy, this membership only, with the
  *  context's host facts): `{ entry, env, secretValues, fingerprint }`, or the §7.3 refusal as a
@@ -106,7 +117,7 @@ export function killProbe(child, { platform = process.platform, agent = null, ki
   if (agent && alive) killGroup(child.pid, agent);
 }
 
-/** initialize + tools/list against one expanded entry → tool names. Throws on failure or timeout;
+/** initialize + tools/list against one expanded entry → tool records (toolRecord). Throws on failure or timeout;
  *  `err.rejected` marks an HTTP 401/403 (http/sse only). */
 export async function probe(entry, { platform = process.platform, env = process.env, agent = null, spawnImpl = spawn,
   timeoutMs = TEST_TIMEOUT_MS, kill = killProbe, redact = (s) => s } = {}) {
@@ -143,15 +154,15 @@ export async function probe(entry, { platform = process.platform, env = process.
     const request = { timeout: timeoutMs };
     const work = (async () => {
       await client.connect(transport, request);
-      const names = [];
+      const tools = [];
       let cursor;
       do {
         const page = await client.listTools(cursor ? { cursor } : undefined, request);
-        names.push(...page.tools.map((x) => x.name));
-        if (names.length > MAX_TOOLS) throw new Error(`tools/list returned more than ${MAX_TOOLS} tools`);
+        tools.push(...page.tools.map(toolRecord));
+        if (tools.length > MAX_TOOLS) throw new Error(`tools/list returned more than ${MAX_TOOLS} tools`);
         cursor = page.nextCursor;
       } while (cursor);
-      return names;
+      return tools;
     })();
     const timeout = new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error(`no answer within ${timeoutMs / 1000} s`)), timeoutMs);
@@ -192,8 +203,12 @@ async function runTest(setId, serverId, probeImpl) {
   const at = new Date().toISOString();
   let result;
   try {
-    const tools = await probeImpl(expand(m.entry, m.env), { agent, redact: redactor.text, timeoutMs: mcpStartupMs('test') });
-    result = { at, ok: true, tools, error: null, fingerprint: m.fingerprint };
+    const listed = await probeImpl(expand(m.entry, m.env), { agent, redact: redactor.text, timeoutMs: mcpStartupMs('test') });
+    // Flag-off review: `tools` stays the list of names every Worca reads; the details the workflow-test stand-ins offer
+    // (D35) go beside it, and only while workflow tests are on.
+    const defs = (Array.isArray(listed) ? listed : []).map((t) => (typeof t === 'string' ? { name: t } : t));
+    result = { at, ok: true, tools: defs.map(toolNameOf), error: null, fingerprint: m.fingerprint,
+      ...(flagEnabled('workflowTests') ? { toolDefs: defs } : {}) };
   } catch (err) {
     result = { at, ok: false, tools: [], error: err.rejected ? 'token rejected' : redactor.text(err.message), fingerprint: m.fingerprint };
   }

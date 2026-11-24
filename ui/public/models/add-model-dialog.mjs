@@ -7,7 +7,7 @@ import { icon } from '../icons.mjs';
 import { ENDPOINT_PRESETS, OPENROUTER_PRESET, infoTip, wheresFor } from '../bridge-view.mjs';
 import { providerState } from './provider-state.mjs';
 import { renderHarnessTiles } from './harness-tiles.mjs';
-import { markedSelect } from './brand-marks.mjs';
+import { markedSelect, markTile } from './brand-marks.mjs';
 
 export const ADD_PROVIDERS = Object.freeze(['copilot', 'openrouter', 'openai', 'anthropic']);
 export const ADD_PROVIDER_LABELS = Object.freeze({ copilot: 'GitHub Copilot', openrouter: 'OpenRouter', openai: 'OpenAI-compatible', anthropic: 'Anthropic-compatible' });
@@ -295,10 +295,13 @@ function endpointRow(doc, baseUrl) {
   return box;
 }
 
-/** state = { provider, baseUrl: '' }. Each element below with an id also carries the same name as a class
+/** state = { provider, engine: '', baseUrl: '' }. Each element below with an id also carries the same name as a class
  *  (.mimp-base …): app.js looks them up by class (test/ui-id-consistency).
+ *  With `engine === 'opencode'` the provider select is replaced by a static source label (span.mdl-add-source: the
+ *  harness's mark + "OpenCode") — an OpenCode model names its own provider in its id, so there is no provider to pick.
  *  → section.card.mdl-add[data-step="2"]: head (steps, "2 The model" current; .mdl-close);
- *    toolbar: select.mdl-add-provider, input#mimp-filter.input[type=search][data-dirty-ignore]
+ *    toolbar: select.mdl-add-provider (else span.mdl-add-source),
+ *      input#mimp-filter.input[type=search][data-dirty-ignore]
  *      [aria-label="Filter the listed models"][placeholder="Filter by model, id or vendor"] (always shown),
  *      button.btn.btn-quiet.mdl-manual "Enter an id instead";
  *    openai only: input#mimp-base (placeholder "http://127.0.0.1:11434/v1", value state.baseUrl or
@@ -310,22 +313,31 @@ function endpointRow(doc, baseUrl) {
 export function renderAddStep2(state, { doc = globalThis.document, providers = null } = {}) {
   const s = state || {};
   const provider = ADD_PROVIDERS.includes(s.provider) ? s.provider : ADD_PROVIDERS[0];
+  const engine = s.engine === 'opencode' ? 'opencode' : '';
   const root = screenOf(doc, 2);
   root.dataset.provider = provider;
+  if (engine) root.dataset.engine = engine;
   root.appendChild(headOf(doc, 2));
 
   const main = el(doc, 'div', 'mdl-add-main');
   const bar = el(doc, 'div', 'mdl-add-bar');
-  const sel = providerSelect(doc, provider);
-  sel.setAttribute('aria-label', 'Provider');
   const filter = withId(el(doc, 'input', 'input'), 'mimp-filter');
   filter.type = 'search';
   filter.dataset.dirtyIgnore = '';
   filter.setAttribute('aria-label', 'Filter the listed models');
   filter.placeholder = 'Filter by model, id or vendor';
-  bar.append(markedSelect(doc, sel, 'provider'), filter, button(doc, 'btn btn-quiet mdl-manual', 'Enter an id instead'));
+  if (engine) {
+    const tag = el(doc, 'span', 'mdl-add-source');
+    tag.setAttribute('aria-hidden', 'true');
+    tag.append(markTile(doc, { kind: 'harness', key: 'opencode', size: 'sm' }), el(doc, 'span', 'mdl-add-source-t', 'OpenCode'));
+    bar.append(tag, filter, button(doc, 'btn btn-quiet mdl-manual', 'Enter an id instead'));
+  } else {
+    const sel = providerSelect(doc, provider);
+    sel.setAttribute('aria-label', 'Provider');
+    bar.append(markedSelect(doc, sel, 'provider'), filter, button(doc, 'btn btn-quiet mdl-manual', 'Enter an id instead'));
+  }
   main.appendChild(bar);
-  if (provider === 'openai') main.appendChild(endpointRow(doc, s.baseUrl || providers?.openai?.baseUrl || ''));
+  if (!engine && provider === 'openai') main.appendChild(endpointRow(doc, s.baseUrl || providers?.openai?.baseUrl || ''));
   const msg = withId(el(doc, 'p', 'form-msg'), 'mimp-msg');
   msg.setAttribute('aria-live', 'polite');
   main.appendChild(msg);
@@ -353,8 +365,11 @@ export function renderAddStep2(state, { doc = globalThis.document, providers = n
  *  openrouter: s.tone 'ok' → { kind: 'list', source: 'endpoint', baseUrl: OPENROUTER_PRESET.baseUrl, auto: true },
  *    else { kind: 'blocked', text: s.text, fix: s.fix || 'Set key', row: 'openrouter' };
  *  openai: { kind: 'list', source: 'endpoint', baseUrl: baseUrl || providers.openai.baseUrl || '', auto: !!thatUrl };
- *  anthropic: { kind: 'nolist', text: 'No list to pick from' }. */
-export function addStep2Plan(provider, providers, { baseUrl = '' } = {}) {
+ *  anthropic: { kind: 'nolist', text: 'No list to pick from' }.
+ *  With `engine === 'opencode'` the source is the engines' own list whatever the provider select says: `opencode models`
+ *  needs no provider state to read, and the models it lists name their own providers. */
+export function addStep2Plan(provider, providers, { baseUrl = '', engine = '' } = {}) {
+  if (engine === 'opencode') return { kind: 'list', source: 'opencode' };
   if (provider === 'copilot' || provider === 'openrouter') {
     const s = providerState(providers, provider, { hasModels: true });
     if (s.tone === 'ok') {

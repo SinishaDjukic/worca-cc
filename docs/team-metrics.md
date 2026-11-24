@@ -19,6 +19,8 @@ ticket, By actor and By model mix tables; the runs table; and **Export CSV**.
 Nothing about a run's own branch or history changes — `worca-metrics` carries only
 `.worca-metrics/` and is never merged into anything.
 
+[Workflow test](workflow-tests.md) tries (Labs) never write a record.
+
 ## Enable and join
 
 A project turns team metrics on from its project page's **Team** tab (`Set up metrics…`; the Projects

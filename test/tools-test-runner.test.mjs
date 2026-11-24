@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mergeTimings, needsFullSuiteLock, parseArgs, planShards, releaseFullSuiteLock, selectFiles, tryFullSuiteLock } from '../tools/test.mjs';
+import { fullSuiteLockFile, mergeTimings, needsFullSuiteLock, parseArgs, planShards, releaseFullSuiteLock, selectFiles, suiteTmpOutsideWorca, tryFullSuiteLock } from '../tools/test.mjs';
 import { timingFiles } from '../tools/test-timings-merge.mjs';
 
 const TOOLS = fileURLToPath(new URL('../tools', import.meta.url));
@@ -193,24 +193,38 @@ test('full-suite lock: one holder at a time, a dead holder is taken over, releas
   const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-lock-'));
   try {
     const file = join(dir, 'full.lock');
-    const me = { pid: process.pid, cwd: '/a', at: 1 };
+    const now = Date.now();
+    const me = { pid: process.pid, cwd: '/a', at: now };
     assert.deepEqual(tryFullSuiteLock(file, me), { ok: true });
-    const other = tryFullSuiteLock(file, { pid: process.ppid, cwd: '/b', at: 2 });
+    const other = tryFullSuiteLock(file, { pid: process.ppid, cwd: '/b', at: now });
     assert.equal(other.ok, false);
     assert.equal(other.holder.cwd, '/a');
     releaseFullSuiteLock(file, process.ppid);                 // not the holder: no effect
-    assert.equal(tryFullSuiteLock(file, { pid: process.ppid, cwd: '/b', at: 2 }).ok, false);
+    assert.equal(tryFullSuiteLock(file, { pid: process.ppid, cwd: '/b', at: now }).ok, false);
     releaseFullSuiteLock(file, process.pid);
-    assert.equal(tryFullSuiteLock(file, { pid: process.ppid, cwd: '/b', at: 2 }).ok, true);
+    assert.equal(tryFullSuiteLock(file, { pid: process.ppid, cwd: '/b', at: now }).ok, true);
     writeFileSync(file, JSON.stringify({ pid: 2 ** 22 + 12345, cwd: '/dead', at: 0 }));   // no such process
     assert.equal(tryFullSuiteLock(file, me).ok, true);
     assert.equal(JSON.parse(readFileSync(file, 'utf8')).cwd, '/a');
+    // A live pid that took the lock longer ago than any suite may run (a pid taken again): stale too.
+    writeFileSync(file, JSON.stringify({ pid: process.ppid, cwd: '/old', at: now - 3 * 3600_000 }));
+    assert.equal(tryFullSuiteLock(file, me).ok, true);
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).cwd, '/a');
+    // A stale lock nobody can remove (a folder holding a file at the name) is run past, never waited on or thrown.
+    const stuck = join(dir, 'stuck.lock');
+    mkdirSync(stuck); writeFileSync(join(stuck, 'f'), 'x'); utimesSync(stuck, 1, 1);
+    assert.deepEqual(tryFullSuiteLock(stuck, me), { ok: true });
     const o = (x) => ({ files: [], shard: null, ...x });
     assert.equal(needsFullSuiteLock(o({}), {}), true);
     assert.equal(needsFullSuiteLock(o({ files: ['test/a.test.mjs'] }), {}), false);
     assert.equal(needsFullSuiteLock(o({ shard: '1/4' }), {}), false);
     assert.equal(needsFullSuiteLock(o({}), { CI: 'true' }), false);
     assert.equal(needsFullSuiteLock(o({}), { WORCA_TEST_NO_LOCK: '1' }), false);
+    // One lock for the whole machine: a run's own TMPDIR never moves it; the override still does.
+    assert.equal(fullSuiteLockFile({ TMPDIR: '/Users/u/.worca-cc/runs/r1/.scratch' }, 'darwin', 501), '/tmp/worca-cc-full-suite-501.lock');
+    assert.equal(fullSuiteLockFile({}, 'linux', 1000), '/tmp/worca-cc-full-suite-1000.lock');
+    assert.equal(fullSuiteLockFile({ WORCA_TEST_LOCK_FILE: '/x/l.lock' }, 'darwin'), '/x/l.lock');
+    assert.equal(fullSuiteLockFile({}, 'win32'), join(tmpdir(), 'worca-cc-full-suite.lock'));
   } finally { rmSync(dir, rmOpts); }
 });
 
@@ -274,4 +288,33 @@ test('parseArgs --related: takes --base, refuses --base alone and a file list, a
   assert.throws(() => parseArgs(['--base', 'origin/dev']), /--base needs --related/);
   assert.throws(() => parseArgs(['--related', 'test/a.test.mjs']), /drop the file list/);
   assert.throws(() => parseArgs(['--related', '--base']), /--base needs a value/);
+});
+
+test('suiteTmpOutsideWorca: a TMPDIR inside a .worca-cc folder gets a folder of its own under root, sweeping our dead suites\' folders; any other TMPDIR, Windows, or an unwritable root, none', () => {
+  const root = mkdtempSync(join(tmpdir(), 'worca-cc-suite-tmp-'));
+  try {
+    const dead = 2 ** 22 + 12345;                                      // no such process
+    for (const n of [`worca-cc-test-tmp-${dead}-aaaaaa`, `worca-cc-test-tmp-${process.pid}-live01`, 'unrelated']) mkdirSync(join(root, n));
+    const victim = join(root, 'unrelated');
+    writeFileSync(join(victim, 'keep'), 'x');
+    symlinkSync(victim, join(root, `worca-cc-test-tmp-${dead}-link`));   // a link at one of our names is never followed
+    const run = '/Users/u/.worca-cc/runs/ab12/.scratch';
+    const names = () => readdirSync(root).sort();
+    const before = names();
+    // A dead runner's folder younger than the limit (a live suite in a sandbox with its own pids), or another user's: kept.
+    const young = suiteTmpOutsideWorca(run, { platform: 'darwin', root, pid: 776 });
+    const foreign = suiteTmpOutsideWorca(run, { platform: 'darwin', root, pid: 776, minAgeMs: 0, uid: -2 });
+    assert.deepEqual(names(), [...before, young.slice(root.length + 1), foreign.slice(root.length + 1)].sort());
+    const got = suiteTmpOutsideWorca(run, { platform: 'darwin', root, pid: 777, minAgeMs: 0 });
+    assert.ok(got.startsWith(join(root, 'worca-cc-test-tmp-777-')), got);
+    // Ours, dead and old enough goes.
+    assert.equal(names().includes(`worca-cc-test-tmp-${dead}-aaaaaa`), false);
+    for (const n of [`worca-cc-test-tmp-${process.pid}-live01`, got.slice(root.length + 1), 'unrelated', `worca-cc-test-tmp-${dead}-link`]) assert.ok(names().includes(n), n);
+    assert.equal(readFileSync(join(victim, 'keep'), 'utf8'), 'x');
+    assert.ok(suiteTmpOutsideWorca('/Users/u/.worca-cc', { platform: 'linux', root }));
+    assert.equal(suiteTmpOutsideWorca(run, { platform: 'darwin', root: join(root, 'missing') }), null);
+    assert.equal(suiteTmpOutsideWorca('/var/folders/x/T', { platform: 'darwin', root }), null);
+    assert.equal(suiteTmpOutsideWorca('/Users/u/my.worca-cc/tmp', { platform: 'linux', root }), null);
+    assert.equal(suiteTmpOutsideWorca('C:\\Users\\u\\.worca-cc\\runs\\x', { platform: 'win32', root }), null);
+  } finally { rmSync(root, rmOpts); }
 });

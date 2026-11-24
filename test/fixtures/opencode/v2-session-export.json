@@ -1,0 +1,86 @@
+{
+  "info": {
+    "id": "ses_e072c9a15ffeCnhV8RH7HeNFWm",
+    "parentID": "ses_e072c9ae7ffeBoOhjQjcxuwB5d",
+    "projectID": "3869d825118aa49e468ba1821d307a2ea9124940",
+    "agent": "general",
+    "model": {
+      "id": "m",
+      "providerID": "probe",
+      "variant": "default"
+    },
+    "cost": 0,
+    "tokens": {
+      "input": 4,
+      "output": 3,
+      "reasoning": 0,
+      "cache": {
+        "read": 0,
+        "write": 0
+      }
+    },
+    "outcome": "succeeded",
+    "time": {
+      "created": 1795175966187,
+      "updated": 1795175966227,
+      "busy": 1795175966199,
+      "idle": 1795175966229
+    },
+    "title": "count files",
+    "location": {
+      "directory": "/tmp/oc2"
+    }
+  },
+  "messages": [
+    {
+      "id": "msg_1f8d365ec002P9OOdoeBg8cGeM",
+      "time": {
+        "created": 1795175966201
+      },
+      "text": "You are a subagent spawned by another session.\nRun echo from-sub.",
+      "type": "user"
+    },
+    {
+      "id": "msg_1f8d365fc001zOp6jA7VtOedK3",
+      "time": {
+        "created": 1795175966206,
+        "firstToken": 1795175966223,
+        "streamed": 1795175966226,
+        "completed": 1795175966227
+      },
+      "type": "assistant",
+      "agent": "general",
+      "model": {
+        "id": "m",
+        "providerID": "probe",
+        "variant": "default"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "done"
+        }
+      ],
+      "finish": "stop",
+      "rawFinish": "stop",
+      "cost": 0,
+      "tokens": {
+        "input": 4,
+        "output": 3,
+        "reasoning": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1f8d366150012IDTA6p2Ddh4vh",
+      "time": {
+        "created": 1795175966229
+      },
+      "type": "idle",
+      "outcome": "succeeded"
+    }
+  ]
+}

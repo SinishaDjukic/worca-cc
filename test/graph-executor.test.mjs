@@ -726,9 +726,15 @@ test('E4: an agent node that runs past its wall-clock or goes silent past its id
   assert.deepEqual(nodeTimeLimits({ node: { config: { timeLimitMinutes: 5 } }, template: { limits: { idleLimitMinutes: 2, timeLimitMinutes: 9 } } }),
     { wallMs: 5 * 60000, idleMs: 2 * 60000 });
   // A hung agent is a live child: its pipes keep the process up (the unref'd watchdog does not), modelled by an interval.
+  // Like the real runners (claude-runner, codex, cursor...), a signal that is already aborted rejects at once: the Stop
+  // below fires 5 ms after the start, and on a loaded runner prepare() can take longer, so the spawn starts aborted. An
+  // 'abort' listener added then never fires: the fake hung, its interval held the file's process up after the 300 s test
+  // timeout, and the whole CI shard ran into the job's 30 minute limit.
   const hang = (emitEvery) => async (opts) => new Promise((resolve, reject) => {
+    const aborted = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
+    if (opts.signal.aborted) { reject(aborted()); return; }
     const t = setInterval(() => { if (emitEvery) opts.onEvent({ type: 'text', text: 'still here' }); }, emitEvery || 1000);
-    opts.signal.addEventListener('abort', () => { clearInterval(t); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
+    opts.signal.addEventListener('abort', () => { clearInterval(t); reject(aborted()); }, { once: true });
   });
   const run = async (config, emitEvery) => {
     const c = ctx8({ node: { id: 'n_c', kind: 'agent', key: 'custom', config, agentPrompt: 'x', tools: [] }, signal: new AbortController().signal });
@@ -750,6 +756,63 @@ test('E4: an agent node that runs past its wall-clock or goes silent past its id
     setTimeout(() => ac.abort(), 5);
     assert.equal((await p).name, 'AbortError');
   } finally { _testing.runClaude = null; }
+});
+
+test('E4: a silent agent whose process tree is still working gets another idle window; an idle tree is stopped', async () => {
+  const { noteSpawned } = await import('../src/core/agent-tree.mjs');
+  // The spawn reports its pid as superviseSpawn does; it stays silent until aborted or until `doneAfter` ms.
+  const silent = (doneAfter) => async (opts) => new Promise((resolve, reject) => {
+    noteSpawned(4242);
+    const keep = setInterval(() => {}, 1000);
+    const done = doneAfter ? setTimeout(() => { clearInterval(keep); resolve({ text: 'ok' }); }, doneAfter) : null;
+    opts.signal.addEventListener('abort', () => { clearInterval(keep); clearTimeout(done); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
+  });
+  const run = async (spawn, busy) => {
+    const c = ctx8({ node: { id: 'n_c', kind: 'agent', key: 'custom', config: { idleLimitMinutes: 0.0005, timeLimitMinutes: 1 }, agentPrompt: 'x', tools: [] }, signal: new AbortController().signal });
+    const probed = [];
+    _testing.runClaude = spawn;
+    _testing.treeBusy = async (pid) => { probed.push(pid); return busy(); };
+    try { return { err: await runAgentExecution(c).then(() => null, (e) => e), probed }; } finally { _testing.runClaude = null; _testing.treeBusy = null; }
+  };
+  // Busy for the whole spawn: never an idle stop (the outputs check after it is not the point).
+  const kept = await run(silent(200), () => true);
+  assert.notEqual(kept.err?.code, 'NODE_IDLE_LIMIT');
+  assert.ok(kept.probed.length >= 2, 'the idle timer re-armed and probed again');
+  assert.ok(kept.probed.every((p) => p === 4242), 'the probe asks about the spawned agent');
+  // An idle tree: stopped as before.
+  const stopped = await run(silent(0), () => false);
+  assert.equal(stopped.err?.code, 'NODE_IDLE_LIMIT');
+  assert.equal(stopped.probed[0], 4242);
+});
+
+test('E4: output during the busy probe wins over its answer; a spawn that ends during it raises no idle limit', async () => {
+  const { noteSpawned } = await import('../src/core/agent-tree.mjs');
+  const node = { id: 'n_c', kind: 'agent', key: 'custom', config: { idleLimitMinutes: 0.0005, timeLimitMinutes: 1 }, agentPrompt: 'x', tools: [] };
+  // The probe answers "idle" only after the agent has spoken (or finished): the answer must be ignored.
+  const run = async (spawn) => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const probes = [];
+    _testing.runClaude = (opts) => spawn(opts, release);
+    _testing.treeBusy = async (pid, o) => { probes.push(o); await gate; return false; };
+    try { return { err: await runAgentExecution(ctx8({ node, signal: new AbortController().signal })).then(() => null, (e) => e), probes }; }
+    finally { _testing.runClaude = null; _testing.treeBusy = null; }
+  };
+  // Speaks once the probe started, then finishes: the stale "idle" never stops it.
+  const spoke = await run((opts, release) => new Promise((resolve) => {
+    noteSpawned(4242);
+    const t = setInterval(() => {}, 1000);
+    setTimeout(() => { opts.onEvent({ type: 'text', text: 'back' }); release(); setTimeout(() => { clearInterval(t); resolve({ text: 'ok' }); }, 10); }, 60);
+  }));
+  assert.notEqual(spoke.err?.code, 'NODE_IDLE_LIMIT');
+  assert.ok(spoke.probes.length >= 1);
+  assert.ok(spoke.probes[0].probeMs >= 1000 && spoke.probes[0].probeMs <= 60_000, 'a short idle limit gets a short probe');
+  // Finishes while the probe runs: stop() wins, no NODE_IDLE_LIMIT after a normal end.
+  const ended = await run((opts, release) => new Promise((resolve) => {
+    noteSpawned(4242);
+    setTimeout(() => { resolve({ text: 'ok' }); setTimeout(release, 10); }, 60);
+  }));
+  assert.notEqual(ended.err?.code, 'NODE_IDLE_LIMIT');
 });
 
 test('E9/E10: each spawn appends a manifest line (prompt hashes, model, effort, settings, memory) and names paths outside the checkout', async () => {

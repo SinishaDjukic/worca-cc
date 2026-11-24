@@ -10,10 +10,11 @@ import { StopPausedError } from '../../../src/core/stop-paused.mjs';
 import { engineRefusalFor } from '../../../src/shared/engine-switch.mjs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { rerunOfGuard } from './rerun.mjs';
 import { PLAN_TEXT_MAX, ResumeError, SETTLED_RUN, answerRun, badRequest, liveRunEntry, pauseRun, postDirection, resumeRun, runs, startRunHandler, stopPausedPipeline, stopRun } from '../../server.mjs';
 
 export function register(app) {
-app.post('/api/run', startRunHandler);
+app.post('/api/run', rerunOfGuard, startRunHandler);
 
 // ---------------------------------------------------------------------------
 // POST /api/answer  -> resolve a pending question for a run
@@ -176,6 +177,7 @@ app.post('/api/pause', (req, res) => {
   } catch (err) {
     // `status`: what the run is instead, so a tab whose click lost to another pause keeps its Pausing… quietly.
     if (err?.code === 'CANNOT_PAUSE') return res.status(400).json({ error: err.message, code: 'CANNOT_PAUSE', status: runs.get(runId)?.status || null });
+    if (err?.code === 'TEST_TRY') return res.status(409).json({ error: err.message });
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
