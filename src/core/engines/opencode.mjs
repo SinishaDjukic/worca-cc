@@ -16,6 +16,10 @@
 // (a `bash` call is aliased to it), the sub-agent tool is `subagent` (it returns at once and the child runs in the
 // background; the parent `run` waits for it before exiting), and a chat's lockdown leaves the `skill` meta tool
 // offered. `-s <unknown>` creates that session instead of failing, so the "session is gone" retry never fires on 2.x.
+// 2.x matches a `read`/`edit` pattern against the path relative to the session folder inside it, but against the
+// ABSOLUTE path outside it (1.x: `../…` there), so an outside path rule goes in both forms. 2.x also offers `execute`
+// (JavaScript "Code Mode"), whose `tools.opencode.session_move` moves the session out of the checkout and with it the
+// base every relative rule matches against: worca's agents deny it.
 //
 // Facts this module builds on, checked against opencode 1.18.23 (test/fixtures/opencode/README.md has the captures):
 // - `opencode run --format json` prints one JSON event per line: `step_start`, `text` (part.text, one per text part),
@@ -239,9 +243,10 @@ function pathPatterns(body, { cwd, home }) {
   if (abs !== null) {
     const parts = abs.split('/');
     const at = parts.findIndex((s) => GLOB_RE.test(s));
-    if (at === -1) return [rel(abs)];
-    const head = parts.slice(0, at).join('/') || '/';
-    return [`${rel(head)}/${parts.slice(at).join('/')}`];
+    const relative = at === -1 ? rel(abs) : `${rel(parts.slice(0, at).join('/') || '/')}/${parts.slice(at).join('/')}`;
+    // Outside the cwd, OpenCode 1 matches the `../…` form and OpenCode 2 only the absolute one: both, so one rule set
+    // holds on either major (checked on 1.18.23 and 2.3.2).
+    return relative === '..' || relative.startsWith('../') ? [relative, abs.split('\\').join('/')] : [relative];
   }
   if (body.startsWith('/')) return [body.slice(1)];
   if (body.startsWith('./')) return [body.slice(2)];
@@ -856,9 +861,15 @@ export async function runOpencodeProcess({
     writeFileSync(join(scratch, 'node.md'), sys || 'You are an agent of a worca pipeline. Follow the task you are given.', { mode: 0o600 });
     if (fanOut) {
       writeFileSync(join(scratch, 'investigator.md'), [INVESTIGATOR_PROMPT, appendSubagentSystemPrompt].filter(Boolean).join('\n\n'), { mode: 0o600 });
-      // Read-only for real (no sandbox here): no file edits, no shell, no sub-agents of its own.
+      // Read-only for real (no sandbox here): every tool denied but reading and searching, so a tool a newer OpenCode
+      // adds stays off too. Its permission lands after the global one (last match wins), so `read` allows `*` first and
+      // then repeats the run's own read rules; a bare `Read` deny keeps reading off. `external_directory` stays open (as
+      // --auto leaves it for the node): a workspace's other repos, the memory mount and the scratch folder are outside
+      // the cwd, and the read rules still apply there.
+      const runRead = rules.permission.read;
+      const read = runRead === 'deny' ? 'deny' : { '*': 'allow', ...(runRead && typeof runRead === 'object' ? runRead : {}) };
       agent[OPENCODE_INVESTIGATOR_AGENT] = { mode: 'subagent', description: 'Read-only investigator for a worca pipeline agent: give it an area, a question and the directories to look in.', prompt: `{file:${join(scratch, 'investigator.md')}}`,
-        permission: { edit: 'deny', bash: 'deny', task: 'deny' } };
+        permission: { '*': 'deny', read, glob: 'allow', grep: 'allow', list: 'allow', external_directory: 'allow' } };
     }
   } catch (err) {
     cleanup();
@@ -871,8 +882,11 @@ export async function runOpencodeProcess({
   // cap, sub-agents of their own) are removed, and `task` reaches no agent of the user's config either.
   agent.general = { disable: true };
   agent.explore = { disable: true };
+  // OpenCode 2's `execute` (Code Mode) reaches `tools.opencode.session_move` and the worktree tools: a session moved
+  // out of the checkout leaves every cwd-relative read/edit rule behind (checked on 2.3.2), so worca's agents never get
+  // it. A chat's lockdown already denies every tool but worca's server.
   agent[nodeAgent].permission = ask ? OPENCODE_ASK_LOCKDOWN.allow(Object.keys(mcp || {}))
-    : { task: fanOut ? { '*': 'deny', [OPENCODE_INVESTIGATOR_AGENT]: 'allow' } : 'deny' };
+    : { task: fanOut ? { '*': 'deny', [OPENCODE_INVESTIGATOR_AGENT]: 'allow' } : 'deny', execute: 'deny' };
   const instructions = ask ? [] : instructionFiles(realCwd);
   // The chat self-test's model endpoint, as an OpenAI-compatible provider of its own (engines/chat-selftest.mjs).
   const provider = probe && probe.url ? { [model.split('/')[0]]: { npm: '@ai-sdk/openai-compatible', name: 'worca self-test',
