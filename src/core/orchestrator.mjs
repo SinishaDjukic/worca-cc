@@ -44,6 +44,7 @@ import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
 import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureClarify, featureNotes } from './shape/features.mjs';
 import { fileSha, planOutputOf } from './shape/outline-file.mjs';
+import { splitRulesOptions } from './shape/small-runs.mjs';
 import { readRunPrAuto } from './pr-auto.mjs';
 import { checkSlices, applyOutlineEdits, normalizeOutline, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
 import { onlyCriteria } from '../shared/review/requirements-coverage.mjs';
@@ -1748,7 +1749,8 @@ export class GraphOrchestrator extends RunHarness {
       // A file left from an earlier spawn must not be read as this Planner's outline. Keep it once a round was
       // asked (the loop re-asks that outline after a pause, F25) or when the paused session resumes.
       if (!rounds.length && !resuming) await rm(file, { force: true });
-      out.shapeSlicing = { file, size: this.runShape?.size || null, ...(ctx.bindings?.requirements?.path ? { requirements: true } : {}) };
+      out.shapeSlicing = { file, size: this.runShape?.size || null, ...(ctx.bindings?.requirements?.path ? { requirements: true } : {}),
+        ...splitRulesOptions() };
       // A pause during a revise spawn: put the person's feedback back, and the asked round's baseline (D11).
       const last = rounds[rounds.length - 1];
       if (last?.decision === 'revise') out.shapeSlicing.baseline = this._outlineBaseline();
@@ -1806,6 +1808,8 @@ export class GraphOrchestrator extends RunHarness {
     let carriedEach = null;                                 // and its Ask me before each run choice
     let retry = 0;
     const agreed = await this._outlineAgreed(ctx);
+    // A3: the split rules the Planner's prompt named (read once per spawn, into ctx.shapeSlicing), so they never disagree.
+    const rules = ctx.shapeSlicing.smallRuns ? { smallRuns: true, care: ctx.shapeSlicing.care } : {};
     let classified = null;                                  // the spawn result whose outlineState was acted on
     for (;;) {
       this._checkAbort();
@@ -1830,7 +1834,7 @@ export class GraphOrchestrator extends RunHarness {
         }
         raw = { error: err?.message || String(err) };
       }
-      const read = normalizeOutline(raw, { agreed });
+      const read = normalizeOutline(raw, { agreed, ...rules });
       if (!read.ok || read.outline.slices.length < 2) {
         await appendAudit(this.pipeline.dir, `${label}: ${read.ok ? 'a one-slice outline' : `an unreadable outline (${read.error})`} — planning the whole task.`).catch(() => {});
         this._retireOrphanFeature();
@@ -1845,7 +1849,7 @@ export class GraphOrchestrator extends RunHarness {
       const reasked = Boolean(last && last.decision == null);
       const round = reasked ? last.round : rounds.length + 1;
       const revisable = round < OUTLINE_ROUNDS_MAX;
-      const check = checkSlices(outline);
+      const check = checkSlices(outline, rules);
       const id = `plan-outline-${ctx.nodeId}-${round}${retry ? `-e${retry}` : ''}`;
       // D9: what was asked, so a revise spawn can tell an edited outline from an untouched one and a fresh plan from a stale one.
       this._shapingOutlineRound({ round, outline, check, sha: await fileSha(file), planSha: await fileSha(planOutputOf(ctx.outputs)) });

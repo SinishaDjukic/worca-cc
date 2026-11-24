@@ -4,6 +4,7 @@ import { releaseVersionHint } from '../../../src/core/draft-release.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
 import { cancelRest, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, setFeatureAcceptance, shaperCard, sliceOfPipeline } from '../../../src/core/shape/features.mjs';
 import { normalizeAcceptance } from '../../../src/shared/shape/acceptance.mjs';
+import { recordFeatureFigures } from '../../../src/core/shape/measure.mjs';
 import { prAutoFinisher } from '../../../src/core/pr-auto-finish.mjs';
 import { engineRefusalFor } from '../../../src/shared/engine-switch.mjs';
 import { parseReleaseChoice } from '../../../src/shared/release-version.mjs';
@@ -159,6 +160,8 @@ app.put('/api/shape/features/:id/acceptance', (req, res) => {
     const sent = new Map(r.entries.map((e) => [e.id, e]));
     const kept = new Map((view.ship.acceptance?.entries || []).map((e) => [e.id, e]));
     setFeatureAcceptance(id, agreed.map(({ id: rid }) => sent.get(rid) || kept.get(rid)).filter(Boolean));
+    // Shaper small runs A4: a finished feature's requirements met follow the marks. Best effort: never the response.
+    try { recordFeatureFigures(id); } catch (err) { console.error(`[worca-ui] feature figures failed: ${err?.message || err}`); }
     const acceptance = featureView(id, { live: liveSliceOf }).ship.acceptance || null;
     const th = featureThread(id);
     const found = th ? findShipCardIn(th.threadId, id) : null;

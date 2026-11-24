@@ -66,7 +66,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 105;
+export const SCHEMA_VERSION = 107;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -935,7 +935,11 @@ const INCREMENTAL_COLUMNS = {
                             pr_open: 'TEXT',          // v87: the feature's PR-when-done choice, saved at outline approval; NULL = before v87 (reads as none)
                             pr_slices: 'TEXT',        // v87: 'each' | 'one'
                             pr_source: 'TEXT',        // v87: JSON { open, slices } — where the values came from
-                            pr_outcome: 'TEXT' },     // v87: JSON outcome of the automatic one-PR attempt; NULL = none yet
+                            pr_outcome: 'TEXT',       // v87: JSON outcome of the automatic one-PR attempt; NULL = none yet
+                            care: "TEXT NOT NULL DEFAULT 'balanced'",           // v106 (Shaper small runs A2): the feature's Care position, 'lean' | 'balanced' | 'thorough'
+                            care_chosen_by: "TEXT NOT NULL DEFAULT 'default'",  // v106 (Shaper small runs A2): who chose it, 'default' | 'person' (the person is created_by)
+                            care_worca_pick: 'TEXT',  // v106 (Shaper small runs A2): the position Worca suggested; NULL = no pick
+                            requirement_kinds: 'TEXT' },   // v106 (Shaper small runs A2): JSON { 'R-po-1': {kind:'owned'} | {kind:'confirmed', role} }; NULL = every requirement owned by its run
   shape_feature_slices:   { draft_pr_url: 'TEXT',      // v58 (D24): the PR openSliceDraft opened as a draft
                             kind: 'TEXT' },            // v67 (Shaper s5): 'extra' | 'follow-up' (appendFeatureRun); NULL = from the outline
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
@@ -1638,6 +1642,19 @@ CREATE TABLE IF NOT EXISTS design_cost_ledger (
 CREATE INDEX IF NOT EXISTS design_cost_ledger_ts ON design_cost_ledger(ts);
 `;
 
+// v107 (Shaper small runs A4): one row per finished feature, its Care position and its figures (JSON). Rewritten each
+// time the feature finishes again; no foreign key (like run_group_members). Only src/core/shape/measure.mjs writes it.
+const SHAPE_FIGURES_DDL = `
+CREATE TABLE IF NOT EXISTS shape_feature_figures (
+  feature_id  TEXT PRIMARY KEY,
+  care        TEXT NOT NULL,
+  figures     TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_shape_feature_figures_care ON shape_feature_figures(care);
+`;
+
 // v94 Design pictures (D10): one row per picture ask, written once when the ask ends (`made` or `failed`; "making" is a
 // frame only). A remake under the same name adds a row. Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES; no foreign
 // keys. designs.pictures (the design's Pictures switch) comes from INCREMENTAL_COLUMNS.
@@ -1714,6 +1731,7 @@ const INCREMENTAL_TABLES = {
   design_cost_ledger: DESIGN_DDL,  // v92
   design_pictures:    DESIGN_PICTURES_DDL,  // v94
   tool_tabs: TOOL_TABS_DDL,  // v97 (#1064)
+  shape_feature_figures: SHAPE_FIGURES_DDL,  // v107 (Shaper small runs A4)
 };
 
 /**
@@ -2995,6 +3013,9 @@ export function migrate(db) {
     // reset runs (`current < 100`). IF NOT EXISTS; the repair adds wf_test_examples.criteria and .judge
     // (INCREMENTAL_COLUMNS) to the v103 table, as v104 did for wf_test_tries.
     if (current < 105) { db.exec(WORKFLOW_TEST_CRITERIA_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    // v106 (Shaper small runs A2): shape_features.care, care_chosen_by, care_worca_pick, requirement_kinds — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v107 (Shaper small runs A4): shape_feature_figures, one row per finished feature
+    if (current < 107) db.exec(SHAPE_FIGURES_DDL);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

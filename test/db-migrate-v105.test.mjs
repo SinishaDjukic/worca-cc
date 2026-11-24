@@ -43,7 +43,7 @@ const addExample = (db) => db.prepare(`INSERT INTO wf_test_examples (workflow_id
 test('fresh DB: the Part 4 tables and the example columns exist', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
-  assert.equal(SCHEMA_VERSION, 105);
+  assert.ok(SCHEMA_VERSION >= 105);
   assert.deepEqual(cols(db, 'wf_test_judgements'), ['id', 'workflow_id', 'example_id', 'criterion_id', 'criterion_fp', 'model', 'purpose',
     'try_id', 'other_try_id', 'round_id', 'card', 'variant', 'subject', 'met', 'winner', 'reason', 'proof', 'proof_found', 'error',
     'cost_usd', 'ms', 'created_at', 'test_run_id']);   // test_run_id: fix round 3 (INCREMENTAL_COLUMNS, added after the table)

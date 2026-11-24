@@ -97,8 +97,10 @@ import { writeReadinessSnapshot } from './repo-readiness/snapshot.mjs';
 import { serialQueue } from './graph/human-evidence.mjs';
 import { deriveBranchName, uniqueBranch } from './naming.mjs';
 import { flagEnabled } from './flags.mjs';
-import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit } from './git-sync.mjs';
+import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit, checkBaseMerge } from './git-sync.mjs';
 import { featureBase } from './shape/features.mjs';
+import { shaperSmallRunsOn } from './shape/small-runs.mjs';
+import { latestFinishedSource } from './shape/chain.mjs';
 import { cleanOutcome } from './shape/rounds.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
@@ -421,6 +423,12 @@ export function safeParse(text) {
  *  no slice, a workspace run, or a reused checkout never does. */
 export function mergesFeatureBase({ slice, freshStart, isWorkspace }) {
   return !!(slice && slice.index >= 2 && freshStart && !isWorkspace);
+}
+
+/** Shaper small runs (D9): a resumed slice run first merges the feature's latest finished work. Single project, flag on
+ *  (`smallRuns` = shaperSmallRunsOn()). */
+export function mergesLatestOnResume({ slice, isWorkspace, smallRuns }) {
+  return !!(slice && !isWorkspace && smallRuns);
 }
 
 export function firstLine(text) {
@@ -2207,6 +2215,16 @@ export class RunHarness extends EventEmitter {
         // The replay (re)wrote the run manifest; the re-assembly below reads it.
         if (this.runRootMode === 'detached') resumeManifest = await readRunManifest(this.runRoot);
       }
+      // Shaper small runs (D9): a resumed slice takes in the feature's latest finished work first (the reattach above
+      // restored injectedPaths). baseTip prefers refs/remotes/origin/<base> over the local branch: a finished run's
+      // last push is its final state. Never the resume's outcome.
+      try {
+        const sl = this.runShape && this.runShape.slice;
+        if (this.branchInfo && mergesLatestOnResume({ slice: sl, isWorkspace: this.isWorkspace, smallRuns: shaperSmallRunsOn() })) {
+          const src = latestFinishedSource(sl.feature, { exclude: this.pipeline?.id || null });
+          if (src && src.sourceBranch) await this._mergeFeatureBase(this.members[0], this.branchInfo, sl, { base: src.sourceBranch, onResume: true });
+        }
+      } catch (err) { this._log('worktree', 'warn', `resume: could not take in the latest finished work: ${err?.message || err}`); }
       // A run paused while its graph was still building (the build stops with the run) gets it now:
       // reused when that build had finished, else rebuilt in the background. The replay above did it already.
       if (rp.setupIncomplete !== true) {
@@ -10094,8 +10112,13 @@ export class RunHarness extends EventEmitter {
   }
 
   /** Shaper s5 (D14): merge the feature's base into this run's fresh branch when it moved; move the diff base to the
-   *  merge commit, so the base's commits never count as this run's changes. */
-  async _mergeFeatureBase(m, info, sl) {
+   *  merge commit, so the base's commits never count as this run's changes.
+   *  Shaper small runs (D8): `{base, onResume}` merges `base` (the latest finished run's branch) into a resumed run's
+   *  branch. Its uncommitted tracked work is committed first (as teardown would; never while worca's CLAUDE.md fence is in it); the
+   *  merged base tip is recorded in `baseRefs`, so _refreshMergeBases keeps the merged commits out of this run's diff
+   *  while its own commits stay in. A merge that cannot run is recorded and audited; the run goes on. */
+  async _mergeFeatureBase(m, info, sl, opts = null) {
+    if (opts && opts.onResume) return this._mergeLatestOnResume(m, info, opts.base);
     let base = null;
     try { base = featureBase(sl.feature); } catch { base = null; }
     if (!base || base === info.branch) return;
@@ -10108,6 +10131,40 @@ export class RunHarness extends EventEmitter {
       this.state.branches[m.projectKey] = { ...rec, baseSha: r.to, diffBase: r.to, startHead: r.to, baseMerged: { base, behind: r.behind } };
       this.checkpointRefs[m.projectKey] = r.to;     // dev's commits are never this run's changes
     }
+  }
+
+  async _mergeLatestOnResume(m, info, base) {
+    if (!base || base === info.branch || !info.worktreeDir) return;
+    const key = m.projectKey;
+    // Nothing newer to take in (already merged, or no such branch): no WIP commit, no audit line, baseMerged kept.
+    const NOTHING = new Set(['up-to-date', 'no-branch']);
+    const pre = await checkBaseMerge(resolve(m.projectDir), { base, feature: info.branch }).catch(() => null);
+    if (pre && NOTHING.has(pre.status)) return;
+    const gitOpts = { cwd: info.worktreeDir, ignoreAbort: true };
+    const st = await this._git(['status', '--porcelain', '--untracked-files=no'], gitOpts);
+    // worca's CLAUDE.md fence lives in a tracked file: an exclude pathspec would commit that file's deletion
+    // (_commitWork unstages excluded paths), and teardown strips the fence only at the end. A checkout whose fence file
+    // is dirty is left uncommitted, so the merge below reads it as dirty and the resume is recorded, not merged.
+    const fence = new Set((this.injectedPaths?.[key] ?? []).filter((e) => e && e.kind === 'claudeMdSection' && e.path).map((e) => e.path));
+    const dirty = st.ok ? st.stdout.split('\n').filter(Boolean).map((l) => l.slice(3)) : [];
+    if (dirty.length && !dirty.some((p) => fence.has(p))) {
+      const ec = await this._engineConfigState(info.worktreeDir, { ignoreAbort: true });
+      await this._commitWork(info, this.state.branch,
+        { excludePathspecs: this._excludePathspecs(key), forcePaths: ec.forced, unstagePaths: ec.owned });
+    }
+    const r = await mergeBaseBeforeRun(resolve(m.projectDir), { base, feature: info.branch })
+      .catch((err) => ({ merged: false, status: 'error', behind: 0, files: [], error: err?.message }));
+    if (NOTHING.has(r.status)) return;
+    const status = r.error === 'dirty' ? 'dirty' : r.status;   // mergeBaseInto refused a checkout with uncommitted work
+    const line = baseMovedAudit(base, info.branch, r) || (r.merged ? null : `Resumed · could not take in the latest finished work (${status}).`);
+    if (line) await appendAudit(this.pipeline.dir, line).catch(() => {});
+    const tip = r.merged && r.to ? await commitOf(info.worktreeDir, `${r.to}^2`) : null;
+    const baseMerged = { base, behind: r.behind || 0, merged: !!tip, onResume: true, ...(tip ? {} : { status }) };
+    const patch = (rec) => (rec ? { ...rec, ...(tip ? { baseRefs: { ...(rec.baseRefs || {}), [base]: tip } } : {}), baseMerged } : rec);
+    if (this.state.branch) this.state.branch = patch(this.state.branch);
+    if (this.state.branches?.[key]) this.state.branches[key] = patch(this.state.branches[key]);
+    if (tip) await this._refreshMergeBases();
+    await this._persist();
   }
 
   /**
