@@ -163,9 +163,11 @@ async function moreItems({ flags, detail = WF_DETAIL }) {
 test('G6: More › Use as test example, before Terminal, opens "Use this run as a test example" for this run', async () => {
   const { ctx, doc, reads, items } = await moreItems({ flags: 'workflowTests' });
   const texts = items.map((b) => b.textContent.trim());
-  assert.equal(texts[0], 'Use as test example');
-  assert.match(texts[1], /^Terminal/, 'board 25: the real items stay, Terminal next');
-  click(ctx.window, items[0]);
+  // Merge with dev's Rerun (#1519): Rerun comes first, then this item, still right before Terminal (board 25).
+  const at = texts.indexOf('Use as test example');
+  assert.ok(at >= 0, texts.join(' | '));
+  assert.match(texts[at + 1], /^Terminal/, 'board 25: the real items stay, Terminal next');
+  click(ctx.window, items[at]);
   await settle(ctx.window, 6);
   assert.equal(reads.length, 1, 'GET /api/workflow-tests/past-run/abcd1234');
   assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Use this run as a test example');
