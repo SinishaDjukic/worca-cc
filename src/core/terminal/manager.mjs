@@ -25,8 +25,8 @@ const CLOSE_GRACE_MS = 1000;
 const WIN_SHELL_WAIT_MS = 5000;                 // Windows close: how long to wait for Git Bash's real-shell lookup
 const FOLDER_CHECK_MS = 5000;
 const ENDED_KEEP = 20;                          // ended sessions kept in memory (their replay); the DB keeps all
-const READY_MS = 5000;                          // runCommand: a fresh shell's first prompt
-const ACK_MS = 5000;                            // runCommand: the C mark after a typed command
+const READY_MS = 20000;                         // runCommand: a fresh shell's first prompt (fixed; sized for a loaded machine)
+const ACK_MS = 20000;                           // runCommand: the C mark after a typed command (fixed; sized for a loaded machine)
 
 const iso = (ms) => new Date(ms).toISOString();
 const clamp = (n, lo, hi, dflt) => { const v = Math.round(Number(n)); return Number.isFinite(v) ? Math.min(Math.max(v, lo), hi) : dflt; };
@@ -110,7 +110,7 @@ export class TerminalManager extends EventEmitter {
         runLive: !!runLive, folder: 'ok', commands: 0, ...size },   // cols/rows: the PTY's size, so a replay is drawn at the width it was written for
       proc, parser: new MarkerParser({ nonce }), chunks: [], chunkChars: 0, seq: 0, pendingOut: '', flushTimer: null,
       block: null, blockSeq: 0, lastInputBy: by, cwdNow: cwd, ino, stopTimer: null, closing: null, exitWaiters: [],
-      atPrompt: false, pendingRun: null, readyWaiters: [], startWaiters: [], winShellLookup: null,   // runCommand (#574)
+      atPrompt: false, promptCount: 0, retired: false, pendingRun: null, readyWaiters: [], startWaiters: [], winShellLookup: null,   // runCommand (#574)
     };
     try {
       store.insertSession(s.snap);
@@ -152,7 +152,7 @@ export class TerminalManager extends EventEmitter {
    *  the block's end, and runCommand waits for it anyway. */
   free(id) {
     const s = this.sessions.get(id);
-    return !!s && s.snap.status === 'running' && !s.block && !s.pendingRun;
+    return !!s && s.snap.status === 'running' && !s.retired && !s.block && !s.pendingRun;
   }
 
   /** The shell's current folder (the W mark's $PWD after every command; the open cwd before the first one). A
@@ -179,15 +179,30 @@ export class TerminalManager extends EventEmitter {
     const s = this.sessions.get(id);
     if (!s || s.snap.status !== 'running') throw codeError('NO_SESSION', 'That terminal is not running.');
     if (s.snap.shellKind === 'other') throw codeError('NO_BLOCKS', noBlocksMessage(this.platform));
+    if (s.retired) throw codeError('SHELL_RETIRED', 'That terminal stopped responding and was set aside; a new one is used for the next command.');
     if (s.block || s.pendingRun) throw codeError('BUSY', 'A command is already running in this terminal.');
-    if (!s.atPrompt) await this._waitFor(s.readyWaiters, readyMs, 'NO_BLOCKS', 'The shell did not reach its prompt.');
+    if (!s.atPrompt) {
+      // A shell that never reaches its prompt is set aside (left running for the person), never reused by a program.
+      try { await this._waitFor(s.readyWaiters, readyMs, 'NOT_READY', `The shell did not reach its prompt within ${Math.max(1, Math.round(readyMs / 1000))}s (the machine may be overloaded). It was set aside; the next command gets a fresh shell.`); }
+      catch (e) { if (e.code === 'NOT_READY') { s.retired = true; e.retired = true; } throw e; }
+    }
     if (s.block || s.pendingRun) throw codeError('BUSY', 'A command is already running in this terminal.');
     // The W mark (cwd) is printed in the same printf as the A mark, before it: at the prompt, cwdNow is current.
     // `cwd` is the folder the caller's command check reasoned about (for Ask, the shell's own folder at its pick):
     // a shell that moved since (a `cd` whose W mark landed late) must not run the command anywhere else.
     if (cwd && !sameDir(s.cwdNow, cwd)) throw codeError('MOVED', 'The shell is in another folder.');
     s.pendingRun = { by, source };
-    const started = this._waitFor(s.startWaiters, ackMs, 'NOT_STARTED', 'The shell did not start the command.')
+    const promptsBefore = s.promptCount;
+    const sec = Math.max(1, Math.round(ackMs / 1000));
+    const started = this._waitFor(s.startWaiters, ackMs, 'NOT_STARTED', '')
+      .catch((e) => {
+        // No prompt came back: the shell took the line and went silent. A prompt means a healthy shell that ran nothing.
+        if (s.promptCount === promptsBefore) {
+          s.retired = true;
+          throw Object.assign(codeError('NOT_STARTED', `The shell did not start the command within ${sec}s and is no longer responding (the machine may be overloaded, or the shell is stuck). It was set aside and left open for the user; the command may still run there later. The next command gets a fresh shell.`), { retired: true });
+        }
+        throw codeError('NOT_STARTED', 'The shell did not start the command — the line ran nothing (a comment, an empty line, or a line bash could not parse; check its syntax).');
+      })
       .finally(() => { s.pendingRun = null; });
     // Under a PTY: Ctrl+U first clears anything a person left half-typed on the line, then Enter (\r). Over pipes
     // there is no line editor and bash reads a line only at \n.
@@ -329,7 +344,7 @@ export class TerminalManager extends EventEmitter {
       return;
     }
     if (ev.type === 'end') { this._endBlock(s, 'done', ev.exitCode); return; }
-    if (ev.type === 'prompt') { s.atPrompt = true; for (const w of s.readyWaiters.splice(0)) w.res(); return; }
+    if (ev.type === 'prompt') { s.atPrompt = true; s.promptCount += 1; for (const w of s.readyWaiters.splice(0)) w.res(); return; }
     if (ev.type === 'start') {
       const at = this.now();
       s.atPrompt = false;

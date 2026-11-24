@@ -303,3 +303,41 @@ test('Windows: Git Bash records Ask\'s commands as blocks, reports C:/ folders; 
     for (const p of cmds) assert.equal(pidAlive(p), false, `command pid ${p} still running after close`);
   } finally { await win.closeAll(); }
 });
+
+// A fake shell: `marks` are emitted as OSC 133 marks with the session's nonce once the data handler is attached.
+function fakeShell(marks) {
+  let emit = () => {};
+  const m = new TerminalManager({ ptyInfo: () => ({ pty: null }), shell: () => ({ file: '/bin/bash', kind: 'bash', platform: process.platform }),
+    spawnImpl: ({ env }) => {
+      const mark = (k) => `\x1b]133;${k};${env.WORCA_TERMINAL_NONCE}\x07`;
+      return { pid: null, mode: 'pipes', write() {}, resize() {}, signal() {}, onExit() {}, onData(fn) { emit = fn; for (const k of marks) fn(mark(k)); } };
+    } });
+  return { m, emit: (d) => emit(d) };
+}
+
+test('runCommand on a shell that swallows input: NOT_STARTED and retired; free() is false, still running, next call SHELL_RETIRED', async () => {
+  const { m } = fakeShell(['A']);
+  const s = await m.open({ cwd: work, scope: 'project', by: 'ask:x', baseEnv, agent: true });
+  await assert.rejects(m.runCommand(s.id, 'ls', { by: 'ask:x', ackMs: 100 }),
+    (e) => e.code === 'NOT_STARTED' && e.retired === true && /no longer responding/.test(e.message) && /fresh shell/.test(e.message));
+  assert.equal(m.free(s.id), false);
+  assert.equal(m.get(s.id).status, 'running');
+  await assert.rejects(m.runCommand(s.id, 'ls', { by: 'ask:x', ackMs: 100 }), { code: 'SHELL_RETIRED' });
+});
+
+test('runCommand: a prompt that never comes is NOT_READY and the shell is retired', async () => {
+  const { m } = fakeShell([]);
+  const s = await m.open({ cwd: work, scope: 'project', by: 'ask:x', baseEnv, agent: true });
+  await assert.rejects(m.runCommand(s.id, 'ls', { by: 'ask:x', readyMs: 100 }), (e) => e.code === 'NOT_READY' && e.retired === true && /prompt/.test(e.message));
+  assert.equal(m.free(s.id), false);
+});
+
+test('runCommand: a no-op line that gets a prompt back leaves the shell free and is not retired', async () => {
+  const { m, emit } = fakeShell(['A']);
+  const s = await m.open({ cwd: work, scope: 'project', by: 'ask:x', baseEnv, agent: true });
+  const nonce = [...m.sessions.values()][0].parser.nonce;
+  const p = m.runCommand(s.id, '# x', { by: 'ask:x', ackMs: 100 });
+  emit(`\x1b]133;A;${nonce}\x07`);
+  await assert.rejects(p, (e) => e.code === 'NOT_STARTED' && !e.retired);
+  assert.equal(m.free(s.id), true);
+});

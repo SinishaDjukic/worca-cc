@@ -6,6 +6,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAskCommands, terminalEventPrompt, plainOutput } from '../src/core/ask/commands.mjs';
+import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 
 function fakeTerminals() {
   const t = new EventEmitter();
@@ -380,4 +381,53 @@ test('run() echoes a cleaned summary: trimmed, one line, at most 120 characters 
   assert.equal(r2.summary.length, 120);
   const r3 = await make().svc.run('ask_0000aaaa', { command: 'npm test' });
   assert.equal(r3.summary, null);
+});
+
+test('a shell that did not start the command is retired from the pool, left open, and the next run uses a new shell', async () => {
+  const { svc, terminals } = make();
+  const realRun = terminals.runCommand.bind(terminals);
+  let calls = 0;
+  terminals.runCommand = async (id, command, opts) => {
+    calls += 1;
+    if (calls === 1) throw Object.assign(new Error('The shell did not start the command'), { code: 'NOT_STARTED', retired: true });
+    return realRun(id, command, opts);
+  };
+  await assert.rejects(svc.run('ask_0000aaaa', { command: 'npm test' }), { code: 'NOT_STARTED' });
+  assert.equal(calls, 1, 'the failed command is not retried');
+  const stuck = 't-0000000001';                              // the fake's first session id
+  const r = await svc.run('ask_0000aaaa', { command: 'npm test' });
+  assert.notEqual(r.sessionId, stuck);
+  assert.equal(terminals.opened.length, 2);
+  assert.equal(terminals.closed.length, 0, 'the stuck shell is left running');
+  assert.equal(terminals.get(stuck).status, 'running');
+});
+
+function stickingTerminals(terminals) {
+  const realRun = terminals.runCommand.bind(terminals);
+  terminals.runCommand = async (id, command, opts) => {
+    if (command === 'stick') throw Object.assign(new Error('The shell did not start the command'), { code: 'NOT_STARTED', retired: true });
+    return realRun(id, command, opts);
+  };
+}
+
+test('a retired shell frees its pool slot: the stuck shell is not recycled and the next runs open new shells, not NO_SLOT', async () => {
+  const { svc, terminals } = make({ limits: { ...ASK_LIMITS, commandsPerThread: 2 } });
+  stickingTerminals(terminals);
+  await assert.rejects(svc.run('ask_0000aaaa', { command: 'stick' }), { code: 'NOT_STARTED' });
+  const a = await svc.run('ask_0000aaaa', { command: 'npm test' });      // the pool holds only this one; a second fits
+  const b = await svc.run('ask_0000aaaa', { command: 'ls' });
+  assert.notEqual(a.sessionId, b.sessionId);
+  assert.equal(terminals.closed.length, 0, 'the stuck shell is not recycled');
+});
+
+test('a chat with commandsPerThread set-aside shells is refused STUCK_SHELLS; closeThread closes them', async () => {
+  const { svc, terminals } = make({ limits: { ...ASK_LIMITS, commandsPerThread: 2 } });
+  stickingTerminals(terminals);
+  await assert.rejects(svc.run('ask_0000aaaa', { command: 'stick' }), { code: 'NOT_STARTED' });
+  await assert.rejects(svc.run('ask_0000aaaa', { command: 'stick' }), { code: 'NOT_STARTED' });
+  const before = terminals.opened.length;
+  await assert.rejects(svc.run('ask_0000aaaa', { command: 'npm test' }), { code: 'STUCK_SHELLS' });
+  assert.equal(terminals.opened.length, before, 'no third shell is opened');
+  await svc.closeThread('ask_0000aaaa');
+  assert.equal(terminals.closed.length, 2);
 });

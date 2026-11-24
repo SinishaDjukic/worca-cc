@@ -112,6 +112,7 @@ export function createAskCommands({ terminals, store, resolveTarget, onFinish, o
   setTimer = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; }, clearTimer = clearTimeout, outDirFor = defaultOutDir } = {}) {
   const pools = new Map();     // threadId → Set<sessionId>
   const owner = new Map();     // sessionId → threadId
+  const retired = new Map();   // threadId → Set<sessionId> of shells set aside (still running, left for the user)
   const active = new Map();    // blockId → { threadId, capTimer }
   const seenEnd = new Set();   // blockIds whose end a tool already returned to the model (pruned at SEEN_KEEP)
   const idleTimers = new Map();// sessionId → timer
@@ -204,6 +205,22 @@ export function createAskCommands({ terminals, store, resolveTarget, onFinish, o
     await terminals.close(sid, askActor(threadId), reason).catch(() => {});
   }
 
+  /** A shell that stopped answering: out of the pool (its slot is free, Ask never reuses or auto-closes it) but left
+   *  running for the user. A line that still runs there later has no card or cap timer: it is the user's shell now. */
+  function retire(threadId, sid) {
+    pools.get(threadId)?.delete(sid); forget(sid);
+    const set = retired.get(threadId) || new Set();
+    retired.set(threadId, set); set.add(sid);
+  }
+
+  /** This chat's set-aside shells that are still running (ended ones are pruned). */
+  function retiredOf(threadId) {
+    const set = retired.get(threadId) || new Set();
+    for (const sid of [...set]) if (terminals.get(sid)?.status !== 'running') set.delete(sid);
+    if (set.size) retired.set(threadId, set); else retired.delete(threadId);
+    return set;
+  }
+
   function poolOf(threadId) {
     const pool = pools.get(threadId) || new Set();
     pools.set(threadId, pool);
@@ -267,6 +284,10 @@ export function createAskCommands({ terminals, store, resolveTarget, onFinish, o
       if (runningCount(threadId) >= limits.commandsPerThread) {
         throw codeError('TOO_MANY', `${limits.commandsPerThread} commands are already running in this chat — wait for one (wait_for) or stop one (stop_command).`);
       }
+      const stuck = retiredOf(threadId).size;
+      if (stuck >= limits.commandsPerThread) {
+        throw codeError('STUCK_SHELLS', `${stuck} of this chat's terminals stopped responding and were left open. Ask the user to close them before Ask opens more.`);
+      }
       const target = await resolveTarget(threadId, input);
       const line = String(input.command).trim();
       // One more pick when the shell changed under the first one: a `cd` whose W mark landed after the pick (MOVED), or
@@ -281,7 +302,8 @@ export function createAskCommands({ terminals, store, resolveTarget, onFinish, o
         let seq;
         try { ({ seq } = await terminals.runCommand(sid, line, { by: askActor(threadId), source: 'ask', cwd })); }
         catch (e) {
-          if (owner.has(sid)) scheduleIdleClose(sid);            // NOT_STARTED / BUSY: still closes when idle
+          if (e?.retired || e?.code === 'SHELL_RETIRED') retire(threadId, sid);
+          else if (owner.has(sid)) scheduleIdleClose(sid);       // NOT_STARTED / BUSY: still closes when idle
           if (attempt === 0 && (e?.code === 'MOVED' || e?.code === 'BUSY')) continue;
           throw e;
         }
@@ -359,11 +381,11 @@ export function createAskCommands({ terminals, store, resolveTarget, onFinish, o
     },
 
     async closeThread(threadId) {
-      const pool = pools.get(threadId);
-      pools.delete(threadId);
+      const pool = new Set([...(pools.get(threadId) || []), ...retiredOf(threadId)]);
+      pools.delete(threadId); retired.delete(threadId);
       personRuns.delete(threadId);
       for (const [id, a] of active) if (a.threadId === threadId) { clearTimer(a.capTimer); active.delete(id); }
-      await Promise.allSettled([...(pool || [])].map((sid) => { forget(sid); return terminals.close(sid, askActor(threadId), 'Ask: chat deleted'); }));
+      await Promise.allSettled([...pool].map((sid) => { forget(sid); return terminals.close(sid, askActor(threadId), 'Ask: chat deleted'); }));
     },
 
     /** Server shutdown / tests: drop every timer. */
