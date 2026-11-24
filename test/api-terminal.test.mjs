@@ -326,3 +326,9 @@ test('a project terminal has the same gates as the others: raw fields and other 
   const foreign = await raw('POST', `/api/projects/${key}/terminal`, { host: `127.0.0.1:${port}`, origin: 'http://127.0.0.1:4401' }, {});
   assert.equal(foreign.status, 403);
 });
+
+test('a run or project shell has no chatId key: only a chat shell carries one (issue 1064)', async () => {
+  const s = await openRunTerminal();
+  assert.equal(Object.hasOwn(s, 'chatId'), false);
+  await closeSession(s.id);
+});

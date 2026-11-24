@@ -1379,8 +1379,8 @@ if (!ONLY_A6 && !ONLY_A61) {
   await A.evalJs(`(() => { document.getElementById('req-new-title').value = 'Cancel an order';
     document.getElementById('req-new-desc').value = 'Customers cancel before it ships';
     [...document.querySelectorAll('.req-new .btn-primary')].at(-1).click(); })()`);
-  check('9c: a feature made with Codex shows the question card (mock round) and its model chip names Codex',
-    await until(() => A.evalJs(`!!document.querySelector('#requirements-host .qpanel .qopt') && /Codex/.test(document.querySelector('#requirements-host [data-ui="model-chip"]')?.textContent || '')`), 20000));
+  check('9c: a feature made with Codex shows the question card (mock round) and its model button names Codex',
+    await until(() => A.evalJs(`!!document.querySelector('#requirements-host .qpanel .qopt') && /Codex/.test(document.querySelector('#requirements-host [data-ui="model-btn"]')?.textContent || '')`), 20000));
   const seq9 = await A.evalJs(`/feature\\/(\\d+)/.exec(location.hash)[1]`);
   check('9c: the stored choice is Codex with its default model',
     await A.evalJs(`fetch('/api/requirements/${seq9}').then((r) => r.json()).then((d) => d.feature.model?.engine === 'codex' && d.feature.model?.model === 'gpt-6.1-sol')`));
@@ -1394,9 +1394,9 @@ if (!ONLY_A6 && !ONLY_A61) {
   check('9c board 5: Show what it found opens the card "Code look: what Worca found"',
     await until(() => A.evalJs(`(() => { const c = document.querySelector('#requirements-host .req-orient'); return !!c && c.open && c.querySelector('summary')?.textContent.startsWith('Code look: what Worca found'); })()`), 4000));
 
-  // The model chip and its dialog (boards 3, 4); the confirm on Codex -> Gemini
-  await click('#requirements-host [data-ui="model-chip"]');
-  check('9c board 3: the model chip opens the dialog "Model for this feature" on the feature\'s harness',
+  // The model button and its dialog (boards 3, 4); the confirm on Codex -> Gemini
+  await click('#requirements-host [data-ui="model-btn"]');
+  check('9c board 3: the model button opens the dialog "Model for this feature" on the feature\'s harness',
     await until(async () => (await dlgTitle()) === 'Model for this feature', 6000) && (await A.evalJs(`${DLG}.querySelector('.req-who-harness').value`)) === 'codex');
   const gem = await setSel('.req-dlg-wrap .req-who-harness', 'gemini');
   check('9c board 3: choosing Gemini CLI refills Model with the Gemini model', gem === 'gemini' && (await A.evalJs(`${DLG}.querySelector('.req-who-model').value`)) === 'gemini-3-pro');
@@ -1419,9 +1419,9 @@ if (!ONLY_A6 && !ONLY_A61) {
   check('9c board 3: the model dialog is AA in light and dark', modelAA.light.length === 0 && modelAA.dark.length === 0, JSON.stringify(modelAA));
   await closeDlg('model-cancel');
 
-  // The cost chip and its dialog (board 6)
-  await click('#requirements-host [data-ui="cost-chip"]');
-  check('9c board 6: the cost chip opens "Cost of this feature": the Step / Ran on / Cost table ends with "So far" (the mock books no step)',
+  // The cost button and its dialog (board 6)
+  await click('#requirements-host [data-ui="cost-btn"]');
+  check('9c board 6: the cost button opens "Cost of this feature": the Step / Ran on / Cost table ends with "So far" (the mock books no step)',
     await until(async () => (await dlgTitle()) === 'Cost of this feature', 6000)
       && await A.evalJs(`(() => { const d = ${DLG}; return [...d.querySelectorAll('thead th')].map((x) => x.textContent).join('|') === 'Step|Ran on|Cost' && d.querySelector('.req-cost-total td')?.textContent === 'So far'; })()`));
   await shot('9c-board6-cost-dialog');
@@ -1432,14 +1432,14 @@ if (!ONLY_A6 && !ONLY_A61) {
   // The feature page, light and dark, at 1280 and 390 px
   const pageSel = ['#requirements-host .req-head .req-chips', '#requirements-host .req-step-look'];
   const pageAA = await contrastBoth(pageSel, '9c-feature-dark');
-  check('9c: the feature header (cost and model chips) and the code look step are AA in light and dark at 1280 px', pageAA.light.length === 0 && pageAA.dark.length === 0, JSON.stringify(pageAA));
+  check('9c: the feature header (cost and model buttons) and the code look step are AA in light and dark at 1280 px', pageAA.light.length === 0 && pageAA.dark.length === 0, JSON.stringify(pageAA));
   await A.send('Emulation.setDeviceMetricsOverride', PHONE);
   await sleep(300);
   const phoneFit = await A.evalJs(`document.documentElement.scrollWidth === document.documentElement.clientWidth`);
   const pagePhoneAA = await contrastBoth(pageSel, '9c-feature-phone-dark');
   check('9c: at 390 px the feature page does not scroll sideways, and chips and code look step are AA in light and dark',
     phoneFit && pagePhoneAA.light.length === 0 && pagePhoneAA.dark.length === 0, JSON.stringify({ phoneFit, pagePhoneAA }));
-  await click('#requirements-host [data-ui="model-chip"]');
+  await click('#requirements-host [data-ui="model-btn"]');
   await until(async () => (await dlgTitle()) === 'Model for this feature', 6000);
   const dlgStack = await stacked(DLG);
   check('9c board 7: at 390 px the dialog\'s selects stack too', dlgStack.n >= 2 && dlgStack.stacked, JSON.stringify(dlgStack));

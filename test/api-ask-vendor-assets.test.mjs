@@ -6,7 +6,7 @@
 // no-store 404; nothing here may disturb the hljs routes or the SPA fallback.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 
@@ -17,7 +17,7 @@ let base;
 
 before(async () => {
   const mod = await import('../ui/server.mjs');
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((resolve, reject) => {
     srv.once('error', reject);
     srv.listen(0, '127.0.0.1', () => {
@@ -70,6 +70,32 @@ test('vendor misses stay plain no-store 404s and never the SPA shell', async () 
     '/vendor/marked/marked.esm.js.map',
   ];
   for (const pathname of paths) {
+    const res = await fetch(`${base}${pathname}`);
+    assert.equal(res.status, 404, pathname);
+    assert.doesNotMatch(res.headers.get('content-type') || '', /text\/html/i, pathname);
+    assert.match(res.headers.get('cache-control') || '', /no-store/i, pathname);
+    assert.doesNotMatch(await res.text(), /<!doctype html/i, pathname);
+  }
+});
+
+test('T-V1 the Office preview fallback\'s two UMD scripts are served (JS, nosniff) and, evaluated in that order, set JSZip and docx', async () => {
+  const { JSDOM } = await import('jsdom');
+  const { window: win } = new JSDOM('<!doctype html><body></body>', { runScripts: 'outside-only', url: 'http://localhost:4317/' });
+  for (const pathname of ['/vendor/jszip/jszip.min.js', '/vendor/docx-preview/docx-preview.min.js']) {
+    const res = await fetch(`${base}${pathname}`);
+    assert.equal(res.status, 200, pathname);
+    assert.match(res.headers.get('content-type') || '', /^text\/javascript/i, pathname);
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff', pathname);
+    win.eval(await res.text());     // UMD, never a data: ESM import (it has no exports)
+  }
+  assert.equal(typeof win.JSZip.loadAsync, 'function');
+  assert.equal(typeof win.docx.renderAsync, 'function');
+  assert.equal(typeof win.docx.parseAsync, 'function');
+});
+
+test('T-V2 no other jszip / docx-preview path is served: plain no-store 404s, never the SPA shell', async () => {
+  for (const pathname of ['/vendor/docx-preview/docx-preview.mjs', '/vendor/jszip/jszip.js', '/vendor/jszip/../package.json',
+    '/vendor/jszip/%2e%2e%2fpackage.json', '/vendor/docx-preview/docx-preview.min.js.map', '/vendor/jszip/']) {
     const res = await fetch(`${base}${pathname}`);
     assert.equal(res.status, 404, pathname);
     assert.doesNotMatch(res.headers.get('content-type') || '', /text\/html/i, pathname);

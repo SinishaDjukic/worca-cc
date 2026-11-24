@@ -4,7 +4,7 @@
 // real fetch, WORCA_MOCK=1, temp WORCA_HOME, sets and library skills through the real APIs.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { rm } from 'node:fs/promises';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -26,7 +26,7 @@ before(async () => {
   process.env.WORCA_MOCK = '1';
   const mod = await import('../ui/server.mjs');
   runs = mod.runs;
-  srv = http.createServer(mod.app);
+  srv = appServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
   dir = gitDir('skills-api');

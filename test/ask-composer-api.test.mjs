@@ -165,6 +165,15 @@ test('a composer message must carry a valid canvas; it is stored before the turn
   assert.equal((await get(`/api/ask/threads/${thread.id}`)).body.thread.composer.sessionId, 'cs_ab12cd34');
 });
 
+test('a composer message with supersedes is refused 400 and stores nothing', async () => {
+  const { body: { thread } } = await post('/api/ask/threads', { mode: 'composer' });
+  const canvas = { sessionId: 'cs_ab12cd34', docToken: 'd_ab12cd34', graph: { name: 'x', nodes: [], wires: [] }, selection: null, drafts: [] };
+  const r = await post(`/api/ask/threads/${thread.id}/messages`, { text: 'hi', model: MODEL, effort: EFFORT, context: {}, composer: canvas, supersedes: 'askm_00000001' });
+  assert.deepEqual([r.status, r.body.error], [400, 'supersedes is not available in this chat']);
+  assert.equal((await get(`/api/ask/threads/${thread.id}`)).body.thread.composer ?? null, null);
+  assert.deepEqual(store.listMessages(thread.id), []);
+});
+
 test('composer card clicks flip state without starting a turn', async () => {
   const threadId = (await post('/api/ask/threads', { mode: 'composer' })).body.thread.id;
   const cardId = 'card_0000abcd';

@@ -1,20 +1,16 @@
-
-/* Agent readiness: the row chip (status only), the project page header's chip and its popover. Labels are the app's state
-   chip (4px corners, 11px, weight 500): no dot, no border, no ring (also on hover). The count is a solid number chip,
-   regular weight. Not-ready text is --red-ink-strong, the AA red on --red-bg. */
-.pl-rd{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:var(--r-xs);font:500 var(--fs-caption)/1 var(--sans);
-  user-select:none;}
+/* Agent readiness: the row chip (status only), the project page header's chip and its popover. Both chips are the
+   shared chip (.badge, design-system.css's one chip rule: 18px, 11px / 500, 4px corners, no border or ring) in its
+   green / amber / red / grey tones; amber and red text takes the -ink-strong shade, the AA one on its tint at 11px.
+   The count is a solid number chip inside it, regular weight. */
+.pl-rd{gap:5px;user-select:none;}
 .pd-rd-slot .pl-rd{cursor:pointer;}   /* the header chip, the one chip that opens the report */
 .pl-rd:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.rd-ready{background:var(--green-bg);color:var(--green-ink);}
-.rd-partial{background:var(--amber-bg);color:var(--amber-ink-strong);}
-.rd-not-ready{background:var(--red-bg);color:var(--red-ink-strong);}
-.rd-unused{background:var(--field);color:var(--ink-2);}
+.pl-rd.amber,.rd-lbl.amber{color:var(--amber-ink-strong);}
+.pl-rd.red,.rd-lbl.red{color:var(--red-ink-strong);}
 .pl-rd .rd-n{display:inline-grid;place-items:center;min-width:14px;height:14px;margin-right:-4px;padding:0 3px;border-radius:var(--r-xs);
   font-size:var(--fs-caption);font-weight:500;font-variant-numeric:tabular-nums;color:var(--panel);}
-.rd-partial .rd-n{background:var(--amber-ink-strong);}
-.rd-not-ready .rd-n{background:var(--red-ink-strong);}
-.rd-lbl{display:inline-flex;align-items:center;flex:none;height:20px;padding:0 7px;border-radius:var(--r-xs);font:500 var(--fs-caption)/1 var(--sans);white-space:nowrap;}
+.pl-rd.amber .rd-n{background:var(--amber-ink-strong);}
+.pl-rd.red .rd-n{background:var(--red-ink-strong);}
 
 /* The project page header: the name, then its chip; the slot takes the free width so the header's buttons stay right. */
 .pd-row1:has(.pd-rd-slot) .pd-title{flex:0 1 auto;}
@@ -38,28 +34,26 @@
 .rp-tool-d{color:var(--ink-2);}
 .rp-act{grid-column:1 / -1;justify-self:start;}
 .rp-notjudged{padding:4px 16px 2px;font-size:var(--fs-meta);color:var(--ink-2);}
-.rp-chk{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:2px 10px;padding:8px 16px;}
+.rp-chk{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:2px 8px;padding:8px 16px;}
 .rp-chk:hover{background:var(--field);}
-.rp-sevdot{margin-top:5px;width:10px;height:10px;border-radius:50%;border:2px solid currentColor;}
-.rp-sevdot.blocker{color:var(--red);background:var(--red);}
-.rp-sevdot.warn{color:var(--amber);}
-.rp-sevdot.info{color:var(--ink-3);}
+/* The severity is the shared .issue-sev chip; its tint comes from the row's .sev-* class, its text from the AA shade. */
+.rp-chk.sev-critical .issue-sev{color:var(--red-ink-strong);}
+.rp-chk.sev-minor .issue-sev{color:var(--amber-ink-strong);}
+.rp-chk.sev-suggestion .issue-sev{color:var(--blue-ink-strong);}
 .rp-chk-t{font-weight:600;font-size:var(--fs-body);}
-.rp-chk-d{grid-column:2;font-size:var(--fs-meta);color:var(--ink-2);}
-.rp-chk-f{grid-column:2;font-size:var(--fs-meta);}
-.rp-ign{grid-row:1;grid-column:3;align-self:start;}
+.rp-chk-d{grid-column:1 / -1;font-size:var(--fs-meta);color:var(--ink-2);}
+.rp-chk-f{grid-column:1 / -1;font-size:var(--fs-meta);}
+.rp-ign{grid-row:1;grid-column:3;}
+/* The passed and ignored boxes: the shared .disclosure (its triangle, native-control.css), then a line icon. */
 .rp-more{margin:8px 16px 0;border-radius:var(--r-md);background:var(--field);}
 .rp-more + .rp-more{margin-top:6px;}
-.rp-more summary{display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:var(--fs-meta);font-weight:500;color:var(--ink-2);cursor:pointer;list-style:none;border-radius:var(--r-md);}
-.rp-more summary::-webkit-details-marker{display:none;}
-.rp-more summary:hover{color:var(--ink);}
-.rp-more summary .rp-chev{margin-left:auto;flex:none;width:8px;height:8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-2px);}
-.rp-more[open] summary .rp-chev{transform:rotate(225deg) translateY(-1px);}
-.rp-tick{flex:none;position:relative;width:7px;height:12px;}
-.rp-tick::before{content:"";position:absolute;left:2px;top:0;width:4px;height:9px;border-right:1.6px solid var(--green);border-bottom:1.6px solid var(--green);transform:rotate(45deg);}
-.rp-gdot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--ink-3);}
+.rp-more > summary{padding:8px 10px;font-size:var(--fs-meta);font-weight:500;color:var(--ink-2);border-radius:var(--r-md);}
+.rp-more > summary:hover{color:var(--ink);}
+.rp-lead{flex:none;}
+.rp-lead.is-check{color:var(--green);}
+.rp-lead.is-none{color:var(--ink-3);}
 .rp-more ul{list-style:none;margin:0 10px;padding:0 0 8px;}
-.rp-more li{margin-left:15px;padding:6px 0;border-top:1px solid var(--line-2);}
+.rp-more li{margin-left:39px;padding:6px 0;border-top:1px solid var(--line-2);}
 .rp-more li b{display:block;font-weight:600;font-size:var(--fs-meta);}
 .rp-more li span{display:block;font-size:var(--fs-meta);color:var(--ink-2);}
 .rp-more li .rp-ign{margin-top:2px;}

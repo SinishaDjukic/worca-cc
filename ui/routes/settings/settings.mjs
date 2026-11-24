@@ -24,10 +24,10 @@ import { resolvePrDescriptionModel } from '../../../src/core/pr-description.mjs'
 import { listProjects, normalizeProjectPath } from '../../../src/core/projects.mjs';
 import { DEFAULT_INTERVIEW_EFFORT, requirementsModel } from '../../../src/core/requirements/interview.mjs';
 import { settingsErrorReply } from '../../../src/core/settings-errors.mjs';
-import { actionsSettings, agentGenModel as storedAgentGenModel, askEngineSetting, askMaxBudgetUsd, askMaxTurns, askModelsSetting, askWeb, autoGeneratePrDescription, autoTestWorkers, autoWorkflowModel as storedAutoWorkflowModel, chatPrefs, commandSummaryModel as storedCommandSummaryModel, costLimitResetPeriod, debugSpawnEnabled as storedDebugSpawnEnabled, defaultProjectsRoot, designModelsSetting, defaultRoot, effectiveDebugSpawn, getWorcaRoot, hideBuiltinEngines, hideBuiltinModels, humanRateUsdPerHour, keepAwakeEnabled, memoryCaps, memoryDefragModel, modelRolesSetting, namingModel as storedNamingModel, networkWaitSettings, nightModeSettings, nightModeToggle, nightModeToggleFor, pipelineCostLimitUsd, prDescriptionModel as storedPrDescriptionModel, rawProjectsRoot, requirementsInterviewSetting, resumeAfterUsageLimit, runEngineSetting, runLimits, scheduleDefaults, screensaverSettings, secondOpinionModelSetting, smartNaming, stepModelsSetting, syncDefaults, theme as storedTheme, titleModel as storedTitleModel, totalCostLimitUsd, updateCheckEnabled, userEnforceTags, userTagDimensions, utilityModelsSetting, workspaceScanModels } from '../../../src/core/settings.mjs';
+import { actionsSettings, agentGenModel as storedAgentGenModel, askEngineSetting, askMaxBudgetUsd, askMaxTurns, askModelsSetting, askWeb, chatLinksInPanel, autoGeneratePrDescription, autoTestWorkers, autoWorkflowModel as storedAutoWorkflowModel, chatPrefs, commandSummaryModel as storedCommandSummaryModel, costLimitResetPeriod, debugSpawnEnabled as storedDebugSpawnEnabled, defaultProjectsRoot, designModelsSetting, defaultRoot, effectiveDebugSpawn, getWorcaRoot, hideBuiltinEngines, hideBuiltinModels, humanRateUsdPerHour, keepAwakeEnabled, memoryCaps, memoryDefragModel, modelRolesSetting, namingModel as storedNamingModel, networkWaitSettings, nightModeSettings, nightModeToggle, nightModeToggleFor, pipelineCostLimitUsd, prDescriptionModel as storedPrDescriptionModel, rawProjectsRoot, requirementsInterviewSetting, resumeAfterUsageLimit, runEngineSetting, runLimits, scheduleDefaults, screensaverSettings, secondOpinionModelSetting, smartNaming, stepModelsSetting, syncDefaults, theme as storedTheme, titleModel as storedTitleModel, totalCostLimitUsd, updateCheckEnabled, userEnforceTags, userTagDimensions, utilityModelsSetting, workspaceScanModels } from '../../../src/core/settings.mjs';
 import { describeTitleModel } from '../../../src/core/title.mjs';
 import process from 'node:process';
-import { APP_INFO, REMOTE_MODE, actionsEnabledHere, agentMayBeCaller, applySettingsPatch, autoDetectedBuiltins, awayPersonOf, effectiveUiLevel, emitMemoryChanged, liveDefragRun, memoryError, refuseAgentCaller, requireFsAllowed, teamOriginOk, teamWarn } from '../../server.mjs';
+import { APP_INFO, REMOTE_MODE, actionsEnabledHere, agentMayBeCaller, applySettingsPatch, autoDetectedBuiltins, awayPersonOf, effectiveUiLevel, emitMemoryChanged, liveDefragRun, memoryError, previewPortMode, refuseAgentCaller, requireFsAllowed, teamOriginOk, teamWarn } from '../../server.mjs';
 
 export function register(app) {
 
@@ -156,9 +156,10 @@ const settingsState = () => ({
   nightModeEffective: resolveNightConfig({ user: nightModeSettings() }).config,   // no project: the global view
   nightModeToggle: nightModeToggle(),                     // auto | on | off (live switch)
   keepAwake: keepAwakeEnabled(),                          // the account menu's Keep awake switch
+  chatLinksInPanel: chatLinksInPanel(),
   actions: actionsSettings(),                             // Settings › Runs › Actions (issue #529)
   actionsDetected: autoDetectedBuiltins(),                // what Editor / Terminal fall back to when left blank (null = none found)
-  actionsGate: { remote: REMOTE_MODE, enabled: actionsEnabledHere() },
+  actionsGate: { remote: REMOTE_MODE, enabled: actionsEnabledHere(), previewPorts: previewPortMode(), previewPortsLocked: REMOTE_MODE },
 });
 
 /** Settings ▸ Auto workflow model: the stored id + what the classifier will actually use

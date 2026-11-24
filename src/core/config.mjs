@@ -879,7 +879,11 @@ export async function assertSlotModels(items, { projectDir = '', pending = [] } 
     if (!hit) throw bad(`unknown model "${value.model}" — add it to the catalog first`);
     if (!runsOn(hit, engine)) throw bad(`"${hit.id}" runs on ${harnessesLabel(hit)} — this slot picks a model ${engineLabel(engine)} can run`);
     // A pending row has no efforts yet; only a catalog row is checked (role efforts never reach here, A7).
-    if (value.effort && models.includes(hit) && !effortsOn(hit, engine).includes(value.effort)) throw bad(`${hit.id} does not offer effort "${value.effort}" on ${engineLabel(engine)}`);
+    // A model that offers no effort accepts the pick with or without one: the effort is inert. That covers every
+    // Cursor model (cursor-agent has no effort lever) and an OpenCode Zen `opencode/*`, whose catalog row advertises
+    // none because OpenCode 2.3.1+ refuses any variant on it (buildOpencodeArgs drops it).
+    const offered = effortsOn(hit, engine);
+    if (value.effort && models.includes(hit) && offered.length && !offered.includes(value.effort)) throw bad(`${hit.id} does not offer effort "${value.effort}" on ${engineLabel(engine)}`);
   }
 }
 
@@ -947,14 +951,18 @@ export async function resolveStepModels(projectDir, fallbackModel, engine = 'cla
   const { roles } = await projectRolesFor(eng, projectDir);
   const out = {};
   for (const { key, label } of agentSteps()) {
-    const own = eng === 'claude' ? (cfg.steps[key] || {}) : {};
+    // The legacy per-role steps (project_config.steps, wf_default's storage) apply on ANY engine — `modelForEngine`
+    // below keeps a pick only when the engine runs it, so a stale Claude pick on an opencode run (or vice versa)
+    // falls through to the slot/fallback instead of being reported as a model this run will spawn. Before
+    // multi-engine this was claude-only, silently discarding per-role picks saved on other engines.
+    const own = cfg.steps[key] || {};
     const sel = own.model || own.effort ? own : (slots[key] || {});
     // Model roles (D3, D15): after the slot's own value and the run's model, before "no --model"; team roles included.
     // #1450: an empty role resolves to Worca's default (filled like a role); "Let <tool> decide" leaves it unset.
     const pick = !sel.model && !sel.effort && !fallback ? resolveRolePick(eng, roleOf(`steps.${key}`, { name: label }), { roles }) : null;
     const role = pick && pick.kind !== 'cli-decides' ? pick : null;
     const roleModel = role ? modelForEngine(role.model, eng, { projectDir }) : undefined;
-    out[key] = { model: sel.model || fallback || roleModel || undefined, effort: sel.effort || (roleModel ? role.effort : undefined) };
+    out[key] = { model: modelForEngine(sel.model || undefined, eng, { projectDir }) || fallback || roleModel || undefined, effort: sel.effort || (roleModel ? role.effort : undefined) };
   }
   return out;
 }

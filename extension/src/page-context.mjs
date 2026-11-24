@@ -5,7 +5,7 @@
 // them as DATA (system rule 2) and the server stamps a [worca context] line saying so (EXTENSION_CLIENT_LINE).
 // An area capture adds page-capture.md (one section per screenshot, D4); a page served by a running worca Action
 // names that run (GET /api/extension/actions/match).
-import { SNIPPET_MAX, SELECTOR_MAX } from './element-snippet.mjs';
+import { SNIPPET_MAX, SELECTOR_MAX } from '../../src/shared/element-snippet.mjs';
 export const SELECTION_MAX = 4000;
 export const TITLE_MAX = 300;
 export const PAGE_TEXT_MAX = 200_000;

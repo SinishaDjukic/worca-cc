@@ -289,3 +289,24 @@ test('style.css: a ref chip uses the token corner, a neutral fill and a coloured
   assert.match(css, /\.ask-ref-pill\.tone-slate\{color:var\(--slate-ink\);\}/);
   assert.doesNotMatch(css, /\.ask-ref-pill\.tone-violet/);
 });
+
+test('resolveRefKeys: the chip lookup\'s route and body, at most REFS_MAX keys per call; ok entries only; a failure is {}', async () => {
+  const { resolveRefKeys, ITEM_PILL } = await import('../ui/public/ask-ref-chips.mjs');
+  const { REFS_MAX } = await import('../src/shared/chip-refs.mjs');
+  assert.deepEqual(ITEM_PILL.merged, ['slate', 'Merged']);
+  const bodies = [];
+  const fetch = async (url, opts) => {
+    assert.equal(url, '/api/ask/refs/resolve');
+    assert.equal(opts.method, 'POST');
+    const { refs } = JSON.parse(opts.body);
+    bodies.push(refs.length);
+    return { ok: true, json: async () => ({ refs: Object.fromEntries(refs.map((k, i) => [k, i % 2 ? { ok: false } : { ok: true, kind: 'pr', state: 'merged', title: `T ${k}` }])) }) };
+  };
+  const keys = Array.from({ length: REFS_MAX + 3 }, (_, i) => `gh:o/r#${i + 1}`);
+  const out = await resolveRefKeys({ fetch, keys: [...keys, keys[0]] });
+  assert.deepEqual(bodies, [REFS_MAX, 3], 'deduped, sliced');
+  assert.deepEqual(out['gh:o/r#1'], { state: 'merged', title: 'T gh:o/r#1' });
+  assert.equal(out['gh:o/r#2'], undefined, 'not ok: left out');
+  assert.deepEqual(await resolveRefKeys({ fetch: async () => { throw new Error('offline'); }, keys: ['gh:o/r#1'] }), {});
+  assert.deepEqual(await resolveRefKeys({ fetch, keys: [] }), {});
+});

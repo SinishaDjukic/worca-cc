@@ -827,7 +827,11 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     const legacy = stepsCfg[authored] || {};
     const cfg = node.config && typeof node.config === 'object' ? node.config : {};
     const selO = owned(sel);
-    const legacyO = engine === 'claude' ? owned(legacy) : NO_PICK;
+    // The legacy per-role layer (wf_default's storage) applies on ANY engine: `owned` already keeps a pick only when
+    // the run's engine runs it, so a Claude pick on an opencode/codex run (and vice versa) is dropped exactly like a
+    // node pick, while a pick the engine CAN run is honored. Before multi-engine, this was claude-only, which silently
+    // discarded per-role picks the run window's Advanced → Agents rows save on other engines.
+    const legacyO = owned(legacy);
     const selP = selO.pick;
     const legacyP = legacyO.pick;
     const teamSkipped = !!(selP.model || selP.effort || legacyP.model || legacyP.effort);
@@ -871,7 +875,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     const ownSel = cleanPick(over.nodes?.[node.id]);
     const layerWanted = pair ? null : wantedOf([
       [sel, selO, (field) => (ownSel?.[field] ? 'run' : 'project')],
-      [engine === 'claude' ? legacy : null, legacyO, 'project'],
+      [legacy, legacyO, 'project'],
       [teamSkipped ? null : slotDefaults[authored], teamO, 'slot'],
       [cfgEff, cfgO, factoryApplied ? factorySource : 'template'],
       [roleO.raw, roleO, 'slot'],

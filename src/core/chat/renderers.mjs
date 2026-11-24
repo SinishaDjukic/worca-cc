@@ -15,6 +15,7 @@ import { CHAT_PROJECTION_MAX } from '../ask-projection.mjs';
 import { awayAnswersSummary } from '../../shared/away-mode/labels.mjs';
 import { usageLimitSwitches, engineLabel, engineReportsCost, runCostLabel } from '../../shared/engine-switch.mjs';
 import { readyEnginesCached } from '../engines/ready-cache.mjs';
+import { runHeadlineMs } from '../../shared/run-elapsed.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 
@@ -57,7 +58,7 @@ function head(icon, meta) {
 /**
  * done event: status done|stopped|paused (+reason for limit pauses, +limitEngine for a
  * usage limit an engine hit).
- * meta may carry {title, totalCostUsd, totalActiveMs, runEngine} for the summary line.
+ * meta may carry {title, totalCostUsd, totalActiveMs, elapsedMs, runEngine} for the summary line.
  */
 export function renderDone(meta, payload = {}) {
   const status = payload.status || 'done';
@@ -100,7 +101,7 @@ export function renderDone(meta, payload = {}) {
   }
   const parts = head('✅', meta);
   parts.push('   **Status:** completed');
-  const dur = fmtMs(meta.totalActiveMs);
+  const dur = fmtMs(runHeadlineMs(meta));
   if (dur) parts.push(`   **Duration:** ${dur}`);
   const cost = fmtRunCost(meta.runEngine, meta.totalCostUsd);
   if (cost) parts.push(`   **Cost:** ${cost}`);

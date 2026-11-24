@@ -58,13 +58,16 @@ const objectBody = (fetchJson) => (url, opts = {}) => {
  * The shared mount: button visibility by flag (live), store-driven label, click → picker, revalidate once on mount and when
  * the flag comes back on. `getScope()` is the picker's scope source; `onProject(key)` applies a chosen project to the host.
  */
-function mountEntry({ button, store, getScope, getProjects, onProject, doc, flagOn, onFlagChange, fetchJson }) {
+function mountEntry({ button, store, getScope, getProjects, onProject, doc, flagOn, onFlagChange, fetchJson, paint = null }) {
   if (!button) return () => {};
   const searchFn = searchFnFor(fetchJson);
   const toObjectBody = objectBody(fetchJson);
   let picking = false;
 
-  const syncLabel = () => { button.textContent = pullLabel(store.get().items.length); };
+  const syncLabel = () => {
+    const n = store.get().items.length;
+    if (paint) paint(button, n); else button.textContent = pullLabel(n);
+  };
   const recheck = () => revalidate(store, toObjectBody, getScope(), flagOn).catch(() => ({ ok: false, changed: false }));
   const syncFlag = () => { button.hidden = !flagOn(); };
 
@@ -111,10 +114,14 @@ export function mountNewRunAttach({
   return mountEntry({ button, store, getScope, getProjects, onProject, doc, flagOn, onFlagChange, fetchJson });
 }
 
-/** The Chat composer button. `getScope()` is the thread's `{pinned, projectKey, workspaceId}`; a picked project pins the chat. */
+/**
+ * The Chat composer button. `getScope()` is the thread's `{pinned, projectKey, workspaceId}`; a picked project pins the chat.
+ * `paint(button, n)`, when given, draws the button in place of the words; it runs on mount and on every store commit, so it
+ * must be idempotent.
+ */
 export function mountChatAttach({
   button, store, getScope, setScope, doc = globalThis.document,
-  flagOn = () => pageFlagOn(FLAG), onFlagChange = (fn) => pageOnFlagChange(FLAG, fn), fetchJson = jsonFetcher(),
+  flagOn = () => pageFlagOn(FLAG), onFlagChange = (fn) => pageOnFlagChange(FLAG, fn), fetchJson = jsonFetcher(), paint = null,
 }) {
   const scopeNow = () => chatScope(getScope());
   const getProjects = async () => {
@@ -124,5 +131,5 @@ export function mountChatAttach({
     } catch { return []; }
   };
   const onProject = (key) => { setScope({ pinned: true, projectKey: key }); };
-  return mountEntry({ button, store, getScope: scopeNow, getProjects, onProject, doc, flagOn, onFlagChange, fetchJson });
+  return mountEntry({ button, store, getScope: scopeNow, getProjects, onProject, doc, flagOn, onFlagChange, fetchJson, paint });
 }

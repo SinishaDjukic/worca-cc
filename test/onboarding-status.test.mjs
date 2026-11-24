@@ -77,7 +77,7 @@ test('claudeReady (Windows): a .cmd shim alone is not ready (hint); a real claud
 
 test('derived ticks: project, run, realRun, ask, workflows, teamPolicy (one store, sequential)', async () => {
   await checkRows([
-    { name: 'adding a project ticks "project"; a done pipeline ticks "run"; spend ticks "realRun"', run: async () => {
+    { name: 'adding a project ticks "project"; a finished, paid run ticks "run" and "realRun"', run: async () => {
       const proj = join(home, 'proj');
       mkdirSync(proj, { recursive: true });
       await addProject({ name: 'proj', path: proj });
@@ -85,14 +85,41 @@ test('derived ticks: project, run, realRun, ask, workflows, teamPolicy (one stor
       assert.equal(s.steps.project, true);
       assert.equal(s.steps.run, false);
 
-      await seedPipeline(proj, { title: 'mock', status: 'done', totalCostUsd: 0 });
+      await seedPipeline(proj, { title: 'free', status: 'done', totalCostUsd: 0 });
       s = await onboardingStatus();
-      assert.equal(s.steps.run, true, 'a finished run, free or not, is "end to end"');
+      assert.equal(s.steps.run, false, 'a $0 run is not a real run');
       assert.equal(s.steps.realRun, false, 'no spend yet');
 
-      await seedPipeline(proj, { title: 'real', status: 'error', totalCostUsd: 0.42 });
+      await seedPipeline(proj, { title: 'real', status: 'done', totalCostUsd: 0.42 });
       s = await onboardingStatus();
-      assert.equal(s.steps.realRun, true, 'any spend is a real run, whatever its outcome');
+      assert.equal(s.steps.run, true, 'a finished run that cost something is a real run');
+      assert.equal(s.steps.realRun, true);
+    } },
+    { name: 'run/realRun ticks ignore demo and $0 runs; deleted runs and the no-project key behave as documented', run: async () => {
+      const { getDb } = await import('../src/core/db.mjs');
+      const { NO_PROJECT_KEY } = await import('../src/shared/no-project.mjs');
+      const db = getDb();
+      db.exec('DELETE FROM pipeline_steps; DELETE FROM pipelines');
+      const proj = join(home, 'proj');
+      for (let i = 0; i < 10; i++) {
+        const { id } = await seedPipeline(proj, { title: `demo${i}`, status: 'done', totalCostUsd: 1 });
+        db.prepare('UPDATE pipelines SET run_setup = ? WHERE id = ?').run(JSON.stringify({ mock: true }), id);
+      }
+      await seedPipeline(proj, { title: 'free', status: 'done', totalCostUsd: 0 });
+      let s = await onboardingStatus();
+      assert.equal(s.steps.run, false, 'demo and $0 runs never tick "run"');
+      assert.equal(s.steps.realRun, false, 'nor "realRun"');
+
+      const real = await seedPipeline(proj, { title: 'real', status: 'done', totalCostUsd: 0.3 });
+      db.prepare('UPDATE pipelines SET project_key = ? WHERE id = ?').run(NO_PROJECT_KEY, real.id);
+      s = await onboardingStatus();
+      assert.equal(s.steps.run, true, 'a real run with no project still ticks "run" (install-wide)');
+      assert.equal(s.steps.realRun, false, '...but not "realRun", which needs a project');
+
+      db.prepare('UPDATE pipelines SET project_key = ?, deleted_at = ? WHERE id = ?').run(real.key, new Date().toISOString(), real.id);
+      s = await onboardingStatus();
+      assert.equal(s.steps.run, true, 'deleted runs still count');
+      assert.equal(s.steps.realRun, true);
     } },
     { name: 'an answer in a chat ticks "ask", a failed turn does not; a picked workflow (the persisted picker choice) ticks "workflows"', run: async () => {
       let s = await onboardingStatus();
@@ -125,9 +152,19 @@ test('derived ticks: project, run, realRun, ask, workflows, teamPolicy (one stor
 
 test('the claude block carries where the CLI checked (configDirectory) to /api/onboarding', async () => {
   const detect = async () => ({ ready: true, bin: '/usr/local/bin/claude', hint: null, auth: 'signed-out', connected: false, configDirectory: '/tmp/scratch/.claude' });
-  const s = await onboardingStatus({ detect });
+  const s = await onboardingStatus({ detect, signedIn: async () => ({ signedIn: false, via: [] }) });
   assert.deepEqual(s.claude, { bin: '/usr/local/bin/claude', hint: null, auth: 'signed-out', configDirectory: '/tmp/scratch/.claude' });
   assert.equal(s.steps.claude, false);
+});
+
+test('claude step ticks for a non-Claude provider ("Connect a model")', async () => {
+  const detect = async () => ({ ready: false, bin: 'claude', hint: null, auth: null, connected: false, configDirectory: null });
+  const signedOut = await onboardingStatus({ detect, signedIn: async () => ({ signedIn: false, via: [] }) });
+  assert.equal(signedOut.steps.claude, false);
+  assert.equal(signedOut.providerSignedIn, false);
+  const copilotOnly = await onboardingStatus({ detect, signedIn: async () => ({ signedIn: true, via: ['copilot'] }) });
+  assert.equal(copilotOnly.steps.claude, true, 'a Copilot-only install ticks the step');
+  assert.equal(copilotOnly.providerSignedIn, true);
 });
 
 // ---- stored flags ----
@@ -137,20 +174,94 @@ test('onboarding prefs: booleans only, unknown keys refused, all-false drops the
   assert.throws(() => assertOnboardingPrefsInput({ workspaceGuideSeen: 1 }), /onboarding\.workspaceGuideSeen must be true or false/);
   assert.throws(() => assertOnboardingPrefsInput({ nope: true }), /unknown onboarding key/);
   assert.throws(() => assertOnboardingPrefsInput(null), /object/);
-  assert.deepEqual(await setOnboardingPrefs({ hidden: true }), { hidden: true, welcomeSeen: false, workspaceGuideSeen: false, roleDefaultsNoticeSeen: false });
-  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: true }), { hidden: true, welcomeSeen: true, workspaceGuideSeen: false, roleDefaultsNoticeSeen: false });
-  assert.deepEqual(await setOnboardingPrefs({ hidden: false }), { hidden: false, welcomeSeen: true, workspaceGuideSeen: false, roleDefaultsNoticeSeen: false }, 'Show again keeps the welcome seen');
-  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, roleDefaultsNoticeSeen: false });
-  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: true, roleDefaultsNoticeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: true, roleDefaultsNoticeSeen: false }, 'the walkthrough flag alone keeps the key');
+  assert.deepEqual(await setOnboardingPrefs({ hidden: true }), { hidden: true, welcomeSeen: false, workspaceGuideSeen: false, setupFinished: false, setupChecked: false, roleDefaultsNoticeSeen: false, guidesSeen: {} });
+  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: true }), { hidden: true, welcomeSeen: true, workspaceGuideSeen: false, setupFinished: false, setupChecked: false, roleDefaultsNoticeSeen: false, guidesSeen: {} });
+  assert.deepEqual(await setOnboardingPrefs({ hidden: false }), { hidden: false, welcomeSeen: true, workspaceGuideSeen: false, setupFinished: false, setupChecked: false, roleDefaultsNoticeSeen: false, guidesSeen: {} }, 'Show again keeps the welcome seen');
+  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, setupFinished: false, setupChecked: false, roleDefaultsNoticeSeen: false, guidesSeen: {} });
+  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: true }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: true, setupFinished: false, setupChecked: false, roleDefaultsNoticeSeen: false, guidesSeen: {} }, 'the walkthrough flag alone keeps the key');
   assert.equal((await onboardingStatus()).workspaceGuideSeen, true, 'GET /api/onboarding carries it');
-  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: false, roleDefaultsNoticeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, roleDefaultsNoticeSeen: false });
-  assert.deepEqual(onboardingPrefs(), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, roleDefaultsNoticeSeen: false });
+  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, setupFinished: false, setupChecked: false, roleDefaultsNoticeSeen: false, guidesSeen: {} });
+  assert.deepEqual(onboardingPrefs(), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, setupFinished: false, setupChecked: false, roleDefaultsNoticeSeen: false, guidesSeen: {} });
   const s = await onboardingStatus();
   assert.equal(s.hidden, false);
+  assert.deepEqual(s.guidesSeen, {}, 'GET /api/onboarding always carries the map');
+});
+
+test('onboarding guidesSeen: validated whole-patch, merged (true sets, false deletes), reset composes, empty drops the key', async () => {
+  const { settingsFile, isSeenOnlyPatch } = await import('../src/core/settings.mjs');
+  const { readFileSync, existsSync } = await import('node:fs');
+  const onDisk = () => (existsSync(settingsFile()) ? JSON.parse(readFileSync(settingsFile(), 'utf8')) : {});
+  await checkRows([
+    { name: 'every new refusal has its own words', run: () => {
+      assert.throws(() => assertOnboardingPrefsInput({ guidesSeen: [] }), /onboarding\.guidesSeen must be an object/);
+      assert.throws(() => assertOnboardingPrefsInput({ guidesSeen: 'runs' }), /onboarding\.guidesSeen must be an object/);
+      assert.throws(() => assertOnboardingPrefsInput({ guidesSeen: null }), /onboarding\.guidesSeen must be an object/);
+      assert.throws(() => assertOnboardingPrefsInput({ guidesSeen: { nope: true } }), /unknown how-it-works area "nope"/);
+      assert.throws(() => assertOnboardingPrefsInput({ guidesSeen: { runs: 'yes' } }), /onboarding\.guidesSeen\.runs must be true or false/);
+      assert.throws(() => assertOnboardingPrefsInput({ guidesReset: 1 }), /onboarding\.guidesReset must be true or false/);
+      assert.throws(() => assertOnboardingPrefsInput({ other: true }), /unknown onboarding key "other"/);
+      assert.doesNotThrow(() => assertOnboardingPrefsInput({ guidesSeen: { runs: true, chat: false }, guidesReset: false }));
+    } },
+    { name: 'isSeenOnlyPatch: only guidesSeen / workspaceGuideSeen keys', run: () => {
+      assert.equal(isSeenOnlyPatch({ guidesSeen: { runs: true } }), true);
+      assert.equal(isSeenOnlyPatch({ workspaceGuideSeen: true }), true);
+      assert.equal(isSeenOnlyPatch({ guidesSeen: { runs: true }, workspaceGuideSeen: false }), true);
+      assert.equal(isSeenOnlyPatch({ guidesSeen: { runs: true }, hidden: true }), false);
+      assert.equal(isSeenOnlyPatch({}), false, 'an empty body keeps today\'s pin');
+      assert.equal(isSeenOnlyPatch({ welcomeSeen: true }), false);
+      assert.equal(isSeenOnlyPatch({ guidesReset: true }), false);
+      assert.equal(isSeenOnlyPatch({ guidesSeen: { runs: true }, guidesReset: true }), false);
+    } },
+    { name: 'true sets a key, false deletes it, other keys stay', run: async () => {
+      let p = await setOnboardingPrefs({ guidesSeen: { runs: true, chat: true } });
+      assert.deepEqual(p.guidesSeen, { runs: true, chat: true });
+      assert.deepEqual(onDisk().onboarding.guidesSeen, { runs: true, chat: true });
+      p = await setOnboardingPrefs({ guidesSeen: { chat: false } });
+      assert.deepEqual(p.guidesSeen, { runs: true });
+      assert.equal(p.hidden, false, 'booleans untouched');
+    } },
+    { name: 'a refused patch writes nothing (prefs and file unchanged)', run: async () => {
+      const before = onboardingPrefs();
+      const fileBefore = readFileSync(settingsFile(), 'utf8');
+      await assert.rejects(setOnboardingPrefs({ hidden: true, guidesSeen: { runs: true, nope: true } }), /unknown how-it-works area/);
+      assert.deepEqual(onboardingPrefs(), before);
+      assert.equal(readFileSync(settingsFile(), 'utf8'), fileBefore);
+    } },
+    { name: 'the returned prefs are a fresh object (mutating them changes nothing stored)', run: () => {
+      const p = onboardingPrefs();
+      p.guidesSeen.design = true;
+      assert.deepEqual(onboardingPrefs().guidesSeen, { runs: true });
+    } },
+    { name: 'stored junk is ignored on read (unknown area, non-true value)', run: async () => {
+      const { writeFileSync } = await import('node:fs');
+      const file = onDisk();
+      writeFileSync(settingsFile(), JSON.stringify({ ...file, onboarding: { guidesSeen: { runs: true, bogus: true, chat: 'yes', design: false } } }));
+      assert.deepEqual(onboardingPrefs().guidesSeen, { runs: true });
+    } },
+    { name: 'guidesReset clears the map and workspaceGuideSeen, and composes with the same patch', run: async () => {
+      await setOnboardingPrefs({ workspaceGuideSeen: true, hidden: true });
+      const p = await setOnboardingPrefs({ guidesReset: true, guidesSeen: { stats: true } });
+      assert.deepEqual(p.guidesSeen, { stats: true }, 'the reset runs first, then the patch map');
+      assert.equal(p.workspaceGuideSeen, false);
+      assert.equal(p.hidden, true, 'other flags stay');
+      const q = await setOnboardingPrefs({ guidesReset: true });
+      assert.deepEqual(q.guidesSeen, {});
+    } },
+    { name: 'the onboarding key drops only when every flag is false AND the map is empty', run: async () => {
+      await setOnboardingPrefs({ hidden: false, guidesSeen: { runs: true } });
+      assert.ok(onDisk().onboarding, 'a map alone keeps the key');
+      await setOnboardingPrefs({ guidesSeen: { runs: false } });
+      assert.equal('onboarding' in onDisk(), false);
+      await setOnboardingPrefs({ hidden: true });
+      assert.equal('guidesSeen' in onDisk().onboarding, false, 'an empty map is omitted');
+      await setOnboardingPrefs({ hidden: false });
+      assert.equal('onboarding' in onDisk(), false);
+    } },
+  ]);
 });
 
 test('#1450: roleDefaultsNoticeSeen is an onboarding flag; an unknown flag is still refused', async () => {
-  assert.deepEqual(await setOnboardingPrefs({ roleDefaultsNoticeSeen: true }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, roleDefaultsNoticeSeen: true });
+  assert.deepEqual(await setOnboardingPrefs({ roleDefaultsNoticeSeen: true }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, setupFinished: false, setupChecked: false, roleDefaultsNoticeSeen: true, guidesSeen: {} });
   assert.equal((await onboardingStatus()).roleDefaultsNoticeSeen, true, 'GET /api/onboarding carries it');
   assert.throws(() => assertOnboardingPrefsInput({ roleDefaultsNoticeSeen: 'yes' }), /true or false/);
   assert.throws(() => assertOnboardingPrefsInput({ roleDefaultsNotice: true }), /unknown onboarding key/);
@@ -175,9 +286,50 @@ test('resetWorkspaceGuideIfNoWorkspaces: clears the flag only when it is set AND
       assert.equal(await resetWorkspaceGuideIfNoWorkspaces(), true);
       assert.equal(onboardingPrefs().workspaceGuideSeen, false);
     } },
+    { name: 'seen + none left: the one write also marks the workspaces area as seen (D-5)', run: async () => {
+      await setOnboardingPrefs({ workspaceGuideSeen: true });
+      assert.equal(await resetWorkspaceGuideIfNoWorkspaces(), true);
+      assert.equal(onboardingPrefs().workspaceGuideSeen, false);
+      assert.equal(onboardingPrefs().guidesSeen.workspaces, true);
+    } },
     { name: 'not seen + none left: nothing to undo, false (no write)', run: async () => {
       assert.equal(await resetWorkspaceGuideIfNoWorkspaces(), false);
       assert.equal(onboardingPrefs().workspaceGuideSeen, false);
+    } },
+  ]);
+});
+
+test('ensureSetupMarker credits a non-fresh install once, leaves a fresh install unfinished, never rewrites', async () => {
+  const { ensureSetupMarker } = await import('../src/core/onboarding.mjs');
+  const { settingsFile } = await import('../src/core/settings.mjs');
+  const { readFileSync, writeFileSync, rmSync } = await import('node:fs');
+  const reset = () => rmSync(settingsFile(), { force: true });
+  const raw = () => readFileSync(settingsFile(), 'utf8');
+  await checkRows([
+    { name: 'a non-fresh install is credited once: written, then unchanged', run: async () => {
+      reset();
+      assert.equal(await ensureSetupMarker({ isFresh: false }), 'written');
+      assert.equal(onboardingPrefs().setupFinished, true);
+      assert.equal(onboardingPrefs().setupChecked, true);
+      assert.equal((await onboardingStatus()).setupFinished, true);
+      const before = raw();
+      assert.equal(await ensureSetupMarker({ isFresh: false }), 'unchanged');
+      assert.equal(raw(), before, 'no second write');
+    } },
+    { name: 'a fresh install is checked but stays unfinished, and a later non-fresh boot never credits it', run: async () => {
+      reset();
+      assert.equal(await ensureSetupMarker({ isFresh: true }), 'written');
+      assert.equal(onboardingPrefs().setupFinished, false);
+      assert.equal(onboardingPrefs().setupChecked, true);
+      assert.equal((await onboardingStatus()).setupFinished, false);
+      assert.equal(await ensureSetupMarker({ isFresh: false }), 'unchanged');
+      assert.equal(onboardingPrefs().setupFinished, false, 'never rewritten after the first check');
+    } },
+    { name: 'a setup already finished by the user is left alone', run: async () => {
+      reset();
+      writeFileSync(settingsFile(), JSON.stringify({ onboarding: { setupFinished: true, setupChecked: true } }));
+      assert.equal(await ensureSetupMarker({ isFresh: true }), 'unchanged');
+      assert.equal(onboardingPrefs().setupFinished, true);
     } },
   ]);
 });

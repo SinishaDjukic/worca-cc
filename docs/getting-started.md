@@ -10,6 +10,15 @@ that only explains something (the Workflows canvas, its chat), or whose
 state is already right, carries a **Next** button instead. Every start is a fresh
 walk from the first hop, so a replayed guide explains every stop again.
 
+## How the page is laid out
+
+When setup is not finished, a **Finish setup** tile comes first; it opens the setup assistant and is not one of the nine
+steps. Below Runner the checklist has two sections: **Toward Runner** (steps 1 to 6 and a "Real runs · n of 3" counter) and
+**Later** (steps 7 to 9, each tagged "Helps Hooked"). The team steps (8 and 9) are listed before Runner only in Expert mode;
+from Runner on they are listed in every mode for a person on a team and hidden for a solo one. At Runner and above the page
+folds to one line plus the undone Later steps that are visible. The sidebar pill reads "Finish setup" until setup is done,
+then "Runner · n of 7" until Runner, then "Getting started" with its count.
+
 ## The nine steps
 
 | # | Tile | Done when (derived) | Guide (each row is a hop; the first that applies is lit) |
@@ -147,16 +156,36 @@ inside a stacking context the class cannot escape (the Workflows stage) are lift
 their ancestor (`lift`). `pointer` mode (no scrim, above the modal layer) exists
 for targets inside an open dialog.
 
+## How it works
+
+Every main area has a **How it works** button in its top bar. It opens a walkthrough of three to five
+screens that explains the area with made-up examples; opening it never changes anything in your
+workspace or projects.
+
+- The first time you visit an area, its button carries a **new** mark. The mark goes away once you open
+  that walkthrough, and it stays gone on every other tab and after a reload (the server remembers which
+  areas you have opened).
+- A walkthrough whose last screen has a matching Getting started tour shows **Show me in the product**
+  there; it closes the walkthrough and starts that tour on the real controls. A walkthrough without a
+  matching tour has no such button.
+- **Show again** in Settings › General › Getting started also brings every **new** mark back. For a person
+  with no workspace it also makes the next **Create workspace** open the Workspaces walkthrough first
+  again, as it did on a first visit.
+- The explainers are reviewed now and then; no one person owns them.
+
 ## API and storage
 
-- `GET /api/onboarding[?recheck=1]` → `{ steps, done, total, claude: { bin, hint, auth }, hidden, welcomeSeen, workspaceGuideSeen }` (`auth`: `signed-in` | `signed-out` | `unknown` | `null` when the binary is missing; `recheck` skips the remembered sign-in answer)
+- `GET /api/onboarding[?recheck=1]` → `{ steps, done, total, claude: { bin, hint, auth }, hidden, welcomeSeen, workspaceGuideSeen, guidesSeen }` (`guidesSeen`: `{ <areaId>: true }` for each How it works area opened; `auth`: `signed-in` | `signed-out` | `unknown` | `null` when the binary is missing; `recheck` skips the remembered sign-in answer)
   (`src/core/onboarding.mjs`). Computed on every call from the store and the
   PATH; team metrics and team policy read the cached scope status only (no
   discovery).
-- `POST /api/onboarding` `{ hidden?, welcomeSeen?, workspaceGuideSeen? }` — booleans only, unknown
-  keys 400 — writes the flags to `settings.json` (`onboarding: {...}`,
-  dropped when all are false) and broadcasts `onboarding-changed`.
-  `workspaceGuideSeen` is the *How workspaces work* walkthrough; the server clears it when the last workspace is deleted.
+- `POST /api/onboarding` `{ hidden?, welcomeSeen?, workspaceGuideSeen?, guidesSeen?, guidesReset? }` — flags and
+  `guidesReset` are booleans; `guidesSeen` is `{ <areaId>: boolean }` with known area ids only; anything else,
+  and unknown keys, answer 400 and write nothing — writes the prefs to `settings.json` (`onboarding: {...}`,
+  dropped when all are false and no guide is seen) and broadcasts `onboarding-changed`. `guidesReset: true`
+  clears `guidesSeen` and `workspaceGuideSeen` (Show again sends it). A body that only carries `guidesSeen`
+  or `workspaceGuideSeen` does not pin the interface mode.
+  `workspaceGuideSeen` is the legacy *How workspaces work* flag; the server clears it when the last workspace is deleted (the Workspaces area stays seen in `guidesSeen`).
 - The client refetches on `pipelines-changed`, `projects-changed`,
   `workspaces-changed`, `team-metrics-changed`, `team-policy-changed`,
   `onboarding-changed`, on a run

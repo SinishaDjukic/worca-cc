@@ -93,7 +93,7 @@ test('the Chat row dot rides the rail corner; the logo links show a focus ring',
 });
 
 test('the composer buttons keep their size, the run panel slot hides, cards measure the transcript, the empty lead row takes no room, the rail dot', () => {
-  assert.equal(ruleBody('.chat-page .ask-composer-row > :is(.btn,.ask-meter,.ask-model-btn,.ask-voice):not(.ask-scope-btn)'), 'flex:none;', 'Send never shrinks out of the box (v2); the scope button is a .btn too and must stay shrinkable');
+  assert.equal(ruleBody('.chat-page .ask-composer-row > :is(.btn,.ask-meter,.ask-model-btn,.ask-voice,.ask-composer-ext):not(.ask-scope-btn)'), 'flex:none;', 'Send never shrinks out of the box (v2), nor a design\'s Point and gear (they lay over the model name); the scope button is a .btn too and must stay shrinkable');
   assert.equal(ruleBody('.chat-panel[hidden]'), 'display:none;', '.chat-panel{display:flex} would beat [hidden]: an empty bordered slot');
   assert.equal(ruleBody('.chat-convo .ask-transcript'), 'container-type:inline-size;isolation:isolate;scrollbar-gutter:stable both-edges;padding-bottom:calc(var(--chat-dock-h,120px) + var(--chat-dock-fade));', '100cqi = the transcript width; the floating dock\'s height plus its fade band is its bottom clearance');
   assert.equal(ruleBody('.chat-convo .ask-msg > :is(.ask-card,.ask-card-stub)'), null, 'no card width rule (#959)');

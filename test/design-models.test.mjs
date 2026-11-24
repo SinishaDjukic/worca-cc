@@ -7,6 +7,9 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { JSDOM } from 'jsdom';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { useDesignEnv } from './helpers/design-fixture.mjs';
 import { createDesignBuilds } from '../src/core/design/registry.mjs';
 import { registerDesignRoutes } from '../src/core/design/routes.mjs';
@@ -15,6 +18,7 @@ import { designModelPick, resolveDesignModel } from '../src/core/design/spawn-op
 import { designBuildModels } from '../src/core/design/chat-thread.mjs';
 import { DESIGN_ENGINES } from '../src/core/design/engines.mjs';
 import { assertDesignModelsInput, nextDesignModels } from '../src/core/settings.mjs';
+import { assertSlotModels } from '../src/core/config.mjs';
 import { DESIGN_ENGINE_NAMES } from '../src/shared/design-names.mjs';
 import { roleOfSettingId } from '../src/shared/model-roles.mjs';
 import { enginePatchToSettingsBody, designRowId, renderEngineSection } from '../ui/public/engine-settings-view.mjs';
@@ -108,6 +112,34 @@ test('POST takes picks the engine runs and stores them; a model the engine canno
     const r = await call('POST', '/api/design', { kind: 'web', title: 'refused', models });
     assert.equal(r.status, 400, JSON.stringify(models));
     assert.match(r.json.error, re);
+  }
+});
+
+test('assertSlotModels: a pick may carry an effort an OpenCode Zen model does not offer — the effort is inert, not refused', async () => {
+  // A Zen `opencode/*` advertises no efforts (OpenCode 2.3.1+ refuses a `#variant`), so a design pick that carries
+  // the default lead/builder effort must be accepted, not refused: the effort is dropped at spawn. The slot-check
+  // HOME is sandboxed (and opted in) just for this catalog seed, then restored.
+  const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, FLAG: process.env.WORCA_TEST_ALLOW_HOME_FALLBACK };
+  const home = mkdtempSync(join(tmpdir(), 'worca-design-zen-'));
+  process.env.HOME = home; process.env.USERPROFILE = home;
+  process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+  const { addGlobalModel, removeGlobalModel } = await import('../src/core/settings.mjs');
+  try {
+    await addGlobalModel({ id: 'opencode/big-pickle', label: 'big-pickle', engine: 'opencode', efforts: [] });   // Zen: offers no effort
+    await addGlobalModel({ id: 'aifarm-msp/DeepSeek-V4-Flash-0731', label: 'DS', engine: 'opencode', efforts: ['medium', 'high'] });
+    await assertSlotModels([{ id: 'models.lead', engine: 'opencode', value: { model: 'opencode/big-pickle', effort: 'high' } }]);
+    await assertSlotModels([{ id: 'models.builder', engine: 'opencode', value: { model: 'opencode/big-pickle' } }]);
+    await assert.rejects(() => assertSlotModels([{ id: 'models.lead', engine: 'opencode', value: { model: 'aifarm-msp/DeepSeek-V4-Flash-0731', effort: 'low' } }]),
+      /does not offer effort "low"/, 'a model that offers efforts still refuses the ones it does not');
+    await assert.rejects(() => assertSlotModels([{ id: 'models.lead', engine: 'opencode', value: { model: 'aifarm-msp/DeepSeek-V4-Flash-0731', effort: 'max' } }]),
+      /does not offer effort "max"/);
+  } finally {
+    await removeGlobalModel('opencode/big-pickle').catch(() => {});
+    await removeGlobalModel('aifarm-msp/DeepSeek-V4-Flash-0731').catch(() => {});
+    for (const [k, v] of [['HOME', prev.HOME], ['USERPROFILE', prev.USERPROFILE], ['WORCA_TEST_ALLOW_HOME_FALLBACK', prev.FLAG]]) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+    try { rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); } catch { /* best effort */ }
   }
 });
 
@@ -207,6 +239,24 @@ test('the pickers read the answer and say who picks, as the Chat button reads', 
   const { primary, rest } = splitModels([{ id: 'claude-opus-5-5' }, { id: 'claude-opus-5' }, { id: 'claude-sonnet-5-5' }], null);
   assert.deepEqual([primary.map((m) => m.id), rest.map((m) => m.id)], [['claude-opus-5-5', 'claude-sonnet-5-5'], ['claude-opus-5']]);
   assert.deepEqual(splitModels([{ id: 'claude-opus-5-5' }, { id: 'claude-opus-5' }], 'claude-opus-5').primary.map((m) => m.id), ['claude-opus-5-5', 'claude-opus-5'], 'the pick stays up front');
+});
+
+test('coerceEffort: a model that offers no effort (an OpenCode Zen `opencode/*`) is picked without one', () => {
+  const zen = readOptions({
+    engine: 'opencode', label: 'OpenCode', efforts: ['minimal', 'low', 'medium', 'high', 'max'],
+    models: [
+      { id: 'opencode/big-pickle', label: 'big-pickle', efforts: [] },
+      { id: 'aifarm-msp/DeepSeek-V4-Flash-0731', label: 'DS', efforts: ['medium', 'high'] },
+    ],
+    picks: { lead: null, builder: null },
+    defaults: { lead: { model: null, effort: 'high', source: 'default' }, builder: { model: null, effort: 'medium', source: 'default' } },
+  });
+  assert.equal(coerceEffort('opencode/big-pickle', 'high', zen), '', 'no effort for a model that offers none (the default lead effort does not stick)');
+  assert.equal(coerceEffort('opencode/big-pickle', '', zen), '');
+  assert.equal(coerceEffort('aifarm-msp/DeepSeek-V4-Flash-0731', 'high', zen), 'high', 'a model with efforts keeps its pick');
+  assert.equal(coerceEffort('aifarm-msp/DeepSeek-V4-Flash-0731', 'low', zen), 'high', 'a foreign effort maps to high');
+  const p = pillView('lead', { model: 'opencode/big-pickle', effort: 'high' }, zen);
+  assert.equal(p.effort, '', 'the pill shows no effort for the Zen model');
 });
 
 test('a pick in the dock is saved, and a refused save puts it back; Effort opens its own pane', async () => {

@@ -9,6 +9,11 @@
 - **Fable 5.2 is in the catalog** (premium, $8 / $40). A step about to run on a premium model nobody chose, or whose `[init]` model is premium and unchosen or differs from the requested one, **pauses** until you choose **Continue on <model>** or **Switch model and continue…**. A paused run started before this change resumes on the defaults.
 - **A usage limit scoped to one model** ("Fable limit") offers the other models on the same sign-in. The setup assistant preselects a model per role, and existing installs with an empty role see a one-time notice. The sub-agent `auto` rubric no longer offers Fable, the title retry runs on Haiku 5.5, and the broker preflight checks the default it will really use.
 
+### Remotes through an SSH Host alias (#1476)
+
+- A remote through a `~/.ssh/config` Host alias (`git@github-work:me/repo.git`) now counts as the host the alias names: Worca asks `ssh -G` (no connection) and re-parses the URL with the real host, so a pull request from a fork cloned that way goes to `upstream` instead of failing with "Head ref must be a branch", and an Azure DevOps alias gets its org and project. git keeps the URL as written. ssh missing, failing or slow keeps the alias host, and the next lookup asks again; real answers are cached per process.
+- Behaviour change: with a fork cloned through an alias as `origin`, Automations watch the fork instead of `upstream` (the same as a fork cloned without an alias). See [Git automations](docs/git-automations.md).
+
 ### GitHub Copilot on a GHE.com tenant (data residency)
 
 - **A fourth Copilot account type, GHE.com tenant** (`accountType: ghe-com`), with a required **GHE.com host** (`acme.ghe.com`) on the Providers page, in `worca models set copilot accountType=ghe-com enterpriseHost=acme.ghe.com` and in Ask Worca's provider card. The host is validated (a bare `<tenant>.ghe.com`, no path, port or credentials) and stored normalized.

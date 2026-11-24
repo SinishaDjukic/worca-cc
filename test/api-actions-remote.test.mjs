@@ -10,6 +10,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { WebSocket } from 'ws';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { TEAM, AUD, CERTS_URL, makeAccessKey, signAccessJwt, certsFetch } from './helpers/access-jwt.mjs';
 
@@ -40,6 +41,40 @@ function remote(method, path, body) {
     if (data) r.write(data);
     r.end();
   });
+}
+/** A remote request whose answer may be a page (the preview proxy): the body as text. `jwt: false`: no Access token. */
+function remoteRaw(method, path, { headers = {}, jwt = true } = {}) {
+  return new Promise((res, rej) => {
+    const r = http.request({ host: '127.0.0.1', port, path, method, headers: {
+      host: PUBLIC, ...(jwt ? { 'cf-access-jwt-assertion': signAccessJwt(accessKey) } : {}), ...headers } }, (resp) => {
+      let text = '';
+      resp.setEncoding('utf8');
+      resp.on('data', (c) => { text += c; });
+      resp.on('end', () => res({ status: resp.statusCode, text }));
+    });
+    r.on('error', rej);
+    r.end();
+  });
+}
+/** A remote WebSocket upgrade: resolves 'open' or rejects with the HTTP status the server answered. */
+function remoteWs(path, { jwt = true } = {}) {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`, { headers: { host: PUBLIC, origin: 'null',
+    ...(jwt ? { 'cf-access-jwt-assertion': signAccessJwt(accessKey) } : {}) } });
+  return new Promise((res, rej) => { ws.once('open', () => { ws.terminate(); res('open'); }); ws.once('error', rej); });
+}
+/** A loopback page Worca did not start, in a range of its own: minting probes the port (another Worca is refused), so
+ *  the preview tests never depend on what this machine runs on 4400–4499. */
+async function withQuietPort(fn) {
+  const { setActionsSettings } = await import('../src/core/settings.mjs');
+  const quiet = http.createServer((q, s) => { s.writeHead(200, { 'content-type': 'text/plain' }); s.end('quiet'); });
+  await new Promise((r) => quiet.listen(0, '127.0.0.1', r));
+  const p = quiet.address().port;
+  await setActionsSettings({ portLow: p, portHigh: p });
+  try { return await fn(p); } finally {
+    await setActionsSettings({ portLow: 4400, portHigh: 4499 });
+    quiet.closeAllConnections();
+    await new Promise((r) => quiet.close(r));
+  }
 }
 /** An in-container request: loopback peer and Host 127.0.0.1 (no identity needed). */
 async function local(method, path, body) {
@@ -152,6 +187,67 @@ test('WORCA_ACTIONS_REMOTE=1 enables actions for an identified request', async (
     assert.ok(r.body.ports.PORT >= 4400 && r.body.ports.PORT <= 4499);
     assert.equal((await remote('POST', `/api/runs/${id}/actions/run/stop?projectKey=${key}`, {})).status, 200);
   } finally { delete process.env.WORCA_ACTIONS_REMOTE; }
+});
+
+test('remote mode: the Browser tab\'s preview is refused while actions are off, minting, pages and upgrades alike', async () => {
+  const mint = await remote('POST', '/api/preview/sessions', { port: 4400 });
+  assert.equal(mint.status, 403);
+  assert.equal(mint.body.code, 'ACTIONS_DISABLED');
+  await withQuietPort(async (p) => {
+    process.env.WORCA_ACTIONS_REMOTE = '1';   // a token minted while actions were on: the gate, not the token, refuses
+    const { base } = (await remote('POST', '/api/preview/sessions', { port: p })).body;
+    delete process.env.WORCA_ACTIONS_REMOTE;
+    const page = await remoteRaw('GET', base, { headers: { origin: 'null' } });
+    assert.equal(page.status, 403);
+    assert.match(page.text, /"ACTIONS_DISABLED"/);
+    await assert.rejects(remoteWs(base), /403/);
+  });
+});
+
+test('WORCA_ACTIONS_REMOTE=1: a signed-in person reaches the server\'s loopback through the proxy; no sign-in, no preview', async () => {
+  process.env.WORCA_ACTIONS_REMOTE = '1';
+  try {
+    const mint = await withQuietPort(async (p) => {
+      const m = await remote('POST', '/api/preview/sessions', { port: p });
+      assert.equal(m.status, 201);
+      const page = await remoteRaw('GET', m.body.base, { headers: { origin: 'null' } });
+      assert.deepEqual([page.status, page.text], [200, 'quiet'], 'the proxy answered with the page');
+      return m;
+    });
+    const page = await remoteRaw('GET', mint.body.base, { headers: { origin: 'null' } });
+    assert.equal(page.status, 403, 'the range narrowed again: the same token is refused');
+    assert.doesNotMatch(page.text, /"(ACTIONS_DISABLED|TOKEN_UNKNOWN)"/);
+    assert.equal((await remoteRaw('GET', mint.body.base, { jwt: false })).status, 401, 'the identity check runs for /preview/ too');
+    await assert.rejects(remoteWs(mint.body.base, { jwt: false }), /401/);
+  } finally { delete process.env.WORCA_ACTIONS_REMOTE; }
+});
+
+test('hosted: Preview ports is enforced to the Actions range — a stored "all" is ignored and a POST of "all" is refused', async () => {
+  const { setActionsSettings } = await import('../src/core/settings.mjs');
+  process.env.WORCA_ACTIONS_REMOTE = '1';
+  const outside = http.createServer((q, s) => { s.writeHead(200, { 'content-type': 'text/plain' }); s.end('outside'); });
+  await new Promise((r) => outside.listen(0, '127.0.0.1', r));
+  const p = outside.address().port;
+  try {
+    await setActionsSettings({ previewPorts: 'all' });            // planted directly, as an old file or another tool could
+    const mint = await remote('POST', '/api/preview/sessions', { port: p });
+    assert.equal(mint.status, 403, 'any loopback port on a hosted server is an SSRF into its own services');
+    assert.equal(mint.body.code, 'PORT_NOT_ALLOWED');
+    assert.equal(mint.body.error, `Port ${p} is outside the ports Worca previews on this hosted deployment: 4400–4499 and running Actions.`);
+    const save = await remote('POST', '/api/settings', { actions: { previewPorts: 'all' } });
+    assert.equal(save.status, 400);
+    assert.equal(save.body.field, 'actions.previewPorts');
+    assert.equal(save.body.error, 'Preview ports stays "Actions range only" on a hosted Worca.');
+    const got = await remote('GET', '/api/settings');
+    assert.equal(got.body.actionsGate.previewPorts, 'range');
+    assert.equal(got.body.actionsGate.previewPortsLocked, true);
+    assert.equal((await remote('POST', '/api/settings', { actions: { previewPorts: 'range' } })).status, 200, '"range" is always fine');
+  } finally {
+    await setActionsSettings({ previewPorts: null });
+    delete process.env.WORCA_ACTIONS_REMOTE;
+    outside.closeAllConnections();
+    await new Promise((r) => outside.close(r));
+  }
 });
 
 test('WORCA_ACTIONS_REMOTE=1 + agent isolation: in-container callers are refused, Stop included; people are not', async () => {

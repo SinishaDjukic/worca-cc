@@ -110,7 +110,8 @@ references break, and the catalog and the import preview flag them.
   the run's own folder: an agent's edit never reaches the library or a plugin.
 - **Chat:** General plus the sets of the projects in play, as for MCP servers. The `Skill` tool is on only
   for a turn that mounts at least one skill, and **inline shell blocks never run in Ask** (every Ask turn runs with
-  Claude Code's `disableSkillShellExecution`). The composer's **Sets · N** picker switches skills per chat.
+  Claude Code's `disableSkillShellExecution`). The composer's Sets picker (a layers icon with the
+  count; its tooltip reads **Sets for this chat**) switches skills per chat.
 - **Project page › Sets** lists *Skills in runs on X* with each skill's status; a workspace's Overview shows the
   servers and skills its runs get, each with the member project that brings it.
 - **Hooks:** a skill whose frontmatter declares `hooks:` is shown, never refused. Its hooks run shell commands

@@ -68,7 +68,9 @@ test('sidebar buttons route via the hash, and back/forward (a plain hashchange) 
       assert.equal(hidden(doc, 'runs'), false, 'Runs view shown');
       assert.ok(btn.classList.contains('active'), 'button highlighted');
       assert.equal(btn.getAttribute('aria-current'), 'page', 'active state exposed to AT');
-      assert.equal(doc.getElementById('topnav-new').getAttribute('aria-current'), null, 'New run is never lit as the open page');
+      assert.equal(doc.getElementById('runs-new').getAttribute('aria-current'), null, 'New run is never lit as the open page');
+      assert.equal(doc.getElementById('runs-new').dataset.minLevel, 'simple', 'New run shows at every level (its place moved from the top bar)');
+      assert.equal(doc.getElementById('runs-new').closest('[data-min-level]:not(#runs-new)'), null, 'no gated parent hides it below Expert');
     } },
     { name: 'back/forward (a plain hashchange) still routes', run: async () => {
       click(window, doc.querySelector('.nav button[data-nav="runs"]'));
@@ -98,10 +100,10 @@ test('sidebar buttons route via the hash, and back/forward (a plain hashchange) 
       await tick();
       assert.equal(btn.getAttribute('aria-current'), null, 'leaving Settings clears it');
     } },
-    { name: 'New run in the top bar routes back to the New view; no sidebar row is lit there', run: async () => {
-      click(window, doc.querySelector('.nav button[data-nav="projects"]'));
+    { name: 'New run (the Runs page head) routes to the New view; no sidebar row is lit there', run: async () => {
+      click(window, doc.querySelector('.nav button[data-nav="runs"]'));
       await tick();
-      click(window, doc.getElementById('topnav-new'));
+      click(window, doc.getElementById('runs-new'));
       await tick();
       assert.equal(window.location.hash, '#new');
       assert.equal(doc.querySelector('[data-view="new"]').classList.contains('hidden'), false);

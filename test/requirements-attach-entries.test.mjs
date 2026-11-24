@@ -182,6 +182,17 @@ test('Chat: scope from getScope reaches the search; project pick pins the chat',
   assert.equal(u.searchParams.get('scopeKey'), 'shop');
 });
 
+test('Chat: a paint hook replaces the words, on mount and on every store commit', () => {
+  const painted = [];
+  const store = createAttachStore({ storage: memStorage(), key: 'nr' });
+  const button = mkButton();
+  const flag = makeFlag(true);
+  mountChatAttach({ button, store, getScope: () => ({ pinned: true, projectKey: 'shop' }), setScope() {}, doc: document, flagOn: flag.flagOn, onFlagChange: flag.onFlagChange, fetchJson: makeFetch(), paint: (b, n) => painted.push(n) });
+  store.add([feat(7)]);
+  assert.deepEqual(painted, [0, 1]);
+  assert.equal(button.textContent, '');
+});
+
 test('Chat: unscoped chat shows the chooser and setScope receives the pinned project', async () => {
   const flag = makeFlag(true);
   const button = mkButton();

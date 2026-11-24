@@ -2031,6 +2031,52 @@ const openRdMore = (ctx) => {
 };
 const rdLabel = (b) => b.querySelector('.wfv-menu-l').textContent;
 
+test('Rerun, live page: greyed with its visible hint while the run runs, enabled once it has ended; inert when greyed', async () => {
+  const ctx = await bootRunning({ rows: [liveRow()] });
+  await openGlance(ctx, 'running/r1', { status: 'running' });
+  const running = openRdMore(ctx).find((b) => rdLabel(b) === 'Rerun');
+  assert.ok(running, 'offered on a run with a pipeline id');
+  assert.equal(running.disabled, true);
+  assert.equal(running.querySelector('.wfv-menu-hint').textContent, 'after it ends');
+  assert.equal(running.title, 'Rerun is available once the run has ended.');
+  running.click();
+  await settle(ctx.window, 4);
+  assert.equal(ctx.calls.filter((c) => /\/rerun$/.test(c.url)).length, 0, 'nothing is fetched');
+  ctx.window.document.querySelector('body > .wfv-menu')?.remove();
+
+  const ended = await bootRunning({ rows: [liveRow()] });
+  await openGlance(ended, 'running/r1', { status: 'stopped', active: [] });
+  const items = openRdMore(ended);
+  const rerun = items.find((b) => rdLabel(b) === 'Rerun');
+  assert.equal(rerun.disabled, false);
+  assert.equal(rerun.querySelector('.wfv-menu-hint'), null);
+  assert.ok(items.map(rdLabel).indexOf('Rerun') < items.map(rdLabel).indexOf('Terminal'));
+  assert.deepEqual(items.map(rdLabel).slice(-2), ['Report this run', 'Archive']);
+});
+
+test('Rerun of …: the live page links the run it was copied from (from its state, no saved-run read), or says it is gone, as text only', async () => {
+  const ctx = await bootRunning();
+  const rd = await openGlance(ctx, 'running/r1', { rerunOf: { id: 'src00001', key: KEY, title: 'Old <b>run</b>', exists: true } });
+  assert.equal(ctx.calls.filter((c) => c.url.startsWith('/api/runs/p1?')).length, 0, 'a live run never reads its saved run for the link');
+  const row = rd.querySelector('.rd-kv [data-fact="rerun"]');
+  assert.equal(row.hidden, false);
+  const a = row.querySelector('a');
+  assert.equal(a.getAttribute('href'), `#history/${KEY}/src00001`);
+  assert.equal(a.textContent, 'Rerun of Old <b>run</b>');
+  assert.equal(row.querySelector('b'), null);
+
+  const gone = await bootRunning();
+  const rd2 = await openGlance(gone, 'running/r1', { rerunOf: { id: 'src00001', key: null, title: null, exists: false } });
+  const row2 = rd2.querySelector('.rd-kv [data-fact="rerun"]');
+  assert.equal(row2.hidden, false);
+  assert.equal(row2.querySelector('a'), null);
+  assert.equal(row2.querySelector('.rd-kv-v').textContent, 'Copied from a run that no longer exists');
+
+  const plain = await bootRunning();
+  const rd3 = await openGlance(plain, 'running/r1');
+  assert.equal(rd3.querySelector('.rd-kv [data-fact="rerun"]').hidden, true, 'a run that is no rerun has no row');
+});
+
 test('needle (e), live: a stopped run has one Archive, in ⋯; confirming archives it and shows the list', async () => {
   const ctx = await bootRunning({ rows: [liveRow()] });
   const rd = await openGlance(ctx, 'running/r1', { status: 'stopped', active: [] });
@@ -2312,4 +2358,139 @@ test('the run page shows Resuming… at the Resume click, and a refusal that ask
       } finally { hold.restore(); }
     } },
   ]);
+});
+
+// --- The run time is the engine's elapsed clock; the summed step time is "agent time" ----------
+// A state frame carries `elapsedMs` (folded) + `elapsedSince` (the anchor). The header and the
+// Overview time tile read it and tick 1 s per second, however many steps run at once.
+
+const AGENT_TIP = 'Total time of all agents, parallel work added up';
+const rdHeadTime = (window) => window.document.querySelector('#run-detail .rd-header .rd-dur.run-time, #run-detail .rd-header .rd-dur');
+const rdTiles = (window) => [...secOf(window, 'overview').querySelectorAll('.rd-glance .rd-facts .rd-stats > div')];
+const rdTile = (window, label) => rdTiles(window).find((t) => t.querySelector('span').textContent === label) || null;
+const tileTime = (window) => rdTile(window, 'time').querySelector('b').textContent;
+const running = (n, t0, activeMs = 5000) => Array.from({ length: n }, (_, i) => (
+  { key: `implement#${i + 1}`, nodeId: 'implement', cycle: i + 1, status: 'start', activeMs, runningSince: t0, costUsd: 0.1 }));
+
+/** Open the run's Overview with a pinned clock; `at(ms)` moves it and runs the 1 s tick. */
+async function openClocked(state) {
+  const ctx = await bootRunning();
+  const realNow = Date.now;
+  const t0 = realNow();
+  Date.now = () => t0;
+  const restore = () => { Date.now = realNow; };
+  try {
+    await openRun(ctx, state(t0));
+    click(ctx.window, tabOf(ctx.window, 'overview'));
+    await settle(ctx.window);
+  } catch (err) { restore(); throw err; }
+  const at = (ms, tick = true) => { Date.now = () => t0 + ms; if (tick) ctx.window.__np.timerTick(); };
+  return { ctx, window: ctx.window, t0, at, restore };
+}
+
+test('two steps in parallel: the run time advances 1 s per second', async () => {
+  const c = await openClocked((t0) => ({ elapsedMs: 10_000, elapsedSince: t0, steps: running(2, t0) }));
+  try {
+    const { window } = c;
+    assert.equal(rdHeadTime(window).textContent, '10s');
+    assert.equal(tileTime(window), '10s', 'header and time tile show the same text');
+    c.at(1000);
+    assert.equal(rdHeadTime(window).textContent, '11s', 'two running steps: 1 s, not 2 s');
+    assert.equal(tileTime(window), '11s');
+    c.at(2000);
+    assert.equal(rdHeadTime(window).textContent, '12s');
+    assert.equal(tileTime(window), '12s');
+    // A third step joins: still one second per second.
+    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', elapsedMs: 10_000, elapsedSince: c.t0, steps: running(3, c.t0) });
+    await settle(window);
+    assert.equal(rdHeadTime(window).textContent, '12s');
+    assert.equal(tileTime(window), '12s');
+    c.at(3000);
+    assert.equal(rdHeadTime(window).textContent, '13s');
+    assert.equal(tileTime(window), '13s');
+  } finally { c.restore(); }
+});
+
+test('the run time stands still while a question waits', async () => {
+  const c = await openClocked((t0) => ({ elapsedMs: 10_000, elapsedSince: t0, steps: running(1, t0) }));
+  try {
+    const { window } = c;
+    // The question frame can reach the browser before the parked state frame: no stale tick.
+    c.at(4000, false);
+    frame(c.ctx, { type: 'question', runId: 'r1', ...clarify() });
+    await settle(window);
+    c.at(9000);
+    assert.equal(rdHeadTime(window).textContent, '10s', 'the anchor is ignored while a person must answer');
+    assert.equal(tileTime(window), '10s');
+    // The engine's parked frame: folded at the moment the question opened.
+    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', elapsedMs: 14_000, elapsedSince: null,
+      steps: running(1, null) });
+    await settle(window);
+    c.at(60_000);
+    assert.equal(rdHeadTime(window).textContent, '14s');
+    assert.equal(tileTime(window), '14s');
+  } finally { c.restore(); }
+});
+
+test('agent time tile appears when parallel work exceeds the run time and ticks; its title is the tooltip text; absent for a sequential run', async () => {
+  const c = await openClocked((t0) => ({ elapsedMs: 10_000, elapsedSince: t0, steps: running(2, t0, 20_000) }));
+  try {
+    const { window } = c;
+    const agent = rdTile(window, 'agent time');
+    assert.ok(agent, 'agent time (40s) is larger than the run time (10s)');
+    assert.equal(agent.title, AGENT_TIP);
+    assert.equal(agent.querySelector('b').textContent, '40s');
+    assert.ok(agent.querySelector('b').classList.contains('run-agent-time'), 'the tick target');
+    assert.equal(rdTiles(window)[0], rdTile(window, 'time'), 'the time tile stays first');
+    assert.equal(rdTiles(window)[1], agent, 'agent time sits right after the time tile');
+    assert.equal(window.document.querySelectorAll('#run-detail .rd-stats b.run-agent-time').length, 1, 'shown once');
+    c.at(1000);
+    assert.equal(tileTime(window), '11s');
+    assert.equal(rdTile(window, 'agent time').querySelector('b').textContent, '42s', 'two steps: 2 s per second of agent time');
+    // A frame in the same second does not rebuild the ticking row.
+    const row = window.document.querySelector('#run-detail .rd-facts .rd-stats');
+    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', elapsedMs: 10_000, elapsedSince: c.t0, steps: running(2, c.t0, 20_000) });
+    await settle(window);
+    assert.equal(window.document.querySelector('#run-detail .rd-facts .rd-stats'), row, 'the row is kept while only the ticking texts moved');
+    // The parallel work ends below the run time: the tile goes.
+    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', elapsedMs: 200_000, elapsedSince: c.t0, steps: running(1, c.t0, 20_000) });
+    await settle(window);
+    assert.equal(rdTile(window, 'agent time'), null, 'the tile disappearing rebuilds the row');
+  } finally { c.restore(); }
+
+  const seq = await openClocked((t0) => ({ elapsedMs: 200_000, elapsedSince: t0 }));   // STEPS(): 95 s of step time
+  try {
+    assert.equal(rdTile(seq.window, 'agent time'), null, 'a sequential run: elapsed is at least the step time');
+    assert.equal(tileTime(seq.window), '3m 20s');
+  } finally { seq.restore(); }
+});
+
+test('the finished run shows the engine\'s elapsed figure, same as the last live value', async () => {
+  const c = await openClocked((t0) => ({ elapsedMs: 10_000, elapsedSince: t0, steps: running(2, t0, 20_000) }));
+  try {
+    const { window } = c;
+    c.at(2000);
+    assert.equal(rdHeadTime(window).textContent, '12s', 'the last live value');
+    const done = running(2, null, 22_000).map((s) => ({ ...s, status: 'done' }));
+    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'done', elapsedMs: 12_000, elapsedSince: null, steps: done });
+    await settle(window, 6);
+    c.at(90_000);
+    assert.equal(rdHeadTime(window).textContent, '12s', 'no jump at the end, and no tick after it');
+    assert.equal(tileTime(window), '12s');
+    assert.equal(rdTile(window, 'agent time').querySelector('b').textContent, '44s', 'the summed time stays, as agent time');
+    assert.equal(rdTile(window, 'agent time').querySelector('b').classList.contains('run-agent-time'), false, 'a finished tile does not tick');
+  } finally { c.restore(); }
+});
+
+test('a live run whose state carries no elapsed figure still shows the summed time (fallback)', async () => {
+  const c = await openClocked((t0) => ({ steps: running(2, t0) }));
+  try {
+    const { window } = c;
+    assert.equal(rdHeadTime(window).textContent, '10s');
+    assert.equal(tileTime(window), '10s');
+    assert.equal(rdTile(window, 'agent time'), null);
+    c.at(1000);
+    assert.equal(rdHeadTime(window).textContent, '12s', 'as before: the sum of the running steps');
+    assert.equal(tileTime(window), '12s');
+  } finally { c.restore(); }
 });

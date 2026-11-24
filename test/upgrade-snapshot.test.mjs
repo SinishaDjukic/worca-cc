@@ -3,7 +3,7 @@
 // The JSDOM boot is a trimmed copy of test/ui-runs-view.test.mjs's boot() (no shared harness, by convention).
 import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
+import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,7 +36,7 @@ before(async () => {
   assert.ok(ticket && ticket.id, 'createSchedule materialised the first occurrence');
   createTicket({ title: 'After nightly', projectDir, request: { prompt: 'y', mock: true },
     after: { kind: 'ticket', id: ticket.id } });
-  srv = http.createServer(app);
+  srv = appServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
   const get = async (p) => (await fetch(base + p)).json();

@@ -1,5 +1,5 @@
 // test/ask-panel-history.test.mjs — worca Chat P1: the History aside, which hosts the Chats column (#948, #952): the
-// toggle (aria-pressed, data-history, a stored choice, open by default from 1600px), the overlay below 1100px (scrim,
+// toggle (aria-pressed, data-history, a stored choice, open by default from 1100px), the overlay below 1100px (scrim,
 // Escape, a pick closes it), setHistoryOpen for P4, a pick that loads and routes once, delete through confirm, the
 // keyboard focus around deletes and refreshes, and refreshes that wait while Chat is hidden. The column's own rows,
 // views and keys: test/ui-chats-column.test.mjs.
@@ -40,31 +40,33 @@ function rowOf(ctx, id) {
 const moreOf = (ctx, id) => rowOf(ctx, id).closest('.runs-item').querySelector('.runs-more');
 const inColumn = (ctx) => ctx.doc.querySelector('[data-chat-history]').contains(ctx.doc.activeElement);
 
-test('the toggle opens and closes the column (aria-pressed, data-history), remembers the choice and refreshes the rows on open; from 1600px it starts open unless told otherwise', async () => {
+test('the toggle opens and closes the column (aria-pressed, data-history), remembers the choice and refreshes the rows on open; from 1100px it starts open unless told otherwise', async () => {
   const rec = {};
   const ctx = makePanel({ fetchHandler: api(rec), innerWidth: 1280 });
   ctx.panel.open();
   await ticks(ctx);
   const page = ctx.panel.root;
   const btn = ctx.doc.querySelector('[data-ask-threads-btn]');
-  assert.equal(page.dataset.history, 'closed', '1280px and nothing stored: closed');
-  assert.equal(btn.getAttribute('aria-pressed'), 'false');
+  assert.equal(page.dataset.history, 'open', '1280px and nothing stored: Chat shows its chats list');
+  assert.equal(btn.getAttribute('aria-pressed'), 'true');
   assert.equal(btn.getAttribute('aria-controls'), 'chat-history');
   assert.ok(btn.classList.contains('chat-history-toggle'), 'the menu toggle\'s look (style.css)');
   assert.equal(btn.querySelectorAll('svg > path').length, 5, 'the page-of-text glyph: page, fold, three lines');
   assert.equal(btn.querySelector('svg > rect'), null, 'no panel glyph');
-  btn.click();
-  assert.equal(page.dataset.history, 'open');
-  assert.equal(btn.getAttribute('aria-pressed'), 'true');
-  assert.equal(ctx.storage.getItem('worca-cc.chat.history'), 'open');
-  await ticks(ctx);
-  assert.equal(listFetches(rec), 2, 'opening refreshed the rows');
   assert.equal(ctx.doc.querySelector('[data-chat-scrim]').hidden, true, 'a push column has no scrim');
   btn.click();
   assert.equal(page.dataset.history, 'closed');
+  assert.equal(btn.getAttribute('aria-pressed'), 'false');
   assert.equal(ctx.storage.getItem('worca-cc.chat.history'), 'closed');
-  const wide = makePanel({ fetchHandler: api({}), innerWidth: 1600 });
-  assert.equal(wide.panel.root.dataset.history, 'open', 'from 1600px it starts open');
+  const before = listFetches(rec);
+  btn.click();
+  assert.equal(page.dataset.history, 'open');
+  assert.equal(ctx.storage.getItem('worca-cc.chat.history'), 'open');
+  await ticks(ctx);
+  assert.equal(listFetches(rec), before + 1, 'opening refreshed the rows');
+  btn.click();
+  const narrowest = makePanel({ fetchHandler: api({}), innerWidth: 1100 });
+  assert.equal(narrowest.panel.root.dataset.history, 'open', 'from 1100px it starts open');
   const told = makePanel({ fetchHandler: api({}), innerWidth: 1600, storage: ctx.storage });
   assert.equal(told.panel.root.dataset.history, 'closed', 'a stored choice wins');
 });
@@ -155,12 +157,15 @@ test('⋯ › Delete… asks first; a confirmed delete refetches the column; del
   const rec = {};
   const routes = [];
   const confirms = [];
-  const ctx = makePanel({ fetchHandler: api(rec), confirm: async (o) => { confirms.push(o); return true; }, deps: { onRoute: (id, o) => routes.push([id, o]) } });
+  const closed = [];
+  const ctx = makePanel({ fetchHandler: api(rec), confirm: async (o) => { confirms.push(o); return true; },
+    deps: { onRoute: (id, o) => routes.push([id, o]), onChatsClosed: (ids) => closed.push(ids) } });
   ctx.panel.open({ threadId: 'ask_00000001' });
   await ticks(ctx);
   const before = listFetches(rec);
   await deleteFromList(ctx, 'ask_00000001');
   await ticks(ctx, 5);
+  assert.deepEqual(closed, [['ask_00000001']], 'the tool panel closes the chat\'s tabs (issue 1064)');
   assert.equal(confirms[0].title, 'Delete this chat?');
   assert.equal(confirms[0].confirmLabel, 'Delete');
   assert.equal(confirms[0].danger, true);
@@ -240,7 +245,7 @@ test('leaving Chat closes the overlay (never a stored choice); a push column sta
   const wide = makePanel({ fetchHandler: api({}), innerWidth: 1280 });
   wide.panel.open();
   await ticks(wide);
-  wide.doc.querySelector('[data-ask-threads-btn]').click();
+  assert.equal(wide.panel.root.dataset.history, 'open', 'a push column starts open');
   wide.panel.close();
   assert.equal(wide.panel.root.dataset.history, 'open', 'a push column is the user\'s choice');
 });
@@ -365,7 +370,7 @@ test('below 1100px focus leaving the overlay (Tab past the last row) closes it; 
   const wide = makePanel({ fetchHandler: api({}), innerWidth: 1280 });
   wide.panel.open();
   await ticks(wide);
-  wide.doc.querySelector('[data-ask-threads-btn]').click();
+  assert.equal(wide.panel.root.dataset.history, 'open', 'a push column starts open');
   rowOf(wide, 'ask_00000001').focus();
   wide.doc.querySelector('textarea.ask-input').focus();
   assert.equal(wide.panel.root.dataset.history, 'open', 'a push column is not an overlay');
@@ -376,8 +381,7 @@ test('narrowing the window below 1100px closes a push column (as an overlay it w
   ctx.panel.open();
   await ticks(ctx);
   const page = ctx.panel.root;
-  ctx.doc.querySelector('[data-ask-threads-btn]').click();
-  assert.equal(page.dataset.history, 'open');
+  assert.equal(page.dataset.history, 'open', 'a push column starts open');
   const resize = (w) => {
     Object.defineProperty(ctx.window, 'innerWidth', { value: w, configurable: true });
     ctx.window.dispatchEvent(new ctx.window.Event('resize'));
@@ -385,7 +389,7 @@ test('narrowing the window below 1100px closes a push column (as an overlay it w
   resize(1024);
   assert.equal(page.dataset.history, 'closed');
   assert.equal(ctx.doc.querySelector('[data-chat-scrim]').hidden, true);
-  assert.equal(ctx.storage.getItem('worca-cc.chat.history'), 'open', 'the user\'s choice is kept for a wide window');
+  assert.equal(ctx.storage.getItem('worca-cc.chat.history'), null, 'closing for the width stores no choice');
   ctx.doc.querySelector('[data-ask-threads-btn]').click();
   assert.equal(page.dataset.history, 'open');
   resize(900);

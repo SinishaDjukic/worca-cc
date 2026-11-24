@@ -1,10 +1,14 @@
 // ui/public/ask-engine.mjs — Chat's engine rules for the panel (cascading-settings-design.md D12, D16, §6; #943). Pure.
-import { isBetaEngine, engineLabel, CHAT_ENGINE_NAMES, chatAttachRefusal } from '../../src/shared/engine-switch.mjs';
+import { isBetaEngine, engineLabel, CHAT_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, chatAttachRefusal } from '../../src/shared/engine-switch.mjs';
 /** The engines an Ask chat runs on, in picker order (engine-switch.mjs `chat`, as src/core/model-env.mjs ASK_ENGINES). */
 export const ASK_CHAT_ENGINES = CHAT_ENGINE_NAMES;
 import { runsOn } from '../../src/shared/connections.mjs';
 /** A catalog row's engine: the server tags every non-Claude row; an untagged row is Claude. */
 export const engineOfEntry = (m) => (m && m.engine) || 'claude';
+/** Whether a chat can start sub-agents, as the server spawns it (src/core/ask/spawn.mjs): only a plain chat (no surface
+ *  mode: the Workflows chat gets no sub-agent tool; a chat with a design is a plain chat and gets it) on Claude (every
+ *  other engine is locked to worca's tools). */
+export const chatSpawnsAgents = (mode, engine) => !mode && engine === 'claude';
 /** The engine a chat runs on now: its stored engine once it has an assistant row; null before (any engine may start
  *  it). `serverEngine` (the thread payload's `engine`) wins: the server knows it after a switch (#943) and after the
  *  catalog drops a model. The panel offers every engine and moves the chat; the extension and the Workflows chat keep
@@ -34,6 +38,13 @@ export function pickerGroups(models, { lock = null, active = null } = {}) {
     if (own.length) out.push({ engine, label, models: own });
   }
   return out;
+}
+/** The chat engines with no model yet, for the picker's "More harnesses" list: `[{engine, label}]` in picker order.
+ *  Only a sign-in engine can be one: it ships no built-in models, and Add model takes it as a sign-in. */
+export function moreHarnesses(models) {
+  const list = Array.isArray(models) ? models : [];
+  return ASK_CHAT_ENGINES.filter((engine) => SIGN_IN_ENGINE_NAMES.includes(engine) && !list.some((m) => m && runsOn(m, engine)))
+    .map((engine) => ({ engine, label: pickerEngineLabel(engine, { beta: true }) }));
 }
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
 /** D16: what a chat's engine cannot take, said before upload (engine-switch.mjs chatAttachRefusal: Codex and Goose chats

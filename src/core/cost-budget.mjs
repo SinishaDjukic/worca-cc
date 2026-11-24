@@ -6,13 +6,14 @@
 // (raw floats); roundUsd applies to aggregated outputs only.
 
 import { prepare } from './db.mjs';
+import { DEMO_RUN_SQL } from './real-run.mjs';
 import {
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   COST_RESET_PERIODS, DEFAULT_COST_RESET_PERIOD,
 } from './settings.mjs';
 
 /** A run's human hours for the Saved figures: a mock run (pipelines.run_setup) saved nobody any work. SQL over alias `p`. */
-export const REAL_RUN_HOURS = `CASE WHEN json_extract(CASE WHEN json_valid(p.run_setup) THEN p.run_setup END, '$.mock') = 1 THEN 0 ELSE p.human_hours END`;
+export const REAL_RUN_HOURS = `CASE WHEN ${DEMO_RUN_SQL('p')} THEN 0 ELSE p.human_hours END`;
 
 export { COST_RESET_PERIODS, DEFAULT_COST_RESET_PERIOD };
 

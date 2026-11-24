@@ -19,7 +19,7 @@ export const BUTTON_SPEC = Object.freeze({
     'button.pd-ov-card', 'button.wd-member', 'button.ask-activity-head', 'button.act-srow-name', 'button.runs-sec-head',
     'button.gp-row', 'button.rd-fact-act', '.dz-dots button','button.agent-row-head', 'button.hd-tree-file', 'button.hd-tree-dir', 'button.ask-filescard-thumb', 'button.ask-filescard-name', 'button.chat-home-act',
     'button.chat-home-wf', 'button.chat-home-chat', 'button.chat-home-plan-open', 'button.release-row-edit',
-    '.row-btn', 'button.mcp-setrow', 'button.xtoggle', 'button.gs-tile', 'button.mk-tile', 'button.mk-facet', 'button.mk-name',
+    '.row-btn', 'button.xtoggle', 'button.gs-tile', 'button.mk-tile', 'button.mk-facet', 'button.mk-name',
     '.mk-upd > button.mk-disc', 'button.mdl-hx-t', 'button.mdl-tile', 'button.mdl-pick',
     '.cost-bd-btn', 'button.chat-head-meter', '.linkish', '.hd-dl-more-btn', '.plan-fold', '.plan-persp-edit', '.qopt', '.afb-main',
     '.afb-folder', '.acct', '.sn-btn', '[class*="chip"]'],
@@ -228,7 +228,7 @@ export function auditType(root, spec, env) {
 // the rows and tiles a person opens (docs/design-system.md › Cards versus divided rows). Nothing screen-specific.
 export const STRAY_SPEC = Object.freeze({
   allow: ['.tab', '[role="tab"]', '.seg button', '.seg-btn', '.filter-chip', '.switch', '[role="switch"]', '[role^="menuitem"]',
-    '[role="option"]', '[role="radio"]', '.info-tip', '.row-btn', 'div.wfl-main', 'button.mcp-setrow', 'button.gs-tile',
+    '[role="option"]', '[role="radio"]', '.info-tip', '.row-btn', 'div.wfl-main', 'button.gs-tile',
     'button.ob-door', 'button.wfc-chip-btn', 'button.mk-tile', 'button.mk-facet', 'button.mk-name', '.mk-upd > button.mk-disc',
     'button.rd-fact-act', '.dz-dots button', 'button.mdl-hx-t', 'button.mdl-tile', 'button.mdl-pick'],
   skip: '#wfv-canvas',
