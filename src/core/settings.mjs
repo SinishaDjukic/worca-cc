@@ -53,6 +53,7 @@
 // so a saved root takes effect for new runs/listing without a server restart.
 
 import { isAnswererLead, ANSWERER_LEAD_KEYS } from '../shared/answerer.mjs';
+import { CHAT_SOURCE_BRANCH_MODES, SOURCE_BRANCH_TEXT, normalizeChatSourceBranch } from '../shared/chat-source-branch.mjs';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { suggestModelHandle } from '../shared/connections.mjs';
 export { suggestModelHandle };
@@ -1120,16 +1121,23 @@ export function chatPrefs() {
   }
   // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
   // `summariseCommands` (#911, flag commandSummaries): chat commands as one-line rows — default ON.
+  // `sourceBranch`: "Chat runs: source branch", normalised for display (the gate reads the cascade, not this).
   return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false,
-    summariseCommands: chat.summariseCommands !== false };
+    summariseCommands: chat.summariseCommands !== false, sourceBranch: normalizeChatSourceBranch(chat.sourceBranch) };
+}
+
+/** "Chat runs: source branch" input: one of the modes, or null (back to the default). Throws the shared sentence. */
+export function assertChatSourceBranchInput(value) {
+  if (value !== null && !CHAT_SOURCE_BRANCH_MODES.includes(value)) throw new Error(SOURCE_BRANCH_TEXT.invalid);
+  return value;
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?, away?},
  * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean,
- * summariseCommands?: boolean}.
+ * summariseCommands?: boolean, sourceBranch?: 'current'|'ask'|'require'|null}.
  * Unknown notify keys and a non-boolean scriptTools / suggestions / summariseCommands are rejected (400 at the API layer);
- * channels merge per key.
+ * channels merge per key. A null sourceBranch deletes it (back to 'ask'); any other value outside the modes throws.
  */
 export async function setChatPrefs(patch = {}) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('chat prefs must be an object');
@@ -1142,6 +1150,8 @@ export async function setChatPrefs(patch = {}) {
   if (hasSuggestions && typeof patch.suggestions !== 'boolean') throw new Error('chat suggestions must be true or false');
   const hasSummaries = Object.prototype.hasOwnProperty.call(patch, 'summariseCommands');
   if (hasSummaries && typeof patch.summariseCommands !== 'boolean') throw new Error('chat summariseCommands must be true or false');
+  const hasSourceBranch = Object.prototype.hasOwnProperty.call(patch, 'sourceBranch');
+  if (hasSourceBranch) assertChatSourceBranchInput(patch.sourceBranch);
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -1156,7 +1166,9 @@ export async function setChatPrefs(patch = {}) {
     ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
     ...(hasSuggestions ? { suggestions: patch.suggestions } : {}),
     ...(hasSummaries ? { summariseCommands: patch.summariseCommands } : {}),
+    ...(hasSourceBranch && patch.sourceBranch !== null ? { sourceBranch: patch.sourceBranch } : {}),
   };
+  if (hasSourceBranch && patch.sourceBranch === null) delete settings.chat.sourceBranch;
   await persistSettings(settings);
   return chatPrefs();
 }

@@ -6,6 +6,7 @@ import { resolveSetting } from '../../../src/core/settings-cascade.mjs';
 import { scopePrSetting } from '../../../src/core/pr-auto.mjs';
 import { WORKSPACE_KEY_RE, readWorkspace } from '../../../src/core/workspaces.mjs';
 import { projectKey } from '../../../src/core/store.mjs';
+import { cardBranchGate, targetsForBody } from '../../../src/core/chat-source-branch-gate.mjs';
 import { badRequest, resolveProjectDir } from '../../server.mjs';
 
 export function register(app) {
@@ -25,7 +26,9 @@ app.get('/api/run-defaults', async (req, res) => {
       steps: Object.fromEntries(MODEL_ENGINES.map((e) => [e, stepSlotDefaults(e, { projectDir })])),
       projectKey: key,
       tags: key ? readProjectDefaultTags(key) : [],
-      pr: await scopePrSetting({ projectDir, workspaceId }) });
+      pr: await scopePrSetting({ projectDir, workspaceId }),
+      // Chat runs: source branch — the chat card's gate (mode, where it was set, the git targets needing a branch).
+      chatSourceBranch: cardBranchGate(await targetsForBody({ projectDir, workspaceId })) });
   } catch (error) { res.status(500).json({ error: error?.message || String(error) }); }
 });
 }

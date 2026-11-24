@@ -555,6 +555,16 @@ test('chat.summariseCommands defaults on, saves false, rejects a non-boolean (#9
   assert.equal(typeof body.error, 'string');
 });
 
+test('chat.sourceBranch: a bad value is 400 on field chat.sourceBranch and writes nothing', async () => {
+  const file = join(home, '.worca-cc', 'settings.json');
+  await postJson({ enforceTags: false });   // the file exists before the byte comparison
+  const before = readFileSync(file, 'utf8');
+  const r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { sourceBranch: 'x' } }) });
+  assert.equal(r.status, 400);
+  assert.equal((await r.json()).field, 'chat.sourceBranch');
+  assert.equal(readFileSync(file, 'utf8'), before);
+});
+
 test('POST modelRoles: a model outside the catalog or a bad effort is 400 and writes nothing; ids are stored canonical', async () => {
   const file = join(home, '.worca-cc', 'settings.json');
   const ok0 = await postJson({ enforceTags: false });   // the file exists before the byte comparison
