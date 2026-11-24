@@ -82,6 +82,107 @@
 .shape-reqs-agreed dt{padding:3px 0;font-size:var(--fs-meta);color:var(--ink-2);}
 .shape-reqs-agreed dd{container:shape-reqs-rows / inline-size;margin:0;}
 .shape-reqs-agreed :is(.plan-check-label,.plan-check-detail){overflow-wrap:anywhere;}
+/* Owner direction d5c0afe48: ONE row layout for every list on the small-runs card, never per-list rules: the role folds
+   and their requirement rows (B3), the Split's run, check and challenge rows (B4) and the run rows (B1, their 16px
+   column restated below under .chat-rc-members). A row: the mark in a fixed 16px box centred on the first text line (a `?`
+   glyph and an SVG check share one centre), gap 8, [the role icon in an 18px box, gap 8,] the id in one fixed tabular
+   column, gap 8, the text, then the chevron or action in its own column at the far right. One-line rows are 32px, with
+   no margin between siblings; a longer row grows from the top and its mark stays on the first line. */
+.srows{--row-mark:16px;--row-gap:8px;--row-line:20px;--row-id:5.4em;}
+/* Small runs C4: the change fold's id column holds a case name ("Not started"), not an R-id: the same column, wider.
+   Its line is always open, so it keeps the turned chevron's room as .shape-reqs does. */
+.srows.req-change-rule{--row-id:6.4em;}
+.srows.req-change-rule > .plan-check-line{box-sizing:border-box;padding-right:8px;}
+.srows :is(.plan-check-row,.shape-role-fold-head,.outline-run-row){display:flex;flex-wrap:nowrap;align-items:flex-start;gap:var(--row-gap);
+  box-sizing:border-box;width:100%;min-height:32px;margin:0;padding:6px 0;line-height:var(--row-line);text-align:left;white-space:normal;}
+.srows .plan-checks{gap:0;padding-left:0;}
+.srows .plan-check-mark{flex:none;display:inline-flex;align-items:center;justify-content:center;width:var(--row-mark);height:var(--row-line);line-height:1;}
+.srows .plan-check-mark > svg{display:block;}
+.srows .plan-check-id{flex:none;width:var(--row-id);color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.srows .plan-check-text{flex:1 1 0;min-width:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:0 var(--row-gap);}
+.srows .plan-check-text > :is(.plan-check-label,.plan-check-detail){flex:0 0 auto;max-width:100%;min-width:0;overflow-wrap:anywhere;}
+.srows .plan-check-label{font-weight:400;color:var(--ink);}   /* a check is a sentence: 600 is for role and run names only */
+.srows .plan-check-row > .split-objection-state{flex:none;margin-left:auto;color:var(--ink-2);white-space:nowrap;}
+.srows :is(.plan-check-row,.shape-role-fold-head,.outline-run-row) > :is(.plan-chev,.btn:not(.plan-fold)){flex:none;margin-left:auto;}
+.srows .plan-chev{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-block:calc((var(--row-line) - 16px) / 2);}   /* square: it turns in place */
+.srows :is(.plan-check-row,.outline-run-row) > .btn-sm:not(.plan-fold){margin-block:-4px;}   /* an action keeps the row at 32px */
+/* A row with an action: the text keeps at least 12em; on a narrow card the action wraps under it, still right-aligned. */
+.srows .plan-check-row:has(> .btn){flex-wrap:wrap;row-gap:4px;}
+.srows .plan-check-row:has(> .btn) > .plan-check-text{flex-basis:12em;}
+/* Role folds (B3): mark · icon · name · summary, the chevron at the far right; the requirement rows start under the icon. */
+.shape-role-fold .plan-check-mark.ok{color:var(--green-ink);}
+.shape-role-fold-ic{display:inline-flex;align-items:center;justify-content:center;flex:none;box-sizing:border-box;width:18px;height:18px;margin-top:1px;border:1px solid var(--line);border-radius:var(--r-xs);font:600 11px/1 var(--sans);color:var(--ink-2);}
+.shape-role-fold-name{color:var(--ink);font-weight:600;}
+.shape-role-fold-lead{font-weight:400;color:var(--ink-2);}
+.srows .shape-role-fold > .plan-checks{padding-left:calc(var(--row-mark) + var(--row-gap));}
+@media (max-width:480px){
+  .srows .shape-role-fold-head{flex-wrap:wrap;}
+  .srows .shape-role-fold-head .plan-fold-text{order:1;flex:1 0 100%;padding-left:calc(var(--row-mark) + 18px + 2 * var(--row-gap));}
+}
+/* The Split's runs (B4, prototype splitRow): a flat list of one-line rows; the fold button holds the number (id column),
+   the title, the R-ids right-aligned and the chevron; the row ⋯ sits beside it. The facts start under the number. */
+.srows .split-runs{gap:0;counter-reset:none;}
+.srows .split-runs > .outline-slice{gap:0;padding:0;border:0;border-radius:0;background:none;}
+.srows .outline-run-fold{flex:1 1 0;min-width:0;display:flex;align-items:flex-start;justify-content:flex-start;gap:var(--row-gap);height:auto;padding:0;white-space:normal;
+  font:400 var(--fs-body)/var(--row-line) var(--sans);color:var(--ink);text-align:left;}
+.srows .outline-run-fold .outline-slice-title{font-weight:600;}
+.srows .outline-run-fold .outline-slice-title::before{content:none;}
+.srows .outline-run-ids{flex:none;margin-left:auto;color:var(--ink-2);white-space:nowrap;}
+.srows .outline-run-fold > .plan-chev{flex:none;}
+.srows .outline-run-facts{padding-left:calc(var(--row-mark) + var(--row-gap));}
+.srows .outline-own .plan-check-detail{color:var(--ink-2);}
+/* The Split's fold lines (checks, challenge) wrap their text inside the card instead of running past it on a phone. */
+.srows > .plan-check-line{max-width:100%;white-space:normal;text-align:left;}
+.srows > .plan-check-line .plan-fold-text{min-width:0;overflow-wrap:anywhere;}
+@media (max-width:480px){
+  .srows .outline-run-fold{flex-wrap:wrap;}
+  .srows .outline-run-ids{order:3;flex:1 0 100%;margin-left:0;padding-left:calc(var(--row-id) + var(--row-gap));white-space:normal;}
+}
+/* The run rows (B1): the same 16px mark column and 8px gap. Every rule is scoped under the chat card's member host, the
+   only place one-line rows are drawn, so it outranks the runs/group-page.css rule it replaces whatever the file order,
+   and that file stays dev's. The columns restate dev's list per width (base, the 480px chat container, the 600px phone,
+   the 360px chat container) with 16px for dev's 12px. The chat container queries are range forms (`width > 480px` after
+   the base, `width <= 360px`): the design-language gates read group-page.css's first max-width blocks by their text. */
+.chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content 16px;column-gap:8px;}
+@container chat-rc-members (width > 480px){
+  .chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content 64px 16px;}
+}
+/* 1px top border + 5 + 20 + 6 = 32px; the text starts 6px below the border-box top, as in the other rows. */
+.chat-rc-members .run-members.is-table.is-one-line > .run-member{align-items:start;min-height:32px;box-sizing:border-box;padding:5px 0 6px;line-height:20px;}
+.chat-rc-members .run-members.is-one-line > .run-member > .status-dot{justify-self:center;margin-top:6px;}
+/* C3: a run waiting on the person draws dev's 12px symbol dot (14px with an icon): the same centre, on the first line. */
+.chat-rc-members .run-members.is-one-line > .run-member > .status-dot.has-sym{margin-top:4px;}
+.chat-rc-members .run-members.is-one-line > .run-member > .status-dot.has-ic{margin-top:3px;}
+/* Title, then the short state right-aligned on the same line; a Requirements fold wraps under. */
+.chat-rc-members .run-members.is-one-line .run-member-main{flex-direction:row;flex-wrap:wrap;align-items:center;column-gap:8px;}
+/* C3 (D15): a long title stays one line (the full title is in its tooltip), so a row with a stop word stays 32px. */
+.chat-rc-members .run-members.is-one-line .run-member-title{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;}
+.chat-rc-members .run-members.is-one-line .run-member-main > :not(.run-member-title, .run-member-state){flex-basis:100%;}
+.chat-rc-members .run-member-state{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
+/* A narrow row with no PR chip and no cost keeps one grid row: the stacked ". . pr cost" row and its gap would add 9px.
+   C2: every narrow one-line row stays one 32px line, as the prototype's #build rows. A PR chip takes the last column
+   (the chevron's; the whole-row link opens the run); the cost is dropped, as dev drops it in a narrow chat card, and
+   stays on the run page. */
+@media (max-width:600px){
+  .chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty){grid-template-areas:"dot num main go";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member{grid-template-areas:"dot num main pr";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty){grid-template-areas:"dot num main go";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:not(:has(> .run-member-pr:empty)) > .run-member-go,
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > :is(.run-member-pr:empty, .run-member-cost){display:none;}
+}
+@container chat-rc-members (width <= 360px){
+  .chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty){grid-template-areas:"dot num main main";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member{grid-template-areas:"dot num main pr";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty){grid-template-areas:"dot num main main";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > .status-dot{grid-area:dot;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > .run-member-num{grid-area:num;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > .run-member-main{grid-area:main;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > .run-member-pr{grid-area:pr;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > :is(.run-member-go, .run-member-pr:empty, .run-member-cost){display:none;}
+}
+.chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty) > :is(.run-member-pr, .run-member-cost){display:none;}
 /* Too narrow for a failing row's words side by side: its detail goes under its label. */
 @container shape-reqs-rows (max-width:320px){
   .shape-reqs .plan-check-row:has(.plan-check-detail){display:grid;grid-template-columns:1em minmax(0,1fr);}
@@ -167,6 +268,9 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .chat-rc-log-run{color:var(--ink-3);}
 .chat-rc-log-run::after{content:" \00B7";}
 .chat-rc-log-show{margin-left:auto;background:none;border:0;padding:0 2px;color:var(--ink-2);font:inherit;cursor:pointer;text-decoration:underline;}
+/* C5 (owner direction d86d13181): a Verifier receipt is one .srows row: no wrap point between the mark and the text, and
+   the gap list's .plan-checks inset and type, so its mark and text share the gap rows' columns. */
+.chat-rc-log-row.chat-rc-log-verify{display:block;padding:0 0 0 4px;font-size:inherit;color:inherit;}
 .chat-rc-log-detail{flex-basis:100%;list-style:none;margin:2px 0 0 22px;padding:0;color:var(--ink-3);}
 .chat-rc-member-open{display:flex;width:100%;gap:4px;background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;}
 .chat-rc-member-open:disabled{cursor:default;opacity:.7;}
@@ -175,6 +279,8 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
    (.flag-chip: 18px, violet for Labs). Never truncated. */
 .chat-home-act-badge{flex:none;box-sizing:border-box;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-xs);background:var(--slate-bg);color:var(--slate-ink);font-size:var(--fs-caption);font-weight:500;line-height:1;white-space:nowrap;}
 .shape-checklists{margin:12px 0;display:flex;flex-direction:column;gap:6px;}
+/* Small runs C2: the Overview's Agents section (.srows rows) sits like the Perspective checklists above. */
+.run-agents{margin:12px 0;gap:6px;padding-top:0;}
 .shape-cl-title{font-size:13px;margin:0;color:var(--ink-2);}
 .shape-cl-cycle{border:1px solid var(--line);border-radius:var(--r-ctrl);padding:6px 10px;background:var(--panel);
   display:flex;flex-direction:column;align-items:flex-start;gap:6px;}
@@ -269,3 +375,19 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .chat-home-plan-feature{margin:0 10px 4px;color:var(--ink-2);font-size:12px;}
 .chat-home-plan-feature>summary{cursor:pointer;}
 .chat-home-plan-feature-body{margin-top:6px;}
+/* Shaper small runs C1: the Prototype step (prototype-body.mjs, prototype-build.mjs). The preview well holds one column
+   per screen (one column at 375px); each piece fades in once, after its --i; reduced motion shows every piece at once. */
+.proto-body .proto-well{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:8px;padding:10px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);}
+.proto-body .proto-col{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.proto-body .proto-col-head{display:flex;flex-wrap:wrap;gap:0 6px;font-weight:600;overflow-wrap:anywhere;}
+.proto-body .proto-col-ids{color:var(--ink-2);font-weight:400;font-size:var(--fs-meta);}
+.proto-body .proto-piece{padding:2px 6px;border-radius:var(--r-xs);background:var(--hover);color:var(--ink-2);font-size:var(--fs-meta);overflow-wrap:anywhere;animation:proto-piece-in .2s ease-out both;animation-delay:calc(var(--i, 0) * 40ms);}
+@keyframes proto-piece-in{from{opacity:0;}}
+.proto-body .proto-remark{display:flex;flex-wrap:wrap;gap:8px;}
+.proto-body .proto-remark-field{flex:1 1 12em;min-width:0;}
+/* 375px: the remark field takes the whole row, so Send remark wraps under it and the placeholder is not cut. */
+@media (max-width:480px){.proto-body .proto-remark-field{flex-basis:100%;}}
+.proto-body .proto-was{color:var(--ink-3);overflow-wrap:anywhere;}
+.proto-body .proto-quote{margin:0;color:var(--ink-2);overflow-wrap:anywhere;}
+.proto-body .proto-open{align-self:flex-start;}
+@media (prefers-reduced-motion:reduce){.proto-body .proto-piece{animation:none;}}

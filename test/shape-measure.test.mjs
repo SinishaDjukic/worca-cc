@@ -325,3 +325,24 @@ test('featureFinished: no slices is not finished; every slice and round done is'
   assert.equal(featureFinished({ status: 'done', total: 2, slices: [s([{ status: 'done' }]), s()] }), true);
   assert.equal(featureFinished({ status: 'done', total: 2, slices: [s([{ status: 'done' }, { status: 'stopped' }]), s()] }), false);
 });
+
+on('figuresByCare with projectDir ignores another project\'s figures', () => {
+  clear();
+  const ours = [0, 1, 2].map(() => costFeature(1, 'lean'));
+  const theirs = [0, 1, 2].map(() => costFeature(50, 'lean'));
+  for (const fid of [...ours, ...theirs]) recordFeatureFigures(fid);
+  for (const fid of theirs) db().prepare('UPDATE shape_features SET project_dir = ? WHERE id = ?').run('/elsewhere/other', fid);
+  const mine = figuresByCare({ projectDir: root });
+  assert.deepEqual([mine.lean.features, mine.lean.enough, mine.lean.figures.costPerFeature], [3, true, 1]);
+  assert.equal(figuresByCare({ projectDir: '/elsewhere/other' }).lean.figures.costPerFeature, 50);
+  assert.equal(figuresByCare({ projectDir: '/nowhere' }).lean.features, 0);
+  assert.equal(figuresByCare().lean.features, 6, 'without projectDir every row counts, as before');
+  clear();
+});
+
+test('C5 (D10): a feature with a Verifier check is finished only once the latest check is clean or accepted', () => {
+  const s = (rounds = []) => ({ rounds });
+  const v = (state) => ({ status: 'done', total: 1, slices: [s()], verify: { state, gapsFound: 2 } });
+  for (const state of ['verifying', 'gaps', 'asking', 'paused', 'halted']) assert.equal(featureFinished(v(state)), false, state);
+  for (const state of ['clean', 'accepted']) assert.equal(featureFinished(v(state)), true, state);
+});

@@ -535,3 +535,177 @@ test('requirements-body does not import plan-body (no cycle)', () => {
   assert.doesNotMatch(src, /from '\.\/plan-body\.mjs'/);
   assert.match(src, /import \{ buildFeedbackRow \} from '\.\/feedback-row\.mjs'/);
 });
+
+// ── Small runs B3: one fold per role, examples, one question per disagreement, "Agree requirements" ──────────────
+const SR_CRITERIA = [
+  ['R-po-1', 'A person can export their own runs as CSV'], ['R-arch-1', 'The export reads the stored runs only'],
+  ['R-sec-1', 'The export never includes secrets'], ['R-ux-1', 'The export button says what it downloads'],
+  ['R-comp-1', 'The export is logged for audit'], ['R-rel-1', 'The export ships behind a flag'],
+];
+const srCheck = ({ noExample = [] } = {}) => {
+  const items = SR_CRITERIA.map(([id, text]) => ({ id, label: `${id} · ${text}`, pass: true, example: noExample.includes(id) ? null : `case for ${id}` }));
+  for (const id of noExample) items.push({ id, label: `${id} · ${SR_CRITERIA.find((c) => c[0] === id)[1]}`, pass: false, code: 'no-example', detail: 'no example yet' });
+  return { ok: !noExample.length, passed: SR_CRITERIA.length, total: items.length, items, criteria: SR_CRITERIA.map(([id, text]) => ({ id, text })) };
+};
+const roleRec = (key, label, findings = []) => ({ key, label, findings });
+const srReviews = (extra = {}) => ({ rounds: [{ node: 'n_reqroles', target: 'requirements', pass: 1, round: 1, roles: [
+  roleRec('product', 'Product'), roleRec('architect', 'Architect'), roleRec('ux', 'UX'), roleRec('devops', 'DevOps'),
+  roleRec('security', 'Security', extra.security || []), roleRec('compliance', 'Compliance'), roleRec('qa', 'QA'),
+] }] });
+const srAsk = (over = {}) => ask({ smallRuns: true, roleNode: 'n_reqroles', roleReviews: srReviews(), criteria: srCheck(), decisions: [], lead: 'architect', ...over });
+const heads = ($$) => $$('.shape-role-fold-head');
+const nameOf = (h) => h.querySelector('.shape-role-fold-name').firstChild.textContent;
+const foldOf = ($$, name) => heads($$).find((h) => nameOf(h) === name);
+const leadFolds = ($$) => heads($$).filter((h) => /\(you ask as\)/.test(h.textContent)).map(nameOf);
+
+test('small runs: 1 fold per role in CONFIRM_ROLES order, then Release; the lead marked; e.g. per row; "Agree requirements"', () => {
+  const { $, $$ } = setup({ pq: srAsk() });
+  assert.deepEqual(heads($$).map(nameOf), ['Product', 'Engineering', 'Design', 'DevOps', 'Security', 'Compliance', 'QA', 'Release']);
+  assert.deepEqual(leadFolds($$), ['Engineering']);
+  assert.match(foldOf($$, 'Compliance').nextElementSibling.textContent, /R-comp-1|The export is logged for audit/);
+  assert.match(foldOf($$, 'Release').nextElementSibling.textContent, /The export ships behind a flag/);
+  const row = foldOf($$, 'Product').nextElementSibling.querySelector('.plan-check-row');
+  assert.equal(row.querySelector('.plan-check-detail').textContent, 'e.g. case for R-po-1');
+  assert.equal(row.title, 'R-po-1 · e.g. case for R-po-1');
+  assert.equal(row.querySelector('.plan-check-id').textContent, 'R-po-1');
+  assert.equal(row.querySelector('.sr-only'), null, 'a screen reader hears the id once, from its column');
+  assert.equal(foldOf($$, 'Engineering').querySelector('.plan-fold-text').textContent, 'wrote 1');
+  assert.equal(foldOf($$, 'Product').querySelector('.plan-fold-text').textContent, 'added 1');
+  assert.equal($('.plan-approve').textContent, 'Agree requirements');
+  assert.deepEqual($$('.btn-primary').filter(visible).map((b) => b.textContent), ['Agree requirements'], 'one primary');
+  assert.equal($('.shape-reqs-agreed'), null, 'no persona fold');
+  for (const h of heads($$)) assert.equal(h.getAttribute('aria-expanded'), 'false', `${nameOf(h)} is clean, so closed`);
+});
+
+test('owner direction (R-id column): mark · id · [label detail]; an engineering lead sees every id, a plain lead none', () => {
+  const tech = setup({ pq: srAsk({ lead: 'architect' }) });
+  const rows = tech.$$('.shape-role-fold .plan-check-row');
+  assert.ok(rows.length >= 6);
+  for (const row of rows) {
+    assert.deepEqual([...row.children].map((c) => c.className), ['plan-check-mark', 'plan-check-id', 'plan-check-text']);
+    assert.equal(row.querySelector('.plan-check-id').hidden, false);
+    assert.match(row.querySelector('.plan-check-id').textContent, /^R-[a-z]+-\d+$/);
+    assert.deepEqual([...row.querySelector('.plan-check-text').children].map((c) => c.className), ['plan-check-label', 'plan-check-detail']);
+  }
+  for (const lead of ['product', 'ux', 'compliance']) {
+    const plain = setup({ pq: srAsk({ lead }) });
+    const ids = plain.$$('.shape-role-fold .plan-check-id');
+    assert.ok(ids.length >= 6 && ids.every((e) => e.hidden), `${lead}: no id`);
+  }
+});
+
+test('owner direction (R-id column): the column follows the lead once loadAnswerer resolves', async () => {
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ lead: 'security' }) });
+  const { $$ } = setup({ pq: srAsk({ lead: undefined }) });
+  assert.ok($$('.shape-role-fold .plan-check-id').length >= 6);
+  assert.ok($$('.shape-role-fold .plan-check-id').every((e) => e.hidden), 'no lead yet: plain wording, no id');
+  await flush(); await flush();
+  assert.ok($$('.shape-role-fold .plan-check-id').every((e) => !e.hidden), 'Security is technical: ids shown');
+});
+
+test('owner direction (detail alignment): a fixed id column; label and detail each stay whole, the detail wraps under the label', () => {
+  const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = (sel) => (css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`)) || [])[1] || '';
+  // Owner direction d5c0afe48: the one shared row layout (.srows) draws the role folds' rows.
+  assert.match(rule('.srows .plan-check-id'), /flex:none/);
+  assert.match(rule('.srows .plan-check-id'), /width:var\(--row-id\)/);
+  const text = rule('.srows .plan-check-text');
+  assert.match(text, /display:flex/);
+  assert.match(text, /flex-wrap:wrap/);
+  // Neither grows nor shrinks, and neither is wider than the line: the detail sits beside the label only when both fit.
+  const parts = rule('.srows .plan-check-text > :is(.plan-check-label,.plan-check-detail)');
+  assert.match(parts, /flex:0 0 auto/);
+  assert.match(parts, /max-width:100%/);
+});
+
+test('small runs: a picked role with no rows and no findings draws a closed fold reading "nothing added"', () => {
+  const { $$ } = setup({ pq: srAsk() });
+  const qa = foldOf($$, 'QA');
+  assert.equal(qa.querySelector('.plan-fold-text').textContent, 'nothing added');
+  assert.equal(qa.getAttribute('aria-expanded'), 'false');
+  assert.equal(qa.querySelector('.plan-check-mark').getAttribute('aria-hidden'), 'true');
+  assert.equal(qa.querySelector('.sr-only').textContent, ', nothing open');
+});
+
+test('small runs: once loadAnswerer resolves, "(you ask as)" moves to the loaded lead and the order is unchanged', async () => {
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ lead: 'security' }) });
+  const { $$ } = setup({ pq: srAsk({ lead: undefined }) });
+  const order = heads($$).map(nameOf);
+  assert.deepEqual(leadFolds($$), []);
+  await flush(); await flush();
+  assert.deepEqual(leadFolds($$), ['Security']);
+  assert.deepEqual(heads($$).map(nameOf), order);
+});
+
+test('small runs: a no-example row reads "no example yet"; Agree is aria-disabled with a visible one-line reason; a click sends nothing', async () => {
+  const { $, $$, calls } = setup({ pq: srAsk({ criteria: srCheck({ noExample: ['R-po-1'] }) }) });
+  const fold = foldOf($$, 'Product');
+  assert.equal(fold.getAttribute('aria-expanded'), 'true');
+  assert.equal(fold.querySelector('.plan-check-mark').textContent, '?');
+  assert.equal(fold.querySelector('.sr-only').textContent, ', no example yet');
+  const row = fold.nextElementSibling.querySelector('.plan-check-row');
+  assert.equal(row.querySelector('.plan-check-detail').textContent, 'no example yet');
+  const agree = $('.plan-approve');
+  assert.equal(agree.getAttribute('aria-disabled'), 'true');
+  const note = $('.qanswered');
+  assert.equal(note.textContent, '1 requirement has no example yet: ask for changes');
+  assert.equal(note.hidden, false);
+  assert.ok($('.plan-ask-changes').classList.contains('btn-primary'), 'Ask for changes is the primary');
+  agree.click(); await flush();
+  assert.deepEqual(calls.submit, []);
+});
+
+test('small runs: two Security–Design conflicts through onePerPair render 1 .qblock; their row shows ? "in question"', async () => {
+  const { conflictDecisions } = await import('../src/shared/review/decisions.mjs');
+  const conflicts = [
+    { id: 'conflict-1', roles: ['security', 'ux'], section: 'R-sec-1', question: 'Mask secrets in the file?', options: ['Mask', 'Drop the column'] },
+    { id: 'conflict-2', roles: ['ux', 'security'], section: 'R-ux-1', question: 'Warn before export?', options: ['Warn', 'No warning'] },
+  ];
+  const one = setup({ pq: srAsk({ decisions: conflictDecisions(conflicts, { lead: 'architect', onePerPair: true }) }) });
+  assert.equal(one.$$('.chat-q .qblock').length, 1);
+  assert.equal(one.$$('.plan-decision').length, 0);
+  assert.deepEqual(heads(one.$$).filter((h) => h.getAttribute('aria-expanded') === 'true').map(nameOf), ['Design', 'Security']);
+  const sec = foldOf(one.$$, 'Security');
+  assert.equal(sec.querySelector('.plan-check-mark').textContent, '?');
+  assert.equal(sec.querySelector('.sr-only').textContent, ', has a question');
+  assert.equal(sec.querySelector('.plan-fold-text').textContent, '0 agreed · 1 in question');
+  const row = sec.nextElementSibling.querySelector('.plan-check-row');
+  assert.equal(row.querySelector('.plan-check-mark').textContent, '?');
+  assert.equal(row.querySelector('.plan-check-detail').textContent, 'in question: the decision above · e.g. case for R-sec-1');
+  const two = setup({ pq: srAsk({ decisions: conflictDecisions(conflicts, { lead: 'architect' }) }) });
+  assert.equal(two.$$('.chat-q .qblock').length, 2);
+});
+
+test('small runs: a role that owns a row in question asks even when the decision is not from it', () => {
+  const decisions = [{ id: 'd-1', question: 'Which file format?', options: ['CSV', 'JSON'], from: ['architect'], criteria: ['R-sec-1'] }];
+  const { $$ } = setup({ pq: srAsk({ decisions }) });
+  const sec = foldOf($$, 'Security');
+  assert.equal(sec.querySelector('.plan-fold-text').textContent, '0 agreed · 1 in question');
+  assert.equal(sec.getAttribute('aria-expanded'), 'true');
+  assert.equal(sec.querySelector('.plan-check-mark').textContent, '?');
+  assert.equal(sec.querySelector('.sr-only').textContent, ', has a question');
+});
+
+test('small runs: an open objection at the bound is listed by findingList, status "open", in its open fold', () => {
+  const finding = { id: 'security-3-1', severity: 'major', title: 'Secrets', section: 'R-sec-1', fix: 'Name the masked fields', status: 'open' };
+  const { $$ } = setup({ pq: srAsk({ roleReviews: srReviews({ security: [finding] }) }) });
+  const sec = foldOf($$, 'Security');
+  assert.equal(sec.getAttribute('aria-expanded'), 'true');
+  assert.equal(sec.querySelector('.sr-only').textContent, ', open objection');
+  assert.equal(sec.querySelector('.plan-fold-text').textContent, 'added 1 · 1 open');
+  const list = sec.nextElementSibling.querySelector('.plan-findings');
+  assert.equal(list.hidden, false);
+  assert.equal(list.querySelector('.plan-finding-fix').textContent, 'Name the masked fields');
+  assert.equal(list.querySelector('.plan-finding-status').textContent, 'open');
+});
+
+test('without smallRuns, a hold carrying R-comp-1 draws no "Compliance" and today\'s single fold; "Agree and plan"', () => {
+  const c = check();
+  c.items.push({ id: 'R-comp-1', label: 'R-comp-1 · The export is logged', pass: true });
+  c.criteria.push({ id: 'R-comp-1', text: 'The export is logged' });
+  const { $, $$, panel } = setup({ pq: ask({ criteria: c, decisions: [] }) });
+  assert.doesNotMatch(panel.textContent, /Compliance/);
+  assert.equal($$('.shape-role-fold').length, 0);
+  assert.equal($$(FOLD).length, 1);
+  assert.equal($('.plan-approve').textContent, 'Agree and plan');
+});

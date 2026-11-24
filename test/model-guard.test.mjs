@@ -10,6 +10,7 @@ const routed = (id) => id === 'gw-routed';
 
 test('UNCHOSEN_SOURCES: worca-default, factory, auto and null (a legacy undefined reads as null)', () => {
   assert.deepEqual([...UNCHOSEN_SOURCES].sort(), [null, 'auto', 'factory', 'worca-default'].sort());
+  assert.equal(UNCHOSEN_SOURCES.has('care'), false, 'a care fill is a chosen model');
 });
 
 test('preStepVerdict: unchosen premium pauses; chosen, confirmed or non-premium passes', () => {
@@ -21,6 +22,7 @@ test('preStepVerdict: unchosen premium pauses; chosen, confirmed or non-premium 
     [{ model: 'claude-fable-5-2', source: 'project' }, false],
     [{ model: 'claude-fable-5-2', source: 'run' }, false],
     [{ model: 'claude-fable-5-2', source: 'role' }, false],
+    [{ model: 'claude-fable-5-2', source: 'care' }, false],
     [{ model: 'claude-fable-5-2', source: 'auto', confirmed: ['claude-fable-5-2'] }, false],
     [{ model: 'claude-fable-5-2', source: 'auto', confirmed: ['claude-fable-5-1'] }, true],
     [{ model: 'claude-opus-5-5', source: 'auto' }, false],

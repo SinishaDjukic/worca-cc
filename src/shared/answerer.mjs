@@ -8,8 +8,14 @@ export const ANSWERER_LEADS = Object.freeze({
   product: 'plain', architect: 'technical', ux: 'plain', qa: 'technical', security: 'technical', devops: 'technical',
 });
 export const ANSWERER_LEAD_KEYS = Object.freeze(Object.keys(ANSWERER_LEADS));
-export const isAnswererLead = (k) => typeof k === 'string' && Object.hasOwn(ANSWERER_LEADS, k);
-const isPlainLead = (lead) => ANSWERER_LEADS[lead] === 'plain';
+/** Leads only the `shaperSmallRuns` flag admits (small runs B3), with their register. */
+export const ANSWERER_FLAG_LEADS = Object.freeze({ compliance: 'plain' });
+/** The lead keys a person may pick: ANSWERER_LEAD_KEYS, plus the flag leads under small runs. */
+export const answererLeadKeys = ({ smallRuns = false } = {}) => (smallRuns === true
+  ? [...ANSWERER_LEAD_KEYS, ...Object.keys(ANSWERER_FLAG_LEADS)] : [...ANSWERER_LEAD_KEYS]);
+export const isAnswererLead = (k, { smallRuns = false } = {}) => typeof k === 'string'
+  && (Object.hasOwn(ANSWERER_LEADS, k) || (smallRuns === true && Object.hasOwn(ANSWERER_FLAG_LEADS, k)));
+export const isPlainLead = (lead) => (Object.hasOwn(ANSWERER_LEADS, lead) ? ANSWERER_LEADS[lead] : ANSWERER_FLAG_LEADS[lead]) === 'plain';
 
 const words = (text) => String(text).split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w));
 

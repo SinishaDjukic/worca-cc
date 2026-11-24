@@ -401,6 +401,34 @@ test('no agreed list: today\'s output, no new keys', () => {
   assert.deepEqual(applyOutlineEdits(r.outline, [{ op: 'remove', id: 's2' }]).outline, { why: r.outline.why, slices: [r.outline.slices[0]] });
 });
 
+test('C2: brief of a marked feature carries Example lines, and the Lean tests-first line', () => {
+  const agreed = AGREED.map((a) => (a.id === 'R-po-2' ? { ...a, example: `  Ana has 3 runs; Export gives 3 rows.  ${'x'.repeat(400)}` } : a));
+  const o = normalizeOutline(reqOutline(['R-po-1'], ['R-po-2', 'R-ux-1', 'R-qa-1', 'R-ops-1']), { agreed }).outline;
+  const ex = o.agreed.find((a) => a.id === 'R-po-2').example;
+  assert.ok(ex.startsWith('Ana has 3 runs; Export gives 3 rows.'), 'trimmed');
+  assert.equal(ex.length, 300, 'capped like text');
+  assert.equal('example' in o.agreed.find((a) => a.id === 'R-ux-1'), false, 'no example, no key');
+  const brief = sliceBrief({ featureTitle: 'Charts', outline: o, index: 2 });
+  assert.ok(brief.includes(`Satisfies: R-po-2, R-ux-1, R-qa-1, R-ops-1\n- **R-po-2** text of R-po-2\n  Example: ${ex}\n- **R-ux-1** text of R-ux-1\n`), brief);
+  assert.deepEqual(criterionIds(brief), ['R-po-2', 'R-ux-1', 'R-qa-1', 'R-ops-1']);
+  assert.ok(!brief.includes('Write the tests for these examples first'));
+  const lean = sliceBrief({ featureTitle: 'Charts', outline: o, index: 2, testsFirst: true });
+  assert.ok(lean.includes('- **R-ops-1** text of R-ops-1\nWrite the tests for these examples first, then the code.\n\n'), lean);
+  // A slice whose ids have no example gets no tests-first line, even under Lean.
+  assert.ok(!sliceBrief({ featureTitle: 'Charts', outline: o, index: 1, testsFirst: true }).includes('Write the tests for these examples first'));
+  // An example's line breaks collapse, so it stays one indented line under its criterion.
+  const multi = normalizeOutline(reqOutline(['R-po-1'], ['R-po-2', 'R-ux-1', 'R-qa-1', 'R-ops-1']),
+    { agreed: AGREED.map((a) => (a.id === 'R-po-2' ? { ...a, example: 'Ana exports.\n# Not a heading\n  3 rows.' } : a)) }).outline;
+  assert.equal(multi.agreed.find((a) => a.id === 'R-po-2').example, 'Ana exports. # Not a heading 3 rows.');
+});
+
+test('C2: an agreed list without examples renders byte-identical', () => {
+  const o = normalizeOutline(reqOutline(['R-po-1'], ['R-po-2', 'R-ux-1', 'R-qa-1', 'R-ops-1']), { agreed: AGREED }).outline;
+  assert.deepEqual(o.agreed, AGREED);
+  const brief = sliceBrief({ featureTitle: 'Charts', outline: o, index: 2 });
+  assert.ok(brief.includes('Satisfies: R-po-2, R-ux-1, R-qa-1, R-ops-1\n- **R-po-2** text of R-po-2\n- **R-ux-1** text of R-ux-1\n- **R-qa-1** text of R-qa-1\n- **R-ops-1** text of R-ops-1\n\n'), brief);
+});
+
 test('sliceBrief lists `Satisfies:` and only its slice\'s criterion lines (`criteriaList` returns 4 ids)', () => {
   const o = normalizeOutline(reqOutline(['R-po-1'], ['R-po-2', 'R-ux-1', 'R-qa-1', 'R-ops-1']), { agreed: AGREED }).outline;
   const brief = sliceBrief({ featureTitle: 'Charts', outline: o, index: 2 });
@@ -508,6 +536,44 @@ test("smallRuns: role 'Legal' fails confirmRole; 'Compliance' passes", () => {
     'R-ops-1: "Legal" cannot confirm a requirement. Pick Product, Engineering, Design, DevOps, Security, Compliance or QA.');
   assert.equal(checkSlices({ ...o, confirmed: [{ id: 'R-ops-1', role: ' compliance ' }] }, on()).ok, true);
   assert.equal(checkSlices({ ...o, confirmed: [{ id: 'R-ops-1', role: 'Compliance' }] }, on()).ok, true);
+});
+
+test('smallRuns B4: ownership, coverage and confirmRole list one failure per failing id; every wrong role is named', () => {
+  const o = perRun([1, 1, 1]);
+  o.slices[1].requirements = ['R-po-2', 'R-po-1'];
+  o.slices[2].requirements = ['R-po-3', 'R-po-1', 'R-po-2'];
+  o.agreed.push({ id: 'R-ops-1', text: 'ops' }, { id: 'R-ops-2', text: 'ops 2' }, { id: 'R-sec-1', text: 's' }, { id: 'R-sec-2', text: 's2' });
+  o.confirmed = [{ id: 'R-sec-1', role: 'Legal' }, { id: 'R-sec-2', role: 'Board' }];
+  const item = (id) => checkSlices(o, on()).items.find((i) => i.id === id);
+  assert.deepEqual(item('ownership').failures, [
+    { id: 'R-po-1', text: 'R-po-1 is owned by s1, s2 and s3' }, { id: 'R-po-2', text: 'R-po-2 is owned by s2 and s3' }]);
+  assert.equal(item('ownership').detail, 'R-po-1 is owned by s1, s2 and s3; R-po-2 is owned by s2 and s3');
+  assert.deepEqual(item('coverage').failures.map((f) => f.id), ['R-ops-1', 'R-ops-2']);
+  assert.equal(item('coverage').failures[0].text, 'R-ops-1 is not owned by a slice or confirmed by a person');
+  assert.deepEqual(item('confirmRole').failures.map((f) => f.id), ['R-sec-1', 'R-sec-2']);
+  assert.match(item('confirmRole').failures[1].text, /^R-sec-2: "Board" cannot confirm a requirement\./);
+  assert.equal(item('confirmRole').detail, item('confirmRole').failures.map((f) => f.text).join('; '));
+  const ok = checkSlices(perRun([1, 1]), on()).items;
+  for (const id of ['ownership', 'coverage', 'confirmRole']) assert.deepEqual(ok.find((i) => i.id === id).failures, [], id);
+  assert.ok(checkSlices(perRun([1, 1])).items.every((i) => !('failures' in i)), 'dev items unchanged');
+});
+
+test('smallRuns B4: the confirm edit only with the option; it replaces the role of a confirmed id', () => {
+  const edit = { op: 'confirm', id: 'R-ops-1', role: 'Security' };
+  assert.equal(normalizeEdits([edit]).ok, false);
+  assert.deepEqual(normalizeEdits([edit, { op: 'merge', id: 's1', x: 1 }], { confirm: true }),
+    { ok: true, edits: [edit, { op: 'merge', id: 's1' }] });
+  assert.equal(normalizeEdits([{ op: 'confirm', id: 'R-ops-1' }], { confirm: true }).ok, false);
+  const o = { ...perRun([1, 1]), confirmed: [{ id: 'R-ops-1', role: 'Legal' }] };
+  o.agreed.push({ id: 'R-ops-1', text: 'ops' });
+  const r = applyOutlineEdits(o, [edit]);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.outline.confirmed, [{ id: 'R-ops-1', role: 'Security' }]);
+  assert.deepEqual(o.confirmed, [{ id: 'R-ops-1', role: 'Legal' }], 'input not mutated');
+  assert.equal(checkSlices(r.outline, on()).ok, true);
+  assert.equal(applyOutlineEdits(o, [{ ...edit, id: 'R-po-1' }]).ok, false, 'agreed but not confirmed');
+  assert.equal(applyOutlineEdits(o, [{ ...edit, id: 'R-zz-9' }]).ok, false, 'not agreed');
+  assert.equal(applyOutlineEdits(o, [{ ...edit, role: 'Legal' }]).ok, false, 'not a role');
 });
 
 test('smallRuns: a self and a forward builds-on each fail buildsOnEarlier', () => {

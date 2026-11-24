@@ -40,3 +40,8 @@ test('register/lookup: last wins, missing members are filled, junk is ignored', 
   assert.equal(askRendererFor('zz-bad'), null, 'no render function, no registration');
   assert.equal(askRendererFor('nope'), null);
 });
+
+test('askKindOf routes a care ask (Shaper small runs B2, the Start step) to the care renderer', () => {
+  assert.equal(askKindOf({ kind: 'care' }), 'care');
+  assert.equal(askKindOf({ kind: 'care', issues: [] }), 'care', 'care wins over the issues-array gate arm');
+});

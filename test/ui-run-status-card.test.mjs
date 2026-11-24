@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { runModel, groupModel } from '../src/shared/run-model.mjs';
-import { statusText, memberStatusText, kindLabel, paintRunStatus, syncActions, pauseResumeOwn, renderMemberRows, groupShipLine } from '../ui/public/run-status-card.mjs';
+import { statusText, memberStatusText, kindLabel, paintRunStatus, syncActions, pauseResumeOwn, renderMemberRows, groupShipLine, FEATURE_KIND } from '../ui/public/run-status-card.mjs';
 import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
@@ -213,6 +213,7 @@ test('kindLabel, member rows and ship lines for a feature group', () => {
     members: model.members.map((m, i) => ({ position: i + 1, title: `Slice ${i + 1}`, href: `#history/acme/p${i + 1}`, model: m, cost: 1 })) };
   assert.equal(kindLabel(null), 'Run');
   assert.equal(kindLabel(row), 'Feature · 3 runs');
+  assert.equal(FEATURE_KIND, 'Feature', 'B1: the one source of the word');
   assert.equal(kindLabel({ ...row, groupKind: 'chain' }), 'Chain · 3 runs');
   const ol = renderMemberRows(doc, row);
   assert.ok(ol.classList.contains('is-table'), 'one layout for the group page and the chat card');

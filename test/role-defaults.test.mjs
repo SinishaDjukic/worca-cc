@@ -56,13 +56,14 @@ test('noModelLines: a tool-decides engine (or Claude signed out) warns once for 
   assert.deepEqual(noModelLines('gemini', { c: agent('check', { model: 'g' }) }), []);
 });
 
-test('noModelLines: Worca-default and cli-decides steps get one line each', () => {
+test('noModelLines: Worca-default and cli-decides steps get one line each; a chosen model (project, care fill) gets none', () => {
   const nodes = {
     a: agent('plan', { model: 'claude-opus-5-5', modelSource: 'worca-default' }),
     b: agent('build', { modelSource: 'cli-decides' }),
     c: agent('check', { model: 'claude-sonnet-5-5', modelSource: 'project' }),
+    d: agent('review', { model: 'claude-haiku-5-5', modelSource: 'care' }),
   };
-  const roles = { plan: 'deep', build: 'everyday', check: 'everyday' };
+  const roles = { plan: 'deep', build: 'everyday', check: 'everyday', review: 'everyday' };
   const lines = noModelLines('claude', nodes, { labelOf: (id) => (id === 'claude-opus-5-5' ? 'Opus 5.5' : id), roleOf: (nc) => roles[nc.authoredKey] });
   assert.deepEqual(lines, [
     "Plan runs on Opus 5.5 (Worca's default for Deep thinking).",

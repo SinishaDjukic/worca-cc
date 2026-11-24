@@ -9,6 +9,7 @@ import { PR_OPEN_LABELS, prExemptText } from '../shared/pr-auto.mjs';
 import { readRunPrAuto, setRunPrOutcome, featurePrSetting, setFeaturePrOutcome, logToRun } from './pr-auto.mjs';
 import { featureOfPipeline, featureView, featureThread, featureRootSource, featureBase, acceptanceRefusal } from './shape/features.mjs';
 import { roundOrigin } from './shape/rounds.mjs';
+import { verifyCheckOfPipeline } from './shape/verifier.mjs';
 import { readPrState, readMemberPrStates, readPipelineStateById } from './artifacts.mjs';
 import { branchExists, commitsAhead } from './git-info.mjs';
 import { addNotification } from './notifications.mjs';
@@ -46,7 +47,7 @@ export function prAutoFinisher() { return current; }
 
 const DEFAULTS = {
   readRunPrAuto, setRunPrOutcome, featurePrSetting, setFeaturePrOutcome, logToRun,
-  featureOfPipeline, featureView, featureThread, featureRootSource, featureBase, acceptanceRefusal, roundOrigin,
+  featureOfPipeline, featureView, featureThread, featureRootSource, featureBase, acceptanceRefusal, roundOrigin, verifyCheckOfPipeline,
   readPrState, readMemberPrStates, readState: readPipelineStateById, branchExists, commitsAhead, addNotification, withBillTo, accountCheck,
   now: () => new Date().toISOString(),
   pushRemoteUrls: async () => [], live: () => null, changed: () => {}, postNotice: () => {},
@@ -192,6 +193,8 @@ export function createPrAutoFinisher(deps = {}) {
       if (pa.exempt === 'round' || pa.exempt === 'pr-watch') {
         await maybeShipOne(d.featureOfPipeline(d.roundOrigin(st.id))?.featureId, { triggerPipelineId: st.id });
       }
+      // Small runs C5 (D11): the Verifier run's settle releases its feature's one-PR ship, as a round's does.
+      if (pa.exempt === 'verify') await maybeShipOne(d.verifyCheckOfPipeline(st.id)?.featureId, { triggerPipelineId: st.id });
       return record(st.id, outcome('skipped', final, { reason: prExemptText(pa.exempt) }), { quiet: true });
     }
     const at = d.featureOfPipeline(st.id);

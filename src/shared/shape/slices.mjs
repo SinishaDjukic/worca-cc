@@ -2,7 +2,7 @@
 // check, the outline card's edits and the prompt text. Browser-safe: the card imports it too.
 import { isTestable } from './shape.mjs';
 import { CRITERION_ID_RE } from '../review/coverage.mjs';
-import { roleKey, roleNames, CARE_LABELS } from './feature-record.mjs';
+import { roleKey, roleNames, CARE_LABELS, CONFIRM_ROLES } from './feature-record.mjs';
 
 export const OUTLINE_FILE = 'slices.json';
 /** D19: a later slice's Planner writes this (in the run's pipeline dir) when the slice cannot be built as outlined. */
@@ -69,7 +69,9 @@ function agreedList(raw) {
     const id = typeof a?.id === 'string' ? a.id.trim() : '';
     if (!CRITERION_ID_RE.test(id) || seen.has(id)) continue;
     seen.add(id);
-    out.push({ id, text: typeof a.text === 'string' ? a.text.trim().slice(0, AGREED_TEXT_MAX) : '' });
+    // One line under its criterion in the brief: its line breaks collapse to spaces.
+    const example = typeof a.example === 'string' ? a.example.replace(/\s+/g, ' ').trim().slice(0, AGREED_TEXT_MAX) : '';
+    out.push({ id, text: typeof a.text === 'string' ? a.text.trim().slice(0, AGREED_TEXT_MAX) : '', ...(example ? { example } : {}) });
     if (out.length >= AGREED_MAX) break;
   }
   return out;
@@ -163,7 +165,7 @@ function layerCheck(slices) {
 }
 
 /** The rows stating the fixed rule (every requirement owned by exactly one slice or confirmed by a person): never
- *  waivable, passing or failing (owner direction, 2026-11-20). Nothing reads `waivable` yet; a later Split step will. */
+ *  waivable, passing or failing (owner direction, 2026-11-20). The Split step's gate (B4, `splitApprovable`) reads it. */
 const NOT_WAIVABLE = new Set(['ownership', 'coverage', 'confirmRole']);
 
 /** The small-runs rules (A3), in SMALL_RUN_IDS order; the four requirement rows only with an agreed list. Ownership is
@@ -174,6 +176,9 @@ function checkSmallRuns(outline, care) {
   const items = [];
   const add = (id, pass, detail) => items.push({ id, label: SMALL_RUN_LABELS[id], pass, detail: pass ? '' : detail,
     waivable: !NOT_WAIVABLE.has(id) });
+  // B4 (D11): the non-waivable rows list one failure per failing requirement id; `detail` is their joined text.
+  const addEach = (id, failures) => items.push({ id, label: SMALL_RUN_LABELS[id], pass: !failures.length,
+    detail: failures.map((f) => f.text).join('; '), waivable: false, failures });
 
   add('runs', n >= 2 && n <= SMALL_RUNS_MAX,
     n < 2 ? 'One slice is no slicing: choose Don\'t slice' : `${n} slices: never more than ${SMALL_RUNS_MAX}`);
@@ -211,20 +216,20 @@ function checkSmallRuns(outline, care) {
     }
     const twice = agreedIds.filter((id) => (owners.get(id)?.length || 0) + (confirmed.has(id) ? 1 : 0) > 1);
     const join = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}` : xs[0]);
-    add('ownership', !twice.length, twice.map((id) => `${id} is owned by ${join(owners.get(id))}`
-      + (confirmed.has(id) ? ` and confirmed by ${confirmed.get(id)}` : '')).join('; '));
+    addEach('ownership', twice.map((id) => ({ id, text: `${id} is owned by ${join(owners.get(id) || [])}`
+      + (confirmed.has(id) ? ` and confirmed by ${confirmed.get(id)}` : '') })));
     const uncovered = agreedIds.filter((id) => !owners.has(id) && !confirmed.has(id));
-    add('coverage', !uncovered.length, uncovered.map((id) => `${id} is not owned by a slice or confirmed by a person`).join('; '));
-    const wrong = [...confirmed].find(([, role]) => roleKey(role) === null);
-    add('confirmRole', !wrong, wrong ? `${wrong[0]}: "${wrong[1]}" cannot confirm a requirement. Pick ${roleNames()}.` : '');
+    addEach('coverage', uncovered.map((id) => ({ id, text: `${id} is not owned by a slice or confirmed by a person` })));
+    const wrong = [...confirmed].filter(([, role]) => roleKey(role) === null);
+    addEach('confirmRole', wrong.map(([id, role]) => ({ id, text: `${id}: "${role}" cannot confirm a requirement. Pick ${roleNames()}.` })));
   }
 
   return { ok: items.every((i) => i.pass), items, passed: items.filter((i) => i.pass).length, total: items.length };
 }
 
 /** The outline check (spec §3.8), in the checkShape result shape so the card reuses the check row.
- *  Dev's items are all waivable; with `smallRuns`, ownership, coverage and confirmRole carry `waivable: false`.
- *  Nothing blocks approval on it yet. */
+ *  Dev's items are all waivable; with `smallRuns`, ownership, coverage and confirmRole carry `waivable: false` and
+ *  `failures` (one per failing id), and the server refuses an approve that fails them (B4). */
 export function checkSlices(outline, opts = {}) {
   if (opts?.smallRuns === true) return checkSmallRuns(outline, opts.care);
   const slices = Array.isArray(outline?.slices) ? outline.slices : [];
@@ -265,12 +270,18 @@ export function checkSlices(outline, opts = {}) {
   return { ok: items.every((i) => i.pass), items, passed: items.filter((i) => i.pass).length, total: items.length };
 }
 
-/** The card's edit list: `[{op:'merge'|'remove', id}]`. */
-export function normalizeEdits(raw) {
+/** The card's edit list: `[{op:'merge'|'remove', id}]`. With `confirm` (small runs, B4 D13) also
+ *  `{op:'confirm', id, role}`: "Ask the role to confirm" on a confirmRole row. */
+export function normalizeEdits(raw, { confirm = false } = {}) {
   if (raw === undefined || raw === null) return { ok: true, edits: [] };
   if (!Array.isArray(raw) || raw.length > OUTLINE_EDITS_MAX) return { ok: false, error: `edits must be a list of at most ${OUTLINE_EDITS_MAX}` };
   const edits = [];
   for (const e of raw) {
+    if (confirm && e?.op === 'confirm') {
+      if (typeof e.id !== 'string' || !e.id || typeof e.role !== 'string' || !e.role.trim()) return { ok: false, error: 'a confirm edit is {op:"confirm", id, role}' };
+      edits.push({ op: 'confirm', id: e.id, role: e.role.trim().slice(0, ROLE_MAX) });
+      continue;
+    }
     if (!e || (e.op !== 'merge' && e.op !== 'remove') || typeof e.id !== 'string' || !e.id) return { ok: false, error: 'each edit is {op:"merge"|"remove", id}' };
     edits.push({ op: e.op, id: e.id });
   }
@@ -295,9 +306,19 @@ function mergeTwo(a, b) {
 export function applyOutlineEdits(outline, edits = []) {
   let slices = outline.slices.map((s) => ({ ...s, dependsOn: [...s.dependsOn] }));
   const leftOut = outline.agreed?.length ? (outline.leftOut || []).map((e) => ({ ...e })) : null;
+  let confirmed = Array.isArray(outline.confirmed) ? outline.confirmed.map((c) => ({ ...c })) : null;
   let merges = 0;
   let removals = 0;
   for (const e of edits) {
+    if (e.op === 'confirm') {
+      // D13: only re-names the role of an id that already has a confirmed entry; coverage and ownership clear through
+      // Ask for changes.
+      const at = confirmed ? confirmed.findIndex((c) => c.id === e.id) : -1;
+      if (at < 0) return { ok: false, error: `${e.id} has no confirmation to change` };
+      if (roleKey(e.role) === null) return { ok: false, error: `"${e.role}" cannot confirm a requirement. Pick ${roleNames()}.` };
+      confirmed = confirmed.map((c, k) => (k === at ? { ...c, role: CONFIRM_ROLES.find((r) => r.key === roleKey(e.role)).label } : c));
+      continue;
+    }
     const i = slices.findIndex((s) => s.id === e.id);
     if (i < 0) return { ok: false, error: `there is no slice "${e.id}"` };
     if (e.op === 'merge') {
@@ -315,7 +336,7 @@ export function applyOutlineEdits(outline, edits = []) {
       removals += 1;
     }
   }
-  return { ok: true, outline: { ...outline, slices, ...(leftOut ? { leftOut } : {}) }, merges, removals };
+  return { ok: true, outline: { ...outline, slices, ...(leftOut ? { leftOut } : {}), ...(confirmed ? { confirmed } : {}) }, merges, removals };
 }
 
 /** The approved outline's left-out ids, each with a reason: an id no slice placed is left out as not placed. Identity
@@ -390,6 +411,24 @@ export function outlineFixAllFeedback(items) {
     + 'Rewrite the outline so these checks pass.';
 }
 
+/** Small runs B4 (D12): every failing (rule, id) of a `waivable: false` row of the outline plus the edits under `rules`,
+ *  the one gate the server (split-step.mjs splitApprovable) and the card (step-card.mjs splitRefused) share.
+ *  `error` when the edits do not apply. */
+export function splitBlockers(outline, edits = [], rules = {}) {
+  const applied = applyOutlineEdits(outline, edits || []);
+  if (!applied.ok) return { ok: false, failing: [], error: applied.error };
+  const check = checkSlices(settleLeftOut(applied.outline), rules || {});
+  const failing = check.items.filter((i) => i.waivable === false && !i.pass)
+    .flatMap((i) => (i.failures || []).map((f) => ({ rule: i.id, id: f.id, text: f.text })));
+  return { ok: !failing.length, failing };
+}
+
+/** Small runs B4 (D9, D14): open objections as the Planner's revise feedback, one line each ({ label, ids?, fix }). */
+export function objectionFeedback(open) {
+  return 'The roles challenged the split. Address each objection in the outline:\n'
+    + (open || []).map((o) => `- ${o.label}${o.ids?.length ? ` (${o.ids.join(', ')})` : ''}: ${o.fix}`).join('\n');
+}
+
 export function outlineFeedbackBlock(feedback) {
   return '## Changes asked for the outline\n\n'
     + 'The outline you wrote is still in the outline file. Edit it to address these changes, keep what they do not '
@@ -429,19 +468,26 @@ export function sliceScopeBlock({ index, total, outline, earlier = [], refiner =
 }
 
 /** The slice's agreed criteria: the Satisfies line, then one criterion line per id (what the slice run checks). */
-function satisfiesBlock(ids, agreed = []) {
-  const text = new Map((agreed || []).map((a) => [a.id, a.text]));
-  return `${satisfies(ids)}\n${ids.map((id) => `- **${id}** ${text.get(id) || ''}`.trimEnd()).join('\n')}\n\n`;
+function satisfiesBlock(ids, agreed = [], { testsFirst = false } = {}) {
+  const byId = new Map((agreed || []).map((a) => [a.id, a]));
+  // Small runs C2 (D11): an agreed example prints under its criterion; a Care plan without a Test writer adds one line.
+  const line = (id) => {
+    const a = byId.get(id);
+    const item = `- **${id}** ${a?.text || ''}`.trimEnd();
+    return a?.example ? `${item}\n  Example: ${a.example}` : item;
+  };
+  const lean = testsFirst === true && ids.some((id) => byId.get(id)?.example) ? 'Write the tests for these examples first, then the code.\n' : '';
+  return `${satisfies(ids)}\n${ids.map(line).join('\n')}\n${lean}\n`;
 }
 
 /** The task of a slice run (k ≥ 2, or a restarted slice): what its Clarify, Planner and title start from. */
-export function sliceBrief({ featureTitle, outline, index }) {
+export function sliceBrief({ featureTitle, outline, index, testsFirst = false }) {
   const s = outline.slices[index - 1];
   return `# ${featureTitle}: slice ${index} of ${outline.slices.length} — ${s.title}\n\n`
     + (s.goal ? `${s.goal}\n\n` : '')
     + (s.inScope.length ? `In scope:\n${s.inScope.map((x) => `- ${x}`).join('\n')}\n\n` : '')
     + (s.acceptance.length ? `Acceptance:\n${s.acceptance.map((x) => `- ${x}`).join('\n')}\n\n` : '')
-    + (s.requirements?.length ? satisfiesBlock(s.requirements, outline.agreed) : '')
+    + (s.requirements?.length ? satisfiesBlock(s.requirements, outline.agreed, { testsFirst }) : '')
     + (s.outOfScope.length ? `Out of scope:\n${s.outOfScope.map((x) => `- ${x}`).join('\n')}\n\n` : '')
     + `This is one slice of an approved outline:\n\n${outlineMarkdown(outline, { current: index })}\n`;
 }

@@ -21,6 +21,10 @@ test('a chosen source whose model the engine dropped falls to the default', () =
   assert.deepEqual(orch()._nodeModelPair(nc({ model: 'gpt-5.5', modelSource: 'project' })), { model: 'claude-opus-5-5', effort: undefined, source: 'worca-default' });
 });
 
+test('a care-filled node keeps its own model', () => {
+  assert.deepEqual(orch()._nodeModelPair(nc({ model: 'claude-sonnet-5', modelSource: 'care' })), { model: 'claude-sonnet-5', effort: undefined });
+});
+
 test('the tool decides (null) and cli-decides stay empty; codex cli-decides names no default', () => {
   assert.deepEqual(orch()._nodeModelPair(nc({ modelSource: null })), { model: undefined, effort: undefined });
   assert.deepEqual(orch()._nodeModelPair(nc({ modelSource: 'cli-decides' })), { model: undefined, effort: undefined });
