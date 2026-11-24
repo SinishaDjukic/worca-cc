@@ -52,14 +52,19 @@ function start({ onCare = pickCare, ...opts } = {}, onPlan = () => {}) {
   const plans = [];
   const execs = [];
   const asked = [];
+  let unanswered;
+  const failFast = new Promise((_, reject) => { unanswered = reject; });
   orch.on('exec', (e) => execs.push(e));
   orch.on('question', (q) => {
     asked.push(q);
     if (q.kind === 'care') { setImmediate(() => onCare(q, orch)); return; }
     if (q.kind === 'plan') { plans.push(q); setImmediate(() => onPlan(q, orch)); return; }
-    if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+    if (q.kind === 'clarify' || q.kind === 'questions') { setImmediate(() => orch.answer(q.id, { answers: [] })); return; }
+    // C3: a marked, non-auto run whose review loop runs out stops on dev's gate ask.
+    if (q.kind === 'gate') { setImmediate(() => orch.answer(q.id, { decision: 'continue' })); return; }
+    unanswered(new Error('unanswered ask kind ' + q.kind));
   });
-  const done = opts.resume ? orch.resume() : orch.run();
+  const done = Promise.race([opts.resume ? orch.resume() : orch.run(), failFast]);
   return { orch, plans, execs, asked, done, dir };
 }
 const ran = (execs, nodeId, status) => execs.filter((e) => e.nodeId === nodeId && (!status || e.status === status));
@@ -516,6 +521,14 @@ test('B2: answering Lean under a Thorough pick stores chosenBy person with the p
   assert.equal(h.orch.getState().stepper.careFill.position, 'lean');
 });
 
+test('B2: a Lean marked run whose review runs out stops at the gate and continues on the answer', async () => {
+  const h = await marked(async () => { const x = start({ projectDir: gitDir('b2-lean-gate'), prompt: PAY, onCare: answerCare('lean') }, approveAll); return { x, res: await x.done }; });
+  const gate = h.x.asked.find((q) => q.kind === 'gate');
+  assert.ok(gate, `a gate ask was raised: ${h.x.asked.map((q) => q.kind)}`);
+  assert.ok(gate.stop, 'the gate carries a stop');
+  assert.equal(h.res.status, 'done', h.res.error);
+});
+
 test('B2: answering the pick stores chosenBy default', async () => {
   const h = await marked(async () => { const x = start({ projectDir: gitDir('b2-pick'), prompt: PAY }, approveAll); await x.done; return x; });
   const care = statsOf(h.orch.getState().id).care;
@@ -666,6 +679,7 @@ test('B2: the split writes the saved Care onto the feature row', async () => {
       else if (q.kind === 'plan' && q.plan?.outline) setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
       else if (q.kind === 'plan') setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
       else if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+      else if (q.kind === 'gate') setImmediate(() => orch.answer(q.id, { decision: 'continue' }));
     });
     await orch.run();
     return { orch };

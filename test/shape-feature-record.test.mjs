@@ -139,7 +139,7 @@ test('the shared module never reads the flag and imports nothing from core', () 
   const src = readFileSync(new URL('../src/shared/shape/feature-record.mjs', import.meta.url), 'utf8');
   assert.ok(!src.includes('flagEnabled'));
   assert.ok(!/core\//.test(src));
-  assert.deepEqual([...src.matchAll(/^import .* from '(.*)';$/gm)].map((m) => m[1]), ['../review/coverage.mjs']);
+  assert.deepEqual([...src.matchAll(/^import .* from '(.*)';$/gm)].map((m) => m[1]), ['../review/coverage.mjs', './perspectives.mjs']);
 });
 
 test('A3: roleKey and roleNames are exported for the split check', () => {
@@ -279,4 +279,11 @@ test('exactly one perspective-to-role table exists: the UI and the shared module
     const src = readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
     assert.doesNotMatch(src, /architect:\s*'engineering'|architect:\s*'Engineering'/, f);
   }
+});
+
+test('C1 (D3): prototypeCare reads the Prototype row: Lean skips, Thorough reviews, an unknown position is the default', async () => {
+  const { prototypeCare } = await import('../src/shared/shape/feature-record.mjs');
+  assert.deepEqual(CARE_POSITIONS.map((p) => prototypeCare(p)), [
+    { primary: 'skip', review: false }, { primary: 'build', review: false }, { primary: 'build', review: true }]);
+  assert.deepEqual(prototypeCare('nope'), prototypeCare('balanced'));
 });

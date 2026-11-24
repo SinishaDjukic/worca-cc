@@ -13,11 +13,11 @@ import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { getTicket, runDueTickets, requestRunNow } from '../src/core/scheduler.mjs';
-import { createSliceFeature, featureView, resumeFeature, featureHoldsTicket } from '../src/core/shape/features.mjs';
+import { createSliceFeature, featureView, resumeFeature, featureHoldsTicket, liveSliceFrom, sliceGateState, appendFeatureRun } from '../src/core/shape/features.mjs';
 import { careOfRow, requirementKindsOf } from '../src/shared/shape/feature-record.mjs';
 import { featureFigures } from '../src/core/shape/measure.mjs';
 import { latestFinishedSlice, latestFinishedSource, sliceChainGate, sliceSourceOf, headMissingSlice, smallRunsChainGate,
-  sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase } from '../src/core/shape/chain.mjs';
+  sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase, heldStopTurn } from '../src/core/shape/chain.mjs';
 
 useTempHome(after, 'worca-shape-chain-');
 
@@ -57,6 +57,7 @@ const feature = (n, { deps = {}, approveEach = false, two = 'done' } = {}) => {
   if (two === 'done') fire(t[2], pipe('done'));
   return { id: f.id, t };
 };
+const featureOfT = (ticketId) => getDb().prepare('SELECT feature_id FROM shape_feature_slices WHERE ticket_id = ?').get(ticketId).feature_id;
 const okStart = async () => ({ ok: true });
 const gate = (t, o) => sliceChainGate(t, o, ON);
 const tick = (opts = {}) => runDueTickets({ start: okStart, chainGate: gate, hold: featureHoldsTicket, ...opts });
@@ -403,4 +404,82 @@ test('flag on, create, flag off, resume: readable and linear', async () => {
     assert.deepEqual(getTicket(t4).after, { kind: 'ticket', id: res.ticketId, policy: 'done' });
     assert.equal(getTicket(t4).status, 'scheduled');
   });
+});
+
+// ── Small runs C3 (D8, D9): a stop question does not hold independent runs; a held answer waits for its turn ───────────
+const STOP_Q = (id) => ({ id, kind: 'gate', stop: { reason: 'objection', run: 8 } });
+/** A 10-run feature: runs 1..7 done, run 10 builds on run 8. → {id, t, p} (p[k] = run k's pipeline once fired). */
+const tenRuns = () => {
+  const f = feature(10, { deps: { 10: ['s8'] } });
+  const p = [];
+  for (let k = 3; k <= 7; k++) fire(f.t[k], (p[k] = pipe('done')));
+  return { ...f, p };
+};
+/** The live overlay: `stops` = {k: heldStop|null} for a run waiting on a stop, `going` = runs at work. */
+const liveOf = (p, { stops = {}, going = [] } = {}) => (pid) => {
+  const k = p.indexOf(pid);
+  if (k < 0) return null;
+  if (k in stops) return liveSliceFrom({ runId: `r${k}`, status: 'running', pendingQuestion: STOP_Q(`g${k}`), approved: true, heldStop: stops[k] });
+  return going.includes(k) ? liveSliceFrom({ runId: `r${k}`, status: 'running', approved: true }) : null;
+};
+const tickLive = (live) => tick({ chainGate: (tk, o) => sliceChainGate(tk, { ...o, live }, ON) });
+
+test('C3: stop open on run 8: run 9 fires, run 10 stays scheduled', async () => {
+  const { t, p } = tenRuns();
+  fire(t[8], (p[8] = pipe('running')));
+  const out = await tickLive(liveOf(p, { stops: { 8: null } }));
+  assert.deepEqual(out.fired, [t[9]]);
+  assert.equal(getTicket(t[10]).status, 'scheduled');
+  const v = featureView(featureOfT(t[8]), { live: liveOf(p, { stops: { 8: null } }) });
+  assert.equal(v.slices[7].state, 'questions', 'the stopped run still reads as asking');
+});
+
+test('C3: held answer: no independent run fires until it is delivered', async () => {
+  const { t, p } = tenRuns();
+  fire(t[8], (p[8] = pipe('running')));
+  const held = await tickLive(liveOf(p, { stops: { 8: { id: 'g8', after: 9, payload: { decision: 'another' } } } }));
+  assert.deepEqual(held.fired, [], 'a held answer counts as going');
+  const open = await tickLive(liveOf(p, { stops: { 8: null } }));
+  assert.deepEqual(open.fired, [t[9]]);
+});
+
+test('C3: heldStopTurn: {due:false, after:9} while run 9 is going, {due:true} after; two held answers go one at a time', () => {
+  const { id, t, p } = tenRuns();
+  fire(t[8], (p[8] = pipe('running')));
+  fire(t[9], (p[9] = pipe('running')));
+  assert.deepEqual(heldStopTurn(id, 8, { live: liveOf(p, { stops: { 8: {} }, going: [9] }) }), { due: false, after: 9 });
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = ?").run(p[9]);
+  assert.deepEqual(heldStopTurn(id, 8, { live: liveOf(p, { stops: { 8: {} } }) }), { due: true });
+  // Two stopped runs, both answers held: neither waits on the other; once 8 is delivered (going again), 9 waits for it.
+  getDb().prepare("UPDATE pipelines SET status = 'running' WHERE id = ?").run(p[9]);
+  const both = liveOf(p, { stops: { 8: { after: 9 }, 9: { after: 8 } } });
+  assert.deepEqual(heldStopTurn(id, 8, { live: both }), { due: true });
+  assert.deepEqual(heldStopTurn(id, 9, { live: liveOf(p, { stops: { 9: { after: 8 } }, going: [8] }) }), { due: false, after: 8 });
+});
+
+test('C3: stop open on run 1: independent run 2 fires, a run building on s1 stays scheduled', async () => {
+  quiet();
+  const p1 = pipe('running');
+  const f = createSliceFeature({ pipelineId: p1, projectDir: root, title: 'Charts', outline: outlineOf(3, { 3: ['s1'] }),
+    perspectives: ['product'], workflowId: 'wf_shape' });
+  const t = rows(f.id).map((r) => r.ticket_id);
+  const live = (pid) => (pid === p1 ? liveSliceFrom({ runId: 'r1', status: 'running', pendingQuestion: STOP_Q('g1'), approved: true }) : null);
+  const out = await tickLive(live);
+  assert.deepEqual(out.fired, [t[1]]);
+  assert.equal(getTicket(t[2]).status, 'scheduled');
+});
+
+test('C4 (D7): a due change run takes the next turn before an earlier due run; it waits while another run is going', () => {
+  const { id, t } = feature(3);
+  const c = appendFeatureRun(id, { title: 'Change: R-po-1', goal: 'g', kind: 'change', requirements: ['R-po-1'] });
+  assert.equal(c.index, 4);
+  const g = (tid) => sliceGateState(getTicket(tid))?.state;
+  assert.equal(g(c.ticketId), 'ok', 'the change run goes first');
+  assert.equal(g(t[3]), 'waiting', 'run 3 waits for it');
+  fire(c.ticketId, pipe('running'));
+  assert.equal(g(t[3]), 'waiting', 'run 3 waits while the change run is going');
+  const { id: id2, t: t2 } = feature(3);
+  const c2 = appendFeatureRun(id2, { title: 'Change: R-po-1', goal: 'g', kind: 'change', requirements: ['R-po-1'] });
+  fire(t2[3], pipe('running'));
+  assert.equal(g(c2.ticketId), 'waiting', 'a change run waits while another run is going');
 });

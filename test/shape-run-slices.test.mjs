@@ -206,3 +206,20 @@ test('validateOutlineAnswer B4: dev rules (no `rules`) are unchanged: a broken s
   assert.deepEqual(validateOutlineAnswer({ decision: 'approve' }, { outline: BROKEN.coverage }),
     { ok: true, payload: { decision: 'approve', approveEach: false } });
 });
+
+// ---- Small runs C5 (D15): the Verifier's request ----
+const VERIFY = { featureId: 'feat_1', round: 1, fixCycles: 2, extra: 0, owned: ['R-po-1', 'R-po-2'], head: { index: 4, pipelineId: 'p4' } };
+
+test('resolveShapeRequest C5: an internal shape.verify on wf_shape_verify returns {shape:{verify}, workflowId}', () => {
+  const r = resolveShapeRequest({ shape: { verify: VERIFY }, workflowId: 'wf_shape_verify' }, { internal: true });
+  assert.deepEqual(r, { ok: true, shape: { verify: VERIFY }, workflowId: 'wf_shape_verify' });
+});
+
+test('resolveShapeRequest C5: verify is internal-only, needs wf_shape_verify and a well-formed record', () => {
+  assert.match(resolveShapeRequest({ shape: { verify: VERIFY }, workflowId: 'wf_shape_verify' }).error, /unknown field\(s\): verify/);
+  assert.equal(resolveShapeRequest({ shape: { verify: VERIFY }, workflowId: 'wf_shape' }, { internal: true }).ok, false);
+  assert.equal(resolveShapeRequest({ shape: { verify: VERIFY } }, { internal: true }).ok, false);
+  assert.equal(resolveShapeRequest({ shape: { verify: { ...VERIFY, round: 0 } }, workflowId: 'wf_shape_verify' }, { internal: true }).ok, false);
+  assert.equal(resolveShapeRequest({ shape: { verify: { ...VERIFY, owned: 'R-po-1' } }, workflowId: 'wf_shape_verify' }, { internal: true }).ok, false);
+  assert.equal(resolveShapeRequest({ workflowId: 'wf_shape_verify' }, { internal: true }).ok, false, 'never a plain run');
+});

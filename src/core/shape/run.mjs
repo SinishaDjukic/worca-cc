@@ -2,7 +2,7 @@
 import { isAbsolute } from 'node:path';
 import {
   SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_REQ_WORKFLOW_ID, SHAPE_UX_REQ_WORKFLOW_ID, SHAPE_REQ_WORKFLOW_IDS,
-  SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID, SHAPE_SLICE_REQ_WORKFLOW_IDS,
+  SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID, SHAPE_SLICE_REQ_WORKFLOW_IDS, SHAPE_VERIFY_WORKFLOW_ID,
 } from '../graph/builtin-workflows.mjs';
 import { shapeRequirementsEligible } from '../../shared/shape/requirements.mjs';
 import { isAnswererLead, answererLeadKeys } from '../../shared/answerer.mjs';
@@ -17,7 +17,7 @@ import { splitApprovable, splitRefusedMessage } from './split-step.mjs';
 export const PLAN_ASK_KIND = 'plan';
 export const PLAN_FEEDBACK_MAX = 8000;
 const SHAPE_FIELDS = new Set(['perspectives', 'slices', 'size', 'lead']);
-const SHAPE_INTERNAL_FIELDS = new Set(['slice', 'replaces', 'requirementsFirst']);   // only a fired slice ticket / a re-plan run / a Changes follow-up carries these
+const SHAPE_INTERNAL_FIELDS = new Set(['slice', 'replaces', 'requirementsFirst', 'verify']);   // only a fired slice ticket / a re-plan run / a Changes follow-up / a Verifier ticket carries these
 const SLICES_MODES = new Set(['auto', 'off']);
 const SIZES = new Set(['small', 'medium', 'large']);
 
@@ -38,6 +38,19 @@ function normalizeSliceRef(raw) {
   return { feature, index, total, outline: o.outline };
 }
 
+const count = (v, min) => Number.isInteger(v) && v >= min;
+
+/** Small runs C5 (D15): shape.verify of a Verifier ticket (src/core/shape/verifier.mjs startVerifyCheck); null when malformed. */
+function normalizeVerifyRef(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const { featureId, round, fixCycles, extra = 0, owned, head } = raw;
+  if (typeof featureId !== 'string' || !featureId || !count(round, 1) || !count(fixCycles, 0) || !count(extra, 0)) return null;
+  if (!Array.isArray(owned) || !owned.every((id) => typeof id === 'string' && id)) return null;
+  if (!head || typeof head !== 'object' || typeof head.pipelineId !== 'string' || !head.pipelineId
+    || !(head.index === null || count(head.index, 1))) return null;
+  return { featureId, round, fixCycles, extra, owned: [...owned], head: { index: head.index, pipelineId: head.pipelineId } };
+}
+
 export const isShapeWorkflowId = (id) => id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id)
   || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id);
 
@@ -52,6 +65,8 @@ export const isShapeWorkflowId = (id) => id === SHAPE_WORKFLOW_ID || id === SHAP
  */
 export function resolveShapeRequest({ shape, workflowId }, { internal = false, proposal = false, smallRuns = false } = {}) {
   const named = typeof workflowId === 'string' && workflowId.trim() ? workflowId.trim() : null;
+  const verifyRun = `${SHAPE_VERIFY_WORKFLOW_ID} runs only as a feature's Verifier`;
+  if (shape === undefined && named === SHAPE_VERIFY_WORKFLOW_ID) return { ok: false, error: verifyRun };
   if (shape === undefined && !isShapeWorkflowId(named)) return { ok: true, shape: null, workflowId: named };
   if (shape !== undefined && (shape === null || typeof shape !== 'object' || Array.isArray(shape))) {
     return { ok: false, error: 'shape must be an object' };
@@ -59,6 +74,12 @@ export function resolveShapeRequest({ shape, workflowId }, { internal = false, p
   const allowed = (k) => SHAPE_FIELDS.has(k) || (internal && SHAPE_INTERNAL_FIELDS.has(k));
   const extra = Object.keys(shape || {}).filter((k) => !allowed(k));
   if (extra.length) return { ok: false, error: `shape has unknown field(s): ${extra.join(', ')}` };
+  // Small runs C5 (D15): the Verifier's run carries only `verify`, on its own workflow (never a Shaper workflow id).
+  if (shape?.verify !== undefined || named === SHAPE_VERIFY_WORKFLOW_ID) {
+    if (named !== SHAPE_VERIFY_WORKFLOW_ID || Object.keys(shape).length !== 1) return { ok: false, error: verifyRun };
+    const verify = normalizeVerifyRef(shape.verify);
+    return verify ? { ok: true, shape: { verify }, workflowId: SHAPE_VERIFY_WORKFLOW_ID } : { ok: false, error: 'shape.verify is malformed' };
+  }
   if (named && !isShapeWorkflowId(named)) {
     return { ok: false, error: `a shaped run uses the Shaper workflow (${SHAPE_WORKFLOW_ID}), not "${named}"` };
   }
@@ -156,10 +177,11 @@ export function validatePlanAnswer(raw, { revisable = false, perspectives = null
     return { ok: false, errors: [{ path: 'feedback', code: 'too-long', message: `feedback is over ${PLAN_FEEDBACK_MAX} characters` }] };
   }
   const source = raw.source === undefined ? 'person' : raw.source;
-  if (source !== 'person' && source !== 'check') {
-    return { ok: false, errors: [{ path: 'source', code: 'invalid', message: 'source must be person or check' }] };
+  // Small runs C4 (D11): 'requirement' is a requirement stop's Change it, whose change the server applied first.
+  if (source !== 'person' && source !== 'check' && source !== 'requirement') {
+    return { ok: false, errors: [{ path: 'source', code: 'invalid', message: 'source must be person, check or requirement' }] };
   }
-  const payload = { decision: 'revise', feedback, ...(source === 'check' ? { source } : {}) };
+  const payload = { decision: 'revise', feedback, ...(source !== 'person' ? { source } : {}) };
   if (raw.perspectives !== undefined) {
     const p = normalizePerspectives(raw.perspectives, { smallRuns });
     if (!p.ok) return { ok: false, errors: [{ path: 'perspectives', code: 'invalid', message: p.error }] };

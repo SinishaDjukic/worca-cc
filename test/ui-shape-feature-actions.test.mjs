@@ -36,6 +36,35 @@ test('running: Pause · Stop · ⋯; halted: Resume · Re-plan the rest · ⋯; 
   assert.deepEqual(featureButtons(null), []);
 });
 
+test('an open stop (item 10): the buttons shrink to Stop; ⋯ gains the moved model actions, deduplicated, and a halted feature\'s Resume', () => {
+  assert.deepEqual(featureButtons(C(), { stopOpen: true }), [{ key: 'stop', label: 'Stop' }]);
+  assert.deepEqual(featureButtons(C({ halted: true }), { stopOpen: true }), [], 'no Resume, no Re-plan the rest beside ⋯');
+  assert.deepEqual(featureButtons(C({ held: { index: 2 } }), { stopOpen: true }), []);
+  const moved = [{ id: 'retry' }, { id: 'report' }, { id: 'resume', disabled: 'Pausing…' }, { id: 'retry' }];
+  assert.deepEqual(featureMenu(C({ halted: true }), { moved, stopOpen: true }).map((i) => i.key),
+    ['replan', 'cancel', 'approve-each', 'plan', 'resume', 'act:retry', 'act:report']);
+  const items = featureMenu(C(), { moved, stopOpen: true });
+  assert.deepEqual(items.slice(4).map((i) => [i.key, i.label, i.disabled || null]),
+    [['act:retry', 'Retry', null], ['act:report', 'Report', null], ['act:resume', 'Resume', 'Pausing…']]);
+  assert.deepEqual(featureMenu(C(), { moved: [] }).map((i) => i.key), featureMenu(C()).map((i) => i.key), 'no stop: today\'s menu');
+});
+
+test('an open stop: a moved item calls deps.modelAct with its id; the feature Resume still posts the feature resume', async () => {
+  const { doc, host, seen, labels, menu } = setup(C({ halted: true }));
+  paintFeatureActions(doc, host, C({ halted: true }), { act: async (a) => { seen.push(['act', a]); return { ok: true }; }, confirm: async () => true,
+    openPlan() {}, modelAct: (id, b) => seen.push(['model', id, b.dataset.act]) }, { stopOpen: true, moved: [{ id: 'retry' }, { id: 'report', disabled: 'busy' }] });
+  assert.deepEqual(labels(), [''], 'only ⋯');
+  const items = menu();
+  assert.deepEqual(items.map((i) => i.textContent.trim()), ['Re-plan the rest', 'Cancel the rest', 'Ask before each run', 'Open the plan', 'Resume', 'Retry', 'Report']);
+  assert.equal(items[6].disabled || items[6].getAttribute('aria-disabled') === 'true', true, 'a disabled foot action stays disabled');
+  items[5].click();
+  await settle();
+  assert.deepEqual(seen.at(-1), ['model', 'retry', 'feature-more']);
+  menu()[4].click();
+  await settle();
+  assert.deepEqual(seen.at(-1), ['act', 'resume']);
+});
+
 test('Resume posts resume; Ask before each run posts approve-each with the flipped switch; Open the plan opens', async () => {
   const { host, seen, menu } = setup(C({ halted: true }));
   host.querySelector('[data-act="feature-resume"]').click();

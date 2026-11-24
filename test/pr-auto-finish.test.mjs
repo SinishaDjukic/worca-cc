@@ -519,3 +519,20 @@ test('a resumed run whose in-memory state has no starter takes it from the row',
   await none.fin.afterSettled(st({ startedBy: null }));
   assert.equal(none.opened[0].actor, 'worca', 'no starter anywhere: worca opens it');
 });
+
+test('small runs C5: a verify-exempt settle records "skipped" and calls the one-PR ship for its feature once', async () => {
+  let ready = false;
+  const w = world({ runs: { s1: { pa: PA() }, s2: { pa: PA() }, vr: { pa: PA({ open: 'none', exempt: 'verify' }) } },
+    features: { f1: feature({ ready: () => ready }) } });
+  w.deps.verifyCheckOfPipeline = (id) => (id === 'vr' ? { featureId: 'f1', round: 1 } : null);
+  w.fin = createPrAutoFinisher(w.deps);
+  await w.fin.afterSettled(slice('s2'));
+  assert.equal(w.ships.length, 0, 'the Verifier is still checking');
+  ready = true;
+  await w.fin.afterSettled(st({ id: 'vr' }));
+  assert.equal(w.ships.length, 1);
+  assert.equal(w.runs.vr.pa.outcome.status, 'skipped');
+  assert.equal(w.runs.vr.pa.outcome.reason, 'The Verifier checks the feature; it opens no PR of its own');
+  await w.fin.afterSettled(st({ id: 'vr' }));
+  assert.equal(w.ships.length, 1, 'once');
+});

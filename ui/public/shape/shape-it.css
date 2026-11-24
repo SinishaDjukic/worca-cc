@@ -89,6 +89,10 @@
    column, gap 8, the text, then the chevron or action in its own column at the far right. One-line rows are 32px, with
    no margin between siblings; a longer row grows from the top and its mark stays on the first line. */
 .srows{--row-mark:16px;--row-gap:8px;--row-line:20px;--row-id:5.4em;}
+/* Small runs C4: the change fold's id column holds a case name ("Not started"), not an R-id: the same column, wider.
+   Its line is always open, so it keeps the turned chevron's room as .shape-reqs does. */
+.srows.req-change-rule{--row-id:6.4em;}
+.srows.req-change-rule > .plan-check-line{box-sizing:border-box;padding-right:8px;}
 .srows :is(.plan-check-row,.shape-role-fold-head,.outline-run-row){display:flex;flex-wrap:nowrap;align-items:flex-start;gap:var(--row-gap);
   box-sizing:border-box;width:100%;min-height:32px;margin:0;padding:6px 0;line-height:var(--row-line);text-align:left;white-space:normal;}
 .srows .plan-checks{gap:0;padding-left:0;}
@@ -146,19 +150,37 @@
 /* 1px top border + 5 + 20 + 6 = 32px; the text starts 6px below the border-box top, as in the other rows. */
 .chat-rc-members .run-members.is-table.is-one-line > .run-member{align-items:start;min-height:32px;box-sizing:border-box;padding:5px 0 6px;line-height:20px;}
 .chat-rc-members .run-members.is-one-line > .run-member > .status-dot{justify-self:center;margin-top:6px;}
+/* C3: a run waiting on the person draws dev's 12px symbol dot (14px with an icon): the same centre, on the first line. */
+.chat-rc-members .run-members.is-one-line > .run-member > .status-dot.has-sym{margin-top:4px;}
+.chat-rc-members .run-members.is-one-line > .run-member > .status-dot.has-ic{margin-top:3px;}
 /* Title, then the short state right-aligned on the same line; a Requirements fold wraps under. */
 .chat-rc-members .run-members.is-one-line .run-member-main{flex-direction:row;flex-wrap:wrap;align-items:center;column-gap:8px;}
-.chat-rc-members .run-members.is-one-line .run-member-title{flex:1 1 0;min-width:0;}
+/* C3 (D15): a long title stays one line (the full title is in its tooltip), so a row with a stop word stays 32px. */
+.chat-rc-members .run-members.is-one-line .run-member-title{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;}
 .chat-rc-members .run-members.is-one-line .run-member-main > :not(.run-member-title, .run-member-state){flex-basis:100%;}
 .chat-rc-members .run-member-state{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
-/* A narrow row with no PR chip and no cost keeps one grid row: the stacked ". . pr cost" row and its gap would add 9px. */
+/* A narrow row with no PR chip and no cost keeps one grid row: the stacked ". . pr cost" row and its gap would add 9px.
+   C2: every narrow one-line row stays one 32px line, as the prototype's #build rows. A PR chip takes the last column
+   (the chevron's; the whole-row link opens the run); the cost is dropped, as dev drops it in a narrow chat card, and
+   stays on the run page. */
 @media (max-width:600px){
   .chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content;}
   .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty){grid-template-areas:"dot num main go";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member{grid-template-areas:"dot num main pr";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty){grid-template-areas:"dot num main go";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:not(:has(> .run-member-pr:empty)) > .run-member-go,
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > :is(.run-member-pr:empty, .run-member-cost){display:none;}
 }
 @container chat-rc-members (width <= 360px){
   .chat-rc-members .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content;}
   .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty){grid-template-areas:"dot num main main";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member{grid-template-areas:"dot num main pr";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty){grid-template-areas:"dot num main main";}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > .status-dot{grid-area:dot;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > .run-member-num{grid-area:num;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > .run-member-main{grid-area:main;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > .run-member-pr{grid-area:pr;}
+  .chat-rc-members .run-members.is-table.is-one-line > .run-member > :is(.run-member-go, .run-member-pr:empty, .run-member-cost){display:none;}
 }
 .chat-rc-members .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty):has(> .run-member-cost:empty) > :is(.run-member-pr, .run-member-cost){display:none;}
 /* Too narrow for a failing row's words side by side: its detail goes under its label. */
@@ -246,6 +268,9 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .chat-rc-log-run{color:var(--ink-3);}
 .chat-rc-log-run::after{content:" \00B7";}
 .chat-rc-log-show{margin-left:auto;background:none;border:0;padding:0 2px;color:var(--ink-2);font:inherit;cursor:pointer;text-decoration:underline;}
+/* C5 (owner direction d86d13181): a Verifier receipt is one .srows row: no wrap point between the mark and the text, and
+   the gap list's .plan-checks inset and type, so its mark and text share the gap rows' columns. */
+.chat-rc-log-row.chat-rc-log-verify{display:block;padding:0 0 0 4px;font-size:inherit;color:inherit;}
 .chat-rc-log-detail{flex-basis:100%;list-style:none;margin:2px 0 0 22px;padding:0;color:var(--ink-3);}
 .chat-rc-member-open{display:flex;width:100%;gap:4px;background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;}
 .chat-rc-member-open:disabled{cursor:default;opacity:.7;}
@@ -254,6 +279,8 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
    (.flag-chip: 18px, violet for Labs). Never truncated. */
 .chat-home-act-badge{flex:none;box-sizing:border-box;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-xs);background:var(--slate-bg);color:var(--slate-ink);font-size:var(--fs-caption);font-weight:500;line-height:1;white-space:nowrap;}
 .shape-checklists{margin:12px 0;display:flex;flex-direction:column;gap:6px;}
+/* Small runs C2: the Overview's Agents section (.srows rows) sits like the Perspective checklists above. */
+.run-agents{margin:12px 0;gap:6px;padding-top:0;}
 .shape-cl-title{font-size:13px;margin:0;color:var(--ink-2);}
 .shape-cl-cycle{border:1px solid var(--line);border-radius:var(--r-ctrl);padding:6px 10px;background:var(--panel);
   display:flex;flex-direction:column;align-items:flex-start;gap:6px;}
@@ -348,3 +375,19 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .chat-home-plan-feature{margin:0 10px 4px;color:var(--ink-2);font-size:12px;}
 .chat-home-plan-feature>summary{cursor:pointer;}
 .chat-home-plan-feature-body{margin-top:6px;}
+/* Shaper small runs C1: the Prototype step (prototype-body.mjs, prototype-build.mjs). The preview well holds one column
+   per screen (one column at 375px); each piece fades in once, after its --i; reduced motion shows every piece at once. */
+.proto-body .proto-well{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:8px;padding:10px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);}
+.proto-body .proto-col{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.proto-body .proto-col-head{display:flex;flex-wrap:wrap;gap:0 6px;font-weight:600;overflow-wrap:anywhere;}
+.proto-body .proto-col-ids{color:var(--ink-2);font-weight:400;font-size:var(--fs-meta);}
+.proto-body .proto-piece{padding:2px 6px;border-radius:var(--r-xs);background:var(--hover);color:var(--ink-2);font-size:var(--fs-meta);overflow-wrap:anywhere;animation:proto-piece-in .2s ease-out both;animation-delay:calc(var(--i, 0) * 40ms);}
+@keyframes proto-piece-in{from{opacity:0;}}
+.proto-body .proto-remark{display:flex;flex-wrap:wrap;gap:8px;}
+.proto-body .proto-remark-field{flex:1 1 12em;min-width:0;}
+/* 375px: the remark field takes the whole row, so Send remark wraps under it and the placeholder is not cut. */
+@media (max-width:480px){.proto-body .proto-remark-field{flex-basis:100%;}}
+.proto-body .proto-was{color:var(--ink-3);overflow-wrap:anywhere;}
+.proto-body .proto-quote{margin:0;color:var(--ink-2);overflow-wrap:anywhere;}
+.proto-body .proto-open{align-self:flex-start;}
+@media (prefers-reduced-motion:reduce){.proto-body .proto-piece{animation:none;}}

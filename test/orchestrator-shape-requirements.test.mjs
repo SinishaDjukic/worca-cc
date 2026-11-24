@@ -560,6 +560,8 @@ function startSR({ position = 'balanced', smallRuns = true, ...opts } = {}, onAs
     if (q.kind === 'care') setImmediate(() => orch.answer(q.id, { care: { position } }));
     else if (q.kind === 'plan') setImmediate(() => onAsk(q, orch));
     else if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+    // Care's fix cycles hold run 1's code review loop (Lean: 1, and the mock review blocks its first cycle): continue.
+    else if (q.kind === 'gate') setImmediate(() => orch.answer(q.id, { decision: 'continue' }));
   });
   const done = opts.resume ? orch.resume() : orch.run();
   return { orch, asks, execs, done, dir, workflowId: req.workflowId };
@@ -893,3 +895,79 @@ test('B4: a pause between challenge rounds resumes at the next round', async () 
   assert.equal(h2.order.filter((x) => x === 'C').length, 2, 'rounds 2 and 3 only');
   assert.equal(h2.asks.find(isOutlineAsk).plan.challenge.rounds, 3);
 });
+
+// Small runs C2 (run 1): the origin run builds slice 1 itself. Its Care graph (Test writer, fix cycles, second opinion)
+// is applied at the Start step, before the scheduler exists; its plan reviewers come at the Split, from slice 1's ids.
+const CODE_MAJOR_EVERY_CYCLE = JSON.stringify({ correctness: EVERY });
+const startsOf = (execs) => execs.filter((e) => e.kind !== 'task' && e.status === 'start').map((e) => e.nodeId);
+/** A run-1 Split run whose code review blocks every cycle (startSR answers a spent fix loop's gate Continue). */
+function startRunOne(position, opts = {}) {
+  let testsReq = null;
+  const h = startSplit({ position, ...opts });
+  const real = h.orch._runNodeAttempts.bind(h.orch);
+  h.orch._runNodeAttempts = async (nc, ctx) => {
+    if (nc.key === 'testWriter' && testsReq === null) testsReq = await readFile(ctx.bindings?.requirements?.path || '', 'utf8').catch(() => '');
+    return real(nc, ctx);
+  };
+  return { ...h, gates: () => h.asks.filter((q) => q.kind === 'gate').map((q) => q.id), testsReq: () => testsReq };
+}
+
+test('small runs C2: run 1 follows its Care plan under every position (Test writer, fix cycles by behaviour, plan reviewers)', () => withEnv({ WORCA_MOCK_ROLE_REVIEW: CODE_MAJOR_EVERY_CYCLE }, async () => {
+  const { careRunPlan } = await import('../src/shared/shape/feature-record.mjs');
+  const { runRolesOf } = await import('../src/shared/shape/requirements.mjs');
+  const { sliceRequirementIds } = await import('../src/shared/shape/slices.mjs');
+  for (const position of ['lean', 'balanced', 'thorough']) {
+    const h = startRunOne(position);
+    const res = await h.done;
+    assert.equal(res.status, 'done', `${position}: ${res.error}`);
+    const careRun = h.orch.state.stepper.careRun;
+    const owned = sliceRequirementIds(h.orch.runShape.slice);
+    const want = careRunPlan(position, { runRoles: runRolesOf(owned), lead: 'security' });
+    assert.equal(careRun.position, position);
+    assert.equal(careRun.testWriter, want.testWriter, position);
+    assert.deepEqual(careRun.planReviewers, want.planReviewers, position);
+    const planRounds = (h.orch.state.roleReviews?.rounds || []).filter((r) => r.node === 'n_roles');
+    assert.deepEqual(planRounds[0].roles.map((r) => r.key), want.planReviewers, position);
+    // The fix loop: n_impl runs once per cycle Care allows, then the spent budget holds at w9.
+    const order = startsOf(h.execs);
+    assert.equal(order.filter((id) => id === 'n_impl').length, want.fixCycles, `${position}: fix executions`);
+    assert.deepEqual(h.gates(), [`gate-w9-${want.fixCycles}`], `${position}: the w9 hold`);
+    assert.equal(h.orch.state.stepper.graph.wires.find((w) => w.id === 'w9').maxCycles, want.fixCycles);
+    // The Test writer: Balanced and Thorough run it once, after Refine and before the Implementer; Lean has none.
+    const tests = order.filter((id) => id === 'n_tests').length;
+    assert.equal(tests, want.testWriter ? 1 : 0, `${position}: n_tests runs`);
+    assert.equal(h.orch.state.stepper.graph.nodes.some((n) => n.id === 'n_tests'), want.testWriter, position);
+    if (want.testWriter) {
+      assert.ok(order.indexOf('n_tests') > order.lastIndexOf('n_refine') && order.indexOf('n_tests') < order.indexOf('n_impl'), `${position}: ${order.join(' ')}`);
+      // Its requirements are slice 1's own agreed ids only.
+      const ids = [...h.testsReq().matchAll(/\*\*(R-[a-z]+-\d+)\*\*/g)].map((m) => m[1]);
+      assert.ok(ids.length >= 1, h.testsReq());
+      assert.deepEqual([...new Set(ids)].sort(), [...owned].sort());
+    }
+    const label = { lean: 'Lean', balanced: 'Balanced', thorough: 'Thorough' }[position];
+    const tw = want.testWriter ? 'by a separate Test writer' : 'by the Implementer';
+    const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(h.orch.getState().id).map((r) => r.text);
+    assert.ok(audit.some((t) => t.startsWith(`Care ${label}: tests first, ${tw}, fix cycles ${want.fixCycles}, plan reviewers `)), audit.join('\n'));
+  }
+}));
+
+test('small runs C2: a project w9 budget wins over run 1\'s Care fix cycles', () => withEnv({ WORCA_MOCK_ROLE_REVIEW: CODE_MAJOR_EVERY_CYCLE }, async () => {
+  const { setWireCycles } = await import('../src/core/config.mjs');
+  const dir = gitDir('shapereq-c2-w9');
+  await setWireCycles(dir, 'wf_shape_req', 'w9', 2);
+  const h = startRunOne('lean', { projectDir: dir });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  assert.equal(startsOf(h.execs).filter((id) => id === 'n_impl').length, 2);
+  assert.deepEqual(h.gates(), ['gate-w9-2']);
+  const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(h.orch.getState().id).map((r) => r.text);
+  assert.ok(audit.some((t) => t.startsWith('Care Lean: tests first, by the Implementer, fix cycles 2, set by the project, plan reviewers ')), audit.join('\n'));
+}));
+
+test('small runs C2: an unmarked sliced run 1 has no Care plan, no Test writer and keeps w9 at 3', () => withSmallRuns(false, async () => {
+  const h = start({ prompt: SLICED });
+  assert.equal((await h.done).status, 'done');
+  assert.equal('careRun' in h.orch.state.stepper, false);
+  assert.ok(!h.orch.state.stepper.graph.nodes.some((n) => n.id === 'n_tests'));
+  assert.equal(h.orch.state.stepper.graph.wires.find((w) => w.id === 'w9').maxCycles, 3);
+}));

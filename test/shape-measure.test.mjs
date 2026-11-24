@@ -339,3 +339,10 @@ on('figuresByCare with projectDir ignores another project\'s figures', () => {
   assert.equal(figuresByCare().lean.features, 6, 'without projectDir every row counts, as before');
   clear();
 });
+
+test('C5 (D10): a feature with a Verifier check is finished only once the latest check is clean or accepted', () => {
+  const s = (rounds = []) => ({ rounds });
+  const v = (state) => ({ status: 'done', total: 1, slices: [s()], verify: { state, gapsFound: 2 } });
+  for (const state of ['verifying', 'gaps', 'asking', 'paused', 'halted']) assert.equal(featureFinished(v(state)), false, state);
+  for (const state of ['clean', 'accepted']) assert.equal(featureFinished(v(state)), true, state);
+});

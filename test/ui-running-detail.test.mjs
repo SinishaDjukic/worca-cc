@@ -144,6 +144,8 @@ async function bootRunning({ budget = okBudget(), rows = [HISTORY_ROW] } = {}) {
       if (box.slice && /\/api\/shape\/pipelines\/[^/]+\/slice$/.test(url)) return ok(box.slice);
       // The run's saved state (rdLoadData), only when a test sets box.runData.
       if (box.runData && url.startsWith('/api/runs/p1?')) return ok(box.runData);
+      // C5: the run's PR-when-done answer, only when a test sets box.prAuto.
+      if (box.prAuto && url.endsWith('/api/pipelines/p-verify/pr-auto')) return ok({ prAuto: box.prAuto });
       return null;
     },
   });
@@ -1263,6 +1265,18 @@ test('a live run\'s route ends at its base branch, where the work lands once the
   assert.equal(rows[2].querySelector('.rd-route-place').textContent, 'main');
   assert.equal(rows[2].querySelector('.rd-route-second').textContent, 'Lands here when the pull request is merged');
   assert.equal(R.querySelector('.rd-route-fold'), null);
+});
+
+test('C5: a live Verifier run (PR-exempt as verify) says why it opens no PR, once its pr-auto answer lands; no "Lands here"', async () => {
+  const ctx = await bootRunning();
+  ctx.box.prAuto = { exempt: 'verify' };
+  // Its own pipeline id: pr-auto-view's answer cache is shared by every app boot in this file (p1 is asked elsewhere).
+  const rd = await openGlance(ctx, 'running/r1', { id: 'p-verify', branch: { source: 'main', feature: 'worca-cc/verify-p1', worktreeDir: '/tmp/wt' } });
+  await settle(ctx.window, 6);
+  const rows = [...rd.querySelectorAll('.rd-route .rd-route-row')];
+  assert.equal(rows.length, 2, 'the branch and the PR row; nothing lands');
+  assert.equal(rows[1].querySelector('.rd-route-second').textContent, 'The Verifier checks the feature; it opens no PR of its own');
+  assert.ok(!/Opens when the changes are done|Lands here/.test(rd.querySelector('.rd-route').textContent));
 });
 
 test('needle (c): at Advanced and Expert the ▾ lists one Watch switch, whose click POSTs /api/pr/watch', async () => {

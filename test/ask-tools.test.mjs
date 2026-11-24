@@ -1506,3 +1506,19 @@ test('read_attachment: a generic binary returns a path on Claude, and neither a 
   assert.equal(Object.keys(l).includes('content'), false);
   assert.match(l.note, /not an image or a PDF/);
 });
+
+test('Small runs C4: change_requirement is listed only with the small-runs bundle key; the flag-off list is unchanged', async () => {
+  const { PERSPECTIVE_KEYS } = await import('../src/shared/shape/perspectives.mjs');
+  const seen = [];
+  const st = (extra) => ({ follows: () => true, check: (kind, input) => { seen.push([kind, input]); return { ok: true }; }, ...extra });
+  const on = { perspectiveKeys: PERSPECTIVE_KEYS, chatActions: {} };
+  const names = (deps) => createAskTools({ ...fake, ...deps }).list().map((d) => d.name).filter((n) => ['propose_changes', 'route_message', 'change_requirement'].includes(n));
+  assert.deepEqual(names({ ...on, shapeTools: st({}) }), ['propose_changes', 'route_message'], 'flag off: as before');
+  assert.deepEqual(names({ ...on, shapeTools: st({ smallRuns: true }) }), ['propose_changes', 'route_message', 'change_requirement']);
+  await assert.rejects(createAskTools({ ...fake, ...on, shapeTools: st({}) }).call('change_requirement', { featureId: 'f1', requirement: 'R-po-1', text: 'x', reason: 'r' }),
+    /change_requirement: unavailable/);
+  const ok = await createAskTools({ ...fake, ...on, shapeTools: st({ smallRuns: true }) })
+    .call('change_requirement', { featureId: 'f1', requirement: 'R-po-1', text: 'retry once', reason: 'r' });
+  assert.deepEqual([ok.ok, ok.requested], [true, { kind: 'requirement', featureId: 'f1', requirement: 'R-po-1', text: 'retry once', reason: 'r' }]);
+  assert.deepEqual(seen.at(-1), ['requirement', { featureId: 'f1', requirement: 'R-po-1', text: 'retry once', reason: 'r' }]);
+});

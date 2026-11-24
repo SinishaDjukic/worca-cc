@@ -1128,10 +1128,15 @@ export function createAskTools(deps) {
         inputSchema: SCHEMA.obj({ pipelineId: SCHEMA.s('the run (8-hex id) this chat follows, or any run of its feature'),
           request: SCHEMA.s('the change, in the user\'s words') }, ['pipelineId', 'request']) },
       { name: 'route_message',
-        description: 'Shaper: when the user brings a new idea or change while the feature this chat follows still has runs to go, put a "Where does this go?" card in the chat: Add to the feature, Own run now (from the base, its own pull request) or Save for later. guess = your pick (add, own or save), reason = one short line why; the user can pick another. Never for a question, a summary or thanks; never while a Plan or Split step is open. Returns {ok:true} or {ok:false, error}. Only from your own turn.',
+        description: 'Shaper: when the user brings a new idea or change while the feature this chat follows still has runs to go, put a "Where does this go?" card in the chat: Add to the feature, Own run now (from the base, its own pull request) or Save for later. An edit to an agreed requirement\'s text (an R-id) takes change_requirement when it is listed. guess = your pick (add, own or save), reason = one short line why; the user can pick another. Never for a question, a summary or thanks; never while a Plan or Split step is open. Returns {ok:true} or {ok:false, error}. Only from your own turn.',
         inputSchema: SCHEMA.obj({ featureId: SCHEMA.s('the feature this chat follows'), text: SCHEMA.s('the idea, in the user\'s words'),
           guess: { type: 'string', enum: ['add', 'own', 'save'], description: 'add | own | save' },
           reason: SCHEMA.s('one short line: why this guess') }, ['featureId', 'text', 'guess', 'reason']) },
+      // Small runs C4 (D13): only with Shaper small runs on.
+      ...(shapeTools.smallRuns === true ? [{ name: 'change_requirement',
+        description: 'Shaper small runs: when the user asks to change the text of an agreed requirement (an R-id such as R-po-3) of the feature this chat follows, put a requirement-change card in the chat. text = the requirement\'s new text (300 characters at most), reason = one short line why. worca lands it by where the run that owns the requirement is: not started, running, or finished (a small change run). Nothing changes until the user presses the card\'s button. A new idea is not a requirement change: use route_message for it. Never while a Plan or Split step is open. Returns {ok:true} or {ok:false, error}. Only from your own turn.',
+        inputSchema: SCHEMA.obj({ featureId: SCHEMA.s('the feature this chat follows'), requirement: SCHEMA.s('the agreed requirement id, e.g. R-po-3'),
+          text: SCHEMA.s('the requirement\'s new text'), reason: SCHEMA.s('one short line: why it changes') }, ['featureId', 'requirement', 'text', 'reason']) }] : []),
     ] : []),
     ...(deps.chatQuestions ? [{ name: 'ask_question',
       description: 'Ask the user ONE question that the chat shows as native controls (this chat is a chat-channel conversation, e.g. Discord). answer "choice": 2–25 options, each {id, label, description?} — the user picks exactly one. answer "text": the user types a short answer (no options). Use it only when you cannot continue without the answer and the answer is a bounded pick or a short text; never to confirm a run (propose_run makes its own card) and never to ask several things at once. It decides nothing: END YOUR TURN right after it. The app sends "[worca event] question card <id> answered: …" with the answer; continue from it. Returns {ok:true, card} or {ok:false, errors}.',
@@ -3356,6 +3361,14 @@ export function createAskTools(deps) {
       const r = st.check('changes', req);
       if (!r || r.ok !== true) return { ok: false, error: (r && r.error) || 'not available here' };
       return { ok: true, requested: { kind: 'changes', ...req }, note: SHAPE_CARD_NOTE };
+    },
+    async change_requirement(input) {
+      const st = shapeToolOf('change_requirement');
+      if (st.smallRuns !== true) throw new AskToolError('change_requirement: unavailable');
+      const req = { featureId: str(input.featureId), requirement: str(input.requirement), text: str(input.text), reason: str(input.reason) };
+      const r = st.check('requirement', req);
+      if (!r || r.ok !== true) return { ok: false, error: (r && r.error) || 'not available here' };
+      return { ok: true, requested: { kind: 'requirement', ...req }, note: SHAPE_CARD_NOTE };
     },
     async route_message(input) {
       const st = shapeToolOf('route_message');

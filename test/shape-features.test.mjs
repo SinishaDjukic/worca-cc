@@ -25,6 +25,7 @@ import {
   recordShip, clearShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
   liveSliceFrom, shaperCard, featureThread, featureRootSource, sliceOfTicket, busySliceOf, sliceGateState,
   addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf, setFeatureAcceptance, chatShipCardOffered,
+  changeAgreedRequirements,
 } from '../src/core/shape/features.mjs';
 
 useTempHome(after, 'worca-shape-features-');
@@ -1528,3 +1529,208 @@ test('B2: createSliceFeature with smallRuns writes Care with the flag off; small
   const b = mk(2, { care: START_CARE });
   assert.deepEqual(careRow(b.id), { position: 'balanced', chosenBy: 'default', worcaPick: null });
 }));
+
+// ---- Shaper small runs C1: the Prototype step's record on the card ---------------------------------------------------
+const PROTO = { v: 1, state: 'confirmed', screenIds: ['R-ux-1'], designId: 'd_1', buildId: 'b_1', round: 1, version: 2,
+  screens: [{ section: 'editor', name: 'Template editor', ids: ['R-ux-1'] }], costUsd: 2.8, findings: [], reviewRounds: 0,
+  remarks: 1, rebuilt: true, ref: { dir: '/secret/prototype-confirmed', version: 2, designId: 'd_1' }, at: '2026-11-21T10:00:00.000Z' };
+const markWithProto = (pid, extra = { smallRuns: true }) => getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?')
+  .run(JSON.stringify({ questions: { asked: 0, skipped: 0 }, revises: [], shapeScore: null, ...extra, prototype: PROTO }), pid);
+
+test('C1: shaperCard returns prototype only for a marked card, with no file path; featureView likewise', () => withSmallRuns(true, () => {
+  const solo = pipe('running');
+  markWithProto(solo);
+  const c = shaperCard(solo, { shaped: () => true });
+  assert.equal(c.prototype.state, 'confirmed');
+  assert.deepEqual(c.prototype.screens, PROTO.screens);
+  assert.equal(c.prototype.version, 2);
+  assert.ok(!JSON.stringify(c).includes('/secret/'), 'no ref.dir');
+  assert.equal('ref' in c.prototype, false);
+  const { id, pid } = mk(2);
+  markWithProto(pid);
+  assert.equal(shaperCard(pid).prototype.state, 'confirmed');
+  assert.equal(featureView(id).prototype.state, 'confirmed');
+  assert.ok(!JSON.stringify(featureView(id)).includes('/secret/'));
+  const plain = pipe('running');
+  markWithProto(plain, {});
+  assert.equal('prototype' in shaperCard(plain, { shaped: () => true }), false, 'unmarked: no prototype key');
+  const bare = pipe('running');
+  mark(bare);
+  assert.equal('prototype' in shaperCard(bare, { shaped: () => true }), false, 'marked, no record');
+}));
+
+// ── Small runs C3 (D8, D15): an open stop is not going; a held one is; a marked view names the stop and who waits ──
+const STOP_PQ = { id: 'g1', kind: 'gate', stop: { reason: 'objection', run: 1 } };
+test('C3: rowGoing/busySliceOf: an open stop is not going, a held stop is; dev\'s gate ask and a cost pause are unchanged', () => {
+  const f = mk(2);
+  const live = (extra) => (pid) => (pid === f.pid ? liveSliceFrom({ runId: 'r1', status: 'running', approved: true, ...extra }) : null);
+  assert.equal(busySliceOf(f.id, { live: live({ pendingQuestion: STOP_PQ }) }), null, 'an open stop is not going');
+  assert.deepEqual(busySliceOf(f.id, { live: live({ pendingQuestion: STOP_PQ, heldStop: { id: 'g1', after: 2 } }) }), { index: 1 });
+  assert.deepEqual(busySliceOf(f.id, { live: live({ pendingQuestion: { id: 'g1', kind: 'gate' } }) }), { index: 1 }, 'dev: a gate ask is going');
+  // A live slice paused on a cost limit: the same answer whether or not the feature is marked.
+  const paused = live({ status: 'paused', pendingQuestion: null });
+  const before = busySliceOf(f.id, { live: paused });
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), f.pid);
+  assert.deepEqual(busySliceOf(f.id, { live: paused }), before);
+  assert.equal('stop' in liveSliceFrom({ runId: 'r', status: 'running', pendingQuestion: { id: 'c', kind: 'recovery' } }), false);
+});
+
+test('C3: featureView of a marked feature: the stopped run carries stop, a run building on it waitsFor; unmarked adds neither', () => {
+  const p1 = pipe('running');
+  const outline = { why: 'x', slices: [slice(1), slice(2), slice(3, { dependsOn: ['s1'] })] };
+  const f = createSliceFeature({ pipelineId: p1, projectDir: root, title: 'Charts', outline, perspectives: ['product'], workflowId: 'wf_shape' });
+  const live = (held) => (pid) => (pid === p1 ? liveSliceFrom({ runId: 'r1', status: 'running', pendingQuestion: STOP_PQ, heldStop: held }) : null);
+  const plain = featureView(f.id, { live: live(null) });
+  assert.ok(plain.slices.every((s) => !('stop' in s) && !('waitsFor' in s)), 'unmarked: no new keys');
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), p1);
+  const v = featureView(f.id, { live: live(null) });
+  assert.deepEqual(v.slices[0].stop, { reason: 'objection', held: false });
+  assert.equal(v.slices[2].waitsFor, 1);
+  assert.equal('waitsFor' in v.slices[1], false, 'an independent run waits for nobody');
+  assert.deepEqual(featureView(f.id, { live: live({ id: 'g1', after: 2 }) }).slices[0].stop, { reason: 'objection', held: true, after: 2 });
+});
+
+// ── Small runs C4: a requirement change written in one transaction ──
+const AGREED_C4 = [{ id: 'R-po-1', text: 'reset emails send once' }, { id: 'R-po-2', text: 'members only' }];
+const outlineC4 = (n) => ({ ...outlineOf(n), agreed: AGREED_C4.map((a) => ({ ...a })),
+  slices: outlineOf(n).slices.map((s, i) => ({ ...s, requirements: [i === 0 ? 'R-po-1' : 'R-po-2'] })) });
+const mkC4 = (n, over = {}) => mk(n, { outline: outlineC4(n), ...over });
+const snapC4 = (fid) => JSON.stringify([getDb().prepare('SELECT * FROM shape_features WHERE id = ?').all(fid),
+  getDb().prepare('SELECT * FROM scheduled_runs WHERE id IN (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ?) ORDER BY id').all(fid),
+  getDb().prepare('SELECT * FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(fid)]);
+const CH2 = { id: 'R-po-2', from: 'members only', to: 'members and guests' };
+const entryC4 = (over = {}) => ({ id: 'R-po-2', from: 'members only', to: 'members and guests', at: new Date().toISOString(), by: 'ann',
+  source: { kind: 'chat' }, case: 'not-started', run: 2, ...over });
+const outlineRow = (fid) => JSON.parse(getDb().prepare('SELECT outline FROM shape_features WHERE id = ?').get(fid).outline);
+
+test('C4: the text and the entry are written; every scheduled or missed ticket is re-issued with the new text, old ones canceled', () => {
+  const a = mkC4(4, { pipelineId: pipe('done') });
+  const [, r2, r3, r4] = tickets(a.id);
+  setTicket(r3.ticket_id, 'missed');
+  const out = changeAgreedRequirements(a.id, { changes: [CH2], entries: [entryC4()], by: 'ann' });
+  assert.deepEqual(out.added, []); assert.deepEqual(out.restarted, []);
+  const o = outlineRow(a.id);
+  assert.equal(o.agreed.find((x) => x.id === 'R-po-2').text, 'members and guests');
+  assert.equal(o.changes.length, 1);
+  const rows = tickets(a.id);
+  for (const [i, old] of [[1, r2], [2, r3], [3, r4]]) {
+    assert.notEqual(rows[i].ticket_id, old.ticket_id);
+    assert.equal(getTicket(old.ticket_id).status, 'canceled');
+    const t = getTicket(rows[i].ticket_id, { withRequest: true });
+    assert.equal(t.status, 'scheduled');
+    assert.equal(t.request.shape.slice.outline.agreed.find((x) => x.id === 'R-po-2').text, 'members and guests');
+    assert.match(t.request.prompt, /members and guests/);
+    assert.equal(t.request.internal.startedBy, 'ann', 'the old request keeps its starter');
+  }
+  assert.deepEqual(getTicket(rows[1].ticket_id).after, { kind: 'pipeline', id: a.pid, policy: 'done' });
+  assert.deepEqual(getTicket(rows[2].ticket_id).after, { kind: 'ticket', id: rows[1].ticket_id, policy: 'done' });
+  assert.deepEqual(getTicket(rows[3].ticket_id).after, { kind: 'ticket', id: rows[2].ticket_id, policy: 'done' });
+});
+
+test('C4: a restart index gets its restart ticket from the new text (run 1: due now on the source branch; run k: after run k-1)', () => {
+  const a = mkC4(3);                                            // run 1 running
+  const now = Date.now();
+  const one = changeAgreedRequirements(a.id, { changes: [{ id: 'R-po-1', from: 'reset emails send once', to: 'reset emails retry once' }],
+    entries: [entryC4({ id: 'R-po-1', case: 'running', run: 1 })], restart: [1], by: 'ann', now });
+  const t1 = getTicket(one.restarted[0].ticketId, { withRequest: true });
+  assert.equal(t1.after, null);
+  assert.ok(Date.parse(t1.runAt) <= now);
+  assert.equal(t1.request.sourceBranch, 'main');
+  assert.match(t1.request.prompt, /reset emails retry once/);
+  const rows = tickets(a.id);
+  assert.equal(rows[0].ticket_id, t1.id); assert.equal(rows[0].pipeline_id, null);
+  assert.deepEqual(getTicket(rows[1].ticket_id).after, { kind: 'ticket', id: t1.id, policy: 'done' }, 'run 2 follows the restart');
+  assert.equal(getDb().prepare('SELECT origin_pipeline_id FROM shape_features WHERE id = ?').get(a.id).origin_pipeline_id, a.pid);
+  const b = mkC4(3, { pipelineId: pipe('done') });
+  const p2 = pipe('running');
+  setTicket(tickets(b.id)[1].ticket_id, 'fired', { pipelineId: p2 });
+  getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = 2').run(p2, b.id);
+  const two = changeAgreedRequirements(b.id, { changes: [CH2], entries: [entryC4({ case: 'running' })], restart: [2], by: 'ann' });
+  const t2 = getTicket(two.restarted[0].ticketId, { withRequest: true });
+  assert.deepEqual(t2.after, { kind: 'pipeline', id: b.pid, policy: 'done' });
+  assert.equal(t2.sourceFromPrevious, true);
+  assert.match(t2.request.prompt, /members and guests/);
+  assert.equal(tickets(b.id)[1].ticket_id, t2.id);
+});
+
+test('C4: an append in the same call keeps the new text in outline.agreed and its ticket carries it', () => {
+  const { id } = three({ allDone: true });
+  getDb().prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify(outlineC4(3)), id);
+  const out = changeAgreedRequirements(id, { changes: [CH2], entries: [entryC4({ case: 'finished', added: 4 })],
+    appendFor: [{ ownerIndex: 2, ids: ['R-po-2'], title: 'Change: R-po-2', goal: 'R-po-2 now reads: members and guests' }], by: 'ann' });
+  assert.deepEqual(out.added.map((x) => [x.ownerIndex, x.index]), [[2, 4]]);
+  const o = outlineRow(id);
+  assert.equal(o.agreed.find((x) => x.id === 'R-po-2').text, 'members and guests');
+  assert.equal(o.changes.length, 1);
+  assert.deepEqual(o.slices[3].requirements, ['R-po-2']);
+  const v = featureView(id);
+  assert.equal(v.slices[3].kind, 'change');
+  assert.match(getTicket(out.added[0].ticketId, { withRequest: true }).request.prompt, /members and guests/);
+});
+
+test('C4: a STALE from throws and leaves the row, tickets and slice rows byte-equal', () => {
+  const a = mkC4(3, { pipelineId: pipe('done') });
+  const before = snapC4(a.id);
+  assert.throws(() => changeAgreedRequirements(a.id, { changes: [{ ...CH2, from: 'something else' }], entries: [entryC4()], restart: [], by: 'ann' }),
+    (e) => e.code === 'STALE' && e.status === 409 && /R-po-2 changed since: read it again/.test(e.message));
+  assert.equal(snapC4(a.id), before);
+});
+
+test('C4: outline.changes keeps the newest 32; appendFeatureRun(change) stores kind and requirements', () => {
+  const a = mkC4(2, { pipelineId: pipe('done') });
+  let from = 'members only';
+  for (let i = 0; i < 34; i++) {
+    const to = `members v${i}`;
+    changeAgreedRequirements(a.id, { changes: [{ id: 'R-po-2', from, to }], entries: [entryC4({ from, to, at: `2026-11-22T15:00:${String(i).padStart(2, '0')}Z` })] });
+    from = to;
+  }
+  const o = outlineRow(a.id);
+  assert.equal(o.changes.length, 32);
+  assert.equal(o.changes[0].to, 'members v2');
+  const r = appendFeatureRun(a.id, { title: 'Change: R-po-2', goal: 'g', kind: 'change', requirements: ['R-po-2'] });
+  assert.equal(featureView(a.id).slices[2].kind, 'change');
+  assert.deepEqual(outlineRow(a.id).slices[2].requirements, ['R-po-2']);
+  assert.ok(getTicket(r.ticketId).after, 'a change run chains like extra');
+  assert.throws(() => appendFeatureRun(a.id, { title: 'x', kind: 'nope' }), TypeError);
+});
+
+test('C4 (D8): a paused slice with a newer waiting change entry restarts instead of resuming', () => {
+  const a = mkC4(2, { pipelineId: pipe('paused', { startedAt: '2026-01-01T00:00:00.000Z' }) });
+  assert.equal(resumeFeature(a.id).action, 'resume');
+  changeAgreedRequirements(a.id, { changes: [{ id: 'R-po-1', from: 'reset emails send once', to: 'reset emails retry once' }],
+    entries: [entryC4({ id: 'R-po-1', case: 'waiting', run: 1 })] });
+  const res = resumeFeature(a.id, { by: 'ann' });
+  assert.equal(res.action, 'restart');
+  assert.match(getTicket(res.ticketId, { withRequest: true }).request.prompt, /reset emails retry once/);
+});
+
+test('C4: re-issue keeps a held ticket held and copies its timing', async () => {
+  const a = mkC4(3, { pipelineId: pipe('done'), approveEach: true });
+  const old = getTicket(tickets(a.id)[1].ticket_id);
+  assert.equal(ticketHeld(old), true);
+  changeAgreedRequirements(a.id, { changes: [CH2], entries: [entryC4()] });
+  const nt = getTicket(tickets(a.id)[1].ticket_id);
+  assert.notEqual(nt.id, old.id);
+  assert.equal(ticketHeld(nt), true);
+  assert.equal(nt.runAt, old.runAt);
+  assert.equal(nt.forced, false);
+});
+
+test('C4 (D17): featureView.change is the newest entry whose landing run is not done; the log has every other entry', () => {
+  const a = mkC4(3, { pipelineId: pipe('done') });
+  assert.equal('change' in featureView(a.id), false, 'no entry: dev\'s shape');
+  changeAgreedRequirements(a.id, { changes: [{ id: 'R-po-1', from: 'reset emails send once', to: 'x1' }],
+    entries: [entryC4({ id: 'R-po-1', from: 'reset emails send once', to: 'x1', case: 'none', run: null, at: '2026-11-22T15:00:00Z' })] });
+  changeAgreedRequirements(a.id, { changes: [CH2], entries: [entryC4({ at: '2026-11-22T15:01:00Z' })] });
+  const v = featureView(a.id);
+  assert.equal(v.change.id, 'R-po-2');
+  assert.equal(v.changes.length, 2);
+  const texts = v.log.map((l) => l.text);
+  assert.ok(texts.includes('R-po-1 changed'));
+  assert.ok(!texts.some((t) => t.startsWith('R-po-2 changed')), 'the notice is not a log row too');
+  const p2 = pipe('done');
+  setTicket(tickets(a.id)[1].ticket_id, 'fired', { pipelineId: p2 });
+  const w = featureView(a.id);
+  assert.equal(w.change, null);
+  assert.ok(w.log.map((l) => l.text).includes('R-po-2 changed · run 2 plans from the new text'));
+});

@@ -331,7 +331,7 @@ import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shar
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
-import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto } from './pr-auto-view.mjs';
+import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto, knownPrExempt } from './pr-auto-view.mjs';
 import { createRequirementsView } from './requirements-view.mjs';
 import { mountDesignView, pushDesignFrame, designHello, designNavCount, paintDesignNav } from './design/view.mjs';
 import { createDesignChat } from './design/chat.mjs';
@@ -371,7 +371,8 @@ import { needsYouItems as chatNeedsYouItems } from './runs-list.mjs';
 import { createActivityMenu } from './activity-menu.mjs';
 import { createAwayScreensaver } from './away-screensaver.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
-import { activeAgents } from './ask-run-card.mjs';
+import { activeAgents, snapshotFromState } from './ask-run-card.mjs';
+import { mountRunAgents } from './shape/run-agents.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
 import { mountNewRunAttach, newRunScope, jsonFetcher as attachFetcher } from './requirements-attach/entries.mjs';
@@ -391,6 +392,8 @@ import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
 import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget, answerFieldOpen, smallRunsAsk } from './shape/step-card.mjs';
 import { renderCareStart } from './shape/proposal.mjs';
+import { renderPrototypeBody } from './shape/prototype-body.mjs';
+import { pushPrototypeFrame, onPrototypeFrame } from './shape/prototype-build.mjs';
 import { installInputMode } from './input-mode.mjs';
 import { noteAnswer, forgetAnswer } from './shape/step-receipt.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
@@ -1975,7 +1978,7 @@ function handleServerMessage(msg) {
   // Design frames are tagged by designId + buildId (no runId) and reach every socket: the Design view keeps the
   // nav count and the open stage. Handle them BEFORE the !msg.runId early-return below.
   if (msg.type === 'design-attached') { askPanel?.setDesign(msg.threadId, msg.designId); return; }   // start_design: the design opens beside its chat
-  if (typeof msg.type === 'string' && msg.type.startsWith('design-')) { pushDesignFrame(msg); designStudio?.studio.pushFrame(msg); if (msg.type === 'design-build' && designActivity.frame(msg)) updateNavCounts(); return; }
+  if (typeof msg.type === 'string' && msg.type.startsWith('design-')) { pushDesignFrame(msg); designStudio?.studio.pushFrame(msg); pushPrototypeFrame(msg); if (msg.type === 'design-build' && designActivity.frame(msg)) updateNavCounts(); return; }
 
   // Ask Worca frames are tagged by threadId (job frames also carry messageId +
   // seq) and ride the same broadcast socket. Handle them BEFORE the
@@ -2096,8 +2099,14 @@ function handleServerMessage(msg) {
     return;
   }
   // Shape it first: a feature's slices changed (an action, a slice's run, the scheduler tick). L11.
+  // Shaper small runs C1: the Prototype step moved; its planning run's card re-reads its saved state.
+  if (msg.type === 'shape-prototype') { refreshShaperCardsOf(msg.pipelineId); return; }
   if (msg.type === 'shape-feature') {
+    // Small runs C3 (D13): an open stop of this feature re-reads its slice, so an answer held in any tab draws its
+    // answered line. Read the held state before the cache clears: only a stop whose held state changed repaints.
+    const heldBefore = openStopsHeld(msg.id);
     SLICE_INFO.clear();
+    repaintHeldStops(msg.id, heldBefore);
     refreshShapeFeatures(msg.id);
     void refreshGroupFeatureLock(msg.id);
     refreshShaperCards();
@@ -6949,7 +6958,7 @@ registerAskRenderer('clarify', {
 // Gate and recovery are step cards for every run (shaper-cards D3): their buttons post through stepPost themselves.
 registerAskRenderer('gate', {
   title: () => 'Cycle gate',
-  render: (panel, pq, ctx) => renderGateCard(panel, pq, { ...stepDeps(ctx, pq),
+  render: (panel, pq, ctx) => renderGateCard(panel, pq, { ...stepDeps(ctx, pq), ...stopDeps(ctx, pq, panel),
     wireCopy: gateWireCopy(ctx.run, pq.wireId), tagLevel, submit: (p) => stepPost(ctx.run, p) }),
 });
 registerAskRenderer('recovery', {
@@ -6972,12 +6981,28 @@ registerAskRenderer('care', {
   collect: (panel) => (panel && panel.__care ? panel.__care.collect() : null),
   setErrors: (panel, errors) => { if (panel && panel.__care) panel.__care.setErrors(errors); },
 });
+// Shaper small runs C1: the Prototype step; its build follows the design frames this socket hears.
+registerAskRenderer('prototype', {
+  render: (panel, pq, ctx) => {
+    // The Chat run side panel shows the step but none of its buttons: it is answered on the feature card.
+    const readOnly = !!(panel.closest && panel.closest('[data-presentation="panel"]'));
+    panel.__proto = renderPrototypeBody(panel, pq, { ...stepDeps(ctx, pq), readOnly, confirm: confirmModal, submit: (p) => stepPost(ctx.run, p),
+      reduced: () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches),
+      subscribe: (msg, fn) => { if (state.ws && state.wsReady) state.ws.send(JSON.stringify(msg)); return onPrototypeFrame(fn); } });
+    // A repaint (disposeQpanel) ends the live build's frame subscription and its animation.
+    panel.__dispose = () => { if (panel.__proto) panel.__proto.destroy(); panel.__proto = null; };
+  },
+  setErrors: (panel, errors) => { if (panel && panel.__proto) panel.__proto.setErrors(errors); },
+});
 // Shape it first (S4): registered ungated: the only way to answer a run still held when the gate goes off.
 // title/count fill the hidden .qpanel-head (F28); askHeading is what people read. Kept for completeness.
 registerAskRenderer('plan', {
   title: (pq) => (pq.plan && pq.plan.outline ? `Slices ready for your approval · v${pq.plan.round || 1}` : `Plan ready for your approval · v${(pq.plan && pq.plan.round) || 1}`),
   count: (pq) => { const c = pq.plan && pq.plan.check; return c && Number.isFinite(c.total) ? `${pq.plan.outline ? 'Outline' : 'Shape'} ${c.passed}/${c.total}` : null; },
-  render: (panel, pq, ctx) => (pq.plan && pq.plan.outline
+  // Small runs C3 (D11): a marked run's stop on a plan ask is drawn by the gate card, as one question.
+  render: (panel, pq, ctx) => (pq.stop
+    ? renderGateCard(panel, pq, { ...stepDeps(ctx, pq), ...stopDeps(ctx, pq, panel), tagLevel, submit: (p) => stepPost(ctx.run, p) })
+    : pq.plan && pq.plan.outline
     ? renderOutlineBody(panel, pq, outlineBodyDeps(ctx))
     : renderPlanBody(panel, pq, planBodyDeps(ctx))),
   setErrors: (panel, errors) => { if (panel && panel.__plan) panel.__plan.setErrors(errors); },
@@ -6993,6 +7018,61 @@ function stepDeps(ctx, pq) {
   const r = ctx.run;
   const who = pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '';
   return { doc: ctx.doc || document, run: r, title: stepTitle(pq, who), chip: stepChip(pq, r) };
+}
+
+/** Small runs C3 (D12, D13): a stop's extra deps. A stop is answered on the feature card only: the run side panel and the
+ *  run page (`readOnly`) draw only its findings; an answer held for another run's turn (the feature view's `stop.held`,
+ *  read through the slice info) draws the one answered line. */
+function stopDeps(ctx, pq, panel) {
+  if (!pq || !pq.stop) return {};
+  const r = ctx.run;
+  const readOnly = !!(panel.closest && panel.closest('[data-presentation="panel"], #run-detail'));
+  const repaint = () => { if (panel.isConnected && r.pendingQuestion === pq) renderQpanel(r, panel.parentElement); };
+  const info = r && r.pipelineId ? sliceInfoFor(r.pipelineId, repaint) : null;
+  const held = info && info.stop && info.stop.held ? { value: info.stop.value } : null;
+  const pick = typeof panel.__stopPick === 'string' ? panel.__stopPick : null;   // the person's pick across a repaint
+  return { readOnly, ...(held ? { held } : {}), ...(pick ? { pick } : {}) };
+}
+
+/** A stop's held state as read from its slice info: '' when nothing is held. */
+const heldSigOf = (info) => (info && info.stop && info.stop.held ? `held:${info.stop.value}` : '');
+
+/** The open stops of feature `featureId` (or whose slice is not known yet), each with its held state now. */
+function openStopsHeld(featureId) {
+  const out = [];
+  for (const r of runs.values()) {
+    const pq = r && r.pendingQuestion;
+    if (!pq || !pq.stop || !r.pipelineId) continue;
+    const info = SLICE_INFO.get(r.pipelineId);
+    if (info && info.featureId !== featureId) continue;
+    out.push({ r, pq, sig: heldSigOf(info) });
+  }
+  return out;
+}
+
+/** Re-read each stop's slice and repaint its panels only when the held state changed (fit: a repaint must not drop
+ *  the person's pick or focus). */
+function repaintHeldStops(featureId, before) {
+  for (const { r, pq, sig } of before) {
+    sliceInfoFor(r.pipelineId, (info) => {
+      if (info.featureId !== featureId || heldSigOf(info) === sig || r.pendingQuestion !== pq) return;
+      for (const panel of qpanelsFor(r)) repaintStopPanel(r, panel);
+    });
+  }
+}
+
+/** Rebuild a stop's panel, carrying the person's pick (as the preset) and the focused tile or primary across it. */
+function repaintStopPanel(r, panel) {
+  const sel = panel.querySelector('.qopt.sel');
+  const a = document.activeElement;
+  const had = a && a !== document.body && panel.contains(a)
+    ? (a.matches?.('.qopt') ? { tile: a.dataset.value } : a.matches?.('[data-qpanel-submit]') ? { go: true } : null) : null;
+  panel.__stopPick = sel && !sel.dataset.preset ? sel.dataset.value : null;
+  try { renderQpanel(r, panel.parentElement); } finally { delete panel.__stopPick; }
+  const cur = document.activeElement;
+  if (!had || (cur && cur !== document.body && cur.isConnected)) return;
+  const target = had.tile ? [...panel.querySelectorAll('.qopt')].find((t) => t.dataset.value === had.tile) : panel.querySelector('[data-qpanel-submit]');
+  (target || panel.querySelector('[data-qpanel-submit]'))?.focus();
 }
 
 /** The outline body's deps: the plan body's posting rule (the gate read at post time, S4) and its confirm dialog. */
@@ -27304,7 +27384,9 @@ function paintHdGlance(screen, record, data) {
   paintGroupLine(glance.querySelector('.rd-kv .rd-group-line'), record.id || '', record.title || '', home);
   paintRunPlace(screen, home);
   paintRunLabels(glance.querySelector('.rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: data.state.id, labels: data.state.labels, onSaved: (l) => { data.state.labels = l; } });
-  void paintRunPrAuto(glance.querySelector('.rd-kv [data-fact="pr-auto"]'), data.state.id, st.status, () => !!histDetailState && histDetailState.data === data);
+  const hdExempt = knownPrExempt(data.state.id);
+  void paintRunPrAuto(glance.querySelector('.rd-kv [data-fact="pr-auto"]'), data.state.id, st.status, () => !!histDetailState && histDetailState.data === data)
+    .then(() => { if (!hdExempt && knownPrExempt(data.state.id) && histDetailState && histDetailState.data === data) paintHdHead(screen, hdCurrentRecord(record), data); });   // C5: the route reads it
   paintRerunOf(glance.querySelector('.rd-kv [data-fact="rerun"]'), st.rerunOf);
   paintRerunCarrier(screen.querySelector('.hd-rerun'), { id: st.id, title: record.title || st.title, status: record.status || st.status, live: runLiveHere(st.id) });
   syncFacts(glance.querySelector('.rd-kv'));
@@ -32545,12 +32627,21 @@ function buildRdOverview(sec, ctx) {
   const checklists = document.createElement('div');   // Perspective checklists (spec D7)
   checklists.className = 'rd-checklists';
   checklists.hidden = true;
+  // Small runs C2 (D14): the Care roles of a marked slice run and their step word, inside the card (item 11); hidden and
+  // empty for every other run.
+  const agents = document.createElement('div');
+  agents.className = 'rd-run-agents';
+  agents.hidden = true;
   const below = document.createElement('div');
   below.className = 'hd-ov hd-ov-below';
-  wrap.append(banner);
+  wrap.append(banner, agents);
   below.append(checklists, skills);
   adoptRunCard(sec, wrap, below);
-  const paint = (c) => { rdOvStateBanner(banner, c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
+  const paintAgents = (run) => {
+    const snap = run && run.stepper && run.stepper.careRun ? snapshotFromState(run) : null;
+    agents.hidden = !mountRunAgents(agents, snap ? { ...snap, pendingQuestion: run.pendingQuestion || null } : null);
+  };
+  const paint = (c) => { rdOvStateBanner(banner, c.run); paintAgents(c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
   paint(ctx);
   sec.__update = paint;
 }
@@ -33603,7 +33694,50 @@ function chatPaintQuestion(ref, host) {
     if (r._answering) setPanelBusy(r, true);   // an answer already in flight (paintRdQuestions' rule)
   }
   return { id: pq.id || null, kind: askKindOf(pq), heading: askHeading(r, pq),
-    step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, true) };
+    step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, true), ...(pq.stop ? { stop: true } : {}) };
+}
+/** Shaper small runs C1 (R-ux-2): the Prototype step's working moment (building, reviewing, matching) on the one card,
+ *  from the card's saved state while no ask is open: the same renderer as the step's asks, with nothing to answer.
+ *  Rebuilt only when the moment, round or build changes, so the live rows keep following the design frames. */
+function chatPaintPrototypeWork(ref, host, proto) {
+  const panel = host && host.querySelector('.qpanel');
+  const r = chatLiveRun(ref);
+  if (!panel || !r || r._finished || r.pendingQuestion || !proto) { chatReleaseQuestion(host); return null; }
+  if (panel.dataset.qid !== protoWorkKey(proto) || panel.dataset.qrun !== r.runId) {
+    for (const [runId, old] of CHAT_QPANELS) { old.delete(panel); if (!old.size) CHAT_QPANELS.delete(runId); }
+  }
+  const key = paintPrototypeWork(panel, r, proto);
+  return { id: key, kind: 'prototype', heading: '', step: '', stepCard: true };
+}
+const PROTO_WORKING = new Set(['building', 'reviewing', 'matching']);
+const protoWorkKey = (proto) => `proto-work|${proto.state}|${proto.reviewRounds || 0}|${proto.buildId || ''}`;
+/** C1 (R-ux-2): the one paint of the Prototype step's working moment into a .qpanel, for the Chat card and the run page's
+ *  step area. Rebuilt only when the moment, round or build changes (the key), so the live rows keep following the
+ *  design frames. Returns the key. */
+function paintPrototypeWork(panel, r, proto) {
+  const key = protoWorkKey(proto);
+  if (panel.dataset.qid !== key || panel.dataset.qrun !== r.runId) {
+    disposeQpanel(panel);
+    panel.innerHTML = '';
+    panel.classList.remove('qpanel-workflow', 'hidden');
+    panel.dataset.kind = 'prototype';
+    askRendererFor('prototype').render(panel, { id: key, kind: 'prototype', prototype: { ...proto, moment: proto.state } }, askCtxFor(r, panel));
+    panel.dataset.qid = key;
+    panel.dataset.qrun = r.runId;
+  }
+  return key;
+}
+/** The run page's twin of the Chat card's rule: a live shaping run with no ask open and its saved card in a working
+ *  moment. The card is read once per pipeline (shaperCardFor); its answer repaints the open run page. */
+function rdPrototypeWork(r) {
+  if (!r || r._finished || r.pendingQuestion || !isShapingRun(r) || !r.pipelineId) return null;
+  const card = shaperCardFor(r.pipelineId, rdRepaintOpen);
+  const proto = card && card.prototype;
+  return proto && PROTO_WORKING.has(proto.state) ? proto : null;
+}
+function rdRepaintOpen() {
+  const r = runDetailState.screen ? runs.get(runDetailState.runId) : null;
+  if (r) repaintRunDetail(r);
 }
 // ---- Runs redesign slice 4: the one model's actions (D5, D6) and a run's group (D7), for the chat card and the pages.
 /** D7: the group a pipeline belongs to, as the list's group row, with its place in it. */
@@ -33726,6 +33860,7 @@ const chatRunControls = {
     return postAnswer(r, payload);
   },
   paintQuestion: chatPaintQuestion,
+  paintPrototypeWork: chatPaintPrototypeWork,
   releaseQuestion: chatReleaseQuestion,
   /** Shaper s3: a feature card's Resume / Re-plan the rest / Cancel the rest / Ask before each run. */
   featureAct: async (featureId, action, body) => {
@@ -38265,7 +38400,9 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     // Slice 2: Archive and Report live in the ⋯ (runMoreItems); slice 3: the head actions in the card head (run-head.mjs).
     // The full page draws the waiting question right under its header, on every tab: an Answer that only scrolls to it
     // is noise there. The Chat panel keeps it.
-    skip: [...MENU_ACTIONS, ...HEAD_ACTIONS, ...(screen.dataset.presentation === 'panel' ? [] : ['answer'])],
+    // The Prototype ask is answered on the feature card only: the panel has no Answer for it either.
+    // Small runs C3 (D12): a stop is answered on the feature card only, as the Prototype ask.
+    skip: [...MENU_ACTIONS, ...HEAD_ACTIONS, ...(screen.dataset.presentation === 'panel' && !(r.pendingQuestion && (r.pendingQuestion.kind === 'prototype' || r.pendingQuestion.stop)) ? [] : ['answer'])],
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
     labels: { answer: answerLabelOf(screen.querySelector('.rd-questions')) },
@@ -38787,6 +38924,7 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, tryIt = 
   }
   const source = (rec && rec.sourceBranch) || liveSource || '';
   const group = routeGroupOf(groupHomeOf((rec && rec.id) || pipelineId), { sourceBranch: source, histOf });
+  const prExempt = knownPrExempt((rec && rec.id) || pipelineId);
   return {
     m, mode, gitChrome, folder, canTry, tryIt, kept, level: currentLevel(),
     workspace: ws ? { members: histWsMembers(rec).map((x) => ({
@@ -38802,8 +38940,9 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, tryIt = 
     group,
     groupPending: !group && routeGroupsPending(),   // D2: never guess the landing branch before the groups answer
     pr: own, prInput: glancePrInput(rec), prStatus, watch: (rec && rec.watch) || null,
+    prExempt,   // C5: a Verifier's route says why it opens no PR
     mock: !!(rec && rec.mock),
-    canCreatePr: !!rec && histPrEligible(rec) && !(own && open) && !recHasNoRemote(rec),
+    canCreatePr: !!rec && prExempt !== 'verify' && histPrEligible(rec) && !(own && open) && !recHasNoRemote(rec),
     noRemote: !!rec && recHasNoRemote(rec),
     push: !!rec && !!rec.sameAsSource && rec.target !== 'workspace' && rec.mergeBack?.merged === true && !!rec.sourceBranch,
     notMergedBack: !!rec && !!rec.sameAsSource && rec.mergeBack?.merged === false,
@@ -39526,6 +39665,15 @@ function paintRdQuestions(screen, r) {
   // handle.relayout()). Inside a hidden host clientWidth is 0, so the flow would lay
   // out at the 702 default and the ResizeObserver would re-lay it a frame later — a
   // visible flash on top of the wr-rise entry. The card path already un-hides first.
+  // C1 (R-ux-2): with no ask open, the step area draws the Prototype step's working moment (the Chat card's paint).
+  const proto = pq ? null : rdPrototypeWork(r);
+  if (proto && panel) {
+    host.hidden = false;
+    const h0 = host.querySelector('.rd-ask-head');
+    if (h0) h0.textContent = '';
+    paintPrototypeWork(panel, r, proto);
+    return;
+  }
   host.hidden = pq == null;                    // drives the wr-rise entry
   const head = host.querySelector('.rd-ask-head');
   // A step card carries its own head (title + chip): the run page's heading stays empty for it (shaper-cards D16).
@@ -39797,7 +39945,9 @@ function paintRdHeader(screen, r) {
   // Run tags (#718): read-only chips after the person chip, replaced on every paint.
   for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();   // s2: the chips moved to the Cost tags row
   paintRunLabels(screen.querySelector('.rd-glance .rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: r.pipelineId || '', labels: r.labels, onSaved: (l) => { r.labels = l; } });
-  void paintRunPrAuto(screen.querySelector('.rd-glance .rd-kv [data-fact="pr-auto"]'), r.pipelineId, r.status, () => screen.isConnected && runs.get(r.runId) === r);
+  const rdExempt = knownPrExempt(r.pipelineId);
+  void paintRunPrAuto(screen.querySelector('.rd-glance .rd-kv [data-fact="pr-auto"]'), r.pipelineId, r.status, () => screen.isConnected && runs.get(r.runId) === r)
+    .then(() => { if (!rdExempt && knownPrExempt(r.pipelineId) && screen.isConnected && runs.get(r.runId) === r) paintRdHead(screen, r); });   // C5: the route reads it
   paintRunKindChip(screen.querySelector('.rd-page-meta'), workModeOf(r));
   syncFacts(screen.querySelector('.rd-glance .rd-kv'));
 

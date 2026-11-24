@@ -3,6 +3,7 @@
 import { flagEnabled } from '../flags.mjs';
 import { getDb } from '../db.mjs';
 import { CARE_DEFAULT, careOfRow, normalizeStartCare } from '../../shared/shape/feature-record.mjs';
+import { normalizePrototype } from '../../shared/shape/prototype.mjs';
 
 /** Whether Shaper's small runs are on, read fresh on each call (env plus settings). `deps.flagEnabled` is a test seam. */
 export function shaperSmallRunsOn(deps = {}) {
@@ -69,5 +70,29 @@ export function careOfFeature(featureId, deps = {}) {
   try {
     const row = (deps.getDb || getDb)().prepare('SELECT care, care_chosen_by, care_worca_pick FROM shape_features WHERE id = ?').get(String(featureId));
     return row ? careOfRow(row) : null;
+  } catch { return null; }
+}
+
+const protoOf = (row) => (row ? normalizePrototype(JSON.parse(row.shape_stats)?.prototype) : null);
+
+/** C1 (D12): the Prototype step's record saved on a planning run (`pipelines.shape_stats.prototype`), or null (no id,
+ *  before any DB access; no row; none saved; an invalid record; bad JSON). Never throws. */
+export function prototypeOfPipeline(pipelineId, deps = {}) {
+  if (!pipelineId) return null;
+  try { return protoOf((deps.getDb || getDb)().prepare('SELECT shape_stats FROM pipelines WHERE id = ?').get(String(pipelineId))); } catch { return null; }
+}
+
+/** C1 (D14): the pipeline id of the run that planned the feature (where its prototype was frozen), or null. */
+export function originPipelineOfFeature(featureId, deps = {}) {
+  if (!featureId) return null;
+  try { return (deps.getDb || getDb)().prepare('SELECT origin_pipeline_id FROM shape_features WHERE id = ?').get(String(featureId))?.origin_pipeline_id || null; } catch { return null; }
+}
+
+/** C1 (D14): a feature's prototype record, its origin run's (the confirmed `ref` included), or null. Never throws. */
+export function prototypeOfFeature(featureId, deps = {}) {
+  if (!featureId) return null;
+  try {
+    return protoOf((deps.getDb || getDb)().prepare(`SELECT p.shape_stats FROM shape_features f JOIN pipelines p ON p.id = f.origin_pipeline_id
+      WHERE f.id = ?`).get(String(featureId)));
   } catch { return null; }
 }
