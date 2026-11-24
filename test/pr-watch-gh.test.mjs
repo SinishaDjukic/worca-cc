@@ -64,7 +64,9 @@ test('every snapshot query is balanced and asks reviewThreads, issueComments and
     assert.equal((q.match(/{/g) || []).length, (q.match(/}/g) || []).length, 'balanced braces');
     const field = depthAt(q, 'statusCheckRollup{');
     assert.equal(depthAt(q, 'reviewThreads('), field, 'reviewThreads is a pullRequest field');
-    assert.equal(depthAt(q, 'issueComments('), field, 'issueComments is a pullRequest field');
+    // GitHub names a PR's issue comments `comments`; there is no `issueComments` field (the alias keeps the reply's key).
+    assert.equal(depthAt(q, 'issueComments:comments('), field, 'issueComments aliases the pullRequest comments field');
+    assert.doesNotMatch(q, /[{\s]issueComments\(/, 'no field named issueComments');
     assert.equal(depthAt(q, 'reviews('), field, 'reviews is a pullRequest field');
   }
 });
