@@ -12,7 +12,8 @@ test('parseTriageVerdict reads the first word only, case-insensitively, through 
   assert.equal(parseTriageVerdict('  **feedback**\n'), true);
   assert.equal(parseTriageVerdict('OTHER'), false);
   assert.equal(parseTriageVerdict('`Other`.'), false);
-  assert.equal(parseTriageVerdict('I think FEEDBACK'), null);
+  assert.equal(parseTriageVerdict('FEEDBACK? No. Comment says review skipped. → OTHER\n\nOTHER'), false, 'the last word decides');
+  assert.equal(parseTriageVerdict('maybe'), null);
   assert.equal(parseTriageVerdict(''), null);
   assert.equal(parseTriageVerdict(undefined), null);
 });
@@ -22,6 +23,9 @@ test('buildTriagePrompt fences the comment as data and caps it', () => {
   assert.match(p, /`review-bot`/);
   assert.match(p, /\[…truncated\]\n<\/comment>$/);
   assert.match(TRIAGE_SYSTEM_PROMPT, /UNTRUSTED DATA/);
+  const html = buildTriagePrompt({ body: '<!-- state: {"x":1} -->\n<details><summary>Action performed</summary>\n\nReview finished.</details>', author: 'bot' });
+  assert.doesNotMatch(html, /state:|<details>|<summary>/, 'hidden state and tags are dropped');
+  assert.match(html, /Action performed/);
 });
 
 test('triagePrComment: one tool-less call on a Haiku-class model; the verdict comes back', async () => {
@@ -30,6 +34,7 @@ test('triagePrComment: one tool-less call on a Haiku-class model; the verdict co
   assert.equal(await triagePrComment({ body: 'add a null check', author: 'bot', cwd: home, runClaudeImpl: run, models: MODELS }), true);
   assert.equal(calls.length, 1);
   assert.deepEqual([calls[0].model, calls[0].tools, calls[0].allowedTools, calls[0].strictMcpConfig], ['claude-haiku-5-5', [], [], true]);
+  assert.deepEqual(calls[0].settingSources, ['project'], 'not the user\'s hooks or plugins');
   assert.match(calls[0].prompt, /add a null check/);
   assert.equal(await triagePrComment({ body: 'Review skipped', cwd: '.', runClaudeImpl: async () => ({ text: 'OTHER' }), models: MODELS }), false);
 });

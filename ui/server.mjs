@@ -6312,7 +6312,7 @@ const prWatcherDeps = {
   // Before a listed reviewer's PR-level comment starts a fix run, a short helper-model call asks whether it wants
   // code changes (bots also post notices and placeholders). A mock run never calls a model: every comment counts.
   triageComment: ({ origin, comment }) => origin?.mock ? true : triagePrComment({ body: comment.body, author: comment.author?.login || null,
-    projectKey: origin.projectKey, engine: origin.engine, pipelineId: origin.pipelineId, cwd: origin.projectDir }),
+    projectKey: origin.projectKey, engine: origin.engine, pipelineId: origin.pipelineId }),
   host: { snapshot: prWatchSnapshot, jobLog: prWatchJobLog, rerun: prWatchRerun, reply: prWatchReply, comment: prWatchComment },
   git: {
     fetch: ({ projectDir, remote }) => fetchRemote(projectDir, { remote, maxAgeMs: 0 }),
