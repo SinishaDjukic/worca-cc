@@ -187,7 +187,7 @@ function boot({ status = { guidesSeen: {} }, postResult = {} } = {}) {
 }
 
 describe('howto button', () => {
-  test('is a design-system button with a question icon, the sr-only New mark and the min-level hook', () => {
+  test('is a design-system button with a question icon, a text-free New dot announced by aria-description and the min-level hook', () => {
     const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
     const doc = dom.window.document;
     doc.body.innerHTML = howtoButtonHtml({ id: 'x-btn', cls: 'x-cls' });
@@ -198,14 +198,30 @@ describe('howto button', () => {
     assert.ok(b.querySelector('svg'));
     assert.ok(b.textContent.includes('How it works'));
     assert.equal(b.querySelector('.howto-new').hidden, true);
-    assert.equal(b.querySelector('.howto-new .sr-only').textContent, 'New');
+    assert.equal(b.querySelector('.howto-new').textContent, '', 'the dot holds no text: it would be a fourth label word');
+    assert.equal(b.getAttribute('aria-label'), 'How it works', 'the name survives the narrow top bar hiding the words');
+    assert.equal(b.hasAttribute('aria-description'), false);
     paintHowtoMark(b, true);
     assert.equal(b.dataset.new, 'true');
     assert.equal(b.querySelector('.howto-new').hidden, false);
+    assert.equal(b.getAttribute('aria-description'), 'New');
     paintHowtoMark(b, false);
     assert.equal(b.dataset.new, 'false');
+    assert.equal(b.hasAttribute('aria-description'), false);
     assert.equal(b.querySelector('.howto-new').hidden, true);
     assert.doesNotThrow(() => paintHowtoMark(null, true));
+  });
+
+  test('the icon form is a quiet icon button with no words, named by aria-label', () => {
+    const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
+    const doc = dom.window.document;
+    doc.body.innerHTML = howtoButtonHtml({ id: 'i-btn', cls: 'wfv-howto', icon: true });
+    const b = doc.getElementById('i-btn');
+    assert.deepEqual([...b.classList], ['btn', 'btn-quiet', 'btn-icon', 'wfv-howto']);
+    assert.equal(b.querySelector('.howto-label'), null);
+    assert.equal(b.textContent.trim(), '');
+    assert.equal(b.getAttribute('aria-label'), 'How it works');
+    assert.ok(b.querySelector('svg') && b.querySelector('.howto-new'));
   });
 });
 
