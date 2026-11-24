@@ -7,6 +7,8 @@ import { discoverAll, flushAll, flushProject, flushSlug, scheduleFlush, slugDirN
 import { listProjects } from '../../../src/core/projects.mjs';
 import { parseTag } from '../../../src/shared/run-tags.mjs';
 import { badRequest, sendMetricsError } from '../../server.mjs';
+import { pokeWorcaLevel } from '../worca-levels/worca-level.mjs';
+import { createDiscoverGate } from '../worca-levels/discover-gate.mjs';
 
 export function register(app) {
 
@@ -113,8 +115,9 @@ app.post('/api/team-metrics/flush', async (req, res) => {
 });
 
 // Empty state "Check now" (§4.10): force discovery everywhere.
-app.post('/api/team-metrics/discover', async (_req, res) => {
-  try { await discoverAll({ force: true }); res.json(await listScopes()); }
+const discoverGate = createDiscoverGate(() => discoverAll({ force: true }));
+app.post('/api/team-metrics/discover', async (req, res) => {
+  try { await discoverGate({ page: req.query?.source === 'page' }); pokeWorcaLevel(); res.json(await listScopes()); }
   catch (err) { sendMetricsError(res, err); }
 });
 }

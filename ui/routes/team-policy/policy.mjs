@@ -13,6 +13,8 @@ import { resolveSkillRegistry as policySkillRegistry } from '../../../src/core/s
 import { skillSkipReasonText as policySkillWhy } from '../../../src/core/skills-registry/texts.mjs';
 import fs from 'node:fs';
 import { badRequest, mcpRunPreview, mcpTargetOf, parseMcpOptOut, sendPolicyError } from '../../server.mjs';
+import { pokeWorcaLevel } from '../worca-levels/worca-level.mjs';
+import { createDiscoverGate } from '../worca-levels/discover-gate.mjs';
 
 export function register(app) {
 
@@ -122,8 +124,9 @@ app.post('/api/policy/validate', (req, res) => {
   res.json({ ok: !!doc && !unknownSchema && warnings.length === 0, warnings, doc });
 });
 
-app.post('/api/policy/discover', async (_req, res) => {
-  try { await discoverAllPolicies({ force: true }); res.json(await listPolicyScopes()); }
+const discoverGate = createDiscoverGate(() => discoverAllPolicies({ force: true }));
+app.post('/api/policy/discover', async (req, res) => {
+  try { await discoverGate({ page: req.query?.source === 'page' }); pokeWorcaLevel(); res.json(await listPolicyScopes()); }
   catch (err) { sendPolicyError(res, err); }
 });
 }

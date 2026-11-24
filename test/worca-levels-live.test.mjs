@@ -88,6 +88,25 @@ beforeEach(() => {
   try { unlinkSync(store.worcaLevelsFile()); } catch { /* none yet */ }
 });
 
+test('POST /api/team-metrics/discover and /api/policy/discover each send one worca-level-changed poke', async () => {
+  assert.equal((await call('GET', '/api/worca-level')).status, 200);   // the poke is a no-op until the first level request made the service
+  for (const path of ['/api/team-metrics/discover', '/api/policy/discover']) {
+    const { out, pokes: n } = await pokesDuring(() => call('POST', path));
+    assert.equal(out.status, 200, out.text);
+    assert.ok(n >= 1, `${path} pokes the level`);
+  }
+});
+
+test('a persisted PR state change pokes once; the same state again does not', async () => {
+  assert.equal((await call('GET', '/api/worca-level')).status, 200);
+  const { seedPipeline } = await import('./helpers/db-seed.mjs');
+  const { persistPrState } = await import('../src/core/artifacts.mjs');
+  const { id } = await seedPipeline(repoDir, { title: 'Pr', status: 'done', startedAt: '2026-06-01T00:00:00Z' });
+  const pr = { url: 'https://gh/x/pull/7', number: 7, state: 'MERGED' };
+  assert.equal((await pokesDuring(() => persistPrState(id, pr))).pokes, 1);
+  assert.equal((await pokesDuring(() => persistPrState(id, pr))).pokes, 0);
+});
+
 const noWorcaData = (text) => assert.doesNotMatch(text, /worca-?level|peakParallel|"live"\s*:/i, 'I-5: the response carries no worca data');
 
 test('plugin install: a failed install records nothing; a successful one records the plugin id with one poke', async () => {
@@ -478,4 +497,21 @@ test('migrateRecord: a rules 2 record is not changed, and a damaged v2 field is 
   assert.deepEqual([once.summary, once.nudged, once.modeSuggestion, once.reachedAt], [rec.summary, rec.nudged, rec.modeSuggestion, rec.reachedAt]);
   const bad = migrateRecord({ ...rec, summary: 'x', nudged: [], modeSuggestion: { advanced: 'maybe' }, reachedAt: { 1: 'no', 9: NOW } }, { now: NOW }).record;
   assert.deepEqual([bad.summary, bad.nudged, bad.modeSuggestion, bad.reachedAt], [null, {}, { advanced: null, expert: null }, {}]);
+});
+
+test('service: pokeLevelFactsChanged emits one worca-level-changed and writes nothing (I-1)', async () => {
+  const { service, pokes } = makeService();
+  service.pokeLevelFactsChanged();
+  assert.deepEqual(pokes, [POKE]);
+  assert.equal(existsSync(store.worcaLevelsFile()), false);
+});
+
+test('service: after a fact flips, the next getState raises the level and sets the celebration', async () => {
+  const { service, w } = makeService({ fresh: false, ...RUNNER });
+  assert.equal((await service.getState(LOCAL)).level.index, 2);   // backfilled: not celebrated
+  Object.assign(w, { onboarding: SETUP, realRuns: 19, rows: HISTORY, schedules: true });   // a fact changed outside the service
+  service.pokeLevelFactsChanged();
+  const up = await service.getState(LOCAL);
+  assert.equal(up.level.index, 3);
+  assert.equal(up.celebration?.index, 3);
 });

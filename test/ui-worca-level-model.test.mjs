@@ -303,3 +303,9 @@ test('renderSegments marks a sm bar of more than 10 segments as dense (gap 2px) 
   assert.equal(renderSegments(fakeDoc(), { done: 1, total: 4 }, { size: 'sm' }).getAttribute('data-gap'), null);
   assert.equal(renderSegments(fakeDoc(), { done: 1, total: 30 }, { size: 'lg' }).getAttribute('data-gap'), null);
 });
+
+test('pickDialog: shownThisSession blocks a backlog celebration but not a live level-up', () => {
+  assert.equal(pickDialog(celebrating(), { ...CLEAR, shownThisSession: true, liveLevelUp: false }), null);
+  assert.equal(pickDialog(celebrating(), { ...CLEAR, shownThisSession: true, liveLevelUp: true }), 'celebration');
+  assert.equal(pickDialog(celebrating(), { ...CLEAR, menuOpen: true, shownThisSession: true, liveLevelUp: true }), null, 'other gates still hold');
+});

@@ -17,6 +17,10 @@ export const WORCA_REFRESH_EVENTS = new Set([
 ]);
 export const WORCA_REFRESH_MS = 250;
 export const WORCA_RETRY_MS = 5000;
+/** Opening these pages re-checks the shared-repo facts (a forced discovery), then re-reads the level. */
+export const DISCOVER_ENDPOINTS = { 'team-metrics': '/api/team-metrics/discover', 'team-policy': '/api/policy/discover' };
+export const DISCOVER_MIN_MS = 60000;
+export const DISCOVER_CEILING_MS = 10000;
 
 /** A pending retry or refresh must never keep a process alive (app.js _timerTick is unref'd for the same reason). */
 function unrefTimer(t) { if (t && typeof t.unref === 'function') t.unref(); }
@@ -55,8 +59,8 @@ async function ackNudge(id) {
  * @param {(o: object) => void} [deps.notify]  the toast (the run-finished message); tests replace it
  * @param {() => Promise<object>} [deps.fetchView]  how the view is read; tests replace it
  */
-export function createWorcaLevelWiring({ menu, repaint, isSettled, setupOpen, initials = () => '', onFinishSetup, onSignIn, notify = defaultNotify, fetchView = fetchWorcaLevel, hashNow = () => globalThis.location?.hash || '', runStatus = () => undefined, doc = globalThis.document }) {
-  const state = { view: null, retried: false, profile: null, dialog: null, celebrated: 0, refreshTimer: 0, retryTimer: 0, seq: 0, finished: [], resultSeen: false, nudged: new Set() };
+export function createWorcaLevelWiring({ menu, repaint, isSettled, setupOpen, initials = () => '', onFinishSetup, onSignIn, notify = defaultNotify, fetchView = fetchWorcaLevel, hashNow = () => globalThis.location?.hash || '', runStatus = () => undefined, doc = globalThis.document, now = () => Date.now() }) {
+  const state = { view: null, retried: false, profile: null, dialog: null, celebrated: 0, refreshTimer: 0, retryTimer: 0, seq: 0, finished: [], resultSeen: false, nudged: new Set(), bootLevel: null, discoveredAt: {} };
 
   /** The level card is the first child of the menu, its own top group; a repaint swaps it in place. */
   function paintLevelCard() {
@@ -121,6 +125,7 @@ export function createWorcaLevelWiring({ menu, repaint, isSettled, setupOpen, in
       liveRunOpen: isLiveRunRoute(hashNow(), runStatus),
       shownThisSession: shownThisSession(),
       resultSeen: state.resultSeen,
+      liveLevelUp: state.bootLevel !== null && (view.celebration?.index ?? 0) > state.bootLevel,
     });
     if (!kind) return;
     markShownThisSession();
@@ -170,6 +175,7 @@ export function createWorcaLevelWiring({ menu, repaint, isSettled, setupOpen, in
     }
     state.retried = false;
     state.view = view;
+    state.bootLevel ??= view.level?.index ?? 0;   // the level this page load started at: a higher one is reached live
     paintLevelCard();
     repaint();
     repaintProfile();
@@ -193,6 +199,28 @@ export function createWorcaLevelWiring({ menu, repaint, isSettled, setupOpen, in
     state.refreshTimer = setTimeout(() => { state.refreshTimer = 0; void load(); }, WORCA_REFRESH_MS);
     unrefTimer(state.refreshTimer);
   }
+
+  /** Ask the server to re-check the shared-repo facts, then re-read the level. Best effort: a failed or slow
+   *  discovery (offline, no git) keeps the cached verdict and the level is re-read anyway. */
+  async function discoverThenLoad(view) {
+    const at = now();
+    const last = state.discoveredAt[view];
+    if (last !== undefined && at - last < DISCOVER_MIN_MS) { void load(); return; }
+    state.discoveredAt[view] = at;
+    let ceiling;
+    try {
+      await Promise.race([
+        globalThis.fetch(`${DISCOVER_ENDPOINTS[view]}?source=page`, { method: 'POST' }),
+        new Promise((resolve) => { ceiling = setTimeout(resolve, DISCOVER_CEILING_MS); unrefTimer(ceiling); }),
+      ]);
+    } catch { /* offline or no git: the cached verdict stays */ }
+    clearTimeout(ceiling);
+    void load();
+  }
+
+  doc.addEventListener?.('visibilitychange', () => {
+    if (doc.visibilityState === 'visible') scheduleRefresh();   // a poke may have been missed while hidden
+  });
 
   return {
     state,
@@ -226,10 +254,11 @@ export function createWorcaLevelWiring({ menu, repaint, isSettled, setupOpen, in
           host.replaceChildren(Object.assign(doc.createElement('p'), { className: 'hint', textContent: `Could not load your level: ${err.message}` }));
         });
     },
-    /** A page was opened (once per navigation). Only Team policy matters: it refetches, because opening it
-     *  can change what the card says; no page view is ever posted to the server. */
+    /** A page was opened (once per navigation). Team metrics and Team policy re-check their shared-repo facts
+     *  (at most once a minute) and refetch, because opening them can change what the card says; no page view is
+     *  ever posted to the server. */
     onViewShown(view) {
-      if (view === 'team-policy') void load();
+      if (DISCOVER_ENDPOINTS[view]) void discoverThenLoad(view);
     },
   };
 }

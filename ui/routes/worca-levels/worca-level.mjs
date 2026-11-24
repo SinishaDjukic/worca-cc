@@ -17,6 +17,11 @@ export function worcaLevelService() {
   return service;
 }
 
+/** Tell every open tab a level fact changed; a no-op until the first level request created the service. */
+export function pokeWorcaLevel() {
+  service?.pokeLevelFactsChanged();
+}
+
 const refuse = (res, message) => res.status(400).json({ error: message, code: BAD_REQUEST });
 
 function fail(res, err) {
