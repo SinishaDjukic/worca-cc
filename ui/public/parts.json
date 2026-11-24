@@ -47,6 +47,7 @@
     "projects/readiness.css",
     "workspace-map/workspaces-shell.css",
     "workspace-map/workspace-guide.css",
+    "how-it-works/how-it-works.css",
     "guardrails/guardrail-rows.css",
     "projects/confirm-add.css",
     "marketplace/plugins-view.css",
