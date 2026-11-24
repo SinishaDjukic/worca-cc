@@ -27,13 +27,13 @@ import { runModel, isFinishedState, RUN_STATES } from '../../../src/shared/run-m
 import { paintRunStatus, statusText, kindLabel, syncActions, pauseResumeOwn, renderMemberRows } from '../run-status-card.mjs';
 import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
-import { runShortWord } from '../../../src/shared/shape/run-agents.mjs';
-import { waitsForRunWord } from '../../../src/shared/shape/run-stops.mjs';
+import { cardShortWord } from '../../../src/shared/shape/run-agents.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { featureCardModel, oneCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
 import { buildCheckRows } from '../shape/check-row.mjs';
 import { verifyGapItems } from '../../../src/shared/shape/verifier.mjs';
 import { paintReqChange } from '../shape/req-change.mjs';
+import { renderShipCard, confirmRequirement } from '../shape/ship-card.mjs';
 import { namedAnswer, forgetAnswer, REQUIREMENTS_AGREED } from '../shape/step-receipt.mjs';
 import { isRequirementsAsk, answerFieldOpen } from '../shape/step-card.mjs';
 import { renderChecklistGroups } from '../shape/checklist-view.mjs';
@@ -44,18 +44,6 @@ import { roundsModel, liveRound } from './rounds.mjs';
 import { flagOn } from '../flags.mjs';
 import { labelChip } from '../label-picker.mjs';
 
-/** Small runs C2: a member run that finished (done, or its model's ready, in-review or merged state). */
-const isFinishedMember = (mb) => mb.state === 'done' || isFinishedState(mb.model && mb.model.state);
-/** Small runs C2 (D13): a marked card's run row word. A finished run reads `done` when it has a Care plan, or no snapshot
- *  is loaded; a run without `careRun` (null from runShortWord) keeps dev's memberStatusText. */
-const cardShortWord = (mb, snap, slice = null) => (isFinishedMember(mb) && (!snap || (snap.stepper && snap.stepper.careRun)) ? 'done'
-  : runShortWord(snap, slice) || chainWaitWord(mb));
-/** Item 9: a run that has not started and waits on its chain predecessor (no stop): the predecessor index dev's
- *  "starts after run N" reads (the member's ticket), as the short word. A held ticket keeps dev's word. */
-const chainWaitWord = (mb) => {
-  const t = mb.model && mb.model.state === 'waiting' && mb.run && mb.run.ticket;
-  return t && !t.held && t.after && Number.isInteger(t.after.index) ? waitsForRunWord(t.after.index) : null;
-};
 /** Small runs C3 (D15): a member's slice in the feature view (its `stop` and `waitsFor`), by pipeline or ticket. */
 const sliceOfMember = (card, mb) => ((card && card.feature && card.feature.slices) || [])
   .find((x) => (mb.pipelineId && x.pipelineId === mb.pipelineId) || (mb.ticketId && x.ticketId === mb.ticketId)) || null;
@@ -333,6 +321,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   const changeEl = h('div', 'chat-rc-req-change');
   // Small runs C5 (D12): the Verifier's open gaps, one `.srows` list, mounted only while gap runs build (flag-off golden).
   const gapsEl = h('div', 'plan-checks srows verify-gaps');
+  // Feature D1 (D14): the Ship step's card (ship-card.mjs, the feature page's too), mounted only on the `ship` step.
+  const shipEl = h('div', 'chat-rc-ship');
   changeEl.hidden = true;
   // ---- Shaper s5: the ideas saved for the next checkpoint (D11) and a watch that gave up on the run's PR (D23)
   const notesEl = h('div', 'chat-rc-notes');
@@ -967,11 +957,14 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // A group row goes along, so app.js hands the action to groupAction (D6, D11).
     // A run on its source branch is never given a PR (the server refuses it): when Push does not own `ship` (not merged
     // back yet, or below Advanced where the result's row is hidden) the footer makes no Create PR either.
-    // B1: the one card ships from the feature page (D8), and its open step card's button is its one primary.
+    // B1: the model's ship action never shows on the one card: Feature D1's Ship step card holds Create N PRs, and the open
+    // step card's button is its one primary.
     const fc = fm && fm.phase === 'feature' ? fm.controls : null;
     const stopOpen = !!(painted && painted.stop);
     const disable = { ...(st === 'pausing' ? { resume: 'Pausing…' } : {}), ...(changesWhy ? { 'ask-changes': changesWhy } : {}) };
-    const baseSkip = [...(oneNow || (s && s.sameAsSource && !own.ship) ? ['ship'] : []), ...(stopOpen ? ['answer'] : [])];
+    // Feature D1 (R-ux-2): a shipped marked feature's Ship step holds the one view action (View PRs): no View PR here.
+    const shipDone = !!oneNow && !!shipEl.parentNode && shipEl.dataset.phase === 'applied';
+    const baseSkip = [...(oneNow || (s && s.sameAsSource && !own.ship) ? ['ship'] : []), ...(stopOpen ? ['answer'] : []), ...(shipDone ? ['open-pr'] : [])];
     // Item 10: while a stop is open its question's primary is the card's one primary. The foot keeps only Stop; every
     // other action it would draw moves into the feature ⋯ (only where there is one: a feature's controls).
     const moved = stopOpen && fc ? ((m && m.actions) || []).filter((id) => id !== 'stop' && !baseSkip.includes(id)) : [];
@@ -1025,6 +1018,32 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (!gaps.length) { if (gapsEl.isConnected) gapsEl.remove(); return; }
     if (!gapsEl.isConnected) logEl.after(gapsEl);
     gapsEl.replaceChildren(...buildCheckRows(doc, { items: verifyGapItems(gaps) }));
+  }
+
+  /** D1: the one card's `ship` step mounts the Ship card from the feature view's `ship.smallRuns`; rebuilt only when
+   *  what it shows changes, keeping the focus on the same control. */
+  function paintShipStep(one, feature) {
+    const ship = one && one.step === 'ship' && feature && feature.ship && feature.ship.smallRuns ? feature.ship : null;
+    const phase = ship ? (ship.mode ? 'applied' : ship.ready ? 'ready' : null) : null;
+    if (!phase) { if (shipEl.parentNode) { shipEl.remove(); delete shipEl.dataset.sig; delete shipEl.dataset.phase; } return; }
+    shipEl.dataset.phase = phase;
+    if (!shipEl.parentNode) logEl.after(shipEl);   // parentNode: a card being built is not in the document yet
+    const sig = JSON.stringify([phase, feature.title, ship.smallRuns]);
+    if (shipEl.dataset.sig === sig) return;
+    shipEl.dataset.sig = sig;
+    // The focused control, else the one a mark in flight noted (Chromium blurs its disabled button to <body>).
+    const a = doc.activeElement;
+    const noted = shipEl.querySelector('[data-focus]');
+    const act = a && shipEl.contains(a) && a.dataset.act ? a.dataset.act : (!a || a === doc.body) && noted ? noted.dataset.focus : null;
+    const had = act ? `[data-act="${act}"]` : null;
+    // R-ux-2: the card's state line already says "N PRs open" (countShown), and the foot draws no View PR (paintFoot).
+    // The one card's head already shows the feature title (titleShown): the Ship card names only its step.
+    const card = renderShipCard(doc, { phase, featureId: feature.id, title: feature.title, runs: feature.total, result: ship.result || null,
+      smallRuns: ship.smallRuns }, { countShown: true, titleShown: true, onConfirm: (id, mark, reason) => confirmRequirement(feature.id, id, mark, reason) });
+    card.dataset.needsGit = '';   // shipping opens pull requests: hidden while git is missing (git-gate.mjs)
+    shipEl.replaceChildren(card);
+    const back = had ? shipEl.querySelector(had) : null;
+    if (back && !back.disabled) back.focus();
   }
 
   function update(snap) {
@@ -1125,6 +1144,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (one) { receipt.hidden = true; qSec.hidden = !painted && !working; clearResult(); }
     else paintResult(s, m); // sets createPrBtn; m: the status line it must not repeat
     paintVerifyGaps(one);
+    paintShipStep(one, shaperIn && shaperIn.card ? shaperIn.card.feature : null);
     paintChanges(s, m, !!lr, one);
     paintWatch(m, (fm && fm.watch) || rm.watch);
     paintFoot(s);           // labels and disabled rules only

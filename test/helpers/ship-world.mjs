@@ -29,12 +29,13 @@ export async function withShip(fn) {
 
 /** gh/git stub for the ship: `gh pr create` answers `create`, `git describe --tags` answers `describe`, every argv is
  *  recorded. Anything it does not know answers '' (so the world repo's real tags are never seen). */
-export function stubShip(seen, { create = () => okRun('https://github.com/me/repo/pull/9\n'), ready = () => okRun(''), describe = null } = {}) {
+export function stubShip(seen, { create = () => okRun('https://github.com/me/repo/pull/9\n'), ready = () => okRun(''), push = () => okRun(''), describe = null } = {}) {
   gitInfo.setRunner((cmd, args) => {
     seen.push([cmd, ...args]);
     if (cmd === 'gh' && args[0] === '--version') return okRun('gh 2.x');
     if (cmd === 'git' && args[0] === 'remote') return okRun(REMOTES_V);
     if (cmd === 'git' && args[0] === 'describe') return describe ? okRun(`${describe}\n`) : failRun('fatal: No names found');
+    if (cmd === 'git' && args[0] === 'push') return push(args);
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create') return create(args);
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'ready') return ready(args);
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args.includes('body')) return okRun('Some body');

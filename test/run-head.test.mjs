@@ -332,6 +332,19 @@ test('groupHead: a feature with unmarked requirements locks every Create PR (dis
   assert.deepEqual(groupHead({ state: 'ready', prs: [], unmarked: 0 }).cta, { state: 'create' }, 'every row marked: as before');
 });
 
+test('groupHead with ship (a small-runs feature): Create N PRs, locked with the ledger\'s reason in place of the count', () => {
+  const pr = (n) => ({ key: `p${n}`, name: `Run ${n}`, number: n, url: `u${n}`, open: true, merged: false });
+  const why = 'Waiting for Compliance to confirm R-comp-4';
+  const blocked = { n: 3, blocked: true, reason: why };
+  assert.deepEqual(groupHead({ state: 'ready', prs: [], unmarked: 1, ship: blocked }).cta, { state: 'create', label: 'Create 3 PRs', disabled: true, quiet: true, title: why });
+  assert.deepEqual(groupHead({ state: 'ready', prs: [], ship: { n: 3, blocked: false, reason: null } }).cta, { state: 'create', label: 'Create 3 PRs' });
+  const after = (ship) => groupHead({ state: 'ready', prs: [pr(1)], ship }).after.map((b) => [b.id, b.label, !!b.primary, !!b.disabled, b.title || '']);
+  assert.deepEqual(after(blocked), [['ship', 'Create 3 PRs', false, true, why]]);
+  assert.deepEqual(after({ ...blocked, blocked: false }), [['ship', 'Create 3 PRs', true, false, '']]);
+  for (const ship of [null, undefined]) assert.deepEqual(groupHead({ state: 'ready', prs: [], ship }), groupHead({ state: 'ready', prs: [] }));
+  assert.equal(groupHead({ state: 'working', prs: [], ship: blocked }).cta, null);
+});
+
 test('prMenuItems with onWatchAll / onCopyAll: each PR as today, then Watch PRs (Advanced) and Copy PR links', () => {
   const prs = [{ key: 'a', name: 'Run 1', number: 12, url: 'u1', open: true, watch: null },
     { key: 'b', name: 'Run 2', number: 13, url: 'u2', open: true, watch: null, conflicts: true }];

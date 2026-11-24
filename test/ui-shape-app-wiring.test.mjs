@@ -995,6 +995,53 @@ test('C3 web UI review: the run page draws a stop as the panel does: findings on
   }
 });
 
+test('item 5: with the flag on the run page heads the stop and links where it is answered: Chat with a thread, else the feature page', async () => {
+  const { applyFlags } = await import('../ui/public/flags.mjs');
+  for (const [info, href, text] of [[{ featureId: 'feat-1', index: 4, threadId: 'ask_7' }, '#chat/ask_7', "the feature's card in Chat"],
+    [{ featureId: 'feat-1', index: 4, threadId: null }, '#feature/feat-1', 'the feature page'],
+    [{ verifier: true, featureId: 'feat-1', threadId: null }, '#feature/feat-1', 'the feature page']]) {
+    const slice = (url) => (url === '/api/shape/pipelines/p-rr/slice' ? res(200, info) : null);
+    for (const route of ['running/run-rr', 'chat/new/run/run-rr']) {
+      const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', [], slice) });
+      applyFlags({ shaperSmallRuns: true }, ctx.window.document);
+      ctx.wsBox.ws.dispatch('open', {});
+      ctx.dispatch({ type: 'hello', runs: [reqRun(C3_PLAN_STOP)] });
+      ctx.go(route);
+      await ctx.settle(8);
+      const doc = ctx.window.document;
+      const panel = route.startsWith('chat/');
+      const q = doc.querySelector(panel ? '[data-chat-panel] .crp-host > .rd .qpanel' : '#run-detail .qpanel');
+      const label = `${route} ${JSON.stringify(info)}`;
+      assert.equal(q.querySelectorAll('button, .qopt').length, 0, label);
+      assert.equal(q.querySelectorAll('.issues, .plan-checks').length, 1, label);
+      assert.deepEqual([...q.querySelectorAll('a.rd-fact-link')].map((a) => [a.getAttribute('href'), a.textContent]), panel ? [] : [[href, text]], label);
+      assert.equal(q.textContent.includes(C3_PLAN_STOP.stop.head), !panel, label);
+      applyFlags({ shaperSmallRuns: false }, doc);
+    }
+  }
+});
+
+test('item 5: a cached miss of the Verifier\'s run is asked again once per question', async () => {
+  const { applyFlags } = await import('../ui/public/flags.mjs');
+  let gets = 0;
+  const slice = (url) => (url === '/api/shape/pipelines/p-rr/slice'
+    ? (gets += 1, gets === 1 ? res(404, { error: 'not a slice' }) : res(200, { verifier: true, featureId: 'feat-1', threadId: null })) : null);
+  const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', [], slice) });
+  applyFlags({ shaperSmallRuns: true }, ctx.window.document);
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [reqRun(null)] });
+  ctx.go('running/run-rr');
+  await ctx.settle(6);
+  ctx.dispatch({ type: 'question', runId: 'run-rr', ...C3_GATE_STOP, id: 'verify-9' });
+  await ctx.settle(6);
+  const pq = () => ctx.window.document.querySelector('#run-detail .qpanel');
+  assert.ok(pq().textContent.includes(C3_GATE_STOP.stop.head));
+  const a = pq().querySelector('a.rd-fact-link');
+  assert.equal(a && a.getAttribute('href'), '#feature/feat-1', `${gets} GETs`);
+  assert.equal(gets, 2);
+  applyFlags({ shaperSmallRuns: false }, ctx.window.document);
+});
+
 test('C3: a plan-kind stop is drawn by the gate card on the feature card: one primary naming the pick', async () => {
   const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', []) });
   ctx.wsBox.ws.dispatch('open', {});
@@ -1017,7 +1064,7 @@ test('C3: a plan-kind stop is drawn by the gate card on the feature card: one pr
 });
 
 test('C3: a shape-feature frame keeps an open stop\'s pick and focus; only a held answer repaints it', async () => {
-  const info = { featureId: 'feat-1', stop: { reason: 'objection', held: false } };
+  const info = { featureId: 'feat-1', index: 8, stop: { reason: 'objection', held: false } };   // a slice's answer always has its index
   let gets = 0;
   const slice = (url) => (url === '/api/shape/pipelines/p-rr/slice' ? (gets++, res(200, { ...info })) : null);
   const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', [], slice) });

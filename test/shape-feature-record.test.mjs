@@ -7,7 +7,7 @@ import {
   CARE_POSITIONS, CARE_LABELS, CARE_CHOSEN_BY, CARE_DEFAULT, CONFIRM_ROLES, REQUIREMENT_KINDS,
   normalizeCare, normalizeRequirementKinds, careOfRow, requirementKindsOf, roleKey, roleNames,
   CARE_TRIGGERS, CARE_SUBSYSTEMS, CARE_TABLE, careFactsOf, worcaCarePick, careDescription, careGivesUp, careGivesUpSentence, careModelRoles,
-  careRecordLine, normalizeStartCare,
+  careRecordLine, normalizeStartCare, confirmedKindsOf,
 } from '../src/shared/shape/feature-record.mjs';
 import { RUN_REQUIREMENTS_MAX } from '../src/shared/shape/slices.mjs';
 import { criterionPerspective } from '../src/shared/shape/requirements.mjs';
@@ -110,6 +110,13 @@ test('normalizeRequirementKinds: an unknown id, a malformed id and an unknown ki
 
 const outline = { why: 'w', agreed: [{ id: 'R-po-1', text: 'a' }, { id: 'R-sec-1', text: 'b' }, { id: 'R-qa-2', text: 'c' }, { id: 'R-ops-1', text: 'd' }],
   slices: [{ id: 's1', requirements: ['R-po-1'] }, { id: 's2', requirements: ['R-qa-2', 'R-sec-1'] }, { id: 's3', requirements: ['R-qa-2'] }] };
+
+test('confirmedKindsOf: the outline\'s confirmed list as kinds, {} for any other shape; normalizeRequirementKinds takes them', () => {
+  const kinds = confirmedKindsOf({ confirmed: [{ id: 'R-sec-1', role: 'Security' }, null, { role: 'QA' }] });
+  assert.deepEqual(kinds, { 'R-sec-1': { kind: 'confirmed', role: 'Security' } });
+  assert.deepEqual(normalizeRequirementKinds(kinds, IDS).kinds['R-sec-1'], { kind: 'confirmed', role: 'security' });
+  for (const o of [null, undefined, {}, { confirmed: 'x' }, { confirmed: [] }]) assert.deepEqual(confirmedKindsOf(o), {});
+});
 
 test('requirementKindsOf: the run of an owned id, null for an id in no run, the role of a confirmed id', () => {
   assert.deepEqual(requirementKindsOf({ 'R-sec-1': { kind: 'confirmed', role: 'compliance' } }, outline), [

@@ -119,12 +119,14 @@ export function resolveShapeRequest({ shape, workflowId }, { internal = false, p
   }
   // A slice of a feature with agreed requirements runs the slice variant, chosen when its ticket fires.
   const sliceIds = resolved.slice ? sliceRequirementIds(resolved.slice) : [];
-  if (SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(named) && !sliceIds.length) {
+  // Small runs: a re-plan that carries agreed requirements is planned on it too (its brief is the requirements input).
+  const replanReq = SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(named) && !!resolved.replaces && !resolved.slice;
+  if (SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(named) && !sliceIds.length && !replanReq) {
     return { ok: false, error: `${named} runs only as a slice of a feature with agreed requirements` };
   }
   const req = !proposal && shapeRequirementsEligible(resolved);
   // s3 (D13): a requirements-first Changes run updates the requirements before it plans, a slice included.
-  const sliceReq = sliceIds.length > 0 && !resolved.requirementsFirst;
+  const sliceReq = replanReq || (sliceIds.length > 0 && !resolved.requirementsFirst);
   return {
     ok: true,
     shape: resolved,

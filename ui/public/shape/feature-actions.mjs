@@ -188,7 +188,8 @@ export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withM
 
 /** Run 4 (D18): the ⋯ items as entries for a menu outside the controls host (the group page's header ⋯), with the same
  *  confirms and posts. `anchor` gets the focus back after a confirm (Chromium drops it to <body> when the dialog closes).
- *  deps: { act(action, body) → Promise<{ok, error?}>, confirm(opts) → Promise<boolean>, openPlan(c), fail?(text) } */
+ *  deps: { act(action, body) → Promise<{ok, error?}>, confirm(opts) → Promise<boolean>, openPlan(c), fail?(text),
+ *          noReplan?: boolean (a stop is open on the page: Re-plan the rest is left out) } */
 export function featureMenuItems(c, deps, anchor) {
   const fail = deps.fail || (() => {});
   const run = async (action, body) => {
@@ -206,5 +207,5 @@ export function featureMenuItems(c, deps, anchor) {
     'approve-each': () => run('approve-each', { on: !c.approveEach }),
     plan: () => deps.openPlan(c),
   };
-  return featureMenu(c).map((i) => ({ label: i.label, ...(i.checked != null ? { checked: i.checked } : {}), onSelect: () => pick[i.key]() }));
+  return featureMenu(c).filter((i) => !(deps.noReplan && i.key === 'replan')).map((i) => ({ label: i.label, ...(i.checked != null ? { checked: i.checked } : {}), onSelect: () => pick[i.key]() }));
 }

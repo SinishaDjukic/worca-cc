@@ -568,6 +568,7 @@
   "POST /api/setup/team/draft": {"class": "probe", "reason": "read-only: builds a draft from local settings and model catalog; try/catch"},
   "POST /api/shape/features/:id/approve-each": {"class": "probe", "reason": "400 when on is not a boolean"},
   "POST /api/shape/features/:id/cancel": {"class": "probe", "reason": "cancelRest refuses an unknown feature; shapeRouteError catches"},
+  "POST /api/shape/features/:id/confirm": {"class": "probe", "reason": "featureView misses an unknown feature, 404 before any write; try/catch"},
   "POST /api/shape/features/:id/replan": {"class": "probe", "reason": "replanRest refuses an unknown feature before any ticket; try/catch"},
   "POST /api/shape/features/:id/resume": {"class": "probe", "reason": "resumeFeature refuses an unknown feature before resumeRun; try/catch"},
   "POST /api/shape/features/:id/ship": {"class": "probe", "reason": "shipFeatureNow refuses missing mode / unknown feature; try/catch"},

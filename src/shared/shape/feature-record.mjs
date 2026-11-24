@@ -74,6 +74,13 @@ export function normalizeRequirementKinds(raw, agreedIds) {
   return { ok: true, kinds: Object.fromEntries(ids.map((id) => [id, named[id] || { kind: 'owned' }])) };
 }
 
+/** The kinds an approved outline's `confirmed` list asks for, as normalizeRequirementKinds takes them (it maps the role
+ *  labels to keys and refuses a bad one); `{}` for any other shape. Never throws. */
+export function confirmedKindsOf(outline) {
+  const list = Array.isArray(outline?.confirmed) ? outline.confirmed : [];
+  return Object.fromEntries(list.filter((c) => isObject(c) && typeof c.id === 'string' && c.id).map((c) => [c.id, { kind: 'confirmed', role: c.role }]));
+}
+
 /** A `shape_features` row's Care values; an unknown or missing value reads as the default. Never throws. */
 export function careOfRow(row) {
   const r = isObject(row) ? row : {};
@@ -277,12 +284,18 @@ export function careRunPlan(position, opts = {}) {
   };
 }
 
-/** The fixed fact a feature's Care reads as after Start. */
-export function careRecordLine(care) {
+/** The Care choice in words: "Balanced · Worca's pick", or "Careful · your choice · Worca recommended Balanced". A
+ *  person who kept Worca's pick reads as Worca's pick (the position is the recommendation, whoever chose it). */
+export function careChoiceText(care) {
   const c = isObject(care) ? care : {};
   const label = CARE_LABELS[c.position] || CARE_LABELS[CARE_DEFAULT.position];
-  if (c.chosenBy === 'person') return `Care: ${label} · your choice${CARE_LABELS[c.worcaPick] ? ` · Worca recommended ${CARE_LABELS[c.worcaPick]}` : ''}`;
-  return `Care: ${label} · Worca's pick`;
+  if (c.chosenBy === 'person' && c.position !== c.worcaPick) return `${label} · your choice${CARE_LABELS[c.worcaPick] ? ` · Worca recommended ${CARE_LABELS[c.worcaPick]}` : ''}`;
+  return `${label} · Worca's pick`;
+}
+
+/** The fixed fact a feature's Care reads as after Start. */
+export function careRecordLine(care) {
+  return `Care: ${careChoiceText(care)}`;
 }
 
 const REASON_MAX = 200;

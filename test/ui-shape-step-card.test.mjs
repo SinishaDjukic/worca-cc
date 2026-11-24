@@ -369,6 +369,34 @@ test('C5: readOnly (the side panel) draws the Verifier stop\'s gaps as its one f
   assert.deepEqual($$('.verify-gaps .plan-check-id').map((e) => e.textContent), ['R-po-2', 'R-po-3']);
 });
 
+// The run page of a stopped run (item 5): it says what stopped and where it is answered, and offers no control.
+test('the run page (readOnly, runPage): the stop\'s head, one line with its link, then the findings; no control', async () => {
+  const { verifyStop } = await import('../src/shared/shape/verifier.mjs');
+  const V_STOP = { id: 'verify-3', kind: 'gate', nodeId: 'n_verify', issues: [], stop: verifyStop({ gaps: [{ id: 'R-po-2', why: 'no email' }], round: 3, fixCycles: 2 }) };
+  for (const pq of [G_STOP, P_STOP, C_STOP, V_STOP]) {
+    const { panel, $$, $ } = mountStop(pq, { readOnly: true, runPage: true, home: { href: '#chat/ask_1', text: "the feature's card in Chat" } });
+    assert.equal($('.ask-mcard-title').textContent, pq.stop.head, pq.id);
+    assert.equal($$('.ask-mcard-title').length, 1);
+    const links = $$('a.rd-fact-link');
+    assert.deepEqual(links.map((a) => [a.getAttribute('href'), a.textContent]), [['#chat/ask_1', "the feature's card in Chat"]]);
+    assert.equal($('.stop-home').textContent, "This run waits for your answer on the feature's card in Chat");
+    assert.equal($$('button, .qopt').length, 0);
+    assert.equal(panel.textContent.includes(pq.stop.text), false, 'no question text');
+    assert.equal($$('.issues, .plan-checks').length, 1, 'the one findings list');
+    const order = [...panel.children].map((c) => (c.matches('.stop-home') ? 'line' : c.matches('.issues, .plan-checks') ? 'findings' : 'head'));
+    assert.deepEqual(order, ['head', 'line', 'findings']);
+  }
+  const waiting = mountStop(P_STOP, { readOnly: true, runPage: true, home: null });
+  assert.equal(waiting.$$('a').length, 0, 'the home is not known yet: no line');
+  assert.equal(waiting.$('.ask-mcard-title').textContent, P_STOP.stop.head);
+  assert.ok([...waiting.panel.children].some((c) => 'stop' in c.dataset), 'one column before the home is known (shape-it.css)');
+  assert.equal(mountStop(P_STOP, {}).panel.querySelector(':scope > [data-stop]'), null);
+  const held = mountStop(G_STOP, { readOnly: true, runPage: true, home: { href: '#feature/f1', text: 'the feature page' }, held: { value: 'another' } });
+  assert.equal(held.$$('.ask-mcard-title, .stop-home, button').length, 0);
+  assert.equal(held.$('.chat-rc-log-text').textContent, 'another cycle · decided by you');
+  assert.equal(held.$$('.issues, .plan-checks').length, 1);
+});
+
 test('C3: a gate without stop still draws the two dev buttons; renderRecoveryCard is unchanged', () => {
   const { $$ } = mountStop(GATE);
   assert.deepEqual($$('.qpanel-foot button').map((b) => b.textContent), ['Accept as is', 'Run another cycle']);

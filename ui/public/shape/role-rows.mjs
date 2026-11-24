@@ -120,6 +120,8 @@ export function buildConflictCards(doc, roleReviews, { labelOf = (k) => k } = {}
  * native button: the mark (✓ clean, else `?`, aria-hidden, its words in an `.sr-only` span), the role name ("(you ask
  * as)" on the lead), the summary, the chevron. A clean role starts closed, any other open. Its rows are check rows, then
  * its open objections (findingList). `groups`: [{ key, perspective, label, lead, summary, state, findings, rows }].
+ * Small runs D3 (the feature page's Requirements): a group may name its own head `mark` and `markWord` for a role that
+ * is not clean (`wait`, "not all met"); without them the head is `?` and FOLD_MARK_WORDS' words.
  * @returns {{ el: HTMLElement, folds: Array<{ key: string, line: HTMLElement, rows: HTMLElement, setLead(on: boolean): void }>, setPlain(on: boolean): void }}
  */
 export function buildRequirementRoleFolds(doc, groups) {
@@ -136,14 +138,14 @@ export function buildRequirementRoleFolds(doc, groups) {
       },
       open: state !== 'clean',
     });
-    const mark = checkMark(doc, state === 'clean' ? 'check' : '?', state === 'clean' ? ' ok' : '');
+    const mark = checkMark(doc, state === 'clean' ? 'check' : g.mark || '?', state === 'clean' ? ' ok' : '');
     mark.setAttribute('aria-hidden', 'true');
     const name = el(doc, 'span', 'shape-role-fold-name');
     const nameText = el(doc, 'span', '', g.label);
     const asks = el(doc, 'span', 'shape-role-fold-lead');
     const setLead = (on) => { asks.textContent = on ? ' (you ask as)' : ''; };
     setLead(!!g.lead);
-    name.append(nameText, asks, el(doc, 'span', 'sr-only', `, ${FOLD_MARK_WORDS[state]}`));
+    name.append(nameText, asks, el(doc, 'span', 'sr-only', `, ${state !== 'clean' && g.markWord ? g.markWord : FOLD_MARK_WORDS[state]}`));
     f.line.insertBefore(name, f.line.firstChild);
     // Owner direction: the role's perspective icon (perspectives.mjs `icon`) before its name, as the row's title.
     const glyph = g.perspective ? perspectiveByKey(g.perspective)?.icon : null;

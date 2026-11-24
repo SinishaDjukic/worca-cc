@@ -2,23 +2,30 @@
 // the feature card's view and its actions. Engine side, ungated (D12): only reached for runs that carry `shape`;
 // every route that reaches it is gated (ui/server.mjs).
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { guardedGitEnvSync } from '../git-guard.mjs';
 import { getDb, tx } from '../db.mjs';                  // node:sqlite: tx(fn), never db.transaction (F23)
 import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf, stackedPrBaseOf, predecessorState, requestRunNow } from '../scheduler.mjs';
-import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } from '../artifacts.mjs';
+import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow, listRunArtifacts } from '../artifacts.mjs';
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
 import { normalizeCare, normalizeRequirementKinds, careOfRow, requirementKindsOf, careRunPlan } from '../../shared/shape/feature-record.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature, smallRunsOfPipeline, careOfPipeline, careOfFeature, prototypeOfPipeline } from './small-runs.mjs';
 import { prototypeView } from '../../shared/shape/prototype.mjs';
+import { planVersionOf, startsFromOf, ownsOf } from '../../shared/shape/run-facts.mjs';
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
+import { shipLedger, unownedReason, careOutcome, unmetLines } from '../../shared/shape/ship-ledger.mjs';
+import { rerunsOf } from '../../shared/shape/req-status.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
 import { stopOptionOf } from '../../shared/shape/run-stops.mjs';
 import { CHANGES_MAX } from '../../shared/shape/req-change.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
+import { SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { roundsOf } from './rounds.mjs';
-import { verifyView, startVerifyCheck } from './verifier.mjs';
+import { refuseWhileShipping } from './ship-lock.mjs';
+import { verifyView, startVerifyCheck, stillFinishing, roundOpen, shipRuleOn } from './verifier.mjs';
 import { getWatch, stoppedWatchFact } from '../pr-watch.mjs';
 import { clipTitle } from '../title.mjs';
 import { readRunTags } from '../run-tags-store.mjs';
@@ -211,12 +218,73 @@ function shipAcceptance(f, slices) {
   return { items, ready, marked, total, agreed, entries: Array.isArray(f.outline.acceptance) ? f.outline.acceptance : [], covered };
 }
 
-/** The ship gate's refusal body (D8) while an agreed requirement is unmarked, else null. */
+/** The ship gate's refusal body (D8) while an agreed requirement is unmarked, else null. Feature D1 (D7): a marked
+ *  feature's gate reads `ship.smallRuns`: only the requirements a person confirms must be marked, and (fail closed)
+ *  every other one must have a run; one that has neither names no role. */
 export function acceptanceRefusal(view) {
+  const sr = view?.ship?.smallRuns;
+  if (sr) {
+    if (!sr.blocked) return null;
+    const unowned = sr.unowned || [];
+    return { error: sr.reason, code: 'ACCEPTANCE_INCOMPLETE', missing: [...sr.waiting, ...unowned],
+      role: unowned.length ? null : sr.confirmed.find((c) => c.state === 'waiting')?.role || null };
+  }
   const ledger = view?.ship?.acceptance;
   if (!ledger || ledger.ready) return null;
   const missing = ledger.items.filter((i) => !i.pass).map((i) => i.id);
   return { error: `mark every requirement before you create the PR (${missing.length} left)`, code: 'ACCEPTANCE_INCOMPLETE', missing };
+}
+
+/** Feature D1 (D10, D11): a marked feature's Ship: the requirement rows, the block reason and the Care outcome
+ *  (ship-ledger.mjs), the root source's name and the runs in finish order with their PR and what each stacks on. */
+function smallRunsShip(f, slices, verify) {
+  // Small runs D3 (D3): with the flag on, every row carries its status (`shown`), computed here once from the runs' states
+  // and the runs that build an id again; with the flag off the ledger is D1's, byte for byte.
+  const ledger = ledgerOf(f, verify, shaperSmallRunsOn()
+    ? { runs: slices.map((s) => ({ index: s.index, state: s.state, stop: s.stop || null })), reruns: rerunsOf(f.outline) } : {});
+  const root = featureRootSource(f.id);
+  const list = orderOf(f.id, slices);
+  const order = list.map((s, i) => {
+    const base = i > 0 && s.pipelineId ? smallRunsPrBase(s.pipelineId) : null;
+    const prev = list[i - 1];
+    return { index: s.index, pipelineId: s.pipelineId, title: s.title,
+      pr: s.pr && s.pr.url ? { number: s.pr.number ?? null, url: s.pr.url } : null,
+      onto: base && base !== root && prev && prev.pr && prev.pr.url ? (prev.pr.number ?? null) : null };
+  });
+  return { ...ledger, care: careOutcome(careOfRow(f), featureFigures(f.id), ledger.met), base: baseName(f.project_dir, root), order };
+}
+
+/** The root source as the PR names it: `origin/dev` reads `dev` when `origin` is one of the project's remotes (git-info.mjs
+ *  prBaseBranch maps it so for the PR). The remote names are read once per project and kept for a minute. */
+const REMOTES = new Map();
+function baseName(projectDir, root) {
+  if (!projectDir || typeof root !== 'string' || !root.includes('/')) return root;
+  let hit = REMOTES.get(projectDir);
+  if (!hit || Date.now() - hit.at > 60_000) {
+    let names = [];
+    try { names = execFileSync('git', ['remote'], { cwd: projectDir, env: guardedGitEnvSync(projectDir), encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).split(/\r?\n/).map((x) => x.trim()).filter(Boolean); } catch { names = []; }
+    REMOTES.set(projectDir, (hit = { at: Date.now(), names }));
+  }
+  const remote = [...hit.names].sort((a, b) => b.length - a.length).find((n) => root.startsWith(`${n}/`) && root.length > n.length + 1);
+  return remote ? root.slice(remote.length + 1) : root;
+}
+
+/** The ship ledger of feature row `f` (ship-ledger.mjs), with `verify` the Verifier's view or null. */
+const ledgerOf = (f, verify, status = {}) => shipLedger({ agreed: f.outline.agreed || [], kinds: requirementKindsOf(j(f.requirement_kinds, null), f.outline),
+  acceptance: f.outline.acceptance, verify, ...status });
+
+/** Fail closed, for the Runs list: why a feature is not ready to ship although its runs are done (an agreed requirement
+ *  has no run and no person), from its row alone; null when none. The caller checks the flag and the marker. */
+export function shipHold(featureId) {
+  const f = featureRow(featureId);
+  return f ? unownedReason(requirementKindsOf(j(f.requirement_kinds, null), f.outline).filter((k) => k.kind === 'owned' && k.run === null).map((k) => k.id)) : null;
+}
+
+/** A feature's recorded figures (shape_feature_figures, one row), or null. Readable with the flag off; measure.mjs
+ *  re-exports it. */
+export function featureFigures(featureId) {
+  const row = getDb().prepare('SELECT figures FROM shape_feature_figures WHERE feature_id = ?').get(String(featureId));
+  return row ? j(row.figures, null) : null;
 }
 
 /** s2: what a Shaper run started without a predecessor carries from the feature's origin run: its cost tags and labels. */
@@ -308,7 +376,7 @@ function sliceRequirements(f, r) {
   return { ids, check: last ? requirementsCheck(ids, texts, last.issues) : null };
 }
 
-export function featureView(id, { live = () => null, oneCard = false } = {}) {
+export function featureView(id, { live = () => null, finishing = () => false, oneCard = false } = {}) {
   const f = featureRow(id);
   if (!f) return null;
   let ask = null;
@@ -335,26 +403,36 @@ export function featureView(id, { live = () => null, oneCard = false } = {}) {
   const done = slices.filter((s) => s.state === 'done').length;
   const h = slices.find((s, i) => HALTS.has(s.state) || (i > 0 && STUCK.has(s.state) && slices[i - 1].state === 'done'));
   const waiting = h ? slices.filter((s) => s.index > h.index && (s.state === 'planned' || s.state === 'missed')).map((s) => s.index) : [];
-  const status = f.status === 'active' && done === slices.length ? 'done' : f.status;
   // D3: the run that waits for the owner's Start now ("Ask me before each run"); never persisted.
   const held = slices.find((s) => s.state === 'held') || null;
   // D24: Ship as once every slice is done, on a feature that is still active and not shipped. The suggestion is
   // async (featureShipSuggestion); the GET route merges it.
   const lastPrUrl = slices.length ? (slices[slices.length - 1].pr?.url || null) : null;
-  // Small runs C5 (D11): a feature with a Verifier check ships only once the latest check is clean or accepted.
-  const verify = verifyView(f, live);
-  const verified = !verify || verify.state === 'clean' || verify.state === 'accepted';
   // A ship whose PRs were all closed unmerged is withdrawn: the feature ships again (the ship route clears the record).
   const shipPrs = slices.map((s) => s.pr).filter((p) => p && p.url);
   const shipped = !!f.ship_mode && !(shipPrs.length && shipPrs.every((p) => p.state === 'CLOSED'));
+  // Small runs C5 (D11): a feature with a Verifier check ships only once the latest check is clean or accepted.
+  const verify = verifyView(f, live, slices, finishing, shipped);
+  // With the flag on, a halted Verifier waits for Resume, so its feature is not done: the card's controls are for an active one.
+  const status = f.status === 'active' && done === slices.length && !(verify && verify.state === 'halted' && shaperSmallRunsOn()) ? 'done' : f.status;
+  // The ship rule (verifier.mjs checkedHead): with the flag on, a marked feature needs a passed check for the head it ships
+  // (a check for another head does not read clean or accepted) and nothing of it finishing, interrupted or pending.
+  const ruled = shipRuleOn(f);
+  const verified = verify ? verify.state === 'clean' || verify.state === 'accepted' : !ruled;
+  const settling = ruled && (stillFinishing(slices, finishing) || roundOpen(slices));
   const release = shipped && f.release_version ? { version: f.release_version, url: f.release_url || null, error: f.release_error || null } : null;
-  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !shipped && !roundLive && verified,
+  const sr = smallRunsOfFeature(f.id) ? smallRunsShip(f, slices, verify) : null;
+  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !shipped && !roundLive && verified && !settling
+      // Fail closed: an agreed requirement with no run and no person (a missing mark blocks through the ledger instead).
+      && !(sr && sr.unowned),
     mode: shipped ? f.ship_mode : null, prUrl: shipped ? f.ship_pr_url || null : null, lastPrUrl, suggested: null, linesAdded: null,
     linesRemoved: null, files: null, release,
     // s4: what the applied Ship card shows, wherever it renders (chat, group page, Plans).
     result: shipped ? { mode: f.ship_mode, prUrl: f.ship_pr_url || lastPrUrl,
       closed: f.ship_mode === 'one' ? (f.ship_closed ?? slices.filter((s) => s.pr && s.pr.state === 'CLOSED').length) : 0, release } : null,
-    ...(f.outline.agreed?.length ? { acceptance: shipAcceptance(f, slices) } : {}) };
+    ...(f.outline.agreed?.length ? { acceptance: shipAcceptance(f, slices) } : {}),
+    // Feature D1 (D10): a marked feature's Ship model, last; an unmarked feature keeps dev's keys.
+    ...(sr ? { smallRuns: sr } : {}) };
   // The Re-plan the rest run (replanning/replanned): its ticket id is the run id it fires as (ui/server.mjs:2188).
   const rt = f.replan_ticket_id ? getTicket(f.replan_ticket_id) : null;
   const replan = rt ? { ticketId: rt.id, pipelineId: rt.pipelineId || null, runId: rt.pipelineId ? (live(rt.pipelineId)?.runId || null) : null } : null;
@@ -402,6 +480,17 @@ function stopWords(f, rows, slices, live) {
     const dep = (f.outline.slices[s.index - 1]?.dependsOn || []).map((id) => bySlice.get(id)).find((d) => d && d.stop);
     if (dep) s.waitsFor = dep.index;
   }
+}
+
+/** Small runs: what each slice's one short word reads (run-agents.mjs cardShortWord), from the rows alone (no full view):
+ *  index → {kind, state, stop?, waitsFor?}, the words featureView's slices carry. */
+export function sliceWords(featureId, { live = () => null } = {}) {
+  const f = featureRow(featureId);
+  if (!f) return new Map();
+  const rows = sliceRows(f.id);
+  const slices = rows.map((r) => ({ index: r.index, pipelineId: r.pipelineId, kind: r.kind, state: sliceState(r, live) }));
+  stopWords(f, rows, slices, live);
+  return new Map(slices.map(({ index, pipelineId, ...s }) => [index, s]));
 }
 
 /** D17: `change` is the newest entry whose landing run (the change run, else the owner) is not done; `changes` every
@@ -456,13 +545,13 @@ export function liveRoundOf(featureId) {
 const APPEND_KINDS = new Set(['extra', 'follow-up', 'change']);
 
 /** Shaper s5 (D13): run N+1 of the feature. 'extra' chains after the last run; 'follow-up' fires now from the base.
- *  Small runs C4 (D6): 'change' chains like 'extra' and owns the changed `requirements`. */
+ *  Small runs C4 (D6): 'change' chains like 'extra' and owns the changed `requirements`. Throws SHIPPING while the Ship lock holds. */
 export function appendFeatureRun(featureId, { title, goal, kind, by = null, requirementsFirst = false, requirements = null, now = Date.now() }) {
   if (!APPEND_KINDS.has(kind)) throw new TypeError('kind must be extra, follow-up or change');
   const f = featureRow(featureId);
   if (!f) return null;
   let out = null;
-  tx(() => { out = appendRunRows(f, sliceRows(featureId), { title, goal, kind, by, requirementsFirst, requirements, now }); });
+  tx(() => { refuseWhileShipping(f.id); out = appendRunRows(f, sliceRows(featureId), { title, goal, kind, by, requirementsFirst, requirements, now }); });
   return out;
 }
 
@@ -525,7 +614,7 @@ const STALE_ERROR = (id) => Object.assign(new Error(`${id} changed since: read i
  */
 export function changeAgreedRequirements(featureId, opts) {
   let out = null;
-  tx(() => { out = changeAgreedRequirementsIn(featureId, opts); });
+  tx(() => { refuseWhileShipping(featureId); out = changeAgreedRequirementsIn(featureId, opts); });
   return out;
 }
 
@@ -616,7 +705,7 @@ export async function featureShipSuggestion(view) {
  *  it) and its checklist markdown. */
 export async function featureShipInput(view) {
   const slices = [];
-  for (const s of view.slices) {
+  for (const s of shipOrder(view)) {
     const reviews = s.pipelineId ? readPipelineExtras(s.pipelineId).reviews : [];
     const last = reviews.filter((v) => v.kind === 'impl' && v.summary).sort((a, b) => a.cycle - b.cycle).at(-1);
     const cl = latestChecklist(reviews);
@@ -663,13 +752,13 @@ export function featureRootSource(featureId) {
  *  orch.state.shaping), the run's own decision log. null for an unknown run and for a plain one.
  *  Shaper small runs B1 (D1, D3): `smallRuns: true`, last, when the marker saved on the feature's origin run (before the
  *  split, on the run itself) is set, with the one card's log words; without it the answer is dev's exact shape. */
-export function shaperCard(pipelineId, { live = () => null, shaped = () => false } = {}) {
+export function shaperCard(pipelineId, { live = () => null, finishing = () => false, shaped = () => false } = {}) {
   const pid = String(pipelineId);
   if (!getDb().prepare('SELECT 1 FROM pipelines WHERE id = ?').get(pid)) return null;
   const at = featureOfPipeline(pid);
   const fid = at ? currentFeatureId(at.featureId) : null;
   const featureMarked = !!fid && smallRunsOfFeature(fid);
-  const feature = fid ? featureView(fid, { live, oneCard: featureMarked }) : null;
+  const feature = fid ? featureView(fid, { live, finishing, oneCard: featureMarked }) : null;
   if (!feature && !shaped(pid)) return null;
   const marked = feature ? featureMarked : smallRunsOfPipeline(pid);
   // B2 (D18): the Care saved at the Start step, for a marked run; absent until Start is answered.
@@ -737,7 +826,8 @@ export function chainFeature(members) {
     slices: sliceRows(f.id).map((r) => ({ index: r.index, title: r.title, ticketId: r.ticketId, pipelineId: r.pipelineId })) };
 }
 
-/** D16, D22: where a run sits in its feature, or null. */
+/** D16, D22: where a run sits in its feature, or null. Shaper small runs D2 (D8): a marked feature with the flag on adds
+ *  `owns` (always an array) and `startsFrom` (null when the run's row stores no source); otherwise dev's exact keys. */
 export function sliceOfPipeline(pipelineId, { live = () => null } = {}) {
   const at = featureOfPipeline(pipelineId);
   if (!at) return null;
@@ -746,22 +836,80 @@ export function sliceOfPipeline(pipelineId, { live = () => null } = {}) {
   const s = v.slices[at.idx - 1];
   const n = v.slices[at.idx] || null;
   return { featureId: v.id, title: v.title, index: at.idx, total: v.total, sliceTitle: s ? s.title : '',
-    state: s ? s.state : null, next: n ? { index: n.index, title: n.title, state: n.state } : null, ...(s && s.stop ? { stop: s.stop } : {}) };
+    state: s ? s.state : null, next: n ? { index: n.index, title: n.title, state: n.state } : null, ...(s && s.stop ? { stop: s.stop } : {}),
+    ...(shaperSmallRunsOn() && smallRunsOfFeature(v.id) ? runFacts(v, at.idx, s) : {}) };
 }
 
-/** D22: the first lines of a slice's PR body: which feature, which slice, and the other slices' PRs. */
+const branchOf = (pid) => (pid ? j(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(String(pid))?.branch, null) : null);
+
+/** D2 (D7, D8): a run's Owns rows (from the `requirements` featureView already put on the slice, with the agreed texts)
+ *  and where it starts from (its stored `branch.source` against the feature base and the earlier runs' branches). */
+function runFacts(v, index, s) {
+  const req = (s && s.requirements) || { ids: [], check: null };
+  const agreed = featureRow(v.id)?.outline?.agreed;
+  const texts = Object.fromEntries((Array.isArray(agreed) ? agreed : []).map((a) => [a.id, a.text]));
+  const runs = v.slices.filter((x) => x.index < index && x.pipelineId).map((x) => ({ index: x.index, feature: branchOf(x.pipelineId)?.feature || null }));
+  const source = s && s.pipelineId ? branchOf(s.pipelineId)?.source || null : null;
+  // D3 (D4): the Owns rows' words are the feature's own `shown` (computed once in shipLedger), never a second ledger.
+  const sr = v.ship && v.ship.smallRuns;
+  const shown = new Map((sr ? [...sr.owned, ...sr.confirmed] : []).filter((e) => e.shown).map((e) => [e.id, e.shown]));
+  return { owns: ownsOf({ ids: req.ids, texts, check: req.check, shown }), startsFrom: startsFromOf({ index, source, base: featureBase(v.id), runs }) };
+}
+
+const AGENT_TEST_NODES = Object.freeze(['n_impl', 'n_check']);
+const isCount = (x) => Number.isSafeInteger(x) && x >= 0;
+const testsOf = (meta) => {
+  const t = meta && typeof meta === 'object' ? meta.tests : null;
+  return t && typeof t === 'object' && isCount(t.passed) && isCount(t.total) && t.total >= 1 && t.passed <= t.total
+    ? { passed: t.passed, total: t.total } : null;
+};
+
+/** D2 (D14): what the Agents rows' detail reads, from existing records only (it writes nothing): the highest plan
+ *  version among the run's plan artifacts, whether a plan review (n_roles) finished, and the last valid stored test
+ *  count (`exec_meta.tests`) of an n_impl or n_check step. Each part null/false when absent. */
+export async function storedAgentFacts(pipelineId) {
+  const plans = await listRunArtifacts(pipelineId, { kind: 'plan' });
+  const planVersion = plans.length ? Math.max(...plans.map((a) => planVersionOf(a.relPath))) : null;
+  const db = getDb();
+  const planReviewed = !!db.prepare("SELECT 1 FROM pipeline_steps WHERE pipeline_id = ? AND node_id = 'n_roles' AND status = 'done' LIMIT 1")
+    .get(String(pipelineId));
+  const rows = db.prepare(`SELECT exec_meta FROM pipeline_steps WHERE pipeline_id = ? AND node_id IN (${AGENT_TEST_NODES.map(() => '?').join(', ')})
+    AND exec_meta IS NOT NULL ORDER BY rowid`).all(String(pipelineId), ...AGENT_TEST_NODES);
+  const tests = rows.map((r) => testsOf(j(r.exec_meta, null))).filter(Boolean).at(-1) || null;
+  return { planVersion, planReviewed, tests };
+}
+
+/** One line: a title in a PR body is data, so its line breaks and runs of whitespace collapse to one space. */
+const oneLine = (t) => String(t ?? '').replace(/\s+/g, ' ').trim();
+
+/** D22: the first lines of a slice's PR body: which feature, which slice, and the other slices' PRs. Feature D1 (D13): a
+ *  marked feature's adds its Care line under `Satisfies:` and puts every title on one line. */
 export function slicePrPreamble(pipelineId) {
   const at = featureOfPipeline(pipelineId);
   if (!at) return '';
   const f = featureRow(at.featureId);
   if (!f) return '';
+  const marked = smallRunsOfFeature(f.id);
+  const t = marked ? oneLine : (x) => x;
   const rows = sliceRows(f.id);
   const others = rows.filter((r) => r.index !== at.idx).map((r) => {
     const pr = r.pipelineId ? readPrState(r.pipelineId) : null;
-    return `- Slice ${r.index}, ${r.title}: ${pr?.url || 'not opened yet'}`;
+    return `- Slice ${r.index}, ${t(r.title)}: ${pr?.url || 'not opened yet'}`;
   });
   const ids = f.outline?.slices?.[at.idx - 1]?.requirements || [];
-  return `Part of ${f.title}: slice ${at.idx} of ${rows.length}\n${ids.length ? `Satisfies: ${ids.join(', ')}\n` : ''}\n${others.join('\n')}`;
+  const care = marked ? `${carePrLines(f)}\n` : '';
+  return `Part of ${t(f.title)}: slice ${at.idx} of ${rows.length}\n${ids.length ? `Satisfies: ${ids.join(', ')}\n` : ''}${care}\n${others.join('\n')}`;
+}
+
+/** A line of a slice PR's preamble that sits under "Part of" (the agreed ids, the Care line and the Not met / Dropped
+ *  lines carePrLines adds): refreshSliceBody skips these before it swaps in the fresh preamble. */
+export const isSlicePreambleLine = (line) => /^(Satisfies|Care|Not met|Dropped): /.test(String(line || ''));
+
+/** A marked feature's `Care: …` PR line, from the live ledger and the recorded figures (careOutcome), then one line per
+ *  requirement marked Not met or Dropped, with its reason (owner direction da6198d8d). */
+function carePrLines(f) {
+  const ledger = ledgerOf(f, verifyView(f));
+  return [careOutcome(careOfRow(f), featureFigures(f.id), ledger.met).line, ...unmetLines(ledger).map(oneLine)].join('\n');
 }
 
 /** L6, D14: each done earlier slice's last review summary and changed files (results.json), oldest first. */
@@ -831,15 +979,16 @@ export function rechainWaiting(id, index, { by = null, now = Date.now() } = {}) 
  *  Stopped/error/failed, or missed/canceled behind a done slice (F43) → a new ticket for slice k, re-chained so the
  *  waiting slices follow it.
  *  @returns {null|{error, status}|{action:'resume', pipelineId, index}|{action:'restart', ticketId}|{action:'none'}} */
-export function resumeFeature(id, { live = () => null, by = null, now = Date.now() } = {}) {
+export function resumeFeature(id, { live = () => null, finishing = () => false, by = null, now = Date.now() } = {}) {
   const f = featureRow(id);
   if (!f) return null;
   const refused = notActive(f);
   if (refused) return refused;
-  const view = featureView(id, { live });
-  // Small runs C5: every run done and the Verifier halted (failed or stopped) → a fresh check for the same head.
+  const view = featureView(id, { live, finishing });
+  // Small runs C5: every run done and the Verifier halted (failed, stopped, or settled with the flag off) → a fresh check,
+  // with the flag on only (startVerifyCheck starts none without it).
   if (!view.halted && view.verify && view.verify.state === 'halted') {
-    const v = startVerifyCheck(id, { by, now });
+    const v = startVerifyCheck(id, { by, now, finishing });
     return v ? { action: 'restart', ticketId: v.ticketId } : { action: 'none' };
   }
   if (!view.halted) return { action: 'none' };
@@ -974,7 +1123,25 @@ export function sliceGateState(ticket, { now = Date.now(), isLive = null, live =
   } catch { return null; }
 }
 
-/** Re-plan the rest (L9): cancel what waits, then one new shaped run (slicing on) from the last done slice. */
+/** Small runs: what a re-plan of the feature carries, from the stored row: every agreed requirement no finished run owns
+ *  (`agreed`, in agreed order), the ones a person confirms among them (`confirmed`, role keys) and the finished runs'
+ *  indexes (`done`). An id a finished run owns is never carried. Empty lists for an unknown feature. */
+export function carriedRequirements(featureId) {
+  const f = featureId ? featureRow(featureId) : null;
+  if (!f) return { agreed: [], confirmed: [], done: [] };
+  const done = sliceRows(f.id).filter((r) => sliceState(r, () => null) === 'done').map((r) => r.index);
+  const kinds = requirementKindsOf(j(f.requirement_kinds, null), f.outline).filter((k) => k.kind === 'confirmed' || !done.includes(k.run));
+  const ids = new Set(kinds.map((k) => k.id));
+  return {
+    agreed: (f.outline.agreed || []).filter((a) => ids.has(a.id)).map(({ id, text, example }) => ({ id, text: text || '', ...(example ? { example } : {}) })),
+    confirmed: kinds.filter((k) => k.kind === 'confirmed').map(({ id, role }) => ({ id, role })), done,
+  };
+}
+
+/** Re-plan the rest (L9): cancel what waits, then one new shaped run (slicing on) from the last done slice.
+ *  A marked feature with the flag on hands its carried requirements to that run as its agreed list (the slice-requirements
+ *  workflow: the brief is the requirements input). That run starts from the run that finished last, which holds every
+ *  finished run's work (the source a slice starts from too), not from the highest index. Throws SHIPPING while the Ship lock holds. */
 export function replanRest(id, { live = () => null, by = null, now = Date.now() } = {}) {
   const f = featureRow(id);
   if (!f) return null;
@@ -983,7 +1150,10 @@ export function replanRest(id, { live = () => null, by = null, now = Date.now() 
   const view = featureView(id, { live });
   const busy = busySliceOf(id, { live });
   if (busy) return { status: 409, error: `Slice ${busy.index} is still going: stop it first, then re-plan the rest` };
-  const lastDone = [...view.slices].reverse().find((s) => s.state === 'done');
+  const found = shaperSmallRunsOn() && smallRunsOfFeature(id) ? carriedRequirements(id) : null;
+  const carried = found && found.agreed.length ? found : null;
+  const latest = carried ? finishedSlices(id).at(-1)?.index : null;
+  const lastDone = view.slices.find((s) => s.index === latest) || [...view.slices].reverse().find((s) => s.state === 'done');
   // previousBranchesOf → {sourceBranch} | {pending:true} | null (scheduler.mjs:504): the done slice's work branch.
   const prev = lastDone ? previousBranchesOf(lastDone.pipelineId) : null;
   if (prev?.pending) return { status: 409, error: 'the last finished slice is still merging its work back: try again in a moment' };
@@ -991,14 +1161,16 @@ export function replanRest(id, { live = () => null, by = null, now = Date.now() 
   const branch = lastDone ? prev.sourceBranch : f.source_branch || null;
   const { top, internal } = requestOptions(f.base, by);
   const request = {
-    projectDir: f.project_dir, prompt: replanBrief({ featureTitle: f.title, outline: f.outline, doneCount: view.done }),
-    title: `${f.title} · re-plan`, workflowId: f.workflow_id, ...top, ...(branch ? { sourceBranch: branch } : {}),
+    projectDir: f.project_dir, prompt: replanBrief({ featureTitle: f.title, outline: f.outline, doneCount: view.done, carried }),
+    title: `${f.title} · re-plan`,
+    workflowId: !carried ? f.workflow_id : f.perspectives.includes('ux') ? SHAPE_UX_SLICE_REQ_WORKFLOW_ID : SHAPE_SLICE_REQ_WORKFLOW_ID, ...top, ...(branch ? { sourceBranch: branch } : {}),
     ...originCarry(f),
     shape: { perspectives: f.perspectives, slices: 'auto', replaces: id },
     internal,
   };
   let ticketId = null;
   tx(() => {
+    refuseWhileShipping(id);
     cancelOpenTickets(id, { by, now });
     ticketId = createTicket({ title: request.title, projectDir: f.project_dir, request, runAtMs: now, createdBy: by, now }).id;
     getDb().prepare("UPDATE shape_features SET status = 'replanning', replan_ticket_id = ?, updated_at = ? WHERE id = ?").run(ticketId, iso(now), id);
@@ -1006,9 +1178,62 @@ export function replanRest(id, { live = () => null, by = null, now = Date.now() 
   return { ticketId };
 }
 
-/** L10: a slice's PR base — the generic stacked base (scheduler.mjs stackedPrBaseOf); a slice is one chained run. */
+/**
+ * Feature D1 (D1): the feature's finished runs in the order they finished, ascending. A run counts when its pipeline is
+ * `done` and not archived; it finished at its last step's finish (MAX(pipeline_steps.updated_at), else
+ * pipelines.updated_at), a tie putting the higher index later. `exclude` = a pipeline id left out.
+ * → Array<{index, pipelineId, finishedAt}>
+ */
+export function finishedSlices(featureId, { exclude = null } = {}) {
+  return getDb().prepare(`SELECT x.idx AS idx, p.id AS pid,
+      COALESCE((SELECT MAX(st.updated_at) FROM pipeline_steps st WHERE st.pipeline_id = p.id), p.updated_at) AS finished
+    FROM (SELECT s.idx AS idx, COALESCE(s.pipeline_id, t.pipeline_id) AS pid FROM shape_feature_slices s
+      LEFT JOIN scheduled_runs t ON t.id = s.ticket_id WHERE s.feature_id = ?) x
+    JOIN pipelines p ON p.id = x.pid
+    WHERE p.status = 'done' AND p.archived_at IS NULL AND p.id IS NOT ?
+    ORDER BY finished ASC, x.idx ASC`).all(String(featureId), exclude == null ? null : String(exclude))
+    .map((r) => ({ index: r.idx, pipelineId: r.pid, finishedAt: r.finished }));
+}
+
+/**
+ * Feature D1 (D2): a marked feature's run PR base. The first run in finish order, or one whose predecessor's PR is
+ * MERGED, goes into the feature's root source; any other stacks on the run that finished before it (its work branch),
+ * or the root while that branch is pending or unknown. null for a run that is not a finished slice of a marked feature;
+ * never throws (a DB error is null).
+ */
+export function smallRunsPrBase(pipelineId) {
+  try {
+    const at = pipelineId ? featureOfPipeline(pipelineId) : null;
+    if (!at || !smallRunsOfFeature(at.featureId)) return null;
+    const order = finishedSlices(at.featureId);
+    const i = order.findIndex((s) => s.pipelineId === String(pipelineId));
+    if (i < 0) return null;
+    const root = featureRootSource(at.featureId);
+    if (i === 0) return root;
+    const pred = order[i - 1].pipelineId;
+    if (readPrState(pred)?.state === 'MERGED') return root;
+    const prev = previousBranchesOf(pred);
+    return (prev && !prev.pending && prev.sourceBranch) || root;
+  } catch { return null; }
+}
+
+/** L10: a slice's PR base — a marked feature's (smallRunsPrBase), else the generic stacked base (scheduler.mjs
+ *  stackedPrBaseOf); a slice is one chained run. */
 export function stackedPrBase(pipelineId, chain) {
-  return stackedPrBaseOf(pipelineId, chain);
+  return smallRunsPrBase(pipelineId) ?? stackedPrBaseOf(pipelineId, chain);
+}
+
+/** Feature D1 (D4): the order a feature's PRs are opened and marked ready: a marked feature's finished runs in finish
+ *  order, then any others in index order; otherwise `view.slices` itself. */
+export function shipOrder(view) {
+  if (!view || !smallRunsOfFeature(view.id)) return view ? view.slices : [];
+  return orderOf(view.id, view.slices);
+}
+
+function orderOf(featureId, slices) {
+  const pos = new Map(finishedSlices(featureId).map((s, i) => [s.pipelineId, i]));
+  const done = (s) => !!s.pipelineId && pos.has(s.pipelineId);
+  return [...slices.filter(done).sort((a, b) => pos.get(a.pipelineId) - pos.get(b.pipelineId)), ...slices.filter((s) => !done(s))];
 }
 
 /** L12: a shaped run started from a Chat card (Plans tab). */

@@ -202,3 +202,18 @@ test('checkMark wait: the box holds one wrapped dev status dot (the grey waiting
   assert.equal(mark.firstElementChild.dataset.state, 'waiting');
   assert.equal(mark.textContent, '');
 });
+
+// The feature page's Requirements rows: their hooks and the run link come from the builder, never from a post-pass.
+test('buildCheckRows: data fills the row\'s dataset, without the null and undefined ones', () => {
+  const [row, bare] = buildCheckRows(doc, { items: [{ ...item('a', true), data: { key: 'R-po-1', owner: 'run 2', role: null, x: undefined } }, item('a', true)] });
+  assert.deepEqual({ ...row.dataset }, { key: 'R-po-1', owner: 'run 2' });
+  for (const k of ['key', 'owner']) delete row.dataset[k];
+  assert.equal(row.outerHTML, bare.outerHTML, 'without data the row is as before');
+});
+
+test('buildCheckRows: noteLead starts the note with a link, then the note', () => {
+  const [row] = buildCheckRows(doc, { items: [{ ...item('a', true), idCol: true, note: 'met', noteLead: { text: 'run 2', href: '#running/r2' } }] });
+  assert.equal(row.querySelector('.plan-check-detail').outerHTML, '<span class="plan-check-detail"><a class="rd-fact-link" href="#running/r2">run 2</a> · met</span>');
+  const [plain] = buildCheckRows(doc, { items: [{ ...item('a', true), idCol: true, note: 'run 2 · met' }] });
+  assert.equal(plain.querySelector('.plan-check-detail').outerHTML, '<span class="plan-check-detail">run 2 · met</span>');
+});

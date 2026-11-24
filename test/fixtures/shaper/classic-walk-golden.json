@@ -1,0 +1,547 @@
+{
+  "checkpoint": "a0a3730bb",
+  "walk": {
+    "asked": [
+      [
+        "clarify",
+        "outline",
+        "plan"
+      ],
+      [
+        "plan"
+      ],
+      [
+        "plan"
+      ]
+    ],
+    "built": {
+      "view": {
+        "view": [
+          "id",
+          "title",
+          "projectKey",
+          "status",
+          "approveEach",
+          "total",
+          "done",
+          "halted",
+          "open",
+          "held",
+          "replacedBy",
+          "replan",
+          "slices",
+          "ship",
+          "originPipelineId",
+          "ask",
+          "log",
+          "notes"
+        ],
+        "slice": [
+          [
+            "index",
+            "title",
+            "goal",
+            "estimate",
+            "state",
+            "runId",
+            "pipelineId",
+            "ticketId",
+            "pr",
+            "kind",
+            "rounds",
+            "watch"
+          ],
+          [
+            "index",
+            "title",
+            "goal",
+            "estimate",
+            "state",
+            "runId",
+            "pipelineId",
+            "ticketId",
+            "pr",
+            "kind",
+            "rounds",
+            "watch"
+          ],
+          [
+            "index",
+            "title",
+            "goal",
+            "estimate",
+            "state",
+            "runId",
+            "pipelineId",
+            "ticketId",
+            "pr",
+            "kind",
+            "rounds",
+            "watch"
+          ]
+        ],
+        "ship": [
+          "ready",
+          "mode",
+          "prUrl",
+          "lastPrUrl",
+          "suggested",
+          "linesAdded",
+          "linesRemoved",
+          "files",
+          "release",
+          "result"
+        ]
+      },
+      "card": {
+        "cardKeys": [
+          "pipelineId",
+          "feature",
+          "log"
+        ],
+        "keys": [
+          "phase",
+          "log",
+          "step",
+          "controls",
+          "requirementChecks",
+          "notesLine",
+          "watch"
+        ],
+        "model": {
+          "phase": "feature",
+          "log": [
+            {
+              "key": "clarify",
+              "run": null,
+              "text": "Clarify · 2 answers",
+              "detail": [
+                "How should the feature handle invalid input — fail fast, coerce, or ignore? → Fail fast with a clear error",
+                "Should delete be a hard delete or a soft delete? → Hard delete"
+              ]
+            },
+            {
+              "key": "1-7",
+              "run": null,
+              "text": "Split into 3 runs",
+              "detail": [
+                "1 · Store chart definitions",
+                "2 · Ask for a chart in Chat",
+                "3 · Show charts on the run page"
+              ]
+            },
+            {
+              "key": "1-10",
+              "run": 1,
+              "text": "Plan approved",
+              "detail": [
+                "Goal: Charts are saved and listed.",
+                "✓ GET /api/charts returns the saved chart"
+              ]
+            },
+            {
+              "key": "2-10",
+              "run": 2,
+              "text": "Plan approved",
+              "detail": [
+                "Goal: Chat proposes a chart and saves it.",
+                "✓ Chat shows the chart card after \"chart my runs\""
+              ]
+            },
+            {
+              "key": "3-10",
+              "run": 3,
+              "text": "Plan approved",
+              "detail": [
+                "Goal: The run page shows the saved charts.",
+                "✓ The run page lists the saved charts"
+              ]
+            }
+          ],
+          "step": null,
+          "controls": {
+            "featureId": "F1",
+            "active": false,
+            "halted": false,
+            "rest": false,
+            "approveEach": false,
+            "planPipelineId": "P1",
+            "held": null,
+            "target": null
+          },
+          "requirementChecks": {},
+          "notesLine": null,
+          "watch": null
+        },
+        "words": [
+          "Done",
+          "Done",
+          "Done"
+        ]
+      },
+      "group": {
+        "id": "F1",
+        "kind": "feature",
+        "title": "Plan this in 3 slices: charts",
+        "projectKey": null,
+        "planning": null,
+        "members": [
+          {
+            "position": 1,
+            "title": "Store chart definitions",
+            "pipelineId": "P1",
+            "ticketId": null,
+            "status": "done",
+            "pr": null,
+            "ticket": null,
+            "adhoc": false,
+            "after": null
+          },
+          {
+            "position": 2,
+            "title": "Ask for a chart in Chat",
+            "pipelineId": "P2",
+            "ticketId": "T2",
+            "status": "done",
+            "pr": null,
+            "ticket": null,
+            "adhoc": false,
+            "after": null
+          },
+          {
+            "position": 3,
+            "title": "Show charts on the run page",
+            "pipelineId": "P3",
+            "ticketId": "T3",
+            "status": "done",
+            "pr": null,
+            "ticket": null,
+            "adhoc": false,
+            "after": null
+          }
+        ],
+        "cost": {
+          "usd": "COST",
+          "byPipeline": {
+            "P1": "COST",
+            "P3": "COST",
+            "P2": "COST"
+          }
+        }
+      },
+      "readiness": true
+    },
+    "slice": [
+      [
+        "featureId",
+        "title",
+        "index",
+        "total",
+        "sliceTitle",
+        "state",
+        "next",
+        "threadId"
+      ],
+      [
+        "featureId",
+        "title",
+        "index",
+        "total",
+        "sliceTitle",
+        "state",
+        "next",
+        "threadId"
+      ],
+      [
+        "featureId",
+        "title",
+        "index",
+        "total",
+        "sliceTitle",
+        "state",
+        "next",
+        "threadId"
+      ]
+    ],
+    "shipResponse": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "mode": "one",
+        "prUrl": "https://github.com/me/repo/pull/9",
+        "warnings": [],
+        "newDraft": false
+      }
+    },
+    "gh": [
+      [
+        "gh",
+        "--version"
+      ],
+      [
+        "gh",
+        "pr",
+        "create",
+        "--repo",
+        "me/repo",
+        "--base",
+        "main",
+        "--head",
+        "BRANCH3",
+        "--title",
+        "Plan this in 3 slices: charts",
+        "--body",
+        "## Slice 1: Store chart definitions\n\nRole reviews: no blocking findings.\n\n\n\n## Slice 2: Ask for a chart in Chat\n\nRole reviews: no blocking findings.\n\n\n\n## Slice 3: Show charts on the run page\n\nRole reviews: no blocking findings.\n\n"
+      ]
+    ],
+    "shipped": {
+      "view": {
+        "view": [
+          "id",
+          "title",
+          "projectKey",
+          "status",
+          "approveEach",
+          "total",
+          "done",
+          "halted",
+          "open",
+          "held",
+          "replacedBy",
+          "replan",
+          "slices",
+          "ship",
+          "originPipelineId",
+          "ask",
+          "log",
+          "notes"
+        ],
+        "slice": [
+          [
+            "index",
+            "title",
+            "goal",
+            "estimate",
+            "state",
+            "runId",
+            "pipelineId",
+            "ticketId",
+            "pr",
+            "kind",
+            "rounds",
+            "watch"
+          ],
+          [
+            "index",
+            "title",
+            "goal",
+            "estimate",
+            "state",
+            "runId",
+            "pipelineId",
+            "ticketId",
+            "pr",
+            "kind",
+            "rounds",
+            "watch"
+          ],
+          [
+            "index",
+            "title",
+            "goal",
+            "estimate",
+            "state",
+            "runId",
+            "pipelineId",
+            "ticketId",
+            "pr",
+            "kind",
+            "rounds",
+            "watch"
+          ]
+        ],
+        "ship": [
+          "ready",
+          "mode",
+          "prUrl",
+          "lastPrUrl",
+          "suggested",
+          "linesAdded",
+          "linesRemoved",
+          "files",
+          "release",
+          "result"
+        ]
+      },
+      "card": {
+        "cardKeys": [
+          "pipelineId",
+          "feature",
+          "log"
+        ],
+        "keys": [
+          "phase",
+          "log",
+          "step",
+          "controls",
+          "requirementChecks",
+          "notesLine",
+          "watch"
+        ],
+        "model": {
+          "phase": "feature",
+          "log": [
+            {
+              "key": "clarify",
+              "run": null,
+              "text": "Clarify · 2 answers",
+              "detail": [
+                "How should the feature handle invalid input — fail fast, coerce, or ignore? → Fail fast with a clear error",
+                "Should delete be a hard delete or a soft delete? → Hard delete"
+              ]
+            },
+            {
+              "key": "1-7",
+              "run": null,
+              "text": "Split into 3 runs",
+              "detail": [
+                "1 · Store chart definitions",
+                "2 · Ask for a chart in Chat",
+                "3 · Show charts on the run page"
+              ]
+            },
+            {
+              "key": "1-10",
+              "run": 1,
+              "text": "Plan approved",
+              "detail": [
+                "Goal: Charts are saved and listed.",
+                "✓ GET /api/charts returns the saved chart"
+              ]
+            },
+            {
+              "key": "2-10",
+              "run": 2,
+              "text": "Plan approved",
+              "detail": [
+                "Goal: Chat proposes a chart and saves it.",
+                "✓ Chat shows the chart card after \"chart my runs\""
+              ]
+            },
+            {
+              "key": "3-10",
+              "run": 3,
+              "text": "Plan approved",
+              "detail": [
+                "Goal: The run page shows the saved charts.",
+                "✓ The run page lists the saved charts"
+              ]
+            }
+          ],
+          "step": null,
+          "controls": {
+            "featureId": "F1",
+            "active": false,
+            "halted": false,
+            "rest": false,
+            "approveEach": false,
+            "planPipelineId": "P1",
+            "held": null,
+            "target": null
+          },
+          "requirementChecks": {},
+          "notesLine": null,
+          "watch": null
+        },
+        "words": [
+          "Done",
+          "Done",
+          "Done"
+        ]
+      },
+      "group": {
+        "id": "F1",
+        "kind": "feature",
+        "title": "Plan this in 3 slices: charts",
+        "projectKey": null,
+        "planning": null,
+        "members": [
+          {
+            "position": 1,
+            "title": "Store chart definitions",
+            "pipelineId": "P1",
+            "ticketId": null,
+            "status": "done",
+            "pr": {
+              "url": "https://github.com/me/repo/pull/9",
+              "number": null,
+              "state": "OPEN",
+              "draft": false
+            },
+            "ticket": null,
+            "adhoc": false,
+            "after": null
+          },
+          {
+            "position": 2,
+            "title": "Ask for a chart in Chat",
+            "pipelineId": "P2",
+            "ticketId": "T2",
+            "status": "done",
+            "pr": {
+              "url": "https://github.com/me/repo/pull/9",
+              "number": null,
+              "state": "OPEN",
+              "draft": false
+            },
+            "ticket": null,
+            "adhoc": false,
+            "after": null
+          },
+          {
+            "position": 3,
+            "title": "Show charts on the run page",
+            "pipelineId": "P3",
+            "ticketId": "T3",
+            "status": "done",
+            "pr": {
+              "url": "https://github.com/me/repo/pull/9",
+              "number": 9,
+              "state": "OPEN",
+              "draft": false
+            },
+            "ticket": null,
+            "adhoc": false,
+            "after": null
+          }
+        ],
+        "cost": {
+          "usd": "COST",
+          "byPipeline": {
+            "P1": "COST",
+            "P3": "COST",
+            "P2": "COST"
+          }
+        }
+      },
+      "ship": {
+        "ready": false,
+        "mode": "one",
+        "prUrl": "https://github.com/me/repo/pull/9",
+        "lastPrUrl": "https://github.com/me/repo/pull/9",
+        "suggested": null,
+        "linesAdded": null,
+        "linesRemoved": null,
+        "files": null,
+        "release": null,
+        "result": {
+          "mode": "one",
+          "prUrl": "https://github.com/me/repo/pull/9",
+          "closed": 0,
+          "release": null
+        }
+      }
+    },
+    "shipMode": "one"
+  }
+}

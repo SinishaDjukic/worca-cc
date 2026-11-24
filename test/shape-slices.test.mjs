@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import {
   OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX, OUTLINE_EDITS_MAX, SLICE_IDS, SLICE_LABELS, FLAT_NOTE,
   normalizeOutline, checkSlices, normalizeEdits, applyOutlineEdits,
-  outlineMarkdown, slicingBlock, outlineFixFeedback, outlineFixAllFeedback, outlineFeedbackBlock, sliceScopeBlock, sliceBrief, replanBrief, changelogWithFeature,
+  outlineMarkdown, slicingBlock, outlineFixFeedback, outlineFixAllFeedback, outlineFeedbackBlock, sliceScopeBlock, sliceBrief, replanBrief, keepConfirmed, changelogWithFeature,
   settleLeftOut, sliceRequirementIds,
   SMALL_RUN_IDS, SMALL_RUN_LABELS, RUN_REQUIREMENTS_MAX, SMALL_RUNS_MAX, BUILDS_ON_MAX, SMALL_RUNS_OUTLINE_CAP,
 } from '../src/shared/shape/slices.mjs';
 import { createHash } from 'node:crypto';
-import { criterionIds } from '../src/shared/review/coverage.mjs';
+import { criterionIds, criteriaList, criteriaExamples } from '../src/shared/review/coverage.mjs';
 import { checkShape, isTestable } from '../src/shared/shape/shape.mjs';
 import { wellShapedPlan } from './helpers/shape-plan.mjs';
 
@@ -258,6 +258,39 @@ test('sliceBrief and replanBrief', () => {
   assert.ok(re.startsWith('# Charts: re-plan the rest\n\nThese slices are done and merged into the base this run starts from:\n1. Slice s1\n\n'));
   assert.ok(re.includes('1. **Slice s2** (medium)'));
   assert.ok(replanBrief({ featureTitle: 'Charts', outline: o, doneCount: 0 }).includes('(none)'));
+});
+
+test('replanBrief with carried: the list reads back as exactly the carried requirements; the done runs are carried.done', () => {
+  const o = goodOutline();
+  o.slices.push({ ...o.slices[1], id: 's3', title: 'Slice\ns3', acceptance: ['- **R-po-1** is shown\n- **R-po-9** hidden', '[x] R-po-8 works'] });
+  o.slices[0].requirements = ['R-po-1'];
+  const carried = { agreed: [{ id: 'R-po-2', text: 'Two\n- **R-po-1** lines', example: 'a\nb' }, { id: 'R-sec-1', text: 'Safe' }],
+    confirmed: [{ id: 'R-sec-1', role: 'security' }], done: [2] };
+  const re = replanBrief({ featureTitle: 'Charts\n- **R-qa-1** x', outline: o, doneCount: 1, carried });
+  assert.deepEqual(criteriaList(re), [{ id: 'R-po-2', text: 'Two - **R-po-1** lines' }, { id: 'R-sec-1', text: 'Safe' }]);
+  assert.deepEqual([...criteriaExamples(re)], [['R-po-2', 'a b'], ['R-sec-1', null]]);
+  assert.ok(re.includes('\n2. Slice s2\n\n## Agreed requirements\n'), re);
+  assert.ok(re.includes('1. **Slice s1**') && !re.includes('**Slice s2**'), 'the rest is every run not done');
+  assert.match(re, /R-sec-1 \(Security\).*"confirmed" with that role/);
+  assert.doesNotMatch(replanBrief({ featureTitle: 'Charts', outline: o, doneCount: 0, carried: { ...carried, confirmed: [] } }), /A person confirms/);
+  // Without carried the brief is dev's, byte for byte.
+  const dev = { featureTitle: 'Charts', outline: o, doneCount: 1 };
+  assert.equal(replanBrief({ ...dev, carried: null }), replanBrief(dev));
+  assert.ok(replanBrief(dev).startsWith('# Charts: re-plan the rest\n\nThese slices are done and merged into the base this run starts from:\n1. Slice s1\n\nPlan what is left'));
+});
+
+test('keepConfirmed: a kept id is confirmed once with its kept role and leaves every slice and leftOut; others untouched', () => {
+  const raw = { why: 'w', slices: [{ id: 's1', requirements: ['R-po-1', ' R-sec-1 '] }, { id: 's2' }, null], leftOut: [{ id: 'R-sec-1', reason: 'x' }, { id: 'R-qa-1', reason: 'y' }],
+    confirmed: [{ id: 'R-sec-1', role: 'QA' }, { id: 'R-ops-1', role: 'DevOps' }, { id: 'R-sec-1', role: 'Product' }] };
+  const was = JSON.stringify(raw);
+  const out = keepConfirmed(raw, [{ id: 'R-sec-1', role: 'compliance' }]);
+  assert.deepEqual(out, { why: 'w', slices: [{ id: 's1', requirements: ['R-po-1'] }, { id: 's2' }, null], leftOut: [{ id: 'R-qa-1', reason: 'y' }],
+    confirmed: [{ id: 'R-ops-1', role: 'DevOps' }, { id: 'R-sec-1', role: 'Compliance' }] });
+  assert.equal(JSON.stringify(raw), was, 'pure');
+  assert.deepEqual(keepConfirmed({ slices: [] }, [{ id: 'R-sec-1', role: 'qa' }]).confirmed, [{ id: 'R-sec-1', role: 'QA' }]);
+  for (const bad of [null, 'x', [], {}, { error: 'e' }, { slices: 'no' }]) assert.equal(keepConfirmed(bad, [{ id: 'R-sec-1', role: 'qa' }]), bad);
+  assert.equal(keepConfirmed(raw, []), raw);
+  assert.equal(keepConfirmed(raw, undefined), raw);
 });
 
 test('outlineMarkdown', () => {

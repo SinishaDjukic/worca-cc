@@ -467,8 +467,8 @@ import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
-  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered } from '../src/core/shape/features.mjs';
-import { smallRunsChainGate, sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, createHeldStops, featureOfAnyPipeline } from '../src/core/shape/chain.mjs';
+  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, isSlicePreambleLine } from '../src/core/shape/features.mjs';
+import { smallRunsChainGate, sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, createHeldStops, featureOfAnyPipeline } from '../src/core/shape/chain.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts, createRequirementChanges } from '../src/core/shape/changes.mjs';
 import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
@@ -558,7 +558,7 @@ import {
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
   recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
   resolveAfterRef, resumeWaitError, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
-  chainBaseBranchesOf, stackedPrBaseOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
+  chainBaseBranchesOf, resumeTicketsFor, cancelResumeTicketsFor, inheritedTagsAtCreation, runChains,
 } from '../src/core/scheduler.mjs';
 import {
   addNotification, onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
@@ -3098,7 +3098,7 @@ const startRunHandler = async (req, res) => {
     const resolveOf = req._resolveOf && typeof req._resolveOf === 'object' && typeof req._resolveOf.runId === 'string' ? req._resolveOf : null;
     // Shaper s5 (D4): a round of an earlier run (Ask for changes → Start round n, or a Watch PR fix run). Set in-process
     // by startRunAs / invokeStartRun only, never from HTTP.
-    const roundOf = req._roundOf && typeof req._roundOf === 'object' && typeof req._roundOf.pipelineId === 'string' ? req._roundOf : null;
+    const roundOf = req._roundOf && typeof req._roundOf === 'object' && typeof req._roundOf.pipelineId === 'string' ? req._roundOf : null; if (roundWhileShipping(roundOf?.pipelineId)) return res.status(409).json(roundWhileShipping(roundOf.pipelineId));   // the Ship lock
     // A6 D15: a requirements start's ticket (Report back). Set in-process by invokeStartRun only, never from HTTP, like _roundOf.
     const reportTo = req._reportTo && typeof req._reportTo === 'object' && typeof req._reportTo.plugin === 'string'
       && typeof req._reportTo.taskId === 'string' ? req._reportTo : null;
@@ -3537,6 +3537,7 @@ const startRunHandler = async (req, res) => {
       entry.scheduleId = internal.ticket.scheduleId || null;
       entry.scheduledFor = internal.ticket.runAt;
     }
+    const shipping = roundWhileShipping(roundOf?.pipelineId); if (shipping) return res.status(409).json(shipping);   // asked again, right before Ship can see the round (shipBusy) and its row is written
     if (workflowTest) entry.isTest = true;   // D21: hidden from every tab, list and chat
     runs.set(runId, entry);
     wireRun(entry);
@@ -4171,7 +4172,7 @@ function afterRunSettled(orch) {
   // Git event automations (#711): a finished event run writes back now, not at the next tick.
   if (automationsOn()) kickAutomations();
   try {
-    const st = orch.getState?.(); card = recordSettledFigures(st, { tick: () => void schedulerTick(), offerShip: offerShipCard, broadcastFeature });
+    const st = orch.getState?.(); card = recordSettledFigures(st, { tick: () => void schedulerTick(), offerShip: offerShipCard, broadcastFeature, finishing: isFinishingRun });
     // The Ship card is offered once the last slice is done (offerShipCard checks).
     if (orch.runShape?.slice && st?.status === 'done' && st.id) {
       card = Promise.resolve().then(() => offerShipCard(st.id))
@@ -4885,7 +4886,7 @@ async function stopPausedPipeline(pipelineId, by = 'local') {
   if (running) return running;
   const p = stopPausedPipelineOnce(pipelineId, by);
   STOPS_IN_FLIGHT.set(pipelineId, p);
-  try { return await p; } finally { STOPS_IN_FLIGHT.delete(pipelineId); }
+  try { return await p; } finally { STOPS_IN_FLIGHT.delete(pipelineId); recordSettledFigures({ id: pipelineId, status: 'stopped' }, { tick: () => void schedulerTick(), broadcastFeature, finishing: isFinishingRun }); }   // a stopped Verifier reads halted only now; a stopped round may start the check
 }
 
 /** One stop of a paused run. Called only through stopPausedPipeline, which joins concurrent stops. */
@@ -5034,15 +5035,15 @@ async function refreshSliceBody(prUrl, pid, repoDir) {
   if (!cur.ok || !cur.body.startsWith('Part of ')) return null;
   // The preamble: the "Part of" line, a blank line, the "- Slice" list; it ends at the first blank line after the list.
   const lines = cur.body.split('\n');
-  let end = lines[1]?.startsWith('Satisfies: ') ? 2 : 1;   // the slice's agreed ids, under the "Part of" line
+  let end = 1; while (isSlicePreambleLine(lines[end])) end += 1;   // the agreed ids, the Care and Not met / Dropped lines (D1)
   while (end < lines.length && lines[end] === '') end += 1;
   while (end < lines.length && lines[end].startsWith('- Slice ')) end += 1;
   const fresh = slicePrPreamble(pid);
   if (!fresh) return null;
   return editPrBody({ projectDir: repoDir, prUrl, body: [fresh, ...lines.slice(end)].join('\n') });
 }
-const SHIPPING = new Set();     // feature ids with a Ship as in flight (ship_mode is written only at the end)
-const featureShipping = (id) => SHIPPING.has(String(id));   // s3 (D9): the acceptance PUT refuses while one is in flight
+/** Ship's `finishing` probe: a run still finishing, or one with a round that started and may have no row yet. */
+const shipBusy = (pid) => isFinishingRun(pid) || [...runs.values()].some((e) => !e.settled && e.orch?.branchOpts?.roundOf?.pipelineId === pid);
 /** One ship flow: a PR a ship opened or marked ready is stored as an open, ready PR at once, so the group page and its
  *  Runs row stop reading Draft (or Ready to ship) before the next PR lookup. persistPrState keeps an old verdict
  *  unless it is given one; a different PR (a closed draft's row taking the one PR) starts from a fresh verdict. */
@@ -5056,7 +5057,7 @@ function storeReadyPr(pid, pr) {
 async function shipFeatureNow(id, mode, { actor = null, release = null, watch = false, draft = false, base = null, onDraftFallback = null } = {}) {
   if (!SHIP_MODES.includes(mode)) return { status: 400, body: { error: 'mode must be stacked or one' } };
   if (SHIPPING.has(id)) return { status: 409, body: { code: 'SHIPPING', error: 'this feature is already shipping' } };
-  const view = featureView(id, { live: liveSliceOf });
+  const probes = { live: liveSliceOf, finishing: shipBusy }, view = featureView(id, probes);
   if (!view) return { status: 404, body: { error: 'unknown feature' } };
   if (view.ship.mode) return { status: 409, body: { code: 'ALREADY_SHIPPED', error: `this feature was already shipped as ${view.ship.mode === 'one' ? 'one PR' : 'stacked PRs'}` } };
   const round = liveRoundOf(id);                    // Shaper s5 (D16): a live round holds Ship back
@@ -5064,11 +5065,11 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     const s = view.slices.find((x) => (x.rounds || []).some((r) => r.pipelineId === round.pipelineId));
     return { status: 409, body: { code: 'ROUND_LIVE', error: `a round of run ${s ? s.index : '?'} is still going` } };
   }
-  if (!view.ship.ready) return { status: 409, body: { code: 'NOT_READY', error: 'every slice must be done before the feature ships' } };
+  if (!view.ship.ready) return { status: 409, body: view.ship.smallRuns?.unowned?.length ? acceptanceRefusal(view) : { code: 'NOT_READY', error: 'every slice must be done before the feature ships' } };
   // Shaper requirements s3 (D8): every agreed requirement is marked before any PR, changelog, push or forge call.
   const unmarked = acceptanceRefusal(view);
   if (unmarked) return { status: 409, body: unmarked };
-  SHIPPING.add(id);
+  const made = [], cover = shipCover(id), stopped = (failed) => shipStopped(id, cover, probes, made, failed); SHIPPING.add(id);   // stopped: the rule, asked again
   try {
     // One ship flow: stacked gives each slice without a PR its own, ready, on its stacked base, in merge order;
     // One makes no slice PRs (shipFeature closes only those that exist, e.g. an in-flight feature's drafts).
@@ -5079,9 +5080,9 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     // A slice whose PR was closed gets a new one (openMemberPr opens past a CLOSED PR).
     const needsPr = (s) => s.pipelineId && (!s.pr || s.pr.state === 'CLOSED');
     if (mode === 'stacked' && shown.slices.some(needsPr)) {
-      const made = [];
-      for (const s of shown.slices) {
+      for (const s of shipOrder(shown)) {   // Feature D1: a marked feature's runs in finish order
         if (!needsPr(s)) continue;
+        const stop = stopped(); if (stop) return stop;
         const r = await openMemberPr(s.pipelineId, { actor });
         if (!r.ok) return { status: r.status || 500, body: { error: `could not create run ${s.index}'s PR: ${r.error}. Create PR again to continue.`, prs: made } };
         made.push(r.pr.url);
@@ -5094,11 +5095,11 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     let onePr = null;
     const out = await shipFeature({ feature: input, mode, maxBody: PR_BODY_MAX - 2000, ...(head ? { headPipelineId: head } : {}) }, {
       commitChangelog: (pid, update) => commitFileOnBranch(ctx.target.repoDir, {
-        branch: ctx.target.feature, path: 'CHANGELOG.md', update, message: `Changelog: ${view.title}` }),
+        branch: ctx.target.feature, path: 'CHANGELOG.md', update, message: `Changelog: ${view.title}` }).then((r) => recordShipCommit(id, r)),
       push: async () => {
         const picked = await pickPrRemotes({}, ctx.target.repoDir);
         if (picked.error) return { ok: false, error: picked.error };
-        const p = await pushBranch(ctx.target.repoDir, ctx.target.feature, picked.pushRemote);
+        const p = stopped() ? { ok: false, stderr: 'the work changed' } : await pushBranch(ctx.target.repoDir, ctx.target.feature, picked.pushRemote);
         return p.ok ? { ok: true } : { ok: false, error: p.stderr };
       },
       openOnePr: async ({ pipelineId, title, body }) => {
@@ -5126,7 +5127,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
       },
       refreshBody: (prUrl, pid) => refreshSliceBody(prUrl, pid, ctx.target.repoDir),
     });
-    if (!out.ok) return { status: out.status, body: { error: out.error } };
+    const late = stopped(out.error); if (late || !out.ok) return late || { status: out.status, body: { error: out.error } };
     // The one PR is every slice's PR, as a chain shipped as One records it on every run: the group reads In review.
     if (out.mode === 'one' && out.prUrl) {
       for (const s of shown.slices) if (s.pipelineId) storeReadyPr(s.pipelineId, { url: out.prUrl, number: onePr && onePr.url === out.prUrl ? onePr.number : null, draft: !!onePr?.newDraft });
@@ -5240,7 +5241,7 @@ async function offerShipCard(pipelineId) {
   const at = featureOfPipeline(pipelineId);
   if (!at) return null;
   const fid = currentFeatureId(at.featureId);
-  const view = featureView(fid, { live: liveSliceOf });
+  const view = featureView(fid, { live: liveSliceOf, finishing: isFinishingRun });
   if (!view || !view.ship.ready || !chatShipCardOffered(view)) return null;
   const th = featureThread(fid);
   if (!th || !askGetThread(th.threadId) || findShipCardIn(th.threadId, fid)) return null;
@@ -7166,7 +7167,7 @@ function chainRootFor(pipelineId, target) { return chainOf(pipelineId, target)[0
 /** A chained run's own PR base: stacked on the previous run's branch until that run's PR merges; the root otherwise. */
 function stackedBaseFor(pipelineId, target) {
   const chain = chainOf(pipelineId, target);
-  try { return stackedPrBaseOf(pipelineId, chain) || chain[0] || null; } catch { return chain[0] || null; }
+  try { return stackedPrBase(pipelineId, chain) || chain[0] || null; } catch { return chain[0] || null; }
 }
 /** One ship flow: a member's own PR, ready for review, on its stacked base (feature slices and chain runs). */
 async function openMemberPr(pipelineId, { actor = null, draft = false, onDraftFallback = null } = {}) {

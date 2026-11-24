@@ -82,7 +82,7 @@ const state = {
 };
 // The group page host (runs redesign slice 4, D16). Up here, next to `state`: the boot's synchronous showView runs
 // mountGroupPage on a #feature/… reload, and a `const` declared below that call would still be in its TDZ.
-const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0 };
+const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0, stackedOnly: false, feature: null, requirements: false, featureSeq: 0, featureApplied: 0, memberKey: '', memberPending: '', memberFailed: '' };
 
 import { icon, iconSvg } from './icons.mjs';
 import { subagentAliasLabel, subagentAliasTitle, roleOf, ROLE_LABELS } from '../../src/shared/model-roles.mjs';
@@ -373,6 +373,8 @@ import { createAwayScreensaver } from './away-screensaver.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
 import { activeAgents, snapshotFromState } from './ask-run-card.mjs';
 import { mountRunAgents } from './shape/run-agents.mjs';
+import { mountRunFacts } from './shape/run-facts.mjs';
+import { runAgentRows, memberShortWord } from '../../src/shared/shape/run-agents.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
 import { mountNewRunAttach, newRunScope, jsonFetcher as attachFetcher } from './requirements-attach/entries.mjs';
@@ -385,7 +387,8 @@ import { attachHashSearch } from './requirements-attach/hash-search.mjs';
 import { revalidate as revalidateAttached } from './requirements-attach/revalidate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
-import { renderFeature, featureModelOf } from './shape/feature-view.mjs';
+import { renderFeature, featureModelOf, renderFeatureRequirements, paintFeatureDecisions } from './shape/feature-view.mjs';
+import { shipWaitText } from './shape/feature-card.mjs';
 import { renderReleaseRow } from './shape/release-row.mjs';
 import { featureFocusOf, focusFeatureControl, featureMenuItems } from './shape/feature-actions.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
@@ -521,25 +524,60 @@ const SHAPE_FEATURE_HOSTS = new Map();
  *  schedules-changed frames (a slice's next state and PRs change there). */
 const SLICE_INFO = new Map();
 const SLICE_INFO_WAITERS = new Map();      // pipelineId → Set<onLoad>
-function sliceInfoFor(pipelineId, onLoad) {
-  if (!pipelineId) return null;
-  const known = SLICE_INFO.get(pipelineId);
-  if (known) return known;
-  if (typeof onLoad === 'function') {
-    if (!SLICE_INFO_WAITERS.has(pipelineId)) SLICE_INFO_WAITERS.set(pipelineId, new Set());
-    SLICE_INFO_WAITERS.get(pipelineId).add(onLoad);
-  }
-  if (SLICE_INFO.has(pipelineId)) return null;   // pending, or not a slice
+const STOP_HOME_WAITERS = new Map();       // the same, for stopHomeFor
+const STOP_HOMES = new Map();              // pipelineId → the last known home: those frames never take it away
+const SLICE_INFO_PENDING = new Set();      // pipeline ids with a fetch in flight
+const STOP_HOME_RETRIED = new Set();       // pipeline and question ids whose cached miss was asked again
+const isSliceInfo = (info) => !!info && Number.isInteger(info.index);
+function waitForSliceInfo(map, pipelineId, onLoad) {
+  if (typeof onLoad !== 'function') return;
+  if (!map.has(pipelineId)) map.set(pipelineId, new Set());
+  map.get(pipelineId).add(onLoad);
+}
+function loadSliceInfo(pipelineId) {
+  if (SLICE_INFO.has(pipelineId)) return;        // pending, or not a slice
   SLICE_INFO.set(pipelineId, null);
+  SLICE_INFO_PENDING.add(pipelineId);
   fetch(`/api/shape/pipelines/${encodeURIComponent(pipelineId)}/slice`)
     .then((r) => (r && r.ok ? r.json() : null)).catch(() => null)
     .then((info) => {
-      const waiters = [...(SLICE_INFO_WAITERS.get(pipelineId) || [])]; SLICE_INFO_WAITERS.delete(pipelineId);
+      SLICE_INFO_PENDING.delete(pipelineId);
+      const take = (map) => { const fns = [...(map.get(pipelineId) || [])]; map.delete(pipelineId); return fns; };
+      const slices = take(SLICE_INFO_WAITERS);
+      const homes = take(STOP_HOME_WAITERS);
       if (!info || !info.featureId) return;
       SLICE_INFO.set(pipelineId, info);
-      for (const fn of waiters) { try { fn(info); } catch { /* a repaint hint only */ } }
+      const was = STOP_HOMES.get(pipelineId);
+      const home = { featureId: info.featureId, threadId: info.threadId || null };
+      STOP_HOMES.set(pipelineId, home);
+      const moved = !was || was.featureId !== home.featureId || was.threadId !== home.threadId;
+      for (const fn of [...(isSliceInfo(info) ? slices : []), ...(moved ? homes : [])]) { try { fn(info); } catch { /* a repaint hint only */ } }
     });
+}
+/** A slice's info; never a Verifier run's answer (it has no slice fields). */
+function sliceInfoFor(pipelineId, onLoad) {
+  if (!pipelineId) return null;
+  const known = SLICE_INFO.get(pipelineId);
+  if (known) return isSliceInfo(known) ? known : null;
+  waitForSliceInfo(SLICE_INFO_WAITERS, pipelineId, onLoad);
+  loadSliceInfo(pipelineId);
   return null;
+}
+/** Where a run's stop is answered, a slice's or a Verifier run's: `{featureId, threadId}`, or null until it is known. A
+ *  known home stays while the cleared slice info is read again, so the question on the feature page is never torn down.
+ *  A cached miss is asked again once per question `askId` (a Verifier's ticket may not have had its pipeline yet). */
+function stopHomeFor(pipelineId, onLoad, askId = '') {
+  if (!pipelineId) return null;
+  const last = STOP_HOMES.get(pipelineId) || null;
+  if (SLICE_INFO.get(pipelineId)) return last;
+  waitForSliceInfo(STOP_HOME_WAITERS, pipelineId, onLoad);
+  const key = `${pipelineId} ${askId}`;
+  if (SLICE_INFO.has(pipelineId) && !SLICE_INFO_PENDING.has(pipelineId) && !STOP_HOME_RETRIED.has(key)) {
+    STOP_HOME_RETRIED.add(key);
+    SLICE_INFO.delete(pipelineId);
+  }
+  loadSliceInfo(pipelineId);
+  return last;
 }
 /** F33: Chat's own run panel (chatDeps.openRunPanel is openChatRunPanel once Chat is installed): it stays in Chat.
  *  The full ref: a run id alone can be a superseded paused copy, or one a restarted server no longer knows. */
@@ -567,6 +605,7 @@ async function paintShapeFeature(host) {
   if (opts.loading && host.dataset.painted !== id) {
     host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-loading', textContent: 'Loading feature…' }));
   }
+  const ticket = groupFeatureTicket();
   const r = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
   const f = r && r.ok ? await r.json().catch(() => null) : null;
   if (seq !== host.__shapeSeq || SHAPE_FEATURE_HOSTS.get(host) !== id) return;
@@ -584,7 +623,7 @@ async function paintShapeFeature(host) {
   // F47: the route follows replaced_by, so f.id can be a newer feature than the host's id. Frames name f.id, and the
   // actions must reach it.
   host.__shapeShown = f.id;
-  noteGroupFeatureLock(f);                                   // Shaper requirements s3: the page header's Create PR lock
+  noteGroupFeatureLock(f, ticket);                           // Shaper requirements s3: the page header's Create PR lock
   // A rebuild drops the focus (rule: app-js-repaint-drops-focus): give it back to the same control. An action names
   // its control itself (F39: in Chromium the disabled button has already lost the focus); a WS repaint reads it.
   const act = host.__shapeFocus || featureFocusOf(document, host);
@@ -2109,6 +2148,8 @@ function handleServerMessage(msg) {
     repaintHeldStops(msg.id, heldBefore);
     refreshShapeFeatures(msg.id);
     void refreshGroupFeatureLock(msg.id);
+    // Small runs: a member's short word (a stop opened, held or answered) comes with its group.
+    if (flagOn('shaperSmallRuns') && (state.runGroups || []).some((g) => g.smallRuns && (!msg.id || g.id === msg.id))) void loadRunGroups();
     refreshShaperCards();
     chatHome?.refreshPlans();
     return;
@@ -7021,7 +7062,8 @@ function stepDeps(ctx, pq) {
 }
 
 /** Small runs C3 (D12, D13): a stop's extra deps. A stop is answered on the feature card only: the run side panel and the
- *  run page (`readOnly`) draw only its findings; an answer held for another run's turn (the feature view's `stop.held`,
+ *  run page (`readOnly`) draw only its findings; with the flag on the run page (`runPage`) also names the stop and links
+ *  where it is answered (`home`: the feature's card in Chat when a thread started it, else the feature page); an answer held for another run's turn (the feature view's `stop.held`,
  *  read through the slice info) draws the one answered line. */
 function stopDeps(ctx, pq, panel) {
   if (!pq || !pq.stop) return {};
@@ -7031,7 +7073,11 @@ function stopDeps(ctx, pq, panel) {
   const info = r && r.pipelineId ? sliceInfoFor(r.pipelineId, repaint) : null;
   const held = info && info.stop && info.stop.held ? { value: info.stop.value } : null;
   const pick = typeof panel.__stopPick === 'string' ? panel.__stopPick : null;   // the person's pick across a repaint
-  return { readOnly, ...(held ? { held } : {}), ...(pick ? { pick } : {}) };
+  const runPage = flagOn('shaperSmallRuns') && !!panel.closest?.('#run-detail') && !panel.closest('[data-presentation="panel"]');
+  const at = runPage && r && r.pipelineId ? stopHomeFor(r.pipelineId, repaint, pq.id) : null;
+  const home = !at ? null : at.threadId ? { href: `#chat/${encodeURIComponent(at.threadId)}`, text: "the feature's card in Chat" }
+    : { href: `#feature/${encodeURIComponent(at.featureId)}`, text: 'the feature page' };
+  return { readOnly, ...(runPage ? { runPage: true, home } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}) };
 }
 
 /** A stop's held state as read from its slice info: '' when nothing is held. */
@@ -26964,8 +27010,9 @@ async function openFeatureShip(featureId, { opener = null, card = null } = {}) {
   if (!res.ok || !f || !Array.isArray(f.slices) || !f.slices.length) throw new Error((f && f.error) || `HTTP ${res.status}`);
   const base = await groupShipBase(f.slices[f.slices.length - 1].pipelineId, f.projectKey);
   openShipItGroupModal({ kind: 'feature', id: f.id, title: f.title, projectKey: f.projectKey, base,
-    members: f.slices.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested,
-    hint: shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
+    members: f.slices.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested, smallRuns: !!(f.ship && f.ship.smallRuns),
+    // Feature D1: One is off for small runs, so the size hint (which may suggest One) is left out.
+    hint: f.ship && f.ship.smallRuns ? '' : shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
     { opener, refocus: card ? shipCardRefocus(f.id, card) : focusGroupHead });
 }
 const shipMemberOf = (mb) => { const pr = mb.model && mb.model.pr;
@@ -29544,7 +29591,8 @@ const HD_TABS = [
   { key: 'sessions', label: 'Sessions', level: 'advanced', badge: (d) => sessionsBadge(d.state), visible: (d) => sessionsTabVisible(d.state), build: (...a) => buildHdSessions(...a) },
   { key: 'agents', label: 'Agents', level: 'expert',
     badge: (d) => ((Array.isArray(d.state.subAgents) && d.state.subAgents.length) ? String(d.state.subAgents.length) : null),
-    visible: () => true, build: (...a) => buildHdAgents(...a) },
+    // Shaper small runs D2 (D11): with the flag on, a Care run's Agents live in the Overview's one Agents place.
+    visible: (d) => !hdAgentsMerged(d.state), build: (...a) => buildHdAgents(...a) },
 ];
 
 function initHdTabs(screen, record, data) {
@@ -31096,6 +31144,7 @@ function buildHdOverview(sec, record, data) {
     verdict.append(chip, document.createTextNode(' No review results captured. The run did not complete.'));
   }
   if (verdict.childNodes.length) wrap.appendChild(verdict);
+  hdRunPlaces(wrap, record, data);
   // The pull request is the card head's; the Actions tab has the controls.
   const git = gitOn() && isGitRun(hdRunOf(record, data));
   if (checks.length) below.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
@@ -31178,6 +31227,50 @@ function buildHdOverview(sec, record, data) {
     note.textContent = 'finished at quiescence — End not reached';
     wrap.appendChild(note);
   }
+}
+
+/** Shaper small runs D2 (D12, D16): the saved Overview's run facts and its one Agents place. With the flag on, a Care run
+ *  gets C2's `.rd-run-agents` box (dev's saved page has none) holding dev's sub-agent body at Expert, in place of the
+ *  Agents tab (HD_TABS); the facts host is made only once a /slice answer carries `owns`. Flag off: nothing. */
+function hdRunPlaces(wrap, record, data) {
+  if (!flagOn('shaperSmallRuns')) return;
+  const st = data.state || {};
+  let agents = null;
+  if (hdAgentsMerged(st)) {
+    agents = document.createElement('div');
+    agents.className = 'rd-run-agents';
+    wrap.appendChild(agents);
+  }
+  const paintAgents = (info) => {
+    if (!agents) return;
+    agents.hidden = !mountRunAgents(agents, snapshotFromState(st), { stored: info && info.stored });
+    let sub = agents.querySelector(':scope > .rd-run-subagents');
+    if (!sub) {
+      sub = tagLevel(document.createElement('div'), 'expert');
+      sub.className = 'rd-run-subagents';
+      buildHdAgents(sub, record, data);
+    }
+    agents.append(sub);   // under the rows
+  };
+  let facts = null;
+  const paintFacts = (info) => {
+    if (info && 'owns' in info) {
+      if (!facts) {
+        facts = document.createElement('div');
+        facts.className = 'rd-run-facts';
+        if (agents) agents.before(facts); else wrap.appendChild(facts);
+      }
+      mountRunFacts(facts, info);
+    }
+    paintAgents(info);
+  };
+  const pid = (record && record.id) || st.id || '';
+  paintFacts(pid ? sliceInfoFor(pid, paintFacts) : null);
+}
+
+/** D11: with the flag on, a saved Care run's one Agents place is the Overview's `.rd-run-agents`. */
+function hdAgentsMerged(st) {
+  return flagOn('shaperSmallRuns') && !!(st && st.stepper && typeof st.stepper === 'object' && st.stepper.careRun);
 }
 
 /** The Task tab: the run's prompt in full, rendered as the markdown it was written in, under the run's place (project,
@@ -32092,6 +32185,7 @@ function ensureRdTabs(screen, r) {
     const tabs = detailTabsOf(screen);
     if (tabs && tabs.cells.has(want) && levelAtLeast(tabs.cells.get(want).tab.level || 'simple') && (gitOn() || !tabs.cells.get(want).tab.needsGit)) tabs.activate(want);
   }
+  rdSyncAgentsPlace(screen, rdCtx(r));   // D2 (D11): a rebuilt bar keeps the one Agents place
 }
 
 // ── Live log tab ────────────────────────────────────────────────────────────
@@ -32637,13 +32731,69 @@ function buildRdOverview(sec, ctx) {
   wrap.append(banner, agents);
   below.append(checklists, skills);
   adoptRunCard(sec, wrap, below);
-  const paintAgents = (run) => {
-    const snap = run && run.stepper && run.stepper.careRun ? snapshotFromState(run) : null;
-    agents.hidden = !mountRunAgents(agents, snap ? { ...snap, pendingQuestion: run.pendingQuestion || null } : null);
+  // Shaper small runs D2 (D16): the run's facts host is made only once a /slice answer carries `owns` (a marked feature,
+  // flag on), so every other Overview keeps dev's DOM. The facts and the Agents rows' detail paint from the same answer.
+  let facts = null;
+  const ensureFactsHost = () => {
+    if (!facts) { facts = document.createElement('div'); facts.className = 'rd-run-facts'; agents.before(facts); }
+    return facts;
   };
-  const paint = (c) => { rdOvStateBanner(banner, c.run); paintAgents(c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
+  let last = ctx;
+  let doneSig = null;
+  let subSig = null;
+  const repaint = () => { if (sec.isConnected) paint(last); };
+  const paintAgents = (run, info) => {
+    const snap = run && run.stepper && run.stepper.careRun ? snapshotFromState(run) : null;
+    const full = snap ? { ...snap, pendingQuestion: run.pendingQuestion || null } : null;
+    agents.hidden = !mountRunAgents(agents, full, { stored: info && info.stored });
+    // D16: a finished agent changes what the stored facts say: drop the cached answer and ask again, once per change.
+    // The emptied entry is momentary, as the shape-feature frame's SLICE_INFO.clear() already makes it.
+    const sig = full ? runAgentRows(full).filter((r) => r.word === 'done').map((r) => r.key).join(',') : null;
+    if (info && 'owns' in info && doneSig !== null && sig !== doneSig && run.pipelineId) {
+      SLICE_INFO.delete(run.pipelineId);
+      sliceInfoFor(run.pipelineId, repaint);
+    }
+    doneSig = sig;
+    // D11: the one Agents place holds dev's sub-agent groups at Expert, repainted only when they change.
+    let sub = agents.querySelector(':scope > .rd-run-subagents');
+    if (!rdAgentsMerged(run) || agents.hidden) { if (sub) sub.remove(); subSig = null; return; }
+    if (!sub) { sub = tagLevel(document.createElement('div'), 'expert'); sub.className = 'rd-run-subagents'; subSig = null; }
+    agents.append(sub);   // after the rows
+    const sig2 = (Array.isArray(run.subAgents) ? run.subAgents : []).map((a) => `${a && a.id}:${a && a.status}`).join(',');
+    if (sig2 !== subSig) { subSig = sig2; rdAgentsBody(sub, run); }
+  };
+  const paint = (c) => {
+    last = c;
+    rdOvStateBanner(banner, c.run);
+    const info = flagOn('shaperSmallRuns') && c.run.pipelineId ? sliceInfoFor(c.run.pipelineId, repaint) : null;
+    if (info && 'owns' in info) mountRunFacts(ensureFactsHost(), info);
+    else if (facts && info) mountRunFacts(facts, null);
+    paintAgents(c.run, info);
+    paintRdChecklists(checklists, c.run);
+    paintRunSkills(skills, c.run.skillMount);
+  };
   paint(ctx);
   sec.__update = paint;
+}
+
+/** Shaper small runs D2 (D11): with the flag on, a Care run's one Agents place is the Overview's `.rd-run-agents`. */
+function rdAgentsMerged(run) {
+  return flagOn('shaperSmallRuns') && !!(run && run.stepper && typeof run.stepper === 'object' && run.stepper.careRun);
+}
+
+/** D11: initDetailTabs filters `visible` once, at build, and `careRun` can arrive later: each frame hides the Agents tab
+ *  and its section once the condition holds. An open Agents tab gives way to Overview, and its focus with it. */
+function rdSyncAgentsPlace(screen, ctx) {
+  if (!screen || !rdAgentsMerged(ctx && ctx.run)) return;
+  const btn = screen.querySelector('.rd-tab[data-sec="agents"]');
+  if (!btn) return;
+  const ov = screen.querySelector('.rd-tab[data-sec="overview"]');
+  const hadFocus = document.activeElement === btn;
+  if (btn.classList.contains('active') && ov) ov.click();
+  btn.hidden = true;
+  const sec = screen.querySelector('.rd-sec[data-sec="agents"]');
+  if (sec) sec.hidden = true;
+  if (hadFocus && ov) ov.focus();
 }
 
 // ── Agents tab ──────────────────────────────────────────────────────────────
@@ -32878,6 +33028,7 @@ function rdUpdateSections(r) {
     if (typeof sec.__update === 'function') sec.__update(ctx);
   }
   rdPaintTabBadges(screen, ctx);
+  rdSyncAgentsPlace(screen, ctx);
   paintActionsHeaders();   // the pill needs the run's pipeline id, which arrives with state frames
 }
 
@@ -35746,12 +35897,14 @@ const withChainPr = (x, m) => (x && !x.pr && m.prUrl && isTerminalStatus(x.statu
 
 /** A group (a Run-after chain from schedulesView, or a feature / user group from /api/run-groups) as the list's group
  *  item: members carry their raw run from this tab's live map, else memberRun, else their ticket. */
-function runsGroupItem({ id, groupKind, title, members, cost = null, planning = null }) {
+function runsGroupItem({ id, groupKind, title, members, cost = null, planning = null, smallRuns = false, hold = null }) {
   // /api/run-groups members carry no projectKey / historyKey (src/core/run-groups.mjs member()), so a finished member's
   // href would fall back to the group page itself: the History row knows the project.
   const histPk = (pid) => (pid ? (((state.historyAll || []).find((p) => p && p.id === pid)) || {}).projectKey || '' : '');
+  const words = smallRuns && flagOn('shaperSmallRuns');
   const items = members.map((m, i) => {
     const r = m.pipelineId ? latestPipelineRun(m.pipelineId) : null;
+    const stopped = !!(r && r.pendingQuestion && r.pendingQuestion.stop);
     const h = histOf(m.pipelineId);
     // An after-ticket has no start time: never pass its AFTER_RUN_AT sentinel (runModel does not read ticket.after).
     // `m.after` (D29): the 1-based position of the member this one runs after (runChains and listRunGroups both send it),
@@ -35772,6 +35925,12 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
       ticketId: m.ticketId || null, runId: r ? r.runId : '', kind: r ? 'live' : m.pipelineId ? 'hist' : 'sched', run,
       roundOf: m.pipelineId ? runsRoundOf(r, h) : null,   // null for an origin: a member's own rounds fold under it
       memo: memoFor(m.pipelineId || m.ticketId || `${id}:${i}`),
+      // D2: a small-runs member's row says the card's short word (runs-list.mjs cardShortWord), read from its live snapshot.
+      // Its pending question rides along, as the run page's Agents panel attaches it, so a waiting member reads so.
+      // A stopped run without a Care plan says so too; a finished one without either has none and reads `done`.
+      ...(smallRuns && r && ((r.stepper && r.stepper.careRun) || (words && stopped)) ? { snap: { ...snapshotFromState(r), pendingQuestion: r.pendingQuestion || null } } : {}),
+      // The server's slice words; its stop is dropped once this tab's live run asks nothing more (a stale answer).
+      ...(words && m.slice ? { slice: r && !stopped && m.slice.stop ? { ...m.slice, stop: undefined } : m.slice } : {}),
       startedAt: (r && r.startedAt) || (h && h.startedAt) || null,       // D12: the group's dispatch time
       // D32: the member's own cost (a chain's total sums these). D5: max(live, History, the group's stored byPipeline):
       // a finished run in the live map at 0 never wins.
@@ -35799,11 +35958,12 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
   const liveCost = Object.fromEntries(items.filter((x) => x.kind === 'live' && x.run && typeof x.run.totalCostUsd === 'number')
     .map((x) => [x.pipelineId, x.run.totalCostUsd]));
   return { id, groupKind, title, members: items, planning: planningItem, groupKey: g.key, groupName: g.name, memo: memoFor(`group:${id}:${sig}`),
-    cost, liveCost, costMemo: memoFor(`cost:${id}:${sig}`) };
+    cost, liveCost, costMemo: memoFor(`cost:${id}:${sig}`), ...(smallRuns ? { smallRuns: true } : {}), ...(hold ? { hold } : {}) };   // D2 (D1)
 }
 function runsGroupItems() {
   const owned = new Set((state.runGroups || []).flatMap((g) => g.members.flatMap((m) => [m.pipelineId && `p:${m.pipelineId}`, m.ticketId && `t:${m.ticketId}`])).filter(Boolean));
-  const own = (state.runGroups || []).map((g) => runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members, cost: g.cost || null, planning: g.planning || null }));
+  const own = (state.runGroups || []).map((g) => runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members, cost: g.cost || null, planning: g.planning || null,
+    smallRuns: g.smallRuns === true, hold: (flagOn('shaperSmallRuns') && g.hold) || null }));
   // A run group stands for any chain that shares a member with it (a feature's Run-after chain).
   const chains = schedulesView.chains()
     .filter((c) => !c.members.some((m) => owned.has(`p:${m.pipelineId}`) || owned.has(`t:${m.ticketId}`)))
@@ -35855,7 +36015,7 @@ el.groupDetail?.addEventListener('click', (e) => {
 });
 async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
-  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false, unmarked: 0 } : {}) });
+  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false, unmarked: 0, stackedOnly: false, feature: null, requirements: false, memberKey: '', memberPending: '', memberFailed: '' } : {}) });
   if (fresh) {
     groupMessage(host, 'feature-page-loading', 'Loading group…');
     host.__gp = null;
@@ -35872,13 +36032,14 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
     if (route === 'feature') {
       // F47: a replaced feature id carries on as the newest one; the route answers the current id, or 404.
       GROUP_PAGE.resolving = true;
+      const ticket = groupFeatureTicket();
       const res = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
       if (GROUP_PAGE.id !== id || GROUP_PAGE.route !== route) return;
       GROUP_PAGE.resolving = false;
       // A network error or a 5xx is not an answer; only a 404 means gone.
       GROUP_PAGE.failed = !res || (!res.ok && res.status !== 404);
       if (res && res.status === 404) GROUP_PAGE.gone = true;
-      else if (res && res.ok) { const f = await res.json().catch(() => ({})); GROUP_PAGE.featureId = f.id || id; GROUP_PAGE.unmarked = unmarkedOf(f); }
+      else if (res && res.ok) { const f = await res.json().catch(() => ({})); GROUP_PAGE.featureId = f.id || id; GROUP_PAGE.unmarked = unmarkedOf(f); GROUP_PAGE.stackedOnly = smallRunsOf(f); if (ticket >= GROUP_PAGE.featureApplied) { GROUP_PAGE.featureApplied = ticket; storeGroupFeature(f); } }
     }
   }
   paintGroupPageNow();
@@ -35886,6 +36047,8 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
 function paintGroupPageNow() {
   const { host, route, id, tab } = GROUP_PAGE;
   if (!host || !host.isConnected || host.closest('.view.hidden') || !(el.groupShell && el.groupShell.classList.contains('detail-open'))) return;
+  // Small runs D3: a Requirements deep link keeps "Loading group…" while its feature is fetched (no Runs flash).
+  if (route === 'feature' && tab === 'requirements' && GROUP_PAGE.resolving && !host.__gp) return;
   const gid = GROUP_PAGE.featureId || id;
   const it = !GROUP_PAGE.gone && state.runGroupsLoaded ? runsGroupItems().find((g) => g.id === gid) : null;
   if (!it && !GROUP_PAGE.gone && (state.runGroupsFailed || GROUP_PAGE.failed)) {
@@ -35918,7 +36081,10 @@ function paintGroupPageNow() {
     }
     return;                                        // not loaded yet: "Loading group…" stays; loadRunGroups repaints
   }
-  const row = groupRow(it, { now: Date.now() });
+  // Small runs: the runs are done but the feature is not ready to ship (the Verifier checks, asks or stopped): say so, as
+  // the Runs list's held row does, never "Ready to ship".
+  const hold = it.hold || (route === 'feature' && GROUP_PAGE.requirements ? shipWaitText(GROUP_PAGE.feature) : '');
+  const row = groupRow(hold ? { ...it, hold } : it, { now: Date.now() });
   if (!host.__gp) {
     host.__gp = buildGroupPage(document);
     // Run 4 (D2): a Shaper card set or changed its primary's label: the bar's Answer follows it.
@@ -35930,7 +36096,8 @@ function paintGroupPageNow() {
   // Run 3 (D15): the group's Labels fact is the read-only union of its members' History labels.
   const labels = [...new Set(row.members.flatMap((mb) => (histOf(mb.pipelineId) || {}).labels || []))].sort();
   paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: levelAtLeast('expert'), labels,
-    unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0 }, {
+    unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0, stackedOnly: route === 'feature' && GROUP_PAGE.stackedOnly,
+    requirements: route === 'feature' && GROUP_PAGE.requirements, ...(route === 'feature' && GROUP_PAGE.requirements ? { shortState: memberShortWord, ship: groupShipOf(GROUP_PAGE.feature) } : {}) }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
     // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.
@@ -35945,7 +36112,7 @@ function paintGroupPageNow() {
     },
     labelChip: (d, l) => labelChip(d, l, {}),
     onTab: (t) => { location.hash = t === 'runs' ? base : `${base}/${t}`; },
-    mountQuestion: (slot, mb) => paintGroupQuestion(slot, mb),
+    mountQuestion: (slot, mb) => paintGroupQuestion(slot, groupAsker(slot, row, mb)),
     answerLabel: () => answerLabelOf(host.__gp.querySelector('.gpage-question')),
     // Mount once per feature: paintGroupPageNow runs on every run frame, and a remount would refetch and rebuild the
     // Shaper view each time.
@@ -35960,7 +36127,23 @@ function paintGroupPageNow() {
       else if (GROUP_PAGE.reentered || changed) paintShapeFeature(h);   // away: the hidden page skipped frames
       GROUP_PAGE.reentered = false;
     },
-    mountDecisions: (h, r) => { void paintGroupDecisions(h, r); },
+    // Small runs D3 (D8): a marked feature's Decisions is its decision log; the per-run receipts stay on each run's page.
+    // Deleting the receipts' signature makes an in-flight paintGroupDecisions bail at its own check.
+    mountDecisions: (h, r) => {
+      if (route === 'feature' && GROUP_PAGE.requirements) { delete h.dataset.sig; paintFeatureDecisions(document, h, GROUP_PAGE.feature); refetchGroupFeature(r); return; }
+      h.classList.remove('plan-body', 'srows', 'shape-feature-decisions');
+      void paintGroupDecisions(h, r);
+    },
+    mountRequirements: (h, r) => {
+      refetchGroupFeature(r);
+      // Link only a run with its own page: a waiting ticket's href is the feature page (or Schedules), so it stays text.
+      return renderFeatureRequirements(document, GROUP_PAGE.feature, { runHref: (n) => {
+        const mb = r.members.find((x) => x.position === n);
+        if (!mb) return null;
+        if (mb.runId) return `#running/${mb.runId}`;
+        return mb.href && mb.href.startsWith('#history/') ? mb.href : null;
+      } });
+    },
     // A member with no run page yet (a waiting ticket) links its row's own href.
     logsHref: (mb) => {
       const page = mb.runId ? `#running/${mb.runId}` : mb.href || '#runs';
@@ -35972,12 +36155,72 @@ function paintGroupPageNow() {
 // top) because History's cached paint can call this during boot, before a `let` down here is initialised.
 /** Shaper requirements s3: a feature's unmarked agreed requirements (0 without a ledger, or with the flag off: the
  *  route then leaves ship.acceptance out). The page header's Create PR locks on it, as the Ship card does. */
-function unmarkedOf(f) { const a = f && f.ship && f.ship.acceptance; return a && !a.ready ? Math.max(0, (a.total || 0) - (a.marked || 0)) : 0; }
-/** The open feature page's lock from a fetched feature view; a change repaints the page header. */
-function noteGroupFeatureLock(f) {
+function unmarkedOf(f) {
+  // Feature D1: a small-runs feature's lock is its ledger's waiting ids. Its acceptance also counts the run-owned ids,
+  // which a person can never mark (RUN_OWNED).
+  const sr = f && f.ship && f.ship.smallRuns;
+  if (sr) return sr.blocked && Array.isArray(sr.waiting) ? sr.waiting.length + (sr.unowned || []).length : 0;
+  const a = f && f.ship && f.ship.acceptance; return a && !a.ready ? Math.max(0, (a.total || 0) - (a.marked || 0)) : 0;
+}
+/** Feature D1: a small-runs feature ships a PR per run, so its page never offers One. */
+function smallRunsOf(f) { return !!(f && f.ship && f.ship.smallRuns); }
+/** Small runs D3 (D11): the open feature page's feature view. Its Requirements tab exists only for a marked feature with
+ *  the flag on (the route sends ship.smallRuns for a marked feature with the flag off too). */
+function storeGroupFeature(f) {
+  GROUP_PAGE.feature = f;
+  GROUP_PAGE.requirements = flagOn('shaperSmallRuns') && smallRunsOf(f);
+}
+/** What the head's Create N PRs reads from a small-runs feature, as the Ship card does: it is locked until the feature is
+ *  ready to ship, then by its ledger. */
+function groupShipOf(f) {
+  const sr = f.ship.smallRuns;
+  const wait = shipWaitText(f);
+  return { n: (sr.order || []).length, blocked: !!wait || !!sr.blocked, reason: wait || sr.reason || '' };
+}
+/** What the Requirements and Decisions tabs and the head paint from: every row's status text, the Care line, the ship
+ *  lock and the log. */
+function groupFeatureSig(f) {
+  const sr = f && f.ship && f.ship.smallRuns;
+  return JSON.stringify([sr ? [...(sr.owned || []), ...(sr.confirmed || [])].map((e) => [e.id, e.shown ? e.shown.text : '']) : null,
+    sr && sr.care ? sr.care.line : '', sr ? [shipWaitText(f), !!sr.blocked, sr.reason || '', (sr.order || []).length] : null, (f && f.log) || []]);
+}
+/** Every feature fetch that may reach GROUP_PAGE takes a rising ticket before it is sent; noteGroupFeatureLock drops an
+ *  answer older than the last one applied, so a slow fetch never paints a stale feature over a newer one. */
+function groupFeatureTicket() { return ++GROUP_PAGE.featureSeq; }
+/** The open feature page's lock from a fetched feature view; a change repaints the page header. D3: the view is kept,
+ *  and a change of what the Requirements or Decisions tab shows repaints the page too. */
+function noteGroupFeatureLock(f, ticket) {
   if (GROUP_PAGE.route !== 'feature' || !f || f.id !== GROUP_PAGE.featureId) return;
+  if (ticket < GROUP_PAGE.featureApplied) return;
+  GROUP_PAGE.featureApplied = ticket;
   const n = unmarkedOf(f);
-  if (n !== GROUP_PAGE.unmarked) { GROUP_PAGE.unmarked = n; scheduleGroupPagePaint(); }
+  const so = smallRunsOf(f);
+  const was = [groupFeatureSig(GROUP_PAGE.feature), GROUP_PAGE.requirements];
+  storeGroupFeature(f);
+  const moved = was[0] !== groupFeatureSig(f) || was[1] !== GROUP_PAGE.requirements;
+  if (n !== GROUP_PAGE.unmarked || so !== GROUP_PAGE.stackedOnly || moved) { GROUP_PAGE.unmarked = n; GROUP_PAGE.stackedOnly = so; scheduleGroupPagePaint(); }
+}
+/** D3 (D11): while Requirements or Decisions shows a marked feature, a member that moves on (its model state) refetches
+ *  the feature once per change, as paintGroupDecisions keys on it. The key lives in GROUP_PAGE (one for both tabs),
+ *  never in the DOM; the first key after the page's own fetch is seeded without a refetch. A failed refetch keeps the
+ *  painted rows and stores no key: the next change retries. */
+function refetchGroupFeature(row) {
+  const key = [...(row.planning ? [row.planning] : []), ...row.members]
+    .map((mb) => `${mb.pipelineId || mb.ticketId || ''}:${mb.model ? mb.model.state : ''}`).join(',');
+  const gp = GROUP_PAGE;
+  if (!gp.memberKey && gp.feature) { gp.memberKey = key; return; }
+  if (gp.memberKey === key || gp.memberPending === key || gp.memberFailed === key) return;
+  const fid = gp.featureId;
+  gp.memberPending = key;
+  const ticket = groupFeatureTicket();
+  void fetch(`/api/shape/features/${encodeURIComponent(fid)}`).then((r) => (r && r.ok ? r.json() : null)).catch(() => null).then((f) => {
+    if (gp.featureId !== fid) return;
+    if (gp.memberPending === key) gp.memberPending = '';
+    if (!f) { gp.memberFailed = key; return; }
+    gp.memberKey = key;
+    gp.memberFailed = '';
+    noteGroupFeatureLock(f, ticket);
+  });
 }
 /** A shape-feature frame (a mark saved here, in Chat or in another tab): re-read the open feature page's lock. A
  *  mounted Overview view of the feature refetches it anyway (refreshShapeFeatures) and notes the lock itself. */
@@ -35987,18 +36230,44 @@ async function refreshGroupFeatureLock(id) {
   for (const [host, hid] of SHAPE_FEATURE_HOSTS) {
     if (host.isConnected && !host.closest('.view.hidden') && (hid === fid || host.__shapeShown === fid)) return;
   }
+  const ticket = groupFeatureTicket();
   const res = await fetch(`/api/shape/features/${encodeURIComponent(fid)}`).catch(() => null);
-  noteGroupFeatureLock(res && res.ok ? await res.json().catch(() => null) : null);
+  noteGroupFeatureLock(res && res.ok ? await res.json().catch(() => null) : null, ticket);
 }
 function scheduleGroupPagePaint() {
   if (GROUP_PAGE.paintQueued) return;
   GROUP_PAGE.paintQueued = true;
   queueMicrotask(() => { GROUP_PAGE.paintQueued = false; paintGroupPageNow(); });
 }
+/** Whose question the group page shows. A small-runs feature (flag on): an open stop whose answer is not held, the one on
+ *  screen first (another run's stop never takes a half-picked one away), whichever member is current, since a run can
+ *  stop while another works; else the current member's; else the Verifier's. Any other group: the current member's. */
+function groupAsker(slot, row, mb) {
+  if (!flagOn('shaperSmallRuns') || GROUP_PAGE.route !== 'feature') return mb;
+  const asks = (x) => { const r = x && x.runId ? runs.get(x.runId) : null; return (r && r.pendingQuestion) || null; };
+  if (GROUP_PAGE.requirements) {
+    const open = [...(row.planning ? [row.planning] : []), ...row.members]
+      .filter((x) => { const pq = asks(x); return !!pq && !!pq.stop && !(x.slice && x.slice.stop && x.slice.stop.held); });
+    if (open.length) return open.find((x) => x.runId === slot.__runId) || open[0];
+  }
+  return asks(mb) ? mb : groupVerifierAsk() || mb;
+}
+/** The Verifier's run is no member of its feature's group: with the flag on and no member asking, its open stop is the
+ *  feature page's question (a feature no Chat thread started has no other place to answer it). */
+function groupVerifierAsk() {
+  if (!flagOn('shaperSmallRuns') || GROUP_PAGE.route !== 'feature' || !GROUP_PAGE.featureId) return null;
+  for (const r of runs.values()) {
+    const pq = r && r.pendingQuestion;
+    if (!pq || !pq.stop || pq.stop.node !== 'n_verify' || !r.pipelineId) continue;
+    const home = stopHomeFor(r.pipelineId, scheduleGroupPagePaint, pq.id);
+    if (home && home.featureId === GROUP_PAGE.featureId) return { runId: r.runId };
+  }
+  return null;
+}
 /** D12, Known bug 7: the group page's question, answered through the one question delegate. */
 function paintGroupQuestion(slot, mb) {
   const r = mb && mb.runId ? runs.get(mb.runId) : null;
-  if (!r || !r.pendingQuestion) { chatReleaseQuestion(slot); slot.hidden = true; slot.__runId = ''; return; }
+  if (!r || !r.pendingQuestion) { chatReleaseQuestion(slot); slot.hidden = true; slot.__runId = ''; delete slot.dataset.stop; return; }
   if (!slot.querySelector('.qpanel')) slot.appendChild(Object.assign(document.createElement('div'), { className: 'qpanel hidden' }));
   if (!slot.__offQ) {
     // chatLiveRun follows the pipeline's newest run (as chatPaintQuestion does), so an answer after a resume goes to
@@ -36012,6 +36281,9 @@ function paintGroupQuestion(slot, mb) {
   slot.__runId = r.runId;
   slot.__pipelineId = r.pipelineId || '';
   slot.hidden = false;
+  // Small runs: a stop (held or not) is its own head and primary: no ask banner over it (shape-it.css), no bar answer and
+  // no Re-plan in the page's ⋯.
+  if (r.pendingQuestion.stop && flagOn('shaperSmallRuns')) slot.dataset.stop = ''; else delete slot.dataset.stop;
   chatPaintQuestion({ runId: r.runId, pipelineId: r.pipelineId }, slot);
 }
 /** D6: one handler for a group's actions, from the group page and from a group's chat card (chatRunControls.act). */
@@ -36139,6 +36411,7 @@ const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, 
   r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon, r.model.pr.pending ? 1 : 0] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
   r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
   r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '', roundsSig(m),
+    r.smallRuns ? memberShortWord(m) || '' : '',   // D2: the member's short word
     m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.title, m.model.pr.icon, m.model.pr.pending ? 1 : 0] : 0])] : 0, (r.labels || []).join('\n')];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
@@ -36731,6 +37004,7 @@ async function groupFeatureMenuItems(anchor, row) {
       return r && r.ok ? { ok: true } : { ok: false, error: out.error || 'That did not work. Try again.' };
     },
     fail: (text) => notify({ tone: 'err', title: 'That did not work', detail: text }),
+    noReplan: !!document.querySelector('#group-detail .gpage-question[data-stop]:not([hidden])'),
   }, anchor);
 }
 async function openGroupMoreMenu(anchor, row) {
@@ -36766,7 +37040,8 @@ function openAddToGroup(anchor, items, rowKey) {
   const own = items.length === 1 ? groupOfRun(pids[0])?.id : '';
   const groups = (state.runGroups || []).filter((g) => g.id !== own).map((g) => {
     const it = runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members });
-    return { id: g.id, title: g.title, model: groupModel({ kind: g.kind === 'feature' ? 'feature' : 'chain', title: g.title, members: it.members.map((x) => x.run) }) };
+    return { id: g.id, title: g.title, model: groupModel({ kind: g.kind === 'feature' ? 'feature' : 'chain', title: g.title, members: it.members.map((x) => x.run),
+      hold: (flagOn('shaperSmallRuns') && g.hold) || null }) };
   });
   const key = anchor.dataset.rowKey;
   const opener = () => shownEl(key ? el.runsList.querySelector(`.runs-more[data-row-key="${cssEscape(key)}"]`) : null)
@@ -37209,6 +37484,7 @@ function setRdMode(screen, mode, tab = '', { focus = true } = {}) {
     // The graph laid out while its section sat in a hidden subtree measured 0px wide;
     // repaint it now that it is visible.
     const r = rdOpenRun();
+    if (r) rdSyncAgentsPlace(screen, rdCtx(r));   // D2 (D11): a deep link to the merged Agents tab lands on Overview
     if (r && changed) paintRdGraph(screen, r);
   }
   if (changed && el.runDetail) el.runDetail.scrollTop = 0;

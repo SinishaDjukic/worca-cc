@@ -91,8 +91,8 @@ export function featureCardModel({ own = null, card = null, snapOf = () => null 
     watch: wText ? { text: wText, prUrl: watched.watch.prUrl || null } : null };
 }
 
-/** Shaper small runs B1: the one card's steps. `start` is B2's; B1 draws none (D11). */
-export const ONE_CARD_STEPS = Object.freeze(['start', 'requirements', 'prototype', 'split', 'build', 'done']);
+/** Shaper small runs B1: the one card's steps. `start` is B2's; B1 draws none (D11). Feature D1: the last is `ship`. */
+export const ONE_CARD_STEPS = Object.freeze(['start', 'requirements', 'prototype', 'split', 'build', 'ship']);
 
 /** A run that ended (run-card.mjs RESULT_STATUS; not imported: run-card imports this module). */
 const ENDED = new Set(['done', 'complete', 'completed', 'failed', 'stopped', 'error', 'aborted']);
@@ -113,13 +113,43 @@ const ONE_DETAIL = Object.freeze({
   S6: () => SPLIT_PROPOSED,
   S7: ({ asking }) => (asking ? SPLIT_PROPOSED : SPLIT_WORKING),
   S8: ({ k, n }) => `${k} of ${plural(n, 'run')} done`,
-  S9: ({ n }) => `${plural(n, 'run')} done · ship from the feature page`,
+  // Feature D1 (D16): S9 (no Verifier check) and SR ship from the one card: the prototype's words.
+  S9: ({ view }) => shipDetail(view),
   // Small runs C5 (D12): the Verifier checks the whole feature (SV); once it is through, Ready to ship is the word (SR).
   SV: ({ k, n }) => `the Verifier walks the main flow · ${k} of ${plural(n, 'run')} done`,
-  SR: () => 'ship from the feature page',
+  SR: ({ view }) => shipDetail(view),
 });
+/** Fail closed: the ship ledger holds an agreed requirement with no run and no person (ship-ledger.mjs). */
+const unownedOf = (sr) => !!(sr && Array.isArray(sr.unowned) && sr.unowned.length);
+/** Feature D1 (D16): the ship step's detail: `waiting for Compliance` while a confirmed requirement waits (role labels
+ *  joined by "and"), the Ship card mounted or not (the owner's call: the state detail says who it waits for); the ledger's
+ *  reason while a requirement has no run and no person;
+ *  `N PRs open` once shipped, else `Ready to ship`. */
+function shipDetail(view) {
+  const ship = (view && view.ship) || {};
+  const sr = ship.smallRuns || null;
+  if (ship.mode) return plural(sr ? sr.order.filter((o) => o.pr).length : (view.slices || []).filter((s) => s.pr && s.pr.url).length, 'PR') + ' open';
+  if (unownedOf(sr)) return sr.reason;
+  if (sr && sr.blocked) {
+    const labels = [...new Set(sr.confirmed.filter((c) => c.state === 'waiting').map((c) => c.roleLabel))];
+    return `waiting for ${labels.join(' and ')}`;
+  }
+  return 'Ready to ship';
+}
 /** C5: a stopped or failed Verifier run's line: the card's Resume starts a fresh check (resumeFeature). */
 const VERIFY_HALTED = 'The Verifier stopped · Resume checks again';
+const VERIFY_WAIT = Object.freeze({ verifying: 'The Verifier is checking the feature', gaps: 'The Verifier found a gap', asking: 'The Verifier waits for your answer',
+  paused: 'The Verifier is paused', halted: VERIFY_HALTED, clean: 'Worca is finishing a run', accepted: 'Worca is finishing a run' });
+/** Why a small-runs feature whose runs are done cannot ship yet (featureView's `ship.ready` is false), for the feature
+ *  page's head; '' when it is ready (a missing mark blocks through the ledger instead). */
+export function shipWaitText(view) {
+  const ship = (view && view.ship) || {};
+  if (!view || ship.ready) return '';
+  if (unownedOf(ship.smallRuns)) return ship.smallRuns.reason;
+  if (ship.mode) return 'Already shipped';
+  if (view.status === 'replanning') return 'The rest is being re-planned';
+  return VERIFY_WAIT[view.verify && view.verify.state] || 'The Verifier has not checked the feature yet';
+}
 
 /** The open ask's question, when this tab holds it (the pointer-only step of a slice has none). */
 const pqOf = (step) => (step && step.snap && step.snap.pendingQuestion) || null;
@@ -131,10 +161,10 @@ function oneState(view, step, log, card, ended = false) {
     const allDone = slices.length && slices.every((s) => s.state === 'done');
     // C5: with a Verifier check, every run done reads by the check: verifying, through, or S8 (gaps, its stop, paused, halted).
     const v = view.verify && view.verify.state;
-    if (allDone && (v === 'clean' || v === 'accepted')) return ['SR', 'done'];
+    if (allDone && (v === 'clean' || v === 'accepted')) return ['SR', 'ship'];
     if (allDone && v === 'verifying') return ['SV', 'build'];
     if (allDone && v) return ['S8', 'build'];
-    if (allDone) return ['S9', 'done'];
+    if (allDone) return ['S9', 'ship'];
     if (view.status === 'replanning') return ['S7', 'split'];
     return ['S8', 'build'];
   }
@@ -176,14 +206,16 @@ export function oneCardModel({ own = null, card = null, snapOf = () => null } = 
   const detail = ONE_DETAIL[state]({
     start: !!pq && pq.kind === 'care',
     proto: pq && pq.kind === 'prototype' ? pq.prototype : card.prototype || null,
-    k: view ? view.done || 0 : 0, n: view ? view.total || 0 : 0,
+    k: view ? view.done || 0 : 0, n: view ? view.total || 0 : 0, view,
     q: pq && Array.isArray(pq.questions) ? pq.questions.length : 0,
     asking: !!question && (asks(rp) || (!!view && !!view.ask && view.ask.index == null)),
   });
   // C5 (D12): the Verifier's word, and the halted line in place of S8's; only with a check (no key otherwise).
   const vs = view && view.verify ? view.verify.state : null;
   const verify = state === 'SV' || state === 'SR' || (state === 'S8' && vs && !['clean', 'accepted', 'verifying'].includes(vs)) ? view.verify : null;
-  const vx = verify ? { verify, word: VERIFY_WORDS[verify.state] || null } : {};
+  // Fail closed: the Verifier's own "Ready to ship" gives way while a requirement has no run and no person.
+  const heldShip = state === 'SR' && unownedOf(view.ship && view.ship.smallRuns);
+  const vx = verify ? { verify, word: heldShip ? ICON_WORD.scheduled : VERIFY_WORDS[verify.state] || null } : {};
   const line = verify && verify.state === 'halted' && state === 'S8' ? VERIFY_HALTED : detail;
   // Small runs C4 (D17): the requirement change the Build step's notice shows, while its landing run is not done.
   return { state, step, detail: line, question, receipts: base.log, runs: !!view, kindWord: FEATURE_KIND, base, change: (view && view.change) || null, ...vx };
@@ -208,31 +240,53 @@ function verifyRow(doc, li, text) {
   return li;
 }
 
-/** The step log (D17): a check, the run tag, the named decision; Show unfolds what was answered, in place. */
-export function paintFeatureLog(doc, host, lines) {
+/** Small runs D3 (D10): a log line as the shared .srows row (buildCheckRows, as verifyRow): the `Run N` tag in the id
+ *  column (empty, the column kept, for a feature line), ✓ named `decided`, the text. */
+function srowsLine(doc, li, line) {
+  const [row] = buildCheckRows(doc, { items: [{ id: line.run ? `Run ${line.run}` : '', idCol: true, label: line.text, pass: true, mark: 'check', ariaLabel: 'decided' }] });
+  li.appendChild(row);
+  return row;
+}
+
+/** The step log (D17): a check, the run tag, the named decision; Show unfolds what was answered, in place.
+ *  `opts.srows` (small runs D3, the feature page's Decisions): each line is a .srows row (srowsLine) with Show at its
+ *  end; without it the log is the chat card's and Overview's, unchanged. */
+export function paintFeatureLog(doc, host, lines, opts = {}) {
   const list = Array.isArray(lines) ? lines : [];
   if (!sigOf(host, list)) return;
   const open = host.__open || (host.__open = new Set());
+  /** Show unfolds a line's detail in place: `{ show, body }`, or null for a line without one. */
+  const detailFold = (line, cls) => {
+    if (!Array.isArray(line.detail) || !line.detail.length) return null;
+    const body = doc.createElement('ul'); body.className = 'chat-rc-log-detail';
+    for (const d of line.detail) { const x = doc.createElement('li'); x.textContent = d; body.appendChild(x); }
+    const show = doc.createElement('button'); show.type = 'button'; show.className = cls;
+    const set = (on) => { body.hidden = !on; show.textContent = on ? 'Hide' : 'Show'; show.setAttribute('aria-expanded', String(on)); if (on) open.add(line.key); else open.delete(line.key); };
+    show.addEventListener('click', () => set(body.hidden));
+    set(open.has(line.key));
+    return { show, body };
+  };
   keepFocus(doc, host, '.chat-rc-log-show', () => {
     host.replaceChildren();
     host.hidden = !list.length;
     for (const line of list) {
       const li = doc.createElement('li'); li.className = 'chat-rc-log-row'; li.dataset.key = line.key;
+      if (opts.srows) {
+        li.className = 'shape-feature-decision';
+        const row = srowsLine(doc, li, line);
+        const d = detailFold(line, 'btn btn-sm btn-quiet chat-rc-log-show');
+        if (d) { row.appendChild(d.show); li.appendChild(d.body); }
+        host.appendChild(li);
+        continue;
+      }
       if (line.kind === 'verify') { host.appendChild(verifyRow(doc, li, line.text)); continue; }
       const ic = doc.createElement('span'); ic.className = 'chat-rc-log-check'; ic.appendChild(icon(doc, 'check', 12));
       li.appendChild(ic);
       if (line.run) { const r = doc.createElement('span'); r.className = 'chat-rc-log-run'; r.textContent = `Run ${line.run}`; li.appendChild(r); }
       const t = doc.createElement('span'); t.className = 'chat-rc-log-text'; t.textContent = line.text;
       li.appendChild(t);
-      if (Array.isArray(line.detail) && line.detail.length) {
-        const body = doc.createElement('ul'); body.className = 'chat-rc-log-detail';
-        for (const d of line.detail) { const x = doc.createElement('li'); x.textContent = d; body.appendChild(x); }
-        const show = doc.createElement('button'); show.type = 'button'; show.className = 'chat-rc-log-show';
-        const set = (on) => { body.hidden = !on; show.textContent = on ? 'Hide' : 'Show'; show.setAttribute('aria-expanded', String(on)); if (on) open.add(line.key); else open.delete(line.key); };
-        show.addEventListener('click', () => set(body.hidden));
-        set(open.has(line.key));
-        li.append(show, body);
-      }
+      const d = detailFold(line, 'chat-rc-log-show');
+      if (d) li.append(d.show, d.body);
       host.appendChild(li);
     }
   });

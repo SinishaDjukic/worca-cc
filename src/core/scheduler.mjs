@@ -494,7 +494,7 @@ export function afterRefOf(id) {
 // run merges back; an interrupted one gets no teardown until it is resumed) with a member record that has
 // a worktree and no mergeBack yet; a record without a worktreeDir (a setup failure) never gets a teardown.
 // Bounded from the row's last write: a host killed mid-teardown must not hold its dependents forever.
-const MERGE_BACK_WAIT_MS = 10 * 60_000;
+export const MERGE_BACK_WAIT_MS = 10 * 60_000;
 function mergeBackPending(row, now = Date.now()) {
   if (!row || row.status !== 'done') return false;
   const records = row.target === 'workspace'

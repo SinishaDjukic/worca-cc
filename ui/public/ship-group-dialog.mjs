@@ -2,6 +2,7 @@
 // feature or a Run-after chain, or a user group (slice 3). One or N stacked, the suggestion under it; the title and the
 // confirm follow the pick (createPrLabel). Pure DOM over the shared #shipit-modal; app.js opens, posts and closes it.
 import { createPrLabel } from './ship-words.mjs';
+import { SMALL_RUNS_SHIP } from '../../src/shared/shape/ship-ledger.mjs';
 
 export const PER_RUN_NOTE = 'Each PR takes its own run summary';
 export const ONE_FEATURE_NOTE = 'The PR takes every run\'s summary';
@@ -11,6 +12,8 @@ export const CHECKING_COMBINE = 'Checking whether the runs combine…';
 export const ONE_RUN_GROUP = 'A group of one run ships as its own PR';
 export const ONE_GROUP_NOTE = 'A new branch combines the runs\' branches';
 export const ONE_LOOSE_REASON = 'A run does not start from the previous run\'s branch';
+// Feature D1: a small-runs feature ships a PR per run (the server refuses One with STACKED_ONLY): the one shared string.
+export const SMALL_RUNS_REASON = SMALL_RUNS_SHIP;
 
 /** A member's own PR: open, and not an in-flight feature's slice draft (stacked marks those ready, One closes them). */
 const ownsPr = (kind, pr) => !!(pr && pr.url && pr.state !== 'CLOSED' && !(kind === 'feature' && pr.draft));
@@ -20,10 +23,12 @@ const ownsPr = (kind, pr) => !!(pr && pr.url && pr.state !== 'CLOSED' && !(kind 
  *   stacks? }] }: a chain member with `stacks: false` did not start from the previous run's branch, so One would ship
  *   only the last run's work.
  * check: a user group's combine check ({ oneOff, line }) or null while it has not answered (slice 3).
+ * smallRuns: a marked feature (Feature D1): One is off with SMALL_RUNS_REASON, stacked is the pick.
  * → { n: members that still need a PR, oneOff: '' or why One is disabled, mode: the default pick }
  */
-export function groupShipChoice({ kind, members, suggested = null, check = null }) {
+export function groupShipChoice({ kind, members, suggested = null, check = null, smallRuns = false }) {
   const owned = members.filter((m) => ownsPr(kind, m.pr));
+  if (smallRuns === true) return { n: members.length - owned.length, oneOff: SMALL_RUNS_REASON, mode: 'stacked' };
   const loose = kind === 'chain' && members.some((m, i) => i > 0 && m.stacks === false);
   const oneOff = owned.length ? ONE_OFF_REASON
     : loose ? ONE_LOOSE_REASON

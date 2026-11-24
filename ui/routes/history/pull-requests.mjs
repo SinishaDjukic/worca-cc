@@ -15,7 +15,8 @@ import { helperEngineFor } from '../../../src/core/model-env.mjs';
 import { PR_BODY_MAX, generatePrDescription } from '../../../src/core/pr-description.mjs';
 import { getWatch, setWatch } from '../../../src/core/pr-watch.mjs';
 import { CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../../../src/core/preflight.mjs';
-import { chainBaseBranchesOf, stackedPrBaseOf } from '../../../src/core/scheduler.mjs';
+import { chainBaseBranchesOf } from '../../../src/core/scheduler.mjs';
+import { stackedPrBase } from '../../../src/core/shape/features.mjs';
 import { projectKey } from '../../../src/core/store.mjs';
 import { parseReleaseChoice } from '../../../src/shared/release-version.mjs';
 import { NO_PR_HOST, PR_TITLE_MAX, askThreadVisible, badRequest, broadcast, createRunPr, crosslinkMemberPrs, defaultPrRemotes, flipCard, isPrStoreKey, kickPrWatch, prTargetFor, prWatchFrame, prWatcher, resolvePrPipeline, resolveProjectDir, runSourceIssue } from '../../server.mjs';
@@ -62,7 +63,12 @@ app.get('/api/pr/remotes', async (req, res) => {
   // until the previous run's PR merges. The route is async with no try/catch (F29): a failed lookup keeps the
   // chain-root default instead of rejecting.
   let stacked = null;
-  try { stacked = stackedPrBaseOf(pipelineId, chain); } catch (err) { console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
+  // Shaper small runs D1: a marked feature's run stacks on the run that finished before it (stackedPrBase), named as
+  // the remote names it, as Ship's createRunPr does.
+  try {
+    stacked = stackedPrBase(pipelineId, chain);
+    if (stacked) stacked = await prBaseBranch(repoDir, stacked, remoteNames);
+  } catch (err) { stacked = null; console.error(`[worca-ui] stacked PR base: ${err?.message || err}`); }
   const defaultBase = stacked || chain[0] || null;
   if (!rl.ok) {
     const issue = runSourceIssue(pipelineId, { memberKey: target.memberKey });
