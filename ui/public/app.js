@@ -310,6 +310,7 @@ import {
   renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { renderMapTab, emptyMapFilters } from './workspace-map-view.mjs';
 import { openWorkspaceGuide, shouldAutoOpenWorkspaceGuide } from './workspace-guide.mjs';
+import { createHowItWorks } from './how-it-works/how-it-works.mjs';
 import { paintAboutInto, paintVersionStatusInto, paintUpdateMarkerInto } from './about-links.mjs';
 import { createUpdateUi } from './update-view.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts, REPORT_PREVIEW_DEBOUNCE_MS } from './report-run.mjs';
@@ -10792,7 +10793,11 @@ async function deleteWorkspaceFromPage(id) {
     state.workspaces = state.workspaces.filter((x) => !(x && x.id === w.id));
     // FEAT-7: the server clears workspaceGuideSeen when the last workspace goes (R-po-13);
     // mirror it now, so a Create pressed before the onboarding refetch lands already sees it.
-    if (!state.workspaces.length && gs.status) gs.status = { ...gs.status, workspaceGuideSeen: false };
+    // The explainer map keeps Workspaces seen (the server's rule): only the legacy flag is cleared.
+    if (!state.workspaces.length && gs.status) {
+      const wasSeen = gs.status.workspaceGuideSeen === true || gs.status.guidesSeen?.workspaces === true;
+      gs.status = { ...gs.status, workspaceGuideSeen: false, ...(wasSeen ? { guidesSeen: { ...gs.status.guidesSeen, workspaces: true } } : {}) };
+    }
     if (state.selectedWorkspaceId === w.id) state.selectedWorkspaceId = '';
     if (localStorage.getItem(LAST_WORKSPACE_KEY) === w.id) localStorage.removeItem(LAST_WORKSPACE_KEY);
     const warnings = Array.isArray(data.warnings) ? data.warnings : [];
@@ -10823,21 +10828,15 @@ async function readWorkspaceGuideSeen() {
   if (knownWorkspaceGuideSeen() === null) await loadOnboarding();
   return knownWorkspaceGuideSeen();
 }
-async function markWorkspaceGuideSeen() {
-  if (gs.status) gs.status = { ...gs.status, workspaceGuideSeen: true };   // this tab knows at once
-  try {
-    const res = await fetch('/api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspaceGuideSeen: true }) });
-    const data = await safeJson(res);
-    if (res.ok && data && data.steps) { gs.status = data; paintOnboarding(); }
-  } catch { /* offline: this tab's copy says seen; the server is asked again on the next load */ }
-}
 function openWsGuide(mode) {
   if (wsGuide.handle) return;
-  wsGuide.handle = openWorkspaceGuide({ doc: document, mode, onClose: (how) => {
+  wsGuide.handle = openWorkspaceGuide({ doc: document, mode, tour: { label: 'Show me in the product' }, onClose: (how) => {
     wsGuide.handle = null;
+    if (how === 'tour') { startGuide('workspace').catch((err) => console.error('how-it-works: could not start the workspace guide', err)); return; }
     if (mode === 'create' && (how === 'finish' || how === 'skip') && currentView() === 'workspaces') location.hash = 'workspace-create';
   } });
-  void markWorkspaceGuideSeen();
+  void howItWorks.markSeen('workspaces');
+  howItWorks.paintMarks();
 }
 async function onCreateWorkspace() {
   if (wsGuide.handle || wsGuide.checking) return;         // a double click opens one walkthrough
@@ -40192,6 +40191,7 @@ function paintOnboarding() {
   }
   paintGsSettings();
   paintClaudeSetupStatus();
+  howItWorks.paintMarks();
 }
 /** The shelf lives on its own page and is painted on entry (the reveal plays then)
  *  and on every status change while the page is open; a hidden checklist still
@@ -40238,9 +40238,8 @@ function paintGsSettings() {
 // Settings › General › Setup assistant: Run setup (AC-4.4).
 document.getElementById('setupRunAgain')?.addEventListener('click', () => openSetup({ entry: 'rerun' }));
 document.getElementById('gsShowAgain')?.addEventListener('click', async () => {
-  if (gs.status && gs.status.hidden) {
-    if (!(await setOnboardingPrefs({ hidden: false }))) return;
-  }
+  // Show again also brings every How it works mark back (one POST, so a refusal leaves both as they were).
+  if (!(await setOnboardingPrefs({ guidesReset: true, ...(gs.status && gs.status.hidden ? { hidden: false } : {}) }))) return;
   showView('getting-started');
 });
 
@@ -40903,6 +40902,30 @@ void paintTeamNotice();
 
 const views = $$('.view');
 // Settings lives in the account menu (#acct-settings) and lights like a nav row while it is open.
+// ── How it works: the per-area explainers (ui/public/how-it-works/). Created once the Getting started
+// block above exists: it reads and writes gs.status and its Show me starts a Getting started tour.
+// An explainer never writes into #gsSettingsMsg (setOnboardingPrefs does), so it has its own quiet POST.
+async function postGuidePrefs(patch) {
+  try {
+    const res = await fetch('/api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+    const data = await safeJson(res);
+    if (!res.ok || !data || !data.steps) { console.error('how-it-works: the server refused the update', res.status); return null; }
+    gs.status = data;
+    paintOnboarding();
+    return data;
+  } catch (err) {
+    console.error('how-it-works: the update did not reach the server', err);
+    return null;
+  }
+}
+const howItWorks = createHowItWorks({
+  doc: document,
+  getStatus: () => gs.status,
+  setStatus: (status) => { gs.status = status; },
+  postPrefs: postGuidePrefs,
+  startTour: startGuide,
+});
+howItWorks.mount();
 const navLinks = $$('.nav button[data-nav], #acct-settings');
 // workflows took over composer, agents, scripts and agent-create (see MOVED_ROUTES); workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
@@ -41236,6 +41259,7 @@ function showView(name, param = '') {
     else b.removeAttribute('aria-current');
   });
   paintTopnavTitle(navSection === 'design' ? 'design' : name);
+  howItWorks.syncRoute(name);
   setMobileNavOpen(false);   // any route (a drawer tap, back/forward, a deep link) puts the drawer away
   // Any route puts the Actions flyout away (a click inside it already did).
   sideActionsFlyout?.close();
