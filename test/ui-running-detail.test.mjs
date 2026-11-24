@@ -1560,6 +1560,17 @@ test('live graph: a running graph run shows its workflow in the card\'s right co
   assert.ok(secOf(window, 'workflow').querySelector('.rd-graph .run-flow'), 'the full graph lives in Workflow');
 });
 
+test('live graph: the Chat run panel keeps it (CSS hides it only while the panel is narrow)', async () => {
+  const ctx = await bootRunning();
+  const { window } = ctx;
+  const rd = await openGlance(ctx);
+  rd.dataset.presentation = 'panel';   // as presentRunScreenInPanel sets it
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: GLANCE_MANIFEST,
+    active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }], steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 0.6 });
+  await settle(window, 6);
+  assert.equal(rd.querySelector('.rd-sheet-nav > .rd-live').hidden, false, 'a running graph run shows it in the panel too');
+});
+
 // #555: a run-page action that fails is said where the user is — a toast — not only in the run log.
 const fail = (status, body) => Promise.resolve({ ok: false, status, json: async () => body });
 const clickToastAction = (window) => {

@@ -31297,11 +31297,12 @@ function runTaskCard(prompt, chips) {
   return card;
 }
 /** While a graph run goes: its workflow in the card's summary column, framed on the running step(s) (the `focus` host),
- *  the way into the Workflow tab. Gone once the run ends, and never in the Chat run panel (its column is too narrow). */
+ *  the way into the Workflow tab. Gone once the run ends. In the Chat run panel it shows only while the panel is wide
+ *  enough for the card's two columns (runs/run-card.css): the narrow panel has no room for it. */
 function paintRdLive(screen, r) {
   const panel = screen.querySelector('.rd-live');
   if (!panel) return;
-  const on = !RD_TERMINAL.includes(r.status) && isGraphRun(r) && screen.dataset.presentation !== 'panel';
+  const on = !RD_TERMINAL.includes(r.status) && isGraphRun(r);
   if (on) {
     panel.hidden = false;
     paintGraphFor(panel.querySelector('.run-flow'), r.stepper, runDecorFor(r, 'focus'), r.steps);
@@ -32601,8 +32602,8 @@ function rdStateCopy(r, stepName) {
     const by = r.status === 'stopped' && r.lastAction && r.lastAction.kind === 'stop' ? personLabel(r.lastAction.by) : '';
     return `${runStatusMeta(r).word}${by ? ` by ${by}` : ''}.${at}`;
   }
-  // The ACTIVE agent names the line (the v1 phase/cycle scalars are gone).
-  return `${activeCopy(r).text}.`;
+  // A run that is simply working: the chip beside this line already names the active agent, so there is nothing to add.
+  return '';
 }
 
 function rdOvStateBanner(host, r) {
@@ -32615,7 +32616,8 @@ function rdOvStateBanner(host, r) {
   const copy = document.createElement('span');
   copy.className = 'rd-ov-copy';
   copy.textContent = rdStateCopy(r, name);
-  host.append(chip, copy);
+  host.append(chip);
+  if (copy.textContent) host.append(copy);
   // A usage limit the engine hit: each other engine has its own allowance, so offer them here, at
   // every interface level (the Resume menu's caret is Advanced only).
   const pause = { reason: r.pauseReason, limitEngine: r.limitEngine };
