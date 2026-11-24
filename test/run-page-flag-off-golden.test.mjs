@@ -1,11 +1,11 @@
 // test/run-page-flag-off-golden.test.mjs — Shaper small runs D2 (D17): with the flag off, or for a run without the
 // small-runs marker, the run page (live and saved), the Runs-list group row and the /slice and /api/run-groups keys
-// are exactly dev's at checkpoint 82de8b518. The fixture holds each case's normalized outerHTML (only `data-sig`
+// are exactly dev's at checkpoint 1f53f4e21. The fixture holds each case's normalized outerHTML (only `data-sig`
 // values are stripped) and the key lists. The fixtures below are written here (not imported from other test files),
 // so this file runs on its own inside the checkpoint archive.
 //
 // The fixture was generated ONCE, from a `git archive` of the checkpoint, never from this tree:
-//   D=$(mktemp -d "$TMPDIR/golden.XXXXXX"); git archive 82de8b518 | tar -x -C "$D"
+//   D=$(mktemp -d "$TMPDIR/golden.XXXXXX"); git archive 1f53f4e21 | tar -x -C "$D"
 //   ln -s "$PWD/node_modules" "$D/node_modules"; cp test/run-page-flag-off-golden.test.mjs "$D/test/"
 //   (cd "$D" && UPDATE_RUN_PAGE_GOLDEN=1 node tools/test.mjs test/run-page-flag-off-golden.test.mjs)
 //   cp "$D/test/fixtures/shaper/run-page-flag-off-golden.json" test/fixtures/shaper/
@@ -28,7 +28,7 @@ import { applyFlags } from '../ui/public/flags.mjs';
 import { buildRunsModel, renderRunsList } from '../ui/public/runs-list.mjs';
 
 const FIXTURE = new URL('./fixtures/shaper/run-page-flag-off-golden.json', import.meta.url);
-const CAPTURED_AT = '82de8b518';
+const CAPTURED_AT = '1f53f4e21';
 const UPDATE = process.env.UPDATE_RUN_PAGE_GOLDEN === '1';
 const golden = UPDATE ? { capturedAt: CAPTURED_AT, cases: {} } : JSON.parse(readFileSync(FIXTURE, 'utf8'));
 const nodeFetch = globalThis.fetch;   // the jsdom boots below replace the global fetch
