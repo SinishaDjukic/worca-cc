@@ -1525,6 +1525,89 @@ test('Details › Diff reads the live worktree while the run goes', async () => 
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/live-diff')).length, 1);
 });
 
+// --- Diff: open the run's changes in the editor (diff-open-editor.mjs) ------------
+const OPEN_PATCH = 'diff --git a/src/limiter.js b/src/limiter.js\n--- a/src/limiter.js\n+++ b/src/limiter.js\n@@ -3,2 +5,2 @@\n-a\n+b\n'
+  + 'diff --git a/.env b/.env\nnew file mode 100644\n--- /dev/null\n+++ b/.env\n@@ -0,0 +1 @@\n+K=v\n';
+const liveModel = (builtins = [{ key: 'editor', label: 'Cursor' }], over = {}) => ({ enabled: true, finished: false, workspace: false,
+  checkoutBlocked: 'Check out is available once the run has finished',
+  members: [{ projectKey: KEY, state: 'not-checked-out', builtins }], ...over });
+async function openLiveDiff({ model }) {
+  const posts = [];
+  const box = { model };
+  const ctx = await boot({ fetchHandler: (url, opts) => {
+    if (url.endsWith('/api/runs/r1/live-diff')) {
+      return ok({ results: { summary: { filesNew: 1, filesChanged: 1, linesAdded: 2, linesRemoved: 1 },
+        newFiles: [{ path: '.env', status: 'A', added: 1, removed: 0 }],
+        changedFiles: [{ path: 'src/limiter.js', status: 'M', added: 1, removed: 1 }] },
+        patch: OPEN_PATCH, untrackedCapped: false, protectedPaths: ['.env'] });
+    }
+    if (url.startsWith('/api/runs/p1/actions?')) return ok(typeof box.model === 'function' ? box.model() : box.model);
+    if (url.startsWith('/api/runs/p1/open-in-editor?')) { posts.push({ url, body: JSON.parse(opts.body) }); return ok({ ok: true }); }
+    if (url.endsWith('/api/history')) return ok({ pipelines: [], ghAvailable: false });
+    if (url.endsWith('/api/budget')) return ok(okBudget());
+    return null;
+  } });
+  frame(ctx, { type: 'hello', runs: [] });
+  await settle(ctx.window, 6);
+  await openGlance(ctx, 'running/r1/details/diff');
+  await settle(ctx.window, 8);
+  return { ctx, window: ctx.window, sec: secOf(ctx.window, 'diff'), posts, box };
+}
+const rowOf = (sec, path) => [...sec.querySelectorAll('.rd-diff-row')].find((b) => b.dataset.path === path);
+
+test('Diff: a live run offers Open in Cursor and opens its worktree', async () => {
+  const { window, sec, posts } = await openLiveDiff({ model: liveModel() });
+  const note = sec.querySelector('.rd-diff-note');
+  assert.equal(note.firstElementChild.textContent, 'Live: edits you make there go into the run.');
+  const end = note.querySelector('.rd-diff-note-end');
+  assert.deepEqual([...end.children].map((b) => b.className), ['btn btn-sm rd-diff-refresh', 'btn btn-sm rd-diff-open']);
+  const open = end.querySelector('.rd-diff-open');
+  assert.equal(open.textContent, 'Open in Cursor');
+  assert.equal(sec.textContent.split('Cursor').length - 1, 1, 'the editor name shows once (the icon carries it only in its tooltip)');
+  open.click();
+  await settle(window, 4);
+  assert.deepEqual(posts.map((p) => p.body), [{}], 'the whole worktree: no member, no file');
+  assert.match(posts[0].url, /^\/api\/runs\/p1\/open-in-editor\?/);
+});
+
+test('Diff: the file head icon opens the file at its first changed line; a protected file gets none', async () => {
+  const { window, sec, posts } = await openLiveDiff({ model: liveModel() });
+  rowOf(sec, 'src/limiter.js').click();
+  await settle(window, 2);
+  const icon = sec.querySelector('.hd-diff-pane-head .hd-diff-head-end > .hd-diff-open');
+  assert.equal(icon.title, 'Open limiter.js in Cursor', 'a live run opens its worktree: no checkout first');
+  icon.click();
+  await settle(window, 4);
+  assert.deepEqual(posts.map((p) => p.body), [{ file: 'src/limiter.js', line: 5 }]);
+  rowOf(sec, '.env').click();
+  await settle(window, 2);
+  assert.equal(sec.querySelector('.hd-diff-pane-head .hd-diff-path').textContent, '.env');
+  assert.equal(sec.querySelector('.hd-diff-open'), null, 'the protected floor refuses it, so no icon');
+});
+
+test("Diff: no editor → no Open button and today's hint", async () => {
+  const { sec } = await openLiveDiff({ model: liveModel([{ key: 'terminal', label: 'Terminal' }]) });
+  assert.equal(sec.querySelector('.rd-diff-note').firstElementChild.textContent, 'Live: the worktree right now, against where the run started.');
+  assert.equal(sec.querySelector('.rd-diff-refresh').hidden, false);
+  assert.equal(sec.querySelector('.rd-diff-open'), null);
+  assert.equal(sec.querySelector('.hd-diff-open'), null);
+  const off = await openLiveDiff({ model: liveModel(undefined, { enabled: false }) });
+  assert.equal(off.sec.querySelector('.rd-diff-open'), null, 'actions off (hosted): neither control');
+  assert.equal(off.sec.querySelector('.hd-diff-open'), null);
+});
+
+test('Diff: the Open button goes when the run finishes', async () => {
+  const { ctx, window, sec, box } = await openLiveDiff({ model: liveModel() });
+  assert.ok(sec.querySelector('.rd-diff-open'));
+  box.model = liveModel(undefined, { finished: true, checkoutBlocked: null });
+  const reads = () => ctx.calls.filter((c) => c.url.startsWith('/api/runs/p1/actions?')).length;
+  const before = reads();
+  frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+  await settle(window, 10);
+  assert.equal(secOf(window, 'diff').querySelector('.rd-diff-open'), null);
+  assert.ok(reads() > before, 'the stale live model is read again');
+});
+
 // --- Live view is gone: the graph lives only in the Workflow tab -------------
 
 test('live graph: a running graph run shows its workflow in the card\'s right column (no switch); a click opens Workflow', async () => {

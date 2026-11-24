@@ -517,6 +517,7 @@
   "POST /api/runs/:id/directions": {"class": "probe", "reason": "400 text is required with {}"},
   "POST /api/runs/:id/discard": {"class": "probe", "reason": "folderRouteTarget answers 404 for unknown row; try/catch"},
   "POST /api/runs/:id/discard-worktree": {"class": "probe", "reason": "resolveRunScope answers 400 without scope query"},
+  "POST /api/runs/:id/open-in-editor": {"class": "probe", "reason": "runRowForScope answers 400 before any launch"},
   "POST /api/runs/:id/overview": {"class": "probe", "reason": "400 key or projectDir is required before generateOverview"},
   "POST /api/runs/:id/plan/save": {"class": "probe", "reason": "runs.get misses, 404 unknown run"},
   "POST /api/runs/:id/publish": {"class": "probe", "reason": "resolvePrPipeline answers 400 without projectDir/projectKey before any push"},

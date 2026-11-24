@@ -4,6 +4,7 @@ import { findPipelineRowById, listArtifacts, listRunArtifacts, lookupPipelineRow
 import { ASK_LIMITS } from '../../../src/core/ask/limits.mjs';
 import { failedBecauseSignedOut } from '../../../src/core/claude-auth.mjs';
 import { listModels, modelCostConfig } from '../../../src/core/config.mjs';
+import { protectedSectionKeys } from '../../../src/core/diff-anchor.mjs';
 import { requireFlag } from '../../../src/core/flags.mjs';
 import { helperEngineFor } from '../../../src/core/model-env.mjs';
 import { modelFacts } from '../../../src/core/model-tiers.mjs';
@@ -115,7 +116,8 @@ app.get('/api/runs/:id/live-diff', async (req, res) => {
   try {
     const out = await liveDiffOf(entry);
     if (!out) return res.status(404).json({ error: 'no worktree yet' });
-    res.json(out);
+    // Spread, never written onto `out`: it is the object liveDiffOf caches on the entry.
+    res.json({ ...out, protectedPaths: protectedSectionKeys(out.patch || '') });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

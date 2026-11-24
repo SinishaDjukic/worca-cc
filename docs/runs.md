@@ -147,7 +147,7 @@ the run didn't finish, the work stays on its own branch, and you get the command
 Waiting, Finished, **Ready to ship** (finished, no PR yet) or Archived, and groups runs by project or by date.
 
 A live run's page shows its state and current step, the time ticking, its cost and the files it changed. **Live
-view** shows the running step inside its workflow graph. **Diff** shows the worktree's changes so far. **Logs**
+view** shows the running step inside its workflow graph. **Diff** shows the worktree's changes so far, with **Open in <Editor>** at the top right (edits you make there go into the run). Each file's head, on live and finished runs, has an icon that opens the file at its first changed line; on a finished run that is not checked out, that one click checks it out first (see [Actions](actions.md#built-ins)). **Logs**
 streams every step with search, and at Expert you can filter by source, level, step and cycle.
 
 The top bar's **Activity** pill counts what needs you and what is running. To hear about it outside the tab, turn
