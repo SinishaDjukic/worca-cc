@@ -145,6 +145,9 @@ async function verifierRound(ticketId, deps) {
 test('email for website X: Start to Ship with a stop, a change and a Verifier gap', { timeout: 180_000 }, () => withEnv({ ...NO_ADO,
   WORCA_MOCK_SPLIT_OUTLINE: 'pass', WORCA_MOCK_VERIFY: JSON.stringify([['R-ops-2'], []]) }, async () => {
   const dir = gitDir('shape-walk');
+  // The changelog commit Ship writes is made by Worca, not by this test: the repo itself carries the identity, so the test
+  // does not depend on a global git identity (a CI runner has none).
+  git(dir, 'config', 'user.email', 't@t'); git(dir, 'config', 'user.name', 't'); git(dir, 'config', 'commit.gpgsign', 'false');
   git(dir, 'branch', '-M', 'main');   // gitDir takes the host's default branch
   try {
     // ── Phase A: Start, Requirements, Prototype, the Split; the planning run finishes as run 1 ──
