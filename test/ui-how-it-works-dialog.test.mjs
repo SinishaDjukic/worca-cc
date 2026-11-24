@@ -4,6 +4,7 @@
 import { test, describe, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { openGuideDialog, BACKDROP_GRACE_MS } from '../ui/public/how-it-works/guide-dialog.mjs';
 import { createHowItWorks } from '../ui/public/how-it-works/how-it-works.mjs';
@@ -187,25 +188,54 @@ function boot({ status = { guidesSeen: {} }, postResult = {} } = {}) {
 }
 
 describe('howto button', () => {
-  test('is a design-system button with a question icon, the sr-only New mark and the min-level hook', () => {
+  test('is a design-system button with a question icon, the label span, an empty aria-hidden mark and the min-level hook', () => {
     const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
     const doc = dom.window.document;
     doc.body.innerHTML = howtoButtonHtml({ id: 'x-btn', cls: 'x-cls' });
     const b = doc.getElementById('x-btn');
     assert.equal(b.tagName, 'BUTTON');
-    assert.ok(b.classList.contains('btn') && b.classList.contains('x-cls'));
+    assert.ok(b.classList.contains('btn') && b.classList.contains('btn-sm') && b.classList.contains('x-cls'));
     assert.equal(b.dataset.minLevel, 'simple');
     assert.ok(b.querySelector('svg'));
     assert.ok(b.textContent.includes('How it works'));
-    assert.equal(b.querySelector('.howto-new').hidden, true);
-    assert.equal(b.querySelector('.howto-new .sr-only').textContent, 'New');
+    assert.equal(b.querySelector('.howto-label').textContent, 'How it works');
+    const mark = b.querySelector('.howto-new');
+    assert.equal(mark.hidden, true);
+    assert.equal(mark.getAttribute('aria-hidden'), 'true');
+    assert.equal(mark.textContent, '', 'the mark is a dot with no text child');
+    assert.equal(b.querySelector('.sr-only'), null);
+    assert.equal(b.getAttribute('aria-label'), 'How it works');
     paintHowtoMark(b, true);
     assert.equal(b.dataset.new, 'true');
-    assert.equal(b.querySelector('.howto-new').hidden, false);
+    assert.equal(mark.hidden, false);
+    assert.equal(b.getAttribute('aria-label'), 'How it works, new', 'the New state lives in the accessible name');
     paintHowtoMark(b, false);
     assert.equal(b.dataset.new, 'false');
-    assert.equal(b.querySelector('.howto-new').hidden, true);
+    assert.equal(mark.hidden, true);
+    assert.equal(b.getAttribute('aria-label'), 'How it works');
     assert.doesNotThrow(() => paintHowtoMark(null, true));
+  });
+
+  test('icon only: a quiet btn-icon square with the name in aria-label and no label span', () => {
+    const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
+    const doc = dom.window.document;
+    doc.body.innerHTML = howtoButtonHtml({ id: 'y-btn', cls: 'y-cls', iconOnly: true });
+    const b = doc.getElementById('y-btn');
+    for (const c of ['btn', 'btn-quiet', 'btn-icon', 'y-cls']) assert.ok(b.classList.contains(c), c);
+    assert.equal(b.classList.contains('btn-sm'), false);
+    assert.equal(b.querySelector('.howto-label'), null);
+    assert.equal(b.getAttribute('aria-label'), 'How it works');
+    assert.equal(b.dataset.minLevel, 'simple');
+    assert.ok(b.querySelector('svg'));
+    assert.ok(b.querySelector('.howto-new[aria-hidden="true"]'));
+  });
+
+  test('the phone tier hides the label span and never sets font-size:0', () => {
+    const css = readFileSync(new URL('../ui/public/how-it-works/how-it-works.css', import.meta.url), 'utf8');
+    assert.doesNotMatch(css, /font-size:\s*0(?![.\d])/);
+    const at = css.indexOf('@media (max-width:760px)');
+    assert.ok(at >= 0, 'the phone tier block exists');
+    assert.match(css.slice(at), /\.topnav-howto \.howto-label\{display:none/);
   });
 });
 
@@ -218,6 +248,10 @@ describe('How it works controller', () => {
     assert.equal(c.doc.querySelectorAll('#howto-btn').length, 1);
     assert.equal(c.doc.querySelectorAll('#wfv-howto-btn').length, 1);
     assert.equal(c.doc.getElementById('wfv-lib-toggle').previousElementSibling.id, 'wfv-howto-btn');
+    assert.ok(c.wf.classList.contains('btn-icon'), 'the Workflows one is icon only');
+    assert.equal(c.wf.classList.contains('btn-sm'), false);
+    assert.ok(c.top.classList.contains('btn-sm'));
+    assert.ok(c.top.querySelector('.howto-label'));
   });
 
   test('paintMarks: unseen shows the mark, seen and unknown prefs do not (also on #ws-howto-btn)', () => {

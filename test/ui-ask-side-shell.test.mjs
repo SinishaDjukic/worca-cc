@@ -972,7 +972,8 @@ test('beside the page (> 1080px), a topic row chosen by keyboard keeps the colum
 });
 
 // ---- the merge with the Chats column (#948): its menus open in <body>, outside #ask-side (merge review cycle 1) ------
-const LISTED = { ...SNAP.thread, createdAt: '2026-10-24T10:00:00.000Z', updatedAt: '2026-10-24T10:00:00.000Z' };
+const LISTED_AT = new Date(Date.now() - 60_000).toISOString();
+const LISTED = { ...SNAP.thread, createdAt: LISTED_AT, updatedAt: LISTED_AT };
 const listArms = (href, opts, box) => (href.split('?')[0].endsWith('/api/ask/threads')
   ? ok({ threads: [LISTED], total: 1, counts: { all: 1, needs: 0, archived: 0 } }) : threadArms(href, opts, box));
 /** Opens a chat row's ⋯ menu from the column's chats menu; answers the menu (it sits in <body>, not in the column). */

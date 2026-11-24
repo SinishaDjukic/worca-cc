@@ -12,6 +12,7 @@ import { checkRows } from './helpers/rows.mjs';
 import { auditRunsLayout } from '../tools/runs-layout-audit.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
+import { rowTime } from '../ui/public/runs-list.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -386,7 +387,7 @@ test('Show = Archived fetches the archived feed only when picked (and on the fir
       const titles = () => [...doc.querySelectorAll('#runs-list .runs-row-title')].map((n) => n.textContent);
       assert.deepEqual(titles(), ['Archived thing']);
       const row = rowEl(doc, '[data-pipeline-id="cccc0009"]');
-      assert.equal(row.querySelector('.runs-row-sub').textContent, 'Archived · Sep 1', 'the word says where the run lives');
+      assert.equal(row.querySelector('.runs-row-sub').textContent, `Archived · ${rowTime(ARCH.archivedAt)}`, 'the word says where the run lives');
       assert.equal(doc.querySelector('#runs-view-chip .runs-view-chip-t').textContent, 'Archived · 1 run');
       await pickView(window, doc, 'All');
       assert.deepEqual(titles().sort(), ['Merged thing', 'Stopped thing'],

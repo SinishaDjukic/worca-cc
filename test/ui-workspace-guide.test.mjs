@@ -172,6 +172,10 @@ test('first Create with no workspace: the walkthrough first, then the wizard (R-
   const label = howto.cloneNode(true);
   label.querySelector('.howto-new')?.remove();
   assert.equal(label.textContent.trim(), 'How workspaces work', 'the words are unchanged; the mark is a separate span');
+  const wsMark = howto.querySelector('.howto-new');
+  assert.equal(wsMark.textContent, '', 'the mark is a dot with no text child');
+  assert.equal(wsMark.getAttribute('aria-hidden'), 'true');
+  assert.equal(howto.getAttribute('aria-label'), wsMark.hidden ? 'How workspaces work' : 'How workspaces work, new');
   assert.equal(howto.closest('.ws-top-actions'), doc.getElementById('ws-create-btn').closest('.ws-top-actions'), 'R-po-16: beside Create workspace');
   click(window, doc.getElementById('ws-create-btn'));
   await settle();

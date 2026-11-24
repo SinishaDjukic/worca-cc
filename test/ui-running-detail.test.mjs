@@ -1126,7 +1126,7 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   assert.match(facts.textContent, /\+12/);
   const filesLink = facts.querySelector('a.rd-stat-link');
   assert.match(filesLink.getAttribute('href'), /\/details\/diff$/, 'F-22: the files tile opens the diff');
-  assert.match(rd.querySelector('.rd-clock') ? rd.querySelector('.rd-clock').textContent : 'started 00:00', /^started (\d{2}:\d{2}|[A-Z][a-z]{2}(, \d{2}:\d{2}| \d+, \d{2}:\d{2}))/, 'F-9: the Runs list time style');
+  assert.match(rd.querySelector('.rd-clock') ? rd.querySelector('.rd-clock').textContent : 'started 00:00', /^started (\d{2}:\d{2}|[A-Z][a-z]{2}(, \d{2}:\d{2}| \d+(, \d{4})?, \d{2}:\d{2}))/, 'F-9: the Runs list time style');
   const result = rd.querySelector('.rd-result');
   assert.equal(result.hidden, false);
   assert.equal(result.querySelector('.issues'), null, 'the things to check live in Overview only');
