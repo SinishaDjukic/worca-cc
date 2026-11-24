@@ -21,7 +21,7 @@
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { pluginDataDir, pluginsRoot } from './plugins-lock.mjs';
+import { DIR_NAME_RE, pluginDataDir, pluginsRoot } from './plugins-lock.mjs';
 import { writeJsonAtomic } from './json-atomic.mjs';
 import { isVaultRef, ownerField } from './secrets/refs.mjs';
 import { noteUnresolved, resolveVaultRefSync } from './secrets/settings-resolver.mjs';
@@ -284,10 +284,11 @@ function writeUnlessStale(file, all, raw) {
   return true;
 }
 
-/** The names of the plugins with a folder under the plugins root ([] when there is none). */
+/** The names of the plugins with a folder under the plugins root ([] when there is none); folders that are not a plugin
+ *  name (the `.cache` folder) are left out. */
 export function installedPluginNames() {
   try {
-    return readdirSync(pluginsRoot(), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    return readdirSync(pluginsRoot(), { withFileTypes: true }).filter((d) => d.isDirectory() && DIR_NAME_RE.test(d.name)).map((d) => d.name);
   } catch (err) {
     if (err?.code === 'ENOENT') return [];
     throw err;
