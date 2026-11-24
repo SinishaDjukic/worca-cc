@@ -616,3 +616,163 @@ test('an attachment keeps the where block in front of the attachment blocks', as
   assert.deepEqual(blocks.map((b) => b.kind), ['where', 'attachment']);
   assert.deepEqual(blocks[0], { kind: 'where', label: 'Projects', icon: 'project' });
 });
+
+// ---- a voice merge replaces the fragment turn (POST /messages { supersedes }, docs/speech.md) ----
+const sendSettled = async (id, body) => {
+  const r = await post(`/api/ask/threads/${id}/messages`, { ...MODEL, ...body });
+  assert.equal(r.status, 202, await r.clone().text());
+  const out = await r.json();
+  await settled(id);
+  return out;
+};
+
+test('supersedes that is not a message id is 400 and stores nothing', async () => {
+  const t = await newThread();
+  const first = await sendSettled(t.id, { text: 'hello there' });
+  const before = (await snapshot(t.id)).messages.length;
+  for (const bad of ['x', 42, 'askm_XYZ', `${first.userMessageId}0`]) {
+    const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'again', ...MODEL, supersedes: bad });
+    assert.equal(r.status, 400, String(bad));
+    assert.equal((await r.json()).error, 'supersedes must be a message id');
+  }
+  assert.equal((await snapshot(t.id)).messages.length, before);
+});
+
+test('a valid supersede hides the fragment turn, broadcasts ask-superseded, adds the replace rule and keeps the session', async () => {
+  const { SUPERSEDE_TURN_RULE, SPOKEN_TURN_RULE } = await import('../src/core/ask/prompt.mjs');
+  const t = await newThread();
+  const frag = await sendSettled(t.id, { text: 'Do you know how' });
+  const sessionId = (await snapshot(t.id)).thread.sessionId;
+  assert.ok(sessionId, 'the mock turn stored a session');
+  const { ws, msgs, opened } = openWs(`?threadId=${t.id}`);
+  await opened;
+  try {
+    const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'Do you know how to bake bread?', ...MODEL, handsFree: true, supersedes: frag.userMessageId });
+    assert.equal(r.status, 202, await r.clone().text());
+    const body = await r.json();
+    assert.deepEqual(body.superseded, [frag.userMessageId, frag.assistantMessageId]);
+    const turn = mod._testing.askJobs.get(t.id).turn;
+    assert.ok(turn.prompt.includes(SUPERSEDE_TURN_RULE), 'the model is told the message replaces the previous one');
+    assert.ok(turn.prompt.includes(SPOKEN_TURN_RULE), 'a merged hands-free turn still asks for the spoken version');
+    assert.ok(turn.prompt.indexOf(SUPERSEDE_TURN_RULE) < turn.prompt.indexOf(SPOKEN_TURN_RULE));
+    assert.equal(turn.resumeSessionId, sessionId, 'the session is kept');
+    assert.ok(!turn.restoredPrompt.includes('Do you know how\n') && !/User: Do you know how$/m.test(turn.restoredPrompt), 'the restored prompt leaves the hidden rows out');
+    const frame = await waitFor(() => msgs.find((m) => m.type === 'ask-superseded'));
+    assert.deepEqual(frame, { type: 'ask-superseded', threadId: t.id, messageIds: [frag.userMessageId, frag.assistantMessageId], by: body.userMessageId });
+    const snap = await settled(t.id);
+    const byId = Object.fromEntries(snap.messages.map((m) => [m.id, m]));
+    assert.equal(byId[frag.userMessageId].supersededBy, body.userMessageId, 'GET still returns the hidden row, with the flag');
+    assert.equal(byId[frag.assistantMessageId].supersededBy, body.userMessageId);
+    assert.equal(byId[body.userMessageId].supersededBy, null);
+    assert.equal(snap.messages.length, 4, 'nothing deleted');
+  } finally { ws.close(); }
+});
+
+test('a fragment reply holding a card: 409 supersede-refused, nothing stored', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const t = await newThread();
+  const frag = await sendSettled(t.id, { text: 'Start a run for' });
+  store.setMessageBlocks(frag.assistantMessageId, [{ kind: 'card', id: 'card_0000aa01', state: 'proposed', card: { type: 'run' } }]);
+  const before = (await snapshot(t.id)).messages.length;
+  const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'Start a run for the api project', ...MODEL, supersedes: frag.userMessageId });
+  assert.equal(r.status, 409);
+  const body = await r.json();
+  assert.equal(body.code, 'supersede-refused');
+  assert.match(body.error, /^the earlier message cannot be replaced: /);
+  const snap = await snapshot(t.id);
+  assert.equal(snap.messages.length, before, 'no user row, no turn');
+  assert.ok(snap.messages.every((m) => !m.supersededBy), 'no flag');
+  assert.equal(snap.inFlight, null);
+});
+
+test('the write\'s in-tx re-check refuses: 409 supersede-refused, the thread row and its messages unchanged', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const t = await newThread();
+  const frag = await sendSettled(t.id, { text: 'Start a run for' });
+  store.setMessageBlocks(frag.assistantMessageId, [{ kind: 'card', id: 'card_0000aa02', state: 'proposed', card: { type: 'run' } }]);
+  const before = await snapshot(t.id);
+  await new Promise((r) => setTimeout(r, 5));                       // a thread write would move updatedAt
+  mod._testing.setSupersedePrecheck(() => null);                    // the pre-check says yes; only the tx refuses
+  try {
+    const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'Start a run for the api project', ...MODEL, context: { view: 'projects', pinned: false }, supersedes: frag.userMessageId });
+    assert.equal(r.status, 409);
+    const body = await r.json();
+    assert.equal(body.code, 'supersede-refused');
+    assert.match(body.error, /^the earlier message cannot be replaced: /);
+  } finally { mod._testing.setSupersedePrecheck(null); }
+  const after = await snapshot(t.id);
+  assert.deepEqual(after.thread, before.thread, 'no context, model or updatedAt write');
+  assert.deepEqual(after.messages, before.messages, 'no row, no flag');
+  assert.equal(after.inFlight, null);
+});
+
+test('with no session (the handoff transcript) and in the restored prompt, the hidden rows are left out', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const t = await newThread();
+  await sendSettled(t.id, { text: 'first question zeta' });
+  const frag = await sendSettled(t.id, { text: 'fragment omega how' });
+  store.updateThread(t.id, { sessionId: null });
+  const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'the whole question about bread', ...MODEL, supersedes: frag.userMessageId });
+  assert.equal(r.status, 202, await r.clone().text());
+  const turn = mod._testing.askJobs.get(t.id).turn;
+  assert.equal(turn.resumeSessionId, null);
+  assert.match(turn.prompt, /^Conversation so far in this chat\./);
+  assert.ok(turn.prompt.includes('first question zeta'));
+  assert.ok(!turn.prompt.includes('fragment omega'), 'the handoff transcript skips the hidden turn');
+  assert.ok(turn.restoredPrompt.includes('first question zeta'));
+  assert.ok(!turn.restoredPrompt.includes('fragment omega'), 'the restored prompt skips it too');
+  await settled(t.id);
+});
+
+test('supersedes with a new scope: 409 supersede-refused before the switch (scope kept, no divider row)', async () => {
+  const t = await newThread();
+  const frag = await sendSettled(t.id, { text: 'Do you know how' });
+  const before = await snapshot(t.id);
+  const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'Do you know how to bake bread?', ...MODEL, context: { view: 'chat', pinned: true, workspaceId: 'wks-havn-0000abcd' }, supersedes: frag.userMessageId });
+  assert.equal(r.status, 409);
+  const body = await r.json();
+  assert.equal(body.code, 'supersede-refused');
+  assert.match(body.error, /^the earlier message cannot be replaced: /);
+  const after = await snapshot(t.id);
+  assert.deepEqual(after.thread.context, before.thread.context, 'the scope is not switched');
+  assert.deepEqual(after.messages, before.messages, 'no divider, no row, no flag');
+  assert.equal(after.inFlight, null);
+});
+
+test('supersedes with an issue link that would switch a No-project chat: 409 supersede-refused before the link switch (scope kept, no notice row)', async () => {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const { addProject } = await import('../src/core/projects.mjs');
+  const dir = join(homeDir, 'code', 'shop');
+  await mkdir(join(dir, '.git'), { recursive: true });
+  await writeFile(join(dir, '.git', 'config'), '[core]\n\tbare = false\n[remote "origin"]\n\turl = https://github.com/Acme/Shop.git\n');
+  const shop = (await addProject({ name: 'Shop', path: dir })).find((p) => p.name === 'Shop');
+  assert.ok(shop && shop.key, 'the fixture registered the project');
+  const NOPROJ = { view: 'chat', pinned: false };
+  const t = await newThread();
+  const frag = await sendSettled(t.id, { text: 'Please fix', context: NOPROJ });
+  const before = await snapshot(t.id);
+  const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'Please fix https://github.com/Acme/Shop/issues/12.', ...MODEL, context: NOPROJ, supersedes: frag.userMessageId });
+  assert.equal(r.status, 409);
+  // This exact reason proves the link matched the project: the refusal is the scope one, not the store's.
+  assert.deepEqual(await r.json(), { error: 'the earlier message cannot be replaced: the chat scope changed', code: 'supersede-refused' });
+  const after = await snapshot(t.id);
+  assert.deepEqual(after.thread.context, before.thread.context, 'the link did not switch the chat');
+  assert.deepEqual(after.messages, before.messages, 'no divider, no "Switched to" notice, no row, no flag');
+  assert.equal(after.inFlight, null);
+});
+
+test('supersedes on an archived chat whose target cannot be replaced: 409 supersede-refused, the chat stays archived', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const t = await newThread();
+  const frag = await sendSettled(t.id, { text: 'Start a run for' });
+  store.setMessageBlocks(frag.assistantMessageId, [{ kind: 'card', id: 'card_0000aa03', state: 'proposed', card: { type: 'run' } }]);
+  store.setArchived(t.id, true);
+  const before = await snapshot(t.id);
+  assert.ok(before.thread.archivedAt, 'the fixture archived the chat');
+  const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'Start a run for the api project', ...MODEL, supersedes: frag.userMessageId });
+  assert.equal(r.status, 409);
+  assert.equal((await r.json()).code, 'supersede-refused');
+  const after = await snapshot(t.id);
+  assert.equal(after.thread.archivedAt, before.thread.archivedAt, 'still archived');
+  assert.deepEqual(after.messages, before.messages);
+});

@@ -1,7 +1,7 @@
 // test/ask-engine-ui.test.mjs — the panel's engine helpers (cascading-settings-design.md §6 Ask, D12, D16).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { engineOfEntry, chatEngineOf, chatSpawnsAgents, pickerGroups, attachRefusal, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from '../ui/public/ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, chatSpawnsAgents, pickerGroups, moreHarnesses, attachRefusal, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from '../ui/public/ask-engine.mjs';
 import { chatSwitchChanges } from '../src/shared/engine-switch.mjs';
 
 const CAT = { models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }, { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex' }] };
@@ -19,6 +19,17 @@ test('engineOfEntry / chatEngineOf: a chat with an assistant row is locked to it
 test('pickerGroups: one group per engine present, Claude first; a lock keeps one', () => {
   assert.deepEqual(pickerGroups(CAT.models).map((g) => [g.label, g.models.map((m) => m.id)]), [['Claude Code', ['claude-opus-5-5']], ['OpenAI Codex (beta)', ['gpt-5.5']]]);
   assert.deepEqual(pickerGroups(CAT.models, { lock: 'codex' }).map((g) => g.engine), ['codex']);
+});
+
+test('moreHarnesses: the sign-in chat engines with no model, in picker order; none once each has one', () => {
+  assert.deepEqual(moreHarnesses(CAT.models), [
+    { engine: 'gemini', label: 'Gemini CLI (beta)' }, { engine: 'goose', label: 'Goose (beta)' },
+    { engine: 'opencode', label: 'OpenCode (beta)' }, { engine: 'qwen', label: 'Qwen Code (beta)' }]);
+  const some = [...CAT.models, { id: 'openai/gpt-5', engine: 'opencode' }, { id: 'gemini-3-pro', engine: 'gemini' }];
+  assert.deepEqual(moreHarnesses(some).map((h) => h.engine), ['goose', 'qwen']);
+  const all = [...some, { id: 'g', engine: 'goose' }, { id: 'q', engine: 'qwen' }];
+  assert.deepEqual(moreHarnesses(all), []);
+  assert.deepEqual(moreHarnesses(null).map((h) => h.engine), ['gemini', 'goose', 'opencode', 'qwen'], 'an engine with built-ins (Claude Code, Codex, Copilot) is never one');
 });
 
 test('attachRefusal: a Codex chat refuses PDFs and names the chats that view them', () => {

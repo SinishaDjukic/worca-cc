@@ -2,12 +2,10 @@
 // and art only — it never reads or changes a workspace. app.js decides WHEN it opens (Create
 // workspace for a first-timer; the Workspaces page's "How workspaces work" button on request) and
 // remembers that it was seen (POST /api/onboarding {workspaceGuideSeen:true}); this module paints.
-import { layoutDialog } from './dialog-layout.mjs';
-import { guardModal } from './modal-guard.mjs';
+import { openGuideDialog } from './how-it-works/guide-dialog.mjs';
 import { changeOrder } from '../../src/shared/workspace-map/order.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const FOCUSABLE = 'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
 const NODE_W = 132;
 const NODE_H = 36;
 const VIEW_W = 620;
@@ -136,120 +134,25 @@ function buildArt(doc, kind) {
   return [];
 }
 
-const BACKDROP_GRACE_MS = 450;
-
 /**
  * Open the walkthrough over the current page. mode 'create' (from Create workspace: the last
  * screen's button reads "Create workspace") or 'learn' (from "How workspaces work": "Done").
+ * `tour` ({ label }) adds a "show me" button on the last screen; Workspaces passes none today.
  * onClose(how), called once: 'finish' (the last screen's button) | 'skip' (Skip) |
- * 'close' (×, Escape, a backdrop click). The caller routes; this module never does.
+ * 'close' (×, Escape, a backdrop click) | 'tour'. The caller routes; this module never does.
  * @returns {{ close:(how?:string)=>void, goTo:(i:number)=>void, index:()=>number, modal:HTMLElement }}
  */
-export function openWorkspaceGuide({ doc = globalThis.document, mode = 'learn', onClose = () => {} } = {}) {
-  const el = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
-  const btn = (text, cls, on) => { const b = el('button', cls, text); b.type = 'button'; b.addEventListener('click', on); return b; };
-  const steps = WORKSPACE_GUIDE_STEPS;
-  const finishLabel = mode === 'create' ? 'Create workspace' : 'Done';
-  const opener = doc.activeElement;
-  let at = 0;
-  let closed = false;
-
-  const dots = el('span', 'wg-dots');
-  dots.setAttribute('aria-hidden', 'true');                 // "N of M" says the same to a screen reader
-  for (const s of steps) { const d = el('span', 'wg-dot'); d.dataset.step = s.id; dots.append(d); }
-  const stepOf = el('span', 'wg-step-of');
-  stepOf.setAttribute('aria-live', 'polite');
-  const closeX = btn('', 'btn btn-quiet btn-icon btn-sm wg-close', () => teardown('close'));
-  const xIcon = doc.createElementNS(SVG_NS, 'svg');
-  xIcon.setAttribute('viewBox', '0 0 24 24');
-  xIcon.setAttribute('width', '16');
-  xIcon.setAttribute('height', '16');
-  xIcon.setAttribute('fill', 'none');
-  xIcon.setAttribute('stroke', 'currentColor');
-  xIcon.setAttribute('stroke-width', '2');
-  xIcon.setAttribute('stroke-linecap', 'round');
-  xIcon.setAttribute('aria-hidden', 'true');
-  const xPath = doc.createElementNS(SVG_NS, 'path');
-  xPath.setAttribute('d', 'M6 6l12 12M18 6L6 18');
-  xIcon.append(xPath);
-  closeX.append(xIcon);
-  closeX.setAttribute('aria-label', 'Close');
-  const head = el('div', 'wg-head');
-  head.append(dots, stepOf, closeX);
-  const title = el('h2', 'wg-title');
-  title.id = 'wg-title';
-  const body = el('div', 'wg-step');
-  const skip = btn('Skip', 'btn btn-quiet wg-skip', () => teardown('skip'));
-  const back = btn('Back', 'btn wg-back', () => goTo(at - 1));
-  const next = btn('Next', 'btn btn-primary wg-next', () => (at === steps.length - 1 ? teardown('finish') : goTo(at + 1)));
-  const actions = el('div', 'confirm-actions wg-actions');
-  actions.append(skip, el('span', 'wg-spacer'), back, next);
-  const card = el('div', 'card wg-card');
-  card.append(head, title, body, actions);
-  layoutDialog(card, { head: [head, title], foot: [actions] });
-  const modal = el('div', 'viewer-modal wg-modal');
-  modal.id = 'workspace-guide-modal';
-  modal.dataset.mode = mode;
-  modal.setAttribute('role', 'dialog');
-  modal.setAttribute('aria-modal', 'true');
-  modal.setAttribute('aria-labelledby', 'wg-title');
-  modal.append(card);
-  // On the modal itself: Escape stops HERE, so neither modal-guard's nor the spotlight tour's
-  // document listener also acts on it (a tour that led to Create workspace survives).
-  modal.addEventListener('keydown', onKey);
-  // Backdrop click (press AND release on the scrim) = the safe "close"; stack + dialogOpen().
-  // Ignored for the first moments: a double-click on Create lands its 2nd click on the new scrim.
-  const openedAt = Date.now();
-  const guard = guardModal(modal, {
-    kind: 'decision',
-    close: () => { if (Date.now() - openedAt >= BACKDROP_GRACE_MS) teardown('close'); },
+export function openWorkspaceGuide({ doc = globalThis.document, mode = 'learn', tour = null, onClose = () => {} } = {}) {
+  const create = mode === 'create';
+  return openGuideDialog({
+    doc,
+    id: 'workspace-guide-modal',
+    steps: WORKSPACE_GUIDE_STEPS,
+    buildArt,
+    finishLabel: create ? 'Create workspace' : 'Done',
+    tour,
+    tourPlacement: create ? 'secondary' : 'primary',
+    dataset: { mode },
+    onClose,
   });
-
-  function onKey(e) {
-    if (e.defaultPrevented || e.isComposing) return;
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); teardown('close'); return; }
-    if (e.key === 'Tab') { trapTab(e); return; }
-    if (e.key === 'ArrowRight' && at < steps.length - 1) { e.preventDefault(); goTo(at + 1); }
-    else if (e.key === 'ArrowLeft' && at > 0) { e.preventDefault(); goTo(at - 1); }
-  }
-  function trapTab(e) {
-    const list = [...card.querySelectorAll(FOCUSABLE)];
-    if (!list.length) return;
-    const first = list[0];
-    const last = list[list.length - 1];
-    const active = doc.activeElement;
-    if (!card.contains(active)) { e.preventDefault(); first.focus(); }
-    else if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
-  }
-  function goTo(i) {
-    if (closed) return;
-    at = Math.max(0, Math.min(steps.length - 1, i));
-    paint();
-  }
-  function paint() {
-    const s = steps[at];
-    modal.dataset.step = s.id;
-    stepOf.textContent = `${at + 1} of ${steps.length}`;
-    [...dots.children].forEach((d, i) => { d.dataset.state = i < at ? 'done' : i === at ? 'current' : 'todo'; });
-    title.textContent = s.title;
-    body.replaceChildren(...s.paras.map((t) => el('p', null, t)), ...buildArt(doc, s.art));
-    back.disabled = at === 0;
-    next.textContent = at === steps.length - 1 ? finishLabel : 'Next';
-    const a = doc.activeElement;
-    if (!a || a === doc.body || !card.contains(a) || a.disabled) next.focus({ preventScroll: true });
-  }
-  function teardown(how) {
-    if (closed) return;
-    closed = true;
-    guard.release();
-    modal.remove();
-    if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
-    onClose(how);
-  }
-
-  doc.body.append(modal);
-  guard.opened();
-  paint();
-  return { close: (how = 'close') => teardown(how), goTo, index: () => at, modal };
 }

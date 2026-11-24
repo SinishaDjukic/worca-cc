@@ -729,6 +729,23 @@ test('no exported list is mutated', async () => {
   assert.ok([...CODEX_BUILTIN_MODELS, ...COPILOT_BUILTIN_MODELS].every((m) => !('testable' in m)));
 });
 
+test('an OpenCode Zen entry advertises no efforts — a Zen model takes no reasoning variant, so pickers and the spawn must not offer one', async () => {
+  await checkRows([
+    { name: 'POST an engine:opencode Zen model (`opencode/*`): its efforts come back empty', run: async () => {
+      const r = await post('/api/models', { id: 'opencode/big-pickle', label: 'Big Pickle (Zen)', engine: 'opencode', efforts: ['low', 'high'] });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.deepEqual(r.body.model.efforts, [], 'a Zen free model advertises no efforts (it takes no variant)');
+      assert.deepEqual(listGlobalModels().find((m) => m.id === 'opencode/big-pickle').efforts, []);
+    } },
+    { name: 'POST an engine:opencode model of another provider keeps its chosen efforts', run: async () => {
+      const r = await post('/api/models', { id: 'openrouter/z-ai/glm-5.3-prime', label: 'GLM', engine: 'opencode', efforts: ['low', 'high'] });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.deepEqual(r.body.model.efforts, ['low', 'high']);
+      assert.deepEqual(listGlobalModels().find((m) => m.id === 'openrouter/z-ai/glm-5.3-prime').efforts, ['low', 'high']);
+    } },
+  ]);
+});
+
 // ── the pricing override over HTTP (what the editor form actually sends) ──────
 
 test('POST/PATCH /api/models carry `cost` end-to-end (GET unmasked) and reject a malformed `cost` with the form message', async () => {

@@ -491,7 +491,7 @@ test('scope from a pasted link: a No-project send switches to the one project th
         const t = threadWithHistory({ pinned: false });
         const r = await post(`/api/ask/threads/${t.id}/messages`, { text: ISSUE, ...MODEL, context: { view: 'chat', pinned: true, projectKey: android.key } });
         assert.equal(r.status, 202, await r.clone().text());
-        assert.deepEqual(Object.keys(await r.json()).sort(), ['assistantMessageId', 'attachments', 'contexts', 'userMessageId']);
+        assert.deepEqual(Object.keys(await r.json()).sort(), ['assistantMessageId', 'attachments', 'contexts', 'superseded', 'userMessageId']);
         assert.equal(store.getThread(t.id).context.projectKey, android.key);
         assert.deepEqual(autoNotices(t.id), []);
         await idle();

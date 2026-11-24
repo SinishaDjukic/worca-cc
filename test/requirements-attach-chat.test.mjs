@@ -218,5 +218,5 @@ test('a stored feature block never changes: a newer start and a rename after the
 test('the chat route hands the frozen spec to the turn prompt (the renderer is wired, not just exported)', async () => {
   const { readServerSource } = await import('../src/core/read-server-source.mjs');
   const src = readServerSource();
-  assert.match(src.replace(/\s+/g, ' '), /askBuildTurnPrompt\(composerBlock \? `\$\{header\}\\n\\n\$\{composerBlock\}` : header, text, inline, chatBlock \? askRenderChatContextPrompt\(chatBlock\) : '', askRenderAttachedRequirementsPrompt\(featureBlocks\)\)/);
+  assert.match(src.replace(/\s+/g, ' '), /askBuildTurnPrompt\(composerBlock \? `\$\{header\}\\n\\n\$\{composerBlock\}` : header, text, inline, chatBlock \? askRenderChatContextPrompt\(chatBlock\) : '', askRenderAttachedRequirementsPrompt\(featureBlocks\)[,)]/);   // the voice options may follow it
 });

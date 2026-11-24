@@ -79,7 +79,7 @@ async function boot({ hold = null, holdId = WF.id } = {}) {
     if (url.includes('/api/projects')) return ok({ projects: [{ name: 'proj', path: PROJECT, exists: true }] });
     for (const w of [WF, WF2]) {
       if (url.includes(`/api/workflows/${w.id}/defaults`)) return ok({ workflow: w, defaults: {} });
-      if (url.endsWith(`/api/workflows/${w.id}`)) return hold && holdId === w.id ? hold.then(() => ok(w)) : ok(w);
+      if (url.split('?')[0].endsWith(`/api/workflows/${w.id}`)) return hold && holdId === w.id ? hold.then(() => ok(w)) : ok(w);
     }
     if (url.includes('/api/workflows')) return ok({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: WF.id, name: WF.name }, { id: WF2.id, name: WF2.name }] });
     if (url.includes('/api/agents')) return ok({ agents });
