@@ -16,6 +16,7 @@ import { fieldsForRun } from './policy/effective.mjs';
 import { MODEL_ENGINES, HELPER_ENGINES, ASK_ENGINES } from './model-env.mjs';
 import { NIGHT_FIELDS, NIGHT_DEFAULTS, fieldError as nightFieldError } from './night/config.mjs';
 import { PR_OPEN, PR_SLICES } from '../shared/pr-auto.mjs';
+import { isVerbosity, DEFAULT_VERBOSITY, VERBOSITY_HINT } from '../shared/chat-verbosity.mjs';
 
 export const LAYERS = Object.freeze(['project', 'user', 'team']);
 const isObj = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -52,6 +53,8 @@ const SCALARS = [
   scalar({ id: 'humanRateUsdPerHour', check: SETTING_CHECKS.usdCap, def: DEFAULT_HUMAN_RATE_USD, teamKey: 'cost.humanRateUsd', hint: 'must be a positive number of USD' }),
   scalar({ id: 'askMaxTurns', check: SETTING_CHECKS.askMaxTurns, def: DEFAULT_ASK_MAX_TURNS, teamKey: 'ask.maxTurns', hint: 'must be an integer between 1 and 500' }),
   scalar({ id: 'askMaxBudgetUsd', check: SETTING_CHECKS.askMaxBudgetUsd, def: DEFAULT_ASK_MAX_BUDGET_USD, teamKey: 'ask.maxBudgetUsd', hint: 'must be a valid budget' }),
+  // Chat reply style (#1230): chat > project > user > team default > normal (the chat override is resolveChatVerbosity's).
+  scalar({ id: 'chat.verbosity', path: ['chat', 'verbosity'], check: isVerbosity, def: DEFAULT_VERBOSITY, teamKey: 'ask.verbosity', hint: VERBOSITY_HINT }),
   scalar({ id: 'askWeb', check: (value) => { try { assertAskWebInput(webIn(value)); return true; } catch { return false; } }, def: OFF_WEB, hint: 'must be web settings', readUser: (ctx) => ctx.settings().askWeb ?? undefined }),
   scalar({ id: 'smartNaming', check: (value) => { try { assertSmartNamingInput(value); return true; } catch { return false; } }, def: SMART_NAMING_DEFAULTS, hint: 'must be smart run naming settings', readUser: (ctx) => ctx.settings().smartNaming ?? undefined }),
   scalar({ id: 'contextMaxBytesPerFile', check: SETTING_CHECKS.byteCap, def: DEFAULT_CONTEXT_MAX_BYTES_PER_FILE }),

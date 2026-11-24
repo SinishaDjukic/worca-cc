@@ -11,8 +11,13 @@ import {
   askMaxTurns, askMaxBudgetUsd, setAskMaxTurns, setAskMaxBudgetUsd, assertAskLimitInputs,
   DEFAULT_ASK_MAX_TURNS, DEFAULT_ASK_MAX_BUDGET_USD, settingsFile, readSettings,
 } from '../src/core/settings.mjs';
-import { askLimits } from '../src/core/ask/limits.mjs';
+import { askLimits, resolveChatVerbosity } from '../src/core/ask/limits.mjs';
+import { writeTeamPolicyPrefs } from '../src/core/config.mjs';
+import { getDb, prepare } from '../src/core/db.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { useTempHome } from './helpers/temp-home.mjs';
+
+useTempHome(after);   // resolveChatVerbosity's project and team layers read the DB
 
 let sandboxHome;
 const prevEnv = {};
@@ -120,4 +125,30 @@ test('askLimits() reads the settings fresh on every call (D12) and accepts injec
   await setAskMaxBudgetUsd(null);
   assert.deepEqual(askLimits(), { maxTurns: 3, maxBudgetUsd: null }, 'no caching');
   assert.deepEqual(askLimits({ readMaxTurns: () => 9, readMaxBudgetUsd: () => 0.25 }), { maxTurns: 9, maxBudgetUsd: 0.25 });
+});
+
+test('resolveChatVerbosity: a valid thread override wins with source chat; null/invalid override falls through to the cascade; no projectKey skips the project and team layers; invalid stored user/project values resolve to {normal, default} (#1230)', async () => {
+  const key = 'verb-0000a1b2';
+  const writeProject = (settings) => { getDb(); prepare(`INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra) VALUES (?, '{}', '[]', NULL, ?)
+    ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra`).run(key, JSON.stringify({ settings })); };
+  const writeUser = (obj) => writeFile(settingsFile(), JSON.stringify(obj), 'utf8');
+  assert.deepEqual(resolveChatVerbosity(), { level: 'normal', source: 'default' });
+  assert.deepEqual(resolveChatVerbosity({ thread: { verbosity: 'terse' } }), { level: 'terse', source: 'chat' });
+  await writeUser({ chat: { verbosity: 'caveman' } });
+  for (const verbosity of [null, undefined, 'loud', 'TERSE', 7]) {
+    assert.deepEqual(resolveChatVerbosity({ thread: { verbosity } }), { level: 'caveman', source: 'user' }, String(verbosity));
+  }
+  writeProject({ chat: { verbosity: 'detailed' } });
+  assert.deepEqual(resolveChatVerbosity({ thread: { verbosity: null }, projectKey: key }), { level: 'detailed', source: 'project' });
+  assert.deepEqual(resolveChatVerbosity({ thread: { verbosity: 'concise' }, projectKey: key }), { level: 'concise', source: 'chat' }, 'chat beats project');
+  assert.deepEqual(resolveChatVerbosity({ thread: null, projectKey: null }), { level: 'caveman', source: 'user' }, 'no projectKey: no project layer');
+  writeProject({});
+  writeTeamPolicyPrefs(key, { present: true, docKnown: true, slug: 'acme/verb', headSha: 'abc1234', delegateTo: null,
+    doc: { schema: 1, fields: { 'ask.verbosity': { kind: 'default', value: 'terse' } }, workspaceRuns: {}, catalogs: { guardrailSets: [], models: [] } } });
+  await writeUser({});
+  assert.deepEqual(resolveChatVerbosity({ projectKey: key }), { level: 'terse', source: 'team' });
+  assert.deepEqual(resolveChatVerbosity({}), { level: 'normal', source: 'default' }, 'no projectKey: no team layer');
+  await writeUser({ chat: { verbosity: 'LOUD' } });
+  writeProject({ chat: { verbosity: 99 } });
+  assert.deepEqual(resolveChatVerbosity({ thread: { verbosity: 'x' } }), { level: 'normal', source: 'default' }, 'invalid stored values never throw');
 });

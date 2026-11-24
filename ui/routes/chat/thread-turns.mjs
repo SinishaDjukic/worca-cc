@@ -33,6 +33,7 @@ import { listProjects } from '../../../src/core/projects.mjs';
 import { changesCard, landingFacts, landingFactsOfFeature } from '../../../src/core/shape/changes.mjs';
 import { isGenericBinary } from '../../../src/shared/artifact-kinds.mjs';
 import { chatAttachRefusal, chatSwitchChanges, engineLabel } from '../../../src/shared/engine-switch.mjs';
+import { isVerbosity, VERBOSITY_HINT } from '../../../src/shared/chat-verbosity.mjs';
 import { askChatEngine, askChatEngineGate, askContextTokens, askCredentialGate, askDeleting, askEngineSwitchText, askIdParam, askInFlight, askRunningCount, askSignedIn, askSupersedePrecheck, askSwitchTranscript, askTurnEngine, askViewer, badRequest, broadcast, brokerStartRefusal, factDeps, flipCard, liveRunEntry, postDirection, startAskTurn, switchThreadScope } from '../../server.mjs';
 
 /** A message typed in a design chat closes the chat's open clarifying cards (L5.9): every `design-questions` card still
@@ -267,6 +268,8 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     const mo = body.mcpOff === undefined ? { ok: true, value: undefined } : validateMcpOff(body.mcpOff);
     if (!mo.ok) return badRequest(res, mo.error);
     if (body.agentMode !== undefined && typeof body.agentMode !== 'boolean') return badRequest(res, 'agentMode must be true or false');
+    // #1230: a new chat's reply style picked before its first send rides that send (undefined = no change, null clears).
+    if (body.verbosity !== undefined && body.verbosity !== null && !isVerbosity(body.verbosity)) return badRequest(res, `verbosity ${VERBOSITY_HINT}, or null`);
     // Hands-free voice (per turn, never stored): the panel sends it only while hands-free is really speaking.
     if (body.handsFree !== undefined && typeof body.handsFree !== 'boolean') return badRequest(res, 'handsFree must be true or false');
     // A voice merge (docs/speech.md): the message replaces the one just sent; startAskTurn checks it may be hidden.
@@ -369,8 +372,9 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     if (composerState) askUpdateThread(id, { composer: composerState });
     if (designId) closeOpenDesignQuestions(id);
     if (designState) askUpdateThread(id, { composer: designState });
+    if (body.verbosity !== undefined) askUpdateThread(id, { verbosity: body.verbosity });   // #1230: stored before the turn reads it
     if (thread.archivedAt) askSetArchived(id, false);   // #948 s2: a message brings an archived chat back
-    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, handsFree: body.handsFree === true, supersedes: body.supersedes ?? null, client: req.worcaExtension ? 'browser-extension' : null, scopeNote }, { features: attached.features });
+    const r = await startAskTurn({ threadId: id, thread: body.verbosity !== undefined ? { ...thread, verbosity: body.verbosity } : thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, handsFree: body.handsFree === true, supersedes: body.supersedes ?? null, client: req.worcaExtension ? 'browser-extension' : null, scopeNote }, { features: attached.features });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.code ? { code: r.code } : {}), ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast

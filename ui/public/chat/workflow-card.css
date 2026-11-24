@@ -157,6 +157,9 @@
 /* The per-chat MCP picker (MCP registry §9.4) opens over the scope pill it sits beside. Level 1 rows hold a
    small switch and a drill button; level 2 rows a copy name and its switch. */
 .ask-pop-mcp{left:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:300px;max-height:min(420px,70%);overflow-y:auto;}
+/* The Style picker (ask-panel.mjs openVerbosityPopover, #1230). left is the fallback; ask-panel.mjs
+   anchorVerbosityPopover aligns it with the Style pill. */
+.ask-pop-verbosity{left:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:240px;max-height:min(420px,70%);overflow-y:auto;}
 .ask-mcp-row{display:flex;align-items:center;gap:6px;padding:0 11px;}
 .ask-mcp-row .ask-pop-item{flex:1 1 auto;min-width:0;padding-left:6px;}
 .ask-mcp-copy{flex:1 1 auto;min-width:0;padding:9px 0;font-family:var(--mono);font-size:12px;color:var(--ink);

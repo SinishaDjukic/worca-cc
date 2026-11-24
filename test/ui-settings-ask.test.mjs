@@ -335,6 +335,19 @@ test('ui-settings-ask: the suggestions toggle paints from chat prefs and rides t
   assert.deepEqual(posts[0].chat, { scriptTools: true, suggestions: false, summariseCommands: true });
 });
 
+test('changing Reply style posts chat.verbosity (#1230)', async () => {
+  const { window, $, posts, tick, openSettings } = await boot({ get: { chat: { verbosity: 'concise' } } });
+  await openSettings();
+  const sel = $('#chatVerbosity');
+  assert.ok(sel, 'the select is mounted in the Limits & access card');
+  assert.equal(sel.value, 'concise', 'paints the stored user value');
+  assert.deepEqual([...sel.options].map((o) => o.value), ['detailed', 'normal', 'concise', 'terse', 'caveman']);
+  edit(window, sel, 'terse');
+  $('#askLimitsSave').click();
+  await tick();
+  assert.deepEqual(posts[0].chat, { scriptTools: true, suggestions: true, summariseCommands: true, verbosity: 'terse' });
+});
+
 test('the web section posts askWeb only when touched (trimmed, blank lines dropped)', async () => {
   // One boot per row (cuts the count, not the time).
   await checkRows([

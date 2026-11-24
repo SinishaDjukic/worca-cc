@@ -122,3 +122,18 @@ test('localSnapshot: pr.open and pr.slices are set only when the project stored 
   assert.deepEqual(s['pr.slices'], { value: null, set: false });
   writeProjectSettings(proj, { 'pr.open': null });
 });
+
+test('ask.verbosity local snapshot: normal unset; set:true and the value after a user or project value (#1230)', async () => {
+  const { writeProjectSettings } = await import('../src/core/settings-cascade.mjs');
+  const { setChatPrefs } = await import('../src/core/settings.mjs');
+  assert.deepEqual(localSnapshot(null)['ask.verbosity'], { value: 'normal', set: false });
+  assert.deepEqual(localSnapshot(proj)['ask.verbosity'], { value: 'normal', set: false });
+  await setChatPrefs({ verbosity: 'terse' });
+  assert.deepEqual(localSnapshot(null)['ask.verbosity'], { value: 'terse', set: true });
+  writeProjectSettings(proj, { 'chat.verbosity': 'detailed' });
+  assert.deepEqual(localSnapshot(proj)['ask.verbosity'], { value: 'detailed', set: true }, 'the project value wins');
+  await setChatPrefs({ verbosity: null });
+  assert.deepEqual(localSnapshot(proj)['ask.verbosity'], { value: 'detailed', set: true }, 'a project value alone is a stored choice');
+  assert.deepEqual(localSnapshot(null)['ask.verbosity'], { value: 'normal', set: false });
+  writeProjectSettings(proj, { 'chat.verbosity': null });
+});

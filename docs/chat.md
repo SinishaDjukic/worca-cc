@@ -78,6 +78,34 @@ chat as a card with **Stop** and **Output**. Chat changes files only through com
 Shells get a cleaned environment and a command check. That isn't a sandbox. A hosted Worca allows no commands
 unless `WORCA_TERMINAL_REMOTE=1`. See [Terminal](terminal.md).
 
+## Reply style (verbosity)
+
+Choose how long Chat's answers are: **Detailed**, **Normal** (the default, unchanged), **Concise**, **Terse** or
+**Caveman** (minimal words, fragments). Every engine gets the same style. The Workflows composer and Design chats
+keep their own style.
+
+- **This chat:** the **Style** button in the composer row (`Style · Default` until you pick one), or type
+  `/verbosity terse` and press Enter. `/verbosity default` (or `reset`, `auto`) goes back to your settings, and
+  `/verbosity` alone shows the current style. The command is never sent as a message; a toast confirms it. A pick
+  made while a reply streams applies from the next reply. The pick is saved with the chat, and a new chat's pick is
+  saved with its first message.
+- **Your setting:** Settings › Chat › Limits & access › **Reply style**, or ask Chat ("make your answers terse":
+  `change_setting chat.verbosity`, with a receipt you can revert).
+- **A project:** the project's Settings tab › Chat › **Reply style**, or `change_setting` with scope "project".
+- **The team:** a team policy can set `ask.verbosity` as a default ([Team policy](team-policy.md)).
+
+The first one set wins: the chat's own pick, then the project, then your setting, then the team default, then Normal.
+The team default applies only to a chat in a project: a No-project or workspace chat uses its own pick, then your
+setting, then Normal.
+
+A style changes only Chat's own prose. Tool arguments, the brief of a run card or any other proposal you confirm,
+code, commands, ids, paths, links, chips, and the warnings and confirmations Chat must give are always written in
+full.
+
+Each finished reply, and the running one, shows its tokens next to the context fill and the cost:
+`12.3k ctx · 12.3k in · 456 out · $0.10`. **in** counts everything sent to the model, including cache reads and
+writes; **out** is what it wrote. See [Costs](costs.md#tokens-per-reply).
+
 ## Pinpoint
 
 Select text in a chat answer, a markdown artifact or the Diff tab. You can then **Explain** it, ask for

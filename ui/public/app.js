@@ -219,7 +219,7 @@ import { renderCatalogue, renderModelPanel } from './models/catalogue-view.mjs';
 import { buildJobs, jobsSaved, jobsSaveBody, jobsDirty } from './models/jobs-model.mjs';
 import { renderJobs, openOverrideMenu } from './models/jobs-view.mjs';
 import { openModelPicker } from './models/model-picker.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields, renderVerbositySelect, collectVerbositySelect } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
@@ -17798,6 +17798,7 @@ function paintAskSettings(data) {
   budget.value = data.askMaxBudgetUsd == null ? '' : String(data.askMaxBudgetUsd);
   // W20: the chat's script tools ride the same payload (`chat`), so the card paints from
   // the GET and from every save response without a second fetch.
+  renderVerbositySelect({ prefs: data.chat || {} }, document.getElementById('ask-verbosity-host'));   // #1230
   const scriptHost = document.getElementById('ask-script-tools-host');
   if (scriptHost) scriptHost.replaceChildren(renderScriptToolsToggle({ prefs: data.chat || {} }, { doc: document }));
   const suggestHost = document.getElementById('ask-suggestions-host');
@@ -17860,6 +17861,7 @@ function saveAskLimits(e) {
     ...(scriptHost ? collectScriptToolsToggle(scriptHost) : {}),
     ...(suggestHost ? collectSuggestionsToggle(suggestHost) : {}),
     ...(summariesHost ? collectSummariesToggle(summariesHost) : {}),
+    ...collectVerbositySelect(document.getElementById('ask-verbosity-host')),   // #1230: only when changed
   };
   postAskLimits({ askMaxTurns, askMaxBudgetUsd,
     ...(Object.keys(chat).length ? { chat } : {}),

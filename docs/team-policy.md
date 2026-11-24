@@ -33,6 +33,7 @@ No run is ever blocked by a policy. The two Chat web fields are the exception to
 | Reset period | weekly / monthly, when you have not stored one | default |
 | Pooled budget (USD) | the whole team's figure, read from team metrics; advisory only | soft |
 | Chat turn limit, per-turn cap | Settings › Chat, when you have not stored them | default |
+| Chat reply style | Settings › Chat reply style for chats in the project, when no chat, project or user value is set | default |
 | Chat web access | off switches web access off for chats pinned to the project; a policy can never switch it on | soft (off only) |
 | Chat web allowlist | the most a developer may allow: hosts outside it are dropped from their own list for chats pinned to the project; it never adds a host | soft |
 | Guardrails default set / minimum tier | what the New pipeline picker starts on; a run below the tier warns | default / soft |
@@ -284,6 +285,9 @@ mechanics.
 
   An edit card lists each change as before → after. When you apply it, Worca re-reads the
   policy and applies the changes on top. A teammate's publish made since the proposal is kept.
+
+The policy's `ask.verbosity` default sets the reply style of chats in the project when the chat, the project and
+the developer set none ([Reply style](chat.md#reply-style-verbosity)). A No-project or workspace chat never reads it.
 
 Continuing past a team cap is deliberately not something the chat can do. That override carries
 a person's reason, so it stays on the pause banner and in History. When the Team policy page is

@@ -67,6 +67,15 @@ export function ctxBreakdown(ctx, w) {
     pct: ctxPercent(ctx, w), level: ctxLevel(ctx, w),
   };
 }
+/** One reply's tokens (#1230): input counts cache reads and writes too (usage.input alone is often a few tokens with
+ *  prompt caching). "12.3k in · 456 out", or null with no usage or nothing counted. Non-finite or negative parts are 0. */
+export function fmtReplyTokens(usage) {
+  if (!usage || typeof usage !== 'object') return null;
+  const n = (v) => (Number.isFinite(v) && v > 0 ? v : 0);
+  const input = n(usage.input) + n(usage.cacheRead) + n(usage.cacheCreation);
+  const output = n(usage.output);
+  return input || output ? `${kTok(input)} in · ${kTok(output)} out` : null;
+}
 export function fmtUsd(x) {
   return Number.isFinite(x) ? `$${x.toFixed(2)}` : null;
 }

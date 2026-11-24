@@ -21,6 +21,7 @@ import { normaliseDimension, MAX_DIMENSIONS } from '../../shared/tag-dimensions.
 import { MODEL_ROLES, TEAM_ROLE_HARNESSES } from '../../shared/model-roles.mjs';
 import { ENGINES } from '../../shared/engine-switch.mjs';
 import { PR_OPEN, PR_SLICES } from '../../shared/pr-auto.mjs';
+import { VERBOSITY_LEVELS } from '../../shared/chat-verbosity.mjs';
 
 export const POLICY_SCHEMA = 1;
 export const KINDS = Object.freeze(['default', 'soft', 'hard']);
@@ -53,6 +54,7 @@ export const FIELDS = Object.freeze([
   { key: 'cost.humanRateUsd', group: 'cost', label: 'Developer rate (USD/h)', help: 'Prices the estimated human hours behind "Saved". A developer\'s own rate wins when set.', type: 'usd', kinds: ['default'], local: 'humanRateUsdPerHour' },
   { key: 'ask.maxTurns', group: 'ask', label: 'Turn limit', help: 'Agentic turns per Chat turn.', type: 'int', min: 1, max: 500, kinds: ['default'], local: 'askMaxTurns' },
   { key: 'ask.maxBudgetUsd', group: 'ask', label: 'Per-turn cost cap (USD)', help: 'Chat per-turn cap; null means no cap.', type: 'usd-or-null', min: 0.1, max: 100, kinds: ['default'], local: 'askMaxBudgetUsd' },
+  { key: 'ask.verbosity', group: 'ask', label: 'Reply style', help: 'Default Chat reply length, from detailed to caveman-terse.', type: 'enum', values: VERBOSITY_LEVELS, kinds: ['default'], local: 'chat.verbosity' },
   // The two web fields only ever NARROW, and bind (no "go past it"): web access is opt-in per developer, and the policy
   // branch is writable by whoever can push to the repo — so a policy may switch it off or cap the hosts, never widen.
   { key: 'ask.webEnabled', group: 'ask', label: 'Web access', help: 'Off switches Chat web access off for chats pinned to this project. A policy can never switch it on — each developer opts in.', type: 'bool', kinds: ['soft'], offOnly: true, local: 'askWeb.enabled' },

@@ -200,3 +200,28 @@ test('pr.open: project > team default > none; no user layer (settings.json is ig
   assert.deepEqual(pick(r), { value: 'draft', source: 'project' });
   assert.equal(r.layers.user, undefined);
 });
+
+test('chat.verbosity: project > user > team default > normal (with a projectKey); invalid layer ignored; no projectKey → no team layer (#1230)', () => {
+  const key = projectKey(dir);
+  const scope = { projectKey: key };
+  // writeProjectRow replaces project_config.extra wholesale, team prefs included: re-seed the team after it.
+  const team = () => writeTeamPolicyPrefs(key, { present: true, docKnown: true, slug: 'acme/cascade', headSha: 'abc1234', delegateTo: null,
+    doc: { ...TEAM_DOC, fields: { ...TEAM_DOC.fields, 'ask.verbosity': { kind: 'default', value: 'caveman' } } } });
+  assert.deepEqual(pick(resolveSetting('chat.verbosity', scope)), { value: 'normal', source: 'default' });
+  team();
+  assert.deepEqual(pick(resolveSetting('chat.verbosity', scope)), { value: 'caveman', source: 'team' });
+  writeUser({ chat: { verbosity: 'detailed' } });
+  assert.deepEqual(pick(resolveSetting('chat.verbosity', scope)), { value: 'detailed', source: 'user' });
+  writeProjectRow({ extra: { settings: { chat: { verbosity: 'terse' } } } });
+  team();
+  assert.deepEqual(pick(resolveSetting('chat.verbosity', scope)), { value: 'terse', source: 'project' });
+  writeProjectRow({ extra: { settings: { chat: { verbosity: 'LOUD' } } } });
+  team();
+  assert.deepEqual(pick(resolveSetting('chat.verbosity', scope)), { value: 'detailed', source: 'user' }, 'an invalid project value falls through');
+  writeUser({ chat: { verbosity: 42 } });
+  assert.deepEqual(pick(resolveSetting('chat.verbosity', scope)), { value: 'caveman', source: 'team' }, 'an invalid user value falls through');
+  assert.deepEqual(pick(resolveSetting('chat.verbosity', {})), { value: 'normal', source: 'default' }, 'no projectKey: no project and no team layer');
+  writeUser({ chat: { verbosity: 'concise' } });
+  assert.deepEqual(pick(resolveSetting('chat.verbosity', {})), { value: 'concise', source: 'user' });
+  assert.ok(settingIds().includes('chat.verbosity'), 'cascadable: listed for the project Settings API');
+});

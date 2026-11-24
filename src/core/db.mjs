@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 101;
+export const SCHEMA_VERSION = 102;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -915,7 +915,8 @@ const INCREMENTAL_COLUMNS = {
                             composer: 'TEXT',        // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
                             archived_at: 'TEXT',     // v75 (#948 s2): when the chat was archived; NULL = not archived
                             pinned_at: 'TEXT',       // v75 (#948 s2): when the chat was pinned; NULL = not pinned
-                            group_id: 'TEXT' },      // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
+                            group_id: 'TEXT',        // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
+                            verbosity: 'TEXT' },     // v102 (#1230): the chat's reply-style override; NULL = follow settings
   shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
                             ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
                             shipped_at: 'TEXT',       // v58: when Ship as ran
@@ -2920,6 +2921,8 @@ export function migrate(db) {
     // v101: ask_messages.superseded_by (a voice merge hides the turn it replaces) — INCREMENTAL_COLUMNS, added by the hoisted
     // repairSchemaGaps. First written as v89, then v96, v97 and v100 (Requirements 9c took 89; Stillhet and Design took 90–95;
     // the Requirements run note took 96; the tool panel and design chats took 97–99; Levels took 100).
+    // v102 Chat reply style (#1230): ask_threads.verbosity — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps.
+    // First written as v97 (the tool panel, design chats, Levels and the voice merge took 97–101).
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

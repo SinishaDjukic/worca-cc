@@ -16,6 +16,7 @@ import { isGroupBy } from '../../shared/team-metrics/aggregate.mjs';
 import { isValidTimeZone, formatInstant } from '../../shared/schedule/recurrence.mjs';
 import { chatDescriptor } from '../engines/chat.mjs';   // a locked-down chat's words for its engine (engines/chat-descriptor.mjs)   // prompt DATA (D23 — recipes.mjs is the ONE Auto module naming agents; it has zero imports)
 import { engineLabel, chatAttachRefusal } from '../../shared/engine-switch.mjs';   // #943: the handoff transcript's words
+import { verbosityBlock } from './verbosity.mjs';   // #1230: the reply-style block, appended last
 
 export const ASK_SYSTEM_RULES = [
   'You are worca\'s Chat assistant, built into worca-cc (a tool that runs multi-agent pipelines — "runs" — over the user\'s projects and workspaces, using saved workflows made of agent steps. Most workflows are coding ones, but a workflow can be built for any kind of work).',
@@ -464,8 +465,10 @@ export function renderCommandsSection() {
  *  without script or web tools. `shape` (Shape it first, spec D9) adds its section after mcp. `chat` ({platform}: the
  *  thread is mirrored to a chat app, freeform chat) adds the chat channel section after it. `commands` (agent mode,
  *  #574) appends the commands section. `tabs` (issue 1064 slice 3) appends the tool panel section, and `design` (start_design) the
- *  Designs section after it; `designChat` (the chat has a design) the design rules (DESIGN_CHAT_RULES) last. */
-export function buildSystemPrompt(catalog, { scripts = null, deployment = 'local', web = null, mcp = null, commands = false, engine = 'claude', shape = false, git = true, chat = null, tabs = false, design = false, designChat = false, designPictures = true } = {}) {
+ *  Designs section after it; `designChat` (the chat has a design) the design rules (DESIGN_CHAT_RULES) after those. `verbosity`
+ *  (#1230, the chat's resolved reply style) appends that level's block as the very last step; normal/null/unknown add nothing
+ *  (byte-identical). */
+export function buildSystemPrompt(catalog, { scripts = null, deployment = 'local', web = null, mcp = null, commands = false, engine = 'claude', shape = false, git = true, chat = null, tabs = false, design = false, designChat = false, designPictures = true, verbosity = null } = {}) {
   const own = engineSystemRules(engine);
   const hosted = deployment === 'container' || deployment === 'hosted' ? `${own}\n${ASK_HOSTING_RULE}` : own;
   // `git` (P0): false = this machine has no git — the rules then name no git-only tool (noGitSystemRules).
@@ -482,7 +485,9 @@ export function buildSystemPrompt(catalog, { scripts = null, deployment = 'local
   // A locked-down chat (Codex) reads the design with worca's file tools, which reach its work/ folder and project only
   // through the absolute paths get_design returns (ask/file-deps.mjs askFileRoots).
   const designRules = designChat && chatDescriptor(engine) ? `${DESIGN_CHAT_RULES}\n${DESIGN_LOCKED_FILES}` : DESIGN_CHAT_RULES;
-  return designChat ? `${withHandoff}\n\n${designRules}` : withHandoff;
+  const withDesign = designChat ? `${withHandoff}\n\n${designRules}` : withHandoff;
+  const style = verbosityBlock(verbosity);
+  return style ? `${withDesign}\n\n${style}` : withDesign;
 }
 
 /** Composer rule 12's image/PDF sentence; buildComposerSystemPrompt swaps it for its Codex form (D16). */

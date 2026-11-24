@@ -7,6 +7,7 @@
 
 import { makeSwitch } from './switch.mjs';
 import { chip } from './flags.mjs';
+import { VERBOSITY_LEVELS, VERBOSITY_LABELS, DEFAULT_VERBOSITY, isVerbosity } from '../../src/shared/chat-verbosity.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -173,6 +174,37 @@ export function renderSummariesToggle({ prefs } = {}, { doc = globalThis.documen
 export function collectSummariesToggle(root) {
   const cb = root && typeof root.querySelector === 'function' ? root.querySelector('input.ask-summaries') : null;
   return { summariseCommands: cb ? cb.checked : true };
+}
+
+/** Settings › Chat "Reply style" (#1230): the user's own Chat reply style, rendered into `host`. Paints the stored value,
+ *  else normal, and records what it painted in data-initial: collectVerbositySelect posts only a change, so a Save of
+ *  the card never pins normal over a project's team default. */
+export function renderVerbositySelect({ prefs } = {}, host) {
+  if (!host) return;
+  const doc = host.ownerDocument;
+  const painted = isVerbosity(prefs?.verbosity) ? prefs.verbosity : DEFAULT_VERBOSITY;
+  const label = h(doc, 'label', 'drow-label', 'Reply style');
+  label.setAttribute('for', 'chatVerbosity');
+  const sel = h(doc, 'select', 'select');
+  sel.id = 'chatVerbosity';
+  sel.dataset.setting = 'chat.verbosity';
+  for (const v of VERBOSITY_LEVELS) {
+    const o = h(doc, 'option', null, VERBOSITY_LABELS[v]);
+    o.value = v;
+    sel.appendChild(o);
+  }
+  sel.value = painted;
+  sel.dataset.initial = painted;
+  const ctl = h(doc, 'div', 'drow-control');
+  ctl.appendChild(sel);
+  const hint = h(doc, 'small', 'hint drow-help', "A chat's own pick and a project override win. With no value here, a project's team policy may set the default.");
+  host.replaceChildren(label, ctl, hint);
+}
+
+/** collectVerbositySelect(host) -> {verbosity} only when the select moved from what it painted, else {}. */
+export function collectVerbositySelect(host) {
+  const sel = host && typeof host.querySelector === 'function' ? host.querySelector('select#chatVerbosity') : null;
+  return sel && sel.value !== sel.dataset.initial ? { verbosity: sel.value } : {};
 }
 
 /** Ask Worca → Web access (docs/guardrails.md "Web access"): off by default; the allowlist is enforced by worca's server. */

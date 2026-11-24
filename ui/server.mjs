@@ -162,7 +162,7 @@ import { CHAT_BUSY, chatBusyReason, chatGroupBusyText } from '../src/shared/chat
 import { revealTargetFor as askRevealTargetFor } from '../src/core/ask/show-files-deps.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { stripIntentLead } from '../src/shared/intent-leads.mjs';
-import { ASK_LIMITS, askLimits as askLimitsFor } from '../src/core/ask/limits.mjs';
+import { ASK_LIMITS, askLimits as askLimitsFor, resolveChatVerbosity } from '../src/core/ask/limits.mjs';
 import { contextEntries as askContextEntries } from '../src/core/ask/contexts.mjs';
 import { askWebAccess, WEB_OFF } from '../src/core/ask/web-access.mjs';
 import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf, askEventPick as askEventPickOf, eventFallbackNotice } from '../src/core/ask/models.mjs';
@@ -9096,10 +9096,10 @@ function askWebAccessFor(threadId, ctx) {
  *  (`edits`) — with the runtimes this host actually has (the python probe, cached 60 s); plus the web section when `web`
  *  (askWebAccess() for this turn) is on, and the MCP servers section when the turn has registry copies (`mcp`,
  *  askMcpPromptInput()). Memory is mounted, not rendered. */
-async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude', chat = null, tabs = false, design = false, designChat = false } = {}) {
+async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude', chat = null, tabs = false, design = false, designChat = false, verbosity = null } = {}) {
   const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
   return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, tabs, design, designChat, git: gitAvailable(),
-    ...(engine !== 'claude' ? { engine } : {}), shape: true, ...(chat ? { chat } : {}) });
+    ...(engine !== 'claude' ? { engine } : {}), shape: true, ...(chat ? { chat } : {}), ...(verbosity ? { verbosity } : {}) });
 }
 
 /** The Workflows chat's system prompt (D10): composer rules + catalog + scripts/web — no MCP, no commands, no hosting rule. */
@@ -9590,7 +9590,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const tabsOn = !surfaceMode && !chatBound && askTabsEnabled();
     const systemPrompt = composerMode ? await askComposerSystemPromptFor(catalog, { web, engine })
       : await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn, engine, tabs: tabsOn && toolPanelOn(), design: tabsOn && askDesignHandoff(id),
-        designChat: !!dChat, designPictures: designPicturesReady(), chat: chatConv ? { platform: chatConv.platform } : null });
+        designChat: !!dChat, designPictures: designPicturesReady(), chat: chatConv ? { platform: chatConv.platform } : null,
+        verbosity: resolveChatVerbosity({ thread, projectKey: pinned?.projectKey }).level });
     // Shared terminal: what the user ran in this chat's Ask tabs since its last user turn (their commands never wake
     // the chat; an event turn leaves them for the next user turn).
     if (!synthetic && !chatBound && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);

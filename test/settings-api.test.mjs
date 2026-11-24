@@ -555,6 +555,27 @@ test('chat.summariseCommands defaults on, saves false, rejects a non-boolean (#9
   assert.equal(typeof body.error, 'string');
 });
 
+test('chat.verbosity defaults null, saves terse, null clears, rejects \'loud\' with 400 and writes nothing (#1230)', async () => {
+  const file = join(home, '.worca-cc', 'settings.json');
+  let s = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(s.chat.verbosity, null);
+  assert.equal((await postJson({ chat: { verbosity: 'terse' } })).status, 200);
+  s = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(s.chat.verbosity, 'terse');
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).chat.verbosity, 'terse');
+  const before = readFileSync(file);
+  const bad = await postJson({ chat: { verbosity: 'loud' } });
+  assert.equal(bad.status, 400);
+  const body = await bad.json();
+  assert.equal(body.field, 'chat.verbosity', 'settingsErrorReply names the key from the message');
+  assert.equal(body.error, '“Reply style” must be one of detailed, normal, concise, terse, caveman.', 'humanized by settingsErrorReply');
+  assert.deepEqual(readFileSync(file), before, 'a refused POST leaves settings.json byte-identical');
+  assert.equal((await postJson({ chat: { verbosity: null } })).status, 200);
+  s = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(s.chat.verbosity, null);
+  assert.equal('verbosity' in JSON.parse(readFileSync(file, 'utf8')).chat, false, 'null deletes the stored value');
+});
+
 test('POST modelRoles: a model outside the catalog or a bad effort is 400 and writes nothing; ids are stored canonical', async () => {
   const file = join(home, '.worca-cc', 'settings.json');
   const ok0 = await postJson({ enforceTags: false });   // the file exists before the byte comparison

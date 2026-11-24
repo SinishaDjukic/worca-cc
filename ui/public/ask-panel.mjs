@@ -34,6 +34,8 @@ import { engineOfEntry, chatEngineOf, chatSpawnsAgents, pickerGroups, moreHarnes
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
+import { parseVerbosityCommand, verbosityButtonLabel } from './chat/verbosity-command.mjs';
+import { VERBOSITY_LEVELS, VERBOSITY_LABELS } from '../../src/shared/chat-verbosity.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 import { keepFocus } from './chat/keep-focus.mjs';
@@ -68,13 +70,13 @@ import { applyPresetStart } from '../../src/shared/run-presets.mjs';
 import { subagentAliasLabel, subagentAliasTitle } from '../../src/shared/model-roles.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
-  fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
+  fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd, fmtReplyTokens,
 } from './ask-meter.mjs';
 import { renderContextDetails, ctxRing, paintCtxRing, validContexts, fmtElapsed } from './ask-context-view.mjs';
 import { HARNESS_MARKS, markTile } from './models/brand-marks.mjs';
 export {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT,
-  fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
+  fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd, fmtReplyTokens,
 } from './ask-meter.mjs';
 
 /**
@@ -186,6 +188,22 @@ export function chipPickerTop({ top, bottom, panelH, sheetH, gap = 6 }) {
   return Math.max(0, t);
 }
 
+/**
+ * Composer-relative left edge for the Style picker (.ask-pop-verbosity). The scope
+ * and MCP pills sit at the composer's left edge, so their pickers can hug
+ * --ask-col-inset in CSS; the Style pill sits further right in the control row,
+ * so a CSS-anchored menu would open away from it. Align the menu with the pill,
+ * keep it at least `inset` inside both of the composer's edges, and let the left
+ * inset win when the composer is too narrow for both. Zero widths (jsdom,
+ * detached, hidden) or non-finite input return null: keep the CSS fallback, no
+ * fake geometry.
+ */
+export function composerPopLeft({ btnLeft, panelW, boxW, inset }) {
+  if (![btnLeft, panelW, boxW, inset].every(Number.isFinite) || boxW <= 0 || panelW <= 0) return null;
+  const pad = Math.max(0, inset);
+  return Math.max(pad, Math.min(btnLeft, boxW - panelW - pad));
+}
+
 /** Out-of-turn / other-thread frames that can move a History row's dots: a run a
  *  chat follows changed (tracking) or a turn started/ended there (thinking). */
 // worca Chat: a followed run's question notice (ask-message) can turn a dot amber; a new title renames a row.
@@ -246,6 +264,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // the last POST /api/ask/mcp-preview body and whether it failed; gen drops a stale response, render repaints
     // an open picker, saving chains the PATCHes so they land in toggle order.
     mcp: { off: { sets: [], members: [] }, preview: null, failed: false, gen: 0, queued: false, render: null, saving: Promise.resolve() },
+    // #1230: the chat's reply-style override (null = follow settings). Before the chat exists a pick is pending: the
+    // first send carries it. verbositySaving chains the PATCHes so they land in pick order.
+    verbosity: null,
+    verbosityPending: false,
+    verbositySaving: Promise.resolve(),
     commands: new Map(),      // blockId → command card handle (ask-command-card.mjs)
     commandFrames: new Map(), // blockId → the last ask-command view that arrived before its card was built
     commandsOpen: new Set(),  // blockIds whose output the user unfolded (the card's toggle; outlives a rebuild of the card)
@@ -1034,6 +1057,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // home, in a brand-new chat — while the address already names the loading one. The draft waits for it, and so do
     // the add-ons (a direction would reach the run of the chat being left).
     if (typeof st.wantThread === 'string' && st.wantThread !== st.threadId) return false;
+    // #1230: /verbosity is the composer's own command — handled here, before the queue, the attachments and the add-ons,
+    // and never posted as a message (even while a reply streams).
+    const verbosityCmd = queued ? null : parseVerbosityCommand(draft.text);
+    if (verbosityCmd) { runVerbosityCommand(verbosityCmd); return true; }
     // worca Chat CONTRACT §2: an add-on may take the send first (P3's direction to a live run) — even while a reply
     // streams, since it never starts an Ask turn: true = handled, the input cleared; 'keep' = handled, the input kept
     // (the server refused it). Not taken: the add-ons may reword it (transformSend, e.g. P6's intent prefix) — that
@@ -1114,6 +1141,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // MCP registry §9.4: every message carries the picker's choices, so each turn runs what the picker shows —
         // a refused first message (429/403/400, network) or a PATCH still in flight would leave the stored ones behind.
         mcpOff: sentOff,
+        // #1230: a reply style picked before the chat existed rides its first send (stored before the turn reads it).
+        ...(st.verbosityPending ? { verbosity: st.verbosity } : {}),
         // Hands-free voice: ask for a short spoken version first, only while hands-free really speaks (read at POST time).
         ...(handsFreeSpeaking() ? { handsFree: true } : {}),
         // A voice merge: the message it replaces (the server hides that turn, or refuses and the resend below goes plain).
@@ -1157,6 +1186,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         return false;
       }
       st.scopeHeld = null;                           // S39: this message carried the held pick (its pinned is authoritative)
+      // #1230: the message stored the pending reply style; a pick made while this POST was out PATCHed a value the route
+      // then overwrote: re-send the latest, as for mcpOff.
+      if ('verbosity' in payload) { st.verbosityPending = false; if (st.verbosity !== payload.verbosity) patchVerbosity(id, st.verbosity); }
       if (extNow && st.ext === extNow && typeof extNow.sent === 'function') { try { extNow.sent(); } catch { /* the design's own trouble */ } }
       // A toggle made while this POST was out PATCHed a value the route then overwrote with sentOff: re-send the latest.
       if (st.mcp.off !== sentOff) patchMcpOff(id, st.mcp.off);
@@ -2157,6 +2189,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     row.appendChild(el.extSlot);
     el.composerRow = row;
 
+    // #1230: the chat's reply style — `Style · Default` or the chat's own pick. Shown at every interface level (voice
+    // users need it); /verbosity <level> in the composer does the same.
+    const verbosityBtn = make('button', 'btn btn-sm btn-quiet ask-scope-btn ask-verbosity-btn');
+    verbosityBtn.type = 'button';
+    verbosityBtn.setAttribute('data-ask-verbosity-btn', '');
+    verbosityBtn.setAttribute('aria-haspopup', 'menu');
+    verbosityBtn.title = 'Reply style for this chat';
+    el.verbosityLabel = make('span', 'ask-scope-label', verbosityButtonLabel(st.verbosity));
+    verbosityBtn.appendChild(el.verbosityLabel);
+    verbosityBtn.addEventListener('click', () => openVerbosityPopover(verbosityBtn));
+    el.verbosityBtn = verbosityBtn;
+    row.appendChild(verbosityBtn);
+
     row.appendChild(make('span', 'ask-composer-spacer'));
 
     // The cost (an Advanced detail), then the context ring. The ring opens the context popover — the
@@ -2627,6 +2672,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     relayoutCards();
     applyPin();
     if (st.popover && st.popover.trigger === el.ctxBtn) anchorCtxPopover(st.popover.panel, el.ctxBtn);
+    if (st.popover && st.popover.trigger === el.verbosityBtn) anchorVerbosityPopover(st.popover.panel, el.verbosityBtn);
   }
 
   // ---- keyboard + pointer routing ------------------------------------------
@@ -3486,6 +3532,60 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.mcp.render) st.mcp.render();          // the switch moves now; the counts follow the preview
     scheduleMcpRefresh();
   }
+
+  // ---- reply style (#1230) ----------------------------------------------------------------------------------------
+  function paintVerbosity() {
+    if (el.verbosityLabel) el.verbosityLabel.textContent = verbosityButtonLabel(st.verbosity);
+  }
+  /** One PATCH at a time, in pick order (two in flight can land out of order), like patchMcpOff. */
+  function patchVerbosity(tid, value) {
+    const body = JSON.stringify({ verbosity: value });
+    st.verbositySaving = st.verbositySaving
+      .then(() => fetch(`/api/ask/threads/${tid}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body }))
+      .catch(() => { /* the picker keeps the pick; a reload shows what the server stored */ });
+  }
+  /** The chat's override, from the picker or /verbosity: PATCHed when the chat exists, else carried by the first send. */
+  function setVerbosity(next) {
+    if (typeof st.wantThread === 'string' && st.wantThread !== st.threadId) return;   // a switch is loading: the pick would hit the chat being left
+    st.verbosity = next;
+    if (st.threadId) { st.verbosityPending = false; patchVerbosity(st.threadId, next); }
+    else st.verbosityPending = true;
+    paintVerbosity();
+  }
+  const verbosityName = (v) => (v ? VERBOSITY_LABELS[v] : 'Default');
+  function openVerbosityPopover(trigger) {
+    const panel = openPopover({ panelClass: 'ask-pop-verbosity', trigger, build: (panel) => {
+      for (const v of [null, ...VERBOSITY_LEVELS]) {
+        const it = menuItem('ask-verbosity-item', () => { setVerbosity(v); closePopover(); });
+        it.setAttribute('role', 'menuitemradio');
+        it.setAttribute('aria-checked', String(st.verbosity === v));
+        it.dataset.verbosity = v || 'default';
+        it.textContent = v ? VERBOSITY_LABELS[v] : 'Default (follows settings)';
+        panel.appendChild(it);
+      }
+    } });
+    if (panel) anchorVerbosityPopover(panel, trigger);
+  }
+  /** A parsed /verbosity command: never posted as a message. A pick works while a reply streams (from the next one). */
+  function runVerbosityCommand(cmd) {
+    if (cmd.kind === 'error') {
+      notify({ tone: 'err', title: 'Reply style not changed', detail: cmd.message, key: 'ask-verbosity' }, { doc });
+      announce(cmd.message);
+      return;
+    }
+    if (cmd.kind === 'show') {
+      const now = st.verbosity ? VERBOSITY_LABELS[st.verbosity] : 'Default (follows settings)';
+      notify({ tone: 'info', title: `Reply style: ${now}`, detail: 'Change it with /verbosity detailed | normal | concise | terse | caveman | default.', key: 'ask-verbosity' }, { doc });
+      announce(`Reply style: ${now}`);
+    } else {
+      setVerbosity(cmd.kind === 'set' ? cmd.level : null);
+      notify({ tone: 'ok', title: `Reply style: ${verbosityName(st.verbosity)}`, detail: 'Applies from this chat\'s next reply.', key: 'ask-verbosity' }, { doc });
+      announce(`Reply style: ${verbosityName(st.verbosity)}`);
+    }
+    el.input.value = '';
+    fitInput();                                    // a programmatic clear fires no input event
+    updateSendStop();
+  }
   const toggle = (list, v) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
   function mcpSwitch(on, label, onToggle, focusKey) {
@@ -4024,6 +4124,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (sr.width > 0) panel.style.right = `${Math.max(0, Math.min(sr.right - tr.right, sr.width - CTX_POP_WIDTH - 6))}px`;
   }
 
+  /** Left edge under the Style pill (composerPopLeft). The CSS left (--ask-col-inset) is cleared back in first and
+   *  measured as the inset, so a re-run on resize never ratchets; unmeasurable geometry keeps that fallback. */
+  function anchorVerbosityPopover(panel, trigger) {
+    const host = panel.parentElement;
+    if (!host) return;
+    panel.style.left = '';
+    const hr = host.getBoundingClientRect();
+    const pr = panel.getBoundingClientRect();
+    const tr = trigger.getBoundingClientRect();
+    const x = composerPopLeft({ btnLeft: tr.left - hr.left, panelW: pr.width, boxW: hr.width, inset: pr.left - hr.left });
+    if (x !== null) panel.style.left = `${x}px`;
+  }
+
   // ---- thread actions -------------------------------------------------------
   /** `focus:false`: a chat that went away by itself (a 404, all history cleared) — the side column beside a page never
    *  takes the focus for that. */
@@ -4048,6 +4161,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     setContexts([]);
     restoreBrowserPick();               // …and on the browser-level pick, not the last chat's
     st.mcp.off = { sets: [], members: [] };   // …and with every MCP server on
+    st.verbosity = null;                      // …and following the reply-style settings (#1230)
+    st.verbosityPending = false;
+    paintVerbosity();
     scheduleMcpRefresh();
     pruneCardEls();                     // st.model is already null — renderTranscript's keep set cannot see the old ids
     renderTranscript();
@@ -7365,7 +7481,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       else {
         const shown = fmtElapsed(r.durationMs);
         const elapsed = shown && shown !== '0.0s' ? shown : '';
-        const meter = [fmtCtx(r.usage && r.usage.ctx), fmtUsd(r.costUsd)].filter(Boolean).join(' · ');
+        const meter = [fmtCtx(r.usage && r.usage.ctx), fmtReplyTokens(r.usage), fmtUsd(r.costUsd)].filter(Boolean).join(' · ');
         parts.push(make('span', 'ask-activity-label', stopped ? (elapsed ? 'Stopped after' : 'Stopped') : 'Done'));
         if (elapsed) parts.push(stopped ? ' ' : ' · ');
         parts.push(make('span', 'ask-activity-elapsed', elapsed));
@@ -7469,7 +7585,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.thinkingLabel.textContent = `${live.label || 'Thinking'}…`;
     // ask-usage marks only `meters` dirty, so the row is NOT rebuilt when the
     // numbers move — this runs every flush instead (updateLiveElapsed).
-    const rest = [fmtCtx(live.usage && live.usage.ctx), fmtUsd(live.costUsd)].filter(Boolean).join(' · ');
+    const rest = [fmtCtx(live.usage && live.usage.ctx), fmtReplyTokens(live.usage), fmtUsd(live.costUsd)].filter(Boolean).join(' · ');
     el.thinkingUsage.textContent = rest ? ` · ${rest}` : '';
     // Thinking · a tool or sub-agent running · writing, as in the Workflows chat. Only once the row is in the page:
     // the orb reads its colour from the canvas's computed `color` (.dot-orb in style.css). A row renderTail builds
@@ -7948,6 +8064,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const nowEngine = snap.thread && snap.thread.engine;
     if (switched || (wasEngine && nowEngine && nowEngine !== wasEngine)) applyThreadPick(snap.thread);
     if (switched) st.mcp.off = mcpOffOf(snap.thread && snap.thread.mcpOff);   // §9.4: the chat's own choices
+    // #1230: the chat's reply style — on a switch only, like mcpOff (a resync never clobbers a pick still being saved).
+    if (switched) { st.verbosity = (snap.thread && snap.thread.verbosity) || null; st.verbosityPending = false; paintVerbosity(); }
     scheduleMcpRefresh();
     renderTranscript();
     updateMeters();

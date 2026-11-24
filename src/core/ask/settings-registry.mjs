@@ -15,6 +15,7 @@ import {
 import { RUN_ENGINES, MODEL_ENGINES, ASK_ENGINES, EFFORTS, SUBAGENT_MODELS, effortsForEngine } from '../model-env.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { MODEL_ROLES, ROLE_LABELS, ROLE_HARNESSES } from '../../shared/model-roles.mjs';
+import { VERBOSITY_LEVELS, VERBOSITY_LABELS, VERBOSITY_HINT, isVerbosity } from '../../shared/chat-verbosity.mjs';
 import { receiptCard } from './receipt.mjs';
 import { WORKSPACE_SCAN_DEFAULT_MODELS } from '../factory-models.mjs';
 
@@ -59,6 +60,7 @@ const DIVERGED = choice([['ask', 'Ask me'], ['origin', 'Start from origin'], ['f
 const MISSED = choice([['run', 'Start it late'], ['skip', 'Skip it']]);
 const MOUNT = choice([['copy', 'Copy'], ['symlink', 'Link']]);
 const RUN_ENGINE = choice(RUN_ENGINES.map((e) => [e, engineLabel(e)]));
+const VERBOSITY = choice(VERBOSITY_LEVELS.map((v) => [v, VERBOSITY_LABELS[v]]));   // #1230: the Chat reply style
 const CHAT_ENGINE = choice(ASK_ENGINES.map((e) => [e, engineLabel(e)]));
 const NOTIFY = Object.freeze({ question: 'Approval / question needed', done: 'Run finished', error: 'Run failed', paused: 'Run paused', away: 'Away hours start or end' });
 const JOBS = Object.freeze({ title: 'Title model', classifier: 'Auto workflow classifier model', overview: 'Run overview model', prDescription: 'PR description model', memoryDefrag: 'Memory defragment model', workspaceScan: 'Workspace scan model', secondOpinion: 'Second-opinion reviewer model' });
@@ -165,6 +167,10 @@ function buildUserDefs(roles, scanDefaults) {
       check: (v) => (v == null ? true : typeof v === 'boolean' ? v : fail(`chat.notify.${ev} must be true or false`)) })),
     userDef({ id: 'askEngine', label: 'Engine for new chats', group: 'Chat', read: (s) => ownKey(s, 'askEngine'), body: (unit) => ({ askEngine: unit ?? null }),
       dflt: 'claude', fmt: CHAT_ENGINE.fmt, allowed: CHAT_ENGINE.allowed, check: (v) => assertAskEngineInput(v) }),
+    userDef({ id: 'chat.verbosity', label: 'Reply style', group: 'Chat',
+      read: (s) => (isObj(s.chat) && isVerbosity(s.chat.verbosity) ? s.chat.verbosity : null), body: (unit) => ({ chat: { verbosity: unit ?? null } }),
+      dflt: 'normal', fmt: VERBOSITY.fmt, allowed: VERBOSITY.allowed,
+      check: (v) => (v == null ? null : isVerbosity(v) ? v : fail(`chat.verbosity ${VERBOSITY_HINT}`)) }),
     ...ASK_ENGINES.map((e) => pairDef(`models.${e}.ask`, `Chat model (${engineLabel(e)})`, 'Chat', e,
       (s) => (isObj(s.askModels) && isObj(s.askModels[e]) ? s.askModels[e] : null), (unit) => ({ askModels: { [e]: unit ?? null } }))),
     userDef({ id: 'askMaxTurns', label: 'Turn limit', group: 'Chat', ...topKey('askMaxTurns'), dflt: DEFAULT_ASK_MAX_TURNS, fmt: String, allowed: 'a whole number 1–500',

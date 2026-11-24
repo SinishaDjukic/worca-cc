@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields } from '../ui/public/chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, renderVerbositySelect, collectVerbositySelect } from '../ui/public/chat-settings-view.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
@@ -183,4 +183,28 @@ test('Summarise commands: on by default, a Beta chip, collects its value (#911)'
   assert.deepEqual(collectSummariesToggle(host), { summariseCommands: false });
   host.replaceChildren(renderSummariesToggle({ prefs: { summariseCommands: false } }, { doc }));
   assert.equal(host.querySelector('input.ask-summaries').checked, false);
+});
+
+test('renderVerbositySelect paints stored else normal; collect returns {} untouched and {verbosity} when changed (#1230)', () => {
+  const host = doc.createElement('div');
+  renderVerbositySelect({ prefs: { verbosity: null } }, host);
+  const sel = host.querySelector('select#chatVerbosity');
+  assert.ok(sel && sel.classList.contains('select'));
+  assert.deepEqual([...sel.options].map((o) => [o.value, o.textContent]), [['detailed', 'Detailed'], ['normal', 'Normal'], ['concise', 'Concise'], ['terse', 'Terse'], ['caveman', 'Caveman']]);
+  assert.equal(sel.value, 'normal', 'no stored value paints normal');
+  assert.equal(sel.dataset.initial, 'normal');
+  assert.equal(host.querySelector('label[for="chatVerbosity"]').textContent, 'Reply style');
+  assert.match(host.textContent, /A chat's own pick and a project override win\. With no value here, a project's team policy may set the default\./);
+  assert.deepEqual(collectVerbositySelect(host), {}, 'untouched: nothing posted (a team default stays reachable)');
+  sel.value = 'terse';
+  assert.deepEqual(collectVerbositySelect(host), { verbosity: 'terse' });
+  renderVerbositySelect({ prefs: { verbosity: 'caveman' } }, host);
+  assert.equal(host.querySelectorAll('select').length, 1, 'a repaint replaces the row');
+  assert.equal(host.querySelector('select').value, 'caveman', 'the stored value paints');
+  assert.deepEqual(collectVerbositySelect(host), {});
+  host.querySelector('select').value = 'normal';
+  assert.deepEqual(collectVerbositySelect(host), { verbosity: 'normal' }, 'an explicit normal is a stored choice');
+  renderVerbositySelect({}, host);
+  assert.equal(host.querySelector('select').value, 'normal');
+  assert.deepEqual(collectVerbositySelect(null), {});
 });

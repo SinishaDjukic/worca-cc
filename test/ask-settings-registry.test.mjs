@@ -18,6 +18,7 @@ function applyBody(s, body) {
   const [[key, v]] = Object.entries(body);
   if (key === 'schedule') { for (const [k, x] of Object.entries(v)) { if (x === null || x === '') delete s[SCHED[k]]; else s[SCHED[k]] = x; } return; }
   if (key === 'sync') { s.sync = { ...(s.sync || {}) }; for (const [k, x] of Object.entries(v)) { if (x === null) delete s.sync[k]; else s.sync[k] = x; } return; }
+  if (key === 'chat' && 'verbosity' in v) { s.chat = { ...(s.chat || {}) }; if (v.verbosity === null) delete s.chat.verbosity; else s.chat.verbosity = v.verbosity; return; }
   if (key === 'chat') { s.chat = { ...(s.chat || {}), notify: { ...((s.chat || {}).notify || {}), ...v.notify } }; return; }
   if (key === 'workspaceScan') { if (v) s.workspaces = { scan: v }; else delete s.workspaces; return; }
   if (key === 'theme') { if (v === '' || v === 'system') delete s.theme; else s.theme = v; return; }
@@ -494,6 +495,54 @@ test('team memory (1a): the project defs leave out the memory.team opt-in and la
   assert.equal(cap.ok, true, cap.error);
   // The exclusion matches memory.team and memory.team.* only: the cap beside it is a per-project setting, not "published".
   assert.match((await reg.check({ id: 'memory.teamMaxFiles', scope: 'user', value: 7 })).error, /^unknown setting "memory\.teamMaxFiles".*\(it is set per project: scope "project"\)$/);
+});
+
+test('list_settings lists chat.verbosity with its five allowed values (#1230)', async () => {
+  const { reg } = setup({ settings: { chat: { verbosity: 'terse' } } });
+  const row = (await reg.list({ scope: 'user', query: 'chat.verbosity' })).settings.find((r) => r.id === 'chat.verbosity');
+  assert.deepEqual(row, { id: 'chat.verbosity', label: 'Reply style', group: 'Chat', value: 'Terse', stored: 'terse',
+    allowed: '"detailed" | "normal" | "concise" | "terse" | "caveman" | null (default)' });
+  const unset = (await setup().reg.list({ scope: 'user', query: 'chat.verbosity' })).settings.find((r) => r.id === 'chat.verbosity');
+  assert.equal(unset.value, 'Normal (default)');
+});
+
+test('change_setting user scope writes {chat:{verbosity}} and reverts with null (#1230)', async () => {
+  const { reg, s, bodies } = setup();
+  const r = await reg.apply({ id: 'chat.verbosity', scope: 'user', value: 'caveman' });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(bodies, [{ chat: { verbosity: 'caveman' } }]);
+  assert.equal(s.chat.verbosity, 'caveman');
+  assert.equal(r.card.before, 'Normal (default)'); assert.equal(r.card.after, 'Caveman');
+  assert.deepEqual(await reg.revert(r.card), { ok: true, notice: 'Reverted: Reply style back to Normal (default)' });
+  assert.deepEqual(bodies.at(-1), { chat: { verbosity: null } });
+  assert.equal('verbosity' in s.chat, false);
+  const bad = await reg.check({ id: 'chat.verbosity', scope: 'user', value: 'loud' });
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /^chat\.verbosity must be one of detailed \| normal \| concise \| terse \| caveman/);
+});
+
+test('change_setting project scope writes chat.verbosity and refuses an unknown level (#1230)', async () => {
+  const { settingIds, assertProjectSettingsPatch } = await import('../src/core/settings-cascade.mjs');
+  const layer = {}; const patches = [];
+  const reg = createSettingsRegistry({
+    readSettings: () => ({}),
+    projectSettingIds: () => settingIds({ roles: [] }),
+    resolveSetting: (id) => ({ value: layer[id] ?? 'normal', source: layer[id] !== undefined ? 'project' : 'default', layers: { project: layer[id], user: undefined, team: undefined, default: 'normal' } }),
+    assertProjectSettingsPatch,
+    projects: async () => [PROJECT],
+    applyProject: async (p, patch) => { patches.push([p.key, patch]); for (const [k, v] of Object.entries(patch)) { if (v === null) delete layer[k]; else layer[k] = v; } },
+  });
+  const row = (await reg.list({ scope: 'project', projectKey: PROJECT.key, query: 'chat.verbosity' })).settings.find((x) => x.id === 'chat.verbosity');
+  assert.equal(row.label, 'Reply style', 'borrowed from the user def');
+  assert.equal(row.allowed, '"detailed" | "normal" | "concise" | "terse" | "caveman" | null (inherited)');
+  assert.equal(row.value, 'Normal (inherited)');
+  const r = await reg.apply({ id: 'chat.verbosity', scope: 'project', projectKey: PROJECT.key, value: 'terse' });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(patches, [[PROJECT.key, { 'chat.verbosity': 'terse' }]]);
+  const bad = await reg.check({ id: 'chat.verbosity', scope: 'project', projectKey: PROJECT.key, value: 'loud' });
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /chat\.verbosity must be one of detailed \| normal \| concise \| terse \| caveman/);
+  assert.equal(patches.length, 1, 'a refused change writes nothing');
 });
 
 test('extra: chatLinksInPanel is excluded from the chat', () => {
