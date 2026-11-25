@@ -177,7 +177,18 @@ jobs:
       - name: Run fast tests
         env:
           WORCA_TEST_SHARD: ${{ matrix.shard }}/4
-        run: npm run test:fast -- --timings-out .test-timings/fast-${{ matrix.shard }}.json
+        run: npm run test:fast -- --timings-out .test-timings/fast-${{ matrix.shard }}.json --failures-out .test-failures/fast-${{ matrix.node }}-${{ matrix.shard }}.json
+
+      # A red shard's failure record (the test files that failed), for the CI gate's summary. The run
+      # attempt is in the name so the gate reads only this attempt's records; a green shard writes none.
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-failures-${{ github.run_attempt }}-fast-${{ matrix.node }}-${{ matrix.shard }}
+          path: .test-failures/
+          include-hidden-files: true
+          if-no-files-found: ignore   # a leg that failed before its tests (npm ci) has no record
+          retention-days: 7
 
       # This shard's per-file seconds, measured on the runner that ran it. test/timings.json is
       # refreshed from a green dev run's set (tools/test-timings-merge.mjs), so the shards are
@@ -226,7 +237,17 @@ jobs:
       - name: Run slow tests
         env:
           WORCA_TEST_SHARD: ${{ matrix.shard }}/2
-        run: npm run test:slow -- --timings-out .test-timings/slow-${{ matrix.shard }}.json
+        run: npm run test:slow -- --timings-out .test-timings/slow-${{ matrix.shard }}.json --failures-out .test-failures/slow-${{ matrix.shard }}.json
+
+      # A red shard's failure record, for the CI gate's summary (see test-fast).
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-failures-${{ github.run_attempt }}-slow-${{ matrix.shard }}
+          path: .test-failures/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -503,6 +524,28 @@ jobs:
           sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha || true)
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
+      # This attempt's failure records from red fast and slow shards (none on a green run). A failed
+      # download never fails the gate: the verdict then names the failed job without its files.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: ${{ always() }}
+        continue-on-error: true
+        with:
+          pattern: test-failures-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/test-failures
+
+      # The base branch's live quarantine list, so a failing file dev has quarantined is marked
+      # "(quarantined)". The run's own list is not read: its files never run. A failed call marks nothing.
+      - id: base-quarantine
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.base_ref || github.ref_name }}
+        run: |
+          out="$RUNNER_TEMP/base-quarantine/test/quarantine.json"
+          mkdir -p "$(dirname "$out")"
+          gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/test/quarantine.json?ref=$BASE_REF" > "$out" || rm -f "$out"
+
       - name: Verdict
         if: ${{ always() }}
         env:
@@ -510,4 +553,6 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           RUN_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           PR_HEAD_SHA: ${{ steps.pr-head.outputs.sha }}
+          FAILURES_DIR: ${{ runner.temp }}/test-failures
+          BASE_QUARANTINE_ROOT: ${{ runner.temp }}/base-quarantine
         run: node tools/ci-gate.mjs

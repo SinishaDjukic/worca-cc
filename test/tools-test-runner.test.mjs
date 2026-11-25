@@ -117,7 +117,7 @@ test('main() runs when tools/test.mjs is reached through a symlink (else npm tes
 });
 
 test('parseArgs: a flag that needs a value refuses a missing one (a bare --shard once ran the whole suite); the shard env never splits a file list', () => {
-  for (const flag of ['--shard', '--tier', '--concurrency', '--timings-out']) {
+  for (const flag of ['--shard', '--tier', '--concurrency', '--timings-out', '--failures-out']) {
     assert.throws(() => parseArgs([flag], {}), new RegExp(`${flag} needs a value`));
     assert.throws(() => parseArgs([flag, '--write-timings'], {}), new RegExp(`${flag} needs a value`));
   }
@@ -190,6 +190,59 @@ test('--timings-out writes the run\'s own per-file seconds, spawn to exit (what 
     assert.ok(Object.values(measured)[0] >= 0.4, `the file's whole run, not just its tests: ${Object.values(measured)[0]}`);
     assert.equal(readFileSync(new URL('./timings.json', import.meta.url), 'utf8'), before, 'only --write-timings rewrites test/timings.json');
   } finally { rmSync(dir, rmOpts); }
+});
+
+// --failures-out: a red run writes one failure record { version, tier, shard, node, files } (what a CI shard
+// uploads for the gate summary); a green run writes nothing.
+const failuresFixture = (fn) => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-failures-'));
+  try {
+    const w = (name, body) => { const f = join(dir, name); writeFileSync(f, "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\n" + body); return f; };
+    const f = {
+      bad: w('bad.test.mjs', "test('passes', () => {});\ntest('fails', () => { assert.equal(1, 2); });\n"),
+      good: w('good.test.mjs', "test('passes', () => {});\n"),
+      todo: w('todo.test.mjs', "test('a failing todo', { todo: true }, () => { assert.equal(1, 2); });\n"),
+      boom: w('boom.test.mjs', "throw new Error('boom at import');\n"),
+    };
+    return fn({ dir, f });
+  } finally { rmSync(dir, rmOpts); }
+};
+const runFailures = (args) => spawnSync(process.execPath, [join(TOOLS, 'test.mjs'), ...args],
+  { encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: undefined } });
+
+test('--failures-out lists the failing file only', () => failuresFixture(({ dir, f }) => {
+  const out = join(dir, 'nested', 'fast-24-3.json');
+  const r = runFailures(['--failures-out', out, '--shard', '1/1', f.bad, f.good, f.todo]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.ok(existsSync(out), 'a red run writes its record: ' + r.stderr);
+  const record = JSON.parse(readFileSync(out, 'utf8'));
+  assert.deepEqual(Object.keys(record).sort(), ['files', 'node', 'shard', 'tier', 'version']);
+  assert.deepEqual({ ...record, files: undefined }, { version: 1, tier: 'all', shard: '1/1', node: process.versions.node, files: undefined });
+  assert.equal(record.files.length, 1, JSON.stringify(record.files));
+  assert.ok(record.files[0].endsWith('/bad.test.mjs'), record.files[0]);
+
+  // A file that throws at import (no test of its own) fails at file level and is listed too.
+  const out2 = join(dir, 'boom.json');
+  const r2 = runFailures(['--failures-out', out2, f.boom, f.good]);
+  assert.equal(r2.status, 1, r2.stdout + r2.stderr);
+  const record2 = JSON.parse(readFileSync(out2, 'utf8'));
+  assert.equal(record2.shard, '1/1', 'unsharded reads 1/1');
+  assert.equal(record2.files.length, 1, JSON.stringify(record2.files));
+  assert.ok(record2.files[0].endsWith('/boom.test.mjs'), record2.files[0]);
+}));
+
+test('--failures-out: a green run writes nothing', () => failuresFixture(({ dir, f }) => {
+  const out = join(dir, 'green.json');
+  const r = runFailures(['--failures-out', out, '--shard', '1/1', f.good, f.todo]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(existsSync(out), false, 'a green run (a failing todo included) writes no record');
+}));
+
+test('failureRecord: the D2 shape, files sorted by code unit and deduped', async () => {
+  const mod = await import('../tools/test.mjs');
+  assert.equal(typeof mod.failureRecord, 'function', 'tools/test.mjs exports failureRecord');
+  assert.deepEqual(mod.failureRecord({ tier: 'fast', shard: '3/4', node: '24.11.0', files: ['test/b.test.mjs', 'test/B.test.mjs', 'test/a.test.mjs', 'test/b.test.mjs'] }),
+    { version: 1, tier: 'fast', shard: '3/4', node: '24.11.0', files: ['test/B.test.mjs', 'test/a.test.mjs', 'test/b.test.mjs'] });
 });
 
 test('a measuring run: a file whose process stays up over 2 s after its last test gets a tail warning; a file that exits at once does not', () => {
@@ -466,6 +519,23 @@ export function gateProblems(doc) {
   if (jobs['test-slow'] && !String(jobs['test-slow'].if || '').includes("needs.changes.outputs.engine != 'false'"))
     problems.push("test-slow: if lost needs.changes.outputs.engine != 'false'");
 
+  // Failing test files in the gate summary: each red fast or slow shard uploads its failure record (this
+  // attempt's name only), the gate downloads this attempt's records before the verdict, and the verdict reads them.
+  const ATTEMPT = 'test-failures-${{ github.run_attempt }}-';
+  for (const [id, script] of [['test-fast', 'test:fast'], ['test-slow', 'test:slow']]) {
+    const steps = jobs[id]?.steps;
+    if (!steps) continue;
+    const runStep = steps.find((s) => String(s.run || '').includes(`npm run ${script}`));
+    const upload = steps.find((s) => String(s.uses || '').startsWith('actions/upload-artifact@') && String(s.if || '').includes('failure()')
+      && String(s.with?.name || '').startsWith(ATTEMPT));
+    if (!runStep || !String(runStep.run).includes('--failures-out .test-failures/') || !upload) problems.push(`${id}: no test-failures upload on failure()`);
+  }
+  const download = steps.slice(0, -1).find((s) => String(s.uses || '').startsWith('actions/download-artifact@'));
+  if (!download || download.with?.pattern !== `${ATTEMPT}*` || download.if !== ALWAYS || download['continue-on-error'] !== true)
+    problems.push('ci-gate: no test-failures download before the verdict');
+  if (!last.env || !('FAILURES_DIR' in last.env) || !('BASE_QUARANTINE_ROOT' in last.env))
+    problems.push('ci-gate steps: the verdict needs FAILURES_DIR and BASE_QUARANTINE_ROOT');
+
   for (const [id, job] of Object.entries(jobs)) {
     for (const s of job?.steps || []) if (String(s.run ?? '').trim() === 'exit 1') problems.push(`${id}: a step runs exactly "exit 1" (a proof step leaked in)`);
   }
@@ -546,4 +616,33 @@ test('ci.yml CI gate: the last gate step runs node tools/ci-gate.mjs with NEEDS 
 
 test('ci.yml CI gate: a bare "exit 1" proof step is rejected', () => {
   hasProblem(mutated((d) => { d.jobs.extension.steps.unshift({ run: 'exit 1' }); }), /^extension: .*exit 1/, 'exit 1');
+});
+
+const failUpload = (d, id) => d.jobs[id].steps.findIndex((s) => String(s.uses || '').startsWith('actions/upload-artifact@') && String(s.if || '').includes('failure()'));
+
+test('ci.yml CI gate: a shard without its test-failures upload is named', () => {
+  for (const id of ['test-fast', 'test-slow']) {
+    hasProblem(mutated((d) => { d.jobs[id].steps.splice(failUpload(d, id), 1); }), new RegExp(`^${id}: no test-failures upload on failure\\(\\)`), `${id} upload removed`);
+    hasProblem(mutated((d) => { d.jobs[id].steps[failUpload(d, id)].with.name = 'test-failures-' + id; }), new RegExp(`^${id}: no test-failures upload`), `${id} name without run_attempt`);
+    hasProblem(mutated((d) => { delete d.jobs[id].steps[failUpload(d, id)].if; }), new RegExp(`^${id}: no test-failures upload`), `${id} upload not on failure()`);
+    hasProblem(mutated((d) => {
+      const s = d.jobs[id].steps.find((x) => String(x.run || '').includes('--failures-out'));
+      s.run = s.run.replace(/\s*--failures-out \S+/, '');
+    }), new RegExp(`^${id}: no test-failures upload`), `${id} run without --failures-out`);
+  }
+});
+
+test('ci.yml CI gate: the gate without the test-failures download is named', () => {
+  const dl = (d) => d.jobs['ci-gate'].steps.findIndex((s) => String(s.uses || '').startsWith('actions/download-artifact@'));
+  hasProblem(mutated((d) => { d.jobs['ci-gate'].steps.splice(dl(d), 1); }), /^ci-gate: no test-failures download before the verdict/, 'download removed');
+  hasProblem(mutated((d) => { d.jobs['ci-gate'].steps[dl(d)].with.pattern = 'test-failures-*'; }), /^ci-gate: no test-failures download/, 'every attempt');
+  hasProblem(mutated((d) => { delete d.jobs['ci-gate'].steps[dl(d)]['continue-on-error']; }), /^ci-gate: no test-failures download/, 'no continue-on-error');
+  hasProblem(mutated((d) => { delete d.jobs['ci-gate'].steps[dl(d)].if; }), /^ci-gate: no test-failures download/, 'not always()');
+});
+
+test('ci.yml CI gate: the verdict without FAILURES_DIR or BASE_QUARANTINE_ROOT is named', () => {
+  for (const key of ['FAILURES_DIR', 'BASE_QUARANTINE_ROOT']) {
+    hasProblem(mutated((d) => { const s = d.jobs['ci-gate'].steps; delete s[s.length - 1].env[key]; }),
+      /^ci-gate steps: the verdict needs FAILURES_DIR and BASE_QUARANTINE_ROOT/, `no ${key}`);
+  }
 });

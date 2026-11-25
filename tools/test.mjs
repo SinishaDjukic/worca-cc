@@ -5,11 +5,13 @@
 // working-tree change can affect (tools/test-related.mjs). Replaces the POSIX-only shell one-liner
 // and node's index-modulo --test-shard. --timings-out writes the run's own per-file seconds to a file
 // (each CI shard uploads one; tools/test-timings-merge.mjs folds them into test/timings.json).
+// --failures-out writes a red run's failure record (the files that failed; each red CI shard uploads one and
+// tools/ci-gate.mjs names them in the gate summary); a green run writes nothing.
 // A full suite takes a machine-wide lock (one full suite at a time, wherever it runs: two at once each
 // took 2-3x as long and tripped the timing budgets, perf audit T1), and every run has a whole-suite
 // timeout, so no test can hold `npm test` open forever (process audit §8c).
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,8 +86,13 @@ export function mergeTimings(base, measured, exists) {
 export const writeTimings = (root, timings) =>
   writeFileSync(join(root, 'test', 'timings.json'), JSON.stringify(timings, null, 1) + '\n');
 
+/** One shard's failure record (what tools/ci-gate.mjs reads): files sorted by code unit, each once. */
+export function failureRecord({ tier, shard, node, files }) {
+  return { version: 1, tier, shard, node, files: [...new Set(files)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) };
+}
+
 export function parseArgs(argv, env = process.env) {
-  const o = { tier: 'all', shard: null, writeTimings: false, timingsOut: null, concurrency: null, related: false, base: null, files: [] };
+  const o = { tier: 'all', shard: null, writeTimings: false, timingsOut: null, failuresOut: null, concurrency: null, related: false, base: null, files: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = () => {
@@ -98,6 +105,7 @@ export function parseArgs(argv, env = process.env) {
     else if (a === '--concurrency') o.concurrency = Number(value());
     else if (a === '--write-timings') o.writeTimings = true;
     else if (a === '--timings-out') o.timingsOut = value();
+    else if (a === '--failures-out') o.failuresOut = value();
     else if (a === '--related') o.related = true;
     else if (a === '--base') o.base = value();
     else if (a.startsWith('--')) throw new Error(`unknown flag ${a}`);
@@ -264,7 +272,9 @@ async function main() {
   const listFile = join(work, 'files.json');
   const timingsOut = join(work, 'timings.json');
   const measure = o.writeTimings || o.timingsOut;
-  writeFileSync(listFile, JSON.stringify({ files, concurrency: o.concurrency, timingsOut: measure ? timingsOut : null }));
+  const failuresFile = join(work, 'failures.json');
+  writeFileSync(listFile, JSON.stringify({ files, concurrency: o.concurrency, timingsOut: measure ? timingsOut : null,
+    ...(o.failuresOut ? { failuresOut: failuresFile } : {}) }));
 
   const env = { ...process.env, WORCA_HOME: scoped ? testHome : '.worca-cc-test', HOME: home, USERPROFILE: home,
     WORCA_NO_REAL_CLAUDE_LOG: join(testHome, 'real-claude-spawns.log'), // read by the shim and assert-none.mjs
@@ -300,6 +310,16 @@ async function main() {
       mkdirSync(dirname(out), { recursive: true });
       writeFileSync(out, JSON.stringify(measured, null, 1) + '\n');
     }
+  }
+  if (o.failuresOut && code !== 0) {
+    try {
+      let failed = [];
+      try { const v = JSON.parse(readFileSync(failuresFile, 'utf8')); if (Array.isArray(v)) failed = v.filter((f) => typeof f === 'string'); } catch { /* none recorded, or cut mid-write */ }
+      const out = resolve(o.failuresOut);
+      mkdirSync(dirname(out), { recursive: true });
+      writeFileSync(`${out}.tmp`, JSON.stringify(failureRecord({ tier: o.tier, shard: o.shard || '1/1', node: process.versions.node, files: failed }), null, 1) + '\n');
+      renameSync(`${out}.tmp`, out);
+    } catch (e) { console.error(`--failures-out: could not write the failure record: ${e.message}`); }
   }
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });

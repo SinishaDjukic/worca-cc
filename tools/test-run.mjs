@@ -4,13 +4,15 @@
 // exit), which the sum of its tests misses (imports, module-level setup, a process that lingers).
 // Warns about each file's tail: the time its process stayed up outside its tests, mostly a timer or
 // child still holding it open after the last test, which costs a CI slot for nothing.
+// Optionally records the files that failed (failuresOut), rewritten on each new one so a suite killed at its
+// time limit still leaves the files that failed before.
 import { run } from 'node:test';
 import { spec } from 'node:test/reporters';
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { relative, resolve } from 'node:path';
 
-const { files, concurrency, timingsOut } = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const { files, concurrency, timingsOut, failuresOut } = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const perFile = {}; // sum of top-level tests: the fallback when a file reports no file-level event
 const wall = {};
 const rootRun = {}; // the file's own test run (its summary): first test registered to exit, so the tail is in it
@@ -47,6 +49,15 @@ const note = (ev) => {
 };
 stream.on('test:pass', note);
 stream.on('test:fail', note);
+// A top-level failure (a test, or the file itself when it throws at import); a failing `todo` keeps the run green.
+const failed = new Set();
+stream.on('test:fail', (ev) => {
+  if (!failuresOut || ev.nesting !== 0 || !ev.file || ev.todo) return;
+  const f = rel(ev.file);
+  if (failed.has(f)) return;
+  failed.add(f);
+  writeFileSync(failuresOut, JSON.stringify([...failed].sort()));
+});
 // With process isolation each file completes as a test named after its path, timed spawn to exit.
 stream.on('test:complete', (ev) => {
   if (ev.nesting === 0 && ev.file && isFileLevel(ev)) wall[rel(ev.file)] = (ev.details?.duration_ms || 0) / 1000;

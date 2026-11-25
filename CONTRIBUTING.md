@@ -120,7 +120,8 @@ pull request runs only the `changed paths` and `CI gate` jobs, and the gate
 passes. CI does not run the smoke scripts. Run `npm test` (and
 the relevant smoke script if you touched the engine, workspace, or plugin
 paths) locally before opening or updating a PR, and say so in the PR
-description.
+description. A failed `CI gate` lists each failing test file by shard in its job
+summary and marks `(quarantined)` the files on dev's quarantine list.
 
 A test file, extension Playwright spec or CDP proof that fails at random can be
 quarantined: add it to `test/quarantine.json` with three fields, `path`,
