@@ -126,3 +126,21 @@ test('decisionClarifications: one Q&A line per decision, the picked option\'s la
     '- **d-2** — Question 2? → **One way (decided at approval)**',
   ]);
 });
+
+// Small runs B3 (D14): one disagreement between two roles is one question.
+const SEC_UX = (n, section, question) => ({ id: `conflict-${n}`, findings: [`security-1-${n}`, `ux-1-${n}`], roles: ['security', 'ux'], section,
+  question, options: ['Keep it', 'Drop it'] });
+
+test('conflictDecisions onePerPair: 2 Security–UX conflicts give 1 decision, 2 without it; 2 different pairs give 2', () => {
+  const two = [SEC_UX(1, 'R-sec-1', 'Mask emails?'), { ...SEC_UX(2, 'R-ux-1', 'Show a warning?'), roles: ['ux', 'security'] }];
+  assert.equal(conflictDecisions(two, { onePerPair: true }).length, 1);
+  assert.equal(conflictDecisions(two).length, 2);
+  assert.equal(conflictDecisions([SEC_UX(1, 'R-sec-1', 'Mask emails?'), CONFLICT], { onePerPair: true }).length, 2);
+});
+
+test('conflictDecisions onePerPair names a criterion section in criteria; without it no decision has criteria', () => {
+  const [on] = conflictDecisions([SEC_UX(1, 'R-sec-1', 'Mask emails?')], { onePerPair: true });
+  assert.deepEqual(on.criteria, ['R-sec-1']);
+  assert.equal('criteria' in conflictDecisions([SEC_UX(1, 'R-sec-1', 'Mask emails?')])[0], false);
+  assert.equal('criteria' in conflictDecisions([CONFLICT], { onePerPair: true })[0], false, 'a section that is not a criterion id');
+});

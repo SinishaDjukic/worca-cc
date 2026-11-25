@@ -92,6 +92,26 @@ export function buildGroupPage(doc) {
   return root;
 }
 
+/** Shaper small runs D3 (D7): the Requirements tab, after Runs, only while it applies. It is created and removed in the
+ *  DOM (never only hidden), so a page without it keeps dev's four tabs. GROUP_TABS stays dev's. */
+export function syncRequirementsTab(root, on) {
+  const tab = root.querySelector('.gpage-tabs .rd-tab[data-tab="requirements"]');
+  const panel = root.querySelector('.gpage-panel[data-tab="requirements"]');
+  if (!on) { tab?.remove(); panel?.remove(); return; }
+  if (tab && panel) return;
+  const doc = root.ownerDocument;
+  const t = el(doc, 'button', 'rd-tab tab', 'Requirements');
+  t.type = 'button';
+  t.setAttribute('role', 'tab');
+  t.dataset.tab = 'requirements';
+  root.querySelector('.gpage-tabs .rd-tab[data-tab="runs"]').after(t);
+  const p = el(doc, 'div', 'gpage-panel');
+  p.dataset.tab = 'requirements';
+  p.setAttribute('role', 'tabpanel');
+  p.append(el(doc, 'div', 'gpage-requirements'));
+  root.querySelector('.gpage-panel[data-tab="runs"]').after(p);
+}
+
 /** One ship flow (D11): a group's Create PR and View PR(s) live on the status line (docs/design-system.md
  *  "Placement"), never in the bar, for features, chains and user groups alike. */
 export function headerActions(m) {
@@ -121,9 +141,13 @@ export function groupPrList(row) {
 
 /**
  * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean, labels: [] (the
- * members' labels), unmarked?: number (a feature's unmarked requirements: its Create PR is locked) }.
+ * members' labels), unmarked?: number (a feature's unmarked requirements: its Create PR is locked), stackedOnly?: boolean (a small-runs
+ * feature: the ship line never offers One), requirements?: boolean (D3: a marked feature with the flag on), shortState?:
+ * (member) → string|null (small runs: one-line member rows with the card's short words), ship?: {n, blocked, reason}|null
+ * (small runs: the ledger the head's Create N PRs follows) }.
  * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
- * mountDecisions(host, row), logsHref(member), labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
+ * mountDecisions(host, row), mountRequirements?(host, row) → Node|null (D3, while `view.requirements`), logsHref(member),
+ * labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
  * groupHead's head (Create PR, View PR ▾, View PRs ▾) into the card head; without it the slot stays hidden.
  */
 export function paintGroupPage(root, view, deps) {
@@ -138,7 +162,11 @@ export function paintGroupPage(root, view, deps) {
   title.title = row.title;   // D13: the heading is one line cut with "…"; the full title is the tooltip
   root.querySelector('.gpage-head .kind-chip').textContent = groupKindWord(row);   // run 3 (D7): the group's kind
   paintCrumbs(root.querySelector('.gpage-bar .rd-crumbs'), [{ label: 'Runs', href: '#runs' }, { label: row.title }]);
-  const pm = pageModel(m);
+  const shown = pageModel(m);
+  // Small runs: a disabled Create N PRs says why on the page, not only in its tooltip. A held group's line already does,
+  // and so does the Overview tab's Ship card.
+  const why = view.ship && view.ship.blocked && m.state === 'ready' && !m.hold && !(view.overview && view.tab === 'overview') ? view.ship.reason : '';
+  const pm = why ? { ...shown, line: `${shown.line} · ${why}` } : shown;
   paintRunStatus(root.querySelector('.gpage-card .run-status'), pm, { hold: true });   // run 3 (D10); slice 3: keep the last bar
   // Run 3 (D15): the facts block — Project, Runs, Total cost, Labels (the read-only union of the members' labels).
   const kv = root.querySelector('.gpage-card > .rd-kv');
@@ -162,16 +190,21 @@ export function paintGroupPage(root, view, deps) {
   const stop = root.querySelector('.gpage-stop');
   stop.title = current ? `Stop ${current.isPlanning ? 'Planning' : `Run ${current.position}`}` : 'Stop';
   // Run 4 (D2): the question is mounted first, so the bar's Answer can name the card's own primary.
-  deps.mountQuestion(root.querySelector('.gpage-question'), current);
+  const question = root.querySelector('.gpage-question');
+  deps.mountQuestion(question, current);
+  // Small runs: an open stop's own primary is the page's one primary, as on the run page and the Chat card.
+  const stopOpen = 'stop' in question.dataset && !question.hidden;
   syncActions(root.querySelector('.gpage-actions'), headerActions(m), { own: { stop }, pool: [stop], onAction: deps.onAction,
     disable: { 'ask-changes': "Ask for changes from the run's chat" }, labels: { answer: deps.answerLabel ? deps.answerLabel() : '' },
-    plain: answerFieldOpen(root.querySelector('.gpage-question')) ? ['answer'] : [] });
+    plain: answerFieldOpen(question) ? ['answer'] : [], ...(stopOpen ? { skip: ['answer'] } : {}) });
   if (deps.paintHead) {
     deps.paintHead(root.querySelector('.gpage-card .rd-head-acts'), root.querySelector('.gpage-card .rd-pr-slot'),
-      groupHead({ state: m.state, prs: groupPrList(row), unmarked: view.unmarked || 0 }));
+      groupHead({ state: m.state, prs: groupPrList(row), unmarked: view.unmarked || 0, ship: view.ship || null }));
   }
-  const offered = (id) => (id !== 'overview' || !!view.overview) && (id !== 'logs' || !!view.logs);
-  const tab = GROUP_TABS.some(([id]) => id === view.tab) && offered(view.tab) ? view.tab : 'runs';
+  // Small runs D3 (D7): the Requirements tab exists only while `view.requirements` (a marked feature, flag on).
+  syncRequirementsTab(root, !!view.requirements);
+  const offered = (id) => (id !== 'overview' || !!view.overview) && (id !== 'logs' || !!view.logs) && (id !== 'requirements' || !!view.requirements);
+  const tab = (GROUP_TABS.some(([id]) => id === view.tab) || view.tab === 'requirements') && offered(view.tab) ? view.tab : 'runs';
   for (const t of root.querySelectorAll('.gpage-tabs .rd-tab')) {
     t.hidden = !offered(t.dataset.tab);
     t.setAttribute('aria-selected', String(t.dataset.tab === tab));
@@ -179,11 +212,17 @@ export function paintGroupPage(root, view, deps) {
   }
   for (const p of root.querySelectorAll('.gpage-panel')) p.hidden = p.dataset.tab !== tab;
   // Slice 3: a frame that changes nothing in the table keeps its nodes (a focused row, the scroll anchor).
-  keepUnchanged(root.querySelector('.gpage-runs'), [renderMemberRows(doc, row)]);
-  const line = groupShipLine(row);
+  keepUnchanged(root.querySelector('.gpage-runs'), [view.shortState ? renderMemberRows(doc, row, { oneLine: true, shortState: view.shortState }) : renderMemberRows(doc, row)]);
+  const line = groupShipLine(row, { stackedOnly: !!view.stackedOnly });
   const ship = root.querySelector('.gpage-ship');
   ship.textContent = line;
   ship.hidden = !line;
+  // D12: the rows carry no listeners, so keepUnchanged may keep or replace them (a focused run link moves to its successor).
+  if (tab === 'requirements') {
+    const host = root.querySelector('.gpage-requirements');
+    const node = deps.mountRequirements(host, row);
+    if (node) keepUnchanged(host, [node]);
+  }
   if (tab === 'overview') deps.mountOverview(root.querySelector('.gpage-overview'));
   if (tab === 'decisions') deps.mountDecisions(root.querySelector('.gpage-decisions'), row);
   const numbered = (mb) => !mb.isPlanning && !mb.adhoc && row.groupKind !== 'user';

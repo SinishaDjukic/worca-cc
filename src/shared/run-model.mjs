@@ -76,6 +76,8 @@ const ENDED = new Set(['done', 'stopped', 'error']);
 const PARKED = new Set(['paused', 'pausing', 'interrupted']);
 const LIVE = new Set(['starting', 'working', 'needs-you', 'paused']);
 const FINISHED = new Set(['ready', 'in-review', 'merged']);
+/** A run model state that means the run finished its work (ready to ship, in review or merged). */
+export const isFinishedState = (state) => FINISHED.has(state);
 const TICKET_STATE = Object.freeze({ scheduled: 'waiting', missed: 'waiting', firing: 'starting', fired: 'starting',
   failed: 'failed', canceled: 'stopped', skipped: 'stopped' });
 
@@ -383,7 +385,7 @@ export function groupModel(group, opts = {}) {
       // D18: a held run's predecessor is done, so "waiting for run N" would be stale; the feature's row says why.
       case 'waiting': return current.held ? `${where} · waiting` : idx > 0 ?`${where} · waiting for run ${idx}` : join(where, current.line.replace(/^Waiting · /, '').replace(/^Waiting$/, 'waiting'));
       case 'stopped': return `Stopped at ${where === 'Planning' ? 'planning' : `run ${idx + 1} of ${total}`}`;
-      case 'ready': return `Ready to ship · ${done} of ${total} done`;
+      case 'ready': return hold || `Ready to ship · ${done} of ${total} done`;
       case 'in-review': {
         // Distinct PRs: a chain shipped as One records the same PR on every run.
         const urls = new Set(members.filter((m) => m.pr && m.pr.id !== 'merged' && m.pr.id !== 'closed').map((m) => m.pr.url || `#${m.pr.number}`));
@@ -392,7 +394,8 @@ export function groupModel(group, opts = {}) {
       default: return 'Merged';
     }
   };
-  const meta = RUN_STATES[state];
+  const hold = state === 'ready' && g.hold ? String(g.hold) : null;
+  const meta = RUN_STATES[hold ? 'waiting' : state];
   const progress = groupProgress(members.map(asPart), { planning: planning ? asPart(planning) : null, memo: g.memo || null });
   // A group whose current member needs you only through its PR has no question to answer and nothing running there,
   // so it offers that PR, not Answer / Stop; `prNeeds` marks a group whose every member is finished. A PR- or
@@ -414,6 +417,7 @@ export function groupModel(group, opts = {}) {
   const prUrl = prCount === 1 ? prList[0].url || null : null;
   return { kind: g.kind || 'chain', title: g.title || '', state, ...meta, symbol, line: tail(), actions: prNeedsCurrent ? [...current.actions]
       // D18: a held current run's start is the feature's one Start now: the group row offers none either.
-      : current && current.held ? ACTIONS[state].filter((a) => a !== 'start-now') : [...ACTIONS[state]],
-    prNeeds: prNeedsCurrent && all.every(doneLike), pr, prCount, prUrl, count: { done, total, text: `${done}/${total}` }, progress, current, members, planning };
+      : current && current.held ? ACTIONS[state].filter((a) => a !== 'start-now') : hold ? [] : [...ACTIONS[state]],
+    prNeeds: prNeedsCurrent && all.every(doneLike), pr, prCount, prUrl, count: { done, total, text: `${done}/${total}` }, progress, current, members, planning,
+    ...(hold ? { hold } : {}) };
 }

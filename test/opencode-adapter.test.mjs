@@ -258,8 +258,12 @@ test('rule plan: tools removed are held; command and path rules are partial; Web
   const p = opencodeRulePlan({ deny: ['Bash(git push)', 'Bash(git push:*)', 'Bash(curl)', 'Read(.env*)', 'Read(//**/.worca-cc/settings.json)',
     'Edit(/src/gen/**)', 'Edit(//etc/**)', 'Read(~/.ssh/**)', 'WebFetch', 'WebSearch', 'mcp__github__delete_repo', 'mcp__slack', 'Agent'] }, { cwd, home: '/home/u' });
   assert.deepEqual(p.permission.bash, { 'git push': 'deny', 'git push *': 'deny', curl: 'deny' });
-  assert.deepEqual(p.permission.read, { '.env*': 'deny', '*/.env*': 'deny', '.worca-cc/settings.json': 'deny', '*/.worca-cc/settings.json': 'deny', '../../home/u/.ssh/**': 'deny' });
-  assert.deepEqual(p.permission.edit, { 'src/gen/**': 'deny', '../../etc/**': 'deny' });
+  // A path outside the cwd in both forms: OpenCode 1 matches `../…`, OpenCode 2 only the absolute path.
+  assert.deepEqual(p.permission.read, { '.env*': 'deny', '*/.env*': 'deny', '.worca-cc/settings.json': 'deny', '*/.worca-cc/settings.json': 'deny', '../../home/u/.ssh/**': 'deny', '/home/u/.ssh/**': 'deny' });
+  assert.deepEqual(p.permission.edit, { 'src/gen/**': 'deny', '../../etc/**': 'deny', '/etc/**': 'deny' });
+  // Inside the cwd: the relative form only (both majors match it).
+  assert.deepEqual(opencodeRulePlan({ deny: ['Read(~/repo/secret.txt)', 'Edit(//work/repo/gen/**)'] }, { cwd, home: '/work' }).permission,
+    { read: { 'secret.txt': 'deny' }, edit: { 'gen/**': 'deny' } });
   assert.equal(p.permission.webfetch, 'deny');
   assert.equal(p.permission.websearch, 'deny');
   assert.equal(p.permission.github_delete_repo, 'deny');
@@ -397,7 +401,7 @@ test('spawn: prompt on stdin; system prompt, rules and MCP ride OPENCODE_CONFIG_
   assert.equal(cfg.agent['worca-node'].mode, 'primary');
   assert.equal(cfg.agent['worca-node'].steps, undefined, 'no turn cap, no step limit');
   // No fan-out: no sub-agent at all — OpenCode's built-in ones are removed and the task tool is denied.
-  assert.deepEqual(cfg.agent['worca-node'].permission, { task: 'deny' });
+  assert.deepEqual(cfg.agent['worca-node'].permission, { task: 'deny', execute: 'deny' }, 'no Code Mode: its session_move would leave the cwd-relative rules behind');
   assert.deepEqual(cfg.agent.general, { disable: true });
   assert.deepEqual(cfg.agent.explore, { disable: true });
   assert.equal(cfg.agent['worca-investigator'], undefined);
@@ -409,6 +413,20 @@ test('spawn: prompt on stdin; system prompt, rules and MCP ride OPENCODE_CONFIG_
   assert.deepEqual(readFileSync(join(cwd, 'AGENTS.md'), 'utf8'), '# rules');
 });
 
+test('spawn: the investigator\'s read allow repeats the run\'s read rules after it, and a bare Read keeps reading off', POSIX, async () => {
+  for (const [deny, want] of [
+    [['Read(.env*)', 'Edit(src/**)'], { '*': 'allow', '.env*': 'deny', '*/.env*': 'deny' }],
+    [['Read'], 'deny'],
+  ]) {
+    const fake = fakeOpencode(tmp(), null, { lines: frames('task-subagent.jsonl'), exportDoc: JSON.parse(text('export-subsession.json')) });
+    await runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'go', model: 'anthropic/x', allowedTools: ['Read', 'Agent'], permissionRules: { deny } });
+    const p = fake.config().agent['worca-investigator'].permission;
+    assert.deepEqual(p.read, want, `${deny}: the run's read rules still hold for the investigator`);
+    assert.deepEqual(Object.keys(p.read === 'deny' ? {} : p.read)[0], p.read === 'deny' ? undefined : '*', 'the allow comes first, so the denies after it win');
+    assert.equal(p['*'], 'deny');
+  }
+});
+
 test('spawn: a fan-out node gets the investigator sub-agent; its spend joins the result', POSIX, async () => {
   const lines = frames('task-subagent.jsonl');
   const fake = fakeOpencode(tmp(), null, { lines, exportDoc: JSON.parse(text('export-subsession.json')) });
@@ -418,9 +436,9 @@ test('spawn: a fan-out node gets the investigator sub-agent; its spend joins the
   const cfg = fake.config();
   assert.equal(cfg.agent['worca-investigator'].mode, 'subagent');
   assert.match(cfg.agent['worca-investigator'].prompt, /^\{file:/);
-  // The node reaches worca's investigator only; the investigator edits nothing, has no shell and no sub-agents.
-  assert.deepEqual(cfg.agent['worca-node'].permission, { task: { '*': 'deny', 'worca-investigator': 'allow' } });
-  assert.deepEqual(cfg.agent['worca-investigator'].permission, { edit: 'deny', bash: 'deny', task: 'deny' });
+  // The node reaches worca's investigator only; the investigator only reads and searches: every other tool is denied.
+  assert.deepEqual(cfg.agent['worca-node'].permission, { task: { '*': 'deny', 'worca-investigator': 'allow' }, execute: 'deny' });
+  assert.deepEqual(cfg.agent['worca-investigator'].permission, { '*': 'deny', read: { '*': 'allow' }, glob: 'allow', grep: 'allow', list: 'allow', external_directory: 'allow' });
   assert.deepEqual(cfg.agent.general, { disable: true });
   assert.deepEqual(fake.exported(), ['ses_ee2c6ffe4ffe2lbboOzQjzEkHc']);
   // What the sub-agent did reaches the audit, under its task call.

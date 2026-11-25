@@ -375,8 +375,8 @@ try {
   await settle('live graph');
   const lg = await ev(`(()=>{const q=(s)=>document.querySelector('#run-detail '+s);const live=q('.rd-sheet-nav > .rd-live');const main=q('.rd-sheet-main');
     const l=live.getBoundingClientRect(),m=main.getBoundingClientRect();return {left:l.left,mainRight:m.right,h:l.height,wrap:getComputedStyle(live.querySelector('.run-flow-wrap')).height};})()`);
-  check('1e', '1e live graph: in the card\'s right column beside the details, 280px tall',
-    lg.left >= lg.mainRight && Math.abs(parseFloat(lg.wrap) - 280) < 1, lg);
+  check('1e', '1e live graph: in the card\'s right column beside the details, 320px tall',
+    lg.left >= lg.mainRight && Math.abs(parseFloat(lg.wrap) - 320) < 1, lg);
   if (process.env.WORCA_SHOT_DIR) {
     const shot = await cdp('Page.captureScreenshot', { format: 'png' }, 15000);
     await writeFile(path.join(process.env.WORCA_SHOT_DIR, 'run-live-graph.png'), Buffer.from(shot.data, 'base64'));

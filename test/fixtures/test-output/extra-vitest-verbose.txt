@@ -1,0 +1,13 @@
+
+ RUN  v5.1.0 /home/tomica/tool-formats/x/vt
+
+ ✓ s.test.js > slow one 1203ms
+ □ s.test.js > todo item
+ ✓ s.test.js > g1 > t1 0ms
+ ✓ s.test.js > g2 > t2 0ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed | 1 todo (4)
+   Start at  17:15:36
+   Duration  1.43s (tests 96%, transform 2%, import 1%)
+

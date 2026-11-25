@@ -25,6 +25,8 @@ const ALLOWED = {
   'src/core/engines/project-files.mjs': [1, 'git(): env from guardedGitEnvSync (the Cursor and Gemini CLI project files)'],
   'src/core/workspace-map/files.mjs': [1, 'env from guardedGitEnv'],
   'src/core/repo-readiness/facts.mjs': [1, 'gitOut(): env from guardedGitEnv (the agent-readiness facts and fingerprint)'],
+  'src/core/shape/features.mjs': [1, 'baseName(): plumbing (git remote, lists names only), env from guardedGitEnvSync'],
+  'src/core/shape/verifier.mjs': [1, 'gitOut(): plumbing (for-each-ref, rev-parse), env from guardedGitEnvSync'],
   'src/core/git-lock.mjs': [1, 'plumbing: rev-parse / for-each-ref'],
   'src/core/in-base.mjs': [1, 'plumbing: merge-base / rev-parse'],
   'src/core/store.mjs': [1, 'plumbing: rev-parse --git-common-dir'],
@@ -41,6 +43,7 @@ const ALLOWED = {
   'src/core/plugin-repo.mjs': [2, 'a worca-owned bare cache of a plugin repository (--git-dir), no work tree'],
   'src/core/plugin-inventory.mjs': [1, 'git archive from the same worca-owned bare cache'],
   'src/cli/container.mjs': [1, 'git config --get from the CLI user\'s own shell, outside any checkout'],
+  'src/core/workflow-tests/project-copy.mjs': [1, 'git(): env from guardedGitEnv (the person\'s project, read only; Worca\'s copy, over the try guard env)'],
 };
 
 function* files(dir) {

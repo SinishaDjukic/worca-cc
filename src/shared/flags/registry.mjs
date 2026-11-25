@@ -76,6 +76,18 @@ export const FLAGS = Object.freeze([
     docs: 'docs/requirements.md',
   }),
   entry({
+    key: 'workflowTests',
+    title: 'Workflow versions and tests',
+    description: 'Save named versions of a workflow, choose which version new runs use, and restore any earlier save. Test a version on your own examples and compare it with another before runs use it.',
+    stage: 'experimental',
+    default: false,
+    owner: 'TomicaB',
+    since: '1.15.0',
+    added: '2026-10-25',
+    reviewBy: '2027-01-22',
+    docs: 'docs/workflow-tests.md',
+  }),
+  entry({
     key: 'runTelemetry',
     title: 'Run telemetry',
     description: 'Runs record detailed statistics: context size, tokens and timing of every model call, tool time, retries and compactions per agent, plus how long Worca\'s own saves and live updates take. Shown on the run page\'s Agents tab. Recording only: runs behave the same.',
@@ -148,6 +160,18 @@ export const FLAGS = Object.freeze([
     added: '2026-11-19',
     reviewBy: '2027-02-16',
     docs: 'docs/terminal.md',
+  }),
+  entry({
+    key: 'shaperSmallRuns',
+    title: 'Shaper small runs',
+    description: "Shaper builds a feature as small runs, checked as a whole by a Verifier and shipped as one stacked PR per run. Features with no marker also start from the latest finished work. Off: runs follow the linear chain, and a feature started with it on keeps its card, Care and stacked Ship, but no Verifier check starts.",
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.19.0',
+    added: '2026-11-20',
+    reviewBy: '2027-02-18',
+    docs: 'docs/feature-flags.md',
   }),
 ]);
 

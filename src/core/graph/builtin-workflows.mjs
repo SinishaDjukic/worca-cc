@@ -412,6 +412,18 @@ const withRequirementsInput = (nodes) => nodes.map((n) => {
   return { ...n, config };
 });
 
+/** The inverse, for one node of a running slice graph: a re-plan that ended unsliced checks no agreed list, so its node
+ *  reads as the plain Shaper graph's. Any other node is returned as is. Pure. */
+export function withoutRequirementsInput(node) {
+  const { extraInputs = [], ...config } = node?.config || {};
+  const rest = extraInputs.filter((e) => e.id !== REQUIREMENTS_INPUT.id);
+  if (rest.length === extraInputs.length) return node;
+  if (rest.length) config.extraInputs = rest;
+  if (config.roleReview?.checklist === SHAPE_REQ_CODE_REVIEW.checklist) config.roleReview = SHAPE_CODE_ROLES_CONFIG.roleReview;
+  if (config.approve?.coverage) { const { coverage, ...approve } = config.approve; config.approve = approve; }
+  return { ...node, config };
+}
+
 /** A Shaper graph with the requirements stage in place of Clarify. Pure: every other node and wire keeps its id. */
 export function requirementsVariant(graph, id) {
   return deepFreeze({
@@ -435,6 +447,29 @@ export function sliceRequirementsVariant(graph, id) {
   });
 }
 
+/** Shaper small runs C2 (D4): a slice graph with a Test writer between Refine and the Implementer. `n_tests` takes the
+ *  approved plan (wt1) and the slice's task (run 1: the agreed requirements) as its own optional `requirements` input
+ *  (wt2), and hands its `tests` note to the Implementer through an extra `tests` input (wt3), so the Implementer's first
+ *  run waits for the tests. The
+ *  frozen slice templates are never changed: this runs at resolve time on a private copy. Pure. */
+export function withTestWriter(graph) {
+  const impl = graph.nodes.find((n) => n.id === 'n_impl');
+  const tests = { id: 'n_tests', kind: 'agent', key: 'testWriter', x: impl.x, y: impl.y + 180, config: {} };
+  // A planning run with the requirements stage (run 1 of a feature) hands over the agreed requirements, not the prompt.
+  const reqFrom = graph.nodes.some((n) => n.id === 'n_reqrefine') ? { node: 'n_reqrefine', port: 'requirements' } : { node: 'n_task', port: 'task' };
+  const nodes = graph.nodes.map((n) => (n.id === 'n_impl'
+    ? { ...n, config: { ...structuredClone(n.config || {}), extraInputs: [...(n.config?.extraInputs || []).map((e) => ({ ...e })), { id: 'tests', type: 'md' }] } }
+    : structuredClone(n)));
+  return {
+    ...structuredClone(graph),
+    nodes: [...nodes, tests],
+    wires: [...graph.wires.map(copyWire),
+      { id: 'wt1', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_tests', port: 'plan' } },
+      { id: 'wt2', from: reqFrom, to: { node: 'n_tests', port: 'requirements' } },
+      { id: 'wt3', from: { node: 'n_tests', port: 'tests' }, to: { node: 'n_impl', port: 'tests' } }],
+  };
+}
+
 export const GRAPH_SHAPE_REQ_WORKFLOW = requirementsVariant(GRAPH_SHAPE_WORKFLOW, SHAPE_REQ_WORKFLOW_ID);
 export const GRAPH_SHAPE_UX_REQ_WORKFLOW = requirementsVariant(GRAPH_SHAPE_UX_WORKFLOW, SHAPE_UX_REQ_WORKFLOW_ID);
 /** Reserved apart from RESERVED_WORKFLOW_IDS (whose members are pinned): never listed, never saved over, never deleted. */
@@ -446,6 +481,29 @@ export const GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW = sliceRequirementsVariant(GRAPH_
 /** Reserved and hidden like SHAPE_REQ_WORKFLOW_IDS: a slice ticket picks one when it fires (never listed, never a row). */
 export const SHAPE_SLICE_REQ_WORKFLOW_IDS = Object.freeze([SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID]);
 
+/** Shaper small runs C5: the Verifier's run, chained after a feature's last finished run (src/core/shape/verifier.mjs).
+ *  One agent between the task and End, no loop: the check loop re-checks with a new run. Reserved and hidden like
+ *  SHAPE_SLICE_REQ_WORKFLOW_IDS: never listed, never a row, never deleted. */
+export const SHAPE_VERIFY_WORKFLOW_ID = 'wf_shape_verify';
+export const GRAPH_SHAPE_VERIFY_WORKFLOW = deepFreeze({
+  id: SHAPE_VERIFY_WORKFLOW_ID,
+  name: 'Shaper Verifier',
+  version: 2,
+  domain: 'coding',
+  createdAt: '1970-01-01T00:00:00.000Z',
+  updatedAt: '1970-01-01T00:00:00.000Z',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+    { id: 'n_verify', kind: 'agent', key: 'featureVerifier', x: 320, y: 200, config: {} },
+    { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_verify', port: 'task' } },
+    { id: 'w2', from: { node: 'n_verify', port: 'verify' }, to: { node: 'n_end', port: 'result' } },
+  ],
+});
+export const SHAPE_VERIFY_WORKFLOW_IDS = Object.freeze([SHAPE_VERIFY_WORKFLOW_ID]);
+
 /** The ids no saved row may claim: writeGraphWorkflow re-mints them, listWorkflows hides them,
  *  DELETE refuses them. wf_workspace_scan and wf_pr_fix are reserved but never listed anywhere;
  *  wf_shape is listed only while the Shape it first gate is on, and wf_shape_ux is never listed. Order is NOT
@@ -454,4 +512,4 @@ export const SHAPE_SLICE_REQ_WORKFLOW_IDS = Object.freeze([SHAPE_SLICE_REQ_WORKF
  *  NOTE: `ui/public/graph/composer.mjs` keeps a twin of this list as a `Set` (`.has`), not an
  *  Array (`.includes`) — the two are not interchangeable. */
 export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, PR_FIX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID]);
-export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id) || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id); }
+export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id) || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_VERIFY_WORKFLOW_IDS.includes(id); }

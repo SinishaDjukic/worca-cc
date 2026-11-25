@@ -45,8 +45,26 @@ export const PERSPECTIVES = Object.freeze([
 ]);
 
 export const PERSPECTIVE_KEYS = Object.freeze(PERSPECTIVES.map((p) => p.key));
-const BY_KEY = new Map(PERSPECTIVES.map((p) => [p.key, p]));
+
+/** Small runs D6: the Challenger is the existing devil's-advocate perspective, under its own label. */
+export const CHALLENGER_KEY = 'devil';
+export const CHALLENGER_LABEL = 'Challenger';
+
+/** Compliance (small runs B3): a perspective only under the `shaperSmallRuns` flag, so it is not in PERSPECTIVES. It
+ *  reviews plans as a role with a rule (no plan section, no checklist) and writes `R-comp` requirements. */
+export const COMPLIANCE_KEY = 'compliance';
+export const COMPLIANCE_PERSPECTIVE = perspective({ key: COMPLIANCE_KEY, label: 'Compliance', icon: 'C', help: 'Rules that apply (personal data, retention, audit) and the proof that must be kept.', roleRule: 'Your role has no checklist: judge whether the plan keeps the rules that apply (personal data, retention, audit) and the proof they need.', sections: [], effect: {} });
+const WITH_COMPLIANCE = Object.freeze(PERSPECTIVES.flatMap((p) => (p.key === 'devops' ? [p, COMPLIANCE_PERSPECTIVE] : [p])));
+const KEYS_WITH_COMPLIANCE = Object.freeze(WITH_COMPLIANCE.map((p) => p.key));
+
+/** The perspectives a picker offers: PERSPECTIVES, plus Compliance after DevOps under small runs. */
+export const perspectivesFor = ({ smallRuns = false } = {}) => (smallRuns === true ? WITH_COMPLIANCE : PERSPECTIVES);
+
+const BY_KEY = new Map(WITH_COMPLIANCE.map((p) => [p.key, p]));
+/** Every perspective by key, Compliance included, so a stored run keeps its labels with the flag off. */
 export const perspectiveByKey = (key) => BY_KEY.get(key) || null;
+/** A role key's label: the Challenger's, a perspective's, else the key itself. */
+export const roleLabelOf = (key) => (key === CHALLENGER_KEY ? CHALLENGER_LABEL : perspectiveByKey(key)?.label || key);
 
 /** The sections a plan with these perspectives carries, in §3.1 order, numbered from 1. Product is always on. */
 export function sectionsFor(perspectives) {
@@ -123,16 +141,18 @@ const SECTION_TITLE = new Map(SECTIONS.map((s) => [s.key, s.title]));
 /**
  * Validate a request's perspective keys (POST /api/run `shape.perspectives`).
  * @returns {{ok:true, perspectives:string[]}|{ok:false, error:string}} keys in PERSPECTIVES order, Product first,
- *   duplicates collapsed
+ *   duplicates collapsed. `smallRuns` admits Compliance (after DevOps); without it Compliance is refused as unknown.
+ * @param {unknown} raw @param {{smallRuns?:boolean}} [opts]
  */
-export function normalizePerspectives(raw) {
+export function normalizePerspectives(raw, { smallRuns = false } = {}) {
   if (!Array.isArray(raw)) return { ok: false, error: 'shape.perspectives must be an array of perspective keys' };
-  const unknown = raw.filter((k) => typeof k !== 'string' || !BY_KEY.has(k));
+  const keys = smallRuns === true ? KEYS_WITH_COMPLIANCE : PERSPECTIVE_KEYS;
+  const unknown = raw.filter((k) => typeof k !== 'string' || !keys.includes(k));
   if (unknown.length) {
-    return { ok: false, error: `unknown perspective(s): ${unknown.map(String).join(', ')} — known: ${PERSPECTIVE_KEYS.join(', ')}` };
+    return { ok: false, error: `unknown perspective(s): ${unknown.map(String).join(', ')} — known: ${keys.join(', ')}` };
   }
   const picked = new Set(['product', ...raw]);
-  return { ok: true, perspectives: PERSPECTIVE_KEYS.filter((k) => picked.has(k)) };
+  return { ok: true, perspectives: keys.filter((k) => picked.has(k)) };
 }
 
 /**
@@ -145,7 +165,7 @@ export function normalizePerspectives(raw) {
  * @param {{refiner?:boolean, agreedIds?:string[]}} [opts]
  */
 export function perspectivesBlock(perspectives, { refiner = false, agreedIds = [] } = {}) {
-  const n = normalizePerspectives(perspectives);
+  const n = normalizePerspectives(perspectives, { smallRuns: true });   // a stored list: Compliance only if the run had it
   if (!n.ok) return '';
   const picked = n.perspectives;
   const label = (k) => perspectiveByKey(k).label;

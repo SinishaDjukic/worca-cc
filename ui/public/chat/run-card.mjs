@@ -23,12 +23,17 @@ import { isGitRun, isNoProjectRun, kindChip, workModeOf } from '../run-kind.mjs'
 import { gitOn } from '../git-gate.mjs';
 import { formatBytes } from '../artifacts/common.mjs';
 import { fixOutcomeText } from './pr-watch-words.mjs';
-import { runModel } from '../../../src/shared/run-model.mjs';
+import { runModel, isFinishedState, RUN_STATES } from '../../../src/shared/run-model.mjs';
 import { paintRunStatus, statusText, kindLabel, syncActions, pauseResumeOwn, renderMemberRows } from '../run-status-card.mjs';
 import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
+import { cardShortWord } from '../../../src/shared/shape/run-agents.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
-import { featureCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
+import { featureCardModel, oneCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
+import { buildCheckRows } from '../shape/check-row.mjs';
+import { verifyGapItems } from '../../../src/shared/shape/verifier.mjs';
+import { paintReqChange } from '../shape/req-change.mjs';
+import { renderShipCard, confirmRequirement } from '../shape/ship-card.mjs';
 import { namedAnswer, forgetAnswer, REQUIREMENTS_AGREED } from '../shape/step-receipt.mjs';
 import { isRequirementsAsk, answerFieldOpen } from '../shape/step-card.mjs';
 import { renderChecklistGroups } from '../shape/checklist-view.mjs';
@@ -39,10 +44,18 @@ import { roundsModel, liveRound } from './rounds.mjs';
 import { flagOn } from '../flags.mjs';
 import { labelChip } from '../label-picker.mjs';
 
+/** Small runs C3 (D15): a member's slice in the feature view (its `stop` and `waitsFor`), by pipeline or ticket. */
+const sliceOfMember = (card, mb) => ((card && card.feature && card.feature.slices) || [])
+  .find((x) => (mb.pipelineId && x.pipelineId === mb.pipelineId) || (mb.ticketId && x.ticketId === mb.ticketId)) || null;
+
 const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
+/** C5: the run states that read the Verifier's Working while gap runs build (every other state keeps its own word). */
+const GAPS_BUILDING = new Set(['starting', 'working', 'waiting']);
 /** A question that goes away under these was answered (here or elsewhere). Not `pausing`: ui/server.mjs pauseRun resolves
  *  the open question (reason 'paused') right AFTER the run's `pausing` frame — that question was not answered. */
 const ANSWERING_STATUS = new Set(['starting', 'running']);
+/** C1: the Prototype step's moments where Worca works and nobody answers (drawn from the card's saved state). */
+const PROTO_WORKING = new Set(['building', 'reviewing', 'matching']);
 /** Statuses whose card keeps its run controls: live, parked (paused), or resumable after a restart (interrupted). */
 const CONTROL_STATUS = new Set(['starting', 'running', 'pausing', 'paused', 'interrupted']);
 /** Over for good: the result region replaces the controls (interrupted is resumable, so it is not here). */
@@ -303,6 +316,14 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   const logEl = h('ol', 'chat-rc-log');
   logEl.hidden = true;
   logEl.setAttribute('aria-label', 'Steps');
+  // ---- Small runs C4: a requirement change's notice on the Build step (req-change.mjs); told, not asked. Mounted
+  // before the log only once a change shows, so every other card keeps dev's markup.
+  const changeEl = h('div', 'chat-rc-req-change');
+  // Small runs C5 (D12): the Verifier's open gaps, one `.srows` list, mounted only while gap runs build (flag-off golden).
+  const gapsEl = h('div', 'plan-checks srows verify-gaps');
+  // Feature D1 (D14): the Ship step's card (ship-card.mjs, the feature page's too), mounted only on the `ship` step.
+  const shipEl = h('div', 'chat-rc-ship');
+  changeEl.hidden = true;
   // ---- Shaper s5: the ideas saved for the next checkpoint (D11) and a watch that gave up on the run's PR (D23)
   const notesEl = h('div', 'chat-rc-notes');
   notesEl.hidden = true;
@@ -318,8 +339,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
 
   let last = null, graph = null, zoom = null, agentsSig = null, resultSig = '', painted = null, sent = null, inFlight = false, dead = false, pauseAsked = '';
   let shownFor = null;   // the question whose receipt shows the "Answered" fallback (its answer may still be in flight)
+  let working = false;   // item 6: the question section shows the Prototype step's working moment (nothing to answer)
   let curRow = null;          // the group row while this card shows a group (D11)
   let createPrBtn = null;     // the result's "Create pull request" button while paintResult shows it (D4: it is `ship`)
+  let oneNow = null;          // B1: the one card model of the last paint (null: dev's card)
   let viewPrLink = null;      // the result's View PR link while paintResult shows it (it is `open-pr` while the PR is open)
   let lastM = null;           // the model update() painted last, for the Pause click's repaint
   let fm = null;              // the feature card model of the last paint (null: a plain run, or Shape it first off)
@@ -365,6 +388,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       ? controls.featureAct(fm.controls.featureId, action, body || {}) : Promise.resolve({ ok: false })),
     confirm: (o) => (typeof controls.confirm === 'function' ? controls.confirm(o) : Promise.resolve(true)),
     openPlan,
+    // Item 10: a footer action moved into ⋯ while a stop is open runs the footer's own handler (syncActions' last one).
+    modelAct: (aid, b) => (typeof footActions.__onAction === 'function' ? footActions.__onAction(aid, b) : undefined),
   };
 
   // #959: the chip names a group only (kindLabel's `Feature/Chain/Group · N runs`), and Shaping for the feature a
@@ -549,6 +574,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   }
 
   function paintQuestion(s) {
+    working = false;
     // D11: the Shaper open step wins over ownIsCurrent(): a feature card shows its asking member's step.
     if (!(fm && fm.step) && !ownIsCurrent()) {
       // A group card that is not the current member's own card draws no question (its Answer opens the member's
@@ -565,6 +591,20 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const pointer = !!(fm && fm.step && !fm.step.snap);
     const pq = pointer ? { id: fm.step.id, kind: fm.step.kind }
       : src && src.source === 'live' && !RESULT_STATUS.has(status) ? src.pendingQuestion : null;
+    // C1 (R-ux-2): with no ask open, the one card draws the Prototype step's working moment from its saved state.
+    const proto = !pq && oneNow && oneNow.state === 'SP' && s && s.shaper && s.shaper.card ? s.shaper.card.prototype : null;
+    if (proto && PROTO_WORKING.has(proto.state) && src && src.source === 'live' && !RESULT_STATUS.has(status)
+      && typeof controls.paintPrototypeWork === 'function') {
+      qBody.hidden = false; qSec.hidden = false;
+      if (controls.paintPrototypeWork(stepRef(), qBody, proto)) {
+        // Nothing was answered here: the asked step's note is spent, and no receipt shows.
+        if (painted) forgetAnswer(painted.runId, painted.id);
+        painted = null; sent = null; planSent = null; shownFor = null;
+        qHead.hidden = true; qErr.hidden = true; receipt.hidden = true;
+        working = true;
+        return;
+      }
+    }
     // Un-hide BEFORE the run page's renderer builds (paintRdQuestions' rule): a workflow body measures its graph host
     // the moment it attaches. The null path below hides both again.
     if (pq) { qBody.hidden = false; qSec.hidden = false; }
@@ -573,7 +613,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       if (!painted || painted.id !== (q.id || null)) { qErr.hidden = true; sent = null; shownFor = null; planSent = null; }
       const planAsk = askKindOf(pq) === 'plan' && !!pq.plan && !pq.plan.outline;
       painted = { id: q.id || null, runId: stepRef().runId, kind: q.kind || askKindOf(pq), heading: q.heading || '', step: q.step || '',
-        stepCard: !!q.stepCard, planAsk, reqAsk: isRequirementsAsk(pq), roleReviews: planAsk ? pq.plan.roleReviews || null : null };
+        stepCard: !!q.stepCard, stop: !!(q.stop || pq.stop), stopNode: (pq.stop && pq.stop.node) || null, planAsk, reqAsk: isRequirementsAsk(pq), roleReviews: planAsk ? pq.plan.roleReviews || null : null };
       qHead.textContent = painted.heading;
       qHead.hidden = !painted.heading || painted.stepCard;   // a step card's own head says it once (shaper-cards D16)
       qBody.hidden = false;
@@ -614,14 +654,15 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     return box;
   }
 
+  function clearResult() {
+    if (!resultSec.hidden || resultSig) { resultSec.hidden = true; resultSec.replaceChildren(); resultSig = ''; }
+    createPrBtn = null;
+    viewPrLink = null;
+  }
+
   function paintResult(s, m) {
     const word = resultWord(s);
-    if (!word) {
-      if (!resultSec.hidden || resultSig) { resultSec.hidden = true; resultSec.replaceChildren(); resultSig = ''; }
-      createPrBtn = null;
-      viewPrLink = null;
-      return;
-    }
+    if (!word) { clearResult(); return; }
     const r = s.results || null;
     const arts = Array.isArray(s.artifacts) ? s.artifacts : [];
     const prUrl = s.pr && isWebUrl(s.pr.url) ? s.pr.url : '';
@@ -819,13 +860,14 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
 
   /** Shaper s5 (D5): the Ask for changes field — a finished single-project run, or a feature that is ready to ship or
    *  shipped and not halted. The server mints the card from the ref (a feature's id, else the run's pipeline id). */
-  function paintChanges(s, m, roundLive) {
+  function paintChanges(s, m, roundLive, one = null) {
     const feature = fm && fm.phase === 'feature' ? fm : null;
     // A feature reads the GROUP model's state; until groupOf knows the row, `m` is the planning run's model (done →
     // ready), so the field waits for curRow.
-    const finished = feature ? !!curRow && ['ready', 'in-review', 'merged'].includes(m.state)
+    const finished = feature ? !!curRow && isFinishedState(m.state)
       : RESULT_STATUS.has(String((s && s.status) || ''));
-    const show = !!s && !roundLive && finished && s.kind !== 'workspace-run' && typeof ctx.postChanges === 'function'
+    // B1: the field lives in the result block, which the one card never shows (D8, D10).
+    const show = !one && !!s && !roundLive && finished && s.kind !== 'workspace-run' && typeof ctx.postChanges === 'function'
       && (feature ? !(feature.controls && feature.controls.halted) : !!s.pipelineId);
     changesSlot.hidden = !show;
     if (!show) { changesSlot.replaceChildren(); changesView = null; return; }
@@ -910,23 +952,98 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // The same for View PR while the model offers it (an open PR): one View PR on the card, not a second in the footer.
     if (!curRow && viewPrLink && resultSec.contains(viewPrLink) && levelAtLeast('advanced', doc) && ((m && m.actions) || []).includes('open-pr')) own['open-pr'] = viewPrLink;
     else if (viewPrLink) delete viewPrLink.dataset.modelAction;
-    const changesWhy = changesView && !changesSlot.hidden ? '' : 'Ask for changes from the chat that started this run';
+    const changesWhy = changesView && !changesSlot.hidden ? ''
+      : oneNow ? 'Ask for changes from the feature page' : 'Ask for changes from the chat that started this run';
     // A group row goes along, so app.js hands the action to groupAction (D6, D11).
     // A run on its source branch is never given a PR (the server refuses it): when Push does not own `ship` (not merged
     // back yet, or below Advanced where the result's row is hidden) the footer makes no Create PR either.
+    // B1: the model's ship action never shows on the one card: Feature D1's Ship step card holds Create N PRs, and the open
+    // step card's button is its one primary.
+    const fc = fm && fm.phase === 'feature' ? fm.controls : null;
+    const stopOpen = !!(painted && painted.stop);
+    const disable = { ...(st === 'pausing' ? { resume: 'Pausing…' } : {}), ...(changesWhy ? { 'ask-changes': changesWhy } : {}) };
+    // Feature D1 (R-ux-2): a shipped marked feature's Ship step holds the one view action (View PRs): no View PR here.
+    const shipDone = !!oneNow && !!shipEl.parentNode && shipEl.dataset.phase === 'applied';
+    const baseSkip = [...(oneNow || (s && s.sameAsSource && !own.ship) ? ['ship'] : []), ...(stopOpen ? ['answer'] : []), ...(shipDone ? ['open-pr'] : [])];
+    // Item 10: while a stop is open its question's primary is the card's one primary. The foot keeps only Stop; every
+    // other action it would draw moves into the feature ⋯ (only where there is one: a feature's controls).
+    const moved = stopOpen && fc ? ((m && m.actions) || []).filter((id) => id !== 'stop' && !baseSkip.includes(id)) : [];
     syncActions(footActions, m, {
       own,
-      skip: s && s.sameAsSource && !own.ship ? ['ship'] : [],
-      plain: answerFieldOpen(qBody) ? ['answer'] : [],
-      disable: { ...(st === 'pausing' ? { resume: 'Pausing…' } : {}), ...(changesWhy ? { 'ask-changes': changesWhy } : {}) },
+      // Small runs C3 (R-ux-4): a stop answers only through its own question (open or held), never the foot's Answer.
+      skip: [...baseSkip, ...moved],
+      plain: answerFieldOpen(qBody) || (oneNow && painted) ? ['answer'] : [],
+      disable,
       onAction: (aid, b) => (aid === 'ask-changes' ? askForChanges() : call(controls.act, target(), aid, b, m, curRow)),
     });
-    const fc = fm && fm.phase === 'feature' ? fm.controls : null;
-    if (fc) paintFeatureActions(doc, fActions, fc, featureDeps, { omit: m.actions });
+    if (fc) paintFeatureActions(doc, fActions, fc, featureDeps, { omit: m.actions, stopOpen,
+      moved: moved.map((id) => ({ id, ...(disable[id] ? { disabled: disable[id] } : {}) })) });
     // Clear the sig too: else the next feature paint's sig matches and returns early, leaving an empty host.
     else { fActions.replaceChildren(); fActions.hidden = true; delete fActions.dataset.sig; }
     // A footer with nothing visible stays hidden (a Ready run whose Create PR is the result's own button).
     foot.hidden = ![...footActions.children, ...fActions.children].some((b) => !b.hidden) && footErr.hidden;
+  }
+
+  /** B1 (D10): the one card's state line — the model's word, dot and current run's bar, with the one card's detail and no
+   *  group bar (its "k done" would say the count again). Before groupOf knows the feature's row, a Build card reads Working. */
+  function oneStatus(m, one) {
+    // No bar at all (owner review): the detail already says "k of n runs done", and an empty bar read as 0%.
+    const o = { ...m, line: one.detail, barLine: one.detail, lineSaysState: false, progress: null };
+    if (m.current) o.current = { ...m.current, progress: null };
+    if (one.state === 'S8' && !curRow) o.word = 'Working';
+    // C5: the Verifier's word (Verifying, Needs you, Paused, Stopped, Ready to ship). While gap runs build, the model's
+    // word stands when a gap run asks, pauses, fails or stops; only a building one (starting, working, waiting) reads Working.
+    const gapsWord = !(one.verify && one.verify.state === 'gaps') || GAPS_BUILDING.has(m.state);
+    if (one.word && gapsWord) o.word = one.word;
+    return o;
+  }
+
+  /** C5: the Verifier's run row (a paused or halted Verifier), one renderMemberRows row: dot, "Verifier" and its short
+   *  state, unnumbered; its title opens the run in the panel. */
+  function verifierRow(v, snap) {
+    const state = v.state === 'halted' ? 'stopped' : 'paused';
+    const runRef = { ...ref(), pipelineId: v.pipelineId, runId: (snap && snap.runId) || null, title: 'Verifier' };
+    const mb = { position: '', title: 'Verifier', pipelineId: v.pipelineId, href: progressRoute(runRef, snap), model: { state, ...RUN_STATES[state] } };
+    const ol = renderMemberRows(doc, { groupKind: 'feature', members: [mb] }, { oneLine: true, shortState: () => state });
+    const li = ol.querySelector('.run-member');
+    li.dataset.key = 'verifier';
+    li.querySelector('.run-member-title').addEventListener('click', (e) => { e.preventDefault(); call(ctx.openRunPanel, runRef, {}); });
+    return li;
+  }
+
+  /** C5 (D12): while gap runs build, the open gaps as one list; none while the Verifier's own stop is up (it lists them). */
+  function paintVerifyGaps(one) {
+    const v = one && one.verify;
+    const gaps = v && v.state === 'gaps' && !(painted && painted.stopNode === 'n_verify') ? v.gaps : [];
+    if (!gaps.length) { if (gapsEl.isConnected) gapsEl.remove(); return; }
+    if (!gapsEl.isConnected) logEl.after(gapsEl);
+    gapsEl.replaceChildren(...buildCheckRows(doc, { items: verifyGapItems(gaps) }));
+  }
+
+  /** D1: the one card's `ship` step mounts the Ship card from the feature view's `ship.smallRuns`; rebuilt only when
+   *  what it shows changes, keeping the focus on the same control. */
+  function paintShipStep(one, feature) {
+    const ship = one && one.step === 'ship' && feature && feature.ship && feature.ship.smallRuns ? feature.ship : null;
+    const phase = ship ? (ship.mode ? 'applied' : ship.ready ? 'ready' : null) : null;
+    if (!phase) { if (shipEl.parentNode) { shipEl.remove(); delete shipEl.dataset.sig; delete shipEl.dataset.phase; } return; }
+    shipEl.dataset.phase = phase;
+    if (!shipEl.parentNode) logEl.after(shipEl);   // parentNode: a card being built is not in the document yet
+    const sig = JSON.stringify([phase, feature.title, ship.smallRuns]);
+    if (shipEl.dataset.sig === sig) return;
+    shipEl.dataset.sig = sig;
+    // The focused control, else the one a mark in flight noted (Chromium blurs its disabled button to <body>).
+    const a = doc.activeElement;
+    const noted = shipEl.querySelector('[data-focus]');
+    const act = a && shipEl.contains(a) && a.dataset.act ? a.dataset.act : (!a || a === doc.body) && noted ? noted.dataset.focus : null;
+    const had = act ? `[data-act="${act}"]` : null;
+    // R-ux-2: the card's state line already says "N PRs open" (countShown), and the foot draws no View PR (paintFoot).
+    // The one card's head already shows the feature title (titleShown): the Ship card names only its step.
+    const card = renderShipCard(doc, { phase, featureId: feature.id, title: feature.title, runs: feature.total, result: ship.result || null,
+      smallRuns: ship.smallRuns }, { countShown: true, titleShown: true, onConfirm: (id, mark, reason) => confirmRequirement(feature.id, id, mark, reason) });
+    card.dataset.needsGit = '';   // shipping opens pull requests: hidden while git is missing (git-gate.mjs)
+    shipEl.replaceChildren(card);
+    const back = had ? shipEl.querySelector(had) : null;
+    if (back && !back.disabled) back.focus();
   }
 
   function update(snap) {
@@ -940,7 +1057,11 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     el.dataset.runStatus = status;
     const pid = (s && s.pipelineId) || id.pipelineId || '';
     // Shaper's slots (feature model, rounds).
-    fm = s && s.shaper ? featureCardModel({ own: s, card: s.shaper.card, snapOf: (p) => (s.shaper.snaps && s.shaper.snaps[p]) || null }) : null;
+    const shaperIn = s && s.shaper ? { own: s, card: s.shaper.card, snapOf: (p) => (s.shaper.snaps && s.shaper.snaps[p]) || null } : null;
+    // Shaper small runs B1: a card whose planning run carries the marker is the one card (null: dev's card, unchanged).
+    const one = shaperIn ? oneCardModel(shaperIn) : null;
+    oneNow = one;
+    fm = one ? one.base : shaperIn ? featureCardModel(shaperIn) : null;
     const roundSnap = (p) => (s && s.roundSnaps && s.roundSnaps[p]) || null;
     // s5 (D16): a plain run's rounds (the controller fills s.roundSnaps) fill the log; the live one feeds the model (D6).
     const rm = roundsModel(s);
@@ -955,7 +1076,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const m = curRow ? curRow.model : runModel(s ? modelInput(s, status, lr) : { status: 'starting' }, opts);
     lastM = s || curRow ? m : { ...m, actions: [] };
     paintStatusDot(headDot, m);
-    paintRunStatus(statusEl, m);
+    paintRunStatus(statusEl, one ? oneStatus(m, one) : m);
     const labels = flagOn('runLabels', doc) && s && Array.isArray(s.labels) ? s.labels : [];   // the card's own document (jsdom tests)
     const sig = labels.join('\n');
     if (sig !== labelsSig) { labelsSig = sig; labelsEl.replaceChildren(...labels.map((l) => labelChip(doc, l))); }
@@ -963,17 +1084,28 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const feat = id.feature && Number.isInteger(Number(id.feature.seq)) && id.feature.title ? id.feature : null;
     featureEl.hidden = !feat;
     if (feat) { featureEl.textContent = String(feat.title); featureEl.setAttribute('href', `#requirements/feature/${Number(feat.seq)}`); }
-    const kindWord = kindOf(curRow, s);
+    const kindWord = one ? one.kindWord : kindOf(curRow, s);
     kind.textContent = kindWord;
     kind.hidden = !kindWord;
+    open.className = one ? 'btn btn-sm btn-quiet chat-rc-open' : 'ask-rc-open';   // B1: the open step's button is the card's one primary
     open.setAttribute('href', curRow ? (curRow.groupKind === 'feature' ? `#feature/${encodeURIComponent(curRow.groupId)}` : `#group/${encodeURIComponent(curRow.groupId)}`) : progressRoute(id, s));
-    if (curRow) {
+    if (curRow && (!one || one.runs)) {
       // A Requirements fold the person opened stays open across the repaint (the rows are rebuilt each paint).
       const opened = [...membersEl.querySelectorAll('.run-member')].filter((li) => li.querySelector('.plan-check-line[aria-expanded="true"]')).map((li) => li.dataset.key);
-      membersEl.replaceChildren(renderMemberRows(doc, curRow, { checks: fm && fm.requirementChecks }));
+      // Small runs C2 (D13): a marked card's run rows say one short word (cardShortWord).
+      const shortState = one ? (mb) => cardShortWord(mb, shaperIn.snapOf(mb.pipelineId), sliceOfMember(shaperIn.card, mb)) : null;
+      membersEl.replaceChildren(renderMemberRows(doc, curRow, { checks: fm && fm.requirementChecks, oneLine: !!one, ...(shortState ? { shortState } : {}) }));
       for (const li of membersEl.querySelectorAll('.run-member')) if (opened.includes(li.dataset.key)) li.querySelector('.plan-check-line')?.click();
       membersEl.hidden = false;
     } else { membersEl.replaceChildren(); membersEl.hidden = true; }
+    // C5 (D12): a paused or stopped Verifier is one run row; its click opens the run, where dev's Resume lives.
+    const vstate = one && one.verify ? one.verify.state : null;
+    if (vstate === 'paused' || vstate === 'halted') {
+      const vrow = verifierRow(one.verify, shaperIn.snapOf(one.verify.pipelineId));
+      const list = membersEl.querySelector('ol.run-members');
+      if (list) list.append(vrow); else membersEl.append(vrow.parentElement);
+      membersEl.hidden = false;
+    }
     // Run 4 (D20): no id in visible text — the run id is the sub line's tooltip.
     if (isNoProjectRun(s)) where.replaceChildren(kindChip(doc, 'none'));
     else where.textContent = projectLabel(id, s);
@@ -999,14 +1131,21 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       }
       shapedEl.hidden = false;
     } else shapedEl.hidden = true;
+    if (one && one.step === 'build' && one.change && !changeEl.isConnected) logEl.before(changeEl);
+    if (changeEl.isConnected) paintReqChange(doc, changeEl, one || {});
     paintFeatureLog(doc, logEl, fm ? fm.log : rm.log);
     notesEl.textContent = (fm && fm.notesLine) || '';
     notesEl.hidden = !(fm && fm.notesLine);
-    paintAgents(s);
-    paintGraph(s, chip);
+    if (one) { agentsBox.hidden = true; well.hidden = true; }   // B1: the one card draws no graph and no agents
+    else { paintAgents(s); paintGraph(s, chip); }
     paintQuestion(s);       // draws only when ownIsCurrent(), or the feature's open step
-    paintResult(s, m);      // sets createPrBtn; m: the status line it must not repeat
-    paintChanges(s, m, !!lr);
+    // B1: the log row is the one receipt and the state line the one headline; Ship stays on the feature page (D8).
+    // Item 6: the working moment has nothing to answer (painted is null) and still shows.
+    if (one) { receipt.hidden = true; qSec.hidden = !painted && !working; clearResult(); }
+    else paintResult(s, m); // sets createPrBtn; m: the status line it must not repeat
+    paintVerifyGaps(one);
+    paintShipStep(one, shaperIn && shaperIn.card ? shaperIn.card.feature : null);
+    paintChanges(s, m, !!lr, one);
     paintWatch(m, (fm && fm.watch) || rm.watch);
     paintFoot(s);           // labels and disabled rules only
     paintActions(lastM, s); // last: the model decides what shows
@@ -1140,7 +1279,9 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
     // s5 (D16): each slice's rounds too — a live round is what the feature card is doing now.
     const slices = (card.feature && card.feature.slices) || [];
     const roundPids = slices.flatMap((s) => (s.rounds || []).map((r) => r && r.pipelineId));
-    for (const p of [...slices.map((s) => s.pipelineId), ...roundPids, rpPid]) {
+    // Small runs C5: the Verifier run's too (its bound stop is the card's open step; its paused or stopped state, a row).
+    const vfPid = card.feature && card.feature.verify ? card.feature.verify.pipelineId : null;
+    for (const p of [...slices.map((s) => s.pipelineId), ...roundPids, rpPid, vfPid]) {
       if (!p || p === pid) continue;
       const m = store && typeof store.byPipeline === 'function' ? store.byPipeline(p) : null;
       if (m) snaps[p] = m;

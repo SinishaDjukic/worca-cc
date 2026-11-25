@@ -291,7 +291,11 @@
         "defaults": "workflows",
         "export": "workflows",
         "generate": "agents",
-        "agents": "agents"
+        "agents": "agents",
+        "versions": "versions",
+        "history": "versions",
+        "tests": "workflow-tests",
+        "workflow-tests": "workflow-tests"
       },
       "network-proxy": {
         "status": "proxy",
@@ -697,10 +701,23 @@
           ".wfv",
           "#wfv-",
           "input.wfv-",
+          ".badge.wfv-",
           ".wfl"
         ],
         "feature": "workflows",
         "name": "workflow-canvas"
+      },
+      {
+        "section": "^Actions",
+        "selectors": [
+          ".wft",
+          "input.wft-",
+          ".badge.wft-",
+          "button.badge.wft-",
+          ".mk-dialog-body > .wft-"
+        ],
+        "feature": "workflows",
+        "name": "workflow-tests"
       },
       {
         "section": "^Actions",
@@ -1131,6 +1148,7 @@
       "doc": "docs/workflows.md",
       "routes": [
         "/api/workflows",
+        "/api/workflow-tests",
         "/api/agents"
       ],
       "css": [

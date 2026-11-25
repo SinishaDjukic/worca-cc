@@ -550,3 +550,11 @@ test('P5: starting() holds from a hand-off\'s call until its queue settles; a de
   await assert.rejects(r.whileStarting(p.id, async () => { ran.push('open'); }), (e) => e.status === 409);
   assert.deepEqual(ran, ['one']);
 });
+
+test('C1 (D7): designBuildsInstance returns the last registry createDesignBuilds made', async () => {
+  const { designBuildsInstance } = await import('../src/core/design/registry.mjs');
+  const a = createDesignBuilds({ broadcast: () => {} });
+  assert.equal(designBuildsInstance(), a);
+  const b = createDesignBuilds({ broadcast: () => {} });
+  assert.equal(designBuildsInstance(), b);
+});
