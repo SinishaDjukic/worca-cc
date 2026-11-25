@@ -200,3 +200,25 @@ test('pr.open: project > team default > none; no user layer (settings.json is ig
   assert.deepEqual(pick(r), { value: 'draft', source: 'project' });
   assert.equal(r.layers.user, undefined);
 });
+
+test('chat.sourceBranch: ask by default, project > user, and a stored bad value reads ask at its own layer', async () => {
+  const { chatSourceBranchMode } = await import('../src/core/settings-cascade.mjs');
+  writeUser({});
+  writeProjectRow({});
+  assert.deepEqual(pick(resolveSetting('chat.sourceBranch', { projectDir: dir })), { value: 'ask', source: 'default' });
+  assert.deepEqual(pick(resolveSetting('chat.sourceBranch')), { value: 'ask', source: 'default' });
+  writeUser({ chat: { sourceBranch: 'current' } });
+  assert.deepEqual(pick(resolveSetting('chat.sourceBranch', { projectDir: dir })), { value: 'current', source: 'user' });
+  writeProjectRow({ extra: { settings: { chat: { sourceBranch: 'require' } } } });
+  assert.deepEqual(pick(resolveSetting('chat.sourceBranch', { projectDir: dir })), { value: 'require', source: 'project' });
+  writeProjectRow({ extra: { settings: { chat: { sourceBranch: 'bogus' } } } });
+  assert.deepEqual(pick(resolveSetting('chat.sourceBranch', { projectKey: projectKey(dir) })), { value: 'ask', source: 'project' }, 'never falls through to the user\'s current');
+  writeProjectRow({});
+  writeUser({ chat: { sourceBranch: 'bogus' } });
+  assert.deepEqual(pick(resolveSetting('chat.sourceBranch', { projectDir: dir })), { value: 'ask', source: 'user' });
+  writeUser({ chat: { sourceBranch: 'current' } });
+  assert.deepEqual(chatSourceBranchMode({ projectDir: dir }), { mode: 'current', source: 'user' });
+  assert.deepEqual(chatSourceBranchMode(null), { mode: 'current', source: 'user' });
+  assert.deepEqual(chatSourceBranchMode({ projectKey: 42 }), { mode: 'current', source: 'user' }, 'a bad scope still answers');
+  writeUser({});
+});

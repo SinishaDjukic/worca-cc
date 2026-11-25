@@ -2395,7 +2395,7 @@ const ONE_STATES = {
   },
   S9: () => {
     const v = oneView(['done', 'done', 'done'], { status: 'done', ship: { ready: true, mode: null }, log: [ONE_CL, ONE_L('Runs approved')] });
-    return { row: featureRow([DONE_RUN, DONE_RUN, DONE_RUN]), n: 3, snap: shaped(oneCard(v), {}, ...DONE_OWN), detail: '3 runs done · ship from the feature page' };
+    return { row: featureRow([DONE_RUN, DONE_RUN, DONE_RUN]), snap: shaped(oneCard(v), {}, ...DONE_OWN), detail: '' };   // Feature D1: "Ready to ship" is the word; the detail does not repeat it
   },
 };
 const shownIn = (el) => { for (let n = el; n; n = n.parentElement) if (n.hidden || n.classList.contains('hidden')) return false; return true; };
@@ -2423,7 +2423,7 @@ test('B1 one card: S1–S9 show the kind "Feature", one state line with the tabl
       assert.equal($('.kind-chip').hidden, false, name);
       assert.equal($$('.chat-rc-status').length, 1, name);
       assert.equal($('.chat-rc-status .run-status-detail').textContent, c.detail, name);
-      assert.equal($('.chat-rc-status .run-status-detail').hidden, false, name);
+      assert.equal($('.chat-rc-status .run-status-detail').hidden, !c.detail, name);   // D1: an empty detail (it repeated the word) is hidden
       assert.equal($('.run-status-group').hidden, true, `${name}: no group bar`);
       assert.equal($('.chat-rc-result').hidden, true, `${name}: no result block`);
       assert.equal($('.chat-rc-well').hidden, true, `${name}: no graph`);
@@ -2599,7 +2599,7 @@ function vfCard(state, { gaps = state === 'gaps' ? VF_GAPS : [], ask = null } = 
   return shaped(oneCard(v), lv ? { [VF_PID]: lv } : {}, ...DONE_OWN);
 }
 ONE_STATES.SV = () => ({ row: featureRow([DONE_RUN, DONE_RUN, DONE_RUN]), n: 3, snap: vfCard('verifying'), detail: 'the Verifier walks the main flow · 3 of 3 runs done' });
-ONE_STATES.SR = () => ({ row: featureRow([DONE_RUN, DONE_RUN, DONE_RUN]), snap: vfCard('clean'), detail: 'ship from the feature page' });
+ONE_STATES.SR = () => ({ row: featureRow([DONE_RUN, DONE_RUN, DONE_RUN]), snap: vfCard('clean'), detail: '' });
 function paintVf(state, opts = {}, stub = { paintQuestion: () => null, releaseQuestion() {} }, members = null) {
   const row = featureRow(members || (state === 'gaps' ? [DONE_RUN, DONE_RUN, DONE_RUN, WAITING, WAITING] : [DONE_RUN, DONE_RUN, DONE_RUN]));
   const f = mk({ controls: { ...stub, memoFor: () => ({}), groupOf: () => row, modelOpts: () => ({ now: NOW }) } });
@@ -2661,7 +2661,7 @@ test('C5 one card: a gap run\'s own question leaves the gap list up; only the Ve
 
 test('C5 one card: each Verifier view state reads its word and detail', () => {
   const detail = { verifying: 'the Verifier walks the main flow · 3 of 3 runs done', paused: '3 of 3 runs done', halted: 'The Verifier stopped · Resume checks again',
-    clean: 'ship from the feature page', accepted: 'ship from the feature page' };
+    clean: '', accepted: '' };
   for (const [state, line] of Object.entries(detail)) {
     const f = paintVf(state);
     assert.equal(f.$('.chat-rc-status .run-status-word').textContent, VF_WORDS[state], state);
@@ -2729,6 +2729,29 @@ test('one card in SP with the Prototype step building: Lead row, a row per scree
   assert.equal(card.el.querySelector('.proto-rows').getAttribute('aria-busy'), 'true');
   assert.ok(card.el.querySelectorAll('.proto-col .proto-piece').length > 0, 'pieces assemble in the preview');
   card.destroy();
+});
+
+test('D2 (D6): a marked card\'s members are ol.run-members.is-one-line, one dot and one number per row, the working run\'s dot pulsing; unmarked: no is-one-line', () => {
+  try {
+    const { $$ } = paintOne('S8');
+    const lists = $$('.chat-rc-members ol.run-members');
+    assert.equal(lists.length, 1);
+    assert.ok(lists[0].classList.contains('is-one-line'));
+    const rows = $$('.chat-rc-members ol.run-members > .run-member');
+    assert.ok(rows.length >= 3);
+    for (const li of rows) {
+      assert.equal(li.querySelectorAll(':scope > .status-dot').length, 1);
+      assert.equal(li.querySelectorAll(':scope > .run-member-num').length, 1);
+    }
+    const pulsing = rows.filter((li) => li.querySelector(':scope > .status-dot').classList.contains('is-pulse'));
+    assert.equal(pulsing.length, 1, 'only the working run pulses (dev\'s live dot)');
+    const c = ONE_STATES.S8();
+    const plain = mk({ controls: { memoFor: () => ({}), groupOf: () => c.row, modelOpts: () => ({ now: NOW }) } });
+    plain.card.update({ ...c.snap, shaper: { ...c.snap.shaper, card: { ...c.snap.shaper.card, smallRuns: false } } });
+    const pl = plain.$$('ol.run-members');
+    assert.ok(pl.length >= 1, 'the unmarked feature card still lists its runs');
+    for (const l of pl) assert.equal(l.classList.contains('is-one-line'), false, 'an unmarked card keeps dev\'s rows');
+  } finally { forgetAnswer('run-uuid-1', ONE_PQ.outline.id); }
 });
 
 test('chat run card: a feature run links its feature title to the feature page; a card without one is unchanged', async () => {

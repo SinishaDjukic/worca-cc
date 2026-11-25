@@ -82,6 +82,14 @@ export function fitInto(b, vw, vh, { zoomMin = 0.3 } = {}) {
   return { x: f.tx, y: f.ty, z: f.z };
 }
 
+/** The Live view's camera while a step runs (or is parked): the step(s) at 1×, centred, the way the run page's Live
+ *  view showed them before it moved into the card's narrow right column. Only when they do not fit the whole box at
+ *  1× (parallel steps) does it zoom out, just enough to keep them all in. `b` is focusBoundsFor's box, `r` the host's. */
+export function focusZoomOn(b, r) {
+  const z = Math.max(0.3, Math.min(1, r.width / b.w, r.height / b.h));
+  return { x: r.width / 2 - (b.x + b.w / 2) * z, y: r.height / 2 - (b.y + b.h / 2) * z, z };
+}
+
 /** The node-id set as a string — a change of it is the ONE structural change
  *  short of a new run (the manifest is never rewritten mid-run, spec §5.8). */
 const nodeSig = (stepper) => manifestNodes(stepper).map((n) => n.id).join(',');
@@ -215,14 +223,16 @@ export function mountRunGraph(hostEl, opts = {}) {
     });
   }
 
-  // Focus (the glance's Live view): the running steps' cards, padded, fitted into
-  // the clear middle of the host (FOCUS_CLEAR per axis) at ≤ 1×; nothing running
-  // yet frames the whole graph. The host never resizes itself — the panel's CSS
-  // owns its box.
+  // Focus (the card's live graph): the running steps' cards, padded, at 1× and
+  // centred (focusZoomOn); nothing running yet fits the whole graph into the clear
+  // middle of the host (FOCUS_CLEAR per axis). The host never resizes itself — the
+  // panel's CSS owns its box.
   function fitFocus() {
     const r = view.readRect();
     if (!(r.width > 0) || !(r.height > 0)) return;
-    const b = (focus.length && focusBoundsFor(view, focus, view.sessionSpecs())) || view.bounds(FOCUS_PAD);
+    const fb = focus.length ? focusBoundsFor(view, focus, view.sessionSpecs()) : null;
+    if (fb) { view.setTransform(focusZoomOn(fb, r)); return; }
+    const b = view.bounds(FOCUS_PAD);
     if (!b) return;
     const cw = r.width * FOCUS_CLEAR, ch = r.height * FOCUS_CLEAR;
     const f = fitInto(b, cw, ch, { zoomMin });

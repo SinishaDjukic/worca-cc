@@ -208,6 +208,18 @@ test('slice ticket resolution: ids → wf_shape_slice_req (ux → wf_shape_ux_sl
   assert.equal(fire({ size: 'large', slice: REQ_SLICE }, 'wf_shape_slice_req').workflowId, 'wf_shape_slice_req');
 });
 
+test('a named slice variant with `replaces` (a re-plan that carries requirements, internal only) resolves to itself, the UX twin with ux', () => {
+  const ask = (shape, workflowId, internal = true) => resolveShapeRequest({ shape, workflowId }, { internal });
+  const r = ask({ perspectives: ['product'], slices: 'auto', replaces: 'feat_1' }, 'wf_shape_slice_req');
+  assert.deepEqual([r.ok, r.workflowId, r.shape.replaces], [true, 'wf_shape_slice_req', 'feat_1']);
+  assert.equal(ask({ perspectives: ['ux'], slices: 'auto', replaces: 'feat_1' }, 'wf_shape_ux_slice_req').workflowId, 'wf_shape_ux_slice_req');
+  assert.equal(ask({ perspectives: ['ux'], slices: 'auto', replaces: 'feat_1' }, 'wf_shape_slice_req').workflowId, 'wf_shape_ux_slice_req');
+  assert.equal(ask({ slices: 'auto', replaces: 'feat_1' }, 'wf_shape').workflowId, 'wf_shape', 'not named: today\'s');
+  assert.equal(ask({ slices: 'auto', replaces: 'feat_1' }, 'wf_shape_slice_req', false).error, 'shape has unknown field(s): replaces');
+  assert.equal(ask({ size: 'large', replaces: 'feat_1', slice: SLICE }, 'wf_shape_slice_req').error,
+    'wf_shape_slice_req runs only as a slice of a feature with agreed requirements');
+});
+
 test('slice variants are reserved: readWorkflow returns them with the flag off, deleteWorkflow refuses them, listWorkflows hides them', async () => {
   assert.equal(await readWorkflow('wf_shape_slice_req'), GRAPH_SHAPE_SLICE_REQ_WORKFLOW);
   assert.equal(await readWorkflow('wf_shape_ux_slice_req'), GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW);

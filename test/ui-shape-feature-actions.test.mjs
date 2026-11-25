@@ -297,6 +297,13 @@ test('run 4 D18: featureMenuItems runs the footer ⋯ actions from another menu 
   assert.equal(w.document.activeElement, anchor);
 });
 
+test('item 6 (D12): noReplan leaves out Re-plan the rest only', () => {
+  const c = { active: true, rest: true, approveEach: false, planPipelineId: 'p0' };
+  const labels = (deps) => featureMenuItems(c, { act: async () => ({ ok: true }), confirm: async () => true, openPlan() {}, ...deps }, null).map((i) => i.label);
+  assert.deepEqual(labels({ noReplan: true }), ['Cancel the rest', 'Ask before each run', 'Open the plan']);
+  assert.deepEqual(labels({ noReplan: false }), ['Re-plan the rest', 'Cancel the rest', 'Ask before each run', 'Open the plan']);
+});
+
 test('run 4 D17: paintFeatureActions with menu:false draws no ⋯', () => {
   const dom = track(new JSDOM('<!doctype html><body></body>'));
   const host = dom.window.document.body.appendChild(dom.window.document.createElement('div'));

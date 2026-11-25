@@ -148,6 +148,8 @@ test('refusal kinds: busy, gates, cost limit, turn cap and browser confirmations
   assert.equal(cardRefusal({ status: 409, body: { error: 'a turn in flight' } }).failed, false);
   assert.equal(cardRefusal({ status: 409, body: { code: 'sync-diverged' } }).failed, false);
   assert.equal(cardRefusal({ status: 400, body: { error: 'card is not proposed' } }).failed, true);
+  // Chat runs: source branch (D23): a card Start with no branch is picked on the worca card, never a failure.
+  assert.deepEqual(cardRefusal({ status: 400, body: { code: 'source-branch-required', error: 'pick a branch' } }), { text: SAY.confirmInWorca(null), failed: false });
   assert.equal(refusalText({ status: 400, body: { error: 'x' } }), SAY.failed('x'), 'the text helpers keep their strings');
   assert.equal(turnRefusalText({ ok: false, status: 403, error: 'cost limit' }), SAY.budget);
 });

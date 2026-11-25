@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { runShortWord, runAgentRows } from '../src/shared/shape/run-agents.mjs';
+import { runShortWord, runAgentRows, agentDetail, cardShortWord, memberShortWord } from '../src/shared/shape/run-agents.mjs';
 import { careRunPlan } from '../src/shared/shape/feature-record.mjs';
 import { snapshotFromState } from '../ui/public/ask-run-card.mjs';
 
@@ -106,4 +106,38 @@ test('C3: runAgentRows words the stopped reviewer objects (mark paused, no count
   const any = runAgentRows({ ...snap, pendingQuestion: { ...snap.pendingQuestion, stop: { ...snap.pendingQuestion.stop, head: 'Run 2 · Code review objects' } } });
   assert.ok(any.filter((r) => r.word === 'objects').length >= 2, 'no role named: every code reviewer of the node objects');
   assert.equal(runAgentRows(base).some((r) => r.word === 'objects'), false);
+});
+
+// ── Shaper small runs D2 (D13): a done row's detail, from stored records only ──
+test('D2 agentDetail: plan vN (· after the plan review from v2), T of T tests pass on the Implementer only, else null', () => {
+  const done = (key) => ({ key, name: key, word: 'done', mark: 'check' });
+  const stored = { planVersion: 2, planReviewed: true, tests: { passed: 12, total: 12 } };
+  assert.equal(agentDetail(done('planner'), stored), 'plan v2 · after the plan review');
+  assert.equal(agentDetail(done('planner'), { planVersion: 1, planReviewed: true }), 'plan v1');
+  assert.equal(agentDetail(done('planner'), { planVersion: 2, planReviewed: false }), 'plan v2');
+  assert.equal(agentDetail({ key: 'planner', name: 'Planner', word: 'planning', mark: 'live' }, stored), null, 'a live row has no detail');
+  assert.equal(agentDetail(done('planner'), { planVersion: null, planReviewed: true }), null);
+  assert.equal(agentDetail(done('implementer'), stored), '12 of 12 tests pass');
+  assert.equal(agentDetail(done('tests-implementer'), stored), null, 'the count shows once, on the Implementer');
+  assert.equal(agentDetail(done('implementer'), { tests: { passed: 11, total: 12 } }), null);
+  assert.equal(agentDetail(done('code-review-correctness'), stored), null);
+  for (const key of ['planner', 'implementer', 'test-writer']) {
+    assert.equal(agentDetail(done(key), null), null);
+    assert.equal(agentDetail(done(key), undefined), null);
+  }
+});
+
+test('memberShortWord is cardShortWord of a member with the snapshot and slice it carries', () => {
+  const stop = { status: 'running', pendingQuestion: { stop: { reason: 'check' } } };
+  for (const mb of [
+    { model: { state: 'needs-you' }, run: {}, snap: stop },
+    { model: { state: 'working' }, run: {}, snap: { status: 'running', stepper: { careRun: {} }, active: [{ nodeId: 'n_impl' }] } },
+    { model: { state: 'working' }, run: {}, snap: stop, slice: { stop: { held: true, after: 9 } } },
+    { model: { state: 'waiting' }, run: { ticket: {} }, slice: { waitsFor: 8 } },
+    { model: { state: 'ready' }, run: {} }, { model: { state: 'needs-you' }, run: {} }]) {
+    assert.equal(memberShortWord(mb), cardShortWord(mb, mb.snap || null, mb.slice || null));
+  }
+  assert.deepEqual([memberShortWord({ model: { state: 'needs-you' }, run: {}, snap: stop }), memberShortWord({ model: { state: 'working' }, run: {}, slice: { stop: { held: true, after: 9 } } }),
+    memberShortWord({ model: { state: 'waiting' }, run: {}, slice: { waitsFor: 8 } }), memberShortWord({ model: { state: 'ready' }, run: {} })],
+  ['waiting for you', 'after run 9', 'waits for run 8', 'done']);
 });

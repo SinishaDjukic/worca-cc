@@ -26,7 +26,7 @@ import {
 import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW, writeGraphWorkflow, readWorkflow, isReservedWorkflowId } from './workflows.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
-import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_SLICE_REQ_WORKFLOW_IDS } from './graph/builtin-workflows.mjs';
+import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_SLICE_REQ_WORKFLOW_IDS, withoutRequirementsInput } from './graph/builtin-workflows.mjs';
 import { careRunGraph } from './shape/care-run.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
@@ -43,7 +43,7 @@ import { applyAgreement, pendingAgreement, validateAgreement } from './requireme
 import { checkPlan } from './shape/check.mjs';
 import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
-import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureClarify, featureNotes, featureView } from './shape/features.mjs';
+import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureClarify, featureNotes, featureView, carriedRequirements } from './shape/features.mjs';
 import { changeCaseOf } from '../shared/shape/req-change.mjs';
 import { fileSha, planOutputOf } from './shape/outline-file.mjs';
 import { splitRules, smallRunsOfFeature, careOfFeature, prototypeOfFeature, originPipelineOfFeature } from './shape/small-runs.mjs';
@@ -57,9 +57,9 @@ import { distDir as designDistDir, designWorkDir } from './design/paths.mjs';
 import { splitChallengePlan, normalizeChallenge, challengeBlock, runSplitChallenge, skipsPlanAfterSplit, splitRevisable, splitApproveError, keptObjections, splitAskFields, planReviewNode, CHALLENGER_LABEL, CHALLENGE_FILE_MAX_BYTES } from './shape/split-step.mjs';
 import { careStartAsk, careAnswerValidator } from './shape/care-start.mjs';
 import { careAuditLine } from './run-harness.mjs';
-import { careFactsOf, careModelRoles, careRunPlan, CARE_LABELS } from '../shared/shape/feature-record.mjs';
+import { careFactsOf, careModelRoles, careRunPlan, confirmedKindsOf, CARE_LABELS } from '../shared/shape/feature-record.mjs';
 import { readRunPrAuto } from './pr-auto.mjs';
-import { checkSlices, applyOutlineEdits, normalizeOutline, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE } from '../shared/shape/slices.mjs';
+import { checkSlices, applyOutlineEdits, normalizeOutline, keepConfirmed, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE } from '../shared/shape/slices.mjs';
 import { onlyCriteria } from '../shared/review/requirements-coverage.mjs';
 import { DEFAULT_PERSPECTIVES, perspectiveByKey, roleLabelOf } from '../shared/shape/perspectives.mjs';
 import { criterionPerspective, runRolesOf } from '../shared/shape/requirements.mjs';
@@ -1765,7 +1765,8 @@ export class GraphOrchestrator extends RunHarness {
 
   /** The node's `config.approve`, or null. */
   _approveSpec(nodeId) {
-    return (this.resolved?.template?.nodes || []).find((n) => n.id === nodeId)?.config?.approve || null;
+    const node = (this.resolved?.template?.nodes || []).find((n) => n.id === nodeId);
+    return (this._unslicedReplan() ? withoutRequirementsInput(node) : node)?.config?.approve || null;
   }
 
   /** The file bound to an input of a held node: its execution's binding, else the token latched on the input. */
@@ -2199,6 +2200,13 @@ export class GraphOrchestrator extends RunHarness {
       && !this.state.shaping?.outline?.decided;
   }
 
+  /** Small runs: a re-plan that carried requirements but ended unsliced (Don't slice, or a one-slice, unreadable or flat
+   *  outline). There is no feature to carry them into, so from here on no node has the list: the run is the plain Shaper's. */
+  _unslicedReplan() {
+    const s = this.runShape;
+    return Boolean(s?.replaces) && !s.slice && SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(this.workflowId) && !this._slicingOffered();
+  }
+
   async _shapeSliceCtx(nc, ctx) {
     const out = {};
     const scope = await this._shapeSliceScope();
@@ -2290,6 +2298,7 @@ export class GraphOrchestrator extends RunHarness {
     const agreed = await this._outlineAgreed(ctx);
     // A3: the split rules the Planner's prompt named (read once per spawn, into ctx.shapeSlicing), so they never disagree.
     const rules = ctx.shapeSlicing.smallRuns ? { smallRuns: true, care: ctx.shapeSlicing.care } : {};
+    const keptRoles = this._keptConfirmed(agreed);
     let classified = null;                                  // the spawn result whose outlineState was acted on
     // B4 (D9): this execution's first spawn re-ran an internal refine a pause cut short: that refine is done.
     if (ctx.splitRefineRestored && this.state.shaping?.outline?.challenge) {
@@ -2320,7 +2329,7 @@ export class GraphOrchestrator extends RunHarness {
         }
         raw = { error: err?.message || String(err) };
       }
-      const read = normalizeOutline(raw, { agreed, ...rules });
+      const read = normalizeOutline(keepConfirmed(raw, keptRoles), { agreed, ...rules });
       if (!read.ok || read.outline.slices.length < 2) {
         await appendAudit(this.pipeline.dir, `${label}: ${read.ok ? 'a one-slice outline' : `an unreadable outline (${read.error})`} — planning the whole task.`).catch(() => {});
         this._retireOrphanFeature();
@@ -2394,6 +2403,9 @@ export class GraphOrchestrator extends RunHarness {
           base: this._sliceRequestBase(), replaces: this.runShape?.replaces || null, startedBy: this._runStarter(), pr: this._featurePr(),
           // B2 (D10, d-3): the marker, not the live flag, decides whether the feature records its Care.
           care: this._shapeRec?.care || null, smallRuns: this._shapeRec?.smallRuns === true,
+          // From the outline with the person's edits (a `confirm` edit changes the role). Always an object for a marked run:
+          // null would keep the replaced feature's roles.
+          requirementKinds: this._shapeRec?.smallRuns === true ? confirmedKindsOf(applied.outline) : null,
         });
       } catch (err) {
         this._log('orchestrator', 'warn', `slices: cannot create the feature: ${err?.message || err}`);
@@ -2421,6 +2433,16 @@ export class GraphOrchestrator extends RunHarness {
       if (this.runShape?.replaces) this._emit('shape-feature', { id: this.runShape.replaces });
       return this._resumeOutline(nc, ctx, payload);
     }
+  }
+
+  /** Small runs: the requirements a person confirms that a marked re-plan carried over, with the replaced feature's role:
+   *  the outline keeps them whatever the Planner wrote (a person's `confirm` edit still wins). [] for any other run. */
+  _keptConfirmed(agreed) {
+    const replaces = this.runShape?.replaces;
+    if (!replaces || this._shapeRec?.smallRuns !== true || !SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(this.workflowId)) return [];
+    const ids = new Set(agreed.map((a) => a.id));
+    try { return carriedRequirements(replaces).confirmed.filter((c) => ids.has(c.id)); }
+    catch (err) { this._log('orchestrator', 'warn', `slices: cannot read the replaced feature's requirements: ${err?.message || err}`); return []; }
   }
 
   /** D14: every agreed requirement id of the feature, for the planner's and refiner's numbering and `Covers:` lines: a slice
@@ -2585,6 +2607,10 @@ export class GraphOrchestrator extends RunHarness {
     // B4: an internal refine (no person round yet) passes the shas it was asked about.
     if (d === 'revise') ctx.shapeSlicing.baseline = baseline !== undefined ? baseline : this._outlineBaseline();
     else { ctx.shapeSlicing = null; this._slicingDone = true; this._outlineRevise = null; }
+    if (this._unslicedReplan()) {                           // this execution was bound before the decision
+      const { requirements, ...bindings } = ctx.bindings || {};
+      Object.assign(ctx, { bindings, shapeAgreedIds: [] });
+    }
     ctx.shapeOutlineNote = d === 'flat' ? { decision: 'flat' } : d === 'revise' ? { decision: 'revise', feedback: payload.feedback } : null;
     if (d === 'approve') ctx.shapeSliceScope = await this._shapeSliceScope();
     const step = this.state.steps.find((s) => s.key === ctx.executionId);
@@ -2796,6 +2822,10 @@ export class GraphOrchestrator extends RunHarness {
    * machinery, all of it keyed by executionId.
    */
   async _execute(args) {
+    if (this._unslicedReplan() && args.node) {
+      const { requirements, ...bindings } = args.bindings || {};
+      args = { ...args, node: withoutRequirementsInput(args.node), bindings };
+    }
     const node = args.node;
     const nc = (this.resolved.nodeCtx || {})[node.id] || { nodeId: node.id, kind: node.kind, key: null };
     // The composite protocol: these three modes are the process side of a

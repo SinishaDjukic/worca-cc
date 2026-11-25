@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { groupModel } from '../src/shared/run-model.mjs';
-import { buildGroupPage, paintGroupPage, GROUP_TABS, runReceipts, groupPrList } from '../ui/public/group-page.mjs';
+import { buildGroupPage, paintGroupPage, GROUP_TABS, runReceipts, groupPrList, syncRequirementsTab } from '../ui/public/group-page.mjs';
 import { ACTION_LABEL } from '../src/shared/run-model.mjs';
 import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
 
@@ -336,4 +336,105 @@ test('slice 3: a focused member link keeps focus when ANOTHER row changes and th
   const next = root.querySelector('.gpage-runs .run-members');
   assert.notEqual(next, ol, 'the table was replaced');
   assert.equal(doc.activeElement, next.querySelector('.run-member-title'), 'focus moved to the new row 1 link');
+});
+
+test('D3: syncRequirementsTab inserts a role=tab button after Runs and a role=tabpanel panel, and removes them; a repaint keeps one Requirements tab and the focused link; requirements falls back to runs when off', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  doc.body.appendChild(root);
+  syncRequirementsTab(root, true);
+  syncRequirementsTab(root, true);
+  const tabs = () => [...root.querySelectorAll('.gpage-tabs .rd-tab')].map((t) => t.dataset.tab);
+  assert.deepEqual(tabs(), ['runs', 'requirements', 'overview', 'decisions', 'logs'], 'once, after Runs');
+  const tab = root.querySelector('.rd-tab[data-tab="requirements"]');
+  assert.ok(tab.matches('button.rd-tab.tab[type="button"][role="tab"]'));
+  assert.equal(tab.textContent, 'Requirements');
+  const panel = root.querySelector('.gpage-panel[data-tab="requirements"]');
+  assert.ok(panel.matches('div.gpage-panel[role="tabpanel"]'));
+  assert.equal(panel.previousElementSibling.dataset.tab, 'runs');
+  assert.ok(panel.querySelector(':scope > div.gpage-requirements'));
+  syncRequirementsTab(root, false);
+  assert.deepEqual(tabs(), GROUP_TABS.map(([id]) => id), 'removed from the DOM, not hidden');
+  assert.equal(root.querySelector('.gpage-panel[data-tab="requirements"]'), null);
+
+  let n = 0;
+  const node = (key) => { const d = doc.createElement('div'); d.className = 'shape-feature-reqs'; d.innerHTML = `<div class="plan-check-row" data-key="R-po-1"><span class="plan-check-detail"><a class="rd-fact-link" href="#running/r2">run 2</a> · ${key}</span></div>`; return d; };
+  let word = 'being built';
+  const deps = { ...NOOP, mountRequirements: () => { n += 1; return node(word); } };
+  paintGroupPage(root, { row: row(), project: '', tab: 'requirements', overview: true, requirements: true }, deps);
+  assert.equal(root.querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'requirements');
+  assert.equal(root.querySelector('.gpage-panel[data-tab="requirements"]').hidden, false);
+  assert.equal(root.querySelectorAll('.rd-tab[data-tab="requirements"]').length, 1);
+  const link = root.querySelector('.gpage-requirements a.rd-fact-link');
+  link.focus();
+  paintGroupPage(root, { row: row(), project: '', tab: 'requirements', overview: true, requirements: true }, deps);
+  assert.equal(root.querySelector('.gpage-requirements a.rd-fact-link'), link, 'an unchanged repaint keeps the node');
+  word = 'met';
+  paintGroupPage(root, { row: row(), project: '', tab: 'requirements', overview: true, requirements: true }, deps);
+  const fresh = root.querySelector('.gpage-requirements a.rd-fact-link');
+  assert.notEqual(fresh, link);
+  assert.equal(doc.activeElement, fresh, 'the focus moves to the same row\'s link');
+  assert.equal(root.querySelectorAll('.rd-tab[data-tab="requirements"]').length, 1);
+  assert.equal(n, 3);
+  paintGroupPage(root, { row: row(), project: '', tab: 'requirements', overview: true, requirements: false }, deps);
+  assert.equal(root.querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'runs', 'off: requirements falls back to Runs');
+  assert.equal(root.querySelector('.rd-tab[data-tab="requirements"]'), null);
+  assert.equal(n, 3, 'nothing mounted while off');
+});
+
+// ── small runs: an open stop on the feature page, the one-line rows, Create N PRs and the visible reason ──
+const visibleBar = (root) => [...root.querySelectorAll('.gpage-actions [data-model-action]')].filter((b) => !b.hidden);
+test('item 6: a stop in the question slot leaves the bar without an answer, so one primary stays; any other ask keeps it', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const mount = (stop) => (slot) => {
+    slot.hidden = false;
+    if (stop) slot.dataset.stop = ''; else delete slot.dataset.stop;
+    slot.innerHTML = '<div class="qpanel"><button class="btn btn-primary" data-qpanel-submit>Re-plan</button></div>';
+  };
+  const root = buildGroupPage(doc);
+  paintGroupPage(root, { row: row(), project: 'p', tab: 'runs' }, { ...NOOP, mountQuestion: mount(true), answerLabel: () => 'Re-plan' });
+  assert.deepEqual(visibleBar(root).map((b) => b.dataset.modelAction), []);
+  assert.deepEqual([...root.querySelectorAll('.btn-primary')].filter((b) => !b.closest('[hidden]')).map((b) => b.textContent), ['Re-plan']);
+  paintGroupPage(root, { row: row(), project: 'p', tab: 'runs' }, { ...NOOP, mountQuestion: mount(false), answerLabel: () => 'Agree and plan' });
+  assert.deepEqual(visibleBar(root).map((b) => b.textContent), ['Agree and plan']);
+});
+
+test('item 7: shortState draws one-line rows with its words; without it the rows are dev\'s', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  const words = { 1: 'done', 2: 'waiting for you', 3: null };
+  paintGroupPage(root, { row: row(), project: 'p', tab: 'runs', shortState: (mb) => words[mb.position] }, NOOP);
+  const list = root.querySelector('.gpage-runs .run-members');
+  assert.ok(list.classList.contains('is-one-line'));
+  assert.deepEqual([...list.querySelectorAll('.run-member-state')].map((x) => x.textContent).slice(1), ['done', 'waiting for you', 'Waiting · starts after run 2']);
+  assert.equal(list.querySelector('.run-member-line'), null);
+  paintGroupPage(root, { row: row(), project: 'p', tab: 'runs' }, NOOP);
+  const dev = root.querySelector('.gpage-runs .run-members');
+  assert.equal(dev.className, 'run-members is-table');
+  assert.equal(dev.querySelectorAll('.run-member-line').length, 4);
+});
+
+test('item 8 (D11): while Ship is blocked the status line ends with the reason; a held row says it itself; unblocked as before', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const reason = 'Waiting for Compliance to confirm R-comp-4';
+  const text = (view, hold = null) => {
+    const root = buildGroupPage(doc);
+    const heads = [];
+    const model = groupModel({ kind: 'feature', title: 'T', members: [done, done], hold }, { now: NOW });
+    paintGroupPage(root, { row: { ...row(), planning: null, model, members: model.members.map((m, i) => ({ position: i + 1, title: `S${i + 1}`, href: '#x', model: m })) },
+      project: 'p', tab: 'runs', ...view }, { ...NOOP, paintHead: (a, s, head) => heads.push(head) });
+    return [root.querySelector('.gpage-card .run-status').textContent, heads.at(-1).cta];
+  };
+  const [blocked, cta] = text({ ship: { n: 2, blocked: true, reason } });
+  assert.equal(blocked.split(reason).length - 1, 1, blocked);
+  assert.match(blocked, /^Ready to ship/);
+  assert.deepEqual(cta, { state: 'create', label: 'Create 2 PRs', disabled: true, quiet: true, title: reason });
+  const [open, cta2] = text({ ship: { n: 2, blocked: false, reason: '' } });
+  assert.equal(open, text({})[0]);
+  assert.deepEqual(cta2, { state: 'create', label: 'Create 2 PRs' });
+  const [held] = text({ ship: { n: 2, blocked: true, reason: 'R-ops-1 is owned by no run' } }, 'R-ops-1 is owned by no run');
+  assert.equal(held.split('R-ops-1 is owned by no run').length - 1, 1, held);
+  // The Overview tab's ready Ship card says the reason: the status line does not repeat it.
+  const [onOverview] = text({ ship: { n: 2, blocked: true, reason }, overview: true, tab: 'overview' });
+  assert.equal(onOverview.includes(reason), false, onOverview);
 });

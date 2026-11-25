@@ -5,8 +5,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { featureHeadline, renderFeature } from '../ui/public/shape/feature-view.mjs';
-import { setShipDialogOpener } from '../ui/public/shape/ship-card.mjs';
+import { featureHeadline, renderFeature, renderFeatureRequirements, paintFeatureDecisions } from '../ui/public/shape/feature-view.mjs';
+import { setShipDialogOpener, renderShipCard } from '../ui/public/shape/ship-card.mjs';
+import { shipLedger, careOutcome } from '../src/shared/shape/ship-ledger.mjs';
+import { requirementStatus } from '../src/shared/shape/req-status.mjs';
+import { featureFocusOf, focusFeatureControl } from '../ui/public/shape/feature-actions.mjs';
 import { closeMenus } from '../ui/public/workflows/menu.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -222,4 +225,288 @@ test('run 4 D17: on the group page the view has no merge-order line and no ⋯; 
   const plans = renderFeature(doc, f, d);
   assert.ok(plans.querySelector('.shape-feature-order'));
   assert.ok(plans.querySelector('[data-act="feature-more"]'));
+});
+
+const SR_WAIT = () => ({ confirmed: [{ id: 'R-comp-4', text: 'EU only', role: 'compliance', roleLabel: 'Compliance', state: 'waiting', mark: null, reason: null, at: null }], owned: [],
+  waiting: ['R-comp-4'], blocked: true, reason: 'Waiting for Compliance to confirm R-comp-4', met: { met: 0, total: 1 }, unmet: [],
+  care: { choice: "Balanced · Worca's pick", outcome: null, line: '' }, base: 'main', order: [{ index: 1, pipelineId: 'p1', title: 'A', pr: null, onto: null }] });
+
+test('D1: a marked feature\'s shipBlock renders the small-runs card and Met posts the confirm verb; unmarked unchanged', async () => {
+  const sr = { confirmed: [{ id: 'R-comp-4', text: 'EU only', role: 'compliance', roleLabel: 'Compliance', state: 'waiting', mark: null, reason: null, at: null }], owned: [],
+    waiting: ['R-comp-4'], blocked: true, reason: 'Waiting for Compliance to confirm R-comp-4', met: { met: 0, total: 1 },
+    care: { choice: "Balanced · Worca's pick", outcome: null, line: '' }, base: 'main', order: [{ index: 1, pipelineId: 'p1', title: 'A', pr: null, onto: null }] };
+  const ready = { ready: true, mode: null, smallRuns: sr };
+  const { el } = mount(feature({ status: 'done', done: 3, ship: ready }));
+  assert.ok(q(el, '[data-ship-card="ready"].is-small-runs'));
+  const sent = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push([url, JSON.parse(init.body)]); return { ok: true, json: async () => ({ smallRuns: { ...sr, blocked: false, waiting: [], reason: null } }) }; };
+  try {
+    q(el, '[data-act="ship-mark-R-comp-4-met"]').click();
+    await flush(); await flush();
+  } finally { globalThis.fetch = real; }
+  assert.deepEqual(sent, [['/api/shape/features/f1/confirm', { id: 'R-comp-4', mark: 'met' }]]);
+  const plain = mount(feature({ status: 'done', done: 3, ship: { ready: true, mode: null } })).el;
+  assert.equal(q(plain, '.is-small-runs'), null);
+  assert.ok(q(plain, '[data-ship-card="ready"]'));
+  const waiting = mount(feature({ ship: { ready: false, mode: null, smallRuns: sr } })).el;
+  assert.ok(q(waiting, '[data-ship-card="waiting"]'), 'a marked feature still waits for its runs');
+});
+
+test('D1: on the feature page, Not met with a typed reason and Enter posts the mark and the reason', async () => {
+  const sr = SR_WAIT();
+  const { el } = mount(feature({ status: 'done', done: 3, ship: { ready: true, mode: null, smallRuns: sr } }));
+  const sent = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push([url, JSON.parse(init.body)]); return { ok: true, json: async () => ({ smallRuns: { ...sr, blocked: false, waiting: [], reason: null } }) }; };
+  try {
+    q(el, '[data-act="ship-mark-R-comp-4-not-met"]').click();
+    const input = q(doc.body, '[data-act="ship-mark-R-comp-4-text"]');
+    input.value = 'Legal has not signed';
+    input.dispatchEvent(new doc.defaultView.Event('input'));
+    input.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Enter' }));
+    await flush(); await flush();
+  } finally { globalThis.fetch = real; }
+  assert.deepEqual(sent, [['/api/shape/features/f1/confirm', { id: 'R-comp-4', mark: 'not-met', reason: 'Legal has not signed' }]]);
+});
+
+test('D1 (R-fit-4): a page repaint while a mark is in flight gives the focus back to the mark (featureFocusOf, blur on disable)', async () => {
+  const win = doc.defaultView;
+  const proto = win.HTMLButtonElement.prototype;
+  const desc = Object.getOwnPropertyDescriptor(proto, 'disabled');
+  Object.defineProperty(proto, 'disabled', { configurable: true, get() { return desc.get.call(this); }, set(v) { if (v) this.blur(); desc.set.call(this, v); } });
+  const real = globalThis.fetch;
+  let release;
+  globalThis.fetch = () => new Promise((r) => { release = r; });
+  const host = doc.createElement('div');
+  doc.body.replaceChildren(host);
+  const f = (sr) => feature({ id: 'f_focus', status: 'done', done: 3, ship: { ready: true, mode: null, smallRuns: sr } });
+  try {
+    host.replaceChildren(renderFeature(doc, f(SR_WAIT()), deps()));
+    const met = q(host, '[data-act="ship-mark-R-comp-4-met"]');
+    met.focus(); met.click();
+    assert.equal(doc.activeElement, doc.body, 'Chromium blurred the disabled button');
+    // The confirm route broadcasts before it answers: app.js paintShapeFeature rebuilds the page.
+    const after = { ...SR_WAIT(), blocked: false, waiting: [], reason: null,
+      confirmed: [{ ...SR_WAIT().confirmed[0], state: 'confirmed', mark: 'met', at: '2026-11-22T16:55:00.000Z' }] };
+    const act = featureFocusOf(doc, host);
+    host.replaceChildren(renderFeature(doc, f(after), deps()));
+    focusFeatureControl(host, act);
+    const fresh = q(host, '[data-act="ship-mark-R-comp-4-met"]');
+    assert.notEqual(fresh, met);
+    assert.equal(doc.activeElement, fresh);
+    release({ ok: true, json: async () => ({ smallRuns: after }) });
+    await flush(); await flush();
+    assert.equal(doc.activeElement, fresh, 'the late answer keeps it there');
+  } finally {
+    globalThis.fetch = real;
+    Object.defineProperty(proto, 'disabled', desc);
+  }
+});
+
+// ---- Shaper small runs D3: the feature page's Requirements (one fold per role) and Decisions ----
+const D3_AGREED = [
+  { id: 'R-po-1', text: 'People see it' }, { id: 'R-po-2', text: 'People\nexport   it' }, { id: 'R-po-3', text: 'People pin it' },
+  { id: 'R-po-4', text: 'People share it' }, { id: 'R-comp-1', text: 'A signed copy is kept' },
+];
+const D3_KINDS = [{ id: 'R-po-1', kind: 'owned', run: 2 }, { id: 'R-po-2', kind: 'owned', run: 3 }, { id: 'R-po-3', kind: 'owned', run: 4 },
+  { id: 'R-po-4', kind: 'owned', run: 2 }, { id: 'R-comp-1', kind: 'confirmed', role: 'compliance' }];
+const D3_RUNS = (s3 = 'running') => [{ index: 1, state: 'done' }, { index: 2, state: 'done' }, { index: 3, state: s3 }, { index: 4, state: 'planned' }, { index: 5, state: 'running' }];
+const D3_RERUNS = [{ id: 'R-po-4', run: 5, why: 'change', at: '2026-11-21T10:00:00Z' }];
+const d3Feature = ({ acceptance = [], runs = D3_RUNS(), log = null, figures = null } = {}) => {
+  const sr = shipLedger({ agreed: D3_AGREED, kinds: D3_KINDS, acceptance, runs, reruns: D3_RERUNS });
+  const care = careOutcome({ position: 'balanced', chosenBy: 'worca', worcaPick: 'balanced' }, figures, sr.met);
+  return feature({ id: 'f_d3', requirementKinds: D3_KINDS,
+    log: log || [{ key: 'outline', run: null, text: 'Split into 4 runs', detail: ['Run 2 · Export'] }, { key: 'r2-plan', run: 2, text: 'Plan approved', detail: [] }],
+    ship: { ready: false, mode: null, smallRuns: { ...sr, care, base: 'main', order: [] } } });
+};
+const runHref = (n) => (n === 4 ? null : `#running/r${n}`);
+const reqs = (f = d3Feature()) => { const el = renderFeatureRequirements(doc, f, { runHref }); doc.body.replaceChildren(el); return el; };
+const rowsOf = (el) => [...el.querySelectorAll('.plan-check-row')];
+
+test('Requirements lists 5 rows; each note equals shown.text of requirementStatus for its entry; data-owner is run N or confirmed by a person with a role; none is unowned', () => {
+  const f = d3Feature();
+  const el = reqs(f);
+  assert.ok(el.matches('div.plan-body.srows.shape-feature-reqs'));
+  assert.equal(el.querySelector('p.cap.shape-feature-reqs-cap').textContent, '5 requirements · 4 owned by a run · 1 confirmed by a person');
+  const rows = rowsOf(el);
+  assert.equal(rows.length, 5);
+  const sr = f.ship.smallRuns;
+  const entries = new Map([...sr.owned, ...sr.confirmed].map((e) => [e.id, e]));
+  for (const r of rows) {
+    const e = entries.get(r.dataset.key);
+    const { shown, ...bare } = e;
+    assert.equal(r.querySelector('.plan-check-detail').textContent, requirementStatus(bare, { runs: D3_RUNS(), reruns: D3_RERUNS }).text, r.dataset.key);
+    assert.ok(/^run \d+$/.test(r.dataset.owner) || r.dataset.owner === 'confirmed by a person', r.dataset.owner);
+    if (r.dataset.owner === 'confirmed by a person') assert.equal(r.dataset.role, 'Compliance');
+  }
+  assert.deepEqual(rows.map((r) => r.querySelector('.plan-check-detail').textContent), ['run 2 · met', 'run 3 · being built', 'run 4 · to do',
+    'run 2 · changed · run 5 builds it', 'confirmed by a person · Compliance']);
+});
+
+test('owner direction: Requirements are grouped per role with the role fold, count and states; an all-met role is closed, a role with anything open is open', () => {
+  const el = reqs();
+  const folds = [...el.querySelectorAll('.shape-role-fold')];
+  assert.deepEqual(folds.map((x) => x.querySelector('.shape-role-fold-head').dataset.role), ['product', 'compliance'], 'CONFIRM_ROLES order');
+  const [po, comp] = folds;
+  assert.equal(po.querySelector('.plan-fold-text').textContent, '4 · 1 met · 3 open');
+  assert.equal(po.querySelector('.shape-role-fold-head').getAttribute('aria-expanded'), 'true');
+  assert.equal(po.querySelectorAll('.plan-check-row').length, 4);
+  assert.equal(comp.querySelector('.plan-fold-text').textContent, '1 · 0 met · 1 open');
+  assert.ok(comp.querySelector('.shape-role-fold-head > .plan-check-mark').classList.contains('is-wait'), 'an open role: the grey ring, not a question');
+  assert.equal(comp.querySelector('.shape-role-fold-head .sr-only').textContent, ', not all met');
+  const met = reqs(d3Feature({ runs: D3_RUNS('done').map((r) => ({ ...r, state: 'done' })),
+    acceptance: [{ id: 'R-comp-1', mark: 'met', at: '2026-11-22T16:55:00.000Z' }] }));
+  const [po2, comp2] = met.querySelectorAll('.shape-role-fold-head');
+  assert.equal(po2.getAttribute('aria-expanded'), 'false', 'all met: closed');
+  assert.equal(comp2.getAttribute('aria-expanded'), 'false');
+  assert.equal(comp2.querySelector('.plan-fold-text').textContent, '1 · 1 met');
+  assert.ok(comp2.querySelector('.plan-check-mark svg'), 'the ✓ head');
+  const dropped = reqs(d3Feature({ acceptance: [{ id: 'R-comp-1', mark: 'dropped', reason: 'out of scope' }] }));
+  assert.equal(dropped.querySelector('[data-role="compliance"]').getAttribute('aria-expanded'), 'true', 'Dropped is open');
+});
+
+test('a decided requirement (Not met, Dropped) is not open in its role\'s summary, and the role never looks all met', () => {
+  const two = (entries) => {
+    const f = d3Feature();
+    const sr = shipLedger({ agreed: [...D3_AGREED, { id: 'R-comp-2', text: 'Kept in the EU' }], kinds: [...D3_KINDS, { id: 'R-comp-2', kind: 'confirmed', role: 'compliance' }],
+      acceptance: entries, runs: D3_RUNS(), reruns: D3_RERUNS });
+    f.requirementKinds = [...D3_KINDS, { id: 'R-comp-2', kind: 'confirmed', role: 'compliance' }];
+    f.ship.smallRuns = { ...f.ship.smallRuns, ...sr };
+    return f;
+  };
+  const roleOf = (f, key = 'compliance') => {
+    const head = reqs(f).querySelector(`[data-role="${key}"].shape-role-fold-head`);
+    return [head.querySelector('.plan-fold-text').textContent, head.getAttribute('aria-expanded'), head.querySelector('.sr-only').textContent];
+  };
+  const met = { id: 'R-comp-1', mark: 'met' };
+  assert.deepEqual(roleOf(two([met, { id: 'R-comp-2', mark: 'dropped', reason: 'later' }])), ['2 · 1 met · 1 dropped', 'true', ', not all met']);
+  assert.deepEqual(roleOf(two([met, { id: 'R-comp-2', mark: 'not-met', reason: 'no' }])), ['2 · 1 met · 1 not met', 'true', ', not all met']);
+  assert.deepEqual(roleOf(two([{ id: 'R-comp-1', mark: 'not-met', reason: 'no' }, { id: 'R-comp-2', mark: 'dropped', reason: 'x' }])),
+    ['2 · 0 met · 1 not met · 1 dropped', 'true', ', not all met']);
+  // A mark without its reason is undecided, and so is an accepted gap: both stay open.
+  assert.deepEqual(roleOf(two([met, { id: 'R-comp-2', mark: 'dropped' }]))[0], '2 · 1 met · 1 open');
+  assert.deepEqual(roleOf(two([met, { ...met, id: 'R-comp-2' }])), ['2 · 2 met', 'false', roleOf(two([met, { ...met, id: 'R-comp-2' }]))[2]]);
+  const gap = d3Feature();
+  const e = gap.ship.smallRuns.owned[0];
+  e.status = 'gap-accepted'; e.shown = { ...e.shown, word: 'gap accepted', text: 'run 2 · gap accepted', mark: 'x' };
+  assert.equal(roleOf(gap, 'product')[0], '4 · 0 met · 4 open');
+});
+
+test('an owned row\'s run N is a link to runHref(N), and plain text when runHref returns null', () => {
+  const rows = rowsOf(reqs());
+  const a = rows[0].querySelector('.plan-check-detail a.rd-fact-link');
+  assert.equal(a.getAttribute('href'), '#running/r2');
+  assert.equal(a.textContent, 'run 2');
+  assert.equal(rows[0].querySelector('.plan-check-detail').textContent, 'run 2 · met', 'the text is still shown.text');
+  assert.equal(rows[2].querySelector('a'), null, 'run 4 has no page yet');
+  assert.equal(rows[2].querySelector('.plan-check-detail').textContent, 'run 4 · to do');
+  assert.equal(rows[4].querySelector('a'), null, 'a confirmed row has no run link');
+});
+
+test('before and after Ship the confirmed row reads `confirmed by a person · Compliance`, then confirmed by Compliance or Marked Not met by you · reason', () => {
+  const note = (f) => reqs(f).querySelector('[data-key="R-comp-1"] .plan-check-detail').textContent;
+  assert.equal(note(d3Feature()), 'confirmed by a person · Compliance');
+  assert.equal(note(d3Feature({ acceptance: [{ id: 'R-comp-1', mark: 'met', at: '2026-11-22T16:55:00.000Z' }] })), 'confirmed by Compliance');
+  assert.equal(note(d3Feature({ acceptance: [{ id: 'R-comp-1', mark: 'not-met', reason: 'no signed\ncopy' }] })), 'Marked Not met by you · no signed copy');
+  const at = '2026-11-22T16:55:00.000Z';
+  const row = reqs(d3Feature({ acceptance: [{ id: 'R-comp-1', mark: 'met', at }] })).querySelector('[data-key="R-comp-1"]');
+  const d = new Date(at);
+  assert.equal(row.title, `R-comp-1 · A signed copy is kept · confirmed by Compliance · ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+});
+
+test('a row with a note gives its mark a state-only accessible name', () => {
+  const names = rowsOf(reqs()).map((r) => r.querySelector('.plan-check-mark').getAttribute('aria-label'));
+  assert.deepEqual(names, ['met', 'in progress', 'waiting', 'in progress', 'waiting']);
+  const f = d3Feature();
+  const e = f.ship.smallRuns.owned[0];
+  e.shown = { ...e.shown, word: 'gap accepted', text: `${e.shown.owner} · gap accepted`, mark: 'x' };
+  assert.equal(reqs(f).querySelector(`[data-key="${e.id}"] .plan-check-mark`).getAttribute('aria-label'), 'gap accepted', 'not "not met"');
+});
+
+test('requirement text with newlines renders on one line', () => {
+  const row = reqs().querySelector('[data-key="R-po-2"]');
+  assert.equal(row.querySelector('.plan-check-label').textContent, 'People export it');
+  assert.equal(row.title, 'R-po-2 · People export it · run 3 · being built');
+});
+
+test('Requirements and Decisions paint nothing without ship.smallRuns', () => {
+  assert.equal(renderFeatureRequirements(doc, feature(), { runHref }), null);
+  const host = doc.createElement('div');
+  paintFeatureDecisions(doc, host, feature());
+  assert.equal(host.childNodes.length, 0);
+});
+
+test('Decisions, with and without a key care log line: one [data-fact=care] row first, text === care.line === \'Care: \' + Ship card care dd, with and without figures; every other f.log line follows in order, each named decided', () => {
+  const logs = [null, [{ key: 'care', run: null, text: 'Care: Lean · your pick', detail: [] }, { key: 'outline', run: null, text: 'Split into 4 runs', detail: ['Run 2 · Export'] },
+    { key: 'r2-plan', run: 2, text: 'Plan approved', detail: [] }]];
+  for (const log of logs) {
+    for (const figures of [null, { gapsAtEnd: 0, changesAfterShip: 0 }]) {
+      const f = d3Feature({ log, figures });
+      const host = doc.createElement('div');
+      doc.body.replaceChildren(host);
+      paintFeatureDecisions(doc, host, f);
+      assert.ok(host.classList.contains('plan-body') && host.classList.contains('srows') && host.classList.contains('shape-feature-decisions'));
+      const care = host.querySelectorAll('[data-fact="care"]');
+      assert.equal(care.length, 1);
+      const items = [...host.querySelectorAll(':scope > ul.plan-checks > li')];
+      assert.equal(items[0], care[0], 'first');
+      const line = f.ship.smallRuns.care.line;
+      assert.equal(care[0].querySelector('.plan-check-label').textContent, line);
+      const ship = renderShipCard(doc, { phase: 'ready', featureId: 'f_d3', title: 'x', runs: 4, smallRuns: f.ship.smallRuns }, {});
+      assert.equal(line, `Care: ${ship.querySelector('[data-fact="care"] dd').textContent}`);
+      if (figures) assert.match(line, /built requirements met/);
+      assert.deepEqual(items.slice(1).map((li) => li.querySelector('.plan-check-label').textContent), ['Split into 4 runs', 'Plan approved']);
+      assert.deepEqual(items.slice(1).map((li) => li.querySelector('.plan-check-id').textContent), ['', 'Run 2']);
+      assert.ok(items.every((li) => li.querySelector('.plan-check-mark').getAttribute('aria-label') === 'decided'));
+      const show = items[1].querySelector('.chat-rc-log-show');
+      assert.equal(show.textContent, 'Show');
+      assert.equal(show.className, 'btn btn-sm btn-quiet chat-rc-log-show', 'a quiet button; the last class is the focus hook');
+      assert.equal(items[1].querySelector('.chat-rc-log-detail').hidden, true);
+    }
+  }
+});
+
+test('Decisions: a repaint keeps the focus on the line\'s Show', () => {
+  const log = (text) => [{ key: 'outline', run: null, text, detail: ['Run 2 · Export'] }];
+  const host = doc.createElement('div');
+  doc.body.replaceChildren(host);
+  paintFeatureDecisions(doc, host, d3Feature({ log: log('Split into 4 runs') }));
+  const was = host.querySelector('.chat-rc-log-show');
+  was.focus();
+  paintFeatureDecisions(doc, host, d3Feature({ log: log('Split into 5 runs') }));
+  const now = host.querySelector('.chat-rc-log-show');
+  assert.notEqual(now, was);
+  assert.equal(doc.activeElement, now);
+});
+
+test('Ship card, run page and feature page show the same word for R-po-2', async () => {
+  const { mountRunFacts } = await import('../ui/public/shape/run-facts.mjs');
+  const f = d3Feature();
+  const shown = f.ship.smallRuns.owned.find((o) => o.id === 'R-po-2').shown;
+  const page = reqs(f).querySelector('[data-key="R-po-2"] .plan-check-detail').textContent;
+  const ship = renderShipCard(doc, { phase: 'ready', featureId: 'f_d3', title: 'x', runs: 4, smallRuns: f.ship.smallRuns }, {});
+  const shipNote = [...ship.querySelectorAll('.ask-shipcard-owned .plan-check-row')].find((r) => r.querySelector('.plan-check-id').textContent === 'R-po-2')
+    .querySelector('.plan-check-detail').textContent;
+  const host = doc.createElement('div');
+  const runNote = mountRunFacts(host, { owns: [{ id: 'R-po-2', text: 'People export it', pass: null, word: shown.word, mark: shown.mark }], startsFrom: null })
+    .querySelector('.plan-check-detail').textContent;
+  assert.equal(shown.word, 'being built');
+  assert.ok(page.endsWith(shown.word) && shipNote.endsWith(shown.word));
+  assert.equal(runNote, shown.word);
+  assert.equal(page, shipNote);
+});
+
+test('source scan: the status words appear in string literals only in req-status.mjs', async () => {
+  const { readdirSync } = await import('node:fs');
+  const root = new URL('../', import.meta.url);
+  const files = [...readdirSync(new URL('ui/public/shape/', root)).filter((n) => n.endsWith('.mjs')).map((n) => `ui/public/shape/${n}`),
+    'src/shared/shape/ship-ledger.mjs', 'src/shared/shape/run-facts.mjs', 'src/shared/shape/req-status.mjs'];
+  const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`\\])\/\/.*$/gm, '$1');
+  const literals = (src) => strip(src).match(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g) || [];
+  const words = ['being built', 'to do', 'builds it', 'fixes it'];
+  const hits = files.filter((p) => literals(readFileSync(new URL(p, root), 'utf8')).some((l) => words.some((w) => l.includes(w))));
+  assert.deepEqual(hits, ['src/shared/shape/req-status.mjs']);
+  const importers = files.filter((p) => p.startsWith('ui/') && /\bfrom\s+['"][^'"]*req-status\.mjs['"]/.test(readFileSync(new URL(p, root), 'utf8')));
+  assert.deepEqual(importers, [], 'no ui module imports req-status.mjs (R-arch-8)');
 });

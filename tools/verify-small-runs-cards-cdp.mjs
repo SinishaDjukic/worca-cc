@@ -9,6 +9,10 @@
 //   C1 `#prototype` offered, building, built, remark proposed, confirmed ([data-proto] 0, .5, 1, 2, 3);
 //   C2 `#build` rows and `#run-panel` Agents; C3 `#run-stops` question, answered fold and waiting row;
 //   C4 `#req-change` notice and its "How a change lands" fold;
+// D2 (D2_ONLY=1 runs it alone): the cases runs-list, run-facts, agents-place and card-members of a marked 10-run
+//   feature, in light and dark at 375px and 1280px at Expert, and the flag-off control's Agents places per page;
+// D3 (last; D3_ONLY=1 runs it alone): the feature page's Requirements (one fold per role) and Decisions tabs of a marked
+//   feature before and after Ship, light and dark at 1280px and 375px, beside the prototype's `#feature` tabs;
 // and one reduced-motion capture of Prototype building. A live phase then follows a REAL paced mock Design build
 // (WORCA_MOCK_DESIGN_MS=400) on the Chat card: the Lead row, a row per screen and pieces assembling, captured mid-build
 // and with reduced motion (chat-prototype-building-mid-light, chat-prototype-building-reduced-motion-light). Every list (the Verifier's gap `.srows` included) is measured:
@@ -79,8 +83,8 @@ const imp = (rel) => import(new URL(rel, import.meta.url).href);
 const { server, runs, reqChanges } = await imp('../ui/server.mjs');
 const { getDb } = await imp('../src/core/db.mjs');
 const { projectKey } = await imp('../src/core/store.mjs');
-const { writeStoreMeta } = await imp('../src/core/artifacts.mjs');
-const { createSliceFeature, recordShapePlan, changeAgreedRequirements } = await imp('../src/core/shape/features.mjs');
+const { writeStoreMeta, recordArtifact, appendAuditById } = await imp('../src/core/artifacts.mjs');
+const { createSliceFeature, recordShapePlan, changeAgreedRequirements, setFeatureAcceptance, recordShip } = await imp('../src/core/shape/features.mjs');
 const askStore = await imp('../src/core/ask/store.mjs');
 const { normalizeOutline } = await imp('../src/shared/shape/slices.mjs');
 const { gateStop } = await imp('../src/shared/shape/run-stops.mjs');
@@ -152,13 +156,14 @@ function thread(title, pid) {
   return th.id;
 }
 /** A marked 4-run feature (`states[k-1]`: done, running or planned) with its Chat thread. → {f, pid(k), threadId} */
-function seedFeature(tag, title, states) {
+function seedFeature(tag, title, states, { withOutline = outline, requirementKinds = null, titles = TITLES } = {}) {
   const pid = (k) => `c5${tag}00000${k}`;
   pipeline(pid(1), states[0], title, { smallRuns: true, care: careRec });
-  const f = createSliceFeature({ pipelineId: pid(1), projectDir: proj, title, outline, perspectives: ['product', 'architect'], workflowId: 'wf_shape', smallRuns: true, care });
+  const f = createSliceFeature({ pipelineId: pid(1), projectDir: proj, title, outline: withOutline, perspectives: ['product', 'architect'], workflowId: 'wf_shape',
+    smallRuns: true, care, requirementKinds });
   states.forEach((st, i) => {
     const k = i + 1;
-    if (k > 1 && st !== 'planned') fire(f, k, pid(k), st, `Run ${k} · ${TITLES[i]}`);
+    if (k > 1 && st !== 'planned') fire(f, k, pid(k), st, `Run ${k} · ${titles[i]}`);
   });
   return { f, pid, threadId: thread(title, pid(1)) };
 }
@@ -237,6 +242,31 @@ for (const [i, [, moment, rec]] of PROTO_MOMENTS.entries()) {
   liveRun(pid, `Sign-up · ${moment}`, { at: 'n_refine', pendingQuestion: pq, runShape: { perspectives: ['product', 'ux'] } });
   PROTO[moment] = { pid, threadId: thread(`Sign-up ${moment}`, pid) };
 }
+// D1 Ship: every run done, no Verifier check (state S9: the ship step), R-comp-4 for Compliance to confirm.
+const SHIP_OUTLINE = { ...outline, agreed: [...outline.agreed, { id: 'R-comp-4', text: 'The sign-up data stays in the EU', example: 'rows live in eu-west' }] };
+const shipFeature = (tag, title) => seedFeature(tag, title, ['done', 'done', 'done', 'done'],
+  { withOutline: SHIP_OUTLINE, requirementKinds: { 'R-comp-4': { kind: 'confirmed', role: 'compliance' } } });
+const COMP_MET = { id: 'R-comp-4', mark: 'met', role: 'compliance', by: 'proof', at: now };
+const SB = shipFeature('sb', 'Ship blocked');
+// The Care outcome needs the feature's recorded figures (measure.mjs writes them when a feature finishes): ready and done
+// carry them, blocked has none (its Care row is the choice alone).
+const FIGURES = { requirementsMet: { met: 4, total: 5 }, gapsAtEnd: 1, changesAfterShip: 0 };
+const figures = (fid) => getDb().prepare(`INSERT INTO shape_feature_figures (feature_id, care, figures, recorded_at, updated_at) VALUES (?, ?, ?, ?, ?)`)
+  .run(fid, 'balanced', JSON.stringify(FIGURES), now, now);
+const SR = shipFeature('sr', 'Ship ready');
+setFeatureAcceptance(SR.f.id, [COMP_MET]);
+figures(SR.f.id);
+const SD = shipFeature('sd', 'Ship done');
+// Done with R-comp-4 Not met: its row sits under the PR rows.
+setFeatureAcceptance(SD.f.id, [{ ...COMP_MET, mark: 'not-met', reason: 'Legal has not signed the EU clause yet' }]);
+figures(SD.f.id);
+[1, 2, 3, 4].forEach((k) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?")
+  .run(`https://github.com/proof/repo/pull/${1430 + k}`, 1430 + k, SD.pid(k)));
+recordShip(SD.f.id, { mode: 'stacked' });
+const SK = shipFeature('sk', 'Ship keyboard');
+// Owner direction da6198d8d: R-comp-4 marked Not met with a reason: Ship open, the reason on its own line.
+const SN = shipFeature('sn', 'Ship not met');
+setFeatureAcceptance(SN.f.id, [{ id: 'R-comp-4', mark: 'not-met', reason: 'Legal has not signed the EU clause yet', role: 'compliance', by: 'proof', at: now }]);
 log(`server ${base} · seeded`);
 
 // ---- chrome + cdp
@@ -341,9 +371,9 @@ const MEASURE = (rootSel, rowSel, markSel, textSel) => `(() => {
 })()`;
 /** Judges one list: `oneLine` lists (run rows) want every row one 32px line; others (the gap list, whose why may wrap,
  *  the folds) every row at least 32px with its mark on the first text line. */
-function judge(list, theme, m, { oneLine = true } = {}) {
-  results.lists.push({ list, theme, ...m });
-  const where = `${list}, ${theme}, ${WIDTH}px`;
+function judge(list, theme, m, { oneLine = true, width = WIDTH } = {}) {
+  results.lists.push({ list, theme, width, ...m });
+  const where = `${list}, ${theme}, ${width}px`;
   if (!m.found) { check(false, `${where}: the list is on screen`); return; }
   const off = oneLine ? m.rows.filter((r) => !r.oneLine || r.textLines > 1 || Math.abs(r.height - 32) > 0.5) : m.rows.filter((r) => r.height < 31.5);
   check(m.rows.length > 0 && off.length === 0, `${where}: ${oneLine ? 'every row is one 32px line' : 'every row is at least 32px'} (${m.rows.length} rows${off.length ? `; off: ${JSON.stringify(off.map((r) => [r.text, r.height, r.textLines]))}` : ''})`);
@@ -388,7 +418,8 @@ const PROTO_URL = pathToFileURL(PROTOTYPE).href;
 /** A prototype screen, the moment's segment clicked (`seg` = a selector), then the capture. */
 async function prototypeShot(screen, seg, name, theme) {
   await open(`${PROTO_URL}?${name}-${theme}#${screen}`); await setTheme(theme); await sleep(300);
-  if (seg) { await ev(`(() => { const b = document.querySelector(${JSON.stringify(seg)}); if (b) b.click(); return !!b; })()`); await sleep(300); }
+  // `seg` is one selector or (D1 Ship's moments) a list clicked in order.
+  for (const sel of [].concat(seg || [])) { await ev(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (b) b.click(); return !!b; })()`); await sleep(300); }
   await shot(`prototype-${name}-${theme}`);
 }
 /** Opens a Chat thread's feature card. → true when its state line is up */
@@ -421,7 +452,450 @@ async function runViews(runId, pid, name, theme) {
   await shot(`app-${name}-side-panel-${theme}`);
 }
 
+// ---- D1 Ship: blocked, ready and done in the one card's ship step, beside the prototype's #ship moments.
+const SHIP = '.chat-rc .chat-rc-ship .ask-shipcard';
+const SHIP_ROWS = (list) => [`${SHIP} ${list}`, '.plan-check-row', '.plan-check-mark', '.plan-check-text'];
+const SHIP_FACTS = `(() => { const r = [...document.querySelectorAll(${JSON.stringify(SHIP)})].find((x) => x.offsetParent); if (!r) return null;
+  const c = r.querySelector('[data-act="ship-create"]'); const why = r.querySelector('.ask-shipcard-why');
+  const vis = (els) => [...els].filter((b) => b.offsetParent);
+  return { phase: r.dataset.shipCard, why: why ? why.textContent : null, create: c ? c.textContent : null, disabled: c ? c.disabled : null,
+    primary: c ? c.classList.contains('btn-primary') : null, described: !!why && !!c && c.getAttribute('aria-describedby') === why.id,
+    marks: vis(r.querySelectorAll('.ask-shipcard-mark .seg')).map((b) => b.getAttribute('aria-label')),
+    pressed: vis(r.querySelectorAll('.ask-shipcard-mark [aria-pressed="true"]')).map((b) => b.textContent),
+    note: (r.querySelector('.ask-shipcard-confirmed .plan-check-detail') || {}).textContent || null,
+    reasonLine: (r.querySelector('.ask-shipcard-reason') || {}).textContent || null,
+    stateDetail: (() => { const c = r.closest('.chat-rc'); const d = c && c.querySelector('.chat-rc-status .run-status-detail'); return d && !d.hidden ? d.textContent : null; })(),
+    prsOpen: (() => { const c = r.closest('.chat-rc'); return c ? (c.innerText.match(/PRs open/g) || []).length : 0; })(),
+    views: (() => { const c = r.closest('.chat-rc'); return c ? vis(c.querySelectorAll('a, button')).filter((b) => /^View PRs?$/.test(b.textContent.trim())).map((b) => b.textContent.trim()) : []; })(),
+    care: vis(r.querySelectorAll('[data-fact="care"]')).length,
+    careText: (r.querySelector('[data-fact="care"] .rd-kv-v') || {}).textContent || null,
+    stats: (r.querySelector('.ask-shipcard-stats') || {}).textContent || null,
+    titled: !!r.querySelector('.ask-mcard-title'),
+    whyIds: why ? [...why.querySelectorAll('.ask-shipcard-id')].map((x) => [x.textContent, x.getBoundingClientRect().height]) : [],
+    whyLine: why ? parseFloat(getComputedStyle(why).lineHeight) || 0 : 0,
+    unmet: vis(r.querySelectorAll('.ask-shipcard-unmet .plan-check-row')).map((x) => [x.querySelector('.plan-check-id').textContent, x.querySelector('.plan-check-detail').textContent]),
+    unmetBelow: (() => { const p = r.querySelector('.ask-shipcard-prs'); const u = r.querySelector('.ask-shipcard-unmet'); return !!(p && u && (p.compareDocumentPosition(u) & 4)); })(),
+    waiting: (r.querySelector('.ask-mcard-body').textContent.match(/waiting for compliance/gi) || []).length,
+    prs: vis(r.querySelectorAll('.ask-shipcard-prs .plan-check-row')).map((x) => [x.querySelector('.plan-check-id').textContent, x.querySelector('.plan-check-detail').textContent]),
+    done: (r.querySelector('.ask-shipcard-done') || {}).textContent || null,
+    careAbove: (() => { const k = r.querySelector('[data-fact="care"]'); const p = r.querySelector('.ask-shipcard-prs'); return !p || !!(k && (k.compareDocumentPosition(p) & 4)); })() };
+})()`;
+const SHIP_READY = (what, theme) => waitFor(`!!document.querySelector(${JSON.stringify(SHIP)})`, `${what} (${theme})`);
+/** At 375px a Ship row's detail drops under its title (the .srows rule): rows there are judged at least 32px with the mark
+ *  on the first text line; at 1280px every row is one 32px line. */
+async function shipCells(theme, width) {
+  const at = `${theme}, ${width}px`;
+  if (await card(SB.threadId, `sb${width}`, 'the Ship blocked card', theme) && await SHIP_READY('the Ship blocked card', theme)) {
+    await reveal(SHIP);
+    const f = await ev(SHIP_FACTS);
+    check(f && f.why === 'Waiting for Compliance to confirm R-comp-4' && f.waiting === 1 && f.stateDetail === 'waiting for Compliance',
+      `ship blocked, ${at}: the reason once in the card; the step detail names who it waits for (D1 shipDetail, the owner's call) (${JSON.stringify(f)})`);
+    check(f && f.create === 'Create 4 PRs' && f.disabled && !f.primary && f.described, `ship blocked, ${at}: Create 4 PRs disabled, not primary, described by the reason`);
+    check(f && f.marks.length === 1 && f.marks[0] === 'Mark R-comp-4 as Compliance: The sign-up data stays in the EU' && f.pressed.length === 0 && f.care === 1,
+      `ship blocked, ${at}: one unmarked Met / Not met / Dropped picker, one Care row`);
+    check(f && f.careText === "Balanced · Worca's pick" && f.stats === 'Your turn: mark what only a person can' && !f.titled,
+      `ship blocked, ${at}: Care kept as Worca's pick with no outcome (no figures), the step named once with no feature title (${JSON.stringify(f)})`);
+    check(f && f.whyIds.length === 1 && f.whyIds[0][0] === 'R-comp-4' && f.whyIds[0][1] <= f.whyLine * 1.5,
+      `ship blocked, ${at}: R-comp-4 in the reason stays on one line (${JSON.stringify(f && f.whyIds)})`);
+    const c = await ev(COUNTS('.chat-rc'));
+    check(c && c.primaries.length === 0 && c.answer === 0 && c.rawLinks === 0, `ship blocked, ${at}: no primary, no Answer, no raw link (${JSON.stringify(c)})`);
+    judge('ship blocked confirmed rows', theme, await ev(MEASURE(...SHIP_ROWS('.ask-shipcard-confirmed'))), { oneLine: false, width });
+    await shot(`app-ship-blocked-${theme}-${width}`);
+  }
+  await prototypeShot('ship', null, `ship-blocked-${width}`, theme);
+  if (await card(SR.threadId, `sr${width}`, 'the Ship ready card', theme) && await SHIP_READY('the Ship ready card', theme)) {
+    await reveal(SHIP);
+    const f = await ev(SHIP_FACTS);
+    check(f && f.why === null && f.pressed.join() === 'Met' && f.create === 'Create 4 PRs' && !f.disabled && f.primary && f.care === 1, `ship ready, ${at}: Met marked, no reason, Create 4 PRs primary (${JSON.stringify(f)})`);
+    check(f && f.stats === 'Ready to ship' && !f.titled
+      && /^Balanced · Worca's pick · \d of 5 built requirements met · 1 gap found at the end · 0 changes after ship so far$/.test(f.careText || ''),
+    `ship ready, ${at}: Ready to ship, the Care outcome from the recorded figures (${JSON.stringify(f && [f.stats, f.careText])})`);
+    const c = await ev(COUNTS('.chat-rc'));
+    check(c && c.primaries.length === 1 && c.primaries[0] === 'Create 4 PRs' && c.answer === 0, `ship ready, ${at}: exactly one primary, no Answer (${JSON.stringify(c)})`);
+    judge('ship ready confirmed rows', theme, await ev(MEASURE(...SHIP_ROWS('.ask-shipcard-confirmed'))), { oneLine: width > WIDTH, width });
+    await shot(`app-ship-ready-${theme}-${width}`);
+  }
+  await prototypeShot('ship', ['[data-act="compok"]', '[data-mark="R-po-3:Met"]', '[data-mark="R-ux-2:Met"]'], `ship-ready-${width}`, theme);
+  if (await card(SN.threadId, `sn${width}`, 'the Ship not-met card', theme) && await SHIP_READY('the Ship not-met card', theme)) {
+    await reveal(SHIP);
+    const f = await ev(SHIP_FACTS);
+    check(f && f.pressed.join() === 'Not met' && /^Marked Not met by you/.test(f.note || '') && f.reasonLine === 'Legal has not signed the EU clause yet'
+      && f.why === null && !f.disabled && f.primary, `ship not met, ${at}: the mark, the reason on its own line, Ship open (${JSON.stringify(f)})`);
+    await shot(`app-ship-not-met-${theme}-${width}`);
+  }
+  if (await card(SD.threadId, `sd${width}`, 'the Ship done card', theme) && await SHIP_READY('the Ship done card', theme)) {
+    await reveal(SHIP);
+    const f = await ev(SHIP_FACTS);
+    check(f && f.done === null && f.stateDetail === '4 PRs open' && f.prsOpen === 1 && f.care === 1 && f.careAbove,
+      `ship done, ${at}: 4 PRs open once (the state line), the Care row once above the PRs (${JSON.stringify(f)})`);
+    check(f && /^Balanced · Worca's pick · \d of 5 built requirements met · 1 gap found at the end · 0 changes after ship so far$/.test(f.careText || '') && !f.titled,
+      `ship done, ${at}: the Care outcome from the recorded figures (${JSON.stringify(f && f.careText)})`);
+    // D3 (D5): with the flag on, the row reads the one shared status (its confirmed entry's shown.text).
+    check(f && f.unmetBelow && f.unmet.length === 1 && f.unmet[0][0] === 'R-comp-4' && f.unmet[0][1] === 'Marked Not met by you · Legal has not signed the EU clause yet',
+      `ship done, ${at}: the Not met row under the PR rows (${JSON.stringify(f && f.unmet)})`);
+    check(f && f.views.join() === 'View PRs', `ship done, ${at}: one view action, View PRs (${JSON.stringify(f && f.views)})`);
+    check(f && f.prs.length === 4 && f.prs[0][1] === 'into main' && new Set(f.prs.map((x) => x[0])).size === 4, `ship done, ${at}: one row per PR, run 1 first into main`);
+    const c = await ev(COUNTS('.chat-rc'));
+    check(c && c.rawLinks === 0 && c.primaries.length === 0, `ship done, ${at}: no raw link, View PRs quiet (${JSON.stringify(c)})`);
+    judge('ship done PR rows', theme, await ev(MEASURE(...SHIP_ROWS('.ask-shipcard-prs'))), { oneLine: width > WIDTH, width });
+    await shot(`app-ship-done-${theme}-${width}`);
+  }
+  await prototypeShot('ship', ['[data-act="prdlg"]', '[data-act="prok"]'], `ship-done-${width}`, theme);
+}
+
+// ---- Shaper small runs D2: the Runs-list group row and its one-line members, the run's facts (Starts from, Owns) and
+// the one Agents place on the live page, the saved page and the panel, and the chat card's members. A marked 10-run
+// feature: run 1 (the planning run) and runs 2–9 done, run 10 live with stages, run 3 with a fix round. Cases:
+// runs-list, run-facts, agents-place, card-members; light and dark, 375px and 1280px, Expert. The flag-off control
+// flips the flag on the same server and seed (D18), counts the Agents places per page, then turns it back on.
+// Run 4's title is long on purpose: the D4 truncation proof (the title ellipsizes, the short word keeps its natural width).
+const D2_LONG = 4;
+const D2_TITLES = ['Store sign-ups', 'Welcome email', 'Show the sign-up form',
+  'List new members with their sign-up source, their referral code, their chosen plan and the date they joined', 'Export the member list',
+  'Filter members by date', 'Sort the member list', 'Page through members', 'Search members by name', 'Show a member count'];
+const D2_AGREED = D2_TITLES.map((t, i) => ({ id: i === 9 ? 'R-arch-10' : `R-po-${i + 1}`, text: t, example: `example ${i + 1}` }));
+const d2Outline = normalizeOutline({ why: 'proof', leftOut: [], slices: D2_TITLES.map((title, i) => ({ id: `s${i + 1}`, title, goal: `Goal ${i + 1}`,
+  inScope: [], outOfScope: [], acceptance: [`ok ${i + 1}`], dependsOn: [], estimate: 'small', requirements: [D2_AGREED[i].id] })) }, { agreed: D2_AGREED }).outline;
+const D2 = seedFeature('d2', 'Member admin', [...Array(9).fill('done'), 'running'], { withOutline: d2Outline, titles: D2_TITLES });
+const D2_LIVE = D2.pid(10);
+const D2_SAVED = D2.pid(2);
+// Each run starts from the run before it (run 1 from the feature base): its stored branch source.
+for (let k = 2; k <= 10; k++) getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({ source: `feat/${D2.pid(k - 1)}`, feature: `feat/${D2.pid(k)}` }), D2.pid(k));
+// The done runs carry their Care graph, done steps and plan v1 + v2 (the saved page's Agents rows and the Planner detail).
+for (let k = 1; k <= 9; k++) {
+  const pid = D2.pid(k);
+  getDb().prepare('UPDATE pipelines SET stepper = ?, total_cost_usd = ? WHERE id = ?').run(JSON.stringify(stepper), 0.41, pid);
+  for (const n of ['n_clarify', 'n_plan', 'n_roles', 'n_refine', 'n_tests', 'n_impl', 'n_review']) {
+    getDb().prepare('INSERT INTO pipeline_steps (pipeline_id, key, node_id, cycle, status, started_at, execution_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(pid, `x:${n}:1`, n, 1, 'done', now, `x:${n}:1`);
+  }
+  recordArtifact(pid, 'plan', `plans/d2-run-${k}.md`);
+  recordArtifact(pid, 'plan', `plans/d2-run-${k}-v2.md`);
+}
+// Run 3's fix round (a done Watch round): the member keeps dev's rounds line under its row.
+pipeline('c5d2r00003', 'done', 'Fix round 2 of run 3');
+getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({ source: 'main', feature: 'feat/c5d2r00003',
+  roundOf: { pipelineId: D2.pid(3), round: 2, request: 'merge dev in', by: 'watch' } }), 'c5d2r00003');
+const D2_RUN = liveRun(D2_LIVE, `Run 10 · ${D2_TITLES[9]}`, { at: 'n_impl', runShape: { slice: { feature: D2.f.id, index: 10 } } });
+const D2_SAVED_URL = `#history/${key}/${D2_SAVED}/details/overview`;
+
+/** The Runs-list members of the D2 group: each one-line row (an anchor without a stage block) at 32px, its dot in one
+ *  mark column; the staged live member's stage block whole inside its anchor. */
+const D2_MEMBERS = `(() => {
+  const g = document.querySelector('.runs-item[data-row-key="chain:${D2.f.id}"]');
+  if (!g) return { found: false };
+  const items = [...g.querySelectorAll('.srows.runs-members > .runs-item')];
+  const rows = items.map((it) => {
+    const a = it.querySelector(':scope > a.runs-row'); const dot = it.querySelector(':scope > .runs-pick .status-dot');
+    const t = a.querySelector('.runs-row-title'); const ab = a.getBoundingClientRect(); const db = dot.getBoundingClientRect(); const tb = t.getBoundingClientRect();
+    const stage = a.querySelector(':scope > .runs-stage');
+    // The D4 truncation proof: the line keeps its natural width (never clipped), the title is what ellipsizes.
+    const sub = a.querySelector(':scope > .runs-row-sub'); const sb = sub ? sub.getBoundingClientRect() : null;
+    return { text: t.textContent, pid: a.dataset.pipelineId || '', height: Math.round(ab.height * 10) / 10, staged: !!stage,
+      sub: sub ? sub.textContent : null, subW: sb ? Math.round(sb.width * 10) / 10 : null, subScroll: sub ? sub.scrollWidth : null, subClient: sub ? sub.clientWidth : null,
+      titleCut: t.scrollWidth > t.clientWidth, titleEllipsis: getComputedStyle(t).textOverflow === 'ellipsis', anchorFits: a.scrollWidth <= a.clientWidth + 1,
+      stageInside: stage ? stage.getBoundingClientRect().bottom <= ab.bottom + 0.5 : null, rounds: !!it.querySelector(':scope > .runs-rounds-line'),
+      markX: db.left + db.width / 2, markY: db.top + db.height / 2, textY: tb.top + tb.height / 2,
+      textLines: Math.round(tb.height / (parseFloat(getComputedStyle(t).lineHeight) || 20)) };
+  });
+  const one = rows.filter((r) => !r.staged);
+  const xs = one.map((r) => r.markX);
+  return { found: true, groups: document.querySelectorAll('.runs-item[data-row-key="chain:${D2.f.id}"]').length, rows,
+    spreadX: xs.length ? Math.max(...xs) - Math.min(...xs) : 0, maxDy: Math.max(0, ...one.map((r) => Math.abs(r.markY - r.textY))),
+    shown: !!g.offsetParent && !!g.querySelector(':scope > a.runs-row').getClientRects().length,
+    cost: [...g.querySelectorAll(':scope > a.runs-row .runs-cost')].filter((c) => c.offsetParent).length, costTitle: g.querySelector(':scope > a.runs-row').getAttribute('title'),
+    overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth };
+})()`;
+/** Visible Agents places under `scope`: the `.rd-run-agents` box plus the Agents tab buttons. */
+const AGENT_PLACES = (scope) => `(() => [...document.querySelectorAll(${JSON.stringify(`${scope} .rd-run-agents`)})].filter((x) => x.offsetParent && !x.hidden).length
+  + [...document.querySelectorAll(${JSON.stringify(`${scope} :is(.rd-tab, .hd-tab)[data-sec="agents"]`)})].filter((x) => x.offsetParent && !x.hidden).length)()`;
+/** The facts box: one "Starts from", each owned id once, every id and Owns label whole, and the box names neither the
+ *  feature title nor the run's own "Run N". */
+const FACTS = (scope, runN) => `(() => {
+  const root = document.querySelector(${JSON.stringify(scope)});
+  const box = root && [...root.querySelectorAll('.run-facts')].find((x) => x.offsetParent);
+  if (!box) return { found: false };
+  const whole = (els) => [...els].filter((e) => e.offsetParent).every((e) => e.scrollWidth <= e.clientWidth);
+  const text = root.textContent;
+  return { found: true, boxes: [...root.querySelectorAll('.run-facts')].filter((x) => x.offsetParent).length, starts: (text.match(/Starts from/g) || []).length,
+    ids: [...box.querySelectorAll('.plan-check-id')].map((e) => [e.textContent, [...root.querySelectorAll('.plan-check-id')].filter((x) => x.textContent === e.textContent && x.offsetParent).length]),
+    idsWhole: whole(box.querySelectorAll('.plan-check-id')), labelsWhole: whole(box.querySelectorAll('.plan-check-label')),
+    wordsWhole: whole(box.querySelectorAll('.plan-check-detail')), words: [...box.querySelectorAll('.plan-check-detail')].map((e) => e.textContent),
+    repeats: box.textContent.includes('Member admin') || new RegExp('\\\\bRun ${runN}\\\\b').test(box.textContent),
+    overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+})()`;
+/** The done Planner row: 32px, and whether its detail ("plan v2 · after the plan review") is visible on the row's line. */
+const PLANNER = (scope) => `(() => {
+  const row = [...document.querySelectorAll(${JSON.stringify(`${scope} .run-agents .plan-check-row`)})].find((r) => r.offsetParent && r.querySelector('.plan-check-label').textContent === 'Planner');
+  if (!row) return null;
+  const d = row.querySelector('.plan-check-detail'); const t = row.querySelector('.plan-check-text');
+  const db = d.getBoundingClientRect(); const tb = t.getBoundingClientRect();
+  return { height: Math.round(row.getBoundingClientRect().height * 10) / 10, detail: d.textContent, shown: db.top < tb.bottom && db.bottom <= tb.bottom + 0.5 };
+})()`;
+
+async function d2Page(url, scope, name, theme, width, { runN = null, flagOff = false } = {}) {
+  await open(url);
+  await skipWelcome(); await setTheme(theme);
+  const ok = await waitFor(`!!document.querySelector(${JSON.stringify(`${scope} .rd-run-agents`)}) || !!document.querySelector(${JSON.stringify(`${scope} :is(.rd-tab, .hd-tab)[data-sec="agents"]`)})`, `the D2 ${name} (${theme}, ${width}px)`);
+  if (!ok) return null;
+  await sleep(900);
+  const places = await ev(AGENT_PLACES(scope));
+  if (flagOff) return places;
+  check(places === 1, `agents-place: ${name}, ${theme}, ${width}px: exactly 1 visible Agents place (${places})`);
+  if (runN != null && await waitFor(`!!document.querySelector(${JSON.stringify(`${scope} .run-facts`)})`, `the D2 ${name} facts (${theme}, ${width}px)`)) {
+    const f = await ev(FACTS(scope, runN));
+    check(f.found && f.boxes === 1 && f.starts === 1 && f.ids.length >= 1 && f.ids.every(([, n]) => n === 1) && !f.repeats,
+      `run-facts: ${name}, ${theme}, ${width}px: one box, "Starts from" once, each owned id once, no title or own run number (${JSON.stringify(f)})`);
+    // D3 (D4): an Owns row carries its status word; at 375px the text shrinks first and the word stays whole (the row's
+    // tooltip holds the text), so labels are judged whole at 1280px.
+    check(f.idsWhole && f.wordsWhole && f.words.length > 0 && (width === WIDTH || f.labelsWhole) && !f.overflow,
+      `run-facts: ${name}, ${theme}, ${width}px: every id and status word whole${width === WIDTH ? '' : ', every Owns label whole'}, no overflow (${JSON.stringify(f.words)})`);
+    if (width === WIDTH) judge(`run-facts ${name} Owns`, theme, await ev(MEASURE(`${scope} .run-facts`, '.plan-check-row', '.plan-check-mark', '.plan-check-text')), { width });
+  }
+  if (width === WIDTH && await ev(`!!document.querySelector(${JSON.stringify(`${scope} .run-agents .plan-check-row`)})`)) {
+    judge(`agents-place ${name} Agents`, theme, await ev(MEASURE(...AGENT_ROWS(scope))), { width });
+  }
+  await reveal(`${scope} :is(.run-facts, .run-agents)`);
+  await sleep(200);
+  return places;
+}
+
+async function d2Phase() {
+  { const r = await post('/api/settings', { uiLevel: 'expert' }); check(r.ok, `D2: the Expert level is set (${r.status})`); }
+  for (const theme of THEMES) {
+    for (const width of [WIDTH, 1280]) {
+      await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+      // ---- runs-list: 1 group row, 10 members, member 1 = the planning run; one-line members 32px, one mark column.
+      // #runs reopens the last run opened (the earlier cases' pages): forget it, so the list itself is on screen.
+      await ev("(() => { try { localStorage.removeItem('worca-cc.runs.last'); } catch {} return 0; })()");
+      await open(`${base}/?d2l-${theme}-${width}#runs`);
+      await skipWelcome(); await setTheme(theme);
+      if (await waitFor(`!!document.querySelector('.runs-item[data-row-key="chain:${D2.f.id}"]')`, `the D2 group row (${theme}, ${width}px)`)) {
+        await ev(`(() => { const b = document.querySelector('.runs-item[data-row-key="chain:${D2.f.id}"] > .runs-row-tail .runs-expand'); if (b && b.getAttribute('aria-expanded') !== 'true') b.click(); return 1; })()`);
+        await waitFor(`document.querySelectorAll('.runs-item[data-row-key="chain:${D2.f.id}"] .srows.runs-members > .runs-item').length === 10`, `the D2 group's 10 members (${theme}, ${width}px)`);
+        await sleep(500);
+        const m = await ev(D2_MEMBERS);
+        results.lists.push({ list: 'runs-list D2 members', theme, width, ...m });
+        check(m.found && m.shown && m.groups === 1 && m.rows.length === 10 && m.rows[0].pid === D2.pid(1) && m.rows[0].text.startsWith('1 · '),
+          `runs-list, ${theme}, ${width}px: 1 group row, 10 members, member 1 is the planning run ${D2.pid(1)} (${JSON.stringify(m.found ? m.rows.map((r) => r.pid) : m)})`);
+        check(m.cost === 1 && !m.costTitle, `runs-list, ${theme}, ${width}px: the cost is visible once and the anchor has no cost title`);
+        const off = m.rows.filter((r) => !r.staged && (Math.abs(r.height - 32) > 1 || r.textLines > 1));
+        check(!off.length, `runs-list, ${theme}, ${width}px: every one-line member is 32px (±1px) (${JSON.stringify(off.map((r) => [r.text, r.height]))})`);
+        check(m.spreadX <= 1 && m.maxDy <= 1, `runs-list, ${theme}, ${width}px: one mark column (spread ${m.spreadX.toFixed(2)}px, max dy ${m.maxDy.toFixed(2)}px)`);
+        check(m.rows.some((r) => r.staged) && m.rows.filter((r) => r.staged).every((r) => r.stageInside), `runs-list, ${theme}, ${width}px: the staged live member's .runs-stage bottom is inside its anchor`);
+        check(m.rows.some((r) => r.rounds), `runs-list, ${theme}, ${width}px: the member with a fix round keeps its rounds line`);
+        // Owner direction db0a5c6c7: a member says the card's short word; runs 1–9 finished, so each reads 'done' (run 3's
+        // line is its fix round's, the rounds line below it: D6).
+        const words = m.rows.slice(0, 9).filter((r) => !r.rounds).map((r) => r.sub);
+        check(words.length === 8 && words.every((w) => w === 'done'), `runs-list, ${theme}, ${width}px: the finished members read the card's short word 'done' (${JSON.stringify(words)})`);
+        // D4 truncation, measured: every member's line at its natural width (rect width = scrollWidth ±1px, never clipped).
+        const clipped = m.rows.filter((r) => r.sub && (Math.abs(r.subW - r.subScroll) > 1 || r.subScroll > r.subClient));
+        check(!clipped.length, `runs-list, ${theme}, ${width}px: every member's .runs-row-sub keeps its natural width (${JSON.stringify(m.rows.map((r) => [r.sub, r.subW, r.subScroll, r.subClient]))})`);
+        const long = m.rows[D2_LONG - 1];
+        check(long && long.titleEllipsis && long.titleCut && Math.abs(long.height - 32) <= 1 && long.anchorFits,
+          `runs-list, ${theme}, ${width}px: the long-title member's title is what ellipsizes, its row stays 32px and nothing spills (${JSON.stringify(long)})`);
+        check(!m.overflow && m.scrollWidth <= width, `runs-list, ${theme}, ${width}px: no horizontal overflow (scrollWidth ${m.scrollWidth})`);
+        await reveal(`.runs-item[data-row-key="chain:${D2.f.id}"]`);
+        await shot(`app-d2-runs-list-${theme}-${width}`);
+      }
+      // ---- run-facts and agents-place: the live page, the saved page, the panel.
+      await d2Page(`${base}/?d2r-${theme}-${width}#running/${D2_RUN}`, '#run-detail', 'live run page', theme, width, { runN: 10 });
+      await shot(`app-d2-run-page-${theme}-${width}`);
+      await d2Page(`${base}/?d2h-${theme}-${width}${D2_SAVED_URL}`, '#hist-detail', 'saved run page', theme, width, { runN: 2 });
+      const p = await ev(PLANNER('#hist-detail'));
+      check(p && Math.abs(p.height - 32) <= 1 && p.detail === 'plan v2 · after the plan review' && (width === WIDTH || p.shown),
+        `agents-place: the done Planner row with its long detail is 32px at ${width}px, the detail ${width === WIDTH ? 'never wraps' : 'shown'} (${JSON.stringify(p)})`);
+      if (p) results.lists.push({ list: 'saved Planner row', theme, width, ...p });
+      await shot(`app-d2-saved-page-${theme}-${width}`);
+      await d2Page(`${base}/?d2p-${theme}-${width}#chat/new/run/${D2_LIVE}/overview`, PANEL, 'side panel', theme, width, { runN: 10 });
+      await shot(`app-d2-side-panel-${theme}-${width}`);
+      // ---- card-members: the chat card's one-line members, the Requirements fold collapsed.
+      if (await card(D2.threadId, `d2c-${width}`, 'the D2 card', theme)) {
+        await reveal('.chat-rc-members');
+        check(await ev("!!document.querySelector('.chat-rc-members ol.run-members.is-one-line')"), `card-members, ${theme}, ${width}px: ol.run-members.is-one-line`);
+        if (width === WIDTH) judge('card-members D2 run rows', theme, await ev(MEASURE(...RUN_ROWS)), { width });
+        await shot(`app-d2-card-members-${theme}-${width}`);
+      }
+    }
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+  // ---- the flag-off control (D18): the same server and seed, the flag off (env cleared, PATCH /api/flags), dev's places.
+  delete process.env.WORCA_FLAGS;
+  const offRes = await fetch(`${base}/api/flags`, { method: 'PATCH', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ shaperSmallRuns: false }) });
+  check(offRes.ok, `flag-off control: PATCH /api/flags turns shaperSmallRuns off (${offRes.status})`);
+  const live = await d2Page(`${base}/?d2off-r#running/${D2_RUN}`, '#run-detail', 'live run page (flag off)', 'light', WIDTH, { flagOff: true });
+  const panel = await d2Page(`${base}/?d2off-p#chat/new/run/${D2_LIVE}/overview`, PANEL, 'side panel (flag off)', 'light', WIDTH, { flagOff: true });
+  const saved = await d2Page(`${base}/?d2off-h${D2_SAVED_URL}`, '#hist-detail', 'saved run page (flag off)', 'light', WIDTH, { flagOff: true });
+  results.flagOff = { live, panel, saved };
+  check(live === 2 && panel === 2 && saved === 1, `flag-off control: dev's Agents places, live 2, panel 2, saved 1 (${JSON.stringify(results.flagOff)})`);
+  check(await ev("!document.querySelector('.run-facts')"), 'flag-off control: no .run-facts node');
+  const onRes = await fetch(`${base}/api/flags`, { method: 'PATCH', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ shaperSmallRuns: true }) });
+  process.env.WORCA_FLAGS = 'shaperSmallRuns';
+  check(onRes.ok, `flag-off control: the flag is back on (${onRes.status})`);
+}
+/** The closing lines: page errors, the verdict, the log. */
+async function finish() {
+  check(errors.length === 0, `no page errors${errors.length ? ` — ${errors.slice(0, 3).join(' | ')}` : ''}`);
+  results.minutes = Math.round((Date.now() - T0) / 600) / 100;
+  results.failed = failed;
+  const verdict = failed ? `${failed} FAILED` : 'all passed';
+  writeLog(verdict);
+  log(`${results.shots.length} PNGs and ${logFile} in ${results.minutes} min; ${verdict}`);
+  await shutdown(failed ? 1 : 0);
+}
+
+// ---- Shaper small runs D3: the feature page's Requirements and Decisions tabs. A marked feature: the planning run
+// (run 1) and 4 runs, each owning one requirement, R-po-1's text changed after its run finished (a change run, run 6),
+// R-comp-1 confirmed by Compliance. Before Ship: run 2 done, run 3 building, runs 4–6 not started, R-comp-1 waiting.
+// After Ship: R-comp-1 marked Not met through POST /confirm with a short reason, every run done, the ship applied.
+const D3_TITLES = ['Plan the member export', 'Export members as CSV', 'Email the export link', 'Keep a download log', 'Show the export button'];
+const D3_AGREED = [...D3_TITLES.slice(1).map((t, i) => ({ id: `R-po-${i + 1}`, text: t, example: `example ${i + 1}` })),
+  { id: 'R-comp-1', text: 'A signed copy of each export is kept', example: 'a PDF per export' }];
+const d3Outline = normalizeOutline({ why: 'proof', leftOut: [], slices: D3_TITLES.map((title, i) => ({ id: `s${i + 1}`, title, goal: `Goal ${i + 1}`,
+  inScope: [], outOfScope: [], acceptance: [`ok ${i + 1}`], dependsOn: [], estimate: 'small', requirements: i ? [`R-po-${i}`] : [] })) }, { agreed: D3_AGREED }).outline;
+const D3 = seedFeature('d3', 'Member export', ['done', 'done', 'running', 'planned', 'planned'],
+  { withOutline: d3Outline, titles: D3_TITLES, requirementKinds: { 'R-comp-1': { kind: 'confirmed', role: 'compliance' } } });
+// The decision log's lines (featureLog reads the runs' audit lines): the planning run's agreed requirements and Split,
+// run 2's approved plan.
+appendAuditById(D3.pid(1), 'Requirements approval **approve** by proof.');
+appendAuditById(D3.pid(1), 'Slice outline **approve** by proof.');
+appendAuditById(D3.pid(2), 'Plan approval **approve** by proof.');
+{ const r = reqChanges.apply(D3.f.id, [{ id: 'R-po-1', from: D3_AGREED[0].text, to: 'Export members as CSV with a header row' }], { kind: 'chat', by: 'proof' });
+  check(r.ok && r.result.changes[0].case === 'finished', `seed: the D3 change lands on a change run (${JSON.stringify(r)})`); }
+const D3_BEFORE = { 'R-po-1': 'run 2 · changed · run 6 builds it', 'R-po-2': 'run 3 · being built', 'R-po-3': 'run 4 · to do', 'R-po-4': 'run 5 · to do',
+  'R-comp-1': 'confirmed by a person · Compliance' };
+const D3_REASON = 'unsigned';
+const D3_AFTER = { 'R-po-1': 'run 2 · met · changed by run 6', 'R-po-2': 'run 3 · met', 'R-po-3': 'run 4 · met', 'R-po-4': 'run 5 · met',
+  'R-comp-1': `Marked Not met by you · ${D3_REASON}` };
+const D3_REQS = '.gpage-requirements .shape-feature-reqs';
+const D3_DECS = '.gpage-decisions.shape-feature-decisions';
+/** The Requirements tab's facts: every row's note, whether an id spans two lines or a note is cut, each label's visible
+ *  width, the run link's colour against the note's. Every role fold is opened first (an all-met role starts closed). */
+const D3_REQ_FACTS = `(() => {
+  const root = document.querySelector(${JSON.stringify(D3_REQS)});
+  if (!root) return null;
+  for (const h of root.querySelectorAll('.shape-role-fold-head[aria-expanded="false"]')) h.click();
+  const lines = (el) => Math.round(el.getBoundingClientRect().height / (parseFloat(getComputedStyle(el).lineHeight) || 20));
+  const rows = [...root.querySelectorAll('.plan-check-row')].filter((r) => r.offsetParent).map((r) => {
+    const id = r.querySelector('.plan-check-id'); const d = r.querySelector('.plan-check-detail'); const l = r.querySelector('.plan-check-label');
+    return { id: r.dataset.key, note: d.textContent, idLines: lines(id), noteCut: d.scrollWidth > d.clientWidth + 0.5, labelW: Math.round(l.getBoundingClientRect().width) };
+  });
+  const a = root.querySelector('a.rd-fact-link'); const d = a && a.closest('.plan-check-detail');
+  return { tab: (document.querySelector('.gpage .rd-tab[aria-selected="true"]') || {}).dataset?.tab || null, hash: location.hash,
+    cap: (root.querySelector('.shape-feature-reqs-cap') || {}).textContent || null, roles: [...root.querySelectorAll('.shape-role-fold-head')].map((h) => h.dataset.role),
+    rows, link: a ? { href: a.getAttribute('href'), color: getComputedStyle(a).color, noteColor: getComputedStyle(d).color } : null,
+    overflow: root.scrollWidth > root.clientWidth || document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    widths: [root.scrollWidth, root.clientWidth, document.documentElement.scrollWidth, document.documentElement.clientWidth],
+    spill: [...root.querySelectorAll('*')].filter((e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.right + (parseFloat(getComputedStyle(e).marginRight) || 0) > root.getBoundingClientRect().right + 0.5; })
+      .slice(0, 4).map((e) => [String(e.className && e.className.baseVal != null ? e.className.baseVal : e.className), e.tagName, Math.round(e.getBoundingClientRect().right - root.getBoundingClientRect().right), getComputedStyle(e).marginRight])
+      .concat((() => { const out = []; const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); const rr = root.getBoundingClientRect().right;
+        for (let t = w.nextNode(); t && out.length < 4; t = w.nextNode()) { const r = document.createRange(); r.selectNodeContents(t);
+          const b = [...r.getClientRects()].reduce((m, x) => Math.max(m, x.right), 0); if (b > rr + 0.5) out.push(['text', t.parentElement.className, t.textContent.slice(0, 30), Math.round(b - rr)]); }
+        return out; })()) };
+})()`;
+/** The Decisions tab's facts: the Care row (once, first, its label whole), the other rows' labels, every Show fold closed. */
+const D3_DEC_FACTS = `(() => {
+  const root = document.querySelector(${JSON.stringify(D3_DECS)});
+  if (!root) return null;
+  const items = [...root.querySelectorAll(':scope > ul > li')];
+  const care = root.querySelectorAll('[data-fact="care"]');
+  const label = care[0] && care[0].querySelector('.plan-check-label');
+  return { care: care.length, first: items[0] === care[0], careText: label ? label.textContent : null, careCut: label ? label.scrollWidth > label.clientWidth + 0.5 : null,
+    lines: items.slice(1).map((li) => li.querySelector('.plan-check-label').textContent),
+    decided: items.every((li) => li.querySelector('.plan-check-mark').getAttribute('aria-label') === 'decided'),
+    folded: [...root.querySelectorAll('.chat-rc-log-detail')].every((x) => x.hidden),
+    idLines: [...root.querySelectorAll('.plan-check-id')].filter((x) => x.textContent).map((x) => Math.round(x.getBoundingClientRect().height / (parseFloat(getComputedStyle(x).lineHeight) || 20))),
+    overflow: root.scrollWidth > root.clientWidth || document.documentElement.scrollWidth > document.documentElement.clientWidth };
+})()`;
+
+async function d3Cells(phase, theme, width, want) {
+  const at = `${phase}, ${theme}, ${width}px`;
+  await open(`${base}/?d3r-${phase}-${theme}-${width}#feature/${D3.f.id}/requirements`);
+  await skipWelcome(); await setTheme(theme);
+  if (await waitFor(`!!document.querySelector(${JSON.stringify(`${D3_REQS} .plan-check-row`)})`, `the D3 Requirements tab (${at})`)) {
+    await sleep(500);
+    const f = await ev(D3_REQ_FACTS);
+    results.lists.push({ list: `d3 requirements facts ${phase}`, theme, width, ...f });
+    check(f && f.tab === 'requirements' && f.hash === `#feature/${D3.f.id}/requirements`, `requirements, ${at}: the deep link selects Requirements (${JSON.stringify(f && [f.tab, f.hash])})`);
+    check(f && f.cap === '5 requirements · 4 owned by a run · 1 confirmed by a person' && f.roles.join() === 'product,compliance',
+      `requirements, ${at}: the caption and one fold per role, Product then Compliance (${JSON.stringify(f && [f.cap, f.roles])})`);
+    const notes = f ? Object.fromEntries(f.rows.map((r) => [r.id, r.note])) : {};
+    check(f && f.rows.length === 5 && Object.keys(want).every((k) => notes[k] === want[k]),
+      `requirements, ${at}: every row's status (${JSON.stringify(notes)})`);
+    check(f && f.rows.every((r) => r.idLines <= 1), `requirements, ${at}: no id spans two lines`);
+    check(f && f.rows.every((r) => !r.noteCut) && !f.overflow, `requirements, ${at}: no status note is cut, no overflow (${JSON.stringify(f && [f.rows.map((r) => [r.id, r.noteCut]), f.widths, f.spill])})`);
+    check(f && f.link && f.link.href.startsWith('#') && f.link.color !== f.link.noteColor, `requirements, ${at}: the run link wears the link colour (${JSON.stringify(f && f.link)})`);
+    if (width === WIDTH) results.lists.push({ list: `d3 requirements label widths ${phase}`, theme, width, labels: f ? f.rows.map((r) => [r.id, r.labelW]) : null });
+    if (width === WIDTH) log(`d3 requirements ${at}: visible label widths ${JSON.stringify(f ? f.rows.map((r) => [r.id, r.labelW]) : null)}`);
+    judge(`d3 requirements ${phase}`, theme, await ev(MEASURE(D3_REQS, '.plan-check-row', '.plan-check-mark', '.plan-check-text')), { width, oneLine: true });
+    await reveal(D3_REQS);
+    await shot(`app-d3-requirements-${phase}-${theme}-${width}`);
+  }
+  await open(`${base}/?d3d-${phase}-${theme}-${width}#feature/${D3.f.id}/decisions`);
+  await skipWelcome(); await setTheme(theme);
+  if (await waitFor(`!!document.querySelector(${JSON.stringify(`${D3_DECS} [data-fact="care"]`)})`, `the D3 Decisions tab (${at})`)) {
+    await sleep(500);
+    const f = await ev(D3_DEC_FACTS);
+    results.lists.push({ list: `d3 decisions facts ${phase}`, theme, width, ...f });
+    check(f && f.care === 1 && f.first && /^Care: Balanced/.test(f.careText || '') && !f.careCut, `decisions, ${at}: one Care row, first, its label whole (${JSON.stringify(f && [f.care, f.careText, f.careCut])})`);
+    check(f && f.lines.length > 0 && f.decided && f.folded && f.idLines.every((n) => n <= 1) && !f.overflow,
+      `decisions, ${at}: the log lines, each named decided, folds closed, ids on one line, no overflow (${JSON.stringify(f && f.lines)})`);
+    judge(`d3 decisions ${phase}`, theme, await ev(MEASURE(D3_DECS, 'li:not([data-fact="care"]) > .plan-check-row', '.plan-check-mark', '.plan-check-text')), { width, oneLine: true });
+    await shot(`app-d3-decisions-${phase}-${theme}-${width}`);
+  }
+}
+/** The prototype's #feature after Ship: #ship at moment rs, Compliance confirmed, then a hash change in the same page. */
+async function prototypeFeatureAfter(tab, name, theme) {
+  await open(`${PROTO_URL}?${name}-${theme}#ship`); await setTheme(theme); await sleep(300);
+  await ev(`(() => { const b = document.querySelector('[data-act="compok"]'); if (b) b.click(); return !!b; })()`); await sleep(300);
+  await ev("(() => { location.hash = '#feature'; return 0; })()"); await sleep(500);
+  for (const sel of ['[data-moment="rs"]', `[data-tab="${tab}"]`]) { await ev(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (b) b.click(); return !!b; })()`); await sleep(300); }
+  await shot(`prototype-${name}-${theme}`);
+}
+
+async function d3Phase() {
+  const t0 = Date.now();
+  { const r = await post('/api/settings', { uiLevel: 'expert' }); check(r.ok, `D3: the Expert level is set (${r.status})`); }
+  for (const theme of THEMES) {
+    for (const width of [1280, WIDTH]) {
+      await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+      await d3Cells('before', theme, width, D3_BEFORE);
+    }
+    await prototypeShot('feature', ['[data-moment="vf"]', '[data-tab="Requirements"]'], 'feature-requirements-before', theme);
+    await prototypeShot('feature', ['[data-moment="vf"]', '[data-tab="Decisions"]'], 'feature-decisions-before', theme);
+  }
+  // Ship: R-comp-1 marked through the route, every run done, the ship applied (as the Ship done case seeds it).
+  const r = await post(`/api/shape/features/${D3.f.id}/confirm`, { id: 'R-comp-1', mark: 'not-met', reason: D3_REASON });
+  check(r.ok, `D3: POST /confirm marks R-comp-1 Not met (${r.status})`);
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = ?").run(D3.pid(3));
+  for (const k of [4, 5, 6]) fire(D3.f, k, D3.pid(k), 'done', `Run ${k}`);
+  [1, 2, 3, 4, 5, 6].forEach((k) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?")
+    .run(`https://github.com/proof/repo/pull/${1530 + k}`, 1530 + k, D3.pid(k)));
+  recordShip(D3.f.id, { mode: 'stacked' });
+  for (const theme of THEMES) {
+    for (const width of [1280, WIDTH]) {
+      await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+      await d3Cells('after', theme, width, D3_AFTER);
+    }
+    await prototypeFeatureAfter('Requirements', 'feature-requirements-after', theme);
+    await prototypeFeatureAfter('Decisions', 'feature-decisions-after', theme);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+  results.d3Minutes = Math.round((Date.now() - t0) / 600) / 100;
+  log(`D3: ${results.d3Minutes} min`);
+}
+
+// D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases (each command stays under 10 minutes); unset, every case
+// runs, D2 before D3, D3 last.
+if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
+if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }
+
 for (const theme of THEMES) {
+  for (const width of [1280, WIDTH]) {
+    await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+    await shipCells(theme, width);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
   // ---- C5: verifying, gap found, the bound stop, no gap; the Verifier's and a gap run's run page and side panel.
   if (await card(VW.threadId, 'vw', 'the verifying card', theme)) {
     const s = await ev(STATUS);
@@ -462,7 +936,7 @@ for (const theme of THEMES) {
   }
   if (await card(VC.threadId, 'vc', 'the no-gap card', theme)) {
     const s = await ev(STATUS);
-    check(s && s.word === 'Ready to ship' && s.detail === 'ship from the feature page', `no gap, ${theme}: Ready to ship (${JSON.stringify(s)})`);
+    check(s && s.word === 'Ready to ship' && !s.detail, `no gap, ${theme}: Ready to ship, said once (${JSON.stringify(s)})`);
     const logs = await ev(LOGS);
     check(logs.includes('Verified: the 4 requirements owned by runs hold in the main flow'), `no gap, ${theme}: the clean receipt (${JSON.stringify(logs)})`);
     await reveal('.chat-rc .chat-rc-log-verify'); await judgeVerifyLine('no gap', theme);
@@ -523,6 +997,35 @@ for (const theme of THEMES) {
   await prototypeShot('req-change', null, 'req-change', theme);
 }
 
+// ---- D1 Ship keyboard (light, 375px): Tab reaches Met, its group's computed name names R-comp-4, Enter marks it (the
+// real confirm verb), and the focus stays on Met through the confirm route's repaint.
+const key1 = (key, code, vk, text) => cdp('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: vk, ...(text ? { text } : {}) })
+  .then(() => cdp('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk }));
+if (await card(SK.threadId, 'sk', 'the Ship keyboard card', 'light') && await SHIP_READY('the Ship keyboard card', 'light')) {
+  await reveal(SHIP);
+  const BTN = `${SHIP} [data-act="ship-mark-R-comp-4-met"]`;
+  const GROUP = `${SHIP} .ask-shipcard-mark .seg`;
+  // Focus the control just before Met in tab order, then one real Tab.
+  await ev(`(() => { const all = [...document.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')]
+    .filter((e) => e.offsetParent && !e.disabled && e.tabIndex >= 0); const b = document.querySelector(${JSON.stringify(BTN)});
+    const i = all.indexOf(b); if (i > 0) all[i - 1].focus(); return i; })()`);
+  await key1('Tab', 'Tab', 9);
+  const reached = await ev(`document.activeElement === document.querySelector(${JSON.stringify(BTN)})`);
+  check(reached, 'ship keyboard: Tab reaches Met');
+  const { root } = await cdp('DOM.getDocument', { depth: 0 });
+  const { nodeId } = await cdp('DOM.querySelector', { nodeId: root.nodeId, selector: GROUP });
+  const ax = nodeId ? await cdp('Accessibility.getPartialAXTree', { nodeId, fetchRelatives: false }) : null;
+  const name = ax && ax.nodes && ax.nodes[0] && ax.nodes[0].name ? ax.nodes[0].name.value : '';
+  check(/R-comp-4/.test(name), `ship keyboard: the computed name names R-comp-4 (${JSON.stringify(name)})`);
+  await key1('Enter', 'Enter', 13, '\r');
+  await waitFor(`document.querySelector(${JSON.stringify(BTN)})?.getAttribute('aria-pressed') === 'true'`, 'the Met row to read confirmed');
+  await sleep(400);
+  const focus = await ev(`(() => { const a = document.activeElement; return { act: a.dataset ? a.dataset.act : null, pressed: a.getAttribute('aria-pressed'),
+    note: (document.querySelector(${JSON.stringify(`${SHIP} .ask-shipcard-confirmed .plan-check-detail`)}) || {}).textContent }; })()`);
+  check(focus && focus.act === 'ship-mark-R-comp-4-met' && focus.pressed === 'true' && /^confirmed by Compliance/.test(focus.note || ''), `ship keyboard: the focus stays on Met (${JSON.stringify(focus)})`);
+  await shot('app-ship-keyboard-confirmed-light');
+}
+
 // ---- one reduced-motion capture of Prototype building.
 await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
 if (await card(PROTO.building.threadId, 'rm', 'the reduced-motion prototype building card', 'light')) await shot('app-prototype-building-reduced-motion-light');
@@ -570,10 +1073,6 @@ const LIVE_ROWS = "[...document.querySelectorAll('.chat-rc .proto-rows .plan-che
   await cdp('Emulation.setEmulatedMedia', { features: [] });
 }
 
-check(errors.length === 0, `no page errors${errors.length ? ` — ${errors.slice(0, 3).join(' | ')}` : ''}`);
-results.minutes = Math.round((Date.now() - T0) / 600) / 100;
-results.failed = failed;
-const verdict = failed ? `${failed} FAILED` : 'all passed';
-writeLog(verdict);
-log(`${results.shots.length} PNGs and ${logFile} in ${results.minutes} min; ${verdict}`);
-await shutdown(failed ? 1 : 0);
+await d2Phase();
+await d3Phase();
+await finish();

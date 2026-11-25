@@ -107,7 +107,8 @@ function computeFigures(featureId, view) {
     // Care is the feature's position at record time; without one it is the A2 default, Balanced (careOfRow).
     care: CARE_POSITIONS.includes(position) ? position : 'balanced', runs: runIds.length,
     costPerStep, cost: { shaping: usd4(shaping), building: usd4(building), total: usd4(shaping + building) },
-    requirementsMet: { met: items.filter((i) => i.pass && !i.state).length, total: items.length },
+    // Feature D1 (D11): a marked feature's count is its Ship ledger's (owned holds plus confirmed marks).
+    requirementsMet: view.ship?.smallRuns ? { ...view.ship.smallRuns.met } : { met: items.filter((i) => i.pass && !i.state).length, total: items.length },
     gapsAtEnd: view.verify ? view.verify.gapsFound : 0,
     reviewFindings,
     firstPassRate: reviewed ? rate3(passes / reviewed) : null,
@@ -147,11 +148,8 @@ export function recordSettledFigures(state) {
 
 const parse = (t) => { try { return JSON.parse(t); } catch { return null; } };
 
-/** A feature's recorded figures, or null. Readable with the flag off. */
-export function featureFigures(featureId) {
-  const row = getDb().prepare('SELECT figures FROM shape_feature_figures WHERE feature_id = ?').get(String(featureId));
-  return row ? parse(row.figures) : null;
-}
+/** A feature's recorded figures, or null (features.mjs owns the one-row read). Readable with the flag off. */
+export { featureFigures } from './features.mjs';
 
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + (Number(b) || 0), 0) / xs.length : 0);
 
