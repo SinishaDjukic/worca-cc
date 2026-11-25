@@ -6,8 +6,8 @@ import { appServer } from './helpers/app-server.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { _resetForTests } from '../src/core/db.mjs';
-import { writeStoreMeta, baseCheckSummary, baseCheckSummaryFor } from '../src/core/artifacts.mjs';
+import { _resetForTests, getDb } from '../src/core/db.mjs';
+import { writeStoreMeta, baseCheckSummary, baseCheckSummaryFor, persistPrState, persistMemberPrState } from '../src/core/artifacts.mjs';
 import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
 
 let home, prevHome, srv, base, plainId, conflictId, wsId, dirs = [];
@@ -69,4 +69,27 @@ test('GET /api/history answers each row\'s base-check summary (null when never c
   assert.equal(mem['api-00000001'].status, 'clean');
   assert.equal(mem['web-00000002'].status, 'conflicts');
   assert.equal(mem['web-00000002'].files, undefined);
+});
+
+test('a merged or closed PR is final: its branch has no row summary; a workspace row drops only that member', async () => {
+  const proj = await mkdtemp(join(tmpdir(), 'worca-cc-hbc-final-'));
+  dirs.push(proj);
+  const ids = {};
+  for (const state of ['MERGED', 'CLOSED', 'OPEN']) {
+    const s = await seedPipeline(proj, { title: state, status: 'done', branch: { source: 'dev', feature: `worca/${state}`, baseCheck: CONFLICTS } });
+    writeStoreMeta(s.key, 'project', { key: s.key, name: 'p', path: proj });
+    persistPrState(s.id, { url: `https://github.com/o/r/pull/${s.id.slice(-6)}`, number: 1, state });
+    ids[state] = s.id;
+  }
+  persistMemberPrState(wsId, 'web-00000002', { url: 'https://github.com/o/web/pull/1', number: 1, state: 'MERGED' });
+  try {
+    const { pipelines } = await (await fetch(`${base}/api/history`)).json();
+    const byId = new Map(pipelines.map((p) => [p.id, p]));
+    assert.equal(byId.get(ids.MERGED).baseCheck, null);
+    assert.equal(byId.get(ids.CLOSED).baseCheck, null);
+    assert.equal(byId.get(ids.OPEN).baseCheck.status, 'conflicts', 'an open PR keeps its summary');
+    assert.equal(byId.get(wsId).baseCheck.status, 'clean', 'the merged member is left out; the open one is the worst');
+  } finally {
+    getDb().prepare('DELETE FROM pipeline_member_prs WHERE pipeline_id = ?').run(wsId);
+  }
 });

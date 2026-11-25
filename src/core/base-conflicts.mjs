@@ -138,7 +138,8 @@ export async function settleResolutions(rowId, checked, { by = null, isActive = 
 }
 
 /** Update branch: re-check (a fetch younger than the TTL is reused), require clean, merge, record, push.
- *  `assertFree(row, m)` throws while something else owns the branch (a Watch PR fix run, PR_FIXING). */
+ *  `assertFree(row, m)` throws while something else owns the branch (a Watch PR fix run, PR_FIXING) or its PR is
+ *  final; it runs again after the check's fetch, since the PR refresh can record a merge meanwhile (no run lock). */
 export function updateRunBranch({ id, member = null, by = null, isLive, isFinishing, isActive = () => false, assertFree = () => {} } = {}) {
   return withRunLock(id, async () => {
     const row = findPipelineRowById(id);
@@ -148,6 +149,7 @@ export function updateRunBranch({ id, member = null, by = null, isLive, isFinish
     assertNotResolving(m, isActive);
     assertFree(row, m);
     const c = await checkBaseMerge(m.projectDir, { base: m.br.source, feature: m.br.feature, remote: m.remote, maxAgeMs: INTERACTIVE_TTL_MS });
+    assertFree(findPipelineRowById(row.id) || row, m);
     const rec = toRecord(c, by);
     if (c.status !== 'clean') {
       updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseCheck = rec; });

@@ -25431,12 +25431,30 @@ async function histCostOverride(projectDir, id, record, btn) {
 
 // Paint the post-PR mergeability pill. MERGEABLE -> green, CONFLICTING -> red,
 // UNKNOWN -> amber "checking…" (GitHub computes mergeability asynchronously).
-function setMergePill(el, mergeable) {
+// `owner` (mergePillOwner) names the run (and member) the value belongs to: a paint for anything else clears it.
+function setMergePill(el, mergeable, owner) {
   const m = String(mergeable || 'UNKNOWN').toUpperCase();
+  el.dataset.mergeFor = owner;
   el.hidden = false;
   if (m === 'MERGEABLE') { el.className = 'hist-merge ok'; el.textContent = 'can merge'; }
   else if (m === 'CONFLICTING') { el.className = 'hist-merge bad'; el.textContent = 'conflicts'; }
   else { el.className = 'hist-merge unknown'; el.textContent = 'merge: checking…'; }
+}
+
+const mergePillOwner = (record, memberKey = null) => `${record.projectKey}/${record.id}${memberKey ? `#${memberKey}` : ''}`;
+function clearMergePill(el) {
+  el.hidden = true;
+  el.className = 'hist-merge';
+  el.textContent = '';
+  delete el.dataset.mergeFor;
+}
+/** The header pill only ever shows what the open run's OPEN PR was told (a ship, its re-check). Every PR paint
+ *  clears it for another run's value and for a merged or closed PR, which is final: nothing is left to merge. */
+function paintHdMergePill(screen, record) {
+  const el = screen.querySelector('.hd-row1 .hist-merge');
+  if (!el) return;
+  if (el.dataset.mergeFor === mergePillOwner(record) && prStateOf(record.pr) === 'OPEN') return;
+  clearMergePill(el);
 }
 
 // GitHub computes PR mergeability asynchronously, so a freshly-opened PR comes back
@@ -25450,9 +25468,12 @@ function prMergeRecheckMs() {
   return Number.isFinite(o) && o >= 0 ? o : PR_MERGE_RECHECK_MS;
 }
 
-function scheduleMergeRecheck(mergeEl, body) {
+function scheduleMergeRecheck(mergeEl, body, owner) {
+  // A Refresh rebuilt the card, or the pill now belongs to another run / the PR was merged or closed (a paint
+  // cleared its owner): the stale answer is dropped.
+  const owned = () => !!mergeEl && mergeEl.isConnected && mergeEl.dataset.mergeFor === owner;
   const t = setTimeout(async () => {
-    if (!mergeEl || !mergeEl.isConnected) return;   // a Refresh rebuilt the card — stale timer no-ops
+    if (!owned()) return;
     let mergeable = 'UNKNOWN';
     try {
       const res = await fetch('/api/pr/mergeable', {
@@ -25461,10 +25482,10 @@ function scheduleMergeRecheck(mergeEl, body) {
       const data = await safeJson(res);               // safeJson -> {} on non-JSON, never null
       if (res.ok && data) mergeable = data.mergeable;
     } catch { /* network error -> treat as still unknown -> hide below */ }
-    if (!mergeEl.isConnected) return;                 // a Refresh during the await -> no-op
+    if (!owned()) return;                             // the detail moved on during the await -> no-op
     const m = String(mergeable || 'UNKNOWN').toUpperCase();
-    if (m === 'MERGEABLE' || m === 'CONFLICTING') setMergePill(mergeEl, m);
-    else mergeEl.hidden = true;                        // still checking -> drop the stuck pill
+    if (m === 'MERGEABLE' || m === 'CONFLICTING') setMergePill(mergeEl, m, owner);
+    else clearMergePill(mergeEl);                      // still checking -> drop the stuck pill
   }, prMergeRecheckMs());
   // Node test runner: the timer keeps the loop alive; unref it where supported.
   // Real browser setTimeout returns a number (no .unref) -> the guard makes this a no-op.
@@ -26687,11 +26708,11 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
         void paintHdSavePreset(screen, histDetailState.data);
         const mergeEl = screen.querySelector('.hist-merge');
         if (mergeEl) {
-          setMergePill(mergeEl, dd.mergeable);
+          setMergePill(mergeEl, dd.mergeable, mergePillOwner(record));
           // GitHub computes mergeability asynchronously; re-check once so the
           // "checking…" pill never sticks.
           if (String(dd.mergeable || 'UNKNOWN').toUpperCase() === 'UNKNOWN') {
-            scheduleMergeRecheck(mergeEl, { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id });
+            scheduleMergeRecheck(mergeEl, { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id }, mergePillOwner(record));
           }
         }
       }
@@ -26973,9 +26994,10 @@ function paintWsMergePills(record, rows) {
     if (!r.mergeable) continue;
     const pill = screen.querySelector(`.hd-pr-repo[data-member-key="${cssEscape(r.member.memberKey)}"] .hist-merge`);
     if (!pill) continue;
-    setMergePill(pill, r.mergeable);
+    const owner = mergePillOwner(record, r.member.memberKey);
+    setMergePill(pill, r.mergeable, owner);
     if (String(r.mergeable).toUpperCase() === 'UNKNOWN') {
-      scheduleMergeRecheck(pill, { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id, memberKey: r.member.memberKey });
+      scheduleMergeRecheck(pill, { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id, memberKey: r.member.memberKey }, owner);
     }
   }
 }
@@ -27942,6 +27964,7 @@ function paintHdPr(screen, record, data) {
   if (!btn.querySelector('.ic')) setCtaContent(btn, 'pr-create', CREATE_PR_LABEL);
   const repos = screen.querySelector('.hd-pr-repos');
   if (repos) { repos.hidden = true; repos.replaceChildren(); }
+  paintHdMergePill(screen, record);
   if (!(gitOn() && isGitRun(hdRunOf(record, data)))) { paintHdPush(screen, null); return; }
   if (paintHdPush(screen, record)) return;   // a run on its source branch ships by Push, never a PR
   // Legacy workspace rows / minimal deep-link records (no members) keep the single path.
@@ -28003,11 +28026,14 @@ function hdWsRepoItem(m) {
   li.append(name, ' ');
   if (prLive(m.pr)) {
     li.appendChild(prRepoLink(m.pr));
-    const pill = document.createElement('span');     // post-ship mergeability, like the single header pill
-    pill.className = 'hist-merge';
-    pill.dataset.minLevel = 'expert';
-    pill.hidden = true;
-    li.appendChild(pill);
+    // Post-ship mergeability, like the single header pill; a merged or closed PR is final and gets none.
+    if (prStateOf(m.pr) === 'OPEN') {
+      const pill = document.createElement('span');
+      pill.className = 'hist-merge';
+      pill.dataset.minLevel = 'expert';
+      pill.hidden = true;
+      li.appendChild(pill);
+    }
   } else {
     const note = document.createElement('span');
     note.className = 'hd-pr-repo-note';
@@ -28933,17 +28959,21 @@ function hdCanTry(record, st, retained, provisional) {
 
 /** [{ key, name, rec, published, resolving, prOpen }] from the detail state; a row-level summary newer than the
  *  detail wins (no file list then). `published`: the branch's last recorded push. `prOpen`: the branch has an open
- *  PR, whose Overview row owns the pipeline Resolve. */
+ *  PR, whose Overview row owns the pipeline Resolve. A branch whose PR is merged or closed is final: it is left out
+ *  (after a squash merge it would always read "behind, merges cleanly"), so it gets no line and no automatic check. */
+const BASE_PR_FINAL = new Set(['MERGED', 'CLOSED']);
 function hdBaseMembers(record, data) {
   const st = (data && data.state) || {};
   if (st.target === 'workspace') {
     const names = new Map((st.projects || []).map((p) => [p.projectKey, p.projectName]));
     const rows = new Map(((record && record.members) || []).map((m) => [m.memberKey, m]));
     return Object.entries(st.branches || {}).filter(([, br]) => br && br.feature && br.branchKept !== false && !br.branchDeleted)
+      .filter(([key]) => !BASE_PR_FINAL.has(prStateOf(rows.get(key) && rows.get(key).pr)))
       .map(([key, br]) => ({ key, name: names.get(key) || key, rec: newerBaseCheck(br.baseCheck, rows.get(key) && rows.get(key).baseCheck),
         published: br.published || null, resolving: !!br.baseResolve, prOpen: prStateOf(rows.get(key) && rows.get(key).pr) === 'OPEN' }));
   }
   const br = st.branch || {};
+  if (BASE_PR_FINAL.has(prStateOf(record && record.pr))) return [];
   return br.feature ? [{ key: null, name: null, rec: newerBaseCheck(br.baseCheck, record && record.baseCheck),
     published: br.published || null, resolving: !!br.baseResolve, prOpen: prStateOf(record && record.pr) === 'OPEN' }] : [];
 }
@@ -36598,7 +36628,8 @@ function runsHistItem(p) {
     checks: typeof p.checks === 'number' ? p.checks : null,
     changes: folder ? { state: (p.changes && p.changes.state) || 'pending' } : null,
     files: folder ? (fc ? fc.total : null) : (typeof p.files === 'number' ? p.files : null),
-    base: gitOn() ? baseRowNote(p.baseCheck) : '',
+    // A merged or closed PR is final (the server leaves it out of the summary; a live PR state newer than the stored one too).
+    base: gitOn() && (hasWsMembers(p) || !BASE_PR_FINAL.has(prStateOf(p.pr))) ? baseRowNote(p.baseCheck) : '',
     tags: p.tags || [],
     labels: flagOn('runLabels') ? (p.labels || []) : [],
     run: histRun(p),
