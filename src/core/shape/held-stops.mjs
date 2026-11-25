@@ -3,7 +3,7 @@
 // memory) and the question stays open; once no other slice is going it is delivered: the run takes the answer, its
 // question is resolved for every tab, and the feature card repaints. Lives outside the line-capped ui/server.mjs, which
 // only wires it (re-exported by chain.mjs).
-import { stopAnswerOk, heldRefusal } from '../../shared/shape/run-stops.mjs';
+import { stopAnswerOk, heldRefusal, answeredRefusal } from '../../shared/shape/run-stops.mjs';
 import { featureOfPipeline } from './features.mjs';
 import { heldStopTurn } from './chain.mjs';
 import { requirementChangedFeedback } from '../../shared/shape/req-change.mjs';
@@ -24,13 +24,23 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
   const featureOf = entryFeatureOf;
   const turnOf = (at) => (at ? heldStopTurn(at.featureId, at.index, { live: liveSliceOf, now: now() }) : { due: true });
   const repaint = (at) => { if (at) broadcastFeature(at.featureId); };
+  /** Remember a stop the run has taken: one answer per stop. */
+  const taken = (entry, id) => { (entry.answeredStops ||= new Set()).add(id); };
 
   /** Answer question `id` of `entry`. A stop's answer must be one of its options (422) and only one may be held (409);
    *  it is held while another slice is going ({held:true}), else handed to the run now (the caller resolves the
-   *  question, as for every other answer). Any other question goes straight to the run. A refusal changes nothing. */
+   *  question, as for every other answer). A stop this run has already taken (`entry.answeredStops`, in memory) refuses
+   *  a later answer with its id (409 STOP_ANSWERED). Any other question goes straight to the run. A refusal changes
+   *  nothing. */
   function answer(entry, id, payload, by) {
     const pq = entry && entry.pendingQuestion;
-    if (!pq || !pq.stop || pq.id !== id) { entry.orch.answer(id, payload, by); return undefined; }
+    if (!pq || !pq.stop || pq.id !== id) {
+      if (entry.answeredStops && entry.answeredStops.has(id)) {
+        throw Object.assign(new Error(answeredRefusal()), { code: 'STOP_ANSWERED', status: 409 });
+      }
+      entry.orch.answer(id, payload, by);
+      return undefined;
+    }
     if (!stopAnswerOk(pq.stop, payload)) {
       throw Object.assign(new Error('invalid answer'), { code: 'INVALID_ANSWER',
         errors: [{ field: 'decision', path: 'decision', code: 'invalid', message: "not one of this stop's options" }] });
@@ -50,6 +60,7 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
       return { held: true };
     }
     entry.orch.answer(id, payload, by);
+    taken(entry, id);
     return undefined;
   }
 
@@ -66,6 +77,7 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
         if (!turn.due) { if (turn.after !== h.after) { entry.heldStop = { ...h, after: turn.after }; repaint(at); } continue; }
         entry.heldStop = null;
         entry.orch.answer(h.id, h.payload, h.by);
+        taken(entry, h.id);
         resolvePending(entry, { id: h.id, reason: 'answered' });
         repaint(at);
       } catch (err) {

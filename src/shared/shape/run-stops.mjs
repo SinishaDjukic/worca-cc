@@ -183,6 +183,8 @@ export const settledLine = (kind, n = 0) => (SETTLED[kind] ? SETTLED[kind](n) : 
 
 /** A second answer while one is held. */
 export const heldRefusal = (after) => `this stop is already answered: it goes on after run ${after}`;
+/** An answer to a stop this run has already taken. */
+export const answeredRefusal = () => 'this stop is already answered';
 
 /** The stopped reviewer's word in the Agents rows. */
 export const reviewerStopWord = (stop) => (stop && stop.reason === 'objection' ? 'objects' : null);

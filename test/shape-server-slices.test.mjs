@@ -1446,9 +1446,22 @@ test('C3 routes: a held answer replies {ok:true, held:true}; a foreign payload 4
     assert.equal(w.e2.pendingQuestion.id, 'gate-w9-3', 'the question stays open');
     r = await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'continue' } });
     assert.equal(r.status, 409);
-    assert.equal((await r.json()).error, 'this stop is already answered: it goes on after run 3');
+    assert.deepEqual(await r.json(), { error: 'this stop is already answered: it goes on after run 3', code: 'STOP_HELD' });
     assert.equal(w.answered.length, 0);
     assert.equal((await view(w.f.id)).slices[1].state, 'questions');
+  } finally { w.cleanup(); }
+});
+
+test('C3 routes: a stop the run has taken refuses a second answer 409 STOP_ANSWERED and answers nothing more', async () => {
+  const w = stoppedFeature({ three: false });
+  try {
+    let r = await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'continue' } });
+    assert.deepEqual(await r.json(), { ok: true });
+    assert.equal(w.e2.pendingQuestion, null, 'the question is resolved');
+    r = await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'another' } });
+    assert.equal(r.status, 409);
+    assert.deepEqual(await r.json(), { error: 'this stop is already answered', code: 'STOP_ANSWERED' });
+    assert.equal(w.answered.length, 1);
   } finally { w.cleanup(); }
 });
 

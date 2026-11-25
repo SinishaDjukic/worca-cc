@@ -7096,23 +7096,20 @@ function stepDeps(ctx, pq) {
   return { doc: ctx.doc || document, run: r, title: stepTitle(pq, who), chip: stepChip(pq, r) };
 }
 
-/** Small runs C3 (D12, D13): a stop's extra deps. A stop is answered on the feature card only: the run side panel and the
- *  run page (`readOnly`) draw only its findings; with the flag on the run page (`runPage`) also names the stop and links
- *  where it is answered (`home`: the feature's card in Chat when a thread started it, else the feature page); an answer held for another run's turn (the feature view's `stop.held`,
- *  read through the slice info) draws the one answered line. */
+/** Small runs C3 (D12, D13): a stop's extra deps. A stop is answered on every surface: the feature card, the feature
+ *  page, the run page and the run side panel (`runPage` there: the head's one-column marker); with the flag off, the run
+ *  page and panel (`readOnly`) draw its findings only. An answer held for another run's turn (the feature view's
+ *  `stop.held`, read through the slice info) draws the one answered line. */
 function stopDeps(ctx, pq, panel) {
   if (!pq || !pq.stop) return {};
   const r = ctx.run;
-  const readOnly = !!(panel.closest && panel.closest('[data-presentation="panel"], #run-detail'));
+  const small = flagOn('shaperSmallRuns');
+  const runScreen = !!(panel.closest && panel.closest('[data-presentation="panel"], #run-detail'));
   const repaint = () => { if (panel.isConnected && r.pendingQuestion === pq) renderQpanel(r, panel.parentElement); };
   const info = r && r.pipelineId ? sliceInfoFor(r.pipelineId, repaint) : null;
   const held = info && info.stop && info.stop.held ? { value: info.stop.value } : null;
   const pick = typeof panel.__stopPick === 'string' ? panel.__stopPick : null;   // the person's pick across a repaint
-  const runPage = flagOn('shaperSmallRuns') && !!panel.closest?.('#run-detail') && !panel.closest('[data-presentation="panel"]');
-  const at = runPage && r && r.pipelineId ? stopHomeFor(r.pipelineId, repaint, pq.id) : null;
-  const home = !at ? null : at.threadId ? { href: `#chat/${encodeURIComponent(at.threadId)}`, text: "the feature's card in Chat" }
-    : { href: `#feature/${encodeURIComponent(at.featureId)}`, text: 'the feature page' };
-  return { readOnly, ...(runPage ? { runPage: true, home } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}) };
+  return { readOnly: !small && runScreen, ...(small && runScreen ? { runPage: true } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}) };
 }
 
 /** A stop's held state as read from its slice info: '' when nothing is held. */
@@ -38901,7 +38898,7 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     // The full page draws the waiting question right under its header, on every tab: an Answer that only scrolls to it
     // is noise there. The Chat panel keeps it.
     // The Prototype ask is answered on the feature card only: the panel has no Answer for it either.
-    // Small runs C3 (D12): a stop is answered on the feature card only, as the Prototype ask.
+    // Small runs C3 (D12): a stop's card draws its own primary on the page and in the panel: no bar Answer beside it.
     skip: [...MENU_ACTIONS, ...HEAD_ACTIONS, ...(screen.dataset.presentation === 'panel' && !(r.pendingQuestion && (r.pendingQuestion.kind === 'prototype' || r.pendingQuestion.stop)) ? [] : ['answer'])],
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
