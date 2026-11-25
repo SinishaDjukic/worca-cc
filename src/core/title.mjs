@@ -4,7 +4,8 @@ import { normalizingOnEvent } from './engines/claude-events.mjs';
 import { resolveModelEnv, resolveModelCost, catalogHasModel, estimateCost, isPriceableUsage } from './config.mjs';
 import { titleModel as storedTitleModel } from './settings.mjs';
 import { AUX_EFFORT } from './model-env.mjs';
-import { roleModelFor } from './model-roles.mjs';
+import { roleModelFor, roleAuthState } from './model-roles.mjs';
+import { roleDefaultFor } from './role-defaults.mjs';
 import { withRecoveryRetry } from './recovery-backoff.mjs';
 import { bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
@@ -38,7 +39,8 @@ export function clipTitle(text, max) {
   return (sp >= Math.floor(max / 2) ? cut.slice(0, sp) : t.slice(0, max)).replace(/[\s,;:–—-]+$/, '').trim();
 }
 
-const roleTitleModel = () => roleModelFor('claude', 'titleModel')?.model || '';
+// The STORED quick role only: Worca's role default (#1450) sits below the run model, as the retry model (generateTitle).
+const roleTitleModel = () => roleModelFor('claude', 'titleModel', { floor: false })?.model || '';
 
 /**
  * Which model writes a title, decided PER CALL (#422) — nothing is captured at
@@ -142,7 +144,8 @@ export function isRefusalTitle(t) {
  * passes 'dontAsk' so the mock dispatcher can never reach a file-writing role.
  * `runModel` is the model of the run/chat asking (resolveTitleModel step 4).
  * When the call fails on the BUILT-IN Haiku fallback (an account or provider that
- * does not serve it), it is retried ONCE with no model — the CLI's own default.
+ * does not serve it), it is retried ONCE on Worca's Quick jobs default (Haiku 5.5,
+ * role-defaults.mjs), or with no model when Claude Code is signed out.
  * A model someone chose (explicit, env, settings, run) is never second-guessed.
  * `onError` fires ONCE when the call yields no usable title for any reason but
  * an abort (a spawn failure, a refusal, an empty reply) — the caller logs it on
@@ -171,8 +174,11 @@ export async function generateTitle(prompt, opts = {}, deps) {
   let tried = model;
   let r = await titleAttempt(text, model || undefined, opts, engine);
   if (r.thrown && source === 'builtin' && model && !opts.signal?.aborted) {
-    tried = null;
-    r = await titleAttempt(text, undefined, opts, engine);
+    // #1450: the retry runs on Worca's Quick jobs default, not silently on the CLI's own default (which may be a
+    // premium model); signed out (no default) it keeps the CLI default.
+    const quick = roleDefaultFor('claude', 'quick', { claudeAuth: roleAuthState() })?.model;
+    tried = quick && quick !== model ? quick : null;
+    r = await titleAttempt(text, tried || undefined, opts, engine);
   }
   if (r.aborted) return '';
   if (r.error) report(tried, r.error);

@@ -60,7 +60,8 @@ test("a resumed session's flag adds back that session's own total (L2.2)", async
 });
 
 test('a live estimate at the per-run cap aborts running agents, before any result', async () => {
-  const { build } = newBuild(newDesign(), { brief: 'MOCK_SECTIONS=1 MOCK_HANG_SECTION=hero MOCK_PRICED', deps: { readCaps: async () => ({ perRunCapUsd: 0.005, totalCapUsd: null }) } });
+  // The lead is pinned to the model its mock init reports, so it is priced as it was before #1450 gave it Worca's Deep default.
+  const { build } = newBuild(newDesign({ models: { lead: { model: 'claude-sonnet-5-5' } } }), { brief: 'MOCK_SECTIONS=1 MOCK_HANG_SECTION=hero MOCK_PRICED', deps: { readCaps: async () => ({ perRunCapUsd: 0.005, totalCapUsd: null }) } });
   const end = await within(build.run()).catch(async (err) => { await build.stop(); throw err; });
   assert.deepEqual(end, { status: 'paused', reason: 'total-limit' }, 'priced 0.007 passes 0.005 with nobody stopping it');
   assert.equal(listAgents(build.id).find((a) => a.sectionId === 'hero')?.status, 'stopped', 'the hero tripped it, not the priced lead (peak about $0.0026, and its $0 result retires it)');

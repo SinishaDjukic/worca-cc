@@ -521,6 +521,34 @@ test('B2: answering Lean under a Thorough pick stores chosenBy person with the p
   assert.equal(h.orch.getState().stepper.careFill.position, 'lean');
 });
 
+test('B2: a Care fill adopted after the start resolve leaves every filled node with modelSource care, in the cell and in nodeCtx; a cliDecides mapping leaves cli-decides', async () => {
+  const sourcesOf = (orch) => {
+    const cells = Object.fromEntries(orch.getState().stepper.graph.nodes.filter((c) => c.kind === 'agent').map((c) => [c.id, c.modelSource]));
+    const live = Object.fromEntries(Object.keys(cells).map((id) => [id, orch.resolved.nodeCtx[id]?.modelSource]));
+    return { cells, live };
+  };
+  // _careOriginGraph re-resolves after the adopt and would mask a stale source; stub it so the adopt alone is checked.
+  const adoptOnly = (h) => { h.orch._careOriginGraph = async () => {}; return h; };
+  const lean = await marked(async () => { const x = adoptOnly(start({ projectDir: gitDir('b2-src-lean'), prompt: PAY, onCare: answerCare('lean') }, approveAll)); assert.equal((await x.done).status, 'done'); return x; });
+  const fillable = lean.orch.getState().stepper.careFill.fillable;
+  assert.ok(fillable.length > 0);
+  const a = sourcesOf(lean.orch);
+  for (const id of fillable) { assert.equal(a.cells[id], 'care', `cell ${id}`); assert.equal(a.live[id], 'care', `nodeCtx ${id}`); }
+  // Thorough maps deep → deep; deep stored as "Let Claude Code decide" leaves those nodes with no model, never a floor.
+  const file = join(sandboxHome, '.worca-cc', 'settings.json');
+  const cli = await withSmallRuns(true, async () => {
+    writeFileSync(file, JSON.stringify({ modelRoles: { claude: { ...ROLES, deep: { cliDecides: true } } } }));
+    try { const x = adoptOnly(start({ projectDir: gitDir('b2-src-cli'), prompt: PAY, onCare: answerCare('thorough') }, approveAll)); assert.equal((await x.done).status, 'done'); return x; }
+    finally { writeFileSync(file, '{}'); }
+  });
+  const b = sourcesOf(cli.orch);
+  const cells = cellsOf(cli.orch);
+  for (const id of cli.orch.getState().stepper.careFill.fillable) assert.ok(['care', 'cli-decides'].includes(b.cells[id]), `${id}: ${b.cells[id]}`);
+  const cliIds = cli.orch.getState().stepper.careFill.fillable.filter((id) => b.cells[id] === 'cli-decides');
+  assert.ok(cliIds.length > 0, `some fillable node maps to the cliDecides role: ${JSON.stringify(b.cells)}`);
+  for (const id of cliIds) { assert.equal(b.live[id], 'cli-decides', `nodeCtx ${id}`); assert.equal(cells[id], '', `cell model ${id}`); }
+});
+
 test('B2: a Lean marked run whose review runs out stops at the gate and continues on the answer', async () => {
   const h = await marked(async () => { const x = start({ projectDir: gitDir('b2-lean-gate'), prompt: PAY, onCare: answerCare('lean') }, approveAll); return { x, res: await x.done }; });
   const gate = h.x.asked.find((q) => q.kind === 'gate');

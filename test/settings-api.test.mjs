@@ -454,6 +454,18 @@ test('GET has askWeb; POST askWeb validates, saves, and null clears', async () =
   assert.deepEqual((await (await postJson({ askWeb: null })).json()).askWeb, { enabled: false, anyHost: false, allowedDomains: [], search: null });
 });
 
+test('POST modelRoles.claude.deep { cliDecides: true } saves ("Let Claude Code decide", #1450); with a model it is 400', async () => {
+  const file = join(home, '.worca-cc', 'settings.json');
+  const ok = await postJson({ modelRoles: { claude: { deep: { cliDecides: true } } } });
+  assert.equal(ok.status, 200, await ok.clone().text());
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).modelRoles, { claude: { deep: { cliDecides: true } } });
+  const both = await postJson({ modelRoles: { claude: { deep: { cliDecides: true, model: 'claude-opus-5-5' } } } });
+  assert.equal(both.status, 400);
+  assert.match((await both.json()).field, /^modelRoles/);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).modelRoles, { claude: { deep: { cliDecides: true } } }, 'a refused POST writes nothing');
+  assert.equal((await postJson({ modelRoles: { claude: { deep: null } } })).status, 200);
+});
+
 test('smartNaming: GET has defaults, POST saves a partial block, rejects a bad pattern, null clears', async () => {
   const get = async () => (await fetch(`${base}/api/settings`)).json();
   const g = (await get()).smartNaming;

@@ -36,7 +36,7 @@ import { PREDEFINED_LIST_PRICES, CODEX_PRICES, codexCachedRate } from './list-pr
 import { validateNightPatch } from './night/config.mjs';
 import { normalizeProjectActions, EMPTY_PROJECT_ACTIONS } from './actions/model.mjs';
 import { setCascadeModelOwnerReader, resolveSetting } from './settings-cascade.mjs';
-import { resolveRoleModel, roleOf, projectRoles, setRoleModelOwnerReader } from './model-roles.mjs';
+import { resolveRolePick, roleOf, projectRoles, setRoleModelOwnerReader, setRoleAuthReader } from './model-roles.mjs';
 
 /**
  * Recompute the agent step list FRESH from the layered registry (repo agents/ +
@@ -97,6 +97,7 @@ export { EFFORTS };
 export const PREDEFINED_MODELS = [
   { id: 'claude-opus-5-5',        label: 'Opus 5.5',        efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-5',          label: 'Opus 5',          efforts: ['medium', 'high', 'xhigh', 'max'] },
+  { id: 'claude-fable-5-2',       label: 'Fable 5.2',       efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-fable-5-1',       label: 'Fable 5.1 (1M)',  efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-8',        label: 'Opus 4.8',        efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-8[1m]',    label: 'Opus 4.8 (1M)',   efforts: ['medium', 'high', 'xhigh', 'max'] },
@@ -777,7 +778,7 @@ export function resolveModelEnv(modelId, { tag } = {}) {
  *  id a Codex or Copilot built-in also has. Synchronous; never throws. */
 function catalogEngineRows(projectDir = null) {
   // `harnesses`: every harness the entry's connection reaches (src/shared/connections.mjs); `engine` the first.
-  const row = (m, engine = engineTag(m)) => { const connection = connectionOf({ ...m, engine }); return { id: m.id, engine, connection, harnesses: harnessesOf({ connection }) }; };
+  const row = (m, engine = engineTag(m)) => { const connection = connectionOf({ ...m, engine }); return { id: m.id, engine, connection, harnesses: harnessesOf({ connection }), label: m.label || m.name || m.id }; };
   return [
     ...listGlobalModels().map((m) => row(m)),
     ...listPluginModels().map((m) => row(m)),
@@ -794,6 +795,11 @@ function catalogRowOf(modelId, projectDir = null) {
   if (!id) return null;
   const lc = id.toLowerCase();
   return catalogEngineRows(projectDir).find((r) => r.id.toLowerCase() === lc) || null;
+}
+
+/** A catalog model's display label (synchronous; the id itself for an unknown id). */
+export function modelLabelOf(modelId, { projectDir = null } = {}) {
+  return catalogRowOf(modelId, projectDir)?.label || String(modelId ?? '');
 }
 
 /** Every harness that can run `modelId`, or null for an id no catalog layer knows (a bare Claude Code id or
@@ -831,6 +837,8 @@ export function engineOfModel(modelId, { projectDir = null } = {}) {
 setCascadeModelOwnerReader((id, { projectDir = null } = {}) => enginesOfModel(id, { projectDir }));
 // Roles check their model with the same reader (a role on a model a failed import never created falls back, D3).
 setRoleModelOwnerReader((id) => enginesOfModel(id));
+// #1450 D-n: helpers read Claude's sign-in synchronously from the role probe's memo; cold → 'unknown' → Worca default.
+setRoleAuthReader(() => roleAuthMemo?.state ?? 'unknown');
 
 /** Why a run-level model cannot run on `engine` (no harness of its connection is that engine), else null. */
 export function foreignRunModel(model, engine, projectDir = null) {
@@ -950,7 +958,9 @@ export async function resolveStepModels(projectDir, fallbackModel, engine = 'cla
     const own = cfg.steps[key] || {};
     const sel = own.model || own.effort ? own : (slots[key] || {});
     // Model roles (D3, D15): after the slot's own value and the run's model, before "no --model"; team roles included.
-    const role = !sel.model && !sel.effort && !fallback ? resolveRoleModel(eng, roleOf(`steps.${key}`, { name: label }), { roles }) : null;
+    // #1450: an empty role resolves to Worca's default (filled like a role); "Let <tool> decide" leaves it unset.
+    const pick = !sel.model && !sel.effort && !fallback ? resolveRolePick(eng, roleOf(`steps.${key}`, { name: label }), { roles }) : null;
+    const role = pick && pick.kind !== 'cli-decides' ? pick : null;
     const roleModel = role ? modelForEngine(role.model, eng, { projectDir }) : undefined;
     out[key] = { model: modelForEngine(sel.model || undefined, eng, { projectDir }) || fallback || roleModel || undefined, effort: sel.effort || (roleModel ? role.effort : undefined) };
   }

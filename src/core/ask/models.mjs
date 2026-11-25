@@ -28,12 +28,13 @@ export function chatEngine(thread, { engineOf = realEngineOf } = {}) {
   const own = thread && typeof thread.model === 'string' ? engineOf(thread.model) : null;
   return ASK_ENGINES.includes(own) ? own : 'claude';
 }
-/** The user's Ask engine and per-engine slots (D17), an unset slot taking the everyday model role (D3); a settings
- *  failure reads as today's defaults. */
+/** The user's Ask engine and per-engine slots (D17), an unset slot taking the STORED everyday model role (D3) — never
+ *  a Worca default (#1450): Chat's own D8 default (ASK_LIMITS) already names a model. A settings failure reads as
+ *  today's defaults. */
 export function defaultAskPrefs() {
   try {
     return { engine: resolveSetting('askEngine').value,
-      slots: Object.fromEntries(ASK_ENGINES.map((e) => [e, withRole(resolveSetting(`models.${e}.ask`).value, e, 'askModels')])) };
+      slots: Object.fromEntries(ASK_ENGINES.map((e) => [e, withRole(resolveSetting(`models.${e}.ask`).value, e, 'askModels', { floor: false })])) };
   } catch { return { engine: 'claude', slots: {} }; }
 }
 

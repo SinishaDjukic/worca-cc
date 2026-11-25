@@ -82,3 +82,34 @@ test('model baked to frontmatter; effort as prose and never without a model', as
   assert.match(plannerBlock, /Model: dispatch with `model: opus`/);
   assert.match(plannerBlock, /Effort: instruct the subagent to work at \*\*high\*\*/);
 });
+
+// #1450: a node nobody gave a model resolves to Worca's fallback ('worca-default'). The export
+// must not pin that fallback as if someone had chosen it.
+test('a node nobody gave a model exports none: no frontmatter model, no effort, no SKILL.md Model line', async () => {
+  const dest = await tmp();
+  const tpl = await writeKeyGraph({
+    name: 'No Model',
+    keys: [
+      { key: 'planner', config: { model: 'opus', effort: 'high' } },
+      { key: 'implementer', config: { effort: 'high' } },
+      'reviewer',
+    ],
+  });
+  await applyExport({ workflowId: tpl.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
+
+  const reviewer = await readFile(join(dest, '.claude/agents/worca-cc-code-reviewer.md'), 'utf8');
+  assert.doesNotMatch(reviewer, /^model:/m);
+  assert.doesNotMatch(reviewer, /Work at \*\*/);
+
+  const skill = await readFile(join(dest, '.claude/skills/no-model/SKILL.md'), 'utf8');
+  const at = (k) => skill.indexOf(`Dispatch \`worca-cc-${k}\``);
+  const plannerBlock = skill.slice(at('planner'), at('implementer'));
+  assert.ok(at('code-reviewer') > at('implementer'), 'the reviewer is dispatched after the implementer');
+  const implBlock = skill.slice(at('implementer'), at('code-reviewer'));
+  const reviewerBlock = skill.slice(at('code-reviewer'));
+  assert.match(plannerBlock, /- Model: dispatch with `model: opus`/);
+  for (const block of [implBlock, reviewerBlock]) {
+    assert.doesNotMatch(block, /- Model:/);
+    assert.doesNotMatch(block, /- Effort:/);
+  }
+});

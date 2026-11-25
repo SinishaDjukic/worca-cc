@@ -64,6 +64,7 @@ import { runScriptExecution } from './script-runner.mjs';
 import { BUSY_PROBE_MS, treeBusy, watchSpawns } from '../agent-tree.mjs';
 // Skills registry §4.1: the CLI's refusal of `--plugin-dir` under managed `disableSideloadFlags` (P3's one regex).
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
+import { initVerdict } from '../model-guard.mjs';
 
 /** The reserved synthesized gate input. Scheduler-only: it never reaches `bindings`,
  *  is never listed in the Ports block, selects no mode, and carries no renderer. */
@@ -776,7 +777,10 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
   let sawInit = false;
   const said = [];   // the CLI's plain (non-JSON) lines: a refusal printed on stdout lands here, not in the error
   const limit = timeLimitGuard(nodeTimeLimits(full), opts.signal, full.node?.id);
-  opts.signal = limit.signal;
+  // #1450: the [init] guard (armed by the orchestrator for Claude agent nodes off a session host): stops the step when
+  // Claude Code started a premium model nobody chose, or another model than asked for.
+  const modelGuard = initModelGuard(full.claudeOpts?.modelGuard, limit.signal);
+  opts.signal = modelGuard ? modelGuard.signal : limit.signal;
   const scope = createScopeWatch(full);            // E9: paths outside the checkout, from the tool calls
   const startedAt = new Date().toISOString();
   let initModel = null;
@@ -786,7 +790,11 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
   opts.onEvent = (e) => {
     limit.touch();
     scope.observe(e);
-    if (e?.type === 'session' && e.model && !initModel) initModel = String(e.model);
+    if (e?.type === 'session' && e.model && !initModel) {
+      initModel = String(e.model);
+      const note = modelGuard ? modelGuard.check(initModel) : null;
+      if (note) e = { ...e, modelNote: note };
+    }
     if (e?.type === 'session' && e.sessionId) sessionId = String(e.sessionId);
     if (e?.type === 'session' || (e?.type === 'system' && e.raw?.subtype === 'init')) sawInit = true;
     if (e?.type === 'log' && typeof e.text === 'string' && said.length < 20) said.push(e.text.slice(0, 500));
@@ -796,10 +804,12 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
   const run = full.sessionHost ? (o) => full.sessionHost.run(o, memberInfo(full)) : (_testing.runClaude || runClaude);
   try {
     const { text } = await watchSpawns(limit.watch, () => run(opts));
+    if (modelGuard?.error) throw modelGuard.error;   // a runner that finished despite the abort still pauses
     return { text, sessionId, scope: scope.result({ sessionId }) };
   } catch (err) {
-    outcome = 'error'; failure = limit.error || err;
+    outcome = 'error'; failure = limit.error || modelGuard?.error || err;
     if (limit.error) throw limit.error;
+    if (modelGuard?.error) throw modelGuard.error;
     if (!opts.pluginDirs?.length || sawInit || !SIDELOAD_REFUSED_RE.test([String(err?.message || err), ...said].join('\n'))) throw err;
     if (typeof full.onSkillSideloadRefused === 'function') full.onSkillSideloadRefused();
     try {
@@ -815,6 +825,34 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
     if (outside.length && typeof inner === 'function') { try { inner({ type: 'scope', paths: outside }); } catch { /* listener */ } }
     await writeExecManifest(full, { opts, prompt, systemPrompt, sessionId, initModel, startedAt, outcome, error: failure, outside, outsideExpected });
   }
+}
+
+// ── the [init] model guard (#1450) ────────────────────────────────────────────
+
+/**
+ * `guard` is the orchestrator's claudeOpts.modelGuard: `{ requested, source, step, nodeId, stepKey, confirmed,
+ * premium(id), routed(id) }`; none → no guard. `check(init)` runs initVerdict once, on the first session event that
+ * names a model: on a pause it aborts the spawn with a `model_confirm` error (the failure policy pauses on it) and the
+ * caller rethrows that error; it returns the verdict's `note` (a cli-decides premium pick), else null.
+ */
+function initModelGuard(guard, outer) {
+  if (!guard || typeof guard !== 'object') return null;
+  const ac = new AbortController();
+  const g = { error: null, signal: outer ? AbortSignal.any([outer, ac.signal]) : ac.signal, done: false };
+  g.check = (init) => {
+    if (g.done || outer?.aborted) return null;
+    g.done = true;
+    const v = initVerdict({ requested: guard.requested, init, source: guard.source, step: guard.step || guard.nodeId || 'the step',
+      confirmed: guard.confirmed, premium: guard.premium || (() => false), routed: guard.routed || (() => false) });
+    if (!v.pause) return v.note || null;
+    g.error = Object.assign(new Error(v.detail), {
+      errorClass: 'model_confirm',
+      modelConfirm: { nodeId: guard.nodeId ?? null, stepKey: guard.stepKey ?? null, model: init, requested: guard.requested ?? null, at: 'init' },
+    });
+    ac.abort(g.error);
+    return null;
+  };
+  return g;
 }
 
 // ── node time limits (E4) ─────────────────────────────────────────────────────

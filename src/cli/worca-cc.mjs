@@ -1594,9 +1594,9 @@ async function cliWorkMode(projectDir) {
 
 /** `worca resume <pipelineId>` — continue a paused pipeline from its resume point. */
 async function cmdResume(argv) {
-  const id = (argv.find((a, i) => !a.startsWith('--') && !['--reason', '--engine', '--model', '--effort'].includes(argv[i - 1])) || '').trim();
+  const id = (argv.find((a, i) => !a.startsWith('--') && !['--reason', '--engine', '--model', '--effort', '--confirm-model'].includes(argv[i - 1])) || '').trim();
   if (!id) {
-    process.stderr.write('usage: worca resume <pipelineId> [--mock] [--yes] [--engine <name>] [--model <id> [--effort <e>]] [--allow-unguarded-engine] [--ignore-cost-cap] [--past-team-cap [--reason "<why>"]]\n');
+    process.stderr.write('usage: worca resume <pipelineId> [--mock] [--yes] [--engine <name>] [--model <id> [--effort <e>]] [--confirm-model <id>] [--allow-unguarded-engine] [--ignore-cost-cap] [--past-team-cap [--reason "<why>"]]\n');
     return 1;
   }
   const mock = argv.includes('--mock');
@@ -1614,6 +1614,10 @@ async function cmdResume(argv) {
   const effortAt = argv.indexOf('--effort');
   const effort = effortAt !== -1 ? (argv[effortAt + 1] ?? '').trim() : '';
   if (modelAt !== -1 && !model) { process.stderr.write('worca resume: --model needs a model id\n'); return 1; }
+  // #1450 --confirm-model: "Continue on <model>" for a run paused waiting to confirm a premium model (POST /api/resume confirmModel).
+  const confirmAt = argv.indexOf('--confirm-model');
+  const confirmModel = confirmAt !== -1 ? (argv[confirmAt + 1] ?? '').trim() : '';
+  if (confirmAt !== -1 && !confirmModel) { process.stderr.write('worca resume: --confirm-model needs a model id\n'); return 1; }
   if (mock) process.env.WORCA_MOCK = '1';
 
   const { readPipelineForResume, reconcileStaleRunning } = await import('../core/artifacts.mjs');
@@ -1656,6 +1660,11 @@ async function cmdResume(argv) {
   if (saved.row.archived_at) {
     process.stderr.write('worca resume: pipeline is archived\n');
     return 1;
+  }
+  if (confirmModel) {
+    const { checkConfirmModel } = await import('../core/model-guard.mjs');
+    const refusal = checkConfirmModel(saved.resumePoint, { confirmModel, ...(model ? { model } : {}) });
+    if (refusal) { process.stderr.write(`worca resume: ${refusal.body.error}\n`); return 1; }
   }
   if (model) {
     const { catalogHasModel, modelRunsOn, enginesOfModel } = await import('../core/config.mjs');
@@ -1742,6 +1751,7 @@ async function cmdResume(argv) {
     claude: { mock, ...(engine ? { engine } : {}), ...(allowUnguardedEngine ? { allowUnguardedEngine: true } : {}), ...(model ? { model, ...(effort ? { effort } : {}), modelForAll: true } : {}) },
     auto,
     resume: saved,
+    ...(confirmModel ? { confirmModel } : {}),
   });
   const code = await attachAndDrive(orch, { auto }, () => orch.resume());
   await drainTeamPushes();

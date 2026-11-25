@@ -117,11 +117,12 @@ test('withRole: an own pair wins; else the slot role on that engine; else the pa
   assert.equal(withRole(null, 'claude', 'unknownKey', { roles }), null);
 });
 
-test('withRole: the Design slots fall back to their roles; an unset role stays the engine default', () => {
+test('withRole: the Design slots fall back to their roles; an unset role takes Worca\'s default (#1450)', () => {
   const roles = { claude: { deep: DEEP, everyday: EVERYDAY } };
   assert.equal(withRole(null, 'claude', 'designLead', { roles }).model, 'claude-opus-5-5');
   assert.equal(withRole(null, 'claude', 'designBuilder', { roles }).model, 'claude-sonnet-5-5');
-  assert.equal(withRole(null, 'claude', 'designLead', { roles: {} }), null);
+  assert.equal(withRole(null, 'claude', 'designLead', { roles: {} }).model, 'claude-opus-5-5');
+  assert.equal(withRole(null, 'copilot', 'designLead', { roles: {} }), null);
   const own = { model: 'claude-haiku-5-5' };
   assert.equal(withRole(own, 'claude', 'designLead', { roles }), own);
 });
@@ -143,7 +144,7 @@ test('a role naming a model missing from the catalog falls back like an empty ro
   writeUser({ modelRoles: { claude: { deep: { model: 'copilot-gone', effort: 'high' }, quick: QUICK } } });
   assert.equal(resolveRoleModel('claude', 'deep'), null);
   assert.equal(resolveRoleModel('claude', 'quick').model, 'claude-haiku-5-5');        // a known model still resolves
-  assert.equal((await resolveStepModels(projectDir, undefined, 'claude')).planner.model, undefined);   // deep slot: today's fallback
+  assert.equal((await resolveStepModels(projectDir, undefined, 'claude')).planner.model, 'claude-opus-5-5');   // deep slot: Worca's default (#1450)
   // Once the import lands, the same role resolves.
   writeUser({ modelRoles: { claude: { deep: { model: 'copilot-gone' } } },
     models: [{ id: 'copilot-gone', label: 'Gone (Copilot)', efforts: ['medium'], upstream: { provider: 'copilot', api: 'anthropic', model: 'gone' }, cost: { free: true } }] });
@@ -189,8 +190,11 @@ test('resolveGraph: the role is the last layer; a run model, an Auto run and a s
   assert.equal(nodeOf(plain, 'implementer').model, 'claude-sonnet-5-5');
   const run = await resolveGraph(projectDir, 'wf_default', REG(), undefined, { runModel: 'claude-haiku-5-5' });
   assert.equal(nodeOf(run, 'planner').model, undefined);
+  assert.equal(nodeOf(run, 'planner').modelSource, 'run-model');
   const auto = await resolveGraph(projectDir, 'wf_default', REG(), undefined, { ignoreProjectOverrides: true });
-  assert.equal(nodeOf(auto, 'planner').model, undefined);
+  assert.equal(nodeOf(auto, 'planner').model, 'claude-opus-5-5', 'an Auto run skips your roles but keeps Worca\'s default (D-h)');
+  assert.equal(nodeOf(auto, 'planner').effort, undefined);
+  assert.equal(nodeOf(auto, 'planner').modelSource, 'worca-default');
   writeUser({ modelRoles: { claude: { deep: DEEP } }, stepModels: { claude: { planner: { model: 'claude-sonnet-5-5' } } } });
   const slot = await resolveGraph(projectDir, 'wf_default', REG());
   assert.equal(nodeOf(slot, 'planner').model, 'claude-sonnet-5-5');
@@ -240,16 +244,21 @@ test('the Away decider takes the deep role; a stored decider wins', async () => 
 
 // --- no modelRoles (AC-1.4) -------------------------------------------------
 
-test('with no modelRoles every slot resolves as today', async () => {
-  writeUser({ stepModels: { claude: { reviewer: { model: 'claude-sonnet-5-5' } } }, titleModel: 'claude-haiku-5-5' });
+test('with no modelRoles an empty role on claude/codex takes Worca\'s default; copilot is unchanged (#1450)', async () => {
+  const stored = { stepModels: { claude: { reviewer: { model: 'claude-sonnet-5-5' } } }, titleModel: 'claude-haiku-5-5' };
+  writeUser(stored);
   const out = await resolveStepModels(projectDir, undefined, 'claude');
   assert.equal(out.reviewer.model, 'claude-sonnet-5-5');
-  assert.equal(out.planner.model, undefined); assert.equal(out.implementer.model, undefined);
+  assert.equal(out.planner.model, 'claude-opus-5-5'); assert.equal(out.implementer.model, 'claude-sonnet-5-5');
+  assert.equal(out.planner.effort, undefined, 'a Worca default carries no effort');
   const g = await resolveGraph(projectDir, 'wf_default', REG());
-  assert.equal(nodeOf(g, 'planner').model, undefined);
+  assert.equal(nodeOf(g, 'planner').model, 'claude-opus-5-5');
   assert.equal(nodeOf(g, 'reviewer').model, 'claude-sonnet-5-5');
-  for (const r of MODEL_ROLES) assert.equal(resolveRoleModel('claude', r), null);
-  assert.equal(withRole(null, 'claude', 'titleModel'), null);
+  for (const r of MODEL_ROLES) assert.equal(resolveRoleModel('claude', r), null, 'stored roles only');
+  assert.equal(withRole(null, 'claude', 'titleModel').model, 'claude-haiku-5-5');
+  assert.equal(withRole(null, 'copilot', 'titleModel'), null);
+  assert.equal((await resolveStepModels(projectDir, undefined, 'copilot')).planner.model, undefined);
+  assert.deepEqual(JSON.parse(readFileSync(settingsPath, 'utf8')), stored, 'no migration: settings are never rewritten');
 });
 
 // --- harness isolation (AC-1.6) ---------------------------------------------
@@ -257,15 +266,16 @@ test('with no modelRoles every slot resolves as today', async () => {
 test('modelRoles.codex applies only to Codex', async () => {
   writeUser({ modelRoles: { codex: { everyday: { model: 'gpt-5.5' } } } });
   for (const r of MODEL_ROLES) assert.equal(resolveRoleModel('claude', r), null);
-  assert.equal((await resolveStepModels(projectDir, undefined, 'claude')).implementer.model, undefined);
-  assert.equal(nodeOf(await resolveGraph(projectDir, 'wf_default', REG()), 'implementer').model, undefined);
-  assert.notEqual(resolveTitleModel({}, { env: {} }).source, 'role');
-  assert.equal(withRole(null, 'claude', 'askModels'), null);
+  // Claude's empty roles take Claude's Worca defaults, never the Codex role.
+  assert.equal((await resolveStepModels(projectDir, undefined, 'claude')).implementer.model, 'claude-sonnet-5-5');
+  assert.equal(nodeOf(await resolveGraph(projectDir, 'wf_default', REG()), 'implementer').model, 'claude-sonnet-5-5');
+  assert.equal(withRole(null, 'claude', 'askModels').model, 'claude-sonnet-5-5');
   assert.equal((await resolveStepModels(projectDir, undefined, 'codex')).implementer.model, 'gpt-5.5');
   writeUser({ modelRoles: { codex: { everyday: { model: 'claude-opus-5-5' } } } });
-  assert.equal((await resolveStepModels(projectDir, undefined, 'codex')).implementer.model, undefined);
+  // A Codex role on a model Codex cannot run falls to Codex's Worca default.
+  assert.equal((await resolveStepModels(projectDir, undefined, 'codex')).implementer.model, 'gpt-6.1-sol');
   const codex = await resolveGraph(projectDir, 'wf_default', REG(), undefined, { engine: 'codex' });
-  assert.equal(nodeOf(codex, 'implementer').model, undefined);
+  assert.equal(nodeOf(codex, 'implementer').model, 'gpt-6.1-sol');
 });
 
 // --- validation and writes --------------------------------------------------
@@ -415,4 +425,63 @@ test('roles exist on every engine with models; a team policy carries Claude\'s a
   const owners = (id) => (id.startsWith('copilot/') ? ['copilot'] : ['claude']);
   assert.deepEqual(resolveRoleModel('copilot', 'deep', { roles, owners }), { model: 'copilot/claude-fable-5.1', effort: 'xhigh', role: 'deep', source: 'role' });
   assert.equal(resolveRoleModel('claude', 'deep', { roles, owners }), null, 'a Claude run never reads the Copilot roles');
+});
+
+// --- #1450: no silent Claude Code default -----------------------------------
+
+const { resolveRolePick } = await import('../src/core/model-roles.mjs');
+const { CLI_DECIDES, isCliDecides, decidesLabel, toolDecidesText } = await import('../src/shared/model-roles.mjs');
+const { normalizeRolePair } = await import('../src/core/settings.mjs');
+
+test('resolveRolePick: role, cli-decides, worca-default and null (tool decides)', () => {
+  assert.deepEqual(resolveRolePick('claude', 'quick', { roles: { claude: { quick: QUICK } }, owners: null }),
+    { kind: 'role', model: 'claude-haiku-5-5', effort: 'medium', role: 'quick', source: 'role' });
+  assert.deepEqual(resolveRolePick('claude', 'deep', { roles: { claude: { deep: { cliDecides: true } } }, owners: null }),
+    { kind: 'cli-decides', role: 'deep', source: 'cli-decides' });
+  assert.deepEqual(resolveRolePick('claude', 'deep', { roles: {}, owners: null }),
+    { kind: 'worca-default', model: 'claude-opus-5-5', effort: undefined, role: 'deep', source: 'worca-default' });
+  assert.equal(resolveRolePick('copilot', 'deep', { roles: {}, owners: null }), null);
+  assert.equal(resolveRolePick('claude', 'deep', { roles: {}, owners: null, claudeAuth: 'signed-out' }), null);
+  assert.equal(resolveRolePick('claude', 'deep', { roles: {}, owners: null, floor: false }), null);
+  // An invalid stored model (no catalog layer runs it) falls to the Worca default.
+  const owners = (id) => (id === 'claude-opus-5-5' ? ['claude'] : null);
+  assert.equal(resolveRolePick('claude', 'deep', { roles: { claude: { deep: { model: 'copilot-gone' } } }, owners }).kind, 'worca-default');
+  // A Worca default the catalog does not run on the engine is not offered (invariant 4).
+  assert.equal(resolveRolePick('claude', 'deep', { roles: {}, owners: () => ['codex'] }), null);
+  // resolveRoleModel keeps its meaning: stored roles only, cliDecides → null.
+  assert.equal(resolveRoleModel('claude', 'deep', { roles: { claude: { deep: { cliDecides: true } } }, owners: null }), null);
+});
+
+test('withRole / roleModelFor: an empty role gives the Worca default; cliDecides keeps the pair', () => {
+  assert.equal(withRole(null, 'claude', 'designLead', { roles: {}, owners: null }).model, 'claude-opus-5-5');
+  assert.equal(roleModelFor('claude', 'titleModel', { roles: {}, owners: null }).model, 'claude-haiku-5-5');
+  const pair = { effort: 'high' };
+  assert.equal(withRole(pair, 'claude', 'designLead', { roles: { claude: { deep: CLI_DECIDES } }, owners: null }), pair);
+  assert.equal(roleModelFor('claude', 'titleModel', { roles: { claude: { quick: CLI_DECIDES } }, owners: null }), null);
+  assert.equal(withRole(null, 'copilot', 'titleModel', { roles: {}, owners: null }), null);
+});
+
+test('projectRoles: a personal cliDecides beats a team default, loses to a team soft role', () => {
+  const team = (kind) => ({ kind, value: { claude: { deep: { model: 'claude-opus-5-5' } } } });
+  const user = { claude: { deep: { cliDecides: true } } };
+  assert.deepEqual(projectRoles('claude', { user, team: team('default'), catalog: [OPUS_BUILTIN], claudeAuth: 'signed-in' }).roles.claude.deep, { cliDecides: true });
+  assert.deepEqual(projectRoles('claude', { user, team: team('soft'), catalog: [OPUS_BUILTIN], claudeAuth: 'signed-in' }).roles.claude.deep, { model: 'claude-opus-5-5' });
+});
+
+test('normalizeRolePair accepts { cliDecides: true } and refuses it with a model or effort', () => {
+  assert.deepEqual(normalizeRolePair({ cliDecides: true }, 'r'), { cliDecides: true });
+  assert.throws(() => normalizeRolePair({ cliDecides: true, model: 'claude-opus-5-5' }, 'r'), { message: 'r: cliDecides takes no model or effort' });
+  assert.throws(() => normalizeRolePair({ cliDecides: true, effort: 'high' }, 'r'), { message: 'r: cliDecides takes no model or effort' });
+  assert.throws(() => normalizeRolePair({ cliDecides: false }, 'r'), /unknown field "cliDecides"|model is required/);
+  assert.deepEqual(assertModelRolesInput({ claude: { deep: { cliDecides: true } } }).claude.deep, { cliDecides: true });
+});
+
+test('shared cliDecides helpers', () => {
+  assert.deepEqual(CLI_DECIDES, { cliDecides: true });
+  assert.equal(Object.isFrozen(CLI_DECIDES), true);
+  assert.equal(isCliDecides({ cliDecides: true }), true);
+  assert.equal(isCliDecides({ model: 'x' }), false);
+  assert.equal(isCliDecides(null), false);
+  assert.equal(decidesLabel('Claude Code'), 'Let Claude Code decide');
+  assert.equal(toolDecidesText('GitHub Copilot'), "GitHub Copilot decides: Worca can't know which model runs");
 });

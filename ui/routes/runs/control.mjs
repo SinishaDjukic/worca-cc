@@ -3,6 +3,8 @@
 import { DIRECTION_MAX_CHARS } from '../../../src/core/directions.mjs';
 import { engineLocks } from '../../../src/core/engines/readiness.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
+import { readPipelineForResume } from '../../../src/core/artifacts.mjs';
+import { checkConfirmModel } from '../../../src/core/model-guard.mjs';
 import { readNightDecisions } from '../../../src/core/night/store.mjs';
 import { PLAN_ASK_KIND, planFileOf } from '../../../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../../../src/core/shape/save.mjs';
@@ -193,6 +195,11 @@ app.post('/api/pause', (req, res) => {
 // ---------------------------------------------------------------------------
 app.post('/api/resume', async (req, res) => {
   try {
+    // #1450 "Continue on <model>": refused before anything is written when the run is not waiting on that model.
+    if (req.body?.confirmModel != null) {
+      const refusal = checkConfirmModel(readPipelineForResume(String(req.body?.pipelineId || ''))?.resumePoint ?? null, req.body);
+      if (refusal) return res.status(refusal.status).json(refusal.body);
+    }
     const out = await resumeRun(req.body?.pipelineId, {
       ignoreCostCap: req.body?.ignoreCostCap === true,
       mock: !!(req.body && req.body.mock),
@@ -205,6 +212,7 @@ app.post('/api/resume', async (req, res) => {
       allowUnguardedEngine: req.body?.allowUnguardedEngine,
       model: req.body?.model,
       effort: req.body?.effort,
+      confirmModel: typeof req.body?.confirmModel === 'string' ? req.body.confirmModel : null,   // #1450 "Continue on <model>"
     });
     res.json(out);
   } catch (err) {

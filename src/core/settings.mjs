@@ -1515,6 +1515,11 @@ export function modelRolesSetting() {
 export function normalizeRolePair(input, label = 'role') {
   if (input === null || input === undefined || input === '') return null;
   if (!isObj(input)) throw new Error(`${label} must be { model, effort } or null`);
+  // "Let <tool> decide" (#1450): exactly { cliDecides: true }, distinct from an empty role.
+  if (input.cliDecides === true) {
+    if (Object.keys(input).length !== 1) throw new Error(`${label}: cliDecides takes no model or effort`);
+    return { cliDecides: true };
+  }
   for (const key of Object.keys(input)) if (key !== 'model' && key !== 'effort') throw new Error(`${label}: unknown field "${key}"`);
   const model = typeof input.model === 'string' ? input.model.trim() : '';
   const effort = typeof input.effort === 'string' ? input.effort.trim() : '';
@@ -1584,6 +1589,11 @@ export async function setUtilityModels(input) {
 export function normalizeModelPair(engine, input, label = 'model') {
   if (input === null || input === undefined || input === '') return null;
   if (!isObj(input)) throw new Error(`${label} must be { model, effort } or null`);
+  // "Let <tool> decide" (#1450): exactly { cliDecides: true }, distinct from an empty role.
+  if (input.cliDecides === true) {
+    if (Object.keys(input).length !== 1) throw new Error(`${label}: cliDecides takes no model or effort`);
+    return { cliDecides: true };
+  }
   for (const key of Object.keys(input)) if (key !== 'model' && key !== 'effort') throw new Error(`${label}: unknown field "${key}"`);
   const model = input.model == null ? '' : (typeof input.model === 'string' ? input.model.trim() : null);
   if (model === null || model.length > MODEL_PAIR_MAX_LEN) throw new Error(`${label}.model must be a model id`);
@@ -3273,11 +3283,12 @@ export async function writeStoredFlags(map) {
 // flag, cleared when the last workspace is deleted. `setupFinished` records that the
 // Setup Assistant was completed (install-wide, like the setup); `setupChecked` is the
 // boot marker that credits an install that predates it exactly once
-// (onboarding.mjs#ensureSetupMarker). `guidesSeen` maps a how-it-works area id
+// (onboarding.mjs#ensureSetupMarker). `roleDefaultsNoticeSeen` is #1450's one-time
+// notice about Worca's role defaults. `guidesSeen` maps a how-it-works area id
 // (src/shared/how-it-works/areas.mjs) to true once that area's guide has been opened;
 // `guidesReset` is a write-only command that clears the map and workspaceGuideSeen.
 // All absent = all false and an empty map.
-const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'setupFinished', 'setupChecked']);
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'setupFinished', 'setupChecked', 'roleDefaultsNoticeSeen']);
 const ONBOARDING_KEYS = Object.freeze([...ONBOARDING_FLAGS, 'guidesSeen', 'guidesReset']);
 const SEEN_ONLY_KEYS = Object.freeze(['guidesSeen', 'workspaceGuideSeen']);
 

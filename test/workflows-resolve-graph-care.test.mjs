@@ -110,6 +110,33 @@ test('a node the fill wins raises no factory note, signed out', async () => {
   assert.ok(r.fillNotes.filled.includes('n_roles'));
 });
 
+test('a care fill whose mapped role is stored as Let Claude Code decide leaves the node with no model (cli-decides), never Worca\'s default, and above the template\'s model', async () => {
+  const map = careModelRoles('lean');
+  const cliRole = map.deep;
+  writeUser({ modelRoles: { claude: { [cliRole]: { cliDecides: true }, quick: { model: 'claude-haiku-4-5' } } } });
+  const r = await resolve('wf_shape', { ...fill('lean'), claudeAuth: auth('signed-in') });
+  for (const id of ['n_plan', 'n_refine', 'n_review', 'n_roles']) {
+    assert.equal(r.nodes[id].model, undefined, id);
+    assert.equal(r.nodes[id].modelSource, 'cli-decides', id);
+    assert.ok(!(r.factoryNotes || []).some((n) => n.nodeId === id && !n.role), `${id}: no factory note`);
+  }
+  assert.deepEqual(r.fillNotes.filled, [], 'no model was filled');
+  const withModel = await resolve('wf_shape', { roleFill: { source: 'care', roles: { ...map, deep: 'quick' } }, claudeAuth: auth('signed-in') });
+  assert.equal(withModel.nodes.n_plan.model, 'claude-haiku-4-5');
+  assert.equal(withModel.nodes.n_plan.modelSource, 'care', 'a mapped role that holds a model still fills');
+});
+
+test('care fill and the floor together: a filled node reads modelSource care, a node the fill does not reach gets Worca\'s default, and every agent node carries modelSource', async () => {
+  const map = careModelRoles('lean');
+  writeUser({ modelRoles: { claude: { quick: { model: GW } } } });
+  const r = await resolve('wf_shape', { roleFill: { source: 'care', roles: { ...map, deep: 'quick' } }, claudeAuth: auth('signed-in') });
+  for (const nc of agents(r)) assert.ok(Object.hasOwn(nc, 'modelSource'), nc.nodeId);
+  assert.equal(r.nodes.n_plan.modelSource, 'care');
+  assert.equal(r.nodes.n_plan.model, GW);
+  assert.equal(r.nodes.n_impl.modelSource, 'worca-default', `the mapped role (${map.everyday}) is empty: the floor runs after the fill`);
+  assert.ok(r.nodes.n_impl.model);
+});
+
 test('a pinned pair and an Auto resolve (ignoreProjectOverrides) are never filled', async () => {
   writeUser({ modelRoles: { claude: ROLES } });
   const r = await resolve('wf_shape', { ...fill('lean'), agentPair: { model: 'claude-opus-5-5', effort: 'high' } });

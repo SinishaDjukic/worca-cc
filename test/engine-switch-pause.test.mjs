@@ -131,6 +131,28 @@ test('a usage limit an agent hit records its engine on every copy of the pause',
   assert.equal(orch2.getState().limitEngine, null);
 });
 
+test('#1450: a usage limit records its scope and model — a Fable limit is the model\'s, a session limit the connection\'s; a resume clears both', async () => {
+  for (const [message, scope] of [["You've hit your Fable limit · resets 3pm (Europe/Berlin)", 'model'], ["You've hit your session limit · resets 3pm (Europe/Berlin)", 'connection']]) {
+    const dir = gitDir();
+    const orch = createOrchestrator({
+      projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+      runners: { producer: async () => { throw Object.assign(new Error(message), { errorClass: 'usage_limit' }); }, verifier: okVerifier },
+    });
+    const res = await orch.run();
+    assert.equal(res.reason, 'usage_limit', message);
+    const saved = readPipelineForResume(orch.state.id);
+    assert.equal(saved.resumePoint.limitScope, scope);
+    assert.equal(typeof saved.resumePoint.limitModel, 'string', 'the model the step was spawned with');
+    assert.equal(readPipelineStateById(orch.state.id).limitScope, scope, 'the saved row\'s state reads it back');
+    const row = (await listPipelines(dir)).find((p) => p.id === orch.state.id);
+    assert.equal(row.limitScope, scope, 'the history list row too');
+    const orch2 = createOrchestrator({ projectDir: dir, auto: true, claude: { mock: true }, runners: { producer: async () => ({ status: 'ok', summary: 'done' }), verifier: okVerifier }, resume: saved });
+    await orch2.resume();
+    assert.equal(orch2.getState().limitScope, null);
+    assert.equal(orch2.getState().limitModel, null);
+  }
+});
+
 test('a spent free-model allowance and an error pause record no engine', async () => {
   for (const err of [FREE_DAILY_ERR, () => new Error('boom: a plain bug')]) {
     const dir = gitDir();
@@ -184,7 +206,7 @@ test('resume with another model: every remaining step runs on it, and later resu
     resume: saved,
   });
   await orch2.resume();
-  assert.deepEqual(seen[0], { model: 'claude-haiku-4-5', effort: 'high' }, 'a node pinned to another model runs on the picked one');
+  assert.deepEqual(seen[0], { model: 'claude-haiku-4-5', effort: 'high', source: 'run' }, 'a node pinned to another model runs on the picked one');
   const again = readPipelineForResume(orch2.state.id);
   assert.equal(again.resumePoint.claude.model, 'claude-haiku-4-5');
   assert.equal(again.resumePoint.claude.modelForAll, true, 'rides the resume point');

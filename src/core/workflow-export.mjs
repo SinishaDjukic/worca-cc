@@ -420,7 +420,8 @@ async function buildExportSet({ workflowId, destination, projectDir, slug, inclu
     return {
       nodeId: cell.id, key: rn.key, uiPhase: cell.uiPhase,
       tools: Array.isArray(rn.tools) ? rn.tools : [],
-      model: rn.model || null, effort: rn.effort || null,
+      // Worca's fallback model is nobody's choice: export no model (and so no effort) for it.
+      model: rn.modelSource === 'worca-default' ? null : (rn.model || null), effort: rn.effort || null,
       fanOut: !!rn.fanOut, askQuestions: !!rn.askQuestions,
       reads: io.reads, writes: io.writes,
     };

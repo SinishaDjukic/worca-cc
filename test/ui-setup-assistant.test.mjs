@@ -1679,6 +1679,29 @@ test('networkAnswered: only a working direct connection, no proxy in the environ
   assert.equal(networkAnswered(a, null), false, 'no check, no answer');
 });
 
+test('#1450: empty Claude Code roles start on Worca\'s defaults, a saved role or "Let Claude Code decide" is kept, Review says so', () => {
+  const ROLE_DEFAULTS = { claude: { deep: { model: 'claude-opus-5-5' }, everyday: { model: 'claude-sonnet-5-5' }, quick: { model: 'claude-haiku-5-5' } } };
+  const s = saved({ settings: { ...SETTINGS, roleDefaults: ROLE_DEFAULTS, claudeAuth: 'signed-in' } });
+  const first = initialAnswers({ saved: s, entry: 'first' });
+  assert.deepEqual(first.models.modelRoles.claude, { deep: { model: 'claude-opus-5-5' }, everyday: { model: 'claude-sonnet-5-5' }, quick: { model: 'claude-haiku-5-5' } });
+  assert.deepEqual(buildApplyBody(s, first).models.modelRoles.claude, first.models.modelRoles.claude, 'the defaults ride the apply body');
+  const lines = diffRows(s, first).find((r) => r.group === 'models').lines;
+  assert.deepEqual(lines.slice(0, 3).map((l) => [l.role, l.model, !!l.defaulted]), [
+    ['Deep thinking', 'claude-opus-5-5', true], ['Everyday tasks', 'claude-sonnet-5-5', true], ['Quick jobs', 'claude-haiku-5-5', true]]);
+  assert.match(diffRows(s, first).find((r) => r.group === 'models').value, /^Deep thinking · Worca’s default \(Opus 5\.5\)/);
+
+  const mine = saved({ settings: { ...SETTINGS, roleDefaults: ROLE_DEFAULTS, modelRoles: { claude: { deep: { model: 'claude-haiku-5-5', effort: 'high' }, everyday: { cliDecides: true } } } } });
+  const rerun = initialAnswers({ saved: mine, entry: 'rerun' });
+  assert.deepEqual(rerun.models.modelRoles.claude.deep, { model: 'claude-haiku-5-5', effort: 'high' }, 'a saved role is never overwritten');
+  assert.deepEqual(rerun.models.modelRoles.claude.everyday, { cliDecides: true });
+  assert.deepEqual(rerun.models.modelRoles.claude.quick, { model: 'claude-haiku-5-5' }, 'only the empty one is filled');
+  const rerunLines = diffRows(mine, rerun).find((r) => r.group === 'models').lines;
+  assert.equal(rerunLines[1].fallback, 'Let Claude Code decide');
+
+  const out = initialAnswers({ saved: saved({ settings: { ...SETTINGS, roleDefaults: ROLE_DEFAULTS, claudeAuth: 'signed-out' } }), entry: 'first' });
+  assert.equal(out.models.modelRoles.claude, undefined, 'signed out: no Claude default is preselected');
+});
+
 // ── the ready screen and the level subtitle (Phase 8) ──
 const EARNED = { earned: true, held: 0, level: { index: 1, name: 'Curious', avatar: '/img/curious.png', hue: 235 }, missing: [],
   nextName: 'Runner', nextNeeds: ['Getting started steps 1 to 6', '3 real runs'] };
