@@ -237,6 +237,8 @@ test('kindLabel, member rows and ship lines for a feature group', () => {
   assert.equal(groupShipLine({ ...row, model: ready, members: ready.members.map((m, i) => ({ position: i + 1, model: m })) }),
     'Merge in order 1 → 2 → 3, or ship as one PR');
   assert.equal(groupShipLine({ ...row, groupKind: 'user' }), 'Create PR comes when all 3 runs are done.');
+  assert.equal(groupShipLine({ ...row, model: ready, members: ready.members.map((m, i) => ({ position: i + 1, model: m })) }, { stackedOnly: true }),
+    'Merge in order 1 → 2 → 3', 'small runs ship a PR per run: One is never offered');
 });
 
 test('groupShipLine (one ship flow): a chain waits, then reads the merge order; stacked In review keeps it, One drops it', () => {

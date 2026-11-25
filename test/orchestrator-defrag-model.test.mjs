@@ -142,11 +142,12 @@ test('a paused defragment run resumes on the pair it STARTED with, whatever the 
 });
 
 test('an ordinary run never consults the setting', { timeout: 120000 }, async () => {
-  await storeSetting({ model: 'claude-opus-5-5', effort: 'high' });
+  // effort max: an empty role runs Opus 5.5 (#1450) and a deep step's intent fills high there, so high could match by chance.
+  await storeSetting({ model: 'claude-opus-5-5', effort: 'max' });
   const logs = [];
   const orch = createOrchestrator({ projectDir: gitDir('dmodel'), workflowId: 'wf_default', prompt: 'demo task', claude: { mock: true }, auto: true });
   orch.on('log', (e) => logs.push(e));
   assert.equal((await orch.run()).status, 'done');
   assert.ok(!logs.some((e) => /Memory defragment model/.test(e.text)));
-  assert.ok(!orch.getState().stepper.graph.nodes.some((n) => n.model === 'claude-opus-5-5' && n.effort === 'high'), 'no node took the defragment pair');
+  assert.ok(!orch.getState().stepper.graph.nodes.some((n) => n.model === 'claude-opus-5-5' && n.effort === 'max'), 'no node took the defragment pair');
 });

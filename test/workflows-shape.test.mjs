@@ -273,7 +273,7 @@ test('validatePlanAnswer: revise takes an optional source; only check is carried
   assert.deepEqual(ok({ decision: 'revise', feedback: 'x' }).payload, { decision: 'revise', feedback: 'x' });
   assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'person' }).payload, { decision: 'revise', feedback: 'x' });
   assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'check' }).payload, { decision: 'revise', feedback: 'x', source: 'check' });
-  assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'bot' }).errors, [{ path: 'source', code: 'invalid', message: 'source must be person or check' }]);
+  assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'bot' }).errors, [{ path: 'source', code: 'invalid', message: 'source must be person, check or requirement' }]);
 });
 
 // ── conflict picks (#990 slice 3): optional on every decision, checked against the asked round's conflicts ──

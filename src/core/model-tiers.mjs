@@ -129,6 +129,12 @@ export function modelFacts(rows, { costOf = () => null } = {}) {
   return out;
 }
 
+/** True when a model id prices into the premium tier (its own cost first, then the list price); an unknown id is not. */
+export function isPremiumModel(id, { costOf } = {}) {
+  if (typeof id !== 'string' || !id) return false;
+  return modelFacts([{ id }], costOf ? { costOf } : {})[0]?.tier === 'premium';
+}
+
 /** Picking order: vendor (VENDORS), then tier, then the cheaper output price, then id — byte-stable for the prompt. */
 export function compareFacts(a, b) {
   const v = VENDORS.indexOf(a.vendor) - VENDORS.indexOf(b.vendor);

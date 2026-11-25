@@ -52,14 +52,19 @@ function start({ onCare = pickCare, ...opts } = {}, onPlan = () => {}) {
   const plans = [];
   const execs = [];
   const asked = [];
+  let unanswered;
+  const failFast = new Promise((_, reject) => { unanswered = reject; });
   orch.on('exec', (e) => execs.push(e));
   orch.on('question', (q) => {
     asked.push(q);
     if (q.kind === 'care') { setImmediate(() => onCare(q, orch)); return; }
     if (q.kind === 'plan') { plans.push(q); setImmediate(() => onPlan(q, orch)); return; }
-    if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+    if (q.kind === 'clarify' || q.kind === 'questions') { setImmediate(() => orch.answer(q.id, { answers: [] })); return; }
+    // C3: a marked, non-auto run whose review loop runs out stops on dev's gate ask.
+    if (q.kind === 'gate') { setImmediate(() => orch.answer(q.id, { decision: 'continue' })); return; }
+    unanswered(new Error('unanswered ask kind ' + q.kind));
   });
-  const done = opts.resume ? orch.resume() : orch.run();
+  const done = Promise.race([opts.resume ? orch.resume() : orch.run(), failFast]);
   return { orch, plans, execs, asked, done, dir };
 }
 const ran = (execs, nodeId, status) => execs.filter((e) => e.nodeId === nodeId && (!status || e.status === status));
@@ -516,6 +521,42 @@ test('B2: answering Lean under a Thorough pick stores chosenBy person with the p
   assert.equal(h.orch.getState().stepper.careFill.position, 'lean');
 });
 
+test('B2: a Care fill adopted after the start resolve leaves every filled node with modelSource care, in the cell and in nodeCtx; a cliDecides mapping leaves cli-decides', async () => {
+  const sourcesOf = (orch) => {
+    const cells = Object.fromEntries(orch.getState().stepper.graph.nodes.filter((c) => c.kind === 'agent').map((c) => [c.id, c.modelSource]));
+    const live = Object.fromEntries(Object.keys(cells).map((id) => [id, orch.resolved.nodeCtx[id]?.modelSource]));
+    return { cells, live };
+  };
+  // _careOriginGraph re-resolves after the adopt and would mask a stale source; stub it so the adopt alone is checked.
+  const adoptOnly = (h) => { h.orch._careOriginGraph = async () => {}; return h; };
+  const lean = await marked(async () => { const x = adoptOnly(start({ projectDir: gitDir('b2-src-lean'), prompt: PAY, onCare: answerCare('lean') }, approveAll)); assert.equal((await x.done).status, 'done'); return x; });
+  const fillable = lean.orch.getState().stepper.careFill.fillable;
+  assert.ok(fillable.length > 0);
+  const a = sourcesOf(lean.orch);
+  for (const id of fillable) { assert.equal(a.cells[id], 'care', `cell ${id}`); assert.equal(a.live[id], 'care', `nodeCtx ${id}`); }
+  // Thorough maps deep → deep; deep stored as "Let Claude Code decide" leaves those nodes with no model, never a floor.
+  const file = join(sandboxHome, '.worca-cc', 'settings.json');
+  const cli = await withSmallRuns(true, async () => {
+    writeFileSync(file, JSON.stringify({ modelRoles: { claude: { ...ROLES, deep: { cliDecides: true } } } }));
+    try { const x = adoptOnly(start({ projectDir: gitDir('b2-src-cli'), prompt: PAY, onCare: answerCare('thorough') }, approveAll)); assert.equal((await x.done).status, 'done'); return x; }
+    finally { writeFileSync(file, '{}'); }
+  });
+  const b = sourcesOf(cli.orch);
+  const cells = cellsOf(cli.orch);
+  for (const id of cli.orch.getState().stepper.careFill.fillable) assert.ok(['care', 'cli-decides'].includes(b.cells[id]), `${id}: ${b.cells[id]}`);
+  const cliIds = cli.orch.getState().stepper.careFill.fillable.filter((id) => b.cells[id] === 'cli-decides');
+  assert.ok(cliIds.length > 0, `some fillable node maps to the cliDecides role: ${JSON.stringify(b.cells)}`);
+  for (const id of cliIds) { assert.equal(b.live[id], 'cli-decides', `nodeCtx ${id}`); assert.equal(cells[id], '', `cell model ${id}`); }
+});
+
+test('B2: a Lean marked run whose review runs out stops at the gate and continues on the answer', async () => {
+  const h = await marked(async () => { const x = start({ projectDir: gitDir('b2-lean-gate'), prompt: PAY, onCare: answerCare('lean') }, approveAll); return { x, res: await x.done }; });
+  const gate = h.x.asked.find((q) => q.kind === 'gate');
+  assert.ok(gate, `a gate ask was raised: ${h.x.asked.map((q) => q.kind)}`);
+  assert.ok(gate.stop, 'the gate carries a stop');
+  assert.equal(h.res.status, 'done', h.res.error);
+});
+
 test('B2: answering the pick stores chosenBy default', async () => {
   const h = await marked(async () => { const x = start({ projectDir: gitDir('b2-pick'), prompt: PAY }, approveAll); await x.done; return x; });
   const care = statsOf(h.orch.getState().id).care;
@@ -666,6 +707,7 @@ test('B2: the split writes the saved Care onto the feature row', async () => {
       else if (q.kind === 'plan' && q.plan?.outline) setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
       else if (q.kind === 'plan') setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
       else if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+      else if (q.kind === 'gate') setImmediate(() => orch.answer(q.id, { decision: 'continue' }));
     });
     await orch.run();
     return { orch };

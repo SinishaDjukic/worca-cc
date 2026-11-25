@@ -1,7 +1,11 @@
 // src/shared/shape/feature-log.mjs — Shaper s2: the feature card's step log (D7) and the receipt words it shares with
 // ui/public/shape/step-receipt.mjs (D8). Pure and browser-safe (B2: the Care words come from feature-record.mjs): the server builds the log from durable rows (the run
 // harness's audit lines, the clarify row, the feature row); the browser names a receipt with the same words.
+import { verifyLines } from './verifier.mjs';
 import { careRecordLine } from './feature-record.mjs';
+import { SKIP_LINES } from './prototype.mjs';
+import { STOP_DONE_RE } from './run-stops.mjs';
+import { reqChangeLogText } from './req-change.mjs';
 
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 
@@ -22,6 +26,19 @@ export const runsApprovedText = (kept = 0) => (kept > 0 ? `${RUNS_APPROVED} · $
 export const outlineKeptNote = (stub, decision, value) => (decision === 'approve' && value?.openObjections === 'kept' && stub?.open > 0
   ? ` · ${stub.open} objection${stub.open === 1 ? '' : 's'} kept` : '');
 export const outlineKeptStub = (plan) => (plan?.challenge?.open > 0 ? { open: plan.challenge.open } : {});
+/** Shaper small runs C1: the Prototype step's log lines (the audit line is the same words plus a full stop). */
+export const PROTOTYPE_CONFIRMED = 'Prototype confirmed by you';
+/** `rebuilt`: the build that follows a remark (same count and cost, its own words). */
+export const prototypeBuiltText = (n, costUsd = 0, rebuilt = false) =>
+  `Prototype ${rebuilt ? 'rebuilt with your remark' : "built by Design's agents"} · ${plural(n, 'screen')} · $${(Number(costUsd) || 0).toFixed(2)}`;
+export const remarkUpdatedText = (remark, id) => `Your remark: “${remark}” → ${id} updated`;
+const PROTO_RES = [/^Prototype (?:built by Design's agents|rebuilt with your remark) · \d+ screens? · \$\d+\.\d{2}$/, /^Your remark: “.*” → R-[a-z]{1,8}-\d+ updated$/s];
+/** A Prototype log line (C1), or null. */
+export function parsePrototypeLine(text) {
+  const t = String(text || '').replace(/\.$/, '');
+  if (t === PROTOTYPE_CONFIRMED || Object.values(SKIP_LINES).includes(t) || PROTO_RES.some((re) => re.test(t))) return { kind: 'prototype', text: t };
+  return null;
+}
 const AWAY_KEPT_TEXT = 'Plan kept as written · by Away mode · please check';
 export function replanText(indexes) {
   const xs = [...indexes].sort((a, b) => a - b);
@@ -83,7 +100,7 @@ const byAway = (text, d) => (d.away ? `${text} · by Away mode` : text);
  *   `oneCard` (Shaper small runs B1, D7): the one card's words, "Requirements agreed" and "Runs approved"; without it a
  *   requirements line reads as the plan approval it was before B1, and the split keeps splitText.
  */
-export function buildDecisionLog({ clarify = null, origin = [], sliced = false, runs = [], slices = [], replan = null, rounds = [], oneCard = false } = {}) {
+export function buildDecisionLog({ clarify = null, origin = [], sliced = false, runs = [], slices = [], replan = null, rounds = [], oneCard = false, changes = [], verify = null } = {}) {
   const out = [];
   const front = [];
   const qs = clarify && Array.isArray(clarify.questions) ? clarify.questions : [];
@@ -101,6 +118,11 @@ export function buildDecisionLog({ clarify = null, origin = [], sliced = false, 
     events.forEach((text, n) => {
       const b = run ? parseBaseLine(text) : null;
       if (b) { out.push({ key: `${run}-${n}`, run: null, text: baseMovedText(b.base, run, b.files), detail: [] }); return; }
+      const proto = oneCard ? parsePrototypeLine(text) : null;
+      if (proto) { out.push({ key: `${run || 'p'}-${n}`, run, text: proto.text, detail: [] }); return; }
+      // Small runs C3 (D14): a stop a person answered (run-stops.mjs stopDoneText), its own decision row.
+      // The run shows once, in the row's span; the text drops its own "Run N: " (fit-2-1).
+      if (STOP_DONE_RE.test(String(text || ''))) { out.push({ key: `${run || 'p'}-${n}`, run, text: String(text).replace(/^Run \d+: /, ''), detail: [] }); return; }
       const p = parseDecisionLine(text);
       if (!p) return;
       const d = p.kind === 'requirements' && !oneCard ? { ...p, kind: 'plan' } : p;
@@ -132,6 +154,11 @@ export function buildDecisionLog({ clarify = null, origin = [], sliced = false, 
     out.push({ key: `round-${run}-1`, run, text: roundText(1, s ? s.title : ''), detail: [] });
     for (const r of list) out.push({ key: `round-${run}-${r.round}`, run, text: roundText(r.round, r.request, r.status, r.outcome), detail: [] });
   }
+  // Small runs C4 (D17): a requirement change not on the feature card's notice (landed, superseded or `none`), oldest first.
+  (Array.isArray(changes) ? changes : []).forEach((e) => { out.push({ key: `change-${e.at}-${e.id}`, run: null, text: reqChangeLogText(e), detail: [] }); });
+  // Small runs C5 (D13): one receipt per Verifier check with a result (`verify` = the feature's outline.verify). `kind`
+  // draws it as a .srows row, in the gap list's mark and text columns (owner direction d86d13181).
+  verifyLines(verify).forEach((text, i) => { out.push({ key: `verify-${i}`, run: null, text, detail: [], kind: 'verify' }); });
   out.unshift(...front.slice(0, 1));
   if (replan && replan.length) {
     out.push({ key: 'replan', run: null, text: replanText(replan), detail: [...replan].sort((a, b) => a - b).map((i) => { const s = sliceOf(i); return s ? `${i} · ${s.title}` : String(i); }) });

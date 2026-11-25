@@ -45,6 +45,8 @@ export function chatActionSummary(card) {
   if (c.type === 'ship') return `Ship ${c.title || c.featureId || 'feature'}${c.result && c.result.mode ? `: shipped as ${c.result.mode === 'one' ? 'one PR' : 'stacked PRs'}` : ''}`;
   if (c.type === 'changes') return `${(c.landing && c.landing.title) || 'Changes'}${c.result ? `: ${changesDone(c)}` : ''}`;
   if (c.type === 'route') return `Where does this go: ${c.text || ''}${c.result ? `: ${routeDone(c.result)}` : ''}`;
+  // Small runs C4: a requirement-change card; its new text shows only while it is proposed.
+  if (c.type === 'req-change') return c.result ? `Changed: ${c.requirement || ''}` : `Change ${c.requirement || ''}: ${c.to || ''}`;
   return '';
 }
 

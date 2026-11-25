@@ -164,7 +164,7 @@ export const FLAGS = Object.freeze([
   entry({
     key: 'shaperSmallRuns',
     title: 'Shaper small runs',
-    description: "Groundwork for Shaper's small runs (a Care position per feature, at most 3 requirements per run, runs that start from the latest finished work). While it is being built, turning it on changes nothing you can see.",
+    description: "Shaper builds a feature as small runs, checked as a whole by a Verifier and shipped as one stacked PR per run. Features with no marker also start from the latest finished work. Off: runs follow the linear chain, and a feature started with it on keeps its card, Care and stacked Ship, but no Verifier check starts.",
     stage: 'experimental',
     default: false,
     owner: 'e-angelov',

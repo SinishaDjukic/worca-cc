@@ -30,7 +30,7 @@ import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsIn
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
-import { CODEX_PRICES, codexCachedRate } from '../list-prices.mjs';
+import { CODEX_PRICES, CODEX_DEFAULT_MODEL, codexCachedRate } from '../list-prices.mjs';
 import { codexEndpointSpawn, findCodexEndpointEntry, hasCodexEndpoint } from './codex-endpoint.mjs';
 import { makeChatDescriptor, openaiListRates } from './chat-descriptor.mjs';
 import { chatEnginesTaking } from '../../shared/engine-switch.mjs';
@@ -64,10 +64,10 @@ export function codexThreadOf(sessionId) {
  *  - Skills: codex loads `.agents/skills` from the cwd, where the run context mounts them. */
 const CODEX_FALSE = new Set(['allowedTools', 'hookTelemetry', 'turnBudget']);
 
-/** The model a codex spawn runs when worca names none: codex's own bundled default (GPT-6.1 Sol since
- *  codex-cli 0.153.4; 0.146's was gpt-5.6-sol). `exec --json` never names the model it ran, so worca names it on
- *  every spawn: that keeps every Codex call priced (CODEX_PRICES) instead of a $0.00 "cost unknown". */
-export const CODEX_DEFAULT_MODEL = 'gpt-6.1-sol';
+/** The model a codex spawn runs when worca names none (list-prices.mjs). `exec --json` never names the model it
+ *  ran, so worca names it on every spawn: that keeps every Codex call priced (CODEX_PRICES) instead of a $0.00
+ *  "cost unknown". */
+export { CODEX_DEFAULT_MODEL };
 export const codexCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, !CODEX_FALSE.has(k)])));
 
 /** Ask Worca on Codex (cascading-settings-design.md D13): the flags that leave codex no shell, no image viewer, no native
@@ -814,10 +814,11 @@ export async function runCodexProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model: namedModel, effort, onEvent = () => {}, signal,
   bin = CODEX_DEFAULT_BIN, resumeSessionId, addDirs, writableDirs, sandbox, envScrub, envAllowlist, asAgent, usageDir = defaultUsageDir(),
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, images, askLockdown,
-  permissionRules, allowedTools, agents, appendSubagentSystemPrompt, tryGuard = null,
+  permissionRules, allowedTools, agents, appendSubagentSystemPrompt, cliDefault, tryGuard = null,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
-  const model = namedModel || CODEX_DEFAULT_MODEL;
+  // "Let Codex decide" (#1450): no -m, so codex runs its own default (the turn may then be unpriced).
+  const model = namedModel || (cliDefault === true ? undefined : CODEX_DEFAULT_MODEL);
   // A model on its own OpenAI-compatible endpoint (codex-endpoint.mjs): codex connects to it directly. Throws
   // (auth class) before any spawn when the endpoint has no usable key.
   const endpoint = codexEndpointSpawn(model);

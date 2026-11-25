@@ -16,6 +16,7 @@ import { fieldsForRun } from './policy/effective.mjs';
 import { MODEL_ENGINES, HELPER_ENGINES, ASK_ENGINES } from './model-env.mjs';
 import { NIGHT_FIELDS, NIGHT_DEFAULTS, fieldError as nightFieldError } from './night/config.mjs';
 import { PR_OPEN, PR_SLICES } from '../shared/pr-auto.mjs';
+import { CHAT_SOURCE_BRANCH_ID, CHAT_SOURCE_BRANCH_MODES, DEFAULT_CHAT_SOURCE_BRANCH, SOURCE_BRANCH_TEXT, normalizeChatSourceBranch } from '../shared/chat-source-branch.mjs';
 
 export const LAYERS = Object.freeze(['project', 'user', 'team']);
 const isObj = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -41,6 +42,7 @@ const pairCheck = (engine) => (value, _layer, ctx) => {
 const webIn = (raw) => isObj(raw) ? { enabled: raw.enabled, anyHost: raw.anyHost ?? false, allowedDomains: raw.allowedDomains ?? [], search: raw.search ?? null } : raw;
 const OFF_WEB = Object.freeze({ enabled: false, anyHost: false, allowedDomains: Object.freeze([]), search: null });
 
+const presentMode = (value) => (value === undefined || value === null ? undefined : normalizeChatSourceBranch(value));
 function scalar({ id, path = [id], check, def, teamKey = null, hint, readUser = null }) {
   return { id, path, store: 'settings', default: def, hint, validate: (value) => check(value),
     readUser: readUser || ((ctx) => dig(ctx.settings(), path)), readProject: (ctx) => dig(ctx.projectSettings(), path),
@@ -73,6 +75,12 @@ const SCALARS = [
   scalar({ id: 'memory.defrag.files', path: ['memory', 'defrag', 'files'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_DEFRAG_FILES }),
   scalar({ id: 'memory.defrag.bytesPct', path: ['memory', 'defrag', 'bytesPct'], check: SETTING_CHECKS.pct, def: DEFAULT_MEMORY_DEFRAG_BYTES_PCT }),
   scalar({ id: 'memory.defrag.alwaysOnBytes', path: ['memory', 'defrag', 'alwaysOnBytes'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES }),
+  // Chat runs: source branch. No team layer. A present value outside the modes reads 'ask' at ITS layer (D4), so a
+  // corrupt project value never falls through to the user's 'current'; writes still refuse it.
+  { ...scalar({ id: CHAT_SOURCE_BRANCH_ID, path: ['chat', 'sourceBranch'], check: (value) => CHAT_SOURCE_BRANCH_MODES.includes(value),
+    def: DEFAULT_CHAT_SOURCE_BRANCH, hint: SOURCE_BRANCH_TEXT.invalid.slice(CHAT_SOURCE_BRANCH_ID.length + 1),
+    readUser: (ctx) => presentMode(dig(ctx.settings(), ['chat', 'sourceBranch'])) }),
+  readProject: (ctx) => presentMode(dig(ctx.projectSettings(), ['chat', 'sourceBranch'])) },
   // Project-only (not scalar()): scalar() defaults readUser to the user layer, which would inherit.
   { id: 'readiness.ignore', path: ['readiness', 'ignore'], store: 'settings', default: [],
     readUser: () => undefined, readProject: (ctx) => dig(ctx.projectSettings(), ['readiness', 'ignore']), team: null,
@@ -259,6 +267,14 @@ export function hasProjectSetting(id, scope) {
   if (!entry || entry.userOnly) return false;
   const ctx = makeCtx(scope);
   return ctx.projectLayer && layerValue(entry, 'project', safeRead(entry.readProject, ctx), ctx) !== undefined;
+}
+
+/** The chat-card source branch mode for a scope: { mode, source }. Never throws (a failed read is 'ask'). */
+export function chatSourceBranchMode(scope = null) {
+  try {
+    const result = resolveSetting(CHAT_SOURCE_BRANCH_ID, scope);
+    return { mode: normalizeChatSourceBranch(result.value), source: result.source };
+  } catch { return { mode: DEFAULT_CHAT_SOURCE_BRANCH, source: 'default' }; }
 }
 
 export function resolveRunEngine({ explicit = null, projectDir = null, projectKey = null, workspace = false } = {}) {

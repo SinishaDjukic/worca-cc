@@ -34,6 +34,32 @@ test('{folder} and {worktree} go where they are written (a quoted one is not quo
   assert.ok(!c.line.endsWith("'/r' '/r'"), 'no extra folder at the end when {folder} is used');
 });
 
+test('{file} and {line}: the file quoted, the line as digits; no folder appended when {file} is used', () => {
+  const c = buildLauncherCommand('subl {file}:{line}', { folder: '/r x', file: "/r x/it's.mjs", line: 12, ...MAC, exists: () => false });
+  assert.equal(c.line, "subl '/r x/it'\\''s.mjs':12");
+  const w = buildLauncherCommand('code -g "{file}:{line}"', { folder: 'C:\\r', file: 'C:\\r\\a b.mjs', line: 3, ...WIN, exists: () => false });
+  assert.equal(w.line, 'code -g ""C:\\r\\a b.mjs":3"', 'win32 quoting; a quote that does not pair around {file} is kept');
+  const q = buildLauncherCommand('ed "{file}" {line}', { folder: '/r', file: '/r/a.mjs', line: 7, ...MAC, exists: () => false });
+  assert.equal(q.line, "ed '/r/a.mjs' 7", 'a quoted {file} is not quoted twice');
+  const both = buildLauncherCommand('idea {folder} --line {line} {file}', { folder: '/r', file: '/r/a.mjs', line: 2, ...MAC, exists: () => false });
+  assert.equal(both.line, "idea '/r' --line 2 '/r/a.mjs'");
+});
+
+test('a value placed for one placeholder is never scanned again: a file named {branch}/{line} stays quoted once and unchanged', () => {
+  const vars = { branch: 'feat/$(touch PWNED)', project: 'p', runId: 'r' };
+  const c = buildLauncherCommand('subl {file}:{line} {branch}', { folder: '/w', file: '/w/src/{branch}{line}{folder}.js', line: 3, vars, ...MAC, exists: () => false });
+  assert.equal(c.line, "subl '/w/src/{branch}{line}{folder}.js':3 'feat/$(touch PWNED)'");
+  const f = buildLauncherCommand('code {folder}', { folder: '/w/{runId}', vars, ...MAC, exists: () => false });
+  assert.equal(f.line, "code '/w/{runId}'", 'a folder holding a placeholder is not rescanned either');
+});
+
+test('{file} without a file is the folder, {line} without a line is 1; a line without {file} is unchanged by a file', () => {
+  assert.equal(buildLauncherCommand('subl {file}:{line}', { folder: '/r', ...MAC, exists: () => false }).line, "subl '/r':1");
+  assert.equal(buildLauncherCommand('code --new-window', { folder: '/r', file: '/r/a.mjs', line: 4, ...MAC, exists: () => false }).line,
+    buildLauncherCommand('code --new-window', { folder: '/r', ...MAC, exists: () => false }).line);
+  assert.equal(buildLauncherCommand('code {folder}', { folder: '/r', file: '/r/a.mjs', line: 4, ...MAC, exists: () => false }).line, "code '/r'");
+});
+
 test('macOS: a path to an app, or just its name, opens with open -a', () => {
   assert.equal(buildLauncherCommand('/Applications/Xcode.app', { folder: '/r', ...MAC, exists: has(['/Applications/Xcode.app']) }).line,
     "open -a '/Applications/Xcode.app' '/r'");

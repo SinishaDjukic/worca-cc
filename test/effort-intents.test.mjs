@@ -157,7 +157,7 @@ test('stepIntent: a plugin step by its display name (the plugin bug steps)', () 
 test('every built-in agent key has an intent', () => {
   const keys = readdirSync(new URL('../agents/', import.meta.url)).filter((f) => f.endsWith('.meta.json'))
     .map((f) => JSON.parse(readFileSync(new URL(`../agents/${f}`, import.meta.url), 'utf8')).key).sort();
-  assert.equal(keys.length, 35);
+  assert.equal(keys.length, 37);
   assert.deepEqual(Object.keys(STEP_INTENTS).sort(), keys);
   for (const v of Object.values(STEP_INTENTS)) assert.ok(EFFORT_INTENTS.includes(v));
 });
@@ -242,13 +242,15 @@ test('a stored effort medium wins: --effort medium', async () => {
   assert.equal(effortIn(argv), 'medium');
 });
 
-test('gpt-5.5 / claude-x-9 / empty model: no --effort in argv', async () => {
+test('claude-x-9 / claude-opus-4-7: no --effort in argv; an empty role runs the Worca default at its intent', async () => {
   for (const model of ['claude-x-9', 'claude-opus-4-7']) {
     const { argv } = await planArgv({ overlay: { nodes: { n_plan: { model } } } });
     assert.equal(effortIn(argv), null, model);
   }
-  const { argv } = await planArgv({ claude: { mock: true } });
-  assert.equal(effortIn(argv), null, 'no model at all: the CLI default');
+  // #1450: no model anywhere runs the role's Worca default (Opus 5.5 for Plan), so the deep intent fills its effort.
+  const { argv, nc } = await planArgv({ claude: { mock: true } });
+  assert.equal(nc.model, 'claude-opus-5-5');
+  assert.equal(effortIn(argv), 'high');
 });
 
 test('codex + gpt-5.5: no fill, no model_reasoning_effort', async () => {

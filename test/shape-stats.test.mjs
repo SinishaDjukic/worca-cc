@@ -87,3 +87,15 @@ test('B2 Care: shapeRecordFrom and buildShapeStats keep a valid care, drop an in
   rec.care = { ...care, position: 'max' };
   assert.equal('care' in buildShapeStats(rec, []), false, 'buildShapeStats checks it too');
 });
+
+test('C1 prototype: shapeRecordFrom and buildShapeStats carry a valid prototype record, drop junk, and stay byte-identical without one', () => {
+  const proto = { v: 1, state: 'built', screenIds: ['R-ux-1'], round: 1, screens: [], costUsd: 1.2, findings: [], reviewRounds: 0,
+    remarks: 0, rebuilt: false, at: '2026-11-21T10:00:00.000Z' };
+  const rec = shapeRecordFrom({ smallRuns: true, prototype: proto });
+  assert.deepEqual(rec.prototype, proto);
+  assert.deepEqual(buildShapeStats(rec, []).prototype, proto);
+  assert.equal('prototype' in shapeRecordFrom({ smallRuns: true, prototype: { v: 9 } }), false);
+  const plain = shapeRecordFrom({ smallRuns: true });
+  assert.equal(JSON.stringify(buildShapeStats(plain, [])), JSON.stringify(buildShapeStats({ ...plain, prototype: null }, [])));
+  assert.equal('prototype' in buildShapeStats(plain, []), false);
+});

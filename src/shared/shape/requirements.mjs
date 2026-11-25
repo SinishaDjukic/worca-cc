@@ -2,7 +2,7 @@
 // each perspective asks while the requirements are drafted (with lead or supporting wording), the checklist provider
 // the engine's role-review step reads for `checklist: 'requirements'`, and when a run takes the stage. Pure and
 // browser-safe.
-import { PERSPECTIVES, DEFAULT_PERSPECTIVES, FIT_KEY, COMPLIANCE_KEY, normalizePerspectives, perspectiveByKey } from './perspectives.mjs';
+import { PERSPECTIVES, DEFAULT_PERSPECTIVES, FIT_KEY, COMPLIANCE_KEY, normalizePerspectives, perspectiveByKey, perspectivesFor } from './perspectives.mjs';
 import { CARE_DEFAULT, CARE_POSITIONS } from './feature-record.mjs';
 import { criteriaList, CRITERION_ID_RE, CRITERIA_MAX_PER_PREFIX } from '../review/coverage.mjs';
 
@@ -25,6 +25,17 @@ export function criterionPerspective(id, { smallRuns = false } = {}) {
   const prefix = id.split('-')[1];
   const prefixes = requirementPrefixes({ smallRuns });
   return Object.keys(prefixes).find((key) => prefixes[key] === prefix) || null;
+}
+
+/** Small runs C2 (D2): a slice run's roles, Product plus the perspective of each requirement id it owns, deduplicated,
+ *  in perspective order (Compliance after DevOps, as under small runs). Unknown ids add nothing. */
+export function runRolesOf(ids) {
+  const owned = new Set(['product']);
+  for (const id of Array.isArray(ids) ? ids : []) {
+    const key = criterionPerspective(id, { smallRuns: true });
+    if (key) owned.add(key);
+  }
+  return perspectivesFor({ smallRuns: true }).map((p) => p.key).filter((k) => owned.has(k));
 }
 
 /** The perspectives that write requirements: every one with a prefix (not Project fit, not the Devil's advocate). */

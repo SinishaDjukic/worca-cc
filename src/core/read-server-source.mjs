@@ -7,9 +7,11 @@ import { fileURLToPath } from 'node:url';
 export const SERVER_MJS = 'ui/server.mjs';
 const UI_DIR = path.dirname(fileURLToPath(new URL('../../ui/server.mjs', import.meta.url)));
 
-/** ui/server.mjs plus, on a split tree, every route file in ui/routes/index.mjs order (feature indexes followed). */
-export function readServerSource(uiDir = UI_DIR) {
+/** ui/server.mjs plus, on a split tree, every route file in ui/routes/index.mjs order (feature indexes followed).
+ *  `routes: false` returns ui/server.mjs alone (its own size, e.g. for the size cap). */
+export function readServerSource(uiDir = UI_DIR, { routes: withRoutes = true } = {}) {
   const main = fs.readFileSync(path.join(uiDir, 'server.mjs'), 'utf8');
+  if (!withRoutes) return main;
   const routes = path.join(uiDir, 'routes');
   if (!fs.existsSync(path.join(routes, 'index.mjs'))) return main;
   const files = (rel) => {

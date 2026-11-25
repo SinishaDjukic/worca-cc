@@ -375,8 +375,8 @@ try {
   await settle('live graph');
   const lg = await ev(`(()=>{const q=(s)=>document.querySelector('#run-detail '+s);const live=q('.rd-sheet-nav > .rd-live');const main=q('.rd-sheet-main');
     const l=live.getBoundingClientRect(),m=main.getBoundingClientRect();return {left:l.left,mainRight:m.right,h:l.height,wrap:getComputedStyle(live.querySelector('.run-flow-wrap')).height};})()`);
-  check('1e', '1e live graph: in the card\'s right column beside the details, 280px tall',
-    lg.left >= lg.mainRight && Math.abs(parseFloat(lg.wrap) - 280) < 1, lg);
+  check('1e', '1e live graph: in the card\'s right column beside the details, 320px tall',
+    lg.left >= lg.mainRight && Math.abs(parseFloat(lg.wrap) - 320) < 1, lg);
   if (process.env.WORCA_SHOT_DIR) {
     const shot = await cdp('Page.captureScreenshot', { format: 'png' }, 15000);
     await writeFile(path.join(process.env.WORCA_SHOT_DIR, 'run-live-graph.png'), Buffer.from(shot.data, 'base64'));
@@ -615,8 +615,17 @@ try {
   await ev('window.fetch=window.__realFetch;delete window.__realFetch;0');
 
   // ---- the History detail --------------------------------------------------
-  const hist = await api('/api/history');
-  const rec = (hist.body.pipelines || []).find((p) => p.id === entry.pipelineId);
+  // The post-run base check (#620) lands a moment after `done`. One that lands after the
+  // History detail opened makes the next /api/history row newer than the loaded detail, so
+  // refreshHdFromRow re-opens the page and drops the review strip (3) expands. Wait for it,
+  // bounded: a run without a base check has nothing to land.
+  let hist, rec;
+  for (let i = 0; i < 50; i += 1) {
+    hist = await api('/api/history');
+    rec = (hist.body.pipelines || []).find((p) => p.id === entry.pipelineId);
+    if (rec && rec.baseCheck) break;
+    await sleep(200);
+  }
   if (!rec) throw new Error(`pipeline ${entry.pipelineId} is not in /api/history`);
   const HD = '#hist-detail .hd-graph .run-flow-wrap';
   await go(`history/${rec.projectKey}/${rec.id}/details/workflow`);   // the graph lives in Details › Workflow

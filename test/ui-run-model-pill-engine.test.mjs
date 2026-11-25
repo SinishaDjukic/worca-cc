@@ -58,3 +58,27 @@ test('stepModelByNode marks a node that ran the model its run\'s own overlay set
   const fanOnly = window.__np.stepModelByNode({ ...STEPPER, runOverlay: { nodes: { n1: { fanOut: true } } } }, 'claude');
   assert.equal('perRun' in fanOnly.n1, false, 'an entry naming no model (fan-out only) leaves the model pill unmarked');
 });
+
+test('#1450: an empty node shows the observed model as the tool\'s pick, a Worca default says so, a mismatch titles "Asked for X, ran on Y"', async () => {
+  const { window } = await boot();
+  window.__np._setModels([
+    { id: 'claude-fable-5-2', label: 'Fable 5.2', engine: 'claude' },
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', engine: 'claude' },
+    { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', engine: 'claude' },
+  ]);
+  const stepper = { version: 2, steps: [], graph: { wires: [], nodes: [
+    { id: 'e1', kind: 'agent', modelSource: null },
+    { id: 'e2', kind: 'agent', modelSource: null },
+    { id: 'w1', kind: 'agent', model: 'claude-opus-5-5', modelSource: 'worca-default' },
+    { id: 'p1', kind: 'agent', model: 'claude-opus-5-5', modelSource: 'project' },
+    { id: 'legacy', kind: 'agent' },
+  ] } };
+  const steps = [{ nodeId: 'e1', modelUsed: 'claude-fable-5-2' }, { nodeId: 'p1', modelUsed: 'claude-sonnet-5-5' }, { nodeId: 'w1', modelUsed: 'claude-opus-5-5-20261101' }];
+  const by = window.__np.stepModelByNode(stepper, 'claude', steps);
+  assert.match(window.__np.stepModelPillHtml(by.e1), />Fable 5\.2 · Claude Code's pick<\/span>$/);
+  assert.match(window.__np.stepModelPillHtml(by.e2), />Default · Claude Code decides<\/span>$/);
+  assert.match(window.__np.stepModelPillHtml(by.w1), />Opus 5\.5 · Worca default<\/span>$/);
+  assert.doesNotMatch(window.__np.stepModelPillHtml(by.w1), /title=/, 'a dated init id is the same model');
+  assert.match(window.__np.stepModelPillHtml(by.p1), /title="Asked for Opus 5\.5, ran on Sonnet 5\.5"/);
+  assert.equal(by.legacy, undefined, 'a pre-change node with nothing observed shows no pill');
+});

@@ -360,3 +360,13 @@ test('5c. the override menu lists the four groups in one order, whatever order i
   assert.deepEqual(shown, ['# Follow Deep thinking', 'Review', 'Refine', 'Plan', '# Follow Quick jobs', 'Memory defragment',
     '# Follow Everyday tasks', 'Manual tests checklist', 'Implement', "# Use Worca's default", 'Second-opinion reviewer']);
 });
+
+test('#1450: a role tile on a Worca default or "Let Claude Code decide" says so in its aria-label', () => {
+  const roleDefaults = { claude: { deep: { model: 'claude-opus-5-5' }, everyday: { model: 'claude-sonnet-5-5' }, quick: { model: 'claude-haiku-4-5' } } };
+  const vm = build({ runEngine: null, roleDefaults, claudeAuth: 'signed-in', modelRoles: { claude: { everyday: { cliDecides: true } } } });
+  const { root } = draw(vm);
+  const tile = (r) => root.querySelector(`#jobs-roles .mdl-tile[data-setting="models.claude.roles.${r}"]`);
+  assert.equal(tile('deep').getAttribute('aria-label'), 'Deep thinking: Worca default · Opus 5.5');
+  assert.equal(tile('everyday').getAttribute('aria-label'), 'Everyday tasks: Let Claude Code decide');
+  assert.equal(tile('everyday').querySelector('.mdl-tile-name').textContent, 'Let Claude Code decide');
+});

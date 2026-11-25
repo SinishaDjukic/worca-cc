@@ -173,3 +173,57 @@ test('fit-1-2: the outline audit line\'s kept note and the pending stub\'s count
   // parseDecisionLine reads the note back (D20)
   assert.equal(parseDecisionLine(`Slice outline **approve** (round 1${outlineKeptNote(stub, 'approve', { openObjections: 'kept' })}).`).kept, 2);
 });
+
+test('C1: the 4 Prototype log lines parse and show on the one card only', async () => {
+  const { PROTOTYPE_CONFIRMED, prototypeBuiltText, remarkUpdatedText, parsePrototypeLine } = await import('../src/shared/shape/feature-log.mjs');
+  assert.equal(PROTOTYPE_CONFIRMED, 'Prototype confirmed by you');
+  assert.equal(prototypeBuiltText(2, 2.8), "Prototype built by Design's agents · 2 screens · $2.80");
+  assert.equal(prototypeBuiltText(1, 0), "Prototype built by Design's agents · 1 screen · $0.00");
+  assert.equal(prototypeBuiltText(2, 3.2, true), 'Prototype rebuilt with your remark · 2 screens · $3.20');
+  assert.deepEqual(parsePrototypeLine(`${prototypeBuiltText(2, 3.2, true)}.`), { kind: 'prototype', text: prototypeBuiltText(2, 3.2, true) });
+  assert.equal(remarkUpdatedText('dark please', 'R-ux-2'), 'Your remark: “dark please” → R-ux-2 updated');
+  const lines = ['Prototype skipped · no screen requirements', 'Prototype skipped by you', prototypeBuiltText(2, 2.8),
+    remarkUpdatedText('dark please', 'R-ux-2'), PROTOTYPE_CONFIRMED];
+  for (const l of lines) assert.deepEqual(parsePrototypeLine(`${l}.`), { kind: 'prototype', text: l }, l);
+  assert.equal(parsePrototypeLine('Prototype was nice'), null);
+  const origin = ['Requirements approval **approve**.', `${prototypeBuiltText(2, 2.8)}.`, `${PROTOTYPE_CONFIRMED}.`];
+  assert.deepEqual(buildDecisionLog({ origin, oneCard: true }).map((l) => l.text),
+    ['Requirements agreed', prototypeBuiltText(2, 2.8), PROTOTYPE_CONFIRMED]);
+  assert.deepEqual(buildDecisionLog({ origin }).map((l) => l.text), ['Plan approved'], "not on dev's card");
+});
+
+test('C3 (D14): a stop\'s answered line is read back as a decision row, once, under its run', () => {
+  const log = buildDecisionLog({ origin: [], sliced: true,
+    runs: [{ index: 8, events: ['Loop on wire w9 (n_review) spent after its last round: sent to approval with 1 open issue(s).',
+      'Run 8: another cycle · decided by you', 'Review loop ran out with 2 minor issue(s): accepted · settled by the agents.'] }] });
+  assert.deepEqual(log.map((r) => [r.run, r.text]), [[8, 'another cycle · decided by you']], 'the run shows once, in its span');
+});
+
+test('C4 (D17): buildDecisionLog({changes}) lists one row per change it is given, after the runs', () => {
+  const changes = [
+    { id: 'R-po-3', from: 'a', to: 'b', at: '2026-11-22T15:00:00Z', source: { kind: 'chat' }, case: 'finished', run: 2, added: 9 },
+    { id: 'R-po-4', from: 'a', to: 'b', at: '2026-11-22T15:01:00Z', source: { kind: 'chat' }, case: 'none', run: null },
+  ];
+  const log = buildDecisionLog({ origin: [], sliced: true, runs: [{ index: 8, events: ['Run 8: another cycle · decided by you'] }], changes });
+  assert.deepEqual(log.map((r) => [r.run, r.text]), [[8, 'another cycle · decided by you'],
+    [null, 'R-po-3 changed · run 9 added: a small change run'], [null, 'R-po-4 changed']]);
+  assert.equal(new Set(log.map((r) => r.key)).size, log.length);
+  assert.deepEqual(buildDecisionLog({ origin: [] }), buildDecisionLog({ origin: [], changes: [] }));
+});
+
+test('C5 (D13): buildDecisionLog({verify}) adds one receipt per check with a result; without it the log is the same', () => {
+  const held = (n) => Array.from({ length: n }, (_, i) => `R-h-${i}`);
+  const verify = { checks: [
+    { round: 1, state: 'gaps', result: { held: held(15), gaps: [{ id: 'R-po-2', why: 'x', title: 'y' }] }, gapRuns: [11] },
+    { round: 2, state: 'clean', result: { held: held(16), gaps: [] }, gapRuns: [] },
+    { round: 1, state: 'verifying', result: null, gapRuns: [] },
+  ] };
+  const log = buildDecisionLog({ origin: [], sliced: true, verify });
+  assert.deepEqual(log.map((r) => [r.run, r.text]), [
+    [null, 'Verifier: 15 of 16 hold · 1 gap · run 11 added for it'],
+    [null, 'Verified: the 16 requirements owned by runs hold in the main flow'],
+  ]);
+  assert.equal(new Set(log.map((r) => r.key)).size, log.length);
+  assert.deepEqual(log.map((r) => r.kind), ['verify', 'verify'], 'drawn as .srows rows (paintFeatureLog)');
+  assert.deepEqual(buildDecisionLog({ origin: [] }), buildDecisionLog({ origin: [], verify: null }));
+});

@@ -464,3 +464,53 @@ test('cardGuardrails: a pick is trimmed, blank falls back; an unpicked Permissiv
   assert.match(moved.guardrailsNote, /the run it changes is on Permissive/);
   assert.equal(cardGuardrails({ askLink: {}, guardrailsId: 'permissive', fallback: perm }).guardrailsNote, null);
 });
+
+// Chat runs: source branch — `require` refuses a proposal with no branch, through the injected sourceBranchNeeds dep.
+test('require: a proposal with no source branch is refused and tells the assistant to ask; named branches, Folder and sourceFromPrevious pass', async () => {
+  const calls = [];
+  /** members/keys in `require`, the rest `current`; Folder members are never git targets (the real gate's rule). */
+  const needsFor = (requireKeys) => async (target, branches) => {
+    calls.push({ target: target.target, branches });
+    if (branches.sourceBranch) return [];
+    const list = target.target === 'project' ? [{ key: target.projectKey, name: target.projectName }]
+      : target.members.filter((m) => m.workMode !== 'folder').map((m) => ({ key: m.projectKey, name: m.projectName }));
+    return list.filter((t) => requireKeys.includes(t.key) && !(branches.sourceBranchByKey || {})[t.key]).map((t) => ({ ...t, mode: 'require', source: 'user' }));
+  };
+  const v = (requireKeys, extra = {}) => createProposalValidator({ ...deps, sourceBranchNeeds: needsFor(requireKeys), ...extra }).validateProposal;
+  const P = { projectKey: 'demo-00000001', brief: 'x' };
+  await checkRows([
+    { name: 'project under require, no branch → refused with the ask sentence', run: async () => {
+      const e = errs(await v(['demo-00000001'])(P));
+      assert.deepEqual(e, [PROPOSAL_ERRORS.sourceRequired('Demo')]);
+      assert.match(e[0], /Ask the user in the chat which branch/);
+    } },
+    { name: 'the dep receives the proposal\'s own branches', run: async () => {
+      calls.length = 0;
+      ok(await v(['demo-00000001'])({ ...P, sourceBranch: 'dev' }));
+      assert.deepEqual(calls, [{ target: 'project', branches: { sourceBranch: 'dev', sourceBranchByKey: null } }]);
+    } },
+    { name: 'ask / current (no require entry) → ok', run: async () => { ok(await v([])(P)); } },
+    { name: 'workspace: only the require member is named; card-wide or byKey covers it', run: async () => {
+      const W = { workspaceId: 'wks-team-0000abcd', brief: 'x' };
+      const name = basename(dirA);
+      assert.deepEqual(errs(await v(['alpha-00000001'])(W)), [PROPOSAL_ERRORS.sourceRequiredMembers([name])]);
+      ok(await v(['alpha-00000001'])({ ...W, sourceBranch: 'main' }));
+      ok(await v(['alpha-00000001'])({ ...W, sourceBranchByKey: { 'alpha-00000001': 'main' } }));
+    } },
+    { name: 'a Folder member under require → ok', run: async () => {
+      ok(await v(['notes-00000004'])({ workspaceId: 'wks-mixed-0000abcd', brief: 'x' }));
+    } },
+    { name: 'after + sourceFromPrevious → ok', run: async () => {
+      const afterRef = (id) => (id === 'abcd1234' ? { kind: 'pipeline', id, title: 'Prev', status: 'running', pipelineId: id, projectKey: 'demo-00000001', workspaceId: null, scheduleId: null } : null);
+      ok(await v(['demo-00000001'], { afterRef })({ ...P, after: 'abcd1234', sourceFromPrevious: true }));
+    } },
+    { name: 'a Shaper proposal and a tracker task proposal are refused too', run: async () => {
+      assert.ok(errs(await v(['demo-00000001'])({ ...P, shape: {} })).includes(PROPOSAL_ERRORS.sourceRequired('Demo')));
+      const SRC = [{ type: 'plugin', plugin: 'gh', sourceId: 'gh', displayName: 'GitHub', inputs: [], multiProfile: false, profiles: [] }];
+      const tracker = v(['demo-00000001'], { listTaskSources: () => SRC });
+      const r = await tracker({ projectKey: 'demo-00000001', source: { plugin: 'gh', sourceId: 'gh', taskId: '1' } }, { lookupTask: async () => ({ title: 'T', url: 'https://x/1' }) });
+      assert.ok(errs(r).includes(PROPOSAL_ERRORS.sourceRequired('Demo')), JSON.stringify(r));
+    } },
+    { name: 'no dep → ok (R-arch-8)', run: async () => { ok(await validateProposal(P)); } },
+  ]);
+});

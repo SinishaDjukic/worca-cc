@@ -1,0 +1,25 @@
+{
+  "key": "testWriter",
+  "metaVersion": 2,
+  "progressStage": "build",
+  "mockRole": "generic-producer",
+  "sideEffect": "code",
+  "promptHints": "Work inside the project directory (your cwd). Write the failing tests only, never production code. Commit nothing.",
+  "inputs": [
+    { "id": "plan", "type": "md", "directive": "Write the failing tests first: one test per behaviour the plan below names, in the project's own test runner and style. Run them and record that they fail for the right reason. Write no production code." },
+    { "id": "requirements", "type": "md", "required": false, "directive": "Write one test per example: each requirement below with an `Example:` line gets a test that checks exactly that case." }
+  ],
+  "outputs": [{ "id": "tests", "type": "md", "filename": "{base}-tests.md", "store": "run" }],
+  "domain": "coding",
+  "displayName": "Test writer",
+  "description": "Writes the failing tests from the approved plan and the run's requirement examples, before the Implementer writes any code.",
+  "color": "peach",
+  "icon": "<path d=\"M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "agentFile": "worca-cc-test-writer.md",
+  "runnerType": "producer",
+  "fanOut": true,
+  "asksQuestions": false,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 81
+}

@@ -34,6 +34,7 @@ import { classifyLoops } from '../shared/graph/loops.mjs';
 import { KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { pickOrDrop, cleanPick, resolveRolePicks } from '../shared/graph/role-slots.mjs';
 import { roleReviewOf } from '../shared/graph/role-review-step.mjs';
+import { selfReviewViolations } from '../shared/graph/self-review.mjs';
 import { pickTemplateExtras } from '../shared/graph/template.mjs';
 import { scriptNodeCtx } from '../shared/graph/script-meta.mjs';
 import {
@@ -44,11 +45,13 @@ import {
   SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_WORKFLOW_NAME, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW,
   SHAPE_REQ_WORKFLOW_ID, SHAPE_UX_REQ_WORKFLOW_ID, GRAPH_SHAPE_REQ_WORKFLOW, GRAPH_SHAPE_UX_REQ_WORKFLOW, SHAPE_REQ_WORKFLOW_IDS,
   SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID, GRAPH_SHAPE_SLICE_REQ_WORKFLOW, GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW, SHAPE_SLICE_REQ_WORKFLOW_IDS,
+  SHAPE_VERIFY_WORKFLOW_ID, GRAPH_SHAPE_VERIFY_WORKFLOW, SHAPE_VERIFY_WORKFLOW_IDS,
   GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID,
 } from './graph/builtin-workflows.mjs';
 export { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId, runnableOf, readRunnableWorkflow };
 import { registryPortsFn } from './graph/registry-ports.mjs';
-import { resolveRoleModel, roleOf, MODEL_ROLES } from './model-roles.mjs';
+import { resolveRolePick, resolveRoleModel, roleOf, MODEL_ROLES } from './model-roles.mjs';
+import { roleDefaultFor } from './role-defaults.mjs';
 import { intentEffortFor } from './effort-intents.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 
@@ -332,7 +335,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   if (reserved(id)) {
     const which = id === AUTO_WORKFLOW_ID ? AUTO_WORKFLOW_NAME
       : id === MEMORY_DEFRAG_WORKFLOW_ID ? MEMORY_DEFRAG_WORKFLOW_NAME
-      : id === SHAPE_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id) ? SHAPE_WORKFLOW_NAME
+      : id === SHAPE_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_VERIFY_WORKFLOW_IDS.includes(id) ? SHAPE_WORKFLOW_NAME
       : GRAPH_DEFAULT_WORKFLOW.name;
     throw Object.assign(
       new Error(`the name "${which}" is reserved — choose another name`),
@@ -401,6 +404,7 @@ export async function readWorkflow(id, opts = {}) {
   if (id === SHAPE_UX_REQ_WORKFLOW_ID) return GRAPH_SHAPE_UX_REQ_WORKFLOW;
   if (id === SHAPE_SLICE_REQ_WORKFLOW_ID) return GRAPH_SHAPE_SLICE_REQ_WORKFLOW;
   if (id === SHAPE_UX_SLICE_REQ_WORKFLOW_ID) return GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW;
+  if (id === SHAPE_VERIFY_WORKFLOW_ID) return GRAPH_SHAPE_VERIFY_WORKFLOW;   // small runs C5: the Verifier's run
   return readRaw(id, opts);
 }
 
@@ -571,7 +575,7 @@ export async function deleteWorkflow(id) {
   if (id === LEAN_WORKFLOW_ID) return false;    // a constant, never a row
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return false; // a constant, never a row
   if (id === PR_FIX_WORKFLOW_ID) return false;  // a constant, never a row
-  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id)) return false; // constants, never rows
+  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_VERIFY_WORKFLOW_IDS.includes(id)) return false; // constants, never rows
   if (!isSafeWorkflowId(id)) return false;      // SECURITY: reject unsafe ids
   getDb();
   let changed = 0;
@@ -646,6 +650,7 @@ function ownedPair(sel, engine, projectDir) {
 }
 
 const NO_PICK = Object.freeze({ pick: Object.freeze({}), dropped: null });
+const CLI_DECIDES = Object.freeze({ ...NO_PICK, kind: 'cli-decides' });
 
 /** The request the engine dropped, when it came from the WINNING raw layer (the first naming a model, else the first
  *  naming an effort): `{ model?, effort?, source }`, else null. A dropped layer some higher layer overrode never ran.
@@ -676,6 +681,23 @@ export async function workflowNeedsRepo(workflowId, { registry = loadAgentRegist
   return graphNeedsRepo(await readWorkflow(workflowId), registry);
 }
 
+/** Small runs C2 (D5): a per-run topology change, `transform(template) => template`, run on the private copy before
+ *  any layer resolves. The result keeps the workflow's id and version (per-workflow picks and wire budgets keyed by it
+ *  still apply), validates, and has no node reviewing its own output; anything else refuses the run with
+ *  `code: 'GRAPH_TRANSFORM_INVALID'`. */
+function transformedTemplate(copy, transform, reg, scripts) {
+  const refuse = (why, extra = {}) => Object.assign(new Error(`the run's graph change is refused: ${why}`), { code: 'GRAPH_TRANSFORM_INVALID', ...extra });
+  let out;
+  try { out = transform(copy); } catch (err) { throw refuse(err?.message || String(err)); }
+  if (!out || typeof out !== 'object' || !Array.isArray(out.nodes) || !Array.isArray(out.wires)) throw refuse('it returned no graph');
+  if (out.id !== copy.id || out.version !== copy.version) throw refuse('it changed the workflow id or version');
+  const { ok, errors } = validateGraph(out, registryPortsFn(reg, scripts), { allowUnplaceable: isReservedWorkflowId(out.id) });
+  if (!ok) throw refuse(errors.map(formatIssue).join('; '), { issues: errors });
+  const self = selfReviewViolations(out, (n) => reg[n.key]);
+  if (self.length) throw refuse(self.map((v) => `${v.reviewer} reviews its own output (${v.output})`).join('; '), { violations: self });
+  return out;
+}
+
 export async function resolveGraph(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
   if (workflowId === AUTO_WORKFLOW_ID) {
     throw new Error('the Auto workflow is decided per run — resolveGraph needs the adopted workflow id');
@@ -685,9 +707,11 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   if (stored.version !== 2) throw new Error('template is not a graph — runs on the v1 engine');
   // The RESOLVED template: a private deep copy (the alias row spreads a deep-frozen
   // constant) whose agent nodes carry the RESOLVED key after workspace substitution.
-  const tpl = structuredClone(stored);
   const reg = registry && typeof registry === 'object' ? registry : {};
   const scripts = opts.scripts && typeof opts.scripts === 'object' ? opts.scripts : loadScriptRegistry({ agentKeys: Object.keys(reg) });
+  const tpl = typeof opts.transform === 'function'
+    ? transformedTemplate(structuredClone(stored), opts.transform, reg, scripts)
+    : structuredClone(stored);
   const isWorkspace = !!opts.isWorkspace;
   const variants = isWorkspace ? workspaceVariants(reg) : {};
   // Per-project overlays. An Auto run owns its tuning (spec D7/D9): with
@@ -720,10 +744,22 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   const runModel = typeof opts.runModel === 'string' && opts.runModel.trim() ? opts.runModel.trim() : null;
   // D15: the project's team roles join the person's own; a workspace run keeps the person's roles only.
   const { roles: projectRoleSet } = ignore || runModel ? { roles: undefined } : await projectRolesFor(engine, isWorkspace ? null : projectDir);
-  const roleFor = (authored, meta) => {
-    if (ignore || runModel) return NO_PICK;
-    const hit = resolveRoleModel(engine, roleOf(`steps.${authored}`, { name: meta?.displayName || '' }), projectRoleSet ? { roles: projectRoleSet } : {});
-    return hit ? { ...owned(hit), raw: hit } : NO_PICK;
+  // #1450: an empty role resolves to Worca's default (role-defaults.mjs) instead of the tool's own; a stored
+  // "Let <tool> decide" leaves the node with no model. An Auto run skips the person's roles but keeps the Worca default
+  // floor (D-h). Claude's sign-in is read only when the floor is reached, so Codex never probes.
+  const roleFor = async (authored, meta, { floor = true } = {}) => {
+    if (runModel) return NO_PICK;
+    const role = roleOf(`steps.${authored}`, { name: meta?.displayName || '' });
+    const floorAuth = async () => (engine === 'claude' ? authState() : 'unknown');
+    let hit = ignore ? null : resolveRolePick(engine, role, { ...(projectRoleSet ? { roles: projectRoleSet } : {}), floor: false });
+    if (hit?.kind === 'cli-decides') return { ...NO_PICK, kind: 'cli-decides' };
+    if (hit) return { ...owned(hit), raw: hit, kind: 'role' };
+    if (!floor) return NO_PICK;
+    hit = ignore ? roleDefaultFor(engine, role, { claudeAuth: await floorAuth() })
+      : resolveRolePick(engine, role, { ...(projectRoleSet ? { roles: projectRoleSet } : {}), claudeAuth: await floorAuth() });
+    if (!hit) return NO_PICK;
+    const o = owned(hit);
+    return o.pick.model ? { ...o, kind: 'worca-default' } : NO_PICK;
   };
   // Memory defragment (Settings › Memory, memory-defrag-model.mjs): the run's model/effort PAIR —
   // named at start, else the global setting. The one layer that beats even the project's own node
@@ -782,7 +818,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   const roleFill = validRoleFill(opts.roleFill);
   const fillOn = !!roleFill && !ignore && !runModel && !pair;
   const fillNotes = roleFill ? { source: roleFill.source, filled: [], kept: { run: [], project: [], slot: [] } } : null;
-  const sourceOf = {};   // nodeId → { model, modelRole?, factoryRole } — internal, never emitted on the node
+  const sourceOf = {};   // nodeId → { model, modelRole?, factoryRole }; `model` is emitted as the node's modelSource (#1450)
 
   const nodes = {};
   const agentsByKey = {};
@@ -843,13 +879,16 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       || (!teamSkipped && named(slotDefaults[authored]?.model));
     let fillP = null;
     let fillDropped = null;
-    if (fillOn && !setModel) {
+    const fillRole = fillOn && !setModel ? roleFill.roles[roleOf(`steps.${authored}`, { name: meta?.displayName || '' })] : undefined;
+    // A mapped role stored as "Let <tool> decide": the node runs with no model, never Worca's default (#1450).
+    const fillCli = !!fillRole && resolveRolePick(engine, fillRole, { ...(projectRoleSet ? { roles: projectRoleSet } : {}), floor: false })?.kind === 'cli-decides';
+    if (fillOn && !setModel && !fillCli) {
       const nodeRole = roleOf(`steps.${authored}`, { name: meta?.displayName || '' });
       const hit = Object.hasOwn(roleFill.roles, nodeRole)
         ? resolveRoleModel(engine, roleFill.roles[nodeRole], projectRoleSet ? { roles: projectRoleSet } : {}) : null;
       const fillO = hit ? owned(hit) : NO_PICK;
       // What the node resolves to without the fill: its own role, else the authored or factory model.
-      const without = roleFor(authored, meta).pick.model || (named(cfg.model) ? cfg.model : fac?.pick?.model);
+      const without = (await roleFor(authored, meta, { floor: false })).pick.model || (named(cfg.model) ? cfg.model : fac?.pick?.model);
       if (fillO.pick.model && fillO.pick.model !== without) {
         if (await signedOutFor(fillO.pick.model)) {
           fillDropped = { setting: roleFill.source, nodeId: node.id, wanted: cleanPick(hit) };
@@ -860,11 +899,13 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     let cfgEff = cfg;
     let factoryApplied = false;
     let nodeDefaultWanted = null;
-    if (fac && !fillP && !named(cfg.model) && !named(cfg.effort)) {
+    if (fac && !fillP && !fillCli && !named(cfg.model) && !named(cfg.effort)) {
       const higher = !!(selP.model || selP.effort || legacyP.model || legacyP.effort || team.model || team.effort);
       // Your role beats Worca's factory default: the default only fills a slot no role covers (the role layer below
-      // then applies, as it does on any node no other layer names).
-      if (!pair && !higher && roleFor(authored, meta).pick.model) {
+      // then applies, as it does on any node no other layer names). A Worca role default is nobody's role: the factory
+      // default wins over it; a stored "Let <tool> decide" is a role.
+      const mine = !pair && !higher ? await roleFor(authored, meta, { floor: false }) : NO_PICK;
+      if (mine.kind === 'cli-decides' || (mine.kind === 'role' && mine.pick.model)) {
         // nothing: the role applies
       } else if (!pair && !higher && await signedOutFor(fac.pick.model)) {
         nodeDefaultWanted = cleanPick(fac.pick);
@@ -876,13 +917,16 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     }
     const cfgO = owned(cfgEff);
     const cfgP = cfgO.pick;
-    const baseModel = firstDefined(selP.model, legacyP.model, team.model, fillP?.model, cfgP.model);
+    // Under fillCli no set layer names a model (!setModel), and the fill outranks the template's: no model at all.
+    const baseModel = fillCli ? undefined : firstDefined(selP.model, legacyP.model, team.model, fillP?.model, cfgP.model);
     // An effort only travels with the model that advertises it: an override naming its own model must not
     // inherit a lower layer's effort — the legacy per-role effort included (a per-run overlay or a node pick
     // naming a model on wf_default).
     const baseEffort = selP.model ? selP.effort : fillP ? firstDefined(selP.effort, legacyP.effort, team.effort, fillP.effort)
       : firstDefined(selP.effort, legacyP.effort, team.effort, (legacyP.model || team.model) ? undefined : cfgP.effort);
-    const roleO = baseModel === undefined && baseEffort === undefined ? roleFor(authored, meta) : NO_PICK;
+    // #1450: a layer that names only an effort still takes its model from the role (or Worca's default), at that
+    // layer's effort: a node with no model would run on the tool's own default.
+    const roleO = fillCli ? CLI_DECIDES : baseModel === undefined ? await roleFor(authored, meta) : NO_PICK;
     const roleP = roleO.pick;
     // No silent fallbacks: the winning layer's request, when the engine dropped it (only layers that were consulted;
     // the merged `sel` is the run overlay where it names the field itself, else the project). A pinned pair bypasses.
@@ -897,7 +941,9 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     // A dropped factory default is recorded as wanted when nothing else was.
     const wanted = layerWanted || (!pair && nodeDefaultWanted ? { ...nodeDefaultWanted, source: 'default' } : null);
     const nodeModel = pair ? pair.model : (roleP.model ?? baseModel);
-    const explicitEffort = pair ? pair.effort : (roleP.model ? roleP.effort : baseEffort);
+    // An effort-only layer's effort rides the role's model when that model offers it, else the role's own effort.
+    const layerEffortOnRole = roleP.model && baseEffort !== undefined ? owned({ model: roleP.model, effort: baseEffort }).pick.effort : undefined;
+    const explicitEffort = pair ? pair.effort : (roleP.model ? (layerEffortOnRole ?? roleP.effort) : baseEffort);
     // Effort intents (effort-intents.mjs): a run start (fillIntents) fills an unset effort from the step's intent for its
     // model's family, clamped to that model's efforts. A named effort always wins; a pinned pair carries its own effort.
     // The catalog is read only for a mapped family.
@@ -941,9 +987,11 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       factoryNotes.push({ setting: fr.setting, nodeId: node.id, role: fr.roleKey, wanted: fr.pick, used: { model: nodeModel ?? runModel, effort: eff } });
     }
     sourceOf[node.id] = {
-      model: pair ? 'pair' : roleP.model ? 'role' : selP.model ? (ownSel?.model ? 'run' : 'project') : legacyP.model ? 'legacy'
-        : team.model ? 'slot' : fillP ? roleFill.source : cfgP.model ? (factoryApplied ? 'factory' : 'template') : null,
-      ...(roleP.model ? { modelRole: roleOf(`steps.${authored}`, { name: meta?.displayName || '' }) } : {}),
+      model: pair ? 'pair' : roleP.model ? (roleO.kind === 'worca-default' ? 'worca-default' : 'role')
+        : selP.model ? (ownSel?.model ? (ignore ? 'auto' : 'run') : 'project') : legacyP.model ? 'legacy'
+          : team.model ? 'slot' : fillP ? roleFill.source : fillCli ? 'cli-decides' : cfgP.model ? (factoryApplied ? 'factory' : 'template')
+            : roleO.kind === 'cli-decides' ? 'cli-decides' : runModel ? 'run-model' : null,
+      ...(roleP.model && roleO.kind === 'role' ? { modelRole: roleOf(`steps.${authored}`, { name: meta?.displayName || '' }) } : {}),
       ...(fillP ? { fill: true } : {}),
       factoryRole,
     };
@@ -968,6 +1016,8 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       config: { ...cfg },
       model: nodeModel,
       effort: nodeEffort,
+      // #1450: who chose the model — the premium guard's "nobody chose" (model-guard.mjs) and the UI's captions.
+      modelSource: sourceOf[node.id].model,
       // workspaceFanOut forces fan-out on a workspace run (the generic
       // replacement for the v1 FANOUT_ELIGIBLE key list).
       fanOut: isWorkspace && meta.workspaceFanOut
@@ -1038,9 +1088,12 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     if (runModel && needsSignIn(runModel)) candidates.push({ model: runModel, source: 'runModel' });
     if (candidates.length && (await authState()) === 'signed-out') signInBlocked.push(...candidates);
   }
+  // #1450: Claude Code's sign-in when this resolve read a definite one ('signed-in' | 'signed-out'); absent otherwise.
+  const authSeen = authP ? await authP : 'unknown';
   return {
     template: tpl, ports: portsFn, loops, nodes, wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys,
     ...(factoryNotes.length ? { factoryNotes } : {}), ...(signInBlocked.length ? { signInBlocked } : {}),
+    ...(authSeen === 'unknown' ? {} : { claudeAuth: authSeen }),
     ...(fillNotes ? { fillNotes } : {}),
     ...(Number.isInteger(stored.versionNo) ? { versionNo: stored.versionNo } : {}), // the named version that runs, only when one does
   };

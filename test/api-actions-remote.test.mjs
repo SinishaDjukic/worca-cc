@@ -160,6 +160,12 @@ test('remote mode: start is refused with 403 ACTIONS_DISABLED', async () => {
   assert.equal((await remote('GET', `/api/runs/${id}/actions?projectKey=${key}`)).body.enabled, false);
 });
 
+test('remote mode: open-in-editor is refused on a hosted deployment (403 ACTIONS_DISABLED)', async () => {
+  const r = await remote('POST', `/api/runs/${id}/open-in-editor?projectKey=${key}`, { file: 'README.md', line: 1 });
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, 'ACTIONS_DISABLED');
+});
+
 test('remote mode: the config can still be edited while actions are off (D4)', async () => {
   const r = await remote('PUT', `/api/projects/${key}/actions`, { setup: `${NODE} -e "console.log('installing')"`, actions: [RUN] });
   assert.equal(r.status, 200);

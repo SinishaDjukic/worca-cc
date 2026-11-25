@@ -32,10 +32,11 @@ export const ROLE_REVIEW_SINKS = Object.freeze([REFINER_SINK, 'implementer']);
 
 /** What each target reviews, as data: the port the findings leave on, the input whose fresh token continues the pass,
  *  the mock role of its slices, its prompt words, the input it reviews (`reviewedPort`, also the output that passes
- *  the reviewed file on) and the findings file's head line. The engine reads this table; it never compares a target. */
+ *  the reviewed file on), the findings file's head line, and whether it is a run's plan review (`reviewsPlan`: a run that
+ *  names its plan reviewers narrows this one). The engine reads this table; it never compares a target. */
 export const ROLE_REVIEW_TARGETS = Object.freeze({
   plan: Object.freeze({ findingsPort: 'findings', continuePort: 'revise', mockRole: 'plan-review', noun: 'plan', sectionHint: 'the plan section',
-    reviewedPort: 'plan', reviewedHead: 'Plan reviewed', requirementConcerns: true }),
+    reviewedPort: 'plan', reviewedHead: 'Plan reviewed', requirementConcerns: true, reviewsPlan: true }),
   diff: Object.freeze({ findingsPort: 'review', continuePort: 'done', mockRole: 'code-review', noun: 'diff', sectionHint: 'the file and line',
     reviewedPort: 'plan', reviewedHead: 'Diff reviewed against the plan' }),
   requirements: Object.freeze({ findingsPort: 'findings', continuePort: 'revise', mockRole: 'requirements-review', noun: 'requirements',
@@ -162,6 +163,9 @@ export function rolesForRound(roles, round, lastRound = null) {
   });
 }
 
+/** A finding's proposed requirement text: one line (whitespace runs collapsed), at most 300 characters, '' when absent. */
+const proposedOf = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, 300).trim() : '');
+
 /** One reviewer's raw verdict JSON → the stored role record. Ids are `key-round-n` (`ux-1-2`). Every expected
  *  checklist id gets an entry; one the reviewer left out is `unmet`, so it can never earn a round-2 skip. A finding
  *  keeps its `requirement` only when that id is one of `requirementIds` (the run's agreed ids). */
@@ -175,7 +179,9 @@ export function roleRecord(role, round, verdict, expectedIds = [], { requirement
     section: oneLine(i.section || i.location),
     fix: oneLine(i.fix || i.detail),
     status: 'open',
-    ...(typeof i.requirement === 'string' && requirementIds.includes(i.requirement) ? { requirement: i.requirement } : {}),
+    ...(typeof i.requirement === 'string' && requirementIds.includes(i.requirement) ? { requirement: i.requirement,
+      // Small runs C4 (D9): the requirement's new text the reviewer proposes, kept only with the requirement.
+      ...(proposedOf(i.proposed) ? { proposed: proposedOf(i.proposed) } : {}) } : {}),
   }));
   const given = new Map((Array.isArray(verdict?.checklist) ? verdict.checklist : [])
     .filter((c) => expectedIds.includes(String(c?.id)))

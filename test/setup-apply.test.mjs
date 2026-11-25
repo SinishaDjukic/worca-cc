@@ -212,6 +212,15 @@ test('AC-3.3: one write, one ordered result per side effect', async () => {
   assert.doesNotMatch(JSON.stringify(out), /"pw"/);
 });
 
+test('a cliDecides role is accepted and adds no role-test step (#1450)', async () => {
+  seed({});
+  const { deps } = fakeDeps();
+  const plan = await planSetupApply({ models: { modelRoles: { claude: { deep: { cliDecides: true }, everyday: { model: 'claude-sonnet-5-5' } } }, testRoles: true } }, deps);
+  assert.deepEqual(plan.steps.map((s) => s.id), ['role-test.claude.everyday']);
+  await commitSetupPlan(plan, deps);
+  assert.deepEqual(read().modelRoles.claude.deep, { cliDecides: true });
+});
+
 test('AC-3.3 full order: every side-effect kind, roles labelled with their engine', async () => {
   seed({});
   const { deps, calls } = fakeDeps();

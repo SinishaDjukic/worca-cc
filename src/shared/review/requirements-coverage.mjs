@@ -2,7 +2,7 @@
 // engine's role-review step reads for `checklist: 'coverage'`. One role, Requirements, checks the bound R-ids; every
 // other role keeps the generic diff brief. An id the diff does not deliver is a `major` issue with a fixed title, so
 // the step's existing routing blocks on it. Also the per-slice check a slice row draws. Pure and browser-safe.
-import { criteriaList, criterionIds } from './coverage.mjs';
+import { criteriaList, criterionIds, criteriaExamples } from './coverage.mjs';
 import { genericRoleBrief } from '../graph/role-review-step.mjs';
 
 export const COVERAGE_ROLE = Object.freeze({ key: 'requirements', label: 'Requirements' });
@@ -19,10 +19,15 @@ export const uncoveredTitle = (id) => `${id} · not covered by the diff`;
 
 /** A requirements text narrowed to the criterion lines of `ids`, re-emitted as `- **id** text` in input order.
  *  `ids` null returns the text unchanged. */
-export function onlyCriteria(markdown, ids) {
+export function onlyCriteria(markdown, ids, { examples = false } = {}) {
   if (ids === null || ids === undefined) return markdown;
   const keep = new Set(ids);
-  return criteriaList(markdown).filter((c) => keep.has(c.id)).map((c) => `- **${c.id}** ${c.text}`.trimEnd()).join('\n') + '\n';
+  // Small runs C2 (D11): `examples` keeps each kept item's indented `Example:` line under it (coverage.mjs EXAMPLE_RE).
+  const ex = examples === true ? criteriaExamples(markdown) : null;
+  return criteriaList(markdown).filter((c) => keep.has(c.id)).map((c) => {
+    const line = `- **${c.id}** ${c.text}`.trimEnd();
+    return ex?.get(c.id) ? `${line}\n  Example: ${ex.get(c.id)}` : line;
+  }).join('\n') + '\n';
 }
 
 /** The slice row's check: one row per id, unmet only when an issue carries the id's uncovered title (a role prefix

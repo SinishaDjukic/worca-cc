@@ -27,13 +27,13 @@ const intents = (deep, light, standard) => Object.freeze(Object.fromEntries([
 export const STEP_INTENTS = intents(
   // deep — judgement
   ['planner', 'planReviewer', 'refiner', 'reviewer', 'deckReviewer', 'deckAudit', 'requirementsReviewer', 'requirementsRefiner',
-    'workspaceReviewer', 'promoReview', 'architect'],
+    'workspaceReviewer', 'promoReview', 'architect', 'featureVerifier'],
   // light — mechanical
   ['decomposer', 'manualTestsChecklist', 'deckExport', 'memoryDefragmenter', 'promoCapture'],
   // standard — producers and everything else
   ['implementer', 'clarify', 'architectSetup', 'deckBuilder', 'deckClarify', 'deckNarrative', 'deckOutputs', 'deckSystem',
     'manualWebUiTesting', 'promoExplorer', 'promoMascot', 'promoScenes', 'promoSetup', 'promoVoice', 'promoWriter',
-    'requirementsDrafter', 'workspaceScanner', 'workspaceSynthesizer', 'workspaceUsageMapper'],
+    'requirementsDrafter', 'testWriter', 'workspaceScanner', 'workspaceSynthesizer', 'workspaceUsageMapper'],
 );
 
 /** For keys not in STEP_INTENTS (plugin and user agents): the lowercased display name, as roleOf's DEEP_STEP_NAMES. */

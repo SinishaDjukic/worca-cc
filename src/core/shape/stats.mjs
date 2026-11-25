@@ -1,5 +1,6 @@
 // src/core/shape/stats.mjs — Shaper D28: what a shaped run records about its shaping. Pure.
 import { normalizeStartCare } from '../../shared/shape/feature-record.mjs';
+import { normalizePrototype } from '../../shared/shape/prototype.mjs';
 
 /** The nodes that run before the approval stop; every other step row is building. */
 export const SHAPING_NODES = Object.freeze(['n_clarify', 'n_plan', 'n_roles', 'n_refine']);
@@ -21,9 +22,12 @@ export function shapeRecordFrom(stored) {
     ...(s.smallRuns === true ? { smallRuns: true } : {}),
     // Shaper small runs B2 (D8): the Care chosen at the Start step, kept only when it is a valid record.
     ...careEntry(s.care),
+    // Shaper small runs C1 (D12): the Prototype step's state, kept only when it is a valid record.
+    ...protoEntry(s.prototype),
   };
 }
 
+const protoEntry = (raw) => { const p = raw ? normalizePrototype(raw) : null; return p ? { prototype: p } : {}; };
 const careEntry = (raw) => { const c = raw ? normalizeStartCare(raw) : null; return c?.ok ? { care: c.care } : {}; };
 
 /** A Clarify ask's counts from the RAW answer payload ({answers} or a bare array): no non-blank choice = skipped. */
@@ -59,5 +63,6 @@ export function buildShapeStats(record, steps) {
     cost: { shaping: round4(shaping), building: round4(building) },
     ...(record.smallRuns === true ? { smallRuns: true } : {}),
     ...careEntry(record.care),
+    ...protoEntry(record.prototype),
   };
 }

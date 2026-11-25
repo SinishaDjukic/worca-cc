@@ -710,10 +710,40 @@ test('B1 one-line run rows are 32px: scoped under the chat member host, they out
   assert.match(css, new RegExp(String.raw`@media \(max-width:600px\)\{[^}]*\}\s*${empty}\{grid-template-areas:"dot num main go";\}`));
   assert.match(css, new RegExp(String.raw`@container chat-rc-members \(width <= 360px\)\{[^}]*\}\s*${empty}\{grid-template-areas:"dot num main main";\}`));
   assert.match(css, new RegExp(String.raw`${empty} > :is\(\.run-member-pr, \.run-member-cost\)\{display:none;\}`));
+  // C2: a narrow row WITH a PR chip or a cost stays one line too (the prototype's #build rows): the chip takes the last
+  // column, the cost is dropped, at the phone width and in the narrow container alike.
+  for (const at of [String.raw`@media \(max-width:600px\)`, String.raw`@container chat-rc-members \(width <= 360px\)`]) {
+    const block = css.match(new RegExp(String.raw`${at}\{[^]*?\n\}`, 'g')).find((b) => b.includes('"dot num main pr"'));
+    assert.ok(block, at);
+    assert.match(block, new RegExp(String.raw`${table} > \.run-member\{grid-template-areas:"dot num main pr";\}`));
+    assert.match(block, /\.run-member-cost\)\{display:none;\}/);
+  }
   // No selector starts with .run-member (the split tool would hand it to runs/group-page), and the group table is dev's.
   assert.deepEqual(css.split('\n').filter((l) => /^\s*\.run-member/.test(l)), []);
   const groupCss = await readFile(new URL('../ui/public/runs/group-page.css', import.meta.url), 'utf8');
   for (const text of ['is-one-line', '--member-', '.run-member-state']) assert.ok(!groupCss.includes(text), text);
+});
+
+test('item 7: the feature page\'s one-line rows have their own twins under .gpage-runs: 32px, one line at every width, group-page.css untouched', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const css = await readFile(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
+  const host = String.raw`\.gpage-runs \.run-members`;
+  const table = String.raw`${host}\.is-table\.is-one-line`;
+  assert.match(css, new RegExp(String.raw`${table} > \.run-member\{[^}]*min-height:32px[^}]*padding:5px 0 6px[^}]*line-height:20px`));
+  assert.match(css, new RegExp(String.raw`${host}\.is-one-line \.run-member-main\{[^}]*flex-direction:row[^}]*align-items:center`));
+  assert.match(css, new RegExp(String.raw`${host}\.is-one-line \.run-member-title\{[^}]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;\}`));
+  assert.match(css, new RegExp(String.raw`\ndiv${table}\{grid-template-columns:16px 20px minmax\(0,1fr\) max-content 64px 16px;column-gap:8px;\}`));
+  // Narrow: one line, the PR chip in the last column, no cost. The container query is a range form (the gates read
+  // group-page.css's first max-width block by its text).
+  for (const at of [String.raw`@media \(max-width:600px\)`, String.raw`@container gpage-runs \(width <= 480px\)`]) {
+    const block = css.match(new RegExp(String.raw`${at}\{[^]*?\n\}`, 'g')).find((b) => b.includes('.gpage-runs .run-members'));
+    assert.ok(block, at);
+    assert.match(block, new RegExp(String.raw`${table}\{grid-template-columns:16px 20px minmax\(0,1fr\) max-content;`));
+    assert.match(block, new RegExp(String.raw`${table} > \.run-member\{grid-template-areas:"dot num main pr";\}`));
+    assert.match(block, /\.run-member-cost\)\{display:none;\}/);
+  }
+  assert.doesNotMatch(css, /@container gpage-runs \(max-width/);
+  assert.deepEqual(css.split('\n').filter((l) => /^\s*\.gpage/.test(l)), [], 'a rule that starts with .gpage would move to runs/group-page');
 });
 
 test('B4 phone width: the Split\'s fold lines wrap inside the card (the challenge line overflowed at 375px)', async () => {

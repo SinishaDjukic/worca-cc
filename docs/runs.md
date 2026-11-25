@@ -145,13 +145,28 @@ page then offers **Push <source>** instead of a pull request.
 Worca only ever fast-forwards. If the source branch moved in the meantime, its checkout has uncommitted changes, or
 the run didn't finish, the work stays on its own branch, and you get the commands to merge it yourself.
 
+### Chat runs: source branch
+
+A run proposed in a chat starts from the branch the chat names. When it names none, the setting **Chat runs: source
+branch** (Settings › Runs) decides, and a project can override it under its Settings › Chat:
+
+- **Ask me on the card** (the default): the run card shows its Source branch field at every interface mode, with
+  "Pick a branch…" and a hint, and Start stays off until you pick one. A Start from Discord, Slack or Telegram of
+  such a card answers "confirm in worca": open the chat in worca and pick the branch on the card.
+- **Current (checked out)**: the run starts from the branch the project has checked out, as before. The card names it,
+  for example "Current (checked out): feat/x".
+- **Only when the chat names one**: the chat asks you which branch to use before it proposes the run.
+
+Folder projects, folders that are not git repositories, and machines without git never need a branch. Worca checks
+the setting again when you start or schedule the card, so a card proposed earlier follows the setting as it is now.
+
 ### Following runs live
 
 **Runs** in the sidebar lists every run, live and finished. Its **View** menu shows All, Needs you, Running,
 Waiting, Finished, **Ready to ship** (finished, no PR yet) or Archived, and groups runs by project or by date.
 
 A live run's page shows its state and current step, the time ticking, its cost and the files it changed. **Live
-view** shows the running step inside its workflow graph. **Diff** shows the worktree's changes so far. **Logs**
+view** shows the running step inside its workflow graph. **Diff** shows the worktree's changes so far, with **Open in <Editor>** at the top right (edits you make there go into the run). Each file's head, on live and finished runs, has an icon that opens the file at its first changed line; on a finished run that is not checked out, that one click checks it out first (see [Actions](actions.md#built-ins)). **Logs**
 streams every step with search, and at Expert you can filter by source, level, step and cycle.
 
 The top bar's **Activity** pill counts what needs you and what is running. To hear about it outside the tab, turn

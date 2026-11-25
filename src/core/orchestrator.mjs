@@ -26,7 +26,8 @@ import {
 import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW, writeGraphWorkflow, readWorkflow, isReservedWorkflowId } from './workflows.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
-import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
+import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_SLICE_REQ_WORKFLOW_IDS, withoutRequirementsInput } from './graph/builtin-workflows.mjs';
+import { careRunGraph } from './shape/care-run.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
 import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
@@ -42,18 +43,26 @@ import { applyAgreement, pendingAgreement, validateAgreement } from './requireme
 import { checkPlan } from './shape/check.mjs';
 import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
-import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureClarify, featureNotes } from './shape/features.mjs';
+import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureClarify, featureNotes, featureView, carriedRequirements } from './shape/features.mjs';
+import { changeCaseOf } from '../shared/shape/req-change.mjs';
 import { fileSha, planOutputOf } from './shape/outline-file.mjs';
-import { splitRules, smallRunsOfFeature, careOfFeature } from './shape/small-runs.mjs';
+import { splitRules, smallRunsOfFeature, careOfFeature, prototypeOfFeature, originPipelineOfFeature } from './shape/small-runs.mjs';
+import { runPrototypeStep, validatePrototypeAnswer, PROTOTYPE_ASK_KIND } from './shape/prototype-step.mjs';
+import { createPrototypeDesign, startPrototypeBuild, awaitBuild as awaitPrototypeBuild, freezePrototype, stagePrototypeForRun,
+  registryOf, prototypeBrief } from './shape/prototype-design.mjs';
+import { normalizePrototype, normalizeReview, prototypeRemarkBlock, prototypeReviewBlock, remarkTarget, rewriteRequirement,
+  screenRequirements, validRemarkProposal, piecesOf } from '../shared/shape/prototype.mjs';
+import { flagEnabled } from './flags.mjs';
+import { distDir as designDistDir, designWorkDir } from './design/paths.mjs';
 import { splitChallengePlan, normalizeChallenge, challengeBlock, runSplitChallenge, skipsPlanAfterSplit, splitRevisable, splitApproveError, keptObjections, splitAskFields, planReviewNode, CHALLENGER_LABEL, CHALLENGE_FILE_MAX_BYTES } from './shape/split-step.mjs';
 import { careStartAsk, careAnswerValidator } from './shape/care-start.mjs';
 import { careAuditLine } from './run-harness.mjs';
-import { careFactsOf, careModelRoles, CARE_LABELS } from '../shared/shape/feature-record.mjs';
+import { careFactsOf, careModelRoles, careRunPlan, confirmedKindsOf, CARE_LABELS } from '../shared/shape/feature-record.mjs';
 import { readRunPrAuto } from './pr-auto.mjs';
-import { checkSlices, applyOutlineEdits, normalizeOutline, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE } from '../shared/shape/slices.mjs';
+import { checkSlices, applyOutlineEdits, normalizeOutline, keepConfirmed, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE } from '../shared/shape/slices.mjs';
 import { onlyCriteria } from '../shared/review/requirements-coverage.mjs';
-import { DEFAULT_PERSPECTIVES, perspectiveByKey } from '../shared/shape/perspectives.mjs';
-import { criterionPerspective } from '../shared/shape/requirements.mjs';
+import { DEFAULT_PERSPECTIVES, perspectiveByKey, roleLabelOf } from '../shared/shape/perspectives.mjs';
+import { criterionPerspective, runRolesOf } from '../shared/shape/requirements.mjs';
 import { normalizePlanConcern, planConcernFileName, concernFeedbackSection, requirementConcernOf, requirementConcernFeedbackSection } from '../shared/review/plan-concern.mjs';
 import { ensureHouseBrief } from './house-brief.mjs';
 import { extractChecklist } from '../shared/shape/checklist.mjs';
@@ -61,20 +70,25 @@ import { applyChecklist, checklistFindingsMarkdown, mergeReportedChecklists, nor
 import { REFINER_SINK, roleReviewOf, roleChecklistOf, runningRoles, rolesForRound, roleTaskId, roleRecord, findingsMarkdown, refinerVerdict, roleTargetOf, roleRoutingVerdict } from '../shared/graph/role-review-step.mjs';
 import { DISPOSITIONS_MAX_BYTES, applyDispositions, withCounts, normalizeConflicts, dispositionsPathFor, conflictClarifications, withClarifications } from '../shared/review/findings.mjs';
 import { currentPass } from '../shared/shape/role-review.mjs';
+import { gateStop, planStop, concernStop, stopDoneText, stopOptionOf, settledLine, SETTLED_CONCERN_FEEDBACK } from '../shared/shape/run-stops.mjs';
+import { verifyResult, verifyRoundPlan, verifyStop } from '../shared/shape/verifier.mjs';
+import { VERIFY_RESULT_FILE } from './shape/verifier.mjs';
 import { criteriaCheck, criteriaList, criterionIds, coverageOf, criteriaExamples } from '../shared/review/coverage.mjs';
 import { normalizeDecisions, conflictDecisions, validateDecisionPicks, decisionClarifications } from '../shared/review/decisions.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { sigkillGraceMs } from './engines/spawn.mjs';
-import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, decompositionProblems, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS, _testing as executorTesting } from './graph/executor.mjs';
+import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, decompositionProblems, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS, TEST_WRITER_AGENT_KEY, _testing as executorTesting } from './graph/executor.mjs';
 import { serialQueue, measureCodeCursor, collectStepEvidence, withoutMembers } from './graph/human-evidence.mjs';
 import { estimateStepHours, resolveConstants, sumStepHours } from '../shared/human-estimate.mjs';
 import { diffNumstat } from './git-info.mjs';
 import { humanEstimateOverrides } from './settings.mjs';
-import { renderPromptArtifact } from './phases.mjs';
-import { listModels, modelHasBaseUrlRouting, resolveRunConfig, stepSlotDefaults, slotSourceLines } from './config.mjs';
+import { renderPromptArtifact, mockMarkers } from './phases.mjs';
+import { listModels, modelHasBaseUrlRouting, resolveRunConfig, stepSlotDefaults, slotSourceLines, modelCostConfig, bridgedModelInfo } from './config.mjs';
+import { isPremiumModel } from './model-tiers.mjs';
+import { noModelLines } from './role-defaults.mjs';
 import { defragSlotPair, utilityModelFor } from './settings-cascade.mjs';
 import { resolveDefragModel, agentPairText } from './memory-defrag-model.mjs';
-import { withRole } from './model-roles.mjs';
+import { withRole, roleOf } from './model-roles.mjs';
 import { describeScanModels } from './workspace-scan-run.mjs';
 import { assembleShape, normalizeShape, ShapeError } from '../shared/graph/assemble.mjs';
 import { blockingIssues } from '../shared/graph/verdict.mjs';
@@ -141,9 +155,17 @@ export class GraphOrchestrator extends RunHarness {
     this._graphError = null;     // first genuine execution error (identity preserved)
     this._planVersion = 0;       // {vsuffix} ticks, carried across a resume
     this._planRevise = null;     // {id, path}: a revise answered just before a pause (F19), carried across a resume
+    this._protoAnswer = null;    // C1 (D16): {key, payload} of the last Prototype answer, until the step persisted it
+    this._protoSeq = 0;          // C1: prototype asks raised by this orchestrator
+    this._protoAskId = null;     // C1: the open (or last) prototype ask's id, for who answered a stop
+    this._protoCtx = undefined;  // C1 (D14): this run's staged prototype context, once read
+    this._protoShown = null;     // C1: the last announced moment|round|build of the Prototype step
     this._planConcernAnswer = null; // {id, payload}: a plan concern answered just before a pause (#990 s5), carried across a resume
     this._planAwayApproved = null;  // {id}: a plan ask Away mode approved just before a pause, carried across a resume
     this._planConcernSeen = {};     // {[id]: 'raised' | 'decided'}: audited once per concern across resumes (#990 s5)
+    this._smallRunsMarked = null;   // Small runs C3 (D7): fixed before the scheduler starts, carried on the resume point
+    this._stopAnswer = null;        // C3 (D14): {id, payload} of a stop answered just before a pause, replayed once
+    this._stopSettled = new Set();  // C3 (D3): gate ids the agents settled (the gate's audit line names them)
     this._planConcernHeld = null;   // {id, concern}: the parsed concern, carried across a resume (the agent need not rewrite it)
     this._slicingDone = false;   // L2: the Planner's slicing offer is over (no outline, or one decided); carried across a resume
     this._outlineRevise = null;  // the feedback of an outline revise answered before a pause, carried across a resume
@@ -230,12 +252,23 @@ export class GraphOrchestrator extends RunHarness {
     // Shaper small runs B2 (D13): a later run of a marked feature fills its Default agents' models from the feature's Care.
     const featureId = this.runShape?.slice?.feature || null;
     const care = featureId && smallRunsOfFeature(featureId) ? careOfFeature(featureId) : null;
+    // Small runs C2 (D7): a slice run of a marked feature with owned requirement ids also takes its Care plan's graph
+    // (Test writer, fix cycles, second opinion), fixed here at start in `manifest.careRun`.
+    const ownedIds = this.runShape?.slice ? sliceRequirementIds(this.runShape.slice) : [];
+    const careRun = care?.position && SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(this.workflowId) && ownedIds.length
+      ? careRunPlan(care.position, { runRoles: runRolesOf(ownedIds), lead: this.runShape?.lead || null }) : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
       ...this._graphResolveOptions({ overlay, defrag, scan }),
       ...(care ? { roleFill: { source: 'care', roles: careModelRoles(care.position) } } : {}),
+      ...(careRun ? { transform: (t) => this._careRunGraph(t, careRun) } : {}),
     });
     this._adoptResolvedGraph(resolved);
     if (care) this._logCareFill(care.position, resolved);
+    if (careRun) {
+      const line = this._careRunLine(careRun, overlay);
+      this._log('orchestrator', 'info', line);
+      this._pendingAudits.push(`${line}.`);
+    }
     // A model a person set that needs the Claude Code sign-in while it is signed out: the engine gate refuses the start
     // (RunHarness#_engineGate). Fresh starts only: resume never resolves, so this stays null there.
     this._signInBlocked = resolved.signInBlocked
@@ -247,6 +280,21 @@ export class GraphOrchestrator extends RunHarness {
     for (const line of slotSourceLines(engineNow, this.resolved.nodeCtx, stepSlotDefaults(engineNow, { projectDir: this.projectDir, workspace: this.isWorkspace }))) {
       this._log('orchestrator', 'info', line);
       this._pendingAudits.push(`${line}.`);
+    }
+    // #1450: say which steps run on a Worca default, which ones the tool picks for ("Let Claude Code decide"), and warn
+    // where Worca cannot know the model at all (another harness, or Claude Code signed out: no default was given).
+    const agentNodes = Object.values(this.resolved.nodeCtx || {}).filter((nc) => nc.kind === 'agent');
+    const signedOut = engineNow === 'claude' && resolved.claudeAuth === 'signed-out' && agentNodes.some((nc) => !nc.model && nc.modelSource === null);
+    const noModel = noModelLines(engineNow, this.resolved.nodeCtx, {
+      claudeAuth: signedOut ? 'signed-out' : 'unknown', labelOf: ((labels) => (id) => labels?.[id] || id)(await this._modelLabels()),
+      roleOf: (nc) => roleOf(`steps.${nc.authoredKey || nc.key}`, { name: nc.meta?.displayName || '' }),
+    });
+    // Only warnings reach the audit: the per-step "runs on X (Worca's default)" lines stay in the run log (the Agents
+    // tab shows the resolved model), so the audit, and the feature log keyed by its positions, keep dev's shape.
+    const noModelWarns = signedOut || !['claude', 'codex'].includes(engineNow);
+    for (const line of noModel) {
+      this._log('orchestrator', noModelWarns ? 'warn' : 'info', line);
+      if (noModelWarns) this._pendingAudits.push(line);
     }
     // No silent fallbacks: name each pick the engine dropped (run log + audit, once, at start).
     for (const line of this._notePickDrops()) {
@@ -274,6 +322,7 @@ export class GraphOrchestrator extends RunHarness {
     // What THIS run was told to use over the project's settings, beside the cells it resolved to (the run page marks
     // those pills "this run only"; resume reads the cells, never this).
     if (overlay) manifest.runOverlay = structuredClone(overlay);
+    if (careRun) manifest.careRun = structuredClone(careRun);
     // D8: the named version this run used (plans/workflow-tests-plan.md); absent = the workflow's row.
     if (Number.isInteger(resolved.versionNo)) manifest.workflowVersion = { no: resolved.versionNo };
     return {
@@ -281,6 +330,44 @@ export class GraphOrchestrator extends RunHarness {
       agentKeys: new Set(this.resolved.agentKeys),
       workflow: { id: this.workflowId, name: this.resolved.template.name || this.workflowId },
     };
+  }
+
+  /** Small runs C2 (D6): the Care graph of a slice run (a seam the tests stub with a refused transform). */
+  _careRunGraph(template, plan) {
+    return careRunGraph(template, plan);
+  }
+
+  /** Small runs C2 (run 1): the origin planning run builds slice 1 itself. Its Care graph (Test writer, fix cycles, second
+   *  opinion) was applied at the Start step (`_careOriginGraph`); once its Split is approved and slice 1's ids are known,
+   *  it stamps slice 1's Care plan on the live manifest, so the plan review runs Care's reviewers (`_careRoles`).
+   *  Idempotent; a run without Care, owned ids or a manifest is left as dev's. */
+  async _careOriginRun() {
+    const rec = this._shapeRec;
+    const manifest = this.state.stepper;
+    const sl = this.runShape?.slice;
+    if (!rec?.smallRuns || !rec.care?.position || !manifest?.graph || manifest.careRun || sl?.index !== 1) return;
+    const ownedIds = sliceRequirementIds(sl);
+    if (!ownedIds.length) return;
+    const plan = careRunPlan(rec.care.position, { runRoles: runRolesOf(ownedIds), lead: this.runShape?.lead || null });
+    // What the run actually builds with: a graph the Care transform could not shape keeps the Implementer writing tests.
+    plan.testWriter = plan.testWriter && manifest.graph.nodes.some((n) => n.key === TEST_WRITER_AGENT_KEY);
+    manifest.careRun = structuredClone(plan);
+    const line = this._careRunLine(plan, manifest.runOverlay || null);
+    this._log('orchestrator', 'info', line);
+    if (this.pipeline) await appendAudit(this.pipeline.dir, `${line}.`).catch(() => {});
+    await this._persist();
+  }
+
+  /** Small runs C2: the run's one Care line, its fix-cycle limit read from the resolved code review loop (a project or
+   *  run budget wins over Care's, and the line says so). */
+  _careRunLine(plan, overlay) {
+    const limit = this.resolved?.wires?.w9?.maxCycles ?? plan.fixCycles;
+    const by = overlay?.wires?.w9 ? 'this run' : 'the project';
+    const cycles = limit === plan.fixCycles ? `fix cycles ${limit}` : `fix cycles ${limit}, set by ${by}`;
+    const tests = plan.testWriter ? 'tests first, by a separate Test writer' : 'tests first, by the Implementer';
+    const reviewers = plan.planReviewers.length === 1 ? `${roleLabelOf(plan.planReviewers[0])} only, the run owns no other role`
+      : plan.planReviewers.map(roleLabelOf).join(', ');
+    return `Care ${CARE_LABELS[plan.position]}: ${tests}, ${cycles}, plan reviewers ${reviewers}`;
   }
 
   /** The options every resolveGraph of this run shares: its engine, run model, workspace, scripts and sign-in probe, plus
@@ -313,8 +400,9 @@ export class GraphOrchestrator extends RunHarness {
   async _defragAgentPair() {
     const engine = this.claude.engine || 'claude';
     const explicit = { model: this.claude.model, effort: this.claude.effort };
-    // Model roles (D3): an unset defragment slot takes the quick role.
-    const stored = withRole(defragSlotPair(engine, this._settingsScope()), engine, 'memoryDefrag');
+    // Model roles (D3): an unset defragment slot takes the quick role. Not Worca's role default (#1450): the factory
+    // default (resolveGraph) fills the node instead, and its sign-in drop rule applies.
+    const stored = withRole(defragSlotPair(engine, this._settingsScope()), engine, 'memoryDefrag', { floor: false });
     // The catalog read only when the setting is the one that decides.
     const models = !(typeof explicit.model === 'string' && explicit.model.trim()) && stored.model
       ? (await listModels(this.projectDir)).filter((m) => runsOn(m, engine)) : [];
@@ -412,6 +500,8 @@ export class GraphOrchestrator extends RunHarness {
     if (helper === 'claude') {
       // On a Claude run: the run's own sign-in. On a Cursor run: the helper's Claude (the seam probes with no bin).
       try { helperAuth = (await this._claudeAuth())?.state || 'unknown'; } catch { /* unknown narrows nothing */ }
+      // #1450: Auto's resolve reads the sign-in for the Worca-default floor; on a Claude run it reuses this probe.
+      if (engine === 'claude') this._autoAuthState = helperAuth;
     }
     const catalog = (await listModels(this.projectDir)).filter((m) => runsOn(m, engine));
     const runnable = autoModelsFor(catalog, { auth: engine === 'claude' ? helperAuth : 'unknown', routed: modelHasBaseUrlRouting });
@@ -686,7 +776,7 @@ export class GraphOrchestrator extends RunHarness {
     const use = match && Number.isInteger(match.candidate.versionNo) ? match.candidate.versionNo : 'live';
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
       use, engine: this.claude.engine || 'claude', runModel: this.claude.model || null, fillIntents: true, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
-      claudeAuth: this._resolveClaudeAuth(),
+      claudeAuth: this._autoAuthState && this._resolveClaudeAuth() ? async () => ({ state: this._autoAuthState }) : this._resolveClaudeAuth(),
     });
     if (!this.humanInLoop) {
       // spec D3: no agent may stop the run to ask (generic — every agent node).
@@ -1023,6 +1113,7 @@ export class GraphOrchestrator extends RunHarness {
         plainRun: (o) => (executorTesting.runClaude || runClaude)(o), restore: this._sessionRestore ?? null })
       : null;
 
+    if (this._smallRunsMarked == null) this._smallRunsMarked = this._smallRunsMarkedNow();
     const sched = createScheduler({
       template: this._schedulerTemplate(),
       portsFn: ports,
@@ -1066,7 +1157,8 @@ export class GraphOrchestrator extends RunHarness {
       },
       sliceWorkKept: (row) => this._sliceWorkKept(row),
       // Shape it first (spec D2/D12): node approval stops are armed only for a run that carries `shape`.
-      approvalStops: Boolean(this.runShape),
+      // Small runs C5 (D15): the Verifier's run has no plan to approve.
+      approvalStops: Boolean(this.runShape) && !this.runShape.verify,
       // 4.1: a failure or stop waits for siblings to take their SIGTERM→SIGKILL before teardown.
       settleGraceMs: sigkillGraceMs() + 2000,
     });
@@ -1238,6 +1330,9 @@ export class GraphOrchestrator extends RunHarness {
       })),
       planVersion: this._planVersion,
       ...(this._planRevise ? { planRevise: { ...this._planRevise } } : {}),
+      ...(this._smallRunsMarked ? { smallRunsMarked: true } : {}),
+      ...(this._stopAnswer ? { stopAnswer: jsonClone(this._stopAnswer) } : {}),
+      ...(this._protoAnswer ? { protoAnswer: jsonClone(this._protoAnswer) } : {}),
       ...(this._planConcernAnswer ? { planConcernAnswer: { ...this._planConcernAnswer } } : {}),
       ...(this._planAwayApproved ? { planAwayApproved: { ...this._planAwayApproved } } : {}),
       ...(Object.keys(this._planConcernSeen).length ? { planConcernSeen: { ...this._planConcernSeen } } : {}),
@@ -1289,6 +1384,11 @@ export class GraphOrchestrator extends RunHarness {
       ...(this._net ? { network: { ...this._net } } : {}),
       ...(this.auto ? { runAuto: true } : {}),
       ...(this.limitEngine ? { limitEngine: this.limitEngine } : {}),
+      // #1450: the model a 'model_confirm' pause waits on, a usage limit's model and scope, and the run's confirmations.
+      ...(this.modelConfirm ? { modelConfirm: { ...this.modelConfirm } } : {}),
+      ...(this.limitModel ? { limitModel: this.limitModel } : {}),
+      ...(this.limitScope ? { limitScope: this.limitScope } : {}),
+      ...(this._confirmedModels?.length ? { confirmedModels: [...this._confirmedModels] } : {}),
       // The EFFECTIVE instruction at dispatch time (post in-worktree graph
       // build), not the detect-time tools.instruction.
       toolInstruction: this.toolInstruction ?? '',
@@ -1329,6 +1429,7 @@ export class GraphOrchestrator extends RunHarness {
 
   /** Who answered a gate, for its audit line (6.3): Away mode, a named person, the --yes run, or the user. */
   _gateChooser(askId) {
+    if (askId && this._stopSettled.has(askId)) return 'the agents';
     const by = askId ? this.answeredBy(askId) : null;
     if (by === NIGHT_ACTOR) return 'Away mode';
     if (by) return actorLabel(by) || 'the user';
@@ -1439,6 +1540,8 @@ export class GraphOrchestrator extends RunHarness {
    */
   _schedulerAsk(q) {
     if (q.kind === PLAN_ASK_KIND) return this._planAsk(q);
+    // Small runs C3 (D3): a marked run's exhausted review loop is settled by the agents or becomes an objection stop.
+    if (q.kind === 'gate' && this._smallRunsMarked && !this.auto) return this._gateStopAsk(q);
     // A gate takes exactly "another" or "continue" (2.1): anything else leaves the question open
     // (answer() refuses it), so a typo or a wrapper object can never continue past open issues.
     const ask = q.kind === 'gate' ? { ...q, validate: gateAnswer } : q;
@@ -1453,6 +1556,92 @@ export class GraphOrchestrator extends RunHarness {
         return new Promise(() => {});   // never settles: the hold survives (see above)
       },
     );
+  }
+
+  /** Small runs C3 (D7): whether this run belongs to a marked feature. Run 1 reads its own record, runs 2..N the
+   *  feature's origin (never the live flag). Read once, before the scheduler starts. */
+  _smallRunsMarkedNow() {
+    if (!this.runShape) return false;
+    const fid = this.runShape.slice?.feature;
+    try { return fid ? !!smallRunsOfFeature(fid) : this._shapeRec?.smallRuns === true; } catch { return false; }
+  }
+
+  /** The run's number in its feature (run 1 = the origin run). */
+  _stopRun() {
+    return Number.isInteger(this.runShape?.slice?.index) ? this.runShape.slice.index : 1;
+  }
+
+  /** C3 (D3): a marked run's exhausted review loop. Minor issues only: the agents accept it (dev's `continue`) and say
+   *  so; a critical, major or severity-less issue is an objection stop on dev's gate ask. */
+  _gateStopAsk(q) {
+    if (this._stopAnswer?.id === q.id) return Promise.resolve(gateAnswer(this._stopAnswer.payload)?.decision ?? null);
+    this._stopAnswer = null;
+    const stop = gateStop({ run: this._stopRun(), issues: q.issues, roleReviews: currentPass(this.state.roleReviews, { node: q.nodeId }),
+      fixCycles: q.deliveryNo, nodeId: q.nodeId });
+    if (!stop) {
+      this._stopSettled.add(q.id);
+      const line = settledLine('gate', (q.issues || []).length);
+      this._log('orchestrator', 'info', `gate ${q.id}: ${line}`);
+      return (this.pipeline ? appendAudit(this.pipeline.dir, line).catch(() => {}) : Promise.resolve()).then(() => 'continue');
+    }
+    return this._enqueueAsk(() => this._ask({ ...q, stop, validate: gateAnswer })).then(
+      async (payload) => {
+        await this._afterStopAnswer(q.id, stop, payload);
+        return gateAnswer(payload)?.decision ?? null;
+      },
+      (err) => {
+        if (isPause(err) || this.pauseRequested) this._scheduler?.pause();
+        else this._scheduler?.abort();
+        return new Promise(() => {});
+      },
+    );
+  }
+
+  /** C3 (D10, D14): a person answered a stop. Stash it before any await (the pause window), write the one answered
+   *  line, then, unless the run stops (Change), take in the feature's latest finished work before it goes on. */
+  async _afterStopAnswer(id, stop, payload) {
+    if (this.answeredBy(id) === NIGHT_ACTOR) return;
+    this._stopAnswer = { id, payload };
+    if (this.pipeline) await appendAudit(this.pipeline.dir, stopDoneText(stop, payload), { actor: this.answeredBy(id) }).catch(() => {});
+    if (stopOptionOf(stop, payload)?.value === 'change') return;
+    await this._takeInLatestFinished({ smallRuns: this._smallRunsMarked, onAnswer: true });
+  }
+
+  /**
+   * Small runs C5 (D9, D14): after n_verify, read the Verifier's file (bounded), judge it against the owned ids, and
+   * past Care's bound ask C3's `check` stop on this run. Writes verify-result.json {result, headSha, decision} into the
+   * run dir for the settle hook (src/core/shape/verifier.mjs). An unparseable, mis-shaped or oversized file fails the run
+   * (an absent one never gets here: the executor's missing-output path pauses it first).
+   */
+  async _afterVerify(ctx) {
+    const v = this.runShape.verify;
+    const out = ctx.outputs?.verify?.path || null;
+    let raw = null;
+    try { if (out && (await stat(out)).size <= CHALLENGE_FILE_MAX_BYTES) raw = JSON.parse(await readFile(out, 'utf8')); } catch { raw = null; }
+    let result;
+    try { result = verifyResult(raw, { owned: v.owned }); }
+    catch (err) {
+      if (err?.code !== 'VERIFY_RESULT_MISSING') throw err;
+      throw markTerminal(Object.assign(new Error('The Verifier wrote no result'), { code: 'VERIFY_RESULT_MISSING', errorClass: null }));
+    }
+    const ref = await this._git(['rev-parse', 'HEAD'], { cwd: ctx.projectDir });
+    const headSha = ref.ok ? ref.stdout.trim() : null;
+    let decision = null;
+    if (verifyRoundPlan({ round: v.round, fixCycles: v.fixCycles, extra: v.extra, gaps: result.gaps }) === 'stop') {
+      const id = `verify-${v.round}-${ctx.executionId}`;
+      if (this._stopAnswer?.id === id) decision = gateAnswer(this._stopAnswer.payload)?.decision ?? null;   // replay after a pause
+      else {
+        this._stopAnswer = null;
+        const stop = verifyStop({ gaps: result.gaps, round: v.round, fixCycles: v.fixCycles });
+        const payload = await this._enqueueAsk(() => this._ask({ id, kind: 'gate', nodeId: ctx.nodeId, executionId: ctx.executionId,
+          issues: [], stop, validate: gateAnswer }));
+        this._stopAnswer = { id, payload };
+        const o = stopOptionOf(stop, payload);
+        if (this.pipeline) await appendAudit(this.pipeline.dir, `Verifier: ${o ? o.short : 'answered'} · decided by you`, { actor: this.answeredBy(id) }).catch(() => {});
+        decision = gateAnswer(payload)?.decision ?? null;
+      }
+    }
+    await writeFile(join(this.pipeline.dir, VERIFY_RESULT_FILE), `${JSON.stringify({ result, headSha, decision }, null, 2)}\n`, 'utf8');
   }
 
   _planAsk(q) {
@@ -1480,6 +1669,10 @@ export class GraphOrchestrator extends RunHarness {
       return Promise.resolve({ decision: 'approve' });
     }
     this._planAwayApproved = null;
+    // C3 (D14): a stop answered just before a pause is replayed once, with no second answered line.
+    const replay = this._stopAnswer?.id === q.id ? this._stopAnswer.payload : null;
+    if (!replay) this._stopAnswer = null;
+    let stop = null;
     const spec = this._approveSpec(q.nodeId);
     if (spec?.check === 'criteria') return this._criteriaAsk(q, spec);
     let check = null;
@@ -1487,7 +1680,7 @@ export class GraphOrchestrator extends RunHarness {
     const conflicts = currentPass(this.state.roleReviews)?.rounds.at(-1)?.conflicts || [];
     // Shaper requirements s3 (D4): findings naming an agreed requirement ride this ask as one concern, never a loop.
     // Derived from the saved role reviews, so a resume re-raises the same concern.
-    const concern = requirementConcernOf(currentPass(this.state.roleReviews)?.rounds);
+    const concern = this._changeFrom(requirementConcernOf(currentPass(this.state.roleReviews)?.rounds));
     const asked = (async () => {
       check = await this._planCheck(q.plan?.file);
       const coverage = spec?.coverage ? await this._planCoverage(q, spec.coverage) : null;
@@ -1499,6 +1692,14 @@ export class GraphOrchestrator extends RunHarness {
       // B4 (D1): a marked run's slice 1 follows the slice-k rule once its Split was approved.
       if (sl && (sl.index > 1 || skipsPlanAfterSplit({ smallRuns: this._shapeRec?.smallRuns === true, slice: sl,
         outlineDecided: this.state.shaping?.outline?.decided }))) {
+        // Small runs C3 (D5): a marked run stops only for a requirement or a failing check; chat notes alone are settled.
+        stop = this._smallRunsMarked ? planStop({ run: this._stopRun(), check, concern, outlineChange, node: q.nodeId }) : null;
+        if (this._smallRunsMarked && !stop) {
+          await appendAudit(this.pipeline.dir, 'Plan approval **approve** (the plan passed its checks).').catch(() => {});
+          if (notes.length) await appendAudit(this.pipeline.dir, settledLine('notes')).catch(() => {});
+          return { decision: 'approve' };
+        }
+        if (replay) return replay;
         // D19: plan once, confirm later: the plan stops only when its check fails or the planner says the slice
         // cannot be built as outlined. A missing check (null: it errored) stops too.
         if (check?.ok === true && !outlineChange && !notes.length && !concern) {
@@ -1513,7 +1714,7 @@ export class GraphOrchestrator extends RunHarness {
       }
       const perspectives = this._shapePerspectives();
       return this._enqueueAsk(() => this._ask({
-        id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId, ...(concern ? { concern } : {}),
+        id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId, ...(concern ? { concern } : {}), ...(stop ? { stop } : {}),
         // coverage: null = it could not be read, which is not "no coverage configured"; Away sends it back (planRule).
         plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(spec?.coverage ? { coverage } : {}), ...(outlineChange ? { outlineChange } : {}), ...(notes.length ? { notes } : {}),
           ...(conflicts.length ? { openConflicts: conflicts.length } : {}), ...(this._shapeRec?.smallRuns === true ? { smallRuns: true } : {}) },
@@ -1523,6 +1724,7 @@ export class GraphOrchestrator extends RunHarness {
     return asked.then(
       async (payload) => {
         if (payload?.decision === 'approve' && this.answeredBy(q.id) === NIGHT_ACTOR) this._planAwayApproved = { id: q.id };   // before any await: the pause window
+        if (stop && !replay) await this._afterStopAnswer(q.id, stop, payload);
         this._shapingDecision(q, payload);
         if (payload?.decision === 'stop') {
           this._log('orchestrator', 'info', `plan approval ${q.id}: stop`);
@@ -1532,6 +1734,8 @@ export class GraphOrchestrator extends RunHarness {
         }
         if (payload?.decision === 'revise') {
           if (Array.isArray(payload.perspectives)) this._setShapePerspectives(payload.perspectives);
+          // Small runs C4 (D11): Change it with a proposal; the server wrote the new text before the answer came in.
+          if (payload.source === 'requirement' && stop?.change) this._takeRequirementChange(stop.change);
           const path = join(this.pipeline.dir, `plan-feedback-${q.plan.round}.md`);
           // Stash BEFORE the write (F19): a pause-time resume point built while the write is pending must carry it.
           // Persisted with the resume point; replayed only if a pause re-raises this same ask.
@@ -1564,7 +1768,8 @@ export class GraphOrchestrator extends RunHarness {
 
   /** The node's `config.approve`, or null. */
   _approveSpec(nodeId) {
-    return (this.resolved?.template?.nodes || []).find((n) => n.id === nodeId)?.config?.approve || null;
+    const node = (this.resolved?.template?.nodes || []).find((n) => n.id === nodeId);
+    return (this._unslicedReplan() ? withoutRequirementsInput(node) : node)?.config?.approve || null;
   }
 
   /** The file bound to an input of a held node: its execution's binding, else the token latched on the input. */
@@ -1584,12 +1789,62 @@ export class GraphOrchestrator extends RunHarness {
     } catch { return null; }
   }
 
+  /** Small runs C4 (D9): a requirement concern's proposals carry the agreed text they change (`from`, read from the
+   *  run's own outline), so the change path can compare it; a proposal for an id the outline lacks is dropped. */
+  _changeFrom(concern) {
+    if (!concern || !Array.isArray(concern.proposals)) return concern;
+    const sl = this.runShape?.slice;
+    const agreed = sl?.outline?.agreed || [];
+    // The fold's mark: where the run that owns the requirement is (this run: it re-plans, `waiting`).
+    let slices = [];
+    try { slices = (sl?.feature && featureView(sl.feature)?.slices) || []; } catch { slices = []; }
+    const landsAs = (id) => {
+      const owner = slices.find((s) => (s.requirements?.ids || []).includes(id));
+      return !owner ? 'none' : owner.index === sl.index ? 'waiting' : changeCaseOf(owner.state);
+    };
+    const proposals = concern.proposals.map((p) => ({ ...p, from: agreed.find((a) => a.id === p.id)?.text, landsAs: landsAs(p.id) }))
+      .filter((p) => typeof p.from === 'string');
+    const rest = { ...concern };
+    delete rest.proposals;
+    return proposals.length ? { ...rest, proposals } : rest;
+  }
+
+  /** Small runs C4 (D11): after Change it, this run plans from the changed text: its slice outline's agreed texts are
+   *  replaced and the cached slice scope is read again. */
+  _takeRequirementChange(change) {
+    const sl = this.runShape?.slice;
+    if (!sl?.outline || !Array.isArray(change)) return;
+    const to = new Map(change.map((c) => [c.id, c.to]));
+    const agreed = (sl.outline.agreed || []).map((a) => (to.has(a.id) ? { ...a, text: to.get(a.id) } : a));
+    this.runShape = { ...this.runShape, slice: { ...sl, outline: { ...sl.outline, agreed } } };
+    this._sliceScopeCache = null;
+  }
+
   /** Shaper: a sliced feature's run checks only its own slice's agreed criteria. The planning run (slice 1) is bound
    *  to the file of every agreed id, so the text is narrowed to the slice's ids; identity without agreed requirements. */
   _sliceCriteria(text) {
     const sl = this.runShape?.slice;
     // s3 (D13): a requirements-first Changes run reworks every agreed requirement, so its text is not narrowed.
-    return sl?.outline?.agreed?.length && this.runShape.requirementsFirst !== true ? onlyCriteria(text, sliceRequirementIds(sl)) : text;
+    // Small runs C2 (D11): a run with a Care plan keeps the requirements' Example lines for its reviewers.
+    const examples = !!this.state.stepper?.careRun;
+    return sl?.outline?.agreed?.length && this.runShape.requirementsFirst !== true
+      ? onlyCriteria(text, sliceRequirementIds(sl), examples ? { examples: true } : undefined) : text;
+  }
+
+  /** Small runs C2 (run 1): rebind the Test writer's `requirements` input to a copy narrowed to the slice's own ids, with
+   *  their Example lines (`_sliceCriteria`). The execution's own bindings stay as the scheduler gave them. */
+  async _sliceTestRequirements(ctx) {
+    const token = ctx.bindings.requirements;
+    try {
+      const text = await readFile(token.path, 'utf8');
+      const narrowed = this._sliceCriteria(text);
+      if (narrowed === text) return;
+      const path = join(this.pipeline.dir, `slice-requirements-${String(ctx.executionId).replace(/[^\w.-]+/g, '_')}.md`);
+      await writeFile(path, narrowed, 'utf8');
+      ctx.bindings = { ...ctx.bindings, requirements: { ...token, path } };
+    } catch (err) {
+      this._log('orchestrator', 'warn', `Test writer: cannot narrow the requirements to this slice: ${err?.message || err}`);
+    }
   }
 
   /** The held criteria document and its decisions: the criteria check (agreed ids must survive), the sink's decisions
@@ -1630,6 +1885,8 @@ export class GraphOrchestrator extends RunHarness {
     const lead = this.runShape?.lead || null;
     const perspectives = this._shapePerspectives();
     const smallRuns = this._shapeRec?.smallRuns === true;
+    // C1: a resumed marked run whose requirements were agreed (the Prototype step has a record) goes on with the step.
+    if (smallRuns && this._shapeRec?.prototype) return this._afterRequirements(q);
     const ask = async (attempt, failed = null) => {
       const got = failed ? { error: failed } : await this._criteriaLoad(q, spec, conflicts, lead);
       const id = attempt ? `${q.id}-retry${attempt}` : q.id;
@@ -1682,6 +1939,8 @@ export class GraphOrchestrator extends RunHarness {
           this._log('orchestrator', 'info', `approval ${q.id}: revise (${path})`);
           return { decision: 'revise', path };
         }
+        // C1 (D1): a marked run's approval resolves only once the Prototype step ended, so the Split fires after it.
+        if (payload?.decision === 'approve' && smallRuns) return this._afterRequirements(q);
         return payload?.decision === 'approve' ? { decision: 'approve' } : payload;
       },
       (err) => {
@@ -1690,6 +1949,189 @@ export class GraphOrchestrator extends RunHarness {
         return new Promise(() => {});
       },
     );
+  }
+
+  /** C1 (D1): the Prototype step after agreed requirements; resolves the approval, or stops or pauses like the ask. */
+  async _afterRequirements(q) {
+    let r;
+    try {
+      r = await this._prototypeStep(q);
+    } catch (err) {
+      if (isPause(err) || this.pauseRequested) this._scheduler?.pause();
+      else {
+        // A stop ends the round Design is building too (a pause leaves it: the resume awaits it).
+        const p = this._shapeRec?.prototype;
+        if (this.abort.signal.aborted && p?.state === 'building' && p.buildId) {
+          await Promise.resolve(registryOf({ designBuilds: this.opts.designBuilds || null })?.stopBuild(p.buildId)).catch(() => {});
+        }
+        this._graphError ||= err;
+        this._scheduler?.abort();
+      }
+      return new Promise(() => {});
+    }
+    if (r.state === 'stopped') {
+      this._log('orchestrator', 'info', `prototype ${q.id}: stop`);
+      this.stop(this.answeredBy(this._protoAskId));
+      this._scheduler?.abort();
+      return new Promise(() => {});
+    }
+    return { decision: 'approve' };
+  }
+
+  /** C1: the Prototype step's effects (src/core/shape/prototype-step.mjs). Design through the injected registry or the
+   *  server's (D7); the review and the remark match through the plan review node's agent (D8). */
+  async _prototypeStep(q) {
+    const rec = this._shapeRec;
+    const readReqs = async () => { try { return await readFile(q.plan.file, 'utf8'); } catch { return ''; } };
+    const agreed = criteriaList(await readReqs());
+    const deps = { designBuilds: this.opts.designBuilds || null };
+    const by = this._runStarter();
+    const node = planReviewNode(this.resolved?.template);
+    // Each effect first checks for a pause or a stop, so a paused or stopped run never drives the step on.
+    const live = (fn) => async (...a) => { this._protoCheck(); return fn(...a); };
+    return runPrototypeStep({
+      rec, position: rec.care?.position, agreed, designOn: flagEnabled('design') === true, registry: !!registryOf(deps),
+      ask: (moment, view) => this._prototypeAsk(q, moment, view),
+      build: live(async ({ keep }) => {
+        // The design is saved (keep) before the round starts, so a replayed Build never makes a second one.
+        let designId = rec.prototype?.designId;
+        if (!designId) {
+          designId = createPrototypeDesign({ projectKey: this.state.projectKey || null, title: this.state.title || 'Feature', by,
+            models: this.claude?.model ? { model: this.claude.model, effort: this.claude.effort } : null });
+          await keep(designId);
+        }
+        const text = await readReqs();
+        const brief = prototypeBrief({ title: this.state.title, requirements: screenRequirements(criteriaList(text)), examples: criteriaExamples(text),
+          fail: this.claude?.mock === true && process.env.WORCA_MOCK_PROTO_FAIL === '1' });
+        const s = await startPrototypeBuild({ designId, brief, by, deps });
+        return s.refused ? s : { ...s, designId };
+      }),
+      change: live((a) => startPrototypeBuild({ designId: rec.prototype?.designId, instruction: a.instruction, sections: a.sections, needsLead: a.needsLead, by, deps })),
+      // The wait gives way to a pause or a stop at once: the build itself goes on in Design, and a resume awaits it.
+      awaitBuild: live((id) => this._untilPauseOrStop(awaitPrototypeBuild(id, deps))),
+      review: live((r, prior) => this._prototypeReview(node, q, r, prior)),
+      matchRemark: live((said) => this._prototypeRemark(node, q, said)),
+      rewrite: live(async (id, p) => {
+        const out = rewriteRequirement(await readReqs(), id, p);
+        if (!out) return false;
+        await writeFile(q.plan.file, out, 'utf8');
+        return true;
+      }),
+      freeze: live(async (a) => freezePrototype({ designId: rec.prototype?.designId, shownVersion: a.shownVersion, screens: a.screens, pipelineDir: this.pipeline.dir })),
+      // D16: the stashed answer is spent once the step saved what it did with it. A new moment (or review round) is
+      // announced, so the one card re-reads the saved state and draws the working moments live (R-ux-2).
+      persist: async () => {
+        this._protoAnswer = null;
+        const out = await this._persist();
+        const p = rec.prototype || {};
+        const key = `${p.state}|${p.reviewRounds}|${p.buildId || ''}`;
+        if (key !== this._protoShown) { this._protoShown = key; this._emit('shape-prototype', { pipelineId: this.state.id, state: p.state }); }
+        return out;
+      },
+      audit: (text) => appendAudit(this.pipeline.dir, text).catch(() => {}),
+    });
+  }
+
+  /** C1: throws the stop or the pause that landed, so the Prototype step goes no further. */
+  _protoCheck() {
+    if (this.abort.signal.aborted) throw abortError('stopped');
+    if (this.pauseRequested) throw pauseErr();
+  }
+
+  /** C1: `work`, or the stop or the pause, whichever lands first. */
+  _untilPauseOrStop(work) {
+    const sigs = [this.abort.signal, this.pauseAbort.signal];
+    let off = () => {};
+    const halted = new Promise((_, reject) => {
+      const on = () => { try { this._protoCheck(); } catch (err) { reject(err); } };
+      for (const sg of sigs) sg.addEventListener('abort', on, { once: true });
+      off = () => { for (const sg of sigs) sg.removeEventListener('abort', on); };
+    });
+    return Promise.race([work, halted]).finally(off);
+  }
+
+  /** C1 (D15, D16): one `prototype` ask. An answer is stashed before the first await, keyed by the moment, the saved
+   *  record's time and the version shown, so a pause right after it replays it instead of losing it. */
+  async _prototypeAsk(q, moment, view) {
+    const key = `${moment}|${this._shapeRec?.prototype?.at || ''}|${view.version ?? ''}`;
+    if (this._protoAnswer?.key === key) return this._protoAnswer.payload;
+    this._protoAnswer = null;
+    this._protoSeq += 1;
+    // The round and the saved record's time keep the id unique across a resume, which counts from 1 again.
+    const at = String(this._shapeRec?.prototype?.at || '').replace(/\D/g, '');
+    const id = `proto-${q.nodeId}-${this._shapeRec?.prototype?.round ?? 0}-${at}-${this._protoSeq}`;
+    this._protoAskId = id;
+    // D17: each screen's pieces, read here as plain words, so the card never needs the agent's HTML.
+    const screens = await Promise.all((view.screens || []).map(async (sc) => {
+      let html = '';
+      if (view.designId && /^[a-z][a-z0-9-]{0,31}$/.test(sc.section)) { try { html = await readFile(join(designWorkDir(view.designId), 'sections', sc.section, 'index.html'), 'utf8'); } catch { html = ''; } }
+      return { ...sc, pieces: piecesOf(html) };
+    }));
+    const payload = await this._enqueueAsk(() => this._ask({ id, kind: PROTOTYPE_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId,
+      prototype: { moment, ...view, screens }, validate: (raw) => validatePrototypeAnswer(raw, moment) }));
+    this._protoAnswer = { key, payload };
+    return payload;
+  }
+
+  /** The next free ordinal of a slice spawn kind under the run (its execution ids stay unique across a resume). */
+  _nextSliceOrdinal(prefix) {
+    return this.state.steps.filter((s) => typeof s.key === 'string' && s.key.includes(`:${prefix}-`)).length + 1;
+  }
+
+  /** C1 (D8, D9): one Thorough review round of the built prototype by Design and Product. */
+  async _prototypeReview(node, q, r, prior) {
+    if (!node) {
+      await appendAudit(this.pipeline.dir, 'Prototype not reviewed: this workflow has no plan review step.').catch(() => {});
+      return [];
+    }
+    const n = this._nextSliceOrdinal('prototype-review');
+    const out = join(this.pipeline.dir, `prototype-review-${n}.json`);
+    const p = this._shapeRec.prototype || {};
+    const brief = prototypeReviewBlock({ dir: designDistDir(p.designId), requirements: q.plan.file, screens: p.screens || [], out, round: r, prior })
+      + mockMarkers({ MOCK_PROTO_REVIEW: out, MOCK_PROTO_ROUND: r }) + '\n\n';
+    const raw = await this._spawnSliceAgent({ roleNode: node, parentExecutionId: q.executionId, ordinal: n, taskId: `prototype-review-${n}`,
+      brief, out, auditLine: (model) => `Prototype review round ${r}: Design and Product on ${model}.` });
+    return normalizeReview(raw);
+  }
+
+  /** C1 (D10): the one requirement a remark changes, with its proposed text and example, or null. */
+  async _prototypeRemark(node, q, said) {
+    let list = [];
+    try { list = criteriaList(await readFile(q.plan.file, 'utf8')); } catch { list = []; }
+    const ids = list.map((c) => c.id);
+    const target = remarkTarget(said, ids);
+    if (!node || !ids.length) return null;
+    const n = this._nextSliceOrdinal('prototype-remark');
+    const out = join(this.pipeline.dir, `prototype-remark-${n}.json`);
+    const screenIds = this._shapeRec.prototype?.screenIds || [];
+    const brief = prototypeRemarkBlock({ remark: said, requirements: q.plan.file, ids, target, out })
+      + mockMarkers({ MOCK_PROTO_REMARK: out, MOCK_PROTO_IDS: target || [...screenIds, ...ids].join(',') }) + '\n\n';
+    const raw = await this._spawnSliceAgent({ roleNode: node, parentExecutionId: q.executionId, ordinal: n, taskId: `prototype-remark-${n}`,
+      brief, out, auditLine: (model) => `Prototype remark matched on ${model}.` });
+    const p = validRemarkProposal(raw, target ? [target] : ids);
+    return p ? { ...p, was: list.find((c) => c.id === p.id)?.text || '' } : null;
+  }
+
+  /** C1 (D14): the confirmed prototype of a run whose slice owns a screen requirement, staged once into its own folder. */
+  async _shapePrototypeCtx() {
+    if (this._protoCtx !== undefined) return this._protoCtx;
+    const sl = this.runShape?.slice;
+    let out = null;
+    const own = sl?.index === 1 && !!this._shapeRec?.prototype;
+    const rec = own ? normalizePrototype(this._shapeRec.prototype) : prototypeOfFeature(sl?.feature);
+    if (rec?.state === 'confirmed' && rec.ref) {
+      const ids = sliceRequirementIds(sl).filter((id) => rec.screenIds.includes(id));
+      if (ids.length) {
+        // security: the frozen folder must be unchanged since the confirm (its digest) and, for a feature's record, sit in
+        // the feature's origin run.
+        const origin = own ? null : originPipelineOfFeature(sl?.feature);
+        const dir = stagePrototypeForRun({ ref: rec.ref, pipelineDir: this.pipeline.dir, originPipelineId: origin });
+        if (dir) out = { dir, ids };
+        else await appendAudit(this.pipeline.dir, 'The confirmed prototype is gone: this run goes on without it.').catch(() => {});
+      }
+    }
+    this._protoCtx = out;
+    return out;
   }
 
   /** #990 slice 3 (D9): the approved plan keeps the person's conflict picks in its Clarifications (idempotent across a
@@ -1759,6 +2201,13 @@ export class GraphOrchestrator extends RunHarness {
     const s = this.runShape;
     return Boolean(s) && s.slices !== 'off' && !s.slice && !this.isWorkspace && !this._slicingDone
       && !this.state.shaping?.outline?.decided;
+  }
+
+  /** Small runs: a re-plan that carried requirements but ended unsliced (Don't slice, or a one-slice, unreadable or flat
+   *  outline). There is no feature to carry them into, so from here on no node has the list: the run is the plain Shaper's. */
+  _unslicedReplan() {
+    const s = this.runShape;
+    return Boolean(s?.replaces) && !s.slice && SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(this.workflowId) && !this._slicingOffered();
   }
 
   async _shapeSliceCtx(nc, ctx) {
@@ -1852,6 +2301,7 @@ export class GraphOrchestrator extends RunHarness {
     const agreed = await this._outlineAgreed(ctx);
     // A3: the split rules the Planner's prompt named (read once per spawn, into ctx.shapeSlicing), so they never disagree.
     const rules = ctx.shapeSlicing.smallRuns ? { smallRuns: true, care: ctx.shapeSlicing.care } : {};
+    const keptRoles = this._keptConfirmed(agreed);
     let classified = null;                                  // the spawn result whose outlineState was acted on
     // B4 (D9): this execution's first spawn re-ran an internal refine a pause cut short: that refine is done.
     if (ctx.splitRefineRestored && this.state.shaping?.outline?.challenge) {
@@ -1882,7 +2332,7 @@ export class GraphOrchestrator extends RunHarness {
         }
         raw = { error: err?.message || String(err) };
       }
-      const read = normalizeOutline(raw, { agreed, ...rules });
+      const read = normalizeOutline(keepConfirmed(raw, keptRoles), { agreed, ...rules });
       if (!read.ok || read.outline.slices.length < 2) {
         await appendAudit(this.pipeline.dir, `${label}: ${read.ok ? 'a one-slice outline' : `an unreadable outline (${read.error})`} — planning the whole task.`).catch(() => {});
         this._retireOrphanFeature();
@@ -1956,6 +2406,9 @@ export class GraphOrchestrator extends RunHarness {
           base: this._sliceRequestBase(), replaces: this.runShape?.replaces || null, startedBy: this._runStarter(), pr: this._featurePr(),
           // B2 (D10, d-3): the marker, not the live flag, decides whether the feature records its Care.
           care: this._shapeRec?.care || null, smallRuns: this._shapeRec?.smallRuns === true,
+          // From the outline with the person's edits (a `confirm` edit changes the role). Always an object for a marked run:
+          // null would keep the replaced feature's roles.
+          requirementKinds: this._shapeRec?.smallRuns === true ? confirmedKindsOf(applied.outline) : null,
         });
       } catch (err) {
         this._log('orchestrator', 'warn', `slices: cannot create the feature: ${err?.message || err}`);
@@ -1976,12 +2429,23 @@ export class GraphOrchestrator extends RunHarness {
       this.runShape = { ...this.runShape, slice: { feature: feature.id, index: 1, total: feature.total, outline: applied.outline } };
       if (this.state.shaping) this.state.shaping.feature = { id: feature.id, index: 1, total: feature.total };
       this._sliceScopeCache = null;
+      await this._careOriginRun();
       this._emit('state', this.getState());
       this._emit('shape-feature', { id: feature.id });
       // F47: hosts still pointed at the re-planned feature now follow replaced_by to this one: repaint them too.
       if (this.runShape?.replaces) this._emit('shape-feature', { id: this.runShape.replaces });
       return this._resumeOutline(nc, ctx, payload);
     }
+  }
+
+  /** Small runs: the requirements a person confirms that a marked re-plan carried over, with the replaced feature's role:
+   *  the outline keeps them whatever the Planner wrote (a person's `confirm` edit still wins). [] for any other run. */
+  _keptConfirmed(agreed) {
+    const replaces = this.runShape?.replaces;
+    if (!replaces || this._shapeRec?.smallRuns !== true || !SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(this.workflowId)) return [];
+    const ids = new Set(agreed.map((a) => a.id));
+    try { return carriedRequirements(replaces).confirmed.filter((c) => ids.has(c.id)); }
+    catch (err) { this._log('orchestrator', 'warn', `slices: cannot read the replaced feature's requirements: ${err?.message || err}`); return []; }
   }
 
   /** D14: every agreed requirement id of the feature, for the planner's and refiner's numbering and `Covers:` lines: a slice
@@ -1996,7 +2460,14 @@ export class GraphOrchestrator extends RunHarness {
   async _outlineAgreed(ctx) {
     const path = ctx.bindings?.requirements?.path;
     if (!path) return [];
-    try { return criteriaList(await readFile(path, 'utf8')); } catch (err) {
+    try {
+      const text = await readFile(path, 'utf8');
+      const list = criteriaList(text);
+      // Small runs C2 (D11): a marked run's outline keeps each requirement's example, so its slice briefs carry it.
+      if (!this._shapeRec?.smallRuns) return list;
+      const examples = criteriaExamples(text);
+      return list.map((c) => (examples.get(c.id) ? { ...c, example: examples.get(c.id) } : c));
+    } catch (err) {
       this._log('orchestrator', 'warn', `slices: cannot read the agreed requirements: ${err?.message || err}`);
       return [];
     }
@@ -2064,6 +2535,12 @@ export class GraphOrchestrator extends RunHarness {
       await appendAudit(this.pipeline.dir, `${label} raised a plan concern: "${concern.title}".`).catch(() => {});
     }
     const decided = this._planConcernSeen[id] === 'decided';
+    // Small runs C3 (D4): a marked run settles a first plain concern (the Planner re-plans with it); a second one from
+    // this node after an earlier was decided, or a requirement concern, is a stop.
+    const marked = this._smallRunsMarked && !this.auto;
+    const prefix = `plan-concern-${ctx.nodeId}-`;
+    const decidedBefore = Object.entries(this._planConcernSeen).some(([k, v]) => k !== id && k.startsWith(prefix) && v === 'decided');
+    const stop = marked ? concernStop({ run: this._stopRun(), concern, nodeId: ctx.nodeId, decidedBefore }) : null;
     let payload;
     if (this.auto) {
       payload = { decision: 'approve' };
@@ -2072,24 +2549,32 @@ export class GraphOrchestrator extends RunHarness {
     } else if (this._planConcernAnswer?.id === id) {
       payload = this._planConcernAnswer.payload;     // answered just before a pause (D9): replay, never re-ask
       this._log('orchestrator', 'info', `plan concern ${id}: ${payload?.decision} replayed after a pause`);
+    } else if (marked && !stop) {
+      payload = { decision: 'revise', feedback: SETTLED_CONCERN_FEEDBACK };
+      this._planConcernAnswer = { id, payload };     // before any await: a resume replays it without a second line
+      await appendAudit(this.pipeline.dir, settledLine('concern')).catch(() => {});
     } else {
       this._planConcernAnswer = null;               // a different id: the stash is stale
       const perspectives = this._shapePerspectives();
       payload = await this._enqueueAsk(() => this._ask({
-        id, kind: PLAN_ASK_KIND, nodeId: ctx.nodeId, executionId: ctx.executionId, concern,
+        id, kind: PLAN_ASK_KIND, nodeId: ctx.nodeId, executionId: ctx.executionId, concern, ...(stop ? { stop } : {}),
         plan: { nodeId: pc.approvalNodeId, port: 'plan', file: planFile, round, revisable: true, perspectives },
         validate: (raw) => validatePlanAnswer(raw, { revisable: true, perspectives, smallRuns: this._shapeRec?.smallRuns === true }),
       }));
       this._planConcernAnswer = { id, payload };     // before any await: the pause window (graph-ask-kind-traps)
+      if (stop) await this._afterStopAnswer(id, stop, payload);
     }
     this._checkAbort();
     const d = payload?.decision;
     if (d === 'withdrawn' || !d) return result;
     if (d === 'stop') { this.stop(this.answeredBy(id)); this._checkAbort(); return result; }
     this._planConcernSeen[id] = 'decided';
+    if (d === 'revise' && payload.source === 'requirement' && stop?.change) this._takeRequirementChange(stop.change);
     if (d === 'revise') {
       const path = join(this.pipeline.dir, `plan-concern-feedback-c${ctx.ordinal}.md`);
-      await writeFile(path, renderPlanFeedback(payload.feedback, planFile) + concernFeedbackSection(concern), 'utf8');
+      // A stop's Re-plan already carries the concern's section (run-stops.mjs): it is written once.
+      const section = concernFeedbackSection(concern);
+      await writeFile(path, renderPlanFeedback(payload.feedback, planFile) + (payload.feedback.includes(section.trim()) ? '' : section), 'utf8');
       return { ...result, reviseApproval: { path } };
     }
     ctx.planConcern = null;                          // the re-run cannot raise a second concern (D5)
@@ -2125,6 +2610,10 @@ export class GraphOrchestrator extends RunHarness {
     // B4: an internal refine (no person round yet) passes the shas it was asked about.
     if (d === 'revise') ctx.shapeSlicing.baseline = baseline !== undefined ? baseline : this._outlineBaseline();
     else { ctx.shapeSlicing = null; this._slicingDone = true; this._outlineRevise = null; }
+    if (this._unslicedReplan()) {                           // this execution was bound before the decision
+      const { requirements, ...bindings } = ctx.bindings || {};
+      Object.assign(ctx, { bindings, shapeAgreedIds: [] });
+    }
     ctx.shapeOutlineNote = d === 'flat' ? { decision: 'flat' } : d === 'revise' ? { decision: 'revise', feedback: payload.feedback } : null;
     if (d === 'approve') ctx.shapeSliceScope = await this._shapeSliceScope();
     const step = this.state.steps.find((s) => s.key === ctx.executionId);
@@ -2162,26 +2651,35 @@ export class GraphOrchestrator extends RunHarness {
    *  the Planner's execution. Its config loses `roleReview` (no verdict brief) and gains the challenge block as
    *  promptHints; `nc.meta` is never written. The one output is split-challenge-r.json in the pipeline dir. */
   async _challengeSplit(roleNode, ctx, r, plan, prior) {
-    const nc = (this.resolved.nodeCtx || {})[roleNode.id] || { nodeId: roleNode.id, kind: roleNode.kind, key: roleNode.key };
     const out = join(this.pipeline.dir, `split-challenge-${r}.json`);
-    await rm(out, { force: true });
-    const { roleReview: _drop, ...rest } = roleNode.config || {};
     const brief = challengeBlock({ file: ctx.shapeSlicing?.file || join(this.pipeline.dir, OUTLINE_FILE), out,
       requirements: ctx.bindings?.requirements?.path || null, round: r, roles: plan.roles, challenger: plan.challenger, prior });
+    const labels = [...plan.roles.map((k) => perspectiveByKey(k)?.label || k), ...(plan.challenger ? [CHALLENGER_LABEL] : [])];
+    const raw = await this._spawnSliceAgent({ roleNode, parentExecutionId: ctx.executionId, ordinal: r, taskId: `split-challenge-${r}`,
+      brief, out, auditLine: (model) => `Split challenge round ${r}: ${labels.join(', ')} on ${model}.` });
+    return normalizeChallenge(raw, { roles: plan.roles, challenger: plan.challenger });
+  }
+
+  /** B4 (D8), C1 (D8): ONE spawn of `roleNode`'s agent and model as a non-task slice `taskId` under the execution
+   *  `parentExecutionId`, with `brief` as its promptHints and no verdict (its config loses `roleReview`; `nc.meta` is
+   *  never written), so it routes no wire. Its one output is the JSON file `out`, read back (null when missing, too
+   *  big or not JSON). */
+  async _spawnSliceAgent({ roleNode, parentExecutionId, ordinal, taskId, brief, out, auditLine }) {
+    const nc = (this.resolved.nodeCtx || {})[roleNode.id] || { nodeId: roleNode.id, kind: roleNode.kind, key: roleNode.key };
+    await rm(out, { force: true });
+    const { roleReview: _drop, ...rest } = roleNode.config || {};
     const node = { ...roleNode, config: { ...rest, promptHints: brief } };
-    const taskId = `split-challenge-${r}`;
-    const c = this._execCtx(node, nc, { executionId: sliceExecutionId(ctx.executionId, taskId), ordinal: r,
-      slice: { id: taskId }, parentExecutionId: ctx.executionId, bindings: {} });
+    const c = this._execCtx(node, nc, { executionId: sliceExecutionId(parentExecutionId, taskId), ordinal,
+      slice: { id: taskId }, parentExecutionId, bindings: {} });
     c.ports = { ...(c.ports || {}), inputs: [], outputs: [] };
     c.outputs = {};
     c.verdict = null;
-    const labels = [...plan.roles.map((k) => perspectiveByKey(k)?.label || k), ...(plan.challenger ? [CHALLENGER_LABEL] : [])];
-    await appendAudit(this.pipeline.dir, `Split challenge round ${r}: ${labels.join(', ')} on ${c.claudeOpts?.model || 'the default model'}.`).catch(() => {});
+    await appendAudit(this.pipeline.dir, auditLine(c.claudeOpts?.model || 'the default model')).catch(() => {});
     const result = await this._runNodeAttempts(nc, c);
     await this._afterExecution(nc, c, result);
     let raw = null;
     try { if ((await stat(out)).size <= CHALLENGE_FILE_MAX_BYTES) raw = JSON.parse(await readFile(out, 'utf8')); } catch { raw = null; }
-    return normalizeChallenge(raw, { roles: plan.roles, challenger: plan.challenger });
+    return raw;
   }
 
   /** B4: what the Split ask adds under the marker (split-step.mjs splitAskFields); the agreed list is the requirements
@@ -2327,6 +2825,10 @@ export class GraphOrchestrator extends RunHarness {
    * machinery, all of it keyed by executionId.
    */
   async _execute(args) {
+    if (this._unslicedReplan() && args.node) {
+      const { requirements, ...bindings } = args.bindings || {};
+      args = { ...args, node: withoutRequirementsInput(args.node), bindings };
+    }
     const node = args.node;
     const nc = (this.resolved.nodeCtx || {})[node.id] || { nodeId: node.id, kind: node.kind, key: null };
     // The composite protocol: these three modes are the process side of a
@@ -2357,6 +2859,8 @@ export class GraphOrchestrator extends RunHarness {
     }
     // E10: the CLI version the execution manifest records (Claude's probe, already run at start; null elsewhere).
     if (nc.kind === 'agent' && this._capsProbe) ctx.cliVersion = (await Promise.resolve(this._capsProbe).catch(() => null))?.version ?? null;
+    // Small runs C2 (run 1): the Test writer is bound to every agreed requirement; it writes tests for this slice's only.
+    if (nc.key === TEST_WRITER_AGENT_KEY && this.runShape && ctx.bindings?.requirements?.path) await this._sliceTestRequirements(ctx);
     // A role slice's brief lists the plan's own items for its role: read the plan this round reviews.
     if (ctx.role) {
       ctx.roleSpec = roleReviewOf(node.config);
@@ -2366,6 +2870,8 @@ export class GraphOrchestrator extends RunHarness {
       ctx.roleRequirementsText = req?.path ? await readFile(req.path, 'utf8').catch(() => '') : '';
       if (this.runShape) ctx.roleRequirementsText = this._sliceCriteria(ctx.roleRequirementsText);
       ctx.roleShape = this.runShape || null;
+      // Small runs C4 (D9): a marked slice run's reviewers may propose a requirement's new text.
+      if (this._smallRunsMarked === true && this.runShape?.slice) ctx.roleProposals = true;
       if (roleChecklistOf(ctx.roleSpec)?.wantsHouseBrief(ctx.role)) ctx.houseBrief = await this._fitHouseBrief();
     }
     await this._humanCursorInit(ctx);
@@ -2389,6 +2895,7 @@ export class GraphOrchestrator extends RunHarness {
       // P5: a mixed workspace (a git run) checks its Folder members' copies too — fan-out agents work in them.
       if ((this.workMode === 'folder' || this.isWorkspace) && !(await this._folderCopyIntact())) throw new Error(`the run's copy is not the run's own folder: ${(this.isWorkspace && this._badFolderCopy) || this.runCwd}`);
       this._checkCostLimits();                  // budget gate at EVERY spawn (throws pauseErr)
+      this._premiumGate(nc, ctx);               // #1450: a premium model nobody chose pauses before the spawn
       if (node.kind === 'script') {
         // A child process through the NODE site: every runner error carries
         // errorClass:null (D9), so _recover lands on the '*' row — pause as
@@ -2403,6 +2910,8 @@ export class GraphOrchestrator extends RunHarness {
       if (this.runShape && nc.key === CHECKLIST_REVIEWER_KEY) ctx.checklistItems = await this._reviewChecklistItems(ctx);
       if (this.runShape && SLICE_SCOPE_AGENT_KEYS.has(nc.key)) Object.assign(ctx, await this._shapeSliceCtx(nc, ctx));
       if (this.runShape && SLICE_SCOPE_AGENT_KEYS.has(nc.key)) ctx.shapeAgreedIds = await this._shapeAgreedIds(ctx);
+      // C1 (D14): every agent node of a run whose slice owns a screen requirement reads the confirmed prototype.
+      if (this.runShape?.slice?.outline) { const sp = await this._shapePrototypeCtx(); if (sp) ctx.shapePrototype = sp; }
       ctx.planConcern = this._planConcernCtx(nc, ctx);
       if (ctx.planConcern && this._planConcernOverridden(planConcernAskId(ctx))) {
         ctx.planConcernOverride = this._planConcernHeld.concern;   // paused during the override re-run (D9): resume as it
@@ -2419,6 +2928,8 @@ export class GraphOrchestrator extends RunHarness {
       if (!ctx.role) result = await this._applyReviewChecklist(ctx, result);
       result = await this._applyRoleReviewVerdict(ctx, result);
       result = await this._planConcernLoop(nc, ctx, result);
+      // Small runs C5 (D9, D14): the Verifier's result, its bound stop and verify-result.json, before the node settles.
+      if (this.runShape?.verify && nc.nodeId === 'n_verify') await this._afterVerify(ctx);
       // C5: the verdict the routing reads, as counts, on the execution's latest host dispatch (none when it ran plain).
       this._sessions?.noteVerdict(ctx.executionId, verdictSummary(result?.verdict));
       await this._afterExecution(nc, ctx, result);
@@ -2695,6 +3206,7 @@ export class GraphOrchestrator extends RunHarness {
         engine: this.claude.engine,
         permissionMode: this.claude.permissionMode,
         ...(modelPair || this._nodeModelPair(nc)),
+        ...this._modelGuardOpts(nc, node, executionId, modelPair, slice),
         permissionRules: this._spawnPermissionRules(),
         envScrub: this.guardrails?.envScrub || undefined,
         // §5.5.1: a scrubbed spawn with a registry stdio copy keeps the launcher's keep-list.
@@ -2704,6 +3216,22 @@ export class GraphOrchestrator extends RunHarness {
         mock: this.claude.mock,
       },
     };
+  }
+
+  /** #1450 D-m: the [init] model guard (graph/executor.mjs) for a Claude agent node that does not run on a session host
+   *  (a member's synthetic init carries its definition's model and would false-pause). `confirmed` is the run's live list. */
+  _modelGuardOpts(nc, node, executionId, modelPair, slice = null) {
+    if (nc.kind !== 'agent' || (this.claude.engine || 'claude') !== 'claude') return {};
+    if (this._sessions?.hostFor(node.id, { slice, role: slice?.role ?? null })) return {};
+    const pair = modelPair || this._nodeModelPair(nc);
+    return { modelGuard: {
+      requested: pair.model || undefined,
+      source: pair.source || nc.modelSource,
+      step: nc.meta?.displayName || nc.key || node.id, nodeId: node.id, stepKey: executionId,
+      confirmed: this._confirmedModels,
+      premium: (id) => isPremiumModel(id, { costOf: (m) => modelCostConfig(m) }),
+      routed: (id) => modelHasBaseUrlRouting(id) || !!bridgedModelInfo(id),
+    } };
   }
 
   /** Session groups (Task 45): a member's host and its mode for `_execCtx`, on a run that has sessions only (an ungrouped
@@ -3641,6 +4169,25 @@ export class GraphOrchestrator extends RunHarness {
   /** Small runs B3 (D10): the requirements review of a marked run runs only the roles its Care plan names (Lean: the
    *  lead and Product). Every other node, and every unmarked run, keeps `roles`. */
   _careRoles(spec, roles) {
+    // Small runs C2 (D8): a slice run's plan review runs the Care plan's reviewers, read from the roles the node declares
+    // (so the Challenger joins under Thorough even when nobody picked it). The code review keeps its declared roles.
+    const careRun = this.state.stepper?.careRun;
+    if (careRun && Array.isArray(careRun.planReviewers) && spec?.target && roleTargetOf(spec).reviewsPlan) {
+      // A planned role the node does not declare (Compliance) joins as the provider names it, as runningRoles does.
+      const declared = Array.isArray(spec.roles) ? spec.roles : [];
+      const keep = declared.filter((r) => careRun.planReviewers.includes(r.key));
+      const missing = [];
+      for (const k of careRun.planReviewers) {
+        if (declared.some((r) => r.key === k)) continue;
+        const role = roleChecklistOf(spec)?.pickedRole?.(k);
+        if (role) keep.push(role); else missing.push(k);
+      }
+      if (missing.length && !this._careRolesMissingNoted && this.pipeline) {
+        this._careRolesMissingNoted = true;
+        appendAudit(this.pipeline.dir, `Care ${CARE_LABELS[careRun.position] || careRun.position}: the plan review has no ${missing.map(roleLabelOf).join(', ')} role; reviewing without it.`).catch(() => {});
+      }
+      return keep.length ? keep : roles;
+    }
     const plan = this._requirementRoundPlan(spec);
     if (!plan) return roles;
     const keep = roles.filter((r) => plan.roles.includes(r.key));
@@ -3932,7 +4479,39 @@ export class GraphOrchestrator extends RunHarness {
       await this._adoptCareFill(rec.care.position);
       await this._persist();
     }
+    await this._careOriginGraph(rec.care.position);
     await this._careRequirementBudget();
+  }
+
+  /** Small runs C2 (run 1): the origin run builds slice 1, so it takes Care's run graph like runs 2..N (careRunGraph: the
+   *  Test writer under Balanced and Thorough, the fix-cycle budgets, the second opinion). Applied here, before the
+   *  scheduler is created, so the scheduler builds its wire budgets from it. Re-resolves with the run overlay (a run or
+   *  project budget still wins) and replaces the frozen manifest's topology; every node the start graph had keeps the
+   *  model and effort it started with (Care's fill included). Once per run (`careGraph`); a failing resolve keeps the
+   *  start graph. */
+  async _careOriginGraph(position) {
+    const manifest = this.state.stepper;
+    if (!manifest?.graph || manifest.careGraph || !this.resolved) return;
+    const plan = careRunPlan(position);
+    try {
+      const fresh = await resolveGraph(this.projectDir, this.workflowId, this.registry, this.agentsDir, {
+        ...this._graphResolveOptions({ overlay: manifest.runOverlay || null }), roleFill: { source: 'care', roles: careModelRoles(position) },
+        transform: (t) => this._careRunGraph(t, plan),
+      });
+      const nodes = { ...fresh.nodes };
+      for (const [id, old] of Object.entries(this.resolved.nodeCtx || {})) {
+        if (!nodes[id] || old.kind !== 'agent') continue;
+        nodes[id] = { ...nodes[id], model: old.model, effort: old.effort, modelSource: old.modelSource };
+      }
+      const next = buildGraphManifest(fresh.template, fresh.agentsByKey, { overlays: { nodes, wires: fresh.wires }, scripts: fresh.scriptsByKey });
+      Object.assign(manifest, next);
+      this._adoptResolvedGraph({ ...fresh, nodes });
+    } catch (err) {
+      this._log('orchestrator', 'warn', `Care: cannot shape the run's graph, it keeps its start graph: ${err?.message || err}`);
+    }
+    manifest.careGraph = plan.position;
+    await this._persist();
+    this._emit('state', this.getState());
   }
 
   /** B2 (D13): the Care probe — a resolve with the run's own options plus a Lean fill — stamps on the frozen manifest
@@ -3993,8 +4572,10 @@ export class GraphOrchestrator extends RunHarness {
         if (!nc || nc.kind !== 'agent' || !cell) continue;
         cell.model = nc.model ?? '';
         cell.effort = nc.effort ?? '';
+        // Who chose the model travels with it: a stale start source would misread the fill at the guard and the spawn backstop.
+        if (nc.modelSource !== undefined) cell.modelSource = nc.modelSource;
         const live = this.resolved?.nodeCtx?.[id];
-        if (live) { live.model = nc.model; live.effort = nc.effort; }
+        if (live) { live.model = nc.model; live.effort = nc.effort; live.modelSource = nc.modelSource; }
       }
       this._logCareFill(position, { ...fresh, fillNotes: { filled: careFill.fillable.filter((id) => fresh.fillNotes?.filled.includes(id)) } });
     } catch (err) {
@@ -4022,6 +4603,11 @@ export class GraphOrchestrator extends RunHarness {
     this._planVersion = Number.isFinite(rp.planVersion) ? rp.planVersion : 0;
     const pr = rp.planRevise;
     this._planRevise = pr && typeof pr.id === 'string' && typeof pr.path === 'string' ? { id: pr.id, path: pr.path } : null;
+    this._smallRunsMarked = rp.smallRunsMarked === true;
+    const sa = rp.stopAnswer;
+    this._stopAnswer = sa && typeof sa.id === 'string' && sa.payload && typeof sa.payload === 'object' ? { id: sa.id, payload: { ...sa.payload } } : null;
+    const pa = rp.protoAnswer;
+    this._protoAnswer = pa && typeof pa.key === 'string' && pa.payload && typeof pa.payload === 'object' ? { key: pa.key, payload: { ...pa.payload } } : null;
     const pca = rp.planConcernAnswer;
     this._planConcernAnswer = pca && typeof pca.id === 'string' && pca.payload && typeof pca.payload === 'object'
       ? { id: pca.id, payload: { ...pca.payload } } : null;
@@ -4165,6 +4751,8 @@ export function resolvedFromManifest(manifest, registry, scripts = {}) {
       awaitAll: !!mn.awaitAll,
       ...(mn.roles && typeof mn.roles === 'object' && Object.keys(mn.roles).length ? { roles: mn.roles } : {}),
       ...(mn.wanted && typeof mn.wanted === 'object' ? { wanted: mn.wanted } : {}),
+      // #1450 D-i: only when the cell has it — a pre-change manifest leaves nc.modelSource undefined (the spawn backstop).
+      ...('modelSource' in mn ? { modelSource: mn.modelSource } : {}),
       duplicateKey: false,
     };
   }

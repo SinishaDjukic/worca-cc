@@ -552,7 +552,8 @@ function startSR({ position = 'balanced', smallRuns = true, ...opts } = {}, onAs
   assert.equal(req.ok, true, req.error);
   const dir = opts.projectDir || gitDir('shapereq-b3');
   const orch = createOrchestrator({ projectDir: dir, workflowId: opts.workflowId || req.workflowId, prompt: opts.prompt || 'demo',
-    claude: { mock: true }, shape: req.shape, ...(opts.resume ? { resume: opts.resume } : {}), ...(opts.overlay ? { overlay: opts.overlay } : {}) });
+    claude: { mock: true }, shape: req.shape, ...(opts.resume ? { resume: opts.resume } : {}), ...(opts.overlay ? { overlay: opts.overlay } : {}),
+    ...(opts.branch ? { branch: opts.branch } : {}) });
   const asks = []; const execs = [];
   orch.on('exec', (e) => execs.push(e));
   orch.on('question', (q) => {
@@ -560,6 +561,8 @@ function startSR({ position = 'balanced', smallRuns = true, ...opts } = {}, onAs
     if (q.kind === 'care') setImmediate(() => orch.answer(q.id, { care: { position } }));
     else if (q.kind === 'plan') setImmediate(() => onAsk(q, orch));
     else if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+    // Care's fix cycles hold run 1's code review loop (Lean: 1, and the mock review blocks its first cycle): continue.
+    else if (q.kind === 'gate') setImmediate(() => orch.answer(q.id, { decision: 'continue' }));
   });
   const done = opts.resume ? orch.resume() : orch.run();
   return { orch, asks, execs, done, dir, workflowId: req.workflowId };
@@ -719,6 +722,8 @@ test('small runs: the snapshot wins over a live flag flip: the flag deleted afte
 
 // ── Small runs B4: the Split step ─────────────────────────────────────────────────────────────────────────────────
 const { careOfPipeline, careOfFeature } = await import('../src/core/shape/small-runs.mjs');
+const { featureView, acceptanceRefusal, setFeatureAcceptance, replanRest } = await import('../src/core/shape/features.mjs');
+const { startVerifyCheck } = await import('../src/core/shape/verifier.mjs');
 const { checkSlices } = await import('../src/shared/shape/slices.mjs');
 const { perspectiveByKey } = await import('../src/shared/shape/perspectives.mjs');
 const PASSING_PLAN = { ok: true, passed: 8, total: 8, items: [] };
@@ -779,6 +784,136 @@ test('B4: a marked run asks Start, Requirements and Split only; the approved spl
   const start = careOfPipeline(h.orch.getState().id);
   assert.deepEqual(careOfFeature(feature.id), { position: start.position, chosenBy: start.chosenBy, worcaPick: start.worcaPick });
   assert.ok(auditOf(h.orch).some((x) => x.includes('Plan approval **approve** (the plan passed its checks)')));
+});
+
+/** A started marked split run whose Split is approved with `editsOf(lastId)`; → the feature's view and the confirmed id. */
+async function approvedSplit(editsOf = () => []) {
+  let lastId = null;
+  const h = startSplit({}, (q, orch) => {
+    if (!q.plan?.outline) return approve(q, orch);
+    lastId = q.plan.outline.agreed.at(-1).id;
+    orch.answer(q.id, { decision: 'approve', edits: editsOf(lastId) });
+  });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  return { h, lastId, fid: featureRow(h.orch).id };
+}
+const CONFIRM_EDITS = (id) => [{ op: 'merge', id: 's1' }, { op: 'confirm', id, role: 'Compliance' }];
+
+test('the approved split stores what a person confirms: Ship waits for the edited role, and the Verifier leaves the id out', async () => {
+  const { lastId, fid } = await approvedSplit(CONFIRM_EDITS);
+  let view = featureView(fid);
+  assert.deepEqual(view.requirementKinds.at(-1), { id: lastId, kind: 'confirmed', role: 'compliance' });
+  assert.equal(view.requirementKinds.length, 8);
+  assert.ok(view.requirementKinds.slice(0, -1).every((k) => k.kind === 'owned' && Number.isInteger(k.run)), JSON.stringify(view.requirementKinds));
+  const reason = `Waiting for Compliance to confirm ${lastId}`;
+  assert.deepEqual([view.ship.smallRuns.waiting, view.ship.smallRuns.blocked, view.ship.smallRuns.reason], [[lastId], true, reason]);
+  assert.deepEqual(acceptanceRefusal(view), { error: reason, code: 'ACCEPTANCE_INCOMPLETE', missing: [lastId], role: 'compliance' });
+  setFeatureAcceptance(fid, [{ id: lastId, mark: 'met', role: 'compliance', by: 'ann', at: new Date().toISOString() }]);
+  view = featureView(fid);
+  assert.equal(acceptanceRefusal(view), null);
+  assert.equal(view.ship.smallRuns.blocked, false);
+  // The Verifier's input, with run 1 as the feature's only run.
+  getDb().prepare('DELETE FROM shape_feature_slices WHERE feature_id = ? AND idx > 1').run(fid);
+  await withSmallRuns(true, async () => {
+    const check = startVerifyCheck(fid);
+    assert.ok(check, 'the check started');
+    const { owned } = getTicket(check.ticketId, { withRequest: true }).request.shape.verify;
+    assert.deepEqual([owned.length, owned.includes(lastId)], [7, false]);
+    assert.equal(featureView(fid).verify.owned, 7);
+  });
+});
+
+test('the approved split without edits stores the Planner\'s own role', async () => {
+  const { lastId, fid } = await approvedSplit();
+  assert.deepEqual(featureView(fid).requirementKinds.at(-1), { id: lastId, kind: 'confirmed', role: 'security' });
+  assert.equal(featureView(fid).ship.smallRuns.reason, `Waiting for Security to confirm ${lastId}`);
+});
+
+test('a re-plan of a marked feature carries every requirement no finished run owns; a confirmed one keeps its role, unmarked', async () => {
+  const { h, lastId, fid } = await approvedSplit(CONFIRM_EDITS);
+  const old = JSON.parse(await readFile(join(h.orch.pipeline.dir, 'slices.json'), 'utf8'));
+  const finished = old.slices[0].requirements;                        // run 1 is the planning run: done
+  assert.equal(finished.length, 2);
+  const carried = old.agreed.filter((a) => !finished.includes(a.id));
+  setFeatureAcceptance(fid, [{ id: lastId, mark: 'met', role: 'compliance', by: 'ann', at: new Date().toISOString() }]);
+  const request = await withSmallRuns(true, () => getTicket(replanRest(fid, { by: 'ann' }).ticketId, { withRequest: true }).request);
+  const fired = resolveShapeRequest({ shape: request.shape, workflowId: request.workflowId }, { internal: true, smallRuns: true });
+  assert.equal(fired.ok, true, fired.error);
+  const h2 = startSplit({ projectDir: h.dir, shape: request.shape, internal: true, workflowId: fired.workflowId,
+    branch: { source: request.sourceBranch }, prompt: `${request.prompt}\nPlan this in slices\n` });
+  const res = await h2.done;
+  assert.equal(res.status, 'done', res.error);
+  assert.equal(h2.asks.some((q) => q.kind === 'care'), false, 'the Care is kept, not asked');
+  const split = h2.asks.find(isOutlineAsk);
+  assert.ok(split, 'the re-plan asks the Split');
+  assert.deepEqual((split.plan.requirements || []).map(({ id, text, example }) => ({ id, text, example })), carried.map(({ id, text, example }) => ({ id, text, example })));
+  const f2 = getDb().prepare('SELECT id, outline FROM shape_features WHERE origin_pipeline_id = ?').get(h2.orch.getState().id);
+  const outline = JSON.parse(f2.outline);
+  assert.deepEqual(outline.agreed, carried);
+  const check = checkSlices(outline, { smallRuns: true, care: 'balanced' });
+  for (const id of ['ownership', 'coverage', 'confirmRole']) assert.equal(check.items.find((i) => i.id === id).pass, true, id);
+  const view = featureView(f2.id);
+  assert.deepEqual(view.requirementKinds.at(-1), { id: lastId, kind: 'confirmed', role: 'compliance' }, 'the mock Planner named Security');
+  assert.ok(view.requirementKinds.slice(0, -1).every((k) => k.kind === 'owned' && Number.isInteger(k.run)), JSON.stringify(view.requirementKinds));
+  const ship = () => withSmallRuns(true, () => featureView(f2.id));
+  let v = await ship();
+  assert.equal('unowned' in v.ship.smallRuns, false);
+  assert.deepEqual([v.ship.smallRuns.waiting, v.ship.smallRuns.reason], [[lastId], `Waiting for Compliance to confirm ${lastId}`], 'the old mark is not carried');
+  setFeatureAcceptance(f2.id, [{ id: lastId, mark: 'met', role: 'compliance', by: 'ann', at: new Date().toISOString() }]);
+  v = await ship();
+  assert.equal(v.ship.smallRuns.blocked, false);
+  assert.equal(acceptanceRefusal(v), null);
+});
+
+test('a carried re-plan that ends with Don\'t slice runs as wf_shape does: no requirements input, no Requirements reviewer, no plan coverage (also after a resume)', async () => {
+  const { h, fid } = await approvedSplit(CONFIRM_EDITS);
+  const request = await withSmallRuns(true, () => getTicket(replanRest(fid, { by: 'ann' }).ticketId, { withRequest: true }).request);
+  assert.equal(request.workflowId, 'wf_shape_slice_req');
+  const seen = (orch) => {
+    const spawns = [];
+    const real = orch._runNodeAttempts.bind(orch);
+    orch._runNodeAttempts = async (nc, ctx) => {
+      spawns.push({ node: nc.nodeId, role: ctx.role || null, note: ctx.shapeOutlineNote?.decision || null, ids: (ctx.shapeAgreedIds || []).length,
+        bound: !!ctx.bindings?.requirements, text: ctx.roleRequirementsText || '' });
+      return real(nc, ctx);
+    };
+    return spawns;
+  };
+  const flat = (q, orch) => (q.plan?.outline ? orch.answer(q.id, { decision: 'flat' }) : approve(q, orch));
+  const replan = (workflowId) => {
+    const fired = resolveShapeRequest({ shape: request.shape, workflowId }, { internal: true, smallRuns: true });
+    const x = startSplit({ projectDir: h.dir, shape: request.shape, internal: true, workflowId: fired.workflowId || workflowId,
+      branch: { source: request.sourceBranch }, prompt: `${request.prompt}\nPlan this in slices\n` }, flat);
+    x.spawns = seen(x.orch);
+    return x;
+  };
+  const a = replan('wf_shape_slice_req');
+  assert.equal((await a.done).status, 'done');
+  const b = replan('wf_shape');
+  assert.equal((await b.done).status, 'done');
+  assert.ok(a.asks.find(isOutlineAsk) && b.asks.find(isOutlineAsk), 'both asked the Split');
+  // From the person's Don't slice on: the same executions in the same order, none with the carried list.
+  const after = (x) => x.spawns.slice(x.spawns.findIndex((s) => s.note === 'flat'));
+  const roleSet = (x) => after(x).map((s) => `${s.node}${s.role ? `:${s.role}` : ''}`).sort();
+  assert.ok(after(a).length > 4);
+  assert.deepEqual(roleSet(a), roleSet(b));
+  assert.deepEqual(after(a).filter((s) => s.bound || s.ids || s.text), []);
+  assert.equal(after(a).some((s) => s.role === 'requirements'), false);
+  const planAsk = (x) => x.asks.find((q) => q.kind === 'plan' && !q.plan.outline);
+  assert.deepEqual(Object.keys(planAsk(a).plan).sort(), Object.keys(planAsk(b).plan).sort());
+  assert.equal('coverage' in planAsk(a).plan, false);
+  // Paused at the plan approval: the resumed run still has no list.
+  const c = startSplit({ projectDir: h.dir, shape: request.shape, internal: true, workflowId: 'wf_shape_slice_req',
+    branch: { source: request.sourceBranch }, prompt: `${request.prompt}\nPlan this in slices\n` },
+  (q, orch) => (q.plan?.outline ? orch.answer(q.id, { decision: 'flat' }) : orch.pause()));
+  assert.equal((await c.done).status, 'paused');
+  const d = startSplit({ projectDir: h.dir, shape: request.shape, internal: true, workflowId: 'wf_shape_slice_req', resume: readPipelineForResume(c.orch.getState().id) }, flat);
+  d.spawns = seen(d.orch);
+  assert.equal((await d.done).status, 'done');
+  assert.equal('coverage' in planAsk(d).plan, false);
+  assert.ok(d.spawns.some((s) => s.node === 'n_review'));
+  assert.deepEqual(d.spawns.filter((s) => s.bound || s.ids || s.text || s.role === 'requirements'), []);
 });
 
 test('B4: marker off, the sliced run still asks plan-n_refine-1; a marked slice 1 whose plan check fails is held', async () => {
@@ -893,3 +1028,79 @@ test('B4: a pause between challenge rounds resumes at the next round', async () 
   assert.equal(h2.order.filter((x) => x === 'C').length, 2, 'rounds 2 and 3 only');
   assert.equal(h2.asks.find(isOutlineAsk).plan.challenge.rounds, 3);
 });
+
+// Small runs C2 (run 1): the origin run builds slice 1 itself. Its Care graph (Test writer, fix cycles, second opinion)
+// is applied at the Start step, before the scheduler exists; its plan reviewers come at the Split, from slice 1's ids.
+const CODE_MAJOR_EVERY_CYCLE = JSON.stringify({ correctness: EVERY });
+const startsOf = (execs) => execs.filter((e) => e.kind !== 'task' && e.status === 'start').map((e) => e.nodeId);
+/** A run-1 Split run whose code review blocks every cycle (startSR answers a spent fix loop's gate Continue). */
+function startRunOne(position, opts = {}) {
+  let testsReq = null;
+  const h = startSplit({ position, ...opts });
+  const real = h.orch._runNodeAttempts.bind(h.orch);
+  h.orch._runNodeAttempts = async (nc, ctx) => {
+    if (nc.key === 'testWriter' && testsReq === null) testsReq = await readFile(ctx.bindings?.requirements?.path || '', 'utf8').catch(() => '');
+    return real(nc, ctx);
+  };
+  return { ...h, gates: () => h.asks.filter((q) => q.kind === 'gate').map((q) => q.id), testsReq: () => testsReq };
+}
+
+test('small runs C2: run 1 follows its Care plan under every position (Test writer, fix cycles by behaviour, plan reviewers)', () => withEnv({ WORCA_MOCK_ROLE_REVIEW: CODE_MAJOR_EVERY_CYCLE }, async () => {
+  const { careRunPlan } = await import('../src/shared/shape/feature-record.mjs');
+  const { runRolesOf } = await import('../src/shared/shape/requirements.mjs');
+  const { sliceRequirementIds } = await import('../src/shared/shape/slices.mjs');
+  for (const position of ['lean', 'balanced', 'thorough']) {
+    const h = startRunOne(position);
+    const res = await h.done;
+    assert.equal(res.status, 'done', `${position}: ${res.error}`);
+    const careRun = h.orch.state.stepper.careRun;
+    const owned = sliceRequirementIds(h.orch.runShape.slice);
+    const want = careRunPlan(position, { runRoles: runRolesOf(owned), lead: 'security' });
+    assert.equal(careRun.position, position);
+    assert.equal(careRun.testWriter, want.testWriter, position);
+    assert.deepEqual(careRun.planReviewers, want.planReviewers, position);
+    const planRounds = (h.orch.state.roleReviews?.rounds || []).filter((r) => r.node === 'n_roles');
+    assert.deepEqual(planRounds[0].roles.map((r) => r.key), want.planReviewers, position);
+    // The fix loop: n_impl runs once per cycle Care allows, then the spent budget holds at w9.
+    const order = startsOf(h.execs);
+    assert.equal(order.filter((id) => id === 'n_impl').length, want.fixCycles, `${position}: fix executions`);
+    assert.deepEqual(h.gates(), [`gate-w9-${want.fixCycles}`], `${position}: the w9 hold`);
+    assert.equal(h.orch.state.stepper.graph.wires.find((w) => w.id === 'w9').maxCycles, want.fixCycles);
+    // The Test writer: Balanced and Thorough run it once, after Refine and before the Implementer; Lean has none.
+    const tests = order.filter((id) => id === 'n_tests').length;
+    assert.equal(tests, want.testWriter ? 1 : 0, `${position}: n_tests runs`);
+    assert.equal(h.orch.state.stepper.graph.nodes.some((n) => n.id === 'n_tests'), want.testWriter, position);
+    if (want.testWriter) {
+      assert.ok(order.indexOf('n_tests') > order.lastIndexOf('n_refine') && order.indexOf('n_tests') < order.indexOf('n_impl'), `${position}: ${order.join(' ')}`);
+      // Its requirements are slice 1's own agreed ids only.
+      const ids = [...h.testsReq().matchAll(/\*\*(R-[a-z]+-\d+)\*\*/g)].map((m) => m[1]);
+      assert.ok(ids.length >= 1, h.testsReq());
+      assert.deepEqual([...new Set(ids)].sort(), [...owned].sort());
+    }
+    const label = { lean: 'Lean', balanced: 'Balanced', thorough: 'Thorough' }[position];
+    const tw = want.testWriter ? 'by a separate Test writer' : 'by the Implementer';
+    const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(h.orch.getState().id).map((r) => r.text);
+    assert.ok(audit.some((t) => t.startsWith(`Care ${label}: tests first, ${tw}, fix cycles ${want.fixCycles}, plan reviewers `)), audit.join('\n'));
+  }
+}));
+
+test('small runs C2: a project w9 budget wins over run 1\'s Care fix cycles', () => withEnv({ WORCA_MOCK_ROLE_REVIEW: CODE_MAJOR_EVERY_CYCLE }, async () => {
+  const { setWireCycles } = await import('../src/core/config.mjs');
+  const dir = gitDir('shapereq-c2-w9');
+  await setWireCycles(dir, 'wf_shape_req', 'w9', 2);
+  const h = startRunOne('lean', { projectDir: dir });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  assert.equal(startsOf(h.execs).filter((id) => id === 'n_impl').length, 2);
+  assert.deepEqual(h.gates(), ['gate-w9-2']);
+  const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(h.orch.getState().id).map((r) => r.text);
+  assert.ok(audit.some((t) => t.startsWith('Care Lean: tests first, by the Implementer, fix cycles 2, set by the project, plan reviewers ')), audit.join('\n'));
+}));
+
+test('small runs C2: an unmarked sliced run 1 has no Care plan, no Test writer and keeps w9 at 3', () => withSmallRuns(false, async () => {
+  const h = start({ prompt: SLICED });
+  assert.equal((await h.done).status, 'done');
+  assert.equal('careRun' in h.orch.state.stepper, false);
+  assert.ok(!h.orch.state.stepper.graph.nodes.some((n) => n.id === 'n_tests'));
+  assert.equal(h.orch.state.stepper.graph.wires.find((w) => w.id === 'w9').maxCycles, 3);
+}));

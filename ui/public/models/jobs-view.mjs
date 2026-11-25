@@ -57,8 +57,10 @@ function roleTile(doc, r) {
   tile.setAttribute('aria-expanded', 'false');
   const effortText = str(r.effortText);
   const hasModel = !!(r.value && str(r.value.model));
+  // An empty role reads as its tile text (#1450: "Worca default · Opus 5.5", "Let Claude Code decide", "<tool> decides …").
+  const emptyText = str(r.text) === "Each job's own default" ? "each job's own default" : str(r.text);
   tile.setAttribute('aria-label', hasModel ? `${r.name}: ${r.text}, ${effortText}`
-    : `${r.name}: each job's own default${effortText ? `, ${effortText}` : ''}`);
+    : `${r.name}: ${emptyText}${effortText ? `, ${effortText}` : ''}`);
   const model = make(doc, 'span', 'mdl-tile-model');
   if (r.model) model.append(modelMark(doc, withUpstream(r.model), 'md'));
   model.append(make(doc, 'span', 'mdl-tile-name', str(r.text)), icon(doc, 'chevron-down', 16));

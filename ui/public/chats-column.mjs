@@ -43,8 +43,8 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
   viewBtn.setAttribute('aria-haspopup', 'menu');
   viewBtn.setAttribute('aria-expanded', 'false');
   viewBtn.append(icon(doc, 'chevron-down', 14));
-  // New chat leads the list's head, as New run does the Runs list's (`newButton`: the panel's own button).
-  head.append(el('h2', 'runs-head-title', 'Chats'), ...(newButton ? [newButton] : []), viewBtn);
+  // New chat ends the list's head, after View, as New run does the Runs list's (`newButton`: the panel's own button).
+  head.append(el('h2', 'runs-head-title', 'Chats'), viewBtn, ...(newButton ? [newButton] : []));
   const chip = el('div', 'runs-view-chip');
   chip.id = 'chats-view-chip';
   chip.hidden = true;

@@ -84,8 +84,8 @@ test('every shipped sidecar: required fields, runnable runnerType, v2 typed port
         clarify: 'plan', planner: 'plan', refiner: 'plan', planReviewer: 'plan',
         requirementsDrafter: 'plan', requirementsReviewer: 'plan', requirementsRefiner: 'plan',
         architect: 'plan', architectSetup: 'plan',
-        decomposer: 'build', implementer: 'build',
-        reviewer: 'review', workspaceReviewer: 'review',
+        decomposer: 'build', implementer: 'build', testWriter: 'build',
+        reviewer: 'review', workspaceReviewer: 'review', featureVerifier: 'review',
         manualTestsChecklist: 'review', manualWebUiTesting: 'review',
       };
       const { metas } = await listAgents();

@@ -7,6 +7,7 @@
 // .mdl-pick (span.mdl-pick-text, span.mdl-pick-eff, a chevron icon; .inherit when the row follows something) and gets
 // aria-expanded from here while its menu is open.
 import { runsOn, modelGroups, effortsOn, HARNESS_EFFORTS } from '../../../src/shared/connections.mjs';
+import { CLI_DECIDES, isCliDecides } from '../../../src/shared/model-roles.mjs';
 import { displayName } from './catalogue-model.mjs';
 import { modelMark } from './brand-marks.mjs';
 import { placeFlyout } from '../side-flyout.mjs';
@@ -67,7 +68,8 @@ export function splitForPicker(catalog, engine, current = '') {
  *  Item = { kind: 'item'|'head'|'sep', label, hint?, tick: boolean, disabled: boolean, next?, back?, model?, act? }
  *  (tick and disabled always present, false when not set); act: { type: 'clear' } | { type: 'model', id } |
  *  { type: 'effort', effort } | { type: 'pane', pane }.
- *  main: the clear item (label = clearLabel, ticked when value has no model and no effort), a separator, the primary
+ *  main: the clear item (label = clearLabel, ticked when value has no model and no effort), the "Let <tool> decide"
+ *    item when decideLabel is given (act cli, ticked when the value isCliDecides), a separator, the primary
  *    models (under a 'head' per connection when modelGroups gives more than one group), a separator, "Effort" (next;
  *    hint = the effort or "Model default"; disabled when there is no model and !allowEffortOnly; disabled with hint
  *    "not supported" when modelOnly or when the effort list below is empty), and "More models" (next) when rest is
@@ -76,7 +78,7 @@ export function splitForPicker(catalog, engine, current = '') {
  *    (effortsOn), or HARNESS_EFFORTS[engine] when no model is picked or the id is not in the catalogue.
  *  more: back row "Models", a separator, the rest (grouped the same way; blocked ones disabled with their hint).
  *  A current id the catalogue does not have is listed first among the primary as "<id> (not in the catalog)". */
-export function pickerItems({ catalog, engine, value = null, clearLabel, modelOnly = false, allowEffortOnly = false, pane = 'main' }) {
+export function pickerItems({ catalog, engine, value = null, clearLabel, decideLabel = '', modelOnly = false, allowEffortOnly = false, pane = 'main' }) {
   const rows = rowsOf(catalog);
   const model = modelOf(value);
   const effort = effortOf(value);
@@ -105,7 +107,11 @@ export function pickerItems({ catalog, engine, value = null, clearLabel, modelOn
   }
   const split = splitForPicker(rows, engine, model);
   if (pane === 'more') return [back('Models'), sep(), ...byConnection(split.rest)];
-  const out = [item(str(clearLabel), { tick: !model && !effort, act: { type: 'clear' } }), sep()];
+  const decides = isCliDecides(value);
+  const out = [item(str(clearLabel), { tick: !decides && !model && !effort, act: { type: 'clear' } })];
+  // #1450 "Let Claude Code decide": a role tile on Claude Code or Codex only (the caller passes decideLabel).
+  if (str(decideLabel)) out.push(item(str(decideLabel), { tick: decides, act: { type: 'cli' } }));
+  out.push(sep());
   if (model && !entry) out.push(item(missingText(model), { tick: true, act: { type: 'model', id: model } }));
   out.push(...byConnection(split.primary), sep());
   const unsupported = modelOnly || !efforts.length;
@@ -129,6 +135,7 @@ export function applyPick(value, act, { catalog, engine, modelOnly = false, allo
   const effort = effortOf(value);
   const type = act && typeof act === 'object' ? act.type : '';
   if (type === 'clear') return null;
+  if (type === 'cli') return { ...CLI_DECIDES };
   if (type === 'model' && str(act.id)) {
     if (modelOnly || !effort) return shape(act.id, '');
     const entry = rowsOf(catalog).find((m) => m.id === act.id);
@@ -228,14 +235,14 @@ function itemNode(doc, item, ctx, onAct) {
  *  enabled item. Escape (document capture listener, stopImmediatePropagation) removes it and focuses the anchor; a
  *  pointerdown outside it and the anchor, or focus moving outside both, removes it without moving focus. The anchor's
  *  aria-expanded follows. → { close() } (a no-op once closed) */
-export function openModelPicker({ doc, win, anchor, catalog, engine, value, clearLabel, modelOnly = false, allowEffortOnly = false, onPick }) {
+export function openModelPicker({ doc, win, anchor, catalog, engine, value, clearLabel, decideLabel = '', modelOnly = false, allowEffortOnly = false, onPick }) {
   const prev = OPEN.get(doc);
   if (prev) {
     prev.close();
     if (prev.anchor === anchor) return { close() {} };
   }
   const view = win || doc.defaultView;
-  const opts = { catalog, engine, value: value ?? null, clearLabel, modelOnly: !!modelOnly, allowEffortOnly: !!allowEffortOnly };
+  const opts = { catalog, engine, value: value ?? null, clearLabel, decideLabel, modelOnly: !!modelOnly, allowEffortOnly: !!allowEffortOnly };
   const ctx = { model: modelOf(value), modelOnly: !!modelOnly };
   const root = make(doc, 'div', 'menu ask-pop ask-pop-model mdl-pick-pop');
   root.setAttribute('role', 'menu');
