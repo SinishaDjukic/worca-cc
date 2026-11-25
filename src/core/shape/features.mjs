@@ -482,6 +482,11 @@ function stopWords(f, rows, slices, live) {
   if (shaperSmallRunsOn()) {
     const holdsByIndex = new Map();
     const rowBySlice = new Map(rows.map((r) => [r.sliceId, r]));
+    // Slice 3 (D2): every slice's direct builds-on runs, started ones too (run-status.mjs namedWaits reduces by them).
+    rows.forEach((r, i) => {
+      const deps = (f.outline.slices[slices[i].index - 1]?.dependsOn || []).map((id) => rowBySlice.get(id));
+      slices[i].buildsOn = deps.filter((d) => d && d.index !== r.index).map((d) => d.index).sort((a, b) => a - b);
+    });
     rows.forEach((r, i) => {
       const s = slices[i];
       if (s.pipelineId || !NOT_STARTED_STATE.has(s.state)) return;
@@ -502,7 +507,7 @@ function stopWords(f, rows, slices, live) {
 }
 
 /** Small runs: what each slice's one short word reads (run-agents.mjs cardShortWord), from the rows alone (no full view):
- *  index → {kind, state, stop?, waitsFor?, cannotStart?, nextTurn?}, the words featureView's slices carry. */
+ *  index → {kind, state, stop?, waitsFor?, cannotStart?, nextTurn?, buildsOn?}, the words featureView's slices carry. */
 export function sliceWords(featureId, { live = () => null } = {}) {
   const f = featureRow(featureId);
   if (!f) return new Map();

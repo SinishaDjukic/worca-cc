@@ -15,6 +15,7 @@ import { listRunGroups } from '../src/core/run-groups.mjs';
 import { busySliceOf, featureView, setApproveEach, sliceGateState } from '../src/core/shape/features.mjs';
 import { sliceChainGate, heldStopTurn } from '../src/core/shape/chain.mjs';
 import { SIXTEEN_RUN_LINKS, sixteenRunFeature, startable, world, SIXTEEN_RUN_STATES } from './helpers/shape-sixteen-runs.mjs';
+import { runStatus, namedWaits } from '../src/shared/shape/run-status.mjs';
 
 useTempHome(after, 'worca-shape-sixteen-');
 const root = mkdtempSync(join(tmpdir(), 'worca-shape-sixteen-proj-'));
@@ -232,4 +233,77 @@ test('T7 (R-qa-12): a free change run takes nextTurn before a lower-numbered fre
   const { view, members } = views(fx);
   assert.deepEqual(turnRuns(view), [13]);
   assert.deepEqual(turnRuns(members), [13]);
+}));
+
+// ---- Slice 3: the shared run status phrase on the real payloads (R-po-1, R-po-3) ----
+const statusOf = (m, run) => runStatus({ slice: m.get(run), slices: m });
+const nextRuns = (m) => [...m.keys()].filter((r) => statusOf(m, r).word === 'next');
+
+test('S3-T1 base: run 12 waits for run 7, 10; run 7 names [2, 6]; run 9 alone reads next', () => withEnvVars(ON, () => {
+  const { view, members } = views(world(root, 'base'));
+  for (const m of [view, members]) {
+    assert.equal(statusOf(m, 12).word, 'waits for run 7, 10');
+    assert.deepEqual(namedWaits(m.get(7), m), [2, 6]);
+    assert.equal(statusOf(m, 7).word, 'waits for run 2 (needs you), 6');
+    assert.deepEqual(nextRuns(m), [9]);
+  }
+}));
+
+test('S3-T2 busy: run 9 next, run 10 empty, run 8 and run 7 name run 2 (needs you), run 13 names run 11', () => withEnvVars(ON, () => {
+  const { view, members } = views(world(root, 'busy'));
+  for (const m of [view, members]) {
+    assert.equal(statusOf(m, 9).word, 'next');
+    assert.equal(statusOf(m, 10).word, '');
+    assert.equal(statusOf(m, 8).word, 'waits for run 2 (needs you)');
+    assert.equal(statusOf(m, 7).word, 'waits for run 2 (needs you), 6');
+    assert.equal(statusOf(m, 13).word, 'waits for run 11 (needs you)');
+    assert.ok(nextRuns(m).length <= 1);
+  }
+}));
+
+test('S3-T3 busy with run 6 not started: run 6 reads waits for run 5 (failed)', () => withEnvVars(ON, () => {
+  const { states } = SIXTEEN_RUN_STATES.busy;
+  const { 6: _six, ...rest } = states;
+  const { view, members } = views(world(root, { done: [1, 3], states: rest }));
+  for (const m of [view, members]) assert.equal(statusOf(m, 6).word, 'waits for run 5 (failed)');
+}));
+
+test('S3-T4 change run: run 13 reads next · small change run, run 9 reads empty', () => withEnvVars(ON, () => {
+  const fx = world(root, 'base');
+  fx.setKind(13, 'change');
+  const { view, members } = views(fx);
+  for (const m of [view, members]) {
+    assert.equal(statusOf(m, 13).word, 'next · small change run');
+    assert.equal(statusOf(m, 9).word, '');
+  }
+}));
+
+test('S3-T5 held answer has the turn: no row reads next; run 2 is mark after, never waiting for you', () => withEnvVars(ON, () => {
+  const fx = world(root, { done: [1], states: { 2: { stop: 'requirement', held: true }, 3: { pipe: 'running' } } });
+  const { view, members } = views(fx);
+  for (const m of [view, members]) {
+    assert.deepEqual(nextRuns(m), []);
+    assert.equal(statusOf(m, 2).mark, 'after');
+    assert.notEqual(statusOf(m, 2).word, 'next');
+    assert.notEqual(statusOf(m, 2).word, 'waiting for you');
+    assert.equal(statusOf(m, 9).word, '');
+  }
+}));
+
+test('S3-T6 buildsOn: every flag-on slice carries its direct builds-on runs in both payloads; flag off carries none', () => {
+  const fx = world(root, 'busy');
+  withEnvVars(ON, () => {
+    const { view, members } = views(fx);
+    for (const m of [view, members]) for (const { run, dependsOn } of SIXTEEN_RUN_LINKS) assert.deepEqual(m.get(run).buildsOn, [...dependsOn], `run ${run}`);
+  });
+  withEnvVars({ WORCA_FLAGS: undefined }, () => {
+    for (const s of featureView(fx.featureId, { live: fx.live }).slices) assert.equal('buildsOn' in s, false, `run ${s.index}`);
+  });
+});
+
+test('S3-T7 cannot start on the payload: a canceled dependency reads word null, mark faint, never next', () => withEnvVars(ON, () => {
+  const fx = world(root, { done: [1], states: { 2: { stop: 'requirement' } } });
+  fx.cancelTicket(3);
+  const { view, members } = views(fx);
+  for (const m of [view, members]) assert.deepEqual(statusOf(m, 4), { word: null, mark: 'faint' });
 }));
