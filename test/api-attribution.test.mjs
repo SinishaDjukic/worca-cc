@@ -88,7 +88,7 @@ test('a run records who started it, persisted on the pipeline row; the HTTP body
   await stopRun(await untilRecorded(second));
 });
 
-test('the PR body ends with who started the run', async () => {
+test('the PR body names nobody, even for a named starter', async () => {
   const dir = gitDir('attrib-pr');
   const r = await post('/api/run', { projectDir: dir, prompt: 'z', mock: true, humanInLoop: false }, { 'X-Forwarded-Email': 'grace@example.com' });
   const { runId } = await r.json();
@@ -114,5 +114,5 @@ test('the PR body ends with who started the run', async () => {
   const create = seen.find((c) => c[0] === 'gh' && c[1] === 'pr' && c[2] === 'create');
   assert.ok(create, JSON.stringify(seen));
   const body = create[create.indexOf('--body') + 1];
-  assert.match(body, /\n\n---\nStarted by grace@example\.com via worca$/);
+  assert.doesNotMatch(body, /Started by|via worca/);
 });

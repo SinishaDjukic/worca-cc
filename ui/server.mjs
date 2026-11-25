@@ -235,7 +235,7 @@ import {
 import { extensionInstallInfo } from '../src/core/extension-package.mjs';
 import { pageOrigin, matchRunningAction } from '../src/core/extension-actions.mjs';
 import { detectDeployment, deploymentFacts } from '../src/core/deployment.mjs';
-import { resolveIdentity, startedByOf, prAttributionFooter, actorOf, isSharedIdentity, byActor } from '../src/core/identity.mjs';
+import { resolveIdentity, startedByOf, actorOf, isSharedIdentity, byActor } from '../src/core/identity.mjs';
 import { withBillTo, currentBillTo, currentOwner } from '../src/core/billing.mjs';
 import { agentIdentity } from '../src/core/agent-user.mjs';
 import { spawn } from 'node:child_process';
@@ -7242,8 +7242,6 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const pushed = await pushBranch(repoDir, feature, pushRemote);
   if (!pushed.ok) return { ok: false, status: 500, error: `git push failed: ${pushed.stderr}` };
 
-  // A PR opened by a shared bot still names the person behind it (identity.mjs); none for 'local'.
-  const footer = prAttributionFooter(state.startedBy);
   const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
   // A run from the Azure Boards source links its work item to the PR.
   const sourceRef = provider.forge === 'azure' ? findPipelineRowById(pipelineIdForPr)?.source_ref ?? null : null;
@@ -7251,11 +7249,11 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   // A workspace automation's work item (#711) is linked by the PR of the member it came through only, as only the
   // issue's own repository's PR closes a GitHub issue.
   if (workItemId && memberKey && !automationSourceIsRepo(sourceRef, baseR)) workItemId = null;
-  // The run's GitHub issue, closed on merge: after the description, before the footer.
+  // The run's GitHub issue, closed on merge: after the description.
   const closing = runSourceIssue(pipelineIdForPr, { baseRemote: baseR, memberKey })
     ? issueClosingLine({ sourceUrl: runSourceUrl(pipelineIdForPr), baseRepo: repo, body: description }) : '';
-  // Spec D7: a shaped run's PR ends with its checklist (the latest review cycle that has one), before the
-  // attribution footer; skipped when the description already carries it. Guarded like runSourceUrl: the branch is
+  // Spec D7: a shaped run's PR ends with its checklist (the latest review cycle that has one);
+  // skipped when the description already carries it. Guarded like runSourceUrl: the branch is
   // already pushed, so a DB error must not become a failed PR.
   let cl = null;
   if (!description.includes(CHECKLIST_PR_MARKER)) {
@@ -7266,8 +7264,8 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   let lead0 = '';
   if (preamble && !memberKey) { try { lead0 = slicePrPreamble(pipelineIdForPr); } catch { lead0 = ''; } }
   const lead = description || title || state.title || feature;
-  const prBody = lead0 || description || closing || checklistMd || footer
-    ? `${lead0 ? `${lead0}\n\n` : ''}${lead}${closing ? `\n\n${closing}` : ''}${checklistMd ? `\n\n${checklistMd}` : ''}${footer}` : '';
+  const prBody = lead0 || description || closing || checklistMd
+    ? `${lead0 ? `${lead0}\n\n` : ''}${lead}${closing ? `\n\n${closing}` : ''}${checklistMd ? `\n\n${checklistMd}` : ''}` : '';
   const pr = await createPr({
     projectDir: repoDir, base, head: feature, title: title || state.title || feature, repo, headOwner,
     baseRemote: baseR, pushRemote: pushR, workItemId, draft,
@@ -7286,7 +7284,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
     // A workspace member's PR is recorded per member; the row keeps the rollup (stats count the run once).
     if (memberKey) persistMemberPrState(pipelineIdForPr, memberKey, facts);
     else persistPrState(pipelineIdForPr, facts);
-    // Who shipped it (the footer names who STARTED the run). No actor: worca opened it (a slice's draft).
+    // Who shipped it. No actor: worca opened it (a slice's draft).
     const where = memberKey ? ` in \`${target.memberName}\`` : '';
     appendAuditById(pipelineIdForPr, `PR ${pr.existed ? 'linked' : (newDraft ? 'created (draft)' : 'created')}${where}${byActor(actor)}: ${pr.url}`, { actor });
     if (!pr.existed) announcePrOpened(pipelineIdForPr, { prUrl: pr.url, draft: newDraft, memberName: memberKey ? target.memberName : null });
@@ -7316,10 +7314,10 @@ function automationSourceIsRepo(sourceRef, baseR) {
 // from the body); baseBranch must be a well-formed ref other than the feature
 // branch; a base the base remote does not have is refused (409) before anything is pushed.
 // `body` is the "Ship it?" modal's PR description (a string of at most PR_BODY_MAX
-// characters): it becomes the PR body, the attribution footer after it. Absent,
+// characters): it becomes the PR body. Absent,
 // null or blank keeps the title-only body exactly as before. `draft` (boolean) opens a
-// new PR as a draft; the run's GitHub issue source adds a `Closes` line between the
-// description and the footer. `title` (a string of at most 256 characters) replaces the run title as the PR title;
+// new PR as a draft; the run's GitHub issue source adds a `Closes` line after the
+// description. `title` (a string of at most 256 characters) replaces the run title as the PR title;
 // blank keeps the run title.
 // ---------------------------------------------------------------------------
 const PR_TITLE_MAX = 256;
