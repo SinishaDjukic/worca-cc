@@ -77,6 +77,11 @@ it starts **one** catch-up run within its grace and reports the slots that passe
 failure streak, and an overlap skip leaves no feed item (the skipped occurrence is in its
 history).
 
+A missed run that starts late — through **Run now**, a new time, or a predecessor that finishes
+after all — resolves its **Missed** row in the activity feed. The row stays, greyed, and reads
+"Resolved" with what happened next; a **Started** item follows it ("started after all"), and both
+link to the run.
+
 ## After another run
 
 A one-off run can wait for a **run** instead of a time — a running (or already finished)
@@ -100,6 +105,10 @@ one left.
   branches always survive a run, so a `done` predecessor always has one. Any scheduled run,
   timed or not, may also pick a finished run's branch from the *Run branches* group of the
   Source branch picker.
+- **Waiting only for the time.** A **Run after** that does not start on the previous run's branch
+  only waits for it to end, so it does not join that run's chain in **Runs**: it starts its own
+  group, and its first row names the run it waits for ("Waiting · starts after" and the run's title).
+  Pick *Branch of the run before it* and it joins the chain instead.
 - **When it starts.** The scheduler tick (30 s) reads the predecessor's state from the
   database, so a predecessor that ends in a `--wait` terminal or another server is seen too;
   a run ending in the UI server nudges an extra tick. The ticket's time becomes the moment
@@ -109,7 +118,7 @@ one left.
   local branch), names the runs that wait for it; they are marked missed on the next tick. A run cannot wait for itself, directly or through a chain.
 - **Entry points.** **Run after** (*Schedule a run after this*) on a run's page;
   *Schedule next…* on a scheduled run's card; the **After a run** side of the schedule sheet's kind switch.
-  All open New pipeline with the pick made (`#new/after/<id>`).
+  All open New run with the pick made (`#new/after/<id>`).
 
 An older worca on the same home never starts an after-run early: until its gate opens the
 ticket's time is the year 9999, which that build shows as a run "in 7973 years". Run one
@@ -233,14 +242,14 @@ the caller's zone — and so is a time in the past.
 
 ![Schedules view on the Repeating tab: three active repeating schedules (a monthly flaky-test sweep, a weekly broken-link sweep and a nightly dependency audit) for demo projects, each with its rule, project, next start time, pause switch and Run now, Skip next, Edit and Delete buttons](screenshots/schedules.png)
 
-- **New pipeline** and the **Ask run card**: *Start run* is a split button;
+- **New run** and the **Ask run card**: *Start run* is a split button;
   *Schedule…* opens the schedule sheet at once — before the prompt is typed — and the
   pick waits on the form while *Start run* reads as **Schedule**. The sheet builds a
   sentence and shows the next three dates; presets are Once, Every day, Weekdays,
   Weekly, Monthly, Custom; *Times a day* picks one time, a list of times, or every N
   minutes/hours, optionally only between two times. An Ask card that becomes a repeating schedule follows the
   series (Run now, Delete schedule) instead of one run.
-- **Schedules › Schedule a run** picks the time FIRST: it opens New pipeline with the
+- **Schedules › Schedule a run** picks the time FIRST: it opens New run with the
   schedule sheet already up (`#new/schedule`); the pick then waits on the form
   ("Scheduled · Starts Sat Sep 19, 02:00 · Change… · Start now instead") and *Start run*
   reads as **Schedule**, so describing the task and one click schedules it. The pick is

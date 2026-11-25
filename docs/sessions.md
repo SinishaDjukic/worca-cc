@@ -64,7 +64,7 @@ With the Labs flag on, a session set to One conversation runs as one conversatio
   spikes pass — in particular S3 (the run's deny rules and the host guard reach the sub-agents, on both measured CLI
   versions) — and the S7b go/no-go passes (the reference pipeline, run with and without a session, keeps its quality).
   Codex, Copilot and OpenCode follow after their own spike (S10).
-- The run-start notice under the Engine dropdown on New pipeline says, per session, how it will run: `2 steps share
+- The run-start notice under the Engine dropdown on New run says, per session, how it will run: `2 steps share
   one session (Refine Plan + Decompose).`, or the reason it runs as separate sessions.
 
 ## Limits

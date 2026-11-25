@@ -256,7 +256,7 @@ failed (never paused), so Re-scan stays available.
 
 ## Workspace runs
 
-In **New pipeline**, set **Target** to **Workspace**. The planner writes one plan whose every
+In **New run**, set **Target** to **Workspace**. The planner writes one plan whose every
 task is tagged with the projects it touches (`Projects: <projectKey>[, ...]`), and each
 implementer edits only those. Every Git member gets its own branch and worktree; every Folder
 member gets its own copy, which you apply to its folder (or discard) on its own. **Workspace

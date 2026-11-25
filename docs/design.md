@@ -1,7 +1,7 @@
 # Design
 
 Describe a web page, a document (a report, an analysis or an architecture document), a presentation, a pitch deck or
-an HTML and JavaScript video in its own chat, and real agents build it in front of you. On by default (beta); `WORCA_FLAGS=-design` turns it off, and so does the
+an HTML and JavaScript video in a chat, and real agents build it in front of you. On by default (beta); `WORCA_FLAGS=-design` turns it off, and so does the
 **Design** switch in Settings › Labs (the `design` flag). With the flag off the page is hidden and every
 `/api/design` route answers 404; what Design already spent stays in Statistics.
 
@@ -23,15 +23,15 @@ an HTML and JavaScript video in its own chat, and real agents build it in front 
    [Documents](#documents).
 4. **Attach files** with the button, by pasting or by dropping them: pictures, a logo, notes. A file worca does not
    take is named under the composer.
-5. **Send.** The design opens in a chat of its own, on the Chat page (see [In the chat](#in-the-chat)). Its title is
+5. **Send.** The design opens in a new chat on the Chat page (see [In the chat](#in-the-chat)). Its title is
    the first line of what you wrote (the first sentence, at most 60 characters); no model names it. **Rename** and
    **Delete** are in the **⋯** menu over the chat. Delete is off while a build runs; it removes the design's files,
    keeps its chat, and what it cost stays in Statistics.
 
 ## In the chat
 
-A chat with a design is a chat like any other. The sidebar's **Design** is the one way in made for designing; once
-the design has started there is no difference: the chat is in the Chat lists and their search with the Design mark
+A chat with a design is a chat like any other. The sidebar's **Design** is the way in made for designing, and any chat can start a design when you ask it for one
+(see [From any chat](#from-any-chat)); once the design has started there is no difference: the chat is in the Chat lists and their search with the Design mark
 before its title, `#chat/<id>` opens it, and it can do everything a chat does (runs, schedules, settings, MCP
 servers, skills, commands, its own title and suggestions, any engine). What the design adds:
 

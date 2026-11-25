@@ -4,10 +4,13 @@ The Chat home is the page Chat opens on: the composer, a row of quick actions, a
 (Needs you, Running, Recent chats, Workflows). A quick action only arms the composer. Nothing is sent
 until you send.
 
+The composer is a compact bar of icons, with the engine's mark on the model button; the [Chat](chat.md#which-engine-answers)
+page lists them. For the small things in the composer and the chats list, see [Chat basics](chat-basics.md). Chat apps (Telegram, Slack, Discord, Teams) can start a chat and a run too: see [Plugins](plugins.md).
+
 ## Pinned workflows
 
 The quick-action row has seven built-in tiles: **New run**, **Build workflow**, **Schedule a run**,
-**Track a run**, **Explain a diff**, **Write a script** and **Clone a repo**. After them comes one slot
+**Track a run**, **Explain a diff**, **Write a script** and **Add project** ([Projects](projects.md)). After them comes one slot
 for a pinned workflow, then **More**.
 
 - **Pin any workflow.** In the Workflows Library, open a workflow row's ⋯ menu and pick
@@ -20,8 +23,8 @@ for a pinned workflow, then **More**.
   workflow. Nothing is sent until you send.
 - **Unpin from the tile.** Right-click a pinned tile (or focus it and press Shift+F10 or the menu key)
   and pick **Unpin**. The next pin moves into the slot.
-- **Shaper is pinned by default.** Someone who never pinned anything gets Shaper, which shows while
-  [Shape it first](shape-it-first.md) is on, with its **Beta** badge. It can be unpinned like any
+- **Shaper is pinned by default.** Someone who never pinned anything gets Shaper
+  ([Shape it first](shape-it-first.md)), which is always on. It can be unpinned like any
   other pin, and it stays unpinned.
 - **Per person.** Pins are kept for each signed-in person (one list on a local install), in
   `settings.json` under `chatHomePins`, through `GET` / `PUT /api/chat-home/pins`.
@@ -48,12 +51,12 @@ group, then Ungrouped. Archive group is blocked while a chat in it is busy. With
 suggests a name from the chat titles and first messages on the Run naming model; off, it is a plain name field and
 `POST /api/ask/groups/suggest-name` answers 404.
 
-A design's chat is a thread with mode `design`, titled after the design and shown only in the design's own dock. As
-Workflows chats are, it is kept out of Chat's list, counts and search, and out of the browser extension.
+A design starts from any chat, and its chat is in Chat's list, counts and search like any other, with the **Design** mark
+before its title ([Design](design.md#in-the-chat)). Workflows chats stay out of Chat's list and out of the browser extension.
 
 ## Ask worca beside the page
 
-Every page with the top bar, except Chat, has an **Ask worca** button left of Activity. It opens the
+Every page with the top bar, except Chat, has an **Ask worca** button left of Activity ([Search and Activity](search.md)). It opens the
 same Chat beside the page: the same chats, the same history and the same composer. On a wide window
 the page moves over to make room; on a narrower one the chat covers the page until you hide it. A run
 or a link you open from the chat there moves the chat aside, so the page shows; the button brings it

@@ -20,7 +20,8 @@ turn on **Requirements** in Settings › Labs (the `requirements` flag), or star
 4. **The spec** fills in as you answer: goal, actors, main flow, edge cases, business rules, out of scope,
    acceptance criteria (`R-po-1`, `R-po-2`, …), assumptions (`A-1`, …) and open questions. Edit any section:
    Worca keeps your text (**Let Worca rewrite this** hands it back). Add or remove criteria: a criterion
-   you removed never comes back. Confirm or reject each assumption.
+   you removed never comes back. Confirm or reject each assumption. Each item (the goal, the success measure,
+   a criterion or any other line) can be up to 10,000 characters; Worca refuses a longer one rather than cutting it.
 5. **Export ▾** → **Save to specs/** writes `specs/FEAT-<n>-<title>.md` into the project's folder without committing.
    **Copy Markdown** and **Download .md** work for workspaces too.
 
@@ -385,7 +386,7 @@ confirm before it starts yours.
 
 **In the chat.** A sent message shows each feature as a card. Click it to read the requirements it carried in place; that text is a
 snapshot from the moment you sent, and does not change when the feature does. If the feature has since been archived or deleted, the card
-says *This feature is no longer available.* A chat proposal card started with **Run** or **Shape it first** carries the features of the
+says *This feature is no longer available.* A chat proposal card started with **Run** or **Shaper** carries the features of the
 message it answers.
 
 Both entries are behind the `requirements` flag, like the page: with it off the button and `#` are gone, a card says **Requirements

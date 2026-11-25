@@ -10,7 +10,10 @@ Worca never uses the browser's own Web Speech API (Chrome sends that audio to Go
 
 ## Using it
 
-- **Click the mic** in the Ask composer: speak once; the text lands in the box (not sent).
+- **Click the mic** in the Ask composer: it starts the voice mode you used last, and
+  stays that way after a reload. Until you pick another, that is *Dictate once*: speak
+  once; the text lands in the box (not sent). The mic's tip names the mode a click
+  will start, and the ▾ menu ticks it. Pick *Dictate once* in the ▾ menu to go back.
 - **▾ menu → *Talk, read the replies*** (voice in, text out): worca listens, sends
   when you stop talking, shows the reply as text, then listens again — a
   conversation without typing and without the reply read aloud. No voice model is

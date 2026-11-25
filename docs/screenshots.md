@@ -115,7 +115,7 @@ is held in memory and never written anywhere.
 | `workspace-map.png` | The `Nimbus` workspace's Map tab | Advanced | stored scan result |
 | `actions.png` | A finished run's Actions tab after a Test run | Advanced | project actions, checkout, real `npm test` |
 | `ship-it.png` | The CSV run's *Create PR* dialog: files and lines, push and base remotes, a previewed description, Watch PR ticked, Try it first (due for a recapture: the dialog now has the Into / Title and description / After it opens zones and Try it first in the footer) | Advanced | the CSV run's Create PR button; a GitHub push URL set for this shot only, closed with Cancel |
-| `engine-picker.png` | New pipeline (`#new`) for `nimbus-crm` with a task typed and Engine set to Codex (Beta) | Advanced | the form filled in place; nothing is started |
+| `engine-picker.png` | New run (`#new`) for `nimbus-crm` with a task typed and Engine set to Codex (Beta) | Advanced | the form filled in place; nothing is started |
 | `scripts.png` | Workflows (`#workflows/scripts`), the Library's Scripts section with every domain folder expanded, showing the built-in script rows | Expert | built-in scripts |
 
 Statistics uses "This week" from Wednesday on, "This month" early in a week from the 8th, and

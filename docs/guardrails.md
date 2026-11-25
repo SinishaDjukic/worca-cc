@@ -132,6 +132,21 @@ workspace-trust gate; hooks and statusline still don't apply off-worktree and
 stay warned). A paused run re-reads its selected set by id on resume, so it
 enforces the set's latest definition.
 
+Agents cannot stop Worca itself, whichever set the run uses. Every agent is told
+the process Worca runs in is off limits, and a Bash hook refuses the commands
+that would take it down: pattern kills (`pkill`, `killall`, `taskkill /IM`,
+`Stop-Process -Name`), a `kill` fed from a pipe or a variable, and a `kill` that
+names Worca's own process. An agent can still stop a process it started: it
+looks the number up with `ps` and runs `kill` on that literal number.
+
+The protected-file rules also apply on Windows. The rules for files protected
+wherever they sit (`.env*`, `secrets.json`, Worca's database, its store, logs
+and settings) match a Windows path on any drive, a network share and a long path
+such as `\\?\C:\…`, and the rules for your home folder (`.ssh`, `.claude`,
+`AppData` and the rest) match those forms too. They are what refuses those files
+to Worca's own file tools and to Gemini and Cursor runs; Claude Code applies the
+same rules itself.
+
 ## Worca's own git calls
 
 An agent can write the project's `.git`: run checkouts share its hooks and config, and in a

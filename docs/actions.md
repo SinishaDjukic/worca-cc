@@ -34,6 +34,18 @@ A run can be checked out when it ended `done`, `stopped` or `error`, is not arch
 branch, and kept no uncommitted work of its own. Paused and interrupted runs are refused: resume or
 stop them first.
 
+On a workspace run, the **Check out the changes** card lists only projects the run changed, and its
+header counts them ("2 of 5 projects changed"). The rest fold into one line, "3 projects had no
+changes", with nothing to click: their branches have no commits, so there is nothing to check out.
+A project that already has a checkout keeps its own row, changed or not, because its folder,
+Discard and Download patch live there. A project whose changes could not be decided, such as one from
+an older run, is listed, so no work is hidden.
+
+While a checkout's setup runs, its row shows a progress line: `Running setup: <the setup command> ·
+12s · usually ~20s`. The seconds count up live. The last part is how long the last setup took, and it
+is left out when there is none; with no setup command set the line just says
+"Running setup".
+
 
 ### When the branch is already checked out in your folder
 
