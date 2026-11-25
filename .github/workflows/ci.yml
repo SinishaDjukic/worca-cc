@@ -5,7 +5,7 @@ name: CI
 # gated a publish, never a merge. Tags are left to that workflow; this one gates
 # every pull request and every push to dev.
 #
-# Tests run in two tiers (test/tiers.json): fast on every run, slow on dev pushes
+# Tests run in two tiers (test/tiers.json): fast on every code change, slow on dev pushes
 # and on PRs that touch what the slow tier exercises.
 #
 # Pushes to other branches don't run: a branch with an open PR is covered by the
@@ -13,29 +13,27 @@ name: CI
 # left the cancelled push run's checks red on the PR. A branch gets CI once it
 # has a PR (a draft PR is enough).
 #
-# Docs-only changes skip CI.
-# Safe while no status check is required on dev: a skipped workflow would
-# otherwise leave a required check pending forever.
+# The workflow starts on every pull request and every dev push, docs-only ones
+# included, and every run ends in one `CI gate` job, so a required gate always
+# reports (a required check that never runs would stay pending forever). A
+# docs-only pull request runs only `changes` and `CI gate` (the `changes` job's
+# `code` filter skips the rest); a dev push runs every job.
 on:
   push:
     branches: [dev]
-    paths:
-      - "**"
-      - "!docs/**"
   pull_request:
-    paths:
-      - "**"
-      - "!docs/**"
 
 permissions:
   contents: read
 
-# A new push to a PR (or to dev) cancels the run it supersedes. Group on the
-# branch name — head_ref on pull_request, ref_name on push — plus the head repo,
-# so a fork's same-named branch can't cancel ours.
+# A new push to a PR cancels the run it supersedes. The PR group is the head repo
+# plus head_ref, so a fork's same-named branch can't cancel ours. Dev pushes are
+# never cancelled: each push run gets a group of its own (run_id), because a
+# shared group with cancel-in-progress: false still cancels the older *pending*
+# run when a third one queues.
 concurrency:
-  group: ci-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.head.repo.full_name, github.head_ref) || format('push-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Does a pull request touch what the slow tier (test/tiers.json "slow") exercises? A push
@@ -54,8 +52,20 @@ jobs:
       pull-requests: read
     outputs:
       engine: ${{ steps.filter.outputs.engine }}
+      code: ${{ steps.code.outputs.code }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Anything outside docs/? Its own step: `every` makes the negated pattern exclude docs/,
+      # and it would change the meaning of the any-of `engine` list below.
+      - id: code
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
 
       - id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -134,6 +144,8 @@ jobs:
     # LTS, so a difference between them (1.15.0-rc.1 failed on one) shows up on dev instead of on a
     # burned release tag. test/supply-chain.test.mjs keeps this list in step with both.
     name: fast tests (Node ${{ matrix.node }}, ${{ matrix.shard }}/4)
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -192,7 +204,7 @@ jobs:
     # checkout + npm ci.
     name: slow tests (${{ matrix.shard }}/2)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.engine != 'false') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (needs.changes.outputs.code != 'false' && needs.changes.outputs.engine != 'false')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -233,6 +245,8 @@ jobs:
     # distinct within each group. Across groups only theme and feature-page share one (9336), which
     # is safe while the groups run on separate runners (set CDP_PORT if they ever share a machine).
     name: headless-Chrome UI proofs (${{ matrix.group }})
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -307,6 +321,8 @@ jobs:
   # targets and their store zips, lint the Firefox build and smoke it in Firefox.
   extension:
     name: Browser extension (build, zips, Firefox lint + smoke)
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -327,6 +343,8 @@ jobs:
   # not in this image, which is why the Firefox steps stay in the job above.
   extension-e2e:
     name: Browser extension (Playwright E2E)
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     container:
@@ -353,6 +371,8 @@ jobs:
   # produce, and gating it only added its ~1.5 min to every run's wall time.
   docker:
     name: container image
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -439,3 +459,53 @@ jobs:
           ignore-unfixed: true
           exit-code: "0"
           skip-setup-trivy: true
+
+  # The one check a branch rule requires. Every other job must be in `needs` (file order), and the
+  # gate must never be skipped: a job skipped by its `if` reads as Success to a required check, so
+  # it runs with always(), on cancelled runs too, and tools/ci-gate.mjs decides. A cancel always fails;
+  # a run a newer PR push superseded says so in its summary, and its red mark sits on the old SHA only.
+  # test/tools-test-runner.test.mjs enforces all of it.
+  ci-gate:
+    name: CI gate
+    needs: [changes, test-fast, test-slow, cdp, extension, extension-e2e, docker]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # pull-requests: read for the PR-head lookup; the workflow-level permissions drop it.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # Cone mode: `tools` is a directory pattern (a file path is not a valid cone pattern), and
+      # root files such as .nvmrc come along. The script imports only node: builtins, so no npm ci.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ always() }}
+        with:
+          sparse-checkout: tools
+
+      - name: Set up Node.js
+        if: ${{ always() }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      # The PR's head now, not when the run started: a different SHA means a newer push superseded
+      # this run. A failed lookup leaves it empty, and then the summary does not call it superseded.
+      - id: pr-head
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha || true)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Verdict
+        if: ${{ always() }}
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_HEAD_SHA: ${{ steps.pr-head.outputs.sha }}
+        run: node tools/ci-gate.mjs

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fullSuiteLockFile, mergeTimings, needsFullSuiteLock, parseArgs, planShards, releaseFullSuiteLock, selectFiles, suiteTmpOutsideWorca, tryFullSuiteLock } from '../tools/test.mjs';
 import { timingFiles } from '../tools/test-timings-merge.mjs';
+import YAML from 'yaml';
 
 const TOOLS = fileURLToPath(new URL('../tools', import.meta.url));
 const rmOpts = { recursive: true, force: true, maxRetries: 10, retryDelay: 50 };
@@ -317,4 +318,144 @@ test('suiteTmpOutsideWorca: a TMPDIR inside a .worca-cc folder gets a folder of 
     assert.equal(suiteTmpOutsideWorca('/Users/u/my.worca-cc/tmp', { platform: 'linux', root }), null);
     assert.equal(suiteTmpOutsideWorca('C:\\Users\\u\\.worca-cc\\runs\\x', { platform: 'win32', root }), null);
   } finally { rmSync(root, rmOpts); }
+});
+
+// ── ci.yml's `CI gate` ─────────────────────────────────────────────────────────────────────
+// One always-running job, `ci-gate`, needs every other job, so a required check always reports
+// (docs-only PRs too) and no job can slip past it. gateProblems is pure so each rule is proven on a
+// mutated copy without touching the real workflow. It returns one string per problem.
+const ALWAYS = '${{ always() }}';
+export function gateProblems(doc) {
+  const problems = [];
+  const jobs = doc?.jobs || {};
+  for (const ev of ['push', 'pull_request']) {
+    for (const key of ['paths', 'paths-ignore']) {
+      if (doc?.on?.[ev] && typeof doc.on[ev] === 'object' && key in doc.on[ev]) problems.push(`on.${ev}.${key}: the workflow must always start so the gate always reports`);
+    }
+  }
+  const c = doc?.concurrency || {};
+  if (c['cancel-in-progress'] !== "${{ github.event_name == 'pull_request' }}") problems.push(`concurrency: cancel-in-progress must be \${{ github.event_name == 'pull_request' }}, not ${JSON.stringify(c['cancel-in-progress'])}`);
+  if (!String(c.group || '').includes('github.run_id')) problems.push('concurrency: the push group must be per run (github.run_id)');
+
+  const gate = jobs['ci-gate'];
+  if (!gate) return [...problems, 'ci-gate: no job with id ci-gate'];
+  if (gate.name !== 'CI gate') problems.push(`ci-gate name: ${JSON.stringify(gate.name)}, want "CI gate"`);
+  if (gate.if !== ALWAYS) problems.push(`ci-gate if: ${JSON.stringify(gate.if)}, want ${ALWAYS} (a skipped gate reads as Success)`);
+  if (gate.permissions?.['pull-requests'] !== 'read') problems.push('ci-gate permissions: pull-requests: read is needed for the PR-head lookup');
+  const others = Object.keys(jobs).filter((id) => id !== 'ci-gate');
+  const needs = [].concat(gate.needs || []);
+  for (const id of others) if (!needs.includes(id)) problems.push(`ci-gate needs is missing ${id}`);
+  for (const id of needs) if (!others.includes(id)) problems.push(`ci-gate needs names unknown job ${id}`);
+  if (others.every((id) => needs.includes(id)) && needs.length === others.length && needs.join() !== others.join()) problems.push(`ci-gate needs: not in file order (${others.join(', ')})`);
+
+  const steps = gate.steps || [];
+  const checkout = steps.find((s) => String(s.uses || '').startsWith('actions/checkout@'));
+  const sparse = checkout?.with?.['sparse-checkout'];
+  if (!checkout) problems.push('ci-gate checkout: no actions/checkout step');
+  else if (sparse != null && checkout.with['sparse-checkout-cone-mode'] !== false) {
+    const pats = String(sparse).split('\n').map((s) => s.trim()).filter(Boolean);
+    if (!pats.some((p) => p === 'tools' || p === 'tools/') || pats.some((p) => /\.[A-Za-z0-9]+$/.test(p)))
+      problems.push(`ci-gate checkout: sparse-checkout ${JSON.stringify(sparse)} in cone mode must list the tools directory, not a file`);
+  }
+  const last = steps[steps.length - 1] || {};
+  if (!/\bnode tools\/ci-gate\.mjs\b/.test(String(last.run || '')) || last.env?.NEEDS !== '${{ toJSON(needs) }}')
+    problems.push('ci-gate steps: the last step must run node tools/ci-gate.mjs with NEEDS: ${{ toJSON(needs) }}');
+
+  const changes = jobs.changes;
+  const codeRef = String(changes?.outputs?.code || '').match(/steps\.([\w-]+)\.outputs\.code/);
+  const codeStep = codeRef && (changes.steps || []).find((s) => s.id === codeRef[1]);
+  if (!codeRef) problems.push('changes: no outputs.code from a filter step');
+  else if (!codeStep || !String(codeStep.uses || '').startsWith('dorny/paths-filter@') || codeStep.with?.['predicate-quantifier'] !== 'every')
+    problems.push('changes: the code filter step must be dorny/paths-filter with predicate-quantifier: every');
+
+  for (const id of others.filter((j) => j !== 'changes')) {
+    const job = jobs[id] || {};
+    const cond = String(job.if || '');
+    if (![].concat(job.needs || []).includes('changes')) problems.push(`${id}: needs: changes is missing`);
+    if (!cond.includes('!cancelled()') || !cond.includes("needs.changes.outputs.code != 'false'"))
+      problems.push(`${id}: if must hold !cancelled() and needs.changes.outputs.code != 'false'`);
+  }
+  if (jobs['test-slow'] && !String(jobs['test-slow'].if || '').includes("needs.changes.outputs.engine != 'false'"))
+    problems.push("test-slow: if lost needs.changes.outputs.engine != 'false'");
+
+  for (const [id, job] of Object.entries(jobs)) {
+    for (const s of job?.steps || []) if (String(s.run ?? '').trim() === 'exit 1') problems.push(`${id}: a step runs exactly "exit 1" (a proof step leaked in)`);
+  }
+  return problems;
+}
+
+const ciDoc = () => YAML.parse(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
+// Each mutation is checked against a clean real ci.yml, so a rule can't "pass" on an unrelated problem.
+const mutated = (fn) => {
+  const base = ciDoc();
+  assert.deepEqual(gateProblems(base), [], 'the real ci.yml is clean before the mutation');
+  const doc = structuredClone(base);
+  fn(doc);
+  return gateProblems(doc);
+};
+const hasProblem = (problems, re, what) => assert.ok(problems.some((p) => re.test(p)), `${what}: ${JSON.stringify(problems)}`);
+
+test('ci.yml CI gate: the real workflow has no gate problem', () => {
+  assert.deepEqual(gateProblems(ciDoc()), []);
+});
+
+test('ci.yml CI gate: a lint job missing from the gate\'s needs is named', () => {
+  const p = mutated((d) => { d.jobs.lint = { name: 'lint', needs: 'changes', if: "${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}", 'runs-on': 'ubuntu-latest', steps: [{ run: 'npm run lint' }] }; });
+  hasProblem(p, /ci-gate needs is missing lint/, 'lint missing');
+});
+
+test('ci.yml CI gate: the gate\'s if must be exactly ${{ always() }}', () => {
+  hasProblem(mutated((d) => { d.jobs['ci-gate'].if = '${{ !cancelled() }}'; }), /^ci-gate if:/, '!cancelled()');
+  hasProblem(mutated((d) => { delete d.jobs['ci-gate'].if; }), /^ci-gate if:/, 'no if');
+});
+
+test('ci.yml CI gate: paths or paths-ignore under on: is a problem', () => {
+  hasProblem(mutated((d) => { d.on.pull_request = { ...(d.on.pull_request || {}), paths: ['**', '!docs/**'] }; }), /on\.pull_request\.paths\b/, 'pull_request.paths');
+  hasProblem(mutated((d) => { d.on.push['paths-ignore'] = ['docs/**']; }), /on\.push\.paths-ignore/, 'push.paths-ignore');
+});
+
+test('ci.yml CI gate: a job without needs: changes or the docs-only if is named', () => {
+  hasProblem(mutated((d) => { delete d.jobs.cdp.needs; }), /^cdp: needs: changes/, 'cdp needs');
+  hasProblem(mutated((d) => { d.jobs.cdp.if = "${{ github.event_name != 'pull_request' || needs.changes.outputs.code != 'false' }}"; }), /^cdp: if/, 'cdp no !cancelled()');
+  hasProblem(mutated((d) => { d.jobs.cdp.if = '${{ !cancelled() }}'; }), /^cdp: if/, 'cdp no code clause');
+});
+
+test('ci.yml CI gate: changes must output code from an every-quantifier filter step', () => {
+  hasProblem(mutated((d) => { delete d.jobs.changes.outputs.code; }), /^changes:/, 'no outputs.code');
+  hasProblem(mutated((d) => {
+    const id = d.jobs.changes.outputs.code.match(/steps\.([\w-]+)\./)[1];
+    delete d.jobs.changes.steps.find((s) => s.id === id).with['predicate-quantifier'];
+  }), /^changes:/, 'no predicate-quantifier');
+});
+
+test('ci.yml CI gate: test-slow keeps its engine clause', () => {
+  hasProblem(mutated((d) => { d.jobs['test-slow'].if = d.jobs['test-slow'].if.replace(" && needs.changes.outputs.engine != 'false'", '').replace("needs.changes.outputs.engine != 'false'", 'true'); }), /^test-slow:/, 'engine clause');
+});
+
+test('ci.yml CI gate: the gate needs the other jobs in file order', () => {
+  hasProblem(mutated((d) => { d.jobs['ci-gate'].needs = [].concat(d.jobs['ci-gate'].needs).reverse(); }), /ci-gate needs: not in file order/, 'reversed needs');
+});
+
+test('ci.yml CI gate: concurrency cancels PR runs only, with a per-run push group', () => {
+  hasProblem(mutated((d) => { d.concurrency['cancel-in-progress'] = true; }), /^concurrency:/, 'cancel-in-progress: true');
+  hasProblem(mutated((d) => { d.concurrency.group = 'ci-${{ github.head_ref || github.ref_name }}'; }), /^concurrency:.*run_id/, 'no run_id');
+});
+
+test('ci.yml CI gate: the sparse checkout lists the tools directory, never a file', () => {
+  const co = (d) => d.jobs['ci-gate'].steps.find((s) => String(s.uses || '').startsWith('actions/checkout@'));
+  hasProblem(mutated((d) => { co(d).with = { ...(co(d).with || {}), 'sparse-checkout': 'tools/ci-gate.mjs' }; }), /^ci-gate checkout:/, 'file path');
+  const base = ciDoc();
+  const none = structuredClone(base); delete co(none).with?.['sparse-checkout'];
+  assert.deepEqual(gateProblems(none), [], 'no sparse-checkout passes');
+  const dir = structuredClone(base); co(dir).with = { ...(co(dir).with || {}), 'sparse-checkout': 'tools' };
+  assert.deepEqual(gateProblems(dir), [], 'tools in cone mode passes');
+});
+
+test('ci.yml CI gate: the last gate step runs node tools/ci-gate.mjs with NEEDS from toJSON(needs)', () => {
+  hasProblem(mutated((d) => { const s = d.jobs['ci-gate'].steps; s[s.length - 1].run = 'echo ok'; }), /^ci-gate steps:/, 'wrong run');
+  hasProblem(mutated((d) => { const s = d.jobs['ci-gate'].steps; delete s[s.length - 1].env.NEEDS; }), /^ci-gate steps:/, 'no NEEDS');
+});
+
+test('ci.yml CI gate: a bare "exit 1" proof step is rejected', () => {
+  hasProblem(mutated((d) => { d.jobs.extension.steps.unshift({ run: 'exit 1' }); }), /^extension: .*exit 1/, 'exit 1');
 });
