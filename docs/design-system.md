@@ -316,7 +316,8 @@ set once, so it never jumps on a resize and a shrunk graph never sits in an empt
 same live graph in the shared `.wf-pop` overlay (a run-hosts `monitor` host fitted to the box) and never navigates; the
 overlay's Open run is the way to the run's Workflow tab. The transcript reserves its
 scrollbar gutter on both edges (`scrollbar-gutter:stable both-edges`), so the column, the composer and Jump to latest
-share one centre. The dock is opaque from its top edge down after a 32px fade band (`--chat-dock-fade`); Jump to latest
+share one centre. The dock is opaque from its top edge down after a 32px fade band (`--chat-dock-fade`); it stops at the transcript's
+scrollbar gutter (`--scrollbar-w`), so the scrollbar stays visible and draggable to its end. Jump to latest
 sits in that band, right above the dock, and the transcript's bottom clearance includes it, so nothing reads under
 the composer. A row rises in (`data-ask-enter`) only the first time the page shows it, in any chat; the card inside it
 never rises on its own. No part of a chat card is a pill; inner corners stay at or under the card's 8px.

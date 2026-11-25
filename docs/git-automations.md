@@ -179,6 +179,11 @@ applies to review comments), plus the logins a rule adds. An issue from anyone e
 costs nothing; it shows in Activity as skipped. A maintainer starts it by adding the rule's trigger label
 (only people with triage access can label).
 
+Watch PR (the run's own watcher on a created PR) trusts the same authors for its inline review triggers, plus
+the logins in the project's **Pull requests › Reviewers that may trigger a fix** setting; PR-level comments count
+only from those listed logins, and only when a quick model check finds they ask for code changes (see
+[Runs › Watch PR](runs.md#watch-pr-and-conflicts)).
+
 On such a PR the label covers the code the maintainer looked at: once a review rule has reviewed it, a later push
 from the same author is skipped ("pushed after the trigger label") until a maintainer adds the label again (remove
 it and add it back).

@@ -513,6 +513,90 @@ test('UNKNOWN mergeability schedules exactly one recheck; a later recheck update
   ]);
 });
 
+// The header pill is ONE static node reused by every run's detail: it is painted from the open run only, and a
+// merged or closed PR is final (no pill).
+test('the merge pill belongs to its run: another run, a merged PR or a late re-check never shows a stale one', async () => {
+  const MERGED_PR = { state: 'MERGED', url: 'https://x/pull/9', number: 9 };
+  const otherUrl = (id) => `/api/history/${KEY}/${id}`;
+  // A second saved run with its own detail (the arm is ahead of the shared detail arm).
+  const bootTwo = (other, recheck) => bootShip({ rows: [row(), other], arms: (url, opts) => {
+    if (url.endsWith(otherUrl(other.id))) return ok({ ...DETAIL, state: { ...DETAIL.state, id: other.id } });
+    if (url.endsWith('/api/pr/mergeable') && opts.method === 'POST') return recheck();
+    if (url.endsWith('/api/pr') && opts.method === 'POST') return ok({ ...PR_OK, mergeable: recheck.first || 'CONFLICTING' });
+    return null;
+  } });
+  const ship = async (ctx) => {
+    ctx.window.__prMergeRecheckMs = 0;
+    const modal = await openModal(ctx);
+    click(ctx.window, modal.querySelector('.shipit-ok'));
+    await settle(ctx.window, 4);
+  };
+  await checkRows([
+    { name: 'a merged run opened after a run that showed "conflicts" shows no pill; reopening the first does not bring it back', run: async () => {
+      const merged = row({ id: 'bbbb2222', title: 'Shipped run', pr: MERGED_PR });
+      const ctx = await bootTwo(merged, () => ok({ ok: true, mergeable: 'CONFLICTING' }));
+      await ship(ctx);
+      assert.equal(hdMerge(ctx.window).hidden, false);
+      assert.match(hdMerge(ctx.window).textContent, /conflicts/);
+      go(ctx.window, `history/${KEY}/${merged.id}`);
+      await settle(ctx.window, 6);
+      assert.equal(hdMerge(ctx.window).hidden, true, 'the merged run shows no pill');
+      assert.equal(hdMerge(ctx.window).textContent, '', 'nothing of the previous run is left in it');
+      await openDetail(ctx);
+      await settle(ctx.window, 4);
+      assert.equal(hdMerge(ctx.window).hidden, true, 'a reopen paints from the data, which has no mergeability');
+    } },
+    // Today a detail hop clones a fresh screen (openHistDetail's `#hist-detail-tpl` clone), so this row holds even
+    // without paintHdMergePill's owner comparison; it pins the behaviour should the header node ever be kept.
+    { name: 'a run with its own OPEN PR opened after a run that showed "conflicts" shows no pill of the first', run: async () => {
+      const open = row({ id: 'ffff6666', title: 'Open PR run', pr: { state: 'OPEN', url: 'https://x/pull/8', number: 8 } });
+      const ctx = await bootTwo(open, () => ok({ ok: true, mergeable: 'CONFLICTING' }));
+      await ship(ctx);
+      assert.match(hdMerge(ctx.window).textContent, /conflicts/);
+      go(ctx.window, `history/${KEY}/${open.id}`);
+      await settle(ctx.window, 6);
+      assert.equal(hdMerge(ctx.window).hidden, true, 'the pill belongs to the first run, not to every open PR');
+      assert.equal(hdMerge(ctx.window).textContent, '');
+    } },
+    { name: 'the open run\'s PR becoming MERGED hides its pill', run: async () => {
+      const ctx = await bootTwo(row({ id: 'cccc3333' }), () => ok({ ok: true, mergeable: 'CONFLICTING' }));
+      await ship(ctx);
+      assert.match(hdMerge(ctx.window).textContent, /conflicts/);
+      ctx.dispatchPr({ token: ctx.prTokens().at(-1), items: [{ projectKey: KEY, id: ROW.id, pr: MERGED_PR }] });
+      await settle(ctx.window, 4);
+      assert.equal(hdMerge(ctx.window).hidden, true);
+    } },
+    { name: 'a re-check that answers after the detail moved to another run paints nothing', run: async () => {
+      let release; const gate = new Promise((r) => { release = r; });
+      const recheck = () => gate.then(() => ok({ ok: true, mergeable: 'CONFLICTING' }));
+      recheck.first = 'UNKNOWN';
+      const other = row({ id: 'dddd4444', title: 'Another run' });
+      const ctx = await bootTwo(other, recheck);
+      await ship(ctx);
+      assert.match(hdMerge(ctx.window).textContent, /checking/);
+      go(ctx.window, `history/${KEY}/${other.id}`);
+      await settle(ctx.window, 6);
+      assert.equal(hdMerge(ctx.window).hidden, true);
+      release();
+      await settle(ctx.window, 6);
+      assert.equal(ctx.calls.filter((c) => c.url.endsWith('/api/pr/mergeable')).length, 1, 'the re-check did answer');
+      assert.equal(hdMerge(ctx.window).hidden, true, 'run A\'s late answer never lands on run B');
+    } },
+    { name: 'a re-check that answers after the PR merged paints nothing', run: async () => {
+      let release; const gate = new Promise((r) => { release = r; });
+      const recheck = () => gate.then(() => ok({ ok: true, mergeable: 'CONFLICTING' }));
+      recheck.first = 'UNKNOWN';
+      const ctx = await bootTwo(row({ id: 'eeee5555' }), recheck);
+      await ship(ctx);
+      ctx.dispatchPr({ token: ctx.prTokens().at(-1), items: [{ projectKey: KEY, id: ROW.id, pr: MERGED_PR }] });
+      await settle(ctx.window, 4);
+      release();
+      await settle(ctx.window, 6);
+      assert.equal(hdMerge(ctx.window).hidden, true);
+    } },
+  ]);
+});
+
 test('PR failure shows the error inside the modal and re-enables confirm, Cancel and Escape', async () => {
   const ctx = await bootShip({
     arms: (url, opts) => (url.endsWith('/api/pr') && opts.method === 'POST'

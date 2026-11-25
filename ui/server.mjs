@@ -487,6 +487,7 @@ import { autoFillTags } from '../src/shared/cost-tag-suggest.mjs';
 import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, prefillSources } from '../src/core/tag-dimensions.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
+import { triagePrComment } from '../src/core/pr-comment-triage.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
 import { runProjectDir, noProjectWorkDir, isNoProjectWorkDir, isNoProjectKey, NO_PROJECT_KEY } from '../src/core/store.mjs';   // P3 — its own line: test/api-memory.test.mjs pins the one above
 import { WORK_ARTIFACT_KIND } from '../src/core/no-project-work.mjs';
@@ -6302,6 +6303,16 @@ function prWatchFrame(pipelineId, memberKey) {
 }
 const prWatcherDeps = {
   originOf: prWatchOrigin,
+  // Watch.trustedReviewers: extra reviewer logins (usually review bots) whose feedback on a watched PR may
+  // start a fix run, as if they were collaborators. Read here, once per tick, from the origin project's settings.
+  trustedLogins: (origin) => {
+    try { const v = resolveSetting('watch.trustedReviewers', { projectKey: origin?.projectKey }).value; return Array.isArray(v) ? v : []; }
+    catch { return []; }
+  },
+  // Before a listed reviewer's PR-level comment starts a fix run, a short helper-model call asks whether it wants
+  // code changes (bots also post notices and placeholders). A mock run never calls a model: every comment counts.
+  triageComment: ({ origin, comment }) => origin?.mock ? true : triagePrComment({ body: comment.body, author: comment.author?.login || null,
+    projectKey: origin.projectKey, engine: origin.engine, pipelineId: origin.pipelineId }),
   host: { snapshot: prWatchSnapshot, jobLog: prWatchJobLog, rerun: prWatchRerun, reply: prWatchReply, comment: prWatchComment },
   git: {
     fetch: ({ projectDir, remote }) => fetchRemote(projectDir, { remote, maxAgeMs: 0 }),
