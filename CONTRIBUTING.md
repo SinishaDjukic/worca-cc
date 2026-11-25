@@ -129,6 +129,17 @@ the full suite when you change the runner, its config or `package.json`. It
 can't see every link, so run the full `npm test` once before you hand the
 change over.
 
+The suite guard (`test/suite-guard.test.mjs`, in the fast tier) keeps the suite from
+getting slower. A new test file may not boot `ui/public/app.js` inside each of its
+tests: boot it once in `before()` (see `test/helpers/*-boot.mjs`). Today's per-test
+boot files are listed in `test/suite-guard-offenders.json`, which only shrinks:
+remove a file once you convert it, never add one, and convert a listed file before
+you rename it. A new test file may also cost at most 20 s, read from
+`test/timings.json` (the per-file seconds CI measures); it is judged only when its
+time is in that file, so run `npm run test:timings` and commit the result. `node
+tools/suite-guard.mjs` runs the check by hand; `--list` prints the files that boot
+per test today.
+
 ### In a container
 
 The container image ([`docs/docker.md`](docs/docker.md)) is built from the
