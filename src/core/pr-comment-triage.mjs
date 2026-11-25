@@ -8,7 +8,7 @@ import { runClaude } from './claude-runner.mjs';
 import { normalizingOnEvent } from './engines/claude-events.mjs';
 import { resolveModelEnv, resolveModelCost, listModels } from './config.mjs';
 import { utilityModelFor } from './settings-cascade.mjs';
-import { roleModelFor, jobSlot } from './model-roles.mjs';
+import { resolveRolePick } from './model-roles.mjs';
 import { AUX_EFFORT, helperEngineFor } from './model-env.mjs';
 import { pickCatalogModel } from './auto/model.mjs';
 import { upsertSubAgent } from './artifacts.mjs';
@@ -84,7 +84,7 @@ export function parseTriageVerdict(text) {
 
 /**
  * One check. `engine` is the origin run's engine (helper jobs run on Claude for engines without helpers);
- * the model is the project's classifier helper slot, else its role, else the catalog default.
+ * the model is the project's classifier helper slot, else the Quick jobs role, else the catalog's Haiku-class model.
  * Throws when the call fails or the reply is unreadable; the watcher then tries again later.
  * @returns {Promise<boolean>} whether the comment asks for code changes
  */
@@ -93,7 +93,10 @@ export async function triagePrComment({ body, author, projectKey = null, engine 
   const helper = helperEngineFor(engine);
   const onClaude = helper === 'claude';
   const slot = utilityModelFor(helper, 'classifier', projectKey ? { projectKey } : null);
-  let model = slot.model || roleModelFor(helper, jobSlot(helper, 'classifier'))?.model || '';
+  // The project's classifier model when one is set; else the Quick jobs role (Worca's default on Claude is Haiku):
+  // this is a short helper call, not the Auto classifier's Everyday work.
+  const quick = slot.model ? null : resolveRolePick(helper, 'quick');
+  let model = slot.model || (quick && quick.kind !== 'cli-decides' ? quick.model : '') || '';
   if (!model && onClaude) {
     // A one-word answer needs no large model: the catalog's Haiku-class model, else its default.
     const catalog = models || await listModels('');

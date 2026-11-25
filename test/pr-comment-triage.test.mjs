@@ -1,5 +1,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 
 const home = useTempHome(after, 'pr-triage-');
@@ -37,6 +39,26 @@ test('triagePrComment: one tool-less call on a Haiku-class model; the verdict co
   assert.deepEqual(calls[0].settingSources, ['project'], 'not the user\'s hooks or plugins');
   assert.match(calls[0].prompt, /add a null check/);
   assert.equal(await triagePrComment({ body: 'Review skipped', cwd: '.', runClaudeImpl: async () => ({ text: 'OTHER' }), models: MODELS }), false);
+});
+
+test('triagePrComment runs on the Quick jobs role, not the Everyday one', async () => {
+  // Saved roles count only with the test opt-in (settings.mjs homeGuarded), read from this file's own HOME.
+  const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, ALLOW: process.env.WORCA_TEST_ALLOW_HOME_FALLBACK };
+  process.env.HOME = home; process.env.USERPROFILE = home; process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+  const file = join(home, '.worca-cc', 'settings.json');
+  mkdirSync(dirname(file), { recursive: true });
+  const pick = async () => { let model; await triagePrComment({ body: 'x', cwd: home, runClaudeImpl: async (o) => { model = o.model; return { text: 'OTHER' }; }, models: MODELS }); return model; };
+  try {
+    writeFileSync(file, JSON.stringify({ modelRoles: { claude: { everyday: { model: 'claude-sonnet-5-5' } } } }));
+    assert.equal(await pick(), 'claude-haiku-5-5', 'an Everyday pick does not move the check');
+    writeFileSync(file, JSON.stringify({ modelRoles: { claude: { quick: { model: 'claude-sonnet-5' } } } }));
+    assert.equal(await pick(), 'claude-sonnet-5', 'the Quick jobs pick does');
+  } finally {
+    rmSync(file, { force: true });
+    for (const [k, v] of [['HOME', prev.HOME], ['USERPROFILE', prev.USERPROFILE], ['WORCA_TEST_ALLOW_HOME_FALLBACK', prev.ALLOW]]) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
 });
 
 test('triagePrComment throws on an unreadable reply or a failed call', async () => {

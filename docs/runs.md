@@ -198,7 +198,7 @@ Reviewers that may trigger a fix**.
 On GitHub, a PR-level comment from a listed reviewer counts too, if it was posted after Watch PR was turned on
 and asks for code changes. Review bots also post notices ("review skipped", "rate limit exceeded"), placeholders
 and summaries on the PR, so before starting a run Worca asks a small helper model (the project's classifier
-helper) whether the comment requests changes; this costs well under a cent. A comment that doesn't is skipped
+helper when one is set, else the Quick jobs role) whether the comment requests changes; this costs well under a cent. A comment that doesn't is skipped
 and noted in the run's activity log. A comment that does starts a fix run: Worca quotes it in the run and replies
 with the result on the PR. Worca waits until the comment has not changed for two minutes, so a verdict still being
 written is checked once it is finished. Editing the comment later (a bot that refreshes one summary comment after
