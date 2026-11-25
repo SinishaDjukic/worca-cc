@@ -136,7 +136,7 @@ export async function exportFilm({ html, out, audio = null, scale = 2, workers, 
     if (audio) {
       // the mix covers the whole film; cut it to the exported range
       await run(FF, ['-hide_banner', '-loglevel', 'error', '-y', '-i', video, '-ss', String(f0 / FPS), '-t', String(N / FPS), '-i', audio,
-        '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '320k', '-ar', '48000', '-shortest', '-movflags', '+faststart', out]);
+        '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '320k', '-ar', '48000', '-movflags', '+faststart', out]);
     } else {
       await run(FF, ['-hide_banner', '-loglevel', 'error', '-y', '-i', video, '-c', 'copy', '-movflags', '+faststart', out]);
     }
