@@ -132,7 +132,9 @@ quarantined file leaves `npm test`, `npm run test:fast` and `npm run test:slow`
 (`.github/workflows/quarantine.yml`) runs every entry on each push to `dev` and
 nightly, never blocks a merge, and lists each entry's result and pass rate over
 the last 30 runs in its job summary. Leaving quarantine is a manual PR that meets
-the `exitCondition` and deletes the entry along with the fix.
+the `exitCondition` and deletes the entry along with the fix. Repeat offenders
+and their verdicts are kept in `docs/test-offenders.md`: a fix or quarantine of
+a listed file updates its row.
 
 CI force-closes a test file whose process lingers after its tests (a ref'd
 timer, a live server or child) and logs a `warning:` line naming the handles it

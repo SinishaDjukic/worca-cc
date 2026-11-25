@@ -279,6 +279,23 @@ test('exportFilm renders every frame to an H.264 MP4 at 60 fps and muxes the aud
   } finally { rmSync(promo, { recursive: true, force: true }); }
 });
 
+// The audio mux must never cut the copied video where a short AAC track ends (CI saw "55 of its 60 frames").
+test('exportFilm keeps every frame when the audio ends early', { skip: noBoth }, async () => {
+  const promo = fixtureFilm(1, SLIDE);
+  try {
+    const audio = join(promo, 'short-tone.m4a');
+    ff(['-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.9:sample_rate=48000', '-c:a', 'aac', '-b:a', '128k', audio]);
+    const out = join(promo, 'video', 'short-audio.mp4');
+    const r = await exportFilm({ html: join(promo, 'film', 'index.html'), out, audio, scale: 1, workers: 2, crf: 30, preset: 'ultrafast',
+      chrome: CHROME, ffmpeg: FFMPEG });
+    assert.equal(r.frames, 60, `the export kept ${r.frames} of its 60 frames`);
+    assert.equal(readMP4(out).samples, 60);
+    assert.ok(Math.abs(r.duration - 1) < 0.02, `duration ${r.duration}`);
+    const probe = spawnSync(FFMPEG, ['-hide_banner', '-i', out], { encoding: 'utf8' }).stderr;
+    assert.match(probe, /Audio: aac/);
+  } finally { rmSync(promo, { recursive: true, force: true }); }
+});
+
 test('exportFilm stops at its signal with an AbortError and no file; every browser goes through the caller\'s hook', { skip: noBoth }, async () => {
   const promo = fixtureFilm(3, SLIDE);
   try {
