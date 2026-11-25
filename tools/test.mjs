@@ -230,10 +230,12 @@ function runSuite(args, opts, timeoutMs) {
  * else null. POSIX only: Windows' temp folder is never a run's. A run's teardown never sees this folder, so a suite
  * that was killed leaves it behind: the name carries the runner's pid, and each start removes our own folders whose
  * runner is gone and that are `minAgeMs` old (a live runner in a sandbox with its own pid numbers looks gone from
- * here; none outlives its time limit). A `root` we cannot write to gives null too (the suite then stays in tmpdir()).
+ * here; none outlives its time limit). A birth time carries a fraction of a millisecond and `now()` does not, so a
+ * folder born in the sweep's own millisecond reads as slightly negative in age: that counts as 0, and `minAgeMs: 0`
+ * sweeps any age. A `root` we cannot write to gives null too (the suite then stays in tmpdir()).
  * Exported for tests.
  */
-export function suiteTmpOutsideWorca(tmp, { platform = process.platform, root = '/tmp', pid = process.pid, uid = process.getuid?.(), minAgeMs = SUITE_STALE_MS } = {}) {
+export function suiteTmpOutsideWorca(tmp, { platform = process.platform, root = '/tmp', pid = process.pid, uid = process.getuid?.(), minAgeMs = SUITE_STALE_MS, now = Date.now } = {}) {
   if (platform === 'win32' || !/(^|\/)\.worca-cc\//.test(`${tmp}/`)) return null;
   let names = [];
   try { names = readdirSync(root); } catch { /* unreadable: nothing to sweep */ }
@@ -241,7 +243,7 @@ export function suiteTmpOutsideWorca(tmp, { platform = process.platform, root = 
     const m = /^worca-cc-test-tmp-(\d+)-/.exec(name);
     if (!m || alive(Number(m[1]))) continue;
     const p = join(root, name);
-    try { const st = lstatSync(p); if (st.isDirectory() && st.uid === uid && Date.now() - st.birthtimeMs >= minAgeMs) rmSync(p, { recursive: true, force: true }); } catch { /* another user's, or gone */ }
+    try { const st = lstatSync(p); if (st.isDirectory() && st.uid === uid && Math.max(0, now() - st.birthtimeMs) >= minAgeMs) rmSync(p, { recursive: true, force: true }); } catch { /* another user's, or gone */ }
   }
   try { return mkdtempSync(join(root, `worca-cc-test-tmp-${pid}-`)); } catch { return null; }
 }

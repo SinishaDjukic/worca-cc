@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -529,6 +529,18 @@ test('suiteTmpOutsideWorca: a TMPDIR inside a .worca-cc folder gets a folder of 
     assert.equal(suiteTmpOutsideWorca('/var/folders/x/T', { platform: 'darwin', root }), null);
     assert.equal(suiteTmpOutsideWorca('/Users/u/my.worca-cc/tmp', { platform: 'linux', root }), null);
     assert.equal(suiteTmpOutsideWorca('C:\\Users\\u\\.worca-cc\\runs\\x', { platform: 'win32', root }), null);
+  } finally { rmSync(root, rmOpts); }
+});
+
+test('suiteTmpOutsideWorca: minAgeMs 0 sweeps a dead runner\'s folder born in the same millisecond as the sweep (a birth time carries a fraction of a millisecond, the clock does not)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'worca-cc-suite-tmp-'));
+  try {
+    const name = `worca-cc-test-tmp-${2 ** 22 + 12345}-bbbbbb`;   // no such process
+    mkdirSync(join(root, name));
+    const born = lstatSync(join(root, name)).birthtimeMs;
+    // The clock reads half a millisecond before the birth time, as Date.now() does when it shares the folder's millisecond.
+    suiteTmpOutsideWorca('/Users/u/.worca-cc/runs/ab12/.scratch', { platform: 'darwin', root, pid: 778, minAgeMs: 0, now: () => born - 0.5 });
+    assert.equal(readdirSync(root).includes(name), false);
   } finally { rmSync(root, rmOpts); }
 });
 
