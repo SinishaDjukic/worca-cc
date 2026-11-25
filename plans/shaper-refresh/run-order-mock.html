@@ -1,0 +1,429 @@
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Shaper run order map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap">
+<style>
+/* Layout: mock controls on top, then three surfaces of one feature drawn from one state: the feature page's Runs tab,
+   the Chat feature card, the Runs sidebar entry. List first: the run rows carry every fact; the order drawing is on
+   demand on the feature page only. Classic Worca tokens. */
+:root{
+  --bg:#F1F1EF; --panel:#FFFFFF; --line:#ECECEA; --line-2:#E3E3E0;
+  --ink:#19191B; --ink-2:#5C5C63; --ink-3:#8A8A91;
+  --green:#5BAE5B; --peach:#EFA63C; --amber:#E6962A; --amber-ink:#8E550B; --red:#E76A5A; --red-ink:#B23F33;
+  --on-mark:#1B1408; --blue-ink:#2B6A8C;
+  --r-sm:6px; --r-md:8px;
+  --font:'Poppins',system-ui,-apple-system,'Segoe UI',sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#161614; --panel:#222220; --line:#30302D; --line-2:#494944;
+  --ink:#ECECE8; --ink-2:#B4B4AE; --ink-3:#9E9E98;
+  --amber-ink:#F0B45A; --red-ink:#F08C7E; --blue-ink:#86C4E3; color-scheme:dark; } }
+:root[data-theme="dark"]{
+  --bg:#161614; --panel:#222220; --line:#30302D; --line-2:#494944;
+  --ink:#ECECE8; --ink-2:#B4B4AE; --ink-3:#9E9E98;
+  --amber-ink:#F0B45A; --red-ink:#F08C7E; --blue-ink:#86C4E3; color-scheme:dark; }
+
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.45;
+  padding-block:20px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:16px;}
+h1{font-size:18px;font-weight:600;margin:0;text-wrap:balance;}
+.lede{margin:0;color:var(--ink-2);max-width:68ch;}
+button{font:inherit;color:inherit;}
+:focus-visible{outline:2px solid var(--blue-ink);outline-offset:2px;}
+
+/* mock controls: prototype chrome, above the screens */
+.chrome{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 10px;border:1px dashed var(--line-2);border-radius:var(--r-sm);}
+.chrome .tag{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-right:4px;}
+.btn{background:var(--panel);border:1px solid var(--line-2);border-radius:var(--r-sm);padding:4px 10px;cursor:pointer;}
+.btn:hover{border-color:var(--ink-3);}
+.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink);}
+.btn.sm{padding:2px 8px;font-size:12px;}
+.btn.quiet{border-color:transparent;color:var(--ink-2);padding-left:0;}
+.btn:disabled{opacity:.45;cursor:default;}
+.chrome .note{color:var(--ink-2);font-size:12px;flex:1 1 220px;min-width:0;}
+
+.screens{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;}
+.screen{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px;min-width:0;}
+.screen.page{flex:3 1 480px;}
+.screen.card{flex:1 1 320px;max-width:440px;}
+.screen.side{flex:0 1 330px;max-width:340px;}
+.where{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin:0 0 8px;}
+.head{display:flex;align-items:baseline;gap:8px;min-width:0;}
+.head .t{font-weight:600;flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.head .n{color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.state{color:var(--ink-2);font-size:13px;margin:2px 0 8px;}
+.bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden;}
+.bar i{display:block;height:100%;background:var(--green);}
+
+/* what waits for the person: every open stop, each answerable, and what it holds up */
+.needs{list-style:none;margin:10px 0 0;padding:0;border-top:1px solid var(--line);}
+.needs li{display:flex;align-items:center;gap:8px;min-height:34px;border-bottom:1px solid var(--line);min-width:0;}
+.needs .what{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.needs .holds{color:var(--ink-2);font-size:12px;}
+
+/* run rows: one line, one word */
+.rows{list-style:none;margin:10px 0 0;padding:0;border-top:1px solid var(--line);}
+.needs + .rows,.order + .rows{border-top:0;margin-top:0;}
+.row{position:relative;display:grid;grid-template-columns:16px 22px minmax(0,1fr) max-content;column-gap:8px;align-items:center;
+  min-height:32px;border-bottom:1px solid var(--line);cursor:default;}
+.row .num{color:var(--ink-2);text-align:right;font-variant-numeric:tabular-nums;}
+.row .title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.row .word{color:var(--ink-2);font-size:12px;white-space:nowrap;}
+.row[data-s="stop"] .word{color:var(--amber-ink);}
+.row[data-s="failed"] .word{color:var(--red-ink);}
+.card .row .word{max-width:170px;overflow:hidden;text-overflow:ellipsis;}
+.side .row .word{max-width:130px;overflow:hidden;text-overflow:ellipsis;}
+.side .row{grid-template-columns:16px 18px minmax(0,1fr) max-content;column-gap:6px;font-size:13px;}
+/* point at a run: a bar marks the runs it waits for (solid) and the runs that wait for it (dashed) */
+.row.sel{background:color-mix(in srgb,var(--ink) 6%,transparent);}
+.row.pre::before,.row.post::before{content:"";position:absolute;left:-8px;top:5px;bottom:5px;border-left:2px solid var(--ink);}
+.row.post::before{border-left-style:dashed;}
+.mark{width:9px;height:9px;border-radius:50%;justify-self:center;box-sizing:border-box;border:1.5px solid var(--ink-3);}
+.mark[data-s="done"]{background:var(--green);border-color:var(--green);}
+.mark[data-s="live"]{background:var(--peach);border-color:var(--peach);animation:pulse 1.6s ease-out infinite;}
+.mark[data-s="stop"],.mark[data-s="failed"]{width:14px;height:14px;font-size:10px;font-weight:600;line-height:11px;text-align:center;color:var(--on-mark);}
+.mark[data-s="stop"]{background:var(--amber);border-color:var(--amber);}
+.mark[data-s="failed"]{background:var(--red);border-color:var(--red);}
+.mark[data-s="held"]{border-style:dashed;}
+.mark[data-s="next"]{border-color:var(--ink);}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--peach) 55%,transparent);}100%{box-shadow:0 0 0 7px transparent;}}
+.row:has(+ .strip){border-bottom:0;}
+.strip{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:0 0 7px 46px;border-bottom:1px solid var(--line);font-size:11px;color:var(--ink-3);}
+.strip span{border-top:2px solid var(--line-2);padding-top:3px;}
+.strip span.was{border-color:var(--ink-3);}
+.strip span.on{border-color:var(--peach);color:var(--ink);font-weight:600;}
+
+/* the order drawing: feature page only, on demand, still */
+.order{border-bottom:1px solid var(--line);}
+.order-hint{font-size:12px;color:var(--ink-2);margin:0 0 8px;max-width:70ch;}
+.map-scroll{overflow-x:auto;overflow-y:hidden;padding:18px 12px 12px 6px;}
+.map{position:relative;--n:12px;}
+.map svg{position:absolute;inset:0;overflow:visible;pointer-events:none;}
+.e{fill:none;stroke:var(--ink-3);stroke-width:1.5;}
+.e.on{stroke:var(--ink);stroke-width:2;}
+.e.dim{opacity:.18;}
+.node{position:absolute;width:var(--n);height:var(--n);box-sizing:border-box;display:grid;place-items:center;border-radius:50%;
+  border:1.5px solid var(--ink-3);background:var(--panel);color:var(--ink-2);cursor:pointer;}
+.node::before{content:"";position:absolute;inset:-7px;}
+.node .lbl{position:absolute;bottom:calc(100% + 3px);left:50%;transform:translateX(-50%);font-size:10px;line-height:1;font-weight:500;
+  font-variant-numeric:tabular-nums;pointer-events:none;background:var(--panel);padding:0 1px;}
+.node[data-s="done"]{background:var(--green);border-color:var(--green);}
+.node[data-s="live"]{background:var(--peach);border-color:var(--peach);animation:pulse 1.6s ease-out infinite;}
+.node[data-s="stop"]{background:var(--amber);border-color:var(--amber);box-shadow:0 0 0 2px var(--amber);}
+.node[data-s="failed"]{background:var(--red);border-color:var(--red);box-shadow:0 0 0 2px var(--red);}
+.node[data-s="stop"]::after,.node[data-s="failed"]::after{font-size:9px;font-weight:600;line-height:1;color:var(--on-mark);}
+.node[data-s="stop"]::after{content:"?";}
+.node[data-s="failed"]::after{content:"!";}
+.node.sel{outline:2px solid var(--ink);outline-offset:3px;}
+
+@media (prefers-reduced-motion: reduce){ .node[data-s="live"],.mark[data-s="live"]{animation:none;} }
+</style>
+
+<div class="wrap">
+  <h1>Run order map</h1>
+  <p class="lede">List first. Each run says in its own row what it waits for, by the real run numbers. Point at a run to see what it waits for and what waits for it. The drawing is on the feature page only, behind "Show order". Data: the 16-run CI feature.</p>
+
+  <div class="chrome" role="group" aria-label="Mock controls">
+    <span class="tag">Mock controls</span>
+    <button class="btn primary" id="play" type="button">Play</button>
+    <button class="btn" id="step" type="button">Step</button>
+    <button class="btn" id="fail" type="button">Fail the working run</button>
+    <button class="btn" id="change" type="button">Add a change run</button>
+    <button class="btn" id="reset" type="button">Restart</button>
+    <span class="note" id="note" aria-live="polite"></span>
+  </div>
+
+  <div class="screens">
+    <section class="screen page" id="page" aria-label="Feature page, Runs tab"></section>
+    <section class="screen card" id="card" aria-label="Chat feature card"></section>
+    <section class="screen side" id="side" aria-label="Runs sidebar, the feature's entry"></section>
+  </div>
+</div>
+
+<script>
+const DATA = [
+  [1, 'Always-running CI gate with PR-only cancellation', []],
+  [2, 'Every required check reports on every PR', [1]],
+  [3, 'Quarantine list and a non-blocking quarantine job', [1]],
+  [4, 'A gate summary that names failing jobs and test files', [1, 3]],
+  [5, 'Node test offenders: verdicts and fixes', [3, 4]],
+  [6, 'Browser offenders: extension Playwright and the CDP proofs', [3, 5]],
+  [7, 'Admin checklist that makes dev require the gate', [1, 2, 3, 4, 5, 6]],
+  [8, 'PR fast tier on the .nvmrc Node only', [1, 2]],
+  [9, 'Same-tree run-page flag-off check', []],
+  [10, 'Lingering test files free their CI worker', [3]],
+  [11, 'Suite regression guard', []],
+  [12, 'Weekly timings refresh PR', [1, 7, 10]],
+  [13, 'Shared resettable app boot, and the largest UI files convert', [11]],
+  [14, 'Remaining UI files on the shared boot, in batches', [11, 13]],
+  [15, 'PR feedback-time report', [8, 13, 14]],
+  [16, 'Cleanup: remove copied boot helpers and dead code', [9, 11, 12, 13, 14, 15]],
+];
+const TITLE = 'CI as a trusted merge gate, and a faster test suite';
+const STOPS = new Set([2, 9, 11]);          // these runs stop for a plan approval
+const STEPS = ['planning', 'building', 'building', 'reviewing'];
+const REST_TICKS = 7;                        // the resting frame: run 1 done, run 2 asks, run 3 builds
+
+let S, hi = null, pin = null, timer = null, views = [];
+const run = (i) => S.runs[i - 1];
+const live = () => S.runs.find((r) => r.state === 'live') || null;
+const isDone = (i) => run(i).state === 'done';
+
+function fresh() {
+  return { note: '', runs: DATA.map(([i, title, deps]) => ({ i, title, deps, state: 'planned', p: 0, asked: false, kind: null })) };
+}
+function ancestors(i, seen = new Set()) { for (const d of run(i).deps) if (!seen.has(d)) { seen.add(d); ancestors(d, seen); } return seen; }
+/** The links worth naming and drawing: a link another link already implies is left out. */
+const reduce = (list) => list.filter((d) => !list.some((e) => e !== d && ancestors(e).has(d)));
+const openDeps = (r) => reduce(r.deps.filter((d) => !isDone(d)));
+const due = () => S.runs.filter((r) => r.state === 'planned' && r.deps.every(isDone))
+  .sort((a, b) => ((b.kind === 'change') - (a.kind === 'change')) || a.i - b.i);
+const turnOrder = () => [...S.runs.filter((r) => r.state === 'held'), ...due()];
+/** Every run not done that builds on run i, directly or through others: what a stop or a failure holds up. */
+const holdsUp = (i) => S.runs.filter((r) => r.state !== 'done' && ancestors(r.i).has(i)).map((r) => r.i);
+
+function takeTurn(notes) {
+  if (live()) return;
+  const n = turnOrder()[0];
+  if (n) { n.p = n.state === 'held' ? 1 : 0; n.state = 'live'; notes.push(`run ${n.i} takes the turn`); }
+  else if (S.runs.some((r) => r.state === 'stop' || r.state === 'failed')) notes.push('nothing can go on until you act');
+  else if (S.runs.every((r) => r.state === 'done')) notes.push('every run is done');
+}
+function tick() {
+  const notes = [];
+  const l = live();
+  if (l) {
+    if (l.p === 0 && STOPS.has(l.i) && !l.asked) { l.asked = true; l.state = 'stop'; notes.push(`Run ${l.i} stops for your answer`); }
+    else if (l.p >= STEPS.length - 1) { l.state = 'done'; notes.push(`Run ${l.i} is done`); }
+    else l.p += 1;
+  }
+  takeTurn(notes);
+  if (notes.length) S.note = cap(notes.join(' · '));
+  return !!live();
+}
+function answer(i) {
+  const r = run(i), l = live();
+  if (r.state !== 'stop') return;
+  r.p = 1; r.state = l ? 'held' : 'live';
+  S.note = l ? `Run ${i} answered · it goes on after run ${l.i}` : `Run ${i} answered · it builds now`;
+  render();
+}
+function failLive() {
+  const l = live(); if (!l) return;
+  l.state = 'failed';
+  const notes = [`Run ${l.i} failed`]; takeTurn(notes);
+  S.note = cap(notes.join(' · ')); render();
+}
+function resume(i) {
+  const r = run(i); if (r.state !== 'failed') return;
+  r.state = 'planned'; r.p = 0;
+  const notes = [`Run ${i} resumed`]; takeTurn(notes);
+  S.note = cap(notes.join(' · ')); render();
+}
+function addChange() {
+  const lastDone = [...S.runs].reverse().find((r) => r.state === 'done');
+  const i = S.runs.length + 1;
+  S.runs.push({ i, title: 'Change: one more requirement, as its own small run', deps: lastDone ? [lastDone.i] : [], state: 'planned', p: 0, asked: true, kind: 'change' });
+  S.note = `Run ${i} added for a change · it takes the next turn`;
+  render();
+}
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** The one state and the one word of a run, the same on every surface. Today's words, kept. */
+function stateOf(r) {
+  if (r.state !== 'planned') return r.state;
+  if (openDeps(r).length) return 'blocked';
+  return turnOrder()[0] === r ? 'next' : 'ready';
+}
+const CAUSE = { stop: ' (needs you)', failed: ' (failed)' };
+function wordOf(r) {
+  const l = live();
+  switch (stateOf(r)) {
+    case 'done': return 'done';
+    case 'live': return r.word || STEPS[r.p];
+    case 'stop': return 'waiting for you';
+    case 'failed': return 'failed';
+    case 'held': return l ? `after run ${l.i}` : 'next';
+    // The real runs it builds on that are not done; one that waits for the person or failed says so.
+    case 'blocked': return `waits for run ${openDeps(r).map((d) => `${d}${CAUSE[run(d).state] || ''}`).join(', ')}`;
+    case 'next': return r.kind === 'change' ? 'next · small change run' : 'next';
+    default: return '';
+  }
+}
+
+function layout(width, n) {
+  const depth = new Map();
+  const d = (i) => { if (!depth.has(i)) depth.set(i, run(i).deps.length ? 1 + Math.max(...run(i).deps.map(d)) : 0); return depth.get(i); };
+  S.runs.forEach((r) => d(r.i));
+  const cols = Math.max(...depth.values()) + 1;
+  const rowOf = new Map();
+  let maxRows = 1;
+  for (let c = 0; c < cols; c++) {
+    const col = S.runs.filter((r) => depth.get(r.i) === c);
+    const bary = (r) => { const ps = reduce(r.deps); return ps.length ? ps.reduce((s, p) => s + rowOf.get(p), 0) / ps.length : r.i / 100; };
+    col.sort((a, b) => bary(a) - bary(b) || a.i - b.i).forEach((r, k) => rowOf.set(r.i, k));
+    maxRows = Math.max(maxRows, col.length);
+  }
+  const gap = cols > 1 ? Math.max(n + 26, (width - n) / (cols - 1)) : 0;
+  const rowGap = n + 26;
+  const pos = new Map(S.runs.map((r) => [r.i, { x: depth.get(r.i) * gap, y: rowOf.get(r.i) * rowGap, c: depth.get(r.i) }]));
+  return { pos, gap, rowGap, w: n + (cols - 1) * gap, h: n + (maxRows - 1) * rowGap + rowGap / 2 };
+}
+
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const NS = 'http://www.w3.org/2000/svg';
+
+function mount(host, where, opts = {}) {
+  host.replaceChildren();
+  host.append(el('p', 'where', where));
+  const head = el('div', 'head'); const n = el('span', 'n'); head.append(el('span', 't', TITLE), n);
+  const state = el('div', 'state');
+  const bar = el('div', 'bar'); const fill = el('i'); bar.append(fill);
+  const needs = el('ul', 'needs'); needs.setAttribute('aria-label', 'Needs you');
+  const rows = el('ol', 'rows'); rows.setAttribute('aria-label', 'Runs');
+  host.append(head, state, bar, needs);
+  const v = { host, n, state, fill, needs, rows, opts, open: false };
+  if (opts.map) {
+    // On demand, feature page only. The rows say everything the drawing shows, so it is hidden from screen readers.
+    v.order = el('div', 'order');
+    v.toggle = el('button', 'btn sm quiet', 'Show order'); v.toggle.type = 'button'; v.toggle.id = `${host.id}-order`;
+    v.toggle.setAttribute('aria-expanded', 'false');
+    v.body = el('div'); v.body.hidden = true; v.body.setAttribute('aria-hidden', 'true');
+    v.body.append(el('p', 'order-hint', 'A run sits to the right of every run it builds on. A line joins a run that is not done to the runs waiting for it; links that are already met are not drawn.'));
+    v.scroll = el('div', 'map-scroll'); v.map = el('div', 'map'); v.svg = document.createElementNS(NS, 'svg');
+    v.map.append(v.svg); v.scroll.append(v.map); v.body.append(v.scroll);
+    v.order.append(v.toggle, v.body); host.append(v.order);
+    v.toggle.addEventListener('click', () => { v.open = !v.open; v.body.hidden = !v.open; v.toggle.textContent = v.open ? 'Hide order' : 'Show order'; v.toggle.setAttribute('aria-expanded', String(v.open)); paint(v); });
+  }
+  host.append(rows);
+  // Point at a run to mark its links in the list; click (or Enter) keeps them, again lets go.
+  const over = (e) => { if (pin != null) return; const x = e.target.closest('[data-run]'); setHi(x ? Number(x.dataset.run) : null); };
+  const toggle = (x) => { const i = Number(x.dataset.run); pin = pin === i ? null : i; setHi(pin); };
+  host.addEventListener('mouseover', over); host.addEventListener('focusin', over);
+  host.addEventListener('mouseleave', () => setHi(pin));
+  host.addEventListener('focusout', (e) => { if (!host.contains(e.relatedTarget)) setHi(pin); });
+  host.addEventListener('click', (e) => { const x = e.target.closest('[data-run]'); if (x && !e.target.closest('.btn')) toggle(x); });
+  host.addEventListener('keydown', (e) => { if (e.key === 'Escape' && pin != null) { pin = null; setHi(null); } if (e.key === 'Enter' && e.target.matches('.row')) toggle(e.target); });
+  return v;
+}
+
+function paintMap(v) {
+  const size = 12;
+  const L = layout(v.scroll.clientWidth - 18, size);
+  v.map.style.width = `${L.w}px`; v.map.style.height = `${L.h}px`;
+  v.map.querySelectorAll('.node').forEach((n) => n.remove());
+  v.svg.replaceChildren();
+  const h = size / 2;
+  for (const r of S.runs) {
+    const b = el('span', 'node'); b.append(el('span', 'lbl', String(r.i))); b.dataset.run = r.i;
+    const s = stateOf(r); b.dataset.s = ['done', 'live', 'stop', 'failed'].includes(s) ? s : 'wait';
+    const p = L.pos.get(r.i); b.style.left = `${p.x}px`; b.style.top = `${p.y}px`;
+    v.map.append(b);
+  }
+  // Only links that still hold a run back. A link that skips columns travels in the lane under the upper row,
+  // so it never runs through a dot it does not belong to.
+  for (const r of S.runs) for (const d of openDeps(r)) {
+    const a = L.pos.get(d), z = L.pos.get(r.i);
+    const x1 = a.x + size, y1 = a.y + h, x2 = z.x, y2 = z.y + h, k = L.gap * 0.35;
+    let path;
+    if (z.c - a.c === 1) { const mx = (x1 + x2) / 2; path = `M${x1} ${y1}C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`; }
+    else {
+      const lane = Math.min(a.y, z.y) + size + L.rowGap / 2 - h;
+      const ax = x1 + L.gap * 0.6, bx = x2 - L.gap * 0.6;
+      path = `M${x1} ${y1}C${x1 + k} ${y1} ${ax - k} ${lane} ${ax} ${lane}L${bx} ${lane}C${bx + k} ${lane} ${x2 - k} ${y2} ${x2} ${y2}`;
+    }
+    const e = document.createElementNS(NS, 'path'); e.setAttribute('d', path); e.setAttribute('class', 'e');
+    e.dataset.from = d; e.dataset.to = r.i; v.svg.append(e);
+  }
+}
+
+function paint(v) {
+  const doneN = S.runs.filter((r) => r.state === 'done').length;
+  const l = live(); const nx = turnOrder()[0];
+  v.n.textContent = `${doneN}/${S.runs.length}`;
+  v.state.textContent = [l ? `Run ${l.i} ${wordOf(l)}` : null, nx ? `next: run ${nx.i}` : null].filter(Boolean).join(' · ')
+    || (doneN === S.runs.length ? 'Every run is done' : 'Nothing can go on until you act');
+  v.fill.style.width = `${(100 * doneN) / S.runs.length}%`;
+
+  const asks = v.opts.answers === false ? [] : S.runs.filter((r) => r.state === 'stop' || r.state === 'failed');
+  v.needs.replaceChildren(); v.needs.hidden = !asks.length;
+  for (const r of asks) {
+    const failed = r.state === 'failed';
+    const li = el('li'); li.dataset.run = r.i;
+    const m = el('span', 'mark', failed ? '!' : '?'); m.dataset.s = r.state; m.setAttribute('aria-hidden', 'true');
+    const what = el('span', 'what', failed ? `Run ${r.i} failed` : `Run ${r.i} · plan approval`);
+    const held = holdsUp(r.i);
+    if (held.length) { const hu = el('span', 'holds', ` · holds up ${held.join(', ')}`); what.append(hu); }
+    what.title = what.textContent;
+    const b = el('button', 'btn sm primary', failed ? 'Resume' : 'Approve'); b.type = 'button'; b.id = `${v.host.id}-act-${r.i}`;
+    b.setAttribute('aria-label', failed ? `Resume run ${r.i}` : `Approve the plan of run ${r.i}`);
+    b.addEventListener('click', () => (failed ? resume(r.i) : answer(r.i)));
+    li.append(m, what, b); v.needs.append(li);
+  }
+
+  if (v.opts.map && v.open) paintMap(v);
+
+  v.rows.replaceChildren();
+  for (const r of S.runs) {
+    const s = stateOf(r);
+    const li = el('li', 'row'); li.dataset.run = r.i; li.dataset.s = s; li.tabIndex = 0;
+    const m = el('span', 'mark', s === 'stop' ? '?' : s === 'failed' ? '!' : ''); m.dataset.s = s; m.setAttribute('aria-hidden', 'true');
+    const title = el('span', 'title', r.title); title.title = r.title;
+    const text = wordOf(r); const w = el('span', 'word', text); w.title = text;
+    li.append(m, el('span', 'num', String(r.i)), title, w);
+    v.rows.append(li);
+    if (v.opts.strips && r.state === 'live') {
+      const strip = el('li', 'strip'); strip.setAttribute('aria-label', `Run ${r.i} is at ${r.p ? 'Build' : 'Plan'}`);
+      const at = r.p === 0 ? 0 : r.p === 3 ? 2 : 1;
+      ['Plan', 'Build', 'Review', 'Ready'].forEach((name, k) => strip.append(el('span', k === at ? 'on' : k < at ? 'was' : '', name)));
+      v.rows.append(strip);
+    }
+  }
+  light(v);
+}
+
+/** The pointed run's direct links only: what it builds on (pre) and what builds on it (post). */
+function light(v) {
+  const pre = hi == null ? [] : reduce(run(hi).deps);
+  const post = hi == null ? [] : S.runs.filter((x) => reduce(x.deps).includes(hi)).map((x) => x.i);
+  for (const li of v.rows.children) {
+    const i = Number(li.dataset.run);
+    li.classList.toggle('sel', !!i && i === hi); li.classList.toggle('pre', pre.includes(i)); li.classList.toggle('post', post.includes(i));
+  }
+  if (!v.opts.map || !v.open) return;
+  for (const n of v.map.querySelectorAll('.node')) n.classList.toggle('sel', Number(n.dataset.run) === hi);
+  for (const p of v.svg.children) {
+    const on = hi != null && (Number(p.dataset.from) === hi || Number(p.dataset.to) === hi);
+    p.classList.toggle('on', on); p.classList.toggle('dim', hi != null && !on);
+  }
+}
+function setHi(i) { if (i === hi || (i != null && !run(i))) return; hi = i; views.forEach(light); }
+
+function render() {
+  views.forEach(paint);
+  document.getElementById('note').textContent = S.note;
+  document.getElementById('change').disabled = S.runs.length >= DATA.length + 2;
+  document.getElementById('fail').disabled = !live();
+}
+function stop() { clearInterval(timer); timer = null; document.getElementById('play').textContent = 'Play'; }
+function start() {
+  document.getElementById('play').textContent = 'Pause';
+  timer = setInterval(() => { const more = tick(); render(); if (!more) stop(); }, 1100);
+}
+function reset() {
+  stop(); hi = null; pin = null; S = fresh();
+  for (let k = 0; k < REST_TICKS; k++) tick();
+  S.note = 'Run 2 waits for your answer, so run 3 took the turn. Press Play, or approve run 2.';
+  render();
+}
+
+views = [mount(document.getElementById('page'), 'Feature page · Runs', { map: true }),
+  mount(document.getElementById('card'), 'Chat · feature card'),
+  mount(document.getElementById('side'), 'Runs sidebar · layout as today', { answers: false, strips: true })];
+document.getElementById('play').addEventListener('click', () => (timer ? stop() : start()));
+document.getElementById('step').addEventListener('click', () => { stop(); tick(); render(); });
+document.getElementById('fail').addEventListener('click', failLive);
+document.getElementById('change').addEventListener('click', addChange);
+document.getElementById('reset').addEventListener('click', reset);
+reset();
+new ResizeObserver(() => { const v = views[0]; if (v.open) { paintMap(v); light(v); } }).observe(views[0].host);
+</script>
