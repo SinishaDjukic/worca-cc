@@ -128,21 +128,22 @@ columns: the dimension(s), `spendUsd`, `runs`, `finished`, `stopped`, `failed`, 
 
 ## Leaderboard and Worca levels
 
-**By person** opens with a **Leaderboard** card: a friendly competition between the people who ran runs on
-the team. Its period has its own buttons (All time, This year, This quarter, Last month, This month; This
+**By person** opens with a **Worca Orchestrator Leaderboard** card: a friendly competition between the people
+who ran runs on the team. Its period has its own buttons (This month, Last month, Quarter, Year, All time; This
 month is the default and the choice is kept in this browser) and ignores the page's range, tag and row
 filters. Periods are calendar periods in UTC, the same as the page's range chips.
 
 **Score.** Out of 100: merged runs 35, success rate 35, runs 15, spend per run 15. Each part is compared with
 the best person on the team in the same period (a person's runs divided by the most runs anyone has, and so
 on; for spend per run, lower is better), so the score says how close someone is to the best of the team, not
-how big the team is. A card row shows each part as "points / weight" with the raw number under it.
+how big the team is. A card row shows the score with a bar split into the four parts, then each part's raw number
+with "points / weight" under it.
 Runs without a recorded cost are left out of spend per run only (the card says "N of M costed").
 
 **Who is ranked.** A person needs at least 3 runs started in the period; people with 1 or 2 are listed under
 **Not eligible yet** with "needs N more run(s)", and people with no run in the period are not listed. Equal
 scores (to one decimal) share a rank and are joint winners. An open period says **Leading so far** and
-"Ends in N days, ranking can still change"; a closed one (Last month) says **Winner** and the date it
+"Ends in N days · ranking can still change", with the leader's avatar and score; a closed one (Last month) says **Winner** and the date it
 closed; All time says **All-time leader**. With no runs the card says "No winner yet", and when nobody has 3
 runs it says "No winner for this period".
 

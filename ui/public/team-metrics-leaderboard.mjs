@@ -7,10 +7,13 @@ import { setAvatarSrc } from './worca-level/model.mjs';
 
 const DAY = 86_400_000;
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const PERIODS = [['all', 'All time'], ['year', 'This year'], ['quarter', 'This quarter'], ['last-month', 'Last month'], ['this-month', 'This month']];
+const MONTH = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const PERIODS = [['this-month', 'This month'], ['last-month', 'Last month'], ['quarter', 'Quarter'], ['year', 'Year'], ['all', 'All time']];
 const LEVEL_TEXT = { none: 'No level yet', unknown: 'Level unknown' };
 const GLYPH = { none: '○', unknown: '?' };
-const COLUMNS = ['#', 'Person', 'Score / 100', 'Runs (15%)', 'Per run (15%)', 'Merged (35%)', 'Success (35%)'];
+// The four parts in column order; their colours are the --tm-lb-<part> custom properties in team-metrics.css.
+const PARTS = [['runs', 'Runs', 15], ['perRun', 'Per run', 15], ['merged', 'Merged', 35], ['success', 'Success', 35]];
+const MIN_RUNS = 3;
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -23,9 +26,11 @@ const usd = (n) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, max
 const dayLabel = (ms) => { const d = new Date(ms); return `${MO[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`; };
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
+const levelState = (level) => (level?.state === 'known' ? 'known' : level?.state === 'none' ? 'none' : 'unknown');
+
 /** A person's Worca level: the real one (icon + name), or a neutral icon with "No level yet" / "Level unknown". */
 export function renderLevelBadge(level, { doc = globalThis.document } = {}) {
-  const state = level?.state === 'known' ? 'known' : level?.state === 'none' ? 'none' : 'unknown';
+  const state = levelState(level);
   const badge = h(doc, 'span', 'tm-level');
   badge.dataset.levelState = state;
   if (state === 'known') {
@@ -57,76 +62,175 @@ export function renderPeriodSelector(lbRange, { doc = globalThis.document } = {}
   return seg;
 }
 
-/** What the card says about the top of the ranking. Pure text. */
-export function leaderboardBanner(lb, { now = Date.now() } = {}) {
-  if (lb.status === 'no-runs') return { kind: 'none', headline: 'No winner yet — no finished runs in this period', detail: '' };
-  if (lb.status === 'none-eligible') return { kind: 'none', headline: 'No winner for this period — nobody has 3 runs yet', detail: '' };
-  const names = lb.rows.filter((r) => lb.winners.includes(r.key)).map((r) => r.label).join(', ');
-  const joint = lb.winners.length > 1;
-  if (lb.phase === 'closed') {
-    return { kind: 'winner', headline: `${joint ? 'Joint winners' : 'Winner'}: ${names}`, detail: `Closed ${dayLabel(lb.endMs - 1)}, final ranking` };
-  }
-  if (lb.phase === 'all-time') {
-    return { kind: 'all-time', headline: `${joint ? 'Joint all-time leaders' : 'All-time leader'}: ${names}`, detail: '' };
-  }
-  const days = Math.max(1, Math.ceil((lb.endMs - now) / DAY));
-  return { kind: 'leading', headline: `${joint ? 'Joint leaders so far' : 'Leading so far'}: ${names}`, detail: `Ends in ${plural(days, 'day')}, ranking can still change` };
+/** The period a leaderboard covers, in words: "November 2026", "Q4 2026", "2026" or "All time". */
+export function leaderboardPeriodLabel(lb) {
+  if (lb.startMs == null) return 'All time';
+  const d = new Date(lb.startMs);
+  const y = d.getUTCFullYear();
+  if (lb.range === 'year') return String(y);
+  if (lb.range === 'quarter') return `Q${Math.floor(d.getUTCMonth() / 3) + 1} ${y}`;
+  return `${MONTH[d.getUTCMonth()]} ${y}`;
 }
 
-function partCell(doc, label, part, raw, extra) {
-  const td = h(doc, 'td', 'num mono');
-  td.dataset.label = label;
-  td.append(h(doc, 'span', 'tm-lb-pts', `${part.points.toFixed(1)} / ${part.weight}`), h(doc, 'small', 'hint', raw));
-  if (extra) td.append(h(doc, 'small', 'hint', extra));
-  return td;
+/** What the card says about the top of the ranking. Pure text; `score` is null when nobody is ranked. */
+export function leaderboardBanner(lb, { now = Date.now() } = {}) {
+  if (lb.status === 'no-runs') return { kind: 'none', kicker: null, headline: 'No winner yet — no finished runs in this period', detail: '', score: null };
+  if (lb.status === 'none-eligible') return { kind: 'none', kicker: null, headline: 'No winner for this period — nobody has 3 runs yet', detail: '', score: null };
+  const names = lb.rows.filter((r) => lb.winners.includes(r.key)).map((r) => r.label).join(', ');
+  const joint = lb.winners.length > 1;
+  const score = lb.rows[0].score.toFixed(1);
+  const period = leaderboardPeriodLabel(lb);
+  if (lb.phase === 'closed') {
+    return { kind: 'winner', kicker: joint ? 'Joint winners' : 'Winner', headline: `${names} won ${period}`, detail: `Closed ${dayLabel(lb.endMs - 1)} · final ranking`, score };
+  }
+  if (lb.phase === 'all-time') {
+    return { kind: 'all-time', kicker: joint ? 'Joint all-time leaders' : 'All-time leader', headline: `${names} ${joint ? 'lead' : 'leads'} all time`, detail: '', score };
+  }
+  const days = Math.max(1, Math.ceil((lb.endMs - now) / DAY));
+  return { kind: 'leading', kicker: joint ? 'Joint leaders so far' : 'Leading so far', headline: `${names} ${joint ? 'are' : 'is'} leading ${period}`, detail: `Ends in ${plural(days, 'day')} · ranking can still change`, score };
+}
+
+/** A person's avatar: the level avatar when the level is known, else the neutral glyph. */
+function renderAvatar(doc, level) {
+  const state = levelState(level);
+  if (state === 'known') {
+    const img = h(doc, 'img', 'tm-lb-ava');
+    img.alt = level.name || '';
+    if (level.key) img.dataset.worcaLevel = level.key;
+    setAvatarSrc(img, level.avatar);
+    return img;
+  }
+  const glyph = h(doc, 'span', 'tm-lb-ava tm-lb-glyph', GLYPH[state]);
+  glyph.setAttribute('aria-hidden', 'true');
+  return glyph;
+}
+
+const levelName = (level) => (levelState(level) === 'known' ? level.name || '' : LEVEL_TEXT[levelState(level)]);
+
+/** Avatar, then the name with a second line under it. */
+function renderWho(doc, label, level, subText) {
+  const who = h(doc, 'div', 'tm-lb-who');
+  const name = h(doc, 'span', 'tm-person', label);
+  name.title = label;
+  const sub = h(doc, 'span', 'tm-lb-sub-line', subText);
+  const text = h(doc, 'div', 'tm-lb-who-text');
+  text.append(name, sub);
+  who.append(renderAvatar(doc, level), text);
+  return { who, sub };
+}
+
+function renderLeader(lb, { doc, levelFor, now }) {
+  const banner = leaderboardBanner(lb, { now });
+  const box = h(doc, 'div', 'tm-lb-leader');
+  box.dataset.kind = banner.kind;
+  if (lb.winners.length) {
+    const avas = h(doc, 'div', 'tm-lb-leader-avas');
+    for (const r of lb.rows.filter((row) => lb.winners.includes(row.key))) avas.append(renderAvatar(doc, levelFor(r.label)));
+    box.append(avas);
+  }
+  const text = h(doc, 'div', 'tm-lb-leader-text');
+  if (banner.kicker) text.append(h(doc, 'div', 'tm-lb-kicker', banner.kicker));
+  text.append(h(doc, 'div', 'tm-lb-headline', banner.headline));
+  if (banner.detail) text.append(h(doc, 'div', 'tm-lb-detail', banner.detail));
+  box.append(text);
+  if (banner.score != null) {
+    const score = h(doc, 'div', 'tm-lb-leader-score');
+    score.append(h(doc, 'div', 'tm-lb-leader-num', banner.score), h(doc, 'div', 'tm-lb-leader-of', 'score of 100'));
+    box.append(score);
+  }
+  return box;
+}
+
+function cell(doc, cls, text) {
+  const c = h(doc, 'div', cls ? `tm-lb-cell ${cls}` : 'tm-lb-cell', text);
+  c.setAttribute('role', 'cell');
+  return c;
+}
+
+function partCell(doc, key, part, raw, extra) {
+  const c = cell(doc, 'tm-lb-num');
+  c.dataset.part = key;
+  c.append(h(doc, 'div', 'tm-lb-val', raw), h(doc, 'div', 'tm-lb-pts', `${part.points.toFixed(1)} / ${part.weight}`));
+  if (extra) c.append(h(doc, 'div', 'tm-lb-note', extra));
+  return c;
+}
+
+function renderHead(doc) {
+  const head = h(doc, 'div', 'tm-lb-grid-head');
+  head.setAttribute('role', 'row');
+  const th = (cls, text) => {
+    const c = h(doc, 'div', cls, text);
+    c.setAttribute('role', 'columnheader');
+    head.append(c);
+    return c;
+  };
+  th(null, '#');
+  th(null, 'Person');
+  th(null, 'Score');
+  for (const [key, label, weight] of PARTS) {
+    const c = th('tm-lb-num');
+    c.dataset.part = key;
+    const dot = h(doc, 'span', 'tm-lb-dot');
+    dot.dataset.part = key;
+    dot.setAttribute('aria-hidden', 'true');
+    c.append(dot, label, h(doc, 'span', 'tm-lb-weight', `${weight}%`));
+  }
+  return head;
 }
 
 function renderRows(lb, { doc, levelFor }) {
-  const table = h(doc, 'table', 'table tm-tbl tm-lb-tbl');
-  const thr = h(doc, 'tr');
-  for (const text of COLUMNS) thr.append(h(doc, 'th', text === '#' || text === 'Person' ? null : 'num', text));
-  const thead = h(doc, 'thead');
-  thead.append(thr);
-  const tbody = h(doc, 'tbody');
+  const grid = h(doc, 'div', 'tm-lb-grid');
+  grid.setAttribute('role', 'table');
+  grid.setAttribute('aria-label', 'Leaderboard ranking');
+  grid.append(renderHead(doc));
   for (const r of lb.rows) {
-    const tr = h(doc, 'tr');
-    if (lb.winners.includes(r.key)) tr.dataset.winner = 'true';
-    tr.dataset.lbKey = r.key;
-    const rank = h(doc, 'td', 'num mono', String(r.rank));
-    rank.dataset.label = '#';
-    const who = h(doc, 'td', 'table-main');
-    const name = h(doc, 'span', 'tm-person', r.label);
-    name.title = r.label;
-    who.append(name, ' ', renderLevelBadge(levelFor(r.label), { doc }));
-    const score = h(doc, 'td', 'num mono tm-lb-score', r.score.toFixed(1));
-    score.dataset.label = 'Score';
-    tr.append(
-      rank, who, score,
-      partCell(doc, 'Runs', r.parts.runs, String(r.runs)),
-      partCell(doc, 'Per run', r.parts.perRun, r.perRunUsd == null ? '—' : `${usd(r.perRunUsd)} per run`, r.costed < r.runs ? `${r.costed} of ${r.runs} costed` : null),
-      partCell(doc, 'Merged', r.parts.merged, String(r.merged)),
-      partCell(doc, 'Success', r.parts.success, `${Math.round(r.successRate * 100)}%`),
+    const row = h(doc, 'div', 'tm-lb-row');
+    row.setAttribute('role', 'row');
+    if (lb.winners.includes(r.key)) row.dataset.winner = 'true';
+    row.dataset.lbKey = r.key;
+    const level = levelFor(r.label);
+    const person = cell(doc, 'tm-lb-person');
+    const { who, sub } = renderWho(doc, r.label, level, levelName(level));
+    sub.classList.add('tm-lb-level');
+    sub.dataset.levelState = levelState(level);
+    person.append(who);
+    const score = cell(doc, 'tm-lb-score');
+    const bar = h(doc, 'div', 'tm-lb-bar');
+    bar.setAttribute('aria-hidden', 'true');
+    for (const [key] of PARTS) {
+      const seg = h(doc, 'span', 'tm-lb-seg');
+      seg.dataset.part = key;
+      seg.style.width = `${r.parts[key].points}%`;
+      bar.append(seg);
+    }
+    score.append(h(doc, 'div', 'tm-lb-score-num', r.score.toFixed(1)), bar);
+    row.append(
+      cell(doc, 'tm-lb-rank', String(r.rank)), person, score,
+      partCell(doc, 'runs', r.parts.runs, String(r.runs)),
+      partCell(doc, 'perRun', r.parts.perRun, r.perRunUsd == null ? '—' : usd(r.perRunUsd), r.costed < r.runs ? `${r.costed} of ${r.runs} costed` : null),
+      partCell(doc, 'merged', r.parts.merged, String(r.merged)),
+      partCell(doc, 'success', r.parts.success, `${Math.round(r.successRate * 100)}%`),
     );
-    tbody.append(tr);
+    grid.append(row);
   }
-  table.append(thead, tbody);
-  const wrap = h(doc, 'div', 'table-wrap');
-  wrap.append(table);
+  const wrap = h(doc, 'div', 'tm-lb-scroll');
+  wrap.append(grid);
   return wrap;
 }
 
 function renderNotEligible(lb, { doc, levelFor }) {
   const box = h(doc, 'div', 'tm-lb-todo');
-  box.append(h(doc, 'h3', null, 'Not eligible yet'));
-  const list = h(doc, 'ul', 'tm-lb-todo-list');
+  const head = h(doc, 'h3', 'tm-lb-todo-head', 'Not eligible yet');
+  const period = lb.startMs == null ? 'all time' : leaderboardPeriodLabel(lb);
+  head.append(h(doc, 'span', 'tm-lb-dim', ` · fewer than ${MIN_RUNS} runs in ${period}`));
+  const list = h(doc, 'div', 'tm-lb-todo-list');
   for (const p of lb.notEligible) {
-    const li = h(doc, 'li', 'tm-lb-todo-row');
-    const name = h(doc, 'span', 'tm-person', p.label);
-    name.title = p.label;
-    li.append(renderLevelBadge(levelFor(p.label), { doc }), name, h(doc, 'small', 'hint', `Not eligible yet — needs ${plural(p.needs, 'more run')}`));
-    list.append(li);
+    const card = h(doc, 'div', 'tm-lb-todo-card');
+    const level = levelFor(p.label);
+    card.append(renderWho(doc, p.label, level, `${levelName(level)} · ${plural(p.runs, 'run')}`).who, h(doc, 'span', 'tm-lb-tag', `needs ${plural(p.needs, 'more run')}`));
+    list.append(card);
   }
-  box.append(list);
+  box.append(head, list);
   return box;
 }
 
@@ -138,18 +242,14 @@ const MERGED_NOTE = {
 export function renderLeaderboardCard(lb, { doc = globalThis.document, levelFor, mergedState = 'ok', lbRange, now = Date.now() } = {}) {
   const card = h(doc, 'section', 'card chart-card tm-lb');
   const head = h(doc, 'div', 'card-head');
-  head.append(h(doc, 'h2', null, 'Leaderboard'), renderPeriodSelector(lbRange ?? lb.range, { doc }));
-  card.append(head);
-  const banner = leaderboardBanner(lb, { now });
-  const bar = h(doc, 'div', 'tm-lb-banner');
-  bar.dataset.kind = banner.kind;
-  bar.append(h(doc, 'strong', null, banner.headline));
-  if (banner.detail) bar.append(' ', h(doc, 'small', 'hint', banner.detail));
-  card.append(bar);
+  const title = h(doc, 'div', 'tm-lb-title');
+  title.append(h(doc, 'h2', null, 'Worca Orchestrator Leaderboard'), h(doc, 'p', 'tm-lb-sub', `${leaderboardPeriodLabel(lb)} · ranked by score · ${MIN_RUNS} runs to qualify`));
+  head.append(title, renderPeriodSelector(lbRange ?? lb.range, { doc }));
+  card.append(head, renderLeader(lb, { doc, levelFor, now }));
   if (lb.rows.length) card.append(renderRows(lb, { doc, levelFor }));
   if (lb.notEligible.length) card.append(renderNotEligible(lb, { doc, levelFor }));
-  const note = h(doc, 'small', 'hint tm-lb-foot');
-  note.append('Score out of 100: merged 35, success 35, runs 15, spend per run 15. Each part is compared with the best person on the team in the same period; a person needs 3 runs in the period to be ranked. Runs without a recorded cost are left out of spend per run only.');
+  const note = h(doc, 'p', 'tm-lb-foot');
+  note.append('Each part is compared with the rest of the team in the same period. Merged runs and success ratio 35% each, runs and spend per run 15% each. Runs without a recorded cost are left out of spend per run.');
   if (MERGED_NOTE[mergedState]) note.append(' ', h(doc, 'span', 'tm-lb-merged-note', MERGED_NOTE[mergedState]));
   card.append(note);
   return card;

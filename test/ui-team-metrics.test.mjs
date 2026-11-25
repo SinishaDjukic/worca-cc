@@ -407,7 +407,8 @@ const openPerson = async (opts) => {
   for (let i = 0; i < 6; i++) await ctx.tick();
   return ctx;
 };
-const lbRow = (doc, name) => doc.querySelector(`#tm-body .tm-lb tr[data-lb-key="${name}"]`);
+const lbRow = (doc, name) => doc.querySelector(`#tm-body .tm-lb .tm-lb-row[data-lb-key="${name}"]`);
+const merged = (doc, name) => { const c = lbRow(doc, name).querySelector('.tm-lb-num[data-part="merged"]'); return [c.querySelector('.tm-lb-val').textContent, c.querySelector('.tm-lb-pts').textContent]; };
 const tableRow = (doc, name) => [...doc.querySelectorAll('#tm-body table[data-dim="actor"] tbody tr')].find((tr) => tr.querySelector('.tm-person')?.textContent === name);
 
 test('levels on overview and by person: the viewer (matched by name) shows the served level, teammates "Level unknown"', async () => {
@@ -422,20 +423,22 @@ test('levels on overview and by person: the viewer (matched by name) shows the s
   assert.match(tableRow(doc, 'Bo').textContent, /Level unknown/);
   doc.querySelector('#tm-view [data-tm-view="person"]').click();
   for (let i = 0; i < 4; i++) await tick();
-  assert.equal(lbRow(doc, 'Ana').querySelector('.tm-level').outerHTML, tableRow(doc, 'Ana').querySelector('.tm-level').outerHTML, 'one badge everywhere');
-  assert.equal(lbRow(doc, 'Bo').querySelector('.tm-level').dataset.levelState, 'unknown');
+  assert.equal(lbRow(doc, 'Ana').querySelector('img.tm-lb-ava').getAttribute('src'), LEVEL.level.avatar, 'the same level avatar');
+  assert.equal(lbRow(doc, 'Ana').querySelector('.tm-lb-level').textContent, 'Builder');
+  assert.equal(lbRow(doc, 'Bo').querySelector('.tm-lb-level').dataset.levelState, 'unknown');
+  assert.equal(doc.querySelector('#tm-body .tm-lb-leader img.tm-lb-ava').getAttribute('src'), LEVEL.level.avatar, 'the leader box shows the leader level avatar');
 });
 
 test('the viewer is also found by actor key, and without a level yet shows "No level yet"', async () => {
   const recent = new Date().toISOString();
   const records = ['a1', 'a2', 'a3'].map((id) => lbRec(id, 'Ana B.', recent, { actorKey: '0123456789abcdef' }));
   const keyed = await openPerson({ fetchHandler: lbHandler(lbData({ viewer: { names: [], actorKey: '0123456789abcdef' }, records })) });
-  assert.equal(lbRow(keyed.window.document, 'Ana B.').querySelector('.tm-level').dataset.levelState, 'known');
+  assert.equal(lbRow(keyed.window.document, 'Ana B.').querySelector('.tm-lb-level').dataset.levelState, 'known');
   const none = await openPerson({ fetchHandler: lbHandler(lbData(), { level: { level: null } }) });
   assert.match(lbRow(none.window.document, 'Ana').textContent, /No level yet/);
   assert.match(lbRow(none.window.document, 'Bo').textContent, /Level unknown/);
   const stranger = await openPerson({ fetchHandler: lbHandler(lbData({ viewer: { names: [], actorKey: null } })) });
-  assert.equal(stranger.window.document.querySelector('#tm-body .tm-lb .tm-level[data-level-state="known"]'), null, 'nobody is guessed');
+  assert.equal(stranger.window.document.querySelector('#tm-body .tm-lb .tm-lb-level[data-level-state="known"]'), null, 'nobody is guessed');
 });
 
 test('a failing level read never breaks the page', async () => {
@@ -448,15 +451,15 @@ test('switching the leaderboard period re-ranks and persists', async () => {
   const recs = [...lbData().records.slice(0, 3), ...['c1', 'c2', 'c3'].map((id) => lbRec(id, 'Cy', lastMonth))];
   const { window, tick } = await openPerson({ fetchHandler: lbHandler(lbData({ records: recs })) });
   const doc = window.document;
-  const winners = () => doc.querySelector('#tm-body .tm-lb-banner').textContent;
-  assert.match(winners(), /Leading so far: Ana/);
+  const winners = () => doc.querySelector('#tm-body .tm-lb-leader .tm-lb-headline').textContent;
+  assert.match(winners(), /^Ana is leading /);
   assert.equal(doc.querySelector('#tm-body .tm-lb [data-lb-range="this-month"]').getAttribute('aria-pressed'), 'true');
   doc.querySelector('#tm-body .tm-lb [data-lb-range="last-month"]').click();
   await tick();
-  assert.match(winners(), /Winner: Cy/);
+  assert.match(winners(), /^Cy won /);
   assert.equal(window.localStorage.getItem('worca.teamMetrics.lbRange'), 'last-month');
   const again = await openPerson({ fetchHandler: lbHandler(lbData({ records: recs })), storage: { 'worca.teamMetrics.lbRange': 'last-month' } });
-  assert.match(again.window.document.querySelector('#tm-body .tm-lb-banner').textContent, /Winner: Cy/, 'the period is remembered');
+  assert.match(again.window.document.querySelector('#tm-body .tm-lb-leader .tm-lb-headline').textContent, /^Cy won /, 'the period is remembered');
 });
 
 test('merged runs come from the PR lookup: asked once per run, the count rises after the repaint', async () => {
@@ -466,8 +469,8 @@ test('merged runs come from the PR lookup: asked once per run, the count rises a
   const doc = window.document;
   assert.equal(log.length, 1);
   assert.deepEqual(log[0].runs.map((r) => r.id).sort(), ['a1', 'a2', 'a3', 'b1', 'b2', 'b3']);
-  assert.match(lbRow(doc, 'Ana').querySelectorAll('td')[5].textContent, /^35\.0 \/ 352$/);
-  assert.match(lbRow(doc, 'Bo').querySelectorAll('td')[5].textContent, /^0\.0 \/ 350$/);
+  assert.deepEqual(merged(doc, 'Ana'), ['2', '35.0 / 35']);
+  assert.deepEqual(merged(doc, 'Bo'), ['0', '0.0 / 35']);
   assert.equal(doc.querySelector('#tm-body .tm-lb-merged-note'), null);
   doc.querySelector('#tm-body .tm-lb [data-lb-range="all"]').click();
   for (let i = 0; i < 4; i++) await tick();
@@ -478,7 +481,7 @@ test('a failing PR lookup leaves merged at 0, says so, and shows no toast', asyn
   const { window } = await openPerson({ fetchHandler: lbHandler(lbData(), { prs: () => respond({ error: 'gh down' }, 502) }) });
   const doc = window.document;
   assert.match(doc.querySelector('#tm-body .tm-lb-merged-note').textContent, /GitHub could not be reached/);
-  assert.match(lbRow(doc, 'Ana').querySelectorAll('td')[5].textContent, /^0\.0 \/ 350$/);
+  assert.deepEqual(merged(doc, 'Ana'), ['0', '0.0 / 35']);
   assert.equal(doc.querySelector('.toast, [data-toast]'), null);
 });
 

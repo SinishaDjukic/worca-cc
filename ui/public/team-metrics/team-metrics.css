@@ -291,23 +291,78 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 
 /* Team metrics → By person: the Worca level badge and the Leaderboard card (docs/team-metrics.md "Leaderboard").
    Colour comes from the theme tokens; a known level tints through [data-worca-level] (--wl-hue, worca-level.css).
-   No .hint on a <td>: .hint{display:block} would take the cell out of table layout. */
+   The ranking is a CSS grid, not a table: every cell has its own tm-lb-* class, never .hint (.hint{display:block}). */
 .tm-level{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);white-space:nowrap;}
 .tm-level-ava{width:20px;height:20px;border-radius:50%;flex:none;}
 .tm-level-glyph{display:inline-flex;align-items:center;justify-content:center;
   background:var(--line);color:var(--ink-3);font-size:11px;font-weight:700;}
 .tm-level[data-level-state="known"]{color:var(--ink);}
 .tm-level[data-worca-level] .tm-level-ava{box-shadow:0 0 0 2px oklch(0.9 0.06 var(--wl-hue,235));}
-.tm-lb{margin-bottom:14px;}
-.tm-lb .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
-.tm-lb-banner{margin:4px 0 10px;font-size:13px;}
-.tm-lb-banner[data-kind="none"]{color:var(--ink-2);}
-.tm-lb-tbl td .tm-lb-pts{display:block;}
-.tm-lb-tbl td small{display:block;font-size:11px;color:var(--ink-2);}
-.tm-lb-tbl tr[data-winner] td:first-child,.tm-lb-tbl tr[data-winner] .tm-person{font-weight:700;}
-.tm-lb-score{font-weight:700;}
-.tm-lb-todo{margin-top:12px;}
-.tm-lb-todo h3{font-size:12px;font-weight:700;margin:0 0 6px;color:var(--ink-2);}
-.tm-lb-todo-list{list-style:none;padding:0;margin:0;}
-.tm-lb-todo-row{display:flex;align-items:center;gap:10px;padding:4px 0;flex-wrap:wrap;}
-.tm-lb-foot{display:block;margin-top:12px;color:var(--ink-2);}
+/* One colour per part of the score: the header squares and the score bar segments. The dark-only greys of the
+   design (winner tint, bar track) keep a light-theme fallback through light-dark(). */
+.tm-lb{margin-bottom:14px;display:flex;flex-direction:column;gap:20px;
+  --tm-lb-runs:oklch(0.72 0.09 250);--tm-lb-perRun:oklch(0.72 0.09 200);
+  --tm-lb-merged:oklch(0.72 0.09 150);--tm-lb-success:oklch(0.72 0.09 85);}
+.tm-lb [data-part="runs"]{--tm-lb-part:var(--tm-lb-runs);}
+.tm-lb [data-part="perRun"]{--tm-lb-part:var(--tm-lb-perRun);}
+.tm-lb [data-part="merged"]{--tm-lb-part:var(--tm-lb-merged);}
+.tm-lb [data-part="success"]{--tm-lb-part:var(--tm-lb-success);}
+.tm-lb .card-head{align-items:flex-start;gap:16px;flex-wrap:wrap;margin:0;}
+.tm-lb .card-head h2{font-size:17px;font-weight:600;}
+.tm-lb-sub{margin:4px 0 0;font-size:13px;color:var(--ink-3);}
+.tm-lb-range{background:var(--field);border-radius:8px;padding:3px;gap:2px;}
+.tm-lb-range button{height:auto;padding:6px 14px;border-radius:6px;font-size:13px;white-space:nowrap;color:var(--ink-2);}
+.tm-lb-range button.on,.tm-lb-range button[aria-pressed="true"]{background:var(--hover);color:var(--ink);}
+
+.tm-lb-ava{width:24px;height:24px;border-radius:50%;flex:none;display:block;box-sizing:border-box;}
+.tm-lb-glyph{display:inline-flex;align-items:center;justify-content:center;
+  background:var(--line);color:var(--ink-3);font-size:12px;font-weight:700;}
+.tm-lb-leader{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:18px 20px;
+  background:var(--field);border:1px solid var(--line);border-radius:10px;}
+.tm-lb-leader-avas{display:flex;}
+.tm-lb-leader-avas .tm-lb-ava{width:44px;height:44px;border:2px solid var(--field);font-size:18px;}
+.tm-lb-leader-avas .tm-lb-ava + .tm-lb-ava{margin-left:-10px;}
+.tm-lb-leader-text{flex:1;min-width:220px;}
+.tm-lb-kicker{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--amber-ink);}
+.tm-lb-headline{font-size:20px;font-weight:600;margin-top:2px;text-wrap:pretty;}
+.tm-lb-detail{font-size:13px;color:var(--ink-3);margin-top:2px;}
+.tm-lb-leader[data-kind="none"]{background:transparent;}
+.tm-lb-leader[data-kind="none"] .tm-lb-headline{font-size:15px;font-weight:500;color:var(--ink-2);margin:0;}
+.tm-lb-leader-score{text-align:right;}
+.tm-lb-leader-num{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums;}
+.tm-lb-leader-of{font-size:12px;color:var(--ink-3);}
+
+/* Under 920px the grid scrolls sideways inside its wrapper; the card itself never widens. */
+.tm-lb-scroll{overflow-x:auto;}
+.tm-lb-grid{min-width:920px;}
+.tm-lb-grid-head,.tm-lb-row{display:grid;gap:12px;align-items:center;
+  grid-template-columns:44px minmax(200px,1.5fr) minmax(170px,1.3fr) repeat(4,minmax(100px,1fr));}
+.tm-lb-grid-head{padding:0 12px 10px;font-size:13px;font-weight:500;color:var(--ink-2);border-bottom:1px solid var(--line);}
+.tm-lb-grid-head .tm-lb-num{display:flex;align-items:center;justify-content:flex-end;gap:6px;}
+.tm-lb-dot{width:8px;height:8px;border-radius:2px;background:var(--tm-lb-part);flex:none;}
+.tm-lb-weight{color:var(--ink-3);font-weight:400;}
+.tm-lb-row{padding:12px;border-bottom:1px solid var(--line);}
+.tm-lb-row[data-winner]{background:light-dark(var(--amber-wash),oklch(0.27 0.02 85));border-radius:8px;}
+.tm-lb-rank{font-size:14px;color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.tm-lb-person{min-width:0;}
+.tm-lb-who{display:flex;align-items:center;gap:10px;min-width:0;}
+.tm-lb-who-text{display:flex;flex-direction:column;min-width:0;flex:1;}
+.tm-lb-who .tm-person{display:block;max-width:none;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tm-lb-sub-line{font-size:12px;color:var(--ink-3);}
+.tm-lb-score{display:flex;flex-direction:column;gap:6px;}
+.tm-lb-score-num{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;}
+.tm-lb-bar{display:flex;gap:1px;height:6px;border-radius:3px;overflow:hidden;background:light-dark(var(--line),rgb(46,46,46));}
+.tm-lb-seg{display:block;flex:none;background:var(--tm-lb-part);}
+.tm-lb-row .tm-lb-num{text-align:right;font-variant-numeric:tabular-nums;}
+.tm-lb-val{font-size:14px;}
+.tm-lb-pts{font-size:12px;color:var(--ink-3);}
+.tm-lb-note{font-size:11px;color:var(--ink-3);opacity:.8;}
+
+.tm-lb-todo{display:flex;flex-direction:column;gap:8px;}
+.tm-lb-todo-head{margin:0;font-size:13px;font-weight:500;color:var(--ink-2);}
+.tm-lb-dim{color:var(--ink-3);font-weight:400;}
+.tm-lb-todo-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;}
+.tm-lb-todo-card{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px dashed var(--line-2);border-radius:10px;min-width:0;}
+.tm-lb-todo-card .tm-lb-who{flex:1;}
+.tm-lb-tag{font-size:12px;color:var(--ink-2);background:var(--field);border-radius:6px;padding:3px 8px;white-space:nowrap;}
+.tm-lb-foot{margin:0;font-size:12px;color:var(--ink-3);text-wrap:pretty;}
