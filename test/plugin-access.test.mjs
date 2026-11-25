@@ -52,8 +52,8 @@ test('inventoryAccessChanges: what a snapshot adds over the installed inventory;
 
 test('githubWebUrl: a GitHub repository at a sha, down to the plugin folder; null off GitHub, for a branch name or no repo', () => {
   const sha = 'd12b77f'.padEnd(40, '0');
-  assert.equal(githubWebUrl('https://github.com/SinishaDjukic/worca-cc', sha, 'plugins/github-source'),
-    `https://github.com/SinishaDjukic/worca-cc/tree/${sha}/plugins/github-source`);
+  assert.equal(githubWebUrl('https://github.com/worca-org/worca', sha, 'plugins/github-source'),
+    `https://github.com/worca-org/worca/tree/${sha}/plugins/github-source`);
   assert.equal(githubWebUrl('git@github.com:acme/tools.git', sha, ''), `https://github.com/acme/tools/tree/${sha}`);
   assert.equal(githubWebUrl('https://github.com/a/b', sha, '/plugins//my plugin#1/'), `https://github.com/a/b/tree/${sha}/plugins/my%20plugin%231`);
   for (const args of [['https://gitlab.com/a/b', sha, ''], ['https://github.com/a/b', 'main', ''], [null, sha, ''], ['/home/me/plugins', sha, 'x'],

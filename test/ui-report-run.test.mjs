@@ -37,11 +37,11 @@ const REPORT = {
   payload: { schemaVersion: 1, reason: 'too-slow', run: { id: PID },
              included: { paths: false, prompt: false },
              app: { worca: '1.2.0' }, steps: [], subAgents: [] },
-  issue: { url: 'https://github.com/SinishaDjukic/worca-cc/issues/new?labels=too-slow',
+  issue: { url: 'https://github.com/worca-org/worca/issues/new?labels=too-slow',
            truncated: false, filename: `worca-run-report-${PID}-too-slow.json` },
 };
 
-const FILED_URL = 'https://github.com/SinishaDjukic/worca-cc/issues/512';
+const FILED_URL = 'https://github.com/worca-org/worca/issues/512';
 const FILED = { ok: true, url: FILED_URL, labeled: true };
 
 // ── boot(): test/ui-running-stop-modal.test.mjs:22-82, plus trackDom and clipboard ──

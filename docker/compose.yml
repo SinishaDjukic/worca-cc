@@ -1,7 +1,7 @@
 # docker/compose.yml — run Worca in a container (docs/docker.md).
 #
 #   mkdir worca && cd worca
-#   curl -fsSLO https://raw.githubusercontent.com/SinishaDjukic/worca-cc/dev/docker/compose.yml
+#   curl -fsSLO https://raw.githubusercontent.com/worca-org/worca/dev/docker/compose.yml
 #   echo "WORCA_PROJECTS=$HOME/dev" > .env
 #   docker compose up -d                    # http://localhost:4317
 #   docker compose run --rm worca claude    # log Claude Code in, once
@@ -14,7 +14,7 @@ name: worca
 
 services:
   worca:
-    image: ghcr.io/sinishadjukic/worca:${WORCA_TAG:-latest}
+    image: ghcr.io/worca-org/worca:${WORCA_TAG:-latest}
     init: true
     # A stop pauses active runs before the server exits (WORCA_DRAIN_TIMEOUT_MS, 20 s by default);
     # Docker's own default of 10 s would SIGKILL it halfway.

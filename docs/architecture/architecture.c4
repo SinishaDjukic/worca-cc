@@ -1,5 +1,5 @@
 // Worca — architecture as code (LikeC4)
-// Source of truth: the code of github.com/SinishaDjukic/worca-cc at @worca/app 1.10.0
+// Source of truth: the code of github.com/worca-org/worca at @worca/app 1.10.0
 // (HEAD fc5ba23, schema v54). Every element names the file or directory it stands for; every
 // relationship was checked against an import or a call site. Where docs/ARCHITECTURE.md
 // disagrees with the code, the code wins (see the deployment view's description).
@@ -184,7 +184,7 @@ model {
 
   worca = system 'Worca' {
     description 'Turns a task into reviewed, merge-ready work: a deterministic multi-agent pipeline with quality gates, budgets and a human in the loop.'
-    link https://github.com/SinishaDjukic/worca-cc 'Repository'
+    link https://github.com/worca-org/worca 'Repository'
     link https://docs.worca.dev 'Docs'
 
     // ── Ways in ──

@@ -291,7 +291,7 @@ const GH = { url: 'https://github.com/o/worca', ref: 'dev' };
 
 test('builtinMarketplaceSource: the package repository on GitHub, branch dev; WORCA_BUILTIN_MARKETPLACE replaces it at HEAD', () => {
   assert.equal(BUILTIN_MARKETPLACE_REF, 'dev');
-  assert.deepEqual(builtinMarketplaceSource({}), { url: 'https://github.com/SinishaDjukic/worca-cc', ref: 'dev' });
+  assert.deepEqual(builtinMarketplaceSource({}), { url: 'https://github.com/worca-org/worca', ref: 'dev' });
   assert.deepEqual(builtinMarketplaceSource({ WORCA_BUILTIN_MARKETPLACE: '  ' }), builtinMarketplaceSource({}), 'blank = unset');
   assert.deepEqual(builtinMarketplaceSource({ WORCA_BUILTIN_MARKETPLACE: scratch }), { url: scratch, ref: null });
   assert.deepEqual(builtinMarketplaceSource({ WORCA_BUILTIN_MARKETPLACE: 'https://github.com/o/r.git' }),
@@ -343,6 +343,29 @@ test('seedBuiltinMarketplace: a local-checkout builtin (older worca) is replaced
   assert.equal(now[r.id].builtin, true);
   assert.equal(now[r.id].ref, 'dev');
   assert.ok(!existsSync(repoCacheDir(root)), 'no installed plugin shares it');
+});
+
+test('seedBuiltinMarketplace: the builtin repo moved on GitHub; plugins installed from it follow, others and checkout swaps do not', () => {
+  const OLD = { url: 'https://github.com/someone/worca-cc', ref: 'dev' };
+  writeMarketplaces({ seededBuiltin: false, marketplaces: {} });
+  const before = seedBuiltinMarketplace({ source: OLD });
+  writePluginsLock({
+    a: { marketplace: before.id, repo: OLD.url, version: '1.0.0' },
+    b: { marketplace: 'github.com-acme-plugins-1a2b3c4d', repo: 'https://github.com/acme/plugins', version: '2.0.0' },
+    c: { linked: true, version: 'dev' },
+  });
+  const moved = seedBuiltinMarketplace({ source: GH });
+  assert.equal(moved.replaced, before.id);
+  const lock = JSON.parse(readFileSync(join(pluginsRoot(), 'plugins.lock.json'), 'utf8'));
+  assert.equal(lock.a.marketplace, moved.id, 'follows the moved builtin');
+  assert.equal(lock.a.repo, OLD.url, 'install URL kept: GitHub redirects it');
+  assert.equal(lock.b.marketplace, 'github.com-acme-plugins-1a2b3c4d', 'another marketplace untouched');
+  assert.deepEqual(lock.c, { linked: true, version: 'dev' });
+  const local = seedBuiltinMarketplace({ source: { url: scratch, ref: null } });
+  assert.equal(local.replaced, moved.id);
+  assert.equal(JSON.parse(readFileSync(join(pluginsRoot(), 'plugins.lock.json'), 'utf8')).a.marketplace, moved.id,
+    'a local checkout swapped in is not a move');
+  writePluginsLock({});
 });
 
 test('seedBuiltinMarketplace: WORCA_BUILTIN_MARKETPLACE swaps the builtin to a checkout at HEAD, and back', () => {

@@ -16,7 +16,7 @@ your own.
 
 ## Why this shape
 
-- **The published image, not a build.** Railway deploys `ghcr.io/sinishadjukic/worca:<version>`,
+- **The published image, not a build.** Railway deploys `ghcr.io/worca-org/worca:<version>`,
   the same signed image the release workflow publishes. Pushing to the repo never redeploys, so it
   never interrupts running agents. An upgrade is an explicit change of the image tag.
 - **One volume, `/data`.** Railway gives a service one volume and mounts it root-owned. With
@@ -40,7 +40,7 @@ your own.
 | A domain on Cloudflare and a Zero Trust organization | See [remote-access.md → Before you start](remote-access.md#before-you-start). |
 | Claude credentials | **Either** a subscription token from `claude setup-token` (runs count against your Claude plan) **or** an Anthropic API key (billed per token; set a spend limit). Run `claude setup-token` in your own terminal: it prints the token. |
 | A GitHub token (for pushes and PRs) | A fine-grained personal access token limited to the repos you'll run, with **Contents** and **Pull requests** read/write. Not needed for a first test on a local repo. |
-| The image version | Pick an exact tag of `ghcr.io/sinishadjukic/worca` (e.g. `1.5.0`), not `latest`. |
+| The image version | Pick an exact tag of `ghcr.io/worca-org/worca` (e.g. `1.5.0`), not `latest`. |
 
 Keep the secrets (Claude token, GitHub token, and the tunnel token from step 2) in a password
 manager or a local file outside any repository until you paste them into Railway.
@@ -65,7 +65,7 @@ One Railway **project per deployment**. Use either the dashboard or the CLI.
 
 ### With the dashboard
 
-1. **New project → Deploy a Docker image** → `ghcr.io/sinishadjukic/worca:<version>`.
+1. **New project → Deploy a Docker image** → `ghcr.io/worca-org/worca:<version>`.
    Rename the service to exactly **`worca`** (Settings → Service name): that name becomes its private
    hostname `worca.railway.internal`, which the tunnel points to.
 2. `worca` → **Settings**:
@@ -105,7 +105,7 @@ folder: `railway init` links the current folder to the new project.
 ```bash
 railway init --name worca --workspace "<workspace name or id>"
 
-railway add --service worca --image ghcr.io/sinishadjukic/worca:<version> \
+railway add --service worca --image ghcr.io/worca-org/worca:<version> \
   --variables "RAILWAY_RUN_UID=0" --variables "WORCA_DATA_DIR=/data" \
   --variables "WORCA_HOST=::" --variables "PORT=4317" \
   --variables "WORCA_ALLOWED_HOSTS=worca.example.com,healthcheck.railway.app" \
@@ -272,7 +272,7 @@ redacts tokens from anything it prints. In Claude Code, the `/worca-railway` ski
 
 ### Upgrade or roll back
 
-Releases publish `ghcr.io/sinishadjukic/worca:<version>`. Pin an exact version, never `latest`:
+Releases publish `ghcr.io/worca-org/worca:<version>`. Pin an exact version, never `latest`:
 
 ```bash
 node tools/railway/worca-railway.mjs upgrade mydeploy 1.5.0 --yes    # set the tag, deploy, wait, show the log

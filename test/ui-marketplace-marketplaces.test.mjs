@@ -200,7 +200,7 @@ test('Already added: Open it lands on the Marketplaces tab (the address follows,
   await go(window, 'marketplace');
   doc.querySelector('#mk-root .mk-head-actions .mk-add-mkt').click(); await settle();
   const url = doc.getElementById('mk-add-url');
-  url.value = 'SinishaDjukic/worca-cc'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
+  url.value = 'worca-org/worca'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
   dialog(doc).querySelector('.mk-add-primary').click(); await settle();
   assert.equal(dialog(doc).querySelector('.mk-add-msg .mk-chip-built').textContent, 'Built-in');
   dialog(doc).querySelector('.mk-add-primary').click(); await settle();
@@ -455,7 +455,7 @@ test('Open it: the card takes focus once; a later re-render leaves the focus whe
   await go(window, 'marketplace/marketplaces');
   head(doc).querySelector('.mk-add-mkt').click(); await settle();
   const url = doc.getElementById('mk-add-url');
-  url.value = 'SinishaDjukic/worca-cc'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
+  url.value = 'worca-org/worca'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
   dialog(doc).querySelector('.mk-add-primary').click(); await settle();
   dialog(doc).querySelector('.mk-add-primary').click(); await settle();
   assert.equal(doc.activeElement.dataset.id, OFFICIAL.id);
@@ -669,7 +669,7 @@ test('a tab switch never leaves the focus in the panel it hid (a browser drops i
         ? { status: 409, body: { error: 'x', code: 'EXISTS', existing: { id: OFFICIAL.id, name: OFFICIAL.name } } } : undefined) });
       await go(window, 'marketplace');
       const form = doc.querySelector('.mk-panel[data-tab="browse"] form.mk-empty-add');
-      form.querySelector('input').value = 'SinishaDjukic/worca-cc';
+      form.querySelector('input').value = 'worca-org/worca';
       form.querySelector('button[type="submit"]').focus();
       form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); await settle();
       dialog(doc).querySelector('.mk-add-primary').click(); await settle();

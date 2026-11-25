@@ -99,7 +99,7 @@ directly.
 ## In a container
 
 If you'd rather the agents run in a disposable Linux box than on your machine, the same Worca ships as an image:
-`ghcr.io/sinishadjukic/worca`, for amd64 and arm64, plus a `-full` variant, with a Compose file. The agents can't
+`ghcr.io/worca-org/worca`, for amd64 and arm64, plus a `-full` variant, with a Compose file. The agents can't
 read your host credentials or touch files outside the project folders you mount. The box keeps its own Worca home
 and Claude login. You need Docker, or Podman with `podman compose`.
 
