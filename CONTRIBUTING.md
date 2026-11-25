@@ -122,6 +122,10 @@ the relevant smoke script if you touched the engine, workspace, or plugin
 paths) locally before opening or updating a PR, and say so in the PR
 description. A failed `CI gate` lists each failing test file by shard in its job
 summary and marks `(quarantined)` the files on dev's quarantine list.
+Pull requests run the fast tier on `.nvmrc`'s Node only, pushes to `dev` run it on
+22.19.0, 24 and 26, and the `full-node-matrix` label runs all three on a PR.
+Making the full matrix permanent on PRs is one edit to the matrix expression in
+`.github/workflows/ci.yml`, together with `test/supply-chain.test.mjs`.
 
 A test file, extension Playwright spec or CDP proof that fails at random can be
 quarantined: add it to `test/quarantine.json` with three fields, `path`,
