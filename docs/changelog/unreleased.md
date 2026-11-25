@@ -3,6 +3,20 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Steady command rows in Chat
+
+**A stack of commands no longer flickers while it runs.**
+
+Each new command now only adds its own row: the rows before it and their group stay where they are, instead of being rebuilt. Stop on a running command is a quiet square icon, as in the composer, not a red button.
+
+Chips: Chat
+
+Read it: [Chat](../chat.md)
+
+Pull requests (add each number when it opens):
+
+- Chat: steady command rows, quiet Stop
+
 ## Chat composer bar, compact
 
 **A compact bottom bar.**
