@@ -40,12 +40,6 @@ export function startedByOf(req, env = process.env) {
   return resolveIdentity(req, env).name;
 }
 
-/** The PR body footer naming who started the run, or '' when nobody in particular did. */
-export function prAttributionFooter(startedBy) {
-  const who = clean(startedBy);
-  return who && who !== 'local' ? `\n\n---\nStarted by ${who} via worca` : '';
-}
-
 /** Who did this: the actor string an action records ('local' when nothing applies). */
 export function actorOf(req, env = process.env) {
   return resolveIdentity(req, env).name;

@@ -554,6 +554,22 @@ test('D10: with no current run, the Verifier\'s open stop is asked and answered 
   }
 });
 
+test('D10: a cached miss of the Verifier\'s run is asked again once per question, and the feature page then asks it', async () => {
+  let gets = 0;
+  const extra = (url) => (url === '/api/shape/pipelines/pv/slice'
+    ? (gets += 1, gets === 1 ? json({ error: 'not a slice' }, 404) : json({ verifier: true, featureId: 'feat_1', threadId: null })) : null);
+  const { ctx } = await d3Boot({ extra, feature: () => json(D3_FEATURE('met')) });
+  ctx.dispatch({ type: 'hello', runs: [verifierRun] });
+  ctx.go('feature/feat_1');
+  await ctx.settle(12);
+  const slot = pageOf(ctx).querySelector('.gpage-question');
+  assert.equal(slot.hidden, false, `${gets} GETs`);
+  assert.ok(slot.textContent.includes('Verifier · 1 gap left'));
+  assert.equal(slot.querySelectorAll('.qopt').length, 2);
+  await ctx.settle(6);
+  assert.equal(gets, 2, 'asked again once, not on every paint');
+});
+
 // ── item 6: a run's stop on the feature page: one head (the stop's), one primary, no Re-plan beside it ──
 const P_STOP = { id: 'plan-n_refine-2', kind: 'plan', nodeId: 'n_refine', plan: { round: 1, file: 'p.md', check: { ok: false, passed: 3, total: 8, items: [{ label: 'Has tests', pass: false }] } },
   stop: { reason: 'check', run: 2, node: 'n_refine', pick: 'revise', head: 'Run 2 · the plan check did not pass', text: 'The plan passes 3 of 8 checks.', findingsLine: '5 checks to fix', options: [
@@ -722,6 +738,7 @@ test('the open, unanswered stop is the page\'s question, whichever member is cur
   ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
   await ctx.settle(12);
   assert.ok(slot.textContent.includes('Run 1 · the plan check did not pass'), slot.textContent);
+  assert.equal(slot.querySelectorAll('.qopt').length, P_STOP.stop.options.length, 'a member run\'s stop draws its tiles');
   clickOn(ctx, slot.querySelector('.btn-primary'));
   await ctx.settle(6);
   assert.deepEqual(posts.map((x) => [x.runId, x.id]), [['r1', 'plan-1']]);

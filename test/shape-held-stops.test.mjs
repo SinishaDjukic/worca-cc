@@ -11,7 +11,7 @@ import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createSliceFeature, liveSliceFrom, busySliceOf } from '../src/core/shape/features.mjs';
 import { createHeldStops } from '../src/core/shape/chain.mjs';
-import { gateStop, heldRefusal, planStop } from '../src/shared/shape/run-stops.mjs';
+import { answeredRefusal, gateStop, heldRefusal, planStop } from '../src/shared/shape/run-stops.mjs';
 
 useTempHome(after, 'worca-held-stops-');
 const root = mkdtempSync(join(tmpdir(), 'worca-held-stops-proj-'));
@@ -195,4 +195,46 @@ test('C5: answering a Verifier-run stop (no slice, no other run going) delivers 
   assert.deepEqual(answers, [{ id: 'verify-3-x', payload: { decision: 'another' }, by: 'ann' }]);
   assert.equal(e.heldStop, null);
   assert.throws(() => held.answer(e, 'verify-3-x', { decision: 'revise' }, 'ann'), (err) => err.code === 'INVALID_ANSWER');
+});
+
+// One stop, one answer: once a stop is handed to the run (due or delivered), a later answer with its id is refused.
+test('a stop answered due, then answered again once its question is gone, is refused STOP_ANSWERED (409)', () => {
+  const { e2, held, answers } = setup({ three: false });
+  assert.equal(held.answer(e2, 'gate-w9-3', { decision: 'continue' }, 'ann'), undefined);
+  e2.pendingQuestion = null;   // the caller resolved it
+  assert.throws(() => held.answer(e2, 'gate-w9-3', { decision: 'another' }, 'bo'),
+    (err) => err.code === 'STOP_ANSWERED' && err.status === 409 && err.message === answeredRefusal());
+  assert.equal(answers.length, 1, 'the run took the stop once');
+});
+
+test('a stop held, then delivered, then answered again is refused STOP_ANSWERED', () => {
+  const { e2, e3, held, answers, finish } = setup();
+  held.answer(e2, 'gate-w9-3', { decision: 'another' }, 'ann');
+  finish(e3);
+  held.deliver();
+  assert.equal(answers.length, 1);
+  assert.throws(() => held.answer(e2, 'gate-w9-3', { decision: 'continue' }, 'bo'), (err) => err.code === 'STOP_ANSWERED' && err.status === 409);
+  assert.equal(answers.length, 1);
+});
+
+test('a stale answer to a non-stop question still goes to the run and does not throw', () => {
+  const { e2, held, answers } = setup({ three: false });
+  held.answer(e2, 'gate-w9-3', { decision: 'continue' }, 'ann');
+  e2.pendingQuestion = null;
+  assert.equal(held.answer(e2, 'q-old', { answers: [] }, 'ann'), undefined);
+  assert.equal(answers.length, 2);
+});
+
+test('a refused answer (422 or STOP_HELD) adds no id: a later valid answer is taken', () => {
+  const a = setup({ three: false });
+  assert.throws(() => a.held.answer(a.e2, 'gate-w9-3', { decision: 'stop' }, 'ann'), (err) => err.code === 'INVALID_ANSWER');
+  assert.equal(a.held.answer(a.e2, 'gate-w9-3', { decision: 'continue' }, 'ann'), undefined);
+  assert.equal(a.answers.length, 1);
+  const b = setup();
+  b.held.answer(b.e2, 'gate-w9-3', { decision: 'another' }, 'ann');
+  assert.throws(() => b.held.answer(b.e2, 'gate-w9-3', { decision: 'continue' }, 'bo'), (err) => err.code === 'STOP_HELD');
+  b.held.clear(b.e2);   // the held answer is dropped (the run was paused)
+  b.finish(b.e3);
+  assert.equal(b.held.answer(b.e2, 'gate-w9-3', { decision: 'continue' }, 'bo'), undefined);
+  assert.equal(b.answers.length, 1);
 });

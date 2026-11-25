@@ -209,9 +209,8 @@ div.gpage-runs .run-member-state{color:var(--ink-2);font-size:var(--fs-meta);whi
 }
 /* A stop on the feature page has its own head (the question's): the plan ask's banner is hidden, for a stop only. */
 div.gpage-question[data-stop] .qpanel-head{display:none;}
-/* The run page of a stopped run: the head and the one line to where it is answered, over its findings. A gate's two
-   columns (decision, evidence) would leave the findings a sliver here, so its card is one column. */
-.stop-home{margin:0 0 12px;color:var(--ink-2);}
+/* The run page and panel of a stopped run: the stop's head over its question. A gate's two columns (decision,
+   evidence) would leave the question a sliver here, so its card is one column. */
 .rd-questions .qpanel[data-kind="gate"]:has(> :is([data-stop], .chat-rc-log)){grid-template-columns:minmax(0,1fr);row-gap:4px;}
 .rd-questions .qpanel[data-kind="gate"]:has(> :is([data-stop], .chat-rc-log)) > .issues{grid-column:1;}
 /* Too narrow for a failing row's words side by side: its detail goes under its label. */

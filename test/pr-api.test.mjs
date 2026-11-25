@@ -875,7 +875,7 @@ test('POST /api/pr without a body (absent, null or blank) keeps today\'s --body 
   }
 });
 
-test('POST /api/pr sends the user description as the PR body, the attribution footer after it', async () => {
+test('POST /api/pr sends the user description as the PR body', async () => {
   let seen = [];
   stubForkRepo(seen);
   assert.equal((await post({ projectKey: betaKey, id: betaId, body: '## Summary\nRetries fetch.\n\n' })).status, 200);
@@ -887,11 +887,12 @@ test('POST /api/pr sends the user description as the PR body, the attribution fo
   seen = [];
   stubForkRepo(seen);
   assert.equal((await post({ projectKey: betaKey, id, body: 'Did the thing.' })).status, 200);
-  assert.equal(bodyArg(seen), 'Did the thing.\n\n---\nStarted by grace@example.com via worca');
+  assert.equal(bodyArg(seen), 'Did the thing.');
+  assert.doesNotMatch(bodyArg(seen), /via worca/);
   seen = [];
   stubForkRepo(seen);
   assert.equal((await post({ projectKey: betaKey, id })).status, 200);
-  assert.equal(bodyArg(seen), 'Signed feature\n\n---\nStarted by grace@example.com via worca', 'no description: today\'s title + footer');
+  assert.equal(bodyArg(seen), 'Signed feature', 'no description: the title only');
 });
 
 test('POST /api/pr refuses a non-string or oversized body with 400 before anything is pushed; the largest one fits the JSON limit', async () => {
@@ -1187,7 +1188,8 @@ test('GET /api/pr/remotes labels a Bitbucket remote and names the missing token'
 // ---------------------------------------------------------------------------
 const ISSUE_URL = 'https://github.com/up/repo/issues/42';
 // An issue-sourced run (the sourceMeta shape src/core/sources.mjs builds for github-source:
-// taskId is the connector's 'owner/repo#N' id), started by grace so the footer shows.
+// taskId is the connector's 'owner/repo#N' id), started by grace, so a named starter's body
+// is pinned too.
 // Same production-writer pattern as the existing attribution test.
 async function seedIssueRun({ url = ISSUE_URL, feature = 'worca-cc/issue-run' } = {}) {
   const { id, dir } = await createPipeline(betaRepo, { prompt: 'p', title: 'Issue feature', startedBy: 'grace@example.com',
@@ -1284,20 +1286,20 @@ test('POST /api/pr draft: true on an existing PR changes nothing: draft:false, "
   assert.deepEqual(prAudit(id), ['PR linked: https://github.com/up/repo/pull/3']);
 });
 
-test('POST /api/pr body order: description -> Closes line -> attribution footer', async () => {
+test('POST /api/pr body order: description -> Closes line', async () => {
   const id = await seedIssueRun({ feature: 'worca-cc/order-run' });
   let seen = [];
   stubForkRepo(seen);
   assert.equal((await post({ projectKey: betaKey, id, body: 'Did the thing.', ...FORK })).status, 200);
-  assert.equal(bodyArg(seen), 'Did the thing.\n\nCloses #42\n\n---\nStarted by grace@example.com via worca');
+  assert.equal(bodyArg(seen), 'Did the thing.\n\nCloses #42');
   seen = [];
   stubForkRepo(seen);
   assert.equal((await post({ projectKey: betaKey, id, ...FORK })).status, 200);
-  assert.equal(bodyArg(seen), 'Issue feature\n\nCloses #42\n\n---\nStarted by grace@example.com via worca', 'no description: title, then the line');
+  assert.equal(bodyArg(seen), 'Issue feature\n\nCloses #42', 'no description: title, then the line');
   seen = [];
   stubForkRepo(seen);
   assert.equal((await post({ projectKey: betaKey, id, body: 'x', pushRemote: 'origin', baseRemote: 'origin' })).status, 200);
-  assert.equal(bodyArg(seen), 'x\n\nCloses up/repo#42\n\n---\nStarted by grace@example.com via worca', 'a PR into me/repo names the repo');
+  assert.equal(bodyArg(seen), 'x\n\nCloses up/repo#42', 'a PR into me/repo names the repo');
 });
 
 test('POST /api/pr adds no Closes line for a prompt run, a PR-URL source, or a description that already closes the issue', async () => {
@@ -1310,13 +1312,13 @@ test('POST /api/pr adds no Closes line for a prompt run, a PR-URL source, or a d
   seen = [];
   stubForkRepo(seen);
   assert.equal((await post({ projectKey: betaKey, id: prSourced, body: 'Did it.', ...FORK })).status, 200);
-  assert.equal(bodyArg(seen), 'Did it.\n\n---\nStarted by grace@example.com via worca');
+  assert.equal(bodyArg(seen), 'Did it.');
 
   const id = await seedIssueRun({ feature: 'worca-cc/fixes-run' });
   seen = [];
   stubForkRepo(seen);
   assert.equal((await post({ projectKey: betaKey, id, body: 'Fixes #42', ...FORK })).status, 200);
-  assert.equal(bodyArg(seen), 'Fixes #42\n\n---\nStarted by grace@example.com via worca');
+  assert.equal(bodyArg(seen), 'Fixes #42');
 });
 
 test('GET /api/pr/remotes carries the run\'s source issue (null for a prompt run)', async () => {
@@ -1453,9 +1455,9 @@ test('POST /api/push: 409 when not merged back, and 409 for a normal run (open a
 });
 
 // ---------------------------------------------------------------------------
-// Spec D7 (slice 3): a shaped run's PR ends with its perspective checklist, before the attribution footer.
+// Spec D7 (slice 3): a shaped run's PR ends with its perspective checklist, after the Closes line.
 // ---------------------------------------------------------------------------
-test('POST /api/pr appends the latest perspective checklist after the Closes line and before the footer', async () => {
+test('POST /api/pr appends the latest perspective checklist after the Closes line', async () => {
   const { writeReview } = await import('../src/core/artifacts.mjs');
   const id = await seedIssueRun({ feature: 'worca-cc/checklist-run' });
   const item = (over) => ({ id: 'R-qa-1', perspective: 'qa', text: 'Rejects empty input.', status: 'met', evidence: 'test passes', ...over });
@@ -1464,21 +1466,20 @@ test('POST /api/pr appends the latest perspective checklist after the Closes lin
   const section = '<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n' +
     '- [x] **R-qa-1** Rejects empty input. — test passes\n' +
     '- [ ] ~~**R-ux-1** Empty state.~~ — Not applicable: no UI';
-  const footer = '\n\n---\nStarted by grace@example.com via worca';
 
   let seen = [];
   stubForkRepo(seen);
   assert.equal((await post({ projectKey: betaKey, id, body: 'Did it.', ...FORK })).status, 200);
-  assert.equal(bodyArg(seen), `Did it.\n\nCloses #42\n\n${section}${footer}`, 'only cycle 2 is used');
+  assert.equal(bodyArg(seen), `Did it.\n\nCloses #42\n\n${section}`, 'only cycle 2 is used');
 
   seen = [];
   stubForkRepo(seen);
   const own = 'Mine.\n\n<!-- worca:perspective-checklist -->\n## Perspective checklist\n\n- [x] done';
   assert.equal((await post({ projectKey: betaKey, id, body: own, ...FORK })).status, 200);
-  assert.equal(bodyArg(seen), `${own}\n\nCloses #42${footer}`, 'a description that carries the marker is left alone');
+  assert.equal(bodyArg(seen), `${own}\n\nCloses #42`, 'a description that carries the marker is left alone');
 });
 
-test('POST /api/pr: a run without checklist rows is unchanged; a footer-less run ends with the section', async () => {
+test('POST /api/pr: a run without checklist rows is unchanged; a run ends with the section', async () => {
   const { writeReview } = await import('../src/core/artifacts.mjs');
   let seen = [];
   stubForkRepo(seen);
