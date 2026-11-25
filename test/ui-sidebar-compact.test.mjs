@@ -86,11 +86,23 @@ test('the open page is a soft grey fill and hover the lighter field grey; nothin
   assert.equal(ruleBody('.nav button.active .nav-count'), null, 'no white-on-wash count: the fill is light now');
 });
 
-test('the first group has no label: "Activity" is gone, Build, Add-ons and Manage remain; Chat leads the nav, Design right under it, then Runs', () => {
-  assert.deepEqual([...doc.querySelectorAll('.nav .nav-sect')].map((s) => s.textContent.trim()), ['Build', 'Add-ons', 'Manage']);
+test('the first group has no label: "Activity" is gone, Insights, Build, Add-ons and Manage remain; Chat leads the nav, Design right under it, then Runs', () => {
+  assert.deepEqual([...doc.querySelectorAll('.nav .nav-sect')].map((s) => s.textContent.trim()), ['Insights', 'Build', 'Add-ons', 'Manage']);
   assert.equal(doc.querySelector('.nav').firstElementChild.dataset.nav, 'chat');
   assert.equal(doc.querySelector('.nav').firstElementChild.nextElementSibling.dataset.nav, 'design');
   assert.equal(doc.querySelector('.nav').firstElementChild.nextElementSibling.nextElementSibling.dataset.nav, 'runs');
+});
+
+test('Insights: a label after Schedules, then Statistics and Team metrics, each with its level; Build follows', () => {
+  const sect = [...doc.querySelectorAll('.nav > .nav-sect')].find((s) => s.textContent.trim() === 'Insights');
+  assert.ok(sect, 'the Insights label');
+  assert.equal(sect.dataset.minLevel, 'advanced', 'the label hides with its Advanced rows');
+  assert.equal(sect.previousElementSibling.dataset.nav, 'schedules', 'right after the first group');
+  const rows = [];
+  for (let n = sect.nextElementSibling; n && n.tagName === 'BUTTON'; n = n.nextElementSibling) rows.push(n);
+  assert.deepEqual(rows.map((b) => [b.dataset.nav, b.dataset.minLevel, b.querySelector(':scope > span').textContent]),
+    [['stats', 'advanced', 'Statistics'], ['team-metrics', 'expert', 'Team metrics']]);
+  assert.equal(rows.at(-1).nextElementSibling.textContent.trim(), 'Build');
 });
 
 test('New run has no sidebar row (the top bar\'s button opens it): no "+" tile, no nav-new, no nav-cta anywhere', () => {

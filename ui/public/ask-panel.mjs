@@ -203,6 +203,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     open: false,
     threadId: null,
     designThread: null,       // the design chat whose dock the design slot shows (syncDesign), else null
+    listDesigns: false,       // the chats list shows only chats with a design (setListDesigns: the sidebar lights Design)
+    listDesignsQueued: false, // a setListDesigns waits for the end of the task
     designStart: false,       // the design slot shows a new design's start (startDesign)
     ext: null,                // the composer's extension (setComposerExt): a design chat's or a new design's own controls
     lentTips: [],             // [{btn, title}]: the ext's buttons whose title became a tip while lent (setComposerExt gives it back)
@@ -2319,10 +2321,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     onToolScope();
   }
 
-  /** The panel moved to another chat: app.js points the address at it (pushed, or swapped with `replace`). */
-  function route(threadId, { replace = false } = {}) {
+  /** The panel moved to another chat: app.js points the address at it (pushed, or swapped with `replace`). `design`:
+   *  a new design's start (#chat/new/design), not a chat. */
+  function route(threadId, { replace = false, design = false } = {}) {
     if (typeof onRoute !== 'function') return;
-    try { onRoute(threadId || null, { replace }); } catch { /* the address is a nicety */ }
+    try { onRoute(threadId || null, design ? { replace, design: true } : { replace }); } catch { /* the address is a nicety */ }
   }
 
   /**
@@ -2388,14 +2391,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  chat stays a chat: this transcript draws its messages and the design's cards. Any other thread, or none, gives the
    *  slot back. */
   function syncDesign(thread) {
-    const leftStart = st.designStart;
     if (st.designStart) { st.designStart = false; el.designSlot.hidden = true; setComposerExt(null); try { designChat.unmount(); } catch { /* the page's own trouble */ } }
     const clearHead = () => { el.headSlot.replaceChildren(); el.headSlot.hidden = true; };
     const want = designChat && designChat.enabled?.() !== false && thread && typeof thread.id === 'string' && typeof thread.designId === 'string' && thread.designId
       ? thread.id : null;
-    // Only the design start folds the chats list (startDesign): on any chat after it, the design's chat included, it is
-    // as the person left it (open by default).
-    if (leftStart) setHistoryOpen(initialHistoryOpen(), { persist: false });
+    // The chats list is as the person left it (open by default) on a design's start and its chat, as on any chat.
     if (want === st.designThread) { syncView(); return; }
     if (st.designThread) { setComposerExt(null); try { designChat.unmount(); } catch { /* the dock's own trouble */ } }
     clearHead();
@@ -2423,7 +2423,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!designChat || typeof designChat.mountStart !== 'function' || st.destroyed) return false;
     newThread({ focus: false });
     st.designStart = true;
-    setHistoryOpen(false, { persist: false });   // a new design starts with the chats list folded (the person's choice is kept)
     el.designSlot.hidden = false;
     el.designSlot.removeAttribute('data-inline');
     placeDesignSlot(false);
@@ -2769,17 +2768,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  capture-phase listeners read (chat/home-flip.mjs arms the glide, chat/intent.mjs drops the intent). Below 1100px
    *  the overlay closes first, as after a pick, so the new chat has its room and newThread() can focus its composer.
    *  `words` is the visible text; the list's copy reads "New", and the accessible name keeps "New chat ⌥⌘N". */
-  function newChatPlus(words = 'New chat') {
+  function newChatPlus(words = 'New chat', { list = false } = {}) {
     // Like the Runs page's New run: a small primary button with its icon and its words (the key stays in the tooltip).
+    // The list's New beside Design (st.listDesigns) starts a new design, as the sidebar's Design does.
     const b = iconButton('btn btn-sm btn-primary chat-head-btn chat-new-plus', `New chat ${keyHint(['alt', 'mod', 'N'], isMac(win))}`,
-      svgIcon(ICONS.plus, 14, 2), () => { if (historyOverlayOpen()) setHistoryOpen(false, { persist: false }); newThread(); route(null); });
+      svgIcon(ICONS.plus, 14, 2), () => {
+        if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
+        if (list && st.listDesigns) { route(null, { design: true }); return; }
+        newThread();
+        route(null);
+      });
     b.append(doc.createTextNode(words));
     b.setAttribute('data-ask-new-btn', '');
     return b;
   }
   function mountChats() {
     el.page.dataset.chats = 'on';
-    el.listNew = newChatPlus('New');   // New chat at the end of the chats list's head (the head's own shows only while the list is folded)
+    el.listNew = newChatPlus('New', { list: true });   // New chat at the end of the chats list's head (the head's own shows only while the list is folded)
+    el.listNewName = el.listNew.getAttribute('aria-label');
     el.listNew.classList.add('chat-list-new');
     chatsCol = mountChatsColumn({ host: el.history, newButton: el.listNew, fetch, storage, win, now, level: () => currentLevel(doc),
       scopeName: (sc) => chatDep('scopeName', sc) || '', currentId: () => (typeof st.wantThread === 'string' ? st.wantThread : st.threadId),
@@ -8760,6 +8766,26 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     setDesign(threadId, designId) {
       if (st.destroyed || !threadId || st.threadId !== threadId) return;
       syncDesign({ id: threadId, designId: typeof designId === 'string' && designId ? designId : null });
+    },
+    /** Chat `id` is not the chat on screen yet (it loads) and its chats-list row has a design. The chat on screen
+     *  answers through its mounted design (app.js designStudio). */
+    designChatLoading: (id) => typeof id === 'string' && !!id && st.threadId !== id && !!chatsCol && chatsCol.hasDesign(id),
+    /** The sidebar lights Design (on) or not: the chats list shows only chats with a design, or every chat. Settled at
+     *  the end of the task, so a design chat switching to another (its design leaves, the next one mounts) keeps the
+     *  list as it is. */
+    setListDesigns(on) {
+      st.listDesigns = !!on;
+      if (el.listNew) {                              // its New names what it starts
+        const name = st.listDesigns ? 'New design' : el.listNewName;
+        el.listNew.title = name;
+        el.listNew.setAttribute('aria-label', name);
+      }
+      if (st.listDesignsQueued) return;
+      st.listDesignsQueued = true;
+      queueMicrotask(() => {
+        st.listDesignsQueued = false;
+        if (!st.destroyed && chatsCol && chatsCol.setDesigns(st.listDesigns)) loadHistory();
+      });
     },
     setHost,                                        // Ask worca beside the page: 'page' (the Chat section) or 'dock' (the side column)
     host: () => st.host,

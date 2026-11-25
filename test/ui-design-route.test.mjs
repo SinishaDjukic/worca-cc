@@ -303,7 +303,7 @@ test('in the real app: a chat with a design draws its replies and its round card
   assert.deepEqual(errors, [], 'no listener threw');
 });
 
-test('in the real app: the sidebar\'s Design is lit and named in the bar, and folds the chats list without changing the person\'s choice', async () => {
+test('in the real app: the sidebar\'s Design is lit and named in the bar, and the chats list stays as the person left it', async () => {
   const { window, doc } = await boot({ design: true }, {}, { answer: designChatAnswer(), raf: true });
   const page = doc.querySelector('[data-chat-page]');
   Object.defineProperty(window, 'innerWidth', { value: 1280, configurable: true });   // a push column, not the overlay
@@ -314,14 +314,107 @@ test('in the real app: the sidebar\'s Design is lit and named in the bar, and fo
   doc.querySelector('.nav button[data-nav="design"]').click();
   await settle();
   assert.equal(window.location.hash, '#chat/new/design');
-  assert.equal(page.dataset.history, 'closed', 'Design starts with the list folded');
+  assert.equal(page.dataset.history, 'open', 'Design keeps the chats list open');
   assert.deepEqual([...doc.querySelectorAll('.nav button.active')].map((x) => x.dataset.nav), ['design'], 'the sidebar lights Design, not Chat');
   assert.equal(doc.querySelector('.nav button[data-nav="design"]').getAttribute('aria-current'), 'page');
   assert.equal(doc.getElementById('topnav-title').textContent, 'Design');
   doc.querySelector('.nav button[data-nav="chat"]').click();
   await settle();
   assert.deepEqual([...doc.querySelectorAll('.nav button.active')].map((x) => x.dataset.nav), ['chat'], 'back on Chat, Chat is lit');
-  assert.equal(page.dataset.history, 'open', 'back on Chat, the list Design folded shows again');
+  assert.equal(page.dataset.history, 'open', 'back on Chat, the list is still open');
+});
+test('in the real app: a design\'s chat is the sidebar\'s Design too: Design lit and named beside the open chats list; a chat with no design lights Chat', async () => {
+  const { window, doc } = await boot({ design: true }, {}, { answer: designChatAnswer(), raf: true });
+  const page = doc.querySelector('[data-chat-page]');
+  Object.defineProperty(window, 'innerWidth', { value: 1280, configurable: true });   // a push column, not the overlay
+  window.dispatchEvent(new window.Event('resize'));
+  window.location.hash = '#chat'; await settle();
+  if (page.dataset.history !== 'open') { doc.querySelector('[data-ask-threads-btn]').click(); await settle(); }
+  assert.equal(page.dataset.history, 'open', 'precondition: the list is open on Chat');
+  await openFromLibrary(window, doc);
+  assert.equal(window.location.hash, `#chat/${APP_TID}`);
+  const lit = () => [...doc.querySelectorAll('.nav button.active')].map((x) => x.dataset.nav);
+  assert.deepEqual(lit(), ['design'], 'the design\'s chat lights Design, not Chat');
+  assert.equal(doc.getElementById('topnav-title').textContent, 'Design');
+  assert.equal(page.dataset.history, 'open', 'the chats list stays open beside a design');
+  window.location.hash = '#chat/new';                                // a new chat (the worca logo's route)
+  await settle();
+  assert.deepEqual(lit(), ['chat'], 'a chat with no design: Chat is lit');
+  assert.equal(doc.getElementById('topnav-title').textContent, 'Chat');
+  assert.equal(page.dataset.history, 'open', 'and the list is still open');
+});
+test('in the real app: beside Design the chats list holds design chats only; a design chat picked from the list lights Design while it loads', async () => {
+  const at = new Date().toISOString();
+  const row = (id, o = {}) => ({ id, title: `Chat ${id}`, createdAt: at, updatedAt: at, totals: { costUsd: 0 }, scope: null, inFlight: false,
+    waiting: false, tracking: false, trackingRuns: 0, commands: 0, archived: false, ...o });
+  const PLAIN = 'ask_00000002';
+  let release = null;
+  const gate = new Promise((r) => { release = r; });
+  const base = designChatAnswer();
+  const answer = (url, init = {}) => {
+    const reply = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
+    if (url.startsWith('/api/ask/threads?')) {
+      const threads = url.includes('designs=1') ? [row(APP_TID, { designId: APP_DID })] : [row(APP_TID, { designId: APP_DID }), row(PLAIN)];
+      return reply({ threads, cursor: null, total: threads.length, counts: { all: threads.length, needs: 0, archived: 0 } });
+    }
+    const own = base(url, init);
+    if (own && url === `/api/ask/threads/${APP_TID}`) return gate.then(() => own);   // the design chat loads when the test says
+    return own;
+  };
+  const { window, doc, urls } = await boot({ design: true }, {}, { answer, raf: true });
+  const page = doc.querySelector('[data-chat-page]');
+  Object.defineProperty(window, 'innerWidth', { value: 1280, configurable: true });   // a push column, not the overlay
+  window.dispatchEvent(new window.Event('resize'));
+  window.location.hash = '#chat'; await settle();
+  if (page.dataset.history !== 'open') { doc.querySelector('[data-ask-threads-btn]').click(); await settle(); }
+  const title = () => doc.querySelector('[data-chat-history] .runs-head-title').textContent;
+  const rows = () => [...doc.querySelectorAll('[data-chat-history] a.runs-row')].map((a) => a.dataset.rowKey);
+  const lit = () => [...doc.querySelectorAll('.nav button.active')].map((x) => x.dataset.nav);
+  const lastList = () => urls.filter((u) => u.startsWith('/api/ask/threads?')).at(-1);
+  assert.equal(title(), 'Chats');
+  assert.deepEqual(rows(), [`chat:${APP_TID}`, `chat:${PLAIN}`], 'Chat lists every chat');
+  doc.querySelector('.nav button[data-nav="design"]').click();
+  await settle();
+  assert.equal(window.location.hash, '#chat/new/design');
+  assert.match(lastList(), /[?&]designs=1(&|$)/, 'Design asks for design chats only');
+  assert.equal(title(), 'Design chats');
+  assert.deepEqual(rows(), [`chat:${APP_TID}`], 'the chat with a design, alone');
+  doc.querySelector('.nav button[data-nav="chat"]').click();
+  await settle();
+  assert.equal(title(), 'Chats', 'back on Chat, every chat');
+  assert.doesNotMatch(lastList(), /designs=/);
+  doc.querySelector(`[data-chat-history] a.runs-row[data-row-key="chat:${APP_TID}"]`).click();
+  await settle();
+  assert.equal(window.location.hash, `#chat/${APP_TID}`);
+  assert.deepEqual(lit(), ['design'], 'still loading, the design chat\'s row lights Design');
+  assert.equal(title(), 'Design chats');
+  release();
+  await settle(); await settle();
+  assert.deepEqual(lit(), ['design'], 'loaded, its design keeps Design lit');
+  assert.equal(doc.getElementById('topnav-title').textContent, 'Design');
+  assert.equal(title(), 'Design chats');
+  window.location.hash = '#chat/new';
+  await settle();
+  assert.deepEqual(lit(), ['chat']);
+  assert.equal(title(), 'Chats', 'a new chat: every chat again');
+});
+test('in the real app: from a design chat the chats list\'s New starts a new design: the design start, Design still lit, the list still design chats', async () => {
+  const { window, doc } = await boot({ design: true }, {}, { answer: designChatAnswer(), raf: true });
+  const page = doc.querySelector('[data-chat-page]');
+  window.location.hash = '#chat'; await settle();
+  await openFromLibrary(window, doc);
+  assert.equal(window.location.hash, `#chat/${APP_TID}`, 'precondition: the design\'s chat');
+  const btn = doc.querySelector('[data-chat-history] .runs-head > .chat-list-new');
+  assert.equal(btn.getAttribute('aria-label'), 'New design');
+  btn.click();
+  await settle();
+  assert.equal(window.location.hash, '#chat/new/design');
+  assert.equal(page.dataset.view, 'design', 'the design start shows');
+  assert.deepEqual([...doc.querySelectorAll('.nav button.active')].map((x) => x.dataset.nav), ['design']);
+  assert.equal(doc.querySelector('[data-chat-history] .runs-head-title').textContent, 'Design chats');
+  doc.querySelector('.nav button[data-nav="chat"]').click();
+  await settle();
+  assert.match(btn.getAttribute('aria-label'), /^New chat /, 'on Chat it starts a chat again');
 });
 test('in the real app: the sidebar\'s Chat after Design shows the Chat home, not the design start under Chat\'s name', async () => {
   const { window, doc } = await boot({ design: true }, {}, { answer: designChatAnswer(), raf: true });

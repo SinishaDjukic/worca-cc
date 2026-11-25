@@ -143,11 +143,13 @@ be skipped by forgetting it.
 | Chat home: Start from a preset chips; "N more…" opens New run below Advanced and Settings › Presets from Advanced | S |
 | The account corner and its menu: the level card, "Signed in as" (a shared identity), the spend card and Usage, the Away and Keep awake switches, Appearance, Interface mode, Settings | S |
 | The spend ring on the avatar and the menu's spend card (with the free-request row) | S — never hidden: a blocked limit turns the ring red and full, and the card and the New pipeline note say until when |
-| Statistics, Workspaces | A |
+| Insights: the group label, Statistics | A |
+| Workspaces | A |
 | Add-ons: the group label, Marketplace, Connectors | A |
 | Add-ons: Models (Providers is its third tab) | E — like every page, the open one keeps its row at a lower mode while the banner names its level |
 | Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread; its grey count and amber unread pill each hide at zero |
-| Team metrics, Team policy | E |
+| Insights: Team metrics | E |
+| Team policy | E |
 | The level avatar art in the corner (the round art on the account corner and the spend ring's avatar) | all — a level is shown to everyone, whatever the mode |
 | The account-menu level card (the first item of the account menu, a compact card: the level's avatar and name with "View level", then "To <Next>" with the count and a small segment bar; a click or Enter goes straight to the Profile level page (`#profile/level`) and closes the menu, with no popover or dialog in between; the menu opens on a click or Enter, and nothing opens on hover or focus) | all |
 | Profile (the level section) | all — it has no sidebar entry; it opens from "View level" on the account-menu level card and the Getting started level line |
