@@ -24,10 +24,10 @@ an HTML and JavaScript video in its own chat, and real agents build it in front 
 4. **Attach files** with the button, by pasting or by dropping them: pictures, a logo, notes. A file worca does not
    take is named under the composer.
 5. **Send.** The design opens in a chat of its own, on the Chat page (see [In the chat](#in-the-chat)); the sidebar's
-   **Design** stays lit and the page is titled Design. The chat names itself from what you wrote, as any chat does,
-   and the design takes the same name; until then, or when no name comes, it is the first line of what you wrote (the
-   first sentence, at most 60 characters). A rename before the name comes wins. **Rename** and
-   **Delete** are in the **⋯** menu over the chat. Delete is off while a build runs; it removes the design's files,
+   **Design** stays lit and the page is titled Design. The design's title is the first line of what you wrote (the
+   first sentence, at most 60 characters); no model names it. The chat names itself from what you wrote, as any chat
+   does, with the design's title as its fallback; a rename before that names both. **Rename** and **Delete** are in
+   the **⋯** menu over the chat. Delete is off while a build runs; it removes the design's files,
    keeps its chat, and what it cost stays in Statistics.
 
 ## In the chat

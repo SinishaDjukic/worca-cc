@@ -1,6 +1,6 @@
 // test/design-chat-thread.test.mjs
 // Design P5 Task 2: a design points at one chat (designs.thread_id), a plain thread with no mode. POST /api/design
-// makes it untitled (its first message titles it as any chat's, and the design takes that title), POST /api/ask/threads
+// makes it untitled (its first message titles it as any chat's; the design keeps its brief's name), POST /api/ask/threads
 // {mode:'design', designId} recreates it (a plain thread titled from the design) once Settings › Delete all chat history
 // removed it, DELETE /api/design/:id keeps it, and a design's total is its builds plus its chat. One in-process server on the mock engine (test/helpers/design-chat-boot.mjs).
 import { test, after } from 'node:test';
@@ -49,21 +49,8 @@ test('a design total is builds plus chat', async () => {
 });
 
 // Guards the rows above leave open (mutation check).
-const { createDesignThread, followChatTitle } = await import('../src/core/design/chat-thread.mjs');
+const { createDesignThread } = await import('../src/core/design/chat-thread.mjs');
 
-test('followChatTitle: the Design button\'s design takes its chat\'s first title; a design a chat started keeps its own', async () => {
-  const d = (await call('POST', '/api/design', { kind: 'web', title: 'a landing page for a bakery' })).body;
-  assert.equal(followChatTitle(d.threadId, '  Bakery   Landing Page ').title, 'Bakery Landing Page');
-  assert.equal(getDesign(d.design.id).title, 'Bakery Landing Page');
-  assert.equal(followChatTitle(d.threadId, 'Bakery Landing Page'), null, 'the same title changes nothing');
-  assert.equal(followChatTitle(d.threadId, '   '), null, 'a blank title changes nothing');
-  assert.equal(followChatTitle(d.threadId, 'x'.repeat(200)).title.length, 120, 'cut to the design\'s limit');
-  assert.equal(followChatTitle('ask_ffffffff', 'Nothing'), null, 'a chat with no design');
-  const asked = (await call('POST', '/api/design', { kind: 'web', title: 'Agent name' })).body;
-  getDb().prepare('UPDATE designs SET origin_thread_id = ? WHERE id = ?').run(asked.threadId, asked.design.id);
-  assert.equal(followChatTitle(asked.threadId, 'Chat name'), null);
-  assert.equal(getDesign(asked.design.id).title, 'Agent name', 'start_design\'s design keeps the name its agent gave it');
-});
 test('a Design-button design renamed before its chat has a title names the chat too, so the title call changes nothing', async () => {
   const d = (await call('POST', '/api/design', { kind: 'web', title: 'First' })).body;
   assert.equal((await call('PATCH', `/api/design/${d.design.id}`, { title: 'Picked' })).status, 200);

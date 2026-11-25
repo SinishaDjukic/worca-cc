@@ -387,7 +387,7 @@ import { createDesignChatActions } from '../src/core/design/chat-actions.mjs';
 import { cardStart, createSoundCards } from '../src/core/design/sound-cards.mjs';
 import { stageDesignKit } from '../src/core/design/kit.mjs';
 import { designWorkDir } from '../src/core/design/paths.mjs';
-import { designIdForThread, designToolFolder, followChatTitle as followDesignChatTitle } from '../src/core/design/chat-thread.mjs';
+import { designIdForThread, designToolFolder } from '../src/core/design/chat-thread.mjs';
 import { listVersions, restoreVersion, snapshotVersion } from '../src/core/design/versions.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -9614,7 +9614,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         proxyBridge: askProxyBridge,                         // the corporate proxy bridge: null for an agent caller
         tabsBridge: tabsOn ? askTabBridge : null,   // issue 1064 slice 3: the tab tools
         onFrame: stampAskFrames(id, job),
-        onOutOfTurn: (f) => { if (dChat && f.type === 'ask-title') followDesignChatTitle(id, f.title); broadcast({ ...f, threadId: id }); },
+        onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
         onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
         onWorktreeMutation: () => { emitAskWorktrees(id); },
         // §9.1 (D17): at turn end, name the copies a worktree opened this turn brings into the next one.

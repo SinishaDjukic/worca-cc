@@ -317,7 +317,7 @@ export function registerDesignRoutes(app, { broadcast, deps } = {}) {
       { by },
     );
     // The Design button's design gets an untitled chat: its first message titles it as any chat's does (the design's own
-    // title is the fallback), and the design takes that title (chat-thread.mjs followChatTitle).
+    // title is the fallback). The design keeps the name from its brief; only a person renames it.
     const thread = askingThread ? { id: askingThread } : createDesignThread({ design, by, titled: false });
     const linked = updateDesign(design.id, { threadId: thread.id });
     // P8 (L8.13): its maker's agent gets it once it is whole; a refused claim (500) keeps the design, and every later

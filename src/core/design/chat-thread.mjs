@@ -1,14 +1,14 @@
 // src/core/design/chat-thread.mjs
 // A design's chat (P5): a plain ask thread its design points at (designs.thread_id), one design per chat. The Design
 // button's start makes it untitled, with its scope taken from the design row (L5.4): its first message titles it as
-// any chat's does, and the design takes that title (followChatTitle). A chat that asked for a design (start_design) is
-// that chat itself. Also the chat's share of a design's total
+// any chat's does, and the design keeps the name from its brief (no model names a design, L6.13). A chat that asked
+// for a design (start_design) is that chat itself. Also the chat's share of a design's total
 // (builds plus chat), the design's scope for a turn, and the models a build of this design would spawn.
 
 import { getDb } from '../db.mjs';
 import { createThread, getThread, updateThread } from '../ask/store.mjs';
 import { resolveDesignModel } from './spawn-options.mjs';
-import { getDesign, updateDesign, TITLE_MAX } from './store.mjs';
+import { getDesign } from './store.mjs';
 import { existsSync } from 'node:fs';
 import { designWorkDir } from './paths.mjs';
 
@@ -23,18 +23,6 @@ export function createDesignThread({ design, by = null, titled = true }) {
   const thread = createThread({ title: titled ? String(design.title).slice(0, 120) : null, createdBy: by });
   const context = design.projectKey ? { pinned: true, projectKey: design.projectKey } : { pinned: false };
   return updateThread(thread.id, { context });
-}
-
-/** The chat's first title (its title call's, or that call's fallback) names its design too, so the Library, the chat
- *  lists and the chat's head agree. Only a Design-button design: one a chat started (start_design, it has an origin
- *  chat) keeps the name its agent gave it. A rename before the title lands named the chat too, so no title comes.
- *  Returns the renamed design, else null. */
-export function followChatTitle(threadId, title) {
-  const id = designIdForThread(threadId);
-  const d = id ? getDesign(id) : null;
-  const t = typeof title === 'string' ? title.replace(/\s+/g, ' ').trim().slice(0, TITLE_MAX) : '';
-  if (!d || d.originThreadId || !t || t === d.title) return null;
-  return updateDesign(id, { title: t });
 }
 
 /** The design attached to chat `threadId`, else null. */
