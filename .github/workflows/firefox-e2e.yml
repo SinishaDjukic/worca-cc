@@ -5,6 +5,7 @@ name: Firefox e2e
 # … Operation not permitted), so split:verify --firefox-in-ci marks this suite "CI job firefox-e2e, not run locally" and
 # this job is where it runs. Meant as a required check: every PR into dev (incl. one retargeted to dev) and every push
 # to dev, with NO paths filter (a required check that never runs stays pending forever; see ci.yml's header).
+# A new push to a PR cancels that PR's older run; dev pushes are never cancelled (each gets its own group, as in ci.yml).
 # The `extension` job in ci.yml keeps smoking the runner's stock Firefox.
 on:
   push:
@@ -18,8 +19,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: firefox-e2e-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  group: firefox-e2e-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.head.repo.full_name, github.head_ref) || format('push-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   firefox-e2e:
