@@ -25,7 +25,7 @@ import {
 import { canonicalMetricsSlug, sameMetricsSlug } from '../../shared/team-metrics/slug.mjs';
 import { normalizePolicyDoc, emptyPolicyDoc, serializePolicyDoc, POLICY_SCHEMA, fieldMeta } from './registry.mjs';
 import { capSummary, fieldCount, effectiveRows } from './effective.mjs';
-import { GIT_MISSING, BITBUCKET_NEEDS_GIT, gitMissingMessage, onGitChange } from '../git-available.mjs';
+import { GIT_MISSING, isNeedsGitMessage, gitMissingMessage, onGitChange } from '../git-available.mjs';
 import { teamOverHttps } from '../git-free/team-repo.mjs';
 import { repoOfSlug, lsRemoteHttps, readBranchFile, createOrphanBranch, commitFiles } from '../git-free/team-branch.mjs';
 
@@ -195,7 +195,7 @@ export const carriesPolicy = (prefs) => !!prefs?.present && !!prefs.docKnown && 
 // P6: a GitHub team repository never read over HTTPS (a private one without a token, GitHub unreachable) is not read
 // yet — never "off"; with git a failed first discovery reads as before. One that needs git (a repository the slug misnames
 // answers GIT_MISSING) is off, as a host slug.
-const unreadOverHttps = (prefs, dir) => !prefs?.present && !!prefs?.lastDiscoveryError && ![GIT_MISSING.message, BITBUCKET_NEEDS_GIT].includes(prefs.lastDiscoveryError)
+const unreadOverHttps = (prefs, dir) => !prefs?.present && !!prefs?.lastDiscoveryError && !isNeedsGitMessage(prefs.lastDiscoveryError)
   && !prefs.checkedAt && !!repoOfSlug(prefs.slug) && teamOverHttps(dir);
 
 // ---- resolver (§6) ----------------------------------------------------------------

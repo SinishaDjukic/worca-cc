@@ -19,6 +19,8 @@ import { githubEnv } from './github-credentials.mjs';
 import { gitEnvFor } from './host-credentials.mjs';
 import { isAzureHost, parseAzurePath } from '../shared/azure-remote.mjs';
 import { isBitbucketHost } from '../shared/bitbucket-remote.mjs';
+import { FORGE_LABEL } from './forge.mjs';
+import { familyCredentialsOf } from './gitea-family-credentials.mjs';
 import { gitAvailable, GIT_MISSING } from './git-available.mjs';
 
 export const CLONE_TIMEOUT_MS = 10 * 60_000;
@@ -110,11 +112,14 @@ export function planClone({ url, branch = null, name = null } = {}, { projectsRo
 function classify(stderr, host = 'github.com') {
   const s = String(stderr || '');
   if (/Authentication failed|could not read Username|terminal prompts disabled|403/i.test(s)) {
+    const fam = familyCredentialsOf(host);
     return new CloneError('auth-failed', isAzureHost(host)
       ? 'Azure DevOps refused the credential: check WORCA_ADO_TOKEN (Code: Read) and that it can see this repository'
       : isBitbucketHost(host)
         ? 'Bitbucket refused the credential: check WORCA_BB_TOKEN (Repositories: Read) and that it can see this repository'
-        : 'GitHub refused the credential: check the token or that the App is installed on this repository');
+        : fam
+          ? `${FORGE_LABEL[fam.forge]} refused the credential: check ${fam.tokenName} and that it can see this repository`
+          : 'GitHub refused the credential: check the token or that the App is installed on this repository');
   }
   if (/Remote branch .* not found/i.test(s)) return new CloneError('not-found', 'that branch does not exist');
   if (/Repository not found|not found|404/i.test(s)) {

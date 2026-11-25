@@ -79,7 +79,8 @@ back. Workflows has its own chat and no button.
 
 A chat in **No project** can switch itself when your message holds links to an issue, a pull request
 or a work item: GitHub `/issues/N` and `/pull/N`, Azure DevOps pull requests and work items, Bitbucket
-pull requests and issues (https links only). Before the reply starts, worca compares each link with
+pull requests and issues, and `/pulls/N` and `/issues/N` on Codeberg and on the
+[Gitea and Forgejo](gitea.md) hosts you listed (https links only). Before the reply starts, worca compares each link with
 the `origin` remote in every registered project's local git config. It reads no network and runs no
 git command, and the remote's address never reaches the chat.
 

@@ -45,6 +45,13 @@ services:
       WORCA_BB_READ_TOKEN: ${WORCA_BB_READ_TOKEN:-}
       WORCA_BB_WRITE_TOKEN: ${WORCA_BB_WRITE_TOKEN:-}
       WORCA_BB_EMAIL: ${WORCA_BB_EMAIL:-}
+      # Gitea and Forgejo host lists; their per-host tokens (WORCA_GITEA_TOKEN_<HOST>, …) cannot be listed here by
+      # prefix and come in through env_file, see docs/gitea.md.
+      WORCA_GITEA_HOSTS: ${WORCA_GITEA_HOSTS:-}
+      WORCA_FORGEJO_HOSTS: ${WORCA_FORGEJO_HOSTS:-}
+      WORCA_CODEBERG_TOKEN: ${WORCA_CODEBERG_TOKEN:-}
+      WORCA_CODEBERG_READ_TOKEN: ${WORCA_CODEBERG_READ_TOKEN:-}
+      WORCA_CODEBERG_WRITE_TOKEN: ${WORCA_CODEBERG_WRITE_TOKEN:-}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
