@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderOutlineBody, outlineSummary } from '../ui/public/shape/outline-body.mjs';
 import { stepTitle } from '../ui/public/shape/step-card.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
 import { SEND_FAILED } from '../ui/public/shape/plan-body.mjs';
 import { checkSlices, outlineFixFeedback, outlineFixAllFeedback } from '../src/shared/shape/slices.mjs';
 
@@ -753,4 +754,36 @@ test('B4 phone width: the Split\'s fold lines wrap inside the card (the challeng
   assert.match(css, /\.srows > \.plan-check-line \.plan-fold-text\{[^}]*min-width:0/);
   const { $ } = setup({ pq: srAsk(SR_PASS, 'balanced', { challenge: CHALLENGE() }) });
   assert.equal($('.split-challenge-line').parentElement, $('.split-body'));
+});
+
+// ── Slice 11 (R-po-6): the Split row's Starts from names the runs ────────────────────────────────────────────────────
+const S11_IDS = ['R-po-1', 'R-po-2', 'R-po-3', 'R-po-4', 'R-po-5', 'R-po-6', 'R-po-7'];
+const s11Outline = () => ({ why: 'w', agreed: S11_IDS.map((id) => ({ id, text: `text of ${id}` })), leftOut: [], confirmed: [],
+  slices: S11_IDS.map((id, i) => srSlice(`s${i + 1}`, [id], { dependsOn: i === 6 ? ['s6', 's4'] : i === 1 ? ['s1'] : [] })) });
+const startsOf = ($$) => $$('.outline-slice').map((s) => [...s.querySelectorAll('.outline-run-facts .rd-kv-row')]
+  .find((r) => r.querySelector('.rd-kv-k').textContent === 'Starts from')?.querySelector('.rd-kv-v').textContent);
+const openAll = ($$) => $$('.outline-run-fold').forEach((b) => { if (b.getAttribute('aria-expanded') !== 'true') b.click(); });
+
+test('S11-T6 flag on: dependsOn s6, s4 reads "waits for runs 4, 6"; one dependency "run 1"; none "no run"; an edit renumbers live', () => {
+  applyFlags({ shaperSmallRuns: true }, doc);
+  try {
+    const { $$ } = setup({ pq: srAsk(s11Outline()) });
+    openAll($$);
+    const t = startsOf($$);
+    assert.equal(t[0], 'the feature branch: it starts first');
+    assert.equal(t[1], 'the latest finished run · waits for run 1');
+    assert.equal(t[2], 'the latest finished run · waits for no run');
+    assert.equal(t[6], 'the latest finished run · waits for runs 4, 6');
+    rowMenu($$, 4).pick('Remove');
+    openAll($$);
+    assert.equal(startsOf($$)[5], 'the latest finished run · waits for runs 4, 5');
+  } finally { applyFlags({ shaperSmallRuns: false }, doc); }
+});
+
+test('S11-T7 flag off: run 3 still reads "waits for 2 runs"', () => {
+  applyFlags({ shaperSmallRuns: false }, doc);
+  const { $$ } = setup({ pq: srAsk(s11Outline()) });
+  openAll($$);
+  assert.equal(startsOf($$)[2], 'the latest finished run · waits for 2 runs');
+  assert.equal(startsOf($$)[6], 'the latest finished run · waits for 6 runs');
 });

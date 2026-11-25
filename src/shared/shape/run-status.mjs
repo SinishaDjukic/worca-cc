@@ -46,6 +46,18 @@ export function namedWaits(slice, slices = new Map()) {
 }
 
 /**
+ * Slice 11 (R-po-6): the runs that directly build on `run` (their `buildsOn` lists it), over the same Map run → slice
+ * namedWaits takes. Finished dependants count too; the run itself never does. Ascending.
+ * @returns {number[]}
+ */
+export function neededByOf(run, slices = new Map()) {
+  if (!Number.isInteger(run)) return [];
+  const out = [];
+  for (const [k, s] of slices) if (k !== run && isObj(s) && Array.isArray(s.buildsOn) && s.buildsOn.includes(run)) out.push(k);
+  return out.sort((a, b) => a - b);
+}
+
+/**
  * D5: one run's word and mark, first match wins: done; a held stop answer (`after run N`); an open stop or ask
  * (`waiting for you`); failed; not started (cannot start, `waits for run …`, `next`, or no word); live (today's phase
  * word). `word` null means "the caller keeps dev's text", '' means "deliberately no word".

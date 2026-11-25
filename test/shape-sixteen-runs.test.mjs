@@ -12,7 +12,7 @@ import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { getTicket, predecessorState } from '../src/core/scheduler.mjs';
 import { listRunGroups } from '../src/core/run-groups.mjs';
-import { busySliceOf, featureView, setApproveEach, sliceGateState } from '../src/core/shape/features.mjs';
+import { busySliceOf, featureView, setApproveEach, sliceGateState, sliceOfPipeline } from '../src/core/shape/features.mjs';
 import { sliceChainGate, heldStopTurn } from '../src/core/shape/chain.mjs';
 import { SIXTEEN_RUN_LINKS, sixteenRunFeature, startable, world, SIXTEEN_RUN_STATES } from './helpers/shape-sixteen-runs.mjs';
 import { runStatus, namedWaits } from '../src/shared/shape/run-status.mjs';
@@ -306,4 +306,46 @@ test('S3-T7 cannot start on the payload: a canceled dependency reads word null, 
   fx.cancelTicket(3);
   const { view, members } = views(fx);
   for (const m of [view, members]) assert.deepEqual(statusOf(m, 4), { word: null, mark: 'faint' });
+}));
+
+// ── Slice 11 (R-po-6): the run page's links on the /slice answer ─────────────────────────────────────────────────────
+const S11_STATE = { done: [1, 11], states: { 2: { stop: 'requirement' }, 3: { pipe: 'running' }, 7: { pipe: 'running' } } };
+
+test('S11-T2 base state, run 7 started: links {waitsFor: [2, 6], neededBy: [12]}', () => withEnvVars(ON, () => {
+  const fx = world(root, S11_STATE);
+  assert.deepEqual(sliceOfPipeline(fx.pipelineOf(7), { live: fx.live }).links, { waitsFor: [2, 6], neededBy: [12] });
+}));
+
+test('S11-T3 run 2 is needed by 7 and 8 and waits for nothing; run 16 started is needed by nothing', () => withEnvVars(ON, () => {
+  const fx = world(root, S11_STATE);
+  assert.deepEqual(sliceOfPipeline(fx.pipelineOf(2), { live: fx.live }).links, { waitsFor: [], neededBy: [7, 8] });
+  fx.setRun(16, { pipe: 'running' });
+  assert.deepEqual(sliceOfPipeline(fx.pipelineOf(16), { live: fx.live }).links.neededBy, []);
+}));
+
+test('S11-T4 flag off or unmarked feature: no links key; flag on: no top-level waitsFor / neededBy / buildsOn', () => {
+  const fx = world(root, S11_STATE);
+  withEnvVars({ WORCA_FLAGS: undefined }, () => {
+    assert.equal('links' in sliceOfPipeline(fx.pipelineOf(7), { live: fx.live }), false);
+  });
+  withEnvVars(ON, () => {
+    const on = sliceOfPipeline(fx.pipelineOf(7), { live: fx.live });
+    assert.ok(on.links);
+    for (const k of ['waitsFor', 'neededBy', 'buildsOn']) assert.equal(k in on, false, k);
+  });
+  getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+  const plain = sixteenRunFeature({ projectDir: root, smallRuns: false });
+  plain.setRun(1, { pipe: 'running' });
+  withEnvVars(ON, () => {
+    assert.equal('links' in sliceOfPipeline(plain.pipelineOf(1), { live: plain.live }), false);
+  });
+});
+
+test('S11-T5 a canceled dependency is never listed in links.waitsFor', () => withEnvVars(ON, () => {
+  const fx = world(root, { done: [1], states: { 2: { stop: 'requirement' } } });
+  fx.cancelTicket(3);
+  fx.setRun(7, { pipe: 'running' });
+  const { waitsFor } = sliceOfPipeline(fx.pipelineOf(7), { live: fx.live }).links;
+  assert.ok(!waitsFor.includes(3));
+  assert.ok(waitsFor.includes(2));
 }));

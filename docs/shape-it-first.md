@@ -187,7 +187,8 @@ outline once per round that raised any. Care sets the rounds and the run size:
 
 A workflow with no plan review step is not challenged, and the card says `Not challenged: no review step in this
 workflow`. The card shows each run as one fold row: its title and requirement ids, then **Owns**, **Starts from** and
-**Checked by** when unfolded. The checks fold and one challenge fold follow (`Challenged by 3 roles and the Challenger ·
+**Checked by** when unfolded. With the flag on, Starts from names the runs a run builds on (`waits for runs 4, 6`,
+`waits for no run`). The checks fold and one challenge fold follow (`Challenged by 3 roles and the Challenger ·
 1 change`), then the Care chosen at the start. There is no "Ask me before each run" switch: runs follow one after
 another. Objections still open after the last round are one question, **Keep the split** or **Ask for changes**, and
 approving over them is recorded as `Runs approved · 2 objections kept`.
@@ -692,7 +693,8 @@ fix cycles it stops adding runs by itself and asks you: **Add a run for the gap*
 - **The Runs list group row**: one group per feature, the planning run as run 1, the state word, the runs done of N and
   the cost, once.
 - **The run panel and the Expert run page**: what the run owns, what it starts from, and one Agents place. With the flag
-  off, the Agents tab and Overview stay as today. A stopped run's page names the stop and links where it is answered
+  off, the Agents tab and Overview stay as today. The facts add **Waits for** (left out when the run waits for nothing)
+  and **Needed by** (`nothing` when no run builds on it). A stopped run's page names the stop and links where it is answered
   (the feature's card in Chat, or the feature page for a feature no chat started); it has no answer controls.
 - **The feature page**: Runs, Requirements (each with its owner run or confirming role, and its status) and Decisions
   with the Care line. Its run rows are one line with the same short words as the card and the Runs list ("waiting for
