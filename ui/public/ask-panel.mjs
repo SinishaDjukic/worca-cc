@@ -7926,30 +7926,31 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (sig === tailSig) return;
         tailSig = sig;
         const cards = inlineCards(cur);
-        const sameInline = cards.length === inline.length && cards.every((b, i) => b.id === inline[i].id);
-        if (sameInline) {
-          // Kept in place: a card swaps its element only when buildCard hands back a new one. #958: the old element
-          // may already be detached (a command card's dispose removes it), and the same element may sit in a gone
-          // row: in both cases the card goes back before its answer piece.
-          cards.forEach((b, i) => {
-            const cardEl = buildCard(b, cur);
-            if (cardEl !== inline[i].card || !wrap.contains(cardEl)) {
-              if (cardEl !== inline[i].card) inline[i].card.remove();
-              inline[i].piece.before(cardEl);
-              inline[i].card = cardEl;
-            }
-          });
+        // The cards this message already shows, in order, stay where they are: a new card (the next command of a
+        // stack) only adds its own element. Rebuilding them all re-inserted every row and group, so each new command
+        // replayed the rows' entrance and flashed the group head.
+        let keep = 0;
+        while (keep < inline.length && keep < cards.length && cards[keep].id === inline[keep].id) keep += 1;
+        // Kept in place: a card swaps its element only when buildCard hands back a new one. #958: the old element
+        // may already be detached (a command card's dispose removes it), and the same element may sit in a gone
+        // row: in both cases the card goes back before its answer piece.
+        for (let i = 0; i < keep; i += 1) {
+          const cardEl = buildCard(cards[i], cur);
+          if (cardEl !== inline[i].card || !wrap.contains(cardEl)) {
+            if (cardEl !== inline[i].card) inline[i].card.remove();
+            inline[i].piece.before(cardEl);
+            inline[i].card = cardEl;
+          }
         }
-        const last = inline.length ? inline[inline.length - 1].piece : answer;
+        const last = keep ? inline[keep - 1].piece : answer;
         while (wrap.lastChild && wrap.lastChild !== last) wrap.removeChild(wrap.lastChild);
-        if (!sameInline) {
-          while (wrap.lastChild && wrap.lastChild !== answer) wrap.removeChild(wrap.lastChild);
-          inline = cards.map((b) => {
+        if (keep !== inline.length || keep !== cards.length) {
+          inline = inline.slice(0, keep).concat(cards.slice(keep).map((b) => {
             const card = buildCard(b, cur);
             const piece = make('div', 'ask-answer');
             wrap.append(card, piece);
             return { id: b.id, card, piece };
-          });
+          }));
           renderAnswer();
         }
         paintGroups();
