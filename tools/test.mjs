@@ -13,6 +13,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { quarantinedPaths, readQuarantine } from './quarantine.mjs';
 import { changedFiles, relatedTests } from './test-related.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -26,13 +27,32 @@ const SUITE_STALE_MS = 2 * SUITE_TIMEOUT_MIN * 60_000;
 const readJson = (rel, dflt) => { try { return JSON.parse(readFileSync(join(ROOT, rel), 'utf8')); } catch { return dflt; } };
 const globRe = (g) => new RegExp('^' + g.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*') + '$');
 
-export function selectFiles({ all, tier = 'all', tiers = {} }) {
+// Quarantine wins over tiers: a quarantined file (test/quarantine.json) leaves fast, slow and all.
+export function selectFiles({ all, tier = 'all', tiers = {}, quarantined = new Set() }) {
   const slow = (tiers.slow || []).map(globRe);
   const keep = new Set(tiers.keepFast || []);
   const isSlow = (f) => !keep.has(f) && slow.some((re) => re.test(f));
-  if (tier === 'fast') return all.filter((f) => !isSlow(f));
-  if (tier === 'slow') return all.filter(isSlow);
-  return [...all];
+  const kept = all.filter((f) => !quarantined.has(f));
+  if (tier === 'fast') return kept.filter((f) => !isSlow(f));
+  if (tier === 'slow') return kept.filter(isSlow);
+  return kept;
+}
+
+/**
+ * The sorted test/*.mjs files of `root` for `tier`, with its test/tiers.json and test/quarantine.json applied.
+ * `left` counts the quarantined test files among them (the same for every tier). A malformed quarantine list throws.
+ */
+export function tierFiles(root, tier) {
+  const all = readdirSync(join(root, 'test')).filter((f) => f.endsWith('.mjs')).sort().map((f) => `test/${f}`);
+  let tiers = {};
+  try { tiers = JSON.parse(readFileSync(join(root, 'test', 'tiers.json'), 'utf8')); } catch { /* no tiers: every file is fast */ }
+  const quarantined = quarantinedPaths(readQuarantine(root), 'test');
+  return { files: selectFiles({ all, tier, tiers, quarantined }), left: all.filter((f) => quarantined.has(f)).length };
+}
+
+/** The files a run takes: an explicit list (or --related's) as given, quarantined or not; else the tier's files. */
+export function filesToRun(root, o) {
+  return o.files.length ? { files: o.files, left: 0 } : tierFiles(root, o.tier);
 }
 
 export function planShards(files, timings, n) {
@@ -207,9 +227,10 @@ async function main() {
     else if (!r.tests.length) { console.log('related: no test file depends on the changed files'); process.exit(0); }
     else { console.log(`related: ${r.tests.length} test files`); o.files = r.tests; }
   }
-  const all = o.files.length ? o.files
-    : readdirSync(join(ROOT, 'test')).filter((f) => f.endsWith('.mjs')).sort().map((f) => `test/${f}`);
-  let files = o.files.length ? all : selectFiles({ all, tier: o.tier, tiers: readJson('test/tiers.json', {}) });
+  let picked;
+  try { picked = filesToRun(ROOT, o); } catch (e) { console.error(e.message); process.exit(2); }
+  let files = picked.files;
+  if (picked.left) console.log(`quarantine: ${picked.left} test files left out (test/quarantine.json)`);
   const timings = readJson('test/timings.json', {});
   if (o.shard) {
     const m = /^(\d+)\/(\d+)$/.exec(o.shard);

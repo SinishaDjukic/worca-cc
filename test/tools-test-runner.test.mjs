@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,6 +47,61 @@ test('tier selection: slow globs and keepFast override', () => {
   assert.deepEqual(selectFiles({ all, tier: 'slow', tiers }).sort(), ['test/git-sync.test.mjs', 'test/orchestrator-x.test.mjs']);
   assert.deepEqual(selectFiles({ all, tier: 'fast', tiers }).sort(), ['test/a.test.mjs', 'test/orchestrator-guardrails.test.mjs']);
   assert.deepEqual(selectFiles({ all, tier: 'all', tiers }).sort(), [...all].sort());
+  // Quarantine wins over tiers: a quarantined fast file and a quarantined slow-glob file leave fast, slow and all.
+  const quarantined = new Set(['test/a.test.mjs', 'test/orchestrator-x.test.mjs']);
+  assert.deepEqual(selectFiles({ all, tier: 'slow', tiers, quarantined }).sort(), ['test/git-sync.test.mjs']);
+  assert.deepEqual(selectFiles({ all, tier: 'fast', tiers, quarantined }).sort(), ['test/orchestrator-guardrails.test.mjs']);
+  assert.deepEqual(selectFiles({ all, tier: 'all', tiers, quarantined }).sort(),
+    ['test/git-sync.test.mjs', 'test/orchestrator-guardrails.test.mjs']);
+});
+
+test('filesToRun: a temp root\'s quarantined file leaves fast, slow and all, an explicit list keeps it, and a malformed list throws', async () => {
+  const { filesToRun } = await import('../tools/test.mjs');
+  assert.equal(typeof filesToRun, 'function', 'tools/test.mjs exports filesToRun(root, o)');
+  const root = mkdtempSync(join(tmpdir(), 'worca-cc-runner-quarantine-'));
+  try {
+    mkdirSync(join(root, 'test'));
+    writeFileSync(join(root, 'test', 'tiers.json'), JSON.stringify({ slow: ['test/s.test.mjs'], keepFast: [] }));
+    writeFileSync(join(root, 'test', 'quarantine.json'), JSON.stringify({ entries: [{ path: 'test/q.test.mjs', reason: 'flaky', exitCondition: 'green 20x' }] }));
+    for (const n of ['f', 's', 'q']) writeFileSync(join(root, 'test', `${n}.test.mjs`), '');
+    const got = {};
+    for (const tier of ['fast', 'slow', 'all']) {
+      const r = filesToRun(root, { files: [], tier });
+      assert.ok(!r.files.includes('test/q.test.mjs'), `${tier}: ${r.files}`);
+      assert.equal(r.left, 1, `${tier}: left`);
+      got[tier] = r.files;
+    }
+    assert.deepEqual(got.fast, ['test/f.test.mjs']);
+    assert.deepEqual(got.slow, ['test/s.test.mjs']);
+    assert.deepEqual(got.all, ['test/f.test.mjs', 'test/s.test.mjs']);
+    // I1: fast and slow are disjoint and, with the quarantined file, cover every test file.
+    assert.deepEqual([...got.fast, ...got.slow, 'test/q.test.mjs'].sort(), ['test/f.test.mjs', 'test/q.test.mjs', 'test/s.test.mjs']);
+    // I3: an explicit list runs what it is given, quarantined or not.
+    assert.deepEqual(filesToRun(root, { files: ['test/q.test.mjs'], tier: 'all' }), { files: ['test/q.test.mjs'], left: 0 });
+    // I7: a broken list never silently re-tiers.
+    writeFileSync(join(root, 'test', 'quarantine.json'), '{ not json');
+    assert.throws(() => filesToRun(root, { files: [], tier: 'fast' }), /not valid JSON/);
+  } finally { rmSync(root, rmOpts); }
+  // main() keeps no selection of its own: it goes through the one seam.
+  const src = readFileSync(join(TOOLS, 'test.mjs'), 'utf8');
+  const body = src.slice(src.indexOf('async function main()'));
+  assert.ok(body.includes('filesToRun(ROOT, o)'), 'main() calls filesToRun(ROOT, o)');
+  assert.ok(!body.includes('selectFiles('), 'main() makes no selectFiles( call');
+});
+
+test('test/quarantine.json: every entry names an existing test file, spec or proof and carries reason and exitCondition', async () => {
+  const { readQuarantine, quarantineProblems } = await import('../tools/quarantine.mjs');
+  const ROOT = fileURLToPath(new URL('..', import.meta.url));
+  const exists = (p) => existsSync(join(ROOT, p));
+  const tiers = JSON.parse(readFileSync(new URL('./tiers.json', import.meta.url), 'utf8'));
+  const entries = readQuarantine(ROOT);
+  assert.deepEqual(quarantineProblems(entries, { exists, tiers }), []);
+  // Each mutated copy of the real list yields exactly its one message. The probe paths leave the base copy first, so a
+  // real entry for one of them never adds a "listed twice".
+  const withEntry = (e) => quarantineProblems([...structuredClone(entries).filter((x) => x.path !== e.path), e], { exists, tiers });
+  assert.deepEqual(withEntry({ path: 'test/ui-ask-side-shell.test.mjs', exitCondition: 'x' }), ['test/ui-ask-side-shell.test.mjs: no reason']);
+  assert.deepEqual(withEntry({ path: 'test/ui-ask-side-shell.test.mjs', reason: 'x' }), ['test/ui-ask-side-shell.test.mjs: no exitCondition']);
+  assert.deepEqual(withEntry({ path: 'test/no-such-file.test.mjs', reason: 'x', exitCondition: 'x' }), ['test/no-such-file.test.mjs: no such file']);
 });
 
 test('main() runs when tools/test.mjs is reached through a symlink (else npm test exits 0 having run nothing)', () => {
@@ -275,10 +330,43 @@ test('every tiers.json entry matches at least one test file (a typo silently mov
   }
 });
 
-test('ci.yml engine filter lists every slow-tier entry of tiers.json', () => {
-  const yml = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+// The slow-filter lines of ci.yml's `changes` job (filter step id `filter`, its `engine` list) against tiers.json
+// "slow", entry for entry. Only "test/NAME.test.mjs" lines (globs included) are slow-tier entries; test/helpers/**,
+// test/fixtures/** and test/tiers.json are path triggers and stay out of the comparison.
+function slowFilterDrift(doc, slow) {
+  const step = (doc?.jobs?.changes?.steps || []).find((s) => s.id === 'filter');
+  const engine = (YAML.parse(String(step?.with?.filters || '')) || {}).engine || [];
+  const lines = engine.filter((l) => /^test\/[^/]+\.test\.mjs$/.test(l));
+  const want = new Set(slow);
+  const problems = [];
+  const seen = new Set();
+  for (const l of lines) {
+    if (seen.has(l)) problems.push(`ci.yml engine filter lists ${l} twice`);
+    else if (!want.has(l)) problems.push(`ci.yml engine filter has ${l}, which test/tiers.json slow lacks`);
+    seen.add(l);
+  }
+  for (const g of slow) if (!seen.has(g)) problems.push(`ci.yml engine filter is missing ${g}`);
+  return problems;
+}
+
+test('ci.yml engine filter lists exactly the slow-tier entries of tiers.json, entry for entry', () => {
   const { slow } = JSON.parse(readFileSync(new URL('./tiers.json', import.meta.url), 'utf8'));
-  for (const g of slow) assert.ok(yml.includes(`- '${g}'`), `ci.yml engine filter is missing ${g}`);
+  const base = ciDoc();
+  assert.deepEqual(slowFilterDrift(base, slow), []);
+  const drift = (fn) => {
+    const doc = structuredClone(base);
+    const step = doc.jobs.changes.steps.find((s) => s.id === 'filter');
+    const filters = YAML.parse(step.with.filters);
+    fn(filters.engine);
+    step.with.filters = YAML.stringify(filters);
+    return slowFilterDrift(doc, slow);
+  };
+  assert.deepEqual(drift((e) => e.push('test/extra-slow.test.mjs')),
+    ['ci.yml engine filter has test/extra-slow.test.mjs, which test/tiers.json slow lacks']);
+  assert.deepEqual(drift((e) => e.splice(e.indexOf('test/git-sync.test.mjs'), 1)),
+    ['ci.yml engine filter is missing test/git-sync.test.mjs']);
+  assert.deepEqual(drift((e) => e.push('test/git-sync.test.mjs')),
+    ['ci.yml engine filter lists test/git-sync.test.mjs twice']);
 });
 
 test('parseArgs --related: takes --base, refuses --base alone and a file list, and never reads the shard env', () => {

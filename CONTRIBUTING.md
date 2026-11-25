@@ -122,6 +122,17 @@ the relevant smoke script if you touched the engine, workspace, or plugin
 paths) locally before opening or updating a PR, and say so in the PR
 description.
 
+A test file, extension Playwright spec or CDP proof that fails at random can be
+quarantined: add it to `test/quarantine.json` with three fields, `path`,
+`reason` (why it is distrusted) and `exitCondition` (what lets it come back). A
+quarantined file leaves `npm test`, `npm run test:fast` and `npm run test:slow`
+(and a spec or proof leaves its CI job), but still runs when you name it
+(`node tools/test.mjs test/x.test.mjs`). The Quarantined tests workflow
+(`.github/workflows/quarantine.yml`) runs every entry on each push to `dev` and
+nightly, never blocks a merge, and lists each entry's result and pass rate over
+the last 30 runs in its job summary. Leaving quarantine is a manual PR that meets
+the `exitCondition` and deletes the entry along with the fix.
+
 While you work, `npm run test:related` runs only the test files your
 uncommitted changes can affect (`-- --base origin/dev` for everything on your
 branch). It follows imports and the paths tests load by name, and falls back to

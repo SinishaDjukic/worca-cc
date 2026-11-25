@@ -286,6 +286,7 @@ jobs:
       # nothing else has to be provisioned. --no-sandbox is required whenever
       # headless Chrome runs as root. Every proof in the group runs even after one fails
       # (one group holds twelve), and the step fails at the end naming each failed proof.
+      # A quarantined proof (test/quarantine.json) is skipped: it runs in quarantine.yml.
       - name: Headless-Chrome UI proofs
         env:
           CHROME_NO_SANDBOX: "1"
@@ -293,6 +294,7 @@ jobs:
         run: |
           failed=
           for proof in $PROOFS; do
+            if node tools/quarantine.mjs skips-proof "$proof"; then continue; fi
             echo "::group::npm run $proof"
             npm run "$proof" || failed="$failed $proof"
             echo "::endgroup::"
