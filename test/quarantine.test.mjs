@@ -360,3 +360,25 @@ test('ci.yml holds no quarantine job, and the CI gate does not need one', () => 
   }
   assert.ok(![].concat(ci.jobs['ci-gate'].needs || []).some((n) => /quarantine/.test(n)));
 });
+
+test('run --kind proof runs each listed proof and report shows its pass rate', () => {
+  const root = fixture([ok('tools/verify-ok-cdp.mjs'), ok('tools/verify-bad-cdp.mjs')], { 'tools/verify-ok-cdp.mjs': 'process.exit(0);\n', 'tools/verify-bad-cdp.mjs': 'process.exit(1);\n' });
+  const work = mkdtempSync(join(tmpdir(), 'worca-cc-quarantine-proof-'));
+  try {
+    const out = join(work, 'results-proofs.json');
+    const r = cli(['run', '--kind', 'proof', '--out', out, '--root', root]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const results = JSON.parse(readFileSync(out, 'utf8'));
+    assert.equal(results['tools/verify-ok-cdp.mjs'].result, 'pass', JSON.stringify(results));
+    assert.equal(results['tools/verify-bad-cdp.mjs'].result, 'fail', JSON.stringify(results));
+    assert.equal(typeof results['tools/verify-ok-cdp.mjs'].seconds, 'number');
+    const hin = join(work, 'qh');
+    mkdirSync(hin);
+    const rep = cli(['report', '--results', out, '--history-in', hin, '--history-out', join(work, 'h.json'), '--run-id', '1', '--sha', 'abc', '--event', 'push', '--root', root]);
+    assert.equal(rep.status, 0, rep.stdout + rep.stderr);
+    const okRow = rep.stdout.split('\n').find((l) => l.includes('verify-ok-cdp.mjs'));
+    const badRow = rep.stdout.split('\n').find((l) => l.includes('verify-bad-cdp.mjs'));
+    assert.ok(okRow?.includes('1/1 (100%)'), rep.stdout);
+    assert.ok(badRow?.includes('0/1 (0%)'), rep.stdout);
+  } finally { rmSync(root, rmOpts); rmSync(work, rmOpts); }
+});
