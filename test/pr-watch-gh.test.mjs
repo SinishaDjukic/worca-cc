@@ -42,15 +42,15 @@ function runner(answer) {
 
 const check = (id, extra = {}) => ({ __typename: 'CheckRun', databaseId: id, name: `c${id}`, status: 'COMPLETED', conclusion: 'FAILURE', detailsUrl: `https://x/${id}`, isRequired: false, ...extra });
 const comment = (id) => ({ databaseId: id, body: `c${id}`, author: { login: 'rev' }, authorAssociation: 'MEMBER' });
-const prNode = ({ contexts, threads = page([]), reviews = page([]), rollup } = {}) => ({ data: { repository: { pullRequest: {
+const prNode = ({ contexts, threads = page([]), comments = page([]), reviews = page([]), rollup } = {}) => ({ data: { repository: { pullRequest: {
   url: PR, state: 'OPEN', headRefName: 'feat/x', headRefOid: 'sha1', author: { login: 'me' },
-  statusCheckRollup: rollup !== undefined ? rollup : { contexts: contexts || page([]) }, reviewThreads: threads, reviews,
+  statusCheckRollup: rollup !== undefined ? rollup : { contexts: contexts || page([]) }, reviewThreads: threads, issueComments: comments, reviews,
 } } } });
 
 /** Brace depth at the first `needle` (the runner stub never parses the query, GitHub does). */
 const depthAt = (q, needle) => { let d = 0; const end = q.indexOf(needle); for (let i = 0; i < end; i++) d += q[i] === '{' ? 1 : q[i] === '}' ? -1 : 0; return d; };
 
-test('every snapshot query is balanced and asks reviewThreads and reviews on the pull request, beside statusCheckRollup', async () => {
+test('every snapshot query is balanced and asks reviewThreads, issueComments and reviews on the pull request, beside statusCheckRollup', async () => {
   const queries = [];
   runner(async (cmd, args) => {
     const { query } = graphqlArgs(args);
@@ -64,6 +64,9 @@ test('every snapshot query is balanced and asks reviewThreads and reviews on the
     assert.equal((q.match(/{/g) || []).length, (q.match(/}/g) || []).length, 'balanced braces');
     const field = depthAt(q, 'statusCheckRollup{');
     assert.equal(depthAt(q, 'reviewThreads('), field, 'reviewThreads is a pullRequest field');
+    // GitHub names a PR's issue comments `comments`; there is no `issueComments` field (the alias keeps the reply's key).
+    assert.equal(depthAt(q, 'issueComments:comments('), field, 'issueComments aliases the pullRequest comments field');
+    assert.doesNotMatch(q, /[{\s]issueComments\(/, 'no field named issueComments');
     assert.equal(depthAt(q, 'reviews('), field, 'reviews is a pullRequest field');
   }
 });
@@ -106,18 +109,22 @@ test('snapshot pages every dimension independently and uses the read credential 
 });
 
 test('uneven page counts collect every item once and stop asking for finished connections', async () => {
-  // contexts=2 pages, threads=1 page, reviews=3 pages.
+  // contexts=2 pages, threads=1 page, comments=2 pages, reviews=3 pages.
   const reviewPages = { '': ['r1', 31], r1: ['r2', 32], r2: [null, 33] };
+  const commentPages = { '': ['cc1', 101], cc1: [null, 102] };
   const calls = runner(async (cmd, args) => {
     const { vars } = graphqlArgs(args);
     const contexts = vars.contextsCursor ? page([check(2)]) : page([check(1)], 'c1');
     const threads = page([{ id: 'T1', isResolved: false, comments: page([comment(11)]) }]);
+    const [cnext, cid] = commentPages[vars.commentsCursor || ''];
+    const comments = page([{ databaseId: cid, body: `m${cid}`, author: { login: 'rev' }, authorAssociation: 'MEMBER' }], cnext);
     const [next, id] = reviewPages[vars.reviewsCursor || ''];
     const reviews = page([{ databaseId: id, state: 'COMMENTED', body: 'x', author: { login: 'rev' }, authorAssociation: 'OWNER' }], next);
-    const pr = prNode({ contexts, threads, reviews }).data.repository.pullRequest;
+    const pr = prNode({ contexts, threads, comments, reviews }).data.repository.pullRequest;
     // A connection left out by @include(if:false) is absent from the response.
     if (vars.withContexts === 'false') pr.statusCheckRollup = {};
     if (vars.withThreads === 'false') delete pr.reviewThreads;
+    if (vars.withComments === 'false') delete pr.issueComments;
     if (vars.withReviews === 'false') delete pr.reviews;
     return ok({ data: { repository: { pullRequest: pr } } });
   });
@@ -125,10 +132,37 @@ test('uneven page counts collect every item once and stop asking for finished co
   assert.equal(snap.ok, true, snap.error);
   assert.deepEqual(snap.pr.contexts.map((c) => c.databaseId), [1, 2]);
   assert.deepEqual(snap.pr.threads.map((t) => t.nodeId), ['T1']);
+  assert.deepEqual(snap.pr.comments.map((c) => c.databaseId), [101, 102]);
   assert.deepEqual(snap.pr.reviews.map((r) => r.databaseId), [31, 32, 33]);
   const sent = calls.map((c) => graphqlArgs(c.args).vars);
-  assert.deepEqual(sent.map((v) => [v.withContexts, v.withThreads, v.withReviews]),
-    [['true', 'true', 'true'], ['true', 'false', 'true'], ['false', 'false', 'true']]);
+  assert.deepEqual(sent.map((v) => [v.withContexts, v.withThreads, v.withComments, v.withReviews]),
+    [['true', 'true', 'true', 'true'], ['true', 'false', 'true', 'true'], ['false', 'false', 'false', 'true']]);
+});
+
+test('issue comments are collected once, keep every author association, and a malformed connection fails the snapshot', async () => {
+  const calls = runner(async (cmd, args) => {
+    const { query, vars } = graphqlArgs(args);
+    if (query.startsWith('query PrWatchComments')) return ok({ data: { node: { comments: page([]) } } });
+    const comments = vars.commentsCursor ? page([])
+      : page([comment(201), { databaseId: 202, body: 'verdict', author: { login: 'bot' }, authorAssociation: 'NONE' }], 'm1');
+    return ok(prNode({ comments }));
+  });
+  const snap = await ghPrWatchSnapshot({ projectDir: '/p', prUrl: PR });
+  assert.equal(snap.ok, true, snap.error);
+  assert.deepEqual(snap.pr.comments.map((c) => [c.databaseId, c.authorAssociation]), [[201, 'MEMBER'], [202, 'NONE']]);
+  assert.equal(calls.filter((c) => graphqlArgs(c.args).vars.commentsCursor === 'm1').length, 1, 'comments paginate on their own cursor');
+  // A malformed issueComments connection fails the whole snapshot, like a malformed reviews connection.
+  gitInfo.reset();
+  runner(async (cmd, args) => {
+    const { query } = graphqlArgs(args);
+    if (query.startsWith('query PrWatchComments')) return ok({ data: { node: { comments: page([]) } } });
+    const pr = prNode().data.repository.pullRequest;
+    pr.issueComments = { nodes: [], pageInfo: null };
+    return ok({ data: { repository: { pullRequest: pr } } });
+  });
+  const bad = await ghPrWatchSnapshot({ projectDir: '/p', prUrl: PR });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.error, 'malformed GitHub pagination');
 });
 
 test('snapshot and job logs use the read role, mutations the write role', async () => {
@@ -264,8 +298,8 @@ test('GraphQL variables are typed explicitly: strings raw (-f), booleans and the
   const calls = runner(async () => ok(prNode()));
   assert.equal((await ghPrWatchSnapshot({ projectDir: '/p', prUrl: PR })).ok, true);
   const { query, vars, flags } = graphqlArgs(calls[0].args);
-  assert.deepEqual(flags, { owner: '-f', repo: '-f', number: '-F', headRef: '-f', withContexts: '-F', withThreads: '-F', withReviews: '-F', withBase: '-F' });
-  assert.deepEqual([vars.number, vars.headRef, vars.withContexts, vars.withThreads, vars.withReviews, vars.withBase], ['7', 'refs/pull/7/head', 'true', 'true', 'true', 'true']);
+  assert.deepEqual(flags, { owner: '-f', repo: '-f', number: '-F', headRef: '-f', withContexts: '-F', withThreads: '-F', withComments: '-F', withReviews: '-F', withBase: '-F' });
+  assert.deepEqual([vars.number, vars.headRef, vars.withContexts, vars.withThreads, vars.withComments, vars.withReviews, vars.withBase], ['7', 'refs/pull/7/head', 'true', 'true', 'true', 'true', 'true']);
   // Required-check detection asks GitHub per pull request, on both check kinds.
   assert.match(query, /CheckRun\{[^}]*isRequired\(pullRequestNumber:\$number\)/);
   assert.match(query, /StatusContext\{[^}]*isRequired\(pullRequestNumber:\$number\)/);

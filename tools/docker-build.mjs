@@ -3,7 +3,7 @@
 // Build the Worca container image locally the way CI does: `npm pack` the
 // package, then `docker build` docker/Dockerfile with that tarball.
 //
-//   npm run docker:build                                  # ghcr.io/sinishadjukic/worca:dev (slim)
+//   npm run docker:build                                  # ghcr.io/worca-org/worca:dev (slim)
 //   npm run docker:build -- --variant full                # ...:dev-full
 //   npm run docker:build -- --tag worca:test --claude-code 2.1.278
 //   npm run docker:build -- --platform linux/arm64 -- --no-cache   # args after `--` go to docker build
@@ -18,7 +18,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import process from 'node:process';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-export const DEFAULT_IMAGE = 'ghcr.io/sinishadjukic/worca';
+export const DEFAULT_IMAGE = 'ghcr.io/worca-org/worca';
 const PACK_DIR = join('docker', '.pack');
 
 function parseArgs(argv) {

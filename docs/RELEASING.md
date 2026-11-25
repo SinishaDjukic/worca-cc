@@ -77,7 +77,7 @@ attestation:
 ```json
 "repository": {
   "type": "git",
-  "url": "https://github.com/SinishaDjukic/worca-cc.git"
+  "url": "https://github.com/worca-org/worca.git"
 }
 ```
 
@@ -110,8 +110,8 @@ npmjs.com → the package → **Settings** → **Trusted Publisher** → GitHub 
 
 | Field | Value |
 | --- | --- |
-| Organization / user | `SinishaDjukic` |
-| Repository | `worca-cc` (the GitHub repo name, as-is) |
+| Organization / user | `worca-org` |
+| Repository | `worca` (the GitHub repo name, as-is) |
 | Workflow filename | `release-npm-app.yml` |
 | Environment | *(leave empty unless the job declares one)* |
 | Allowed actions | `npm publish` only |
@@ -381,7 +381,7 @@ previously working pipeline breaks.
 
 ## 7. The container image
 
-`release-npm-app.yml` also publishes `ghcr.io/sinishadjukic/worca` from the
+`release-npm-app.yml` also publishes `ghcr.io/worca-org/worca` from the
 same tag, **after** the npm publish succeeds, through the reusable
 `docker-image.yml`: it checks the tag out, runs `npm pack` (the bytes npm just
 shipped), builds `slim` and `full` for `linux/amd64` and `linux/arm64` on native

@@ -99,12 +99,12 @@ test('payload size: a big-but-legal payload ships minified, a too-big one degrad
 });
 
 test('repoSlugFromBugsUrl reduces package.json bugs.url to OWNER/REPO', () => {
-  assert.equal(repoSlugFromBugsUrl('https://github.com/SinishaDjukic/worca-cc/issues'),
-    'SinishaDjukic/worca-cc');
-  assert.equal(repoSlugFromBugsUrl('https://github.com/SinishaDjukic/worca-cc/issues/'),
-    'SinishaDjukic/worca-cc', 'a trailing slash is not part of the repo name');
-  assert.equal(repoSlugFromBugsUrl('https://github.com/SinishaDjukic/worca-cc'),
-    'SinishaDjukic/worca-cc', 'bugs.url may point at the repo itself');
+  assert.equal(repoSlugFromBugsUrl('https://github.com/worca-org/worca/issues'),
+    'worca-org/worca');
+  assert.equal(repoSlugFromBugsUrl('https://github.com/worca-org/worca/issues/'),
+    'worca-org/worca', 'a trailing slash is not part of the repo name');
+  assert.equal(repoSlugFromBugsUrl('https://github.com/worca-org/worca'),
+    'worca-org/worca', 'bugs.url may point at the repo itself');
   assert.equal(repoSlugFromBugsUrl('https://gitlab.com/acme/thing/issues'), '',
     'only github.com is addressable by `gh issue create`');
   assert.equal(repoSlugFromBugsUrl(''), '');

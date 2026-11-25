@@ -4,6 +4,9 @@ The Chat home is the page Chat opens on: the composer, a row of quick actions, a
 (Needs you, Running, Recent chats, Workflows). A quick action only arms the composer. Nothing is sent
 until you send.
 
+A run tile in Needs you or Running opens the chat that follows the run, with the run beside it in a Run tab
+(its Workflow tab); **Answer** opens that chat at its question. A run no chat follows opens beside the home.
+
 ## Pinned workflows
 
 The quick-action row has seven built-in tiles: **New run**, **Build workflow**, **Schedule a run**,
@@ -40,7 +43,10 @@ archived chat unarchives it. The column's search moves into the top-bar search a
 right after the list toggle in the conversation head (the browser extension's sidebar head shows the same +). The
 column loads only once Chat shows: while Chat is hidden, a change only marks the list stale, and the next show fetches
 it once; a load that failed is tried again on the next show. Below 1100px the column is an overlay with a scrim; a
-menu, picker or dialog opened from it keeps it open, and picking a chat closes it and focuses the composer.
+menu, picker or dialog opened from it keeps it open, and picking a chat closes it and focuses the composer. While the
+sidebar lights Design (a new design or a chat with a design), the list is headed "Design chats" and holds only chats
+with a design (`GET /api/ask/threads?designs=1`, its total and counts too), and its New is "New design": it opens
+`#chat/new/design`, the sidebar's Design start, instead of a new chat; see [Design](design.md#in-the-chat).
 
 Topic groups: Select › Group N or a chat's ⋯ › Add to group… puts chats in a group (one group per chat; adding a
 grouped chat moves it; ⋯ on a selected chat adds the whole selection). A group row shows its count and expands with ⌄; View › Group by › Topic lists one section per

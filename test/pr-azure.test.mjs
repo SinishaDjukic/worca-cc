@@ -80,12 +80,11 @@ test('Azure PR provider', async () => {
       assert.equal(f.calls[0].body.isDraft, true);
       assert.equal('isDraft' in f.calls[1].body, false);
     } },
-    { name: 'fitDescription: ≤4000, cut at a paragraph, footer kept', run: () => {
-      const footer = '\n\n---\nStarted by ann@x.io via worca';
-      const long = `${'para one. '.repeat(200)}\n\n${'para two. '.repeat(300)}${footer}`;
+    { name: 'fitDescription: ≤4000, cut at a paragraph', run: () => {
+      const long = `${'para one. '.repeat(200)}\n\n${'para two. '.repeat(300)}`;
       const out = az.fitDescription(long);
       assert.ok(out.length <= az.DESCRIPTION_MAX);
-      assert.ok(out.endsWith(footer));
+      assert.ok(out.endsWith('_(Description shortened to fit Azure DevOps.)_'));
       assert.ok(out.startsWith('para one. '));
       assert.ok(!out.includes('para two.'), 'cut at the paragraph boundary');
       assert.match(out, /shortened to fit Azure DevOps/);

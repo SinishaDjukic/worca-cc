@@ -1,0 +1,37 @@
+# Makes it clear what a pull request is for: adds area:* labels from the paths it touches,
+# and fails the "Linked issue" check when the description names no issue ("Closes #123",
+# or "Refs #123"). Bots are skipped; the no-issue label skips the check.
+#
+# Safe on pull_request_target: it checks out only this repository's base branch, for the
+# script, and never checks out or runs code from the pull request.
+name: PR context
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: pr-context-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  linked-issue:
+    name: Linked issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { run } = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/pr-context.cjs`);
+            await run({ github, context, core });

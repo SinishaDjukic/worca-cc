@@ -203,6 +203,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     open: false,
     threadId: null,
     designThread: null,       // the design chat whose dock the design slot shows (syncDesign), else null
+    listDesigns: false,       // the chats list shows only chats with a design (setListDesigns: the sidebar lights Design)
+    listDesignsQueued: false, // a setListDesigns waits for the end of the task
     designStart: false,       // the design slot shows a new design's start (startDesign)
     ext: null,                // the composer's extension (setComposerExt): a design chat's or a new design's own controls
     lentTips: [],             // [{btn, title}]: the ext's buttons whose title became a tip while lent (setComposerExt gives it back)
@@ -257,6 +259,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     leftAt: null,          // #958: { threadId, top, pinned } recorded when the page hides; read on the next show
     restoreTop: null,      // #958: a scrollTop the next applyPin() writes back (a same-chat return, unpinned)
     scrollIntentAt: null,  // #958: now() of the last wheel / touch / press / key on the transcript
+    scrollSeen: null,      // #958: the transcript's last known scrollTop (its last scroll event or our last write), so
+                           // a reader's scroll reads as up or down; null = unknown (the page hid), today's rule applies
     scrollHeld: false,     // #958: a press on the transcript (its scrollbar) is held until pointerup
     cardMemo: null,        // #958: card id → element built in the current renderTranscript pass (one build per card)
     wantThread: undefined,    // the chat the page shows or is loading: an id, null = home (a new chat), undefined = none yet
@@ -2317,10 +2321,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     onToolScope();
   }
 
-  /** The panel moved to another chat: app.js points the address at it (pushed, or swapped with `replace`). */
-  function route(threadId, { replace = false } = {}) {
+  /** The panel moved to another chat: app.js points the address at it (pushed, or swapped with `replace`). `design`:
+   *  a new design's start (#chat/new/design), not a chat. */
+  function route(threadId, { replace = false, design = false } = {}) {
     if (typeof onRoute !== 'function') return;
-    try { onRoute(threadId || null, { replace }); } catch { /* the address is a nicety */ }
+    try { onRoute(threadId || null, design ? { replace, design: true } : { replace }); } catch { /* the address is a nicety */ }
   }
 
   /**
@@ -2347,6 +2352,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // still loading has no place worth keeping.
     const loading = typeof st.wantThread === 'string' && st.wantThread !== st.threadId;
     st.leftAt = st.threadId && !loading ? { threadId: st.threadId, top: el.transcript.scrollTop, pinned: st.pinned, host: st.host } : null;
+    st.scrollSeen = null;   // display:none drops the offset; the restore write sets a fresh baseline
     stopVoice();
     closePopover({ focusTrigger: false });
     if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
@@ -2385,14 +2391,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  chat stays a chat: this transcript draws its messages and the design's cards. Any other thread, or none, gives the
    *  slot back. */
   function syncDesign(thread) {
-    const leftStart = st.designStart;
     if (st.designStart) { st.designStart = false; el.designSlot.hidden = true; setComposerExt(null); try { designChat.unmount(); } catch { /* the page's own trouble */ } }
     const clearHead = () => { el.headSlot.replaceChildren(); el.headSlot.hidden = true; };
     const want = designChat && designChat.enabled?.() !== false && thread && typeof thread.id === 'string' && typeof thread.designId === 'string' && thread.designId
       ? thread.id : null;
-    // Only the design start folds the chats list (startDesign): on any chat after it, the design's chat included, it is
-    // as the person left it (open by default).
-    if (leftStart) setHistoryOpen(initialHistoryOpen(), { persist: false });
+    // The chats list is as the person left it (open by default) on a design's start and its chat, as on any chat.
     if (want === st.designThread) { syncView(); return; }
     if (st.designThread) { setComposerExt(null); try { designChat.unmount(); } catch { /* the dock's own trouble */ } }
     clearHead();
@@ -2420,7 +2423,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!designChat || typeof designChat.mountStart !== 'function' || st.destroyed) return false;
     newThread({ focus: false });
     st.designStart = true;
-    setHistoryOpen(false, { persist: false });   // a new design starts with the chats list folded (the person's choice is kept)
     el.designSlot.hidden = false;
     el.designSlot.removeAttribute('data-inline');
     placeDesignSlot(false);
@@ -2766,17 +2768,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  capture-phase listeners read (chat/home-flip.mjs arms the glide, chat/intent.mjs drops the intent). Below 1100px
    *  the overlay closes first, as after a pick, so the new chat has its room and newThread() can focus its composer.
    *  `words` is the visible text; the list's copy reads "New", and the accessible name keeps "New chat ⌥⌘N". */
-  function newChatPlus(words = 'New chat') {
+  function newChatPlus(words = 'New chat', { list = false } = {}) {
     // Like the Runs page's New run: a small primary button with its icon and its words (the key stays in the tooltip).
+    // The list's New beside Design (st.listDesigns) starts a new design, as the sidebar's Design does.
     const b = iconButton('btn btn-sm btn-primary chat-head-btn chat-new-plus', `New chat ${keyHint(['alt', 'mod', 'N'], isMac(win))}`,
-      svgIcon(ICONS.plus, 14, 2), () => { if (historyOverlayOpen()) setHistoryOpen(false, { persist: false }); newThread(); route(null); });
+      svgIcon(ICONS.plus, 14, 2), () => {
+        if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
+        if (list && st.listDesigns) { route(null, { design: true }); return; }
+        newThread();
+        route(null);
+      });
     b.append(doc.createTextNode(words));
     b.setAttribute('data-ask-new-btn', '');
     return b;
   }
   function mountChats() {
     el.page.dataset.chats = 'on';
-    el.listNew = newChatPlus('New');   // New chat at the end of the chats list's head (the head's own shows only while the list is folded)
+    el.listNew = newChatPlus('New', { list: true });   // New chat at the end of the chats list's head (the head's own shows only while the list is folded)
+    el.listNewName = el.listNew.getAttribute('aria-label');
     el.listNew.classList.add('chat-list-new');
     chatsCol = mountChatsColumn({ host: el.history, newButton: el.listNew, fetch, storage, win, now, level: () => currentLevel(doc),
       scopeName: (sc) => chatDep('scopeName', sc) || '', currentId: () => (typeof st.wantThread === 'string' ? st.wantThread : st.threadId),
@@ -7926,30 +7935,31 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (sig === tailSig) return;
         tailSig = sig;
         const cards = inlineCards(cur);
-        const sameInline = cards.length === inline.length && cards.every((b, i) => b.id === inline[i].id);
-        if (sameInline) {
-          // Kept in place: a card swaps its element only when buildCard hands back a new one. #958: the old element
-          // may already be detached (a command card's dispose removes it), and the same element may sit in a gone
-          // row: in both cases the card goes back before its answer piece.
-          cards.forEach((b, i) => {
-            const cardEl = buildCard(b, cur);
-            if (cardEl !== inline[i].card || !wrap.contains(cardEl)) {
-              if (cardEl !== inline[i].card) inline[i].card.remove();
-              inline[i].piece.before(cardEl);
-              inline[i].card = cardEl;
-            }
-          });
+        // The cards this message already shows, in order, stay where they are: a new card (the next command of a
+        // stack) only adds its own element. Rebuilding them all re-inserted every row and group, so each new command
+        // replayed the rows' entrance and flashed the group head.
+        let keep = 0;
+        while (keep < inline.length && keep < cards.length && cards[keep].id === inline[keep].id) keep += 1;
+        // Kept in place: a card swaps its element only when buildCard hands back a new one. #958: the old element
+        // may already be detached (a command card's dispose removes it), and the same element may sit in a gone
+        // row: in both cases the card goes back before its answer piece.
+        for (let i = 0; i < keep; i += 1) {
+          const cardEl = buildCard(cards[i], cur);
+          if (cardEl !== inline[i].card || !wrap.contains(cardEl)) {
+            if (cardEl !== inline[i].card) inline[i].card.remove();
+            inline[i].piece.before(cardEl);
+            inline[i].card = cardEl;
+          }
         }
-        const last = inline.length ? inline[inline.length - 1].piece : answer;
+        const last = keep ? inline[keep - 1].piece : answer;
         while (wrap.lastChild && wrap.lastChild !== last) wrap.removeChild(wrap.lastChild);
-        if (!sameInline) {
-          while (wrap.lastChild && wrap.lastChild !== answer) wrap.removeChild(wrap.lastChild);
-          inline = cards.map((b) => {
+        if (keep !== inline.length || keep !== cards.length) {
+          inline = inline.slice(0, keep).concat(cards.slice(keep).map((b) => {
             const card = buildCard(b, cur);
             const piece = make('div', 'ask-answer');
             wrap.append(card, piece);
             return { id: b.id, card, piece };
-          });
+          }));
           renderAnswer();
         }
         paintGroups();
@@ -8451,8 +8461,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.rowEls) for (const id of st.rowEls.keys()) st.seenRows.add(id);
   }
 
-  // #958: only the reader's own scroll (wheel, touch, a press on the transcript or its scrollbar, a key on the
-  // transcript) leaves the bottom. A scroll the browser makes after a layout change (a clamp while a card measures)
+  // #958: only the reader's own scroll UP (wheel, touch, a press on the transcript or its scrollbar, a key on the
+  // transcript) leaves the bottom; a scroll down toward an end the stream keeps moving away follows it. A scroll the browser makes after a layout change (a clamp while a card measures)
   // is not theirs. Tab, and Enter/Space on a control, count: they can scroll a card control into view.
   const USER_SCROLL_MS = 600;
   const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
@@ -8477,6 +8487,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.pinned && st.pinWrite != null && t.scrollTop >= st.pinWrite) {
       st.pinWrite = null;
       applyPin();
+      st.scrollSeen = t.scrollTop;
       return;
     }
     st.pinWrite = null;
@@ -8484,10 +8495,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!userScrolling()) {                          // #958: not the reader: never unpins; reaching the bottom re-pins
       if (st.pinned) applyPin();
       else if (atBottom) { st.pinned = true; if (el.jump) el.jump.hidden = true; }
+      st.scrollSeen = t.scrollTop;
       return;
     }
-    st.pinned = atBottom;
-    if (el.jump) el.jump.hidden = st.pinned;
+    // The reader's scroll. Down (more than 1px, for a fractional scrollTop at zoom) while pinned, short of an end the
+    // stream moved further: keep following. Up, or an unknown direction: the bottom decides, as before.
+    const up = st.scrollSeen == null || t.scrollTop < st.scrollSeen - 1;
+    if (st.pinned && !atBottom && !up) {
+      applyPin();
+      if (el.jump) el.jump.hidden = true;
+    } else {
+      st.pinned = atBottom;
+      if (el.jump) el.jump.hidden = st.pinned;
+    }
+    st.scrollSeen = t.scrollTop;
   }
 
   function applyPin() {
@@ -8496,14 +8517,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.restoreTop != null && t.clientHeight > 0) {   // #958: a same-chat return, unpinned, once the page has a box
       const top = st.restoreTop;
       st.restoreTop = null;
-      if (!st.pinned) t.scrollTop = top;
+      if (!st.pinned) { t.scrollTop = top; st.scrollSeen = t.scrollTop; }
     }
     if (st.pinned) {
       // Only when the bottom has actually moved away. flush() runs this on EVERY
       // rAF of a stream, and an unconditional write re-snapped the scrollport on
       // each one — which is what turned a growing answer into a twitch.
       const max = t.scrollHeight - t.clientHeight;
-      if (max > 0 && t.scrollTop < max) { t.scrollTop = t.scrollHeight; st.pinWrite = t.scrollTop; }
+      if (max > 0 && t.scrollTop < max) { t.scrollTop = t.scrollHeight; st.pinWrite = t.scrollTop; st.scrollSeen = t.scrollTop; }
     }
     if (el.jump) el.jump.hidden = st.pinned;
   }
@@ -8519,6 +8540,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     change();
     const moved = control.getBoundingClientRect().top - before;
     if (moved) t.scrollTop += moved;
+    st.scrollSeen = t.scrollTop;   // the toggle's geometry is a fresh baseline, moved or not
     st.pinWrite = null;
     st.pinned = t.scrollHeight - t.scrollTop - t.clientHeight < 24;
     if (el.jump) el.jump.hidden = st.pinned;
@@ -8529,6 +8551,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.restoreTop = null;
     el.transcript.scrollTop = el.transcript.scrollHeight;
     st.pinWrite = el.transcript.scrollTop;
+    st.scrollSeen = st.pinWrite;
     if (el.jump) el.jump.hidden = true;
   }
 
@@ -8743,6 +8766,26 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     setDesign(threadId, designId) {
       if (st.destroyed || !threadId || st.threadId !== threadId) return;
       syncDesign({ id: threadId, designId: typeof designId === 'string' && designId ? designId : null });
+    },
+    /** Chat `id` is not the chat on screen yet (it loads) and its chats-list row has a design. The chat on screen
+     *  answers through its mounted design (app.js designStudio). */
+    designChatLoading: (id) => typeof id === 'string' && !!id && st.threadId !== id && !!chatsCol && chatsCol.hasDesign(id),
+    /** The sidebar lights Design (on) or not: the chats list shows only chats with a design, or every chat. Settled at
+     *  the end of the task, so a design chat switching to another (its design leaves, the next one mounts) keeps the
+     *  list as it is. */
+    setListDesigns(on) {
+      st.listDesigns = !!on;
+      if (el.listNew) {                              // its New names what it starts
+        const name = st.listDesigns ? 'New design' : el.listNewName;
+        el.listNew.title = name;
+        el.listNew.setAttribute('aria-label', name);
+      }
+      if (st.listDesignsQueued) return;
+      st.listDesignsQueued = true;
+      queueMicrotask(() => {
+        st.listDesignsQueued = false;
+        if (!st.destroyed && chatsCol && chatsCol.setDesigns(st.listDesigns)) loadHistory();
+      });
     },
     setHost,                                        // Ask worca beside the page: 'page' (the Chat section) or 'dock' (the side column)
     host: () => st.host,

@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { scanSecrets, describeFindings } from '../../src/core/secret-scan.mjs';
 import { parseRemoteUrl, sameRepo } from '../../src/core/forge.mjs';
 
-export const REPO = 'SinishaDjukic/worca-cc';
+export const REPO = 'worca-org/worca';
 export const ISSUE = 919;
 
 /** gh's own output can name the account and a masked token: only the account line goes to evidence. */
@@ -14,8 +14,13 @@ export function authStatus(run) {
     : { ok: false, detail: 'gh auth status failed: run gh auth login' };
 }
 
+/** The repo before it moved to worca-org (2026-11): a clone whose origin still names it reaches the
+ *  same repo through GitHub's redirect. Drop it once clones have been repointed. */
+const LEGACY = { host: 'github.com', owner: 'SinishaDjukic', repo: 'worca-cc' };
+
 export function originMatches(run, root) {
-  return sameRepo(parseRemoteUrl(run('git', ['-C', root, 'remote', 'get-url', 'origin']).stdout.trim()), { host: 'github.com', owner: 'SinishaDjukic', repo: 'worca-cc' });
+  const origin = parseRemoteUrl(run('git', ['-C', root, 'remote', 'get-url', 'origin']).stdout.trim());
+  return [{ host: 'github.com', owner: 'worca-org', repo: 'worca' }, LEGACY].some((target) => sameRepo(origin, target));
 }
 
 /** Scan, comment, then prove gh issue view 919 --comments shows the marker line. Throws on any refusal, before any

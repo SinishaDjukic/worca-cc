@@ -160,7 +160,7 @@ test('result: Install closes first and opens the plugin sheet; Browse these n fi
 });
 
 test('errors stay in the dialog: Already added, Can’t reach, Needs git, 400, any other failure (F10)', async () => {
-  const EXISTS = { error: 'marketplace already added: https://github.com/SinishaDjukic/worca-cc', code: 'EXISTS', existing: { id: OFFICIAL.id, name: 'Worca CC Official' } };
+  const EXISTS = { error: 'marketplace already added: https://github.com/worca-org/worca', code: 'EXISTS', existing: { id: OFFICIAL.id, name: 'Worca CC Official' } };
   const sameAsExists = (h) => {
     assert.equal(D().dataset.state, 'error');
     assert.deepEqual([q('.mk-add-msg .mk-wash-text').textContent, q('.mk-add-msg .mk-chip-built').textContent, q('.mk-add-msg').classList.contains('mk-wash-bad')],
@@ -174,11 +174,11 @@ test('errors stay in the dialog: Already added, Can’t reach, Needs git, 400, a
   await checkRows([
     { name: 'EXISTS answered at once (Built-in from page state, SM7)', run: async () => {
       const h = harness({ answers: { 'POST /api/marketplaces': R(409, EXISTS) } });
-      h.dlg.open(); type('SinishaDjukic/worca-cc'); await submit(); sameAsExists(h);
+      h.dlg.open(); type('worca-org/worca'); await submit(); sameAsExists(h);
     } },
     { name: 'EXISTS from the job (caught after the sync)', run: async () => {
       const h = harness({ answers: { 'POST /api/marketplaces': ACCEPTED() } });
-      h.dlg.open(); type('SinishaDjukic/worca-cc'); await submit();
+      h.dlg.open(); type('worca-org/worca'); await submit();
       h.dlg.onJob(job({ state: 'error', code: 'EXISTS', error: EXISTS.error, existing: EXISTS.existing })); await settle(); sameAsExists(h);
     } },
     { name: 'EXISTS for a marketplace this page never read: Open it reads the page again (cycle 5)', run: async () => {
@@ -212,7 +212,7 @@ test('errors stay in the dialog: Already added, Can’t reach, Needs git, 400, a
     } },
     { name: 'editing the field after an error goes back to Add', run: async () => {
       const h = harness({ answers: { 'POST /api/marketplaces': R(409, EXISTS) } });
-      h.dlg.open(); type('SinishaDjukic/worca-cc'); await submit(); type('acme/other');
+      h.dlg.open(); type('worca-org/worca'); await submit(); type('acme/other');
       assert.deepEqual([D().dataset.state, q('.mk-add-msg'), foot()], ['idle', null, [['Cancel', false], ['Add', false]]]);
       h.dlg.close();
     } },
@@ -321,13 +321,13 @@ test('focus, the guard kind, late answers and leaving the page stay right (refin
       assert.equal(doc.activeElement, q('.mk-add-primary'));
       h.dlg.close();
       const x = harness({ answers: { 'POST /api/marketplaces': EXISTS } });
-      x.dlg.open(); type('SinishaDjukic/worca-cc'); await submit();
+      x.dlg.open(); type('worca-org/worca'); await submit();
       assert.equal(doc.activeElement, q('.mk-add-primary'));
       x.dlg.close();
     } },
     { name: 'typing after an error keeps focus in the field', run: async () => {
       const h = harness({ answers: { 'POST /api/marketplaces': EXISTS } });
-      h.dlg.open(); type('SinishaDjukic/worca-cc'); await submit();
+      h.dlg.open(); type('worca-org/worca'); await submit();
       const input = doc.getElementById('mk-add-url');
       input.focus(); type('acme/other');
       assert.equal(doc.activeElement, input);

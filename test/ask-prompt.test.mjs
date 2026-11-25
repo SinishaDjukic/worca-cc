@@ -532,6 +532,7 @@ const MUST_STATE = [
   [23, () => ASK_HOSTING_RULE, 'Never ask for one in chat'],
   [23, () => ASK_HOSTING_RULE, 'do not repeat it back'],
   [23, () => ASK_HOSTING_RULE, 'revoke it'],
+  [23, () => ASK_HOSTING_RULE, 'PRs show the App as their author)'],
   [22, () => ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('22. Away mode:')), 'never claim it was applied'],
   [2, () => ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('2. ')), '[pinned by the user]'],
   [2, () => ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('2. ')), 'the scope the user explicitly selected for this chat'],
@@ -582,6 +583,9 @@ test('system rules: rule 1 advertises every model tool (compare against the mcp-
     } })),
     { name: 'rule 23 carries no control character', run: () => {
       assert.equal(CTRL_RE.test(ASK_HOSTING_RULE.replace(/\n/g, '')), false);
+    } },
+    { name: 'rule 23 names no PR attribution footer', run: () => {
+      assert.ok(!ASK_HOSTING_RULE.includes('via worca'));
     } },
   ]);
 });

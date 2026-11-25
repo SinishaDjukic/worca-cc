@@ -3,7 +3,7 @@
 // ask-run-card.mjs: the panel owns hydration (GET …/commands/:blockId) and the ask-command frames.
 import { paintStatusDot } from './status-dot.mjs';
 import { RUN_STATES } from '../../src/shared/run-model.mjs';
-import { iconSvg } from './icons.mjs';
+import { iconSvg, icon } from './icons.mjs';
 import { copyButton, copyFromButton } from './copy-button.mjs';
 import { fmtCmdDur, elapsedMs, isFailed, groupHeadParts, groupOpen } from './ask-command-group.mjs';
 export { isFailed };
@@ -113,6 +113,18 @@ function showOrSayClosed(control, show, relabel = () => {}) {
   }, () => {});
 }
 
+/** The Stop control of a running command: a quiet square-stop icon (as the composer's Stop), never a red button. A stack
+ *  of commands shows one at a time, and a red one beside every running line read as an alarm. */
+function stopButton(doc, label, onClick) {
+  const btn = h(doc, 'button', 'btn btn-sm btn-quiet btn-icon ask-cmd-stop');
+  btn.type = 'button';
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+  btn.append(icon(doc, 'stop-square', 14));
+  btn.addEventListener('click', () => { btn.disabled = true; onClick(); });
+  return btn;
+}
+
 /** A command long enough that the 3-line clamp may cut it (jsdom cannot measure, so this is a length test). */
 export function longCommand(cmd) {
   const s = String(cmd || '');
@@ -133,10 +145,7 @@ export function createCommandCard({ doc, card, onStop, onShow = () => {}, expand
   el.dataset.blockId = card.blockId;
   const head = h(doc, 'div', 'ask-cmd-head');
   const pill = h(doc, 'span', 'ask-cmd-pill st-peach', 'running');
-  const stop = h(doc, 'button', 'btn btn-sm btn-danger ask-cmd-stop', 'Stop');
-  stop.type = 'button';
-  stop.setAttribute('aria-label', 'Stop this command');
-  stop.addEventListener('click', () => { stop.disabled = true; onStop(card.sessionId); });
+  const stop = stopButton(doc, 'Stop this command', () => onStop(card.sessionId));
   // The folder names the terminal the command runs in: a click shows that tab in the terminal pane.
   const folder = h(doc, 'button', 'ask-cmd-folder', card.folder || '');
   folder.type = 'button';
@@ -211,10 +220,7 @@ function createCommandRow({ doc, card, onStop, onShow, keepInPlace, rowOpen, onR
   sum.title = card.command;
   const meta = h(doc, 'span', 'ask-cmd-meta', '');
   btn.append(dot, sum, meta);
-  const stop = h(doc, 'button', 'btn btn-sm btn-danger ask-cmd-stop', 'Stop');
-  stop.type = 'button';
-  stop.setAttribute('aria-label', 'Stop this command');
-  stop.addEventListener('click', () => { stop.disabled = true; onStop(card.sessionId); });
+  const stop = stopButton(doc, 'Stop this command', () => onStop(card.sessionId));
   const chev = h(doc, 'span', 'ask-cmd-chev', '›');
   chev.setAttribute('aria-hidden', 'true');
   row.append(btn, stop, chev);
@@ -336,11 +342,8 @@ export function createCommandGroup({ doc, choice, onToggle = () => {}, onStop = 
   const chev = h(doc, 'span', 'ask-cmd-chev', '›');
   chev.setAttribute('aria-hidden', 'true');
   head.append(words, chev);
-  const stop = h(doc, 'button', 'btn btn-sm btn-danger ask-cmd-stop', 'Stop');
-  stop.type = 'button';
+  const stop = stopButton(doc, 'Stop the running command', () => onStop());
   stop.hidden = true;
-  stop.setAttribute('aria-label', 'Stop the running command');
-  stop.addEventListener('click', () => { stop.disabled = true; onStop(); });
   top.append(head, stop);
   const body = h(doc, 'div', 'ask-cmd-gbody');
   groupSeq += 1;

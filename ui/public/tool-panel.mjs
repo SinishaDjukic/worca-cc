@@ -89,7 +89,7 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
     if (next && next.blocked === BLOCKED.pending && st.open) st.pendingTimer = win.setTimeout(() => { if (!st.destroyed) follow(); }, 1500);
     const carry = st.carry;
     st.carry = null;
-    if (!next) { syncIcons(); return; }                    // a page about no project, run or chat keeps the last view
+    if (!next) { stepAside(); return; }
     const changed = viewKey(next) !== viewKey(st.view) || (next.blocked || '') !== (st.view?.blocked || '');
     const prevRun = st.runId;
     st.view = next;
@@ -110,6 +110,21 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
     void pullView(next);
   }
 
+  /** A page about no run, chat or project (the Runs list, Workflows, Settings) has no tool icons to reach the panel
+   *  with: the last view's panel leaves with it. Hidden, not closed: its tabs and shells stay, nothing is saved (the
+   *  view is dropped first, so setOpen has no key), and back on that chat, run or project it opens as it was left. A
+   *  guest the page itself opened (an Actions service, a shell) has no view to leave and stays while the page does. */
+  function stepAside() {
+    if (st.view) {
+      st.view = null;
+      st.runId = null;
+      st.guest = null;
+      st.note = '';
+      st.page = 'tab';
+      if (st.open) { hide(); return; }
+    }
+    syncIcons();
+  }
   /** The assistant's tabs that arrived while the panel was closed: their kind's header icon (and the project page's
    *  opener, for a terminal) shows a dot until the person opens the panel (setOpen clears the marks in view). */
   function markFresh(tabs) { if (!st.open) for (const t of tabs) st.fresh.add(t.id); }
@@ -267,10 +282,9 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
     const def = registry.get(kind);
     if (!def) return null;
     follow();
-    // follow() keeps the last view on a page about no run, chat or project (Settings): a tab that brings its own
-    // scope (an Actions service's run) goes there as a guest, not into whatever project was open before.
-    const onPage = !!viewOf(getPageContext ? getPageContext() : {});
-    return openNew(def, scope && !onPage ? NO_VIEW : currentView(), state, scope);
+    // A page about no run, chat or project (Settings) has no view (stepAside): a tab that brings its own scope (an
+    // Actions service's run) goes there as a guest; one without says why on the + page.
+    return openNew(def, currentView(), state, scope);
   }
   /** The + page's Suggested rows changed (a service started or stopped): draw it again when it is on screen, keeping
    *  the focus on the row it was on. */

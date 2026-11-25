@@ -16,7 +16,7 @@ import { openChatGroupDialog } from './chat-group-dialog.mjs';
 import { readRecentGroups, noteRecentGroup, addedNotice } from './group-add.mjs';
 import { CHAT_BUSY, chatGroupBusyText } from '../../src/shared/chat-busy.mjs';
 import { buildChatsModel, chatArchivePlan, chatRowMenuItems, chatGroupMenuItems, CHAT_STATES, chatsViewChip, chatsViewMenuItems, loadChatsView,
-  saveChatsView, DEFAULT_CHATS_VIEW, CHATS_PAGE, CHATS_EMPTY, CHATS_LOADING, CHATS_OFFLINE, CHATS_LIST_W_KEY } from './chats-list.mjs';
+  saveChatsView, DEFAULT_CHATS_VIEW, CHATS_PAGE, CHATS_EMPTY, DESIGN_CHATS_EMPTY, CHATS_LOADING, CHATS_OFFLINE, CHATS_LIST_W_KEY } from './chats-list.mjs';
 
 // The route's own clamp. A refresh re-reads as many chats as are loaded, up to this; past it the refresh keeps the
 // first MAX_PAGE and the cursor after them, so "Show older" / "Show more" carries on from there (rows loaded beyond
@@ -32,7 +32,8 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
   const st = { view: loadChatsView(storage), threads: [], cursor: null, total: null, counts: {}, gen: 0, olderOpen: false,
     collapsed: new Set(), sel: createRunsSelection(), selecting: false, anchorKey: null, focusKey: null, near: [], byKey: new Map(),
     model: null, timer: null, cmd: new Map(), destroyed: false, loaded: false, failed: false,
-    groups: [], toggled: new Map() };   // #948 s3: the topic groups (GET /api/ask/groups) and the person's ⌄ per group row
+    groups: [], toggled: new Map(),   // #948 s3: the topic groups (GET /api/ask/groups) and the person's ⌄ per group row
+    designs: false };                 // only chats with a design: the list beside Design (setDesigns)
 
   // Head, chip, list, bar: the Runs markup (index.html #runs-list-pane and #runs-bulk), built here because ask-panel
   // builds the whole aside in JS.
@@ -44,7 +45,8 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
   viewBtn.setAttribute('aria-expanded', 'false');
   viewBtn.append(icon(doc, 'chevron-down', 14));
   // New chat ends the list's head, after View, as New run does the Runs list's (`newButton`: the panel's own button).
-  head.append(el('h2', 'runs-head-title', 'Chats'), viewBtn, ...(newButton ? [newButton] : []));
+  const title = el('h2', 'runs-head-title', 'Chats');
+  head.append(title, viewBtn, ...(newButton ? [newButton] : []));
   const chip = el('div', 'runs-view-chip');
   chip.id = 'chats-view-chip';
   chip.hidden = true;
@@ -92,7 +94,7 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
   // ---- data ----
   const sortOf = () => (st.view.groupBy === 'date' && st.view.show === 'all' ? 'activity' : st.view.sort);
   const query = (extra = {}) => new URLSearchParams({ show: st.view.show, sort: sortOf(),
-    limit: String(extra.limit || CHATS_PAGE), ...(extra.cursor ? { cursor: extra.cursor } : {}) }).toString();
+    limit: String(extra.limit || CHATS_PAGE), ...(extra.cursor ? { cursor: extra.cursor } : {}), ...(st.designs ? { designs: '1' } : {}) }).toString();
   async function load({ cursor = null } = {}) {
     const gen = ++st.gen;
     const limit = cursor ? CHATS_PAGE : Math.min(MAX_PAGE, Math.max(CHATS_PAGE, st.threads.length));
@@ -147,7 +149,8 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     st.sel.prune(new Set(st.byKey.keys()));
     const checked = new Set([...st.sel.keys()]);
     list.replaceChildren(...renderRunsList(doc, st.model, { checked, selecting: st.selecting || st.sel.size > 0,
-      emptyText: 'No chats yet.', emptyByShow: CHATS_EMPTY, loading: !st.loaded && !st.failed, offline: st.failed,
+      emptyText: st.designs ? 'No design chats yet.' : 'No chats yet.', emptyByShow: st.designs ? DESIGN_CHATS_EMPTY : CHATS_EMPTY,
+      loading: !st.loaded && !st.failed, offline: st.failed,
       retry: st.failed, loadingText: CHATS_LOADING, offlineText: CHATS_OFFLINE }));
     paintCurrent();
     paintChip();
@@ -155,7 +158,8 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     // The chats the list holds now, in its view (ask-panel.mjs: the side column's Recent chats). `loaded`: false while
     // "Loading chats…" (a view change); `newest`: they hold the newest chats by activity — the All view in activity order
     // (pinned chats lead its page), or every chat the view has.
-    onThreads(st.threads, st.view, { loaded: st.loaded, newest: st.view.show === 'all' && (!st.cursor || sortOf() === 'activity') });
+    // Design chats only are never the newest chats.
+    onThreads(st.threads, st.view, { loaded: st.loaded, newest: !st.designs && st.view.show === 'all' && (!st.cursor || sortOf() === 'activity') });
     // A focused row the repaint dropped (E, a bulk archive) hands its stop to the nearest row still shown.
     if (st.near.length && !rove.find([st.focusKey])) { const n = rove.find(st.near); if (n) st.focusKey = navKey(n); }
     st.near = [];
@@ -468,6 +472,11 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
   function setView(p) {
     st.view = { ...st.view, ...p };
     saveChatsView(storage, st.view);
+    restart();
+    void refresh();
+  }
+  /** A new set of chats: "Loading chats…" until it answers, never the old set's rows or count. */
+  function restart() {
     st.threads = [];
     st.cursor = null;
     st.total = null;          // "Loading chats…" until the new view answers, never the old view's count
@@ -476,7 +485,6 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     st.anchorKey = null;
     st.olderOpen = false;
     paint();
-    void refresh();
   }
   bar.addEventListener('click', (e) => {
     const b = e.target.closest('[data-bulk]');
@@ -518,6 +526,19 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
       return k ? k.slice('chat:'.length) : null;
     },
     focusTarget: () => rove.rove() || viewBtn,
+    /** Only chats with a design (`on`, the list beside Design), or every chat. A change empties the list and drops a
+     *  load in flight; the caller fetches the new set (true = changed). */
+    setDesigns(on) {
+      if (!!on === st.designs) return false;
+      st.designs = !!on;
+      st.gen += 1;
+      title.textContent = st.designs ? 'Design chats' : 'Chats';
+      list.setAttribute('aria-label', title.textContent);
+      restart();
+      return true;
+    },
+    /** Whether the list's row for chat `id` says it has a design (false for a chat the list does not hold). */
+    hasDesign: (id) => st.threads.some((t) => t.id === id && typeof t.designId === 'string' && !!t.designId),
     destroy() {
       unbindSelect();
       st.destroyed = true;

@@ -48,7 +48,7 @@ test('POST returns the metadata-only payload, a prefilled issue URL and a downlo
       assert.equal(body.payload.run.id, id);
       assert.deepEqual(body.payload.included, { paths: false, prompt: false },
         'the endpoint defaults to metadata only');
-      assert.match(body.issue.url, /github\.com\/SinishaDjukic\/worca-cc\/issues\/new\?/,
+      assert.match(body.issue.url, /github\.com\/worca-org\/worca\/issues\/new\?/,
         'the issue link targets package.json bugs.url');
       assert.equal(body.issue.truncated, false);
       assert.equal(body.issue.filename, `worca-run-report-${id}-too-slow.json`,
@@ -97,7 +97,7 @@ test('report and report-issue: a bad/missing reason is 400 { error }, an unknown
 // The only route that WRITES to GitHub for the reporter. gh is stubbed through
 // git-info's injectable runner, so nothing here reaches github.com.
 
-const ISSUE_URL = 'https://github.com/SinishaDjukic/worca-cc/issues/512';
+const ISSUE_URL = 'https://github.com/worca-org/worca/issues/512';
 
 /** Stub gh; returns the recorded calls plus the body file gh was handed. */
 function stubGh(answer) {
@@ -122,7 +122,7 @@ test('report-issue files the issue and hands back its URL', async () => {
 
     const create = seen.calls.find((c) => c.args[0] === 'issue');
     assert.ok(create, 'gh issue create was spawned');
-    assert.equal(create.args[3], 'SinishaDjukic/worca-cc', '--repo comes from package.json bugs.url');
+    assert.equal(create.args[3], 'worca-org/worca', '--repo comes from package.json bugs.url');
     assert.deepEqual(create.args.filter((a, i) => create.args[i - 1] === '--label'), ['bug', 'ai']);
   } finally { gitInfo.reset(); }
 });

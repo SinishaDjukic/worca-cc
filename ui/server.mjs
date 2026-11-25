@@ -235,7 +235,7 @@ import {
 import { extensionInstallInfo } from '../src/core/extension-package.mjs';
 import { pageOrigin, matchRunningAction } from '../src/core/extension-actions.mjs';
 import { detectDeployment, deploymentFacts } from '../src/core/deployment.mjs';
-import { resolveIdentity, startedByOf, prAttributionFooter, actorOf, isSharedIdentity, byActor } from '../src/core/identity.mjs';
+import { resolveIdentity, startedByOf, actorOf, isSharedIdentity, byActor } from '../src/core/identity.mjs';
 import { withBillTo, currentBillTo, currentOwner } from '../src/core/billing.mjs';
 import { agentIdentity } from '../src/core/agent-user.mjs';
 import { spawn } from 'node:child_process';
@@ -487,6 +487,7 @@ import { autoFillTags } from '../src/shared/cost-tag-suggest.mjs';
 import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, prefillSources } from '../src/core/tag-dimensions.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
+import { triagePrComment } from '../src/core/pr-comment-triage.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
 import { runProjectDir, noProjectWorkDir, isNoProjectWorkDir, isNoProjectKey, NO_PROJECT_KEY } from '../src/core/store.mjs';   // P3 — its own line: test/api-memory.test.mjs pins the one above
 import { WORK_ARTIFACT_KIND } from '../src/core/no-project-work.mjs';
@@ -6302,6 +6303,16 @@ function prWatchFrame(pipelineId, memberKey) {
 }
 const prWatcherDeps = {
   originOf: prWatchOrigin,
+  // Watch.trustedReviewers: extra reviewer logins (usually review bots) whose feedback on a watched PR may
+  // start a fix run, as if they were collaborators. Read here, once per tick, from the origin project's settings.
+  trustedLogins: (origin) => {
+    try { const v = resolveSetting('watch.trustedReviewers', { projectKey: origin?.projectKey }).value; return Array.isArray(v) ? v : []; }
+    catch { return []; }
+  },
+  // Before a listed reviewer's PR-level comment starts a fix run, a short helper-model call asks whether it wants
+  // code changes (bots also post notices and placeholders). A mock run never calls a model: every comment counts.
+  triageComment: ({ origin, comment }) => origin?.mock ? true : triagePrComment({ body: comment.body, author: comment.author?.login || null,
+    projectKey: origin.projectKey, engine: origin.engine, pipelineId: origin.pipelineId }),
   host: { snapshot: prWatchSnapshot, jobLog: prWatchJobLog, rerun: prWatchRerun, reply: prWatchReply, comment: prWatchComment },
   git: {
     fetch: ({ projectDir, remote }) => fetchRemote(projectDir, { remote, maxAgeMs: 0 }),
@@ -7242,8 +7253,6 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const pushed = await pushBranch(repoDir, feature, pushRemote);
   if (!pushed.ok) return { ok: false, status: 500, error: `git push failed: ${pushed.stderr}` };
 
-  // A PR opened by a shared bot still names the person behind it (identity.mjs); none for 'local'.
-  const footer = prAttributionFooter(state.startedBy);
   const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
   // A run from the Azure Boards source links its work item to the PR.
   const sourceRef = provider.forge === 'azure' ? findPipelineRowById(pipelineIdForPr)?.source_ref ?? null : null;
@@ -7251,11 +7260,11 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   // A workspace automation's work item (#711) is linked by the PR of the member it came through only, as only the
   // issue's own repository's PR closes a GitHub issue.
   if (workItemId && memberKey && !automationSourceIsRepo(sourceRef, baseR)) workItemId = null;
-  // The run's GitHub issue, closed on merge: after the description, before the footer.
+  // The run's GitHub issue, closed on merge: after the description.
   const closing = runSourceIssue(pipelineIdForPr, { baseRemote: baseR, memberKey })
     ? issueClosingLine({ sourceUrl: runSourceUrl(pipelineIdForPr), baseRepo: repo, body: description }) : '';
-  // Spec D7: a shaped run's PR ends with its checklist (the latest review cycle that has one), before the
-  // attribution footer; skipped when the description already carries it. Guarded like runSourceUrl: the branch is
+  // Spec D7: a shaped run's PR ends with its checklist (the latest review cycle that has one);
+  // skipped when the description already carries it. Guarded like runSourceUrl: the branch is
   // already pushed, so a DB error must not become a failed PR.
   let cl = null;
   if (!description.includes(CHECKLIST_PR_MARKER)) {
@@ -7266,8 +7275,8 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   let lead0 = '';
   if (preamble && !memberKey) { try { lead0 = slicePrPreamble(pipelineIdForPr); } catch { lead0 = ''; } }
   const lead = description || title || state.title || feature;
-  const prBody = lead0 || description || closing || checklistMd || footer
-    ? `${lead0 ? `${lead0}\n\n` : ''}${lead}${closing ? `\n\n${closing}` : ''}${checklistMd ? `\n\n${checklistMd}` : ''}${footer}` : '';
+  const prBody = lead0 || description || closing || checklistMd
+    ? `${lead0 ? `${lead0}\n\n` : ''}${lead}${closing ? `\n\n${closing}` : ''}${checklistMd ? `\n\n${checklistMd}` : ''}` : '';
   const pr = await createPr({
     projectDir: repoDir, base, head: feature, title: title || state.title || feature, repo, headOwner,
     baseRemote: baseR, pushRemote: pushR, workItemId, draft,
@@ -7286,7 +7295,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
     // A workspace member's PR is recorded per member; the row keeps the rollup (stats count the run once).
     if (memberKey) persistMemberPrState(pipelineIdForPr, memberKey, facts);
     else persistPrState(pipelineIdForPr, facts);
-    // Who shipped it (the footer names who STARTED the run). No actor: worca opened it (a slice's draft).
+    // Who shipped it. No actor: worca opened it (a slice's draft).
     const where = memberKey ? ` in \`${target.memberName}\`` : '';
     appendAuditById(pipelineIdForPr, `PR ${pr.existed ? 'linked' : (newDraft ? 'created (draft)' : 'created')}${where}${byActor(actor)}: ${pr.url}`, { actor });
     if (!pr.existed) announcePrOpened(pipelineIdForPr, { prUrl: pr.url, draft: newDraft, memberName: memberKey ? target.memberName : null });
@@ -7316,10 +7325,10 @@ function automationSourceIsRepo(sourceRef, baseR) {
 // from the body); baseBranch must be a well-formed ref other than the feature
 // branch; a base the base remote does not have is refused (409) before anything is pushed.
 // `body` is the "Ship it?" modal's PR description (a string of at most PR_BODY_MAX
-// characters): it becomes the PR body, the attribution footer after it. Absent,
+// characters): it becomes the PR body. Absent,
 // null or blank keeps the title-only body exactly as before. `draft` (boolean) opens a
-// new PR as a draft; the run's GitHub issue source adds a `Closes` line between the
-// description and the footer. `title` (a string of at most 256 characters) replaces the run title as the PR title;
+// new PR as a draft; the run's GitHub issue source adds a `Closes` line after the
+// description. `title` (a string of at most 256 characters) replaces the run title as the PR title;
 // blank keeps the run title.
 // ---------------------------------------------------------------------------
 const PR_TITLE_MAX = 256;
@@ -7611,7 +7620,7 @@ registerRequirementsRoutes(app, { broadcast, server, deps: {
   startRun: (body, opts) => invokeStartRun(body, null, opts),   // D6: through the run handler, as PR watch does
   runSummary: requirementsRunSummary,
 } });
-const designApi = registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal, renameThread: (id, title, from) => { try { if (askGetThread(id)?.title === String(from).slice(0, 120)) askUpdateThread(id, { title: String(title).slice(0, 120) }); } catch { /* the chat went */ } }, dropGrants: (id) => previewGrants.revokeDesign(id), versions: { list: listVersions, restore: (id, n) => restoreVersion({ designId: id, n }) }, postSystemNotice: postAskSystemNotice, thumbs: designThumbs, soundCards } });
+const designApi = registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal, renameThread: (id, title, from) => { try { const t = askGetThread(id); if (t && (t.title == null || t.title === String(from).slice(0, 120))) askUpdateThread(id, { title: String(title).slice(0, 120) }); } catch { /* the chat went */ } }, dropGrants: (id) => previewGrants.revokeDesign(id), versions: { list: listVersions, restore: (id, n) => restoreVersion({ designId: id, n }) }, postSystemNotice: postAskSystemNotice, thumbs: designThumbs, soundCards } });
 registerPreviewTokenRoute(app, { flagGate: requireFlag('design'), grants: previewGrants, getDesign, viewerOf: askViewer });
 /** These routes push notes off the machine or rewrite them: a browser page must be served by THIS Worca —
  *  isLocalRequest checks the hostname, never the port, and a body-less POST needs no CORS preflight (decision E8).
@@ -9445,7 +9454,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // (§17 Q&A 1). deterministicTitle is only the turn's fallback for an
     // empty haiku result (turn.mjs _kickoffTitle), never written here.
     const titleWasAuto = thread.title == null;
-    const deterministicTitle = titleWasAuto && !synthetic ? (askSanitizeTitle(stripIntentLead(text).slice(0, 80)) || 'New chat') : thread.title;
+    const deterministicTitle = titleWasAuto && !synthetic ? ((dChat && getDesign(dChat)?.title) || askSanitizeTitle(stripIntentLead(text).slice(0, 80)) || 'New chat') : thread.title;   // a design chat falls back to its design's title
     // P3: a synthetic row keeps the EVENT as its text (buildRestoredPrompt replays it truthfully) and carries the
     // human notice as a block the panel renders instead of a bubble.
     // Ask worca beside the page: the page a message was sent from ("on Run · Diff") leads its blocks; none for a Chat-page

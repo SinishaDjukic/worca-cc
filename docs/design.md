@@ -23,16 +23,22 @@ an HTML and JavaScript video in its own chat, and real agents build it in front 
    [Documents](#documents).
 4. **Attach files** with the button, by pasting or by dropping them: pictures, a logo, notes. A file worca does not
    take is named under the composer.
-5. **Send.** The design opens in a chat of its own, on the Chat page (see [In the chat](#in-the-chat)). Its title is
-   the first line of what you wrote (the first sentence, at most 60 characters); no model names it. **Rename** and
-   **Delete** are in the **⋯** menu over the chat. Delete is off while a build runs; it removes the design's files,
+5. **Send.** The design opens in a chat of its own, on the Chat page (see [In the chat](#in-the-chat)); the sidebar's
+   **Design** stays lit and the page is titled Design. The design's title is the first line of what you wrote (the
+   first sentence, at most 60 characters); no model names it. The chat names itself from what you wrote, as any chat
+   does, with the design's title as its fallback; a rename before that names both. **Rename** and **Delete** are in
+   the **⋯** menu over the chat. Delete is off while a build runs; it removes the design's files,
    keeps its chat, and what it cost stays in Statistics.
 
 ## In the chat
 
-A chat with a design is a chat like any other. The sidebar's **Design** is the one way in made for designing; once
-the design has started there is no difference: the chat is in the Chat lists and their search with the Design mark
-before its title, `#chat/<id>` opens it, and it can do everything a chat does (runs, schedules, settings, MCP
+A chat with a design is a chat like any other. The sidebar's **Design** is the one way in made for designing, and it
+stays lit while a chat with a design is on screen, however you opened it (a design chat picked from the list lights it
+while it loads). Beside Design the chats list is headed **Design chats** and holds only chats with a design, the ones a
+chat's own request started included; its View, counts and Archived work on those, and its **New** starts a new design
+(the design start, as the sidebar's Design opens it). It stays open or folded as you left it, as on Chat, and Chat,
+a new chat or a chat with no design lists every chat again. Otherwise there is no difference once the design has
+started: the chat is in the Chat lists and their search with the Design mark before its title, `#chat/<id>` opens it, and it can do everything a chat does (runs, schedules, settings, MCP
 servers, skills, commands, its own title and suggestions, any engine). What the design adds:
 
 - **Its cards are the chat's.** The design's questions, the sound card and each round's row with **Back to before

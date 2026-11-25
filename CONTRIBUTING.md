@@ -36,7 +36,7 @@ Requirements:
   Everything else, including the full test suite, works without it.
 
 ```bash
-git clone https://github.com/SinishaDjukic/worca-cc.git
+git clone https://github.com/worca-org/worca.git
 cd worca-cc          # the default branch is dev
 npm install
 ```
@@ -134,7 +134,7 @@ The container image ([`docs/docker.md`](docs/docker.md)) is built from the
 `npm pack` tarball, so it is a test of the *package*, not the source tree:
 
 ```bash
-npm run docker:build        # packs this checkout, builds ghcr.io/sinishadjukic/worca:dev
+npm run docker:build        # packs this checkout, builds ghcr.io/worca-org/worca:dev
 npm run docker:smoke        # offline: CLI mock run, UI health + Host guard, SIGTERM, volume
 ```
 
@@ -192,6 +192,13 @@ graduate and remove one: [`docs/feature-flags.md`](docs/feature-flags.md).
 
 ## Pull request workflow
 
+- **An issue comes first.** Every PR names the issue it belongs to in its description:
+  `Closes #123`, or `Refs #123` when the issue should stay open. No issue yet? Open one
+  and say what the change is for. The **Linked issue** check fails without it; a
+  maintainer can add the `no-issue` label for a PR that needs none (a typo fix, a release).
+- Area labels (`area:chat`, `area:runs`, `area:shaper`, …) are added automatically from the
+  feature folders the PR touches. The mapping is the `AREAS` list in
+  [`.github/scripts/pr-context.cjs`](.github/scripts/pr-context.cjs).
 - Branch from `dev`, open the PR with **base `dev`**.
 - PRs are integrated with **merge commits** (no squash, no rebase-merge).
 - Once a PR is under review, **never rebase or force-push it** — reviewers'

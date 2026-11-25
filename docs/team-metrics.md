@@ -4,7 +4,7 @@ Team metrics is a **git-backed, team-wide record of finished runs**. Every teamm
 Worca has a project enabled writes one small JSON file per finished run to an orphan branch
 (`worca-metrics`) on the project's own `origin` remote. There is no separate metrics server:
 the branch itself is the shared store, fetched and pushed like any other git ref. A **Team
-metrics** page (sidebar, Expert level, alongside Runs and Statistics) reads that branch back and
+metrics** page (sidebar, Expert level, in the Insights group with Statistics) reads that branch back and
 aggregates spend, runs, duration, autonomy and review cycles per project or per workspace.
 
 For one project or workspace and a range (This month, Last month, Quarter, Year, All time or

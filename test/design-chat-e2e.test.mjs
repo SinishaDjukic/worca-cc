@@ -42,8 +42,9 @@ test('first build: chat → engine → page, with no AI after it', async () => {
   await new Promise((res) => setTimeout(res, 200));
   const after2 = await call('GET', `/api/ask/threads/${d.threadId}`);
   assert.equal(after2.body.messages.length, rows, 'no AI turn after the build');
-  // Titled from the design at creation, so no title call; a suggestion follows the setting as in any chat (off here).
-  assert.equal(frames.some((f) => f.threadId === d.threadId && f.type === 'ask-title'), false);
+  // The first message titles the chat as any chat's does; the mock's title call names nothing, so the design's own title
+  // is the fallback. A suggestion follows the setting as in any chat (off here).
+  assert.deepEqual(frames.filter((f) => f.threadId === d.threadId && f.type === 'ask-title').map((f) => f.title), ['ShipRadar']);
   ws.close();
 });
 test('a chat turn cannot start a second build', async () => {

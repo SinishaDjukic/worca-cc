@@ -7096,23 +7096,20 @@ function stepDeps(ctx, pq) {
   return { doc: ctx.doc || document, run: r, title: stepTitle(pq, who), chip: stepChip(pq, r) };
 }
 
-/** Small runs C3 (D12, D13): a stop's extra deps. A stop is answered on the feature card only: the run side panel and the
- *  run page (`readOnly`) draw only its findings; with the flag on the run page (`runPage`) also names the stop and links
- *  where it is answered (`home`: the feature's card in Chat when a thread started it, else the feature page); an answer held for another run's turn (the feature view's `stop.held`,
- *  read through the slice info) draws the one answered line. */
+/** Small runs C3 (D12, D13): a stop's extra deps. A stop is answered on every surface: the feature card, the feature
+ *  page, the run page and the run side panel (`runPage` there: the head's one-column marker); with the flag off, the run
+ *  page and panel (`readOnly`) draw its findings only. An answer held for another run's turn (the feature view's
+ *  `stop.held`, read through the slice info) draws the one answered line. */
 function stopDeps(ctx, pq, panel) {
   if (!pq || !pq.stop) return {};
   const r = ctx.run;
-  const readOnly = !!(panel.closest && panel.closest('[data-presentation="panel"], #run-detail'));
+  const small = flagOn('shaperSmallRuns');
+  const runScreen = !!(panel.closest && panel.closest('[data-presentation="panel"], #run-detail'));
   const repaint = () => { if (panel.isConnected && r.pendingQuestion === pq) renderQpanel(r, panel.parentElement); };
   const info = r && r.pipelineId ? sliceInfoFor(r.pipelineId, repaint) : null;
   const held = info && info.stop && info.stop.held ? { value: info.stop.value } : null;
   const pick = typeof panel.__stopPick === 'string' ? panel.__stopPick : null;   // the person's pick across a repaint
-  const runPage = flagOn('shaperSmallRuns') && !!panel.closest?.('#run-detail') && !panel.closest('[data-presentation="panel"]');
-  const at = runPage && r && r.pipelineId ? stopHomeFor(r.pipelineId, repaint, pq.id) : null;
-  const home = !at ? null : at.threadId ? { href: `#chat/${encodeURIComponent(at.threadId)}`, text: "the feature's card in Chat" }
-    : { href: `#feature/${encodeURIComponent(at.featureId)}`, text: 'the feature page' };
-  return { readOnly, ...(runPage ? { runPage: true, home } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}) };
+  return { readOnly: !small && runScreen, ...(small && runScreen ? { runPage: true } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}) };
 }
 
 /** A stop's held state as read from its slice info: '' when nothing is held. */
@@ -25434,12 +25431,30 @@ async function histCostOverride(projectDir, id, record, btn) {
 
 // Paint the post-PR mergeability pill. MERGEABLE -> green, CONFLICTING -> red,
 // UNKNOWN -> amber "checking…" (GitHub computes mergeability asynchronously).
-function setMergePill(el, mergeable) {
+// `owner` (mergePillOwner) names the run (and member) the value belongs to: a paint for anything else clears it.
+function setMergePill(el, mergeable, owner) {
   const m = String(mergeable || 'UNKNOWN').toUpperCase();
+  el.dataset.mergeFor = owner;
   el.hidden = false;
   if (m === 'MERGEABLE') { el.className = 'hist-merge ok'; el.textContent = 'can merge'; }
   else if (m === 'CONFLICTING') { el.className = 'hist-merge bad'; el.textContent = 'conflicts'; }
   else { el.className = 'hist-merge unknown'; el.textContent = 'merge: checking…'; }
+}
+
+const mergePillOwner = (record, memberKey = null) => `${record.projectKey}/${record.id}${memberKey ? `#${memberKey}` : ''}`;
+function clearMergePill(el) {
+  el.hidden = true;
+  el.className = 'hist-merge';
+  el.textContent = '';
+  delete el.dataset.mergeFor;
+}
+/** The header pill only ever shows what the open run's OPEN PR was told (a ship, its re-check). Every PR paint
+ *  clears it for another run's value and for a merged or closed PR, which is final: nothing is left to merge. */
+function paintHdMergePill(screen, record) {
+  const el = screen.querySelector('.hd-row1 .hist-merge');
+  if (!el) return;
+  if (el.dataset.mergeFor === mergePillOwner(record) && prStateOf(record.pr) === 'OPEN') return;
+  clearMergePill(el);
 }
 
 // GitHub computes PR mergeability asynchronously, so a freshly-opened PR comes back
@@ -25453,9 +25468,12 @@ function prMergeRecheckMs() {
   return Number.isFinite(o) && o >= 0 ? o : PR_MERGE_RECHECK_MS;
 }
 
-function scheduleMergeRecheck(mergeEl, body) {
+function scheduleMergeRecheck(mergeEl, body, owner) {
+  // A Refresh rebuilt the card, or the pill now belongs to another run / the PR was merged or closed (a paint
+  // cleared its owner): the stale answer is dropped.
+  const owned = () => !!mergeEl && mergeEl.isConnected && mergeEl.dataset.mergeFor === owner;
   const t = setTimeout(async () => {
-    if (!mergeEl || !mergeEl.isConnected) return;   // a Refresh rebuilt the card — stale timer no-ops
+    if (!owned()) return;
     let mergeable = 'UNKNOWN';
     try {
       const res = await fetch('/api/pr/mergeable', {
@@ -25464,10 +25482,10 @@ function scheduleMergeRecheck(mergeEl, body) {
       const data = await safeJson(res);               // safeJson -> {} on non-JSON, never null
       if (res.ok && data) mergeable = data.mergeable;
     } catch { /* network error -> treat as still unknown -> hide below */ }
-    if (!mergeEl.isConnected) return;                 // a Refresh during the await -> no-op
+    if (!owned()) return;                             // the detail moved on during the await -> no-op
     const m = String(mergeable || 'UNKNOWN').toUpperCase();
-    if (m === 'MERGEABLE' || m === 'CONFLICTING') setMergePill(mergeEl, m);
-    else mergeEl.hidden = true;                        // still checking -> drop the stuck pill
+    if (m === 'MERGEABLE' || m === 'CONFLICTING') setMergePill(mergeEl, m, owner);
+    else clearMergePill(mergeEl);                      // still checking -> drop the stuck pill
   }, prMergeRecheckMs());
   // Node test runner: the timer keeps the loop alive; unref it where supported.
   // Real browser setTimeout returns a number (no .unref) -> the guard makes this a no-op.
@@ -26690,11 +26708,11 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
         void paintHdSavePreset(screen, histDetailState.data);
         const mergeEl = screen.querySelector('.hist-merge');
         if (mergeEl) {
-          setMergePill(mergeEl, dd.mergeable);
+          setMergePill(mergeEl, dd.mergeable, mergePillOwner(record));
           // GitHub computes mergeability asynchronously; re-check once so the
           // "checking…" pill never sticks.
           if (String(dd.mergeable || 'UNKNOWN').toUpperCase() === 'UNKNOWN') {
-            scheduleMergeRecheck(mergeEl, { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id });
+            scheduleMergeRecheck(mergeEl, { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id }, mergePillOwner(record));
           }
         }
       }
@@ -26976,9 +26994,10 @@ function paintWsMergePills(record, rows) {
     if (!r.mergeable) continue;
     const pill = screen.querySelector(`.hd-pr-repo[data-member-key="${cssEscape(r.member.memberKey)}"] .hist-merge`);
     if (!pill) continue;
-    setMergePill(pill, r.mergeable);
+    const owner = mergePillOwner(record, r.member.memberKey);
+    setMergePill(pill, r.mergeable, owner);
     if (String(r.mergeable).toUpperCase() === 'UNKNOWN') {
-      scheduleMergeRecheck(pill, { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id, memberKey: r.member.memberKey });
+      scheduleMergeRecheck(pill, { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id, memberKey: r.member.memberKey }, owner);
     }
   }
 }
@@ -27945,6 +27964,7 @@ function paintHdPr(screen, record, data) {
   if (!btn.querySelector('.ic')) setCtaContent(btn, 'pr-create', CREATE_PR_LABEL);
   const repos = screen.querySelector('.hd-pr-repos');
   if (repos) { repos.hidden = true; repos.replaceChildren(); }
+  paintHdMergePill(screen, record);
   if (!(gitOn() && isGitRun(hdRunOf(record, data)))) { paintHdPush(screen, null); return; }
   if (paintHdPush(screen, record)) return;   // a run on its source branch ships by Push, never a PR
   // Legacy workspace rows / minimal deep-link records (no members) keep the single path.
@@ -28006,11 +28026,14 @@ function hdWsRepoItem(m) {
   li.append(name, ' ');
   if (prLive(m.pr)) {
     li.appendChild(prRepoLink(m.pr));
-    const pill = document.createElement('span');     // post-ship mergeability, like the single header pill
-    pill.className = 'hist-merge';
-    pill.dataset.minLevel = 'expert';
-    pill.hidden = true;
-    li.appendChild(pill);
+    // Post-ship mergeability, like the single header pill; a merged or closed PR is final and gets none.
+    if (prStateOf(m.pr) === 'OPEN') {
+      const pill = document.createElement('span');
+      pill.className = 'hist-merge';
+      pill.dataset.minLevel = 'expert';
+      pill.hidden = true;
+      li.appendChild(pill);
+    }
   } else {
     const note = document.createElement('span');
     note.className = 'hd-pr-repo-note';
@@ -28936,17 +28959,21 @@ function hdCanTry(record, st, retained, provisional) {
 
 /** [{ key, name, rec, published, resolving, prOpen }] from the detail state; a row-level summary newer than the
  *  detail wins (no file list then). `published`: the branch's last recorded push. `prOpen`: the branch has an open
- *  PR, whose Overview row owns the pipeline Resolve. */
+ *  PR, whose Overview row owns the pipeline Resolve. A branch whose PR is merged or closed is final: it is left out
+ *  (after a squash merge it would always read "behind, merges cleanly"), so it gets no line and no automatic check. */
+const BASE_PR_FINAL = new Set(['MERGED', 'CLOSED']);
 function hdBaseMembers(record, data) {
   const st = (data && data.state) || {};
   if (st.target === 'workspace') {
     const names = new Map((st.projects || []).map((p) => [p.projectKey, p.projectName]));
     const rows = new Map(((record && record.members) || []).map((m) => [m.memberKey, m]));
     return Object.entries(st.branches || {}).filter(([, br]) => br && br.feature && br.branchKept !== false && !br.branchDeleted)
+      .filter(([key]) => !BASE_PR_FINAL.has(prStateOf(rows.get(key) && rows.get(key).pr)))
       .map(([key, br]) => ({ key, name: names.get(key) || key, rec: newerBaseCheck(br.baseCheck, rows.get(key) && rows.get(key).baseCheck),
         published: br.published || null, resolving: !!br.baseResolve, prOpen: prStateOf(rows.get(key) && rows.get(key).pr) === 'OPEN' }));
   }
   const br = st.branch || {};
+  if (BASE_PR_FINAL.has(prStateOf(record && record.pr))) return [];
   return br.feature ? [{ key: null, name: null, rec: newerBaseCheck(br.baseCheck, record && record.baseCheck),
     published: br.published || null, resolving: !!br.baseResolve, prOpen: prStateOf(record && record.pr) === 'OPEN' }] : [];
 }
@@ -35961,6 +35988,7 @@ const designChatHost = {
       createChat: createDesignChat, showStage: () => showDesignStage(threadId), setTitle, setComposer,
       onCards: () => designChatCards.repaint(), onDeleted: () => askPanel?.setDesign(threadId, null) });
     designStudio = { threadId, studio };
+    repaintChatNav();                 // a design chat is the sidebar's Design
     designKind?.ready(threadId);      // a Design tab the panel mounted before the studio existed
     toolPanel?.onContextChange();     // a design chat's tools open in its design's folder (toolPageContext chatDesign)
     void showDesignStage(threadId);   // the design shows beside its chat
@@ -35971,7 +35999,7 @@ const designChatHost = {
     const page = createDesignStartPage({ doc: document, win: window, host: slot, fetch: (...a) => fetch(...a), navigate: designNavigate, setComposer });
     designStudio = { threadId: null, studio: page };
   },
-  unmount() { const d = designStudio; designStudio = null; d?.studio.destroy(); if (d) designChatCards.repaint(); },
+  unmount() { const d = designStudio; designStudio = null; d?.studio.destroy(); if (d) { designChatCards.repaint(); repaintChatNav(); } },
 };
 onFlagChange('design', (on) => { if (!on && currentView() === 'design') showView('chat', ''); updateNavCounts(); });
 
@@ -36601,7 +36629,8 @@ function runsHistItem(p) {
     checks: typeof p.checks === 'number' ? p.checks : null,
     changes: folder ? { state: (p.changes && p.changes.state) || 'pending' } : null,
     files: folder ? (fc ? fc.total : null) : (typeof p.files === 'number' ? p.files : null),
-    base: gitOn() ? baseRowNote(p.baseCheck) : '',
+    // A merged or closed PR is final (the server leaves it out of the summary; a live PR state newer than the stored one too).
+    base: gitOn() && (hasWsMembers(p) || !BASE_PR_FINAL.has(prStateOf(p.pr))) ? baseRowNote(p.baseCheck) : '',
     tags: p.tags || [],
     labels: flagOn('runLabels') ? (p.labels || []) : [],
     run: histRun(p),
@@ -38651,9 +38680,10 @@ function chatRunPanelContext() {
 }
 
 // chatDeps.openRunPanel (CONTRACT §3/§6): ref = {runId?, pipelineId?, projectKey?, workspaceId?},
-// opts = {tab?}. A live run opens by its run id (a pipeline id finds its live run); anything else by its
-// pipeline id, whose project key is remembered so the saved run opens before History lists it.
-function openChatRunPanel(ref = {}, { tab = '' } = {}) {
+// opts = {tab?, threadId?}. A live run opens by its run id (a pipeline id finds its live run); anything else by its
+// pipeline id, whose project key is remembered so the saved run opens before History lists it. `threadId` opens the
+// panel beside that chat (the Chat home's run tile: the chat that follows the run); else beside the chat on screen.
+function openChatRunPanel(ref = {}, { tab = '', threadId = null } = {}) {
   // D23 first: a chat card's ref carries BOTH ids (run-card.mjs runRefOf), and its run id may be a superseded paused
   // copy or a run a restarted server no longer knows. The pipeline id names the current lineage.
   let id = '';
@@ -38680,7 +38710,7 @@ function openChatRunPanel(ref = {}, { tab = '' } = {}) {
     const t = crpResolve(id);
     if ((t.kind === 'saved' ? t.id : t.runId) === crp.id) return;
   }
-  const hash = runPanel.chatPanelHash(crpThreadParam(), id, String(tab || ''));
+  const hash = runPanel.chatPanelHash(threadId && CHAT_THREAD_RE.test(threadId) ? threadId : crpThreadParam(), id, String(tab || ''));
   if (location.hash.slice(1) === hash) { routeChatRunPanel(runPanel.panelSegments(hash.slice('chat/'.length))); return; }
   location.hash = hash;
 }
@@ -38901,7 +38931,7 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     // The full page draws the waiting question right under its header, on every tab: an Answer that only scrolls to it
     // is noise there. The Chat panel keeps it.
     // The Prototype ask is answered on the feature card only: the panel has no Answer for it either.
-    // Small runs C3 (D12): a stop is answered on the feature card only, as the Prototype ask.
+    // Small runs C3 (D12): a stop's card draws its own primary on the page and in the panel: no bar Answer beside it.
     skip: [...MENU_ACTIONS, ...HEAD_ACTIONS, ...(screen.dataset.presentation === 'panel' && !(r.pendingQuestion && (r.pendingQuestion.kind === 'prototype' || r.pendingQuestion.stop)) ? [] : ['answer'])],
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
@@ -41971,15 +42001,7 @@ function showView(name, param = '') {
   refreshAllCounts();        // every view switch re-reads the authoritative counts
 
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== viewSection(name)));
-  // A new design opens on the Chat page (#chat/new/design) but is the sidebar's Design: that row is lit, not Chat's.
-  const navSection = name === 'chat' && /^new\/design(?:\/|$)/.test(String(param || '')) ? 'design' : viewSection(name);
-  navLinks.forEach((b) => {
-    const on = b.dataset.nav === navSection;
-    b.classList.toggle('active', on);
-    if (on) b.setAttribute('aria-current', 'page');
-    else b.removeAttribute('aria-current');
-  });
-  paintTopnavTitle(navSection === 'design' ? 'design' : name);
+  paintNav(name, param);
   howItWorks.syncRoute(name);
   setMobileNavOpen(false);   // any route (a drawer tap, back/forward, a deep link) puts the drawer away
   // Any route puts the Actions flyout away (a click inside it already did).
@@ -42438,6 +42460,32 @@ for (const t of ['input', 'change', 'click']) {
   document.getElementById('run-form')?.addEventListener(t, () => setTimeout(paintHiddenSettings, 0));
 }
 
+/** The sidebar row a route lights. A design lives on the Chat page but is the sidebar's Design: a new design's start
+ *  (#chat/new/design) and a chat whose design is on screen light Design and title the page Design, not Chat. */
+function navSectionOf(name, param) {
+  if (name !== 'chat') return viewSection(name);
+  const p = String(param || '');
+  if (/^new\/design(?:\/|$)/.test(p)) return 'design';
+  const thread = p.split('/')[0];
+  // A design chat still loading reads its chats-list row, so Design stays lit from one design chat to the next.
+  return thread && (designStudio?.threadId === thread || askPanel?.designChatLoading(thread)) ? 'design' : 'chat';
+}
+function paintNav(name, param) {
+  const navSection = navSectionOf(name, param);
+  askPanel?.setListDesigns(name === 'chat' && navSection === 'design');   // beside Design, the chats list holds design chats only
+  navLinks.forEach((b) => {
+    const on = b.dataset.nav === navSection;
+    b.classList.toggle('active', on);
+    if (on) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
+  paintTopnavTitle(navSection === 'design' ? 'design' : name);
+}
+/** A design chat's design mounted or left after the route painted (the chat loads first): light the row again. */
+function repaintChatNav() {
+  if (currentShownView === 'chat') paintNav('chat', parseHash()[1]);
+}
+
 // Nav clicks only update the hash; the single hashchange listener drives
 // showView so each navigation runs it exactly once (no double /api/runs fetch).
 navLinks.forEach((b) =>
@@ -42655,13 +42703,14 @@ function enterChatView(param = '', prevView = null) {
 /** The panel moved to another chat (a History row, New chat, a first send, a deleted chat): the address follows —
  *  pushed, so Back returns to the previous chat, or swapped (`replace`: a first send, a chat that is gone). Only
  *  while Chat shows; the echo (hashchange → enterChatView → open) is a no-op for the chat already shown. */
-function chatRoute(threadId, { replace = false } = {}) {
+function chatRoute(threadId, { replace = false, design = false } = {}) {
   if (currentShownView !== 'chat') return;
   // A swapped address keeps an open run panel's tail (P4): #chat/new/run/<id>/logs → #chat/<id>/run/<id>/logs.
   const [, cur] = parseHash();
   const parts = String(cur || '').split('/');
   const tail = replace && parts[1] === 'run' ? `/${parts.slice(1).join('/')}` : '';
-  const target = threadId ? `chat/${threadId}${tail}` : (tail ? `chat/new${tail}` : 'chat');
+  // design: a new design's start (the chats list's New beside Design), as the sidebar's Design opens it.
+  const target = design ? 'chat/new/design' : threadId ? `chat/${threadId}${tail}` : (tail ? `chat/new${tail}` : 'chat');
   if (location.hash.slice(1) === target) return;
   if (replace) {
     try { window.history.replaceState(null, '', `#${target}`); } catch { /* sandboxed */ }

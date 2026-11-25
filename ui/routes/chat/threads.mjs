@@ -116,7 +116,8 @@ app.get('/api/ask/threads', (req, res) => {
     if (show) {
       const sort = THREAD_SORTS.includes(req.query.sort) ? req.query.sort : 'activity';
       const needIds = [...askFollowers.keys()].filter((tid) => askWaitingCount(tid) > 0);
-      const base = { visibleTo, mode, query };
+      // designs=1: the column beside Design lists only chats with a design; `total` and `counts` count those too.
+      const base = { visibleTo, mode, query, designs: req.query.designs === '1' };
       const page = askListThreadsPage({ ...base, limit, sort, cursor, show: show === 'needs' ? 'all' : show, ids: show === 'needs' ? needIds : null });
       const counts = {
         all: askCountThreads({ ...base, show: 'all' }),

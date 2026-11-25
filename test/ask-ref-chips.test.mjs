@@ -8,7 +8,7 @@ import { createMarkdownRenderer } from '../ui/public/ask-markdown.mjs';
 import { createRefChips, workItemTone } from '../ui/public/ask-ref-chips.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const PR = 'https://github.com/SinishaDjukic/worca-cc/pull/777';
+const PR = 'https://github.com/worca-org/worca/pull/777';
 const UUID = '0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0';
 const realLoad = async () => ({ marked: (await import('marked')).marked, createDOMPurify: (await import('dompurify')).default });
 
@@ -42,10 +42,10 @@ async function world({ results = {}, store = null, fail = false, visible } = {})
 
 test('ask-ref-chips: a rendered answer turns its refs into chips, never inside code', async () => {
   const w = await world();
-  const div = w.answer([`I opened ${PR}, see SinishaDjukic/worca-cc#12 and [the run](#history/worca-cc-ace1a602/1a2b3c4d), [#13](https://github.com/o/r/pull/13).`,
+  const div = w.answer([`I opened ${PR}, see worca-org/worca#12 and [the run](#history/worca-cc-ace1a602/1a2b3c4d), [#13](https://github.com/o/r/pull/13).`,
     '', '`owner/repo#5` and', '', '```', 'acme/api#6 5c40dcc6', '```'].join('\n'));
   const chips = [...div.querySelectorAll('a.ask-ref-chip')];
-  assert.deepEqual(chips.map((a) => a.querySelector('.ask-ref-label').textContent), ['SinishaDjukic/worca-cc#777', 'SinishaDjukic/worca-cc#12', '#1a2b3c4d', 'o/r#13']);
+  assert.deepEqual(chips.map((a) => a.querySelector('.ask-ref-label').textContent), ['worca-org/worca#777', 'worca-org/worca#12', '#1a2b3c4d', 'o/r#13']);
   assert.equal(chips[3].querySelector('.ask-ref-title').hidden, true, 'link words that only repeat the ref are no title');
   assert.equal(chips[0].getAttribute('href'), PR);
   assert.equal(chips[0].getAttribute('target'), '_blank');
@@ -89,7 +89,7 @@ test('ask-ref-chips: a prototype-named state paints no pill and never throws', a
 
 test('ask-ref-chips: one batched lookup after the answer is done; titles, pills and confirmed run ids fill in', async () => {
   const w = await world({ results: {
-    'gh:SinishaDjukic/worca-cc#777': { ok: true, kind: 'pr', title: 'fix(promo-kit): startApp.stop() waits for the process group to die', state: 'merged' },
+    'gh:worca-org/worca#777': { ok: true, kind: 'pr', title: 'fix(promo-kit): startApp.stop() waits for the process group to die', state: 'merged' },
     'adowi:acme#123': { ok: true, kind: 'workitem', title: 'Login loops', state: 'Active', type: 'Bug' },
     'run:5c40dcc6': { ok: true, kind: 'run', id: '5c40dcc6', runId: null, title: 'Chips plan', status: 'done', home: 'worca-cc-ace1a602' },
     'chat:ask_1a2b3c4d': { ok: true, kind: 'chat', title: 'Release notes' },
@@ -105,13 +105,13 @@ test('ask-ref-chips: one batched lookup after the answer is done; titles, pills 
   assert.equal(w.calls.length, 2, 'worca refs and forge refs go in two requests');
   assert.deepEqual(w.calls.map((c) => c.body.refs.sort()), [
     ['chat:ask_1a2b3c4d', 'run:5c40dcc6', 'run:deadbeef'],
-    ['adowi:acme#123', 'gh:SinishaDjukic/worca-cc#777'],
+    ['adowi:acme#123', 'gh:worca-org/worca#777'],
   ]);
   const [pr, wi, run, chat] = [...div.querySelectorAll('a.ask-ref-chip')];
   assert.equal(pr.querySelector('.ask-ref-title').textContent, 'fix(promo-kit): startApp.stop() waits for the process group to die');
   assert.equal(pr.querySelector('.ask-ref-pill').textContent, 'Merged');
   assert.ok(pr.querySelector('.ask-ref-pill').classList.contains('tone-slate'));
-  assert.match(pr.title, /^GitHub pull request SinishaDjukic\/worca-cc#777 · fix\(promo-kit\)/);
+  assert.match(pr.title, /^GitHub pull request worca-org\/worca#777 · fix\(promo-kit\)/);
   assert.deepEqual([wi.querySelector('.ask-ref-label').textContent, wi.querySelector('.ask-ref-pill').textContent], ['AB#123', 'Active']);
   assert.equal(run.getAttribute('href'), '#history/worca-cc-ace1a602/5c40dcc6', 'a confirmed bare id links to its run page');
   assert.equal(run.querySelector('.ask-ref-pill').textContent, 'Done');
@@ -172,7 +172,7 @@ test('ask-ref-chips: a failed lookup leaves tidy plain chips and never throws', 
   assert.equal(a.querySelector('.ask-ref-title').hidden, true);
   assert.equal(a.querySelector('.ask-ref-pill').hidden, true);
   assert.equal(b.querySelector('.ask-ref-title').textContent, 'the fix', 'the link words survive a failed lookup');
-  assert.equal(div.textContent.trim(), 'SinishaDjukic/worca-cc#777  and o/r#9 · the fix  and run 5c40dcc6', 'copy and Pinpoint read real words');
+  assert.equal(div.textContent.trim(), 'worca-org/worca#777  and o/r#9 · the fix  and run 5c40dcc6', 'copy and Pinpoint read real words');
 });
 
 test('ask-ref-chips: run chips follow the run store; an unfinished REST run is re-read on tick', async () => {

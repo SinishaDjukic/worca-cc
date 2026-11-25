@@ -33,7 +33,8 @@ app.post('/api/answer', (req, res) => {
     // Gate 3 (ask forms, spec §5): the answer was validated and refused, so the
     // question stays OPEN and the client gets the field errors to mark up. Every
     // other failure keeps its 500.
-    if (err && err.code === 'STOP_HELD') return res.status(409).json({ error: err.message });
+    if (err && err.code === 'STOP_HELD') return res.status(409).json({ error: err.message, code: 'STOP_HELD' });
+    if (err && err.code === 'STOP_ANSWERED') return res.status(409).json({ error: err.message, code: 'STOP_ANSWERED' });   // one stop, one answer
     if (err && err.code === 'STALE') return res.status(409).json({ error: err.message, code: 'STALE' });   // a stop that changed under the answer
     if (err && err.code === 'INVALID_ANSWER') {
       return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
@@ -65,7 +66,8 @@ app.post('/api/runs/:id/answer', (req, res) => {
       ...(source !== undefined ? { source } : {}) }, actorOf(req));
     res.json({ ok: true, ...(out && out.held ? { held: true } : {}) });
   } catch (err) {
-    if (err && err.code === 'STOP_HELD') return res.status(409).json({ error: err.message });
+    if (err && err.code === 'STOP_HELD') return res.status(409).json({ error: err.message, code: 'STOP_HELD' });
+    if (err && err.code === 'STOP_ANSWERED') return res.status(409).json({ error: err.message, code: 'STOP_ANSWERED' });   // one stop, one answer
     if (err && err.code === 'STALE') return res.status(409).json({ error: err.message, code: 'STALE' });   // a stop that changed under the answer
     if (err && err.code === 'INVALID_ANSWER') {
       return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });

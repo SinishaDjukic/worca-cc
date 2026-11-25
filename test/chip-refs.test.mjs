@@ -7,13 +7,13 @@ import { checkRows } from './helpers/rows.mjs';
 import { refFromHref, refsInText, parseRefKey } from '../src/shared/chip-refs.mjs';
 import { ASK_SYSTEM_RULES } from '../src/core/ask/prompt.mjs';
 
-const PR = 'https://github.com/SinishaDjukic/worca-cc/pull/777';
+const PR = 'https://github.com/worca-org/worca/pull/777';
 const UUID = '0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0';
 
 test('chip refs: links, text and keys (src/shared/chip-refs.mjs)', async () => {
   await checkRows([
     { name: 'GitHub PR and issue URLs, with tails; never another host or a zero', run: () => {
-      assert.equal(refFromHref(PR).key, 'gh:SinishaDjukic/worca-cc#777');
+      assert.equal(refFromHref(PR).key, 'gh:worca-org/worca#777');
       assert.equal(refFromHref(`${PR}/files`).type, 'pr');
       assert.equal(refFromHref('https://github.com/o/r/issues/12#issuecomment-1').type, 'issue');
       for (const h of ['https://github.com/o/r/pull/0', 'https://gist.github.com/o/r/pull/3', 'https://github.com/o/r/discussions/3', 'mailto:a@b.c']) assert.equal(refFromHref(h), null, h);
@@ -36,8 +36,8 @@ test('chip refs: links, text and keys (src/shared/chip-refs.mjs)', async () => {
     } },
     { name: 'text: owner/repo#N, ask_ ids, and 8-hex run CANDIDATES — never inside a sha, a path, a file name or another id', run: () => {
       const keys = (t) => refsInText(t).map((x) => [x.ref.key, !!x.ref.candidate]);
-      assert.deepEqual(keys('see SinishaDjukic/worca-cc#777, run 5c40dcc6 and ask_1a2b3c4d.'),
-        [['gh:SinishaDjukic/worca-cc#777', false], ['run:5c40dcc6', true], ['chat:ask_1a2b3c4d', false]]);
+      assert.deepEqual(keys('see worca-org/worca#777, run 5c40dcc6 and ask_1a2b3c4d.'),
+        [['gh:worca-org/worca#777', false], ['run:5c40dcc6', true], ['chat:ask_1a2b3c4d', false]]);
       assert.deepEqual(keys('sha 527edc25f69c, file abcd1234.json, x/abcd1234, #history/k/abcd1234, ask_1a2b3c4d5, PR #777, AB#123, a/b#0'), []);
     } },
     { name: 'the Chat prompt asks for the full forms, and each one it names is a chip while each bare one it forbids is not', run: () => {
