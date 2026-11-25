@@ -410,7 +410,8 @@ export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentMod
         '`~/.claude/skills`) can be invoked via the Skill tool — by you AND by the sub-agents you spawn — ' +
         'use any that fit (e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n') +
     'Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a ' +
-    'trivial, single-file change.\n\n' +
+    'trivial, single-file change. A short diff or a short brief is not a reason to skip: what a change missed is ' +
+    'outside it.\n\n' +
     'Send every dispatch in ONE message with `run_in_background: false`: the lanes still run concurrently and ' +
     'all their reports come back in that same turn. Never wait for a lane or a background command with ' +
     '`sleep`, `node -e setTimeout`, a polling loop, or by reading sub-agent transcripts; a background ' +
@@ -438,7 +439,8 @@ export function codexFanOutDirective() {
     'Skills are available too: the skills listed for you (this run\'s `.agents/skills`) — read a skill\'s ' +
     '`SKILL.md` and use any that fit (e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n' +
     'Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a ' +
-    'trivial, single-file change.\n\n'
+    'trivial, single-file change. A short diff or a short brief is not a reason to skip: what a change missed is ' +
+    'outside it.\n\n'
   );
 }
 
@@ -459,7 +461,8 @@ function taskToolFanOutDirective(field, defines) {
     'Skills are available too: the skills listed for you (this run\'s `.agents/skills`) — use any that fit ' +
     '(e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n' +
     'Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a ' +
-    'trivial, single-file change.\n\n'
+    'trivial, single-file change. A short diff or a short brief is not a reason to skip: what a change missed is ' +
+    'outside it.\n\n'
   );
 }
 
@@ -1458,6 +1461,11 @@ export function renderPromptArtifact(promptText, extras = []) {
   return (
     `# Task (from the user prompt)\n\n` +
     `No upstream agent produced this artifact, so the user's request below stands in for it.\n\n` +
+    `It is a request, not a reviewed plan. Its lists of files, functions and routes are leads from whoever wrote it, ` +
+    `not the edge of the work, and its root causes may be unchecked: confirm each against the code before you build on it. ` +
+    `Where it states a goal wider than its lists ("every surface", "anywhere X is shown"), the goal wins: find every ` +
+    `place it reaches and cover each, or say why one is left out. Covering such a place is not a deviation; ` +
+    `dropping or changing what the request asks is.\n\n` +
     `## Original request\n\n${body}\n` +
     renderAttachmentsBlock(extras)
   );
