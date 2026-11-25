@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Worca moved to worca-org
+
+- Worca moved to [github.com/worca-org/worca](https://github.com/worca-org/worca). Old links, clones and forks keep working.
+- Update your remote: `git remote set-url origin https://github.com/worca-org/worca`.
+- The image is now `ghcr.io/worca-org/worca`. Change `image:` in your compose file.
+- The old name, `ghcr.io/sinishadjukic/worca`, gets the same releases for a while. A later release says when it stops. Older versions stay there.
+- The built-in plugin marketplace moves with the repo. Plugins installed from it keep their update notices.
+- To check an image signature, accept both repositories: see [Verify](docs/docker.md).
+
 ### No silent Claude Code default model (#1450)
 
 - **An empty role now runs Worca's default**, not the CLI's own: Opus 5.5 / Sonnet 5.5 / Haiku 5.5 on Claude Code, and models derived by tier on Codex. No settings are migrated. A new per-role choice, **Let Claude Code decide** (Codex: **Let Codex decide**), keeps the old behaviour. On the other harnesses (and Claude Code signed out) Models › Jobs, the run card and the run log say the tool decides. See [When a role is empty](docs/models.md#when-a-role-is-empty).

@@ -786,8 +786,8 @@ test('#1067 a staged row\'s fill moves in place: the state replay after a first 
 });
 
 // ── PR fix rounds stack under their run (plans/pr-fix-rounds-stacking-plan.md, Tasks 1, 3, 4) ──
-const PR947 = { url: 'https://github.com/SinishaDjukic/worca-cc/pull/947', number: 947, state: 'OPEN', mergeable: 'CONFLICTING' };
-const REVIEW = (n) => ({ url: `https://github.com/SinishaDjukic/worca-cc/pull/${n}`, number: n, state: 'OPEN', mergeable: 'MERGEABLE' });
+const PR947 = { url: 'https://github.com/worca-org/worca/pull/947', number: 947, state: 'OPEN', mergeable: 'CONFLICTING' };
+const REVIEW = (n) => ({ url: `https://github.com/worca-org/worca/pull/${n}`, number: n, state: 'OPEN', mergeable: 'MERGEABLE' });
 const marker = (n, extra = {}) => ({ pipelineId: 'ba22d7fd', round: n, request: 'merge dev in', by: 'watch', kinds: ['conflicts'],
   outcome: { kind: 'pushed', sha: `${n}e4f5a6` }, ...extra });
 // Round n: done, its own PR chip on #947 (attachPr), finished on Sep (20 + n).

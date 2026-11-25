@@ -4,7 +4,7 @@
 # never a COPY of the source tree, so one Dockerfile serves PR builds and
 # releases and the container can never drift from the npm package.
 #
-#   npm run docker:build                     # packs + builds ghcr.io/sinishadjukic/worca:dev
+#   npm run docker:build                     # packs + builds ghcr.io/worca-org/worca:dev
 #   npm run docker:build -- --variant full   # the -full variant (python, build tools, chromium)
 #
 # Build args:
@@ -158,7 +158,7 @@ ENV HOME=/home/worca \
 
 LABEL org.opencontainers.image.title="Worca" \
       org.opencontainers.image.description="Worca — deterministic multi-agent pipeline that drives Claude Code, in a container" \
-      org.opencontainers.image.source="https://github.com/SinishaDjukic/worca-cc" \
+      org.opencontainers.image.source="https://github.com/worca-org/worca" \
       org.opencontainers.image.licenses="MIT" \
       dev.worca.claude-code.version="${CLAUDE_CODE_VERSION}" \
       dev.worca.variant="${VARIANT}"

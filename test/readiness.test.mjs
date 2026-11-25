@@ -12,7 +12,7 @@ const SHA = 'a'.repeat(40);
 const PARITY = { pass: true, timingGated: true, routeDiffs: [], visualDiffs: [], failedFlows: [],
   timings: { boot: { a: 1400, b: 1410, deltaPct: 0.7, gated: true, pass: true }, pages: { runs: { a: 300, b: 301, deltaPct: 0.3, gated: true, pass: true } } } };
 const TARGET = { kind: 'PR', number: 1049, title: 'chore(deps): bump express from 4.22.3 to 5.3.0', branch: 'dependabot/npm_and_yarn/dev/express-5.3.0',
-  head: 'd'.repeat(40), url: 'https://github.com/SinishaDjukic/worca-cc/pull/1049', ref: 'refs/readiness/pr/1049', src: 'refs/pull/1049/head' };
+  head: 'd'.repeat(40), url: 'https://github.com/worca-org/worca/pull/1049', ref: 'refs/readiness/pr/1049', src: 'refs/pull/1049/head' };
 
 const CRAWL = { pass: true, control: true, a: { spec: 'tree:base', tree: SHA }, bs: [{ spec: 'tree:mig', tree: SHA }], masks: [], minutes: 1,
   comparisons: [{ label: 'migrated', pass: true, diffs: [] }],
@@ -25,7 +25,7 @@ const pwReport = (st) => ({ suites: [{ title: 'visual.spec.mjs', specs: [{ title
 function fakeDeps({ failOpenPrs = false, noAuth = false, badSha = false, gateFailed = false, splitterMissing = false, e2eFail = null, targets = [TARGET], gone = [], afterStatus = 'unexpected', calls = [], crawl = CRAWL, parityPass = true } = {}) {
   const run = (cmd, args) => {
     if (cmd === 'git' && args.includes('rev-parse')) return { code: 0, stdout: `${badSha ? 'nope' : SHA}\n`, stderr: '' };
-    if (cmd === 'git' && args.includes('get-url')) return { code: 0, stdout: 'git@github.com:SinishaDjukic/worca-cc.git\n', stderr: '' };
+    if (cmd === 'git' && args.includes('get-url')) return { code: 0, stdout: 'git@github.com:worca-org/worca.git\n', stderr: '' };
     return { code: 0, stdout: '', stderr: '' };
   };
   const runLogged = (cmd, args, file, o = {}) => {
@@ -164,8 +164,8 @@ test('postFrom posts the run\'s report with every #ev- anchor resolved, .json ev
   const gh = (cmd, args) => {
     calls.push([cmd, ...args].join(' '));
     if (cmd === 'gh' && args[0] === 'auth') return { code: 0, stdout: '', stderr: '✓ Logged in to github.com account someone (keyring)' };
-    if (cmd === 'git' && args.includes('get-url')) return { code: 0, stdout: 'git@github.com:SinishaDjukic/worca-cc.git\n', stderr: '' };
-    if (cmd === 'gh' && args[1] === 'comment') { body = readFileSync(args[args.indexOf('--body-file') + 1], 'utf8'); return { code: 0, stdout: 'https://github.com/SinishaDjukic/worca-cc/issues/919#issuecomment-1\n', stderr: '' }; }
+    if (cmd === 'git' && args.includes('get-url')) return { code: 0, stdout: 'git@github.com:worca-org/worca.git\n', stderr: '' };
+    if (cmd === 'gh' && args[1] === 'comment') { body = readFileSync(args[args.indexOf('--body-file') + 1], 'utf8'); return { code: 0, stdout: 'https://github.com/worca-org/worca/issues/919#issuecomment-1\n', stderr: '' }; }
     if (cmd === 'gh' && args[1] === 'view') return { code: 0, stdout: body, stderr: '' };
     return { code: 1, stdout: '', stderr: 'unexpected' };
   };

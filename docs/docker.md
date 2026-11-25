@@ -37,7 +37,7 @@ verbs. `worca container help` lists everything.
 
 ```bash
 mkdir worca && cd worca
-curl -fsSLO https://raw.githubusercontent.com/SinishaDjukic/worca-cc/dev/docker/compose.yml
+curl -fsSLO https://raw.githubusercontent.com/worca-org/worca/dev/docker/compose.yml
 echo "WORCA_PROJECTS=$HOME/dev" > .env          # the folder that holds your repos
 docker compose up -d                              # UI on http://localhost:4317
 docker compose run --rm worca claude              # log Claude Code in, once
@@ -62,7 +62,7 @@ docker compose run --rm worca worca metrics push
 
 ## Images
 
-`ghcr.io/sinishadjukic/worca`, `linux/amd64` and `linux/arm64`, built from the
+`ghcr.io/worca-org/worca`, `linux/amd64` and `linux/arm64`, built from the
 same tag as the npm package with provenance, an SBOM and a keyless cosign
 signature:
 
@@ -77,10 +77,14 @@ Verify with cosign 3 or later: images are signed with cosign 3, whose new bundle
 doesn't find; cosign 3 verifies the older images too.
 
 ```bash
-cosign verify ghcr.io/sinishadjukic/worca:1.3.0 \
-  --certificate-identity-regexp 'https://github.com/SinishaDjukic/worca-cc/' \
+cosign verify ghcr.io/worca-org/worca:1.3.0 \
+  --certificate-identity-regexp '^https://github.com/(worca-org/worca|SinishaDjukic/worca-cc)/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
+
+The repository moved from `SinishaDjukic/worca-cc` to `worca-org/worca` in November 2026. Images
+built before the move were signed by the old repository's workflow, so the identity accepts both.
+Those images are under the old name, `ghcr.io/sinishadjukic/worca`, which stays available.
 
 The pinned Claude Code version is a label: `docker inspect --format '{{index .Config.Labels "dev.worca.claude-code.version"}}' <image>`.
 The CLI's own updater is off inside the image; a newer CLI is a newer image tag.
@@ -90,7 +94,7 @@ The slim image has no browser either: an Architecture (C4) run there writes SVG 
 **Your project needs a toolchain the image lacks?** Pull `-full`, or extend:
 
 ```dockerfile
-FROM ghcr.io/sinishadjukic/worca:1.3.0
+FROM ghcr.io/worca-org/worca:1.3.0
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends rustup && rm -rf /var/lib/apt/lists/*
 USER worca
@@ -419,7 +423,7 @@ by default; unreachable under the egress overlay.
 ## Building it yourself
 
 ```bash
-npm run docker:build                      # ghcr.io/sinishadjukic/worca:dev from this checkout
+npm run docker:build                      # ghcr.io/worca-org/worca:dev from this checkout
 npm run docker:build -- --variant full
 npm run docker:smoke                      # offline proof: CLI mock run, UI health, Host guard, SIGTERM, volume
 ```

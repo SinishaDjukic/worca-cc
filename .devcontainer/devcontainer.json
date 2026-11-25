@@ -1,6 +1,6 @@
 {
   "name": "Worca (contributor)",
-  "image": "ghcr.io/sinishadjukic/worca:latest",
+  "image": "ghcr.io/worca-org/worca:latest",
   "workspaceFolder": "/workspaces/worca-cc",
   "remoteUser": "worca",
   "forwardPorts": [4317],

@@ -4,7 +4,7 @@ export const SKIP = 'worca-cc-marketplace.json: plugins/x/worca-cc-plugin.json n
 const inv = (o) => ({ agents: [], scripts: [], taskSources: [], chatChannels: [], models: [], modelSecrets: [], mcpServers: [],
   skills: [], workflows: [], depCount: 0, setupCommands: [], ...o });
 export const OFFICIAL = {
-  id: 'github.com-SinishaDjukic-worca-cc-1a2b3c4d', name: 'Worca CC Official', url: 'https://github.com/SinishaDjukic/worca-cc',
+  id: 'github.com-worca-org-worca-1a2b3c4d', name: 'Worca CC Official', url: 'https://github.com/worca-org/worca',
   ref: 'dev', builtin: true, description: '', addedAt: '2026-01-01T12:00:00Z',
   lastSync: { sha: '735b354c0ffee000000000000000000000000000', at: '2026-10-20T11:57:00Z' }, lastError: null, warnings: [],
   plugins: [

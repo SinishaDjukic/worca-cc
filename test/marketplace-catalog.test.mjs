@@ -13,7 +13,7 @@ test('buildCatalog: one item per snapshot plugin in marketplace order; versions,
   assert.deepEqual([rn.iconKind, rn.counts.agents, rn.counts.skills], ['mix', 2, 1]);
   assert.deepEqual([base.version, base.marketplace], ['16b6363', { id: 'example', name: 'example/worca-marketplace', stale: true, snapshotAt: '2026-09-03T12:00:00.000Z' }]);
   assert.deepEqual(gh.source, { repoUrl: OFF.url, subdir: 'plugins/github-source', sha: OFF.lastSync.sha,
-    webUrl: `https://github.com/SinishaDjukic/worca-cc/tree/${OFF.lastSync.sha}/plugins/github-source` });
+    webUrl: `https://github.com/worca-org/worca/tree/${OFF.lastSync.sha}/plugins/github-source` });
   assert.equal(gh.entry, OFF.plugins[0]);
   const [snap] = buildCatalog([OFF], [{ ...ROWS[0], contributions: { ...ROWS[0].contributions, agents: 2 } }]);
   assert.deepEqual([snap.iconKind, snap.counts.agents], ['taskSources', 0]);   // counts come from the snapshot, never the row

@@ -16,7 +16,7 @@ One instance is three containers. Two of them come from the same image.
 
 | Container | Image | Start command | Listens on | Reached by |
 | --- | --- | --- | --- | --- |
-| `worca` | the instance image published by this repo, for example `ghcr.io/sinishadjukic/worca:<version>` | the image's own (`ENTRYPOINT tini -s -e 143 -- worca-entrypoint`, `CMD worca ui`) | `4317` (UI and API) | `cloudflared` only |
+| `worca` | the instance image published by this repo, for example `ghcr.io/worca-org/worca:<version>` | the image's own (`ENTRYPOINT tini -s -e 143 -- worca-entrypoint`, `CMD worca ui`) | `4317` (UI and API) | `cloudflared` only |
 | `broker` | the same image and tag as `worca` | `worca-entrypoint worca broker` | `8080` (private API), `8081` (key page) | `8080`: `worca` only. `8081`: `cloudflared` only |
 | `cloudflared` | `cloudflare/cloudflared:<pinned version>` | `cloudflared tunnel --no-autoupdate run` | nothing | (dials out to Cloudflare) |
 

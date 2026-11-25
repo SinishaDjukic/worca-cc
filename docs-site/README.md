@@ -44,7 +44,7 @@ One Cloudflare Worker, `worca-docs`, defined by `wrangler.jsonc` and built by
 
 | Setting | Value |
 | --- | --- |
-| Repository | `SinishaDjukic/worca-cc` |
+| Repository | `worca-org/worca` |
 | Root directory | `docs-site` |
 | Build command | `npm run build` |
 | Deploy command | `npx wrangler deploy` |
