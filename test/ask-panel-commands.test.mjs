@@ -525,3 +525,38 @@ test('with no ask-command-summary frame (what no ready model sends), the row kee
   assert.equal(s.textContent, 'cmd 1');
   ctx.panel.destroy();
 });
+
+test('summaries on: the next command of a stack only adds its row; the earlier rows and the group box stay in place, and Stop is a quiet icon', async () => {
+  const all = [cmdBlock(1, 0, 'One'), cmdBlock(2, 0, 'Two'), cmdBlock(3, 0, 'Three')];
+  const { ctx } = setup({ blocks: [] });
+  applyFlags({ commandSummaries: true }, ctx.doc);
+  ctx.panel.open();
+  await settle(ctx);
+  const say = (blocks) => {
+    ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: { id: MID, threadId: TID, seq: 2, role: 'assistant', text: '', status: 'streaming', createdAt: 't', blocks } });
+    ctx.flush();
+  };
+  say(all.slice(0, 2));
+  await settle(ctx);
+  const box = ctx.doc.querySelector('.ask-cmd-group');
+  const rows = [...ctx.doc.querySelectorAll('.ask-cmd.is-sum')];
+  assert.ok(box);
+  assert.equal(rows.length, 2);
+  const moved = [];
+  const mo = new ctx.window.MutationObserver((recs) => { for (const r of recs) for (const n of r.removedNodes) if (n.nodeType === 1) moved.push(n.dataset.blockId || n.className); });
+  mo.observe(ctx.doc.body, { childList: true, subtree: true });
+  say(all);
+  await settle(ctx);
+  mo.takeRecords();
+  mo.disconnect();
+  // Only the new row may move (built loose, then placed in the box).
+  assert.deepEqual(moved.filter((c) => /ask-cmd|:[12]$/.test(c)), [], 'no earlier row or group box was taken out and put back');
+  assert.equal(ctx.doc.querySelector('.ask-cmd-group'), box);
+  assert.equal(box.querySelectorAll('.ask-cmd.is-sum').length, 3);
+  for (const stop of ctx.doc.querySelectorAll('.ask-cmd-stop')) {
+    assert.ok(!stop.classList.contains('btn-danger'), 'never a red button');
+    assert.ok(stop.classList.contains('btn-quiet'));
+    assert.ok(stop.getAttribute('aria-label'));
+  }
+  ctx.panel.destroy();
+});
