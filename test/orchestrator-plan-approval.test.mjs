@@ -14,6 +14,9 @@ import { GRAPH_SHAPE_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 import { readPipelineForResume, readPipelineExtras } from '../src/core/artifacts.mjs';
 import { hasBlocking } from '../src/shared/graph/verdict.mjs';
 import { getDb } from '../src/core/db.mjs';
+import { createSliceFeature } from '../src/core/shape/features.mjs';
+import { resolveShapeRequest } from '../src/core/shape/run.mjs';
+import { MOCK_OUTLINE } from '../src/core/engines/mock.mjs';
 
 useTempHome(after);
 
@@ -40,19 +43,29 @@ const waitFor = async (pred, ms = 60000) => {
   throw new Error('waitFor timed out');
 };
 
-/** Start a mock run. Clarify asks are answered with no answers; plan asks go to `onPlan(q, orch)`. */
-function start(opts = {}, onPlan = () => {}) {
+/** Start a mock run. Clarify asks are answered with no answers; plan asks go to `onPlan(q, orch)`; a Care ask (Shaper small
+ *  runs B2, a marked run) goes to `opts.onCare(q, orch)`, by default Worca's pick. */
+const pickCare = (q, orch) => orch.answer(q.id, { care: { position: q.care.pick.position } });
+function start({ onCare = pickCare, ...opts } = {}, onPlan = () => {}) {
   const dir = opts.projectDir || gitDir('plan');
   const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_shape', prompt: 'demo', claude: { mock: true }, shape: SHAPE, ...opts });
   const plans = [];
   const execs = [];
+  const asked = [];
+  let unanswered;
+  const failFast = new Promise((_, reject) => { unanswered = reject; });
   orch.on('exec', (e) => execs.push(e));
   orch.on('question', (q) => {
+    asked.push(q);
+    if (q.kind === 'care') { setImmediate(() => onCare(q, orch)); return; }
     if (q.kind === 'plan') { plans.push(q); setImmediate(() => onPlan(q, orch)); return; }
-    if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+    if (q.kind === 'clarify' || q.kind === 'questions') { setImmediate(() => orch.answer(q.id, { answers: [] })); return; }
+    // C3: a marked, non-auto run whose review loop runs out stops on dev's gate ask.
+    if (q.kind === 'gate') { setImmediate(() => orch.answer(q.id, { decision: 'continue' })); return; }
+    unanswered(new Error('unanswered ask kind ' + q.kind));
   });
-  const done = opts.resume ? orch.resume() : orch.run();
-  return { orch, plans, execs, done, dir };
+  const done = Promise.race([opts.resume ? orch.resume() : orch.run(), failFast]);
+  return { orch, plans, execs, asked, done, dir };
 }
 const ran = (execs, nodeId, status) => execs.filter((e) => e.nodeId === nodeId && (!status || e.status === status));
 
@@ -340,4 +353,366 @@ test('the unshaped copy of wf_shape stores no checklist and results.json has non
   for (const r of rows) assert.equal(Object.hasOwn(r, 'checklist'), false);
   const results = JSON.parse(await readFile(join(h.orch.pipeline.dir, 'results.json'), 'utf8'));
   assert.equal(Object.hasOwn(results, 'checklist'), false);
+});
+
+// ── Shaper small runs B1: the marker stamped on the planning run when it starts (D1), and the requirements line (D6) ──
+/** Runs `fn` with WORCA_FLAGS set to `shaperSmallRuns` (on) or unset (off), restoring it afterwards. */
+async function withSmallRuns(on, fn) {
+  const prev = process.env.WORCA_FLAGS;
+  if (on) process.env.WORCA_FLAGS = 'shaperSmallRuns'; else delete process.env.WORCA_FLAGS;
+  try { return await fn(); } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
+}
+const setFlag = (on) => { if (on) process.env.WORCA_FLAGS = 'shaperSmallRuns'; else delete process.env.WORCA_FLAGS; };
+const statsOf = (pid) => JSON.parse(getDb().prepare('SELECT shape_stats FROM pipelines WHERE id = ?').get(pid)?.shape_stats || 'null');
+const approveAll = (q, orch) => orch.answer(q.id, { decision: 'approve' });
+const auditOf = (pid) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(pid).map((r) => r.text);
+/** A finished shaped run, stamped or not, and a feature whose origin it is. */
+async function featureFrom(on) {
+  const dir = gitDir(`b1-origin-${on ? 'on' : 'off'}`);
+  const h = await withSmallRuns(on, async () => { const x = start({ projectDir: dir }, approveAll); await x.done; return x; });
+  const pid = h.orch.getState().id;
+  const f = createSliceFeature({ pipelineId: pid, projectDir: dir, title: 'T', outline: MOCK_OUTLINE, perspectives: SHAPE.perspectives, workflowId: 'wf_shape' });
+  return { pid, f, dir };
+}
+
+test('B1 stamp: a shaped run started with the flag on records smallRuns: true; with it off, no key', async () => {
+  for (const on of [true, false]) {
+    const h = await withSmallRuns(on, async () => { const x = start({ projectDir: gitDir(`b1-stamp-${on}`) }, approveAll); assert.equal((await x.done).status, 'done'); return x; });
+    const stats = statsOf(h.orch.getState().id);
+    if (on) assert.equal(stats.smallRuns, true, 'stamped');
+    else assert.equal(Object.hasOwn(stats, 'smallRuns'), false, 'no key with the flag off');
+  }
+});
+
+test('B1 stamp: a re-plan run of a marked feature is stamped with the flag off; of an unmarked one it is not', async () => {
+  for (const marked of [true, false]) {
+    const { f } = await featureFrom(marked);
+    const h = await withSmallRuns(false, async () => {
+      const x = start({ projectDir: gitDir(`b1-replan-${marked}`), shape: { ...SHAPE, replaces: f.id } }, approveAll); await x.done; return x;
+    });
+    assert.equal(statsOf(h.orch.getState().id).smallRuns === true, marked);
+  }
+});
+
+test('B1 stamp: a re-plan run of an unmarked feature started with the flag ON is not stamped (it inherits only)', async () => {
+  const { f } = await featureFrom(false);
+  const h = await withSmallRuns(true, async () => {
+    const x = start({ projectDir: gitDir('b1-replan-unmarked-on'), shape: { ...SHAPE, replaces: f.id } }, approveAll); await x.done; return x;
+  });
+  assert.equal(Object.hasOwn(statsOf(h.orch.getState().id), 'smallRuns'), false);
+});
+
+test('B1 stamp: a slice run is never stamped, even with the flag on', async () => {
+  const { f, dir } = await featureFrom(true);
+  const shape = { ...SHAPE, slices: 'off', slice: { feature: f.id, index: 2, total: 2, outline: MOCK_OUTLINE } };
+  const h = await withSmallRuns(true, async () => { const x = start({ projectDir: dir, prompt: 'demo', shape }, approveAll); await x.done; return x; });
+  assert.equal(Object.hasOwn(statsOf(h.orch.getState().id), 'smallRuns'), false);
+});
+
+test('B1 stamp: a resume after the flag flips keeps the stamp it started with, and never gains one', async () => {
+  for (const on of [true, false]) {
+    const dir = gitDir(`b1-resume-${on}`);
+    const prev = process.env.WORCA_FLAGS;
+    try {
+      setFlag(on);
+      const h = start({ projectDir: dir });
+      await waitFor(() => h.plans.length === 1);
+      h.orch.pause();
+      assert.equal((await h.done).status, 'paused');
+      setFlag(!on);
+      const saved = readPipelineForResume(h.orch.getState().id);
+      const h2 = start({ projectDir: dir, resume: saved, shape: undefined }, approveAll);
+      assert.equal((await h2.done).status, 'done');
+      assert.equal(statsOf(h2.orch.getState().id).smallRuns === true, on, `started with the flag ${on ? 'on' : 'off'}`);
+    } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
+  }
+});
+
+test('B1 audit: a real requirements ask answered via answer() writes "Requirements approval **approve**" only on a marked run', async () => {
+  const lines = {};
+  for (const on of [true, false]) {
+    const req = resolveShapeRequest({ shape: { size: 'large', lead: 'security' } }, {});
+    assert.equal(req.ok, true, req.error);
+    const asks = [];
+    const res = await withSmallRuns(on, async () => {
+      const orch = createOrchestrator({ projectDir: gitDir(`b1-req-${on}`), workflowId: req.workflowId, prompt: 'demo', claude: { mock: true }, shape: req.shape });
+      orch.on('question', (q) => {
+        asks.push(q);
+        if (q.kind === 'care') setImmediate(() => pickCare(q, orch));
+        else if (q.kind === 'plan') setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
+        else if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+      });
+      const r = await orch.run();
+      return { r, pid: orch.getState().id };
+    });
+    assert.equal(res.r.status, 'done', res.r.error);
+    assert.ok(asks.some((q) => q.kind === 'plan' && (q.plan?.criteria || q.plan?.error)), 'a real requirements ask was raised');
+    lines[on] = auditOf(res.pid);
+  }
+  const count = (texts, head) => texts.filter((t) => t.startsWith(head)).length;
+  assert.equal(count(lines.true, 'Requirements approval **approve**'), 1, 'marked: the requirements line');
+  assert.equal(count(lines.false, 'Requirements approval'), 0, 'unmarked: dev\'s lines');
+  assert.equal(count(lines.false, 'Plan approval **approve**'), count(lines.true, 'Plan approval **approve**') + 1,
+    'the requirements approval is the one line that changed');
+});
+
+test('B1 audit: an outline ask\'s line is unchanged with the marker', async () => {
+  const lines = {};
+  for (const on of [true, false]) {
+    const res = await withSmallRuns(on, async () => {
+      const orch = createOrchestrator({ projectDir: gitDir(`b1-outline-${on}`), workflowId: 'wf_shape', prompt: 'Plan this in slices: demo', claude: { mock: true }, shape: SHAPE });
+      orch.on('question', (q) => {
+        if (q.kind === 'care') setImmediate(() => pickCare(q, orch));
+        else if (q.kind === 'plan' && q.plan?.outline) setImmediate(() => orch.answer(q.id, { decision: 'stop' }));
+        else if (q.kind === 'plan') setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
+        else if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+      });
+      const r = await orch.run();
+      return { r, pid: orch.getState().id };
+    });
+    assert.equal(statsOf(res.pid).smallRuns === true, on);
+    lines[on] = auditOf(res.pid).filter((t) => t.startsWith('Slice outline'));
+  }
+  assert.deepEqual(lines.true, ['Slice outline **stop** (round 1).']);
+  assert.deepEqual(lines.true, lines.false);
+});
+
+// ── Shaper small runs B2: the Start step (the Care ask), saved with the planning run, fixed after Start ──
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { careOfPipeline } from '../src/core/shape/small-runs.mjs';
+import { careOfRow } from '../src/shared/shape/feature-record.mjs';
+
+const ROLES = { deep: { model: 'claude-sonnet-5' }, everyday: { model: 'claude-haiku-4-5' }, quick: { model: 'claude-haiku-4-5' } };
+/** Runs `fn` with the flag on and the install roles of the fixture, restoring both. */
+async function marked(fn) {
+  const file = join(sandboxHome, '.worca-cc', 'settings.json');
+  mkdirSync(join(sandboxHome, '.worca-cc'), { recursive: true });
+  writeFileSync(file, JSON.stringify({ modelRoles: { claude: ROLES } }));
+  try { return await withSmallRuns(true, fn); } finally { writeFileSync(file, '{}'); }
+}
+const PAY = 'take payments';            // no size: Worca picks Thorough ("it touches payments, and its size is not known")
+const answerCare = (position, extra = {}) => (q, orch) => orch.answer(q.id, { care: { position, ...extra } });
+const careAudit = (pid) => auditOf(pid).filter((t) => t.startsWith('Care **'));
+const cellsOf = (orch) => Object.fromEntries(orch.getState().stepper.graph.nodes.filter((c) => c.kind === 'agent').map((c) => [c.id, c.model]));
+
+test('B2: a marked run raises exactly 1 care ask, before Clarify, with care on the frame; an unmarked run raises none', async () => {
+  const on = await marked(async () => { const h = start({ projectDir: gitDir('b2-ask-on'), prompt: PAY }, approveAll); await h.done; return h; });
+  const kinds = on.asked.map((q) => q.kind);
+  assert.equal(kinds.filter((k) => k === 'care').length, 1);
+  assert.equal(kinds[0], 'care', `the Start step comes first: ${kinds}`);
+  const q = on.asked[0];
+  assert.equal(q.id, 'care-1');
+  assert.equal(q.care.pick.position, 'thorough');
+  assert.deepEqual(Object.keys(q.care.positions), ['lean', 'balanced', 'thorough']);
+  const off = await withSmallRuns(false, async () => { const h = start({ projectDir: gitDir('b2-ask-off'), prompt: PAY }, approveAll); await h.done; return h; });
+  assert.equal(off.asked.filter((x) => x.kind === 'care').length, 0);
+  assert.equal(Object.hasOwn(statsOf(off.orch.getState().id), 'care'), false);
+});
+
+test('B2: answering Lean under a Thorough pick stores chosenBy person with the pick, one audit line, and fills every Default agent with the everyday model', async () => {
+  const h = await marked(async () => { const x = start({ projectDir: gitDir('b2-lean'), prompt: PAY, onCare: answerCare('lean') }, approveAll); assert.equal((await x.done).status, 'done'); return x; });
+  const pid = h.orch.getState().id;
+  const care = statsOf(pid).care;
+  assert.deepEqual([care.position, care.chosenBy, care.worcaPick], ['lean', 'person', 'thorough']);
+  assert.equal(care.reason, h.asked[0].care.pick.reason);
+  assert.deepEqual(careOfPipeline(pid), care);
+  assert.deepEqual(careAudit(pid), ["Care **lean** · Worca's pick **thorough**."]);
+  for (const [id, model] of Object.entries(cellsOf(h.orch))) assert.equal(model, ROLES.everyday.model, id);
+  assert.equal(h.orch.getState().stepper.careFill.position, 'lean');
+});
+
+test('B2: a Care fill adopted after the start resolve leaves every filled node with modelSource care, in the cell and in nodeCtx; a cliDecides mapping leaves cli-decides', async () => {
+  const sourcesOf = (orch) => {
+    const cells = Object.fromEntries(orch.getState().stepper.graph.nodes.filter((c) => c.kind === 'agent').map((c) => [c.id, c.modelSource]));
+    const live = Object.fromEntries(Object.keys(cells).map((id) => [id, orch.resolved.nodeCtx[id]?.modelSource]));
+    return { cells, live };
+  };
+  // _careOriginGraph re-resolves after the adopt and would mask a stale source; stub it so the adopt alone is checked.
+  const adoptOnly = (h) => { h.orch._careOriginGraph = async () => {}; return h; };
+  const lean = await marked(async () => { const x = adoptOnly(start({ projectDir: gitDir('b2-src-lean'), prompt: PAY, onCare: answerCare('lean') }, approveAll)); assert.equal((await x.done).status, 'done'); return x; });
+  const fillable = lean.orch.getState().stepper.careFill.fillable;
+  assert.ok(fillable.length > 0);
+  const a = sourcesOf(lean.orch);
+  for (const id of fillable) { assert.equal(a.cells[id], 'care', `cell ${id}`); assert.equal(a.live[id], 'care', `nodeCtx ${id}`); }
+  // Thorough maps deep → deep; deep stored as "Let Claude Code decide" leaves those nodes with no model, never a floor.
+  const file = join(sandboxHome, '.worca-cc', 'settings.json');
+  const cli = await withSmallRuns(true, async () => {
+    writeFileSync(file, JSON.stringify({ modelRoles: { claude: { ...ROLES, deep: { cliDecides: true } } } }));
+    try { const x = adoptOnly(start({ projectDir: gitDir('b2-src-cli'), prompt: PAY, onCare: answerCare('thorough') }, approveAll)); assert.equal((await x.done).status, 'done'); return x; }
+    finally { writeFileSync(file, '{}'); }
+  });
+  const b = sourcesOf(cli.orch);
+  const cells = cellsOf(cli.orch);
+  for (const id of cli.orch.getState().stepper.careFill.fillable) assert.ok(['care', 'cli-decides'].includes(b.cells[id]), `${id}: ${b.cells[id]}`);
+  const cliIds = cli.orch.getState().stepper.careFill.fillable.filter((id) => b.cells[id] === 'cli-decides');
+  assert.ok(cliIds.length > 0, `some fillable node maps to the cliDecides role: ${JSON.stringify(b.cells)}`);
+  for (const id of cliIds) { assert.equal(b.live[id], 'cli-decides', `nodeCtx ${id}`); assert.equal(cells[id], '', `cell model ${id}`); }
+});
+
+test('B2: a Lean marked run whose review runs out stops at the gate and continues on the answer', async () => {
+  const h = await marked(async () => { const x = start({ projectDir: gitDir('b2-lean-gate'), prompt: PAY, onCare: answerCare('lean') }, approveAll); return { x, res: await x.done }; });
+  const gate = h.x.asked.find((q) => q.kind === 'gate');
+  assert.ok(gate, `a gate ask was raised: ${h.x.asked.map((q) => q.kind)}`);
+  assert.ok(gate.stop, 'the gate carries a stop');
+  assert.equal(h.res.status, 'done', h.res.error);
+});
+
+test('B2: answering the pick stores chosenBy default', async () => {
+  const h = await marked(async () => { const x = start({ projectDir: gitDir('b2-pick'), prompt: PAY }, approveAll); await x.done; return x; });
+  const care = statsOf(h.orch.getState().id).care;
+  assert.deepEqual([care.position, care.chosenBy, care.worcaPick], ['thorough', 'default', 'thorough']);
+  assert.equal(cellsOf(h.orch).n_plan, ROLES.deep.model, 'Thorough keeps the deep model on planning');
+});
+
+test('B2: a bad position throws INVALID_ANSWER and leaves shape_stats without care; the question stays open', async () => {
+  let refused = null;
+  const h = await marked(async () => {
+    const x = start({ projectDir: gitDir('b2-bad'), prompt: PAY, onCare: (q, orch) => {
+      try { orch.answer(q.id, { care: { position: 'max' } }); } catch (err) { refused = err; }
+      assert.equal(orch.pendingQuestion?.id, q.id, 'still open');
+      assert.equal(Object.hasOwn(statsOf(orch.getState().id) || {}, 'care'), false);
+      orch.answer(q.id, { care: { position: 'balanced' } });
+    } }, approveAll);
+    await x.done; return x;
+  });
+  assert.equal(refused?.code, 'INVALID_ANSWER');
+  assert.deepEqual(refused.errors, [{ field: 'care', message: 'Care must be Lean, Balanced or Thorough.' }]);
+  assert.equal(statsOf(h.orch.getState().id).care.position, 'balanced');
+});
+
+test('B2: a client-sent worcaPick and chosenBy are ignored', async () => {
+  const h = await marked(async () => {
+    const x = start({ projectDir: gitDir('b2-client'), prompt: PAY, onCare: answerCare('lean', { worcaPick: 'lean', chosenBy: 'default', reason: 'mine' }) }, approveAll);
+    await x.done; return x;
+  });
+  const care = statsOf(h.orch.getState().id).care;
+  assert.deepEqual([care.worcaPick, care.chosenBy], ['thorough', 'person']);
+  assert.notEqual(care.reason, 'mine');
+});
+
+test('B2: --yes stores the pick with chosenBy default and exactly one audit line', async () => {
+  const h = await marked(async () => { const x = start({ projectDir: gitDir('b2-yes'), prompt: PAY, auto: true, onCare: () => {} }, approveAll); await x.done; return x; });
+  const pid = h.orch.getState().id;
+  assert.deepEqual([statsOf(pid).care.position, statsOf(pid).care.chosenBy], ['thorough', 'default']);
+  assert.deepEqual(careAudit(pid), ["Care **thorough** · Worca's pick **thorough**."]);
+});
+
+test('B2: an Away-owned --yes marked run passes Start with chosenBy default', async () => {
+  const h = await marked(async () => {
+    const x = start({ projectDir: gitDir('b2-away'), prompt: PAY, auto: true, nightMode: true, onCare: () => {} }, approveAll);
+    assert.equal((await x.done).status, 'done'); return x;
+  });
+  const pid = h.orch.getState().id;
+  assert.deepEqual([statsOf(pid).care.position, statsOf(pid).care.chosenBy], ['thorough', 'default']);
+  assert.equal(careAudit(pid).length, 1);
+});
+
+test('B2: an overlay model survives pause at S0 and a Lean answer; the other Default agents get the everyday model', async () => {
+  const dir = gitDir('b2-s0-overlay');
+  await marked(async () => {
+    const h = start({ projectDir: dir, prompt: PAY, overlay: { nodes: { n_roles: { model: 'claude-opus-5' } } }, onCare: (q, orch) => orch.pause() });
+    assert.equal((await h.done).status, 'paused');
+    const saved = readPipelineForResume(h.orch.getState().id);
+    assert.equal(saved.resumePoint.snapshot, null, 'no node ran');
+    assert.deepEqual(saved.resumePoint.manifest.careFill.kept.run, ['n_roles']);
+    const h2 = start({ projectDir: dir, resume: saved, shape: undefined, onCare: answerCare('lean') }, approveAll);
+    assert.equal((await h2.done).status, 'done');
+    assert.equal(h2.asked.filter((q) => q.kind === 'care').length, 1, 'a pause while S0 is open resumes with exactly 1 care ask');
+    const cells = cellsOf(h2.orch);
+    assert.equal(cells.n_roles, 'claude-opus-5');
+    for (const id of ['n_clarify', 'n_plan', 'n_refine', 'n_impl', 'n_review']) assert.equal(cells[id], ROLES.everyday.model, id);
+    assert.equal(h2.orch.getState().stepper.careFill.kept.run.length, 1);
+  });
+});
+
+test('B2: answer, pause and resume keeps the Care deep-equal and raises no more care asks', async () => {
+  const dir = gitDir('b2-resume');
+  await marked(async () => {
+    const h = start({ projectDir: dir, prompt: PAY, onCare: answerCare('lean') });
+    await waitFor(() => h.plans.length === 1);
+    h.orch.pause();
+    assert.equal((await h.done).status, 'paused');
+    const pid = h.orch.getState().id;
+    const before = statsOf(pid).care;
+    const h2 = start({ projectDir: dir, resume: readPipelineForResume(pid), shape: undefined }, approveAll);
+    assert.equal((await h2.done).status, 'done');
+    assert.equal(h2.asked.filter((q) => q.kind === 'care').length, 0);
+    assert.deepEqual(statsOf(pid).care, before);
+    assert.deepEqual(careOfPipeline(pid), before);
+  });
+});
+
+test('B2: answer() then pause() in the same tick, then resume: Care is saved and no care ask is raised', async () => {
+  const dir = gitDir('b2-answer-pause');
+  await marked(async () => {
+    const h = start({ projectDir: dir, prompt: PAY, onCare: (q, orch) => { orch.answer(q.id, { care: { position: 'lean' } }); orch.pause(); } });
+    assert.equal((await h.done).status, 'paused');
+    const pid = h.orch.getState().id;
+    assert.equal(statsOf(pid).care.position, 'lean');
+    const h2 = start({ projectDir: dir, resume: readPipelineForResume(pid), shape: undefined }, approveAll);
+    assert.equal((await h2.done).status, 'done');
+    assert.equal(h2.asked.filter((q) => q.kind === 'care').length, 0);
+    assert.equal(cellsOf(h2.orch).n_plan, ROLES.everyday.model);
+  });
+});
+
+test('B2: Care saved without careFill.position re-adopts the fill once on resume', async () => {
+  const dir = gitDir('b2-readopt');
+  await marked(async () => {
+    const h = start({ projectDir: dir, prompt: PAY, onCare: answerCare('lean') });
+    h.orch._adoptCareFill = async () => { h.orch.pause(); };     // a stop between the answer and the manifest patch
+    assert.equal((await h.done).status, 'paused');
+    const pid = h.orch.getState().id;
+    const saved = readPipelineForResume(pid);
+    assert.equal(statsOf(pid).care.position, 'lean');
+    assert.equal(saved.resumePoint.manifest.careFill.position, undefined);
+    assert.equal(saved.resumePoint.manifest.graph.nodes.find((c) => c.id === 'n_plan').model, ROLES.deep.model);
+    const h2 = start({ projectDir: dir, resume: saved, shape: undefined }, approveAll);
+    assert.equal((await h2.done).status, 'done');
+    assert.equal(h2.asked.filter((q) => q.kind === 'care').length, 0);
+    assert.equal(cellsOf(h2.orch).n_plan, ROLES.everyday.model);
+    assert.equal(h2.orch.getState().stepper.careFill.position, 'lean');
+  });
+});
+
+test('B2: a re-plan copies the feature\'s Care and asks nothing', async () => {
+  const { f } = await featureFrom(true);
+  getDb().prepare('UPDATE shape_features SET care = ?, care_chosen_by = ?, care_worca_pick = ? WHERE id = ?').run('lean', 'person', 'thorough', f.id);
+  const h = await marked(async () => { const x = start({ projectDir: gitDir('b2-replan'), prompt: PAY, shape: { ...SHAPE, replaces: f.id } }, approveAll); await x.done; return x; });
+  assert.equal(h.asked.filter((q) => q.kind === 'care').length, 0);
+  const care = statsOf(h.orch.getState().id).care;
+  assert.deepEqual([care.position, care.chosenBy, care.worcaPick], ['lean', 'person', 'thorough']);
+  assert.equal(cellsOf(h.orch).n_plan, ROLES.everyday.model);
+  assert.deepEqual(careAudit(h.orch.getState().id), ["Care **lean** · Worca's pick **thorough**."], 'the copy writes one Care audit line');
+});
+
+test('B2: a slice run of a marked Lean feature resolves with the saved Care (every Default agent on everyday) and asks nothing; of an unmarked one it is untouched', async () => {
+  for (const isMarked of [true, false]) {
+    const { f, dir } = await featureFrom(isMarked);
+    getDb().prepare('UPDATE shape_features SET care = ?, care_chosen_by = ?, care_worca_pick = ? WHERE id = ?').run('lean', 'person', 'thorough', f.id);
+    const shape = { ...SHAPE, slices: 'off', slice: { feature: f.id, index: 2, total: 2, outline: MOCK_OUTLINE } };
+    const h = await marked(async () => { const x = start({ projectDir: dir, prompt: 'demo', shape }, approveAll); assert.equal((await x.done).status, 'done'); return x; });
+    assert.equal(h.asked.filter((q) => q.kind === 'care').length, 0, 'a slice run has no Start step');
+    const cells = cellsOf(h.orch);
+    if (isMarked) for (const [id, model] of Object.entries(cells)) assert.equal(model, ROLES.everyday.model, id);
+    else assert.equal(cells.n_plan, ROLES.deep.model, 'an unmarked feature keeps the role defaults');
+  }
+});
+
+test('B2: the split writes the saved Care onto the feature row', async () => {
+  const h = await marked(async () => {
+    const orch = createOrchestrator({ projectDir: gitDir('b2-split'), workflowId: 'wf_shape', prompt: `Plan this in slices: ${PAY}`, claude: { mock: true }, shape: SHAPE });
+    orch.on('question', (q) => {
+      if (q.kind === 'care') setImmediate(() => orch.answer(q.id, { care: { position: 'lean' } }));
+      else if (q.kind === 'plan' && q.plan?.outline) setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
+      else if (q.kind === 'plan') setImmediate(() => orch.answer(q.id, { decision: 'approve' }));
+      else if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+      else if (q.kind === 'gate') setImmediate(() => orch.answer(q.id, { decision: 'continue' }));
+    });
+    await orch.run();
+    return { orch };
+  });
+  const row = getDb().prepare('SELECT care, care_chosen_by, care_worca_pick FROM shape_features WHERE origin_pipeline_id = ?').get(h.orch.getState().id);
+  assert.ok(row, 'a feature was created');
+  assert.deepEqual(careOfRow(row), { position: 'lean', chosenBy: 'person', worcaPick: 'thorough' });
 });

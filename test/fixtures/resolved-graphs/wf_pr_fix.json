@@ -410,6 +410,8 @@
         "workspaceFanOut": true,
         "workspaceStrategy": "task"
       },
+      "model": "claude-sonnet-5-5",
+      "modelSource": "worca-default",
       "nodeId": "n_impl",
       "promptHints": "Work inside the project directory (your cwd). Commit nothing; just edit files and tests.",
       "runnerType": "producer",
@@ -643,6 +645,8 @@
         "wantsRequest": true,
         "workspaceStrategy": "review"
       },
+      "model": "claude-opus-5-5",
+      "modelSource": "worca-default",
       "nodeId": "n_review",
       "promptHints": "Review the git diff of what was implemented against the plan's contracts and invariants, with an adversarial pass and the severity floors.",
       "runnerType": "verifier",

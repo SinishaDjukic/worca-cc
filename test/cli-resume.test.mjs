@@ -347,3 +347,38 @@ test('a run work folder is never a CLI project: --project and the cwd are refuse
   assert.equal(rows(), before, 'no pipelines row');
   assert.equal(existsSync(join(work, '.git')), false, 'no git init in the work folder');
 });
+
+// #1450: `--confirm-model` is "Continue on <model>" from the CLI; it is refused, before anything starts, when the run
+// is not waiting on that model (the same checks as POST /api/resume confirmModel).
+test('resume --confirm-model: refused when nothing is pending, on a mismatch, and together with --model', async () => {
+  const seed = (rp) => seedPipeline(noProjectWorkDir('abcd1234'), { title: 'confirm run', status: 'paused',
+    branch: { workMode: 'none', runRootMode: 'detached' }, resumePoint: graphResumePoint({ pipelineDir: worcaHome(), ...rp }) });
+  const plain = await seed({});
+  const none = await run(['resume', plain.id, '--mock', '--yes', '--confirm-model', 'claude-fable-5-2']);
+  assert.equal(none.code, 1, none.stderr);
+  assert.match(none.stderr, /not waiting for a model confirmation/);
+  const pending = await seed({ pauseReason: 'model_confirm', modelConfirm: { nodeId: 'n_plan', model: 'claude-fable-5-2', at: 'pre' } });
+  const wrong = await run(['resume', pending.id, '--mock', '--yes', '--confirm-model', 'claude-opus-5-5']);
+  assert.equal(wrong.code, 1, wrong.stderr);
+  assert.match(wrong.stderr, /waiting to confirm claude-fable-5-2, not claude-opus-5-5/);
+  const both = await run(['resume', pending.id, '--mock', '--yes', '--confirm-model', 'claude-fable-5-2', '--model', 'claude-opus-5-5']);
+  assert.equal(both.code, 1, both.stderr);
+  assert.match(both.stderr, /Confirm the model or switch it, not both/);
+  const ok = await run(['resume', pending.id, '--mock', '--yes', '--confirm-model', 'claude-fable-5-2']);
+  assert.doesNotMatch(ok.stderr, /confirm/i, 'a matching confirmation passes the check (it stops later, at the missing work folder)');
+});
+
+// Workflow tests 3a (final review round 2): `worca resume` refuses a test try, as the server does; it would otherwise resolve
+// the try's project key to the person's folder.
+test('resume refuses a workflow-test try: exit 1, before any project is resolved', async () => {
+  const projDir = await realpath(await mkdtemp(join(tmpdir(), 'worca-cc-cliresume-try-')));
+  try {
+    const { id } = await seedPipeline(projDir, { title: 'Test: x · try 1', status: 'paused', resumePoint: graphResumePoint({ pipelineDir: projDir }) });
+    getDb().prepare('UPDATE pipelines SET is_test = 1 WHERE id = ?').run(id);
+    const r = await run(['resume', id, '--mock', '--yes'], { cwd: projDir });
+    assert.equal(r.code, 1, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+    assert.match(r.stderr, /a test try cannot be resumed/i, `stderr: ${r.stderr}`);
+  } finally {
+    await rm(projDir, { recursive: true, force: true });
+  }
+});

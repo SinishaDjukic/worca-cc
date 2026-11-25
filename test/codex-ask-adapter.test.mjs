@@ -240,6 +240,16 @@ test('runCodexProcess: no model names CODEX_DEFAULT_MODEL, so the turn is priced
   assert.ok(events.find((e) => e.type === 'result').costUsd > 0);
 });
 
+test('runCodexProcess: cliDefault ("Let Codex decide", #1450) names no -m; a named model still wins', POSIX, async () => {
+  const dir = tmp();
+  const fake = fakeCodex(dir, 'ok');
+  await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', usageDir: dir, cliDefault: true });
+  assert.equal(fake.args().includes('-m'), false);
+  await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', usageDir: dir, cliDefault: true, model: 'gpt-5.5' });
+  const args = fake.args();
+  assert.equal(args[args.indexOf('-m') + 1], 'gpt-5.5');
+});
+
 test('runCodexProcess: maxTurns caps the main agent\'s tool calls with a turnCap error', POSIX, async () => {
   const cmd = (id) => [
     { type: 'item.started', item: { id, type: 'command_execution', command: 'ls', aggregated_output: '', exit_code: null, status: 'in_progress' } },

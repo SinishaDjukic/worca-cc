@@ -84,7 +84,12 @@ export function renderDone(meta, payload = {}) {
       parts.push(`   Or continue now on ${engineLabel(e)}: /resume ${runRef(meta.runId)} ${e} (may need Allow unguarded in the Worca UI)`);
     }
     // Any usage limit (the sign-in's or a provider's): a model on another connection has its own allowance.
-    if (payload.reason === 'usage_limit') parts.push('   Or resume with another model in the Worca UI (Resume › Resume with another model…)');
+    if (payload.reason === 'usage_limit') parts.push('   Or switch model and continue in the Worca UI (Resume › Switch model and continue…)');
+    // #1450: a premium model nobody chose — a person confirms it or switches; a plain /resume asks again.
+    if (payload.reason === 'model_confirm') {
+      const m = payload.modelConfirm?.model;
+      parts.push(`   Continue on ${m || 'that model'} or switch model in the Worca UI (Resume › Continue on … / Switch model and continue…)`);
+    }
     return mdMsg(parts.join('\n'), isError ? 'error' : 'warning');
   }
   if (status === 'stopped') {

@@ -15,7 +15,7 @@ import { basename } from 'node:path';
 export const APP_BINS = new Set(['open', 'osascript', 'xdg-open', 'gio', 'explorer', 'explorer.exe', 'wt', 'wt.exe', 'gnome-terminal',
   'konsole', 'xfce4-terminal', 'x-terminal-emulator', 'kitty', 'code', 'cursor', 'idea', 'webstorm', 'zeditor', 'zenity', 'kdialog']);
 /** Routes where every spawn launches an app: a saved Editor / Terminal line runs as `/bin/sh -c LINE` (launcher.mjs). */
-export const APP_ROUTES = [/^POST \/api\/runs\/[^/]+\/builtins\/[^/]+$/, /^POST \/api\/actions\/launchers\/(try|browse)$/,
+export const APP_ROUTES = [/^POST \/api\/runs\/[^/]+\/builtins\/[^/]+$/, /^POST \/api\/runs\/[^/]+\/open-in-editor$/, /^POST \/api\/actions\/launchers\/(try|browse)$/,
   /^POST \/api\/ask\/threads\/[^/]+\/attachments\/[^/]+\/reveal$/, /^POST \/api\/fs\/pick-folder$/];
 
 export function isAppLaunch(file, req) {

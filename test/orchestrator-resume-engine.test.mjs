@@ -135,6 +135,7 @@ test('a Claude model is dropped when the resume switches the run to codex', asyn
   const { orch, res, seen, logs } = await resumeWith(dir, saved, { engine: 'codex' });
   assert.equal(res.status, 'done', res.error);
   assert.equal(orch.claude.model, undefined);
-  assert.ok(seen.models.every((m) => m === null), JSON.stringify(seen.models));
+  // #1450: "codex's default" is Worca's Codex role default per step — never a Claude id, never the CLI's own.
+  assert.ok(seen.models.length && seen.models.every((m) => /^gpt-/.test(m || '')), JSON.stringify(seen.models));
   assert.ok(said(logs, /claude-sonnet-5.*is a claude model — resuming on codex's default model/));
 });

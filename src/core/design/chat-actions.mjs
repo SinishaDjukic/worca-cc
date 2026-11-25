@@ -28,8 +28,9 @@ function planSectionIds(design, workDir) {
   return check.ok ? check.plan.sections.map((s) => s.id) : null;
 }
 
-/** What the chat says when `designBuilds.start` refuses (L5.20); `what` is 'build' or 'change'. */
-function refusalNotice(err, what) {
+/** What the chat says when `designBuilds.start` refuses (L5.20); `what` is 'build' or 'change'. Shaper's Prototype
+ *  step (C1, D6) shows the same words. */
+export function refusalNotice(err, what) {
   const status = err?.status;
   const message = messageOf(err);
   if (status === 409) {
@@ -38,6 +39,48 @@ function refusalNotice(err, what) {
   if (status === 403) return 'Total cost limit reached: no build started.';
   if (status === 503) return message;
   return `Could not start the ${what}: ${message}.`;
+}
+
+/**
+ * The hand-off of one round (C1, D6, shared by the chat and Shaper's Prototype step): stages the kit, makes the design's
+ * folders real, runs `beforeStart` (the chat copies its uploads), then starts the round, all while the design is held
+ * against a restore (M3). A file system error names server paths: the log keeps it, the caller gets words. The folders
+ * are made real first (`ensureDesignFolders`): a link or a file an agent planted at `assets` or `assets/att` would
+ * otherwise refuse this and every later copy, and only a started round makes them again.
+ * @param {{ designBuilds: object, stageKit: Function, design: {id: string, kind: string, version?: number}, what: string,
+ *   opts: object | ((before: unknown) => object), beforeStart?: {run: Function, label: string, refused: string} | null }} a
+ * @returns {Promise<{ok: true, started: {buildId: string, round: number, kind: string}, baseVersion: number}
+ *   | {ok: false, notice: string, status?: number}>} `status` is the refusal's HTTP status, when it has one.
+ */
+export async function startHeldRound({ designBuilds, stageKit, design, what, opts, beforeStart = null }) {
+  const workDir = designWorkDir(design.id);
+  const handOff = async () => {
+    try {
+      await stageKit({ kind: design.kind, workDir });
+    } catch (err) {
+      console.error(`[worca-design] staging the kit of ${design.id} failed: ${messageOf(err)}`);
+      return { refused: `Could not prepare the ${what}: try again.` };
+    }
+    let before;
+    try {
+      ensureDesignFolders(design.id);
+      before = beforeStart ? await beforeStart.run({ workDir }) : undefined;
+    } catch (err) {
+      console.error(`[worca-design] ${beforeStart ? beforeStart.label : 'making the folders'} of ${design.id} failed: ${messageOf(err)}`);
+      return { refused: beforeStart ? beforeStart.refused : `Could not prepare the ${what}: try again.` };
+    }
+    // Read now, not with the caller's row: a restore may have ended meanwhile, and none runs while held.
+    const baseVersion = getDesign(design.id)?.version ?? design.version;
+    return { started: await designBuilds.start(typeof opts === 'function' ? opts(before) : opts), baseVersion };
+  };
+  let held;
+  try {
+    held = await designBuilds.whileStarting(design.id, handOff);
+  } catch (err) {
+    return { ok: false, notice: refusalNotice(err, what), ...(Number.isInteger(err?.status) ? { status: err.status } : {}) };
+  }
+  if (held.refused) return { ok: false, notice: held.refused };
+  return { ok: true, started: held.started, baseVersion: held.baseVersion };
 }
 
 /**
@@ -104,40 +147,18 @@ export function createDesignChatActions({ designBuilds, receipts, flagOn, broker
     const rawText = change ? ask.instruction : ask.brief;
     const pins = Array.isArray(thread.composer?.pins) ? thread.composer.pins : [];
     const what = change ? 'change' : 'build';
-    /** Stages the kit and the uploads, then starts the round, all while the design is held against a restore (M3). A
-     *  file system error names server paths: the log keeps it, the chat gets words. The design's folders are made
-     *  real first (`ensureDesignFolders`): a link or a file an agent planted at `assets` or `assets/att` would
-     *  otherwise refuse this and every later copy, and only a started round makes them again. */
-    const handOff = async () => {
-      try {
-        await stageKit({ kind: design.kind, workDir });
-      } catch (err) {
-        console.error(`[worca-design] staging the kit of ${design.id} failed: ${messageOf(err)}`);
-        return { refused: `Could not prepare the ${what}: try again.` };
-      }
-      let names;
-      try {
-        ensureDesignFolders(design.id);
-        names = await copyThreadAttachments({ threadId, workDir });
-      } catch (err) {
-        console.error(`[worca-design] copying the uploads of ${design.id} failed: ${messageOf(err)}`);
-        return { refused: 'Could not copy the attachments: try again.' };
-      }
-      const text = rawText + attachmentNote(names);   // within BRIEF_MAX: DESIGN_LIMITS leaves the line its room
-      // Read now, not with the row above: a restore may have ended during the broker check, and none runs while held.
-      const baseVersion = getDesign(design.id)?.version ?? design.version;
-      const opts = change
-        ? { designId: design.id, instruction: text, sections: ask.sections, needsLead: ask.needsLead, ...(pins.length ? { pins } : {}), by }
-        : { designId: design.id, brief: text, by };
-      return { started: await designBuilds.start(opts), baseVersion };
-    };
-    let held;
-    try {
-      held = await designBuilds.whileStarting(design.id, handOff);
-    } catch (err) {
-      return notice(refusalNotice(err, what));
-    }
-    if (held.refused) return notice(held.refused);
+    const held = await startHeldRound({
+      designBuilds, stageKit, design, what,
+      beforeStart: { label: 'copying the uploads', refused: 'Could not copy the attachments: try again.',
+        run: ({ workDir: dir }) => copyThreadAttachments({ threadId, workDir: dir }) },
+      opts: (names) => {
+        const text = rawText + attachmentNote(names);   // within BRIEF_MAX: DESIGN_LIMITS leaves the line its room
+        return change
+          ? { designId: design.id, instruction: text, sections: ask.sections, needsLead: ask.needsLead, ...(pins.length ? { pins } : {}), by }
+          : { designId: design.id, brief: text, by };
+      },
+    });
+    if (!held.ok) return notice(held.notice);
     const { started: { buildId, round, kind }, baseVersion } = held;
     const block = {
       id: newCardId(),

@@ -52,7 +52,8 @@
 // is deliberately no in-module cache: worcaHome() is read fresh per operation,
 // so a saved root takes effect for new runs/listing without a server restart.
 
-import { isAnswererLead, ANSWERER_LEAD_KEYS } from '../shared/answerer.mjs';
+import { isAnswererLead, answererLeadKeys } from '../shared/answerer.mjs';
+import { CHAT_SOURCE_BRANCH_MODES, SOURCE_BRANCH_TEXT, normalizeChatSourceBranch } from '../shared/chat-source-branch.mjs';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { suggestModelHandle } from '../shared/connections.mjs';
 export { suggestModelHandle };
@@ -1120,16 +1121,23 @@ export function chatPrefs() {
   }
   // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
   // `summariseCommands` (#911, flag commandSummaries): chat commands as one-line rows — default ON.
+  // `sourceBranch`: "Chat runs: source branch", normalised for display (the gate reads the cascade, not this).
   return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false,
-    summariseCommands: chat.summariseCommands !== false };
+    summariseCommands: chat.summariseCommands !== false, sourceBranch: normalizeChatSourceBranch(chat.sourceBranch) };
+}
+
+/** "Chat runs: source branch" input: one of the modes, or null (back to the default). Throws the shared sentence. */
+export function assertChatSourceBranchInput(value) {
+  if (value !== null && !CHAT_SOURCE_BRANCH_MODES.includes(value)) throw new Error(SOURCE_BRANCH_TEXT.invalid);
+  return value;
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?, away?},
  * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean,
- * summariseCommands?: boolean}.
+ * summariseCommands?: boolean, sourceBranch?: 'current'|'ask'|'require'|null}.
  * Unknown notify keys and a non-boolean scriptTools / suggestions / summariseCommands are rejected (400 at the API layer);
- * channels merge per key.
+ * channels merge per key. A null sourceBranch deletes it (back to 'ask'); any other value outside the modes throws.
  */
 export async function setChatPrefs(patch = {}) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('chat prefs must be an object');
@@ -1142,6 +1150,8 @@ export async function setChatPrefs(patch = {}) {
   if (hasSuggestions && typeof patch.suggestions !== 'boolean') throw new Error('chat suggestions must be true or false');
   const hasSummaries = Object.prototype.hasOwnProperty.call(patch, 'summariseCommands');
   if (hasSummaries && typeof patch.summariseCommands !== 'boolean') throw new Error('chat summariseCommands must be true or false');
+  const hasSourceBranch = Object.prototype.hasOwnProperty.call(patch, 'sourceBranch');
+  if (hasSourceBranch) assertChatSourceBranchInput(patch.sourceBranch);
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -1156,7 +1166,9 @@ export async function setChatPrefs(patch = {}) {
     ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
     ...(hasSuggestions ? { suggestions: patch.suggestions } : {}),
     ...(hasSummaries ? { summariseCommands: patch.summariseCommands } : {}),
+    ...(hasSourceBranch && patch.sourceBranch !== null ? { sourceBranch: patch.sourceBranch } : {}),
   };
+  if (hasSourceBranch && patch.sourceBranch === null) delete settings.chat.sourceBranch;
   await persistSettings(settings);
   return chatPrefs();
 }
@@ -1503,6 +1515,11 @@ export function modelRolesSetting() {
 export function normalizeRolePair(input, label = 'role') {
   if (input === null || input === undefined || input === '') return null;
   if (!isObj(input)) throw new Error(`${label} must be { model, effort } or null`);
+  // "Let <tool> decide" (#1450): exactly { cliDecides: true }, distinct from an empty role.
+  if (input.cliDecides === true) {
+    if (Object.keys(input).length !== 1) throw new Error(`${label}: cliDecides takes no model or effort`);
+    return { cliDecides: true };
+  }
   for (const key of Object.keys(input)) if (key !== 'model' && key !== 'effort') throw new Error(`${label}: unknown field "${key}"`);
   const model = typeof input.model === 'string' ? input.model.trim() : '';
   const effort = typeof input.effort === 'string' ? input.effort.trim() : '';
@@ -1572,6 +1589,11 @@ export async function setUtilityModels(input) {
 export function normalizeModelPair(engine, input, label = 'model') {
   if (input === null || input === undefined || input === '') return null;
   if (!isObj(input)) throw new Error(`${label} must be { model, effort } or null`);
+  // "Let <tool> decide" (#1450): exactly { cliDecides: true }, distinct from an empty role.
+  if (input.cliDecides === true) {
+    if (Object.keys(input).length !== 1) throw new Error(`${label}: cliDecides takes no model or effort`);
+    return { cliDecides: true };
+  }
   for (const key of Object.keys(input)) if (key !== 'model' && key !== 'effort') throw new Error(`${label}: unknown field "${key}"`);
   const model = input.model == null ? '' : (typeof input.model === 'string' ? input.model.trim() : null);
   if (model === null || model.length > MODEL_PAIR_MAX_LEN) throw new Error(`${label}.model must be a model id`);
@@ -3261,11 +3283,12 @@ export async function writeStoredFlags(map) {
 // flag, cleared when the last workspace is deleted. `setupFinished` records that the
 // Setup Assistant was completed (install-wide, like the setup); `setupChecked` is the
 // boot marker that credits an install that predates it exactly once
-// (onboarding.mjs#ensureSetupMarker). `guidesSeen` maps a how-it-works area id
+// (onboarding.mjs#ensureSetupMarker). `roleDefaultsNoticeSeen` is #1450's one-time
+// notice about Worca's role defaults. `guidesSeen` maps a how-it-works area id
 // (src/shared/how-it-works/areas.mjs) to true once that area's guide has been opened;
 // `guidesReset` is a write-only command that clears the map and workspaceGuideSeen.
 // All absent = all false and an empty map.
-const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'setupFinished', 'setupChecked']);
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'setupFinished', 'setupChecked', 'roleDefaultsNoticeSeen']);
 const ONBOARDING_KEYS = Object.freeze([...ONBOARDING_FLAGS, 'guidesSeen', 'guidesReset']);
 const SEEN_ONLY_KEYS = Object.freeze(['guidesSeen', 'workspaceGuideSeen']);
 
@@ -3419,22 +3442,23 @@ function answererMap(settings) {
   return Object.assign(Object.create(null), m && typeof m === 'object' && !Array.isArray(m) ? m : {});
 }
 
-/** The person's profile, `{ lead }` (null when never set or unknown). Never throws. */
-export function answererProfileFor(person) {
+/** The person's profile, `{ lead }` (null when never set or unknown). `smallRuns` (the live flag) admits a Compliance
+ *  lead; off, a stored one reads null. Never throws. */
+export function answererProfileFor(person, { smallRuns = false } = {}) {
   if (homeGuarded()) return { lead: null };
   const lead = answererMap(readSettings())[pinsPersonKey(person)]?.lead;
-  return { lead: isAnswererLead(lead) ? lead : null };
+  return { lead: isAnswererLead(lead, { smallRuns }) ? lead : null };
 }
 
-/** Set the person's lead. Throws { code: 'BAD_LEAD' } before any write. */
-export async function setAnswererProfileFor(person, { lead } = {}) {
-  if (!isAnswererLead(lead)) throw Object.assign(new Error(`Pick one of: ${ANSWERER_LEAD_KEYS.join(', ')}`), { code: 'BAD_LEAD' });
+/** Set the person's lead. Throws { code: 'BAD_LEAD' } before any write, naming the leads `smallRuns` allows. */
+export async function setAnswererProfileFor(person, { lead } = {}, { smallRuns = false } = {}) {
+  if (!isAnswererLead(lead, { smallRuns })) throw Object.assign(new Error(`Pick one of: ${answererLeadKeys({ smallRuns }).join(', ')}`), { code: 'BAD_LEAD' });
   const settings = readSettings();
   const map = answererMap(settings);
   map[pinsPersonKey(person)] = { lead };
   settings.answererProfiles = map;
   await persistSettings(settings);
-  return answererProfileFor(person);
+  return answererProfileFor(person, { smallRuns });
 }
 
 /** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */

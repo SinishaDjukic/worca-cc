@@ -11,13 +11,17 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { runDueTickets, previousBranchesOf, setTicketPipeline, getTicket } from '../src/core/scheduler.mjs';
-import { featureView, resumeFeature, featureThread, liveSliceFrom, setApproveEach, addFeatureNote } from '../src/core/shape/features.mjs';
+import { featureView, resumeFeature, featureThread, liveSliceFrom, setApproveEach, addFeatureNote, createSliceFeature } from '../src/core/shape/features.mjs';
 import { createThread, linkRun } from '../src/core/ask/store.mjs';
-import { readRunResultsById } from '../src/core/artifacts.mjs';
+import { readRunResultsById, readPipelineForResume } from '../src/core/artifacts.mjs';
+import { projectKey as projectKeyOf } from '../src/core/store.mjs';
+import { seedPipelineRow } from './helpers/db-seed.mjs';
+import { worcaHome } from '../src/core/projects.mjs';
+import { readRunManifest, updateRunManifest } from '../src/core/run-manifest.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { _testing } from '../src/core/graph/executor.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
-import { mergesFeatureBase } from '../src/core/run-harness.mjs';
+import { mergesFeatureBase, mergesLatestOnResume } from '../src/core/run-harness.mjs';
 
 useTempHome(after);
 
@@ -229,3 +233,193 @@ test('s5 (D14): only a fresh single-project run 2+ of a feature merges the base;
   assert.equal(mergesFeatureBase({ slice: sl, freshStart: true, isWorkspace: true }), false, 'a workspace run');
   assert.equal(mergesFeatureBase({ slice: sl, freshStart: false, isWorkspace: false }), false, 'a reused checkout');
 });
+
+// ── Shaper small runs A5 (D8, D9): a resumed slice first merges the feature's latest finished work ─────────────────
+const sh = (cwd, cmd) => execSync(cmd, { cwd, encoding: 'utf8' }).trim();
+const isAncestorOf = (cwd, a, b) => { try { execSync(`git merge-base --is-ancestor ${a} ${b}`, { cwd, stdio: 'ignore' }); return true; } catch { return false; } };
+const auditOf = (pid) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(pid).map((r) => r.text);
+const branchRow = (pid) => JSON.parse(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(pid).branch);
+const filesOf = async (pid) => { const r = await readRunResultsById(pid); return [...(r?.newFiles || []), ...(r?.changedFiles || [])].map((x) => x.path); };
+let worldSeq = 0;
+/** A 4-run feature in a real repo: run 1 done on `main`, run 2 a mock wf_shape run paused at its plan ask with a commit of
+ *  its own (`own.txt`), runs 3 and 4 finished by hand on stacked branches from `main` (`s3.txt`, `s4.txt`; run 4 also
+ *  edits `clash.txt` when `clash`). */
+async function pausedSliceWorld(tag, { clash = false } = {}) {
+  const dir = gitDir(tag);
+  execSync('git branch -m main && git config user.email t@t && git config user.name t && git config commit.gpgsign false', { cwd: dir });
+  writeFileSync(join(dir, 'clash.txt'), 'base\n');
+  writeFileSync(join(dir, 'CLAUDE.md'), '# Project\n');
+  sh(dir, 'git add -A && git commit -qm base');
+  const key = projectKeyOf(dir);
+  const n = ++worldSeq;
+  const origin = `a5o${String(n).padStart(5, '0')}`;
+  seedPipelineRow({ id: origin, projectKey: key, status: 'done', title: 'Run 1', branch: { source: 'main', feature: 'main' } });
+  const outline = { why: 'w', slices: [1, 2, 3, 4].map((i) => ({ id: `s${i}`, title: `Slice ${i}`, goal: `g${i}`, inScope: [], outOfScope: [],
+    acceptance: [], dependsOn: [], estimate: 'S' })) };
+  const f = createSliceFeature({ pipelineId: origin, projectDir: dir, title: 'Charts', outline, perspectives: ['product'], workflowId: 'wf_shape', base: { mock: true } });
+  const ticketOf = (k) => getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(f.id, k).ticket_id;
+  const two = startRun({ projectDir: dir, prompt: 'slice 2', shape: { perspectives: ['product'], slices: 'off', slice: { feature: f.id, index: 2, total: 4, outline } },
+    branch: { source: 'main' } }, { hold: () => true });
+  let ended = null;
+  two.done.then((x) => { ended = x; });
+  await waitFor(() => ended || (two.orch.getState().id && two.asks.some((q) => q.kind === 'plan')));
+  assert.equal(ended, null, `run 2 ended before its plan ask: ${JSON.stringify(ended)}`);
+  two.orch.pause();
+  assert.equal((await two.done).status, 'paused');
+  const pid = two.orch.getState().id;
+  setTicketPipeline(ticketOf(2), pid);
+  getDb().prepare("UPDATE scheduled_runs SET status = 'fired' WHERE id = ?").run(ticketOf(2));
+  const { worktreeDir: wt, feature } = branchRow(pid);
+  writeFileSync(join(wt, 'own.txt'), 'own\n');
+  if (clash) writeFileSync(join(wt, 'clash.txt'), 'run 2\n');
+  sh(wt, 'git add own.txt clash.txt && git commit -qm own');
+  const own = sh(wt, 'git rev-parse HEAD');
+  const later = (k, from) => {
+    const br = `feat/a5-${n}-s${k}`;
+    sh(dir, `git checkout -q -b ${br} ${from}`);
+    writeFileSync(join(dir, `s${k}.txt`), `${k}\n`);
+    if (clash && k === 4) writeFileSync(join(dir, 'clash.txt'), 'run 4\n');
+    sh(dir, `git add -A && git commit -qm s${k} && git checkout -q main`);
+    const p = `a5s${String(n).padStart(4, '0')}${k}`;
+    seedPipelineRow({ id: p, projectKey: key, status: 'done', title: `Run ${k}`, branch: { source: from, feature: br } });
+    getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?").run(p, ticketOf(k));
+    return br;
+  };
+  const s3 = later(3, 'main');
+  const s4 = later(4, s3);
+  return { dir, f, pid, wt, feature, own, s3, s4 };
+}
+/** Resume run 2 from its saved row (a fresh orchestrator, as the server's resumeRun builds one). */
+function resumeSlice(w, { hold = () => false } = {}) {
+  const orch = createOrchestrator({ workflowId: 'wf_shape', projectDir: w.dir, claude: { mock: true }, resume: readPipelineForResume(w.pid) });
+  const asks = [];
+  orch.on('question', (q) => {
+    asks.push(q);
+    if (q.kind === 'plan') { if (!hold(q)) setImmediate(() => orch.answer(q.id, { decision: 'approve' })); return; }
+    if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+  });
+  return { orch, asks, done: orch.resume() };
+}
+const SMALL = (on) => { if (on) process.env.WORCA_FLAGS = 'shaperSmallRuns'; else delete process.env.WORCA_FLAGS; };
+const withFlag = async (on, fn) => { const prev = process.env.WORCA_FLAGS; SMALL(on); try { return await fn(); } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; } };
+
+test('mergesLatestOnResume: slice, single project, flag on only', () => {
+  const sl = { feature: 'feat-1', index: 3 };
+  assert.equal(mergesLatestOnResume({ slice: sl, isWorkspace: false, smallRuns: true }), true);
+  assert.equal(mergesLatestOnResume({ slice: { ...sl, index: 1 }, isWorkspace: false, smallRuns: true }), true, 'any slice, run 1 too');
+  assert.equal(mergesLatestOnResume({ slice: null, isWorkspace: false, smallRuns: true }), false);
+  assert.equal(mergesLatestOnResume({ slice: sl, isWorkspace: true, smallRuns: true }), false);
+  assert.equal(mergesLatestOnResume({ slice: sl, isWorkspace: false, smallRuns: false }), false);
+});
+
+test('small runs: a paused slice resumed after two later slices finished merges the latest finished branch first', () => withFlag(true, async () => {
+  const w = await pausedSliceWorld('a5-merge');
+  assert.equal(sh(w.wt, 'git status --porcelain --untracked-files=no'), '', 'a clean checkout at resume');
+  const r = resumeSlice(w);
+  assert.equal((await r.done).status, 'done');
+  assert.ok(isAncestorOf(w.dir, w.s3, w.feature), "run 3's commits are in run 2's branch");
+  assert.ok(isAncestorOf(w.dir, w.s4, w.feature), "run 4's commits are in run 2's branch");
+  assert.ok(isAncestorOf(w.dir, w.own, w.feature), "run 2's own commit is kept");
+  const b = branchRow(w.pid);
+  assert.deepEqual({ ...b.baseMerged }, { base: w.s4, behind: b.baseMerged.behind, merged: true, onResume: true });
+  assert.ok(b.baseRefs[w.s4], 'the merged base tip is recorded');
+  assert.ok(auditOf(w.pid).some((t) => t.startsWith(`Base \`${w.s4}\` moved: merged into`)), JSON.stringify(auditOf(w.pid)));
+  const files = await filesOf(w.pid);
+  assert.ok(files.includes('own.txt'), JSON.stringify(files));
+  assert.ok(!files.includes('s3.txt') && !files.includes('s4.txt'), JSON.stringify(files));
+}));
+
+test('small runs: a paused slice with an uncommitted edit commits it, then merges', () => withFlag(true, async () => {
+  const w = await pausedSliceWorld('a5-wip');
+  writeFileSync(join(w.wt, 'own.txt'), 'own, edited while paused\n');
+  const r = resumeSlice(w, { hold: () => true });
+  await waitFor(() => r.asks.some((q) => q.kind === 'plan'));
+  const merge = sh(w.wt, 'git rev-parse HEAD');
+  assert.equal(sh(w.wt, `git rev-list --parents -n 1 ${merge}`).split(' ').length, 3, 'HEAD is the merge');
+  const wip = sh(w.wt, `git rev-parse ${merge}^1`);
+  assert.notEqual(wip, w.own, 'the edit was committed first');
+  assert.deepEqual(sh(w.wt, `git show --name-only --format= ${wip}`).split('\n').filter(Boolean), ['own.txt'], 'only the edit, no injected path');
+  r.orch.stop();
+  await r.done;
+  assert.ok((await filesOf(w.pid)).includes('own.txt'));
+  assert.ok(isAncestorOf(w.dir, w.s4, w.feature));
+}));
+
+test('small runs: a tracked CLAUDE.md fence left uncommitted records baseMerged.merged false with status dirty and writes the Resumed line', () => withFlag(true, async () => {
+  const w = await pausedSliceWorld('a5-fence');
+  writeFileSync(join(w.wt, 'CLAUDE.md'), '# Project\n\n<!-- worca:begin -->\nrun context\n<!-- worca:end -->\n');
+  // worca's fence entry, as the run's assembly records it (the run root's manifest; reattach restores it on resume).
+  const key = projectKeyOf(w.dir);
+  const root = join(worcaHome(), 'runs', w.pid);
+  const m = await readRunManifest(root);
+  assert.ok(m, 'a detached run root');
+  const injected = { ...(m.injectedPaths || {}) };
+  injected[key] = [...(injected[key] || []), { kind: 'claudeMdSection', path: 'CLAUDE.md' }];
+  await updateRunManifest(root, { injectedPaths: injected });
+  const r = resumeSlice(w, { hold: () => true });
+  await waitFor(() => r.asks.some((q) => q.kind === 'plan'));
+  const b = branchRow(w.pid);
+  assert.deepEqual({ ...b.baseMerged }, { base: w.s4, behind: b.baseMerged.behind, merged: false, onResume: true, status: 'dirty' });
+  assert.ok(auditOf(w.pid).includes('Resumed · could not take in the latest finished work (dirty).'), JSON.stringify(auditOf(w.pid)));
+  assert.equal(sh(w.wt, 'git rev-parse HEAD'), w.own, 'nothing was committed: the fence stays out');
+  r.orch.stop();
+  await r.done;
+}));
+
+test("small runs: a conflicting latest branch leaves run 2's head unchanged, records baseMerged.merged false and writes the conflicts line", () => withFlag(true, async () => {
+  const w = await pausedSliceWorld('a5-clash', { clash: true });
+  const r = resumeSlice(w, { hold: () => true });
+  await waitFor(() => r.asks.some((q) => q.kind === 'plan'));
+  assert.equal(sh(w.wt, 'git rev-parse HEAD'), w.own);
+  const b = branchRow(w.pid);
+  assert.deepEqual({ ...b.baseMerged }, { base: w.s4, behind: b.baseMerged.behind, merged: false, onResume: true, status: 'conflicts' });
+  assert.ok(auditOf(w.pid).includes(`Base \`${w.s4}\` moved: conflicts in 1 file.`), JSON.stringify(auditOf(w.pid)));
+  r.orch.stop();
+  assert.equal((await r.done).status, 'stopped', 'the run went on');
+}));
+
+test('flag off: the same resume does not merge', () => withFlag(false, async () => {
+  const w = await pausedSliceWorld('a5-off');
+  const r = resumeSlice(w);
+  assert.equal((await r.done).status, 'done');
+  assert.ok(!isAncestorOf(w.dir, w.s3, w.feature) && !isAncestorOf(w.dir, w.s4, w.feature));
+  assert.ok(!auditOf(w.pid).some((t) => /^Base `.*` moved/.test(t) && t.includes(w.s4)), JSON.stringify(auditOf(w.pid)));
+  assert.equal(branchRow(w.pid).baseMerged?.onResume, undefined);
+}));
+
+test('merged with the flag on, then resumed with it off: the diff still excludes the merged commits', async () => {
+  const w = await withFlag(true, () => pausedSliceWorld('a5-roundtrip'));
+  const one = await withFlag(true, async () => {
+    const r = resumeSlice(w, { hold: () => true });
+    await waitFor(() => r.asks.some((q) => q.kind === 'plan'));
+    r.orch.pause();
+    return r.done;
+  });
+  assert.equal(one.status, 'paused');
+  assert.ok(isAncestorOf(w.dir, w.s4, w.feature));
+  await withFlag(false, async () => {
+    const r = resumeSlice(w);
+    assert.equal((await r.done).status, 'done');
+  });
+  const files = await filesOf(w.pid);
+  assert.ok(files.includes('own.txt'), JSON.stringify(files));
+  assert.ok(!files.includes('s3.txt') && !files.includes('s4.txt'), JSON.stringify(files));
+});
+
+test('small runs: a resume with nothing newer finished writes no Resumed line and keeps the earlier baseMerged', () => withFlag(true, async () => {
+  const w = await pausedSliceWorld('a5-uptodate');
+  const one = resumeSlice(w, { hold: () => true });
+  await waitFor(() => one.asks.some((q) => q.kind === 'plan'));
+  one.orch.pause();
+  assert.equal((await one.done).status, 'paused');
+  const before = branchRow(w.pid).baseMerged;
+  assert.equal(before.merged, true);
+  const head = sh(w.wt, 'git rev-parse HEAD');
+  const two = resumeSlice(w, { hold: () => true });
+  await waitFor(() => two.asks.some((q) => q.kind === 'plan'));
+  assert.equal(sh(w.wt, 'git rev-parse HEAD'), head, 'no new commit');
+  assert.deepEqual({ ...branchRow(w.pid).baseMerged }, { ...before });
+  assert.ok(!auditOf(w.pid).some((t) => t.startsWith('Resumed ·')), JSON.stringify(auditOf(w.pid)));
+  two.orch.stop();
+  await two.done;
+}));

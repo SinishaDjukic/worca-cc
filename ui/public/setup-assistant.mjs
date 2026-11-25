@@ -11,7 +11,7 @@ import { renderRolesSection, ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { renderInheritField, readInheritField } from './inherit-field.mjs';
 import { fetchJson as defaultFetchJson, renderResults, PORT_EMPTY_NOTE, PORT_SWITCH_NOTE, AUTH_OPTIONS } from './settings-network-proxy.mjs';
 import { LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
-import { ROLE_LABELS, MODEL_ROLES, ROLE_HARNESSES } from '../../src/shared/model-roles.mjs';
+import { ROLE_LABELS, MODEL_ROLES, ROLE_HARNESSES, isCliDecides, decidesLabel } from '../../src/shared/model-roles.mjs';
 import { CHAT_ENGINE_NAMES, engineLabel } from '../../src/shared/engine-switch.mjs';
 import { UPSTREAM_TIMEOUTS } from '../../src/shared/proxy-timeouts.mjs';
 import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
@@ -106,6 +106,19 @@ export function initialAnswers({ saved, detect = null, entry = 'first', step = n
     if (entry !== 'team' && !(entry === 'first' && blank)) continue;
     a.work[k] = isRecord(v) && isRecord(a.work[k]) ? { ...a.work[k], ...structuredClone(v) } : structuredClone(v);
     a.found.team.push(`work.${k}`);
+  }
+  // #1450: each empty Claude Code / Codex role starts on Worca's default (GET /api/settings roleDefaults), so the
+  // person sees and saves a model for it; a saved or team role is never replaced, nor a "Let <tool> decide".
+  a.found.defaults = [];
+  const st = saved.settings || {};
+  for (const [harness, picks] of Object.entries(isRecord(st.roleDefaults) ? st.roleDefaults : {})) {
+    if (harness === 'claude' && st.claudeAuth === 'signed-out') continue;
+    for (const [role, pick] of Object.entries(picks || {})) {
+      const cur = a.models.modelRoles?.[harness]?.[role];
+      if (!pick?.model || (cur && (cur.model || isCliDecides(cur)))) continue;
+      ((a.models.modelRoles[harness] ||= {})[role]) = { model: pick.model };
+      a.found.defaults.push(`models.modelRoles.${harness}.${role}`);
+    }
   }
   a.found.unmapped = Array.isArray(team?.unmapped) ? team.unmapped : [];
   a.found.teamGone = entry === 'team' && team === null;   // the home vanished between the menu click and the load (ux-2-4)
@@ -223,7 +236,13 @@ export function diffRows(saved, answers, { detect = null } = {}) {
   const body = buildApplyBody(saved, answers); const n = answers.network; const a = answers.access; const w = answers.work;
   const claudeOff = (detect?.checks || []).some((c) => c.id === 'claude' && c.state !== 'ok');
   const sources = [a.claude && (claudeOff ? 'Claude Code (not signed in)' : 'Claude Code'), a.copilot && 'GitHub Copilot', a.openai && 'OpenAI-compatible', a.anthropic && 'Anthropic-compatible'].filter(Boolean);
-  const roles = answers.models.modelRoles[w.runEngine || 'claude'] || {};
+  const engineOfRoles = w.runEngine || 'claude';
+  const roles = answers.models.modelRoles[engineOfRoles] || {};
+  // #1450: a role still on the Worca default it was preselected with reads "Worca's default (…)".
+  const defaulted = (r) => (answers.found?.defaults || []).includes(`models.modelRoles.${engineOfRoles}.${r}`)
+    && same(roles[r], { model: saved.settings?.roleDefaults?.[engineOfRoles]?.[r]?.model });
+  const roleWords = (r) => (isCliDecides(roles[r]) ? decidesLabel(engineOfRoles === 'codex' ? 'Codex' : engineLabel(engineOfRoles))
+    : defaulted(r) ? `Worca’s default (${(saved.catalog || []).find((m) => m?.id === roles[r].model)?.label || roles[r].model})` : '');
   const chatLine = { role: 'Chat', model: answers.models.askModel?.model || null, fallback: chatFallback(askEngineOf(saved.settings)) };
   const money = (v) => (v == null ? 'none' : `$${v}`);
   // Whether the team filled a key of this group (the Team chip); network and access never: D12.
@@ -233,8 +252,9 @@ export function diffRows(saved, answers, { detect = null } = {}) {
       value: n.mode === 'proxy' ? `Corporate proxy · ${n.host}:${n.port || '8080'}` : 'Direct' },
     { group: 'access', step: 'access', label: 'Model access', changed: !!body.access, team: false, value: sources.join(', ') || 'None' },
     { group: 'models', step: 'models', label: 'Models', changed: !!body.models, team: teamIn('models'),
-      value: [...MODEL_ROLES.map((r) => `${ROLE_LABELS[r]} · ${roles[r]?.model || 'each job’s own default'}`), `Chat · ${chatLine.model || chatLine.fallback}`].join('; '),
-      lines: [...MODEL_ROLES.map((r) => ({ role: ROLE_LABELS[r], model: roles[r]?.model || null })), chatLine] },
+      value: [...MODEL_ROLES.map((r) => `${ROLE_LABELS[r]} · ${roleWords(r) || roles[r]?.model || 'each job’s own default'}`), `Chat · ${chatLine.model || chatLine.fallback}`].join('; '),
+      lines: [...MODEL_ROLES.map((r) => ({ role: ROLE_LABELS[r], model: roles[r]?.model || null, ...(defaulted(r) ? { defaulted: true } : {}),
+        ...(isCliDecides(roles[r]) ? { fallback: decidesLabel(engineOfRoles === 'codex' ? 'Codex' : engineLabel(engineOfRoles)) } : {}) })), chatLine] },
     { group: 'work', step: 'work', label: 'How you work', changed: !!body.work, team: teamIn('work'),
       value: `${LEVEL_INFO[w.uiLevel || 'simple']?.label || 'Simple'} interface · per run ${money(w.pipelineCostLimitUsd)} · total ${money(w.totalCostLimitUsd)}${w.totalCostLimitUsd == null ? '' : `, resets ${w.costLimitResetPeriod === 'weekly' ? 'weekly' : 'monthly'}`}` },
   ];
@@ -841,7 +861,8 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     chatHost.addEventListener('change', readChat);
     chatHost.addEventListener('click', (e) => { if (e.target.closest?.('.inherit-clear')) readChat(); });
     body.append(host);
-    renderRolesSection(host, { roles: m.modelRoles, catalog, engine: S.answers.work.runEngine || 'claude', engines: roleEngines(), switchLevel: null, onChange: (next) => {
+    renderRolesSection(host, { roles: m.modelRoles, catalog, engine: S.answers.work.runEngine || 'claude', engines: roleEngines(), switchLevel: null,
+      roleDefaults: S.saved.settings?.roleDefaults || null, claudeAuth: S.saved.settings?.claudeAuth || 'unknown', onChange: (next) => {
       // A click that changes nothing (the harness switch) keeps the answers as they were.
       if (!Object.keys(rolePatch(m.modelRoles, next)).length) return;
       m.modelRoles = next;
@@ -884,7 +905,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       const what = el('td', 'sa-review-what'); what.append(el('div', 'sa-review-name', r.label));
       if (r.lines) {
         const ul = el('ul', 'sa-review-lines');
-        for (const l of r.lines) { const li = el('li'); li.append(el('span', 'sa-review-role', l.role), doc.createTextNode(l.model ? labelOf(l.model) : (l.fallback || 'each job’s own default'))); ul.append(li); }
+        for (const l of r.lines) { const li = el('li'); li.append(el('span', 'sa-review-role', l.role), doc.createTextNode(l.defaulted ? `Worca’s default (${labelOf(l.model)})` : l.model ? labelOf(l.model) : (l.fallback || 'each job’s own default'))); ul.append(li); }
         what.append(ul);
       } else what.append(el('div', 'sa-review-value', r.value));
       const marks = el('td', 'sa-review-marks');

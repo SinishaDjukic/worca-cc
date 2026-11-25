@@ -35,7 +35,7 @@ test('a codex run over Claude step picks spawns no Claude id and no Claude effor
   assert.ok(seen.length > 0);
   for (const s of seen) {
     assert.equal(s.engine, 'codex');
-    assert.equal(s.model, null, JSON.stringify(seen));
+    assert.match(s.model || '', /^gpt-/, JSON.stringify(seen));   // #1450: the dropped Claude pick falls to Worca's Codex default
     assert.equal(s.effort, null, JSON.stringify(seen));
   }
 });
@@ -59,5 +59,5 @@ test('a codex run drops a legacy project custom model (Review Focus 9)', async (
   const res = await orch.run();
   assert.equal(res.status, 'done', res.error);
   assert.ok(seen.length > 0);
-  assert.ok(seen.every((s) => s.model === null && s.effort === null), JSON.stringify(seen));
+  assert.ok(seen.every((s) => /^gpt-/.test(s.model || '') && s.effort === null), JSON.stringify(seen));   // #1450: Worca's Codex default
 });

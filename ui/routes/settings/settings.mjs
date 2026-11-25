@@ -15,7 +15,8 @@ import { defragDefaultModel } from '../../../src/core/memory-defrag-model.mjs';
 import { approveProposal, listProposals, rejectProposal } from '../../../src/core/memory-proposals.mjs';
 import { memoryRoot } from '../../../src/core/memory-store.mjs';
 import { queueTeamChanges, teamClientText } from '../../../src/core/memory-team.mjs';
-import { withRole, withScanRole } from '../../../src/core/model-roles.mjs';
+import { withRole, withScanRole, roleAuthState } from '../../../src/core/model-roles.mjs';
+import { roleDefaultsPayload } from '../../../src/core/role-defaults.mjs';
 import { resolveNamingModel } from '../../../src/core/naming.mjs';
 import { resolveNightConfig } from '../../../src/core/night/config.mjs';
 import { syncPluginSlots } from '../../../src/core/plugin-broker-slots.mjs';
@@ -136,6 +137,8 @@ const settingsState = () => ({
   memoryDefragDefault: defragDefaultModel(),              // what "(default)" means there: Worca's factory default
   secondOpinionModel: secondOpinionModelSetting(),        // Models › Jobs › Helper jobs › Second-opinion reviewer: the STORED pair (null = the factory default)
   factoryModels: factoryModelsPayload(),                  // what "(default)" means on Claude Code's helper rows (Models › Jobs › Helper jobs)
+  roleDefaults: roleDefaultsPayload(),                    // #1450: what an empty role runs on Claude Code / Codex (Models › Jobs)
+  claudeAuth: roleAuthState(),                            // the sign-in state the role defaults read ('unknown' when not probed yet)
   workspaceScan: workspaceScanModels(),                   // Settings › Runs › Workspaces: the STORED pick (null = the defaults)
   // What null means: the Everyday tasks role as the scan model when set, else Sonnet 5 · medium; project agents sonnet · medium.
   workspaceScanDefault: withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS) || WORKSPACE_SCAN_DEFAULT_MODELS,
@@ -195,13 +198,13 @@ async function agentGenModelState() {
 /** Models › Jobs › Helper jobs › Run naming: the stored pair + what a suggestion will actually run on. */
 async function namingModelState() {
   const stored = storedNamingModel();
-  return { namingModel: stored, namingModelEffective: resolveNamingModel(withRole(stored, 'claude', 'namingModel'), await listModels(''), modelCostConfig) };
+  return { namingModel: stored, namingModelEffective: resolveNamingModel(withRole(stored, 'claude', 'namingModel', { floor: false }), await listModels(''), modelCostConfig) };
 }
 
 /** Models › Jobs › Helper jobs › Command summaries: the stored pair + what a summary will actually run on. */
 async function commandSummaryModelState() {
   const stored = storedCommandSummaryModel();
-  return { commandSummaryModel: stored, commandSummaryModelEffective: resolveNamingModel(withRole(stored, 'claude', 'commandSummaryModel'), await listModels(''), modelCostConfig) };
+  return { commandSummaryModel: stored, commandSummaryModelEffective: resolveNamingModel(withRole(stored, 'claude', 'commandSummaryModel', { floor: false }), await listModels(''), modelCostConfig) };
 }
 
 app.get('/api/credentials', async (req, res) => {

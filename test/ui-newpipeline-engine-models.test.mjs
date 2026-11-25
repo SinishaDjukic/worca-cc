@@ -170,3 +170,31 @@ test('"Add model…" in a picker on a Codex run lands on step 1 with a sign-in a
   assert.equal(step.querySelector('.mdl-opt[data-where="signin"]').getAttribute('aria-checked'), 'true', '"A sign-in" checked');
   assert.ok(step.querySelector('.mdl-hx-t[data-engine="codex"][aria-pressed="true"]'), 'the Codex tile pressed');
 });
+
+// #1450: what "default" resolves to on the run card, and the tool-decides warning in the engine hint.
+const EFFECTIVE = {
+  claude: { deep: { model: 'claude-opus-4-8', source: 'worca-default' }, everyday: { model: 'claude-haiku-4-5', source: 'worca-default' }, quick: { model: 'claude-haiku-4-5', source: 'worca-default' } },
+  codex: { deep: { source: 'cli-decides' }, everyday: { model: 'gpt-5.5', source: 'worca-default' }, quick: { model: 'gpt-5.5', source: 'worca-default' } },
+  copilot: { deep: { source: 'tool-decides' }, everyday: { source: 'tool-decides' }, quick: { source: 'tool-decides' } },
+};
+const withDefaults = (inner) => (url, opts) => (url.includes('/api/run-defaults')
+  ? Promise.resolve({ ok: true, status: 200, json: async () => ({ engine: { value: 'claude', source: 'default' }, steps: {}, projectKey: null, tags: [], pr: null, effectiveRoles: EFFECTIVE }) })
+  : inner(url, opts));
+
+test('#1450: an empty step says which model it runs on; a tool-decides engine warns in the hint', async () => {
+  const { window } = await boot(withDefaults(apiFetch()));
+  await openWf(window);
+  const doc = window.document;
+  const row = (id) => doc.querySelector(`.step-model[data-node-id="${id}"]`).closest('.agent-row');
+  await waitFor(() => /Worca/.test(row('n1').querySelector('.agent-origin').textContent));
+  assert.equal(row('n1').querySelector('.agent-origin').textContent, 'No model set: runs on Opus 4.8 (Worca’s default for Deep thinking).');
+  assert.equal(row('n1').querySelector('.agent-sum').textContent, 'default: Opus 4.8');
+  pick(doc, 'codex');
+  await waitFor(() => /decides/.test(row('n1').querySelector('.agent-origin').textContent));
+  assert.equal(row('n1').querySelector('.agent-origin').textContent, 'No model set: Codex decides (your Deep thinking role).');
+  pick(doc, 'copilot');
+  await waitFor(() => /can't know/.test(doc.getElementById('engine-hint').textContent));
+  assert.match(doc.getElementById('engine-hint').textContent, /Steps with no model: GitHub Copilot decides: Worca can't know which model runs\.$/);
+  await waitFor(() => /Copilot/.test(row('n1').querySelector('.agent-origin').textContent));
+  assert.equal(row('n1').querySelector('.agent-origin').textContent, "GitHub Copilot decides: Worca can't know which model runs.");
+});

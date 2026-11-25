@@ -64,10 +64,12 @@ test('the design pick wins, then the Models page row, then the role, then the en
   assert.deepEqual(designModelPick('lead', { engine: 'claude', design, settings }), { model: 'claude-fable-5-1', effort: 'max', source: 'design' });
   assert.deepEqual(designModelPick('builder', { engine: 'claude', design, settings }), { model: 'claude-haiku-5-5', effort: 'medium', source: 'setting' }, 'no effort: the builder default');
   assert.deepEqual(designModelPick('lead', { engine: 'claude', settings }), { model: 'claude-opus-5', effort: 'xhigh', source: 'setting' });
-  assert.deepEqual(designModelPick('lead', { engine: 'codex', settings }), { model: null, effort: 'high', source: 'default' }, 'another engine has its own rows');
-  assert.deepEqual(designModelPick('builder', { engine: 'claude', settings: () => ({}) }), { model: null, effort: 'medium', source: 'default' });
-  assert.deepEqual(designModelPick('lead', { engine: 'claude', design: { models: { lead: { model: '  ' } } }, settings: () => ({}) }).source, 'default', 'a blank pick is none');
-  assert.deepEqual(designModelPick('lead', { engine: 'claude', settings: () => { throw new Error('bad file'); } }).source, 'default', 'an unreadable setting is none');
+  // #1450: unset everywhere, the role layer gives Worca's default (Deep thinking / Everyday tasks), never the CLI default.
+  assert.deepEqual(designModelPick('lead', { engine: 'codex', settings }), { model: 'gpt-5.6-sol', effort: 'high', source: 'role' }, 'another engine has its own rows');
+  assert.deepEqual(designModelPick('builder', { engine: 'claude', settings: () => ({}) }), { model: 'claude-sonnet-5-5', effort: 'medium', source: 'role' });
+  assert.deepEqual(designModelPick('builder', { engine: 'copilot', settings: () => ({}) }), { model: null, effort: 'medium', source: 'default' }, 'the tool decides');
+  assert.deepEqual(designModelPick('lead', { engine: 'claude', design: { models: { lead: { model: '  ' } } }, settings: () => ({}) }).source, 'role', 'a blank pick is none');
+  assert.deepEqual(designModelPick('lead', { engine: 'claude', settings: () => { throw new Error('bad file'); } }).source, 'role', 'an unreadable setting is none');
 });
 
 test('resolveDesignModel and designBuildModels read the design picks', () => {
@@ -76,7 +78,7 @@ test('resolveDesignModel and designBuildModels read the design picks', () => {
   assert.deepEqual(resolveDesignModel('builder', { engine: 'claude', design }), { model: 'claude-sonnet-5-5', effort: 'medium' });
   assert.deepEqual(designBuildModels(design), ['claude-opus-5-5', 'claude-sonnet-5-5']);
   assert.deepEqual(designBuildModels({ engine: 'claude', models: { lead: { model: 'claude-opus-5-5' }, builder: { model: 'claude-opus-5-5' } } }), ['claude-opus-5-5'], 'one model once');
-  assert.deepEqual(designBuildModels({ engine: 'claude' }), [], 'no picks, no role: the CLI default');
+  assert.deepEqual(designBuildModels({ engine: 'claude' }), ['claude-opus-5-5', 'claude-sonnet-5-5'], 'no picks, no role: Worca\'s defaults (#1450)');
 });
 
 // ── the store ───────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -164,7 +166,7 @@ test('GET /models offers the engine models, the design picks and the defaults', 
   assert.ok(start.json.models.every((m) => (m.harnesses || ['claude']).includes('claude')), 'only models Claude runs');
   assert.deepEqual(start.json.models.find((m) => m.id === 'claude-opus-5-5').efforts, ['medium', 'high', 'xhigh', 'max']);
   assert.deepEqual(start.json.picks, { lead: null, builder: null });
-  assert.deepEqual(start.json.defaults, { lead: { model: null, effort: 'high', source: 'default' }, builder: { model: null, effort: 'medium', source: 'default' } });
+  assert.deepEqual(start.json.defaults, { lead: { model: 'claude-opus-5-5', effort: 'high', source: 'role' }, builder: { model: 'claude-sonnet-5-5', effort: 'medium', source: 'role' } });
   const codex = await call('GET', '/api/design/models?engine=codex');
   assert.equal(codex.json.engine, 'codex');
   assert.ok(codex.json.models.length && codex.json.models.every((m) => m.harnesses.includes('codex')));

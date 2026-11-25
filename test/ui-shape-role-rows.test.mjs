@@ -120,3 +120,75 @@ test('CSS: the disputed chip and the reason use light-dark tokens; .qopt is scop
   }
   assert.match(css, /:is\(\.rd-questions,\.chat-rc-q,\.plan-decisions\) \.qopt\{/);
 });
+
+// Small runs B3 (D16, D17): one fold per role on the Requirements card.
+const roleGroup = (over = {}) => ({ key: 'security', perspective: 'security', label: 'Security', lead: false, summary: 'added 2', state: 'clean', findings: [],
+  rows: [{ id: 'R-sec-1', label: 'Secrets never leave', pass: true, note: 'e.g. a token is masked', tip: 'R-sec-1 · e.g. a token is masked' }], ...over });
+
+test('buildRequirementRoleFolds: 1 fold per group; head reads mark, name, summary, chevron; clean is closed with ✓ and its words', async () => {
+  const { buildRequirementRoleFolds, FOLD_MARK_WORDS } = await import('../ui/public/shape/role-rows.mjs');
+  const { el, folds } = buildRequirementRoleFolds(doc, [roleGroup({ lead: true, label: 'Engineering', key: 'engineering', perspective: 'architect' }), roleGroup(), roleGroup({ key: 'qa', label: 'QA', state: 'open' })]);
+  assert.equal(folds.length, 3);
+  assert.equal(el.querySelectorAll('.shape-role-fold').length, 3);
+  const [eng, sec, qa] = folds;
+  assert.deepEqual([...sec.line.children].map((c) => c.className), ['plan-check-mark ok', 'shape-role-fold-ic', 'shape-role-fold-name', 'plan-fold-text', 'plan-chev']);
+  assert.equal(sec.line.querySelector('.plan-check-mark').getAttribute('aria-hidden'), 'true');
+  assert.ok(sec.line.querySelector('.plan-check-mark svg'), 'the check icon');
+  assert.equal(sec.line.querySelector('.sr-only').textContent, `, ${FOLD_MARK_WORDS.clean}`);
+  assert.equal(sec.line.getAttribute('aria-expanded'), 'false');
+  assert.equal(sec.rows.hidden, true);
+  assert.match(eng.line.querySelector('.shape-role-fold-name').textContent, /^Engineering \(you ask as\)/);
+  assert.doesNotMatch(sec.line.textContent, /you ask as/);
+  assert.equal(qa.line.getAttribute('aria-expanded'), 'true');
+  assert.equal(qa.line.querySelector('.plan-check-mark').textContent, '?');
+  assert.equal(qa.line.querySelector('.sr-only').textContent, ', open objection');
+  assert.deepEqual(FOLD_MARK_WORDS, { clean: 'nothing open', asks: 'has a question', open: 'open objection', example: 'no example yet' });
+});
+
+test('owner direction (role title): the perspective\'s icon sits before the name, aria-hidden; the name is ink at weight 600', async () => {
+  const { buildRequirementRoleFolds } = await import('../ui/public/shape/role-rows.mjs');
+  const { perspectiveByKey } = await import('../src/shared/shape/perspectives.mjs');
+  const groups = [roleGroup({ perspective: 'security' }), roleGroup({ key: 'engineering', label: 'Engineering', perspective: 'architect' }),
+    roleGroup({ key: 'release', label: 'Release', perspective: 'release' }), roleGroup({ key: 'x', label: 'X', perspective: null })];
+  const [sec, eng, rel, none] = buildRequirementRoleFolds(doc, groups).folds;
+  for (const [f, key] of [[sec, 'security'], [eng, 'architect'], [rel, 'release']]) {
+    const ic = f.line.querySelector('.shape-role-fold-ic');
+    assert.equal(ic.textContent, perspectiveByKey(key).icon, key);
+    assert.equal(ic.getAttribute('aria-hidden'), 'true');
+    assert.equal(ic.nextElementSibling.className, 'shape-role-fold-name', 'the icon comes right before the name');
+  }
+  assert.equal(none.line.querySelector('.shape-role-fold-ic'), null, 'no perspective, no icon');
+  const css = readStyleCss().replace(/\/\*[\s\S]*?\*\//g, '');
+  const name = css.match(/\.shape-role-fold-name\{([^}]*)\}/);
+  assert.ok(name, 'a .shape-role-fold-name rule');
+  assert.match(name[1], /color:var\(--ink\)/);
+  assert.match(name[1], /font-weight:600/);
+  assert.match(css, /\.shape-role-fold-ic\{[^}]*\}/);
+});
+
+test('buildRequirementRoleFolds keyboard: a native button head with no tabindex or role; click toggles aria-expanded both ways', async () => {
+  const { buildRequirementRoleFolds } = await import('../ui/public/shape/role-rows.mjs');
+  const [f] = buildRequirementRoleFolds(doc, [roleGroup()]).folds;
+  assert.equal(f.line.tagName, 'BUTTON');
+  assert.equal(f.line.getAttribute('type'), 'button');
+  assert.equal(f.line.hasAttribute('tabindex'), false);
+  assert.equal(f.line.hasAttribute('role'), false);
+  f.line.click();
+  assert.deepEqual([f.line.getAttribute('aria-expanded'), f.rows.hidden], ['true', false]);
+  f.line.click();
+  assert.deepEqual([f.line.getAttribute('aria-expanded'), f.rows.hidden], ['false', true]);
+});
+
+test('buildRequirementRoleFolds lists open objections through findingList, status "open"; setLead moves the marker', async () => {
+  const { buildRequirementRoleFolds, findingList } = await import('../ui/public/shape/role-rows.mjs');
+  assert.equal(typeof findingList, 'function');
+  const finding = { id: 'security-3-1', severity: 'major', title: 'Secrets', section: 'R-sec-1', fix: 'Mask the token', status: 'open' };
+  const [f] = buildRequirementRoleFolds(doc, [roleGroup({ state: 'open', findings: [finding] })]).folds;
+  const list = f.rows.querySelector('.plan-findings');
+  assert.equal(list.hidden, false);
+  assert.equal(list.querySelector('.plan-finding-status').textContent, 'open');
+  f.setLead(true);
+  assert.match(f.line.textContent, /\(you ask as\)/);
+  f.setLead(false);
+  assert.doesNotMatch(f.line.textContent, /you ask as/);
+});

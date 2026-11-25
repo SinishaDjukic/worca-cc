@@ -73,6 +73,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 - [Feature flags](feature-flags.md) — the Labs features, and how to turn them on and off
 - [Requirements](requirements.md) — feature specs through a short interview (Labs)
 - [Run telemetry](run-telemetry.md) — detailed per-run model and timing statistics (Labs)
+- [Workflow tests](workflow-tests.md) — versions of a workflow, examples, Test a version and Compare, your criteria checked by Worca (Labs)
 
 ## Deployment
 

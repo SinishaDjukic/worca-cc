@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { useCurrentSourceBranch } from './helpers/source-branch-current.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { shipKit, stubShip, withShip, ghCalls } from './helpers/ship-world.mjs';
@@ -17,6 +18,8 @@ import { editRunLabels, readRunLabels } from '../src/core/run-labels-store.mjs';
 import { createThread, linkRun as askLinkRun, listMessages, appendMessage as askAppendMessage } from '../src/core/ask/store.mjs';
 
 useTempHome(after);
+// Branchless chat cards on git repos keep today's path: "Chat runs: source branch" = Current (checked out).
+useCurrentSourceBranch(after);
 
 let srv, base, wsBase, runs;
 const JSONH = { 'Content-Type': 'application/json' };
@@ -176,6 +179,26 @@ test('an invalid answer is a 422 with the run\'s field errors', async () => {
     assert.equal(r.status, 422);
     assert.deepEqual((await r.json()).errors, errors);
   } finally { runs.delete('shape-422-run'); }
+});
+
+test('an answer that throws STALE gets 409 {error, code:STALE} on /api/answer and /api/runs/:id/answer; any other error is still 500', async () => {
+  const stale = () => { throw Object.assign(new Error('this stop changed: reload the card'), { code: 'STALE', status: 409 }); };
+  fakePlanRun('shape-stale-run', stale);
+  try {
+    let r = await post('/api/answer', { runId: 'shape-stale-run', id: 'plan-n_refine-1', payload: { decision: 'approve' } });
+    assert.equal(r.status, 409);
+    assert.deepEqual(await r.json(), { error: 'this stop changed: reload the card', code: 'STALE' });
+    r = await post('/api/runs/shape-stale-run/answer', { id: 'plan-n_refine-1', decision: 'approve' });
+    assert.equal(r.status, 409);
+    assert.deepEqual(await r.json(), { error: 'this stop changed: reload the card', code: 'STALE' });
+  } finally { runs.delete('shape-stale-run'); }
+  fakePlanRun('shape-boom-run', () => { throw Object.assign(new Error('boom'), { code: 'OTHER', status: 403 }); });
+  try {
+    let r = await post('/api/answer', { runId: 'shape-boom-run', id: 'plan-n_refine-1', payload: { decision: 'approve' } });
+    assert.equal(r.status, 500);
+    r = await post('/api/runs/shape-boom-run/answer', { id: 'plan-n_refine-1', decision: 'approve' });
+    assert.equal(r.status, 500);
+  } finally { runs.delete('shape-boom-run'); }
 });
 
 /** Answer clarify asks until a plan ask other than `skipId` is open; returns it. */

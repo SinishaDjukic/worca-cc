@@ -387,3 +387,12 @@ test('catalogue lists level elements', async () => {
   } })));
   assert.match(doc, /Levels are not Interface modes: no level element carries `data-min-level`/);
 });
+
+test('catalogue: the chat card\'s Source branch shows at Simple under Ask me on the card, and stays once picked', () => {
+  const doc = readFileSync(join(__dir, '..', 'docs', 'ui-levels.md'), 'utf8');
+  const row = doc.split('\n').find((l) => l.startsWith('| Ask: proposal card\'s Source branch'));
+  assert.ok(row, 'the catalogue names the row');
+  assert.match(row, /Ask me on the card/);
+  assert.match(row, /stays shown once a branch is picked/);
+  assert.match(row, /\|\s*S\b[^|]*\|\s*$/);
+});

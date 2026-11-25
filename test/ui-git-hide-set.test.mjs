@@ -170,7 +170,7 @@ test('hide set: JS-built surfaces and requests', async () => {
       // The worktrees section's git gate: the panel computes it (showWorktrees), the one Context renderer obeys it (issue 1064 D4).
       assert.match(askSrc, /showWorktrees: gitOn\(doc\)/);
       assert.match(ctxViewSrc, /if \(!list\.length \|\| !d\.showWorktrees\) return null;/);
-      for (const re of [/const off = noBranches\(projSel\.value\);\n\s+for \(const f of \[srcField, featureField, sameField\]\) f\.hidden = off;\n\s+if \(!off\) loadBranchesInto\(srcSel, projSel\.value, want\)\.then\(updateTargetSub\); else updateTargetSub\(\);/, /=== 'folder' \|\| !gitOn\(doc\);/]) assert.match(askSrc, re);
+      for (const re of [/const off = noBranches\(projSel\.value\);\n\s+for \(const f of \[srcField, featureField, sameField\]\) f\.hidden = off;\n(?:.*\n){0,2}\s+if \(off\) \{ local\.branchGate = \{ status: 'off' \}; syncBranchGate\(\); return; \}\n(?:.*\n){0,3}\s+loadBranchesInto\(srcSel, projSel\.value, want,/, /=== 'folder' \|\| !gitOn\(doc\);/]) assert.match(askSrc, re);
       for (const key of ['diff', 'actions']) {
         const n = (appSrc.match(new RegExp(`key: '${key}'[^\\n]*needsGit: true`, 'g')) || []).length;
         assert.ok(n >= (key === 'diff' ? 2 : 4), `${key} tabs tagged: ${n}`);

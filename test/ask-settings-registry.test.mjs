@@ -18,12 +18,13 @@ function applyBody(s, body) {
   const [[key, v]] = Object.entries(body);
   if (key === 'schedule') { for (const [k, x] of Object.entries(v)) { if (x === null || x === '') delete s[SCHED[k]]; else s[SCHED[k]] = x; } return; }
   if (key === 'sync') { s.sync = { ...(s.sync || {}) }; for (const [k, x] of Object.entries(v)) { if (x === null) delete s.sync[k]; else s.sync[k] = x; } return; }
+  if (key === 'chat' && 'sourceBranch' in v) { s.chat = { ...(s.chat || {}) }; if (v.sourceBranch === null) delete s.chat.sourceBranch; else s.chat.sourceBranch = v.sourceBranch; return; }
   if (key === 'chat') { s.chat = { ...(s.chat || {}), notify: { ...((s.chat || {}).notify || {}), ...v.notify } }; return; }
   if (key === 'workspaceScan') { if (v) s.workspaces = { scan: v }; else delete s.workspaces; return; }
   if (key === 'theme') { if (v === '' || v === 'system') delete s.theme; else s.theme = v; return; }
   if (v === '' || v === null) delete s[key]; else s[key] = v;
 }
-function setup({ settings = {}, own = {}, writable = true } = {}) {
+function setup({ settings = {}, own = {}, writable = true, projectIds = null } = {}) {
   const s = { ...settings };
   const layer = { ...own };
   const bodies = []; const patches = []; const slots = [];
@@ -35,7 +36,7 @@ function setup({ settings = {}, own = {}, writable = true } = {}) {
       slots.push(...items);
       for (const it of items) if (!MODELS.some((m) => m.id === it.value.model)) throw new Error(`${it.id}: unknown model "${it.value.model}" — add it to the catalog first`);
     },
-    projectSettingIds: (roles) => ['run.engine', 'pipelineCostLimitUsd', 'askMaxTurns', 'askWeb', 'nightMode.enabled', 'skillMount', ...roles.map((r) => `models.claude.steps.${r}`)],
+    projectSettingIds: (roles) => projectIds || ['run.engine', 'pipelineCostLimitUsd', 'askMaxTurns', 'askWeb', 'nightMode.enabled', 'skillMount', ...roles.map((r) => `models.claude.steps.${r}`)],
     resolveSetting: (id) => {
       const dflt = id === 'askMaxTurns' ? 400 : null;
       return { value: layer[id] ?? dflt, source: layer[id] !== undefined ? 'project' : 'default', layers: { project: layer[id], user: undefined, team: undefined, default: dflt } };
@@ -182,6 +183,37 @@ test('every user setting writes exactly one known POST key — never an empty bo
       assert.ok(SETTINGS_POST_KEYS.includes(keys[0]) && !['root', 'projectsRoot', 'actions'].includes(keys[0]), `${def.id} → ${keys[0]}`);
     }
   }
+});
+
+test('chat.sourceBranch is a Runs choice that writes exactly { chat: { sourceBranch } }', async () => {
+  const { reg, bodies, s } = setup();
+  const def = reg.defsFor('user').find((d) => d.id === 'chat.sourceBranch');
+  assert.equal(def.group, 'Runs');
+  assert.equal(def.label, 'Chat runs: source branch');
+  assert.equal(def.dflt, 'ask');
+  assert.deepEqual(def.body('current'), { chat: { sourceBranch: 'current' } });
+  assert.deepEqual(def.body(null), { chat: { sourceBranch: null } });
+  const row = (await reg.list({ scope: 'user', query: 'chat.sourceBranch' })).settings[0];
+  assert.equal(row.value, 'Ask me on the card (default)');
+  assert.deepEqual(['current', 'ask', 'require'].map(def.fmt), ['Current (checked out)', 'Ask me on the card', 'Only when the chat names one']);
+  const r = await reg.apply({ id: 'chat.sourceBranch', scope: 'user', value: 'require' });
+  assert.deepEqual(bodies, [{ chat: { sourceBranch: 'require' } }]);
+  assert.equal(r.card.before, 'Ask me on the card (default)'); assert.equal(r.card.after, 'Only when the chat names one');
+  assert.equal(s.chat.sourceBranch, 'require');
+  await reg.apply({ id: 'chat.sourceBranch', scope: 'user', value: null });
+  assert.equal((await reg.list({ scope: 'user', query: 'chat.sourceBranch' })).settings[0].value, 'Ask me on the card (default)');
+  const bad = await reg.check({ id: 'chat.sourceBranch', scope: 'user', value: 'x' });
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /chat\.sourceBranch must be one of current \| ask \| require/);
+});
+
+test('chat.sourceBranch at project scope: listed with the same label and written through applyProject', async () => {
+  const { reg, patches } = setup({ projectIds: ['chat.sourceBranch'] });
+  const row = (await reg.list({ scope: 'project', projectKey: PROJECT.key })).settings.find((r) => r.id === 'chat.sourceBranch');
+  assert.equal(row.label, 'Chat runs: source branch');
+  assert.equal(row.group, 'Runs');
+  await reg.apply({ id: 'chat.sourceBranch', scope: 'project', projectKey: PROJECT.key, value: 'current' });
+  assert.deepEqual(patches, [[PROJECT.key, { 'chat.sourceBranch': 'current' }]]);
 });
 
 test('updateCheck is a default-on General boolean that writes exactly { updateCheck }', () => {

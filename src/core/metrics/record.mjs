@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { roundUsd } from '../cost-budget.mjs';
 import { prepare } from '../db.mjs';
-import { readPrState } from '../artifacts.mjs';
+import { readPrState, isTestPipeline } from '../artifacts.mjs';
 import { RESULTS_FILE } from '../results.mjs';
 import { UI_PHASE } from '../../shared/graph/manifest.mjs';
 import {
@@ -455,6 +455,7 @@ async function recordImpl(harness, { status, error = null, now = new Date() }) {
   if (!harness?.pipeline?.id) return { recorded: false, reason: 'no-pipeline' }; // preflight-only: nothing started
   if (isMockRun(harness)) return { recorded: false, reason: 'mock' };
   const runId = harness.pipeline.id;
+  if (harness?.opts?.workflowTest === true || isTestPipeline(runId)) return { recorded: false, reason: 'test' };   // D21
   // Decision 25: cached discovery only (one bounded discovery if there is no cache at all) —
   // the terminal `done` event must never wait on ls-remote/fetch.
   const sink = harness.isWorkspace
