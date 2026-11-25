@@ -19,6 +19,14 @@ const NODE_OFFENDERS = [
   'test/ask-panel-voice.test.mjs',
   'test/ui-ship-words.test.mjs',
 ];
+const BROWSER_OFFENDERS = [
+  'e2e/extension/visual.spec.mjs',
+  'tools/verify-composer-cdp.mjs',
+  'tools/verify-theme-cdp.mjs',
+  'tools/verify-feature-page-cdp.mjs',
+  'tools/verify-requirements-cdp.mjs',
+];
+const OFFENDERS = [...NODE_OFFENDERS, ...BROWSER_OFFENDERS];
 const VERDICT = /^(deterministic|flaky \(timing\)|flaky \(load\)|environment)(?=$|[\s,;.:])/;
 const OUTCOMES = ['green', 'slow tier', 'quarantined'];
 const PATH = /(test\/[A-Za-z0-9._-]+\.test\.mjs|e2e\/extension\/[A-Za-z0-9._-]+\.spec\.mjs|tools\/verify-[A-Za-z0-9._-]+-cdp\.mjs)/;
@@ -34,7 +42,8 @@ function section(md, title) {
   return next ? rest.slice(0, next.index) : rest;
 }
 
-/** The data rows of the first Markdown table in `body`, each an array of raw cells. */
+/** The data rows of every Markdown table in `body` (all `|` lines after the first two; the extra header and
+ *  separator lines become unused keys such as `Run` and `---`), each an array of raw cells. */
 function tableRows(body) {
   const lines = body.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('|'));
   return lines.slice(2).map((l) => l.replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim()));
@@ -55,9 +64,10 @@ function record() {
   return { md, verdicts, runs };
 }
 
-test('the record lists all 6 node offenders', () => {
+test('the record lists all 11 audit offenders', () => {
   const { verdicts } = record();
-  for (const p of NODE_OFFENDERS) {
+  assert.equal(OFFENDERS.length, 11);
+  for (const p of OFFENDERS) {
     const n = verdicts.filter((r) => r.path === p).length;
     assert.equal(n, 1, `${p}: expected exactly one Verdicts row, found ${n}`);
   }
@@ -65,7 +75,7 @@ test('the record lists all 6 node offenders', () => {
 
 test('every row has a known verdict and outcome', () => {
   const { verdicts } = record();
-  assert.ok(verdicts.length >= NODE_OFFENDERS.length, 'the Verdicts table has too few rows');
+  assert.ok(verdicts.length >= OFFENDERS.length, 'the Verdicts table has too few rows');
   for (const r of verdicts) {
     const first = r.verdict.split(';')[0].trim();
     assert.match(first, VERDICT, `${r.path}: verdict "${r.verdict}" does not start with deterministic, flaky (timing), flaky (load) or environment`);
@@ -103,13 +113,41 @@ test('slow-tier rows match test/tiers.json', () => {
 test('green and slow-tier rows cite 3 loaded runs', () => {
   const { verdicts, runs } = record();
   for (const r of verdicts.filter((v) => v.outcome === 'green' || v.outcome === 'slow tier')) {
-    const cited = [...new Set(r.evidence.match(/\bfull-\d+\b/g) ?? [])];
+    const browser = entryKind(r.path) !== 'test';
+    const re = browser ? /\bbrowser-\d+\b/g : /\bfull-\d+\b/g;
+    const cited = [...new Set(r.evidence.match(re) ?? [])];
     assert.ok(cited.length >= 3, `${r.path}: cites ${cited.length} loaded runs (${cited.join(', ') || 'none'}), needs 3`);
     for (const id of cited) {
       assert.ok(runs.has(id), `${r.path}: cites ${id}, which has no row under "## Evidence runs"`);
       assert.match(runs.get(id), new RegExp(`${escapeRe(r.path)}=\\d+(\\.\\d+)?s`), `${r.path}: Evidence run ${id} has no ${r.path}=Ns seconds value`);
+      if (browser) assert.match(runs.get(id), /\b[0-9a-f]{64}\b/, `${id}: no log sha256`);
     }
   }
+});
+
+test('a spec or proof has no slow tier', () => {
+  const { verdicts } = record();
+  for (const r of verdicts.filter((v) => entryKind(v.path) !== 'test')) {
+    assert.notEqual(r.outcome, 'slow tier', `${r.path}: a spec or proof has no slow tier`);
+  }
+});
+
+test('each browser offender\'s evidence cites its loaded browser runs', () => {
+  const { verdicts } = record();
+  for (const p of BROWSER_OFFENDERS) {
+    const r = verdicts.find((v) => v.path === p);
+    assert.ok(r, `${p}: no Verdicts row`);
+    if (r.outcome === 'green') assert.match(r.evidence, /\bbrowser-\d+\b/, `${p}: Evidence "${r.evidence}" cites no loaded browser run`);
+    else if (r.outcome === 'quarantined') assert.match(r.evidence, /\bfailed \d+ of 3 loaded\b|\bno local loaded runs\b/, `${p}: Evidence "${r.evidence}" says neither "failed N of 3 loaded" nor "no local loaded runs"`);
+  }
+});
+
+test('the Post-merge check has a Window column with 5 rows from each slice', () => {
+  const { md } = record();
+  const body = section(md, 'Post-merge check');
+  assert.match(body, /\bWindow\b/);
+  assert.equal((body.match(/from slice 5 merge/g) ?? []).length, 5);
+  assert.equal((body.match(/from slice 6 merge/g) ?? []).length, 5);
 });
 
 // R-qa-5's example: "`test/ui-ask-side-shell.test.mjs`: flaky, timing; failed 3 of 20 loaded runs, 0 of 20 alone".

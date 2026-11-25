@@ -134,7 +134,9 @@ nightly, never blocks a merge, and lists each entry's result and pass rate over
 the last 30 runs in its job summary. Leaving quarantine is a manual PR that meets
 the `exitCondition` and deletes the entry along with the fix. Repeat offenders
 and their verdicts are kept in `docs/test-offenders.md`: a fix or quarantine of
-a listed file updates its row.
+a listed file updates its row. Browser offenders (extension specs and CDP
+proofs) are checked by 3 loaded runs of their own harness, see
+`docs/test-offenders.md`.
 
 While you work, `npm run test:related` runs only the test files your
 uncommitted changes can affect (`-- --base origin/dev` for everything on your

@@ -76,6 +76,11 @@ for (const sig of ['SIGINT', 'SIGTERM', 'uncaughtException', 'unhandledRejection
 
 // ---- app server on an ephemeral port (the house pattern: env BEFORE the import)
 home = await mkdtemp(path.join(tmpdir(), 'worca-cdp-'));
+// settings.json lives under HOME/USERPROFILE, which WORCA_HOME does not cover: without these lines the proof reads
+// (and its POST /api/settings writes) the developer's real ~/.worca-cc/settings.json. Chrome gets REAL_ENV back below.
+const REAL_ENV = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+process.env.HOME = home;
+process.env.USERPROFILE = home;
 process.env.WORCA_HOME = home;
 process.env.WORCA_MOCK = '1';
 const { app } = await import(new URL('../ui/server.mjs', import.meta.url).href);
@@ -96,7 +101,7 @@ profile = await mkdtemp(path.join(tmpdir(), 'worca-cdp-profile-'));
 chrome = spawn(CHROME, ['--headless=new', ...SANDBOX, `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
   '--window-size=1280,900', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check', '--use-mock-keychain',
   '--disable-background-timer-throttling', '--disable-renderer-backgrounding', 'about:blank'],
-{ stdio: ['ignore', 'pipe', 'pipe'] });
+{ stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...REAL_ENV } });
 // Keep Chrome's last stderr lines: when no DevTools target ever appears, its own
 // words (a sandbox refusal, a profile lock, a crash) are the diagnosis.
 const chromeErr = [];

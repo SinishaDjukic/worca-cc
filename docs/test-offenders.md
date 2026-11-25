@@ -8,8 +8,10 @@ evidence, the CI history and the fix. `test/test-offenders.test.mjs` keeps this 
 Three loaded full-suite runs and five alone runs per file showed no offender failure on this tree. That cannot rule
 out a rare flake. The five dev push runs under [Post-merge check](#post-merge-check) are the second check.
 
-The browser offenders (extension Playwright specs and CDP proofs) are added to the same Verdicts table later, with
-their spec or proof paths.
+The browser offenders (the extension Playwright spec and four CDP proofs) are rows of the same Verdicts table, by
+spec or proof path. Each is checked with its own harness while `npm run test:fast` runs in the background:
+`env -u FORCE_COLOR -u PORT HOME="$(mktemp -d "$TMPDIR/home.XXXXXX")" npm run verify:NAME` for a proof (a fresh HOME
+per run), and `npm run e2e:extension -- visual.spec.mjs` for the spec.
 
 Words used:
 - Verdict: `deterministic` (fails every time on a given tree), `flaky (timing)` (depends on how fast something
@@ -19,7 +21,8 @@ Words used:
 - Outcome: `green` (in the normal tiers and passing), `slow tier` (in the slow tier of `test/tiers.json` and
   passing), `quarantined` (in `test/quarantine.json`).
 - Evidence: `5/5 alone` means 5 passing runs of `node tools/test.mjs FILE`. `full-1`, `full-2` and `full-3` are
-  the loaded full-suite runs under [Evidence runs](#evidence-runs).
+  the loaded full-suite runs under [Evidence runs](#evidence-runs). `browser-1`, `browser-2` and `browser-3` are the
+  loaded browser runs there: a spec or proof row cites them.
 
 ## Verdicts
 
@@ -92,16 +95,40 @@ each file's `test at …` line. "dev" is a push to `dev`; the others are pull re
 - `test/ui-ship-words.test.mjs`, fast tests shards 1/4 and 2/4, 8 runs. dev: 45071431393. PR: 45090629669,
   45072298253, 45070675729, 45070336133, 45028494841, 44765508561, 44759165394.
 
+The browser offenders, from the last 120 failed `ci.yml` runs, read the same way:
+
+- `e2e/extension/visual.spec.mjs`, job `extension-e2e`, 5 runs, light and dark: `"padding-left": "8px"` against
+  `"10px"` on the bar buttons after #1546. dev: 45102926427, 45107372698, 45125540891, 45170618730, 45224008084.
+  Green on every dev run since 45230448507.
+- `tools/verify-composer-cdp.mjs`, job `cdp` (the rest group): FAIL (11), an unexpected `wfv-howto-btn` in the top
+  bar, and FAIL (18), the wider top-left bar, after #1443. dev: 45357178869, 45409974761, plus about 20 PR runs up to
+  PR 45576083436 (2026-11-25, a branch without the fix). Locally it also failed 3 of 3 on a machine whose real
+  `~/.worca-cc/settings.json` holds `onboarding.welcomeSeen` and `onboarding.setupFinished`: the worca-level summary
+  dialog covered the canvas at check (1).
+- `tools/verify-theme-cdp.mjs`, job `cdp` (`theme` group). "project Back", cause not identified, PR: 44917572665
+  (2026-11-21), 45378688636 (2026-11-24), never on a dev push. "one button style / dark / system-dark" after #1443,
+  dev: 45357178869, 45409974761. "page intro" after `06aabffa2`, PR: 45003518603, 45005394485.
+- `tools/verify-feature-page-cdp.mjs`, job `cdp` (the rest group): "the group page at 290px" measured the
+  `.topnav-howto` button at font-size 0px after #1443. dev: 45357178869, 45409974761.
+- `tools/verify-requirements-cdp.mjs`, job `cdp` (the rest group): "back on the feature" and "the start records the
+  file it sent" after #1500, 10 runs. dev: 44760932899, 44821482637. PR: 45028494841 and 7 runs on 2026-11-20.
+
 ## Post-merge check
 
-Fill in after this page merges: the next 5 push runs of `ci.yml` on `dev`. A failure of an offender that is not
-quarantined reopens its row. That offender is then quarantined in a follow-up PR (an entry in
-`test/quarantine.json`, outcome `quarantined` here). The CI gate checklist links this section.
+Fill in after each slice merges: the next 5 push runs of `ci.yml` on `dev`, counted from that slice's merge commit
+(the `Window` column). A failure of any of the 11 offenders that is not quarantined reopens its row. That offender is
+then quarantined in a follow-up PR (an entry in `test/quarantine.json`, outcome `quarantined` here). The browser rows
+watch the theme proof's "project Back" by name. The CI gate checklist links this section.
 
-| Dev push run id | Date | Offender failures |
-|---|---|---|
-| | | |
-| | | |
-| | | |
-| | | |
-| | | |
+| Window | Dev push run id | Date | Offender failures |
+|---|---|---|---|
+| from slice 5 merge | | | |
+| from slice 5 merge | | | |
+| from slice 5 merge | | | |
+| from slice 5 merge | | | |
+| from slice 5 merge | | | |
+| from slice 6 merge | | | |
+| from slice 6 merge | | | |
+| from slice 6 merge | | | |
+| from slice 6 merge | | | |
+| from slice 6 merge | | | |
