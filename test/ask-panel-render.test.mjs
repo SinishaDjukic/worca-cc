@@ -231,6 +231,9 @@ test('ask-panel-render: opening an activity body while the transcript is pinned 
   ctx.flush();
   assert.equal(body.hidden, true, 'closed');
   assert.equal(jump.hidden, true, 'back at the end: pinned again');
+  t.dispatchEvent(new ctx.window.Event('wheel', { bubbles: true }));   // a toggle's own write is the baseline: its
+  t.dispatchEvent(new ctx.window.Event('scroll'));                     // scroll event does not misread direction
+  assert.equal(jump.hidden, true, 'still pinned');
   t.scrollTop = 600;                                            // a turn landing grows the column: the pin follows it
   ctx.flush();
   assert.equal(t.scrollTop, 1000);
@@ -241,6 +244,8 @@ test('ask-panel-render: opening an activity body while the transcript is pinned 
   assert.equal(body.hidden, false);
   assert.equal(head.getBoundingClientRect().top, 550, 'the head is back where it was clicked');
   assert.equal(t.scrollTop, 330);
+  userScroll(ctx, t, 320);                                      // up from the toggle's write
+  assert.equal(jump.hidden, false, 'still unpinned');
 });
 
 test('ask-panel-render: a tool row is a dot, the tool name, its args (never cut at 60 chars; CSS clamps two lines) and the duration; the full text is its hover', async () => {
