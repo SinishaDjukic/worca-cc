@@ -20,6 +20,7 @@ import { rerunsOf } from '../../shared/shape/req-status.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
 import { stopOptionOf } from '../../shared/shape/run-stops.mjs';
+import { namedWaits, neededByOf } from '../../shared/shape/run-status.mjs';
 import { CHANGES_MAX } from '../../shared/shape/req-change.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
 import { SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
@@ -872,14 +873,20 @@ const branchOf = (pid) => (pid ? j(getDb().prepare('SELECT branch FROM pipelines
  *  and where it starts from (its stored `branch.source` against the feature base and the earlier runs' branches). */
 function runFacts(v, index, s) {
   const req = (s && s.requirements) || { ids: [], check: null };
-  const agreed = featureRow(v.id)?.outline?.agreed;
+  const f = featureRow(v.id);
+  const agreed = f?.outline?.agreed;
   const texts = Object.fromEntries((Array.isArray(agreed) ? agreed : []).map((a) => [a.id, a.text]));
   const runs = v.slices.filter((x) => x.index < index && x.pipelineId).map((x) => ({ index: x.index, feature: branchOf(x.pipelineId)?.feature || null }));
   const source = s && s.pipelineId ? branchOf(s.pipelineId)?.source || null : null;
   // D3 (D4): the Owns rows' words are the feature's own `shown` (computed once in shipLedger), never a second ledger.
   const sr = v.ship && v.ship.smallRuns;
   const shown = new Map((sr ? [...sr.owned, ...sr.confirmed] : []).filter((e) => e.shown).map((e) => [e.id, e.shown]));
-  return { owns: ownsOf({ ids: req.ids, texts, check: req.check, shown }), startsFrom: startsFromOf({ index, source, base: featureBase(v.id), runs }) };
+  // Slice 11 (D4 to D7): what the run waits for (the gate's own rule, reduced as R-po-1) and which runs build on it,
+  // nested under `links` so no top-level `waitsFor` reads as a slice's wait word (run-stops.mjs runStopWord).
+  const bySlice = new Map(v.slices.map((x) => [x.index, x]));
+  const holds = f ? sliceHolds(f, sliceRows(v.id), index) : { waitsFor: [] };
+  const links = { waitsFor: namedWaits({ waitsFor: holds.waitsFor }, bySlice), neededBy: neededByOf(index, bySlice) };
+  return { owns: ownsOf({ ids: req.ids, texts, check: req.check, shown }), startsFrom: startsFromOf({ index, source, base: featureBase(v.id), runs }), links };
 }
 
 const AGENT_TEST_NODES = Object.freeze(['n_impl', 'n_check']);

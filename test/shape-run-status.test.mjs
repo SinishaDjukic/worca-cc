@@ -2,7 +2,9 @@
 // src/shared/shape/run-status.mjs does not exist yet, so this file fails to load until the module is written.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RUN_MARKS, namedWaits, runStatus } from '../src/shared/shape/run-status.mjs';
+import { readFileSync } from 'node:fs';
+import { RUN_MARKS, namedWaits, neededByOf, runStatus } from '../src/shared/shape/run-status.mjs';
+import { SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
 
 const LINKS = [[1, []], [2, [1]], [3, [1]], [4, [1, 3]], [5, [3, 4]], [6, [3, 5]], [7, [1, 2, 3, 4, 5, 6]], [8, [1, 2]],
   [9, []], [10, [3]], [11, []], [12, [1, 7, 10]], [13, [11]]];
@@ -119,4 +121,18 @@ test('no input: nothing throws, null word and mark; every mark is in RUN_MARKS o
     const { mark } = runStatus({ slice });
     assert.ok(mark === null || RUN_MARKS.includes(mark));
   }
+});
+
+// ── Slice 11 (R-po-6): neededByOf, the runs that directly build on a run ─────────────────────────────────────────────
+test('S11-T1 neededByOf over the 16-run links: run 1 → 2,3,4,7,8,12; run 7 → 12; run 16 → none; no buildsOn → none; stays pure', () => {
+  const w = new Map(SIXTEEN_RUN_LINKS.map((l) => [l.run, { index: l.run, buildsOn: [...l.dependsOn] }]));
+  assert.deepEqual(neededByOf(1, w), [2, 3, 4, 7, 8, 12]);
+  assert.deepEqual(neededByOf(7, w), [12]);
+  assert.deepEqual(neededByOf(16, w), []);
+  assert.deepEqual(neededByOf('x', w), []);
+  const bare = new Map(SIXTEEN_RUN_LINKS.map((l) => [l.run, { index: l.run }]));
+  assert.deepEqual(neededByOf(1, bare), []);
+  assert.deepEqual(neededByOf(1), []);
+  const src = readFileSync(new URL('../src/shared/shape/run-status.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /from\s+['"][^'"]*(src\/core|\/core\/|ui\/)/);
 });

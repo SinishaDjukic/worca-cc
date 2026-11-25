@@ -86,3 +86,37 @@ test('null info (or info without owns) hides and empties the host; a second call
   assert.equal(host.children.length, 0);
   assert.equal(mountRunFacts(null, INFO), null);
 });
+
+// ── Slice 11 (R-po-6): Waits for and Needed by ───────────────────────────────────────────────────────────────────────
+const rowsOf = (box) => [...box.querySelectorAll('dl.rd-kv > .rd-kv-row')].map((r) => [r.dataset.fact, r.querySelector('dt').textContent, r.querySelector('dd').textContent]);
+
+test('S11-T8 run 7: Starts from, Waits for 2, 6, Needed by 12, in that order, each once; run 1 reads its long list whole', () => {
+  const box = mountRunFacts(hostOf(), { ...INFO, index: 7, links: { waitsFor: [2, 6], neededBy: [12] } });
+  assert.deepEqual(rowsOf(box).map((r) => r.slice(0, 2)), [['starts', 'Starts from'], ['waits', 'Waits for'], ['needed', 'Needed by']]);
+  assert.deepEqual(rowsOf(box).slice(1).map((r) => r[2]), ['2, 6', '12']);
+  assert.equal(box.textContent.match(/Waits for/g).length, 1);
+  assert.equal(box.textContent.match(/Needed by/g).length, 1);
+  const one = mountRunFacts(hostOf(), { ...INFO, links: { waitsFor: [], neededBy: [2, 3, 4, 7, 8, 12] } });
+  assert.equal(one.querySelector('[data-fact="needed"] dd').textContent, '2, 3, 4, 7, 8, 12');
+});
+
+test('S11-T9 no dependants reads Needed by: nothing; an empty Waits for is left out', () => {
+  const box = mountRunFacts(hostOf(), { ...INFO, links: { waitsFor: [], neededBy: [] } });
+  assert.equal(box.querySelector('[data-fact="needed"] dd').textContent, 'nothing');
+  assert.equal(box.querySelector('[data-fact="waits"]'), null);
+});
+
+test('S11-T10 startsFrom null with links: only the two link rows in one dl; no links: no new rows; a second paint is the same DOM', () => {
+  const host = hostOf();
+  const box = mountRunFacts(host, { ...INFO, startsFrom: null, links: { waitsFor: [2], neededBy: [3] } });
+  assert.equal(box.querySelectorAll('dl.rd-kv').length, 1);
+  assert.deepEqual(rowsOf(box).map((r) => r[0]), ['waits', 'needed']);
+  const plain = mountRunFacts(hostOf(), INFO);
+  assert.equal(plain.querySelector('[data-fact="waits"]'), null);
+  assert.equal(plain.querySelector('[data-fact="needed"]'), null);
+  const info = { ...INFO, links: { waitsFor: [2, 6], neededBy: [12] } };
+  mountRunFacts(host, info);
+  const html = host.innerHTML;
+  mountRunFacts(host, info);
+  assert.equal(host.innerHTML, html);
+});
