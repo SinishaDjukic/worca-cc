@@ -140,7 +140,9 @@ the `exitCondition` and deletes the entry along with the fix. Repeat offenders
 and their verdicts are kept in `docs/test-offenders.md`: a fix or quarantine of
 a listed file updates its row. Browser offenders (extension specs and CDP
 proofs) are checked by 3 loaded runs of their own harness, see
-`docs/test-offenders.md`.
+`docs/test-offenders.md`. The repo admin makes `dev` require these checks by
+following `docs/required-checks.md`; a renamed gate, parity or Firefox job fails
+`test/required-checks.test.mjs`.
 
 While you work, `npm run test:related` runs only the test files your
 uncommitted changes can affect (`-- --base origin/dev` for everything on your
