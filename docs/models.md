@@ -410,7 +410,8 @@ defragment, Workspace scan and, on Claude Code, the Auto workflow classifier
 `GET /api/settings` returns them as `roleDefaults` (with `claudeAuth`), and
 `GET /api/run-defaults` returns `effectiveRoles` per engine and role
 (`source`: `role`, `worca-default`, `cli-decides` or `tool-decides`). The run
-log and audit name each step that runs on a Worca default.
+log names each step that runs on a Worca default; the audit keeps only the
+warnings (the tool decides, or Claude Code is signed out).
 
 - **Let Claude Code decide** (Codex: **Let Codex decide**) keeps the old
   behaviour for one role: it is stored as `{ "cliDecides": true }` and spawns

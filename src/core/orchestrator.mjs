@@ -289,9 +289,12 @@ export class GraphOrchestrator extends RunHarness {
       claudeAuth: signedOut ? 'signed-out' : 'unknown', labelOf: ((labels) => (id) => labels?.[id] || id)(await this._modelLabels()),
       roleOf: (nc) => roleOf(`steps.${nc.authoredKey || nc.key}`, { name: nc.meta?.displayName || '' }),
     });
+    // Only warnings reach the audit: the per-step "runs on X (Worca's default)" lines stay in the run log (the Agents
+    // tab shows the resolved model), so the audit, and the feature log keyed by its positions, keep dev's shape.
+    const noModelWarns = signedOut || !['claude', 'codex'].includes(engineNow);
     for (const line of noModel) {
-      this._log('orchestrator', signedOut || !['claude', 'codex'].includes(engineNow) ? 'warn' : 'info', line);
-      this._pendingAudits.push(line);
+      this._log('orchestrator', noModelWarns ? 'warn' : 'info', line);
+      if (noModelWarns) this._pendingAudits.push(line);
     }
     // No silent fallbacks: name each pick the engine dropped (run log + audit, once, at start).
     for (const line of this._notePickDrops()) {
