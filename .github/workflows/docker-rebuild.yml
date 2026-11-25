@@ -58,6 +58,8 @@ jobs:
       ref: ${{ needs.resolve.outputs.stable }}
       channel: latest
       date_tag: true
+    secrets:
+      GHCR_LEGACY_TOKEN: ${{ secrets.GHCR_LEGACY_TOKEN }}
 
   rc:
     needs: resolve
@@ -71,3 +73,5 @@ jobs:
       ref: ${{ needs.resolve.outputs.rc }}
       channel: rc
       date_tag: true
+    secrets:
+      GHCR_LEGACY_TOKEN: ${{ secrets.GHCR_LEGACY_TOKEN }}

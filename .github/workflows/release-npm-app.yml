@@ -133,6 +133,8 @@ jobs:
     with:
       ref: ${{ github.ref_name }}
       channel: ${{ needs.build-and-publish.outputs.dist_tag }}
+    secrets:
+      GHCR_LEGACY_TOKEN: ${{ secrets.GHCR_LEGACY_TOKEN }}
 
   release:
     needs: [build-and-publish, image]
