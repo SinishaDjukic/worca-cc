@@ -76,7 +76,8 @@ function apiHandler(rec = {}) {
       rec.order = [...(rec.order || []), `config:${method}`];
       return { ok: true, status: 200, json: async () => ({}) };
     }
-    if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: rec.runEngine || 'claude', source: 'default' } }) };
+    // Chat runs: source branch: Current (checked out), today's path (no branch needed).
+    if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: rec.runEngine || 'claude', source: 'default' }, chatSourceBranch: { mode: 'current', source: 'default', needs: [] } }) };
     if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'proj2', path: '/repos/proj2', exists: true }] }) };
     if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
     if (url === '/api/guardrails') return { ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'normal', name: 'Normal' }] }) };

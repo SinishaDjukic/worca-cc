@@ -3,6 +3,7 @@ import { renderEngineSection, utilityId } from './engine-settings-view.mjs';
 import { notify, cardAlert } from './feedback.mjs';
 import { ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { PR_OPEN_LABELS, PR_SLICES_LABELS } from '../../src/shared/pr-auto.mjs';
+import { CHAT_SOURCE_BRANCH_ID, CHAT_SOURCE_BRANCH_SETTING, CHAT_SOURCE_BRANCH_LABELS } from '../../src/shared/chat-source-branch.mjs';
 
 // A USD field's inherited value as the placeholder shows it: "$5.00", or "no cap" when unset.
 const usd = (value) => (value == null ? 'no cap' : `$${Number(value).toFixed(2)}`);
@@ -18,7 +19,9 @@ const PR_FIELDS = [
 ];
 export const PROJECT_CARDS = Object.freeze([
   { key: 'cost', title: 'Cost', fields: [{ id: 'pipelineCostLimitUsd', label: 'Per-pipeline cap (USD)', kind: 'number', min: .01, step: .01, format: usd }, { id: 'humanRateUsdPerHour', label: 'Developer rate (USD/h)', kind: 'number', min: .01, step: .01, format: usd }] },
-  { key: 'ask', title: 'Chat', fields: [{ id: 'askMaxTurns', label: 'Turn limit', kind: 'number', min: 1, step: 1 }, { id: 'askMaxBudgetUsd', label: 'Per-turn cost cap (USD)', kind: 'number', min: .1, step: .1, format: usd }] },
+  { key: 'ask', title: 'Chat', fields: [{ id: 'askMaxTurns', label: 'Turn limit', kind: 'number', min: 1, step: 1 }, { id: 'askMaxBudgetUsd', label: 'Per-turn cost cap (USD)', kind: 'number', min: .1, step: .1, format: usd },
+    // Chat runs: source branch — this project's override; "Chat" is its home (the project page has no Runs card).
+    { id: CHAT_SOURCE_BRANCH_ID, label: CHAT_SOURCE_BRANCH_SETTING, kind: 'select', options: labelled(CHAT_SOURCE_BRANCH_LABELS), format: (v) => CHAT_SOURCE_BRANCH_LABELS[v] ?? null }] },
   { key: 'context', title: 'Context and memory', fields: [{ id: 'contextMaxBytesPerFile', label: 'Run context: bytes per file', kind: 'number', min: 1 }, { id: 'contextMaxBytesTotal', label: 'Run context: bytes in total', kind: 'number', min: 1 }, { id: 'skillMount', label: 'Skill delivery', kind: 'select', options: [{ value: 'copy', label: 'Copy' }, { value: 'symlink', label: 'Symlink' }] },
     { id: 'memory.team', label: 'Team memory', kind: 'select', options: [{ value: 'team', label: 'Team: team notes only' }, { value: 'both', label: 'Both: my notes and the team\'s' }],
       // Project layer only (no user layer): inherit = Local (off). Off is stored as null, like the CLI and the Team view do.

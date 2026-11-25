@@ -111,7 +111,7 @@ import {
   runLimits, assertRunLimitsInput, setRunLimits, autoTestWorkers,
   networkProxySettings, networkProxyEnabled, migrateCorporateProxyFlag,
   keepAwakeEnabled, setKeepAwake, assertKeepAwakeInput, migrateKeepAwakeFlag,
-  chatLinksInPanel, setChatLinksInPanel, assertChatLinksInPanelInput,
+  chatLinksInPanel, setChatLinksInPanel, assertChatLinksInPanelInput, assertChatSourceBranchInput,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels, setDesignModels,
   modelRolesSetting, assertModelRolesInput, setModelRoles,
@@ -121,6 +121,7 @@ import {
   chatHomePinsFor, setChatHomePinsFor,
 } from '../src/core/settings.mjs';
 import { resolveSetting, resolveAll, writeProjectSettings, assertProjectSettingsPatch, resolveRunEngine, defragSlotPair } from '../src/core/settings-cascade.mjs';
+import { branchNeeds, targetsForBody, sourceBranchRefusal } from '../src/core/chat-source-branch-gate.mjs';
 import { resolveNightConfig, validateNightPatch } from '../src/core/night/config.mjs';
 import { effectiveNightConfig, nightLayers } from '../src/core/night/effective.mjs';
 import { readNightDecisions, nightAnsweredSince } from '../src/core/night/store.mjs';
@@ -2857,6 +2858,10 @@ const startRunHandler = async (req, res) => {
       if (!parsed.ok) return badRequest(res, parsed.error);
       sched = parsed;
     }
+
+    // Chat runs: source branch — a chat card's Start/Schedule with no branch is re-checked now (never a fired ticket or a sourceFromPrevious chain), before anything is written.
+    const branchless = askLink && !internal && !sched?.sourceFromPrevious && !body.sourceFromPrevious ? branchNeeds(await targetsForBody(body), body) : [];
+    if (branchless.length) return res.status(400).json(sourceBranchRefusal(branchless, { workspace: !!hasWorkspace }));
 
     // ── Shared resolution (factored BEFORE the target branch, §2.6) ──────────
     // NEW (plugins §7.3): body.source is the task-source descriptor; shape-check
@@ -8455,6 +8460,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     });
     if (hasKeepAwakeKey) asSettingsField('keepAwake', () => assertKeepAwakeInput(body.keepAwake));
     if (hasChatLinksKey) asSettingsField('chatLinksInPanel', () => assertChatLinksInPanelInput(body.chatLinksInPanel));
+    if (has('chat') && body.chat && typeof body.chat === 'object' && 'sourceBranch' in body.chat) asSettingsField('chat', () => assertChatSourceBranchInput(body.chat.sourceBranch));   // Chat runs: source branch, before root is written
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
     if (hasNetworkWaitKey) asSettingsField('networkWait', () => assertNetworkWaitInput(body.networkWait));
     if (hasRunLimitsKey) asSettingsField('runLimits', () => assertRunLimitsInput(body.runLimits));

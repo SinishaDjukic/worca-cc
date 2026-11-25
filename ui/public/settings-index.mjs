@@ -4,6 +4,7 @@
 // tab / card id, its mode and its Labs gate to ui/public/index.html, so a moved or re-gated card fails there.
 import { flagByKey } from '../../src/shared/flags/registry.mjs';
 import { levelRank, LEVEL_INFO } from './ui-level.mjs';
+import { CHAT_SOURCE_BRANCH_SETTING } from '../../src/shared/chat-source-branch.mjs';
 
 const tab = (id, title, o = {}) => ({ id, title, min: 'simple', flag: '', alts: [], ...o });
 const card = (tabId, id, title, o = {}) => ({ tab: tabId, id, title, min: 'simple', flag: '', alts: [], ...o });
@@ -35,6 +36,7 @@ export const CARDS = Object.freeze([
   card('runs', 'budget-settings-card', 'Budget & cost limits', { alts: ['budget', 'cost', 'spend', 'money', 'limit', 'cap', 'price'] }),
   card('runs', 'night-settings-card', 'Away mode', { min: 'advanced', alts: ['night', 'overnight', 'unattended', 'away', 'autopilot'] }),
   card('runs', 'smart-naming-settings-card', 'Smart run naming', { alts: ['title', 'branch name', 'naming', 'rename'] }),
+  card('runs', 'chat-runs-settings-card', CHAT_SOURCE_BRANCH_SETTING, { alts: ['source branch', 'base branch', 'chat run', 'branch'] }),
   card('runs', 'sync-settings-card', 'Sync before run', { min: 'advanced', alts: ['git', 'pull', 'fetch', 'up to date', 'rebase'] }),
   card('runs', 'schedule-settings-card', 'Scheduled runs', { min: 'advanced', alts: ['schedule', 'cron', 'timer', 'recurring', 'repeat'] }),
   card('runs', 'network-proxy-settings-card', 'Network proxy', { alts: ['proxy', 'corporate proxy', 'ntlm', 'firewall', 'network'] }),

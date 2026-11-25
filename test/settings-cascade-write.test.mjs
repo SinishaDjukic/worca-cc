@@ -70,3 +70,13 @@ test('assertSlotModels: a slot takes only its engine\'s catalog models and their
   await assert.rejects(() => assertSlotModels([{ id: 'x', engine: 'claude', value: { model: 'no-such-model' } }]), /x: unknown model "no-such-model"/);
   await assert.rejects(() => assertSlotModels([{ id: 'y', engine: 'claude', value: { model: 'claude-haiku-4-5', effort: 'max' } }]), /y: claude-haiku-4-5 does not offer effort "max"/);
 });
+
+test('chat.sourceBranch: a bad project value is refused with the invalid sentence; null clears it', () => {
+  assert.throws(() => writeProjectSettings({ projectDir: dir }, { 'chat.sourceBranch': 'bogus' }),
+    (err) => err.status === 400 && err.message === 'chat.sourceBranch must be one of current | ask | require');
+  writeProjectSettings({ projectDir: dir }, { 'chat.sourceBranch': 'require' });
+  assert.deepEqual(extraOf().settings.chat, { sourceBranch: 'require' });
+  assert.equal(resolveSetting('chat.sourceBranch', { projectDir: dir }).source, 'project');
+  writeProjectSettings({ projectDir: dir }, { 'chat.sourceBranch': null });
+  assert.equal(extraOf().settings?.chat, undefined);
+});

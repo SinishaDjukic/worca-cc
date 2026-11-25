@@ -581,6 +581,28 @@
               </div>
             </section>
 
+            <!-- The chat run card's source branch: which branch a chat run card starts from when the chat names none.
+                 Every word (title, row, tip, options) comes from src/shared/chat-source-branch.mjs via app.js. -->
+            <section class="card settings-card" id="chat-runs-settings-card" data-min-level="simple" data-needs-git>
+              <div class="card-head">
+                <div class="label-row">
+                  <h2 id="chatRunsTitle"></h2>
+                  <button type="button" class="info-tip" id="chatRunsInfo">i<span class="tip-content hidden"></span></button>
+                </div>
+              </div>
+              <div class="drows">
+                <div class="field drow">
+                  <label class="drow-label" for="chatRunsSourceBranch"></label>
+                  <div class="drow-control"><div class="select-wrap">
+                    <select id="chatRunsSourceBranch" data-setting="chat.sourceBranch" class="select"></select>
+                  </div></div>
+                </div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="chatRunsSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+            </section>
+
             <!-- Scheduled runs: the defaults a NEW schedule inherits. Each schedule keeps
                  its own copy, so a change here never rewrites an existing one. -->
             <!-- Sync before run (#527): the instance defaults each project inherits. -->

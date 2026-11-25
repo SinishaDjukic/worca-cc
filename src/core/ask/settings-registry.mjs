@@ -8,7 +8,7 @@
 import {
   assertThemeInput, assertUiLevelInput, assertDebugSpawnInput, assertUpdateCheckInput, assertAutoGeneratePrDescriptionInput, assertCostLimitInputs,
   assertHumanRateInput, assertAskLimitInputs, assertAskEngineInput, assertRunEngineInput, assertSyncSettingsInput,
-  assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, assertNamingModelInput, assertSecondOpinionModelInput, normalizeModelPair, normalizeRolePair,
+  assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, assertNamingModelInput, assertSecondOpinionModelInput, assertChatSourceBranchInput, normalizeModelPair, normalizeRolePair,
   SETTINGS_POST_KEYS, DEFAULT_SYNC_SETTINGS, DEFAULT_SCHEDULE_GRACE_MIN, DEFAULT_SCHEDULE_IF_MISSED,
   DEFAULT_SCHEDULE_MAX_FAILURES, DEFAULT_COST_RESET_PERIOD, DEFAULT_HUMAN_RATE_USD, DEFAULT_ASK_MAX_TURNS,
 } from '../settings.mjs';
@@ -17,6 +17,7 @@ import { engineLabel } from '../../shared/engine-switch.mjs';
 import { MODEL_ROLES, ROLE_LABELS, ROLE_HARNESSES } from '../../shared/model-roles.mjs';
 import { receiptCard } from './receipt.mjs';
 import { WORKSPACE_SCAN_DEFAULT_MODELS } from '../factory-models.mjs';
+import { CHAT_SOURCE_BRANCH_ID, CHAT_SOURCE_BRANCH_SETTING, CHAT_SOURCE_BRANCH_MODES, CHAT_SOURCE_BRANCH_LABELS, DEFAULT_CHAT_SOURCE_BRANCH } from '../../shared/chat-source-branch.mjs';
 
 /** What the chat never reads or changes, and why (list_settings returns `what`; a refused change names `why`). */
 export const SETTING_EXCLUSIONS = Object.freeze([
@@ -58,6 +59,7 @@ const PERIOD = choice([['weekly', 'Weekly'], ['monthly', 'Monthly']]);
 const DIVERGED = choice([['ask', 'Ask me'], ['origin', 'Start from origin'], ['fail', "Don't run"]]);
 const MISSED = choice([['run', 'Start it late'], ['skip', 'Skip it']]);
 const MOUNT = choice([['copy', 'Copy'], ['symlink', 'Link']]);
+const SOURCE_BRANCH = choice(CHAT_SOURCE_BRANCH_MODES.map((m) => [m, CHAT_SOURCE_BRANCH_LABELS[m]]));
 const RUN_ENGINE = choice(RUN_ENGINES.map((e) => [e, engineLabel(e)]));
 const CHAT_ENGINE = choice(ASK_ENGINES.map((e) => [e, engineLabel(e)]));
 const NOTIFY = Object.freeze({ question: 'Approval / question needed', done: 'Run finished', error: 'Run failed', paused: 'Run paused', away: 'Away hours start or end' });
@@ -159,6 +161,11 @@ function buildUserDefs(roles, scanDefaults) {
       put: (unit, v) => { const next = { ...(unit || scanDefaults), [f]: v ?? scanDefaults[f] }; return sameValue(next, scanDefaults) ? null : next; },
       body: (unit) => ({ workspaceScan: unit ?? null }),
       check: async (v, ctx) => { const pick = assertWorkspaceScanInput(ctx.def.put(ctx.unit, v), await ctx.models()); return pick ? pick[f] : null; } })),
+    // Chat runs: source branch. The project twin comes from buildProjectDefs through the same cascade id.
+    userDef({ id: CHAT_SOURCE_BRANCH_ID, label: CHAT_SOURCE_BRANCH_SETTING, group: 'Runs', dflt: DEFAULT_CHAT_SOURCE_BRANCH, fmt: SOURCE_BRANCH.fmt, allowed: SOURCE_BRANCH.allowed,
+      read: (s) => (isObj(s.chat) && Object.prototype.hasOwnProperty.call(s.chat, 'sourceBranch') ? s.chat.sourceBranch : null),
+      body: (unit) => ({ chat: { sourceBranch: unit ?? null } }),
+      check: (v) => assertChatSourceBranchInput(v ?? null) }),
     ...Object.entries(NOTIFY).map(([ev, words]) => userDef({ id: `chat.notify.${ev}`, label: `Chat notification: ${words}`, group: 'Runs', fmt: onOff, allowed: 'true | false',
       read: (s) => !(isObj(s.chat) && isObj(s.chat.notify) && s.chat.notify[ev] === false),
       body: (unit) => ({ chat: { notify: { [ev]: unit !== false } } }),

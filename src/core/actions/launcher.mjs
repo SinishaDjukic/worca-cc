@@ -4,6 +4,8 @@
 // quotes and && all work. Worca adds three conveniences on top:
 //   • {folder} (or {worktree}) marks where the checkout path goes, quoted for the shell; without it the
 //     path is added at the end, so a bare command (`xed`) keeps working;
+//   • {file} (quoted) and {line} (digits) place a file to open at a line; without a file they become the
+//     folder and 1. A line with {file} gets no folder appended;
 //   • a path to a macOS app (`/Applications/Xcode.app`, `Xcode.app`) becomes `open -a <app> <folder>`;
 //   • an unquoted path with spaces at the start (`C:\Program Files\…\Code.exe --new-window`) is quoted.
 // The person who saves the line decides what it runs: this is a local or trusted setup, and the save is
@@ -13,7 +15,7 @@ import { homedir } from 'node:os';
 import { basename, join, isAbsolute } from 'node:path';
 
 const FOLDER_RE = /(["']?)\{(?:folder|worktree)\}\1/g;
-const VAR_RE = /(["']?)\{(branch|project|runId)\}\1/g;
+const PLACEHOLDER_RE = /(["']?)\{(folder|worktree|file|line|branch|project|runId)\}\1/g;
 const WIN_PROGRAM_RE = /\.(exe|cmd|bat|com)$/i;
 const WIN_BUILTINS = new Set(['start', 'cd', 'pushd', 'call', 'cmd', 'echo']);
 
@@ -71,7 +73,7 @@ export function quoteLeadingPath(line, { platform = process.platform, env = proc
  * Build the command for one launch.
  * @returns {{ line: string, file: string, args: string[], opts: object }}
  */
-export function buildLauncherCommand(rawLine, { folder, vars = {}, platform = process.platform, env = process.env, exists = existsSync } = {}) {
+export function buildLauncherCommand(rawLine, { folder, vars = {}, platform = process.platform, env = process.env, exists = existsSync, file = null, line: lineNo = null } = {}) {
   let line = String(rawLine ?? '').trim();
   if (!line) throw Object.assign(new Error('the command is empty'), { code: 'EMPTY' });
   if (platform === 'darwin') {
@@ -80,8 +82,13 @@ export function buildLauncherCommand(rawLine, { folder, vars = {}, platform = pr
   }
   line = quoteLeadingPath(line, { platform, env, exists });
   let hasFolder = false;
-  line = line.replace(FOLDER_RE, () => { hasFolder = true; return shellQuote(folder, platform); });
-  line = line.replace(VAR_RE, (m, q, name) => (vars[name] == null ? m : shellQuote(vars[name], platform)));
+  // One pass, so a value just placed (a file name from the diff holding `{branch}`) is never scanned again.
+  line = line.replace(PLACEHOLDER_RE, (m, q, name) => {
+    if (name === 'folder' || name === 'worktree') { hasFolder = true; return shellQuote(folder, platform); }
+    if (name === 'file') { hasFolder = true; return shellQuote(file ?? folder, platform); }
+    if (name === 'line') return String(lineNo ?? 1);
+    return vars[name] == null ? m : shellQuote(vars[name], platform);
+  });
   if (!hasFolder) line = `${line} ${shellQuote(folder, platform)}`;
   const base = { detached: true, windowsHide: false };
   if (platform === 'win32') {

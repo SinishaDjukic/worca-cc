@@ -207,3 +207,28 @@ test('Pull requests card: with no team value pr.open inherits "Worca default"', 
   assert.equal(field(host, 'pr.open').querySelector('.inherit-input').options[0].textContent, "Don't create a PR (default)");
   assert.equal(field(host, 'pr.slices').querySelector('.inherit-input').options[0].textContent, 'A PR per slice, stacked (default)');
 });
+
+test('Chat › Chat runs: source branch: the shared labels, inherited from your settings; a pick PATCHes it, Clear PATCHes null', async () => {
+  const { CHAT_SOURCE_BRANCH_LABELS } = await import('../src/shared/chat-source-branch.mjs');
+  const id = 'chat.sourceBranch';
+  const view = { ...VIEW, own: {}, layers: { ...VIEW.layers, [id]: { user: 'ask', default: 'ask' } } };
+  const saved = { ...view, own: { [id]: 'require' }, layers: { ...view.layers, [id]: { project: 'require', user: 'ask', default: 'ask' } } };
+  const { window, host, calls } = harness({ settings: () => ({ status: 200, body: view }), patch: (body) => ({ status: 200, body: body[id] === 'require' ? saved : view }) });
+  for (let i = 0; i < 4; i++) await tick();
+  const row = field(host, id);
+  assert.ok(row.closest('.pd-settings-card[data-card="ask"]'), 'in the Chat card');
+  assert.equal(row.querySelector('label').textContent, 'Chat runs: source branch');
+  const select = row.querySelector('.inherit-input');
+  assert.match(select.options[0].textContent, /^Ask me on the card/, 'the empty value reads as the inherited one (listed once)');
+  assert.deepEqual([...select.options].slice(1).map((o) => [o.value, o.textContent]), Object.entries(CHAT_SOURCE_BRANCH_LABELS).filter(([v]) => v !== 'ask'));
+  select.value = 'require';
+  select.dispatchEvent(new window.Event('change', { bubbles: true }));
+  const card = host.querySelector('.pd-settings-card[data-card="ask"]');
+  card.querySelector('.pd-settings-save').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { [id]: 'require' });
+  field(host, id).querySelector('.inherit-clear').click();
+  host.querySelector('.pd-settings-card[data-card="ask"] .pd-settings-save').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { [id]: null });
+});
