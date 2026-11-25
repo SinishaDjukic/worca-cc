@@ -148,3 +148,20 @@ test('pr.open / pr.slices: a PATCH round-trips; a bad value is a 400 naming the 
   const clear = await call('PATCH', url, { 'pr.open': null, 'pr.slices': null });
   assert.deepEqual(clear.body.effective['pr.open'], { value: 'none', source: 'default' });
 });
+
+test('watch.trustedReviewers (the bot allowlist Watch PR trusts): a list PATCH round-trips; a bad value is a 400', async () => {
+  const url = `/api/projects/${key}/settings`;
+  assert.deepEqual((await call('GET', url)).body.effective['watch.trustedReviewers'], { value: [], source: 'default' });
+  const set = await call('PATCH', url, { 'watch.trustedReviewers': ['review-bot', 'another-bot'] });
+  assert.equal(set.status, 200, JSON.stringify(set.body));
+  const got = await call('GET', url);
+  assert.deepEqual(got.body.own['watch.trustedReviewers'], ['review-bot', 'another-bot']);
+  assert.deepEqual(got.body.effective['watch.trustedReviewers'], { value: ['review-bot', 'another-bot'], source: 'project' });
+  const bad = await call('PATCH', url, { 'watch.trustedReviewers': 'review-bot' });
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.error, /^watch\.trustedReviewers must be an array of reviewer login strings$/);
+  assert.deepEqual((await call('GET', url)).body.own['watch.trustedReviewers'], ['review-bot', 'another-bot'], 'a refused patch writes nothing');
+  const clear = await call('PATCH', url, { 'watch.trustedReviewers': null });
+  assert.equal('watch.trustedReviewers' in clear.body.own, false);
+  assert.deepEqual(clear.body.effective['watch.trustedReviewers'], { value: [], source: 'default' });
+});
