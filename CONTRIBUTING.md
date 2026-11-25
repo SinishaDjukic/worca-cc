@@ -122,6 +122,10 @@ the relevant smoke script if you touched the engine, workspace, or plugin
 paths) locally before opening or updating a PR, and say so in the PR
 description. A failed `CI gate` lists each failing test file by shard in its job
 summary and marks `(quarantined)` the files on dev's quarantine list.
+Pull requests run the fast tier on `.nvmrc`'s Node only, pushes to `dev` run it on
+22.19.0, 24 and 26, and the `full-node-matrix` label runs all three on a PR.
+Making the full matrix permanent on PRs is one edit to the matrix expression in
+`.github/workflows/ci.yml`, together with `test/supply-chain.test.mjs`.
 
 A test file, extension Playwright spec or CDP proof that fails at random can be
 quarantined: add it to `test/quarantine.json` with three fields, `path`,
@@ -134,7 +138,11 @@ nightly, never blocks a merge, and lists each entry's result and pass rate over
 the last 30 runs in its job summary. Leaving quarantine is a manual PR that meets
 the `exitCondition` and deletes the entry along with the fix. Repeat offenders
 and their verdicts are kept in `docs/test-offenders.md`: a fix or quarantine of
-a listed file updates its row.
+a listed file updates its row. Browser offenders (extension specs and CDP
+proofs) are checked by 3 loaded runs of their own harness, see
+`docs/test-offenders.md`. The repo admin makes `dev` require these checks by
+following `docs/required-checks.md`; a renamed gate, parity or Firefox job fails
+`test/required-checks.test.mjs`.
 
 CI force-closes a test file whose process lingers after its tests (a ref'd
 timer, a live server or child) and logs a `warning:` line naming the handles it
