@@ -706,8 +706,9 @@ fix cycles it stops adding runs by itself and asks you: **Add a run for the gap*
 Some parts follow the marker and stay with the feature; the rest follow the flag as it is now.
 
 **The flag, read live.** While it is on, these apply to every sliced feature, also for a feature with no marker: a run
-waits only for the runs it builds on, so an independent run starts while an earlier one is stopped, failed or waiting
-(one run of a feature at a time); a run starts from the feature's latest finished run; a resumed run first merges the
+waits only for the runs it builds on, so an independent run starts while an earlier one is stopped, failed, waiting
+or paused (one run of a feature at a time), an answer held for its turn waits until no other run is going, and among
+the free runs a change run starts first, then the lowest run number; a run starts from the feature's latest finished run; a resumed run first merges the
 latest finished work; a finished feature's figures are recorded on this machine; and one PR ships the latest finished
 run's branch, or is refused with `HEAD_MISSING_WORK` when that branch does not hold every run's work.
 
