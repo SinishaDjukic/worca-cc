@@ -15,7 +15,7 @@ export const NOTICE_EVERY_MS = 10 * 60 * 1000;
 /** Card actions whose success leaves the card open (D8): their refs are reusable and nothing is retired. */
 const REUSABLE_CARD_ACTIONS = new Set(['changes']);
 /** Run-start refusals that ask the browser user to confirm something (D4 row 1): never answered from chat. */
-const BROWSER_CONFIRM_CODES = new Set(['sync-diverged', 'sync-fetch-failed', 'reason_required', 'team_total', 'engine-refused', 'preset-broken']);
+const BROWSER_CONFIRM_CODES = new Set(['sync-diverged', 'sync-fetch-failed', 'reason_required', 'team_total', 'engine-refused', 'preset-broken', 'source-branch-required']);
 const BOT_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 
 const MENTION_PLATFORMS = new Set(['discord', 'slack']);

@@ -23,6 +23,7 @@ import { buildNodeConfigRows, buildRoleRows, pruneNodeSelection, modifiedFieldsO
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import { PR_OPEN, PR_OPEN_LABELS, prSourceText } from '../../src/shared/pr-auto.mjs';
+import { SOURCE_BRANCH_TEXT, currentBranchLabel } from '../../src/shared/chat-source-branch.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
 import { runsOn, modelGroups, connectionOf, connectionLabel } from '../../src/shared/connections.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -34,7 +35,7 @@ import { engineOfEntry, chatEngineOf, chatSpawnsAgents, pickerGroups, moreHarnes
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
-import { currentLevel, levelShows } from './ui-level.mjs';
+import { currentLevel, levelShows, keepVisible } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 import { keepFocus } from './chat/keep-focus.mjs';
 import { flagOn, onFlagChange } from './flags.mjs';
@@ -4222,19 +4223,26 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (value != null && [...select.options].some((o) => o.value === value)) select.value = value;
   }
 
-  /** Returns the fill promise so a caller can re-read the select once the list lands. */
-  function loadBranchesInto(select, projectDir, want) {
-    fillSelect(select, [{ value: '', label: 'current branch (auto)' }], '');
-    if (!projectDir) return Promise.resolve();
+  /** Fill a Source branch select: "Loading branches…" until the list lands, then the first option `firstLabel(current)`
+   *  (it may wait for the card's gate read, so both land in ONE paint) and the branches. Resolves to
+   *  { status: 'ok' | 'empty' | 'failed', current }, or null when a newer fill of the same select took over. */
+  function loadBranchesInto(select, projectDir, want, firstLabel = (current) => currentBranchLabel(current)) {
+    const mine = (select.__branchFill = (select.__branchFill || 0) + 1);
+    fillSelect(select, [{ value: '', label: SOURCE_BRANCH_TEXT.loading }], '');
     return Promise.resolve()
-      .then(() => fetch(`/api/branches?projectDir=${encodeURIComponent(projectDir)}`))
-      .then((r) => (r && r.ok ? r.json() : null))
+      .then(() => (projectDir ? fetch(`/api/branches?projectDir=${encodeURIComponent(projectDir)}`) : null))
+      .then((r) => (!projectDir ? { branches: [] } : r && r.ok ? r.json() : null))
       .catch(() => null)
-      .then((body) => {
+      .then(async (body) => {
         const branches = Array.isArray(body) ? body : (body && Array.isArray(body.branches)) ? body.branches : [];
-        const opts = [{ value: '', label: 'current branch (auto)' }, ...branches.map((b) => ({ value: b, label: b }))];
+        const current = body && typeof body.current === 'string' && body.current ? body.current : null;
+        const status = !body ? 'failed' : branches.length ? 'ok' : 'empty';
+        const label = await firstLabel(current);
+        if (mine !== select.__branchFill) return null;
+        const opts = [{ value: '', label }, ...branches.map((b) => ({ value: b, label: b }))];
         if (want && !opts.some((o) => o.value === want)) opts.push({ value: want, label: want });
         fillSelect(select, opts, want || '');
+        return { status, current };
       });
   }
 
@@ -5873,6 +5881,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const card = block.card || {};
     const rootEl = make('div', 'ask-card ask-rp');
     const local = { target: card.target === 'workspace' ? 'workspace' : card.target === 'none' ? 'none' : 'project', options: null, lane: null, pills: [], projectDir: () => '', workflowId: () => '' };
+    // Chat runs: source branch (plan D7–D21): the target's gate from GET /api/run-defaults ({ status, mode, source, needs }),
+    // the project select's branch list ({ status, current }), and the one hint line's id.
+    local.branchGate = { status: 'loading' };
+    local.branchList = null;
+    local.branchBlocked = false;
+    const hintId = `${block.id}-src-hint`;
+    let gateSeq = 0;
     const summary = make('span', 'ask-rp-summary');   // footer; renderLane paints it from the loaded lane
 
     // head
@@ -5976,7 +5991,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     rootEl.appendChild(targetSec);
     engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
     workflowSel.addEventListener('change', () => {
-      if (local.workflowUnavailable) { local.workflowUnavailable = false; err.textContent = ''; startBtn.disabled = false; }
+      if (local.workflowUnavailable) { local.workflowUnavailable = false; err.textContent = ''; refreshStartGate(); }
       paintNeedsRepo();
       reloadLane();
     });
@@ -6141,6 +6156,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         local.schedulePick = { ...picked, ...(local.schedulePick && local.schedulePick.sourceFromPrevious && picked.after ? { sourceFromPrevious: true } : {}) };
         badge.textContent = picked.repeat ? 'Repeats' : picked.after ? 'After run' : 'Scheduled';
         text.textContent = pickedLineText(local.schedulePick);
+        refreshStartGate();   // a pick that drops sourceFromPrevious needs a source branch again
       });
       line.append(badge, text, change);
       rootEl.insertBefore(line, err);
@@ -6177,17 +6193,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           shapeBtn.type = 'button';
           shapeBtn.setAttribute('data-ask-card-shape', '');
           if (!card.shape) startBtn.classList.replace('btn-primary', 'btn-quiet');
-          const syncLead = () => {
-            const blocked = shapeUi.blocked();
-            if (blocked) shapeBtn.setAttribute('aria-disabled', 'true'); else shapeBtn.removeAttribute('aria-disabled');
-            // described by "You lead as" only once that span exists (the profile is still loading before)
-            if (blocked && shapeUi.el.querySelector(`#${shapeUi.labelId}`)) shapeBtn.setAttribute('aria-describedby', shapeUi.labelId); else shapeBtn.removeAttribute('aria-describedby');
-            if (direct) laterBtn.disabled = blocked;     // Schedule… starts a run too: no requirements run without a lead
-          };
-          shapeUi.el.addEventListener('shape-lead-change', syncLead);
-          syncLead();
+          // The lead and the source branch gate it (aria-disabled, described by "You lead as" and the branch hint):
+          // refreshStartGate paints both, with every other blocker.
+          shapeUi.el.addEventListener('shape-lead-change', () => refreshStartGate());
           shapeBtn.addEventListener('click', () => {
-            if (shapeUi.blocked()) return;
+            if (shapeUi.blocked() || local.branchBlocked) return;
             shapeUi.commit();
             startCard(block, rootEl, local, null, { shaped: true });
           });
@@ -6202,6 +6212,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     foot.append(openNp, summary, dismissBtn, laterBtn, ...(shapeBtn ? [shapeBtn] : []), startBtn);
     rootEl.appendChild(foot);
+    refreshStartGate();
 
     // Shaper (D20, mock board 13): a shaped card shows the title, the brief clamped, Project, Base branch,
     // Perspectives and what happens; every other field MOVES, unchanged, into a collapsed Advanced. Moves only: each
@@ -6278,7 +6289,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const chip = kindChip(doc, projectKind(projectRowOf(projSel ? projSel.value : '')));
         const parts = [doc.createTextNode(name)];
         if (chip) parts.push(chip);
-        if (!noBranches(projSel ? projSel.value : '')) parts.push(doc.createTextNode(` · branch ${(srcSel && srcSel.value) || 'current'} · feature ${featureWord()}`));
+        if (!noBranches(projSel ? projSel.value : '')) {
+          // Chat runs: source branch — the picked branch, "not picked" while one is needed, else the checked-out one.
+          const b = branchState();
+          const word = (srcSel && srcSel.value) || (b.loading ? '' : b.need ? SOURCE_BRANCH_TEXT.notPicked : currentBranchLabel(local.branchList && local.branchList.current));
+          parts.push(doc.createTextNode(`${word ? ` · branch ${word}` : ''} · feature ${featureWord()}`));
+        }
         targetSub.replaceChildren(...parts);
       } else {
         const wsSel = rootEl.querySelector('.ask-card-workspace-select');
@@ -6290,6 +6306,128 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       rootEl.__rp?.refreshTagRules?.();
     }
     feature.addEventListener('input', updateTargetSub);
+
+    // ── Chat runs: source branch ──────────────────────────────────────────────────────────────────────────────────────
+    /** GET /api/run-defaults' chatSourceBranch; a failed read is { status: 'failed' } (D12: the safe side, ask). */
+    function fetchBranchGate(query) {
+      return Promise.resolve()
+        .then(() => fetch(`/api/run-defaults?${query}`))
+        .then((r) => (r && r.ok ? r.json() : null))
+        .catch(() => null)
+        .then((body) => {
+          const g = body && body.chatSourceBranch;
+          return g && Array.isArray(g.needs) ? { status: 'ok', mode: g.mode, source: g.source, needs: g.needs } : { status: 'failed' };
+        });
+    }
+    /** Does a project target's gate need a branch? `require` reads as `ask` on the card (D13); a failed read too (D12). */
+    function gateNeeds(g) { return !!g && (g.status === 'failed' || (g.status === 'ok' && g.needs.length > 0)); }
+    /** { loading, need, blocked, hint, field, control } for the card's target right now. */
+    function branchState() {
+      const none = { loading: false, need: false, blocked: false, hint: '', field: null, control: null };
+      const g = local.branchGate;
+      if (local.target === 'none' || !g || g.status === 'off') return none;
+      if (local.target === 'project') {
+        const control = rootEl.querySelector('.ask-card-source');
+        const field = control && control.closest('.ask-rp-field');
+        if (g.status === 'loading' || !local.branchList) return { ...none, loading: true, blocked: true, field, control };
+        const need = gateNeeds(g);
+        if (!need || (control && control.value)) return { ...none, need, field, control };
+        const list = local.branchList;
+        const hint = list.status === 'failed' ? SOURCE_BRANCH_TEXT.failed : list.status === 'empty' ? SOURCE_BRANCH_TEXT.empty
+          : `${SOURCE_BRANCH_TEXT.pick} ${SOURCE_BRANCH_TEXT.where(g.status === 'ok' ? g.needs.map((n) => n.source) : 'user')}`;
+        return { loading: false, need, blocked: true, hint, field, control };
+      }
+      const control = rootEl.querySelector('.ask-card-source-input');
+      const field = control && control.closest('.ask-rp-field');
+      const members = Array.isArray(local.wsMembers) ? local.wsMembers : [];
+      if (!gitOn(doc) || (members.length && members.every((m) => m.folder))) return none;
+      if (g.status === 'loading') return { ...none, loading: true, blocked: true, field, control };
+      // D12: a failed read asks for every member the card shows a source field for.
+      const needs = g.status === 'ok' ? g.needs : members.filter((m) => !m.folder).map((m) => ({ key: m.projectKey, name: m.name, source: 'user' }));
+      const own = (key) => { const inp = rootEl.querySelector(`.ask-card-member-src[data-project-key="${key}"]`); return inp ? inp.value.trim() : ''; };
+      const covered = !!(control && control.value.trim());
+      const order = (k) => { const i = members.findIndex((m) => m.projectKey === k); return i < 0 ? members.length : i; };
+      const open = covered ? [] : needs.filter((n) => !own(n.key)).sort((a, b) => order(a.key) - order(b.key));
+      const nameOf = (n) => (members.find((m) => m.projectKey === n.key) || {}).name || n.name || n.key;
+      const hint = open.length ? `${SOURCE_BRANCH_TEXT.members(open.map(nameOf))} ${SOURCE_BRANCH_TEXT.where(open.map((n) => n.source))}` : '';
+      return { loading: false, need: needs.length > 0, blocked: open.length > 0, hint, field, control, needs };
+    }
+    /** Repaint the branch hint, aria-describedby, the level keep and the workspace placeholders, then every button. */
+    function syncBranchGate() {
+      const b = branchState();
+      local.branchBlocked = b.blocked;
+      let p = rootEl.querySelector(`[id="${hintId}"]`);
+      if (b.hint && b.field) {
+        if (!p || p.parentElement !== b.field) { if (p) p.remove(); p = make('p', 'hint'); p.id = hintId; b.field.appendChild(p); }
+        p.textContent = b.hint;
+      } else if (p) p.remove();
+      for (const c of rootEl.querySelectorAll('.ask-card-source, .ask-card-source-input')) describedBy(c, hintId, !!(b.hint && c === b.control));
+      // D21: a field that needs a branch shows at every level, and stays shown once a branch is picked on this card.
+      if (b.need && b.blocked && b.field) keepVisible(b.field, true);
+      if (local.target === 'workspace' && b.control) {
+        const keys = new Set((b.needs || []).map((n) => n.key));
+        b.control.placeholder = keys.size ? SOURCE_BRANCH_TEXT.option : 'auto';
+        for (const inp of rootEl.querySelectorAll('.ask-card-member-src')) inp.placeholder = keys.has(inp.getAttribute('data-project-key')) ? SOURCE_BRANCH_TEXT.option : 'auto';
+      }
+      updateTargetSub();
+      refreshStartGate();
+    }
+    /** Add or drop one id in an element's aria-describedby, keeping any other blocker's. */
+    function describedBy(el, id, on) {
+      if (!el) return;
+      const ids = (el.getAttribute('aria-describedby') || '').split(/\s+/).filter((x) => x && x !== id);
+      if (on) ids.push(id);
+      if (ids.length) el.setAttribute('aria-describedby', ids.join(' ')); else el.removeAttribute('aria-describedby');
+    }
+    /** The ONE writer of Start, Schedule… / Start now and Shape requirements: every blocker at once (a missing enforced
+     *  tag, an unavailable workflow, a missing lead, a missing source branch, a Start in flight), so none clears another. */
+    function refreshStartGate() {
+      const tagWhy = (rootEl.__rp && rootEl.__rp.tagRules && rootEl.__rp.tagRules.blocked()) || '';
+      const busy = !!local.starting;
+      const wfOff = !!local.workflowUnavailable;
+      const lead = !!(shapeUi && shapeUi.requirements && shapeUi.blocked());
+      const branch = !!local.branchBlocked;
+      const hint = branch && rootEl.querySelector(`[id="${hintId}"]`) ? hintId : null;
+      const focused = [startBtn, laterBtn, shapeBtn].find((x) => x && x === doc.activeElement);   // before any disable (Chromium blurs)
+      // The proposed "Schedule" of an after + sourceFromPrevious card starts on the previous run's branch: no branch needed.
+      const startBranch = branch && !(card.schedule && local.schedulePick && local.schedulePick.sourceFromPrevious);
+      startBtn.disabled = busy || wfOff || (!direct && !!tagWhy) || startBranch;
+      describedBy(startBtn, hintId, !!(hint && startBranch));
+      laterBtn.disabled = branch || (direct && lead);
+      describedBy(laterBtn, hintId, !!hint);
+      if (shapeBtn) {
+        shapeBtn.disabled = busy || !!tagWhy || (direct && wfOff) || (!shapeUi.requirements && branch);
+        if (shapeUi.requirements) {
+          if (lead || branch) shapeBtn.setAttribute('aria-disabled', 'true'); else shapeBtn.removeAttribute('aria-disabled');
+          // described by "You lead as" only once that span exists (the profile is still loading before)
+          describedBy(shapeBtn, shapeUi.labelId, lead && !!shapeUi.el.querySelector(`#${shapeUi.labelId}`));
+        }
+        describedBy(shapeBtn, hintId, !!hint);
+      }
+      if (rootEl.__rp && rootEl.__rp.tagRules) (direct ? shapeBtn : startBtn).title = tagWhy;
+      // The focused button just went off for a missing branch: focus moves to the field that lifts it.
+      if (focused && (focused.disabled || focused.getAttribute('aria-disabled') === 'true') && branch && !busy) {
+        const b = branchState();
+        if (b.control) { try { b.control.focus(); } catch { /* ignore */ } }
+      }
+    }
+    local.refreshStartGate = refreshStartGate;
+    /** D17: the server refused a Start for a missing branch — the card shows the ask state for those targets, at every level. */
+    local.onSourceBranchRequired = (members) => {
+      const keys = Array.isArray(members) ? members.filter((k) => typeof k === 'string') : [];
+      const prev = local.branchGate && local.branchGate.status === 'ok' ? local.branchGate : null;
+      const sourceOf = (k) => ((prev && prev.needs.find((n) => n.key === k)) || {}).source || 'user';
+      if (local.target === 'project') {
+        const key = keys[0] || card.projectKey || '';
+        local.branchGate = { status: 'ok', mode: 'ask', source: sourceOf(key), needs: [{ key, name: '', mode: 'ask', source: sourceOf(key) }] };
+        if (!local.branchList) local.branchList = { status: 'ok', current: null };
+        const first = (rootEl.querySelector('.ask-card-source') || { options: [] }).options[0];
+        if (first && first.value === '') first.textContent = SOURCE_BRANCH_TEXT.option;
+      } else if (local.target === 'workspace') {
+        local.branchGate = { status: 'ok', mode: 'ask', source: 'user', needs: keys.map((k) => ({ key: k, name: '', mode: 'ask', source: sourceOf(k) })) };
+      }
+      syncBranchGate();
+    };
 
     function paintNeedsRepo() {
       targetHost.querySelector('.ask-card-needs-repo')?.remove();
@@ -6303,7 +6441,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (local.target === 'none') {
         if (local.shapeBranchHost) local.shapeBranchHost.replaceChildren();
         paintNeedsRepo();
-        updateTargetSub();
+        local.branchGate = { status: 'off' };
+        syncBranchGate();
         return;
       }
       if (local.target === 'project') {
@@ -6314,23 +6453,40 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const srcHint = srcField.querySelector('.ask-rp-hint');
         srcSel.addEventListener('change', () => {
           if (srcHint && srcSel.value !== card.sourceBranch) srcHint.textContent = '';
-          updateTargetSub();
+          syncBranchGate();
         });
         const featureField = lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch);
         const sameField = lvTag(rpField('Run on the source branch', sameSw.row, 'commits onto the source branch'), 'advanced', !!card.sameAsSource);
         for (const f of [srcField, featureField, sameField]) f.dataset.needsGit = '';
         // S12: a Folder project, or no git, shows no branch rows and asks for no branches. The fill is async: the
         // sub-line reads the select again when the branches land, or a proposed sourceBranch would read "branch current".
+        // Chat runs: source branch — the gate (GET /api/run-defaults) and the branches are read together and painted
+        // once; a later project change drops a stale answer (gateSeq).
         const paintBranches = (want) => {
           const off = noBranches(projSel.value);
           for (const f of [srcField, featureField, sameField]) f.hidden = off;
-          if (!off) loadBranchesInto(srcSel, projSel.value, want).then(updateTargetSub); else updateTargetSub();
+          const seq = ++gateSeq;
+          local.branchList = null;
+          if (off) { local.branchGate = { status: 'off' }; syncBranchGate(); return; }
+          local.branchGate = { status: 'loading' };
+          const gate = fetchBranchGate(`projectDir=${encodeURIComponent(projSel.value)}`);
+          syncBranchGate();
+          loadBranchesInto(srcSel, projSel.value, want, async (current) => {
+            const g = await gate;
+            return gateNeeds(g) ? SOURCE_BRANCH_TEXT.option : currentBranchLabel(current);
+          }).then(async (list) => {
+            const g = await gate;
+            if (!list || seq !== gateSeq || st.destroyed) return;
+            local.branchGate = g;
+            local.branchList = list;
+            syncBranchGate();
+          });
         };
         if (opts) {
           fillSelect(projSel, opts.projects.map((p) => ({ value: p.path, label: p.exists === false ? `${p.name} (missing)` : p.name })), card.projectDir || (opts.projects[0] && opts.projects[0].path) || '');
           paintBranches(card.sourceBranch || '');
         }
-        projSel.addEventListener('change', () => { paintBranches(''); updateTargetSub(); reloadLane(); });
+        projSel.addEventListener('change', () => { paintBranches(''); reloadLane(); });
         if (local.shapeBranchHost) {
           // Shaper (D20): Project and Base branch on the small card, at every level; the rest in Advanced.
           srcField.querySelector('.ask-rp-label').firstChild.textContent = 'Base branch';
@@ -6341,7 +6497,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           grid.append(rpField('Project', projSel), lvTag(srcField, 'advanced', !!card.sourceBranch), featureField, sameField);
         }
         targetHost.appendChild(grid);
-        updateTargetSub();
+        if (!opts) { local.branchGate = { status: 'loading' }; local.branchList = null; }
+        syncBranchGate();
         return;
       }
       if (local.shapeBranchHost) local.shapeBranchHost.replaceChildren();
@@ -6353,6 +6510,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       srcInput.placeholder = 'auto';
       srcInput.value = card.sourceBranch || '';
       srcInput.setAttribute('aria-label', 'Source branch default');
+      srcInput.addEventListener('input', () => syncBranchGate());
       const details = doc.createElement('details');
       details.className = 'ask-card-members-src disclosure';   // .disclosure swaps the OS triangle for the app's chevron
       details.appendChild(make('summary', null, 'Per-member source branches'));
@@ -6375,11 +6533,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           inp.placeholder = 'auto';
           inp.setAttribute('data-project-key', m.projectKey);
           if (card.sourceBranchByKey && card.sourceBranchByKey[m.projectKey]) inp.value = card.sourceBranchByKey[m.projectKey];
+          inp.addEventListener('input', () => syncBranchGate());
           memberHost.appendChild(rpField(m.name, inp));
         }
         details.hidden = list.length > 0 && !memberHost.childElementCount;   // every member a Folder project: nothing to pick
         for (const f of wsGitFields) f.hidden = list.length > 0 && list.every((m) => m.folder);   // ...and no branch to start from, name or commit onto
-        updateTargetSub();
+        // Chat runs: source branch — the members that need a branch come from GET /api/run-defaults (needs only).
+        local.wsMembers = list;
+        const seq = ++gateSeq;
+        if (!wsSel.value) local.branchGate = { status: 'loading' };
+        else {
+          local.branchGate = { status: 'loading' };
+          fetchBranchGate(`workspaceId=${encodeURIComponent(wsSel.value)}`).then((g) => {
+            if (seq !== gateSeq || st.destroyed) return;
+            local.branchGate = g;
+            syncBranchGate();
+          });
+        }
+        syncBranchGate();
       };
       wsSel.addEventListener('change', renderMembers);
       const wsField = rpField('Workspace', wsSel);
@@ -6394,8 +6565,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (opts) {
         fillSelect(wsSel, opts.workspaces.map((w) => ({ value: w.id, label: w.name || w.id })), card.workspaceId || (opts.workspaces[0] && opts.workspaces[0].id) || '');
         renderMembers();
+      } else {
+        local.wsMembers = null;
+        local.branchGate = { status: 'loading' };
+        syncBranchGate();
       }
-      updateTargetSub();
     }
 
     // A reload (workflow / project / target change) rebuilds the lane from scratch:
@@ -6460,8 +6634,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     function markWorkflowUnavailable() {
       workflowSel.selectedIndex = -1;
       err.textContent = `Workflow ${card.workflowId} is not available: pick one`;
-      startBtn.disabled = true;
       local.workflowUnavailable = true;
+      refreshStartGate();
     }
 
     renderTarget();
@@ -6489,9 +6663,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const line = createTagRulesLine(doc, tagInput);
       tagRow.appendChild(line.el);
       rootEl.__rp.tagRules = line;
-      const gated = direct ? shapeBtn : startBtn;
-      const sync = () => { const why = line.blocked(); gated.disabled = !!why || !!local.workflowUnavailable; gated.title = why || ''; };   // a missing workflow keeps Start off
-      line.onChange(sync);
+      line.onChange(() => refreshStartGate());   // an enforced tag still missing keeps Start off (with every other blocker)
       let gen = 0;
       let lastQ = null;
       const refreshTagRules = () => {
@@ -6585,9 +6757,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const err = rootEl.querySelector('.ask-card-err');
     const startBtn = rootEl.querySelector('[data-ask-card-start]');
     err.textContent = '';
-    if (startBtn) startBtn.disabled = true;               // a direct card's only start button is Shape requirements
-    const shapeBtn = rootEl.querySelector('[data-ask-card-shape]');
-    if (shapeBtn) shapeBtn.disabled = true;               // a double click must not post /api/run twice
+    // A double click must not post /api/run twice: Start and Shape requirements stay off while this runs.
+    local.starting = true;
+    if (local.refreshStartGate) local.refreshStartGate();
+    else for (const b of [startBtn, rootEl.querySelector('[data-ask-card-shape]')]) if (b) b.disabled = true;
     freezeTargetInputs(rootEl, true);
     try {
       // D3: read-only, so it runs BEFORE saveLaneEdits — a refusal here must not leave the config already written.
@@ -6651,6 +6824,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           b = null;
           if (!res.ok) { try { b = await res.json(); } catch { /* keep */ } }
         }
+        // Chat runs: source branch (D17): no error line — the card shows the branch field, hint and disabled Start instead.
+        if (!res.ok && b && b.code === 'source-branch-required' && local.onSourceBranchRequired) {
+          local.starting = false;
+          local.onSourceBranchRequired(b.members);
+          return;
+        }
         if (!res.ok) {
           err.textContent = (b && b.error) || `request failed (${res.status})`;
           return;
@@ -6660,9 +6839,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // the flip frame renders the terminal state. The browser never navigates
       // (beginRun is NEVER called — spec §10.5).
     } finally {
-      const tagBlocked = !!rootEl.__rp?.tagRules?.blocked();   // an enforced tag still missing keeps Start off
-      if (startBtn) startBtn.disabled = tagBlocked;
-      if (shapeBtn) shapeBtn.disabled = tagBlocked;            // Shaper starts a run too: the same tag rule
+      // Every blocker at once (tag, workflow, lead, branch): refreshStartGate never lets one clear another.
+      local.starting = false;
+      if (local.refreshStartGate) local.refreshStartGate();
       freezeTargetInputs(rootEl, false);
       // freezeTargetInputs re-enabled the select; a shaped card's workflow is fixed.
       if ((block.card || {}).shape && local.shapeUi) rootEl.querySelector('.ask-card-workflow').disabled = true;

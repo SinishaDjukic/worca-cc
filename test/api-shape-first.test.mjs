@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { useCurrentSourceBranch } from './helpers/source-branch-current.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { shipKit, stubShip, withShip, ghCalls } from './helpers/ship-world.mjs';
@@ -17,6 +18,8 @@ import { editRunLabels, readRunLabels } from '../src/core/run-labels-store.mjs';
 import { createThread, linkRun as askLinkRun, listMessages, appendMessage as askAppendMessage } from '../src/core/ask/store.mjs';
 
 useTempHome(after);
+// Branchless chat cards on git repos keep today's path: "Chat runs: source branch" = Current (checked out).
+useCurrentSourceBranch(after);
 
 let srv, base, wsBase, runs;
 const JSONH = { 'Content-Type': 'application/json' };

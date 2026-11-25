@@ -87,6 +87,7 @@ const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', 
 import { icon, iconSvg } from './icons.mjs';
 import { subagentAliasLabel, subagentAliasTitle, roleOf, ROLE_LABELS } from '../../src/shared/model-roles.mjs';
 import { HELPER_JOBS } from '../../src/shared/model-jobs.mjs';
+import { CHAT_SOURCE_BRANCH_SETTING, CHAT_SOURCE_BRANCH_ROW, CHAT_SOURCE_BRANCH_INFO, CHAT_SOURCE_BRANCH_MODES, CHAT_SOURCE_BRANCH_LABELS, normalizeChatSourceBranch } from '../../src/shared/chat-source-branch.mjs';
 import { paintMarkedSelect } from './models/brand-marks.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
 import { copyButton, copyFromButton, flashCopy, writeClipboard } from './copy-button.mjs';
@@ -16858,6 +16859,7 @@ async function loadSettings() {
     paintTagDimsSettings(data);
     paintNightSettings(data);
     paintSyncSettings(data);
+    paintChatRunsSettings(data);
     paintNetworkWaitSettings(data);
     paintRunLimitsSettings(data);
     paintSmartNamingSettings(data);
@@ -17760,6 +17762,32 @@ document.getElementById('syncDefaultsSave')?.addEventListener('click', saveSyncD
 document.getElementById('syncDefaultsReset')?.addEventListener('click', (e) => postSyncDefaults(
   { sync: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('syncDefaultsSave');
+
+// Settings › Runs › Chat runs: source branch — which branch a chat run card starts from when the chat names none.
+// The card's words all come from the shared module (the HTML shell is empty), so the card, the chat and the server agree.
+function paintChatRunsSettings(data) {
+  const card = document.getElementById('chat-runs-settings-card');
+  const sel = document.getElementById('chatRunsSourceBranch');
+  if (!card || !sel) return;
+  card.querySelector('h2').textContent = CHAT_SOURCE_BRANCH_SETTING;
+  card.querySelector(`label[for="chatRunsSourceBranch"]`).textContent = CHAT_SOURCE_BRANCH_ROW;
+  const tip = document.getElementById('chatRunsInfo');
+  tip.setAttribute('aria-label', `About ${CHAT_SOURCE_BRANCH_SETTING}`);
+  tip.querySelector('.tip-content').textContent = CHAT_SOURCE_BRANCH_INFO;
+  if (sel.options.length !== CHAT_SOURCE_BRANCH_MODES.length) {
+    sel.replaceChildren(...CHAT_SOURCE_BRANCH_MODES.map((m) => {
+      const opt = document.createElement('option');
+      opt.value = m; opt.textContent = CHAT_SOURCE_BRANCH_LABELS[m];
+      return opt;
+    }));
+  }
+  sel.value = normalizeChatSourceBranch(data && data.chat && data.chat.sourceBranch);
+  settingsCardPainted('chatRunsSave');
+}
+document.getElementById('chatRunsSave')?.addEventListener('click', (e) => postSettingsCard(
+  { chat: { sourceBranch: document.getElementById('chatRunsSourceBranch').value } },
+  { card: document.getElementById('chat-runs-settings-card'), paint: paintChatRunsSettings, dirty: settingsCardDirty('chatRunsSave'), button: e.currentTarget }));
+settingsCardDirty('chatRunsSave');
 
 // Settings › Runs › Wait for the network (network-wait.mjs).
 function paintNetworkWaitSettings(data) {

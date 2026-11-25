@@ -390,6 +390,16 @@ const fake = {
 };
 const tools = createAskTools(fake);
 
+test('propose_run explains the "Chat runs: source branch" modes and says to ask the user for the branch', () => {
+  const def = tools.list().find((d) => d.name === 'propose_run');
+  const text = `${def.description} ${def.inputSchema.properties.sourceBranch.description}`;
+  assert.match(text, /Only when the chat names one/);
+  assert.match(text, /Ask me on the card/);
+  assert.match(text, /Current \(checked out\)/);
+  assert.match(text, /ask the user which branch/i);
+  assert.match(def.description, /never guess/i);
+});
+
 test('list(): forty-five tools with JSON-Schema inputs', () => {
   const defs = tools.list();
   assert.deepEqual(defs.map((d) => d.name), ['list_projects', 'list_branches', 'list_workflows', 'list_runs', 'list_people', 'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'read_attachment',

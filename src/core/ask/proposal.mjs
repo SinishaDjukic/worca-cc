@@ -17,6 +17,8 @@ import { flagEnabled } from '../flags.mjs';
 import { sanitizeTitle } from '../title.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 import { resolveScheduleSpec } from './schedule-spec.mjs';
+import { branchNeeds, targetsForBody } from '../chat-source-branch-gate.mjs';
+import { proposalSourceRequired, proposalSourceRequiredMembers } from '../../shared/chat-source-branch.mjs';
 import { validateRunSource, checkTask } from './source-spec.mjs';
 import { listTaskSources as realListTaskSources } from '../sources.mjs';
 import { afterRefOf as realAfterRefOf } from '../scheduler.mjs';
@@ -112,6 +114,9 @@ export const PROPOSAL_ERRORS = Object.freeze({
   byKeyFolder: (k) => `sourceBranchByKey: ${k} is a Folder project and has no branches`,
   byKeyProjectOnly: 'sourceBranchByKey is only valid for a workspace',
   missingSource: (v, remote) => `sourceBranch "${v}" exists neither locally nor on ${remote}`,
+  // Chat runs: source branch = Only when the chat names one: the assistant must ask the user first.
+  sourceRequired: proposalSourceRequired,
+  sourceRequiredMembers: proposalSourceRequiredMembers,
   shapeSlices: 'shape.slices must be "auto" or "off"',
   shapeScheduled: 'Shaper starts now and waits for the user to approve its plan: drop when / every / after',
   nodesAuto: 'nodes needs a saved workflow — Auto (wf_auto) picks its agents and their models when the run starts',
@@ -250,6 +255,9 @@ export function createProposalValidator({
   // Run presets (#712 slice 3): propose_run's presetId. Null by default, so a validator built on fake readers
   // never reads presets; the module singleton below binds the real one.
   readPreset = null,
+  // Chat runs: source branch (target, { sourceBranch, sourceBranchByKey }) → the `require` entries of the one gate
+  // (chat-source-branch-gate.mjs). Null by default, so a validator built on fakes never reads git or settings.
+  sourceBranchNeeds = null,
 } = {}) {
   /** propose_run `nodes` → { nodes, errors, warnings }: the run API's check (run-overlay.mjs) on the catalog the run's
    *  engine runs, plus Ask's own: signed out, every agent node needs a model the install can run (auto/runnable.mjs,
@@ -561,6 +569,16 @@ export function createProposalValidator({
     if (spec.ok && spec.schedule && spec.schedule.kind === 'after' && spec.schedule.sourceFromPrevious && (sourceBranch || (sourceBranchByKey && Object.keys(sourceBranchByKey).length))) {
       errors.push('sourceFromPrevious and sourceBranch / sourceBranchByKey cannot both be given');
     }
+    // ── Chat runs: source branch = require: no branch for a git target is refused; a sourceFromPrevious chain never is ──
+    const fromPrevious = spec.ok && spec.schedule && spec.schedule.kind === 'after' && spec.schedule.sourceFromPrevious;
+    if (typeof sourceBranchNeeds === 'function' && !none && !fromPrevious) {
+      let needs = [];
+      try { needs = (await sourceBranchNeeds(target, { sourceBranch, sourceBranchByKey })) || []; } catch { needs = []; }
+      if (needs.length) {
+        errors.push(target.target === 'project' ? PROPOSAL_ERRORS.sourceRequired(target.projectName)
+          : PROPOSAL_ERRORS.sourceRequiredMembers(needs.map((n) => n.name)));
+      }
+    }
 
     // ── source branch vs the remote (#527): only for a card that is otherwise valid ──
     let sourceRef = null;
@@ -648,4 +666,7 @@ export const validateProposal = createProposalValidator({
   estimate: (wfs) => estimateChoices(wfs),
   readPreset: async (id, opts) => readPresetRow(id, opts),
   hasHouseBrief: async ({ projectKey, projectDir }) => (await ensureHouseBrief({ projectKey, projectDir })).words > 0,
+  sourceBranchNeeds: async (target, branches) => branchNeeds(
+    await targetsForBody(target.target === 'workspace' ? { workspaceId: target.workspaceId } : { projectDir: target.projectDir }), branches)
+    .filter((n) => n.mode === 'require'),
 }).validateProposal;
