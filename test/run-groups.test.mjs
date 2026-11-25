@@ -255,8 +255,9 @@ test('item 7: each native member of a small-runs group carries its slice (kind, 
   const on = withSmallRuns(true, () => listRunGroups({ live }));
   const m = of(on, f).members;
   assert.deepEqual(m[0].slice, { kind: null, state: 'done' });
-  assert.deepEqual(m[1].slice, { kind: null, state: 'questions', stop: { reason: 'objection', held: true, after: 1 } });
-  assert.deepEqual(m[2].slice, { kind: null, state: 'planned', waitsFor: 2 });
+  // Its stop answer is held waiting its turn, so it goes on next (owner direction dd8aea6ed).
+  assert.deepEqual(m[1].slice, { kind: null, state: 'questions', stop: { reason: 'objection', held: true, after: 1 }, nextTurn: true });
+  assert.deepEqual(m[2].slice, { kind: null, state: 'planned', waitsFor: [2] });
   assert.equal(m.at(-1).pipelineId, loose);
   assert.equal('slice' in m.at(-1), false, 'an ad-hoc member is no slice');
   const none = (list, x) => of(list, x).members.every((y) => !('slice' in y));

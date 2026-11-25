@@ -64,7 +64,25 @@ export function sixteenRunFeature({ projectDir, smallRuns = true }) {
     else if (how.approval) pq = { id: `q${run}`, kind: 'plan' };
     if (pq) liveMap.set(pid, liveSliceFrom({ runId: `r${run}`, status: 'running', approved: true, pendingQuestion: pq, heldStop }));
   };
-  return { featureId: f.id, originPipelineId, ticketOf, pipelineOf, setRun, live };
+  const cancelTicket = (run) => { db.prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id = ?").run(ticketOf(run)); };
+  const setKind = (run, kind) => { db.prepare('UPDATE shape_feature_slices SET kind = ? WHERE feature_id = ? AND idx = ?').run(kind, f.id, run); };
+  return { featureId: f.id, originPipelineId, ticketOf, pipelineOf, setRun, live, cancelTicket, setKind };
+}
+
+/** Named walked states (slice 2 D11): `done` run numbers finished, then each `{run: how}` applied. */
+export const SIXTEEN_RUN_STATES = Object.freeze({
+  base: { done: [1, 11], states: { 2: { stop: 'requirement' }, 3: { pipe: 'running' } } },
+  busy: { done: [1, 3], states: { 2: { stop: 'requirement' }, 4: { stop: 'check' }, 11: { stop: 'check' }, 5: { pipe: 'error' }, 6: { pipe: 'running' } } },
+});
+
+/** A fresh feature in a named state (or a literal `{done, states}`); cancels the previous features' scheduled tickets first. */
+export function world(projectDir, spec) {
+  const { done, states } = typeof spec === 'string' ? SIXTEEN_RUN_STATES[spec] : spec;
+  getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+  const fx = sixteenRunFeature({ projectDir });
+  for (const r of done) fx.setRun(r, { pipe: 'done' });
+  for (const [r, how] of Object.entries(states || {})) fx.setRun(Number(r), how);
+  return fx;
 }
 
 /** The sorted run numbers of the runs not started yet (ticket scheduled, no pipeline) that the scheduler's gate lets start. */
