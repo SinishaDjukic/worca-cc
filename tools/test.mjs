@@ -7,6 +7,8 @@
 // (each CI shard uploads one; tools/test-timings-merge.mjs folds them into test/timings.json).
 // --failures-out writes a red run's failure record (the files that failed; each red CI shard uploads one and
 // tools/ci-gate.mjs names them in the gate summary); a green run writes nothing.
+// --measure-tails turns forceExit off, so each file's tail (its process staying up after its tests) is measured and
+// logged; every other run force-closes such a file and names the handles it held (tools/test-run.mjs).
 // A full suite takes a machine-wide lock (one full suite at a time, wherever it runs: two at once each
 // took 2-3x as long and tripped the timing budgets, perf audit T1), and every run has a whole-suite
 // timeout, so no test can hold `npm test` open forever (process audit §8c).
@@ -92,7 +94,7 @@ export function failureRecord({ tier, shard, node, files }) {
 }
 
 export function parseArgs(argv, env = process.env) {
-  const o = { tier: 'all', shard: null, writeTimings: false, timingsOut: null, failuresOut: null, concurrency: null, related: false, base: null, files: [] };
+  const o = { tier: 'all', shard: null, writeTimings: false, timingsOut: null, failuresOut: null, measureTails: false, concurrency: null, related: false, base: null, files: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = () => {
@@ -106,6 +108,7 @@ export function parseArgs(argv, env = process.env) {
     else if (a === '--write-timings') o.writeTimings = true;
     else if (a === '--timings-out') o.timingsOut = value();
     else if (a === '--failures-out') o.failuresOut = value();
+    else if (a === '--measure-tails') o.measureTails = true;
     else if (a === '--related') o.related = true;
     else if (a === '--base') o.base = value();
     else if (a.startsWith('--')) throw new Error(`unknown flag ${a}`);
@@ -274,6 +277,7 @@ async function main() {
   const measure = o.writeTimings || o.timingsOut;
   const failuresFile = join(work, 'failures.json');
   writeFileSync(listFile, JSON.stringify({ files, concurrency: o.concurrency, timingsOut: measure ? timingsOut : null,
+    measureTails: o.measureTails,
     ...(o.failuresOut ? { failuresOut: failuresFile } : {}) }));
 
   const env = { ...process.env, WORCA_HOME: scoped ? testHome : '.worca-cc-test', HOME: home, USERPROFILE: home,

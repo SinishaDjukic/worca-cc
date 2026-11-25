@@ -134,6 +134,16 @@ nightly, never blocks a merge, and lists each entry's result and pass rate over
 the last 30 runs in its job summary. Leaving quarantine is a manual PR that meets
 the `exitCondition` and deletes the entry along with the fix.
 
+CI force-closes a test file whose process lingers after its tests (a ref'd
+timer, a live server or child) and logs a `warning:` line naming the handles it
+held, so the file frees its worker at once. To measure how long such a file
+would stay up, run `node tools/test.mjs --measure-tails test/x.test.mjs`
+(forceExit off; it prints `stayed up N s outside its tests` per file). That
+figure includes the file's top-level `before`/`after` hooks, which forceExit
+cannot cut. CI's tail lengths are in the
+Quarantined tests workflow, in the `tail measure` job summary; they cover the
+fast tier only.
+
 While you work, `npm run test:related` runs only the test files your
 uncommitted changes can affect (`-- --base origin/dev` for everything on your
 branch). It follows imports and the paths tests load by name, and falls back to

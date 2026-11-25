@@ -8,6 +8,10 @@ name: Quarantined tests
 #
 # No concurrency group: a shared one would cancel a pending run and leave a cancelled mark on dev. Overlapping runs
 # lose no history record: each run unions the histories of the newest few dev runs by runId.
+#
+# The `tail measure` job runs the fast tier once with forceExit off (--measure-tails) and lists each test file whose
+# process stayed up after its tests (top-level hooks included), longest first, in its job summary. ci.yml's tiers
+# force-close those files.
 
 on:
   push:
@@ -122,3 +126,45 @@ jobs:
           name: quarantine-history
           path: quarantine-out/history/quarantine-history.json
           retention-days: 90
+
+  # Every CI tier force-closes a test file whose process lingers after its tests (and names the handles it held).
+  # This job measures those tails instead: the fast tier with forceExit off. It never blocks (ci.yml already reports a
+  # failing fast test) and needs nothing, so the pass-rate history upload above never waits on it. The whole fast tier
+  # on one runner takes ~40-60 min; the tail lines are printed per file, so a run cut off at its limit keeps what it saw.
+  tail-measure:
+    name: tail measure
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    env:
+      WORCA_TEST_SUITE_TIMEOUT_MIN: "85"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the fast tier with forceExit off
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:fast -- --measure-tails 2>&1 | tee tails.log
+
+      - name: Write the tails to the job summary
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          echo "### Test file tails (forceExit off)" >> "$GITHUB_STEP_SUMMARY"
+          lines=$(grep -E '^warning: .* stayed up ' tails.log | sed -E 's/^(.* stayed up ([0-9.]+) s .*)$/\2 \1/' | sort -rn | cut -d' ' -f2- || true)
+          if [ -n "$lines" ]; then
+            printf '%s\n' "$lines" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No tail over 2 s." >> "$GITHUB_STEP_SUMMARY"
+          fi

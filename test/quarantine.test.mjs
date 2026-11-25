@@ -320,6 +320,19 @@ test('quarantine.yml: dev push, nightly and manual dispatch, never pull_request,
   assert.deepEqual(wf.permissions, { contents: 'read' });
 });
 
+test('quarantine.yml: the tail measure job runs the fast tier with --measure-tails, needs nothing, never blocks, and writes the tails to the job summary', () => {
+  const wf = YAML.parse(wfText());
+  const job = wf.jobs['tail-measure'];
+  assert.ok(job, 'job tail-measure');
+  assert.equal(job.name, 'tail measure');
+  assert.equal(job.needs, undefined);
+  assert.equal(job['continue-on-error'], true);
+  const runs = job.steps.map((s) => String(s.run || '')).join('\n');
+  assert.ok(runs.includes('npm run test:fast -- --measure-tails'), runs);
+  assert.ok(runs.includes('$GITHUB_STEP_SUMMARY'), runs);
+  assert.equal(wf.jobs['quarantined-tests']['timeout-minutes'], 90);
+});
+
 test('quarantine.yml: the quarantined tests job runs after the spec job unless cancelled, reads actions, runs every kind and keeps the history', async () => {
   const { HISTORY_MAX } = await Q();
   const wf = YAML.parse(wfText());

@@ -245,36 +245,107 @@ test('failureRecord: the D2 shape, files sorted by code unit and deduped', async
     { version: 1, tier: 'fast', shard: '3/4', node: '24.11.0', files: ['test/B.test.mjs', 'test/a.test.mjs', 'test/b.test.mjs'] });
 });
 
-test('a measuring run: a file whose process stays up over 2 s after its last test gets a tail warning; a file that exits at once does not', () => {
+const heldTimer = "import { test } from 'node:test';\ntest('arms a timer', () => { setTimeout(() => {}, 4000); });\n";
+const cleanTimer = "import { test } from 'node:test';\ntest('arms an unref timer', () => { setTimeout(() => {}, 4000).unref(); });\n";
+const runTools = (args, extra = {}) => spawnSync(process.execPath, [join(TOOLS, 'test.mjs'), ...args],
+  { encoding: 'utf8', timeout: 60_000, env: { ...process.env, NODE_TEST_CONTEXT: undefined, ...extra } });
+
+test('parseArgs: --measure-tails is a bare flag, off by default, and combines with --timings-out', () => {
+  assert.equal(parseArgs([]).measureTails, false);
+  assert.equal(parseArgs(['--measure-tails']).measureTails, true);
+  const o = parseArgs(['--measure-tails', '--timings-out', 'x.json']);
+  assert.equal(o.measureTails, true);
+  assert.equal(o.timingsOut, 'x.json');
+});
+
+test('forceExit under --timings-out: a file holding a 4 s timer frees its slot in under 1 s and the log names the Timeout handle', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-slot-'));
+  try {
+    const held = join(dir, 'held.test.mjs');
+    const clean = join(dir, 'clean.test.mjs');
+    writeFileSync(held, heldTimer);
+    writeFileSync(clean, cleanTimer);
+    const out = join(dir, 't.json');
+    const t0 = Date.now();
+    const r = runTools(['--timings-out', out, held, clean]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.ok(Date.now() - t0 < 20_000, `took ${Date.now() - t0} ms`);
+    const measured = JSON.parse(readFileSync(out, 'utf8'));
+    const key = Object.keys(measured).find((k) => k.endsWith('/held.test.mjs'));
+    assert.ok(key, JSON.stringify(measured));
+    assert.ok(measured[key] < 1, `the slot is freed at once: ${measured[key]} s`);
+    const lines = r.stderr.split('\n').filter((l) => l.startsWith('warning: '));
+    const handle = lines.filter((l) => /held\.test\.mjs held the process open after its tests: Timeout \(force-closed/.test(l));
+    assert.equal(handle.length, 1, r.stderr);
+    assert.ok(!lines.some((l) => /clean\.test\.mjs/.test(l)), 'an unref\'d timer holds nothing: ' + r.stderr);
+    assert.ok(!lines.some((l) => /stayed up/.test(l)), r.stderr);
+  } finally { rmSync(dir, rmOpts); }
+});
+
+test('measure-tails: the same 4 s fixture logs a tail warning of about 4 s; a clean file none', () => {
   const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-tail-'));
   try {
     const held = join(dir, 'held.test.mjs');
     const clean = join(dir, 'clean.test.mjs');
-    // A ref'd timer armed by the test holds the process 2.5 s after the test passes.
-    writeFileSync(held, "import { test } from 'node:test';\ntest('arms a timer', () => { setTimeout(() => {}, 2500); });\n");
-    writeFileSync(clean, "import { test } from 'node:test';\ntest('arms an unref timer', () => { setTimeout(() => {}, 2500).unref(); });\n");
-    // Only a measuring run sees tails: elsewhere forceExit ends a file as soon as its tests are done.
-    const r = spawnSync(process.execPath, [join(TOOLS, 'test.mjs'), '--timings-out', join(dir, 't.json'), held, clean],
-      { encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: undefined } });
+    writeFileSync(held, heldTimer);
+    writeFileSync(clean, cleanTimer);
+    const r = runTools(['--measure-tails', held, clean]);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const warned = r.stderr.split('\n').filter((l) => l.startsWith('warning: '));
-    assert.equal(warned.length, 1, r.stderr);
-    const m = warned[0].match(/\/held\.test\.mjs stayed up (\d+\.\d) s outside its tests/);
-    assert.ok(m && +m[1] >= 2.4, warned[0]);
+    const tails = warned.filter((l) => /stayed up/.test(l));
+    assert.equal(tails.length, 1, r.stderr);
+    const m = tails[0].match(/\/held\.test\.mjs stayed up (\d+\.\d) s outside its tests/);
+    assert.ok(m && +m[1] >= 3.9 && +m[1] < 8, tails[0]);
+    assert.ok(!warned.some((l) => /held the process open/.test(l)), 'forceExit is off, so no handle line: ' + r.stderr);
   } finally { rmSync(dir, rmOpts); }
 });
 
-test('forceExit: a file still held open after its tests (a live server, a ref\'d timer) no longer holds the run', () => {
+test('forceExit: a file still held open after its tests (a live server, a ref\'d timer) no longer holds the run, and its handles are named', () => {
   const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-force-'));
   try {
     const held = join(dir, 'held.test.mjs');
     writeFileSync(held, "import { test } from 'node:test';\nimport { createServer } from 'node:http';\ntest('leaves a server listening', () => { createServer().listen(0); setTimeout(() => {}, 60_000); });\n");
     const t0 = Date.now();
-    const r = spawnSync(process.execPath, [join(TOOLS, 'test.mjs'), held],
-      { encoding: 'utf8', timeout: 30_000, env: { ...process.env, NODE_TEST_CONTEXT: undefined } });
+    const r = runTools([held]);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.ok(Date.now() - t0 < 20_000, `took ${Date.now() - t0} ms: the file's process outlived its tests`);
+    const line = r.stderr.split('\n').find((l) => /held the process open after its tests/.test(l));
+    assert.ok(line, r.stderr);
+    assert.match(line, /TCPServerWrap/);
+    assert.match(line, /Timeout/);
   } finally { rmSync(dir, rmOpts); }
+});
+
+test('a slow top-level after() hook is hook time, not a tail: no tail line under forceExit; under --measure-tails the line names hooks too', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-hook-'));
+  try {
+    const hook = join(dir, 'hook.test.mjs');
+    writeFileSync(hook, "import { test, after } from 'node:test';\nafter(() => new Promise((r) => setTimeout(r, 2500)));\ntest('a', () => {});\n");
+    const forced = runTools([hook]);
+    assert.equal(forced.status, 0, forced.stdout + forced.stderr);
+    assert.ok(!/stayed up/.test(forced.stderr), forced.stderr);
+    const measured = runTools(['--measure-tails', hook]);
+    assert.equal(measured.status, 0, measured.stdout + measured.stderr);
+    assert.match(measured.stderr, /hook\.test\.mjs stayed up \d+\.\d s outside its tests \(top-level hooks, or a timer or child/);
+  } finally { rmSync(dir, rmOpts); }
+});
+
+test('a red file under forceExit still reports red and still gets its handle line', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-redforce-'));
+  try {
+    const bad = join(dir, 'bad.test.mjs');
+    writeFileSync(bad, "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('fails', () => { setTimeout(() => {}, 4000); assert.equal(1, 2); });\n");
+    const r = runTools([bad]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stderr, /bad\.test\.mjs held the process open after its tests: Timeout/);
+  } finally { rmSync(dir, rmOpts); }
+});
+
+test('ci.yml never passes --measure-tails (forceExit stays on in every tier)', () => {
+  const wf = YAML.parse(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
+  const runs = Object.values(wf.jobs).flatMap((j) => (j.steps || []).map((s) => String(s.run || '')));
+  assert.ok(runs.length > 0);
+  assert.equal(runs.filter((r) => r.includes('--measure-tails')).length, 0);
 });
 
 test('the whole-suite timeout stops the run and every test process it started (WORCA_TEST_SUITE_TIMEOUT_MIN)', async () => {
