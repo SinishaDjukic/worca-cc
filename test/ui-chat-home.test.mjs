@@ -211,7 +211,7 @@ test('a tab shows at most RUN_TILES_MAX run tiles; "N more" goes to the Runs pag
   assert.equal(s.doc.querySelectorAll('.chat-run-tile').length, 3);
 });
 
-test('routing: Answer opens the run on Q&A when no chat follows it, a tile opens it on Workflow, two clicks route once', async () => {
+test('routing: Answer opens the run on Q&A when no chat follows it, a tile opens it on Workflow, two clicks route once; a followed run opens in its chat', async () => {
   const s = setup({ runs: RUNS({ needs: [WAITING()] }) });
   await settle(s.window);
   const answer = s.doc.querySelector('.chat-run-tile-answer');
@@ -231,9 +231,9 @@ test('routing: Answer opens the run on Q&A when no chat follows it, a tile opens
   const asked = t.calls.filter((c) => c[0] === 'threadForRun').length;
   t.doc.querySelector('.chat-run-tile-open').click();
   await settle(t.window);
-  assert.deepEqual(t.calls.at(-1), ['openRunPanel', { runId: 'r2', pipelineId: 'p2' }, { tab: 'workflow' }],
-    'the title opens the run\'s graph even when a chat follows it');
-  assert.equal(t.calls.filter((c) => c[0] === 'threadForRun').length, asked, 'the title looks nothing up');
+  assert.deepEqual(t.calls.at(-1), ['openRunPanel', { runId: 'r2', pipelineId: 'p2' }, { tab: 'workflow', threadId: 'ask_00000009' }],
+    'the title opens the chat that follows the run, with the run\'s graph beside it');
+  assert.equal(t.calls.filter((c) => c[0] === 'threadForRun').length, asked + 1, 'the title looks the chat up too');
   assert.equal(answerTab({ source: 'live' }), 'qa');
   assert.equal(answerTab({ source: 'history' }), 'clarify');
   assert.deepEqual(runRef({ runId: null, pipelineId: 'p9', projectKey: 'k', workspaceId: '' }), { pipelineId: 'p9', projectKey: 'k' });

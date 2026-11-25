@@ -35958,6 +35958,7 @@ const designChatHost = {
       createChat: createDesignChat, showStage: () => showDesignStage(threadId), setTitle, setComposer,
       onCards: () => designChatCards.repaint(), onDeleted: () => askPanel?.setDesign(threadId, null) });
     designStudio = { threadId, studio };
+    repaintChatNav();                 // a design chat is the sidebar's Design
     designKind?.ready(threadId);      // a Design tab the panel mounted before the studio existed
     toolPanel?.onContextChange();     // a design chat's tools open in its design's folder (toolPageContext chatDesign)
     void showDesignStage(threadId);   // the design shows beside its chat
@@ -35968,7 +35969,7 @@ const designChatHost = {
     const page = createDesignStartPage({ doc: document, win: window, host: slot, fetch: (...a) => fetch(...a), navigate: designNavigate, setComposer });
     designStudio = { threadId: null, studio: page };
   },
-  unmount() { const d = designStudio; designStudio = null; d?.studio.destroy(); if (d) designChatCards.repaint(); },
+  unmount() { const d = designStudio; designStudio = null; d?.studio.destroy(); if (d) { designChatCards.repaint(); repaintChatNav(); } },
 };
 onFlagChange('design', (on) => { if (!on && currentView() === 'design') showView('chat', ''); updateNavCounts(); });
 
@@ -38648,9 +38649,10 @@ function chatRunPanelContext() {
 }
 
 // chatDeps.openRunPanel (CONTRACT §3/§6): ref = {runId?, pipelineId?, projectKey?, workspaceId?},
-// opts = {tab?}. A live run opens by its run id (a pipeline id finds its live run); anything else by its
-// pipeline id, whose project key is remembered so the saved run opens before History lists it.
-function openChatRunPanel(ref = {}, { tab = '' } = {}) {
+// opts = {tab?, threadId?}. A live run opens by its run id (a pipeline id finds its live run); anything else by its
+// pipeline id, whose project key is remembered so the saved run opens before History lists it. `threadId` opens the
+// panel beside that chat (the Chat home's run tile: the chat that follows the run); else beside the chat on screen.
+function openChatRunPanel(ref = {}, { tab = '', threadId = null } = {}) {
   // D23 first: a chat card's ref carries BOTH ids (run-card.mjs runRefOf), and its run id may be a superseded paused
   // copy or a run a restarted server no longer knows. The pipeline id names the current lineage.
   let id = '';
@@ -38677,7 +38679,7 @@ function openChatRunPanel(ref = {}, { tab = '' } = {}) {
     const t = crpResolve(id);
     if ((t.kind === 'saved' ? t.id : t.runId) === crp.id) return;
   }
-  const hash = runPanel.chatPanelHash(crpThreadParam(), id, String(tab || ''));
+  const hash = runPanel.chatPanelHash(threadId && CHAT_THREAD_RE.test(threadId) ? threadId : crpThreadParam(), id, String(tab || ''));
   if (location.hash.slice(1) === hash) { routeChatRunPanel(runPanel.panelSegments(hash.slice('chat/'.length))); return; }
   location.hash = hash;
 }
@@ -41968,15 +41970,7 @@ function showView(name, param = '') {
   refreshAllCounts();        // every view switch re-reads the authoritative counts
 
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== viewSection(name)));
-  // A new design opens on the Chat page (#chat/new/design) but is the sidebar's Design: that row is lit, not Chat's.
-  const navSection = name === 'chat' && /^new\/design(?:\/|$)/.test(String(param || '')) ? 'design' : viewSection(name);
-  navLinks.forEach((b) => {
-    const on = b.dataset.nav === navSection;
-    b.classList.toggle('active', on);
-    if (on) b.setAttribute('aria-current', 'page');
-    else b.removeAttribute('aria-current');
-  });
-  paintTopnavTitle(navSection === 'design' ? 'design' : name);
+  paintNav(name, param);
   howItWorks.syncRoute(name);
   setMobileNavOpen(false);   // any route (a drawer tap, back/forward, a deep link) puts the drawer away
   // Any route puts the Actions flyout away (a click inside it already did).
@@ -42435,6 +42429,32 @@ for (const t of ['input', 'change', 'click']) {
   document.getElementById('run-form')?.addEventListener(t, () => setTimeout(paintHiddenSettings, 0));
 }
 
+/** The sidebar row a route lights. A design lives on the Chat page but is the sidebar's Design: a new design's start
+ *  (#chat/new/design) and a chat whose design is on screen light Design and title the page Design, not Chat. */
+function navSectionOf(name, param) {
+  if (name !== 'chat') return viewSection(name);
+  const p = String(param || '');
+  if (/^new\/design(?:\/|$)/.test(p)) return 'design';
+  const thread = p.split('/')[0];
+  // A design chat still loading reads its chats-list row, so Design stays lit from one design chat to the next.
+  return thread && (designStudio?.threadId === thread || askPanel?.designChatLoading(thread)) ? 'design' : 'chat';
+}
+function paintNav(name, param) {
+  const navSection = navSectionOf(name, param);
+  askPanel?.setListDesigns(name === 'chat' && navSection === 'design');   // beside Design, the chats list holds design chats only
+  navLinks.forEach((b) => {
+    const on = b.dataset.nav === navSection;
+    b.classList.toggle('active', on);
+    if (on) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
+  paintTopnavTitle(navSection === 'design' ? 'design' : name);
+}
+/** A design chat's design mounted or left after the route painted (the chat loads first): light the row again. */
+function repaintChatNav() {
+  if (currentShownView === 'chat') paintNav('chat', parseHash()[1]);
+}
+
 // Nav clicks only update the hash; the single hashchange listener drives
 // showView so each navigation runs it exactly once (no double /api/runs fetch).
 navLinks.forEach((b) =>
@@ -42652,13 +42672,14 @@ function enterChatView(param = '', prevView = null) {
 /** The panel moved to another chat (a History row, New chat, a first send, a deleted chat): the address follows —
  *  pushed, so Back returns to the previous chat, or swapped (`replace`: a first send, a chat that is gone). Only
  *  while Chat shows; the echo (hashchange → enterChatView → open) is a no-op for the chat already shown. */
-function chatRoute(threadId, { replace = false } = {}) {
+function chatRoute(threadId, { replace = false, design = false } = {}) {
   if (currentShownView !== 'chat') return;
   // A swapped address keeps an open run panel's tail (P4): #chat/new/run/<id>/logs → #chat/<id>/run/<id>/logs.
   const [, cur] = parseHash();
   const parts = String(cur || '').split('/');
   const tail = replace && parts[1] === 'run' ? `/${parts.slice(1).join('/')}` : '';
-  const target = threadId ? `chat/${threadId}${tail}` : (tail ? `chat/new${tail}` : 'chat');
+  // design: a new design's start (the chats list's New beside Design), as the sidebar's Design opens it.
+  const target = design ? 'chat/new/design' : threadId ? `chat/${threadId}${tail}` : (tail ? `chat/new${tail}` : 'chat');
   if (location.hash.slice(1) === target) return;
   if (replace) {
     try { window.history.replaceState(null, '', `#${target}`); } catch { /* sandboxed */ }

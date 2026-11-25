@@ -364,13 +364,12 @@ test('openKind on a page about no run, chat or project: the given scope, shown a
   const blocked = boot({ ctx: { view: 'chat', chatId: null } });
   const g = await blocked.panel.openKind('files', {}, { scope: { type: 'run', id: 'dddd4444' } });
   assert.equal(g.scope.id, 'dddd4444', 'a view that opens no tab (a new chat) uses the fallback too');
-  const kept = boot();   // a run page, then Settings: the panel keeps the run's view, the tab still goes to its own scope
-  await kept.go({ view: 'settings' });
-  const s = await kept.panel.openKind('files', {}, { scope: { type: 'run', id: 'eeee5555', projectKey: 'app-0000aaaa' } });
+  const left = boot();   // a run page, then Settings: the run's view leaves with it, the tab goes to its own scope
+  await left.go({ view: 'settings' });
+  const s = await left.panel.openKind('files', {}, { scope: { type: 'run', id: 'eeee5555', projectKey: 'app-0000aaaa' } });
   assert.equal(s.scope.id, 'eeee5555', 'not the run the person looked at before Settings');
-  assert.ok(kept.tabsText().includes('Files'), 'shown as a guest');
-  const plain = await kept.panel.openKind('files', {});
-  assert.equal(plain.scope.id, 'aaaa1111', 'with no scope of its own: the kept view, as before');
+  assert.deepEqual(left.tabsText(), ['Files'], 'shown as a guest, alone');
+  assert.equal(await left.panel.openKind('files', {}), null, 'with no scope of its own: nothing, not the run left behind');
   const own = boot();   // a run page of its own: the page's scope wins over the one the tab brings
   const o = await own.panel.openKind('files', {}, { scope: { type: 'run', id: 'eeee5555', projectKey: 'app-0000aaaa' } });
   assert.equal(o.scope.id, 'aaaa1111');
@@ -544,6 +543,31 @@ test('per scope: a new chat starts closed after the panel was open in another ch
   await b.go(OS_CHAT_B);
   await b.go(OS_CHAT_A);
   assert.equal(shown(b), false, 'closed in A stays closed in A');
+});
+
+test('a page about no run, chat or project (Runs list, Workflows, Settings) has no tool icons: the panel steps aside there, its tabs kept, and opens again back in the chat', async () => {
+  const b = boot({ ctx: OS_CHAT_A });
+  b.icon('files').click();
+  await tick();
+  assert.equal(shown(b), true);
+  const tab = b.model.tabs()[0];
+  await b.go({ view: 'runs' });
+  assert.equal(shown(b), false, 'the Runs list: no panel');
+  assert.deepEqual(b.tabsText(), [], 'the chat\'s tabs are not drawn beside another page');
+  assert.equal(b.log.at(-1)?.[0], 'unmount', 'its tab is unmounted, not closed');
+  assert.ok(b.model.get(tab.id), 'the tab stays');
+  await b.go({ view: 'settings' });
+  assert.equal(shown(b), false);
+  await b.go(OS_CHAT_A);
+  assert.equal(shown(b), true, 'back in the chat it was left open in');
+  assert.deepEqual(b.tabsText(), ['Files']);
+  const reload = boot({ ctx: OS_CHAT_A, storage: b.storage });
+  await tick();
+  assert.equal(shown(reload), true, 'stepping aside saved nothing: a reload in the chat opens it');
+  const guest = boot({ ctx: { view: 'settings' } });   // a page's own action (an Actions service) still opens it there
+  await guest.panel.openKind('files', { path: 'x' }, { scope: { type: 'run', id: 'cccc3333', projectKey: 'app-0000aaaa' } });
+  await guest.go({ view: 'settings' });
+  assert.equal(shown(guest), true, 'a guest opened on the page stays while the page does');
 });
 
 test('a reload opens the panel only in the scope it was left open in', async () => {

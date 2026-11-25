@@ -1,8 +1,8 @@
 // test/design-chat-thread.test.mjs
-// Design P5 Task 2: a design points at one titled chat (designs.thread_id), a plain thread with no mode. POST
-// /api/design makes it with no title call, POST /api/ask/threads {mode:'design', designId} recreates it (a plain
-// titled thread) once Settings › Delete all chat history removed it, DELETE /api/design/:id keeps it, and a design's
-// total is its builds plus its chat. One in-process server on the mock engine (test/helpers/design-chat-boot.mjs).
+// Design P5 Task 2: a design points at one chat (designs.thread_id), a plain thread with no mode. POST /api/design
+// makes it untitled (its first message titles it as any chat's, and the design takes that title), POST /api/ask/threads
+// {mode:'design', designId} recreates it (a plain thread titled from the design) once Settings › Delete all chat history
+// removed it, DELETE /api/design/:id keeps it, and a design's total is its builds plus its chat. One in-process server on the mock engine (test/helpers/design-chat-boot.mjs).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootDesignChat } from './helpers/design-chat-boot.mjs';
@@ -12,17 +12,12 @@ const { call, mod } = await bootDesignChat(after);
 const { designIdForThread } = await import('../src/core/design/chat-thread.mjs');
 const { getDesign } = await import('../src/core/design/store.mjs');
 const { getDb } = await import('../src/core/db.mjs');
-test('POST /api/design makes a titled plain chat its design points at', async () => {
+test('POST /api/design makes an untitled plain chat its design points at: its first message titles it', async () => {
   const r = await call('POST', '/api/design', { kind: 'web', title: 'ShipRadar' });
   assert.equal(r.status, 201);
   const t = (await call('GET', `/api/ask/threads/${r.body.threadId}`)).body.thread;
-  assert.deepEqual([t.mode ?? null, t.title, t.context.pinned, t.designId], [null, 'ShipRadar', false, r.body.design.id]);
+  assert.deepEqual([t.mode ?? null, t.title, t.context.pinned, t.designId], [null, null, false, r.body.design.id]);
   assert.equal(designIdForThread(t.id), r.body.design.id);
-});
-test('a design with no title still gets a titled thread (no title call can fire)', async () => {
-  const r = await call('POST', '/api/design', { kind: 'web' });
-  const t = (await call('GET', `/api/ask/threads/${r.body.threadId}`)).body.thread;
-  assert.equal(typeof t.title, 'string'); assert.ok(t.title.length > 0);
 });
 test('POST /api/ask/threads mode design: only for a design whose chat is gone', async () => {
   assert.equal((await call('POST', '/api/ask/threads', { mode: 'design' })).status, 404);
@@ -41,7 +36,7 @@ test('DELETE /api/design/:id keeps its chat, a plain chat with no design', async
   assert.equal((await call('DELETE', `/api/design/${d.design.id}`)).status, 200);
   const r = await call('GET', `/api/ask/threads/${d.threadId}`);
   assert.equal(r.status, 200, 'the chat stays');
-  assert.deepEqual([r.body.thread.title, r.body.thread.designId], ['B', undefined]);
+  assert.deepEqual([r.body.thread.title ?? null, r.body.thread.designId], [null, undefined]);
   assert.equal(designIdForThread(d.threadId), null);
 });
 test('a design total is builds plus chat', async () => {
@@ -54,7 +49,26 @@ test('a design total is builds plus chat', async () => {
 });
 
 // Guards the rows above leave open (mutation check).
-const { createDesignThread } = await import('../src/core/design/chat-thread.mjs');
+const { createDesignThread, followChatTitle } = await import('../src/core/design/chat-thread.mjs');
+
+test('followChatTitle: the Design button\'s design takes its chat\'s first title; a design a chat started keeps its own', async () => {
+  const d = (await call('POST', '/api/design', { kind: 'web', title: 'a landing page for a bakery' })).body;
+  assert.equal(followChatTitle(d.threadId, '  Bakery   Landing Page ').title, 'Bakery Landing Page');
+  assert.equal(getDesign(d.design.id).title, 'Bakery Landing Page');
+  assert.equal(followChatTitle(d.threadId, 'Bakery Landing Page'), null, 'the same title changes nothing');
+  assert.equal(followChatTitle(d.threadId, '   '), null, 'a blank title changes nothing');
+  assert.equal(followChatTitle(d.threadId, 'x'.repeat(200)).title.length, 120, 'cut to the design\'s limit');
+  assert.equal(followChatTitle('ask_ffffffff', 'Nothing'), null, 'a chat with no design');
+  const asked = (await call('POST', '/api/design', { kind: 'web', title: 'Agent name' })).body;
+  getDb().prepare('UPDATE designs SET origin_thread_id = ? WHERE id = ?').run(asked.threadId, asked.design.id);
+  assert.equal(followChatTitle(asked.threadId, 'Chat name'), null);
+  assert.equal(getDesign(asked.design.id).title, 'Agent name', 'start_design\'s design keeps the name its agent gave it');
+});
+test('a Design-button design renamed before its chat has a title names the chat too, so the title call changes nothing', async () => {
+  const d = (await call('POST', '/api/design', { kind: 'web', title: 'First' })).body;
+  assert.equal((await call('PATCH', `/api/design/${d.design.id}`, { title: 'Picked' })).status, 200);
+  assert.equal((await call('GET', `/api/ask/threads/${d.threadId}`)).body.thread.title, 'Picked');
+});
 const deleteChat = async (threadId) => assert.equal((await call('DELETE', `/api/ask/threads/${threadId}`)).status, 200);
 
 test('a design in a project gets its thread scoped to that project', () => {

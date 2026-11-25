@@ -387,7 +387,7 @@ import { createDesignChatActions } from '../src/core/design/chat-actions.mjs';
 import { cardStart, createSoundCards } from '../src/core/design/sound-cards.mjs';
 import { stageDesignKit } from '../src/core/design/kit.mjs';
 import { designWorkDir } from '../src/core/design/paths.mjs';
-import { designIdForThread, designToolFolder } from '../src/core/design/chat-thread.mjs';
+import { designIdForThread, designToolFolder, followChatTitle as followDesignChatTitle } from '../src/core/design/chat-thread.mjs';
 import { listVersions, restoreVersion, snapshotVersion } from '../src/core/design/versions.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -7609,7 +7609,7 @@ registerRequirementsRoutes(app, { broadcast, server, deps: {
   startRun: (body, opts) => invokeStartRun(body, null, opts),   // D6: through the run handler, as PR watch does
   runSummary: requirementsRunSummary,
 } });
-const designApi = registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal, renameThread: (id, title, from) => { try { if (askGetThread(id)?.title === String(from).slice(0, 120)) askUpdateThread(id, { title: String(title).slice(0, 120) }); } catch { /* the chat went */ } }, dropGrants: (id) => previewGrants.revokeDesign(id), versions: { list: listVersions, restore: (id, n) => restoreVersion({ designId: id, n }) }, postSystemNotice: postAskSystemNotice, thumbs: designThumbs, soundCards } });
+const designApi = registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal, renameThread: (id, title, from) => { try { const t = askGetThread(id); if (t && (t.title == null || t.title === String(from).slice(0, 120))) askUpdateThread(id, { title: String(title).slice(0, 120) }); } catch { /* the chat went */ } }, dropGrants: (id) => previewGrants.revokeDesign(id), versions: { list: listVersions, restore: (id, n) => restoreVersion({ designId: id, n }) }, postSystemNotice: postAskSystemNotice, thumbs: designThumbs, soundCards } });
 registerPreviewTokenRoute(app, { flagGate: requireFlag('design'), grants: previewGrants, getDesign, viewerOf: askViewer });
 /** These routes push notes off the machine or rewrite them: a browser page must be served by THIS Worca —
  *  isLocalRequest checks the hostname, never the port, and a body-less POST needs no CORS preflight (decision E8).
@@ -9443,7 +9443,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // (§17 Q&A 1). deterministicTitle is only the turn's fallback for an
     // empty haiku result (turn.mjs _kickoffTitle), never written here.
     const titleWasAuto = thread.title == null;
-    const deterministicTitle = titleWasAuto && !synthetic ? (askSanitizeTitle(stripIntentLead(text).slice(0, 80)) || 'New chat') : thread.title;
+    const deterministicTitle = titleWasAuto && !synthetic ? ((dChat && getDesign(dChat)?.title) || askSanitizeTitle(stripIntentLead(text).slice(0, 80)) || 'New chat') : thread.title;   // a design chat falls back to its design's title
     // P3: a synthetic row keeps the EVENT as its text (buildRestoredPrompt replays it truthfully) and carries the
     // human notice as a block the panel renders instead of a bubble.
     // Ask worca beside the page: the page a message was sent from ("on Run · Diff") leads its blocks; none for a Chat-page
@@ -9614,7 +9614,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         proxyBridge: askProxyBridge,                         // the corporate proxy bridge: null for an agent caller
         tabsBridge: tabsOn ? askTabBridge : null,   // issue 1064 slice 3: the tab tools
         onFrame: stampAskFrames(id, job),
-        onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
+        onOutOfTurn: (f) => { if (dChat && f.type === 'ask-title') followDesignChatTitle(id, f.title); broadcast({ ...f, threadId: id }); },
         onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
         onWorktreeMutation: () => { emitAskWorktrees(id); },
         // §9.1 (D17): at turn end, name the copies a worktree opened this turn brings into the next one.
