@@ -42319,7 +42319,9 @@ navLinks.forEach((b) =>
   b.id = 'runs-new';
   b.dataset.minLevel = 'simple';
   b.innerHTML = iconSvg('run', 14);
-  b.append('New run');
+  b.append('New');
+  b.setAttribute('aria-label', 'New run');
+  b.title = 'New run';
   $('#runs-new-slot')?.replaceChildren(b);
 }
 $('#runs-new')?.addEventListener('click', () => {

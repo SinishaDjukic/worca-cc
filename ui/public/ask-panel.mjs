@@ -2764,18 +2764,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   let chatsCol = null;
   /** The head's one New chat: a + right after the list toggle (mock 11). It carries [data-ask-new-btn], which the add-ons'
    *  capture-phase listeners read (chat/home-flip.mjs arms the glide, chat/intent.mjs drops the intent). Below 1100px
-   *  the overlay closes first, as after a pick, so the new chat has its room and newThread() can focus its composer. */
-  function newChatPlus() {
+   *  the overlay closes first, as after a pick, so the new chat has its room and newThread() can focus its composer.
+   *  `words` is the visible text; the list's copy reads "New", and the accessible name keeps "New chat ⌥⌘N". */
+  function newChatPlus(words = 'New chat') {
     // Like the Runs page's New run: a small primary button with its icon and its words (the key stays in the tooltip).
     const b = iconButton('btn btn-sm btn-primary chat-head-btn chat-new-plus', `New chat ${keyHint(['alt', 'mod', 'N'], isMac(win))}`,
       svgIcon(ICONS.plus, 14, 2), () => { if (historyOverlayOpen()) setHistoryOpen(false, { persist: false }); newThread(); route(null); });
-    b.append(doc.createTextNode('New chat'));
+    b.append(doc.createTextNode(words));
     b.setAttribute('data-ask-new-btn', '');
     return b;
   }
   function mountChats() {
     el.page.dataset.chats = 'on';
-    el.listNew = newChatPlus();   // New chat on top of the chats list (the head's own shows only while the list is folded)
+    el.listNew = newChatPlus('New');   // New chat at the end of the chats list's head (the head's own shows only while the list is folded)
     el.listNew.classList.add('chat-list-new');
     chatsCol = mountChatsColumn({ host: el.history, newButton: el.listNew, fetch, storage, win, now, level: () => currentLevel(doc),
       scopeName: (sc) => chatDep('scopeName', sc) || '', currentId: () => (typeof st.wantThread === 'string' ? st.wantThread : st.threadId),
