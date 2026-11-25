@@ -210,10 +210,26 @@ Agent readiness (`ui/public/readiness-chip.mjs`) uses the same chip: the project
 "Not used"). Amber and red take the `-ink-strong` text shade, and a not-ready chip ends in a solid count of open problems
 (`.rd-n`). A failing check leads with `.issue-sev` (Must fix red, Should fix amber, Advice blue), never a dot: a dot is a
 state. The passed and ignored boxes are `.disclosure` with the `check` and `none` icons.
-### Status dot and symbols
+### Status dot and symbols (checked)
 A dot is the state: peach working (pulses), grey paused or waiting, green ready, violet merged. Needs you is an amber
 "?" only when Worca asks; a PR problem is a plain amber dot with the reason in the PR chip; failed is a red "!".
-An idle chat shows the chat bubble line icon in the dot's place.
+An idle chat shows the chat bubble line icon in the dot's place. A Shaper small-runs row maps its run status mark to a
+dot through `markDot` (`ui/public/status-dot.mjs`). This table lists every `.status-dot.is-*` modifier, and
+`test/ui-design-language.test.mjs` fails when the CSS has one without a row.
+
+| Dot | Class | Means |
+|---|---|---|
+| peach | `.status-dot.is-peach` | working or starting; a live Shaper run |
+| pulse | `.status-dot.is-pulse` | the only motion: a live run (none under reduced motion) |
+| amber | `.status-dot.is-amber` | needs you: the "?" while Worca asks, a plain dot for a PR problem |
+| red | `.status-dot.is-red` | failed, with the "!" |
+| green | `.status-dot.is-green` | ready, in review or done |
+| violet | `.status-dot.is-violet` | merged |
+| grey | `.status-dot.is-grey` | paused; an idle chat |
+| dark grey | `.status-dot.is-dark-grey` | stopped |
+| grey ring | `.status-dot.is-grey-ring` | waiting; a Shaper run that waits for runs, cannot start, or is free without the turn |
+| ink ring | `.status-dot.is-ink-ring` | the Shaper run with the next turn (`next`) |
+| dashed ring | `.status-dot.is-dashed-ring` | a Shaper stop answer held for its turn (`after run 3`), 12px, `--ink-3`, no glyph |
 ### Usage rings
 The avatar draws only the session and long-window rings (`ui/public/usage-view.mjs`), each in one tone (`--ink-2`,
 `--amber` at the warning line, `--red` full at the limit); spend is never a ring there, it lives in the account menu's

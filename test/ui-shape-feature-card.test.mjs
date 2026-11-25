@@ -16,6 +16,14 @@ import { shaperCard, liveSliceFrom } from '../src/core/shape/features.mjs';
 import { createRunCardController } from '../ui/public/chat/run-card.mjs';
 import { PROGRESS_CARD_TYPE } from '../ui/public/ask-run-card.mjs';
 import { registerAskRenderer } from '../ui/public/ask/registry.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
+import { renderStatusDot } from '../ui/public/status-dot.mjs';
+import { featureView } from '../src/core/shape/features.mjs';
+import { world } from './helpers/shape-sixteen-runs.mjs';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 
 useTempHome(after, 'worca-shape-feature-card-');
 
@@ -595,4 +603,145 @@ test('D1 one card: the ship step mounts the Ship card once: Met unpressed while 
   const { built, ctl } = c2Card({ members: [{ status: 'done', endReached: true }, { status: 'running' }], pids: ['p1', 'p2'], snaps: {} });
   assert.equal(built.el.querySelector('.chat-rc-ship'), null);
   built.dispose(); ctl.destroy();
+});
+
+
+// ---- Shaper small runs s4 (R-ux-1, R-arch-4, R-ux-5): the Chat card rows read the shared run status ----
+const S4_MEMBER = (sl) => (sl.state === 'done' ? { status: 'done', endReached: true }
+  : ['planned', 'held', 'canceled'].includes(sl.state) ? { ticket: { status: 'scheduled' } }
+  : sl.state === 'error' ? { status: 'error' } : { status: 'running' });
+/** A marked feature card whose rows are `slices` (featureView slice payloads). `flag` is shaperSmallRuns. */
+function s4Card(slices, { flag = true, marked = true, snaps = {} } = {}) {
+  const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
+  const doc = dom.window.document;
+  applyFlags({ shaperSmallRuns: flag }, doc);
+  const members = slices.map(S4_MEMBER);
+  const v = VIEW(slices, { originPipelineId: 'p0' });
+  const cardJson = { pipelineId: 'p0', feature: v, log: [], ...(marked ? { smallRuns: true } : {}) };
+  const rest = { source: 'rest', terminal: true, status: 'done', pipelineId: 'p0' };
+  const runStore = { subscribe: () => () => {}, byPipeline: (pid) => (pid === 'p0' ? rest : snaps[pid] || null), get: () => null };
+  const gm = groupModel({ kind: 'feature', title: 'Charts', planning: { status: 'done', endReached: true }, members });
+  const row = { kind: 'chain', groupKind: 'feature', groupId: 'feat-1', title: 'Charts', model: gm, count: gm.count.text,
+    planning: { title: 'Planning', href: '#running/r0', model: gm.planning },
+    members: gm.members.map((m, i) => ({ position: slices[i].index, title: `Part ${slices[i].index}`, href: '#runs', model: m,
+      pipelineId: slices[i].pipelineId, ticketId: slices[i].ticketId, run: members[i] })) };
+  const controls = { paintQuestion: () => null, releaseQuestion() {}, groupOf: () => row, memoFor: () => ({}) };
+  const ctl = createRunCardController({ controls, runStore, tickMs: 0 });
+  const built = ctl.build({ id: 'card_s4', card: { type: PROGRESS_CARD_TYPE, pipelineId: 'p0', runId: 'run-p0', title: 'Charts' } }, { doc, win: dom.window, shaperCard: () => cardJson });
+  doc.body.appendChild(built.el);
+  const rowOf = (run) => built.el.querySelector(`.run-member:not([data-key="planning"]):nth-of-type(${slices.findIndex((x) => x.index === run) + 2})`);
+  const li = (run) => [...built.el.querySelectorAll('.run-member:not([data-key="planning"])')][slices.findIndex((x) => x.index === run)];
+  const word = (run) => li(run).querySelector('.run-member-state').textContent;
+  const dot = (run) => li(run).querySelector('.status-dot');
+  return { built, ctl, row, li, word, dot, rowOf, done: () => { built.dispose(); ctl.destroy(); } };
+}
+const S = (i, state, over = {}) => ({ index: i, title: `Part ${i}`, state, runId: null, pipelineId: ['planned', 'held', 'canceled'].includes(state) ? null : `p${i}`,
+  ticketId: `t${i}`, pr: null, kind: 'build', waitsFor: [], buildsOn: [], nextTurn: false, cannotStart: false, stop: null, ...over });
+
+test('s4 R-ux-1 card: run 2 open stop shows "?", run 4 (held, after run 3) the dashed ring with no "?", run 5 failed the "!"', () => {
+  const slices = [S(1, 'done'), S(2, 'approval', { stop: { reason: 'requirement', held: false }, buildsOn: [1] }), S(3, 'running', { buildsOn: [1] }),
+    S(4, 'held', { stop: { reason: 'check', held: true, after: 3 }, buildsOn: [1, 3] }), S(5, 'error', { buildsOn: [3, 4] })];
+  const c = s4Card(slices, { snaps: { p3: c2Snap('p3') } });
+  assert.equal(c.word(2), 'waiting for you');
+  assert.equal(c.dot(2).dataset.symbol, 'question');
+  assert.ok(c.dot(2).classList.contains('is-amber') && c.dot(2).classList.contains('has-sym'));
+  assert.equal(c.dot(2).getAttribute('aria-label'), 'waiting for you');
+  assert.equal(c.word(4), 'after run 3');
+  assert.ok(c.dot(4).classList.contains('is-dashed-ring'));
+  assert.ok(!c.dot(4).classList.contains('has-sym'));
+  assert.equal(c.dot(4).dataset.symbol, undefined);
+  assert.equal(c.dot(4).querySelector('svg'), null);
+  assert.equal(c.li(4).dataset.mark, 'after');
+  assert.equal(c.word(5), 'failed');
+  assert.equal(c.dot(5).dataset.symbol, 'alert');
+  assert.ok(c.dot(5).classList.contains('is-red'));
+  assert.equal(c.dot(5).getAttribute('aria-label'), 'failed');
+  assert.equal(c.word(1), 'done');
+  assert.ok(c.dot(1).classList.contains('is-green'));
+  // Only the open stop shows "?", only the failed run "!".
+  assert.deepEqual([...c.built.el.querySelectorAll('.run-members .status-dot[data-symbol]')].map((d) => d.dataset.symbol).sort(), ['alert', 'question']);
+  // Held: no row reads next.
+  assert.ok(![1, 2, 3, 4, 5].some((r) => /^next/.test(c.word(r))));
+  // Live: today's phase word (never `working`) with the pulse, and only that row pulses.
+  assert.notEqual(c.word(3), 'working');
+  assert.match(c.word(3), /\S/);
+  assert.ok(c.dot(3).classList.contains('is-pulse'));
+  assert.equal(c.built.el.querySelectorAll('.run-members .status-dot.is-pulse').length, 1);
+  c.done();
+});
+
+test('s4 card: a held slice with no `after` reads next with the turn, else no word; the dashed ring either way', () => {
+  const held = (turn) => [S(1, 'done'), S(2, 'held', { stop: { reason: 'check', held: true }, nextTurn: turn, buildsOn: [1] })];
+  const a = s4Card(held(true));
+  assert.equal(a.word(2), 'next');
+  assert.ok(a.dot(2).classList.contains('is-dashed-ring'));
+  a.done();
+  const b = s4Card(held(false));
+  assert.equal(b.word(2), '');
+  assert.ok(b.dot(2).classList.contains('is-dashed-ring'));
+  b.done();
+});
+
+test('s4 card: next draws the --ink ring, a free run without the turn no word and the grey ring, a cannot-start run keeps today\'s text', () => {
+  const slices = [S(1, 'done'), S(2, 'planned', { nextTurn: true, buildsOn: [1] }), S(3, 'planned', { buildsOn: [1] }), S(4, 'planned', { cannotStart: true, waitsFor: [2], buildsOn: [2] })];
+  const c = s4Card(slices);
+  assert.equal(c.word(2), 'next');
+  assert.ok(c.dot(2).classList.contains('is-ink-ring'));
+  assert.equal(c.li(2).dataset.mark, 'ring');
+  assert.equal(c.word(3), '');
+  assert.ok(c.dot(3).classList.contains('is-grey-ring') && !c.dot(3).classList.contains('is-ink-ring'));
+  const off = s4Card(slices, { flag: false });
+  assert.equal(c.word(4), off.word(4), 'cannot start: today\'s text (D9: the card\'s short word)');
+  off.done();
+  assert.ok(c.dot(4).classList.contains('is-grey-ring'));
+  c.done();
+});
+
+test('s4 base state (R-qa-9): run 12 reads "waits for run 7, 10" and run 7 "waits for run 2 (needs you), 6", one line, no second line', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'worca-s4-base-'));
+  try {
+    await withEnvVars({ WORCA_FLAGS: 'shaperSmallRuns' }, () => {
+      const fx = world(root, 'base');
+      const slices = featureView(fx.featureId, { live: fx.live }).slices;
+      assert.equal(slices.length, 16);
+      const c = s4Card(slices);
+      assert.equal(c.word(12), 'waits for run 7, 10');
+      assert.equal(c.word(7), 'waits for run 2 (needs you), 6');
+      assert.equal(c.word(2), 'waiting for you');
+      assert.equal(c.word(9), 'next');
+      assert.ok(c.dot(9).classList.contains('is-ink-ring'));
+      assert.equal(c.word(13), '', 'a free run without the turn has no word');
+      assert.equal(c.word(1), 'done');
+      assert.ok(c.built.el.querySelector('.run-members.is-one-line'));
+      assert.equal(c.built.el.querySelector('.run-member-line'), null, 'no second line');
+      assert.equal(c.built.el.querySelectorAll('.run-member-state').length, 17, 'one state per row, planning included');
+      assert.equal([...c.built.el.querySelectorAll('.run-member-state')].filter((n) => n.textContent === 'next').length, 1);
+      for (const r of [7, 12]) assert.ok(c.dot(r).classList.contains('is-grey-ring'), `run ${r}: waiting is a grey ring`);
+      const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
+      assert.match(css, /\.chat-rc-members \.run-member-state\{[^}]*white-space:nowrap/);
+      c.done();
+      // A change run with the turn.
+      const fx2 = world(root, 'base');
+      fx2.setKind(13, 'change');
+      const change = s4Card(featureView(fx2.featureId, { live: fx2.live }).slices);
+      assert.equal(change.word(13), 'next · small change run');
+      assert.ok(change.dot(13).classList.contains('is-ink-ring'));
+      assert.ok(![...change.built.el.querySelectorAll('.run-member-state')].some((n) => n.textContent === 'next'), 'only the change run has the turn');
+      change.done();
+    });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('s4 R-arch-4 card: flag off, or a card not marked small-runs, has no data-mark and every dot is the dev model\'s', () => {
+  const slices = [S(1, 'done'), S(2, 'approval', { stop: { reason: 'requirement', held: false }, buildsOn: [1] }), S(3, 'held', { stop: { reason: 'check', held: true, after: 2 } }), S(4, 'error')];
+  for (const opts of [{ flag: false }, { marked: false }]) {
+    const c = s4Card(slices, opts);
+    assert.equal(c.built.el.querySelector('[data-mark]'), null);
+    for (const [i, mb] of c.row.members.entries()) {
+      const want = renderStatusDot(c.built.el.ownerDocument, mb.model);
+      assert.equal(c.li(i + 1).querySelector('.status-dot').className, want.className, `run ${i + 1}`);
+    }
+    assert.equal(c.built.el.querySelector('.status-dot.is-dashed-ring, .status-dot.is-ink-ring'), null);
+    c.done();
+  }
 });

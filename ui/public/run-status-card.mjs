@@ -2,7 +2,7 @@
 // page (live and finished) and the group page draw the dot or symbol, the status line, the group bar, the current
 // run's bar, the kind chip, the actions and the member rows from runModel / groupModel through this module. Pure DOM
 // over the host's ownerDocument; app.js and chat/run-card.mjs bind the handlers.
-import { paintStatusDot } from './status-dot.mjs';
+import { paintStatusDot, markDot } from './status-dot.mjs';
 import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
 import { prChip } from './runs-list.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
@@ -223,7 +223,7 @@ export function memberStatusText(m) {
  *  over the row. `checks` (the chat card's feature) maps a member's key to its Requirements check: that row gets the
  *  check's fold under its status line. `oneLine` (Shaper's one card): the status sits right of the title on the same
  *  line, as a short state (`.run-member-state`), with no second line under the title. */
-export function renderMemberRows(doc, row, { checks, oneLine = false, shortState = null } = {}) {
+export function renderMemberRows(doc, row, { checks, oneLine = false, shortState = null, status = null } = {}) {
   const ol = doc.createElement('ol');
   ol.className = oneLine ? 'run-members is-table is-one-line' : 'run-members is-table';
   const items = [...(row.planning && row.planning.model ? [{ ...row.planning, isPlanning: true }] : []), ...(row.members || [])];
@@ -234,15 +234,21 @@ export function renderMemberRows(doc, row, { checks, oneLine = false, shortState
     li.dataset.state = m.state;
     li.dataset.key = mb.isPlanning ? 'planning' : String(mb.pipelineId || mb.ticketId || mb.position || '');
     const unnumbered = mb.isPlanning || mb.adhoc || row.groupKind === 'user';
+    // Shaper small runs s4 (D9, D12): `status(mb)` gives runStatus's {word, mark}; never asked for the planning row.
+    const st = typeof status === 'function' && !mb.isPlanning ? status(mb) : null;
+    const mark = st && st.mark ? st.mark : null;
     const dot = doc.createElement('span');
-    paintStatusDot(dot, m);
     const name = mb.isPlanning ? 'Planning' : (mb.title || '(untitled)');
     const title = textEl(doc, 'a', 'run-member-title', name);
     title.setAttribute('href', mb.href || '#runs');
     title.title = name;
     // Small runs C2 (D13): a marked card's `shortState(mb)` names a member's state in one short word; null keeps dev's.
-    const said = typeof shortState === 'function' && !mb.isPlanning ? shortState(mb) : null;
-    const line = textEl(doc, 'span', oneLine ? 'run-member-state' : 'run-member-line', typeof said === 'string' ? said : memberStatusText(m));
+    const said = st && typeof st.word === 'string' ? st.word
+      : typeof shortState === 'function' && !mb.isPlanning ? shortState(mb) : null;
+    const shown = typeof said === 'string' ? said : memberStatusText(m);
+    paintStatusDot(dot, mark ? markDot(m, mark, shown) : m);
+    if (mark) li.dataset.mark = mark;
+    const line = textEl(doc, 'span', oneLine ? 'run-member-state' : 'run-member-line', shown);
     const pr = textEl(doc, 'span', 'run-member-pr', '');
     if (mb.adhoc) pr.append(textEl(doc, 'span', 'runs-indep', 'Independent'));
     if (m.pr && !m.pr.pending) pr.append(prChip(doc, m.pr, { link: true }));

@@ -349,3 +349,13 @@ test('S11-T5 a canceled dependency is never listed in links.waitsFor', () => wit
   assert.ok(!waitsFor.includes(3));
   assert.ok(waitsFor.includes(2));
 }));
+
+// ---- Slice 4 (D14): the helper holds a stop behind any run, default run 2 ----
+test('setRun held takes `after`: run 4 held behind run 3 reads stop.after === 3 in featureView; the default stays 2', () => withEnvVars(ON, () => {
+  const fx = world(root, { done: [1], states: { 2: { stop: 'requirement' }, 3: { pipe: 'running' }, 4: { stop: 'check', held: true, after: 3 } } });
+  const four = featureView(fx.featureId, { live: fx.live }).slices.find((x) => x.index === 4);
+  assert.equal(four.stop.held, true);
+  assert.equal(four.stop.after, 3);
+  const def = world(root, { done: [1], states: { 2: { stop: 'check', held: true } } });
+  assert.equal(featureView(def.featureId, { live: def.live }).slices.find((x) => x.index === 2).stop.after, 2);
+}));

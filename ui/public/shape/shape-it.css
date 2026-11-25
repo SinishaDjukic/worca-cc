@@ -151,7 +151,8 @@
 .chat-rc-members .run-members.is-table.is-one-line > .run-member{align-items:start;min-height:32px;box-sizing:border-box;padding:5px 0 6px;line-height:20px;}
 .chat-rc-members .run-members.is-one-line > .run-member > .status-dot{justify-self:center;margin-top:6px;}
 /* C3: a run waiting on the person draws dev's 12px symbol dot (14px with an icon): the same centre, on the first line. */
-.chat-rc-members .run-members.is-one-line > .run-member > .status-dot.has-sym{margin-top:4px;}
+.chat-rc-members .run-members.is-one-line > .run-member > .status-dot.has-sym,
+.chat-rc-members .run-members.is-one-line > .run-member > .status-dot.is-dashed-ring{margin-top:4px;}
 .chat-rc-members .run-members.is-one-line > .run-member > .status-dot.has-ic{margin-top:3px;}
 /* Title, then the short state right-aligned on the same line; a Requirements fold wraps under. */
 .chat-rc-members .run-members.is-one-line .run-member-main{flex-direction:row;flex-wrap:wrap;align-items:center;column-gap:8px;}
@@ -159,6 +160,9 @@
 .chat-rc-members .run-members.is-one-line .run-member-title{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;}
 .chat-rc-members .run-members.is-one-line .run-member-main > :not(.run-member-title, .run-member-state){flex-basis:100%;}
 .chat-rc-members .run-member-state{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
+/* s4 (owner direction): an open stop's word reads amber ink, a failed run's red ink; every other word stays --ink-2. */
+.chat-rc-members .run-member[data-mark="ask"] .run-member-state{color:var(--amber-ink);}
+.chat-rc-members .run-member[data-mark="failed"] .run-member-state{color:var(--red-ink);}
 /* A narrow row with no PR chip and no cost keeps one grid row: the stacked ". . pr cost" row and its gap would add 9px.
    C2: every narrow one-line row stays one 32px line, as the prototype's #build rows. A PR chip takes the last column
    (the chevron's; the whole-row link opens the run); the cost is dropped, as dev drops it in a narrow chat card, and
@@ -190,11 +194,14 @@
 div.gpage-runs .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content 64px 16px;column-gap:8px;}
 div.gpage-runs .run-members.is-table.is-one-line > .run-member{align-items:start;min-height:32px;box-sizing:border-box;padding:5px 0 6px;line-height:20px;}
 div.gpage-runs .run-members.is-one-line > .run-member > .status-dot{justify-self:center;margin-top:6px;}
-div.gpage-runs .run-members.is-one-line > .run-member > .status-dot.has-sym{margin-top:4px;}
+div.gpage-runs .run-members.is-one-line > .run-member > .status-dot.has-sym,
+div.gpage-runs .run-members.is-one-line > .run-member > .status-dot.is-dashed-ring{margin-top:4px;}
 div.gpage-runs .run-members.is-one-line > .run-member > .status-dot.has-ic{margin-top:3px;}
 div.gpage-runs .run-members.is-one-line .run-member-main{flex-direction:row;flex-wrap:wrap;align-items:center;column-gap:8px;}
 div.gpage-runs .run-members.is-one-line .run-member-title{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;}
 div.gpage-runs .run-member-state{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
+div.gpage-runs .run-member[data-mark="ask"] .run-member-state{color:var(--amber-ink);}
+div.gpage-runs .run-member[data-mark="failed"] .run-member-state{color:var(--red-ink);}
 @media (max-width:600px){
   div.gpage-runs .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content;}
   div.gpage-runs .run-members.is-table.is-one-line > .run-member{grid-template-areas:"dot num main pr";}

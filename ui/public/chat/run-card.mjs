@@ -28,6 +28,7 @@ import { paintRunStatus, statusText, kindLabel, syncActions, pauseResumeOwn, ren
 import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
 import { cardShortWord } from '../../../src/shared/shape/run-agents.mjs';
+import { runStatus } from '../../../src/shared/shape/run-status.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { featureCardModel, oneCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
 import { buildCheckRows } from '../shape/check-row.mjs';
@@ -1094,7 +1095,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       const opened = [...membersEl.querySelectorAll('.run-member')].filter((li) => li.querySelector('.plan-check-line[aria-expanded="true"]')).map((li) => li.dataset.key);
       // Small runs C2 (D13): a marked card's run rows say one short word (cardShortWord).
       const shortState = one ? (mb) => cardShortWord(mb, shaperIn.snapOf(mb.pipelineId), sliceOfMember(shaperIn.card, mb)) : null;
-      membersEl.replaceChildren(renderMemberRows(doc, curRow, { checks: fm && fm.requirementChecks, oneLine: !!one, ...(shortState ? { shortState } : {}) }));
+      // Shaper small runs s4 (D7, D10): with the flag on, the one card's rows take word and mark from runStatus.
+      const sliceMap = one && flagOn('shaperSmallRuns', doc) ? new Map(((shaperIn.card.feature && shaperIn.card.feature.slices) || []).map((x) => [x.index, x])) : null;
+      const status = sliceMap ? (mb) => runStatus({ slice: sliceOfMember(shaperIn.card, mb), slices: sliceMap, snap: shaperIn.snapOf(mb.pipelineId) }) : null;
+      membersEl.replaceChildren(renderMemberRows(doc, curRow, { checks: fm && fm.requirementChecks, oneLine: !!one, ...(shortState ? { shortState } : {}), ...(status ? { status } : {}) }));
       for (const li of membersEl.querySelectorAll('.run-member')) if (opened.includes(li.dataset.key)) li.querySelector('.plan-check-line')?.click();
       membersEl.hidden = false;
     } else { membersEl.replaceChildren(); membersEl.hidden = true; }

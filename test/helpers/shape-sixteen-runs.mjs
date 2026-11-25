@@ -27,7 +27,7 @@ export function sixteenRunFeature({ projectDir, smallRuns = true }) {
   const db = getDb();
   const key = projectKey(projectDir);
   const newPipe = (status) => {
-    const id = `s16${String(++seq).padStart(5, '0')}`;
+    const id = `s16-${String(++seq).padStart(5, '0')}`;   // 9 characters: a run reference GET /api/ask/runs/:id takes (ASK_RUN_REF_RE)
     seedPipelineRow({ id, projectKey: key, status, title: id, branch: { source: 'main', feature: `feat/${id}` } });
     return id;
   };
@@ -59,7 +59,7 @@ export function sixteenRunFeature({ projectDir, smallRuns = true }) {
     let heldStop = null;
     if (how.stop) {
       pq = { id: `q${run}`, kind: STOP_KIND[how.stop], stop: { reason: how.stop, run } };
-      if (how.held) heldStop = { id: `q${run}`, after: 2 };
+      if (how.held) heldStop = { id: `q${run}`, after: Number.isInteger(how.after) ? how.after : 2 };   // s4 D14: held behind any run
     } else if (how.asking) pq = { id: `q${run}`, kind: 'questions' };
     else if (how.approval) pq = { id: `q${run}`, kind: 'plan' };
     if (pq) liveMap.set(pid, liveSliceFrom({ runId: `r${run}`, status: 'running', approved: true, pendingQuestion: pq, heldStop }));

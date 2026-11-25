@@ -1001,3 +1001,48 @@ test('run proposal: the shared field and one form grid (#959)', () => {
   assert.match(body('.ask-rp-ctl > span:first-child'), /white-space:nowrap;/);
   assert.equal(ALL.some((r) => r.sel === '.ask-rp-tags' && /nowrap|overflow-x/.test(r.body)), false, 'the tags wrap');
 });
+
+// ---- Shaper small runs s4 (R-ux-1, R-ux-5): the status dot guide is checked against the CSS; the dashed ring and the ink ring ----
+const dotModifiers = () => [...new Set([...css.matchAll(/\.status-dot\.is-([a-z][a-z-]*)/g)].map((m) => m[1]))].sort();
+const guideDots = () => {
+  const guide = readFileSync(join(ROOT, 'docs/design-system.md'), 'utf8');
+  const at = guide.indexOf('### Status dot and symbols (checked)');
+  assert.ok(at >= 0, 'the guide heading is "### Status dot and symbols (checked)"');
+  const section = guide.slice(at).split(/\n### /)[0];
+  assert.match(section, /\|\s*Dot\s*\|\s*Class\s*\|\s*Means\s*\|/, 'the table header is | Dot | Class | Means |');
+  return [...section.matchAll(/^\|[^|\n]*\|\s*`\.status-dot\.is-([a-z-]+)`\s*\|/gm)].map((m) => m[1]).sort();
+};
+test('the guide\'s status dot table lists exactly the .status-dot.is-* modifiers of the served CSS, the dashed ring and the ink ring included', () => {
+  assert.ok(dotModifiers().includes('dashed-ring'));
+  assert.ok(dotModifiers().includes('ink-ring'));
+  assert.ok(dotModifiers().includes('pulse'));
+  assert.deepEqual(guideDots(), dotModifiers());
+});
+test('every dot value of RUN_STATES and RUN_MARK_DOTS has a .status-dot.is-* rule', async () => {
+  const { RUN_STATES } = await import('../src/shared/run-model.mjs');
+  const { RUN_MARK_DOTS } = await import('../ui/public/status-dot.mjs');
+  const have = new Set(dotModifiers());
+  const want = [...Object.values(RUN_STATES).map((v) => v.dot), ...Object.values(RUN_MARK_DOTS).map((v) => v.dot)];
+  assert.deepEqual([...new Set(want)].filter((d) => !have.has(d)), []);
+});
+test('the dashed ring: 12px, tokens only (--ink-3), cut by a mask, no shadow, no animation', () => {
+  const r = ALL.find((x) => x.sel === '.status-dot.is-dashed-ring' && !x.media);
+  assert.ok(r, 'the rule exists');
+  assert.match(r.body, /width:\s*12px/);
+  assert.match(r.body, /height:\s*12px/);
+  assert.match(r.body, /color:\s*var\(--ink-3\)/);
+  assert.match(r.body, /mask/);
+  assert.doesNotMatch(r.body, /box-shadow|animation|#[0-9a-f]{3,8}\b|rgb\(/i);
+});
+test('the ink ring (the run with the turn): the --ink token, 8px dot scale like the grey ring, no animation', () => {
+  const r = ALL.find((x) => x.sel === '.status-dot.is-ink-ring' && !x.media);
+  assert.ok(r, 'the rule exists');
+  assert.match(r.body, /color:\s*var\(--ink\)/);
+  assert.match(r.body, /box-shadow:\s*inset 0 0 0 2px currentColor/);
+  assert.doesNotMatch(r.body, /animation|#[0-9a-f]{3,8}\b|rgb\(/i);
+});
+test('one-line rows: the dashed ring lines up like the 12px symbol dots on the Chat card and the feature page', () => {
+  const shape = readFileSync(join(ROOT, 'ui/public/shape/shape-it.css'), 'utf8');
+  assert.match(shape, /\.chat-rc-members \.run-members\.is-one-line > \.run-member > \.status-dot\.is-dashed-ring[^{]*\{margin-top:4px;\}/);
+  assert.match(shape, /div\.gpage-runs \.run-members\.is-one-line > \.run-member > \.status-dot\.is-dashed-ring[^{]*\{margin-top:4px;\}/);
+});

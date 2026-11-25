@@ -2,6 +2,7 @@
 // status text, the dot or symbol, the bars per state (D20), the model actions (D4), member rows and ship lines.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -410,4 +411,70 @@ test('at 375px the fold and a long criterion detail wrap: scrollWidth <= clientW
   doc.body.append(host);
   ol.querySelector('.plan-check-line').click();
   for (const el of [ol.querySelector('.run-member-main'), ...ol.querySelectorAll('.plan-check-row')]) assert.ok(el.scrollWidth <= el.clientWidth);
+});
+
+// ---- Shaper small runs s4: renderMemberRows takes word and mark from the `status` option (R-ux-1, R-arch-4) ----
+const rowsOf = (members, opts) => {
+  const d = dom();
+  const gm = groupModel({ kind: 'feature', title: 'F', planning: { status: 'done', endReached: true }, members }, { now: NOW });
+  const row = { groupKind: 'feature', model: gm, planning: { title: 'Planning', href: '#running/r0', model: gm.planning },
+    members: gm.members.map((m, i) => ({ position: i + 1, title: `Run ${i + 1}`, href: '#runs', pipelineId: `p${i + 1}`, model: m })) };
+  return renderMemberRows(d, row, opts);
+};
+const MEMBERS = [{ status: 'done', endReached: true }, { status: 'running' }, { status: 'running' }];
+const member = (ol, i) => ol.querySelectorAll('.run-member:not([data-key="planning"])')[i];
+
+test('s4 renderMemberRows: with no `status` the output is byte-identical and no row has data-mark', () => {
+  const plain = rowsOf(MEMBERS, { oneLine: true, shortState: () => 'x' });
+  const same = rowsOf(MEMBERS, { oneLine: true, shortState: () => 'x', status: undefined });
+  assert.equal(plain.outerHTML, same.outerHTML);
+  assert.equal(plain.querySelector('[data-mark]'), null);
+});
+
+test('s4 renderMemberRows: status gives the word, the markDot dot and data-mark', () => {
+  const marks = [{ word: 'done', mark: 'done' }, { word: 'after run 3', mark: 'after' }, { word: 'waiting for you', mark: 'ask' }];
+  const ol = rowsOf(MEMBERS, { oneLine: true, status: (mb) => marks[mb.position - 1] });
+  const rows = [0, 1, 2].map((i) => member(ol, i));
+  assert.deepEqual(rows.map((li) => li.dataset.mark), ['done', 'after', 'ask']);
+  assert.deepEqual(rows.map((li) => li.querySelector('.run-member-state').textContent), ['done', 'after run 3', 'waiting for you']);
+  assert.ok(rows[1].querySelector('.status-dot').classList.contains('is-dashed-ring'));
+  assert.equal(rows[1].querySelector('.status-dot').dataset.symbol, undefined);
+  assert.equal(rows[2].querySelector('.status-dot').dataset.symbol, 'question');
+  assert.ok(rows[0].querySelector('.status-dot').classList.contains('is-green'));
+  assert.equal(rows[1].dataset.state, member(rowsOf(MEMBERS, { oneLine: true }), 1).dataset.state, 'data-state keeps the dev state');
+});
+
+test('s4 renderMemberRows: word precedence: a string word (even empty), else shortState, else memberStatusText', () => {
+  const ol = rowsOf(MEMBERS, { oneLine: true, shortState: () => 'short', status: (mb) => ([{ word: '', mark: 'ring' }, { word: null, mark: 'live' }, { word: null, mark: null }][mb.position - 1]) });
+  assert.equal(member(ol, 0).querySelector('.run-member-state').textContent, '', 'an empty word is kept: no word');
+  assert.equal(member(ol, 1).querySelector('.run-member-state').textContent, 'short', 'a null word falls to shortState');
+  assert.equal(member(ol, 2).querySelector('.run-member-state').textContent, 'short');
+  const bare = rowsOf(MEMBERS, { oneLine: true, status: () => ({ word: null, mark: null }) });
+  const dev = rowsOf(MEMBERS, { oneLine: true });
+  assert.equal(bare.outerHTML, dev.outerHTML, 'a null word and null mark leave today\'s row');
+  assert.equal(member(bare, 0).dataset.mark, undefined);
+  const noShort = rowsOf(MEMBERS, { oneLine: true, status: () => ({ word: null, mark: 'live' }) });
+  assert.equal(member(noShort, 1).querySelector('.run-member-state').textContent, member(dev, 1).querySelector('.run-member-state').textContent);
+  assert.equal(member(noShort, 1).dataset.mark, 'live');
+});
+
+test('s4 renderMemberRows: the planning row never calls status and has no data-mark; a null return is today\'s row', () => {
+  const seen = [];
+  const ol = rowsOf(MEMBERS, { oneLine: true, status: (mb) => { seen.push(mb.isPlanning ? 'planning' : mb.position); return mb.position === 1 ? null : { word: 'x', mark: 'faint' }; } });
+  assert.deepEqual(seen, [1, 2, 3]);
+  assert.equal(ol.querySelector('.run-member[data-key="planning"]').dataset.mark, undefined);
+  assert.equal(member(ol, 0).dataset.mark, undefined);
+});
+
+test('s4 row words: "waiting for you" reads --amber-ink and "failed" --red-ink, other words keep --ink-2 (owner direction d6dd6d688)', () => {
+  const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
+  for (const scope of ['.chat-rc-members', 'div.gpage-runs']) {
+    const rule = (mark) => css.split('}').find((r) => r.includes(scope) && r.includes(`[data-mark="${mark}"]`) && r.includes('.run-member-state')) || '';
+    assert.match(rule('ask'), /color:\s*var\(--amber-ink\)/, `${scope} ask`);
+    assert.match(rule('failed'), /color:\s*var\(--red-ink\)/, `${scope} failed`);
+    assert.doesNotMatch(css, new RegExp(`${scope.replace('.', '\\.')}[^{}]*\\[data-mark="(?:after|ring|faint|done|live)"\\][^{}]*\\.run-member-state[^{}]*\\{[^}]*color`), `${scope}: no other word is coloured`);
+  }
+  const tokens = readStyleCss();
+  assert.match(tokens, /--amber-ink:/);
+  assert.match(tokens, /--red-ink:/);
 });

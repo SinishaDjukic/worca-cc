@@ -756,3 +756,34 @@ test('a member current through its PR does not hide the Verifier\'s question', a
   assert.equal(slot.hidden, false);
   assert.ok(slot.textContent.includes('Verifier · 1 gap left'));
 });
+
+
+// ---- Shaper small runs s4 (R-ux-1, R-arch-4): the feature page's Runs tab reads the shared run status ----
+const S4_SLICE = (over) => ({ state: 'planned', kind: 'build', buildsOn: [], waitsFor: [], cannotStart: null, nextTurn: false, stop: null, ...over });
+const s4Members = () => [
+  { ...d3Member(1), status: 'done', slice: S4_SLICE({ state: 'done' }) },
+  { ...d3Member(2), pipelineId: 'p2', status: 'running', slice: S4_SLICE({ state: 'approval', buildsOn: [1], stop: { reason: 'requirement', held: false } }) },
+  { ...d3Member(3), pipelineId: 'p3', status: 'running', slice: S4_SLICE({ state: 'held', buildsOn: [1], stop: { reason: 'check', held: true, after: 2 } }) },
+  { ...d3Member(4), pipelineId: 'p4', status: 'error', slice: S4_SLICE({ state: 'error', buildsOn: [1] }) },
+];
+const s4Groups = () => ({ groups: [{ ...GROUPS.groups[0], smallRuns: true, members: s4Members() }, GROUPS.groups[1]] });
+
+test('s4: a marked feature with the flag on draws the held ring, "?" and "!" in the Runs tab; with the flag off no row has data-mark', async () => {
+  for (const flag of [true, false]) {
+    const { ctx } = await d3Boot({ flag, feature: () => json(D3_FEATURE('being built')), groups: s4Groups() });
+    ctx.go('feature/feat_1');
+    await ctx.settle(10);
+    const runs = pageOf(ctx).querySelector('.gpage-runs');
+    assert.ok(runs, 'the Runs tab painted');
+    if (flag) {
+      assert.ok(runs.querySelector('.status-dot.is-dashed-ring'), 'a held answer: the dashed ring');
+      assert.ok(runs.querySelector('.status-dot[data-symbol="question"]'));
+      assert.ok(runs.querySelector('.status-dot[data-symbol="alert"]'));
+      assert.equal(runs.querySelectorAll('.status-dot[data-symbol="question"]').length, 1, 'the held answer shows no "?"');
+      assert.equal(runs.querySelector('.run-member[data-key="p3"] .run-member-state').textContent, 'after run 2');
+    } else {
+      assert.equal(runs.querySelector('[data-mark]'), null);
+      assert.equal(runs.querySelector('.is-dashed-ring, .is-ink-ring'), null);
+    }
+  }
+});

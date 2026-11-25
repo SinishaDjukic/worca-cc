@@ -714,15 +714,18 @@ With the flag on, each run of a marked feature reads one word and one mark, the 
 | `waiting for you` | amber "?" | The run is at a stop or asks you something. |
 | `after run 3` | dashed ring | You answered its stop; the answer waits for its turn. |
 | `failed` | red "!" | The run failed. |
-| `waits for run 2, 6` | faint ring | It has not started; it builds on runs that are not done. |
-| `next` (`next · small change run` for a change run) | ring | It has not started and goes on next. |
-| no word | ring | It has not started, builds on nothing unfinished, and it is not its turn. |
+| `waits for run 2, 6` | grey ring | It has not started; it builds on runs that are not done. |
+| `next` (`next · small change run` for a change run) | ink ring | It has not started and goes on next. |
+| no word | grey ring | It has not started, builds on nothing unfinished, and it is not its turn. |
 
 A waiting run names only the unfinished runs nothing else in its list leads to: run 7 builds on runs 2 to 6, but 6
 builds on 3, 4 and 5, so it reads `waits for run 2, 6`. A named run at a stop says so inside the word
 (`waits for run 2 (needs you), 6`), and a named run that failed adds `(failed)` (`waits for run 5 (failed)`).
 `next` comes only from the server's turn: an answer held for its turn first, then a change run, then the lowest free run.
 A free run without the turn shows no word.
+
+The Chat card's run rows and the feature page's Runs tab draw these marks (`markDot` in `ui/public/status-dot.mjs`).
+The `waiting for you` word reads in amber ink and `failed` in red ink; every other word keeps the row's grey.
 
 ### Off
 

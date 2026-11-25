@@ -1,7 +1,7 @@
 // test/ui-group-page.test.mjs — the group page (ui/public/group-page.mjs, runs redesign slice 4 D13): header actions,
 // title + kind chip, meta, the status card, the tabs Runs · Overview · Decisions · Logs, the Runs table, the ship line,
 // and the plan / review receipts of the Decisions tab (D15).
-import { test, afterEach } from 'node:test';
+import { test, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
@@ -9,7 +9,16 @@ import { groupModel } from '../src/shared/run-model.mjs';
 import { buildGroupPage, paintGroupPage, GROUP_TABS, runReceipts, groupPrList, syncRequirementsTab } from '../ui/public/group-page.mjs';
 import { ACTION_LABEL } from '../src/shared/run-model.mjs';
 import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { useTempHome } from './helpers/temp-home.mjs';
+import { withEnv as withEnvVars } from './helpers/with-env.mjs';
+import { featureView } from '../src/core/shape/features.mjs';
+import { world } from './helpers/shape-sixteen-runs.mjs';
+import { runStatus } from '../src/shared/shape/run-status.mjs';
 
+useTempHome(after, 'worca-group-page-s4-');
 const trackDom = useDomRelease(afterEach);
 const done = { status: 'done', endReached: true };
 const asking = RUN_STATE_ROWS.find((r) => r.state === 'needs-you').run;
@@ -437,4 +446,75 @@ test('item 8 (D11): while Ship is blocked the status line ends with the reason; 
   // The Overview tab's ready Ship card says the reason: the status line does not repeat it.
   const [onOverview] = text({ ship: { n: 2, blocked: true, reason }, overview: true, tab: 'overview' });
   assert.equal(onOverview.includes(reason), false, onOverview);
+});
+
+
+// ---- Shaper small runs s4 (R-ux-1, R-arch-4): the feature page's Runs rows read the shared run status ----
+const S4_MEMBER = (sl) => (sl.state === 'done' ? { status: 'done', endReached: true }
+  : ['planned', 'held', 'canceled'].includes(sl.state) ? { ticket: { status: 'scheduled' } }
+  : sl.state === 'error' ? { status: 'error' } : { status: 'running' });
+const s4Row = (slices) => {
+  const model = groupModel({ kind: 'feature', title: 'F', planning: done, members: slices.map(S4_MEMBER) }, { now: NOW });
+  return { kind: 'chain', groupKind: 'feature', groupId: 'feat_1', title: 'F', model, costUsd: 0,
+    planning: { title: 'Planning', href: '#running/r0', model: model.planning, cost: 0 },
+    members: model.members.map((m, i) => ({ position: slices[i].index, title: `Run ${slices[i].index}`, href: `#running/r${i}`, model: m, slice: slices[i] })) };
+};
+const s4Slices = (row) => new Map(row.members.map((mb) => [mb.position, mb.slice]));
+const s4Status = (row) => { const slices = s4Slices(row); return (mb) => runStatus({ slice: mb.slice || null, slices, snap: null }); };
+const s4Paint = (row, view = {}) => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  paintGroupPage(root, { row, project: 'acme', tab: 'runs', overview: true, requirements: true, ...view }, NOOP);
+  const li = (n) => [...root.querySelectorAll('.gpage-runs .run-member:not([data-key="planning"])')].find((x) => x.querySelector('.run-member-num').textContent === String(n));
+  return { root, li, word: (n) => li(n).querySelector('.run-member-state').textContent, dot: (n) => li(n).querySelector('.status-dot') };
+};
+const SL4 = (i, state, over = {}) => ({ index: i, state, kind: 'build', waitsFor: [], buildsOn: [], nextTurn: false, cannotStart: false, stop: null, ...over });
+
+test('s4 feature page: with `status` the rows show the dashed ring, "?" and "!" with their words (R-ux-1)', () => {
+  const row = s4Row([SL4(1, 'done'), SL4(2, 'approval', { stop: { reason: 'requirement', held: false }, buildsOn: [1] }), SL4(3, 'running', { buildsOn: [1] }),
+    SL4(4, 'held', { stop: { reason: 'check', held: true, after: 3 }, buildsOn: [1, 3] }), SL4(5, 'error', { buildsOn: [3, 4] })]);
+  const p = s4Paint(row, { shortState: () => 'dev short', status: s4Status(row) });
+  assert.equal(p.word(4), 'after run 3');
+  assert.ok(p.dot(4).classList.contains('is-dashed-ring') && !p.dot(4).classList.contains('has-sym'));
+  assert.equal(p.dot(4).dataset.symbol, undefined);
+  assert.equal(p.word(2), 'waiting for you');
+  assert.equal(p.dot(2).dataset.symbol, 'question');
+  assert.equal(p.word(5), 'failed');
+  assert.equal(p.dot(5).dataset.symbol, 'alert');
+  assert.equal(p.li(4).dataset.mark, 'after');
+  assert.equal(p.word(1), 'done');
+  assert.equal(p.word(3), 'dev short', 'a live run with no snapshot keeps the surface\'s own short word');
+  assert.ok(p.dot(3).classList.contains('is-pulse'));
+  assert.ok(![1, 2, 3, 4, 5].some((n) => /^next/.test(p.word(n))));
+});
+
+test('s4 feature page base state: run 7 waits for run 2 (needs you), 6; run 12 waits for run 7, 10; run 9 next; a free run no word; run 1 done', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'worca-s4-page-'));
+  try {
+    await withEnvVars({ WORCA_FLAGS: 'shaperSmallRuns' }, () => {
+      const fx = world(root, 'base');
+      const row = s4Row(featureView(fx.featureId, { live: fx.live }).slices);
+      const p = s4Paint(row, { shortState: () => 'dev short', status: s4Status(row) });
+      assert.equal(p.word(7), 'waits for run 2 (needs you), 6');
+      assert.equal(p.word(12), 'waits for run 7, 10');
+      assert.equal(p.word(9), 'next');
+      assert.ok(p.dot(9).classList.contains('is-ink-ring'));
+      assert.equal(p.word(13), '');
+      assert.ok(p.dot(13).classList.contains('is-grey-ring'));
+      assert.equal(p.word(1), 'done');
+      assert.ok(p.dot(1).classList.contains('is-green'));
+      assert.ok(p.dot(12).classList.contains('is-grey-ring'));
+      assert.equal(p.root.querySelector('.gpage-runs .run-member-line'), null);
+      assert.equal([...p.root.querySelectorAll('.gpage-runs .run-member-state')].filter((n) => n.textContent === 'next').length, 1);
+    });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('s4 feature page: without `status` the Runs rows are today\'s (no data-mark, no new dot class)', () => {
+  const row = s4Row([SL4(1, 'done'), SL4(2, 'held', { stop: { reason: 'check', held: true, after: 1 } })]);
+  const a = s4Paint(row, { shortState: () => 'x' });
+  assert.equal(a.root.querySelector('[data-mark]'), null);
+  assert.equal(a.root.querySelector('.is-dashed-ring, .is-ink-ring'), null);
+  const b = s4Paint(row, { shortState: () => 'x', status: undefined });
+  assert.equal(a.root.querySelector('.gpage-runs').outerHTML, b.root.querySelector('.gpage-runs').outerHTML);
 });

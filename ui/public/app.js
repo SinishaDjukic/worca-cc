@@ -377,6 +377,7 @@ import { activeAgents, snapshotFromState } from './ask-run-card.mjs';
 import { mountRunAgents } from './shape/run-agents.mjs';
 import { mountRunFacts } from './shape/run-facts.mjs';
 import { runAgentRows, memberShortWord } from '../../src/shared/shape/run-agents.mjs';
+import { runStatus } from '../../src/shared/shape/run-status.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
 import { mountNewRunAttach, newRunScope, jsonFetcher as attachFetcher } from './requirements-attach/entries.mjs';
@@ -36294,6 +36295,12 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   }
   paintGroupPageNow();
 }
+/** Shaper small runs s4 (D8, D10): a marked feature's Runs rows take word and mark from runStatus, over the members'
+ *  own slices (position → slice) and snapshots. */
+function featureRowStatus(row) {
+  const slices = new Map((row.members || []).filter((mb) => mb.slice).map((mb) => [mb.position, mb.slice]));
+  return (mb) => runStatus({ slice: mb.slice || null, slices, snap: mb.snap || null });
+}
 function paintGroupPageNow() {
   const { host, route, id, tab } = GROUP_PAGE;
   if (!host || !host.isConnected || host.closest('.view.hidden') || !(el.groupShell && el.groupShell.classList.contains('detail-open'))) return;
@@ -36347,7 +36354,7 @@ function paintGroupPageNow() {
   const labels = [...new Set(row.members.flatMap((mb) => (histOf(mb.pipelineId) || {}).labels || []))].sort();
   paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: levelAtLeast('expert'), labels,
     unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0, stackedOnly: route === 'feature' && GROUP_PAGE.stackedOnly,
-    requirements: route === 'feature' && GROUP_PAGE.requirements, ...(route === 'feature' && GROUP_PAGE.requirements ? { shortState: memberShortWord, ship: groupShipOf(GROUP_PAGE.feature) } : {}) }, {
+    requirements: route === 'feature' && GROUP_PAGE.requirements, ...(route === 'feature' && GROUP_PAGE.requirements ? { shortState: memberShortWord, status: featureRowStatus(row), ship: groupShipOf(GROUP_PAGE.feature) } : {}) }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
     // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.

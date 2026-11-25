@@ -143,7 +143,8 @@ export function groupPrList(row) {
  * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean, labels: [] (the
  * members' labels), unmarked?: number (a feature's unmarked requirements: its Create PR is locked), stackedOnly?: boolean (a small-runs
  * feature: the ship line never offers One), requirements?: boolean (D3: a marked feature with the flag on), shortState?:
- * (member) → string|null (small runs: one-line member rows with the card's short words), ship?: {n, blocked, reason}|null
+ * (member) → string|null (small runs: one-line member rows with the card's short words), status?: (member) →
+ * {word, mark}|null (small runs s4: runStatus's word and mark for each row, renderMemberRows' `status`), ship?: {n, blocked, reason}|null
  * (small runs: the ledger the head's Create N PRs follows) }.
  * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
  * mountDecisions(host, row), mountRequirements?(host, row) → Node|null (D3, while `view.requirements`), logsHref(member),
@@ -212,7 +213,8 @@ export function paintGroupPage(root, view, deps) {
   }
   for (const p of root.querySelectorAll('.gpage-panel')) p.hidden = p.dataset.tab !== tab;
   // Slice 3: a frame that changes nothing in the table keeps its nodes (a focused row, the scroll anchor).
-  keepUnchanged(root.querySelector('.gpage-runs'), [view.shortState ? renderMemberRows(doc, row, { oneLine: true, shortState: view.shortState }) : renderMemberRows(doc, row)]);
+  keepUnchanged(root.querySelector('.gpage-runs'), [view.shortState || view.status
+    ? renderMemberRows(doc, row, { oneLine: true, shortState: view.shortState || null, ...(view.status ? { status: view.status } : {}) }) : renderMemberRows(doc, row)]);
   const line = groupShipLine(row, { stackedOnly: !!view.stackedOnly });
   const ship = root.querySelector('.gpage-ship');
   ship.textContent = line;
