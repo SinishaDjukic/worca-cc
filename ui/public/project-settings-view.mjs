@@ -16,6 +16,14 @@ const PR_FIELDS = [
     hint: 'New runs of this project create this PR when they finish with work committed. A run can choose otherwise on the New run form.' },
   { id: 'pr.slices', label: 'Shaper features', kind: 'select', options: labelled(PR_SLICES_LABELS), format: (v) => PR_SLICES_LABELS[v] ?? null,
     hint: 'When Shaper plans a run in slices: a stacked PR per slice, or one PR when the feature is done.' },
+  { id: 'watchNewPrs', label: 'Watch new pull requests', kind: 'select',
+    options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }],
+    toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),
+    hint: 'Create PR opens with Watch PR on for this project. A workspace run needs it on in every repository.' },
+  { id: 'watch.trustedReviewers', label: 'Reviewers that may trigger a fix', kind: 'text', mono: true,
+    toValue: (text) => String(text).split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
+    format: (v) => Array.isArray(v) ? v.join(', ') : v == null ? null : String(v),
+    hint: 'Watch PR also starts a fix run on review feedback from these reviewers, usually review bots. On GitHub their PR-level comments count too, once a quick model check finds they ask for code changes. GitHub: login names. Bitbucket: account UUIDs. Azure DevOps already counts every reviewer. Comma or space separated.' },
 ];
 export const PROJECT_CARDS = Object.freeze([
   { key: 'cost', title: 'Cost', fields: [{ id: 'pipelineCostLimitUsd', label: 'Per-pipeline cap (USD)', kind: 'number', min: .01, step: .01, format: usd }, { id: 'humanRateUsdPerHour', label: 'Developer rate (USD/h)', kind: 'number', min: .01, step: .01, format: usd }] },
@@ -31,10 +39,7 @@ export const PROJECT_CARDS = Object.freeze([
     { id: 'runUserClaudeSettings', label: 'Runs load my Claude Code setup', kind: 'select', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }],
       toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),
       hint: 'Off: pipeline agents load only this project\'s own Claude Code settings, rules and CLAUDE.md, never your ~/.claude settings, hooks, plugins or skills, so every run gets the same setup. On: they load yours too. Sign-in or proxy settings in ~/.claude/settings.json keep it on.' }] },
-  { key: 'pr', title: 'Pull requests', fields: [...PR_FIELDS, { id: 'watchNewPrs', label: 'Watch new pull requests', kind: 'select',
-    options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }],
-    toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),
-    hint: 'Create PR opens with Watch PR on for this project. A workspace run needs it on in every repository.' }] },
+  { key: 'pr', title: 'Pull requests', fields: PR_FIELDS },
 ]);
 const JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag'];
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the sign-in engines' helper jobs run on Claude.
@@ -46,7 +51,16 @@ export function mountProjectSettings(host, { projectKey, projectDir, fetchFn = (
     current = data; host.replaceChildren(); const field = (id) => ({ own: data.own[id], inherited: inheritedOf(data.layers[id]) }); const roles = data.roles || [];
     const models = makeCard(doc, 'models', 'Engine and models'); const ids = ['run.engine']; for (const engine of ENGINE_NAMES) { for (const role of roles) ids.push(`models.${engine}.steps.${role.key}`); if (HELPER_ENGINES.includes(engine)) for (const job of JOBS) ids.push(utilityId(engine, job)); }
     renderEngineSection(models.body, { level: 'project', roles, catalog, fields: Object.fromEntries(ids.map((id) => [id, field(id)])), jobs: { claude: JOBS, codex: JOBS, cursor: [], goose: [], opencode: [] }, status: models.msg, onTest, notes: { claude: 'Claude step models set here apply to the Default workflow; other workflows keep their own node picks.' } }); host.append(models.card);
-    for (const spec of PROJECT_CARDS) { const item = makeCard(doc, spec.key, spec.title); for (const row of spec.fields) item.body.append(renderInheritField(doc, { ...row, level: 'project', ...field(row.id) })); host.append(item.card); item.save.addEventListener('click', () => void save(item)); }
+    for (const spec of PROJECT_CARDS) {
+      const item = makeCard(doc, spec.key, spec.title);
+      for (const row of spec.fields) {
+        const f = field(row.id);
+        // The reviewers list is stored as an array but edited as text: join it for the input.
+        const own = row.id === 'watch.trustedReviewers' && Array.isArray(f.own) ? f.own.join(', ') : f.own;
+        item.body.append(renderInheritField(doc, { ...row, level: 'project', ...f, own }));
+      }
+      host.append(item.card); item.save.addEventListener('click', () => void save(item));
+    }
     models.save.addEventListener('click', () => void save(models));
     const naming = namingCard(data); host.append(naming.card); naming.save.addEventListener('click', () => void save(naming));
   };

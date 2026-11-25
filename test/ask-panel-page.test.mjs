@@ -1010,3 +1010,77 @@ test('#958: a press on the transcript (a scrollbar drag) counts while it is held
   input.remove();
   ctx.panel.destroy();
 });
+
+// #958 and the dock-scrollbar fix: only the reader's scroll UP leaves the bottom; a scroll down toward an end the
+// stream keeps moving away follows it. Every panel write to scrollTop is the direction baseline.
+async function pinnedAt(T, sh, ch = 400) {
+  const ctx = makePanel({ fetchHandler: api({}), now: () => T.now });
+  ctx.panel.open({ threadId: TID });
+  await ticks(ctx);
+  ctx.flush();
+  const t = ctx.doc.querySelector('.ask-transcript');
+  const jump = ctx.doc.querySelector('.ask-jump');
+  Object.defineProperty(t, 'scrollHeight', { configurable: true, get: () => sh.v });
+  Object.defineProperty(t, 'clientHeight', { configurable: true, value: ch });
+  ctx.flush();
+  return { ctx, t, jump };
+}
+
+test('a pinned reader scrolling DOWN while a reply grows the column by more than 24px stays pinned and follows', async () => {
+  const T = { now: 1_000_000 };
+  const sh = { v: 1000 };
+  const { ctx, t, jump } = await pinnedAt(T, sh);
+  t.scrollTop = 600;                                 // our write's own event: pinWrite consumed
+  t.dispatchEvent(new ctx.window.Event('scroll'));
+  assert.equal(jump.hidden, true);
+  sh.v = 1100;                                       // the reply grew; no frame has followed yet
+  userScroll(ctx, t, 640);                           // the reader scrolls down, short of the moved end
+  assert.equal(jump.hidden, true, 'a scroll down never unpins');
+  assert.equal(t.scrollTop, 1100, 'followed to the new end');
+  ctx.panel.destroy();
+});
+
+test('a pinned reader\'s scroll UP still unpins, even while the column grows', async () => {
+  const T = { now: 1_000_000 };
+  const sh = { v: 1000 };
+  const { ctx, t, jump } = await pinnedAt(T, sh);
+  t.scrollTop = 600;
+  t.dispatchEvent(new ctx.window.Event('scroll'));
+  sh.v = 1100;
+  userScroll(ctx, t, 500);
+  assert.equal(jump.hidden, false, 'the reader left the bottom');
+  assert.equal(t.scrollTop, 500);
+  ctx.flush();
+  assert.equal(t.scrollTop, 500, 'and the next frame does not pull them back');
+  ctx.panel.destroy();
+});
+
+test('a reader\'s scroll up that lands in the same frame as our pin write still unpins: the write is the baseline', async () => {
+  const T = { now: 1_000_000 };
+  const sh = { v: 1000 };
+  const { ctx, t, jump } = await pinnedAt(T, sh);
+  t.scrollTop = 600;
+  t.dispatchEvent(new ctx.window.Event('scroll'));
+  sh.v = 1500;
+  ctx.flush();                                       // our pin write; its scroll event never arrives
+  const written = t.scrollTop;
+  assert.ok(written > 900);
+  userScroll(ctx, t, 900);                           // up from our write, though below the last seen event
+  assert.equal(jump.hidden, false, 'a scroll up from our own write unpins');
+  assert.equal(t.scrollTop, 900);
+  ctx.panel.destroy();
+});
+
+test('an unpinned reader scrolling down short of the bottom stays unpinned; reaching it re-pins', async () => {
+  const T = { now: 1_000_000 };
+  const sh = { v: 2000 };
+  const { ctx, t, jump } = await pinnedAt(T, sh);
+  userScroll(ctx, t, 500);
+  assert.equal(jump.hidden, false);
+  userScroll(ctx, t, 700);
+  assert.equal(jump.hidden, false, 'down, but short of the bottom: still unpinned');
+  assert.equal(t.scrollTop, 700);
+  userScroll(ctx, t, 1590);
+  assert.equal(jump.hidden, true, 'within 24px of the bottom: pinned again');
+  ctx.panel.destroy();
+});
