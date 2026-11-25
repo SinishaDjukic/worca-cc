@@ -257,6 +257,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     leftAt: null,          // #958: { threadId, top, pinned } recorded when the page hides; read on the next show
     restoreTop: null,      // #958: a scrollTop the next applyPin() writes back (a same-chat return, unpinned)
     scrollIntentAt: null,  // #958: now() of the last wheel / touch / press / key on the transcript
+    scrollSeen: null,      // #958: the transcript's last known scrollTop (its last scroll event or our last write), so
+                           // a reader's scroll reads as up or down; null = unknown (the page hid), today's rule applies
     scrollHeld: false,     // #958: a press on the transcript (its scrollbar) is held until pointerup
     cardMemo: null,        // #958: card id → element built in the current renderTranscript pass (one build per card)
     wantThread: undefined,    // the chat the page shows or is loading: an id, null = home (a new chat), undefined = none yet
@@ -2347,6 +2349,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // still loading has no place worth keeping.
     const loading = typeof st.wantThread === 'string' && st.wantThread !== st.threadId;
     st.leftAt = st.threadId && !loading ? { threadId: st.threadId, top: el.transcript.scrollTop, pinned: st.pinned, host: st.host } : null;
+    st.scrollSeen = null;   // display:none drops the offset; the restore write sets a fresh baseline
     stopVoice();
     closePopover({ focusTrigger: false });
     if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
@@ -8452,8 +8455,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.rowEls) for (const id of st.rowEls.keys()) st.seenRows.add(id);
   }
 
-  // #958: only the reader's own scroll (wheel, touch, a press on the transcript or its scrollbar, a key on the
-  // transcript) leaves the bottom. A scroll the browser makes after a layout change (a clamp while a card measures)
+  // #958: only the reader's own scroll UP (wheel, touch, a press on the transcript or its scrollbar, a key on the
+  // transcript) leaves the bottom; a scroll down toward an end the stream keeps moving away follows it. A scroll the browser makes after a layout change (a clamp while a card measures)
   // is not theirs. Tab, and Enter/Space on a control, count: they can scroll a card control into view.
   const USER_SCROLL_MS = 600;
   const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
@@ -8478,6 +8481,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.pinned && st.pinWrite != null && t.scrollTop >= st.pinWrite) {
       st.pinWrite = null;
       applyPin();
+      st.scrollSeen = t.scrollTop;
       return;
     }
     st.pinWrite = null;
@@ -8485,10 +8489,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!userScrolling()) {                          // #958: not the reader: never unpins; reaching the bottom re-pins
       if (st.pinned) applyPin();
       else if (atBottom) { st.pinned = true; if (el.jump) el.jump.hidden = true; }
+      st.scrollSeen = t.scrollTop;
       return;
     }
-    st.pinned = atBottom;
-    if (el.jump) el.jump.hidden = st.pinned;
+    // The reader's scroll. Down (more than 1px, for a fractional scrollTop at zoom) while pinned, short of an end the
+    // stream moved further: keep following. Up, or an unknown direction: the bottom decides, as before.
+    const up = st.scrollSeen == null || t.scrollTop < st.scrollSeen - 1;
+    if (st.pinned && !atBottom && !up) {
+      applyPin();
+      if (el.jump) el.jump.hidden = true;
+    } else {
+      st.pinned = atBottom;
+      if (el.jump) el.jump.hidden = st.pinned;
+    }
+    st.scrollSeen = t.scrollTop;
   }
 
   function applyPin() {
@@ -8497,14 +8511,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.restoreTop != null && t.clientHeight > 0) {   // #958: a same-chat return, unpinned, once the page has a box
       const top = st.restoreTop;
       st.restoreTop = null;
-      if (!st.pinned) t.scrollTop = top;
+      if (!st.pinned) { t.scrollTop = top; st.scrollSeen = t.scrollTop; }
     }
     if (st.pinned) {
       // Only when the bottom has actually moved away. flush() runs this on EVERY
       // rAF of a stream, and an unconditional write re-snapped the scrollport on
       // each one — which is what turned a growing answer into a twitch.
       const max = t.scrollHeight - t.clientHeight;
-      if (max > 0 && t.scrollTop < max) { t.scrollTop = t.scrollHeight; st.pinWrite = t.scrollTop; }
+      if (max > 0 && t.scrollTop < max) { t.scrollTop = t.scrollHeight; st.pinWrite = t.scrollTop; st.scrollSeen = t.scrollTop; }
     }
     if (el.jump) el.jump.hidden = st.pinned;
   }
@@ -8520,6 +8534,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     change();
     const moved = control.getBoundingClientRect().top - before;
     if (moved) t.scrollTop += moved;
+    st.scrollSeen = t.scrollTop;   // the toggle's geometry is a fresh baseline, moved or not
     st.pinWrite = null;
     st.pinned = t.scrollHeight - t.scrollTop - t.clientHeight < 24;
     if (el.jump) el.jump.hidden = st.pinned;
@@ -8530,6 +8545,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.restoreTop = null;
     el.transcript.scrollTop = el.transcript.scrollHeight;
     st.pinWrite = el.transcript.scrollTop;
+    st.scrollSeen = st.pinWrite;
     if (el.jump) el.jump.hidden = true;
   }
 

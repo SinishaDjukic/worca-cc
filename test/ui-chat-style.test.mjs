@@ -108,7 +108,7 @@ test('the mockup look (2026-10-10, corners and shadows per the runs redesign): t
   assert.equal(ruleBody('.chat-page .ask-composer-box:has(.guide-target)'), '-webkit-backdrop-filter:none;backdrop-filter:none;', 'a Getting started ring escapes the blur\'s stacking context');
   assert.equal(ruleBody('.chat-dock > .ask-composer'), 'pointer-events:none;');
   assert.equal(ruleBody('.chat-dock > .ask-jump,.chat-dock > .ask-composer > *'), 'pointer-events:auto;', 'only the composer\'s own parts take the pointer');
-  assert.match(ruleBody('.chat-dock::before'), /^content:"";position:absolute;left:0;right:0;bottom:0;top:calc\(-1 \* var\(--chat-dock-fade\)\);/);
+  assert.match(ruleBody('.chat-dock::before'), /^content:"";position:absolute;left:var\(--scrollbar-w\);right:var\(--scrollbar-w\);bottom:0;top:calc\(-1 \* var\(--chat-dock-fade\)\);background:linear-gradient\(/);
   assert.equal(ruleBody('.chat-convo .ask-msg .ask-card'), 'animation:none;', 'the row rises, never the card in it (#959)');
   assert.equal(ruleBody('.ask-card.chat-rc'), 'gap:0;border-radius:var(--r-card);');
   assert.doesNotMatch(css, /--shadow-card\b/, 'the resting card shadow token is gone');
@@ -155,4 +155,20 @@ test('summary rows: one line, a group is one card under a quiet head, the raw co
   assert.match(ruleBody('.ask-cmd-outbox .ask-cmd-out'), /max-height:min\(400px,50vh\);/);
   assert.match(ruleBody('.ask-cmd-code'), /font-size:12px;line-height:1\.6;/);
   assert.equal(ruleBody('.chat-convo .ask-msg > .ask-cmd-group'), null, 'a group fills the text column like every card (#959)');
+});
+
+test('the dock\'s fade leaves the transcript\'s scrollbar gutter uncovered, so the track is whole to its end', () => {
+  const root = css.match(/(?:^|\n):root\{([\s\S]*?)\n\}/)[1];
+  const tokenW = root.match(/--scrollbar-w:(\d+)px;/);
+  assert.ok(tokenW, ':root declares --scrollbar-w');
+  assert.equal(tokenW[1], '10');
+  const barW = ruleBody('::-webkit-scrollbar').match(/(?:^|;)width:(\d+)px;/);
+  assert.equal(barW[1], tokenW[1], 'the token is the width of every classic scrollbar (shell/scrollbars.css)');
+  const fade = ruleBody('.chat-dock::before');
+  assert.match(fade, /(?:^|;)left:var\(--scrollbar-w\);/);
+  assert.match(fade, /(?:^|;)right:var\(--scrollbar-w\);/);
+  assert.doesNotMatch(fade, /(?:^|;)(?:left|right):0;/, 'the opaque layer never paints over the gutter');
+  assert.ok(css.includes('\n.chat-dock{position:absolute;left:0;right:0;bottom:0;pointer-events:none;}'), 'the dock box, and so the composer, did not move');
+  const pad = ruleBody('.ask-composer').match(/(?:^|;)padding:(\d+)px (\d+)px/);
+  assert.ok(Number(pad[2]) >= Number(tokenW[1]), 'no composer part reaches the gutter');
 });
