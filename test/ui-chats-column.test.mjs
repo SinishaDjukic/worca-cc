@@ -68,9 +68,13 @@ const key = (doc, target, init) => target.dispatchEvent(new doc.defaultView.Keyb
 const toastTitles = (doc) => [...doc.querySelectorAll('.toast .tt')].map((n) => n.textContent);
 const listGets = (rec) => rec.calls.filter((c) => c.startsWith('GET /api/ask/threads?'));
 
-test('head is Chats, New chat, View (as Runs, New run, View); Pinned, then the Runs day sections; no search or trash', async () => {
+test('head is Chats, View, New (as Runs, View, New); Pinned, then the Runs day sections; no search or trash', async () => {
   const { col } = await bootOn();
-  assert.deepEqual([...col.querySelector('.runs-head').children].map((n) => n.textContent.trim()), ['Chats', 'New chat', 'View']);
+  assert.deepEqual([...col.querySelector('.runs-head').children].map((n) => n.textContent.trim()), ['Chats', 'View', 'New']);
+  const last = col.querySelector('.runs-head').lastElementChild;
+  assert.ok(last.matches('[data-ask-new-btn].chat-list-new'), 'the list\'s New ends the head');
+  assert.match(last.getAttribute('aria-label'), /^New chat /, 'the accessible name keeps the full words');
+  assert.match(last.title, /^New chat /);
   assert.ok(col.querySelector('.runs-head > [data-ask-new-btn]'), 'the list\'s New chat starts a chat as the head\'s did');
   assert.deepEqual([...col.querySelectorAll('.runs-sec-head .runs-sec-title')].map((n) => n.textContent),
     ['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Previous 30 days', 'Older']);

@@ -230,12 +230,14 @@ test('resizing across 1080px and 760px: the tiers never touch the stored prefere
 
 // ---- New run ----
 
-test('New run: no button in the top bar; the Runs page head holds its slot, which app.js fills with the library Button', () => {
+test('New run: no button in the top bar; the slot ends the Runs page head, after View, and app.js fills it with the library Button', () => {
   const doc = new JSDOM(html).window.document;
   assert.equal(doc.getElementById('topnav-new'), null, 'the top bar has no New run');
   const slot = doc.getElementById('runs-new-slot');
   assert.equal(slot.parentElement.className, 'runs-head');
-  assert.equal(slot.previousElementSibling.className, 'runs-head-title', 'after the Runs title');
+  assert.equal(slot.nextElementSibling, null, 'the last child of the head');
+  const viewBtn = doc.getElementById('runs-view-btn');
+  assert.ok(viewBtn.compareDocumentPosition(slot) & doc.defaultView.Node.DOCUMENT_POSITION_FOLLOWING, 'after View');
   assert.equal(ruleBody('.topnav-new'), null, 'no rule left for the old button');
 });
 
@@ -247,7 +249,11 @@ test('New run (the Runs page head) opens #new, and is never marked current', asy
   assert.deepEqual([...btn.classList].sort(), ['btn', 'btn-primary', 'btn-sm', 'runs-new'], 'the library Button, primary');
   assert.equal(btn.dataset.minLevel, 'simple', 'visible at every interface mode');
   assert.equal(btn.hasAttribute('data-nav'), false, 'the router never lights it as the open page');
-  assert.equal(btn.textContent.trim(), 'New run');
+  assert.equal(btn.textContent.trim(), 'New');
+  assert.equal(btn.getAttribute('aria-label'), 'New run', 'the accessible name keeps the full words');
+  assert.equal(btn.title, 'New run');
+  assert.deepEqual([...$('#runs-list-pane .runs-head').children].filter((n) => !n.hidden).map((n) => n.textContent.trim()), ['Runs', 'View', 'New'],
+    'New ends the head, after View');
   click('#runs-new');
   await settle();
   assert.equal(window.location.hash, '#new');
