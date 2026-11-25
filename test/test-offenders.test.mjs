@@ -121,8 +121,39 @@ test('green and slow-tier rows cite 3 loaded runs', () => {
       assert.ok(runs.has(id), `${r.path}: cites ${id}, which has no row under "## Evidence runs"`);
       assert.match(runs.get(id), new RegExp(`${escapeRe(r.path)}=\\d+(\\.\\d+)?s`), `${r.path}: Evidence run ${id} has no ${r.path}=Ns seconds value`);
       if (browser) assert.match(runs.get(id), /\b[0-9a-f]{64}\b/, `${id}: no log sha256`);
+      assert.doesNotMatch(runs.get(id), new RegExp(`${escapeRe(r.path)}\`? exit [1-9]`), `${r.path}: cites ${id}, in which it failed (exit non-zero)`);
     }
   }
+});
+
+// D5/D6: the spec is decided by its own harness, the 4 computed-style tests, in the rounds browser-4 to browser-6.
+test('the spec row is decided by browser-4 to browser-6, never by the whole-file rounds browser-1 to browser-3', () => {
+  const { verdicts, runs } = record();
+  const spec = verdicts.find((v) => v.path === 'e2e/extension/visual.spec.mjs');
+  assert.ok(spec, 'e2e/extension/visual.spec.mjs: no Verdicts row');
+  if (spec.outcome === 'green') {
+    for (const id of ['browser-4', 'browser-5', 'browser-6']) {
+      assert.match(spec.evidence, new RegExp(`\\b${id}\\b`), `spec Evidence "${spec.evidence}" does not cite ${id}`);
+      const row = runs.get(id);
+      assert.ok(row, `${id}: no row under "## Evidence runs"`);
+      assert.match(row, /1\/1 exit 0 \(4 of 4 tests\)/, `${id}: Results is not "1/1 exit 0 (4 of 4 tests)"`);
+      assert.match(row, /e2e\/extension\/visual\.spec\.mjs=\d+(\.\d+)?s/, `${id}: no spec seconds value`);
+    }
+    for (const id of ['browser-1', 'browser-2', 'browser-3']) {
+      assert.doesNotMatch(spec.evidence, new RegExp(`\\b${id}\\b`), `spec Evidence cites ${id}, in which the whole file failed`);
+    }
+  } else {
+    assert.equal(spec.outcome, 'quarantined');
+    assert.match(spec.evidence, /\bfailed \d+ of 3 loaded\b/);
+  }
+});
+
+test('the record names the D5 spec harness and the stale darwin baselines', () => {
+  const { md } = record();
+  assert.match(md, /tokens resolve\|computed styles/, 'the spec harness filter is not written in the record');
+  assert.match(md, /\bbrowser-6\b/, 'browser-6 is not mentioned');
+  assert.match(md, /darwin/i, 'the stale darwin baselines are not noted');
+  assert.match(md, /fd6eb0c3d/, 'the darwin baselines\' last-update commit fd6eb0c3d is not named');
 });
 
 test('a spec or proof has no slow tier', () => {

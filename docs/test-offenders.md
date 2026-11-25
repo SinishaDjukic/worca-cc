@@ -11,7 +11,10 @@ out a rare flake. The five dev push runs under [Post-merge check](#post-merge-ch
 The browser offenders (the extension Playwright spec and four CDP proofs) are rows of the same Verdicts table, by
 spec or proof path. Each is checked with its own harness while `npm run test:fast` runs in the background:
 `env -u FORCE_COLOR -u PORT HOME="$(mktemp -d "$TMPDIR/home.XXXXXX")" npm run verify:NAME` for a proof (a fresh HOME
-per run), and `npm run e2e:extension -- visual.spec.mjs` for the spec.
+per run), and `npm run e2e:extension -- visual.spec.mjs -g "tokens resolve|computed styles"` for the spec. That
+filter selects the offender's own 4 tests, which compare computed values, in light and dark. The spec's screenshot
+tests are left to CI: `extension-e2e` runs the whole file against the linux baselines inside the pinned Playwright
+image, and the darwin baselines a local run compares against are stale (see the note under the loaded browser runs).
 
 Words used:
 - Verdict: `deterministic` (fails every time on a given tree), `flaky (timing)` (depends on how fast something
@@ -21,8 +24,9 @@ Words used:
 - Outcome: `green` (in the normal tiers and passing), `slow tier` (in the slow tier of `test/tiers.json` and
   passing), `quarantined` (in `test/quarantine.json`).
 - Evidence: `5/5 alone` means 5 passing runs of `node tools/test.mjs FILE`. `full-1`, `full-2` and `full-3` are
-  the loaded full-suite runs under [Evidence runs](#evidence-runs). `browser-1`, `browser-2` and `browser-3` are the
-  loaded browser runs there: a spec or proof row cites them.
+  the loaded full-suite runs under [Evidence runs](#evidence-runs). `browser-1` to `browser-6` are the loaded
+  browser runs there: a spec or proof row cites the runs that ran its own harness (`browser-1` to `browser-3` for
+  the proofs, `browser-4` to `browser-6` for the spec).
 
 ## Verdicts
 
@@ -34,6 +38,11 @@ Words used:
 | `test/design-film-mp4-real.test.mjs` | flaky (timing); deterministic | green | 5/5 alone; 0 failures in full-1, full-2, full-3 | (B) 2 runs, 2026-11-18 (Node 22.19.0) and 2026-11-20 (Node 26): "the video holds 55 of its 60 frames" (`:115`). (A) 23 runs, 2026-11-14 to 2026-11-20: "test timed out after 300000ms" (`:48`, or file level), a CDP `send()` on a closed socket that never settled | (B) the change that added this page: the final audio mux in `assets/promo-kit/tools/export.mjs` no longer passes `-shortest`, which cut the copied video where a shorter AAC track ended. `test/promo-kit-tools.test.mjs` "exportFilm keeps every frame when the audio ends early" shows the cut (55 of 60 frames with 0.9 s of audio) and now passes. Why the app's mix came out short on those 2 CI runners is inferred, not reproduced. (A) `b4ebb10d0`: a CDP call on a closed browser fails at once |
 | `test/ask-panel-voice.test.mjs` | deterministic | green | 5/5 alone; 0 failures in full-1, full-2, full-3 | 8 runs, all 2026-11-23: PV6 (`:796`) read a chip that #1546 removed, after #1546 and #1468 merged one after the other ("Cannot read properties of null (reading 'textContent')") | `c03361ebd` (#1555): PV6 reads the voice state from the input placeholder |
 | `test/ui-ship-words.test.mjs` | deterministic | green | 5/5 alone; 0 failures in full-1, full-2, full-3 | 8 runs, 2026-11-20 to 2026-11-23: the wording guard (`:52`) caught `` `${T.prsOpened} pull request opened` `` in `src/shared/worca-levels.mjs` (#1506). The guard did its job | `5c990240f` (#1545): the milestone says "PR created" |
+| `e2e/extension/visual.spec.mjs` | deterministic | green | 0 failures in browser-4, browser-5, browser-6 (4 tests each: tokens resolve and computed styles, light and dark) | 5 dev runs, job `extension-e2e`, light and dark: "computed styles of Ask elements …" (`:58` then, `:63` now) read `"padding-left": "8px"` against `"10px"` on the bar buttons, after `b4374eed9` (#1546) gave the app's `.ask-model-btn` `padding:0 8px`, CSS the sidebar does not load. Green on every dev run since 45230448507 | `538d89ee0` (#1554) takes side padding out of the comparison for the two bar buttons |
+| `tools/verify-composer-cdp.mjs` | environment; deterministic | green | 0 failures in browser-1, browser-2, browser-3 (20 checks each). With a HOME holding the real `settings.json` (`welcomeSeen`, `setupFinished`): exit 0, its sha256 unchanged | (env) local only: the proof sandboxed `WORCA_HOME` but not `HOME`, so the worca-level summary dialog covered the canvas at check (1), 3 of 3 on a developer machine, and its `POST /api/settings` wrote the real settings file. (det) 2 dev runs and about 20 PR runs, 2026-11-24 to 2026-11-25: FAIL (11) an unexpected `wfv-howto-btn` in the top bar, FAIL (18) the wider top-left bar, after #1443 | (env) this page's change: `HOME` and `USERPROFILE` point at the temp home before `ui/server.mjs` is imported; Chrome gets the real HOME back (`test/verify-composer-cdp.test.mjs`). (det) `be80c31e7` (#1580) |
+| `tools/verify-theme-cdp.mjs` | deterministic | green | 0 failures in browser-1, browser-2, browser-3 | "project Back": 2 PR runs, 2026-11-21 and 2026-11-24, never on a dev push, cause not identified; the post-merge window watches it. "one button style / dark / system-dark": 2 dev runs and PR runs after #1443 (`.topnav-howto` at font-size 0px). "page intro": 2 PR runs after `06aabffa2` redesigned Connectors | "project Back": none (open). #1443: `be80c31e7` (#1580). Page intro: `cfcc71db9` |
+| `tools/verify-feature-page-cdp.mjs` | deterministic | green | 0 failures in browser-1, browser-2, browser-3 | 2 dev runs and PR runs, 2026-11-24: "the group page at 290px" measured the `.topnav-howto` button at font-size 0px, after #1443 | `be80c31e7` (#1580) |
+| `tools/verify-requirements-cdp.mjs` | deterministic | green | 0 failures in browser-1, browser-2, browser-3 | 10 runs (2 dev, 8 PR), 2026-11-19 to 2026-11-22: "back on the feature" and "the start records the file it sent", after #1500 changed how runs start | `b8889ce73`: the proof starts runs through the run setup overlay |
 
 ## Evidence runs
 
@@ -69,6 +78,35 @@ The other failures do not count against an offender:
   `test/workflow-test-project-key.test.mjs`) failed in every run and fail alone too on this machine. The change
   does not touch the code they test.
 - `test/tools-test-runner.test.mjs` ("suiteTmpOutsideWorca …") failed once, in full-3, and passes alone.
+
+Loaded browser runs, 2026-11-25, on `feat/run-6-browser-offenders-extension-playwright` at HEAD `797b81472` plus this
+page's change, same laptop, Chrome for the proofs and Playwright's Chromium (`@playwright/test` 1.65.1) for the spec.
+Each round ran composer, feature-page, requirements, theme, then the spec, one after another, while
+`npm run test:fast` ran in the background. Each proof ran with a fresh HOME and `PORT` unset, as in the intro; the CDP
+ports were the defaults. Seconds are `/usr/bin/time -p` real time. One log per round (the 5 harness logs in run order),
+kept in `evidence/` with its sha256. `browser-4` to `browser-6` ran later the same day at HEAD `7d9d4bd88` plus this
+page's change, under the same load: each round ran only the spec's own harness,
+`env -u FORCE_COLOR -u PORT npm run e2e:extension -- visual.spec.mjs -g "tokens resolve|computed styles"`.
+
+| Run | Date | HEAD | Load | Log sha256 | Results | Offender seconds |
+|---|---|---|---|---|---|---|
+| browser-1 | 2026-11-25 | `797b81472` + this change | `npm run test:fast` | `8f9f4c60be53fd86ffa6e924dc6bcb240276ce4dce208cc076e008f8b2b26f2e` (`browser-1.log`) | 4/5: `e2e/extension/visual.spec.mjs` exit 1 | `tools/verify-composer-cdp.mjs=38.3s`, `tools/verify-feature-page-cdp.mjs=20.4s`, `tools/verify-requirements-cdp.mjs=110.7s`, `tools/verify-theme-cdp.mjs=428.1s`, `e2e/extension/visual.spec.mjs=67.0s` |
+| browser-2 | 2026-11-25 | `797b81472` + this change | `npm run test:fast` | `a3453ac9087a8daf91860ff7bc9452f451a2d253a69cc4415ed789246eaf4030` (`browser-2.log`) | 4/5: `e2e/extension/visual.spec.mjs` exit 1 | `tools/verify-composer-cdp.mjs=36.5s`, `tools/verify-feature-page-cdp.mjs=14.4s`, `tools/verify-requirements-cdp.mjs=103.3s`, `tools/verify-theme-cdp.mjs=381.5s`, `e2e/extension/visual.spec.mjs=48.8s` |
+| browser-3 | 2026-11-25 | `797b81472` + this change | `npm run test:fast` | `5fcfb93a6fc9712e7c69ed375eb5b76599eeb5d8c2994dfda1d23aa0f81d39c0` (`browser-3.log`) | 4/5: `e2e/extension/visual.spec.mjs` exit 1 | `tools/verify-composer-cdp.mjs=37.8s`, `tools/verify-feature-page-cdp.mjs=15.0s`, `tools/verify-requirements-cdp.mjs=106.0s`, `tools/verify-theme-cdp.mjs=383.1s`, `e2e/extension/visual.spec.mjs=37.1s` |
+| browser-4 | 2026-11-25 | `7d9d4bd88` + this change | `npm run test:fast` | `2211da306b5e6ea924ed21325a7bdfd072c2fa5577233e1097a4d0ca68c48491` (`browser-4.log`) | 1/1 exit 0 (4 of 4 tests) | `e2e/extension/visual.spec.mjs=17.6s` |
+| browser-5 | 2026-11-25 | `7d9d4bd88` + this change | `npm run test:fast` | `821f31a6681b797b56b4ce860764f2d7d45aa6802cf2c0766622ca359181950e` (`browser-5.log`) | 1/1 exit 0 (4 of 4 tests) | `e2e/extension/visual.spec.mjs=15.9s` |
+| browser-6 | 2026-11-25 | `7d9d4bd88` + this change | `npm run test:fast` | `b6aca49e9ecab7d487a4261f4277d7fe750bde00b51970ab0c0b0429d897f3ef` (`browser-6.log`) | 1/1 exit 0 (4 of 4 tests) | `e2e/extension/visual.spec.mjs=16.5s` |
+
+In `browser-1` to `browser-3`, which ran the whole spec file, the spec's `:50` and `:63` tests passed in light and
+dark, 12 of 12. Its 4 screenshot tests (`:98`, `:120`) failed with 2-3% pixel diffs, on `sidebar-chat` and
+`sidebar-composer`. `browser-4` to `browser-6` ran only the spec's own harness (`-g "tokens resolve|computed styles"`,
+the 4 computed-value tests), with no proofs.
+
+The darwin screenshot baselines in `e2e/extension/__screenshots__` are stale: `sidebar-chat-*-darwin.png` and
+`sidebar-composer-*-darwin.png` were last updated on 2026-10-14 (`fd6eb0c3d`), while the linux ones that CI compares
+were refreshed on 2026-10-25 (`40600ff09`) and 2026-10-26 (`86a38b317`). A local run of the whole spec therefore
+fails its screenshot tests on macOS. CI never compares darwin baselines. Refreshing them, with the pixel changes
+reviewed, is a follow-up; this page leaves them as they are.
 
 ## CI failure history
 
