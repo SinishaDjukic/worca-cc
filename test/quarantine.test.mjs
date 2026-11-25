@@ -320,7 +320,8 @@ test('quarantine.yml: dev push, nightly and manual dispatch, never pull_request,
   assert.deepEqual(wf.permissions, { contents: 'read' });
 });
 
-test('quarantine.yml: the quarantined tests job runs after the spec job unless cancelled, reads actions, runs every kind and keeps the history', () => {
+test('quarantine.yml: the quarantined tests job runs after the spec job unless cancelled, reads actions, runs every kind and keeps the history', async () => {
+  const { HISTORY_MAX } = await Q();
   const wf = YAML.parse(wfText());
   const specs = wf.jobs['quarantined-specs'];
   assert.ok(specs, 'job quarantined-specs');
@@ -342,6 +343,8 @@ test('quarantine.yml: the quarantined tests job runs after the spec job unless c
   const fetch = job.steps.find((s) => s.name === 'Fetch the pass-rate history');
   assert.ok(!/\bbreak\b/.test(fetch.run), 'every recent history is fetched, not only the newest (overlapping runs)');
   assert.match(fetch.run, /-D "\$RUNNER_TEMP\/qh\/\$id"/, 'each run\'s history lands in its own folder');
+  const limit = Number((fetch.run.match(/gh run list\b[^\n]*?\s-L\s+(\d+)/) || [])[1]);
+  assert.ok(limit >= HISTORY_MAX, `the fetch looks back at least HISTORY_MAX (${HISTORY_MAX}) runs, got -L ${limit}`);
   const up = job.steps.find((s) => String(s.uses || '').startsWith('actions/upload-artifact@') && s.with?.name === 'quarantine-history');
   assert.ok(up, 'uploads quarantine-history');
   assert.equal(Number(up.with['retention-days']), 90);

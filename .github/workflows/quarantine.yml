@@ -94,15 +94,16 @@ jobs:
           name: quarantine-results-specs
           path: quarantine-out/specs
 
-      # The histories of the newest completed dev runs, each in its own folder: two overlapping runs each extend the
-      # same parent, so report unions them by runId and neither record is lost. None (the first run, or expired):
-      # it starts fresh.
+      # The histories of the 30 newest completed dev runs (HISTORY_MAX), each in its own folder: overlapping runs each
+      # extend the same parent, so report unions them by runId and trims to 30. Any number of overlapping runs, or up
+      # to 29 runs in a row that saved no history, loses no record still inside the 30-run window. None (the first
+      # run, or expired): it starts fresh.
       - name: Fetch the pass-rate history
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "$RUNNER_TEMP/qh"
-          for id in $(gh run list -w quarantine.yml -b dev -s completed -L 3 --json databaseId -q '.[].databaseId' || true); do
+          for id in $(gh run list -w quarantine.yml -b dev -s completed -L 30 --json databaseId -q '.[].databaseId' || true); do
             if gh run download "$id" -n quarantine-history -D "$RUNNER_TEMP/qh/$id"; then
               echo "history from run $id"
             fi
