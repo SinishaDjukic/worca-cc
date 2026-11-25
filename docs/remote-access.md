@@ -186,8 +186,6 @@ each run. This is attribution, not permissions: everyone keeps the same rights.
 - People are shown only when each viewer signs in as themselves (Cloudflare Access or
   `WORCA_IDENTITY_HEADER`). A local install, or a self-hosted worca with only
   `WORCA_IDENTITY_NAME`, records the name but shows none of it: there is only one person.
-- A pull request opened from a run ends with *Started by ada@example.com via worca*, so a PR
-  authored by a shared bot or GitHub App still names the person.
 - Chat sees the signed-in person in its context and answers "who started this", "what did ada
   run", "who paused it" and "who scheduled this" from the recorded names (`list_runs` with a
   `startedBy` filter, `list_people`, and the actions `get_run` lists). "My runs" works only with a
