@@ -27,6 +27,8 @@ export function currentBranchLabel(name) {
 
 const WHERE_PROJECT = `Set in this project's Settings › Chat › ${CHAT_SOURCE_BRANCH_SETTING}.`;
 const WHERE_USER = `Set in Settings › Runs › ${CHAT_SOURCE_BRANCH_SETTING}.`;
+/** A project or member name in assistant-facing text, rendered as data: hard quotes, newlines and quotes escaped. */
+const quoteName = (name) => JSON.stringify(String(name));
 
 export const SOURCE_BRANCH_TEXT = Object.freeze({
   pick: 'Pick a source branch to start this run.',
@@ -46,12 +48,12 @@ export const SOURCE_BRANCH_TEXT = Object.freeze({
 
 /** The `require` refusal of a project proposal with no branch: tells the assistant to ask the user. */
 export function proposalSourceRequired(name) {
-  return `No source branch for ${name}: its "${CHAT_SOURCE_BRANCH_SETTING}" setting is "${CHAT_SOURCE_BRANCH_LABELS.require}". `
+  return `No source branch for ${quoteName(name)}: its "${CHAT_SOURCE_BRANCH_SETTING}" setting is "${CHAT_SOURCE_BRANCH_LABELS.require}". `
     + 'Ask the user in the chat which branch to start from, then propose again with sourceBranch.';
 }
 
 /** The workspace variant: names every member the setting refuses. */
 export function proposalSourceRequiredMembers(names) {
-  return `No source branch for ${names.join(', ')}: their "${CHAT_SOURCE_BRANCH_SETTING}" setting is "${CHAT_SOURCE_BRANCH_LABELS.require}". `
+  return `No source branch for ${names.map(quoteName).join(', ')}: their "${CHAT_SOURCE_BRANCH_SETTING}" setting is "${CHAT_SOURCE_BRANCH_LABELS.require}". `
     + 'Ask the user in the chat which branch to start from, then propose again with sourceBranch or sourceBranchByKey.';
 }
