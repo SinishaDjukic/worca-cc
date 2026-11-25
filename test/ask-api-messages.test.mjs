@@ -161,6 +161,22 @@ test('a full mock turn: 202, stamped frames to ask-done, persistence, session, t
   ws.close();
 });
 
+test('sendId: the user echo carries the sender\'s id (its composer clears on it); a malformed one is a 400', async () => {
+  const t = await newThread();
+  assert.equal((await post(`/api/ask/threads/${t.id}/messages`, { text: 'x', ...MODEL, sendId: 'has space' })).status, 400);
+  assert.equal((await post(`/api/ask/threads/${t.id}/messages`, { text: 'x', ...MODEL, sendId: 7 })).status, 400);
+  const { ws, msgs, opened } = openWs(`?threadId=${t.id}`);
+  await opened;
+  const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'tagged', ...MODEL, sendId: 's_lq3x9a_k2' });
+  assert.equal(r.status, 202);
+  const { userMessageId } = await r.json();
+  const echo = await waitFor(() => msgs.find((m) => m.type === 'ask-message' && m.threadId === t.id && m.message.id === userMessageId));
+  assert.equal(echo.sendId, 's_lq3x9a_k2');
+  assert.equal('sendId' in echo.message, false, 'never stored on the row');
+  await waitFor(() => framesFor(msgs, t.id).some((f) => f.type === 'ask-done'));
+  ws.close();
+});
+
 test('409 while in flight; the 30 s grace entry never blocks the next turn', async (tc) => {
   const release = holdMockTurn(tc);
   const t = await newThread();
