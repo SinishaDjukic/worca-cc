@@ -148,6 +148,7 @@ import {
   collectSeedDecisions, seedSummary, seedableCount, renderTeamAvailableLine,
 } from './memory-view.mjs';
 import { createScriptsController, nextCopyKey } from './scripts-view.mjs';
+import { editorOpenFor, runFolderOpenFor, firstChangedLine, buildOpenFileButton, buildOpenRunButton, clearOpenError } from './diff-open-editor.mjs';
 import { renderRunPill, renderOverviewStrip, renderShipItStrip, shipItTryState, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout, withPort } from './actions-view.mjs';
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createConnectorLayers } from './mcp-servers/connectors-layers.mjs';
@@ -19462,6 +19463,36 @@ async function refreshActionsModel(runId, scopeQuery) {
   return r;
 }
 /**
+ * The Diff tab's open controls read the run's Actions model (diff-open-editor.mjs). From the cache, else one read; a
+ * cached live model is read again once the page says the run finished. A failed read is null: no control shows.
+ */
+async function diffEditorModel(runId, scopeQuery, { finishedNow = false } = {}) {
+  const cached = actionsModelCache.get(runId);
+  if (cached && !(cached.finished === false && finishedNow)) return cached;
+  const r = await actionsCall('GET', actionsRunUrl(runId, '/actions', scopeQuery));
+  if (!r.ok) return null;
+  actionsModelCache.set(runId, r.data);
+  return r.data;
+}
+/**
+ * Open the run (or one file at a line) in the Editor built-in. A finished run that is not checked out is checked
+ * out first (mode 'checkout'), or linked to the folder that holds its branch (mode 'use-folder'). → { ok, error? }
+ */
+async function openInEditor(runId, scopeQuery, { member, workspace = false, file, line, mode }) {
+  const failed = (r) => ({ ok: false, error: r.data?.error || `Request failed (${r.status})` });
+  if (mode === 'checkout' || mode === 'use-folder') {
+    const co = await actionsCall('POST', actionsRunUrl(runId, '/checkout', scopeQuery),
+      mode === 'use-folder' ? { members: [member], useExisting: true } : { members: [member] });
+    if (!co.ok) return failed(co);
+    await refreshActionsModel(runId, scopeQuery);
+  }
+  const body = {};
+  if (workspace && member) body.member = member;            // a single-project run needs none
+  if (file) { body.file = file; if (line) body.line = line; }
+  const r = await actionsCall('POST', actionsRunUrl(runId, '/open-in-editor', scopeQuery), body);
+  return r.ok ? { ok: true } : failed(r);
+}
+/**
  * actions-changed: a stop from the sidebar or the pill, or a crash, changes runs whose tab may never have
  * opened. Refetch every mounted strip's model; a run with a live controller repaints through its onModel.
  * Cached models of unmounted runs are dropped, so a revisit fetches instead of painting a stale state.
@@ -30935,7 +30966,10 @@ function buildHdDiff(sec, record, data) {
     if (entry.f.from) {
       selectedPath.setAttribute('aria-label', `Renamed from ${entry.f.from} to ${entry.f.path}`);
     }
-    ph.append(selectedPath, hdFileCountsNode(document, entry.f));
+    const headEnd = document.createElement('span');
+    headEnd.className = 'hd-diff-head-end';          // the counts, then the open icon (diff-open-editor.mjs)
+    headEnd.append(hdFileCountsNode(document, entry.f));
+    ph.append(selectedPath, headEnd);
     pane.appendChild(ph);
 
     // Both loads, not just the patch — so the first window already has cards and
@@ -30953,7 +30987,7 @@ function buildHdDiff(sec, record, data) {
       lock.className = 'hd-diff-guarded';
       lock.textContent = 'protected path';
       lock.title = 'New comments are not stored for credential-shaped paths (.env*, *.pem, *.key, **/secrets/**, …). Existing comments still show.';
-      ph.appendChild(lock);
+      ph.insertBefore(lock, headEnd);
     }
 
     const body = document.createElement('div');
@@ -30961,6 +30995,8 @@ function buildHdDiff(sec, record, data) {
     const section = pstate.index && pstate.index.get(sectionKey(entry.project, entry.f.path));
     const meta = diffSectionMeta(entry, fileKey, section);
     lastMeta = meta;                                   // what repaintCards re-attaches against
+    const parsed = section ? parseFileSection(section.raw, { maxCodeUnits: HD_MAX_SECTION_CODE_UNITS }) : null;
+    void addOpenIcon(firstChangedLine(parsed)).catch(() => {});
     if (!section) {
       body.classList.add('hint');
       const note = document.createElement('div');
@@ -30974,7 +31010,6 @@ function buildHdDiff(sec, record, data) {
       pane.appendChild(body);
       return;
     }
-    const parsed = parseFileSection(section.raw, { maxCodeUnits: HD_MAX_SECTION_CODE_UNITS });
     if (parsed.binary || !parsed.hunks.length) {
       body.classList.add('hint');
       const note = document.createElement('div');
@@ -31012,6 +31047,19 @@ function buildHdDiff(sec, record, data) {
     const lang = langForPath(syntaxPath);
     if (lang && canHighlightParsed(parsed)) {
       void enhanceDiffBody(view, lang).catch(() => {});
+    }
+
+    // The file head's open icon, once the run's Actions model says it may show (a deleted file, a comment-only
+    // row, a protected path, an archived run or a blocked checkout get none). Dropped if another file was picked.
+    async function addOpenIcon(line) {
+      if (entry.f.status === 'D' || entry.synthetic || ctx.guarded(entry.project, entry.f.path)) return;
+      const q = runActionQuery(record.projectDir, record).toString();
+      const model = await diffEditorModel(record.id, q, { finishedNow: hdRunFinished(data) });
+      if (epoch !== pstate.selEpoch || !headEnd.isConnected) return;
+      const pick = editorOpenFor(model, { projectKey: entry.project, archived: !!data.state?.archivedAt });
+      if (!pick) return;
+      headEnd.append(buildOpenFileButton(document, { fileName: entry.f.path.split('/').pop(), label: pick.label, mode: pick.mode,
+        onOpen: () => openInEditor(record.id, q, { member: pick.member, workspace: !!model.workspace, file: entry.f.path, line, mode: pick.mode }) }));
     }
   }
 
@@ -31823,19 +31871,34 @@ async function rdFetchDiff(r) {
 // Up to this many diff rows are connected per file; the rest stay one click away on the saved run.
 const RD_DIFF_MAX_LINES = 4000;
 
-function rdRenderFileBody(pane, index, entry) {
+/**
+ * One file of the run page's Diff tab. `openCtx` ({ runId, q, model, protectedKeys }) adds the file head's
+ * open-in-editor icon (diff-open-editor.mjs); the Folder runs' Changes tab passes none.
+ */
+function rdRenderFileBody(pane, index, entry, openCtx = null) {
   pane.innerHTML = '';
+  const section = index && index.get(sectionKey(entry.project, entry.f.path));
+  const parsed = section ? parseFileSection(section.raw, { maxCodeUnits: HD_MAX_SECTION_CODE_UNITS }) : null;
   const head = document.createElement('div');
   head.className = 'hd-diff-pane-head mono';
   const path = document.createElement('h3');
   path.className = 'hd-diff-path';
   path.textContent = entry.f.path;
-  head.append(path, hdFileCountsNode(document, entry.f));
+  const headEnd = document.createElement('span');
+  headEnd.className = 'hd-diff-head-end';
+  headEnd.append(hdFileCountsNode(document, entry.f));
+  const pick = openCtx && entry.f.status !== 'D' && !openCtx.protectedKeys.has(sectionKey(entry.project, entry.f.path))
+    ? editorOpenFor(openCtx.model, { projectKey: entry.project, archived: false }) : null;
+  if (pick) {
+    const line = firstChangedLine(parsed);
+    headEnd.append(buildOpenFileButton(document, { fileName: entry.f.path.split('/').pop(), label: pick.label, mode: pick.mode,
+      onOpen: () => openInEditor(openCtx.runId, openCtx.q, { member: pick.member, workspace: !!openCtx.model.workspace,
+        file: entry.f.path, line, mode: pick.mode }) }));
+  }
+  head.append(path, headEnd);
   pane.appendChild(head);
   const body = document.createElement('div');
   body.className = 'hd-diff-body mono';
-  const section = index && index.get(sectionKey(entry.project, entry.f.path));
-  const parsed = section ? parseFileSection(section.raw, { maxCodeUnits: HD_MAX_SECTION_CODE_UNITS }) : null;
   if (!parsed || parsed.binary || !parsed.hunks.length) {
     body.classList.add('hint');
     const note = document.createElement('div');
@@ -31869,8 +31932,9 @@ function rdRenderFileBody(pane, index, entry) {
 }
 
 // The Diff tab's file list and body for a { results, patch } diff; the tool panel's Changes tab draws with it too
-// (issue 1064). `picked`: the section key to open first; `onPick(key)` after every pick. Returns the key picked.
-function paintDiffGrid(host, out, { picked = null, onPick = null } = {}) {
+// (issue 1064). `picked`: the section key to open first; `onPick(key)` after every pick; `openCtx`: rdRenderFileBody's
+// open-in-editor context (the run page only). Returns the key picked.
+function paintDiffGrid(host, out, { picked = null, onPick = null, openCtx = null } = {}) {
   const results = out.results;
   const rows = results ? hdDiffFileRows(results) : [];
   if (!rows.length) return picked;
@@ -31897,7 +31961,7 @@ function paintDiffGrid(host, out, { picked = null, onPick = null } = {}) {
   const pick = (entry, btn) => {
     for (const b of rowsHost.querySelectorAll('.rd-diff-row')) b.classList.toggle('active', b === btn);
     picked = sectionKey(entry.project, entry.f.path);
-    rdRenderFileBody(pane, index, entry);
+    rdRenderFileBody(pane, index, entry, openCtx);
     if (onPick) onPick(picked);
   };
   let first = null;
@@ -31937,22 +32001,42 @@ function buildRdDiff(sec, ctx) {
   refresh.type = 'button';
   refresh.className = 'btn btn-sm rd-diff-refresh';
   refresh.textContent = 'Refresh';
-  note.append(noteText, refresh);
+  const noteEnd = document.createElement('span');
+  noteEnd.className = 'rd-diff-note-end';          // Refresh, then Open in <Editor> while the run is live
+  noteEnd.append(refresh);
+  note.append(noteText, noteEnd);
   const host = document.createElement('div');
   host.className = 'rd-diff-host';
   sec.append(note, host);
   let epoch = 0;
   let picked = null;
+  let openBtn = null;
   const load = async () => {
     const mine = ++epoch;
     const live = !RD_TERMINAL.includes(r.status);
     refresh.hidden = !live;
     noteText.textContent = live ? 'Live: the worktree right now, against where the run started.' : 'The final diff of this run.';
     refresh.disabled = true;
+    const q = rdScopeQuery(r);
     let out;
-    try { out = await rdFetchDiff(r); } catch (e) { out = { error: e.message }; }
+    let model = null;
+    try {
+      [out, model] = await Promise.all([rdFetchDiff(r),
+        r.pipelineId ? diffEditorModel(r.pipelineId, q, { finishedNow: !live }) : null]);
+    } catch (e) { out = { error: e.message }; }
     refresh.disabled = false;
     if (mine !== epoch || !sec.isConnected) return;
+    openBtn?.remove();
+    openBtn = null;
+    clearOpenError(note);
+    const folder = live && r.pipelineId ? runFolderOpenFor(model) : null;
+    if (folder) {
+      noteText.textContent = 'Live: edits you make there go into the run.';
+      openBtn = buildOpenRunButton(document, { label: folder.label, onOpen: () => openInEditor(r.pipelineId, q, { mode: 'open' }) });
+      noteEnd.append(openBtn);
+    }
+    const openCtx = r.pipelineId && model ? { runId: r.pipelineId, q, model,
+      protectedKeys: new Set(live && Array.isArray(r._rdLiveDiff?.protectedPaths) ? r._rdLiveDiff.protectedPaths : []) } : null;
     host.innerHTML = '';
     if (out.error) { host.appendChild(histEmpty(`Could not load the diff: ${out.error}`)); return; }
     const results = out.results;
@@ -31965,7 +32049,7 @@ function buildRdDiff(sec, ctx) {
       return;
     }
     if (out.capped) noteText.textContent += ' Some new files are not listed.';
-    picked = paintDiffGrid(host, out, { picked, onPick: (k) => { picked = k; } });
+    picked = paintDiffGrid(host, out, { picked, onPick: (k) => { picked = k; }, openCtx });
     if (askSide?.shown()) askPanel?.pageChanged?.();   // Ask worca beside the page: the first file opens with no click
     rdPaintTabBadges(runDetailState.screen || sec, rdCtx(r));
   };
