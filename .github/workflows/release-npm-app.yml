@@ -46,6 +46,8 @@ jobs:
       - name: Run tests
         env:
           WORCA_TEST_SHARD: ${{ matrix.shard }}/4
+          # A depth-1 tag checkout has no base for test/suite-guard.test.mjs; the tagged commit was judged on dev.
+          WORCA_SUITE_GUARD_BASE: none
         run: npm test
 
   build-and-publish:
