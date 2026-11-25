@@ -145,3 +145,81 @@ test('initialShaping: with neither, the four keys are exactly as before', () => 
   assert.deepEqual(initialShaping(null), { perspectives: [...DEFAULT_PERSPECTIVES], rounds: [], approved: null, savedTo: null });
   assert.deepEqual(Object.keys(initialShaping({ perspectives: ['qa'] }, {})), ['perspectives', 'rounds', 'approved', 'savedTo']);
 });
+
+// Small runs B4 (D12, D13, D14, D15): the Split's approve gate.
+const rsl = (id, requirements) => sl(id, { requirements });
+const AGREED4 = ['R-po-1', 'R-po-2', 'R-qa-1', 'R-sec-1'].map((id) => ({ id, text: id }));
+const PASSING = { why: 'w', slices: [rsl('a', ['R-po-1', 'R-po-2']), rsl('b', ['R-qa-1'])], agreed: AGREED4, leftOut: [],
+  confirmed: [{ id: 'R-sec-1', role: 'Security' }] };
+const BROKEN = {
+  ownership: { ...PASSING, slices: [rsl('a', ['R-po-1', 'R-po-2']), rsl('b', ['R-qa-1', 'R-po-2'])] },
+  coverage: { ...PASSING, slices: [rsl('a', ['R-po-1', 'R-po-2']), rsl('b', ['R-po-1'])].map((s, i) => (i ? { ...s, requirements: ['R-po-2'] } : { ...s, requirements: ['R-po-1'] })) },
+  confirmRole: { ...PASSING, confirmed: [{ id: 'R-sec-1', role: 'Legal' }] },
+};
+const RULES = (care) => ({ smallRuns: true, care });
+
+test('validateOutlineAnswer B4: each Care × rule refuses an approve with split-not-approvable, naming the rule and ids', () => {
+  for (const care of ['lean', 'balanced', 'thorough']) {
+    for (const [rule, outline] of Object.entries(BROKEN)) {
+      const r = validateOutlineAnswer({ decision: 'approve' }, { outline, rules: RULES(care), revisable: true });
+      assert.equal(r.ok, false, `${care} ${rule}`);
+      assert.equal(r.errors[0].code, 'split-not-approvable', `${care} ${rule}`);
+      assert.equal(r.errors[0].path, 'decision');
+      assert.match(r.errors[0].message, new RegExp(`^The split cannot be approved: .*${rule} R-`), `${care} ${rule}`);
+      assert.match(r.errors[0].message, /Ask for changes\.$/);
+    }
+  }
+  const msg = validateOutlineAnswer({ decision: 'approve' }, { outline: { ...BROKEN.ownership, slices: [rsl('a', ['R-po-1']), rsl('b', ['R-po-1'])] }, rules: RULES('balanced') });
+  assert.equal(msg.errors[0].message, 'The split cannot be approved: ownership R-po-1; coverage R-po-2, R-qa-1. Ask for changes.');
+});
+
+test('validateOutlineAnswer B4: a passing outline approves with approveEach false; a confirm fixes confirmRole; a stranding remove is refused', () => {
+  assert.deepEqual(validateOutlineAnswer({ decision: 'approve', approveEach: true }, { outline: PASSING, rules: RULES('balanced') }),
+    { ok: true, payload: { decision: 'approve', approveEach: false } });
+  const confirm = [{ op: 'confirm', id: 'R-sec-1', role: 'Security' }];
+  assert.deepEqual(validateOutlineAnswer({ decision: 'approve', edits: confirm }, { outline: BROKEN.confirmRole, rules: RULES('lean') }),
+    { ok: true, payload: { decision: 'approve', edits: confirm, approveEach: false } });
+  assert.equal(validateOutlineAnswer({ decision: 'approve', edits: confirm }, { outline: BROKEN.confirmRole }).ok, false, 'no confirm without small runs');
+  const remove = validateOutlineAnswer({ decision: 'approve', edits: [{ op: 'remove', id: 'b' }] }, { outline: PASSING, rules: RULES('balanced') });
+  assert.equal(remove.errors[0].code, 'split-not-approvable');
+  assert.match(remove.errors[0].message, /coverage R-qa-1/);
+  const unconfirmed = validateOutlineAnswer({ decision: 'approve', edits: [{ op: 'confirm', id: 'R-qa-1', role: 'QA' }] }, { outline: PASSING, rules: RULES('balanced') });
+  assert.equal(unconfirmed.ok, false);
+  assert.equal(unconfirmed.errors[0].path, 'edits');
+});
+
+test('validateOutlineAnswer B4: approve with a forged passing check is still refused (the gate runs on the server\'s outline)', () => {
+  const r = validateOutlineAnswer({ decision: 'approve', check: { ok: true, items: [] } }, { outline: BROKEN.coverage, rules: RULES('balanced') });
+  assert.equal(r.errors[0].code, 'split-not-approvable');
+});
+
+test('validateOutlineAnswer B4: openObjections is only "kept", only with open objections', () => {
+  const opts = (open) => ({ outline: PASSING, rules: RULES('balanced'), open });
+  assert.deepEqual(validateOutlineAnswer({ decision: 'approve', openObjections: 'kept' }, opts(2)),
+    { ok: true, payload: { decision: 'approve', approveEach: false, openObjections: 'kept' } });
+  assert.equal(validateOutlineAnswer({ decision: 'approve', openObjections: 'kept' }, opts(0)).errors[0].path, 'openObjections');
+  assert.equal(validateOutlineAnswer({ decision: 'approve', openObjections: 'dropped' }, opts(2)).errors[0].path, 'openObjections');
+  assert.equal(validateOutlineAnswer({ decision: 'approve', openObjections: 'kept' }, { outline: OUTLINE }).ok, false, 'dev never takes it');
+});
+
+test('validateOutlineAnswer B4: dev rules (no `rules`) are unchanged: a broken split still approves', () => {
+  assert.deepEqual(validateOutlineAnswer({ decision: 'approve' }, { outline: BROKEN.coverage }),
+    { ok: true, payload: { decision: 'approve', approveEach: false } });
+});
+
+// ---- Small runs C5 (D15): the Verifier's request ----
+const VERIFY = { featureId: 'feat_1', round: 1, fixCycles: 2, extra: 0, owned: ['R-po-1', 'R-po-2'], head: { index: 4, pipelineId: 'p4' } };
+
+test('resolveShapeRequest C5: an internal shape.verify on wf_shape_verify returns {shape:{verify}, workflowId}', () => {
+  const r = resolveShapeRequest({ shape: { verify: VERIFY }, workflowId: 'wf_shape_verify' }, { internal: true });
+  assert.deepEqual(r, { ok: true, shape: { verify: VERIFY }, workflowId: 'wf_shape_verify' });
+});
+
+test('resolveShapeRequest C5: verify is internal-only, needs wf_shape_verify and a well-formed record', () => {
+  assert.match(resolveShapeRequest({ shape: { verify: VERIFY }, workflowId: 'wf_shape_verify' }).error, /unknown field\(s\): verify/);
+  assert.equal(resolveShapeRequest({ shape: { verify: VERIFY }, workflowId: 'wf_shape' }, { internal: true }).ok, false);
+  assert.equal(resolveShapeRequest({ shape: { verify: VERIFY } }, { internal: true }).ok, false);
+  assert.equal(resolveShapeRequest({ shape: { verify: { ...VERIFY, round: 0 } }, workflowId: 'wf_shape_verify' }, { internal: true }).ok, false);
+  assert.equal(resolveShapeRequest({ shape: { verify: { ...VERIFY, owned: 'R-po-1' } }, workflowId: 'wf_shape_verify' }, { internal: true }).ok, false);
+  assert.equal(resolveShapeRequest({ workflowId: 'wf_shape_verify' }, { internal: true }).ok, false, 'never a plain run');
+});

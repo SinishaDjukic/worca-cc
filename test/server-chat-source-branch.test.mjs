@@ -9,6 +9,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { mkdirSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { stopAndSettle } from './helpers/stop-and-settle.mjs';
@@ -17,7 +18,7 @@ import { seedPipelineRow } from './helpers/db-seed.mjs';
 after(() => runs && stopAndSettle(runs));
 useTempHome(after);
 let sandboxHome, srv, base, runs, writeProjectSettings, createThread, appendMessage, findCard, getDb;
-let dirA, dirB, keyA, keyB, workspaceId;
+let dirA, dirB, keyA, keyB, workspaceId, branchA;
 const prevEnv = {};
 const JSONH = { 'Content-Type': 'application/json' };
 const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(b ?? {}) });
@@ -39,6 +40,7 @@ before(async () => {
   const { addProject, getProjectByPath } = await import('../src/core/projects.mjs');
   const { createWorkspace } = await import('../src/core/workspaces.mjs');
   dirA = gitDir('srcbranch-api'); dirB = gitDir('srcbranch-web');
+  branchA = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dirA, encoding: 'utf8' }).trim(); // the host's init.defaultBranch
   await addProject({ name: 'api', path: dirA }); await addProject({ name: 'web', path: dirB });
   keyA = getProjectByPath(dirA).key; keyB = getProjectByPath(dirB).key;
   workspaceId = (await createWorkspace({ name: 'srcbranch ws', projectPaths: [dirA, dirB] })).id;
@@ -123,7 +125,7 @@ test('override: a project current over a user ask is accepted; a project ask und
 
 test('a named branch, a New run form body and an after + sourceFromPrevious chain are accepted under ask', async () => {
   setModes();
-  await accepted({ projectDir: dirA, prompt: 'x', sourceBranch: 'main', ...proposed({ projectDir: dirA }) });
+  await accepted({ projectDir: dirA, prompt: 'x', sourceBranch: branchA, ...proposed({ projectDir: dirA }) });
   await accepted({ projectDir: dirA, prompt: 'x' });   // no askThreadId: the New run form
   seedPipelineRow({ id: 'sb000001', projectKey: keyA, title: 'Prev', status: 'running', startedAt: new Date().toISOString() });
   const r = await start({ projectDir: dirA, prompt: 'x', after: { kind: 'pipeline', id: 'sb000001' }, sourceFromPrevious: true, ...proposed({ projectDir: dirA }) });
@@ -136,7 +138,7 @@ test('workspace: api (ask) and web (current) with no branches → 400 naming onl
   assert.equal(r.status, 400, JSON.stringify(r.body));
   assert.equal(r.body.code, 'source-branch-required');
   assert.deepEqual(r.body.members, [keyA]);
-  await accepted({ workspaceId, prompt: 'x', sourceBranchByKey: { [keyA]: 'main' }, ...proposed({ workspaceId }) });
+  await accepted({ workspaceId, prompt: 'x', sourceBranchByKey: { [keyA]: branchA }, ...proposed({ workspaceId }) });
   setModes();
 });
 

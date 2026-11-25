@@ -328,6 +328,35 @@ test('guardedGitEnv refuses a repository whose config sets a first-wins command 
   assert.ok(Number(missing.GIT_CONFIG_COUNT) > 0);
 });
 
+// U-T1 (F1): on Windows an agent's `git config …` in a sibling checkout replaces the shared config while worca lists it.
+test('guardedGitEnv lists the config once more on Windows when the file was busy; never elsewhere, never for other errors', async () => {
+  const busy = Object.assign(new Error('Command failed'), { code: 128 });
+  const fake = (results) => {
+    const calls = [];
+    const fn = (cmd, args, opts, cb) => { calls.push([cmd, ...args]); const [err, out, errOut] = results[Math.min(calls.length - 1, results.length - 1)]; setImmediate(() => cb(err, out, errOut)); };
+    return { fn, calls };
+  };
+  const okOut = 'global\0file:/home/a/.gitconfig\0user.name\nA\0';   // the --show-origin form: scope, origin, key and value
+  const denied = [busy, '', "fatal: unable to access '.git/config': Permission denied"];
+  const a = fake([denied, [null, okOut, '']]);
+  const env = await guardedGitEnv('/repo', { env: {}, execFile: a.fn, platform: 'win32' });
+  assert.equal(a.calls.length, 2, 'listed again');
+  assert.deepEqual(a.calls[0], ['git', 'config', '--list', '--show-scope', '--show-origin', '-z']);
+  assert.ok(Number(env.GIT_CONFIG_COUNT) > 0);
+
+  const b = fake([denied, denied]);
+  await assert.rejects(guardedGitEnv('/repo', { env: {}, execFile: b.fn, platform: 'win32' }), { code: 'GIT_CONFIG_UNREADABLE' });
+  assert.equal(b.calls.length, 2, 'once more only');
+
+  const c = fake([denied, [null, okOut, '']]);
+  await assert.rejects(guardedGitEnv('/repo', { env: {}, execFile: c.fn, platform: 'linux' }), { code: 'GIT_CONFIG_UNREADABLE' });
+  assert.equal(c.calls.length, 1, 'not on another platform');
+
+  const d = fake([[busy, '', 'fatal: bad config line 3 in file .git/config'], [null, okOut, '']]);
+  await assert.rejects(guardedGitEnv('/repo', { env: {}, execFile: d.fn, platform: 'win32' }), { code: 'GIT_CONFIG_UNREADABLE' });
+  assert.equal(d.calls.length, 1, 'a broken config is not tried again');
+});
+
 test('parseConfigList with origin: scope, origin, then key and value', () => {
   assert.deepEqual(parseConfigList('local\0file:.git/config\0core.bare\nfalse\0command line:\0\0x.y\0', { origin: true }),
     [{ scope: 'local', origin: 'file:.git/config', key: 'core.bare', value: 'false' },

@@ -33,6 +33,7 @@
 // document — including the prompt block that tells a producer where to write the
 // task files and what the manifest looks like.
 import { join, dirname, relative, basename, isAbsolute, resolve as resolvePath } from 'node:path';
+import { prototypeBlock } from '../../shared/shape/prototype.mjs';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 
@@ -502,13 +503,16 @@ const PERSPECTIVE_AGENT_KEYS = new Set(['planner', 'refiner']);
 /** Spec §3.8: the agent that may write the slice outline, and the agents that get the slice scope (F15). */
 export const SLICE_PLANNER_KEY = 'planner';
 export const SLICE_SCOPE_AGENT_KEYS = PERSPECTIVE_AGENT_KEYS;
+/** Shaper small runs C2: the Test writer's agent key (builtin-workflows.mjs `withTestWriter` places it as `n_tests`). */
+export const TEST_WRITER_AGENT_KEY = 'testWriter';
 
 /** The Planner's slicing text: the rules plus a revise note while the outline is open, the flat note after
  *  Don't slice, '' otherwise. Driven by ctx fields the orchestrator sets, never by ctx.shape alone. */
 function slicingPromptBlock(ctx) {
   if (ctx.shapeOutlineNote?.decision === 'flat') return FLAT_NOTE;
   if (!ctx.shapeSlicing) return '';
-  return slicingBlock({ file: ctx.shapeSlicing.file, size: ctx.shapeSlicing.size || null, requirements: ctx.shapeSlicing.requirements === true })
+  return slicingBlock({ file: ctx.shapeSlicing.file, size: ctx.shapeSlicing.size || null, requirements: ctx.shapeSlicing.requirements === true,
+    smallRuns: ctx.shapeSlicing.smallRuns === true, care: ctx.shapeSlicing.care })
     + (ctx.shapeOutlineNote?.decision === 'revise' ? outlineFeedbackBlock(ctx.shapeOutlineNote.feedback) : '')
     + mockMarkers({ MOCK_SLICES: ctx.shapeSlicing.file }) + '\n\n';
 }
@@ -572,7 +576,7 @@ function roleBriefFor(ctx) {
   const spec = ctx.roleSpec;
   const provider = roleChecklistOf(spec);
   const concerns = ctx.bindings?.requirements && roleTargetOf(spec).requirementConcerns
-    ? requirementConcernBlock(criterionIds(ctx.roleRequirementsText || '')) : '';
+    ? requirementConcernBlock(criterionIds(ctx.roleRequirementsText || ''), { proposals: ctx.roleProposals === true }) : '';
   if (provider) return provider.brief(ctx.role, ctx.rolePlanText || '', { houseBrief: ctx.houseBrief, shape: ctx.roleShape || null }) + concerns;
   return genericRoleBrief(spec.roles.find((r) => r.key === ctx.role) || { key: ctx.role, label: ctx.role }, spec.target) + concerns;
 }
@@ -621,6 +625,9 @@ export function buildAgentPrompt(ctx) {
   // byte-identical.
   const concernFile = ctx.planConcern?.file || '';
   const concern = planConcernBlock(concernFile) + planConcernOverrideBlock(ctx.planConcernOverride);
+  // Shaper small runs C1 (D14): the confirmed prototype, set by the orchestrator only for a run whose slice owns a screen
+  // requirement; every agent node gets it, and every other prompt stays byte-identical.
+  const prototype = ctx.shapePrototype ? prototypeBlock(ctx.shapePrototype) : '';
   const title = meta.displayName || node?.key || node?.id || 'agent';
   // Spec §3: a role reviewer's prompt carries ITS role brief only (ctx.role is set per composite slice); a provider's
   // brief carries the house brief for the role that wants it.
@@ -642,8 +649,9 @@ export function buildAgentPrompt(ctx) {
     sliceScope +
     slicing +
     concern +
+    prototype +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed, investigator: !!ctxSubagentEffort(ctx), engine: node?.engine }) +
+    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed, investigator: !!ctxSubagentEffort(ctx), engine: node?.engine, personalOff: ctx?.pluginsOff === true }) +
     workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative, endpointRouted: routed, serial: node?.noSubagents === true }) +
     (siblings ? siblings + '\n' : '') +
     portIoBlock({ node, ports, bindings, outputs, verdict, ctx }) +

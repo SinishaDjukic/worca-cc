@@ -12,8 +12,9 @@ import { _resetForTests } from '../src/core/db.mjs';
 import {
   GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, GRAPH_SHAPE_REQ_WORKFLOW, GRAPH_SHAPE_UX_REQ_WORKFLOW,
   SHAPE_REQ_WORKFLOW_IDS, RESERVED_WORKFLOW_IDS, isReservedWorkflowId, requirementsVariant,
-  GRAPH_SHAPE_SLICE_REQ_WORKFLOW, GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW, SHAPE_SLICE_REQ_WORKFLOW_IDS,
+  GRAPH_SHAPE_SLICE_REQ_WORKFLOW, GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW, SHAPE_SLICE_REQ_WORKFLOW_IDS, withTestWriter,
 } from '../src/core/graph/builtin-workflows.mjs';
+import { TEST_WRITER_AGENT_KEY } from '../src/core/graph/executor.mjs';
 import { readWorkflow, listWorkflows, writeGraphWorkflow, deleteWorkflow } from '../src/core/workflows.mjs';
 import { resolveShapeRequest } from '../src/core/shape/run.mjs';
 import { autoCandidates } from '../src/core/auto/match.mjs';
@@ -160,6 +161,37 @@ test('slice variants: `n_task.task` feeds four takers via ws1–ws4 and validate
   }
 });
 
+const DEV_SLICE_GRAPHS = JSON.parse(readFileSync(new URL('./fixtures/shape-slice-graphs-dev.json', import.meta.url), 'utf8'));
+
+test('C2: the frozen slice templates deep-equal the checkpoint fixture (no Test writer, w9 at 3 cycles)', () => {
+  assert.deepEqual(JSON.parse(JSON.stringify(GRAPH_SHAPE_SLICE_REQ_WORKFLOW)), DEV_SLICE_GRAPHS.wf_shape_slice_req);
+  assert.deepEqual(JSON.parse(JSON.stringify(GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW)), DEV_SLICE_GRAPHS.wf_shape_ux_slice_req);
+  for (const wf of [GRAPH_SHAPE_SLICE_REQ_WORKFLOW, GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW]) {
+    assert.equal(node(wf, 'n_tests'), undefined);
+    assert.equal(wf.wires.find((w) => w.id === 'w9').config.maxCycles, 3);
+  }
+});
+
+test('C2: withTestWriter adds n_tests between refine and impl and validates with zero warnings', () => {
+  const ports = registryPortsFn(loadAgentRegistry(undefined, { userAgentsDir: null }));
+  for (const wf of [GRAPH_SHAPE_SLICE_REQ_WORKFLOW, GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW]) {
+    const before = JSON.stringify(wf);
+    const g = withTestWriter(wf);
+    assert.equal(JSON.stringify(wf), before, 'the input is not changed');
+    assert.equal(g.id, wf.id);
+    const t = node(g, 'n_tests');
+    assert.equal(t.kind, 'agent');
+    assert.equal(t.key, TEST_WRITER_AGENT_KEY);
+    assert.equal(t.config?.extraInputs, undefined, 'requirements is the sidecar\'s own input');
+    assert.deepEqual(node(g, 'n_impl').config.extraInputs, [{ id: 'tests', type: 'md' }]);
+    assert.deepEqual(g.wires.slice(wf.wires.length).map(edge),
+      ['wt1 n_refine.plan->n_tests.plan', 'wt2 n_task.task->n_tests.requirements', 'wt3 n_tests.tests->n_impl.tests']);
+    const v = validateGraph(g, ports);
+    assert.deepEqual(v.errors, [], wf.id);
+    assert.deepEqual(v.warnings, [], wf.id);
+  }
+});
+
 const REQ_SLICE = { ...SLICE, outline: { ...SLICE.outline, slices: SLICE.outline.slices.map((s, i) => ({ ...s, requirements: i ? ['R-qa-1'] : ['R-po-1'] })),
   agreed: [{ id: 'R-po-1', text: 'a' }, { id: 'R-qa-1', text: 'b' }], leftOut: [] } };
 
@@ -174,6 +206,18 @@ test('slice ticket resolution: ids → wf_shape_slice_req (ux → wf_shape_ux_sl
     assert.deepEqual(fire({ size: 'large', slice: SLICE }, id), { ok: false, error: `${id} runs only as a slice of a feature with agreed requirements` });
   }
   assert.equal(fire({ size: 'large', slice: REQ_SLICE }, 'wf_shape_slice_req').workflowId, 'wf_shape_slice_req');
+});
+
+test('a named slice variant with `replaces` (a re-plan that carries requirements, internal only) resolves to itself, the UX twin with ux', () => {
+  const ask = (shape, workflowId, internal = true) => resolveShapeRequest({ shape, workflowId }, { internal });
+  const r = ask({ perspectives: ['product'], slices: 'auto', replaces: 'feat_1' }, 'wf_shape_slice_req');
+  assert.deepEqual([r.ok, r.workflowId, r.shape.replaces], [true, 'wf_shape_slice_req', 'feat_1']);
+  assert.equal(ask({ perspectives: ['ux'], slices: 'auto', replaces: 'feat_1' }, 'wf_shape_ux_slice_req').workflowId, 'wf_shape_ux_slice_req');
+  assert.equal(ask({ perspectives: ['ux'], slices: 'auto', replaces: 'feat_1' }, 'wf_shape_slice_req').workflowId, 'wf_shape_ux_slice_req');
+  assert.equal(ask({ slices: 'auto', replaces: 'feat_1' }, 'wf_shape').workflowId, 'wf_shape', 'not named: today\'s');
+  assert.equal(ask({ slices: 'auto', replaces: 'feat_1' }, 'wf_shape_slice_req', false).error, 'shape has unknown field(s): replaces');
+  assert.equal(ask({ size: 'large', replaces: 'feat_1', slice: SLICE }, 'wf_shape_slice_req').error,
+    'wf_shape_slice_req runs only as a slice of a feature with agreed requirements');
 });
 
 test('slice variants are reserved: readWorkflow returns them with the flag off, deleteWorkflow refuses them, listWorkflows hides them', async () => {
@@ -208,4 +252,44 @@ test('the requirements refiner asks for persona and reason, real questions, and 
   assert.match(text, /^3\. .*In a `conflicts` entry, `options` follow the order of `findings`: option 1 is the side of the first finding\./m);
   assert.match(text, /^3\. .*Do not also list that conflict in the decisions file\./m);
   assert.doesNotMatch(text, /When you turn a conflict into a decision/);
+});
+
+// Small runs B3 (D2, D7): Compliance as a perspective or a lead only with the flag.
+test('resolveShapeRequest: compliance as a perspective or as shape.lead is refused off and admitted on', () => {
+  const off = resolveShapeRequest({ shape: { perspectives: ['compliance'] } });
+  assert.equal(off.ok, false);
+  assert.match(off.error, /unknown perspective\(s\): compliance/);
+  const on = resolveShapeRequest({ shape: { perspectives: ['compliance'] } }, { smallRuns: true });
+  assert.equal(on.ok, true);
+  assert.deepEqual(on.shape.perspectives, ['product', 'compliance']);
+  const leadOff = resolveShapeRequest({ shape: { lead: 'compliance' } });
+  assert.equal(leadOff.ok, false);
+  assert.doesNotMatch(leadOff.error, /compliance, /);
+  assert.equal(leadOff.error, 'shape.lead must be one of product, architect, ux, qa, security, devops');
+  const leadOn = resolveShapeRequest({ shape: { lead: 'compliance', size: 'large' } }, { smallRuns: true });
+  assert.equal(leadOn.ok, true);
+  assert.equal(leadOn.shape.lead, 'compliance');
+  assert.ok(leadOn.shape.perspectives.includes('compliance'));
+  assert.equal(leadOn.workflowId, 'wf_shape_req');
+});
+
+// Small runs B3, owner direction: POST /api/run's shape fills a missing lead from the saved profile, else Product.
+test('resolveShapeStart: no lead takes the saved lead, else Product; a given lead, a slice or the flag off keep today\'s result', async () => {
+  const { resolveShapeStart } = await import('../src/core/shape/run.mjs');
+  const asked = [];
+  const deps = (on, lead) => ({ smallRunsOn: () => on, profileFor: (person, opts) => { asked.push([person, opts]); return { lead }; } });
+  const saved = resolveShapeStart({ shape: { size: 'large' } }, { person: 'ana', deps: deps(true, 'ux') });
+  assert.equal(saved.shape.lead, 'ux');
+  assert.equal(saved.workflowId, 'wf_shape_ux_req', 'the lead joins the perspectives, as a card lead does');
+  assert.deepEqual(asked, [['ana', { smallRuns: true }]]);
+  assert.equal(resolveShapeStart({ shape: { size: 'large' } }, { deps: deps(true, null) }).shape.lead, 'product');
+  assert.equal(resolveShapeStart({ shape: { size: 'large', lead: 'qa' } }, { deps: deps(true, 'ux') }).shape.lead, 'qa');
+  assert.equal(resolveShapeStart({ shape: { size: 'large' } }, { deps: deps(false, 'ux') }).shape.lead, undefined);
+  assert.deepEqual(resolveShapeStart({ shape: { size: 'large' } }, { deps: deps(false, 'ux') }), resolveShapeRequest({ shape: { size: 'large' } }));
+  assert.equal(resolveShapeStart({ shape: { perspectives: ['nope'] } }, { deps: deps(true, 'ux') }).ok, false);
+  assert.equal(asked.length, 2, 'a given lead or the flag off reads no profile');
+  const small = resolveShapeStart({ shape: { size: 'small' } }, { deps: deps(true, 'security') });
+  assert.deepEqual(small, resolveShapeRequest({ shape: { size: 'small' } }, { smallRuns: true }), 'a run with no Requirements step keeps its shape');
+  assert.ok(!small.shape.perspectives.includes('security'), 'and gains no reviewer');
+  assert.equal(asked.length, 2, 'a run with no Requirements step reads no profile');
 });

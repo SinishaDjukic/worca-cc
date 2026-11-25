@@ -122,6 +122,17 @@ test('group: a held current member reads "Run 3 of 3 · waiting", never the stal
   assert.ok(!g.actions.includes('start-now'));
 });
 
+test('group: hold keeps a ready group waiting: the reason is its line, no action; any other state and no hold are unchanged', () => {
+  const REASON = 'R-ops-1 is owned by no run and confirmed by no person';
+  const g = groupModel({ kind: 'feature', members: [DONE, DONE], hold: REASON }, OPTS);
+  assert.deepEqual([g.state, g.word, g.dot, g.line, g.actions, g.hold], ['ready', 'Waiting', 'grey-ring', REASON, [], REASON]);
+  assert.equal('hold' in groupModel({ kind: 'feature', members: [DONE, DONE] }, OPTS), false);
+  const live = { kind: 'feature', members: [DONE, R(inBuild)] };
+  assert.deepEqual(groupModel({ ...live, hold: REASON }, OPTS), groupModel(live, OPTS));
+  const open = { kind: 'feature', members: [DONE, DONE], pr: PR };
+  assert.deepEqual(groupModel({ ...open, hold: REASON }, OPTS), groupModel(open, OPTS));
+});
+
 test('group: shipped as one PR reads "In review · 1 PR"; count "2/3" leaves Planning out; the bar counts Planning', () => {
   const one = groupModel({ kind: 'feature', members: [DONE, DONE, DONE], pr: PR }, OPTS);
   assert.equal(one.line, 'In review · 1 PR');

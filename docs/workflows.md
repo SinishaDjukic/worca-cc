@@ -158,10 +158,21 @@ For a plugin you can also pick **Marketplace**. Worca then opens a pull request 
 team marketplace. It uses one branch, `worca/plugin/<name>`, is validated with the marketplace's own
 discovery, and comes from a fork when you can't push.
 
+With the flag `workflowTests` on and at least one saved [version](workflow-tests.md#versions), Export has a **Version**
+field: it starts on the version new runs use, and can export another version or **Your draft**. An exported skill or
+plugin keeps the workflow's name whichever version it holds.
+
 The CLI does the same with `worca workflow list`, `worca workflow export <id> --format json|claude|plugin` and
 `worca workflow import <file>`.
 
 ![The Workflows view with the built-in Default pipeline on the full-screen canvas — Task, Clarify, Plan, Refine Plan, Implementation, Review Implementation and End wired port to port, amber loop wires swooping back under the reviewers with ≤3 pills — beside the Library open on its Workflows tab, its architecture, coding, presentation, video and shared folders with coding opened on Default, with the black + and the composer chat pill at the bottom and Auto-layout and the zoom menu bottom right](screenshots/composer.png)
+
+### Tests (Labs)
+
+Behind the flag `workflowTests` (Settings › Labs), a workflow also has **Tests** and **Versions** pages. Save a version,
+choose which one new runs use, keep real requests as examples, then **Test a version**: Worca tries every example 3 times
+on two versions, and Compare shows what got better or worse. Your criteria, written in your own words, are checked by
+AI on every try. See [Workflow tests](workflow-tests.md).
 
 ## Presentations
 

@@ -12,6 +12,7 @@ import {
   buildAgentPrompt, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS,
 } from '../src/core/graph/executor.mjs';
 import { BUILTIN_KEYS, makeCtxFor } from './helpers/prompt-ctx.mjs';
+import { slicingBlock } from '../src/shared/shape/slices.mjs';
 
 useTempHome(after);
 
@@ -166,3 +167,14 @@ test('a slice 2 planner prompt lists slice 1\'s and slice 3\'s agreed ids', asyn
   for (const id of ids) assert.ok(prompt.includes(`\`${id}\``), id);
   assert.match(prompt, /start at `R-po-2`, `R-qa-3`, `R-arch-4`/);
 });
+
+test("A3: shapeSlicing {smallRuns:true, care:'thorough'} says at most 20 and 1 to 2; {file} alone is dev's block", () => {
+  const on = buildAgentPrompt({ ...ctxFor('planner'), shapeSlicing: { file: FILE, smallRuns: true, care: 'thorough' } });
+  assert.ok(on.includes('at most 20'));
+  assert.ok(on.includes('each owns 1 to 2 agreed requirements'));
+  assert.ok(!on.includes('never more than 8'));
+  const off = buildAgentPrompt({ ...ctxFor('planner'), shapeSlicing: { file: FILE } });
+  assert.ok(off.includes(slicingBlock({ file: FILE })));
+  assert.ok(off.includes('never more than 8'));
+});
+

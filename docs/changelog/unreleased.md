@@ -123,6 +123,117 @@ Pull requests (add each number when it opens):
 
 - Requirements: attach Ready features without starting them
 
+## Workflow versions (Labs)
+
+**Save a workflow as a version, choose which one new runs use, and go back.**
+
+Workflow versions (Labs, flag `workflowTests`): Save version on a workflow, choose which version new runs use, see what changed, and restore any of the last 50 saves. Every save keeps the workflow as it was just before; a version keeps the workflow's steps and settings, and runs today's agent and script text from the Library.
+
+Export can export the version in use or your draft: the Export dialog's Version field picks which, and starts on the version new runs use. An exported skill or plugin keeps the workflow's name, so exporting an older version updates it.
+
+Chips: Save version · Versions · Use for new runs · Restore · experimental: turn it on in Settings › Labs
+
+Read it: [Workflow tests › Versions](../workflow-tests.md#versions)
+
+Pull requests (add each number when it opens):
+
+- Workflow versions (#979)
+
+## Workflow tests (Labs)
+
+**Try a new version of a workflow on real examples, and see what got better or worse.**
+
+Workflow tests (Labs, flag `workflowTests`) add a Tests page to a workflow.
+- Keep real requests as examples, with their files and the answers to Worca's questions. Add one from a past run, or write one.
+- Say what a good result needs: the Basics (no error, no help needed, a cost limit, how often it is sent back for fixes) and automatic checks counted exactly, without AI (length, sections, must or must not mention, a file, a Library script).
+- Test a version: Worca tries every example 3 times on it and on the version you compare with, reuses earlier results when nothing changed, and stops at the cost limit you set.
+- Compare shows the tries passed, the cost and time per try, what got better or worse per example, and each example side by side.
+- Connectors: by default a test's tries use stand-ins for your connectors, so nothing is posted or sent, and one example's page shows what would have been sent. Choose Real to use your real connectors.
+- A test of a workflow runs one at a time; while it runs, Test a version and Try your draft once now wait.
+- Their runs stay out of the Runs list, Statistics and team metrics, but count in the spending limit.
+
+Chips: Tests · Test a version · Compare · experimental: turn it on in Settings › Labs
+
+Read it: [Workflow tests](../workflow-tests.md)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests (#979)
+
+## Workflow tests on a project (Labs)
+
+**Test workflows that change a project's code, without touching your folder.**
+
+- An example can name a Git project and a start point: a commit, kept the same until you change it, so two versions start from exactly the same code. Keep your changes that are not committed yet with it if you want. Worca says when the project has moved on, and Start from the latest moves the example.
+- Each try works in Worca's own copy of the project. Your folder and your branches are never touched, and the copy of each try is deleted after its checks. The list of changes and the full diff stay to look at.
+- Before each try, Worca can run a setup command (filled in from the project's setup, such as `npm ci`). If it fails, the test stops and no try counts as failed.
+- A new automatic check: The command passes (such as `npm test`), with its summary line. Text checks can read a file of the project.
+- Pushes, pull requests and issues are stopped, with any engine; common publish commands are stopped with Claude Code. The attempts Worca sees are listed under Would have sent. It is not a network block yet: a program's own web calls, a publish that signs in with a token kept in a file, a publish run from inside a script, or a push or web call with a token the agent reads from a file or from git's settings are not stopped.
+- Test a version says how much disk and time a test needs, and refuses to start when the disk is too full.
+- Add from a past run takes project runs too: the example starts where the run started.
+
+Chips: Tests · Where it starts · The command passes · experimental: turn it on in Settings › Labs
+
+Read it: [Workflow tests › Tests on a project](../workflow-tests.md#tests-on-a-project)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests on a project (#979)
+
+## Workflow tests: plugins off, file checks, before and after (Labs)
+
+**Tests of a workflow are no longer shaped by your own Claude Code setup, and they say what a change did to the project's tests.**
+
+- With Pretend connectors, a try loads none of your personal Claude Code plugins, skills, agents or hooks, and none of the
+  project's own hooks or plugins. The project's instructions (CLAUDE.md, agents, skills) stay on. Your sign-in and your own deny
+  rules and sandbox are carried over, and nothing else from your settings.
+- New automatic checks for a project: Changes only files under …, Leaves these files unchanged (names or patterns such as
+  `test/**`) and Changes at most N files.
+- The command passes now also runs once on the start point, before the change. Side by side shows which tests the change made
+  pass, which passed before and still pass, and which it broke (for TAP, node:test, pytest, Jest and Vitest output; other
+  commands are compared by whether they passed). Results on a start point are kept for a week.
+- The command passes can instead be met when the change breaks nothing that passed before: useful when some tests already
+  fail on the start point. A test that is skipped or deleted now, or fewer passing tests, counts as broken even when the
+  command passes.
+- A question Worca answered with its own pick (the example says "Worca picks a sensible answer") now meets Finishes without
+  needing help. A review loop that runs out of rounds fails Finishes without an error.
+- Compare says in short what changed and shows a difference only when it is big enough to trust: cost at least 20 % and
+  $0.01 a try, time at least 20 % and 10 s, sent back at least 0.5 a try, and at least 2 finished tries on each side.
+  Otherwise it shows no difference. It also shows the questions Worca asked in each try.
+- Smaller changes: a Library script check counts only when the script gives a verdict; saving a draft that is the same as a
+  version does not make a new version; Try N more asks first; a note on what an example needs to say; "Save and stop the
+  test?" and "Run it once" say what they do; in mock mode the page says so.
+- Not covered yet: it is not a network block, so do not keep forge logins in `~/.netrc` (`_netrc` on Windows) while you
+  test; a flaky test can show as broken; test names are read only from TAP, node:test, pytest, Jest and Vitest output.
+  The full list is on the page.
+
+Chips: Tests · Pretend · The command passes · experimental: turn it on in Settings › Labs
+
+Read it: [Workflow tests › Tests on a project](../workflow-tests.md#tests-on-a-project)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests: plugins off, file checks, before and after (#979)
+
+## Your criteria, checked by Worca (Labs)
+
+**Say in your own words what a good result needs, and Worca checks it on every try.**
+
+An example can list your criteria, sentences a good result makes true, and an AI model you pick checks each one on every
+try, with its reason and a quote from the result as proof; new exact checks (Every quote is in the files, Numbers come from
+the files, No personal data, Links work) need no AI. You answer Agree or Disagree, and Check the checker breaks a good
+result on purpose to see whether Worca notices, so How reliable is Worca's checking can show which criteria you can trust;
+a criterion Worca judges unreliably is shown but never decides better or worse. The AI checks count in the spending limit
+(those made for a test also in its own cost limit), and "Checked with" says who pays for them, as far as Worca can tell.
+
+Chips: Your criteria · Check the checker · By criterion · experimental: turn it on in Settings › Labs
+
+Read it: [Workflow tests › Your criteria](../workflow-tests.md#your-criteria) · [Costs](../costs.md#hard-limits)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests: your criteria (#979)
+
 ## Choose who interviews, per feature
 
 **Pick the harness, model and effort for a feature's Requirements.**

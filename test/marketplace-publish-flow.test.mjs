@@ -373,3 +373,31 @@ test('credentials never surface: a token in git/gh stderr is scrubbed from the e
   stub({ bare, fork, over: { createPr: async () => ({ ok: false, error: 'HTTP 401 for https://x-access-token:ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345@github.com/acme/market' }) } });
   await assert.rejects(exportWorkflowToMarketplace({ workflowId, marketplaceId: 'acme' }), (e) => e.code === 'PR_FAILED' && !/ghp_|x-access-token:/.test(e.message));
 });
+
+test('D17: use reaches the plugin build — version 1 bundles the agent the draft dropped; the draft (default) does not', async () => {
+  const { createVersion } = await import('../src/core/workflow-versions.mjs');
+  const node = (id, kind, key, x) => ({ id, kind, ...(key ? { key } : {}), x, y: 100, config: {} });
+  const w = (id, a, ap, b, bp) => ({ id, from: { node: a, port: ap }, to: { node: b, port: bp } });
+  const v1 = await writeGraphWorkflow({ name: 'Versioned Flow', domain: 'coding',
+    nodes: [node('n_task', 'task', null, 0), node('n_plan', 'agent', 'planner', 120), node('n_shared', 'agent', 'sharedAgent', 240), node('n_end', 'end', null, 360)],
+    wires: [w('w1', 'n_task', 'task', 'n_plan', 'task'), w('w2', 'n_plan', 'plan', 'n_shared', 'task'), w('w3', 'n_shared', 'out', 'n_end', 'result')] });
+  await createVersion(v1.id);
+  // The draft drops the user agent and is renamed: the plugin (its name, its PR branch) stays the workflow's.
+  await writeGraphWorkflow({ id: v1.id, name: 'Renamed Flow', domain: 'coding',
+    nodes: [node('n_task', 'task', null, 0), node('n_plan', 'agent', 'planner', 120), node('n_end', 'end', null, 360)],
+    wires: [w('w1', 'n_task', 'task', 'n_plan', 'task'), w('w2', 'n_plan', 'plan', 'n_end', 'result')] });
+  const AGENT = 'plugins/versioned-flow/agents/sharedAgent.md';
+  const dry = async (extra) => {
+    const { bare, fork } = await makeMarket();
+    stub({ bare, fork });
+    return exportWorkflowToMarketplace({ workflowId: v1.id, marketplaceId: 'acme', pluginName: 'versioned-flow', dryRun: true, ...extra });
+  };
+  assert.ok((await dry({ use: 1 })).files.created.includes(AGENT), 'version 1 has the user agent');
+  assert.equal((await dry({})).files.created.includes(AGENT), false, 'the draft no longer has it');
+  for (const use of ['abc', 'live']) await assert.rejects(dry({ use }), (e) => e.code === 'BAD_REQUEST');
+  await assert.rejects(dry({ use: 7 }), (e) => e.code === 'NOT_FOUND');
+  for (const use of [1, 'draft']) {
+    const r = await dry({ use, pluginName: undefined });
+    assert.deepEqual([r.name, r.branch], ['renamed-flow', 'worca/plugin/renamed-flow'], `use ${use}: named after the workflow, never the version`);
+  }
+});

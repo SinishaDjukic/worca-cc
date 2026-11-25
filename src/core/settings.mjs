@@ -52,7 +52,7 @@
 // is deliberately no in-module cache: worcaHome() is read fresh per operation,
 // so a saved root takes effect for new runs/listing without a server restart.
 
-import { isAnswererLead, ANSWERER_LEAD_KEYS } from '../shared/answerer.mjs';
+import { isAnswererLead, answererLeadKeys } from '../shared/answerer.mjs';
 import { CHAT_SOURCE_BRANCH_MODES, SOURCE_BRANCH_TEXT, normalizeChatSourceBranch } from '../shared/chat-source-branch.mjs';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { suggestModelHandle } from '../shared/connections.mjs';
@@ -3431,22 +3431,23 @@ function answererMap(settings) {
   return Object.assign(Object.create(null), m && typeof m === 'object' && !Array.isArray(m) ? m : {});
 }
 
-/** The person's profile, `{ lead }` (null when never set or unknown). Never throws. */
-export function answererProfileFor(person) {
+/** The person's profile, `{ lead }` (null when never set or unknown). `smallRuns` (the live flag) admits a Compliance
+ *  lead; off, a stored one reads null. Never throws. */
+export function answererProfileFor(person, { smallRuns = false } = {}) {
   if (homeGuarded()) return { lead: null };
   const lead = answererMap(readSettings())[pinsPersonKey(person)]?.lead;
-  return { lead: isAnswererLead(lead) ? lead : null };
+  return { lead: isAnswererLead(lead, { smallRuns }) ? lead : null };
 }
 
-/** Set the person's lead. Throws { code: 'BAD_LEAD' } before any write. */
-export async function setAnswererProfileFor(person, { lead } = {}) {
-  if (!isAnswererLead(lead)) throw Object.assign(new Error(`Pick one of: ${ANSWERER_LEAD_KEYS.join(', ')}`), { code: 'BAD_LEAD' });
+/** Set the person's lead. Throws { code: 'BAD_LEAD' } before any write, naming the leads `smallRuns` allows. */
+export async function setAnswererProfileFor(person, { lead } = {}, { smallRuns = false } = {}) {
+  if (!isAnswererLead(lead, { smallRuns })) throw Object.assign(new Error(`Pick one of: ${answererLeadKeys({ smallRuns }).join(', ')}`), { code: 'BAD_LEAD' });
   const settings = readSettings();
   const map = answererMap(settings);
   map[pinsPersonKey(person)] = { lead };
   settings.answererProfiles = map;
   await persistSettings(settings);
-  return answererProfileFor(person);
+  return answererProfileFor(person, { smallRuns });
 }
 
 /** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */

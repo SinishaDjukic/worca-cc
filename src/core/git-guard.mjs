@@ -330,23 +330,31 @@ const listed = (key, cwd, env, startedAt, stdout, err, stderr) => {
  * overrides above. Rejects (code GIT_CONFIG_REFUSED / GIT_CONFIG_UNREADABLE) when the call must not run.
  * `hooks: true` keeps the repository's hooks (see the header); every other override still applies.
  * `timeout` (ms) is the caller's budget for its whole git call: the listing never takes longer than it.
+ * On Windows a listing that meets another process replacing the config file (Permission denied, unable to access) is
+ * read once more after LIST_RETRY_MS (U-T1, F1: an agent's `git config …` in a sibling checkout writes the shared config).
+ * `execFile` and `platform` are seams for the tests.
  */
-export function guardedGitEnv(cwd, { env = process.env, hooks = false, timeout = 0 } = {}) {
-  const key = cwd ? memoKey(cwd, env) : null;
+export async function guardedGitEnv(cwd, { env = process.env, hooks = false, timeout = 0, execFile: exec = execFile, platform = process.platform } = {}) {
+  const key = cwd && exec === execFile ? memoKey(cwd, env) : null;   // a test's execFile seam is never memoized
   const hit = key && memoGet(key);
-  if (hit) {
-    try { return Promise.resolve(finish(cwd, env, { hooks }, { list: hit })); } catch (e) { return Promise.reject(e); }
-  }
-  const startedAt = Date.now();
-  return new Promise((resolve, reject) => {
-    execFile('git', LIST_ARGS, { cwd, env, timeout: listTimeout(timeout), killSignal: 'SIGKILL', windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        try { resolve(finish(cwd, env, { hooks }, key ? listed(key, cwd, env, startedAt, stdout, err, stderr)
-          : { stdout: err ? '' : stdout, error: err ? listFailure(err, stderr) : null })); }
-        catch (e) { reject(e); }
-      });
+  if (hit) return finish(cwd, env, { hooks }, { list: hit });
+  const list = () => new Promise((done) => {
+    exec('git', LIST_ARGS, { cwd, env, timeout: listTimeout(timeout), killSignal: 'SIGKILL', windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
+      (err, stdout, stderr) => done({ err, stdout, stderr }));
   });
+  let startedAt = Date.now();
+  let r = await list();
+  if (r.err && platform === 'win32' && LIST_BUSY.test(String(r.stderr || ''))) {
+    await new Promise((res) => setTimeout(res, LIST_RETRY_MS));
+    startedAt = Date.now();
+    r = await list();
+  }
+  return finish(cwd, env, { hooks }, key ? listed(key, cwd, env, startedAt, r.stdout, r.err, r.stderr)
+    : { stdout: r.err ? '' : r.stdout, error: r.err ? listFailure(r.err, r.stderr) : null });
 }
+/** What git says when the config file is being replaced under it (Windows), and the wait before the one retry. */
+const LIST_BUSY = /Permission denied|unable to access/i;
+const LIST_RETRY_MS = 150;
 
 /** guardedGitEnv, synchronously (for the sync git callers). Throws instead of rejecting. */
 export function guardedGitEnvSync(cwd, { env = process.env, hooks = false, timeout = 0 } = {}) {

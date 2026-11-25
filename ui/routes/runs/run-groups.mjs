@@ -8,7 +8,7 @@ import { PR_BODY_MAX } from '../../../src/core/pr-description.mjs';
 import { RunGroupError, addRunsToGroup, createRunGroup, listRunGroups, removeFromGroup, restoreRunGroups, skipError } from '../../../src/core/run-groups.mjs';
 import { rememberUndo, takeUndo } from '../../../src/core/undo-tokens.mjs';
 import { suggestBranchName } from '../../../src/core/worktree.mjs';
-import { NO_PR_HOST, PR_TITLE_MAX, badRequest, createRunPr, emitChanged, livePr, openMemberPr, prTargetFor, runGroupIds, settleShipped, shipChainNow } from '../../server.mjs';
+import { NO_PR_HOST, PR_TITLE_MAX, badRequest, createRunPr, emitChanged, livePr, liveSliceOf, openMemberPr, prTargetFor, runGroupIds, settleShipped, shipChainNow } from '../../server.mjs';
 
 export function register(app) {
 app.post('/api/chains/:id/ship', async (req, res) => {
@@ -142,7 +142,7 @@ app.post('/api/run-groups/:id/ship', async (req, res) => {
 });
 
 const groupError = (res, err) => (err instanceof RunGroupError ? res.status(err.status).json({ error: err.message, code: err.code }) : res.status(500).json({ error: String(err.message || err) }));
-app.get('/api/run-groups', (req, res) => { try { res.json({ groups: listRunGroups() }); } catch (err) { groupError(res, err); } });
+app.get('/api/run-groups', (req, res) => { try { res.json({ groups: listRunGroups({ live: liveSliceOf }) }); } catch (err) { groupError(res, err); } });
 app.post('/api/run-groups', (req, res) => {
   try {
     const ids = runGroupIds(res, req.body);

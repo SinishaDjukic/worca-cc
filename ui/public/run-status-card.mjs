@@ -56,11 +56,14 @@ export function statusText(m, { stageBar = false } = {}) {
   return { word, line, text, head, detail: rest.join(SEP) };
 }
 
+/** The kind word of a feature (Shaper): kindLabel's `Feature · N runs` and, B1, the one card's chip. */
+export const FEATURE_KIND = 'Feature';
+
 /** D10: the kind chip. `row` is runs-list.mjs groupRow's output, or null for a single run. */
 export function kindLabel(row) {
   if (!row || row.kind !== 'chain' || !row.model) return 'Run';
   const n = row.model.count.total;
-  const kind = row.groupKind === 'feature' ? 'Feature' : row.groupKind === 'user' ? 'Group' : 'Chain';
+  const kind = row.groupKind === 'feature' ? FEATURE_KIND : row.groupKind === 'user' ? 'Group' : 'Chain';
   return `${kind} · ${n} run${n === 1 ? '' : 's'}`;
 }
 
@@ -218,10 +221,11 @@ export function memberStatusText(m) {
 /** D11, D13: a group's member rows (Planning first, unnumbered), the same table on the group page and the chat card
  *  (A13, spec §3.4): each row is title over status, then PR, cost and a quiet chevron, with the title link stretched
  *  over the row. `checks` (the chat card's feature) maps a member's key to its Requirements check: that row gets the
- *  check's fold under its status line. */
-export function renderMemberRows(doc, row, { checks } = {}) {
+ *  check's fold under its status line. `oneLine` (Shaper's one card): the status sits right of the title on the same
+ *  line, as a short state (`.run-member-state`), with no second line under the title. */
+export function renderMemberRows(doc, row, { checks, oneLine = false, shortState = null } = {}) {
   const ol = doc.createElement('ol');
-  ol.className = 'run-members is-table';
+  ol.className = oneLine ? 'run-members is-table is-one-line' : 'run-members is-table';
   const items = [...(row.planning && row.planning.model ? [{ ...row.planning, isPlanning: true }] : []), ...(row.members || [])];
   for (const mb of items) {
     const m = mb.model;
@@ -236,7 +240,9 @@ export function renderMemberRows(doc, row, { checks } = {}) {
     const title = textEl(doc, 'a', 'run-member-title', name);
     title.setAttribute('href', mb.href || '#runs');
     title.title = name;
-    const line = textEl(doc, 'span', 'run-member-line', memberStatusText(m));
+    // Small runs C2 (D13): a marked card's `shortState(mb)` names a member's state in one short word; null keeps dev's.
+    const said = typeof shortState === 'function' && !mb.isPlanning ? shortState(mb) : null;
+    const line = textEl(doc, 'span', oneLine ? 'run-member-state' : 'run-member-line', typeof said === 'string' ? said : memberStatusText(m));
     const pr = textEl(doc, 'span', 'run-member-pr', '');
     if (mb.adhoc) pr.append(textEl(doc, 'span', 'runs-indep', 'Independent'));
     if (m.pr && !m.pr.pending) pr.append(prChip(doc, m.pr, { link: true }));
@@ -255,8 +261,9 @@ export function renderMemberRows(doc, row, { checks } = {}) {
   return ol;
 }
 
-/** D17: the group page's one ship line (a feature, or a chain in the one ship flow). */
-export function groupShipLine(row) {
+/** D17: the group page's one ship line (a feature, or a chain in the one ship flow). `stackedOnly`: a small-runs
+ *  feature ships a PR per run (One answers 409 STACKED_ONLY), so the line never offers One. */
+export function groupShipLine(row, { stackedOnly = false } = {}) {
   if (!row || !['feature', 'chain', 'user'].includes(row.groupKind) || !row.model) return '';
   const { done, total } = row.model.count;
   const native = (row.members || []).filter((mb) => !mb.adhoc);
@@ -268,7 +275,7 @@ export function groupShipLine(row) {
   }
   // A run that already has its own PR disables One in the dialog (groupShipChoice), so the line stops offering it.
   // A feature's legacy slice draft is not such a PR.
-  const owned = (row.members || []).some((mb) => { const pr = mb.model && mb.model.pr;
+  const owned = stackedOnly || (row.members || []).some((mb) => { const pr = mb.model && mb.model.pr;
     return !!(pr && pr.url && pr.id !== 'closed' && !(row.groupKind === 'feature' && pr.id === 'draft')); });
   // Slice 3: a user group's runs are independent (every member is ad hoc): any merge order; One only when they combine.
   if (row.groupKind === 'user') {
