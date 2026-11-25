@@ -1,7 +1,10 @@
 <!-- PRs target `dev`. See CONTRIBUTING.md → Pull request workflow. -->
 
 ## What and why
-<!-- The user-facing change in plain words. Link the issue: Closes #123 -->
+<!-- The user-facing change in plain words. -->
+
+<!-- Required: replace the number with the issue this PR belongs to. Use "Refs" instead of "Closes" to keep the issue open. -->
+Closes #
 
 ## Changes
 -
