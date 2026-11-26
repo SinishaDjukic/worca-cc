@@ -243,6 +243,7 @@
   "GET /api/scripts/:key": {"class": "probe", "reason": "key regex/readScript 404, try/catch"},
   "GET /api/scripts/bench/:benchId/output/:port": {"class": "probe", "reason": "in-memory bench lookup, 404 when missing"},
   "GET /api/scripts/runtimes": {"class": "probe", "reason": "python probe never rejects, 60 s cached (local spawn, short)"},
+  "GET /api/security/posture": {"class": "probe", "reason": "read-only: env and settings, the proxy status (a sidecar call times out); never docker"},
   "GET /api/sets/teams/:home/skills/:skillId/consent": {"class": "probe", "reason": "mcpHome/skill param validation, then cached consent; try/catch"},
   "GET /api/settings": {"class": "probe", "reason": "local settings state read"},
   "GET /api/setup/apply/:id": {"class": "probe", "reason": "in-memory job lookup, 404 when missing"},

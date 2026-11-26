@@ -136,3 +136,20 @@ test('a container removed mid-run fails the run cleanly (gone), and the sweep re
   assert.equal(fake.containers.has(dead.id), false);
   await client.remove(live.id);
 });
+
+test('a first-use image build shows on the run as execEnvPreparing image-build, cleared once the sandbox starts', POSIX, async () => {
+  const building = createFakeDocker({ root: tmp('worca-docker-fake-build-'), missingImages: true });
+  _setDockerRunnerForTests(building.runner);
+  try {
+    _resetSlotsForTests();
+    const orch = createOrchestrator({ projectDir: freshRepo(), prompt: 'docker task', claude: { mock: true }, execEnv: 'docker' });
+    const seen = [];
+    orch.on('state', (st) => { if (st.execEnvPreparing) seen.push(st.execEnvPreparing); });
+    answerAll(orch);
+    const r = await orch.run();
+    assert.equal(r.status, 'done', r.error);
+    assert.ok(seen.includes('image-build'), 'the build was shown');
+    assert.equal(building.calls.filter((c) => c[0] === 'build').length, 1);
+    assert.equal(orch.getState().execEnvPreparing, undefined, 'cleared after the build');
+  } finally { _setDockerRunnerForTests(fake.runner); }
+});

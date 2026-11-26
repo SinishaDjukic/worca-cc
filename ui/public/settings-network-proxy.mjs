@@ -132,10 +132,15 @@ function build(doc, body) {
   setup.type = 'button';
   setup.id = 'npSetup';
   setup.hidden = true;
-  body.append(drows, actions, basicNote, where, status, setup, results);
+  // Sidecar unreachable only: read the status again (nothing else can work until the sidecar answers).
+  const retry = make(doc, 'button', 'btn btn-sm np-retry', 'Retry');
+  retry.type = 'button';
+  retry.id = 'npRetry';
+  retry.hidden = true;
+  body.append(drows, actions, basicNote, where, status, setup, retry, results);
   portNote.textContent = `${PORT_EMPTY_NOTE} ${PORT_SWITCH_NOTE}`;
   return { enabled, host, port, auth, noProxy, fixedPort, connectS, authS, idleS, domain, user, password, save, login, logout, test, detect, basicNote, status, setup, results,
-    fixedRow, loginRows, where };
+    fixedRow, loginRows, where, retry };
 }
 
 function fill(f, st) {
@@ -169,6 +174,18 @@ export function sidecarMode(f, st) {
     f.where.hidden = !side;
     f.where.textContent = managed ? (st.managedNote || '') : side ? SIDECAR_NOTE : '';
   }
+  unreachableMode(f, st);
+}
+
+/** The egress sidecar does not answer (`st.unreachable`): every button would fail the same way, so they are off and
+ *  Retry reads the status again. The status line (the server's) says what is wrong. */
+export function unreachableMode(f, st) {
+  const down = !!(st && st.sidecar && st.unreachable);
+  f.down = down;
+  for (const b of [f.save, f.logout, f.test, f.detect]) if (b) b.disabled = down;
+  if (f.login) f.login.disabled = down || !!PASSWORD_NOTES[f.auth.value];
+  if (f.retry) f.retry.hidden = !down;
+  if (f.where && down) f.where.hidden = true;   // "the sidecar holds the login" is beside the point while it is down
 }
 
 /** The server's state line only: the inputs keep what the person typed (after a Test, ux-1-1). */
@@ -182,7 +199,7 @@ function fillStatus(f, st) {
 /** D5/D16: Basic and Digest keep the login in the HTTPS_PROXY URL, so Log in is off and a hint says why. */
 function basicMode(f) {
   const note = PASSWORD_NOTES[f.auth.value];
-  f.login.disabled = !!note;
+  f.login.disabled = !!note || !!f.down;
   f.basicNote.hidden = !note;
   f.basicNote.textContent = note || '';
 }
@@ -215,6 +232,11 @@ export function mountNetworkProxyCard({ doc = globalThis.document, fetchJson: fj
     const cur = f;
     cur.onOpenSetup = onOpenSetup;
     cur.setup.addEventListener('click', () => onOpenSetup?.('network'));
+    cur.retry.addEventListener('click', () => withButton(cur.retry, async () => {
+      const r = await fj('/api/proxy/status');
+      if (f === cur && r.ok) fill(cur, r.data);
+      return { ok: r.ok && !r.data?.unreachable };
+    }, { busy: 'Checking…', done: 'Reached' }));
     cur.auth.addEventListener('change', () => basicMode(cur));
     /** The form as a networkProxy patch: Save and Test send the same values. */
     const patchOf = (c) => ({

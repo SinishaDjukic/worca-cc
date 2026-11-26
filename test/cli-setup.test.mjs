@@ -84,6 +84,20 @@ test('a typed answer for a left-out question is applied; --yes asks nothing', as
   assert.equal(y.code, 0); assert.equal(y.asked.length, 0);
 });
 
+test('Where agents run: the last question sets the default execution environment; "local" clears it', async () => {
+  fresh();
+  const p = file({ schema: 1, fields: { 'setup.uiLevel': { kind: 'default', value: 'advanced' } } });
+  const ask = (v) => CLI_QUESTIONS.filter((q) => q.key !== 'work.uiLevel').map((q) => (q.key === 'work.execEnv' ? v : '')).join('\n');
+  const r = await run(['--from', p], `${ask('docker')}\ny\n`);
+  assert.equal(r.code, 0, r.errs.join('\n'));
+  assert.ok(r.lines.includes('  Where agents run (local, docker or e2b): not set → docker'), r.lines.join('\n'));
+  assert.equal(JSON.parse(readFileSync(settingsPath, 'utf8')).execEnv, 'docker');
+  assert.equal((await run(['--from', p], `${ask('Local')}\ny\n`)).code, 0);
+  assert.equal(JSON.parse(readFileSync(settingsPath, 'utf8')).execEnv, undefined);
+  const bad = await run(['--from', p], `${ask('acme-cloud')}\ny\n`);
+  assert.equal(bad.code, 2); assert.match(bad.errs.join('\n'), /work\.execEnv/);
+});
+
 test('a record field prints each changed sub-key before the confirm', async () => {
   fresh('{"sync":{"remote":"upstream"}}');
   const p = file({ schema: 1, fields: { 'setup.sync': { kind: 'default', value: { beforeRun: true, onDiverged: 'ask' } } } });

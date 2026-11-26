@@ -16,6 +16,7 @@ import { CHAT_ENGINE_NAMES, engineLabel } from '../../src/shared/engine-switch.m
 import { UPSTREAM_TIMEOUTS } from '../../src/shared/proxy-timeouts.mjs';
 import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
 import { WORCA_LEVEL_COUNT } from '../../src/shared/worca-levels.mjs';
+import { whereAgentsRunSection, EXEC_ENV_CHOICES } from './setup-where-agents-run.mjs';
 
 export const SETUP_STEPS = Object.freeze([
   { id: 'check', label: 'Check this machine' },
@@ -30,7 +31,7 @@ export const SETUP_STEPS = Object.freeze([
 export const TEST_PASS_MS = 9 * 60_000;
 const GROUP_STEP = Object.freeze({ network: 'network', access: 'access', models: 'models', work: 'work' });
 const WORK_KEYS = Object.freeze(['uiLevel', 'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'autoGeneratePrDescription', 'smartNaming', 'runEngine',
-  'hideBuiltinModels', 'sync', 'networkWait']);
+  'hideBuiltinModels', 'sync', 'networkWait', 'execEnv']);
 /** The Review line when a team's values already match what is saved (T17). */
 export const TEAM_MATCHES_LINE = "Your setup already matches your team's recommendation.";
 /** The Review line when the notice's policy home is no longer cached by the time the dialog loads (T17). */
@@ -256,7 +257,7 @@ export function diffRows(saved, answers, { detect = null } = {}) {
       lines: [...MODEL_ROLES.map((r) => ({ role: ROLE_LABELS[r], model: roles[r]?.model || null, ...(defaulted(r) ? { defaulted: true } : {}),
         ...(isCliDecides(roles[r]) ? { fallback: decidesLabel(engineOfRoles === 'codex' ? 'Codex' : engineLabel(engineOfRoles)) } : {}) })), chatLine] },
     { group: 'work', step: 'work', label: 'How you work', changed: !!body.work, team: teamIn('work'),
-      value: `${LEVEL_INFO[w.uiLevel || 'simple']?.label || 'Simple'} interface · per run ${money(w.pipelineCostLimitUsd)} · total ${money(w.totalCostLimitUsd)}${w.totalCostLimitUsd == null ? '' : `, resets ${w.costLimitResetPeriod === 'weekly' ? 'weekly' : 'monthly'}`}` },
+      value: `${LEVEL_INFO[w.uiLevel || 'simple']?.label || 'Simple'} interface · per run ${money(w.pipelineCostLimitUsd)} · total ${money(w.totalCostLimitUsd)}${w.totalCostLimitUsd == null ? '' : `, resets ${w.costLimitResetPeriod === 'weekly' ? 'weekly' : 'monthly'}`}${w.execEnv ? ` · agents in ${EXEC_ENV_CHOICES.find((c) => c.name === w.execEnv)?.label || w.execEnv}` : ''}` },
   ];
 }
 
@@ -907,6 +908,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       sw('AI-written PR descriptions', w.autoGeneratePrDescription !== false, (on) => { w.autoGeneratePrDescription = on; paintFoot(); }, 'sa-pr-desc'),
       sw('Smart run names', naming.suggestTitle !== false && naming.suggestBranch !== false,
         (on) => { w.smartNaming = { ...naming, suggestTitle: on, suggestBranch: on }; paintFoot(); }, 'sa-smart-naming')));
+    body.append(whereAgentsRunSection({ doc, detect: S.detect, posture: S.posture, value: w.execEnv, onPick: (v) => { w.execEnv = v; paint(); }, seg, section }));
   }
 
   // A table like the Check step's: the group and its value stacked on the left, its badges and Change on the right,
@@ -1101,7 +1103,8 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   async function load({ keepAnswers = false } = {}) {
     S.provSeq++;
     S.loadError = ''; if (!keepAnswers) S.error = ''; paint();   // a successful Try again leaves no stale error (ux-2-1)
-    const [settings, proxy, providers, cfg, detect, teamRes] = await Promise.all(['/api/settings', '/api/proxy/status', '/api/providers', '/api/config', '/api/setup/detect', '/api/setup/team'].map((u) => call(u)));
+    const [settings, proxy, providers, cfg, detect, teamRes, posture] = await Promise.all(['/api/settings', '/api/proxy/status', '/api/providers', '/api/config', '/api/setup/detect', '/api/setup/team', '/api/security/posture'].map((u) => call(u)));
+    S.posture = posture.ok ? posture.data : null;   // "Where agents run": a box shows its posture instead of the choice
     if (closed) return;
     const bad = [settings, proxy, providers].find((r) => !r.ok);
     if (bad) { S.loadError = "Couldn't load your settings."; S.error = `${S.loadError} ${bad.data?.error || `HTTP ${bad.status}`}`; paint(); return; }

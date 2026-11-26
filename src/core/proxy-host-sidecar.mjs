@@ -30,15 +30,20 @@ export function sidecarView(b) {
   // The proxy from the sidecar's HTTPS_PROXY (.env) fills the form too; saving it again keeps the login (same host:port).
   if (!s.upstream && b.upstream) s.upstream = `http://${b.upstream}`;
   s.enabled = s.enabled !== false && !!b.upstream;
-  return { ...b, settings: s, localUrl: SIDECAR_LOCAL_URL, localError: b.upstreamError || null, sidecar: true, managed: !!b.managed,
+  // A rejected login the operator manages: nobody logs in again from Worca, the operator replaces the file.
+  const line = b.managed && b.state === 'needs-login' ? stateLine({ ...b, managed: true }) : b.line;
+  return { ...b, ...(line !== undefined ? { line } : {}), settings: s, localUrl: SIDECAR_LOCAL_URL, localError: b.upstreamError || null, sidecar: true, managed: !!b.managed,
     ...(b.managed ? { managedNote: MANAGED_NOTE } : {}) };
 }
 
-/** The status when the sidecar cannot be reached: state error, the reason as the line. */
+/** The card's line while the sidecar does not answer: nothing can be read, saved or logged in until it does. */
+export const unreachableLine = (why) => `The egress sidecar cannot be reached${why ? ` (${why})` : ''}. Worca cannot read or change the proxy settings or the login until it answers: check that it runs (worca container logs), then Retry.`;
+
+/** The status when the sidecar cannot be reached: state error, `unreachable` set, the reason in the line. */
 function unreachable(err) {
   const st = { state: 'error', text: STATE_TEXT.error, error: err.message, login: null, loginError: null, running: false,
-    restartNeeded: false, warnings: [], settings: {}, localUrl: SIDECAR_LOCAL_URL, localError: err.message, sidecar: true, managed: false };
-  return { ...st, line: stateLine(st) };
+    restartNeeded: false, warnings: [], settings: {}, localUrl: SIDECAR_LOCAL_URL, localError: err.message, sidecar: true, managed: false, unreachable: true };
+  return { ...st, line: unreachableLine(err.message) };
 }
 
 const hostPortOf = (up) => { if (!up) return null; const p = parseUpstreamUrl(up); return p.error ? null : upstreamLabel(p.host, p.port); };

@@ -44,6 +44,17 @@ test('pure parts: the patch the sidecar takes, and the status view the card read
   assert.equal(sidecarView({ settings: { enabled: false }, upstream: 'p:1' }).settings.enabled, false);
 });
 
+test('a managed login the proxy rejected: the line says the operator replaces the login file, never "log in again"', () => {
+  const b = { upstream: 'proxy.acme.example:8080', settings: {}, managed: true, state: 'needs-login',
+    login: { label: 'ACME\\svc-worca', rejected: { at: '2026-11-20T10:00:00.000Z' } },
+    line: 'needs login: the corporate proxy rejected the saved login for ACME\\svc-worca 2026-11-20 10:00 UTC, so Worca sends no credentials. Log in again (worca proxy login).' };
+  const v = sidecarView(b);
+  assert.match(v.line, /rejected the saved login for ACME\\svc-worca/);
+  assert.match(v.line, /they must replace the login file \(WORCA_EGRESS_LOGIN_FILE\)/);
+  assert.doesNotMatch(v.line, /Log in again|worca proxy login/);
+  assert.equal(sidecarView({ ...b, managed: false }).line, b.line, 'a login the person owns keeps "log in again"');
+});
+
 test('status, login, test, logout through the sidecar; nothing in the box, no secret in any answer', async () => {
   const r = await rig();
   try {
@@ -126,7 +137,10 @@ test('a sidecar that cannot be reached: the status says so, nothing throws', asy
   const host = createProxyHost({ egress: () => null, io: { env: () => env, sidecar: createSidecarProxyHost({ client: sidecarClient(env) }) } });
   const st = await host.status();
   assert.equal(st.state, 'error');
-  assert.match(st.line, /cannot be reached/);
+  assert.equal(st.unreachable, true, 'marked, so the card need not read the line');
+  assert.match(st.line, /^The egress sidecar cannot be reached .*Retry\.$/);
+  const save = await host.saveSettings({ enabled: false });
+  assert.deepEqual([save.refused.status, save.refused.body.code], [502, 'SIDECAR_UNREACHABLE']);
   assert.equal((await host.login(LOGIN)).status, 502);
   const d = await host.sidecar().detect();
   assert.equal(d.found, false);

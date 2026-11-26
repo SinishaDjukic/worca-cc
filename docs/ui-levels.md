@@ -172,7 +172,8 @@ Levels are not Interface modes: no level element carries `data-min-level`; Try n
 | "Not sure what to build yet? Try Shaper" under the Markdown source (Shaper, gated) | A |
 | Engine dropdown beside the workflow (greyed-out engines the credential broker refuses) | A — stays visible at every level while a non-Claude engine is picked (rule 2) |
 | Session notice under the Engine dropdown: one line per session of the chosen workflow, how it will run (One session, Labs) | A — stays visible with the Engine dropdown while a non-Claude engine is picked |
-| Runs in (execution environment: Local, E2B sandbox or Local sandbox (Docker)), its live E2B status chip (connected · N of cap in use, unreachable, key refused, not set up) and the note when a saved E2B default does not apply | A — stays visible at every level while a non-Local value is picked (rule 2) |
+| Runs in (execution environment: Local, E2B sandbox or Local sandbox (Docker)), the chosen sandbox's live status chip (connected · N of cap in use, unreachable, key refused, not set up) and the note when a saved sandbox default does not apply | A — stays visible at every level while a non-Local value is picked (rule 2) |
+| Runs in: on a native install, the note under a Local pick ("Local runs are not sandboxed" with a Choose a setup link) | A — with Runs in |
 | Advanced disclosure: guardrails, human in the loop, per-agent model and effort | A |
 | Per-agent fan-out, sub-agent model, questions; feedback-loop max cycles; "Save as defaults"; memory scope | E |
 
@@ -210,7 +211,9 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Run page (one level): the header (the run's name, Run after, Pause/Resume, Stop and ⋯ ending the title row), a waiting question above the tabs on every tab, then the tabs; the run card is the Overview tab's body: the status line (state, then the step), the Cost tags row, the result actions; on a wide pane its right column holds time · cost (with its Away mode share) · changes, the verdict and, while the run goes, its fogged workflow framed on the running step(s) (a click opens the Workflow tab); parallel steps (Now) | S |
 | Task tab (second): the prompt in full as markdown and the Run setup card, which shows each choice at the level the New run form shows it: workflow, Away mode, mock run (S); engine (kept visible when it is not Claude), guardrails, human in the loop, source branch, MCP servers off, code graph, each agent's model and effort (A); each agent's sub-agents and questions, each loop's round budget (E) | S |
 | Run progress: the bar under the status line (Plan · Build · Review · Ready, blue / amber / green), its text ("Build · task 2 of 4") in place of "Step: …", the chain's overall bar ("Run 2 of 3"), the Runs list's group bar and group row with its ⌄ | S |
-| Run page: the execution environment in the status line (E2B sandbox, or waiting for an E2B slot) and a waiting question's "Answer by HH:MM" line on a sandbox run | all (rule 1) |
+| Run page: the execution environment in the status line (the sandbox's label, "waiting for a Docker slot", "building the sandbox image, first use…" while the Local sandbox builds its image) and a waiting question's "Answer by HH:MM" line on a sandbox run | all (rule 1) |
+| Run page: "not sandboxed" in the status line of a Local run on a native install (muted, its tooltip says why, it opens Choose a setup) | all |
+| Run page: the "review files from the sandbox" banner (files a sandbox run changed that run on this machine when someone uses them: npm scripts, editor tasks) | all (rule 1) |
 | Run progress hover breakdown: stages with their agents and states, review pass count | A |
 | Workflow graph with status colours, gate pip, End result; Workflow, Overview and Q&A tabs | S |
 | Run header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the Overview cost card's Away mode share | S |
@@ -232,7 +235,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 
 | Element | Level |
 |---|---|
-| The E2B sandbox chip on a run that executed in a sandbox | S |
+| The sandbox chip (the backend's label: E2B sandbox, Local sandbox (Docker)) on a run that executed in a sandbox | S |
 | List, project filter, Refresh; Overview (verdict, findings, duration, cost, task); Clarify tab; Resume | S |
 | Header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the glance and Overview cost's Away mode share | S |
 | The Away mode note and the Q&A tab, as on the run page | S |
@@ -328,11 +331,13 @@ inside the view.
 | Agent readiness chip (Projects row, project page header) and its report, incl. Not used here / Undo and Recheck | S — status of the project a run starts in; its Settings links open the project Settings tab by deep link |
 | Project Settings tab: Agent readiness card (Detect / Used / Not used per tool, skipped checks) | A — the tab's level |
 | Project Memory tab (view and edit files) | A |
+| Memory: the "Held for review" badge on a file a sandbox run wrote, and its Approve button (Save on any other file) | A — with the Memory tab |
 | Project Memory tab › Team view (Local · Team · Both choice, note states, share existing notes, Compare, Undo seeding); project Settings › Team memory | A |
 | Project page Overview › "Your team shares memory for this repository" (Turn on, Not now); the "team memory available" mark in the Projects list and the workspace wizard's import list | A |
 | Project page Actions tab | A |
 | Project page Automations tab (flag gitAutomations: Auto-handle switches with what each does and its limits, your own rules with Add / Turn off / Delete, each switch's and rule's limits with Edit limits, Waiting (the queue, in order, with Start now and Remove), Recent with Approve and Open run, Check now; a note naming the workspace whose rules take this repository's events over) | A — "Approve" waits on a person, but a `/worca approve` comment on GitHub or Azure DevOps answers it too |
-| Project page Settings › Execution environment: where this project's runs execute, its E2B template field, the Local sandbox (Docker) image and network fields, the environment spec (read-only), the last build and Build / Rebuild environment with its log | A |
+| Project page Settings › Execution environment: where this project's runs execute, its E2B template field, the Local sandbox (Docker) image and network fields, the environment spec form (Tools rows of mise name + pinned version with Add tool / Remove, Apt packages, Save spec / Clear spec, the server's refusal inline), the last build and Build / Rebuild environment with its log | A |
+| Add project in the hardened box: Clone from URL only, with the line saying why (no New or Folder tab) | S — as Add project |
 | Workspaces list, create wizard (with its Add… / paste-box import), workspace page Overview (projects, the Remove confirm's re-scan choice and recommendation, description, re-scan, delete) | A |
 | Workspace header "Scan model" control (view / change / clear the saved re-scan model); the choose-a-model window a re-scan opens when the workspace has no usable pick — it unblocks the re-scan, so it shows at any level | A |
 | Workspace page Map tab (coverage, graph, edges, confirm / reject / clear, add / delete manual edges, Regenerate description) | A |
@@ -347,17 +352,18 @@ inside the view.
 | Element | Level |
 |---|---|
 | General: Appearance, Alerts, Interface mode, Getting started, About | S |
+| General: Security (where Worca runs, credential broker, agent users, outbound network, proxy login, default execution environment, the box image in a container; the docs links) | A |
 | Runs tab: Budget & cost limits (incl. Resume runs automatically when a usage limit resets) | S |
 | Runs tab: Pull requests (Draft the PR description with AI automatically) | S |
 | Runs tab: the filter box above its cards | S |
-| Runs tab: Network proxy | S — timeouts and the local port under More; in a container a line says the egress sidecar holds the login (no local port), and a login the operator manages shows status only |
+| Runs tab: Network proxy | S — timeouts and the local port under More; in a container a line says the egress sidecar holds the login (no local port), and a login the operator manages shows status only (a rejected one says the operator must replace the login file); when the egress sidecar cannot be reached the line says so, its buttons are off and Retry checks again |
 | Labs tab (feature flags) | S — flags are independent of levels (docs/feature-flags.md) |
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
 | Runs tab › Actions: Preview ports (All local ports / Actions range only; locked to the range on a hosted Worca) | A — with its card |
 | Runs tab: Wait for the network | A |
 | Runs tab: Machine load (runs at once, test workers per run, archive finished runs after) | A |
-| Runs tab: Execution environment (default execution environment, Sandboxes at once, Max wait for an answer), its status chip and "Server: …" line | E |
+| Runs tab: Execution environment (default execution environment; the selected backend's copy, docs links, status chip and "Server: …" line; its Sandboxes at once and Max wait for an answer; for the Local sandbox (Docker) also Memory, CPUs and Processes per sandbox and Container runtime) | E |
 | Guardrails tab (list, details); Memory tab (files) | A |
 | Presets tab (every preset: Use, Rename, Duplicate, Edit scope, Delete) | A |
 | Automations tab (flag gitAutomations: the overview — delivery, the projects and workspaces that automate something with Open, Waiting across them with Start now and Remove, Recent across them with Approve and Open run) | A |
@@ -426,6 +432,9 @@ missing (`data-needs-git`), at every level.
 |---|---|
 | The level welcome and celebration (the dialogs that open at boot and after a level-up) | all — they wait while a blocking prompt or another dialog is on screen (rule 1) |
 | The Getting started level line (the current level and what is next, linking to Profile) | all |
+| Setup assistant › Check this machine: the Docker and E2B sandbox rows | S |
+| Setup assistant › How you work › Where agents run: Local (not sandboxed), Local sandbox (Docker) when Docker answers, E2B sandbox when set up, and the Choose a setup link; in a container or the hardened box the posture rows instead | S |
+| Setup assistant › Network, managed view: the proxy login the operator manages, status only (a rejected login says the operator must replace the login file) | S |
 | Statistics page | A |
 | Statistics: the Requirements tile (spend, features, a link to the page; behind the `requirements` flag), the Requirements row in the Group by tables and in the Cost report (money already spent there stays listed while the flag is off) | A — with the page |
 | Team metrics page and every surface of it elsewhere | E |

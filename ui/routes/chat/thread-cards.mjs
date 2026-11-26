@@ -34,6 +34,7 @@ import { actorOf } from '../../../src/core/identity.mjs';
 import { displayPath, listProjects, normalizeProjectPath } from '../../../src/core/projects.mjs';
 import { PROXY_AGENT_TEXT } from '../../../src/core/proxy-host.mjs';
 import { isInContainer } from '../../../src/core/remote-access.mjs';
+import { HARDENED_CLONE_ONLY_TEXT, isHardenedBox } from '../../../src/core/security-posture.mjs';
 import { addAskWebHost } from '../../../src/core/settings.mjs';
 import { applyChanges, applyRoute, applyRequirementCard } from '../../../src/core/shape/changes.mjs';
 import { addFeatureNote, appendFeatureRun, currentFeatureId } from '../../../src/core/shape/features.mjs';
@@ -823,6 +824,7 @@ async function askCardHandler(req, res) {
       try {
         try {
           const card = found.block.card; const ch = card.change || {};
+          if (ch.kind === 'add' && isHardenedBox()) throw Object.assign(new Error(HARDENED_CLONE_ONLY_TEXT), { code: 'HARDENED_CLONE_ONLY' });
           if (ch.kind === 'add' && fsLimitedHere(req)) {
             const p = normalizeProjectPath(ch.path);
             if (!p || !(await checkInside(p, await fsAllowedRoots())).inside) {

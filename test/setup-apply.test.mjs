@@ -856,3 +856,17 @@ test('work.hideBuiltinModels / sync / networkWait: validated, merged and written
   await assert.rejects(planSetupApply({ work: { sync: { remote: 'https://x' } } }, deps), (e) => e.field === 'work.sync.remote' && /remote NAME/.test(e.message));
   await assert.rejects(planSetupApply({ work: { networkWait: { maxWaitMin: 0 } } }, deps), (e) => e.field === 'work.networkWait.maxWaitMin');
 });
+
+test('work.execEnv ("Where agents run"): a backend name is stored, null clears it to Local, an unknown name names the field', async () => {
+  seed({});
+  const { deps } = fakeDeps();
+  const plan = await planSetupApply({ work: { execEnv: 'docker' } }, deps);
+  assert.deepEqual(plan.written, ['execEnv']);
+  assert.equal(plan.values.execEnv, 'docker');
+  await commitSetupPlan(plan, deps);
+  assert.equal(read().execEnv, 'docker');
+  const clear = await planSetupApply({ work: { execEnv: null } }, deps);
+  assert.deepEqual(clear.written, ['execEnv']);
+  assert.equal(clear.values.execEnv, undefined);
+  await assert.rejects(planSetupApply({ work: { execEnv: 'acme-cloud' } }, deps), (e) => e.field === 'work.execEnv');
+});

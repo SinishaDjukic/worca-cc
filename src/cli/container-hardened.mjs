@@ -406,7 +406,8 @@ export function postureRows({ containers = {}, networks = [], sidecar = null, lo
   else if (sidecar.state === 'not-configured' || sidecar.state === 'off') row('proxy-login', 'Proxy login in the sidecar', 'on', 'no corporate proxy: the sidecar relays direct');
   else if (sidecar.state === 'no-login') row('proxy-login', 'Proxy login in the sidecar', 'on', `the proxy ${sidecar.upstream} needs no login`);
   else if (sidecar.state === 'ready') row('proxy-login', 'Proxy login in the sidecar', 'on', `the sidecar holds the login for ${sidecar.upstream}${sidecar.login?.label ? ` (${sidecar.login.label})` : ''}${sidecar.managed ? ', managed by the operator' : ''}`);
-  else if (sidecar.state === 'needs-login') row('proxy-login', 'Proxy login in the sidecar', 'off', `the proxy ${sidecar.upstream} asks for a login and none works`, 'worca container proxy login');
+  else if (sidecar.state === 'needs-login') row('proxy-login', 'Proxy login in the sidecar', 'off', `the proxy ${sidecar.upstream} asks for a login and none works`,
+    sidecar.managed ? 'the operator manages this login: replace the login file (WORCA_EGRESS_LOGIN_FILE) with a working one' : 'worca container proxy login');
   else row('proxy-login', 'Proxy login in the sidecar', 'off', `the proxy setting has an error${sidecar.error ? `: ${sidecar.error}` : ''}`, 'fix HTTPS_PROXY in .env, then worca container up --hardened');
 
   // The allow-list: Worca on internal networks only, the sidecar in allow-list mode, Worca pointed at it.

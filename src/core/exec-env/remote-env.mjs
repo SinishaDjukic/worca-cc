@@ -64,11 +64,11 @@ const credentialValues = (env) => LEAK_KEYS.map((k) => env?.[k]).filter((v) => t
 export class RemoteExecEnv {
   constructor({ backend, client, environment = null, environmentBuild = null, worktreeDir, pipelineDir, storeRoots = [], mcpConfigPath = null,
     injected = [], refreshPaths = [], syncExcludes = [], supportFiles = SCRIPT_SUPPORT_FILES, metadata, scratchDir,
-    log = () => {}, env = process.env, startedAt = Date.now(), onMaxWait = null, onPark = null, onReview = null, syncBudget = null,
+    log = () => {}, env = process.env, startedAt = Date.now(), onMaxWait = null, onPark = null, onReview = null, onPhase = null, syncBudget = null,
     mcpjsonProjectDir = null, homeDir = homedir(), rebuildHint = backend.rebuildHint ?? null, relayUpstreams = null,
     secretPaths = DEFAULT_SECRET_PATHS, network = null, maxShellOutput = MAX_SHELL_OUTPUT }) {
     Object.assign(this, { backend, client, environment, environmentBuild, worktreeDir, pipelineDir, storeRoots, mcpConfigPath, injected,
-      refreshPaths, syncExcludes, supportFiles, metadata, scratchDir, log, env, startedAt, onMaxWait, onPark, onReview,
+      refreshPaths, syncExcludes, supportFiles, metadata, scratchDir, log, env, startedAt, onMaxWait, onPark, onReview, onPhase,
       mcpjsonProjectDir, homeDir, rebuildHint, secretPaths, network });
     // Where the engine routes' calls go when not the vendor's own API (relay-route.mjs ENGINE_UPSTREAMS): tests only.
     this.relayUpstreams = relayUpstreams;
@@ -244,7 +244,9 @@ export class RemoteExecEnv {
     // `network` (null: open) is fixed at create; a reconnect keeps the policy the sandbox was made with.
     // `onLog`: a backend's progress lines while it creates (a first-use image build, the sandbox's limits).
     this._adopt(await this._call(() => this.client.create({ environment: this.environment, tags: this.metadata, timeoutMs: SANDBOX_TIMEOUT_MS,
-      ...(this.network ? { network: this.network } : {}), onLog: (line) => this.log('info', String(line)) })));
+      ...(this.network ? { network: this.network } : {}), onLog: (line) => this.log('info', String(line)),
+      // A first-use image build (backends/docker.mjs): the run page shows it while it lasts.
+      onPhase: (phase) => this.onPhase?.(phase) })));
     this.log('info', `sandbox ${this.sandboxId} created from ${this.backend.environmentNoun} ${this.environment}`);
     await this._ensureDirs([this.work, dirname(this.worktreeDir), ...this.roots]);
     await this._cloneIn();

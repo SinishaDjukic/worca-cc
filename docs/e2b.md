@@ -161,7 +161,8 @@ Where it runs is picked with the `run.execEnv` setting, first match wins:
   executes, and Default follows the settings below. The chat can also change `run.execEnv` and the two E2B
   limits, each with a Revert.
 - **Per project:** the project page → Execution environment → Where runs execute.
-- **For you:** Settings → Runs → Execution environment → Default execution environment (Expert level).
+- **For you:** Settings → Runs → Execution environment → Default execution environment (Expert level), or the
+  setup assistant's How you work › Where agents run, which offers E2B once `E2B_API_KEY` is set.
 
 A run preset carries no execution environment: `worca run --preset NAME` follows the project and user
 defaults. A saved E2B default applies to runs of one git project on Claude, Codex, Copilot or Cursor; workspace runs,
@@ -231,6 +232,12 @@ Folder projects and runs without a project run locally, and the run log says why
 | Max wait for an answer (`e2bMaxWaitMin`) | Settings → Runs | 240 min | How long a waiting or paused run keeps its sandbox. Past it, the sandbox is released and the run pauses; Resume continues in a fresh sandbox. |
 | E2B template (per project) | the project page → Execution environment | — | Overrides every other template for this project. |
 | Sandbox network (per project) | the project page → Execution environment | Open | Open, or **Allow listed hosts only**: the sandbox reaches only `WORCA_EGRESS_ALLOW` (see [Outbound network](#outbound-network-egress)). |
+
+Settings → Runs → Execution environment follows the backend its select shows. On **E2B sandbox** it shows the E2B
+status chip, the "Server: …" line and the two E2B limits. On **Local sandbox (Docker)** it shows Docker's own limits
+instead ([Local sandbox](local-sandbox.md#settings)). On **Local** it shows neither, and says that a Local run is
+not sandboxed. Each backend keeps its own values: switching the select loses nothing. The card links to
+[Choose a setup](choose-a-setup.md), the [security overview](security-overview.md) and this page.
 
 ## Per-project templates
 

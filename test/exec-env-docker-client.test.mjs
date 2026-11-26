@@ -135,6 +135,21 @@ test('create builds the default image on first use from the shipped files, with 
   await assert.rejects(client.create({ environment: '--privileged', tags: {}, timeoutMs: 60_000 }), /not a Docker image reference/);
 });
 
+test('create reports the first-use image build as a phase (the run page shows it), for a run that waits on another run\'s build too', async () => {
+  const fake = createFakeDocker({ root: tmp(), missingImages: true });
+  const client = dockerClient(fake.runner, { resources: {} });
+  const phases = { r1: [], r2: [] };
+  const image = defaultImageName();
+  const made = await Promise.all(['r1', 'r2'].map((id) => client.create({ environment: image, tags: { worca: '1', worcaRunId: id }, timeoutMs: 60_000,
+    onPhase: (p) => phases[id].push(p) })));
+  assert.deepEqual(phases, { r1: ['image-build', null], r2: ['image-build', null] });
+  // The image is there now: a later run reports no phase.
+  const later = [];
+  const c = await client.create({ environment: image, tags: { worca: '1', worcaRunId: 'r3' }, timeoutMs: 60_000, onPhase: (p) => later.push(p) });
+  assert.deepEqual(later, []);
+  for (const h of [...made, c]) await client.remove(h.id);
+});
+
 test('run: the env goes as -e NAME with the value in the CLI env, never on the argv; exit codes and stdout', async () => {
   const r = stubRunner((args) => (args.includes('fail') ? { code: 3, stderr: 'boom\n', stdout: 'partial' } : { code: 0, stdout: 'ok\n' }));
   const client = dockerClient(r);

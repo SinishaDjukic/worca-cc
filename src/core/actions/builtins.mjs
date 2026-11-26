@@ -2,6 +2,7 @@
 // (platform, env, exists) so every OS is tested from any OS.
 import { buildLauncherCommand, launcherLabel } from './launcher.mjs';
 import { statSync } from 'node:fs';
+import { isHardenedBox } from '../security-posture.mjs';
 
 const EDITORS = [['code', 'VS Code'], ['cursor', 'Cursor'], ['idea', 'IntelliJ IDEA'], ['webstorm', 'WebStorm']];
 const LINUX_TERMS = [
@@ -26,6 +27,9 @@ export function findOnPath(name, { env = process.env, platform = process.platfor
 const hasDisplay = (env) => !!(env.DISPLAY || env.WAYLAND_DISPLAY);
 
 export function detectBuiltins({ platform = process.platform, env = process.env, exists = defaultExists, overrides = {} } = {}) {
+  // The hardened box (docs/hardened-box.md): an editor, terminal or file manager would open inside the box, on no
+  // one's screen, on a checkout that is not on the host. None is offered there, a saved command line included.
+  if (isHardenedBox(env)) return { editor: null, terminal: null, fileManager: null, copyCommand: { label: 'Copy command' } };
   const find = (n) => findOnPath(n, { env, platform, exists });
   let editor = null;
   // A saved Editor / Terminal is a command line (launcher.mjs): run through the shell, {folder} placed.
