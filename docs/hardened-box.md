@@ -166,8 +166,15 @@ docker compose -f compose.yml -f compose.broker.yml -f compose.isolation.yml -f 
   corporate proxy when there is one.
 
 Docker publishes no port for a container that is only on an internal network. So a small relay (`ui`) publishes
-`127.0.0.1:4317` and passes each connection on to Worca. Worca trusts the relay's address as a local caller. The
-relay refuses connections from Worca's container and from the sidecar, so an agent cannot use it to come back in.
+`127.0.0.1:4317` and passes each connection on to Worca. Worca trusts the relay's address as a local caller.
+
+The relay lets a connection through only from where the published port arrives: the gateway of its own default
+route. It uses the same rule Worca applies in the plain container ([Network](docker.md#network)). Every other
+caller is closed at once: an agent in Worca's container, the sidecar, any other container. No header and no name
+lookup decides it. When the relay finds no such gateway, it does not start.
+
+On Docker Desktop the published port may arrive from another address. Then the relay refuses every connection, and
+the UI does not open. That fails closed. It has not been checked on Docker Desktop yet.
 
 The broker's calls to the model provider go through the sidecar too. So the allow-list keeps `api.anthropic.com`,
 and the proxy login applies to the broker.

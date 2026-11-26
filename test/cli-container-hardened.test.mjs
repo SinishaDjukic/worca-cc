@@ -359,7 +359,8 @@ test('compose.hardened.yml: its own project, the data volume only, the port on t
   assert.equal(h.services.worca.environment.WORCA_UI_RELAY, 'ui');
   assert.deepEqual(h.services.ui.ports, ['127.0.0.1:${WORCA_PORT:-4317}:4317'], 'loopback only');
   assert.deepEqual(h.services.ui.networks, ['internal', 'default']);
-  assert.equal(h.services.ui.environment.WORCA_UI_RELAY_REFUSE, 'worca,egress');
+  assert.equal(h.services.ui.environment.WORCA_UI_RELAY_REFUSE, undefined, 'an allow-list in the relay, no refuse list');
+  assert.match(h.services.ui.entrypoint.join(' '), /node \/usr\/local\/lib\/node_modules\/@worca\/app\/src\/core\/ui-relay\.mjs$/);
   assert.ok(h.services.ui.cap_drop.includes('ALL'));
   assert.equal(h.services.broker.environment.HTTPS_PROXY, 'http://egress:3128');
   assert.deepEqual(HARDENED_OVERLAYS, ['broker', 'isolation', 'egress', 'hardened', 'proxy']);

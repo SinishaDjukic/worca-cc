@@ -19,7 +19,8 @@
 #     agent plant a git hook or a config command that your own git or IDE then runs on your machine;
 #   - its own compose project (worca-hardened), so the plain container's containers and volumes stay apart;
 #   - the UI relay: Docker publishes no port for a container that is only on an internal network, so the
-#     `ui` service publishes 127.0.0.1:${WORCA_PORT} and relays to Worca (src/core/ui-relay.mjs);
+#     `ui` service publishes 127.0.0.1:${WORCA_PORT} and relays to Worca only what arrives through that port
+#     (src/core/ui-relay.mjs);
 #   - the broker's calls to the model provider go through the sidecar, so the allow-list and the proxy
 #     login apply to them too.
 #
@@ -47,12 +48,13 @@ services:
 
   ui:
     image: ghcr.io/worca-org/worca:${WORCA_TAG:-latest}
-    entrypoint: ["tini", "-s", "--", "node", "/usr/local/lib/worca-ui-relay.mjs"]
+    entrypoint: ["tini", "-s", "--", "node", "/usr/local/lib/node_modules/@worca/app/src/core/ui-relay.mjs"]
     command: []
     environment:
       WORCA_UI_RELAY_TARGET: worca:4317
-      # Agents run in the worca container and reach out through the sidecar: neither may use the relay.
-      WORCA_UI_RELAY_REFUSE: worca,egress
+    # It relays only a peer that is this container's default-route gateway (where the published port arrives)
+    # or its own loopback (the healthcheck), and exits when it has no such gateway: an agent in Worca's container
+    # or the sidecar is never let through.
     ports:
       # Loopback only, as in the plain container.
       - "127.0.0.1:${WORCA_PORT:-4317}:4317"
