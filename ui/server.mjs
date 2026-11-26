@@ -113,6 +113,7 @@ import {
   keepAwakeEnabled, setKeepAwake, assertKeepAwakeInput, migrateKeepAwakeFlag,
   chatLinksInPanel, setChatLinksInPanel, assertChatLinksInPanelInput, assertChatSourceBranchInput,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
+  assertExecEnvInput, setExecEnvSetting, assertE2bIntInput, setE2bIntSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels, setDesignModels,
   modelRolesSetting, assertModelRolesInput, setModelRoles,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
@@ -120,7 +121,9 @@ import {
   askEngineSetting, assertAskEngineInput, setAskEngineSetting, askModelsSetting, assertAskModelsInput, setAskModels,
   chatHomePinsFor, setChatHomePinsFor,
 } from '../src/core/settings.mjs';
-import { resolveSetting, resolveAll, writeProjectSettings, assertProjectSettingsPatch, resolveRunEngine, defragSlotPair } from '../src/core/settings-cascade.mjs';
+import { resolveSetting, resolveAll, writeProjectSettings, assertProjectSettingsPatch, resolveRunEngine, runExecEnvOpts, defragSlotPair } from '../src/core/settings-cascade.mjs';
+import { sweepAllBackends } from '../src/core/exec-env/sweep.mjs';
+import { markServerProcess } from '../src/core/exec-env/build.mjs';
 import { branchNeeds, targetsForBody, sourceBranchRefusal } from '../src/core/chat-source-branch-gate.mjs';
 import { resolveNightConfig, validateNightPatch } from '../src/core/night/config.mjs';
 import { effectiveNightConfig, nightLayers } from '../src/core/night/effective.mjs';
@@ -636,6 +639,9 @@ preflightNode();
 // (express, ws and htmlparser2 are imported statically above, so a missing one of
 // those still fails at load, before this line.)
 preflightDeps();
+// This process is the worca server: the only one that may build project environments (it holds the backend
+// keys; plans/e2b-execution-design.md §18). A test that imports this module acts as the server.
+markServerProcess();
 // CONTRACT §0: one git answer before anything can spawn git — at import, so every process that loads this module has it:
 // `npm start` / `worca ui`, and the CDP proofs and screenshot tools (tools/verify-*-cdp.mjs) that import the server and call
 // listen themselves. WORCA_GIT=0|1 answers without a probe (the suite runs with 1).
@@ -1468,6 +1474,12 @@ function summarizeRuns() {
     limitEngine: r.limitEngine || null,
     limitResetAt: r.limitResetAt || null, modelConfirm: r.orch?.state?.modelConfirm || null, limitScope: r.orch?.state?.limitScope || null, limitModel: r.orch?.state?.limitModel || null,   // #1450
     runEngine: r.orch?.state?.runEngine || null,
+    // Where the run executes (e2b mode only) and whether it still waits for a sandbox slot.
+    ...(r.orch?.state?.execEnv ? { execEnv: r.orch.state.execEnv, execEnvWaiting: !!r.orch.state.execEnvWaiting,
+      // While a question waits: when the parked sandbox is released (the run page's "Answer by" line).
+      ...(r.orch.state.execEnvWaitUntil ? { execEnvWaitUntil: r.orch.state.execEnvWaitUntil } : {}),
+      // Files from the sandbox to review before running them here (the run page's banner).
+      ...(Array.isArray(r.orch.state.execEnvReview) ? { execEnvReview: r.orch.state.execEnvReview } : {}) } : {}),
     startedAt: r.startedAt,
     startedBy: r.startedBy || null,
     // Who last stopped / paused / resumed it ({ kind, by, at }), or null.
@@ -2741,6 +2753,13 @@ async function _folderSizeProblem(dir, { name } = {}) {
 
 /** An engine refusal's message on a preset start names the preset (#712). */
 const presetEngineMessage = (presetRow, runEngine, msg) => (presetRow ? `Preset "${presetRow.name}" cannot start: Engine ${runEngine.engine}: ${msg}` : msg);
+/** A scheduled run's early refusals (engine gate, then the exec-env preflight): the 409 body, or null. */
+async function scheduledStartRefusal(probe, runEngine, presetRow) {
+  const refusal = runEngine.engine ? await probe.engineStartRefusal() : null;
+  if (refusal) return { error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable };
+  const execRefusal = probe.execEnvStartRefusal();
+  return execRefusal ? { error: execRefusal, code: 'exec-env-refused' } : null;
+}
 
 const startRunHandler = async (req, res) => {
   // B2: a draining server starts nothing new (the scan arm and the scheduler come through here too).
@@ -2835,6 +2854,10 @@ const startRunHandler = async (req, res) => {
         return res.status(409).json({ error: `card is ${found.block.state}` });
       }
       askLink = { threadId: body.askThreadId, cardId: body.askCardId };
+      // The card's Runs in pick (docs/e2b.md): a request with no execEnv key at all comes from a page older than the
+      // field, so the run goes where the card said. The card's own "Default" sends '' and keeps the default.
+      const cardExecEnv = found.block.card && found.block.card.execEnv;
+      if (!Object.hasOwn(body, 'execEnv') && typeof cardExecEnv === 'string' && cardExecEnv) body.execEnv = cardExecEnv;
     }
 
     // Run on the source branch: an explicit boolean, validated before a schedule stores it.
@@ -3057,6 +3080,13 @@ const startRunHandler = async (req, res) => {
       && await claudeRunSignedOut(hasWorkspace ? '' : (resolveProjectDir(body.projectDir) || ''))) {
       return res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
     }
+    // Where the run executes (e2b mode): `{}` for a local run, spread at the TOP level of the options.
+    // A Folder project or a run without a project cannot take a saved remote default (no git bundle to send in).
+    const execProjectDir = hasWorkspace || noProject ? null : resolveProjectDir(body.projectDir);
+    const execWorkMode = noProject ? 'none'
+      : execProjectDir ? workModeForStart({ projectDir: execProjectDir }, { getProjectByPath, gitAvailable: (await gitState()).available }) : 'git';
+    const execEnvShape = runExecEnvOpts(body, hasWorkspace ? { workspace: true } : { projectDir: execProjectDir, workMode: execWorkMode }, runEngine.engine || 'claude');
+    if (execEnvShape.error) return badRequest(res, execEnvShape.error);
 
     // Per-run agent picks (the Ask run card's lane; docs/models.md "Per-agent models for one run"): `overlay.nodes`
     // merges PER NODE over the project's saved agent settings for THIS run only and never writes them. Checked here
@@ -3269,14 +3299,15 @@ const startRunHandler = async (req, res) => {
       if (Array.isArray(body.tags)) tags = body.tags;
       if (sched) {
         // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
-        if (runEngine.engine) {
+        if (runEngine.engine || execEnvShape.opts.execEnv) {
           const probe = await createOrchestratorFor({
             workspace: { id: ws.id, key: ws.id, name: ws.name, description: ws.description, projects: buildWorkspaceMembers(projects, branch, sourceByKey) },
             prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
             mcpOptOut: await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws)), claude: { mock, ...runEngine },
+            ...execEnvShape.opts,
           });
-          const refusal = await probe.engineStartRefusal();
-          if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
+          const refused = await scheduledStartRefusal(probe, runEngine, presetRow);
+          if (refused) return res.status(409).json(refused);
         }
         return res.status(202).json(await scheduleRequest({ body: runOverlay ? { ...body, overlay: runOverlay } : body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy,
           preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner, overrides: overriddenKeys(body, presetRow.setup) } : null }));
@@ -3328,6 +3359,7 @@ const startRunHandler = async (req, res) => {
         // Human in the loop is per run on a workspace (D-W1): the body wins, else on.
         humanInLoop: bodyHumanInLoop ?? true,
         claude: { permissionMode: stored.permissionMode || 'acceptEdits', ...(stored.model ? { model: stored.model } : {}), mock, ...runEngine },
+        ...execEnvShape.opts,
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
@@ -3447,15 +3479,16 @@ const startRunHandler = async (req, res) => {
       const storedBody = runOverlay ? { ...pairBody, overlay: runOverlay } : pairBody;
       if (sched) {
         // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
-        if (runEngine.engine) {
+        if (runEngine.engine || execEnvShape.opts.execEnv) {
           const probe = await createOrchestratorFor({
             projectDir, prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
             workMode, ...(projectRow && workMode !== 'git' ? { projectKey: projectRow.key } : {}),
             mcpOptOut: await knownMcpOptOut(optOut.list, { kind: 'project', key: runKey, name: path.basename(projectDir), rank: 0 }),
             claude: { mock, ...runEngine },
+            ...execEnvShape.opts,
           });
-          const refusal = await probe.engineStartRefusal();
-          if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
+          const refused = await scheduledStartRefusal(probe, runEngine, presetRow);
+          if (refused) return res.status(409).json(refused);
         }
         return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy,
           preset: presetRow ? { id: presetRow.id, name: presetRow.name, owner: presetOwner, overrides: overriddenKeys(body, presetRow.setup) } : null }));
@@ -3508,6 +3541,7 @@ const startRunHandler = async (req, res) => {
           mock,
           ...runEngine,
         },
+        ...execEnvShape.opts,
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
@@ -3542,6 +3576,9 @@ const startRunHandler = async (req, res) => {
       const refusal = await orch.engineStartRefusal();
       if (refusal) return res.status(409).json({ error: presetEngineMessage(presetRow, runEngine, engineRefusalFor(refusal.error, 'ui')), code: 'engine-refused', overridable: refusal.overridable });
     }
+    // The e2b preflight (single-project, a remote engine and its sign-in, …): refused here, before anything is announced.
+    const execRefusal = orch.execEnvStartRefusal();
+    if (execRefusal) return res.status(409).json({ error: execRefusal, code: 'exec-env-refused' });
 
     if (internal) {
       entry.ticketId = internal.ticket.id;
@@ -5544,6 +5581,10 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     const refusal = await orch.engineResumeRefusal();
     if (refusal) throw new ResumeError(409, { error: refusal.error, code: 'engine-refused', overridable: refusal.overridable, engine: orch.claude.engine });
   }
+  // The e2b preflight, also before the resume is committed (the kind comes back from the resume point;
+  // a local run answers null).
+  const execRefusal = orch.execEnvStartRefusal();
+  if (execRefusal) throw new ResumeError(409, { error: execRefusal, code: 'exec-env-refused' });
 
   // A scheduled resume for this run is moot the moment any resume is committed.
   cancelScheduledResumes(pipelineId, { by, reason: `the run was resumed${byActor(by || 'local')}` });
@@ -8360,6 +8401,8 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const csModels = hasCommandSummaryModelKey ? (autoModels || defragModels || agentGenModels || namingModels || await listModels('')) : null; const secondOpinionModels = has('secondOpinionModel') ? (autoModels || defragModels || agentGenModels || namingModels || csModels || await listModels('')) : null;
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
+  const hasExecEnvKey = has('execEnv');
+  const e2bIntKeys = ['e2bMaxSandboxes', 'e2bMaxWaitMin'].filter((k) => has(k));
   const hasStepModelsKey = has('stepModels'); const hasDesignModelsKey = has('designModels');   // designModels: Models › Jobs › Design
   const hasModelRolesKey = has('modelRoles');
   const hasUtilityModelsKey = has('utilityModels');
@@ -8435,6 +8478,8 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasCommandSummaryModelKey) asSettingsField('commandSummaryModel', () => assertCommandSummaryModelInput(body.commandSummaryModel, csModels)); if (secondOpinionModels) asSettingsField('secondOpinionModel', () => assertSecondOpinionModelInput(body.secondOpinionModel, secondOpinionModels));
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
+    if (hasExecEnvKey) asSettingsField('execEnv', () => assertExecEnvInput(body.execEnv));
+    for (const k of e2bIntKeys) asSettingsField(k, () => assertE2bIntInput(k, body[k]));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
     if (hasRequirementsInterviewKey) await asSettingsField('requirementsInterview', async () => {
       const v = assertRequirementsInterviewInput(body.requirementsInterview);
@@ -8529,6 +8574,8 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
     if (hasRunEngineKey) void reevaluateAllReadiness();   // which tool each project judges follows run.engine
+    if (hasExecEnvKey) await asSettingsField('execEnv', () => setExecEnvSetting(body.execEnv));
+    for (const k of e2bIntKeys) await asSettingsField(k, () => setE2bIntSetting(k, body[k]));
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels)); if (hasDesignModelsKey) await asSettingsField('designModels', () => setDesignModels(body.designModels));
     if (hasModelRolesKey) await asSettingsField('modelRoles', () => setModelRoles(modelRolesPatch));
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', () => setUtilityModels(body.utilityModels));
@@ -10307,7 +10354,7 @@ app.use((err, _req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, recoveredAttachmentReads: 0, attachmentReadFolders: null, attachmentTempBodies: null, runRoots: null, testCopies: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
+  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, recoveredAttachmentReads: 0, attachmentReadFolders: null, attachmentTempBodies: null, runRoots: null, testCopies: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null, e2b: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -10372,6 +10419,10 @@ export async function bootMaintenance({ log } = {}) {
     console.error(`[worca-ui] run-root sweep failed: ${err && err.message ? err.message : err}`);
   }
   summary.testCopies = await sweepTestCopiesAtBoot(sink('workflow-tests'));   // workflow tests (D61): after the run-root sweep; never rejects
+
+  // Orphan sandboxes of this instance, per backend (docs/e2b.md, sweep.mjs sweepAllBackends): before autoResumeOnBoot.
+  summary.execEnvs = await sweepAllBackends();
+  summary.e2b = summary.execEnvs.e2b ?? null;
 
   // The one-time legacy sweep (§6 Phase 7). A TOTAL no-op while the effective mode is
   // `legacy` — under legacy those paths hold every live and every paused run, so

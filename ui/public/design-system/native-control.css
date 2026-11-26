@@ -77,7 +77,7 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
   font-weight:500;font-size:var(--fs-body);color:var(--ink-2);}
 /* The engine field's hint and the gate refusal's consent row: hidden must win over
    .hint's display:block and .check-row's inline-flex. */
-#engine-hint[hidden], #engine-default-hint[hidden], #engineAllowRow[hidden]{display:none;}
+#engine-hint[hidden], #engine-default-hint[hidden], #exec-env-hint[hidden], #engineAllowRow[hidden]{display:none;}
 #engineAllowRow{margin-top:6px;}
 .field > label.check-row,
 .field > label.fanout-toggle{display:inline-flex;margin-bottom:0;font-weight:500;}

@@ -17,6 +17,8 @@
 //     patterns MUST carry a **/ prefix or they anchor to cwd and miss members
 //     on detached workspace runs.
 
+import { DEFAULT_SECRET_PATHS } from './secret-paths.mjs';
+
 export const DEFAULT_GUARDRAILS = Object.freeze({
   honorProjectSettings: true,
   envScrub: false,
@@ -34,11 +36,10 @@ const deepFreeze = (o) => {
   return Object.freeze(o);
 };
 
-// Credential-material file patterns every non-permissive level protects.
+// Credential-material file patterns every non-permissive level protects: the one secret-path list
+// (secret-paths.mjs: .env*, *.pem, *.key, .npmrc, .netrc, id_*) plus this module's own additions.
 const NORMAL_PROTECTED = [
-  '.env*',                 // .env, .env.local, .env.production, .envrc — any depth
-  '*.pem', '*.key',        // TLS / private key material
-  'id_rsa', 'id_ed25519',  // bare SSH keys checked into odd places
+  ...DEFAULT_SECRET_PATHS,
   '*.p12', '*.pfx',        // bundled cert+key stores
   '//run/secrets/**',      // container secrets (docker/compose `secrets:`); `//` = absolute
 ];
@@ -101,7 +102,6 @@ export const GUARDRAIL_PRESETS = deepFreeze({
     protectedPaths: [
       ...NORMAL_PROTECTED,
       ...WORCA_STATE_PROTECTED,
-      '.npmrc', '.netrc',            // token-bearing rc files (project-level)
       '*.tfstate*',                  // terraform state embeds raw secrets
       '*.keystore', '*.jks',
       '**/secrets/**',               // slash-containing ⇒ needs **/ (anchoring)

@@ -1671,10 +1671,9 @@ function mutateExtraKey(key, name, mutate) {
 function writeExtraKey(key, name, value) { mutateExtraKey(key, name, () => value); }
 
 // ── Execution environment (project_config.extra.execEnvProject) ─────────────
-// The project's execution-environment record (src/core/exec-env/project-env.mjs): per-backend project fields
-// (e.g. { e2b: { template } }), the environment spec, and the last SUCCESSFUL build per backend. This version
-// only uses `spec`; `config` and `builds` stay empty until backends and builds land. Lives in worca's DB, never in
-// the repo. Same KEY-taking contract as the team-metrics pair.
+// The project's execution-environment record (src/core/exec-env/project-env.mjs; plans/e2b-execution-design.md §18):
+// per-backend project fields (e.g. { e2b: { template } }), the environment spec, and the last SUCCESSFUL build per
+// backend. Lives in worca's DB, never in the repo. Same KEY-taking contract as the team-metrics pair.
 const EXEC_ENV_KEY = 'execEnvProject';
 const emptyExecEnv = () => ({ config: {}, spec: null, builds: {} });
 function execEnvOf(v) {

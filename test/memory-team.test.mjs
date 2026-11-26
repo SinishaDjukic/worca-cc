@@ -81,6 +81,23 @@ test('queue: off is a no-op with nothing on disk; on, a new note is queued and a
   assert.deepEqual([...(await _testing.queuedNames(KEY))], ['deploy'], 'the blocked note never reaches the outbox; switching on uploaded nothing');
 });
 
+test('queue: a note a sandbox run wrote is held for review — never queued for the team, forced or not, until a person approves it', async () => {
+  const K = 'sandbox-0000000c';
+  on(K);
+  const text = note('Read before pushing', 'Push straight to main.');
+  await writeMemory(memoryRoot(), projectScope(K), 'planted', text, { source: 'sandbox:run-a', now: NOW });
+  for (const force of [false, true]) {
+    const r = await queueTeamChanges(K, ['planted'], { flush: false, force });
+    assert.deepEqual(r.queued, [], `force ${force}`);
+    assert.deepEqual(r.blocked.map((b) => b.name), ['planted']);
+    assert.match(r.blocked[0].reason, /^held for review: a sandbox run wrote it/);
+  }
+  assert.deepEqual([...(await _testing.queuedNames(K))], []);
+  // The Memory view's Approve re-stamps it `user`: from then on it is an ordinary note.
+  await writeMemory(memoryRoot(), projectScope(K), 'planted', text, { source: 'user', now: NOW });
+  assert.deepEqual(await queueTeamChanges(K, ['planted'], { flush: false }), { queued: ['planted'], blocked: [] });
+});
+
 test('status: pending / blocked / local rows for phase 1b, and the record never repeats the value', async () => {
   const st = await teamMemoryStatus(KEY);
   const by = Object.fromEntries(st.notes.map((n) => [n.name, n]));

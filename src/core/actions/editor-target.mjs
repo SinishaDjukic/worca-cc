@@ -5,7 +5,7 @@
 import { realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { refusePathShape, isInside } from '../ask-files.mjs';
-import { isProtectedBasename } from '../ask/tools.mjs';
+import { isSecretPath as isProtectedBasename } from '../secret-paths.mjs';
 import { SECURE_PROTECTED_PATHS } from '../diff-anchor.mjs';
 
 const fail = (code, message) => Object.assign(new Error(message), { code });

@@ -254,6 +254,13 @@ test('11. default harness and readiness', () => {
   assert.equal(gemini.reason, 'Gemini CLI can start runs: its CLI is installed and signed in. Note: its quota is low.');
   assert.equal(buildJobs({ ...DATA(SETTINGS), engines: null }, {}, VIEW('codex')).reason, '');
   assert.equal(build(SETTINGS, 'claude').reason, '');
+  // A configured remote backend adds whether Worca signs the harness's model calls inside its sandbox (#826).
+  const boxed = (engines, engine) => buildJobs({ ...DATA(SETTINGS), engines }, {}, VIEW(engine)).reason;
+  assert.equal(boxed([{ name: 'copilot', label: 'Copilot', ready: true, reason: null, sandbox: { titles: ['E2B'], ready: false, reason: 'COPILOT_GITHUB_TOKEN is not set' } }], 'copilot'),
+    'Remote sandbox (E2B): COPILOT_GITHUB_TOKEN is not set.');
+  assert.equal(boxed([{ name: 'cursor', label: 'Cursor', ready: false, reason: 'cursor-agent is not signed in', sandbox: { titles: ['E2B'], ready: true, reason: null } }], 'cursor'),
+    "Cursor can't start runs yet: cursor-agent is not signed in. Remote sandbox (E2B): Worca can sign its model calls from the sandbox.");
+  assert.equal(boxed([{ name: 'codex', label: 'Codex', ready: true, reason: null }], 'codex'), '', 'no sandbox entry: the line stays as it was');
   const claude = build(SETTINGS, 'claude');
   assert.deepEqual([claude.isDefault, claude.canDefault], [true, false]);
   // The default harness is settings.runEngine when it names one.
