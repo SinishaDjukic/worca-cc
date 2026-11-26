@@ -12,6 +12,33 @@ brings their changes back after every step and commits them on your machine, as 
 your personal agent setup (`~/.claude`, `~/.codex`, `~/.copilot`, `~/.cursor`: skills, global instructions,
 plugins). Local stays the default; a local run is exactly what it was before.
 
+## When to use this
+
+This is the "E2B sandbox" setup. The other setups are "Native", "Local sandbox (Docker)", "Hardened box" and
+"Shared instance".
+
+**Who it is for.** Teams with an E2B server. It can be self-hosted or E2B Cloud.
+
+**What you keep.**
+
+- Worca stays where it is. It can run natively or hosted.
+- Your folders and your workflow do not change.
+- Uncommitted files go along into the sandbox.
+
+**What it protects.**
+
+- Agents run in a sandbox. Each run gets one sandbox.
+- No model key enters the sandbox. Worca adds the key on the server, behind the model relay.
+- Changes come back as a patch after each step. Worca filters the patch before it applies it.
+
+**Its limits.**
+
+- It takes single git projects only. Other runs are refused. With E2B as the saved default, they run locally.
+- It runs Claude, Codex, Copilot and Cursor only. Other engines are refused the same way.
+- Bedrock, Vertex and Foundry models are refused.
+- The network allow-list stops casual egress only. It does not stop a determined agent.
+- With E2B Cloud, your source code goes to E2B Cloud.
+
 ## Quick start
 
 1. Build the sandbox template once (needs the `e2b` package and a reachable E2B API):
