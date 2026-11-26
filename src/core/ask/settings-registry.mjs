@@ -9,7 +9,7 @@ import {
   assertThemeInput, assertUiLevelInput, assertDebugSpawnInput, assertUpdateCheckInput, assertAutoGeneratePrDescriptionInput, assertCostLimitInputs,
   assertHumanRateInput, assertAskLimitInputs, assertAskEngineInput, assertRunEngineInput, assertSyncSettingsInput,
   assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, assertNamingModelInput, assertSecondOpinionModelInput, assertChatSourceBranchInput, normalizeModelPair, normalizeRolePair,
-  assertExecEnvInput, assertE2bIntInput,
+  assertExecEnvInput, assertE2bIntInput, assertDockerSandboxInput,
   SETTINGS_POST_KEYS, DEFAULT_SYNC_SETTINGS, DEFAULT_SCHEDULE_GRACE_MIN, DEFAULT_SCHEDULE_IF_MISSED,
   DEFAULT_SCHEDULE_MAX_FAILURES, DEFAULT_COST_RESET_PERIOD, DEFAULT_HUMAN_RATE_USD, DEFAULT_ASK_MAX_TURNS,
 } from '../settings.mjs';
@@ -18,6 +18,7 @@ import { engineLabel } from '../../shared/engine-switch.mjs';
 import { MODEL_ROLES, ROLE_LABELS, ROLE_HARNESSES, isCliDecides } from '../../shared/model-roles.mjs';
 import { describeExecEnvs } from '../exec-env/index.mjs';
 import { DEFAULT_E2B_MAX_SANDBOXES, DEFAULT_E2B_MAX_WAIT_MIN } from '../exec-env/e2b-config.mjs';
+import { DEFAULT_DOCKER_MAX_SANDBOXES, DEFAULT_DOCKER_MAX_WAIT_MIN, DEFAULT_RESOURCES as DOCKER_DEFAULT_RESOURCES } from '../exec-env/backends/docker.mjs';
 import { receiptCard } from './receipt.mjs';
 import { WORKSPACE_SCAN_DEFAULT_MODELS } from '../factory-models.mjs';
 import { CHAT_SOURCE_BRANCH_ID, CHAT_SOURCE_BRANCH_SETTING, CHAT_SOURCE_BRANCH_MODES, CHAT_SOURCE_BRANCH_LABELS, DEFAULT_CHAT_SOURCE_BRANCH } from '../../shared/chat-source-branch.mjs';
@@ -79,6 +80,12 @@ const SCAN_FIELDS = Object.freeze({
   scanEffort: { label: 'Workspace scan: scan agent effort', allowed: EFFORTS.map((e) => JSON.stringify(e)).join(' | ') },
   agentModel: { label: 'Workspace scan: project agents model', allowed: SUBAGENT_MODELS.map((e) => JSON.stringify(e)).join(' | ') },
   agentEffort: { label: 'Workspace scan: project agents effort', allowed: EFFORTS.map((e) => JSON.stringify(e)).join(' | ') },
+});
+const DOCKER_SANDBOX_FIELDS = Object.freeze({
+  memory: { label: 'Docker sandbox: memory per sandbox', allowed: 'a size such as "4g", at least "512m"', fmt: (v) => (v == null ? 'Default' : String(v)) },
+  cpus: { label: 'Docker sandbox: CPUs per sandbox', allowed: 'a number 0.5–256', fmt: (v) => (v == null ? 'Default' : String(v)) },
+  pids: { label: 'Docker sandbox: processes per sandbox', allowed: 'a whole number 64–65536', fmt: (v) => (v == null ? 'Default' : String(v)) },
+  runtime: { label: 'Docker sandbox: container runtime', allowed: 'a runtime name such as "runsc" (gVisor)', fmt: (v) => (v == null ? 'Docker default' : String(v)) },
 });
 const PROJECT_ONLY = Object.freeze({
   contextMaxBytesPerFile: { label: 'Context size per file', group: 'Runs', fmt: bytes, allowed: 'a whole number of bytes' },
@@ -205,6 +212,21 @@ function buildUserDefs(roles, scanDefaults) {
       dflt: DEFAULT_E2B_MAX_SANDBOXES, fmt: String, allowed: 'a whole number 1–64', check: (v) => assertE2bIntInput('e2bMaxSandboxes', v) }),
     userDef({ id: 'e2bMaxWaitMin', label: 'E2B max wait for an answer', group: 'Runs', read: (s) => ownKey(s, 'e2bMaxWaitMin'), body: (unit) => ({ e2bMaxWaitMin: unit ?? null }),
       dflt: DEFAULT_E2B_MAX_WAIT_MIN, fmt: minutes, allowed: 'whole minutes 5–1440', check: (v) => assertE2bIntInput('e2bMaxWaitMin', v) }),
+    // Settings › Runs › Execution environment › Local sandbox (Docker) (docs/local-sandbox.md): its two limits and the
+    // container's resources. dockerSandbox is ONE stored object, so each field reads and writes its own key of it.
+    userDef({ id: 'dockerMaxSandboxes', label: 'Docker sandboxes at once', group: 'Runs', read: (s) => ownKey(s, 'dockerMaxSandboxes'), body: (unit) => ({ dockerMaxSandboxes: unit ?? null }),
+      dflt: DEFAULT_DOCKER_MAX_SANDBOXES, fmt: String, allowed: 'a whole number 1–64', check: (v) => assertE2bIntInput('dockerMaxSandboxes', v) }),
+    userDef({ id: 'dockerMaxWaitMin', label: 'Docker max wait for an answer', group: 'Runs', read: (s) => ownKey(s, 'dockerMaxWaitMin'), body: (unit) => ({ dockerMaxWaitMin: unit ?? null }),
+      dflt: DEFAULT_DOCKER_MAX_WAIT_MIN, fmt: minutes, allowed: 'whole minutes 5–1440', check: (v) => assertE2bIntInput('dockerMaxWaitMin', v) }),
+    ...Object.entries(DOCKER_SANDBOX_FIELDS).map(([f, { label, allowed, fmt }]) => userDef({ id: `dockerSandbox.${f}`, label, group: 'Runs', allowed, fmt,
+      dflt: DOCKER_DEFAULT_RESOURCES[f] ?? null,
+      read: (s) => (isObj(s.dockerSandbox) && Object.keys(s.dockerSandbox).length ? s.dockerSandbox : null),
+      get: (unit) => (isObj(unit) && unit[f] !== undefined && unit[f] !== null && unit[f] !== '' ? unit[f] : null),
+      // null = this field's default; no field left = the whole key unset.
+      put: (unit, v) => { const next = { ...(isObj(unit) ? unit : {}) }; if (v == null) delete next[f]; else next[f] = v; return Object.keys(next).length ? next : null; },
+      body: (unit) => ({ dockerSandbox: unit ?? null }),
+      // The Settings page's own check (settings.mjs assertDockerSandboxInput → sandboxResources), on the merged object.
+      check: (v, ctx) => { const next = ctx.def.put(ctx.unit, v ?? null); const ok = assertDockerSandboxInput(next ?? null); return ok && ok[f] !== undefined ? ok[f] : null; } })),
     ...MODEL_ENGINES.flatMap((e) => roles.map((r) => pairDef(`models.${e}.steps.${r.key}`, `${r.label || r.key} model (${engineLabel(e)})`, 'Models', e,
       (s) => (isObj(s.stepModels) && isObj(s.stepModels[e]) && isObj(s.stepModels[e][r.key]) ? s.stepModels[e][r.key] : null),
       (unit) => ({ stepModels: { [e]: { [r.key]: unit ?? null } } })))),

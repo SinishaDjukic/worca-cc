@@ -106,10 +106,12 @@ const CREDENTIAL_NAMES = Object.freeze([
   ...GUARDRAIL_PRESETS.secure.protectedPaths,
   '.git-credentials', '.pgpass', '.pypirc',
   'secrets.json', 'credentials', 'credentials.json', '*.kdbx', 'worca-cc.db*', 'worca.db*',
+  'proxy-login.json*',   // the corporate proxy login (an NT hash), as ASK_DENY_RULES
 ]);
 /** A folder that holds credentials (or worca's own state) anywhere BELOW the root the file was found in. */
 const CREDENTIAL_DIRS = new Set(['.ssh', '.aws', '.gnupg', '.kube', '.docker', '.azure', '.git', '.worca-cc']);
-const CREDENTIAL_DIR_PAIRS = Object.freeze([['.config', 'gh'], ['.config', 'gcloud']]);
+// run/secrets: Docker secrets, under /run and /var/run alike (the deny list's pair).
+const CREDENTIAL_DIR_PAIRS = Object.freeze([['.config', 'gh'], ['.config', 'gcloud'], ['run', 'secrets']]);
 
 /** Why this root-relative POSIX path looks like a credential, or null. Case-insensitive (darwin and win32 fold). */
 export function credentialReason(relPosix) {

@@ -1,6 +1,7 @@
 // P1/T10: prompts (ask-worca-design.md §6.5): byte-stable system prompt, the
 // validated client context, the clipped [worca context] header, attachment
 // inlining and the DB-replay restore prompt.
+import { securityToolFamily } from '../src/core/ask/security-tools.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -555,7 +556,8 @@ test('system rules: rule 1 advertises every model tool (compare against the mcp-
       // Every conditional family on but web (renderWebSection names those): the list
       // test/ask-mcp-stdio.test.mjs pins name for name on the real child.
       const served = createAskTools({ limits: ASK_LIMITS, redact: (s) => s, scripts: { enabled: true },
-        models: {}, clones: {}, projectChanges: {}, workspaceChanges: {}, actions: {}, chatActions: {}, composer: {}, scopeSwitch: {}, listPresets: () => [], showFiles: {}, proxy: {}, mcpServers: {} }).list().map((t) => t.name);
+        models: {}, clones: {}, projectChanges: {}, workspaceChanges: {}, actions: {}, chatActions: {}, composer: {}, scopeSwitch: {}, listPresets: () => [], showFiles: {}, proxy: {}, mcpServers: {},
+        security: {}, envProposals: {}, toolFamilies: [securityToolFamily] }).list().map((t) => t.name);
       const rule1 = ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('1. '));
       const listed = rule1.slice(rule1.indexOf('(') + 1, rule1.indexOf(')')).split(', ');
       const elsewhere = ['propose_run', 'propose_workflow', 'save_script', 'test_script'];

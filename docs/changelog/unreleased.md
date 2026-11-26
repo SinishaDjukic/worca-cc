@@ -3,6 +3,34 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Ask Worca knows your security setup
+
+**Chat now answers questions about sandboxes and security setups. It can change a project's sandbox with a card.**
+
+Every chat message carries one security line. It names the setup, the broker, agent users, the network, the proxy login and the default execution environment.
+
+Ask "is this run sandboxed?". Chat reads the same rows as the Security card. It says which sandboxes are ready, and why one is not. It shows the slots in use and the wait limit.
+
+A run card that asks for Docker or E2B checks it first. When Docker is not running, Chat says so and offers Local.
+
+Chat reads a sandbox run's state. It sees a run waiting for a slot, the image build, the answer-by time and the files held for review.
+
+New cards set a project's environment spec, build its template or image, and set its sandbox network. You apply each one.
+
+Chat can change the Docker limits and resources in Settings, with Revert.
+
+Chat says exactly what a setup protects. It never claims "no secrets". It never changes the broker, agent users, the allow-list or the base image.
+
+Chat can no longer read the proxy login file, Docker secrets or the egress sidecar's data. In the hardened box it adds projects by cloning only.
+
+Chips: Chat · Security · Sandbox
+
+Read it: [Chat](../chat.md#security-and-sandboxes), [Security overview](../security-overview.md), [Environment spec](../environment-spec.md)
+
+Pull requests (add each number when it opens):
+
+- Ask Worca knows the security setups (#1619)
+
 ## See how Worca is protected, and change it from the UI
 
 **Worca now shows how it is set up. The security setups need no settings.json editing.**

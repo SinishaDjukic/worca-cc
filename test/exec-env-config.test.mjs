@@ -357,7 +357,7 @@ test('propose_run\'s execEnv and the chat rules name the engines a sandbox runs 
   assert.match(desc({ remoteEngines: ['claude', 'zeta'] }), /one git project\) on the claude or zeta engine\. Only/);
   assert.match(desc({}), /one git project\)\. Only/, 'no list given: no engine named');
   const words = `${remote.slice(0, -1).map(engineLabel).join(', ')} or ${engineLabel(remote.at(-1))}`;
-  assert.ok(String(ASK_SYSTEM_RULES).includes(`E2B takes runs of one git project only, on ${words}: no workspace`));
+  assert.ok(String(ASK_SYSTEM_RULES).includes(`A sandbox takes runs of one git project only, on ${words}: no workspace`));
 });
 
 // ── sandbox egress (plan Task 13): Sandbox.create gets `network` only for an `allow` project ──

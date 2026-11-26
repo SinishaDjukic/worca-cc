@@ -69,6 +69,43 @@ instead of a message to the chat. The chat still posts when the run waits for an
 A pull request opened from a chat card keeps reporting there. The card shows its Watch PR status. Each fix run that
 Watch PR or Resolve starts on it appears in the chat as a live run card, with what started it and how it ended.
 
+## Security and sandboxes
+
+Chat knows how this Worca is set up. Every message carries one `security:` line. It names the setup (native,
+container, hardened box or hosted), the credential broker, agent users, the outbound network, where the proxy login
+lives and the default execution environment.
+
+Ask it "is this run sandboxed?", "why can't I use Docker?" or "what does the hardened box protect?". It reads:
+
+- **the security posture**: the same rows as Settings › General › Security.
+- **the execution environments**: Local, Local sandbox (Docker) and E2B sandbox. Each says ready or why not, the slots
+  in use and the cap, and the wait limit.
+- **a project's sandbox environment**: its network (open or allow), its template or image, its environment spec and
+  its builds, current or stale.
+- **a sandbox run**: waiting for a slot, building the image, the answer-by time and the files held for review.
+
+It states the claim exactly: no model key, no git token and no proxy login in an agent's reach. It never says "no
+secrets". MCP registry secrets stay in reach of the runs that use them. A Local run on a native install is not
+sandboxed.
+
+A run card that asks for a sandbox runs the run start's checks first. When Docker is not running or E2B is not set
+up, Chat says so and offers Local.
+
+Chat changes a project's sandbox with cards you apply:
+
+- **the environment spec**: pinned tools and apt packages. Set or clear it.
+- **a build** of the project's template or image from its spec. It runs on the Worca server.
+- **the sandbox settings**: the network (open or allow) and the template or image.
+
+Chat can also change the Docker and E2B limits in Settings › Runs, with a receipt and Revert.
+
+Chat never changes the credential broker, agent users, the allow-list or the box's base image. Whoever runs Worca
+sets those. In the hardened box, Chat adds a project by cloning it only. Chat never reads the proxy login file,
+`/run/secrets` or the egress sidecar's data.
+
+More: [Choose a setup](choose-a-setup.md), [Security overview](security-overview.md),
+[Environment spec](environment-spec.md), [Network proxy](network-proxy.md).
+
 ## Agent mode with a shared terminal
 
 Chat can run commands such as tests, builds, linters and git in a run's or a project's folder. It uses up to 3
