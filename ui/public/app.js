@@ -305,7 +305,7 @@ import { mcpRunsLabel, renderMcpRunsPop, renderRunSkills } from './mcp-run-picke
 import { aggregate, toCsv, recordTags } from '../../src/shared/team-metrics/aggregate.mjs';
 import { recordFacts, heatGrid, missingKeyTodos } from '../../src/shared/team-metrics/cost-facts.mjs';
 import { buildWorkItems, prLookupFor } from '../../src/shared/team-metrics/timeline.mjs';
-import { buildLeaderboard, mergedRunIds, leaderboardRecords, LEADERBOARD_RANGES } from '../../src/shared/team-metrics/leaderboard.mjs';
+import { buildLeaderboard, mergedRunIds, mergedLookupGaps, leaderboardRecords, LEADERBOARD_RANGES } from '../../src/shared/team-metrics/leaderboard.mjs';
 import { renderTimeline, renderTimelinePopover, timelineWindow, shiftAnchor, TL_MODES, TL_ZOOMS } from './team-metrics-timeline.mjs';
 import {
   renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
@@ -23941,7 +23941,8 @@ const tmState = {
   tab: 'overview',                  // 'overview' | 'timeline' — the hash param (#team-metrics/timeline)
   view: storedTmView(),             // the Overview tab's chip (#718 slice 4)
   lbRange: storedChoice(TM_LB_RANGE_KEY, LEADERBOARD_RANGES, 'this-month'),   // the By person leaderboard's own period
-  viewerLevel: undefined,           // the viewer's Worca level: undefined = not asked yet, null = none, else { key, name, avatar }
+  viewerLevel: null,                // the viewer's Worca level as last read: null = none (or not read yet), else { key, name, avatar }
+  viewerLevelFresh: false,          // false = read it again on the next paint; every load of the page (entry, Refresh) clears it
   viewerLevelLoading: false,
   viewerMatch: null,                // { data, labels }: the actor labels that are the viewer, per loaded payload
   // Timeline: calendar position, grouping (kept per viewer) and the tile filter.
@@ -24025,6 +24026,7 @@ async function loadTeamMetricsView({ refresh = false } = {}) {
   // event reloads the page — the chip says "Checking origin…" meanwhile.
   const qs = new URLSearchParams({ scope: tmState.scopeId, range: 'all', aggregate: '0', defer: '1' });
   if (refresh) qs.set('refresh', '1');
+  tmState.viewerLevelFresh = false;   // each load reads the viewer's level again (loadTmViewerLevel)
   let data = null;
   try {
     const res = await fetch(`/api/team-metrics?${qs}`);
@@ -24236,25 +24238,34 @@ function tmLevelFor(label) {
   return tmState.viewerLevel ? { state: 'known', ...tmState.viewerLevel } : { state: 'none' };
 }
 
-/** The viewer's level, once per page session; a failure leaves "No level yet" without a toast. */
+const sameTmLevel = (a, b) => (a?.key ?? null) === (b?.key ?? null) && (a?.name ?? null) === (b?.name ?? null) && (a?.avatar ?? null) === (b?.avatar ?? null);
+
+/**
+ * The viewer's level, read once per load of the page: every load (entering the page, Refresh, a changed
+ * scope) asks again, so a level-up shows. A failed read keeps what was shown, without a toast, and is
+ * not repeated until the next load: a failing read cannot loop (paint → ask → fail → paint).
+ */
 async function loadTmViewerLevel() {
-  if (tmState.viewerLevel !== undefined || tmState.viewerLevelLoading) return;
+  if (tmState.viewerLevelFresh || tmState.viewerLevelLoading) return;
   tmState.viewerLevelLoading = true;
-  let level = null;
   try {
     const l = (await fetchWorcaLevel()).level;
-    if (l && l.key) level = { key: l.key, name: l.name, avatar: l.avatar };
-  } catch { /* no level shown */ }
-  tmState.viewerLevelLoading = false;
-  tmState.viewerLevel = level;
-  if (level && tmState.data && currentView() === 'team-metrics') renderTeamMetrics();
+    const level = l && l.key ? { key: l.key, name: l.name, avatar: l.avatar } : null;
+    const changed = !sameTmLevel(level, tmState.viewerLevel);
+    tmState.viewerLevel = level;
+    tmState.viewerLevelFresh = true;
+    if (changed && tmState.data && currentView() === 'team-metrics') renderTeamMetrics();
+  } catch (err) {
+    tmState.viewerLevelFresh = true;   // asked for this load; the next load asks again
+    console.warn(`team metrics: could not read your level: ${err.message}`);
+  } finally {
+    tmState.viewerLevelLoading = false;
+  }
 }
 
-/** 'loading' until every run in the card's window has been asked about; 'unreachable' when GitHub could not answer. */
+/** 'loading' until every run in the card's window has been asked about; what the answer could not cover is mergedLookupGaps' to say. */
 function tmMergedState(pr, windowRecords) {
-  if (pr.loading || windowRecords.some((r) => !pr.asked.has(r.id))) return 'loading';
-  const st = pr.status;
-  return st?.ghError || st?.gh === 'missing' || st?.gh === 'unauthenticated' ? 'unreachable' : 'ok';
+  return pr.loading || windowRecords.some((r) => !pr.asked.has(r.id)) ? 'loading' : 'ok';
 }
 
 function closeTlPopover() { document.querySelectorAll('.tl-pop').forEach((p) => p.remove()); }
@@ -24380,7 +24391,7 @@ function renderTeamMetrics() {
     mergedState = tmMergedState(pr, leaderboardRecords(data.records, tmState.lbRange, now));
   }
   body.classList.remove('is-loading');
-  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims, view, costEl, levelFor: tmLevelFor, leaderboard, lbRange: tmState.lbRange, mergedState }));
+  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims, view, costEl, levelFor: tmLevelFor, leaderboard, lbRange: tmState.lbRange, mergedState, mergedGaps: leaderboard ? mergedLookupGaps(tmPrsFor(tmState.scopeId).status) : undefined }));
   tmState.lastAgg = agg;
   // The #tm-tag select, beside the range controls (replaced on every render; hidden with the flag off).
   const tagSel = renderTagFilterSelect(data.records || [], tmState.tag, { doc: document });

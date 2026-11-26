@@ -323,7 +323,14 @@ test('leaderboard card: ranked grid row shows the score bar and the four parts a
 test('leaderboard card: merged-state notes (loading, unreachable) follow the footer', () => {
   const b = board(lbRuns('Ana', 3));
   assert.match(renderLeaderboardCard(b, { doc, levelFor: unknown, now: NOW, mergedState: 'loading' }).querySelector('.tm-lb-foot .tm-lb-merged-note').textContent, /Checking merged pull requests…/);
-  assert.match(renderLeaderboardCard(b, { doc, levelFor: unknown, now: NOW, mergedState: 'unreachable' }).querySelector('.tm-lb-foot').textContent, /spend per run\. GitHub could not be reached/);
+  const foot = (mergedGaps) => renderLeaderboardCard(b, { doc, levelFor: unknown, now: NOW, mergedGaps }).querySelector('.tm-lb-foot');
+  assert.match(foot({ providers: ['GitHub'], truncated: [] }).textContent, /spend per run\. GitHub could not be reached — runs whose pull request could not be checked count as not merged\.$/);
+  assert.match(foot({ providers: ['Azure DevOps'], truncated: [] }).querySelector('.tm-lb-merged-note').textContent, /^Azure DevOps could not be reached/);
+  assert.match(foot({ providers: ['GitHub', 'Azure DevOps', 'Bitbucket'], truncated: [] }).textContent, /GitHub, Azure DevOps, and Bitbucket could not be reached/);
+  assert.match(foot({ providers: [], truncated: ['org/p/r'] }).querySelector('.tm-lb-merged-note').textContent, /^org\/p\/r has more pull requests than one listing covers — older runs there may count as not merged\.$/);
+  assert.match(foot({ providers: ['Bitbucket'], truncated: ['a/b/c', 'd/e/f'] }).textContent, /Bitbucket could not be reached .* a\/b\/c, d\/e\/f have more pull requests/);
+  assert.equal(foot({ providers: [], truncated: [] }).querySelector('.tm-lb-merged-note'), null);
+  assert.match(renderLeaderboardCard(b, { doc, levelFor: unknown, now: NOW, mergedState: 'loading', mergedGaps: { providers: ['GitHub'], truncated: [] } }).querySelector('.tm-lb-merged-note').textContent, /^Checking merged pull requests…$/, 'while checking, only the checking note');
 });
 
 test('leaderboard card: not-eligible cards have an avatar, "<level> · N runs" and a "needs N more run" tag', () => {

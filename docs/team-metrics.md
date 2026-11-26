@@ -148,15 +148,20 @@ closed; All time says **All-time leader**. With no runs the card says "No winner
 runs it says "No winner for this period".
 
 **Merged runs** are matched to pull requests exactly as the [Timeline](#timeline) does (the Action's
-events, this machine's runs, GitHub through `gh`, and the cache). The card paints first with "Checking merged
-pull requests…" and repaints when the answer arrives. When GitHub cannot be reached, runs whose pull
-request could not be checked count as not merged and the card says so.
+events, this machine's runs, GitHub through `gh`, Azure DevOps and Bitbucket through their tokens, and the
+cache). The card paints first with "Checking merged pull requests…" and repaints when the answer arrives.
+When GitHub, Azure DevOps or Bitbucket cannot be reached (no CLI or token, a refused token, or an error), runs
+whose pull request could not be checked count as not merged and the card names the provider. It also names an
+Azure DevOps repository with more pull requests than one listing covers: older runs there may count as not merged.
 
 **Levels.** Each person in the By actor table (Overview and By person) and on the leaderboard shows a Worca
 level badge. A Worca level is worked out on each person's own machine and is private, so Team metrics only
 shows the real level (name and icon) for **you**; everyone else shows **Level unknown** with a neutral icon.
 You are found by your signed-in name, or, on a single-person install, by your git name or the key of your git
-email on the records. If you have not reached a level yet the badge says "No level yet".
+email on the records (for a workspace, read from the first member that is a Git checkout, where its runs
+record it — not from the metrics home). If you have not reached a level yet the badge says "No level yet".
+Your level is read again each time the page loads and on **Refresh**, so a level-up shows there; when that
+read fails, the level already on screen stays.
 
 ## Timeline
 

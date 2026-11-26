@@ -92,3 +92,23 @@ export function buildLeaderboard(records, { range, now = Date.now(), mergedRunId
   out.winners = rows.filter((r) => r.rank === 1).map((r) => r.key);
   return out;
 }
+
+const PR_PROVIDERS = Object.freeze([
+  { name: 'GitHub', state: 'gh', error: 'ghError' },
+  { name: 'Azure DevOps', state: 'azure', error: 'azureError' },
+  { name: 'Bitbucket', state: 'bitbucket', error: 'bitbucketError' },
+]);
+const PROVIDER_DOWN = Object.freeze(['missing', 'unauthenticated']);
+
+/**
+ * What kept the pull-request lookup (prs.mjs resolveRunPrs `status`) from a full answer: the providers that
+ * could not answer (no CLI or token, a refused token, or an error), and the Azure DevOps repositories whose
+ * listing was cut short. Runs behind either count as not merged, so the card says so.
+ * @returns {{ providers: string[], truncated: string[] }}
+ */
+export function mergedLookupGaps(status) {
+  const st = status || {};
+  const providers = PR_PROVIDERS.filter((p) => !!st[p.error] || PROVIDER_DOWN.includes(st[p.state])).map((p) => p.name);
+  const truncated = Array.isArray(st.azureTruncated) ? [...st.azureTruncated] : [];
+  return { providers, truncated };
+}

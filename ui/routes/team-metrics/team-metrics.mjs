@@ -71,7 +71,7 @@ app.get('/api/team-metrics', async (req, res) => {
       sync: read.sync,
       refresh: read.refresh,
       fetchError: read.fetchError,
-      viewer: await viewerOf(req, read.rateProjectDir),
+      viewer: await viewerOf(req, read.identityProjectDir),
     });
   } catch (err) { sendMetricsError(res, err); }
 });

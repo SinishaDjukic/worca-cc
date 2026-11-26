@@ -234,12 +234,21 @@ function renderNotEligible(lb, { doc, levelFor }) {
   return box;
 }
 
-const MERGED_NOTE = {
-  loading: 'Checking merged pull requests…',
-  unreachable: 'GitHub could not be reached — runs whose pull request could not be checked count as not merged.',
-};
+const NO_GAPS = Object.freeze({ providers: Object.freeze([]), truncated: Object.freeze([]) });
+const listOf = (names) => new Intl.ListFormat('en', { style: 'long', type: 'conjunction' }).format(names);
 
-export function renderLeaderboardCard(lb, { doc = globalThis.document, levelFor, mergedState = 'ok', lbRange, now = Date.now() } = {}) {
+/** The footer's note on merged runs: "checking" while the lookup runs, then what it could not cover (leaderboard.mjs mergedLookupGaps). */
+function mergedNote(mergedState, gaps) {
+  if (mergedState === 'loading') return 'Checking merged pull requests…';
+  const providers = gaps?.providers || [];
+  const truncated = gaps?.truncated || [];
+  const parts = [];
+  if (providers.length) parts.push(`${listOf(providers)} could not be reached — runs whose pull request could not be checked count as not merged.`);
+  if (truncated.length) parts.push(`${truncated.join(', ')} ${truncated.length === 1 ? 'has' : 'have'} more pull requests than one listing covers — older runs there may count as not merged.`);
+  return parts.join(' ') || null;
+}
+
+export function renderLeaderboardCard(lb, { doc = globalThis.document, levelFor, mergedState = 'ok', mergedGaps = NO_GAPS, lbRange, now = Date.now() } = {}) {
   const card = h(doc, 'section', 'card chart-card tm-lb');
   const head = h(doc, 'div', 'card-head');
   const title = h(doc, 'div', 'tm-lb-title');
@@ -250,7 +259,8 @@ export function renderLeaderboardCard(lb, { doc = globalThis.document, levelFor,
   if (lb.notEligible.length) card.append(renderNotEligible(lb, { doc, levelFor }));
   const note = h(doc, 'p', 'tm-lb-foot');
   note.append('Each part is compared with the rest of the team in the same period. Merged runs and success ratio 35% each, runs and spend per run 15% each. Runs without a recorded cost are left out of spend per run.');
-  if (MERGED_NOTE[mergedState]) note.append(' ', h(doc, 'span', 'tm-lb-merged-note', MERGED_NOTE[mergedState]));
+  const merged = mergedNote(mergedState, mergedGaps);
+  if (merged) note.append(' ', h(doc, 'span', 'tm-lb-merged-note', merged));
   card.append(note);
   return card;
 }

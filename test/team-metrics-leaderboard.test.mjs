@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  LEADERBOARD_WEIGHTS, LEADERBOARD_RANGES, buildLeaderboard, mergedRunIds,
+  LEADERBOARD_WEIGHTS, LEADERBOARD_RANGES, buildLeaderboard, mergedRunIds, mergedLookupGaps,
 } from '../src/shared/team-metrics/leaderboard.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 
@@ -177,4 +177,20 @@ test('input is not mutated', () => {
   const copy = structuredClone(recs);
   lb(recs);
   assert.deepEqual(recs, copy);
+});
+
+test('mergedLookupGaps: every provider that failed is named, and Azure listings cut short are kept', () => {
+  assert.deepEqual(mergedLookupGaps(null), { providers: [], truncated: [] });
+  assert.deepEqual(mergedLookupGaps({ gh: 'ok', azure: 'ok', bitbucket: 'unused' }), { providers: [], truncated: [] });
+  assert.deepEqual(mergedLookupGaps({ gh: 'unused', azure: 'missing' }).providers, ['Azure DevOps']);
+  assert.deepEqual(mergedLookupGaps({ gh: 'unused', azure: 'unauthenticated' }).providers, ['Azure DevOps']);
+  assert.deepEqual(mergedLookupGaps({ gh: 'ok', azure: 'ok', azureError: 'HTTP 500' }).providers, ['Azure DevOps']);
+  assert.deepEqual(mergedLookupGaps({ bitbucket: 'missing' }).providers, ['Bitbucket']);
+  assert.deepEqual(mergedLookupGaps({ bitbucket: 'ok', bitbucketError: 'timeout' }).providers, ['Bitbucket']);
+  assert.deepEqual(mergedLookupGaps({ gh: 'missing', azure: 'unauthenticated', bitbucketError: 'x' }).providers, ['GitHub', 'Azure DevOps', 'Bitbucket']);
+  assert.deepEqual(mergedLookupGaps({ ghError: 'gh down' }).providers, ['GitHub']);
+  const status = { azure: 'ok', azureTruncated: ['org/proj/repo'] };
+  const gaps = mergedLookupGaps(status);
+  assert.deepEqual(gaps, { providers: [], truncated: ['org/proj/repo'] });
+  assert.notEqual(gaps.truncated, status.azureTruncated, 'a copy, not the status array');
 });

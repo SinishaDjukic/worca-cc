@@ -446,6 +446,54 @@ test('a failing level read never breaks the page', async () => {
   assert.ok(ctx.window.document.querySelector('#tm-body .tm-lb'));
 });
 
+// The account corner reads /api/worca-level too, so these tests switch the served answer instead of counting reads.
+const levelSwitch = (first) => {
+  const served = { now: first, reads: 0 };
+  const base = lbHandler(lbData());
+  const fetchHandler = (u, o) => {
+    if (!u.includes('/api/worca-level')) return base(u, o);
+    served.reads += 1;
+    return served.now ? respond(served.now) : respond({ error: 'no' }, 500);
+  };
+  return { served, fetchHandler };
+};
+const tmRefresh = async ({ window, tick }) => { window.document.querySelector('#tm-sync .tm-refresh').click(); for (let i = 0; i < 8; i++) await tick(); };
+
+test('a failed level read recovers, and a level-up shows, on Refresh', async () => {
+  const UP = { level: { index: 4, key: 'orchestrator', name: 'Orchestrator', avatar: '/assets/worca-levels/orchestrator.svg' } };
+  const { served, fetchHandler } = levelSwitch(null);
+  const ctx = await openPerson({ fetchHandler });
+  const levelOf = () => lbRow(ctx.window.document, 'Ana').querySelector('.tm-lb-level').textContent;
+  assert.match(levelOf(), /No level yet/, 'the failed read shows no level');
+  served.now = LEVEL;
+  await tmRefresh(ctx);
+  assert.equal(levelOf(), 'Builder', 'the failed read was not kept for the session');
+  served.now = UP;
+  await tmRefresh(ctx);
+  assert.equal(levelOf(), 'Orchestrator', 'a level-up shows after Refresh');
+});
+
+test('a failed level read after a good one keeps the level that was shown', async () => {
+  const { served, fetchHandler } = levelSwitch(LEVEL);
+  const ctx = await openPerson({ fetchHandler });
+  const levelOf = () => lbRow(ctx.window.document, 'Ana').querySelector('.tm-lb-level').textContent;
+  assert.equal(levelOf(), 'Builder');
+  served.now = null;
+  const before = served.reads;
+  await tmRefresh(ctx);
+  assert.ok(served.reads > before, 'Refresh asked again');
+  assert.equal(levelOf(), 'Builder');
+});
+
+test('an Azure DevOps or Bitbucket lookup that could not answer is named under the leaderboard', async () => {
+  const open = (status) => openPerson({ fetchHandler: lbHandler(lbData(), { prs: () => respond({ prs: {}, status }) }) });
+  const note = (ctx) => ctx.window.document.querySelector('#tm-body .tm-lb-merged-note')?.textContent ?? null;
+  assert.match(note(await open({ gh: 'unused', azure: 'missing' })), /^Azure DevOps could not be reached/);
+  assert.match(note(await open({ gh: 'ok', bitbucket: 'ok', bitbucketError: 'HTTP 500' })), /^Bitbucket could not be reached/);
+  assert.match(note(await open({ gh: 'ok', azure: 'ok', azureTruncated: ['org/p/r'] })), /^org\/p\/r has more pull requests than one listing covers/);
+  assert.equal(note(await open({ gh: 'ok', azure: 'ok', bitbucket: 'unused' })), null);
+});
+
 test('switching the leaderboard period re-ranks and persists', async () => {
   const lastMonth = new Date(monthStart(1) + 9 * 86_400_000).toISOString();
   const recs = [...lbData().records.slice(0, 3), ...['c1', 'c2', 'c3'].map((id) => lbRec(id, 'Cy', lastMonth))];

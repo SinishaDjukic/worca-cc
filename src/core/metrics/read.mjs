@@ -4,7 +4,7 @@ import { readdir, readFile, lstat, realpath } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, sep, resolve } from 'node:path';
 import { listProjects } from '../projects.mjs';
-import { listWorkspaces, readWorkspace, WORKSPACE_KEY_RE } from '../workspaces.mjs';
+import { listWorkspaces, memberWorkMode, readWorkspace, WORKSPACE_KEY_RE } from '../workspaces.mjs';
 import {
   METRICS_DIR, REMOTE_REF, ensureWorktree, fetchMetricsBranch, runGit, withSlugLock, worktreePath, pushHint,
   resolveProjectSink, discoverProject, listOutbox, projectMetricsStatus, workspaceMetricsStatus, recordsLocally,
@@ -265,10 +265,11 @@ function syncFor(slug, prefs, pending) {
 
 /**
  * @returns {Promise<{scope, records, stats:{files,malformed,unknownV}, sinks:string[], sync:object[],
- *                    refresh:{requested,fetched,limited,retryInMs}, fetchError:string|null}>}
+ *                    refresh:{requested,fetched,limited,retryInMs}, fetchError:string|null,
+ *                    rateProjectDir:string|null, identityProjectDir:string|null}>}
  */
 export async function readScope(scope, { refresh = false, defer = false } = {}) {
-  const { sources, meta, rateProjectDir } = await scopeSources(scope);
+  const { sources, meta, rateProjectDir, identityProjectDir } = await scopeSources(scope);
   const seen = new Set();
   const records = [];
   const stats = { files: 0, malformed: 0, unknownV: 0 };
@@ -301,22 +302,40 @@ export async function readScope(scope, { refresh = false, defer = false } = {}) 
     }
     sync.push({ ...syncFor(src.slug, readTeamMetricsPrefs(projectKey(src.projectDir)), (await listOutbox(src.slug)).length), fetchedAt: r.fetchedAt });
   }
-  return { scope: meta, records, stats, sinks: sources.map((s) => s.slug), sync, refresh: refreshInfo, fetchError, rateProjectDir };
+  return { scope: meta, records, stats, sinks: sources.map((s) => s.slug), sync, refresh: refreshInfo, fetchError, rateProjectDir, identityProjectDir };
+}
+
+const byKey = (a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+
+/**
+ * The checkout a workspace run takes the actor's git identity from: in project-key order (run-harness.mjs
+ * sorts a run's members so), the first member that is not a Folder — the one record.mjs snapshotFromHarness
+ * picks. Null when every member is a Folder.
+ * @param {string[]} projectPaths
+ * @returns {string|null}
+ */
+export function viewerIdentityDir(projectPaths, { workModeOf = memberWorkMode, keyOf = projectKey } = {}) {
+  const members = (projectPaths || []).map((path) => ({ path, key: keyOf(path) })).sort(byKey);
+  return members.find((m) => workModeOf(m.path) !== 'folder')?.path ?? null;
 }
 
 /**
  * The metrics branches a scope reads (no git, no record parsing): a project's own sink (or the
- * one it delegates to), or every workspace member that records locally.
- * @returns {Promise<{sources: {slug, projectDir, keep}[], meta: object, rateProjectDir: string|null}>}
+ * one it delegates to), or every workspace member that records locally. `rateProjectDir` prices the
+ * human hours (a workspace's optional metrics home); `identityProjectDir` is where the viewer's git
+ * identity is read, the checkout a run of this scope records it from.
+ * @returns {Promise<{sources: {slug, projectDir, keep}[], meta: object, rateProjectDir: string|null, identityProjectDir: string|null}>}
  */
 export async function scopeSources(scope) {
   const sources = [];
   let meta;
   let rateProjectDir = null;
+  let identityProjectDir = null;
   if (scope.kind === 'project') {
     const p = (await listProjects()).find((x) => x.key === scope.id);
     if (!p) throw Object.assign(new Error(`unknown project ${scope.id}`), { code: 'NOT_FOUND' });
     rateProjectDir = p.path;
+    identityProjectDir = p.path;
     const sink = await resolveProjectSink(p.path);
     if (!sink.ok) {
       const code = sink.reason === 'delegate-invalid' ? 'DELEGATE_INVALID' : 'NOT_ENABLED';
@@ -336,10 +355,11 @@ export async function scopeSources(scope) {
     }
     if (!sources.length) throw Object.assign(new Error(`no member of ${ws.name} records team metrics`), { code: 'NOT_ENABLED' });
     rateProjectDir = ws.metricsProject || null;
+    identityProjectDir = viewerIdentityDir(ws.projectPaths);
     const homePrefs = ws.metricsProject ? readTeamMetricsPrefs(projectKey(ws.metricsProject)) : null;
     meta = { kind: 'workspace', id: ws.id, name: ws.name, home: homePrefs?.slug ?? null, sources: sources.map((s) => s.slug) };
   }
-  return { sources, meta, rateProjectDir };
+  return { sources, meta, rateProjectDir, identityProjectDir };
 }
 
 /** Scope list + Projects/Workspaces status in one call (Scope select, Projects cells, ws cards, Stats hint). */
