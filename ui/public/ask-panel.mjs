@@ -4259,7 +4259,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       });
   }
 
-  function wsBasename(p) { return String(p || '').replace(/\/+$/, '').split('/').pop() || String(p || ''); }
+  // Both separators: a Windows workspace sends c:\…\name paths.
+  function wsBasename(p) { return String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(p || ''); }
+  // The line under the Workspace select: the first few member names, the rest as a count; every name in the tooltip.
+  const WS_MEMBERS_SHOWN = 3;
+  function wsMembersLine(names) {
+    const rest = names.length - WS_MEMBERS_SHOWN;
+    return rest > 0 ? `${names.slice(0, WS_MEMBERS_SHOWN).join(', ')} and ${rest} more` : names.join(', ');
+  }
 
   // ---- Run proposal card v2 (spec 2026-09-06-ask-run-card-v2 §7.3) --------------------------------------------------
   const RP_ACC = new Set(['violet', 'blue', 'green', 'peach', 'red', 'amber']);
@@ -6553,7 +6560,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const list = row && Array.isArray(row.projectKeys)
           ? row.projectKeys.map((k, i) => ({ projectKey: k, name: wsBasename(row.projectPaths && row.projectPaths[i]), folder: Array.isArray(row.vcs) && row.vcs[i] === 'none' }))
           : Array.isArray(card.members) ? card.members.map((m) => ({ projectKey: m.projectKey, name: m.projectName, folder: m.workMode === 'folder' })) : [];
-        members.textContent = list.map((m) => m.name).join(', ');
+        const names = list.map((m) => m.name);
+        members.textContent = wsMembersLine(names);
+        members.title = names.length > WS_MEMBERS_SHOWN ? names.join(', ') : '';
         for (const m of list) {
           if (m.folder) continue;   // listed above, but no per-member source input: never in sourceBranchByKey
           const inp = doc.createElement('input');
