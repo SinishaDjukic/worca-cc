@@ -189,3 +189,10 @@ test('s10 closing (R-rel-1): Small runs describes next and no word, the open sto
   assert.ok(words.includes('solid') && words.includes('dashed bar'), 'the link marks');
   assert.ok(smallPart('Show order'), 'the "### Show order" part');
 });
+
+// Shaper small runs slice 15 (R-po-6): a run that has not started has no run page; the docs say where its two facts show.
+test('s15 (R-po-6): the run page bullet says Waits for and Needed by show on a started run\'s page only, and a not-started run\'s row opens the feature page', () => {
+  const bullet = smallPart('The four places').split(/ - \*\*/).find((b) => b.startsWith('The run panel and the Expert run page**')) || '';
+  assert.ok(bullet, 'the run panel and run page bullet');
+  assert.deepEqual(missing(bullet, [/started run/, /not started/, 'no run page', 'feature page', /point(ing)? at the row/, 'dashed bar']), []);
+});
