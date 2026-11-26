@@ -2788,6 +2788,8 @@ test('s5 run page head: a marked member with an open stop reads \'waiting for yo
   assert.equal(head.word, 'waiting for you');
   assert.equal(head.dot.dataset.symbol, 'question');
   assert.doesNotMatch(head.detail, /needs you/i, head.detail);
+  assert.match(stateLine(ctx.window).textContent, /^waiting for you/, 'the header state line reads the shared word');
+  assert.equal(stateLine(ctx.window).querySelector('.status-dot').dataset.symbol, 'question');
 
   frame(ctx, { type: 'run-created', runId: 'r0', title: 'Slice one', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T09:00:00Z', kind: 'run' });
   frame(ctx, { type: 'state', runId: 'r0', id: 'p0', status: 'done', endReached: true, stepper: V2_MANIFEST, steps: V2_STEPS().map((x) => ({ ...x, status: 'done' })), active: [], subAgents: [], totalCostUsd: 1 });
@@ -2810,6 +2812,9 @@ test('s5 saved run page head: a marked member that failed reads the shared word 
   assert.equal(head.word, 'failed');
   assert.equal(head.dot.dataset.symbol, 'alert');
   for (const seg of head.detail.split(' · ')) assert.ok(!/^failed$/i.test(seg), head.detail);
+  const line = ctx.window.document.querySelector('#hist-detail .run-state-line');
+  assert.match(line.textContent, /^failed/, 'the saved header state line reads the shared word');
+  assert.equal(line.querySelector('.status-dot').dataset.symbol, 'alert');
 });
 
 // --- the header state line -------------------------------------------------

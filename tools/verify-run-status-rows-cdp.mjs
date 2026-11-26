@@ -18,7 +18,7 @@
 // and one 360px light shot `rows-busy-side-360-light.png`; every member's word, dot and data-mark equal the card's, the
 // live member keeps its .runs-stage strips (Plan, Build, Review, Ready), the ask and failed words take the card's ink,
 // the dashed ring's centre sits within 1px of a plain dot's, and at 360px each run number and word stays visible. `run`:
-// the run page head (.rd-sheet .run-status) of busy runs 2 (ask), 5 (failed), 6 (live) and held run 4 (after run 3),
+// the run page head (the header's state line) of busy runs 2 (ask), 5 (failed), 6 (live) and held run 4 (after run 3),
 // `rows-{world}-run{n}-{theme}.png`; its word and dot equal the card's, and its detail restates no dev state word.
 // Slice 6 adds the `stops` surface: the Chat card's open stop list in the busy world, per theme at 1280px and 2x.
 // `stops-busy-card-{theme}.png`: 4 lines in run order (runs 2, 4, 5, 11) with their exact texts, run 5's red "!" and its
@@ -363,7 +363,7 @@ const WANT = {
 };
 const SURFACES = { card: '.chat-rc-members', page: '#group-detail div.gpage-runs',
   // s5: the Runs list's expanded feature group, and the run page head.
-  side: '.runs-members.srows', run: '.rd-sheet .run-status' };
+  side: '.runs-members.srows', run: '.run-state-line' };
 /** s5: the dev state words a run page head detail must not restate beside the shared word (plan D8). */
 const DEV_STATE = ['needs you', 'paused', 'waiting', 'working', 'failed', 'stopped', 'running'];
 const devSegs = (detail) => String(detail || '').split(' · ').map((x) => x.trim()).filter((x) => DEV_STATE.includes(x.toLowerCase()) || /^starts /i.test(x));
@@ -398,20 +398,18 @@ const SIDE_ROWS = (featureId) => `(() => {
   }).filter((r) => Number.isInteger(r.run));
   return { rows };
 })()`;
-/** s5: the run page head: its word, detail and dot signature. A live run waiting at a Shaper plan stop hides its whole
- *  status card while the question card is the page (D30, shape-it.css .rd-glance[data-shaper-wait] > .rd-sheet): its head
- *  is still painted, so it is read there and reported with `wait` (the shot is then the visible question card, #run-detail .rd-questions, which the page moves out of the glance). */
+/** s5: the run page head as the person sees it: the header's state line (its dot, word and step), shown on every tab, and
+ *  the detail of the status card under it (.rd-sheet .run-status), which repeats neither the word nor the step. */
 const RUN_HEAD = `(() => {
   const SIG = ${SIG_SRC};
-  const all = [...document.querySelectorAll('.rd-sheet .run-status')];
-  const shown = all.find((x) => x.offsetParent);
-  const folded = all.find((x) => { const g = x.closest('.rd-glance[data-shaper-wait]'); return g && g.offsetParent; });
-  const host = shown || folded;
-  if (!host) return null;
-  const wait = shown ? null : host.closest('.rd-glance').dataset.shaperWait;
-  const word = host.querySelector('.run-status-word'); const detail = host.querySelector('.run-status-detail');
-  const dot = host.querySelector('.run-status-head .status-dot');
-  return { hash: location.hash, word: word ? word.textContent : null, detail: detail && !detail.hidden ? detail.textContent : '', sig: SIG(dot), dot: dot ? dot.className : '', wait };
+  const line = [...document.querySelectorAll('.run-state-line')].find((x) => x.offsetParent);
+  if (!line) return null;
+  const card = line.closest('.rd, .hd')?.querySelector('.rd-sheet .run-status');
+  const word = line.querySelector('.run-state-word'); const step = line.querySelector('.run-state-step');
+  const detail = card?.querySelector('.run-status-detail');
+  const dot = line.firstElementChild;
+  const said = [step && !step.hidden ? step.textContent.replace(/^ · /, '') : '', detail && !detail.hidden ? detail.textContent : ''].filter(Boolean).join(' · ');
+  return { hash: location.hash, word: word ? word.textContent : null, detail: said, sig: SIG(dot), dot: dot ? dot.className : '' };
 })()`;
 /** s5: the side list must say what the card says, for the same world, theme and run. */
 function judgeSide(where, side, card) {
@@ -514,17 +512,16 @@ for (const name of WORLDS) {
       await skipWelcome(); await sleep(400);
       h = await ev(RUN_HEAD);
       if (!h) {
-        check(false, `${where}: the .rd-sheet .run-status head is on screen`);
+        check(false, `${where}: the header's state line is on screen`);
         log(`  seen: ${JSON.stringify(await ev(`(() => ({ hash: location.hash, heads: [...document.querySelectorAll('.rd-sheet .run-status')].map((x) => [x.closest('[id]')?.id, !!x.offsetParent, x.textContent.slice(0, 60)]), views: [...document.querySelectorAll('.view:not(.hidden)')].map((x) => x.id) }))()`))}`);
         continue;
       }
       check(h.word === want.word && h.sig === want.sig, `${where}: the head's word and dot equal the card's (${h.word} ${h.sig} vs ${want.word} ${want.sig}, ${h.hash})`);
       check(!/^working$/i.test(String(h.word).trim()), `${where}: a live word is never working (${h.word})`);
       const dev = devSegs(h.detail);
-      check(dev.length === 0, `${where}: the run-status-detail restates no dev state word (needs you, paused, waiting, working, failed, stopped, running, starts …): "${h.detail}"`);
+      check(dev.length === 0, `${where}: the step and run-status-detail restate no dev state word (needs you, paused, waiting, working, failed, stopped, running, starts …): "${h.detail}"`);
       results.rows.push({ where, head: h, card: { word: want.word, sig: want.sig, mark: want.mark } });
-      if (h.wait) log(`  run ${n}: the status card is folded under the Shaper ${h.wait} wait (D30); the head was read from the DOM and the shot is the question card the person sees`);
-      await shotOf(h.wait ? '#run-detail .rd-questions' : SURFACES.run, `rows-${name}-run${n}-${theme}.png`, 'center');   // the page's sticky tabs cover a head scrolled to the top
+      await shotOf(SURFACES.run, `rows-${name}-run${n}-${theme}.png`, 'center');   // the page's sticky tabs cover a head scrolled to the top
     }
   }
   if (name === 'base') {
