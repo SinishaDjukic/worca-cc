@@ -298,6 +298,12 @@ test('posture: every protection on, read from the running box', () => {
   assert.equal(ca.rows.find((r) => r.id === 'no-host-mount').status, 'on', 'the read-only CA file is not a project mount');
   const login = postureRows(box({ sidecar: { state: 'ready', upstream: 'proxy.acme.example:8080', login: { label: 'ACME\\jdoe' }, policy: { mode: 'allowlist', allow: ['github.com'] } } }));
   assert.match(login.rows.find((r) => r.id === 'proxy-login').detail, /sidecar holds the login for proxy\.acme\.example:8080 \(ACME\\jdoe\)/);
+  // The sidecar's 'no-login' means "no login saved" (a real sidecar reports it for a proxy that answers 407 too).
+  const none = postureRows(box({ sidecar: { state: 'no-login', upstream: 'proxy.acme.example:8080', policy: { mode: 'allowlist', allow: ['github.com'] } } }));
+  const row = none.rows.find((r) => r.id === 'proxy-login');
+  assert.equal(row.status, 'on');
+  assert.doesNotMatch(row.detail, /needs no login/);
+  assert.match(row.detail, /no login is saved for the proxy proxy\.acme\.example:8080.*worca container proxy login/);
 });
 
 test('posture: each protection that is off says so and how to fix it', () => {

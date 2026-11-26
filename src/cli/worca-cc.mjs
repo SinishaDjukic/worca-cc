@@ -56,7 +56,7 @@ import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
 import { cmdExtension } from './extension.mjs';
 import { cmdProxy } from './proxy.mjs';
-import { sealEgressSecret } from '../core/egress-sidecar-client.mjs';
+import { sealEgressSecret, egressSecretChildEnv } from '../core/egress-sidecar-client.mjs';
 import { cmdSetup } from './setup.mjs';
 import { cmdE2b } from './e2b.mjs';
 import { cmdExecEnv } from './exec-env.mjs';
@@ -1042,6 +1042,8 @@ async function uiStart(a) {
   out(c('cyan', `Starting Worca UI on ${url}`));
   if (effectiveDebugSpawn().enabled) out(c('gray', `  node ${server}`));
   const env = { ...process.env, PORT: String(port), [SUPERVISOR_ENV]: String(process.pid) };   // the server checks it against its ppid
+  // main() sealed the egress sidecar's secret out of process.env; the server needs it for the sidecar API and seals it again.
+  Object.assign(env, egressSecretChildEnv());
   if (a.mock) env.WORCA_MOCK = '1';
   let child = null;
   const ac = new AbortController();

@@ -175,7 +175,9 @@ caller is closed at once: an agent in Worca's container, the sidecar, any other 
 lookup decides it. When the relay finds no such gateway, it does not start.
 
 On Docker Desktop the published port may arrive from another address. Then the relay refuses every connection, and
-the UI does not open. That fails closed. It has not been checked on Docker Desktop yet.
+the UI does not open. That fails closed. On Docker Desktop 28 for macOS it was checked: the published port arrives
+from the gateway of the relay's default network, so the UI opens, and connections from Worca's container, the broker
+and the sidecar are refused.
 
 The broker's calls to the model provider go through the sidecar too. So the allow-list keeps `api.anthropic.com`,
 and the proxy login applies to the broker.
