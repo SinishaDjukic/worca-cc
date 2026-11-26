@@ -72,9 +72,9 @@ after(async () => {
   await rm(homeDir, { recursive: true, force: true });
 });
 
-test('GET /api/exec-envs lists local, e2b and a registered backend', async () => {
+test('GET /api/exec-envs lists local, e2b, docker and a registered backend', async () => {
   const unregister = _registerExecBackendForTests(lb.backend);
-  try { assert.deepEqual((await get('/api/exec-envs')).body.execEnvs.map((e) => e.name), ['local', 'e2b', 'loopback']); }
+  try { assert.deepEqual((await get('/api/exec-envs')).body.execEnvs.map((e) => e.name), ['local', 'e2b', 'docker', 'loopback']); }
   finally { unregister(); }
 });
 test('GET /api/exec-envs/status: every backend with a status, one server each; mock mode reads the e2b fake', async () => {
@@ -82,8 +82,10 @@ test('GET /api/exec-envs/status: every backend with a status, one server each; m
   try {
     const { status, body } = await get('/api/exec-envs/status');
     assert.equal(status, 200);
-    assert.deepEqual(body.execEnvs.map((e) => e.name), ['e2b', 'loopback'], 'Local has no status');
-    const [e2b, loop] = body.execEnvs;
+    assert.deepEqual(body.execEnvs.map((e) => e.name), ['e2b', 'docker', 'loopback'], 'Local has no status');
+    const [e2b, docker, loop] = body.execEnvs;
+    assert.equal(docker.state, 'connected');
+    assert.match(docker.servers[0].label, /mock/);
     assert.equal(e2b.state, 'connected');
     assert.equal(e2b.servers.length, 1);
     assert.match(e2b.servers[0].label, /mock/);
@@ -133,7 +135,7 @@ test('POST build without a spec is 409 EXEC_ENV_NO_SPEC; an unknown backend is 4
   await del(`/api/projects/${key}/exec-env/spec`);
   const r = await post(`/api/projects/${key}/exec-env/build`, { backend: 'e2b' });
   assert.equal(r.status, 409); assert.equal(r.body.code, 'EXEC_ENV_NO_SPEC');
-  assert.equal((await post(`/api/projects/${key}/exec-env/build`, { backend: 'docker' })).status, 400);
+  assert.equal((await post(`/api/projects/${key}/exec-env/build`, { backend: 'podman' })).status, 400);
   assert.equal((await get('/api/projects/nope-00000000/exec-env')).status, 404);
   assert.equal((await get('/api/exec-env/builds/envb_nope')).status, 404);
 });

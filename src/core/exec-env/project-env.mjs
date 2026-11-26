@@ -100,7 +100,7 @@ function sandboxNetwork(backend, config, env, notes) {
   if (!egress) return null;
   const { unheldDeny = [], ...network } = egress;
   const reach = network.allowOut?.length ? `only ${network.allowOut.join(', ')}` : 'nothing (every outbound connection is blocked)';
-  notes.push({ level: 'info', text: `sandbox network: allow, so the sandbox reaches ${reach}; the model relay still works. ${SANDBOX_EGRESS_HELP}` });
+  notes.push({ level: 'info', text: `sandbox network: allow, so the sandbox reaches ${reach}; the model relay still works. ${backend.networkHelp || SANDBOX_EGRESS_HELP}` });
   if (unheldDeny.length) {
     const one = unheldDeny.length === 1;
     notes.push({ level: 'warn', text: `sandbox network: WORCA_EGRESS_DENY names ${unheldDeny.join(', ')}, which an allowed wildcard covers; `

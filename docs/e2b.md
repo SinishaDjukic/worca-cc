@@ -39,6 +39,17 @@ This is the "E2B sandbox" setup. The other setups are "Native", "Local sandbox (
 - The network allow-list stops casual egress only. It does not stop a determined agent.
 - With E2B Cloud, your source code goes to E2B Cloud.
 
+### Compared with the Local sandbox (Docker)
+
+The [Local sandbox (Docker)](local-sandbox.md) runs the same layer on your own Docker instead of an E2B server.
+
+- **Local sandbox (Docker):** no server needed. The wall is a container, which shares your kernel. The network goes
+  through Worca only, also behind a proxy that needs a login. No sudo in the sandbox.
+- **E2B sandbox:** needs an E2B server. The wall is a virtual machine. Agents have sudo in their own VM.
+
+Pick E2B when your team has an E2B server or wants the stronger wall. Pick the local sandbox for one developer on a
+laptop.
+
 ## Quick start
 
 1. Build the sandbox template once (needs the `e2b` package and a reachable E2B API):

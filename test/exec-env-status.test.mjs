@@ -128,8 +128,8 @@ test('execEnvStatuses lists only backends with status() and caches for a few sec
   try {
     let now = 1_000;
     const first = await execEnvStatuses({ env: ENV, now: () => now });
-    assert.deepEqual(first.map((e) => e.name), ['e2b', 'loopstat']);
-    assert.equal(first[1].servers[0].cap, 2, "the backend's own default when it has no setting");
+    assert.deepEqual(first.map((e) => e.name), ['e2b', 'docker', 'loopstat']);
+    assert.equal(first[2].servers[0].cap, 2, "the backend's own default when it has no setting");
     now += 2_000; await execEnvStatuses({ env: ENV, now: () => now });
     assert.equal(calls, 1, 'served from the cache');
     now += 10_000; await execEnvStatuses({ env: ENV, now: () => now });

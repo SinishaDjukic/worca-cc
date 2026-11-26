@@ -19,10 +19,10 @@ const repo = gitDir('cli-execenv');
 const KEY = projectKey(repo);
 before(async () => { await addProject({ name: 'cli-execenv', path: repo }); });
 
-test('list names local and e2b', async () => {
+test('list names local, e2b and docker', async () => {
   const out = [];
   assert.equal(await cmdExecEnv(['list'], { out: (s) => out.push(s), fail: () => {} }), 0);
-  assert.deepEqual(out.map((l) => l.split(/\s+/)[0]), ['local', 'e2b']);
+  assert.deepEqual(out.map((l) => l.split(/\s+/)[0]), ['local', 'e2b', 'docker']);
 });
 test('spec --set stores the normalized spec; status shows it; a bad file fails with the reason', async () => {
   const out = []; const errs = [];

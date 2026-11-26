@@ -4,6 +4,7 @@
 // (plans/e2b-execution-design.md §17). Each backend's secretEnv joins stripHostCredentials.
 import { assertBackend } from './backend.mjs';
 import { e2bBackend } from './backends/e2b.mjs';
+import { dockerBackend } from './backends/docker.mjs';
 import { registerHostSecretEnv } from '../host-credentials.mjs';
 
 const BACKENDS = new Map();
@@ -14,6 +15,7 @@ function register(backend) {
   registerHostSecretEnv(backend.secretEnv);
 }
 register(e2bBackend);
+register(dockerBackend);
 
 /** 'local' first, then every registered backend. */
 export const execEnvNames = () => ['local', ...BACKENDS.keys()];

@@ -22,7 +22,7 @@ const pre = (o = {}) => e2bPreflight({ engine: 'claude', isWorkspace: false, env
 test('selectExecEnv: blank is local, unknown throws', () => {
   assert.equal(selectExecEnv(undefined), 'local');
   assert.equal(selectExecEnv(' e2b '), 'e2b');
-  assert.throws(() => selectExecEnv('docker'), /unknown execution environment "docker"/);
+  assert.throws(() => selectExecEnv('podman'), /unknown execution environment "podman"/);
 });
 
 test('preflight: a clean e2b claude single-project run passes', () => {

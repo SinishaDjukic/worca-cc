@@ -38,8 +38,8 @@ test('propose_run execEnv: omitted keeps the card shape, a known environment rid
   // An explicit local is a real pick: it keeps a saved remote default off this one run.
   assert.equal(ok(await validateProposal({ ...P, execEnv: 'local' })).execEnv, 'local');
   assert.equal('execEnv' in ok(await validateProposal({ ...P, execEnv: '' })), false);
-  assert.deepEqual(errs(await validateProposal({ ...P, execEnv: 'docker' })), [PROPOSAL_ERRORS.unknownExecEnv('docker')]);
-  assert.match(PROPOSAL_ERRORS.unknownExecEnv('docker'), /one of local, e2b/);
+  assert.deepEqual(errs(await validateProposal({ ...P, execEnv: 'podman' })), [PROPOSAL_ERRORS.unknownExecEnv('podman')]);
+  assert.match(PROPOSAL_ERRORS.unknownExecEnv('podman'), /one of local, e2b, docker/);
 });
 
 test('propose_run execEnv: a remote environment takes single-project runs of a git project on any remote engine, as the run start does', async () => {
@@ -130,7 +130,7 @@ test('chat settings: run.execEnv and the E2B limits are listed, checked and writ
     } },
     { name: 'refusals are the setters\' own words', run: async () => {
       const { reg } = registry();
-      assert.match((await reg.check({ id: 'run.execEnv', value: 'docker' })).error, /execEnv must be one of local \| e2b/);
+      assert.match((await reg.check({ id: 'run.execEnv', value: 'podman' })).error, /execEnv must be one of local \| e2b \| docker/);
       assert.match((await reg.check({ id: 'e2bMaxSandboxes', value: 0 })).error, /e2bMaxSandboxes must be a whole number in 1–64/);
       assert.match((await reg.check({ id: 'e2bMaxWaitMin', value: 2 })).error, /e2bMaxWaitMin must be a whole number in 5–1440/);
     } },

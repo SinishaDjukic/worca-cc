@@ -175,7 +175,7 @@ test('an execEnv that is not a string, or an unknown one, is a 400', async () =>
   const bad = await post('/api/run', { projectDir, prompt: 'demo task', mock: true, execEnv: 42 });
   assert.equal(bad.status, 400);
   assert.match(bad.body.error, /execEnv must be a string/);
-  const unknown = await post('/api/run', { projectDir, prompt: 'demo task', mock: true, execEnv: 'docker' });
+  const unknown = await post('/api/run', { projectDir, prompt: 'demo task', mock: true, execEnv: 'podman' });
   assert.equal(unknown.status, 400);
-  assert.match(unknown.body.error, /unknown execution environment "docker"/);
+  assert.match(unknown.body.error, /unknown execution environment "podman"/);
 });
