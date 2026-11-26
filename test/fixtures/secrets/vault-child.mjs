@@ -12,11 +12,15 @@ import { createVault, openVaultIfEnabled } from '../../../src/core/secrets/vault
 const [cmd, ...rest] = process.argv.slice(2);
 const opt = (name) => { const i = rest.indexOf(`--${name}`); return i < 0 ? undefined : rest[i + 1]; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// A test child never reaches a real OS key store, whatever the machine has installed: with no runner marker the real
+// selection runs, and these deps make it find none (on a Mac with @napi-rs/keyring it picked the Keychain).
+const NO_REAL_STORE = Object.freeze({ loadKeyring: () => null, isWsl: async () => false, findPowershell: () => null });
+const childStore = () => selectOsStore({ home: worcaHome(), deps: NO_REAL_STORE });
 
 if (cmd === 'put-many') {
   const store = opt('store');
   const count = Number(opt('count'));
-  const vault = createVault({ home: worcaHome(), store: await selectOsStore({ home: worcaHome() }) });
+  const vault = createVault({ home: worcaHome(), store: await childStore() });
   writeFileSync(opt('ready'), String(process.pid));
   const deadline = Date.now() + 30_000;
   while (!existsSync(opt('go'))) {
@@ -27,7 +31,7 @@ if (cmd === 'put-many') {
   for (let i = 0; i < count; i++) await vault.put({ store, field: `f${i}`, value: `${store}-v${i}` });
   console.log(JSON.stringify({ start, end: Date.now() }));
 } else if (cmd === 'probe-store') {
-  const store = await selectOsStore({ home: worcaHome() });
+  const store = await childStore();
   let result;
   try {
     result = { ref: await createVault({ home: worcaHome(), store }).put({ store: 'settings', field: 'probe', value: 'probe-value' }) };

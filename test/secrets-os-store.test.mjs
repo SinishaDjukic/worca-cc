@@ -30,8 +30,11 @@ test('unavailableOsStore: kind none, both calls throw unavailable', async () => 
 
 test('the switch is honoured only with the runner marker and an absolute path', async () => {
   assert.equal((await selectOsStore({ env: { [TEST_OS_STORE_ENV]: STATE, NODE_TEST_CONTEXT: 'child-v8' } })).kind, 'fake');
-  assert.equal((await selectOsStore({ env: { [TEST_OS_STORE_ENV]: STATE } })).kind, 'none');
-  assert.equal((await selectOsStore({ env: { [TEST_OS_STORE_ENV]: STATE, NODE_TEST_CONTEXT: '' } })).kind, 'none');
+  // Without the marker the real selection runs: these deps stand in for a machine with no OS key store, so a test
+  // never loads the native binding of a developer machine that has it installed (where this said 'keychain').
+  const noStore = { platform: 'darwin', loadKeyring: () => null };
+  assert.equal((await selectOsStore({ env: { [TEST_OS_STORE_ENV]: STATE }, deps: noStore })).kind, 'none');
+  assert.equal((await selectOsStore({ env: { [TEST_OS_STORE_ENV]: STATE, NODE_TEST_CONTEXT: '' }, deps: noStore })).kind, 'none');
   assert.equal((await selectOsStore({ env: { [TEST_OS_STORE_ENV]: 'fake/state.json', NODE_TEST_CONTEXT: 'child-v8' } })).kind, 'none');
   assert.equal((await selectOsStore({ env: { NODE_TEST_CONTEXT: 'child-v8' } })).kind, 'none');
 });
