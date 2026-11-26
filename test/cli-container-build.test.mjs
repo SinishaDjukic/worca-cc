@@ -147,6 +147,19 @@ test('a named project without a spec, an unknown one, and no spec anywhere are r
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a proxy URL with a login never reaches the build', async () => {
+  resetSpecs();
+  const dir = await containerDir('HTTPS_PROXY=http://jdoe:s3cret@proxy.acme.example:3128\nNO_PROXY=.acme.example\n');
+  try {
+    const rt = fakeRuntime();
+    const r = await run([], { dir, rt });
+    assert.equal(r.code, 0, r.fails.join('\n'));
+    const build = rt.calls.find((k) => k.args[0] === 'build');
+    assert.ok(!build.args.some((a) => a.includes('s3cret') || a.includes('jdoe')), 'the login is in no build argument');
+    assert.ok(build.args.includes('NO_PROXY=.acme.example'), 'NO_PROXY still reaches the build');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('a build: base id, build, labels, offline probe; then the record and WORCA_IMAGE; --status says current', async () => {
   resetSpecs();
   const dir = await containerDir('HTTPS_PROXY=http://proxy.acme.example:3128\nHTTP_PROXY=http://127.0.0.1:9999\n');

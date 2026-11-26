@@ -102,13 +102,21 @@ async function projectsWithSpec() {
   return out;
 }
 
-/** The proxy for the build's own downloads (apt, mise, the tools), from the container .env: never a loopback one. */
+/** True when a proxy URL carries a login (`user:pass@host`). An unparsable value counts as one: it is not passed on. */
+function proxyHasLogin(v) {
+  try { const u = new URL(v); return Boolean(u.username || u.password); } catch { return true; }
+}
+
+/** The proxy for the build's own downloads (apt, mise, the tools), from the container .env: never a loopback one, and
+ *  never one whose URL carries a login. Third-party install scripts run in the build, and a build argument also stays
+ *  in the image's history. */
 function proxyBuildArgs(envFile, out, c) {
   const args = [];
   for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY']) {
     const v = envFile(k);
     if (!v) continue;
     if (k !== 'NO_PROXY' && isLoopbackProxy(v)) { out(`${c('yellow', 'proxy')}  .env sets ${k} to a loopback address; the build does not use it`); continue; }
+    if (k !== 'NO_PROXY' && proxyHasLogin(v)) { out(`${c('yellow', 'proxy')}  .env sets ${k} with a login; the build does not use it. Set the proxy in Docker's own settings for builds.`); continue; }
     args.push('--build-arg', `${k}=${v}`);
   }
   return args;
