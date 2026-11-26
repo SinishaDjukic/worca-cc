@@ -9466,7 +9466,7 @@ function askSignedIn(req) {
 /** The voice-merge pre-check startAskTurn runs (tests swap it to reach the write's own in-tx refusal). */
 let askSupersedePrecheck = askSupersedeRefusal;
 
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, handsFree = false, client = null, onUserRow = null, chatContext = null, scopeNote = null, supersedes = null }, { features = [] } = {}) {
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, handsFree = false, client = null, onUserRow = null, chatContext = null, scopeNote = null, supersedes = null, sendId = null }, { features = [] } = {}) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -9573,7 +9573,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         ...featureBlocks,
       ]);
     }
-    broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); if (superseded.length) broadcast({ type: 'ask-superseded', threadId: id, messageIds: superseded, by: userMsg.id });   // echo for other tabs, then the rows a voice merge hid (not replay-buffered)
+    broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id), ...(sendId ? { sendId } : {}) }); if (superseded.length) broadcast({ type: 'ask-superseded', threadId: id, messageIds: superseded, by: userMsg.id });   // echo for other tabs, then the rows a voice merge hid (not replay-buffered)
     asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model, effort, engine: modelEngine || 'claude' });   // #943: per-reply engine
     job.messageId = asstMsg.id;
 

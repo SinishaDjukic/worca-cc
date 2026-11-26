@@ -22,7 +22,6 @@ import { createDesignBuilds } from '../src/core/design/registry.mjs';
 import { registerDesignRoutes } from '../src/core/design/routes.mjs';
 import { getBuild } from '../src/core/design/store.mjs';
 import { createDesignChat } from '../ui/public/design/chat.mjs';
-import { createLibrary } from '../ui/public/design/library.mjs';
 
 const registries = [];
 const servers = [];
@@ -282,67 +281,15 @@ test('GET /api/design/limits answers {fast: 12, calm: 3} locally, {fast: 6, calm
   }
 });
 
-// ── The labels: the Library's composer and the chat dock read the limits once per instance ────────────────────────
+// ── The label: the chat dock reads the limits once per instance (the design start's: test/ui-design-studio.test.mjs) ──
 const doms = [];
 const made = [];
 afterEach(() => {
   for (const m of made.splice(0)) m.destroy();
   for (const dom of doms.splice(0)) dom.window.close();
 });
-const flush = () => new Promise((res) => setImmediate(res));
 const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
 const LIMITS_URL = '/api/design/limits';
-
-/** The Library with `/api/design/limits` answering `answer` (null: 404), held until `release()` when `hold`. */
-function mountLibrary(answer, { hold = false } = {}) {
-  const dom = new JSDOM('<!doctype html><html><body><div id="h"></div></body></html>', { url: 'http://localhost/' });
-  doms.push(dom);
-  const win = dom.window;
-  const doc = win.document;
-  const urls = [];
-  let release = () => {};
-  const held = hold ? new Promise((res) => { release = res; }) : null;
-  const fetch = async (url) => {
-    urls.push(url);
-    if (url === LIMITS_URL) {
-      if (held) await held;
-      return answer === null ? reply(404, { error: 'not found' }) : reply(200, answer);
-    }
-    if (url === '/api/design') return reply(200, []);
-    return reply(404, { error: 'not found' });
-  };
-  made.push(createLibrary({ doc, win, host: doc.getElementById('h'), fetch, navigate() {} }));
-  const cap = () => doc.querySelector('.dz-fast-cap');
-  // Build fast starts on: a click is needed only when a test turned it off.
-  const on = () => { const sw = doc.querySelector('.dz-fast [role=switch]'); if (!sw.checked) sw.click(); };
-  return { urls, cap, on, release: () => release() };
-}
-
-test("the Library's Build fast label reads the server's cap", async () => {
-  const six = mountLibrary({ fast: 6, calm: 3 });
-  await flush();
-  six.on();
-  assert.equal(six.cap().hidden, false);
-  assert.equal(six.cap().textContent, 'up to 6');
-  assert.equal(six.urls.filter((u) => u === LIMITS_URL).length, 1, 'asked once');
-  const missing = mountLibrary(null);
-  await flush();
-  missing.on();
-  assert.equal(missing.cap().textContent, 'up to 12', 'a 404: the next Library does not inherit 6');
-  for (const half of [{ fast: '6', calm: 3 }, { fast: 6 }, { fast: 6.5, calm: 3 }, [6, 3]]) {
-    const lib = mountLibrary(half);
-    await flush();
-    lib.on();
-    assert.equal(lib.cap().textContent, 'up to 12', JSON.stringify(half));
-  }
-  const late = mountLibrary({ fast: 6, calm: 3 }, { hold: true });
-  late.on();
-  assert.equal(late.cap().textContent, 'up to 12', 'until the answer comes');
-  late.release();
-  await flush();
-  await flush();
-  assert.equal(late.cap().textContent, 'up to 6', 'then the answer');
-});
 
 /** The chat dock on a design with fast off, `/api/design/limits` answering `answer` (null: 404). */
 async function mountChat(answer) {

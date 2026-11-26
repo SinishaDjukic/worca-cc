@@ -350,35 +350,17 @@ input.dsc-sound-key:focus-visible,input.dsc-sound-music:focus-visible{outline:2p
 .dz-standby-doing{min-height:1.5em;font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
 @media (prefers-reduced-motion: reduce){.frame-box{transition:transform var(--cam-ms,0ms) cubic-bezier(.65,0,.35,1);}}
 .dz-lost,.dz-empty{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color-scheme:dark;color:var(--ink-2);font-size:var(--fs-body);}
-/* The Library (board 1, canvas design.css:138-160): just the items. It scrolls, its padding is the inner column's,
-   and the grid reflows below the mockup's 1240. The body is a flex column, so its [hidden] needs its own rule */
-.dz-lib{flex:1;min-width:0;min-height:0;overflow-y:auto;background:var(--panel);}
-.dz-lib-in{display:flex;flex-direction:column;align-items:center;padding:64px 32px 24px;}
-/* The start composer (canvas design.css:140-150), then what the mockup does not draw: the files, the refusal line, the
-   project menu, which the flyout places in the viewport, so it is fixed, and the kind chips wrapping on a phone, where
-   the centred row would spill past both edges and leave its first chip out of reach */
-.dz-hero{width:100%;max-width:760px;}
-.dz-hero .ask-composer{padding:0;--ask-col-max:100%;--ask-col-inset:0px;}
-.dz-hero .ask-composer-box{padding:12px 12px 10px;border-color:var(--line-2);}
-.dz-hero .dz-input{min-height:64px;font-size:15px;line-height:1.55;}
-/* Equal columns across the composer's width: every kind button is the same size, whatever its word; a narrow page
-   wraps them into rows of equal ones. */
+/* The design start's kind buttons (studio.mjs): equal columns across the composer's width, every kind button the same
+   size whatever its word; a narrow page wraps them into rows of equal ones, where a centred row would spill past both
+   edges and leave its first button out of reach. */
 .dz-kinds{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;width:100%;margin-top:20px;}
 /* The kind buttons are .btn .btn-lg, the Chat home's quick actions' size; the pressed one is .btn-primary. */
 .dz-kind-btn{min-width:0;padding:0 12px;}
 .dz-kind-btn svg{width:20px;height:20px;color:var(--ink-2);}
 .dz-kind-btn.btn-primary svg{color:var(--on-ink);}
-.dz-start-files{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px 4px;}
-.dz-start-files[hidden]{display:none;}
-.dz-start-file{display:inline-flex;align-items:center;gap:4px;max-width:240px;height:24px;padding:0 3px 0 8px;border-radius:var(--r-xs);background:var(--field);color:var(--ink);font:500 var(--fs-meta)/1 var(--sans);}
-.dz-start-file > span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.dz-start-file-x{display:grid;place-items:center;flex:none;width:18px;height:18px;padding:0;border:0;border-radius:var(--r-xs);background:none;color:var(--ink-2);cursor:pointer;}
-.dz-start-file-x:hover{background:var(--quiet-hover);color:var(--ink);}
-.dz-start-file-x:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.dz-start-err{margin:8px 0 0;padding:0 4px;color:var(--red-ink);font-size:var(--fs-meta);}
-.dz-start-menu{position:fixed;min-width:200px;max-width:320px;z-index:6;}
-.dz-start-menu .menu-item > span:first-child{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.dz-lib-body{width:100%;max-width:1240px;margin-top:44px;display:flex;flex-direction:column;gap:14px;}
+/* The designs under the design start (designs-grid.mjs): the heading and the tiles. The body is a flex column, so its
+   [hidden] needs its own rule. */
+.dz-lib-body{display:flex;flex-direction:column;gap:14px;}
 .dz-lib-body[hidden]{display:none;}
 .dz-lib-h{margin:0;font-size:var(--fs-section);font-weight:600;letter-spacing:-.01em;line-height:var(--lh-title);}
 .dz-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:20px;}
@@ -391,7 +373,14 @@ input.dsc-sound-key:focus-visible,input.dsc-sound-music:focus-visible{outline:2p
 .dz-thumb-none svg{width:28px;height:28px;}
 .dz-tile-t{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .dz-tile-m{margin-top:-6px;color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;}
-.dz-lib-load,.dz-lib-err{width:100%;max-width:1240px;}
+/* The designs under a new design's start (designs-grid.mjs): at most three tiles a row, so the newest nine fill three
+   rows; the search beside the heading; Show all designs centred under the tiles. */
+.dz-designs{width:100%;max-width:1040px;margin-top:44px;}
+.dz-designs .dz-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,max(260px,calc((100% - 40px)/3))),1fr));}
+.dz-lib-head{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.dz-find{flex:0 1 240px;min-width:0;}
+.dz-lib-foot{display:flex;justify-content:center;margin-top:6px;}
+.dz-lib-foot[hidden]{display:none;}
 /* The chat head's More (Rename, Delete): the flyout writes the menu's viewport left and top, so it is fixed */
 .dz-more{position:fixed;min-width:160px;z-index:6;}
 @keyframes dz-fade{to{opacity:0;}}
@@ -444,7 +433,6 @@ input.dsc-sound-key:focus-visible,input.dsc-sound-music:focus-visible{outline:2p
 .dz-start-composer .ask-composer-box{border-radius:var(--r-lg);}
 /* As on the chat home (chat-shell.css): the composer's menus open below it, never clipped by the page above. */
 .dz-start-composer .ask-composer > .ask-pop{bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(90vh - 230px));}
-.dz-start-foot{display:flex;justify-content:center;margin-top:12px;}
 @media (max-width:760px){
 .dz-studio{flex-direction:column;}
 .dz-chat{flex:0 0 45%;width:100%;border-right:0;border-top:1px solid var(--line);order:2;}

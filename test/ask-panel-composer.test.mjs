@@ -270,6 +270,59 @@ test('ask-panel-composer: the user echo replaces the optimistic row (no duplicat
   ]);
 });
 
+test('ask-panel-composer: the composer clears when the echo of its own send lands, not only at the 202', async () => {
+  await checkRows([
+    { name: 'ask-panel-composer: the echo carrying this send\'s sendId clears the composer while the 202 is still out; text typed after it survives the 202', run: async () => {
+      // The server broadcasts the user row, then assembles the prompt before it answers 202 (seconds on Windows):
+      // the bubble must not sit beside the same text still in the composer.
+      const bodies = [];
+      let answer;
+      const calls = { messages: (url, opts) => { bodies.push(JSON.parse(opts.body)); return new Promise((r) => { answer = r; }); } };
+      const ctx = makePanel({ fetchHandler: apiHandler(calls) });
+      ctx.panel.open();
+      injectFiles(ctx, [mkFile(ctx, 'notes.md', 'hello world')]);
+      await ctx.tick(); await ctx.tick();
+      const input = ctx.doc.querySelector('textarea.ask-input');
+      input.value = 'evaluate the tests';
+      ctx.doc.querySelector('[data-ask-send]').click();
+      await ctx.tick(); await ctx.tick(); await ctx.tick();
+      assert.equal(bodies.length, 1);
+      assert.match(bodies[0].sendId, /^[A-Za-z0-9_-]{1,64}$/, 'the send carries an id for its echo');
+      assert.equal(input.value, 'evaluate the tests', 'nothing echoed yet: the draft stays');
+      ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, sendId: bodies[0].sendId, message: { id: 'askm_u0000001', threadId: TID, seq: 1, role: 'user', text: 'evaluate the tests', blocks: [], status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: 't' } });
+      ctx.flush();
+      assert.equal(input.value, '', 'the bubble is in: the composer is empty');
+      assert.equal(ctx.doc.querySelector('.ask-chip'), null, 'its files went with it');
+      assert.equal(ctx.doc.querySelectorAll('.ask-msg-user').length, 1);
+      input.value = 'next thought';
+      answer({ ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: MID }) });
+      await ctx.tick(); await ctx.tick(); await ctx.tick();
+      ctx.flush();
+      assert.equal(input.value, 'next thought', 'the 202 leaves what was typed after the echo');
+      assert.equal(ctx.doc.querySelectorAll('.ask-msg-user').length, 1, 'no duplicate bubble');
+    } },
+    { name: 'ask-panel-composer: another tab\'s echo (no or another sendId) leaves the composer alone', run: async () => {
+      const bodies = [];
+      let answer;
+      const calls = { messages: (url, opts) => { bodies.push(JSON.parse(opts.body)); return new Promise((r) => { answer = r; }); } };
+      const ctx = makePanel({ fetchHandler: apiHandler(calls) });
+      ctx.panel.open();
+      const input = ctx.doc.querySelector('textarea.ask-input');
+      input.value = 'same words';
+      ctx.doc.querySelector('[data-ask-send]').click();
+      await ctx.tick(); await ctx.tick(); await ctx.tick();
+      const row = (id) => ({ id, threadId: TID, seq: 1, role: 'user', text: 'same words', blocks: [], status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: 't' });
+      ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: row('askm_u0000009') });
+      ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, sendId: `${bodies[0].sendId}x`, message: row('askm_u0000008') });
+      ctx.flush();
+      assert.equal(input.value, 'same words');
+      answer({ ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: MID }) });
+      await ctx.tick(); await ctx.tick(); await ctx.tick();
+      assert.equal(input.value, '', 'the 202 still clears it');
+    } },
+  ]);
+});
+
 // ---- the queue (messages sent while a reply runs), ArrowUp history ------------------------------------------------
 const START = (uid = 'askm_u0000001') => ({ type: 'ask-start', userMessageId: uid, model: 'm', effort: 'high', startedAt: 't' });
 const DONE = (status = 'done') => ({ type: 'ask-done', text: 'ok', blocks: [], usage: null, costUsd: 0, durationMs: 5, model: 'm', status, threadTotals: {} });
