@@ -58,6 +58,50 @@ export function neededByOf(run, slices = new Map()) {
 }
 
 /**
+ * Slice 6 (D6): the runs a stop on `run` holds up: every run that builds on it directly or through others (the reverse
+ * `buildsOn` closure, walked through every link whatever its state) whose state is neither `done` nor `canceled`. The
+ * run itself is never listed; a cycle ends through `seen`. Ascending.
+ * @returns {number[]}
+ */
+export function holdsUpOf(run, slices = new Map()) {
+  if (!Number.isInteger(run)) return [];
+  const seen = new Set([run]);
+  const stack = [run];
+  const out = [];
+  while (stack.length) {
+    for (const d of neededByOf(stack.pop(), slices)) {
+      if (seen.has(d)) continue;
+      seen.add(d);
+      stack.push(d);
+      const st = slices.get(d).state;
+      if (st !== 'done' && st !== 'canceled') out.push(d);
+    }
+  }
+  return out.sort((a, b) => a - b);
+}
+
+/** Slice 6 (D7): a stop line's word for an ask with no stop reason, by its kind (step-card.mjs `stepChip`). */
+export const STOP_KIND_WORDS = Object.freeze({
+  plan: 'plan approval', outline: 'runs approval', clarify: 'questions', questions: 'questions', gate: 'gate',
+  recovery: 'recovery', care: 'start', prototype: 'prototype',
+});
+
+/**
+ * Slice 6 (D7): one stop line's text: `Run N · WORD` for an open stop, `Run N failed` for a failed run, plus
+ * ` · holds up a, b` when `holdsUp` is non-empty.
+ * @param {{index: number, kind?: string|null, reason?: string|null, failed?: boolean, holdsUp?: number[]}} entry
+ * @returns {string}
+ */
+export function stopLineText(entry) {
+  const e = isObj(entry) ? entry : {};
+  const word = e.reason ? (e.reason === 'objection' ? 'gate' : 'plan approval')
+    : (Object.hasOwn(STOP_KIND_WORDS, e.kind) ? STOP_KIND_WORDS[e.kind] : 'waiting for you');
+  const head = e.failed ? `Run ${e.index} failed` : `Run ${e.index} · ${word}`;
+  const held = Array.isArray(e.holdsUp) && e.holdsUp.length ? ` · holds up ${e.holdsUp.join(', ')}` : '';
+  return head + held;
+}
+
+/**
  * D5: one run's word and mark, first match wins: done; a held stop answer (`after run N`); an open stop or ask
  * (`waiting for you`); failed; not started (cannot start, `waits for run …`, `next`, or no word); live (today's phase
  * word). `word` null means "the caller keeps dev's text", '' means "deliberately no word".

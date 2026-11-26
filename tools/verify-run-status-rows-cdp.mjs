@@ -20,6 +20,12 @@
 // the dashed ring's centre sits within 1px of a plain dot's, and at 360px each run number and word stays visible. `run`:
 // the run page head (.rd-sheet .run-status) of busy runs 2 (ask), 5 (failed), 6 (live) and held run 4 (after run 3),
 // `rows-{world}-run{n}-{theme}.png`; its word and dot equal the card's, and its detail restates no dev state word.
+// Slice 6 adds the `stops` surface: the Chat card's open stop list in the busy world, per theme at 1280px and 2x.
+// `stops-busy-card-{theme}.png`: 4 lines in run order (runs 2, 4, 5, 11) with their exact texts, run 5's red "!" and its
+// Resume, a mounted visible .qpanel per open line whose data-qrun is that run's seeded run id, and no footer Resume. Then
+// Approve on run 4's real step card must post run 4's run id to /answer. `stops-refused-{theme}.png`: run 5's Resume is
+// refused (run 6 is going) and its line shows the refusal with Resume enabled again. `stops-after-{theme}.png`: busy with
+// run 4 re-seeded building lists 3 lines, runs 2, 5 and 11. SURFACE=stops runs only this surface.
 // NOT part of `npm test`: it needs Chrome. A hard 20-minute cap inside.
 // Run: H=$(mktemp -d); env -u FORCE_COLOR HOME=$H VERIFY_PORT=4943 SHOTS_DIR=… node --disable-warning=ExperimentalWarning tools/verify-run-status-rows-cdp.mjs
 import { spawn, execFileSync } from 'node:child_process';
@@ -35,7 +41,7 @@ const CHROME = process.env.CHROME_BIN || CHROME_PATHS.find((p) => existsSync(p))
 const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0 ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
 if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
 const THEMES = ['light', 'dark'];
-const WORLDS = ['base', 'busy', 'held', 'change', 'failed'].filter((w) => !process.env.WORLD || w === process.env.WORLD);   // WORLD=held runs one world
+const WORLDS = ['base', 'busy', 'held', 'change', 'failed'].filter((w) => (!process.env.WORLD || w === process.env.WORLD) && process.env.SURFACE !== 'stops');   // WORLD=held runs one world
 const WIDE = 1280;
 const NARROW = 375;
 const SIDE_NARROW = 360;   // s5: the Runs list's narrow shot
@@ -132,6 +138,8 @@ const SPECS = {
   held: { spec: { done: [1], states: { 2: { stop: 'requirement' }, 3: { pipe: 'running' }, 4: { stop: 'check', held: true, after: 3 } } } },
   change: { spec: SIXTEEN_RUN_STATES.base, then: (fx) => fx.setKind(13, 'change') },
   failed: { spec: { done: [1, 3, 4], states: { 2: { stop: 'requirement' }, 11: { stop: 'check' }, 5: { pipe: 'error' } } }, then: (fx) => fx.cancelTicket(14) },
+  // s6 stops: busy with run 4 answered and building, so its stop line is gone.
+  'stops-after': { spec: { done: SIXTEEN_RUN_STATES.busy.done, states: { ...SIXTEEN_RUN_STATES.busy.states, 4: { pipe: 'running' } } } },
 };
 /** Seeds one world (cancelling the previous world's tickets and live runs) and its Chat thread; returns the routes. */
 function seed(name) {
@@ -147,7 +155,7 @@ function seed(name) {
     blocks: [{ kind: 'card', id: cardId, state: 'tracked', card: { type: 'progress', pipelineId: fx.originPipelineId, runId: `run-${fx.originPipelineId}`, projectKey: key, title: 'CI as a trusted merge gate', status: 'done' } }] });
   askStore.linkRun(thread.id, { runId: `run-${fx.originPipelineId}`, cardId, pipelineId: fx.originPipelineId, status: 'done' });
   recordShapePlan({ threadId: thread.id, cardId, title: 'CI as a trusted merge gate' });
-  return { card: `#chat/${thread.id}`, page: `#feature/${fx.featureId}`, side: '#runs', origin: fx.originPipelineId, featureId: fx.featureId,
+  return { card: `#chat/${thread.id}`, pipelineOf: (n) => fx.pipelineOf(n), page: `#feature/${fx.featureId}`, side: '#runs', origin: fx.originPipelineId, featureId: fx.featureId,
     // s5: a started run's page: a live run at #running/ plus its run id, a finished one at #history/ plus key and id.
     run: (n) => (liveIds.includes(`run-${fx.pipelineOf(n)}`) ? `#running/run-${fx.pipelineOf(n)}` : `#history/${key}/${fx.pipelineOf(n)}`) };
 }
@@ -483,6 +491,94 @@ for (const name of WORLDS) {
     }
   }
 }
+// ---- s6 stops: the Chat card's open stop list (busy), a refused Resume, Approve on run 4, and the list after run 4.
+const STOPS_ROOT = '.chat-rc ol.chat-rc-stops';
+const BUSY_STOP_LINES = ['Run 2 · plan approval · holds up 7, 8, 12, 15, 16', 'Run 4 · plan approval · holds up 5, 6, 7, 12, 16',
+  'Run 5 failed · holds up 6, 7, 12, 16', 'Run 11 · plan approval · holds up 13, 14, 15, 16'];
+const REFUSED = 'Slice 6 is still going';
+/** Every visible stop line: run, text, dot class and symbol, height, its .qpanel (visible, data-qrun), its Resume. */
+const STOP_LINES = `(() => {
+  const root = [...document.querySelectorAll(${JSON.stringify(STOPS_ROOT)})].find((r) => r.offsetParent);
+  if (!root) return null;
+  const card = root.closest('.chat-rc');
+  const lines = [...root.querySelectorAll('li.chat-rc-stop')].map((li) => {
+    const dot = li.querySelector('.chat-rc-stop-line .status-dot'); const q = li.querySelector('.chat-rc-stop-q .qpanel');
+    const b = li.querySelector('.chat-rc-stop-resume'); const err = li.querySelector('.chat-rc-stop-err');
+    return { run: Number(li.dataset.run), text: li.querySelector('.chat-rc-stop-text')?.textContent || '', dot: dot ? dot.className : '',
+      symbol: dot ? dot.dataset.symbol || null : null, height: Math.round(li.getBoundingClientRect().height * 10) / 10,
+      qpanel: q ? { visible: !!q.offsetParent && !q.classList.contains('hidden'), qrun: q.dataset.qrun || null } : null,
+      resume: b ? { label: b.getAttribute('aria-label'), visible: !!b.offsetParent, disabled: b.disabled } : null,
+      err: err && !err.hidden ? err.textContent : '' };
+  });
+  return { lines, footerResume: !!card.querySelector('.chat-rc-factions [data-act="feature-resume"]') };
+})()`;
+/** Records each /answer request's body in the page, so the proof reads which run an Approve names. */
+const TAP_ANSWERS = `(() => { if (window.__answers) return 0; window.__answers = []; const f = window.fetch;
+  window.fetch = (u, o) => { try { if (/[/]answer$/.test(String(u).split('?')[0])) window.__answers.push({ url: String(u), body: o && o.body ? JSON.parse(o.body) : null }); } catch {} return f(u, o); }; return 0; })()`;
+async function stopsShot(routes, theme, file, want) {
+  await metrics(WIDE);
+  await go(routes.card, theme);
+  const where = `stops ${file}`;
+  if (!await waitFor(`(() => { const m = (${STOP_LINES}); return !!m && m.lines.length === ${want.length}; })()`, `${where}: ${want.length} stop lines`)) {
+    log(`  seen: ${JSON.stringify(await ev(STOP_LINES))}`); return null;
+  }
+  await skipWelcome(); await sleep(500);
+  const m = await ev(STOP_LINES);
+  check(JSON.stringify(m.lines.map((l) => l.text)) === JSON.stringify(want), `${where}: the lines in run order read ${JSON.stringify(want)} (${JSON.stringify(m.lines.map((l) => l.text))})`);
+  check(!m.footerResume, `${where}: the footer has no second Resume (feature-resume)`);
+  for (const l of m.lines.filter((x) => x.symbol !== 'alert')) {
+    const runId = `run-${routes.pipelineOf(l.run)}`;
+    check(!!l.qpanel && l.qpanel.visible && l.qpanel.qrun === runId, `${where}: run ${l.run}'s line holds a mounted, visible .qpanel with data-qrun ${runId} (${JSON.stringify(l.qpanel)})`);
+  }
+  results.rows.push({ where, theme, stops: m.lines });
+  return m;
+}
+if (!process.env.WORLD || process.env.SURFACE === 'stops') {
+  for (const theme of THEMES) {
+    const routes = seed('busy');
+    const m = await stopsShot(routes, theme, `stops-busy-card-${theme}.png`, BUSY_STOP_LINES);
+    if (m) {
+      const five = m.lines.find((l) => l.run === 5) || {};
+      check(/\bis-red\b/.test(five.dot) && five.symbol === 'alert' && !!five.resume && five.resume.visible && five.resume.label === 'Resume run 5',
+        `stops busy ${theme}: run 5's dot is red with the "!" and its Resume is visible (${five.dot}, ${JSON.stringify(five.resume)})`);
+      check(m.lines.filter((l) => l.resume).length === 1, `stops busy ${theme}: one Resume in the list`);
+      await shotOf(STOPS_ROOT, `stops-busy-card-${theme}.png`);
+      // Run 5's Resume is refused: run 6 is going. The refusal shows on its line and Resume comes back.
+      await ev(`document.querySelector(${JSON.stringify(`${STOPS_ROOT} li[data-run="5"] .chat-rc-stop-resume`)}).click();0`);
+      if (await waitFor(`(() => { const m = (${STOP_LINES}); const l = m && m.lines.find((x) => x.run === 5); return !!l && l.err.includes(${JSON.stringify(REFUSED)}) && !l.resume.disabled; })()`, `stops refused ${theme}: run 5's line shows "${REFUSED}…" with Resume enabled`)) {
+        const l = (await ev(STOP_LINES)).lines.find((x) => x.run === 5);
+        check(true, `stops refused ${theme}: "${l.err}"`);
+        results.rows.push({ where: `stops refused ${theme}`, line: l });
+        await shotOf(STOPS_ROOT, `stops-refused-${theme}.png`);
+      }
+      // Approve on run 4's real mounted step card: the request must name run 4 (a refusal from the mock is fine).
+      await ev(TAP_ANSWERS);
+      // A check stop's "Approve as is" is an option (Worca's pick is Re-plan); the foot's submit then reads "Approve as is".
+      const LI4 = JSON.stringify(`${STOPS_ROOT} li[data-run="4"]`);
+      await ev(`(() => { const o = [...document.querySelector(${LI4}).querySelectorAll('.qpanel .qopt')].find((x) => x.offsetParent && /^Approve/.test(x.textContent.trim()));
+        if (o) o.click(); return !!o; })()`);
+      await sleep(300);
+      const clicked = await ev(`(() => { const li = document.querySelector(${LI4});
+        const b = li && [...li.querySelectorAll('.qpanel .qpanel-foot button')].find((x) => x.offsetParent && !x.disabled && /^Approve/.test(x.textContent.trim()));
+        if (!b) return null; const t = b.textContent.trim(); b.click(); return t; })()`);
+      check(!!clicked, `stops approve ${theme}: run 4's step card has an Approve button (${clicked})`);
+      const want4 = `run-${routes.pipelineOf(4)}`;
+      if (clicked && await waitFor('(window.__answers || []).length > 0', `stops approve ${theme}: an /answer request`)) {
+        const sent = await ev('window.__answers');
+        results.rows.push({ where: `stops approve ${theme}`, answers: sent });
+        check(sent.length >= 1 && sent.every((a) => a.body && a.body.runId === want4), `stops approve ${theme}: the Approve posts run 4's run id ${want4} (pipeline ${routes.pipelineOf(4)}) (${JSON.stringify(sent.map((a) => a.body && a.body.runId))})`);
+      }
+    }
+    // Run 4 answered and building: three lines remain, runs 2, 5 and 11.
+    const after = seed('stops-after');
+    const a = await stopsShot(after, theme, `stops-after-${theme}.png`, [BUSY_STOP_LINES[0], BUSY_STOP_LINES[2], BUSY_STOP_LINES[3]]);
+    if (a) {
+      check(JSON.stringify(a.lines.map((l) => l.run)) === '[2,5,11]', `stops after ${theme}: runs 2, 5 and 11 (${JSON.stringify(a.lines.map((l) => l.run))})`);
+      await shotOf(STOPS_ROOT, `stops-after-${theme}.png`);
+    }
+  }
+}
+
 results.errors = errors;
 check(errors.length === 0, `no page errors${errors.length ? ` — ${errors.slice(0, 3).join(' | ')}` : ''}`);
 results.minutes = Math.round((Date.now() - T0) / 600) / 100;

@@ -4,6 +4,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { RUN_MARKS, memberStatusOf, namedWaits, neededByOf, runStatus } from '../src/shared/shape/run-status.mjs';
+// Slice 6: a namespace read, so a missing new export fails only its own test, not the whole file.
+import * as RS from '../src/shared/shape/run-status.mjs';
 import { SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
 
 const LINKS = [[1, []], [2, [1]], [3, [1]], [4, [1, 3]], [5, [3, 4]], [6, [3, 5]], [7, [1, 2, 3, 4, 5, 6]], [8, [1, 2]],
@@ -178,4 +180,63 @@ test('S5 R-arch-6: the sidebar and app.js build runStatus input only through mem
   const fn = app.match(/function featureRowStatus\(row\)\s*\{[^}]*\}/)?.[0] ?? '';
   assert.match(fn, /memberStatusOf\(row\.members\)/, 'featureRowStatus is one call');
   assert.doesNotMatch(fn, /new Map|runStatus\(/);
+});
+
+// ── Slice 6 (R-po-4): holdsUpOf and stopLineText, the only source of a stop line's "holds up" runs and its text ───────
+const ALL_LINKS = new Map(SIXTEEN_RUN_LINKS.map((l) => [l.run, l.dependsOn]));
+/** The busy state's 16 slices: runs 1 and 3 done, 2, 4 and 11 at stops, 5 failed, 6 building, the rest planned. */
+const busySlices = (over = {}) => {
+  const states = { 1: 'done', 2: 'approval', 3: 'done', 4: 'questions', 5: 'error', 6: 'running', 11: 'questions' };
+  return new Map([...ALL_LINKS].map(([run, dependsOn]) => [run, { index: run, state: states[run] || 'planned', buildsOn: [...dependsOn], ...(over[run] || {}) }]));
+};
+
+test('S6 holdsUpOf on the busy slices: every unfinished run that builds on a run directly or through others, ascending', () => {
+  const w = busySlices();
+  assert.deepEqual(RS.holdsUpOf(2, w), [7, 8, 12, 15, 16]);
+  assert.deepEqual(RS.holdsUpOf(4, w), [5, 6, 7, 12, 16], 'the failed run 5 and the live run 6 cannot finish while run 4 is open');
+  assert.deepEqual(RS.holdsUpOf(5, w), [6, 7, 12, 16]);
+  assert.deepEqual(RS.holdsUpOf(11, w), [13, 14, 15, 16]);
+  assert.deepEqual(RS.holdsUpOf(16, w), [], 'nothing builds on run 16');
+  assert.deepEqual(RS.holdsUpOf('x', w), []);
+  assert.deepEqual(RS.holdsUpOf(2), []);
+});
+
+test('S6 holdsUpOf: a done or canceled dependant is not listed, a run behind it is', () => {
+  const w = busySlices({ 7: { state: 'done' }, 8: { state: 'canceled' } });
+  assert.deepEqual(RS.holdsUpOf(2, w), [12, 15, 16], 'runs 7 and 8 are over; 12 (behind 7) and 15 (behind 8) are still held');
+});
+
+test('S6 holdsUpOf: a cycle ends and never lists the run itself; the slices are not changed', () => {
+  const w = new Map([[3, { index: 3, state: 'planned', buildsOn: [4] }], [4, { index: 4, state: 'planned', buildsOn: [3] }], [5, { index: 5, state: 'planned', buildsOn: [4] }]]);
+  const before = JSON.stringify([...w]);
+  assert.deepEqual(RS.holdsUpOf(3, w), [4, 5]);
+  assert.deepEqual(RS.holdsUpOf(4, w), [3, 5]);
+  assert.equal(JSON.stringify([...w]), before);
+});
+
+test('S6 stopLineText: the four busy lines', () => {
+  const open = (index, reason, kind, holdsUp) => ({ index, kind, reason, failed: false, holdsUp });
+  assert.equal(RS.stopLineText(open(2, 'requirement', 'plan', [7, 8, 12, 15, 16])), 'Run 2 · plan approval · holds up 7, 8, 12, 15, 16');
+  assert.equal(RS.stopLineText(open(4, 'check', 'gate', [5, 6, 7, 12, 16])), 'Run 4 · plan approval · holds up 5, 6, 7, 12, 16');
+  assert.equal(RS.stopLineText({ index: 5, kind: null, reason: null, failed: true, holdsUp: [6, 7, 12, 16] }), 'Run 5 failed · holds up 6, 7, 12, 16');
+  assert.equal(RS.stopLineText(open(11, 'check', 'gate', [13, 14, 15, 16])), 'Run 11 · plan approval · holds up 13, 14, 15, 16');
+});
+
+test('S6 stopLineText: a line that holds up nothing has no "holds up" part', () => {
+  assert.equal(RS.stopLineText({ index: 9, kind: 'gate', reason: 'objection', failed: false, holdsUp: [] }), 'Run 9 · gate');
+  assert.equal(RS.stopLineText({ index: 9, kind: 'plan', reason: 'check', failed: false }), 'Run 9 · plan approval');
+  assert.equal(RS.stopLineText({ index: 16, kind: null, reason: null, failed: true, holdsUp: [] }), 'Run 16 failed');
+});
+
+test('S6 stopLineText words (D7): a stop\'s reason wins over its kind; without one the kind names the step', () => {
+  const word = (kind, reason = null) => RS.stopLineText({ index: 3, kind, reason, failed: false, holdsUp: [] });
+  assert.equal(word('gate', 'check'), 'Run 3 · plan approval');
+  assert.equal(word('plan', 'requirement'), 'Run 3 · plan approval');
+  assert.equal(word('gate', 'objection'), 'Run 3 · gate');
+  const KINDS = { plan: 'plan approval', outline: 'runs approval', clarify: 'questions', questions: 'questions', gate: 'gate',
+    recovery: 'recovery', care: 'start', prototype: 'prototype' };
+  for (const [kind, w] of Object.entries(KINDS)) assert.equal(word(kind), `Run 3 · ${w}`, kind);
+  for (const kind of ['mystery', null]) assert.equal(word(kind), 'Run 3 · waiting for you', String(kind));
+  assert.ok(Object.isFrozen(RS.STOP_KIND_WORDS));
+  assert.deepEqual({ ...RS.STOP_KIND_WORDS }, KINDS);
 });

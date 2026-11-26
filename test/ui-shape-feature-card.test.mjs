@@ -18,8 +18,9 @@ import { PROGRESS_CARD_TYPE } from '../ui/public/ask-run-card.mjs';
 import { registerAskRenderer } from '../ui/public/ask/registry.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
 import { renderStatusDot } from '../ui/public/status-dot.mjs';
+import { closeMenus } from '../ui/public/workflows/menu.mjs';
 import { featureView } from '../src/core/shape/features.mjs';
-import { world } from './helpers/shape-sixteen-runs.mjs';
+import { world, SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -611,12 +612,12 @@ const S4_MEMBER = (sl) => (sl.state === 'done' ? { status: 'done', endReached: t
   : ['planned', 'held', 'canceled'].includes(sl.state) ? { ticket: { status: 'scheduled' } }
   : sl.state === 'error' ? { status: 'error' } : { status: 'running' });
 /** A marked feature card whose rows are `slices` (featureView slice payloads). `flag` is shaperSmallRuns. */
-function s4Card(slices, { flag = true, marked = true, snaps = {} } = {}) {
+function s4Card(slices, { flag = true, marked = true, snaps = {}, view = {}, controls: over = {} } = {}) {
   const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
   const doc = dom.window.document;
   applyFlags({ shaperSmallRuns: flag }, doc);
   const members = slices.map(S4_MEMBER);
-  const v = VIEW(slices, { originPipelineId: 'p0' });
+  const v = VIEW(slices, { originPipelineId: 'p0', ...view });
   const cardJson = { pipelineId: 'p0', feature: v, log: [], ...(marked ? { smallRuns: true } : {}) };
   const rest = { source: 'rest', terminal: true, status: 'done', pipelineId: 'p0' };
   const runStore = { subscribe: () => () => {}, byPipeline: (pid) => (pid === 'p0' ? rest : snaps[pid] || null), get: () => null };
@@ -625,15 +626,18 @@ function s4Card(slices, { flag = true, marked = true, snaps = {} } = {}) {
     planning: { title: 'Planning', href: '#running/r0', model: gm.planning },
     members: gm.members.map((m, i) => ({ position: slices[i].index, title: `Part ${slices[i].index}`, href: '#runs', model: m,
       pipelineId: slices[i].pipelineId, ticketId: slices[i].ticketId, run: members[i] })) };
-  const controls = { paintQuestion: () => null, releaseQuestion() {}, groupOf: () => row, memoFor: () => ({}) };
+  const controls = { paintQuestion: () => null, releaseQuestion() {}, groupOf: () => row, memoFor: () => ({}), ...over };
   const ctl = createRunCardController({ controls, runStore, tickMs: 0 });
-  const built = ctl.build({ id: 'card_s4', card: { type: PROGRESS_CARD_TYPE, pipelineId: 'p0', runId: 'run-p0', title: 'Charts' } }, { doc, win: dom.window, shaperCard: () => cardJson });
+  let changed = null;   // the card's onChange: a new feature view landed (app.js `shape-feature`)
+  const built = ctl.build({ id: 'card_s4', card: { type: PROGRESS_CARD_TYPE, pipelineId: 'p0', runId: 'run-p0', title: 'Charts' } },
+    { doc, win: dom.window, shaperCard: (_pid, onChange) => { changed = onChange; return cardJson; } });
   doc.body.appendChild(built.el);
+  const update = (next) => { cardJson.feature = { ...cardJson.feature, ...next }; changed(); };
   const rowOf = (run) => built.el.querySelector(`.run-member:not([data-key="planning"]):nth-of-type(${slices.findIndex((x) => x.index === run) + 2})`);
   const li = (run) => [...built.el.querySelectorAll('.run-member:not([data-key="planning"])')][slices.findIndex((x) => x.index === run)];
   const word = (run) => li(run).querySelector('.run-member-state').textContent;
   const dot = (run) => li(run).querySelector('.status-dot');
-  return { built, ctl, row, li, word, dot, rowOf, done: () => { built.dispose(); ctl.destroy(); } };
+  return { built, ctl, row, li, word, dot, rowOf, update, doc, win: dom.window, done: () => { built.dispose(); ctl.destroy(); } };
 }
 const S = (i, state, over = {}) => ({ index: i, title: `Part ${i}`, state, runId: null, pipelineId: ['planned', 'held', 'canceled'].includes(state) ? null : `p${i}`,
   ticketId: `t${i}`, pr: null, kind: 'build', waitsFor: [], buildsOn: [], nextTurn: false, cannotStart: false, stop: null, ...over });
@@ -744,4 +748,175 @@ test('s4 R-arch-4 card: flag off, or a card not marked small-runs, has no data-m
     assert.equal(c.built.el.querySelector('.status-dot.is-dashed-ring, .status-dot.is-ink-ring'), null);
     c.done();
   }
+});
+
+// ---- Shaper small runs slice 6 (R-po-4, R-qa-1): the card lists every open stop and failed run -----------------------
+const S6_STATE = { 1: 'done', 2: 'approval', 3: 'done', 4: 'questions', 5: 'error', 6: 'running', 11: 'questions' };
+const S6_STOP = { 2: 'requirement', 4: 'check', 11: 'check' };
+const S6_SLICES = SIXTEEN_RUN_LINKS.map(({ run, dependsOn }) => S(run, S6_STATE[run] || 'planned',
+  { buildsOn: [...dependsOn], ...(S6_STOP[run] ? { stop: { reason: S6_STOP[run], held: false } } : {}) }));
+const s6Open = (index, kind, reason, holdsUp, id = `q${index}`) => ({ index, runId: `r${index}`, pipelineId: `p${index}`, id, kind, reason, failed: false, holdsUp });
+const A2 = s6Open(2, 'plan', 'requirement', [7, 8, 12, 15, 16]);
+const A4 = s6Open(4, 'gate', 'check', [5, 6, 7, 12, 16]);
+const A5 = { index: 5, runId: null, pipelineId: 'p5', id: null, kind: null, reason: null, failed: true, holdsUp: [6, 7, 12, 16] };
+const A11 = s6Open(11, 'gate', 'check', [13, 14, 15, 16]);
+const S6_ASKS = [A2, A4, A5, A11];
+const S6_HALTED = { index: 5, state: 'error', waiting: [7, 8, 9, 10, 12, 13, 14, 15, 16] };
+const asksView = (asks = S6_ASKS, over = {}) => ({ asks, ask: asks[0] || null, halted: S6_HALTED, open: true, ...over });
+const S6_TEXTS = ['Run 2 · plan approval · holds up 7, 8, 12, 15, 16', 'Run 4 · plan approval · holds up 5, 6, 7, 12, 16',
+  'Run 5 failed · holds up 6, 7, 12, 16', 'Run 11 · plan approval · holds up 13, 14, 15, 16'];
+
+/** Controls whose paintQuestion mounts a step card stub: its own Approve button, posting by itself (step-card.mjs). */
+function s6Controls() {
+  const log = { answered: [], released: [], acted: [] };
+  return { log, controls: {
+    paintQuestion: (ref, host) => {
+      const panel = host.querySelector('.qpanel');
+      if (panel.dataset.ref !== ref.pipelineId) {
+        const b = host.ownerDocument.createElement('button');
+        b.type = 'button'; b.className = 'btn btn-primary s6-approve'; b.textContent = 'Approve';
+        b.addEventListener('click', (e) => { e.stopPropagation(); log.answered.push(ref.pipelineId); });
+        panel.replaceChildren(b); panel.dataset.ref = ref.pipelineId; panel.classList.remove('hidden');
+      }
+      return { id: `q${ref.pipelineId.slice(1)}`, kind: 'plan', heading: 'Plan', step: '', stepCard: true, stop: true };
+    },
+    releaseQuestion: (host) => {
+      log.released.push(host);
+      const panel = host.querySelector('.qpanel');
+      if (panel) { panel.replaceChildren(); delete panel.dataset.ref; panel.classList.add('hidden'); }
+    },
+    featureAct: (id, action, body) => { log.acted.push([id, action, body]); return Promise.resolve({ ok: true }); },
+  } };
+}
+const stopRows = (c) => [...c.built.el.querySelectorAll('.chat-rc-stops li.chat-rc-stop')];
+const stopRow = (c, run) => stopRows(c).find((li) => li.dataset.run === String(run));
+const stopTexts = (c) => stopRows(c).map((li) => li.querySelector('.chat-rc-stop-text').textContent);
+const qSecOf = (c) => c.built.el.querySelector('.chat-rc-q');
+const tickOnce = () => new Promise((r) => setTimeout(r, 0));
+
+test('S6 card busy: four stop lines with their step cards before the question slot, which stays hidden; run 5 has Resume', () => {
+  const live2 = snap('p2', { pendingQuestion: { id: 'q2', kind: 'plan', plan: {}, stop: { reason: 'requirement', run: 2 } } });
+  for (const snaps of [{}, { p2: live2 }]) {      // run 2 followed by pointer, then by a live snapshot of this tab
+    const { controls } = s6Controls();
+    const c = s4Card(S6_SLICES, { view: asksView(), controls, snaps });
+    assert.deepEqual(stopTexts(c), S6_TEXTS);
+    assert.equal(stopTexts(c)[0], 'Run 2 · plan approval · holds up 7, 8, 12, 15, 16');
+    assert.equal(stopRow(c, 5).querySelector('.chat-rc-stop-resume').getAttribute('aria-label'), 'Resume run 5');
+    for (const r of [2, 4, 11]) {
+      assert.equal(stopRow(c, r).querySelectorAll('.qpanel .s6-approve').length, 1, `run ${r} has its own step card`);
+      assert.ok(!stopRow(c, r).querySelector('.qpanel').classList.contains('hidden'), `run ${r}`);
+    }
+    assert.equal(stopRow(c, 5).querySelector('.s6-approve'), null);
+    assert.equal(qSecOf(c).hidden, true);
+    assert.equal(qSecOf(c).querySelector('.s6-approve'), null, 'the slot never paints a listed run\'s step');
+    const list = c.built.el.querySelector('ol.chat-rc-stops');
+    assert.ok(list.compareDocumentPosition(qSecOf(c)) & c.win.Node.DOCUMENT_POSITION_FOLLOWING, 'the list comes before the slot');
+    c.done();
+  }
+});
+
+test('S6 slot release: a step that moves from the question slot into the list is released and leaves no receipt', () => {
+  const { controls, log } = s6Controls();
+  const c = s4Card(S6_SLICES, { view: { ask: A2 }, controls });
+  const qBody = c.built.el.querySelector('.chat-rc-qbody');
+  assert.equal(qSecOf(c).hidden, false);
+  assert.ok(qBody.querySelector('.s6-approve'), 'run 2 is the open step first');
+  c.update(asksView());
+  assert.equal(stopRows(c).length, 4);
+  assert.equal(qSecOf(c).hidden, true);
+  assert.ok(log.released.includes(qBody), 'releaseQuestion got the slot');
+  assert.equal(qBody.querySelector('.s6-approve'), null);
+  assert.equal([...c.built.el.querySelectorAll('.chat-rc-receipt')].filter((r) => !r.hidden).length, 0);
+  c.done();
+});
+
+test('S6 approve run 4: its line answers run 4; the next view lists 2, 5 and 11 with run 2\'s line untouched', () => {
+  const { controls, log } = s6Controls();
+  const c = s4Card(S6_SLICES, { view: asksView(), controls });
+  assert.equal(stopRows(c).length, 4);
+  const [two, button2] = [stopRow(c, 2), stopRow(c, 2).querySelector('.s6-approve')];
+  const four = stopRow(c, 4);
+  four.querySelector('.s6-approve').click();
+  assert.deepEqual(log.answered, ['p4']);
+  c.update(asksView([A2, A5, A11], { slices: S6_SLICES.map((x) => (x.index === 4 ? { ...x, state: 'running', stop: null } : x)) }));
+  assert.deepEqual(stopTexts(c), [S6_TEXTS[0], S6_TEXTS[2], S6_TEXTS[3]]);
+  assert.equal(stopRow(c, 2), two);
+  assert.equal(stopRow(c, 2).querySelector('.s6-approve'), button2);
+  assert.ok(log.released.some((host) => four.contains(host)), 'run 4\'s host is released');
+  assert.equal(qSecOf(c).hidden, true);
+  assert.equal([...c.built.el.querySelectorAll('.chat-rc-receipt')].filter((r) => !r.hidden).length, 0);
+  c.done();
+});
+
+test('S6 Clarify line: a question that is no step card is answered for its own run, with the line\'s current ask id', async () => {
+  registerAskRenderer('clarify', { render() {}, collect: (panel) => ({ answers: [{ id: 'q1', choice: panel.dataset.ref }] }) });
+  const answered = [];
+  const controls = {
+    paintQuestion: (ref, host) => {
+      const panel = host.querySelector('.qpanel');
+      if (!panel.querySelector('[data-qpanel-submit]')) {
+        panel.innerHTML = '<button type="button" class="btn btn-primary" data-qpanel-submit>Send</button>';
+        panel.dataset.ref = ref.pipelineId; panel.classList.remove('hidden');
+      }
+      return { id: `q${ref.pipelineId.slice(1)}`, kind: 'clarify', heading: 'Clarify', step: '', stepCard: false };
+    },
+    releaseQuestion() {},
+    answer: (ref, id, payload) => { answered.push([ref.runId, ref.pipelineId, id, payload.answers[0].choice]); return true; },
+  };
+  const q4 = s6Open(4, 'questions', null, [5, 6, 7, 12, 16]);
+  const q11 = s6Open(11, 'questions', null, [13, 14, 15, 16]);
+  const c = s4Card(S6_SLICES, { view: { asks: [q4, q11], ask: q4 }, controls });
+  assert.equal(stopRows(c).length, 2);
+  stopRow(c, 11).querySelector('[data-qpanel-submit]').click();
+  await tickOnce();
+  assert.deepEqual(answered, [['r11', 'p11', 'q11', 'p11']], 'one post, for run 11');
+  c.update({ asks: [q4, { ...q11, id: 'q11b' }] });
+  stopRow(c, 11).querySelector('[data-qpanel-submit]').click();
+  await tickOnce();
+  assert.deepEqual(answered.at(-1), ['r11', 'p11', 'q11b', 'p11'], 'the new ask id');
+  assert.equal(answered.length, 2);
+  stopRow(c, 4).querySelector('[data-qpanel-submit]').click();
+  await tickOnce();
+  assert.deepEqual(answered.at(-1), ['r4', 'p4', 'q4', 'p4']);
+  c.done();
+});
+
+test('S6 Resume once: the failed line holds the only Resume (no footer, no ⋯ item) and posts the run\'s index', async () => {
+  for (const asks of [[A5], S6_ASKS]) {
+    const { controls, log } = s6Controls();
+    const c = s4Card(S6_SLICES, { view: asksView(asks), controls });
+    const el = c.built.el;
+    assert.equal(el.querySelector('.chat-rc-factions [data-act="feature-resume"]'), null, 'no footer Resume');
+    const resumes = [...el.querySelectorAll('button')].filter((b) => !b.hidden && /^Resume/.test(b.textContent.trim()));
+    assert.deepEqual(resumes.map((b) => b.getAttribute('aria-label')), ['Resume run 5']);
+    el.querySelector('.chat-rc-factions [data-act="feature-more"]').click();
+    const items = [...c.doc.querySelectorAll('.wfv-menu-item')].map((i) => i.textContent.trim());
+    assert.ok(items.includes('Cancel the rest'), items.join());
+    assert.ok(!items.includes('Resume'), `no ⋯ Resume: ${items.join()}`);
+    if (asks === S6_ASKS) {           // an open stop line: the footer gives up its other buttons, as for one open stop
+      assert.equal(el.querySelector('.chat-rc-factions [data-act="feature-replan"]'), null);
+      assert.ok(items.includes('Re-plan the rest'));
+    }
+    resumes[0].click();
+    await tickOnce();
+    assert.deepEqual(log.acted, [['feat-1', 'resume', { index: 5 }]]);
+    closeMenus();
+    c.done();
+  }
+});
+
+test('S6 off: flag off, an unmarked card, or no entries appends no stop list; a Verifier step stays in the slot', () => {
+  for (const opts of [{ flag: false, view: asksView() }, { marked: false, view: asksView() }, { view: asksView([], { halted: null }) }]) {
+    const { controls } = s6Controls();
+    const c = s4Card(S6_SLICES, { ...opts, controls });
+    assert.equal(c.built.el.querySelector('.chat-rc-stops'), null, JSON.stringify({ flag: opts.flag, marked: opts.marked }));
+    c.done();
+  }
+  const { controls } = s6Controls();
+  const verifier = { index: null, runId: 'rv', pipelineId: 'pv', id: 'vq', kind: 'gate' };
+  const c = s4Card(S6_SLICES.map((x) => S(x.index, 'done')), { view: { asks: [], ask: verifier }, controls });
+  assert.equal(qSecOf(c).hidden, false);
+  assert.ok(qSecOf(c).querySelector('.s6-approve'), 'an ask that is no run line is still the card\'s open step');
+  assert.equal(c.built.el.querySelector('.chat-rc-stops'), null);
+  c.done();
 });

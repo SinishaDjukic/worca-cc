@@ -169,7 +169,10 @@ export function threadWork(links, deps) {
     const fid = currentFeatureId(at.featureId);
     const feature = fv(fid);
     if (!feature) continue;
-    const ask = feature.ask;
+    // Slice 6 (D16): with the stop list, the open step is the first open stop; a failed run never is (feature-card.mjs ptr).
+    const ask = Array.isArray(feature.asks)
+      ? (feature.asks.find((a) => a && !a.failed) || (feature.ask && feature.ask.index == null ? feature.ask : null))
+      : feature.ask;
     return { feature, run: null, facts: landingFactsOfFeature(fid, factDeps), open: ask ? { index: ask.index, kind: ask.kind } : null,
       ...(smallRunsOfFeature(fid) ? { smallRuns: true } : {}) };
   }

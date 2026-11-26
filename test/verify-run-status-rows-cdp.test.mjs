@@ -87,3 +87,30 @@ test('s5: it names the sidebar shots, one 360px light sidebar shot and the run p
   assert.match(s, /rows-(busy|\$\{[A-Za-z.]+\})-side-360-light\.png/);
   assert.match(s, /rows-\$\{[A-Za-z.]+\}-run\$\{[A-Za-z.]+\}-\$\{[A-Za-z.]+\}\.png/);
 });
+
+// ── Slice 6 (R-po-4): the same proof shoots the Chat card's open stop list, a refused Resume and the list after run 4 ───
+test('s6: it adds the stops surface and names its three shots per theme', () => {
+  const s = src();
+  assert.match(s, /\bstops\b\s*:|['"]stops['"]/);
+  for (const shot of ['stops-busy-card', 'stops-refused', 'stops-after']) {
+    assert.match(s, new RegExp(`${shot}-\\$\\{[A-Za-z.]*theme[A-Za-z.]*\\}\\.png`), `${shot}-{theme}.png`);
+  }
+  assert.match(s, /chat-rc-stop/);
+});
+
+test('s6: it checks the busy lines, run 5\'s red "!" and Resume, a mounted question per open line and no second Resume', () => {
+  const s = src();
+  for (const line of ['Run 2 · plan approval · holds up 7, 8, 12, 15, 16', 'Run 5 failed · holds up 6, 7, 12, 16']) assert.ok(s.includes(line), line);
+  assert.match(s, /chat-rc-stop-resume/);
+  assert.match(s, /data-qrun|dataset\.qrun/);
+  assert.match(s, /\.qpanel/);
+  assert.match(s, /feature-resume/, 'the footer has no second Resume');
+});
+
+test('s6: Approve on run 4\'s real step card names run 4, a refused Resume shows its text, and run 4 re-seeded building leaves three lines', () => {
+  const s = src();
+  assert.ok(s.includes('Slice 6 is still going'), 'the refused Resume\'s text');
+  assert.match(s, /Approve/, 'run 4\'s Approve is clicked');
+  assert.match(s, /\/answer/, 'the Approve request is read');
+  assert.match(s, /4:\s*\{\s*pipe:\s*'running'\s*\}/, 'run 4 re-seeded as building');
+});

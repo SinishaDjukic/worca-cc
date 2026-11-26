@@ -18,10 +18,11 @@ export const CANCEL_CONFIRM = Object.freeze({ title: 'Cancel the rest', confirmL
 /** The buttons beside ⋯, [{key, label, primary?, disabled?}]. `c` is featureCardModel(...).controls (null: none).
  *  `stopOpen` (item 10): a stop question is open and its own primary is the card's one primary, so at most Stop shows
  *  here (Resume moves into ⋯, Re-plan the rest is already there). */
-export function featureButtons(c, { stopOpen = false } = {}) {
+export function featureButtons(c, { stopOpen = false, resumeListed = false } = {}) {
   if (stopOpen) return featureButtons(c).filter((b) => b.key === 'stop').map(({ key, label }) => ({ key, label }));
   if (!c || !c.active) return [];
-  if (c.halted) return [{ key: 'resume', label: 'Resume', primary: true }, ...(c.rest ? [{ key: 'replan', label: 'Re-plan the rest' }] : [])];
+  // Slice 6 (D14): `resumeListed`, the halted run's stop line holds its Resume, so the footer leaves it out.
+  if (c.halted) return [...(resumeListed ? [] : [{ key: 'resume', label: 'Resume', primary: true }]), ...(c.rest ? [{ key: 'replan', label: 'Re-plan the rest' }] : [])];
   if (c.held) return [{ key: 'start', label: ACTION_LABEL['start-now'], primary: true }];
   const t = c.target;
   if (!t || !LIVE.has(t.status)) return [];
@@ -34,13 +35,13 @@ export function featureButtons(c, { stopOpen = false } = {}) {
 /** The ⋯ items, the same on every host, [{key, label, checked?, disabled?}]. Item 10, while a stop is open: a halted
  *  feature's Resume (`stopOpen`), then `moved`, the model actions the footer gives up ([{id, disabled?}], `disabled` the
  *  footer's reason), each `act:<id>` with its ACTION_LABEL; an id already in the menu shows once. */
-export function featureMenu(c, { moved = [], stopOpen = false } = {}) {
+export function featureMenu(c, { moved = [], stopOpen = false, resumeListed = false } = {}) {
   if (!c) return [];
   const items = [];
   if (c.rest) items.push({ key: 'replan', label: 'Re-plan the rest' }, { key: 'cancel', label: 'Cancel the rest' });
   if (c.active) items.push({ key: 'approve-each', label: 'Ask before each run', checked: !!c.approveEach });
   if (c.planPipelineId) items.push({ key: 'plan', label: 'Open the plan' });
-  if (stopOpen && c.active && c.halted) items.push({ key: 'resume', label: 'Resume' });
+  if (stopOpen && c.active && c.halted && !resumeListed) items.push({ key: 'resume', label: 'Resume' });
   const has = new Set(items.map((i) => i.key));
   for (const { id, disabled } of moved) {
     if (has.has(id) || has.has(`act:${id}`)) continue;
@@ -78,13 +79,13 @@ export function focusFeatureControl(host, act, fallback = null) {
  * omit: the button keys the host's run-model footer already shows (pause / stop / resume), so none shows twice. It never
  * drops Start now: no footer shows a held run's start.
  * stopOpen, moved (item 10): a stop question is open; the buttons shrink to Stop and ⋯ lists `moved` (featureMenu), whose
- * picks call deps.modelAct(id, ⋯).
+ * picks call deps.modelAct(id, ⋯). resumeListed (slice 6, D14): a stop line holds the halted run's Resume; none here.
  */
-export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withMenu = true, stopOpen = false, moved = [] } = {}) {
-  const buttons = featureButtons(c, { stopOpen }).filter((b) => (b.key === 'start' || !omit.includes(b.key))
+export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withMenu = true, stopOpen = false, moved = [], resumeListed = false } = {}) {
+  const buttons = featureButtons(c, { stopOpen, resumeListed }).filter((b) => (b.key === 'start' || !omit.includes(b.key))
     && (b.key === 'pause' ? !!deps.pause : b.key === 'stop' ? !!deps.stop : true));
   const held = c && c.active && !c.halted && c.held ? c.held : null;
-  const menu = withMenu ? featureMenu(c, { moved, stopOpen }) : [];
+  const menu = withMenu ? featureMenu(c, { moved, stopOpen, resumeListed }) : [];
   // Set before the signature check: a host hidden by the caller (run-card.mjs, a non-feature paint) must reappear
   // even when the controls it shows did not change. An error (a Ship as failure on a finished feature) shows on its own.
   host.hidden = !buttons.length && !menu.length && !deps.error;

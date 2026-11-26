@@ -729,6 +729,20 @@ marks (`markDot` in `ui/public/status-dot.mjs`).
 The `waiting for you` word reads in amber ink and `failed` in red ink; every other word keeps the row's grey.
 A done run's page keeps its ship line (Ready to ship, Merged) instead of `done`.
 
+### Open stops on the card
+
+With the flag on, the Chat card of an active marked feature lists every open stop and every failed run, one line each,
+in run order. A line reads `Run 2 · plan approval · holds up 7, 8, 12, 15, 16` for a stop, or
+`Run 5 failed · holds up 6, 7, 12, 16` for a failed run, with the run's own mark (amber "?" or red "!"). A line that
+holds up nothing has no `holds up` part (`Run 9 · gate`).
+
+"holds up" names the runs that are not done or canceled and build on that run, directly or through others: they cannot
+finish while it is open.
+
+You answer a stop on its line, with the same step card the run page shows. A failed line has its own Resume, which
+restarts that run only; the card's footer and ⋯ then show no second Resume. An answer held for its turn (`after run 3`)
+is not a line. The bar's Answer goes to the first line. With the flag off the card shows one open step, as before.
+
 ### Off
 
 Some parts follow the marker and stay with the feature; the rest follow the flag as it is now.

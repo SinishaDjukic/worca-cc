@@ -337,6 +337,43 @@ test('resume: nothing stopped is a 409, a stopped slice restarts as a new ticket
   assert.equal((await post('/api/shape/features/feat_nope/resume', {})).status, 404);
 });
 
+// Slice 6 (D13): the resume route takes the run number of a stop line's Resume.
+const ticketCount = () => getDb().prepare('SELECT COUNT(*) AS n FROM scheduled_runs').get().n;
+const rowTicket = (fid, idx) => getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(fid, idx).ticket_id;
+
+test('resume with an index that is not a run number is a 400 and writes no ticket', async () => {
+  for (const index of [0, 'x', 1.5, -1]) {
+    const f = mk(2, 'stopped');
+    const n = ticketCount(); const t = rowTicket(f.id, 1);
+    const r = await post(`/api/shape/features/${f.id}/resume`, { index });
+    assert.equal(r.status, 400, JSON.stringify(index));
+    assert.deepEqual(await r.json(), { error: 'index must be a run number' }, JSON.stringify(index));
+    assert.equal(ticketCount(), n, JSON.stringify(index));
+    assert.equal(rowTicket(f.id, 1), t, JSON.stringify(index));
+  }
+});
+
+test('resume with a run that is not stopped is a 409 NOT_HALTED and writes no ticket', async () => {
+  const f = mk(2, 'stopped');
+  const n = ticketCount(); const t = rowTicket(f.id, 1);
+  const r = await post(`/api/shape/features/${f.id}/resume`, { index: 2 });
+  assert.equal(r.status, 409);
+  assert.deepEqual(await r.json(), { code: 'NOT_HALTED', error: 'Run 2 is not stopped' });
+  assert.equal(ticketCount(), n);
+  assert.equal(rowTicket(f.id, 1), t);
+});
+
+test('resume with the stopped run\'s index, or with an empty body, restarts it as today', async () => {
+  for (const body of [{ index: 1 }, {}]) {
+    const f = mk(2, 'stopped');
+    const r = await post(`/api/shape/features/${f.id}/resume`, body);
+    const out = await r.json();
+    assert.equal(r.status, 200, JSON.stringify(out));
+    assert.equal(out.action, 'restart', JSON.stringify(body));
+    assert.equal(rowTicket(f.id, 1), out.ticketId, JSON.stringify(body));
+  }
+});
+
 test('replan answers the ticket as runId and a second replan is a 409', async () => {
   const f = mk(2, 'stopped');
   let r = await post(`/api/shape/features/${f.id}/replan`, {});

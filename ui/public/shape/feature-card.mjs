@@ -73,10 +73,13 @@ export function featureCardModel({ own = null, card = null, snapOf = () => null 
   // Small runs C5: the Verifier run's bound stop is the card's open step once every run is done.
   const vf = view.verify && view.verify.pipelineId ? snapOf(view.verify.pipelineId) : null;
   const liveAsk = slices.find((s) => asks(snap(s)));
+  // Slice 6 (D16): with the stop list, the pointer is the first open stop; a failed run never is. With no run entry, a
+  // Re-plan or Verifier ask (index null) stays the pointer (D11).
+  const ptr = Array.isArray(view.asks) ? (view.asks.find((a) => a && !a.failed) || (view.ask && view.ask.index == null ? view.ask : null)) : view.ask;
   const step = liveAsk ? stepOf(liveAsk.index, snap(liveAsk))
     : asks(rp) ? stepOf(null, rp)
     : asks(vf) ? stepOf(null, vf)
-    : view.ask ? { index: view.ask.index, runId: view.ask.runId || null, pipelineId: view.ask.pipelineId || null, kind: view.ask.kind, id: view.ask.id || null, snap: null } : null;
+    : ptr ? { index: ptr.index, runId: ptr.runId || null, pipelineId: ptr.pipelineId || null, kind: ptr.kind, id: ptr.id || null, snap: null } : null;
   // s5: ideas saved from the chat (D11), and a watch that gave up on a run's PR (D23)
   const ideas = (view.notes && view.notes.ideas) || 0;
   const watched = slices.find((s) => s.watch);

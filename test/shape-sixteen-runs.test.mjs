@@ -10,12 +10,16 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { getTicket, predecessorState } from '../src/core/scheduler.mjs';
+import { createTicket, getTicket, predecessorState } from '../src/core/scheduler.mjs';
 import { listRunGroups } from '../src/core/run-groups.mjs';
-import { busySliceOf, featureView, setApproveEach, sliceGateState, sliceOfPipeline } from '../src/core/shape/features.mjs';
+import { busySliceOf, featureView, liveSliceFrom, resumeFeature, setApproveEach, sliceGateState, sliceOfPipeline } from '../src/core/shape/features.mjs';
 import { sliceChainGate, heldStopTurn } from '../src/core/shape/chain.mjs';
 import { SIXTEEN_RUN_LINKS, sixteenRunFeature, startable, world, SIXTEEN_RUN_STATES } from './helpers/shape-sixteen-runs.mjs';
 import { runStatus, namedWaits } from '../src/shared/shape/run-status.mjs';
+// Slice 6: a namespace read, so a missing new export fails only its own test, not the whole file.
+import * as RS from '../src/shared/shape/run-status.mjs';
+import { projectKey } from '../src/core/store.mjs';
+import { seedPipelineRow } from './helpers/db-seed.mjs';
 
 useTempHome(after, 'worca-shape-sixteen-');
 const root = mkdtempSync(join(tmpdir(), 'worca-shape-sixteen-proj-'));
@@ -358,4 +362,201 @@ test('setRun held takes `after`: run 4 held behind run 3 reads stop.after === 3 
   assert.equal(four.stop.after, 3);
   const def = world(root, { done: [1], states: { 2: { stop: 'check', held: true } } });
   assert.equal(featureView(def.featureId, { live: def.live }).slices.find((x) => x.index === 2).stop.after, 2);
+}));
+
+// ---- Slice 6 (R-po-4, R-arch-3, R-qa-1): featureView.asks, every open stop and failed run, and Resume of a named run ----
+const viewOf = (fx, live = fx.live) => featureView(fx.featureId, { live });
+const indexes = (v) => v.asks?.map((a) => a.index);
+const BUSY_LINES = ['Run 2 · plan approval · holds up 7, 8, 12, 15, 16', 'Run 4 · plan approval · holds up 5, 6, 7, 12, 16',
+  'Run 5 failed · holds up 6, 7, 12, 16', 'Run 11 · plan approval · holds up 13, 14, 15, 16'];
+
+test('S6-T1 busy: asks lists runs 2, 4, 5 and 11 in order with holdsUp, run 5 marked failed, and ask equals asks[0]', () => withEnvVars(ON, () => {
+  const fx = world(root, 'busy');
+  const v = viewOf(fx);
+  assert.deepEqual(indexes(v), [2, 4, 5, 11]);
+  const open = (index, kind, reason, holdsUp) => ({ index, runId: `r${index}`, pipelineId: fx.pipelineOf(index), id: `q${index}`, kind, reason, failed: false, holdsUp });
+  assert.deepEqual(v.asks, [
+    open(2, 'plan', 'requirement', [7, 8, 12, 15, 16]),
+    open(4, 'gate', 'check', [5, 6, 7, 12, 16]),
+    { index: 5, runId: null, pipelineId: fx.pipelineOf(5), id: null, kind: null, reason: null, failed: true, holdsUp: [6, 7, 12, 16] },
+    open(11, 'gate', 'check', [13, 14, 15, 16]),
+  ]);
+  assert.deepEqual(v.ask, v.asks[0]);
+}));
+
+test('S6-T1b busy: stopLinesOf on the real view gives the four lines, their marks, and no ref only for the failed run', () => withEnvVars(ON, async () => {
+  const { stopLinesOf } = await import('../ui/public/shape/stop-list.mjs');
+  const fx = world(root, 'busy');
+  const lines = stopLinesOf(viewOf(fx));
+  assert.deepEqual(lines.map((l) => l.text), BUSY_LINES);
+  assert.deepEqual(lines.map((l) => l.mark), ['ask', 'ask', 'failed', 'ask']);
+  assert.deepEqual(lines.map((l) => l.ref), [2, 4, 5, 11].map((r) => (r === 5 ? null : { runId: `r${r}`, pipelineId: fx.pipelineOf(r) })));
+}));
+
+test('S6-T2: once run 4 is answered and building, asks lists 2, 5 and 11 and ask is still run 2', () => withEnvVars(ON, () => {
+  const fx = world(root, 'busy');
+  fx.setRun(4, { pipe: 'running' });
+  const v = viewOf(fx);
+  assert.deepEqual(indexes(v), [2, 5, 11]);
+  assert.equal(v.ask.index, 2);
+  assert.deepEqual(v.ask, v.asks[0]);
+}));
+
+test('S6-T3 (D2): a held stop answer is not a line', () => withEnvVars(ON, () => {
+  const { states } = SIXTEEN_RUN_STATES.busy;
+  const fx = world(root, { done: [1, 3], states: { ...states, 4: { stop: 'check', held: true, after: 6 } } });
+  assert.deepEqual(indexes(viewOf(fx)), [2, 5, 11]);
+}));
+
+test('S6 (D2): a plan approval and a Clarify question without a stop are lines too, with no reason', () => withEnvVars(ON, () => {
+  const fx = world(root, { done: [1, 3], states: { 2: { approval: true }, 9: { asking: true } } });
+  const v = viewOf(fx);
+  assert.deepEqual(v.asks?.map((a) => [a.index, a.kind, a.reason, a.failed]), [[2, 'plan', null, false], [9, 'questions', null, false]]);
+}));
+
+test('S6 (D3): a run that could not start is a failed line; stopped, paused and canceled runs are not lines', () => withEnvVars(ON, () => {
+  const fx = world(root, { done: [1, 3], states: { 2: { stop: 'requirement' }, 5: { pipe: 'stopped' }, 9: { pipe: 'paused' } } });
+  fx.cancelTicket(10);
+  getDb().prepare("UPDATE scheduled_runs SET status = 'failed' WHERE id = ?").run(fx.ticketOf(11));
+  const v = viewOf(fx);
+  assert.equal(v.slices[10].state, 'failed');
+  assert.deepEqual(v.asks?.map((a) => [a.index, a.failed, a.pipelineId]), [[2, false, fx.pipelineOf(2)], [11, true, null]]);
+}));
+
+test('S6 (D5): with nothing open and nothing failed, asks is empty and ask stays null', () => withEnvVars(ON, () => {
+  const v = viewOf(world(root, { done: [1], states: { 3: { pipe: 'running' } } }));
+  assert.deepEqual(v.asks, []);
+  assert.equal(v.ask, null);
+}));
+
+test('S6 (D5): a failed run before the first open stop is asks[0], and ask equals it', () => withEnvVars(ON, () => {
+  const v = viewOf(world(root, { done: [1], states: { 2: { pipe: 'error' }, 9: { stop: 'check' } } }));
+  assert.deepEqual(indexes(v), [2, 9]);
+  assert.equal(v.ask?.failed, true);
+  assert.deepEqual(v.ask, v.asks[0]);
+}));
+
+test('S6 (D16): the chat tools never take a failed run for the open step: failed run 2 before stop run 9 names run 9; only a failed run lets them through', () => withEnvVars(ON, async () => {
+  const { threadWork, shapeToolFit } = await import('../src/core/shape/changes.mjs');
+  const deps = (fx) => ({ live: fx.live, readPrState: () => null, findPipelineRowById: () => null, readRunTags: () => [], readRunLabels: () => [] });
+  const route = (fx) => ({ featureId: fx.featureId, text: 'add a chart', guess: 'add', reason: 'fits the next run' });
+  const both = world(root, { done: [1], states: { 2: { pipe: 'error' }, 9: { stop: 'check' } } });
+  const w = threadWork([{ pipelineId: both.pipelineOf(1) }], deps(both));
+  assert.equal(w.open?.index, 9);
+  assert.match(shapeToolFit('route', route(both), w).error, /^Run 9 is waiting/);
+  const onlyFailed = world(root, { done: [1], states: { 2: { pipe: 'error' } } });
+  const w2 = threadWork([{ pipelineId: onlyFailed.pipelineOf(1) }], deps(onlyFailed));
+  assert.equal(w2.open, null);
+  assert.doesNotMatch(String(shapeToolFit('route', route(onlyFailed), w2).error || ''), /is waiting at its/);
+}));
+
+test('S6-T4 (D1): flag off or unmarked: no asks key, and ask is today\'s first-live-ask pointer', async () => {
+  const fx = world(root, 'busy');
+  await withEnvVars({ WORCA_FLAGS: undefined }, () => {
+    const v = viewOf(fx);
+    assert.equal('asks' in v, false);
+    assert.deepEqual(v.ask, { index: 2, runId: 'r2', pipelineId: fx.pipelineOf(2), id: 'q2', kind: 'plan' });
+  });
+  getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+  const plain = sixteenRunFeature({ projectDir: root, smallRuns: false });
+  plain.setRun(1, { pipe: 'done' });
+  plain.setRun(2, { stop: 'requirement' });
+  plain.setRun(5, { pipe: 'error' });
+  await withEnvVars(ON, () => {
+    const v = viewOf(plain);
+    assert.equal('asks' in v, false);
+    assert.deepEqual(v.ask, { index: 2, runId: 'r2', pipelineId: plain.pipelineOf(2), id: 'q2', kind: 'plan' });
+  });
+});
+
+test('S6-T5 (D19): every member\'s waitsFor and nextTurn equal featureView\'s, and no member carries asks', () => withEnvVars(ON, () => {
+  const fx = world(root, 'busy');
+  const { view, members } = views(fx);
+  for (const { run } of SIXTEEN_RUN_LINKS) {
+    for (const k of ['waitsFor', 'nextTurn']) assert.deepEqual(members.get(run)[k], view.get(run)[k], `run ${run} ${k}`);
+  }
+  const group = listRunGroups({ live: fx.live }).find((g) => g.id === fx.featureId);
+  assert.equal('asks' in group, false);
+  for (const m of group.members) { assert.equal('asks' in m, false); assert.equal('asks' in (m.slice || {}), false); }
+}));
+
+test('S6-T6 (R-qa-1): runs 2, 9 and 11 at stops and run 5 failed: every row word, every stop line; approving run 9 leaves 2, 5 and 11', () => withEnvVars(ON, () => {
+  const fx = world(root, { done: [1, 3, 4], states: { 2: { stop: 'requirement' }, 9: { stop: 'check' }, 11: { stop: 'check' }, 5: { pipe: 'error' } } });
+  const v = viewOf(fx);
+  const map = new Map(v.slices.map((s) => [s.index, s]));
+  const words = Object.fromEntries(v.slices.filter((s) => s.state !== 'done').map((s) => [s.index, statusOf(map, s.index).word]));
+  assert.deepEqual(words, {
+    2: 'waiting for you', 5: 'failed', 6: 'waits for run 5 (failed)', 7: 'waits for run 2 (needs you), 6',
+    8: 'waits for run 2 (needs you)', 9: 'waiting for you', 10: 'next', 11: 'waiting for you', 12: 'waits for run 7, 10',
+    13: 'waits for run 11 (needs you)', 14: 'waits for run 13', 15: 'waits for run 8, 14', 16: 'waits for run 9 (needs you), 12, 15',
+  });
+  assert.deepEqual(v.asks?.map((a) => RS.stopLineText(a)), [
+    'Run 2 · plan approval · holds up 7, 8, 12, 15, 16', 'Run 5 failed · holds up 6, 7, 12, 16',
+    'Run 9 · plan approval · holds up 16', 'Run 11 · plan approval · holds up 13, 14, 15, 16',
+  ]);
+  fx.setRun(9, { pipe: 'running' });
+  assert.deepEqual(indexes(viewOf(fx)), [2, 5, 11]);
+}));
+
+test('S6-T7 (D1): re-planning lists no asks and keeps the Re-plan run\'s Split ask; a canceled feature lists none', () => withEnvVars(ON, () => {
+  const fx = world(root, 'busy');
+  for (const r of [2, 4, 11]) fx.setRun(r, { pipe: 'error' });   // no slice asks any more, as while re-planning
+  const rp = 's16-replan-1';
+  seedPipelineRow({ id: rp, projectKey: projectKey(root), status: 'running', title: 'Re-plan', branch: { source: 'main', feature: 'feat/replan' } });
+  const t = createTicket({ title: 'Re-plan the rest', projectDir: root, request: {}, runAtMs: Date.now() });
+  getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?").run(rp, t.id);
+  getDb().prepare("UPDATE shape_features SET status = 'replanning', replan_ticket_id = ? WHERE id = ?").run(t.id, fx.featureId);
+  const split = liveSliceFrom({ runId: 'r-replan', status: 'running', pendingQuestion: { id: 'out-1', kind: 'plan', plan: { outline: { why: 'w', slices: [] } } } });
+  const v = viewOf(fx, (pid) => (pid === rp ? split : fx.live(pid)));
+  assert.equal('asks' in v, false);
+  assert.deepEqual(v.ask, { index: null, runId: 'r-replan', pipelineId: rp, id: 'out-1', kind: 'outline' });
+  getDb().prepare("UPDATE shape_features SET status = 'canceled' WHERE id = ?").run(fx.featureId);
+  assert.equal('asks' in viewOf(fx), false);
+}));
+
+// ---- Slice 6 Step 3 (D12): Resume a named run ----
+const writes = (fid) => JSON.stringify([
+  getDb().prepare('SELECT * FROM scheduled_runs ORDER BY id').all(),
+  getDb().prepare('SELECT * FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(fid)]);
+const rowTickets = (fid) => new Map(getDb().prepare('SELECT idx, ticket_id FROM shape_feature_slices WHERE feature_id = ?').all(fid).map((r) => [r.idx, r.ticket_id]));
+const TWO_FAILED = { done: [1, 3, 4], states: { 5: { pipe: 'error' }, 9: { pipe: 'error' } } };
+
+test('S6 resume: an index that is not halted answers 409 NOT_HALTED and writes nothing', () => withEnvVars(ON, () => {
+  const fx = world(root, 'busy');
+  for (const index of [4, 10, 99]) {
+    const before = writes(fx.featureId);
+    assert.deepEqual(resumeFeature(fx.featureId, { live: fx.live, index }), { status: 409, code: 'NOT_HALTED', error: `Run ${index} is not stopped` });
+    assert.equal(writes(fx.featureId), before, `index ${index} wrote nothing`);
+  }
+}));
+
+test('S6 resume: a named run on a feature with nothing halted is NOT_HALTED, not "none"', () => withEnvVars(ON, () => {
+  const fx = world(root, 'base');
+  const before = writes(fx.featureId);
+  assert.deepEqual(resumeFeature(fx.featureId, { live: fx.live, index: 3 }), { status: 409, code: 'NOT_HALTED', error: 'Run 3 is not stopped' });
+  assert.equal(writes(fx.featureId), before);
+}));
+
+test('S6 resume: a named failed run while another run is going keeps today\'s 409 and writes nothing', () => withEnvVars(ON, () => {
+  const fx = world(root, 'busy');
+  const before = writes(fx.featureId);
+  assert.deepEqual(resumeFeature(fx.featureId, { live: fx.live, index: 5 }), { status: 409, error: 'Slice 6 is still going: resume this one when it finishes' });
+  assert.equal(writes(fx.featureId), before);
+}));
+
+test('S6 resume: index 9 restarts run 9 only; run 5 stays the first halted run', () => withEnvVars(ON, () => {
+  const fx = world(root, TWO_FAILED);
+  const before = rowTickets(fx.featureId);
+  const res = resumeFeature(fx.featureId, { live: fx.live, index: 9 });
+  assert.equal(res.action, 'restart');
+  const after = rowTickets(fx.featureId);
+  assert.equal(after.get(9), res.ticketId);
+  assert.notEqual(after.get(9), before.get(9), 'run 9 got a new ticket');
+  for (const r of [5, 6, 7, 12, 16]) assert.equal(after.get(r), before.get(r), `run ${r} keeps its ticket`);
+  assert.equal(viewOf(fx).halted.index, 5);
+}));
+
+test('S6 resume: a named paused run resumes that run, not the first halted one', () => withEnvVars(ON, () => {
+  const fx = world(root, { done: [1, 3, 4], states: { 5: { pipe: 'error' }, 9: { pipe: 'paused' } } });
+  assert.deepEqual(resumeFeature(fx.featureId, { live: fx.live, index: 9 }), { action: 'resume', pipelineId: fx.pipelineOf(9), index: 9, mock: false });
 }));

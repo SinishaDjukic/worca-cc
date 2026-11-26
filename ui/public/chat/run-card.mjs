@@ -40,6 +40,7 @@ import { isRequirementsAsk, answerFieldOpen } from '../shape/step-card.mjs';
 import { renderChecklistGroups } from '../shape/checklist-view.mjs';
 import { checkLine, roundCheck } from '../shape/plan-text.mjs';
 import { paintFeatureActions } from '../shape/feature-actions.mjs';
+import { paintStopList, stopLinesOf } from '../shape/stop-list.mjs';
 import { renderAskChanges } from './ask-changes.mjs';
 import { roundsModel, liveRound } from './rounds.mjs';
 import { flagOn } from '../flags.mjs';
@@ -325,6 +326,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   // Feature D1 (D14): the Ship step's card (ship-card.mjs, the feature page's too), mounted only on the `ship` step.
   const shipEl = h('div', 'chat-rc-ship');
   changeEl.hidden = true;
+  // ---- Shaper small runs slice 6 (D15): every open stop and failed run, one line each (stop-list.mjs). Mounted before
+  // the question slot only once a line shows, so every other card keeps dev's markup.
+  const stopsEl = h('ol', 'chat-rc-stops');
+  stopsEl.setAttribute('aria-label', 'Open stops');
   // ---- Shaper s5: the ideas saved for the next checkpoint (D11) and a watch that gave up on the run's PR (D23)
   const notesEl = h('div', 'chat-rc-notes');
   notesEl.hidden = true;
@@ -350,6 +355,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   let roundRef = null;        // D25: set by update(): the live round's run ref, or null
   let changesView = null;     // Shaper's Ask for changes field ({ el, focus }) while it shows
   let planSent = null;   // slice 4: the plan card's last approve attempt, named by its `plan-answer` event (D12)
+  let stopLines = [];         // slice 6: the stop list's lines of the last paint (stop-list.mjs stopLinesOf)
+  let resumeListed = false;   // slice 6 (D14): a failed line holds the halted run's Resume, so the footer and ⋯ do not
+  const stopByKey = new Map();   // slice 6 (D10): the line kept per key, so a line's delegate reads its current ask
   const ref = () => runRefOf(id, last);
   /** D11: the run whose ask is the open step — the asking member's snapshot, else this card's run. */
   const stepSnap = (s) => (fm && fm.step && fm.step.snap) || s;
@@ -490,6 +498,18 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     },
   });
 
+  // Slice 6 (D10): built once; each open line mounts today's step card in its own host and, for asks that are not step
+  // cards (a Clarify renderer), the delegate answers for that line's own run with its current ask id.
+  const stopDeps = {
+    paintQuestion: (r, host) => call(controls.paintQuestion, r, host),
+    releaseQuestion: (host) => call(controls.releaseQuestion, host),
+    bindQuestion: (host, line) => delegateQuestion(host, {
+      question: () => { const l = stopByKey.get(line.key); return l && !l.failed ? { id: l.id, kind: l.kind } : null; },
+      send: (payload, pq) => { const l = stopByKey.get(line.key); if (l && l.ref) call(controls.answer, l.ref, pq.id, payload); },
+    }),
+    resume: (index) => (fm && fm.controls ? call(controls.featureAct, fm.controls.featureId, 'resume', { index }) : Promise.resolve({ ok: false })),
+  };
+
   function paintAgents(s) {
     const pq = s && s.pendingQuestion;
     const gate = s && s.decor && s.decor.gate ? s.decor.gate.nodeId : null;
@@ -576,6 +596,14 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
 
   function paintQuestion(s) {
     working = false;
+    // Slice 6 (D11): a step the stop list shows is drawn on its line, never here. Release the slot without a receipt:
+    // the step moved, nobody answered it.
+    if (fm && fm.step && fm.step.index != null && stopLines.some((l) => l.index === fm.step.index)) {
+      call(controls.releaseQuestion, qBody);
+      painted = null; sent = null; planSent = null; shownFor = null;
+      qBody.hidden = true; qHead.hidden = true; qErr.hidden = true; receipt.hidden = true; qSec.hidden = true;
+      return;
+    }
     // D11: the Shaper open step wins over ownIsCurrent(): a feature card shows its asking member's step.
     if (!(fm && fm.step) && !ownIsCurrent()) {
       // A group card that is not the current member's own card draws no question (its Answer opens the member's
@@ -961,7 +989,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // B1: the model's ship action never shows on the one card: Feature D1's Ship step card holds Create N PRs, and the open
     // step card's button is its one primary.
     const fc = fm && fm.phase === 'feature' ? fm.controls : null;
-    const stopOpen = !!(painted && painted.stop);
+    const stopOpen = !!(painted && painted.stop) || stopLines.some((l) => !l.failed);
     const disable = { ...(st === 'pausing' ? { resume: 'Pausing…' } : {}), ...(changesWhy ? { 'ask-changes': changesWhy } : {}) };
     // Feature D1 (R-ux-2): a shipped marked feature's Ship step holds the one view action (View PRs): no View PR here.
     const shipDone = !!oneNow && !!shipEl.parentNode && shipEl.dataset.phase === 'applied';
@@ -977,7 +1005,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       disable,
       onAction: (aid, b) => (aid === 'ask-changes' ? askForChanges() : call(controls.act, target(), aid, b, m, curRow)),
     });
-    if (fc) paintFeatureActions(doc, fActions, fc, featureDeps, { omit: m.actions, stopOpen,
+    if (fc) paintFeatureActions(doc, fActions, fc, featureDeps, { omit: m.actions, stopOpen, resumeListed,
       moved: moved.map((id) => ({ id, ...(disable[id] ? { disabled: disable[id] } : {}) })) });
     // Clear the sig too: else the next feature paint's sig matches and returns early, leaving an empty host.
     else { fActions.replaceChildren(); fActions.hidden = true; delete fActions.dataset.sig; }
@@ -1063,6 +1091,12 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const one = shaperIn ? oneCardModel(shaperIn) : null;
     oneNow = one;
     fm = one ? one.base : shaperIn ? featureCardModel(shaperIn) : null;
+    // Slice 6: a marked card with the flag on lists every open stop and failed run (none without `feature.asks`).
+    const fview = one && shaperIn.card ? shaperIn.card.feature || null : null;
+    stopLines = one && flagOn('shaperSmallRuns', doc) ? stopLinesOf(fview, { snapOf: shaperIn.snapOf }) : [];
+    stopByKey.clear();
+    for (const l of stopLines) stopByKey.set(l.key, l);
+    resumeListed = stopLines.some((l) => l.failed && !!fview.halted && l.index === fview.halted.index);
     const roundSnap = (p) => (s && s.roundSnaps && s.roundSnaps[p]) || null;
     // s5 (D16): a plain run's rounds (the controller fills s.roundSnaps) fill the log; the live one feeds the model (D6).
     const rm = roundsModel(s);
@@ -1142,6 +1176,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     notesEl.hidden = !(fm && fm.notesLine);
     if (one) { agentsBox.hidden = true; well.hidden = true; }   // B1: the one card draws no graph and no agents
     else { paintAgents(s); paintGraph(s, chip); }
+    if (stopLines.length && !stopsEl.parentNode) qSec.before(stopsEl);   // parentNode: a card being built is not in the document yet
+    if (stopsEl.parentNode) paintStopList(doc, stopsEl, stopLines, stopDeps);
     paintQuestion(s);       // draws only when ownIsCurrent(), or the feature's open step
     // B1: the log row is the one receipt and the state line the one headline; Ship stays on the feature page (D8).
     // Item 6: the working moment has nothing to answer (painted is null) and still shows.
@@ -1179,6 +1215,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (zoom) zoom.close();
     if (graph) { graph.destroy(); graph = null; }
     call(controls.releaseQuestion, qBody);
+    if (stopsEl.parentNode) paintStopList(doc, stopsEl, [], stopDeps);   // slice 6: release every line's step card
   }
 
   paintFix();

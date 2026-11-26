@@ -163,6 +163,17 @@
 /* s4 (owner direction): an open stop's word reads amber ink, a failed run's red ink; every other word stays --ink-2. */
 .chat-rc-members .run-member[data-mark="ask"] .run-member-state{color:var(--amber-ink);}
 .chat-rc-members .run-member[data-mark="failed"] .run-member-state{color:var(--red-ink);}
+/* Slice 6 (stop-list.mjs): every open stop and failed run, one line each before the question slot. A line is the run
+   row's mark in the same 16px box and 32px line, then that run's own step card or its Resume (no dot class of its own). */
+.chat-rc-stops{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
+.chat-rc-stop + .chat-rc-stop{border-top:1px solid var(--line);}
+.chat-rc-stop-line{display:grid;grid-template-columns:16px minmax(0,1fr);column-gap:8px;align-items:center;min-height:32px;padding:5px 0 6px;box-sizing:border-box;line-height:20px;}
+.chat-rc-stop-line > .status-dot{justify-self:center;}
+.chat-rc-stop-text{color:var(--ink);font-size:var(--fs-body);min-width:0;}
+.chat-rc-stop-body{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:0 0 8px 24px;}
+.chat-rc-stop-body:empty{display:none;}
+.chat-rc-stop-q{flex:1 1 100%;min-width:0;}
+.chat-rc-stop-err{color:var(--red-ink);font-size:var(--fs-meta);}
 /* A narrow row with no PR chip and no cost keeps one grid row: the stacked ". . pr cost" row and its gap would add 9px.
    C2: every narrow one-line row stays one 32px line, as the prototype's #build rows. A PR chip takes the last column
    (the chevron's; the whole-row link opens the run); the cost is dropped, as dev drops it in a narrow chat card, and

@@ -20,7 +20,7 @@ import { rerunsOf } from '../../shared/shape/req-status.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
 import { stopOptionOf } from '../../shared/shape/run-stops.mjs';
-import { namedWaits, neededByOf } from '../../shared/shape/run-status.mjs';
+import { holdsUpOf, namedWaits, neededByOf } from '../../shared/shape/run-status.mjs';
 import { CHANGES_MAX } from '../../shared/shape/req-change.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
 import { SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
@@ -398,6 +398,9 @@ export function featureView(id, { live = () => null, finishing = () => false, on
       ...(f.outline.agreed?.length ? { requirements: sliceRequirements(f, r) } : {}) };
   });
   if (smallRunsOfFeature(f.id)) stopWords(f, rows, slices, live);
+  // Slice 6 (D1, D5): with the flag on, an active marked feature lists every open stop and failed run; the first is `ask`.
+  const asks = shaperSmallRunsOn() && smallRunsOfFeature(f.id) && f.status === 'active' ? openStopsOf(rows, slices, live) : null;
+  if (asks && asks.length) ask = asks[0];
   const roundLive = slices.some((s) => s.rounds.some((x) => LIVE_ROUND.has(x.status)));
   const ideas = getDb().prepare(`SELECT COUNT(*) AS n FROM shape_feature_notes WHERE feature_id = ? AND kind = 'idea'
     AND (run_index IS NULL OR run_index NOT IN (SELECT idx FROM shape_feature_slices WHERE feature_id = ? AND pipeline_id IS NOT NULL))`).get(f.id, f.id).n;
@@ -455,7 +458,7 @@ export function featureView(id, { live = () => null, finishing = () => false, on
     open: slices.some((s) => ['planned', 'missed', 'held'].includes(s.state)),
     held: held ? { index: held.index, ticketId: held.ticketId } : null,
     replacedBy: f.replaced_by || null, replan, slices, ship,
-    originPipelineId: f.origin_pipeline_id, ask, log: featureLog(f, slices, oneCard, ch.logged, f.outline.verify || null), notes: { ideas },
+    originPipelineId: f.origin_pipeline_id, ask, ...(asks ? { asks } : {}), log: featureLog(f, slices, oneCard, ch.logged, f.outline.verify || null), notes: { ideas },
     // Shaper small runs A2: the record's 2 keys, last, only with the flag on or (B2, D20) for a marked feature; an unmarked
     // feature with the flag off is dev's exact shape.
     ...(shaperSmallRunsOn() || smallRunsOfFeature(f.id) ? { care: careOfRow(f), requirementKinds: requirementKindsOf(j(f.requirement_kinds, null), f.outline) } : {}),
@@ -466,6 +469,27 @@ export function featureView(id, { live = () => null, finishing = () => false, on
     // Small runs C5 (D12): the latest Verifier check as the card reads it; absent before the first check.
     ...(verify ? { verify } : {}),
   };
+}
+
+const FAILED_RUN = new Set(['error', 'failed']);   // run-status.mjs FAILED: the red "!"
+
+/** Slice 6 (D2 to D4, D6): a marked feature's open stops (a live ask whose answer is not held) and failed runs, in run
+ *  order, each with the unfinished runs it holds up. `stopWords` has already set `buildsOn` on every slice. */
+function openStopsOf(rows, slices, live) {
+  const byRun = new Map(slices.map((s) => [s.index, s]));
+  const out = [];
+  rows.forEach((r, i) => {
+    const s = slices[i];
+    const l = r.pipelineId ? live(r.pipelineId) : null;
+    if (l && l.ask && !(l.stop && l.stop.held)) {
+      out.push({ index: r.index, runId: l.runId || null, pipelineId: r.pipelineId, id: l.ask.id, kind: l.ask.kind,
+        reason: (l.stop && l.stop.reason) || null, failed: false, holdsUp: holdsUpOf(r.index, byRun) });
+    } else if (FAILED_RUN.has(s.state)) {
+      out.push({ index: r.index, runId: null, pipelineId: r.pipelineId, id: null, kind: null, reason: null, failed: true,
+        holdsUp: holdsUpOf(r.index, byRun) });
+    }
+  });
+  return out.sort((a, b) => a.index - b.index);
 }
 
 /** Small runs C3 (D15): a marked feature's slices gain `stop` (an open or held stop question) and `waitsFor`. With the
@@ -1012,12 +1036,18 @@ export function rechainWaiting(id, index, { by = null, now = Date.now() } = {}) 
  *  Stopped/error/failed, or missed/canceled behind a done slice (F43) → a new ticket for slice k, re-chained so the
  *  waiting slices follow it.
  *  @returns {null|{error, status}|{action:'resume', pipelineId, index}|{action:'restart', ticketId}|{action:'none'}} */
-export function resumeFeature(id, { live = () => null, finishing = () => false, by = null, now = Date.now() } = {}) {
+export function resumeFeature(id, { live = () => null, finishing = () => false, by = null, now = Date.now(), index = null } = {}) {
   const f = featureRow(id);
   if (!f) return null;
   const refused = notActive(f);
   if (refused) return refused;
   const view = featureView(id, { live, finishing });
+  // Slice 6 (D12): a stop line's Resume names its run; a run that is not halted is refused and nothing is written.
+  if (index != null) {
+    const named = view.slices[index - 1];
+    if (!named || !HALTS.has(named.state)) return { status: 409, code: 'NOT_HALTED', error: `Run ${index} is not stopped` };
+    return resumeHalted(f, id, named, { live, by, now });
+  }
   // Small runs C5: every run done and the Verifier halted (failed, stopped, or settled with the flag off) → a fresh check,
   // with the flag on only (startVerifyCheck starts none without it).
   if (!view.halted && view.verify && view.verify.state === 'halted') {
@@ -1025,7 +1055,11 @@ export function resumeFeature(id, { live = () => null, finishing = () => false, 
     return v ? { action: 'restart', ticketId: v.ticketId } : { action: 'none' };
   }
   if (!view.halted) return { action: 'none' };
-  const h = view.slices[view.halted.index - 1];
+  return resumeHalted(f, id, view.slices[view.halted.index - 1], { live, by, now });
+}
+
+/** resumeFeature's body for one halted run `h`: the busy check, a paused resume, or a restart. */
+function resumeHalted(f, id, h, { live, by, now }) {
   // Shaper small runs (D10): one slice of a feature is going at a time; a refusal changes nothing.
   const smallRuns = shaperSmallRunsOn();
   const busy = smallRuns ? busySliceOf(id, { exclude: h.index, live }) : null;

@@ -115,3 +115,15 @@ test('s5: the marks paragraph names the Runs list member rows and the run page h
   assert.ok(para, 'the paragraph that names markDot');
   assert.deepEqual(missing(para, [/Chat card/, /Runs tab/, /Runs list/i, /member rows/i, /run page/i, /ship line/i]), []);
 });
+
+// Shaper small runs slice 6 (R-po-4): the open stop list on the card.
+test('s6: "Open stops on the card" sits under Small runs, after the run words, and says what a line holds up, the order and Resume', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const at = small.indexOf('\n### Open stops on the card\n');
+  assert.ok(at >= 0, 'the heading "### Open stops on the card" under Small runs');
+  assert.ok(at > small.indexOf('\n### The run words\n'), 'after "The run words"');
+  const rest = small.slice(at + 1);
+  const next = rest.indexOf('\n### ', 1);
+  const part = flat(next < 0 ? rest : rest.slice(0, next));
+  assert.deepEqual(missing(part, ['holds up', 'in run order', 'Resume']), []);
+});

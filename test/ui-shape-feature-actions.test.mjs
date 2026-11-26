@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { featureButtons, featureMenu, featureMenuItems, paintFeatureActions } from '../ui/public/shape/feature-actions.mjs';
+import { featureCardModel } from '../ui/public/shape/feature-card.mjs';
 import { closeMenus } from '../ui/public/workflows/menu.mjs';
 
 const track = useDomRelease(afterEach);
@@ -309,4 +310,46 @@ test('run 4 D17: paintFeatureActions with menu:false draws no ⋯', () => {
   const host = dom.window.document.body.appendChild(dom.window.document.createElement('div'));
   paintFeatureActions(dom.window.document, host, C(), { act: async () => ({ ok: true }), confirm: async () => true, pause: async () => {}, stop() {}, openPlan() {} }, { menu: false });
   assert.equal(host.querySelector('[data-act="feature-more"]'), null);
+});
+
+// ---- Slice 6 (D14, D16): Resume shows once, on the failed run's stop line; the pointer is the first open stop ---------
+test('s6 resumeListed: the buttons and the ⋯ menu leave out Resume, everything else stays; the default is today\'s', () => {
+  const halted = C({ halted: true });
+  assert.deepEqual(featureButtons(halted, { resumeListed: true }).map((b) => b.key), ['replan']);
+  assert.deepEqual(featureButtons(halted).map((b) => b.key), ['resume', 'replan']);
+  assert.deepEqual(featureButtons(halted, { resumeListed: false }).map((b) => b.key), ['resume', 'replan']);
+  assert.deepEqual(featureMenu(halted, { stopOpen: true, resumeListed: true }).map((i) => i.key), ['replan', 'cancel', 'approve-each', 'plan']);
+  assert.deepEqual(featureMenu(halted, { stopOpen: true }).map((i) => i.key), ['replan', 'cancel', 'approve-each', 'plan', 'resume']);
+  assert.deepEqual(featureButtons(C(), { stopOpen: true, resumeListed: true }).map((b) => b.key), ['stop'], 'Stop is unchanged');
+});
+
+test('s6 resumeListed: paintFeatureActions forwards it to the footer and the menu', () => {
+  const { doc, host, labels, menu } = setup(C({ halted: true }));
+  const deps = { act: async () => ({ ok: true }), confirm: async () => true, openPlan() {} };
+  paintFeatureActions(doc, host, C({ halted: true }), deps, { resumeListed: true });
+  assert.deepEqual(labels(), ['Re-plan the rest', '']);
+  assert.equal(host.querySelector('[data-act="feature-resume"]'), null);
+  closeMenus();
+  paintFeatureActions(doc, host, C({ halted: true }), deps, { stopOpen: true, resumeListed: true });
+  assert.deepEqual(menu().map((i) => i.textContent.trim()), ['Re-plan the rest', 'Cancel the rest', 'Ask before each run', 'Open the plan']);
+  closeMenus();
+});
+
+const S6_VIEW = (asks) => ({ id: 'feat_1', title: 'Charts', status: 'active', total: 2, done: 0, halted: { index: 5, state: 'error', waiting: [] },
+  slices: [{ index: 5, state: 'error', pipelineId: 'p5' }, { index: 11, state: 'questions', pipelineId: 'p11' }], asks, ask: asks[0] || null,
+  log: [], originPipelineId: 'p0' });
+const FAILED_5 = { index: 5, runId: null, pipelineId: 'p5', id: null, kind: null, reason: null, failed: true, holdsUp: [6] };
+const OPEN_11 = { index: 11, runId: 'r11', pipelineId: 'p11', id: 'q11', kind: 'gate', reason: 'check', failed: false, holdsUp: [13] };
+
+test('s6 featureCardModel: the pointer step is the first open entry of asks; a failed entry never becomes one', () => {
+  const m = featureCardModel({ own: null, card: { pipelineId: 'p0', feature: S6_VIEW([FAILED_5, OPEN_11]), log: [] } });
+  assert.deepEqual([m.step?.index, m.step?.pipelineId, m.step?.id, m.step?.kind, m.step?.snap], [11, 'p11', 'q11', 'gate', null]);
+  const onlyFailed = featureCardModel({ own: null, card: { pipelineId: 'p0', feature: S6_VIEW([FAILED_5]), log: [] } });
+  assert.equal(onlyFailed.step, null);
+});
+
+test('s6 featureCardModel: with no run entry, a Re-plan or Verifier ask (index null) is still the pointer step', () => {
+  const verifier = { index: null, runId: 'rv', pipelineId: 'pv', id: 'vq', kind: 'gate' };
+  const m = featureCardModel({ own: null, card: { pipelineId: 'p0', feature: { ...S6_VIEW([]), halted: null, ask: verifier }, log: [] } });
+  assert.deepEqual([m.step?.index, m.step?.pipelineId, m.step?.id], [null, 'pv', 'vq']);
 });

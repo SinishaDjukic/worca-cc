@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { replanBrief } from '../src/shared/shape/slices.mjs';
+import { world } from './helpers/shape-sixteen-runs.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb, dbPath, SCHEMA_VERSION, _resetForTests } from '../src/core/db.mjs';
@@ -1967,3 +1968,15 @@ test('D2 (D14): storedAgentFacts reads plan versions, a done plan review and a s
   step(impl, '5:n_impl', 'n_impl', 'done', { tests: { passed: 3, total: 4 } });
   assert.deepEqual((await storedAgentFacts(impl)).tests, { passed: 3, total: 4 });
 });
+
+// ---- Slice 6 (D12): without an index, Resume still restarts the first halted run, as today --------------------------
+test('resumeFeature without an index restarts the first halted run (run 5), not run 9', () => withSmallRuns(true, () => {
+  const fx = world(root, { done: [1, 3, 4], states: { 5: { pipe: 'error' }, 9: { pipe: 'error' } } });
+  const rowTickets = () => new Map(tickets(fx.featureId).map((r) => [r.idx, r.ticket_id]));
+  const before = rowTickets();
+  const res = resumeFeature(fx.featureId, { live: fx.live });
+  assert.equal(res.action, 'restart');
+  assert.equal(rowTickets().get(5), res.ticketId);
+  assert.notEqual(res.ticketId, before.get(5));
+  assert.equal(rowTickets().get(9), before.get(9));
+}));
