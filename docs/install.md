@@ -98,6 +98,9 @@ directly.
 
 ## In a container
 
+Not sure which setup fits? [Choose a setup](choose-a-setup.md) compares them. The [Security overview](security-overview.md)
+says what each one protects and what it does not.
+
 If you'd rather the agents run in a disposable Linux box than on your machine, the same Worca ships as an image:
 `ghcr.io/worca-org/worca`, for amd64 and arm64, plus a `-full` variant, with a Compose file. The agents can't
 read your host credentials or touch files outside the project folders you mount. The box keeps its own Worca home
@@ -113,6 +116,9 @@ worca container login     # log Claude Code in, once
 
 Without npm, download `docker/compose.yml`, set `WORCA_PROJECTS` in a `.env` beside it and run
 `docker compose up -d`.
+
+For the strictest local setup, with no model key, git token or proxy login in an agent's reach, use the
+[Hardened box](hardened-box.md): `worca container up --hardened`.
 
 See [Worca in a container](docker.md) for login options, git credentials, the egress allowlist, clone-in mode and
 Windows (WSL2).

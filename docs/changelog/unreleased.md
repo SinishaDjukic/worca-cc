@@ -3,6 +3,22 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Choose a setup, and a security overview
+
+**Two new pages tell you which Worca setup fits you, and what each one protects.**
+
+"Choose a setup" compares Native, Local sandbox (Docker), E2B sandbox, Hardened box and Shared instance. It says who each is for, how you work in it, where each credential lives and what you need. The Local sandbox and the E2B sandbox arrive in a later release.
+
+The security overview says what Worca treats as untrusted. The claim for a sandboxed setup is: no model key, no git token and no proxy login in an agent's reach. It does not claim "no secrets". The page lists what stays in reach, such as MCP registry secrets.
+
+Chips: setups · security overview · known limits
+
+Read it: [Choose a setup](../choose-a-setup.md), [Security overview](../security-overview.md)
+
+Pull requests (add each number when it opens):
+
+- Docs: choose a setup, and a security overview
+
 ## A reference profile for a shared instance
 
 **One documented way to run Worca for a team on a server, hardened.**

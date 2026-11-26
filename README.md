@@ -58,7 +58,7 @@ worca "Add a /search endpoint with pagination"
 ```
 
 See [Install](docs/install.md) for npm install scripts, Gentoo, Windows, the container image and a
-hosted setup, and [CLI](docs/cli.md) for every command.
+hosted setup, [Choose a setup](docs/choose-a-setup.md) to pick one, and [CLI](docs/cli.md) for every command.
 
 ## How a run works
 
@@ -114,6 +114,7 @@ for it, which you review before it runs. More in [Runs](docs/runs.md).
 | | Team metrics and team policy, shared through git | [Team metrics](docs/team-metrics.md), [Team policy](docs/team-policy.md) |
 | | Labs features behind flags | [Feature flags](docs/feature-flags.md) |
 | Deployment | Container image, hosted behind Cloudflare Access, credential broker | [Docker](docs/docker.md), [Railway](docs/deploy-railway.md), [Remote access](docs/remote-access.md), [Credential broker](docs/credential-broker.md) |
+| | Which setup fits you, and what each protects: Native, Local sandbox, E2B sandbox, Hardened box, Shared instance | [Choose a setup](docs/choose-a-setup.md), [Security overview](docs/security-overview.md) |
 
 ![A finished run, "CSV export for contacts", on its Diff tab: 4 files changed (+36 −0) in a file tree beside the highlighted patch of src/routes/contacts.js, with the run's worca-cc/ branch, its time and cost, and the Create PR and Publish branch buttons](docs/screenshots/run-detail.png)
 

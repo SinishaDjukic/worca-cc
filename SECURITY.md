@@ -95,6 +95,9 @@ Out of scope:
 
 If you are not sure whether something is in scope, report it anyway.
 
+For what each setup protects and what it does not, see the
+[Security overview](docs/security-overview.md) and [Choose a setup](docs/choose-a-setup.md).
+
 ## Safe harbor
 
 We will not take legal action against anyone who researches and reports a

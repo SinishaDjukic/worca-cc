@@ -53,7 +53,8 @@ trust — a task built from an outside issue, a repository you did not write —
 run Worca in a container ([docker.md](docker.md)): the box holds no host
 credentials, mounts only the projects you name, can run agents as their own
 user apart from Worca's settings and database, and the egress overlay limits
-the network.
+the network. [Choose a setup](choose-a-setup.md) compares the setups that do this, and the
+[Security overview](security-overview.md) says what each protects and what it does not.
 
 ## The built-in tiers
 

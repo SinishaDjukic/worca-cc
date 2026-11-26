@@ -5,8 +5,9 @@ it spawns run inside a disposable Linux container. An agent that goes off the
 rails damages a box, not your machine. Design and trade-offs:
 [`plans/container-isolation-design.md`](../plans/container-isolation-design.md).
 
-This page is the plain container: the Local sandbox (Docker). It protects your
-machine, not the projects it mounts.
+This page is the plain container. It protects your machine, not the projects it
+mounts. It is not one of the five setups in [Choose a setup](choose-a-setup.md);
+it is the existing option they are measured against.
 
 What it protects, beyond what guardrails alone can (see
 [guardrails.md](guardrails.md), "Honest limitations"): the agents cannot read
@@ -24,6 +25,9 @@ What it does **not** protect:
 - Worca's own settings and database. Agents run as Worca's user, unless you
   add agent users.
 - The network. It is open unless you add the egress overlay.
+
+To compare this with the other setups, see [Choose a setup](choose-a-setup.md) and the
+[Security overview](security-overview.md).
 
 For all of that at once, use the [Hardened box](hardened-box.md): one command
 (`worca container up --hardened`) with the broker, agent users, the allow-list
