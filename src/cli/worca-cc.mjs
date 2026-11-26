@@ -350,7 +350,7 @@ Subcommands:
                               See: worca schedule help
   models <cmd> [...]          Model catalog + providers: list|providers|login|logout|import|test|set.
                               See: worca models help
-  container <cmd> [...]       Run Worca in a container: init|up|down|status|logs|pull|login|shell|run|where.
+  container <cmd> [...]       Run Worca in a container: init|up|down|status|logs|pull|build|login|shell|run|where.
                               See: worca container help (docs/docker.md)
   extension [--browser <b>] [--open]
                               The browser extension packaged with this Worca: folder, version, install steps.

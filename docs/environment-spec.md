@@ -2,7 +2,7 @@
 
 A project can store an environment spec. It lists the tools and system packages the project needs to build and test.
 
-This release stores the spec. It does not build anything from it yet. Builds of a container image, an E2B template or a Docker backend image from the spec arrive in later releases. Setting a spec today changes nothing about how runs execute.
+`worca container build` builds the box image from it: the container that `worca container` runs. Builds of an E2B template or a Docker backend image from the same spec arrive in later releases.
 
 ## When to use this
 
@@ -10,9 +10,21 @@ Use a spec when your agents need tools the default image lacks. Python, Rust and
 
 Do not use it for secrets, env vars or files. It also cannot install tools that are outside mise and apt. The spec holds tool names and pinned versions, nothing else.
 
-The same spec will build the image for every sandboxed setup: "Local sandbox (Docker)", "E2B sandbox", "Hardened box" and "Shared instance". "Native" runs on your own machine and needs no image.
+The same spec builds the image for every sandboxed setup. "Native" runs on your own machine and needs no image.
 
-Today only the spec and its CLI ship. No setup builds an image from it yet.
+| Setup | Image from the spec |
+| --- | --- |
+| "Native" | none needed |
+| "Hardened box" | `worca container build` |
+| "Shared instance" | `worca container build` on Compose; elsewhere, build the Dockerfile from `--dry-run` in your own pipeline |
+| "Local sandbox (Docker)" | a later release |
+| "E2B sandbox" | a later release |
+
+Not supported yet:
+
+- Tools outside mise and apt. Extend the image by hand for those (see [Worca in a container](docker.md#images)).
+- Internal package mirrors at build time. The build fetches from the public apt, mise and tool sources, through the proxy in the container `.env`. A proxy URL that carries a login is not passed to the build. Set the proxy in Docker's own settings for that case.
+- A corporate CA for a proxy that re-signs TLS is not added to the build.
 
 ## The format
 
@@ -56,3 +68,55 @@ A spec that fails the checks is refused, and the stored spec stays as it was.
 ## Where it is stored
 
 The spec is stored in Worca's database, under the project, in the `execEnvProject` record. It is never written into the repository.
+
+## Building the box image
+
+In the box, one image serves every project. `worca container build` builds it from the specs of the projects you name, or of every project that has a spec.
+
+```bash
+worca container build                                 # every project with a spec
+worca container build --project ~/dev/acme-api        # only these (repeat --project)
+worca container build --dry-run                       # print the Dockerfile, build nothing
+worca container build --status                        # current or stale? (--json too)
+worca container build --reset                         # back to the plain image
+worca container up                                    # restart the box on the new image
+```
+
+What it does:
+
+1. It joins the specs. Each tool goes in once, and so does each apt package.
+2. It writes a Dockerfile: `FROM` the base, the apt packages, then mise and each pinned tool.
+3. It builds the image and names it `worca-box:<12 hex>`. The name comes from the Dockerfile and the base image, so the same input gives the same name.
+4. It checks the image. Node must meet Worca's minimum. git, `worca` and the base's pinned Claude Code must be there.
+5. It writes `WORCA_IMAGE=worca-box:…` into the container `.env`. `worca container` then adds `compose.image.yml`, which points the box at that image.
+
+Nothing changes until all five steps pass. A failed build or check keeps the previous image in use. Restart the box with `worca container up` to run the new image.
+
+Two projects that pin different versions of one tool are refused. The error names both projects and the tool. Align the versions, or build for one project with `--project`.
+
+### The base image
+
+The build starts from `WORCA_BASE_IMAGE` in the container `.env`. Without it, the build starts from the image of `WORCA_TAG`.
+
+```bash
+# ~/.worca-cc/container/.env
+WORCA_BASE_IMAGE=registry.acme.example/platform/worca:1.21.0
+```
+
+The base is an operator setting. It lives in the container `.env` only, never in a project or a spec. A repository cannot choose what a build starts from.
+
+The base must be a Worca image or one built `FROM` it. Worca images carry the `dev.worca.claude-code.version` label, and the check refuses an image without it. To build Worca itself on a company base image, see [Building it yourself](docker.md#building-it-yourself).
+
+A tool in the spec comes first on `PATH`, for Worca too. A `node` older than Worca's minimum fails the check, and so does a spec that replaces Claude Code.
+
+### Current or stale
+
+The build writes a record next to the `.env`: `.worca-box-image.json` in the container dir. It holds the image name, the base and its image id, each project's spec hash, and the build time.
+
+`worca container build --status` compares that record with now. The image is stale when:
+
+- a project in it changed or cleared its spec,
+- `WORCA_BASE_IMAGE` or `WORCA_TAG` names another base, or
+- a newer copy of the base was pulled.
+
+A stale image is still used. `worca container up` warns about it. Nothing rebuilds by itself: run `worca container build` again. `--status` also notes projects that have a spec but are not in the image.

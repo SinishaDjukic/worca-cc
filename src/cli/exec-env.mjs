@@ -32,7 +32,7 @@ function parse(argv) {
 }
 /** A registered project's key from a key or a directory; throws for anything else (a spec must never land under
  *  a key no project has — projectKey() hashes any directory). A key-shaped name is tried as a key first. */
-async function keyOf(p) {
+export async function keyOf(p) {
   const known = new Set((await listProjects()).map((x) => x.key));
   if (PROJECT_KEY_RE.test(p) && known.has(p)) return p;
   const k = keyOfDir(resolve(p));
