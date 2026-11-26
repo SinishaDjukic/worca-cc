@@ -70,3 +70,31 @@ test('the work stays bounded: long globs, many braces, many substitutions', () =
   assert.equal(namesSystemSecretPath(Array.from({ length: 300 }, (_, i) => `cd d${i}`).join(' && '), { cwd: '/repo' }), false);
   assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
 });
+
+// Round 3 (fail closed): only what is resolved with certainty is tracked; everything else is ANY, and with an unknown
+// prefix a word that could complete a protected path is refused.
+const FAIL_CLOSED = {
+  'a cd anywhere in a command is a folder change': ['{ cd /run; cat secrets/a; }', 'if true; then cd /run; fi; cat secrets/a', '! cd /run; cat secrets/a',
+    "eval 'cd /run'; cat secrets/a", "sh -c 'cd /run && cat secrets/a'", "bash -lc 'cd /var/run; cat secrets/a'", 'true && cd /worca || cd /x; cat egress/y'],
+  'cd options are skipped; an unknown one makes the folder unknown': ['cd -P /run && cat secrets/a', 'cd -- /run && cat secrets/a', 'cd -L -P /run; cat secrets/a',
+    'cd -x /tmp && cat secrets/a'],
+  'an unresolvable cd target, cd - and popd make the folder unknown': ['cd $(mktemp -d) && cat secrets/a', 'cd $D && cat secrets/a', 'cd /r* && cat secrets/a',
+    'cd - && cat secrets/a', 'popd; cat egress/x', 'pushd $X; cat proxy-login.json'],
+  'a variable holds every value it is given; X=v cmd does not persist': ['X=/tmp; X=/run; cat $X/secrets/a', 'X=/tmp ls; cat $X/secrets/a',
+    'X=/run; Y=/tmp; X=$Y; cat $X/secrets/a'],
+  'nested shells, eval, env, xargs, find -exec and here-strings': ["env -i sh -c 'cat /run/secrets/a'", "bash <<< 'cd /run; cat secrets/a'",
+    'find / -exec cat {} +', "echo /run/secrets/a | xargs cat", "zsh -c 'cat ~/.worca-cc/proxy*.json'"],
+  'an unknown prefix with a word that could complete a protected path': ['cat $X/secrets/a', 'cat ${A}${B}/egress/x', 'cat $X/proxy-login.j*',
+    'cd $(pwd)/.. && cat run/secrets/a'],
+};
+test('fail closed: every case of the third review is refused', async () => {
+  const rows = [];
+  for (const [cls, cmds] of Object.entries(FAIL_CLOSED)) for (const c of cmds) rows.push({ name: `${cls}: ${c}`, run: () => assert.ok(refused(c), c) });
+  await checkRows(rows);
+});
+test('fail closed still lets ordinary commands through, an unknown folder included', async () => {
+  await checkRows(['npm run build', 'ls run', 'cd src && ls', 'git log -- secrets.md', 'rm -rf *', 'X=1 npm test', 'cd "$(git rev-parse --show-toplevel)" && npm test',
+    'cd $(mktemp -d) && ls', 'cd - && npm test', 'X=/tmp; cat $X/notes.txt', 'cd -P src && npm test', 'pushd src; npm test; popd',
+    'cd "$(git rev-parse --show-toplevel)" && grep -r TODO src', 'echo $HOME', 'bash -c "npm test"']
+    .map((c) => ({ name: c, run: () => assert.equal(checkAskCommand(c, CTX), null, c) })));
+});

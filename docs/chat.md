@@ -100,8 +100,16 @@ Chat changes a project's sandbox with cards you apply:
 Chat can also change the Docker and E2B limits in Settings › Runs, with a receipt and Revert.
 
 Chat never changes the credential broker, agent users, the allow-list or the box's base image. Whoever runs Worca
-sets those. In the hardened box, Chat adds a project by cloning it only. Chat never reads the proxy login file,
-`/run/secrets` or the egress sidecar's data.
+sets those. In the hardened box, Chat adds a project by cloning it only. Chat's own file tools never read the proxy
+login file, `/run/secrets` or the egress sidecar's data.
+
+What the command check promises, and what it does not. In agent mode, a check runs before each of Chat's own
+commands. It refuses a command that could name the proxy login, Docker secrets or the egress sidecar's data, however
+the path is spelled. When it cannot work out a folder or a variable, it assumes the worst and refuses. It is a guard on
+Chat's own commands, on an install where Chat runs as you. It is not the security boundary. The boundary is file
+permissions, agent users and the egress sidecar. On a native install, an agent or a chat running as your OS user can
+reach every file you can read. A script that builds a path when it runs, or a symlink made earlier, is not caught. See
+[Security overview](security-overview.md).
 
 More: [Choose a setup](choose-a-setup.md), [Security overview](security-overview.md),
 [Environment spec](environment-spec.md), [Network proxy](network-proxy.md).
