@@ -59,7 +59,13 @@
 :is(.rd-questions,.chat-rc-q) .qblock:has(.qopt.sel:not([data-preset]),.qfree.has) .qtext::after{content:'Answered';grid-area:1 / 1;justify-self:start;
   align-self:center;margin-left:24px;padding:3px 10px;border-radius:var(--r-sm);background:var(--green-bg);color:var(--green-ink);
   font-size:var(--fs-meta);font-weight:600;line-height:1.4;letter-spacing:0;}
-:is(.rd-questions,.chat-rc-q) .qopts{grid-column:2;gap:0;margin:0;padding-left:0;}
+:is(.rd-questions,.chat-rc-q) .qopts{grid-column:2;gap:0;margin:0;padding-left:0;container:qopts / inline-size;}
+/* A narrow list: "Recommended" (and its figure) go under the label, level with it, so the label keeps the row's width. */
+@container qopts (max-width:400px){
+  :is(.rd-questions,.chat-rc-q) .qopt:has(> .qrec){flex-wrap:wrap;row-gap:4px;}
+  :is(.rd-questions,.chat-rc-q) .qopt:has(> .qrec) > .qopt-txt{flex:1 1 calc(100% - 28px);}   /* 28px = the mark + its gap */
+  :is(.rd-questions,.chat-rc-q) .qopt > .qrec{margin-left:28px;}
+}
 :is(.rd-questions,.chat-rc-q,.plan-decisions) .qopt{font-size:var(--fs-body);line-height:1.5;}
 /* Run 4 (D7): "Write your own" is the shared field, after the options. */
 :is(.rd-questions,.chat-rc-q) .qblock > .qfree{grid-column:2;margin-left:0;margin-top:8px;width:100%;min-height:32px;padding:6px 12px;
