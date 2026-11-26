@@ -2,7 +2,7 @@
 // Ask agent mode (#574): the rails every command Ask runs passes BEFORE a key is typed. A rail
 // against mistakes and naive prompt injection, not a sandbox: obfuscated text can pass it
 // (docs/terminal.md "Chat"). Pure: the caller gives the folder, homes, host PID and port.
-import { isAbsolute, relative, resolve, win32 } from 'node:path';
+import { isAbsolute, relative, resolve, win32, posix } from 'node:path';
 import { evaluateKillCommand } from '../host-guard.mjs';
 import { SPAWN_ENV_BASE } from '../claude-runner.mjs';
 
@@ -32,6 +32,76 @@ const PROTECTED_WIN = [
 ];
 
 const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
+
+// ── system secret folders, by path shape (not by spelling) ───────────────────────────────────────────────────────────
+// /run/secrets (also /var/run/secrets), the egress sidecar's data folder (/worca/egress or WORCA_EGRESS_DATA_DIR) and
+// any proxy-login.json. A regex on the text misses `/run//secrets`, `/run/./secrets`, `/run/x/../secrets`, `/run/sec*`,
+// `/run/secr''ets`, `/ru?/secrets`, `/run/{secrets,x}` and `cd /run && cat secrets/x`, so each path-like word is
+// unquoted, brace-expanded and normalised (`/+`, `.`, `..`), relative words are joined to every folder a `cd` in the
+// command reaches, and the segments are matched with the shell's own glob rules. This is a guard on the chat's commands,
+// not the boundary: file permissions and agent users are.
+const SECRET_SEGMENTS = Object.freeze([['run', 'secrets'], ['worca', 'egress']]);
+const SECRET_NAMES = Object.freeze(['proxy-login.json']);
+const GLOB_CHARS = /[*?[\]]/;
+/** One word's brace alternatives (`a{b,c}d` → abd, acd), at most 64. */
+function braceExpand(word) {
+  const out = []; const todo = [word];
+  while (todo.length && out.length < 64) {
+    const w = todo.shift();
+    const m = /\{([^{}]*,[^{}]*)\}/.exec(w);
+    if (!m) { out.push(w); continue; }
+    for (const alt of m[1].split(',')) todo.push(w.slice(0, m.index) + alt + w.slice(m.index + m[0].length));
+  }
+  return out.concat(todo);
+}
+/** Does the glob segment `g` (*, ?, [...]) match the literal `name`? */
+function segMatches(g, name) {
+  if (!GLOB_CHARS.test(g)) return g === name;
+  let re = '';
+  for (let i = 0; i < g.length; i += 1) {
+    const c = g[i];
+    if (c === '*') re += '[^/]*';
+    else if (c === '?') re += '[^/]';
+    else if (c === '[') { const j = g.indexOf(']', i + 2); if (j < 0) { re += '\\['; continue; } re += `[${g.slice(i + 1, j).replace(/^!/, '^').replace(/\\/g, '\\\\')}]`; i = j; }
+    else re += c.replace(/[.+^${}()|\\]/g, '\\$&');
+  }
+  try { return new RegExp(`^${re}$`).test(name); } catch { return true; }   // a broken glob is refused, never trusted
+}
+/** True when the segments hold `want` as consecutive segments (glob-aware), or end in a protected file name. */
+function holdsSegments(segs, want) {
+  for (let i = 0; i + want.length <= segs.length; i += 1) if (want.every((w, k) => segMatches(segs[i + k], w))) return true;
+  return false;
+}
+/** The words of a command (split on blanks and shell operators), each unquoted and unescaped. */
+const wordsOf = (text) => String(text).split(/[\s;&|()<>`]+|\$\(/).filter(Boolean)
+  .map((w) => w.replace(/\\(.)/g, '$1').replace(/['"]/g, '').replace(/^[^=/~.]*=/, ''));
+export function namesSystemSecretPath(command, { cwd = '/', egressDataDir = null } = {}) {
+  const egressSegs = typeof egressDataDir === 'string' && egressDataDir.trim().length > 1 ? posix.normalize(egressDataDir.trim()).split('/').filter(Boolean) : null;
+  const targets = [...SECRET_SEGMENTS, ...(egressSegs && egressSegs.length ? [egressSegs] : [])];
+  const words = wordsOf(command);
+  // Every folder a `cd` in the command can reach, in order (a relative cd from the one before), plus the session folder.
+  const dirs = [posix.resolve('/', String(cwd || '/').replace(/\\/g, '/'))];
+  for (let i = 0; i < words.length - 1; i += 1) {
+    if (words[i] !== 'cd' && words[i] !== 'pushd') continue;
+    for (const t of braceExpand(words[i + 1])) dirs.push(posix.resolve(dirs[dirs.length - 1], t));
+  }
+  const bad = (abs) => {
+    const segs = posix.normalize(abs).split('/').filter(Boolean);
+    return targets.some((t) => holdsSegments(segs, t)) || (segs.length > 0 && /proxy/i.test(segs[segs.length - 1]) && SECRET_NAMES.some((n) => segMatches(segs[segs.length - 1], n)));   // a bare * is not a name
+  };
+  for (const raw of words) {
+    for (const w of braceExpand(raw)) {
+      if (!w.includes('/') && !GLOB_CHARS.test(w) && !SECRET_NAMES.includes(w) && !targets.some((t) => t.includes(w))) continue;
+      if (w.startsWith('/')) { if (bad(w)) return true; continue; }
+      if (w.startsWith('~') || /^\$/.test(w)) continue;   // the home and variables: the other rules' business
+      if (dirs.some((d) => bad(posix.join(d, w)))) return true;
+    }
+    // A protected root written with quotes, braces or a wildcard is refused outright, whatever it expands to.
+    const plain = raw.replace(/\/+/g, '/');
+    if (/^\/(?:var\/)?run\b|^\/worca\b/.test(plain) && /[*?[\]{}]/.test(plain)) return true;
+  }
+  return false;
+}
 /** Rooted without a drive (/tmp, \x): Git's own MSYS root, never the session folder; `//server` (UNC) is not one. */
 const DRIVELESS = /^[\\/](?![\\/])/;
 /** `/c/x` (Git Bash) → `C:/x`; anything else as written. */
@@ -233,7 +303,7 @@ export function checkAskCommand(command, { cwd, home = null, userHome = null, ho
       : local.includes(home);
   // An egress sidecar data folder set elsewhere than /worca/egress (WORCA_EGRESS_DATA_DIR) is protected the same way.
   const egressDir = typeof egressDataDir === 'string' && egressDataDir.trim().length > 1 ? egressDataDir.trim().replace(/[\\/]+$/, '') : null;
-  const namesEgressDir = !!egressDir && local.includes(egressDir);
+  const namesEgressDir = (!!egressDir && local.includes(egressDir)) || namesSystemSecretPath(raw, { cwd: win ? '/' : cwd, egressDataDir: egressDir });
   if ((win ? PROTECTED_WIN : PROTECTED).some((re) => re.test(local)) || namesWorcaHome || namesEgressDir || namesHomeOnly(local, { cwd, userHome, win })) {
     return 'That command names a protected path (Worca\'s own files or credentials). Ask cannot read or change them.';
   }

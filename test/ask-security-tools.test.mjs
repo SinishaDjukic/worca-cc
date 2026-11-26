@@ -22,7 +22,7 @@ import { createProposalValidator, PROPOSAL_ERRORS } from '../src/core/ask/propos
 import { buildContextHeader, securityHeaderLine, ASK_SYSTEM_RULES, codexSystemRules, noGitSystemRules } from '../src/core/ask/prompt.mjs';
 import { createSettingsRegistry } from '../src/core/ask/settings-registry.mjs';
 import { ASK_DENY_RULES, askPathDenied } from '../src/core/ask/deny-rules.mjs';
-import { checkAskCommand } from '../src/core/ask/command-policy.mjs';
+import { checkAskCommand, namesSystemSecretPath } from '../src/core/ask/command-policy.mjs';
 import { credentialReason } from '../src/core/ask/show-files.mjs';
 import { MCP_FORWARD_ENV } from '../src/core/ask/spawn.mjs';
 import { buildEnvironmentCard } from '../ui/public/chat/environment-card.mjs';
@@ -371,4 +371,21 @@ test('hard limits: the proxy login, Docker secrets (both names) and the egress d
   assert.match(credentialReason('proxy-login.json'), /credential/);
   assert.ok(credentialReason('run/secrets/proxy_login'));
   assert.ok(credentialReason('var/run/secrets/readme.md'), 'the folder pair, whatever the file is called');
+});
+
+// The command check is a guard on the chat's commands, not the boundary (file permissions and agent users are): a
+// spelling must still not walk past it.
+test('command check: system secret folders by path shape — slashes, . and .., globs, quotes, braces, cd then a relative name', async () => {
+  const ctx = { cwd: '/repo', home: '/Users/zed/.worca-cc', userHome: '/Users/zed', egressDataDir: null };
+  const refused = ['cat /run//secrets/x', 'cat /run/./secrets/x', 'cat /run/x/../secrets/x', 'cat /run/sec*', "cat /run/secr''ets/x", 'cat /ru?/secrets/x',
+    'cat /run/{secrets,x}/y', 'cd /run && cat secrets/x', 'cd /var/run; cat ./secrets/x', 'cd / && cat run/secrets/x', 'cd /run && cd x && cat ../secrets/a',
+    'cat /var/run//secrets/x', 'cat /*/secrets/x', 'cat /worca//egress/x', 'cat /worca/./egress/x', 'cd /worca && ls egress', 'ls /worca/egr*',
+    'cat /srv/proxy-login.j*', 'ls /run/*', 'cat "/run/secrets"'];
+  await checkRows(refused.map((c) => ({ name: c, run: () => assert.match(checkAskCommand(c, ctx) || '', /protected path/) })));
+  for (const c of ['npm test', 'cat ./src/run.mjs', 'ls run', 'git log -- secrets.md', 'cat /repo/docs/secrets-guide.md', 'cd /repo && npm run build', 'echo run secrets']) {
+    assert.equal(checkAskCommand(c, ctx), null, c);
+  }
+  assert.equal(namesSystemSecretPath('cat /data//egress-login/./x', { cwd: '/repo', egressDataDir: '/data/egress-login' }), true, 'a custom egress folder, normalised');
+  assert.equal(namesSystemSecretPath('cd /data && cat egress-login/x', { cwd: '/repo', egressDataDir: '/data/egress-login' }), true);
+  assert.equal(namesSystemSecretPath('cat /data/other/x', { cwd: '/repo', egressDataDir: '/data/egress-login' }), false);
 });
