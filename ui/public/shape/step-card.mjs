@@ -9,6 +9,8 @@ import { splitBlockers } from '../../../src/shared/shape/slices.mjs';
 import { stopDoneText } from '../../../src/shared/shape/run-stops.mjs';
 import { buildChatQuestion } from '../chat/question.mjs';
 import { buildCheckRows } from './check-row.mjs';
+import { buildNoteBody } from './note-body.mjs';
+import { noteTitle } from '../../../src/shared/shape/outline-note.mjs';
 import { paintFeatureLog } from './feature-card.mjs';
 import { renderChangeRule } from './req-change.mjs';
 
@@ -201,7 +203,7 @@ function appendRecoveryBody(doc, panel, rec) {
   }
 }
 
-/** A requirement stop's one finding: the concern's title and detail (or the Planner's outline change), unranked. */
+/** A requirement stop's one finding: the concern's title and detail, unranked. */
 function concernFinding(doc, title, detail) {
   const list = doc.createElement('ul');
   list.className = 'issues';
@@ -221,6 +223,16 @@ function concernFinding(doc, title, detail) {
     li.appendChild(d);
   }
   list.appendChild(li);
+  return list;
+}
+
+/** An outline change as the one finding: the note's title heads it (else the stop's line) and the rest of the note is
+ *  its body. */
+function outlineFinding(doc, pq, stop) {
+  const text = pq.plan?.outlineChange || '';
+  const list = concernFinding(doc, noteTitle(text) || stop.findingsLine);
+  const note = buildNoteBody(doc, text, { key: `finding:${pq.id}`, dropTitle: true });
+  if (note) list.firstElementChild.appendChild(note.el);
   return list;
 }
 
@@ -255,7 +267,7 @@ function stopFindings(doc, pq) {
     box.append(...buildCheckRows(doc, { items: items.length ? items : [{ label: stop.findingsLine, pass: false }] }));
     return box;
   }
-  return pq.concern ? concernFinding(doc, pq.concern.title, pq.concern.detail) : concernFinding(doc, stop.findingsLine, plan.outlineChange || '');
+  return pq.concern ? concernFinding(doc, pq.concern.title, pq.concern.detail) : outlineFinding(doc, pq, stop);
 }
 
 /** Small runs C3 (D11, D13): a marked run's stop. The card asks one question (who wants what and why; two options, each
@@ -302,6 +314,11 @@ function renderStopCard(panel, pq, deps) {
   // The focus rule (questionFocusTarget) takes the foot's primary: the one that names Worca's pick.
   const foot = q.el.querySelector('.qpanel-foot');
   if (foot) foot.classList.add('plan-actions');
+  // An outline change: the question is one line; the rest of the Planner's note folds between it and the options.
+  if (stop.reason === 'requirement' && !pq.concern && pq.plan?.outlineChange) {
+    const note = buildNoteBody(doc, pq.plan.outlineChange, { key: `stop:${pq.id}`, dropTitle: true });
+    if (note) q.el.querySelector('.qopts').before(note.el);
+  }
   // Small runs C4 (D16): a proposed requirement change shows every new text in full (what Change it applies), then how
   // it lands, below the options.
   if (stop.reason === 'requirement' && Array.isArray(stop.change)) {

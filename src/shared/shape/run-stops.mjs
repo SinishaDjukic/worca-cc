@@ -8,6 +8,7 @@ import { roleSummaries } from './role-review.mjs';
 import { concernFeedbackSection } from '../review/plan-concern.mjs';
 import { BLOCKING, normalizeSeverity } from '../graph/verdict.mjs';
 import { requirementChangedFeedback, oneLineText } from './req-change.mjs';
+import { noteTitle, noteClause } from './outline-note.mjs';
 
 export const STOP_REASONS = Object.freeze(['check', 'objection', 'requirement']);
 // Small runs C5: the Verifier's bound stop is a `check` stop of the same shape.
@@ -88,9 +89,11 @@ function changeOf(concern) {
 function requirementStop({ run, concern = null, outlineChange = null, node = null }) {
   const ids = concern && Array.isArray(concern.requirements) ? concern.requirements : [];
   const head = ids.length ? `Run ${run} · ${ids.join(', ')} would have to change` : `Run ${run} · the outline would have to change`;
+  // An outline change asks with its reason only; the card draws the rest of the note under the question.
+  const title = noteTitle(outlineChange);
   const text = concern
     ? `A reviewer wants ${ids.length ? ids.join(', ') : 'an agreed requirement'} changed: ${concern.title}.`
-    : `The Planner says this run cannot be built as outlined: ${String(outlineChange || '').trim()}`;
+    : `The Planner says this run cannot be built as outlined${title ? `: ${noteClause(title)}` : '.'}`;
   const change = changeOf(concern);
   return { reason: 'requirement', run, node, pick: 'keep', head, text, findingsLine: concern ? concern.title : 'The outline no longer fits',
     ...(change ? { change, landsAs: concern.proposals.find((p) => p.landsAs)?.landsAs || 'none' } : {}), options: keepChange(change) };

@@ -38,4 +38,9 @@
   .chat-q .qtext{grid-row:1 / span 2;}
   .chat-q.chat-rc-q .qopts{grid-column:2;}
 }
+/* A question with an agent's note under it (shape/note-body.mjs) reads top to bottom on every width: question, note,
+   options. */
+.chat-q .qblock > .note-body{grid-column:1 / -1;margin:0 0 10px;}
+.chat-q .qblock:has(> .note-body){grid-template-columns:minmax(0,1fr);grid-template-rows:none;}
+.chat-q.chat-rc-q .qblock:has(> .note-body) > :is(.qtext,.qopts){grid-column:1;grid-row:auto;}
 

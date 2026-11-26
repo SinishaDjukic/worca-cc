@@ -107,9 +107,23 @@ test('the card: head, summary, footer of four, Stop only in ⋯, no Run anyway',
 test('D19: plan.outlineChange shows the planner\'s note as text; without it there is no note', () => {
   const withNote = setup({ pq: ask({ outlineChange: 'Slice 1 did not add the <b>tags</b> table.' }) });
   assert.equal(withNote.$('.shape-plan-outline-change-head').textContent, 'The planner says this run can\'t be built as outlined:');
-  assert.equal(withNote.$('.shape-plan-outline-change-text').textContent, 'Slice 1 did not add the <b>tags</b> table.');
-  assert.equal(withNote.$('.shape-plan-outline-change-text b'), null, 'text, never markup');
+  assert.equal(withNote.$('.shape-plan-outline-change .note-body').textContent, 'Slice 1 did not add the <b>tags</b> table.');
+  assert.equal(withNote.$('.shape-plan-outline-change b'), null, 'text, never markup');
+  assert.equal(withNote.$('.note-toggle'), null, 'a note that fits has no control');
   assert.equal(setup().$('.shape-plan-outline-change'), null);
+});
+
+test('D19: a long outline note is drawn whole (its title as the first paragraph), folded, and opens without an answer', () => {
+  const outlineChange = `## The tags table is missing\n\n${'Run 1 did not add it. '.repeat(40)}\n\nPlan the route without it.`;
+  const pq = { ...ask({ outlineChange }), id: 'q-outline-long' };
+  const card = setup({ pq });
+  assert.equal(card.$('.shape-plan-outline-change .note-body > p').textContent, 'The tags table is missing');
+  const toggle = card.$('.shape-plan-outline-change .note-toggle');
+  assert.equal(toggle.textContent, 'Show the full note');
+  toggle.click();
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(card.calls.submit, []);
+  assert.equal(setup({ pq }).$('.note-toggle').getAttribute('aria-expanded'), 'true', 'a repaint keeps it open');
 });
 
 test('s5: notes from the chat list as "From the chat", the same with the gate on and off', () => {

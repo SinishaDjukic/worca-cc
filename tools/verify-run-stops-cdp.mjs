@@ -11,8 +11,12 @@
 // link to where it is answered, no control; a feature a Chat thread started and one it did not), the feature page with a
 // stop (one visible head, one primary, no Re-plan in the bar or the ⋯), one word per run on the Runs list, the feature
 // page and the Chat card (one-line 32px rows), and a finished feature (Create N PRs blocked with its reason, then open
-// after the mark; the Decisions Show as a quiet button; "1 dropped" in a role's summary). SECTION=stops or SECTION=pages
-// runs one half.
+// after the mark; the Decisions Show as a quiet button; "1 dropped" in a role's summary).
+// Then the outline-change stop (NOTE_CELLS: the page cells and a 1920px desktop): run 8 waits on the Planner's note, once as written and once
+// three times as long, on the feature card in Chat, the feature page, the run page and the side panel, and with the flag
+// off on the run page's and the panel's findings. It captures each folded and opened, and checks a question of at most
+// two lines at the card's normal width (three with a 120-character title), no inner scrollbar, nothing wider than the card, and a pick kept across
+// opening and closing. SECTION=stops, SECTION=pages or SECTION=note runs one part.
 // NOT part of `npm test`: it needs Chrome. A hard 30-minute cap inside: past it the script exits non-zero.
 // Run: H=$(mktemp -d); env -u FORCE_COLOR HOME=$H VERIFY_PORT=4939 SHOTS_DIR=… node --disable-warning=ExperimentalWarning tools/verify-run-stops-cdp.mjs
 import { spawn, execFileSync } from 'node:child_process';
@@ -327,7 +331,7 @@ await cdp('Page.enable'); await cdp('Runtime.enable');
 await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 const PROTO = pathToFileURL(PROTOTYPE).href;
 const SECTION = process.env.SECTION || 'all';
-for (const theme of SECTION === 'pages' ? [] : THEMES) {
+for (const theme of SECTION === 'pages' || SECTION === 'note' ? [] : THEMES) {
   runs.get(RUN_ID).heldStop = null;
   // 1. The feature card in Chat: the stop's question (one primary naming the pick) and the run rows.
   await open(`${base}/?t=${theme}#chat/${thread.id}`);
@@ -415,7 +419,7 @@ const resetMark = () => { const row = getDb().prepare('SELECT outline FROM shape
   o.acceptance = (o.acceptance || []).filter((e) => e.id !== 'R-comp-1'); getDb().prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify(o), fa.id); };
 runs.get(RUN_ID).heldStop = null;
 let turn = 0;
-for (const [width, theme] of SECTION === 'stops' ? [] : PAGE_CELLS) {
+for (const [width, theme] of SECTION === 'stops' || SECTION === 'note' ? [] : PAGE_CELLS) {
   const at = `${width}px, ${theme}`;
   const name = (n) => `page-${n}-${width}-${theme}`;
   await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -514,6 +518,120 @@ for (const [width, theme] of SECTION === 'stops' ? [] : PAGE_CELLS) {
     check(s.line === 'none' && s.bg === 'rgba(0, 0, 0, 0)' && /\bbtn-quiet\b/.test(s.cls), `Decisions, ${at}: Show is a quiet button, no underline, transparent (${JSON.stringify(s)})`);
     await shot(name('decisions'));
   }
+}
+// ---- the outline-change stop: run 8 waits on the Planner's note instead of its objection.
+const NOTE_HEAD = '## Slice 10: A prerequisite is not in this tree';
+const NOTE_BODY = [
+  "Slice 9 (Run order drawing component) is not in this run's branch. Its commit `78897b71d` was built from slice 7 (`2f159b244`), not slice 8, and it exists only on `feat/run-9-run-order-drawing-component`.",
+  '',
+  "Slice 10 places that component, so it cannot be built until the component is in the tree. The plan's Step 0 brings `78897b71d` in with `git cherry-pick --no-commit`. A trial `git merge-tree` shows conflicts in 4 files only:",
+  '',
+  '- `docs/design-system.md`',
+  '- `test/ui-design-language.test.mjs`',
+  '- `test/verify-run-status-rows-cdp.test.mjs`',
+  '- `tools/verify-run-status-rows-cdp.mjs`',
+].join('\n');
+const LONG_NAME = 'feat/run-9-run-order-drawing-component-with-a-branch-name-that-never-fits-one-narrow-row-9c41d7e2b5a8';
+const NOTE = `${NOTE_HEAD}\n\n${NOTE_BODY}`;
+const LONG_NOTE = `${NOTE_HEAD}\n\n${NOTE_BODY}\n- \`${LONG_NAME}\`\n- \`ui/public/app.js\` also changes, so its conflict is resolved by hand after the pick\n\n`
+  + `The same name in running text: ${LONG_NAME.replace(/[-/]/g, '')}\n\n${NOTE_BODY}\n\n${NOTE_BODY}`;
+const TITLE_120 = 'The run order drawing component from slice nine is not in this tree, so slice ten cannot place it on the group page yet.'.padEnd(120, '.').slice(0, 120);
+const outlinePq = (id, outlineChange) => ({ id, kind: 'plan', nodeId: 'n_plan', executionId: 'x:n_plan:1',
+  plan: { nodeId: 'n_plan', port: 'plan', file: 'plan.md', round: 1, revisable: true, outlineChange, smallRuns: true },
+  stop: planStop({ run: 8, outlineChange, node: 'n_plan' }) });
+// The page cells, plus a wide desktop where the question card has room for two columns.
+const NOTE_CELLS = [...PAGE_CELLS, [1920, 'light']];
+// [name, hash, the drawn question panel, flag on]. With the flag off the run page and the panel draw the findings only.
+const NOTE_SURFACES = [
+  ['card', `#chat/${thread.id}`, '.chat-rc .qpanel', true],
+  ['feature-page', `#feature/${f.id}`, '#group-detail .gpage-question .qpanel', true],
+  ['run-page', `#running/${RUN_ID}`, '#run-detail .qpanel', true],
+  ['side-panel', '#chat/new/run/ab000008/overview', '[data-chat-panel] .qpanel', true],
+  ['run-page-finding', `#running/${RUN_ID}`, '#run-detail .qpanel', false],
+  ['side-panel-finding', '#chat/new/run/ab000008/overview', '[data-chat-panel] .qpanel', false],
+];
+/** The drawn note: the question's lines, boxes that scroll, anything wider than the card, the fold and the pick. */
+const NOTE_STATE = (sel) => `(() => {
+  const q = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.offsetParent);
+  const note = q && q.querySelector('.note-body');
+  if (!note) return null;
+  const text = q.querySelector('.qtext-t');
+  const name = (n) => n.tagName.toLowerCase() + '.' + [...n.classList].join('.');
+  const all = [q, ...q.querySelectorAll('*')].filter((n) => n.getClientRects().length);
+  const opts = q.querySelector('.qopts'); const toggle = note.querySelector('.note-toggle');
+  const style = getComputedStyle(note);
+  return {
+    question: text ? text.textContent : null,
+    lines: text ? Math.round(text.getBoundingClientRect().height / parseFloat(getComputedStyle(text).lineHeight)) : 0,
+    // the clamped paragraph is clipped by its line clamp on purpose (overflow hidden, so it draws no scrollbar)
+    tall: all.filter((n) => !n.classList.contains('is-clamped') && n.clientHeight > 0 && n.scrollHeight > n.clientHeight + 1).map((n) => name(n) + ' ' + n.scrollHeight + '/' + n.clientHeight),
+    wide: q.scrollWidth > q.clientWidth || document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    past: all.filter((n) => !n.closest('.note-mid-head') && n.getBoundingClientRect().right > q.getBoundingClientRect().right + 1).map(name),
+    toggle: toggle ? toggle.textContent : null,
+    rows: [...note.querySelectorAll('li.note-row')].filter((n) => n.offsetParent).length,
+    height: Math.round(note.getBoundingClientRect().height),
+    cut: [...note.querySelectorAll('.note-mid')].filter((m) => m.offsetParent && m.firstChild.scrollWidth > m.firstChild.clientWidth).map((m) => m.title),
+    weight: style.fontWeight, ink2: style.color,
+    under: opts ? { gap: Math.round(opts.getBoundingClientRect().top - note.getBoundingClientRect().bottom),
+      width: Math.round(note.getBoundingClientRect().width - opts.getBoundingClientRect().width) } : null,
+    picked: [...q.querySelectorAll('.qopt.sel')].map((t) => t.dataset.value),
+    primary: [...q.querySelectorAll('.btn-primary')].map((b) => b.textContent),
+  };
+})()`;
+const judgeNote = (s, what) => {
+  results.lists.push({ note: what, ...s });
+  check(s.tall.length === 0, `${what}: no box in the card scrolls or is cut in height (${JSON.stringify(s.tall)})`);
+  check(!s.wide && s.past.length === 0, `${what}: nothing is wider than the card (${JSON.stringify(s.past)})`);
+  check(s.weight === '400', `${what}: the note is normal weight (${s.weight})`);
+};
+if (SECTION === 'all' || SECTION === 'note') {
+  for (const [width, theme] of NOTE_CELLS) {
+    await cdp('Emulation.setDeviceMetricsOverride', { width, height: 1800, deviceScaleFactor: 1, mobile: false });
+    for (const [surface, hash, sel, flagOnHere] of NOTE_SURFACES) {
+      for (const [length, text] of [['note', NOTE], ['long', LONG_NOTE], ...(flagOnHere && width >= 1280 ? [['title-120', `${TITLE_120}\n\n${NOTE_BODY}`]] : [])]) {
+        const at = `${surface}, ${length}, ${width}px, ${theme}`;
+        process.env.WORCA_FLAGS = flagOnHere ? 'shaperSmallRuns' : '-shaperSmallRuns';
+        const run = runs.get(RUN_ID);
+        run.heldStop = null;
+        run.pendingQuestion = outlinePq(`plan-outline-${length}`, text);
+        turn += 1;
+        await open(`${base}/?n=${turn}${hash}`); await skipWelcome(); await setTheme(theme);
+        if (!(await waitFor(`[...document.querySelectorAll(${JSON.stringify(`${sel} .note-body`)})].some((x) => x.offsetParent)`, `the note (${at})`))) { await shot(`note-missing-${surface}-${length}-${width}-${theme}`); continue; }
+        await skipWelcome(); await reveal(`${sel} .note-body`); await sleep(300);
+        const folded = await ev(NOTE_STATE(sel));
+        judgeNote(folded, `${at}, folded`);
+        if (folded.question !== null) {
+          // The card's normal width (the side panel is narrower). A 120-character title measures three lines there: the
+          // card's question is --fs-section text, larger than the 120-character limit was sized for.
+          if (width >= 1280 && surface !== 'side-panel') {
+            const cap = length === 'title-120' ? 3 : 2;
+            check(folded.lines <= cap, `${at}: the question takes at most ${cap} lines (${folded.lines})`);
+          }
+          check(folded.under && folded.under.gap >= 0 && folded.under.gap <= 24 && Math.abs(folded.under.width) <= 40, `${at}: the options sit directly under the note (${JSON.stringify(folded.under)})`);
+        } else check(surface.endsWith('-finding'), `${at}: only a finding has no question`);
+        if (length === 'title-120') { await shot(`note-${surface}-${length}-${width}-${theme}`); continue; }
+        await shot(`note-${surface}-${length}-${width}-${theme}-folded`);
+        if (length === 'note') { check(folded.toggle === null || folded.toggle === 'Show the full note', `${at}: folded (${folded.toggle})`); if (folded.toggle === null) continue; }
+        else check(folded.toggle === 'Show the full note' && folded.rows === 5, `${at}: four rows and "+N more", with the control (${folded.toggle}, ${folded.rows} rows)`);
+        if (width === 375 && length === 'long') check(folded.height < 900, `${at}: the folded note stays short (${folded.height}px)`);
+        const other = folded.question !== null;
+        if (other) await ev(`[...document.querySelectorAll(${JSON.stringify(`${sel} .qopt`)})].find((t) => t.offsetParent && t.dataset.value === 'change').click();0`);
+        const press = () => ev(`[...document.querySelectorAll(${JSON.stringify(`${sel} .note-toggle`)})].find((t) => t.offsetParent).click();0`);
+        await press(); await sleep(200);
+        const opened = await ev(NOTE_STATE(sel));
+        judgeNote(opened, `${at}, opened`);
+        check(opened.toggle === 'Show less' && opened.height > folded.height && opened.rows > folded.rows, `${at}: opens in place (${folded.height}px to ${opened.height}px)`);
+        if (width === 375 && length === 'long') check(opened.cut.includes(LONG_NAME), `${at}: the long name loses its middle on one line (${JSON.stringify(opened.cut)})`);
+        await shot(`note-${surface}-${length}-${width}-${theme}-opened`);
+        await press(); await sleep(200);
+        const closed = await ev(NOTE_STATE(sel));
+        check(closed.toggle === 'Show the full note' && closed.height === folded.height, `${at}: closes again`);
+        if (other) check([opened, closed].every((x) => JSON.stringify(x.picked) === '["change"]' && JSON.stringify(x.primary) === '["Change it"]'),
+          `${at}: the pick is kept across opening and closing (${JSON.stringify([opened.picked, closed.picked, closed.primary])})`);
+      }
+    }
+  }
+  process.env.WORCA_FLAGS = 'shaperSmallRuns';
 }
 check(errors.length === 0, `no page errors${errors.length ? ` — ${errors.slice(0, 3).join(' | ')}` : ''}`);
 results.minutes = Math.round((Date.now() - T0) / 600) / 100;
