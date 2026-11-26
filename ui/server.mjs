@@ -347,6 +347,7 @@ import { defaultSettingsRegistryDeps } from '../src/core/ask/chat-action-deps.mj
 import { awayEventPrompt, awayNoticeText } from '../src/core/ask/away-proposal.mjs';
 import { policyEventPrompt, policyNoticeText } from '../src/core/ask/policy-proposal.mjs';
 import { scheduleEventPrompt, scheduleNoticeText } from '../src/core/ask/schedule-spec.mjs';
+import { cardOwnedByTicket, cardFollowsSeries, cardOutlivesRunFailure, cardStateRefusal, followSeriesCard } from '../src/core/ask/schedule-card.mjs';
 import { applyModelChange } from '../src/core/ask/model-deps.mjs';
 import { modelEventPrompt, modelNoticeText } from '../src/core/ask/model-proposal.mjs';
 import { cloneEventPrompt, cloneNoticeText } from '../src/core/ask/clone-proposal.mjs';
@@ -2568,7 +2569,9 @@ function attachAskFollower(orch, { threadId, runId, cardId, quiet = false }) {
         if (linkPatch.pipelineId && row && row.commentIds.length) {
           try { stampSentRunId(row.commentIds, linkPatch.pipelineId); } catch { /* best effort */ }
         }
-        if (patch.cardFailed && cardId) {
+        // A series card (#1567) outlives one failed occurrence: the thread's notice and the schedule's streak, never a
+        // `failed` card. Decided from the card NOW, not at launch: resumeRun re-attaches with the link row alone.
+        if (patch.cardFailed && cardId && !cardOutlivesRunFailure(askFindCard(threadId, cardId)?.block)) {
           flipCard(threadId, cardId, { state: 'failed', error: patch.cardFailed });
         }
         broadcast({
@@ -2849,9 +2852,9 @@ const startRunHandler = async (req, res) => {
       if (!askGetThread(body.askThreadId)) return badRequest(res, 'unknown askThreadId');
       const found = askFindCard(body.askThreadId, body.askCardId);
       if (!found) return badRequest(res, 'unknown askCardId');
-      const ownScheduledCard = internal && found.block.state === 'scheduled' && found.block.runId === internal.ticket.id;
+      const ownScheduledCard = !!internal && cardOwnedByTicket(found.block, internal.ticket);
       if (found.block.state !== 'proposed' && !ownScheduledCard) {
-        return res.status(409).json({ error: `card is ${found.block.state}` });
+        return res.status(409).json({ error: cardStateRefusal(found.block) });
       }
       askLink = { threadId: body.askThreadId, cardId: body.askCardId };
       // The card's Runs in pick (docs/e2b.md): a request with no execEnv key at all comes from a page older than the
@@ -3597,27 +3600,29 @@ const startRunHandler = async (req, res) => {
       // must not launch a second pipeline for the same card (review of PR #376).
       // Withdraw the run entry (nothing has run or been announced yet) and 409.
       const still = askFindCard(askLink.threadId, askLink.cardId);
-      const stillOwn = internal && still && still.block.state === 'scheduled' && still.block.runId === runId;
+      const stillOwn = !!internal && !!still && cardOwnedByTicket(still.block, internal.ticket);
       if (!still || (still.block.state !== 'proposed' && !stillOwn)) {
         runs.delete(runId);
         syncKeepAwake();
         return res.status(409).json({ error: `card is no longer proposed (${still ? still.block.state : 'gone'})` });
       }
+      // A series card (#1567) stays `scheduled` — flipped to `started` it would refuse the next occurrence (schedule-card.mjs).
+      const series = !!internal && cardFollowsSeries(still.block, internal.ticket);
       try {
         askLinkRun(askLink.threadId, { runId, cardId: askLink.cardId, status: entry.status });
-        flipCard(askLink.threadId, askLink.cardId, { state: 'started', runId });
+        if (!series) flipCard(askLink.threadId, askLink.cardId, { state: 'started', runId });
         if (shape) { try { recordShapePlan({ threadId: askLink.threadId, cardId: askLink.cardId, title }); } catch (err) { console.error(`[worca-ui] shape plan record failed: ${err?.message || err}`); } }
         // The card's pending comment ids move onto the link row, keyed by the minted
         // UUID exactly as pipeline_id is before it exists. Consumed one-shot: a card
-        // launches at most once. Own try/catch — comment bookkeeping must never
+        // launches at most once (a series card's FIRST occurrence takes them). Own try/catch — comment bookkeeping must never
         // abort the card flip or the run.
         try {
           // Read, WRITE, then consume — not consume-then-write. A combined take()
           // deletes the rows it returns, so if askUpdateRunLink throws in between (its
           // catch here only logs) the ids are gone and the sent_run_id stamp is lost
           // with no way to recover them. peek/commit keeps the delete on the success
-          // path only; a second launch of the same card cannot happen anyway (the
-          // card must be in state 'proposed' above).
+          // path only; a second launch of the same one-off card cannot happen anyway
+          // (the card must be in state 'proposed' above).
           const pendingComments = peekPendingCardComments(askLink.cardId);
           if (pendingComments.length) {
             askUpdateRunLink(askLink.threadId, runId, { commentIds: pendingComments });
@@ -4235,6 +4240,7 @@ function afterRunSettled(orch) {
   return card;
 }
 
+const SERIES_CARD_DEPS = { getSchedule, findCard: askFindCard, flipCard, log: console.error };   // flipCard: a hoisted declaration below
 let _schedulerBusy = false;
 let _schedulerLastTickAt = 0;   // ms of the last finished pass; the platform heartbeat reports a stall (W3)
 let _lastNotificationId = -1;
@@ -4254,6 +4260,7 @@ export async function schedulerTick({ now = Date.now() } = {}) {
       staggerMs: SCHEDULER_STAGGER_MS, hold: featureHoldsTicket, chainGate: smallRunsChainGate(liveSliceOf), // hold: "Ask me before each run" waits for Start now
     });
     for (const id of [...out.failed, ...out.missed, ...out.skipped]) releaseAskCard(getTicket(id));
+    for (const id of [...out.fired, ...out.failed, ...out.missed, ...out.skipped]) followSeriesCard(getTicket(id), SERIES_CARD_DEPS);   // #1567: a series card shows the next occurrence
     const newlyHeld = out.held.filter((id) => !_schedulerHeld.has(id)); // a held card repaints once, when it becomes held
     _schedulerHeld = new Set(out.held);
     broadcastFeaturesOf(() => featuresOfTickets([...out.fired, ...out.missed, ...out.failed, ...out.skipped, ...newlyHeld]));
@@ -4531,6 +4538,7 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
     const opt = { by: by || undefined };
     const s = verb === 'pause' ? pauseSchedule(found.item.id, opt) : verb === 'resume' ? resumeSchedule(found.item.id, opt) : skipNext(found.item.id, opt);
     if (!s) return out(409, { error: `this schedule is ${found.item.status}` });
+    followSeriesCard({ scheduleId: s.id }, SERIES_CARD_DEPS);   // #1567: the series card's time follows the verb, with no tick to carry it
     emitChanged('schedules-changed', verb);
     emitChanged('notifications-changed');
     return out(200, { kind: 'recurring', item: s });

@@ -155,8 +155,14 @@ test('"schedule …" proposes a one-off card in the browser zone; "… every …
       const made = await post('/api/run', runBody(t, cards[0], { scheduledFor: s.runAt }));
       assert.equal(made.status, 202);
       const { runId } = await made.json();
-      const block = (await blocksOf(t.id)).find((b) => b.id === cards[0].id);
+      let block = (await blocksOf(t.id)).find((b) => b.id === cards[0].id);
       assert.equal(block.state, 'scheduled');
+      assert.equal(block.runId, runId);
+      // The ticket fires: a one-off card is this one run's, so it becomes `started` (a series card below never does).
+      const tick = await mod.schedulerTick({ now: at + 1000 });
+      assert.ok(tick.fired.includes(runId), JSON.stringify(tick));
+      block = (await blocksOf(t.id)).find((b) => b.id === cards[0].id);
+      assert.equal(block.state, 'started');
       assert.equal(block.runId, runId);
     } },
     { name: '"schedule … every …": the card becomes a repeating schedule it follows; deleting the series hands it back', run: async () => {
@@ -168,7 +174,8 @@ test('"schedule …" proposes a one-off card in the browser zone; "… every …
       assert.equal(card.card.schedule.rule.tz, TZ);
       assert.equal(card.card.schedule.next.length, 3);
       const s = card.card.schedule;
-      const made = await post('/api/run', runBody(t, card, { repeat: { rule: s.rule, overlap: s.overlap, maxFailures: s.maxFailures } }));
+      // overlap 'start': the timed occurrence below fires while the Run-now runs (parked mock runs) are still live.
+      const made = await post('/api/run', runBody(t, card, { repeat: { rule: s.rule, overlap: 'start', maxFailures: s.maxFailures } }));
       assert.equal(made.status, 202, 'an Ask card may now start a repeating schedule');
       const out = await made.json();
       assert.match(out.scheduleId, /^sch_[0-9a-f]{8}$/);
@@ -179,6 +186,65 @@ test('"schedule …" proposes a one-off card in the browser zone; "… every …
       assert.equal(block.runId ?? null, null, 'a series card follows the schedule, not one run of it');
       const detail = await (await fetch(`${base}/api/schedules/${out.scheduleId}`)).json();
       assert.equal(detail.item.askCardId, card.id, 'the series remembers the card that made it');
+
+      // #1567: every occurrence starts. The card keeps following the series (never `started`), each run is
+      // linked to the thread through the card, and the card's time is the occurrence materialised next.
+      const { listRunLinks } = await import('../src/core/ask/store.mjs');
+      const scheduleItem = async () => (await (await fetch(`${base}/api/schedules/${out.scheduleId}`)).json()).item;
+      const cardFollows = async (runId) => {
+        assert.ok(mod.runs.get(runId), 'the run entry is live under the ticket id');
+        assert.ok(listRunLinks(t.id).some((l) => l.runId === runId && l.cardId === card.id), 'the run is linked to the thread through the card');
+        block = (await blocksOf(t.id)).find((b) => b.id === card.id);
+        assert.equal(block.state, 'scheduled', 'the card still follows the series');
+        assert.equal(block.scheduleId, out.scheduleId);
+        assert.equal(block.runId ?? null, null);
+        assert.equal(block.scheduledFor, (await scheduleItem()).nextRunAt, 'the card shows the next occurrence');
+      };
+      const runNow = async () => {
+        const r = await post(`/api/schedules/${out.scheduleId}/run-now`, {});
+        assert.equal(r.status, 200);
+        const now = await r.json();
+        assert.equal(now.status, 'fired', `the occurrence started: ${now.failReason}`);
+        await cardFollows(now.runId);
+        return now.runId;
+      };
+      const first = await runNow();
+      const second = await runNow();
+      assert.notEqual(first, second, 'two occurrences, two runs');
+      // The timed occurrence: it fires too, and the card's next time moves on to the one after it.
+      const dueAt = (await scheduleItem()).nextRunAt;
+      const tick = await mod.schedulerTick({ now: Date.parse(dueAt) + 1000 });
+      // Only this series' tickets count: another row's ticket may be due by then as well.
+      const fired = tick.fired.filter((id) => mod.runs.get(id)?.scheduleId === out.scheduleId);
+      assert.equal(fired.length, 1, JSON.stringify(tick));
+      await cardFollows(fired[0]);
+      assert.notEqual(block.scheduledFor, dueAt, 'the card moved to the occurrence after the one that fired');
+      // A manual Start of the card is still refused while it is scheduled.
+      const manual = await post('/api/run', runBody(t, card));
+      assert.equal(manual.status, 409);
+      assert.match((await manual.json()).error, /^card is scheduled/);
+      // Pause, resume and skip next move the series' next time without a tick: the card follows each.
+      const verb = async (v) => { const r = await post(`/api/schedules/${out.scheduleId}/${v}`, {}); assert.equal(r.status, 200, v); return (await r.json()).item; };
+      const cardTime = async () => ((await blocksOf(t.id)).find((b) => b.id === card.id)).scheduledFor ?? null;
+      assert.equal((await verb('pause')).nextRunAt, null);
+      assert.equal(await cardTime(), null, 'a paused series has no next time, and the card shows none');
+      const resumed = await verb('resume');
+      assert.ok(resumed.nextRunAt, 'resumed: a next time again');
+      assert.equal(await cardTime(), resumed.nextRunAt, 'the card shows it');
+      const skipped = await verb('skip-next');
+      assert.ok(Date.parse(skipped.nextRunAt) > Date.parse(resumed.nextRunAt), 'skip next moved on');
+      assert.equal(await cardTime(), skipped.nextRunAt, 'and so did the card');
+      // A failed occurrence is a failed run, not a failed card: the series still has a next run.
+      mod.runs.get(second).orch.emit('error', { message: 'boom' });
+      block = (await blocksOf(t.id)).find((b) => b.id === card.id);
+      assert.equal(block.state, 'scheduled', 'one failed occurrence does not end the series card');
+      // A resumed occurrence is a new orchestrator whose follower resumeRun re-attaches from the link row alone — the
+      // same call, with nothing but thread, run and card. The card decides at fail time, so this one stays scheduled too.
+      mod.attachAskFollower(mod.runs.get(first).orch, { threadId: t.id, runId: first, cardId: card.id });
+      mod.runs.get(first).orch.emit('error', { message: 'boom after a resume' });
+      block = (await blocksOf(t.id)).find((b) => b.id === card.id);
+      assert.equal(block.state, 'scheduled', 'a failed resumed occurrence does not end the series card either');
+      assert.equal(block.scheduleId, out.scheduleId);
 
       // The next turn's context block names it, so the model never proposes it again.
       const next = await turn(t.id, 'thanks');
