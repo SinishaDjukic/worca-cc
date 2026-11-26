@@ -149,7 +149,7 @@ test('a named project without a spec, an unknown one, and no spec anywhere are r
 
 test('a proxy URL with a login never reaches the build', async () => {
   resetSpecs();
-  const dir = await containerDir('HTTPS_PROXY=http://jdoe:s3cret@proxy.acme.example:3128\nNO_PROXY=.acme.example\n');
+  const dir = await containerDir('HTTPS_PROXY=http://jdoe:s3cret@proxy.acme.example:3128\nHTTP_PROXY=jdoe:s3cret@proxy.acme.example:3128\nNO_PROXY=.acme.example\n');
   try {
     const rt = fakeRuntime();
     const r = await run([], { dir, rt });

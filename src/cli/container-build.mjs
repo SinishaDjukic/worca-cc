@@ -102,9 +102,12 @@ async function projectsWithSpec() {
   return out;
 }
 
-/** True when a proxy URL carries a login (`user:pass@host`). An unparsable value counts as one: it is not passed on. */
+/** True when a proxy value carries a login (`user:pass@host`, with or without a scheme). Any `@` counts, and so does
+ *  an unparsable value: neither is passed on. */
 function proxyHasLogin(v) {
-  try { const u = new URL(v); return Boolean(u.username || u.password); } catch { return true; }
+  const s = String(v).trim();
+  if (s.includes('@')) return true;
+  try { const u = new URL(s.includes('://') ? s : `http://${s}`); return Boolean(u.username || u.password); } catch { return true; }
 }
 
 /** The proxy for the build's own downloads (apt, mise, the tools), from the container .env: never a loopback one, and
