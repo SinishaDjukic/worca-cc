@@ -9,6 +9,7 @@
 //   WORCA_BROKER_SYSTEM_BILL_TO who pays for work no signed-in person caused
 import { readFileSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { recordSecretFile } from './secret-files.mjs';
 
 /** This server process's identity towards the broker: tokens issued under an older one are revoked at boot. */
 export const BOOT_ID = `srv-${randomUUID()}`;
@@ -70,6 +71,7 @@ export function sealBrokerSecret({ readFile = readFileSync, stat = statSync } = 
     try {
       _secret = String(readFile(file, 'utf8')).trim() || null;
       try { _secretFileMode = stat(file).mode & 0o777; } catch { _secretFileMode = null; }
+      recordSecretFile('WORCA_BROKER_SECRET_FILE', file, { stat });
     } catch (err) { _secret = null; _secretFileError = `WORCA_BROKER_SECRET_FILE cannot be read: ${err.code || err.message}`; }
     delete process.env.WORCA_BROKER_SECRET_FILE;
     delete process.env.WORCA_BROKER_SECRET;

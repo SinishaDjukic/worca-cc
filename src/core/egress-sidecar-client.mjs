@@ -11,6 +11,7 @@
 // proxy), so they never pass through the proxy they configure.
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
+import { recordSecretFile } from './secret-files.mjs';
 
 export const EGRESS_API_VAR = 'WORCA_EGRESS_API_URL';
 export const EGRESS_SECRET_VAR = 'WORCA_EGRESS_SECRET';
@@ -44,6 +45,8 @@ export function sealEgressSecret({ env = process.env, readFile = readFileSync } 
   const has = typeof env[EGRESS_SECRET_VAR] === 'string' || String(env[`${EGRESS_SECRET_VAR}_FILE`] || '').trim();
   if (!has) return;
   sealed = readSecretVar(env, EGRESS_SECRET_VAR, readFile);
+  const file = String(env[`${EGRESS_SECRET_VAR}_FILE`] || '').trim();
+  if (file && env === process.env) recordSecretFile(`${EGRESS_SECRET_VAR}_FILE`, file);
   delete env[EGRESS_SECRET_VAR];
   delete env[`${EGRESS_SECRET_VAR}_FILE`];
 }

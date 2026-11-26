@@ -226,7 +226,7 @@ import { policyCatalogModels, cachedPolicyHomes } from '../src/core/policy/cache
 import { pickFolderNative, pickAppNative, nativeDialogAvailable } from '../src/core/folder-dialog.mjs';
 import {
   readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
-  isThisBox, LOCAL_HOSTNAMES, hostnameOf, createPeerGuard, readRouteGateways,
+  isThisBox, LOCAL_HOSTNAMES, hostnameOf, createPeerGuard, readRouteGateways, watchRelayPeers,
 } from '../src/core/remote-access.mjs';
 import { identityHeaderTrust } from '../src/core/trusted-proxies.mjs';
 import {
@@ -276,6 +276,8 @@ import {
 } from '../src/core/platform-heartbeat.mjs';
 import { freeDailyStatus } from '../src/core/openrouter-free.mjs';
 import { checkBrokerAtBoot } from '../src/core/broker-boot.mjs';
+import { secretFileRefusals } from '../src/core/secret-files.mjs';
+import { sealGithubAppKey } from '../src/core/github-app.mjs';
 import { modelSlot, missingCredentials, describeMissing, workflowNeedsModel } from '../src/core/broker-routing.mjs';
 import { syncPluginSlots } from '../src/core/plugin-broker-slots.mjs';
 import { planClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
@@ -621,7 +623,7 @@ import { proxyEventPrompt, proxyNoticeText } from '../src/core/ask/proxy-proposa
 // printer no longer fires (a bare listener would NOT suppress the warning and would
 // double-print every OTHER warning), then attach our single filtering listener.
 // The credential broker's secret leaves process.env before anything can spawn: no child inherits it.
-sealBrokerSecret(); sealEgressSecret();   // and the egress sidecar's (egress-sidecar-client.mjs)
+sealBrokerSecret(); sealEgressSecret(); sealGithubAppKey();   // and the egress sidecar's, and the GitHub App key's (read once)
 process.removeAllListeners('warning');
 process.on('warning', (w) => {
   if (w && w.name === 'ExperimentalWarning' && /SQLite/i.test(w.message)) return;
@@ -789,7 +791,8 @@ const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
 // In the image, a published port reaches worca from the container's gateway (G4).
 const PEER_GATEWAYS = DEPLOYMENT === 'container' ? readRouteGateways() : [];
 const REMOTE_ACCESS_CHECK = checkRemoteAccessConfig(REMOTE_ACCESS, { bindHost: HOST, gateways: PEER_GATEWAYS });
-const isTrustedPeer = createPeerGuard(REMOTE_ACCESS, { gateways: PEER_GATEWAYS });
+const isTrustedPeer = createPeerGuard(REMOTE_ACCESS, { gateways: PEER_GATEWAYS,
+  relays: watchRelayPeers(DEPLOYMENT === 'container' && !REMOTE_MODE ? process.env : {}) });   // the hardened box's UI relay
 const hostGuard = createHostGuard(REMOTE_ACCESS.allowedHosts);
 const isLocalRequest = (req) => isTrustedPeer(req) && hostGuard(req);
 // X1: WORCA_IDENTITY_HEADER names a person (Ask thread owner, broker bill-to, startedBy) only when the identity
@@ -10638,6 +10641,10 @@ if (isMain) {
       process.exit(1);
     }
   }
+
+  // Secret files Worca read at start, with agent users on: 0600 and Worca's own (secret-files.mjs; the broker's in checkBrokerAtBoot).
+  const badSecretFiles = secretFileRefusals({ names: ['WORCA_EGRESS_SECRET_FILE', 'WORCA_GH_APP_KEY_FILE'] });
+  if (badSecretFiles.length) { for (const e of badSecretFiles) console.error(`[worca-ui] secrets: ${e}`); console.error('[worca-ui] not starting.'); process.exit(78); }
 
   // Credential broker (docs/credential-broker.md): with WORCA_BROKER_URL set, worca holds no
   // model credential. Refuse to serve while one is still reachable by agents, or while the

@@ -3,6 +3,30 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## The hardened box
+
+**One command starts the strictest local setup.**
+
+`worca container up --hardened` starts Worca with every protection on. The credential broker holds the model key. Agents run under their own users. The network has no route out except through an allow-list. The egress sidecar holds the proxy login.
+
+No folder from your machine is mounted. You clone projects from the remote into the box. Results leave as pushed branches and pull requests. A mounted checkout would let an agent plant a git hook that your own git then runs.
+
+The setup asks only for what is missing. It writes `.env` with mode 0600 and never overwrites your values. Every answer also works from a flag or the environment, so a script can run it. It checks Docker, Compose, the image and WSL2 first.
+
+`worca container status` then shows one line per protection, read from the running box. A line that is off says how to fix it.
+
+With agents under their own users, Worca now checks every secret file it reads. The broker's secret, the egress sidecar's secret and the GitHub App key must each be mode 0600 and owned by Worca's user. Otherwise Worca does not start, and says which file to fix.
+
+It is for one developer on their own machine. It runs on Docker only. It is not "no secrets": an MCP registry secret a run uses stays in its reach. Your native install and the plain container do not change.
+
+Chips: Container · Security
+
+Read it: [Hardened box](../hardened-box.md)
+
+Pull requests (add each number when it opens):
+
+- The hardened box
+
 ## The proxy login moves out of the box
 
 **In a container, agents can no longer reach your proxy login.**

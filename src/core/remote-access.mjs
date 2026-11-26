@@ -22,6 +22,7 @@
 // loopback Host from a loopback TCP peer (createPeerGuard), whatever the bind.
 import fs from 'node:fs';
 import os from 'node:os';
+import dns from 'node:dns';
 import { createAccessVerifier, normalizeTeamDomain } from './cf-access.mjs';
 import { createIssuerVerifier, normalizeIssuer } from './issuer-jwt.mjs';
 
@@ -236,13 +237,36 @@ export function readRouteGateways(read = () => fs.readFileSync('/proc/net/route'
  * a sidecar on the same network keeps its own address. Remote mode is unchanged: every caller there
  * passes the identity check, and isInContainer still requires a peer on this box (isThisBox).
  */
-export function createPeerGuard(cfg, { gateways = [] } = {}) {
+export function createPeerGuard(cfg, { gateways = [], relays = null } = {}) {
   if (isRemoteMode(cfg)) return () => true;
   const trusted = new Set(gateways.map(unmapV4));
   return (req) => {
     const peer = req?.socket?.remoteAddress;
-    return isLoopbackPeer(peer) || trusted.has(unmapV4(peer));
+    return isLoopbackPeer(peer) || trusted.has(unmapV4(peer)) || !!relays?.has(unmapV4(peer));
   };
+}
+
+/**
+ * The hardened box's UI relay (src/core/ui-relay.mjs, docker/compose.hardened.yml): Worca sits on an internal
+ * network, where Docker publishes no port, so a relay on both networks takes the published port. WORCA_UI_RELAY
+ * names its compose host(s); their addresses are trusted like Docker's gateway. Resolved now and every
+ * `intervalMs` (a restarted relay gets a new address). Only in the image and in local mode: the caller passes
+ * an empty env otherwise. @returns {{has: (addr: string) => boolean, stop: () => void}}
+ */
+export function watchRelayPeers(env = process.env, { lookup, intervalMs = 15_000 } = {}) {
+  const hosts = String(env.WORCA_UI_RELAY || '').split(',').map((s) => s.trim()).filter(Boolean);
+  let addrs = new Set();
+  if (!hosts.length) return { has: () => false, stop: () => {} };
+  const look = lookup || ((h) => dns.promises.lookup(h, { all: true }));
+  const refresh = async () => {
+    const next = new Set();
+    for (const h of hosts) { try { for (const r of await look(h)) next.add(unmapV4(r.address)); } catch { /* not up yet */ } }
+    addrs = next;
+  };
+  refresh();
+  const t = setInterval(refresh, intervalMs);
+  t.unref?.();
+  return { has: (a) => addrs.has(unmapV4(a)), stop: () => clearInterval(t), refresh };
 }
 /**
  * The TCP peer is one of this machine's own addresses (any interface, loopback included).
