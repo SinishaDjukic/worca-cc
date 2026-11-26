@@ -1,7 +1,7 @@
 // ui/public/run-sandbox-note.mjs — where a run's agents execute, said plainly (docs/choose-a-setup.md): the run page
 // header's execution-environment segment (a remote backend's label, "waiting for … slot", "building the sandbox image",
 // or, for a Local run on a native install, a quiet "not sandboxed" link) and New run's note under "Runs in".
-import { docsUrl } from './docs-links.mjs';
+import { docsLink, docsUrl } from './docs-links.mjs';
 
 export const NOT_SANDBOXED_TEXT = 'not sandboxed';
 export const NOT_SANDBOXED_TITLE = "This run's agents and scripts run directly on this machine, as your user: they can read and change what you can. A Local sandbox (Docker) or E2B run keeps them in a container. Opens Choose a setup.";
@@ -37,14 +37,28 @@ export function execEnvSegNode(doc, [cls, text, strong, extra = {}]) {
   return node;
 }
 
+/** The run card's execution-environment line, under its status block (`.rd-sheet .run-status`): the header's segment
+ *  sits in a header the one-level run page hides, so the card says it where the status is read. `seg` from
+ *  runExecEnvSeg (null hides the line). Rebuilt only when what it says changes. */
+export function paintRunExecLine(block, seg) {
+  if (!block || !block.parentNode) return;
+  const doc = block.ownerDocument;
+  let line = block.parentNode.querySelector(':scope > .rd-exec-line');
+  if (!seg) { if (line) line.hidden = true; return; }
+  if (!line) { line = doc.createElement('p'); line.className = 'rd-exec-line'; block.after(line); }
+  line.hidden = false;
+  const sig = JSON.stringify(seg);
+  if (line.dataset.sig === sig) return;
+  line.dataset.sig = sig;
+  line.replaceChildren(execEnvSegNode(doc, seg));
+}
+
 /** New run's note under "Runs in": shown for a Local run on a native install. */
 export function paintLocalRunNote(node, { show }) {
   if (!node) return;
   node.hidden = !show;
   if (!show || node.dataset.painted) return;
   const doc = node.ownerDocument;
-  const a = doc.createElement('a');
-  a.href = docsUrl('choose-a-setup'); a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = 'Choose a setup';
-  node.replaceChildren(doc.createTextNode(`${LOCAL_NOTE_TEXT} `), a);
+  node.replaceChildren(doc.createTextNode(`${LOCAL_NOTE_TEXT} `), docsLink(doc, 'choose-a-setup', 'Choose a setup'));
   node.dataset.painted = '1';
 }

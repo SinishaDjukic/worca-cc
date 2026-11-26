@@ -36,6 +36,7 @@ export function boxImageRow(doc, img) {
   if (status === 'off') row.querySelector('.exec-env-status').dataset.tone = 'warn';
   const cmd = el(doc, 'small', 'hint drow-help security-cmd');
   cmd.append(doc.createTextNode(img.state === 'current' ? 'After a spec change, rebuild on the host: ' : 'Rebuild on the host: '), el(doc, 'code', null, img.command));
+  cmd.append(doc.createTextNode('.'));
   if (img.note) cmd.append(doc.createTextNode(` ${img.note}`));
   row.insertBefore(cmd, row.querySelector('.drow-control'));
   return row;

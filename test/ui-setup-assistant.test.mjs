@@ -1845,6 +1845,7 @@ test('Network with a managed login the proxy rejected: the line says the operato
     const text = h.$('.sa-managed').textContent;
     assert.match(text, /operator manages this login: they must replace the login file/);
     assert.doesNotMatch(text, /Log in again|worca proxy login/);
+    assert.doesNotMatch(text, /Logged in as/, 'a rejected login is not shown as logged in');
   } finally { h.close(); }
 });
 

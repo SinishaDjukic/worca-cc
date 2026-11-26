@@ -613,7 +613,8 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   function paintManagedNetwork(p) {
     const list = rows('sa-managed');
     list.append(row(null, p.managedNote || 'The corporate proxy login is managed by the operator.'));
-    list.append(row(null, p.login ? `Logged in as ${p.login.label}${p.upstream ? ` to ${p.upstream}` : ''}.` : 'No login is set.'));
+    // A login the proxy rejected is not "logged in": the state line below says what happened and who fixes it.
+    if (p.state !== 'needs-login') list.append(row(null, p.login ? `Logged in as ${p.login.label}${p.upstream ? ` to ${p.upstream}` : ''}.` : 'No login is set.'));
     if (p.line) list.append(row(null, p.line));
     body.append(list);
   }

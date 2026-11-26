@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { paintExecEnvCardBackend, paintExecEnvCardValues, readExecEnvCard, EXEC_ENV_CARD_COPY } from '../ui/public/exec-env-settings-card.mjs';
 import { paintSecurityStatus, loadSecurityStatus } from '../ui/public/security-status-view.mjs';
-import { runExecEnvSeg, execEnvSegNode, paintLocalRunNote, NOT_SANDBOXED_TEXT } from '../ui/public/run-sandbox-note.mjs';
+import { runExecEnvSeg, execEnvSegNode, paintLocalRunNote, paintRunExecLine, NOT_SANDBOXED_TEXT } from '../ui/public/run-sandbox-note.mjs';
 import { setWorcaBox, worcaBox, inHardenedBox, paintProjectAddForBox, projectAddModeForBox, _resetWorcaBoxForTests, HARDENED_ADD_NOTE } from '../ui/public/worca-box.mjs';
 import { docsUrl, DOCS_BASE } from '../ui/public/docs-links.mjs';
 import { setExecEnvListForTests, setExecEnvSelectValue } from '../ui/public/exec-envs.mjs';
@@ -113,6 +113,21 @@ test('run page segment: a backend, its slot wait, its first-use image build, and
   assert.equal(a.target, '_blank');
   assert.match(a.title, /directly on this machine/);
   assert.equal(execEnvSegNode(doc, runExecEnvSeg({ execEnv: 'docker' }, o)).tagName, 'SPAN');
+});
+
+test('run card line: under the status block, shown, changed and hidden with the segment', () => {
+  const doc = domOf('<div class="rd-sheet"><div class="run-status"></div></div>');
+  const block = doc.querySelector('.run-status');
+  const o = { label: () => 'Local sandbox (Docker)', titleWithArticle: () => 'a Docker' };
+  paintRunExecLine(block, runExecEnvSeg({}, { ...o, box: 'native' }));
+  const line = block.nextElementSibling;
+  assert.equal(line.className, 'rd-exec-line');
+  assert.equal(line.querySelector('a.rd-not-sandboxed').textContent, NOT_SANDBOXED_TEXT);
+  paintRunExecLine(block, runExecEnvSeg({ execEnv: 'docker', execEnvPreparing: 'image-build' }, o));
+  assert.equal(doc.querySelectorAll('.rd-exec-line').length, 1);
+  assert.equal(line.textContent, 'building the sandbox image, first use…');
+  paintRunExecLine(block, null);
+  assert.equal(line.hidden, true);
 });
 
 test("New run's note: the real markup, shown for Local on a native install, with the Choose a setup link", () => {

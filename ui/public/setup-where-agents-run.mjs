@@ -32,7 +32,7 @@ export const inABox = (posture) => !!posture && typeof posture.where === 'string
 export function whereAgentsRunSection({ doc, detect, posture, value, onPick, seg, section }) {
   const el = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const guide = el('p', 'hint sa-where-guide');
-  guide.append('Which setup fits you: ', docsLink(doc, 'choose-a-setup', 'Choose a setup', { className: 'link' }), '.');
+  guide.append('Which setup fits you: ', docsLink(doc, 'choose-a-setup', 'Choose a setup'), '.');
   if (inABox(posture)) {
     const list = el('ul', 'sa-rows sa-where-posture');
     for (const r of posture.rows || []) {

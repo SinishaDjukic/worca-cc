@@ -20,7 +20,8 @@
 .exec-env-spec-tool{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .exec-env-spec-tool .exec-env-tool-name{flex:1 1 200px;min-width:0}
 .exec-env-spec-tool .exec-env-tool-version{flex:0 1 160px;min-width:0}
-.exec-env-spec .exec-env-field-row{margin-top:12px}
+.exec-env-spec .exec-env-tool-add{display:block}
+.exec-env-spec .exec-env-field-row{display:flex;flex-direction:column;gap:6px;margin-top:12px}
 .exec-env-spec-error{font-size:12px;color:var(--red-ink);margin:8px 0 0}
 .exec-env-spec-error[hidden]{display:none}
 .exec-env-spec-actions{display:flex;gap:8px;align-items:center;margin-top:12px}

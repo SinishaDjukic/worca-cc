@@ -189,7 +189,7 @@ import { loadExecEnvs, execEnvKnown, execEnvLabel, execEnvTitle, execEnvTitleWit
 import { paintExecEnvStatusChip, watchExecEnvStatus } from './exec-env-status.mjs';
 import { paintExecEnvCardBackend, paintExecEnvCardValues, readExecEnvCard } from './exec-env-settings-card.mjs';
 import { paintProjectAddForBox, projectAddModeForBox, setWorcaBox, worcaBox } from './worca-box.mjs';
-import { execEnvSegNode, paintLocalRunNote, runExecEnvSeg } from './run-sandbox-note.mjs';
+import { execEnvSegNode, paintLocalRunNote, paintRunExecLine, runExecEnvSeg } from './run-sandbox-note.mjs';
 import { loadSecurityStatus } from './security-status-view.mjs';
 import { guardModal, dialogOpen, DISCARD_MESSAGE } from './modal-guard.mjs';
 import { createVoiceController } from './ask-voice.mjs';
@@ -39021,6 +39021,7 @@ function paintRdStatus(screen, r) {
   const m = rdModel(r);
   const block = screen.querySelector('.rd-sheet .run-status');
   paintRdHead(screen, r, m);                                 // slice 3: the card head (status line, head buttons, route)
+  paintRunExecLine(block, runExecEnvSeg(r, { box: worcaBox(), label: execEnvLabel, titleWithArticle: execEnvTitleWithArticle }));   // where its agents run
   // The run page's bar takes over the removed .rd-prog's focus stop ("Run progress"): the D30 one-line wait state
   // shows only its stage words and gives it the focus ring.
   const bar = block && block.querySelector('.run-status-bar');
