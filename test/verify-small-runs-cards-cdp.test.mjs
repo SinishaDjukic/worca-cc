@@ -193,7 +193,7 @@ test('the HELD_RESUME_ONLY phase: a seeded held resume, Resume clicked, still pa
   assert.match(s, /[`'/]held-resume-(\$\{theme\}|light|dark)\.png/);
 });
 
-test('the AFTER_RUN_ONLY phase: the Resume before the press and the after-run row, light and dark at 1280px, 4 screenshots', () => {
+test('the AFTER_RUN_ONLY phase: the Resume before the press and the after-run row, light and dark at 1280px, 8 screenshots', () => {
   const s = src();
   const gate = s.match(/process\.env\.AFTER_RUN_ONLY === '1'\) \{ await (\w+)\(\); await finish\(\); \}/);
   assert.ok(gate, 'the AFTER_RUN_ONLY=1 gate');
@@ -209,6 +209,13 @@ test('the AFTER_RUN_ONLY phase: the Resume before the press and the after-run ro
   // The four files, with these exact names (no prefix), in SHOTS_DIR.
   assert.match(s, /[`'/]after-run-row-(\$\{theme\}|light|dark)\.png/);
   assert.match(s, /[`'/]resume-after-run-(\$\{theme\}|light|dark)\.png/);
+  // Slice 11: a paused run before a working one, on the feature page's footer and the Chat feature card's footer.
+  for (const needle of ['.gpage-actions', '.chat-rc-foot', 'Resume after run 6']) assert.ok(body.includes(needle), needle);
+  assert.match(body, /\bcard\(/, 'the Chat feature card');
+  const narrow = body.slice(0, body.indexOf('width: 1280'));
+  for (const needle of ['.gpage-actions', '.chat-rc-foot']) assert.ok(narrow.includes(needle), `at 375px: ${needle}`);
+  assert.match(s, /[`'/]feature-resume-after-run-(\$\{theme\}|light|dark)\.png/);
+  assert.match(s, /[`'/]chat-card-resume-after-run-(\$\{theme\}|light|dark)\.png/);
 });
 
 test('the STOP_FINDINGS_ONLY phase: a 3-finding stop on the run page, the Chat run panel and the Chat card, light and dark at 1280px, 6 screenshots', () => {

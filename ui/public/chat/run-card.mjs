@@ -28,7 +28,7 @@ import { paintRunStatus, statusText, kindLabel, syncActions, pauseResumeOwn, ren
 import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
 import { cardShortWord } from '../../../src/shared/shape/run-agents.mjs';
-import { runStatus } from '../../../src/shared/shape/run-status.mjs';
+import { resumeAfterOf, resumeLabel, runStatus } from '../../../src/shared/shape/run-status.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { featureCardModel, oneCardModel, paintFeatureLog, needYouText } from '../shape/feature-card.mjs';
 import { buildCheckRows } from '../shape/check-row.mjs';
@@ -372,6 +372,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   let changesView = null;     // Shaper's Ask for changes field ({ el, focus }) while it shows
   let planSent = null;   // slice 4: the plan card's last approve attempt, named by its `plan-answer` event (D12)
   let stopLines = [];         // slice 6: the stop list's lines of the last paint (stop-list.mjs stopLinesOf)
+  let fview = null;           // slice 11: the one card's feature view of the last paint (its slices name the Resume)
   let resumeListed = false;   // slice 6 (D14): a failed line holds the halted run's Resume, so the footer and ⋯ do not
   const stopByKey = new Map();   // slice 6 (D10): the line kept per key, so a line's delegate reads its current ask
   const ref = () => runRefOf(id, last);
@@ -1013,16 +1014,19 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // Item 10: while a stop is open its question's primary is the card's one primary. The foot keeps only Stop; every
     // other action it would draw moves into the feature ⋯ (only where there is one: a feature's controls).
     const moved = stopOpen && fc ? ((m && m.actions) || []).filter((id) => id !== 'stop' && !baseSkip.includes(id)) : [];
+    // Slice 11 (d11-2): the footer's Resume acts on target(), so it reads that run's slice preview.
+    const resumeText = fc && fview ? resumeLabel(resumeAfterOf(fview.slices, target().pipelineId)) : '';
     syncActions(footActions, m, {
       own,
       // Small runs C3 (R-ux-4): a stop answers only through its own question (open or held), never the foot's Answer.
       skip: [...baseSkip, ...moved],
       plain: answerFieldOpen(qBody) || (oneNow && painted) ? ['answer'] : [],
       disable,
+      labels: resumeText ? { resume: resumeText } : {},
       onAction: (aid, b) => (aid === 'ask-changes' ? askForChanges() : call(controls.act, target(), aid, b, m, curRow)),
     });
     if (fc) paintFeatureActions(doc, fActions, fc, featureDeps, { omit: m.actions, stopOpen, resumeListed,
-      moved: moved.map((id) => ({ id, ...(disable[id] ? { disabled: disable[id] } : {}) })) });
+      moved: moved.map((id) => ({ id, ...(id === 'resume' && resumeText ? { label: resumeText } : {}), ...(disable[id] ? { disabled: disable[id] } : {}) })) });
     // Clear the sig too: else the next feature paint's sig matches and returns early, leaving an empty host.
     else { fActions.replaceChildren(); fActions.hidden = true; delete fActions.dataset.sig; }
     // A footer with nothing visible stays hidden (a Ready run whose Create PR is the result's own button).
@@ -1110,7 +1114,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     oneNow = one;
     fm = one ? one.base : shaperIn ? featureCardModel(shaperIn) : null;
     // Slice 6: a marked card with the flag on lists every open stop and failed run (none without `feature.asks`).
-    const fview = one && shaperIn.card ? shaperIn.card.feature || null : null;
+    fview = one && shaperIn.card ? shaperIn.card.feature || null : null;
     stopLines = one && flagOn('shaperSmallRuns', doc) ? stopLinesOf(fview, { snapOf: shaperIn.snapOf }) : [];
     stopByKey.clear();
     for (const l of stopLines) stopByKey.set(l.key, l);

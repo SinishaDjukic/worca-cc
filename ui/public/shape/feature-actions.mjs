@@ -34,8 +34,8 @@ export function featureButtons(c, { stopOpen = false, resumeListed = false } = {
 }
 
 /** The ⋯ items, the same on every host, [{key, label, checked?, disabled?}]. Item 10, while a stop is open: a halted
- *  feature's Resume (`stopOpen`), then `moved`, the model actions the footer gives up ([{id, disabled?}], `disabled` the
- *  footer's reason), each `act:<id>` with its ACTION_LABEL; an id already in the menu shows once. */
+ *  feature's Resume (`stopOpen`), then `moved`, the model actions the footer gives up ([{id, label?, disabled?}], `disabled` the
+ *  footer's reason), each `act:<id>` with its `label` (slice 11: the footer's own text), else its ACTION_LABEL; an id already in the menu shows once. */
 export function featureMenu(c, { moved = [], stopOpen = false, resumeListed = false } = {}) {
   if (!c) return [];
   const items = [];
@@ -44,10 +44,10 @@ export function featureMenu(c, { moved = [], stopOpen = false, resumeListed = fa
   if (c.planPipelineId) items.push({ key: 'plan', label: 'Open the plan' });
   if (stopOpen && c.active && c.halted && !resumeListed) items.push({ key: 'resume', label: resumeLabel(c.resumeAfter) });
   const has = new Set(items.map((i) => i.key));
-  for (const { id, disabled } of moved) {
+  for (const { id, label, disabled } of moved) {
     if (has.has(id) || has.has(`act:${id}`)) continue;
     has.add(`act:${id}`);
-    items.push({ key: `act:${id}`, label: ACTION_LABEL[id] || id, ...(disabled ? { disabled } : {}) });
+    items.push({ key: `act:${id}`, label: label || ACTION_LABEL[id] || id, ...(disabled ? { disabled } : {}) });
   }
   return items;
 }

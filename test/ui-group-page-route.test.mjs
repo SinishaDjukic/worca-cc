@@ -1046,3 +1046,74 @@ test('s8: a feature frame that only adds heldResume or resumeAfter to run 6 repa
   assert.equal(await frame(view()), true, 'the hold is gone');
   observer.disconnect();
 });
+
+// ── Shaper small runs slice 11 (R-ux-2): the page's footer Resume says which run it would wait for ───────────────
+const S11_STATUS = { ...S7_STATUS, paused: 'paused', stopped: 'stopped' };
+/** Six runs. `states[k-1]` is run k's slice state, `over[k]` its extra slice fields; the view halts at run `halted`. */
+const s11View = (states, over, halted) => ({ ...s7Feature([]), total: 6, done: states.filter((s) => s === 'done').length,
+  halted: { index: halted, state: states[halted - 1], waiting: [] }, slices: states.map((st, i) => s7Sl(i + 1, st, over[i + 1])) });
+const s11Groups = (view) => ({ groups: [{ ...GROUPS.groups[0], smallRuns: true, members: view.slices.map((sl) => ({ ...member(sl.index), pipelineId: sl.pipelineId,
+  ticketId: sl.pipelineId ? null : sl.ticketId, status: S11_STATUS[sl.state], ticket: sl.pipelineId ? null : { status: 'scheduled' }, slice: sl })) }] });
+// The Verifier's state: runs 1–3 done, run 4 paused, run 5 not started, run 6 working.
+const S11_PAUSED_FIRST = ['done', 'done', 'done', 'paused', 'planned', 'running'];
+/** The feature page on its Overview tab, where the footer and the Shaper view's own controls are both mounted. `show(next)`
+ *  delivers a feature frame; the run groups stop answering first, so only the feature fetch can repaint the page. */
+async function s11Page(first) {
+  let feature = first;
+  let stall = false;
+  const { ctx, calls } = await d3Boot({ feature: () => json(feature), groups: s11Groups(first),
+    extra: (url) => (stall && url.startsWith('/api/run-groups') ? new Promise(() => {}) : null) });
+  ctx.go('feature/feat_1/overview');
+  await ctx.settle(12);
+  const footer = () => [...pageOf(ctx).querySelectorAll('.gpage-actions [data-model-action="resume"]')].filter((b) => !b.hidden);
+  const resumes = () => shownButtons(pageOf(ctx).querySelector('.gpage')).filter((b) => /^Resume\b/.test(b.textContent)).map((b) => b.textContent);
+  const show = async (next) => {
+    stall = true;
+    feature = next;
+    const before = calls.feature;
+    ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+    await ctx.settle(10);
+    assert.ok(calls.feature > before, 'the frame refetched the feature');
+  };
+  return { ctx, footer, resumes, show };
+}
+
+test('s11 (R-ux-2): paused run 4 before working run 6: the page shows 1 Resume, in the footer, reading "Resume after run 6"', async () => {
+  const { footer, resumes } = await s11Page(s11View(S11_PAUSED_FIRST, { 4: { resumeAfter: 6 } }, 4));
+  assert.equal(footer().length, 1, 'the fixture: the footer offers run 4\'s Resume');
+  assert.equal(footer()[0].textContent, 'Resume after run 6');
+  assert.deepEqual(resumes(), ['Resume after run 6'], 'one Resume on the page, never the view\'s as well');
+});
+
+test('s11 (R-ux-2): the focused footer Resume is relabelled in place: plain "Resume" without resumeAfter and once held', async () => {
+  const view = (four) => s11View(S11_PAUSED_FIRST, { 4: four }, 4);
+  const { ctx, footer, resumes, show } = await s11Page(view({ resumeAfter: 6 }));
+  const button = footer()[0];
+  assert.equal(button.textContent, 'Resume after run 6');
+  button.focus();
+  for (const [name, four, label] of [
+    ['no resumeAfter', {}, 'Resume'],
+    ['the preview is back', { resumeAfter: 6 }, 'Resume after run 6'],
+    ['the resume is held', { heldResume: { after: 6 } }, 'Resume'],
+  ]) {
+    await show(view(four));
+    assert.deepEqual(resumes(), [label], name);
+    assert.equal(footer()[0], button, `${name}: the same button`);
+    assert.equal(ctx.window.document.activeElement, button, `${name}: it keeps the focus`);
+  }
+});
+
+test('s11 (R-ux-2): the label is the one of the run the footer resumes, not of the run the view halts at', async () => {
+  // Run 3 stopped halts the view; the footer's Resume acts on paused run 4.
+  const states = ['done', 'done', 'stopped', 'paused', 'planned', 'running'];
+  const { footer, resumes } = await s11Page(s11View(states, { 4: { resumeAfter: 6 } }, 3));
+  assert.equal(footer().length, 1, 'the fixture: the footer offers run 4\'s Resume');
+  assert.deepEqual(resumes(), ['Resume after run 6']);
+});
+
+test('R-ux-2 example: on run 6, the control reads that it resumes after run 4 (run 4 working: no footer Resume, 1 Resume on the page)', async () => {
+  const states = ['done', 'done', 'done', 'running', 'planned', 'paused'];
+  const { footer, resumes } = await s11Page(s11View(states, { 6: { resumeAfter: 4 } }, 6));
+  assert.deepEqual(footer().map((b) => b.textContent), []);
+  assert.deepEqual(resumes(), ['Resume after run 4']);
+});

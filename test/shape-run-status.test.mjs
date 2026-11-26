@@ -263,3 +263,34 @@ test('s8: resumeLabel(4) is "Resume after run 4"; resumeLabel(undefined), resume
   assert.equal(RS.resumeLabel(4), 'Resume after run 4');
   for (const after of [undefined, null, '4']) assert.equal(RS.resumeLabel(after), 'Resume', String(after));
 });
+
+// ── Shaper small runs slice 11 (R-ux-2): the preview of the run a footer Resume acts on ──────────────────────────
+const S11_RUNS = [{ index: 4, pipelineId: 'p4', state: 'paused', resumeAfter: 6 }, { index: 6, pipelineId: 'p6', state: 'running' }];
+
+test('s11: resumeAfterOf reads the resumeAfter of the slice with that pipelineId, so paused run 4 reads "Resume after run 6" and working run 6 "Resume"', () => {
+  assert.equal(typeof RS.resumeAfterOf, 'function', 'run-status.mjs exports resumeAfterOf');
+  assert.equal(RS.resumeAfterOf(S11_RUNS, 'p4'), 6);
+  assert.equal(RS.resumeAfterOf(S11_RUNS, 'p6'), null);
+  assert.equal(RS.resumeLabel(RS.resumeAfterOf(S11_RUNS, 'p4')), 'Resume after run 6');
+  assert.equal(RS.resumeLabel(RS.resumeAfterOf(S11_RUNS, 'p6')), 'Resume');
+  // Two paused runs: each reads its own number, never the other's.
+  const two = [{ pipelineId: 'p4', resumeAfter: 6 }, { pipelineId: 'p5' }];
+  assert.deepEqual(['p4', 'p5'].map((p) => RS.resumeAfterOf(two, p)), [6, null]);
+});
+
+test('s11: resumeAfterOf returns null, and never throws, for an unknown or empty id, no slices, or a resumeAfter that is no integer', () => {
+  assert.equal(typeof RS.resumeAfterOf, 'function', 'run-status.mjs exports resumeAfterOf');
+  assert.equal(RS.resumeAfterOf(S11_RUNS, 'p9'), null, 'unknown id');
+  for (const slices of [null, undefined, {}, 'p4', []]) assert.equal(RS.resumeAfterOf(slices, 'p4'), null, `slices ${JSON.stringify(slices)}`);
+  // A run not started yet has no pipelineId: an empty or missing id must not match it.
+  const planned = [{ pipelineId: null, resumeAfter: 6 }, { pipelineId: '', resumeAfter: 6 }, { resumeAfter: 6 }];
+  for (const id of ['', null, undefined]) assert.equal(RS.resumeAfterOf(planned, id), null, `id ${String(id)}`);
+  for (const resumeAfter of ['6', 6.5, null, undefined]) assert.equal(RS.resumeAfterOf([{ pipelineId: 'p4', resumeAfter }], 'p4'), null, `resumeAfter ${String(resumeAfter)}`);
+  assert.equal(RS.resumeAfterOf([null, undefined, { pipelineId: 'p4', resumeAfter: 6 }], 'p4'), 6, 'a hole in the list is skipped');
+});
+
+test('s11: the hosts read the preview through resumeAfterOf and write none of the words themselves', () => {
+  const src = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8');
+  for (const p of ['group-page.mjs', 'app.js', 'chat/run-card.mjs']) assert.ok(!src(p).includes('Resume after run'), `${p}: no literal label`);
+  for (const p of ['app.js', 'chat/run-card.mjs']) assert.match(src(p), /\bresumeAfterOf\(/, `${p} calls resumeAfterOf`);
+});

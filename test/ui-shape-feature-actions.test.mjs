@@ -50,6 +50,25 @@ test('an open stop (item 10): the buttons shrink to Stop; ⋯ gains the moved mo
   assert.deepEqual(featureMenu(C(), { moved: [] }).map((i) => i.key), featureMenu(C()).map((i) => i.key), 'no stop: today\'s menu');
 });
 
+test('s11 (R-ux-2): a moved item with a label lists it and still calls its action; without one it reads its ACTION_LABEL', () => {
+  const named = [{ id: 'resume', label: 'Resume after run 6', disabled: 'Pausing…' }];
+  const moved = (list) => featureMenu(C(), { moved: list, stopOpen: true }).filter((i) => i.key === 'act:resume').map((i) => [i.label, i.disabled || null]);
+  assert.deepEqual(moved(named), [['Resume after run 6', 'Pausing…']]);
+  assert.deepEqual(moved([{ id: 'resume' }]), [['Resume', null]]);
+  // Painted: the ⋯ shows the label, a pick is still the footer's `resume`, and the next paint without one reads Resume.
+  const { doc, host, seen, menu } = setup(C());
+  const deps = { act: async () => ({ ok: true }), confirm: async () => true, openPlan() {}, modelAct: (id) => seen.push(['model', id]) };
+  paintFeatureActions(doc, host, C(), deps, { stopOpen: true, moved: [{ id: 'resume', label: 'Resume after run 6' }] });
+  const item = menu().at(-1);
+  assert.equal(item.textContent.trim(), 'Resume after run 6');
+  item.click();
+  assert.deepEqual(seen, [['model', 'resume']]);
+  closeMenus();
+  paintFeatureActions(doc, host, C(), deps, { stopOpen: true, moved: [{ id: 'resume' }] });
+  assert.equal(menu().at(-1).textContent.trim(), 'Resume');
+  closeMenus();
+});
+
 test('an open stop: a moved item calls deps.modelAct with its id; the feature Resume still posts the feature resume', async () => {
   const { doc, host, seen, labels, menu } = setup(C({ halted: true }));
   paintFeatureActions(doc, host, C({ halted: true }), { act: async (a) => { seen.push(['act', a]); return { ok: true }; }, confirm: async () => true,

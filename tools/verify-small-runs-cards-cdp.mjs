@@ -1108,6 +1108,10 @@ async function heldResumePhase() {
 // clicked, the server holds it after run 4 and the button reads plain Resume; the feature page's Runs table row of run 6
 // then reads "after run 4" on the after mark (after-run-row-THEME.png). Once at 375px in light, before the click: the
 // label neither wraps nor overflows, on the saved page and in Chat's run panel.
+// Slice 11: a second marked 6-run feature in the Verifier's state, run 4 paused (a resume point, no runs-map entry) before
+// run 6 working. Nothing in it is clicked. The feature page's footer Resume and the Chat feature card's footer Resume read
+// "Resume after run 6": once at 375px in light (one line, fits), then at 1280px in light and dark
+// (feature-resume-after-run-THEME.png, chat-card-resume-after-run-THEME.png).
 const AR_TITLES = [...TITLES, 'Export the member list', 'Filter members by date'];
 const AR_AGREED = AR_TITLES.map((t, i) => ({ id: `R-po-${i + 1}`, text: t, example: `example ${i + 1}` }));
 const arOutline = normalizeOutline({ why: 'proof', leftOut: [], slices: AR_TITLES.map((title, i) => ({ id: `s${i + 1}`, title, goal: `Goal ${i + 1}`,
@@ -1120,13 +1124,23 @@ async function afterRunPhase() {
   getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify({ version: 2, ledger: [], tokens: {} }), six);
   await mkdir(path.join(projectStorePath(key), 'pipelines', `after-run-${six}`), { recursive: true });
   try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  // Slice 11: the Verifier's state, run 4 paused before run 6 working.
+  const BF = seedFeature('bf', 'Before', ['done', 'done', 'done', 'planned', 'planned', 'running'], { withOutline: arOutline, titles: AR_TITLES });
+  liveRun(BF.pid(6), `Run 6 · ${AR_TITLES[5]}`, { runShape: { slice: { feature: BF.f.id, index: 6 } } });
+  const four = 'bf7e0004';
+  fire(BF.f, 4, four, 'paused', `Run 4 · ${AR_TITLES[3]}`);
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify({ version: 2, ledger: [], tokens: {} }), four);
+  const FOOT = (scope) => `[...document.querySelectorAll('${scope} [data-model-action="resume"]')].find((b) => b.offsetParent)`;
+  const PAGE_RESUME = FOOT('.gpage-actions');
+  const CARD_RESUME = FOOT('.chat-rc-foot');
+  const reads = (btn, text) => `(() => { const b = ${btn}; return !!b && b.textContent.trim() === ${JSON.stringify(text)}; })()`;
   const RESUME = "[...document.querySelectorAll('#hist-detail .hd-resume')].find((b) => b.offsetParent)";
   const WAITS = `(() => { const b = ${RESUME}; return !!b && b.textContent.trim() === 'Resume after run 4'; })()`;
   // One line, no overflow: the label's line boxes and its bar.
   const FITS = (btn) => `(() => { const b = ${btn}; if (!b) return null; const l = b.querySelector('.hd-btn-label, .rd-btn-label') || b;
     const bar = b.closest('.rd-bar-end') || b.parentElement; const lines = new Set([...l.getClientRects()].map((r) => Math.round(r.top))).size;
     return { text: b.textContent.trim(), lines, fits: bar.scrollWidth <= bar.clientWidth, own: b.scrollWidth <= b.clientWidth }; })()`;
-  const fitOk = (r) => !!r && r.text === 'Resume after run 4' && r.lines === 1 && r.fits && r.own;
+  const fitOk = (r, text = 'Resume after run 4') => !!r && r.text === text && r.lines === 1 && r.fits && r.own;
   const ROW6 = "[...document.querySelectorAll('.gpage-runs .run-member')].find((li) => li.offsetParent && li.querySelector('.run-member-num')?.textContent.trim() === '6')";
   // 375px, light, before any click.
   await cdp('Emulation.setDeviceMetricsOverride', { width: 375, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -1143,6 +1157,18 @@ async function afterRunPhase() {
     const r = await ev(FITS(PANEL));
     check(fitOk(r), `after run, 375px: Chat's run panel reads Resume after run 4 on one line that fits (${JSON.stringify(r)})`);
   }
+  // Slice 11, 375px light: both footers' Resume after run 6 keeps one line and fits.
+  await open(`${base}/?beforerun-narrow#feature/${encodeURIComponent(BF.f.id)}`);
+  await skipWelcome(); await setTheme('light');
+  if (await waitFor(reads(PAGE_RESUME, 'Resume after run 6'), 'the feature page footer Resume after run 6 at 375px')) {
+    const r = await ev(FITS(PAGE_RESUME));
+    check(fitOk(r, 'Resume after run 6'), `before run, 375px: the feature page footer's Resume after run 6 keeps one line and fits (${JSON.stringify(r)})`);
+  } else check(false, `before run, 375px: the feature page footer reads Resume after run 6 (${JSON.stringify(await ev(`(${PAGE_RESUME})?.textContent.trim()`))})`);
+  if (await card(BF.threadId, 'beforerun-card-narrow', 'the Before feature card at 375px', 'light')
+    && await waitFor(reads(CARD_RESUME, 'Resume after run 6'), 'the Chat card footer Resume after run 6 at 375px')) {
+    const r = await ev(FITS(CARD_RESUME));
+    check(fitOk(r, 'Resume after run 6'), `before run, 375px: the Chat card footer's Resume after run 6 keeps one line and fits (${JSON.stringify(r)})`);
+  } else check(false, `before run, 375px: the Chat card footer reads Resume after run 6 (${JSON.stringify(await ev(`(${CARD_RESUME})?.textContent.trim()`))})`);
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
   const capture = async (name) => {
     await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
@@ -1172,6 +1198,25 @@ async function afterRunPhase() {
     check(row, `after run, ${theme}: the Runs table row of run 6 reads after run 4 with data-mark="after" (${JSON.stringify(await ev(`(() => { const li = ${ROW6}; return li ? [li.dataset.mark || null, li.querySelector('.run-member-state')?.textContent || null] : null; })()`))})`);
     if (row) await capture(`after-run-row-${theme}.png`);
     heldStops.dropResume(six);   // the next theme starts from a paused run that is not held yet
+  }
+  // Slice 11, 1280px light and dark: the footers say which run the paused run 4 would wait for, before any press.
+  const COUNT = (scope) => `[...document.querySelectorAll('${scope} button')].filter((b) => b.offsetParent && /Resume/.test(b.textContent)).length`;
+  for (const theme of THEMES) {
+    await open(`${base}/?beforerun-${theme}#feature/${encodeURIComponent(BF.f.id)}`);
+    await skipWelcome(); await setTheme(theme);
+    const page = await waitFor(reads(PAGE_RESUME, 'Resume after run 6'), `the feature page footer Resume after run 6 (${theme})`);
+    check(page, `before run, ${theme}: the feature page footer's Resume reads Resume after run 6 (${JSON.stringify(await ev(`(${PAGE_RESUME})?.textContent.trim()`))})`);
+    if (page) {
+      check(await ev(COUNT('.gpage-actions')) === 1, `before run, ${theme}: the feature page footer shows 1 Resume`);
+      await capture(`feature-resume-after-run-${theme}.png`);
+    }
+    const chat = await card(BF.threadId, `beforerun-card-${theme}`, 'the Before feature card', theme)
+      && await waitFor(reads(CARD_RESUME, 'Resume after run 6'), `the Chat card footer Resume after run 6 (${theme})`);
+    check(chat, `before run, ${theme}: the Chat card footer's Resume reads Resume after run 6 (${JSON.stringify(await ev(`(${CARD_RESUME})?.textContent.trim()`))})`);
+    if (chat) {
+      check(await ev(COUNT('.chat-rc-foot')) === 1, `before run, ${theme}: the Chat card footer shows 1 Resume`);
+      await capture(`chat-card-resume-after-run-${theme}.png`);
+    }
   }
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 }

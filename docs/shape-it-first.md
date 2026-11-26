@@ -792,7 +792,8 @@ turn, but it goes before the free runs. Pause or Stop on the held run drops the 
 is then simply paused. Of several runs of one feature resumed at a restart, only the lowest goes on; the others are
 held behind it. A held resume reads `after run N` on its row and on its run page head, and its Resume then reads plain
 `Resume`. Before it is pressed, a paused run's Resume reads `Resume after run N` while another run of the feature is
-going, and `Resume` otherwise; the server still decides at the press. A restart of a stopped or failed run is still
+going, and `Resume` otherwise; the server still decides at the press. The same wording shows on the Resume in the
+feature page's footer and in the Chat feature card's footer, taken from the run that Resume acts on. A restart of a stopped or failed run is still
 refused while another run of the feature is going.
 
 ### Show order

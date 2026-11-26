@@ -144,6 +144,19 @@ export function resumeLabel(after) {
 }
 
 /**
+ * Slice 11 (d11-3): the `resumeAfter` of the view slice whose `pipelineId` is the member a footer's Resume acts on, for
+ * `resumeLabel`. Null for malformed input, an empty id, no match or a non-integer value. Pure; never throws.
+ * @param {unknown} slices
+ * @param {unknown} pipelineId
+ * @returns {number|null}
+ */
+export function resumeAfterOf(slices, pipelineId) {
+  if (!Array.isArray(slices) || !pipelineId) return null;
+  const s = slices.find((x) => isObj(x) && x.pipelineId === pipelineId);
+  return s && Number.isInteger(s.resumeAfter) ? s.resumeAfter : null;
+}
+
+/**
  * Slice 5 (D1): a feature's members as runStatus input, for the sidebar, the feature page and the run page. The
  * `position → slice` Map is built once from the members that carry a `slice` (an integer `position`); a member without a
  * `slice` object gives null. Pure; never reads a flag.
