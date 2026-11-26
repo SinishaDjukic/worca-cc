@@ -23,7 +23,7 @@ The same spec builds the image for every sandboxed setup. "Native" runs on your 
 Not supported yet:
 
 - Tools outside mise and apt. Extend the image by hand for those (see [Worca in a container](docker.md#images)).
-- Internal package mirrors at build time. The build fetches from the public apt, mise and tool sources, through the proxy in the container `.env`.
+- Internal package mirrors at build time. The build fetches from the public apt, mise and tool sources, through the proxy in the container `.env`. A proxy URL that carries a login is not passed to the build. Set the proxy in Docker's own settings for that case.
 - A corporate CA for a proxy that re-signs TLS is not added to the build.
 
 ## The format
