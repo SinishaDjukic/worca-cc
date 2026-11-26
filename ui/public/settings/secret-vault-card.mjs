@@ -176,7 +176,8 @@ export async function loadSecretVaultCard(doc, { confirm = async () => false, js
       btn.addEventListener('click', () => copyFromButton(btn, EXPORT_COMMAND));
       box.append(btn);
       card.querySelector('.sv-export')?.remove();
-      card.querySelector('#secretVaultBody')?.append(box);
+      const links = card.querySelector('#secretVaultBody .sv-links');
+      if (links) links.before(box); else card.querySelector('#secretVaultBody')?.append(box);
     }
   }
   try { status = await json('/api/secrets/status'); } catch { status = null; }

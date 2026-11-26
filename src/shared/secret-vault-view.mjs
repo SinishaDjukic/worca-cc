@@ -49,7 +49,7 @@ export function vaultModel(status, counts = {}) {
   }
   if (inVault > 0 && inFiles > 0) {
     return { state: 'interrupted', value: 'Move not finished', tone: 'attention', primary: 'finish',
-      detail: `${inFiles} saved ${inFiles === 1 ? 'secret is' : 'secrets are'} still in their files. Finish moving them into the vault.` };
+      detail: inFiles === 1 ? "1 saved secret is still in its file. Finish moving it into the vault." : `${inFiles} saved secrets are still in their files. Finish moving them into the vault.` };
   }
   if (inVault === 0 && inFiles > 0) {
     return { state: 'off', value: 'Off', tone: 'neutral', primary: 'turn-on',

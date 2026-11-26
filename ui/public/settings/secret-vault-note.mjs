@@ -21,16 +21,22 @@ export function vaultTakesSaves(doc = globalThis.document, fetchFn = (u) => fetc
 /** Tests and a status change (Turn on, Reset) drop the cached answer. */
 export function forgetVaultNoteStatus() { pending = null; }
 
-/** Add the note right after `input` once the answer is in; at most one per field. Never throws. */
+/**
+ * Add the note once the answer is in; at most one per field. In a divided row (.drow) it is the row's help line under
+ * its label (docs/design-system.md, form rows); elsewhere it follows the field. Never throws.
+ */
 export function addVaultNote(input, { fetchFn } = {}) {
   const doc = input?.ownerDocument;
   if (!doc || !flagOn('secretVault', doc)) return;
   vaultTakesSaves(doc, fetchFn).then((yes) => {
     const host = input.parentElement;
-    if (!yes || !host || host.querySelector(':scope > .sv-field-note')) return;
+    if (!yes || !host) return;
+    const row = input.closest('.drow');
+    const label = row ? row.querySelector(':scope > .drow-label') : null;
+    if ((label ? row : host).querySelector('.sv-field-note')) return;
     const n = doc.createElement('small');
-    n.className = 'hint sv-field-note';
+    n.className = label ? 'hint drow-help sv-field-note' : 'hint sv-field-note';
     n.textContent = VAULT_NOTE_TEXT;
-    input.after(n);
+    if (label) label.after(n); else input.after(n);
   }, () => {});
 }
