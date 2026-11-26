@@ -120,7 +120,7 @@ import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LAB
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, rowMenuPrs, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
-import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
+import { paintRunStatus, paintStateLine, stageBarOf, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
@@ -29697,9 +29697,9 @@ const HD_TAB_ICONS = {
 // describe exactly ONE open detail; the Running detail is a second screen that
 // can be initialised while History's is still mounted. Keeping the cells on the
 // screen makes the engine reentrant and lets the state die with the node.
-const detailTabState = new WeakMap();   // screen -> { cells, activate }
+const detailTabState = new WeakMap();   // screen -> { cells, activate, relayout, menu }
 
-/** The tab cells + activate() of a screen initDetailTabs has run on, else null. */
+/** The tab state of a screen initDetailTabs has run on, else null. */
 function detailTabsOf(screen) {
   return (screen && detailTabState.get(screen)) || null;
 }
@@ -29707,7 +29707,7 @@ function detailTabsOf(screen) {
 // Table-driven pill row + lazily-built section bodies for a detail screen.
 // `tabs` is a list of { key, label, badge(ctx), visible(ctx), build(sec, ...args) }.
 // `opts` names the markup — { tabsSel, secsSel, tabClass, secClass, badgeClass,
-// idPrefix, initial?, buildArgs? } — and the five class/selector names
+// idPrefix, initial?, buildArgs?, overflow? } — and the five class/selector names
 // deliberately have NO defaults: falling back to History's class names inside the
 // Running screen would paint an unstyled tab bar that still passes every
 // structural check.
@@ -29716,14 +29716,21 @@ function detailTabsOf(screen) {
 //   initial   — (ctx) => key for the initially active tab; first visible otherwise
 //   buildArgs — (ctx) => extra args appended after `sec`, evaluated at ACTIVATION
 //               time so a builder sees late-corrected context (History's record)
+//   overflow  — { row: string[] }, opt-in. The keys in `row` always sit in the row;
+//               when two or more of the OTHER tabs are shown they go under a "More"
+//               menu, and the open one joins the row just before More. A table entry
+//               may carry `menuIcon` (an icons.mjs name) for its menu row. The screen's
+//               state `relayout()` recomputes this after a level, git or visibility
+//               change; without `overflow` it does nothing.
 function initDetailTabs(screen, tabs, ctx, opts) {
   const {
     tabsSel, secsSel, tabClass, secClass, badgeClass, idPrefix,
-    initial = null, buildArgs = null,
+    initial = null, buildArgs = null, overflow = null,
   } = opts;
   const bar = screen.querySelector(tabsSel);
   const secs = screen.querySelector(secsSel);
   if (!bar || !secs) return;   // a screen whose template lacks the two hosts
+  detailTabState.get(screen)?.menu?.close();   // never a menu left anchored to a button this rebuild drops
   bar.innerHTML = '';
   bar.classList.add('tabs');
   // The run card lives in the Overview section (adoptRunCard): park it back at the screen's top level, so the
@@ -29784,6 +29791,7 @@ function initDetailTabs(screen, tabs, ctx, opts) {
       sec.hidden = !on;
       if (on && sec.dataset.loaded !== '1') pending = { tab, sec };
     }
+    relayout();
     if (pending) {
       // Stamp AFTER the builder returns: a builder that throws leaves the tab
       // un-stamped and retries on the next activation instead of being stuck
@@ -29795,11 +29803,54 @@ function initDetailTabs(screen, tabs, ctx, opts) {
       pending.sec.dataset.loaded = '1';
     }
   }
-  detailTabState.set(screen, { cells, activate });
+  // The More button (opts.overflow): not a tab, so no tab selector or selection state sees it.
+  let more = null;
+  if (overflow) {
+    more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'tab tab-more';
+    more.setAttribute('aria-haspopup', 'menu');
+    more.setAttribute('aria-expanded', 'false');
+    more.append('More', icon(document, 'chevron-down', 12));
+    more.addEventListener('click', () => {
+      // Read at open time: the shown candidates, their live badge counts and the open one.
+      state.menu = toggleMenu({ doc: document, anchor: more, align: 'end', label: 'More tabs',
+        items: overflowCells().filter(([k]) => inBar(k)).map(([, { tab, btn }]) => ({
+          label: tab.label, icon: tab.menuIcon, hint: btn.querySelector(`.${badgeClass}`)?.textContent,
+          checked: btn.classList.contains('active'),
+          onSelect: () => { btn.click(); btn.focus({ preventScroll: true }); },
+        })) });
+    });
+  }
+  const state = { cells, activate, relayout, menu: null };
+  detailTabState.set(screen, state);
+  const overflowCells = () => [...cells].filter(([k]) => !overflow.row.includes(k));
+  // A tab the interface mode and git show; `inBar` also drops one its page hid while open (the merged Agents place).
+  function showsTab(k) { return cells.has(k) && levelAtLeast(cells.get(k).tab.level || 'simple') && (gitOn() || !cells.get(k).tab.needsGit); }
+  function inBar(k) { return showsTab(k) && !cells.get(k).btn.hidden; }
+  // The row's order: its own tabs, the overflow ones (CSS draws only the open one), then More. With fewer than two
+  // candidates to show there is no More, and every tab keeps its table place.
+  function relayout() {
+    if (!overflow) return;
+    const rest = overflowCells();
+    const use = rest.filter(([k]) => inBar(k)).length >= 2;
+    for (const [, { btn }] of rest) btn.toggleAttribute('data-overflow', use);
+    const all = [...cells.values()].map((c) => c.btn);
+    const over = (b) => b.hasAttribute('data-overflow');
+    const order = use ? [...all.filter((b) => !over(b)), ...all.filter(over), more] : all;
+    const had = document.activeElement;
+    const gone = !use && (had === more || !!state.menu?.el.contains(had));   // the focus is on More or in its menu
+    if (!use) { state.menu?.close(); more.remove(); }
+    // Move only when the order changed: moving a focused button drops its focus.
+    if (order.length !== bar.children.length || order.some((n, i) => n !== bar.children[i])) bar.append(...order);
+    if (had && had !== document.activeElement && (gone || order.includes(had))) {
+      const to = order.includes(had) ? had : bar.querySelector('[role="tab"][aria-selected="true"]');
+      to?.focus({ preventScroll: true });
+    }
+  }
   if (!cells.size) return;
   // The opening tab is always one the interface mode shows: History prefers Diff and Running the
   // live log, both advanced, so Simple lands on Overview instead of on a tab with no pill lit.
-  const showsTab = (k) => cells.has(k) && levelAtLeast(cells.get(k).tab.level || 'simple') && (gitOn() || !cells.get(k).tab.needsGit);
   const want = initial ? initial(ctx) : null;
   const first = [...cells.keys()].find(showsTab);
   activate(showsTab(want) ? want : (first || cells.keys().next().value));
@@ -29810,9 +29861,13 @@ function reselectHiddenDetailTabs() {
   for (const active of $$('.rd-tab.active, .hd-tab.active, .pd-tab.active')) {
     const shows = (b) => levelAtLeast(b.dataset.minLevel || 'simple') && (gitOn() || b.dataset.needsGit === undefined);
     if (shows(active)) continue;
-    const next = [...active.parentElement.children].find(shows);
+    const next = [...active.parentElement.children].find((b) => b.getAttribute('role') === 'tab' && shows(b));   // never "More"
     if (next) next.click();
   }
+}
+/** A level or git change: each open run page recomputes which tabs go under "More". */
+function relayoutDetailTabs() {
+  for (const screen of $$('.rd, .hd')) detailTabsOf(screen)?.relayout();
 }
 
 function hdClarifyCount(data) {
@@ -29838,6 +29893,12 @@ function hdStepRounds(data) {
 function hdAwayOthers(data) {
   const all = data && Array.isArray(data.awayAnswers) ? data.awayAnswers : [];
   return all.filter((d) => d && (d.choice == null || !['clarify', 'questions', 'form'].includes(d.kind)));
+}
+
+/** The run pages' tabs that stay in the row (initDetailTabs `overflow`); the others go under "More". `qa` is the page's
+ *  own Q&A key. A run without a project has no Diff: its Artifacts, the result, keeps that place in the row. */
+function runTabRow(qa, noProject) {
+  return { row: ['overview', 'task', 'diff', 'changes', qa, 'logs', ...(noProject ? ['artifacts'] : [])] };
 }
 
 const HD_TABS = [
@@ -29870,19 +29931,19 @@ const HD_TABS = [
   // step attribution); it only gates VISIBILITY here — buildHdArtifacts fetches the
   // attributed GET /api/runs/:id/artifacts before rendering. Hidden when a run has
   // no indexed artifact beyond the transient live-log / run-dir markers.
-  { key: 'artifacts', label: 'Artifacts', level: 'advanced',
+  { key: 'artifacts', label: 'Artifacts', menuIcon: 'cube', level: 'advanced',
     badge: (d) => {
       const n = Array.isArray(d.artifacts) ? d.artifacts.filter(isDisplayableArtifact).length : 0;
       return n ? String(n) : null;
     },
     visible: (d) => Array.isArray(d.artifacts) && d.artifacts.some(isDisplayableArtifact),
     build: (...a) => buildHdArtifacts(...a) },
-  { key: 'actions', label: 'Actions', level: 'advanced', needsGit: true, badge: () => null, visible: (d) => isGitRun(d.state),
+  { key: 'actions', label: 'Actions', menuIcon: 'play', level: 'advanced', needsGit: true, badge: () => null, visible: (d) => isGitRun(d.state),
     build: (...a) => buildHdActions(...a) },
   // The graph, moved off the page body into its own tab (as on the Running page).
   // loadHistDetailScreen paints it into `.hd-graph` before the tabs exist; the builder
   // MOVES that node, so its mounted view, decor and log links come along.
-  { key: 'workflow', label: 'Workflow', level: 'simple', badge: () => null, visible: () => true,
+  { key: 'workflow', label: 'Workflow', menuIcon: 'workflow', level: 'simple', badge: () => null, visible: () => true,
     build: (sec) => {
       const screen = sec.closest('.hd');
       const g = screen && screen.querySelector('.hd-graph');
@@ -29896,8 +29957,8 @@ const HD_TABS = [
     visible: (d) => Array.isArray(d.artifacts) && d.artifacts.some((a) => a && a.kind === 'live-log'),
     build: (...a) => buildHdLogs(...a) },
   // Session groups (Task 58): only on a run that has a session (its summaries, or a session in its manifest).
-  { key: 'sessions', label: 'Sessions', level: 'advanced', badge: (d) => sessionsBadge(d.state), visible: (d) => sessionsTabVisible(d.state), build: (...a) => buildHdSessions(...a) },
-  { key: 'agents', label: 'Agents', level: 'expert',
+  { key: 'sessions', label: 'Sessions', menuIcon: 'terminal', level: 'advanced', badge: (d) => sessionsBadge(d.state), visible: (d) => sessionsTabVisible(d.state), build: (...a) => buildHdSessions(...a) },
+  { key: 'agents', label: 'Agents', menuIcon: 'agent', level: 'expert',
     badge: (d) => ((Array.isArray(d.state.subAgents) && d.state.subAgents.length) ? String(d.state.subAgents.length) : null),
     // Shaper small runs D2 (D11): with the flag on, a Care run's Agents live in the Overview's one Agents place.
     visible: (d) => !hdAgentsMerged(d.state), build: (...a) => buildHdAgents(...a) },
@@ -29915,6 +29976,7 @@ function initHdTabs(screen, record, data) {
     tabsSel: '.hd-tabs', secsSel: '.hd-sections',
     tabClass: 'hd-tab', secClass: 'hd-sec', badgeClass: 'hd-tab-badge',
     idPrefix: 'hd',
+    overflow: runTabRow('clarify', noProject),
     // hdCurrentRecord(), NOT the captured `record`: build() runs at CLICK time,
     // and refreshHdFromRow REPLACES histDetailState.record (deep link, and every
     // pipelines-changed forced reload). Closing over the load-time object is
@@ -31986,7 +32048,7 @@ const RD_TABS = [
   },
   { key: 'changes', label: 'Changes', icon: HD_TAB_ICONS.changes, level: 'simple', badge: (ctx) => { const fm = rdFolderMembers(ctx.run); const n = fm.length ? memberChangesTotal(fm) : ((changesCounts(rdFolderChanges(ctx.run)) || {}).total || 0); return n ? String(n) : null; }, visible: (ctx) => isFolderRun(ctx.run) || rdFolderMembers(ctx.run).length > 0, build: (sec, ctx) => buildRdChanges(sec, ctx) },
   {
-    key: 'artifacts', label: 'Artifacts', icon: HD_TAB_ICONS.artifacts, level: 'advanced',
+    key: 'artifacts', label: 'Artifacts', menuIcon: 'cube', icon: HD_TAB_ICONS.artifacts, level: 'advanced',
     badge: (ctx) => {
       const n = Array.isArray(ctx.run.artifacts)
         ? ctx.run.artifacts.filter(isDisplayableArtifact).length : 0;
@@ -31996,12 +32058,12 @@ const RD_TABS = [
     build: (sec, ctx) => buildRdArtifacts(sec, ctx),
   },
   {
-    key: 'actions', label: 'Actions', icon: HD_TAB_ICONS.actions, level: 'advanced', needsGit: true,
+    key: 'actions', label: 'Actions', menuIcon: 'play', icon: HD_TAB_ICONS.actions, level: 'advanced', needsGit: true,
     badge: () => null, visible: (ctx) => isGitRun(ctx.run),
     build: (sec, ctx) => buildRdActions(sec, ctx),
   },
   {
-    key: 'workflow', label: 'Workflow', icon: RD_WORKFLOW_ICON, level: 'simple',
+    key: 'workflow', label: 'Workflow', menuIcon: 'workflow', icon: RD_WORKFLOW_ICON, level: 'simple',
     badge: () => null, visible: () => true,
     build: (sec, ctx) => buildRdWorkflow(sec, ctx),
   },
@@ -32016,12 +32078,12 @@ const RD_TABS = [
     build: (sec, ctx) => buildRdLogs(sec, ctx),
   },
   {
-    key: 'sessions', label: 'Sessions', icon: HD_TAB_ICONS.sessions, level: 'advanced',
+    key: 'sessions', label: 'Sessions', menuIcon: 'terminal', icon: HD_TAB_ICONS.sessions, level: 'advanced',
     badge: (ctx) => sessionsBadge(ctx.run), visible: (ctx) => sessionsTabVisible(ctx.run),
     build: (sec, ctx) => buildRdSessions(sec, ctx),
   },
   {
-    key: 'agents', label: 'Agents', icon: HD_TAB_ICONS.agents, level: 'expert',
+    key: 'agents', label: 'Agents', menuIcon: 'agent', icon: HD_TAB_ICONS.agents, level: 'expert',
     badge: (ctx) => {
       const n = Array.isArray(ctx.run.subAgents) ? ctx.run.subAgents.length : 0;
       return n ? String(n) : null;
@@ -32044,6 +32106,7 @@ function initRdTabs(screen, r) {
     secClass: 'rd-sec',
     badgeClass: 'rd-tab-badge',
     idPrefix: 'rd',
+    overflow: runTabRow('qa', noProject),
   });
 }
 
@@ -33160,6 +33223,7 @@ function rdSyncAgentsPlace(screen, ctx) {
   const hadFocus = document.activeElement === btn;
   if (btn.classList.contains('active') && ov) ov.click();
   btn.hidden = true;
+  detailTabsOf(screen)?.relayout();                    // one candidate fewer for More
   const sec = screen.querySelector('.rd-sec[data-sec="agents"]');
   if (sec) sec.hidden = true;
   if (hadFocus && ov) ov.focus();
@@ -37912,17 +37976,18 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   screen.querySelector('.rd-back').addEventListener('click', () => backToRunsList());
   // Glance <-> Details are routes, so the browser's own back and forward walk them.
   const toDetails = (tab = '') => { rdGoDetails(tab); };
-  // While a question waits, the status header ("? Waiting for you / Step: …") is a way to it.
-  const statusTop = screen.querySelector('.rd-now-top');
+  // While a question waits, the state line under the title and the card's status header are ways to it.
   const toQuestions = () => { if (screen.dataset.glance === 'ask') scrollToQuestions(screen); };
-  statusTop.addEventListener('click', toQuestions);
+  for (const link of screen.querySelectorAll('.rd-header > .run-state-line, .rd-now-top')) {
+    link.addEventListener('click', toQuestions);
+    link.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toQuestions(); }
+    });
+  }
   // The live graph is a way to the Workflow tab.
   const livePanel = screen.querySelector('.rd-live');
   livePanel.addEventListener('click', () => rdGoDetails('workflow'));
   livePanel.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); rdGoDetails('workflow'); } });
-  statusTop.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toQuestions(); }
-  });
   // A Now or Activity row opens its tab.
   screen.querySelector('.rd-sheet').addEventListener('click', (e) => {
     const row = e.target.closest && e.target.closest('[data-rd-tab]');
@@ -39154,21 +39219,23 @@ function paintRdGlance(screen, r) {
   // Runs redesign slice 4 (D19): the one status block, the Group row and the model's actions. The run's own bar only:
   // the Group row says where the run sits, so no chain bar and no slice line (Known bug 9).
   const m = paintRdStatus(screen, live);
-  // Only while a question waits is the status header a control (see openRunDetail). A PR-driven Needs you has no
-  // question to jump to.
-  const statusTop = screen.querySelector('.rd-now-top');
+  // Only while a question waits are the header's state line and the card's status header controls (see openRunDetail).
+  // A PR-driven Needs you has no question to jump to.
   const asking = m.state === 'needs-you' && !m.prNeeds;
-  if (statusTop && statusTop.classList.contains('is-link') !== asking) {
-    statusTop.classList.toggle('is-link', asking);
-    if (asking) {
-      statusTop.setAttribute('role', 'button');
-      statusTop.tabIndex = 0;
-      statusTop.setAttribute('aria-label', 'Go to the questions');
-    } else {
-      statusTop.removeAttribute('role');
-      statusTop.removeAttribute('tabindex');
-      statusTop.removeAttribute('aria-label');
+  for (const link of screen.querySelectorAll('.rd-header > .run-state-line, .rd-now-top')) {
+    if (link.classList.contains('is-link') !== asking) {
+      link.classList.toggle('is-link', asking);
+      if (asking) {
+        link.setAttribute('role', 'button');
+        link.tabIndex = 0;
+      } else {
+        link.removeAttribute('role');
+        link.removeAttribute('tabindex');
+        link.removeAttribute('aria-label');
+      }
     }
+    // A label replaces what a screen reader reads, so the header line's keeps its state; refreshed on every paint.
+    if (asking) link.setAttribute('aria-label', [link.matches('.run-state-line') && link.dataset.text, 'Go to the questions'].filter(Boolean).join('. '));
   }
 
   // Time · Cost · Changes. The time ticks (`run-time`, rdTickHosts) only while steps
@@ -39632,11 +39699,16 @@ function routeGroupsPending() {
   return !state.runGroupsLoaded || !(schedulesView.isLoaded() || routeChainsSettled);
 }
 
-/** Slice 3: the card's status line, head buttons and route. `h`: the page's calls (headHandlers). */
+/** Slice 3: the card's status line, head buttons and route. `h`: the page's calls (headHandlers). The header's state
+ *  line and the card's status block are painted from one model: the line says the state and step, the card the rest. */
 function paintRunHead(screen, f, h) {
   const head = headModel(f);
   const block = screen.querySelector('.rd-sheet .run-status');
-  paintRunStatus(block, head.status ? { ...f.m, ...head.status, lineSaysState: false } : f.m);
+  const m = head.status ? { ...f.m, ...head.status, lineSaysState: false } : f.m;
+  paintRunStatus(block, m, { lead: false });
+  // `screen` is the saved page's glance: the header is the run screen's.
+  const line = screen.closest('.rd, .hd')?.querySelector('.run-state-line');
+  paintStateLine(line, m, { stageBar: stageBarOf(m) });
   const slot = screen.querySelector('.rd-head-acts .rd-pr-slot');
   const c = head.cta;
   if (!c) paintPrCta(slot, { state: 'none' });
@@ -41328,7 +41400,7 @@ const gsRunPageHops = (first) => {
   const on = (sel) => [`#run-detail .rd ${sel}`, ...card];
   const asking = !!document.querySelector('#run-detail .rd .rd-questions:not([hidden])');
   return [
-    { id: 'card', info: true, target: on('.rd-glance .rd-now-top'), text: first },
+    { id: 'card', info: true, target: ['#run-detail .rd .rd-header .run-state-line', ...on('.rd-glance .rd-now-top')], text: first },
     { id: 'facts', info: true, target: on('.rd-glance .rd-facts'),
       text: 'Time, cost and the files it has changed so far, kept current while it works.' },
     asking ? { id: 'ask', info: true, target: on('.rd-questions .rd-ask-head'),
@@ -42614,11 +42686,11 @@ onLevelChange(() => paintHiddenSettings());
 onLevelChange(() => repaintOpenRunGroupLine());               // the Group row's "Add to group…" is Advanced (D18)
 onLevelChange(() => scheduleGroupPagePaint());                // the group page's Logs tab is Expert
 onLevelChange(() => paintShelf());
-onLevelChange(() => reselectHiddenDetailTabs());
+onLevelChange(() => { reselectHiddenDetailTabs(); relayoutDetailTabs(); });
 onLevelChange(() => {                                       // node decorations are expert detail
   for (const host of $$('.run-flow.gv-host')) { const slot = GRAPH_MOUNTS.get(host); if (slot && slot.m.repaint) slot.m.repaint(); }
 });                          // tiles above the mode wear their level
-onGitFlip((on) => { paintFormWorkMode(); reselectHiddenDetailTabs(); refreshHdFromRow(); { const hs = histDetailState; if (hs && hs.screen && hs.data && hs.record) void paintHdPublish(hs.screen, hs.record, hs.data); } { const r = rdOpenRun(); if (r && runDetailState && runDetailState.screen) repaintRunDetail(r); } const v = currentView(); if (on && (v === 'projects' || v === 'workspaces')) void refreshSyncChips(); if (!on && v === 'workspaces') for (const item of document.querySelectorAll('.ws-item[data-workspace-id]')) paintWsSyncItem(item); if (on && v === 'new' && state.runTarget !== 'workspace') void refreshBranches(selectedProjectPath()); if (!on && projAddMode === 'clone' && !cloneFollow) setProjAddMode('folder'); if (!on && projFilter !== 'all') { projFilter = 'all'; paintProjFilters(); } });
+onGitFlip((on) => { paintFormWorkMode(); reselectHiddenDetailTabs(); relayoutDetailTabs(); refreshHdFromRow(); { const hs = histDetailState; if (hs && hs.screen && hs.data && hs.record) void paintHdPublish(hs.screen, hs.record, hs.data); } { const r = rdOpenRun(); if (r && runDetailState && runDetailState.screen) repaintRunDetail(r); } const v = currentView(); if (on && (v === 'projects' || v === 'workspaces')) void refreshSyncChips(); if (!on && v === 'workspaces') for (const item of document.querySelectorAll('.ws-item[data-workspace-id]')) paintWsSyncItem(item); if (on && v === 'new' && state.runTarget !== 'workspace') void refreshBranches(selectedProjectPath()); if (!on && projAddMode === 'clone' && !cloneFollow) setProjAddMode('folder'); if (!on && projFilter !== 'all') { projFilter = 'all'; paintProjFilters(); } });
 for (const t of ['input', 'change', 'click']) {
   document.getElementById('run-form')?.addEventListener(t, () => setTimeout(paintHiddenSettings, 0));
 }

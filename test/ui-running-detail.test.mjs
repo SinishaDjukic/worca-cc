@@ -7,6 +7,7 @@ import { confirmDialog } from './helpers/confirm-modal.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { openTab } from './helpers/run-tabs.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { ASK_IN_CHAT } from '../ui/public/run-head.mjs';
@@ -558,17 +559,21 @@ test('a NEW question replaces the panel even though one was already painted', as
 
 // --- T7: tabs ---------------------------------------------------------------
 
-test('Details has nine tabs, results first; the route picks the open one', async () => {
+test('Details has nine tabs, the reading tabs in the row and the rest under More; the route picks the open one', async () => {
   const ctx = await bootRunning();
   await openRun(ctx);
   const { window } = ctx;
   const tabs = [...window.document.querySelectorAll('#run-detail .rd-tab')];
-  assert.deepEqual(tabs.map((b) => b.dataset.sec), ['overview', 'task', 'diff', 'artifacts', 'actions', 'workflow', 'qa', 'logs', 'agents']);
+  assert.deepEqual(tabs.map((b) => b.dataset.sec), ['overview', 'task', 'diff', 'qa', 'logs', 'artifacts', 'actions', 'workflow', 'agents']);
   assert.match(tabs[0].textContent, /Overview/);
   assert.match(tabs[1].textContent, /Task/);
-  assert.match(tabs[4].textContent, /Actions/);
-  assert.match(tabs[7].textContent, /Logs/);
-  assert.match(tabs[6].textContent, /Q&A/);
+  assert.match(tabs[6].textContent, /Actions/);
+  assert.match(tabs[4].textContent, /Logs/);
+  assert.match(tabs[3].textContent, /Q&A/);
+  click(window, window.document.querySelector('#run-detail .rd-tabs > .tab-more'));
+  assert.deepEqual([...window.document.querySelectorAll('body > .wfv-menu .wfv-menu-l')].map((n) => n.textContent),
+    ['Artifacts', 'Actions', 'Workflow', 'Agents']);
+  click(window, window.document.querySelector('#run-detail .rd-tabs > .tab-more'));
   // openRun lands on #running/r1/details/logs.
   assert.equal(window.document.querySelector('#run-detail .rd').dataset.mode, 'details');
   assert.ok(tabOf(window, 'logs').classList.contains('active'), 'the routed tab is open');
@@ -705,7 +710,7 @@ test('a state frame for the open run repaints the ACTIVE section only', async ()
   assert.equal(agents.dataset.loaded, undefined, 'the hidden section was re-armed');
   // The badge tracks the live count even while its tab is hidden.
   assert.equal(tabOf(window, 'agents').querySelector('.rd-tab-badge').textContent, '3');
-  click(window, tabOf(window, 'agents'));
+  openTab(window, tabOf(window, 'agents'));
   await settle(window);
   assert.equal(agents.querySelectorAll('.rd-ag-row').length, 3, 'rebuilt against current data');
 });
@@ -1805,7 +1810,7 @@ test('Agents (live): a sub-agent type named like an Object member keeps its own 
     subAgents: [row('s1', 'constructor'), row('s2', 'toString'), row('s3', '__proto__')],
   });
   const { window } = ctx;
-  click(window, tabOf(window, 'agents'));
+  openTab(window, tabOf(window, 'agents'));
   await settle(window);
   assert.deepEqual([...secOf(window, 'agents').querySelectorAll('.rd-ag-row .agent-type-pill')].map((p) => p.textContent),
     ['constructor', 'toString', '__proto__']);
@@ -2614,7 +2619,7 @@ test('D2: flag off: no .rd-run-facts, no /slice ask from the Overview, dev\'s Ag
   assert.equal(tabOf(window, 'agents').hidden, false);
   assert.equal(visibleAgentsPlaces(window), 2, 'dev: the tab and C2\'s box');
   assert.deepEqual([...window.document.querySelectorAll('#run-detail .rd-tab')].map((b) => b.dataset.sec),
-    ['overview', 'task', 'diff', 'artifacts', 'actions', 'workflow', 'qa', 'logs', 'agents']);
+    ['overview', 'task', 'diff', 'qa', 'logs', 'artifacts', 'actions', 'workflow', 'agents']);
 });
 
 // --- The run time is the engine's elapsed clock; the summed step time is "agent time" ----------
@@ -2750,4 +2755,96 @@ test('a live run whose state carries no elapsed figure still shows the summed ti
     assert.equal(rdHeadTime(window).textContent, '12s', 'as before: the sum of the running steps');
     assert.equal(tileTime(window), '12s');
   } finally { c.restore(); }
+});
+
+// --- the header state line -------------------------------------------------
+
+const stateLine = (window) => window.document.querySelector('#run-detail .rd-header > .run-state-line');
+const questionHost = (window) => window.document.querySelector('#run-detail .rd-questions');
+
+test('the state line sits under the title and says the state on every tab; the card repeats neither word nor step', async () => {
+  const ctx = await bootRunning();
+  const { window } = ctx;
+  await openGlance(ctx);
+  const line = stateLine(window);
+  assert.ok(line, 'the state line is a direct child of the header');
+  assert.equal(line.previousElementSibling.className, 'rd-row1', 'right under the title row');
+  const card = () => window.document.querySelector('#run-detail .rd-glance .rd-sheet .run-status');
+  for (const key of ['overview', 'task', 'diff', 'qa', 'logs', 'workflow']) {
+    click(window, tabOf(window, key));
+    await settle(window);
+    assert.match(stateLine(window).textContent, /^Working( · .+)?$/, `${key}: the state line`);
+    assert.equal(stateLine(window).closest('.rd-sec'), null, `${key}: outside the tab bodies`);
+  }
+  assert.equal(line.dataset.state, 'working');
+  assert.ok(line.querySelector('.status-dot'), 'its own dot');
+  assert.equal(card().querySelector('.run-status-word').hidden, true);
+  assert.equal(card().querySelector('.status-dot').hidden, true);
+  const step = line.querySelector('.run-state-step').textContent.replace(' · ', '');
+  assert.ok(step, 'a working run names its step or stage');
+  assert.ok(!card().querySelector('.run-status-detail').textContent.includes(step), 'the card never repeats the step');
+  assert.equal(card().querySelector('.run-status-head').hidden, !card().querySelector('.run-status-detail').textContent);
+  // A paused frame updates the line live; the card line reads the reason only.
+  frame(ctx, { type: 'done', runId: 'r1', status: 'paused', reason: 'cost_pipeline' });
+  await settle(window, 6);
+  assert.equal(stateLine(window), line, 'the same node');
+  assert.match(line.textContent, /^Paused( · .+)?$/);
+  assert.doesNotMatch(line.textContent, /cost/i);
+  assert.match(card().querySelector('.run-status-detail').textContent, /^cost limit$/i);
+  assert.equal(card().querySelector('.run-status-head').hidden, false);
+});
+
+test('the state line keeps focus across frames and jumps to the question', async () => {
+  const ctx = await bootRunning();
+  const { window } = ctx;
+  await openGlance(ctx);
+  const line = stateLine(window);
+  assert.equal(line.classList.contains('is-link'), false);
+  assert.equal(line.getAttribute('role'), null);
+  assert.equal(line.hasAttribute('tabindex'), false);
+  frame(ctx, { type: 'question', runId: 'r1', ...clarify() });
+  await settle(window, 6);
+  assert.equal(line.classList.contains('is-link'), true);
+  assert.equal(line.getAttribute('role'), 'button');
+  assert.equal(line.getAttribute('tabindex'), '0');
+  assert.match(line.getAttribute('aria-label'), /^Needs you( · .+)?\. Go to the questions$/, 'the name still says the state');
+  assert.equal(line.getAttribute('aria-label'), `${line.textContent}. Go to the questions`);
+  const kids = [...line.children];
+  line.focus();
+  assert.equal(window.document.activeElement, line);
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: GLANCE_MANIFEST, steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 0.9 });
+  await settle(window, 6);
+  assert.deepEqual([...line.children], kids, 'a repaint never rebuilds the line');
+  assert.equal(window.document.activeElement, line, 'and never drops its focus');
+  // Click, Enter and Space all go to the question.
+  let jumps = 0;
+  window.Element.prototype.scrollIntoView = function () { if (questionHost(window).contains(this)) jumps += 1; };
+  click(window, tabOf(window, 'logs'));
+  await settle(window);
+  click(window, line);
+  assert.equal(jumps, 1, 'click');
+  assert.ok(questionHost(window).contains(window.document.activeElement), 'focus lands in the question');
+  for (const key of ['Enter', ' ']) {
+    const ev = new window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+    line.dispatchEvent(ev);
+    assert.equal(ev.defaultPrevented, true);
+  }
+  assert.equal(jumps, 3, 'Enter and Space');
+  // Answered: the line is plain text again.
+  frame(ctx, { type: 'question-resolved', runId: 'r1', id: clarify().id });
+  await settle(window, 6);
+  assert.equal(line.classList.contains('is-link'), false);
+  assert.equal(line.getAttribute('role'), null);
+  assert.equal(line.hasAttribute('tabindex'), false);
+  click(window, line);
+  assert.equal(jumps, 3, 'no jump without a question');
+});
+
+test('the tour\'s card stop looks at the header state line first, then the card', async () => {
+  const ctx = await bootRunning();
+  await openGlance(ctx);
+  const [card] = ctx.window.__np.gsRunPageHops('hi');
+  assert.equal(card.target[0], '#run-detail .rd .rd-header .run-state-line');
+  assert.equal(card.target[1], '#run-detail .rd .rd-glance .rd-now-top');
+  assert.ok(ctx.window.document.querySelector(card.target[0]), 'it resolves');
 });

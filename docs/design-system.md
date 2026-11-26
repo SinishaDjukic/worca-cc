@@ -194,6 +194,13 @@ on the row below, with 7px switch padding (a 311px History drawer leaves 283px).
 shows, so its selects keep their content width and search shares the switch row with copy.
 ### Tabs
 `.tabs` / `.tab`: underline tabs, 32px, never boxed (checked).
+Overflow under "More" is opt-in per row (`initDetailTabs` `overflow`); only the run pages use it. Their row holds the
+reading tabs, in table order: Overview, Task, Diff / Changes (Artifacts for a run without a project), Q&A and Logs. The
+other tabs go under "More": a `.tab`-styled button (`.tab-more`, never `role=tab`) with a 12px `chevron-down` and
+`aria-haspopup="menu"`, opening the shared menu (`toggleMenu`): one row per tab with its icon, its name, its count as
+the hint and the open one checked. An open overflow tab joins the row, lit, just before "More", and leaves it when
+another tab opens. With fewer than two shown tabs to hold there is no "More" and the tab keeps its usual place. The
+label is "More", never "…", which is the run's ⋯ menu.
 ### Filter chip
 `.filter-chip` (`aria-pressed`): 28px, 12px / 500, 1px `--line-2` border, 6px corner. Selected: `--field` fill, ink
 border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only filter chip: `mv-filter`, `wfl-chip`,
@@ -219,12 +226,21 @@ The avatar draws only the session and long-window rings (`ui/public/usage-view.m
 `--amber` at the warning line, `--red` full at the limit); spend is never a ring there, it lives in the account menu's
 spend card.
 ### Card head
-The first line of a card is its headline. When the page title sits above the card (the run page, the group page),
-the state is the headline: `.run-status-word`, 1–3 words at `--fs-section` / 600 / `--lh-title`, never truncated, the
-status dot centred on it and the head buttons and the Live switch centred on its line (`.rd-sheet-head`,
-`--rd-word-line`). Under it, `.run-status-detail`: 12px `--ink-2`, at most 2 lines (the whole text as its tooltip),
-and only what no row below says ("not in dev yet", "Failed · Build · Implementation" → "Build · Implementation",
-"14 files changed in a copy", "conflicts with dev", GitHub's verdict); absent otherwise. A card with its own title
+The first line of a card is its headline. When the page title sits above the card (the group page), the state is the
+headline: `.run-status-word`, 1–3 words at `--fs-section` / 600 / `--lh-title`, never truncated, the status dot centred
+on it and the head buttons and the Live switch centred on its line (`.rd-sheet-head`, `--rd-word-line`). Under it,
+`.run-status-detail`: 12px `--ink-2`, at most 2 lines (the whole text as its tooltip), and only what no row below says
+("not in dev yet", "Failed · Build · Implementation" → "Build · Implementation", "14 files changed in a copy",
+"conflicts with dev", GitHub's verdict); absent otherwise.
+
+On the run page the state is not the card's: the header's state line under the title says it on every tab
+(`.run-state-line`: the dot or symbol, the state word at 13px / 600, then "· step or stage" in `--ink-2`, one line, the
+step cut with "…"). The card's head shows only what that line does not say, a reason, a timing or a verdict ("cost
+limit", "not in dev yet") on the head buttons' line, and nothing otherwise: the head buttons then take a row of their
+own and the card starts at its progress bar. While a question waits, the state line and the card's status block both
+lead to it. Both are painted from one model (`statusSplit`), so their words and colour cannot differ.
+
+A card with its own title
 (the chat run card) keeps the state at 13px / 600 under it. Its head is one row centred on the title's line box (no
 margin on the title, no nudge on the dot), the project is the meta line right under it, and a single run has no kind
 chip, as the run page title (a PR fix run's fix line leads with "PR fix run"); a group keeps its chip
@@ -282,7 +298,8 @@ label, host, className })` (`ui/public/workflows/menu.mjs`) emits it, and its it
 is appended inside it (a `.btn-split.mini`) and placed by its CSS; a `{ switch: true }` item is a `menuitemcheckbox`
 switch row (help line, `.switch`) whose toggle keeps the menu open. A radio row (`menuitemradio`) is one grid: a 12px ✓
 slot first (painted only when picked), the label, then the count or kind chip at the right edge in tabular figures, so
-every label starts and every number ends at one x; a count of 0 is `--ink-3`. A `{ segmented: true, label, options,
+every label starts and every number ends at one x; a count of 0 is `--ink-3`. A radio row with an `icon` (the run
+page's "More" menu) has the 16px icon between the ✓ slot and the label. A `{ segmented: true, label, options,
 value, onSelect }` item is a `.menu-h` head over one full-width `.seg` (role group of `menuitemradio`): ←/→ move inside
 it, ↑/↓ move on, and a pick keeps the menu open. The View menus (Runs, Chats; `viewMenuItems`, 256px) use it for Sort by
 and Group by. The run page's View PR ▾ is built with it. The sidebar flyouts (`.nav-fly`), the
@@ -487,9 +504,12 @@ above them, never a boxed tab, and never a colour of a tab's own.
   action, Stop, ⋯), the title (one line, cut with "…" where the column ends; the cut is CSS only, the stored name is
   whole, its tooltip holds it, and the bar repeats it once the title scrolls away). A run page's title has no kind chip:
   a run in a group has no group row in its facts block, and the breadcrumb names and links its group. A group page's
-  title keeps its kind chip (`Feature` / `Chain` / `Group`). Then the card: the status block (the state word as the card's headline with its detail under it, the head buttons at its right,
-  centred on the word's line, with the PR control among them; see Card head and PR controls. Beside the stage bar the
-  detail names only the step (`Working` / `Refine Plan`); the stage is on the bar), the route ("Where the work is") under a `--line` divider, the facts block (`.rd-kv`: Project, Labels, Cost tags and Group, in that order; 12px
+  title keeps its kind chip (`Feature` / `Chain` / `Group`). The run page's header has no box: its edges are the tabs'
+  and the content's, and under the title row it holds the state line (see Card head); `.pd-header` (project and
+  workspace pages) keeps its box. Then the card: the status block (on the group page the state word as the card's
+  headline with its detail under it; on the run page only the reason the state line leaves out), the head buttons at its
+  right, centred on that line, with the PR control among them; see Card head and PR controls. Beside the stage bar the
+  run page's state line names only the step (`Working · Refine Plan`); the stage is on the bar. Then the route ("Where the work is") under a `--line` divider, the facts block (`.rd-kv`: Project, Labels, Cost tags and Group, in that order; 12px
   `--ink-2` labels, 13px values, one row per fact and one place to edit it; a quiet button that leads a value pulls back
   by its padding so its text sits on the value column), then the tiles (`--fs-stat` sans values with tabular figures,
   `--pad-tile` padding). No PR bar, no kept-work, merge-back or Apply box: their actions are head buttons.

@@ -528,6 +528,7 @@
         "selectors": [
           ".hd ",
           ".hd-",
+          ".pd-header",
           ".pd-row1",
           ".hist-sic"
         ],

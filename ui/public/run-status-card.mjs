@@ -56,6 +56,48 @@ export function statusText(m, { stageBar = false } = {}) {
   return { word, line, text, head, detail: rest.join(SEP) };
 }
 
+/** The run's own bar shows (a group draws the current member's instead). A run in Needs you only through its PR has
+ *  finished its pipeline, so it has no bar (an empty one read as 0%). */
+const barShows = (cur) => !!(cur && cur.progress && BAR_STATES.has(cur.state) && !cur.prNeeds);
+/** statusText's `stageBar` for a status block painted from `m`. */
+export const stageBarOf = (m) => !!m && !isGroup(m) && barShows(m);
+
+/** The run page's split of statusText: the header's state line says `head · step`, the card only `rest` (reason,
+ *  timing, verdict), never the head or the step again. */
+export function statusSplit(m, { stageBar = false } = {}) {
+  const st = statusText(m, { stageBar });
+  const segs = st.detail ? st.detail.split(SEP) : [];
+  const stage = m && m.progress && m.progress.mode === 'stages' ? String(m.progress.label || '') : '';
+  const working = !!m && m.state === 'working';
+  const step = working ? String(m.barLine || stage || segs[0] || '') : stage && segs[0] === stage ? stage : '';
+  const drop = new Set(working ? [step, stage] : [step]);
+  return { head: st.head, step, rest: segs.filter((s) => s && !drop.has(s)).join(SEP) };
+}
+
+/** Paint the run page's state line into `host` (idempotent): the dot or symbol, the state word and the step. Its nodes
+ *  are built once, so a live repaint never takes the focus off a line that links to the questions. */
+export function paintStateLine(host, m, { stageBar = false } = {}) {
+  if (!host || !m) return;
+  const doc = host.ownerDocument;
+  if (!host.__sl) {
+    const dot = doc.createElement('span');
+    const word = textEl(doc, 'span', 'run-state-word', '');
+    const step = textEl(doc, 'span', 'run-state-step', '');
+    host.replaceChildren(dot, word, step);
+    host.__sl = { dot, word, step };
+  }
+  const { dot, word, step } = host.__sl;
+  const sp = statusSplit(m, { stageBar });
+  paintStatusDot(dot, m);
+  const said = sp.step ? `${SEP}${sp.step}` : '';
+  if (word.textContent !== sp.head) word.textContent = sp.head;
+  if (step.textContent !== said) step.textContent = said;
+  step.hidden = !said;
+  host.dataset.state = m.state;
+  host.dataset.text = sp.head + said;
+  host.title = sp.head + said;                        // the line ellipsizes: the whole text on hover
+}
+
 /** The kind word of a feature (Shaper): kindLabel's `Feature · N runs` and, B1, the one card's chip. */
 export const FEATURE_KIND = 'Feature';
 
@@ -68,8 +110,10 @@ export function kindLabel(row) {
 }
 
 /** Paint the status block into `host` (idempotent): dot or symbol, status text, group bar, current run bar.
- *  `hold` (the group page, slice 3): a live group's member between runs keeps the last bar, edge still. */
-export function paintRunStatus(host, m, { hold = false } = {}) {
+ *  `hold` (the group page, slice 3): a live group's member between runs keeps the last bar, edge still.
+ *  `lead: false` (the run pages): the state line under the title already shows the dot, the word and the step, so the
+ *  block shows only statusSplit's `rest`, and no head at all when nothing is left. The data-* facts stay whole. */
+export function paintRunStatus(host, m, { hold = false, lead = true } = {}) {
   if (!host || !m) return;
   const doc = host.ownerDocument;
   if (!host.__rs) {
@@ -87,23 +131,26 @@ export function paintRunStatus(host, m, { hold = false } = {}) {
     const roles = textEl(doc, 'div', 'run-status-roles', '');
     roles.hidden = true;
     host.append(head, roles, group, bar);
-    host.__rs = { dot, word, detail, group, bar, roles };
+    host.__rs = { head, dot, word, detail, group, bar, roles };
   }
-  const { dot, word, detail, group, bar } = host.__rs;
+  const { head, dot, word, detail, group, bar } = host.__rs;
   host.dataset.state = m.state;
   host.dataset.word = m.word;
   host.dataset.line = m.line;
   const g = isGroup(m);
   const cur = g ? m.current : m;
-  // A run in Needs you only through its PR has finished its pipeline, so it has no bar (an empty one read as 0%).
-  const show = !!(cur && cur.progress && BAR_STATES.has(cur.state) && !cur.prNeeds);
+  const show = barShows(cur);
   paintStatusDot(dot, m);
   const st = statusText(m, { stageBar: !g && show });
   host.dataset.text = st.text;                       // the one-line "State · detail" (lists and tests read this form)
   if (word.textContent !== st.head) word.textContent = st.head;
-  detail.textContent = st.detail;
-  detail.title = st.detail;                           // clamped at 2 lines: the full text on hover
-  detail.hidden = !st.detail;
+  const said = lead ? st.detail : statusSplit(m, { stageBar: !g && show }).rest;
+  detail.textContent = said;
+  detail.title = said;                                // clamped at 2 lines: the full text on hover
+  detail.hidden = !said;
+  dot.hidden = !lead;
+  word.hidden = !lead;
+  head.hidden = !lead && !said;
   if (groupBarShows(m)) {
     paintChainBar(group, { total: m.progress.total, fraction: m.progress.fraction, text: `${m.count.done} done` });
   } else group.hidden = true;
