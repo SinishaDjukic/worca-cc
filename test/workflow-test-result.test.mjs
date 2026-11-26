@@ -104,12 +104,15 @@ test('a script check runs on a copy of the result folder, waits while the bench 
   assert.equal(threw.worcaProblem, true, 'another bench throw stays a Worca problem');
 });
 
+const QUEUED_CHECK_DEADLINE_MS = 30 * 1000;
 test('a stuck script check times out, frees the queue, and still removes its copy once it settles', async () => {
   const t = await seedTry({ work: { 'brief.md': BRIEF } });
   let release; let stuckDir = null;
   const stuck = (req) => { stuckDir = req.cwd.dir; return new Promise((r) => { release = r; }); };
   const first = runScriptCheck({ kind: 'script', key: 'a' }, { pipelineId: t.id, runBench: stuck, deadlineMs: 50 });
-  const second = runScriptCheck({ kind: 'script', key: 'b' }, { pipelineId: t.id, runBench: async () => ({ status: 'clean', summary: '', verdict: { issues: [] } }), deadlineMs: 50 });
+  // The second check is not the stuck one: its backstop only has to outlast its own setup (a temp copy of the try's
+  // result), which takes over 50 ms on a busy CI runner. A short deadline here made this test fail by timing out.
+  const second = runScriptCheck({ kind: 'script', key: 'b' }, { pipelineId: t.id, runBench: async () => ({ status: 'clean', summary: '', verdict: { issues: [] } }), deadlineMs: QUEUED_CHECK_DEADLINE_MS });
   assert.deepEqual(await first, { met: false, value: 'Not met', error: 'timed out', worcaProblem: true }, 'U-T2: the backstop is Worca\'s');
   assert.deepEqual(await second, { met: true, value: 'Met' });
   assert.equal(existsSync(stuckDir), true, 'still there while the job is stuck');
