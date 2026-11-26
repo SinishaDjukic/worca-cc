@@ -40,7 +40,10 @@ function pipelineRows(ids) {
  *  finished ones included. A group with no listable member is left out. D2 (D1): a Shaper small-runs feature (flag on
  *  and its origin marked) also carries `smallRuns: true`; every other group keeps dev's keys (the key is absent). `hold`: why a
  *  small-runs feature whose runs are done is not ready to ship (features.mjs shipHold); absent when nothing holds it. Its
- *  native members carry `slice` (sliceWords; `live` is the server's runs overlay). */
+ *  native members carry `slice` (sliceWords; `live` is the server's runs overlay): with the flag on, every member's
+ *  `slice` carries `buildsOn` (number[], its direct builds-on runs), and a not-started
+ *  member's `slice` also carries `waitsFor` (number[]) and `cannotStart` {run, reason}; the one run that goes on next
+ *  (a run whose stop answer is held waiting its turn, else the scheduler's next start) carries `nextTurn`. */
 export function listRunGroups({ live = () => null } = {}) {
   const db = getDb();
   const small = shaperSmallRunsOn();

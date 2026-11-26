@@ -143,6 +143,7 @@ Pull requests (add each number when it opens):
 
 - Proxy login in the egress sidecar (#1621)
 - The Settings card and the setup assistant talk to the sidecar (#1623)
+- The UI server gets the sidecar's secret, so the card and the move of an old login work (#1637)
 
 ## Build the box image from the spec
 

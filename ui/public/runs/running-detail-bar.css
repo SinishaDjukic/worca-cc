@@ -72,6 +72,10 @@
 .status-dot.is-grey{color:var(--slate);}
 .status-dot.is-dark-grey{color:var(--ink-2);}
 .status-dot.is-grey-ring{color:var(--slate);background:none;box-shadow:inset 0 0 0 2px currentColor;}
+/* Shaper small runs s4: the run with the turn (`next`) is a ring in ink; a held stop answer (`after run N`) a 12px
+   dashed ring in --ink-3, its dashes cut by a mask, with no glyph (status-dot.mjs markDot). */
+.status-dot.is-ink-ring{color:var(--ink);background:none;box-shadow:inset 0 0 0 2px currentColor;}
+.status-dot.is-dashed-ring{width:12px;height:12px;color:var(--ink-3);background:currentColor;-webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5.2' fill='none' stroke='black' stroke-width='1.5' stroke-dasharray='2.4 1.7'/></svg>") center/100% 100% no-repeat;mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5.2' fill='none' stroke='black' stroke-width='1.5' stroke-dasharray='2.4 1.7'/></svg>") center/100% 100% no-repeat;}
 .status-dot.has-sym{width:12px;height:12px;background:none;}
 .status-dot.has-sym > svg{display:block;}
 .status-dot.has-ic{width:14px;height:14px;background:none;color:var(--ink-2);}

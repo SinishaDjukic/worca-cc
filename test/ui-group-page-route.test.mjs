@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootApp } from './helpers/run-page-boot.mjs';
 import { REPLAY_FRAMES } from './helpers/run-states.mjs';
+import { SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
 
 const member = (i) => ({ position: i, title: `Slice ${i}`, pipelineId: `p${i}`, ticketId: null, status: 'done', pr: null, ticket: null, adhoc: false, after: null });
 const GROUPS = { groups: [
@@ -359,6 +360,41 @@ test('D3: a planned run with no page yet (a waiting ticket) reads its run N as p
   assert.equal(row.querySelector('a'), null, 'no link for a run with no page');
   assert.equal(reqNote(ctx, 'R-po-3'), 'run 3 · to do');
   assert.ok(pageOf(ctx).querySelector('.gpage-requirements [data-key="R-po-1"] a.rd-fact-link'), 'a run with a page still links');
+});
+
+test('S16-T5 (R-po-6): a run that has not started has no run page: its row on the feature page and in the Runs list opens the feature', async () => {
+  const waiting = { ...d3Member(3), pipelineId: null, ticketId: 't3', status: 'scheduled' };
+  const groups = { groups: [{ ...D3_GROUPS([waiting]).groups[0], smallRuns: true }, GROUPS.groups[1]] };
+  // The Runs list lists a group only once one of its runs is a live, scheduled or saved row: run 1 is saved.
+  const saved = [{ id: 'p1', projectKey: 'acme', title: 'Slice 1', status: 'done', mtime: Date.now() }];
+  const { ctx } = await d3Boot({ feature: () => json(D3_FEATURE('being built')), groups,
+    extra: (url) => (url.startsWith('/api/history') ? json({ pipelines: saved }) : null) });
+  ctx.go('feature/feat_1');
+  await ctx.settle(10);
+  const hrefs = (row) => [...row.querySelectorAll('a[href]')].map((a) => a.getAttribute('href'));
+  const noRunPage = (row, where) => {
+    assert.deepEqual(hrefs(row).filter((h) => h.startsWith('#running/') || h.startsWith('#history/')), [], `${where}: no run page link`);
+  };
+  const row = pageOf(ctx).querySelector('.gpage-runs .run-member[data-key="t3"]');
+  assert.ok(row, 'the waiting run has a row on the feature page');
+  assert.equal(row.querySelector('.run-member-title').getAttribute('href'), '#feature/feat_1');
+  noRunPage(row, 'feature page');
+  assert.equal(pageOf(ctx).querySelector('.gpage-runs .run-member[data-key="p1"] .run-member-title').getAttribute('href'), '#history/acme/p1',
+    'a started run still links its own page');
+  // The same member in the Runs list (the group row, expanded).
+  const list = () => ctx.window.document.getElementById('runs-list');
+  const toggle = list().querySelector('.runs-item[data-row-key*="feat_1"] .runs-expand');
+  assert.ok(toggle, 'the feature\'s group row is listed');
+  if (toggle.getAttribute('aria-expanded') !== 'true') {
+    toggle.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+    await ctx.settle(6);
+  }
+  const members = [...list().querySelectorAll('.runs-item[data-row-key*="feat_1"] > .runs-members > .runs-item')];
+  const member = (n) => members.find((m) => m.querySelector('.runs-row-title').textContent === `${n} · Slice ${n}`);
+  assert.ok(member(3), `the waiting run is a member row: ${members.map((m) => m.textContent).join(' | ')}`);
+  assert.equal(member(3).querySelector('a.runs-row').getAttribute('href'), '#feature/feat_1');
+  noRunPage(member(3), 'Runs list');
+  assert.equal(member(1).querySelector('a.runs-row').getAttribute('href'), '#history/acme/p1');
 });
 
 test('D3: a member state frame refetches the feature and flips R-po-2 from being built to met; a shape-feature frame changing one word repaints the open tab', async () => {
@@ -755,4 +791,185 @@ test('a member current through its PR does not hide the Verifier\'s question', a
   assert.equal(pageOf(ctx).querySelector('.gpage-card .run-status').dataset.state, 'needs-you', 'a member is current through its PR');
   assert.equal(slot.hidden, false);
   assert.ok(slot.textContent.includes('Verifier · 1 gap left'));
+});
+
+
+// ---- Shaper small runs s4 (R-ux-1, R-arch-4): the feature page's Runs tab reads the shared run status ----
+const S4_SLICE = (over) => ({ state: 'planned', kind: 'build', buildsOn: [], waitsFor: [], cannotStart: null, nextTurn: false, stop: null, ...over });
+const s4Members = () => [
+  { ...d3Member(1), status: 'done', slice: S4_SLICE({ state: 'done' }) },
+  { ...d3Member(2), pipelineId: 'p2', status: 'running', slice: S4_SLICE({ state: 'approval', buildsOn: [1], stop: { reason: 'requirement', held: false } }) },
+  { ...d3Member(3), pipelineId: 'p3', status: 'running', slice: S4_SLICE({ state: 'held', buildsOn: [1], stop: { reason: 'check', held: true, after: 2 } }) },
+  { ...d3Member(4), pipelineId: 'p4', status: 'error', slice: S4_SLICE({ state: 'error', buildsOn: [1] }) },
+];
+const s4Groups = () => ({ groups: [{ ...GROUPS.groups[0], smallRuns: true, members: s4Members() }, GROUPS.groups[1]] });
+
+test('s4: a marked feature with the flag on draws the held ring, "?" and "!" in the Runs tab; with the flag off no row has data-mark', async () => {
+  for (const flag of [true, false]) {
+    const { ctx } = await d3Boot({ flag, feature: () => json(D3_FEATURE('being built')), groups: s4Groups() });
+    ctx.go('feature/feat_1');
+    await ctx.settle(10);
+    const runs = pageOf(ctx).querySelector('.gpage-runs');
+    assert.ok(runs, 'the Runs tab painted');
+    if (flag) {
+      assert.ok(runs.querySelector('.status-dot.is-dashed-ring'), 'a held answer: the dashed ring');
+      assert.ok(runs.querySelector('.status-dot[data-symbol="question"]'));
+      assert.ok(runs.querySelector('.status-dot[data-symbol="alert"]'));
+      assert.equal(runs.querySelectorAll('.status-dot[data-symbol="question"]').length, 1, 'the held answer shows no "?"');
+      assert.equal(runs.querySelector('.run-member[data-key="p3"] .run-member-state').textContent, 'after run 2');
+    } else {
+      assert.equal(runs.querySelector('[data-mark]'), null);
+      assert.equal(runs.querySelector('.is-dashed-ring, .is-ink-ring'), null);
+    }
+  }
+});
+
+// ── Shaper small runs slice 7 (R-po-5): the app hands the marked feature page its state line and need-you count ───────
+const s7Sl = (index, state, over = {}) => ({ index, title: `Slice ${index}`, state, pipelineId: state === 'planned' ? null : `p${index}`,
+  ticketId: `t${index}`, pr: null, kind: 'build', waitsFor: [], buildsOn: [], nextTurn: false, cannotStart: false, stop: null, ...over });
+const s7Stop = (reason) => ({ stop: { reason, held: false } });
+const S7_SLICES = [s7Sl(1, 'done'), s7Sl(2, 'approval', s7Stop('requirement')), s7Sl(4, 'questions', s7Stop('check')), s7Sl(5, 'error'),
+  s7Sl(6, 'running'), s7Sl(9, 'planned', { nextTurn: true }), s7Sl(11, 'questions', s7Stop('check'))];
+const s7Ask = (index, failed = false) => ({ index, runId: failed ? null : `r${index}`, pipelineId: `p${index}`, id: failed ? null : `q${index}`,
+  kind: failed ? null : 'gate', reason: failed ? null : 'check', failed, holdsUp: [] });
+const S7_ASKS = [s7Ask(2), s7Ask(4), s7Ask(5, true), s7Ask(11)];
+const s7Feature = (asks) => ({ ...FEATURE, status: 'active', total: 7, done: 1, slices: S7_SLICES, asks, ask: asks[0] || null,
+  ship: { ready: false, mode: null, smallRuns: { owned: [], confirmed: [], waiting: [], blocked: false, reason: null, order: [], care: null } } });
+const S7_STATUS = { done: 'done', approval: 'running', questions: 'running', running: 'running', error: 'error', planned: 'scheduled' };
+const S7_GROUPS = { groups: [{ ...GROUPS.groups[0], smallRuns: true, members: S7_SLICES.map((sl) => ({ ...member(sl.index), pipelineId: sl.pipelineId,
+  ticketId: sl.pipelineId ? null : sl.ticketId, status: S7_STATUS[sl.state], ticket: sl.pipelineId ? null : { status: 'scheduled' }, slice: sl })) }] };
+/** Run 6's live frames: a Care plan graph with the code reviewer active, so its word is "reviewing". */
+function s7LiveRun6(ctx) {
+  const node = (id, key) => ({ id, kind: 'agent', key, x: 0, y: 0, label: key, ports: { inputs: [], outputs: [] } });
+  ctx.dispatch({ type: 'hello', runs: [{ runId: 'r6', pipelineId: 'p6', title: 'Slice 6', projectDir: '/tmp/p', status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z' }] });
+  ctx.dispatch({ type: 'state', runId: 'r6', id: 'p6', status: 'running',
+    stepper: { version: 2, template: { id: 'wf_shape_slice_req' }, careRun: { position: 'balanced' }, graph: { nodes: [node('n_impl', 'implementer'), node('n_review', 'reviewer')], wires: [] } },
+    steps: [{ key: 'x:n_review:1', executionId: 'x:n_review:1', nodeId: 'n_review', ordinal: 1, cycle: 1, status: 'start', startedAt: '2026-01-01T00:00:00Z' }],
+    active: [{ nodeId: 'n_review', executionId: 'x:n_review:1' }] });
+}
+
+test('s7: the marked feature page shows "Run 6 reviewing · next: run 9" and "4 need you" once; a shape-feature frame alone moves both, and at zero the chip goes', async () => {
+  let feature = s7Feature(S7_ASKS);
+  let late = null;      // while set, the feature answers only after the run groups did (and repainted the page)
+  const { ctx } = await d3Boot({ feature: () => (late ? new Promise((r) => late.push(() => r(json(feature)))) : json(feature)), groups: S7_GROUPS });
+  const frame = async () => {
+    late = [];
+    ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+    await ctx.settle(10);
+    assert.ok(late.length, 'the frame refetched the feature');
+    const held = late;
+    late = null;
+    for (const release of held) release();
+    await ctx.settle(10);
+  };
+  s7LiveRun6(ctx);
+  await ctx.settle(6);
+  ctx.go('feature/feat_1');
+  await ctx.settle(10);
+  const gp = pageOf(ctx).querySelector('.gpage');
+  const detail = () => gp.querySelector('.gpage-card .run-status-detail').textContent;
+  const chips = () => [...gp.querySelectorAll('.rd-title-row [data-need]')].map((c) => c.textContent);
+  assert.equal(gp.querySelector('.run-member[data-key="p6"] .run-member-state').textContent, 'reviewing', 'the fixture: run 6\'s snapshot is loaded');
+  assert.equal(detail(), 'Run 6 reviewing · next: run 9');
+  assert.deepEqual(chips(), ['4 need you']);
+  assert.equal(gp.textContent.match(/\bneed you/g)?.length, 1);   // no trailing \b: the chip's text runs into the next word
+  // Run 4's stop is answered in another view and the turn moves to run 10: only the feature frame says so.
+  feature = { ...s7Feature(S7_ASKS.filter((a) => a.index !== 4)), slices: [...S7_SLICES.map((x) => (x.index === 9 ? { ...x, nextTurn: false } : x)), s7Sl(10, 'planned', { nextTurn: true })] };
+  await frame();
+  assert.equal(detail(), 'Run 6 reviewing · next: run 10');
+  assert.deepEqual(chips(), ['3 need you']);
+  feature = s7Feature([]);
+  await frame();
+  assert.equal(gp.querySelector('[data-need]'), null, 'nothing at zero');
+});
+
+test('s7 R-arch-9: with the flag off the marked feature page has no count and keeps today\'s line', async () => {
+  const { ctx } = await d3Boot({ flag: false, feature: () => json(s7Feature(S7_ASKS)), groups: S7_GROUPS });
+  s7LiveRun6(ctx);
+  await ctx.settle(6);
+  ctx.go('feature/feat_1');
+  await ctx.settle(10);
+  const gp = pageOf(ctx).querySelector('.gpage');
+  assert.ok(gp, 'the group page rendered');
+  assert.equal(gp.querySelector('[data-need]'), null);
+  assert.doesNotMatch(gp.querySelector('.gpage-card .run-status').textContent, /next: run/);
+});
+
+// ── Shaper small runs slice 10 (R-ux-3): the app hands the marked feature page its slices for "Show order" ───────────
+const s10Slices = () => SIXTEEN_RUN_LINKS.map(({ run, dependsOn }) => s7Sl(run, 'planned', { buildsOn: [...dependsOn], waitsFor: [...dependsOn] }));
+const s10Feature = (marked) => ({ ...FEATURE, status: 'active', total: 16, done: 0, slices: s10Slices(), asks: [], ask: null,
+  ship: { ready: false, mode: null, ...(marked ? { smallRuns: D3_SR() } : {}) } });
+const s10Groups = (marked) => ({ groups: [{ ...GROUPS.groups[0], ...(marked ? { smallRuns: true } : {}),
+  members: s10Slices().map((sl) => ({ ...member(sl.index), pipelineId: null, ticketId: sl.ticketId, status: 'scheduled',
+    ticket: { status: 'scheduled' }, ...(marked ? { slice: sl } : {}) })) }, GROUPS.groups[1]] });
+/** The 16-run feature page, opened. The Runs layout is the narrow slide, where bare #runs is the list itself (side by
+ *  side it reopens this very page) and the page root is kept for the way back. */
+async function s10Open({ flag = true, marked = true } = {}) {
+  const { ctx, calls } = await d3Boot({ flag, feature: () => json(s10Feature(marked)), groups: s10Groups(marked) });
+  ctx.window.document.getElementById('runs-shell').dataset.layout = 'slide';
+  ctx.go('feature/feat_1');
+  await ctx.settle(10);
+  const gp = pageOf(ctx).querySelector('.gpage');
+  assert.ok(gp, 'the group page rendered');
+  assert.equal(gp.querySelectorAll('.gpage-runs .run-member').length, 16, 'the fixture: all 16 runs are on the Runs tab');
+  assert.ok(calls.feature >= 1, 'the fixture: the feature view was fetched');
+  return { ctx, gp };
+}
+const s10Toggle = (ctx) => {
+  const t = pageOf(ctx).querySelector('.gpage-order-toggle');
+  assert.ok(t, 'the Runs tab offers Show order');
+  return t;
+};
+function s10Assert(ctx, open, why) {
+  const t = s10Toggle(ctx);
+  assert.equal(t.getAttribute('aria-expanded'), String(open), why);
+  assert.equal(t.textContent, open ? 'Hide order' : 'Show order', why);
+  assert.equal(pageOf(ctx).querySelectorAll('.rom').length, open ? 1 : 0, why);
+}
+const s10Go = async (ctx, hash) => { ctx.go(hash); await ctx.settle(10); };
+
+test('s10: a marked 16-run feature\'s Runs tab offers Show order, closed', async () => {
+  const { ctx } = await s10Open();
+  s10Assert(ctx, false, 'first open');
+  assert.equal(pageOf(ctx).querySelectorAll('.gpage-order-toggle').length, 1);
+  s10Toggle(ctx).click();
+  s10Assert(ctx, true, 'after a click');
+  assert.equal(pageOf(ctx).querySelectorAll('.rom .rom-run').length, 16);
+});
+
+test('s10: flag off → no Show order', async () => {
+  const { ctx } = await s10Open({ flag: false });
+  assert.equal(pageOf(ctx).querySelector('.gpage-order'), null);
+});
+
+test('s10: flag on, unmarked feature → no Show order', async () => {
+  const { ctx } = await s10Open({ marked: false });
+  assert.equal(pageOf(ctx).querySelector('.gpage-order'), null);
+});
+
+test('s10: a tab switch inside the page, and a feature frame, keep it open', async () => {
+  const { ctx } = await s10Open();
+  s10Toggle(ctx).click();
+  await s10Go(ctx, 'feature/feat_1/decisions');
+  await s10Go(ctx, 'feature/feat_1');
+  s10Assert(ctx, true, 'back on the Runs tab');
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(10);
+  s10Assert(ctx, true, 'after a shape-feature frame');
+});
+
+test('s10: closed again after #runs and back', async () => {
+  const { ctx, gp } = await s10Open();
+  s10Toggle(ctx).click();
+  s10Assert(ctx, true, 'opened');
+  await s10Go(ctx, 'runs');
+  assert.equal(ctx.window.location.hash, '#runs', 'the fixture: the Runs list, not this page again');
+  await s10Go(ctx, 'feature/feat_1');
+  assert.equal(pageOf(ctx).querySelector('.gpage'), gp, 'the fixture: the same page root is kept');
+  s10Assert(ctx, false, 'back from #runs');
+  s10Toggle(ctx).click();
+  s10Assert(ctx, true, 'opened again');
+  await s10Go(ctx, 'chat/new');
+  await s10Go(ctx, 'feature/feat_1');
+  s10Assert(ctx, false, 'back from #chat/new');
 });

@@ -1148,7 +1148,9 @@ test('chat run card CSS: an answer label wider than the whole row wraps inside i
 
 test('step card CSS: inside a question panel the head title wraps (375 px) and never overflows the card', () => {
   const css = readStyleCss();
-  const rule = (sel) => { const m = css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`)); return m ? m[1] : ''; };
+  // The rule whose selector is exactly `sel` (it starts its line): a longer selector ending in it, like the stop
+  // host's `.chat-rc-stop-q .qpanel .step-head`, is another rule.
+  const rule = (sel) => { const m = css.match(new RegExp(`(?<![^}\\n])${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`)); return m ? m[1] : ''; };
   assert.match(rule('.qpanel .step-head .ask-mcard-title'), /white-space:normal/);
   assert.match(rule('.qpanel .step-head .ask-mcard-title'), /min-width:0/);
   assert.match(rule('.qpanel .step-head'), /flex-wrap:wrap/);
@@ -2503,7 +2505,13 @@ test('B1 one card: the log reads "Requirements agreed" and "Runs approved"; the 
   const { $$ } = paintOne('S8');
   assert.deepEqual($$('.chat-rc-log-text').map((n) => n.textContent), ['Clarify · 2 answers', 'Requirements agreed', 'Runs approved']);
   const src = readFileSync(new URL('../ui/public/chat/run-card.mjs', import.meta.url), 'utf8');
-  assert.equal(/flagOn\('shaperSmallRuns'/.test(src), false, 'the marker, never the live flag, picks the card');
+  // s4 D7: the flag gates only the rows' run status marks (the sliceMap line) and, slice 6, the stop list (the stopLines
+  // line), and, slice 12, run 1's own snapshot in snapOf (the card's own pipeline); the marker alone picks the card.
+  const reads = src.split('\n').filter((l) => /flagOn\('shaperSmallRuns'/.test(l));
+  assert.equal(reads.length, 3, 'the marker, never the live flag, picks the card');
+  assert.match(reads[0], /p === s\.pipelineId && flagOn\('shaperSmallRuns', doc\) \? s : null/);
+  assert.match(reads[1], /stopLines = one && flagOn\('shaperSmallRuns', doc\)/);
+  assert.match(reads[2], /const sliceMap = one && flagOn\('shaperSmallRuns', doc\)/);
 });
 
 test('B1 one card: a finished marked feature builds no hidden Ask for changes field (it lived in the result block)', () => {
@@ -2786,4 +2794,19 @@ test('chat run card: a feature run links its feature title to the feature page; 
       assert.equal(t.$('.ask-rc-sub img'), null);
     } },
   ]);
+});
+
+// Shaper small runs slice 7 (R-arch-6, D7): the state line and the need count are worded in one place only.
+test('s7 T15: the run card and the group page word no state line or need count of their own; the card\'s chip is made by paintNeed', () => {
+  const read = (rel) => readFileSync(new URL(`../ui/public/${rel}`, import.meta.url), 'utf8');
+  const card = read('chat/run-card.mjs');
+  const page = read('group-page.mjs');
+  for (const [name, src] of [['chat/run-card.mjs', card], ['group-page.mjs', page]]) {
+    assert.doesNotMatch(src, /need you|next: run/, `${name}: the words come from feature-card.mjs`);
+    assert.match(src, /needYouText/, `${name}: it words the count with needYouText`);
+  }
+  assert.match(card, /paintNeed/, 'the head count has its own painter');
+  const head = card.slice(card.indexOf("const head = h('div', 'ask-rc-head')"), card.indexOf('head.append('));
+  assert.ok(head.length > 0, 'the head builder is found');
+  assert.doesNotMatch(head, /data-need|dataset\.need/, 'never built into the head: created when the count turns non-zero');
 });

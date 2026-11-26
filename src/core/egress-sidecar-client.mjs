@@ -37,18 +37,30 @@ export function readSecretVar(env, name, readFile = readFileSync) {
   return { value: v || null, error: null };
 }
 
-let sealed = null;   // { value, error } once sealEgressSecret moved it out of process.env
+let sealed = null;   // { value, error, file } once sealEgressSecret moved it out of process.env
 
 /** Move the sidecar secret out of process.env (WORCA_EGRESS_SECRET, or the file WORCA_EGRESS_SECRET_FILE names, read
  *  once here) and delete both variables. ui/server.mjs and the CLI call this before anything can spawn. */
 export function sealEgressSecret({ env = process.env, readFile = readFileSync } = {}) {
   const has = typeof env[EGRESS_SECRET_VAR] === 'string' || String(env[`${EGRESS_SECRET_VAR}_FILE`] || '').trim();
   if (!has) return;
-  sealed = readSecretVar(env, EGRESS_SECRET_VAR, readFile);
   const file = String(env[`${EGRESS_SECRET_VAR}_FILE`] || '').trim();
+  sealed = { ...readSecretVar(env, EGRESS_SECRET_VAR, readFile), file: file || null };
   if (file && env === process.env) recordSecretFile(`${EGRESS_SECRET_VAR}_FILE`, file);
   delete env[EGRESS_SECRET_VAR];
   delete env[`${EGRESS_SECRET_VAR}_FILE`];
+}
+
+/**
+ * The variables that hand this process's sealed secret to the one child that needs it: `worca ui` seals it before it
+ * starts ui/server.mjs, which talks to the sidecar (the Settings card, the move of an old login) and seals it again
+ * itself. The file's name when it came from a file (the server reads and checks that file), else the value; {} when
+ * nothing was sealed. Never pass this to any other child.
+ */
+export function egressSecretChildEnv() {
+  if (!sealed) return {};
+  if (sealed.file) return { [`${EGRESS_SECRET_VAR}_FILE`]: sealed.file };
+  return sealed.value ? { [EGRESS_SECRET_VAR]: sealed.value } : {};
 }
 
 /** Tests: forget the sealed secret. */

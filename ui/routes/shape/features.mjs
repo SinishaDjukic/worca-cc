@@ -87,9 +87,13 @@ app.post('/api/shape/features/:id/cancel', (req, res) => {
 
 app.post('/api/shape/features/:id/resume', async (req, res) => {
   try {
+    // Slice 6 (D13): a stop line's Resume names its run; anything but a run number is refused before anything runs.
+    const index = req.body && req.body.index !== undefined ? req.body.index : null;
+    if (index !== null && !(Number.isInteger(index) && index >= 1)) return res.status(400).json({ error: 'index must be a run number' });
     if (shipLocked(req.params.id)) return res.status(409).json(SHIP_LOCK);
     const by = actorOf(req);
-    const out = resumeFeature(req.params.id, { live: liveSliceOf, finishing: isFinishingRun, by });
+    const out = resumeFeature(req.params.id, { live: liveSliceOf, finishing: isFinishingRun, by, ...(index !== null ? { index } : {}) });
+    if (out && out.code === 'NOT_HALTED') return res.status(409).json({ code: out.code, error: out.error });
     if (shapeRefused(res, out)) return;
     if (out.action === 'none') {
       const verify = featureView(req.params.id, { live: liveSliceOf, finishing: isFinishingRun }).verify;

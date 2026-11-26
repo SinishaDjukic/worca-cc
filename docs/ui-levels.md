@@ -198,6 +198,8 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Split extras: per-run ⋯ (Merge with next, Remove), Undo edits, "Ask me before each run" | S |
 | Split with small runs: one fold row per run (Owns, Starts from, Checked by), the challenge fold, the open-objections question, the Care row, "Ask the role to confirm" on a refused split; no "Ask me before each run" | all (rule 1) |
 | Small runs, the one card (flag `shaperSmallRuns`): the state line, the steps as one line each, the runs as one-line rows (mark, title, short state word), one primary button, ⋯ (Stop) | all (rule 1) |
+| Small runs, open stops on the one card: one line per open stop or failed run with what it holds up, its step card or Resume; the "N need you" count | all (rule 1) |
+| Small runs, run order: the link bars on pointing at a run row (Chat card, feature page); the run page facts Waits for and Needed by; Show order and its drawing on the feature page's Runs tab | S |
 | Small runs, Start step: the size, the Care dial (Lean, Balanced, Thorough) with Worca's pick and its reason, the estimate per position, "What it does" and "Gives up" for the picked position, Start requirements | all (rule 1) |
 | Small runs, Requirements step: the decisions as one question each, one expand / collapse row per role (mark, what the role did, its question), Ask for changes, Agree requirements | all (rule 1) |
 | Run page Overview: Perspective checklists (Shaper, gated): the latest review cycle as one summary line, unmet items open with their evidence, met items behind "Show N met items", earlier cycles behind "Earlier cycles" | S |
