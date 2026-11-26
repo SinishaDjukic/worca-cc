@@ -9,8 +9,9 @@ Nothing here changes a local install. With none of the variables below set, worc
 as before.
 
 For a complete hosted setup (the container on Railway plus everything on this page), follow
-[deploy-railway.md](deploy-railway.md). This page covers the Cloudflare side and worca's settings,
-which are the same wherever worca runs.
+[deploy-railway.md](deploy-railway.md). For a team's instance on a Linux server or VM, with the
+broker, agent users and the allow-list on, follow [Shared instance](shared-instance.md). This page
+covers the Cloudflare side and worca's settings, which are the same wherever worca runs.
 
 ## How it fits together
 

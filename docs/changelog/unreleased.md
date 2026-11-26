@@ -3,6 +3,26 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## A reference profile for a shared instance
+
+**One documented way to run Worca for a team on a server, hardened.**
+
+`docker/compose.shared.yml` adds the team setup to the usual compose files. The credential broker runs in multi mode: each person saves their own model key and GitHub token. Each person's agents run under their own user. The network has no route out except through an allow-list. The proxy login is a technical user's, which the operator supplies as a file. Nothing is published: Cloudflare Access, or an identity proxy of your own, signs people in.
+
+`docker/shared.env.example` lists every value to supply. Secrets are files, never values in the env file. The new page says how to start it, and how to check that it is safe, with commands and the answers to expect. It also says what maps to what on Kubernetes, and why Railway is the weaker option.
+
+Every signed-in person is an administrator. There is no privacy between teammates.
+
+`compose.broker.yml` and `compose.proxy.yml` now also take their shared secrets as files. Without either, Worca and the broker refuse to start and say so.
+
+Chips: Container · Security
+
+Read it: [Shared instance](../shared-instance.md)
+
+Pull requests (add each number when it opens):
+
+- Shared instance profile
+
 ## The hardened box
 
 **One command starts the strictest local setup.**
