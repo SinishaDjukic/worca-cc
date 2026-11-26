@@ -16,7 +16,7 @@ The same spec builds the image for every sandboxed setup. "Native" runs on your 
 | --- | --- |
 | "Native" | none needed |
 | "Hardened box" | `worca container build` |
-| "Shared instance" | `worca container build` on Compose; elsewhere, build the Dockerfile from `--dry-run` in your own pipeline |
+| "Shared instance" | `worca container build` on the server, then `-f compose.image.yml` and `WORCA_IMAGE` in `shared.env` (the image must be on that server; compose never pulls it). Elsewhere, build the Dockerfile from `--dry-run` in your own pipeline |
 | "Local sandbox (Docker)" | a later release |
 | "E2B sandbox" | a later release |
 

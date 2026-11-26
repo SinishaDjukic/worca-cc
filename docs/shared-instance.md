@@ -2,7 +2,8 @@
 
 One Worca for a team, on a Linux server or VM, with Docker Compose. It runs with the same hardening as the
 [Hardened box](hardened-box.md), plus a sign-in in front and keys per person. This page is a reference profile, not
-a command: `docker/compose.shared.yml` and `docker/shared.env.example`.
+a command: `docker/compose.shared.yml` and `docker/shared.env.example`. To compare it with the other setups, see
+[Choose a setup](choose-a-setup.md).
 
 ## When to use this
 
@@ -127,6 +128,9 @@ docker compose --env-file shared.env \
 The order matters. `compose.proxy.yml` follows `compose.egress.yml`. `compose.shared.yml` goes last, because it sets
 the secret-file variables the others leave empty. It needs Docker Compose 2.24 or newer and an image with the egress
 sidecar (the label `dev.worca.egress-sidecar`).
+
+To run on an image built from your projects' [environment specs](environment-spec.md#building-the-box-image), add
+`-f compose.image.yml` and set `WORCA_IMAGE` in `shared.env`. The image must already be on the server.
 
 Then each person opens Worca, signs in, and saves their model key and GitHub token on the key page
 (**Settings › General › My credentials › Manage keys**).

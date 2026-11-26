@@ -11,7 +11,8 @@ worca container up --hardened
 
 **Who it is for.** One developer, on their own machine, who wants the strictest local setup. For example: agents
 that work on repositories you do not fully trust, or tasks built from outside issues. A team that shares one Worca
-needs a [Shared instance](shared-instance.md) instead.
+needs a [Shared instance](shared-instance.md) instead. To compare all setups, see [Choose a setup](choose-a-setup.md),
+and for the reasoning behind the claims, the [Security overview](security-overview.md).
 
 **What you keep.** The same Worca: the UI on `http://localhost:4317`, workflows, chats, schedules and the CLI.
 Your native install and your plain container are not changed.

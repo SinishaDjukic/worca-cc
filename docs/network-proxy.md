@@ -402,6 +402,7 @@ login. Test still works.
 | Native | `~/.worca-cc/proxy-login.json` | Yes. Agents run as you. |
 | Hardened box | In the egress sidecar, on its own volume | No. The box has no copy, and the API never returns it. |
 | Shared instance | In the egress sidecar: a technical user's login, optionally managed by the operator (`WORCA_EGRESS_LOGIN_FILE`) | No, as in the hardened box. |
+| Plain container (`worca container up`) with a proxy login | In the egress sidecar, which starts by itself, in open mode | No. The box has no copy. |
 | Plain container without the sidecar (raw `docker compose up`) | In the box, `/worca/.worca-cc/proxy-login.json`, with a warning at start | Yes, unless agent isolation is on. |
 
 In the hardened box and the shared instance, agents still send their traffic
@@ -412,8 +413,10 @@ the sidecar out or change its proxy settings, but still never read the login.
 A Railway instance normally has no corporate proxy in front of it, so it has
 no sidecar.
 
-- Local sandbox (Docker): planned. The login stays with Worca on the server and never enters the sandbox.
-- E2B sandbox: planned. The login stays with Worca on the server and never enters the sandbox.
+- Local sandbox (Docker): arrives in a later release. The login stays with Worca on the server and never enters the sandbox.
+- E2B sandbox: arrives in a later release. The login stays with Worca on the server and never enters the sandbox.
+
+To compare the setups, see [Choose a setup](choose-a-setup.md) and the [Security overview](security-overview.md).
 
 ## Troubleshooting
 

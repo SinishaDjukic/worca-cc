@@ -280,7 +280,9 @@ anything you can.
 ```
 
 `compose.yml` + `compose.broker.yml`. Recommended when agents run autonomously on
-repositories you don't fully trust. See [Single mode](#single-mode).
+repositories you don't fully trust. See [Single mode](#single-mode). For the same
+protection with one command, agent users, the allow-list and no host folder mounted,
+use the [Hardened box](hardened-box.md).
 
 ### Team on a Linux server or VM (multi mode, Compose)
 
