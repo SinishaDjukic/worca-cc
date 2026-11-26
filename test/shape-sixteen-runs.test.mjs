@@ -14,7 +14,9 @@ import { getDb } from '../src/core/db.mjs';
 import { chainBaseBranchesOf, createTicket, getTicket, predecessorState } from '../src/core/scheduler.mjs';
 import { listRunGroups } from '../src/core/run-groups.mjs';
 import { busySliceOf, featureView, liveSliceFrom, resumeFeature, setApproveEach, sliceGateState, sliceOfPipeline,
-  clashHoldOf, dependencyBranchesOf, featureBase, featureHoldsTicket, setClashHold, smallRunsPrBase, ticketHeld } from '../src/core/shape/features.mjs';
+  clashHoldOf, dependencyBranchesOf, featureBase, featureHoldsTicket, setClashHold, smallRunsPrBase, ticketHeld, replanRest } from '../src/core/shape/features.mjs';
+// Slice 5: a namespace read, so a missing new export fails only its own test, not the whole file.
+import * as SF from '../src/core/shape/features.mjs';
 import { sliceChainGate, heldStopTurn, latestFinishedSource, sliceSourceOf, sliceCombineGate, combineDependencies, createHeldStops } from '../src/core/shape/chain.mjs';
 import { gateStop } from '../src/shared/shape/run-stops.mjs';
 import { SIXTEEN_RUN_LINKS, sixteenRunFeature, siblingRunsFeature, startable, world, SIXTEEN_RUN_STATES,
@@ -77,17 +79,13 @@ test('M4: run 5 paused frees the turn: run 8 starts (10 and 13 wait behind the l
   assert.deepEqual(startable(world(root, { done: M4_DONE, states: { 5: { pipe: 'paused' } } })), [8]);
 });
 
-test('M5a (boot race, follow-up run before slice 2): run 8 resuming at boot reads as a paused row with no live entry, so run 10 starts', () => {
-  const m4 = world(root, { done: M4_DONE, states: { 5: { pipe: 'paused' } } });
-  const boot = world(root, { done: M4_DONE, states: { 5: { pipe: 'paused' }, 8: { pipe: 'paused' } } });
-  const status = (fx, run) => getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(fx.pipelineOf(run)).status;
-  // The gate cannot tell run 8 (boot resume) from run 5 (person pause): the same paused row, live null.
-  assert.equal(status(m4, 5), 'paused');
-  assert.equal(status(boot, 8), 'paused');
-  assert.equal(m4.live(m4.pipelineOf(5)), null);
-  assert.equal(boot.live(boot.pipelineOf(8)), null);
-  assert.deepEqual(startable(boot), [10]);
-});
+test('M5a (slice 5, R-po-3): run 8 being resumed at boot holds the turn: its row reads paused and nothing starts', () => withEnvVars(ON, () => {
+  const fx = world(root, { done: M4_DONE, states: { 5: { pipe: 'paused' }, 8: { pipe: 'paused', resuming: true } } });
+  assert.equal(getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(fx.pipelineOf(8)).status, 'paused');
+  assert.equal(featureView(fx.featureId, { live: fx.live }).slices.find((s) => s.index === 8).state, 'paused');
+  assert.equal(fx.live(fx.pipelineOf(8)).resuming, true);
+  assert.deepEqual(startable(fx), []);
+}));
 
 test('M5b: runs 8 and 10 going while run 5 is paused: nothing starts; a stop answer of run 5 would wait for run 8 (a resume reads no turn)', () => {
   const fx = world(root, { done: M4_DONE, states: { 5: { pipe: 'paused' }, 8: { pipe: 'running' }, 10: { pipe: 'running' } } });
@@ -1252,4 +1250,145 @@ test('R-po-1 (D4): dependencyBranchesOf names the work branch of each run the sl
   // A follow-up run starts from the base by design.
   db.prepare("UPDATE shape_feature_slices SET kind = 'follow-up' WHERE feature_id = ? AND idx = 4").run(featureId);
   assert.deepEqual(dependencyBranchesOf(featureId, 4), { branches: [] });
+}));
+
+// ---- Slice 5 (R-po-3, R-arch-1, R-qa-4): a run being resumed at server start holds the turn --------------------------
+// The base of these worlds: run 5 paused by a person, so runs 10 and 13 are due once the turn is free (10 first).
+const S5_DONE = [1, 2, 3, 4, 8, 11];
+const s5 = (states = {}) => world(root, { done: S5_DONE, states: { 5: { pipe: 'paused' }, ...states } });
+const WORKING = { pipe: 'running' };
+const RESUMING = { pipe: 'paused', resuming: true };
+const PAUSED = { pipe: 'paused' };
+const OFF = { WORCA_FLAGS: undefined };
+const replan = (fx) => replanRest(fx.featureId, { live: fx.live });
+const busy = (fx, live = fx.live) => busySliceOf(fx.featureId, { live });
+const stillGoing = (n) => ({ status: 409, error: `Slice ${n} is still going: stop it first, then re-plan the rest` });
+
+test('S5: run 9 being resumed holds the turn as while it works', () => withEnvVars(ON, () => {
+  // Each world is read in full before the next is built: building one cancels the previous feature's tickets.
+  const read = (nine) => {
+    const fx = s5({ 9: nine });
+    const { view, members } = views(fx);
+    return { fx, start: startable(fx), ten: gate(fx, 10), view: turnRuns(view), members: turnRuns(members) };
+  };
+  const working = read(WORKING);
+  const workingReplan = replan(working.fx);
+  const resuming = read(RESUMING);
+  const resumingReplan = replan(resuming.fx);
+  const paused = read(PAUSED);
+  assert.deepEqual(paused.start, [10], 'control: a run a person paused frees the turn');
+  assert.deepEqual(working.start, []);
+  assert.deepEqual(resuming.start, [], 'nothing starts while run 9 is being resumed');
+  assert.deepEqual(working.ten, { state: 'waiting' });
+  assert.deepEqual(resuming.ten, { state: 'waiting' }, "Start now's gate");
+  assert.deepEqual(working.view, [10]);
+  assert.deepEqual(resuming.view, working.view, 'featureView next label');
+  assert.deepEqual(resuming.members, working.members, 'Runs list next label');
+  assert.deepEqual(workingReplan, stillGoing(9));
+  assert.deepEqual(resumingReplan, workingReplan, 'Re-plan the rest refuses as while run 9 works');
+}));
+
+test("S5: run 5's held answer stays held and the next label is unchanged while run 9 is being resumed", () => withEnvVars(ON, async () => {
+  const read = async (nine) => {
+    const fx = s5({ 5: { stop: 'requirement', held: true, after: 9 }, 9: nine });
+    const turn = heldStopTurn(fx.featureId, 5, { live: fx.live });
+    const answered = [];
+    const resolved = [];
+    const entry = { id: 'r5', pipelineId: fx.pipelineOf(5), status: 'running',
+      heldStop: { id: 'q5', payload: ANOTHER, by: 'ann', after: 9 },
+      pendingQuestion: { id: 'q5', kind: 'plan', stop: { reason: 'requirement', run: 5 } },
+      orch: { runShape: { slice: { feature: fx.featureId, index: 5 } }, answer: (id) => answered.push(id) } };
+    const held = createHeldStops({ runs: new Map([[entry.id, entry]]), liveSliceOf: fx.live, broadcastFeature: () => {},
+      resolvePending: (e, { id }) => { resolved.push(id); return true; } });
+    await held.deliver();
+    const { view, members } = views(fx);
+    // The re-plan is read last. Run 5's held answer counts as going, so every world refuses it and nothing is written.
+    return { turn, answered, resolved, heldAfter: entry.heldStop?.after ?? null, view: turnRuns(view), members: turnRuns(members),
+      start: startable(fx), replan: replan(fx) };
+  };
+  const working = await read(WORKING);
+  const resuming = await read(RESUMING);
+  const paused = await read(PAUSED);
+  assert.deepEqual(paused.turn, { due: true }, 'control: a run a person paused frees the turn');
+  assert.deepEqual(paused.resolved, ['q5'], 'control: deliver() sends the answer once the turn is free');
+  for (const [name, w] of [['working', working], ['resuming', resuming]]) {
+    assert.deepEqual(w.turn, { due: false, after: 9 }, name);
+    assert.deepEqual(w.resolved, [], `${name}: no pending question is resolved`);
+    assert.deepEqual(w.answered, [], `${name}: run 5 is not answered`);
+    assert.equal(w.heldAfter, 9, `${name}: the answer stays held`);
+  }
+  assert.deepEqual(working.view, [5]);
+  assert.deepEqual(resuming.view, working.view, 'featureView next label');
+  assert.deepEqual(working.members, [5]);
+  assert.deepEqual(resuming.members, working.members, 'Runs list next label');
+  assert.deepEqual(working.start, []);
+  assert.deepEqual(resuming.start, [], 'no other run starts');
+  assert.deepEqual(working.replan, stillGoing(5));
+  assert.deepEqual(resuming.replan, working.replan, 'Re-plan the rest refuses as while run 9 works');
+}));
+
+test('S5 R-qa-4: with the flag off the signal changes nothing', () => withEnvVars(OFF, () => {
+  // Run 13 going: were the signal read, run 9 (the lower number) would be named instead.
+  const going = (nine) => { const fx = s5({ 13: WORKING, 9: nine }); return { busy: busy(fx), replan: replan(fx) }; };
+  const signal = going(RESUMING);
+  const none = going(PAUSED);
+  assert.deepEqual(none.busy, { index: 13 });
+  assert.deepEqual(signal.busy, none.busy);
+  assert.deepEqual(none.replan, stillGoing(13));
+  assert.deepEqual(signal.replan, none.replan);
+  // No going run: the re-plan goes through, so it is read last (it cancels the waiting tickets).
+  const idle = (nine) => {
+    const fx = s5({ 9: nine });
+    const read = { busy: busy(fx), start: startable(fx) };
+    const out = replan(fx);
+    return { ...read, replan: out.ticketId ? { ...out, ticketId: typeof out.ticketId } : out };
+  };
+  const idleSignal = idle(RESUMING);
+  const idleNone = idle(PAUSED);
+  assert.deepEqual(idleNone, { busy: null, start: [10], replan: { ticketId: 'string' } });
+  assert.deepEqual(idleSignal, idleNone);
+}));
+
+test('S5 (R-arch-7): a resuming row shows its stored state, with the flag on and off', async () => {
+  for (const env of [ON, OFF]) {
+    await withEnvVars(env, () => {
+      const fx = s5({ 9: { pipe: 'stopped', resuming: true } });
+      const nine = featureView(fx.featureId, { live: fx.live }).slices.find((s) => s.index === 9);
+      assert.equal(nine.state, 'stopped', `flags ${env.WORCA_FLAGS || 'off'}`);
+    });
+  }
+});
+
+test('S5 (D1): liveSliceResuming() is the frozen overlay of a paused run with no runs-map entry, marked resuming', () => {
+  const overlay = SF.liveSliceResuming();
+  assert.deepEqual(overlay, { runId: null, status: 'paused', waiting: false, asking: false, approved: false, ask: null, resuming: true });
+  assert.ok(Object.isFrozen(overlay));
+});
+
+test('S5 (D2, D3): a marked paused entry holds the turn, even at an open stop, and its row reads as the unmarked entry does', async () => {
+  const entry = liveSliceFrom({ runId: 'r9', status: 'paused', pendingQuestion: { id: 'q9', kind: 'gate', stop: { reason: 'check', run: 9 } } });
+  const read = (overlay) => {
+    const fx = s5({ 9: PAUSED });
+    const live = (pid) => (pid === fx.pipelineOf(9) ? overlay : fx.live(pid));
+    const nine = featureView(fx.featureId, { live }).slices.find((s) => s.index === 9);
+    return { busy: busy(fx, live), state: nine.state, stop: nine.stop };
+  };
+  await withEnvVars(ON, () => {
+    const marked = read({ ...entry, resuming: true });
+    const unmarked = read(entry);
+    assert.equal(unmarked.busy, null, 'control: an open stop frees the turn');
+    assert.deepEqual(marked.busy, { index: 9 });
+    assert.deepEqual([marked.state, marked.stop], [unmarked.state, unmarked.stop]);
+    assert.equal(marked.state, 'questions');
+  });
+  await withEnvVars(OFF, () => assert.deepEqual(read({ ...entry, resuming: true }), read(entry)));
+});
+
+test("S5 (D4): the gate is the flag alone: an unmarked feature's resuming run holds the turn too", () => withEnvVars(ON, () => {
+  getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+  const fx = sixteenRunFeature({ projectDir: root, smallRuns: false });
+  fx.setRun(9, PAUSED);
+  assert.equal(busy(fx), null, 'control: a paused run is not going');
+  fx.setRun(9, RESUMING);
+  assert.deepEqual(busy(fx), { index: 9 });
 }));

@@ -470,10 +470,11 @@ import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/
 import { attachRoleReviews } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeStart, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
+import { shaperSmallRunsOn } from '../src/core/shape/small-runs.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
-  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, isSlicePreambleLine } from '../src/core/shape/features.mjs';
+  liveSliceFrom, liveSliceResuming, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, isSlicePreambleLine } from '../src/core/shape/features.mjs';
 import { smallRunsChainGate, sliceFireStart, sliceCombineGate, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, createHeldStops, featureOfAnyPipeline } from '../src/core/shape/chain.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts, createRequirementChanges } from '../src/core/shape/changes.mjs';
@@ -5056,14 +5057,15 @@ function settleStaleParkedEntries() {
   } catch (err) { console.error(`[worca-ui] stale paused entries: ${err && err.message ? err.message : err}`); }
 }
 
+const bootResuming = new Set(), bootResumingIds = () => [...bootResuming].sort(), markBootResumes = (picks) => { bootResuming.clear(); for (const p of picks || []) bootResuming.add(p.pipelineId); return picks; };   // slice 5 (D5): the pipelines the boot is about to resume, in memory only
 /** The live overlay featureView needs (L8): the entry driving this pipeline or run (liveRunEntry takes either, F26).
- *  A settled entry other than `paused` is ignored, so the pipelines row decides done / stopped / error. */
+ *  A settled entry other than `paused` is ignored, so the pipelines row decides done / stopped / error. Slice 5: being resumed adds `resuming`. */
 function liveSliceOf(id) {
   const e = id ? liveRunEntry(id) : null;
-  if (!e || !e.orch) return null;
-  const status = String(e.status || '');
-  if (SETTLED_RUN.has(status) && status !== 'paused') return null;
-  return liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved, heldStop: e.heldStop || null, going: !!e.takingIn, refused: e.takeInRefused && e.takeInRefused.id === e.pendingQuestion?.id ? e.takeInRefused.reason : null });   // slice 3 (D11, D13)
+  const resuming = !!id && bootResuming.has(id) && shaperSmallRunsOn();
+  const status = String(e?.status || '');
+  if (!e || !e.orch || (SETTLED_RUN.has(status) && status !== 'paused')) return resuming ? liveSliceResuming() : null;
+  return { ...liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved, heldStop: e.heldStop || null, going: !!e.takingIn, refused: e.takeInRefused && e.takeInRefused.id === e.pendingQuestion?.id ? e.takeInRefused.reason : null }), ...(resuming && status === 'paused' ? { resuming: true } : {}) };   // slice 3 (D11, D13), slice 5 (D1)
 }
 function broadcastFeature(id) { if (id) broadcast({ type: 'shape-feature', id }); }
 /** F42: the run-event and tick hooks. Gate first (no query while it is off), and never let a throw escape: in wireRun
@@ -8290,27 +8292,24 @@ function drainServer({ timeoutMs = drainTimeoutMs(), reason = 'stop' } = {}) {
  * (`interruptedIds`), each as the person who last started or resumed it. Resumes go through resumeRun's whole guard chain (budget gates
  * included); a refusal is logged and leaves the run waiting for a person.
  */
-async function autoResumeOnBoot({ interruptedIds = [], env = process.env, mock = isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) } = {}) {
-  const mode = autoResumeMode(env);
-  if (mode === 'off') return { enabled: false, resumed: [], failed: [] };
+function bootResumePicks({ interruptedIds = [], env = process.env } = {}) {   // slice 5 (D7): the runs a start resumes
+  const mode = autoResumeMode(env); if (mode === 'off') return [];
   const rows = getDb().prepare(`SELECT id, status, started_by, archived_at, resume_point FROM pipelines
-    WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL AND is_test IS NULL ORDER BY started_at ASC`).all()
-    .map((r) => { let rp = null; try { rp = r.resume_point ? JSON.parse(r.resume_point) : null; } catch { /* unreadable point */ } return { ...r, resumePoint: rp }; });
-  const picks = autoResumeCandidates(rows, {
-    interruptedNow: new Set(interruptedIds),
-    hasResumeTicket: (id) => resumeTicketsFor(id).length > 0,
-    includeInterrupted: mode === 'all',
-  });
-  const resumed = [];
-  const failed = [];
+    WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL AND is_test IS NULL ORDER BY started_at ASC`).all().map((r) => { let rp = null; try { rp = r.resume_point ? JSON.parse(r.resume_point) : null; } catch { /* unreadable point */ } return { ...r, resumePoint: rp }; });
+  return autoResumeCandidates(rows, { interruptedNow: new Set(interruptedIds), hasResumeTicket: (id) => resumeTicketsFor(id).length > 0, includeInterrupted: mode === 'all' });
+}
+function autoResumeOnBoot(opts) { return autoResumeEach(opts).finally(() => bootResuming.clear()); }   // slice 5 (D8): no "being resumed" mark outlives it
+async function autoResumeEach({ interruptedIds = [], env = process.env, mock = isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK), resume = resumeRun } = {}) {
+  if (autoResumeMode(env) === 'off') return { enabled: false, resumed: [], failed: [] };
+  const picks = markBootResumes(bootResumePicks({ interruptedIds, env })), resumed = [], failed = [];
   for (const p of picks) {
     try {
-      const out = await resumeRun(p.pipelineId, { by: p.by, mock });
+      const out = await resume(p.pipelineId, { by: p.by, mock });
       resumed.push({ ...p, runId: out?.runId || null });
       appendAuditById(p.pipelineId, `Pipeline resumed automatically after ${p.why === 'drain' ? 'a restart' : 'an interruption'}${byActor(p.by)}.`, { actor: p.by });
     } catch (err) {
       failed.push({ ...p, error: (err instanceof ResumeError && err.body?.error) || err?.message || String(err) });
-    }
+    } finally { bootResuming.delete(p.pipelineId); }
   }
   if (resumed.length) console.log(`[worca-ui] auto-resume: resumed ${resumed.length} run(s): ${resumed.map((r) => r.pipelineId).join(', ')}`);
   for (const f of failed) console.warn(`[worca-ui] auto-resume: ${f.pipelineId} stays ${f.why === 'drain' ? 'paused' : 'interrupted'}: ${f.error}`);
@@ -10364,7 +10363,7 @@ app.use((err, _req, res, next) => {
  *        optional sink for the per-candidate lines both sweeps emit; omitted, each
  *        sweep keeps its own console default.
  */
-export async function bootMaintenance({ log } = {}) {
+export async function bootMaintenance({ log, onReconciled } = {}) {
   const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, recoveredAttachmentReads: 0, attachmentReadFolders: null, attachmentTempBodies: null, runRoots: null, testCopies: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null, e2b: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
@@ -10378,6 +10377,7 @@ export async function bootMaintenance({ log } = {}) {
   } catch (err) {
     console.error(`[worca-ui] stale-run reconcile failed: ${err && err.message ? err.message : err}`);
   }
+  if (typeof onReconciled === 'function') try { onReconciled(summary.reconciledIds || []); } catch (err) { console.error(`[worca-ui] boot resume marks failed: ${err?.message || err}`); }   // slice 5 (D6): before the first await
 
   // A DB stamped past 24 by a divergent ladder can still hold v1 resume points
   // (crash-reconciled runs keep theirs). One idempotent sweep per boot.
@@ -10741,7 +10741,7 @@ if (isMain) {
     console.error(`[worca-ui] builtin marketplace seed skipped: ${err && err.message ? err.message : err}`);
   }
 
-  bootMaintenance().then((summary) => {
+  bootMaintenance({ onReconciled: (ids) => markBootResumes(bootResumePicks({ interruptedIds: ids })) }).then((summary) => {
     // B3: continue what the last stop paused (and, with WORCA_AUTO_RESUME=1, what a crash interrupted).
     autoResumeOnBoot({ interruptedIds: summary?.reconciledIds || [] })
       .then((boot) => {
@@ -10759,7 +10759,7 @@ if (isMain) {
       })
       .catch((err) => console.error(`[worca-ui] auto-resume failed: ${err && err.message ? err.message : err}`));
   }, (err) => {
-    bootMaintenanceFailed = true;
+    bootMaintenanceFailed = true; bootResuming.clear();
     console.error(`[worca-ui] boot maintenance failed: ${err && err.message ? err.message : err}`);
   });
 
@@ -10924,7 +10924,7 @@ export const _testing = {
   uiControl, bearerMatches, uiToken: () => UI_TOKEN,
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
-  trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
+  trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, bootResumePicks, markBootResumes, bootResumingIds, liveSliceOf, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askProxyBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, automations, automationHost, automationDraftPr, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,

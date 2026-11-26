@@ -11,12 +11,12 @@ import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { JSDOM } from 'jsdom';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { gitDir } from './helpers/git-dir.mjs';
+import { gitDir, templateRepo } from './helpers/git-dir.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createThread, linkRun as askLinkRun, listMessages, appendMessage as askAppendMessage } from '../src/core/ask/store.mjs';
-import { createSliceFeature, featureView, recordShapePlan, recordShip, retireFeaturesOf, featureThread, currentFeatureId } from '../src/core/shape/features.mjs';
+import { createSliceFeature, featureView, recordShapePlan, recordShip, retireFeaturesOf, featureThread, currentFeatureId, sliceGateState } from '../src/core/shape/features.mjs';
 import { getTicket, requestRunNow, cancelTicket } from '../src/core/scheduler.mjs';
 import { nightModeToggle } from '../src/core/settings.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
@@ -2215,4 +2215,38 @@ test('slice 3 (D4): a settled run delivers the held answers that waited for its 
     assert.deepEqual([w.taken.length, w.answered.length], [1, 1]);
     assert.equal(w.e2.pendingQuestion, null);
   } finally { w.cleanup(); }
+}));
+
+// ── Shaper small runs, slice 5 (R-po-3, R-arch-1): a boot resume holds the turn until it fails or is live ────────────
+test("S5: run 9's boot resume fails, the next tick starts run 10", () => withEnvVars(SMALL_ON, async () => {
+  const repo = templateRepo('s5-boot', { branch: 'main', user: true, files: { 'README.md': 'boot\n' } });
+  writeStoreMeta(projectKey(repo), 'project', { key: projectKey(repo), name: 'S5', path: repo });
+  const fx = world(repo, { done: [1, 2, 3, 4, 8, 11], states: { 5: { pipe: 'paused' }, 9: { pipe: 'paused' } } });
+  // The finished runs' work branches exist, so run 10 can start from them.
+  for (const run of [1, 2, 3, 4, 8, 11]) git(repo, 'branch', `feat/${fx.pipelineOf(run)}`);
+  const pid9 = fx.pipelineOf(9);
+  const [t10, t13] = [fx.ticketOf(10), fx.ticketOf(13)];
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run('{"version":2,"pauseReason":"drain"}', pid9);
+  try {
+    const seen = [];
+    const resume = async (pid) => {
+      seen.push({ pid, resuming: testing.liveSliceOf(pid)?.resuming, gate: sliceGateState(getTicket(t10), { live: testing.liveSliceOf })?.state });
+      throw new Error('refused');
+    };
+    const out = await testing.autoResumeOnBoot({ env: {}, resume });
+    assert.deepEqual(seen.filter((s) => s.pid === pid9), [{ pid: pid9, resuming: true, gate: 'waiting' }], 'run 10 waits while run 9 is being resumed');
+    assert.deepEqual(out.failed.filter((f) => f.pipelineId === pid9).map((f) => f.error), ['refused']);
+    assert.equal(testing.liveSliceOf(pid9), null, 'the failed resume frees the turn');
+    assert.equal(sliceGateState(getTicket(t10), { live: testing.liveSliceOf })?.state, 'ok');
+    // A tick another request started may still be in flight (schedulerTick answers null then): wait for a pass of our own.
+    let pass = null;
+    for (const end = Date.now() + 5000; (pass = await schedulerTick()) === null && Date.now() < end;) await sleep(20);
+    assert.ok(pass, 'a scheduler pass ran');
+    assert.ok(pass.fired.includes(t10), `run 10 starts: ${getTicket(t10).failReason || JSON.stringify(pass)}`);
+    assert.ok(pass.waiting.includes(t13), 'run 13 waits behind run 10');
+  } finally {
+    if (getTicket(t10)?.status === 'fired') await firedRun(t10);
+    getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+    rmSync(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
 }));

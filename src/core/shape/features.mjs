@@ -377,7 +377,8 @@ const STUCK = new Set(['missed', 'canceled']);
 function sliceState(row, live, { held = true } = {}) {
   if (!row.pipelineId) return row.ticket ? (held && ticketHeld(row.ticket) ? 'held' : TICKET_STATE[row.ticket.status] || 'planned') : 'planned';
   const l = live(row.pipelineId);
-  if (l) return l.waiting ? 'approval' : l.asking ? 'questions' : l.status === 'paused' ? 'paused' : l.approved ? 'running' : 'shaping';
+  // Slice 5 (D3): the bare "being resumed" overlay (no runs-map entry yet) reads the row's stored state.
+  if (l && !(l.resuming && l.runId === null)) return l.waiting ? 'approval' : l.asking ? 'questions' : l.status === 'paused' ? 'paused' : l.approved ? 'running' : 'shaping';
   const p = getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(row.pipelineId);
   return (p && PIPELINE_STATE[p.status]) || 'starting';
 }
@@ -395,6 +396,11 @@ export function liveSliceFrom({ runId, status, pendingQuestion = null, approved 
     ...(refused ? { refused } : {}), ...(going ? { going: true } : {}) } : null;
   return { runId, status: String(status || ''), waiting: plan, asking: !!pq && !plan, approved: !!approved,
     ask: pq ? { id: pq.id || null, kind: plan && pq.plan && pq.plan.outline ? 'outline' : pq.kind } : null, ...(stop ? { stop } : {}) };
+}
+
+/** Slice 5 (D1): the overlay of a run being resumed at server start that has no usable runs-map entry yet. */
+export function liveSliceResuming() {
+  return Object.freeze({ ...liveSliceFrom({ runId: null, status: 'paused' }), resuming: true });
 }
 
 const auditTexts = (pid) => (pid ? getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(String(pid)).map((r) => r.text) : []);
@@ -1191,6 +1197,8 @@ function rowGoing(r, live, { now = Date.now(), isLive = null } = {}) {
   // Small runs C3 (D8): a run waiting on an unanswered stop question does not hold the feature's other runs; one whose
   // answer is held waits for its turn, so it counts as going.
   const l = r.pipelineId ? live(r.pipelineId) : null;
+  // Slice 5 (D2): a run being resumed at server start holds the turn until its resume is live or fails.
+  if (l && l.resuming && shaperSmallRunsOn()) return true;
   // Slice 3 (D13): one taking work in before its answer goes on counts as going too.
   if (l && l.stop && !l.stop.held && !l.stop.going) return false;
   if (!BUSY.has(sliceState(r, live, { held: false }))) return false;

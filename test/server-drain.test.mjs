@@ -14,6 +14,8 @@ import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { addProject } from '../src/core/projects.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { graphResumePoint } from './helpers/graph-templates.mjs';
+import { withEnv } from './helpers/with-env.mjs';
+import { createSliceFeature, featureOfPipeline } from '../src/core/shape/features.mjs';
 import {
   drainTimeoutMs, sigtermGraceMs, autoResumeMode, autoResumeCandidates, DRAIN_TIMEOUT_DEFAULT_MS,
 } from '../src/core/drain.mjs';
@@ -168,6 +170,7 @@ test('autoResumeCandidates: drained and freshly interrupted runs only, as whoeve
 test('WORCA_AUTO_RESUME=0 resumes nothing', async () => {
   assert.deepEqual(await _testing.autoResumeOnBoot({ interruptedIds: [seeded.crashedNow], env: { WORCA_AUTO_RESUME: '0' } }),
     { enabled: false, resumed: [], failed: [] });
+  assert.deepEqual(_testing.bootResumingIds(), []);
 });
 
 test('WORCA_AUTO_RESUME=1 resumes the drained run and the run this start found interrupted, nothing else', async () => {
@@ -184,6 +187,7 @@ test('WORCA_AUTO_RESUME=1 resumes the drained run and the run this start found i
   assert.equal(status(seeded.userPaused), 'paused');
   assert.equal(status(seeded.costPaused), 'paused');
   assert.equal(status(seeded.crashedLongAgo), 'interrupted');
+  assert.deepEqual(_testing.bootResumingIds(), []);
 });
 
 test('with no WORCA_AUTO_RESUME a start resumes the drained run only, never the interrupted one', async () => {
@@ -194,7 +198,103 @@ test('with no WORCA_AUTO_RESUME a start resumes the drained run only, never the 
   assert.equal(status(crashed2), 'interrupted');
   assert.equal(status(seeded.userPaused), 'paused');
   assert.equal(status(seeded.costPaused), 'paused');
+  assert.deepEqual(_testing.bootResumingIds(), []);
 });
+
+// ── Shaper small runs, slice 5: the "being resumed" marks of the boot resume ───────────────────────────────────────
+// Each test seeds its own drain-paused rows and archives them at its end, so no later test sees them as picks.
+const ON = { WORCA_FLAGS: 'shaperSmallRuns' };
+const OFF = { WORCA_FLAGS: undefined };
+const RESUMING_OVERLAY = { runId: null, status: 'paused', waiting: false, asking: false, approved: false, ask: null, resuming: true };
+const archive = (...ids) => {
+  for (const id of ids) getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?').run(new Date().toISOString(), id);
+};
+/** `fn(ids)` over fresh drain-paused rows; the marks and the rows are cleared afterwards. */
+async function withDrained(names, fn) {
+  const ids = [];
+  for (const name of names) ids.push(await resumable(name, { pauseReason: 'drain' }));
+  try { await fn(ids); } finally { _testing.markBootResumes?.([]); archive(...ids); }
+}
+
+test('bootResumePicks lists the runs a start would resume, and none with WORCA_AUTO_RESUME=0', () => withDrained(['picked'], async ([id]) => {
+  assert.deepEqual(_testing.bootResumePicks({ env: {} }).filter((p) => p.pipelineId === id), [{ pipelineId: id, by: 'local', why: 'drain' }]);
+  assert.deepEqual(_testing.bootResumePicks({ env: { WORCA_AUTO_RESUME: '0' } }), []);
+}));
+
+test('autoResumeOnBoot: every pick is marked while the resumes run, a stale early mark is dropped, each mark clears after its resume', () => withDrained(['mark-a', 'mark-b'], async (ids) => {
+  const expected = _testing.bootResumePicks({ env: {} }).map((p) => p.pipelineId).sort();
+  for (const id of ids) assert.ok(expected.includes(id));
+  _testing.markBootResumes([{ pipelineId: 'stale' }]);
+  const calls = [];
+  const resume = async (pid) => { calls.push({ pid, marked: _testing.bootResumingIds() }); return { runId: `stub-${pid}` }; };
+  const out = await _testing.autoResumeOnBoot({ env: {}, mock: true, resume });
+  assert.deepEqual(calls[0]?.marked, expected);
+  assert.ok(!calls[1].marked.includes(calls[0].pid), 'the first pick is unmarked as soon as its resume resolves');
+  assert.ok(calls[1].marked.includes(calls[1].pid));
+  assert.deepEqual(out.resumed.map((r) => r.pipelineId).sort(), expected);
+  assert.deepEqual(_testing.bootResumingIds(), []);
+}));
+
+test('autoResumeOnBoot: a failed resume clears its mark, every pick is reported failed and no mark is left', () => withDrained(['fail-a', 'fail-b'], async () => {
+  const expected = _testing.bootResumePicks({ env: {} }).map((p) => p.pipelineId).sort();
+  const calls = [];
+  const resume = async (pid) => { calls.push({ pid, marked: _testing.bootResumingIds() }); throw new Error('refused'); };
+  const out = await _testing.autoResumeOnBoot({ env: {}, mock: true, resume });
+  assert.deepEqual(calls.map((c) => c.pid).sort(), expected);
+  assert.ok(!calls[1].marked.includes(calls[0].pid), 'the first pick is unmarked as soon as its resume throws');
+  assert.deepEqual(out.failed.map((f) => f.pipelineId).sort(), expected);
+  assert.deepEqual(_testing.bootResumingIds(), []);
+}));
+
+test('autoResumeOnBoot: with WORCA_AUTO_RESUME=0 an early mark is dropped', async () => {
+  _testing.markBootResumes([{ pipelineId: 'stale' }]);
+  assert.deepEqual(_testing.bootResumingIds(), ['stale']);
+  await _testing.autoResumeOnBoot({ env: { WORCA_AUTO_RESUME: '0' } });
+  assert.deepEqual(_testing.bootResumingIds(), []);
+});
+
+test('the mark reads only with the flag on', () => withDrained(['mark-flag'], async ([id]) => {
+  _testing.markBootResumes([{ pipelineId: id }]);
+  assert.deepEqual(_testing.bootResumingIds(), [id]);
+  await withEnv(OFF, () => assert.equal(_testing.liveSliceOf(id), null));
+  await withEnv(ON, () => assert.deepEqual(_testing.liveSliceOf(id), RESUMING_OVERLAY));
+  _testing.markBootResumes([]);
+  await withEnv(ON, () => assert.equal(_testing.liveSliceOf(id), null));
+}));
+
+test('a marked pipeline with an entry: paused keeps its overlay plus resuming, running wins unchanged, done reads as resuming', () => withDrained(['mark-entry'], async ([id]) => {
+  const entry = { id: 'mark-entry-run', pipelineId: id, status: 'paused', orch: { state: {} }, events: [], pendingQuestion: { id: 'q1', kind: 'gate' } };
+  const read = (env, status, marked) => withEnv(env, () => {
+    entry.status = status;
+    _testing.markBootResumes(marked ? [{ pipelineId: id }] : []);
+    return _testing.liveSliceOf(id);
+  });
+  runs.set(entry.id, entry);
+  try {
+    const paused = await read(ON, 'paused', false);
+    assert.equal(paused.runId, entry.id);
+    assert.deepEqual(await read(ON, 'paused', true), { ...paused, resuming: true });
+    assert.deepEqual(await read(OFF, 'paused', true), paused);
+    assert.deepEqual(await read(ON, 'running', true), await read(ON, 'running', false));
+    assert.deepEqual(await read(ON, 'done', true), RESUMING_OVERLAY);
+  } finally { runs.delete(entry.id); }
+}));
+
+test('flag on: a feature not marked small-runs resumes as before', () => withDrained(['unmarked-feature'], async ([id]) => {
+  const feature = createSliceFeature({ pipelineId: id, projectDir: await dir('unmarked'), title: 'Unmarked', smallRuns: false,
+    outline: { why: 'because', slices: [{ id: 's1', title: 'One', goal: 'Goal', inScope: ['do'], outOfScope: [], acceptance: ['ok'],
+      dependsOn: [], estimate: 'M' }] }, perspectives: ['product'], workflowId: 'wf_shape' });
+  await withEnv(ON, async () => {
+    assert.equal(featureOfPipeline(id)?.featureId, feature.id);
+    const marks = [];
+    const resume = (pid, opts) => { marks.push(_testing.bootResumingIds()); return _testing.resumeRun(pid, opts); };
+    const out = await _testing.autoResumeOnBoot({ env: {}, mock: true, resume });
+    assert.ok(marks[0]?.includes(id), 'marked during its resume');
+    assert.deepEqual(out.resumed.filter((r) => r.pipelineId === id).map((r) => r.why), ['drain']);
+    assert.deepEqual(out.failed, []);
+    assert.deepEqual(_testing.bootResumingIds(), []);
+  });
+}));
 
 // ── B2: /api/drain is not for anyone on the network ─────────────────────────
 
@@ -257,4 +357,5 @@ test('while draining, new runs, resumes and scheduled starts are refused with 50
   assert.equal(await schedulerTick(), null);
   const auto = await _testing.autoResumeOnBoot({ env: { WORCA_AUTO_RESUME: '1' }, mock: true });
   assert.equal(auto.resumed.length, 0, 'a draining server resumes nothing either');
+  assert.deepEqual(_testing.bootResumingIds(), []);
 });

@@ -1,6 +1,6 @@
 // test/helpers/shape-sixteen-runs.mjs — the real 16-run feature ("CI as a trusted merge gate, and a faster test suite")
 // as a fixture: its builds-on links, and a way to put each run in a state (unrun, a pipeline status, an open or held
-// stop, asking, approval). Everything is built in the temp DB (useTempHome); the real database is never read.
+// stop, asking, approval, being resumed at server start). Everything is built in the temp DB (useTempHome); the real database is never read.
 // `startable()` reads the scheduler's own answer (sliceGateState) for every run that has not started.
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -9,6 +9,8 @@ import { getDb } from '../../src/core/db.mjs';
 import { projectKey } from '../../src/core/store.mjs';
 import { getTicket } from '../../src/core/scheduler.mjs';
 import { createSliceFeature, liveSliceFrom, sliceGateState } from '../../src/core/shape/features.mjs';
+// A namespace read, so a missing liveSliceResuming fails only the tests that use `resuming`, not every importer.
+import * as features from '../../src/core/shape/features.mjs';
 import { g } from './base-world.mjs';
 import { seedPipelineRow } from './db-seed.mjs';
 
@@ -28,6 +30,7 @@ let seq = 0;
  * @returns {{featureId:string, originPipelineId:string, ticketOf:(run:number)=>string|null,
  *   pipelineOf:(run:number)=>string|null, setRun:(run:number, how:any)=>void, live:(pid:string)=>object|null}}
  *   `how`: 'unrun' | { pipe: status } | { stop: reason, held?: boolean } | { asking: true } | { approval: true }
+ *   | { pipe: status, resuming: true } (being resumed at server start: no runs-map entry, liveSliceResuming's overlay)
  */
 export function sixteenRunFeature({ projectDir, smallRuns = true }) {
   const db = getDb();
@@ -69,6 +72,7 @@ export function sixteenRunFeature({ projectDir, smallRuns = true }) {
     } else if (how.asking) pq = { id: `q${run}`, kind: 'questions' };
     else if (how.approval) pq = { id: `q${run}`, kind: 'plan' };
     if (pq) liveMap.set(pid, liveSliceFrom({ runId: `r${run}`, status: 'running', approved: true, pendingQuestion: pq, heldStop }));
+    if (how.resuming) liveMap.set(pid, features.liveSliceResuming());
   };
   const cancelTicket = (run) => { db.prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id = ?").run(ticketOf(run)); };
   const setKind = (run, kind) => { db.prepare('UPDATE shape_feature_slices SET kind = ? WHERE feature_id = ? AND idx = ?').run(kind, f.id, run); };

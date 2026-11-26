@@ -79,7 +79,7 @@ test('git exposure: shell, hello, frame, settings, GET /api/git', async () => {
         assert.ok(at('\npreflightDeps();\n') < at('\nawait gitState();\n'), 'right after the dependency check');
         assert.ok(at('\nawait gitState();\n') < at('if (isMain) {'), 'at module scope, before the isMain boot');
         const main = src.slice(at('if (isMain) {'));
-        for (const later of ['seedBuiltinMarketplace();', 'bootMaintenance()', 'server.listen(PORT', 'startTeamMetricsBackground(']) assert.ok(main.includes(later), later);
+        for (const later of ['seedBuiltinMarketplace();', 'bootMaintenance({', 'server.listen(PORT', 'startTeamMetricsBackground(']) assert.ok(main.includes(later), later);
       } },
     ]);
   } finally { ws.close(); }
