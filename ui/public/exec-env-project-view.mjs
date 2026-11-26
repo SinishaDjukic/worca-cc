@@ -1,23 +1,33 @@
 // ui/public/exec-env-project-view.mjs — the project page's sandbox environments, under "Execution environment"
 // (docs/e2b.md "Per-project templates"): per backend, its project fields (e2b: template, sandbox network) with the one
-// in use, the read-only environment spec, the last build (stale, or made on another server), and Build / Rebuild (the
-// server builds; a failed build keeps the previous template). Polls while a build runs.
+// in use, the environment spec form (exec-env-spec-editor.mjs, once above the backends that build), the last build
+// (stale, or made on another server), and Build / Rebuild (the server builds; a failed build keeps the previous
+// template). Polls while a build runs.
 import { notify, cardAlert } from './feedback.mjs';
+import { renderSpecEditor } from './exec-env-spec-editor.mjs';
 
 const el = (doc, tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const when = (iso) => { try { return new Date(iso).toLocaleString(); } catch { return iso; } };
 
-export function mountExecEnvPanel(host, { projectKey, fetchFn = (u, o) => fetch(u, o), pollMs = 2000,
+export function mountExecEnvPanel(host, { projectKey, fetchFn = (u, o) => fetch(u, o), pollMs = 2000, confirm = null,
   schedule = (f, ms) => setTimeout(f, ms), cancel = (t) => clearTimeout(t) }) {
   const doc = host.ownerDocument;
   const base = `/api/projects/${encodeURIComponent(projectKey)}/exec-env`;
   let timer = null; let stopped = false;
   const call = async (url, opts) => { const r = await fetchFn(url, opts); let d = null; try { d = await r.json(); } catch { /* none */ } if (!r.ok) throw new Error(d?.error || `The server answered ${r.status}.`); return d; };
 
+  let specForm = null; let specHash;   // kept across a build's polls while the spec is unchanged: typed edits survive
   const render = (view) => {
     host.replaceChildren();
     if (!view || !Array.isArray(view.backends)) return;   // an older server: nothing to show
     const backends = view.backends.filter((b) => b.fields.length || b.canBuild);
+    // One spec per project, whichever backend builds it: the form sits above the backends, not inside each.
+    if (backends.some((b) => b.canBuild)) {
+      const hash = view.spec?.hash ?? null;
+      if (!specForm || hash !== specHash) specForm = renderSpecEditor(doc, { spec: view.spec, projectKey, onSave: saveSpec, onClear: clearSpec });
+      specHash = hash;
+      host.append(specForm);
+    }
     for (const b of backends) {
       const box = el(doc, 'div', 'exec-env-backend'); box.dataset.backend = b.name;
       box.append(el(doc, 'h4', null, b.label));
@@ -45,14 +55,6 @@ export function mountExecEnvPanel(host, { projectKey, fetchFn = (u, o) => fetch(
       if (b.effective) box.append(el(doc, 'p', 'hint exec-env-effective', `In use: ${b.effective.name} (${b.effective.from})`));
       if (b.canBuild) {
         const spec = view.spec;
-        if (spec) {
-          const det = el(doc, 'details', 'exec-env-spec');
-          det.append(el(doc, 'summary', null, `Environment spec: ${spec.tools.length} tools, ${spec.apt.length} apt packages`),
-            el(doc, 'pre', null, JSON.stringify({ tools: spec.tools, apt: spec.apt }, null, 2)));
-          box.append(det);
-        } else {
-          box.append(el(doc, 'p', 'hint exec-env-spec-missing', `No environment spec yet. Set one with: worca exec-env spec --project ${projectKey} --set spec.json`));
-        }
         const status = el(doc, 'p', 'hint exec-env-build-status', buildText(b)); box.append(status);
         const btn = el(doc, 'button', 'btn btn-sm exec-env-build', b.build ? 'Rebuild environment' : 'Build environment'); btn.type = 'button';
         btn.disabled = !spec || b.job?.state === 'running';
@@ -85,6 +87,21 @@ export function mountExecEnvPanel(host, { projectKey, fetchFn = (u, o) => fetch(
     const values = Object.fromEntries([...box.querySelectorAll('.exec-env-field')].map((i) => [i.dataset.field, i.value.trim() || null]));
     try { render(await call(`${base}/config`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ backend: b.name, values }) })); notify({ tone: 'ok', title: 'Saved', detail: 'New runs of this project use it.' }, { doc }); }
     catch (err) { cardAlert(box, { title: 'Not saved', detail: err.message }); }
+  };
+  // Save / Clear of the spec form: a refusal throws, and the form shows the server's message under it.
+  const json = { 'Content-Type': 'application/json' };
+  const saveSpec = async (spec) => {
+    const v = await call(`${base}/spec`, { method: 'PUT', headers: json, body: JSON.stringify(spec) });
+    specForm = null;   // the saved spec repaints the form (sorted, deduplicated)
+    render(v);
+    notify({ tone: 'ok', title: 'Spec saved', detail: 'Build the environment to use it.' }, { doc });
+  };
+  const clearSpec = async () => {
+    if (confirm && !(await confirm({ title: 'Clear the environment spec?', message: 'New builds start from the default environment. The last build stays in use until then.', confirmLabel: 'Clear' }))) return;
+    const v = await call(`${base}/spec`, { method: 'DELETE' });
+    specForm = null;
+    render(v);
+    notify({ tone: 'ok', title: 'Spec cleared' }, { doc });
   };
   const build = async (b, box) => {
     cardAlert(box, null);

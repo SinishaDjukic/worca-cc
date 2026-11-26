@@ -41,6 +41,11 @@
 .field.drow > label{margin:0;font-weight:500;}
 .drow > .field-error{grid-column:1 / -1;}
 .drow.drow-wide > .drow-control > :is(.path-row,.act-launcher-row,#tagDimsEditor){flex:1 1 auto;min-width:0;}
+/* A link into Worca's guides (docs-links.mjs): links are blue (Colour), at the PR links' weight. */
+.docs-link{color:var(--blue-ink-strong);font-weight:600;text-decoration:none;overflow-wrap:anywhere;}
+.docs-link:hover{text-decoration:underline;}
+/* A posture chip (security-status-view.mjs): amber takes the -ink-strong shade (Chips and badges). */
+.badge.amber.posture-badge{color:var(--amber-ink-strong);}
 /* Rich row: block content (a schedule, a preset, a guardrail) with the same divider and padding. */
 .drow.drow-stack{display:flex;flex-direction:column;align-items:stretch;gap:4px;}
 /* Stacked (phones): a switch stays right of its label; a segmented control keeps its own width. */

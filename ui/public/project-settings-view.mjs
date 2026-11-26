@@ -47,7 +47,7 @@ const JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag'
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the sign-in engines' helper jobs run on Claude.
 const HELPER_ENGINES = ['claude', 'codex'];
 function makeCard(doc, key, title) { const card = doc.createElement('section'); card.className = 'card pd-settings-card'; card.dataset.card = key; const heading = doc.createElement('h3'); heading.textContent = title; const body = doc.createElement('div'); body.className = 'pd-settings-body drows'; const save = doc.createElement('button'); save.type = 'button'; save.className = 'btn btn-primary btn-sm pd-settings-save'; save.textContent = 'Save'; const msg = doc.createElement('small'); msg.className = 'hint pd-settings-msg'; const actions = doc.createElement('div'); actions.className = 'add-project-actions engine-save-row'; actions.append(msg, save); card.append(heading, body, actions); return { card, body, save, msg }; }
-export function mountProjectSettings(host, { projectKey, projectDir, fetchFn = (url, options) => fetch(url, options), onTest = null }) {
+export function mountProjectSettings(host, { projectKey, projectDir, fetchFn = (url, options) => fetch(url, options), onTest = null, confirm = null }) {
   const doc = host.ownerDocument; const url = `/api/projects/${encodeURIComponent(projectKey)}/settings`; let catalog = []; let current = { own: {} };
   // The registered backends for "Where runs execute" (GET /api/exec-envs; null = the static options), and the sandbox
   // environment panel inside the exec card (exec-env-project-view.mjs), stopped before every re-render.
@@ -65,7 +65,7 @@ export function mountProjectSettings(host, { projectKey, projectDir, fetchFn = (
         const own = row.id === 'watch.trustedReviewers' && Array.isArray(f.own) ? f.own.join(', ') : f.own;
         item.body.append(renderInheritField(doc, { ...row, ...(row.id === 'run.execEnv' && execEnvOptions ? { options: execEnvOptions } : {}), level: 'project', ...f, own }));
       }
-      if (spec.key === 'exec') { const panel = doc.createElement('div'); panel.className = 'exec-env-panel'; item.body.append(panel); execEnvPanel = mountExecEnvPanel(panel, { projectKey, fetchFn }); }
+      if (spec.key === 'exec') { const panel = doc.createElement('div'); panel.className = 'exec-env-panel'; item.body.append(panel); execEnvPanel = mountExecEnvPanel(panel, { projectKey, fetchFn, confirm }); }
       host.append(item.card); item.save.addEventListener('click', () => void save(item));
     }
     models.save.addEventListener('click', () => void save(models));

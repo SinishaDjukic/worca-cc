@@ -332,6 +332,11 @@ then dropped. A line under the card says that the sidecar holds the login.
 There is no local proxy port in a container, so that field is gone. Auto-detect
 fills in the proxy the sidecar uses. Chat's proxy tools use the same path.
 
+**When the sidecar does not answer.** The card says so in its status line:
+"The egress sidecar cannot be reached". Save, Log in, Log out, Test and
+Auto-detect are off, because each one would fail the same way. A Retry button
+reads the status again. Check that the sidecar runs (`worca container logs`).
+
 **What the sidecar keeps.** The same record as the native install (domain,
 user name, NT hash, never the password), with the same file guards, in
 `/worca/egress/proxy-login.json` on its own volume `egress-data`. Only the
@@ -394,6 +399,11 @@ The Settings card and the setup assistant's Network step show who is logged
 in and the state, with no login form, and say that the operator manages the
 login. Test still works.
 `worca proxy status` shows who is logged in and the state.
+
+If the proxy rejects that login, nobody can log in again from Worca. The card
+and the setup assistant say so: the operator must replace the login file
+(`WORCA_EGRESS_LOGIN_FILE`) with a working one. The sidecar reads the new file
+on its next call.
 
 ## Where the login lives
 

@@ -16,8 +16,9 @@ Checks the machine and answers within about 3 seconds:
 ```
 
 There is one row per check, always in this order: `claude`, `git`, `proxyEnv`, `direct`, `harnesses`,
-`ollama`, `apiKey`. `state` is `ok`, `warn` or `no`, and `line` is one plain-words sentence. Some rows also
-carry `facts`: the proxy host for `proxyEnv`, the engines for `harnesses`, the model count for `ollama`.
+`ollama`, `apiKey`, `docker`, `e2b`, `teamSetup`. `state` is `ok`, `warn` or `no`, and `line` is one
+plain-words sentence. Some rows also carry `facts`: the proxy host for `proxyEnv`, the engines for `harnesses`,
+the model count for `ollama`, `up` / `missing` / `down` for `docker`, `configured` for `e2b`.
 The `harnesses` row (shown as Engines) counts the ready engines in its `line`; each `facts.engines[]` entry
 carries its own short `line` (at most 160 characters; the full `reason` is kept), and the dialog shows one
 sub-row per engine under it.
@@ -26,6 +27,10 @@ sub-row per engine under it.
   check that fails is `warn` with "Couldn't check this."
 - `proxyEnv` shows `host:port` only, never a proxy login. `apiKey` says whether `ANTHROPIC_API_KEY` is set,
   never its value.
+- `docker` asks the Local sandbox backend for its status (`docker version`, then a count of its containers). It
+  never starts Docker. It has 5 seconds. `e2b` reads `E2B_API_KEY` and whether the `e2b` package is installed,
+  with no network call; its line names the server (E2B Cloud, or the host of `E2B_API_URL` / `E2B_DOMAIN`),
+  never the key.
 - The `claude` row and the Getting started "Connect Claude Code" tick come from the same detection, so they
   always agree.
 - `?recheck=1` skips the remembered answers.
@@ -44,7 +49,8 @@ assistant step:
                "anthropic": { "baseUrl": "https://llm.acme.example", "apiKey": "…" } },
   "models":  { "modelRoles": { "claude": { "everyday": { "model": "claude-sonnet-5-5" } } }, "askModels": { "claude": { "model": "claude-opus-5-5", "effort": "high" } }, "testRoles": true },
   "work":    { "uiLevel": "simple", "pipelineCostLimitUsd": 5, "totalCostLimitUsd": 50, "costLimitResetPeriod": "weekly",
-               "autoGeneratePrDescription": true, "smartNaming": { "suggestTitle": true }, "runEngine": "claude" },
+               "autoGeneratePrDescription": true, "smartNaming": { "suggestTitle": true }, "runEngine": "claude",
+               "execEnv": "docker" },
   "fromStep": "copilot-signin"
 }
 ```
@@ -158,7 +164,7 @@ labels put the step back to its saved values and move on:
 | 2 Network | Skipped on a first start when the check found a working direct connection and no proxy in the environment (Review's **Change** still opens it). Otherwise: direct, or through a corporate proxy: host and port (**Auto-detect** fills them in from the system settings, see [Auto-detect](network-proxy.md#auto-detect)), login mode, account and password (NTLMv2 only), the hosts that go direct, and under **More** the timeouts (filled in with their defaults) and the local proxy port. **Reset to defaults** puts the login mode, the no-proxy hosts, the local port and the timeouts back. A proxy found in `HTTPS_PROXY` on a first start shows as one "Found in your environment" line with **Change**. **Next** saves and applies these values at once (only when they changed), with its progress inline. |
 | 3 Model access | Which sources to use: Claude Code sign-in, GitHub Copilot, OpenAI-compatible, Anthropic-compatible. Copilot shows the plan and the device sign-in inside the dialog. With the credential broker on, keys and the Copilot sign-in stay on the broker's key page: the dialog re-checks the Copilot sign-in when you come back to its tab, and **Check again** re-checks it on demand. Already connected: Claude Code's **Sign in again** shows the terminal steps (`claude`, then `/logout` and `/login`) and a **Check again** that reads the sign-in past its cache; Copilot's **Use another account** asks first, signs out and runs the device sign-in in the dialog; a saved API key is replaced by typing a new one. |
 | 4 Models | The roles of Models › Jobs: Deep thinking, Everyday tasks and Quick jobs per engine, with an engine switch at every level: Claude, every engine the machine check found ready, your run engine, and any engine that already has roles. Set them here and every step, helper job, Chat and the workspace scan follow them (see [models.md](models.md#model-roles)). Copilot models picked here are imported by Apply (with the credential broker on too); the list shows the models GitHub's own picker offers, under GitHub Copilot. Below them, **Default model for Chat** (model and effort) for Chat's saved engine; its empty choice, "Same as Everyday tasks", stores nothing. A Copilot model picked there is imported too. |
-| 5 How you work | Interface mode, the per-run and total limits, the reset period, AI-written PR descriptions and smart run names. |
+| 5 How you work | Interface mode, the per-run and total limits, the reset period, AI-written PR descriptions and smart run names. Then **Where agents run**: the default execution environment (`execEnv`). Local (not sandboxed) is always offered; Local sandbox (Docker) when the check found Docker running; E2B sandbox when an E2B key is set; a saved choice stays offered. No pick keeps the saved value. In a container, the hardened box or a hosted Worca it shows the instance's posture (`GET /api/security/posture`) instead of a choice. A link opens [Choose a setup](choose-a-setup.md). |
 | 6 Review | One row per group. With changed roles, "Test models after applying" sits above Apply (on by default): the tests run on the Apply step, once the network, sign-ins and imports are saved. A row that differs from the saved value carries **Changed**, and **Change** jumps back. The Models row lists the Chat model too. A re-run lists only the changed rows, plus Network as **Saved** once Next applied it. |
 | 7 Apply | One row per apply step, filled from the `setup-apply` frames (or the poll). |
 
@@ -264,8 +270,8 @@ own source.
 
 **`worca setup --from FILE [--yes]`.** Applies a team setup file with one settings write. It asks one question
 for each of these that the file leaves out: Interface level, Coding agent, Per-run limit ($), Total limit ($),
-Reset, AI-written PR descriptions, and the Deep thinking, Everyday tasks and Quick jobs models. Enter keeps the
-current value. A role the file names but no source here serves counts as set. Then it prints one line per changed
+Reset, AI-written PR descriptions, the Deep thinking, Everyday tasks and Quick jobs models, and last Where agents
+run (`local`, `docker` or `e2b`; `local` clears the default). Enter keeps the current value. A role the file names but no source here serves counts as set. Then it prints one line per changed
 setting (one per changed sub-key for Sync before run, Wait for the network and Smart run names) and asks
 `Apply these changes? [y/N]`; anything but yes exits 1 with "Nothing changed.". `--yes` asks nothing. A
 refused file exits 2 and names the field. It never changes the network or model access: use the setup assistant

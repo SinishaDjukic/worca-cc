@@ -271,6 +271,10 @@ export const STATE_TEXT = Object.freeze({
   ready: 'ready', 'no-login': 'no login saved', 'needs-login': 'needs login', 'not-configured': 'not set up', error: 'cannot be used', off: 'off',
 });
 
+/** A login the operator manages (the egress sidecar's WORCA_EGRESS_LOGIN_FILE) that the proxy rejected: nobody can log
+ *  in again from Worca; the operator replaces the file. */
+export const MANAGED_REJECTED_FIX = 'The operator manages this login: they must replace the login file (WORCA_EGRESS_LOGIN_FILE) with a working one.';
+
 const when = (iso) => (iso ? `${iso.slice(0, 16).replace('T', ' ')} UTC` : 'at an unknown time');
 
 /**
@@ -286,7 +290,7 @@ export function stateLine(st) {
       : `${STATE_TEXT.off}: turn on Use a corporate proxy, enter its host and port, then Save.`;
     case 'ready': return `${STATE_TEXT.ready}:${via}${who}.`;
     case 'no-login': return `${STATE_TEXT['no-login']}:${via}. Log in with your domain, user name and password.`;
-    case 'needs-login': return `${STATE_TEXT['needs-login']}: the corporate proxy rejected the saved login${st.login ? ` for ${st.login.label}` : ''} ${when(st.login && st.login.rejected && st.login.rejected.at)}, so Worca sends no credentials. Log in again (worca proxy login).`;
+    case 'needs-login': return `${STATE_TEXT['needs-login']}: the corporate proxy rejected the saved login${st.login ? ` for ${st.login.label}` : ''} ${when(st.login && st.login.rejected && st.login.rejected.at)}, so Worca sends no credentials. ${st.managed ? MANAGED_REJECTED_FIX : 'Log in again (worca proxy login).'}`;
     case 'error': return `${STATE_TEXT.error}: ${st.error}`;
     default: return `${STATE_TEXT['not-configured']}: enter the corporate proxy host and port, then Save (or set HTTPS_PROXY).`;
   }

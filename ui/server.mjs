@@ -113,7 +113,7 @@ import {
   keepAwakeEnabled, setKeepAwake, assertKeepAwakeInput, migrateKeepAwakeFlag,
   chatLinksInPanel, setChatLinksInPanel, assertChatLinksInPanelInput, assertChatSourceBranchInput,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
-  assertExecEnvInput, setExecEnvSetting, assertE2bIntInput, setE2bIntSetting,
+  assertExecEnvInput, setExecEnvSetting, EXEC_ENV_SETTING_KEYS, assertExecEnvSettingInput, setExecEnvSettingKey,
   stepModelsSetting, assertStepModelsInput, setStepModels, setDesignModels,
   modelRolesSetting, assertModelRolesInput, setModelRoles,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
@@ -1475,7 +1475,7 @@ function summarizeRuns() {
     limitResetAt: r.limitResetAt || null, modelConfirm: r.orch?.state?.modelConfirm || null, limitScope: r.orch?.state?.limitScope || null, limitModel: r.orch?.state?.limitModel || null,   // #1450
     runEngine: r.orch?.state?.runEngine || null,
     // Where the run executes (e2b mode only) and whether it still waits for a sandbox slot.
-    ...(r.orch?.state?.execEnv ? { execEnv: r.orch.state.execEnv, execEnvWaiting: !!r.orch.state.execEnvWaiting,
+    ...(r.orch?.state?.execEnv ? { execEnv: r.orch.state.execEnv, execEnvWaiting: !!r.orch.state.execEnvWaiting, ...(r.orch.state.execEnvPreparing ? { execEnvPreparing: r.orch.state.execEnvPreparing } : {}),
       // While a question waits: when the parked sandbox is released (the run page's "Answer by" line).
       ...(r.orch.state.execEnvWaitUntil ? { execEnvWaitUntil: r.orch.state.execEnvWaitUntil } : {}),
       // Files from the sandbox to review before running them here (the run page's banner).
@@ -8402,7 +8402,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
   const hasExecEnvKey = has('execEnv');
-  const e2bIntKeys = ['e2bMaxSandboxes', 'e2bMaxWaitMin'].filter((k) => has(k));
+  const e2bIntKeys = EXEC_ENV_SETTING_KEYS.filter((k) => has(k));   // the backends' limits and dockerSandbox
   const hasStepModelsKey = has('stepModels'); const hasDesignModelsKey = has('designModels');   // designModels: Models › Jobs › Design
   const hasModelRolesKey = has('modelRoles');
   const hasUtilityModelsKey = has('utilityModels');
@@ -8479,7 +8479,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
     if (hasExecEnvKey) asSettingsField('execEnv', () => assertExecEnvInput(body.execEnv));
-    for (const k of e2bIntKeys) asSettingsField(k, () => assertE2bIntInput(k, body[k]));
+    for (const k of e2bIntKeys) asSettingsField(k, () => assertExecEnvSettingInput(k, body[k]));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
     if (hasRequirementsInterviewKey) await asSettingsField('requirementsInterview', async () => {
       const v = assertRequirementsInterviewInput(body.requirementsInterview);
@@ -8575,7 +8575,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
     if (hasRunEngineKey) void reevaluateAllReadiness();   // which tool each project judges follows run.engine
     if (hasExecEnvKey) await asSettingsField('execEnv', () => setExecEnvSetting(body.execEnv));
-    for (const k of e2bIntKeys) await asSettingsField(k, () => setE2bIntSetting(k, body[k]));
+    for (const k of e2bIntKeys) await asSettingsField(k, () => setExecEnvSettingKey(k, body[k]));
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels)); if (hasDesignModelsKey) await asSettingsField('designModels', () => setDesignModels(body.designModels));
     if (hasModelRolesKey) await asSettingsField('modelRoles', () => setModelRoles(modelRolesPatch));
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', () => setUtilityModels(body.utilityModels));
