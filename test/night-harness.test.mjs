@@ -587,3 +587,30 @@ test('openedAt follows the always-wait list while the question is open', async (
   orch.nightConfigChanged();
   assert.equal(orch.state.night.openedAt, '2026-09-27T12:00:00.000Z', 'the re-arm publishes the open time');
 });
+
+// Shaper small runs C3 (D16): a stop question waits for the person; a --yes run keeps dev's automatic answer.
+const STOP = { reason: 'objection', run: 8, pick: 'another', options: [{ value: 'another', payload: { decision: 'another' } }, { value: 'continue', payload: { decision: 'continue' } }] };
+test('C3: _nightLeavesToPerson is true for a gate and a plan ask with stop; away mode never decides one', async () => {
+  await setNightMode({ enabled: true, graceMinutes: 1, strategy: 'weights', window: null });
+  await setNightModeToggle('on');
+  const clock = fakeClock();
+  const orch = createOrchestrator({ projectDir: '/tmp/night-h-stop', nightClock: clock });
+  assert.equal(orch._nightLeavesToPerson({ kind: 'gate', stop: STOP }), true);
+  assert.equal(orch._nightLeavesToPerson({ kind: 'plan', plan: { file: 'p.md' }, stop: { ...STOP, reason: 'check' } }), true);
+  assert.equal(orch._nightLeavesToPerson({ kind: 'gate' }), false);
+  let decided = 0;
+  orch._nightDecide = async () => { decided += 1; };
+  const p = orch._ask({ id: 'g-stop', kind: 'gate', issues: [], wireId: 'w9', deliveryNo: 3, stop: STOP });
+  p.catch(() => {});
+  await clock.tick(60 * 60_000);
+  assert.equal(decided, 0);
+  assert.equal(orch.pendingQuestion?.id, 'g-stop');
+  assert.equal(orch.pendingQuestion.stop.reason, 'objection');
+});
+
+test('C3: under --yes a gate stop gets dev\'s continue and no "decided by you" line', async () => {
+  const orch = createOrchestrator({ projectDir: '/tmp/night-h-stop-yes', auto: true });
+  assert.equal(orch._nightLeavesToPerson({ kind: 'gate', stop: STOP }), false);
+  assert.deepEqual(await orch._ask({ id: 'g-yes', kind: 'gate', issues: [], stop: STOP }), { decision: 'continue' });
+  assert.equal(orch.pendingQuestion, null);
+});

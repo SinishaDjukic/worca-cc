@@ -279,3 +279,15 @@ test('cell.roles: a role-review node\'s resolved picks ride the cell only when n
   assert.equal('roles' in cell('n_plan'), false);
   assert.equal('roles' in build().graph.nodes.find((n) => n.id === 'n_rev'), false);
 });
+
+test('an agent cell carries modelSource when the resolver set it (null included), never when undefined (#1450)', () => {
+  const cellOf = (over) => build(over).graph.nodes.find((n) => n.id === 'n_plan');
+  assert.equal(cellOf({ overlays: { nodes: { n_plan: { model: 'claude-opus-5-5', modelSource: 'worca-default' } } } }).modelSource, 'worca-default');
+  const nul = cellOf({ overlays: { nodes: { n_plan: { modelSource: null } } } });
+  assert.equal('modelSource' in nul, true);
+  assert.equal(nul.modelSource, null, 'the tool decides: written, so a resume tells it from a pre-change run');
+  const bare = cellOf({ overlays: { nodes: { n_plan: { model: 'claude-opus-5-5' } } } });
+  assert.equal('modelSource' in bare, false);
+  assert.equal(JSON.stringify(build({ overlays: { nodes: { n_plan: { modelSource: undefined } } } })), JSON.stringify(build({ overlays: { nodes: { n_plan: {} } } })),
+    'a pre-change cell is byte-equal');
+});

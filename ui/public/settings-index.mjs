@@ -4,6 +4,7 @@
 // tab / card id, its mode and its Labs gate to ui/public/index.html, so a moved or re-gated card fails there.
 import { flagByKey } from '../../src/shared/flags/registry.mjs';
 import { levelRank, LEVEL_INFO } from './ui-level.mjs';
+import { CHAT_SOURCE_BRANCH_SETTING } from '../../src/shared/chat-source-branch.mjs';
 
 const tab = (id, title, o = {}) => ({ id, title, min: 'simple', flag: '', alts: [], ...o });
 const card = (tabId, id, title, o = {}) => ({ tab: tabId, id, title, min: 'simple', flag: '', alts: [], ...o });
@@ -30,11 +31,14 @@ export const CARDS = Object.freeze([
   card('general', 'debug-spawn-settings-card', 'Spawn diagnostics', { min: 'expert', alts: ['debug', 'diagnostics', 'process', 'logging'] }),
   card('general', 'getting-started-card', 'Getting started', { alts: ['tour', 'onboarding', 'guide', 'tutorial', 'welcome'] }),
   card('general', 'about-card', 'About', { alts: ['version', 'update', 'licence', 'license'] }),
+  card('general', 'security-card', 'Security', { min: 'advanced', alts: ['security', 'sandbox', 'sandboxed', 'broker', 'agent users', 'allow-list', 'hardened box', 'box image', 'posture'] }),
+  card('general', 'secret-vault-card', 'Secret vault', { flag: 'secretVault', alts: ['vault', 'secrets', 'keychain', 'credential manager', 'secret service', 'encryption', 'keys'] }),
   card('tags', 'tag-dims-settings-card', 'Cost tags', { alts: ['cost dimensions', 'tags', 'tagging'] }),
   card('tags', 'labels-settings-card', 'Labels', { flag: 'runLabels', alts: ['label', 'tags', 'categories'] }),
   card('runs', 'budget-settings-card', 'Budget & cost limits', { alts: ['budget', 'cost', 'spend', 'money', 'limit', 'cap', 'price'] }),
   card('runs', 'night-settings-card', 'Away mode', { min: 'advanced', alts: ['night', 'overnight', 'unattended', 'away', 'autopilot'] }),
   card('runs', 'smart-naming-settings-card', 'Smart run naming', { alts: ['title', 'branch name', 'naming', 'rename'] }),
+  card('runs', 'chat-runs-settings-card', CHAT_SOURCE_BRANCH_SETTING, { alts: ['source branch', 'base branch', 'chat run', 'branch'] }),
   card('runs', 'sync-settings-card', 'Sync before run', { min: 'advanced', alts: ['git', 'pull', 'fetch', 'up to date', 'rebase'] }),
   card('runs', 'schedule-settings-card', 'Scheduled runs', { min: 'advanced', alts: ['schedule', 'cron', 'timer', 'recurring', 'repeat'] }),
   card('runs', 'network-proxy-settings-card', 'Network proxy', { alts: ['proxy', 'corporate proxy', 'ntlm', 'firewall', 'network'] }),
@@ -44,6 +48,7 @@ export const CARDS = Object.freeze([
   card('runs', 'pr-settings-card', 'Pull requests', { alts: ['pr', 'merge', 'github', 'review', 'draft'] }),
   card('runs', 'ws-scan-models-card', 'Workspaces', { min: 'advanced', alts: ['scan', 'workspace', 'monorepo'] }),
   card('runs', 'chat-settings-card', 'Chat notifications', { min: 'advanced', alts: ['chat alerts', 'replies', 'notify'] }),
+  card('runs', 'e2b-settings-card', 'Execution environment', { min: 'expert', alts: ['e2b', 'docker', 'local sandbox', 'sandbox', 'remote', 'cloud', 'runs in', 'memory', 'cpus', 'runtime'] }),
   card('ask', 'ask-engine-card', 'Engine & models', { alts: ['engine', 'model', 'claude', 'codex', 'llm'] }),
   card('ask', 'chat-links-card', 'Links in answers', { flag: 'toolPanel', alts: ['links', 'file paths', 'web links', 'panel'] }),
   card('ask', 'ask-settings-card', 'Limits & access', { alts: ['limits', 'access', 'tools', 'spend', 'read only'] }),

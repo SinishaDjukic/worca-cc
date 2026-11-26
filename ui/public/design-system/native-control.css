@@ -1,8 +1,9 @@
 /* ---------- native control skins (checkbox / radio / switch / rows) -------- */
-/* Everything the browser used to draw for itself. The mark is the one .qopt
-   already draws (:761): a 1.5px --radio-ring hairline on --panel that fills
-   --ink behind a tick in the page colour, so "chosen" reads identically on a
-   question option, a checkbox, a chip and a whole row.
+/* Everything the browser used to draw for itself. The mark: a 1.5px
+   --radio-ring hairline on --panel that fills --ink behind a tick in the page
+   colour, so "chosen" reads identically on a checkbox, a chip and a whole row.
+   A pick-one question option (.qopt) draws its own round mark instead: a 1px
+   ring, with an ink dot when picked.
    Styling the REAL <input> through appearance:none — rather than hiding it
    behind a span — is what lets every existing emitter keep its markup:
    :checked, :disabled, :indeterminate, label clicks and keyboard all keep
@@ -77,7 +78,7 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
   font-weight:500;font-size:var(--fs-body);color:var(--ink-2);}
 /* The engine field's hint and the gate refusal's consent row: hidden must win over
    .hint's display:block and .check-row's inline-flex. */
-#engine-hint[hidden], #engine-default-hint[hidden], #engineAllowRow[hidden]{display:none;}
+#engine-hint[hidden], #engine-default-hint[hidden], #exec-env-hint[hidden], #exec-env-local-note[hidden], #engineAllowRow[hidden]{display:none;}
 #engineAllowRow{margin-top:6px;}
 .field > label.check-row,
 .field > label.fanout-toggle{display:inline-flex;margin-bottom:0;font-weight:500;}

@@ -27,6 +27,7 @@ function world({ runs = {}, features = {}, flag = true } = {}) {
     },
     logToRun: (id, level, text) => { w.logs.push({ id, level, text }); },
     featureOfPipeline: (id) => link.get(id) || null,
+    smallRunsOfFeature: (id) => features[id]?.marked === true,
     featureView: (id) => features[id]?.view(),
     featureThread: (id) => (features[id]?.thread === false ? null : { threadId: `t-${id}` }),
     featureRootSource: (id) => features[id]?.root || null,
@@ -518,4 +519,34 @@ test('a resumed run whose in-memory state has no starter takes it from the row',
   const none = world({ runs: { r1: { pa: PA() } } });
   await none.fin.afterSettled(st({ startedBy: null }));
   assert.equal(none.opened[0].actor, 'worca', 'no starter anywhere: worca opens it');
+});
+
+test('small runs C5: a verify-exempt settle records "skipped" and calls the one-PR ship for its feature once', async () => {
+  let ready = false;
+  const w = world({ runs: { s1: { pa: PA() }, s2: { pa: PA() }, vr: { pa: PA({ open: 'none', exempt: 'verify' }) } },
+    features: { f1: feature({ ready: () => ready }) } });
+  w.deps.verifyCheckOfPipeline = (id) => (id === 'vr' ? { featureId: 'f1', round: 1 } : null);
+  w.fin = createPrAutoFinisher(w.deps);
+  await w.fin.afterSettled(slice('s2'));
+  assert.equal(w.ships.length, 0, 'the Verifier is still checking');
+  ready = true;
+  await w.fin.afterSettled(st({ id: 'vr' }));
+  assert.equal(w.ships.length, 1);
+  assert.equal(w.runs.vr.pa.outcome.status, 'skipped');
+  assert.equal(w.runs.vr.pa.outcome.reason, 'The Verifier checks the feature; it opens no PR of its own');
+  await w.fin.afterSettled(st({ id: 'vr' }));
+  assert.equal(w.ships.length, 1, 'once');
+});
+
+test('D1: a marked feature with slices one: each settled slice and shipOne record a quiet skip; no waiting text, no ship', async () => {
+  const w = sliceWorld(feature({ marked: true }));
+  await w.fin.afterSettled(slice('s1'));
+  await w.fin.afterSettled(slice('s2'));
+  for (const id of ['s1', 's2']) assert.deepEqual([w.runs[id].pa.outcome.status, w.runs[id].pa.outcome.reason], ['skipped', 'small runs ship a PR per run']);
+  assert.deepEqual(w.logs, [], 'quiet: no log line, never the one-PR waiting text');
+  assert.equal(w.ships.length, 0);
+  await w.fin.maybeShipOne('f1');
+  assert.equal(w.ships.length, 0);
+  assert.deepEqual([w.features.f1.setting.outcome.status, w.features.f1.setting.outcome.reason], ['skipped', 'small runs ship a PR per run']);
+  assert.deepEqual([w.notices, w.notifs, w.logs], [[], [], []]);
 });

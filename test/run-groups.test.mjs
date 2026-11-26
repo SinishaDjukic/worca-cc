@@ -193,3 +193,86 @@ test('a new group of only feature slices is refused; runNameInputs reads title a
   assert.deepEqual(runNameInputs(['p-q']), [{ title: 'Fix login', firstMessage: 'Safari loops after SSO' }]);
   assert.equal(runNameInputs(['p-q', 'missing']), null);
 });
+
+/** D2 · a 10-slice feature whose origin carries the small-runs marker (`shape_stats.smallRuns`) or not. */
+function tenSliceFeature({ marked = true, agreed = null } = {}) {
+  n += 1;
+  const origin = `p-ten-${n}`;
+  seedPipelineRow({ id: origin, title: 'Shape it', status: 'done' });
+  if (marked) getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run('{"smallRuns":true}', origin);
+  const outline = { why: 'w', slices: Array.from({ length: 10 }, (_, i) => ({ id: `s${i + 1}`, title: `Slice ${i + 1}`, goal: 'g',
+    inScope: [], outOfScope: [], acceptance: [], dependsOn: [], estimate: 'small' })) };
+  if (agreed) { outline.agreed = agreed.map((x) => ({ id: x, text: x })); outline.leftOut = []; outline.slices[0].requirements = [agreed[0]]; }
+  const { id } = createSliceFeature({ pipelineId: origin, projectDir: PROJECT, title: 'Ten runs', outline, perspectives: [], workflowId: 'wf_shape' });
+  return { id, origin };
+}
+const withSmallRuns = (on, fn) => {
+  const prev = process.env.WORCA_FLAGS;
+  try {
+    if (on) process.env.WORCA_FLAGS = 'shaperSmallRuns'; else delete process.env.WORCA_FLAGS;
+    return fn();
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev;
+  }
+};
+
+test('D2 (D1): a marked 10-run feature is 1 group of 10, run 1 is the planning run, smallRuns: true with the flag on', () => {
+  const f = tenSliceFeature();
+  const groups = withSmallRuns(true, () => listRunGroups().filter((x) => x.id === f.id));
+  assert.equal(groups.length, 1);
+  const [g] = groups;
+  assert.equal(g.members.length, 10);
+  assert.equal(g.members[0].pipelineId, f.origin, 'run 1 is the planning run');
+  assert.deepEqual(g.members.map((m) => m.position), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.equal(g.smallRuns, true);
+});
+
+test('D2 (D1): flag off, or an unmarked feature: the group keeps dev\'s keys (no smallRuns key at all)', () => {
+  const marked = tenSliceFeature();
+  const plain = tenSliceFeature({ marked: false });
+  const off = withSmallRuns(false, () => listRunGroups());
+  const on = withSmallRuns(true, () => listRunGroups());
+  assert.equal('smallRuns' in off.find((x) => x.id === marked.id), false);
+  assert.equal('smallRuns' in on.find((x) => x.id === plain.id), false);
+  for (const g of on.filter((x) => x.kind === 'user')) assert.equal('smallRuns' in g, false);
+});
+
+test('item 7: each native member of a small-runs group carries its slice (kind, state, stop, waitsFor); other groups and the flag off keep their keys', () => {
+  const f = tenSliceFeature();
+  const plain = tenSliceFeature({ marked: false });
+  const db = getDb();
+  const outline = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(f.id).outline);
+  outline.slices[2].dependsOn = ['s2'];
+  db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify(outline), f.id);
+  n += 1;
+  seedPipelineRow({ id: `p-live-${n}`, title: 'Slice 2', status: 'running' });
+  db.prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = 2').run(`p-live-${n}`, f.id);
+  const loose = `p-loose-${n}`;
+  seedPipelineRow({ id: loose, title: 'Loose', status: 'done' });
+  addToGroup({ groupId: f.id, pipelineId: loose });
+  const live = (pid) => (pid === `p-live-${n}` ? { runId: 'r', status: 'running', asking: true, stop: { reason: 'objection', held: true, after: 1 } } : null);
+  const of = (list, x) => list.find((g) => g.id === x.id);
+  const on = withSmallRuns(true, () => listRunGroups({ live }));
+  const m = of(on, f).members;
+  assert.deepEqual(m[0].slice, { kind: null, state: 'done', buildsOn: [] });
+  // Its stop answer is held waiting its turn, so it goes on next (owner direction dd8aea6ed).
+  assert.deepEqual(m[1].slice, { kind: null, state: 'questions', stop: { reason: 'objection', held: true, after: 1 }, nextTurn: true, buildsOn: [] });
+  assert.deepEqual(m[2].slice, { kind: null, state: 'planned', waitsFor: [2], buildsOn: [2] });
+  assert.equal(m.at(-1).pipelineId, loose);
+  assert.equal('slice' in m.at(-1), false, 'an ad-hoc member is no slice');
+  const none = (list, x) => of(list, x).members.every((y) => !('slice' in y));
+  assert.ok(none(on, plain));
+  assert.ok(none(withSmallRuns(false, () => listRunGroups({ live })), f));
+  assert.deepEqual(of(withSmallRuns(true, () => listRunGroups()), f).members[1].slice, { kind: null, state: 'starting', buildsOn: [] }, 'no live overlay');
+});
+
+test('fail closed: a marked feature with an owner-less requirement carries hold, flag on only; every other group has no such key', () => {
+  const held = tenSliceFeature({ agreed: ['R-po-1', 'R-ops-1'] });
+  const fine = tenSliceFeature({ agreed: ['R-po-1'] });
+  const plain = tenSliceFeature({ marked: false, agreed: ['R-po-1', 'R-ops-1'] });
+  const on = withSmallRuns(true, () => listRunGroups());
+  const of = (list, f) => list.find((x) => x.id === f.id);
+  assert.equal(of(on, held).hold, 'R-ops-1 is owned by no run and confirmed by no person');
+  for (const f of [fine, plain]) assert.equal('hold' in of(on, f), false);
+  assert.equal('hold' in of(withSmallRuns(false, () => listRunGroups()), held), false);
+});

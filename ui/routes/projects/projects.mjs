@@ -19,10 +19,19 @@ import { cancelForTarget } from '../../../src/core/scheduler.mjs';
 import { getProjectsRoot } from '../../../src/core/settings.mjs';
 import { projectKey } from '../../../src/core/store.mjs';
 import path from 'node:path';
+import { HARDENED_CLONE_ONLY_TEXT, isHardenedBox } from '../../../src/core/security-posture.mjs';
 import { CLONE_JOBS, afterProjectRegistered, agentMayBeCaller, badRequest, detectTeamMemorySoon, emitChanged, fsAllowedRoots, fsLimitedHere, isFinishingRun, liveRunIds, noRawCommand, pinUiLevel, publicCloneJob, refuseAgentCaller, requireFsAllowed, runs, startCloneJob, tmProject } from '../../server.mjs';
 import { readProjectActions, writeProjectActions } from '../../../src/core/config.mjs';
 import { detectDevServer, devServerAction } from '../../../src/core/dev-server.mjs';
 import { ActionConfigError } from '../../../src/core/actions/model.mjs';
+
+// The hardened box (docs/hardened-box.md) adds projects by clone only: a folder there is on the box's own disk, and
+// results leave as pushed branches. The Add project dialog offers Clone from URL only (HARDENED_CLONE_ONLY).
+function refuseFolderInHardenedBox(res) {
+  if (!isHardenedBox()) return false;
+  res.status(409).json({ error: HARDENED_CLONE_ONLY_TEXT, code: 'HARDENED_CLONE_ONLY' });
+  return true;
+}
 
 export function register(app) {
 
@@ -84,6 +93,7 @@ app.get('/api/projects', async (_req, res) => {
 });
 
 app.post('/api/projects', async (req, res) => {
+  if (refuseFolderInHardenedBox(res)) return;
   const body = req.body || {};
   if (!(await requireFsAllowed(req, res, [normalizeProjectPath(body.path)]))) return;
   if (body.useGit === true) {                  // Use git: git init once on a no-git folder, then register (Task 3)
@@ -123,6 +133,7 @@ app.post('/api/projects', async (req, res) => {
 // `reason` on a skipped row. 200 even when every row was skipped — the request itself was valid.
 const MAX_BULK_PROJECTS = 100;
 app.post('/api/projects/bulk', async (req, res) => {
+  if (refuseFolderInHardenedBox(res)) return;
   const items = req.body && req.body.projects;
   if (!Array.isArray(items) || !items.length) return badRequest(res, 'projects must be a non-empty array of {name, path}');
   if (items.length > MAX_BULK_PROJECTS) return badRequest(res, `at most ${MAX_BULK_PROJECTS} projects per request`);

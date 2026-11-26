@@ -311,6 +311,12 @@ test('a policy with a Setup group validates; malformed Setup fields are dropped 
   assert.match(bad.warnings.find((w) => w.startsWith('setup.sync')), /unknown field "pushUrl"/);
 });
 
+test('a team policy may not set "Let Claude Code decide": models.roles names upstream models only (#1450)', () => {
+  const r = normalizePolicyDoc({ schema: 1, fields: { 'models.roles': { kind: 'default', value: { claude: { deep: { cliDecides: true } } } } } });
+  assert.equal('models.roles' in r.doc.fields, false);
+  assert.match(r.warnings[0], /^models\.roles: claude\.deep: model must be an upstream model id/);
+});
+
 test('setup.smartNaming accepts every stored smartNaming key', () => {
   const full = { suggestTitle: false, suggestBranch: true, pattern: '{type}/{slug}', types: ['feat'], trigger: 'manual', addRunId: true };
   const r = normalizePolicyDoc({ schema: 1, fields: { 'setup.smartNaming': { kind: 'default', value: full } } });

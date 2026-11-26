@@ -298,7 +298,7 @@ export const foldSystemPrompt = (sys, prompt) => (sys ? `=== SYSTEM ===\n${sys}\
 export async function runFamilyProcess(spec, {
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal, bin, resumeSessionId,
   addDirs, writableDirs, sandbox, askLockdown, envScrub, envAllowlist, asAgent, mcpConfigPath, spawnEnv: runSpawnEnv,
-  redactValues, maxTurns, permissionRules, noGit = false, probe = null,
+  redactValues, maxTurns, permissionRules, noGit = false, probe = null, tryGuard = null,
 } = {}) {
   const { name, label, prefix } = spec;
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
@@ -348,8 +348,9 @@ export async function runFamilyProcess(spec, {
     prepared = spec.prepare({ cwd, bin, sys, prompt: String(prompt ?? ''), model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe });
     // The engine's own env names survive scrub; the run env carries the MCP servers' ${VAR} values.
     const prefixes = typeof spec.envPrefixes === 'function' ? spec.envPrefixes(process.env) : spec.envPrefixes;
+    // Workflow tests 3a (D56): a try's outward guard (stand-ins first on PATH, git with no sign-in); absent ⇒ unchanged.
     const { env } = composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv,
-      overlay: prepared.env, hostPid: guardOn ? process.pid : null });
+      overlay: prepared.env, hostPid: guardOn ? process.pid : null, ...(tryGuard ? { tryGuard } : {}) });
     const mcpNames = Object.keys(servers || {});
     const cap = Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
     const turnCap = () => Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true });

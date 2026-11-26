@@ -15,11 +15,14 @@ import { WebSocket } from 'ws';
 import http from 'node:http';
 
 import { useTempHome } from './helpers/temp-home.mjs';
+import { useCurrentSourceBranch } from './helpers/source-branch-current.mjs';
 import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { holdMockTurn, isToolResult } from './helpers/ask-hold.mjs';
 
 useTempHome(after);
+// Branchless chat cards on git repos keep today's path: "Chat runs: source branch" = Current (checked out).
+useCurrentSourceBranch(after);
 
 const origCwd = process.cwd();
 let cwdSandbox = null;

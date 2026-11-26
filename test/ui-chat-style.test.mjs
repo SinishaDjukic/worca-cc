@@ -95,7 +95,8 @@ test('the Chat row dot rides the rail corner; the logo links show a focus ring',
 test('the composer buttons keep their size, the run panel slot hides, cards measure the transcript, the empty lead row takes no room, the rail dot', () => {
   assert.equal(ruleBody('.chat-page .ask-composer-row > :is(.btn,.ask-meter,.ask-model-btn,.ask-voice,.ask-composer-ext):not(.ask-scope-btn)'), 'flex:none;', 'Send never shrinks out of the box (v2), nor a design\'s Point and gear (they lay over the model name); the scope button is a .btn too and must stay shrinkable');
   assert.equal(ruleBody('.chat-panel[hidden]'), 'display:none;', '.chat-panel{display:flex} would beat [hidden]: an empty bordered slot');
-  assert.equal(ruleBody('.chat-convo .ask-transcript'), 'container-type:inline-size;isolation:isolate;scrollbar-gutter:stable both-edges;padding-bottom:calc(var(--chat-dock-h,120px) + var(--chat-dock-fade));', '100cqi = the transcript width; the floating dock\'s height plus its fade band is its bottom clearance');
+  assert.equal(ruleBody('.chat-convo .ask-transcript'), 'container-type:inline-size;isolation:isolate;scrollbar-gutter:stable both-edges;', '100cqi = the transcript width; the dock clearance lives on the direct-child rule only');
+  assert.equal(ruleBody('.chat-convo > .ask-transcript'), 'padding-bottom:var(--chat-dock-fade);margin-bottom:var(--chat-dock-h,120px);', 'the scrollport ends at the dock\'s top; the fade band overlays its last 32px');
   assert.equal(ruleBody('.chat-convo .ask-msg > :is(.ask-card,.ask-card-stub)'), null, 'no card width rule (#959)');
   assert.equal(ruleBody('.chat-composer-lead:empty'), 'display:none;');
   assert.equal(ruleBody('.sidebar.collapsed .nav-count.nav-dot'), 'top:6px;right:8px;');
@@ -108,7 +109,7 @@ test('the mockup look (2026-10-10, corners and shadows per the runs redesign): t
   assert.equal(ruleBody('.chat-page .ask-composer-box:has(.guide-target)'), '-webkit-backdrop-filter:none;backdrop-filter:none;', 'a Getting started ring escapes the blur\'s stacking context');
   assert.equal(ruleBody('.chat-dock > .ask-composer'), 'pointer-events:none;');
   assert.equal(ruleBody('.chat-dock > .ask-jump,.chat-dock > .ask-composer > *'), 'pointer-events:auto;', 'only the composer\'s own parts take the pointer');
-  assert.match(ruleBody('.chat-dock::before'), /^content:"";position:absolute;left:0;right:0;bottom:0;top:calc\(-1 \* var\(--chat-dock-fade\)\);/);
+  assert.match(ruleBody('.chat-dock::before'), /^content:"";position:absolute;left:var\(--scrollbar-w\);right:var\(--scrollbar-w\);bottom:0;top:calc\(-1 \* var\(--chat-dock-fade\)\);background:linear-gradient\(/);
   assert.equal(ruleBody('.chat-convo .ask-msg .ask-card'), 'animation:none;', 'the row rises, never the card in it (#959)');
   assert.equal(ruleBody('.ask-card.chat-rc'), 'gap:0;border-radius:var(--r-card);');
   assert.doesNotMatch(css, /--shadow-card\b/, 'the resting card shadow token is gone');
@@ -155,4 +156,33 @@ test('summary rows: one line, a group is one card under a quiet head, the raw co
   assert.match(ruleBody('.ask-cmd-outbox .ask-cmd-out'), /max-height:min\(400px,50vh\);/);
   assert.match(ruleBody('.ask-cmd-code'), /font-size:12px;line-height:1\.6;/);
   assert.equal(ruleBody('.chat-convo .ask-msg > .ask-cmd-group'), null, 'a group fills the text column like every card (#959)');
+});
+
+test('the dock\'s fade leaves the transcript\'s scrollbar gutter uncovered, so the track is whole to its end', () => {
+  const root = css.match(/(?:^|\n):root\{([\s\S]*?)\n\}/)[1];
+  const tokenW = root.match(/--scrollbar-w:(\d+)px;/);
+  assert.ok(tokenW, ':root declares --scrollbar-w');
+  assert.equal(tokenW[1], '10');
+  const barW = ruleBody('::-webkit-scrollbar').match(/(?:^|;)width:(\d+)px;/);
+  assert.equal(barW[1], tokenW[1], 'the token is the width of every classic scrollbar (shell/scrollbars.css)');
+  const fade = ruleBody('.chat-dock::before');
+  assert.match(fade, /(?:^|;)left:var\(--scrollbar-w\);/);
+  assert.match(fade, /(?:^|;)right:var\(--scrollbar-w\);/);
+  assert.doesNotMatch(fade, /(?:^|;)(?:left|right):0;/, 'the opaque layer never paints over the gutter');
+  assert.ok(css.includes('\n.chat-dock{position:absolute;left:0;right:0;bottom:0;pointer-events:none;}'), 'the dock box, and so the composer, did not move');
+  const pad = ruleBody('.ask-composer').match(/(?:^|;)padding:(\d+)px (\d+)px/);
+  assert.ok(Number(pad[2]) >= Number(tokenW[1]), 'no composer part reaches the gutter');
+});
+
+test('the transcript\'s scrollport ends at the dock\'s top edge: its track never runs beside the composer', () => {
+  const clear = ruleBody('.chat-convo > .ask-transcript');
+  assert.match(clear, /(?:^|;)margin-bottom:var\(--chat-dock-h,120px\);/, 'the clearance is a margin, outside the scrollport');
+  assert.match(clear, /(?:^|;)padding-bottom:var\(--chat-dock-fade\);/);
+  for (const m of bare.matchAll(/([^{}]*)\{([^}]*)\}/g)) {
+    if (!/\.ask-transcript\b/.test(m[1])) continue;
+    assert.doesNotMatch(m[2], /(?:^|;)padding(?:-bottom)?:[^;]*--chat-dock-h/, `${m[1].trim()} must not pad by the dock height`);
+  }
+  assert.doesNotMatch(ruleBody('.chat-convo .ask-transcript'), /margin-bottom/, 'a nested Design thread gets no dock-sized gap');
+  assert.match(ruleBody('.chat-dock::before'), /top:calc\(-1 \* var\(--chat-dock-fade\)\)/);
+  assert.equal(ruleBody('.chat-dock > .ask-jump'), 'bottom:100%;');
 });

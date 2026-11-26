@@ -20,13 +20,22 @@ import { writeJsonAtomic } from '../json-atomic.mjs';
 import { validateMcpDefinition, screenNonSecretValue, canonicalJson, sha256Hex, defDigest, MCP_ENV_VAR_RE, URL_SAFE_SECRET_RE, SETS_API_NOUNS } from './definitions.mjs';
 import { parseSkillId, SKILL_ID_RE } from '../skills-registry/ids.mjs';
 import { assignBaseNames, newSetId, slugFor, teamRecord, teamRecordsFor } from './identity.mjs';
+import { isVaultRef, ownerField } from '../secrets/refs.mjs';
 
 export class McpStoreError extends Error {
-  constructor(status, message) { super(message); this.name = 'McpStoreError'; this.status = status; }
+  constructor(status, message, code) {
+    super(message); this.name = 'McpStoreError'; this.status = status;
+    if (code !== undefined) this.code = code;
+  }
 }
+// A vault refusal (SettingsVaultError) as the store's error: a pasted reference is 400, an unusable vault 503.
+const vaultRefusal = (err) => (err?.name === 'SettingsVaultError'
+  ? new McpStoreError(err.code === 'VAULT_REF_REFUSED' ? 400 : 503, err.message, err.code) : err);
 const fail = (status, message) => { throw new McpStoreError(status, message); };
 
 export function mcpDir() { return join(worcaHome(), 'mcp'); }
+/** A stored tool's name: a Test result holds names (older) or records (workflow tests D35); '' for anything else. */
+export const toolNameOf = (t) => (typeof t === 'string' ? t : t && typeof t.name === 'string' ? t.name : '');
 
 const FILES = ['servers', 'sets', 'secrets', 'tests']; // read in this order: sets before secrets (§4.5 pending)
 const map = () => Object.create(null);
@@ -45,7 +54,10 @@ const dropNonMaps = (obj) => {
 // (`String(value.$env)`, `Date.parse(updatedAt)`, `String(tool)`), and the reviver's maps throw when coerced.
 const text = (v) => v === undefined || typeof v === 'string';
 const secretOk = (r) => ((typeof r.value === 'string' && r.value !== '') || (isMap(r.value) && typeof r.value.$env === 'string')) && text(r.updatedAt);
-const testOk = (t) => (t.tools === undefined || (Array.isArray(t.tools) && t.tools.every((x) => typeof x === 'string')))
+// A stored tool is its name (a Test written before workflow tests Part 2) or { name, description?, inputSchema?, annotations? }.
+const toolOk = (x) => typeof x === 'string' || (isMap(x) && typeof x.name === 'string');
+const testOk = (t) => (t.tools === undefined || (Array.isArray(t.tools) && t.tools.every(toolOk)))
+  && (t.toolDefs === undefined || (Array.isArray(t.toolDefs) && t.toolDefs.every((x) => isMap(x) && typeof x.name === 'string')))
   && text(t.at) && text(t.fingerprint) && (t.error === null || text(t.error));
 
 // A missing file reads as empty. A lock-free read never throws: a file that cannot be read or does not
@@ -194,25 +206,59 @@ function fileOf(name, s) {
   return name === 'secrets' ? { sets: s.secrets } : { tests: s.tests };
 }
 
+/** The vault owner field of an MCP secret: `SERVERID/FIELDKEY` (hashed when longer than the owner limit). */
+export const mcpSecretField = (serverId, key) => ownerField([serverId, key]);
+
+/** Every vault reference a raw secrets.json object holds, with its owner field. Tolerant of hand edits. */
+function secretRefs(raw) {
+  const out = [];
+  for (const bySet of Object.values(orMap(raw?.sets))) {
+    for (const [serverId, entry] of Object.entries(orMap(bySet))) {
+      for (const [k, r] of Object.entries(orMap(entry))) if (isMap(r) && isVaultRef(r.value)) out.push({ ref: r.value, field: mcpSecretField(serverId, k) });
+    }
+  }
+  return out;
+}
+
+// While the vault is in use (flag on, or a vault file a migration left): the lock-order check (a store lock never waits
+// while this operation holds the vault lock), the store-vault module and `sealing` (the flag: with it off, new values
+// stay in the config file and only releases run). Otherwise null, and nothing but flag.mjs is loaded.
+async function vaultGate() {
+  const { secretVaultEnabled, vaultInUse } = await import('../secrets/flag.mjs');
+  if (!vaultInUse()) return null;
+  const { assertVaultLockFree } = await import('../secrets/vault.mjs');
+  assertVaultLockFree('mcp');
+  return { vault: await import('../secrets/store-vault.mjs'), sealing: secretVaultEnabled() };
+}
+
 let queue = Promise.resolve();
 const holding = new AsyncLocalStorage();
 
 /**
  * Run `fn(tx)` under the registry lock. `tx.snapshot` is read inside the lock (orphans already swept
  * from disk); `await tx.write(name, obj = <that file from tx.snapshot>)` writes one file, 0600,
- * atomically, at once. Never nest: a store operation inside `fn` rejects.
+ * atomically, at once. Never nest: a store operation inside `fn` rejects. While the vault is in use,
+ * `tx.vault` is the store-vault module (null otherwise) and `tx.sealing` whether new values are sealed (the flag), and after `fn` returns the vault entries its
+ * writes dropped from secrets.json are released inside the lock (store lock first, vault lock second);
+ * every seal into and release from the vault's `mcp` entries runs under this lock.
  */
 export function withMcpLock(fn, lockOpts) {
   if (holding.getStore()?.active) return Promise.reject(new Error('withMcpLock: MCP store operations never nest'));
-  const run = queue.then(() => withLock(join(mcpDir(), '.lock'), () => {
+  const gate = vaultGate();
+  const prior = queue;
+  const run = gate.then((g) => prior.then(() => withLock(join(mcpDir(), '.lock'), () => {
     // `hold` ends with fn: work fn left scheduled may call the store later, and a kept tx may not write.
     const hold = { active: true };
     return holding.run(hold, async () => {
+      const vault = g?.vault ?? null;
       try {
+        const before = vault ? secretRefs(readJson('secrets', true)) : null;
         const { s, orphans } = load(true);
         if (s.newer) fail(409, 'MCP registry files need a newer Worca');
         const tx = {
           snapshot: s,
+          vault,
+          sealing: !!g?.sealing,
           write: async (name, obj = fileOf(name, s)) => {
             if (!hold.active) throw new Error('withMcpLock: tx.write after the lock was released');
             writeJsonAtomic(join(mcpDir(), `${name}.json`), { schema: 1, ...obj }, { mode: 0o600 });
@@ -220,12 +266,118 @@ export function withMcpLock(fn, lockOpts) {
         };
         if (orphans.secrets) await tx.write('secrets');
         if (orphans.tests) await tx.write('tests');
-        return await fn(tx);
+        const out = await fn(tx);
+        if (vault) {
+          const after = secretRefs(readJson('secrets', true));
+          const dropped = vault.refsDropped(before, after);
+          if (dropped.length || before.length || after.length) {
+            const held = () => new Set(secretRefs(readJson('secrets', true)).map((r) => r.ref));
+            await vault.releaseStoreRefs('mcp', dropped, { stillReferenced: (ref) => held().has(ref), sweep: true });
+          }
+        }
+        return out;
       } finally { hold.active = false; }
     });
-  }, lockOpts));
+  }, lockOpts)));
   queue = run.catch(() => {});
   return run.catch((e) => { throw e?.code === 'LOCK_TIMEOUT' ? new McpStoreError(503, 'MCP registry is busy') : e; });
+}
+
+// The file-stored secret records of a registry snapshot: every non-empty string value that is not a vault reference
+// (`{ $env }` and references stay as they are).
+function literalRecords(s) {
+  const out = [];
+  for (const [setId, bySet] of Object.entries(s.secrets)) {
+    for (const [serverId, entry] of Object.entries(bySet)) {
+      for (const [key, rec] of Object.entries(entry)) {
+        if (typeof rec.value === 'string' && rec.value && !isVaultRef(rec.value)) out.push({ setId, serverId, key, rec });
+      }
+    }
+  }
+  return out;
+}
+
+/** How many file-stored secrets secrets.json holds (orphans left out). No lock; never writes. */
+export function mcpSecretLiteralCount() {
+  return literalRecords(load().s).length;
+}
+
+/**
+ * The one-time move of secrets.json's file-stored secrets into the vault (secrets/migrate.mjs), inside the registry
+ * lock: list them as `[{ field, value }]`, `await move(items)` (the caller puts them into the vault and reads them
+ * back; it returns one reference, or null to keep the literal, per item), set each reference in place (`updatedAt`
+ * kept, so Test fingerprints stay valid), `beforeWrite()`, then write secrets.json once, before the lock ends. `names`
+ * lists the moved secrets as `{ set, server, key }` (the set's name) for the secrets notice.
+ * @returns {Promise<{ moved: number, left: number, names: object[] }>}
+ */
+export function migrateMcpSecretLiterals(move, { beforeWrite = () => {} } = {}) {
+  return withMcpLock(async (tx) => {
+    const found = literalRecords(tx.snapshot);
+    if (!found.length) return { moved: 0, left: 0, names: [] };
+    const refs = await move(found.map((f) => ({ field: mcpSecretField(f.serverId, f.key), value: f.rec.value })));
+    let moved = 0;
+    const names = [];
+    found.forEach((f, i) => {
+      if (!isVaultRef(refs?.[i])) return;
+      f.rec.value = refs[i];
+      moved++;
+      names.push({ set: setNameOf(tx.snapshot, f.setId), server: f.serverId, key: f.key });
+    });
+    if (moved) {
+      beforeWrite();
+      await tx.write('secrets');
+    }
+    return { moved, left: found.length - moved, names };
+  });
+}
+
+/** Every vault reference secrets.json holds (orphans left out), with its owner field. No lock; never writes. */
+export function mcpSecretRefs() {
+  const { s } = load();
+  const out = [];
+  for (const [setId, bySet] of Object.entries(s.secrets)) {
+    for (const [serverId, entry] of Object.entries(bySet)) {
+      for (const [key, rec] of Object.entries(entry)) {
+        if (isVaultRef(rec.value)) out.push({ ref: rec.value, field: mcpSecretField(serverId, key), set: setNameOf(s, setId), server: serverId, key });
+      }
+    }
+  }
+  return out;
+}
+
+// A set's display name for the secrets notice (its id when it has none).
+const setNameOf = (s, setId) => String(s.sets?.[setId]?.name || setId);
+
+/**
+ * Export's restore (secrets/export.mjs), inside the registry lock: list the records holding a vault reference as
+ * `[{ field, ref }]`, `await restore(items)` (one literal, or null to keep the reference, per item), put each literal
+ * in place (`updatedAt` kept), `beforeWrite()`, then write secrets.json once (0600), before the lock ends. The
+ * references it drops are released inside the lock, as for every MCP write.
+ * @returns {Promise<{ restored: number, left: number }>}
+ */
+export function restoreMcpSecretRefs(restore, { beforeWrite = () => {} } = {}) {
+  return withMcpLock(async (tx) => {
+    const found = [];
+    for (const [setId, bySet] of Object.entries(tx.snapshot.secrets)) {
+      for (const [serverId, entry] of Object.entries(bySet)) {
+        for (const [key, rec] of Object.entries(entry)) if (isVaultRef(rec.value)) found.push({ setId, serverId, key, rec });
+      }
+    }
+    if (!found.length) return { restored: 0, left: 0 };
+    const values = await restore(found.map((f) => ({ field: mcpSecretField(f.serverId, f.key), ref: f.rec.value })));
+    let restored = 0;
+    found.forEach((f, i) => {
+      const v = values?.[i];
+      if (typeof v !== 'string' || !v) return;
+      f.rec.value = v;
+      restored++;
+    });
+    if (restored) {
+      beforeWrite();
+      await tx.write('secrets');
+    }
+    return { restored, left: found.length - restored };
+  });
 }
 
 const allSlugs = (s) => [...Object.values(s.sets), ...Object.values(s.teams)].map((x) => x.slug).filter(Boolean);
@@ -320,10 +472,30 @@ export async function duplicateSet(id, name, { team } = {}) {
     const from = Object.hasOwn(s.secrets, id) ? s.secrets[id] : map();
     const secrets = map();
     for (const m of members) if (Object.hasOwn(from, m.server)) secrets[m.server] = structuredClone(from[m.server]);
+    if (tx.vault) await copyVaulted(tx, secrets);
     if (Object.keys(secrets).length) { s.secrets[newId] = secrets; await tx.write('secrets'); }
     s.sets[newId] = { name: n, slug, members, ...(skills.length ? { skills } : {}) };
     await tx.write('sets');
     return { id: newId, name: n, slug };
+  });
+}
+
+// A duplicated set's vaulted secrets get fresh entries (one vault transaction), so deleting either set never removes
+// the other's. A reference that does not resolve is left out of the copy (it reads as unset in the source too).
+async function copyVaulted(tx, secrets) {
+  const refs = [];
+  for (const [server, entry] of Object.entries(secrets)) {
+    for (const [key, rec] of Object.entries(entry)) if (isVaultRef(rec.value)) refs.push({ server, key, rec });
+  }
+  if (!refs.length) return;
+  let fresh;
+  try {
+    fresh = await tx.vault.copyStoreRefs('mcp', refs.map((r) => ({ ref: r.rec.value, field: mcpSecretField(r.server, r.key) })));
+  } catch (err) { throw vaultRefusal(err); }
+  refs.forEach((r, i) => {
+    if (fresh[i]) { r.rec.value = fresh[i]; return; }
+    delete secrets[r.server][r.key];
+    if (!Object.keys(secrets[r.server]).length) delete secrets[r.server];
   });
 }
 
@@ -409,6 +581,7 @@ export async function putMember(setId, serverId, { enabled, values, secrets } = 
     const nextSecrets = { ...prev };
     const inUrl = new Set((Array.isArray(def.url) ? def.url : [def.url]).filter(isRef).map((r) => r.field));
     const now = new Date().toISOString();
+    const typed = [];
     for (const [k, v] of Object.entries(secrets ?? {})) {
       if (v === undefined || (isMap(v) && v.set === true)) continue;
       if (!Object.hasOwn(fields, k) || !fields[k].secret) fail(400, `secrets.${k}: not a secret field of this server`);
@@ -421,7 +594,18 @@ export async function putMember(setId, serverId, { enabled, values, secrets } = 
         if (v.includes(String.fromCharCode(0))) fail(400, `secrets.${k}: may not contain a NUL character`);
         if (inUrl.has(k) && !URL_SAFE_SECRET_RE.test(v)) fail(400, `secrets.${k}: the URL uses it, so only letters, digits and . _ ~ - are allowed`);
         nextSecrets[k] = { value: v, updatedAt: now };
+        typed.push(k);
       } else fail(400, `secrets.${k}: expected text, { "$env": "MCP_…" } or null`);
+    }
+    if (tx.vault && tx.sealing && typed.length) {
+      // Sealed inside the lock (store lock first, vault lock second); a sealed value is stored as its reference.
+      try {
+        const sealed = await tx.vault.sealStoreSecrets('mcp', typed.map((k) => ({
+          field: mcpSecretField(serverId, k), value: nextSecrets[k].value, current: Object.hasOwn(prev, k) ? prev[k].value : undefined,
+        })), { nothingVaulted: () => !secretRefs(readJson('secrets')).length, subject: 'The secret' });
+        sealed.recheck();
+        typed.forEach((k, i) => { nextSecrets[k] = { value: sealed.values[i], updatedAt: now }; });
+      } catch (err) { throw vaultRefusal(err); }
     }
     const setsChanged = !target || canonicalJson(target) !== canonicalJson(next);
     const secretsChanged = canonicalJson(prev) !== canonicalJson(nextSecrets);
@@ -458,11 +642,11 @@ export async function deleteMember(setId, serverId) {
 
 /** Store one Test result (§4.5): Test connects outside the lock; this re-reads and writes only its entry.
  *  @returns {Promise<boolean>} false when the membership is gone (nothing written) */
-export async function recordTest(setId, serverId, { at, ok, tools, error, fingerprint }) {
+export async function recordTest(setId, serverId, { at, ok, tools, toolDefs, error, fingerprint }) {
   return withMcpLock(async (tx) => {
     const s = tx.snapshot;
     if (!live(s, setId, serverId)) return false;
-    s.tests[`${setId}|${serverId}`] = { at, ok, tools, error, fingerprint };
+    s.tests[`${setId}|${serverId}`] = { at, ok, tools, error, fingerprint, ...(toolDefs ? { toolDefs } : {}) };
     await tx.write('tests');
     return true;
   });

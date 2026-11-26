@@ -72,6 +72,10 @@
 .status-dot.is-grey{color:var(--slate);}
 .status-dot.is-dark-grey{color:var(--ink-2);}
 .status-dot.is-grey-ring{color:var(--slate);background:none;box-shadow:inset 0 0 0 2px currentColor;}
+/* Shaper small runs s4: the run with the turn (`next`) is a ring in ink; a held stop answer (`after run N`) a 12px
+   dashed ring in --ink-3, its dashes cut by a mask, with no glyph (status-dot.mjs markDot). */
+.status-dot.is-ink-ring{color:var(--ink);background:none;box-shadow:inset 0 0 0 2px currentColor;}
+.status-dot.is-dashed-ring{width:12px;height:12px;color:var(--ink-3);background:currentColor;-webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5.2' fill='none' stroke='black' stroke-width='1.5' stroke-dasharray='2.4 1.7'/></svg>") center/100% 100% no-repeat;mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5.2' fill='none' stroke='black' stroke-width='1.5' stroke-dasharray='2.4 1.7'/></svg>") center/100% 100% no-repeat;}
 .status-dot.has-sym{width:12px;height:12px;background:none;}
 .status-dot.has-sym > svg{display:block;}
 .status-dot.has-ic{width:14px;height:14px;background:none;color:var(--ink-2);}
@@ -102,6 +106,19 @@
 .rd-sheet-head > .run-status{grid-area:1 / 1 / 2 / -1;grid-template-columns:subgrid;column-gap:0;}
 .rd-sheet-head > .run-status > *{grid-column:1 / -1;}
 .rd-sheet-head > .run-status > .run-status-head{grid-column:1;}
+/* The run pages' card says only what the header's state line does not (paintRunStatus lead:false): a detail line with
+   no dot column, on the word's line box beside the head buttons. With nothing to say the head is gone: the head buttons
+   take a row of their own and the card starts at its progress bar. */
+.run-status-head:has(> .run-status-word[hidden]){column-gap:0;}
+.run-status-head:has(> .run-status-word[hidden]) > .run-status-detail{margin-top:0;line-height:var(--rd-word-line);}
+.rd-sheet-head:has(> .run-status > .run-status-head[hidden]) > .run-status{grid-area:2 / 1 / 3 / -1;}
+.rd-sheet-head:has(> .run-status > .run-status-head[hidden]) > .rd-head-acts:not([hidden]){grid-area:1 / 1 / 2 / 4;justify-self:end;margin:0;}
+.rd-sheet-head:has(> .run-status > .run-status-head[hidden]) > .hd-publish:not([hidden]){margin:0 0 0 8px;}
+.rd-sheet-head:has(> .run-status > .run-status-head[hidden]):has(> :is(.rd-head-acts,.hd-publish):not([hidden])) > .run-status:has(> :not([hidden])){margin-top:12px;}
+@container rd-head (max-width:420px){.rd-sheet-head:has(> .run-status > .run-status-head[hidden]) > .rd-head-acts:not([hidden]){justify-self:start;}
+  .rd-sheet-head:has(> .run-status > .run-status-head[hidden]) > .hd-publish:not([hidden]){margin:8px 0 0;}}
+/* Nothing at all for the head (no line, no bar, no button): no empty row at the card's top. */
+.rd-sheet-head:has(> .run-status > .run-status-head[hidden]):not(:has(> .run-status > :not([hidden]),> :is(.rd-head-acts,.hd-publish):not([hidden]))){display:none;}
 /* Slice 3: centred on the state word's line (the detail may add lines under it): the buttons (32px, 40px on touch screens) overhang
    that line each way, so the head is the status block's height with or without them, and the PR control's fade-out moves
    nothing. A narrow card wraps them under the status. */

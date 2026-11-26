@@ -82,6 +82,15 @@ test('entrypoint.sh: single-volume mode prepares the volume as root, then drops 
   assert.match(block, /exit 78/, 'non-root on an unwritable volume is a config error');
 });
 
+test('no image VOLUME (each down + up left anonymous volumes); the unused world-writable mount points close in single-volume mode', () => {
+  const d = read('docker/Dockerfile');
+  assert.doesNotMatch(d, /^VOLUME\b/m, 'compose.yml mounts named volumes; an image VOLUME gave every other service anonymous ones');
+  const e = read('docker/entrypoint.sh');
+  const root = e.slice(e.indexOf('if [ -n "${WORCA_DATA_DIR:-}" ]'), e.indexOf('exec setpriv --reuid=worca --regid=worca --init-groups -- "$0" "$@"\n  fi\n  if [ ! -w "$data" ]'));
+  assert.match(root, /for d in \/worca \/projects \/home\/worca\/\.claude \/home\/worca; do\n\s+if \[ -d "\$d" \] && ! mountpoint -q "\$d" 2>\/dev\/null; then chmod 0755 "\$d"; fi/,
+    'as root, before the drop: a mount point nothing is mounted on is 0755, never 0777');
+});
+
 test('agent isolation: a worca-agent user, sudo only to it, set up on single-volume hosts', () => {
   const d = read('docker/Dockerfile');
   assert.match(d, /useradd -l -u 1001 -g worca-share .* worca-agent/);

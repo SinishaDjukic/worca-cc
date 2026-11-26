@@ -139,6 +139,10 @@ async function boot({ url = 'http://localhost:4317/', runResponse = null, workfl
     if (path.endsWith('/api/branches')) {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ branches: ['main', 'dev'], current: 'main' }) });
     }
+    // Chat runs: source branch: Current (checked out), so a branchless card starts as today.
+    if (path.endsWith('/api/run-defaults')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ engine: { value: 'claude', source: 'default' }, chatSourceBranch: { mode: 'current', source: 'default', needs: [] } }) });
+    }
     if (url2.includes('/api/projects')) {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: '/repos/proj', exists: true }] }) });
     }

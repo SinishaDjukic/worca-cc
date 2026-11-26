@@ -12,7 +12,6 @@ export const DESCRIPTION_MAX = 4000;
 export const AZURE_TIMEOUT_MS = 20_000;
 const STATE = { active: 'OPEN', completed: 'MERGED', abandoned: 'CLOSED' };
 const MERGE = { succeeded: 'MERGEABLE', conflicts: 'CONFLICTING' };
-const FOOTER_RE = /\n\n---\nStarted by [^\n]* via worca\s*$/;
 const enc = encodeURIComponent;
 
 let _fetch = (...a) => globalThis.fetch(...a);
@@ -65,19 +64,16 @@ const toPr = (coords, pr) => ({
   mergeable: MERGE[pr?.mergeStatus] || 'UNKNOWN',
 });
 
-/** Azure caps a PR description at 4,000 chars: cut at a paragraph boundary, keep worca's attribution footer last. */
+/** Azure caps a PR description at 4,000 chars: cut at a paragraph boundary. */
 export function fitDescription(body, max = DESCRIPTION_MAX) {
   const text = String(body || '');
   if (text.length <= max) return text;
-  const m = FOOTER_RE.exec(text);
-  const footer = m ? m[0] : '';
-  const main = m ? text.slice(0, m.index) : text;
   const note = '\n\n_(Description shortened to fit Azure DevOps.)_';
-  const room = Math.max(0, max - footer.length - note.length);
-  let cut = main.slice(0, room);
+  const room = Math.max(0, max - note.length);
+  let cut = text.slice(0, room);
   const para = cut.lastIndexOf('\n\n');
   if (para > room / 2) cut = cut.slice(0, para);
-  return `${cut.trimEnd()}${note}${footer}`;
+  return `${cut.trimEnd()}${note}`;
 }
 
 export function forkRefusal(baseRepo) {

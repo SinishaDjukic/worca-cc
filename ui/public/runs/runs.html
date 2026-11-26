@@ -5,14 +5,14 @@
             <div class="runs-list-pane" id="runs-list-pane" tabindex="-1">
               <div class="runs-head">
                 <h2 class="runs-head-title">Runs</h2>
-                <!-- New run: the way to the #new page (the top bar has no button for it, the sidebar no row). app.js draws the
-                     button here (#runs-new) and routes it like a nav row; the guide rings it after the Runs row. -->
-                <span class="runs-new-slot" id="runs-new-slot"></span>
                 <!-- The one View menu (runs-view-menu.mjs): Show, Group by, Started by, Select. -->
                 <button type="button" class="btn btn-sm btn-quiet runs-view-btn" id="runs-view-btn" aria-haspopup="menu" aria-expanded="false">
                   View <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9.5l6 6 6-6"></path></svg>
                 </button>
                 <label class="runs-all-wrap" hidden><input type="checkbox" class="runs-check runs-all" id="runs-all" aria-label="Select all visible runs"> Select all</label>
+                <!-- New run ends the head, after View (and Select all while selecting): the way to the #new page (the top bar has no button for it, the sidebar no row). app.js draws the
+                     button here (#runs-new) and routes it like a nav row; the guide rings it after the Runs row. -->
+                <span class="runs-new-slot" id="runs-new-slot"></span>
               </div>
               <div class="runs-view-chip" id="runs-view-chip" hidden>
                 <span class="runs-view-chip-t"></span>
@@ -104,7 +104,8 @@
                       <button type="button" role="menuitem" class="menu-item rd-resume-limit" hidden><b>Resume at</b><small>When the limit resets</small></button>
                       <button type="button" role="menuitem" class="menu-item resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
                       <button type="button" role="menuitem" class="menu-item resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
-                      <button type="button" role="menuitem" class="menu-item resume-with-model" hidden><b>Switch model…</b><small>Every remaining step runs on the model you pick</small></button>
+                      <button type="button" role="menuitem" class="menu-item resume-confirm-model" hidden><b>Continue on this model</b><small>Run the step on the premium model it was about to use</small></button>
+                      <button type="button" role="menuitem" class="menu-item resume-with-model" hidden><b>Switch model and continue…</b><small>Every remaining step runs on the model you pick</small></button>
                       <button type="button" role="menuitem" class="menu-item rd-resume-at"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
@@ -190,6 +191,8 @@
                     <span class="rd-status pill-run"><span class="pdot"></span><span class="rd-status-word"></span></span>
                     <span class="act-pill-slot"></span>
                   </div>
+                  <!-- The run's state on every tab (paintStateLine); the Overview card keeps only the rest. -->
+                  <div class="run-state-line" aria-live="off"></div>
                   <div class="rd-meta mono"></div>
                   <div class="rd-row3">
                     <span class="rd-base mono" hidden data-min-level="advanced" data-needs-git></span>
@@ -255,7 +258,8 @@
                       <button type="button" role="menuitem" class="menu-item hd-resume-limit-item" hidden><b>Resume at</b><small>When the limit resets</small></button>
                       <button type="button" role="menuitem" class="menu-item resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
                       <button type="button" role="menuitem" class="menu-item resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
-                      <button type="button" role="menuitem" class="menu-item resume-with-model" hidden><b>Switch model…</b><small>Every remaining step runs on the model you pick</small></button>
+                      <button type="button" role="menuitem" class="menu-item resume-confirm-model" hidden><b>Continue on this model</b><small>Run the step on the premium model it was about to use</small></button>
+                      <button type="button" role="menuitem" class="menu-item resume-with-model" hidden><b>Switch model and continue…</b><small>Every remaining step runs on the model you pick</small></button>
                       <button type="button" role="menuitem" class="menu-item hd-resume-at-item"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
@@ -340,6 +344,7 @@
                   <a class="btn hd-pr-link" hidden data-min-level="advanced" data-needs-git target="_blank" rel="noopener"></a>
                   <button type="button" class="btn btn-primary hd-push" hidden data-min-level="advanced" data-needs-git></button>
                 </div>
+                <div class="run-state-line" aria-live="off"></div>
                 <!-- "Published to <remote>/<branch>" (#618): its own line, so a long branch never squeezes the title. -->
                 <p class="hd-published hint mono" hidden data-min-level="advanced" data-needs-git></p>
                 <!-- Base conflicts (#620): the stored check of each branch against its base. Painted by paintHdBase. -->

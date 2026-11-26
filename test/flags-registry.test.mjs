@@ -77,3 +77,11 @@ test('design is a beta flag, on by default, documented, with its window restarte
   assert.ok(f.extendedOn > f.added, 'the move to beta restarts the review window');
   assert.ok(typeof f.extendReason === 'string' && f.extendReason.trim(), 'the restart says why');
 });
+
+test('shaperSmallRuns is experimental, default off, owned by a handle, inside its 90-day window', () => {
+  const f = flagByKey('shaperSmallRuns');
+  assert.ok(f, 'shaperSmallRuns is registered');
+  assert.deepEqual([f.stage, f.default, f.owner, f.docs], ['experimental', false, 'e-angelov', 'docs/feature-flags.md']);
+  const days = (Date.parse(`${f.reviewBy}T00:00:00Z`) - Date.parse(`${f.added}T00:00:00Z`)) / 86400000;
+  assert.ok(days > 0 && days <= FLAG_REVIEW_DAYS, `reviewBy is ${days} days after added`);
+});

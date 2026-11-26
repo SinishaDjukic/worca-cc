@@ -1,0 +1,26 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.2.0, pluggy-1.7.0 -- /home/tomica/tool-formats/venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/tomica/tool-formats/py
+collecting ... collected 8 items
+
+test_a.py::test_top_pass PASSED                                          [ 12%]
+test_a.py::test_top_fail FAILED                                          [ 25%]
+test_a.py::test_top_skip SKIPPED (not now)                               [ 37%]
+test_a.py::test_param[it's a "quoted" name with spaces] PASSED           [ 50%]
+test_a.py::TestOuter::test_in_class PASSED                               [ 62%]
+test_a.py::TestOuter::TestInner::test_nested PASSED                      [ 75%]
+test_b.py::test_b_pass PASSED                                            [ 87%]
+test_b.py::test_b_other PASSED                                           [100%]
+
+=================================== FAILURES ===================================
+________________________________ test_top_fail _________________________________
+
+    def test_top_fail():
+>       assert 1 == 2
+E       assert 1 == 2
+
+test_a.py:7: AssertionError
+=========================== short test summary info ============================
+FAILED test_a.py::test_top_fail - assert 1 == 2
+==================== 1 failed, 6 passed, 1 skipped in 0.03s ====================

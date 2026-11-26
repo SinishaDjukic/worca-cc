@@ -34,7 +34,8 @@ test('the theme audit kitchen-sink fixture is a script-free fragment whose every
         'n-amber', 'n-grey', 'rc-sic', 'rc-status-word', 'rd-ov-chip', 'st-green', 'st-peach', 'st-red', 'st-blue', 'st-violet', 'st-amber',
         'hd-dl-add', 'hd-dl-del', 'hd-dl-hunk', 'hljs-comment', 'hljs-keyword', 'hljs-type', 'hljs-string', 'hljs-literal', 'hljs-title',
         'qpanel', 'qopt', 'sel', 'ask-md', 'ask-answer', 'results-trunc', 'rd-route', 'run-warn', 'viewer', 'info-bubble', 'chart-tip',
-        'switch', 'seg', 'h-blue', 'h-green', 'h-peach', 'h-flow', 'dot', 'void', 'any', 'gdot'])
+        'switch', 'seg', 'h-blue', 'h-green', 'h-peach', 'h-flow', 'dot', 'void', 'any', 'gdot', 'rom', 'rom-link', 'rom-run', 'rom-n',
+        'chat-rc-stops', 'chat-rc-stop', 'chat-rc-stop-line', 'chat-rc-stop-text', 'chat-rc-stop-body'])
         assert.ok(classes.has(c), `fixture lacks .${c}`);
     } },
   ]);

@@ -1,7 +1,7 @@
 // test/night-strategies.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { weightsVerdict, decideQuestion, gateRule, workflowRule, recoveryRule, weightedTotals, mostReversible } from '../src/core/night/strategies.mjs';
+import { weightsVerdict, decideQuestion, gateRule, workflowRule, recoveryRule, weightedTotals, mostReversible, planRule } from '../src/core/night/strategies.mjs';
 import { NIGHT_DEFAULTS } from '../src/core/night/config.mjs';
 
 const C = NIGHT_DEFAULTS;
@@ -115,4 +115,11 @@ test('an analysis choice outside the options is replaced by the best-scored one 
   assert.equal(d.choice, 'B');
   assert.equal(d.flagged, true);
   assert.match(d.rationale, /which is not an option/);
+});
+
+test('planRule (small runs B4, D18): a Split with open objections waits; none open approves with approveEach false', () => {
+  const split = (challenge) => ({ kind: 'plan', id: 'plan-outline-n_plan-1', plan: { round: 1, check: { ok: true, passed: 9, total: 9, items: [] },
+    outline: { why: 'w', slices: [{ title: 'A' }, { title: 'B' }], leftOut: [] }, smallRuns: true, challenge } });
+  assert.equal(planRule(split({ roles: [], challenger: true, rounds: 1, open: 2 })), null);
+  assert.deepEqual(planRule(split({ roles: [], challenger: true, rounds: 1, open: 0 })).payload, { decision: 'approve', approveEach: false });
 });

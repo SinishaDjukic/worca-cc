@@ -48,6 +48,7 @@ import { validateMcpChange } from './mcp-deps.mjs';
 import { scrub } from './mcp-proposal.mjs';
 import { actionsProposalInput } from './actions-proposal.mjs';
 import { validateProxyChange, validateProxyFlagOn } from './proxy-deps.mjs';
+import { validateEnvProposal } from './env-proposal.mjs';
 import { scriptApprovalCard } from './script-approval.mjs';
 import { defaultScriptDeps } from './script-deps.mjs';
 import { claimFileForAgent } from '../agent-user.mjs';
@@ -85,7 +86,8 @@ const TERMINAL = new Set(['done', 'stopped', 'error']);
 // worca Chat P2 (review P2-1): what a sub-agent's chat-action call asked for, in the "Not applied: …" notice.
 const SUB_ACTION_WORDS = Object.freeze({ change_setting: 'change a setting', pause_run: 'pause a run', resume_run: 'resume a run',
   propose_stop_run: 'stop a run', send_direction: 'send a direction to a run', propose_pull_request: 'create a PR',
-  propose_changes: 'propose changes', route_message: 'route a message' });
+  propose_changes: 'propose changes', route_message: 'route a message',
+  change_requirement: 'change a requirement' });
 
 // The classified notice's raw-detail cap — the runner's own reject is already
 // tail-capped tighter than this; the slice(-N) here only bounds the unusual
@@ -266,6 +268,8 @@ class AskTurn extends EventEmitter {
       validateMetricsChange: deps.validateMetricsChange ?? validateMetricsChange,
       validateAwayChange: deps.validateAwayChange ?? validateAwayChange,
       validateProxyChange: deps.validateProxyChange ?? validateProxyChange,
+      // The environment cards (env-proposal.mjs): (toolName, input) → {ok, card} | {ok:false, errors}.
+      validateEnvProposal: deps.validateEnvProposal ?? validateEnvProposal,
       validateProxyFlagOn: deps.validateProxyFlagOn ?? validateProxyFlagOn,
       validatePolicyChange: deps.validatePolicyChange ?? validatePolicyChange,
       validateScheduleChange: deps.validateScheduleChange ?? validateScheduleChange,
@@ -770,6 +774,8 @@ class AskTurn extends EventEmitter {
    * {ok:false} already reached the model as text: no card, no notice.
    */
   async _onProjectProposal(input, text, isError) {
+    // kind "sandbox" changes an existing project's sandbox settings: an environment card, gated like the others.
+    if (input && typeof input === 'object' && input.kind === 'sandbox') return this._onEnvProposal('propose_project_change', input, text, isError);
     if (isError) return;
     let out = null;
     try { out = JSON.parse(text); } catch { out = null; }
@@ -957,6 +963,43 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /**
+   * propose_environment_spec_change / propose_environment_build / propose_project_change kind "sandbox" RESULT: the
+   * child's {ok:true} is only a hint. The parent replays the chat-scope gate (a project outside it is refused; no
+   * projectKey takes the pinned project), re-validates the same INPUT against the project as it is now, and mints the
+   * environment card. A child {ok:false} already reached the model as text: no card, no notice.
+   */
+  async _onEnvProposal(name, input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    const raw = input && typeof input === 'object' ? input : {};
+    const scope = this.pinnedScope;
+    const key = (typeof raw.projectKey === 'string' && raw.projectKey.trim()) || (scope && scope.projectKey) || '';
+    try {
+      if (this.scopeGated && key) {
+        let members = [];
+        if (scope && scope.workspaceId) { try { members = await d.workspaceMemberKeys(scope.workspaceId); } catch { members = []; } }
+        if (!targetInScope(scope, { projectKey: key }, members)) {
+          this.reducer.addBlock({ kind: 'notice', text: `Environment change rejected: ${scopeRefusalText(scope, { projectKey: key })}` });
+          this._persistBlocks();
+          return;
+        }
+      }
+      const r = await d.validateEnvProposal(name, { ...raw, ...(key ? { projectKey: key } : {}) });
+      if (r && r.ok) this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'proposed', card: r.card });
+      else {
+        const errors = (r && Array.isArray(r.errors) && r.errors.length) ? r.errors : ['invalid proposal'];
+        this.reducer.addBlock({ kind: 'notice', text: `Environment change rejected: ${errors.join('; ')}` });
+      }
+    } catch (err) {
+      this.reducer.addBlock({ kind: 'notice', text: `Environment change rejected: ${err?.message || err}` });
+    }
+    this._persistBlocks();
+  }
+
   /** The card exists from the tool_use on (spec §8.2, PD7): a building block with the four-step trace, persisted. */
   _onWorkflowStart(toolUseId, input) {
     const d = this.deps;
@@ -1085,6 +1128,7 @@ class AskTurn extends EventEmitter {
       onMcpProposal: ({ input, text, isError }) => this._onMcpProposal(input, text, isError),
       onProxyProposal: ({ input, text, isError }) => this._onProxyProposal('propose_network_proxy_change', input, text, isError),
       onProxyFlagProposal: ({ input, text, isError }) => this._onProxyProposal('propose_corporate_proxy_on', input, text, isError),
+      onEnvProposal: ({ name, input, text, isError }) => this._onEnvProposal(name, input, text, isError),
       onWebProposal: ({ input, text, isError }) => this._onWebProposal(input, text, isError),
       onScriptApproval: ({ name, input }) => this._onScriptApproval(name, input),
       onScopeSwitch: this.surfaceLocked ? null : ({ input, text, isError }) => this._onScopeSwitch(input, text, isError),

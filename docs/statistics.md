@@ -4,6 +4,9 @@ The Statistics page shows spend, time worked and outcomes across all pipelines, 
 included. It can also split that spend by cost tag, person, project, workflow or status, with hours and value,
 and export the split as CSV.
 
+[Workflow test](workflow-tests.md) tries (Labs) and the AI checks of their criteria are left out of every figure here,
+filtered or not, and out of **Saved**. Their cost still counts in the spending limit.
+
 ## Ranges
 
 | Range | Window | Bars |

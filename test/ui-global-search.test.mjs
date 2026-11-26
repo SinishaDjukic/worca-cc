@@ -277,13 +277,13 @@ test('dynamic Add-ons rows: a plugin with settings, an MCP server, your own mode
 
 test('R-po-18/A-5: every name match is listed before an alternative-word-only match; a tab before its settings', () => {
   // "run": the Presets tab holds it only in an alternative word ("run presets"). It ranks after every name match
-  // (the card "Budget & cost limits" matches through its tab's name, Runs), so the five rows have no room for it.
+  // (the cards found through their tab's name, Runs, come after the titles), so the five rows have no room for it.
   assert.deepEqual(setRows('run').settings.map((x) => x.title),
-    ['Runs', 'Smart run naming', 'Sync before run', 'Scheduled runs', 'Budget & cost limits']);
+    ['Runs', 'Smart run naming', 'Chat runs: source branch', 'Sync before run', 'Scheduled runs']);
   assert.deepEqual(setRows('mode').settings.map((x) => x.title), ['Interface mode', 'Away mode', 'Engine & models', 'Appearance'],
     'Appearance has "mode" only in "dark mode"');
-  assert.deepEqual(setRows('chat').settings.map((x) => x.title), ['Chat', 'Chat notifications', 'Engine & models', 'Links in answers', 'Limits & access'],
-    'the Chat tab before the card that also starts with "chat", then the cards found through the tab name');
+  assert.deepEqual(setRows('chat').settings.map((x) => x.title), ['Chat', 'Chat runs: source branch', 'Chat notifications', 'Engine & models', 'Links in answers'],
+    'the Chat tab before the cards that also start with "chat", then the cards found through the tab name');
 });
 
 test('Settings and Add-ons rows match only where a query word starts a word of the title, tab/page title or an alt word', () => {

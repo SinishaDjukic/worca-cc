@@ -2,7 +2,8 @@
 // each perspective asks while the requirements are drafted (with lead or supporting wording), the checklist provider
 // the engine's role-review step reads for `checklist: 'requirements'`, and when a run takes the stage. Pure and
 // browser-safe.
-import { PERSPECTIVES, DEFAULT_PERSPECTIVES, FIT_KEY, normalizePerspectives, perspectiveByKey } from './perspectives.mjs';
+import { PERSPECTIVES, DEFAULT_PERSPECTIVES, FIT_KEY, COMPLIANCE_KEY, normalizePerspectives, perspectiveByKey, perspectivesFor } from './perspectives.mjs';
+import { CARE_DEFAULT, CARE_POSITIONS } from './feature-record.mjs';
 import { criteriaList, CRITERION_ID_RE, CRITERIA_MAX_PER_PREFIX } from '../review/coverage.mjs';
 
 /** The criterion id prefix per perspective: `R-po-1` is Product's first criterion. */
@@ -10,12 +11,31 @@ export const REQUIREMENT_PREFIX = Object.freeze({
   product: 'po', architect: 'arch', qa: 'qa', ux: 'ux', security: 'sec', devops: 'ops', release: 'rel',
 });
 export const REQUIREMENT_MAX_PER_PERSPECTIVE = CRITERIA_MAX_PER_PREFIX;
+const PREFIX_WITH_COMPLIANCE = Object.freeze({ ...REQUIREMENT_PREFIX, [COMPLIANCE_KEY]: 'comp' });
 
-/** The perspective a criterion id belongs to (`R-sec-2` is `security`); null for an unknown prefix or a malformed id. */
-export function criterionPerspective(id) {
+/** The criterion prefixes: REQUIREMENT_PREFIX, plus Compliance's `comp` under small runs. */
+export const requirementPrefixes = ({ smallRuns = false } = {}) => (smallRuns === true ? PREFIX_WITH_COMPLIANCE : REQUIREMENT_PREFIX);
+// Readers of a stored picked list or a written requirements text: `comp` is there only if the run had small runs.
+const STORED_PREFIX = requirementPrefixes({ smallRuns: true });
+
+/** The perspective a criterion id belongs to (`R-sec-2` is `security`); null for an unknown prefix or a malformed id.
+ *  `R-comp-n` is Compliance's only under small runs. */
+export function criterionPerspective(id, { smallRuns = false } = {}) {
   if (typeof id !== 'string' || !CRITERION_ID_RE.test(id)) return null;
   const prefix = id.split('-')[1];
-  return Object.keys(REQUIREMENT_PREFIX).find((key) => REQUIREMENT_PREFIX[key] === prefix) || null;
+  const prefixes = requirementPrefixes({ smallRuns });
+  return Object.keys(prefixes).find((key) => prefixes[key] === prefix) || null;
+}
+
+/** Small runs C2 (D2): a slice run's roles, Product plus the perspective of each requirement id it owns, deduplicated,
+ *  in perspective order (Compliance after DevOps, as under small runs). Unknown ids add nothing. */
+export function runRolesOf(ids) {
+  const owned = new Set(['product']);
+  for (const id of Array.isArray(ids) ? ids : []) {
+    const key = criterionPerspective(id, { smallRuns: true });
+    if (key) owned.add(key);
+  }
+  return perspectivesFor({ smallRuns: true }).map((p) => p.key).filter((k) => owned.has(k));
 }
 
 /** The perspectives that write requirements: every one with a prefix (not Project fit, not the Devil's advocate). */
@@ -29,6 +49,7 @@ const ASKS = Object.freeze({
   security: 'Who may do what, and what must never happen?',
   devops: 'Where does it run, and how does it roll back?',
   release: 'How does it ship, and how is it turned off again?',
+  compliance: 'Which rules apply (personal data, retention, audit), and what proof must be kept?',
 });
 
 const labelOf = (key) => perspectiveByKey(key)?.label || key;
@@ -37,7 +58,7 @@ const labelOf = (key) => perspectiveByKey(key)?.label || key;
 export function requirementsAsks(key, { lead = null } = {}) {
   const ask = ASKS[key];
   if (!ask) return '';
-  const prefix = `\`R-${REQUIREMENT_PREFIX[key]}\``;
+  const prefix = `\`R-${STORED_PREFIX[key]}\``;
   if (!lead || lead === key) {
     return `You lead. Ask: ${ask} Write the criteria that answer it under ${prefix}. In your own area your view is the final say.`;
   }
@@ -46,7 +67,7 @@ export function requirementsAsks(key, { lead = null } = {}) {
 
 /** This perspective's criteria in a requirements text, by its prefix. */
 const itemsOf = (key, text) => {
-  const prefix = REQUIREMENT_PREFIX[key];
+  const prefix = STORED_PREFIX[key];
   return prefix ? criteriaList(text).filter((c) => c.id.startsWith(`R-${prefix}-`)) : [];
 };
 
@@ -81,12 +102,16 @@ function requirementsBrief(key, text, { shape } = {}) {
 export const REQUIREMENTS_ROLE_CHECKLIST = Object.freeze({
   roles: () => REQUIREMENT_ROLES.map(({ key, label }) => ({ key, label })),
   normalizePicked(raw) {
-    const n = normalizePerspectives(raw === null || raw === undefined ? [...DEFAULT_PERSPECTIVES] : raw);
-    return (n.ok ? n.perspectives : ['product']).filter((k) => k !== FIT_KEY && Object.hasOwn(REQUIREMENT_PREFIX, k));
+    const n = normalizePerspectives(raw === null || raw === undefined ? [...DEFAULT_PERSPECTIVES] : raw, { smallRuns: true });
+    return (n.ok ? n.perspectives : ['product']).filter((k) => k !== FIT_KEY && Object.hasOwn(STORED_PREFIX, k));
   },
+  /** A picked role `roles()` lacks (Compliance under small runs), as runningRoles appends it; null for one with no prefix. */
+  pickedRole: (key) => { const p = Object.hasOwn(STORED_PREFIX, key) ? perspectiveByKey(key) : null; return p ? { key: p.key, label: p.label } : null; },
   items: (key, text) => itemsOf(key, text).map((c) => c.id),
   brief: (key, text, opts = {}) => requirementsBrief(key, text, opts),
   wantsHouseBrief: () => false,
+  /** Care bounds this review (B3 D8–D10): the engine asks a provider with this hook for the round plan. */
+  roundPlan: (position, opts) => requirementRoundPlan(position, opts),
 });
 
 /** A run takes the requirements stage only for a medium or large task, and never as a slice ticket.
@@ -95,4 +120,20 @@ export function shapeRequirementsEligible(shape) {
   if (!shape) return false;
   if (shape.requirementsFirst === true) return true;
   return (shape.size === 'medium' || shape.size === 'large') && shape.slice === undefined;
+}
+
+/** The most requirement review rounds Care can ask for (Thorough). */
+export const REQUIREMENT_ROUNDS_MAX = 3;
+
+/** How many requirement review rounds a Care position runs, and by which roles (perspective keys). Lean: one round by
+ *  the lead's role plus Product; Balanced: one round by every picked role; Thorough: up to REQUIREMENT_ROUNDS_MAX
+ *  rounds by every picked role, stopping early on a clean round. An unknown position reads as the default (Balanced).
+ *  @param {string} position @param {{picked?:string[], lead?:string|null}} [opts]
+ *  @returns {{rounds:number, roles:string[]}} */
+export function requirementRoundPlan(position, { picked = [], lead = null } = {}) {
+  const pos = CARE_POSITIONS.includes(position) ? position : CARE_DEFAULT.position;
+  const all = Array.isArray(picked) ? [...picked] : [];
+  if (pos === 'lean') return { rounds: 1, roles: [...new Set([lead || 'product', 'product'])] };
+  if (pos === 'thorough') return { rounds: REQUIREMENT_ROUNDS_MAX, roles: all };
+  return { rounds: 1, roles: all };
 }

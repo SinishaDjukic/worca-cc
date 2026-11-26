@@ -79,6 +79,14 @@ const isTerminal = (prAuto) => {
   if (!own || own.final === false) return false;
   return TERMINAL.run.includes(own.status);
 };
+/** C5: why a run opens no PR (`prAuto.exempt`, e.g. 'verify'), once any answer for it was fetched, else null. The
+ *  exemption is fixed when the run starts, so the status part of the key does not matter. */
+export function knownPrExempt(id) {
+  if (!id) return null;
+  for (const [key, hit] of KNOWN) if (key.slice(0, key.lastIndexOf(':')) === id && hit.prAuto && hit.prAuto.exempt) return hit.prAuto.exempt;
+  return null;
+}
+
 /** Fill a run page's "Pull request" fact row. Re-checks isCurrent() after the await, like the other painters. */
 export async function paintRunPrAuto(row, id, status, isCurrent, { fetchFn = (url) => fetch(url), now = () => Date.now() } = {}) {
   if (!row || !id) return;

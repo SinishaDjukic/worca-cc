@@ -6,6 +6,7 @@ import { listRunLinks } from './store.mjs';
 import { readPrState, findPipelineRowById } from '../artifacts.mjs';
 import { readRunTags } from '../run-tags-store.mjs';
 import { readRunLabels } from '../run-labels-store.mjs';
+import { shaperSmallRunsOn } from '../shape/small-runs.mjs';
 
 export function defaultShapeToolDeps({ threadId = null, live = null } = {}) {
   if (!threadId) return {};
@@ -13,6 +14,8 @@ export function defaultShapeToolDeps({ threadId = null, live = null } = {}) {
   const links = () => { try { return listRunLinks(threadId); } catch { return []; } };
   return { shapeTools: {
     follows: () => links().length > 0,
+    // Small runs C4 (D13): change_requirement is listed only with the flag on.
+    ...(shaperSmallRunsOn() ? { smallRuns: true } : {}),
     check: (kind, input) => {
       try { const r = shapeToolCheck(kind, input, links(), deps); return r.ok ? { ok: true } : { ok: false, error: r.error }; }
       catch (err) { return { ok: false, error: `could not read this chat's work: ${err && err.message ? err.message : err}` }; }

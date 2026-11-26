@@ -6,7 +6,9 @@
 // `deps` (tool-deps.mjs builds the real bundle). Handler failures are
 // AskToolError → the MCP child returns them as isError:true text so the model
 // can self-correct; they are never JSON-RPC errors. No imports at all: diff paths
-// are repo-relative POSIX, so path handling here is plain string work.
+// are repo-relative POSIX, so path handling here is plain string work, and the
+// guardrail match is the secret-path owner's (secret-paths.mjs isSecretPath), injected
+// as deps.isSecretPath next to deps.protectedPaths (tool-deps.mjs).
 
 export class AskToolError extends Error {
   constructor(message) { super(message); this.name = 'AskToolError'; }
@@ -262,27 +264,9 @@ export function splitUnifiedDiff(text) {
   return sections;
 }
 
-const RE_SPECIAL = new Set(['.', '+', '?', '^', '$', '{', '}', '(', ')', '|', '[', ']', '\\']);
-const globCache = new Map();
-/** A guardrails.mjs pattern → anchored regex: a leading double-star + slash = any dirs, double-star = anything, one star = within one segment. */
-function globRe(pattern) {
-  let re = globCache.get(pattern);
-  if (re) return re;
-  let body = '';
-  for (let i = 0; i < pattern.length; i++) {
-    const c = pattern[i];
-    if (c !== '*') { body += RE_SPECIAL.has(c) ? `\\${c}` : c; continue; }
-    if (pattern[i + 1] !== '*') { body += '[^/]*'; continue; }
-    if (pattern[i + 2] === '/') { body += '(?:.*/)?'; i += 2; } else { body += '.*'; i += 1; }
-  }
-  re = new RegExp(`^${body}$`);
-  globCache.set(pattern, re);
-  return re;
-}
-
 /** Extensions whose bytes must never be UTF-8 decoded. The shared table in
  *  src/shared/artifact-kinds.mjs is the authority for the raw route and the
- *  viewer; this module stays import-free by contract (two source scans assert
+ *  viewer; this module imports only the secret-path owner (source scans assert
  *  it), so the byte extensions are restated here and
  *  test/ask-tools.test.mjs cross-checks the two sets against viewerKindFor. */
 const BYTE_EXTENSIONS = new Set([
@@ -298,23 +282,6 @@ export function isByteArtifact(relPath) {
   const base = String(relPath || '').split('/').pop() || '';
   const dot = base.lastIndexOf('.');
   return dot > 0 && BYTE_EXTENSIONS.has(base.slice(dot + 1).toLowerCase());
-}
-
-/**
- * Guardrail match for a diff section path (repo-relative, POSIX). Mirrors the CLI
- * semantics guardrails.mjs:16-18 documents: slash-LESS patterns (`*x*`, `*x`, `x*`,
- * `x`) match the basename at any depth; slash-containing ones match the whole path.
- * `~/…` and `//…` are absolute and can never name a file inside a run diff, so they
- * are skipped rather than silently mis-matched.
- */
-export function isProtectedBasename(path, patterns = []) {
-  const full = String(path ?? '').replace(/^\.\//, '');
-  const base = full.slice(full.lastIndexOf('/') + 1);
-  for (const p of patterns) {
-    if (typeof p !== 'string' || !p || p.startsWith('~/') || p.startsWith('//')) continue;
-    if (globRe(p).test(p.includes('/') ? full : base)) return true;
-  }
-  return false;
 }
 
 /** Byte-offset paging: cut at the last newline inside the window; never inside a UTF-8 sequence, never zero progress. */
@@ -421,6 +388,10 @@ const START_DESIGN_KINDS = Object.freeze(['web', 'presentation', 'pitch', 'video
 
 export function createAskTools(deps) {
   const L = deps.limits;
+  // The guardrail match for a path (secret-paths.mjs isSecretPath, injected): with patterns but no matcher, every
+  // path counts as protected, so a bundle that forgot the matcher hides too much, never a secret.
+  const isProtectedBasename = (p, patterns) => (typeof deps.isSecretPath === 'function'
+    ? deps.isSecretPath(p, patterns) : Array.isArray(patterns) && patterns.length > 0);
   // git missing on this machine (P0): an absent dep means git is on, so every existing caller is unchanged.
   const gitOff = () => typeof deps.gitAvailable === 'function' && deps.gitAvailable() === false;
 
@@ -503,6 +474,10 @@ export function createAskTools(deps) {
   const shapeTools = deps.shapeTools && typeof deps.shapeTools.check === 'function' ? deps.shapeTools : null;
   const shapeToolsOn = shapeOn && !!deps.chatActions && !!shapeTools && typeof shapeTools.follows === 'function' && shapeTools.follows() === true;
 
+  // Tool families in their own modules (security-tools.mjs): each gets this closure's helpers and adds its defs and
+  // handlers, listed and called like the rest (no import: deps.toolFamilies carries them).
+  const families = (Array.isArray(deps.toolFamilies) ? deps.toolFamilies : []).filter((f) => typeof f === 'function')
+    .map((make) => make({ deps, SCHEMA, str, AskToolError, scopeError, pinnedScope }));
   const defs = [
     { name: 'list_projects',
       description: 'List the registered projects (key, name, path) and workspaces (id, name, member project keys). Use the key / id in the other tools. Each project with a remote carries sync: {base, ahead, behind, dirty, fetchedAt} from the last fetch (no network).',
@@ -540,7 +515,7 @@ export function createAskTools(deps) {
       description: 'Follow a run in this chat: puts a live progress card (status, elapsed time, cost, active agents, the workflow) into your reply, kept current while the user watches. Works for running, paused and finished runs. id is the run\'s 8-hex id; the app\'s live run id also works. Call it once per run per reply, only from your own turn.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id (8 hex), or the app\'s live run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace') }, ['id']) },
     { name: 'propose_run',
-      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId / noProject: true (a run with no project works in its own empty folder: its files are the result; no git, branch or pull request; it cannot be scheduled or chained yet); omitting all three targets the chat\'s scope — in a No-project chat, a run with no project; use that only for work that belongs to no project. A project or workspace outside the chat\'s scope is refused (rule 2). guardrailsId defaults to "normal"; "permissive" is not allowed. To run it LATER give `when` (once) or `every` (repeat) in the user\'s own words — the card then offers Schedule instead of Start; check the phrase with preview_schedule first when unsure. To run it when ANOTHER run ends give `after` (a run id) — `sourceFromPrevious: true` starts it on that run\'s branch. When the work IS a tracker task (an issue in an installed task source), give `source` INSTEAD of brief: the run fetches the task itself when it starts (find_tasks / get_task find it). workflowId "wf_auto" = Auto: the run picks its own workflow from the task when it starts. engine: who runs the agents — claude (Claude Code), or codex, copilot, cursor (all three in beta); omit it and the run starts on the default engine (the project\'s, else the user\'s, else the team\'s), which is what you want unless the user names an engine. nodes: per-agent model picks for this run only (rule 18) — a saved workflow\'s agent node ids (list_workflows steps[].nodeId) to { model, effort?, subagentModel?, reason }; the card shows each beside the project default and saves nothing. presetId starts from one of the user\'s run presets (list_presets). Returns {ok:true, card} or {ok:false, errors}; a card may carry warnings (the team policy\'s allowed models, a premium-tier pick) — relay them.',
+      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId / noProject: true (a run with no project works in its own empty folder: its files are the result; no git, branch or pull request; it cannot be scheduled or chained yet); omitting all three targets the chat\'s scope — in a No-project chat, a run with no project; use that only for work that belongs to no project. A project or workspace outside the chat\'s scope is refused (rule 2). guardrailsId defaults to "normal"; "permissive" is not allowed. To run it LATER give `when` (once) or `every` (repeat) in the user\'s own words — the card then offers Schedule instead of Start; check the phrase with preview_schedule first when unsure. To run it when ANOTHER run ends give `after` (a run id) — `sourceFromPrevious: true` starts it on that run\'s branch. When the user named no branch, never guess one: ask the user which branch to start from when the refusal says so (the "Chat runs: source branch" setting, see sourceBranch). When the work IS a tracker task (an issue in an installed task source), give `source` INSTEAD of brief: the run fetches the task itself when it starts (find_tasks / get_task find it). workflowId "wf_auto" = Auto: the run picks its own workflow from the task when it starts. engine: who runs the agents — claude (Claude Code), or codex, copilot, cursor (all three in beta); omit it and the run starts on the default engine (the project\'s, else the user\'s, else the team\'s), which is what you want unless the user names an engine. nodes: per-agent model picks for this run only (rule 18) — a saved workflow\'s agent node ids (list_workflows steps[].nodeId) to { model, effort?, subagentModel?, reason }; the card shows each beside the project default and saves nothing. presetId starts from one of the user\'s run presets (list_presets). Returns {ok:true, card} or {ok:false, errors}; a card may carry warnings (the team policy\'s allowed models, a premium-tier pick) — relay them.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'),
         noProject: SCHEMA.b('true = a run with no project, in its own empty folder (never with projectKey / workspaceId)'),
         workflowId: SCHEMA.s('workflow id (default wf_default; "wf_auto" = Auto)'),
@@ -555,7 +530,8 @@ export function createAskTools(deps) {
           description: 'run tags for cost allocation, always "key:value" (client:acme, team:web). Only when the user names them.' },
         memoryScope: SCHEMA.s('Memory defragment workflow only: "global" | "project"'),
         engine: SCHEMA.s('claude | codex | copilot | cursor | gemini | goose | opencode | qwen — only when the user asked for that engine; omit for the default. Every engine but claude is beta: never pick one on your own'),
-        sourceBranch: SCHEMA.s('branch to start from (default: current)'), featureBranch: SCHEMA.s('feature branch name'),
+        execEnv: SCHEMA.s(`${(Array.isArray(deps.execEnvNames) && deps.execEnvNames.length ? deps.execEnvNames : ['local', 'e2b', 'docker']).join(' | ')} — where the run's agents and scripts execute (get_execution_environments lists them, ready or not); every name but local is a sandbox: one container or VM per run, while commits, pushes and PRs stay on this machine; a sandbox needs a project target (one git project)` + (deps.remoteEngines?.length ? ` on the ${deps.remoteEngines.length > 1 ? `${deps.remoteEngines.slice(0, -1).join(', ')} or ${deps.remoteEngines.at(-1)}` : deps.remoteEngines[0]} engine` : '') + '. Only when the user asks for it; omit for the default'),
+        sourceBranch: SCHEMA.s('branch to start from. With the user\'s "Chat runs: source branch" setting: Current (checked out) = omitted means the checked-out branch; Ask me on the card (default) = omitted means the card asks the user to pick one; Only when the chat names one = omitted is refused, so ask the user which branch first'), featureBranch: SCHEMA.s('feature branch name'),
         sameAsSource: SCHEMA.b('commit straight onto the source branch instead of a separate feature branch: the run fast-forwards the source to its work when it finishes. Only when the user asks for it.'),
         note: SCHEMA.s('one line shown on the card: why this workflow fits the work (≤ 200 chars)'),
         nodes: { type: 'object',
@@ -962,8 +938,12 @@ export function createAskTools(deps) {
     ] : []),
     ...(deps.projectChanges ? [
       { name: 'propose_project_change',
-        description: 'Propose adding a project for the user to confirm — it never creates or registers anything itself; the user sees a card and applies or declines it. kind "create": a new, empty folder named after the project in worca\'s projects folder. kind "add": a folder that already exists on this machine (path). useGit: true only when the user asks for git (worca runs git init once; a folder that already has git is a Git project either way). Applying it also switches this chat to the new project. Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
-        inputSchema: SCHEMA.obj({ kind: SCHEMA.s('create | add'), name: SCHEMA.s('the project name (create: also the new folder name; add: default the folder name)'), path: SCHEMA.s('add: the existing folder, absolute or ~'), useGit: SCHEMA.b('true only when the user asks for git: worca runs git init once'), note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }, ['kind']) },
+        description: 'Propose adding a project, or changing a project\'s sandbox settings, for the user to confirm — it never changes anything itself; the user sees a card and applies or declines it. kind "create": a new, empty folder named after the project in worca\'s projects folder. kind "add": a folder that already exists on this machine (path); refused in the hardened box, where a project is cloned (propose_clone_project). useGit: true only when the user asks for git (worca runs git init once; a folder that already has git is a Git project either way). Applying create or add also switches this chat to the new project. kind "sandbox": one git project\'s settings for one backend (e2b | docker): network "open" | "allow" (allow reaches only the hosts the operator listed), and its template (e2b) or image (docker) field, null to clear (get_project_environment shows them). Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
+        inputSchema: SCHEMA.obj({ kind: SCHEMA.s('create | add | sandbox'), name: SCHEMA.s('the project name (create: also the new folder name; add: default the folder name)'), path: SCHEMA.s('add: the existing folder, absolute or ~'), useGit: SCHEMA.b('true only when the user asks for git: worca runs git init once'),
+          projectKey: SCHEMA.s('sandbox: the project (default: the pinned project)'), backend: SCHEMA.s('sandbox: e2b | docker'),
+          network: { type: ['string', 'null'], description: 'sandbox: open | allow' }, template: { type: ['string', 'null'], description: 'sandbox, e2b: the E2B template (null: the default)' },
+          image: { type: ['string', 'null'], description: 'sandbox, docker: the Docker image reference (null: the default)' },
+          note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }, ['kind']) },
     ] : []),
     ...(deps.workspaceChanges ? [
       { name: 'propose_workspace_change',
@@ -1128,10 +1108,15 @@ export function createAskTools(deps) {
         inputSchema: SCHEMA.obj({ pipelineId: SCHEMA.s('the run (8-hex id) this chat follows, or any run of its feature'),
           request: SCHEMA.s('the change, in the user\'s words') }, ['pipelineId', 'request']) },
       { name: 'route_message',
-        description: 'Shaper: when the user brings a new idea or change while the feature this chat follows still has runs to go, put a "Where does this go?" card in the chat: Add to the feature, Own run now (from the base, its own pull request) or Save for later. guess = your pick (add, own or save), reason = one short line why; the user can pick another. Never for a question, a summary or thanks; never while a Plan or Split step is open. Returns {ok:true} or {ok:false, error}. Only from your own turn.',
+        description: 'Shaper: when the user brings a new idea or change while the feature this chat follows still has runs to go, put a "Where does this go?" card in the chat: Add to the feature, Own run now (from the base, its own pull request) or Save for later. An edit to an agreed requirement\'s text (an R-id) takes change_requirement when it is listed. guess = your pick (add, own or save), reason = one short line why; the user can pick another. Never for a question, a summary or thanks; never while a Plan or Split step is open. Returns {ok:true} or {ok:false, error}. Only from your own turn.',
         inputSchema: SCHEMA.obj({ featureId: SCHEMA.s('the feature this chat follows'), text: SCHEMA.s('the idea, in the user\'s words'),
           guess: { type: 'string', enum: ['add', 'own', 'save'], description: 'add | own | save' },
           reason: SCHEMA.s('one short line: why this guess') }, ['featureId', 'text', 'guess', 'reason']) },
+      // Small runs C4 (D13): only with Shaper small runs on.
+      ...(shapeTools.smallRuns === true ? [{ name: 'change_requirement',
+        description: 'Shaper small runs: when the user asks to change the text of an agreed requirement (an R-id such as R-po-3) of the feature this chat follows, put a requirement-change card in the chat. text = the requirement\'s new text (300 characters at most), reason = one short line why. worca lands it by where the run that owns the requirement is: not started, running, or finished (a small change run). Nothing changes until the user presses the card\'s button. A new idea is not a requirement change: use route_message for it. Never while a Plan or Split step is open. Returns {ok:true} or {ok:false, error}. Only from your own turn.',
+        inputSchema: SCHEMA.obj({ featureId: SCHEMA.s('the feature this chat follows'), requirement: SCHEMA.s('the agreed requirement id, e.g. R-po-3'),
+          text: SCHEMA.s('the requirement\'s new text'), reason: SCHEMA.s('one short line: why it changes') }, ['featureId', 'requirement', 'text', 'reason']) }] : []),
     ] : []),
     ...(deps.chatQuestions ? [{ name: 'ask_question',
       description: 'Ask the user ONE question that the chat shows as native controls (this chat is a chat-channel conversation, e.g. Discord). answer "choice": 2–25 options, each {id, label, description?} — the user picks exactly one. answer "text": the user types a short answer (no options). Use it only when you cannot continue without the answer and the answer is a bounded pick or a short text; never to confirm a run (propose_run makes its own card) and never to ask several things at once. It decides nothing: END YOUR TURN right after it. The app sends "[worca event] question card <id> answered: …" with the answer; continue from it. Returns {ok:true, card} or {ok:false, errors}.',
@@ -1165,6 +1150,7 @@ export function createAskTools(deps) {
           kind: { type: 'string', enum: [...START_DESIGN_KINDS], description: 'web (a page, a poster, an illustration) | presentation | pitch | video | document' },
           projectKey: SCHEMA.s('a registered project the design belongs to (list_projects), when the user named one (optional)') }, ['brief', 'kind']) },
     ] : []),
+    ...families.flatMap((f) => f.defs || []),
   ];
 
   const EMPTY_DIFF = () => ({ available: false, files: [], text: '', truncated: false, totalBytes: 0, nextOffset: 0 });
@@ -1662,6 +1648,7 @@ export function createAskTools(deps) {
   async function baseMovedOf(row, baseSha, source) {
     if (gitOff()) return null;
     if (!baseSha || !source || !row || !row.project_key) return null;
+    if (row.is_test) return null;   // 3a (final review round 2): a try's branch is in Worca's copy; its base is not the person's
     if (!deps.branches || typeof deps.branches.baseMoved !== 'function' || typeof deps.readStoreMeta !== 'function') return null;
     const meta = deps.readStoreMeta(row.project_key);
     if (!meta || !meta.path) return null;
@@ -2196,7 +2183,11 @@ export function createAskTools(deps) {
       // #527: has the base moved on the remote since the run started (last fetch, no network).
       const baseMoved = await baseMovedOf(row, run.baseSha, run.sourceBranch);
       const prs = typeof deps.readRunPrs === 'function' ? await deps.readRunPrs(row) : null;
+      // Where it executes, when that is a sandbox (security-deps.mjs runExecEnvOf): its label and, while live, waiting for
+      // a slot, building the image, the answer-by time and the files held for review. A local run keeps its shape.
+      const execEnv = typeof deps.runExecEnvOf === 'function' ? await deps.runExecEnvOf(row, deps).catch(() => null) : null;
       return { ...run, hasDiff: !run.archived && await deps.hasDiffPatch(row), ...(memory ? { memory } : {}), ...(policy ? { policy } : {}),
+        ...(execEnv ? { execEnv } : {}),
         ...(baseMoved ? { baseMoved } : {}),
         ...prFieldsOf(prs),
         ...(actions.length ? { actedBy: actions.map((a) => ({ at: a.at, by: a.by, what: deps.redact(a.what) })) } : {}) };
@@ -2950,7 +2941,9 @@ export function createAskTools(deps) {
       if (typeof p.status !== 'function') {
         return { available: false, text: 'The proxy status cannot be read from this chat turn. Ask again in a new message, or open Settings › Runs › Network proxy.' };
       }
-      return p.status();
+      const s = await p.status();
+      // Operator-managed (docs/network-proxy.md "A login the operator manages"): nobody logs in from Worca or the chat.
+      return s && s.managed ? { ...s, operatorManaged: 'The proxy login is managed by the operator: nobody logs in or out from Worca, and the proxy settings are not changed here. When the proxy rejects the login, the operator must replace the login file (WORCA_EGRESS_LOGIN_FILE).' } : s;
     },
     async test_network_proxy() {
       const p = proxyOf('test_network_proxy');
@@ -3022,6 +3015,13 @@ export function createAskTools(deps) {
     },
     async propose_project_change(input) {
       if (!deps.projectChanges) throw new AskToolError('propose_project_change: adding projects is unavailable');
+      // kind "sandbox" acts on an existing project: the chat's scope (the pin when none is named), as every project tool.
+      if (str(input.kind) === 'sandbox') {
+        const key = str(input.projectKey) || ((pinnedScope() || {}).projectKey || '');
+        const err = key ? await scopeError({ projectKey: key }) : null;
+        if (err) return { ok: false, errors: [err] };
+        return deps.projectChanges.validateChange({ ...input, projectKey: key });
+      }
       return deps.projectChanges.validateChange(input);
     },
     async propose_web_access(input) {
@@ -3356,6 +3356,14 @@ export function createAskTools(deps) {
       if (!r || r.ok !== true) return { ok: false, error: (r && r.error) || 'not available here' };
       return { ok: true, requested: { kind: 'changes', ...req }, note: SHAPE_CARD_NOTE };
     },
+    async change_requirement(input) {
+      const st = shapeToolOf('change_requirement');
+      if (st.smallRuns !== true) throw new AskToolError('change_requirement: unavailable');
+      const req = { featureId: str(input.featureId), requirement: str(input.requirement), text: str(input.text), reason: str(input.reason) };
+      const r = st.check('requirement', req);
+      if (!r || r.ok !== true) return { ok: false, error: (r && r.error) || 'not available here' };
+      return { ok: true, requested: { kind: 'requirement', ...req }, note: SHAPE_CARD_NOTE };
+    },
     async route_message(input) {
       const st = shapeToolOf('route_message');
       const req = { featureId: str(input.featureId), text: str(input.text), guess: str(input.guess), reason: str(input.reason) };
@@ -3364,6 +3372,8 @@ export function createAskTools(deps) {
       return { ok: true, requested: { kind: 'route', ...req }, note: SHAPE_CARD_NOTE };
     },
   };
+
+  for (const f of families) for (const [k, fn] of Object.entries(f.handlers || {})) if (!Object.hasOwn(handlers, k)) handlers[k] = fn;
 
   return {
     list: () => defs.filter((d) => (!composerMode || COMPOSER_ALLOW.has(d.name))

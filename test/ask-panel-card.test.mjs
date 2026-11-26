@@ -61,6 +61,23 @@ function configBody(recorder = {}) {
     subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'] };
 }
 
+/** GET /api/run-defaults' chatSourceBranch as the server's gate answers it: `recorder.sourceBranchMode` (default current,
+ *  today's behaviour) for the project, or for the workspace members named in `recorder.sourceBranchNeeds` (default all). */
+function sourceBranchGate(recorder, q) {
+  const raw = recorder.sourceBranchMode ?? 'current';
+  const mode = typeof raw === 'function' ? raw(q.get('projectDir') || q.get('workspaceId') || '') : raw;
+  const source = recorder.sourceBranchSource || 'user';
+  if (mode === 'current') return { mode, source, needs: [] };
+  if (q.get('workspaceId')) {
+    const keys = recorder.sourceBranchNeeds || ['proj-00000001', 'lib-00000002'];
+    const sources = recorder.sourceBranchSources || {};
+    return { mode: 'current', source: 'user', needs: keys.map((key) => ({ key, name: key.split('-')[0], mode, source: sources[key] || source })) };
+  }
+  if (!q.get('projectDir')) return { mode, source, needs: [] };
+  const dir = q.get('projectDir');
+  return { mode, source, needs: [{ key: `${dir.split('/').pop()}-00000001`, name: dir.split('/').pop(), mode, source }] };
+}
+
 function apiHandler(recorder = {}) {
   return (url, opts) => {
     const method = (opts.method || 'GET').toUpperCase();
@@ -69,7 +86,10 @@ function apiHandler(recorder = {}) {
     if (path === `/api/ask/threads/${TID}/attachments/att_00000002`) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer, json: async () => ({}) };
     if (path.startsWith(`/api/ask/threads/${TID}/attachments/`)) return { ok: false, status: 404, json: async () => ({ error: 'attachment not found' }) };
     if (recorder.laneFail && path === '/api/agents') return { ok: false, status: 500, json: async () => ({ error: 'boom' }) };
-    if (path === '/api/workflows/wf_default' || path === '/api/workflows/wf_review') return { ok: true, status: 200, json: async () => ({ ...WF_DEFAULT_TPL, id: path.split('/').pop(), name: path.endsWith('wf_review') ? 'Review only' : 'Default' }) };
+    if (path === '/api/workflows/wf_default' || path === '/api/workflows/wf_review') {
+      recorder.workflowGets = [...(recorder.workflowGets || []), url];
+      return { ok: true, status: 200, json: async () => ({ ...WF_DEFAULT_TPL, id: path.split('/').pop(), name: path.endsWith('wf_review') ? 'Review only' : 'Default' }) };
+    }
     if (path === '/api/agents') return { ok: true, status: 200, json: async () => ({ agents: recorder.agents || AGENTS, mockWriterRoles: [] }) };
     if (path === '/api/config' && method === 'GET') {
       recorder.configGets = [...(recorder.configGets || []), url];
@@ -81,14 +101,21 @@ function apiHandler(recorder = {}) {
       if (recorder.configResponse) return recorder.configResponse;
       return { ok: true, status: 200, json: async () => ({ config: configBody().config }) };
     }
-    if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' }, ...(recorder.runPr ? { pr: recorder.runPr } : {}) }) };
+    if (path === '/api/run-defaults') {
+      recorder.gateQueries = [...(recorder.gateQueries || []), url.split('?')[1] || ''];
+      if (recorder.gateFail) return { ok: false, status: 500, json: async () => ({ error: 'boom' }) };
+      const held = recorder.gateHold;   // a test that looks at the card while the gate read is still out
+      return { ok: true, status: 200, json: async () => { if (held) await held; return { engine: { value: recorder.runEngine || 'claude', source: 'default' }, ...(recorder.execEnv ? { execEnv: { value: recorder.execEnv, source: 'user' } } : {}), ...(recorder.runPr ? { pr: recorder.runPr } : {}),
+        chatSourceBranch: sourceBranchGate(recorder, new URLSearchParams(url.split('?')[1] || '')) }; } };
+    }
     if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: recorder.projects || [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
     if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: recorder.workflows || [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
     if (url === '/api/guardrails') return { ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }, { id: 'strict', name: 'Strict' }] }) };
     if (url === '/api/workspaces') return { ok: true, status: 200, json: async () => ({ workspaces: recorder.workspaces || [{ id: 'wks-team-00000001', name: 'team', projectPaths: ['/repos/proj', '/repos/lib'], projectKeys: ['proj-00000001', 'lib-00000002'] }] }) };
     if (url.startsWith('/api/branches')) {
       recorder.branchCalls = [...(recorder.branchCalls || []), url];
-      return { ok: true, status: 200, json: async () => ({ branches: ['main', 'dev'] }) };
+      if (recorder.branchesFail) return { ok: false, status: 500, json: async () => ({ error: 'git failed' }) };
+      return { ok: true, status: 200, json: async () => ({ branches: recorder.branches || ['main', 'dev'], current: recorder.current ?? null }) };
     }
     if (url === '/api/run' && method === 'POST') {
       recorder.order = [...(recorder.order || []), 'run'];
@@ -148,7 +175,8 @@ test('ask-panel-card: proposed project card renders the form; Start posts the ex
   assert.equal(proj.value, '/repos/proj');
   assert.match([...proj.options].find((o) => o.value === '/repos/other').textContent, /\(missing\)/);
   const src = cardEl.querySelector('.ask-card-source');
-  assert.equal(src.options[0].value, '', 'current branch (auto) first');
+  assert.equal(src.options[0].value, '', 'Current (checked out) first');
+  assert.equal(src.options[0].textContent, 'Current (checked out)');
   cardEl.querySelector('[data-ask-card-start]').click();
   await ctx.tick(); await ctx.tick();
   assert.equal(rec.runBodies.length, 1);
@@ -297,6 +325,7 @@ test('ask-panel-card: Open in New Pipeline hands over the CURRENT values', async
     prompt: 'edited brief', title: 'Fix login', sourceBranch: '', featureBranch: 'worca/fix-login',
     memoryScope: null,
     engine: null,
+    execEnv: null,
   });
 });
 
@@ -404,6 +433,8 @@ test('ask-panel-card v2: the lane renders one tile per agent with effective valu
       const ctx = await openWithCard(PROJECT_CARD, rec);
       const lane = await laneOf(ctx);
       assert.ok(rec.configGets.some((u) => u.includes('projectDir=%2Frepos%2Fproj')), 'config fetched for the card\'s project');
+      // I3: the lane shows what the run will use (the version in use), never the Composer's draft.
+      assert.ok(rec.workflowGets.length && rec.workflowGets.every((u) => new URL(u, 'http://x').searchParams.get('use') === 'live'), rec.workflowGets.join(', '));
       const tiles = [...lane.querySelectorAll('.ask-rp-tile')];
       assert.deepEqual(tiles.map((t) => t.dataset.nodeId), ['n_plan', 'n_impl', 'n_rev']);
       assert.deepEqual(tiles.map((t) => t.querySelector('.ask-rp-name b').textContent), ['Plan', 'Implement', 'Review']);
@@ -1405,6 +1436,65 @@ test('ask-panel-card: the Pull request field — Use the setting sends none; a p
       ctx.doc.querySelector('[data-ask-card-start]').click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.deepEqual(rec.runBodies[0].pr, { open: 'none' });
+    } },
+  ]);
+});
+
+// Execution environment (docs/e2b.md): like the engine, "Default" sends none (/api/run resolves run.execEnv) and names
+// what the run would get; a proposal that names one preselects it, and Start and Open in New Pipeline both carry it.
+test('ask-panel-card: the Runs in field — Default sends none, a proposed environment rides Start and the New Pipeline handoff', async () => {
+  await checkRows([
+    { name: 'Default names the saved environment and Start sends none', run: async () => {
+      const rec = { execEnv: 'e2b' };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      for (let i = 0; i < 10; i++) await ctx.tick();
+      const sel = ctx.doc.querySelector('.ask-card-exec-env');
+      assert.equal(sel.value, '');
+      assert.equal(sel.options[0].textContent, 'E2B sandbox (default)');
+      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'local'], 'E2B is listed once, as the default');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies.length, 1);
+      assert.equal('execEnv' in rec.runBodies[0], false);
+    } },
+    { name: 'a saved E2B default on codex reads as E2B sandbox (default)', run: async () => {
+      const rec = { execEnv: 'e2b', runEngine: 'codex' };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      for (let i = 0; i < 10; i++) await ctx.tick();
+      assert.equal(ctx.doc.querySelector('.ask-card-exec-env').options[0].textContent, 'E2B sandbox (default)');
+    } },
+    { name: 'a proposed environment is preselected, stays visible at every mode and is sent', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, execEnv: 'e2b' }, rec);
+      const sel = ctx.doc.querySelector('.ask-card-exec-env');
+      assert.equal(sel.value, 'e2b');
+      const field = sel.closest('.ask-rp-field');
+      assert.equal(field.dataset.minLevel, 'advanced');
+      assert.equal(field.dataset.levelKeep, '1');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies[0].execEnv, 'e2b');
+    } },
+    { name: 'Default on a card that proposed an environment sends an empty one, so the server keeps the default', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, execEnv: 'e2b' }, rec);
+      const sel = ctx.doc.querySelector('.ask-card-exec-env');
+      sel.value = '';
+      sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies[0].execEnv, '');
+    } },
+    { name: 'a picked environment is handed to New Pipeline', run: async () => {
+      const handed = [];
+      const ctx = await openWithCard(PROJECT_CARD, {}, { openNewPipeline: (p) => handed.push(p) });
+      const sel = ctx.doc.querySelector('.ask-card-exec-env');
+      assert.equal(sel.closest('.ask-rp-field').dataset.levelKeep, undefined, 'no proposed environment: Advanced and up only');
+      sel.value = 'e2b';
+      sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      ctx.doc.querySelector('[data-ask-card-open-np]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(handed[0].execEnv, 'e2b');
     } },
   ]);
 });
@@ -2510,7 +2600,7 @@ test('P4 (SEAMS S12): a Folder project, or no git, has no branch rows on the run
       assert.equal(rec.branchCalls.length, 1);
       const [libName, libChip, libRest] = subOf(cardEl);
       assert.deepEqual([libName, libChip], ['lib', 'kind-chip kind-git']);
-      assert.match(libRest, /^ · branch current · feature /, 'today\'s branch words follow the chip');
+      assert.match(libRest, /^ · branch Current \(checked out\) · feature /, 'today\'s branch words follow the chip');
       ctx.panel.destroy();
     } },
     { name: 'git missing on this machine (data-git="off"): a Git project shows none either', run: async () => {
@@ -2619,6 +2709,19 @@ test('ask-panel-card: a Folder member is listed but gets no per-member source in
       assert.deepEqual(wsGitFields(cardEl), WS_GIT_LABELS.map((l) => [l, true]));
     } },
   ]);
+});
+
+test('ask-panel-card: a big Windows workspace names its first members by folder name and counts the rest', async () => {
+  const names = ['Api', 'Billing', 'Docs', 'Infra', 'Web'];
+  const row = { id: 'wks-team-00000001', name: 'team', projectPaths: names.map((n) => `c:\\Users\\me\\ws\\${n}`),
+    projectKeys: names.map((n, i) => `${n.toLowerCase()}-0000000${i}`), vcs: names.map(() => 'git') };
+  const ctx = await openWithCard(WS_CARD, { workspaces: [row] });
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  const line = cardEl.querySelector('.ask-card-members');
+  assert.equal(line.textContent, 'Api, Billing, Docs and 2 more');
+  assert.equal(line.title, names.join(', '), 'every member in the tooltip');
+  const labels = [...cardEl.querySelectorAll('.ask-card-member-src')].map((i) => i.closest('.ask-rp-field').querySelector('.ask-rp-label').textContent);
+  assert.deepEqual(labels, names, 'per-member fields are labelled by folder name, not the full path');
 });
 
 test('s2: a proposal for project acme lists the project\'s default cost tags plus required keys', async () => {
@@ -2883,7 +2986,7 @@ test('ask-panel-card: large nudge, first time', async () => {
 });
 
 // Literal, captured before the direct-card change. tag-input-list-N: the tag input's datalist id is a per-process counter.
-const GOLDEN_DIRECT_ASK_CARD = `<div class="ask-card ask-rp"><header class="ask-rp-head"><div class="ask-rp-eyebrow"><span class="ask-rp-kicker ask-rp-kicker-shape">Shaper</span><span class="ask-rp-from">from this chat</span></div><div class="ask-rp-title"><input type="text" aria-label="Run title" placeholder="Run title"><span class="ask-rp-edit">✎ click to rename</span></div><div class="ask-rp-tags"><div class="tag-input"><span class="tag-input-chips"></span><input class="input tag-input-text" placeholder="client:acme, team:web…" aria-label="Cost tags" list="tag-input-list-N"><datalist id="tag-input-list-N"></datalist><span class="hint tag-input-hint" aria-live="polite"></span></div><span class="tag-rule-pickers"></span></div></header><div class="ask-rp-sec ask-rp-shape-main"><div class="ask-rp-brief-preview">Fix the login bug</div><button class="link-btn ask-rp-brief-more" type="button" data-ask-card-brief-more="">Show brief</button><div class="ask-rp-sec ask-rp-brief-host" hidden=""><div class="ask-rp-sec-head"><span class="ask-rp-sec-title">Task brief</span><span class="ask-rp-sec-sub">what the first agent reads · Markdown ok</span><div class="ask-rp-pills"></div></div><textarea class="ask-card-brief ask-rp-brief" aria-label="Task brief" style="height: 2px;"></textarea><div class="ask-rp-brief-foot"><span><kbd>@</kbd> mention an attached file</span><span class="ask-rp-count">17 chars</span></div></div><div class="ask-card-target"><div class="ask-rp-grid two"><div class="ask-rp-field"><span class="ask-rp-label">Project</span><select class="select ask-card-project-select" aria-label="Project"><option value="/repos/proj">proj</option><option value="/repos/other">other (missing)</option></select></div><div class="ask-rp-field" data-needs-git=""><span class="ask-rp-label">Base branch</span><select class="select ask-card-source" aria-label="Source branch"><option value="">current branch (auto)</option><option value="main">main</option><option value="dev">dev</option></select></div></div></div><div class="ask-rp-field"><span class="ask-rp-label">Perspectives</span><div class="shape-card"><div class="shape-chips" role="group" aria-label="Perspectives"><button type="button" class="shape-chip on" data-perspective="product" title="Problem, goal, users, success criteria, out of scope." aria-pressed="true" disabled="" data-locked="1">Product</button><button type="button" class="shape-chip on" data-perspective="qa" title="Acceptance criteria as testable checks, a test plan with file names." aria-pressed="true">QA</button><button type="button" class="shape-chip on" data-perspective="security" title="Trust boundaries, inputs, secrets, permissions, abuse cases." aria-pressed="true">Security</button><button type="button" class="shape-chip-more">+ 5 more</button></div></div></div><div class="ask-rp-shape-what"><span class="ask-rp-label">What happens</span><span>Up to 3 questions, then a plan you approve.</span></div></div><details class="ask-rp-adv disclosure" data-ask-card-advanced=""><summary class="ask-rp-adv-sum">Advanced · Claude Code · Normal guardrails · 3 agents on workflow defaults</summary><p class="ask-rp-why">UI-only change on one module.</p><div class="ask-rp-sec"><div class="ask-rp-sec-head"><span class="ask-rp-sec-title">Where it runs</span><span class="ask-rp-sec-sub">proj · branch current · feature worca/fix-login</span><div class="seg seg-sm ask-card-seg" role="tablist" data-min-level="advanced"><button class="ask-card-seg-btn" type="button" role="tab" data-ask-card-seg="none" aria-selected="false">No project</button><button class="ask-card-seg-btn on" type="button" role="tab" data-ask-card-seg="project" aria-selected="true">Project</button><button class="ask-card-seg-btn" type="button" role="tab" data-ask-card-seg="workspace" aria-selected="false">Workspace</button></div></div><div class="ask-rp-grid two ask-rp-adv-branch"><div class="ask-rp-field" data-min-level="advanced" data-level-keep="1" data-needs-git=""><span class="ask-rp-label">Feature branch<span class="ask-rp-hint"> · created for the run</span></span><input type="text" class="input ask-card-feature" aria-label="Feature branch" title="worca/fix-login"></div><div class="ask-rp-field" data-min-level="advanced" data-needs-git=""><span class="ask-rp-label">Run on the source branch<span class="ask-rp-hint"> · commits onto the source branch</span></span><label class="switch-row"><input type="checkbox" class="sw-input ask-card-same-source" role="switch" aria-label="Run on the source branch"><span class="switch" aria-hidden="true"></span><span class="switch-why" hidden=""></span></label></div></div><div class="ask-rp-grid wf-row"><div class="ask-rp-field"><span class="ask-rp-label">Workflow</span><select class="select ask-card-workflow" aria-label="Workflow" disabled=""><option value="wf_default">Default</option></select><span class="ask-rp-wfdesc" data-for="workflow">3 agents · 1 loop · Review → Implement, max 3 cycles</span></div><div class="ask-rp-field" data-min-level="advanced"><span class="ask-rp-label">Engine</span><select class="select ask-card-engine" aria-label="Engine"><option value="">Claude Code (default)</option><option value="claude" hidden="">Claude Code</option><option value="codex">OpenAI Codex (Beta)</option><option value="copilot">GitHub Copilot (Beta)</option><option value="cursor">Cursor (Beta)</option><option value="gemini">Gemini CLI (Beta)</option><option value="goose">Goose (Beta)</option><option value="opencode">OpenCode (Beta)</option><option value="qwen">Qwen Code (Beta)</option></select></div><div class="ask-rp-field" data-min-level="advanced" data-level-keep="1"><span class="ask-rp-label">Guardrails</span><select class="select ask-card-guardrails" aria-label="Guardrails"><option value="permissive">Permissive</option><option value="normal">Normal</option><option value="strict">Strict</option></select><span class="ask-rp-wfdesc" data-for="guardrails">Applies to every agent in this run</span></div></div><div class="ask-rp-grid wf-row"><div class="ask-rp-field" data-min-level="advanced"><span class="ask-rp-label">Pull request when done</span><select class="select ask-card-pr" aria-label="Pull request when done"><option value="">Use the setting</option><option value="none">Don't create a PR</option><option value="draft">Create a draft PR</option><option value="ready">Create a PR ready for review</option></select></div></div></div><div class="ask-rp-sec ask-rp-lane" data-min-level="expert"><div class="ask-rp-sec-head"><span class="ask-rp-sec-title">Agents</span><span class="ask-rp-sec-sub">proposed by Worca · 0 overrides of the workflow defaults</span><button class="ask-rp-mini" type="button" hidden="">Reset to proposal</button></div><div class="ask-rp-agents"><div class="ask-rp-tile" data-node-id="n_plan"><div class="ask-rp-tile-l1"><span class="ask-rp-acc violet"></span><div class="ask-rp-name"><b>Plan</b><small>step 1 · workflow default</small></div><select class="select ask-rp-model" aria-label="Model for Plan"><option value="">inherit (workflow default)</option><optgroup label="Claude sign-in"><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-fable-5-1">Fable 5.1 (1M)</option><option value="claude-haiku-4-5">Haiku 4.5</option></optgroup></select><div class="ask-rp-eff unset" role="radiogroup" aria-label="Effort for Plan"><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">medium</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">high</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">xhigh</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">max</button></div></div><div class="ask-rp-tile-l2"><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Fan-out" data-ctl="fanOut"><span class="switch" aria-hidden="true"></span><span class="switch-label">Fan-out</span><span class="switch-why" hidden=""></span></label><label class="ask-rp-ctl"><span>Sub-agents</span><select class="select ask-rp-subagent" aria-label="Sub-agent model for Plan" title="Model for the sub-agents this node spawns (needs fan-out)"><option value="">subs: default (agent picks)</option><option value="sonnet" title="Always Claude's Sonnet: sub-agents don't follow your model roles">subs: Sonnet (everyday tasks)</option><option value="opus" title="Always Claude's Opus: sub-agents don't follow your model roles">subs: Opus (deep thinking)</option><option value="fable" title="Always Claude's Fable: sub-agents don't follow your model roles">subs: Fable (premium)</option><option value="auto">subs: agent picks</option><option value="inherit">subs: inherit</option></select></label><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Questions" data-ctl="questions"><span class="switch" aria-hidden="true"></span><span class="switch-label">Questions</span><span class="switch-why" hidden=""></span></label></div></div><div class="ask-rp-tile" data-node-id="n_impl"><div class="ask-rp-tile-l1"><span class="ask-rp-acc green"></span><div class="ask-rp-name"><b>Implement</b><small>step 2 · workflow default</small></div><select class="select ask-rp-model" aria-label="Model for Implement"><option value="">inherit (workflow default)</option><optgroup label="Claude sign-in"><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-fable-5-1">Fable 5.1 (1M)</option><option value="claude-haiku-4-5">Haiku 4.5</option></optgroup></select><div class="ask-rp-eff" role="radiogroup" aria-label="Effort for Implement"><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false">medium</button><button class="ask-rp-effbtn on" type="button" role="radio" aria-checked="true">high</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false">xhigh</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false">max</button></div></div><div class="ask-rp-tile-l2"><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Fan-out" data-ctl="fanOut"><span class="switch" aria-hidden="true"></span><span class="switch-label">Fan-out</span><span class="switch-why" hidden=""></span></label><label class="ask-rp-ctl"><span>Sub-agents</span><select class="select ask-rp-subagent" aria-label="Sub-agent model for Implement" title="Model for the sub-agents this node spawns (needs fan-out)"><option value="">subs: default (agent picks)</option><option value="sonnet" title="Always Claude's Sonnet: sub-agents don't follow your model roles">subs: Sonnet (everyday tasks)</option><option value="opus" title="Always Claude's Opus: sub-agents don't follow your model roles">subs: Opus (deep thinking)</option><option value="fable" title="Always Claude's Fable: sub-agents don't follow your model roles">subs: Fable (premium)</option><option value="auto">subs: agent picks</option><option value="inherit">subs: inherit</option></select></label><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Questions" data-ctl="questions"><span class="switch" aria-hidden="true"></span><span class="switch-label">Questions</span><span class="switch-why" hidden=""></span></label></div></div><div class="ask-rp-tile" data-node-id="n_rev"><div class="ask-rp-tile-l1"><span class="ask-rp-acc peach"></span><div class="ask-rp-name"><b>Review</b><small>step 3 · workflow default</small></div><select class="select ask-rp-model" aria-label="Model for Review"><option value="">inherit (workflow default)</option><optgroup label="Claude sign-in"><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-fable-5-1">Fable 5.1 (1M)</option><option value="claude-haiku-4-5">Haiku 4.5</option></optgroup></select><div class="ask-rp-eff unset" role="radiogroup" aria-label="Effort for Review"><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">medium</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">high</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">xhigh</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">max</button></div></div><div class="ask-rp-tile-l2"><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Fan-out" data-ctl="fanOut"><span class="switch" aria-hidden="true"></span><span class="switch-label">Fan-out</span><span class="switch-why" hidden=""></span></label><label class="ask-rp-ctl"><span>Sub-agents</span><select class="select ask-rp-subagent" aria-label="Sub-agent model for Review" title="Model for the sub-agents this node spawns (needs fan-out)"><option value="">subs: default (agent picks)</option><option value="sonnet" title="Always Claude's Sonnet: sub-agents don't follow your model roles">subs: Sonnet (everyday tasks)</option><option value="opus" title="Always Claude's Opus: sub-agents don't follow your model roles">subs: Opus (deep thinking)</option><option value="fable" title="Always Claude's Fable: sub-agents don't follow your model roles">subs: Fable (premium)</option><option value="auto">subs: agent picks</option><option value="inherit">subs: inherit</option></select></label></div></div><div class="ask-rp-agents-foot"><span class="ask-rp-foot-text">Runs on this project's agent settings</span><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Save as project defaults" data-ctl="saveDefaults"><span class="switch" aria-hidden="true"></span><span class="switch-label">Save as project defaults</span><span class="switch-why" hidden=""></span></label></div></div></div><div class="ask-rp-adv-sched"><button class="btn btn-sm btn-quiet ask-card-not-now ask-card-later" type="button" data-ask-card-schedule="" title="Start this run later" data-min-level="advanced">Schedule…</button></div></details><div class="ask-card-err"></div><footer class="ask-rp-foot"><button class="link-btn ask-card-open-np" type="button" data-ask-card-open-np="">↗ Open in New run</button><button class="btn btn-sm btn-quiet ask-card-not-now" type="button" data-ask-card-dismiss="">Not now</button><button class="btn btn-sm btn-primary" type="button" data-ask-card-start="" title=""><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8V4Z"></path></svg>Start planning</button></footer></div>`;
+const GOLDEN_DIRECT_ASK_CARD = `<div class="ask-card ask-rp"><header class="ask-rp-head"><div class="ask-rp-eyebrow"><span class="ask-rp-kicker ask-rp-kicker-shape">Shaper</span><span class="ask-rp-from">from this chat</span></div><div class="ask-rp-title"><input type="text" aria-label="Run title" placeholder="Run title"><span class="ask-rp-edit">✎ click to rename</span></div><div class="ask-rp-tags"><div class="tag-input"><span class="tag-input-chips"></span><input class="input tag-input-text" placeholder="client:acme, team:web…" aria-label="Cost tags" list="tag-input-list-N"><datalist id="tag-input-list-N"></datalist><span class="hint tag-input-hint" aria-live="polite"></span></div><span class="tag-rule-pickers"></span></div></header><div class="ask-rp-sec ask-rp-shape-main"><div class="ask-rp-brief-preview">Fix the login bug</div><button class="link-btn ask-rp-brief-more" type="button" data-ask-card-brief-more="">Show brief</button><div class="ask-rp-sec ask-rp-brief-host" hidden=""><div class="ask-rp-sec-head"><span class="ask-rp-sec-title">Task brief</span><span class="ask-rp-sec-sub">what the first agent reads · Markdown ok</span><div class="ask-rp-pills"></div></div><textarea class="ask-card-brief ask-rp-brief" aria-label="Task brief" style="height: 2px;"></textarea><div class="ask-rp-brief-foot"><span><kbd>@</kbd> mention an attached file</span><span class="ask-rp-count">17 chars</span></div></div><div class="ask-card-target"><div class="ask-rp-grid two"><div class="ask-rp-field"><span class="ask-rp-label">Project</span><select class="select ask-card-project-select" aria-label="Project"><option value="/repos/proj">proj</option><option value="/repos/other">other (missing)</option></select></div><div class="ask-rp-field" data-needs-git=""><span class="ask-rp-label">Base branch</span><select class="select ask-card-source" aria-label="Source branch"><option value="">Current (checked out)</option><option value="main">main</option><option value="dev">dev</option></select></div></div></div><div class="ask-rp-field"><span class="ask-rp-label">Perspectives</span><div class="shape-card"><div class="shape-chips" role="group" aria-label="Perspectives"><button type="button" class="shape-chip on" data-perspective="product" title="Problem, goal, users, success criteria, out of scope." aria-pressed="true" disabled="" data-locked="1">Product</button><button type="button" class="shape-chip on" data-perspective="qa" title="Acceptance criteria as testable checks, a test plan with file names." aria-pressed="true">QA</button><button type="button" class="shape-chip on" data-perspective="security" title="Trust boundaries, inputs, secrets, permissions, abuse cases." aria-pressed="true">Security</button><button type="button" class="shape-chip-more">+ 5 more</button></div></div></div><div class="ask-rp-shape-what"><span class="ask-rp-label">What happens</span><span>Up to 3 questions, then a plan you approve.</span></div></div><details class="ask-rp-adv disclosure" data-ask-card-advanced=""><summary class="ask-rp-adv-sum">Advanced · Claude Code · Normal guardrails · 3 agents on workflow defaults</summary><p class="ask-rp-why">UI-only change on one module.</p><div class="ask-rp-sec"><div class="ask-rp-sec-head"><span class="ask-rp-sec-title">Where it runs</span><span class="ask-rp-sec-sub">proj · branch Current (checked out) · feature worca/fix-login</span><div class="seg seg-sm ask-card-seg" role="tablist" data-min-level="advanced"><button class="ask-card-seg-btn" type="button" role="tab" data-ask-card-seg="none" aria-selected="false">No project</button><button class="ask-card-seg-btn on" type="button" role="tab" data-ask-card-seg="project" aria-selected="true">Project</button><button class="ask-card-seg-btn" type="button" role="tab" data-ask-card-seg="workspace" aria-selected="false">Workspace</button></div></div><div class="ask-rp-grid two ask-rp-adv-branch"><div class="ask-rp-field" data-min-level="advanced" data-level-keep="1" data-needs-git=""><span class="ask-rp-label">Feature branch<span class="ask-rp-hint"> · created for the run</span></span><input type="text" class="input ask-card-feature" aria-label="Feature branch" title="worca/fix-login"></div><div class="ask-rp-field" data-min-level="advanced" data-needs-git=""><span class="ask-rp-label">Run on the source branch<span class="ask-rp-hint"> · commits onto the source branch</span></span><label class="switch-row"><input type="checkbox" class="sw-input ask-card-same-source" role="switch" aria-label="Run on the source branch"><span class="switch" aria-hidden="true"></span><span class="switch-why" hidden=""></span></label></div></div><div class="ask-rp-grid wf-row"><div class="ask-rp-field"><span class="ask-rp-label">Workflow</span><select class="select ask-card-workflow" aria-label="Workflow" disabled=""><option value="wf_default">Default</option></select><span class="ask-rp-wfdesc" data-for="workflow">3 agents · 1 loop · Review → Implement, max 3 cycles</span></div><div class="ask-rp-field" data-min-level="advanced"><span class="ask-rp-label">Engine</span><select class="select ask-card-engine" aria-label="Engine"><option value="">Claude Code (default)</option><option value="claude" hidden="">Claude Code</option><option value="codex">OpenAI Codex (Beta)</option><option value="copilot">GitHub Copilot (Beta)</option><option value="cursor">Cursor (Beta)</option><option value="gemini">Gemini CLI (Beta)</option><option value="goose">Goose (Beta)</option><option value="opencode">OpenCode (Beta)</option><option value="qwen">Qwen Code (Beta)</option></select></div><div class="ask-rp-field" data-min-level="advanced" data-level-keep="1"><span class="ask-rp-label">Guardrails</span><select class="select ask-card-guardrails" aria-label="Guardrails"><option value="permissive">Permissive</option><option value="normal">Normal</option><option value="strict">Strict</option></select><span class="ask-rp-wfdesc" data-for="guardrails">Applies to every agent in this run</span></div></div><div class="ask-rp-grid wf-row"><div class="ask-rp-field" data-min-level="advanced"><span class="ask-rp-label">Pull request when done</span><select class="select ask-card-pr" aria-label="Pull request when done"><option value="">Use the setting</option><option value="none">Don't create a PR</option><option value="draft">Create a draft PR</option><option value="ready">Create a PR ready for review</option></select></div></div></div><div class="ask-rp-sec ask-rp-lane" data-min-level="expert"><div class="ask-rp-sec-head"><span class="ask-rp-sec-title">Agents</span><span class="ask-rp-sec-sub">proposed by Worca · 0 overrides of the workflow defaults</span><button class="ask-rp-mini" type="button" hidden="">Reset to proposal</button></div><div class="ask-rp-agents"><div class="ask-rp-tile" data-node-id="n_plan"><div class="ask-rp-tile-l1"><span class="ask-rp-acc violet"></span><div class="ask-rp-name"><b>Plan</b><small>step 1 · workflow default</small></div><select class="select ask-rp-model" aria-label="Model for Plan"><option value="">inherit (workflow default)</option><optgroup label="Claude sign-in"><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-fable-5-1">Fable 5.1 (1M)</option><option value="claude-haiku-4-5">Haiku 4.5</option></optgroup></select><div class="ask-rp-eff unset" role="radiogroup" aria-label="Effort for Plan"><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">medium</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">high</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">xhigh</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">max</button></div></div><div class="ask-rp-tile-l2"><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Fan-out" data-ctl="fanOut"><span class="switch" aria-hidden="true"></span><span class="switch-label">Fan-out</span><span class="switch-why" hidden=""></span></label><label class="ask-rp-ctl"><span>Sub-agents</span><select class="select ask-rp-subagent" aria-label="Sub-agent model for Plan" title="Model for the sub-agents this node spawns (needs fan-out)"><option value="">subs: default (agent picks)</option><option value="sonnet" title="Always Claude's Sonnet: sub-agents don't follow your model roles">subs: Sonnet (everyday tasks)</option><option value="opus" title="Always Claude's Opus: sub-agents don't follow your model roles">subs: Opus (deep thinking)</option><option value="fable" title="Always Claude's Fable: sub-agents don't follow your model roles">subs: Fable (premium)</option><option value="auto">subs: agent picks</option><option value="inherit">subs: inherit</option></select></label><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Questions" data-ctl="questions"><span class="switch" aria-hidden="true"></span><span class="switch-label">Questions</span><span class="switch-why" hidden=""></span></label></div></div><div class="ask-rp-tile" data-node-id="n_impl"><div class="ask-rp-tile-l1"><span class="ask-rp-acc green"></span><div class="ask-rp-name"><b>Implement</b><small>step 2 · workflow default</small></div><select class="select ask-rp-model" aria-label="Model for Implement"><option value="">inherit (workflow default)</option><optgroup label="Claude sign-in"><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-fable-5-1">Fable 5.1 (1M)</option><option value="claude-haiku-4-5">Haiku 4.5</option></optgroup></select><div class="ask-rp-eff" role="radiogroup" aria-label="Effort for Implement"><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false">medium</button><button class="ask-rp-effbtn on" type="button" role="radio" aria-checked="true">high</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false">xhigh</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false">max</button></div></div><div class="ask-rp-tile-l2"><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Fan-out" data-ctl="fanOut"><span class="switch" aria-hidden="true"></span><span class="switch-label">Fan-out</span><span class="switch-why" hidden=""></span></label><label class="ask-rp-ctl"><span>Sub-agents</span><select class="select ask-rp-subagent" aria-label="Sub-agent model for Implement" title="Model for the sub-agents this node spawns (needs fan-out)"><option value="">subs: default (agent picks)</option><option value="sonnet" title="Always Claude's Sonnet: sub-agents don't follow your model roles">subs: Sonnet (everyday tasks)</option><option value="opus" title="Always Claude's Opus: sub-agents don't follow your model roles">subs: Opus (deep thinking)</option><option value="fable" title="Always Claude's Fable: sub-agents don't follow your model roles">subs: Fable (premium)</option><option value="auto">subs: agent picks</option><option value="inherit">subs: inherit</option></select></label><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Questions" data-ctl="questions"><span class="switch" aria-hidden="true"></span><span class="switch-label">Questions</span><span class="switch-why" hidden=""></span></label></div></div><div class="ask-rp-tile" data-node-id="n_rev"><div class="ask-rp-tile-l1"><span class="ask-rp-acc peach"></span><div class="ask-rp-name"><b>Review</b><small>step 3 · workflow default</small></div><select class="select ask-rp-model" aria-label="Model for Review"><option value="">inherit (workflow default)</option><optgroup label="Claude sign-in"><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-fable-5-1">Fable 5.1 (1M)</option><option value="claude-haiku-4-5">Haiku 4.5</option></optgroup></select><div class="ask-rp-eff unset" role="radiogroup" aria-label="Effort for Review"><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">medium</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">high</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">xhigh</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">max</button></div></div><div class="ask-rp-tile-l2"><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Fan-out" data-ctl="fanOut"><span class="switch" aria-hidden="true"></span><span class="switch-label">Fan-out</span><span class="switch-why" hidden=""></span></label><label class="ask-rp-ctl"><span>Sub-agents</span><select class="select ask-rp-subagent" aria-label="Sub-agent model for Review" title="Model for the sub-agents this node spawns (needs fan-out)"><option value="">subs: default (agent picks)</option><option value="sonnet" title="Always Claude's Sonnet: sub-agents don't follow your model roles">subs: Sonnet (everyday tasks)</option><option value="opus" title="Always Claude's Opus: sub-agents don't follow your model roles">subs: Opus (deep thinking)</option><option value="fable" title="Always Claude's Fable: sub-agents don't follow your model roles">subs: Fable (premium)</option><option value="auto">subs: agent picks</option><option value="inherit">subs: inherit</option></select></label></div></div><div class="ask-rp-agents-foot"><span class="ask-rp-foot-text">Runs on this project's agent settings</span><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Save as project defaults" data-ctl="saveDefaults"><span class="switch" aria-hidden="true"></span><span class="switch-label">Save as project defaults</span><span class="switch-why" hidden=""></span></label></div></div></div><div class="ask-rp-adv-sched"><button class="btn btn-sm btn-quiet ask-card-not-now ask-card-later" type="button" data-ask-card-schedule="" title="Start this run later" data-min-level="advanced">Schedule…</button></div></details><div class="ask-card-err"></div><footer class="ask-rp-foot"><button class="link-btn ask-card-open-np" type="button" data-ask-card-open-np="">↗ Open in New run</button><button class="btn btn-sm btn-quiet ask-card-not-now" type="button" data-ask-card-dismiss="">Not now</button><button class="btn btn-sm btn-primary" type="button" data-ask-card-start="" title=""><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8V4Z"></path></svg>Start planning</button></footer></div>`;
 
 // A direct Shaper card (card.shape), medium or large: Shape requirements is the only start
 // button, under today's small card without Perspectives and What happens. Small or no size: today's card plus the facts line.
@@ -3038,5 +3141,272 @@ test('ask-panel-card: direct card, flag on, small or no size', async () => {
   await checkRows([
     smallRule('direct card, flag on, small', { perspectives: ['qa'], size: 'small' }, 'Small task · no estimate yet', { perspectives: ['product', 'qa'], size: 'small' }),
     smallRule('direct card, flag on, no size', { perspectives: ['qa'] }, 'This task · no estimate yet', { perspectives: ['product', 'qa'] }),
+  ]);
+});
+
+// ── Chat runs: source branch (plan steps 8–9): the card's gate comes from GET /api/run-defaults' chatSourceBranch ──
+const PICK_HINT = 'Pick a source branch to start this run. Set in Settings › Runs › Chat runs: source branch.';
+const srcSelOf = (cardEl) => cardEl.querySelector('.ask-card-source');
+const srcFieldOf = (cardEl) => srcSelOf(cardEl).closest('.ask-rp-field');
+const branchHint = (cardEl) => cardEl.querySelector('.ask-rp-field p.hint');
+const targetSubOf = (cardEl) => cardEl.querySelector('.ask-rp-sec-head .ask-rp-sec-sub').textContent;
+const pickBranch = (ctx, sel, value) => { sel.value = value; sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true })); };
+const typeInto = (ctx, inp, value) => { inp.value = value; inp.dispatchEvent(new ctx.window.Event('input', { bubbles: true })); };
+
+test('source branch, project card under ask: the field asks for a branch, every start button waits, a pick lifts it in the same event', async () => {
+  await checkRows([
+    { name: 'ask: Pick a branch…, branch not picked, Start and Schedule… off, the exact hint, aria-describedby', run: async () => {
+      const rec = { sourceBranchMode: 'ask' };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const sel = srcSelOf(cardEl);
+      assert.equal(sel.options[0].textContent, 'Pick a branch…');
+      assert.equal(sel.options[0].value, '');
+      assert.match(targetSubOf(cardEl), / · branch not picked · feature /);
+      const start = cardEl.querySelector('[data-ask-card-start]');
+      const later = cardEl.querySelector('[data-ask-card-schedule]');
+      assert.equal(start.disabled, true); assert.equal(later.disabled, true);
+      const hint = branchHint(cardEl);
+      assert.equal(hint.textContent, PICK_HINT);
+      assert.equal(hint.parentElement, srcFieldOf(cardEl), 'the hint lives in the Source branch field');
+      assert.ok(sel.getAttribute('aria-describedby').split(' ').includes(hint.id));
+      assert.ok(start.getAttribute('aria-describedby').split(' ').includes(hint.id));
+      assert.equal(cardEl.querySelector('.ask-card-err').textContent, '');
+      // R-ux-9: the pick lifts everything in the same event (no await).
+      pickBranch(ctx, sel, 'dev');
+      assert.equal(branchHint(cardEl), null);
+      assert.match(targetSubOf(cardEl), / · branch dev · feature /);
+      assert.equal(start.disabled, false); assert.equal(later.disabled, false);
+      assert.equal(start.hasAttribute('aria-describedby'), false, 'R-ux-11: the id goes with the hint');
+      assert.equal(sel.hasAttribute('aria-describedby'), false);
+      start.click(); await ctx.tick(); await ctx.tick();
+      assert.equal(rec.runBodies[0].sourceBranch, 'dev');
+    } },
+    { name: 'R-ux-7: at Simple the field is kept visible under ask; under current it is Advanced with no keep', run: async () => {
+      const ask = await openWithCard(PROJECT_CARD, { sourceBranchMode: 'ask' });
+      ask.doc.documentElement.dataset.level = 'simple';
+      const f = srcFieldOf(ask.doc.querySelector('.ask-card'));
+      assert.equal(f.dataset.levelKeep, '1');
+      pickBranch(ask, srcSelOf(ask.doc.querySelector('.ask-card')), 'main');
+      assert.equal(f.dataset.levelKeep, '1', 'stays shown once a branch is picked on this card');
+      const cur = await openWithCard(PROJECT_CARD, {});
+      const g = srcFieldOf(cur.doc.querySelector('.ask-card'));
+      assert.equal(g.dataset.minLevel, 'advanced');
+      assert.equal('levelKeep' in g.dataset, false);
+    } },
+    { name: 'R-ux-8: no hint under current, nor on a proposed-branch card under ask', run: async () => {
+      const cur = await openWithCard(PROJECT_CARD, {});
+      assert.equal(branchHint(cur.doc.querySelector('.ask-card')), null);
+      assert.equal(cur.doc.querySelector('[data-ask-card-start]').disabled, false);
+      const named = await openWithCard({ ...PROJECT_CARD, sourceBranch: 'main' }, { sourceBranchMode: 'ask' });
+      const cardEl = named.doc.querySelector('.ask-card');
+      assert.equal(branchHint(cardEl), null);
+      assert.equal(srcSelOf(cardEl).value, 'main');
+      assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, false);
+    } },
+    { name: 'the empty and failed hints point to the chat; the project-layer hint names the project Settings', run: async () => {
+      const empty = await openWithCard(PROJECT_CARD, { sourceBranchMode: 'ask', branches: [] });
+      assert.equal(branchHint(empty.doc.querySelector('.ask-card')).textContent, 'No branches found. Ask in the chat which branch to use.');
+      const failed = await openWithCard(PROJECT_CARD, { sourceBranchMode: 'ask', branchesFail: true });
+      assert.equal(branchHint(failed.doc.querySelector('.ask-card')).textContent, 'Could not load the branches. Ask in the chat which branch to use.');
+      const proj = await openWithCard(PROJECT_CARD, { sourceBranchMode: 'require', sourceBranchSource: 'project' });
+      assert.equal(branchHint(proj.doc.querySelector('.ask-card')).textContent,
+        "Pick a source branch to start this run. Set in this project's Settings › Chat › Chat runs: source branch.");
+    } },
+    { name: 'D12: a failed run-defaults read counts as ask', run: async () => {
+      const ctx = await openWithCard(PROJECT_CARD, { gateFail: true });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, true);
+      assert.equal(branchHint(cardEl).textContent, PICK_HINT);
+    } },
+  ]);
+});
+
+test('source branch, current: names the checked-out branch; Start waits for the reads, then enables with no hint', async () => {
+  let release;
+  const rec = { current: 'feat/x', gateHold: new Promise((r) => { release = r; }) };
+  const ctx = await openWithCard(PROJECT_CARD, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  const sel = srcSelOf(cardEl);
+  const start = cardEl.querySelector('[data-ask-card-start]');
+  assert.equal(sel.options[0].textContent, 'Loading branches…');
+  assert.equal(start.disabled, true);
+  assert.equal(branchHint(cardEl), null);
+  assert.doesNotMatch(targetSubOf(cardEl), /branch/, 'no branch words while loading');
+  release();
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  assert.equal(sel.options[0].textContent, 'Current (checked out): feat/x');
+  assert.match(targetSubOf(cardEl), / · branch Current \(checked out\): feat\/x · feature /);
+  assert.equal(start.disabled, false);
+  assert.equal(branchHint(cardEl), null);
+});
+
+test('source branch: a project change on the card to an ask project drops the branch and disables Start', async () => {
+  const rec = { sourceBranchMode: (dir) => (dir === '/repos/other' ? 'ask' : 'current') };
+  const ctx = await openWithCard({ ...PROJECT_CARD, sourceBranch: 'main' }, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  const start = cardEl.querySelector('[data-ask-card-start]');
+  assert.equal(start.disabled, false);
+  pickBranch(ctx, cardEl.querySelector('.ask-card-project-select'), '/repos/other');
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  assert.equal(srcSelOf(cardEl).value, '');
+  assert.equal(srcSelOf(cardEl).options[0].textContent, 'Pick a branch…');
+  assert.equal(start.disabled, true);
+  assert.equal(branchHint(cardEl).textContent, PICK_HINT);
+});
+
+test('source branch: no blocker clears another (tag, startCard finally, workflow reset, Change… pick)', async () => {
+  await checkRows([
+    { name: 'an enforced tag still missing keeps Start off after a branch is picked', run: async () => {
+      const rec = { sourceBranchMode: 'ask', tagRules: { source: 'settings', home: null, enforce: true, prefill: [], dims: [CC_DIM] } };
+      const { ctx, card } = await openFlagged({ ...PROJECT_CARD }, rec);
+      await ctx.tick(); await ctx.tick();
+      const start = card.querySelector('[data-ask-card-start]');
+      pickBranch(ctx, srcSelOf(card), 'dev');
+      assert.equal(start.disabled, true, 'the tag still blocks');
+      assert.equal(start.title, 'Add Cost centre to start');
+    } },
+    { name: 'startCard finally after a refused POST keeps the branch gate', run: async () => {
+      const rec = { sourceBranchMode: 'ask', runResponse: { ok: false, status: 403, json: async () => ({ error: 'cost limit' }) } };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const start = cardEl.querySelector('[data-ask-card-start]');
+      pickBranch(ctx, srcSelOf(cardEl), 'dev');
+      start.click();
+      pickBranch(ctx, srcSelOf(cardEl), '');   // the branch goes again while the request is out
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(cardEl.querySelector('.ask-card-err').textContent, 'cost limit');
+      assert.equal(start.disabled, true, 'the finally never re-enables a branchless Start');
+    } },
+    { name: 'the workflow change reset keeps the branch gate', run: async () => {
+      const ctx = await openWithCard({ ...PROJECT_CARD, workflowId: 'wf_gone' }, { sourceBranchMode: 'ask' });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const wf = cardEl.querySelector('.ask-card-workflow');
+      pickBranch(ctx, wf, 'wf_default');
+      assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, true, 'no branch yet');
+      pickBranch(ctx, srcSelOf(cardEl), 'dev');
+      assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, false);
+    } },
+    { name: 'a proposed after + sourceFromPrevious card: Schedule enabled under ask, Start now waits; a Change… pick to a time gates Schedule', run: async () => {
+      const ctx = await openWithCard({ ...PROJECT_CARD, schedule: AFTER_S }, { sourceBranchMode: 'ask' });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const go = cardEl.querySelector('[data-ask-card-start]');
+      assert.equal(go.disabled, false, 'Schedule starts on the previous run\'s branch');
+      assert.equal(cardEl.querySelector('[data-ask-card-start-now]').disabled, true, 'Start now posts a branch');
+      const saved = globalThis.document;
+      globalThis.document = ctx.doc;
+      try {
+        cardEl.querySelector('[data-ask-card-sched-change]').click();
+        await ctx.tick();
+        ctx.doc.querySelector('.sched-kind [data-kind="time"]').click();
+        ctx.doc.querySelector('.sched-ok').click();
+        for (let i = 0; i < 4; i++) await ctx.tick();
+      } finally { globalThis.document = saved; }
+      assert.equal(cardEl.querySelector('[data-ask-card-sched-proposed] .badge').textContent, 'Scheduled');
+      assert.equal(go.disabled, true, 'a timed pick posts a branch: the gate applies at once');
+    } },
+  ]);
+});
+
+test('source branch: a server 400 source-branch-required on a current-painted card shows the ask state at Simple, with no error line', async () => {
+  const rec = { runResponse: { ok: false, status: 400, json: async () => ({ error: 'Pick a source branch to start this run.', code: 'source-branch-required', members: ['proj-00000001'] }) } };
+  const ctx = await openWithCard(PROJECT_CARD, rec);
+  ctx.doc.documentElement.dataset.level = 'simple';
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  const start = cardEl.querySelector('[data-ask-card-start]');
+  assert.equal(start.disabled, false);
+  start.click();
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  assert.equal(cardEl.querySelector('.ask-card-err').textContent, '');
+  assert.equal(start.disabled, true);
+  assert.equal(branchHint(cardEl).textContent, PICK_HINT);
+  assert.equal(srcFieldOf(cardEl).dataset.levelKeep, '1', 'the field shows at every level');
+  assert.equal(srcSelOf(cardEl).options[0].textContent, 'Pick a branch…');
+});
+
+test('source branch: Folder projects and git off are never blocked for a branch, under ask', async () => {
+  const folder = await openWithCard({ ...PROJECT_CARD }, { sourceBranchMode: 'ask', projects: [{ name: 'proj', path: '/repos/proj', exists: true, vcs: 'none' }] });
+  assert.equal(folder.doc.querySelector('[data-ask-card-start]').disabled, false);
+  assert.equal(branchHint(folder.doc.querySelector('.ask-card')), null);
+  const off = await openWithCard({ ...PROJECT_CARD }, { sourceBranchMode: 'ask' }, { git: 'off' });
+  assert.equal(off.doc.querySelector('[data-ask-card-start]').disabled, false);
+});
+
+test('source branch: the Shaper direct card under ask — Shape requirements aria-disabled and inert, Schedule… off', async () => {
+  const rec = { sourceBranchMode: 'ask' };
+  const { ctx, cardEl } = await openDirect(DIRECT_SHAPE, rec, { lead: 'qa' });
+  const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+  assert.equal(shapeBtn.getAttribute('aria-disabled'), 'true');
+  assert.equal(cardEl.querySelector('[data-ask-card-schedule]').disabled, true);
+  const hint = branchHint(cardEl);
+  assert.ok(hint, 'the Base branch field carries the hint');
+  assert.ok(shapeBtn.getAttribute('aria-describedby').split(' ').includes(hint.id));
+  shapeBtn.click();
+  await settle(ctx);
+  assert.equal((rec.runBodies || []).length, 0, 'the click is ignored');
+  pickBranch(ctx, srcSelOf(cardEl), 'dev');
+  assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+  assert.equal(cardEl.querySelector('[data-ask-card-schedule]').disabled, false);
+});
+
+test('source branch, workspace card: the members that need a branch, the default covers them, a 400 repaints', async () => {
+  await checkRows([
+    { name: 'needs [proj]: placeholders, the hint, Start off, the members details closed, the default input described', run: async () => {
+      const rec = { sourceBranchMode: 'ask', sourceBranchNeeds: ['proj-00000001'] };
+      const ctx = await openWithCard(WS_CARD, rec);
+      for (let i = 0; i < 3; i++) await ctx.tick();
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const def = cardEl.querySelector('.ask-card-source-input');
+      assert.equal(def.placeholder, 'Pick a branch…');
+      assert.equal(cardEl.querySelector('.ask-card-member-src[data-project-key="proj-00000001"]').placeholder, 'Pick a branch…');
+      assert.equal(cardEl.querySelector('.ask-card-member-src[data-project-key="lib-00000002"]').placeholder, 'auto');
+      const hint = branchHint(cardEl);
+      assert.equal(hint.textContent, 'Pick a source branch for: proj. Set in Settings › Runs › Chat runs: source branch.');
+      assert.equal(hint.parentElement, def.closest('.ask-rp-field'));
+      assert.equal(cardEl.querySelector('details.ask-card-members-src').open, false);
+      assert.ok(def.getAttribute('aria-describedby').split(' ').includes(hint.id));
+      assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, true);
+      assert.equal(def.closest('.ask-rp-field').dataset.levelKeep, '1');
+      typeInto(ctx, def, 'main');
+      assert.equal(branchHint(cardEl), null);
+      assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, false);
+      cardEl.querySelector('[data-ask-card-start]').click(); await ctx.tick(); await ctx.tick();
+      assert.equal(rec.runBodies[0].sourceBranch, 'main');
+    } },
+    { name: 'typing only the member\'s own input also covers it', run: async () => {
+      const ctx = await openWithCard(WS_CARD, { sourceBranchMode: 'ask', sourceBranchNeeds: ['proj-00000001'] });
+      for (let i = 0; i < 3; i++) await ctx.tick();
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      typeInto(ctx, cardEl.querySelector('.ask-card-member-src[data-project-key="proj-00000001"]'), 'dev');
+      assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, false);
+    } },
+    { name: 'needs []: as today', run: async () => {
+      const ctx = await openWithCard(WS_CARD, {});
+      for (let i = 0; i < 3; i++) await ctx.tick();
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      assert.equal(cardEl.querySelector('.ask-card-source-input').placeholder, 'auto');
+      assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, false);
+      assert.equal(branchHint(cardEl), null);
+      assert.equal('levelKeep' in cardEl.querySelector('.ask-card-source-input').closest('.ask-rp-field').dataset, false);
+    } },
+    { name: 'a 400 with members [proj] repaints that state', run: async () => {
+      const rec = { runResponse: { ok: false, status: 400, json: async () => ({ error: 'x', code: 'source-branch-required', members: ['proj-00000001'] }) } };
+      const ctx = await openWithCard(WS_CARD, rec);
+      for (let i = 0; i < 3; i++) await ctx.tick();
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      cardEl.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 4; i++) await ctx.tick();
+      assert.equal(branchHint(cardEl).textContent, 'Pick a source branch for: proj. Set in Settings › Runs › Chat runs: source branch.');
+      assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, true);
+      assert.equal(cardEl.querySelector('.ask-card-err').textContent, '');
+    } },
+    { name: 'D16: one project and one user source → Settings › Runs; both project → the project variant', run: async () => {
+      const mixed = await openWithCard(WS_CARD, { sourceBranchMode: 'ask', sourceBranchSources: { 'proj-00000001': 'project', 'lib-00000002': 'user' } });
+      for (let i = 0; i < 3; i++) await mixed.tick();
+      assert.equal(branchHint(mixed.doc.querySelector('.ask-card')).textContent, 'Pick a source branch for: proj, lib. Set in Settings › Runs › Chat runs: source branch.');
+      const both = await openWithCard(WS_CARD, { sourceBranchMode: 'ask', sourceBranchSource: 'project' });
+      for (let i = 0; i < 3; i++) await both.tick();
+      assert.equal(branchHint(both.doc.querySelector('.ask-card')).textContent, "Pick a source branch for: proj, lib. Set in this project's Settings › Chat › Chat runs: source branch.");
+    } },
   ]);
 });

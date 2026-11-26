@@ -44,6 +44,7 @@ export const PAUSE_TITLES = Object.freeze({
   night_guardrail: 'Night guardrail reached',
   time_limit: 'A step hit its time limit',
   terminated: 'Run paused when worca was stopped',
+  model_confirm: 'Confirm the model to continue',   // #1450: a premium model nobody chose
 });
 export const SCHEDULE_TITLE = 'Scheduled run needs attention';
 export const BLOCKED_HINT = 'Notifications are blocked for this site in your browser settings.';

@@ -7,7 +7,7 @@ import { readRunSetup } from '../../../src/core/run-presets-store.mjs';
 import { assertRunnableWorkflow } from '../../../src/core/workflows.mjs';
 import { readGuardrailSet } from '../../../src/core/guardrail-store.mjs';
 import { isNoProjectKey } from '../../../src/core/store.mjs';
-import { RERUN_ENDED, RERUN_NOT_ENDED } from '../../../src/shared/run-rerun.mjs';
+import { RERUN_ENDED, RERUN_NOT_ENDED, RERUN_TEST_TRY } from '../../../src/shared/run-rerun.mjs';
 import { badRequest, bareWorkspaceKey, isLiveRun, presetCheckCtx, presetScopeOf, projectDirForKey } from '../../server.mjs';
 
 
@@ -18,6 +18,7 @@ export function rerunOfGuard(req, res, next) {
   if (id === null || id === '') { delete req.body.rerunOf; return next(); }   // "not a rerun", as an absent field
   const row = typeof id === 'string' ? findPipelineRowById(id) : null;
   if (!row) return res.status(400).json({ error: 'rerun-source-not-found', message: 'The run this was copied from is gone; start it as a new run.' });
+  if (row.is_test === 1) return res.status(409).json({ error: 'rerun-test-try', message: RERUN_TEST_TRY });   // workflow tests: never a run of its own
   // As the read routes: a source still going cannot be rerun. A deleted one has ended for good and is accepted.
   if (!row.deleted_at && (!RERUN_ENDED.has(row.status) || isLiveRun(row.id))) return res.status(409).json({ error: 'run-not-ended', message: RERUN_NOT_ENDED });
   req.body.rerunOf = row.id;
@@ -28,6 +29,7 @@ export function rerunOfGuard(req, res, next) {
 function endedRowOf(req, res) {
   const row = findPipelineRowById(req.params.id);
   if (!row || row.deleted_at) { res.status(404).json({ error: 'run not found' }); return null; }
+  if (row.is_test === 1) { res.status(409).json({ error: 'rerun-test-try', message: RERUN_TEST_TRY }); return null; }   // workflow tests
   if (!RERUN_ENDED.has(row.status) || isLiveRun(row.id)) { res.status(409).json({ error: 'run-not-ended', message: RERUN_NOT_ENDED }); return null; }
   return row;
 }

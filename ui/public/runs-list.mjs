@@ -25,11 +25,13 @@ import { glanceCopy } from './run-glance.mjs';
 import { splitShown, matchesLabels } from '../../src/shared/run-labels.mjs';
 import { labelChip } from './label-picker.mjs';
 import { paintProgressBar, renderRowLine } from './run-progress-bar.mjs';
-import { renderStatusDot } from './status-dot.mjs';
+import { renderStatusDot, markDot, staleLive } from './status-dot.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { runModel, groupModel, finishedNeedsYou, WATCH_WHY } from '../../src/shared/run-model.mjs';
 import { kindChip } from './run-kind.mjs';
+import { memberShortWord } from '../../src/shared/shape/run-agents.mjs';
+import { memberStatusOf } from '../../src/shared/shape/run-status.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -96,7 +98,7 @@ const PARKED = new Set(['paused', 'pausing', 'interrupted']);
 // error / recoverable / a manual pause read plain "Paused".
 const PAUSE_WORDS = Object.freeze({
   cost_pipeline: 'Cost limit', cost_total: 'Total budget', cost_pipeline_policy: 'Team cap',
-  cost_total_policy: 'Team total', usage_limit: 'Usage limit', drain: 'Restart',
+  cost_total_policy: 'Team total', usage_limit: 'Usage limit', drain: 'Restart', model_confirm: 'Confirm model',
 });
 // Search words per icon, beyond the row's own word: "paused" finds a cost-limit pause too.
 const STATE_TERMS = Object.freeze({
@@ -480,7 +482,7 @@ export function listLine(row, { section = '', time = '' } = {}) {
       case 'waiting': return and('Waiting', p, ((m.current && m.current.line) || '').replace(/^Waiting(?: · )?/, ''));
       case 'failed': return and(p ? `Failed at ${p.toLowerCase()}` : 'Failed', time);
       case 'stopped': return and(p ? `Stopped at ${p.toLowerCase()}` : 'Stopped', time);
-      case 'ready': return and('Ready to ship', time);
+      case 'ready': return and(m.hold || 'Ready to ship', time);
       case 'in-review': return m.pr ? time : and(m.line, time);
       default: return m.pr ? time : and('Merged', time);
     }
@@ -535,7 +537,7 @@ export function groupRow(g, { now = Date.now() } = {}) {
   const raw = (g.members || []).map((mb) => ({ ...(mb.run || {}), memo: mb.memo || null }));
   const planningRaw = g.planning ? { ...(g.planning.run || {}), memo: g.planning.memo || null } : null;
   const model = groupModel({ kind: g.groupKind === 'feature' ? 'feature' : 'chain', title: g.title, members: raw,
-    planning: planningRaw, pr: g.pr || null, memo: g.memo || null }, { now });
+    planning: planningRaw, pr: g.pr || null, memo: g.memo || null, hold: g.hold || null }, { now });
   const members = (g.members || []).map((mb, i) => ({ ...mb, key: `member:${g.id}/${mb.pipelineId || mb.ticketId || i}`, model: model.members[i],
     needs: needsYou({ kind: mb.kind || 'hist', status: mb.run && mb.run.status, ask: !!(mb.run && mb.run.pendingQuestion != null),
       prNeeds: prNeedsOf(mb.run) }) }));
@@ -560,6 +562,8 @@ export function groupRow(g, { now = Date.now() } = {}) {
     // The planning run's keys too, so its own list row folds into the group.
     memberKeys: new Set([...members, ...(planning ? [planning] : [])].flatMap((mb) => [mb.pipelineId && `p:${mb.pipelineId}`, mb.ticketId && `t:${mb.ticketId}`, mb.runId && `r:${mb.runId}`]).filter(Boolean)),
     planning,
+    // D2 (D1): a Shaper small-runs feature (the server's marker) says its cost on the row; every other group keeps dev's keys.
+    ...(g.smallRuns ? { smallRuns: true } : {}),
   };
 }
 
@@ -967,7 +971,7 @@ function renderRounds(doc, r, { roundsOpen = new Set(), roundsAll = new Set(), n
 }
 
 function renderItem(doc, r, { section = '', level = 'top', checked, selecting, spansProjects = false, lineFrom = null, position = '', parentWhere = '', now = Date.now(),
-  roundsOpen = new Set(), roundsAll = new Set() } = {}) {
+  roundsOpen = new Set(), roundsAll = new Set(), smallRuns = false, status = null } = {}) {
   const item = doc.createElement('div');
   item.className = `runs-item${checked.has(r.key) ? ' is-checked' : ''}${r.needs && level === 'top' ? ' is-needs' : ''}`;
   item.dataset.rowKey = r.key;
@@ -980,11 +984,11 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   box.className = 'runs-check';
   box.checked = checked.has(r.key);
   box.setAttribute('aria-label', `Select ${r.title}`);
-  pick.append(renderStatusDot(doc, r.model), box);
   const a = doc.createElement('a');
   a.className = `runs-row runs-row-${r.kind}`;
   a.setAttribute('href', r.href);
-  a.title = costTitle(r);                                 // §2.4: the PR chip keeps its own title
+  // §2.4: the PR chip keeps its own title. D2: a small-runs group says its cost as text (.runs-cost), so no hover repeats it.
+  if (!r.smallRuns) a.title = costTitle(r);
   for (const [k, v] of Object.entries({ rowKey: r.key, kind: r.kind, state: r.model.state, pipelineId: r.pipelineId, projectKey: r.projectKey,
     groupId: r.kind === 'chain' ? r.groupId : '' })) if (v) a.dataset[k] = v;
   if (r.runId) a.dataset.runId = r.runId;   // this exact line: test/ui-guide-hops.test.mjs reads it as the guide hop's painter
@@ -996,6 +1000,7 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   const right = doc.createElement('span');
   right.className = 'runs-row-right';
   if (grouped) right.append(textEl(doc, 'span', 'runs-count', r.count));
+  if (grouped && r.smallRuns) right.append(textEl(doc, 'span', 'runs-cost mono', fmtUsd(r.costUsd || 0)));
   if (r.model.pr && !r.model.pr.pending) right.append(prChip(doc, r.model.pr));
   // Rows carry no clock: the model's `now` keeps it deterministic. Group rows ('chain') carry their latest member's
   // activityMs, so "Ready to ship · Fri" and a group-PR row's "Fri" get their time too.
@@ -1012,6 +1017,17 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   const staged = level === 'member' && !unstarted && r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed'
     && !r.model.prNeeds && r.model.progress && r.model.progress.mode === 'stages';
   if (staged) line = DOT_SAYS.has(r.model.state) ? '' : dropLead(line, r.model.progress.label);
+  // D2 (owner direction): a small-runs member says the Chat card's short word (done, building, waits for run 2); a run
+  // the card has no word for (null: no Care plan, held) keeps dev's line.
+  // Shaper small runs s5 (D4): a marked feature's member takes runStatus's word first (a string, '' included), then the
+  // short word, then dev's line; its mark repaints the dot. data-state-word and data-line stay dev's (the layout audit).
+  const st = typeof status === 'function' && level === 'member' ? status(r) : null;
+  const short = smallRuns && level === 'member' && !(st && typeof st.word === 'string') ? memberShortWord(r) : null;
+  if (st && typeof st.word === 'string') line = st.word;
+  else if (short) line = short;
+  const runMark = st && st.mark && !staleLive(st, r.model) ? st.mark : null;
+  if (runMark) item.dataset.mark = runMark;
+  pick.append(renderStatusDot(doc, runMark ? markDot(r.model, runMark, line) : r.model), box);
   // D6: a stack's sub-line is its newest round's (the stack line below the row); the row keeps its own line only while
   // it needs a person for its own reason, and the round line comes second.
   const stack = !!(r.rounds && r.rounds.length);
@@ -1052,11 +1068,13 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   if (stack) item.append(...renderRounds(doc, r, { roundsOpen, roundsAll, now }));
   if (grouped && r.open) {
     const list = doc.createElement('div');   // member rows are div.runs-item, so a list of them is a div with role=list
-    list.className = 'runs-members';
+    list.className = r.smallRuns ? 'runs-members srows' : 'runs-members';   // D2 (D4): one-line .srows members
     list.setAttribute('role', 'list');
+    // s5 (D3): the shared status only for a small-runs group whose members carry slices (the flag on, a marked feature).
+    const status = r.smallRuns && r.members.some((mb) => mb.slice) ? memberStatusOf(r.members) : null;
     for (const mb of r.members) {
       list.append(renderItem(doc, { ...mb, href: mb.href || '#runs', title: mb.title || '(untitled)' },
-        { level: 'member', checked, selecting, lineFrom, now, roundsOpen, roundsAll, parentWhere: r.kind === 'chat-group' ? r.groupName || '' : '',
+        { level: 'member', checked, selecting, lineFrom, now, roundsOpen, roundsAll, smallRuns: !!r.smallRuns, status, parentWhere: r.kind === 'chat-group' ? r.groupName || '' : '',
           position: r.kind !== 'chain' || r.groupKind === 'user' || mb.adhoc ? '' : String(mb.position) }));
     }
     item.append(list);

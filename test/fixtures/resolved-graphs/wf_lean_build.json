@@ -542,6 +542,8 @@
         "runnerType": "clarifier",
         "scope": "project"
       },
+      "model": "claude-sonnet-5-5",
+      "modelSource": "worca-default",
       "nodeId": "n_clarify",
       "promptHints": "",
       "runnerType": "clarifier",
@@ -654,6 +656,8 @@
         "workspaceFanOut": true,
         "workspaceStrategy": "task"
       },
+      "model": "claude-sonnet-5-5",
+      "modelSource": "worca-default",
       "nodeId": "n_impl",
       "promptHints": "Work inside the project directory (your cwd). Commit nothing; just edit files and tests.",
       "runnerType": "producer",
@@ -761,6 +765,8 @@
         "workspaceFanOut": true,
         "workspaceStrategy": "explore"
       },
+      "model": "claude-opus-5-5",
+      "modelSource": "worca-default",
       "nodeId": "n_plan",
       "promptHints": "Write a complete, design-level implementation plan. It MUST name the contracts (files, signatures, data and error shapes), the invariants, the acceptance mapping and the tests, without full code bodies, and MUST end with a \"## Clarifications (Q&A)\" section reproducing the questions and the user answers below so the reviewer can see them.",
       "runnerType": "producer",
@@ -994,6 +1000,8 @@
         "wantsRequest": true,
         "workspaceStrategy": "review"
       },
+      "model": "claude-opus-5-5",
+      "modelSource": "worca-default",
       "nodeId": "n_review",
       "promptHints": "Review the git diff of what was implemented against the plan's contracts and invariants, with an adversarial pass and the severity floors.",
       "runnerType": "verifier",

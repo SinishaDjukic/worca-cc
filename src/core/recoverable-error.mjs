@@ -128,6 +128,12 @@ function serverTimeZone() {
  * when it names no readable time, names an impossible one, or one outside (now, now + 8 days].
  * Pure; never throws. A trailing "(Area/City)" zone wins over `tz` (the server's zone by default).
  */
+/** #1450: whether a usage limit is one model family's ("You've hit your Fable limit") or the whole connection's.
+ *  @returns {'model'|'connection'} */
+export function limitScopeOf(detail) {
+  return /hit your (fable|opus|sonnet|haiku)\b[^.]*\blimit/i.test(String(detail ?? '')) ? 'model' : 'connection';
+}
+
 export function limitResetAt(err, { now = Date.now(), tz = serverTimeZone() } = {}) {
   try {
     const msg = String((err && typeof err === 'object' ? err.message : err) ?? '');

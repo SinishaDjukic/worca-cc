@@ -174,7 +174,7 @@ function failingClaudeBin(message) {
   // mktemp, not a counter: the title-generation spawn and the first node's spawn
   // overlap, and two shells that both read the same directory count would write
   // (and lose) the same file name.
-  writeFileSync(bin, `#!/bin/sh\nf=$(mktemp "${calls}/callXXXXXXXX")\nprintf '%s' "$*" > "$f"\necho "${message}" >&2\nexit 1\n`);
+  writeFileSync(bin, `#!/bin/sh\nf=$(mktemp "${calls}/callXXXXXXXX")\np="$*"; { [ -p /dev/stdin ] || [ -S /dev/stdin ]; } && p="$p $(cat)"\nprintf '%s' "$p" > "$f"\necho "${message}" >&2\nexit 1\n`);
   chmodSync(bin, 0o755);
   return {
     bin,

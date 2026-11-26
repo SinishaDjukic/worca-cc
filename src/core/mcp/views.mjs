@@ -7,13 +7,14 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { readMcpStore } from './store.mjs';
+import { readMcpStore, toolNameOf } from './store.mjs';
 import { loadCatalog } from './catalog.mjs';
 import { teamRecordsFor, copyName } from './identity.mjs';
 import {
   resolveMcpServers, materializeCopy, skipReasonText, PROBLEM_REASONS, teamMembers, cachedTeams, cachedTeamFor, hostContext,
 } from './registry.mjs';
 import { listProjects } from '../projects.mjs';
+import { primeSettingsVaultIfEnabled } from '../settings.mjs';
 import { pluginNameFor, teamSkillMembers } from './sets.mjs';
 import { parseSkillId } from '../skills-registry/ids.mjs';
 import { skillHostFacts } from '../skills-registry/host.mjs';
@@ -123,7 +124,7 @@ function memberViews(ctx, set) {
     if (tr && e) {
       const stale = tr.fingerprint !== materializeCopy({ entry: e, values: m.values, secrets: bag, copy, name: copy }, ctx).fingerprint;
       test = { at: tr.at, ok: tr.ok, tools: Array.isArray(tr.tools) ? tr.tools.length : 0, error: tr.error, stale };
-      const long = tr.ok && (tr.tools || []).find((t) => `mcp__${copy}__${cliName(t)}`.length > 64);
+      const long = tr.ok && (tr.tools || []).map(toolNameOf).find((t) => `mcp__${copy}__${cliName(t)}`.length > 64);
       if (long) tooLong = { limit: `mcp__${copy}__${cliName(long)}`.length > 128 ? 128 : 64, tool: long };
     }
     const reason = skip ? skip.reason : null;
@@ -376,6 +377,7 @@ export function manualNameTaken({ snapshot, catalog }, name) {
 
 /** Everything the builders read, from disk and the policy cache. */
 export async function viewContext() {
+  await primeSettingsVaultIfEnabled();
   const snapshot = await readMcpStore();
   const catalog = await loadCatalog(snapshot);
   const skillCatalog = await loadSkillCatalog();

@@ -4,22 +4,35 @@
 // postAnswer BEFORE its POST (question-resolved can land before the 200).
 import { applyOutlineEdits } from '../../../src/shared/shape/slices.mjs';
 import { askKindOf } from '../ask/registry.mjs';
-import { clarifyText, planApprovedText, splitText, gateText, NOT_SPLIT_TEXT } from '../../../src/shared/shape/feature-log.mjs';
+import { clarifyText, planApprovedText, splitText, gateText, NOT_SPLIT_TEXT, REQUIREMENTS_AGREED, runsApprovedText } from '../../../src/shared/shape/feature-log.mjs';
 import { planApprovedLine } from '../log-line.mjs';
 import { isRequirementsAsk } from './step-card.mjs';
+import { careRecordLine } from '../../../src/shared/shape/feature-record.mjs';
+import { remarkUpdatedText } from '../../../src/shared/shape/feature-log.mjs';
+import { skipLine } from '../../../src/shared/shape/prototype.mjs';
+import { stopDoneText } from '../../../src/shared/shape/run-stops.mjs';
 
-/** The receipt of an agreed Requirements step; the chat run card's fallback says the same. */
-export const REQUIREMENTS_AGREED = 'Requirements agreed';
+/** The receipt of an agreed Requirements step; the chat run card's fallback says the same. One source: feature-log (B1). */
+export { REQUIREMENTS_AGREED };
 
 const NAMED = new Map();          // `${runId}|${questionId}` → { text, answers }
 const NAMED_MAX = 200;
 
 /** The named decision for an answer to `pq`, or null when the kind has no step name (a non-shaping Clarify, a form). */
-export function stepReceipt(pq, payload, { shaping = false } = {}) {
+export function stepReceipt(pq, payload, opts = {}) {
+  const { shaping = false } = opts;
   if (!pq) return null;
+  if (pq.stop) return stopDoneText(pq.stop, payload);   // Small runs C3 (D14): the stop's one answered line
   const p = payload || {};
   const d = p.decision;
   const kind = askKindOf(pq);
+  if (kind === 'care') {
+    // B2 (D18): the fixed fact Care reads as after Start; who chose it is the server's rule (the pick is the default).
+    const position = p.care && p.care.position;
+    const pick = pq.care && pq.care.pick ? pq.care.pick.position : null;
+    return position ? careRecordLine({ position, worcaPick: pick, chosenBy: position === pick ? 'default' : 'person' }) : null;
+  }
+  if (kind === 'prototype') return prototypeReceipt(pq.prototype || {}, p, opts);
   if (kind === 'gate') return gateText(d);
   if (kind === 'recovery') return d === 'retry' ? 'Retried' : d === 'abort' ? 'Aborted' : 'Paused';
   if (kind === 'plan') {
@@ -32,6 +45,8 @@ export function stepReceipt(pq, payload, { shaping = false } = {}) {
       if (d === 'approve') {
         const r = applyOutlineEdits(plan.outline, Array.isArray(p.edits) ? p.edits : []);
         const n = (r.ok ? r.outline : plan.outline).slices.length;
+    // Small runs B4 (D20): the one card's words, as the lasting decision log has them.
+    if (plan.smallRuns === true) return runsApprovedText(p.openObjections === 'kept' ? (plan.challenge && plan.challenge.open) || 0 : 0);
         return splitText(n);
       }
       if (d === 'flat') return NOT_SPLIT_TEXT;
@@ -51,6 +66,22 @@ export function stepReceipt(pq, payload, { shaping = false } = {}) {
     const k = p.answers.filter((a) => a && typeof a.choice === 'string' && a.choice.trim()).length;
     return clarifyText(k);
   }
+  return null;
+}
+
+const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
+/** C1: the Prototype step's receipts: the remark that changed a requirement, the confirm and the skip; nothing for the
+ *  other answers (a build, a remark still to match, Keep). `register: 'plain'` names no id. */
+function prototypeReceipt(v, p, { register } = {}) {
+  const d = p.decision;
+  if (d === 'change' && v.remark && v.remark.id) {
+    return register === 'plain' ? `Your remark: “${v.remark.text}” → the requirement is updated` : remarkUpdatedText(v.remark.text, v.remark.id);
+  }
+  if (d === 'confirm') {
+    const n = Array.isArray(v.screens) ? v.screens.length : 0;
+    return ['Prototype confirmed', plural(n, 'screen'), ...(v.remarks > 0 ? [plural(v.remarks, 'remark')] : [])].join(' · ');
+  }
+  if (d === 'skip') return skipLine(v.moment === 'offered' && v.position === 'lean' ? 'lean' : 'person');
   return null;
 }
 

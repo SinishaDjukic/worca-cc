@@ -23,7 +23,10 @@ import { buildNodeConfigRows, buildRoleRows, pruneNodeSelection, modifiedFieldsO
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import { PR_OPEN, PR_OPEN_LABELS, prSourceText } from '../../src/shared/pr-auto.mjs';
+import { SOURCE_BRANCH_TEXT, currentBranchLabel } from '../../src/shared/chat-source-branch.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
+import { execEnvList, execEnvLabel, execEnvKnown } from './exec-envs.mjs';
+import { remoteRefusesDefault } from '../../src/shared/exec-env.mjs';
 import { runsOn, modelGroups, connectionOf, connectionLabel } from '../../src/shared/connections.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
@@ -34,7 +37,7 @@ import { engineOfEntry, chatEngineOf, chatSpawnsAgents, pickerGroups, moreHarnes
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
-import { currentLevel, levelShows } from './ui-level.mjs';
+import { currentLevel, levelShows, keepVisible } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 import { keepFocus } from './chat/keep-focus.mjs';
 import { flagOn, onFlagChange } from './flags.mjs';
@@ -202,6 +205,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     open: false,
     threadId: null,
     designThread: null,       // the design chat whose dock the design slot shows (syncDesign), else null
+    listDesigns: false,       // the chats list shows only chats with a design (setListDesigns: the sidebar lights Design)
+    listDesignsQueued: false, // a setListDesigns waits for the end of the task
     designStart: false,       // the design slot shows a new design's start (startDesign)
     ext: null,                // the composer's extension (setComposerExt): a design chat's or a new design's own controls
     lentTips: [],             // [{btn, title}]: the ext's buttons whose title became a tip while lent (setComposerExt gives it back)
@@ -256,6 +261,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     leftAt: null,          // #958: { threadId, top, pinned } recorded when the page hides; read on the next show
     restoreTop: null,      // #958: a scrollTop the next applyPin() writes back (a same-chat return, unpinned)
     scrollIntentAt: null,  // #958: now() of the last wheel / touch / press / key on the transcript
+    scrollSeen: null,      // #958: the transcript's last known scrollTop (its last scroll event or our last write), so
+                           // a reader's scroll reads as up or down; null = unknown (the page hid), today's rule applies
     scrollHeld: false,     // #958: a press on the transcript (its scrollbar) is held until pointerup
     cardMemo: null,        // #958: card id → element built in the current renderTranscript pass (one build per card)
     wantThread: undefined,    // the chat the page shows or is loading: an id, null = home (a new chat), undefined = none yet
@@ -303,6 +310,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     queueEdit: null,          // {id, item, li, ta}: the queued card whose text is being edited in place (one at a time)
     stopBy: null,             // who asked the live turn to stop: 'button' pauses the queue, 'voice' (barge-in) lets it send
     stopAfterSend: false,     // voice asked to stop while the send POST was out: stop that turn as soon as the 202 lands
+    echo: null,               // the composer's send while its POST is out: {sendId, quoted, requirements, cleared}; its echo clears the composer
     hist: { idx: -1, draft: '' },   // ArrowUp history walk: idx into historyEntries(), -1 = not walking; the draft it replaced
     basePlaceholder: INPUT_PLACEHOLDER,   // the add-ons' placeholder (addonCtx.setPlaceholder); a suggestion shows only over the default
     suggestion: null,         // the suggestion on screen ({messageId, text}) — what Tab accepts
@@ -1105,8 +1113,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         route(id, { replace: true });          // #chat → #chat/<id>, swapped: Back never lands on an empty new chat
       }
       const sentOff = st.mcp.off;
+      // The composer's own send is tagged: the server's echo of the user row carries the tag, and the composer clears
+      // as the bubble appears (pushServerFrame). The 202 comes only after the prompt is assembled, seconds later on
+      // Windows. A drained queue item is not tagged: it never touches the composer.
+      const sendId = queued ? null : `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
       const payload = {
         text,
+        ...(sendId ? { sendId } : {}),
         model: st.picker.model,
         effort: st.picker.effort,
         // The browser's zone rides along: "tomorrow 02:00" is read in it (docs/scheduled-runs.md "Chat").
@@ -1124,6 +1137,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         ...(requirementsOn() && draft.requirements && draft.requirements.length ? { requirements: draft.requirements } : {}),
       };
       const model = st.model;
+      if (sendId) st.echo = { sendId, quoted, requirements: payload.requirements, cleared: false };
       let res = null;
       let refusedBody = null;
       try {
@@ -1187,17 +1201,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       st.askedIn.add(id);                            // its replies may light the Chat row's dot, even after a switch
       // No provisional title from the prompt: the header keeps "New chat" until
       // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
-      // A drained queue item leaves the composer alone: it holds whatever the user is typing now.
-      if (!queued) {
-        el.input.value = '';
-        fitInput();                                    // a programmatic clear fires no input event
-        st.pendingFiles = [];
-        if (st.quote === quoted) st.quote = null;
-        renderChips();
-        st.hist = { idx: -1, draft: '' };
-        dropAttached(payload.requirements);            // only after the 202: a refusal keeps text and features
-        if (el.hash) el.hash.close();
-      }
+      // A drained queue item leaves the composer alone: it holds whatever the user is typing now. So does a send whose
+      // echo already cleared it: the composer may hold the next message by now.
+      if (!queued && !(st.echo && st.echo.cleared)) clearSentDraft(quoted, payload.requirements);
       subscribe(id);
       st.pinned = true;
       scheduleFlush();
@@ -1205,8 +1211,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     } finally {
       st.sending = false;
       st.stopAfterSend = false;
+      st.echo = null;
       updateSendStop();
     }
+  }
+
+  /** The composer after its message is in (the echo or the 202, whichever lands first): text, files, its quote and the
+   *  features it carried go. Only once the server has the row: a refusal keeps text and features. */
+  function clearSentDraft(quoted, requirements) {
+    el.input.value = '';
+    fitInput();                                    // a programmatic clear fires no input event
+    st.pendingFiles = [];
+    if (st.quote === quoted) st.quote = null;
+    renderChips();
+    st.hist = { idx: -1, draft: '' };
+    dropAttached(requirements);
+    if (el.hash) el.hash.close();
   }
 
   // ---- the composer's extension (docs/design.md "In the chat") ----------------------------------------------------
@@ -2316,10 +2336,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     onToolScope();
   }
 
-  /** The panel moved to another chat: app.js points the address at it (pushed, or swapped with `replace`). */
-  function route(threadId, { replace = false } = {}) {
+  /** The panel moved to another chat: app.js points the address at it (pushed, or swapped with `replace`). `design`:
+   *  a new design's start (#chat/new/design), not a chat. */
+  function route(threadId, { replace = false, design = false } = {}) {
     if (typeof onRoute !== 'function') return;
-    try { onRoute(threadId || null, { replace }); } catch { /* the address is a nicety */ }
+    try { onRoute(threadId || null, design ? { replace, design: true } : { replace }); } catch { /* the address is a nicety */ }
   }
 
   /**
@@ -2346,6 +2367,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // still loading has no place worth keeping.
     const loading = typeof st.wantThread === 'string' && st.wantThread !== st.threadId;
     st.leftAt = st.threadId && !loading ? { threadId: st.threadId, top: el.transcript.scrollTop, pinned: st.pinned, host: st.host } : null;
+    st.scrollSeen = null;   // display:none drops the offset; the restore write sets a fresh baseline
     stopVoice();
     closePopover({ focusTrigger: false });
     if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
@@ -2384,14 +2406,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  chat stays a chat: this transcript draws its messages and the design's cards. Any other thread, or none, gives the
    *  slot back. */
   function syncDesign(thread) {
-    const leftStart = st.designStart;
     if (st.designStart) { st.designStart = false; el.designSlot.hidden = true; setComposerExt(null); try { designChat.unmount(); } catch { /* the page's own trouble */ } }
     const clearHead = () => { el.headSlot.replaceChildren(); el.headSlot.hidden = true; };
     const want = designChat && designChat.enabled?.() !== false && thread && typeof thread.id === 'string' && typeof thread.designId === 'string' && thread.designId
       ? thread.id : null;
-    // Only the design start folds the chats list (startDesign): on any chat after it, the design's chat included, it is
-    // as the person left it (open by default).
-    if (leftStart) setHistoryOpen(initialHistoryOpen(), { persist: false });
+    // The chats list is as the person left it (open by default) on a design's start and its chat, as on any chat.
     if (want === st.designThread) { syncView(); return; }
     if (st.designThread) { setComposerExt(null); try { designChat.unmount(); } catch { /* the dock's own trouble */ } }
     clearHead();
@@ -2413,17 +2432,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (inline) { if (el.designSlot.parentNode !== el.transcript) el.transcript.appendChild(el.designSlot); }
     else if (el.designSlot.previousSibling !== el.transcript) el.transcript.after(el.designSlot);
   }
-  /** A new design chat (#chat/new/design, the sidebar's Design): the design start in the slot. Its Send creates the
-   *  design and its chat, and opens it (app.js). → false where there is no design start (the flag off). */
-  function startDesign() {
+  /** A new design chat (#chat/new/design, the sidebar's Design; #chat/new/design/all, `#design`): the design start in
+   *  the slot, with the designs under it (`all`: every one shown). Its Send creates the design and its chat, and opens it
+   *  (app.js). → false where there is no design start (the flag off). */
+  function startDesign({ all = false } = {}) {
     if (!designChat || typeof designChat.mountStart !== 'function' || st.destroyed) return false;
     newThread({ focus: false });
     st.designStart = true;
-    setHistoryOpen(false, { persist: false });   // a new design starts with the chats list folded (the person's choice is kept)
     el.designSlot.hidden = false;
     el.designSlot.removeAttribute('data-inline');
     placeDesignSlot(false);
-    try { designChat.mountStart(el.designSlot, { setComposer: (ext) => (st.designStart ? setComposerExt(ext) : null) }); } catch (e) { console.warn('[worca] the design start failed to open', e); }
+    try { designChat.mountStart(el.designSlot, { setComposer: (ext) => (st.designStart ? setComposerExt(ext) : null), all }); } catch (e) { console.warn('[worca] the design start failed to open', e); }
     paintTitle('New design');
     syncView();
     return true;
@@ -2763,18 +2782,26 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   let chatsCol = null;
   /** The head's one New chat: a + right after the list toggle (mock 11). It carries [data-ask-new-btn], which the add-ons'
    *  capture-phase listeners read (chat/home-flip.mjs arms the glide, chat/intent.mjs drops the intent). Below 1100px
-   *  the overlay closes first, as after a pick, so the new chat has its room and newThread() can focus its composer. */
-  function newChatPlus() {
+   *  the overlay closes first, as after a pick, so the new chat has its room and newThread() can focus its composer.
+   *  `words` is the visible text; the list's copy reads "New", and the accessible name keeps "New chat ⌥⌘N". */
+  function newChatPlus(words = 'New chat', { list = false } = {}) {
     // Like the Runs page's New run: a small primary button with its icon and its words (the key stays in the tooltip).
+    // The list's New beside Design (st.listDesigns) starts a new design, as the sidebar's Design does.
     const b = iconButton('btn btn-sm btn-primary chat-head-btn chat-new-plus', `New chat ${keyHint(['alt', 'mod', 'N'], isMac(win))}`,
-      svgIcon(ICONS.plus, 14, 2), () => { if (historyOverlayOpen()) setHistoryOpen(false, { persist: false }); newThread(); route(null); });
-    b.append(doc.createTextNode('New chat'));
+      svgIcon(ICONS.plus, 14, 2), () => {
+        if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
+        if (list && st.listDesigns) { route(null, { design: true }); return; }
+        newThread();
+        route(null);
+      });
+    b.append(doc.createTextNode(words));
     b.setAttribute('data-ask-new-btn', '');
     return b;
   }
   function mountChats() {
     el.page.dataset.chats = 'on';
-    el.listNew = newChatPlus();   // New chat on top of the chats list (the head's own shows only while the list is folded)
+    el.listNew = newChatPlus('New', { list: true });   // New chat at the end of the chats list's head (the head's own shows only while the list is folded)
+    el.listNewName = el.listNew.getAttribute('aria-label');
     el.listNew.classList.add('chat-list-new');
     chatsCol = mountChatsColumn({ host: el.history, newButton: el.listNew, fetch, storage, win, now, level: () => currentLevel(doc),
       scopeName: (sc) => chatDep('scopeName', sc) || '', currentId: () => (typeof st.wantThread === 'string' ? st.wantThread : st.threadId),
@@ -4222,23 +4249,37 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (value != null && [...select.options].some((o) => o.value === value)) select.value = value;
   }
 
-  /** Returns the fill promise so a caller can re-read the select once the list lands. */
-  function loadBranchesInto(select, projectDir, want) {
-    fillSelect(select, [{ value: '', label: 'current branch (auto)' }], '');
-    if (!projectDir) return Promise.resolve();
+  /** Fill a Source branch select: "Loading branches…" until the list lands, then the first option `firstLabel(current)`
+   *  (it may wait for the card's gate read, so both land in ONE paint) and the branches. Resolves to
+   *  { status: 'ok' | 'empty' | 'failed', current }, or null when a newer fill of the same select took over. */
+  function loadBranchesInto(select, projectDir, want, firstLabel = (current) => currentBranchLabel(current)) {
+    const mine = (select.__branchFill = (select.__branchFill || 0) + 1);
+    fillSelect(select, [{ value: '', label: SOURCE_BRANCH_TEXT.loading }], '');
     return Promise.resolve()
-      .then(() => fetch(`/api/branches?projectDir=${encodeURIComponent(projectDir)}`))
-      .then((r) => (r && r.ok ? r.json() : null))
+      .then(() => (projectDir ? fetch(`/api/branches?projectDir=${encodeURIComponent(projectDir)}`) : null))
+      .then((r) => (!projectDir ? { branches: [] } : r && r.ok ? r.json() : null))
       .catch(() => null)
-      .then((body) => {
+      .then(async (body) => {
         const branches = Array.isArray(body) ? body : (body && Array.isArray(body.branches)) ? body.branches : [];
-        const opts = [{ value: '', label: 'current branch (auto)' }, ...branches.map((b) => ({ value: b, label: b }))];
+        const current = body && typeof body.current === 'string' && body.current ? body.current : null;
+        const status = !body ? 'failed' : branches.length ? 'ok' : 'empty';
+        const label = await firstLabel(current);
+        if (mine !== select.__branchFill) return null;
+        const opts = [{ value: '', label }, ...branches.map((b) => ({ value: b, label: b }))];
         if (want && !opts.some((o) => o.value === want)) opts.push({ value: want, label: want });
         fillSelect(select, opts, want || '');
+        return { status, current };
       });
   }
 
-  function wsBasename(p) { return String(p || '').replace(/\/+$/, '').split('/').pop() || String(p || ''); }
+  // Both separators: a Windows workspace sends c:\…\name paths.
+  function wsBasename(p) { return String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(p || ''); }
+  // The line under the Workspace select: the first few member names, the rest as a count; every name in the tooltip.
+  const WS_MEMBERS_SHOWN = 3;
+  function wsMembersLine(names) {
+    const rest = names.length - WS_MEMBERS_SHOWN;
+    return rest > 0 ? `${names.slice(0, WS_MEMBERS_SHOWN).join(', ')} and ${rest} more` : names.join(', ');
+  }
 
   // ---- Run proposal card v2 (spec 2026-09-06-ask-run-card-v2 §7.3) --------------------------------------------------
   const RP_ACC = new Set(['violet', 'blue', 'green', 'peach', 'red', 'amber']);
@@ -4286,7 +4327,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   async function loadLane(workflowId, projectDir, picked = '') {
     const qs = projectDir ? `?projectDir=${encodeURIComponent(projectDir)}` : '';
     const [wf, agents, cfg, defaults] = await Promise.all([
-      fetchJsonOk(`/api/workflows/${encodeURIComponent(workflowId)}`), fetchJsonOk('/api/agents'), fetchJsonOk(`/api/config${qs}`),
+      // use=live: the graph the run will use (the version in use, plans/workflow-tests-plan.md D2), not the Composer's draft.
+      fetchJsonOk(`/api/workflows/${encodeURIComponent(workflowId)}?use=live`), fetchJsonOk('/api/agents'), fetchJsonOk(`/api/config${qs}`),
       fetchJsonOk(`/api/run-defaults${qs}`),
     ]);
     // §6: the card's agent models follow the engine the proposed run will start on (the same default /api/run resolves).
@@ -4309,15 +4351,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // them as its defaults ("Save as project defaults", saveLaneEdits). `explicit`: a workspace card's rows are the
     // built-in defaults, not the run's baseline (laneOverlay names its picks outright). `proposal` / `proposed` /
     // `warnings`: Ask Worca's per-agent picks (card.nodes) once applyProposal lays them in as the lane's baseline.
+    // The saved run.execEnv default, raw: the card names what it gives THIS run (cardExecEnvDefault).
+    const savedExecEnv = defaults && defaults.execEnv && typeof defaults.execEnv.value === 'string' ? defaults.execEnv.value : 'local';
     // `reviewRoleRows`: a role-review node's declared roles (node-tunables buildRoleRows); their edits live apart from
     // the node rows' in `reviewRoleEdits[nodeId][roleKey]` (`row.role` already names Default's legacy step role).
     return { wf, registry, runConfig, rows, edits: {}, reviewRoleRows: buildRoleRows(wf, rows, runConfig), reviewRoleEdits: {},
-      editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
+      editable: true, explicit: !projectDir, engine, defaultEngine, savedExecEnv, allModels, proposal: {}, proposed: {}, warnings: [],
       prDefault: defaults && defaults.pr && defaults.pr.scope === 'project' ? defaults.pr : null,
       models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
   const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
+  /** Where the card's run executes with "Default" picked: the saved run.execEnv, except a saved remote default on a run
+   *  no remote backend takes (an engine no sandbox runs, a workspace run), which the server runs locally (resolveRunExecEnv). */
+  function cardExecEnvDefault(lane, local) {
+    const saved = lane && execEnvKnown(lane.savedExecEnv) ? lane.savedExecEnv : 'local';
+    if (saved === 'local') return 'local';
+    return remoteRefusesDefault({ engine: local.engine() || lane.defaultEngine, workspace: local.target === 'workspace',
+      workMode: local.target === 'none' ? 'none' : 'git' }) ? 'local' : saved;
+  }
   const laneCaps = (row) => ({ asksQuestions: row.askQuestions !== null, questionsLocked: row.questionsLocked });
   const laneReviewRoleEdit = (lane, rr) => (lane.reviewRoleEdits[rr.nodeId] || {})[rr.roleKey] || null;
   const laneReviewRoleEffective = (lane, rr) => ({ ...rr, ...(laneReviewRoleEdit(lane, rr) || {}) });
@@ -5872,6 +5924,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const card = block.card || {};
     const rootEl = make('div', 'ask-card ask-rp');
     const local = { target: card.target === 'workspace' ? 'workspace' : card.target === 'none' ? 'none' : 'project', options: null, lane: null, pills: [], projectDir: () => '', workflowId: () => '' };
+    // Chat runs: source branch (plan D7–D21): the target's gate from GET /api/run-defaults ({ status, mode, source, needs }),
+    // the project select's branch list ({ status, current }), and the one hint line's id.
+    local.branchGate = { status: 'loading' };
+    local.branchList = null;
+    local.branchBlocked = false;
+    const hintId = `${block.id}-src-hint`;
+    let gateSeq = 0;
     const summary = make('span', 'ask-rp-summary');   // footer; renderLane paints it from the loaded lane
 
     // head
@@ -5951,6 +6010,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (lockEngineOptions(engineSel)) engineSel.value = '';
     const engineField = rpField('Engine', engineSel);
     local.engine = () => engineSel.value;
+    // Runs in (docs/e2b.md): "Default" sends none, so /api/run resolves run.execEnv (named once the lane has read it);
+    // a proposal that names an environment preselects it.
+    const execEnvSel = rpSelect('ask-card-exec-env', 'Runs in');
+    fillSelect(execEnvSel, [{ value: '', label: 'Default' }, ...execEnvList().map((e) => ({ value: e.name, label: e.label }))], card.execEnv || '');
+    const execEnvField = rpField('Runs in', execEnvSel);
     const guardSel = rpSelect('ask-card-guardrails', 'Guardrails');
     const guardDesc = make('span', 'ask-rp-wfdesc', 'Applies to every agent in this run');
     guardDesc.setAttribute('data-for', 'guardrails');
@@ -5962,7 +6026,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     lvTag(guardField, 'advanced', !!card.guardrailsId && card.guardrailsId !== 'permissive');
     lvTag(seg, 'advanced', card.target === 'workspace' || card.target === 'none');
     lvTag(engineField, 'advanced', !!card.engine && card.engine !== 'claude');
-    wfRow.append(wfField, engineField, guardField);
+    lvTag(execEnvField, 'advanced', !!card.execEnv && card.execEnv !== 'local');
+    wfRow.append(wfField, engineField, execEnvField, guardField);
     targetSec.appendChild(wfRow);
     // Pull request when the run finishes: "Use the setting" sends nothing (the project's or workspace's value, with its source, once the lane has read it); a pick is this run's own choice.
     const prSel = rpSelect('ask-card-pr', 'Pull request when done');
@@ -5975,7 +6040,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     rootEl.appendChild(targetSec);
     engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
     workflowSel.addEventListener('change', () => {
-      if (local.workflowUnavailable) { local.workflowUnavailable = false; err.textContent = ''; startBtn.disabled = false; }
+      if (local.workflowUnavailable) { local.workflowUnavailable = false; err.textContent = ''; refreshStartGate(); }
       paintNeedsRepo();
       reloadLane();
     });
@@ -6140,6 +6205,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         local.schedulePick = { ...picked, ...(local.schedulePick && local.schedulePick.sourceFromPrevious && picked.after ? { sourceFromPrevious: true } : {}) };
         badge.textContent = picked.repeat ? 'Repeats' : picked.after ? 'After run' : 'Scheduled';
         text.textContent = pickedLineText(local.schedulePick);
+        refreshStartGate();   // a pick that drops sourceFromPrevious needs a source branch again
       });
       line.append(badge, text, change);
       rootEl.insertBefore(line, err);
@@ -6176,17 +6242,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           shapeBtn.type = 'button';
           shapeBtn.setAttribute('data-ask-card-shape', '');
           if (!card.shape) startBtn.classList.replace('btn-primary', 'btn-quiet');
-          const syncLead = () => {
-            const blocked = shapeUi.blocked();
-            if (blocked) shapeBtn.setAttribute('aria-disabled', 'true'); else shapeBtn.removeAttribute('aria-disabled');
-            // described by "You lead as" only once that span exists (the profile is still loading before)
-            if (blocked && shapeUi.el.querySelector(`#${shapeUi.labelId}`)) shapeBtn.setAttribute('aria-describedby', shapeUi.labelId); else shapeBtn.removeAttribute('aria-describedby');
-            if (direct) laterBtn.disabled = blocked;     // Schedule… starts a run too: no requirements run without a lead
-          };
-          shapeUi.el.addEventListener('shape-lead-change', syncLead);
-          syncLead();
+          // The lead and the source branch gate it (aria-disabled, described by "You lead as" and the branch hint):
+          // refreshStartGate paints both, with every other blocker.
+          shapeUi.el.addEventListener('shape-lead-change', () => refreshStartGate());
           shapeBtn.addEventListener('click', () => {
-            if (shapeUi.blocked()) return;
+            if (shapeUi.blocked() || local.branchBlocked) return;
             shapeUi.commit();
             startCard(block, rootEl, local, null, { shaped: true });
           });
@@ -6201,6 +6261,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     foot.append(openNp, summary, dismissBtn, laterBtn, ...(shapeBtn ? [shapeBtn] : []), startBtn);
     rootEl.appendChild(foot);
+    refreshStartGate();
 
     // Shaper (D20, mock board 13): a shaped card shows the title, the brief clamped, Project, Base branch,
     // Perspectives and what happens; every other field MOVES, unchanged, into a collapsed Advanced. Moves only: each
@@ -6277,7 +6338,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const chip = kindChip(doc, projectKind(projectRowOf(projSel ? projSel.value : '')));
         const parts = [doc.createTextNode(name)];
         if (chip) parts.push(chip);
-        if (!noBranches(projSel ? projSel.value : '')) parts.push(doc.createTextNode(` · branch ${(srcSel && srcSel.value) || 'current'} · feature ${featureWord()}`));
+        if (!noBranches(projSel ? projSel.value : '')) {
+          // Chat runs: source branch — the picked branch, "not picked" while one is needed, else the checked-out one.
+          const b = branchState();
+          const word = (srcSel && srcSel.value) || (b.loading ? '' : b.need ? SOURCE_BRANCH_TEXT.notPicked : currentBranchLabel(local.branchList && local.branchList.current));
+          parts.push(doc.createTextNode(`${word ? ` · branch ${word}` : ''} · feature ${featureWord()}`));
+        }
         targetSub.replaceChildren(...parts);
       } else {
         const wsSel = rootEl.querySelector('.ask-card-workspace-select');
@@ -6289,6 +6355,128 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       rootEl.__rp?.refreshTagRules?.();
     }
     feature.addEventListener('input', updateTargetSub);
+
+    // ── Chat runs: source branch ──────────────────────────────────────────────────────────────────────────────────────
+    /** GET /api/run-defaults' chatSourceBranch; a failed read is { status: 'failed' } (D12: the safe side, ask). */
+    function fetchBranchGate(query) {
+      return Promise.resolve()
+        .then(() => fetch(`/api/run-defaults?${query}`))
+        .then((r) => (r && r.ok ? r.json() : null))
+        .catch(() => null)
+        .then((body) => {
+          const g = body && body.chatSourceBranch;
+          return g && Array.isArray(g.needs) ? { status: 'ok', mode: g.mode, source: g.source, needs: g.needs } : { status: 'failed' };
+        });
+    }
+    /** Does a project target's gate need a branch? `require` reads as `ask` on the card (D13); a failed read too (D12). */
+    function gateNeeds(g) { return !!g && (g.status === 'failed' || (g.status === 'ok' && g.needs.length > 0)); }
+    /** { loading, need, blocked, hint, field, control } for the card's target right now. */
+    function branchState() {
+      const none = { loading: false, need: false, blocked: false, hint: '', field: null, control: null };
+      const g = local.branchGate;
+      if (local.target === 'none' || !g || g.status === 'off') return none;
+      if (local.target === 'project') {
+        const control = rootEl.querySelector('.ask-card-source');
+        const field = control && control.closest('.ask-rp-field');
+        if (g.status === 'loading' || !local.branchList) return { ...none, loading: true, blocked: true, field, control };
+        const need = gateNeeds(g);
+        if (!need || (control && control.value)) return { ...none, need, field, control };
+        const list = local.branchList;
+        const hint = list.status === 'failed' ? SOURCE_BRANCH_TEXT.failed : list.status === 'empty' ? SOURCE_BRANCH_TEXT.empty
+          : `${SOURCE_BRANCH_TEXT.pick} ${SOURCE_BRANCH_TEXT.where(g.status === 'ok' ? g.needs.map((n) => n.source) : 'user')}`;
+        return { loading: false, need, blocked: true, hint, field, control };
+      }
+      const control = rootEl.querySelector('.ask-card-source-input');
+      const field = control && control.closest('.ask-rp-field');
+      const members = Array.isArray(local.wsMembers) ? local.wsMembers : [];
+      if (!gitOn(doc) || (members.length && members.every((m) => m.folder))) return none;
+      if (g.status === 'loading') return { ...none, loading: true, blocked: true, field, control };
+      // D12: a failed read asks for every member the card shows a source field for.
+      const needs = g.status === 'ok' ? g.needs : members.filter((m) => !m.folder).map((m) => ({ key: m.projectKey, name: m.name, source: 'user' }));
+      const own = (key) => { const inp = rootEl.querySelector(`.ask-card-member-src[data-project-key="${key}"]`); return inp ? inp.value.trim() : ''; };
+      const covered = !!(control && control.value.trim());
+      const order = (k) => { const i = members.findIndex((m) => m.projectKey === k); return i < 0 ? members.length : i; };
+      const open = covered ? [] : needs.filter((n) => !own(n.key)).sort((a, b) => order(a.key) - order(b.key));
+      const nameOf = (n) => (members.find((m) => m.projectKey === n.key) || {}).name || n.name || n.key;
+      const hint = open.length ? `${SOURCE_BRANCH_TEXT.members(open.map(nameOf))} ${SOURCE_BRANCH_TEXT.where(open.map((n) => n.source))}` : '';
+      return { loading: false, need: needs.length > 0, blocked: open.length > 0, hint, field, control, needs };
+    }
+    /** Repaint the branch hint, aria-describedby, the level keep and the workspace placeholders, then every button. */
+    function syncBranchGate() {
+      const b = branchState();
+      local.branchBlocked = b.blocked;
+      let p = rootEl.querySelector(`[id="${hintId}"]`);
+      if (b.hint && b.field) {
+        if (!p || p.parentElement !== b.field) { if (p) p.remove(); p = make('p', 'hint'); p.id = hintId; b.field.appendChild(p); }
+        p.textContent = b.hint;
+      } else if (p) p.remove();
+      for (const c of rootEl.querySelectorAll('.ask-card-source, .ask-card-source-input')) describedBy(c, hintId, !!(b.hint && c === b.control));
+      // D21: a field that needs a branch shows at every level, and stays shown once a branch is picked on this card.
+      if (b.need && b.blocked && b.field) keepVisible(b.field, true);
+      if (local.target === 'workspace' && b.control) {
+        const keys = new Set((b.needs || []).map((n) => n.key));
+        b.control.placeholder = keys.size ? SOURCE_BRANCH_TEXT.option : 'auto';
+        for (const inp of rootEl.querySelectorAll('.ask-card-member-src')) inp.placeholder = keys.has(inp.getAttribute('data-project-key')) ? SOURCE_BRANCH_TEXT.option : 'auto';
+      }
+      updateTargetSub();
+      refreshStartGate();
+    }
+    /** Add or drop one id in an element's aria-describedby, keeping any other blocker's. */
+    function describedBy(el, id, on) {
+      if (!el) return;
+      const ids = (el.getAttribute('aria-describedby') || '').split(/\s+/).filter((x) => x && x !== id);
+      if (on) ids.push(id);
+      if (ids.length) el.setAttribute('aria-describedby', ids.join(' ')); else el.removeAttribute('aria-describedby');
+    }
+    /** The ONE writer of Start, Schedule… / Start now and Shape requirements: every blocker at once (a missing enforced
+     *  tag, an unavailable workflow, a missing lead, a missing source branch, a Start in flight), so none clears another. */
+    function refreshStartGate() {
+      const tagWhy = (rootEl.__rp && rootEl.__rp.tagRules && rootEl.__rp.tagRules.blocked()) || '';
+      const busy = !!local.starting;
+      const wfOff = !!local.workflowUnavailable;
+      const lead = !!(shapeUi && shapeUi.requirements && shapeUi.blocked());
+      const branch = !!local.branchBlocked;
+      const hint = branch && rootEl.querySelector(`[id="${hintId}"]`) ? hintId : null;
+      const focused = [startBtn, laterBtn, shapeBtn].find((x) => x && x === doc.activeElement);   // before any disable (Chromium blurs)
+      // The proposed "Schedule" of an after + sourceFromPrevious card starts on the previous run's branch: no branch needed.
+      const startBranch = branch && !(card.schedule && local.schedulePick && local.schedulePick.sourceFromPrevious);
+      startBtn.disabled = busy || wfOff || (!direct && !!tagWhy) || startBranch;
+      describedBy(startBtn, hintId, !!(hint && startBranch));
+      laterBtn.disabled = branch || (direct && lead);
+      describedBy(laterBtn, hintId, !!hint);
+      if (shapeBtn) {
+        shapeBtn.disabled = busy || !!tagWhy || (direct && wfOff) || (!shapeUi.requirements && branch);
+        if (shapeUi.requirements) {
+          if (lead || branch) shapeBtn.setAttribute('aria-disabled', 'true'); else shapeBtn.removeAttribute('aria-disabled');
+          // described by "You lead as" only once that span exists (the profile is still loading before)
+          describedBy(shapeBtn, shapeUi.labelId, lead && !!shapeUi.el.querySelector(`#${shapeUi.labelId}`));
+        }
+        describedBy(shapeBtn, hintId, !!hint);
+      }
+      if (rootEl.__rp && rootEl.__rp.tagRules) (direct ? shapeBtn : startBtn).title = tagWhy;
+      // The focused button just went off for a missing branch: focus moves to the field that lifts it.
+      if (focused && (focused.disabled || focused.getAttribute('aria-disabled') === 'true') && branch && !busy) {
+        const b = branchState();
+        if (b.control) { try { b.control.focus(); } catch { /* ignore */ } }
+      }
+    }
+    local.refreshStartGate = refreshStartGate;
+    /** D17: the server refused a Start for a missing branch — the card shows the ask state for those targets, at every level. */
+    local.onSourceBranchRequired = (members) => {
+      const keys = Array.isArray(members) ? members.filter((k) => typeof k === 'string') : [];
+      const prev = local.branchGate && local.branchGate.status === 'ok' ? local.branchGate : null;
+      const sourceOf = (k) => ((prev && prev.needs.find((n) => n.key === k)) || {}).source || 'user';
+      if (local.target === 'project') {
+        const key = keys[0] || card.projectKey || '';
+        local.branchGate = { status: 'ok', mode: 'ask', source: sourceOf(key), needs: [{ key, name: '', mode: 'ask', source: sourceOf(key) }] };
+        if (!local.branchList) local.branchList = { status: 'ok', current: null };
+        const first = (rootEl.querySelector('.ask-card-source') || { options: [] }).options[0];
+        if (first && first.value === '') first.textContent = SOURCE_BRANCH_TEXT.option;
+      } else if (local.target === 'workspace') {
+        local.branchGate = { status: 'ok', mode: 'ask', source: 'user', needs: keys.map((k) => ({ key: k, name: '', mode: 'ask', source: sourceOf(k) })) };
+      }
+      syncBranchGate();
+    };
 
     function paintNeedsRepo() {
       targetHost.querySelector('.ask-card-needs-repo')?.remove();
@@ -6302,7 +6490,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (local.target === 'none') {
         if (local.shapeBranchHost) local.shapeBranchHost.replaceChildren();
         paintNeedsRepo();
-        updateTargetSub();
+        local.branchGate = { status: 'off' };
+        syncBranchGate();
         return;
       }
       if (local.target === 'project') {
@@ -6313,23 +6502,40 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const srcHint = srcField.querySelector('.ask-rp-hint');
         srcSel.addEventListener('change', () => {
           if (srcHint && srcSel.value !== card.sourceBranch) srcHint.textContent = '';
-          updateTargetSub();
+          syncBranchGate();
         });
         const featureField = lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch);
         const sameField = lvTag(rpField('Run on the source branch', sameSw.row, 'commits onto the source branch'), 'advanced', !!card.sameAsSource);
         for (const f of [srcField, featureField, sameField]) f.dataset.needsGit = '';
         // S12: a Folder project, or no git, shows no branch rows and asks for no branches. The fill is async: the
         // sub-line reads the select again when the branches land, or a proposed sourceBranch would read "branch current".
+        // Chat runs: source branch — the gate (GET /api/run-defaults) and the branches are read together and painted
+        // once; a later project change drops a stale answer (gateSeq).
         const paintBranches = (want) => {
           const off = noBranches(projSel.value);
           for (const f of [srcField, featureField, sameField]) f.hidden = off;
-          if (!off) loadBranchesInto(srcSel, projSel.value, want).then(updateTargetSub); else updateTargetSub();
+          const seq = ++gateSeq;
+          local.branchList = null;
+          if (off) { local.branchGate = { status: 'off' }; syncBranchGate(); return; }
+          local.branchGate = { status: 'loading' };
+          const gate = fetchBranchGate(`projectDir=${encodeURIComponent(projSel.value)}`);
+          syncBranchGate();
+          loadBranchesInto(srcSel, projSel.value, want, async (current) => {
+            const g = await gate;
+            return gateNeeds(g) ? SOURCE_BRANCH_TEXT.option : currentBranchLabel(current);
+          }).then(async (list) => {
+            const g = await gate;
+            if (!list || seq !== gateSeq || st.destroyed) return;
+            local.branchGate = g;
+            local.branchList = list;
+            syncBranchGate();
+          });
         };
         if (opts) {
           fillSelect(projSel, opts.projects.map((p) => ({ value: p.path, label: p.exists === false ? `${p.name} (missing)` : p.name })), card.projectDir || (opts.projects[0] && opts.projects[0].path) || '');
           paintBranches(card.sourceBranch || '');
         }
-        projSel.addEventListener('change', () => { paintBranches(''); updateTargetSub(); reloadLane(); });
+        projSel.addEventListener('change', () => { paintBranches(''); reloadLane(); });
         if (local.shapeBranchHost) {
           // Shaper (D20): Project and Base branch on the small card, at every level; the rest in Advanced.
           srcField.querySelector('.ask-rp-label').firstChild.textContent = 'Base branch';
@@ -6340,7 +6546,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           grid.append(rpField('Project', projSel), lvTag(srcField, 'advanced', !!card.sourceBranch), featureField, sameField);
         }
         targetHost.appendChild(grid);
-        updateTargetSub();
+        if (!opts) { local.branchGate = { status: 'loading' }; local.branchList = null; }
+        syncBranchGate();
         return;
       }
       if (local.shapeBranchHost) local.shapeBranchHost.replaceChildren();
@@ -6352,6 +6559,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       srcInput.placeholder = 'auto';
       srcInput.value = card.sourceBranch || '';
       srcInput.setAttribute('aria-label', 'Source branch default');
+      srcInput.addEventListener('input', () => syncBranchGate());
       const details = doc.createElement('details');
       details.className = 'ask-card-members-src disclosure';   // .disclosure swaps the OS triangle for the app's chevron
       details.appendChild(make('summary', null, 'Per-member source branches'));
@@ -6365,7 +6573,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const list = row && Array.isArray(row.projectKeys)
           ? row.projectKeys.map((k, i) => ({ projectKey: k, name: wsBasename(row.projectPaths && row.projectPaths[i]), folder: Array.isArray(row.vcs) && row.vcs[i] === 'none' }))
           : Array.isArray(card.members) ? card.members.map((m) => ({ projectKey: m.projectKey, name: m.projectName, folder: m.workMode === 'folder' })) : [];
-        members.textContent = list.map((m) => m.name).join(', ');
+        const names = list.map((m) => m.name);
+        members.textContent = wsMembersLine(names);
+        members.title = names.length > WS_MEMBERS_SHOWN ? names.join(', ') : '';
         for (const m of list) {
           if (m.folder) continue;   // listed above, but no per-member source input: never in sourceBranchByKey
           const inp = doc.createElement('input');
@@ -6374,11 +6584,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           inp.placeholder = 'auto';
           inp.setAttribute('data-project-key', m.projectKey);
           if (card.sourceBranchByKey && card.sourceBranchByKey[m.projectKey]) inp.value = card.sourceBranchByKey[m.projectKey];
+          inp.addEventListener('input', () => syncBranchGate());
           memberHost.appendChild(rpField(m.name, inp));
         }
         details.hidden = list.length > 0 && !memberHost.childElementCount;   // every member a Folder project: nothing to pick
         for (const f of wsGitFields) f.hidden = list.length > 0 && list.every((m) => m.folder);   // ...and no branch to start from, name or commit onto
-        updateTargetSub();
+        // Chat runs: source branch — the members that need a branch come from GET /api/run-defaults (needs only).
+        local.wsMembers = list;
+        const seq = ++gateSeq;
+        if (!wsSel.value) local.branchGate = { status: 'loading' };
+        else {
+          local.branchGate = { status: 'loading' };
+          fetchBranchGate(`workspaceId=${encodeURIComponent(wsSel.value)}`).then((g) => {
+            if (seq !== gateSeq || st.destroyed) return;
+            local.branchGate = g;
+            syncBranchGate();
+          });
+        }
+        syncBranchGate();
       };
       wsSel.addEventListener('change', renderMembers);
       const wsField = rpField('Workspace', wsSel);
@@ -6393,8 +6616,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (opts) {
         fillSelect(wsSel, opts.workspaces.map((w) => ({ value: w.id, label: w.name || w.id })), card.workspaceId || (opts.workspaces[0] && opts.workspaces[0].id) || '');
         renderMembers();
+      } else {
+        local.wsMembers = null;
+        local.branchGate = { status: 'loading' };
+        syncBranchGate();
       }
-      updateTargetSub();
     }
 
     // A reload (workflow / project / target change) rebuilds the lane from scratch:
@@ -6434,6 +6660,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           engineSel.options[0].textContent = `${engineLabel(lane.defaultEngine)} (default)`;
           prSel.options[0].textContent = lane.prDefault && local.target === 'project' ? `Use the setting: ${PR_OPEN_LABELS[lane.prDefault.open.value]} (${prSourceText(lane.prDefault.open.source)})` : 'Use the setting';
           for (const o of engineSel.options) o.hidden = o.value !== '' && o.value === lane.defaultEngine && engineSel.value !== o.value;   // listed once
+          const envDefault = cardExecEnvDefault(lane, local);
+          execEnvSel.options[0].textContent = `${execEnvLabel(envDefault)} (default)`;
+          for (const o of execEnvSel.options) o.hidden = o.value !== '' && o.value === envDefault && execEnvSel.value !== o.value;   // listed once
         }
         wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
         renderLane(laneSec, lane, laneCtx);
@@ -6459,8 +6688,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     function markWorkflowUnavailable() {
       workflowSel.selectedIndex = -1;
       err.textContent = `Workflow ${card.workflowId} is not available: pick one`;
-      startBtn.disabled = true;
       local.workflowUnavailable = true;
+      refreshStartGate();
     }
 
     renderTarget();
@@ -6488,9 +6717,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const line = createTagRulesLine(doc, tagInput);
       tagRow.appendChild(line.el);
       rootEl.__rp.tagRules = line;
-      const gated = direct ? shapeBtn : startBtn;
-      const sync = () => { const why = line.blocked(); gated.disabled = !!why || !!local.workflowUnavailable; gated.title = why || ''; };   // a missing workflow keeps Start off
-      line.onChange(sync);
+      line.onChange(() => refreshStartGate());   // an enforced tag still missing keeps Start off (with every other blocker)
       let gen = 0;
       let lastQ = null;
       const refreshTagRules = () => {
@@ -6530,6 +6757,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const prOpen = (rootEl.querySelector('.ask-card-pr') || {}).value;
     const pr = { ...(prOpen ? { open: prOpen } : {}), ...(card.pr && card.pr.slices && local.target === 'project' ? { slices: card.pr.slices } : {}) };
     if (local.target !== 'none' && Object.keys(pr).length) body.pr = pr;
+    const execEnv = (rootEl.querySelector('.ask-card-exec-env') || {}).value;
+    if (execEnv) body.execEnv = execEnv;                    // none: the run.execEnv default
+    // Default on a card that proposed an environment: '' says so, or /api/run would take the card's own pick.
+    else if (card.execEnv) body.execEnv = '';
     // A tracker task: the reference, never a prompt (POST /api/run takes source OR prompt).
     if (card.source) {
       delete body.prompt;
@@ -6575,7 +6806,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  repoints the lane (reloadLane nulls local.lane) while saveLaneEdits still holds the old
    *  one, so the config written and the body posted would describe different runs. */
   function freezeTargetInputs(rootEl, on) {
-    for (const sel of ['.ask-card-workflow', '.ask-card-engine', '.ask-card-project-select', '.ask-card-workspace-select', '[data-ask-card-seg]']) {
+    for (const sel of ['.ask-card-workflow', '.ask-card-engine', '.ask-card-exec-env', '.ask-card-project-select', '.ask-card-workspace-select', '[data-ask-card-seg]']) {
       for (const node of rootEl.querySelectorAll(sel)) node.disabled = on;
     }
   }
@@ -6584,9 +6815,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const err = rootEl.querySelector('.ask-card-err');
     const startBtn = rootEl.querySelector('[data-ask-card-start]');
     err.textContent = '';
-    if (startBtn) startBtn.disabled = true;               // a direct card's only start button is Shape requirements
-    const shapeBtn = rootEl.querySelector('[data-ask-card-shape]');
-    if (shapeBtn) shapeBtn.disabled = true;               // a double click must not post /api/run twice
+    // A double click must not post /api/run twice: Start and Shape requirements stay off while this runs.
+    local.starting = true;
+    if (local.refreshStartGate) local.refreshStartGate();
+    else for (const b of [startBtn, rootEl.querySelector('[data-ask-card-shape]')]) if (b) b.disabled = true;
     freezeTargetInputs(rootEl, true);
     try {
       // D3: read-only, so it runs BEFORE saveLaneEdits — a refusal here must not leave the config already written.
@@ -6650,6 +6882,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           b = null;
           if (!res.ok) { try { b = await res.json(); } catch { /* keep */ } }
         }
+        // Chat runs: source branch (D17): no error line — the card shows the branch field, hint and disabled Start instead.
+        if (!res.ok && b && b.code === 'source-branch-required' && local.onSourceBranchRequired) {
+          local.starting = false;
+          local.onSourceBranchRequired(b.members);
+          return;
+        }
         if (!res.ok) {
           err.textContent = (b && b.error) || `request failed (${res.status})`;
           return;
@@ -6659,9 +6897,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // the flip frame renders the terminal state. The browser never navigates
       // (beginRun is NEVER called — spec §10.5).
     } finally {
-      const tagBlocked = !!rootEl.__rp?.tagRules?.blocked();   // an enforced tag still missing keeps Start off
-      if (startBtn) startBtn.disabled = tagBlocked;
-      if (shapeBtn) shapeBtn.disabled = tagBlocked;            // Shaper starts a run too: the same tag rule
+      // Every blocker at once (tag, workflow, lead, branch): refreshStartGate never lets one clear another.
+      local.starting = false;
+      if (local.refreshStartGate) local.refreshStartGate();
       freezeTargetInputs(rootEl, false);
       // freezeTargetInputs re-enabled the select; a shaped card's workflow is fixed.
       if ((block.card || {}).shape && local.shapeUi) rootEl.querySelector('.ask-card-workflow').disabled = true;
@@ -6715,6 +6953,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // otherwise start with the row's default `global` and restructure the wrong scope (B17).
       memoryScope: card.memoryScope || null,
       engine: (rootEl.querySelector('.ask-card-engine') || {}).value || null,
+      execEnv: (rootEl.querySelector('.ask-card-exec-env') || {}).value || null,
     };
     if ((rootEl.querySelector('.ask-card-same-source') || {}).checked) p.sameAsSource = true;
     const tags = rootEl.__rp?.tagInput ? rootEl.__rp.tagInput.get() : (card.tags || []);
@@ -7745,30 +7984,31 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (sig === tailSig) return;
         tailSig = sig;
         const cards = inlineCards(cur);
-        const sameInline = cards.length === inline.length && cards.every((b, i) => b.id === inline[i].id);
-        if (sameInline) {
-          // Kept in place: a card swaps its element only when buildCard hands back a new one. #958: the old element
-          // may already be detached (a command card's dispose removes it), and the same element may sit in a gone
-          // row: in both cases the card goes back before its answer piece.
-          cards.forEach((b, i) => {
-            const cardEl = buildCard(b, cur);
-            if (cardEl !== inline[i].card || !wrap.contains(cardEl)) {
-              if (cardEl !== inline[i].card) inline[i].card.remove();
-              inline[i].piece.before(cardEl);
-              inline[i].card = cardEl;
-            }
-          });
+        // The cards this message already shows, in order, stay where they are: a new card (the next command of a
+        // stack) only adds its own element. Rebuilding them all re-inserted every row and group, so each new command
+        // replayed the rows' entrance and flashed the group head.
+        let keep = 0;
+        while (keep < inline.length && keep < cards.length && cards[keep].id === inline[keep].id) keep += 1;
+        // Kept in place: a card swaps its element only when buildCard hands back a new one. #958: the old element
+        // may already be detached (a command card's dispose removes it), and the same element may sit in a gone
+        // row: in both cases the card goes back before its answer piece.
+        for (let i = 0; i < keep; i += 1) {
+          const cardEl = buildCard(cards[i], cur);
+          if (cardEl !== inline[i].card || !wrap.contains(cardEl)) {
+            if (cardEl !== inline[i].card) inline[i].card.remove();
+            inline[i].piece.before(cardEl);
+            inline[i].card = cardEl;
+          }
         }
-        const last = inline.length ? inline[inline.length - 1].piece : answer;
+        const last = keep ? inline[keep - 1].piece : answer;
         while (wrap.lastChild && wrap.lastChild !== last) wrap.removeChild(wrap.lastChild);
-        if (!sameInline) {
-          while (wrap.lastChild && wrap.lastChild !== answer) wrap.removeChild(wrap.lastChild);
-          inline = cards.map((b) => {
+        if (keep !== inline.length || keep !== cards.length) {
+          inline = inline.slice(0, keep).concat(cards.slice(keep).map((b) => {
             const card = buildCard(b, cur);
             const piece = make('div', 'ask-answer');
             wrap.append(card, piece);
             return { id: b.id, card, piece };
-          });
+          }));
           renderAnswer();
         }
         paintGroups();
@@ -8149,6 +8389,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     // Defence-in-depth: the model's own threadId filter is the real router — this early return only saves an apply() call and cannot be observed from tests (the model would drop the frame identically).
     if (!st.model || frame.threadId !== st.threadId) return;
+    // The echo of the composer's own send: the message is in, so it leaves the composer as its bubble appears.
+    if (frame.type === 'ask-message' && frame.sendId && st.echo && frame.sendId === st.echo.sendId && !st.echo.cleared) {
+      st.echo.cleared = true;
+      clearSentDraft(st.echo.quoted, st.echo.requirements);
+      updateSendStop();
+    }
     const r = st.model.apply(frame);
     if (r && r.gap) { resync(); return; }
     if (!r || !r.ok) return;
@@ -8270,8 +8516,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.rowEls) for (const id of st.rowEls.keys()) st.seenRows.add(id);
   }
 
-  // #958: only the reader's own scroll (wheel, touch, a press on the transcript or its scrollbar, a key on the
-  // transcript) leaves the bottom. A scroll the browser makes after a layout change (a clamp while a card measures)
+  // #958: only the reader's own scroll UP (wheel, touch, a press on the transcript or its scrollbar, a key on the
+  // transcript) leaves the bottom; a scroll down toward an end the stream keeps moving away follows it. A scroll the browser makes after a layout change (a clamp while a card measures)
   // is not theirs. Tab, and Enter/Space on a control, count: they can scroll a card control into view.
   const USER_SCROLL_MS = 600;
   const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
@@ -8296,6 +8542,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.pinned && st.pinWrite != null && t.scrollTop >= st.pinWrite) {
       st.pinWrite = null;
       applyPin();
+      st.scrollSeen = t.scrollTop;
       return;
     }
     st.pinWrite = null;
@@ -8303,10 +8550,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!userScrolling()) {                          // #958: not the reader: never unpins; reaching the bottom re-pins
       if (st.pinned) applyPin();
       else if (atBottom) { st.pinned = true; if (el.jump) el.jump.hidden = true; }
+      st.scrollSeen = t.scrollTop;
       return;
     }
-    st.pinned = atBottom;
-    if (el.jump) el.jump.hidden = st.pinned;
+    // The reader's scroll. Down (more than 1px, for a fractional scrollTop at zoom) while pinned, short of an end the
+    // stream moved further: keep following. Up, or an unknown direction: the bottom decides, as before.
+    const up = st.scrollSeen == null || t.scrollTop < st.scrollSeen - 1;
+    if (st.pinned && !atBottom && !up) {
+      applyPin();
+      if (el.jump) el.jump.hidden = true;
+    } else {
+      st.pinned = atBottom;
+      if (el.jump) el.jump.hidden = st.pinned;
+    }
+    st.scrollSeen = t.scrollTop;
   }
 
   function applyPin() {
@@ -8315,14 +8572,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.restoreTop != null && t.clientHeight > 0) {   // #958: a same-chat return, unpinned, once the page has a box
       const top = st.restoreTop;
       st.restoreTop = null;
-      if (!st.pinned) t.scrollTop = top;
+      if (!st.pinned) { t.scrollTop = top; st.scrollSeen = t.scrollTop; }
     }
     if (st.pinned) {
       // Only when the bottom has actually moved away. flush() runs this on EVERY
       // rAF of a stream, and an unconditional write re-snapped the scrollport on
       // each one — which is what turned a growing answer into a twitch.
       const max = t.scrollHeight - t.clientHeight;
-      if (max > 0 && t.scrollTop < max) { t.scrollTop = t.scrollHeight; st.pinWrite = t.scrollTop; }
+      if (max > 0 && t.scrollTop < max) { t.scrollTop = t.scrollHeight; st.pinWrite = t.scrollTop; st.scrollSeen = t.scrollTop; }
     }
     if (el.jump) el.jump.hidden = st.pinned;
   }
@@ -8338,6 +8595,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     change();
     const moved = control.getBoundingClientRect().top - before;
     if (moved) t.scrollTop += moved;
+    st.scrollSeen = t.scrollTop;   // the toggle's geometry is a fresh baseline, moved or not
     st.pinWrite = null;
     st.pinned = t.scrollHeight - t.scrollTop - t.clientHeight < 24;
     if (el.jump) el.jump.hidden = st.pinned;
@@ -8348,6 +8606,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.restoreTop = null;
     el.transcript.scrollTop = el.transcript.scrollHeight;
     st.pinWrite = el.transcript.scrollTop;
+    st.scrollSeen = st.pinWrite;
     if (el.jump) el.jump.hidden = true;
   }
 
@@ -8562,6 +8821,26 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     setDesign(threadId, designId) {
       if (st.destroyed || !threadId || st.threadId !== threadId) return;
       syncDesign({ id: threadId, designId: typeof designId === 'string' && designId ? designId : null });
+    },
+    /** Chat `id` is not the chat on screen yet (it loads) and its chats-list row has a design. The chat on screen
+     *  answers through its mounted design (app.js designStudio). */
+    designChatLoading: (id) => typeof id === 'string' && !!id && st.threadId !== id && !!chatsCol && chatsCol.hasDesign(id),
+    /** The sidebar lights Design (on) or not: the chats list shows only chats with a design, or every chat. Settled at
+     *  the end of the task, so a design chat switching to another (its design leaves, the next one mounts) keeps the
+     *  list as it is. */
+    setListDesigns(on) {
+      st.listDesigns = !!on;
+      if (el.listNew) {                              // its New names what it starts
+        const name = st.listDesigns ? 'New design' : el.listNewName;
+        el.listNew.title = name;
+        el.listNew.setAttribute('aria-label', name);
+      }
+      if (st.listDesignsQueued) return;
+      st.listDesignsQueued = true;
+      queueMicrotask(() => {
+        st.listDesignsQueued = false;
+        if (!st.destroyed && chatsCol && chatsCol.setDesigns(st.listDesigns)) loadHistory();
+      });
     },
     setHost,                                        // Ask worca beside the page: 'page' (the Chat section) or 'dock' (the side column)
     host: () => st.host,

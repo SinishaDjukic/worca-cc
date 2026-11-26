@@ -1,9 +1,9 @@
 // ui/public/shape/chips.mjs — perspective chips (spec D4): Product locked on; `fixed` keys cannot be toggled.
-import { PERSPECTIVES } from '../../../src/shared/shape/perspectives.mjs';
+import { perspectivesFor } from '../../../src/shared/shape/perspectives.mjs';
 
-export function buildPerspectiveChips(doc, { picked, fixed = [], hidden = [], collapsed = true, onChange = () => {} }) {
+export function buildPerspectiveChips(doc, { picked, fixed = [], hidden = [], collapsed = true, smallRuns = false, onChange = () => {} }) {
   // `hidden` keys are not offered: no chip, not in value(), not in "+ N more".
-  const offered = PERSPECTIVES.filter((p) => !hidden.includes(p.key));
+  const offered = perspectivesFor({ smallRuns }).filter((p) => !hidden.includes(p.key));
   const on = new Set(['product', ...picked.filter((k) => !hidden.includes(k))]);
   const el = doc.createElement('div');
   el.className = 'shape-chips';

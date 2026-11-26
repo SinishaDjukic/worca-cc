@@ -43,8 +43,9 @@
 // bootstrap value or a plain scalar toggle, so a table would buy nothing.
 //
 // IMPORTANT: this module imports NOTHING from the core graph (Node builtins
-// plus the zero-import model-env.mjs and night/config.mjs leaves and the
-// web-allowlist.mjs leaf, which imports only node:net and node:url). projects.mjs imports it, so
+// plus the zero-import model-env.mjs and night/config.mjs leaves, the
+// web-allowlist.mjs leaf, which imports only node:net and node:url, and the
+// secrets/settings-resolver.mjs leaf, which imports only node:fs and refs.mjs). projects.mjs imports it, so
 // importing projects.mjs back would make worcaHome() -> getWorcaRoot() ->
 // projects.mjs an infinite cycle.
 //
@@ -52,12 +53,14 @@
 // is deliberately no in-module cache: worcaHome() is read fresh per operation,
 // so a saved root takes effect for new runs/listing without a server restart.
 
-import { isAnswererLead, ANSWERER_LEAD_KEYS } from '../shared/answerer.mjs';
+import { isAnswererLead, answererLeadKeys } from '../shared/answerer.mjs';
+import { CHAT_SOURCE_BRANCH_MODES, SOURCE_BRANCH_TEXT, normalizeChatSourceBranch } from '../shared/chat-source-branch.mjs';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { suggestModelHandle } from '../shared/connections.mjs';
 export { suggestModelHandle };
-import { readFileSync, existsSync, statSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { readFileSync, existsSync, statSync, mkdirSync, chmodSync, readdirSync } from 'node:fs';
+import { writeJsonAtomic } from './json-atomic.mjs';
+import { join, resolve, dirname } from 'node:path';
 import { homedir, availableParallelism } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import {
@@ -65,8 +68,10 @@ import {
   OPENCODE_ZEN_RE,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
-  isUpstreamBaseUrl, REASONING_EFFORT_LEVELS, OPENROUTER_SORTS,
+  isUpstreamBaseUrl, REASONING_EFFORT_LEVELS, OPENROUTER_SORTS, isReadableModelEnvKey, maskModelEnvValue,
 } from './model-env.mjs';
+import { isVaultRef } from './secrets/refs.mjs';
+import { refsDropped, resolveSettingsSecretSync, settingsSecretField, settingsSecretRefs, settingsSecretSlots } from './secrets/settings-resolver.mjs';
 import { MODEL_ROLES } from '../shared/model-roles.mjs';
 import { GHE_COM_ACCOUNT_TYPE, normalizeGheHost, copilotBlockHost } from './ghe-host.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
@@ -75,6 +80,9 @@ import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
 import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
 import { isGuideAreaId } from '../shared/how-it-works/areas.mjs';
+import { isExecEnvName, execEnvNames } from './exec-env/index.mjs';
+import { DEFAULT_E2B_MAX_SANDBOXES, DEFAULT_E2B_MAX_WAIT_MIN } from './exec-env/e2b-config.mjs';
+import { DEFAULT_DOCKER_MAX_SANDBOXES, DEFAULT_DOCKER_MAX_WAIT_MIN, sandboxResources } from './exec-env/backends/docker.mjs';
 import { normalizePins, storedPins } from '../shared/home-pins.mjs';
 import { DEFAULT_PATTERN, DEFAULT_TYPES, TYPE_RE, patternProblem } from '../shared/naming/pattern.mjs';
 import { IMAGE_SERVICES, IMAGE_SHAPES, originOf } from '../shared/image-services.mjs';
@@ -140,13 +148,78 @@ function expandTilde(p) {
  * The body is synchronous on purpose: a setter that awaits nothing between its
  * readSettings() and this call reads, merges and commits in one run of the event
  * loop, so two setters saved at the same moment can never drop each other's change.
+ * `beforeRename` is writeJsonAtomic's last check (a swap's stale-file check); `release: false` skips the release of
+ * dropped references (export's restore: the vault and its entries go as a whole).
  */
-async function persistSettings(settings) {
+async function persistSettings(settings, { beforeRename, release = true } = {}) {
+  // The vault references the file holds now, read synchronously (still nothing awaited before the write). Parsed only
+  // when the text holds one, so a file without references costs one read and no parse.
+  let before = [];
+  try {
+    const old = readFileSync(settingsFile(), 'utf8');
+    if (release && old.includes('worca:vault:v1:')) before = settingsSecretRefs(JSON.parse(old));
+  } catch { /* none (ENOENT), or unreadable: nothing to release */ }
   mkdirSync(join(defaultRoot(), '.worca-cc'), { recursive: true }); // bootstrap dir
+  writeJsonAtomic(settingsFile(), settings, { mode: 0o600, beforeRename });   // owner-only: it holds provider keys
+  if (before.length) await releaseDroppedSettingsRefs(refsDropped(before, settingsSecretRefs(settings)));
+}
+
+/**
+ * After a settings write landed: release the vault entries of the references it dropped (a cleared key, a deleted
+ * model, a key replaced by `${VAR}`), while the vault is in use (flag on, or a vault file left). Never rejects: a setter's write stands, and a
+ * failed release leaves an orphan entry (store-vault.mjs logs it).
+ */
+async function releaseDroppedSettingsRefs(dropped) {
+  if (!dropped.length) return;
+  try {
+    const { vaultInUse } = await import('./secrets/flag.mjs');
+    if (!vaultInUse()) return;
+    const { releaseStoreRefs, LOCKLESS_GRACE_MS } = await import('./secrets/store-vault.mjs');
+    // A strict re-read: a file that cannot be read or parsed throws, and the release keeps every entry.
+    const held = () => new Set(settingsSecretRefs(JSON.parse(readFileSync(settingsFile(), 'utf8'))).map((r) => r.ref));
+    await releaseStoreRefs('settings', dropped, { stillReferenced: (ref) => held().has(ref), graceMs: LOCKLESS_GRACE_MS,
+      scope: () => true });
+  } catch { /* never fails the setter */ }
+}
+
+// A temp copy persistSettings (writeJsonAtomic) leaves behind when the process dies mid-write.
+const SETTINGS_TMP_RE = /^settings\.json\.[0-9a-f]{8}\.tmp$/;
+
+/**
+ * Make an existing settings.json, and any leftover temp copy beside it, owner-only (0600) when a group or other
+ * bit is set: files written before persistSettings wrote 0600. Called at CLI and server start. A no-op on Windows
+ * (the profile's own permissions are relied on). A missing settings.json answers `missing`, its temp copies tightened
+ * all the same. Never throws: an fs error prints
+ * one warning line naming its code. `chmod` and `stat` are test injections.
+ * @returns {{ changed: boolean, reason?: 'windows'|'missing'|'already'|'error', code?: string }}
+ */
+export function tightenSettingsFileMode({ platform = process.platform, chmod = chmodSync, stat = statSync } = {}) {
+  if (platform === 'win32') return { changed: false, reason: 'windows' };
+  if (homeGuarded()) return { changed: false, reason: 'missing' };
   const file = settingsFile();
-  const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`;
-  writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-  renameSync(tmp, file);
+  let changed = false;
+  const tighten = (p) => { if (stat(p).mode & 0o077) { chmod(p, 0o600); changed = true; } };
+  let missing = false;
+  try {
+    try { tighten(file); } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
+      missing = true;
+    }
+    const dir = dirname(file);
+    let names = [];
+    try { names = readdirSync(dir); } catch (err) { if (err?.code !== 'ENOENT') throw err; }
+    // The temp copies too, even with settings.json missing: a copy left by a crash mid-write still holds the keys.
+    for (const name of names) {
+      if (!SETTINGS_TMP_RE.test(name)) continue;
+      try { tighten(join(dir, name)); } catch (err) { if (err?.code !== 'ENOENT') throw err; }   // renamed meanwhile: fine
+    }
+    if (missing) return { changed: false, reason: 'missing' };
+  } catch (err) {
+    const code = err?.code || 'error';
+    console.warn(`[worca] could not make settings.json owner-only (${code}); run chmod 600 on it or fix its owner`);
+    return { changed: false, reason: 'error', code };
+  }
+  return changed ? { changed: true } : { changed: false, reason: 'already' };
 }
 
 /** Setup apply (D20): set or delete whole top-level keys in ONE read and ONE persistSettings. `undefined` deletes. */
@@ -1120,16 +1193,23 @@ export function chatPrefs() {
   }
   // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
   // `summariseCommands` (#911, flag commandSummaries): chat commands as one-line rows — default ON.
+  // `sourceBranch`: "Chat runs: source branch", normalised for display (the gate reads the cascade, not this).
   return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false,
-    summariseCommands: chat.summariseCommands !== false };
+    summariseCommands: chat.summariseCommands !== false, sourceBranch: normalizeChatSourceBranch(chat.sourceBranch) };
+}
+
+/** "Chat runs: source branch" input: one of the modes, or null (back to the default). Throws the shared sentence. */
+export function assertChatSourceBranchInput(value) {
+  if (value !== null && !CHAT_SOURCE_BRANCH_MODES.includes(value)) throw new Error(SOURCE_BRANCH_TEXT.invalid);
+  return value;
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?, away?},
  * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean,
- * summariseCommands?: boolean}.
+ * summariseCommands?: boolean, sourceBranch?: 'current'|'ask'|'require'|null}.
  * Unknown notify keys and a non-boolean scriptTools / suggestions / summariseCommands are rejected (400 at the API layer);
- * channels merge per key.
+ * channels merge per key. A null sourceBranch deletes it (back to 'ask'); any other value outside the modes throws.
  */
 export async function setChatPrefs(patch = {}) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('chat prefs must be an object');
@@ -1142,6 +1222,8 @@ export async function setChatPrefs(patch = {}) {
   if (hasSuggestions && typeof patch.suggestions !== 'boolean') throw new Error('chat suggestions must be true or false');
   const hasSummaries = Object.prototype.hasOwnProperty.call(patch, 'summariseCommands');
   if (hasSummaries && typeof patch.summariseCommands !== 'boolean') throw new Error('chat summariseCommands must be true or false');
+  const hasSourceBranch = Object.prototype.hasOwnProperty.call(patch, 'sourceBranch');
+  if (hasSourceBranch) assertChatSourceBranchInput(patch.sourceBranch);
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -1156,7 +1238,9 @@ export async function setChatPrefs(patch = {}) {
     ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
     ...(hasSuggestions ? { suggestions: patch.suggestions } : {}),
     ...(hasSummaries ? { summariseCommands: patch.summariseCommands } : {}),
+    ...(hasSourceBranch && patch.sourceBranch !== null ? { sourceBranch: patch.sourceBranch } : {}),
   };
+  if (hasSourceBranch && patch.sourceBranch === null) delete settings.chat.sourceBranch;
   await persistSettings(settings);
   return chatPrefs();
 }
@@ -1312,6 +1396,8 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'runEngine', 'stepModels', 'utilityModels',
   'modelRoles',                              // Models › Jobs › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
   'requirementsInterview',                  // Models › Jobs › Helper jobs: the requirements interview { model, effort }
+  'execEnv', 'e2bMaxSandboxes', 'e2bMaxWaitMin', // the execution environment (docs/e2b.md)
+  'dockerMaxSandboxes', 'dockerMaxWaitMin', 'dockerSandbox', // the Local sandbox (Docker) backend (docs/local-sandbox.md)
   'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
   'designModels',                            // Models › Jobs › Design: { <engine>: { lead|builder: { model, effort } } }
   'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
@@ -1467,6 +1553,111 @@ export async function setRunEngineSetting(input) {
   await persistSettings(settings);
   return { runEngine: runEngineSetting() ?? null };
 }
+
+// ── Execution environment (plans/e2b-execution-design.md §12) ────────────────
+// `execEnv` is the user default of the `run.execEnv` cascade (local | a registered backend); the two integers
+// size the e2b mode: sandboxes at once (the capacity queue) and the wait for an answer.
+export function execEnvSetting() {
+  if (homeGuarded()) return undefined;
+  const value = readSettings().execEnv;
+  return value === null ? undefined : value;
+}
+export function assertExecEnvInput(input) {
+  if (isClearInput(input)) return null;
+  if (!isExecEnvName(input)) throw new Error(`execEnv must be one of ${execEnvNames().join(' | ')}`);
+  return input;
+}
+export async function setExecEnvSetting(input) {
+  const value = assertExecEnvInput(input);
+  const settings = readSettings();
+  if (value === null) delete settings.execEnv; else settings.execEnv = value;
+  await persistSettings(settings);
+  return { execEnv: execEnvSetting() ?? null };
+}
+
+const E2B_INTS = {
+  e2bMaxSandboxes: { valid: (v) => Number.isSafeInteger(v) && v >= 1 && v <= 64, range: '1–64', def: DEFAULT_E2B_MAX_SANDBOXES },
+  e2bMaxWaitMin: { valid: (v) => Number.isSafeInteger(v) && v >= 5 && v <= 1440, range: '5–1440', def: DEFAULT_E2B_MAX_WAIT_MIN },
+  // The Local sandbox (Docker) backend's limitSettings (docs/local-sandbox.md): settings.json only.
+  dockerMaxSandboxes: { valid: (v) => Number.isSafeInteger(v) && v >= 1 && v <= 64, range: '1–64', def: DEFAULT_DOCKER_MAX_SANDBOXES },
+  dockerMaxWaitMin: { valid: (v) => Number.isSafeInteger(v) && v >= 5 && v <= 1440, range: '5–1440', def: DEFAULT_DOCKER_MAX_WAIT_MIN },
+};
+/** The stored value or null (GET: an unset field stays empty and shows the default as its placeholder). */
+export function e2bIntSettingRaw(key) {
+  if (homeGuarded()) return null;
+  const v = readSettings()[key];
+  return E2B_INTS[key].valid(v) ? v : null;
+}
+/** The effective value (runtime). An invalid stored value warns and falls back to the default. */
+function e2bInt(key) {
+  const { valid, def } = E2B_INTS[key];
+  if (homeGuarded()) return def;
+  const v = readSettings()[key];
+  if (v === undefined || v === null) return def;
+  if (!valid(v)) { console.warn(`[worca] settings: ignoring invalid ${key} ${JSON.stringify(v)}; using ${def}`); return def; }
+  return v;
+}
+export const e2bMaxSandboxes = () => e2bInt('e2bMaxSandboxes');
+export const e2bMaxWaitMin = () => e2bInt('e2bMaxWaitMin');
+/** A backend's integer limit by its settings key (exec-env backend `limitSettings`); undefined for a
+ *  key this build has no setting for, so the backend's own capability default applies. */
+export function execEnvLimitSetting(key) { return Object.hasOwn(E2B_INTS, key) ? e2bInt(key) : undefined; }
+/** maxConcurrent | maxWaitMin of an exec-env backend: its user setting, else its capability default. */
+export function execEnvLimit(backend, which) {
+  const key = backend.limitSettings?.[which];
+  const v = key ? execEnvLimitSetting(key) : undefined;
+  return v ?? (which === 'maxConcurrent' ? backend.capabilities.defaultMaxConcurrent : backend.capabilities.defaultMaxWaitMin);
+}
+export function assertE2bIntInput(key, input) {
+  if (isClearInput(input)) return null;
+  if (!E2B_INTS[key].valid(input)) throw new Error(`${key} must be a whole number in ${E2B_INTS[key].range}`);
+  return input;
+}
+export async function setE2bIntSetting(key, input) {
+  const value = assertE2bIntInput(key, input);
+  const settings = readSettings();
+  if (value === null) delete settings[key]; else settings[key] = value;
+  await persistSettings(settings);
+  return { [key]: e2bIntSettingRaw(key) };
+}
+// The Local sandbox (Docker) container's limits (docs/local-sandbox.md): { memory, cpus, pids, runtime }, each optional.
+// sandboxResources (backends/docker.mjs) is the one check; here an invalid field is refused instead of falling back.
+const DOCKER_SANDBOX_KEYS = ['memory', 'cpus', 'pids', 'runtime'];
+const DOCKER_SANDBOX_LABELS = { memory: 'Memory per sandbox', cpus: 'CPUs per sandbox', pids: 'Processes per sandbox', runtime: 'Container runtime' };
+/** The stored dockerSandbox (only the fields set), or null. */
+export function dockerSandboxSettingRaw() {
+  if (homeGuarded()) return null;
+  const v = readSettings().dockerSandbox;
+  if (!isObj(v)) return null;
+  const out = Object.fromEntries(DOCKER_SANDBOX_KEYS.filter((k) => v[k] !== undefined && v[k] !== null && v[k] !== '').map((k) => [k, v[k]]));
+  return Object.keys(out).length ? out : null;
+}
+export function assertDockerSandboxInput(input) {
+  if (isClearInput(input)) return null;
+  if (!isObj(input)) throw new Error('dockerSandbox must be { memory, cpus, pids, runtime }');
+  const unknown = Object.keys(input).filter((k) => !DOCKER_SANDBOX_KEYS.includes(k));
+  if (unknown.length) throw new Error(`dockerSandbox: unknown field ${unknown[0]} (known: ${DOCKER_SANDBOX_KEYS.join(', ')})`);
+  const out = Object.fromEntries(DOCKER_SANDBOX_KEYS.filter((k) => !isClearInput(input[k])).map((k) => [k, input[k]]));
+  const { warnings } = sandboxResources(out);
+  const m = warnings.length ? /dockerSandbox\.(\w+): (.*?); using/.exec(warnings[0]) : null;
+  if (m) throw new Error(`${DOCKER_SANDBOX_LABELS[m[1]] || m[1]} ${m[2]}`);
+  return Object.keys(out).length ? out : null;
+}
+export async function setDockerSandboxSetting(input) {
+  const value = assertDockerSandboxInput(input);
+  const settings = readSettings();
+  if (value === null) delete settings.dockerSandbox; else settings.dockerSandbox = value;
+  await persistSettings(settings);
+  return { dockerSandbox: dockerSandboxSettingRaw() };
+}
+/** The execution environment's PATCH /api/config keys beside execEnv: the backends' limits and the Docker container's. */
+export const EXEC_ENV_SETTING_KEYS = Object.freeze([...Object.keys(E2B_INTS), 'dockerSandbox']);
+export function assertExecEnvSettingInput(key, input) {
+  return key === 'dockerSandbox' ? assertDockerSandboxInput(input) : assertE2bIntInput(key, input);
+}
+export function setExecEnvSettingKey(key, input) {
+  return key === 'dockerSandbox' ? setDockerSandboxSetting(input) : setE2bIntSetting(key, input);
+}
 const ROLE_KEY_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export function assertStepModelsInput(input) {
   if (!isObj(input)) throw new Error('stepModels must be { <engine>: { <role>: { model, effort } | null } }');
@@ -1503,6 +1694,11 @@ export function modelRolesSetting() {
 export function normalizeRolePair(input, label = 'role') {
   if (input === null || input === undefined || input === '') return null;
   if (!isObj(input)) throw new Error(`${label} must be { model, effort } or null`);
+  // "Let <tool> decide" (#1450): exactly { cliDecides: true }, distinct from an empty role.
+  if (input.cliDecides === true) {
+    if (Object.keys(input).length !== 1) throw new Error(`${label}: cliDecides takes no model or effort`);
+    return { cliDecides: true };
+  }
   for (const key of Object.keys(input)) if (key !== 'model' && key !== 'effort') throw new Error(`${label}: unknown field "${key}"`);
   const model = typeof input.model === 'string' ? input.model.trim() : '';
   const effort = typeof input.effort === 'string' ? input.effort.trim() : '';
@@ -1572,6 +1768,11 @@ export async function setUtilityModels(input) {
 export function normalizeModelPair(engine, input, label = 'model') {
   if (input === null || input === undefined || input === '') return null;
   if (!isObj(input)) throw new Error(`${label} must be { model, effort } or null`);
+  // "Let <tool> decide" (#1450): exactly { cliDecides: true }, distinct from an empty role.
+  if (input.cliDecides === true) {
+    if (Object.keys(input).length !== 1) throw new Error(`${label}: cliDecides takes no model or effort`);
+    return { cliDecides: true };
+  }
   for (const key of Object.keys(input)) if (key !== 'model' && key !== 'effort') throw new Error(`${label}: unknown field "${key}"`);
   const model = input.model == null ? '' : (typeof input.model === 'string' ? input.model.trim() : null);
   if (model === null || model.length > MODEL_PAIR_MAX_LEN) throw new Error(`${label}.model must be a model id`);
@@ -1593,6 +1794,7 @@ export const SETTING_CHECKS = Object.freeze({
   stringArray: (value) => Array.isArray(value) && value.every((item) => typeof item === 'string'),
   toolMap: (value) => !!value && typeof value === 'object' && !Array.isArray(value)
     && Object.values(value).every((v) => v === 'used' || v === 'unused'),
+  execEnv: (value) => isExecEnvName(value),
 });
 /** Check ids the project's readiness report skips (project layer only — no user inheritance). Unknown ids are kept. */
 export function readinessIgnore(scope) {
@@ -2506,11 +2708,13 @@ function rawModels(settings) {
  * subset of EFFORTS (empty/absent = all); `env` keys must not be reserved;
  * `cost` is an optional per-model override ({free} | {perMtok}, see assertModelCost).
  * `dryRun` validates exactly as a write would and returns the would-be entry
- * without persisting (Ask Worca's model card validates with it).
+ * without persisting (Ask Worca's model card validates with it). `copied` (the server's copy path only) names the
+ * values filled from the copied model, `{ env: [KEY…], apiKey: boolean }`: their vault references may be sealed into
+ * new entries of this model.
  * @returns {Promise<{id:string,label:string,efforts:string[],env?:object,cost?:object}>} the effective entry
  * @throws {Error} on invalid input or a case-insensitively duplicate id
  */
-export async function addGlobalModel({ id, label, efforts, env, cost, upstream, engine } = {}, { dryRun = false } = {}) {
+export async function addGlobalModel({ id, label, efforts, env, cost, upstream, engine } = {}, { dryRun = false, copied } = {}) {
   assertTestSettingsAccess();
   const vid = assertModelId(id);
   if (!isClearInput(label) && typeof label !== 'string') throw new Error('label must be a string');
@@ -2523,12 +2727,22 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream, 
   assertOwnSignInFields(vengine, venv, vupstream);
   assertCopilotFields(vengine, venv, vupstream);
   assertUpstreamEnvCompatible(venv, vupstream);
+  const duplicate = (models) => { if (findModelIndex(models, vid) !== -1) throw new Error(`a model with id ${JSON.stringify(vid)} already exists`); };
+  let sealed = { env: venv, upstream: vupstream };
+  let recheck = NO_RECHECK;
+  if (!dryRun) {
+    const copiedEnv = new Set(copied?.env ?? []);
+    ({ patch: sealed, recheck } = await sealPatch(sealed, (path) => modelLeaf(path, undefined, {
+      env: (k) => copiedEnv.has(k), apiKey: !!copied?.apiKey,
+    }), { before: () => duplicate(rawModels(readSettings())) }));
+  }
   const settings = readSettings();
+  recheck(settings);
   const models = rawModels(settings);
-  if (findModelIndex(models, vid) !== -1) throw new Error(`a model with id ${JSON.stringify(vid)} already exists`);
+  duplicate(models);
   const vlabel = (typeof label === 'string' && label.trim()) || vid;
   if (dryRun) return sanitizeGlobalModel(storedModelShape(vid, vlabel, vefforts, venv, vcost, vupstream, vengine));
-  settings.models = [...models, storedModelShape(vid, vlabel, vefforts, venv, vcost, vupstream, vengine)];
+  settings.models = [...models, storedModelShape(vid, vlabel, vefforts, sealed.env, vcost, sealed.upstream, vengine)];
   await persistSettings(settings);
   return listGlobalModels().find((m) => m.id.toLowerCase() === vid.toLowerCase());
 }
@@ -2542,10 +2756,24 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream, 
  * @returns {Promise<object>} the effective entry
  * @throws {Error} on an unknown id or invalid input
  */
-export async function updateGlobalModel(id, { label, efforts, env, cost, upstream, engine } = {}, { dryRun = false } = {}) {
+export async function updateGlobalModel(id, input = {}, { dryRun = false } = {}) {
+  if (dryRun) return applyGlobalModelUpdate(id, input, { dryRun });
+  assertTestSettingsAccess();
+  const vid = assertModelId(id);
+  const models = rawModels(readSettings());
+  const stored = models[findModelIndex(models, vid)];
+  const { patch, recheck } = await sealPatch({ env: input?.env, upstream: input?.upstream }, (path) => modelLeaf(path, stored), {
+    before: () => applyGlobalModelUpdate(id, input, { dryRun: true }),   // a refused patch vaults nothing
+  });
+  return applyGlobalModelUpdate(id, { ...input, env: patch.env, upstream: patch.upstream }, { recheck });
+}
+
+/** updateGlobalModel's validation, merge and write: synchronous from its readSettings() to its persistSettings(). */
+async function applyGlobalModelUpdate(id, { label, efforts, env, cost, upstream, engine } = {}, { dryRun = false, recheck = NO_RECHECK } = {}) {
   assertTestSettingsAccess();
   const vid = assertModelId(id);
   const settings = readSettings();
+  recheck(settings);
   const models = rawModels(settings);
   const idx = findModelIndex(models, vid);
   if (idx === -1) throw new Error(`unknown model id ${JSON.stringify(vid)}`);
@@ -2706,14 +2934,212 @@ export function providerSecretSet(name) {
 
 /**
  * The live value of a stored secret: a `${VAR}` ref is read from `sourceEnv`
- * (unset → ''), a literal is returned as is.
+ * (unset → ''), a Worca vault reference is resolved as settings field `field`
+ * (settings-resolver.mjs; '' when it does not resolve, and always '' for a
+ * `field` of null: a value the user just typed), a literal is returned as is.
+ * Every caller passes all three arguments (test/secrets-settings-resolver.test.mjs).
  */
-export function resolveProviderSecret(value, sourceEnv = process.env) {
+export function resolveProviderSecret(value, sourceEnv = process.env, field = null) {
   if (typeof value !== 'string' || !value) return '';
+  if (isVaultRef(value)) return field ? resolveSettingsSecretSync(value, field) : '';
   const ref = modelEnvRef(value);
   if (ref === null) return value;
   const v = sourceEnv ? sourceEnv[ref] : undefined;
   return typeof v === 'string' ? v.trim() : '';
+}
+
+/**
+ * A stored secret as the API shows it: `••••••` plus the last 4 characters of its value (maskModelEnvValue). A vault
+ * reference shows its resolved value's mask, or `••••••` alone when it does not resolve; never any part of the
+ * reference.
+ */
+export function maskStoredSecret(value, field) {
+  if (!isVaultRef(value)) return maskModelEnvValue(value);
+  const resolved = resolveSettingsSecretSync(value, field);
+  return resolved ? maskModelEnvValue(resolved) : '••••••';
+}
+
+const NO_RECHECK = () => {};
+
+/**
+ * Seal a setter's string leaves before its sync read-modify-write (src/core/secrets/settings-vault.mjs
+ * sealSettingsSecrets). With the secretVault flag off (or nothing to seal) the values come back unchanged and the
+ * settings vault is never imported. `before()` runs only with the flag on, before anything is vaulted (a setter's
+ * own validation that needs a fresh read). `recheck(settings)` runs inside the setter's sync section: after a plain
+ * fallback it refuses the write when a vault or a reference appeared meanwhile.
+ * @returns {Promise<{ values: any[], recheck: (settings: object) => void }>}
+ */
+export async function sealSecrets(items, { before } = {}) {
+  const values = items.map((it) => it.value);
+  if (!items.length) return { values, recheck: NO_RECHECK };
+  const { secretVaultEnabled } = await import('./secrets/flag.mjs');
+  if (!secretVaultEnabled()) return { values, recheck: NO_RECHECK };
+  if (before) await before();
+  const m = await import('./secrets/settings-vault.mjs');
+  const r = await m.sealSettingsSecrets(items);
+  return { values: r.values, recheck: r.plainFallback ? (settings) => m.assertNothingVaulted(settings, r.reason) : NO_RECHECK };
+}
+
+/**
+ * Prime the settings vault (settings-vault.mjs) while the vault is in use (flag on, or a vault file a migration left);
+ * null otherwise (nothing imported).
+ * `settle: true` bounds the wait (settleSettingsVaultPrime): the store time limit plus 250 ms, then `locked`. A ready
+ * prime then settles the vault's dropped entries once per home (store-vault.mjs settleDroppedOnPrime).
+ */
+export async function primeSettingsVaultIfEnabled({ settle = false, ...rest } = {}) {
+  const { vaultInUse } = await import('./secrets/flag.mjs');
+  if (!vaultInUse({ home: rest.home })) return null;
+  const m = await import('./secrets/settings-vault.mjs');
+  const r = await (settle ? m.settleSettingsVaultPrime(rest) : m.primeSettingsVault(rest));
+  // Once per home: remove the dropped entries past their grace that no owner file holds (an owner deleted for good).
+  if (r?.state === 'ready') await (await import('./secrets/store-vault.mjs')).settleDroppedOnPrime(rest);
+  return r;
+}
+
+const valueAt = (o, path) => path.reduce((x, k) => (x && typeof x === 'object' ? x[k] : undefined), o);
+
+/**
+ * The file-stored secrets a settings object holds, for the one-time move into the vault (secrets/migrate.mjs):
+ * settingsSecretSlots holding a non-empty string that is neither a vault reference nor a whole-value `${VAR}`, and for
+ * a model env slot only a secret key (modelEnvField; a readable key such as ANTHROPIC_MODEL is not a secret). The value
+ * is kept exactly as stored (never trimmed). Pure.
+ * @returns {{ path: (string|number)[], field: string, value: string, modelId?: any }[]}
+ */
+export function settingsSecretLiterals(settings) {
+  const out = [];
+  for (const slot of settingsSecretSlots(settings)) {
+    const v = slot.value;
+    if (typeof v !== 'string' || !v || isVaultRef(v) || modelEnvRef(v) !== null) continue;
+    if (slot.path[2] === 'env' && modelEnvField(slot.path[3]) === null) continue;
+    out.push({ path: slot.path, field: slot.field, value: v, ...(slot.path[0] === 'models' ? { modelId: slot.modelId } : {}) });
+  }
+  return out;
+}
+
+/**
+ * Swap moved literals for their references in ONE synchronous re-read, compare and write. `swaps` =
+ * `[{ path, value, ref, modelId? }]`; a slot is swapped only while its raw value is still `value` (and, for a model
+ * slot, the model at that index still has `modelId`). `beforeWrite()` runs right before the write, only when one slot
+ * matched. The write is persistSettings, whose file write happens before this returns; `write` is its promise (no
+ * reference is dropped, so it releases nothing). Nothing matched: nothing is written. A file changed since the read is
+ * left as it is (D20): `{ adopted: [] }` with a resolved `write`.
+ * @returns {{ adopted: object[], write: Promise<void> }}
+ */
+export function swapSettingsSecretLiterals(swaps, { beforeWrite = () => {} } = {}) {
+  const raw = settingsRawText();
+  const settings = readSettings();
+  const adopted = [];
+  for (const sw of swaps) {
+    const parent = valueAt(settings, sw.path.slice(0, -1));
+    const key = sw.path[sw.path.length - 1];
+    if (!parent || typeof parent !== 'object' || parent[key] !== sw.value) continue;
+    if (sw.path[0] === 'models' && valueAt(settings, ['models', sw.path[1], 'id']) !== sw.modelId) continue;
+    parent[key] = sw.ref;
+    adopted.push(sw);
+  }
+  if (!adopted.length) return { adopted, write: Promise.resolve() };
+  beforeWrite();
+  const w = writeUnlessStale(settings, raw, { release: true });
+  return w.stale ? { adopted: [], write: w.write } : { adopted, write: w.write };
+}
+
+const STALE_SETTINGS = Symbol('stale settings');
+
+// settings.json's raw text, or null when it cannot be read.
+function settingsRawText() {
+  try { return readFileSync(settingsFile(), 'utf8'); } catch { return null; }
+}
+
+// persistSettings with a rename-time check (D20): the file is re-read right before the rename and the write is dropped
+// when its text is no longer `raw` (another writer landed since the read). `stale` is known synchronously: the write
+// happens in persistSettings' sync section. A stale write resolves; it never rejects.
+function writeUnlessStale(settings, raw, { release }) {
+  let stale = false;
+  const beforeRename = () => { if (settingsRawText() !== raw) { stale = true; throw STALE_SETTINGS; } };
+  const write = persistSettings(settings, { beforeRename, release }).catch((err) => { if (err !== STALE_SETTINGS) throw err; });
+  return { stale, write };
+}
+
+/**
+ * Export's restore (secrets/export.mjs): put literals back where references are, in ONE synchronous re-read and write.
+ * `swaps` = `[{ path, ref, value, modelId? }]`; a slot is restored only while its raw value is still `ref` (and, for a
+ * model slot, the model at that index still has `modelId`). `beforeWrite()` runs right before the write, only when one
+ * slot matched. The write is atomic at 0600, releases nothing, and is dropped when the file changed since the read
+ * (D20). Nothing matched, or stale: `{ restored: 0 }`.
+ * @returns {Promise<{ restored: number }>}
+ */
+export async function restoreSettingsSecretRefs(swaps, { beforeWrite = () => {} } = {}) {
+  const raw = settingsRawText();
+  const settings = readSettings();
+  let restored = 0;
+  for (const sw of swaps) {
+    const parent = valueAt(settings, sw.path.slice(0, -1));
+    const key = sw.path[sw.path.length - 1];
+    if (!parent || typeof parent !== 'object' || parent[key] !== sw.ref) continue;
+    if (sw.path[0] === 'models' && valueAt(settings, ['models', sw.path[1], 'id']) !== sw.modelId) continue;
+    parent[key] = sw.value;
+    restored++;
+  }
+  if (!restored) return { restored: 0 };
+  beforeWrite();
+  const w = writeUnlessStale(settings, raw, { release: false });
+  await w.write;
+  return { restored: w.stale ? 0 : restored };
+}
+
+/**
+ * Seal every string leaf of `patch`. `describe(path)` → `{ field, current, allowRef }`: `field` the owner field when
+ * the leaf is a vaulted secret (else null), `current` the leaf's stored value. Returns the patch with the sealed values
+ * (a copy when one changed) and the recheck.
+ */
+async function sealPatch(patch, describe, opts) {
+  const items = [];
+  const slots = [];
+  const walk = (v, path) => {
+    if (typeof v === 'string') {
+      const d = describe(path);
+      items.push({ value: v, current: d.current, field: d.field ?? null, vaulted: !!d.field, allowRef: !!d.allowRef });
+      slots.push(path);
+    } else if (v && typeof v === 'object') {
+      for (const [k, x] of Object.entries(v)) walk(x, [...path, k]);
+    }
+  };
+  walk(patch, []);
+  const { values, recheck } = await sealSecrets(items, opts);
+  if (values.every((v, i) => v === items[i].value)) return { patch, recheck };
+  const out = structuredClone(patch);
+  values.forEach((v, i) => {
+    const path = slots[i];
+    valueAt(out, path.slice(0, -1))[path[path.length - 1]] = v;
+  });
+  return { patch: out, recheck };
+}
+
+/**
+ * sealPatch's description of a model patch leaf (`env.KEY`, `upstream.apiKey`, any other upstream string): its owner
+ * field when it is a vaulted secret, its value in `stored` (the model entry as stored), and the copy marker.
+ */
+function modelLeaf(path, stored, copied = {}) {
+  const current = valueAt(stored, path);
+  if (path[0] === 'env' && path.length === 2) return { field: modelEnvField(path[1]), current, allowRef: !!copied.env?.(path[1]) };
+  if (path[0] === 'upstream' && path[1] === 'apiKey' && path.length === 2) {
+    return { field: settingsSecretField('models', 'upstream', 'apiKey'), current, allowRef: !!copied.apiKey };
+  }
+  return { field: null, current };
+}
+
+/** sealPatch for a flat providers block whose only secret is `apiKey` (images, sound, openrouter). */
+function sealProviderBlock(name, patch) {
+  const block = valueAt(readSettings(), ['providers', name]);
+  return sealPatch(patch, ([k]) => ({
+    field: k === 'apiKey' ? settingsSecretField('providers', name, k) : null, current: valueAt(block, [k]),
+  }));
+}
+
+/** The owner field of a model env key: a secret key (not isReadableModelEnvKey) with a valid name; else null. */
+function modelEnvField(key) {
+  if (isReadableModelEnvKey(key)) return null;
+  try { return settingsSecretField('models', 'env', key); } catch { return null; }
 }
 
 /** updateProvider's validation alone (it throws the same messages). */
@@ -2798,12 +3224,22 @@ export async function updateProvider(name, patch = {}, { dryRun = false, expectC
   if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
   assertTestSettingsAccess();
   assertProviderPatch(name, patch);
-  const settings = readSettings();
-  if (expectCopilotHost !== undefined) {
+  const hostCheck = (settings) => {
+    if (expectCopilotHost === undefined) return;
     // A device-flow sign-in commits its token here: refuse when the GitHub host moved since it began.
     const stored = isObj(settings.providers) && isObj(settings.providers.copilot) ? settings.providers.copilot : {};
     if (copilotBlockHost(stored) !== (expectCopilotHost || 'github.com')) throw Object.assign(new Error('the Copilot GitHub host changed during the sign-in — start it again'), { code: 'HOST_CHANGED' });
+  };
+  let recheck = NO_RECHECK;
+  if (!dryRun) {
+    const block = valueAt(readSettings(), ['providers', name]);
+    ({ patch, recheck } = await sealPatch(patch, ([k]) => ({
+      field: PROVIDER_SECRET_KEYS[name].includes(k) ? settingsSecretField('providers', name, k) : null, current: valueAt(block, [k]),
+    }), { before: () => hostCheck(readSettings()) }));
   }
+  const settings = readSettings();
+  recheck(settings);
+  hostCheck(settings);
   if (dryRun) return { ...providerDefaults(name), ...sanitizeProvider(name, mergeProviderBlock(settings.providers, name, patch)) };
   const v = nextProviders(settings.providers, name, patch);
   if (v === undefined) delete settings.providers; else settings.providers = v;
@@ -2892,7 +3328,13 @@ export async function updateSpeech(patch = {}) {
       if (why) throw new Error(`${kind}: ${why}`);
     }
   }
+  const stored = valueAt(readSettings(), ['providers', 'speech']);
+  let recheck;
+  ({ patch, recheck } = await sealPatch(patch, ([kind, k]) => ({
+    field: k === 'apiKey' ? settingsSecretField('providers', 'speech', kind, k) : null, current: valueAt(stored, [kind, k]),
+  })));
   const settings = readSettings();
+  recheck(settings);
   const all = speechObj(settings.providers) ? settings.providers : {};
   const cur = speechObj(all.speech) ? { ...all.speech } : {};
   for (const [kind, side] of Object.entries(patch)) {
@@ -2983,7 +3425,10 @@ export async function updateImages(patch = {}) {
     const why = imagesFieldError(k, v);
     if (why) throw new Error(why);
   }
+  let recheck;
+  ({ patch, recheck } = await sealProviderBlock('images', patch));
   const settings = readSettings();
+  recheck(settings);
   const all = isObj(settings.providers) ? settings.providers : {};
   const stored = isObj(all.images) ? all.images : {};
   const next = { ...stored };
@@ -3052,7 +3497,10 @@ export async function updateSound(patch = {}) {
     const why = soundFieldError(k, v);
     if (why) throw new Error(why);
   }
+  let recheck;
+  ({ patch, recheck } = await sealProviderBlock('sound', patch));
   const settings = readSettings();
+  recheck(settings);
   const all = isObj(settings.providers) ? settings.providers : {};
   const next = isObj(all.sound) ? { ...all.sound } : {};
   for (const [k, v] of Object.entries(patch)) {
@@ -3145,7 +3593,10 @@ export async function updateOpenRouter(patch = {}, { dryRun = false } = {}) {
     const why = openRouterFieldError(k, v);
     if (why) throw new Error(why);
   }
+  let recheck = NO_RECHECK;
+  if (!dryRun) ({ patch, recheck } = await sealProviderBlock('openrouter', patch));
   const settings = readSettings();
+  recheck(settings);
   const all = isObj(settings.providers) ? settings.providers : {};
   const next = isObj(all.openrouter) ? { ...all.openrouter } : {};
   for (const [k, v] of Object.entries(patch)) {
@@ -3261,11 +3712,12 @@ export async function writeStoredFlags(map) {
 // flag, cleared when the last workspace is deleted. `setupFinished` records that the
 // Setup Assistant was completed (install-wide, like the setup); `setupChecked` is the
 // boot marker that credits an install that predates it exactly once
-// (onboarding.mjs#ensureSetupMarker). `guidesSeen` maps a how-it-works area id
+// (onboarding.mjs#ensureSetupMarker). `roleDefaultsNoticeSeen` is #1450's one-time
+// notice about Worca's role defaults. `guidesSeen` maps a how-it-works area id
 // (src/shared/how-it-works/areas.mjs) to true once that area's guide has been opened;
 // `guidesReset` is a write-only command that clears the map and workspaceGuideSeen.
 // All absent = all false and an empty map.
-const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'setupFinished', 'setupChecked']);
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'setupFinished', 'setupChecked', 'roleDefaultsNoticeSeen']);
 const ONBOARDING_KEYS = Object.freeze([...ONBOARDING_FLAGS, 'guidesSeen', 'guidesReset']);
 const SEEN_ONLY_KEYS = Object.freeze(['guidesSeen', 'workspaceGuideSeen']);
 
@@ -3419,22 +3871,23 @@ function answererMap(settings) {
   return Object.assign(Object.create(null), m && typeof m === 'object' && !Array.isArray(m) ? m : {});
 }
 
-/** The person's profile, `{ lead }` (null when never set or unknown). Never throws. */
-export function answererProfileFor(person) {
+/** The person's profile, `{ lead }` (null when never set or unknown). `smallRuns` (the live flag) admits a Compliance
+ *  lead; off, a stored one reads null. Never throws. */
+export function answererProfileFor(person, { smallRuns = false } = {}) {
   if (homeGuarded()) return { lead: null };
   const lead = answererMap(readSettings())[pinsPersonKey(person)]?.lead;
-  return { lead: isAnswererLead(lead) ? lead : null };
+  return { lead: isAnswererLead(lead, { smallRuns }) ? lead : null };
 }
 
-/** Set the person's lead. Throws { code: 'BAD_LEAD' } before any write. */
-export async function setAnswererProfileFor(person, { lead } = {}) {
-  if (!isAnswererLead(lead)) throw Object.assign(new Error(`Pick one of: ${ANSWERER_LEAD_KEYS.join(', ')}`), { code: 'BAD_LEAD' });
+/** Set the person's lead. Throws { code: 'BAD_LEAD' } before any write, naming the leads `smallRuns` allows. */
+export async function setAnswererProfileFor(person, { lead } = {}, { smallRuns = false } = {}) {
+  if (!isAnswererLead(lead, { smallRuns })) throw Object.assign(new Error(`Pick one of: ${answererLeadKeys({ smallRuns }).join(', ')}`), { code: 'BAD_LEAD' });
   const settings = readSettings();
   const map = answererMap(settings);
   map[pinsPersonKey(person)] = { lead };
   settings.answererProfiles = map;
   await persistSettings(settings);
-  return answererProfileFor(person);
+  return answererProfileFor(person, { smallRuns });
 }
 
 /** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */

@@ -212,6 +212,15 @@ test('AC-3.3: one write, one ordered result per side effect', async () => {
   assert.doesNotMatch(JSON.stringify(out), /"pw"/);
 });
 
+test('a cliDecides role is accepted and adds no role-test step (#1450)', async () => {
+  seed({});
+  const { deps } = fakeDeps();
+  const plan = await planSetupApply({ models: { modelRoles: { claude: { deep: { cliDecides: true }, everyday: { model: 'claude-sonnet-5-5' } } }, testRoles: true } }, deps);
+  assert.deepEqual(plan.steps.map((s) => s.id), ['role-test.claude.everyday']);
+  await commitSetupPlan(plan, deps);
+  assert.deepEqual(read().modelRoles.claude.deep, { cliDecides: true });
+});
+
 test('AC-3.3 full order: every side-effect kind, roles labelled with their engine', async () => {
   seed({});
   const { deps, calls } = fakeDeps();
@@ -846,4 +855,66 @@ test('work.hideBuiltinModels / sync / networkWait: validated, merged and written
   assert.deepEqual(plan.values.sync, { remote: 'upstream', beforeRun: false });
   await assert.rejects(planSetupApply({ work: { sync: { remote: 'https://x' } } }, deps), (e) => e.field === 'work.sync.remote' && /remote NAME/.test(e.message));
   await assert.rejects(planSetupApply({ work: { networkWait: { maxWaitMin: 0 } } }, deps), (e) => e.field === 'work.networkWait.maxWaitMin');
+});
+
+test('work.execEnv ("Where agents run"): a backend name is stored, null clears it to Local, an unknown name names the field', async () => {
+  seed({});
+  const { deps } = fakeDeps();
+  const plan = await planSetupApply({ work: { execEnv: 'docker' } }, deps);
+  assert.deepEqual(plan.written, ['execEnv']);
+  assert.equal(plan.values.execEnv, 'docker');
+  await commitSetupPlan(plan, deps);
+  assert.equal(read().execEnv, 'docker');
+  const clear = await planSetupApply({ work: { execEnv: null } }, deps);
+  assert.deepEqual(clear.written, ['execEnv']);
+  assert.equal(clear.values.execEnv, undefined);
+  await assert.rejects(planSetupApply({ work: { execEnv: 'acme-cloud' } }, deps), (e) => e.field === 'work.execEnv');
+});
+
+test('flag on: Setup stores the OpenAI key as a reference', async () => {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { writeFakeState } = await import('./helpers/os-store-fake.mjs');
+  const { isVaultRef } = await import('../src/core/secrets/refs.mjs');
+  const state = join(mkdtempSync(join(tmpdir(), 'worca-setup-fake-')), 'state.json');
+  writeFakeState(state, { state: 'available' });
+  const prev = { WORCA_FLAGS: process.env.WORCA_FLAGS, WORCA_TEST_OS_STORE: process.env.WORCA_TEST_OS_STORE };
+  Object.assign(process.env, { WORCA_FLAGS: 'secretVault', WORCA_TEST_OS_STORE: state });
+  try {
+    seed({});
+    const { deps } = fakeDeps();
+    await applyAll({ access: { openai: { apiKey: 'sk-setup-live-1234' } } }, deps);
+    const key = read().providers.openai.apiKey;
+    assert.ok(isVaultRef(key), key);
+    assert.ok(!readFileSync(settingsPath(), 'utf8').includes('sk-setup-live'));
+    assert.equal(settings.resolveProviderSecret(key, process.env, 'providers.openai.apiKey'), 'sk-setup-live-1234');
+    const other = 'worca:vault:v1:BBBBBBBBBBBBBBBBBBBBBB';
+    await assert.rejects(planSetupApply({ access: { openai: { apiKey: other } } }, deps), (e) => e instanceof SetupFieldError && e.field === 'access.openai.apiKey' && /^The key was not saved: /.test(e.message));
+  } finally {
+    for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
+
+test('flag on, store locked before vaulting: a reference that appears before the commit refuses the plain key', async () => {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { writeFakeState } = await import('./helpers/os-store-fake.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'worca-setup-locked-'));
+  const state = join(dir, 'state.json');
+  writeFakeState(state, { state: 'locked' });
+  const prev = { WORCA_FLAGS: process.env.WORCA_FLAGS, WORCA_TEST_OS_STORE: process.env.WORCA_TEST_OS_STORE, WORCA_HOME: process.env.WORCA_HOME };
+  Object.assign(process.env, { WORCA_FLAGS: 'secretVault', WORCA_TEST_OS_STORE: state, WORCA_HOME: join(dir, 'worca') });
+  try {
+    seed({});
+    const { deps, writes } = fakeDeps();
+    const plan = await planSetupApply({ access: { openai: { apiKey: 'sk-plain-locked-1234' } } }, deps);
+    assert.equal(plan.values.providers.openai.apiKey, 'sk-plain-locked-1234', 'plain fallback before any vaulting');
+    const fresh = { ...read(), models: [{ id: 'raced', env: { ANTHROPIC_AUTH_TOKEN: 'worca:vault:v1:CCCCCCCCCCCCCCCCCCCCCC' } }] };
+    await assert.rejects(commitSetupPlan(plan, { ...deps, readSettings: () => fresh }),
+      (e) => e instanceof SetupFieldError && e.field === 'access.openai.apiKey');
+    assert.equal(writes.length, 0);
+    assert.ok(!readFileSync(settingsPath(), 'utf8').includes('sk-plain-locked'));
+  } finally {
+    for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
 });

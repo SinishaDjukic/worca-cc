@@ -7,7 +7,7 @@
 
 import { spawn } from 'node:child_process';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { mkdtemp, writeFile, rm, readFile, copyFile, rename, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, readFile, copyFile, rename, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { githubEnv } from './github-credentials.mjs';
@@ -151,10 +151,10 @@ const aheadCache = new Map();
  * per command whether a rename is one `R` row or a `D` plus an `A`.
  * @returns {Promise<Array<{status:string, path:string, from?:string}>>}
  */
-export async function diffNameStatus(projectDir, base, head, pathspecs = []) {
+export async function diffNameStatus(projectDir, base, head, pathspecs = [], { env = null } = {}) {
   if (!projectDir || !base) return [];
   const args = ['-c', 'core.quotePath=false', 'diff', '--name-status', '-M', '-l0', base, ...(head ? [head] : []), '--', ...pathspecs];
-  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS, ...(env ? { env } : {}) });
   if (!r.ok) return [];
   const out = [];
   for (const line of r.stdout.split('\n')) {
@@ -177,11 +177,11 @@ export async function diffNameStatus(projectDir, base, head, pathspecs = []) {
  * and `-l0` this shares so the Map keys match the name-status paths.
  * @returns {Promise<Map<string,{added:number, removed:number, binary:boolean}>>}
  */
-export async function diffNumstat(projectDir, base, head, pathspecs = []) {
+export async function diffNumstat(projectDir, base, head, pathspecs = [], { env = null } = {}) {
   const m = new Map();
   if (!projectDir || !base) return m;
   const args = ['-c', 'core.quotePath=false', 'diff', '--numstat', '-M', '-l0', base, ...(head ? [head] : []), '--', ...pathspecs];
-  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS, ...(env ? { env } : {}) });
   if (!r.ok) return m;
   for (const line of r.stdout.split('\n')) {
     if (!line.trim()) continue;
@@ -218,12 +218,12 @@ export async function diffNumstat(projectDir, base, head, pathspecs = []) {
  * detection the old-path filter in ask/tools.mjs depends on.
  * @returns {Promise<string>}
  */
-export async function diffPatch(projectDir, base, head, pathspecs = []) {
+export async function diffPatch(projectDir, base, head, pathspecs = [], { env = null } = {}) {
   if (!projectDir || !base) return '';
   const args = ['-c', 'core.quotePath=false', 'diff', '-M', '-l0', '--no-color', '--no-ext-diff', '--submodule=short',
     '--src-prefix=a/', '--dst-prefix=b/',
     base, ...(head ? [head] : []), '--', ...pathspecs];
-  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS, ...(env ? { env } : {}) });
   return r.ok ? r.stdout : '';
 }
 
@@ -233,10 +233,10 @@ export async function diffPatch(projectDir, base, head, pathspecs = []) {
  * agent created; the live diff lists these separately. Read-only: never touches the index.
  * @returns {Promise<string[]>}
  */
-export async function untrackedFiles(projectDir, pathspecs = []) {
+export async function untrackedFiles(projectDir, pathspecs = [], { env = null } = {}) {
   if (!projectDir) return [];
   const args = ['-c', 'core.quotePath=false', 'ls-files', '--others', '--exclude-standard', '-z', '--', '.', ...pathspecs];
-  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS, ...(env ? { env } : {}) });
   if (!r.ok) return [];
   return r.stdout.split('\0').filter(Boolean);
 }
@@ -247,10 +247,10 @@ export async function untrackedFiles(projectDir, pathspecs = []) {
  * the success case here, so the exit code is ignored and stdout decides.
  * @returns {Promise<{patch:string, added:number, binary:boolean}>}
  */
-export async function untrackedPatch(projectDir, relPath) {
+export async function untrackedPatch(projectDir, relPath, { env = null } = {}) {
   const args = ['-c', 'core.quotePath=false', 'diff', '--no-index', '--no-color', '--no-ext-diff',
     '--src-prefix=a/', '--dst-prefix=b/', '--', '/dev/null', relPath];
-  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
+  const r = await _run('git', args, { cwd: projectDir, timeout: DIFF_TIMEOUT_MS, ...(env ? { env } : {}) });
   const patch = r.code === 0 || r.code === 1 ? r.stdout : '';
   const binary = /^Binary files /m.test(patch);
   let added = 0;
@@ -268,11 +268,12 @@ const PATCH_ENV_STRIP = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJE
  * `add -A` stages the working tree THERE, and `diff --cached --binary` renders it. So it is safe on a
  * person's own clone (a linked checkout folder) and on a checkout left mid-merge (its conflicts stay
  * unresolved). The only trace is the blobs `add` hashes into the object store (unreferenced; gc drops them).
+ * With `scratchObjects`, nothing at all is written to the repository.
  * Never throws.
  * @returns {Promise<{ok:true, file:string|null, bytes:number}|{ok:false, step:string, message:string}>}
  *   file null = nothing uncommitted.
  */
-export async function uncommittedPatch(dir, { base = 'HEAD', outFile } = {}) {
+export async function uncommittedPatch(dir, { base = 'HEAD', outFile, scratchObjects = false } = {}) {
   if (!dir || !outFile) return { ok: false, step: 'path', message: 'dir and outFile are required' };
   const env = { ...process.env };
   for (const k of PATCH_ENV_STRIP) delete env[k];
@@ -290,6 +291,16 @@ export async function uncommittedPatch(dir, { base = 'HEAD', outFile } = {}) {
     // GIT_INDEX_FILE: git answers `--git-path index` with $GIT_INDEX_FILE whenever it is set.
     const real = await _run('git', ['rev-parse', '--git-path', 'index'], { cwd: dir, env });
     const realPath = real.ok ? real.stdout.trim() : '';
+    // Workflow tests 3a (D53): the blobs `add -A` hashes go to a scratch object folder that reads through to the
+    // repository's own objects, so the person's repository gets no new object at all. Asked before any GIT_* is set.
+    if (scratchObjects) {
+      const o = await _run('git', ['rev-parse', '--git-path', 'objects'], { cwd: dir, env });
+      const objPath = o.ok ? o.stdout.trim() : '';
+      if (!objPath) return fail('objects', o);
+      env.GIT_OBJECT_DIRECTORY = join(tmp, 'objects');
+      await mkdir(env.GIT_OBJECT_DIRECTORY, { recursive: true });
+      env.GIT_ALTERNATE_OBJECT_DIRECTORIES = isAbsolute(objPath) ? objPath : join(dir, objPath);
+    }
     env.GIT_INDEX_FILE = join(tmp, 'index');
     let seeded = false;
     if (realPath) {
@@ -1254,7 +1265,7 @@ async function watchGraphql(query, vars, { projectDir, repo, role = 'read' }) {
 const BASE_TARGET = 'target{oid ... on Commit{statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}';
 // `compare` against refs/pull/<n>/head (it lives in the base repository, fork or not): behindBy is how
 // many base commits the PR lacks.
-const WATCH_QUERY = `query PrWatch($owner:String!,$repo:String!,$number:Int!,$headRef:String!,$contextsCursor:String,$threadsCursor:String,$reviewsCursor:String,$withContexts:Boolean!,$withThreads:Boolean!,$withReviews:Boolean!,$withBase:Boolean!){repository(owner:$owner,name:$repo){pullRequest(number:$number){url state headRefName headRefOid baseRefName baseRefOid mergeable author{login} statusCheckRollup{contexts(first:100,after:$contextsCursor) @include(if:$withContexts){nodes{__typename ... on CheckRun{databaseId name status conclusion detailsUrl isRequired(pullRequestNumber:$number) checkSuite{workflowRun{databaseId}}} ... on StatusContext{context state targetUrl isRequired(pullRequestNumber:$number)}} pageInfo{hasNextPage endCursor}}} reviewThreads(first:100,after:$threadsCursor) @include(if:$withThreads){nodes{id isResolved comments(first:100){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}} reviews(first:100,after:$reviewsCursor) @include(if:$withReviews){nodes{databaseId body state author{login} authorAssociation} pageInfo{hasNextPage endCursor}} baseRef @include(if:$withBase){compare(headRef:$headRef){behindBy} ${BASE_TARGET}}}}}`;
+const WATCH_QUERY = `query PrWatch($owner:String!,$repo:String!,$number:Int!,$headRef:String!,$contextsCursor:String,$threadsCursor:String,$commentsCursor:String,$reviewsCursor:String,$withContexts:Boolean!,$withThreads:Boolean!,$withComments:Boolean!,$withReviews:Boolean!,$withBase:Boolean!){repository(owner:$owner,name:$repo){pullRequest(number:$number){url state headRefName headRefOid baseRefName baseRefOid mergeable author{login} statusCheckRollup{contexts(first:100,after:$contextsCursor) @include(if:$withContexts){nodes{__typename ... on CheckRun{databaseId name status conclusion detailsUrl isRequired(pullRequestNumber:$number) checkSuite{workflowRun{databaseId}}} ... on StatusContext{context state targetUrl isRequired(pullRequestNumber:$number)}} pageInfo{hasNextPage endCursor}}} reviewThreads(first:100,after:$threadsCursor) @include(if:$withThreads){nodes{id isResolved comments(first:100){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}} issueComments:comments(first:100,after:$commentsCursor) @include(if:$withComments){nodes{databaseId body createdAt lastEditedAt updatedAt isMinimized author{login} authorAssociation} pageInfo{hasNextPage endCursor}} reviews(first:100,after:$reviewsCursor) @include(if:$withReviews){nodes{databaseId body state author{login} authorAssociation} pageInfo{hasNextPage endCursor}} baseRef @include(if:$withBase){compare(headRef:$headRef){behindBy} ${BASE_TARGET}}}}}`;
 const BASE_CHECKS_QUERY = `query PrBaseChecks($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){baseRefName baseRef{${BASE_TARGET}}}}}`;
 const COMMENTS_QUERY = `query PrWatchComments($threadId:ID!,$commentsCursor:String){node(id:$threadId){... on PullRequestReviewThread{comments(first:100,after:$commentsCursor){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}}}}`;
 
@@ -1283,13 +1294,13 @@ export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
   const repo = `${p.owner}/${p.repo}`;
   // Each connection pages on its own cursor; a finished one is left out of later pages (@include), so
   // uneven page counts never re-read (and re-collect) a page that was already taken.
-  const cursor = { contexts: null, threads: null, reviews: null };
-  const open = { contexts: true, threads: true, reviews: true };
-  const contexts = []; const threads = []; const reviews = []; let facts = null;
+  const cursor = { contexts: null, threads: null, comments: null, reviews: null };
+  const open = { contexts: true, threads: true, comments: true, reviews: true };
+  const contexts = []; const threads = []; const comments = []; const reviews = []; let facts = null;
   for (let pages = 0; pages < 100; pages++) {
     const q = await watchGraphql(WATCH_QUERY, { owner: p.owner, repo: p.repo, number: p.number,
-      headRef: `refs/pull/${p.number}/head`, contextsCursor: cursor.contexts, threadsCursor: cursor.threads, reviewsCursor: cursor.reviews,
-      withContexts: open.contexts, withThreads: open.threads, withReviews: open.reviews, withBase: pages === 0 }, { projectDir, repo });
+      headRef: `refs/pull/${p.number}/head`, contextsCursor: cursor.contexts, threadsCursor: cursor.threads, commentsCursor: cursor.comments, reviewsCursor: cursor.reviews,
+      withContexts: open.contexts, withThreads: open.threads, withComments: open.comments, withReviews: open.reviews, withBase: pages === 0 }, { projectDir, repo });
     if (!q.ok) return q;
     const pr = q.data?.repository?.pullRequest;
     if (!pr || typeof pr.state !== 'string' || typeof pr.headRefName !== 'string' || typeof pr.headRefOid !== 'string') return { ok: false, class: 'failed', error: 'malformed GitHub snapshot' };
@@ -1304,8 +1315,10 @@ export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
     }
     const done = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
     const cc = !open.contexts || pr.statusCheckRollup === null ? done : pr.statusCheckRollup?.contexts;
-    const tt = open.threads ? pr.reviewThreads : done; const rr = open.reviews ? pr.reviews : done;
-    if (!cc || !Array.isArray(cc.nodes) || !pageOk(cc.pageInfo) || !tt || !Array.isArray(tt.nodes) || !pageOk(tt.pageInfo) || !rr || !Array.isArray(rr.nodes) || !pageOk(rr.pageInfo)) return { ok: false, class: 'failed', error: 'malformed GitHub pagination' };
+    const tt = open.threads ? pr.reviewThreads : done; const ii = open.comments && pr.issueComments ? pr.issueComments : done;
+    const rr = open.reviews ? pr.reviews : done;
+    if (!cc || !Array.isArray(cc.nodes) || !pageOk(cc.pageInfo) || !tt || !Array.isArray(tt.nodes) || !pageOk(tt.pageInfo)
+      || !ii || !Array.isArray(ii.nodes) || !pageOk(ii.pageInfo) || !rr || !Array.isArray(rr.nodes) || !pageOk(rr.pageInfo)) return { ok: false, class: 'failed', error: 'malformed GitHub pagination' };
     for (const c of cc.nodes) {
       if (typeof c.isRequired !== 'boolean') return { ok: false, class: 'failed', error: 'GitHub omitted isRequired' };
       if (c.__typename === 'StatusContext') { contexts.push({ ...c, type: 'status', headSha: facts.headSha }); continue; }
@@ -1318,12 +1331,13 @@ export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
       threads.push({ nodeId: t.id, isResolved: !!t.isResolved, comments: [...t.comments.nodes], _page: t.comments.pageInfo });
     }
     reviews.push(...rr.nodes);
-    for (const [k, conn] of [['contexts', cc], ['threads', tt], ['reviews', rr]]) {
+    for (const t of ii.nodes) if (t?.databaseId != null && t?.body != null) comments.push(t);
+    for (const [k, conn] of [['contexts', cc], ['threads', tt], ['comments', ii], ['reviews', rr]]) {
       if (!open[k]) continue;
       open[k] = conn.pageInfo.hasNextPage;
       if (open[k]) cursor[k] = conn.pageInfo.endCursor;
     }
-    if (!open.contexts && !open.threads && !open.reviews) break;
+    if (!open.contexts && !open.threads && !open.comments && !open.reviews) break;
     if (pages === 99) return { ok: false, class: 'failed', error: 'GitHub pagination ceiling exceeded' };
   }
   for (const thread of threads) {
@@ -1338,7 +1352,7 @@ export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
     }
     delete thread._page;
   }
-  return { ok: true, pr: { ...facts, contexts, threads, reviews } };
+  return { ok: true, pr: { ...facts, contexts, threads, comments, reviews } };
 }
 
 export async function ghFailedJobLog({ projectDir, prUrl, databaseId } = {}) {

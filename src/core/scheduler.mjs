@@ -494,7 +494,7 @@ export function afterRefOf(id) {
 // run merges back; an interrupted one gets no teardown until it is resumed) with a member record that has
 // a worktree and no mergeBack yet; a record without a worktreeDir (a setup failure) never gets a teardown.
 // Bounded from the row's last write: a host killed mid-teardown must not hold its dependents forever.
-const MERGE_BACK_WAIT_MS = 10 * 60_000;
+export const MERGE_BACK_WAIT_MS = 10 * 60_000;
 function mergeBackPending(row, now = Date.now()) {
   if (!row || row.status !== 'done') return false;
   const records = row.target === 'workspace'
@@ -1201,9 +1201,20 @@ function safeHold(hold, t) {
   try { return hold(t) === true; } catch { return false; }
 }
 
+/** A chain gate that throws, or answers no known state, is no gate: the ticket falls back to the predecessor gate. */
+function safeChainGate(chainGate, t, opts) {
+  try {
+    const g = chainGate(t, opts);
+    return g && ['waiting', 'ok', 'bad'].includes(g.state) ? g : null;
+  } catch { return null; }
+}
+
+/** `chainGate(ticket, {now, isLive})` (optional, Shaper small runs): asked for an unforced after-ticket before its
+ *  predecessor gate. waiting → stays scheduled; ok → skips the predecessor gate (the hold still applies);
+ *  bad {reason, title} → missed with that reason; null → the predecessor gate. */
 export async function runDueTickets({
   now = Date.now(), start, isLive = null, pid = process.pid, host = hostname(), pidAlive = defaultPidAlive,
-  onlyOwned = false, staggerMs = 0, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), hold = null,
+  onlyOwned = false, staggerMs = 0, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), hold = null, chainGate = null,
 } = {}) {
   const out = { fired: [], missed: [], skipped: [], failed: [], retried: [], waiting: [], held: [] };
   let startedAny = false;
@@ -1222,7 +1233,10 @@ export async function runDueTickets({
     }
 
     if (t.after) {
-      const p = predecessorState(t.after, { policy: t.after.policy, now, isLive });
+      const g = !t.forced && chainGate ? safeChainGate(chainGate, t, { now, isLive }) : null;
+      if (g && g.state === 'waiting') { out.waiting.push(t.id); continue; }
+      if (g && g.state === 'bad') { missAfter(t, now, g); out.missed.push(t.id); continue; }
+      const p = g ? g : predecessorState(t.after, { policy: t.after.policy, now, isLive });
       if (!t.forced) {
         if (p.state === 'waiting') { out.waiting.push(t.id); continue; }
         if (p.state !== 'ok') { missAfter(t, now, p); out.missed.push(t.id); continue; }

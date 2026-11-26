@@ -141,3 +141,38 @@ test('a plan with no Covers line keeps the first-mention rule', () => {
   const c = coverageOf(['R-po-1'], '## Steps\n\n- Step 4: R-po-1 is delivered here\n');
   assert.deepEqual(c.items.map((i) => [i.label, i.pass]), [['R-po-1 · covered by Step 4', true]]);
 });
+
+// Small runs B3 (D11): every requirement carries one indented `Example:` line under its item.
+const WITH_EXAMPLES = [
+  '# Requirements',
+  '',
+  '- **R-po-1** A person can export their own runs',
+  '  Example: Ana has 3 runs; Export gives 3 rows.',
+  '- **R-sec-1** Only project members can export',
+  '- **R-ops-1** The export rolls back with the flag',
+  '  Example: turning the flag off hides the button.',
+  '```',
+  '- **R-arch-1** fenced',
+  '  Example: fenced',
+  '```',
+].join('\n');
+
+test('criteriaExamples: the example per id, null when missing; a fenced or detached Example line counts for nothing', async () => {
+  const { criteriaExamples } = await import('../src/shared/review/coverage.mjs');
+  const ex = criteriaExamples(WITH_EXAMPLES);
+  assert.deepEqual([...ex], [['R-po-1', 'Ana has 3 runs; Export gives 3 rows.'], ['R-sec-1', null], ['R-ops-1', 'turning the flag off hides the button.']]);
+  assert.equal(criteriaExamples('- **R-po-1** x\n\n  Example: too far').get('R-po-1'), null, 'not directly under its item');
+});
+
+test('criteriaCheck requireExamples: one failing no-example row per missing example; without it, today\'s result', () => {
+  const on = criteriaCheck(WITH_EXAMPLES, { requireExamples: true });
+  const failing = on.items.filter((i) => !i.pass);
+  assert.deepEqual(failing, [{ id: 'R-sec-1', label: 'R-sec-1 · Only project members can export', pass: false, code: 'no-example', detail: 'no example yet' }]);
+  assert.equal(on.ok, false);
+  assert.equal(on.items.find((i) => i.id === 'R-po-1').example, 'Ana has 3 runs; Export gives 3 rows.');
+  assert.equal(on.items.find((i) => i.id === 'R-sec-1' && i.pass).example, null);
+  const off = criteriaCheck(WITH_EXAMPLES);
+  assert.equal(off.ok, true);
+  assert.equal(off.items.some((i) => 'example' in i || i.code), false);
+  assert.deepEqual(criteriaCheck(REQS), criteriaCheck(REQS, { requireExamples: false }));
+});

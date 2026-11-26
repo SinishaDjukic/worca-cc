@@ -2,7 +2,7 @@ import { icon } from './icons.mjs';
 import { renderInheritField, readDirtyFields, readInheritField, inheritText, formatPair } from './inherit-field.mjs';
 import { engineLabel, engineChoiceLabel, isBetaEngine, ENGINE_NAMES, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES, ENGINES } from '../../src/shared/engine-switch.mjs';
 import { applyEngineLocks, engineLock } from './engine-locks.mjs';
-import { MODEL_ROLES, ROLE_LABELS, ROLE_HINTS, ROLE_HARNESSES, roleOfSettingId } from '../../src/shared/model-roles.mjs';
+import { MODEL_ROLES, ROLE_LABELS, ROLE_HINTS, ROLE_HARNESSES, roleOfSettingId, decidesLabel, toolDecidesText, isCliDecides } from '../../src/shared/model-roles.mjs';
 const roleLabelText = (role) => `From ${ROLE_LABELS[role]}`;
 // The own-sign-in engines have no effort flag, except Goose and OpenCode.
 export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']),
@@ -223,7 +223,7 @@ const ROLES_HOST = new WeakMap();
 /** The role picks (the setup assistant): per harness, one model + effort row per role. Binds its
  *  listeners once per host. `engines`: the harnesses to show (every engine with roles by default; the setup assistant
  *  passes the ready ones); `switchLevel`: the engine switch's level (Expert by default; the setup assistant passes null, every level). */
-export function renderRolesSection(host, { roles = {}, catalog = [], engine = 'claude', engines = ROLE_HARNESSES, switchLevel = 'expert', status = null, onChange = null } = {}) {
+export function renderRolesSection(host, { roles = {}, catalog = [], engine = 'claude', engines = ROLE_HARNESSES, switchLevel = 'expert', status = null, onChange = null, roleDefaults = null, claudeAuth = 'unknown' } = {}) {
   const doc = host.ownerDocument; host.replaceChildren();
   const shown = ROLE_HARNESSES.filter((h) => engines.includes(h));
   if (!shown.length) shown.push('claude');
@@ -237,8 +237,16 @@ export function renderRolesSection(host, { roles = {}, catalog = [], engine = 'c
     panel.className = 'roles-engine'; panel.dataset.engine = h;
     panel.append(Object.assign(doc.createElement('h3'), { className: 'engine-card-name', textContent: engineLabel(h) }));
     for (const r of MODEL_ROLES) {
+      // #1450: an empty role runs Worca's default on Claude Code (signed in or unknown) and Codex; elsewhere the tool decides.
+      const dflt = roleDefaults && !(h === 'claude' && claudeAuth === 'signed-out') ? roleDefaults?.[h]?.[r]?.model : null;
+      const tool = h === 'codex' ? 'Codex' : engineLabel(h);
+      const defaultLabel = !roleDefaults ? "each job's own default"
+        : dflt ? `Worca's default (${catalog.find((m) => m?.id === dflt)?.label || dflt})` : toolDecidesText(engineLabel(h));
       const el = renderInheritField(doc, { id: `models.${h}.roles.${r}`, label: ROLE_LABELS[r], hint: ROLE_HINTS[r], kind: 'model', level: 'user', engine: h,
-        catalog, efforts: ENGINE_EFFORTS[h], own: roles?.[h]?.[r], inherited: { value: undefined, source: 'default' }, defaultLabel: "each job's own default" });
+        catalog, efforts: ENGINE_EFFORTS[h], own: roles?.[h]?.[r], inherited: { value: undefined, source: 'default' }, defaultLabel,
+        // A saved "Let <tool> decide" always keeps its option (Claude Code signed out has no default to offer it over):
+        // without it the select would read empty and the next change would clear the stored choice.
+        ...(dflt || isCliDecides(roles?.[h]?.[r]) ? { decideLabel: decidesLabel(tool) } : {}) });
       const clear = el.querySelector('.inherit-clear');
       if (clear) { clear.replaceChildren(icon(doc, 'x', 14)); clear.setAttribute('aria-label', `Clear ${ROLE_LABELS[r]}`); clear.title = 'Clear: each job uses its own default'; }
       panel.append(el);

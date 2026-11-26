@@ -168,3 +168,52 @@ test('buildCheckRows: state dropped draws the none icon with aria-label dropped;
   assert.equal(rows[3].querySelector('.plan-check-detail').textContent, 'covered by the diff');
   assert.equal(buildCheckFold(doc, ledger, 'Requirements').line.textContent.replace('›', ''), 'Requirements 3/4 · 1 to fix');
 });
+
+// Small runs B3 (D19): a row's `note` (its example) shows on a passing row too; the screen reader then hears the id only.
+test('buildCheckRows note: shown on a passing row; .sr-only is the id only; without note the rows are unchanged', () => {
+  const [row] = buildCheckRows(doc, { items: [{ id: 'R-po-1', label: 'Export runs', pass: true, note: 'e.g. Ana exports 3 runs', tip: 'R-po-1 · e.g. Ana exports 3 runs' }] });
+  assert.equal(row.querySelector('.plan-check-detail').textContent, 'e.g. Ana exports 3 runs');
+  assert.equal(row.querySelector('.sr-only').textContent, 'R-po-1');
+  assert.equal(row.title, 'R-po-1 · e.g. Ana exports 3 runs');
+  const plain = { id: 'R-po-1', label: 'Export runs', pass: true, detail: 'ignored on a pass', tip: 'R-po-1' };
+  const [a] = buildCheckRows(doc, { items: [plain] });
+  assert.equal(a.querySelector('.plan-check-detail'), null);
+  assert.equal(a.querySelector('.sr-only').textContent, 'R-po-1');
+  const [q] = buildCheckRows(doc, { items: [{ id: 'R-sec-1', label: 'x', pass: true, note: 'in question: the decision above', mark: '?' }] });
+  assert.equal(q.querySelector('.plan-check-mark').textContent, '?');
+});
+
+test('a row item with an `action` ends with that button; a row without one is unchanged', () => {
+  const action = doc.createElement('button');
+  action.textContent = 'Ask the role to confirm';
+  const [withAction, plain] = buildCheckRows(doc, { items: [{ ...item('a', false, 'why'), action }, item('b', false, 'why')] });
+  assert.equal(withAction.lastElementChild, action);
+  const [ref] = buildCheckRows(doc, { items: [item('b', false, 'why')] });
+  assert.equal(plain.outerHTML, ref.outerHTML);
+  assert.equal(plain.querySelector('button'), null);
+});
+
+test('checkMark wait: the box holds one wrapped dev status dot (the grey waiting ring), no own ring and no text', async () => {
+  const { checkMark } = await import('../ui/public/shape/check-row.mjs');
+  const mark = checkMark(doc, 'wait');
+  assert.ok(mark.matches('.plan-check-mark.is-wait'));
+  assert.equal(mark.children.length, 1);
+  assert.ok(mark.firstElementChild.matches('span.status-dot.is-grey-ring'));
+  assert.equal(mark.firstElementChild.dataset.state, 'waiting');
+  assert.equal(mark.textContent, '');
+});
+
+// The feature page's Requirements rows: their hooks and the run link come from the builder, never from a post-pass.
+test('buildCheckRows: data fills the row\'s dataset, without the null and undefined ones', () => {
+  const [row, bare] = buildCheckRows(doc, { items: [{ ...item('a', true), data: { key: 'R-po-1', owner: 'run 2', role: null, x: undefined } }, item('a', true)] });
+  assert.deepEqual({ ...row.dataset }, { key: 'R-po-1', owner: 'run 2' });
+  for (const k of ['key', 'owner']) delete row.dataset[k];
+  assert.equal(row.outerHTML, bare.outerHTML, 'without data the row is as before');
+});
+
+test('buildCheckRows: noteLead starts the note with a link, then the note', () => {
+  const [row] = buildCheckRows(doc, { items: [{ ...item('a', true), idCol: true, note: 'met', noteLead: { text: 'run 2', href: '#running/r2' } }] });
+  assert.equal(row.querySelector('.plan-check-detail').outerHTML, '<span class="plan-check-detail"><a class="rd-fact-link" href="#running/r2">run 2</a> · met</span>');
+  const [plain] = buildCheckRows(doc, { items: [{ ...item('a', true), idCol: true, note: 'run 2 · met' }] });
+  assert.equal(plain.querySelector('.plan-check-detail').outerHTML, '<span class="plan-check-detail">run 2 · met</span>');
+});

@@ -264,6 +264,8 @@ async function openWithFeatureCard(card, runBodies, runReply = () => ({ ok: true
       if (url === '/api/projects') return json({ projects: [{ name: 'proj', path: '/repos/proj', exists: true }] });
       if (url === '/api/workflows') return json({ workflows: [{ id: 'wf_default', name: 'Default' }] });
       if (url === '/api/guardrails') return json({ guardrails: [{ id: 'normal', name: 'Normal' }] });
+      // Chat runs: source branch: Current (checked out), so a branchless card starts as today.
+      if (url.startsWith('/api/run-defaults')) return json({ chatSourceBranch: { mode: 'current', source: 'default', needs: [] } });
       return json({});
     },
   });

@@ -3,7 +3,8 @@
 // header, then the operator's name, then 'local'. Nothing is ever guessed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveIdentity, startedByOf, prAttributionFooter } from '../src/core/identity.mjs';
+import * as identity from '../src/core/identity.mjs';
+import { resolveIdentity, startedByOf } from '../src/core/identity.mjs';
 
 const req = ({ user, headers = {} } = {}) => ({ worcaUser: user, headers });
 
@@ -32,9 +33,8 @@ test('values that could break a line or markup are refused, not cleaned up', () 
   assert.equal(resolveIdentity(req({ headers: { 'x-user': ['one@example.com', 'two@example.com'] } }), { WORCA_IDENTITY_HEADER: 'X-User' }).name, 'one@example.com');
 });
 
-test('the PR footer names the person, and nobody for local or unknown', () => {
-  assert.equal(prAttributionFooter('ada@example.com'), '\n\n---\nStarted by ada@example.com via worca');
-  for (const none of ['local', null, undefined, '', 'a\nb']) assert.equal(prAttributionFooter(none), '');
+test('no PR footer helper: PR bodies name nobody', () => {
+  assert.equal('prAttributionFooter' in identity, false);
 });
 
 test('actorOf, isSharedIdentity and chatActor', async () => {

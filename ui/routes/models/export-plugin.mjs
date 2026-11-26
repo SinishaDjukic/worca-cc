@@ -3,6 +3,7 @@
 import { effortsForEngine, modelEnvRef } from '../../../src/core/model-env.mjs';
 import { PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE, normalizeManifest } from '../../../src/core/plugin-manifest.mjs';
 import { listGlobalModels } from '../../../src/core/settings.mjs';
+import { isVaultRef } from '../../../src/core/secrets/refs.mjs';
 import { isSecretHeaderName } from '../../../src/shared/secret-names.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -52,7 +53,7 @@ app.post('/api/models/export-plugin', async (req, res) => {
   // left out and named; a whole-value ${VAR} key or header stays.
   const shareableUpstream = (id, upstream) => {
     const out = { ...upstream };
-    if (out.apiKey && !modelEnvRef(out.apiKey)) {
+    if (out.apiKey && !modelEnvRef(out.apiKey)) {   // a literal key or a vault reference
       delete out.apiKey;
       omitted.push({ id, what: 'provider key' });
     }
@@ -91,7 +92,12 @@ app.post('/api/models/export-plugin', async (req, res) => {
     for (const [k, mode] of Object.entries(modes)) {
       if (!entry.env || !(k in entry.env)) return badRequest(res, `model ${JSON.stringify(entry.id)} has no env key ${JSON.stringify(k)}`);
       if (mode === 'omit') continue;
-      if (mode === 'include') { env[k] = entry.env[k]; continue; }
+      if (mode === 'include') {
+        // A vault reference is omitted like a literal provider key: it means nothing on another machine.
+        if (isVaultRef(entry.env[k])) omitted.push({ id: entry.id, what: `env ${k}` });
+        else env[k] = entry.env[k];
+        continue;
+      }
       if (mode === 'secret') {
         const skey = secretKeyFor(k);
         if (!skey) return badRequest(res, `cannot derive a secret key from ${JSON.stringify(k)}`);

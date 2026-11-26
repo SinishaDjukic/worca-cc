@@ -6,12 +6,13 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   rowTime, whenLabel, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
-  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, dateBucket, DATE_BUCKETS, DAY_BUCKETS, dayBucket, isFolded, setFolded, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd, memberLine,
+  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, dateBucket, DATE_BUCKETS, DAY_BUCKETS, dayBucket, isFolded, setFolded, listLine, groupRow, rowShow, groupCostUsd, costTitle, memberCostUsd, memberLine,
 } from '../ui/public/runs-list.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
 import * as RL from '../ui/public/runs-list.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
+import { fmtUsd } from '../ui/public/graph/run-decor.mjs';
 
 const NOW = new Date(2026, 8, 30, 15, 0).getTime();           // Wed Sep 30 2026, 15:00 local
 const at = (d, h, m) => new Date(2026, 8, d, h, m).toISOString();
@@ -785,8 +786,8 @@ test('#1067 a staged row\'s fill moves in place: the state replay after a first 
 });
 
 // ── PR fix rounds stack under their run (plans/pr-fix-rounds-stacking-plan.md, Tasks 1, 3, 4) ──
-const PR947 = { url: 'https://github.com/SinishaDjukic/worca-cc/pull/947', number: 947, state: 'OPEN', mergeable: 'CONFLICTING' };
-const REVIEW = (n) => ({ url: `https://github.com/SinishaDjukic/worca-cc/pull/${n}`, number: n, state: 'OPEN', mergeable: 'MERGEABLE' });
+const PR947 = { url: 'https://github.com/worca-org/worca/pull/947', number: 947, state: 'OPEN', mergeable: 'CONFLICTING' };
+const REVIEW = (n) => ({ url: `https://github.com/worca-org/worca/pull/${n}`, number: n, state: 'OPEN', mergeable: 'MERGEABLE' });
 const marker = (n, extra = {}) => ({ pipelineId: 'ba22d7fd', round: n, request: 'merge dev in', by: 'watch', kinds: ['conflicts'],
   outcome: { kind: 'pushed', sha: `${n}e4f5a6` }, ...extra });
 // Round n: done, its own PR chip on #947 (attachPr), finished on Sep (20 + n).
@@ -1006,4 +1007,290 @@ test('rowMenuPrs: two repos with one name are told apart by their owner', () => 
 test('rowMenuPrs: a group member row reads its raw run\'s member PRs', () => {
   const g = RL.groupRow({ id: 'g1', members: [{ run: { status: 'done', memberPrs: [WSPR('repo-a', 12), WSPR('repo-b', 34)] } }] });
   assert.deepEqual(RL.rowMenuPrs(g.members[0]).map((p) => p.repo), ['repo-a', 'repo-b']);
+});
+
+// ── D2 · a Shaper small-runs feature (smallRuns: true): the cost said once, one-line `.srows` members ──
+const TEN = Array.from({ length: 10 }, (_, i) => `sr${i + 1}`);
+const smallFeature = (extra = {}) => ({ id: 'feat_small', groupKind: 'feature', title: 'Ten runs', smallRuns: true,
+  cost: { usd: 4.12, byPipeline: Object.fromEntries(TEN.map((id, i) => [id, i < 3 ? 1.37 : 0.01])) },
+  members: TEN.map((id, i) => ({ position: i + 1, title: `Slice ${i + 1}`, pipelineId: id, kind: 'hist', run: { status: i < 3 ? 'done' : 'error' } })),
+  ...extra });
+const smallHost = (g, open = false) => {
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, buildRunsModel({ history: TEN.map((id) => histIt(id, { run: { status: 'done' } })), groups: [g],
+    toggled: new Map([[`chain:${g.id}`, open]]), now: NOW })));
+  return host;
+};
+
+test('D2 (D2): a marked group row says its cost once, as visible text after the count, and its anchor has no cost title', () => {
+  const g = smallFeature();
+  const host = smallHost(g);
+  const rows = host.querySelectorAll('.runs-item[data-row-key="chain:feat_small"]');
+  assert.equal(rows.length, 1);
+  const a = rows[0].querySelector(':scope > a.runs-row-chain');
+  assert.ok(a);
+  assert.equal(host.querySelectorAll('.runs-row-chain').length, 1);
+  const cost = a.querySelectorAll('.runs-row-right > .runs-cost');
+  assert.equal(cost.length, 1);
+  assert.equal(cost[0].className, 'runs-cost mono');
+  assert.equal(groupCostUsd(g), 4.18);
+  assert.equal(cost[0].textContent, fmtUsd(4.18));
+  assert.equal(groupRow(g, { now: NOW }).smallRuns, true);
+  assert.equal(cost[0].previousElementSibling.className, 'runs-count');
+  assert.equal(a.hasAttribute('title'), false, 'the cost is said once: no hover title');
+});
+
+test('D2 (D2): an unmarked group row keeps the cost title and has no .runs-cost', () => {
+  const { smallRuns, ...plain } = smallFeature();
+  assert.equal(smallRuns, true);
+  const host = smallHost(plain);
+  const a = host.querySelector('.runs-item[data-row-key="chain:feat_small"] > a.runs-row-chain');
+  assert.match(a.getAttribute('title'), /^Group total \$/);
+  assert.equal(host.querySelector('.runs-cost'), null);
+  assert.equal(groupRow(plain, { now: NOW }).smallRuns, undefined);
+  assert.equal('smallRuns' in groupRow(plain, { now: NOW }), false);
+});
+
+test('D2 (D4): expanded, a marked group lists 10 member rows in .runs-members.srows, numbered 1 to 10', () => {
+  const host = smallHost(smallFeature(), true);
+  const list = host.querySelector('.runs-item[data-row-key="chain:feat_small"] > .runs-members');
+  assert.equal(list.className, 'runs-members srows');
+  const titles = [...list.querySelectorAll(':scope > .runs-item[data-level="member"] .runs-row-title')].map((t) => t.textContent);
+  assert.equal(titles.length, 10);
+  assert.equal(titles[0], '1 · Slice 1');
+  assert.equal(titles[9], '10 · Slice 10');
+  for (const it of list.querySelectorAll(':scope > .runs-item')) assert.equal(it.querySelectorAll(':scope > .runs-pick > .status-dot').length, 1);
+  const { smallRuns, ...plain } = smallFeature();
+  assert.equal(smallRuns, true);
+  assert.equal(smallHost(plain, true).querySelector('.runs-members').className, 'runs-members', 'unmarked: dev\'s class');
+});
+
+test('D2 (owner direction): a marked group\'s member rows say the card\'s short word; an unmarked group keeps dev\'s line', () => {
+  const g = smallFeature({ members: TEN.map((id, i) => (i < 9
+    ? { position: i + 1, title: `Slice ${i + 1}`, pipelineId: id, kind: 'hist', run: { status: 'done' } }
+    : { position: 10, title: 'Slice 10', ticketId: 't10', kind: 'sched', run: { ticket: { status: 'scheduled', after: { index: 9 } } } })) });
+  const subs = (host) => [...host.querySelectorAll('.runs-members > .runs-item[data-level="member"] > a.runs-row > .runs-row-sub')].map((s) => s.textContent);
+  const marked = subs(smallHost(g, true));
+  assert.equal(marked.length, 10);
+  assert.deepEqual(marked.slice(0, 9), Array(9).fill('done'));
+  assert.equal(marked[9], 'waits for run 9');
+  const { smallRuns, ...plain } = g;
+  assert.equal(smallRuns, true);
+  const dev = subs(smallHost(plain, true));
+  assert.match(dev[0], /^Ready to ship/, 'unmarked: dev\'s long line');
+  // A live marked member with a Care plan reads the run's word (the snapshot runsGroupItem attaches).
+  const live = smallFeature({ members: [{ position: 1, title: 'Slice 1', pipelineId: 'sr1', kind: 'hist', run: { status: 'running' },
+    snap: { status: 'running', stepper: { careRun: { planReviewers: [] } }, active: [{ nodeId: 'n_impl' }] } }] });
+  assert.equal(subs(smallHost(live, true))[0], 'building');
+});
+
+test('D2 (correctness-2-1): a live marked member waiting for an answer reads "waiting for you", never its working word', async () => {
+  const subs = (host) => [...host.querySelectorAll('.runs-members > .runs-item[data-level="member"] > a.runs-row > .runs-row-sub')].map((s) => s.textContent);
+  const member = (pendingQuestion) => smallFeature({ members: [{ position: 1, title: 'Slice 1', pipelineId: 'sr1', kind: 'hist',
+    run: { status: 'running', pendingQuestion },
+    snap: { status: 'running', pendingQuestion, stepper: { careRun: { planReviewers: [] } }, active: [{ nodeId: 'n_impl' }] } }] });
+  assert.equal(subs(smallHost(member({ stop: { reason: 'objection' } }), true))[0], 'waiting for you');
+  // A plain question (no stop): the card has no word for it, so the row keeps dev's line, not 'building'.
+  assert.notEqual(subs(smallHost(member({ kind: 'clarify' }), true))[0], 'building');
+  // runsGroupItem (app.js) attaches the run's pendingQuestion to the snapshot, as the run page's Agents panel does.
+  const { readFileSync } = await import('node:fs');
+  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /\{ snap: \{ \.\.\.snapshotFromState\(r\), pendingQuestion: r\.pendingQuestion \|\| null \} \}/);
+});
+
+test('D2 (D4): a marked member with fix rounds still renders its .runs-rounds-line', () => {
+  const m = buildRunsModel({ history: HIST947, groups: [{ ...FEATURE, smallRuns: true }], toggled: new Map([['chain:feat_flag', true]]), now: NOW });
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m));
+  const list = host.querySelector('.runs-members.srows');
+  assert.ok(list);
+  assert.ok(list.querySelector('.runs-item[data-level="member"] .runs-rounds-line'));
+});
+
+test('D2 (D4): truncation order in a marked group: the title ellipsizes first, the short line word and the PR chip stay', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const body = (sel) => css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
+  // (0,3,0) beats dev's (0,2,0) `.runs-members .runs-row-sub{flex:0 1000 auto}` and the title's min-width:50%.
+  assert.match(body('.srows.runs-members .runs-row-title'), /min-width:0/);
+  assert.match(body('.srows.runs-members .runs-row-sub'), /flex:none/);
+  // The right column (the PR chip) keeps its width: the title's min-width:0 takes the overflow, so the chip's word never
+  // collapses before the title has finished ellipsizing (webui cycle 2: "In review" shrank to 3px of 53px).
+  assert.match(body('.srows.runs-members .runs-row-right'), /flex:none/);
+});
+
+// ── fail closed: a small-runs feature with an owner-less requirement (hold) is done but not ready to ship ──
+test('a held small-runs feature row says the reason, never "Ready to ship", and is not in the Ready filter', () => {
+  const hold = 'R-ops-1 is owned by no run and confirmed by no person';
+  const done = smallFeature({ members: TEN.slice(0, 2).map((id, i) => ({ position: i + 1, title: `Slice ${i + 1}`, pipelineId: id, kind: 'hist', run: { status: 'done' } })) });
+  const shows = (g, show) => rowShow(groupRow(g, { now: NOW }), show);
+  const row = (g) => smallHost(g).querySelector('.runs-item[data-row-key="chain:feat_small"] > a.runs-row');
+  assert.match(row(done).textContent, /Ready to ship/);
+  assert.equal(shows(done, 'ready'), true);
+  const a = row({ ...done, hold });
+  assert.ok(a.textContent.includes(hold), a.textContent);
+  assert.doesNotMatch(a.textContent, /Ready to ship/);
+  assert.equal(shows({ ...done, hold }, 'ready'), false);
+  assert.equal(shows({ ...done, hold }, 'finished'), true, 'still listed as finished');
+});
+
+test('item 7: a small-runs member reads the card\'s word from its slice: waiting for you, after run 9, waits for run 8; no slice: dev\'s line', () => {
+  const subs = (host) => [...host.querySelectorAll('.runs-members > .runs-item[data-level="member"] > a.runs-row > .runs-row-sub')].map((s) => s.textContent);
+  const ask = { kind: 'plan', plan: {}, stop: { reason: 'check' } };
+  const mb = (over) => ({ position: 2, title: 'Slice 2', pipelineId: 'sr2', kind: 'hist', run: { status: 'running', pendingQuestion: ask }, ...over });
+  const first = { position: 1, title: 'Slice 1', pipelineId: 'sr1', kind: 'hist', run: { status: 'done' } };
+  const word = (over) => subs(smallHost(smallFeature({ members: [first, mb(over)] }), true)).at(-1);
+  assert.equal(word({ snap: { status: 'running', pendingQuestion: ask } }), 'waiting for you', 'a stop on a run without a Care plan');
+  assert.equal(word({ slice: { stop: { reason: 'check', held: false } } }), 'waiting for you');
+  assert.equal(word({ slice: { stop: { reason: 'check', held: true, after: 9 } } }), 'after run 9');
+  const waits = { pipelineId: null, ticketId: 't1', kind: 'sched', run: { ticket: { status: 'scheduled', after: { index: 4 } } } };
+  assert.equal(word({ ...waits, slice: { waitsFor: 8 } }), 'waits for run 8');
+  assert.equal(word({ ...waits }), 'waits for run 4', 'no slice: the chain predecessor');
+  assert.match(word({}), /^Needs you/, 'no slice and no snapshot: dev\'s line');
+});
+
+// ── Shaper small runs s5 (R-arch-1, R-ux-6): a small-runs member row takes word and mark from the shared run status ──
+const S5_STOP = { reason: 'check', held: false };
+/** A feature member at position `n` with its slice payload; a started run is a saved row, else a scheduled ticket. */
+function s5Member(n, slice, over = {}) {
+  const started = !['planned', 'held'].includes(slice.state);
+  const base = started
+    ? { pipelineId: `sr${n}`, ticketId: null, kind: 'hist', run: { status: slice.state === 'done' ? 'done' : slice.state === 'error' ? 'error' : 'running' } }
+    : { pipelineId: null, ticketId: `t${n}`, kind: 'sched', run: { ticket: { status: 'scheduled' } } };
+  return { position: n, title: `Slice ${n}`, ...base, slice: { kind: null, waitsFor: [], buildsOn: [], ...slice }, ...over };
+}
+const s5Ask = (stop) => ({ status: 'running', pendingQuestion: { id: 'q', kind: 'gate', stop } });
+const S5_CARE_SNAP = { status: 'running', stepper: { careRun: { planReviewers: [] } }, active: [{ nodeId: 'n_impl' }] };
+const S5_STAGED = { status: 'running', steps: [{ nodeId: 'n' }], active: ['n'], stepper: { auto: { status: 'deciding' } } };   // #1012: stages, at Plan
+/** Position → member row (.runs-item) of the open feature group. */
+const s5Items = (host) => new Map([...host.querySelectorAll('.runs-members > .runs-item[data-level="member"]')]
+  .map((it) => [Number.parseInt(it.querySelector(':scope > a.runs-row > .runs-row-title').textContent, 10), it]));
+const s5Sub = (it) => it.querySelector(':scope > a.runs-row > .runs-row-sub').textContent;
+const s5Dot = (it) => it.querySelector(':scope > .runs-pick > .status-dot');
+const s5Draw = (members, over = {}) => s5Items(smallHost(smallFeature({ members, ...over }), true));
+
+const s5Words = () => [
+  s5Member(1, { state: 'done' }),
+  s5Member(2, { state: 'approval', stop: S5_STOP, buildsOn: [1] }, { run: s5Ask(S5_STOP) }),
+  s5Member(3, { state: 'running', buildsOn: [1] }, { snap: S5_CARE_SNAP }),
+  s5Member(4, { state: 'held', stop: { reason: 'check', held: true, after: 3 }, buildsOn: [1, 3] },
+    { pipelineId: 'sr4', ticketId: null, kind: 'hist', run: s5Ask({ reason: 'check' }) }),
+  s5Member(5, { state: 'error', buildsOn: [3, 4] }),
+  s5Member(7, { state: 'planned', waitsFor: [2, 3, 4, 5], buildsOn: [1, 2, 3, 4, 5] }),
+  s5Member(9, { state: 'planned', nextTurn: true }),
+  s5Member(10, { state: 'planned', waitsFor: [3], buildsOn: [3] }),
+  s5Member(12, { state: 'planned', waitsFor: [7, 10], buildsOn: [1, 7, 10] }),
+  s5Member(13, { state: 'planned' }),
+];
+
+test('s5 sidebar: members with slices read runStatus\'s word and mark', () => {
+  const items = s5Draw(s5Words());
+  const rows = [
+    [1, 'done', 'done', 'is-green', null],
+    [2, 'waiting for you', 'ask', 'is-amber', 'question'],
+    [3, 'building', 'live', 'is-pulse', null],
+    [4, 'after run 3', 'after', 'is-dashed-ring', null],
+    [5, 'failed', 'failed', 'is-red', 'alert'],
+    [7, 'waits for run 2 (needs you), 5 (failed)', 'faint', 'is-grey-ring', null],
+    [9, 'next', 'ring', 'is-ink-ring', null],
+    [10, 'waits for run 3', 'faint', 'is-grey-ring', null],
+    [12, 'waits for run 7, 10', 'faint', 'is-grey-ring', null],
+    [13, '', 'ring', 'is-grey-ring', null],
+  ];
+  for (const [n, word, mark, cls, symbol] of rows) {
+    const it = items.get(n);
+    assert.equal(s5Sub(it), word, `run ${n} word`);
+    assert.equal(it.dataset.mark, mark, `run ${n} data-mark`);
+    assert.ok(s5Dot(it).classList.contains(cls), `run ${n} dot ${s5Dot(it).className}`);
+    assert.equal(s5Dot(it).dataset.symbol ?? null, symbol, `run ${n} symbol`);
+  }
+});
+
+test('s5 sidebar: data-state-word and data-line stay dev\'s model values (D4); a member without a slice keeps dev\'s row', () => {
+  const members = [...s5Words(), { position: 14, title: 'Slice 14', pipelineId: null, ticketId: 't14', kind: 'sched', run: { ticket: { status: 'scheduled', after: { index: 13 } } } }];
+  const items = s5Draw(members);
+  const dev = s5Draw(members.map(({ slice, ...m }) => m));
+  assert.equal(items.get(5).dataset.mark, 'failed', 'the shared status is on');
+  for (const [n, it] of items) {
+    assert.equal(it.dataset.stateWord, dev.get(n).dataset.stateWord, `run ${n} state word`);
+    assert.equal(it.querySelector(':scope > a.runs-row').dataset.line, dev.get(n).querySelector(':scope > a.runs-row').dataset.line, `run ${n} line`);
+  }
+  assert.equal(items.get(14).dataset.mark, undefined);
+  assert.equal(items.get(14).outerHTML, dev.get(14).outerHTML);
+});
+
+test('s5 sidebar (R-ux-6): the strips are as before, with run 12 reading "waits for run 7, 10"', () => {
+  const members = (state, pendingQuestion = null) => [
+    s5Member(1, { state: 'done' }),
+    s5Member(3, { state, buildsOn: [1] }, { kind: 'live', run: { ...S5_STAGED, ...(pendingQuestion ? { pendingQuestion } : {}) },
+      snap: { ...S5_CARE_SNAP, pendingQuestion } }),
+    s5Member(7, { state: 'planned', waitsFor: [3], buildsOn: [3] }),
+    s5Member(10, { state: 'planned', waitsFor: [3], buildsOn: [3] }),
+    s5Member(12, { state: 'planned', waitsFor: [7, 10], buildsOn: [1, 7, 10] }),
+  ];
+  const cases = [
+    ['a building run', members('running'), 'building', 'live', 'is-pulse'],
+    ['a run waiting for an answer', members('questions', { id: 'q', questions: [{ id: 'q1', question: 'Which?' }] }), 'waiting for you', 'ask', 'is-amber'],
+  ];
+  for (const [name, list, word, mark, cls] of cases) {
+    const items = s5Draw(list);
+    const before = s5Draw(list.map(({ slice, ...m }) => m));
+    const stage = (m) => m.get(3).querySelector(':scope > a.runs-row > .runs-stage');
+    assert.ok(stage(before), `${name}: dev draws the strips`);
+    assert.equal(stage(items).outerHTML, stage(before).outerHTML, `${name}: the same strips`);
+    assert.deepEqual([...stage(items).querySelectorAll('.run-prog-mark')].map((x) => x.textContent), ['Plan', 'Build', 'Review', 'Ready'], name);
+    assert.equal(stage(items).dataset.mode, 'stages', name);
+    assert.equal(items.get(3).querySelectorAll('.runs-stage').length, 1, name);
+    assert.equal(s5Sub(items.get(3)), word, name);
+    assert.equal(items.get(3).dataset.mark, mark, name);
+    assert.ok(s5Dot(items.get(3)).classList.contains(cls), `${name}: ${s5Dot(items.get(3)).className}`);
+    assert.equal(s5Sub(items.get(12)), 'waits for run 7, 10', name);
+  }
+});
+
+test('s5 sidebar flag off: a marked group whose members carry no slice keeps today\'s lines and no data-mark; an unmarked group ignores slices', () => {
+  const members = [
+    { position: 1, title: 'Slice 1', pipelineId: 'sr1', kind: 'hist', run: { status: 'done' } },
+    { position: 2, title: 'Slice 2', pipelineId: null, ticketId: 't2', kind: 'sched', run: { ticket: { status: 'scheduled', after: { index: 1 } } } },
+  ];
+  // Flag off the server marks no group and sends no slice (listRunGroups).
+  const { smallRuns, ...off } = smallFeature({ members });
+  assert.equal(smallRuns, true);
+  const host = smallHost(off, true);
+  const rows = s5Items(host);
+  assert.match(s5Sub(rows.get(1)), /^Ready to ship/);
+  assert.equal(s5Sub(rows.get(2)), 'Waiting · starts after run 1');
+  assert.equal(host.querySelector('.runs-item[data-mark]'), null);
+  // A marked group whose members carry no slice: the short words of today, no data-mark.
+  const marked = smallHost(smallFeature({ members }), true);
+  assert.deepEqual([...s5Items(marked).values()].map(s5Sub), ['done', 'waits for run 1']);
+  assert.equal(marked.querySelector('.runs-item[data-mark]'), null);
+  // D3: an unmarked group stays dev's even if a member carries a slice.
+  const sliced = smallHost({ ...off, members: members.map((m) => ({ ...m, slice: { state: m.position === 1 ? 'done' : 'planned', nextTurn: m.position === 2 } })) }, true);
+  assert.deepEqual([...s5Items(sliced).values()].map(s5Sub), [...rows.values()].map(s5Sub));
+  assert.equal(sliced.querySelector('.runs-item[data-mark]'), null);
+});
+
+test('s5 sidebar: a null word falls back to memberShortWord, then dev\'s line; the dot still carries the mark', () => {
+  const list = [
+    s5Member(1, { state: 'running' }, { kind: 'live', run: S5_STAGED }),
+    s5Member(2, { state: 'planned', cannotStart: { run: 3, reason: 'was canceled' }, waitsFor: [8] }),
+  ];
+  const items = s5Draw(list);
+  const dev = s5Draw(list.map(({ slice, ...m }) => m));
+  assert.equal(s5Sub(items.get(1)), s5Sub(dev.get(1)), 'a live run with no snapshot keeps today\'s staged line');
+  assert.equal(items.get(1).querySelector('.runs-stage').outerHTML, dev.get(1).querySelector('.runs-stage').outerHTML);
+  assert.equal(items.get(1).dataset.mark, 'live');
+  assert.equal(s5Sub(items.get(2)), 'waits for run 8', 'a run that cannot start keeps memberShortWord');
+  assert.equal(items.get(2).dataset.mark, 'faint');
+  assert.ok(s5Dot(items.get(2)).classList.contains('is-grey-ring'));
+});
+
+test('s5 sidebar words (D7): the ask word reads --amber-ink and the failed word --red-ink; no other word is coloured', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = (mark) => css.split('}').find((r) => r.includes('.srows.runs-members') && r.includes(`[data-mark="${mark}"]`) && r.includes('.runs-row-sub')) || '';
+  assert.match(rule('ask'), /color:\s*var\(--amber-ink\)/);
+  assert.match(rule('failed'), /color:\s*var\(--red-ink\)/);
+  assert.doesNotMatch(css, /\.runs-members[^{}]*\[data-mark="(?:after|ring|faint|done|live)"\][^{}]*\.runs-row-sub[^{}]*\{[^}]*color/);
 });

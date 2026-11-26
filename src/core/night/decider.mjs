@@ -4,6 +4,7 @@ import { decideQuestion, gateRule, workflowRule, recoveryRule, planRule } from '
 import { recoveryDelayMs } from '../recovery-backoff.mjs';
 import { RECOVERY_MAX_AUTO_ATTEMPTS } from '../failure-policy.mjs';
 import { nightNeverDecides } from './config.mjs';
+import { autoPrototypeAnswer } from '../../shared/shape/prototype.mjs';
 
 const agg = (decisions) => ({
   flagged: decisions.some((d) => d.flagged),
@@ -80,6 +81,19 @@ export async function decideAsk(q, env) {
       if (!r) return null;
       return { payload: r.payload, record: { choice: r.payload.decision, strategy: 'rule', confidence: null, flagged: r.flagged, rationale: r.reason,
         reversible: r.payload.decision !== 'approve', ...(r.questions ? { questions: r.questions } : {}), meta: { ask: r.ask } } };
+    }
+    case 'care': {
+      // Shaper small runs B2 (D19): Away takes Worca's Care pick; the server re-derives the rest of the record.
+      const pick = q.care?.pick || {};
+      return { payload: { care: { position: pick.position } }, record: { choice: pick.position, strategy: 'rule', confidence: null,
+        flagged: false, rationale: pick.reason || '', reversible: false } };
+    }
+    case 'prototype': {
+      // Shaper small runs C1 (D19): Away takes Worca's pick for the Prototype step's moment.
+      const payload = autoPrototypeAnswer(q.prototype);
+      if (!payload) return null;
+      return { payload, record: { choice: payload.decision, strategy: 'rule', confidence: null, flagged: false,
+        rationale: `Worca's pick for the prototype (${q.prototype?.moment})`, reversible: false } };
     }
     default: return null;
   }

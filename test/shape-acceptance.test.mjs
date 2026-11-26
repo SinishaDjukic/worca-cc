@@ -89,3 +89,9 @@ test('changesRequirementsBlock lists the agreed ids so criterionIds parses them 
   assert.match(b, /R-sec-2 not met, moved to Run 5/);
   assert.equal(changesRequirementsBlock([], []), '');
 });
+
+test('D1: normalizeAcceptance drops client attribution: an entry with role, by and at keeps only id and mark', () => {
+  const r = normalizeAcceptance([{ id: 'R-po-1', mark: 'met', role: 'compliance', by: 'eve', at: '2026-01-01T00:00:00Z' }], AGREED);
+  assert.equal(r.ok, true);
+  assert.deepEqual(Object.keys(r.entries[0]), ['id', 'mark']);
+});

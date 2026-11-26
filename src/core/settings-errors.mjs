@@ -4,6 +4,7 @@
 // visible label instead of an internal key, plus the path a Settings input carries in
 // data-setting.
 import { FIELD_LABELS as AWAY_LABELS } from '../shared/away-mode/labels.mjs';
+import { CHAT_SOURCE_BRANCH_ID, CHAT_SOURCE_BRANCH_SETTING } from '../shared/chat-source-branch.mjs';
 
 /** Visible labels, keyed by body path. Each must equal the text the Settings UI shows. */
 export const SETTINGS_FIELD_LABELS = Object.freeze({
@@ -15,6 +16,9 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   costLimitResetPeriod: 'Reset period',
   humanRateUsdPerHour: 'Developer rate',
   askMaxTurns: 'Turn limit',
+  execEnv: 'Default execution environment',
+  e2bMaxSandboxes: 'Sandboxes at once',
+  e2bMaxWaitMin: 'Max wait for an answer (min)',
   askMaxBudgetUsd: 'Per-turn cost cap',
   askWeb: 'Web access',
   smartNaming: 'Smart run naming',
@@ -90,6 +94,7 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   hideBuiltinModels: 'Hide built-in models',
   hideBuiltinEngines: 'Hide built-in models',
   chat: 'Chat notifications',
+  [CHAT_SOURCE_BRANCH_ID]: CHAT_SOURCE_BRANCH_SETTING,
   runEngine: 'Default engine',
   stepModels: 'Step models',
   modelRoles: 'Model roles',

@@ -110,3 +110,13 @@ test('buildGraphNodeRows: a pinned row\'s hidden pick is healed against opts.mod
   assert.deepEqual(buildGraphNodeRows(tpl, REG, runConfig, {}).find((r) => r.nodeId === 'n_plan').storedPair, { model: 'claude-fable-5-1', effort: 'max' }, 'no catalog: as stored');
   assert.deepEqual(buildGraphNodeRows(tpl, REG, runConfig, { models: [] }).find((r) => r.nodeId === 'n_rev').storedPair, { model: 'gone-model', effort: 'high' }, 'an empty (failed) catalog condemns nothing');
 });
+
+// Small runs B3 (D3): Compliance never gets a reviewer row: the providers' roles() are unchanged, whatever the flag.
+test('buildRoleRows over wf_shape_req lists 0 Compliance rows', async () => {
+  const { buildRoleRows } = await import('../ui/public/node-tunables.mjs');
+  const { GRAPH_SHAPE_REQ_WORKFLOW } = await import('../src/core/graph/builtin-workflows.mjs');
+  const nodeRows = GRAPH_SHAPE_REQ_WORKFLOW.nodes.filter((n) => n.kind === 'agent').map((n) => ({ nodeId: n.id, label: n.id }));
+  const rows = buildRoleRows(GRAPH_SHAPE_REQ_WORKFLOW, nodeRows, { nodes: {} });
+  assert.ok(rows.length > 0);
+  assert.equal(rows.filter((r) => r.roleKey === 'compliance').length, 0);
+});

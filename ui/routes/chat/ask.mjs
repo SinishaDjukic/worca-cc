@@ -11,9 +11,11 @@ import { withBillTo } from '../../../src/core/billing.mjs';
 import { WORK_ARTIFACT_KIND } from '../../../src/core/no-project-work.mjs';
 import { getWatch, stoppedWatchFact } from '../../../src/core/pr-watch.mjs';
 import { PROXY_AGENT_TEXT } from '../../../src/core/proxy-host.mjs';
+import { SECURITY_BRIDGE_OPS, securityBridgeOp } from '../../../src/core/ask/security-deps.mjs';
 import { isInContainer } from '../../../src/core/remote-access.mjs';
 import { answererProfileFor, chatHomePinsFor, setAnswererProfileFor, setChatHomePinsFor } from '../../../src/core/settings.mjs';
 import { featureOfPipeline } from '../../../src/core/shape/features.mjs';
+import { shaperSmallRunsOn } from '../../../src/core/shape/small-runs.mjs';
 import { roundsOf } from '../../../src/core/shape/rounds.mjs';
 import { isNoProjectKey } from '../../../src/core/store.mjs';
 import { REFS_MAX } from '../../../src/shared/chip-refs.mjs';
@@ -69,11 +71,11 @@ app.put('/api/chat-home/pins', async (req, res) => {
 });
 // The answerer profile (src/shared/answerer.mjs): the lead perspective this person shapes as, keyed like the pins.
 app.get('/api/answerer', (req, res) => {
-  res.json(answererProfileFor(askViewer(req)));
+  res.json(answererProfileFor(askViewer(req), { smallRuns: shaperSmallRunsOn() }));
 });
 app.put('/api/answerer', async (req, res) => {
   try {
-    res.json(await setAnswererProfileFor(askViewer(req), { lead: (req.body || {}).lead }));
+    res.json(await setAnswererProfileFor(askViewer(req), { lead: (req.body || {}).lead }, { smallRuns: shaperSmallRunsOn() }));
   } catch (err) {
     if (err && err.code === 'BAD_LEAD') return res.status(400).json({ error: { code: 'BAD_LEAD', message: err.message } });
     res.status(500).json({ error: String((err && err.message) || err) });
@@ -84,7 +86,7 @@ app.post('/api/ask/proxy', async (req, res) => {
   if (!askProxyBridges.has(String(req.headers['x-worca-ask-proxy'] || ''))) return res.status(403).json({ error: 'proxy: unknown or finished turn' });
   if (agentMayBeCaller(req)) return res.status(403).json({ error: PROXY_AGENT_TEXT, code: 'PROXY_AGENT_BLOCKED' });
   const op = req.body && req.body.op;
-  if (op === 'status') return res.json({ result: proxyHost.chatStatus() });
+  if (op === 'status') return res.json({ result: await proxyHost.chatStatus() });   // a Promise next to the egress sidecar
   if (op === 'test') {
     // proxyHost.test() releases its lock in `finally`; a throw from checkUpstream still needs a JSON reply here
     // (the MCP child reads j.error).
@@ -94,6 +96,12 @@ app.post('/api/ask/proxy', async (req, res) => {
     } catch (err) {
       return res.status(500).json({ error: `the proxy test failed: ${err && err.message ? err.message : String(err)}` });
     }
+  }
+  // The security readers (security-deps.mjs): the posture, the execution environments, a project's sandbox environment,
+  // a live run's sandbox state and the sandbox preflight, answered here where the live state and the backend keys are.
+  if (SECURITY_BRIDGE_OPS.includes(op)) {
+    try { return res.json({ result: await securityBridgeOp(op, req.body || {}, { proxyStatus: () => proxyHost.status(), liveRun: (id) => liveRunEntry(id) }) ?? null }); }
+    catch (err) { return res.status(400).json({ error: String((err && err.message) || err) }); }
   }
   return badRequest(res, 'proxy: unknown op');
 });

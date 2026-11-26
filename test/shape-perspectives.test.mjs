@@ -168,3 +168,30 @@ test('agreedIds: listed, numbering starts after the highest agreed number per pr
   assert.match(block, /`- Step 2 · Covers: R-po-1, R-arch-2`/);
   assert.equal(block.replace(/These requirement ids are already agreed[\s\S]*?Only `Covers:` lines count as coverage\.\n\n/, ''), plain);
 });
+
+// Small runs B3: Compliance is a perspective only under the flag; a stored list keeps it.
+test('perspectivesFor: off deep-equals PERSPECTIVES; on lists Compliance once, after DevOps, and keeps Release', async () => {
+  const { perspectivesFor } = await import('../src/shared/shape/perspectives.mjs');
+  assert.deepEqual(perspectivesFor({ smallRuns: false }), PERSPECTIVES);
+  assert.deepEqual(perspectivesFor(), PERSPECTIVES);
+  assert.equal(PERSPECTIVES.some((p) => p.key === 'compliance'), false);
+  assert.equal(PERSPECTIVE_KEYS.includes('compliance'), false);
+  const on = perspectivesFor({ smallRuns: true }).map((p) => p.key);
+  assert.equal(on.filter((k) => k === 'compliance').length, 1);
+  assert.equal(on.indexOf('compliance'), on.indexOf('devops') + 1);
+  assert.ok(on.includes('release'));
+  assert.equal(perspectiveByKey('compliance').label, 'Compliance');
+});
+
+test('normalizePerspectives refuses compliance off and keeps it on', () => {
+  const off = normalizePerspectives(['compliance']);
+  assert.equal(off.ok, false);
+  assert.match(off.error, /unknown perspective\(s\): compliance/);
+  assert.deepEqual(normalizePerspectives(['compliance'], { smallRuns: true }), { ok: true, perspectives: ['product', 'compliance'] });
+});
+
+test('perspectivesBlock of a stored list with compliance names Compliance', () => {
+  const block = perspectivesBlock(['product', 'compliance']);
+  assert.ok(block.length > 0);
+  assert.match(block, /Compliance/);
+});

@@ -167,7 +167,7 @@ const SEARCHED_MESSAGE = `NOT (m.role = 'user' AND COALESCE(m.blocks, '') LIKE '
  *  `mode: 'any'` (the History "Delete all" count, which deletes composer chats too) skips the surface filter. A `query` (the History search) also
  *  keeps only chats whose title OR any message's text holds it — case-insensitive (SQLite's LIKE folds ASCII only).
  *  `alias` must name the threads table: the message subquery has an `id` of its own. */
-function listWhere(visibleTo, mode, alias, query, { show = null, ids = null } = {}) {
+function listWhere(visibleTo, mode, alias, query, { show = null, ids = null, designs = false } = {}) {
   const where = [];
   const args = [];
   if (visibleTo) { where.push(`(${alias}created_by IS NULL OR ${alias}created_by = ?)`); args.push(visibleTo); }
@@ -178,6 +178,8 @@ function listWhere(visibleTo, mode, alias, query, { show = null, ids = null } = 
   // #948 s2: 'all' = not archived, 'archived' = archived only; null (every caller before s2) = both.
   if (show === 'all') where.push(`${alias}archived_at IS NULL`);
   else if (show === 'archived') where.push(`${alias}archived_at IS NOT NULL`);
+  // The Chats column beside Design: only chats with a design (designs.thread_id, which a chat's start_design sets too).
+  if (designs) where.push(`EXISTS (SELECT 1 FROM designs d WHERE d.thread_id = ${alias}id)`);
   if (Array.isArray(ids)) {
     if (!ids.length) where.push('0');
     else { where.push(`${alias}id IN (${ids.map(() => '?').join(', ')})`); args.push(...ids); }
@@ -270,13 +272,13 @@ function decodeCursor(s, sort) {
  * the first page); the answer's `cursor` is null on the last page. `show`: 'all' | 'archived' | null; `ids` limits the
  * page to those threads (Show = Needs you). Throws `code: 'BAD_CURSOR'` for a cursor of another sort or garbage.
  */
-export function listThreadsPage({ limit = 50, visibleTo = null, mode = null, query = '', show = null, sort = 'activity', cursor = null, ids = null } = {}) {
+export function listThreadsPage({ limit = 50, visibleTo = null, mode = null, query = '', show = null, sort = 'activity', cursor = null, ids = null, designs = false } = {}) {
   getDb();
   const s = THREAD_SORT_SQL[sort] ? sort : 'activity';
   const { expr, desc } = THREAD_SORT_SQL[s];
   const n = Number.isInteger(limit) && limit > 0 ? limit : 50;
   const q = searchText(query);
-  const w = listWhere(visibleTo, mode, 't.', q, { show, ids });
+  const w = listWhere(visibleTo, mode, 't.', q, { show, ids, designs });
   const after = cursor ? decodeCursor(cursor, s) : null;
   const keyset = after
     ? `${w.sql ? ' AND' : ' WHERE'} ((t.pinned_at IS NULL) > ? OR ((t.pinned_at IS NULL) = ? AND (${expr} ${desc ? '<' : '>'} ? OR (${expr} = ? AND t.id > ?))))`
@@ -481,9 +483,9 @@ export function firstUserText(threadId) {
 
 /** Total saved chats — the History popover shows this, not the capped page listThreads returns. With a `query`, the
  *  chats the search matches (same filter as listThreads). */
-export function countThreads({ visibleTo = null, mode = null, query = '', show = null, ids = null } = {}) {
+export function countThreads({ visibleTo = null, mode = null, query = '', show = null, ids = null, designs = false } = {}) {
   getDb();
-  const w = listWhere(visibleTo, mode, 't.', query, { show, ids });
+  const w = listWhere(visibleTo, mode, 't.', query, { show, ids, designs });
   const row = prepare(`SELECT count(*) AS n FROM ask_threads t${w.sql}`).get(...w.args);
   return row ? Number(row.n) : 0;
 }
@@ -823,9 +825,9 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
       if (!(b && b.kind === 'card' && b.id === cardId)) return b;
       const subPatchable = !!(b.card && (b.card.type === 'workflow' || b.card.type === 'metrics'
         || b.card.type === 'policy' || b.card.type === 'schedule' || b.card.type === 'model' || b.card.type === 'clone' || b.card.type === 'web'
-        || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'mcp' || b.card.type === 'away' || b.card.type === 'proxy'
+        || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'mcp' || b.card.type === 'away' || b.card.type === 'proxy' || b.card.type === 'environment'
         || b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request' || b.card.type === 'ship'
-        || b.card.type === 'changes' || b.card.type === 'route'
+        || b.card.type === 'changes' || b.card.type === 'route' || b.card.type === 'req-change'
         || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'
         || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'command' || b.card.type === 'script-approval'
         || (b.card.type === 'progress' && !!b.card.fix) || b.card.type === 'question'

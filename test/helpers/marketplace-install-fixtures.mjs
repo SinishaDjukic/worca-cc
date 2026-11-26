@@ -6,7 +6,7 @@ export const INV = (o = {}) => ({ agents: [], scripts: [], taskSources: [], chat
 const COUNTS = (o = {}) => ({ taskSources: 0, chatChannels: 0, mcpServers: 0, models: 0, agents: 0, scripts: 0, skills: 0, workflows: 0, ...o });
 export const OFFICIAL = { id: 'official', name: 'Worca CC Official', stale: false, snapshotAt: '2026-10-20T08:00:00.000Z' };
 export function item(name, { inventory = INV(), counts = COUNTS(), iconKind = 'none', version = '0.1.0', description = '',
-  marketplace = OFFICIAL, installed = false, repoUrl = 'https://github.com/SinishaDjukic/worca-cc', subdir = `plugins/${name}` } = {}) {
+  marketplace = OFFICIAL, installed = false, repoUrl = 'https://github.com/worca-org/worca', subdir = `plugins/${name}` } = {}) {
   return { key: `${marketplace.id}/${name}`, name, version, description, marketplace, counts, iconKind, secrets: [], installed,
     row: null, update: null, entry: { name, subdir, description, version, inventory, installed },
     source: { repoUrl, subdir, sha: SHA, webUrl: `${repoUrl}/tree/${SHA}${subdir ? `/${subdir}` : ''}` } };
@@ -35,7 +35,7 @@ export const AZURE_CONFIG = (profiles = []) => ({ channels: [], sources: [{ id: 
   schema: [F('organization', 'Organization', { required: true }), F('pat', 'Personal access token', { secret: true, required: true })],
   values: profiles.length ? { organization: 'acme', pat: { set: true } } : {} }] });
 export const EMPTY_CONFIG = { sources: [], channels: [] };
-export const MKTS = [{ id: 'official', name: 'Worca CC Official', url: 'https://github.com/SinishaDjukic/worca-cc',
+export const MKTS = [{ id: 'official', name: 'Worca CC Official', url: 'https://github.com/worca-org/worca',
   lastSync: { sha: SHA, at: '2026-10-20T08:00:00.000Z' }, plugins: [], warnings: [] }];
 export const ok = (data = { ok: true }) => ({ ok: true, status: 200, data });
 /** routes: { 'METHOD /url': (body) => {ok,status,data} | Promise }. Records every call as [method, url, body]. */

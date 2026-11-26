@@ -33,9 +33,11 @@ export function pickCatalogModel(models, setting, { engine = 'claude' } = {}) {
  * @param {Array<{id:string}>} models the effective catalog (listModels)
  * @param {{env?:object, engine?:string, setting?:string}} [o] injectable for tests; with no `setting`, the stored pick,
  *   else the classifier's model role (D3: everyday on Claude, quick on Codex). `engine` comes first: the default reads it.
+ *   #1450: on Claude only a STORED role counts (the Sonnet 5 cascade below beats a Worca default); off Claude an empty
+ *   role takes Worca's default, so Codex never falls to its CLI default.
  * @returns {string} a model id, or '' when the catalog is empty and nothing is configured
  */
-export function resolveAutoModel(models, { env = process.env, engine = 'claude', setting = autoWorkflowModel() || roleModelFor(engine, jobSlot(engine, 'classifier'))?.model || '' } = {}) {
+export function resolveAutoModel(models, { env = process.env, engine = 'claude', setting = autoWorkflowModel() || roleModelFor(engine, jobSlot(engine, 'classifier'), engine === 'claude' ? { floor: false } : {})?.model || '' } = {}) {
   if (engine !== 'claude') {
     const id = typeof setting === 'string' ? setting.trim().toLowerCase() : '';
     const hit = id ? (Array.isArray(models) ? models : []).find((m) => m && runsOn(m, engine) && String(m.id).toLowerCase() === id) : null;
