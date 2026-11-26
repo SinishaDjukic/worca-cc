@@ -68,6 +68,43 @@ Read it: [Network proxy](../network-proxy.md#worca-in-a-container)
 Pull requests (add each number when it opens):
 
 - Proxy login in the egress sidecar (#1621)
+## Build the box image from the spec
+
+**`worca container build` turns your projects' specs into the box image.**
+
+It joins the specs of every project that has one, or of the projects you name with `--project`. It builds `FROM` the base, adds the apt packages, then mise and each pinned tool. Two projects that pin different versions of one tool are refused, with both named.
+
+The finished image is checked. It must have Node at Worca's minimum, git, `worca` and the base's pinned Claude Code. Then the box runs it. A failed build keeps the previous image.
+
+`--status` says whether the image is current or stale. A stale image still runs, with a warning. Nothing rebuilds by itself.
+
+The base is `WORCA_BASE_IMAGE` in the container `.env`. It must be a Worca image or one built from it. A project cannot change it. To build Worca itself on a company base image, pass `--node-base` to `npm run docker:build`.
+
+Not yet: tools outside mise and apt, and internal package mirrors at build time.
+
+Chips: worca container build · box image · base image · stale check
+
+Read it: [Building the box image](../environment-spec.md#building-the-box-image)
+
+Pull requests (add each number when it opens):
+
+- Container: build the box image from the environment spec, with an operator base image
+
+## A project environment spec
+
+**A project can now list the tools its agents need, pinned to exact versions.**
+
+Set it with `worca exec-env spec --project <key|dir> --set spec.json`. The spec lists tools by mise name, each with a pinned version, and apt packages. It holds tools only: never env vars, files or secrets. `latest` is refused. Show it with the same command, or clear it with `--clear`.
+
+`worca container build` builds the box image from it. Other setups build from it in later releases.
+
+Chips: worca exec-env spec · pinned tools · apt packages · no secrets
+
+Read it: [Project environment spec](../environment-spec.md)
+
+Pull requests (add each number when it opens):
+
+- Exec env: a project environment spec and its CLI
 
 ## Steady command rows in Chat
 

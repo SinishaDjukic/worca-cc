@@ -108,16 +108,26 @@ The CLI's own updater is off inside the image; a newer CLI is a newer image tag.
 The slim image has no compiler, so node-pty (the terminal's PTY) is skipped and terminals run over pipes; the -full image builds it.
 The slim image has no browser either: an Architecture (C4) run there writes SVG only and its report says why, and a Presentation run's PDF step reports that it found no browser unless you deselect the PDF. The -full image runs Chromium headless without its own sandbox (Docker's default seccomp profile refuses it to a non-root user); the container is the boundary.
 
-**Your project needs a toolchain the image lacks?** Pull `-full`, or extend:
+**Your project needs a toolchain the image lacks?** Pull `-full`, or give the project an environment spec and build the box image from it:
+
+```bash
+worca exec-env spec --project ~/dev/acme-api --set spec.json   # pinned mise tools and apt packages
+worca container build                                          # the box image, from every project's spec
+worca container up                                             # restart the box on it
+```
+
+The build starts from `WORCA_BASE_IMAGE` in `.env`, or the image of `WORCA_TAG`. It checks the result and points the box at it. See [Building the box image](environment-spec.md#building-the-box-image).
+
+For a tool outside mise and apt, extend the image by hand:
 
 ```dockerfile
 FROM ghcr.io/worca-org/worca:1.3.0
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends rustup && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSLo /usr/local/bin/acme-lint https://tools.acme.example/acme-lint-1.4.0 && chmod 755 /usr/local/bin/acme-lint
 USER worca
 ```
 
-and point `image:` at your build in a `compose.override.yml`.
+Build it, then set `WORCA_IMAGE` in `.env` to its name. `worca container` adds `compose.image.yml`, which runs the box on that image (with raw compose: `-f compose.image.yml`). `worca container build --status` reports an image it did not build as not recorded.
 
 ## Logging Claude Code in
 
@@ -378,6 +388,8 @@ URL from `docker compose logs teams-tunnel`.
 | `WORCA_PROJECTS` | `$HOME/dev` | host folder with your repos, mounted at the same path |
 | `WORCA_PROJECTS_MOUNT` | same as above | mount it elsewhere inside (loses parity) |
 | `WORCA_TAG` | `latest` | image tag |
+| `WORCA_BASE_IMAGE` | the image of `WORCA_TAG` | what `worca container build` starts from: a Worca image or one built `FROM` it ([Building the box image](environment-spec.md#building-the-box-image)) |
+| `WORCA_IMAGE` | | the box runs this local image instead (`compose.image.yml`); `worca container build` writes it |
 | `WORCA_PORT` | `4317` | host loopback port |
 | `TZ` | `UTC` | **scheduled runs use this clock** |
 | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` | | commit identity |
@@ -484,10 +496,18 @@ Claude Code pin is [`docker/CLAUDE_CODE_VERSION`](../docker/CLAUDE_CODE_VERSION)
 What the build pulls in is locked. The package ships `npm-shrinkwrap.json`, and the
 image installs exactly that tree with `npm ci` in the unpacked tarball (a global
 install of a local tarball would ignore the shrinkwrap; an `npm install -g @worca/app`
-from the registry honours it). The `node:22-bookworm-slim` base is pinned by digest
+from the registry honours it). The `node` bookworm-slim base is pinned by digest
 and the workflows' third-party actions by commit SHA; Dependabot
 ([`.github/dependabot.yml`](../.github/dependabot.yml)) proposes the bumps. Two optional
 dependencies run install scripts: `node-pty` builds its native module (or is skipped
 where there is no compiler) and `ffmpeg-static` downloads its ffmpeg binary.
+
+**On a company base image.** Some companies allow only their own base images. Build Worca on yours from a checkout:
+
+```bash
+npm run docker:build -- --node-base registry.acme.example/base/node:24-bookworm-slim --tag registry.acme.example/platform/worca:1.21.0
+```
+
+`--node-base` sets the Dockerfile's `NODE_BASE_IMAGE` build argument. Without it, the build uses the pinned `node` image. Your base must be the official `node` image of the same major, or built `FROM` it: the build needs Debian bookworm, apt, and the `node` user with uid 1000. Push the result to your registry, then set `WORCA_BASE_IMAGE` to it in the container `.env`. `worca container build` then starts from your image.
 
 Hacking on Worca inside the box: [CONTRIBUTING.md](../CONTRIBUTING.md#in-a-container).
