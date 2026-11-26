@@ -127,3 +127,12 @@ test('s6: "Open stops on the card" sits under Small runs, after the run words, a
   const part = flat(next < 0 ? rest : rest.slice(0, next));
   assert.deepEqual(missing(part, ['holds up', 'in run order', 'Resume']), []);
 });
+
+// Shaper small runs slice 7 (R-po-5): the state line and the need-you count, under the stop list part.
+test('s7: the stop list part says what the state line names, the need-you count and who must act', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const at = small.indexOf('\n### Open stops on the card\n');
+  const off = small.indexOf('\n### Off\n');
+  assert.ok(at >= 0 && off > at, '"Open stops on the card" comes before "Off"');
+  assert.deepEqual(missing(flat(small.slice(at, off)), ['next: run', 'need you', 'Nothing can go on until you act']), []);
+});

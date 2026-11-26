@@ -9,6 +9,7 @@ import { groupKindWord, pageModel, paintCrumbs, buildFacts, setFactText, factRow
 import { icon } from './icons.mjs';
 import { groupHead } from './run-head.mjs';
 import { answerFieldOpen } from './shape/step-card.mjs';
+import { needYouText } from './shape/feature-card.mjs';
 
 export const GROUP_TABS = Object.freeze([['runs', 'Runs'], ['overview', 'Overview'], ['decisions', 'Decisions'], ['logs', 'Logs']]);
 const el = (doc, tag, cls, text = '') => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
@@ -139,13 +140,27 @@ export function groupPrList(row) {
   return out;
 }
 
+/** Slice 7 (D7): the need count, the neutral kind chip after the kind chip; created on a non-zero count, removed at zero. */
+function paintNeed(kindEl, text) {
+  let chip = kindEl.parentElement.querySelector(':scope > .kind-chip[data-need]');
+  if (!text) { if (chip) chip.remove(); return; }
+  if (!chip) {
+    chip = kindEl.ownerDocument.createElement('span');
+    chip.className = 'kind-chip';
+    chip.dataset.need = '';
+    kindEl.after(chip);
+  }
+  if (chip.textContent !== text) chip.textContent = text;
+}
+
 /**
  * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean, labels: [] (the
  * members' labels), unmarked?: number (a feature's unmarked requirements: its Create PR is locked), stackedOnly?: boolean (a small-runs
  * feature: the ship line never offers One), requirements?: boolean (D3: a marked feature with the flag on), shortState?:
  * (member) → string|null (small runs: one-line member rows with the card's short words), status?: (member) →
  * {word, mark}|null (small runs s4: runStatus's word and mark for each row, renderMemberRows' `status`), ship?: {n, blocked, reason}|null
- * (small runs: the ledger the head's Create N PRs follows) }.
+ * (small runs: the ledger the head's Create N PRs follows), stateLine?: string|null (small runs slice 7: the feature's state
+ * line, featureStateLine, in place of the model's line), needCount?: number (slice 7: the stop lines, the head's chip) }.
  * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
  * mountDecisions(host, row), mountRequirements?(host, row) → Node|null (D3, while `view.requirements`), logsHref(member),
  * labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
@@ -163,7 +178,9 @@ export function paintGroupPage(root, view, deps) {
   title.title = row.title;   // D13: the heading is one line cut with "…"; the full title is the tooltip
   root.querySelector('.gpage-head .kind-chip').textContent = groupKindWord(row);   // run 3 (D7): the group's kind
   paintCrumbs(root.querySelector('.gpage-bar .rd-crumbs'), [{ label: 'Runs', href: '#runs' }, { label: row.title }]);
-  const shown = pageModel(m);
+  // Small runs slice 7 (D9): a marked feature's state line says which runs work and which goes next.
+  const shown = view.stateLine ? { ...pageModel(m), line: view.stateLine, lineSaysState: false } : pageModel(m);
+  paintNeed(root.querySelector('.gpage-head .kind-chip'), needYouText(view.needCount || 0));
   // Small runs: a disabled Create N PRs says why on the page, not only in its tooltip. A held group's line already does,
   // and so does the Overview tab's Ship card.
   const why = view.ship && view.ship.blocked && m.state === 'ready' && !m.hold && !(view.overview && view.tab === 'overview') ? view.ship.reason : '';

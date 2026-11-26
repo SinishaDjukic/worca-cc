@@ -30,7 +30,7 @@ import { paintStatusDot } from '../status-dot.mjs';
 import { cardShortWord } from '../../../src/shared/shape/run-agents.mjs';
 import { runStatus } from '../../../src/shared/shape/run-status.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
-import { featureCardModel, oneCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
+import { featureCardModel, oneCardModel, paintFeatureLog, needYouText } from '../shape/feature-card.mjs';
 import { buildCheckRows } from '../shape/check-row.mjs';
 import { verifyGapItems } from '../../../src/shared/shape/verifier.mjs';
 import { paintReqChange } from '../shape/req-change.mjs';
@@ -201,6 +201,20 @@ export function midTrunc(s, max = 28) {
 }
 
 const isWebUrl = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);
+
+/** Shaper small runs slice 7 (D7): the head's need count, the neutral kind chip right after the kind chip. Created when
+ *  the count first turns non-zero and removed at zero, so a head without stop lines never holds it. */
+function paintNeed(head, kindEl, text) {
+  let chip = head.querySelector(':scope > .kind-chip[data-need]');
+  if (!text) { if (chip) chip.remove(); return; }
+  if (!chip) {
+    chip = head.ownerDocument.createElement('span');
+    chip.className = 'kind-chip';
+    chip.dataset.need = '';
+    kindEl.after(chip);
+  }
+  if (chip.textContent !== text) chip.textContent = text;
+}
 
 /**
  * @param {{doc: Document, win?: Window|null, snapshot?: object|null, ctx?: object, controls?: object, ident?: object, refresh?: (() => void)|null}} opts
@@ -1097,6 +1111,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     stopByKey.clear();
     for (const l of stopLines) stopByKey.set(l.key, l);
     resumeListed = stopLines.some((l) => l.failed && !!fview.halted && l.index === fview.halted.index);
+    paintNeed(head, kind, needYouText(stopLines.length));
     const roundSnap = (p) => (s && s.roundSnaps && s.roundSnaps[p]) || null;
     // s5 (D16): a plain run's rounds (the controller fills s.roundSnaps) fill the log; the live one feeds the model (D6).
     const rm = roundsModel(s);

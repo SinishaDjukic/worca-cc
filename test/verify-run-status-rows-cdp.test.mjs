@@ -114,3 +114,26 @@ test('s6: Approve on run 4\'s real step card names run 4, a refused Resume shows
   assert.match(s, /\/answer/, 'the Approve request is read');
   assert.match(s, /4:\s*\{\s*pipe:\s*'running'\s*\}/, 'run 4 re-seeded as building');
 });
+
+// ── Slice 7 (R-po-5): the same proof shoots the state line and the need-you count on the card and the feature page ─────
+test('s7: it adds the line surface (SURFACE=line), the worlds busy, next, two and acts, and names its shots per theme', () => {
+  const s = src();
+  assert.match(s, /SURFACE[^\n]*['"]line['"]/, 'SURFACE=line is understood');
+  for (const w of ['next', 'two', 'acts']) assert.match(s, new RegExp(`\\b${w}\\s*:\\s*\\{|['"]${w}['"]`), w);
+  assert.match(s, /line-\$\{[A-Za-z.]+\}-(card|\$\{[A-Za-z.]+\})-\$\{[A-Za-z.]+\}\.png/, 'line-{world}-card-{theme}.png');
+  assert.match(s, /line-\$\{[A-Za-z.]+\}-(page|\$\{[A-Za-z.]+\})-\$\{[A-Za-z.]+\}\.png/, 'line-{world}-page-{theme}.png');
+  assert.match(s, /deviceScaleFactor: 2/);
+  assert.match(s, /n_review/, 'busy run 6 is seeded reviewing');
+  assert.match(s, /setApproveEach/, 'acts asks before each run');
+});
+
+test('s7: it checks the exact lines, "4 need you" once, no chip in two, the chip height and the card detail\'s line count', () => {
+  const s = src();
+  for (const t of ['Run 6 reviewing · next: run 9', '2 of 16 runs done', 'next: run 9', 'Run 8 building, run 10 building · next: run 13',
+    'Nothing can go on until you act', '4 need you', '1 needs you']) assert.ok(s.includes(t), t);
+  assert.match(s, /data-need|dataset\.need/);
+  assert.match(s, /need you[^\n]*once|once[^\n]*need you/i, 'the count is checked to appear once');
+  assert.match(s, /no (need )?chip/i);
+  assert.match(s, /\b18\b/, 'the one-chip height');
+  assert.match(s, /lineHeight|line-height/);
+});

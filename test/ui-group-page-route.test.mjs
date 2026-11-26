@@ -787,3 +787,74 @@ test('s4: a marked feature with the flag on draws the held ring, "?" and "!" in 
     }
   }
 });
+
+// ── Shaper small runs slice 7 (R-po-5): the app hands the marked feature page its state line and need-you count ───────
+const s7Sl = (index, state, over = {}) => ({ index, title: `Slice ${index}`, state, pipelineId: state === 'planned' ? null : `p${index}`,
+  ticketId: `t${index}`, pr: null, kind: 'build', waitsFor: [], buildsOn: [], nextTurn: false, cannotStart: false, stop: null, ...over });
+const s7Stop = (reason) => ({ stop: { reason, held: false } });
+const S7_SLICES = [s7Sl(1, 'done'), s7Sl(2, 'approval', s7Stop('requirement')), s7Sl(4, 'questions', s7Stop('check')), s7Sl(5, 'error'),
+  s7Sl(6, 'running'), s7Sl(9, 'planned', { nextTurn: true }), s7Sl(11, 'questions', s7Stop('check'))];
+const s7Ask = (index, failed = false) => ({ index, runId: failed ? null : `r${index}`, pipelineId: `p${index}`, id: failed ? null : `q${index}`,
+  kind: failed ? null : 'gate', reason: failed ? null : 'check', failed, holdsUp: [] });
+const S7_ASKS = [s7Ask(2), s7Ask(4), s7Ask(5, true), s7Ask(11)];
+const s7Feature = (asks) => ({ ...FEATURE, status: 'active', total: 7, done: 1, slices: S7_SLICES, asks, ask: asks[0] || null,
+  ship: { ready: false, mode: null, smallRuns: { owned: [], confirmed: [], waiting: [], blocked: false, reason: null, order: [], care: null } } });
+const S7_STATUS = { done: 'done', approval: 'running', questions: 'running', running: 'running', error: 'error', planned: 'scheduled' };
+const S7_GROUPS = { groups: [{ ...GROUPS.groups[0], smallRuns: true, members: S7_SLICES.map((sl) => ({ ...member(sl.index), pipelineId: sl.pipelineId,
+  ticketId: sl.pipelineId ? null : sl.ticketId, status: S7_STATUS[sl.state], ticket: sl.pipelineId ? null : { status: 'scheduled' }, slice: sl })) }] };
+/** Run 6's live frames: a Care plan graph with the code reviewer active, so its word is "reviewing". */
+function s7LiveRun6(ctx) {
+  const node = (id, key) => ({ id, kind: 'agent', key, x: 0, y: 0, label: key, ports: { inputs: [], outputs: [] } });
+  ctx.dispatch({ type: 'hello', runs: [{ runId: 'r6', pipelineId: 'p6', title: 'Slice 6', projectDir: '/tmp/p', status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z' }] });
+  ctx.dispatch({ type: 'state', runId: 'r6', id: 'p6', status: 'running',
+    stepper: { version: 2, template: { id: 'wf_shape_slice_req' }, careRun: { position: 'balanced' }, graph: { nodes: [node('n_impl', 'implementer'), node('n_review', 'reviewer')], wires: [] } },
+    steps: [{ key: 'x:n_review:1', executionId: 'x:n_review:1', nodeId: 'n_review', ordinal: 1, cycle: 1, status: 'start', startedAt: '2026-01-01T00:00:00Z' }],
+    active: [{ nodeId: 'n_review', executionId: 'x:n_review:1' }] });
+}
+
+test('s7: the marked feature page shows "Run 6 reviewing · next: run 9" and "4 need you" once; a shape-feature frame alone moves both, and at zero the chip goes', async () => {
+  let feature = s7Feature(S7_ASKS);
+  let late = null;      // while set, the feature answers only after the run groups did (and repainted the page)
+  const { ctx } = await d3Boot({ feature: () => (late ? new Promise((r) => late.push(() => r(json(feature)))) : json(feature)), groups: S7_GROUPS });
+  const frame = async () => {
+    late = [];
+    ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+    await ctx.settle(10);
+    assert.ok(late.length, 'the frame refetched the feature');
+    const held = late;
+    late = null;
+    for (const release of held) release();
+    await ctx.settle(10);
+  };
+  s7LiveRun6(ctx);
+  await ctx.settle(6);
+  ctx.go('feature/feat_1');
+  await ctx.settle(10);
+  const gp = pageOf(ctx).querySelector('.gpage');
+  const detail = () => gp.querySelector('.gpage-card .run-status-detail').textContent;
+  const chips = () => [...gp.querySelectorAll('.rd-title-row [data-need]')].map((c) => c.textContent);
+  assert.equal(gp.querySelector('.run-member[data-key="p6"] .run-member-state').textContent, 'reviewing', 'the fixture: run 6\'s snapshot is loaded');
+  assert.equal(detail(), 'Run 6 reviewing · next: run 9');
+  assert.deepEqual(chips(), ['4 need you']);
+  assert.equal(gp.textContent.match(/\bneed you/g)?.length, 1);   // no trailing \b: the chip's text runs into the next word
+  // Run 4's stop is answered in another view and the turn moves to run 10: only the feature frame says so.
+  feature = { ...s7Feature(S7_ASKS.filter((a) => a.index !== 4)), slices: [...S7_SLICES.map((x) => (x.index === 9 ? { ...x, nextTurn: false } : x)), s7Sl(10, 'planned', { nextTurn: true })] };
+  await frame();
+  assert.equal(detail(), 'Run 6 reviewing · next: run 10');
+  assert.deepEqual(chips(), ['3 need you']);
+  feature = s7Feature([]);
+  await frame();
+  assert.equal(gp.querySelector('[data-need]'), null, 'nothing at zero');
+});
+
+test('s7 R-arch-9: with the flag off the marked feature page has no count and keeps today\'s line', async () => {
+  const { ctx } = await d3Boot({ flag: false, feature: () => json(s7Feature(S7_ASKS)), groups: S7_GROUPS });
+  s7LiveRun6(ctx);
+  await ctx.settle(6);
+  ctx.go('feature/feat_1');
+  await ctx.settle(10);
+  const gp = pageOf(ctx).querySelector('.gpage');
+  assert.ok(gp, 'the group page rendered');
+  assert.equal(gp.querySelector('[data-need]'), null);
+  assert.doesNotMatch(gp.querySelector('.gpage-card .run-status').textContent, /next: run/);
+});

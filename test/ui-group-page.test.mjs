@@ -518,3 +518,57 @@ test('s4 feature page: without `status` the Runs rows are today\'s (no data-mark
   const b = s4Paint(row, { shortState: () => 'x', status: undefined });
   assert.equal(a.root.querySelector('.gpage-runs').outerHTML, b.root.querySelector('.gpage-runs').outerHTML);
 });
+
+// ---- Shaper small runs slice 7 (R-po-5): the feature page's state line and need-you count ---------------------------
+const S7_LINE = 'Run 6 reviewing · next: run 9';
+function s7Page(base = row()) {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  const paint = (more = {}, r = base) => paintGroupPage(root, { row: r, project: 'p', tab: 'runs', overview: true, requirements: true, ...more }, NOOP);
+  return { root, paint, detail: () => root.querySelector('.gpage-card .run-status-detail').textContent,
+    chips: () => [...root.querySelectorAll('.rd-title-row .kind-chip[data-need]')] };
+}
+
+test('s7 T16 feature page: `stateLine` is the status line and `needCount` is one "4 need you" chip after the kind chip', () => {
+  const p = s7Page();
+  p.paint({ stateLine: S7_LINE, needCount: 4 });
+  assert.equal(p.detail(), S7_LINE);
+  assert.deepEqual(p.chips().map((c) => c.textContent), ['4 need you']);
+  assert.deepEqual([p.chips()[0].tagName, p.chips()[0].className], ['SPAN', 'kind-chip']);
+  assert.equal(p.chips()[0].previousElementSibling, p.root.querySelector('.gpage-head .kind-chip:not([data-need])'));
+  assert.equal(p.root.querySelector('.gpage-head .kind-chip').textContent, 'Feature', 'the kind chip is untouched');
+  // No trailing \b: textContent runs the chip straight into the next word.
+  assert.equal(p.root.textContent.match(/\bneed you/g)?.length, 1, 'the count is said once on the page');
+  p.paint({ stateLine: S7_LINE, needCount: 4 });
+  assert.equal(p.chips().length, 1, 'a repaint adds no second chip');
+  p.paint({ stateLine: S7_LINE, needCount: 1 });
+  assert.deepEqual(p.chips().map((c) => c.textContent), ['1 needs you']);
+  p.paint({ stateLine: S7_LINE, needCount: 0 });
+  assert.equal(p.root.querySelector('[data-need]'), null, 'nothing at zero');
+  assert.equal(p.detail(), S7_LINE);
+});
+
+test('s7 T16 feature page: without `stateLine` and `needCount` the page is today\'s, also after a paint that had them', () => {
+  const today = s7Page();
+  today.paint();
+  assert.equal(today.root.querySelector('[data-need]'), null);
+  const empty = s7Page();
+  empty.paint({ stateLine: null, needCount: 0 });
+  assert.equal(empty.root.outerHTML, today.root.outerHTML);
+  const p = s7Page();
+  p.paint({ stateLine: S7_LINE, needCount: 4 });
+  assert.notEqual(p.detail(), today.detail(), 'the state line replaced the model\'s line');
+  p.paint();
+  assert.equal(p.root.querySelector('[data-need]'), null);
+  assert.equal(p.detail(), today.detail());
+});
+
+test('s7 T16 feature page: while Ship is blocked the reason still ends the state line', () => {
+  const reason = 'Waiting for Compliance to confirm R-comp-4';
+  const model = groupModel({ kind: 'feature', title: 'T', members: [done, done] }, { now: NOW });
+  const ready = { ...row(), planning: null, model, members: model.members.map((m, i) => ({ position: i + 1, title: `S${i + 1}`, href: '#x', model: m })) };
+  assert.equal(model.state, 'ready');
+  const p = s7Page(ready);
+  p.paint({ stateLine: S7_LINE, needCount: 0, ship: { n: 2, blocked: true, reason } });
+  assert.equal(p.detail(), `${S7_LINE} · ${reason}`);
+});

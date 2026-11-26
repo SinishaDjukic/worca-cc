@@ -560,3 +560,46 @@ test('S6 resume: a named paused run resumes that run, not the first halted one',
   const fx = world(root, { done: [1, 3, 4], states: { 5: { pipe: 'error' }, 9: { pipe: 'paused' } } });
   assert.deepEqual(resumeFeature(fx.featureId, { live: fx.live, index: 9 }), { action: 'resume', pipelineId: fx.pipelineOf(9), index: 9, mock: false });
 }));
+
+// ---- Slice 7 (R-po-5, R-qa-9, R-qa-10): the state line and the stop count on the real payload -------------------------
+/** The card module and the surface helper (live entries and snapshots, as the server holds them), loaded per test so a
+ *  missing new export fails only these tests. */
+const s7Mods = async () => ({ ...(await import('../ui/public/shape/feature-card.mjs')),
+  ...(await import('../ui/public/shape/stop-list.mjs')), walkWorld: (await import('./helpers/shape-surfaces.mjs')).walkWorld });
+
+test('S7-T17 busy: the real view reads "Run 6 reviewing · next: run 9" and lists 4 stop lines', () => withEnvVars(ON, async () => {
+  const { featureStateLine, needYouText, stopLinesOf, walkWorld } = await s7Mods();
+  const { fx, snaps } = walkWorld(root, { name: 'busy', spec: 'busy', at: { 6: 'n_review' } });
+  const view = viewOf(fx);
+  const snapOf = (pid) => snaps.get(pid) || null;
+  assert.equal(featureStateLine(view, { snapOf }), 'Run 6 reviewing · next: run 9');
+  assert.equal(stopLinesOf(view, { snapOf }).length, 4);
+  assert.equal(needYouText(stopLinesOf(view, { snapOf }).length), '4 need you');
+}));
+
+test('S7-T18 busy with run 6 not started: only "next: run 9"', () => withEnvVars(ON, async () => {
+  const { featureStateLine } = await s7Mods();
+  const { 6: _six, ...states } = SIXTEEN_RUN_STATES.busy.states;
+  assert.equal(featureStateLine(viewOf(world(root, { done: [1, 3], states }))), 'next: run 9');
+}));
+
+test('S7-T18 M5b: runs 8 and 10 both working are named once each, in run order', () => withEnvVars(ON, async () => {
+  const { featureStateLine, stopLinesOf, walkWorld } = await s7Mods();
+  const { fx, snaps } = walkWorld(root, { name: 'two', spec: { done: M4_DONE, states: { 5: { pipe: 'paused' }, 8: { pipe: 'running' }, 10: { pipe: 'running' } } } });
+  const view = viewOf(fx);
+  // Frozen from the real payload: run 5 is paused, runs 8 and 10 build, and the server gives run 13 the next turn.
+  assert.equal(featureStateLine(view, { snapOf: (pid) => snaps.get(pid) || null }), 'Run 8 building, run 10 building · next: run 13');
+  assert.equal(stopLinesOf(view).length, 0);
+}));
+
+test('S7-T18 Ask before each run: an open stop reads "Nothing can go on until you act"; without it the held run waits for you', () => withEnvVars(ON, async () => {
+  const { featureStateLine } = await s7Mods();
+  const stopped = world(root, { done: [1], states: { 2: { stop: 'requirement' } } });
+  setApproveEach(stopped.featureId, true);
+  assert.equal(featureStateLine(viewOf(stopped)), 'Nothing can go on until you act');
+  const held = world(root, { done: [1] });
+  setApproveEach(held.featureId, true);
+  const view = viewOf(held);
+  assert.equal(view.held?.index, 2, 'run 2\'s ticket is held');
+  assert.equal(featureStateLine(view), 'Run 2 waiting for you to start');
+}));

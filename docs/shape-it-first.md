@@ -743,6 +743,13 @@ You answer a stop on its line, with the same step card the run page shows. A fai
 restarts that run only; the card's footer and ⋯ then show no second Resume. An answer held for its turn (`after run 3`)
 is not a line. The bar's Answer goes to the first line. With the flag off the card shows one open step, as before.
 
+The state line on the card and the feature page names the working run, or each working run once in run order, and the
+run with the next turn: `Run 6 reviewing · next: run 9`. It shows only the half that applies (`next: run 9`). When
+neither does, it says who must act: `Nothing can go on until you act` while a stop, a failed, paused or stopped run, or a
+run that cannot start waits on you. The card keeps its `2 of 16 runs done` after the line. The head shows `4 need you`
+once (the stop lines, failed runs included), and nothing at zero. A second answer to a listed stop, from another open
+view, is refused as before.
+
 ### Off
 
 Some parts follow the marker and stay with the feature; the rest follow the flag as it is now.

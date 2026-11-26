@@ -2792,3 +2792,18 @@ test('chat run card: a feature run links its feature title to the feature page; 
     } },
   ]);
 });
+
+// Shaper small runs slice 7 (R-arch-6, D7): the state line and the need count are worded in one place only.
+test('s7 T15: the run card and the group page word no state line or need count of their own; the card\'s chip is made by paintNeed', () => {
+  const read = (rel) => readFileSync(new URL(`../ui/public/${rel}`, import.meta.url), 'utf8');
+  const card = read('chat/run-card.mjs');
+  const page = read('group-page.mjs');
+  for (const [name, src] of [['chat/run-card.mjs', card], ['group-page.mjs', page]]) {
+    assert.doesNotMatch(src, /need you|next: run/, `${name}: the words come from feature-card.mjs`);
+    assert.match(src, /needYouText/, `${name}: it words the count with needYouText`);
+  }
+  assert.match(card, /paintNeed/, 'the head count has its own painter');
+  const head = card.slice(card.indexOf("const head = h('div', 'ask-rc-head')"), card.indexOf('head.append('));
+  assert.ok(head.length > 0, 'the head builder is found');
+  assert.doesNotMatch(head, /data-need|dataset\.need/, 'never built into the head: created when the count turns non-zero');
+});

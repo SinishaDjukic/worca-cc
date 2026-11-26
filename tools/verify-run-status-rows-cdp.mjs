@@ -26,6 +26,11 @@
 // Approve on run 4's real step card must post run 4's run id to /answer. `stops-refused-{theme}.png`: run 5's Resume is
 // refused (run 6 is going) and its line shows the refusal with Resume enabled again. `stops-after-{theme}.png`: busy with
 // run 4 re-seeded building lists 3 lines, runs 2, 5 and 11. SURFACE=stops runs only this surface.
+// Slice 7 adds the `line` surface: the feature's state line and need count on the Chat card head with its status block
+// (`line-{world}-card-{theme}.png`) and on the feature page head (`line-{world}-page-{theme}.png`), per theme at 1280px
+// and 2x, in four worlds: busy (run 6 reviewing), next (busy, run 6 not started), two (slice 1's M5b: runs 8 and 10 build)
+// and acts (only run 2's stop, Ask before each run on). It checks each exact line, the chip text once per surface, no chip
+// in two, the chip height and the card detail's line count. SURFACE=line runs only this surface.
 // NOT part of `npm test`: it needs Chrome. A hard 20-minute cap inside.
 // Run: H=$(mktemp -d); env -u FORCE_COLOR HOME=$H VERIFY_PORT=4943 SHOTS_DIR=… node --disable-warning=ExperimentalWarning tools/verify-run-status-rows-cdp.mjs
 import { spawn, execFileSync } from 'node:child_process';
@@ -41,7 +46,7 @@ const CHROME = process.env.CHROME_BIN || CHROME_PATHS.find((p) => existsSync(p))
 const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0 ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
 if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
 const THEMES = ['light', 'dark'];
-const WORLDS = ['base', 'busy', 'held', 'change', 'failed'].filter((w) => (!process.env.WORLD || w === process.env.WORLD) && process.env.SURFACE !== 'stops');   // WORLD=held runs one world
+const WORLDS = ['base', 'busy', 'held', 'change', 'failed'].filter((w) => (!process.env.WORLD || w === process.env.WORLD) && process.env.SURFACE !== 'stops' && process.env.SURFACE !== 'line');   // WORLD=held runs one world
 const WIDE = 1280;
 const NARROW = 375;
 const SIDE_NARROW = 360;   // s5: the Runs list's narrow shot
@@ -82,7 +87,7 @@ const imp = (rel) => import(new URL(rel, import.meta.url).href);
 const { server, runs } = await imp('../ui/server.mjs');
 const { projectKey } = await imp('../src/core/store.mjs');
 const { writeStoreMeta } = await imp('../src/core/artifacts.mjs');
-const { recordShapePlan } = await imp('../src/core/shape/features.mjs');
+const { recordShapePlan, setApproveEach } = await imp('../src/core/shape/features.mjs');
 const askStore = await imp('../src/core/ask/store.mjs');
 const { resolveGraph } = await imp('../src/core/workflows.mjs');
 const { loadAgentRegistry } = await imp('../src/core/agent-registry.mjs');
@@ -115,7 +120,7 @@ const ORDER = ['n_task', 'n_clarify', 'n_plan', 'n_roles', 'n_refine', 'n_tests'
 const liveIds = [];
 function liveRun(featureId, run, pid, how) {
   const orch = new EventEmitter();
-  const at = how.stop ? 'n_refine' : 'n_impl';
+  const at = how.stop ? 'n_refine' : how.at || 'n_impl';   // slice 7: the line surface seeds busy run 6 at n_review
   const pq = how.stop ? { id: `q${run}`, kind: 'plan', nodeId: 'n_refine', executionId: 'x:n_refine:1',
     plan: { nodeId: 'n_refine', port: 'plan', file: 'plan.md', round: 1, revisable: true, check: CHECK }, stop: stopOf(run, how.stop) } : null;
   orch.state = { id: pid, status: 'running', title: `Run ${run}`, projectDir: proj, stepper,
@@ -140,14 +145,19 @@ const SPECS = {
   failed: { spec: { done: [1, 3, 4], states: { 2: { stop: 'requirement' }, 11: { stop: 'check' }, 5: { pipe: 'error' } } }, then: (fx) => fx.cancelTicket(14) },
   // s6 stops: busy with run 4 answered and building, so its stop line is gone.
   'stops-after': { spec: { done: SIXTEEN_RUN_STATES.busy.done, states: { ...SIXTEEN_RUN_STATES.busy.states, 4: { pipe: 'running' } } } },
+  // s7 line: busy with run 6 reviewing; busy with run 6 not started; slice 1's M5b; only run 2's stop, Ask before each run.
+  'line-busy': { spec: SIXTEEN_RUN_STATES.busy, at: { 6: 'n_review' } },
+  'line-next': { spec: { done: SIXTEEN_RUN_STATES.busy.done, states: Object.fromEntries(Object.entries(SIXTEEN_RUN_STATES.busy.states).filter(([r]) => r !== '6')) } },
+  'line-two': { spec: { done: [1, 2, 3, 4, 9, 11], states: { 5: { pipe: 'paused' }, 8: { pipe: 'running' }, 10: { pipe: 'running' } } } },
+  'line-acts': { spec: { done: [1], states: { 2: { stop: 'requirement' } } }, then: (fx) => setApproveEach(fx.featureId, true) },
 };
 /** Seeds one world (cancelling the previous world's tickets and live runs) and its Chat thread; returns the routes. */
 function seed(name) {
   for (const id of liveIds.splice(0)) runs.delete(id);
-  const { spec, then } = SPECS[name];
+  const { spec, then, at = {} } = SPECS[name];
   const fx = world(proj, spec);
   if (then) then(fx);
-  for (const [r, how] of Object.entries(spec.states || {})) if (how.stop || (how.pipe || 'running') === 'running') liveRun(fx.featureId, Number(r), fx.pipelineOf(Number(r)), how);
+  for (const [r, how] of Object.entries(spec.states || {})) if (how.stop || (how.pipe || 'running') === 'running') liveRun(fx.featureId, Number(r), fx.pipelineOf(Number(r)), at[r] ? { ...how, at: at[r] } : how);
   const thread = askStore.createThread({ title: `Rows ${name}` });
   const cardId = askStore.newAskId('card');
   askStore.appendMessage(thread.id, { role: 'user', text: 'Plan the merge gate in small runs' });
@@ -533,7 +543,7 @@ async function stopsShot(routes, theme, file, want) {
   results.rows.push({ where, theme, stops: m.lines });
   return m;
 }
-if (!process.env.WORLD || process.env.SURFACE === 'stops') {
+if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'stops') {
   for (const theme of THEMES) {
     const routes = seed('busy');
     const m = await stopsShot(routes, theme, `stops-busy-card-${theme}.png`, BUSY_STOP_LINES);
@@ -575,6 +585,96 @@ if (!process.env.WORLD || process.env.SURFACE === 'stops') {
     if (a) {
       check(JSON.stringify(a.lines.map((l) => l.run)) === '[2,5,11]', `stops after ${theme}: runs 2, 5 and 11 (${JSON.stringify(a.lines.map((l) => l.run))})`);
       await shotOf(STOPS_ROOT, `stops-after-${theme}.png`);
+    }
+  }
+}
+
+// ---- s7 line: the feature's state line and need count, on the Chat card head and status, and on the feature page head.
+const LINE_WORLDS = {
+  busy: { line: 'Run 6 reviewing · next: run 9', done: '2 of 16 runs done', chip: '4 need you' },
+  next: { line: 'next: run 9', done: '2 of 16 runs done', chip: '4 need you' },
+  two: { line: 'Run 8 building, run 10 building · next: run 13', done: '6 of 16 runs done', chip: '' },
+  acts: { line: 'Nothing can go on until you act', done: '1 of 16 runs done', chip: '1 needs you' },
+};
+const CHIP_PX = 18;   // the design system's one chip
+/** Each surface's head and status: the state line, the [data-need] chips, the count of "need you" in head and status,
+ *  the chip height, and the detail's line count (its height over its computed lineHeight). */
+const LINE_SURFACES = {
+  card: { root: '.chat-rc', head: '.ask-rc-head', status: '.chat-rc-status', detail: '.chat-rc-status .run-status-detail' },
+  page: { root: '#group-detail .gpage', head: '.gpage-head', status: '.gpage-card .run-status', detail: '.gpage-card .run-status-detail' },
+};
+const LINE_READ = (sf) => `(() => {
+  const root = [...document.querySelectorAll(${JSON.stringify(sf.root)})].find((x) => x.offsetParent);
+  if (!root) return null;
+  const head = root.querySelector(${JSON.stringify(sf.head)}); const status = root.querySelector(${JSON.stringify(sf.status)});
+  const detail = root.querySelector(${JSON.stringify(sf.detail)});
+  const chips = head ? [...head.querySelectorAll('[data-need]')] : [];
+  const lh = detail ? parseFloat(getComputedStyle(detail).lineHeight) || 0 : 0;
+  const text = (head ? head.textContent : '') + ' ' + (status ? status.textContent : '');
+  return { detail: detail ? detail.textContent : null, chips: chips.map((c) => c.textContent), needs: (text.match(/need(s)? you/g) || []).length,
+    chipHeight: chips[0] ? Math.round(chips[0].getBoundingClientRect().height * 10) / 10 : null,
+    lineHeight: lh, lines: detail && lh ? Math.round(detail.getBoundingClientRect().height / lh) : null,
+    detailWidth: detail ? Math.round(detail.getBoundingClientRect().width) : null };
+})()`;
+/** A 2x shot of the union of the visible boxes of `sels` (the head and its status block). */
+async function shotUnion(rootSel, sels, file) {
+  await ev("document.querySelector('.toast[data-key=\"role-defaults\"] .toast-x')?.click();0");
+  await sleep(300);
+  // The chat column scrolls itself after a paint: scroll, let it settle, then measure again right before the capture.
+  const measure = (scroll) => ev(`(() => { const root = [...document.querySelectorAll(${JSON.stringify(rootSel)})].find((x) => x.offsetParent); if (!root) return null;
+    const els = ${JSON.stringify(sels)}.map((s) => root.querySelector(s)).filter((x) => x && x.offsetParent); if (!els.length) return null;
+    if (${scroll}) {
+      // Freeze the scrolling ancestors' own scroll calls (the chat sticks to its end on each repaint), then centre the head.
+      for (let a = els[0].parentElement; a; a = a.parentElement) {
+        if (a.scrollHeight <= a.clientHeight || a.__frozen) continue;
+        const d = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+        Object.defineProperty(a, 'scrollTop', { configurable: true, get() { return d.get.call(this); }, set() {} });
+        a.scrollTo = () => {}; a.scrollBy = () => {}; a.__frozen = true;
+      }
+      els[0].scrollIntoView({ block: 'center' });
+    }
+    const bs = els.map((e) => e.getBoundingClientRect());
+    const x = Math.min(...bs.map((b) => b.left)), y = Math.min(...bs.map((b) => b.top));
+    return { x, y, width: Math.max(...bs.map((b) => b.right)) - x, height: Math.min(Math.max(...bs.map((b) => b.bottom)), innerHeight) - y }; })()`);
+  await measure(true);
+  await sleep(600);
+  const box = await measure(false);
+  if (!box || box.height < MIN_SHOT_PX) { check(false, `${file}: ${sels.join(' + ')} on screen`); return; }
+  const { data } = await cdp('Page.captureScreenshot', { format: 'png',
+    clip: { x: Math.max(0, box.x - 8), y: Math.max(0, box.y - 8), width: box.width + 16, height: box.height + 16, scale: 1 } });
+  const out = path.join(SHOTS, file);
+  await writeFile(out, Buffer.from(data, 'base64'));
+  results.shots.push(out);
+}
+if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'line') {
+  for (const [name, want] of Object.entries(LINE_WORLDS)) {
+    const routes = seed(`line-${name}`);
+    for (const theme of THEMES) {
+      await metrics(WIDE);
+      for (const surface of ['card', 'page']) {
+        const sf = LINE_SURFACES[surface];
+        const where = `line ${name} ${surface}, ${theme}, ${WIDE}px`;
+        const line = surface === 'card' ? `${want.line} · ${want.done}` : want.line;
+        await go(routes[surface], theme);
+        // The line follows the live snapshots and the feature fetch: wait for its exact text.
+        if (!await waitFor(`(() => { const m = (${LINE_READ(sf)}); return !!m && m.detail === ${JSON.stringify(line)}; })()`, `${where}: the line reads "${line}"`)) {
+          log(`  seen: ${JSON.stringify(await ev(LINE_READ(sf)))}`); continue;
+        }
+        await skipWelcome(); await sleep(500);
+        const m = await ev(LINE_READ(sf));
+        results.rows.push({ where, line: m });
+        check(m.detail === line, `${where}: the line reads "${line}" (${m.detail})`);
+        if (want.chip) {
+          check(JSON.stringify(m.chips) === JSON.stringify([want.chip]) && m.needs === 1, `${where}: the head shows "${want.chip}" once, need you said once (${JSON.stringify(m.chips)}, ${m.needs})`);
+          check(Math.abs(m.chipHeight - CHIP_PX) <= 0.5, `${where}: the chip is ${CHIP_PX}px tall (${m.chipHeight})`);
+        } else check(m.chips.length === 0 && m.needs === 0, `${where}: no need chip at zero stop lines (${JSON.stringify(m.chips)})`);
+        if (surface === 'card') {
+          const ok = m.lines === 1;
+          if (name === 'busy') check(ok, `${where}: the card detail is 1 line at the card's normal width (${m.lines} lines of ${m.lineHeight}px line-height, ${m.detailWidth}px wide)`);
+          else if (!ok) log(`  note ${where}: the card detail takes ${m.lines} lines at ${m.detailWidth}px`);
+        }
+        await shotUnion(sf.root, [sf.head, sf.status], `line-${name}-${surface}-${theme}.png`);
+      }
     }
   }
 }
