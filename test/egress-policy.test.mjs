@@ -3,7 +3,7 @@
 // socket, and the child environment worca hands out only while it enforces a policy.
 // The Docker overlay's own behaviour (no mode) is in test/docker-files.test.mjs.
 
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
@@ -22,6 +22,12 @@ import { deploymentFacts } from '../src/core/deployment.mjs';
 import { buildSpawnEnv } from '../src/core/claude-runner.mjs';
 
 const PLATFORM_ALLOW = 'app.worca.dev,worca-run-broker.railway.internal';
+
+// Settings and the saved proxy login live under HOME, which the whole suite shares: this file reads its own, so a
+// proxy another test file saves there cannot change these results.
+const OWN_HOME = mkdtempSync(join(tmpdir(), 'worca-egress-home-'));
+process.env.HOME = OWN_HOME; process.env.USERPROFILE = OWN_HOME;
+after(() => rmSync(OWN_HOME, { recursive: true, force: true }));
 
 test('mode: missing or blank is open and not enforced (an instance from before the policy)', () => {
   for (const env of [{}, { WORCA_EGRESS_MODE: '' }, { WORCA_EGRESS_MODE: '   ' }]) {
