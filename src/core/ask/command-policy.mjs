@@ -16,6 +16,8 @@ const PROTECTED = [
   /\.worca-cc\b/, /\bworca(?:-cc)?\.db/, /\bsecrets\.json\b/, /(?:^|[\s/'"=<>])\.env[\w.-]*/,
   /(?:^|[\s/'"=<>~])\.ssh\b/, /(?:^|[\s/'"=<>~])\.aws\b/, /(?:^|[\s/'"=<>~])\.gnupg\b/,
   /(?:^|[\s/'"=<>~])\.netrc\b/, /\.config\/gh\b/, /(?:^|[\s'"=<>])\/proc\//,
+  // The corporate proxy login (an NT hash), Docker secrets and the egress sidecar's data folder (its default path).
+  /\bproxy-login\.json/, /(?:^|[\s'"=<>]|\/var)\/run\/secrets\b/, /(?:^|[\s'"=<>])\/worca\/egress\b/,
 ];
 // ASK_DENY_RULES anchors these at ~/ only: a project's own .claude/, .docker/, .kube/ and .npmrc are
 // ordinary files (every worca worktree has .claude/rules). Refused only under the user's home.
@@ -26,6 +28,7 @@ const PROTECTED_WIN = [
   /\.worca-cc\b/i, /\bworca(?:-cc)?\.db/i, /\bsecrets\.json\b/i, /(?:^|[\s/\\'"=<>])\.env[\w.-]*/i,
   /(?:^|[\s/\\'"=<>~])\.ssh\b/i, /(?:^|[\s/\\'"=<>~])\.aws\b/i, /(?:^|[\s/\\'"=<>~])\.gnupg\b/i,
   /(?:^|[\s/\\'"=<>~])\.netrc\b/i, /\.config[\\/]+gh\b/i, /(?:^|[\s'"=<>])\/proc\//,
+  /\bproxy-login\.json/i,
 ];
 
 const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
@@ -214,7 +217,8 @@ function hardToUndoIn(text, dir, root, depth = 0, P = POSIX_PATHS) {
  *   home = the worca home; userHome = the shell's $HOME (what `~` expands to); platform = the shell's OS
  *   (default: Windows rules when cwd is a drive path)
  */
-export function checkAskCommand(command, { cwd, home = null, userHome = null, hostPid, serverPort = null, platform = null } = {}) {
+export function checkAskCommand(command, { cwd, home = null, userHome = null, hostPid, serverPort = null, platform = null,
+  egressDataDir = process.env.WORCA_EGRESS_DATA_DIR || null } = {}) {
   const win = platform ? platform === 'win32' : DRIVE_PATH.test(cwd || '');
   const P = win ? WIN_PATHS : POSIX_PATHS;
   const raw = String(command ?? '').trim();
@@ -227,7 +231,10 @@ export function checkAskCommand(command, { cwd, home = null, userHome = null, ho
   const namesWorcaHome = !home ? false
     : win && DRIVE_PATH.test(home) ? new RegExp(`(?<![\\w.:\\\\/-])${winPathSource(home.replace(/[\\/]+$/, ''))}`, 'i').test(local)
       : local.includes(home);
-  if ((win ? PROTECTED_WIN : PROTECTED).some((re) => re.test(local)) || namesWorcaHome || namesHomeOnly(local, { cwd, userHome, win })) {
+  // An egress sidecar data folder set elsewhere than /worca/egress (WORCA_EGRESS_DATA_DIR) is protected the same way.
+  const egressDir = typeof egressDataDir === 'string' && egressDataDir.trim().length > 1 ? egressDataDir.trim().replace(/[\\/]+$/, '') : null;
+  const namesEgressDir = !!egressDir && local.includes(egressDir);
+  if ((win ? PROTECTED_WIN : PROTECTED).some((re) => re.test(local)) || namesWorcaHome || namesEgressDir || namesHomeOnly(local, { cwd, userHome, win })) {
     return 'That command names a protected path (Worca\'s own files or credentials). Ask cannot read or change them.';
   }
   // Matched anywhere (inside `bash -c "…"` or `$(…)` too): gh keeps its OAuth token outside ~/.config/gh (the keychain).

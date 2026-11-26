@@ -474,6 +474,10 @@ export function createAskTools(deps) {
   const shapeTools = deps.shapeTools && typeof deps.shapeTools.check === 'function' ? deps.shapeTools : null;
   const shapeToolsOn = shapeOn && !!deps.chatActions && !!shapeTools && typeof shapeTools.follows === 'function' && shapeTools.follows() === true;
 
+  // Tool families in their own modules (security-tools.mjs): each gets this closure's helpers and adds its defs and
+  // handlers, listed and called like the rest (no import: deps.toolFamilies carries them).
+  const families = (Array.isArray(deps.toolFamilies) ? deps.toolFamilies : []).filter((f) => typeof f === 'function')
+    .map((make) => make({ deps, SCHEMA, str, AskToolError, scopeError, pinnedScope }));
   const defs = [
     { name: 'list_projects',
       description: 'List the registered projects (key, name, path) and workspaces (id, name, member project keys). Use the key / id in the other tools. Each project with a remote carries sync: {base, ahead, behind, dirty, fetchedAt} from the last fetch (no network).',
@@ -526,7 +530,7 @@ export function createAskTools(deps) {
           description: 'run tags for cost allocation, always "key:value" (client:acme, team:web). Only when the user names them.' },
         memoryScope: SCHEMA.s('Memory defragment workflow only: "global" | "project"'),
         engine: SCHEMA.s('claude | codex | copilot | cursor | gemini | goose | opencode | qwen — only when the user asked for that engine; omit for the default. Every engine but claude is beta: never pick one on your own'),
-        execEnv: SCHEMA.s('local | e2b — where the run\'s agents and scripts execute; e2b runs them in one remote sandbox per run while commits, pushes and PRs stay on this machine, and needs a project target (one git project)' + (deps.remoteEngines?.length ? ` on the ${deps.remoteEngines.length > 1 ? `${deps.remoteEngines.slice(0, -1).join(', ')} or ${deps.remoteEngines.at(-1)}` : deps.remoteEngines[0]} engine` : '') + '. Only when the user asks for it; omit for the default'),
+        execEnv: SCHEMA.s(`${(Array.isArray(deps.execEnvNames) && deps.execEnvNames.length ? deps.execEnvNames : ['local', 'e2b', 'docker']).join(' | ')} — where the run's agents and scripts execute (get_execution_environments lists them, ready or not); every name but local is a sandbox: one container or VM per run, while commits, pushes and PRs stay on this machine; a sandbox needs a project target (one git project)` + (deps.remoteEngines?.length ? ` on the ${deps.remoteEngines.length > 1 ? `${deps.remoteEngines.slice(0, -1).join(', ')} or ${deps.remoteEngines.at(-1)}` : deps.remoteEngines[0]} engine` : '') + '. Only when the user asks for it; omit for the default'),
         sourceBranch: SCHEMA.s('branch to start from. With the user\'s "Chat runs: source branch" setting: Current (checked out) = omitted means the checked-out branch; Ask me on the card (default) = omitted means the card asks the user to pick one; Only when the chat names one = omitted is refused, so ask the user which branch first'), featureBranch: SCHEMA.s('feature branch name'),
         sameAsSource: SCHEMA.b('commit straight onto the source branch instead of a separate feature branch: the run fast-forwards the source to its work when it finishes. Only when the user asks for it.'),
         note: SCHEMA.s('one line shown on the card: why this workflow fits the work (≤ 200 chars)'),
@@ -934,8 +938,12 @@ export function createAskTools(deps) {
     ] : []),
     ...(deps.projectChanges ? [
       { name: 'propose_project_change',
-        description: 'Propose adding a project for the user to confirm — it never creates or registers anything itself; the user sees a card and applies or declines it. kind "create": a new, empty folder named after the project in worca\'s projects folder. kind "add": a folder that already exists on this machine (path). useGit: true only when the user asks for git (worca runs git init once; a folder that already has git is a Git project either way). Applying it also switches this chat to the new project. Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
-        inputSchema: SCHEMA.obj({ kind: SCHEMA.s('create | add'), name: SCHEMA.s('the project name (create: also the new folder name; add: default the folder name)'), path: SCHEMA.s('add: the existing folder, absolute or ~'), useGit: SCHEMA.b('true only when the user asks for git: worca runs git init once'), note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }, ['kind']) },
+        description: 'Propose adding a project, or changing a project\'s sandbox settings, for the user to confirm — it never changes anything itself; the user sees a card and applies or declines it. kind "create": a new, empty folder named after the project in worca\'s projects folder. kind "add": a folder that already exists on this machine (path); refused in the hardened box, where a project is cloned (propose_clone_project). useGit: true only when the user asks for git (worca runs git init once; a folder that already has git is a Git project either way). Applying create or add also switches this chat to the new project. kind "sandbox": one git project\'s settings for one backend (e2b | docker): network "open" | "allow" (allow reaches only the hosts the operator listed), and its template (e2b) or image (docker) field, null to clear (get_project_environment shows them). Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
+        inputSchema: SCHEMA.obj({ kind: SCHEMA.s('create | add | sandbox'), name: SCHEMA.s('the project name (create: also the new folder name; add: default the folder name)'), path: SCHEMA.s('add: the existing folder, absolute or ~'), useGit: SCHEMA.b('true only when the user asks for git: worca runs git init once'),
+          projectKey: SCHEMA.s('sandbox: the project (default: the pinned project)'), backend: SCHEMA.s('sandbox: e2b | docker'),
+          network: { type: ['string', 'null'], description: 'sandbox: open | allow' }, template: { type: ['string', 'null'], description: 'sandbox, e2b: the E2B template (null: the default)' },
+          image: { type: ['string', 'null'], description: 'sandbox, docker: the Docker image reference (null: the default)' },
+          note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }, ['kind']) },
     ] : []),
     ...(deps.workspaceChanges ? [
       { name: 'propose_workspace_change',
@@ -1142,6 +1150,7 @@ export function createAskTools(deps) {
           kind: { type: 'string', enum: [...START_DESIGN_KINDS], description: 'web (a page, a poster, an illustration) | presentation | pitch | video | document' },
           projectKey: SCHEMA.s('a registered project the design belongs to (list_projects), when the user named one (optional)') }, ['brief', 'kind']) },
     ] : []),
+    ...families.flatMap((f) => f.defs || []),
   ];
 
   const EMPTY_DIFF = () => ({ available: false, files: [], text: '', truncated: false, totalBytes: 0, nextOffset: 0 });
@@ -2174,7 +2183,11 @@ export function createAskTools(deps) {
       // #527: has the base moved on the remote since the run started (last fetch, no network).
       const baseMoved = await baseMovedOf(row, run.baseSha, run.sourceBranch);
       const prs = typeof deps.readRunPrs === 'function' ? await deps.readRunPrs(row) : null;
+      // Where it executes, when that is a sandbox (security-deps.mjs runExecEnvOf): its label and, while live, waiting for
+      // a slot, building the image, the answer-by time and the files held for review. A local run keeps its shape.
+      const execEnv = typeof deps.runExecEnvOf === 'function' ? await deps.runExecEnvOf(row, deps).catch(() => null) : null;
       return { ...run, hasDiff: !run.archived && await deps.hasDiffPatch(row), ...(memory ? { memory } : {}), ...(policy ? { policy } : {}),
+        ...(execEnv ? { execEnv } : {}),
         ...(baseMoved ? { baseMoved } : {}),
         ...prFieldsOf(prs),
         ...(actions.length ? { actedBy: actions.map((a) => ({ at: a.at, by: a.by, what: deps.redact(a.what) })) } : {}) };
@@ -2928,7 +2941,9 @@ export function createAskTools(deps) {
       if (typeof p.status !== 'function') {
         return { available: false, text: 'The proxy status cannot be read from this chat turn. Ask again in a new message, or open Settings › Runs › Network proxy.' };
       }
-      return p.status();
+      const s = await p.status();
+      // Operator-managed (docs/network-proxy.md "A login the operator manages"): nobody logs in from Worca or the chat.
+      return s && s.managed ? { ...s, operatorManaged: 'The proxy login is managed by the operator: nobody logs in or out from Worca, and the proxy settings are not changed here. When the proxy rejects the login, the operator must replace the login file (WORCA_EGRESS_LOGIN_FILE).' } : s;
     },
     async test_network_proxy() {
       const p = proxyOf('test_network_proxy');
@@ -3000,6 +3015,13 @@ export function createAskTools(deps) {
     },
     async propose_project_change(input) {
       if (!deps.projectChanges) throw new AskToolError('propose_project_change: adding projects is unavailable');
+      // kind "sandbox" acts on an existing project: the chat's scope (the pin when none is named), as every project tool.
+      if (str(input.kind) === 'sandbox') {
+        const key = str(input.projectKey) || ((pinnedScope() || {}).projectKey || '');
+        const err = key ? await scopeError({ projectKey: key }) : null;
+        if (err) return { ok: false, errors: [err] };
+        return deps.projectChanges.validateChange({ ...input, projectKey: key });
+      }
       return deps.projectChanges.validateChange(input);
     },
     async propose_web_access(input) {
@@ -3350,6 +3372,8 @@ export function createAskTools(deps) {
       return { ok: true, requested: { kind: 'route', ...req }, note: SHAPE_CARD_NOTE };
     },
   };
+
+  for (const f of families) for (const [k, fn] of Object.entries(f.handlers || {})) if (!Object.hasOwn(handlers, k)) handlers[k] = fn;
 
   return {
     list: () => defs.filter((d) => (!composerMode || COMPOSER_ALLOW.has(d.name))

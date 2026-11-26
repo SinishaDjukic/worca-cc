@@ -164,6 +164,7 @@ import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
 import { registerChatActionCards, refreshChatPrWatch } from './chat/action-cards.mjs';
 import { registerScopeSwitchCard } from './chat/scope-switch-card.mjs';
+import { registerEnvironmentCard } from './chat/environment-card.mjs';
 import { registerQuestionCard } from './chat/question-card.mjs';
 import { registerFilesCard, filesForViewer, fileViewerUrls } from './chat/files-card.mjs';
 import { createTerminalTool } from './terminal-pane.mjs';
@@ -44237,6 +44238,7 @@ function scopeChatTo(project) {
   if (project && project.key) askPanel?.setScope?.({ pinned: true, projectKey: project.key, label: project.name });
 }
 registerScopeSwitchCard();
+registerEnvironmentCard();   // the environment card: a project's spec, build or sandbox settings (docs/environment-spec.md)
 registerQuestionCard();   // freeform chat D5: the ask_question card (Open in worca parity)
 // A chat's design cards (rounds, design questions, sound): drawn by the design open beside the chat (designChatHost).
 const designChatCards = registerDesignChatCards({ doc: document, studio: () => designStudio?.studio || null });

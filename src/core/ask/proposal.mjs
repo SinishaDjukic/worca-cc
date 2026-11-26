@@ -34,6 +34,7 @@ import { listModels as realListModels, modelCostConfig, modelHasBaseUrlRouting }
 import { resolveRunEngine } from '../settings-cascade.mjs';
 import { execEnvNames, isExecEnvName, getExecBackend } from '../exec-env/index.mjs';
 import { remoteRefusesDefault } from '../../shared/exec-env.mjs';
+import { defaultExecEnvReady } from './security-deps.mjs';
 import { cachedPolicyFor } from '../policy/cache.mjs';
 import { fieldsForRun, deviationsFor } from '../policy/effective.mjs';
 import { autoModelsFor } from '../auto/runnable.mjs';
@@ -112,6 +113,8 @@ export const PROPOSAL_ERRORS = Object.freeze({
   unknownExecEnv: (v) => `unknown execEnv "${v}" — one of ${execEnvNames().join(', ')}, or omit it for the default`,
   // The run start refuses the same (run-harness execEnvStartRefusal): say so before the user presses Start.
   execEnvRefused: (name, why) => `execEnv "${name}": ${execEnvLabelOf(name)} cannot take ${why} — omit execEnv or give "local"`,
+  // The backend's own refusal, as the run start would give it (security-deps.mjs execEnvPreflightErrors).
+  execEnvNotReady: (name, why) => `execEnv "${name}": ${execEnvLabelOf(name)} cannot start this run now: ${why.join(' ')} Offer execEnv "local", another engine or model, or ask the user to fix it first`,
   permissive: 'guardrailsId "permissive" is not allowed for proposed runs — use "normal" or a stricter set',
   briefRequired: 'brief is required',
   briefAndSource: 'give brief OR source, not both — with a task source the run reads the task itself; put what you learned in the note',
@@ -266,6 +269,10 @@ export function createProposalValidator({
   // Chat runs: source branch (target, { sourceBranch, sourceBranchByKey }) → the `require` entries of the one gate
   // (chat-source-branch-gate.mjs). Null by default, so a validator built on fakes never reads git or settings.
   sourceBranchNeeds = null,
+  // The sandbox preflight (security-deps.mjs defaultExecEnvReady): ({name, engine, isWorkspace, workMode}) → the run start's
+  // refusals (Docker not running, E2B not configured, the engine's key missing on the server, a legacy run root). Null by
+  // default, so a validator built on fakes never probes Docker; the module singleton below binds the real one.
+  execEnvReady = null,
 } = {}) {
   /** propose_run `nodes` → { nodes, errors, warnings }: the run API's check (run-overlay.mjs) on the catalog the run's
    *  engine runs, plus Ask's own: signed out, every agent node needs a model the install can run (auto/runnable.mjs,
@@ -487,7 +494,15 @@ export function createProposalValidator({
         const runEngine = engine || resolveEngine(workspace ? { workspace: true } : { projectDir: target.projectDir });
         const workMode = target.target === 'none' ? 'none' : target.workMode || 'git';
         const why = remoteRefusesDefault({ engine: runEngine, workspace, workMode }) ?? getExecBackend(x).refusesDefault?.({ engine: runEngine, workspace, workMode }) ?? null;
-        if (why) errors.push(PROPOSAL_ERRORS.execEnvRefused(x, why)); else execEnv = x;
+        if (why) errors.push(PROPOSAL_ERRORS.execEnvRefused(x, why));
+        else {
+          // The run start's own preflight, when the card is built: the chat hears why now and can offer Local or another model.
+          let notReady = [];
+          if (typeof execEnvReady === 'function') {
+            try { notReady = (await execEnvReady({ name: x, engine: runEngine, isWorkspace: workspace, workMode })) || []; } catch { notReady = []; }
+          }
+          if (notReady.length) errors.push(PROPOSAL_ERRORS.execEnvNotReady(x, notReady)); else execEnv = x;
+        }
       } else execEnv = x;
     }
 
@@ -696,4 +711,5 @@ export const validateProposal = createProposalValidator({
   sourceBranchNeeds: async (target, branches) => branchNeeds(
     await targetsForBody(target.target === 'workspace' ? { workspaceId: target.workspaceId } : { projectDir: target.projectDir }), branches)
     .filter((n) => n.mode === 'require'),
+  execEnvReady: defaultExecEnvReady(),
 }).validateProposal;

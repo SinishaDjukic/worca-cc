@@ -30,6 +30,11 @@ const CASES = [
   ['Read(~/.npmrc)', `${HOME}/.npmrc`],
   ['Read(~/.config/gh/**)', `${HOME}/.config/gh/hosts.yml`],
   ['Read(//proc/**)', '/proc/1/environ'],
+  // The corporate proxy login (an NT hash) wherever it is, Docker secrets under both names, the egress sidecar's data.
+  ['Read(//**/proxy-login.json*)', `${W}/proxy-login.json`],
+  ['Read(//run/secrets/**)', '/run/secrets/proxy_login'],
+  ['Read(//var/run/secrets/**)', '/var/run/secrets/proxy_login'],
+  ['Read(//worca/egress/**)', '/worca/egress/proxy-login.json.tmp'],
 ];
 
 test('spawn.mjs re-exports the one list: the Claude permission rules are the same array, same order', () => {
