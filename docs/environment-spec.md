@@ -99,6 +99,12 @@ In the [Hardened box](hardened-box.md) the projects live inside the box, not on 
 `--project` takes a project's key or name as the box lists it. Start the box first: a stopped box is refused with
 a line that says so. `--plain` reads this machine's projects instead, this once.
 
+What the box sends back is treated as untrusted, because the build runs on your machine's Docker. Each spec is
+checked again here, and its hash must match. A tool must be a plain mise registry name: `npm:`, `pipx:`, `ubi:`,
+`cargo:`, `go:`, `github:` and URLs are refused. Before it builds, Worca prints every tool and apt package and asks.
+`--yes` skips the question in a script. The record says which box the image is for. The other box refuses that
+`WORCA_IMAGE`.
+
 `WORCA_TAG` is read as compose reads it: a value set in the shell wins over the container `.env`.
 
 What it does:

@@ -14,6 +14,9 @@ import { readProjectExecEnv } from '../core/config.mjs';
 import { detectRuntime, dotenvValue, isLoopbackProxy, composeValue } from './container.mjs';
 import { hardenedProjectName, selectBox } from './container-hardened.mjs';
 import { keyOf } from './exec-env.mjs';
+import { normalizeEnvSpec } from '../core/exec-env/env-spec.mjs';
+import { PROJECT_KEY_RE } from '../core/store.mjs';
+import { terminalAsk } from './container-hardened.mjs';
 import {
   BUILD_DIR, PROBE_SCRIPT, boxBaseImage, boxImageState, boxImageTag, checkBoxProbe, parseBoxProbe, parseLabels,
   readBoxImageRecord, renderBoxDockerfile, unionSpecs, writeBoxImageRecord, writeEnvValue, currentSpecHash,
@@ -26,6 +29,7 @@ export const CONTAINER_BUILD_HELP = `worca container build — the box image fro
   worca container build --status [--json]         Is the image in use current or stale?
   worca container build --dry-run                 Print the Dockerfile; build nothing
   worca container build --reset                   Go back to the plain image (removes WORCA_IMAGE from .env)
+  --yes                                           hardened box: build without asking (the list still prints)
 
 In the hardened box the projects live inside the box, so the specs are read from the running box (start it first:
 worca container up --hardened). --project then takes a project's key or name as the box lists it.
@@ -39,8 +43,8 @@ The build starts from WORCA_BASE_IMAGE in the container .env (default: the image
 itself: a stale image is still used, with a warning. Restart the box on a new image with: worca container up
 `;
 
-function defaultExec(cmd, args, { cwd, capture = false, env } = {}) {
-  const r = spawnSync(cmd, args, { cwd, env, stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit', encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+function defaultExec(cmd, args, { cwd, capture = false, env, maxBuffer = 16 * 1024 * 1024 } = {}) {
+  const r = spawnSync(cmd, args, { cwd, env, stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit', encoding: 'utf8', maxBuffer });
   return { status: r.error ? 127 : (r.status ?? 1), stdout: r.stdout || '', stderr: r.stderr || '' };
 }
 
@@ -57,6 +61,7 @@ function parse(argv) {
     else if (a === '--dry-run') o.dryRun = true;
     else if (a === '--reset') o.reset = true;
     else if (a === '--hardened' || a === '--plain') o.box = a.slice(2);
+    else if (a === '--yes' || a === '-y') o.yes = true;
     else if (a === 'help' || a === '--help' || a === '-h') o.help = true;
     else throw new Error(`unknown option ${a} (see: worca container build --help)`);
   }
@@ -79,23 +84,54 @@ const envReader = (dir) => {
  *  entrypoint sets HOME and WORCA_HOME there for the server; an exec does not run the entrypoint). */
 const BOX_SPECS_SCRIPT = 'd="${WORCA_DATA_DIR:-/data}"; HOME="$d/home" WORCA_HOME="$d/worca" exec worca exec-env specs --json';
 
+/** The most the box's answer may be (100 tools and 200 packages per project are far below it). */
+export const BOX_SPECS_MAX_BYTES = 1024 * 1024;
+const BOX_SPECS_MAX_PROJECTS = 200;
+/** A tool from the box: a plain mise registry name only. Backend forms (npm:, pipx:, ubi:, cargo:, go:, github:…),
+ *  paths, URLs and versions in the name are refused: the build runs on this machine's Docker. */
+const BOX_TOOL_RE = /^[a-z0-9][a-z0-9._+-]{0,63}$/i;
+const NAME_RE = /^[\w .-]{1,64}$/;
+
+/**
+ * One project from the box, checked on this side as untrusted input: the key's shape, the spec re-normalized
+ * (normalizeEnvSpec, as a stored one) with the same hash it claims, and plain tool names only.
+ * @returns {{key: string, name: string, spec: object}} @throws {Error} naming the project and the problem
+ */
+export function checkBoxProject(p) {
+  if (!p || typeof p !== 'object' || typeof p.key !== 'string' || !PROJECT_KEY_RE.test(p.key)) throw new Error(`the box listed a project with a malformed key ${JSON.stringify(p && p.key)}`);
+  const name = typeof p.name === 'string' && NAME_RE.test(p.name) ? p.name : '';
+  const who = name ? `${name} (${p.key})` : p.key;
+  const raw = p.spec;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`project ${who}: the box sent no spec`);
+  let spec;
+  try { spec = normalizeEnvSpec({ version: raw.version, tools: raw.tools, apt: raw.apt }); } catch (err) { throw new Error(`project ${who}: the box's spec is invalid: ${err.message}`); }
+  if (raw.hash !== spec.hash) throw new Error(`project ${who}: the box's spec does not match its hash (${raw.hash} claimed, ${spec.hash} computed)`);
+  const bad = spec.tools.find((t) => !BOX_TOOL_RE.test(t.name));
+  if (bad) throw new Error(`project ${who}: tool ${JSON.stringify(bad.name)} is not a plain mise registry name; a box image takes registry tools only (no npm:, pipx:, ubi:, cargo:, go:, github: or other backends)`);
+  return { key: p.key, name, spec };
+}
+
 /**
  * Every project with a spec, read inside the running hardened box: [{key, name, spec}], or {error}.
- * Its projects are cloned into the box's volume, so the host's registry knows none of them.
+ * Its projects are cloned into the box's volume, so the host's registry knows none of them. What comes back is
+ * untrusted (checkBoxProject): an agent that took over the box must not steer a build on this machine's Docker.
  */
 export function boxSpecs({ exec, bin, dir, env }) {
   const project = hardenedProjectName({ dir, env });
   const ps = exec(bin, ['ps', '-q', '--filter', `label=com.docker.compose.project=${project}`, '--filter', 'label=com.docker.compose.service=worca'], { capture: true });
   const id = ps.status === 0 ? String(ps.stdout || '').trim().split('\n')[0].trim() : '';
   if (!id) return { error: `the hardened box (compose project ${project}) is not running, and its projects and their environment specs live inside it. Start it with worca container up --hardened, then run worca container build again` };
-  const r = exec(bin, ['exec', '-u', 'worca', id, 'sh', '-c', BOX_SPECS_SCRIPT], { capture: true });
+  const r = exec(bin, ['exec', '-u', 'worca', id, 'sh', '-c', BOX_SPECS_SCRIPT], { capture: true, maxBuffer: BOX_SPECS_MAX_BYTES + 1024 });
+  const text = String(r.stdout || '');
+  if (text.length > BOX_SPECS_MAX_BYTES) return { error: `the hardened box answered with more than ${BOX_SPECS_MAX_BYTES} bytes of specs; nothing was built` };
   let list = null;
-  try { list = JSON.parse(String(r.stdout || '').trim()); } catch { list = null; }
+  try { list = JSON.parse(text.trim()); } catch { list = null; }
   if (r.status !== 0 || !Array.isArray(list)) {
     const why = String(r.stderr || '').trim().split('\n').pop() || `exit ${r.status}`;
     return { error: `cannot read the environment specs in the hardened box (${why}). Its Worca may be older than this one: update the image (WORCA_TAG in .env, then worca container pull --hardened)` };
   }
-  return list.filter((p) => p && typeof p.key === 'string' && p.spec && typeof p.spec === 'object').map((p) => ({ key: p.key, name: p.name || '', spec: p.spec }));
+  if (list.length > BOX_SPECS_MAX_PROJECTS) return { error: `the hardened box listed ${list.length} projects (at most ${BOX_SPECS_MAX_PROJECTS}); nothing was built` };
+  try { return list.map(checkBoxProject); } catch (err) { return { error: `${err.message}. Nothing was built` }; }
 }
 
 /** From the box's list: the named projects (key or name), else all of them. */
@@ -186,7 +222,8 @@ function describeState(st, record, base) {
  * @param {string[]} argv  tokens after `container build`
  * @param {object} io      { out, c, fail }; `exec`, `dir`, `env` and `now` are injectable for tests
  */
-export async function cmdContainerBuild(argv, { out, c = (_n, s) => s, fail, exec = defaultExec, dir: dirOverride = null, env = process.env, now = () => new Date() } = {}) {
+export async function cmdContainerBuild(argv, { out, c = (_n, s) => s, fail, exec = defaultExec, dir: dirOverride = null, env = process.env, now = () => new Date(),
+  stdin = process.stdin, ask: askOverride = null } = {}) {
   let o;
   try { o = parse(argv); } catch (err) { fail(err.message); return 2; }
   if (o.help) { out(CONTAINER_BUILD_HELP.trimEnd()); return 0; }
@@ -248,6 +285,17 @@ export async function cmdContainerBuild(argv, { out, c = (_n, s) => s, fail, exe
     dockerfile = renderBoxDockerfile({ base, spec, projects: picked.map((p) => ({ key: p.key, specHash: p.spec.hash })) });
   } catch (err) { fail(err.message); return 1; }
   if (o.dryRun) { out(dockerfile.trimEnd()); return 0; }
+  if (hardened) {
+    // The list came from inside the box: show all of it, and build only on a yes (or --yes in a script).
+    out(`${c('bold', 'from the box')}  ${picked.map((p) => p.name || p.key).join(', ')}`);
+    out(`  tools: ${spec.tools.map((t) => `${t.name}@${t.version}`).join(', ') || 'none'}`);
+    out(`  apt:   ${spec.apt.join(', ') || 'none'}`);
+    if (!o.yes) {
+      if (!stdin?.isTTY) { fail('these tools and packages come from inside the hardened box: check them, then build with --yes'); return 1; }
+      const ask = askOverride || terminalAsk({ input: stdin });
+      if (!/^y/i.test(String(await ask('Build an image on this machine with these? [y/N]: ')).trim())) { out('nothing was built'); return 1; }
+    }
+  }
 
   const rt = detectRuntime(exec, o.runtime);
   if (rt.error) { fail(rt.error); return 1; }
@@ -281,7 +329,7 @@ export async function cmdContainerBuild(argv, { out, c = (_n, s) => s, fail, exe
   }
 
   writeBoxImageRecord(dir, {
-    image: tag, base, baseId, specHash: spec.hash, ...(hardened ? { box: 'hardened' } : {}),
+    image: tag, base, baseId, specHash: spec.hash, box: hardened ? 'hardened' : 'plain',
     projects: picked.map((p) => ({ key: p.key, name: p.name, specHash: p.spec.hash })),
     tools: spec.tools.length, apt: spec.apt.length,
     node: probe.node, git: probe.git, claudeCode: probe.claude, worca: probe.worca,

@@ -400,6 +400,7 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
   let composeEnv;   // unset until prepare(): down, status, logs and pull inherit the shell
   let extra = [];
   let sidecar = null;   // why the egress sidecar runs, or null
+  let imageRefusal = null;   // WORCA_IMAGE was built for the other box
   const prepare = () => {
     const envFile = (k) => readEnvValue(dir, k);
     const proxy = boxProxyEnv({ env: hostEnv, envFile, settings, login });
@@ -428,6 +429,13 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
     const recorded = (key) => (readBoxImageRecord(dir)?.projects || []).find((p) => p.key === key)?.specHash ?? null;
     const img = boxImageForCompose({ dir, envFile, ...(box === 'hardened' ? { specHashOf: recorded } : {}) });
     if (img.overlay) extra.push('image');
+    // An image built for the other box is refused: the hardened box's specs came from inside it (untrusted), and a
+    // plain build's from this machine's projects. A record without `box` is from before the field: plain.
+    const rec = img.overlay ? readBoxImageRecord(dir) : null;
+    const envImage = String(envFile('WORCA_IMAGE') || '').trim();
+    if (rec && rec.image === envImage && (rec.box || 'plain') !== box) {
+      imageRefusal = `WORCA_IMAGE=${envImage} was built for the ${rec.box || 'plain'} box, not the ${box} one: build one for it (worca container build${box === 'hardened' ? ' --hardened' : ' --plain'}) or go back to the plain image (worca container build --reset)`;
+    }
     if (img.notice) out(`${c('yellow', 'image')}  ${img.notice}`);
     composeEnv = Object.fromEntries(Object.entries({ ...hostEnv, ...proxy.set, ...caEnv, ...sideEnv }).filter(([, v]) => v !== undefined));
     if (a.tag) composeEnv.WORCA_TAG = a.tag;
@@ -477,7 +485,10 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
   // A login set up for the sidecar is remembered, so every later verb (down included) keeps its overlay.
   const proxyLoginVerb = (a.verb === 'proxy' && a._[0] === 'login') || (a.verb === 'run' && a.passthrough[0] === 'proxy' && a.passthrough[1] === 'login');
   if (proxyLoginVerb && readState(dir).sidecar !== true) writeState(dir, { ...readState(dir), sidecar: true });
-  if (!['down', 'status', 'logs', 'pull'].includes(a.verb)) prepare();
+  if (!['down', 'status', 'logs', 'pull'].includes(a.verb)) {
+    prepare();
+    if (imageRefusal) { fail(imageRefusal); return 1; }
+  }
   else if (readState(dir).sidecar === true && !overlays.includes('proxy')) extra = ['proxy'];
   const hb = () => ({ a, dir, exec, bin: rt.bin, composeEnv: composeEnv || hostEnv, files: files(), out, c, fail, stdin, state: readState(dir),
     login: (args) => cmdContainer(['proxy', 'login', ...args], { out, c, fail, exec, dir, env: hostEnv, settings, login, stdin }) });
