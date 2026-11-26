@@ -17,7 +17,9 @@ A `compose.override.yml` in the container folder is part of every call. A proxy 
 
 The image has no `VOLUME` line any more. Restarting the box leaves no anonymous volumes behind. In the hardened box the unused folders are no longer world-writable.
 
-`worca container build` in the hardened box reads the projects inside the box. A stopped box gets a clear message.
+`worca container build` in the hardened box reads the projects inside the box. A stopped box gets a clear message. What the box sends back is checked again before anything is built, and Worca asks first.
+
+The agent guardrails now also block `/var/run/secrets`. It is the same folder as `/run/secrets`.
 
 Chips: Security · Container · Hardened box · Shared instance
 
