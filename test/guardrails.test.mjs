@@ -131,7 +131,7 @@ test('preset table snapshot — changing a preset is a deliberate, release-noted
     envScrub: false,
     envAllowlist: [],
     protectedPaths: [
-      '.env*', '*.pem', '*.key', '.npmrc', '.netrc', 'id_*', '*.p12', '*.pfx', '//run/secrets/**',
+      '.env*', '*.pem', '*.key', '.npmrc', '.netrc', 'id_*', '*.p12', '*.pfx', '//run/secrets/**', '//var/run/secrets/**',
       '//**/worca-cc.db*', '//**/worca.db*', '//**/.worca-cc/plugins/*/data/secrets.json',
       '//**/.worca-cc/settings.json', '//**/.worca-cc/mcp/**',
       '//**/proxy-login.json*', '//**/worca-vault*',
@@ -152,7 +152,7 @@ test('preset table snapshot — changing a preset is a deliberate, release-noted
     envScrub: true,
     envAllowlist: [],
     protectedPaths: [
-      '.env*', '*.pem', '*.key', '.npmrc', '.netrc', 'id_*', '*.p12', '*.pfx', '//run/secrets/**',
+      '.env*', '*.pem', '*.key', '.npmrc', '.netrc', 'id_*', '*.p12', '*.pfx', '//run/secrets/**', '//var/run/secrets/**',
       '//**/worca-cc.db*', '//**/worca.db*', '//**/.worca-cc/plugins/*/data/secrets.json',
       '//**/.worca-cc/settings.json', '//**/.worca-cc/mcp/**',
       '//**/proxy-login.json*', '//**/worca-vault*',
@@ -399,4 +399,13 @@ test('gateRules: removes the floor, so the gates weigh exactly the rules a set h
   assert.equal(gateRules(null), null);
   assert.equal(gateRules({ deny: [...FLOOR] }), null);
   assert.deepEqual(gateRules({ deny: [...FLOOR], allow: ['Bash(npm:*)'] }), { allow: ['Bash(npm:*)'] });
+});
+
+test('container secrets are denied under both spellings: /run/secrets and its /var/run/secrets alias', () => {
+  for (const level of ['normal', 'secure']) {
+    const deny = guardrailsToPermissionRules(GUARDRAIL_PRESETS[level]).deny;
+    for (const p of ['//run/secrets/**', '//var/run/secrets/**']) {
+      assert.ok(deny.includes(`Read(${p})`), `${level}: Read(${p})`);
+    }
+  }
 });
