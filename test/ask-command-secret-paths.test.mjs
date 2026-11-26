@@ -98,3 +98,22 @@ test('fail closed still lets ordinary commands through, an unknown folder includ
     'cd "$(git rev-parse --show-toplevel)" && grep -r TODO src', 'echo $HOME', 'bash -c "npm test"']
     .map((c) => ({ name: c, run: () => assert.equal(checkAskCommand(c, CTX), null, c) })));
 });
+
+// Round 4: three places the ANY rule itself failed open.
+const ANY_RULE = {
+  // Each name first holds a harmless value the old code trusted (/tmp/secrets is no secret), then is rewritten unseen.
+  'a variable written by anything but a plain resolved NAME=value is ANY': ['X=/tmp; X+=/../run; cat $X/secrets/a',
+    'X=/tmp; for X in /run; do cat $X/secrets/a; done', 'X=/tmp; read X; cat $X/secrets/a', 'Y=/tmp; read -r X Y; cat $Y/secrets/a',
+    'X=/tmp; mapfile X; cat $X/secrets/a', 'X=/tmp; readarray -t X; cat $X/secrets/a', 'X=/tmp; printf -v X /run; cat $X/secrets/a',
+    'X=/tmp; declare X; cat $X/secrets/a', 'X=/tmp; typeset X; cat $X/secrets/a', 'X=/tmp; local X; cat $X/secrets/a',
+    'X=/tmp; unset X; cat $X/secrets/a', 'X=/tmp; X+=/a; X=/tmp; cat $X/secrets/a', 'X=/tmp; export X; cat $X/egress/y'],
+  'under an unknown folder a relative word stands under any folder': ['cd $D && cat *', 'cd $D && find .', 'cd $D && find', 'cd $D && tar c .',
+    'cd $D && grep -r token', 'cd $D && rg token', 'cd $D && cp -r .. /tmp/x', 'cd $D && tar c .*', 'cd $D && zip -r a.zip *'],
+  'completes: x/.. pairs, a leading or remaining .., the tail at every offset': ['cat $X/a/../run/secrets/a', 'cat $X/../secrets/a',
+    'cat $X/a/b/../../worca/egress/y', 'cat $X/../../run/./secrets/a', 'cat $X/deep/run/secrets/a', 'cd $D && cat a/../secrets/b'],
+};
+test('round 4: the ANY rule fails closed in each place the review found', async () => {
+  const rows = [];
+  for (const [cls, cmds] of Object.entries(ANY_RULE)) for (const c of cmds) rows.push({ name: `${cls}: ${c}`, run: () => assert.ok(refused(c), c) });
+  await checkRows(rows);
+});

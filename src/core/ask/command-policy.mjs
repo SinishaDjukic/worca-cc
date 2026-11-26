@@ -207,11 +207,20 @@ export function namesSystemSecretPath(command, { cwd = '/', home = null, worcaHo
   };
   /** With an unknown prefix before segment `p`: could segs[p…] complete a protected path? (the worst prefix) */
   const completes = (segs, p) => {
-    const at = segs.slice(p).filter((g) => g !== '.');
+    // `x/..` pairs cancel; a `..` left over climbs into the unknown prefix, so only what follows the last one counts.
+    const norm = [];
+    for (const g of segs.slice(p)) {
+      if (g === '.' || g === '') continue;
+      if (g === '..') { if (norm.length && norm[norm.length - 1] !== '..') norm.pop(); else norm.push('..'); continue; }
+      norm.push(g);
+    }
+    const at = norm.slice(norm.lastIndexOf('..') + 1);
     if (!at.length) return false;
+    // The protected tail at every offset: the unknown prefix may end anywhere above a known segment (fail closed).
     if (targets.some((t) => t.some((_, k) => {
       const tail = t.slice(k);
-      return tail.length <= at.length && tail.every((w, j) => !isLoneStar(at[j]) && segOk(at[j], w));
+      for (let q = 0; q + tail.length <= at.length; q += 1) if (tail.every((w, j) => !isLoneStar(at[q + j]) && segOk(at[q + j], w))) return true;
+      return false;
     }))) return true;
     if (at.some((g) => !isLoneStar(g) && SECRET_DIRS.some((d) => segOk(g, d)))) return true;
     return nameHit(at[at.length - 1]);
@@ -235,7 +244,21 @@ export function namesSystemSecretPath(command, { cwd = '/', home = null, worcaHo
         }
       }
     };
+    // Names written by anything but a plain NAME=value it resolved (+=, for, read, mapfile / readarray, printf -v,
+    // declare / typeset / local / export / readonly without a value, unset): ANY for every later expansion.
+    const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+    const markAny = (n) => { if (NAME.test(n)) vars.set(n, new Set([ANY])); };
     for (const words of segments) {
+      for (let k = 0; k < words.length; k += 1) {
+        const w = words[k];
+        const plus = /^([A-Za-z_][A-Za-z0-9_]*)\+=/.exec(w);
+        if (plus) markAny(plus[1]);
+        if (w === 'for' || w === 'select') markAny(words[k + 1] || '');
+        if (w === 'printf') for (let j = k + 1; j < words.length - 1; j += 1) if (words[j] === '-v') markAny(words[j + 1]);
+        if (['read', 'mapfile', 'readarray', 'unset', 'declare', 'typeset', 'local', 'export', 'readonly'].includes(w)) {
+          for (let j = k + 1; j < words.length && !/^[;&|]/.test(words[j]); j += 1) if (!words[j].startsWith('-') && !words[j].includes('=')) markAny(words[j]);
+        }
+      }
       // NAME=value words before the command: kept for the line when nothing follows (or after export), else for this command.
       let i = 0;
       const lead = words[0] === 'export' || words[0] === 'declare' || words[0] === 'local' || words[0] === 'readonly';
@@ -246,6 +269,8 @@ export function namesSystemSecretPath(command, { cwd = '/', home = null, worcaHo
         if (!m) break;
         const vals = expandWord(m[2], vars, { pwd: anyDir ? [ANY] : [...dirs], home: homeDir });
         if (!vals) return true;
+        // A name already ANY stays ANY: an earlier write the guard could not resolve may still hold.
+        if (vars.get(m[1])?.has(ANY)) continue;
         scoped.set(m[1], new Set([...(scoped.get(m[1]) || []), ...vals]));
       }
       const persist = lead || i >= words.length;
@@ -255,6 +280,10 @@ export function namesSystemSecretPath(command, { cwd = '/', home = null, worcaHo
       while (i < words.length && PREFIX_WORDS.has(words[i])) i += 1;
       const cmd = words[i] ? words[i].split('/').pop() : '';
       const recursive = RECURSIVE_READERS.has(cmd) || xargs;
+      // A recursive reader with no path reads the folder it is in: with that folder unknown, refused.
+      const pathArgs = words.slice(i + 1).filter((w) => !w.startsWith('-'));
+      if (anyDir && ((cmd === 'find' && !pathArgs.length) || (['rg', 'ag'].includes(cmd) && pathArgs.length <= 1)
+        || (['grep', 'egrep', 'fgrep'].includes(cmd) && words.some((w) => /^-[a-zA-Z]*[rR]/.test(w) || w === '--recursive') && pathArgs.length <= 1))) return true;
       for (let k = 0; k < words.length; k += 1) {
         const raw = words[k];
         const pwd = anyDir ? [ANY] : [...dirs];
@@ -280,13 +309,15 @@ export function namesSystemSecretPath(command, { cwd = '/', home = null, worcaHo
           const starts = [];
           if (!g.startsWith('/') && anyDir) starts.push(0);
           w.split('/').forEach((s, n) => { if (s.includes(ANY)) starts.push(n + 1, n); });
-          const absList = g.startsWith('/') ? [g] : anyDir ? [] : [...dirs].map((d) => posix.join(d, g));
+          const absList = g.startsWith('/') ? [g] : anyDir ? [posix.join('/*', g)] : [...dirs].map((d) => posix.join(d, g));
           if (absList.some(bad)) return true;
           const rel = g.startsWith('/') ? parts.slice(1) : parts;
           const shift = w.startsWith('/') ? 1 : 0;
           if (starts.some((p) => completes(rel, Math.max(0, p - shift)))) return true;
           // A recursive reader given a parent of a protected folder (`find /`, `tar c /run`, `cp -r ~ …`).
           if (recursive && k > i && !w.startsWith('-') && absList.some((p) => ancestor(posix.normalize(p)))) return true;
+          // Under an unknown folder, `.`, `..`, `*` and `.*` given to a recursive reader may be a protected folder's parent.
+          if (recursive && anyDir && k > i && /^(?:\.{1,2}|\*+|\.\*)\/?$/.test(g)) return true;
         }
         // A protected root written with quotes, braces, a wildcard or an expansion is refused outright.
         const plain = raw.replace(/\/+/g, '/');
