@@ -35931,9 +35931,10 @@ const requirementsView = createRequirementsView({
 // Turning the flag off while the page is open leaves it for Chat (a hidden page must not stay up).
 onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirements') showView('chat', ''); });
 
-// Design (behind the design flag): the page module owns #design-host (the Library) and the nav row's live count; app.js
-// routes and relays the design-* frames and hello's design list. A design opens as its chat (docs/design.md, "In the
-// chat"): the Chat page's design slot holds its dock, the tool panel's Design tab its stage.
+// Design (behind the design flag): the page module owns the nav row's live count and `#design/<id>`; `#design` itself is
+// the design start with every design shown (#chat/new/design/all, showView). app.js routes and relays the design-*
+// frames and hello's design list. A design opens as its chat (docs/design.md, "In the chat"): the Chat page's design
+// slot holds its dock, the tool panel's Design tab its stage.
 const designSendWs = (obj) => { const s = state.ws; if (s && state.wsReady) { try { s.send(JSON.stringify(obj)); } catch { /* ignore */ } } };
 // As the Workflows chat's: once marked loads, the open design chat paints its replies again.
 const designRenderMarkdown = (text, mount) => {
@@ -35944,7 +35945,7 @@ const designRenderMarkdown = (text, mount) => {
 };
 const DESIGN_HASH_RE = /^#?design\/(d_[0-9a-f]{12})$/;
 /** A design's chat: `#chat/<its thread>`. A design whose chat is gone (Delete all chat history) gets it back first; one
- *  that cannot be read stays on the Library. */
+ *  that cannot be read leaves the design start as it was (a tile of it), else goes to `#design`. */
 async function openDesignChat(designId) {
   let threadId = null;
   try {
@@ -35957,6 +35958,8 @@ async function openDesignChat(designId) {
       threadId = (tj && tj.thread && tj.thread.id) || (tj && tj.threadId) || threadId;
     }
   } catch { threadId = null; }
+  // A tile of the design start whose design cannot be read (deleted elsewhere): the start stays, its kind and list too.
+  if (!threadId && /^#chat\/new\/design(\/all)?$/.test(location.hash)) return;
   const target = threadId ? `chat/${threadId}` : 'design';
   // `#design/<id>` itself (a tile's own tab, an Activity row) is swapped, so Back does not land on it and come back here.
   if (DESIGN_HASH_RE.test(location.hash)) location.replace(`#${target}`);
@@ -35968,8 +35971,8 @@ const designNavigate = (hash) => {
   if (m) void openDesignChat(m[1]);
   else location.hash = String(hash).replace(/^#/, '');
 };
-const designView = mountDesignView({ doc: document, win: window, host: $('#design-host'), fetch: (...a) => fetch(...a), route: (p) => { location.hash = p ? `#design/${p}` : '#design'; },
-  navigate: designNavigate, openDesign: (id) => openDesignChat(id) });
+const designView = mountDesignView({ doc: document, win: window, route: (p) => { location.hash = p ? `#design/${p}` : '#design'; },
+  openDesign: (id) => openDesignChat(id) });
 /** The design chat on screen: { threadId, studio } (design/studio.mjs), or null. The ask panel mounts and unmounts it. */
 let designStudio = null;
 let designKind = null;   // the tool panel's Design tab (tool-design.mjs), registered with the panel's kinds
@@ -35993,15 +35996,32 @@ const designChatHost = {
     toolPanel?.onContextChange();     // a design chat's tools open in its design's folder (toolPageContext chatDesign)
     void showDesignStage(threadId);   // the design shows beside its chat
   },
-  /** A new design chat: the Chat page's start (kind, project, models, files), which creates the design and opens it. */
-  mountStart(slot, { setComposer } = {}) {
+  /** A new design chat: the Chat page's start (kind, project, models, files), which creates the design and opens it,
+   *  with the designs under it (`all`: every one shown, as `#design` asks). */
+  mountStart(slot, { setComposer, all = false } = {}) {
     designChatHost.unmount();
-    const page = createDesignStartPage({ doc: document, win: window, host: slot, fetch: (...a) => fetch(...a), navigate: designNavigate, setComposer });
+    const page = createDesignStartPage({ doc: document, win: window, host: slot, fetch: (...a) => fetch(...a), navigate: designNavigate, setComposer,
+      all, onAll: designStartRoute });
     designStudio = { threadId: null, studio: page };
   },
   unmount() { const d = designStudio; designStudio = null; d?.studio.destroy(); if (d) { designChatCards.repaint(); repaintChatNav(); } },
 };
-onFlagChange('design', (on) => { if (!on && currentView() === 'design') showView('chat', ''); updateNavCounts(); });
+/** Show all designs and Show fewer on the design start: the address follows, swapped (no history entry, no route, so the
+ *  start and what was typed stay), and Back from a design opened later returns to the list as it was left. Only while
+ *  the start's own address shows: after a tile click the hash is the design's chat while the start stays up until that
+ *  chat loads (ask-panel syncDesign). */
+function designStartRoute(all) {
+  if (!/^#chat\/new\/design(\/all)?$/.test(location.hash)) return;
+  const target = all ? 'chat/new/design/all' : 'chat/new/design';
+  if (location.hash.slice(1) === target) return;
+  try { window.history.replaceState(null, '', `#${target}`); } catch { /* sandboxed */ }
+  wfvReturn = target;                          // no hashchange, so showView never records the swapped address
+}
+// Turning the flag off leaves the Design page and the design start for the Chat home (a hidden page must not stay up).
+onFlagChange('design', (on) => {
+  if (!on && (currentView() === 'design' || (currentView() === 'chat' && /^#chat\/new\/design(\/|$)/.test(location.hash)))) showView('chat', '');
+  updateNavCounts();
+});
 
 /** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
 function withWorkspaces() {
@@ -41870,6 +41890,14 @@ function showView(name, param = '') {
   if (name === 'requirements' && !flagOn('requirements')) return showView('chat', '');
   // Design too: a deep link while the design flag is off lands on Chat.
   if (name === 'design' && !flagOn('design')) return showView('chat', '');
+  // A bare #design is the design start with every design shown. The address is swapped, as #running's below, so Back
+  // does not land on #design and come back here; the nested call finds the hash already right and pushes nothing.
+  if (name === 'design' && !param) {
+    if (/^#design\/?$/.test(location.hash)) {
+      try { window.history.replaceState(null, '', '#chat/new/design/all'); } catch { /* sandboxed */ }
+    }
+    return showView('chat', 'new/design/all');
+  }
   // A bare #running / #history is the Runs list now (both lists merged into it). Replace the
   // entry rather than letting the hash sync below PUSH #runs: Back would land on #history
   // again, normalize again, and never get past it.
@@ -42002,7 +42030,8 @@ function showView(name, param = '') {
 
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== viewSection(name)));
   paintNav(name, param);
-  howItWorks.syncRoute(name);
+  // The design start is the sidebar's Design: its How it works is the Design guide.
+  howItWorks.syncRoute(navSectionOf(name, param) === 'design' ? 'design' : name);
   setMobileNavOpen(false);   // any route (a drawer tap, back/forward, a deep link) puts the drawer away
   // Any route puts the Actions flyout away (a click inside it already did).
   sideActionsFlyout?.close();
@@ -42689,7 +42718,7 @@ function enterChatView(param = '', prevView = null) {
     }
   }
   askPanel?.open({ threadId });
-  if (designStart) askPanel?.startDesign();
+  if (designStart) askPanel?.startDesign({ all: parts[2] === 'all' });
   // The New run link's entry: consumed on ANY Chat entry, so a stale one (home never reached) can't arm a later visit.
   if (pendingShapeEntry) {
     const { text } = pendingShapeEntry;

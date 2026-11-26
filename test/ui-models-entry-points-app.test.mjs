@@ -217,7 +217,7 @@ const WAYS = [
   ['"Add model…" in a New run picker', async () => { await openWf(win); pickOption(doc.querySelector('.step-model[data-node-id="n1"]'), '__add__'); }, '#models',
     () => panelShown('catalogue') && !!doc.querySelector('#model-editor-modal:not(.hidden) #mv-editor-host .mdl-add[data-step="1"]'),
     NEW_RUN_ARMS],                                                                                                       // as ui-newpipeline-engine-models.test.mjs:145-172
-  ['Design › Pictures "Set up"', () => follow('#models/providers/images'), '#models/providers/images', () => rowOpen('images')], // ui-design-library.test.mjs:649-650
+  ['Design › Pictures "Set up"', () => follow('#models/providers/images'), '#models/providers/images', () => rowOpen('images')], // ui-design-library.test.mjs:257-259
   ['account menu free requests', () => clickAccountRow('.mc-free'), '#models/providers/openrouter', () => rowOpen('openrouter')],
   ['search "openai key"', () => searchPick(ctx, 'openai key', 'OpenAI-compatible'), '#models/providers/openai', () => rowOpen('openai')],
   ['search a model by name', () => searchPick(ctx, 'my gpt', 'My GPT'), '#models/model/my-gpt',

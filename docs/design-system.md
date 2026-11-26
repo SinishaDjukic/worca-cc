@@ -518,7 +518,7 @@ above them, never a boxed tab, and never a colour of a tab's own.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header. The Marketplace's Browse search is one exception
   (Marketplace exceptions); the Models Catalogue's own "Search models" field, with its All, In use and Needs setup
-  filter chips (Just imported after an import) and its Source select, is the other, and Connectors' Servers and Skills toolbars use the Catalogue's grammar (search, filter chips, Source select), a third.
+  filter chips (Just imported after an import) and its Source select, is the other, and Connectors' Servers and Skills toolbars use the Catalogue's grammar (search, filter chips, Source select), a third; the design start's "Search designs" field over its tiles is a fourth.
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
 - Runs list order: Needs you (most urgent first), Running, Waiting, Recent. Each section is newest dispatch first (a
   run's start, a waiting ticket's creation); a section with no rows is not drawn.

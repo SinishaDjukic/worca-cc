@@ -2417,16 +2417,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (inline) { if (el.designSlot.parentNode !== el.transcript) el.transcript.appendChild(el.designSlot); }
     else if (el.designSlot.previousSibling !== el.transcript) el.transcript.after(el.designSlot);
   }
-  /** A new design chat (#chat/new/design, the sidebar's Design): the design start in the slot. Its Send creates the
-   *  design and its chat, and opens it (app.js). → false where there is no design start (the flag off). */
-  function startDesign() {
+  /** A new design chat (#chat/new/design, the sidebar's Design; #chat/new/design/all, `#design`): the design start in
+   *  the slot, with the designs under it (`all`: every one shown). Its Send creates the design and its chat, and opens it
+   *  (app.js). → false where there is no design start (the flag off). */
+  function startDesign({ all = false } = {}) {
     if (!designChat || typeof designChat.mountStart !== 'function' || st.destroyed) return false;
     newThread({ focus: false });
     st.designStart = true;
     el.designSlot.hidden = false;
     el.designSlot.removeAttribute('data-inline');
     placeDesignSlot(false);
-    try { designChat.mountStart(el.designSlot, { setComposer: (ext) => (st.designStart ? setComposerExt(ext) : null) }); } catch (e) { console.warn('[worca] the design start failed to open', e); }
+    try { designChat.mountStart(el.designSlot, { setComposer: (ext) => (st.designStart ? setComposerExt(ext) : null), all }); } catch (e) { console.warn('[worca] the design start failed to open', e); }
     paintTitle('New design');
     syncView();
     return true;
