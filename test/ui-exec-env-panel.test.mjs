@@ -96,7 +96,7 @@ test('a failed build says the previous template stays in use; no spec disables B
   h = harness({ ...VIEW(), spec: null });
   for (let i = 0; i < 3; i++) await tick();
   assert.equal(h.host.querySelector('.exec-env-build').disabled, true);
-  assert.match(h.host.querySelector('.exec-env-spec-missing').textContent, /worca exec-env spec --project proj-1 --set spec\.json/);
+  assert.equal(h.host.querySelector('.exec-env-spec-missing').dataset.command, 'worca exec-env spec --project proj-1 --set spec.json');
 });
 
 test('fillExecEnvSelect lists registered backends and keeps a listed value; unknown names fall back', async () => {
@@ -133,7 +133,7 @@ test('the spec form: one form above two building backends; Add tool, Remove, Sav
   const { host, calls } = harness(view, { onSpec: () => ({ status: 200, body: saved }) });
   await settle();
   assert.equal(host.querySelectorAll('.exec-env-spec').length, 1, 'one spec form for the project');
-  assert.equal(host.firstElementChild.className, 'exec-env-spec', 'it sits above the backends');
+  assert.ok(host.firstElementChild.classList.contains('exec-env-spec'), 'it sits above the backends');
   host.querySelector('.exec-env-tool-add').click();
   host.querySelector('.exec-env-tool-add').click();
   const rows = host.querySelectorAll('.exec-env-spec-tool');
@@ -182,7 +182,8 @@ test('Clear asks first and DELETEs; no spec shows the empty form, no Clear, the 
   assert.equal(host.querySelectorAll('.exec-env-spec-tool').length, 0);
   assert.equal(host.querySelector('.exec-env-spec-clear').hidden, true);
   assert.equal(host.querySelector('.exec-env-build').disabled, true);
-  assert.match(host.querySelector('.exec-env-spec-missing').textContent, /worca exec-env spec --project proj-1 --set spec\.json/);
+  assert.equal(host.querySelector('.exec-env-spec-missing code').title, 'worca exec-env spec --project proj-1 --set spec.json');
+  assert.doesNotMatch(host.querySelector('.exec-env-spec-missing').textContent, /proj-1/, 'the project key only in the tooltip');
 });
 
 test("a build's poll keeps the edits typed into the spec form", async () => {

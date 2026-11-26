@@ -1853,8 +1853,8 @@ test('Network with a managed login the proxy rejected: the line says the operato
 const DETECT_SANDBOXES = { checks: [...DETECT.checks, check('docker', 'ok'), check('e2b', 'no')] };
 const POSTURE_NATIVE = { where: 'native', whereLabel: 'Native install', rows: [] };
 const POSTURE_BOX = { where: 'hardened', whereLabel: 'Hardened box', rows: [
-  { id: 'broker', label: 'Credential broker', status: 'on', detail: 'The broker holds the model key; Worca and its agents hold none.' },
-  { id: 'network', label: 'Outbound network', status: 'unknown', detail: 'Through the egress sidecar.' }] };
+  { id: 'broker', label: 'Credential broker', status: 'on', value: 'On', tone: 'ok', detail: 'The broker holds the model key. Worca and its agents hold none.' },
+  { id: 'network', label: 'Outbound network', status: 'unknown', value: 'Sidecar', tone: 'neutral', detail: 'Through the egress sidecar.' }] };
 
 test('Where agents run: Local and the Docker sandbox the check found; a pick is the default execution environment', async () => {
   const h = await open({ entry: 'rerun', detect: DETECT_SANDBOXES, routes: { '/api/security/posture': reply(POSTURE_NATIVE) } });
@@ -1863,7 +1863,7 @@ test('Where agents run: Local and the Docker sandbox the check found; a pick is 
     const pick = h.$('.sa-where-pick');
     assert.deepEqual([...pick.querySelectorAll('button')].map((b) => b.dataset.value), ['local', 'docker'], 'no E2B: its check is no');
     assert.equal(pick.querySelector('[aria-pressed="true"]').dataset.value, 'local');
-    assert.match(h.$('.sa-where-line').textContent, /Not sandboxed/);
+    assert.match(h.$('.sa-where-line').textContent, /not sandboxed/);
     const link = h.$('.sa-where-guide a');
     assert.equal(link.getAttribute('href'), 'https://github.com/worca-org/worca/blob/dev/docs/choose-a-setup.md');
     assert.equal(link.target, '_blank');
@@ -1880,8 +1880,9 @@ test('Where agents run: no sandbox found offers Local only and says how to get o
   const h = await open({ entry: 'rerun' });
   try {
     await h.goTo('work');
-    assert.deepEqual([...h.$$('.sa-where-pick button')].map((b) => b.dataset.value), ['local']);
-    assert.match(h.$('.sa-where-none').textContent, /start Docker .* set E2B_API_KEY/);
+    assert.equal(h.$('.sa-where-pick'), null, 'one choice is a plain line, not a one-button control');
+    assert.match(h.$('.sa-where-line').textContent, /^Local · Agents run on this machine/);
+    assert.match(h.$('.sa-where-none').textContent, /Start Docker .* set an E2B key/);
     assert.equal(buildApplyBody(saved(), initialAnswers({ saved: saved(), entry: 'rerun' })).work, undefined);
   } finally { h.close(); }
 });
@@ -1905,7 +1906,9 @@ test('Where agents run in the hardened box: the posture instead of a choice', as
     const rows = h.$$('.sa-where-posture [data-posture]');
     assert.deepEqual(rows.map((r) => r.dataset.posture), ['broker', 'network']);
     assert.match(rows[0].textContent, /On.*Credential broker/);
-    assert.match(rows[1].textContent, /Unknown/);
+    assert.equal(rows[0].querySelector('.badge').className, 'badge green posture-badge', 'the Security card\'s chip: green for a protection that is on');
+    assert.equal(rows[1].querySelector('.badge').textContent, 'Sidecar');
+    assert.equal(rows[1].querySelector('.badge').className, 'badge grey posture-badge');
     assert.match(h.$('.sa-where-posture').closest('.sa-section').textContent, /runs in the hardened box/);
     assert.ok(h.$('.sa-where-guide a'));
   } finally { h.close(); }

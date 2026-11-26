@@ -71,8 +71,11 @@ test('Security card: one row per protection with a chip, the box image in a cont
   paintSecurityStatus(host, securityPosture({ env: {}, proxy: { state: 'not-configured' } }));
   const rows = [...host.querySelectorAll('.security-row')];
   assert.deepEqual(rows.map((r) => r.dataset.row), ['where', 'broker', 'agents', 'network', 'proxy', 'exec-env']);
-  assert.equal(rows[0].querySelector('.exec-env-status').textContent, 'Native install');
-  assert.equal(rows[1].querySelector('.exec-env-status').dataset.tone, 'muted');
+  assert.equal(rows[0].querySelector('.badge').textContent, 'Native install');
+  assert.equal(rows[0].querySelector('.badge').className, 'badge grey posture-badge');
+  assert.equal(rows[1].querySelector('.badge').className, 'badge grey posture-badge', 'Off natively: a plain value, not a fault');
+  assert.equal(host.querySelector('.exec-env-status'), null, 'the one chip: .badge');
+  assert.ok([...host.querySelectorAll('.security-links a')].every((a) => a.className === 'docs-link'), 'docs links are the blue link');
   assert.match(rows[5].textContent, /not sandboxed/);
   assert.deepEqual([...host.querySelectorAll('.security-links a')].map((a) => a.href), [docsUrl('security-overview'), docsUrl('choose-a-setup')]);
 
@@ -81,10 +84,12 @@ test('Security card: one row per protection with a chip, the box image in a cont
   paintSecurityStatus(host, box);
   const img = host.querySelector('.security-row[data-state]');
   assert.equal(img.dataset.state, 'stale');
-  assert.match(img.textContent, /worca-box:abcdefabcdef/);
-  assert.match(img.textContent, /acme-web changed its environment spec/);
+  assert.doesNotMatch(img.textContent, /worca-box:abcdefabcdef|acme-web/, 'the tag and the project key only in the tooltip');
+  assert.match(img.title, /worca-box:abcdefabcdef\nproject acme-web changed its environment spec/);
+  assert.match(img.textContent, /A project changed its environment spec since the build/);
   assert.equal(img.querySelector('code').textContent, 'worca container build');
-  assert.equal(img.querySelector('.exec-env-status').dataset.tone, 'warn');
+  assert.equal(img.querySelector('.badge').className, 'badge amber posture-badge');
+  assert.equal(host.querySelector('[data-row="broker"] .badge').className, 'badge amber posture-badge', 'the hardened box without its broker needs someone');
   assert.ok([...host.querySelectorAll('.security-links a')].some((a) => a.href === docsUrl('hardened-box')));
 });
 
@@ -122,10 +127,16 @@ test('run card line: under the status block, shown, changed and hidden with the 
   paintRunExecLine(block, runExecEnvSeg({}, { ...o, box: 'native' }));
   const line = block.nextElementSibling;
   assert.equal(line.className, 'rd-exec-line');
-  assert.equal(line.querySelector('a.rd-not-sandboxed').textContent, NOT_SANDBOXED_TEXT);
+  assert.equal(line.textContent, 'Not sandboxed · Choose a setup');
+  assert.equal(line.querySelector('a.docs-link').href, docsUrl('choose-a-setup'));
+  assert.match(line.title, /directly on this machine/);
   paintRunExecLine(block, runExecEnvSeg({ execEnv: 'docker', execEnvPreparing: 'image-build' }, o));
   assert.equal(doc.querySelectorAll('.rd-exec-line').length, 1);
-  assert.equal(line.textContent, 'building the sandbox image, first use…');
+  assert.equal(line.textContent, 'Building the sandbox image, first use…');
+  paintRunExecLine(block, runExecEnvSeg({ execEnv: 'docker', execEnvWaiting: true }, o));
+  assert.equal(line.textContent, 'Waiting for a Docker slot');
+  paintRunExecLine(block, runExecEnvSeg({ execEnv: 'docker' }, o));
+  assert.equal(line.textContent, 'Runs in Local sandbox (Docker)');
   paintRunExecLine(block, null);
   assert.equal(line.hidden, true);
 });
@@ -157,7 +168,7 @@ test('the hardened box: Add project offers Clone from URL only, with the reason'
   paintProjectAddForBox(modal);
   assert.equal(doc.getElementById('proj-add-tab-folder').hidden, true);
   assert.equal(doc.getElementById('proj-add-tab-new').hidden, true);
-  assert.equal(doc.getElementById('proj-add-tab-clone').hidden, false);
+  assert.equal(doc.getElementById('proj-add-tabs').hidden, true, 'one way in: no tab strip');
   const note = doc.getElementById('proj-add-box-note');
   assert.equal(note.hidden, false);
   assert.equal(note.textContent, HARDENED_ADD_NOTE);

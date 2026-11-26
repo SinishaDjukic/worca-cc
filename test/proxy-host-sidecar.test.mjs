@@ -49,8 +49,9 @@ test('a managed login the proxy rejected: the line says the operator replaces th
     login: { label: 'ACME\\svc-worca', rejected: { at: '2026-11-20T10:00:00.000Z' } },
     line: 'needs login: the corporate proxy rejected the saved login for ACME\\svc-worca 2026-11-20 10:00 UTC, so Worca sends no credentials. Log in again (worca proxy login).' };
   const v = sidecarView(b);
-  assert.match(v.line, /rejected the saved login for ACME\\svc-worca/);
-  assert.match(v.line, /they must replace the login file \(WORCA_EGRESS_LOGIN_FILE\)/);
+  assert.match(v.line, /^Needs login · The proxy rejected the login of ACME\\svc-worca\. The operator must replace the login file/);
+  assert.doesNotMatch(v.line, /UTC|2026|WORCA_EGRESS_LOGIN_FILE/, 'no timestamp or variable name in the visible line');
+  assert.match(v.lineTitle, /2026-11-20T10:00:00\.000Z.*WORCA_EGRESS_LOGIN_FILE/, 'they are in its tooltip');
   assert.doesNotMatch(v.line, /Log in again|worca proxy login/);
   assert.equal(sidecarView({ ...b, managed: false }).line, b.line, 'a login the person owns keeps "log in again"');
 });
@@ -138,7 +139,9 @@ test('a sidecar that cannot be reached: the status says so, nothing throws', asy
   const st = await host.status();
   assert.equal(st.state, 'error');
   assert.equal(st.unreachable, true, 'marked, so the card need not read the line');
-  assert.match(st.line, /^The egress sidecar cannot be reached .*Retry\.$/);
+  assert.match(st.line, /^No answer · Worca cannot read or change .*Retry\.$/);
+  assert.doesNotMatch(st.line, /127\.0\.0\.1|ECONNREFUSED/, 'no address or raw error in the visible line');
+  assert.match(st.lineTitle, /127\.0\.0\.1/, 'the reason is in its tooltip');
   const save = await host.saveSettings({ enabled: false });
   assert.deepEqual([save.refused.status, save.refused.body.code], [502, 'SIDECAR_UNREACHABLE']);
   assert.equal((await host.login(LOGIN)).status, 502);

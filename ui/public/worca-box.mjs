@@ -24,6 +24,9 @@ export function paintProjectAddForBox(root) {
     const tab = root.querySelector(`#${id}`);
     if (tab) tab.hidden = hardened;
   }
+  // One way in is no choice: the tab strip itself goes (its Clone tab would be a lone tab).
+  const tabs = root.querySelector('#proj-add-tabs');
+  if (tabs) tabs.hidden = hardened;
   const note = root.querySelector('#proj-add-box-note');
   if (note) { note.hidden = !hardened; note.textContent = hardened ? HARDENED_ADD_NOTE : ''; }
 }

@@ -615,7 +615,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     list.append(row(null, p.managedNote || 'The corporate proxy login is managed by the operator.'));
     // A login the proxy rejected is not "logged in": the state line below says what happened and who fixes it.
     if (p.state !== 'needs-login') list.append(row(null, p.login ? `Logged in as ${p.login.label}${p.upstream ? ` to ${p.upstream}` : ''}.` : 'No login is set.'));
-    if (p.line) list.append(row(null, p.line));
+    if (p.line) { const r = row(null, p.line); if (p.lineTitle) r.title = p.lineTitle; list.append(r); }
     body.append(list);
   }
 

@@ -10,7 +10,7 @@ export function docsUrl(page, anchor = '') {
 }
 
 /** An <a> that opens a guide in a new tab, in the UI's link convention (target=_blank rel=noopener noreferrer). */
-export function docsLink(doc, page, text, { anchor = '', className = 'about-link' } = {}) {
+export function docsLink(doc, page, text, { anchor = '', className = 'docs-link' } = {}) {
   const a = doc.createElement('a');
   a.href = docsUrl(page, anchor);
   a.target = '_blank';

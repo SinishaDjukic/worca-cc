@@ -46,7 +46,10 @@ test('a native install with a Docker default and a saved proxy login on this mac
   assert.equal(rowOf(p, 'exec-env').value, 'Local sandbox (Docker)');
   assert.equal(p.execEnv.sandboxed, true);
   assert.equal(rowOf(p, 'proxy').value, 'This machine');
-  assert.match(rowOf(p, 'proxy').detail, /ACME\\ann/);
+  assert.doesNotMatch(rowOf(p, 'proxy').detail, /ACME/, 'the account only in the tooltip');
+  assert.equal(rowOf(p, 'proxy').title, 'ACME\\ann');
+  assert.equal(rowOf(p, 'proxy').tone, 'neutral');
+  assert.equal(rowOf(p, 'exec-env').tone, 'ok', 'a sandbox default is a protection that is on');
 });
 
 test('the hardened box: broker, agent users, the allow-list and the sidecar login all on', () => {
@@ -55,15 +58,28 @@ test('the hardened box: broker, agent users, the allow-list and the sidecar logi
   for (const id of ['where', 'broker', 'agents', 'network', 'proxy']) assert.equal(rowOf(p, id).status, 'on', id);
   assert.equal(rowOf(p, 'network').value, 'Allow-list');
   assert.equal(rowOf(p, 'proxy').value, 'Sidecar');
-  assert.match(rowOf(p, 'agents').detail, /worca-agent/);
+  assert.equal(rowOf(p, 'agents').title, 'User worca-agent', 'the user name only in the tooltip');
+  assert.deepEqual(['broker', 'agents', 'network', 'proxy'].map((id) => rowOf(p, id).tone), ['ok', 'ok', 'ok', 'ok']);
+  assert.equal(rowOf(p, 'where').tone, 'neutral', 'where Worca runs is a value, not a state');
+  assert.equal(rowOf(p, 'exec-env').tone, 'neutral');
   assert.match(rowOf(p, 'exec-env').detail, /inside this hardened box/);
 });
 
 test('the sidecar: managed by the operator, or not answering (unknown)', () => {
-  assert.equal(rowOf(securityPosture({ env: HARDENED, proxy: { sidecar: true, managed: true, state: 'needs-login', upstream: 'p:1' } }), 'proxy').value, 'Operator');
+  const ok = rowOf(securityPosture({ env: HARDENED, proxy: { sidecar: true, managed: true, state: 'ready', upstream: 'p:1' } }), 'proxy');
+  assert.deepEqual([ok.value, ok.tone], ['Operator', 'ok']);
+  const rejected = rowOf(securityPosture({ env: HARDENED, proxy: { sidecar: true, managed: true, state: 'needs-login', upstream: 'p:1' } }), 'proxy');
+  assert.deepEqual([rejected.value, rejected.tone], ['Rejected', 'attention']);
+  assert.match(rejected.detail, /operator must replace the login file/);
   const down = rowOf(securityPosture({ env: HARDENED, proxy: { sidecar: true, state: 'error', error: 'connect ECONNREFUSED' } }), 'proxy');
-  assert.equal(down.status, 'unknown');
-  assert.match(down.detail, /ECONNREFUSED/);
+  assert.deepEqual([down.status, down.value, down.tone], ['unknown', 'No answer', 'attention']);
+  assert.doesNotMatch(down.detail, /ECONNREFUSED/, 'no raw error in visible text');
+  assert.equal(down.title, 'connect ECONNREFUSED');
+  // In the hardened box a protection that is off needs someone; natively it is a plain value.
+  const bare = securityPosture({ env: { WORCA_BOX: 'hardened' } });
+  assert.deepEqual([rowOf(bare, 'broker').tone, rowOf(bare, 'agents').tone], ['attention', 'attention']);
+  const native = securityPosture({ env: {} });
+  assert.deepEqual([rowOf(native, 'broker').tone, rowOf(native, 'agents').tone, rowOf(native, 'network').tone], ['neutral', 'neutral', 'neutral']);
 });
 
 test('a plain container through the sidecar: the allow-list is unknown from inside', () => {

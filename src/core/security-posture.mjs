@@ -56,9 +56,9 @@ export function parseBoxImageProjects(raw) {
 export function boxImageInside({ env = process.env, specHashOf = () => null } = {}) {
   const image = String(env[BOX_IMAGE_VAR] || '').trim();
   if (!image) return null;
-  const note = `A newer base image shows only on the host: ${REBUILD_COMMAND} --status.`;
+  const note = 'A newer base image shows only on the host.';
   const projects = parseBoxImageProjects(env[BOX_IMAGE_PROJECTS_VAR]);
-  if (!projects.length) return { image, state: 'unknown', reasons: ['the image does not say which project specs it was built from'], command: REBUILD_COMMAND, note };
+  if (!projects.length) return { image, state: 'unknown', reasons: ['the image does not say which project specs it was built from'], summary: 'The image does not say which specs it was built from.', command: REBUILD_COMMAND, note };
   const reasons = [];
   for (const p of projects) {
     let now = null;
@@ -66,11 +66,17 @@ export function boxImageInside({ env = process.env, specHashOf = () => null } = 
     if (!now) reasons.push(`project ${p.key} no longer has an environment spec`);
     else if (now !== p.specHash) reasons.push(`project ${p.key} changed its environment spec`);
   }
-  return { image, state: reasons.length ? 'stale' : 'current', reasons, command: REBUILD_COMMAND, note };
+  const summary = !reasons.length ? 'Built from the environment specs the projects have now.'
+    : reasons.length === 1 ? 'A project changed its environment spec since the build.' : `${reasons.length} projects changed their environment spec since the build.`;
+  return { image, state: reasons.length ? 'stale' : 'current', reasons, summary, command: REBUILD_COMMAND, note };
 }
 
 /**
- * One row per protection. status: on | off | unknown; detail is one plain sentence.
+ * One row per protection. status: on | off | unknown (what Worca can tell); value: the chip's words, the same on every
+ * surface; tone: the chip's colour by the design system's meaning (docs/design-system.md, Colour): `ok` (green) a
+ * protection that is active, `neutral` (grey) a plain value or a choice, `attention` (amber) only where someone must
+ * act (a protection this setup should have is off, the sidecar does not answer, a stale image). detail is one plain
+ * sentence; `title` holds what is not plain words (an address, a raw error) for a tooltip.
  * @param {object} o
  * @param {object} [o.env]
  * @param {boolean} [o.remoteMode]
@@ -78,52 +84,62 @@ export function boxImageInside({ env = process.env, specHashOf = () => null } = 
  * @param {string} [o.execEnvLabel]       its label ("Local sandbox (Docker)")
  * @param {object|null} [o.proxy]         proxyHost.status() (state, upstream, login, managed, sidecar), or null
  * @param {(key: string) => string|null} [o.specHashOf]
- * @returns {{where: string, whereLabel: string, rows: {id: string, label: string, status: string, value: string, detail: string}[],
- *   execEnv: {name: string, label: string, sandboxed: boolean}, boxImage: object|null}}
+ * @returns {{where: string, whereLabel: string, rows: {id: string, label: string, status: string, value: string, tone: string,
+ *   detail: string, title?: string}[], execEnv: {name: string, label: string, sandboxed: boolean}, boxImage: object|null}}
  */
 export function securityPosture({ env = process.env, remoteMode = false, execEnvDefault = 'local', execEnvLabel = null,
   proxy = null, specHashOf = () => null } = {}) {
   const where = whereWorcaRuns(env, { remoteMode });
+  const boxed = where !== 'native';
   const rows = [];
-  const row = (id, label, status, detail, value) => rows.push({ id, label, status, value: value || STATUS_VALUE[status], detail });
+  const row = (id, label, status, detail, value, tone, title) =>
+    rows.push({ id, label, status, value: value || STATUS_VALUE[status], tone, detail, ...(title ? { title } : {}) });
+  // In the hardened box these protections are part of the setup: one that is off needs someone.
+  const missing = where === 'hardened' ? 'attention' : 'neutral';
 
-  row('where', 'Where Worca runs', where === 'native' ? 'off' : 'on', {
-    native: 'Directly on this machine, as your user: agents can reach what you can.',
-    container: 'In a container: agents see only its volumes and what is mounted into it.',
-    hardened: 'In the hardened box: no host folder is mounted, projects are cloned into its volume.',
+  row('where', 'Where Worca runs', boxed ? 'on' : 'off', {
+    native: 'Directly on this machine, as your user. Agents can reach what you can.',
+    container: 'In a container. Agents see only its volumes and what is mounted into it.',
+    hardened: 'In the hardened box. No host folder is mounted; projects are cloned into its volume.',
     hosted: 'On a hosted server, behind an identity proxy.',
-  }[where], WHERE_LABEL[where]);
+  }[where], WHERE_LABEL[where], 'neutral');
 
-  if (brokerEnabled(env)) row('broker', 'Credential broker', 'on', 'The broker holds the model key; Worca and its agents hold none.');
-  else row('broker', 'Credential broker', 'off', 'The model key or sign-in is on this machine, where agents run.');
+  if (brokerEnabled(env)) row('broker', 'Credential broker', 'on', 'The broker holds the model key. Worca and its agents hold none.', 'On', 'ok');
+  else row('broker', 'Credential broker', 'off', 'The model key or sign-in is on this machine, where agents run.', 'Off', missing);
 
   const agent = agentIdentity(env);
-  if (agent) row('agents', 'Agent users', 'on', `Agents run as ${agent.user}: they cannot read Worca's settings, database or environment.`);
-  else row('agents', 'Agent users', 'off', where === 'native' ? 'Agents run as your user.' : "Agents run as Worca's own user.");
+  if (agent) row('agents', 'Agent users', 'on', "Agents run under their own user. They cannot read Worca's settings, database or environment.", 'On', 'ok', `User ${agent.user}`);
+  else row('agents', 'Agent users', 'off', boxed ? "Agents run as Worca's own user." : 'Agents run as your user.', 'Off', missing);
 
   const policy = readEgressPolicy(env);
   const viaSidecar = [env.HTTPS_PROXY, env.https_proxy].some((v) => String(v || '').startsWith(SIDECAR_PROXY));
-  if (policy.enforced) row('network', 'Outbound network', 'on', policy.mode === 'block' ? 'Worca\'s egress proxy allows every host but the deny list.' : `Allow-list: Worca's egress proxy lets through ${policy.allow.length || 'the listed'} hosts.`, policy.mode === 'block' ? 'Deny list' : 'Allow-list');
-  else if (where === 'hardened') row('network', 'Outbound network', 'on', 'Allow-list: the box has no route out; the egress sidecar lets through the listed hosts. worca container status checks it from the host.', 'Allow-list');
-  else if (viaSidecar) row('network', 'Outbound network', 'unknown', 'Through the egress sidecar. Whether it runs an allow-list shows only on the host: worca container status.', 'Sidecar');
-  else row('network', 'Outbound network', 'off', 'Agents can reach any host.', 'Open');
+  if (policy.enforced) {
+    row('network', 'Outbound network', 'on', policy.mode === 'block' ? "Worca's egress proxy lets through every host but the deny list."
+      : "Worca's egress proxy lets through the listed hosts only.", policy.mode === 'block' ? 'Deny list' : 'Allow-list', 'ok',
+    policy.mode === 'block' ? null : `${policy.allow.length} hosts`);
+  } else if (where === 'hardened') row('network', 'Outbound network', 'on', 'The box has no route out. The egress sidecar lets through the listed hosts.', 'Allow-list', 'ok', 'worca container status checks it from the host');
+  else if (viaSidecar) row('network', 'Outbound network', 'unknown', 'Through the egress sidecar. Whether it keeps an allow-list shows only on the host.', 'Sidecar', 'neutral', 'worca container status');
+  else row('network', 'Outbound network', 'off', 'Agents can reach any host.', 'Open', 'neutral');
 
   const p = proxy && typeof proxy === 'object' ? proxy : null;
   if (sidecarConfigured(env) || p?.sidecar) {
-    if (p && p.state === 'error') row('proxy', 'Proxy login', 'unknown', `In the egress sidecar, which did not answer${p.error ? `: ${p.error}` : ''}.`, 'Sidecar');
-    else if (p && p.managed) row('proxy', 'Proxy login', 'on', 'In the egress sidecar, managed by the operator. Worca never holds it.', 'Operator');
-    else row('proxy', 'Proxy login', 'on', p && !p.upstream ? 'No corporate proxy: the egress sidecar relays direct.' : 'In the egress sidecar. Worca never holds it.', 'Sidecar');
-  } else if (!p) row('proxy', 'Proxy login', 'unknown', 'Not checked.');
-  else if (!p.upstream || p.state === 'off' || p.state === 'not-configured') row('proxy', 'Proxy login', 'on', 'No corporate proxy.', 'No proxy');
-  else if (p.login) row('proxy', 'Proxy login', 'on', `On this machine, in Worca's local proxy (${p.login.label || 'saved login'}). Agents get a local proxy address, never the login.`, 'This machine');
-  else row('proxy', 'Proxy login', 'on', `The proxy ${p.upstream} needs no saved login.`, 'No login');
+    if (p && p.state === 'error') row('proxy', 'Proxy login', 'unknown', 'The egress sidecar does not answer, so Worca cannot tell. Check that it runs.', 'No answer', 'attention', p.error || null);
+    else if (p && p.managed && p.state === 'needs-login') row('proxy', 'Proxy login', 'on', 'The proxy rejected the login. The operator must replace the login file.', 'Rejected', 'attention');
+    else if (p && p.managed) row('proxy', 'Proxy login', 'on', 'In the egress sidecar, managed by the operator. Worca never holds it.', 'Operator', 'ok');
+    else if (p && !p.upstream) row('proxy', 'Proxy login', 'on', 'No corporate proxy. The egress sidecar connects directly.', 'No proxy', 'neutral');
+    else row('proxy', 'Proxy login', 'on', 'In the egress sidecar. Worca never holds it.', 'Sidecar', 'ok');
+  } else if (!p) row('proxy', 'Proxy login', 'unknown', 'Not checked.', 'Unknown', 'neutral');
+  else if (!p.upstream || p.state === 'off' || p.state === 'not-configured') row('proxy', 'Proxy login', 'on', 'No corporate proxy.', 'No proxy', 'neutral');
+  else if (p.login) row('proxy', 'Proxy login', 'on', "On this machine, in Worca's local proxy. Agents get its address, never the login.", 'This machine', 'neutral', p.login.label || null);
+  else row('proxy', 'Proxy login', 'on', 'The corporate proxy needs no saved login.', 'No login', 'neutral', p.upstream);
 
   const name = typeof execEnvDefault === 'string' && execEnvDefault ? execEnvDefault : 'local';
   const label = execEnvLabel || (name === 'local' ? 'Local' : name);
-  const sandboxed = name !== 'local' || where !== 'native';
+  const sandboxed = name !== 'local' || boxed;
   row('exec-env', 'Default execution environment', sandboxed ? 'on' : 'off',
-    name !== 'local' ? `${label}: each run's agents work in their own sandbox.`
-      : where === 'native' ? 'Local: agents run on this machine, not sandboxed.' : `Local: agents run inside this ${WHERE_LABEL[where].toLowerCase()}.`, label);
+    name !== 'local' ? "Each run's agents work in their own sandbox."
+      : boxed ? `Agents run inside this ${WHERE_LABEL[where].toLowerCase()}.` : 'Agents run on this machine, not sandboxed.',
+    label, name !== 'local' ? 'ok' : 'neutral');
 
   const boxImage = where === 'native' || where === 'hosted' ? null : boxImageInside({ env, specHashOf });
   return { where, whereLabel: WHERE_LABEL[where], rows, execEnv: { name, label, sandboxed }, boxImage };

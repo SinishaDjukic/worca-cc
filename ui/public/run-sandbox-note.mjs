@@ -50,7 +50,11 @@ export function paintRunExecLine(block, seg) {
   const sig = JSON.stringify(seg);
   if (line.dataset.sig === sig) return;
   line.dataset.sig = sig;
-  line.replaceChildren(execEnvSegNode(doc, seg));
+  const [cls, text, , extra = {}] = seg;
+  line.title = extra.title || '';
+  // Plain sentence-case words in the card's meta style; a Local run's line links its guide (a blue docs link).
+  if (cls.includes('rd-not-sandboxed')) line.replaceChildren(doc.createTextNode('Not sandboxed · '), docsLink(doc, 'choose-a-setup', 'Choose a setup'));
+  else line.replaceChildren(doc.createTextNode(cls === 'rd-exec-env' && !/^(waiting|building)/.test(text) ? `Runs in ${text}` : text.charAt(0).toUpperCase() + text.slice(1)));
 }
 
 /** New run's note under "Runs in": shown for a Local run on a native install. */

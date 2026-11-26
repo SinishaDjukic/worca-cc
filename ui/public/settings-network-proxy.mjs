@@ -133,11 +133,12 @@ function build(doc, body) {
   setup.id = 'npSetup';
   setup.hidden = true;
   // Sidecar unreachable only: read the status again (nothing else can work until the sidecar answers).
-  const retry = make(doc, 'button', 'btn btn-sm np-retry', 'Retry');
+  const retry = make(doc, 'button', 'btn btn-sm', 'Retry');
   retry.type = 'button';
   retry.id = 'npRetry';
   retry.hidden = true;
-  body.append(drows, actions, basicNote, where, status, setup, retry, results);
+  actions.prepend(retry);   // in the card's action row, before the others (they are off while it shows)
+  body.append(drows, actions, basicNote, where, status, setup, results);
   portNote.textContent = `${PORT_EMPTY_NOTE} ${PORT_SWITCH_NOTE}`;
   return { enabled, host, port, auth, noProxy, fixedPort, connectS, authS, idleS, domain, user, password, save, login, logout, test, detect, basicNote, status, setup, results,
     fixedRow, loginRows, where, retry };
@@ -191,6 +192,7 @@ export function unreachableMode(f, st) {
 /** The server's state line only: the inputs keep what the person typed (after a Test, ux-1-1). */
 function fillStatus(f, st) {
   f.status.textContent = statusText(st);
+  f.status.title = (st && st.lineTitle) || '';   // the address, the raw error or the time: never in the visible line
   f.status.dataset.state = st ? st.state : '';
   if (f.setup) f.setup.hidden = !(st && st.state === 'needs-login' && f.onOpenSetup && !st.managed);   // managed: nothing to fix here
   basicMode(f);
