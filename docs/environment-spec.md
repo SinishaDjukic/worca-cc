@@ -2,7 +2,7 @@
 
 A project can store an environment spec. It lists the tools and system packages the project needs to build and test.
 
-`worca container build` builds the box image from it: the container that `worca container` runs. Builds of an E2B template or a Docker backend image from the same spec arrive in later releases.
+`worca container build` builds the box image from it: the container that `worca container` runs. `worca exec-env build` builds an E2B template or a Local sandbox (Docker) image from the same spec. All three render the spec with one renderer, so the tools and packages are the same in each.
 
 ## When to use this
 
@@ -17,8 +17,8 @@ The same spec builds the image for every sandboxed setup. "Native" runs on your 
 | "Native" | none needed |
 | "Hardened box" | `worca container build` |
 | "Shared instance" | `worca container build` on the server, then `-f compose.image.yml` and `WORCA_IMAGE` in `shared.env` (the image must be on that server; compose never pulls it). Elsewhere, build the Dockerfile from `--dry-run` in your own pipeline |
-| "Local sandbox (Docker)" | a later release |
-| "E2B sandbox" | a later release |
+| "Local sandbox (Docker)" | `worca exec-env build --project <dir> --backend docker`, or the project page (see [Local sandbox (Docker)](local-sandbox.md#project-images)) |
+| "E2B sandbox" | `worca exec-env build --project <dir>`, or the project page (see [E2B](e2b.md#building-and-rebuilding-a-project-environment)) |
 
 Not supported yet:
 
