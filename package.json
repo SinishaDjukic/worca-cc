@@ -120,14 +120,14 @@
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "11.12.0",
-    "@lobehub/icons-static-svg": "1.104.0",
+    "@lobehub/icons-static-svg": "1.106.0",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@ricky0123/vad-web": "0.0.31",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
     "diff": "9.0.0",
     "docx-preview": "0.4.1",
-    "dompurify": "3.4.18",
+    "dompurify": "3.5.0",
     "express": "^5.3.0",
     "fflate": "0.8.3",
     "gsap": "3.15.1",
@@ -139,7 +139,7 @@
     "playwright-core": "1.65.1",
     "smol-toml": "1.9.1",
     "tar": "7.5.23",
-    "undici": "8.12.4",
+    "undici": "8.13.1",
     "ws": "^8.18.0",
     "yaml": "2.9.1"
   },
@@ -173,7 +173,7 @@
     "@napi-rs/keyring-win32-arm64-msvc": "2.1.2",
     "@napi-rs/keyring-win32-ia32-msvc": "2.1.2",
     "@napi-rs/keyring-win32-x64-msvc": "2.1.2",
-    "e2b": "2.56.0",
+    "e2b": "2.64.0",
     "ffmpeg-static": "5.3.0",
     "node-pty": "1.1.0"
   }
