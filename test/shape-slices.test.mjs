@@ -243,6 +243,7 @@ test('sliceScopeBlock: outlineChangeFile tells the Planner (never the refiner) w
   const plan = sliceScopeBlock({ index: 2, total: 2, outline: o, outlineChangeFile: '/p/outline-change.md' });
   assert.ok(plan.includes('/p/outline-change.md'));
   assert.ok(plan.includes('only in that case'));
+  for (const shape of ['first line', 'no heading', 'few short paragraphs', 'backticks', 'a list']) assert.ok(plan.includes(shape), shape);
   assert.ok(plan.startsWith(base.slice(0, -1)), 'the note is appended after the existing text');
   const ref = sliceScopeBlock({ index: 2, total: 2, outline: o, refiner: true, outlineChangeFile: '/p/outline-change.md' });
   assert.equal(ref, sliceScopeBlock({ index: 2, total: 2, outline: o, refiner: true }));

@@ -411,3 +411,86 @@ test('C3: a gate without stop still draws the two dev buttons; renderRecoveryCar
   const { $$ } = mountStop(GATE);
   assert.deepEqual($$('.qpanel-foot button').map((b) => b.textContent), ['Accept as is', 'Run another cycle']);
 });
+
+// ── An outline change: a short question line, then the Planner's note as a formatted, folding body ───────────────────
+const FIRST = 'A prerequisite is not in this tree';
+const NOTE = [`## Slice 2: ${FIRST}`, '', 'Run 1 did not add the tags table. '.repeat(8), '', 'The list route reads it. '.repeat(11), '',
+  'Missing:', '', '- `src/core/db.mjs`', '- `src/core/tags.mjs`', '- `ui/public/tags.mjs`', '- `test/tags.test.mjs`', '- `docs/tags.md`',
+  '- `ui/server.mjs`'].join('\n');
+const outlineStop = (id, outlineChange = NOTE) => ({ id, kind: 'plan', plan: { round: 1, outlineChange }, stop: planStop({ run: 2, outlineChange }) });
+
+test('outline stop: the question line, then the note body, then the options', () => {
+  const { panel, $, $$ } = mountStop(outlineStop('plan-outline-1'));
+  assert.equal($('.qtext-t').textContent, 'The Planner says this run cannot be built as outlined: a prerequisite is not in this tree.');
+  assert.deepEqual([...$('.qblock').children].map((c) => c.classList[0]), ['qtext', 'note-body', 'qopts']);
+  assert.equal($$('.note-body').length, 1);
+  assert.equal($('.note-body').textContent.includes(FIRST), false, 'the title is in the question line only');
+  assert.equal((panel.textContent.match(/prerequisite is not in this tree/gi) || []).length, 1);
+  assert.equal($$('.qopt').length, 2);
+  assert.equal($$('.btn-primary').length, 1);
+  assert.equal($('.btn-primary').textContent, 'Keep it');
+  assert.equal($('.note-toggle').textContent, 'Show the full note');
+});
+
+test('opening the note keeps the person\'s pick', () => {
+  const { $, $$, posts } = mountStop(outlineStop('plan-outline-2'));
+  $$('.qopt').find((t) => t.dataset.value === 'change').click();
+  for (const open of ['true', 'false']) {
+    $('.note-toggle').click();
+    assert.equal($('.note-toggle').getAttribute('aria-expanded'), open);
+    assert.deepEqual($$('.qopt.sel').map((t) => [t.dataset.value, t.getAttribute('aria-pressed')]), [['change', 'true']]);
+    assert.equal($('.btn-primary').textContent, 'Change it');
+  }
+  assert.deepEqual(posts, [], 'folding never answers');
+});
+
+test('a repaint keeps the note open', () => {
+  const pq = outlineStop('plan-outline-3');
+  mountStop(pq).$('.note-toggle').click();
+  const again = mountStop(pq);
+  assert.equal(again.$('.note-toggle').getAttribute('aria-expanded'), 'true');
+  assert.equal(again.$('.note-body li[hidden]:not(.note-more)'), null);
+  assert.equal(mountStop(outlineStop('plan-outline-4')).$('.note-toggle').getAttribute('aria-expanded'), 'false');
+});
+
+test('a note that is only its title adds no body; a note with no usable title shows whole under the short question', () => {
+  assert.equal(mountStop(outlineStop('plan-outline-5', 'The split is stale')).$('.note-body'), null);
+  const { $ } = mountStop(outlineStop('plan-outline-6', '- the tags table\n- the route'));
+  assert.equal($('.qtext-t').textContent, 'The Planner says this run cannot be built as outlined.');
+  assert.deepEqual([...$('.note-body').querySelectorAll('li')].map((li) => li.textContent), ['the tags table', 'the route']);
+});
+
+test('readOnly outline stop: the note\'s title is the finding title, the rest is the body; no title → "The outline no longer fits"', () => {
+  const { $, $$ } = mountStop(outlineStop('plan-outline-7'), { readOnly: true });
+  assert.equal($$('.issues, .plan-checks').length, 1);
+  assert.deepEqual($$('.issues > li.issue > .issue-head > .issue-title').map((t) => t.textContent), [FIRST]);
+  assert.ok($('li.issue > .note-body'));
+  assert.equal($('.issue-detail'), null);
+  assert.equal($('.note-body').textContent.includes(FIRST), false);
+  assert.deepEqual($$('button').map((b) => b.className), ['btn btn-sm btn-quiet note-toggle'], 'the fold is its only control');
+  const long = `${'a'.repeat(121)}\n\nMore.`;
+  const bare = mountStop(outlineStop('plan-outline-8', long), { readOnly: true });
+  assert.equal(bare.$('.issue-title').textContent, 'The outline no longer fits');
+  assert.deepEqual(bare.$$('.note-body p').map((p) => p.textContent), ['a'.repeat(121), 'More.']);
+  const only = mountStop(outlineStop('plan-outline-9', 'The split is stale'), { readOnly: true });
+  assert.equal(only.$('.issue-title').textContent, 'The split is stale');
+  assert.equal(only.$('.note-body'), null);
+});
+
+test('the card and the finding of one ask remember their own fold', () => {
+  const pq = outlineStop('plan-outline-10');
+  mountStop(pq).$('.note-toggle').click();
+  assert.equal(mountStop(pq, { readOnly: true }).$('.note-toggle').getAttribute('aria-expanded'), 'false');
+});
+
+test('a concern requirement stop draws no .note-body, and its text and finding are unchanged', () => {
+  const concern = { kind: 'requirement', title: 'Members only is too strict', detail: 'R-arch-2: too strict', requirements: ['R-arch-2'] };
+  const pq = { id: 'plan-concern-9', kind: 'plan', concern, plan: { round: 1, outlineChange: NOTE }, stop: planStop({ run: 2, concern, outlineChange: NOTE }) };
+  const card = mountStop(pq);
+  assert.equal(card.$('.qtext-t').textContent, 'A reviewer wants R-arch-2 changed: Members only is too strict.');
+  assert.equal(card.$('.note-body'), null);
+  const panel = mountStop(pq, { readOnly: true });
+  assert.equal(panel.$('.issue-title').textContent, concern.title);
+  assert.equal(panel.$('.issue-detail').textContent, concern.detail);
+  assert.equal(panel.$('.note-body'), null);
+});

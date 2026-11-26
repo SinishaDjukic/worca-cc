@@ -95,6 +95,14 @@ export function buildGraph(root) {
   return { files, referrers };
 }
 
+// #919: the readers name only the assembled file, so a changed part counts as a change to it; the manifest, to both.
+function assembledFiles(root, changed) {
+  let manifest = {};
+  try { manifest = JSON.parse(readFileSync(join(root, 'ui/public/parts.json'), 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  return [['css', STYLE_CSS], ['html', INDEX_HTML]].filter(([kind]) => changed.some((c) =>
+    c === 'ui/public/parts.json' || (manifest[kind] || []).some((rel) => c === `ui/public/${rel}`))).map(([, file]) => file);
+}
+
 /**
  * @param {string[]} changed repo-relative posix paths
  * @returns {{ full: boolean, reason?: string, tests: string[] }}
@@ -102,8 +110,8 @@ export function buildGraph(root) {
 export function relatedTests(root, changed, graph = buildGraph(root)) {
   const trigger = changed.find((c) => FULL_SUITE.some((re) => re.test(c)));
   if (trigger) return { full: true, reason: `${trigger} changed`, tests: [] };
-  const seen = new Set(changed);
-  const queue = [...changed];
+  const seen = new Set([...changed, ...assembledFiles(root, changed)]);
+  const queue = [...seen];
   while (queue.length) {
     for (const r of graph.referrers(queue.pop())) if (!seen.has(r)) { seen.add(r); queue.push(r); }
   }

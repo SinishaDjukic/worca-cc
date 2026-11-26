@@ -1,7 +1,8 @@
-/* ---------- Running detail: header card ---------- */
-/* Card, not a full-bleed band: .run-screen-detail keeps padding:0 so the sticky
-   tabs can pin, and this margin box supplies the inset (mirrors .hd-header:1615). */
-.rd-header{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);margin:20px 32px 0;padding:20px 24px 18px;}
+/* ---------- Running detail: header ---------- */
+/* No box: the title, its controls and the state line sit on the page, their edges on the tabs' and the body's.
+   .run-screen-detail keeps padding:0 so the sticky tabs can pin, and this margin supplies the inset. The 41px top keeps
+   the title at the group page's title height (tools/verify-feature-page-cdp.mjs); .hd-header matches. */
+.rd-header{margin:41px 32px 0;padding:0;}
 .rd-body{padding:0 32px 40px;}
 .rd-row1{display:flex;align-items:center;gap:14px;}
 .rd-title{margin:0;min-width:0;flex:1;font:700 22px/1.25 var(--sans);letter-spacing:-.02em;

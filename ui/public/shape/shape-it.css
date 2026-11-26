@@ -473,6 +473,23 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .shape-plan-outline-change{padding:8px 10px;border-radius:var(--r-ctrl);background:var(--amber-wash);border:1px solid var(--amber-line);}
 .shape-plan-outline-change-head{font-weight:600;color:var(--amber-ink);}
 .shape-plan-outline-change-text{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;}
+.shape-plan-outline-change > .note-body{margin-top:4px;}
+/* An agent's note in a card (note-body.mjs): normal --ink-2 text, paragraphs, inline code and divided list rows, folded
+   after about six lines and opened in place — never an inner scrollbar. */
+.note-body{font-weight:400;font-size:var(--fs-body);color:var(--ink-2);overflow-wrap:anywhere;min-width:0;}
+.issue > .note-body{grid-column:-2 / -1;}   /* the .issue-detail column: the last one, in the one- and two-column list */
+.note-body [hidden]{display:none;}
+.note-p{margin:0 0 8px;}
+.note-p:last-child,.note-rows:last-child{margin-bottom:0;}
+.note-body code{font-family:var(--mono);font-size:var(--fs-meta);background:var(--field);border-radius:var(--r-sm);padding:1px 4px;}
+.note-rows{list-style:none;margin:0 0 8px;padding:0;border-bottom:1px solid var(--line);}
+li.note-row{display:flex;gap:8px;border-top:1px solid var(--line);padding:6px 0;}
+.note-n{flex:none;color:var(--ink-2);}
+.note-text{min-width:0;}
+.note-mid{display:flex;min-width:0;font-family:var(--mono);}
+.note-mid-head{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.note-mid-tail{flex:none;white-space:nowrap;}
+.note-body .is-clamped{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:var(--note-clamp);overflow:hidden;}
 .shipit-slice-note[hidden]{display:none;}
 .chat-home-plans{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none;}
 .chat-home-plan{display:flex;flex-direction:column;gap:4px;}
