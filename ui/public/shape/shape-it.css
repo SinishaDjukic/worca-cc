@@ -169,10 +169,13 @@
 .chat-rc-stop + .chat-rc-stop{border-top:1px solid var(--line);}
 .chat-rc-stop-line{display:grid;grid-template-columns:16px minmax(0,1fr);column-gap:8px;align-items:center;min-height:32px;padding:5px 0 6px;box-sizing:border-box;line-height:20px;}
 .chat-rc-stop-line > .status-dot{justify-self:center;}
-.chat-rc-stop-text{color:var(--ink);font-size:var(--fs-body);min-width:0;}
+.chat-rc-stop-text{color:var(--ink);font-size:var(--fs-body);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .chat-rc-stop-body{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:0 0 8px 24px;}
 .chat-rc-stop-body:empty{display:none;}
 .chat-rc-stop-q{flex:1 1 100%;min-width:0;}
+/* Slice 13: the stop line is the step card's head (run and kind once); the question text below keeps the reason. */
+.chat-rc-stop-body > .chat-rc-stop-q{margin-top:0;}
+.chat-rc-stop-q .qpanel .step-head{display:none;}
 .chat-rc-stop-err{color:var(--red-ink);font-size:var(--fs-meta);}
 /* Run order map (run-order-map.mjs): the still map. Fixed px geometry (no viewBox scaling); each run is the shared
    status dot centred on its inline left/top, its number above right; links in --ink-3. No motion but the dot's pulse. */

@@ -2,6 +2,9 @@
 // card. One line per `featureView.asks` entry (every open stop and failed run, in run order): the run's own status dot,
 // its text (`stopLineText`), then today's step card for an open stop or a Resume for a failed run. The feature page
 // calls featureCardModel too and shows no stop list, so the list lives here, not in feature-card.mjs.
+// Slice 13 (R-ux-5): an open line's question host carries the card question's class (`chat-rc-q chat-rc-stop-q`), so the
+// card question's own rules draw its step card. It stays a div with no head or body of its own: the card's direct-child
+// section.chat-rc-q is still its one question slot.
 import { runStatus, stopLineText } from '../../../src/shared/shape/run-status.mjs';
 import { RUN_STATES } from '../../../src/shared/run-model.mjs';
 import { markDot, paintStatusDot, renderStatusDot } from '../status-dot.mjs';
@@ -48,7 +51,7 @@ function dropBody(entry, deps, { empty = true } = {}) {
 
 function buildOpen(doc, entry, line, deps) {
   const qHost = doc.createElement('div');
-  qHost.className = 'chat-rc-stop-q';
+  qHost.className = 'chat-rc-q chat-rc-stop-q';
   const panel = doc.createElement('div');
   panel.className = 'qpanel hidden';
   qHost.appendChild(panel);
@@ -122,7 +125,7 @@ export function paintStopList(doc, host, lines, deps) {
     entry.index = line.index;
     entry.li.dataset.run = String(line.index);
     paintStatusDot(entry.dot, dotOf(line));
-    if (entry.text.textContent !== line.text) entry.text.textContent = line.text;
+    if (entry.text.textContent !== line.text) { entry.text.textContent = line.text; entry.text.title = line.text; }
     if (entry.failed !== line.failed) {
       if (entry.failed !== null) dropBody(entry, deps);
       entry.failed = line.failed;

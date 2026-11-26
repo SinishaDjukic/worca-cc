@@ -796,7 +796,7 @@ function s6Controls() {
 const stopRows = (c) => [...c.built.el.querySelectorAll('.chat-rc-stops li.chat-rc-stop')];
 const stopRow = (c, run) => stopRows(c).find((li) => li.dataset.run === String(run));
 const stopTexts = (c) => stopRows(c).map((li) => li.querySelector('.chat-rc-stop-text').textContent);
-const qSecOf = (c) => c.built.el.querySelector('.chat-rc-q');
+const qSecOf = (c) => c.built.el.querySelector(':scope > section.chat-rc-q');   // the card's own slot, never a stop line's host
 const tickOnce = () => new Promise((r) => setTimeout(r, 0));
 
 test('S6 card busy: four stop lines with their step cards before the question slot, which stays hidden; run 5 has Resume', () => {
@@ -923,6 +923,21 @@ test('S6 off: flag off, an unmarked card, or no entries appends no stop list; a 
   assert.equal(qSecOf(c).hidden, false);
   assert.ok(qSecOf(c).querySelector('.s6-approve'), 'an ask that is no run line is still the card\'s open step');
   assert.equal(c.built.el.querySelector('.chat-rc-stops'), null);
+  c.done();
+});
+
+test('slice 13: a card listing four stop lines has one direct-child section.chat-rc-q, and each open line\'s host is a div.chat-rc-q inside its li', () => {
+  const { controls } = s6Controls();
+  const c = s4Card(S6_SLICES, { view: asksView(), controls });
+  assert.equal(stopRows(c).length, 4);
+  assert.equal(c.built.el.querySelectorAll(':scope > section.chat-rc-q').length, 1, 'the card\'s own question slot');
+  for (const r of [2, 4, 11]) {
+    const hosts = stopRow(c, r).querySelectorAll('div.chat-rc-q.chat-rc-stop-q');
+    assert.equal(hosts.length, 1, `run ${r}: its host takes the card question's class`);
+    assert.equal(hosts[0].closest('li.chat-rc-stop'), stopRow(c, r), `run ${r}`);
+    assert.ok(hosts[0].querySelector('.qpanel .s6-approve'), `run ${r}: the step card mounts in it`);
+  }
+  assert.equal(stopRow(c, 5).querySelector('.chat-rc-q'), null, 'a failed run has no question host');
   c.done();
 });
 

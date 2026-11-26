@@ -199,3 +199,29 @@ test('s12: the line surface adds the first world (run 1 reviewing, nothing done)
   assert.match(s, /\bfirst\s*:\s*\{\s*line:\s*'Run 1 reviewing · next: run 9',\s*done:\s*'0 of 16 runs done',\s*chip:\s*''/, 'LINE_WORLDS first');
   assert.match(s, /===\s*'first'[\s\S]{0,600}reviewing/, 'the first world\'s extra card check: run 1\'s row reads reviewing');
 });
+
+// ── Slice 13 (R-ux-5): the stops surface proves each open line's step card draws as the card question, each fact once ──
+test('s13: the stops surface checks no visible banner or step head, the card\'s padding and foot wrap, a zero host margin, Run N once, and seeds gate and clarify stops', () => {
+  const s = src();
+  // Per open line: what STOP_LINES records and stopsShot checks.
+  assert.match(s, /\.qpanel-head/, 'the banner is read');
+  assert.match(s, /\.step-head/, 'the step card\'s head is read');
+  assert.match(s, /banner === false/);
+  assert.match(s, /head === false/);
+  assert.match(s, /\b16px\b/, 'the card\'s top padding');
+  assert.match(s, /['"]wrap['"]/, 'the foot wraps');
+  assert.match(s, /margin === ['"]0px['"]/, 'the host adds no top margin');
+  assert.match(s, /runs === 1/, 'Run N once per line');
+  assert.match(s, /asked === true/, 'the question text stays visible');
+  assert.match(s, /ready for your approval/);
+  assert.match(s, /Shape \\+d/, 'no "Shape 3/8" on a line');
+  assert.match(s, /\b32\.5\b[\s\S]*chat-rc-stop-line|chat-rc-stop-line[\s\S]*\b32\.5\b/, 'each line row stays one line');
+  assert.doesNotMatch(s, /textHeight \+ 11\.5/, 'R-qa-9: 360px keeps the strict 32.5px row, no text-height allowance');
+  // The seeded gate and clarify stops, and the shots.
+  assert.match(s, /['"]stops-kinds['"]/);
+  assert.match(s, /4:\s*\{[^}]*stop:\s*'objection'/, 'run 4 at a gate stop');
+  assert.match(s, /11:\s*\{[^}]*ask:\s*'clarify'/, 'run 11 at a clarify ask');
+  assert.match(s, /gateStop/, 'the gate stop is built by the real gateStop');
+  assert.match(s, /stops-kinds-card-\$\{[A-Za-z.]*theme[A-Za-z.]*\}\.png/, 'stops-kinds-card-{theme}.png');
+  assert.match(s, /stops-busy-card-360-light\.png/);
+});

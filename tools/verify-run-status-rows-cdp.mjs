@@ -26,6 +26,10 @@
 // Approve on run 4's real step card must post run 4's run id to /answer. `stops-refused-{theme}.png`: run 5's Resume is
 // refused (run 6 is going) and its line shows the refusal with Resume enabled again. `stops-after-{theme}.png`: busy with
 // run 4 re-seeded building lists 3 lines, runs 2, 5 and 11. SURFACE=stops runs only this surface.
+// Slice 13 checks each open line's step card: no visible banner or step head, the card question's padding (16px top for
+// plan and gate, 0px for clarify; 0px left) and wrapping foot, a 0px host margin, "Run N" once, the question text shown,
+// and each line row at most 32.5px. `stops-kinds-card-{theme}.png` seeds run 4 at a gate stop and run 11 at a clarify
+// ask; `stops-busy-card-360-light.png` is the busy list at 360px in light.
 // Slice 7 adds the `line` surface: the feature's state line and need count on the Chat card head with its status block
 // (`line-{world}-card-{theme}.png`) and on the feature page head (`line-{world}-page-{theme}.png`), per theme at 1280px
 // and 2x, in four worlds: busy (run 6 reviewing), next (busy, run 6 not started), two (slice 1's M5b: runs 8 and 10 build)
@@ -116,7 +120,7 @@ const { careRunPlan } = await imp('../src/shared/shape/feature-record.mjs');
 const { runRolesOf } = await imp('../src/shared/shape/requirements.mjs');
 const { careRunGraph } = await imp('../src/core/shape/care-run.mjs');
 const { world, SIXTEEN_RUN_STATES } = await imp('../test/helpers/shape-sixteen-runs.mjs');
-const { planStop } = await imp('../src/shared/shape/run-stops.mjs');
+const { planStop, gateStop } = await imp('../src/shared/shape/run-stops.mjs');
 srv = server;
 await new Promise((r, rej) => { srv.once('error', (err) => rej(new Error(`cannot listen on VERIFY_PORT ${process.env.VERIFY_PORT}: ${err.message}`))); srv.listen(Number(process.env.VERIFY_PORT || 0), '127.0.0.1', r); });
 const base = `http://127.0.0.1:${srv.address().port}`;
@@ -136,13 +140,23 @@ const { EventEmitter } = await import('node:events');
 // A stop is the plan approval's real payload (planStop): a requirement stop (an outline change) or a check stop.
 const CHECK = { ok: false, passed: 3, total: 8, items: [{ id: 'tests', label: 'Names its tests', pass: false, detail: 'no test is named' }] };
 const stopOf = (run, reason) => planStop(reason === 'requirement' ? { run, outlineChange: 'the runner cache needs its own run', node: 'n_refine' } : { run, check: CHECK, node: 'n_refine' });
+// s13: a gate stop is the review loop's real payload (gateStop): the Reviewer objects after its fix cycles ran out.
+const GATE_ISSUES = [{ severity: 'major', title: 'The cache key misses the lockfile', role: 'Reviewer' }];
+const gateOf = (run) => ({ id: `q${run}`, kind: 'gate', nodeId: 'n_review', executionId: 'x:n_review:1', issues: GATE_ISSUES,
+  stop: gateStop({ run, issues: GATE_ISSUES, fixCycles: 2, nodeId: 'n_review' }) });
+// s13: a plain clarify ask of the shaping run, several questions.
+const clarifyOf = (run) => ({ id: `q${run}`, kind: 'clarify', nodeId: 'n_clarify', executionId: 'x:n_clarify:1', questions: [
+  { id: 'cache', question: 'Which cache should the runner keep between runs?', options: ['node_modules', 'The npm cache', 'None'], recommended: 'The npm cache' },
+  { id: 'scope', question: 'Should the merge gate cover draft pull requests?', options: ['Yes', 'No'], recommended: 'No' }] });
 const ORDER = ['n_task', 'n_clarify', 'n_plan', 'n_roles', 'n_refine', 'n_tests', 'n_impl', 'n_review'];
 const liveIds = [];
 function liveRun(featureId, run, pid, how) {
   const orch = new EventEmitter();
-  const at = how.stop ? 'n_refine' : how.at || 'n_impl';   // slice 7: the line surface seeds busy run 6 at n_review
-  const pq = how.stop ? { id: `q${run}`, kind: 'plan', nodeId: 'n_refine', executionId: 'x:n_refine:1',
-    plan: { nodeId: 'n_refine', port: 'plan', file: 'plan.md', round: 1, revisable: true, check: CHECK }, stop: stopOf(run, how.stop) } : null;
+  // slice 7: the line surface seeds busy run 6 at n_review; s13: a gate stop waits at n_review, a clarify ask at n_clarify
+  const at = how.stop === 'objection' ? 'n_review' : how.stop ? 'n_refine' : how.ask === 'clarify' ? 'n_clarify' : how.at || 'n_impl';
+  const pq = how.stop === 'objection' ? gateOf(run) : how.ask === 'clarify' ? clarifyOf(run)
+    : how.stop ? { id: `q${run}`, kind: 'plan', nodeId: 'n_refine', executionId: 'x:n_refine:1',
+      plan: { nodeId: 'n_refine', port: 'plan', file: 'plan.md', round: 1, revisable: true, check: CHECK }, stop: stopOf(run, how.stop) } : null;
   orch.state = { id: pid, status: 'running', title: `Run ${run}`, projectDir: proj, stepper,
     steps: [...ORDER.slice(0, ORDER.indexOf(at)).map((id) => step(id)), step(at, pq ? 'done' : 'start')],
     active: pq ? [] : [{ nodeId: at, executionId: `x:${at}:1` }], tokens: {}, wireDeliveries: {}, warnings: [], endReached: false,
@@ -165,6 +179,8 @@ const SPECS = {
   failed: { spec: { done: [1, 3, 4], states: { 2: { stop: 'requirement' }, 11: { stop: 'check' }, 5: { pipe: 'error' } } }, then: (fx) => fx.cancelTicket(14) },
   // s6 stops: busy with run 4 answered and building, so its stop line is gone.
   'stops-after': { spec: { done: SIXTEEN_RUN_STATES.busy.done, states: { ...SIXTEEN_RUN_STATES.busy.states, 4: { pipe: 'running' } } } },
+  // s13 stops: busy with run 4 at a gate stop (the Reviewer objects) and run 11 at a plain clarify ask.
+  'stops-kinds': { spec: { done: SIXTEEN_RUN_STATES.busy.done, states: { ...SIXTEEN_RUN_STATES.busy.states, 4: { stop: 'objection' }, 11: { ask: 'clarify' } } } },
   // s7 line: busy with run 6 reviewing; busy with run 6 not started; slice 1's M5b; only run 2's stop, Ask before each run.
   'line-busy': { spec: SIXTEEN_RUN_STATES.busy, at: { 6: 'n_review' } },
   'line-next': { spec: { done: SIXTEEN_RUN_STATES.busy.done, states: Object.fromEntries(Object.entries(SIXTEEN_RUN_STATES.busy.states).filter(([r]) => r !== '6')) } },
@@ -538,8 +554,20 @@ const STOP_LINES = `(() => {
   const lines = [...root.querySelectorAll('li.chat-rc-stop')].map((li) => {
     const dot = li.querySelector('.chat-rc-stop-line .status-dot'); const q = li.querySelector('.chat-rc-stop-q .qpanel');
     const b = li.querySelector('.chat-rc-stop-resume'); const err = li.querySelector('.chat-rc-stop-err');
+    // s13: what the open line's step card shows. Its own panel only (qHost > .qpanel), never a nested one.
+    const qHost = li.querySelector('.chat-rc-stop-q'); const own = qHost && qHost.querySelector(':scope > .qpanel');
+    const seen = (sel) => { const el = own && own.querySelector(sel); return !!el && getComputedStyle(el).display !== 'none' && !!el.offsetParent; };
+    const cs = own && getComputedStyle(own); const foot = own && own.querySelector('.qpanel-foot');
+    const lineRow = li.querySelector('.chat-rc-stop-line');
+    const style = qHost ? { banner: seen('.qpanel-head'), head: seen('.step-head'), kind: own ? own.dataset.kind || null : null,
+      pad: cs ? { top: cs.paddingTop, left: cs.paddingLeft } : null, foot: foot ? getComputedStyle(foot).flexWrap : null,
+      margin: getComputedStyle(qHost).marginTop,
+      runs: (li.innerText.match(new RegExp('\\\\bRun ' + li.dataset.run + '\\\\b', 'g')) || []).length,
+      asked: [...li.querySelectorAll('.qtext')].some((t) => !!t.offsetParent) } : null;
     return { run: Number(li.dataset.run), text: li.querySelector('.chat-rc-stop-text')?.textContent || '', dot: dot ? dot.className : '',
       symbol: dot ? dot.dataset.symbol || null : null, height: Math.round(li.getBoundingClientRect().height * 10) / 10,
+      lineHeight: lineRow ? Math.round(lineRow.getBoundingClientRect().height * 10) / 10 : null, inner: li.innerText, style,
+      title: li.querySelector('.chat-rc-stop-text')?.title || '',
       qpanel: q ? { visible: !!q.offsetParent && !q.classList.contains('hidden'), qrun: q.dataset.qrun || null } : null,
       resume: b ? { label: b.getAttribute('aria-label'), visible: !!b.offsetParent, disabled: b.disabled } : null,
       err: err && !err.hidden ? err.textContent : '' };
@@ -549,8 +577,24 @@ const STOP_LINES = `(() => {
 /** Records each /answer request's body in the page, so the proof reads which run an Approve names. */
 const TAP_ANSWERS = `(() => { if (window.__answers) return 0; window.__answers = []; const f = window.fetch;
   window.fetch = (u, o) => { try { if (/[/]answer$/.test(String(u).split('?')[0])) window.__answers.push({ url: String(u), body: o && o.body ? JSON.parse(o.body) : null }); } catch {} return f(u, o); }; return 0; })()`;
-async function stopsShot(routes, theme, file, want) {
-  await metrics(WIDE);
+const LINE_MAX_PX = 32.5;   // slice 6: a .chat-rc-stop-line row is one line
+/** s13 (R-ux-5): each open line's step card draws as the card question, each fact once. A plan or gate panel has the
+ *  card's 16px top padding; a clarify or form panel has 0px (its .qblock carries it), as the card question's does. */
+function judgeStopStyle(where, l) {
+  const s = l.style;
+  if (!s) return;
+  const top = s.kind === 'clarify' || s.kind === 'form' ? '0px' : '16px';
+  check(s.banner === false, `${where}: run ${l.run}'s line shows no .qpanel-head banner`);
+  check(s.head === false, `${where}: run ${l.run}'s line shows no .step-head`);
+  check(!!s.pad && s.pad.top === top && s.pad.left === '0px', `${where}: run ${l.run}'s ${s.kind} panel has the card's padding, ${top} top and 0px left (${JSON.stringify(s.pad)})`);
+  check(s.foot === null || s.foot === 'wrap', `${where}: run ${l.run}'s foot wraps (${s.foot})`);
+  check(s.margin === '0px', `${where}: run ${l.run}'s question host adds no top margin (${s.margin})`);
+  check(s.runs === 1, `${where}: run ${l.run}'s line reads "Run ${l.run}" once (${s.runs})`);
+  check(s.asked === true, `${where}: run ${l.run}'s question text is visible`);
+  check(!/ready for your approval/.test(l.inner) && !/\bShape \d+\/\d+/.test(l.inner), `${where}: run ${l.run}'s line has no "ready for your approval" and no "Shape N/M"`);
+}
+async function stopsShot(routes, theme, file, want, width = WIDE) {
+  await metrics(width);
   await go(routes.card, theme);
   const where = `stops ${file}`;
   if (!await waitFor(`(() => { const m = (${STOP_LINES}); return !!m && m.lines.length === ${want.length}; })()`, `${where}: ${want.length} stop lines`)) {
@@ -563,6 +607,12 @@ async function stopsShot(routes, theme, file, want) {
   for (const l of m.lines.filter((x) => x.symbol !== 'alert')) {
     const runId = `run-${routes.pipelineOf(l.run)}`;
     check(!!l.qpanel && l.qpanel.visible && l.qpanel.qrun === runId, `${where}: run ${l.run}'s line holds a mounted, visible .qpanel with data-qrun ${runId} (${JSON.stringify(l.qpanel)})`);
+    judgeStopStyle(where, l);
+  }
+  // R-qa-9: each row is one line at 1280px and at 360px; a long text ellipsises and keeps the whole line as its tooltip.
+  for (const l of m.lines) {
+    check(l.lineHeight !== null && l.lineHeight <= LINE_MAX_PX, `${where}: run ${l.run}'s .chat-rc-stop-line is one line, at most ${LINE_MAX_PX}px (${l.lineHeight}px)`);
+    check(l.title === l.text, `${where}: run ${l.run}'s line text is its own tooltip (${JSON.stringify(l.title)})`);
   }
   results.rows.push({ where, theme, stops: m.lines });
   return m;
@@ -610,7 +660,16 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'sto
       check(JSON.stringify(a.lines.map((l) => l.run)) === '[2,5,11]', `stops after ${theme}: runs 2, 5 and 11 (${JSON.stringify(a.lines.map((l) => l.run))})`);
       await shotOf(STOPS_ROOT, `stops-after-${theme}.png`);
     }
+    // s13: run 4 at a gate stop and run 11 at a clarify ask pass the same style checks as the plan stops.
+    const kinds = seed('stops-kinds');
+    const k = await stopsShot(kinds, theme, `stops-kinds-card-${theme}.png`, [BUSY_STOP_LINES[0], 'Run 4 · gate · holds up 5, 6, 7, 12, 16',
+      BUSY_STOP_LINES[2], 'Run 11 · questions · holds up 13, 14, 15, 16']);
+    if (k) await shotOf(STOPS_ROOT, `stops-kinds-card-${theme}.png`);
   }
+  // s13: the busy list at 360px in light: each line stays one line and reads its run once.
+  const narrow = await stopsShot(seed('busy'), 'light', 'stops-busy-card-360-light.png', BUSY_STOP_LINES, SIDE_NARROW);
+  if (narrow) await shotOf(STOPS_ROOT, 'stops-busy-card-360-light.png');
+  await metrics(WIDE);
 }
 
 // ---- s7 line: the feature's state line and need count, on the Chat card head and status, and on the feature page head.

@@ -1148,7 +1148,9 @@ test('chat run card CSS: an answer label wider than the whole row wraps inside i
 
 test('step card CSS: inside a question panel the head title wraps (375 px) and never overflows the card', () => {
   const css = readStyleCss();
-  const rule = (sel) => { const m = css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`)); return m ? m[1] : ''; };
+  // The rule whose selector is exactly `sel` (it starts its line): a longer selector ending in it, like the stop
+  // host's `.chat-rc-stop-q .qpanel .step-head`, is another rule.
+  const rule = (sel) => { const m = css.match(new RegExp(`(?<![^}\\n])${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`)); return m ? m[1] : ''; };
   assert.match(rule('.qpanel .step-head .ask-mcard-title'), /white-space:normal/);
   assert.match(rule('.qpanel .step-head .ask-mcard-title'), /min-width:0/);
   assert.match(rule('.qpanel .step-head'), /flex-wrap:wrap/);

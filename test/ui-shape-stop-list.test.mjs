@@ -3,6 +3,7 @@
 // The module is imported inside each test, so each behaviour fails on its own until it exists.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
@@ -89,6 +90,14 @@ test('paintStopList: four rows in run order, each with a status dot and its text
   assert.deepEqual(c.rows().map((li) => li.dataset.key), ['run-2', 'run-4', 'run-5', 'run-11']);
   assert.deepEqual(c.rows().map((li) => li.querySelector('.chat-rc-stop-line span.chat-rc-stop-text').textContent), TEXTS);
   assert.deepEqual(c.rows().map((li) => li.querySelectorAll('.chat-rc-stop-line .status-dot').length), [1, 1, 1, 1]);
+  // Slice 13 (R-qa-9): the row is one line at every width, so its text ellipsises and keeps the whole line as a tooltip.
+  assert.deepEqual(c.rows().map((li) => li.querySelector('.chat-rc-stop-text').title), TEXTS);
+});
+
+test('shape-it.css: a stop line\'s text stays one line, with an ellipsis (R-qa-9)', () => {
+  const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
+  const rule = css.match(/\.chat-rc-stop-text\{([^}]*)\}/)?.[1] || '';
+  for (const decl of ['white-space:nowrap', 'overflow:hidden', 'text-overflow:ellipsis']) assert.ok(rule.includes(decl), `${decl} in ${rule}`);
 });
 
 test('paintStopList: only run 5 has the red "!" and a Resume named "Resume run 5"; the others the amber "?"', async () => {
@@ -129,6 +138,20 @@ test('paintStopList: each open line\'s own host gets paintQuestion with its ref 
   for (const b of c.log.bound) assert.equal(b.host, c.qHostOf(b.index));
   c.paint();
   assert.equal(c.log.bound.length, 3, 'a repaint binds no kept host again');
+});
+
+// Slice 13 (R-ux-5): the host takes the card question's class, so the `.chat-rc-q` rules draw the line's step card.
+test('paintStopList: an open line\'s question host is a div.chat-rc-q.chat-rc-stop-q with no heading of its own', async () => {
+  const c = await setup();
+  c.paint();
+  for (const run of [2, 4, 11]) {
+    const host = c.qHostOf(run);
+    assert.equal(host.tagName, 'DIV', `run ${run}: not a section, the card's slot stays its only one`);
+    assert.deepEqual([host.classList.contains('chat-rc-q'), host.classList.contains('chat-rc-stop-q')], [true, true], `run ${run}: ${host.className}`);
+    assert.equal(host.querySelector('.chat-rc-q-head'), null, `run ${run}: the stop line is the head`);
+    assert.equal(host.querySelector('.chat-rc-qbody'), null, `run ${run}`);
+    assert.equal(host.closest('.chat-rc-q'), host, `run ${run}`);
+  }
 });
 
 test('paintStopList: a repaint keeps the rows, their typed text and focus; a gone line releases its host and disposes once', async () => {
