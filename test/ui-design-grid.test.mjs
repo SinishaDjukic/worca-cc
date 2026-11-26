@@ -161,7 +161,7 @@ test('search looks through every design, not the nine; the button hides; no matc
     find().dispatchEvent(ime);
     assert.deepEqual([ime.defaultPrevented, find().value], [false, '<img src=x onerror=alert(1)>'], JSON.stringify(init));
   }
-  const esc =new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  const esc = new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
   find().dispatchEvent(esc);
   assert.deepEqual([esc.defaultPrevented, find().value, tiles().length, host.querySelector('.dz-find-none'), foot().hidden], [true, '', 9, null, false]);
   const idle = new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });

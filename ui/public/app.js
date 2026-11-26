@@ -36199,7 +36199,14 @@ const designNavigate = (hash) => {
   if (m) void openDesignChat(m[1]);
   else location.hash = String(hash).replace(/^#/, '');
 };
-const designView = mountDesignView({ doc: document, win: window, route: (p) => { location.hash = p ? `#design/${p}` : '#design'; },
+// A bad `#design/<x>` (no design id) goes to `#design`, swapped as openDesignChat's: pushed, Back would land on the bad
+// address again, be sent on again, and never get past it.
+const designView = mountDesignView({ doc: document, win: window,
+  route: (p) => {
+    const target = p ? `#design/${p}` : '#design';
+    if (!p && /^#design\/./.test(location.hash)) location.replace(target);
+    else location.hash = target;
+  },
   openDesign: (id) => openDesignChat(id) });
 /** The design chat on screen: { threadId, studio } (design/studio.mjs), or null. The ask panel mounts and unmounts it. */
 let designStudio = null;
@@ -42979,8 +42986,17 @@ function enterChatView(param = '', prevView = null) {
   let threadId = CHAT_THREAD_RE.test(head) ? head : null;
   // Home's own address is #chat: a typo'd or stale chat id, and a bare #chat/new (the worca logo), land there.
   // Every swap below also moves the Workflows view's Back target (showView recorded the address before the swap).
-  // #chat/new/design (the sidebar's Design): a new design chat.
+  // #chat/new/design (the sidebar's Design): a new design chat; #chat/new/design/all shows every design. Any other tail
+  // (a hand-typed address) is the plain start, and the address says so: Show all designs and a tile that cannot be read
+  // act on the start's own two addresses only (designStartRoute, openDesignChat).
   const designStart = head === 'new' && parts[1] === 'design' && flagOn('design');
+  const designAll = designStart && parts.length === 3 && parts[2] === 'all';
+  const designParam = designAll ? 'new/design/all' : 'new/design';
+  if (designStart && String(param) !== designParam) {
+    try { window.history.replaceState(null, '', `#chat/${designParam}`); } catch { /* sandboxed */ }
+    wfvReturn = `chat/${designParam}`;
+    parts.length = designAll ? 3 : 2;
+  }
   if (head && !threadId && !designStart && (head !== 'new' || parts[1] !== 'run')) {
     try { window.history.replaceState(null, '', '#chat'); } catch { /* sandboxed */ }
     wfvReturn = 'chat';
@@ -43001,7 +43017,7 @@ function enterChatView(param = '', prevView = null) {
     }
   }
   askPanel?.open({ threadId });
-  if (designStart) askPanel?.startDesign({ all: parts[2] === 'all' });
+  if (designStart) askPanel?.startDesign({ all: designAll });
   // The New run link's entry: consumed on ANY Chat entry, so a stale one (home never reached) can't arm a later visit.
   if (pendingShapeEntry) {
     const { text } = pendingShapeEntry;

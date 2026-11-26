@@ -144,6 +144,64 @@ test('turning the flag off while the design start is open leaves it for the Chat
   assert.equal(doc.querySelector('.chat-page').dataset.view, 'home');
   assert.equal(doc.querySelector('[data-chat-design]').hidden, true);
 });
+test('turning the flag off while the plain design start (#chat/new/design) is open leaves it for the Chat home too', async () => {
+  const { window, doc, recv } = await boot({ design: true });
+  doc.querySelector('.nav button[data-nav="design"]').click();
+  await settle();
+  assert.equal(window.location.hash, '#chat/new/design', 'precondition: the plain start, not /all');
+  recv({ type: 'flags', flags: { design: false } });
+  await settle();
+  assert.equal(window.location.hash, '#chat');
+  assert.equal(doc.querySelector('.chat-page').dataset.view, 'home');
+  assert.equal(doc.querySelector('[data-chat-design]').hidden, true);
+});
+test('a bad #design/<x> is swapped for the design start: one entry, and Back leaves it', async () => {
+  const { window } = await boot({ design: true }, {}, { answer: tenDesigns });
+  window.location.hash = 'runs';
+  await settle();
+  const depth = window.history.length;
+  window.location.hash = 'design/nope';
+  await settle();
+  assert.equal(window.location.hash, '#chat/new/design/all');
+  assert.equal(window.history.length, depth + 1, 'the bad address is replaced: one entry, not two');
+  window.history.back();
+  await settle(); await settle();
+  assert.equal(window.location.hash, '#runs', 'Back leaves the start: it does not land on the bad address and come back');
+});
+test('a junk tail on #chat/new/design/<x> is the plain start, and the address says so: Show all designs and the Workflows view\'s Back follow it', async () => {
+  const { window, doc } = await boot({ design: true }, {}, { answer: tenDesigns });
+  const depth = window.history.length;
+  window.location.hash = 'chat/new/design/nope';
+  await settle();
+  assert.equal(window.location.hash, '#chat/new/design');
+  assert.equal(window.history.length, depth + 1, 'the address is swapped, not pushed');
+  const slot = doc.querySelector('.chat-page[data-view="design"] [data-chat-design]');
+  assert.equal(slot.querySelectorAll('.dz-designs a.dz-tile').length, 9, 'the plain start: the newest nine');
+  window.location.hash = 'workflows';
+  await settle(); await settle();
+  doc.getElementById('wfv-back').click();
+  await settle();
+  assert.equal(window.location.hash, '#chat/new/design', 'Back from Workflows returns to the address as swapped');
+  doc.querySelector('.chat-page[data-view="design"] [data-chat-design] [data-dz-show-all]').click();
+  await settle();
+  assert.equal(window.location.hash, '#chat/new/design/all', 'the start\'s own address: Show all designs keeps it in step');
+  window.location.hash = 'chat/new/design/all/nope';
+  await settle();
+  assert.equal(window.location.hash, '#chat/new/design', 'all with more after it is junk too');
+});
+test('Show all designs moves the Workflows view\'s Back target with the address', async () => {
+  const { window, doc } = await boot({ design: true }, {}, { answer: tenDesigns });
+  doc.querySelector('.nav button[data-nav="design"]').click();
+  await settle();
+  doc.querySelector('.chat-page[data-view="design"] [data-chat-design] [data-dz-show-all]').click();
+  await settle();
+  assert.equal(window.location.hash, '#chat/new/design/all', 'precondition: the address was swapped');
+  window.location.hash = 'workflows';
+  await settle(); await settle();
+  doc.getElementById('wfv-back').click();
+  await settle();
+  assert.equal(window.location.hash, '#chat/new/design/all', 'Back returns to the list as it was left, every design shown');
+});
 const APP_BID = 'b_0000000000a1';
 function designAnswer(url, init = {}) {
   const reply = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
