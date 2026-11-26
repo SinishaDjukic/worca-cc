@@ -1024,3 +1024,261 @@ test('run proposal: the shared field and one form grid (#959)', () => {
   assert.match(body('.ask-rp-ctl > span:first-child'), /white-space:nowrap;/);
   assert.equal(ALL.some((r) => r.sel === '.ask-rp-tags' && /nowrap|overflow-x/.test(r.body)), false, 'the tags wrap');
 });
+
+// ---- Shaper small runs s4 (R-ux-1, R-ux-5): the status dot guide is checked against the CSS; the dashed ring and the ink ring ----
+const dotModifiers = () => [...new Set([...css.matchAll(/\.status-dot\.is-([a-z][a-z-]*)/g)].map((m) => m[1]))].sort();
+const guideDots = () => {
+  const guide = readFileSync(join(ROOT, 'docs/design-system.md'), 'utf8');
+  const at = guide.indexOf('### Status dot and symbols (checked)');
+  assert.ok(at >= 0, 'the guide heading is "### Status dot and symbols (checked)"');
+  const section = guide.slice(at).split(/\n### /)[0];
+  assert.match(section, /\|\s*Dot\s*\|\s*Class\s*\|\s*Means\s*\|/, 'the table header is | Dot | Class | Means |');
+  return [...section.matchAll(/^\|[^|\n]*\|\s*`\.status-dot\.is-([a-z-]+)`\s*\|/gm)].map((m) => m[1]).sort();
+};
+test('the guide\'s status dot table lists exactly the .status-dot.is-* modifiers of the served CSS, the dashed ring and the ink ring included', () => {
+  assert.ok(dotModifiers().includes('dashed-ring'));
+  assert.ok(dotModifiers().includes('ink-ring'));
+  assert.ok(dotModifiers().includes('pulse'));
+  assert.deepEqual(guideDots(), dotModifiers());
+});
+test('every dot value of RUN_STATES and RUN_MARK_DOTS has a .status-dot.is-* rule', async () => {
+  const { RUN_STATES } = await import('../src/shared/run-model.mjs');
+  const { RUN_MARK_DOTS } = await import('../ui/public/status-dot.mjs');
+  const have = new Set(dotModifiers());
+  const want = [...Object.values(RUN_STATES).map((v) => v.dot), ...Object.values(RUN_MARK_DOTS).map((v) => v.dot)];
+  assert.deepEqual([...new Set(want)].filter((d) => !have.has(d)), []);
+});
+test('the dashed ring: 12px, tokens only (--ink-3), cut by a mask, no shadow, no animation', () => {
+  const r = ALL.find((x) => x.sel === '.status-dot.is-dashed-ring' && !x.media);
+  assert.ok(r, 'the rule exists');
+  assert.match(r.body, /width:\s*12px/);
+  assert.match(r.body, /height:\s*12px/);
+  assert.match(r.body, /color:\s*var\(--ink-3\)/);
+  assert.match(r.body, /mask/);
+  assert.doesNotMatch(r.body, /box-shadow|animation|#[0-9a-f]{3,8}\b|rgb\(/i);
+});
+test('the ink ring (the run with the turn): the --ink token, 8px dot scale like the grey ring, no animation', () => {
+  const r = ALL.find((x) => x.sel === '.status-dot.is-ink-ring' && !x.media);
+  assert.ok(r, 'the rule exists');
+  assert.match(r.body, /color:\s*var\(--ink\)/);
+  assert.match(r.body, /box-shadow:\s*inset 0 0 0 2px currentColor/);
+  assert.doesNotMatch(r.body, /animation|#[0-9a-f]{3,8}\b|rgb\(/i);
+});
+test('one-line rows: the dashed ring lines up like the 12px symbol dots on the Chat card and the feature page', () => {
+  const shape = readFileSync(join(ROOT, 'ui/public/shape/shape-it.css'), 'utf8');
+  assert.match(shape, /\.chat-rc-members \.run-members\.is-one-line > \.run-member > \.status-dot\.is-dashed-ring[^{]*\{margin-top:4px;\}/);
+  assert.match(shape, /div\.gpage-runs \.run-members\.is-one-line > \.run-member > \.status-dot\.is-dashed-ring[^{]*\{margin-top:4px;\}/);
+});
+
+// ---- Shaper small runs s8 (R-ux-2): the run row link marks: the guide, the bar, the kept row and the focus ring ----
+const LINK_HOSTS = ['.chat-rc-members', 'div.gpage-runs'];
+/** Every single selector of the served CSS that names `host`, with its rule. */
+const linkSelectors = (host) => ALL.flatMap((r) => splitTop(r.sel).filter((s) => s.includes(host)).map((s) => ({ s, r })));
+/** One host's bar rules: the ::before of a link row, matched by `match`. */
+const barRules = (host, match = /\.run-member\[data-(?:run|link)[^\]]*\][^\s]*::before$/) => linkSelectors(host).filter(({ s }) => match.test(s));
+const bodies = (list) => list.map(({ r }) => r.body).join(';');
+const has = (body, prop, value) => decls(body, prop).some(([, v]) => value.test(v));
+
+test('s8: the guide\'s "Run row link marks (checked)" table lists exactly the [data-link…] attributes of the served CSS', () => {
+  const inCss = [...new Set([...css.matchAll(/\[(data-link(?:-kept)?(?:="[a-z]+")?)\]/g)].map((m) => m[1]))]
+    .filter((a) => a !== 'data-link').sort();   // a bare [data-link] is "any mark", not one of them
+  assert.deepEqual(inCss, ['data-link-kept', 'data-link="by"', 'data-link="on"']);
+  const guide = readFileSync(join(ROOT, 'docs/design-system.md'), 'utf8');
+  const at = guide.indexOf('### Run row link marks (checked)');
+  assert.ok(at >= 0, 'the guide heading is "### Run row link marks (checked)"');
+  const section = guide.slice(at).split(/\n### /)[0];
+  assert.match(section, /\|\s*Mark\s*\|\s*Attribute\s*\|\s*Means\s*\|/, 'the table header is | Mark | Attribute | Means |');
+  assert.deepEqual([...section.matchAll(/^\|[^|\n]*\|\s*`(data-link[^`]*)`[^|\n]*\|/gm)].map((m) => m[1]).sort(), inCss);
+});
+
+test('s8 bar: a 3px ink ::before left of the row, out of the layout, under both hosts', () => {
+  for (const host of LINK_HOSTS) {
+    const body = bodies(barRules(host));
+    assert.ok(body, `${host}: the bar rule exists`);
+    for (const [prop, value] of [['position', /^absolute$/], ['pointer-events', /^none$/], ['width', /^3px$/], ['color', /^var\(--ink\)$/],
+      ['left', /^-8px$/], ['top', /^8px$/], ['bottom', /^8px$/], ['opacity', /^0$/]]) assert.ok(has(body, prop, value), `${host}: ${prop} ${value}`);
+    assert.doesNotMatch(body, /gradient\(|border-left|(?:^|;)\s*(?:transition|animation)[a-z-]*\s*:/i, `${host}: no gradient, left border or motion`);
+    assert.doesNotMatch(body.replace(/url\("[^"]*"\)/g, ''), /#[0-9a-f]{3,8}\b|rgba?\(/i, `${host}: no colour literal outside the mask`);
+  }
+});
+
+test('s8 bar: data-link="on" is solid and data-link="by" is dashed through a mask, both shown', () => {
+  for (const host of LINK_HOSTS) {
+    const on = bodies(barRules(host, /\[data-link="on"\][^\s]*::before$/));
+    const by = bodies(barRules(host, /\[data-link="by"\][^\s]*::before$/));
+    const any = bodies(barRules(host));
+    assert.ok(on, `${host}: the solid rule`);
+    assert.ok(by, `${host}: the dashed rule`);
+    assert.ok(has(any, 'background(?:-color)?', /^currentColor$/i), `${host}: painted in currentColor`);
+    assert.ok(barRules(host, /\[data-link(?:="on")?\][^\s]*::before$/).some(({ r }) => has(r.body, 'opacity', /^1$/)), `${host}: solid shown`);
+    assert.ok(barRules(host, /\[data-link(?:="by")?\][^\s]*::before$/).some(({ r }) => has(r.body, 'opacity', /^1$/)), `${host}: dashed shown`);
+    assert.match(by, /(?:^|;)\s*(?:-webkit-)?mask(?:-image)?\s*:\s*url\(\s*["']?data:image\/svg\+xml/, `${host}: dashed by an SVG mask`);
+    assert.doesNotMatch(on, /mask/, `${host}: the solid bar has no mask`);
+  }
+});
+
+test('s8: a marked or kept row sets no layout property and nothing dims; the kept row takes --row-selected', () => {
+  const LAYOUT = /(?:^|;)\s*(?:padding|margin|border(?!-radius)|(?:min-|max-)?(?:height|width)|font|line-height|opacity|transition|animation)(?:-[a-z-]+)?\s*:/;
+  for (const host of LINK_HOSTS) {
+    const rows = linkSelectors(host).filter(({ s }) => !s.includes('::') && /\[data-link/.test(s.split(/\s*>\s*|\s+/).at(-1)));
+    const keptRows = rows.filter(({ s }) => s.includes('[data-link-kept]'));
+    assert.ok(keptRows.some(({ r }) => has(r.body, 'background(?:-color)?', /^var\(--row-selected\)$/)), `${host}: the kept row's fill`);
+    for (const { s, r } of rows) assert.doesNotMatch(r.body, LAYOUT, s);
+  }
+});
+
+test('s8: a link row has the inset ink focus ring and the default cursor under both hosts', () => {
+  for (const host of LINK_HOSTS) {
+    const ring = bodies(linkSelectors(host).filter(({ s }) => /\.run-member\[data-run\]:focus-visible$/.test(s)));
+    assert.ok(has(ring, 'outline', /^2px solid var\(--ink\)$/), `${host}: outline`);
+    assert.ok(has(ring, 'outline-offset', /^-2px$/), `${host}: inset`);
+    const row = bodies(linkSelectors(host).filter(({ s }) => /\.run-member\[data-run\]$/.test(s)));
+    assert.ok(has(row, 'cursor', /^default$/), `${host}: cursor`);
+  }
+});
+
+test('s8: on a link row the title overlay is off, and the underline and chevron answer the title\'s own hover or focus', () => {
+  const TITLE_ON = /\.run-member-title(?::is\(:hover,\s*:focus-visible\)|:hover|:focus-visible)/;
+  for (const host of LINK_HOSTS) {
+    const link = linkSelectors(host).filter(({ s }) => s.includes('[data-run]'));
+    assert.ok(link.some(({ s, r }) => /\.run-member-title::after$/.test(s) && has(r.body, 'content', /^none$/)), `${host}: no stretched overlay`);
+    assert.ok(link.some(({ s, r }) => TITLE_ON.test(s) && /\.run-member-title(?::is\([^)]*\)|:[a-z-]+)+$/.test(s) && has(r.body, 'text-decoration(?:-line)?', /^underline$/)),
+      `${host}: the title underlines on its own hover or focus`);
+    assert.ok(link.some(({ s, r }) => TITLE_ON.test(s) && /\.run-member-go$/.test(s) && has(r.body, 'opacity', /^1$/)),
+      `${host}: the chevron shows on the title's hover or focus`);
+  }
+});
+
+// ---- Shaper small runs s9 (R-qa-4, R-ux-4): the run order map has its guide entry; it is still, tokens only ----
+test('gallery: run-order-map.mjs has its guide entry', async () => {
+  const MODULE = 'ui/public/shape/run-order-map.mjs';
+  const missing = [];
+  const guide = readFileSync(GUIDE, 'utf8');
+  const at = guide.indexOf('\n### Run order map (checked)\n');
+  const section = at < 0 ? '' : guide.slice(at + 1).split(/\n##+ /)[0];
+  if (at < 0) missing.push('guide: the section "### Run order map (checked)"');
+  for (const file of [MODULE, 'test/ui-shape-run-order-map.test.mjs']) if (!section.includes(file)) missing.push(`guide: ${file} named in the section`);
+  if (!/\|\s*Part\s*\|\s*Class\s*\|\s*Means\s*\|/.test(section)) missing.push('guide: the table header | Part | Class | Means |');
+  if (!/legend/i.test(section)) missing.push('guide: the legend sentence (the rows beside the map are its legend)');
+  // The classes the painter emits on the busy 16-run state, the shared status dot's own left out.
+  const emitted = new Set();
+  try {
+    const { renderRunOrderMap } = await import(`../${MODULE}`);
+    const { sixteenSlices } = await import('./helpers/shape-order-slices.mjs');
+    const root = renderRunOrderMap(new JSDOM('<!doctype html><body></body>').window.document, sixteenSlices('busy'));
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      if (el.parentElement?.closest('.status-dot')) continue;
+      for (const c of (el.getAttribute('class') || '').split(/\s+/)) if (c && !/^(?:status-dot|num|is-[\w-]+|has-sym)$/.test(c)) emitted.add(c);
+    }
+  } catch (e) { missing.push(`module: ${MODULE} does not paint (${e.message.split('\n')[0]})`); }
+  for (const c of ['rom', 'rom-plot', 'rom-links', 'rom-link', 'rom-run', 'rom-n']) if (!emitted.has(c)) missing.push(`painter: .${c} not emitted`);
+  for (const c of emitted) {
+    if (!new RegExp(`^\\|[^|\\n]*\\|\\s*\`\\.${c}\`\\s*\\|`, 'm').test(section)) missing.push(`guide: a table row for .${c}`);
+    if (!ALL.some((r) => new RegExp(`\\.${c}(?![-\\w])`).test(r.sel))) missing.push(`css: a rule for .${c}`);
+  }
+  assert.deepEqual(missing, []);
+});
+test('the .rom* rules carry no animation, transition or shadow, and use only tokens and 11px type', () => {
+  const ROM = /\.rom(?:-[a-z]+)?(?![-\w])/;
+  const own = ALL.filter((r) => ROM.test(r.sel));
+  assert.ok(own.length > 0, 'the .rom rules exist');
+  const bad = own.flatMap((r) => decls(r.body, 'animation[\\w-]*|transition[\\w-]*|box-shadow|text-shadow|filter').map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(bad, [], 'a still drawing');
+  assert.deepEqual(own.filter((r) => /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|:\s*(?:white|black)\b/i.test(r.body)).map((r) => where(r, 'raw colour')), []);
+  assert.deepEqual(own.filter((r) => /data-theme|prefers-color-scheme/.test(`${r.sel} ${r.media}`)).map((r) => where(r, 'theme rule')), [], 'the tokens switch the theme');
+  const sizes = own.flatMap((r) => decls(r.body, 'font|font-size').filter(([, v]) => !/var\(--fs-caption\)/.test(v)).map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(sizes, [], 'the only type is the 11px caption');
+  // A map dot is the shared status dot: no .rom rule colours it.
+  assert.deepEqual(own.filter((r) => /status-dot|\.rom-run(?![-\w])/.test(r.sel))
+    .flatMap((r) => decls(r.body, 'color|background[\\w-]*|border-color').map(([p, v]) => where(r, `${p}:${v}`))), []);
+  const body = (sel) => own.filter((r) => splitTop(r.sel).includes(sel) && !r.media).map((r) => r.body).join(';');
+  for (const [sel, ...want] of [
+    ['.rom', /overflow-x:\s*auto/],
+    ['.rom-plot', /position:\s*relative/],
+    ['.rom-links', /position:\s*absolute/, /inset:\s*0/, /overflow:\s*visible/, /pointer-events:\s*none/],
+    ['.rom-link', /fill:\s*none/, /stroke:\s*var\(--ink-3\)/, /stroke-width:\s*1\.5px/],
+    ['.rom-run', /position:\s*absolute/],
+    ['.rom-n', /var\(--fs-caption\)/, /line-height:\s*1(?![.\d])|var\(--fs-caption\)\/1(?![.\d])/, /(?:^|;)\s*color:\s*var\(--ink-2\)/],
+  ]) for (const re of want) assert.match(body(sel), re, `${sel} ${re}`);
+});
+
+// ---- Shaper small runs s14 (R-qa-4): the open stop list has its guide entry; tokens only, still ----
+const STOP_MODULE = 'ui/public/shape/stop-list.mjs';
+const STOP_HEADING = '### Open stop list (checked)';
+/** The stop list's own classes. A new painter class is added here and gets a guide row. */
+const STOP_OWN = ['chat-rc-stops', 'chat-rc-stop', 'chat-rc-stop-line', 'chat-rc-stop-text', 'chat-rc-stop-body',
+  'chat-rc-stop-q', 'chat-rc-stop-resume', 'chat-rc-stop-err'];
+/** A hook has a guide row and no rule of its own: Resume is the shared .btn.btn-sm. */
+const STOP_HOOKS = ['chat-rc-stop-resume'];
+/** Classes the painter also puts down; their own sections own them. */
+const STOP_SHARED = /^(?:status-dot|is-[\w-]+|has-sym|btn|btn-sm|chat-rc-q|qpanel|hidden|num)$/;
+const STOP_CLASS = /\.chat-rc-stop(?:s|-[\w-]+)?(?![-\w])/;
+/** The guide's stop list section, up to the next heading; '' when it is absent. */
+const stopSection = () => {
+  const guide = readFileSync(GUIDE, 'utf8');
+  const at = guide.indexOf(`\n${STOP_HEADING}\n`);
+  return at < 0 ? '' : guide.slice(at + 1).split(/\n##+ /)[0];
+};
+
+test('gallery: stop-list.mjs has its guide entry', async () => {
+  const missing = [];
+  const section = stopSection();
+  if (!section) missing.push(`guide: the section "${STOP_HEADING}"`);
+  for (const file of [STOP_MODULE, 'test/ui-shape-stop-list.test.mjs', 'ui/public/chat/run-card.mjs']) {
+    if (!section.includes(file)) missing.push(`guide: ${file} named in the section`);
+  }
+  if (!/\|\s*Part\s*\|\s*Class\s*\|\s*Means\s*\|/.test(section)) missing.push('guide: the table header | Part | Class | Means |');
+  // The classes the real painter emits for one open stop (run 2) and one failed run (run 5).
+  const emitted = new Set();
+  try {
+    const { paintStopList, stopLinesOf } = await import(`../${STOP_MODULE}`);
+    const doc = new JSDOM('<!doctype html><body></body>').window.document;
+    const host = doc.body.appendChild(doc.createElement('ol'));
+    host.className = 'chat-rc-stops';
+    const view = {
+      asks: [
+        { index: 2, runId: 'r2', pipelineId: 'p2', id: 'q2', kind: 'plan', reason: 'requirement', failed: false, holdsUp: [7, 8] },
+        { index: 5, runId: null, pipelineId: 'p5', id: null, kind: null, reason: null, failed: true, holdsUp: [7] },
+      ],
+      slices: [
+        { index: 2, title: 'Run 2', state: 'approval', kind: null, pipelineId: 'p2', runId: null, buildsOn: [], stop: { reason: 'requirement', held: false } },
+        { index: 5, title: 'Run 5', state: 'error', kind: null, pipelineId: 'p5', runId: null, buildsOn: [] },
+      ],
+    };
+    paintStopList(doc, host, stopLinesOf(view), {
+      paintQuestion: () => {}, releaseQuestion: () => {}, bindQuestion: () => () => {}, resume: () => new Promise(() => {}),
+    });
+    for (const el of [host, ...host.querySelectorAll('*')]) {
+      if (el.parentElement?.closest('.status-dot')) continue;
+      for (const c of (el.getAttribute('class') || '').split(/\s+/)) if (c && !STOP_SHARED.test(c)) emitted.add(c);
+    }
+  } catch (e) { missing.push(`module: ${STOP_MODULE} does not paint (${e.message.split('\n')[0]})`); }
+  for (const c of STOP_OWN) if (!emitted.has(c)) missing.push(`painter: .${c} not emitted`);
+  for (const c of emitted) {
+    if (!STOP_OWN.includes(c)) missing.push(`painter: .${c} is not in the stop list's own set`);
+    if (!new RegExp(`^\\|[^|\\n]*\\|\\s*\`\\.${c}\`\\s*\\|`, 'm').test(section)) missing.push(`guide: a table row for .${c}`);
+    const ruled = ALL.some((r) => new RegExp(`\\.${c}(?![-\\w])`).test(r.sel));
+    if (STOP_HOOKS.includes(c)) { if (ruled) missing.push(`css: no own rule for the hook .${c}`); } else if (!ruled) missing.push(`css: a rule for .${c}`);
+  }
+  assert.deepEqual(missing, []);
+});
+
+test('the guide\'s stop list table lists exactly the .chat-rc-stop* classes of the served CSS and the hook', () => {
+  const inCss = [...css.matchAll(new RegExp(STOP_CLASS.source, 'g'))].map((m) => m[0].slice(1));
+  const rows = [...stopSection().matchAll(/^\|[^|\n]*\|\s*`\.([\w-]+)`\s*\|/gm)].map((m) => m[1]);
+  assert.deepEqual(rows.sort(), [...new Set([...inCss, ...STOP_HOOKS])].sort());
+});
+
+test('the .chat-rc-stop* rules: tokens only, no motion, no pill', () => {
+  const own = ALL.filter((r) => STOP_CLASS.test(r.sel));
+  assert.ok(own.length > 0, 'the .chat-rc-stop* rules exist');
+  const motion = own.flatMap((r) => decls(r.body, 'animation[\\w-]*|transition[\\w-]*').map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(motion, [], 'a still list');
+  const colours = own.flatMap((r) => decls(r.body, '[\\w-]+')
+    .filter(([, v]) => /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?)\(|(?<![-\w])(?:white|black)(?![-\w])/i.test(v)).map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(colours, [], 'no raw colour');
+  const small = (p) => /^(?:0|inherit|var\(--r-(?:xs|sm|md|card|ctrl)\))$/.test(p) || (/^\d+(?:\.\d+)?px$/.test(p) && Number.parseFloat(p) <= 8);
+  const pills = own.flatMap((r) => decls(r.body, 'border(?:-(?:top|bottom)-(?:left|right))?-radius')
+    .filter(([, v]) => !v.split(/\s+/).every(small)).map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(pills, [], 'no radius above 8px, no pill, no circle');
+});

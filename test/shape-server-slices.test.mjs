@@ -25,6 +25,8 @@ import { featureCardModel } from '../ui/public/shape/feature-card.mjs';
 import { paintFeatureActions } from '../ui/public/shape/feature-actions.mjs';
 import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { NO_ADO, REMOTES_V, okRun, failRun, argOf, ghCalls, git, stubShip, shipKit } from './helpers/ship-world.mjs';
+import { world, SIXTEEN_RUN_STATES } from './helpers/shape-sixteen-runs.mjs';
+import { planStop, heldRefusal } from '../src/shared/shape/run-stops.mjs';
 
 useTempHome(after, 'worca-shape-server-slices-');
 
@@ -335,6 +337,43 @@ test('resume: nothing stopped is a 409, a stopped slice restarts as a new ticket
   assert.equal(body.action, 'restart');
   assert.ok(body.ticketId);
   assert.equal((await post('/api/shape/features/feat_nope/resume', {})).status, 404);
+});
+
+// Slice 6 (D13): the resume route takes the run number of a stop line's Resume.
+const ticketCount = () => getDb().prepare('SELECT COUNT(*) AS n FROM scheduled_runs').get().n;
+const rowTicket = (fid, idx) => getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(fid, idx).ticket_id;
+
+test('resume with an index that is not a run number is a 400 and writes no ticket', async () => {
+  for (const index of [0, 'x', 1.5, -1]) {
+    const f = mk(2, 'stopped');
+    const n = ticketCount(); const t = rowTicket(f.id, 1);
+    const r = await post(`/api/shape/features/${f.id}/resume`, { index });
+    assert.equal(r.status, 400, JSON.stringify(index));
+    assert.deepEqual(await r.json(), { error: 'index must be a run number' }, JSON.stringify(index));
+    assert.equal(ticketCount(), n, JSON.stringify(index));
+    assert.equal(rowTicket(f.id, 1), t, JSON.stringify(index));
+  }
+});
+
+test('resume with a run that is not stopped is a 409 NOT_HALTED and writes no ticket', async () => {
+  const f = mk(2, 'stopped');
+  const n = ticketCount(); const t = rowTicket(f.id, 1);
+  const r = await post(`/api/shape/features/${f.id}/resume`, { index: 2 });
+  assert.equal(r.status, 409);
+  assert.deepEqual(await r.json(), { code: 'NOT_HALTED', error: 'Run 2 is not stopped' });
+  assert.equal(ticketCount(), n);
+  assert.equal(rowTicket(f.id, 1), t);
+});
+
+test('resume with the stopped run\'s index, or with an empty body, restarts it as today', async () => {
+  for (const body of [{ index: 1 }, {}]) {
+    const f = mk(2, 'stopped');
+    const r = await post(`/api/shape/features/${f.id}/resume`, body);
+    const out = await r.json();
+    assert.equal(r.status, 200, JSON.stringify(out));
+    assert.equal(out.action, 'restart', JSON.stringify(body));
+    assert.equal(rowTicket(f.id, 1), out.ticketId, JSON.stringify(body));
+  }
 });
 
 test('replan answers the ticket as runId and a second replan is a 409', async () => {
@@ -1579,7 +1618,7 @@ test('D2 (D8): GET /slice: marked + flag on adds owns, startsFrom and stored (al
   await withEnvVars(SMALL_ON, async () => {
     const one = await slice(f.pid);
     assert.equal(one.status, 200);
-    assert.deepEqual(Object.keys(one.body), [...DEV.slice(0, 7), 'owns', 'startsFrom', 'threadId', 'stored']);
+    assert.deepEqual(Object.keys(one.body), [...DEV.slice(0, 7), 'owns', 'startsFrom', 'links', 'threadId', 'stored']);
     assert.deepEqual(one.body.owns, []);
     assert.equal(one.body.startsFrom.kind, 'feature');
     assert.deepEqual(one.body.stored, { planVersion: null, planReviewed: false, tests: null });
@@ -1884,4 +1923,111 @@ test('GET /api/shape/pipelines/:pid/slice: a Verifier\'s run answers its feature
   assert.equal((await (await get(`/api/shape/pipelines/${p2}/slice`)).json()).index, 2, 'a slice is unchanged');
   assert.equal((await get('/api/shape/pipelines/p-plain-zz/slice')).status, 404);
   await withEnvVars(SMALL_OFF, async () => { assert.equal((await get(`/api/shape/pipelines/${pv}/slice`)).status, 404); });
+}));
+
+// ── Small runs slice 7 (R-qa-2): a second answer to a listed stop is refused as today, from each listed line ─────────
+const PLAN_REFUSAL = 'no plan approval with that id is waiting on this run';
+const APPROVE = { decision: 'approve' };
+/** The 16-run feature `fx` with a live entry per run in `stops` (run → ask kind) and a running one, asking nothing, per
+ *  run in `going`. Each orchestrator records every answer it receives. */
+function sixteenStopEntries(fx, stops, going = []) {
+  const answered = [];
+  const entries = new Map();
+  const add = (run, pendingQuestion) => {
+    const pid = fx.pipelineOf(run);
+    const orch = Object.assign(new EventEmitter(), { runShape: { slice: { feature: fx.featureId, index: run } }, state: { shaping: { approved: { file: 'p.md' } } },
+      answer: (id, payload, by) => answered.push({ run, id, payload, by }) });
+    const e = { id: `s7-${pid}`, kind: 'run', pipelineId: pid, status: 'running', events: [], pendingQuestion, orch };
+    runs.set(e.id, e);
+    entries.set(run, e);
+  };
+  for (const [key, kind] of Object.entries(stops)) {
+    const run = Number(key);
+    const stop = run === 2 ? planStop({ run, outlineChange: 'the runner cache needs its own run' }) : planStop({ run });
+    add(run, { id: `q${run}`, kind, stop });
+  }
+  for (const run of going) add(run, null);
+  const quiet = () => getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+  const cleanup = () => { for (const e of entries.values()) runs.delete(e.id); quiet(); };
+  /** Run `run` finishes and the held answers whose turn has come are delivered; no waiting ticket may fire. */
+  const finish = async (run) => {
+    runs.delete(entries.get(run).id);
+    setPipe(fx.pipelineOf(run), 'done');
+    quiet();
+    // A tick another request started may still be in flight (schedulerTick answers null then): wait for a pass of our own.
+    for (const end = Date.now() + 5000; (await schedulerTick()) === null && Date.now() < end;) await new Promise((r) => setTimeout(r, 20));
+  };
+  return { entry: (run) => entries.get(run), of: (run) => answered.filter((a) => a.run === run), answered, finish, cleanup };
+}
+const LINE_STOPS = { 2: 'plan', 4: 'gate', 11: 'gate' };
+/** `next`: busy with run 6 not started (nothing going, an answer is due). `busy`: run 6 going (an answer is held). */
+function stopWorld(name, stops = LINE_STOPS) {
+  const { 6: _six, ...states } = SIXTEEN_RUN_STATES.busy.states;
+  const fx = world(project, { done: [1, 3], states: name === 'busy' ? SIXTEEN_RUN_STATES.busy.states : states });
+  return sixteenStopEntries(fx, stops, name === 'busy' ? [6] : []);
+}
+const reply = async (res) => { const r = await res; return [r.status, await r.json()]; };
+const planAnswer = (e, id) => reply(post(`/api/runs/${e.id}/answer`, { id, decision: 'approve' }));
+const gateAnswer = (e, id) => reply(post('/api/answer', { runId: e.id, id, payload: APPROVE }));
+
+test('S7-T10 run 2, due: the second approval is refused 409 on the plan route and run 2 is answered once', () => withEnvVars(SMALL_ON, async () => {
+  const w = stopWorld('next');
+  try {
+    assert.deepEqual(await planAnswer(w.entry(2), 'q2'), [200, { ok: true }]);
+    assert.deepEqual(await planAnswer(w.entry(2), 'q2'), [409, { error: PLAN_REFUSAL }]);
+    assert.deepEqual(w.of(2).map((a) => [a.id, a.payload.decision]), [['q2', 'approve']]);
+    assert.equal(w.answered.length, 1, 'no other run is answered');
+  } finally { w.cleanup(); }
+}));
+
+test('S7-T11 run 2, held behind run 6: the second approval is 409 STOP_HELD; one delivery once run 6 is done', () => withEnvVars(SMALL_ON, async () => {
+  const w = stopWorld('busy');
+  try {
+    const e = w.entry(2);
+    assert.deepEqual(await planAnswer(e, 'q2'), [200, { ok: true, held: true }]);
+    const held = structuredClone(e.heldStop);
+    assert.deepEqual(await planAnswer(e, 'q2'), [409, { error: heldRefusal(6), code: 'STOP_HELD' }]);
+    assert.equal(w.of(2).length, 0, 'not started yet');
+    assert.deepEqual(e.heldStop, held, 'the refusal changes nothing');
+    assert.equal(e.pendingQuestion.id, 'q2');
+    await w.finish(6);
+    assert.equal(w.of(2).length, 1);
+    assert.deepEqual(await planAnswer(e, 'q2'), [409, { error: PLAN_REFUSAL }]);
+    assert.equal(w.of(2).length, 1, 'run 2 is not started twice');
+  } finally { w.cleanup(); }
+}));
+
+test('S7-T12 run 11\'s check line, due: the second answer is 409 STOP_ANSWERED and run 11 is answered once', () => withEnvVars(SMALL_ON, async () => {
+  const w = stopWorld('next');
+  try {
+    assert.deepEqual(await gateAnswer(w.entry(11), 'q11'), [200, { ok: true }]);
+    assert.deepEqual(await gateAnswer(w.entry(11), 'q11'), [409, { error: 'this stop is already answered', code: 'STOP_ANSWERED' }]);
+    assert.equal(w.of(11).length, 1);
+    assert.equal(w.answered.length, 1);
+  } finally { w.cleanup(); }
+}));
+
+test('S7-T12 run 11\'s check line, held: the second answer is 409 STOP_HELD; one delivery once run 6 is done', () => withEnvVars(SMALL_ON, async () => {
+  const w = stopWorld('busy');
+  try {
+    const e = w.entry(11);
+    assert.deepEqual(await gateAnswer(e, 'q11'), [200, { ok: true, held: true }]);
+    const held = structuredClone(e.heldStop);
+    assert.deepEqual(await gateAnswer(e, 'q11'), [409, { error: heldRefusal(6), code: 'STOP_HELD' }]);
+    assert.equal(w.of(11).length, 0);
+    assert.deepEqual(e.heldStop, held);
+    await w.finish(6);
+    assert.equal(w.of(11).length, 1);
+    assert.deepEqual(await gateAnswer(e, 'q11'), [409, { error: 'this stop is already answered', code: 'STOP_ANSWERED' }]);
+    assert.equal(w.of(11).length, 1);
+  } finally { w.cleanup(); }
+}));
+
+test('S7-T12b run 11 as a plan approval: the second approval is refused on the plan route and run 11 is answered once', () => withEnvVars(SMALL_ON, async () => {
+  const w = stopWorld('next', { ...LINE_STOPS, 11: 'plan' });
+  try {
+    assert.deepEqual(await planAnswer(w.entry(11), 'q11'), [200, { ok: true }]);
+    assert.deepEqual(await planAnswer(w.entry(11), 'q11'), [409, { error: PLAN_REFUSAL }]);
+    assert.equal(w.of(11).length, 1);
+  } finally { w.cleanup(); }
 }));

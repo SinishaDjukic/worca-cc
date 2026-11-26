@@ -2,7 +2,7 @@
 // page (live and finished) and the group page draw the dot or symbol, the status line, the group bar, the current
 // run's bar, the kind chip, the actions and the member rows from runModel / groupModel through this module. Pure DOM
 // over the host's ownerDocument; app.js and chat/run-card.mjs bind the handlers.
-import { paintStatusDot } from './status-dot.mjs';
+import { paintStatusDot, markDot, staleLive } from './status-dot.mjs';
 import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
 import { prChip } from './runs-list.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
@@ -54,6 +54,24 @@ export function statusText(m, { stageBar = false } = {}) {
     rest = segs.filter((x) => x.toLowerCase() !== lw);       // "Build · failed · Implementation" → "Build · Implementation"
   }
   return { word, line, text, head, detail: rest.join(SEP) };
+}
+
+// Shaper small runs s5 (D8): the dev state words a run page head detail drops beside the shared word.
+const DEV_STATE_WORDS = new Set(['needs you', 'paused', 'waiting', 'working', 'failed', 'stopped', 'running']);
+const dropDevState = (line) => (line == null ? line : String(line).split(SEP)
+  .filter((x) => { const t = x.trim().toLowerCase(); return t && !DEV_STATE_WORDS.has(t) && !t.startsWith('starts '); }).join(SEP));
+
+/** Shaper small runs s5 (D8, D9): the run page head of a marked feature's run, from runStatus's `{word, mark}` (`st`).
+ *  Null status, a null mark and `done` return `m` itself (a done run keeps its ship line and PR dot). A null word keeps
+ *  dev's word and line, only the dot changes. Otherwise the head reads the shared word and the detail keeps the step or
+ *  reason, with every dev state segment and dev's "starts after run N" dropped; '' gives an empty head and no detail.
+ *  Pure: a new object only when something changes. */
+export function sliceHeadModel(m, st) {
+  if (!m || !st || !st.mark || st.mark === 'done' || staleLive(st, m)) return m;
+  if (st.word == null) return markDot(m, st.mark, m.word);
+  const empty = st.word === '';
+  return { ...markDot(m, st.mark, st.word), word: st.word, lineSaysState: false,
+    line: empty ? '' : dropDevState(m.line), barLine: empty ? null : dropDevState(m.barLine) };
 }
 
 /** The run's own bar shows (a group draws the current member's instead). A run in Needs you only through its PR has
@@ -270,7 +288,7 @@ export function memberStatusText(m) {
  *  over the row. `checks` (the chat card's feature) maps a member's key to its Requirements check: that row gets the
  *  check's fold under its status line. `oneLine` (Shaper's one card): the status sits right of the title on the same
  *  line, as a short state (`.run-member-state`), with no second line under the title. */
-export function renderMemberRows(doc, row, { checks, oneLine = false, shortState = null } = {}) {
+export function renderMemberRows(doc, row, { checks, oneLine = false, shortState = null, status = null, buildsOn = null } = {}) {
   const ol = doc.createElement('ol');
   ol.className = oneLine ? 'run-members is-table is-one-line' : 'run-members is-table';
   const items = [...(row.planning && row.planning.model ? [{ ...row.planning, isPlanning: true }] : []), ...(row.members || [])];
@@ -281,15 +299,24 @@ export function renderMemberRows(doc, row, { checks, oneLine = false, shortState
     li.dataset.state = m.state;
     li.dataset.key = mb.isPlanning ? 'planning' : String(mb.pipelineId || mb.ticketId || mb.position || '');
     const unnumbered = mb.isPlanning || mb.adhoc || row.groupKind === 'user';
+    // Shaper small runs s4 (D9, D12): `status(mb)` gives runStatus's {word, mark}; never asked for the planning row.
+    const st = typeof status === 'function' && !mb.isPlanning ? status(mb) : null;
+    const mark = st && st.mark ? st.mark : null;
     const dot = doc.createElement('span');
-    paintStatusDot(dot, m);
     const name = mb.isPlanning ? 'Planning' : (mb.title || '(untitled)');
     const title = textEl(doc, 'a', 'run-member-title', name);
     title.setAttribute('href', mb.href || '#runs');
     title.title = name;
     // Small runs C2 (D13): a marked card's `shortState(mb)` names a member's state in one short word; null keeps dev's.
-    const said = typeof shortState === 'function' && !mb.isPlanning ? shortState(mb) : null;
-    const line = textEl(doc, 'span', oneLine ? 'run-member-state' : 'run-member-line', typeof said === 'string' ? said : memberStatusText(m));
+    const said = st && typeof st.word === 'string' ? st.word
+      : typeof shortState === 'function' && !mb.isPlanning ? shortState(mb) : null;
+    const shown = typeof said === 'string' ? said : memberStatusText(m);
+    paintStatusDot(dot, mark ? markDot(m, mark, shown) : m);
+    if (mark) li.dataset.mark = mark;
+    // Shaper small runs s8 (D3): with `status`, a numbered row whose `buildsOn(mb)` is a list is a link row (run-links.mjs).
+    const links = typeof status === 'function' && !unnumbered && typeof buildsOn === 'function' ? buildsOn(mb) : null;
+    if (Array.isArray(links)) { li.dataset.run = String(mb.position); li.dataset.buildsOn = links.join(' '); li.tabIndex = 0; }
+    const line = textEl(doc, 'span', oneLine ? 'run-member-state' : 'run-member-line', shown);
     const pr = textEl(doc, 'span', 'run-member-pr', '');
     if (mb.adhoc) pr.append(textEl(doc, 'span', 'runs-indep', 'Independent'));
     if (m.pr && !m.pr.pending) pr.append(prChip(doc, m.pr, { link: true }));

@@ -129,6 +129,7 @@ test('done text, settled lines, refusal and row words read exactly', () => {
   assert.equal(runStopWord({ slice: { stop: { reason: 'objection', held: false } } }), 'waiting for you');
   assert.equal(runStopWord({ slice: { stop: { reason: 'objection', held: true, after: 9 } } }), 'after run 9');
   assert.equal(runStopWord({ slice: { waitsFor: 8 } }), 'waits for run 8');
+  assert.equal(runStopWord({ slice: { waitsFor: [], kind: 'change', state: 'planned', cannotStart: { run: 3, reason: 'was canceled' } } }), null);
   assert.equal(waitsForRunWord(2), 'waits for run 2');
   assert.equal(runStopWord({ snap: { pendingQuestion: { stop: gate } } }), 'waiting for you');
   assert.equal(runStopWord({ slice: {} }), null);
@@ -164,6 +165,14 @@ test('C4 (D10): a requirement stop with proposals carries `change` and a flat re
   assert.deepEqual(plain.options, planStop({ run: 5, concern: { ...REQ, proposals: [] } }).options);
   assert.equal(planStop({ run: 5, concern: { ...REQ, proposals: [{ id: 'R-arch-2', text: 'no from' }] } }).options[1].payload.decision, 'stop',
     'a proposal without the text it changes cannot be applied');
+});
+
+test('T8 (D10): runStopWord reads a waitsFor array as "waits for run 7, 10"; the number case and the change word are unchanged', () => {
+  assert.equal(runStopWord({ slice: { waitsFor: [7, 10] } }), 'waits for run 7, 10');
+  assert.equal(runStopWord({ slice: { waitsFor: [] } }), null);
+  assert.equal(runStopWord({ slice: { waitsFor: [], kind: 'change', state: 'planned' } }), 'next · small change run');
+  assert.equal(runStopWord({ slice: { waitsFor: 8 } }), 'waits for run 8');
+  assert.equal(runStopWord({ slice: { waitsFor: [], kind: 'change', state: 'planned', cannotStart: { run: 3, reason: 'was canceled' } } }), null);
 });
 
 test('outline change: a short question line from the note\'s title; the other words are unchanged', () => {

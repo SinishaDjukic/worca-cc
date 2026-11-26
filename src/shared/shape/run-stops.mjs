@@ -204,7 +204,9 @@ export function runStopWord({ snap = null, slice = null } = {}) {
   if (st && st.held && Number.isInteger(st.after)) return `after run ${st.after}`;
   if ((st && !st.held) || (snap && snap.pendingQuestion && snap.pendingQuestion.stop && !st)) return 'waiting for you';
   if (slice && Number.isInteger(slice.waitsFor)) return waitsForRunWord(slice.waitsFor);
+  // Slice 2 (D10): with the flag on, the runs the gate holds it on, unreduced (slice 3 phrases them).
+  if (slice && Array.isArray(slice.waitsFor) && slice.waitsFor.length) return waitsForRunWord(slice.waitsFor.join(', '));
   // Small runs C4 (D18): a change run that is due takes the next turn.
-  if (slice && slice.kind === 'change' && slice.state === 'planned') return 'next · small change run';
+  if (slice && slice.kind === 'change' && slice.state === 'planned' && !slice.cannotStart) return 'next · small change run';
   return null;
 }

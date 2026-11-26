@@ -14,6 +14,7 @@ import { buildChatQuestion } from '../chat/question.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
 import { icon } from '../icons.mjs';
 import { makeSwitch } from '../switch.mjs';
+import { flagOn } from '../flags.mjs';
 
 /** "3 runs · v2 · why" — the round only after the first, the why when set. */
 export function outlineSummary(outline, round = 1) {
@@ -203,6 +204,8 @@ export const NOT_CHALLENGED = 'Not challenged: no review step in this workflow';
 const KEEP = 'keep';
 const CHANGES = 'changes';
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+/** Slice 11 (D3): the Split row's wait part with the flag on, from the runs a run builds on. */
+const splitWaitsWord = (runs) => (!runs.length ? 'waits for no run' : `waits for ${runs.length === 1 ? 'run' : 'runs'} ${runs.join(', ')}`);
 const listJoin = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}` : xs[0] || '');
 
 /**
@@ -286,7 +289,8 @@ function renderSplitBody(panel, pq, deps) {
     const opened = new Set([...list.querySelectorAll('.outline-run-fold[aria-expanded="true"]')].map((b) => b.closest('li').dataset.slice));
     const active = doc.activeElement && list.contains(doc.activeElement) ? doc.activeElement : null;
     const focusKey = active ? { slice: active.closest('li')?.dataset.slice, more: active.classList.contains('outline-row-more') } : null;
-    list.replaceChildren(...outline.slices.map((s, i) => runItem(s, i, n, opened.has(s.id))));
+    const at = new Map(outline.slices.map((s, i) => [s.id, i + 1]));
+    list.replaceChildren(...outline.slices.map((s, i) => runItem(s, i, n, opened.has(s.id), at)));
     if (focusKey) {
       const li = [...list.children].find((x) => x.dataset.slice === focusKey.slice);
       const target = li && (focusKey.more ? li.querySelector('.outline-row-more') : li.querySelector('.outline-run-fold'));
@@ -453,7 +457,7 @@ function renderSplitBody(panel, pq, deps) {
   /** One fold row per run, in the shared row layout (prototype splitRow): the wait mark, then the fold button (the run's
    *  number in the id column, its title, its R-ids right-aligned, the chevron), the row ⋯ beside (never inside) it;
    *  unfolded, Owns, Starts from and Checked by. */
-  function runItem(s, i, n, open) {
+  function runItem(s, i, n, open, at) {
     const li = h('li', 'outline-slice outline-run');
     li.dataset.slice = s.id;
     const row = h('div', 'outline-slice-head outline-run-row');
@@ -486,7 +490,10 @@ function renderSplitBody(panel, pq, deps) {
       owns.appendChild(line);
     }
     fact('owns', 'Owns', owns);
-    fact('starts', 'Starts from', i === 0 ? 'the feature branch: it starts first' : `the latest finished run · waits for ${plural(i, 'run')}`);
+    // Slice 11 (D1, D2): with the flag on, the runs it builds on (`dependsOn` as positions in this outline), ascending.
+    const builds = () => [...new Set((Array.isArray(s.dependsOn) ? s.dependsOn : []).map((id) => at.get(id)).filter(Boolean))].sort((a, b) => a - b);
+    fact('starts', 'Starts from', i === 0 ? 'the feature branch: it starts first'
+      : `the latest finished run · ${flagOn('shaperSmallRuns', doc) ? splitWaitsWord(builds()) : `waits for ${plural(i, 'run')}`}`);
     const roles = [...new Set(ids.map((id) => (reqs.get(id) || {}).role).filter(Boolean))];
     fact('checked', 'Checked by', roles.join(' · ') || '—');
     kv.hidden = true;
