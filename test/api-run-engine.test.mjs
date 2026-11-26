@@ -16,7 +16,7 @@ import { stopAndSettle } from './helpers/stop-and-settle.mjs';
 after(() => runs && stopAndSettle(runs));
 useTempHome(after);   // outer isolation: mock runs below finish ASYNC in-process
 
-let sandboxHome, projectsRoot, srv, base, runs;
+let sandboxHome, projectsRoot, srv, base, runs, mod;
 const prevEnv = {};
 const JSONH = { 'Content-Type': 'application/json' };
 const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(b ?? {}) });
@@ -41,7 +41,7 @@ before(async () => {
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   process.env.WORCA_PROJECTS_ROOT = projectsRoot;
   process.env.WORCA_MOCK = '1';
-  const mod = await import('../ui/server.mjs');       // imported ⇒ no port bind
+  mod = await import('../ui/server.mjs');       // imported ⇒ no port bind
   ({ runs } = mod);
   srv = mod.server;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -74,7 +74,7 @@ test('engine: an unknown name, the mock and a non-boolean consent are refused wi
 });
 
 test('engine: a default body, or Claude named, passes no engine option', async () => {
-  for (const extra of [{}, { engine: 'claude' }, { engine: 'claude', allowUnguardedEngine: true }]) {
+  for (const extra of [{}, { engine: 'claude' }]) {
     const r = await post('/api/run', { ...body(), ...extra });
     assert.equal(r.status, 200, JSON.stringify(extra));
     const { runId } = await r.json();
@@ -88,6 +88,10 @@ test('engine: a default body, or Claude named, passes no engine option', async (
     await post('/api/stop', { runId });
     await untilSettled(runId);
   }
+  const consent = await post('/api/run', { ...body(), engine: 'claude', allowUnguardedEngine: true });
+  const { runId } = await consent.json();
+  assert.deepEqual(['engine' in runs.get(runId).orch.opts.claude, runs.get(runId).orch.opts.claude.allowUnguardedEngine], [false, true], 'the consent rides on a Claude run');
+  await post('/api/stop', { runId }); await untilSettled(runId);
 });
 
 test('engine: codex on a set with permission rules is refused at once, with the consent offered', async () => {
@@ -123,4 +127,36 @@ test('engine: with the consent the same run starts on codex', async () => {
   // Same reason as the test above: wf_default's clarify node blocks on a human answer.
   await post('/api/stop', { runId });
   await untilSettled(runId);
+});
+
+const PIN = { nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex' } } };
+test('engine: a Claude-default run with a step pinned to Codex meets Codex\'s gate before it exists, the consent offered', async () => {
+  const before = runs.size;
+  const r = await post('/api/run', { ...body(), workflowId: 'wf_default', guardrailsId: 'normal', overlay: PIN });
+  assert.equal(r.status, 409);
+  const data = await r.json();
+  assert.deepEqual([data.code, data.overridable, data.engines], ['engine-refused', true, ['codex']]);
+  assert.match(data.error, /^engine codex \(Plan\): guardrail set "normal" has permission rules this engine cannot enforce/);
+  assert.match(data.error, /tick Allow unguarded/);
+  assert.equal(runs.size, before);
+  const ok = await post('/api/run', { ...body(), workflowId: 'wf_default', guardrailsId: 'normal', allowUnguardedEngine: true, overlay: PIN });
+  assert.equal(ok.status, 200);
+  const { runId } = await ok.json();
+  await post('/api/stop', { runId }); await untilSettled(runId);
+});
+test('Review Focus 1: a scheduled run with a step pinned to Codex is checked when it is scheduled', async () => {
+  const at = new Date(Date.now() + 3600_000).toISOString();
+  const r = await post('/api/run', { ...body(), workflowId: 'wf_default', guardrailsId: 'normal', overlay: PIN, scheduledFor: at });
+  assert.equal(r.status, 409);
+  assert.deepEqual((await r.json()).engines, ['codex']);
+  assert.equal((await post('/api/run', { ...body(), workflowId: 'wf_default', guardrailsId: 'normal', allowUnguardedEngine: true, overlay: PIN, scheduledFor: at })).status, 202);
+});
+test('an unattended start whose project pick needs the consent is refused with the reason', async () => {
+  const { setStep } = await import('../src/core/config.mjs');
+  await setStep(projectDir, 'planner', { model: 'gpt-5.5', engine: 'codex' });
+  try {
+    const out = await mod._testing.invokeStartRun({ ...body(), workflowId: 'wf_default', guardrailsId: 'normal' }, null, { automation: true });
+    assert.deepEqual([out.status, out.body.code, out.body.engines], [409, 'engine-refused', ['codex']]);
+    assert.match(out.body.error, /^engine codex \(Plan\): guardrail set "normal" has permission rules this engine cannot enforce/);
+  } finally { await setStep(projectDir, 'planner', {}); }
 });

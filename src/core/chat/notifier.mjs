@@ -71,6 +71,7 @@ export function createNotifier({ channelHost, getPrefs, chatContext, logger = ()
         title: entry?.title || orch?.state?.title || '',
         totalCostUsd: orch?.state?.totalCostUsd,
         runEngine: orch?.state?.runEngine,
+        runEngines: orch?.state?.runEngines,
         totalActiveMs: orch?.state?.totalActiveMs,
         elapsedMs: orch?.state?.elapsedMs,
         // renderDone reports directions the run never applied. Omitting this made

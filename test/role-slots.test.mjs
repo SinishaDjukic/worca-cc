@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { cleanPick, pickOnEngine, pickOrDrop, layerPick, resolveRolePicks, pickDropWarnings } from '../src/shared/graph/role-slots.mjs';
+import { cleanPick, pickOnEngine, pickOrDrop, layerPick, resolveRolePicks, pickDropWarnings, pickEngine, overPick, autoPinWarnings } from '../src/shared/graph/role-slots.mjs';
 import { effortOn } from '../src/shared/connections.mjs';
 import { effortsForEngine } from '../src/core/model-env.mjs';
 
@@ -157,4 +157,64 @@ test('pickDropWarnings: a wanted record whose source is default is never printed
     roles: { product: { effort: 'high', source: 'default', wanted: { model: 'claude-opus-5-5', effort: 'medium' } } } } };
   assert.deepEqual(pickDropWarnings(nc, { engine: 'claude' }), []);
   assert.deepEqual(pickDropWarnings(nc, { engine: 'codex' }), []);
+});
+
+const envOf = (h) => { const { runs, efforts } = env(h); return { runs, efforts }; };
+
+test('pickEngine and cleanPick: an engine is a harness name beside a model, else nothing', () => {
+  assert.equal(pickEngine({ model: 'gpt-5.5', engine: 'codex' }), 'codex');
+  assert.equal(pickEngine({ engine: 'codex' }), null, 'valid only beside a model');
+  assert.equal(pickEngine({ model: 'gpt-5.5', engine: 'codx' }), null);
+  assert.equal(pickEngine({ model: 'gpt-5.5', engine: 'mock' }), null, 'the mock is no harness');
+  assert.deepEqual(cleanPick({ model: ' gpt-5.5 ', effort: 'high', engine: 'codex' }), { model: 'gpt-5.5', effort: 'high', engine: 'codex' });
+  assert.deepEqual(cleanPick({ effort: 'high', engine: 'codex' }), { effort: 'high' });
+  assert.deepEqual(cleanPick({ model: 'gpt-5.5', engine: 7 }), { model: 'gpt-5.5' });
+});
+test('pickOrDrop: a pin is judged on its own harness and kept; Auto drops a pin to another harness; with neither, ignored', () => {
+  assert.deepEqual(pickOrDrop({ model: 'gpt-5.5', effort: 'max', engine: 'codex' }, 'claude', { ...env('claude'), envOf }),
+    { pick: { model: 'gpt-5.5', effort: 'high', engine: 'codex' }, dropped: null });
+  assert.deepEqual(pickOrDrop({ model: 'claude-opus-5-5', effort: 'max', engine: 'codex' }, 'claude', { ...env('claude'), envOf }),
+    { pick: {}, dropped: { model: 'claude-opus-5-5', effort: 'max', engine: 'codex' } });
+  assert.deepEqual(pickOrDrop({ model: 'claude-opus-5-5', engine: 'claude' }, 'claude', { ...env('claude'), envOf }),
+    { pick: { model: 'claude-opus-5-5', engine: 'claude' }, dropped: null }, 'a pin to the default harness is still a pin');
+  assert.deepEqual(pickOrDrop({ model: 'gpt-5.5', engine: 'codex' }, 'claude', { ...env('claude'), dropPins: true }),
+    { pick: {}, dropped: { model: 'gpt-5.5', engine: 'codex' } }, 'Auto: dropped, the pin kept in `dropped`');
+  assert.deepEqual(pickOrDrop({ model: 'claude-opus-5-5', engine: 'claude' }, 'claude', { ...env('claude'), dropPins: true }),
+    { pick: { model: 'claude-opus-5-5' }, dropped: null }, 'Auto: a pin to its own harness moves nothing');
+  assert.deepEqual(pickOrDrop({ model: 'gpt-5.5', engine: 'codex' }, 'claude', env('claude')),
+    { pick: {}, dropped: { model: 'gpt-5.5' } }, 'neither: judged soft, the pin named nowhere');
+});
+test('layerPick and overPick: an engine travels with its model', () => {
+  assert.deepEqual(layerPick([{ model: 'a', engine: 'codex' }, { model: 'b', effort: 'max', engine: 'claude' }]), { model: 'a', engine: 'codex' });
+  assert.deepEqual(layerPick([{ effort: 'high' }, { model: 'b', engine: 'codex' }]), { model: 'b', engine: 'codex' });
+  assert.deepEqual(overPick({ model: 'gpt-5.5', engine: 'codex', fanOut: true }, { model: 'claude-opus-5-5', effort: '' }), { model: 'claude-opus-5-5', effort: '', fanOut: true });
+  assert.deepEqual(overPick({ model: 'gpt-5.5', engine: 'codex' }, { fanOut: true }), { model: 'gpt-5.5', engine: 'codex', fanOut: true });
+  assert.deepEqual(overPick({ model: 'a', engine: 'codex' }, { model: 'b', engine: 'claude' }), { model: 'b', engine: 'claude' });
+  assert.deepEqual(overPick(undefined, { model: 'b' }), { model: 'b' });
+});
+test('resolveRolePicks: a pinned role runs on its harness; a soft role is judged on its node\'s harness', () => {
+  const roles = [{ key: 'security', label: 'Security', model: 'gpt-5.5', engine: 'codex' }, { key: 'fit', label: 'Fit' }];
+  assert.deepEqual(resolveRolePicks({ roles, overlay: { fit: { model: 'claude-haiku-4-5' } }, project: {}, engine: 'codex', ...env('codex'), envOf }),
+    { security: { model: 'gpt-5.5', engine: 'codex', source: 'template' }, fit: { source: 'run', wanted: { model: 'claude-haiku-4-5' } } });
+  assert.deepEqual(resolveRolePicks({ roles, overlay: {}, project: {}, engine: 'claude', ...env('claude'), envOf }).security,
+    { model: 'gpt-5.5', engine: 'codex', source: 'template' }, 'a pin ignores its node\'s harness');
+});
+test('pickDropWarnings names the harness of the pick that was dropped', () => {
+  const nodes = { n_rev: { nodeId: 'n_rev', kind: 'agent', key: 'reviewer', meta: { displayName: 'Review Implementation' }, model: 'gpt-6.1-sol', engine: 'codex',
+    wanted: { model: 'gpt-5.5', engine: 'claude', source: 'run' }, roles: { qa: { source: 'run', wanted: { model: 'claude-opus-5-5', engine: 'cursor' } } } } };
+  assert.deepEqual(pickDropWarnings(nodes, { engine: 'codex', roleLabel: () => 'QA' }), [
+    'Review Implementation: gpt-5.5 is not on Claude Code, runs gpt-6.1-sol',
+    "Review Implementation · QA: claude-opus-5-5 is not on Cursor, runs the node's model",
+  ]);
+});
+test('autoPinWarnings: one line per pin an Auto run dropped, naming the harness it was set to', () => {
+  const nodes = {
+    n_plan: { nodeId: 'n_plan', kind: 'agent', key: 'planner', meta: { displayName: 'Plan' }, model: 'claude-sonnet-5-5', engine: 'claude',
+      wanted: { model: 'gpt-5.5', engine: 'codex', source: 'template' }, roles: { qa: { source: 'template', wanted: { model: 'gpt-5.5', engine: 'codex' } } } },
+    n_impl: { nodeId: 'n_impl', kind: 'agent', key: 'implementer', meta: {}, wanted: { model: 'gpt-5.5', source: 'run' } },
+  };
+  assert.deepEqual(autoPinWarnings(nodes, { engine: 'claude', roleLabel: () => 'QA' }), [
+    'Plan: set to OpenAI Codex, but an Auto run uses one harness, so it runs claude-sonnet-5-5 on Claude Code',
+    "Plan · QA: set to OpenAI Codex, but an Auto run uses one harness, so it runs the node's model on Claude Code",
+  ]);
 });

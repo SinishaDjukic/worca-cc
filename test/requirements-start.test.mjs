@@ -859,3 +859,18 @@ test('startView exposes note and noteOverrides', async () => {
   const vb = await startView(b);
   assert.deepEqual([va.note, va.noteOverrides, vb.note, vb.noteOverrides], ['hi', true, null, false]);
 });
+
+test('an engine refusal comes back with its code, overridable and engines; the consent rides the next start', async () => {
+  reset();
+  const f = readyFeature();
+  runImpl = async () => ({ status: 409, body: { error: 'engine codex (Plan): guardrail set "normal" has permission rules this engine cannot enforce', code: 'engine-refused', overridable: true, engines: ['codex'] } });
+  const refused = await call('POST', `/api/requirements/${f.seq}/start`, {});
+  assert.equal(refused.status, 409);
+  assert.deepEqual([refused.json.code, refused.json.overridable, refused.json.engines], ['engine-refused', true, ['codex']]);
+  assert.equal('allowUnguardedEngine' in calls[0].body, false);
+  runImpl = ok();
+  const started = await call('POST', `/api/requirements/${f.seq}/start`, { allowUnguardedEngine: true });
+  assert.equal(started.status, 201, JSON.stringify(started.json));
+  assert.equal(calls.at(-1).body.allowUnguardedEngine, true);
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, { allowUnguardedEngine: 'yes' })).status, 400);
+});

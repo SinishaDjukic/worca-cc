@@ -10,7 +10,7 @@ export const CLAUDE_AGENTS_FILE_MIN = '2.1.281';
 /** `modelEnvs` = JSON strings of each member's UNTAGGED resolved model env and the host's (C34; Task 44 builds them).
  *  `caps` = the engine's capabilities plus, for Claude, the probe's `forwardSubagentText`. A missing capability means
  *  capable (`capabilities.mjs`: only a literal `false` degrades). */
-export function chooseSessionMode({ spec, engine, caps = {}, flagOn = false, env = {}, cliVersion = null, verified = {}, modelEnvs = [] } = {}) {
+export function chooseSessionMode({ spec, engine, caps = {}, flagOn = false, env = {}, cliVersion = null, verified = {}, modelEnvs = [], engines = [] } = {}) {
   const requested = spec?.settings?.mode;
   const members = Array.isArray(spec?.members) ? spec.members : [];
   const c = caps || {};
@@ -19,6 +19,8 @@ export function chooseSessionMode({ spec, engine, caps = {}, flagOn = false, env
   if (members.length < 2) return separate('one step');
   if (env?.WORCA_SESSIONS_DISABLE === '1') return separate('WORCA_SESSIONS_DISABLE=1');
   if (!flagOn) return separate('the Labs flag sessionGroups is off');
+  // `engines`: each member's harness. One conversation cannot cross harnesses, and neither can a sub-agent host.
+  if (new Set(Array.isArray(engines) ? engines : []).size > 1) return separate('the steps run on different harnesses');
   if (requested === 'shared' && c.resume === false) return separate(`${name} cannot resume a session`);
   if (requested === 'shared') return { mode: 'shared', requested, reason: 'chosen in the session settings' };
   if (c.subagents === false) return separate(`${name} has no sub-agents`);

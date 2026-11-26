@@ -242,7 +242,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, SYNC_EXECUTION_ID } from '.
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, MODEL_ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, runCostKnown, runCostLabel, engineList, ENGINE_NAMES, MODEL_ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
 import { remoteRefusesDefault } from '../../src/shared/exec-env.mjs';
 import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS, connectionOf } from '../../src/shared/connections.mjs';
 import {
@@ -2543,6 +2543,7 @@ function onHello(msg) {
       limitScope: r0.limitScope || null,
       limitModel: r0.limitModel || null,
       runEngine: r0.runEngine || undefined,
+      runEngines: Array.isArray(r0.runEngines) ? r0.runEngines : undefined,
       execEnv: r0.execEnv || undefined,
       execEnvWaiting: !!r0.execEnvWaiting,
       execEnvPreparing: r0.execEnvPreparing || undefined,
@@ -2712,7 +2713,7 @@ function nowHMS() {
 function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
-  pauseDetail = null, limitEngine = null, limitResetAt = null, modelConfirm = null, limitScope = null, limitModel = null, runEngine = undefined,
+  pauseDetail = null, limitEngine = null, limitResetAt = null, modelConfirm = null, limitScope = null, limitModel = null, runEngine = undefined, runEngines = undefined,
   execEnv = undefined, execEnvWaiting = false, execEnvPreparing = undefined, execEnvWaitUntil = undefined, execEnvReview = undefined, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [], labels = [],
   shaping = null, networkWait = null, workMode = undefined,
@@ -2736,6 +2737,7 @@ function makeRun({
     limitScope,           // 'usage_limit': 'model' (a Fable limit) | 'connection', or null
     limitModel,           // 'usage_limit': the model the limit was spent on, or null
     runEngine,            // the engine the run runs on (state frames carry it too); undefined = not known yet
+    runEngines,           // every harness its steps use, only on a run that uses more than one
     execEnv,              // the backend name ('e2b') when its agents run in a remote sandbox (docs/e2b.md); undefined = local
     execEnvWaiting,       // remote: still queued for a sandbox slot
     execEnvPreparing,     // remote: 'image-build' while the backend builds its sandbox image on first use
@@ -3339,6 +3341,9 @@ function onState(r, msg) {
   if (typeof msg.prompt === 'string' && msg.prompt) r.prompt = msg.prompt;
   // The run's engine (§4.2): the step pills show only what that engine ran.
   if (typeof msg.runEngine === 'string' && msg.runEngine) r.runEngine = msg.runEngine;
+  // Every harness its steps use (a mixed run only): a frame without it drops the copy (a resume that moved every step).
+  if (Array.isArray(msg.runEngines) && msg.runEngines.every((e) => typeof e === 'string')) r.runEngines = msg.runEngines;
+  else delete r.runEngines;
   // Where it executes (e2b only) and whether it still waits for a sandbox slot.
   if (typeof msg.execEnv === 'string') r.execEnv = msg.execEnv;
   r.execEnvWaiting = !!msg.execEnvWaiting;
@@ -16293,7 +16298,9 @@ function buildRunBody() {
     // to be Claude (a failed or stale defaults read must not let the server pick a Codex default).
     engine: state.engine !== 'claude' ? state.engine : (state.runDefaults?.engine?.value === 'claude' ? undefined : 'claude'),
     pr: runPrFields().body(),   // only a value the person changed from the setting
-    allowUnguardedEngine: state.engine !== 'claude' && el.engineAllowUnguarded && el.engineAllowUnguarded.checked ? true : undefined,
+    // Whatever the run's own engine: a step may be pinned to a harness that needs the consent (the box shows only beside
+    // an overridable refusal and is cleared per attempt).
+    allowUnguardedEngine: el.engineAllowUnguarded && el.engineAllowUnguarded.checked ? true : undefined,
     // Run tags (#718): omitted when empty, so a legacy body stays byte-identical. A slot wins its key.
     tags: (() => {
       const all = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;
@@ -16533,7 +16540,7 @@ el.form.addEventListener('submit', async (e) => {
       if (!res.ok && data && data.code === 'engine-refused') {
         startSubmitInFlight = false;
         showEngineRefusal(data);
-        return notStarted(data.overridable ? 'Tick Allow unguarded to run anyway, or pick Claude.' : (data.error || 'The engine cannot run this.'));
+        return notStarted(data.overridable ? (state.engine !== 'claude' ? 'Tick Allow unguarded to run anyway, or pick Claude.' : 'Tick Allow unguarded to run anyway.') : (data.error || 'The engine cannot run this.'));
       }
       // Signed out with nothing else to run on: the sign-in steps, not a paused run.
       if (res.status === 409 && data && data.code === 'claude-signed-out') {
@@ -24015,7 +24022,9 @@ function paintResumeEngineItems(menu, runEngine, pause) {
   const saved = runEngine || 'claude';
   const offers = usageLimitSwitches(pause || {});
   const confirm = pause?.reason === 'model_confirm' && pause.modelConfirm?.model ? pause.modelConfirm.model : '';
-  const sig = `${saved}|${offers.join(',')}|${pause?.reason || ''}|${confirm}|${pause?.limitScope || ''}`;
+  // A run whose steps use several harnesses: Resume keeps each on its own; an offer moves every step.
+  const mixed = !!pause?.mixed;
+  const sig = `${saved}|${offers.join(',')}|${pause?.reason || ''}|${confirm}|${pause?.limitScope || ''}|${mixed ? 'mixed' : ''}`;
   if (menu.dataset.engineSig === sig) return;
   menu.dataset.engineSig = sig;
   // Any usage limit — the sign-in's or a provider's: a model on another connection has its own allowance. A
@@ -24036,7 +24045,7 @@ function paintResumeEngineItems(menu, runEngine, pause) {
   menu.dataset.limitScope = pause?.limitScope || '';
   menu.dataset.limitModel = pause?.limitModel || '';
   const savedItem = menu.querySelector('.resume-on-saved');
-  if (savedItem) savedItem.querySelector('b').textContent = `Resume on ${engineLabel(saved)}`;
+  if (savedItem) savedItem.querySelector('b').textContent = mixed ? 'Resume' : `Resume on ${engineLabel(saved)}`;
   const tpl = menu.querySelector('.resume-on-other[data-template]') || menu.querySelector('.resume-on-other');
   if (!tpl) return;
   tpl.dataset.template = '1'; tpl.hidden = true;
@@ -24045,7 +24054,7 @@ function paintResumeEngineItems(menu, runEngine, pause) {
     const item = tpl.cloneNode(true);
     delete item.dataset.template; item.hidden = false; item.dataset.engine = e;
     item.querySelector('b').textContent = `Resume on ${engineLabel(e)}`;
-    item.querySelector('small').textContent = engineSwitchNote(e);
+    item.querySelector('small').textContent = engineSwitchNote(e, { mixed });
     tpl.before(item);
   }
 }
@@ -24091,9 +24100,9 @@ async function pickResumeModel(engine, pause) {
 }
 
 /** Before a paused run moves to another engine: what that does. true = go. */
-async function confirmEngineSwitch(engine) {
+async function confirmEngineSwitch(engine, { mixed = false } = {}) {
   const name = engineLabel(engine);
-  return !!(await confirmModal({ title: `Resume on ${name}?`, message: engineSwitchNote(engine), confirmLabel: `Resume on ${name}`, cancelLabel: 'Cancel' }));
+  return !!(await confirmModal({ title: `Resume on ${name}?`, message: engineSwitchNote(engine, { mixed }), confirmLabel: `Resume on ${name}`, cancelLabel: 'Cancel' }));
 }
 
 /** A resume the engine gate refused (409 engine-refused). */
@@ -24101,7 +24110,8 @@ const isEngineRefusal = (data, status) => status === 409 && !!data && data.code 
 /** Show the gate's reason; when the consent lifts it, offer it. true = resend with allowUnguardedEngine. */
 async function engineRefusalRetry(data, status, engine) {
   if (!isEngineRefusal(data, status)) return false;
-  const name = engineLabel(data.engine || engine);
+  // The harness the refusal is about (a step pinned to another one included), else the run's.
+  const name = engineLabel(data.engines?.[0] || data.engine || engine);
   const res = await confirmModal({
     title: `Not resumed on ${name}`,
     message: data.error || 'The engine refused this run.',
@@ -24113,20 +24123,22 @@ async function engineRefusalRetry(data, status, engine) {
   return !!(data.overridable && res && res.ok && res.checked);
 }
 
-/** Resume a live paused run on `engine`: its own engine is the plain Resume, another asks first. */
-async function resumeRunOnEngine(runId, btn, engine) {
+/** Resume a live paused run on `engine`: its own engine is the plain Resume, another asks first. On a run whose steps
+ *  use several harnesses an offer (`offer`) of its own engine is a switch too: every step moves there. */
+async function resumeRunOnEngine(runId, btn, engine, { offer = false } = {}) {
   const r = runs.get(runId);
   if (!r || !engine) return;
-  if (engine === (r.runEngine || 'claude')) return resumeRunFromCard(runId, btn);
-  if (!(await confirmEngineSwitch(engine))) return;
+  const mixed = Array.isArray(r.runEngines);
+  if (engine === (r.runEngine || 'claude') && !(offer && mixed)) return resumeRunFromCard(runId, btn);
+  if (!(await confirmEngineSwitch(engine, { mixed }))) return;
   return resumeRunFromCard(runId, btn, { engine });
 }
 
 /** The saved run's resume on `engine` (History detail), as resumeRunOnEngine. */
-async function resumePipelineOnEngine(p, runEngine, btn, engine) {
+async function resumePipelineOnEngine(p, runEngine, btn, engine, { offer = false, mixed = false } = {}) {
   if (!engine) return;
-  if (engine === (runEngine || 'claude')) return resumePipeline(p, p.projectDir || null, btn);
-  if (!(await confirmEngineSwitch(engine))) return;
+  if (engine === (runEngine || 'claude') && !(offer && mixed)) return resumePipeline(p, p.projectDir || null, btn);
+  if (!(await confirmEngineSwitch(engine, { mixed }))) return;
   return resumePipeline(p, p.projectDir || null, btn, { engine });
 }
 
@@ -27926,11 +27938,12 @@ function hdPauseOf(live, screen, data, record) {
   const st = data?.state || {};
   return live
     ? { reason: live.pauseReason, limitEngine: live.limitEngine, limitResetAt: live.limitResetAt,
-      modelConfirm: live.modelConfirm || null, limitScope: live.limitScope || null, limitModel: live.limitModel || null }
+      modelConfirm: live.modelConfirm || null, limitScope: live.limitScope || null, limitModel: live.limitModel || null,
+      mixed: Array.isArray(live.runEngines) }
     : { reason: screen.dataset.pauseReason || st.pauseReason, limitEngine: st.limitEngine ?? record.limitEngine,
         limitResetAt: st.limitResetAt ?? record.limitResetAt ?? null,
         modelConfirm: st.modelConfirm ?? record.modelConfirm ?? null, limitScope: st.limitScope ?? record.limitScope ?? null,
-        limitModel: st.limitModel ?? record.limitModel ?? null };
+        limitModel: st.limitModel ?? record.limitModel ?? null, mixed: Array.isArray(st.runEngines) };
 }
 /** A usage limit the run's own engine hit offers "Resume on <engine>" in the Resume split's menu
  *  (paintResumeEngineItems), never as buttons of its own. The caret is Advanced and up; while the menu holds
@@ -28405,8 +28418,8 @@ function paintHdFacts(screen, record, data) {
   // The run time is the saved elapsed clock (an old run: its summed time); the sum itself is agent time.
   const activeMs = runHeadlineMs(st) ?? liveTotalMs(st.steps, 0);
   const tags = costTagsFact(st.tags, record && record.projectDir, () => { if (screen.isConnected) paintHdGlance(screen, record, data); }, record && record.target);
-  paintGlanceFacts(glance, { summary: folder ? null : (s || null), changes: fc, diffHref: `#${hdHash({ projectKey: record.projectKey, id: record.id }, 'details', 'diff')}`, activeMs, agentMs: st.totalActiveMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
-    costNote: costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd),
+  paintGlanceFacts(glance, { summary: folder ? null : (s || null), changes: fc, diffHref: `#${hdHash({ projectKey: record.projectKey, id: record.id }, 'details', 'diff')}`, activeMs, agentMs: st.totalActiveMs, cost: runCostKnown(st.runEngine, st.runEngines) !== 'none' ? (st.totalCostUsd || 0) : null,
+    costNote: glanceCostNote(st, costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd)),
     // D16: a finished run always has the row, so "Add cost tags" stays reachable.
     costTags: tags || { tags: [], missing: [] } });
   // Only when the row was rebuilt (its control is gone): re-appending on every glance repaint would move an open
@@ -28512,8 +28525,15 @@ function paintHdHeaderMeta(screen, record, data) {
   meta.appendChild(hdDot());
   const eng = document.createElement('span');
   eng.className = 'hd-engine';
-  eng.textContent = engineLabel(engine);
-  eng.title = `Engine: ${engineLabel(engine)}${isBetaEngine(engine) ? ' (beta)' : ''} runs this run's agents`;
+  // A run whose steps used several harnesses names the default one and the others.
+  const others = Array.isArray(st.runEngines) ? st.runEngines.filter((e) => e !== engine) : [];
+  if (others.length) {
+    eng.textContent = [engine, ...others].map(engineLabel).join(' + ');
+    eng.title = `Default harness: ${engineLabel(engine)}. Other steps run on ${others.map(engineLabel).join(', ')}.`;
+  } else {
+    eng.textContent = engineLabel(engine);
+    eng.title = `Engine: ${engineLabel(engine)}${isBetaEngine(engine) ? ' (beta)' : ''} runs this run's agents`;
+  }
   meta.appendChild(eng);
   if (st.execEnv && st.execEnv !== 'local') {
     meta.appendChild(hdDot());
@@ -28540,7 +28560,7 @@ function paintHdHeaderMeta(screen, record, data) {
     meta.appendChild(seg);
   }
   paintCostBreakdown(screen.querySelector('.hd-header'), meta.querySelector('.hd-cost'), runCostBreakdown(st.steps, st.totalCostUsd), costFocus,
-    { agentsUnknown: !engineReportsCost(st.runEngine) });
+    { agentsUnknown: runCostKnown(st.runEngine, st.runEngines) !== 'all' });
   // Scheduled runs: say HOW this run started — "by schedule" links to the Schedules view.
   if (st.scheduledFor) {
     meta.appendChild(hdDot());
@@ -28821,7 +28841,8 @@ async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspac
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         pipelineId, ...when,
-        ...(res.engine ? { engine: res.engine } : {}),
+        // Only a switch names an engine: a scheduled plain resume of a mixed run keeps each step on its own harness.
+        ...(res.engine && res.engine !== saved ? { engine: res.engine } : {}),
       }),
     });
     const data = await safeJson(r);
@@ -29339,7 +29360,8 @@ function setupHdActions(screen, record, data) {
           .then((model) => { if (model) resumePipeline(r, r.projectDir || null, resumeBtn, { model }); });
         return;
       }
-      resumePipelineOnEngine(r, saved, resumeBtn, item.classList.contains('resume-on-other') ? item.dataset.engine : saved);
+      resumePipelineOnEngine(r, saved, resumeBtn, item.classList.contains('resume-on-other') ? item.dataset.engine : saved,
+        { offer: item.classList.contains('resume-on-other'), mixed: Array.isArray(data?.state?.runEngines) });
     });
     const resumeLimitItem = screen.querySelector('.hd-resume-limit-item');
     resumeLimitItem.addEventListener('click', (e) => {
@@ -29539,11 +29561,22 @@ function placeCostPop(header, btn, pop) {
   pop.style.left = `${Math.round(Math.max(8, Math.min(bb.left - hb.left, hb.width - w - 8)))}px`;
 }
 
+/** The glance tile's cost caption: today's share summary, else on a run whose cost is partly unknown, that. */
+function glanceCostNote(r, note) {
+  return note || (runCostKnown(r?.runEngine, r?.runEngines) === 'part' ? 'cost partly unknown' : note);
+}
+
 /** A run on an engine that reports no cost (Cursor): its cost is unknown, never a $0.00 (fmtUsd(null) prints $0.00).
  *  `fallback`: what the site shows today when the total is not a number ('' or '—'); a reporting engine is unchanged. */
 function runCostText(r, total, fallback = null) {
-  if (!engineReportsCost(r?.runEngine)) return { text: 'cost unknown', title: `${engineLabel(r.runEngine)} reports no cost${Number(total) > 0 ? ` (worca's own calls so far: ${fmtUsd(total)})` : ''}` };
+  const known = runCostKnown(r?.runEngine, r?.runEngines);
+  if (known === 'none') return { text: 'cost unknown', title: `${engineLabel(r.runEngine)} reports no cost${Number(total) > 0 ? ` (worca's own calls so far: ${fmtUsd(total)})` : ''}` };
   if (fallback !== null && typeof total !== 'number') return { text: fallback, title: '' };
+  // A run whose steps used a harness that reports no cost beside one that does: the known part, said so.
+  if (known === 'part') {
+    return { text: `${fmtUsd(Number(total) || 0)} (cost partly unknown)`,
+      title: `Steps on ${engineList(r.runEngines.filter((e) => !engineReportsCost(e)))} report no cost, so this total leaves them out` };
+  }
   return { text: fmtUsd(Number(total) || 0), title: '' };
 }
 
@@ -33082,12 +33115,12 @@ function rdOvStateBanner(host, r) {
     btn.className = 'btn btn-sm rd-ov-switch';
     btn.dataset.engine = other;
     btn.textContent = `Resume on ${engineLabel(other)}`;
-    btn.title = engineSwitchNote(other);
+    btn.title = engineSwitchNote(other, { mixed: Array.isArray(r.runEngines) });
     btn.addEventListener('click', () => {
       // The toggle carries the busy state (the banner repaints on every frame).
       const pauseBtn = rdOpenPauseBtn();
       if (pauseBtn && pauseBtn.disabled) return;
-      resumeRunOnEngine(r.runId, pauseBtn || btn, other);
+      resumeRunOnEngine(r.runId, pauseBtn || btn, other, { offer: true });
     });
     host.append(btn);
   }
@@ -34202,7 +34235,7 @@ function askRunSnapshot(r) {
     ...(isGitRun(r) ? {} : { workMode: workModeOf(r), changes: null }),
     live: isLive(r), terminal: !!r._finished || isTerminalStatus(r.status),
     startedAt: r.startedAt || null, elapsedMs: rdElapsedMs(r),
-    costUsd: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,   // null: cost unknown (Cursor), never $0.00
+    costUsd: runCostKnown(r.runEngine, r.runEngines) !== 'none' ? (r.totalCostUsd || 0) : null,   // null: cost unknown (Cursor), never $0.00
     // Chat P3 (U10): activeNodes' model + effort, named through the catalog, plus the execution's cycle.
     progress: decor ? decor.progress : null, active: graph ? activeAgents(decor, r.stepper, { modelLabel: graphModelLabel }) : [],
     stageProgress: decor ? decor.stageProgress : null,
@@ -34843,8 +34876,10 @@ function stepModelByNode(stepper, runEngine = 'claude', steps = null) {
       else if (Object.hasOwn(n, 'modelSource')) out[n.id] = { model: '', effort: '', decides: true, tool };
       continue;
     }
+    // A node is judged on its own harness (a step pinned to another one), else the run's.
+    const onEngine = typeof n.engine === 'string' && n.engine ? n.engine : runEngine;
     const entry = modelById(n.model);
-    if (entry && !runsOn(entry, runEngine)) continue;
+    if (entry && !runsOn(entry, onEngine)) continue;
     // A node that ran the model the run's own overlay set (the Ask run card's per-agent picks, manifest.runOverlay) says
     // so on its pill — not when another model ran (a pinned Memory pair or the run's engine won), and never for an entry
     // naming only fan-out or questions.
@@ -34853,7 +34888,8 @@ function stepModelByNode(stepper, runEngine = 'claude', steps = null) {
     const perRun = !!(ov && typeof ov.model === 'string' && ov.model && typeof n.model === 'string' && ov.model.toLowerCase() === n.model.toLowerCase());
     const ran = used[n.id] && sameModelId(used[n.id], n.model) ? null : used[n.id] || null;
     out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '', ...(perRun ? { perRun: true } : {}),
-      ...(n.modelSource === 'worca-default' ? { worcaDefault: true } : {}), ...(ran ? { ranOn: ran } : {}) };
+      ...(n.modelSource === 'worca-default' ? { worcaDefault: true } : {}), ...(ran ? { ranOn: ran } : {}),
+      ...(onEngine !== (runEngine || 'claude') ? { engine: onEngine } : {}) };
   }
   return out;
 }
@@ -34875,7 +34911,7 @@ function stepModelPillHtml(sel) {
   // bridge — the catalog knows, the manifest does not.
   // " · this run": the model came from the run's own per-run picks (manifest.runOverlay) — said in the text, like
   // " · bridged", because a title is hover-only (touch, keyboard and screen-reader users never get it).
-  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '') + (m && m.bridged ? ' · bridged' : '') + (sel.perRun ? ' · this run' : '')
+  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '') + (sel.engine ? ` · on ${engineLabel(sel.engine)}` : '') + (m && m.bridged ? ' · bridged' : '') + (sel.perRun ? ' · this run' : '')
     + (sel.observed ? ` · ${sel.tool || 'Claude Code'}'s pick` : '') + (sel.worcaDefault ? ' · Worca default' : '');
   // #1450: the session started another model than the one asked for.
   const ran = sel.ranOn ? (modelById(sel.ranOn)?.label || sel.ranOn) : '';
@@ -36348,7 +36384,7 @@ function runsLiveItem(r) {
     // run takes its History row's PR (rdModelRun), so it reads In review here as on the run page.
     run: rdModelRun(r), memo: memoFor(r.pipelineId || r.runId),
     // D32: "Cost unknown" for an engine with none. D5: a finished run still live at 0 takes its History row's cost.
-    cost: engineReportsCost(r.runEngine) ? memberCostUsd(r.totalCostUsd, rec && rec.totalCostUsd) : null,
+    cost: runCostKnown(r.runEngine, r.runEngines) !== 'none' ? memberCostUsd(r.totalCostUsd, rec && rec.totalCostUsd) : null,
   };
 }
 /** A Run-after chain member (scheduler.mjs runChains) has `state` done|current|waiting|failed and `prUrl`, never a
@@ -36896,7 +36932,7 @@ function runsHistItem(p) {
     tags: p.tags || [],
     labels: flagOn('runLabels') ? (p.labels || []) : [],
     run: histRun(p),
-    cost: engineReportsCost(p.runEngine) ? (p.totalCostUsd ?? null) : null,
+    cost: runCostKnown(p.runEngine, p.runEngines) !== 'none' ? (p.totalCostUsd ?? null) : null,
   };
 }
 /** D11: an after-ticket's predecessor inside a /api/run-groups group, worded "Complete Design Language Rollout · run 3". */
@@ -38114,7 +38150,7 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
       return;
     }
     const engine = item.classList.contains('resume-on-other') ? item.dataset.engine : (r.runEngine || 'claude');
-    resumeRunOnEngine(r.runId, pauseBtn, engine);
+    resumeRunOnEngine(r.runId, pauseBtn, engine, { offer: item.classList.contains('resume-on-other') });
   });
   rdResumeLimit.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -39309,8 +39345,8 @@ function paintRdGlance(screen, r) {
   const liveDiff = terminal ? null : rdDiffBadge(live);
   paintGlanceFacts(glance, {
     summary: folder ? null : summary, changes: terminal ? fc : null, diffHref: `#${rdHash(r.runId, 'details', 'diff')}`, liveFiles: liveDiff != null && liveDiff !== '' ? Number(liveDiff) : null,
-    activeMs: rdElapsedMs(r), agentMs: rdAgentMs(r), cost: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,
-    costNote: costSummaryText(runCostBreakdown(r.steps, r.totalCostUsd), fmtUsd),
+    activeMs: rdElapsedMs(r), agentMs: rdAgentMs(r), cost: runCostKnown(r.runEngine, r.runEngines) !== 'none' ? (r.totalCostUsd || 0) : null,
+    costNote: glanceCostNote(r, costSummaryText(runCostBreakdown(r.steps, r.totalCostUsd), fmtUsd)),
     ticking: (r.status === 'running' || r.status === 'starting') && r.pendingQuestion == null,
     costTags: costTagsFact(r.tags, r.projectDir, () => rdRepaintOpenGlance(r.pipelineId), r.workspaceId ? 'workspace' : 'project'),
   });
@@ -40832,11 +40868,11 @@ function paintRdHeader(screen, r) {
     seg.textContent = txt;
     if (cls === 'rd-cost' && freeRequestsSuffix(r.steps)) seg.title = estTitle(r.totalCostUsd || 0) + ' Free requests: calls this run made to OpenRouter :free models (every call, tool-loop continuations too), out of the day\'s free allowance.';
     else if (cls === 'rd-cost') seg.title = estTitle(r.totalCostUsd || 0) + (bridgeRequestsSuffix(r.steps) ? ' Requests: calls this run initiated through the model bridge (Copilot bills premium requests, not tokens); tool-loop continuations are not counted.' : '');
-    if (cls === 'rd-cost' && !engineReportsCost(r.runEngine)) seg.title = runCostText(r, r.totalCostUsd).title;   // the unknown cost wins
+    if (cls === 'rd-cost' && runCostKnown(r.runEngine, r.runEngines) !== 'all') seg.title = runCostText(r, r.totalCostUsd).title;   // the unknown cost wins
     meta.appendChild(seg);
   });
   paintCostBreakdown(screen.querySelector('.rd-header'), meta.querySelector('.rd-cost'), runCostBreakdown(r.steps, r.totalCostUsd), costFocus,
-    { agentsUnknown: !engineReportsCost(r.runEngine) });
+    { agentsUnknown: runCostKnown(r.runEngine, r.runEngines) !== 'all' });
 
   // Branch row.
   if (gitOn() && isGitRun(r)) {
@@ -40956,7 +40992,7 @@ function paintRdHeader(screen, r) {
     resumeAt.title = refused ? 'This run paused on a cost cap. Continuing past it is a live decision and cannot be scheduled.' : '';
   }
   paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine, { reason: r.pauseReason, limitEngine: r.limitEngine,
-    modelConfirm: r.modelConfirm, limitScope: r.limitScope, limitModel: r.limitModel });
+    modelConfirm: r.modelConfirm, limitScope: r.limitScope, limitModel: r.limitModel, mixed: Array.isArray(r.runEngines) });
   paintRdLimitItem(screen, r);
 
   // Away mode switch: any run that is not over (a paused run stores it in its resume point).
@@ -44481,7 +44517,7 @@ function chatHomeHistTile(p) {
     // Bundle QA 2: what runModel reads to say why a finished run needs you — its PR, a stopped Watch PR, member PRs.
     pr: p.pr && typeof p.pr === 'object' ? p.pr : null, watch: p.watch || null, memberPrs: memberPrsOf(p),
     elapsedMs: runHeadlineMs(p) || 0,
-    costUsd: engineReportsCost(p.runEngine) && Number.isFinite(Number(p.totalCostUsd)) ? Number(p.totalCostUsd) : null,   // null: cost unknown (Cursor), as askRunSnapshot
+    costUsd: runCostKnown(p.runEngine, p.runEngines) !== 'none' && Number.isFinite(Number(p.totalCostUsd)) ? Number(p.totalCostUsd) : null,   // null: cost unknown (Cursor), as askRunSnapshot
     progress: null, active: [], stepper: null, decor: null,
   };
 }

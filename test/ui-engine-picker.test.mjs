@@ -403,3 +403,16 @@ test('execution environment: a saved default of another backend follows the same
   await submit(ctx);
   assert.equal('execEnv' in ctx.posted.at(-1), false, 'the run gets the saved default: nothing to send');
 });
+
+test('engine: on Claude, a liftable refusal for a step pinned to Codex offers the consent, and starting again sends it', async () => {
+  const refusal = { error: 'engine codex (Plan): guardrail set "normal" has permission rules this engine cannot enforce', code: 'engine-refused', overridable: true, engines: ['codex'] };
+  const ctx = await boot({ run: (_body, n) => (n === 1 ? ok(refusal, 409) : ok({ runId: 'r2' })) });
+  const doc = ctx.doc;
+  await submit(ctx);
+  await waitFor(() => !doc.getElementById('engineRefusal').hidden);
+  assert.equal(doc.getElementById('engineAllowRow').hidden, false);
+  doc.getElementById('engineAllowUnguarded').checked = true;
+  await submit(ctx);
+  const resent = ctx.posted.at(-1);
+  assert.deepEqual(['engine' in resent, resent.allowUnguardedEngine], [false, true]);
+});

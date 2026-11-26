@@ -144,3 +144,14 @@ test('another engine with no .agents/skills mount (a legacy run): an honest reas
   assert.deepEqual(orch.state.skillMount.layer, { blocked: 'engine-no-skill-mount', text: skillLayerText('engine-no-skill-mount', 'codex') });
   assert.doesNotMatch(orch.state.skillMount.layer.text, /Claude Code|this machine/);
 });
+
+test('a Claude-default run with a step on Codex mounts the set skills in .agents/skills and keeps --plugin-dir for its Claude steps', async () => {
+  const { dir } = await fixture();
+  const { orch, seen } = codexRun(dir, ['deploy-checklist', 'release-notes'], { engine: 'claude', overlay: { nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex' } } } });
+  assert.equal((await orch.run()).status, 'done');
+  assert.ok(seen.length >= 2);
+  for (const r of seen) {
+    assert.deepEqual(r.mounted, ['deploy-checklist', 'release-notes']);
+    assert.equal(r.dirs?.length, 1, 'the set plugin dir rides every spawn; only Claude Code reads it');
+  }
+});

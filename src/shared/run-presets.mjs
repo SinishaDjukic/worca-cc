@@ -2,6 +2,7 @@
 // A preset is the run's CHOICES, never its task: title, prompt, Markdown, source, extra files and the
 // new-branch name are not in the whitelist, and neither are per-start consents (allowUnguardedEngine,
 // pastTeamCap, policyReason, syncPolicy, syncOnDiverged) or schedule fields.
+import { overPick } from './graph/role-slots.mjs';
 
 export const PRESET_SETUP_KEYS = Object.freeze([
   'workflowId', 'engine', 'guardrailsId', 'mcpOptOut', 'mock', 'nightMode', 'humanInLoop',
@@ -71,10 +72,10 @@ export function bodyFollowingPreset(request, preset, { keep = [] } = {}) {
   return presetRunBody(preset, task);
 }
 
-/** Two run overlays: `top`'s per-node picks over `base`'s, loop budgets merged. */
+/** Two run overlays: `top`'s per-node picks over `base`'s (an engine travels with its model: overPick), loop budgets merged. */
 export function overlayOver(base, top) {
   const nodes = { ...(base?.nodes || {}) };
-  for (const [id, pick] of Object.entries(top?.nodes || {})) nodes[id] = { ...(nodes[id] || {}), ...pick };
+  for (const [id, pick] of Object.entries(top?.nodes || {})) nodes[id] = overPick(nodes[id], pick);
   const wires = { ...(base?.wires || {}), ...(top?.wires || {}) };
   return { ...(Object.keys(nodes).length ? { nodes: structuredClone(nodes) } : {}), ...(Object.keys(wires).length ? { wires: structuredClone(wires) } : {}) };
 }
@@ -83,10 +84,10 @@ const CARD_ONLY_KEYS = ['humanInLoop', 'nightMode', 'mcpOptOut', 'syncBeforeStar
 // The card already shows and sends these per node (card.nodes → its agent lane), so the preset's copy must never
 // sit under the lane: the lane sends only picks that differ from the project, and with "Save as project defaults"
 // it sends none, so a preset copy would silently undo a pick the person reset or saved on the card.
-const CARD_NODE_KEYS = ['model', 'effort', 'subagentModel'];
+const CARD_NODE_KEYS = ['model', 'effort', 'subagentModel', 'engine'];
 /** Start on an Ask card proposed from a preset (D11): presetId, the keys the card has no control for, and the
  *  preset's loop budgets and per-node fanOut/askQuestions under the card's own overlay — only while the card still
- *  runs the preset's workflow. The preset's model/effort/subagentModel are never added (the card's lane owns them).
+ *  runs the preset's workflow. The preset's model/effort/subagentModel/engine are never added (the card's lane owns them).
  *  On another workflow the card's own overlay (already built for that workflow) goes out untouched. */
 export function applyPresetStart(body, cardPreset) {
   const s = cardPreset.setup || {};

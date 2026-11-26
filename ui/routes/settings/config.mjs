@@ -73,7 +73,7 @@ app.post('/api/config', async (req, res) => {
   if (!projectDir) return badRequest(res, 'projectDir is required');
   try {
     await setStep(projectDir, body.step, {
-      model: body.model, effort: body.effort, fanOut: body.fanOut, askQuestions: body.askQuestions,
+      model: body.model, effort: body.effort, engine: body.engine, fanOut: body.fanOut, askQuestions: body.askQuestions,
       subagentModel: body.subagentModel,
     });
     // Respond with the FULL run-config (mirrors PATCH): setStep's return value is
@@ -96,7 +96,7 @@ app.post('/api/config', async (req, res) => {
 // validates model/effort against the effective catalog exactly like setStep
 // (configurable-models-design.md §4.5) -> 400; setFeedbackCycles still COERCES
 // maxCycles to >= 1 (it never throws).
-// body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, feedbacks?:{[id]:{maxCycles}}, wires?:{[wireId]:{maxCycles}}, activeWorkflowId?, humanInLoop? }
+// body: { projectDir, workflowId, nodes?:{[id]:{model,effort,engine?}}, feedbacks?:{[id]:{maxCycles}}, wires?:{[wireId]:{maxCycles}}, activeWorkflowId?, humanInLoop? }
 // ---------------------------------------------------------------------------
 app.patch('/api/config', async (req, res) => {
   const body = req.body || {};
@@ -124,6 +124,8 @@ app.patch('/api/config', async (req, res) => {
           model: sel && sel.model, effort: sel && sel.effort,
           fanOut: sel && sel.fanOut, askQuestions: sel && sel.askQuestions,
           subagentModel: sel && sel.subagentModel, roles: sel ? sel.roles : undefined,
+          // engine: a string pins the node's harness, null or '' clears it, absent keeps it while the model stays.
+          engine: sel && Object.hasOwn(sel, 'engine') ? sel.engine : undefined,
         });
       }
     }

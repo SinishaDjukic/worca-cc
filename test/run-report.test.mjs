@@ -601,3 +601,12 @@ test('a renamed stock workflow does not leak through the payload or the issue bo
   assert.match(body, /\| workflow \| Full \(manifest v2, 1 nodes\) \|/,
     'the body names the recipe worca ships, which is the fact a maintainer needs');
 });
+
+test('the report keeps a node model its own harness ran and names every harness of a mixed run', async () => {
+  const stepper = { ...STEPPER_V2, graph: { ...STEPPER_V2.graph, nodes: STEPPER_V2.graph.nodes.map((n) => (n.id === 'n_plan' ? { ...n, model: 'gpt-5.5', effort: 'high', engine: 'codex' } : n)) } };
+  const mx = await seedPipeline(join(home, 'proj-mx'), { status: 'done', phase: 'done', engine: 2, runEngine: 'claude', runEngines: ['claude', 'codex'], stepper });
+  const p = await buildRunReport(mx.id, { reason: 'too-expensive' });
+  assert.deepEqual(p.run.runEngines, ['claude', 'codex']);
+  const node = p.workflow.nodes.find((n) => n.id === 'n_plan');
+  assert.deepEqual([node.model, node.effort, node.engine], ['gpt-5.5', 'high', 'codex']);
+});

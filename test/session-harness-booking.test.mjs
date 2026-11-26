@@ -39,6 +39,17 @@ const B = (stepKey, cumulativeUsd, over = {}) => ({ sid: SID, hostEpoch: 1, host
   hostUsage: { input_tokens: 1000, output_tokens: 20 }, hostModel: 'claude-haiku-4-5', memberUsage: { input_tokens: 10 }, memberModel: 'claude-opus-5-5', hookUsd: NaN, ...over });
 const near = (a, b, m) => assert.ok(Math.abs(a - b) < 1e-9, `${m ?? ''} ${a} vs ${b}`);
 
+test('a session on another harness than the run\'s books on its own: a Claude session\'s cut on a Copilot run is estimated, a Copilot one\'s on a Claude run is not', () => {
+  const cop = unit('copilot');
+  const r1 = cop._bookSessionTurn({ ...B('x:n_a:1', NaN), cutEstimateUsd: 0.05, engine: 'claude' });
+  assert.deepEqual([r1.costSource, r1.memberUsd], ['estimate', 0.05]);
+  near(cop.state.steps[0].costUsd, 0.05);
+  const cl = unit('claude');
+  const r2 = cl._bookSessionTurn({ ...B('x:n_a:1', NaN), cutEstimateUsd: 0.05, engine: 'copilot' });
+  assert.deepEqual([r2.costSource, r2.memberUsd], ['none', null]);
+  assert.equal(cl.state.steps[0].costUsd, 0);
+});
+
 test('two turns on one host: each row books its own share; hand-offs are an aux line; total = Σ rows', () => {
   const o = unit();
   o._bookSessionTurn(B('x:n_a:1', 0.5));

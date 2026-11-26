@@ -737,3 +737,18 @@ test('v5 — a result with no cost on an engine that reports cost is held like a
   await copilot.host.run(mkMember('x:n_a:1', []), member('n_a'));
   assert.deepEqual([copilot.port.booked.length, copilot.hosts.snapshot()[SID].openCut], [1, null], 'an engine without cost: booked at once as none (blank)');
 });
+
+test('a session takes its harness from the run-start decision, else the run\'s', () => {
+  assert.equal(createSessionHosts({ specs: [spec()], decisions: decisions('separate', { engine: 'codex' }), port: fakePort(), transport: runMockSession }).hosts.get(SID).engine, 'codex');
+  assert.equal(createSessionHosts({ specs: [spec()], decisions: decisions('separate'), port: fakePort(), transport: runMockSession }).hosts.get(SID).engine, 'claude');
+});
+test('a session off the run\'s harness books its turns naming its own harness; a session on the run\'s books them as today', async () => {
+  const off = hostWith(runMockSession, { dec: decisions('subagents', { engine: 'codex' }) });
+  await off.host.run(mkMember('x:n_a:1', []), member('n_a'));
+  assert.ok(off.port.booked.length > 0);
+  assert.ok(off.port.booked.every((b) => b.engine === 'codex'), JSON.stringify(off.port.booked.map((b) => b.engine)));
+  mockT.resetSessions();
+  const on = hostWith(runMockSession);
+  await on.host.run(mkMember('x:n_a:1', []), member('n_a'));
+  assert.ok(on.port.booked.length > 0 && on.port.booked.every((b) => !('engine' in b)));
+});

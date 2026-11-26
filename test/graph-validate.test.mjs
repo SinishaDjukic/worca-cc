@@ -688,3 +688,18 @@ test('V33 lints a command text once per validation, however many nodes share it'
   assert.ok(v33.every((w) => w.count === 1));
   assert.ok(ms < loadBudget(150), `took ${ms} ms (a lint per card: ~350 ms)`);
 });
+
+test('V34: config.engine names a harness beside a model; a role\'s engine fails V31 the same way', () => {
+  const on = (config) => { const t = ok(); t.nodes = t.nodes.map((n) => (n.id === 'n_rev' ? A('n_rev', 'reviewer', config) : n)); return t; };
+  const v34 = (config) => V(on(config)).errors.filter((e) => e.code === 'V34').map((e) => e.message);
+  assert.deepEqual(v34({ model: 'gpt-5.5', engine: 'codex' }), []);
+  assert.deepEqual(v34({ model: 'gpt-5.5', engine: 'codx' }), ["node 'n_rev' config.engine must be one of claude, codex, copilot, cursor, gemini, goose, opencode, qwen"]);
+  assert.deepEqual(v34({ engine: 'codex' }), ["node 'n_rev' config.engine needs config.model beside it"]);
+  assert.equal(V(on({ model: 'gpt-5.5', engine: 'codex' })).warnings.some((w) => w.code === 'V17'), false, 'a known key');
+  const SPEC = { source: 'declared', target: 'plan', sink: 'refiner' };
+  const v31 = (roles) => V(on({ roleReview: { ...SPEC, roles } })).errors.filter((e) => e.code === 'V31').map((e) => e.message);
+  assert.deepEqual(v31([{ key: 'security', label: 'Security', model: 'gpt-5.5', engine: 'codex' }]), []);
+  assert.deepEqual(v31([{ key: 'security', label: 'Security', engine: 'codex' }]), ["node 'n_rev': roleReview.roles[0].engine needs a model beside it"]);
+  assert.deepEqual(v31([{ key: 'security', label: 'Security', model: 'gpt-5.5', engine: 'codx' }]),
+    ["node 'n_rev': roleReview.roles[0].engine must be one of claude, codex, copilot, cursor, gemini, goose, opencode, qwen"]);
+});

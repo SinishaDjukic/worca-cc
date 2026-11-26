@@ -19,7 +19,7 @@ worca --project /path/to/your/project --prompt "Add a /search endpoint" --workfl
 # Auto run with no proposal and no questions (loop-budget, recovery, cost and error pauses still apply; add --yes when nothing can answer them, e.g. in CI)
 worca --project /path/to/your/project --prompt "Add a /search endpoint" --workflow auto --no-human
 
-# run the agents on another engine (beta: codex, copilot, cursor, gemini, goose, opencode, qwen)
+# run on another default engine (beta: codex, copilot, cursor, gemini, goose, opencode, qwen); a step whose saved pick names a harness still runs there
 worca --project /path/to/your/project --prompt "Add a /search endpoint" --engine codex
 
 # pick the run's guardrail set (default: Normal on a new install; every engine but Claude needs permissive or --allow-unguarded-engine)
@@ -114,7 +114,8 @@ For scripts and CI wrappers, `worca` exits with:
 
 Nothing is thrown away on a pause. The cause is printed with the pause block on stdout, and
 `worca resume <pipelineId>` picks the run up where it stopped, on the model it was started with (`--model`, or the
-one picked in the UI).
+one picked in the UI), and each step on its own harness. `--engine <name>` moves every remaining step to that harness,
+steps set to another harness included.
 
 ## The `/worca` skill (inside Claude Code)
 

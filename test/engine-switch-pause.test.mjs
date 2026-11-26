@@ -12,10 +12,11 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { readPipelineForResume, readPipelineStateById, listPipelines } from '../src/core/artifacts.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { SWITCH_ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, otherEngines, usageLimitSwitches, engineLabel, engineList, engineReportsCost, engineSwitchNote, runCostLabel, SIGN_IN_ENGINE_NAMES } from '../src/shared/engine-switch.mjs';
+import { SWITCH_ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, otherEngines, usageLimitSwitches, engineLabel, engineList, engineReportsCost, engineSwitchNote, runCostLabel, runCostKnown, SIGN_IN_ENGINE_NAMES } from '../src/shared/engine-switch.mjs';
 import { ENGINES } from '../src/shared/engine-switch.mjs';
 import { MODEL_ENGINES, RUN_ENGINES, HELPER_ENGINES, ASK_ENGINES, helperEngineFor, CURSOR_EFFORTS, effortsForEngine, OWN_SIGNIN_ENGINES } from '../src/core/model-env.mjs';
 import { listEngines } from '../src/core/engines/index.mjs';
+import { fmtRunCost } from '../src/core/chat/renderers.mjs';
 
 useTempHome(after);
 process.env.WORCA_RECOVERY_BACKOFF_MS = '0';
@@ -210,4 +211,29 @@ test('resume with another model: every remaining step runs on it, and later resu
   const again = readPipelineForResume(orch2.state.id);
   assert.equal(again.resumePoint.claude.model, 'claude-haiku-4-5');
   assert.equal(again.resumePoint.claude.modelForAll, true, 'rides the resume point');
+});
+
+test('the switch note on a run whose steps use several harnesses', () => {
+  assert.equal(engineSwitchNote('claude', { mixed: true }), 'Starts the paused step fresh; every step runs on Claude Code from here, steps set to another harness included; a model Claude Code cannot run falls back to its default.');
+});
+test('a usage limit on a step pinned to Codex names Codex, on a Claude-default run', async () => {
+  const orch = createOrchestrator({ projectDir: gitDir(), workflowId: 'wf_default', prompt: 'demo', auto: true, guardrailsId: 'permissive', claude: { mock: true },
+    overlay: { nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex' } } },
+    runners: { producer: async (ctx) => { if (ctx.claudeOpts.engine === 'codex') throw LIMIT_ERR(); return { status: 'ok', summary: 'done' }; }, verifier: okVerifier } });
+  const res = await orch.run();
+  assert.deepEqual([res.status, res.reason, res.limitEngine], ['paused', 'usage_limit', 'codex']);
+  assert.equal(readPipelineForResume(orch.state.id).resumePoint.limitEngine, 'codex');
+});
+
+test('runCostKnown and runCostLabel on a run that used several harnesses', () => {
+  const fmt = (n) => `$${n.toFixed(2)}`;
+  assert.equal(runCostKnown('claude'), 'all');
+  assert.equal(runCostKnown('claude', ['claude', 'codex']), 'all');
+  assert.equal(runCostKnown('claude', ['claude', 'cursor']), 'part');
+  assert.equal(runCostKnown('cursor', ['claude', 'cursor']), 'part');
+  assert.equal(runCostKnown('cursor', ['copilot', 'cursor']), 'none');
+  assert.equal(runCostLabel('claude', 1.5, fmt, ['claude', 'cursor']), '$1.50 (cost partly unknown)');
+  assert.equal(runCostLabel('claude', 0, fmt, ['claude', 'cursor']), 'cost partly unknown');
+  assert.equal(runCostLabel('cursor', 0.42, fmt, ['copilot', 'cursor']), "cost unknown (worca's own calls: $0.42)");
+  assert.equal(fmtRunCost('claude', 1.5, ['claude', 'cursor']), '$1.50 (cost partly unknown)');
 });

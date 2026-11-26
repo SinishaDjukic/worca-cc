@@ -321,13 +321,15 @@ export function resolveRunExecEnv({ explicit = null, projectDir = null, projectK
  */
 export function runExecEnvOpts(body, scope = {}, engine = 'claude') {
   if (body.execEnv != null && body.execEnv !== '' && typeof body.execEnv !== 'string') return { error: 'execEnv must be a string' };
-  let execEnv; let fallback;
+  let execEnv; let fallback; let source;
   try {
     const resolved = resolveRunExecEnv({ explicit: typeof body.execEnv === 'string' ? body.execEnv : null, ...scope, engine });
     fallback = resolved.fallback;
+    source = resolved.source;
     execEnv = selectExecEnv(resolved.execEnv);
   } catch (err) { return { error: err.message }; }
-  if (execEnv !== 'local') return { opts: { execEnv } };
+  // `execEnvDefault`: the remote environment is the saved default, not this start's pick (a mixed-harness run steps aside).
+  if (execEnv !== 'local') return { opts: { execEnv, ...(source !== 'run' ? { execEnvDefault: true } : {}) } };
   return { opts: fallback ? { execEnvFallback: fallback } : {} };
 }
 export function resolvedModelPair(engine, family, name, scope = null) {

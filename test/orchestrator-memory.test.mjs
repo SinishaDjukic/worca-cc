@@ -930,3 +930,21 @@ test('noMemory: no mount, no ledger, step memory { mode: off }, nothing proposed
   const detail = await readPipelineByKey(orch1.members[0].projectKey, orch1.pipeline.id);
   assert.equal((detail.auditMarkdown.match(/Memory: off for this run/g) || []).length, 1, 'the audit says so once, not again on the resume');
 });
+
+test('a step pinned to Codex gets the memory block worded for Codex (read the files); the run\'s Claude Code steps keep the loaded-rules wording', async () => {
+  const { MEMORY_BLOCK_INTRO, MEMORY_BLOCK_INTRO_READ } = await import('../src/core/memory-store.mjs');
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'testing', 'How the suite runs.\n', { source: 'user', now: NOW, caps: CAPS });
+  const seen = [];
+  const orch = createOrchestrator({
+    projectDir: gitDir('mem-pinned'), workflowId: 'wf_default', prompt: 'demo task', auto: true, guardrailsId: 'permissive',
+    claude: { mock: true, allowUnguardedEngine: true }, overlay: { nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex' } } },
+    runners: { producer: recordingProducer(seen) },
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', JSON.stringify(res));
+  const plan = seen.filter((s) => s.key === 'planner');
+  const impl = seen.filter((s) => s.key === 'implementer');
+  assert.ok(plan.length && impl.length, JSON.stringify(seen.map((s) => s.key)));
+  for (const s of plan) assert.ok(s.block.includes(MEMORY_BLOCK_INTRO_READ), 'the Codex step reads the files itself');
+  for (const s of impl) assert.ok(s.block.includes(MEMORY_BLOCK_INTRO) && !s.block.includes(MEMORY_BLOCK_INTRO_READ), 'a Claude Code step is told they are loaded');
+});

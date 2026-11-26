@@ -198,3 +198,8 @@ test('formatResumeHints: the resume command, plus each other engine after a usag
   assert.equal(bold[2], 'Or continue now on GitHub Copilot: <bold>worca resume x --engine copilot');
   assert.equal(bold[3], 'Or continue now on Cursor: <bold>worca resume x --engine cursor');
 });
+
+test('a step on a harness that reports no cost prints no $0.00, whatever the run\'s engine', () => {
+  const pinned = { ...M, graph: { ...M.graph, nodes: M.graph.nodes.map((n) => (n.id === 'n_impl' ? { ...n, engine: 'cursor' } : n)) } };
+  assert.equal(formatExecLine(ev({ nodeId: 'n_impl', executionId: 'x:n_impl:1', ordinal: 1, status: 'done', costUsd: 0, durationMs: 1000 }), pinned, { engine: 'claude' }), '✓ Implementer #1  1s');
+});

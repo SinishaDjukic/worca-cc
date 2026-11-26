@@ -9,6 +9,7 @@ import { JSDOM } from 'jsdom';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { engineSwitchNote } from '../src/shared/engine-switch.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
@@ -66,10 +67,10 @@ async function boot({ level = 'advanced', resumeAnswers = [], fetchHandler } = {
 const limitOf = (engine) => ({ reason: 'usage_limit', detail: "You've hit your usage limit · try again at 3:47 PM", limitEngine: engine });
 
 /** A paused run on `engine`, open on its run page. */
-async function pausedRun(ctx, { engine = 'codex', done = {} } = {}) {
+async function pausedRun(ctx, { engine = 'codex', done = {}, ...hello } = {}) {
   const { doc, recv, settle, go } = ctx;
   go('running');
-  recv({ type: 'hello', runs: [{ runId: 'r1', title: 'Feat', projectDir: PROJECT, status: 'running', startedAt: '00:00:00', pipelineId: 'pl_1', runEngine: engine }] });
+  recv({ type: 'hello', runs: [{ runId: 'r1', title: 'Feat', projectDir: PROJECT, status: 'running', startedAt: '00:00:00', pipelineId: 'pl_1', runEngine: engine, ...hello }] });
   await settle();
   go('running/r1');
   await settle(8);
@@ -236,13 +237,13 @@ test('run page banner: other pauses, and a limit that was not the engine\'s, off
 
 // ── History detail ───────────────────────────────────────────────────────────
 
-const histFetch = (runEngine, { limitEngine = runEngine, pauseReason = 'usage_limit', extra = {} } = {}) => (url) => {
+const histFetch = (runEngine, { limitEngine = runEngine, pauseReason = 'usage_limit', extra = {}, runEngines = null } = {}) => (url) => {
   if (url.endsWith('/api/history')) {
     return ok({ pipelines: [{ id: 'fcec04e8', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Paused feat', status: 'paused', startedAt: '2026-08-17T20:54:42Z', branch: 'worca-cc/feat', pauseReason, retainedWork: null }], live: [], ghAvailable: false });
   }
   if (url.endsWith(`/api/history/${KEY}/fcec04e8`)) {
     return ok({
-      state: { id: 'fcec04e8', title: 'Paused feat', status: 'paused', startedAt: '2026-08-17T20:54:42Z', stepper: null, steps: [], subAgents: [], totalCostUsd: 1.5, totalActiveMs: 60000, branch: { source: 'main', feature: 'worca-cc/feat', worktreeDir: '/tmp/wt' }, prompt: 'Do it.', pauseReason, limitEngine, runEngine, ...extra },
+      state: { id: 'fcec04e8', title: 'Paused feat', status: 'paused', startedAt: '2026-08-17T20:54:42Z', stepper: null, steps: [], subAgents: [], totalCostUsd: 1.5, totalActiveMs: 60000, branch: { source: 'main', feature: 'worca-cc/feat', worktreeDir: '/tmp/wt' }, prompt: 'Do it.', pauseReason, limitEngine, runEngine, ...(runEngines ? { runEngines } : {}), ...extra },
       results: null, overview: null, clarify: { questions: [], answers: [] }, reviews: [], stepQuestions: [], artifacts: [], auditMarkdown: '# saved',
     });
   }
@@ -466,4 +467,98 @@ test('a local run shows no sandbox chip; its run page says "not sandboxed" (nati
   const seg = page.querySelector('.rd-meta .rd-exec-env');
   assert.ok(!seg || seg.classList.contains('rd-not-sandboxed'), 'no backend segment on a local run');
   if (seg) assert.equal(seg.textContent, 'not sandboxed');
+});
+
+test('a refused resume names the harness that refused it, a refusal the consent cannot lift included', async () => {
+  const refusal = { status: 409, body: { code: 'engine-refused', overridable: false, error: 'engine codex (Plan): the credential broker is on, and codex signs in with its own credentials, which the broker cannot bill or revoke', engine: 'claude', engines: ['codex'] } };
+  const ctx = await boot({ fetchHandler: histFetch('claude'), resumeAnswers: [refusal] });
+  ctx.go(`history/${KEY}/fcec04e8`);
+  await ctx.settle(8);
+  ctx.doc.querySelector('.hd-resume-more').click();
+  await ctx.settle();
+  ctx.doc.querySelector('.hd-resume-menu .resume-on-saved').click();
+  await ctx.settle(8);
+  assert.equal(modal(ctx.doc).title, 'Not resumed on OpenAI Codex');
+});
+
+test('History detail of a run that used two harnesses: Resume keeps each step on its own; the offer of its own default moves every step there', async () => {
+  const ctx = await boot({ fetchHandler: histFetch('claude', { limitEngine: 'codex', runEngines: ['claude', 'codex'] }) });
+  ctx.go(`history/${KEY}/fcec04e8`);
+  await ctx.settle(8);
+  const menu = ctx.doc.querySelector('.hd-resume-menu');
+  assert.equal(menu.querySelector('.resume-on-saved b').textContent, 'Resume');
+  const own = [...menu.querySelectorAll('.resume-on-other:not([data-template])')].find((i) => i.dataset.engine === 'claude');
+  assert.equal(own.querySelector('small').textContent, engineSwitchNote('claude', { mixed: true }));
+  ctx.doc.querySelector('.hd-resume-more').click();
+  await ctx.settle();
+  own.click();
+  await ctx.settle();
+  ctx.doc.getElementById('confirm-ok').click();
+  await ctx.settle(8);
+  assert.deepEqual([ctx.resumes[0].pipelineId, ctx.resumes[0].engine], ['fcec04e8', 'claude']);
+});
+
+test('run page of a live run that uses two harnesses: Resume keeps each step on its own; a frame without runEngines drops the copy', async () => {
+  const ctx = await boot();
+  const page = await pausedRun(ctx, { engine: 'claude', runEngines: ['claude', 'codex'], done: limitOf('codex') });
+  assert.equal(page.querySelector('.rd-resume-menu .resume-on-saved b').textContent, 'Resume');
+  ctx.recv({ type: 'state', runId: 'r1', status: 'paused', runEngine: 'claude' });
+  await ctx.settle(4);
+  assert.equal(page.querySelector('.rd-resume-menu .resume-on-saved b').textContent, 'Resume on Claude Code');
+});
+
+test('History detail of a mixed run: the chip names every harness; a harness with no cost makes the cost partly unknown', async () => {
+  const ctx = await boot({ fetchHandler: histFetch('claude', { pauseReason: 'error', limitEngine: null, runEngines: ['claude', 'cursor'] }) });
+  ctx.go(`history/${KEY}/fcec04e8`);
+  await ctx.settle(8);
+  const chip = ctx.doc.querySelector('#hist-detail .hd-meta .hd-engine');
+  assert.deepEqual([chip.textContent, chip.title], ['Claude Code + Cursor', 'Default harness: Claude Code. Other steps run on Cursor.']);
+  const cost = ctx.doc.querySelector('#hist-detail .hd-meta .hd-cost');
+  assert.deepEqual([cost.textContent, cost.title], ['$1.50 (cost partly unknown)', 'Steps on Cursor report no cost, so this total leaves them out']);
+});
+
+test('run page of a live run that uses two harnesses: the menu\'s offer of its own default moves every step there; plain Resume names no engine', async () => {
+  const ctx = await boot();
+  const page = await pausedRun(ctx, { engine: 'claude', runEngines: ['claude', 'codex'], done: limitOf('codex') });
+  const own = [...page.querySelectorAll('.rd-resume-menu .resume-on-other:not([data-template])')].find((i) => i.dataset.engine === 'claude');
+  assert.ok(own, 'the menu offers the run\'s own default');
+  page.querySelector('.rd-resume-more').click();
+  await ctx.settle();
+  own.click();
+  await ctx.settle();
+  assert.equal(modal(ctx.doc).open, true, 'moving every step is a switch: it asks first');
+  ctx.doc.getElementById('confirm-ok').click();
+  await ctx.settle(8);
+  assert.deepEqual([ctx.resumes.length, ctx.resumes[0]?.engine], [1, 'claude']);
+  const ctx2 = await boot();
+  const page2 = await pausedRun(ctx2, { engine: 'claude', runEngines: ['claude', 'codex'], done: limitOf('codex') });
+  page2.querySelector('.rd-resume-more').click();
+  await ctx2.settle();
+  page2.querySelector('.rd-resume-menu .resume-on-saved').click();
+  await ctx2.settle(8);
+  assert.equal(ctx2.resumes.length, 1);
+  assert.equal('engine' in ctx2.resumes[0], false, 'a plain Resume keeps each step on its own harness');
+});
+
+test('run page banner of a live run that uses two harnesses: the offer of its own default moves every step there', async () => {
+  const ctx = await boot();
+  const page = await pausedRun(ctx, { engine: 'claude', runEngines: ['claude', 'codex'], done: limitOf('codex') });
+  const btn = [...page.querySelectorAll('.rd-ov-switch')].find((b) => b.dataset.engine === 'claude');
+  assert.ok(btn, 'the banner offers the run\'s own default');
+  btn.click();
+  await ctx.settle();
+  assert.equal(modal(ctx.doc).open, true);
+  ctx.doc.getElementById('confirm-ok').click();
+  await ctx.settle(8);
+  assert.deepEqual([ctx.resumes.length, ctx.resumes[0]?.engine], [1, 'claude']);
+});
+
+test('History detail of a run live in this tab that uses two harnesses: the menu reads the live run\'s harnesses', async () => {
+  const ctx = await boot({ fetchHandler: histFetch('claude', { limitEngine: 'codex' }) });
+  ctx.recv({ type: 'hello', runs: [{ runId: 'r9', title: 'Paused feat', projectDir: PROJECT, status: 'paused', startedAt: '00:00:00', pipelineId: 'fcec04e8',
+    runEngine: 'claude', runEngines: ['claude', 'codex'], pauseReason: 'usage_limit', limitEngine: 'codex' }] });
+  await ctx.settle();
+  ctx.go(`history/${KEY}/fcec04e8`);
+  await ctx.settle(8);
+  assert.equal(ctx.doc.querySelector('.hd-resume-menu .resume-on-saved b').textContent, 'Resume');
 });

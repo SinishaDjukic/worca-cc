@@ -114,6 +114,13 @@ export function effortsOn(m, engine) {
   return list.filter((e) => mapped.has(e));
 }
 
+/** The efforts a pinned pick of `m` may send on `engine`: the model's own, in its order, then what effortsOn(m, engine)
+ *  adds (the harness's mapped ones). */
+export function pickEffortsOn(m, engine) {
+  const own = Array.isArray(m?.efforts) ? m.efforts : [];
+  return [...own, ...effortsOn(m, engine).filter((e) => !own.includes(e))];
+}
+
 /** A free catalog id for a model `upstreamId` reached through `provider` ('openai', 'copilot', 'anthropic', or 'gw' for a
  *  routing-env endpoint): the id is worca's handle, the upstream id is what the endpoint is sent. */
 export function suggestModelHandle(upstreamId, provider = 'gw') {

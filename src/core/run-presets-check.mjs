@@ -55,7 +55,11 @@ export function completeSnapshot(setup, resolved) {
   for (const [id, n] of Object.entries(resolved.nodes || {})) {
     if (!n || n.kind !== 'agent') continue;
     const pick = { ...(setup.overlay?.nodes?.[id] || {}) };
-    if (pick.model === undefined && typeof n.model === 'string' && n.model) { pick.model = n.model; pick.effort = n.effort || ''; }
+    if (pick.model === undefined && typeof n.model === 'string' && n.model) {
+      pick.model = n.model; pick.effort = n.effort || '';
+      // A pinned winning pick keeps its harness, the run's own default included (a later start on another default keeps it).
+      if (n.pinned && typeof n.engine === 'string' && n.engine) pick.engine = n.engine;
+    }
     for (const k of ['fanOut', 'askQuestions']) if (pick[k] === undefined && typeof n[k] === 'boolean') pick[k] = n[k];
     if (pick.subagentModel === undefined && typeof n.subagentModel === 'string' && n.subagentModel) pick.subagentModel = n.subagentModel;
     nodes[id] = pick;

@@ -51,3 +51,14 @@ test('completeSnapshot fills every agent node and loop from the resolved graph, 
     wires: { w_loop: { maxCycles: 3 } },
   });
 });
+
+test('completeSnapshot writes the harness of every node whose winning pick was pinned, the default harness included', () => {
+  const resolved = { nodes: {
+    n_plan: { kind: 'agent', model: 'gpt-5.5', effort: 'high', engine: 'codex', pinned: true },
+    n_impl: { kind: 'agent', model: 'claude-opus-5-5', effort: 'max', engine: 'claude', pinned: true },
+    n_rev: { kind: 'agent', model: 'claude-sonnet-5-5', effort: 'high', engine: 'claude' } }, wires: {} };
+  assert.deepEqual(completeSnapshot({ workflowId: 'wf_x' }, resolved).overlay.nodes, {
+    n_plan: { model: 'gpt-5.5', effort: 'high', engine: 'codex' },
+    n_impl: { model: 'claude-opus-5-5', effort: 'max', engine: 'claude' },
+    n_rev: { model: 'claude-sonnet-5-5', effort: 'high' } });
+});

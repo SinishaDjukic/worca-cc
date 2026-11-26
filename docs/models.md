@@ -47,7 +47,8 @@ model, **Change where it runs** in the model form's foot makes the choice again
 ### Harnesses, providers and models
 
 A **harness** runs the agents: Claude Code, Codex, Copilot, Cursor, Gemini CLI, Goose,
-OpenCode or Qwen Code, picked per run (see [Engines](#engines)). A **provider** is where a model's tokens are billed: a harness's own
+OpenCode or Qwen Code, picked per run (see [Engines](#engines)), and per step when a step's model names one (see
+[Per-step harness](#per-step-harness)). A **provider** is where a model's tokens are billed: a harness's own
 sign-in, or an endpoint. A **model** sits on one provider. Which harnesses can
 run a model follows from its connection, never from a setting:
 
@@ -108,14 +109,16 @@ Agents run on Claude Code by default. The other engines are all in **beta**: Ope
 [CLI agent](#cursor), Google's [Gemini CLI and Qwen Code](#gemini-cli-and-qwen-code),
 [Goose](#goose) and [OpenCode](#opencode).
 
-- Pick one per run with **Engine** on New pipeline (Advanced) or
+- Pick the run's **default harness** with **Engine** on New pipeline (Advanced) or
   `--engine claude|codex|copilot|cursor|gemini|goose|opencode|qwen`, or set a default with
   **Default for new runs** (a harness group's ⋯ menu on Models › Catalogue, or beside the
-  harness tiles on Models › Jobs) or in a project's settings.
+  harness tiles on Models › Jobs) or in a project's settings. A step whose model pick names a harness runs there
+  instead ([Per-step harness](#per-step-harness)).
 - Each needs its own CLI installed and signed in; each section below says how.
 - The beta engines hold guardrail rules only in part, so a run under Normal or Strict needs
   **Allow unguarded** (`--allow-unguarded-engine`), or Permissive (`--guardrails permissive`); the partial
-  rules still apply, and the run log lists what is held.
+  rules still apply, and the run log lists what is held. One consent covers every harness the run uses, a Claude
+  Code run with one step on Codex included.
 - Copilot, Cursor, Gemini CLI and Qwen Code report no dollar cost; Goose and OpenCode price
   what they know. Each section's **Cost** note says how worca shows it.
 - Chat runs on every engine but Cursor ([Chat](#chat)).
@@ -123,6 +126,38 @@ Agents run on Claude Code by default. The other engines are all in **beta**: Ope
   ([Harnesses, providers and models](#harnesses-providers-and-models)).
 
 ![New pipeline in Advanced mode for the nimbus-crm project: the Workflow picker on Auto beside the Engine picker set to Codex (Beta), the hint that Codex runs this pipeline including titles and summaries, a typed task to add an Idempotency-Key header to POST /contacts, and the Branches table starting from main, up to date](screenshots/engine-picker.png)
+
+### Per-step harness
+
+A model pick can name the harness it runs on: `engine` beside `model` (`claude`, `codex`, `copilot`, `cursor`,
+`gemini`, `goose`, `opencode`, `qwen`). That step runs there whatever the run's default harness; a pick without
+`engine` runs on the default harness, as before.
+
+- **Where.** A workflow's agent node (`config.engine`) and review role (`roleReview.roles[i].engine`), a project's node
+  and role picks (`PATCH /api/config`), the Default workflow's per-role steps (`POST /api/config`) and a run overlay
+  (`overlay.nodes.<id>.engine`, `….roles.<key>.engine`). Presets, a run's saved setup and **Rerun** keep it.
+- **It travels with its model.** A layer that names another model leaves the lower layer's `engine` behind. A `PATCH`
+  without `engine` keeps it while the model stays the same and clears it when the model changes or is cleared; `null`
+  or `''` clears it.
+- **Checked where it is set.** The model must run on that harness, or the write is refused. A saved pick whose model has
+  since left that harness stays saved; at start it is dropped like any other, and the warning names that harness.
+- **Start checks cover every harness the run uses:** sign-in, the credential broker, the guardrail rules each can hold,
+  MCP servers and the capability lines, each naming its steps on a mixed run (`engine codex (Plan): …`), all before the
+  run exists.
+- **A pin is set.** A Settings step slot and Care's model fill skip a step whose workflow pick names a harness; a
+  workflow pick without one ranks below them, as before.
+- **One harness per remote run and per Auto run.** Picking E2B or Docker for a run whose steps use more than one
+  harness is refused: pick Local. A saved remote default runs such a run locally and says why. An Auto run drops a pin
+  to another harness in the workflow it adopts, runs that step on its default harness and says so once.
+- **Sessions.** The steps of one session must share a harness; otherwise they run as separate sessions.
+- **Pauses.** A usage limit names the harness of the step that hit it. Continuing on another harness (`--engine`, or
+  **Resume on …**, the run's own default harness included) moves every remaining step there, pinned ones included; a
+  plain resume keeps each step on its own. **Switch model…** runs every remaining step on the model you pick, on the
+  run's harness.
+- **Cost.** A run that used a harness that reports no cost reads *cost partly unknown*; a step on such a harness shows
+  no cost, never $0.00. The run page names the default harness and the others, and a step's model pill ends in
+  *· on <harness>* when it ran off the default.
+- Chat proposes models for the run's default harness only.
 
 ## The Catalogue tab
 
@@ -363,7 +398,7 @@ design's own pick in its composer wins over the row (see [Design › Models](des
 
 Roles are kept per harness (`modelRoles.claude`, `modelRoles.codex`,
 `modelRoles.copilot`, … one per engine): a Claude run never reads the Codex
-roles. An empty role on Claude Code or Codex runs Worca's default for it (below);
+roles, not even for a step pinned to Codex: that step's own pick names its model. An empty role on Claude Code or Codex runs Worca's default for it (below);
 on every other harness the tool picks its own model. Nothing in `settings.json`
 is rewritten for this. Every engine has roles, so a Copilot, Cursor, Gemini CLI, Qwen Code,
 Goose or OpenCode run takes its steps' models from that engine's roles. Helper
@@ -1208,7 +1243,7 @@ worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cur
 
 **Usage limits.** A usage limit is the allowance of whoever the step ran on:
 
-- **A harness's own sign-in** (your Claude Code, ChatGPT or Cursor subscription): the paused run offers to continue on each other harness that is ready (installed and signed in). From the command line every other harness is listed; the resume refuses one that is not ready.
+- **A harness's own sign-in** (your Claude Code, ChatGPT or Cursor subscription): the paused run offers to continue on each other harness that is ready (installed and signed in); the limit is the harness of the step that hit it, and continuing moves every remaining step to the new harness, steps set to another harness included. From the command line every other harness is listed; the resume refuses one that is not ready.
 - **A provider or a custom endpoint** (a gateway's quota, an API key's limit): the pause names the provider (*OpenAI-compatible limit — …*). No other harness is offered: it would reach the same provider.
 - **Either way**, *Switch model…* (the run page's banner and the Resume menu) picks a model on another connection, and every remaining step of the run runs on it. From the command line: `worca resume <id> --model <model id>`. It must be a catalog model the run's harness can run.
 
@@ -1457,7 +1492,7 @@ with that harness picked:
 ### Per-agent models for one run
 
 When Chat proposes a run of a saved workflow it can also pick a model and effort for each
-agent step (`propose_run` `nodes`), from the models the run's engine runs:
+agent step (`propose_run` `nodes`), from the models the run's default harness runs (Chat never sets a harness):
 
 - **The picking policy** — judgement steps (Plan, Plan Review, Refine Plan, Review
   Implementation, Bug Root Cause, Deck Review) take the top price tier at high effort, never the
@@ -1489,7 +1524,7 @@ agent step (`propose_run` `nodes`), from the models the run's engine runs:
 - **The picks apply to that run only** — and so does any other change you make in a run card's
   Agents section. **Start run** (or **Schedule…**: the scheduled run keeps them) sends them with the run
   (`POST /api/run` `overlay.nodes`), which checks them again — each node must be an agent node of
-  the workflow; each model must be in the catalog, run on the run's engine and offer the effort —
+  the workflow; each model must be in the catalog, run on the harness its pick names (else the run's default harness) and offer the effort —
   and never writes the project's settings. Turn on **Save as project defaults** (project targets
   only) to save the lane as the project's agent settings first, as before. A workspace card's
   lane is editable for the run too; it names every pick outright, because the run merges them
@@ -1574,9 +1609,10 @@ picked per run, findings to Refine). Every node and role pick is cleaned in one 
   `## Clarifications (Q&A)` at approval. Approving without a pick (auto-approve, `--yes`) is
   never blocked: the conflict is audited as left undecided.
 - **Each role has its own model and effort.** A run overlay pick
-  (`overlay.nodes.<nodeId>.roles.<key>`) beats the project's (`POST /api/config`
-  `nodes.<nodeId>.roles`), which beats the template's (`roles[i].model` / `effort`). An effort
-  travels with its model. A role nothing names runs on the node's model, and *Model for all*
+  (`overlay.nodes.<nodeId>.roles.<key>`) beats the project's (`PATCH /api/config`
+  `nodes.<nodeId>.roles`), which beats the template's (`roles[i].model` / `effort`). An effort and a harness
+  (`engine`) travel with their model. A role with its own `engine` runs there; a role without one runs on its node's
+  harness. A role nothing names runs on the node's model, and *Model for all*
   runs every role on the run's model.
 - **The record names what ran:** each role's review records the model and effort its slice
   ran on.
@@ -1584,8 +1620,8 @@ picked per run, findings to Refine). Every node and role pick is cleaned in one 
   per role, labelled like `Plan Review · Architect`, with a model select ("Node's model" = no
   pick) and effort pills. An edited row rides that run only, or becomes the project's default
   with *Save as project defaults*. A workflow, the project config and a run overlay set them too.
-- **A pick the run's engine cannot run is named, never dropped silently.** The node or role
-  runs on what the layers below give it, its record keeps the request as `wanted`, and the run
+- **A pick its harness cannot run is named, never dropped silently.** Its harness is the one it names, else the
+  run's default (a node) or its node's (a role). The node or role runs on what the layers below give it, its record keeps the request as `wanted`, and the run
   page shows one warning per drop, logged and audited once at start:
   - a node pick: `Plan: claude-opus-5-5 is not on Codex, runs Codex's default model` (or the
     model it does run, for example `runs gpt-5.5`);

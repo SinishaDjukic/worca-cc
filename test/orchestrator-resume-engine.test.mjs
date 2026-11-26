@@ -139,3 +139,72 @@ test('a Claude model is dropped when the resume switches the run to codex', asyn
   assert.ok(seen.models.length && seen.models.every((m) => /^gpt-/.test(m || '')), JSON.stringify(seen.models));
   assert.ok(said(logs, /claude-sonnet-5.*is a claude model — resuming on codex's default model/));
 });
+
+const PIN = { overlay: { nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex' } } } };
+test('a Claude-default run with a step on Codex keeps the consent across a pause; a plain resume passes Codex\'s gate', async () => {
+  const { dir, saved } = await pausedRun('eng-mixed-consent', { allowUnguardedEngine: true }, { guardrailsId: 'normal', ...PIN });
+  assert.deepEqual(saved.resumePoint.claude, { allowUnguardedEngine: true });
+  const { res } = await resumeWith(dir, saved);
+  assert.equal(res.status, 'done', res.error);
+});
+
+test('a mixed run resumed with no engine named runs each step on its own harness again', async () => {
+  const { dir, saved } = await pausedRun('eng-mixed-plain', {}, PIN);
+  const { orch, res, seen } = await resumeWith(dir, saved);
+  assert.equal(res.status, 'done', res.error);
+  assert.deepEqual([...new Set(seen.engines)].sort(), ['claude', 'codex']);
+  assert.deepEqual(orch.getState().runEngines, ['claude', 'codex'], 'the restored run still names both harnesses');
+});
+test('Review Focus 3: a mixed run resumed on its own default harness runs every step there, and a later plain resume keeps it so', async () => {
+  const { dir, saved } = await pausedRun('eng-mixed-switch', {}, PIN);
+  assert.equal(saved.resumePoint.manifest.graph.nodes.find((n) => n.id === 'n_plan').engine, 'codex');
+  const { orch, res, seen, logs } = await resumeWith(dir, saved, { engine: 'claude' });
+  assert.equal(res.status, 'done', res.error);
+  assert.deepEqual([...new Set(seen.engines)], ['claude']);
+  assert.equal('engine' in orch.getState().stepper.graph.nodes.find((n) => n.id === 'n_plan'), false, 'the switch is kept on the manifest');
+  assert.ok(said(logs, /resuming every step on claude as asked, steps set to another harness included/));
+});
+test('Review Focus 3: with the credential broker turned on meanwhile, a mixed run still moves to Claude Code', async () => {
+  const { dir, saved } = await pausedRun('eng-mixed-broker', {}, PIN);
+  const prev = process.env.WORCA_BROKER_URL;
+  process.env.WORCA_BROKER_URL = 'http://broker.internal:8080';
+  try {
+    const { res, seen } = await resumeWith(dir, saved, { engine: 'claude' });
+    assert.equal(res.status, 'done', res.error);
+    assert.deepEqual([...new Set(seen.engines)], ['claude']);
+  } finally { if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev; }
+});
+test('Switch model on a mixed run runs every remaining step on that model, on the resume harness', async () => {
+  const { dir, saved } = await pausedRun('eng-mixed-model', {}, PIN);
+  const { res, seen } = await resumeWith(dir, saved, { model: 'claude-haiku-4-5', modelForAll: true });
+  assert.equal(res.status, 'done', res.error);
+  assert.deepEqual([[...new Set(seen.engines)], [...new Set(seen.models)]], [['claude'], ['claude-haiku-4-5']]);
+});
+test('Review Focus 3: a harness switch that fails before the graph is restored leaves no pins behind; a later plain resume runs Claude only', async () => {
+  const { dir, saved } = await pausedRun('eng-mixed-switch-fail', {}, PIN);
+  let orch;
+  orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_default', auto: true, claude: { mock: true, engine: 'claude' }, resume: saved, runners: recording(() => orch, { models: [], engines: [], paused: true }) });
+  orch._restoreFromResumePoint = async () => { throw new Error('restore broke'); };
+  const failed = await orch.resume();
+  assert.notEqual(failed.status, 'done');
+  const again = readPipelineForResume(orch.getState().id);
+  assert.ok(again.resumePoint, `still resumable (${failed.status}: ${failed.error})`);
+  assert.equal('engine' in again.resumePoint.manifest.graph.nodes.find((n) => n.id === 'n_plan'), false, 'the point holds no pin');
+  const { res, seen } = await resumeWith(dir, again);
+  assert.equal(res.status, 'done', res.error);
+  assert.deepEqual([...new Set(seen.engines)], ['claude']);
+});
+test('a Claude-default run with a step on Codex is refused on resume without the consent, naming Codex; the consent lifts it', async () => {
+  const { dir, saved } = await pausedRun('eng-mixed-refuse', { allowUnguardedEngine: true }, { guardrailsId: 'normal', ...PIN });
+  delete saved.resumePoint.claude;
+  const probe = createOrchestrator({ projectDir: dir, workflowId: 'wf_default', auto: true, claude: { mock: true }, resume: saved });
+  const r = await probe.engineResumeRefusal();
+  assert.deepEqual([r?.overridable, r?.engines], [true, ['codex']], JSON.stringify(r));
+  assert.match(r.error, /^engine codex \(Plan\): guardrail set "normal" has permission rules this engine cannot enforce/);
+  await assert.rejects(resumeWith(dir, saved), { engineRefused: true, engine: 'codex', message: /^engine codex \(Plan\): guardrail set "normal"/ }, 'resume() itself refuses too');
+  const again = readPipelineForResume(saved.row.id);
+  assert.equal(again.row.status, 'paused', 'the refused run stays paused');
+  const ok = await resumeWith(dir, again, { allowUnguardedEngine: true });
+  assert.equal(ok.res.status, 'done', ok.res.error);
+  assert.ok(said(ok.logs, /engine codex \(Plan\)/), 'the resumed run\'s gate says what runs unguarded on Codex');
+});

@@ -122,7 +122,8 @@ Select text in a chat answer, a markdown artifact or the Diff tab. You can then 
 
 ## Per-agent models for one run
 
-On a run card for a saved workflow, Chat can pick a model and effort for each agent step from the catalog.
+On a run card for a saved workflow, Chat can pick a model and effort for each agent step from the models the run's
+default harness runs. A step the workflow or the project sets to another harness keeps it.
 Judgement steps get the top price tier, and mechanical steps the cheapest capable model, Anthropic first, then
 OpenAI. It picks a premium-tier model such as Fable 5.1 only when you name it.
 

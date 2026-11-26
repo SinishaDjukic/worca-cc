@@ -127,3 +127,32 @@ test('a bad engine or consent is a 400', async () => {
     assert.match((await r.json()).error, re);
   }
 });
+
+test('a Claude-default run with a step on Codex: a plain resume without the consent is a 409 naming Codex', async () => {
+  const resumePoint = graphResumePoint({ pipelineDir: projC, guardrailsId: 'normal' });
+  Object.assign(resumePoint.manifest.graph.nodes.find((n) => n.id === 'n_plan'), { model: 'gpt-5.5', engine: 'codex' });
+  const { id } = await seedPipeline(projC, {
+    title: 'mixed run', status: 'paused',
+    branch: { source: 'main', feature: 'f', worktreeDir: liveWt, reusedExisting: false },
+    resumePoint,
+  });
+  const before = runs.size;
+  const r = await post('/api/resume', { pipelineId: id, mock: true });
+  const data = await r.json();
+  assert.equal(r.status, 409, JSON.stringify(data));
+  assert.deepEqual([data.code, data.overridable, data.engines], ['engine-refused', true, ['codex']]);
+  assert.match(data.error, /^engine codex \(Plan\): guardrail set "normal" has permission rules this engine cannot enforce/);
+  assert.equal(runs.size, before, 'no run entry is left behind');
+});
+
+test('hello names every harness a live run\'s steps use, and adds no key for a one-harness run', async () => {
+  const { _testing } = await import('../ui/server.mjs');
+  const fake = (id, state) => runs.set(id, { id, projectDir: projC, title: id, status: 'running', startedAt: new Date().toISOString(), orch: { state } });
+  try {
+    fake('hello-mixed', { runEngine: 'claude', runEngines: ['claude', 'codex'] });
+    fake('hello-one', { runEngine: 'codex' });
+    const byId = (id) => _testing.summarizeRuns().find((r) => r.runId === id);
+    assert.deepEqual([byId('hello-mixed').runEngine, byId('hello-mixed').runEngines], ['claude', ['claude', 'codex']]);
+    assert.equal('runEngines' in byId('hello-one'), false);
+  } finally { runs.delete('hello-mixed'); runs.delete('hello-one'); }
+});

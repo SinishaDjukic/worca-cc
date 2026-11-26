@@ -89,3 +89,36 @@ test('Auto on cursor: Claude classifies (Claude\'s sign-in, no cursor-agent bin)
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('an Auto run that adopts a workflow pinning a step to Codex warns once, and a pause and resume do not warn again', { timeout: 120000 }, async () => {
+  const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
+  const { assembleShape } = await import('../src/shared/graph/assemble.mjs');
+  const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+  const { readPipelineForResume } = await import('../src/core/artifacts.mjs');
+  const SMALL = { name: 'Small change', taskKind: 'prompt', stages: [{ agent: 'implementer' }, { agent: 'reviewer' }] };   // no other test here adopts this topology
+  const REG = loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false });
+  const template = structuredClone(assembleShape(SMALL, { registry: REG }).template);
+  for (const n of template.nodes) if (n.key === 'implementer') n.config = { ...n.config, model: 'gpt-5.5', engine: 'codex' };
+  await writeGraphWorkflow({ ...template, id: 'wf_auto_pinned', name: 'Pinned twin', domain: 'coding' });
+  const RE = /set to OpenAI Codex, but an Auto run uses one harness/;
+  const dir = gitDir('auto-pinned-twin');
+  const logs = [];
+  const first = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_auto', prompt: 'Build the thing.', humanInLoop: false, guardrailsId: 'permissive', claude: { mock: true },
+    classify: async (input) => ({ shape: normalizeShape(SMALL), warnings: [], costUsd: 0, attempts: 1, model: input.model || null }),
+  });
+  first.on('log', (l) => logs.push(String(l.text)));
+  let paused = false;
+  first.on('exec', (ev) => { if (!paused && ev.status === 'start' && ev.nodeId && ev.nodeId !== 'preflight' && ev.nodeId !== 'done') { paused = true; first.pause(); } });
+  const r1 = await first.run();
+  assert.equal(r1.status, 'paused', JSON.stringify(r1));
+  assert.equal(first.getState().stepper.auto.workflowId, 'wf_auto_pinned', 'the pinned twin was adopted');
+  assert.equal(first.getState().warnings.filter((w) => RE.test(w)).length, 1, JSON.stringify(first.getState().warnings));
+  const saved = readPipelineForResume(first.getState().id);
+  const second = createOrchestrator({ projectDir: dir, claude: { mock: true }, resume: saved, classify: async () => { throw new Error('the classifier must not run again'); } });
+  second.on('log', (l) => logs.push(String(l.text)));
+  const r2 = await second.resume();
+  assert.equal(r2.status, 'done', r2.error);
+  assert.equal(second.getState().warnings.filter((w) => RE.test(w)).length, 1, JSON.stringify(second.getState().warnings));
+  assert.equal(logs.filter((t) => RE.test(t)).length, 1, logs.filter((t) => RE.test(t)).join('\n'));
+});

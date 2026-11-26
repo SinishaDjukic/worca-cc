@@ -122,6 +122,7 @@ async function assemble(over = {}) {
     ...(over.platform ? { platform: over.platform } : {}),
     ...(over.registry ? { registry: over.registry } : {}),
     ...(over.engine ? { engine: over.engine } : {}),
+    ...(over.engines ? { engines: over.engines } : {}),
     ...(over.agentIsolated ? { agentIsolated: true } : {}),
     ...(over.projectsRootIsDefault ? { projectsRootIsDefault: true } : {}),
   });
@@ -1816,4 +1817,14 @@ test('generateClaudeMd / assembleSkills: a shortened checkout is named by its di
     await rm(proj, { recursive: true, force: true });
     await rm(target, { recursive: true, force: true });
   }
+});
+
+test('a run whose steps use Claude Code and Codex mounts skills for both: .agents/skills holds the user\'s own skills', async () => {
+  const home = await writeTree(await tmp('worca-cc-rc-uhome-'), { '.claude/skills/mine/SKILL.md': '---\nname: mine\n---\n' });
+  const mixed = { projectKey: 'k1', projectName: 'P', projectDir: await tmp(), worktreeDir: await tmp('worca-cc-rc-uwt-') };
+  await assemble({ runRoot: await mkRunRoot(), members: [mixed], homeDir: home, engine: 'claude', engines: ['claude', 'codex'], platform: 'linux' });
+  assert.equal(existsSync(join(mixed.worktreeDir, '.agents', 'skills', 'mine')), true);
+  const claudeOnly = { ...mixed, worktreeDir: await tmp('worca-cc-rc-uwt-') };
+  await assemble({ runRoot: await mkRunRoot(), members: [claudeOnly], homeDir: home, engine: 'claude', platform: 'linux' });
+  assert.equal(existsSync(join(claudeOnly.worktreeDir, '.agents', 'skills')), false, 'a Claude-only run: as today');
 });

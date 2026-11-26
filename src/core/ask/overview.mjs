@@ -7,7 +7,8 @@
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { membersOfRow } from '../checkout.mjs';
-import { engineReportsCost } from '../../shared/engine-switch.mjs';
+import { runCostKnown } from '../../shared/engine-switch.mjs';
+import { runEnginesOfRow } from '../artifacts.mjs';
 import { refFromHref, refsInText } from '../../shared/chip-refs.mjs';
 import { shownKindOf } from './show-files.mjs';
 
@@ -71,7 +72,8 @@ function watchParentOf(row) {
 /** A round's number from its own marker (Infinity for a legacy fix run with none: it sorts by its start). */
 function roundNo(row) { const n = parse(row?.branch)?.roundOf?.round; return Number.isInteger(n) ? n : Infinity; }
 const usable = (row) => !!row && !row.deleted_at;
-const costOf = (row, runEngine) => (engineReportsCost(runEngine) && Number.isFinite(row.total_cost_usd) ? row.total_cost_usd : null);
+/** The run's cost figure, unless no harness it used reports one (a mixed run's figure is the known part). */
+const costOf = (row, runEngine, runEngines = null) => (runCostKnown(runEngine, runEngines) !== 'none' && Number.isFinite(row.total_cost_usd) ? row.total_cost_usd : null);
 
 const CODE_RE = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
 const LINK_RE = /\[[^\]\n]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
@@ -153,8 +155,9 @@ export async function buildThreadOverview(threadId, deps) {
   rows.sort((a, z) => time(z.row.started_at) - time(a.row.started_at));
   const runs = rows.slice(0, OVERVIEW_LIMIT).map(({ row, runId }) => {
     const runEngine = runEngineOf(row);
+    const runEngines = runEnginesOfRow(row);
     return { runId, pipelineId: row.id, title: row.title || row.id, status: row.status || 'unknown', phase: row.phase || null,
-      costUsd: costOf(row, runEngine), runEngine, startedAt: row.started_at || null, href: hrefOf(row), branch: firstBranch(row), fixes: [] };
+      costUsd: costOf(row, runEngine, runEngines), runEngine, ...(runEngines ? { runEngines } : {}), startedAt: row.started_at || null, href: hrefOf(row), branch: firstBranch(row), fixes: [] };
   });
   const shownRuns = new Set(runs.map((r) => r.pipelineId));
   // A started run past the cap is still "started here": it never moves to Mentioned.
@@ -258,8 +261,9 @@ export async function buildThreadOverview(threadId, deps) {
     .sort((a, z) => (roundNo(a.row) - roundNo(z.row)) || (time(a.row.started_at) - time(z.row.started_at)))
     .map(({ row, runId }, i) => {
       const runEngine = runEngineOf(row);
+      const runEngines = runEnginesOfRow(row);
       return { runId, pipelineId: row.id, n: i + 1, status: row.status || 'unknown', phase: row.phase || null,
-        ...(withCost ? { costUsd: costOf(row, runEngine), runEngine } : {}), startedAt: row.started_at || null, href: hrefOf(row) };
+        ...(withCost ? { costUsd: costOf(row, runEngine, runEngines), runEngine, ...(runEngines ? { runEngines } : {}) } : {}), startedAt: row.started_at || null, href: hrefOf(row) };
     });
   for (const r of runs) r.fixes = fixRows(r.pipelineId, true);
   const mentionedRows = [...mentioned].map(([p, m]) => ({ row: rowOf(p), ...m }))

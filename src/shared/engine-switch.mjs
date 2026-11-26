@@ -130,11 +130,22 @@ export function sessionSupport(engine, { verified = SESSION_SUBAGENTS_VERIFIED }
   return { subagents: capable && verified?.[e] === true, shared: true, label: engineLabel(e) };
 }
 
+/** Whether a run's cost is known: every harness it used reports one ('all'), none does ('none'), or some do ('part').
+ *  No runEngines: the run used runEngine alone. Run-level labels only; a step's cost is judged by its own harness. */
+export function runCostKnown(runEngine, runEngines = null) {
+  const list = Array.isArray(runEngines) && runEngines.length ? runEngines : [runEngine || 'claude'];
+  const known = list.filter((e) => engineReportsCost(e)).length;
+  return known === list.length ? 'all' : known === 0 ? 'none' : 'part';
+}
+
 /** A run's cost as text for the CLI and chat: `fmt(costUsd)`, or "cost unknown" on an engine that reports none. A
- *  total above 0 on such a run is worca's own calls alone (helper jobs on Claude), named as that. */
-export function runCostLabel(engine, costUsd, fmt) {
+ *  total above 0 on such a run is worca's own calls alone (helper jobs on Claude), named as that. A run whose steps
+ *  used a harness that reports no cost beside one that does reads "cost partly unknown" (runCostKnown). */
+export function runCostLabel(engine, costUsd, fmt, runEngines = null) {
   const n = Number(costUsd) || 0;
-  if (engineReportsCost(engine)) return fmt(n);
+  const known = runCostKnown(engine, runEngines);
+  if (known === 'all') return fmt(n);
+  if (known === 'part') return n > 0 ? `${fmt(n)} (cost partly unknown)` : 'cost partly unknown';
   return n > 0 ? `cost unknown (worca's own calls: ${fmt(n)})` : 'cost unknown';
 }
 
@@ -159,9 +170,13 @@ export function usageLimitSwitches({ reason = null, limitEngine = null } = {}, r
   return reason === 'usage_limit' && limitEngine ? otherEngines(limitEngine, ready ?? SWITCH_ENGINES) : [];
 }
 
-/** What switching a paused run to `engine` does, in one line. */
-export function engineSwitchNote(engine) {
-  return `Starts the paused step fresh; a model ${engineLabel(engine)} cannot run falls back to its default.`;
+/** What switching a paused run to `engine` does, in one line. `mixed`: a run whose steps use several harnesses, where
+ *  every step moves, the ones set to another harness included. */
+export function engineSwitchNote(engine, { mixed = false } = {}) {
+  const E = engineLabel(engine);
+  return mixed
+    ? `Starts the paused step fresh; every step runs on ${E} from here, steps set to another harness included; a model ${E} cannot run falls back to its default.`
+    : `Starts the paused step fresh; a model ${E} cannot run falls back to its default.`;
 }
 
 /** The engine gate's refusal worded for where it is read. The run writes it for the CLI ("run it with
