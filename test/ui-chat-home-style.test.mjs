@@ -108,18 +108,22 @@ test('a feature card opened in Chat › Plans draws no border of its own: the Sh
   assert.match(css, /(?:^|[,}\s])\.chat-home-plan \.shape-feature\{[^}]*border:0;/);
 });
 
-test('the "More you can do" cards are still gradient pictures: one per card, light scheme, no border, nothing moves', () => {
+test('the "More you can do" cards are flat: a solid surface with a 1px hairline, no picture, no gradient, no shadow, no colour-scheme pin, nothing moves', () => {
   const b = block().replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.match(b, /\.chat-home-promo\{[^}]*border:0;[^}]*background:var\(--field\) center\/cover no-repeat;[^}]*color-scheme:light;/,
-    'the field shows while a picture loads; the card pins a scheme so the ink never follows the page theme');
-  for (const id of ['workflows', 'away', 'schedules']) {
-    assert.match(b, new RegExp(`\\.chat-home-promo\\[data-promo="${id}"\\]\\{background-image:url\\(/assets/promo-${id}\\.jpg\\);`), id);
-    assert.ok(existsSync(new URL(`../ui/public/assets/promo-${id}.jpg`, import.meta.url)), `promo-${id}.jpg ships`);
+  const promoRules = [...b.matchAll(/(\.chat-home-promo[\w-]*(?:\[[^\]]*\])?)\{([^}]*)\}/g)];
+  assert.ok(promoRules.length >= 4, 'the card and its title, description and button rules');
+  for (const [, sel, body] of promoRules) {
+    assert.doesNotMatch(body, /background-image|url\(|gradient/, `${sel}: no picture, url or gradient`);
+    assert.doesNotMatch(body, /color-scheme/, `${sel}: no colour-scheme pin, so the card follows the theme`);
+    assert.doesNotMatch(body, /shadow/, `${sel}: no shadow or glow`);
+    assert.doesNotMatch(body, /animation|transition/, `${sel}: static`);
+    assert.doesNotMatch(body, /-wash\)/, `${sel}: no wash`);
   }
-  // The red and the night pictures carry light ink; the button is the light one everywhere.
-  for (const id of ['workflows', 'schedules']) assert.match(b, new RegExp(`\\.chat-home-promo\\[data-promo="${id}"\\]\\{[^}]*color-scheme:dark;`), id);
-  assert.doesNotMatch(b, /\.chat-home-promo\[data-promo="away"\]\{[^}]*color-scheme/, 'the pale blue keeps the card\'s light scheme');
-  assert.match(b, /\.chat-home-promo-b\{[^}]*color-scheme:light;/);
-  assert.doesNotMatch(b, /\.chat-home-promo[\w-]*(?:\[[^\]]*\])?\{[^}]*(?:animation|transition)/, 'static: no animation on the cards');
-  assert.doesNotMatch(b, /\.chat-home-promo[\w-]*(?:\[[^\]]*\])?\{[^}]*-wash\)/, 'no wash on any promo rule');
+  assert.match(b, /\.chat-home-promo\{[^}]*border:1px solid var\(--line\);[^}]*background:var\(--field\);/,
+    'a solid neutral surface inside a 1px hairline');
+  assert.match(b, /\.chat-home-promo-t\{font-size:var\(--fs-body\);font-weight:600;\}/);
+  assert.match(b, /\.chat-home-promo-d\{color:var\(--ink-2\);font-size:12px;\}/);
+  for (const id of ['workflows', 'away', 'schedules']) {
+    assert.equal(existsSync(new URL(`../ui/public/assets/promo-${id}.jpg`, import.meta.url)), false, `promo-${id}.jpg is gone`);
+  }
 });
