@@ -13,7 +13,8 @@ import { addProject } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { setProjectEnvSpec, clearProjectEnvSpec } from '../src/core/exec-env/project-env.mjs';
 import { cmdContainer, initDir } from '../src/cli/container.mjs';
-import { cmdContainerBuild } from '../src/cli/container-build.mjs';
+import { cmdContainerBuild, checkBoxProject, BOX_SPECS_MAX_BYTES } from '../src/cli/container-build.mjs';
+import { normalizeEnvSpec } from '../src/core/exec-env/env-spec.mjs';
 import { RECORD_FILE } from '../src/core/exec-env/box-image.mjs';
 
 useTempHome(after);
@@ -70,9 +71,9 @@ async function containerDir(extraEnv = '') {
   return dir;
 }
 const envOf = (dir) => readFileSync(join(dir, '.env'), 'utf8');
-const run = async (argv, { dir, rt = fakeRuntime() } = {}) => {
+const run = async (argv, { dir, rt = fakeRuntime(), env = { PATH: process.env.PATH }, stdin = { isTTY: false }, ask = null } = {}) => {
   const o = io();
-  const code = await cmdContainerBuild(argv, { ...o, exec: rt.exec, dir, now: () => new Date('2026-11-26T10:00:00Z') });
+  const code = await cmdContainerBuild(argv, { ...o, exec: rt.exec, dir, env, stdin, ask, now: () => new Date('2026-11-26T10:00:00Z') });
   return { code, ...o, calls: rt.calls };
 };
 
@@ -268,5 +269,144 @@ test('--reset goes back to the plain image; --status then says so', async () => 
     assert.ok(!up.calls.find((k) => k.args.includes('up')).args.includes('compose.image.yml'));
     r = await run(['--reset'], { dir });
     assert.equal(r.code, 0); assert.match(r.lines[0], /no built image in use/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the base follows WORCA_TAG as compose reads it: the shell over .env', async () => {
+  resetSpecs();
+  const dir = await containerDir('WORCA_TAG=1.20.0\n');
+  try {
+    assert.match((await run(['--dry-run'], { dir })).lines.at(-1), /^FROM ghcr\.io\/worca-org\/worca:1\.20\.0$/m, '.env alone');
+    assert.match((await run(['--dry-run'], { dir, env: { WORCA_TAG: '1.21.0-rc.2' } })).lines.at(-1), /^FROM ghcr\.io\/worca-org\/worca:1\.21\.0-rc\.2$/m, 'the shell wins');
+    assert.match((await run(['--dry-run'], { dir, env: { WORCA_TAG: '' } })).lines.at(-1), /^FROM ghcr\.io\/worca-org\/worca:latest$/m, 'set but empty: compose\'s default');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the hardened box: the specs come from inside the running box; a stopped box says so and builds nothing', async () => {
+  resetSpecs();
+  const dir = await containerDir();
+  writeFileSync(join(dir, '.worca-container.json'), JSON.stringify({ hardened: true }));
+  const inBox = [{ key: 'acme-box-0a1b2c3d', name: 'acme-box', spec: normalizeEnvSpec({ tools: [{ name: 'go', version: '1.23.4' }], apt: ['jq'] }) }];
+  const boxRuntime = (up = true) => {
+    const rt = fakeRuntime();
+    const inner = rt.exec;
+    const exec = (cmd, args, o = {}) => {
+      if (args[0] === 'ps') { rt.calls.push({ cmd, args }); return { status: 0, stdout: up ? 'c0ffee\n' : '', stderr: '' }; }
+      if (args[0] === 'exec') { rt.calls.push({ cmd, args }); return { status: 0, stdout: `${JSON.stringify(inBox)}\n`, stderr: '' }; }
+      return inner(cmd, args, o);
+    };
+    return { exec, calls: rt.calls };
+  };
+  try {
+    let rt = boxRuntime();
+    let r = await run(['--dry-run'], { dir, rt });
+    assert.equal(r.code, 0, r.fails.join('\n'));
+    assert.match(r.lines.at(-1), /'go@1\.23\.4'/, 'the box\'s project');
+    assert.doesNotMatch(r.lines.at(-1), /python|node@/, 'not the host\'s projects');
+    assert.deepEqual(rt.calls.find((k) => k.args[0] === 'ps').args, ['ps', '-q', '--filter', 'label=com.docker.compose.project=worca-hardened', '--filter', 'label=com.docker.compose.service=worca']);
+    const ex = rt.calls.find((k) => k.args[0] === 'exec');
+    assert.deepEqual(ex.args.slice(0, 4), ['exec', '-u', 'worca', 'c0ffee']);
+    assert.match(ex.args.at(-1), /exec worca exec-env specs --json/);
+    r = await run(['--dry-run', '--project', 'acme-box'], { dir, rt: boxRuntime() });
+    assert.equal(r.code, 0, 'a project by its name in the box');
+    r = await run(['--dry-run', '--project', web], { dir, rt: boxRuntime() });
+    assert.equal(r.code, 1); assert.match(r.fails[0], /the hardened box has no project .* \(known: acme-box\)/);
+    r = await run([], { dir, rt: boxRuntime(false) });
+    assert.equal(r.code, 1);
+    assert.match(r.fails[0], /the hardened box \(compose project worca-hardened\) is not running, and its projects and their environment specs live inside it\. Start it with worca container up --hardened/);
+    assert.ok(!r.calls.some((k) => k.args[0] === 'build'), 'nothing is built');
+    r = await run(['--dry-run', '--plain'], { dir, rt: boxRuntime(false) });
+    assert.equal(r.code, 0, '--plain: the host\'s projects this once');
+    assert.match(r.lines.at(-1), /'python@3\.13\.1'/);
+    r = await run(['--status'], { dir, rt: boxRuntime(false) });
+    assert.equal(r.code, 1); assert.match(r.fails[0], /is not running/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// Security review of #1643: what the hardened box sends back is untrusted. The build runs on this machine's Docker.
+const boxWith = (answer) => {
+  const rt = fakeRuntime();
+  const inner = rt.exec;
+  const exec = (cmd, args, o = {}) => {
+    if (args[0] === 'ps') { rt.calls.push({ cmd, args }); return { status: 0, stdout: 'c0ffee\n', stderr: '' }; }
+    if (args[0] === 'exec') { rt.calls.push({ cmd, args, maxBuffer: o.maxBuffer }); return { status: 0, stdout: typeof answer === 'string' ? answer : JSON.stringify(answer), stderr: '' }; }
+    return inner(cmd, args, o);
+  };
+  return { exec, calls: rt.calls };
+};
+const hardenedDir = async () => { const d = await containerDir(); writeFileSync(join(d, '.worca-container.json'), JSON.stringify({ hardened: true })); return d; };
+const GO = normalizeEnvSpec({ tools: [{ name: 'go', version: '1.23.4' }], apt: ['jq'] });
+
+test('box specs are re-validated on this side: the key, normalizeEnvSpec, the claimed hash, plain tool names only', () => {
+  const ok = checkBoxProject({ key: 'acme-box-0a1b2c3d', name: 'acme-box', spec: GO });
+  assert.deepEqual(ok.spec, GO);
+  assert.throws(() => checkBoxProject({ key: '../x', spec: GO }), /malformed key/);
+  assert.throws(() => checkBoxProject({ key: 'acme-box-0a1b2c3d', spec: { ...GO, hash: `sha256:${'0'.repeat(64)}` } }), /does not match its hash/);
+  assert.throws(() => checkBoxProject({ key: 'acme-box-0a1b2c3d', spec: { tools: [{ name: 'go', version: 'latest' }], apt: [], hash: 'x' } }), /spec is invalid: tool go: version must be pinned/);
+  assert.throws(() => checkBoxProject({ key: 'acme-box-0a1b2c3d', spec: { tools: [], apt: ['jq; curl evil'], hash: 'x' } }), /spec is invalid: apt package/);
+  // The stored-spec rule lets backend forms through (a project's own spec may use them); the box's may not.
+  for (const name of ['npm:prettier', 'pipx:black', 'ubi:acme/tool', 'cargo:ripgrep', 'go:example.com/x', 'github:cli/cli', 'https://acme.example/x', 'node@24']) {
+    const spec = normalizeEnvSpec({ tools: [{ name, version: '1.0.0' }] });
+    assert.throws(() => checkBoxProject({ key: 'acme-box-0a1b2c3d', spec }), /is not a plain mise registry name/, name);
+  }
+  for (const name of ['a;b', 'a b', '$(id)', '../x', '`id`']) {
+    assert.throws(() => normalizeEnvSpec({ tools: [{ name, version: '1.0.0' }] }), /is not a mise tool name/, `${name}: the stored-spec rule refuses it already`);
+  }
+  assert.equal(checkBoxProject({ key: 'acme-box-0a1b2c3d', name: '<script>', spec: GO }).name, '', 'a strange name is dropped, the key stays');
+});
+
+test('box specs: a bounded answer, a bad project refuses the whole build, and nothing runs', async () => {
+  const dir = await hardenedDir();
+  try {
+    let rt = boxWith([{ key: 'acme-box-0a1b2c3d', name: 'acme-box', spec: normalizeEnvSpec({ tools: [{ name: 'npm:left-pad', version: '1.0.0' }] }) }]);
+    let r = await run(['--yes'], { dir, rt });
+    assert.equal(r.code, 1); assert.match(r.fails[0], /npm:left-pad.*not a plain mise registry name.*Nothing was built/);
+    assert.ok(!r.calls.some((k) => k.args[0] === 'build'));
+    assert.equal(rt.calls.find((k) => k.args[0] === 'exec').maxBuffer, BOX_SPECS_MAX_BYTES + 1024, 'the read itself is bounded');
+    rt = boxWith(`[${' '.repeat(BOX_SPECS_MAX_BYTES)}]`);
+    r = await run(['--yes'], { dir, rt });
+    assert.equal(r.code, 1); assert.match(r.fails[0], /more than 1048576 bytes/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a build from the box prints the whole list and needs a yes in a terminal, or --yes', async () => {
+  const dir = await hardenedDir();
+  const list = [{ key: 'acme-box-0a1b2c3d', name: 'acme-box', spec: GO }];
+  try {
+    let r = await run([], { dir, rt: boxWith(list) });
+    assert.equal(r.code, 1); assert.match(r.fails[0], /come from inside the hardened box: check them, then build with --yes/);
+    assert.ok(r.lines.some((l) => l === '  tools: go@1.23.4') && r.lines.some((l) => l === '  apt:   jq'));
+    assert.ok(!r.calls.some((k) => k.args[0] === 'build'), 'no terminal, no --yes: nothing built');
+    const asked = [];
+    r = await run([], { dir, rt: boxWith(list), stdin: { isTTY: true }, ask: async (q) => { asked.push(q); return 'n'; } });
+    assert.equal(r.code, 1); assert.match(asked[0], /Build an image on this machine with these\? \[y\/N\]/);
+    assert.ok(!r.calls.some((k) => k.args[0] === 'build'));
+    r = await run([], { dir, rt: boxWith(list), stdin: { isTTY: true }, ask: async () => 'y' });
+    assert.equal(r.code, 0, r.fails.join('\n')); assert.ok(r.calls.some((k) => k.args[0] === 'build'));
+    r = await run(['--yes'], { dir, rt: boxWith(list) });
+    assert.equal(r.code, 0); assert.equal(JSON.parse(readFileSync(join(dir, RECORD_FILE), 'utf8')).box, 'hardened', 'the record says which box');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an image built for one box is refused by the other (the record\'s box), not just warned about', async () => {
+  resetSpecs();
+  const dir = await hardenedDir();
+  const up = async (argv) => {
+    const o = io(); const rt = fakeRuntime();
+    const code = await cmdContainer(argv, { ...o, exec: rt.exec, dir, env: { PATH: '/usr/bin' }, stdin: { isTTY: false }, settings: () => ({}), login: () => null });
+    return { code, ...o, calls: rt.calls };
+  };
+  try {
+    assert.equal((await run(['--yes'], { dir, rt: boxWith([{ key: 'acme-box-0a1b2c3d', name: 'acme-box', spec: GO }]) })).code, 0);
+    let r = await up(['run', '--plain', '--', 'list']);
+    assert.equal(r.code, 1);
+    assert.match(r.fails[0], /was built for the hardened box, not the plain one: build one for it \(worca container build --plain\)/);
+    assert.ok(!r.calls.some((k) => k.args.includes('--rm')), 'nothing started');
+    assert.equal((await run(['--plain'], { dir })).code, 0, 'a plain build');
+    assert.equal(JSON.parse(readFileSync(join(dir, RECORD_FILE), 'utf8')).box, 'plain');
+    r = await up(['run', '--hardened', '--', 'list']);
+    assert.equal(r.code, 1); assert.match(r.fails[0], /was built for the plain box, not the hardened one/);
+    r = await up(['run', '--plain', '--', 'list']);
+    assert.equal(r.code, 0, `the matching box runs it: ${r.fails.join('\n')}`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

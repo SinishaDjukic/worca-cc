@@ -1,7 +1,9 @@
 // src/cli/setup.mjs
 // `worca setup --from FILE` (plans/setup-assistant-design.md D16, AC-5.8): applies a team setup file with the
 // setup backend's own validator and one settings write, then asks only for the questions the file leaves out. Network
-// and model access are never asked here: they stay in the setup assistant and `worca proxy` (D12).
+// and model access are never asked here: they stay in the setup assistant and `worca proxy` (D12). The one exception is
+// the secret vault (the secretVault flag, docs/secrets.md): on a native install with a usable key store and keys still
+// in their files, it asks once whether to move them into the vault, as the assistant's Model access step does.
 import { createInterface } from 'node:readline';
 import { readTeamSetupFile, teamValues } from '../core/setup/team-file.mjs';
 import { planSetupApply, commitSetupPlan, runSetupSteps, sameValue } from '../core/setup/apply.mjs';
@@ -51,6 +53,7 @@ export async function cmdSetup(argv, {
   input = process.stdin, prompt = process.stderr, settings = readSettings,
   catalog = async () => (await import('../core/config.mjs')).listModels(null),
   claudeAuth = async () => (await (await import('../core/preflight.mjs')).probeClaudeAuth({ bin: (await import('../core/cli-resolve.mjs')).configuredClaudeBin() })).state,
+  vault = async () => (await import('../core/setup/detect.mjs')).vaultFacts(),
 } = {}) {
   if (argv[0] === 'help' || argv.includes('--help')) { out(HELP); return 0; }
   const at = argv.indexOf('--from'); const from = at >= 0 ? argv[at + 1] : null;
@@ -75,13 +78,22 @@ export async function cmdSetup(argv, {
         const answer = await rl.ask(`${q.label} [${shown(savedAt(current, q.key))}]: `);
         if (answer) setPath(body, q.key, q.parse(answer));     // Enter or end of input keeps the saved value
       }
+      // The secret vault: asked only when there is something to move; Enter keeps the keys in their files.
+      let v = null;
+      try { v = await vault(); } catch { v = null; }
+      if (v?.offer) {
+        const n = v.inFiles;
+        const answer = await rl.ask(`Move the ${n} saved ${n === 1 ? 'secret' : 'secrets'} into the secret vault (key in ${v.label})? [y/N] `);
+        if (/^(y|yes)$/i.test(answer || '')) body.access = { vault: 'move' };
+      }
     }
     // Roles ride as a patch over the saved roles; a value equal to what is saved is not sent (one write, only changes).
     if (body.models?.modelRoles) body.models.testRoles = false;
     for (const [k, v] of Object.entries(body.work || {})) if (sameValue(v, current[k])) delete body.work[k];
     if (body.work && !Object.keys(body.work).length) delete body.work;
     const plan = await planSetupApply(body, CLI_APPLY_DEPS);
-    if (!plan.written.length) { out(`Nothing to change: your settings already match ${from}.`); return 0; }
+    if (!plan.written.length && !plan.steps.length) { out(`Nothing to change: your settings already match ${from}.`); return 0; }
+    if (body.access?.vault === 'move') out('  Secret vault: move the keys saved in files into the vault');
     // Show the change before the one write (security-1-7); --yes is the person's prior consent.
     for (const q of CLI_QUESTIONS) {
       const now = getPath(body, q.key); if (now === undefined) continue;
@@ -105,7 +117,7 @@ export async function cmdSetup(argv, {
     }
     await commitSetupPlan(plan);
     await runSetupSteps(plan, { onResult: (r) => out(`  ${r.state === 'ok' ? '✓' : '✗'} ${r.label}: ${r.line}`) });
-    out(`Applied ${plan.written.length} settings from ${from}.`);
+    out(plan.written.length ? `Applied ${plan.written.length} settings from ${from}.` : 'Done.');
     return 0;
   } catch (e) {
     err(`worca setup: ${e.field ? `${e.field}: ` : ''}${e.message}`);

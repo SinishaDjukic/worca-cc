@@ -116,11 +116,11 @@ before(async () => {
   writePluginsLock({ [NAME]: lockRow, [NAME2]: { ...lockRow, repoUrl: 'https://example.test/g.git' }, [NAME3]: { ...lockRow, repoUrl: 'https://example.test/l.git' },
     [NAME4]: { ...lockRow, repoUrl: 'https://example.test/sl.git' }, [NAME5]: { ...lockRow, repoUrl: 'https://example.test/tm.git' },
     'mock-source': { ...lockRow, repoUrl: 'https://example.test/s.git' } });
-  writePluginConfig(NAME, SCHEMA, CFG);
-  writePluginConfig(NAME3, SCHEMA, { ...CFG, allowedChatIds: 'L1' });
-  writePluginConfig(NAME2, SCHEMA, { ...CFG, allowedChatIds: 'P1' });
-  writePluginConfig(NAME4, SCHEMA, { ...CFG, allowedChatIds: 'S1' });
-  writePluginConfig(NAME5, SCHEMA, { ...CFG, allowedChatIds: 'T1' });
+  await writePluginConfig(NAME, SCHEMA, CFG);
+  await writePluginConfig(NAME3, SCHEMA, { ...CFG, allowedChatIds: 'L1' });
+  await writePluginConfig(NAME2, SCHEMA, { ...CFG, allowedChatIds: 'P1' });
+  await writePluginConfig(NAME4, SCHEMA, { ...CFG, allowedChatIds: 'S1' });
+  await writePluginConfig(NAME5, SCHEMA, { ...CFG, allowedChatIds: 'T1' });
   setMockChannelBehavior({ '*': behavior });
   mod = await import('../ui/server.mjs');
   ({ _testing } = mod);
@@ -450,7 +450,7 @@ test('5. unauthorized', async () => {
 // 5b: a sender outside allowedUserIds is ignored silently, both at the mention and in the thread.
 test('5b. allowedUserIds applies, silently', async () => {
   _testing.chatBridge.resetRateLimits();
-  writeCfg({ allowedUserIds: 'U7' });
+  await writeCfg({ allowedUserIds: 'U7' });
   try {
     const threads0 = countOf('ask_threads');
     const b = binding();
@@ -469,13 +469,13 @@ test('5b. allowedUserIds applies, silently', async () => {
     click(refOf('Stop'));
     await waitFor(() => replies().length);
     assert.match(replies()[0].text, /not set up for worca chat/);
-  } finally { writeCfg({ allowedUserIds: null }); }   // writePluginConfig MERGES: only null clears a key
+  } finally { await writeCfg({ allowedUserIds: null }); }   // writePluginConfig MERGES: only null clears a key
 });
 
 // 5c: freeform off: only the owner is told; strangers and non-allowed senders get nothing; no turn.
 test('5c. freeform off: only the owner is told', async () => {
   _testing.chatBridge.resetRateLimits();
-  writeCfg({ freeformChat: 'off' });
+  await writeCfg({ freeformChat: 'off' });
   try {
     const b = binding();
     await idle(b.askThreadId);
@@ -486,19 +486,19 @@ test('5c. freeform off: only the owner is told', async () => {
     assert.equal(posts.length, before);
     // A sender outside Allowed user IDs first (the off notice is throttled per chat/user/reason, so asking the
     // owner second would hide a refusal() that answers 'off' before 'not-sender').
-    writeCfg({ freeformChat: 'off', allowedUserIds: 'U7' });
+    await writeCfg({ freeformChat: 'off', allowedUserIds: 'U7' });
     await seen(say('hi again'));
     await settle(50);
     assert.equal(posts.length, before);
     assert.equal(userRowCount(b.askThreadId), u0);
-    writeCfg({ freeformChat: 'off', allowedUserIds: null });
+    await writeCfg({ freeformChat: 'off', allowedUserIds: null });
     await seen(say('hi'));
     await waitFor(() => posts.length > before);
     await settle(50);
     assert.equal(posts.length, before + 1);
     assert.match(textOf(posts.at(-1)), /turned off/);
     assert.equal(userRowCount(b.askThreadId), u0);
-  } finally { writeCfg({ allowedUserIds: null }); }   // writePluginConfig MERGES: only null clears a key
+  } finally { await writeCfg({ allowedUserIds: null }); }   // writePluginConfig MERGES: only null clears a key
 });
 
 // 6: the header Scope select pins a project; a proposal card's Start run starts the run as the bound identity; status notices follow.
@@ -1610,7 +1610,7 @@ test('34. chat context: reply-to-start with a file, history on start, off-host f
   const historyCalls = [];
   setMockChannelBehavior({ '*': { ...behavior, history: async (frame) => { historyCalls.push(frame);
     return [{ author: 'Bob', text: 'earlier word', at: '2026-11-03T09:50:00.000Z', link: 'https://discord.com/channels/G1/C1/h1' }]; } } });
-  writeCfg({ historyOnStart: '5' });
+  await writeCfg({ historyOnStart: '5' });
   try {
     const id = `ctx${++nextId}`;
     const fileUrl = 'https://cdn.discordapp.com/attachments/C1/a1/notes.md?ex=1';
@@ -1653,7 +1653,7 @@ test('34. chat context: reply-to-start with a file, history on start, off-host f
     await waitFor(() => posts.some((p) => p.chatId === 'TH34' && textOf(p).includes('[mock] and one more')));
     assert.equal(historyCalls.length, n, 'a message in the bound thread reads no history');
   } finally {
-    writeCfg({ historyOnStart: null });
+    await writeCfg({ historyOnStart: null });
     setMockChannelBehavior({ '*': behavior });
     _testing.setChatFileFetch(null);
     H.setThreadId(() => 'TH1');
@@ -1719,7 +1719,7 @@ test('36. Slack (worker file fetch): reply-to-start with files fetched by ref, u
       link: 'https://acme.slack.com/archives/S1/p1700000000000150?thread_ts=1700000000.000050&cid=S1' }]; },
     file: async (f) => { fileCalls.push(f); if (f.ref === R) return { data: Buffer.from('# Plan\nship friday\n') }; if (f.ref === P) return { data: PNG_BYTES }; return { data: Buffer.alloc(f.maxBytes + 1) }; },
   } });
-  writePluginConfig(NAME4, SCHEMA, { historyOnStart: '5' });
+  await writePluginConfig(NAME4, SCHEMA, { historyOnStart: '5' });
   try {
     const mid = '1700000000.000200';
     channelHost.injectInboundMessage(NAME4, 'main', { chatId: 'S1', userId: 'U1', text: '<@UBOT> summarise the thread',
@@ -1747,7 +1747,7 @@ test('36. Slack (worker file fetch): reply-to-start with files fetched by ref, u
     const stored = JSON.stringify(askStore.listMessages(b.askThreadId)) + JSON.stringify(askStore.listAttachments(b.askThreadId));
     for (const r of [R, P, BIG]) assert.ok(!stored.includes(r), 'a ref is never stored');
   } finally {
-    writePluginConfig(NAME4, SCHEMA, { historyOnStart: null });
+    await writePluginConfig(NAME4, SCHEMA, { historyOnStart: null });
     setMockChannelBehavior({ '*': behavior });
     H.setThreadId(() => 'TH1');
   }

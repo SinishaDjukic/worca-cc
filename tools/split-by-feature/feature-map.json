@@ -524,6 +524,15 @@
         "name": "about-update"
       },
       {
+        "section": "^Browser extension pairings",
+        "selectors": [
+          "#secret-vault-card",
+          ".sv-field-note"
+        ],
+        "feature": "settings",
+        "name": "secret-vault"
+      },
+      {
         "section": "^Model plugins",
         "selectors": [
           ".hd ",

@@ -14,7 +14,7 @@
 // answer 409 MANAGED. No call ever returns the NT hash or a password.
 import http from 'node:http';
 import { safeEqual } from '../broker/tokens.mjs';
-import { proxyState, saveProxyLogin, saveProxyLoginHash, clearProxyLogin, parseAccount, savedLoginRefusal,
+import { proxyState, saveProxyLoginPlain, saveProxyLoginHash, clearProxyLoginPlain, parseAccount, savedLoginRefusal,
   assertProxyLoginInput, markLoginRejected, ProxyLoginError } from '../core/proxy-credentials.mjs';
 import { ntHash } from '../core/ntlm.mjs';
 import { resolveUpstream, checkUpstream } from '../core/upstream-proxy.mjs';
@@ -132,7 +132,7 @@ export function createSidecarApi({ secret, dataDir, env, managed, settings, logi
     const account = typeof body.domain === 'string' && body.domain ? { domain: body.domain, user: body.user } : parseAccount(body.user);
     try {
       const opts = { home, env: writeEnv, upstream: label };
-      if (hasPw) saveProxyLogin({ ...account, password: body.password }, opts);
+      if (hasPw) saveProxyLoginPlain({ ...account, password: body.password }, opts);
       else saveProxyLoginHash({ ...account, ntHash: body.ntHash }, opts);
     } catch (err) {
       if (err instanceof ProxyLoginError) return [400, { error: err.message, field: err.field }];
@@ -144,7 +144,7 @@ export function createSidecarApi({ secret, dataDir, env, managed, settings, logi
 
   function logout() {
     if (managed) return [409, { error: MANAGED_TEXT, code: 'MANAGED' }];
-    const had = clearProxyLogin({ home });
+    const had = clearProxyLoginPlain({ home });
     rebuild();
     return [200, { ...status(), deleted: had }];
   }
@@ -159,7 +159,7 @@ export function createSidecarApi({ secret, dataDir, env, managed, settings, logi
     const before = upstreamLabelOf(env, current);
     const after = upstreamLabelOf(env, next);
     // Bound to its proxy: a login never follows a change of host or port. Deleted before the new proxy is in use.
-    const dropped = before !== after ? clearProxyLogin({ home }) : false;
+    const dropped = before !== after ? clearProxyLoginPlain({ home }) : false;
     try { writeSidecarSettings(home, next); } catch (err) { return [500, { error: `the settings could not be saved (${err && err.code ? err.code : 'error'})` }]; }
     rebuild();
     return [200, { networkProxy: next, loginDropped: dropped, status: status() }];

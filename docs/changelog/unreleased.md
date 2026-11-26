@@ -3,6 +3,78 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Vault commands need your own terminal
+
+**worca secrets export, reset and ack now run only in a terminal, after you type a word they show.**
+
+There is no --yes. No variable turns this off. A script, a pipe or an agent is refused.
+
+Chat's command check also reads commands without their quotes. It refuses a command that builds itself at run time and names the key store or Worca's CLI.
+
+The vault is at-rest encryption, not a sandbox.
+
+Chips: Security · CLI · Chat
+
+Read it: [Secrets and the vault](../secrets.md#terminal-only-commands)
+
+Pull requests (add each number when it opens):
+
+- Vault commands need your own terminal (#1650)
+
+## Container fixes from the first real runs
+
+**The security setups ran in real containers for the first time. These are the fixes.**
+
+The shared instance needs a Linux Docker host. Docker Desktop does not enforce who owns a secret file. Agents could read them there. Worca now opens each secret file as an agent user at start. If that read works, Worca refuses to start and says why.
+
+The hardened box asks about the proxy login again. The sidecar tests the proxy first. A 407 asks "Log in now?". A pass asks nothing. Scripts use `--proxy-user` or `--no-proxy-login`.
+
+`worca container` reads `WORCA_PORT`, `WORCA_TAG` and the project name as compose does. A value in the shell wins over `.env`.
+
+A `compose.override.yml` in the container folder is part of every call. A proxy command no longer restarts the sidecar.
+
+The image has no `VOLUME` line any more. Restarting the box leaves no anonymous volumes behind. In the hardened box the unused folders are no longer world-writable.
+
+`worca container build` in the hardened box reads the projects inside the box. A stopped box gets a clear message. What the box sends back is checked again before anything is built, and Worca asks first.
+
+The agent guardrails now also block `/var/run/secrets`. It is the same folder as `/run/secrets`.
+
+Chips: Security · Container · Hardened box · Shared instance
+
+Read it: [Shared instance](../shared-instance.md), [Hardened box](../hardened-box.md), [Project environment spec](../environment-spec.md)
+
+Pull requests (add each number when it opens):
+
+- Container fixes from the first real runs (#1643)
+
+## Keep saved keys in a secret vault
+
+**Worca can encrypt the keys it saves. The key that opens them stays in your OS key store.**
+
+This is a Labs flag: Secret vault. It is off by default.
+
+Turn it on, and provider and model keys go into one encrypted file. So do MCP secrets, plugin secrets and the proxy login.
+
+Settings › General has a Secret vault card. It shows the state and the key store. It counts what is in the vault, by kind. It never shows a key.
+
+Turn on checks the key store first. Then it moves the keys saved in files. Check now tests the key store again. Reset starts over when the vault cannot be opened.
+
+The setup assistant offers the vault on the Model access step. So does worca setup. Detection asks the key store nothing.
+
+Chat can read the vault's state and counts. It never sees a key.
+
+The vault protects copies of your files. It is not a sandbox. An agent that runs as you can still reach the key store.
+
+In a container the vault does nothing. The egress sidecar keeps the proxy login. The credential broker keeps the model key.
+
+Chips: Security · Settings · Setup assistant · Labs
+
+Read it: [Secrets and the vault](../secrets.md)
+
+Pull requests (add each number when it opens):
+
+- Secret vault handling (#1521)
+
 ## Ask Worca knows your security setup
 
 **Chat now answers questions about sandboxes and security setups. It can change a project's sandbox with a card.**

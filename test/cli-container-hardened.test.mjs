@@ -270,6 +270,84 @@ test('up --hardened with a proxy and --proxy-user: the login goes to the sidecar
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('up --hardened in a terminal with a proxy and no saved login: the sidecar\'s test decides whether it asks', async () => {
+  const tty = { isTTY: true };
+  const env = { WORCA_BROKER_KEY_ANTHROPIC: KEY, GH_TOKEN: TOKEN, GIT_AUTHOR_NAME: 'x', PATH: '/usr/bin' };
+  const upWith = async (test, { flags = [], extraEnv = {} } = {}) => {
+    const dir = await readyDir();
+    writeFileSync(join(dir, '.env'), `${readFileSync(join(dir, '.env'), 'utf8')}\nHTTPS_PROXY=http://proxy.acme.example:8080\nWORCA_EGRESS_ALLOW=github.com\nGIT_AUTHOR_NAME=Jane\nGIT_AUTHOR_EMAIL=jane@acme.example\n`);
+    const asked = [];
+    const logins = [];
+    const { exec, calls } = fakeDocker({
+      'egress status --json': { stdout: JSON.stringify({ state: 'no-login', upstream: 'proxy.acme.example:8080' }) },
+      'egress test --json': { stdout: JSON.stringify(test) },
+      'egress login': (args, o) => { logins.push(o.input); return { status: 0, stdout: '' }; },
+    });
+    const o = io();
+    const ask = async (q) => { asked.push(q); return ''; };
+    try {
+      // `ask` stands in for the terminal; the login itself is cmdContainer's own proxy verb, which reads stdin.
+      const { Readable } = await import('node:stream');
+      const stdin = Object.assign(Readable.from(['ACME\\jdoe\nS3cret\n']), tty);
+      const { hardenedUp } = await import('../src/cli/container-hardened.mjs');
+      const code = await hardenedUp({ a: { _: flags }, dir, exec, bin: 'docker', composeEnv: { ...env, ...extraEnv }, files: FILES, ...o, stdin, state: {}, ask,
+        login: async () => { logins.push('login'); return 0; } });
+      return { code, asked, logins, calls, lines: o.lines };
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
+  // The proxy answered 407: it asks, and Enter means yes.
+  let r = await upWith({ ok: false, results: [{ host: 'github.com', ok: false, status: 407, needsLogin: true }] });
+  assert.equal(r.code, null);
+  assert.equal(r.asked.length, 1);
+  assert.match(r.asked[0], /The proxy http:\/\/proxy\.acme\.example:8080 asks for a login \(it answered 407\)\. Log in now .*\[Y\/n\]/);
+  assert.deepEqual(r.logins, ['login']);
+  assert.ok(r.calls.some((k) => k.args.join(' ').includes('up -d --no-deps --no-recreate egress')), 'the sidecar is started, never recreated');
+  // The test passed: no question, no login.
+  r = await upWith({ ok: true, results: [{ host: 'github.com', ok: true }] });
+  assert.equal(r.asked.length, 0); assert.deepEqual(r.logins, []);
+  assert.ok(r.lines.some((l) => /let a test through without a login/.test(l)));
+  // The test could not tell (the proxy is down): it asks, and Enter means no.
+  r = await upWith({ ok: false, results: [{ host: 'github.com', ok: false, status: 502, error: 'ECONNREFUSED' }] });
+  assert.match(r.asked[0], /Does the proxy .* need a login .*\[y\/N\]/); assert.deepEqual(r.logins, []);
+  // For scripts: --no-proxy-login and WORCA_PROXY_NO_LOGIN=1 never ask; WORCA_PROXY_USER logs in.
+  r = await upWith({ ok: false, results: [{ needsLogin: true }] }, { flags: ['--no-proxy-login'] });
+  assert.equal(r.asked.length, 0); assert.deepEqual(r.logins, []);
+  assert.ok(!r.calls.some((k) => k.args.includes('test')), 'nothing probed');
+  r = await upWith({ ok: false, results: [{ needsLogin: true }] }, { extraEnv: { WORCA_PROXY_NO_LOGIN: '1' } });
+  assert.equal(r.asked.length, 0); assert.deepEqual(r.logins, []);
+  r = await upWith({ ok: true, results: [] }, { extraEnv: { WORCA_PROXY_USER: 'ACME\\jdoe' } });
+  assert.equal(r.asked.length, 0); assert.deepEqual(r.logins, ['login']);
+  assert.equal(parseHardenedFlags(['--no-proxy-login']).flags.noProxyLogin, true);
+});
+
+test('the CLI reads WORCA_PORT and COMPOSE_PROJECT_NAME as compose does (the shell over .env), and names compose.override.yml', async () => {
+  const dir = await readyDir();
+  try {
+    writeFileSync(join(dir, '.env'), `${readFileSync(join(dir, '.env'), 'utf8')}\nWORCA_PORT=4400\n`);
+    const env = { WORCA_BROKER_KEY_ANTHROPIC: KEY, GH_TOKEN: TOKEN, PATH: '/usr/bin' };
+    let o = io();
+    assert.equal(await cmdContainer(['up', '--hardened', '--yes', '--no-proxy'], { ...o, exec: fakeDocker().exec, dir, env, stdin: notTty, ...quiet }), 0, o.fails.join('\n'));
+    assert.ok(o.lines.some((l) => l.includes('http://localhost:4400')), '.env alone');
+    o = io();
+    assert.equal(await cmdContainer(['up', '--yes', '--no-proxy'], { ...o, exec: fakeDocker().exec, dir, env: { ...env, WORCA_PORT: '4521' }, stdin: notTty, ...quiet }), 0);
+    assert.ok(o.lines.some((l) => l.includes('http://localhost:4521')), 'the shell wins, as in compose');
+    // A managed proxy login in compose.override.yml: every call names it, after the overlays, so no `up` drops it.
+    writeFileSync(join(dir, 'compose.override.yml'), 'services:\n  egress:\n    environment:\n      WORCA_EGRESS_LOGIN_FILE: /run/secrets/worca_proxy_login\n');
+    const { exec, calls } = fakeDocker();
+    assert.equal(await cmdContainer(['up', '--yes', '--no-proxy'], { ...io(), exec, dir, env, stdin: notTty, ...quiet }), 0);
+    assert.deepEqual(calls.find((k) => k.args.at(-2) === 'up' && k.args.at(-1) === '-d').args, ['compose', ...FILES, '-f', 'compose.override.yml', 'up', '-d']);
+    // The posture names the project compose really uses.
+    const s = io();
+    await cmdContainer(['status', '--json'], { ...s, exec: fakeDocker({ 'ps -a --format json': { stdout: '' } }).exec, dir, env: { COMPOSE_PROJECT_NAME: 'acme-box' }, ...quiet });
+    assert.equal(JSON.parse(s.lines.at(-1)).project, 'acme-box');
+    const { hardenedProjectName } = await import('../src/cli/container-hardened.mjs');
+    assert.equal(hardenedProjectName({ dir, env: {} }), 'worca-hardened');
+    writeFileSync(join(dir, '.env'), `${readFileSync(join(dir, '.env'), 'utf8')}\nCOMPOSE_PROJECT_NAME=acme-env\n`);
+    assert.equal(hardenedProjectName({ dir, env: {} }), 'acme-env');
+    assert.equal(hardenedProjectName({ dir, env: { COMPOSE_PROJECT_NAME: 'acme-shell' } }), 'acme-shell');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 // ── Posture ──────────────────────────────────────────────────────────────────────────────────────
 
 const running = { Running: true };

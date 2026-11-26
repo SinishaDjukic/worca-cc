@@ -16,7 +16,9 @@ import { agentMayBeCaller, badRequest, isPlainObject } from '../../server.mjs';
 export function register(app) {
 
 function sendMcpError(res, err) {
-  if (err instanceof McpStoreError) return res.status(err.status).json({ error: err.message });
+  if (err instanceof McpStoreError) return res.status(err.status).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+  // An fs failure (it has a syscall) names a path in its message: answer its code only.
+  if (typeof err?.syscall === 'string') return res.status(500).json({ error: `the MCP data could not be read or saved (${err.code || 'error'})` });
   res.status(500).json({ error: err?.message || String(err) });
 }
 function mcpSetId(req, res) {

@@ -61,6 +61,10 @@ Notes:
   to an NTLM proxy, so treat the file like a password.
 - A model key in the broker can still be spent. A rogue agent can spend credits within the broker's budgets and
   limits. It never gets the key.
+- The [secret vault](secrets.md#with-the-other-setups) (the `secretVault` flag, experimental) encrypts saved keys at
+  rest where Worca runs natively: Native, Local sandbox (Docker) and E2B sandbox. It is not a sandbox. An agent that
+  runs as your OS user can reach the key store, held back only by guardrail rules. In a container it does nothing:
+  the Hardened box and a Shared instance say "Not available in a container".
 
 ## How the network is limited
 
@@ -117,7 +121,9 @@ These hold in every setup:
 More, by setup:
 
 - **Shared instance:** every signed-in person is an administrator, and teammates see each other's runs, chats and
-  settings. More than 16 people share agent users. On Railway the network limit is weak.
+  settings. More than 16 people share agent users. On Railway the network limit is weak. The Compose profile needs
+  a Linux Docker host: Docker Desktop does not enforce the owner of a secret file, so Worca refuses to start there
+  with secret files (see [Shared instance](shared-instance.md)).
 - **Hardened box:** single user. Do not publish its port on a network. It has not been checked on Docker Desktop's
   port proxy.
 - **E2B sandbox:** single git projects, Claude, Codex, Copilot and Cursor only. Workspace runs stay local. E2B
@@ -133,8 +139,9 @@ More on the broker: [Credential broker → Limits and accepted risks](credential
 
 - The proxy login in the egress sidecar was tested against a simulated NTLM proxy, not a real corporate one. A check
   against a real corporate proxy follows before a release.
-- The Shared instance's compose files were checked with `docker compose config`. They have not been started together
-  on a real server.
+- The Shared instance's compose files were started together on Docker Desktop for Mac. There an agent user could
+  read the secret files, so Worca now refuses to start on that host. They have not been started on a real Linux
+  server.
 - The Hardened box has not been checked on Docker Desktop for Mac or Windows.
 - The Local sandbox (Docker) has not yet run against a real Docker daemon. Its tests use a stand-in for the docker
   CLI.

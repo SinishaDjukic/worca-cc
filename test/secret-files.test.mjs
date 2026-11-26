@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPairSync } from 'node:crypto';
 
-import { secretFileProblem, secretFileRefusals, recordSecretFile, recordedSecretFile, _resetSecretFiles, BOX_SECRET_FILES } from '../src/core/secret-files.mjs';
+import { secretFileProblem, secretFileRefusals, recordSecretFile, recordedSecretFile, _resetSecretFiles, BOX_SECRET_FILES, sudoAccessProbe, mountFsType } from '../src/core/secret-files.mjs';
 import { sealEgressSecret, _resetSealedEgressSecret, sidecarApiConfig } from '../src/core/egress-sidecar-client.mjs';
 import { sealGithubAppKey, _resetSealedGithubAppKey, loadAppConfig } from '../src/core/github-app.mjs';
 
@@ -81,4 +81,52 @@ test('the GitHub App key file: read once at boot, then used from memory; refused
   assert.throws(() => loadAppConfig({ WORCA_GH_APP_ID: '1', WORCA_GH_APP_KEY_FILE: join(dir, 'other.pem') }), /cannot read WORCA_GH_APP_KEY_FILE/, 'another path is its own file');
   delete process.env.WORCA_AGENT_USER;
   assert.deepEqual(secretFileRefusals(), [], 'no agent users: nothing to refuse');
+});
+
+// #1641: Docker Desktop's fakeowner mount makes `stat` lie (every user sees itself as the owner of a 0600 file), so the
+// check reads each file as the agent user when it can, and falls back to mode, owner and the mount type when it cannot.
+test('secretFileRefusals: a 0600 file the agent user can still read is refused, naming the file and the way out', () => {
+  recordSecretFile('WORCA_BROKER_SECRET_FILE', '/run/secrets/worca_broker_secret', { stat: () => ({ mode: 0o100600, uid: 1000 }) });
+  recordSecretFile('WORCA_EGRESS_SECRET_FILE', '/run/secrets/worca_egress_secret', { stat: () => ({ mode: 0o100600, uid: 1000 }) });
+  const asked = [];
+  const probe = (user) => { asked.push(user); return (path) => path.endsWith('broker_secret'); };
+  const r = secretFileRefusals({ env: AGENTS, uid: 1000, probe, fsType: () => 'fakeowner', log: () => {} });
+  assert.deepEqual(asked, ['worca-agent'], 'one probe, as the agent user');
+  assert.equal(r.length, 1);
+  assert.match(r[0], /^WORCA_BROKER_SECRET_FILE: the agent user worca-agent could read \/run\/secrets\/worca_broker_secret, although its mode and owner say it cannot\./);
+  assert.match(r[0], /This mount does not enforce file ownership \(it is on Docker Desktop's fakeowner file system/);
+  assert.match(r[0], /Run the shared profile on a Linux Docker host, or supply the secret as the WORCA_BROKER_SECRET value instead of a file/);
+  assert.deepEqual(secretFileRefusals({ env: AGENTS, uid: 1000, probe: () => () => false, fsType: () => 'ext4', log: () => {} }), [], 'the read fails: boots');
+  assert.deepEqual(secretFileRefusals({ env: {}, uid: 1000, probe: () => () => true }), [], 'no agent users: no probe, nothing to refuse');
+});
+
+test('secretFileRefusals: no agent user to impersonate logs one line, checks mode and owner, and still refuses a fakeowner mount', () => {
+  recordSecretFile('WORCA_EGRESS_SECRET_FILE', '/run/secrets/e', { stat: () => ({ mode: 0o100600, uid: 1000 }) });
+  recordSecretFile('WORCA_GH_APP_KEY_FILE', '/run/secrets/k', { stat: () => ({ mode: 0o100600, uid: 1000 }) });
+  const lines = [];
+  const log = (l) => lines.push(l);
+  assert.deepEqual(secretFileRefusals({ env: AGENTS, uid: 1000, probe: () => null, fsType: () => 'ext4', log }), []);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /cannot start a command as worca-agent to check the secret files, so only their mode and owner were checked/);
+  const r = secretFileRefusals({ env: AGENTS, uid: 1000, probe: () => null, fsType: (p) => (p === '/run/secrets/k' ? 'fakeowner' : 'ext4'), log });
+  assert.equal(lines.length, 1, 'logged once per process');
+  assert.equal(r.length, 1);
+  assert.match(r[0], /^WORCA_GH_APP_KEY_FILE: \/run\/secrets\/k is on a fakeowner mount, and Worca could not check it as an agent user\. .*WORCA_GH_APP_KEY_B64/);
+});
+
+test('sudoAccessProbe and mountFsType: sudo -n as the agent user, and the longest mount point that holds the file', () => {
+  const calls = [];
+  const spawn = (cmd, args) => { calls.push([cmd, ...args].join(' ')); return { status: args.includes('true') || args.at(-1) === '/run/secrets/open' ? 0 : 1 }; };
+  const read = sudoAccessProbe('worca-agent', { spawn });
+  assert.equal(read('/run/secrets/open'), true);
+  assert.equal(read('/run/secrets/closed'), false);
+  assert.deepEqual(calls, ['sudo -n -u worca-agent -- true', 'sudo -n -u worca-agent -- cat -- /run/secrets/open', 'sudo -n -u worca-agent -- cat -- /run/secrets/closed']);
+  assert.equal(sudoAccessProbe('worca-agent', { spawn: () => ({ status: 1 }) }), null, 'sudo refused: no probe');
+  assert.equal(sudoAccessProbe('worca-agent', { spawn: () => ({ error: new Error('ENOENT') }) }), null, 'no sudo: no probe');
+  const mounts = 'overlay / overlay rw 0 0\ntmpfs /run tmpfs rw 0 0\nfakeowner /run/secrets/worca_broker_secret fakeowner ro 0 0\n/dev/x /data\\040dir ext4 rw 0 0\n';
+  assert.equal(mountFsType('/run/secrets/worca_broker_secret', { readMounts: () => mounts }), 'fakeowner');
+  assert.equal(mountFsType('/run/other', { readMounts: () => mounts }), 'tmpfs');
+  assert.equal(mountFsType('/data dir/x', { readMounts: () => mounts }), 'ext4');
+  assert.equal(mountFsType('/etc/x', { readMounts: () => mounts }), 'overlay');
+  assert.equal(mountFsType('/x', { readMounts: () => { throw new Error('ENOENT'); } }), null);
 });

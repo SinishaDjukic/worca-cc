@@ -7,9 +7,12 @@ import { makeSwitch } from './switch.mjs';
 export { PORT_EMPTY_NOTE, PORT_SWITCH_NOTE, FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
 import { PORT_EMPTY_NOTE, PORT_SWITCH_NOTE, FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
 import { UPSTREAM_TIMEOUTS } from '../../src/shared/proxy-timeouts.mjs';
+import { addVaultNote } from './settings/secret-vault-note.mjs';
 export const TESTING_TEXT = 'Testing…';
 /** In a container the login lives in the egress sidecar (docs/network-proxy.md, "Worca in a container"). */
 export const SIDECAR_NOTE = 'The egress sidecar holds the login: Worca sends it there and keeps no copy in its own container.';
+/** Natively, with the secret vault holding the saved login (docs/secrets.md). */
+export const VAULT_LOGIN_NOTE = 'The secret vault holds the login: its NT hash is encrypted, with the key in the OS key store.';
 /** The login choices; exported for the setup assistant's Login select (fit-1-2). */
 export const AUTH_OPTIONS = [['auto', 'NTLMv2 (recommended)'], ['basic', 'Basic (password in cleartext)'], ['digest', 'Digest (password from HTTPS_PROXY)'], ['none', 'No login']];
 /** Login modes that need the password itself, so Log in (a saved NT hash) is off, with this hint (D16). */
@@ -92,6 +95,7 @@ function build(doc, body) {
   const domain = input(doc, 'text', { placeholder: 'ACME', autocomplete: 'off', spellcheck: 'false' });
   const user = input(doc, 'text', { placeholder: 'jdoe', autocomplete: 'username', spellcheck: 'false' });
   const password = input(doc, 'password', { autocomplete: 'new-password' });
+  addVaultNote(password);   // natively, with the vault on: the login's NT hash goes into it (in a box: the sidecar, no note)
   const { row: enabledRow, input: enabled } = makeSwitch(doc, { label: 'Use a corporate proxy', rowClass: 'np-switch' });
   enabled.id = 'npEnabled';
   const portNote = make(doc, 'small', 'hint', '');
@@ -172,8 +176,9 @@ export function sidecarMode(f, st) {
   for (const b of [f.login, f.logout, f.save, f.detect]) b.hidden = managed;
   for (const i of [f.enabled, f.host, f.port, f.auth, f.noProxy, f.connectS, f.authS, f.idleS]) i.disabled = managed;
   if (f.where) {
-    f.where.hidden = !side;
-    f.where.textContent = managed ? (st.managedNote || '') : side ? SIDECAR_NOTE : '';
+    const vault = !side && !!(st && st.loginInVault);   // natively only: in a container the sidecar holds it
+    f.where.hidden = !side && !vault;
+    f.where.textContent = managed ? (st.managedNote || '') : side ? SIDECAR_NOTE : vault ? VAULT_LOGIN_NOTE : '';
   }
   unreachableMode(f, st);
 }
