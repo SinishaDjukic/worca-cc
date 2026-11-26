@@ -722,7 +722,7 @@ test('#1067 E4: the time-limit watchdog never holds the process open — a spawn
 test('E4: an agent node that runs past its wall-clock or goes silent past its idle limit stops with a time_limit error', async () => {
   const { nodeTimeLimits } = await import('../src/core/graph/executor.mjs');
   // Defaults: generous enough for normal nodes; per node, then per workflow, override them.
-  assert.deepEqual(nodeTimeLimits({ node: { config: {} } }), { wallMs: 90 * 60000, idleMs: 20 * 60000 });
+  assert.deepEqual(nodeTimeLimits({ node: { config: {} } }), { wallMs: 90 * 60000, idleMs: 300 * 60000 });
   assert.deepEqual(nodeTimeLimits({ node: { config: { timeLimitMinutes: 5 } }, template: { limits: { idleLimitMinutes: 2, timeLimitMinutes: 9 } } }),
     { wallMs: 5 * 60000, idleMs: 2 * 60000 });
   // A hung agent is a live child: its pipes keep the process up (the unref'd watchdog does not), modelled by an interval.
