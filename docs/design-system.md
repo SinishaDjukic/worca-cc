@@ -230,6 +230,18 @@ dot through `markDot` (`ui/public/status-dot.mjs`). This table lists every `.sta
 | grey ring | `.status-dot.is-grey-ring` | waiting; a Shaper run that waits for runs, cannot start, or is free without the turn |
 | ink ring | `.status-dot.is-ink-ring` | the Shaper run with the next turn (`next`) |
 | dashed ring | `.status-dot.is-dashed-ring` | a Shaper stop answer held for its turn (`after run 3`), 12px, `--ink-3`, no glyph |
+### Run row link marks (checked)
+A Shaper small-runs run row on the Chat card and the feature page's Runs tab shows its links when you point at it
+(hover or keyboard focus): a 3px ink bar left of each row it builds on, and a dashed one left of each row that builds on
+it. Click, Enter or Space keeps the marks; Esc lets go. The bar is a `::before` out of the layout, so nothing moves and
+nothing dims; a hovered row that is not kept takes the `--row-open` fill. `ui/public/run-links.mjs` sets the attributes, and `test/ui-design-language.test.mjs` fails when the CSS
+has a `[data-link…]` attribute without a row here.
+
+| Mark | Attribute | Means |
+|---|---|---|
+| solid bar | `data-link="on"` | the pointed run builds on this run (done runs included) |
+| dashed bar | `data-link="by"` | this run builds on the pointed run |
+| kept row | `data-link-kept` | the kept run, with `aria-current="true"` and the `--row-selected` fill |
 ### Usage rings
 The avatar draws only the session and long-window rings (`ui/public/usage-view.mjs`), each in one tone (`--ink-2`,
 `--amber` at the warning line, `--red` full at the limit); spend is never a ring there, it lives in the account menu's

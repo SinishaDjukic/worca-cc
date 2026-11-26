@@ -241,7 +241,7 @@ export function memberStatusText(m) {
  *  over the row. `checks` (the chat card's feature) maps a member's key to its Requirements check: that row gets the
  *  check's fold under its status line. `oneLine` (Shaper's one card): the status sits right of the title on the same
  *  line, as a short state (`.run-member-state`), with no second line under the title. */
-export function renderMemberRows(doc, row, { checks, oneLine = false, shortState = null, status = null } = {}) {
+export function renderMemberRows(doc, row, { checks, oneLine = false, shortState = null, status = null, buildsOn = null } = {}) {
   const ol = doc.createElement('ol');
   ol.className = oneLine ? 'run-members is-table is-one-line' : 'run-members is-table';
   const items = [...(row.planning && row.planning.model ? [{ ...row.planning, isPlanning: true }] : []), ...(row.members || [])];
@@ -266,6 +266,9 @@ export function renderMemberRows(doc, row, { checks, oneLine = false, shortState
     const shown = typeof said === 'string' ? said : memberStatusText(m);
     paintStatusDot(dot, mark ? markDot(m, mark, shown) : m);
     if (mark) li.dataset.mark = mark;
+    // Shaper small runs s8 (D3): with `status`, a numbered row whose `buildsOn(mb)` is a list is a link row (run-links.mjs).
+    const links = typeof status === 'function' && !unnumbered && typeof buildsOn === 'function' ? buildsOn(mb) : null;
+    if (Array.isArray(links)) { li.dataset.run = String(mb.position); li.dataset.buildsOn = links.join(' '); li.tabIndex = 0; }
     const line = textEl(doc, 'span', oneLine ? 'run-member-state' : 'run-member-line', shown);
     const pr = textEl(doc, 'span', 'run-member-pr', '');
     if (mb.adhoc) pr.append(textEl(doc, 'span', 'runs-indep', 'Independent'));

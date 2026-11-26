@@ -729,6 +729,11 @@ marks (`markDot` in `ui/public/status-dot.mjs`).
 The `waiting for you` word reads in amber ink and `failed` in red ink; every other word keeps the row's grey.
 A done run's page keeps its ship line (Ready to ship, Merged) instead of `done`.
 
+Point at a run row on the Chat card or the feature page's Runs tab (hover, or keyboard focus) to see its links: a solid
+bar left of each run it builds on, done runs included, and a dashed bar left of each run that builds on it. A click on
+the row, or Enter or Space, keeps the marks after you move away; Esc lets go, wherever the focus is. The title still
+opens the run. Nothing dims and no row moves.
+
 ### Open stops on the card
 
 With the flag on, the Chat card of an active marked feature lists every open stop and every failed run, one line each,

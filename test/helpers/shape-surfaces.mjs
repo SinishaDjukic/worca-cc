@@ -107,13 +107,15 @@ const CARD_MEMBER = (sl) => (sl.state === 'done' ? { status: 'done', endReached:
   : ['planned', 'held', 'canceled'].includes(sl.state) ? { ticket: { status: 'scheduled' } }
     : sl.state === 'error' ? { status: 'error' } : { status: 'running' });
 
-/** The Chat card's run rows (createRunCardController), the marked feature card with the flag on. */
-export function cardStatus(doc, slices, snaps) {
-  applyFlags({ shaperSmallRuns: true }, doc);
+/** The Chat card (createRunCardController) over featureView's slices, left live in `doc.body`: `flag` is the browser's
+ *  shaperSmallRuns, `marked` the card's smallRuns marker. `update()` repaints it from the same snapshot, `destroy()` is
+ *  the card's own teardown, `dispose()` also removes it. */
+export function cardHost(doc, slices, snaps, { flag = true, marked = true } = {}) {
+  applyFlags({ shaperSmallRuns: flag }, doc);
   const members = slices.map(CARD_MEMBER);
   const feature = { id: 'feat-1', title: 'Charts', status: 'active', total: slices.length, done: slices.filter((s) => s.state === 'done').length,
     halted: null, slices, ask: null, log: [], originPipelineId: 'p0', ship: { ready: false, mode: null } };
-  const cardJson = { pipelineId: 'p0', feature, log: [], smallRuns: true };
+  const cardJson = { pipelineId: 'p0', feature, log: [], ...(marked ? { smallRuns: true } : {}) };
   const rest = { source: 'rest', terminal: true, status: 'done', pipelineId: 'p0' };
   const runStore = { subscribe: () => () => {}, byPipeline: (pid) => (pid === 'p0' ? rest : snaps.get(pid) || null), get: () => null };
   const gm = groupModel({ kind: 'feature', title: 'Charts', planning: { status: 'done', endReached: true }, members }, { now: NOW });
@@ -123,11 +125,18 @@ export function cardStatus(doc, slices, snaps) {
       pipelineId: slices[i].pipelineId, ticketId: slices[i].ticketId, run: members[i] })) };
   const controls = { paintQuestion: () => null, releaseQuestion() {}, groupOf: () => listRow, memoFor: () => ({}) };
   const ctl = createRunCardController({ controls, runStore, tickMs: 0 });
-  const built = ctl.build({ id: 'card_s5', card: { type: PROGRESS_CARD_TYPE, pipelineId: 'p0', runId: 'run-p0', title: 'Charts' } },
-    { doc, win: doc.defaultView, shaperCard: () => cardJson });
+  const block = { id: 'card_s5', card: { type: PROGRESS_CARD_TYPE, pipelineId: 'p0', runId: 'run-p0', title: 'Charts' } };
+  const built = ctl.build(block, { doc, win: doc.defaultView, shaperCard: () => cardJson });
   doc.body.appendChild(built.el);
-  const out = rowsRead([...built.el.querySelectorAll('.run-member:not([data-key="planning"])')]);
-  built.dispose(); ctl.destroy(); built.el.remove();
+  return { root: built.el, update: () => built.handle.blockChanged(block), destroy: () => built.dispose(),
+    dispose() { built.dispose(); ctl.destroy(); built.el.remove(); } };
+}
+
+/** The Chat card's run rows, the marked feature card with the flag on. */
+export function cardStatus(doc, slices, snaps) {
+  const host = cardHost(doc, slices, snaps);
+  const out = rowsRead([...host.root.querySelectorAll('.run-member:not([data-key="planning"])')]);
+  host.dispose();
   return out;
 }
 
@@ -140,16 +149,32 @@ function rowsRead(items) {
   }));
 }
 
-/** The feature page's Runs tab (paintGroupPage), with the status app.js passes it: memberStatusOf(members). */
-export function pageStatus(doc, members) {
+/** The feature page (buildGroupPage, paintGroupPage) on its Runs tab, left live in `doc.body`. As app.js does, the
+ *  status (memberStatusOf(members)) is passed only for a marked feature with the flag on. `repaint({groupId, rename})`
+ *  paints it again, with another feature's id or with run titles changed (rename: {run: title}). */
+export function pageHost(doc, members, { flag = true, marked = true } = {}) {
+  applyFlags({ shaperSmallRuns: flag }, doc);
   const model = groupModel({ kind: 'feature', title: 'Charts', members: members.map((m) => m.run) }, { now: NOW });
-  const listRow = { kind: 'chain', groupKind: 'feature', groupId: 'feat_1', title: 'Charts', model, costUsd: 0, planning: null,
-    members: members.map((m) => ({ ...m, cost: 0 })) };
   const root = buildGroupPage(doc);
-  paintGroupPage(root, { row: listRow, project: 'acme', tab: 'runs', overview: true, requirements: true,
-    status: runStatusModule.memberStatusOf(listRow.members) },
-  { onAction: () => {}, onTab: () => {}, mountQuestion: () => {}, mountOverview: () => {}, mountDecisions: () => {}, logsHref: (mb) => `${mb.href}/details/logs` });
-  return rowsRead([...root.querySelectorAll('.gpage-runs .run-member:not([data-key="planning"])')]);
+  const repaint = ({ groupId = 'feat_1', rename = {} } = {}) => {
+    const listRow = { kind: 'chain', groupKind: 'feature', groupId, title: 'Charts', model, costUsd: 0, planning: null,
+      members: members.map((m) => ({ ...m, ...(rename[m.position] ? { title: rename[m.position] } : {}), cost: 0 })) };
+    paintGroupPage(root, { row: listRow, project: 'acme', tab: 'runs', overview: true, requirements: flag && marked,
+      ...(flag && marked ? { status: runStatusModule.memberStatusOf(listRow.members) } : {}) },
+    { onAction: () => {}, onTab: () => {}, mountQuestion: () => {}, mountOverview: () => {}, mountDecisions: () => {}, mountRequirements: () => null,
+      logsHref: (mb) => `${mb.href}/details/logs` });
+  };
+  repaint();
+  doc.body.appendChild(root);
+  return { root, repaint, dispose: () => root.remove() };
+}
+
+/** The feature page's Runs tab rows. */
+export function pageStatus(doc, members) {
+  const host = pageHost(doc, members);
+  const out = rowsRead([...host.root.querySelectorAll('.gpage-runs .run-member:not([data-key="planning"])')]);
+  host.dispose();
+  return out;
 }
 
 /** The Runs list's member rows, the group open (buildRunsModel, renderRunsList). */

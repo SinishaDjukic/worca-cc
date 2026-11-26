@@ -1046,3 +1046,83 @@ test('one-line rows: the dashed ring lines up like the 12px symbol dots on the C
   assert.match(shape, /\.chat-rc-members \.run-members\.is-one-line > \.run-member > \.status-dot\.is-dashed-ring[^{]*\{margin-top:4px;\}/);
   assert.match(shape, /div\.gpage-runs \.run-members\.is-one-line > \.run-member > \.status-dot\.is-dashed-ring[^{]*\{margin-top:4px;\}/);
 });
+
+// ---- Shaper small runs s8 (R-ux-2): the run row link marks: the guide, the bar, the kept row and the focus ring ----
+const LINK_HOSTS = ['.chat-rc-members', 'div.gpage-runs'];
+/** Every single selector of the served CSS that names `host`, with its rule. */
+const linkSelectors = (host) => ALL.flatMap((r) => splitTop(r.sel).filter((s) => s.includes(host)).map((s) => ({ s, r })));
+/** One host's bar rules: the ::before of a link row, matched by `match`. */
+const barRules = (host, match = /\.run-member\[data-(?:run|link)[^\]]*\][^\s]*::before$/) => linkSelectors(host).filter(({ s }) => match.test(s));
+const bodies = (list) => list.map(({ r }) => r.body).join(';');
+const has = (body, prop, value) => decls(body, prop).some(([, v]) => value.test(v));
+
+test('s8: the guide\'s "Run row link marks (checked)" table lists exactly the [data-link…] attributes of the served CSS', () => {
+  const inCss = [...new Set([...css.matchAll(/\[(data-link(?:-kept)?(?:="[a-z]+")?)\]/g)].map((m) => m[1]))]
+    .filter((a) => a !== 'data-link').sort();   // a bare [data-link] is "any mark", not one of them
+  assert.deepEqual(inCss, ['data-link-kept', 'data-link="by"', 'data-link="on"']);
+  const guide = readFileSync(join(ROOT, 'docs/design-system.md'), 'utf8');
+  const at = guide.indexOf('### Run row link marks (checked)');
+  assert.ok(at >= 0, 'the guide heading is "### Run row link marks (checked)"');
+  const section = guide.slice(at).split(/\n### /)[0];
+  assert.match(section, /\|\s*Mark\s*\|\s*Attribute\s*\|\s*Means\s*\|/, 'the table header is | Mark | Attribute | Means |');
+  assert.deepEqual([...section.matchAll(/^\|[^|\n]*\|\s*`(data-link[^`]*)`[^|\n]*\|/gm)].map((m) => m[1]).sort(), inCss);
+});
+
+test('s8 bar: a 3px ink ::before left of the row, out of the layout, under both hosts', () => {
+  for (const host of LINK_HOSTS) {
+    const body = bodies(barRules(host));
+    assert.ok(body, `${host}: the bar rule exists`);
+    for (const [prop, value] of [['position', /^absolute$/], ['pointer-events', /^none$/], ['width', /^3px$/], ['color', /^var\(--ink\)$/],
+      ['left', /^-8px$/], ['top', /^8px$/], ['bottom', /^8px$/], ['opacity', /^0$/]]) assert.ok(has(body, prop, value), `${host}: ${prop} ${value}`);
+    assert.doesNotMatch(body, /gradient\(|border-left|(?:^|;)\s*(?:transition|animation)[a-z-]*\s*:/i, `${host}: no gradient, left border or motion`);
+    assert.doesNotMatch(body.replace(/url\("[^"]*"\)/g, ''), /#[0-9a-f]{3,8}\b|rgba?\(/i, `${host}: no colour literal outside the mask`);
+  }
+});
+
+test('s8 bar: data-link="on" is solid and data-link="by" is dashed through a mask, both shown', () => {
+  for (const host of LINK_HOSTS) {
+    const on = bodies(barRules(host, /\[data-link="on"\][^\s]*::before$/));
+    const by = bodies(barRules(host, /\[data-link="by"\][^\s]*::before$/));
+    const any = bodies(barRules(host));
+    assert.ok(on, `${host}: the solid rule`);
+    assert.ok(by, `${host}: the dashed rule`);
+    assert.ok(has(any, 'background(?:-color)?', /^currentColor$/i), `${host}: painted in currentColor`);
+    assert.ok(barRules(host, /\[data-link(?:="on")?\][^\s]*::before$/).some(({ r }) => has(r.body, 'opacity', /^1$/)), `${host}: solid shown`);
+    assert.ok(barRules(host, /\[data-link(?:="by")?\][^\s]*::before$/).some(({ r }) => has(r.body, 'opacity', /^1$/)), `${host}: dashed shown`);
+    assert.match(by, /(?:^|;)\s*(?:-webkit-)?mask(?:-image)?\s*:\s*url\(\s*["']?data:image\/svg\+xml/, `${host}: dashed by an SVG mask`);
+    assert.doesNotMatch(on, /mask/, `${host}: the solid bar has no mask`);
+  }
+});
+
+test('s8: a marked or kept row sets no layout property and nothing dims; the kept row takes --row-selected', () => {
+  const LAYOUT = /(?:^|;)\s*(?:padding|margin|border(?!-radius)|(?:min-|max-)?(?:height|width)|font|line-height|opacity|transition|animation)(?:-[a-z-]+)?\s*:/;
+  for (const host of LINK_HOSTS) {
+    const rows = linkSelectors(host).filter(({ s }) => !s.includes('::') && /\[data-link/.test(s.split(/\s*>\s*|\s+/).at(-1)));
+    const keptRows = rows.filter(({ s }) => s.includes('[data-link-kept]'));
+    assert.ok(keptRows.some(({ r }) => has(r.body, 'background(?:-color)?', /^var\(--row-selected\)$/)), `${host}: the kept row's fill`);
+    for (const { s, r } of rows) assert.doesNotMatch(r.body, LAYOUT, s);
+  }
+});
+
+test('s8: a link row has the inset ink focus ring and the default cursor under both hosts', () => {
+  for (const host of LINK_HOSTS) {
+    const ring = bodies(linkSelectors(host).filter(({ s }) => /\.run-member\[data-run\]:focus-visible$/.test(s)));
+    assert.ok(has(ring, 'outline', /^2px solid var\(--ink\)$/), `${host}: outline`);
+    assert.ok(has(ring, 'outline-offset', /^-2px$/), `${host}: inset`);
+    const row = bodies(linkSelectors(host).filter(({ s }) => /\.run-member\[data-run\]$/.test(s)));
+    assert.ok(has(row, 'cursor', /^default$/), `${host}: cursor`);
+  }
+});
+
+test('s8: on a link row the title overlay is off, and the underline and chevron answer the title\'s own hover or focus', () => {
+  const TITLE_ON = /\.run-member-title(?::is\(:hover,\s*:focus-visible\)|:hover|:focus-visible)/;
+  for (const host of LINK_HOSTS) {
+    const link = linkSelectors(host).filter(({ s }) => s.includes('[data-run]'));
+    assert.ok(link.some(({ s, r }) => /\.run-member-title::after$/.test(s) && has(r.body, 'content', /^none$/)), `${host}: no stretched overlay`);
+    assert.ok(link.some(({ s, r }) => TITLE_ON.test(s) && /\.run-member-title(?::is\([^)]*\)|:[a-z-]+)+$/.test(s) && has(r.body, 'text-decoration(?:-line)?', /^underline$/)),
+      `${host}: the title underlines on its own hover or focus`);
+    assert.ok(link.some(({ s, r }) => TITLE_ON.test(s) && /\.run-member-go$/.test(s) && has(r.body, 'opacity', /^1$/)),
+      `${host}: the chevron shows on the title's hover or focus`);
+  }
+});
+

@@ -31,6 +31,12 @@
 // and 2x, in four worlds: busy (run 6 reviewing), next (busy, run 6 not started), two (slice 1's M5b: runs 8 and 10 build)
 // and acts (only run 2's stop, Ask before each run on). It checks each exact line, the chip text once per surface, no chip
 // in two, the chip height and the card detail's line count. SURFACE=line runs only this surface.
+// Slice 8 adds the `links` surface: in the base world, per theme at 1280px and 2x, on the Chat card and the feature page,
+// real CDP input points at run 12 (mouseMoved to its dot), keeps it (focus, then Enter), moves off the list with focus
+// on the body, and lets go (Escape). It checks solid [1, 7, 10] and dashed [16] while pointed and kept, no mark after
+// Escape, a 3px bar shown on the marked rows, and that every row and the element after the list keep their rects in
+// every phase (`results.links`, samePositions). Shots: `links-base-{card|page}-{theme}.png` and
+// `links-kept-base-{card|page}-{theme}.png`. SURFACE=links runs only this surface.
 // NOT part of `npm test`: it needs Chrome. A hard 20-minute cap inside.
 // Run: H=$(mktemp -d); env -u FORCE_COLOR HOME=$H VERIFY_PORT=4943 SHOTS_DIR=… node --disable-warning=ExperimentalWarning tools/verify-run-status-rows-cdp.mjs
 import { spawn, execFileSync } from 'node:child_process';
@@ -46,7 +52,7 @@ const CHROME = process.env.CHROME_BIN || CHROME_PATHS.find((p) => existsSync(p))
 const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0 ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
 if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
 const THEMES = ['light', 'dark'];
-const WORLDS = ['base', 'busy', 'held', 'change', 'failed'].filter((w) => (!process.env.WORLD || w === process.env.WORLD) && process.env.SURFACE !== 'stops' && process.env.SURFACE !== 'line');   // WORLD=held runs one world
+const WORLDS = ['base', 'busy', 'held', 'change', 'failed'].filter((w) => (!process.env.WORLD || w === process.env.WORLD) && process.env.SURFACE !== 'stops' && process.env.SURFACE !== 'line' && process.env.SURFACE !== 'links');   // WORLD=held runs one world
 const WIDE = 1280;
 const NARROW = 375;
 const SIDE_NARROW = 360;   // s5: the Runs list's narrow shot
@@ -675,6 +681,74 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'lin
         }
         await shotUnion(sf.root, [sf.head, sf.status], `line-${name}-${surface}-${theme}.png`);
       }
+    }
+  }
+}
+
+// ---- s8 links: pointing at run 12, keeping it with Enter, letting go with Escape; nothing moves.
+/** Rects of every run row and of the element after the list, rounded to 0.01px, plus the marks and the kept row. */
+const LINKS_READ = (rootSel) => `(() => {
+  const host = [...document.querySelectorAll(${JSON.stringify(rootSel)})].find((r) => r.offsetParent);
+  if (!host) return null;
+  const r2 = (v) => Math.round(v * 100) / 100;
+  const rect = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { x: r2(b.left), y: r2(b.top), w: r2(b.width), h: r2(b.height) }; };
+  const num = (li) => Number(li.querySelector('.run-member-num')?.textContent || 0);
+  const rows = [...host.querySelectorAll('.run-member')].map((li) => ({ run: num(li), ...rect(li) }));
+  const marked = (sel) => [...host.querySelectorAll(sel)].map(num).sort((a, b) => a - b);
+  const bars = [...host.querySelectorAll('.run-member[data-link]')].map((li) => { const cs = getComputedStyle(li, '::before'); return { run: num(li), width: cs.width, opacity: cs.opacity }; });
+  return { rows, after: rect(host.nextElementSibling), solid: marked('[data-link="on"]'), dashed: marked('[data-link="by"]'), kept: marked('[data-link-kept]'),
+    current: marked('.run-member[aria-current="true"]'), bars, bodyFocused: document.activeElement === document.body };
+})()`;
+const pressKey = (keyName, code, vk, text) => [['keyDown', text], ['keyUp', undefined]].reduce((p, [type, t]) => p.then(() => cdp('Input.dispatchKeyEvent',
+  { type, key: keyName, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, ...(t ? { text: t } : {}) })), Promise.resolve());
+const posOf = (m) => JSON.stringify({ rows: m.rows, after: m.after });
+if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'links') {
+  const routes = seed('base');
+  results.links = [];
+  for (const theme of THEMES) {
+    await metrics(WIDE);
+    for (const surface of ['card', 'page']) {
+      const sel = SURFACES[surface];
+      const where = `links base ${surface}, ${theme}, ${WIDE}px`;
+      await go(routes[surface], theme);
+      if (!await waitFor(`(() => [...document.querySelectorAll(${JSON.stringify(`${sel} .run-member[data-run]`)})].filter((li) => li.offsetParent).length === 16)()`, `${where}: 16 link rows`)) continue;
+      await skipWelcome(); await sleep(500);
+      await ev("document.querySelector('.toast[data-key=\"role-defaults\"] .toast-x')?.click();0");
+      await ev(`(() => { const li = [...document.querySelectorAll(${JSON.stringify(`${sel} .run-member[data-run="12"]`)})].find((x) => x.offsetParent); li.scrollIntoView({ block: 'center' }); return 0; })()`);
+      await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 });
+      await sleep(300);
+      const before = await ev(LINKS_READ(sel));
+      // 1. point: the mouse on run 12's dot
+      const dot = await ev(`(() => { const d = [...document.querySelectorAll(${JSON.stringify(`${sel} .run-member[data-run="12"] .status-dot`)})].find((x) => x.offsetParent);
+        const b = d.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+      await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: dot.x, y: dot.y });
+      await sleep(300);
+      const pointed = await ev(LINKS_READ(sel));
+      await shotOf(surface === 'card' ? '.chat-rc' : sel, `links-base-${surface}-${theme}.png`, 'center');
+      // 2. keep: focus run 12, Enter, then the mouse off the list and the focus on the body
+      await ev(`(() => { [...document.querySelectorAll(${JSON.stringify(`${sel} .run-member[data-run="12"]`)})].find((x) => x.offsetParent).focus({ preventScroll: true }); return 0; })()`);
+      await pressKey('Enter', 'Enter', 13, '\r');
+      await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 });
+      await ev('(() => { document.activeElement?.blur(); document.body.focus(); return 0; })()');
+      await sleep(300);
+      const kept = await ev(LINKS_READ(sel));
+      check(await ev('document.activeElement === document.body'), `${where}: the focus is on the body before the kept shot`);
+      await shotOf(surface === 'card' ? '.chat-rc' : sel, `links-kept-base-${surface}-${theme}.png`, 'center');
+      // 3. let go: Escape with the focus still on the body
+      await pressKey('Escape', 'Escape', 27);
+      await sleep(300);
+      const released = await ev(LINKS_READ(sel));
+      const phases = { before, pointed, kept, released };
+      const samePositions = [pointed, kept, released].every((m) => !!m && posOf(m) === posOf(before));
+      const solid = pointed && pointed.solid; const dashed = pointed && pointed.dashed;
+      results.links.push({ surface, theme, phases, solid, dashed, samePositions });
+      const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      check(eq(pointed.solid, [1, 7, 10]) && eq(pointed.dashed, [16]) && pointed.kept.length === 0, `${where}: pointed at 12, solid [1, 7, 10] and dashed [16], nothing kept (${JSON.stringify([pointed.solid, pointed.dashed, pointed.kept])})`);
+      check(pointed.bars.length === 4 && pointed.bars.every((b) => b.width === '3px' && b.opacity === '1'), `${where}: each marked row shows its 3px ::before bar (${JSON.stringify(pointed.bars)})`);
+      check(eq(kept.solid, [1, 7, 10]) && eq(kept.dashed, [16]) && eq(kept.kept, [12]) && eq(kept.current, [12]) && kept.bodyFocused,
+        `${where}: kept with Enter, the marks stay with the focus on the body (${JSON.stringify([kept.solid, kept.dashed, kept.kept, kept.current, kept.bodyFocused])})`);
+      check(released.solid.length + released.dashed.length + released.kept.length + released.current.length === 0, `${where}: Escape on the body lets go of every mark`);
+      check(samePositions, `${where}: every row and the element after the list keep their rects before, pointed, kept and released`);
     }
   }
 }

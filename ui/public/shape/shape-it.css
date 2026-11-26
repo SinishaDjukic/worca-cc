@@ -225,6 +225,35 @@ div.gpage-runs .run-member[data-mark="failed"] .run-member-state{color:var(--red
   div.gpage-runs .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty){grid-template-areas:"dot num main main";}
   div.gpage-runs .run-members.is-table.is-one-line > .run-member > :is(.run-member-go, .run-member-pr:empty, .run-member-cost){display:none;}
 }
+/* s8 (R-ux-2): run row link marks (run-links.mjs sets the attributes). A link row (data-run) is focusable and a click on
+   it keeps the marks, so its title's stretched overlay is off: the title text still opens the run, and the underline and
+   chevron answer the title's own hover or focus. The bar is a ::before out of the layout, left of the row (in the host's
+   padding, clear of the dot): solid for a run the pointed one builds on, dashed for a run that builds on it. A kept row
+   takes the selected fill. Nothing else changes: no dimming, no layout property, no motion. */
+.chat-rc-members .run-member[data-run]{cursor:default;}
+.chat-rc-members .run-member[data-run]:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.chat-rc-members .run-member[data-run] .run-member-title::after{content:none;}
+.chat-rc-members .run-members .run-member[data-run]:hover .run-member-title{text-decoration:none;}
+.chat-rc-members .run-members .run-member[data-run] .run-member-title:is(:hover,:focus-visible){text-decoration:underline;}
+.chat-rc-members .run-members .run-member[data-run]:hover .run-member-go{opacity:0;}
+.chat-rc-members .run-members .run-member[data-run]:has(.run-member-title:is(:hover,:focus-visible)) .run-member-go{opacity:1;}
+.chat-rc-members .run-member[data-run]::before{content:"";position:absolute;left:-8px;top:8px;bottom:8px;width:3px;color:var(--ink);background:currentColor;pointer-events:none;opacity:0;}
+.chat-rc-members .run-member[data-run][data-link="on"]::before{opacity:1;}
+.chat-rc-members .run-member[data-run][data-link="by"]::before{-webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'><rect width='3' height='4'/></svg>") 0 0/3px 8px repeat-y;mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'><rect width='3' height='4'/></svg>") 0 0/3px 8px repeat-y;opacity:1;}
+.chat-rc-members .run-member[data-run]:hover:not([data-link-kept]){background:var(--row-open);}
+.chat-rc-members .run-member[data-run][data-link-kept]{background:var(--row-selected);}
+div.gpage-runs .run-member[data-run]{cursor:default;}
+div.gpage-runs .run-member[data-run]:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+div.gpage-runs .run-member[data-run] .run-member-title::after{content:none;}
+div.gpage-runs .run-members .run-member[data-run]:hover .run-member-title{text-decoration:none;}
+div.gpage-runs .run-members .run-member[data-run] .run-member-title:is(:hover,:focus-visible){text-decoration:underline;}
+div.gpage-runs .run-members .run-member[data-run]:hover .run-member-go{opacity:0;}
+div.gpage-runs .run-members .run-member[data-run]:has(.run-member-title:is(:hover,:focus-visible)) .run-member-go{opacity:1;}
+div.gpage-runs .run-member[data-run]::before{content:"";position:absolute;left:-8px;top:8px;bottom:8px;width:3px;color:var(--ink);background:currentColor;pointer-events:none;opacity:0;}
+div.gpage-runs .run-member[data-run][data-link="on"]::before{opacity:1;}
+div.gpage-runs .run-member[data-run][data-link="by"]::before{-webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'><rect width='3' height='4'/></svg>") 0 0/3px 8px repeat-y;mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'><rect width='3' height='4'/></svg>") 0 0/3px 8px repeat-y;opacity:1;}
+div.gpage-runs .run-member[data-run]:hover:not([data-link-kept]){background:var(--row-open);}
+div.gpage-runs .run-member[data-run][data-link-kept]{background:var(--row-selected);}
 /* A stop on the feature page has its own head (the question's): the plan ask's banner is hidden, for a stop only. */
 div.gpage-question[data-stop] .qpanel-head{display:none;}
 /* The run page and panel of a stopped run: the stop's head over its question. A gate's two columns (decision,

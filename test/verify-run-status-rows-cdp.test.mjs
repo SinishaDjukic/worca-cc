@@ -137,3 +137,33 @@ test('s7: it checks the exact lines, "4 need you" once, no chip in two, the chip
   assert.match(s, /\b18\b/, 'the one-chip height');
   assert.match(s, /lineHeight|line-height/);
 });
+
+// ── Slice 8 (R-ux-2, R-qa-5): the same proof points at run 12, keeps it with Enter and lets go with Escape ───────────
+test('s8: it adds the links surface (SURFACE=links), skips the world loop for it, and drives real pointer and key input', () => {
+  const s = src();
+  assert.match(s, /process\.env\.SURFACE === 'links'/, 'the section is guarded by SURFACE=links');
+  assert.match(s, /WORLDS = [^\n]*SURFACE !== 'links'/, 'WORLDS skips SURFACE=links');
+  assert.match(s, /Input\.dispatchMouseEvent/);
+  assert.match(s, /mouseMoved/);
+  assert.match(s, /Input\.dispatchKeyEvent/);
+  assert.match(s, /['"]Enter['"]/);
+  assert.match(s, /['"]Escape['"]/);
+  assert.match(s, /activeElement\s*===?\s*document\.body/, 'focus is checked to be on the body before the kept shot');
+});
+
+test('s8: the pointing log has before, pointed, kept and released row positions, shot per theme, with the exact marks checked', () => {
+  const s = src();
+  assert.match(s, /links-base-(?:card|page|\$\{[A-Za-z.]+\})-\$\{[A-Za-z.]+\}\.png/, 'links-base-{card|page}-{theme}.png');
+  assert.match(s, /links-kept-base-(?:card|page|\$\{[A-Za-z.]+\})-\$\{[A-Za-z.]+\}\.png/, 'links-kept-base-{card|page}-{theme}.png');
+  assert.match(s, /results\.links/);
+  assert.match(s, /samePositions/);
+  assert.match(s, /getBoundingClientRect/);
+  for (const phase of ['before', 'pointed', 'kept', 'released']) assert.match(s, new RegExp(`\\b${phase}\\b`), phase);
+  assert.match(s, /\[\s*1\s*,\s*7\s*,\s*10\s*\]/, 'solid is checked to be 1, 7, 10');
+  assert.match(s, /\[\s*16\s*\]/, 'dashed is checked to be 16');
+  assert.match(s, /::before/, 'the bar\'s computed style is read');
+  assert.match(s, /['"]3px['"]/, 'the bar is checked to be 3px wide');
+  assert.match(s, /deviceScaleFactor: 2/);
+  assert.match(s, /THEMES = \['light', 'dark'\]/);
+});
+

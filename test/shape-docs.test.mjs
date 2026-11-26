@@ -136,3 +136,16 @@ test('s7: the stop list part says what the state line names, the need-you count 
   assert.ok(at >= 0 && off > at, '"Open stops on the card" comes before "Off"');
   assert.deepEqual(missing(flat(small.slice(at, off)), ['next: run', 'need you', 'Nothing can go on until you act']), []);
 });
+
+// Shaper small runs slice 8 (R-ux-2): the link marks, after the marks paragraph and before the stop list part.
+test('s8: a paragraph under the run words names the solid and dashed bars, click or Enter to keep, Esc, and that nothing moves', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const marks = small.indexOf('markDot');
+  const stops = small.indexOf('\n### Open stops on the card\n');
+  assert.ok(marks >= 0 && stops > marks, 'the marks paragraph comes before the stop list part');
+  const paras = small.slice(marks, stops).split(/\n\s*\n/).slice(1).map(flat);
+  const para = paras.find((p) => /dashed/i.test(p) && /solid/i.test(p)) || '';
+  assert.ok(para, 'a paragraph of its own that names the solid and the dashed bar');
+  assert.deepEqual(missing(para, [/\bsolid\b/i, /\bdashed\b/i, /builds? on/i, /\bclick/i, /\bEnter\b/, /\bEsc\b/, /(?:nothing|no row)[^.]*\bmov/i]), []);
+});
+

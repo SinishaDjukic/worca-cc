@@ -45,6 +45,7 @@ import { renderAskChanges } from './ask-changes.mjs';
 import { roundsModel, liveRound } from './rounds.mjs';
 import { flagOn } from '../flags.mjs';
 import { labelChip } from '../label-picker.mjs';
+import { bindRunLinks } from '../run-links.mjs';
 
 /** Small runs C3 (D15): a member's slice in the feature view (its `stop` and `waitsFor`), by pipeline or ticket. */
 const sliceOfMember = (card, mb) => ((card && card.feature && card.feature.slices) || [])
@@ -252,6 +253,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   let labelsSig = '';
   const membersEl = h('div', 'chat-rc-members');
   membersEl.hidden = true;
+  const links = bindRunLinks(membersEl);   // s8 (D5): the run rows' link marks, bound once on the host
   const sub = h('div', 'ask-rc-sub');
   const where = h('span', 'chat-rc-where');
   const autoEl = h('span', 'chat-rc-auto');
@@ -1139,7 +1141,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     kind.hidden = !kindWord;
     open.className = one ? 'btn btn-sm btn-quiet chat-rc-open' : 'ask-rc-open';   // B1: the open step's button is the card's one primary
     open.setAttribute('href', curRow ? (curRow.groupKind === 'feature' ? `#feature/${encodeURIComponent(curRow.groupId)}` : `#group/${encodeURIComponent(curRow.groupId)}`) : progressRoute(id, s));
-    if (curRow && (!one || one.runs)) {
+    // s8 (D6): the link marks, the kept run and a focused row survive the rebuild; another group drops the keep.
+    links.repaint(curRow ? curRow.groupId : null, () => { if (curRow && (!one || one.runs)) {
       // A Requirements fold the person opened stays open across the repaint (the rows are rebuilt each paint).
       const opened = [...membersEl.querySelectorAll('.run-member')].filter((li) => li.querySelector('.plan-check-line[aria-expanded="true"]')).map((li) => li.dataset.key);
       // Small runs C2 (D13): a marked card's run rows say one short word (cardShortWord).
@@ -1147,10 +1150,11 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       // Shaper small runs s4 (D7, D10): with the flag on, the one card's rows take word and mark from runStatus.
       const sliceMap = one && flagOn('shaperSmallRuns', doc) ? new Map(((shaperIn.card.feature && shaperIn.card.feature.slices) || []).map((x) => [x.index, x])) : null;
       const status = sliceMap ? (mb) => runStatus({ slice: sliceOfMember(shaperIn.card, mb), slices: sliceMap, snap: shaperIn.snapOf(mb.pipelineId) }) : null;
-      membersEl.replaceChildren(renderMemberRows(doc, curRow, { checks: fm && fm.requirementChecks, oneLine: !!one, ...(shortState ? { shortState } : {}), ...(status ? { status } : {}) }));
+      const buildsOn = (mb) => sliceOfMember(shaperIn.card, mb)?.buildsOn ?? null;
+      membersEl.replaceChildren(renderMemberRows(doc, curRow, { checks: fm && fm.requirementChecks, oneLine: !!one, ...(shortState ? { shortState } : {}), ...(status ? { status, buildsOn } : {}) }));
       for (const li of membersEl.querySelectorAll('.run-member')) if (opened.includes(li.dataset.key)) li.querySelector('.plan-check-line')?.click();
       membersEl.hidden = false;
-    } else { membersEl.replaceChildren(); membersEl.hidden = true; }
+    } else { membersEl.replaceChildren(); membersEl.hidden = true; } });
     // C5 (D12): a paused or stopped Verifier is one run row; its click opens the run, where dev's Resume lives.
     const vstate = one && one.verify ? one.verify.state : null;
     if (vstate === 'paused' || vstate === 'halted') {
@@ -1231,6 +1235,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (graph) { graph.destroy(); graph = null; }
     call(controls.releaseQuestion, qBody);
     if (stopsEl.parentNode) paintStopList(doc, stopsEl, [], stopDeps);   // slice 6: release every line's step card
+    links.detach();   // s8: a kept row's page Escape goes with the card
   }
 
   paintFix();

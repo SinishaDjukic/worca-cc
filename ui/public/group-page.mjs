@@ -10,6 +10,7 @@ import { icon } from './icons.mjs';
 import { groupHead } from './run-head.mjs';
 import { answerFieldOpen } from './shape/step-card.mjs';
 import { needYouText } from './shape/feature-card.mjs';
+import { bindRunLinks } from './run-links.mjs';
 
 export const GROUP_TABS = Object.freeze([['runs', 'Runs'], ['overview', 'Overview'], ['decisions', 'Decisions'], ['logs', 'Logs']]);
 const el = (doc, tag, cls, text = '') => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
@@ -84,7 +85,9 @@ export function buildGroupPage(doc) {
     p.setAttribute('role', 'tabpanel');
     panels.push(p);
   }
-  panels[0].append(el(doc, 'div', 'gpage-runs'), el(doc, 'p', 'gpage-ship'));
+  const runsHost = el(doc, 'div', 'gpage-runs');
+  runsHost.__links = bindRunLinks(runsHost);   // s8 (D5): the link marks listen on the host, never on the rows
+  panels[0].append(runsHost, el(doc, 'p', 'gpage-ship'));
   panels[1].append(el(doc, 'div', 'gpage-overview'));
   panels[2].append(el(doc, 'div', 'gpage-decisions'));
   panels[3].append(el(doc, 'ul', 'gpage-logs'));
@@ -230,8 +233,11 @@ export function paintGroupPage(root, view, deps) {
   }
   for (const p of root.querySelectorAll('.gpage-panel')) p.hidden = p.dataset.tab !== tab;
   // Slice 3: a frame that changes nothing in the table keeps its nodes (a focused row, the scroll anchor).
-  keepUnchanged(root.querySelector('.gpage-runs'), [view.shortState || view.status
-    ? renderMemberRows(doc, row, { oneLine: true, shortState: view.shortState || null, ...(view.status ? { status: view.status } : {}) }) : renderMemberRows(doc, row)]);
+  // s8 (D6, D14): the link marks, the kept run and a focused row survive the repaint; another feature drops the keep.
+  const runsHost = root.querySelector('.gpage-runs');
+  runsHost.__links.repaint(row.groupId, () => keepUnchanged(runsHost, [view.shortState || view.status
+    ? renderMemberRows(doc, row, { oneLine: true, shortState: view.shortState || null,
+      ...(view.status ? { status: view.status, buildsOn: (mb) => mb.slice?.buildsOn ?? null } : {}) }) : renderMemberRows(doc, row)]));
   const line = groupShipLine(row, { stackedOnly: !!view.stackedOnly });
   const ship = root.querySelector('.gpage-ship');
   ship.textContent = line;

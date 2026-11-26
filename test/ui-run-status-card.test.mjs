@@ -467,6 +467,39 @@ test('s4 renderMemberRows: the planning row never calls status and has no data-m
   assert.equal(member(ol, 0).dataset.mark, undefined);
 });
 
+// ---- Shaper small runs s8 (R-ux-2): renderMemberRows makes link rows from the `buildsOn` option ----
+const LINK_ATTRS = '[data-run], [data-builds-on], [tabindex]';
+const linkAttrs = (li) => [li.getAttribute('data-run'), li.getAttribute('data-builds-on'), li.getAttribute('tabindex')];
+const S8_STATUS = () => ({ word: 'x', mark: 'faint' });
+
+test('s8 renderMemberRows: with status and buildsOn a numbered row gets data-run, data-builds-on and tabindex 0', () => {
+  const lists = { 1: [], 2: [1, 7, 10], 3: null };
+  const ol = rowsOf(MEMBERS, { oneLine: true, status: S8_STATUS, buildsOn: (mb) => lists[mb.position] });
+  assert.deepEqual(linkAttrs(member(ol, 0)), ['1', '', '0'], 'an empty list is an empty attribute');
+  assert.deepEqual(linkAttrs(member(ol, 1)), ['2', '1 7 10', '0']);
+  assert.deepEqual(linkAttrs(member(ol, 2)), [null, null, null], 'a row without a list is not a link row');
+  assert.deepEqual(linkAttrs(ol.querySelector('.run-member[data-key="planning"]')), [null, null, null], 'the planning row');
+});
+
+test('s8 renderMemberRows: an unnumbered row (ad hoc, user group) is never a link row', () => {
+  const gm = groupModel({ kind: 'feature', title: 'F', members: MEMBERS }, { now: NOW });
+  const members = gm.members.map((m, i) => ({ position: i + 1, title: `Run ${i + 1}`, href: '#runs', pipelineId: `p${i + 1}`, model: m, adhoc: i === 2 }));
+  const opts = { oneLine: true, status: S8_STATUS, buildsOn: () => [1] };
+  const feature = renderMemberRows(dom(), { groupKind: 'feature', model: gm, members }, opts);
+  assert.deepEqual([...feature.querySelectorAll('.run-member')].map((li) => li.getAttribute('data-run')), ['1', '2', null]);
+  const user = renderMemberRows(dom(), { groupKind: 'user', model: gm, members }, opts);
+  assert.equal(user.querySelector(LINK_ATTRS), null);
+});
+
+test('s8 renderMemberRows without status adds no data-run, data-builds-on or tabindex', () => {
+  const plain = rowsOf(MEMBERS, { oneLine: true });
+  const asked = rowsOf(MEMBERS, { oneLine: true, buildsOn: () => [1] });
+  assert.equal(asked.outerHTML, plain.outerHTML);
+  assert.equal(asked.querySelector(LINK_ATTRS), null);
+  const marked = rowsOf(MEMBERS, { oneLine: true, status: S8_STATUS });
+  assert.equal(marked.querySelector(LINK_ATTRS), null, 'status without buildsOn');
+});
+
 test('s4 row words: "waiting for you" reads --amber-ink and "failed" --red-ink, other words keep --ink-2 (owner direction d6dd6d688)', () => {
   const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
   for (const scope of ['.chat-rc-members', 'div.gpage-runs']) {
