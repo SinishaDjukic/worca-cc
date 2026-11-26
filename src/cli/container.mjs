@@ -22,6 +22,7 @@ import { readSettings } from '../core/settings.mjs';
 import { readProxyLogin } from '../core/proxy-credentials.mjs';
 import { resolveUpstream, upstreamLabel } from '../core/upstream-proxy.mjs';
 import { readLoginInput } from './proxy.mjs';
+import { HARDENED_OVERLAYS, HARDENED_HELP, HARDENED_PROJECT, selectBox, hardenedBefore, hardenedUp, hardenedStatus, runningProject } from './container-hardened.mjs';
 
 /** The compose files shipped in the package (package.json `files`). */
 export const COMPOSE_SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docker');
@@ -75,6 +76,7 @@ Options:
 The box has its own Worca home and its own Claude Code login: nothing from
 ~/.worca-cc or ~/.claude is mounted. Your repositories are mounted at the same
 path as on the host (WORCA_PROJECTS in .env), so run worktrees stay valid here.
+The plain container protects your machine, not the mounted projects.
 `;
 
 /** Default exec: run and inherit the terminal. Returns { status }. */
@@ -97,7 +99,7 @@ export function detectRuntime(exec, want) {
 }
 
 function parse(argv) {
-  const o = { verb: argv[0] || 'help', dir: null, runtime: null, projects: null, with: null, tag: null, follow: false, passthrough: [], _: [] };
+  const o = { verb: argv[0] || 'help', dir: null, runtime: null, projects: null, with: null, tag: null, follow: false, box: null, passthrough: [], _: [] };
   const rest = argv.slice(1);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -108,6 +110,7 @@ function parse(argv) {
     else if (a === '--with') o.with = rest[++i];
     else if (a === '--tag') o.tag = rest[++i];
     else if (a === '--follow' || a === '-f') o.follow = true;
+    else if (a === '--hardened' || a === '--plain') o.box = a.slice(2);
     else if (a === '--user') { o._.push(a, rest[++i]); }
     else o._.push(a);
   }
@@ -165,6 +168,13 @@ function parseWith(s) {
   return [...new Set(list)];
 }
 
+/** One `git config --get <key>` value from this machine, or '' (no git, or unset). */
+export function gitConfigValue(exec, key) {
+  if (!gitAvailable()) return '';
+  const r = exec('git', ['config', '--get', key], { capture: true });
+  return r.status === 0 ? String(r.stdout).trim() : '';
+}
+
 /** Copy the package's compose files into `dir` (always, they are versioned with the package)
  *  and seed .env once. Returns { dir, envCreated }. */
 export async function initDir(dir, { projects, exec, srcDir = COMPOSE_SRC_DIR, env = process.env } = {}) {
@@ -180,7 +190,7 @@ export async function initDir(dir, { projects, exec, srcDir = COMPOSE_SRC_DIR, e
       try { root = commonParent((await listProjects()).map((p) => p.path)); } catch { root = null; }
     }
     if (!root) root = join(env.HOME || env.USERPROFILE || homedir(), 'dev');
-    const git = (k) => { if (!gitAvailable()) return ''; const r = exec('git', ['config', '--get', k], { capture: true }); return r.status === 0 ? r.stdout.trim() : ''; };
+    const git = (k) => gitConfigValue(exec, k);
     const body = seedEnv(readFileSync(join(srcDir, '.env.example'), 'utf8'), {
       projects: root,
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -337,14 +347,16 @@ export function checkSidecarImage({ exec, bin, cwd, env, files }) {
 export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir: dirOverride = null, env: hostEnv = process.env,
   settings = readSettings, login = readProxyLogin, stdin = process.stdin } = {}) {
   const a = parse(argv);
-  if (a.verb === 'help' || a.verb === '--help' || a.verb === '-h') { out(CONTAINER_HELP.trimEnd()); return 0; }
+  if (a.verb === 'help' || a.verb === '--help' || a.verb === '-h') { out(`${CONTAINER_HELP}${HARDENED_HELP}`.trimEnd()); return 0; }
   const dir = resolve(a.dir || dirOverride || join(worcaHome(), 'container'));
   if (a.verb === 'where') { out(dir); return 0; }
 
   const rt = detectRuntime(exec, a.runtime);
   if (rt.error) { fail(rt.error); return 1; }
   const state = readState(dir);
-  let overlays = Array.isArray(state.with) ? state.with : [];
+  // The hardened box (container-hardened.mjs): its own fixed overlays, remembered by `up --hardened`.
+  const box = selectBox(a.box, state);
+  let overlays = box === 'hardened' ? [...HARDENED_OVERLAYS] : Array.isArray(state.with) ? state.with : [];
   // Every compose call interpolates the same env (shell before .env), so the proxy and CA
   // fixes apply to up, run, login and shell alike. Resolved after init so a fresh .env counts.
   let composeEnv;
@@ -390,6 +402,10 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
   if (a.verb === 'init' || a.verb === 'up') {
     const r = await initDir(dir, { projects: a.projects, exec });
     out(`${c('bold', 'container dir')}  ${dir}${r.envCreated ? `   (${c('green', '.env created')} — edit it: WORCA_PROJECTS, tokens)` : ''}`);
+    if (box === 'hardened') {
+      const code = await hardenedBefore({ a, dir, exec, bin: rt.bin, out, c, fail, env: hostEnv, settings, login, stdin, state, writeState: (s) => writeState(dir, s) });
+      if (code !== null) return code;
+    } else if (a.box === 'plain' && state.hardened) writeState(dir, { ...readState(dir), hardened: false });
     if (a.verb === 'init') return 0;
   }
   if (!existsSync(join(dir, 'compose.yml'))) { fail(`no compose files in ${dir}; run: worca container init`); return 1; }
@@ -398,30 +414,37 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
   if (proxyLoginVerb && readState(dir).sidecar !== true) writeState(dir, { ...readState(dir), sidecar: true });
   if (!['down', 'status', 'logs', 'pull'].includes(a.verb)) prepare();
   else if (readState(dir).sidecar === true && !overlays.includes('proxy')) extra = ['proxy'];
+  const hb = () => ({ a, dir, exec, bin: rt.bin, composeEnv, files: files(), out, c, fail, stdin, state: readState(dir),
+    login: (args) => cmdContainer(['proxy', 'login', ...args], { out, c, fail, exec, dir, env: hostEnv, settings, login, stdin }) });
 
   switch (a.verb) {
     case 'up': {
-      if (a.with !== null) {
+      if (box === 'plain' && runningProject({ exec, bin: rt.bin, project: HARDENED_PROJECT })) { fail('the hardened box is running and holds the same port: stop it first with worca container down --hardened'); return 1; }
+      if (a.with !== null && box === 'plain') {
         const parsed = parseWith(a.with);
         if (parsed.error) { fail(parsed.error); return 1; }
         overlays = parsed;
         writeState(dir, { ...state, with: overlays });
       }
       const port = readEnvValue(dir, 'WORCA_PORT') || '4317';
+      if (box === 'hardened') { const code = await hardenedUp(hb()); if (code !== null) return code; }
       if (!imageOk()) return 1;
       const code = compose(['up', '-d']);
       if (code !== 0) return code;
       const shown = [...overlays, ...extra];
-      out(`${c('bold', 'Worca')}  http://localhost:${port}${shown.length ? `   overlays: ${shown.join(', ')}` : ''}`);
-      out(`  Log in once:  ${c('bold', 'worca container login')}`);
+      out(`${c('bold', box === 'hardened' ? 'Worca (hardened box)' : 'Worca')}  http://localhost:${port}${shown.length ? `   overlays: ${shown.join(', ')}` : ''}`);
+      if (box === 'hardened') out(`  Posture:      ${c('bold', 'worca container status')}`);
+      else out(`  Log in once:  ${c('bold', 'worca container login')}`);
       out(`  Stop:         ${c('bold', 'worca container down')}`);
       return 0;
     }
     case 'down': return compose(['down']);
-    case 'status': return compose(['ps']);
+    case 'status': return box === 'hardened' ? hardenedStatus(hb()) : compose(['ps']);
     case 'logs': return compose(['logs', ...(a.follow ? ['-f'] : []), 'worca']);
     case 'pull': return compose(['pull', 'worca']);
-    case 'login': return imageOk() ? compose(['run', '--rm', 'worca', 'claude']) : 1;
+    case 'login':
+      if (box === 'hardened') { fail('the hardened box keeps no Claude sign-in: the broker holds the model credential (WORCA_BROKER_KEY_ANTHROPIC in .env)'); return 1; }
+      return imageOk() ? compose(['run', '--rm', 'worca', 'claude']) : 1;
     case 'shell': return imageOk() ? compose(['run', '--rm', 'worca', 'bash']) : 1;
     case 'run': {
       const args = a.passthrough.length ? a.passthrough : a._;

@@ -5,13 +5,29 @@ it spawns run inside a disposable Linux container. An agent that goes off the
 rails damages a box, not your machine. Design and trade-offs:
 [`plans/container-isolation-design.md`](../plans/container-isolation-design.md).
 
-What the box gives you that guardrails alone cannot (see
+This page is the plain container: the Local sandbox (Docker). It protects your
+machine, not the projects it mounts.
+
+What it protects, beyond what guardrails alone can (see
 [guardrails.md](guardrails.md), "Honest limitations"): the agents cannot read
 host credentials (`~/.ssh`, `~/.aws`, keychains, browser profiles), cannot touch
 files outside the project folders you mount, cannot see host processes, and
-with the egress overlay cannot reach hosts you did not allow. What it does
-**not** give you: protection of the mounted project itself (the agent is meant
-to edit it) — see *Clone-in mode* for that.
+with the egress overlay cannot reach hosts you did not allow.
+
+What it does **not** protect:
+
+- The mounted projects. The agent is meant to edit them. It can also plant a
+  git hook or a git config command there, which your own git or IDE then runs
+  on your machine.
+- The model key. Without the credential broker it sits in Worca's environment,
+  or in Claude Code's sign-in, where agents can read it.
+- Worca's own settings and database. Agents run as Worca's user, unless you
+  add agent users.
+- The network. It is open unless you add the egress overlay.
+
+For all of that at once, use the [Hardened box](hardened-box.md): one command
+(`worca container up --hardened`) with the broker, agent users, the allow-list
+and the egress sidecar, and no host folder mounted.
 
 ## Quick start
 
@@ -31,7 +47,8 @@ worca container down
 `.env` is seeded with the common parent of your registered projects (or
 `~/dev`), your timezone and git identity; edit it for tokens and tags. `--with
 egress,ssh,teams,clonein` on `up` adds overlays and is remembered for the other
-verbs. `worca container help` lists everything.
+verbs. `worca container help` lists everything. `worca container up --hardened`
+starts the [Hardened box](hardened-box.md) instead.
 
 **Without npm**, the compose file alone:
 
@@ -198,6 +215,9 @@ docker compose -f compose.yml -f compose.clonein.yml run --rm worca worca add --
 
 Needs git credentials (above). `gh repo clone` reads `GH_TOKEN`; with a read/write pair, add
 `-e GH_TOKEN="$WORCA_GH_READ_TOKEN"` to that `run`.
+
+Clone-in mode alone still runs agents as Worca's user, with the model key in reach. The
+[Hardened box](hardened-box.md) clones in the same way and adds the rest.
 
 ## Network
 

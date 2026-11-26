@@ -89,6 +89,8 @@ COPY ${WORCA_TARBALL} /tmp/worca.tgz
 # file (docker/compose.egress.yml; src/core/egress-proxy.mjs imports node: modules only). The
 # sidecar that also holds the corporate proxy login runs `worca egress` instead
 # (docker/compose.proxy.yml); the label dev.worca.egress-sidecar says this image has it.
+# The hardened box (docker/compose.hardened.yml) publishes the UI through the relay installed
+# below as one standalone file too; the label dev.worca.hardened-box says this image has it.
 RUN app="$(npm root -g)/@worca/app" \
  && mkdir -p "${app}" \
  && tar -xzf /tmp/worca.tgz -C "${app}" --strip-components=1 --no-same-owner \
@@ -96,7 +98,8 @@ RUN app="$(npm root -g)/@worca/app" \
  && ln -s "${app}/src/cli/worca-cc.mjs" /usr/local/bin/worca \
  && rm /tmp/worca.tgz \
  && npm cache clean --force \
- && install -m 755 "${app}/src/core/egress-proxy.mjs" /usr/local/lib/worca-egress-proxy.mjs
+ && install -m 755 "${app}/src/core/egress-proxy.mjs" /usr/local/lib/worca-egress-proxy.mjs \
+ && install -m 755 "${app}/src/core/ui-relay.mjs" /usr/local/lib/worca-ui-relay.mjs
 
 # Non-root user. uid/gid 1000 matches the default first user on Linux and in a
 # WSL2 distro, so bind-mounted project files keep their owner. The node base
@@ -164,7 +167,8 @@ LABEL org.opencontainers.image.title="Worca" \
       org.opencontainers.image.licenses="MIT" \
       dev.worca.claude-code.version="${CLAUDE_CODE_VERSION}" \
       dev.worca.variant="${VARIANT}" \
-      dev.worca.egress-sidecar="1"
+      dev.worca.egress-sidecar="1" \
+      dev.worca.hardened-box="1"
 
 # hadolint ignore=DL3066
 USER worca
