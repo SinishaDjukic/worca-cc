@@ -14,6 +14,7 @@
 // and pull requests write.
 import { createPrivateKey, createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { recordSecretFile } from './secret-files.mjs';
 
 const API = 'https://api.github.com';
 const HEADERS = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'worca' };
@@ -29,12 +30,29 @@ export function appConfigured(env = process.env) {
   return /^\d+$/.test(val(env.WORCA_GH_APP_ID)) && !!(val(env.WORCA_GH_APP_KEY_FILE) || val(env.WORCA_GH_APP_KEY_B64));
 }
 
+// The key file's contents, read once at boot (sealGithubAppKey): the path's file is checked like every secret file
+// (secret-files.mjs), and later calls use this copy. Keyed by path, so an env that names another file reads that one.
+let sealedKey = null;
+
+/** Read WORCA_GH_APP_KEY_FILE once and record it for the boot check. ui/server.mjs calls it at start. */
+export function sealGithubAppKey({ env = process.env, readFile = readFileSync, stat } = {}) {
+  const path = val(env.WORCA_GH_APP_KEY_FILE);
+  if (!path) return;
+  recordSecretFile('WORCA_GH_APP_KEY_FILE', path, stat ? { stat } : {});
+  try { sealedKey = { path, pem: readFile(path, 'utf8') }; } catch (e) { sealedKey = { path, error: e.code || 'error' }; }
+}
+/** Tests. */
+export function _resetSealedGithubAppKey() { sealedKey = null; }
+
 /** { appId, key (KeyObject), installationId|null } or throws with a message that names no secret. */
 export function loadAppConfig(env = process.env, { readFile = readFileSync } = {}) {
   const appId = val(env.WORCA_GH_APP_ID);
   if (!/^\d+$/.test(appId)) throw new Error('WORCA_GH_APP_ID must be the App\'s numeric id');
   let pem;
-  if (val(env.WORCA_GH_APP_KEY_FILE)) {
+  if (val(env.WORCA_GH_APP_KEY_FILE) && sealedKey && sealedKey.path === val(env.WORCA_GH_APP_KEY_FILE)) {
+    if (sealedKey.error) throw new Error(`cannot read WORCA_GH_APP_KEY_FILE (${sealedKey.error})`);
+    pem = sealedKey.pem;
+  } else if (val(env.WORCA_GH_APP_KEY_FILE)) {
     try { pem = readFile(val(env.WORCA_GH_APP_KEY_FILE), 'utf8'); } catch (e) { throw new Error(`cannot read WORCA_GH_APP_KEY_FILE (${e.code || 'error'})`); }
   } else if (val(env.WORCA_GH_APP_KEY_B64)) {
     pem = Buffer.from(val(env.WORCA_GH_APP_KEY_B64), 'base64').toString('utf8');
