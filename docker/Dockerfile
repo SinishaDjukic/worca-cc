@@ -12,11 +12,21 @@
 #   CLAUDE_CODE_VERSION  the @anthropic-ai/claude-code version to pin              [required]
 #   VARIANT              slim | full                                               [slim]
 #   APT_REFRESH          any string; a new value rebuilds the OS layer (CI: Debian publish stamps)
+#   NODE_BASE_IMAGE      what Worca is built on                       [node-base, the pinned image below]
 
-# The base image is pinned by its multi-arch index digest, so a re-pushed tag cannot change what
-# the build starts from. A literal FROM (no build arg) so Dependabot can propose the bumps.
+# NODE_BASE_IMAGE builds Worca on a company base image instead (docs/docker.md, "Building it yourself"):
+#   npm run docker:build -- --node-base registry.acme.example/base/node:24-bookworm-slim
+# That image must be the official node image of the same major, or built FROM it: Debian bookworm, apt,
+# and the `node` user with uid 1000 that the steps below rename.
+ARG NODE_BASE_IMAGE=node-base
+
+# The default base is pinned by its multi-arch index digest, so a re-pushed tag cannot change what
+# the build starts from. A literal FROM (the build arg names this stage) so Dependabot can propose the bumps.
 # Its Node major is .nvmrc's, like every single-version CI job (test/supply-chain.test.mjs).
-FROM node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
+FROM node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS node-base
+
+# hadolint ignore=DL3006
+FROM ${NODE_BASE_IMAGE}
 
 ARG WORCA_TARBALL
 ARG CLAUDE_CODE_VERSION

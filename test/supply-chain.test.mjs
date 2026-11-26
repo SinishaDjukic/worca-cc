@@ -33,9 +33,13 @@ test('npm-shrinkwrap.json locks the package the image installs, and is the only 
 test('Dockerfile: the node base image is pinned by digest', () => {
   const d = read('docker/Dockerfile');
   const froms = d.split('\n').filter((l) => /^FROM\s/.test(l));
-  assert.deepEqual(froms.length, 1);
-  // Literal, not a build arg: Dependabot only reads image references written in FROM.
-  assert.match(froms[0], /^FROM node:\d+-bookworm-slim@sha256:[0-9a-f]{64}$/);
+  assert.deepEqual(froms.length, 2);
+  // Literal, not a build arg: Dependabot only reads image references written in FROM. The build arg that lets an
+  // operator build on a company base names this stage by default, so a plain build starts from the pinned digest.
+  assert.match(froms[0], /^FROM node:\d+-bookworm-slim@sha256:[0-9a-f]{64} AS node-base$/);
+  assert.equal(froms[1], 'FROM ${NODE_BASE_IMAGE}');
+  assert.match(d, /^ARG NODE_BASE_IMAGE=node-base$/m);
+  assert.ok(d.indexOf('ARG NODE_BASE_IMAGE=') < d.indexOf(froms[0]), 'declared before the first FROM, so FROM can use it');
 });
 
 // One Node for everything this repo runs: .nvmrc names the major, the image and every single-version

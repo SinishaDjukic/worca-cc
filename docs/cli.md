@@ -93,6 +93,8 @@ worca flags on smartRunNaming   # a Labs feature, off by default
   `proxy`, `exec-env`, `setup`, `extension`, `readiness`, `doctor` and `version`.
 - `exec-env spec` shows, sets or clears a project's environment spec. See
   [Project environment spec](environment-spec.md).
+- `container build` builds the box image from the projects' environment specs. See
+  [Building the box image](environment-spec.md#building-the-box-image).
 
 ## Exit codes
 
