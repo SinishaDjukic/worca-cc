@@ -37,6 +37,20 @@
 // Escape, a 3px bar shown on the marked rows, and that every row and the element after the list keep their rects in
 // every phase (`results.links`, samePositions). Shots: `links-base-{card|page}-{theme}.png` and
 // `links-kept-base-{card|page}-{theme}.png`. SURFACE=links runs only this surface.
+// Slice 9 adds the `map` surface: the run order map (ui/public/shape/run-order-map.mjs) mounted with renderRunOrderMap on
+// the served page from the card payload's `slices`, in worlds base, busy, held, change and after2 (base with run 2 done),
+// `map-{world}-{theme}.png` per theme at 1280px and 2x. From real DOM rects: no link segment meets a dot or a number of a
+// run it does not join; each map dot's class equals the Chat card row's (rows with a data-mark and no violet dot); base
+// draws exactly its 15 links; the root is aria-hidden; narrowed to 240px it overflows and three Tabs never focus inside
+// it; only live dots pulse; after2 draws nothing from run 2. Links that share no run yet run together (or within 3px) fail as `overlaps`.
+// SURFACE=map runs only this surface.
+// Slice 10 adds the `order` surface: Show order on the feature page's Runs tab, in worlds base and busy, per theme at
+// 1280px and 2x. Each pass reloads #feature/ID and waits for the rows' words. Closed first (`order-closed-{world}-{theme}.png`);
+// a real click opens it (`order-open-{world}-{theme}.png`): Hide order, focus kept on the toggle, one aria-hidden map of 16
+// runs, the toggle right-aligned, the state line unmoved, the rows below the body. Then #chat/new and back: closed on return.
+// The Chat card and the Runs list carry no drawing. One 360px light shot, `order-open-busy-360-light.png`, with no page
+// scroll sideways and the map scrolling in its own box, then closed again after #runs and back (the slide layout keeps the
+// page root). SURFACE=order runs only this surface.
 // NOT part of `npm test`: it needs Chrome. A hard 20-minute cap inside.
 // Run: H=$(mktemp -d); env -u FORCE_COLOR HOME=$H VERIFY_PORT=4943 SHOTS_DIR=… node --disable-warning=ExperimentalWarning tools/verify-run-status-rows-cdp.mjs
 import { spawn, execFileSync } from 'node:child_process';
@@ -52,7 +66,7 @@ const CHROME = process.env.CHROME_BIN || CHROME_PATHS.find((p) => existsSync(p))
 const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0 ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
 if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
 const THEMES = ['light', 'dark'];
-const WORLDS = ['base', 'busy', 'held', 'change', 'failed'].filter((w) => (!process.env.WORLD || w === process.env.WORLD) && process.env.SURFACE !== 'stops' && process.env.SURFACE !== 'line' && process.env.SURFACE !== 'links');   // WORLD=held runs one world
+const WORLDS = ['base', 'busy', 'held', 'change', 'failed'].filter((w) => (!process.env.WORLD || w === process.env.WORLD) && process.env.SURFACE !== 'stops' && process.env.SURFACE !== 'line' && process.env.SURFACE !== 'links' && process.env.SURFACE !== 'map' && process.env.SURFACE !== 'order');   // WORLD=held runs one world
 const WIDE = 1280;
 const NARROW = 375;
 const SIDE_NARROW = 360;   // s5: the Runs list's narrow shot
@@ -156,6 +170,8 @@ const SPECS = {
   'line-next': { spec: { done: SIXTEEN_RUN_STATES.busy.done, states: Object.fromEntries(Object.entries(SIXTEEN_RUN_STATES.busy.states).filter(([r]) => r !== '6')) } },
   'line-two': { spec: { done: [1, 2, 3, 4, 9, 11], states: { 5: { pipe: 'paused' }, 8: { pipe: 'running' }, 10: { pipe: 'running' } } } },
   'line-acts': { spec: { done: [1], states: { 2: { stop: 'requirement' } } }, then: (fx) => setApproveEach(fx.featureId, true) },
+  // s9 map: base with run 2 done, so its links are gone.
+  after2: { spec: { done: [...SIXTEEN_RUN_STATES.base.done, 2], states: Object.fromEntries(Object.entries(SIXTEEN_RUN_STATES.base.states).filter(([r]) => r !== '2')) } },
 };
 /** Seeds one world (cancelling the previous world's tickets and live runs) and its Chat thread; returns the routes. */
 function seed(name) {
@@ -750,6 +766,263 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'lin
       check(released.solid.length + released.dashed.length + released.kept.length + released.current.length === 0, `${where}: Escape on the body lets go of every mark`);
       check(samePositions, `${where}: every row and the element after the list keep their rects before, pointed, kept and released`);
     }
+  }
+}
+
+// ---- s9 map: the run order map mounted on the served page from each world's real card payload.
+const MAP_WORLDS = ['base', 'busy', 'held', 'change', 'after2'];
+const MAP_NARROW = 240;   // the host width at which the map must scroll sideways
+const MAP_BASE_PAIRS = [[2, 7], [2, 8], [3, 4], [3, 10], [4, 5], [5, 6], [6, 7], [7, 12], [8, 15], [9, 16], [10, 12], [12, 16], [13, 14], [14, 15], [15, 16]];
+/** Mounts the map in a fixed host (a button before it, for the Tab check) over the page; resolves to the run count. */
+const MAP_MOUNT = (slices) => `(async () => {
+  document.getElementById('rom-host')?.remove();
+  const { renderRunOrderMap } = await import('/shape/run-order-map.mjs');
+  const host = document.createElement('div');
+  host.id = 'rom-host';
+  host.style.cssText = 'position:absolute;left:0;top:0;z-index:2147483647;padding:16px;background:var(--panel);color:var(--ink)';
+  const before = document.createElement('button');
+  before.type = 'button'; before.id = 'rom-before'; before.className = 'btn btn-sm'; before.textContent = 'Before the map';
+  host.append(before, renderRunOrderMap(document, ${JSON.stringify(slices)}));
+  document.body.append(host);
+  return host.querySelectorAll('.rom-run').length;
+})()`;
+/** The mounted map: its links (points in px, from each path's d, plus the svg's client offset) and every run's dot and
+ *  number rects, dot class and data-mark, read from the real layout. */
+const MAP_READ = `(() => {
+  const host = document.getElementById('rom-host'); const root = host && host.querySelector('.rom');
+  if (!root) return null;
+  const sb = root.querySelector('svg.rom-links').getBoundingClientRect();
+  const rect = (el) => { const b = el.getBoundingClientRect(); return { x0: b.left, y0: b.top, x1: b.right, y1: b.bottom }; };
+  const links = [...root.querySelectorAll('path.rom-link')].map((p) => {
+    const nums = (p.getAttribute('d').match(/-?\\d+(?:\\.\\d+)?/g) || []).map(Number);
+    const points = []; for (let i = 0; i + 1 < nums.length; i += 2) points.push([nums[i] + sb.left, nums[i + 1] + sb.top]);
+    return { from: Number(p.dataset.from), to: Number(p.dataset.to), points, d: p.getAttribute('d') };
+  });
+  const runs = [...root.querySelectorAll('.rom-run')].map((r) => {
+    const dot = r.querySelector('.rom-run .status-dot'); const n = r.querySelector('.rom-n');
+    return { run: Number(r.dataset.run), mark: r.dataset.mark || null, dot: dot.className, dotBox: rect(dot), nBox: rect(n) };
+  });
+  return { ariaHidden: root.getAttribute('aria-hidden'), tabindex: root.getAttribute('tabindex'), links, runs };
+})()`;
+/** Every (link, run) pair where a segment meets the dot or the number of a run the link does not join. */
+function mapCrossings(m) {
+  const out = [];
+  const meets = ([[ax, ay], [bx, by]], b) => Math.min(ax, bx) < b.x1 && Math.max(ax, bx) > b.x0 && Math.min(ay, by) < b.y1 && Math.max(ay, by) > b.y0;
+  for (const l of m.links) {
+    for (let i = 1; i < l.points.length; i += 1) {
+      const seg = [l.points[i - 1], l.points[i]];
+      for (const r of m.runs) {
+        if (r.run === l.from || r.run === l.to) continue;
+        if (meets(seg, r.dotBox)) out.push(`${l.from}→${l.to} meets run ${r.run}'s dot`);
+        if (meets(seg, r.nBox)) out.push(`${l.from}→${l.to} meets run ${r.run}'s number`);
+      }
+    }
+  }
+  return out;
+}
+/**
+ * Pairs of links that share no run yet draw as one line: parallel segments less than 3px apart whose stretches overlap or
+ * end less than 3px from each other (an exit stub lined up with another link's entry stub reads as a false link).
+ */
+function mapOverlaps(m) {
+  const segs = m.links.flatMap((l) => l.points.slice(1).map((p, i) => ({ l, a: l.points[i], b: p })));
+  const out = new Set();
+  for (let i = 0; i < segs.length; i += 1) {
+    for (let j = i + 1; j < segs.length; j += 1) {
+      const s = segs[i]; const t = segs[j];
+      if ([s.l.from, s.l.to].some((n) => n === t.l.from || n === t.l.to)) continue;
+      const vert = (q) => q.a[0] === q.b[0];
+      if (vert(s) !== vert(t)) continue;
+      const k = vert(s) ? 0 : 1; const o = 1 - k;
+      const lo = (q) => Math.min(q.a[o], q.b[o]); const hi = (q) => Math.max(q.a[o], q.b[o]);
+      if (Math.abs(s.a[k] - t.a[k]) < 3 && Math.max(lo(t) - hi(s), lo(s) - hi(t)) < 3) {
+        out.add([`${s.l.from}→${s.l.to}`, `${t.l.from}→${t.l.to}`].sort().join(' & '));
+      }
+    }
+  }
+  return [...out];
+}
+if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'map') {
+  await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
+  const overlaps = {};
+  for (const name of MAP_WORLDS) {
+    const routes = seed(name);
+    const r = await fetch(`${base}/api/shape/pipelines/${encodeURIComponent(routes.origin)}/card`);
+    const c = r.ok ? await r.json() : null;
+    const slices = c && c.feature ? c.feature.slices : null;
+    check(Array.isArray(slices) && slices.length === 16, `map ${name}: the card payload carries the 16 slices (HTTP ${r.status})`);
+    if (!slices) continue;
+    for (const theme of THEMES) {
+      const where = `map ${name}, ${theme}, ${WIDE}px`;
+      await metrics(WIDE);
+      await go(routes.card, theme);
+      // The Chat card's own rows: each run's .chat-rc-members .status-dot class and data-mark, the map's reference.
+      if (!await waitFor(ready('.chat-rc-members'), `${where}: the card's 16 marked run rows`)) continue;
+      await skipWelcome(); await sleep(500);
+      const card = await ev(ROWS('.chat-rc-members'));
+      const count = await ev(MAP_MOUNT(slices));
+      check(count === 16, `${where}: the map draws 16 runs (${count})`);
+      await sleep(400);
+      const m = await ev(MAP_READ);
+      if (!m) { check(false, `${where}: the map is on the page`); continue; }
+      const pairs = m.links.map((l) => [l.from, l.to]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      results.rows.push({ where, map: { pairs, runs: m.runs.map((x) => [x.run, x.mark, x.dot]) } });
+      check(m.ariaHidden === 'true' && m.tabindex === '-1', `${where}: the root is aria-hidden with tabindex -1 (${m.ariaHidden}, ${m.tabindex})`);
+      const unparsed = m.links.filter((l) => l.points.length < 2);
+      check(unparsed.length === 0, `${where}: every path.rom-link d parses into at least 2 points (${JSON.stringify(unparsed.map((l) => l.d))})`);
+      const cross = mapCrossings(m);
+      check(cross.length === 0, `${where}: no path.rom-link segment meets a .rom-run .status-dot or .rom-n rect of a run it does not join (${JSON.stringify(cross)})`);
+      const rowOf = (n) => (card?.rows || []).find((x) => x.run === n);
+      const compared = m.runs.filter((x) => { const row = rowOf(x.run); return row && row.mark && !/\bis-violet\b/.test(row.dot); });
+      const diff = compared.filter((x) => x.dot !== rowOf(x.run).dot);
+      check(compared.length > 0 && diff.length === 0, `${where}: each map dot's class equals the card row's dot class (${compared.length} compared; ${JSON.stringify(diff.map((x) => [x.run, x.dot, '≠', rowOf(x.run).dot]))})`);
+      const pulse = m.runs.filter((x) => /\bis-pulse\b/.test(x.dot) !== (x.mark === 'live'));
+      check(pulse.length === 0, `${where}: only data-mark="live" dots carry is-pulse (${JSON.stringify(pulse.map((x) => [x.run, x.mark]))})`);
+      if (name === 'base') check(JSON.stringify(pairs) === JSON.stringify(MAP_BASE_PAIRS), `${where}: the links are exactly the 15 base pairs (${JSON.stringify(pairs)})`);
+      if (name === 'after2') check(await ev(`document.querySelectorAll('#rom-host path.rom-link[data-from="2"]').length`) === 0 && !m.links.some((l) => l.from === 2), `${where}: run 2 is done, so no data-from="2" link`);
+      overlaps[`${name}|${theme}`] = mapOverlaps(m);
+      check(overlaps[`${name}|${theme}`].length === 0, `${where}: no two links that share no run run together or within 3px (${JSON.stringify(overlaps[`${name}|${theme}`])})`);
+      await shotOf('#rom-host', `map-${name}-${theme}.png`);
+      // Narrowed to MAP_NARROW the map scrolls sideways, and Tab from the button before it never lands inside it.
+      await ev(`(() => { const h = document.getElementById('rom-host'); h.style.width = '${MAP_NARROW}px'; h.style.boxSizing = 'border-box'; return 0; })()`);
+      await sleep(200);
+      const scroll = await ev(`(() => { const r = document.querySelector('#rom-host .rom'); return { sw: r.scrollWidth, cw: r.clientWidth }; })()`);
+      check(scroll.sw > scroll.cw, `${where}: narrowed to ${MAP_NARROW}px the map overflows (scrollWidth ${scroll.sw} > clientWidth ${scroll.cw})`);
+      await ev(`document.getElementById('rom-before').focus();0`);
+      const inside = [];
+      for (let i = 0; i < 3; i += 1) {
+        await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+        await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+        await sleep(100);
+        inside.push(await ev(`(() => { const a = document.activeElement; return !!a && !!a.closest('.rom'); })()`));
+      }
+      check(!inside.some(Boolean), `${where}: three Tab presses from the button before the map never focus inside .rom (${JSON.stringify(inside)})`);
+      await ev(`document.getElementById('rom-host')?.remove();0`);
+    }
+  }
+  results.overlaps = overlaps;
+  log(`  map overlaps: ${JSON.stringify(overlaps)}`);
+}
+
+// ---- s10 order: Show order on the feature page's Runs tab, closed first, opened by a real click, closed on return.
+const ORDER_WORLDS = ['base', 'busy'];
+const ORDER_NARROW = 360;
+/** The feature page's Show order block: the toggle, the body, the map, and the rects the checks compare. */
+const ORDER_READ = `(() => {
+  const gp = [...document.querySelectorAll('#group-detail .gpage')].find((x) => x.offsetParent);
+  if (!gp) return null;
+  const t = gp.querySelector('.gpage-order-toggle'); const body = gp.querySelector('.gpage-order-body');
+  const panel = gp.querySelector('.gpage-panel[data-tab="runs"]');
+  const rect = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, r: b.right, b: b.bottom }; };
+  const roms = gp.querySelectorAll('.rom');
+  const first = [...gp.querySelectorAll('.gpage-runs .run-member')].find((li) => li.offsetParent);
+  const pr = panel ? panel.getBoundingClientRect().right - parseFloat(getComputedStyle(panel).paddingRight || '0') : null;
+  return { text: t ? t.textContent : null, expanded: t ? t.getAttribute('aria-expanded') : null, bodyHidden: body ? body.hidden : null,
+    roms: roms.length, romHidden: roms[0] ? roms[0].getAttribute('aria-hidden') : null, runs: roms[0] ? roms[0].querySelectorAll('.rom-run').length : 0,
+    focused: !!t && document.activeElement === t, toggle: rect(t), panelRight: pr, state: rect(gp.querySelector('.gpage-card .run-status')),
+    body: rect(body), first: rect(first),
+    romScroll: roms[0] ? { sw: roms[0].scrollWidth, cw: roms[0].clientWidth } : null,
+    docScroll: { sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth } };
+})()`;
+/** A fresh mount of the feature page: navigate, reload, then wait for a member row with its word (the feature view). */
+async function freshOrderPage(routes, theme, where) {
+  await go(routes.page, theme);
+  await cdp('Page.reload');
+  await sleep(900);
+  await skipWelcome();
+  await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)};0`);
+  const ok = await waitFor(`(() => [...document.querySelectorAll('#group-detail div.gpage-runs .run-member')].some((li) => li.offsetParent
+    && (li.querySelector('.run-member-state')?.textContent || '').trim()))()`, `${where}: a member row with its word (the feature view landed)`);
+  if (ok) { await sleep(500); await ev("document.querySelector('.toast[data-key=\"role-defaults\"] .toast-x')?.click();0"); await sleep(200); }
+  return ok;
+}
+/** Real CDP input: the mouse moves to the visible toggle's centre, presses and releases. */
+async function clickToggle() {
+  const p = await ev(`(() => { const t = [...document.querySelectorAll('#group-detail .gpage-order-toggle')].find((x) => x.offsetParent); if (!t) return null;
+    const b = t.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+  if (!p) return false;
+  await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y });
+  for (const type of ['mousePressed', 'mouseReleased']) await cdp('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', clickCount: 1 });
+  await sleep(400);
+  return true;
+}
+const scrollToToggle = () => ev(`(() => { const t = [...document.querySelectorAll('#group-detail .gpage-order-toggle')].find((x) => x.offsetParent); if (t) t.scrollIntoView({ block: 'center' }); return !!t; })()`);
+/** Drawings and Show order toggles inside `sel`'s visible element (null when it is not on screen). */
+const NO_DRAWING = (sel) => `(() => { const h = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.offsetParent); if (!h) return null;
+  return { roms: h.querySelectorAll('.rom, .rom-run').length, toggles: h.querySelectorAll('.gpage-order-toggle').length
+    + [...h.querySelectorAll('button')].filter((b) => /^(Show|Hide) order$/.test(b.textContent.trim())).length }; })()`;
+/** Leaves the open page for `away` by hash, comes back, and answers whether Show order reads closed with no map. */
+async function returnClosed(routes, away) {
+  await ev(`location.hash = ${JSON.stringify(away)};0`);
+  await sleep(900);
+  await ev(`location.hash = ${JSON.stringify(routes.page)};0`);
+  await waitFor(`[...document.querySelectorAll('#group-detail .gpage-order-toggle')].some((x) => x.offsetParent)`, `the toggle after ${away} and back`);
+  await sleep(400);
+  const back = await ev(ORDER_READ);
+  results.order.push({ away, back });
+  return !!back && back.expanded === 'false' && back.roms === 0;
+}
+const closedOk = (m) => !!m && m.text === 'Show order' && m.expanded === 'false' && m.bodyHidden === true && m.roms === 0;
+if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'order') {
+  results.order = [];
+  for (const name of ORDER_WORLDS) {
+    const routes = seed(name);
+    for (const theme of THEMES) {
+      const where = `order ${name}, ${theme}, ${WIDE}px`;
+      await metrics(WIDE);
+      if (!await freshOrderPage(routes, theme, where)) continue;
+      // 1. closed on the first open of the Runs tab
+      await scrollToToggle();
+      const closed = await ev(ORDER_READ);
+      check(closedOk(closed), `${where}: first open reads Show order, aria-expanded="false", a hidden body and 0 .rom (${JSON.stringify(closed && [closed.text, closed.expanded, closed.bodyHidden, closed.roms])})`);
+      await shotOf('#group-detail .gpage-panel[data-tab="runs"]', `order-closed-${name}-${theme}.png`);
+      // 2. a real click opens it; nothing above the toggle moves
+      await scrollToToggle();
+      const before = await ev(ORDER_READ);
+      await clickToggle();
+      const open = await ev(ORDER_READ);
+      results.order.push({ where, closed, before, open });
+      if (!open) { check(false, `${where}: the feature page is on screen after the click`); continue; }
+      check(open.text === 'Hide order' && open.expanded === 'true' && open.bodyHidden === false, `${where}: the click reads Hide order with aria-expanded="true" and the body shown (${JSON.stringify([open.text, open.expanded, open.bodyHidden])})`);
+      check(open.roms === 1 && open.romHidden === 'true' && open.runs === 16, `${where}: one .rom[aria-hidden="true"] with 16 .rom-run (${open.roms}, ${open.romHidden}, ${open.runs})`);
+      check(open.focused, `${where}: activeElement is still the .gpage-order-toggle after the click`);
+      check(!!open.toggle && open.panelRight != null && Math.abs(open.toggle.r - open.panelRight) <= 1, `${where}: the toggle's right edge sits within 1px of the Runs panel's (${open.toggle && open.toggle.r} vs ${open.panelRight})`);
+      check(!!before && !!before.state && !!open.state && Math.abs(before.state.y - open.state.y) < 0.5 && Math.abs(before.state.b - open.state.b) < 0.5, `${where}: the state line keeps its rect (${JSON.stringify([before && before.state, open.state])})`);
+      check(!!open.first && !!open.body && open.first.y >= open.body.b - 0.5, `${where}: the first run row sits below the open body (${open.first && open.first.y} >= ${open.body && open.body.b})`);
+      await shotOf('#group-detail .gpage-panel[data-tab="runs"]', `order-open-${name}-${theme}.png`);
+      // 3. another view and back: closed on return. Side by side (split, 1280px) #runs keeps this page open beside the
+      // list, so it is no return; #chat/new is. The slide layout's #runs return is checked in the 360px pass below.
+      check(await returnClosed(routes, '#chat/new'), `${where}: closed again on return from #chat/new`);
+      // 4. no drawing on the Chat card or the Runs list
+      await go(routes.card, theme);
+      if (await waitFor(ready('.chat-rc-members'), `${where}: the card's 16 marked run rows`)) {
+        const card = await ev(NO_DRAWING('.chat-rc'));
+        check(!!card && card.roms === 0 && card.toggles === 0, `${where}: no drawing and no Show order on the Chat card (.chat-rc) (${JSON.stringify(card)})`);
+      }
+      if (await openSide(routes, theme, `${where} side`)) {
+        const list = await ev(NO_DRAWING('#runs-list'));
+        check(!!list && list.roms === 0 && list.toggles === 0, `${where}: no drawing and no Show order in the Runs list (${JSON.stringify(list)})`);
+      }
+    }
+  }
+  // 5. one 360px light shot of busy, open: the page has no sideways scroll; the map scrolls in its own box
+  {
+    const routes = seed('busy');
+    const where = `order busy, light, ${ORDER_NARROW}px`;
+    await metrics(ORDER_NARROW);
+    if (await freshOrderPage(routes, 'light', where)) {
+      await scrollToToggle();
+      await clickToggle();
+      const m = await ev(ORDER_READ);
+      results.order.push({ where, open: m });
+      check(!!m && m.expanded === 'true' && m.roms === 1 && m.runs === 16, `${where}: open with the 16-run map (${JSON.stringify(m && [m.expanded, m.roms, m.runs])})`);
+      check(!!m && m.docScroll.sw <= m.docScroll.cw, `${where}: the document has no horizontal scroll (scrollWidth ${m && m.docScroll.sw} <= ${m && m.docScroll.cw})`);
+      check(!!m && !!m.romScroll && m.romScroll.sw > m.romScroll.cw, `${where}: the map scrolls sideways inside its own box (scrollWidth ${m && m.romScroll && m.romScroll.sw} > clientWidth ${m && m.romScroll && m.romScroll.cw})`);
+      await shotOf('#group-detail .gpage-panel[data-tab="runs"]', 'order-open-busy-360-light.png');
+      // The slide layout: #runs is the list itself, the page root is kept for the way back, and the toggle is closed again.
+      check(await returnClosed(routes, '#runs'), `${where}: closed again after #runs and back (slide layout)`);
+    }
+    await metrics(WIDE);
   }
 }
 

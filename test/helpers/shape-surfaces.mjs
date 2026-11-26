@@ -151,8 +151,9 @@ function rowsRead(items) {
 
 /** The feature page (buildGroupPage, paintGroupPage) on its Runs tab, left live in `doc.body`. As app.js does, the
  *  status (memberStatusOf(members)) is passed only for a marked feature with the flag on. `repaint({groupId, rename})`
- *  paints it again, with another feature's id or with run titles changed (rename: {run: title}). */
-export function pageHost(doc, members, { flag = true, marked = true } = {}) {
+ *  paints it again, with another feature's id or with run titles changed (rename: {run: title}). `order` (featureView
+ *  slices, s10) is the page's Show order field; absent by default. */
+export function pageHost(doc, members, { flag = true, marked = true, order = null } = {}) {
   applyFlags({ shaperSmallRuns: flag }, doc);
   const model = groupModel({ kind: 'feature', title: 'Charts', members: members.map((m) => m.run) }, { now: NOW });
   const root = buildGroupPage(doc);
@@ -160,7 +161,7 @@ export function pageHost(doc, members, { flag = true, marked = true } = {}) {
     const listRow = { kind: 'chain', groupKind: 'feature', groupId, title: 'Charts', model, costUsd: 0, planning: null,
       members: members.map((m) => ({ ...m, ...(rename[m.position] ? { title: rename[m.position] } : {}), cost: 0 })) };
     paintGroupPage(root, { row: listRow, project: 'acme', tab: 'runs', overview: true, requirements: flag && marked,
-      ...(flag && marked ? { status: runStatusModule.memberStatusOf(listRow.members) } : {}) },
+      ...(flag && marked ? { status: runStatusModule.memberStatusOf(listRow.members) } : {}), ...(order ? { order } : {}) },
     { onAction: () => {}, onTab: () => {}, mountQuestion: () => {}, mountOverview: () => {}, mountDecisions: () => {}, mountRequirements: () => null,
       logsHref: (mb) => `${mb.href}/details/logs` });
   };

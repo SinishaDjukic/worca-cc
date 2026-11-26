@@ -1126,3 +1126,55 @@ test('s8: on a link row the title overlay is off, and the underline and chevron 
   }
 });
 
+// ---- Shaper small runs s9 (R-qa-4, R-ux-4): the run order map has its guide entry; it is still, tokens only ----
+test('gallery: run-order-map.mjs has its guide entry', async () => {
+  const MODULE = 'ui/public/shape/run-order-map.mjs';
+  const missing = [];
+  const guide = readFileSync(GUIDE, 'utf8');
+  const at = guide.indexOf('\n### Run order map (checked)\n');
+  const section = at < 0 ? '' : guide.slice(at + 1).split(/\n##+ /)[0];
+  if (at < 0) missing.push('guide: the section "### Run order map (checked)"');
+  for (const file of [MODULE, 'test/ui-shape-run-order-map.test.mjs']) if (!section.includes(file)) missing.push(`guide: ${file} named in the section`);
+  if (!/\|\s*Part\s*\|\s*Class\s*\|\s*Means\s*\|/.test(section)) missing.push('guide: the table header | Part | Class | Means |');
+  if (!/legend/i.test(section)) missing.push('guide: the legend sentence (the rows beside the map are its legend)');
+  // The classes the painter emits on the busy 16-run state, the shared status dot's own left out.
+  const emitted = new Set();
+  try {
+    const { renderRunOrderMap } = await import(`../${MODULE}`);
+    const { sixteenSlices } = await import('./helpers/shape-order-slices.mjs');
+    const root = renderRunOrderMap(new JSDOM('<!doctype html><body></body>').window.document, sixteenSlices('busy'));
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      if (el.parentElement?.closest('.status-dot')) continue;
+      for (const c of (el.getAttribute('class') || '').split(/\s+/)) if (c && !/^(?:status-dot|num|is-[\w-]+|has-sym)$/.test(c)) emitted.add(c);
+    }
+  } catch (e) { missing.push(`module: ${MODULE} does not paint (${e.message.split('\n')[0]})`); }
+  for (const c of ['rom', 'rom-plot', 'rom-links', 'rom-link', 'rom-run', 'rom-n']) if (!emitted.has(c)) missing.push(`painter: .${c} not emitted`);
+  for (const c of emitted) {
+    if (!new RegExp(`^\\|[^|\\n]*\\|\\s*\`\\.${c}\`\\s*\\|`, 'm').test(section)) missing.push(`guide: a table row for .${c}`);
+    if (!ALL.some((r) => new RegExp(`\\.${c}(?![-\\w])`).test(r.sel))) missing.push(`css: a rule for .${c}`);
+  }
+  assert.deepEqual(missing, []);
+});
+test('the .rom* rules carry no animation, transition or shadow, and use only tokens and 11px type', () => {
+  const ROM = /\.rom(?:-[a-z]+)?(?![-\w])/;
+  const own = ALL.filter((r) => ROM.test(r.sel));
+  assert.ok(own.length > 0, 'the .rom rules exist');
+  const bad = own.flatMap((r) => decls(r.body, 'animation[\\w-]*|transition[\\w-]*|box-shadow|text-shadow|filter').map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(bad, [], 'a still drawing');
+  assert.deepEqual(own.filter((r) => /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|:\s*(?:white|black)\b/i.test(r.body)).map((r) => where(r, 'raw colour')), []);
+  assert.deepEqual(own.filter((r) => /data-theme|prefers-color-scheme/.test(`${r.sel} ${r.media}`)).map((r) => where(r, 'theme rule')), [], 'the tokens switch the theme');
+  const sizes = own.flatMap((r) => decls(r.body, 'font|font-size').filter(([, v]) => !/var\(--fs-caption\)/.test(v)).map(([p, v]) => where(r, `${p}:${v}`)));
+  assert.deepEqual(sizes, [], 'the only type is the 11px caption');
+  // A map dot is the shared status dot: no .rom rule colours it.
+  assert.deepEqual(own.filter((r) => /status-dot|\.rom-run(?![-\w])/.test(r.sel))
+    .flatMap((r) => decls(r.body, 'color|background[\\w-]*|border-color').map(([p, v]) => where(r, `${p}:${v}`))), []);
+  const body = (sel) => own.filter((r) => splitTop(r.sel).includes(sel) && !r.media).map((r) => r.body).join(';');
+  for (const [sel, ...want] of [
+    ['.rom', /overflow-x:\s*auto/],
+    ['.rom-plot', /position:\s*relative/],
+    ['.rom-links', /position:\s*absolute/, /inset:\s*0/, /overflow:\s*visible/, /pointer-events:\s*none/],
+    ['.rom-link', /fill:\s*none/, /stroke:\s*var\(--ink-3\)/, /stroke-width:\s*1\.5px/],
+    ['.rom-run', /position:\s*absolute/],
+    ['.rom-n', /var\(--fs-caption\)/, /line-height:\s*1(?![.\d])|var\(--fs-caption\)\/1(?![.\d])/, /(?:^|;)\s*color:\s*var\(--ink-2\)/],
+  ]) for (const re of want) assert.match(body(sel), re, `${sel} ${re}`);
+});

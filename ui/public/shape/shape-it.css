@@ -174,6 +174,21 @@
 .chat-rc-stop-body:empty{display:none;}
 .chat-rc-stop-q{flex:1 1 100%;min-width:0;}
 .chat-rc-stop-err{color:var(--red-ink);font-size:var(--fs-meta);}
+/* Run order map (run-order-map.mjs): the still map. Fixed px geometry (no viewBox scaling); each run is the shared
+   status dot centred on its inline left/top, its number above right; links in --ink-3. No motion but the dot's pulse. */
+.rom{overflow-x:auto;}
+.rom-plot{position:relative;}
+.rom-links{position:absolute;inset:0;overflow:visible;pointer-events:none;}
+.rom-link{fill:none;stroke:var(--ink-3);stroke-width:1.5px;}
+/* A 0×0 box at the centre: the dot (8, 12 or 14px) overflows it evenly, with no transform for the pulse to undo. */
+.rom-run{position:absolute;width:0;height:0;display:flex;align-items:center;justify-content:center;}
+.rom-n{position:absolute;left:7px;top:-12px;font-size:var(--fs-caption);line-height:1;color:var(--ink-2);white-space:nowrap;}
+/* Small runs slice 10: Show order on the feature page's Runs tab. The toggle is the run page's Show route button, right
+   above the rows; the body holds the one readable hint and, while open, the map (its own sideways scroll). Still. */
+div.gpage-order{margin-bottom:8px;}
+div.gpage-order-bar{display:flex;justify-content:flex-end;}
+div.gpage-order-body{padding-top:4px;}
+div.gpage-order-body > .gpage-order-hint{margin:0 0 8px;max-width:70ch;font-size:var(--fs-caption);color:var(--ink-2);}
 /* A narrow row with no PR chip and no cost keeps one grid row: the stacked ". . pr cost" row and its gap would add 9px.
    C2: every narrow one-line row stays one 32px line, as the prototype's #build rows. A PR chip takes the last column
    (the chevron's; the whole-row link opens the run); the cost is dropped, as dev drops it in a narrow chat card, and

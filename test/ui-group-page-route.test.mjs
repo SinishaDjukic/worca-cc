@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootApp } from './helpers/run-page-boot.mjs';
 import { REPLAY_FRAMES } from './helpers/run-states.mjs';
+import { SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
 
 const member = (i) => ({ position: i, title: `Slice ${i}`, pipelineId: `p${i}`, ticketId: null, status: 'done', pr: null, ticket: null, adhoc: false, after: null });
 const GROUPS = { groups: [
@@ -857,4 +858,83 @@ test('s7 R-arch-9: with the flag off the marked feature page has no count and ke
   assert.ok(gp, 'the group page rendered');
   assert.equal(gp.querySelector('[data-need]'), null);
   assert.doesNotMatch(gp.querySelector('.gpage-card .run-status').textContent, /next: run/);
+});
+
+// ── Shaper small runs slice 10 (R-ux-3): the app hands the marked feature page its slices for "Show order" ───────────
+const s10Slices = () => SIXTEEN_RUN_LINKS.map(({ run, dependsOn }) => s7Sl(run, 'planned', { buildsOn: [...dependsOn], waitsFor: [...dependsOn] }));
+const s10Feature = (marked) => ({ ...FEATURE, status: 'active', total: 16, done: 0, slices: s10Slices(), asks: [], ask: null,
+  ship: { ready: false, mode: null, ...(marked ? { smallRuns: D3_SR() } : {}) } });
+const s10Groups = (marked) => ({ groups: [{ ...GROUPS.groups[0], ...(marked ? { smallRuns: true } : {}),
+  members: s10Slices().map((sl) => ({ ...member(sl.index), pipelineId: null, ticketId: sl.ticketId, status: 'scheduled',
+    ticket: { status: 'scheduled' }, ...(marked ? { slice: sl } : {}) })) }, GROUPS.groups[1]] });
+/** The 16-run feature page, opened. The Runs layout is the narrow slide, where bare #runs is the list itself (side by
+ *  side it reopens this very page) and the page root is kept for the way back. */
+async function s10Open({ flag = true, marked = true } = {}) {
+  const { ctx, calls } = await d3Boot({ flag, feature: () => json(s10Feature(marked)), groups: s10Groups(marked) });
+  ctx.window.document.getElementById('runs-shell').dataset.layout = 'slide';
+  ctx.go('feature/feat_1');
+  await ctx.settle(10);
+  const gp = pageOf(ctx).querySelector('.gpage');
+  assert.ok(gp, 'the group page rendered');
+  assert.equal(gp.querySelectorAll('.gpage-runs .run-member').length, 16, 'the fixture: all 16 runs are on the Runs tab');
+  assert.ok(calls.feature >= 1, 'the fixture: the feature view was fetched');
+  return { ctx, gp };
+}
+const s10Toggle = (ctx) => {
+  const t = pageOf(ctx).querySelector('.gpage-order-toggle');
+  assert.ok(t, 'the Runs tab offers Show order');
+  return t;
+};
+function s10Assert(ctx, open, why) {
+  const t = s10Toggle(ctx);
+  assert.equal(t.getAttribute('aria-expanded'), String(open), why);
+  assert.equal(t.textContent, open ? 'Hide order' : 'Show order', why);
+  assert.equal(pageOf(ctx).querySelectorAll('.rom').length, open ? 1 : 0, why);
+}
+const s10Go = async (ctx, hash) => { ctx.go(hash); await ctx.settle(10); };
+
+test('s10: a marked 16-run feature\'s Runs tab offers Show order, closed', async () => {
+  const { ctx } = await s10Open();
+  s10Assert(ctx, false, 'first open');
+  assert.equal(pageOf(ctx).querySelectorAll('.gpage-order-toggle').length, 1);
+  s10Toggle(ctx).click();
+  s10Assert(ctx, true, 'after a click');
+  assert.equal(pageOf(ctx).querySelectorAll('.rom .rom-run').length, 16);
+});
+
+test('s10: flag off → no Show order', async () => {
+  const { ctx } = await s10Open({ flag: false });
+  assert.equal(pageOf(ctx).querySelector('.gpage-order'), null);
+});
+
+test('s10: flag on, unmarked feature → no Show order', async () => {
+  const { ctx } = await s10Open({ marked: false });
+  assert.equal(pageOf(ctx).querySelector('.gpage-order'), null);
+});
+
+test('s10: a tab switch inside the page, and a feature frame, keep it open', async () => {
+  const { ctx } = await s10Open();
+  s10Toggle(ctx).click();
+  await s10Go(ctx, 'feature/feat_1/decisions');
+  await s10Go(ctx, 'feature/feat_1');
+  s10Assert(ctx, true, 'back on the Runs tab');
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(10);
+  s10Assert(ctx, true, 'after a shape-feature frame');
+});
+
+test('s10: closed again after #runs and back', async () => {
+  const { ctx, gp } = await s10Open();
+  s10Toggle(ctx).click();
+  s10Assert(ctx, true, 'opened');
+  await s10Go(ctx, 'runs');
+  assert.equal(ctx.window.location.hash, '#runs', 'the fixture: the Runs list, not this page again');
+  await s10Go(ctx, 'feature/feat_1');
+  assert.equal(pageOf(ctx).querySelector('.gpage'), gp, 'the fixture: the same page root is kept');
+  s10Assert(ctx, false, 'back from #runs');
+  s10Toggle(ctx).click();
+  s10Assert(ctx, true, 'opened again');
+  await s10Go(ctx, 'chat/new');
+  await s10Go(ctx, 'feature/feat_1');
+  s10Assert(ctx, false, 'back from #chat/new');
 });

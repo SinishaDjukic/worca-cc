@@ -15,8 +15,9 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { featureView } from '../src/core/shape/features.mjs';
-import { world } from './helpers/shape-sixteen-runs.mjs';
+import { world, SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
 import { runStatus } from '../src/shared/shape/run-status.mjs';
+import { icon } from '../ui/public/icons.mjs';
 
 useTempHome(after, 'worca-group-page-s4-');
 const trackDom = useDomRelease(afterEach);
@@ -571,4 +572,204 @@ test('s7 T16 feature page: while Ship is blocked the reason still ends the state
   const p = s7Page(ready);
   p.paint({ stateLine: S7_LINE, needCount: 0, ship: { n: 2, blocked: true, reason } });
   assert.equal(p.detail(), `${S7_LINE} · ${reason}`);
+});
+
+// ---- Shaper small runs slice 10 (R-ux-3): "Show order" on the feature page's Runs tab ------------------------------
+const ORDER_HINT = 'A run sits to the right of every run it builds on. A line joins a run that is not done to the runs waiting for it; links that are already met are not drawn.';
+/** featureView slice rows from `[run, buildsOn]` pairs; `done` run numbers are finished, every other run is planned. */
+const orderRows = (pairs, done = []) => pairs.map(([index, buildsOn]) => SL4(index, done.includes(index) ? 'done' : 'planned',
+  { title: `Run ${index}`, buildsOn: [...buildsOn], waitsFor: done.includes(index) ? [] : buildsOn.filter((d) => !done.includes(d)) }));
+const SIXTEEN = SIXTEEN_RUN_LINKS.map(({ run, dependsOn }) => [run, dependsOn]);
+const FOUR_BRANCHING = [[1, []], [2, [1]], [3, [1]], [4, [2, 3]]];
+const SIX_CHAIN = [[1, []], [2, [1]], [3, [2]], [4, [3]], [5, [4]], [6, [5]]];
+/** A marked feature's page in a document (so focus works), painted with the 16 runs as `view.order`. */
+function orderPage() {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  doc.body.append(root);
+  const paint = (view = {}, r = row()) => paintGroupPage(root,
+    { row: r, project: 'p', tab: 'runs', overview: true, requirements: true, order: orderRows(SIXTEEN), ...view }, NOOP);
+  paint();
+  const q = (s) => root.querySelector(s);
+  return { doc, root, paint, q, toggle: () => q('.gpage-order-toggle'), body: () => q('.gpage-order-body'),
+    maps: () => root.querySelectorAll('.rom').length, panel: () => q('.gpage-panel[data-tab="runs"]') };
+}
+/** The toggle, which must be there. */
+function toggleOf(p) {
+  const t = p.toggle();
+  assert.ok(t, 'the Runs tab offers Show order');
+  return t;
+}
+function assertClosed(p, why) {
+  const t = toggleOf(p);
+  assert.equal(t.textContent, 'Show order', why);
+  assert.equal(t.getAttribute('aria-expanded'), 'false', why);
+  assert.equal(p.body().hidden, true, why);
+  assert.equal(p.maps(), 0, why);
+  assert.equal(t.lastElementChild.outerHTML, icon(p.doc, 'chevron-down', 12).outerHTML, why);
+}
+function assertOpen(p, why) {
+  const t = toggleOf(p);
+  assert.equal(t.textContent, 'Hide order', why);
+  assert.equal(t.getAttribute('aria-expanded'), 'true', why);
+  assert.equal(p.body().hidden, false, why);
+  assert.equal(p.maps(), 1, why);
+  assert.equal(t.lastElementChild.outerHTML, icon(p.doc, 'chevron-up', 12).outerHTML, why);
+}
+
+test('s10 syncShowOrder: no order slices → no node', async () => {
+  const { syncShowOrder } = await import('../ui/public/group-page.mjs');
+  assert.equal(typeof syncShowOrder, 'function', 'group-page.mjs exports syncShowOrder');
+  const today = s7Page();   // a page that never had the field
+  today.paint();
+  const todayPanel = today.root.querySelector('.gpage-panel[data-tab="runs"]').innerHTML;
+  for (const order of [undefined, null, orderRows(FOUR_BRANCHING), orderRows(SIX_CHAIN)]) {
+    const p = orderPage();   // painted with the 16 runs first: the node goes, it is not just hidden
+    p.paint({ order });
+    assert.equal(p.q('.gpage-order'), null, JSON.stringify(order?.length ?? order));
+    assert.equal(p.panel().innerHTML, todayPanel, 'the Runs panel is as without the field');
+    syncShowOrder(p.root, order || null, 'feat_1');
+    assert.equal(p.q('.gpage-order'), null);
+  }
+});
+
+test('s10 first paint closed: one Show order toggle above the rows, with the run page\'s quiet button', () => {
+  const p = orderPage();
+  assert.equal(p.root.querySelectorAll('.gpage-order').length, 1);
+  assert.equal(p.root.querySelectorAll('.gpage-order-toggle').length, 1);
+  assertClosed(p, 'first paint');
+  const t = p.toggle();
+  assert.equal(t.tagName, 'BUTTON');
+  assert.equal(t.getAttribute('type'), 'button');
+  for (const c of ['btn', 'btn-sm', 'btn-quiet']) assert.ok(t.classList.contains(c), c);
+  assert.equal(p.panel().firstElementChild, p.q('.gpage-order'), 'first in the Runs panel');
+  assert.ok(p.q('.gpage-order').compareDocumentPosition(p.q('.gpage-runs')) & 4, 'before the rows');
+  assert.match(p.body().id, /^gpage-order-\d+$/);
+  assert.equal(t.getAttribute('aria-controls'), p.body().id);
+  const other = orderPage();
+  assert.notEqual(other.body()?.id, p.body().id, 'two pages, two ids');
+});
+
+test('s10 click opens and closes the drawing', () => {
+  const p = orderPage();
+  const t = toggleOf(p);
+  t.click();
+  assertOpen(p, 'after a click');
+  assert.equal(p.toggle(), t, 'the button is not replaced');
+  assert.equal(t.getAttribute('aria-controls'), p.body().id);
+  const map = p.body().querySelector('.rom');
+  assert.ok(map, 'the drawing is in the body the button controls');
+  assert.equal(map.getAttribute('aria-hidden'), 'true');
+  assert.equal(map.querySelectorAll('.rom-run').length, 16);
+  t.click();
+  assertClosed(p, 'after a second click');
+  assert.equal(p.toggle(), t);
+});
+
+test('s10 click keeps focus; a repaint keeps the node', () => {
+  const p = orderPage();
+  const t = toggleOf(p);
+  t.focus();
+  t.click();
+  assert.equal(p.doc.activeElement, t);
+  const map = p.q('.rom');
+  p.paint();
+  p.paint();   // fresh arrays with the same slices
+  assert.equal(p.root.querySelectorAll('.gpage-order').length, 1);
+  assert.equal(p.toggle(), t);
+  assert.equal(p.doc.activeElement, t, 'focus stays on the toggle');
+  assert.equal(p.q('.rom'), map, 'an unchanged drawing keeps its node');
+  assertOpen(p, 'repaint while open keeps it open');
+});
+
+test('s10 a run turning done repaints the drawing', () => {
+  const p = orderPage();
+  const t = toggleOf(p);
+  t.focus();
+  t.click();
+  const before = p.q('.rom');
+  assert.ok(before.querySelector('.rom-link[data-from="2"]'), 'the fixture: links from run 2 are drawn');
+  p.paint({ order: orderRows(SIXTEEN, [2]) });
+  assert.notEqual(p.q('.rom'), before);
+  assert.equal(p.root.querySelectorAll('.rom-link[data-from="2"]').length, 0);
+  assert.ok(p.root.querySelector('.rom-link'), 'the other links stay');
+  assert.equal(p.toggle(), t);
+  assert.equal(p.doc.activeElement, t);
+  assertOpen(p, 'still open');
+});
+
+test('s10 opening after a repaint draws the latest slices', () => {
+  const p = orderPage();
+  toggleOf(p);
+  p.paint({ order: orderRows(SIXTEEN, [2]) });
+  p.toggle().click();
+  assertOpen(p, 'opened');
+  assert.equal(p.root.querySelectorAll('.rom-link[data-from="2"]').length, 0, 'run 2 is done in the latest paint');
+});
+
+test('s10 another groupId resets to closed', () => {
+  const p = orderPage();
+  const t = toggleOf(p);
+  t.click();
+  assertOpen(p, 'opened');
+  p.paint({}, { ...row(), groupId: 'feat_2' });
+  assertClosed(p, 'another feature');
+  assert.equal(p.toggle(), t, 'the button is kept');
+  p.paint();
+  assertClosed(p, 'back on the first feature');
+});
+
+test('s10 a tab switch keeps the choice', () => {
+  const p = orderPage();
+  toggleOf(p).click();
+  const map = p.q('.rom');
+  p.paint({ tab: 'overview' });
+  p.paint({ tab: 'runs' });
+  assertOpen(p, 'back on Runs');
+  assert.equal(p.q('.rom'), map);
+});
+
+test('s10 a missing state repaints the kept node closed', () => {
+  const p = orderPage();
+  const t = toggleOf(p);
+  t.click();
+  assertOpen(p, 'opened');
+  delete p.root.__order;
+  p.paint();
+  assert.equal(p.toggle(), t);
+  assertClosed(p, 'no state');
+});
+
+test('s10 dropping below the threshold moves focus to the Runs tab', () => {
+  const p = orderPage();
+  const t = toggleOf(p);
+  t.focus();
+  assert.equal(p.doc.activeElement, t);
+  p.paint({ order: orderRows(FOUR_BRANCHING) });
+  assert.equal(p.q('.gpage-order'), null);
+  assert.equal(p.doc.activeElement, p.q('.gpage-tabs .rd-tab[data-tab="runs"]'));
+  const elsewhere = orderPage();
+  toggleOf(elsewhere);
+  const more = elsewhere.q('.gpage-tabs .rd-tab[data-tab="decisions"]');
+  more.focus();
+  elsewhere.paint({ order: orderRows(FOUR_BRANCHING) });
+  assert.equal(elsewhere.q('.gpage-order'), null);
+  assert.equal(elsewhere.doc.activeElement, more, 'focus elsewhere is left where it is');
+});
+
+test('s10 the toggle bar is right-aligned and holds only the toggle; the body carries the one hint, readable', () => {
+  const p = orderPage();
+  const t = toggleOf(p);
+  const bar = p.q('.gpage-order > .gpage-order-bar');
+  assert.ok(bar);
+  assert.deepEqual([...bar.children], [t]);
+  assert.equal(p.q('.gpage-order > .gpage-order-body'), p.body());
+  for (const state of ['closed', 'open']) {
+    const hints = p.body().querySelectorAll('p.gpage-order-hint');
+    assert.equal(hints.length, 1, state);
+    assert.equal(hints[0].textContent, ORDER_HINT);
+    assert.equal(hints[0].closest('[aria-hidden="true"]'), null, 'only the drawing is hidden from screen readers');
+    assert.equal(p.root.textContent.split(ORDER_HINT).length - 1, 1, 'said once on the page');
+    t.click();
+  }
 });

@@ -36267,6 +36267,7 @@ el.groupDetail?.addEventListener('click', (e) => {
 });
 async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
+  if (reentered && host.__gp) delete host.__gp.__order;   // small runs slice 10 (D6): Show order is closed again on a return
   Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false, unmarked: 0, stackedOnly: false, feature: null, requirements: false, memberKey: '', memberPending: '', memberFailed: '' } : {}) });
   if (fresh) {
     groupMessage(host, 'feature-page-loading', 'Loading group…');
@@ -36360,7 +36361,7 @@ function paintGroupPageNow() {
   const labels = [...new Set(row.members.flatMap((mb) => (histOf(mb.pipelineId) || {}).labels || []))].sort();
   paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: levelAtLeast('expert'), labels,
     unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0, stackedOnly: route === 'feature' && GROUP_PAGE.stackedOnly,
-    requirements: route === 'feature' && GROUP_PAGE.requirements, ...(route === 'feature' && GROUP_PAGE.requirements ? { shortState: memberShortWord, status: featureRowStatus(row), ship: groupShipOf(GROUP_PAGE.feature), ...featureLineOf(row) } : {}) }, {
+    requirements: route === 'feature' && GROUP_PAGE.requirements, ...(route === 'feature' && GROUP_PAGE.requirements ? { shortState: memberShortWord, status: featureRowStatus(row), ship: groupShipOf(GROUP_PAGE.feature), ...featureLineOf(row), order: (GROUP_PAGE.feature && GROUP_PAGE.feature.slices) || null } : {}) }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
     // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.

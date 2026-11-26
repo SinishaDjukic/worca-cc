@@ -697,7 +697,7 @@ fix cycles it stops adding runs by itself and asks you: **Add a run for the gap*
   and **Needed by** (`nothing` when no run builds on it). A stopped run's page names the stop and links where it is answered
   (the feature's card in Chat, or the feature page for a feature no chat started); it has no answer controls.
 - **The feature page**: Runs, Requirements (each with its owner run or confirming role, and its status) and Decisions
-  with the Care line. Its run rows are one line with the same short words as the card and the Runs list ("waiting for
+  with the Care line, and Show order on its Runs tab. Its run rows are one line with the same short words as the card and the Runs list ("waiting for
   you", "waits for run 8", "done"). Its head button reads "Create N PRs" and follows the Ship card: until the
   feature is ready to ship (the Verifier still checks, or waits for your answer) and while the ledger blocks it, it is
   off and the status line says why. An open stop shows its own head and primary, and the page offers no Re-plan beside
@@ -754,6 +754,20 @@ neither does, it says who must act: `Nothing can go on until you act` while a st
 run that cannot start waits on you. The card keeps its `2 of 16 runs done` after the line. The head shows `4 need you`
 once (the stop lines, failed runs included), and nothing at zero. A second answer to a listed stop, from another open
 view, is refused as before.
+
+### Show order
+
+With the flag on, the feature page's Runs tab of a marked feature offers a `Show order` button above the run rows when
+the feature has 5 runs or more and their links branch or join: some run builds on two or more runs, or two or more runs
+build on one. A plain chain, separate chains or runs without links get no button: each row's own `waits for run N`
+already says it. The button is closed each time the page opens, on another feature and when you come back from another
+view; switching the page's tabs keeps it as you left it.
+
+`Show order` opens a still drawing of the order, and `Hide order` closes it. Each run is a dot with the row's own marks,
+placed right of every run it builds on. A line joins a run that is not done to the runs it holds back; links already
+met, and links another link already implies, are not drawn, and no line passes through another run's dot. Nothing moves
+but the existing pulse of a working run. The drawing is hidden from screen readers: the rows say the same in words.
+The drawing is never on the Chat card or the Runs sidebar.
 
 ### Off
 

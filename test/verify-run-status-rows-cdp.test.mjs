@@ -167,3 +167,27 @@ test('s8: the pointing log has before, pointed, kept and released row positions,
   assert.match(s, /THEMES = \['light', 'dark'\]/);
 });
 
+// ── Slice 9 (R-ux-4, R-qa-4): the same proof mounts the run order map on the served page and checks its real rects ─────
+test('s9: it adds the map surface (SURFACE=map), the worlds base, busy, held, change and after2, shoots map-{world}-{theme}.png and checks segments against the dot and label rects, the base world\'s 15 pairs, aria-hidden, the Tab check on an overflowing map, the card\'s dot classes, the pulse, and fails on overlaps', () => {
+  const s = src();
+  assert.match(s, /!process\.env\.SURFACE[^\n]*SURFACE === 'map'/, 'SURFACE=map runs it, and so does a run with no SURFACE');
+  assert.match(s, /WORLDS = [^\n]*SURFACE !== 'map'/, 'SURFACE=map skips the rows worlds');
+  assert.match(s, /\bafter2\b/, 'base with run 2 done');
+  assert.match(s, /map-\$\{[A-Za-z.]+\}-\$\{[A-Za-z.]+\}\.png/, 'map-{world}-{theme}.png');
+  assert.match(s, /\/shape\/run-order-map\.mjs/, 'the module as the page serves it');
+  assert.match(s, /renderRunOrderMap/);
+  assert.match(s, /path\.rom-link/);
+  assert.match(s, /\.rom-run \.status-dot/);
+  assert.match(s, /\.rom-n\b/);
+  for (const [a, b] of [[2, 7], [2, 8], [3, 4], [3, 10], [4, 5], [5, 6], [6, 7], [7, 12], [8, 15], [9, 16], [10, 12], [12, 16], [13, 14], [14, 15], [15, 16]]) {
+    assert.match(s, new RegExp(`\\b${a}\\s*(?:,|→|->|>|-)\\s*${b}\\b`), `base pair ${a}→${b}`);
+  }
+  assert.match(s, /aria-hidden|ariaHidden/);
+  assert.match(s, /\b240\b/, 'the host is narrowed to 240px');
+  assert.match(s, /Input\.dispatchKeyEvent/);
+  assert.match(s, /['"]Tab['"]/);
+  assert.match(s, /is-violet/, 'merged rows keep a model-only dot');
+  assert.match(s, /\.chat-rc-members[^\n]*\.status-dot|\.status-dot[^\n]*\.chat-rc-members|chat-rc-members[\s\S]{0,400}\.status-dot/, 'the card rows\' dot classes');
+  assert.match(s, /data-from=\\?["']2\\?["']|\.from\s*===?\s*['"]?2\b/, 'after2 draws nothing from run 2');
+  assert.match(s, /check\(overlaps\[[^\n]*\.length === 0/, 'links that share no run and run together fail the proof');
+});

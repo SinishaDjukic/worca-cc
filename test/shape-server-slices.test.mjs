@@ -1618,7 +1618,7 @@ test('D2 (D8): GET /slice: marked + flag on adds owns, startsFrom and stored (al
   await withEnvVars(SMALL_ON, async () => {
     const one = await slice(f.pid);
     assert.equal(one.status, 200);
-    assert.deepEqual(Object.keys(one.body), [...DEV.slice(0, 7), 'owns', 'startsFrom', 'threadId', 'stored']);
+    assert.deepEqual(Object.keys(one.body), [...DEV.slice(0, 7), 'owns', 'startsFrom', 'links', 'threadId', 'stored']);
     assert.deepEqual(one.body.owns, []);
     assert.equal(one.body.startsFrom.kind, 'feature');
     assert.deepEqual(one.body.stored, { planVersion: null, planReviewed: false, tests: null });

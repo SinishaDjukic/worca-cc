@@ -17,7 +17,7 @@ import { listRunGroups } from '../src/core/run-groups.mjs';
 import { sliceGateState } from '../src/core/shape/features.mjs';
 import { buildRunsModel, groupRow, renderRunsList } from '../ui/public/runs-list.mjs';
 import { SIXTEEN_RUN_LINKS, startable } from './helpers/shape-sixteen-runs.mjs';
-import { WALKED, walked, walkWorld, groupItem, cardStatus, pageStatus, sidebarStatus, runPageStatus, headRead, NOW } from './helpers/shape-surfaces.mjs';
+import { WALKED, walked, walkWorld, groupItem, cardStatus, pageStatus, sidebarStatus, runPageStatus, headRead, cardHost, pageHost, NOW } from './helpers/shape-surfaces.mjs';
 
 useTempHome(after, 'worca-shape-surfaces-');
 const trackDom = useDomRelease(afterEach);
@@ -192,4 +192,29 @@ test('acceptance: with the flag off, a marked feature\'s Runs list member rows r
     const after = groupRow(group, { now: NOW }).members.find((m) => m.position === 12).run.ticket.after.index;
     assert.equal(row12.querySelector('.runs-row-sub').textContent, `Waiting · starts after run ${after}`);
   });
+}));
+
+// ---- Shaper small runs slice 10 (R-ux-3): the order drawing is on the feature page only -----------------------------
+test('s10: no drawing on the card or the sidebar', () => withEnvVars(ON, () => {
+  const w = walkWorld(root, walked('failed'));   // the busy 16-run state
+  const card = cardHost(doc(), w.slices, w.snaps);
+  const d = doc();
+  const history = w.group.members.filter((m) => m.pipelineId)
+    .map((m) => ({ id: m.pipelineId, projectKey: 'k', title: m.pipelineId, status: m.run.status, run: { status: m.run.status } }));
+  const sidebar = d.createElement('div');
+  sidebar.append(...renderRunsList(d, buildRunsModel({ history, groups: [w.group], toggled: new Map([[`chain:${w.group.id}`, true]]), now: NOW })));
+  assert.equal(card.root.querySelectorAll('.run-member:not([data-key="planning"])').length, 16, 'the card lists the 16 runs');
+  assert.equal(sidebar.querySelectorAll('.runs-members > .runs-item[data-level="member"]').length, 16, 'the sidebar lists the 16 runs');
+  const showOrder = (host) => [...host.querySelectorAll('button')].filter((b) => b.textContent.trim() === 'Show order').length;
+  for (const [name, host] of [['Chat card', card.root], ['Runs sidebar', sidebar]]) {
+    assert.equal(host.querySelectorAll('.rom, .rom-run').length, 0, `${name}: no drawing`);
+    assert.equal(host.querySelectorAll('.gpage-order, .gpage-order-toggle').length, 0, `${name}: no toggle`);
+    assert.equal(showOrder(host), 0, `${name}: no Show order button`);
+  }
+  card.dispose();
+  // The positive control: the same slices handed to the feature page do offer it.
+  const page = pageHost(doc(), w.members, { order: w.slices });
+  assert.equal(page.root.querySelectorAll('.gpage-order-toggle').length, 1, 'the feature page offers Show order');
+  assert.equal(showOrder(page.root), 1);
+  page.dispose();
 }));

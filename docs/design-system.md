@@ -242,6 +242,39 @@ has a `[data-link…]` attribute without a row here.
 | solid bar | `data-link="on"` | the pointed run builds on this run (done runs included) |
 | dashed bar | `data-link="by"` | this run builds on the pointed run |
 | kept row | `data-link-kept` | the kept run, with `aria-current="true"` and the `--row-selected` fill |
+
+### Run order map (checked)
+The still order of a branching small-runs feature: one status dot per run, each in a column right of every run it
+builds on (rows in run-number order), and only the links that still hold a run back, routed through the gaps between
+columns and the lanes between rows so no link crosses a dot or a number. The module is `ui/public/shape/run-order-map.mjs`
+(`runOrderLayout` is the pure layout, `renderRunOrderMap` the painter), tested by `test/ui-shape-run-order-map.test.mjs`.
+Geometry is fixed px (§Charts, no `viewBox` scaling). A dot is the shared status dot through `markDot`, never a class of
+its own, and the only motion is the live dot's pulse. The map is `aria-hidden` and never a tab stop: the run rows beside
+it are its legend and its accessible source, so it has no caption or legend of its own. Two links that share no run
+never run together: in each gap, exits take tracks from the left and entries from the right, and tracks sit 4px apart.
+A run waiting at a stop held for another run counts as not started, so its link stays.
+
+| Part | Class | Means |
+|---|---|---|
+| root | `.rom` | the map and its sideways scroll box (`aria-hidden`, `tabindex="-1"`) |
+| plot | `.rom-plot` | the drawing, sized in px by the layout |
+| links | `.rom-links` | the SVG behind the dots that holds the links |
+| link | `.rom-link` | one link that still holds a run back, 1.5px `--ink-3`, straight segments only |
+| run | `.rom-run` | one run, its status dot centred on the layout point |
+| number | `.rom-n` | the run's number above right of its dot, 11px `--ink-2` (§Charts) |
+
+The map is placed on the feature page's Runs tab only, behind a Show order / Hide order toggle (the run page's
+`.rd-route-toggle` pattern: a quiet small button with a chevron, `aria-expanded`, `aria-controls`). It is closed each time
+the page opens and offered only from 5 runs whose links branch or join (`showOrderOffered`), never for a plain chain. The
+Chat card and the Runs sidebar never show it. `ui/public/group-page.mjs` `syncShowOrder` creates and removes the node.
+
+| Part | Class | Means |
+|---|---|---|
+| block | `.gpage-order` | the Show order block, first in the Runs panel, above the rows; absent when not offered |
+| bar | `.gpage-order-bar` | right-aligns the toggle |
+| toggle | `.gpage-order-toggle` | `button.btn.btn-sm.btn-quiet`: Show order / Hide order with a 12px chevron |
+| body | `.gpage-order-body` | the part the toggle controls, `hidden` while closed |
+| hint | `.gpage-order-hint` | the one readable line under the toggle, `--fs-caption` in `--ink-2` |
 ### Usage rings
 The avatar draws only the session and long-window rings (`ui/public/usage-view.mjs`), each in one tone (`--ink-2`,
 `--amber` at the warning line, `--red` full at the limit); spend is never a ring there, it lives in the account menu's

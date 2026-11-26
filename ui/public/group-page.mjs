@@ -11,6 +11,7 @@ import { groupHead } from './run-head.mjs';
 import { answerFieldOpen } from './shape/step-card.mjs';
 import { needYouText } from './shape/feature-card.mjs';
 import { bindRunLinks } from './run-links.mjs';
+import { showOrderOffered, renderRunOrderMap } from './shape/run-order-map.mjs';
 
 export const GROUP_TABS = Object.freeze([['runs', 'Runs'], ['overview', 'Overview'], ['decisions', 'Decisions'], ['logs', 'Logs']]);
 const el = (doc, tag, cls, text = '') => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
@@ -116,6 +117,66 @@ export function syncRequirementsTab(root, on) {
   root.querySelector('.gpage-panel[data-tab="runs"]').after(p);
 }
 
+// Small runs slice 10 (D9): the one readable line under Show order; only the drawing itself is aria-hidden.
+const ORDER_HINT = 'A run sits to the right of every run it builds on. A line joins a run that is not done to the runs waiting for it; links that are already met are not drawn.';
+let orderIds = 0;
+
+/** Slice 10 (D4, D6, D7): "Show order" on the Runs tab, the run order drawing behind a toggle. Idempotent: the node
+ *  exists only while showOrderOffered(slices) (created and removed, never only hidden, so other pages keep dev's DOM).
+ *  The open state lives on the root (`root.__order = { gid, open, slices }`); a missing state or another `gid` reads as
+ *  closed. The button is built once and never replaced, so focus survives every repaint. */
+export function syncShowOrder(root, slices, gid) {
+  const panel = root.querySelector('.gpage-panel[data-tab="runs"]');
+  const node = panel.querySelector(':scope > .gpage-order');
+  if (!slices || !showOrderOffered(slices)) {
+    delete root.__order;
+    if (!node) return;
+    const a = root.ownerDocument.activeElement;
+    const had = !!a && node.contains(a);
+    node.remove();
+    if (had) root.querySelector('.gpage-tabs .rd-tab[data-tab="runs"]')?.focus();
+    return;
+  }
+  if (!root.__order || root.__order.gid !== gid) root.__order = { gid, open: false, slices };
+  root.__order.slices = slices;
+  paintShowOrder(root, node || buildShowOrder(root, panel));
+}
+
+function buildShowOrder(root, panel) {
+  const doc = root.ownerDocument;
+  const node = el(doc, 'div', 'gpage-order');
+  const bar = el(doc, 'div', 'gpage-order-bar');
+  const body = el(doc, 'div', 'gpage-order-body');
+  body.id = `gpage-order-${(orderIds += 1)}`;
+  body.hidden = true;
+  const t = el(doc, 'button', 'btn btn-sm btn-quiet gpage-order-toggle');   // the run page's Show route control
+  t.type = 'button';
+  t.setAttribute('aria-controls', body.id);
+  t.append(el(doc, 'span'), icon(doc, 'chevron-down', 12));
+  t.addEventListener('click', () => {
+    if (!root.__order) return;
+    root.__order.open = !root.__order.open;
+    paintShowOrder(root, node);
+  });
+  bar.append(t);
+  node.append(bar, body);
+  panel.prepend(node);
+  return node;
+}
+
+function paintShowOrder(root, node) {
+  const doc = root.ownerDocument;
+  const { open, slices } = root.__order;
+  const t = node.querySelector('.gpage-order-toggle');
+  t.setAttribute('aria-expanded', String(open));
+  t.firstElementChild.textContent = open ? 'Hide order' : 'Show order';
+  const chevron = icon(doc, open ? 'chevron-up' : 'chevron-down', 12);
+  if (t.lastElementChild.outerHTML !== chevron.outerHTML) t.lastElementChild.replaceWith(chevron);
+  const body = node.querySelector('.gpage-order-body');
+  body.hidden = !open;
+  keepUnchanged(body, [el(doc, 'p', 'gpage-order-hint', ORDER_HINT), ...(open ? [renderRunOrderMap(doc, slices)] : [])]);
+}
+
 /** One ship flow (D11): a group's Create PR and View PR(s) live on the status line (docs/design-system.md
  *  "Placement"), never in the bar, for features, chains and user groups alike. */
 export function headerActions(m) {
@@ -163,7 +224,8 @@ function paintNeed(kindEl, text) {
  * (member) → string|null (small runs: one-line member rows with the card's short words), status?: (member) →
  * {word, mark}|null (small runs s4: runStatus's word and mark for each row, renderMemberRows' `status`), ship?: {n, blocked, reason}|null
  * (small runs: the ledger the head's Create N PRs follows), stateLine?: string|null (small runs slice 7: the feature's state
- * line, featureStateLine, in place of the model's line), needCount?: number (slice 7: the stop lines, the head's chip) }.
+ * line, featureStateLine, in place of the model's line), needCount?: number (slice 7: the stop lines, the head's chip),
+ * order?: object[]|null (slice 10: a marked feature's featureView slices; the Runs tab offers Show order from them) }.
  * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
  * mountDecisions(host, row), mountRequirements?(host, row) → Node|null (D3, while `view.requirements`), logsHref(member),
  * labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
@@ -234,6 +296,7 @@ export function paintGroupPage(root, view, deps) {
   for (const p of root.querySelectorAll('.gpage-panel')) p.hidden = p.dataset.tab !== tab;
   // Slice 3: a frame that changes nothing in the table keeps its nodes (a focused row, the scroll anchor).
   // s8 (D6, D14): the link marks, the kept run and a focused row survive the repaint; another feature drops the keep.
+  syncShowOrder(root, view.order || null, row.groupId);   // slice 10 (D4): Show order, above the rows
   const runsHost = root.querySelector('.gpage-runs');
   runsHost.__links.repaint(row.groupId, () => keepUnchanged(runsHost, [view.shortState || view.status
     ? renderMemberRows(doc, row, { oneLine: true, shortState: view.shortState || null,

@@ -149,3 +149,43 @@ test('s8: a paragraph under the run words names the solid and dashed bars, click
   assert.deepEqual(missing(para, [/\bsolid\b/i, /\bdashed\b/i, /builds? on/i, /\bclick/i, /\bEnter\b/, /\bEsc\b/, /(?:nothing|no row)[^.]*\bmov/i]), []);
 });
 
+
+// Shaper small runs slice 10 (R-ux-3, R-rel-1): Show order, and the closing check of the whole run-order feature.
+/** The part of the Small runs section under `### heading`, up to the next `### ` (flattened), or ''. */
+function smallPart(heading) {
+  const small = DOCS['shape-it-first.md'].text();
+  const at = small.indexOf(`\n### ${heading}\n`);
+  if (at < 0) return '';
+  const rest = small.slice(at + 1);
+  const next = rest.indexOf('\n### ', 1);
+  return flat(next < 0 ? rest : rest.slice(0, next));
+}
+
+test('s10: a Show order part before Off names the Runs tab, 5 runs, plain chain, closed, the rows for screen readers, and not the Chat card or Runs sidebar', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const at = small.indexOf('\n### Show order\n');
+  const off = small.indexOf('\n### Off\n');
+  assert.ok(at >= 0, 'the heading "### Show order" under Small runs');
+  assert.ok(off > at, 'before "Off"');
+  const part = smallPart('Show order');
+  assert.deepEqual(missing(part, [/Runs tab/, /\b5 runs\b/, /branch/i, /\bjoin/i, /plain chain/i, /\bclosed\b/i, /screen reader/i,
+    // what the drawing shows
+    /\bmarks?\b/i, /right of/i, /\bholds?\b/i, /\bdot\b/i, /pulse/i]), []);
+  const sentences = part.split(/(?<=\.)\s+/);
+  assert.ok(sentences.some((s) => /Chat card/.test(s) && /Runs sidebar/i.test(s) && /\b(?:never|not|no)\b/i.test(s)),
+    'one sentence says it is not on the Chat card or the Runs sidebar');
+});
+
+test('s10: the feature page bullet of "The four places" names Show order on its Runs tab', () => {
+  const bullet = smallPart('The four places').split(/ - \*\*/).find((b) => b.startsWith('The feature page**')) || '';
+  assert.ok(bullet, 'the feature page bullet');
+  assert.deepEqual(missing(bullet, [/Show order[^.]*Runs tab/]), []);
+});
+
+test('s10 closing (R-rel-1): Small runs describes next and no word, the open stop list, the link marks and Show order', () => {
+  const words = smallPart('The run words');
+  assert.deepEqual(missing(words, ['`next`', /next` comes only from/, 'shows no word']), [], 'when a row reads next, and no word');
+  assert.deepEqual(missing(smallPart('Open stops on the card'), ['holds up', 'Resume']), [], 'the open stop list');
+  assert.ok(words.includes('solid') && words.includes('dashed bar'), 'the link marks');
+  assert.ok(smallPart('Show order'), 'the "### Show order" part');
+});
