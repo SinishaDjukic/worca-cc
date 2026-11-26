@@ -4,12 +4,14 @@
 // which features.mjs imports, calls back into latestFinishedSlice at runtime only).
 import { getDb } from '../db.mjs';
 import { previousBranchesOf } from '../scheduler.mjs';
-import { isAncestor } from '../worktree.mjs';
+import { isAncestor, runGitCapture } from '../worktree.mjs';
+import { checkCombine, mergeBaseInto } from '../git-sync.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature } from './small-runs.mjs';
 import { SHIP_LOCK, shipLocked } from './ship-lock.mjs';
 import { roundOrigin } from './rounds.mjs';
 import { SMALL_RUNS_SHIP } from '../../shared/shape/ship-ledger.mjs';
-import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, busySliceOf, featureOfPipeline, currentFeatureId, finishedSlices } from './features.mjs';
+import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, busySliceOf, featureOfPipeline, currentFeatureId, finishedSlices,
+  dependencyBranchesOf, setClashHold, clearClashHold } from './features.mjs';
 
 import { recordSettledFigures as recordFigures } from './measure.mjs';
 import { verifyAfterSettled, verifyCheckOfPipeline } from './verifier.mjs';
@@ -121,6 +123,134 @@ export function sliceFireStart(ticket, body, { isLive, live } = {}, deps = {}) {
   if (own.pending) return { own, refusal: { ok: false, error: 'the run before it is still merging its work back', transient: true } };
   if (!ticket.after && own.sourceBranch) body.sourceBranch = own.sourceBranch;   // a slice-1 restart
   return { own, refusal: null };
+}
+
+/** "8", "8 and 9", "4, 6 and 8". */
+const andList = (items) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+/** "runs 8 and 9" (ascending, each once); "run 8" alone. */
+const runsText = (runs) => {
+  const list = [...new Set(runs)].sort((a, b) => a - b);
+  return `${list.length === 1 ? 'run' : 'runs'} ${andList(list)}`;
+};
+const CLASH_FILES_NAMED = 3;
+
+/** D8: why a run is held: the runs whose work clashes, ascending, and at most 3 of the files they clash in, then how
+ *  many more (`fileCount`, checkCombine's real count when its list is capped). Pure.
+ *  → 'runs 8 and 9 clash in src/a.mjs' | 'runs 8 and 9 clash in a, b, c and 2 more files' */
+export function clashReason({ runs, files, fileCount = files.length }) {
+  const named = files.slice(0, CLASH_FILES_NAMED);
+  const more = Math.max(0, fileCount - named.length);
+  const where = more ? `${named.join(', ')} and ${more} more ${more === 1 ? 'file' : 'files'}` : andList(named);
+  return `${runsText(runs)} clash in ${where}`;
+}
+
+/** The dependency branches of `found` that `start` lacks (not it, and not an ancestor of it), each once, in order. */
+async function missingFrom(dir, start, found, ancestor) {
+  const missing = [];
+  for (const d of found) {
+    if (d.branch === start || missing.some((m) => m.branch === d.branch)) continue;
+    if (!(await ancestor(dir, `refs/heads/${d.branch}`, `refs/heads/${start}`, { timeout: 10_000 }))) missing.push(d);
+  }
+  return missing;
+}
+
+/**
+ * The one combine verdict of the gate and the harness (D8): checkCombine over `start.branch` then each missing branch.
+ * Run numbers are the card's (slice indices); `start.index` may be null (the feature base). Writes no ref.
+ * → {status:'clean', check} | {status:'clash', reason, runs, files}
+ *   | {status:'no-branch', error} | {status:'error', error, transient}
+ */
+async function combineVerdict(dir, start, missing, combine) {
+  const indexOf = new Map(missing.map((d) => [d.branch, d.index]));
+  if (Number.isInteger(start.index)) indexOf.set(start.branch, start.index);
+  const runsOf = (list) => list.map((b) => indexOf.get(b)).filter(Number.isInteger);
+  const branches = [start.branch, ...missing.map((m) => m.branch)];
+  const c = await combine(dir, { branches });
+  if (c.status === 'clean') return { status: 'clean', check: c };
+  if (c.status === 'conflicts') {
+    // Only the runs that clash: those that conflict with `branch` alone; none alone → the clash needs the whole fold.
+    const alone = [];
+    for (const w of c.with) {
+      if ((await combine(dir, { branches: [w, c.branch] })).status === 'conflicts') alone.push(w);
+    }
+    const runs = runsOf([c.branch, ...(alone.length ? alone : c.with)]);
+    return { status: 'clash', reason: clashReason({ runs, files: c.files, fileCount: c.fileCount }), runs, files: c.files };
+  }
+  if (c.status === 'no-branch') return { status: 'no-branch', error: `branch ${c.branch} no longer exists` };
+  return { status: 'error', error: `could not combine the work of ${runsText(runsOf(branches))}: ${c.error}`,
+    transient: c.kind === 'failed' || c.kind === 'timeout' };
+}
+
+/**
+ * Small runs (D2, D8): fire-time check that a slice run can start with the work of every run it builds on. The start
+ * stays `own.sourceBranch` (D1); the dependency branches it lacks are merged on top by the harness
+ * (combineDependencies). Writes no ref (isAncestor and checkCombine only). null = start as today (flag off, unmarked
+ * feature, workspace ticket, no start branch, nothing to combine, a clean combine); a clash sets the ticket's clash
+ * hold; any other answer clears it. `deps` = { flagEnabled, checkCombine, isAncestor } seams.
+ * → null | {ok:false, hold:true, error} | {ok:false, error, transient}
+ */
+export async function sliceCombineGate(ticket, own, deps = {}) {
+  if (!shaperSmallRunsOn(deps)) return null;
+  const at = activeSlice(ticket);
+  if (!at || !smallRunsOfFeature(at.featureId)) return null;
+  if (!own || own.pending || !own.sourceBranch || ticket.workspaceId) return null;
+  const done = (res) => { clearClashHold(ticket.id); return res; };
+  const found = dependencyBranchesOf(at.featureId, at.index);
+  if (found.pending) return done({ ok: false, error: 'the run before it is still merging its work back', transient: true });
+  const dir = ticket.projectDir;
+  const missing = await missingFrom(dir, own.sourceBranch, found.branches, deps.isAncestor || isAncestor);
+  if (!missing.length) return done(null);
+  const index = found.branches.find((d) => d.branch === own.sourceBranch)?.index
+    ?? (own.pipelineId ? finishedSlices(at.featureId).find((s) => s.pipelineId === own.pipelineId)?.index : null);
+  const v = await combineVerdict(dir, { branch: own.sourceBranch, index }, missing, deps.checkCombine || checkCombine);
+  if (v.status === 'clean') return done(null);
+  if (v.status === 'clash') {
+    setClashHold(ticket.id, { reason: v.reason, runs: v.runs, files: v.files, at: Date.now() });
+    return { ok: false, hold: true, error: v.reason };
+  }
+  return done({ ok: false, error: v.error, transient: v.status === 'error' && v.transient });
+}
+
+/**
+ * Small runs (D3, D10): the harness's half. Re-checks the combine on the run's fresh branch `branch` (it started from
+ * `source`) and, when clean, merges each missing dependency into it from its local SHA (the check's `heads`), in the
+ * check's order. Throws before writing anything for a pending dependency, a clash (its reason) or a check error; a
+ * merge failure puts the branch back at its start and throws with its `kind`. `deps` = { checkCombine, mergeBaseInto, isAncestor }.
+ * → null (nothing missing) | {tip, merged: Array<{index, branch}>}
+ */
+export async function combineDependencies(dir, { featureId, index, branch, source }, deps = {}) {
+  const found = dependencyBranchesOf(featureId, index);
+  if (found.pending) throw new Error('the run before it is still merging its work back');
+  const missing = await missingFrom(dir, branch, found.branches, deps.isAncestor || isAncestor);
+  if (!missing.length) return null;
+  const start = found.branches.find((d) => d.branch === source)?.index
+    ?? finishedSlices(featureId).find((s) => previousBranchesOf(s.pipelineId)?.sourceBranch === source)?.index ?? null;
+  const v = await combineVerdict(dir, { branch, index: start }, missing, deps.checkCombine || checkCombine);
+  if (v.status !== 'clean') throw new Error(v.status === 'clash' ? v.reason : v.error);
+  const merge = deps.mergeBaseInto || mergeBaseInto;
+  const begin = v.check.heads[0];
+  let tip = begin;
+  let at = null;                                   // the checkout an earlier merge ran in
+  for (const [i, d] of missing.entries()) {
+    const r = await merge(dir, { feature: branch, baseSha: v.check.heads[i + 1], headSha: tip, baseRef: d.branch });
+    if (!r.ok) {
+      // Never leave a partial combine: put the branch back at its start.
+      if (tip !== begin) {
+        await (at ? runGitCapture(at, ['reset', '-q', '--hard', begin])
+          : runGitCapture(dir, ['update-ref', `refs/heads/${branch}`, begin, tip])).catch(() => {});
+      }
+      throw Object.assign(new Error(`could not merge the work of run ${d.index} (\`${d.branch}\`): ${r.error || r.kind}`), { kind: r.kind });
+    }
+    tip = r.to;
+    at = r.path || at;
+  }
+  return { tip, merged: missing.map(({ index: k, branch: b }) => ({ index: k, branch: b })) };
+}
+
+/** The audit line of a combine: "Combined the work of run 9 (`feat/run-9`) into `feat/run-10` before the first agent." */
+export function combinedAudit(merged, branch) {
+  const what = merged.map((d) => `${d.index} (\`${d.branch}\`)`);
+  return `Combined the work of ${merged.length === 1 ? 'run' : 'runs'} ${andList(what)} into \`${branch}\` before the first agent.`;
 }
 
 /**

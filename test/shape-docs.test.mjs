@@ -203,3 +203,13 @@ test('S16-T6 (R-po-6): the run page bullet says a run that has not started has n
   assert.ok(bullet, 'the run panel and run page bullet');
   assert.deepEqual(missing(bullet, ['has no run page', 'Waits for', 'Needed by', '`nothing`']), []);
 });
+
+test('a clash between the runs it builds on: Small runs says a run starts with all of them and how a held run is released', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const live = flat(small).split('**The flag, read live.**')[1]?.split('**A feature with the marker')[0] || '';
+  assert.match(live, /merges in every run it builds on/, '"The flag, read live" says the start takes in every run it builds on');
+  const at = small.indexOf('When the runs it builds on clash');
+  assert.ok(at >= 0, 'the paragraph "When the runs it builds on clash"');
+  const para = flat(small.slice(at).split(/\n\s*\n/).slice(0, 2).join('\n'));   // a heading and its paragraph, or one paragraph
+  assert.deepEqual(missing(para, [/held/i, /clash/i, /settle/i, /branch/i, 'Start now', 'Re-plan the rest', 'Cancel the rest', /restart/i]), []);
+});

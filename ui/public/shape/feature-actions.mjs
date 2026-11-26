@@ -158,7 +158,7 @@ export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withM
     // QA 6: the "?" is only for while Worca asks; a held run waits on you, so a plain amber dot
     paintStatusDot(dot, { ...RUN_STATES['needs-you'], state: 'needs-you', symbol: null });
     const word = doc.createElement('span'); word.className = 'shape-feature-held-word'; word.textContent = RUN_STATES['needs-you'].word;
-    const why = doc.createElement('span'); why.className = 'shape-feature-held-why'; why.textContent = `Run ${held.index} waits for you to start`;
+    const why = doc.createElement('span'); why.className = 'shape-feature-held-why'; why.textContent = held.reason ? `Run ${held.index} is held: ${held.reason}` : `Run ${held.index} waits for you to start`;
     row.append(dot, word, why);
     host.appendChild(row);
   }

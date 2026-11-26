@@ -38,7 +38,7 @@ function controlsOf(view, cur, m) {
     featureId: view.id, active, halted: active && (!!view.halted || (!!view.verify && view.verify.state === 'halted')),
     rest: active && !!(view.open || view.halted),
     approveEach: view.approveEach !== false, planPipelineId: view.originPipelineId || null,
-    held: view.held ? { index: view.held.index } : null,
+    held: view.held ? { index: view.held.index, ...(view.held.reason ? { reason: view.held.reason } : {}) } : null,
     target: cur ? { index: cur.index, runId: (m && m.runId) || cur.runId || null, pipelineId: cur.pipelineId || null,
       status: m ? String(m.status || '') : TARGET_STATUS[cur.state] || null,
       // A run waiting at a question still reports `running`: it asks (Pause is off) while this tab sees its ask or the
@@ -185,7 +185,8 @@ export function featureStateLine(view, { snapOf = () => null } = {}) {
   const next = nx ? `next: run ${nx.index}` : '';
   if (work || next) return [work, next].filter(Boolean).join(' · ');
   if (view.asks.length || all.some((s) => PERSON_ACTS.has(s.state) || s.cannotStart)) return MUST_ACT;
-  if (view.held && Number.isInteger(view.held.index)) return `Run ${view.held.index} waiting for you to start`;
+  // A clash hold names its reason once, on the held row; here it only reads held.
+  if (view.held && Number.isInteger(view.held.index)) return `Run ${view.held.index} ${view.held.reason ? 'is held' : 'waiting for you to start'}`;
   return VERIFY_WAIT.clean;
 }
 

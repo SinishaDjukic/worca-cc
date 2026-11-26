@@ -1317,6 +1317,14 @@ export async function runDueTickets({
       continue;
     }
 
+    // A hold (Shaper small runs: the runs it builds on clash): the ticket waits for a person, not for a retry. Back to
+    // scheduled and unforced, so the next tick's hold is consulted; no fail_reason, no attempt, no notice.
+    if (res && res.hold) {
+      touchTicket(t.id, "status = 'scheduled', forced = 0, retry_at = NULL, owner_pid = NULL, owner_host = NULL", [], now);
+      out.held.push(t.id);
+      continue;
+    }
+
     const reason = (res && res.error) || 'the run could not be started';
     const backoff = RETRY_BACKOFF_MIN[Math.min(t.attempts, RETRY_BACKOFF_MIN.length - 1)] * 60_000;
     const deadline = Date.parse(t.runAt) + Math.max(effectiveGraceMs(t, schedule), ON_TIME_SLACK_MS);

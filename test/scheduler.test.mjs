@@ -1503,3 +1503,33 @@ test('summarizeRequest carries pr only when the request has one', () => {
   assert.equal('pr' in summarizeRequest({}), false);
   assert.equal('pr' in summarizeRequest({ pr: 'draft' }), false);
 });
+
+// A clash hold (Shaper small runs): start() refuses with `hold`, and the ticket waits for a person, not for a retry.
+test('runDueTickets: start() answering hold puts a forced ticket back to scheduled, unforced, with no notice', async () => {
+  seedPipelineRow({ id: 'h0000001', title: 'R', status: 'done', startedAt: new Date(T0).toISOString() });
+  const t = createTicket({ projectDir: DIR, title: 'T', request: REQ, after: { kind: 'pipeline', id: 'h0000001' }, now: T0 });
+  requestRunNow(t.id, { now: T0 + MIN });
+  const out = await runDueTickets({ now: T0 + MIN, start: async () => ({ ok: false, hold: true, error: 'x' }) });
+  assert.deepEqual(out.held, [t.id]);
+  assert.deepEqual([out.fired, out.retried, out.failed, out.skipped, out.missed], [[], [], [], [], []]);
+  const r = getTicket(t.id);
+  assert.deepEqual([r.status, r.forced, r.failReason, r.retryAt, r.attempts, r.ownerPid], ['scheduled', false, null, null, 0, null]);
+  assert.deepEqual(listNotifications(), []);
+  // Unforced again, so the next tick's hold is consulted and start is not called.
+  let started = 0;
+  const next = await runDueTickets({ now: T0 + 2 * MIN, start: async () => { started++; return { ok: true }; }, hold: () => true });
+  assert.equal(started, 0);
+  assert.deepEqual(next.held, [t.id]);
+});
+
+test('runDueTickets: a hold answer leaves fail_reason and attempts as an earlier retry left them, and clears retry_at', async () => {
+  const t = createTicket({ projectDir: DIR, title: 'T', runAtMs: T0, request: REQ, now: T0 - MIN });
+  await runDueTickets({ now: T0, start: async () => ({ ok: false, error: 'busy', transient: true }) });
+  const retry = getTicket(t.id);
+  assert.deepEqual([retry.attempts, retry.failReason], [1, 'busy']);
+  const out = await runDueTickets({ now: Date.parse(retry.retryAt) + 1000, start: async () => ({ ok: false, hold: true, error: 'x' }) });
+  assert.deepEqual(out.held, [t.id]);
+  const r = getTicket(t.id);
+  assert.deepEqual([r.status, r.forced, r.failReason, r.retryAt, r.attempts], ['scheduled', false, 'busy', null, 1]);
+  assert.deepEqual(kinds(), ['retrying'], 'only the earlier retry is in the feed');
+});

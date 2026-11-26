@@ -4,17 +4,18 @@
 // sends in featureView and the Runs list.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { createTicket, getTicket, predecessorState } from '../src/core/scheduler.mjs';
 import { listRunGroups } from '../src/core/run-groups.mjs';
-import { busySliceOf, featureView, liveSliceFrom, resumeFeature, setApproveEach, sliceGateState, sliceOfPipeline } from '../src/core/shape/features.mjs';
-import { sliceChainGate, heldStopTurn, latestFinishedSource, sliceSourceOf } from '../src/core/shape/chain.mjs';
+import { busySliceOf, featureView, liveSliceFrom, resumeFeature, setApproveEach, sliceGateState, sliceOfPipeline,
+  clashHoldOf, dependencyBranchesOf, featureBase, featureHoldsTicket, setClashHold, ticketHeld } from '../src/core/shape/features.mjs';
+import { sliceChainGate, heldStopTurn, latestFinishedSource, sliceSourceOf, sliceCombineGate, combineDependencies } from '../src/core/shape/chain.mjs';
 import { SIXTEEN_RUN_LINKS, sixteenRunFeature, siblingRunsFeature, startable, world, SIXTEEN_RUN_STATES } from './helpers/shape-sixteen-runs.mjs';
 import { runStatus, namedWaits } from '../src/shared/shape/run-status.mjs';
 // Slice 6: a namespace read, so a missing new export fails only its own test, not the whole file.
@@ -22,7 +23,7 @@ import * as RS from '../src/shared/shape/run-status.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { g, GITCONFIG } from './helpers/base-world.mjs';
-import { checkBaseMerge } from '../src/core/git-sync.mjs';
+import { checkBaseMerge, mergeBaseInto } from '../src/core/git-sync.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
 
 useTempHome(after, 'worca-shape-sixteen-');
@@ -642,8 +643,9 @@ test('S7-T18 Ask before each run: an open stop reads "Nothing can go on until yo
 }));
 
 // ---- Missing work, reproduced on real git branches (R-qa-1): runs 8 and 9 build on run 7, run 10 builds on 8 and 9 ----
-// Every test here asserts TODAY'S outcome and passes on the unchanged code. The cause, in short (the full write-up with
-// file:line is missing-work-cause.md in this Shaper run's pipeline folder):
+// A1 and A4 assert TODAY'S outcome of the waited run's take-in (slice 3 changes it); A2 and A3 assert that a run starts
+// with the work of every run it builds on (slice 2). The cause, in short (the full write-up with file:line is
+// missing-work-cause.md in slice 1's pipeline folder):
 // 1. A waited run's take-in runs before the finished sibling's work is committed: run 9 sends `done` before its teardown
 //    commits onto feat/run-9, so checkBaseMerge reads up-to-date and the take-in skips silently (A1); while the sibling
 //    is still merging back, latestFinishedSource returns {pending:true} and the take-in skips too (A4).
@@ -651,6 +653,13 @@ test('S7-T18 Ask before each run: an open stop reads "Nothing can go on until yo
 //    so the other sibling's work is missing whichever finishes last (A2, A3).
 
 const commitFile = (cwd, file) => { writeFileSync(join(cwd, file), `${file}\n`); g(cwd, 'add', file); g(cwd, 'commit', '-qm', file); };
+/** Commit src/a.mjs (a fixture file of the temp repo) with `value` on its one line. */
+const writeShared = (cwd, value) => {
+  mkdirSync(join(cwd, 'src'), { recursive: true });
+  writeFileSync(join(cwd, 'src', 'a.mjs'), `export const a = '${value}';\n`);
+  g(cwd, 'add', 'src/a.mjs');
+  g(cwd, 'commit', '-qm', `a ${value}`);
+};
 const head = (cwd, ref) => g(cwd, 'rev-parse', ref);
 // The raw probes drop an inherited GIT_DIR / GIT_WORK_TREE so they always read the repo at cwd.
 const probeEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'GIT_DIR' && k !== 'GIT_WORK_TREE'));
@@ -662,7 +671,7 @@ const record = (run, source = 'feat/run-7') => ({ source, feature: `feat/run-${r
 /** A local repo with no remote and the incident's moment: run 7 done; runs 8 and 9 branched from it, each in its own
  *  worktree; run 8 has committed and is running; run 9 has written nine.txt and not committed it. Run 9's row is
  *  `running` until the test finishes it. */
-function siblingWorld() {
+function siblingWorld({ shared = false } = {}) {
   const dir = mkdtempSync(join(root, 'siblings-'));
   const repo = join(dir, 'repo');
   const wt8 = join(dir, 'wt8');
@@ -671,6 +680,7 @@ function siblingWorld() {
   commitFile(repo, 'base.txt');
   g(repo, 'checkout', '-q', '-b', 'feat/run-7');
   commitFile(repo, 'seven.txt');
+  if (shared) writeShared(repo, 'seven');   // src/a.mjs, which runs 8 and 9 may both change
   g(repo, 'checkout', '-q', 'dev');
   g(repo, 'worktree', 'add', '-q', '-b', 'feat/run-8', wt8, 'feat/run-7');
   g(repo, 'worktree', 'add', '-q', '-b', 'feat/run-9', wt9, 'feat/run-7');
@@ -753,33 +763,284 @@ test('A4 (R-qa-1): while the latest finished run still merges back, the take-in 
   assert.deepEqual(logged, []);
 }));
 
-/** Runs 8 and 9 both committed and done, neither holding the other's work; then run 10's branch, made from the source
- *  the scheduler picks for its ticket (the fire path's own.sourceBranch). */
-function startRunTen({ eightAt, nineAt }) {
-  const { repo, wt9, fx } = siblingWorld();
-  g(wt9, 'add', 'nine.txt');
-  g(wt9, 'commit', '-qm', 'nine.txt');
-  fx.finish(8, { at: eightAt });
-  fx.finish(9, { at: nineAt });
-  const source = sliceSourceOf(getTicket(fx.ticketOf(10)));
-  g(repo, 'branch', 'feat/run-10', source.sourceBranch);
-  return { repo, fx, source, eight: head(repo, 'feat/run-8'), nine: head(repo, 'feat/run-9') };
+// ---- Slice 2 (R-po-1, R-arch-4a): a run starts with the work of every run it builds on ------------------------------
+// The card's run numbers are the slice numbers: the runs labelled 7, 8, 9 and 10 here are the card's runs 1 to 4.
+const CLASH = 'runs 2 and 3 clash in src/a.mjs';
+const refsOf = (repo) => g(repo, 'for-each-ref');
+const cleanTree = (wt) => g(wt, 'status', '--porcelain');
+const auditOf = (id) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY rowid').all(id).map((r) => r.text);
+const combinedLine = (card, run) => `Combined the work of run ${card} (\`feat/run-${run}\`) into \`feat/run-10\` before the first agent.`;
+
+/** Runs 8 and 9 both committed and done, neither holding the other's work. `clash`: both change the same line of
+ *  src/a.mjs. */
+function doneSiblings({ eightAt = minute(2), nineAt = minute(1), clash = false } = {}) {
+  const w = siblingWorld({ shared: clash });
+  if (clash) {
+    writeShared(w.wt8, 'eight');
+    writeFileSync(join(w.wt9, 'src', 'a.mjs'), "export const a = 'nine';\n");
+  }
+  g(w.wt9, 'add', '-A');
+  g(w.wt9, 'commit', '-qm', 'nine.txt');
+  w.fx.finish(8, { at: eightAt });
+  w.fx.finish(9, { at: nineAt });
+  return { ...w, eight: head(w.repo, 'feat/run-8'), nine: head(w.repo, 'feat/run-9') };
 }
 
-// Cause 2 (report above): run 10 starts from the run that finished last, whatever it builds on. Slice 2 flips A2 and
-// A3 so that both commits are ancestors of run 10's branch.
-test('A2 (R-qa-1): run 10 builds on runs 8 and 9 and starts from run 8, which finished last: run 9\'s work is missing', () => withEnvVars(ON, () => {
-  const { repo, fx, source, eight, nine } = startRunTen({ nineAt: minute(1), eightAt: minute(2) });
-  assert.deepEqual(source, { pipelineId: fx.pipelineOf(8), sourceBranch: 'feat/run-8' });
+let tenSeq = 0;
+/** Run 10's worktree on a new branch from `source` (as createWorktree makes it), and a harness with only what the
+ *  combine reads and writes. */
+function runTen({ repo, fx }, source) {
+  const wt10 = join(dirname(repo), 'wt10');
+  g(repo, 'worktree', 'add', '-q', '-b', 'feat/run-10', wt10, source);
+  const start = head(repo, 'feat/run-10');
+  const id = `a10${String(++tenSeq).padStart(5, '0')}`;   // 8 hex characters: appendAudit reads it from the run dir
+  const key = projectKey(repo);
+  seedPipelineRow({ id, projectKey: key, status: 'running', title: id, branch: { source, feature: 'feat/run-10' } });
+  const h = Object.create(RunHarness.prototype);
+  h.runShape = { slice: { feature: fx.featureId, index: 4 } };
+  h.members = [{ projectDir: repo, projectKey: key }];
+  h.isWorkspace = false;
+  h.pipeline = { id, dir: join(root, `run-ten-${id}`) };
+  h.state = { branches: { [key]: { source, feature: 'feat/run-10', worktreeDir: wt10, baseSha: start, diffBase: start, startHead: start } } };
+  h.checkpointRefs = { [key]: start };
+  const logged = [];
+  h._log = (...args) => { logged.push(args); };
+  const combine = () => h._combineDependencies(h.members[0], { branch: 'feat/run-10', worktreeDir: wt10 }, h.runShape.slice);
+  const record = () => h.state.branches[key];
+  const checkpoint = () => h.checkpointRefs[key];
+  return { h, wt10, start, id, logged, combine, record, checkpoint };
+}
+
+/** Runs 8 and 9 done, then run 10 started the way the scheduler and the harness do it: the source the fire path picks,
+ *  the fire-time check (nothing to hold), then the combine onto run 10's fresh branch. */
+async function startRunTen(order) {
+  const w = doneSiblings(order);
+  const ticket = getTicket(w.fx.ticketOf(10));
+  const source = sliceSourceOf(ticket);
+  assert.equal(await sliceCombineGate(ticket, source), null, 'a clean combine does not hold run 10');
+  const ten = runTen(w, source.sourceBranch);
+  await ten.combine();
+  return { ...w, source, ten };
+}
+
+/** Run 10 holds both runs' work, its start is the combined tip, and the audit names the run it took in. */
+function assertBoth({ repo, eight, nine, source, ten }, { card, run }) {
   assert.equal(isAncestorExit(repo, eight, 'feat/run-10'), 0, 'run 8\'s work is on run 10\'s branch');
-  assert.equal(isAncestorExit(repo, nine, 'feat/run-10'), 1, 'run 9\'s commit is not on run 10\'s branch');
-  assert.deepEqual(filesOn(repo, 'feat/run-10'), ['base.txt', 'eight.txt', 'seven.txt']);
+  assert.equal(isAncestorExit(repo, nine, 'feat/run-10'), 0, 'run 9\'s work is on run 10\'s branch');
+  assert.deepEqual(filesOn(repo, 'feat/run-10'), ['base.txt', 'eight.txt', 'nine.txt', 'seven.txt']);
+  const tip = head(repo, 'feat/run-10');
+  assert.notEqual(tip, ten.start);
+  // R-arch-6: the recorded source stays the branch the run started from.
+  assert.equal(ten.record().source, source.sourceBranch);
+  // The dependencies' commits never count as this run's changes.
+  assert.deepEqual([ten.record().baseSha, ten.record().diffBase, ten.record().startHead, ten.checkpoint()], [tip, tip, tip, tip]);
+  assert.deepEqual(auditOf(ten.id), [combinedLine(card, run)]);
+  assert.deepEqual(ten.logged.map((l) => l.slice(0, 2)), [['worktree', 'info']]);
+  assert.equal(cleanTree(ten.wt10), '');
+  assert.equal(noMergeStarted(ten.wt10), true);
+}
+
+test('A2 (R-po-1): run 10 builds on runs 8 and 9 and starts from run 8, which finished last: the combine takes run 9 in', () => withEnvVars(ON, async () => {
+  const w = await startRunTen({ nineAt: minute(1), eightAt: minute(2) });
+  assert.deepEqual(w.source, { pipelineId: w.fx.pipelineOf(8), sourceBranch: 'feat/run-8' });
+  assertBoth(w, { card: 3, run: 9 });
 }));
 
-test('A3 (R-qa-1): with run 9 finishing last instead, run 10 starts from run 9 and run 8\'s work is missing', () => withEnvVars(ON, () => {
-  const { repo, fx, source, eight, nine } = startRunTen({ eightAt: minute(1), nineAt: minute(2) });
-  assert.deepEqual(source, { pipelineId: fx.pipelineOf(9), sourceBranch: 'feat/run-9' });
-  assert.equal(isAncestorExit(repo, nine, 'feat/run-10'), 0, 'run 9\'s work is on run 10\'s branch');
-  assert.equal(isAncestorExit(repo, eight, 'feat/run-10'), 1, 'run 8\'s commit is not on run 10\'s branch');
-  assert.deepEqual(filesOn(repo, 'feat/run-10'), ['base.txt', 'nine.txt', 'seven.txt']);
+test('A3 (R-po-1): with run 9 finishing last instead, run 10 starts from run 9 and the combine takes run 8 in', () => withEnvVars(ON, async () => {
+  const w = await startRunTen({ eightAt: minute(1), nineAt: minute(2) });
+  assert.deepEqual(w.source, { pipelineId: w.fx.pipelineOf(9), sourceBranch: 'feat/run-9' });
+  assertBoth(w, { card: 2, run: 8 });
+}));
+
+test('R-po-1: a start that holds neither run takes both in, one after the other', () => withEnvVars(ON, async () => {
+  const w = doneSiblings();
+  const ten = runTen(w, 'feat/run-7');
+  await ten.combine();
+  assert.equal(isAncestorExit(w.repo, w.eight, 'feat/run-10'), 0);
+  assert.equal(isAncestorExit(w.repo, w.nine, 'feat/run-10'), 0);
+  assert.deepEqual(filesOn(w.repo, 'feat/run-10'), ['base.txt', 'eight.txt', 'nine.txt', 'seven.txt']);
+  const tip = head(w.repo, 'feat/run-10');
+  assert.deepEqual([ten.record().source, ten.record().diffBase, ten.checkpoint()], ['feat/run-7', tip, tip]);
+  assert.equal(cleanTree(ten.wt10), '');
+}));
+
+test('R-arch-4: a second merge that fails puts the branch back at its start, not at the first merge', () => withEnvVars(ON, async () => {
+  const w = doneSiblings();
+  const ten = runTen(w, 'feat/run-7');
+  let calls = 0;
+  const merge = (dir, opts) => (++calls === 2 ? Promise.resolve({ ok: false, kind: 'failed', error: 'boom' }) : mergeBaseInto(dir, opts));
+  await assert.rejects(combineDependencies(w.repo, { featureId: w.fx.featureId, index: 4, branch: 'feat/run-10', source: 'feat/run-7' },
+    { mergeBaseInto: merge }), { kind: 'failed' });
+  assert.equal(calls, 2, 'the first merge ran');
+  assert.equal(head(w.repo, 'feat/run-10'), ten.start);
+  assert.equal(cleanTree(ten.wt10), '');
+  assert.equal(noMergeStarted(ten.wt10), true);
+}));
+
+test('R-arch-6: a start that already holds every run it builds on is left as it is, with no audit line', () => withEnvVars(ON, async () => {
+  const w = siblingWorld();
+  g(w.wt9, 'add', 'nine.txt');
+  g(w.wt9, 'commit', '-qm', 'nine.txt');
+  g(w.wt9, 'merge', '-q', '--no-edit', 'feat/run-8');
+  w.fx.finish(8, { at: minute(1) });
+  w.fx.finish(9, { at: minute(2) });
+  const ten = runTen(w, 'feat/run-9');
+  await ten.combine();
+  assert.equal(head(w.repo, 'feat/run-10'), ten.start);
+  assert.equal(ten.checkpoint(), ten.start);
+  assert.deepEqual(auditOf(ten.id), []);
+  assert.deepEqual(ten.logged, []);
+}));
+
+test('R-arch-4: a dependency still merging its work back fails the combine before anything is written', () => withEnvVars(ON, async () => {
+  const w = siblingWorld();
+  g(w.wt9, 'add', 'nine.txt');
+  g(w.wt9, 'commit', '-qm', 'nine.txt');
+  w.fx.finish(8, { at: minute(1) });
+  w.fx.finish(9, { at: new Date().toISOString(), branch: { ...record(9), sameAsSource: true, worktreeDir: w.wt9 } });
+  const ten = runTen(w, 'feat/run-8');
+  await assert.rejects(ten.combine(), { message: 'the run before it is still merging its work back' });
+  assert.equal(head(w.repo, 'feat/run-10'), ten.start);
+}));
+
+test('R-arch-4: a merge that fails after a clean check fails the combine with its kind', () => withEnvVars(ON, async () => {
+  const w = doneSiblings();
+  const ten = runTen(w, 'feat/run-8');
+  writeFileSync(join(ten.wt10, 'base.txt'), 'an uncommitted change\n');
+  await assert.rejects(ten.combine(), (err) => /dirty|uncommitted/.test(`${err.kind} ${err.message}`));
+  assert.equal(head(w.repo, 'feat/run-10'), ten.start);
+  assert.equal(noMergeStarted(ten.wt10), true);
+}));
+
+test('C1 (R-arch-4a): runs 8 and 9 clash in src/a.mjs: run 10 stays held with that reason, and no ref moves', () => withEnvVars(ON, async () => {
+  const w = doneSiblings({ clash: true });
+  const ticketId = w.fx.ticketOf(10);
+  const ticket = getTicket(ticketId);
+  assert.equal(featureView(w.fx.featureId).slices[3].nextTurn, true, 'before the check, run 10 has the next turn');
+  const refs = refsOf(w.repo);
+  const before = Date.now();
+  assert.deepEqual(await sliceCombineGate(ticket, sliceSourceOf(ticket)), { ok: false, hold: true, error: CLASH });
+  assert.equal(refsOf(w.repo), refs, 'no ref was written or moved, and run 10 has no branch');
+  for (const wt of [w.repo, w.wt8, w.wt9]) assert.equal(noMergeStarted(wt), true, wt);
+  const hold = clashHoldOf(ticketId);
+  assert.equal(hold.reason, CLASH);
+  assert.deepEqual([...hold.runs].sort(), [2, 3]);
+  assert.deepEqual(hold.files, ['src/a.mjs']);
+  assert.ok(hold.at >= before && hold.at <= Date.now(), 'the hold says when it was found');
+  // "Ask me before each run" is off, and the run still reads held, through the one display rule.
+  const view = featureView(w.fx.featureId);
+  assert.equal(view.approveEach, false);
+  assert.equal(ticketHeld(getTicket(ticketId)), true);
+  assert.equal(featureHoldsTicket(getTicket(ticketId)), true);
+  assert.deepEqual(view.held, { index: 4, ticketId, reason: CLASH });
+  assert.equal(view.slices[3].state, 'held');
+  assert.equal(view.slices.some((s) => s.nextTurn), false, 'next never names a run the scheduler will not start');
+  assert.equal(getTicket(ticketId).status, 'scheduled');
+}));
+
+test('C2 (R-arch-4a, R-arch-8): once the clash is settled on run 9\'s local branch, run 10 starts with both runs\' work', () => withEnvVars(ON, async () => {
+  const w = doneSiblings({ clash: true, eightAt: minute(2), nineAt: minute(1) });
+  const ticketId = w.fx.ticketOf(10);
+  const ticket = getTicket(ticketId);
+  assert.equal((await sliceCombineGate(ticket, sliceSourceOf(ticket)))?.hold, true);
+  // The owner merges run 8 into run 9's branch and settles it there, without pushing: origin still has the old tip.
+  g(w.repo, 'remote', 'add', 'origin', join(dirname(w.repo), 'no-such-remote'));
+  g(w.repo, 'update-ref', 'refs/remotes/origin/feat/run-9', w.nine);
+  spawnSync('git', ['merge', '--no-edit', 'feat/run-8'], { cwd: w.wt9, env: probeEnv() });
+  writeFileSync(join(w.wt9, 'src', 'a.mjs'), "export const a = 'settled';\n");
+  g(w.wt9, 'add', '-A');
+  g(w.wt9, 'commit', '-q', '--no-edit');
+  const settled = head(w.repo, 'feat/run-9');
+  const source = sliceSourceOf(ticket);
+  assert.equal(source.sourceBranch, 'feat/run-8');
+  assert.equal(await sliceCombineGate(ticket, source), null);
+  assert.equal(clashHoldOf(ticketId), null, 'the hold is cleared');
+  assert.equal(ticketHeld(getTicket(ticketId)), false);
+  assert.equal(featureView(w.fx.featureId).held, null);
+  const ten = runTen(w, source.sourceBranch);
+  await ten.combine();
+  for (const commit of [w.eight, w.nine, settled]) assert.equal(isAncestorExit(w.repo, commit, 'feat/run-10'), 0, commit);
+  assert.equal(noMergeStarted(ten.wt10), true);
+}));
+
+test('H1 (R-arch-4a): a clash the harness finds fails the combine with the reason and leaves the branch at its start', () => withEnvVars(ON, async () => {
+  const w = doneSiblings({ clash: true });
+  const ten = runTen(w, 'feat/run-8');
+  const refs = refsOf(w.repo);
+  await assert.rejects(ten.combine(), { message: CLASH });
+  assert.equal(head(w.repo, 'feat/run-10'), ten.start);
+  assert.equal(refsOf(w.repo), refs);
+  assert.equal(noMergeStarted(ten.wt10), true);
+  assert.equal(cleanTree(ten.wt10), '');
+  assert.equal(ten.checkpoint(), ten.start);
+}));
+
+test('H2: dev moved and clashes only with run 3: the harness combines first (the gate\'s tree), then leaves the base clash to its audit', () => withEnvVars(ON, async () => {
+  const w = doneSiblings();
+  assert.equal(featureBase(w.fx.featureId), 'dev');
+  // dev adds its own nine.txt: it clashes with run 9 (card run 3) only, never with run 8 alone.
+  writeFileSync(join(w.repo, 'nine.txt'), 'dev\n');
+  g(w.repo, 'add', 'nine.txt');
+  g(w.repo, 'commit', '-qm', 'dev nine');
+  const ticket = getTicket(w.fx.ticketOf(10));
+  const source = sliceSourceOf(ticket);
+  assert.equal(source.sourceBranch, 'feat/run-8');
+  assert.equal(await sliceCombineGate(ticket, source), null, 'the gate checks runs 8 and 9 only: clean');
+  const ten = runTen(w, source.sourceBranch);
+  await ten.h._startFromFeature(ten.h.members[0], { branch: 'feat/run-10', worktreeDir: ten.wt10 }, ten.h.runShape.slice, true);
+  const tip = head(w.repo, 'feat/run-10');
+  for (const commit of [w.eight, w.nine]) assert.equal(isAncestorExit(w.repo, commit, 'feat/run-10'), 0, commit);
+  assert.equal(isAncestorExit(w.repo, head(w.repo, 'dev'), 'feat/run-10'), 1, 'the clashing base is left out');
+  assert.deepEqual(auditOf(ten.id), [combinedLine(3, 9), 'Base `dev` moved: conflicts in 1 file.']);
+  assert.deepEqual([ten.record().diffBase, ten.checkpoint()], [tip, tip]);
+  assert.equal(noMergeStarted(ten.wt10), true);
+  assert.equal(cleanTree(ten.wt10), '');
+}));
+
+test('F1 (R-arch-9): flag off, or an unmarked feature: the gate answers null with no git call, and held has no reason', async () => {
+  const w = await withEnvVars(ON, () => doneSiblings({ clash: true }));
+  const ticketId = w.fx.ticketOf(10);
+  const ticket = getTicket(ticketId);
+  const own = { pipelineId: w.fx.pipelineOf(8), sourceBranch: 'feat/run-8' };
+  let gitCalls = 0;
+  const seams = (on) => ({ flagEnabled: () => on, checkCombine: async () => { gitCalls++; return { status: 'clean' }; },
+    isAncestor: async () => { gitCalls++; return false; } });
+  await withEnvVars({ WORCA_FLAGS: undefined }, async () => {
+    assert.equal(await sliceCombineGate(ticket, own, seams(false)), null);
+    // A hold left from while the flag was on is not read.
+    setClashHold(ticketId, { reason: CLASH, runs: [2, 3], files: ['src/a.mjs'], at: Date.now() });
+    assert.equal(clashHoldOf(ticketId), null);
+    assert.equal(featureHoldsTicket(getTicket(ticketId)), false);
+    assert.equal(featureView(w.fx.featureId).held, null);
+    setApproveEach(w.fx.featureId, true);
+    assert.deepEqual(featureView(w.fx.featureId).held, { index: 4, ticketId }, 'Ask me before each run holds it, with no reason');
+  });
+  await withEnvVars(ON, async () => {
+    getDb().prepare(`UPDATE pipelines SET shape_stats = NULL WHERE id =
+      (SELECT origin_pipeline_id FROM shape_features WHERE id = ?)`).run(w.fx.featureId);
+    assert.equal(await sliceCombineGate(ticket, own, seams(true)), null);
+  });
+  assert.equal(gitCalls, 0);
+});
+
+test('R-po-1 (D4): dependencyBranchesOf names the work branch of each run the slice builds on', () => withEnvVars(ON, () => {
+  const w = doneSiblings();
+  const { featureId, pipelineOf } = w.fx;
+  const eight = { index: 2, pipelineId: pipelineOf(8), branch: 'feat/run-8' };
+  const nine = { index: 3, pipelineId: pipelineOf(9), branch: 'feat/run-9' };
+  assert.deepEqual(dependencyBranchesOf(featureId, 4), { branches: [eight, nine] });
+  assert.deepEqual(dependencyBranchesOf(featureId, 99), { branches: [] }, 'unknown run');
+  assert.deepEqual(dependencyBranchesOf('no-such-feature', 4), { branches: [] });
+  // A dependency with no single-project branch (a workspace run) combines nothing.
+  const db = getDb();
+  db.prepare("UPDATE pipelines SET target = 'workspace', workspace_meta = ? WHERE id = ?")
+    .run(JSON.stringify({ branches: { k: record(9) } }), pipelineOf(9));
+  assert.deepEqual(dependencyBranchesOf(featureId, 4), { branches: [eight] });
+  // One still merging its work back makes the whole answer pending.
+  db.prepare("UPDATE pipelines SET target = 'project', workspace_meta = NULL, branch = ?, updated_at = ? WHERE id = ?")
+    .run(JSON.stringify({ ...record(9), sameAsSource: true, worktreeDir: w.wt9 }), new Date().toISOString(), pipelineOf(9));
+  assert.deepEqual(dependencyBranchesOf(featureId, 4), { pending: true });
+  // A follow-up run starts from the base by design.
+  db.prepare("UPDATE shape_feature_slices SET kind = 'follow-up' WHERE feature_id = ? AND idx = 4").run(featureId);
+  assert.deepEqual(dependencyBranchesOf(featureId, 4), { branches: [] });
 }));

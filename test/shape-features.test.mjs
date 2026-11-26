@@ -29,6 +29,8 @@ import {
   addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf, setFeatureAcceptance, chatShipCardOffered,
   changeAgreedRequirements, acceptanceRefusal, shipHold, carriedRequirements, storedAgentFacts,
 } from '../src/core/shape/features.mjs';
+// A namespace read, so a missing new export (the clash hold) fails only its own test, not the whole file.
+import * as FEATURES from '../src/core/shape/features.mjs';
 
 useTempHome(after, 'worca-shape-features-');
 
@@ -1979,4 +1981,54 @@ test('resumeFeature without an index restarts the first halted run (run 5), not 
   assert.equal(rowTickets().get(5), res.ticketId);
   assert.notEqual(res.ticketId, before.get(5));
   assert.equal(rowTickets().get(9), before.get(9));
+}));
+
+// ---- A run held because the runs it builds on clash: the hold and Start now's refusal --------------------------------
+const CLASH_HOLD = (at = Date.now()) => ({ reason: 'runs 2 and 3 clash in src/a.mjs', runs: [2, 3], files: ['src/a.mjs'], at });
+
+test('clashRefusalOf (D9): the reason only when the hold arm ran for this request', () => {
+  const hold = CLASH_HOLD(1000);
+  const ticket = { status: 'scheduled', forced: false };
+  const refuse = (over = {}) => FEATURES.clashRefusalOf({ ticket, hold, requestAt: 1000, ...over });
+  assert.equal(refuse(), hold.reason, 'found in the same millisecond as the request');
+  assert.equal(refuse({ requestAt: 999 }), hold.reason);
+  assert.equal(refuse({ ticket: { status: 'scheduled', forced: 0 } }), hold.reason);
+  // A busy tick that never reached the ticket leaves it forced: a stale hold never answers.
+  assert.equal(refuse({ ticket: { status: 'scheduled', forced: true } }), null);
+  assert.equal(refuse({ ticket: { status: 'scheduled', forced: 1 } }), null);
+  assert.equal(refuse({ requestAt: 1001 }), null, 'a hold found before the request');
+  assert.equal(refuse({ ticket: { status: 'firing', forced: false } }), null);
+  assert.equal(refuse({ ticket: { status: 'running', forced: false } }), null);
+  assert.equal(refuse({ hold: null }), null);
+  assert.equal(refuse({ ticket: null }), null);
+});
+
+test('clash hold: it holds the ticket and reads on the view with Ask me before each run off, until cleared or the feature leaves active', () => withSmallRuns(true, () => {
+  const fx = world(root, { done: [1] });
+  const ticketId = fx.ticketOf(2);
+  const holds = () => FEATURES.featureHoldsTicket(getTicket(ticketId));
+  assert.equal(featureView(fx.featureId).approveEach, false);
+  assert.equal(holds(), false);
+  const hold = CLASH_HOLD();
+  FEATURES.setClashHold(ticketId, hold);
+  assert.deepEqual(FEATURES.clashHoldOf(ticketId), hold);
+  assert.equal(holds(), true);
+  assert.deepEqual(featureView(fx.featureId).held, { index: 2, ticketId, reason: hold.reason });
+  getDb().prepare("UPDATE shape_features SET status = 'replanning' WHERE id = ?").run(fx.featureId);
+  assert.equal(holds(), false, 'only an active feature holds');
+  getDb().prepare("UPDATE shape_features SET status = 'active' WHERE id = ?").run(fx.featureId);
+  assert.equal(holds(), true);
+  FEATURES.clearClashHold(ticketId);
+  assert.equal(FEATURES.clashHoldOf(ticketId), null);
+  assert.equal(holds(), false);
+  assert.equal(featureView(fx.featureId).held, null);
+}));
+
+test('clash hold: Cancel the rest drops the hold of each ticket it cancels', () => withSmallRuns(true, () => {
+  const fx = world(root, { done: [1] });
+  const ticketId = fx.ticketOf(2);
+  FEATURES.setClashHold(ticketId, CLASH_HOLD());
+  cancelRest(fx.featureId);
+  getDb().prepare("UPDATE shape_features SET status = 'active' WHERE id = ?").run(fx.featureId);
+  assert.equal(FEATURES.clashHoldOf(ticketId), null);
 }));

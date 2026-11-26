@@ -620,6 +620,15 @@ review, a Test writer separate from the Implementer when Care asks for one, the 
 **Verifier** then checks the feature as a whole. While a gap it found is being built, the card reads "Working"; once a
 check is clean, or you choose to ship with the gap, it reads "Ready to ship".
 
+### When the runs it builds on clash
+
+A run starts with the work of every run it builds on. When their work changes the same lines, the run does not start:
+it is held, and the card's held row names the runs that clash and the files, as in `Run 4 is held: runs 2 and 3 clash
+in src/a.mjs`. Nothing is merged and no branch moves. Settle the clash on one of those runs' branches (merge the other
+run's branch into it and commit the fix), then press **Start now**: while the clash is unsettled, Start now refuses with
+the same reason and starts nothing. **Re-plan the rest** and **Cancel the rest** stay in ⋯. The hold lives only while
+Worca runs: after a restart, the next check finds the clash again and holds the run again.
+
 ### Care and its record
 
 Start offers Lean, Balanced and Thorough, with Worca's pick and its reason. A position other than the pick is recorded as
@@ -779,7 +788,7 @@ Some parts follow the marker and stay with the feature; the rest follow the flag
 **The flag, read live.** While it is on, these apply to every sliced feature, also for a feature with no marker: a run
 waits only for the runs it builds on, so an independent run starts while an earlier one is stopped, failed, waiting
 or paused (one run of a feature at a time), an answer held for its turn waits until no other run is going, and among
-the free runs a change run starts first, then the lowest run number; a run starts from the feature's latest finished run; a resumed run first merges the
+the free runs a change run starts first, then the lowest run number; a run starts from the feature's latest finished run and, on a marked feature, merges in every run it builds on that this branch lacks; a resumed run first merges the
 latest finished work; a finished feature's figures are recorded on this machine; and one PR ships the latest finished
 run's branch, or is refused with `HEAD_MISSING_WORK` when that branch does not hold every run's work.
 

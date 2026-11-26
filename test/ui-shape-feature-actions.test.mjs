@@ -353,3 +353,38 @@ test('s6 featureCardModel: with no run entry, a Re-plan or Verifier ask (index n
   const m = featureCardModel({ own: null, card: { pipelineId: 'p0', feature: { ...S6_VIEW([]), halted: null, ask: verifier }, log: [] } });
   assert.deepEqual([m.step?.index, m.step?.pipelineId, m.step?.id], [null, 'pv', 'vq']);
 });
+
+// A run held because the runs it builds on clash: the reason travels from view.held through the card's model to the row.
+const CLASH_VIEW = (held) => ({ id: 'feat_1', title: 'Charts', status: 'active', total: 4, done: 3, open: true, halted: null, approveEach: false,
+  held, ask: null, log: [], originPipelineId: 'p0', ship: { ready: false, mode: null },
+  slices: [1, 2, 3, 4].map((index) => ({ index, title: `Part ${index}`, state: index === 4 ? 'held' : 'done', runId: null,
+    pipelineId: index === 4 ? null : `p${index}`, ticketId: `t${index}`, pr: null })) });
+const controlsFor = (held) => featureCardModel({ own: null, card: { pipelineId: 'p0', feature: CLASH_VIEW(held), log: [] } }).controls;
+
+test('held on a clash: Run 4 is held: the reason, once, with one Start now and Re-plan the rest and Cancel the rest in ⋯', async () => {
+  const reason = 'runs 2 and 3 clash in src/a.mjs';
+  const c = controlsFor({ index: 4, ticketId: 't4', reason });
+  assert.deepEqual(c.held, { index: 4, reason });
+  const t = setup(c);
+  const row = t.host.querySelector('.shape-feature-held');
+  assert.ok(row);
+  assert.equal(row.querySelector('.shape-feature-held-why').textContent, `Run 4 is held: ${reason}`);
+  assert.equal(count(t.host, reason), 1);
+  assert.equal(count(t.host, 'waits for you to start'), 0);
+  assert.equal(count(t.host, 'Needs you'), 1);
+  const start = t.host.querySelectorAll('[data-act="feature-start"]');
+  assert.equal(start.length, 1);
+  assert.equal(start[0].textContent, 'Start now');
+  const items = t.menu().map((i) => i.textContent.trim());
+  for (const label of ['Re-plan the rest', 'Cancel the rest']) assert.ok(items.includes(label), `${label} in ${items}`);
+  closeMenus();
+  start[0].click(); await settle();
+  assert.deepEqual(t.seen.filter((x) => x[0] === 'act').map((x) => x.slice(1, 3)), [['start', null]]);
+  // The same row repaints with a new reason, and without one it reads as before.
+  paintFeatureActions(t.doc, t.host, controlsFor({ index: 4, ticketId: 't4', reason: 'runs 2 and 3 clash in src/b.mjs' }), NOOP);
+  assert.equal(t.host.querySelector('.shape-feature-held-why').textContent, 'Run 4 is held: runs 2 and 3 clash in src/b.mjs');
+  const plain = controlsFor({ index: 4, ticketId: 't4' });
+  assert.deepEqual(plain.held, { index: 4 }, 'no reason key without a reason');
+  paintFeatureActions(t.doc, t.host, plain, NOOP);
+  assert.equal(t.host.querySelector('.shape-feature-held-why').textContent, 'Run 4 waits for you to start');
+});

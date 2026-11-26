@@ -2,8 +2,9 @@
 // the body of register() was moved verbatim from ui/server.mjs. Edit it here from now on.
 import { releaseVersionHint } from '../../../src/core/draft-release.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
-import { cancelRest, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, setFeatureAcceptance, shaperCard, sliceOfPipeline, storedAgentFacts } from '../../../src/core/shape/features.mjs';
+import { cancelRest, clashHoldOf, clashRefusalOf, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, setFeatureAcceptance, shaperCard, sliceOfPipeline, storedAgentFacts } from '../../../src/core/shape/features.mjs';
 import { shaperSmallRunsOn } from '../../../src/core/shape/small-runs.mjs';
+import { getTicket } from '../../../src/core/scheduler.mjs';
 import { verifyCheckOfPipeline } from '../../../src/core/shape/verifier.mjs';
 import { normalizeAcceptance } from '../../../src/shared/shape/acceptance.mjs';
 import { CONFIRM_REASON_MAX, MARK_WORDS, confirmMarkOf, reasonLine } from '../../../src/shared/shape/ship-ledger.mjs';
@@ -135,8 +136,13 @@ app.post('/api/shape/features/:id/start', async (req, res) => {
     if (!view) return res.status(404).json({ error: 'unknown feature' });
     if (view.status !== 'active') return res.status(409).json({ error: `this feature is ${view.status}` });
     if (!view.held) return res.status(409).json({ error: 'no run is waiting for you to start' });
+    const requestAt = Date.now();
     const r = await scheduleVerb('run-now', view.held.ticketId, {}, { by: actorOf(req) });
     broadcastFeature(req.params.id);
+    // Small runs (D9): the runs it builds on still clash, so the tick's hold arm put it back: nothing started.
+    const ticketId = view.held.ticketId;
+    const clash = clashRefusalOf({ ticket: getTicket(ticketId), hold: clashHoldOf(ticketId), requestAt });
+    if (clash) return res.status(409).json({ error: clash, code: 'DEPENDENCY_CLASH' });
     res.status(r.status).json(r.body);
   } catch (err) { shapeRouteError(res, err); }
 });

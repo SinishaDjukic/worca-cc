@@ -1319,6 +1319,91 @@ test('small runs: Run now on a slice whose builds-on is unfinished is refused as
   cancelTicket(t3);
 }));
 
+/** A marked 4-run world whose runs 2 and 3 each branch off run 1 (run 3 finished last, so run 4 would start from its
+ *  branch) and run 4, not started, builds on both. `clash`: both change the same line of src/a.mjs (a fixture file of the
+ *  temp repo); else each adds its own file. → { w, t4, two, three } (two/three = the branch names) */
+function siblingDepsWorld({ clash }) {
+  const w = shipWorld({ slices: 4, prs: false });
+  const [p1, p2, p3] = w.pids;
+  const db = getDb();
+  db.prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), p1);
+  const outline = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(w.f.id).outline);
+  outline.slices[3].dependsOn = ['s2', 's3'];
+  db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify(outline), w.f.id);
+  const commit = (file, text) => { writeFileSync(join(w.dir, file), text); git(w.dir, 'add', '-A'); git(w.dir, 'commit', '-qm', file); };
+  git(w.dir, 'checkout', '-q', `feat/${p1}`);
+  mkdirSync(join(w.dir, 'src'), { recursive: true });
+  commit('src/a.mjs', "export const a = 'one';\n");
+  for (const [pid, n] of [[p2, 2], [p3, 3]]) {
+    git(w.dir, 'checkout', '-q', '-B', `feat/${pid}`, `feat/${p1}`);
+    commit(clash ? 'src/a.mjs' : `sibling${n}.txt`, `export const a = '${n}';\n`);
+  }
+  git(w.dir, 'checkout', '-q', 'main');
+  w.pids.slice(0, 3).forEach((pid, i) => db.prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify({ source: i ? `feat/${p1}` : 'main', feature: `feat/${pid}` }), `2026-01-0${i + 1}T00:00:00.000Z`, pid));
+  unrun(w.f.id, 4);
+  const t4 = sliceTicket(w.f.id, 4);
+  quietBut(t4);
+  return { w, t4, two: `feat/${p2}`, three: `feat/${p3}` };
+}
+
+test('small runs: the run started for slice 4 holds the work of both runs it builds on, not only the latest one', () => withEnvVars(SMALL_ON, async () => {
+  const { w, t4, two, three } = siblingDepsWorld({ clash: false });
+  const heads = [two, three].map((b) => git(w.dir, 'rev-parse', b));
+  await tickUntil(() => getTicket(t4).status !== 'scheduled');
+  assert.equal(getTicket(t4).status, 'fired', getTicket(t4).failReason || '');
+  const run = await firedRun(t4);
+  assert.equal(run.branch.source, three, 'the recorded source is still the latest finished run\'s branch');
+  assert.ok(run.head, 'run 4 has a checkout');
+  assert.ok(isAncestor(w.dir, heads[1], run.head), "run 3's commits are in run 4's branch");
+  assert.ok(isAncestor(w.dir, heads[0], run.head), "run 2's commits are in run 4's branch");
+  const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(run.pid).map((r) => r.text);
+  assert.ok(audit.some((t) => t.startsWith(`Combined the work of run 2 (\`${two}\`) into `) && t.endsWith(' before the first agent.')),
+    audit.join('\n'));
+}));
+
+test('E1 small runs: slice 4 is held while runs 2 and 3 clash; Start now answers 409 DEPENDENCY_CLASH until it is settled', () => withEnvVars(SMALL_ON, async () => {
+  const { w, t4, two, three } = siblingDepsWorld({ clash: true });
+  const reason = 'runs 2 and 3 clash in src/a.mjs';
+  const refs = git(w.dir, 'for-each-ref');
+  const start = () => post(`/api/shape/features/${w.f.id}/start`, {});
+  try {
+    await tickUntil(() => featureView(w.f.id).held || getTicket(t4).status !== 'scheduled');
+    assert.equal(getTicket(t4).status, 'scheduled', 'run 4 did not start');
+    assert.equal(getTicket(t4).pipelineId, null);
+    assert.equal(getTicket(t4).failReason, null);
+    const v = await view(w.f.id);
+    assert.equal(v.approveEach, false);
+    assert.deepEqual(v.held, { index: 4, ticketId: t4, reason });
+    // Start now with the clash unsettled: refused with the reason, and nothing starts.
+    const refused = await start();
+    assert.deepEqual([refused.status, await refused.json()], [409, { error: reason, code: 'DEPENDENCY_CLASH' }]);
+    assert.deepEqual([getTicket(t4).status, getTicket(t4).forced, getTicket(t4).attempts], ['scheduled', false, 0]);
+    assert.equal(runs.get(t4), undefined);
+    assert.equal(git(w.dir, 'for-each-ref'), refs, 'no ref was written or moved');
+    assert.equal(spawnSync('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: w.dir }).status === 0, false, 'no merge in progress');
+    assert.equal((await view(w.f.id)).held?.reason, reason, 'still held');
+    // The owner settles the clash on run 3's branch, without pushing.
+    git(w.dir, 'checkout', '-q', three);
+    spawnSync('git', ['merge', '--no-edit', two], { cwd: w.dir });
+    writeFileSync(join(w.dir, 'src', 'a.mjs'), "export const a = 'settled';\n");
+    git(w.dir, 'add', '-A'); git(w.dir, 'commit', '-q', '--no-edit');
+    git(w.dir, 'checkout', '-q', 'main');
+    const heads = [two, three].map((b) => git(w.dir, 'rev-parse', b));
+    const res = await start();
+    const body = await res.json();
+    assert.equal(res.status, 200, JSON.stringify(body));
+    assert.equal(body.status, 'fired', body.failReason || '');
+    const run = await firedRun(t4);
+    assert.ok(run.head, 'run 4 has a checkout');
+    assert.ok(isAncestor(w.dir, heads[0], run.head), "run 2's commits are in run 4's branch");
+    assert.ok(isAncestor(w.dir, heads[1], run.head), "run 3's commits are in run 4's branch");
+    assert.equal((await view(w.f.id)).held, null);
+  } finally {
+    if (runs.get(t4) && !['done', 'stopped', 'error'].includes(String(runs.get(t4).status))) await firedRun(t4);
+  }
+}));
+
 /** A one-PR world whose last slice (3) was rebuilt on `from`'s branch as feat/<tag>, finishing last. */
 const rebuildLast = (w, from, tag, k = 3) => {
   git(w.dir, 'checkout', '-q', '-b', `feat/${tag}`, from);

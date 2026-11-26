@@ -36674,7 +36674,7 @@ function groupFeatureSig(f) {
   return JSON.stringify([sr ? [...(sr.owned || []), ...(sr.confirmed || [])].map((e) => [e.id, e.shown ? e.shown.text : '']) : null,
     sr && sr.care ? sr.care.line : '', sr ? [shipWaitText(f), !!sr.blocked, sr.reason || '', (sr.order || []).length] : null, (f && f.log) || [],
     // Slice 7: what the state line and the need count read (only a view with `asks`: flag on, marked, active).
-    Array.isArray(f && f.asks) ? [f.status, f.asks, (f.slices || []).map((x) => [x.index, x.state, x.nextTurn === true, x.stop || null, !!x.cannotStart]), f.held ? f.held.index : null] : null]);
+    Array.isArray(f && f.asks) ? [f.status, f.asks, (f.slices || []).map((x) => [x.index, x.state, x.nextTurn === true, x.stop || null, !!x.cannotStart]), f.held ? [f.held.index, f.held.reason || ''] : null] : null]);
 }
 /** Every feature fetch that may reach GROUP_PAGE takes a rising ticket before it is sent; noteGroupFeatureLock drops an
  *  answer older than the last one applied, so a slow fetch never paints a stale feature over a newer one. */

@@ -474,7 +474,7 @@ import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, ca
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
   liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, isSlicePreambleLine } from '../src/core/shape/features.mjs';
-import { smallRunsChainGate, sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, createHeldStops, featureOfAnyPipeline } from '../src/core/shape/chain.mjs';
+import { smallRunsChainGate, sliceFireStart, sliceCombineGate, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, createHeldStops, featureOfAnyPipeline } from '../src/core/shape/chain.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts, createRequirementChanges } from '../src/core/shape/changes.mjs';
 import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
@@ -4173,6 +4173,7 @@ async function fireTicket(ticket) {
       Object.assign(body, prev);
     }
   }
+  const combine = await sliceCombineGate(ticket, own); if (combine) return combine;   // small runs: a clash holds it
   // Every occurrence of a series needs its own feature branch: the local date, plus the time
   // when the series runs several times a day — except a run on its source branch, which has
   // none of its own (the server ignores featureBranch for it).
@@ -4182,8 +4183,7 @@ async function fireTicket(ticket) {
     body.featureBranch = `${body.featureBranch.trim()}-${stamp}`;
   }
   // A "Run now" click names its clicker for this one firing (scheduleVerb records it).
-  const runNowBy = RUN_NOW_BY.get(ticket.id) || null;
-  RUN_NOW_BY.delete(ticket.id);
+  const runNowBy = RUN_NOW_BY.get(ticket.id) || null; RUN_NOW_BY.delete(ticket.id);
   // Enforced tags (D11): saved at creation; a firing fills only what became mandatory since (after #718
   // inheritance above), then re-checks. A start it would refuse is SKIPPED with the reason — never started
   // untagged, and never a failure (the handler gate exempts fired tickets, D10).

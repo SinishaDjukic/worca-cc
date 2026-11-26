@@ -174,8 +174,58 @@ export function featureHoldsTicket(ticket) {
   if (!ticket || !ticket.id) return false;
   try {
     const r = sliceOfTicket(ticket.id);
-    return !!r && r.status === 'active' && r.approveEach;
+    return !!r && r.status === 'active' && (r.approveEach || !!clashHoldOf(ticket.id));
   } catch { return false; }
+}
+
+// Shaper small runs (D5): slice tickets held because the runs they build on clash, by ticket id. In memory only: after a
+// restart the next tick fires the ticket, the combine check runs again and the hold comes back.
+const CLASH_HOLDS = new Map();
+
+/** The clash hold of a ticket while the flag is on, else null. → {reason, runs, files, at} | null */
+export function clashHoldOf(ticketId) {
+  if (!ticketId || !shaperSmallRunsOn()) return null;
+  return CLASH_HOLDS.get(String(ticketId)) || null;
+}
+
+export function setClashHold(ticketId, hold) {
+  if (ticketId) CLASH_HOLDS.set(String(ticketId), hold);
+}
+
+export function clearClashHold(ticketId) {
+  if (ticketId) CLASH_HOLDS.delete(String(ticketId));
+}
+
+/** D9: Start now's refusal: the hold's reason only when the hold arm ran for this request (the ticket is back to
+ *  scheduled and unforced, and the hold was found at or after `requestAt`). Pure. → string | null */
+export function clashRefusalOf({ ticket, hold, requestAt }) {
+  if (!ticket || !hold || ticket.status !== 'scheduled' || ticket.forced) return null;
+  return hold.at >= requestAt ? hold.reason : null;
+}
+
+/** D4: the work branch of each run slice `index` builds on directly (its `dependsOn` rows), from previousBranchesOf.
+ *  A row with no single-project branch is left out; any still merging back makes the answer pending. A follow-up
+ *  slice, an unknown feature or index, or an error → no branches. Never throws.
+ *  → {pending:true} | {branches: Array<{index, pipelineId, branch}>} */
+export function dependencyBranchesOf(featureId, index, { now = Date.now() } = {}) {
+  try {
+    const f = featureId ? featureRow(featureId) : null;
+    const s = f ? f.outline.slices[index - 1] : null;
+    if (!s) return { branches: [] };
+    const rows = sliceRows(f.id);
+    const mine = rows.find((r) => r.index === index);
+    if (!mine || mine.kind === 'follow-up') return { branches: [] };
+    const bySlice = new Map(rows.map((r) => [r.sliceId, r]));
+    const deps = (Array.isArray(s.dependsOn) ? s.dependsOn : []).map((id) => bySlice.get(id)).filter((r) => r && r.index !== index);
+    const branches = [];
+    for (const d of deps) {
+      if (!d.pipelineId) continue;
+      const prev = previousBranchesOf(d.pipelineId, { now });
+      if (prev && prev.pending) return { pending: true };
+      if (prev && prev.sourceBranch) branches.push({ index: d.index, pipelineId: d.pipelineId, branch: prev.sourceBranch });
+    }
+    return { branches };
+  } catch { return { branches: [] }; }
 }
 
 /** The slice a ticket fires (the one ticket lookup): its feature, index, the feature's status and its "Ask me before
@@ -409,6 +459,7 @@ export function featureView(id, { live = () => null, finishing = () => false, on
   const waiting = h ? slices.filter((s) => s.index > h.index && (s.state === 'planned' || s.state === 'missed')).map((s) => s.index) : [];
   // D3: the run that waits for the owner's Start now ("Ask me before each run"); never persisted.
   const held = slices.find((s) => s.state === 'held') || null;
+  const clash = held ? clashHoldOf(held.ticketId) : null;
   // D24: Ship as once every slice is done, on a feature that is still active and not shipped. The suggestion is
   // async (featureShipSuggestion); the GET route merges it.
   const lastPrUrl = slices.length ? (slices[slices.length - 1].pr?.url || null) : null;
@@ -456,7 +507,7 @@ export function featureView(id, { live = () => null, finishing = () => false, on
     status, approveEach: f.approve_each !== 0, total: slices.length, done,
     halted: h ? { index: h.index, state: h.state, waiting } : null,
     open: slices.some((s) => ['planned', 'missed', 'held'].includes(s.state)),
-    held: held ? { index: held.index, ticketId: held.ticketId } : null,
+    held: held ? { index: held.index, ticketId: held.ticketId, ...(clash ? { reason: clash.reason } : {}) } : null,
     replacedBy: f.replaced_by || null, replan, slices, ship,
     originPipelineId: f.origin_pipeline_id, ask, ...(asks ? { asks } : {}), log: featureLog(f, slices, oneCard, ch.logged, f.outline.verify || null), notes: { ideas },
     // Shaper small runs A2: the record's 2 keys, last, only with the flag on or (B2, D20) for a marked feature; an unmarked
@@ -986,7 +1037,9 @@ export async function earlierSliceChanges(featureId, index) {
 
 function cancelOpenTickets(featureId, { by, now }) {
   let n = 0;
-  for (const r of sliceRows(featureId)) if (r.ticket && ['scheduled', 'missed'].includes(r.ticket.status) && cancelTicket(r.ticketId, { by, now })) n += 1;
+  for (const r of sliceRows(featureId)) {
+    if (r.ticket && ['scheduled', 'missed'].includes(r.ticket.status) && cancelTicket(r.ticketId, { by, now })) { clearClashHold(r.ticketId); n += 1; }
+  }
   return n;
 }
 
@@ -1170,10 +1223,10 @@ function sliceHolds(f, rows, index, { now = Date.now(), isLive = null, bySlice =
 /** "Ask me before each run" holds every slice ticket of an active feature (featureHoldsTicket, read once per feature). */
 const featureHeldOf = (f) => f.status === 'active' && f.approve_each === 1;
 
-/** Slice 2 (D2): a run that is due: not started, its ticket scheduled, the feature not holding it, free of its links.
- *  `holdsOf()` (its sliceHolds) is read last, only for a row the cheap checks leave due. */
+/** Slice 2 (D2): a run that is due: not started, its ticket scheduled, the feature not holding it, no clash hold (D11),
+ *  free of its links. `holdsOf()` (its sliceHolds) is read last, only for a row the cheap checks leave due. */
 const dueRow = (r, holdsOf, featureHeld) => {
-  if (r.pipelineId || !r.ticket || r.ticket.status !== 'scheduled' || featureHeld) return false;
+  if (r.pipelineId || !r.ticket || r.ticket.status !== 'scheduled' || featureHeld || clashHoldOf(r.ticketId)) return false;
   const holds = holdsOf();
   return !!holds && !holds.waitsFor.length && !holds.bad;
 };

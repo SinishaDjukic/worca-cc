@@ -101,10 +101,10 @@ test('D2: runs-list, run-facts, agents-place and card-members at Expert, the 10 
   // The truncation proof (fit-1-1, requirements-1-2): a long-title member; the line's natural width; the title ellipsizes.
   for (const needle of ['const D2_LONG = 4;', 'Math.abs(r.subW - r.subScroll) > 1 || r.subScroll > r.subClient', 'long.titleEllipsis && long.titleCut',
     "words.length === 8 && words.every((w) => w === 'done')"]) assert.ok(s.includes(needle), needle);
-  assert.match(s, /await d2Phase\(\);\nawait d3Phase\(\);\nawait finish\(\);\n$/, 'D2 before D3, D3 last, before the verdict');
+  assert.match(s, /await d2Phase\(\);\nawait d3Phase\(\);\nawait heldPhase\(\);\nawait finish\(\);\n$/, 'D2 before D3, the held row last, before the verdict');
 });
 
-test('d3Phase seeds, measures both lists with the width, pairs with the prototype feature screen, and runs last', () => {
+test('d3Phase seeds, measures both lists with the width, pairs with the prototype feature screen, and runs after D2', () => {
   const s = src();
   for (const needle of ["seedFeature('d3'", "'R-comp-1': { kind: 'confirmed', role: 'compliance' }", "reqChanges.apply(D3.f.id",
     "post(`/api/shape/features/${D3.f.id}/confirm`", "recordShip(D3.f.id", '#feature/${D3.f.id}/requirements', '#feature/${D3.f.id}/decisions',
@@ -119,4 +119,18 @@ test('d3Phase seeds, measures both lists with the width, pairs with the prototyp
   assert.match(s, /#ship`\); await setTheme\(theme\)[\s\S]*compok[\s\S]*location\.hash = '#feature'[\s\S]*\[data-moment="rs"\]/, 'the after pair: #ship, confirm, then #feature in the same page');
   assert.match(s, /prototypeFeatureAfter\('Requirements'/);
   assert.match(s, /prototypeFeatureAfter\('Decisions'/);
+});
+
+test('heldPhase: a clash-held run seeded with setClashHold, its row and one Start now at 1280px in both themes, runs last', () => {
+  const s = src();
+  assert.match(s, /process\.env\.HELD_ONLY === '1'\) \{ await heldPhase\(\); await finish\(\); \}/);
+  const at = s.indexOf('async function heldPhase(');
+  assert.ok(at >= 0, 'the held-row phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  for (const needle of ['setClashHold(', 'runs 2 and 3 clash in src/a.mjs', 'Run 4 is held: ', '.shape-feature-held-why']) assert.ok(s.includes(needle), needle);
+  assert.match(s, /feature-start|Start now/, 'Start now is counted');
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  // The two files, with these exact names (no prefix), in SHOTS_DIR.
+  assert.match(s, /[`'/]small-runs-held-clash-(\$\{theme\}|light|dark)\.png/);
 });

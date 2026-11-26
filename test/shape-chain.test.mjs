@@ -19,6 +19,9 @@ import { careOfRow, requirementKindsOf } from '../src/shared/shape/feature-recor
 import { featureFigures } from '../src/core/shape/measure.mjs';
 import { latestFinishedSlice, latestFinishedSource, sliceChainGate, sliceSourceOf, headMissingSlice, smallRunsChainGate,
   sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase, heldStopTurn } from '../src/core/shape/chain.mjs';
+// Namespace reads, so a missing new export (the dependency combine) fails only its own test, not the whole file.
+import * as CHAIN from '../src/core/shape/chain.mjs';
+import * as FEATURES from '../src/core/shape/features.mjs';
 
 useTempHome(after, 'worca-shape-chain-');
 
@@ -556,3 +559,125 @@ test('D1 oneShipCheck, marked: one → 409 STACKED_ONLY first; stacked → head 
     assert.deepEqual(await oneShipCheck(id, 'stacked', v, NEVER, deps), { head: p[2], refusal: null });
   }
 });
+
+// ── Small runs, a run starts with the work of every run it builds on: the reason and the fire-time gate ──────────────
+
+test('R-arch-4 clashReason: the runs in ascending order and the file they clash in', () => {
+  assert.equal(CHAIN.clashReason({ runs: [9, 8], files: ['src/a.mjs'] }), 'runs 8 and 9 clash in src/a.mjs');
+  assert.equal(CHAIN.clashReason({ runs: [8, 4, 6], files: ['src/a.mjs'] }), 'runs 4, 6 and 8 clash in src/a.mjs');
+});
+
+test('R-arch-4 clashReason: at most 3 files are named, then how many more', () => {
+  const files = ['one.mjs', 'two.mjs', 'three.mjs', 'four.mjs', 'five.mjs'];
+  const five = CHAIN.clashReason({ runs: [8, 9], files });
+  assert.ok(five.startsWith('runs 8 and 9 clash in '), five);
+  for (const f of files.slice(0, 3)) assert.ok(five.includes(f), `${five}: names ${f}`);
+  for (const f of files.slice(3)) assert.ok(!five.includes(f), `${five}: leaves out ${f}`);
+  assert.ok(five.endsWith('and 2 more files'), five);
+  // checkCombine caps the list; fileCount is the real number.
+  assert.ok(CHAIN.clashReason({ runs: [8, 9], files, fileCount: 250 }).endsWith('and 247 more files'));
+  const two = CHAIN.clashReason({ runs: [8, 9], files: files.slice(0, 2) });
+  assert.ok(two.includes('one.mjs') && two.includes('two.mjs') && !/more file/.test(two), two);
+});
+
+/** A marked 4-run feature, runs 1 to 3 done on their own branches, run 4 building on `dependsOn`; `start` is the run
+ *  whose branch run 4 would start from. → { id, ticket, branch: (k) => name, own } */
+function combineFeature({ dependsOn = ['s2', 's3'], start = 2 } = {}) {
+  const f = feature(4, { deps: { 4: dependsOn } });
+  fire(f.t[3], pipe('done'));
+  markFeature(f.id);
+  const origin = getDb().prepare('SELECT origin_pipeline_id FROM shape_features WHERE id = ?').get(f.id).origin_pipeline_id;
+  const p = [null, origin, getTicket(f.t[2]).pipelineId, getTicket(f.t[3]).pipelineId];
+  const branch = (k) => `feat/${p[k]}`;
+  return { id: f.id, p, ticket: getTicket(f.t[4]), branch, own: { pipelineId: p[start], sourceBranch: branch(start) } };
+}
+/** Flag on; `check(branches)` is checkCombine's answer, `ancestor(a, b)` isAncestor's. Every call is recorded. */
+function combineSeams({ check = () => ({ status: 'clean', files: [], fileCount: 0 }), ancestor = () => false } = {}) {
+  const checks = [];
+  const ancestors = [];
+  return { checks, ancestors, deps: { flagEnabled: () => true,
+    checkCombine: async (dir, { branches }) => { checks.push({ dir, branches: [...branches] }); return check(branches); },
+    isAncestor: async (dir, a, b) => { ancestors.push([a, b]); return ancestor(a, b); } } };
+}
+const conflicts = (branches, files = ['src/a.mjs']) => ({ status: 'conflicts', files, fileCount: files.length,
+  branch: branches.at(-1), with: branches.slice(0, -1) });
+
+test('sliceCombineGate: a clean check starts the run, checks the start and the missing branches once, and clears an old hold', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature();
+  const s = combineSeams();
+  FEATURES.setClashHold(w.ticket.id, { reason: 'old', runs: [2, 3], files: ['x'], at: Date.now() });
+  assert.equal(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps), null);
+  assert.deepEqual(s.checks, [{ dir: w.ticket.projectDir, branches: [w.branch(2), w.branch(3)] }]);
+  // Every ancestor question names branches under refs/heads/, so a tag or remote of the same name is never read.
+  assert.deepEqual(s.ancestors, [[`refs/heads/${w.branch(3)}`, `refs/heads/${w.branch(2)}`]]);
+  assert.equal(FEATURES.clashHoldOf(w.ticket.id), null);
+}));
+
+test('sliceCombineGate: nothing missing from the start branch answers null with no combine check', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature();
+  const s = combineSeams({ ancestor: () => true });
+  FEATURES.setClashHold(w.ticket.id, { reason: 'old', runs: [2, 3], files: ['x'], at: Date.now() });
+  assert.equal(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps), null);
+  assert.deepEqual(s.checks, []);
+  assert.equal(FEATURES.clashHoldOf(w.ticket.id), null);
+}));
+
+test('sliceCombineGate: a workspace ticket, no start branch, a pending start and an unmarked feature ask git nothing', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature();
+  const s = combineSeams({ check: conflicts });
+  assert.equal(await CHAIN.sliceCombineGate({ ...w.ticket, workspaceId: 'ws_x' }, w.own, s.deps), null);
+  for (const own of [null, { pending: true }, { pipelineId: null, sourceBranch: null }]) {
+    assert.equal(await CHAIN.sliceCombineGate(w.ticket, own, s.deps), null, JSON.stringify(own));
+  }
+  assert.equal(await CHAIN.sliceCombineGate(w.ticket, w.own, { ...s.deps, flagEnabled: () => false }), null);
+  getDb().prepare(`UPDATE pipelines SET shape_stats = NULL WHERE id = ?`).run(w.p[1]);
+  assert.equal(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps), null);
+  assert.deepEqual([s.checks, s.ancestors], [[], []]);
+}));
+
+test('sliceCombineGate: a dependency still merging its work back waits (transient)', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature();
+  getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify({ source: 'main', feature: 'main', sameAsSource: true, worktreeDir: '/tmp/x' }), new Date().toISOString(), w.p[3]);
+  const s = combineSeams();
+  assert.deepEqual(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps),
+    { ok: false, error: 'the run before it is still merging its work back', transient: true });
+  assert.deepEqual(s.checks, []);
+}));
+
+test('sliceCombineGate: a branch that is gone fails the start for good', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature();
+  const s = combineSeams({ check: () => ({ status: 'no-branch', branch: 'feat/x', files: [], fileCount: 0 }) });
+  assert.deepEqual(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps),
+    { ok: false, error: 'branch feat/x no longer exists', transient: false });
+}));
+
+test('sliceCombineGate: a check that cannot run is transient only for a failure or a timeout', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature();
+  for (const [kind, transient] of [['timeout', true], ['failed', true], ['git-too-old', false], ['bad-branch', false], ['bad-request', false]]) {
+    const s = combineSeams({ check: () => ({ status: 'error', kind, error: `boom ${kind}`, files: [], fileCount: 0 }) });
+    assert.deepEqual(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps),
+      { ok: false, error: `could not combine the work of runs 2 and 3: boom ${kind}`, transient }, kind);
+    assert.equal(FEATURES.clashHoldOf(w.ticket.id), null, 'an error is no clash hold');
+  }
+}));
+
+test('sliceCombineGate (D8): only the runs that clash are named: the third branch clashes with the second, not the first', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature({ dependsOn: ['s1', 's2', 's3'], start: 1 });
+  const s = combineSeams({ check: (branches) => (branches.includes(w.branch(2)) && branches.includes(w.branch(3))
+    ? conflicts(branches) : { status: 'clean', files: [], fileCount: 0 }) });
+  assert.deepEqual(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps),
+    { ok: false, hold: true, error: 'runs 2 and 3 clash in src/a.mjs' });
+  assert.deepEqual(s.checks[0].branches, [w.branch(1), w.branch(2), w.branch(3)]);
+  assert.deepEqual(s.checks.slice(1).map((c) => c.branches).sort(),
+    [[w.branch(1), w.branch(3)], [w.branch(2), w.branch(3)]].sort(), 'one pairwise check per branch it was combined with');
+  const hold = FEATURES.clashHoldOf(w.ticket.id);
+  assert.deepEqual([hold.reason, [...hold.runs].sort(), hold.files], ['runs 2 and 3 clash in src/a.mjs', [2, 3], ['src/a.mjs']]);
+}));
+
+test('sliceCombineGate (D8): a clash that needs the whole fold names every run in it', () => withEnvVars(SMALL_ON, async () => {
+  const w = combineFeature({ dependsOn: ['s1', 's2', 's3'], start: 1 });
+  const s = combineSeams({ check: (branches) => (branches.length > 2 ? conflicts(branches) : { status: 'clean', files: [], fileCount: 0 }) });
+  assert.deepEqual(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps),
+    { ok: false, hold: true, error: 'runs 1, 2 and 3 clash in src/a.mjs' });
+}));

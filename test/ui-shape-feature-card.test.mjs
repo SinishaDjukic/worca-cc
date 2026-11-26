@@ -1003,6 +1003,8 @@ test('s7 T5 (R-qa-9, D4): with neither half the line says who must act, by the o
     'a stop line and a held run': [VIEW([S(1, 'done'), S(2, 'approval', { stop: { reason: 'requirement', held: false } }), S(9, 'held')],
       asksView([A2], { halted: null, held: { index: 9, ticketId: 't9' } })), ACT],
     'Ask before each run holds run 9': [bare([S(1, 'done'), S(9, 'held')], { held: { index: 9, ticketId: 't9' } }), 'Run 9 waiting for you to start'],
+    // The clash reason shows once, on the held row (paintFeatureActions); the state line only says it is held.
+    'a clash holds run 9': [bare([S(1, 'done'), S(9, 'held')], { held: { index: 9, ticketId: 't9', reason: 'runs 2 and 3 clash in src/a.mjs' } }), 'Run 9 is held'],
     'none of these': [bare([S(1, 'done'), S(2, 'planned')]), 'Worca is finishing a run'],
   };
   for (const [name, [view, want]] of Object.entries(cases)) {

@@ -895,6 +895,24 @@ test('s7 R-arch-9: with the flag off the marked feature page has no count and ke
   assert.doesNotMatch(gp.querySelector('.gpage-card .run-status').textContent, /next: run/);
 });
 
+// A run held on a clash: the feature page's Overview card shows the reason each shape-feature frame brings.
+test('the marked feature page\'s Overview shows the held reason, and a frame that changes only the reason repaints it', async () => {
+  const slices = S7_SLICES.map((x) => (x.index === 9 ? s7Sl(9, 'held', { pipelineId: null }) : x));
+  const held = (reason) => ({ ...s7Feature([]), slices, held: { index: 9, ticketId: 't9', ...(reason ? { reason } : {}) } });
+  let feature = held(null);
+  const { ctx } = await d3Boot({ feature: () => json(feature), groups: S7_GROUPS });
+  ctx.go('feature/feat_1/overview');
+  await ctx.settle(10);
+  const why = () => pageOf(ctx).querySelector('.gpage-overview .shape-feature-held-why')?.textContent;
+  assert.equal(why(), 'Run 9 waits for you to start', 'the fixture: the Overview draws the held row');
+  for (const reason of ['runs 2 and 4 clash in src/a.mjs', 'runs 2 and 4 clash in src/b.mjs']) {
+    feature = held(reason);
+    ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+    await ctx.settle(10);
+    assert.equal(why(), `Run 9 is held: ${reason}`);
+  }
+});
+
 // ── Shaper small runs slice 10 (R-ux-3): the app hands the marked feature page its slices for "Show order" ───────────
 const s10Slices = () => SIXTEEN_RUN_LINKS.map(({ run, dependsOn }) => s7Sl(run, 'planned', { buildsOn: [...dependsOn], waitsFor: [...dependsOn] }));
 const s10Feature = (marked) => ({ ...FEATURE, status: 'active', total: 16, done: 0, slices: s10Slices(), asks: [], ask: null,

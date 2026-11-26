@@ -14,6 +14,8 @@ import { spawnSync } from 'node:child_process';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
+// A namespace read, so a missing new export fails only its own test, not the whole file.
+import * as HARNESS from '../src/core/run-harness.mjs';
 import { readPipelineForResume } from '../src/core/artifacts.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { getDb } from '../src/core/db.mjs';
@@ -695,4 +697,14 @@ test('R: a merge with the parents swapped (dev merged into, the branch reset to 
   const r = resultsOf(res.pipelineDir);
   const paths = [...r.newFiles, ...r.changedFiles].map((f) => f.path).sort();
   assert.deepEqual(paths, ['own.txt', 'shared.txt'], 'the run\'s work and the resolution, not dev\'s files or feat\'s pr.txt');
+});
+
+test('combinesDependencies: a slice of a feature, a fresh start, a single project and small runs, all four', () => {
+  const on = { slice: { feature: 'feat-1', index: 4 }, freshStart: true, isWorkspace: false, smallRuns: true };
+  assert.equal(HARNESS.combinesDependencies(on), true);
+  for (const [why, over] of [['no slice', { slice: null }], ['a slice with no feature', { slice: { index: 4 } }],
+    ['a reused branch', { freshStart: false }], ['a workspace run', { isWorkspace: true }],
+    ['the flag off or the feature unmarked', { smallRuns: false }]]) {
+    assert.equal(HARNESS.combinesDependencies({ ...on, ...over }), false, why);
+  }
 });

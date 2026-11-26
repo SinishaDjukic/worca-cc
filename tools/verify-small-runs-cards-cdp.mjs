@@ -11,8 +11,9 @@
 //   C4 `#req-change` notice and its "How a change lands" fold;
 // D2 (D2_ONLY=1 runs it alone): the cases runs-list, run-facts, agents-place and card-members of a marked 10-run
 //   feature, in light and dark at 375px and 1280px at Expert, and the flag-off control's Agents places per page;
-// D3 (last; D3_ONLY=1 runs it alone): the feature page's Requirements (one fold per role) and Decisions tabs of a marked
+// D3 (D3_ONLY=1 runs it alone): the feature page's Requirements (one fold per role) and Decisions tabs of a marked
 //   feature before and after Ship, light and dark at 1280px and 375px, beside the prototype's `#feature` tabs;
+// the held row (last; HELD_ONLY=1 runs it alone): a run held on a clash, its reason and one Start now, light and dark at 1280px;
 // and one reduced-motion capture of Prototype building. A live phase then follows a REAL paced mock Design build
 // (WORCA_MOCK_DESIGN_MS=400) on the Chat card: the Lead row, a row per screen and pieces assembling, captured mid-build
 // and with reduced motion (chat-prototype-building-mid-light, chat-prototype-building-reduced-motion-light). Every list (the Verifier's gap `.srows` included) is measured:
@@ -84,7 +85,7 @@ const { server, runs, reqChanges } = await imp('../ui/server.mjs');
 const { getDb } = await imp('../src/core/db.mjs');
 const { projectKey } = await imp('../src/core/store.mjs');
 const { writeStoreMeta, recordArtifact, appendAuditById } = await imp('../src/core/artifacts.mjs');
-const { createSliceFeature, recordShapePlan, changeAgreedRequirements, setFeatureAcceptance, recordShip } = await imp('../src/core/shape/features.mjs');
+const { createSliceFeature, recordShapePlan, changeAgreedRequirements, setFeatureAcceptance, recordShip, setClashHold } = await imp('../src/core/shape/features.mjs');
 const askStore = await imp('../src/core/ask/store.mjs');
 const { normalizeOutline } = await imp('../src/shared/shape/slices.mjs');
 const { gateStop } = await imp('../src/shared/shape/run-stops.mjs');
@@ -895,10 +896,43 @@ async function d3Phase() {
   log(`D3: ${results.d3Minutes} min`);
 }
 
-// D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases (each command stays under 10 minutes); unset, every case
-// runs, D2 before D3, D3 last.
+// ---- Shaper small runs, slice 2: a run held because the runs it builds on clash. A marked 4-run feature, runs 1 to 3
+// done, run 4's ticket scheduled with "Ask me before each run" off, and the clash hold set as the fire-time check sets
+// it. The Chat card's held row reads the reason, with one Start now, at 1280px in the classic look, light and dark:
+// small-runs-held-clash-light.png and small-runs-held-clash-dark.png in SHOTS_DIR.
+const HELD_REASON = 'runs 2 and 3 clash in src/a.mjs';
+async function heldPhase() {
+  const HC = seedFeature('hc', 'Clash', ['done', 'done', 'done', 'planned']);
+  getDb().prepare('UPDATE shape_features SET approve_each = 0 WHERE id = ?').run(HC.f.id);
+  const t4 = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = 4').get(HC.f.id).ticket_id;
+  setClashHold(t4, { reason: HELD_REASON, runs: [2, 3], files: ['src/a.mjs'], at: Date.now() });
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    if (!(await card(HC.threadId, 'held', 'the clash-held card', theme))) continue;
+    if (await waitFor("!!document.querySelector('.chat-rc .shape-feature-held-why')", `the held row (${theme})`)) {
+      const r = await ev(`(() => { const vis = (els) => [...els].filter((b) => b.offsetParent);
+        return { why: (vis(document.querySelectorAll('.chat-rc .shape-feature-held-why'))[0] || {}).textContent || null,
+          starts: vis(document.querySelectorAll('.chat-rc [data-act="feature-start"]')).filter((b) => b.textContent.trim() === 'Start now').length }; })()`);
+      check(r.why === `Run 4 is held: ${HELD_REASON}`, `held row, ${theme}: "Run 4 is held: ${HELD_REASON}" (${JSON.stringify(r.why)})`);
+      check(r.starts === 1, `held row, ${theme}: Start now shows once (${r.starts})`);
+      await reveal('.chat-rc .shape-feature-held');
+    }
+    // A notice (feedback.mjs) can sit over the card's footer: dismiss each one before the capture.
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, `small-runs-held-clash-${theme}.png`);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row (each command stays under
+// 10 minutes); unset, every case runs, D2 before D3, the held row last.
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
 if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }
+if (process.env.HELD_ONLY === '1') { await heldPhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {
@@ -1085,4 +1119,5 @@ const LIVE_ROWS = "[...document.querySelectorAll('.chat-rc .proto-rows .plan-che
 
 await d2Phase();
 await d3Phase();
+await heldPhase();
 await finish();

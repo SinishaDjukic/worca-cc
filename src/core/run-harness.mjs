@@ -102,7 +102,7 @@ import { flagEnabled } from './flags.mjs';
 import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit, checkBaseMerge } from './git-sync.mjs';
 import { featureBase } from './shape/features.mjs';
 import { shaperSmallRunsOn, smallRunsAtStart, smallRunsOfFeature } from './shape/small-runs.mjs';
-import { latestFinishedSource } from './shape/chain.mjs';
+import { latestFinishedSource, combineDependencies, combinedAudit } from './shape/chain.mjs';
 import { cleanOutcome } from './shape/rounds.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
@@ -437,6 +437,12 @@ export function safeParse(text) {
  *  no slice, a workspace run, or a reused checkout never does. */
 export function mergesFeatureBase({ slice, freshStart, isWorkspace }) {
   return !!(slice && slice.index >= 2 && freshStart && !isWorkspace);
+}
+
+/** Shaper small runs (slice 2, D2): a slice run's fresh branch takes in every run it builds on before the first agent.
+ *  A slice of a feature, a fresh start, a single project, and `smallRuns` (the flag on and the feature marked). */
+export function combinesDependencies({ slice, freshStart, isWorkspace, smallRuns }) {
+  return !!(slice && slice.feature && freshStart && !isWorkspace && smallRuns);
 }
 
 /** Shaper small runs (D9): a resumed slice run first merges the feature's latest finished work. Single project, flag on
@@ -3060,10 +3066,11 @@ export class RunHarness extends EventEmitter {
                                                 ...(sameAsSource ? { sameAsSource: true } : {}) };
           // Shaper s5 (D14): a feature's next run starts from the moved base. Slice k ≥ 2, single project, fresh branch only.
           const sl = this.runShape && this.runShape.slice;
-          if (mergesFeatureBase({ slice: sl, freshStart, isWorkspace: this.isWorkspace })) await this._mergeFeatureBase(m, info, sl);
+          await this._startFromFeature(m, info, sl, freshStart);
           const short = (s) => String(s).slice(0, 10);
           if ((freshStart || recreated) && diffBase && (baseMoved || (checkoutHead && diffBase !== checkoutHead))) {
-            await appendAudit(this.pipeline.dir, `Diff base for \`${m.projectKey}\` moved to the run's start \`${short(diffBase)}\`.`).catch(() => {});
+            const startAt = this.state.branches[m.projectKey]?.diffBase || diffBase;   // after the combine and base merge
+            await appendAudit(this.pipeline.dir, `Diff base for \`${m.projectKey}\` moved to the run's start \`${short(startAt)}\`.`).catch(() => {});
           } else if (!freshStart && !recreated && diffBase) {
             await appendAudit(this.pipeline.dir, reuseBase
               ? `Diff base for \`${m.projectKey}\` is \`${short(diffBase)}\`, where \`${info.branch}\` forks from \`${reuseBase.against}\` (reused branch).`
@@ -10668,6 +10675,33 @@ export class RunHarness extends EventEmitter {
       this.state.branches[m.projectKey] = { ...rec, baseSha: r.to, diffBase: r.to, startHead: r.to, baseMerged: { base, behind: r.behind } };
       this.checkpointRefs[m.projectKey] = r.to;     // dev's commits are never this run's changes
     }
+  }
+
+  /** A slice run's fresh branch, before the first agent: first the work of every run it builds on (small runs), so the
+   *  re-check sees the tree the fire-time gate checked; then the feature's moved base (s5 D14) onto that combined tip,
+   *  which leaves a clash with the base to its audit line as before. */
+  async _startFromFeature(m, info, sl, freshStart) {
+    if (combinesDependencies({ slice: sl, freshStart, isWorkspace: this.isWorkspace,
+      smallRuns: !!sl && shaperSmallRunsOn() && smallRunsOfFeature(sl.feature) })) await this._combineDependencies(m, info, sl);
+    if (mergesFeatureBase({ slice: sl, freshStart, isWorkspace: this.isWorkspace })) await this._mergeFeatureBase(m, info, sl);
+  }
+
+  /** Shaper small runs (slice 2, D3, D10): merge every run this slice builds on that its fresh branch lacks, from local
+   *  SHAs, before the first agent; move the diff base to the result, so their commits never count as this run's
+   *  changes. A pending dependency, a clash or a failed merge throws a terminal setup error: the run never goes on
+   *  from a partial combine. */
+  async _combineDependencies(m, info, sl) {
+    const key = m.projectKey;
+    const rec = this.state.branches[key];
+    let r;
+    try {
+      r = await combineDependencies(resolve(m.projectDir), { featureId: sl.feature, index: sl.index, branch: info.branch, source: rec?.source });
+    } catch (err) { throw markTerminal(err); }
+    if (!r) return;
+    this.state.branches[key] = { ...this.state.branches[key], baseSha: r.tip, diffBase: r.tip, startHead: r.tip };
+    this.checkpointRefs[key] = r.tip;               // the dependencies' commits are never this run's changes
+    await appendAudit(this.pipeline.dir, combinedAudit(r.merged, info.branch)).catch(() => {});
+    this._log('worktree', 'info', `${key}: combined the work of ${r.merged.map((d) => d.branch).join(', ')} into ${info.branch}`);
   }
 
   async _mergeLatestOnResume(m, info, base, { onAnswer = false } = {}) {
