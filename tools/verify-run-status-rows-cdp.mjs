@@ -1,17 +1,25 @@
 #!/usr/bin/env node
-// tools/verify-run-status-rows-cdp.mjs — headless-Chrome proof of Shaper small runs slice 4: the Chat card's run rows and
-// the feature page's Runs tab take each run's word and mark from the shared run status (runStatus → markDot). Seeded data
-// only, on the mock engine: the real 16-run feature (test/helpers/shape-sixteen-runs.mjs) in four worlds, its live runs
-// put into the server's runs map the way tools/verify-run-stops-cdp.mjs does.
+// tools/verify-run-status-rows-cdp.mjs — headless-Chrome proof of Shaper small runs slices 4 and 5: the Chat card's run
+// rows, the feature page's Runs tab, the Runs list's member rows and the run page head take each run's word and mark from
+// the shared run status (runStatus → markDot). Seeded data only, on the mock engine: the real 16-run feature
+// (test/helpers/shape-sixteen-runs.mjs) in five worlds, its live runs put into the server's runs map the way
+// tools/verify-run-stops-cdp.mjs does.
 //   base    run 2 at a stop, run 3 building: run 7 `waits for run 2 (needs you), 6`, run 12 `waits for run 7, 10`, run 9 `next`.
+//   busy    runs 2, 4 and 11 at stops, run 5 failed, run 6 building: run 9 `next`, run 7 `waits for run 2 (needs you), 6`.
 //   held    run 4's stop answer held behind run 3: `after run 3` on the dashed ring, and no row reads `next`.
 //   change  base with run 13 a change run: `next · small change run` on the ink ring.
 //   failed  run 5 failed: the red "!", run 6 `waits for run 5 (failed)`, runs 15 and 16 (cannot start) today's text.
 // For each world and theme, at 1280px and deviceScaleFactor 2, it shoots the Chat card and the feature page Runs tab:
-// 16 PNGs `rows-{world}-{card|page}-{theme}.png`. A JSON log records every row (word, data-mark, dot class, height, wrap,
+// `rows-{world}-{card|page}-{theme}.png`. A JSON log records every row (word, data-mark, dot class, height, wrap,
 // word colour). It also checks base-world runs 7 and 12 at 375px in light. The script exits non-zero on any failed
 // check: a row that is not one 32px line, a word that wraps, a pulse on a row whose mark is not live, a live word that
 // reads working, an open stop or failed word not in its ink token. A canceled run keeps today's row (no mark).
+// Slice 5 adds two surfaces. `side`: the Runs list at #runs with the feature group expanded, `rows-{world}-side-{theme}.png`
+// and one 360px light shot `rows-busy-side-360-light.png`; every member's word, dot and data-mark equal the card's, the
+// live member keeps its .runs-stage strips (Plan, Build, Review, Ready), the ask and failed words take the card's ink,
+// the dashed ring's centre sits within 1px of a plain dot's, and at 360px each run number and word stays visible. `run`:
+// the run page head (.rd-sheet .run-status) of busy runs 2 (ask), 5 (failed), 6 (live) and held run 4 (after run 3),
+// `rows-{world}-run{n}-{theme}.png`; its word and dot equal the card's, and its detail restates no dev state word.
 // NOT part of `npm test`: it needs Chrome. A hard 20-minute cap inside.
 // Run: H=$(mktemp -d); env -u FORCE_COLOR HOME=$H VERIFY_PORT=4943 SHOTS_DIR=… node --disable-warning=ExperimentalWarning tools/verify-run-status-rows-cdp.mjs
 import { spawn, execFileSync } from 'node:child_process';
@@ -27,9 +35,10 @@ const CHROME = process.env.CHROME_BIN || CHROME_PATHS.find((p) => existsSync(p))
 const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0 ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
 if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
 const THEMES = ['light', 'dark'];
-const WORLDS = ['base', 'held', 'change', 'failed'].filter((w) => !process.env.WORLD || w === process.env.WORLD);   // WORLD=held runs one world
+const WORLDS = ['base', 'busy', 'held', 'change', 'failed'].filter((w) => !process.env.WORLD || w === process.env.WORLD);   // WORLD=held runs one world
 const WIDE = 1280;
 const NARROW = 375;
+const SIDE_NARROW = 360;   // s5: the Runs list's narrow shot
 const T0 = Date.now();
 const log = (m) => process.stderr.write(`[${((Date.now() - T0) / 1000).toFixed(1)}s] ${m}\n`);
 
@@ -119,6 +128,7 @@ function liveRun(featureId, run, pid, how) {
 /** The four worlds: the helper's `{done, states}` plus what the world changes after (a change run, a canceled ticket). */
 const SPECS = {
   base: { spec: SIXTEEN_RUN_STATES.base },
+  busy: { spec: SIXTEEN_RUN_STATES.busy },
   held: { spec: { done: [1], states: { 2: { stop: 'requirement' }, 3: { pipe: 'running' }, 4: { stop: 'check', held: true, after: 3 } } } },
   change: { spec: SIXTEEN_RUN_STATES.base, then: (fx) => fx.setKind(13, 'change') },
   failed: { spec: { done: [1, 3, 4], states: { 2: { stop: 'requirement' }, 11: { stop: 'check' }, 5: { pipe: 'error' } } }, then: (fx) => fx.cancelTicket(14) },
@@ -137,7 +147,9 @@ function seed(name) {
     blocks: [{ kind: 'card', id: cardId, state: 'tracked', card: { type: 'progress', pipelineId: fx.originPipelineId, runId: `run-${fx.originPipelineId}`, projectKey: key, title: 'CI as a trusted merge gate', status: 'done' } }] });
   askStore.linkRun(thread.id, { runId: `run-${fx.originPipelineId}`, cardId, pipelineId: fx.originPipelineId, status: 'done' });
   recordShapePlan({ threadId: thread.id, cardId, title: 'CI as a trusted merge gate' });
-  return { card: `#chat/${thread.id}`, page: `#feature/${fx.featureId}`, origin: fx.originPipelineId };
+  return { card: `#chat/${thread.id}`, page: `#feature/${fx.featureId}`, side: '#runs', origin: fx.originPipelineId, featureId: fx.featureId,
+    // s5: a started run's page: a live run at #running/ plus its run id, a finished one at #history/ plus key and id.
+    run: (n) => (liveIds.includes(`run-${fx.pipelineOf(n)}`) ? `#running/run-${fx.pipelineOf(n)}` : `#history/${key}/${fx.pipelineOf(n)}`) };
 }
 
 // ---- chrome + cdp
@@ -204,13 +216,16 @@ async function go(hash, theme) {
 const metrics = (width) => cdp('Emulation.setDeviceMetricsOverride', { width, height: 1400, deviceScaleFactor: 2, mobile: false });
 /** A 2x shot of the visible element `sel`, clipped to its box inside the viewport (captureBeyondViewport re-lays the
  *  chat column out). The first-visit notice toast is closed first, so it covers no row. */
-async function shotOf(sel, file) {
+const MIN_SHOT_PX = 16;   // one line of text: a one-line run head (a failed run) is 19px; a folded box is 0px
+async function shotOf(sel, file, block = 'start') {
   await ev("document.querySelector('.toast[data-key=\"role-defaults\"] .toast-x')?.click();0");
   await sleep(300);
   const box = await ev(`(() => { const el = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.offsetParent); if (!el) return null;
-    el.scrollIntoView({ block: 'start' }); const b = el.getBoundingClientRect();
-    return { x: b.left, y: b.top, width: b.width, height: Math.min(b.height, innerHeight - b.top) }; })()`);
+    el.scrollIntoView({ block: ${JSON.stringify(block)} }); const b = el.getBoundingClientRect();
+    return { x: b.left, y: b.top, width: b.width, height: Math.min(b.height, innerHeight - b.top), text: el.innerText.trim().length }; })()`);
   if (!box) { check(false, `${file}: ${sel} is on screen`); return; }
+  // A folded or empty box is no evidence: no file is written for it, and the proof fails.
+  if (box.height < MIN_SHOT_PX || !box.text) { check(false, `${file}: ${sel} is at least ${MIN_SHOT_PX}px tall and has text (${Math.round(box.height)}px, ${box.text} chars), no shot written`); return; }
   await sleep(200);
   const { data } = await cdp('Page.captureScreenshot', { format: 'png',
     clip: { x: Math.max(0, box.x - 8), y: Math.max(0, box.y - 8), width: box.width + 16, height: box.height + 16, scale: 1 } });
@@ -219,9 +234,13 @@ async function shotOf(sel, file) {
   results.shots.push(out);
 }
 
+/** The painted dot's signature, the same on every surface (all paint through paintStatusDot): its is-… classes (the
+ *  pulse included) and its symbol (test/helpers/shape-surfaces.mjs dotSig). */
+const SIG_SRC = `(dot) => dot ? [...dot.classList].filter((c) => c.startsWith('is-')).sort().join(' ') + '|' + (dot.dataset.symbol || '') : ''`;
 /** Every numbered run row of the list under `rootSel`: run, word, data-mark, dot class and symbol, height, whether the
  *  word wraps, the word colour, and the ink tokens resolved in this theme (rgb). */
 const ROWS = (rootSel) => `(() => {
+  const SIG = ${SIG_SRC};
   const root = [...document.querySelectorAll(${JSON.stringify(rootSel)})].find((r) => r.offsetParent);
   if (!root) return null;
   const tone = (v) => { const p = document.createElement('span'); p.style.color = v; root.append(p); const c = getComputedStyle(p).color; p.remove(); return c; };
@@ -232,7 +251,7 @@ const ROWS = (rootSel) => `(() => {
     return { run: Number(li.querySelector('.run-member-num')?.textContent || 0), word: st ? st.textContent : null, mark: li.dataset.mark || null,
       dot: dot ? dot.className : '', symbol: dot ? dot.dataset.symbol || null : null, height: Math.round(li.getBoundingClientRect().height * 10) / 10,
       wrap: !!st && (st.getBoundingClientRect().height > lh + 1 || st.scrollWidth > st.clientWidth + 1),
-      color: st ? getComputedStyle(st).color : null, second: !!li.querySelector('.run-member-line') };
+      color: st ? getComputedStyle(st).color : null, second: !!li.querySelector('.run-member-line'), sig: SIG(dot) };
   });
   return { rows, ink };
 })()`;
@@ -259,6 +278,11 @@ function judgeRows(where, m, width) {
 }
 /** The words and marks each world must show. */
 const WANT = {
+  busy: (at, where) => {
+    check(at(9).word === 'next' && /is-ink-ring/.test(at(9).dot), `${where}: run 9 next on the ink ring (${at(9).word}, ${at(9).dot})`);
+    check(at(7).word === 'waits for run 2 (needs you), 6' && /is-grey-ring/.test(at(7).dot), `${where}: run 7 waits for run 2 (needs you), 6 (${at(7).word})`);
+    check(at(5).word === 'failed' && at(5).symbol === 'alert', `${where}: run 5 failed with the "!"`);
+  },
   base: (at, where) => {
     check(at(7).word === 'waits for run 2 (needs you), 6' && /is-grey-ring/.test(at(7).dot), `${where}: run 7 waits for run 2 (needs you), 6 on the grey ring (${at(7).word})`);
     check(at(12).word === 'waits for run 7, 10' && /is-grey-ring/.test(at(12).dot), `${where}: run 12 waits for run 7, 10 (${at(12).word})`);
@@ -279,13 +303,101 @@ const WANT = {
     for (const n of [15, 16]) check(at(n).mark === 'faint' && /is-grey-ring/.test(at(n).dot) && !!at(n).word, `${where}: run ${n} (cannot start) keeps today's text on the grey ring (${at(n).word})`);
   },
 };
-const SURFACES = { card: '.chat-rc-members', page: '#group-detail div.gpage-runs' };
+const SURFACES = { card: '.chat-rc-members', page: '#group-detail div.gpage-runs',
+  // s5: the Runs list's expanded feature group, and the run page head.
+  side: '.runs-members.srows', run: '.rd-sheet .run-status' };
+/** s5: the dev state words a run page head detail must not restate beside the shared word (plan D8). */
+const DEV_STATE = ['needs you', 'paused', 'waiting', 'working', 'failed', 'stopped', 'running'];
+const devSegs = (detail) => String(detail || '').split(' · ').map((x) => x.trim()).filter((x) => DEV_STATE.includes(x.toLowerCase()) || /^starts /i.test(x));
+/** s5: the feature group's row in the Runs list, and a click on its ⌄ when it is closed. */
+const groupSel = (featureId) => `.runs-item[data-row-key=${JSON.stringify(`chain:${featureId}`)}]`;
+const EXPAND = (featureId) => `(() => { const it = document.querySelector(${JSON.stringify(groupSel(featureId))}); if (!it) return false;
+  const b = it.querySelector(':scope > .runs-row-tail .runs-expand[data-chain-key]'); if (!b) return false;
+  if (b.getAttribute('aria-expanded') !== 'true') b.click(); return true; })()`;
+/** s5: the 16 member rows of the expanded feature group: run, word (.runs-row-sub), data-mark, dot signature and box, its
+ *  strips, the word colour, and whether the run number and the word are visible (not clipped). */
+const SIDE_ROWS = (featureId) => `(() => {
+  const SIG = ${SIG_SRC};
+  const root = document.querySelector(${JSON.stringify(`${groupSel(featureId)} > .runs-members.srows`)});
+  if (!root || !root.offsetParent) return null;
+  const vw = document.documentElement.clientWidth;
+  const rows = [...root.querySelectorAll(':scope > .runs-item[data-level="member"]')].map((it) => {
+    const a = it.querySelector(':scope > a.runs-row'); const title = a.querySelector(':scope > .runs-row-title');
+    const sub = a.querySelector(':scope > .runs-row-sub'); const dot = it.querySelector(':scope > .runs-pick > .status-dot');
+    const run = Number.parseInt(title ? title.textContent : '', 10);
+    const num = String(run); const tb = title.getBoundingClientRect();
+    const rg = document.createRange(); const tn = [...title.childNodes].find((n) => n.nodeType === 3 && n.textContent.startsWith(num));
+    let numSeen = false;
+    if (tn) { rg.setStart(tn, 0); rg.setEnd(tn, num.length); const nb = rg.getBoundingClientRect(); numSeen = nb.width > 0 && nb.left >= 0 && nb.right <= Math.min(tb.right, vw) + 0.5; }
+    const sb = sub ? sub.getBoundingClientRect() : null;
+    const db = dot ? dot.getBoundingClientRect() : null; const ib = it.getBoundingClientRect();
+    const stage = a.querySelector(':scope > .runs-stage');
+    return { run, word: sub ? sub.textContent : null, mark: it.dataset.mark || null, dot: dot ? dot.className : '', symbol: dot ? dot.dataset.symbol || null : null, sig: SIG(dot),
+      color: sub ? getComputedStyle(sub).color : null,
+      centre: db ? { x: db.left + db.width / 2 - ib.left, y: db.top + db.height / 2 - (title ? tb.top + tb.height / 2 : ib.top) } : null,
+      stage: stage ? [...stage.querySelectorAll('.run-prog-mark')].map((x) => x.textContent.trim()) : null,
+      numSeen, subSeen: !!sb && (!sub.textContent || (sb.width > 0 && sb.left >= 0 && sb.right <= vw + 0.5 && sub.scrollWidth <= sub.clientWidth + 1)) };
+  }).filter((r) => Number.isInteger(r.run));
+  return { rows };
+})()`;
+/** s5: the run page head: its word, detail and dot signature. A live run waiting at a Shaper plan stop hides its whole
+ *  status card while the question card is the page (D30, shape-it.css .rd-glance[data-shaper-wait] > .rd-sheet): its head
+ *  is still painted, so it is read there and reported with `wait` (the shot is then the visible question card, #run-detail .rd-questions, which the page moves out of the glance). */
+const RUN_HEAD = `(() => {
+  const SIG = ${SIG_SRC};
+  const all = [...document.querySelectorAll('.rd-sheet .run-status')];
+  const shown = all.find((x) => x.offsetParent);
+  const folded = all.find((x) => { const g = x.closest('.rd-glance[data-shaper-wait]'); return g && g.offsetParent; });
+  const host = shown || folded;
+  if (!host) return null;
+  const wait = shown ? null : host.closest('.rd-glance').dataset.shaperWait;
+  const word = host.querySelector('.run-status-word'); const detail = host.querySelector('.run-status-detail');
+  const dot = host.querySelector('.run-status-head .status-dot');
+  return { hash: location.hash, word: word ? word.textContent : null, detail: detail && !detail.hidden ? detail.textContent : '', sig: SIG(dot), dot: dot ? dot.className : '', wait };
+})()`;
+/** s5: the side list must say what the card says, for the same world, theme and run. */
+function judgeSide(where, side, card) {
+  if (!side) { check(false, `${where}: the feature group's member rows are on screen`); return; }
+  const cat = (n) => card.rows.find((r) => r.run === n) || {};
+  check(side.rows.length === 16, `${where}: 16 member rows (${side.rows.length})`);
+  const diff = side.rows.filter((r) => r.word !== cat(r.run).word || r.sig !== cat(r.run).sig || r.mark !== cat(r.run).mark);
+  check(diff.length === 0, `${where}: every member's word, dot and data-mark equal the card's (${JSON.stringify(diff.map((r) => [r.run, r.word, r.sig, r.mark, '≠', cat(r.run).word, cat(r.run).sig, cat(r.run).mark]))})`);
+  const live = side.rows.filter((r) => r.mark === 'live');
+  check(live.every((r) => r.word && !/^working$/i.test(r.word.trim())), `${where}: a live word is never working (${JSON.stringify(live.map((r) => [r.run, r.word]))})`);
+  const staged = live.filter((r) => r.stage);
+  check(live.length === 0 || (staged.length > 0 && staged.every((r) => JSON.stringify(r.stage) === JSON.stringify(['Plan', 'Build', 'Review', 'Ready']))),
+    `${where}: a live member keeps its .runs-stage strips with the four run-prog-mark marks (${JSON.stringify(live.map((r) => [r.run, r.stage]))})`);
+  for (const mk of ['ask', 'failed']) {
+    const want = (card.rows.find((r) => r.mark === mk) || {}).color;
+    for (const r of side.rows.filter((x) => x.mark === mk)) check(r.color === want, `${where}: run ${r.run}'s runs-row-sub "${r.word}" takes the card's ${mk} ink (${r.color} vs ${want})`);
+  }
+  // The dashed ring's centre against a plain dot's centre (a done row's green dot) in the same list.
+  const plain = side.rows.find((r) => r.mark === 'done' && r.centre && !r.stage);
+  for (const r of side.rows.filter((x) => x.mark === 'after' && x.centre)) {
+    const dx = plain ? Math.abs(r.centre.x - plain.centre.x) : Infinity; const dy = plain ? Math.abs(r.centre.y - plain.centre.y) : Infinity;
+    check(dx <= 1 && dy <= 1, `${where}: run ${r.run}'s dashed ring centre is within 1px of a plain dot's centre (dx ${dx.toFixed?.(2)}, dy ${dy.toFixed?.(2)})`);
+  }
+  results.rows.push({ where, side: side.rows });
+}
 /** What a list shows when it never got its 16 marked rows: the hash, its rows, marked rows and words. */
 const SEEN = (rootSel) => `(() => { const lis = [...document.querySelectorAll(${JSON.stringify(`${rootSel} .run-member`)})];
   return { hash: location.hash, rows: lis.length, marked: lis.filter((li) => li.dataset.mark).length, words: lis.slice(0, 18).map((li) => li.querySelector('.run-member-state, .run-member-line')?.textContent) }; })()`;
 // 16 run rows with their marks painted (a canceled run keeps today's row: no mark), then a moment to settle.
 const ready = (rootSel) => `(() => { const lis = [...document.querySelectorAll(${JSON.stringify(`${rootSel} .run-member`)})].filter((li) => li.offsetParent && li.dataset.key !== 'planning');
   return lis.length === 16 && lis.filter((li) => li.dataset.mark).length >= 15; })()`;
+
+/** s5: open the Runs list and expand the feature group; false when its member rows never show. */
+async function openSide(routes, theme, where) {
+  await go(routes.side, theme);
+  // A narrow #runs reopens the last opened item (the feature page) over the list: its Back returns to the list.
+  await sleep(400);
+  await ev(`(() => { const b = [...document.querySelectorAll('.gpage-back')].find((x) => x.offsetParent); if (b) b.click(); return !!b; })()`);
+  if (!await waitFor(EXPAND(routes.featureId), `${where}: the feature group row in the Runs list`)) return false;
+  return waitFor(`(() => { const r = (${SIDE_ROWS(routes.featureId)}); return !!r && r.rows.length === 16 && r.rows.filter((x) => x.mark).length >= 15; })()`, `${where}: 16 marked member rows`);
+}
+/** s5: the run page heads this proof shoots, per world: started runs only (a run not started has no page, plan D11). */
+const RUN_SHOTS = { busy: [2, 5, 6], held: [4] };
+const cardOf = new Map();   // `${world}|${theme}` → the card's rows at 1280px
 
 await cdp('Page.enable'); await cdp('Runtime.enable');
 for (const name of WORLDS) {
@@ -300,9 +412,61 @@ for (const name of WORLDS) {
       if (!await waitFor(ready(SURFACES[surface]), `${where}: 16 marked run rows`)) { log(`  seen: ${JSON.stringify(await ev(SEEN(SURFACES[surface])))}`); continue; }
       await skipWelcome(); await sleep(500);
       const m = await ev(ROWS(SURFACES[surface]));
+      if (surface === 'card' && m) cardOf.set(`${name}|${theme}`, m);
       const at = judgeRows(where, m, WIDE);
       if (at) WANT[name](at, where, m.rows);
       await shotOf(surface === 'card' ? '.chat-rc' : SURFACES.page, `rows-${name}-${surface}-${theme}.png`);
+    }
+    const card = cardOf.get(`${name}|${theme}`);
+    // s5 side: the Runs list member rows.
+    { const where = `${name} side, ${theme}, ${WIDE}px`;
+      if (!card) check(false, `${where}: the card's rows to compare with`);
+      else if (await openSide(routes, theme, where)) {
+        await skipWelcome(); await sleep(500);
+        judgeSide(where, await ev(SIDE_ROWS(routes.featureId)), card);
+        await shotOf(`${groupSel(routes.featureId)}`, `rows-${name}-side-${theme}.png`);
+      } else log(`  seen: ${JSON.stringify(await ev(`(() => ({ hash: location.hash, groups: [...document.querySelectorAll('.runs-item[data-row-key^="chain:"]')].map((x) => x.dataset.rowKey) }))()`))}`);
+    }
+  }
+  if (name === 'busy') {
+    // s5: the Runs list at 360px in light, before any run page is opened (#runs would reopen it over the list).
+    await metrics(SIDE_NARROW);
+    const where = `busy side, light, ${SIDE_NARROW}px`;
+    if (await openSide(routes, 'light', where)) {
+      await skipWelcome(); await sleep(500);
+      const side = await ev(SIDE_ROWS(routes.featureId));
+      const hid = side ? side.rows.filter((r) => !r.numSeen || !r.subSeen) : [];
+      check(!!side && side.rows.length === 16 && hid.length === 0, `${where}: each member's run number and runs-row-sub word stay visible (${JSON.stringify(hid.map((r) => [r.run, r.word, r.numSeen, r.subSeen]))})`);
+      results.rows.push({ where, width: SIDE_NARROW, side: side && side.rows });
+      await shotOf(`${groupSel(routes.featureId)}`, 'rows-busy-side-360-light.png');
+    }
+    await metrics(WIDE);
+  }
+  // s5 run: the run page head of each started run this world shoots, in both themes.
+  for (const n of RUN_SHOTS[name] || []) {
+    for (const theme of THEMES) {
+      const where = `${name} run ${n} page head, ${theme}, ${WIDE}px`;
+      const want = (cardOf.get(`${name}|${theme}`)?.rows || []).find((r) => r.run === n);
+      if (!want) { check(false, `${where}: the card's row to compare with`); continue; }
+      await metrics(WIDE);
+      await go(routes.run(n), theme);
+      // The head paints dev's word first and the shared one once the groups have loaded: wait for the card's word.
+      const end = Date.now() + 20000; let h = null;
+      while (Date.now() < end) { h = await ev(RUN_HEAD); if (h && h.word === want.word && h.sig === want.sig) break; await sleep(200); }
+      await skipWelcome(); await sleep(400);
+      h = await ev(RUN_HEAD);
+      if (!h) {
+        check(false, `${where}: the .rd-sheet .run-status head is on screen`);
+        log(`  seen: ${JSON.stringify(await ev(`(() => ({ hash: location.hash, heads: [...document.querySelectorAll('.rd-sheet .run-status')].map((x) => [x.closest('[id]')?.id, !!x.offsetParent, x.textContent.slice(0, 60)]), views: [...document.querySelectorAll('.view:not(.hidden)')].map((x) => x.id) }))()`))}`);
+        continue;
+      }
+      check(h.word === want.word && h.sig === want.sig, `${where}: the head's word and dot equal the card's (${h.word} ${h.sig} vs ${want.word} ${want.sig}, ${h.hash})`);
+      check(!/^working$/i.test(String(h.word).trim()), `${where}: a live word is never working (${h.word})`);
+      const dev = devSegs(h.detail);
+      check(dev.length === 0, `${where}: the run-status-detail restates no dev state word (needs you, paused, waiting, working, failed, stopped, running, starts …): "${h.detail}"`);
+      results.rows.push({ where, head: h, card: { word: want.word, sig: want.sig, mark: want.mark } });
+      if (h.wait) log(`  run ${n}: the status card is folded under the Shaper ${h.wait} wait (D30); the head was read from the DOM and the shot is the question card the person sees`);
+      await shotOf(h.wait ? '#run-detail .rd-questions' : SURFACES.run, `rows-${name}-run${n}-${theme}.png`, 'center');   // the page's sticky tabs cover a head scrolled to the top
     }
   }
   if (name === 'base') {

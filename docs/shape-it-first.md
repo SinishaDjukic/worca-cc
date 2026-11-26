@@ -724,8 +724,10 @@ builds on 3, 4 and 5, so it reads `waits for run 2, 6`. A named run at a stop sa
 `next` comes only from the server's turn: an answer held for its turn first, then a change run, then the lowest free run.
 A free run without the turn shows no word.
 
-The Chat card's run rows and the feature page's Runs tab draw these marks (`markDot` in `ui/public/status-dot.mjs`).
+The Chat card's run rows, the feature page's Runs tab, the Runs list's member rows and the run page head draw these
+marks (`markDot` in `ui/public/status-dot.mjs`).
 The `waiting for you` word reads in amber ink and `failed` in red ink; every other word keeps the row's grey.
+A done run's page keeps its ship line (Ready to ship, Merged) instead of `done`.
 
 ### Off
 

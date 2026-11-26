@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { RUN_MARKS, namedWaits, neededByOf, runStatus } from '../src/shared/shape/run-status.mjs';
+import { RUN_MARKS, memberStatusOf, namedWaits, neededByOf, runStatus } from '../src/shared/shape/run-status.mjs';
 import { SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
 
 const LINKS = [[1, []], [2, [1]], [3, [1]], [4, [1, 3]], [5, [3, 4]], [6, [3, 5]], [7, [1, 2, 3, 4, 5, 6]], [8, [1, 2]],
@@ -135,4 +135,47 @@ test('S11-T1 neededByOf over the 16-run links: run 1 → 2,3,4,7,8,12; run 7 →
   assert.deepEqual(neededByOf(1), []);
   const src = readFileSync(new URL('../src/shared/shape/run-status.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(src, /from\s+['"][^'"]*(src\/core|\/core\/|ui\/)/);
+});
+
+// ── Slice 5 (D1, D2, R-arch-6): memberStatusOf, the one adapter from a feature's members to runStatus ────────────────
+/** The base state's members: runs 1 and 11 done, run 2 at an open stop, run 3 building, the rest planned. */
+const baseMembers = () => {
+  const w = world({ 1: { state: 'done' }, 11: { state: 'done' }, 2: { state: 'approval', stop: { reason: 'requirement', held: false } },
+    3: { state: 'running' }, 7: { waitsFor: [2, 3, 4, 5, 6] }, 12: { waitsFor: [7, 10] } });
+  return [...w].map(([position, slice]) => ({ position, slice, ...(position === 3 ? { snap: snapAt('n_impl') } : {}) }));
+};
+
+test('S5 memberStatusOf: a member reads what runStatus answers over the members\' own slices (position → slice) and its snap', () => {
+  const members = baseMembers();
+  const slices = new Map(members.map((m) => [m.position, m.slice]));
+  const at = (n) => members.find((m) => m.position === n);
+  const status = memberStatusOf(members);
+  assert.deepEqual(status(at(12)), runStatus({ slice: at(12).slice, slices, snap: null }));
+  assert.deepEqual(status(at(12)), { word: 'waits for run 7, 10', mark: 'faint' });
+  assert.deepEqual(status(at(7)), { word: 'waits for run 2 (needs you), 6', mark: 'faint' }, 'the Map reaches the other members\' slices');
+  assert.deepEqual(status(at(3)), { word: 'building', mark: 'live' }, 'the member\'s own snapshot');
+});
+
+test('S5 memberStatusOf: a member without a slice gives null; an empty or missing list gives a function returning null', () => {
+  const status = memberStatusOf([...baseMembers(), { position: 17 }]);
+  assert.equal(status({ position: 17 }), null);
+  assert.equal(status({ position: 18, slice: null }), null);
+  for (const fn of [memberStatusOf([]), memberStatusOf()]) {
+    assert.equal(typeof fn, 'function');
+    assert.equal(fn({ position: 1 }), null);
+  }
+});
+
+test('S5 R-arch-6: the sidebar and app.js build runStatus input only through memberStatusOf', () => {
+  const text = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
+  const app = text('../ui/public/app.js');
+  const list = text('../ui/public/runs-list.mjs');
+  assert.match(app, /memberStatusOf\(/);
+  assert.match(list, /memberStatusOf\(/);
+  for (const [name, src] of [['app.js', app], ['runs-list.mjs', list]]) {
+    assert.doesNotMatch(src, /\[\s*\w+\.position\s*,\s*\w+\.slice\s*\]/, `${name}: no position → slice Map of its own`);
+  }
+  const fn = app.match(/function featureRowStatus\(row\)\s*\{[^}]*\}/)?.[0] ?? '';
+  assert.match(fn, /memberStatusOf\(row\.members\)/, 'featureRowStatus is one call');
+  assert.doesNotMatch(fn, /new Map|runStatus\(/);
 });

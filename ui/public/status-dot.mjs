@@ -64,6 +64,13 @@ export const RUN_MARK_DOTS = Object.freeze({
 });
 const MARK_WORD = Object.freeze({ ask: 'Needs you', failed: 'Failed' });
 
+const STILL_STATES = new Set(['paused', 'failed', 'stopped']);
+/** A `live` mark with no word over a paused, failed or stopped run model is stale (the group feed lags the run between
+ *  reloads): it must not paint a pulse. True when `st`'s mark should be ignored for model `m`. Pure. */
+export function staleLive(st, m) {
+  return !!st && st.mark === 'live' && st.word == null && !!m && STILL_STATES.has(m.state);
+}
+
 /** D2: a run model's dot repainted from a run status mark. A merged run (violet) and a PR-problem run (plain amber)
  *  keep their dev dot on `done`, so the PR fact is not lost. A null or unknown mark returns `m` itself. `word` only
  *  labels a symbol dot; the row text never comes from here. Pure. */

@@ -85,3 +85,18 @@ export function runStatus({ slice, slices = new Map(), snap = null } = {}) {
   if (LIVE.has(state)) return { word: runShortWord(snap) || null, mark: 'live' };
   return { word: null, mark: null };
 }
+
+/**
+ * Slice 5 (D1): a feature's members as runStatus input, for the sidebar, the feature page and the run page. The
+ * `position → slice` Map is built once from the members that carry a `slice` (an integer `position`); a member without a
+ * `slice` object gives null. Pure; never reads a flag.
+ * @param {Array<{position?: number, slice?: object, snap?: object|null}>} members
+ * @returns {(member: object) => ({word: string|null, mark: string|null} | null)}
+ */
+export function memberStatusOf(members = []) {
+  const slices = new Map();
+  for (const mb of Array.isArray(members) ? members : []) {
+    if (isObj(mb) && isObj(mb.slice) && Number.isInteger(mb.position)) slices.set(mb.position, mb.slice);
+  }
+  return (mb) => (isObj(mb) && isObj(mb.slice) ? runStatus({ slice: mb.slice, slices, snap: mb.snap || null }) : null);
+}

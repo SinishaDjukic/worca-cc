@@ -117,7 +117,7 @@ import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LAB
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, rowMenuPrs, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
-import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
+import { paintRunStatus, syncActions, pauseResumeOwn, sliceHeadModel } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
@@ -377,7 +377,7 @@ import { activeAgents, snapshotFromState } from './ask-run-card.mjs';
 import { mountRunAgents } from './shape/run-agents.mjs';
 import { mountRunFacts } from './shape/run-facts.mjs';
 import { runAgentRows, memberShortWord } from '../../src/shared/shape/run-agents.mjs';
-import { runStatus } from '../../src/shared/shape/run-status.mjs';
+import { memberStatusOf } from '../../src/shared/shape/run-status.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
 import { mountNewRunAttach, newRunScope, jsonFetcher as attachFetcher } from './requirements-attach/entries.mjs';
@@ -36296,10 +36296,9 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   paintGroupPageNow();
 }
 /** Shaper small runs s4 (D8, D10): a marked feature's Runs rows take word and mark from runStatus, over the members'
- *  own slices (position → slice) and snapshots. */
+ *  own slices and snapshots (s5 D2: the shared adapter). */
 function featureRowStatus(row) {
-  const slices = new Map((row.members || []).filter((mb) => mb.slice).map((mb) => [mb.position, mb.slice]));
-  return (mb) => runStatus({ slice: mb.slice || null, slices, snap: mb.snap || null });
+  return memberStatusOf(row.members);
 }
 function paintGroupPageNow() {
   const { host, route, id, tab } = GROUP_PAGE;
@@ -36665,12 +36664,17 @@ function runsSchedItem(t) {
 const roundsSig = (r) => (r.rounds && r.rounds.length ? [r.roundsLine || '', r.roundsOwnLine ? 1 : 0, r.rounds.length,
   runsUi.groupsToggled.get(`rounds:${r.roundsId}`) ? 1 : 0, runsUi.roundsAll.has(`rounds:${r.roundsId}`) ? 1 : 0,
   r.rounds.map((rd) => [rd.n, rd.status, rd.words || '', rd.time, rd.href])] : 0);
-const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, roundsSig(r), r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
-  r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon, r.model.pr.pending ? 1 : 0] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
-  r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
-  r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '', roundsSig(m),
-    r.smallRuns ? memberShortWord(m) || '' : '',   // D2: the member's short word
-    m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.title, m.model.pr.icon, m.model.pr.pending ? 1 : 0] : 0])] : 0, (r.labels || []).join('\n')];
+const runsRowSig = (r) => {
+  const st = r.kind === 'chain' && r.smallRuns ? memberStatusOf(r.members) : null;   // s5 (D6): the shared word and mark
+  const shared = (m) => { const x = st(m); return [x ? x.word ?? '' : '', x ? x.mark ?? '' : '']; };
+  return [r.key, r.pipelineId, r.href, r.title, r.model.state, roundsSig(r), r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
+    r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon, r.model.pr.pending ? 1 : 0] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
+    r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
+    r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '', roundsSig(m),
+      r.smallRuns ? memberShortWord(m) || '' : '',   // D2: the member's short word
+      st ? shared(m) : 0,
+      m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.title, m.model.pr.icon, m.model.pr.pending ? 1 : 0] : 0])] : 0, (r.labels || []).join('\n')];
+};
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over, then the selected row stands in;
@@ -39458,7 +39462,11 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, tryIt = 
     }
   }
   const source = (rec && rec.sourceBranch) || liveSource || '';
-  const group = routeGroupOf(groupHomeOf((rec && rec.id) || pipelineId), { sourceBranch: source, histOf });
+  const home = groupHomeOf((rec && rec.id) || pipelineId);
+  const group = routeGroupOf(home, { sourceBranch: source, histOf });
+  // Shaper small runs s5 (D10): a marked feature's member reads its head from the shared run status.
+  const sliceStatus = home && home.row && home.row.smallRuns && home.member && home.member.slice
+    ? memberStatusOf(home.row.members)(home.member) : null;
   const prExempt = knownPrExempt((rec && rec.id) || pipelineId);
   return {
     m, mode, gitChrome, folder, canTry, tryIt, kept, level: currentLevel(),
@@ -39473,6 +39481,7 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, tryIt = 
     // s2: the route's own-branch row and its place in a feature or chain (read-only, from loaded data).
     branch: (rec && rec.branch) || liveBranch || '',
     group,
+    sliceStatus,
     groupPending: !group && routeGroupsPending(),   // D2: never guess the landing branch before the groups answer
     pr: own, prInput: glancePrInput(rec), prStatus, watch: (rec && rec.watch) || null,
     prExempt,   // C5: a Verifier's route says why it opens no PR
@@ -39498,7 +39507,7 @@ function routeGroupsPending() {
 function paintRunHead(screen, f, h) {
   const head = headModel(f);
   const block = screen.querySelector('.rd-sheet .run-status');
-  paintRunStatus(block, head.status ? { ...f.m, ...head.status, lineSaysState: false } : f.m);
+  paintRunStatus(block, sliceHeadModel(head.status ? { ...f.m, ...head.status, lineSaysState: false } : f.m, f.sliceStatus));
   const slot = screen.querySelector('.rd-head-acts .rd-pr-slot');
   const c = head.cta;
   if (!c) paintPrCta(slot, { state: 'none' });

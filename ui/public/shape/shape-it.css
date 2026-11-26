@@ -469,6 +469,9 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .srows.runs-members .runs-row-title{min-width:0;}
 .srows.runs-members .runs-row-sub{flex:none;}
 .srows.runs-members .runs-row-right{flex:none;}
+/* s5 (D7): the sidebar's ask word in amber ink and its failed word in red ink, as on the card and the feature page. */
+.srows.runs-members .runs-item[data-mark="ask"] .runs-row-sub{color:var(--amber-ink);}
+.srows.runs-members .runs-item[data-mark="failed"] .runs-row-sub{color:var(--red-ink);}
 /* D2 (D10): the Owns rows are one line: the id column fits R-arch-10 whole, the requirement text ellipsizes (the row's
    tooltip holds it all). The Agents rows keep 32px: a done row's detail that would wrap under its name is clipped. */
 .srows.run-facts{--row-id:6.4em;}

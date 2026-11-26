@@ -55,3 +55,35 @@ test('it measures every row (height, wrap) at 1280px and runs 7 and 12 at 375px 
   assert.match(s, /amber-ink|rgb/i);
   assert.match(s, /red-ink|rgb/i);
 });
+
+// ── Slice 5 (R-ux-6, R-arch-1): the same proof also shoots the Runs list member rows and the run page head ───────────
+test('s5: it adds the busy world and the side (Runs list) and run (run page head) surfaces', () => {
+  const s = src();
+  assert.match(s, /WORLDS = \[[^\]]*'busy'/, 'busy is a walked world');
+  assert.match(s, /busy: \{ spec: SIXTEEN_RUN_STATES\.busy/);
+  assert.match(s, /\bside\b\s*:|['"]side['"]/);
+  assert.match(s, /\brun\b\s*:|['"]run['"]/);
+  assert.match(s, /runs-members/);
+  assert.match(s, /data-level="member"/);
+  assert.match(s, /runs-expand/, 'the feature group is expanded');
+  assert.match(s, /\.rd-sheet \.run-status/);
+  assert.match(s, /#running\//);
+  assert.match(s, /#history\//);
+});
+
+test('s5: the judge checks the strips, the sidebar ink, the dashed ring\'s centre and that no run page detail restates dev\'s state', () => {
+  const s = src();
+  assert.match(s, /\.runs-stage/);
+  assert.match(s, /run-prog-mark/);
+  assert.match(s, /runs-row-sub/);
+  assert.match(s, /run-status-detail/);
+  for (const w of [/needs you/i, /paused/i, /waiting(?! for you)/i, /stopped/i, /starts /]) assert.match(s, w, String(w));
+  assert.match(s, /cent(re|er)/i);
+});
+
+test('s5: it names the sidebar shots, one 360px light sidebar shot and the run page head shots', () => {
+  const s = src();
+  assert.match(s, /\b360\b/);
+  assert.match(s, /rows-(busy|\$\{[A-Za-z.]+\})-side-360-light\.png/);
+  assert.match(s, /rows-\$\{[A-Za-z.]+\}-run\$\{[A-Za-z.]+\}-\$\{[A-Za-z.]+\}\.png/);
+});

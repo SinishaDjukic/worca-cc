@@ -1886,3 +1886,38 @@ test('G with a selection opens the picker for the whole selection, not only the 
   await settle(window, 10);
   assert.deepEqual([...groupPosts.at(-1).body.pipelineIds].sort(), ['pw000001', 'pw000002']);
 });
+
+// --- Shaper small runs s5 (R-arch-1, D6): the member rows read the shared run status, and repaint when only it changes --
+test('s5 sidebar boot: run 7\'s member row reads the shared word and repaints on a slice-only change', async () => {
+  const member = (position, status, slice) => ({ position, title: `Slice ${position}`, pipelineId: `ps50000${position}`, ticketId: null, status, pr: null,
+    ticket: null, adhoc: false, after: null, slice: { kind: null, waitsFor: [], buildsOn: [], ...slice } });
+  const seven = (slice) => ({ position: 7, title: 'Slice 7', pipelineId: null, ticketId: 't7', status: null, pr: null,
+    ticket: { id: 't7', status: 'scheduled', runAt: null, after: true }, adhoc: false, after: 6,
+    slice: { kind: null, state: 'planned', waitsFor: [2, 6], buildsOn: [1, 2, 6], ...slice } });
+  const group = (two, last) => ({ id: 'feat_0000000000s5', kind: 'feature', title: 'Merge gate', smallRuns: true, projectKey: null, planning: null,
+    cost: { usd: 0, byPipeline: {} },
+    members: [member(1, 'done', { state: 'done' }), member(2, 'running', two), member(6, 'running', { state: 'running', buildsOn: [3, 5] }), seven(last)] });
+  const asking = { state: 'questions', buildsOn: [1] };
+  const runGroups = [group(asking, {})];
+  // The group folds its members' History rows: without one the list has no row to group.
+  const history = [[1, 'done'], [2, 'running'], [6, 'running']].map(([n, status]) => ({ id: `ps50000${n}`, projectKey: KEY, projectName: 'proj',
+    projectDir: PROJECT, title: `Slice ${n}`, status, startedAt: '2026-09-29T09:00:00Z', mtime: n }));
+  const { window, doc, recv } = await boot({ runGroups, history });
+  recv({ type: 'hello', flags: { shaperSmallRuns: true }, runs: [] });
+  go(window, 'runs'); await settle(window);
+  recv({ type: 'run-groups-changed' }); await settle(window, 8);
+  const row = () => [...doc.querySelectorAll('#runs-list .runs-item[data-row-key="chain:feat_0000000000s5"] .runs-members > .runs-item[data-level="member"]')]
+    .find((it) => it.querySelector('.runs-row-title').textContent.startsWith('7 · '));
+  const sub = () => row().querySelector(':scope > a.runs-row > .runs-row-sub').textContent;
+  assert.ok(row(), 'the unfinished group lists its members');
+  assert.equal(sub(), 'waits for run 2 (needs you), 6');
+  assert.equal(row().dataset.mark, 'faint');
+  // Only run 2's slice changes: run 7's own payload and every one of dev's row facts stay, so only the shared word moved.
+  runGroups[0] = group({ state: 'error', buildsOn: [1] }, {});
+  recv({ type: 'run-groups-changed' }); await settle(window, 8);
+  assert.equal(sub(), 'waits for run 2 (failed), 6');
+  // Only run 7's slice changes.
+  runGroups[0] = group({ state: 'error', buildsOn: [1] }, { waitsFor: [6] });
+  recv({ type: 'run-groups-changed' }); await settle(window, 8);
+  assert.equal(sub(), 'waits for run 6');
+});

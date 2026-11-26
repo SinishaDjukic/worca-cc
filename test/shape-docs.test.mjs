@@ -109,3 +109,9 @@ test('no flag owner handle from the registry appears in the three docs', () => {
   }
   assert.deepEqual(hits, []);
 });
+
+test('s5: the marks paragraph names the Runs list member rows and the run page head too, and a done run\'s ship line', () => {
+  const para = DOCS['shape-it-first.md'].text().split(/\n\s*\n/).map(flat).find((p) => p.includes('markDot')) || '';
+  assert.ok(para, 'the paragraph that names markDot');
+  assert.deepEqual(missing(para, [/Chat card/, /Runs tab/, /Runs list/i, /member rows/i, /run page/i, /ship line/i]), []);
+});

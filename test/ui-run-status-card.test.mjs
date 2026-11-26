@@ -7,7 +7,8 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { runModel, groupModel } from '../src/shared/run-model.mjs';
-import { statusText, memberStatusText, kindLabel, paintRunStatus, syncActions, pauseResumeOwn, renderMemberRows, groupShipLine, FEATURE_KIND } from '../ui/public/run-status-card.mjs';
+import { statusText, memberStatusText, kindLabel, paintRunStatus, syncActions, pauseResumeOwn, renderMemberRows, groupShipLine, FEATURE_KIND, sliceHeadModel } from '../ui/public/run-status-card.mjs';
+import { markDot } from '../ui/public/status-dot.mjs';
 import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
@@ -477,4 +478,125 @@ test('s4 row words: "waiting for you" reads --amber-ink and "failed" --red-ink, 
   const tokens = readStyleCss();
   assert.match(tokens, /--amber-ink:/);
   assert.match(tokens, /--red-ink:/);
+});
+
+// ── Shaper small runs s5 (R-arch-1, D8, D9): the run page head reads the shared run status ──────────────────────────
+const S5_DEV_WORD = /^(needs you|paused|waiting|working|failed|stopped|running)$/i;
+const s5Run = (state) => RUN_STATE_ROWS.find((r) => r.state === state).run;
+const s5Model = (run) => runModel(run, { now: NOW, timeZone: 'UTC' });
+const S5_WORKING = () => s5Run('working');
+const S5_ROUND = () => ({ ...S5_WORKING(), round: { n: 2, request: 'add a filter', by: 'person' } });
+const S5_AFTER = () => ({ ticket: { status: 'scheduled', after: { index: 3 } } });
+const S5_HELD = () => ({ ticket: { status: 'scheduled', held: true, after: { index: 3 } } });
+/** The head `m` paints: {word, detail, dot}. */
+function s5Head(m) {
+  const host = dom().createElement('div');
+  paintRunStatus(host, m);
+  const detail = host.querySelector('.run-status-detail');
+  return { word: host.querySelector('.run-status-word').textContent, detail: detail.hidden ? '' : detail.textContent,
+    dot: host.querySelector('.run-status-head .status-dot') };
+}
+const s5NoDevWord = (detail, where) => {
+  for (const seg of detail ? detail.split(' · ') : []) {
+    assert.ok(!S5_DEV_WORD.test(seg), `${where}: the detail restates dev's state: "${detail}"`);
+    assert.ok(!/^starts /i.test(seg), `${where}: the detail restates dev's "starts after": "${detail}"`);
+  }
+};
+
+test('s5 sliceHeadModel: the head reads the shared word and the detail holds no dev state word', async () => {
+  const rows = [
+    ['an open stop', s5Run('needs-you'), { word: 'waiting for you', mark: 'ask' }, (h, dev) => {
+      assert.equal(dev.word, 'Needs you');
+      assert.equal(h.dot.dataset.symbol, 'question');
+      assert.equal(h.detail, 'Plan · 2 questions');
+    }],
+    ['a building run keeps dev\'s step-only bar detail', S5_WORKING(), { word: 'building', mark: 'live' }, (h, dev) => {
+      assert.ok(h.dot.classList.contains('is-pulse'));
+      assert.ok(dev.detail, 'dev names the step beside the bar');
+      assert.equal(h.detail, dev.detail);
+    }],
+    ['a failed run', s5Run('failed'), { word: 'failed', mark: 'failed' }, (h) => {
+      assert.equal(h.dot.dataset.symbol, 'alert');
+      assert.match(h.detail, /^Plan · /, 'the step detail stays');
+    }],
+    ['a held answer', S5_HELD(), { word: 'after run 3', mark: 'after' }, (h, dev) => {
+      assert.equal(dev.word, 'Waiting');
+      assert.ok(h.dot.classList.contains('is-dashed-ring'));
+    }],
+    ['a run that waits to start after another', S5_AFTER(), { word: 'waits for run 3', mark: 'faint' }, (h, dev) => {
+      assert.match(dev.detail, /^starts /, 'dev says it');
+      assert.equal(h.detail, '');
+    }],
+    ['a fix round', S5_ROUND(), { word: 'building', mark: 'live' }, (h, dev) => {
+      assert.equal(dev.word, 'Running');
+      assert.match(h.detail, /^Round 2/);
+    }],
+    ['a paused run', s5Run('paused'), { word: 'after run 3', mark: 'after' }, () => {}],
+    ['a stopped run', s5Run('stopped'), { word: 'next', mark: 'ring' }, (h) => assert.ok(h.dot.classList.contains('is-ink-ring'))],
+    ['a starting run', s5Run('starting'), { word: 'planning', mark: 'live' }, () => {}],
+  ];
+  await checkRows(rows.map(([name, run, st, more]) => ({ name, run: () => {
+    const m = s5Model(run);
+    const before = structuredClone(m);
+    const dev = s5Head(m);
+    const out = sliceHeadModel(m, st);
+    assert.notEqual(out, m, 'a new object');
+    assert.deepEqual(m, before, 'the input is not changed');
+    assert.equal(out.word, st.word);
+    assert.equal(out.lineSaysState, false);
+    const h = s5Head(out);
+    assert.equal(h.word, st.word);
+    s5NoDevWord(h.detail, name);
+    more(h, dev);
+  } })));
+});
+
+test('s5 sliceHeadModel: dev state words are dropped from line and barLine in any case; the other segments stay in order', () => {
+  const m = { state: 'working', word: 'Working', dot: 'peach', pulse: true, symbol: null, actions: [],
+    line: 'RUNNING · Build · needs you · Paused · waiting · working · Failed · stopped · Starts after run 3 · Implement · Step 2 of 3',
+    barLine: 'Working · Implement · starts after run 3', lineSaysState: true };
+  const out = sliceHeadModel(m, { word: 'building', mark: 'live' });
+  assert.equal(out.line, 'Build · Implement · Step 2 of 3');
+  assert.equal(out.barLine, 'Implement');
+});
+
+test('s5 sliceHeadModel: null status, null mark and done return the same object (D9)', () => {
+  for (const run of [s5Run('ready'), s5Run('merged')]) {
+    const m = s5Model(run);
+    assert.equal(sliceHeadModel(m, null), m);
+    assert.equal(sliceHeadModel(m, { word: null, mark: null }), m);
+    assert.equal(sliceHeadModel(m, { word: 'done', mark: 'done' }), m);
+  }
+  assert.equal(s5Head(s5Model(s5Run('ready'))).word, 'Ready to ship', 'the ship line');
+});
+
+test('s5 sliceHeadModel: an empty word paints an empty head and no detail', () => {
+  const m = s5Model(S5_AFTER());
+  const out = sliceHeadModel(m, { word: '', mark: 'ring' });
+  assert.equal(out.word, '');
+  assert.equal(out.line, '');
+  assert.equal(out.barLine, null);
+  const h = s5Head(out);
+  assert.equal(h.word, '');
+  assert.equal(h.detail, '');
+  assert.ok(h.dot.classList.contains('is-grey-ring'), h.dot.className);
+});
+
+test('s5 sliceHeadModel: a stale live mark with no word never pulses over a paused, failed or stopped run', () => {
+  for (const state of ['paused', 'failed', 'stopped']) {
+    const m = s5Model(s5Run(state));
+    assert.equal(sliceHeadModel(m, { word: null, mark: 'live' }), m, state);
+    assert.ok(!s5Head(sliceHeadModel(m, { word: null, mark: 'live' })).dot.classList.contains('is-pulse'), state);
+  }
+});
+
+test('s5 sliceHeadModel: a null word keeps dev\'s head and line, only the dot changes', () => {
+  const m = s5Model(S5_AFTER());
+  const out = sliceHeadModel(m, { word: null, mark: 'live' });
+  assert.deepEqual(out, markDot(m, 'live', m.word));
+  const dev = s5Head(m);
+  const h = s5Head(out);
+  assert.deepEqual([h.word, h.detail], [dev.word, dev.detail]);
+  assert.ok(h.dot.classList.contains('is-pulse'));
+  assert.ok(!dev.dot.classList.contains('is-pulse'));
 });

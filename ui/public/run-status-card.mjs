@@ -2,7 +2,7 @@
 // page (live and finished) and the group page draw the dot or symbol, the status line, the group bar, the current
 // run's bar, the kind chip, the actions and the member rows from runModel / groupModel through this module. Pure DOM
 // over the host's ownerDocument; app.js and chat/run-card.mjs bind the handlers.
-import { paintStatusDot, markDot } from './status-dot.mjs';
+import { paintStatusDot, markDot, staleLive } from './status-dot.mjs';
 import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
 import { prChip } from './runs-list.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
@@ -54,6 +54,24 @@ export function statusText(m, { stageBar = false } = {}) {
     rest = segs.filter((x) => x.toLowerCase() !== lw);       // "Build · failed · Implementation" → "Build · Implementation"
   }
   return { word, line, text, head, detail: rest.join(SEP) };
+}
+
+// Shaper small runs s5 (D8): the dev state words a run page head detail drops beside the shared word.
+const DEV_STATE_WORDS = new Set(['needs you', 'paused', 'waiting', 'working', 'failed', 'stopped', 'running']);
+const dropDevState = (line) => (line == null ? line : String(line).split(SEP)
+  .filter((x) => { const t = x.trim().toLowerCase(); return t && !DEV_STATE_WORDS.has(t) && !t.startsWith('starts '); }).join(SEP));
+
+/** Shaper small runs s5 (D8, D9): the run page head of a marked feature's run, from runStatus's `{word, mark}` (`st`).
+ *  Null status, a null mark and `done` return `m` itself (a done run keeps its ship line and PR dot). A null word keeps
+ *  dev's word and line, only the dot changes. Otherwise the head reads the shared word and the detail keeps the step or
+ *  reason, with every dev state segment and dev's "starts after run N" dropped; '' gives an empty head and no detail.
+ *  Pure: a new object only when something changes. */
+export function sliceHeadModel(m, st) {
+  if (!m || !st || !st.mark || st.mark === 'done' || staleLive(st, m)) return m;
+  if (st.word == null) return markDot(m, st.mark, m.word);
+  const empty = st.word === '';
+  return { ...markDot(m, st.mark, st.word), word: st.word, lineSaysState: false,
+    line: empty ? '' : dropDevState(m.line), barLine: empty ? null : dropDevState(m.barLine) };
 }
 
 /** The kind word of a feature (Shaper): kindLabel's `Feature · N runs` and, B1, the one card's chip. */
