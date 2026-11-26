@@ -310,6 +310,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     queueEdit: null,          // {id, item, li, ta}: the queued card whose text is being edited in place (one at a time)
     stopBy: null,             // who asked the live turn to stop: 'button' pauses the queue, 'voice' (barge-in) lets it send
     stopAfterSend: false,     // voice asked to stop while the send POST was out: stop that turn as soon as the 202 lands
+    echo: null,               // the composer's send while its POST is out: {sendId, quoted, requirements, cleared}; its echo clears the composer
     hist: { idx: -1, draft: '' },   // ArrowUp history walk: idx into historyEntries(), -1 = not walking; the draft it replaced
     basePlaceholder: INPUT_PLACEHOLDER,   // the add-ons' placeholder (addonCtx.setPlaceholder); a suggestion shows only over the default
     suggestion: null,         // the suggestion on screen ({messageId, text}) — what Tab accepts
@@ -1112,8 +1113,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         route(id, { replace: true });          // #chat → #chat/<id>, swapped: Back never lands on an empty new chat
       }
       const sentOff = st.mcp.off;
+      // The composer's own send is tagged: the server's echo of the user row carries the tag, and the composer clears
+      // as the bubble appears (pushServerFrame). The 202 comes only after the prompt is assembled, seconds later on
+      // Windows. A drained queue item is not tagged: it never touches the composer.
+      const sendId = queued ? null : `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
       const payload = {
         text,
+        ...(sendId ? { sendId } : {}),
         model: st.picker.model,
         effort: st.picker.effort,
         // The browser's zone rides along: "tomorrow 02:00" is read in it (docs/scheduled-runs.md "Chat").
@@ -1131,6 +1137,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         ...(requirementsOn() && draft.requirements && draft.requirements.length ? { requirements: draft.requirements } : {}),
       };
       const model = st.model;
+      if (sendId) st.echo = { sendId, quoted, requirements: payload.requirements, cleared: false };
       let res = null;
       let refusedBody = null;
       try {
@@ -1194,17 +1201,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       st.askedIn.add(id);                            // its replies may light the Chat row's dot, even after a switch
       // No provisional title from the prompt: the header keeps "New chat" until
       // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
-      // A drained queue item leaves the composer alone: it holds whatever the user is typing now.
-      if (!queued) {
-        el.input.value = '';
-        fitInput();                                    // a programmatic clear fires no input event
-        st.pendingFiles = [];
-        if (st.quote === quoted) st.quote = null;
-        renderChips();
-        st.hist = { idx: -1, draft: '' };
-        dropAttached(payload.requirements);            // only after the 202: a refusal keeps text and features
-        if (el.hash) el.hash.close();
-      }
+      // A drained queue item leaves the composer alone: it holds whatever the user is typing now. So does a send whose
+      // echo already cleared it: the composer may hold the next message by now.
+      if (!queued && !(st.echo && st.echo.cleared)) clearSentDraft(quoted, payload.requirements);
       subscribe(id);
       st.pinned = true;
       scheduleFlush();
@@ -1212,8 +1211,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     } finally {
       st.sending = false;
       st.stopAfterSend = false;
+      st.echo = null;
       updateSendStop();
     }
+  }
+
+  /** The composer after its message is in (the echo or the 202, whichever lands first): text, files, its quote and the
+   *  features it carried go. Only once the server has the row: a refusal keeps text and features. */
+  function clearSentDraft(quoted, requirements) {
+    el.input.value = '';
+    fitInput();                                    // a programmatic clear fires no input event
+    st.pendingFiles = [];
+    if (st.quote === quoted) st.quote = null;
+    renderChips();
+    st.hist = { idx: -1, draft: '' };
+    dropAttached(requirements);
+    if (el.hash) el.hash.close();
   }
 
   // ---- the composer's extension (docs/design.md "In the chat") ----------------------------------------------------
@@ -8376,6 +8389,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     // Defence-in-depth: the model's own threadId filter is the real router — this early return only saves an apply() call and cannot be observed from tests (the model would drop the frame identically).
     if (!st.model || frame.threadId !== st.threadId) return;
+    // The echo of the composer's own send: the message is in, so it leaves the composer as its bubble appears.
+    if (frame.type === 'ask-message' && frame.sendId && st.echo && frame.sendId === st.echo.sendId && !st.echo.cleared) {
+      st.echo.cleared = true;
+      clearSentDraft(st.echo.quoted, st.echo.requirements);
+      updateSendStop();
+    }
     const r = st.model.apply(frame);
     if (r && r.gap) { resync(); return; }
     if (!r || !r.ok) return;
