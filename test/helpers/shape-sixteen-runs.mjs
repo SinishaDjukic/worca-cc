@@ -26,16 +26,18 @@ const STOP_KIND = { requirement: 'plan', check: 'gate', objection: 'gate' };
 let seq = 0;
 
 /**
- * @param {{projectDir:string, smallRuns?:boolean, held?:object}} o  `smallRuns` marks the origin run (shape_stats), not
- *   the flag. `held`: a held-stops instance (createHeldStops) whose overlay `live` reads, as the server's liveSliceOf does.
+ * @param {{projectDir:string, smallRuns?:boolean, held?:object, links?:ReadonlyArray<{run:number, dependsOn:ReadonlyArray<number>}>}} o
+ *   `smallRuns` marks the origin run (shape_stats), not the flag. `held`: a held-stops instance (createHeldStops) whose
+ *   overlay `live` reads, as the server's liveSliceOf does. `links`: the builds-on links, runs numbered 1 upwards.
  * @returns {{featureId:string, originPipelineId:string, ticketOf:(run:number)=>string|null,
  *   pipelineOf:(run:number)=>string|null, setRun:(run:number, how:any)=>void, live:(pid:string)=>object|null,
  *   useHeld:(held:object)=>void}}  `useHeld` swaps the instance (a restart).
  *   `how`: 'unrun' | { pipe: status } | { stop: reason, held?: boolean } | { asking: true } | { approval: true }
  *   | { pipe: status, resuming: true } (being resumed at server start: no runs-map entry, liveSliceResuming's overlay)
  *   | { pipe: 'paused', heldResume: N } (its resume is held behind run N: liveSliceHeldResume's overlay)
+ *   | { pipe: 'paused', stop: reason, held?: boolean } (paused: the question is resolved, so no stop)
  */
-export function sixteenRunFeature({ projectDir, smallRuns = true, held = null }) {
+export function sixteenRunFeature({ projectDir, smallRuns = true, held = null, links = SIXTEEN_RUN_LINKS }) {
   const db = getDb();
   const key = projectKey(projectDir);
   const newPipe = (status) => {
@@ -47,7 +49,7 @@ export function sixteenRunFeature({ projectDir, smallRuns = true, held = null })
     outOfScope: [], acceptance: [`ok ${run}`], dependsOn: dependsOn.map((d) => `s${d}`), estimate: 'M' });
   const originPipelineId = newPipe('done');
   const f = createSliceFeature({ pipelineId: originPipelineId, projectDir, title: 'CI as a trusted merge gate', smallRuns: false,
-    outline: { why: 'because', slices: SIXTEEN_RUN_LINKS.map(slice) }, perspectives: ['product'], workflowId: 'wf_shape' });
+    outline: { why: 'because', slices: links.map(slice) }, perspectives: ['product'], workflowId: 'wf_shape' });
   if (smallRuns) db.prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?')
     .run(JSON.stringify({ questions: { asked: 0, skipped: 0 }, revises: [], shapeScore: null, smallRuns: true }), originPipelineId);
   const rows = db.prepare('SELECT * FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(f.id);
@@ -79,7 +81,10 @@ export function sixteenRunFeature({ projectDir, smallRuns = true, held = null })
       if (how.held) heldStop = { id: `q${run}`, after: Number.isInteger(how.after) ? how.after : 2 };   // s4 D14: held behind any run
     } else if (how.asking) pq = { id: `q${run}`, kind: 'questions' };
     else if (how.approval) pq = { id: `q${run}`, kind: 'plan' };
-    if (pq) liveMap.set(pid, liveSliceFrom({ runId: `r${run}`, status: 'running', approved: true, pendingQuestion: pq, heldStop }));
+    // A paused run as the server reads it: resolvePending has cleared the question; a held answer may still be there.
+    const paused = !!how.stop && how.pipe === 'paused';
+    if (pq) liveMap.set(pid, liveSliceFrom({ runId: `r${run}`, status: paused ? 'paused' : 'running', approved: true,
+      pendingQuestion: paused ? null : pq, heldStop }));
     if (how.resuming) liveMap.set(pid, features.liveSliceResuming());
     if (Number.isInteger(how.heldResume)) liveMap.set(pid, features.liveSliceHeldResume(liveMap.get(pid) || null, how.heldResume));
   };
@@ -95,10 +100,10 @@ export const SIXTEEN_RUN_STATES = Object.freeze({
 });
 
 /** A fresh feature in a named state (or a literal `{done, states}`); cancels the previous features' scheduled tickets first. */
-export function world(projectDir, spec, { held = null } = {}) {
+export function world(projectDir, spec, { held = null, links } = {}) {
   const { done, states } = typeof spec === 'string' ? SIXTEEN_RUN_STATES[spec] : spec;
   getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
-  const fx = sixteenRunFeature({ projectDir, held });
+  const fx = sixteenRunFeature({ projectDir, held, links });
   for (const r of done) fx.setRun(r, { pipe: 'done' });
   for (const [r, how] of Object.entries(states || {})) fx.setRun(Number(r), how);
   return fx;

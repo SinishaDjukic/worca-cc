@@ -1552,3 +1552,30 @@ test('s7 (R-po-5, the example): the owner pauses run 8; the next free run starts
   fx.setRun(8, PAUSED);
   assert.deepEqual(startable(fx), [5]);
 }));
+
+// ── Shaper small runs, slice 9 (R-arch-3): the next-turn marker on a paused run with a held answer ───────────────────
+// Runs 2 to 7 each build on run 1 only, so run 7 can be free while run 2 is paused (in the 16-run links it builds on 2).
+const PAUSED_HELD_LINKS = [[1, []], [2, [1]], [3, [1]], [4, [1]], [5, [1]], [6, [1]], [7, [1]]]
+  .map(([run, dependsOn]) => ({ run, dependsOn }));
+
+test('S9 (R-arch-3): run 2 paused with a held answer and run 7 free: the marker sits on run 7, the run the scheduler starts', () => withEnvVars(ON, () => {
+  const runTwo = (how) => world(root, { done: [1, 3, 4, 5, 6], states: { 2: how } }, { links: PAUSED_HELD_LINKS });
+  const marked = (fx) => { const { view, members } = views(fx); return [turnRuns(view), turnRuns(members)]; };
+  const paused = runTwo({ pipe: 'paused', stop: 'requirement', held: true });
+  assert.deepEqual(startable(paused), [7]);
+  assert.deepEqual(marked(paused), [[7], [7]]);
+  const { view, members } = views(paused);
+  for (const m of [view, members]) {
+    assert.equal(m.get(2).state, 'paused');
+    assert.equal('stop' in m.get(2), false, 'a paused run shows no stop, so no held answer');
+    assert.equal('nextTurn' in m.get(2), false);
+  }
+  // Contrast A (d9-5): the same held answer on a run that is not paused takes the turn.
+  const running = runTwo({ stop: 'requirement', held: true });
+  assert.deepEqual(startable(running), []);
+  assert.deepEqual(marked(running), [[2], [2]]);
+  // Contrast B (d9-5): a paused run has the marker only through a held resume, and then the scheduler waits for it.
+  const resume = runTwo({ pipe: 'paused', heldResume: 1 });
+  assert.deepEqual(startable(resume), []);
+  assert.deepEqual(marked(resume), [[2], [2]]);
+}));

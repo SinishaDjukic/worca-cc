@@ -141,6 +141,16 @@ test('clear drops a held answer; deliver re-checks the question id', () => {
   b.held.deliver();
   assert.equal(b.answers.length, 0);
   assert.equal(b.e2.heldStop, null);
+  // Slice 9 (R-arch-3): Pause resolves the question and leaves the held answer on the entry.
+  const c = setup();
+  c.held.answer(c.e2, 'gate-w9-3', { decision: 'another' }, 'ann');
+  c.e2.status = 'paused';
+  c.e2.pendingQuestion = null;
+  assert.equal('stop' in liveSliceFrom({ runId: c.e2.id, status: c.e2.status, pendingQuestion: c.e2.pendingQuestion, heldStop: c.e2.heldStop }), false);
+  c.finish(c.e3);
+  c.held.deliver();
+  assert.equal(c.answers.length, 0);
+  assert.equal(c.e2.heldStop, null);
 });
 
 test('a question without stop goes straight to the run', () => {

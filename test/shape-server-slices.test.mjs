@@ -33,7 +33,7 @@ import { planStop, heldRefusal } from '../src/shared/shape/run-stops.mjs';
 
 useTempHome(after, 'worca-shape-server-slices-');
 
-let srv, base, wsBase, runs, testing, project, schedulerTick;
+let srv, base, wsBase, runs, testing, project, schedulerTick, pauseRun;
 const JSONH = { 'Content-Type': 'application/json' };
 const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(b) });
 const get = (p) => fetch(`${base}${p}`);
@@ -43,7 +43,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 before(async () => {
   process.env.WORCA_MOCK = '1';
   const mod = await import('../ui/server.mjs');
-  ({ runs, schedulerTick } = mod);
+  ({ runs, schedulerTick, pauseRun } = mod);
   testing = mod._testing;
   srv = mod.server;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -2529,4 +2529,28 @@ test('s8: GET /api/shape/pipelines/:pid/slice of paused run 5 while run 8 works 
     assert.deepEqual([info.index, info.state, info.resumeAfter], [5, 'paused', 8]);
     assert.equal(testing.heldStops.heldResumeOf(w.pid), null, 'reading holds nothing');
   } finally { await w.cleanup(); }
+}));
+
+// ── Shaper small runs, slice 9 (R-arch-3): no live slice reads "paused with a held stop answer" ─────────────────────
+test('slice 9: pausing a run with a held stop answer clears its question, so liveSliceOf carries no stop', () => withEnvVars(SMALL_ON, async () => {
+  const pid = pipe('running');
+  const entry = liveEntry(pid, { pending: { id: 'q2', kind: 'plan', stop: { reason: 'requirement', run: 2 } } });
+  const answered = [];
+  entry.heldStop = { id: 'q2', payload: { decision: 'keep' }, by: 'ann', after: 3 };
+  entry.orch.pause = () => true;
+  entry.orch.answer = (...args) => { answered.push(args); };
+  try {
+    assert.equal(testing.liveSliceOf(pid).stop.held, true);
+    pauseRun(entry.id, 'ann');
+    assert.equal(entry.status, 'pausing');
+    assert.equal(entry.pendingQuestion, null);
+    assert.equal('stop' in testing.liveSliceOf(pid), false, 'no stop while pausing');
+    entry.status = 'paused';                                 // as the state and done frames set it
+    const paused = testing.liveSliceOf(pid);
+    assert.equal(paused.status, 'paused');
+    assert.equal('stop' in paused, false, 'no stop once paused');
+    await testing.heldStops.deliver();
+    assert.equal(entry.heldStop, null, 'the stale held answer is dropped');
+    assert.deepEqual(answered, [], 'nothing is sent to the run');
+  } finally { dropEntry(entry); }
 }));
