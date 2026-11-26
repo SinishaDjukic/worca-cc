@@ -3,6 +3,22 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## A project environment spec
+
+**A project can now list the tools its agents need, pinned to exact versions.**
+
+Set it with `worca exec-env spec --project <key|dir> --set spec.json`. The spec lists tools by mise name, each with a pinned version, and apt packages. It holds tools only: never env vars, files or secrets. `latest` is refused. Show it with the same command, or clear it with `--clear`.
+
+This release only stores the spec. Later releases will build sandbox images from it. Runs behave the same today.
+
+Chips: worca exec-env spec · pinned tools · apt packages · no secrets · stored only
+
+Read it: [Project environment spec](../environment-spec.md)
+
+Pull requests (add each number when it opens):
+
+- Exec env: a project environment spec and its CLI
+
 ## Steady command rows in Chat
 
 **A stack of commands no longer flickers while it runs.**
