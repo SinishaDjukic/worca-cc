@@ -832,7 +832,9 @@ test('no GitHub or Azure DevOps credential reaches claude: scrub off, scrub on w
       await runWithEnvDump({ modelEnv: { GH_TOKEN: 'from-model', ANTHROPIC_BASE_URL: 'http://p' } }),
     ];
     for (const d of dumps) {
-      assert.ok(!/secret-|from-model/.test(d), 'no credential in the child env');
+      // Name the leaking variables (never their values), so a failure says which credential got through.
+      const leaked = d.split('\n').filter((l) => /secret-|from-model/.test(l)).map((l) => l.split('=')[0]);
+      assert.deepEqual(leaked, [], 'no credential in the child env');
       for (const k of ADO_KEYS) assert.ok(!d.includes(`${k}=`), `${k} is not in the child env`);
       assert.ok(d.includes('PATH='), 'the child still got a usable env');
     }
