@@ -259,3 +259,30 @@ test('D15: the keychain reads and the vault files stay refused', () => {
   for (const c of ['cat ~/.worca-cc/worca-vault.enc', 'cd /custom/home && strings worca-vault.key'])
     assert.match(checkAskCommand(c, ctx), /protected path/, c);
 });
+
+// ── defence in depth over the secret vault (docs/chat.md "Known limits of the command guard") ──
+const UNSURE_MSG = /builds part of itself when it runs/;
+
+test('WORCA_HOST_PID and the keychain and secrets patterns are matched on the unquoted, normalised copy too', () => {
+  for (const c of ['env -u WORCA_HOST""_PID ./run.sh', "unset 'WORCA_HOST'_PID; ./run.sh", 'unset WORCA_HOST\\_PID', "env -u $'WORCA_HOST_PID' ./x"])
+    assert.equal(checkAskCommand(c, ctx), HOST_PID_MSG, c);
+  for (const c of ["secret-tool  'look'up service worca", 'sec""ret-tool lookup service worca'])
+    assert.equal(checkAskCommand(c, ctx), KEYCHAIN_MSG, c);
+  for (const c of ['worca   secrets    ack', "worca $'secrets' ack"])
+    assert.equal(checkAskCommand(c, ctx), ACK_MSG, c);
+});
+
+test('a command that builds itself at run time and names the key store tools or Worca\'s CLI is refused', () => {
+  for (const c of ['eval "$(echo c2VjdXJpdHk= | base64 -d) dump-keychain security"', 'x=secrets; worca $x ack', 'cmd=export; worca secrets $cmd',
+    'bash -c "$0 secrets ack" worca', 'v=lookup; secret-tool $v service worca',
+    'python3 -c "import keyring"', 'node -e "require(process.argv[1])" keyring', 'echo `security` > /dev/null',
+    'w=worca-cc; $w secrets reset', 'sh -c "${T} security"'])
+    assert.match(checkAskCommand(c, ctx) || '', UNSURE_MSG, c);
+  assert.equal(checkAskCommand('eval "worca se""crets ack"', ctx), ACK_MSG, 'the specific refusal comes first');
+});
+
+test('run-time commands that name none of them, and paths that only contain worca, stay allowed', () => {
+  for (const c of ['echo $(date)', 'ls $HOME/projects', 'bash -c "npm test"', 'eval "echo hi"', 'cat $(git rev-parse --show-toplevel)/README.md',
+    'cd /w/proj/worca-cc-fork && echo $(pwd)', 'grep -r security docs'])
+    assert.equal(checkAskCommand(c, ctx), null, c);
+});

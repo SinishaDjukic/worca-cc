@@ -106,6 +106,21 @@ Chat never changes the credential broker, agent users, the allow-list or the box
 sets those. In the hardened box, Chat adds a project by cloning it only. Chat never reads the proxy login file,
 `/run/secrets` or the egress sidecar's data.
 
+### Known limits of the command guard
+
+The check on Chat's commands reads their text. It is defence in depth, not the security boundary.
+
+For the secret vault it refuses the OS key store tools (`security`, `secret-tool`, keyring modules) and
+`worca secrets export`, `reset` and `ack`. It matches them after removing quotes and backslashes. It also refuses a
+command that builds part of itself when it runs (`eval`, `$(…)`, a variable, `sh -c`, `python -c`, a decoded string)
+when that command names those tools or Worca's own CLI.
+
+A text check can still be fooled. That is why `worca secrets export`, `reset` and `ack` run only in a person's own
+terminal, after they type a word the command shows. No variable or option lifts that.
+
+On a native install, anything that runs as your OS user can reach the OS key store. The secret vault is at-rest
+encryption, not a sandbox. See [Secrets and the vault](secrets.md).
+
 More: [Choose a setup](choose-a-setup.md), [Security overview](security-overview.md),
 [Environment spec](environment-spec.md), [Network proxy](network-proxy.md).
 
