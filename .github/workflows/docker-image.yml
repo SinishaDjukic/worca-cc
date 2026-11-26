@@ -24,10 +24,18 @@ on:
         required: false
         type: boolean
         default: false
+    secrets:
+      GHCR_LEGACY_TOKEN:
+        description: classic token with write:packages on the owner of LEGACY_IMAGE; optional
+        required: false
 
 env:
   # GHCR repository names must be lowercase; the owner login is not.
-  IMAGE: ghcr.io/sinishadjukic/worca
+  IMAGE: ghcr.io/worca-org/worca
+  # The name before the repo moved to worca-org (2026-11). Each release is also copied there, so
+  # compose files that still name it keep getting updates. Remove this line to stop (end of the
+  # transition, see CHANGELOG); the old package and its tags stay, it just stops moving.
+  LEGACY_IMAGE: ghcr.io/sinishadjukic/worca
 
 jobs:
   build:
@@ -182,6 +190,40 @@ jobs:
         env:
           DIGEST: ${{ steps.manifest.outputs.digest }}
         run: cosign sign --yes "$IMAGE@$DIGEST"
+
+      # Transition: copy the same manifest (same digest) to the old name and sign it there too.
+      # A failure warns and never fails the release: the image under IMAGE is what matters.
+      - name: Copy to the old image name
+        id: legacy
+        if: env.LEGACY_IMAGE != ''
+        continue-on-error: true
+        env:
+          DIGEST: ${{ steps.manifest.outputs.digest }}
+          LEGACY_TOKEN: ${{ secrets.GHCR_LEGACY_TOKEN }}
+        run: |
+          if [ -n "$LEGACY_TOKEN" ]; then
+            owner="${LEGACY_IMAGE#ghcr.io/}"; owner="${owner%%/*}"
+            echo "$LEGACY_TOKEN" | docker login ghcr.io -u "$owner" --password-stdin >/dev/null
+            echo "pushing to $LEGACY_IMAGE with GHCR_LEGACY_TOKEN"
+          else
+            echo "pushing to $LEGACY_IMAGE with the workflow token (no GHCR_LEGACY_TOKEN set)"
+          fi
+          args=""
+          for t in ${{ steps.tags.outputs.tags }}; do args="$args -t $LEGACY_IMAGE:$t"; done
+          docker buildx imagetools create $args "$IMAGE@$DIGEST"
+          first="$(echo ${{ steps.tags.outputs.tags }} | cut -d' ' -f1)"
+          echo "digest=$(docker buildx imagetools inspect "$LEGACY_IMAGE:$first" --format '{{json .Manifest.Digest}}' | tr -d '"')" >> "$GITHUB_OUTPUT"
+
+      - name: Sign the copy under the old name
+        if: steps.legacy.outcome == 'success'
+        continue-on-error: true
+        env:
+          DIGEST: ${{ steps.legacy.outputs.digest }}
+        run: cosign sign --yes "$LEGACY_IMAGE@$DIGEST"
+
+      - name: Warn when the old name was not updated
+        if: env.LEGACY_IMAGE != '' && steps.legacy.outcome != 'success'
+        run: echo "::warning::$LEGACY_IMAGE was not updated. Set GHCR_LEGACY_TOKEN (classic, write:packages) and re-run."
 
   smoke:
     name: smoke pushed image

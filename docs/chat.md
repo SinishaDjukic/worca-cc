@@ -69,6 +69,79 @@ instead of a message to the chat. The chat still posts when the run waits for an
 A pull request opened from a chat card keeps reporting there. The card shows its Watch PR status. Each fix run that
 Watch PR or Resolve starts on it appears in the chat as a live run card, with what started it and how it ended.
 
+## Security and sandboxes
+
+Chat knows how this Worca is set up. Every message carries one `security:` line. It names the setup (native,
+container, hardened box or hosted), the credential broker, agent users, the outbound network, where the proxy login
+lives and the default execution environment.
+
+Ask it "is this run sandboxed?", "why can't I use Docker?" or "what does the hardened box protect?". It reads:
+
+- **the security posture**: the same rows as Settings › General › Security.
+- **the execution environments**: Local, Local sandbox (Docker) and E2B sandbox. Each says ready or why not, the slots
+  in use and the cap, and the wait limit.
+- **a project's sandbox environment**: its network (open or allow), its template or image, its environment spec and
+  its builds, current or stale.
+- **the secret vault** (Labs flag `secretVault`): its state, the OS key store's name and how many saved secrets of each
+  kind are in it or still in files. Never a value, a name or a key. The `security:` line then carries `vault=`. Chat
+  changes nothing here: see [Secrets and the vault](secrets.md).
+- **a sandbox run**: waiting for a slot, building the image, the answer-by time and the files held for review.
+
+It states the claim exactly: no model key, no git token and no proxy login in an agent's reach. It never says "no
+secrets". MCP registry secrets stay in reach of the runs that use them. A Local run on a native install is not
+sandboxed.
+
+A run card that asks for a sandbox runs the run start's checks first. When Docker is not running or E2B is not set
+up, Chat says so and offers Local.
+
+Chat changes a project's sandbox with cards you apply:
+
+- **the environment spec**: pinned tools and apt packages. Set or clear it.
+- **a build** of the project's template or image from its spec. It runs on the Worca server.
+- **the sandbox settings**: the network (open or allow) and the template or image.
+
+Chat can also change the Docker and E2B limits in Settings › Runs, with a receipt and Revert.
+
+Chat never changes the credential broker, agent users, the allow-list or the box's base image. Whoever runs Worca
+sets those. In the hardened box, Chat adds a project by cloning it only. Chat's own file tools never read the proxy
+login file, `/run/secrets` or the egress sidecar's data.
+
+### Known limits of the command guard
+
+In agent mode, a check runs before each of Chat's own commands. It refuses a command that names the proxy login,
+Docker secrets or the egress sidecar's data, however the path is spelled.
+
+The check is a guard on Chat's own commands, on an install where Chat runs as you. It is not the security boundary.
+The boundary is file permissions, agent users and the egress sidecar. On a native install, an agent or a chat that
+runs as your OS user can reach every file you can read.
+
+When a command holds something the check cannot work out, it treats the whole command as unsure. That includes a
+variable set at run time, `$(…)`, `eval`, `read` or a `cd` to such a folder. An unsure command is refused when any
+word names `secrets`, `egress` or the proxy login file. It is also refused when it runs a reader that walks folders
+(`find`, `grep -r`, `rg`, `tar`, `cp -r`, and a few more) without plain paths. The refusal says how to rephrase it.
+Put a `cd` to a written-out path first, then give plain paths.
+
+What the check does not catch:
+
+- A program that builds a path when it runs: a script, `python -c`, `node -e`.
+- A symlink made earlier that points into a protected folder.
+- A tool that reads a folder it is not told about, such as a config file that names one.
+- Any other way of spelling a path. Each new one goes on this list, not into the check.
+
+For the secret vault the check refuses the OS key store tools (`security`, `secret-tool`, keyring modules) and
+`worca secrets export`, `reset` and `ack`. It matches them after removing quotes and backslashes. It also refuses an
+unsure command that names those tools or Worca's own CLI, or that holds a `$'…'` string with a backslash escape.
+
+The check reads text, so it is defence in depth. That is why `worca secrets export`, `reset` and `ack` run only in a
+person's own terminal, after they type a word the command shows. No variable or option lifts that. On a native
+install, anything that runs as your OS user can reach the OS key store. The secret vault is at-rest encryption, not a
+sandbox.
+
+See [Security overview](security-overview.md) and [Secrets and the vault](secrets.md).
+
+More: [Choose a setup](choose-a-setup.md), [Security overview](security-overview.md),
+[Environment spec](environment-spec.md), [Network proxy](network-proxy.md).
+
 ## Agent mode with a shared terminal
 
 Chat can run commands such as tests, builds, linters and git in a run's or a project's folder. It uses up to 3

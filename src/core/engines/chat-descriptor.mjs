@@ -6,7 +6,7 @@
 import { ENGINES, engineLabel, chatEnginesTaking, withArticle } from '../../shared/engine-switch.mjs';
 import { CODEX_PRICES, codexCachedRate, listPriceFor } from '../list-prices.mjs';
 
-const DOCS = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md';
+const DOCS = 'https://github.com/worca-org/worca/blob/dev/docs/models.md';
 /** A descriptor's `suggestionModel` that means "the chat's own model". */
 export const CHAT_MODEL = 'chat';
 const never = () => false;

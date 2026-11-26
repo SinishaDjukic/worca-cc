@@ -129,6 +129,7 @@ test('done text, settled lines, refusal and row words read exactly', () => {
   assert.equal(runStopWord({ slice: { stop: { reason: 'objection', held: false } } }), 'waiting for you');
   assert.equal(runStopWord({ slice: { stop: { reason: 'objection', held: true, after: 9 } } }), 'after run 9');
   assert.equal(runStopWord({ slice: { waitsFor: 8 } }), 'waits for run 8');
+  assert.equal(runStopWord({ slice: { waitsFor: [], kind: 'change', state: 'planned', cannotStart: { run: 3, reason: 'was canceled' } } }), null);
   assert.equal(waitsForRunWord(2), 'waits for run 2');
   assert.equal(runStopWord({ snap: { pendingQuestion: { stop: gate } } }), 'waiting for you');
   assert.equal(runStopWord({ slice: {} }), null);
@@ -164,4 +165,39 @@ test('C4 (D10): a requirement stop with proposals carries `change` and a flat re
   assert.deepEqual(plain.options, planStop({ run: 5, concern: { ...REQ, proposals: [] } }).options);
   assert.equal(planStop({ run: 5, concern: { ...REQ, proposals: [{ id: 'R-arch-2', text: 'no from' }] } }).options[1].payload.decision, 'stop',
     'a proposal without the text it changes cannot be applied');
+});
+
+test('T8 (D10): runStopWord reads a waitsFor array as "waits for run 7, 10"; the number case and the change word are unchanged', () => {
+  assert.equal(runStopWord({ slice: { waitsFor: [7, 10] } }), 'waits for run 7, 10');
+  assert.equal(runStopWord({ slice: { waitsFor: [] } }), null);
+  assert.equal(runStopWord({ slice: { waitsFor: [], kind: 'change', state: 'planned' } }), 'next · small change run');
+  assert.equal(runStopWord({ slice: { waitsFor: 8 } }), 'waits for run 8');
+  assert.equal(runStopWord({ slice: { waitsFor: [], kind: 'change', state: 'planned', cannotStart: { run: 3, reason: 'was canceled' } } }), null);
+});
+
+test('outline change: a short question line from the note\'s title; the other words are unchanged', () => {
+  const note = '## Slice 2: A prerequisite is not in this tree\n\nRun 1 did not add the `tags` table.\n\n- `src/core/db.mjs`\n';
+  const s = planStop({ run: 2, outlineChange: note });
+  assert.equal(s.text, 'The Planner says this run cannot be built as outlined: a prerequisite is not in this tree.');
+  assert.equal(s.head, 'Run 2 · the outline would have to change');
+  assert.equal(s.findingsLine, 'The outline no longer fits');
+  assert.equal(s.pick, 'keep');
+  assert.deepEqual(s.options.map((o) => [o.label, o.payload.decision]), [['Keep it', 'approve'], ['Change it', 'stop']]);
+  assert.deepEqual(Object.keys(s).sort(), ['findingsLine', 'head', 'node', 'options', 'pick', 'reason', 'run', 'text'], 'no field added');
+});
+
+test('outline change: no usable first line (121 characters, empty, a list first) ends the question at "outlined."', () => {
+  const FALLBACK = 'The Planner says this run cannot be built as outlined.';
+  for (const outlineChange of [`${'a'.repeat(121)}\nMore.`, '  \n', '- the tags table\n- the route']) {
+    assert.equal(planStop({ run: 2, outlineChange }).text, FALLBACK, JSON.stringify(outlineChange.slice(0, 20)));
+  }
+});
+
+test('concern, check and objection stop texts are unchanged', () => {
+  assert.equal(planStop({ run: 5, concern: REQ, outlineChange: 'A note' }).text,
+    'A reviewer wants R-arch-2 changed: Members only is too strict.');
+  assert.equal(planStop({ run: 4, check: FAIL }).text, 'The plan passes 3 of 5 checks.');
+  assert.equal(planStop({ run: 4, check: null }).text, 'The plan check could not run.');
+  assert.equal(concernStop({ run: 3, concern: CONCERN, decidedBefore: true }).text,
+    'The Implementer still objects after a re-plan: Store jobs in the DB.');
 });

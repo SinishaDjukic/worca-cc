@@ -36,7 +36,7 @@ const assistantWith = (...blocks) => {
  * GET /api/images (absent: 404), and `imagesGets()` counts those GETs; `o.confirm(opts)` answers the confirm instead of yes;
  * `o.withPlanList` passes a planList of `{ el: <div class="dz-plan-wrap"> }`. `send(text, {refuse})` types and presses
  * Send; `refuse` answers that message 409 with those words, and `o.refuse` every message from the start. `o.initial` is
- * the dock's `initial` (the Library's first message); `o.destroyNow` destroys the dock before its thread loads.
+ * the dock's `initial` (the design start's first message); `o.destroyNow` destroys the dock before its thread loads.
  * `o.renderMarkdown` draws a reply (default: its text); `md.calls` counts the draws. `o.pictures` is the dock's picture
  * log (absent: none). `o.sound` answers GET /api/design/:id/sound: a 200 body, or a function of `reply` that answers
  * (or throws, or holds) itself (absent: 404); `setSound(v)` changes it and `soundGets()` counts those GETs. `o.soundAsk`

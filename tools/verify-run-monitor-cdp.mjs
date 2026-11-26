@@ -381,8 +381,60 @@ try {
     const shot = await cdp('Page.captureScreenshot', { format: 'png' }, 15000);
     await writeFile(path.join(process.env.WORCA_SHOT_DIR, 'run-live-graph.png'), Buffer.from(shot.data, 'base64'));
   }
-  // Back to the width and window the run started with: the checks below were measured there.
+  // (1f) an 800px run pane at Expert: the header has no box and sits on the tabs' edges, the tab row is clipped nowhere
+  // (the rest of the tabs are under "More"), and the state line and the run controls show on every tab.
   await ev(`localStorage.setItem(${JSON.stringify(LIST_W_KEY)},'280');0`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  await settle('1280 again');
+  const PANE_W = `document.querySelector('#run-detail').getBoundingClientRect().width`;
+  const wide = Math.round(1280 - (await ev(PANE_W)) + 800);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: wide, height: 900, deviceScaleFactor: 1, mobile: false });
+  await settle('800px pane');
+  const narrow = await ev(`(()=>{const q=(s)=>document.querySelector('#run-detail '+s);const bar=q('.rd-tabs');const head=q('.rd-header');
+    const cs=getComputedStyle(head);const h=head.getBoundingClientRect(),b=bar.getBoundingClientRect(),ask=q('.rd-questions').getBoundingClientRect();
+    const name=(n)=>n.childNodes[1]?n.childNodes[1].textContent.trim():n.textContent.trim();
+    const tabs=[...bar.querySelectorAll('[role="tab"]')];
+    const row=tabs.filter((n)=>n.offsetParent);const clipped=row.concat(q('.tab-more')||[]).filter((n)=>{const r=n.getBoundingClientRect();return r.left<b.left-0.5||r.right>b.right+0.5;}).map(name);
+    const more=q('.tab-more');let menu=[],rows=[];
+    if(more){more.click();menu=[...document.querySelectorAll('body > .wfv-menu .wfv-menu-l')].map((n)=>n.textContent);
+      rows=[...document.querySelectorAll('body > .wfv-menu .menu-item')].map((n)=>{const r=(s)=>{const e=n.querySelector(s);return e&&e.getBoundingClientRect();};
+        const i=r('.wfv-menu-ic'),l=r('.wfv-menu-l'),h=r('.wfv-menu-hint'),m=n.getBoundingClientRect();
+        const mid=(b)=>b.top+b.height/2;
+        return {h:+m.height.toFixed(1),oneLine:!!i&&Math.abs(mid(i)-mid(l))<=2&&i.right<=l.left&&(!h||(Math.abs(mid(h)-mid(l))<=3&&l.right<=h.left))};});
+      more.click();}
+    return {pane:${PANE_W},scroll:bar.scrollWidth,client:bar.clientWidth,clipped,more:!!(more&&more.offsetParent),menu,rows,
+      row:row.map(name),all:tabs.filter((n)=>!n.hidden).map(name),border:cs.borderTopWidth,background:cs.backgroundColor,
+      edges:{left:[h.left,b.left,ask.left],right:[h.right,b.right,ask.right]}};})()`);
+  const level = (xs) => Math.max(...xs) - Math.min(...xs) <= 1;
+  check('1f', '1f 800px pane, Expert: no clipped tab, More holds every other shown tab',
+    Math.abs(narrow.pane - 800) <= 1 && narrow.scroll <= narrow.client && narrow.clipped.length === 0 && narrow.more && narrow.menu.length >= 2
+    && narrow.all.every((t) => narrow.row.includes(t) !== narrow.menu.includes(t)), narrow);
+  check('1f', '1f the header has no box; it, the waiting question and the tabs share their left and right edges',
+    narrow.border === '0px' && narrow.background === 'rgba(0, 0, 0, 0)' && level(narrow.edges.left) && level(narrow.edges.right), narrow);
+  check('1f', '1f each More row is one 30px line: the icon, the name, then the count',
+    narrow.rows.length >= 2 && narrow.rows.every((r) => r.oneLine && r.h <= 34), narrow.rows);
+  const onTabs = [];
+  for (const key of ['overview', 'task', 'qa', 'logs', 'workflow']) {
+    await ev(`document.querySelector('#run-detail .rd-tab[data-sec="${key}"]').click();0`);
+    await settle(`1f ${key}`);
+    onTabs.push(await ev(`(()=>{const shown=(s)=>{const n=document.querySelector('#run-detail '+s);return !!(n&&n.offsetParent&&n.getBoundingClientRect().height>0);};
+      const bar=document.querySelector('#run-detail .rd-tabs');const more=bar.querySelector('.tab-more').getBoundingClientRect();
+      return {key:${JSON.stringify(key)},line:shown('.rd-header .run-state-line'),said:(document.querySelector('#run-detail .rd-header .run-state-line')||{}).textContent,
+        stop:shown('.rd-bar-end .rd-stop'),tab:shown('.rd-tab.active'),fits:more.right<=bar.getBoundingClientRect().right+0.5};})()`));
+    if (process.env.WORCA_SHOT_DIR && (key === 'overview' || key === 'workflow')) {
+      // The Overview from the top; the open menu with the tab row in view.
+      await ev(key === 'overview' ? `document.querySelector('#run-detail .rd-details').scrollTop=0;document.querySelector('#run-detail').scrollTop=0;0`
+        : `document.querySelector('#run-detail .rd-tabs').scrollIntoView({block:'start'});0`);
+      if (key === 'workflow') await ev(`document.querySelector('#run-detail .tab-more').click();0`);
+      await settle('1f shot');
+      const shot = await cdp('Page.captureScreenshot', { format: 'png' }, 15000);
+      await writeFile(path.join(process.env.WORCA_SHOT_DIR, `run-page-800-${key}.png`), Buffer.from(shot.data, 'base64'));
+      if (key === 'workflow') await ev(`document.querySelector('#run-detail .tab-more').click();0`);
+    }
+  }
+  check('1f', '1f the state line and Stop show on Overview, Task, Q&A, Logs and Workflow, and the row still fits',
+    onTabs.every((t) => t.line && t.stop && t.tab && t.fits && /^Needs you/.test(t.said || '')), onTabs);
+  // Back to the width and window the run started with: the checks below were measured there.
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 
   // (9a) the node axis is live on the Logs tab bar, with MANIFEST labels

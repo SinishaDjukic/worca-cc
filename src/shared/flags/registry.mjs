@@ -173,6 +173,18 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-02-18',
     docs: 'docs/feature-flags.md',
   }),
+  entry({
+    key: 'secretVault',
+    title: 'Secret vault',
+    description: 'Keeps provider and model keys, MCP and plugin secrets and the proxy login in an encrypted vault whose key the OS key store holds. Turning it on moves the secrets saved before into the vault once and lists the moved keys; turned off, vaulted keys still work and new keys go to the config file; worca secrets export goes back to config-file storage.',
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.19.0',
+    added: '2026-11-21',
+    reviewBy: '2027-02-19',
+    docs: 'docs/feature-flags.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));

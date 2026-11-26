@@ -370,7 +370,7 @@ const PIN_PATH = 'M12 17v5M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2V16a1
  *   onRestored?: (r: {version: number, restoredFrom: number}) => void, planList?: {el: HTMLElement}|null,
  *   unpin?: (id: string, path: string) => void, initial?: {text: string, files: object[]}|null,
  *   pictures?: object|null}} o  `confirm` is app.js's
- *   confirmModal (absent = go ahead, a throw = no). `initial` is the Library's first message (P6 takeStart): once the
+ *   confirmModal (absent = go ahead, a throw = no). `initial` is the design start's first message (P6 takeStart): once the
  *   thread has loaded it goes through the dock's own send, files included, so a refusal stays in the input with its note.
  *   `pictures` is the design's picture log (pictures.mjs `createPictureLog`; the view feeds it): a live round's
  *   pictures sit after the feed's lines, a finished or paused round's under its reply's step line.

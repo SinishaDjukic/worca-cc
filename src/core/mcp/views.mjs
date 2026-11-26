@@ -14,6 +14,7 @@ import {
   resolveMcpServers, materializeCopy, skipReasonText, PROBLEM_REASONS, teamMembers, cachedTeams, cachedTeamFor, hostContext,
 } from './registry.mjs';
 import { listProjects } from '../projects.mjs';
+import { primeSettingsVaultIfEnabled } from '../settings.mjs';
 import { pluginNameFor, teamSkillMembers } from './sets.mjs';
 import { parseSkillId } from '../skills-registry/ids.mjs';
 import { skillHostFacts } from '../skills-registry/host.mjs';
@@ -376,6 +377,7 @@ export function manualNameTaken({ snapshot, catalog }, name) {
 
 /** Everything the builders read, from disk and the policy cache. */
 export async function viewContext() {
+  await primeSettingsVaultIfEnabled();
   const snapshot = await readMcpStore();
   const catalog = await loadCatalog(snapshot);
   const skillCatalog = await loadSkillCatalog();

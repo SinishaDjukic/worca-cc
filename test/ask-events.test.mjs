@@ -1047,3 +1047,18 @@ test('hands-free <spoken> block: split out of the stream into ask-spoken; deltas
     } },
   ]);
 });
+
+test('environment cards: the propose_environment_* RESULT reaches onEnvProposal with the tool name and the full input; a sub-agent call never does', () => {
+  for (const tool of ['propose_environment_spec_change', 'propose_environment_build']) {
+    const calls = [];
+    const h = harness({ onEnvProposal: (e) => { calls.push(e); return Promise.resolve(); } });
+    const input = { projectKey: 'api-0000abcd', apt: ['jq'] };
+    h.push(session(), init(), mstart('msg_1'), atool('msg_1', 'toolu_1', `mcp__worca__${tool}`, input));
+    h.push(uresult('toolu_1', '{"ok":true,"card":{}}'));
+    assert.deepEqual(calls, [{ toolUseId: 'toolu_1', name: tool, input, text: '{"ok":true,"card":{}}', isError: false }]);
+    h.push(atool('msg_1', 'toolu_task', 'Agent', { description: 'helper', subagent_type: 'general-purpose', prompt: 'x' }));
+    h.push(atool('msg_c', 'toolu_3', `mcp__worca__${tool}`, input, 'toolu_task'));
+    h.push(uresult('toolu_3', '{"ok":true}', { ptu: 'toolu_task' }));
+    assert.equal(calls.length, 1, 'a sub-agent call is never hooked');
+  }
+});

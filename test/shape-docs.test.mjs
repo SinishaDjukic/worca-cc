@@ -109,3 +109,97 @@ test('no flag owner handle from the registry appears in the three docs', () => {
   }
   assert.deepEqual(hits, []);
 });
+
+test('s5: the marks paragraph names the Runs list member rows and the run page head too, and a done run\'s ship line', () => {
+  const para = DOCS['shape-it-first.md'].text().split(/\n\s*\n/).map(flat).find((p) => p.includes('markDot')) || '';
+  assert.ok(para, 'the paragraph that names markDot');
+  assert.deepEqual(missing(para, [/Chat card/, /Runs tab/, /Runs list/i, /member rows/i, /run page/i, /ship line/i]), []);
+});
+
+// Shaper small runs slice 6 (R-po-4): the open stop list on the card.
+test('s6: "Open stops on the card" sits under Small runs, after the run words, and says what a line holds up, the order and Resume', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const at = small.indexOf('\n### Open stops on the card\n');
+  assert.ok(at >= 0, 'the heading "### Open stops on the card" under Small runs');
+  assert.ok(at > small.indexOf('\n### The run words\n'), 'after "The run words"');
+  const rest = small.slice(at + 1);
+  const next = rest.indexOf('\n### ', 1);
+  const part = flat(next < 0 ? rest : rest.slice(0, next));
+  assert.deepEqual(missing(part, ['holds up', 'in run order', 'Resume']), []);
+});
+
+// Shaper small runs slice 7 (R-po-5): the state line and the need-you count, under the stop list part.
+test('s7: the stop list part says what the state line names, the need-you count and who must act', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const at = small.indexOf('\n### Open stops on the card\n');
+  const off = small.indexOf('\n### Off\n');
+  assert.ok(at >= 0 && off > at, '"Open stops on the card" comes before "Off"');
+  assert.deepEqual(missing(flat(small.slice(at, off)), ['next: run', 'need you', 'Nothing can go on until you act']), []);
+});
+
+// Shaper small runs slice 8 (R-ux-2): the link marks, after the marks paragraph and before the stop list part.
+test('s8: a paragraph under the run words names the solid and dashed bars, click or Enter to keep, Esc, and that nothing moves', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const marks = small.indexOf('markDot');
+  const stops = small.indexOf('\n### Open stops on the card\n');
+  assert.ok(marks >= 0 && stops > marks, 'the marks paragraph comes before the stop list part');
+  const paras = small.slice(marks, stops).split(/\n\s*\n/).slice(1).map(flat);
+  const para = paras.find((p) => /dashed/i.test(p) && /solid/i.test(p)) || '';
+  assert.ok(para, 'a paragraph of its own that names the solid and the dashed bar');
+  assert.deepEqual(missing(para, [/\bsolid\b/i, /\bdashed\b/i, /builds? on/i, /\bclick/i, /\bEnter\b/, /\bEsc\b/, /(?:nothing|no row)[^.]*\bmov/i]), []);
+});
+
+
+// Shaper small runs slice 10 (R-ux-3, R-rel-1): Show order, and the closing check of the whole run-order feature.
+/** The part of the Small runs section under `### heading`, up to the next `### ` (flattened), or ''. */
+function smallPart(heading) {
+  const small = DOCS['shape-it-first.md'].text();
+  const at = small.indexOf(`\n### ${heading}\n`);
+  if (at < 0) return '';
+  const rest = small.slice(at + 1);
+  const next = rest.indexOf('\n### ', 1);
+  return flat(next < 0 ? rest : rest.slice(0, next));
+}
+
+test('s10: a Show order part before Off names the Runs tab, 5 runs, plain chain, closed, the rows for screen readers, and not the Chat card or Runs sidebar', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const at = small.indexOf('\n### Show order\n');
+  const off = small.indexOf('\n### Off\n');
+  assert.ok(at >= 0, 'the heading "### Show order" under Small runs');
+  assert.ok(off > at, 'before "Off"');
+  const part = smallPart('Show order');
+  assert.deepEqual(missing(part, [/Runs tab/, /\b5 runs\b/, /branch/i, /\bjoin/i, /plain chain/i, /\bclosed\b/i, /screen reader/i,
+    // what the drawing shows
+    /\bmarks?\b/i, /right of/i, /\bholds?\b/i, /\bdot\b/i, /pulse/i]), []);
+  const sentences = part.split(/(?<=\.)\s+/);
+  assert.ok(sentences.some((s) => /Chat card/.test(s) && /Runs sidebar/i.test(s) && /\b(?:never|not|no)\b/i.test(s)),
+    'one sentence says it is not on the Chat card or the Runs sidebar');
+});
+
+test('s10: the feature page bullet of "The four places" names Show order on its Runs tab', () => {
+  const bullet = smallPart('The four places').split(/ - \*\*/).find((b) => b.startsWith('The feature page**')) || '';
+  assert.ok(bullet, 'the feature page bullet');
+  assert.deepEqual(missing(bullet, [/Show order[^.]*Runs tab/]), []);
+});
+
+test('s10 closing (R-rel-1): Small runs describes next and no word, the open stop list, the link marks and Show order', () => {
+  const words = smallPart('The run words');
+  assert.deepEqual(missing(words, ['`next`', /next` comes only from/, 'shows no word']), [], 'when a row reads next, and no word');
+  assert.deepEqual(missing(smallPart('Open stops on the card'), ['holds up', 'Resume']), [], 'the open stop list');
+  assert.ok(words.includes('solid') && words.includes('dashed bar'), 'the link marks');
+  assert.ok(smallPart('Show order'), 'the "### Show order" part');
+});
+
+// Shaper small runs slice 15 (R-po-6): a run that has not started has no run page; the docs say where its two facts show.
+test('s15 (R-po-6): the run page bullet says Waits for and Needed by show on a started run\'s page only, and a not-started run\'s row opens the feature page', () => {
+  const bullet = smallPart('The four places').split(/ - \*\*/).find((b) => b.startsWith('The run panel and the Expert run page**')) || '';
+  assert.ok(bullet, 'the run panel and run page bullet');
+  assert.deepEqual(missing(bullet, [/started run/, /not started/, 'no run page', 'feature page', /point(ing)? at the row/, 'dashed bar']), []);
+});
+
+// Shaper small runs slice 16 (R-po-6): the contract's words stay in the run page bullet.
+test('S16-T6 (R-po-6): the run page bullet says a run that has not started has no run page, and names Waits for, Needed by and nothing', () => {
+  const bullet = smallPart('The four places').split(/ - \*\*/).find((b) => b.startsWith('The run panel and the Expert run page**')) || '';
+  assert.ok(bullet, 'the run panel and run page bullet');
+  assert.deepEqual(missing(bullet, ['has no run page', 'Waits for', 'Needed by', '`nothing`']), []);
+});

@@ -49,6 +49,8 @@ const COMMENT_WRITE_TOOLS = new Set([
 // the REST DELETE route emits (ui/server.mjs emitAskWorktrees). `git` counts
 // only when its subcommand is one noteNav acts on; a `log`/`status` never pokes.
 const WORKTREE_TOOLS = new Set(['mcp__worca__open_worktree', 'mcp__worca__remove_worktree', 'mcp__worca__git']);
+// The environment cards' tools (env-proposal.mjs ENV_PROPOSAL_TOOLS; events.mjs imports no proposal module).
+const ENV_PROPOSAL_NAMES = new Set(['mcp__worca__propose_environment_spec_change', 'mcp__worca__propose_environment_build']);
 const GIT_NAV_SUBCOMMANDS = new Set(['checkout', 'switch', 'fetch']);
 // The memory writers (agent-memory-design.md §9.1): a successful remember/forget in the CHILD
 // becomes the same `memory-changed` broadcast the REST routes emit (ui/server.mjs emitMemoryChanged).
@@ -231,6 +233,11 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'test_network_proxy': return 'Testing the corporate proxy';
     case 'propose_network_proxy_change': return 'Proposing a proxy change';
     case 'propose_corporate_proxy_on': return 'Proposing to turn the corporate proxy on';
+    case 'get_security_posture': return 'Reading the security setup';
+    case 'get_execution_environments': return 'Reading the execution environments';
+    case 'get_project_environment': return "Reading the project's sandbox environment";
+    case 'propose_environment_spec_change': return 'Proposing an environment spec change';
+    case 'propose_environment_build': return 'Proposing an environment build';
     case 'list_settings': return 'Reading settings';
     case 'change_setting': return input?.id ? `Changing ${String(input.id).slice(0, 40)}` : 'Changing a setting';
     case 'pause_run': return 'Pausing a run';
@@ -339,6 +346,7 @@ export function createTurnReducer({
   onAwayProposal = null,         // propose_away_mode_change RESULT (Away mode card; the parent re-validates the input)
   onProxyProposal = null,        // propose_network_proxy_change RESULT (proxy card; the parent re-validates the input)
   onProxyFlagProposal = null,    // propose_corporate_proxy_on RESULT (proxy flag card; same split)
+  onEnvProposal = null,          // propose_environment_spec_change / propose_environment_build RESULT (environment card; same split)
   onCommentMutation = null,
   onWorktreeMutation = null,
   onMemoryMutation = null,
@@ -912,6 +920,13 @@ export function createTurnReducer({
         // The parent re-validates the INPUT against the flag and the stored settings (proxy-proposal.mjs).
         try {
           const ret = onProxyProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (ENV_PROPOSAL_NAMES.has(b.name) && typeof onEnvProposal === 'function') {
+        // The parent re-validates the INPUT against the project as it is now (env-proposal.mjs).
+        try {
+          const ret = onEnvProposal({ toolUseId: b.id, name: b.name.slice('mcp__worca__'.length), input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }

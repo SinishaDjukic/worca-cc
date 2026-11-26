@@ -43,7 +43,7 @@ const field = (host, id) => host.querySelector(`[data-setting="${id}"]`);
 test('every field says what it inherits and from where; an override shows Project', async () => {
   const { host } = harness();
   for (let i = 0; i < 4; i++) await tick();
-  assert.deepEqual([...host.querySelectorAll('.pd-settings-card')].map((c) => c.dataset.card), ['models', 'cost', 'ask', 'context', 'pr', 'smartNaming']);
+  assert.deepEqual([...host.querySelectorAll('.pd-settings-card')].map((c) => c.dataset.card), ['models', 'cost', 'ask', 'context', 'exec', 'pr', 'smartNaming']);
   const turns = field(host, 'askMaxTurns');
   assert.equal(turns.querySelector('.inherit-input').value, '9');
   assert.equal(turns.querySelector('.inherit-input').placeholder, '30 (your setting)');
