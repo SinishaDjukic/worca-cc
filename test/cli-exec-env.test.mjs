@@ -52,6 +52,14 @@ test('spec --set stores the normalized spec; show prints it, as text and as JSON
   assert.equal(JSON.parse(r.out[0]).tools[0].name, 'node');
   assert.deepEqual(JSON.parse(r.out[0]), readProjectExecEnv(KEY).spec);
 });
+test('specs lists every project with a spec, with it (what `worca container build` reads inside the hardened box)', async () => {
+  const r = await run(['specs', '--json']);
+  assert.equal(r.code, 0);
+  const list = JSON.parse(r.out[0]);
+  assert.deepEqual(list.map((p) => [p.key, p.name]), [[KEY, 'cli-execenv']]);
+  assert.deepEqual(list[0].spec, readProjectExecEnv(KEY).spec);
+  assert.match((await run(['specs'])).out[0], /^cli-execenv\s+\S+\s+1 tools, 1 apt packages \(sha256:/);
+});
 test('status shows the stored spec (this shell\'s view when no server runs)', async () => {
   const r = await run(['status', '--project', repo], { call: async () => null });
   assert.equal(r.code, 0, 'a directory names the project too');

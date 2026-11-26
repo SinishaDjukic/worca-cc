@@ -15,7 +15,7 @@ import { resolve, join } from 'node:path';
 import process from 'node:process';
 
 import { DEFAULT_ALLOW } from '../core/egress-proxy.mjs';
-import { dotenvValue, isLoopbackProxy, boxProxyEnv, gitConfigValue } from './container.mjs';
+import { dotenvValue, isLoopbackProxy, boxProxyEnv, gitConfigValue, composeValue } from './container.mjs';
 import { readHidden } from './proxy.mjs';
 
 /** The overlays after compose.yml, in order. compose.ca.yml (with a CA) goes after `hardened`, compose.proxy.yml last. */
@@ -26,7 +26,13 @@ export const HARDENED_IMAGE_LABEL = 'dev.worca.hardened-box';
 export const HARDENED_IMAGE_NEEDED = 1;
 /** compose.isolation.yml's `!reset` and compose.hardened.yml's `!override` need it. */
 export const MIN_COMPOSE = [2, 24, 0];
-const DATA_VOLUME = `${HARDENED_PROJECT}_worca-data`;
+
+/** The box's compose project name as compose picks it: COMPOSE_PROJECT_NAME from the shell, then .env, else the
+ *  files' own `name: worca-hardened`. */
+export function hardenedProjectName({ dir, env = process.env } = {}) {
+  const body = dir && existsSync(join(dir, '.env')) ? readFileSync(join(dir, '.env'), 'utf8') : '';
+  return composeValue('COMPOSE_PROJECT_NAME', { env, envFile: (k) => envValue(body, k) }).trim() || HARDENED_PROJECT;
+}
 const CA_MOUNT = '/etc/worca/corporate-ca.pem';
 const SIDECAR = 'http://egress:3128';
 
@@ -60,7 +66,8 @@ Setup flags (each also settable without a prompt; secrets never on the command l
   --git-name <n>, --git-email <e>   Commit identity (default: your git config)
   --allow <hosts>        Extra hosts for the allow-list, comma-separated (your package registry, …)
   --proxy <host:port>    The corporate proxy (default: detected); --no-proxy for none
-  --proxy-user <DOMAIN\\user>   Log in to the proxy now; the password comes from a hidden prompt or stdin
+  --proxy-user <DOMAIN\\user>   Log in to the proxy now; the password comes from a hidden prompt or stdin (or WORCA_PROXY_USER)
+  --no-proxy-login       The proxy needs no login: do not ask (or WORCA_PROXY_NO_LOGIN=1)
   --ca-file <pem>        The corporate CA, for a proxy that re-signs TLS
   --yes                  Never prompt: take what is given and detected, refuse what is missing`;
 
@@ -68,7 +75,7 @@ Setup flags (each also settable without a prompt; secrets never on the command l
 
 const VALUE_FLAGS = { '--model-key-file': 'modelKeyFile', '--git-host': 'gitHost', '--git-token-file': 'gitTokenFile', '--git-name': 'gitName',
   '--git-email': 'gitEmail', '--allow': 'allow', '--proxy': 'proxy', '--proxy-user': 'proxyUser', '--ca-file': 'caFile' };
-const BOOL_FLAGS = { '--no-proxy': 'noProxy', '--yes': 'yes', '-y': 'yes', '--json': 'json' };
+const BOOL_FLAGS = { '--no-proxy': 'noProxy', '--no-proxy-login': 'noProxyLogin', '--yes': 'yes', '-y': 'yes', '--json': 'json' };
 
 /** The setup flags among the tokens container.mjs did not take. @returns {{flags: object, rest: string[]} | {error: string}} */
 export function parseHardenedFlags(tokens = []) {
@@ -195,7 +202,7 @@ const SIGN_IN_SCRIPT = `for f in ${SIGN_IN_PATHS.join(' ')}; do [ -e "$f" ] && e
 
 /** A Claude (or Codex) sign-in or an apiKeyHelper left on the data volume. @returns {string[]} the paths found */
 export function findSignIns({ exec, bin, cwd, env, files }) {
-  if (exec(bin, ['volume', 'inspect', DATA_VOLUME], { capture: true }).status !== 0) return [];
+  if (exec(bin, ['volume', 'inspect', `${hardenedProjectName({ dir: cwd, env })}_worca-data`], { capture: true }).status !== 0) return [];
   const r = exec(bin, ['compose', ...files, 'run', '--rm', '--no-deps', '-T', '--entrypoint', 'sh', 'worca', '-c', SIGN_IN_SCRIPT], { cwd, env, capture: true });
   return r.status === 0 ? String(r.stdout || '').split('\n').map((s) => s.trim()).filter((s) => s.startsWith('/data/')) : [];
 }
@@ -465,14 +472,14 @@ export function readPosture({ exec, bin, cwd, env, files }) {
   return { containers, networks, sidecar, logs };
 }
 
-export function printPosture(p, { out, c }) {
+export function printPosture(p, { out, c, project = HARDENED_PROJECT }) {
   if (!p.running) {
     out(`${c('bold', 'Hardened box')}  not running`);
     if (p.reason) for (const l of p.reason.split('\n')) out(`  ${l}`);
     out(`  Start it: ${c('bold', 'worca container up --hardened')}`);
     return;
   }
-  out(`${c('bold', 'Hardened box')}  running (compose project ${HARDENED_PROJECT})`);
+  out(`${c('bold', 'Hardened box')}  running (compose project ${project})`);
   for (const r of p.rows) {
     const tag = r.status === 'on' ? c('green', 'on     ') : r.status === 'off' ? c('red', 'OFF    ') : c('yellow', 'unknown');
     out(`  ${tag}  ${r.label.padEnd(34)} ${r.detail}`);
@@ -538,7 +545,8 @@ export async function hardenedBefore({ a, dir, exec, bin, out, c, fail, env, set
  */
 export async function hardenedUp({ a, dir, exec, bin, composeEnv, files, out, c, fail, stdin, login: proxyLogin, state, ask: askOverride }) {
   const { flags } = parseHardenedFlags(a._);
-  const img = checkImageLabel({ exec, bin, cwd: dir, env: composeEnv, files, tag: composeEnv?.WORCA_TAG });
+  const img = checkImageLabel({ exec, bin, cwd: dir, env: composeEnv, files,
+    tag: composeValue('WORCA_TAG', { env: composeEnv, envFile: (k) => envValue(existsSync(join(dir, '.env')) ? readFileSync(join(dir, '.env'), 'utf8') : '', k) }) });
   if (img) { fail(img); return 1; }
   const found = findSignIns({ exec, bin, cwd: dir, env: composeEnv, files });
   if (found.length) {
@@ -547,24 +555,39 @@ export async function hardenedUp({ a, dir, exec, bin, composeEnv, files, out, c,
     return 1;
   }
   const envBody = existsSync(join(dir, '.env')) ? readFileSync(join(dir, '.env'), 'utf8') : '';
-  const proxy = envValue(envBody, 'HTTPS_PROXY');
-  const user = flags.proxyUser || state?.proxyUser || '';
+  // The proxy the sidecar gets, as compose reads it (the shell over .env; prepare() already dropped a loopback one).
+  const proxy = composeValue('HTTPS_PROXY', { env: composeEnv || {}, envFile: (k) => envValue(envBody, k) }).trim();
+  const user = flags.proxyUser || String(composeEnv?.WORCA_PROXY_USER || '').trim() || state?.proxyUser || '';
+  // Every answer is also a flag or a variable, for scripts: --proxy-user / WORCA_PROXY_USER (log in; the password
+  // on stdin), --no-proxy-login / WORCA_PROXY_NO_LOGIN=1 (do not ask).
+  const noLogin = !!flags.noProxyLogin || /^(1|true|yes|on)$/i.test(String(composeEnv?.WORCA_PROXY_NO_LOGIN || '').trim());
+  const interactive = !flags.yes && !!stdin?.isTTY;
   if (proxy && !urlLogin(proxy.includes('://') ? proxy : `http://${proxy}`)) {
-    let wanted = !!flags.proxyUser;
-    if (!wanted && !flags.yes && stdin?.isTTY) {
-      const up = exec(bin, ['compose', ...files, 'up', '-d', '--no-deps', 'egress'], { cwd: dir, env: composeEnv, capture: true });
-      const st = up.status === 0 ? exec(bin, ['compose', ...files, 'exec', '-T', 'egress', 'worca', 'egress', 'status', '--json'], { cwd: dir, env: composeEnv, capture: true }) : null;
-      let saved = null;
-      try { saved = st ? JSON.parse(String(st.stdout || '').trim().split('\n').pop()) : null; } catch { saved = null; }
-      if (!saved?.login && saved?.state !== 'no-login') {
-        const ask = askOverride !== undefined ? askOverride : terminalAsk({ input: stdin });
-        wanted = /^y/i.test(String(await ask(`Does the proxy ${proxy} need a login (NTLM, Negotiate, Digest or Basic)? [y/N]: `)).trim());
+    let wanted = !!(flags.proxyUser || composeEnv?.WORCA_PROXY_USER);
+    if (!wanted && !noLogin && interactive) {
+      const side = (args) => exec(bin, ['compose', ...files, 'exec', '-T', 'egress', 'worca', 'egress', ...args], { cwd: dir, env: composeEnv, capture: true });
+      const lastJson = (r) => { try { return r ? JSON.parse(String(r.stdout || '').trim().split('\n').pop()) : null; } catch { return null; } };
+      const up = exec(bin, ['compose', ...files, 'up', '-d', '--no-deps', '--no-recreate', 'egress'], { cwd: dir, env: composeEnv, capture: true });
+      const saved = up.status === 0 ? lastJson(side(['status', '--json'])) : null;
+      // 'no-login' only says no login is saved: the sidecar cannot know whether the proxy wants one until it asks.
+      if (!saved?.login) {
+        // So ask it: a test CONNECT through the proxy. A 407 says it wants a login; a pass says it does not.
+        const t = up.status === 0 ? lastJson(side(['test', '--json'])) : null;
+        const asks = !!t?.results?.some((x) => x.needsLogin);
+        if (t?.ok) out(`${c('green', 'proxy')}  ${proxy} let a test through without a login; none is needed (later: worca container proxy login)`);
+        else {
+          const ask = askOverride !== undefined ? askOverride : terminalAsk({ input: stdin });
+          const q = asks ? `The proxy ${proxy} asks for a login (it answered 407). Log in now (NTLM, Negotiate, Digest or Basic)? [Y/n]: `
+            : `Does the proxy ${proxy} need a login (NTLM, Negotiate, Digest or Basic)? [y/N]: `;
+          const a = String(await ask(q)).trim();
+          wanted = asks ? !/^n/i.test(a) : /^y/i.test(a);
+        }
       }
     }
     if (wanted) {
       const code = await proxyLogin([...(user ? ['--user', user] : [])]);
       if (code !== 0) { fail('the proxy login was not saved; the box was not started. Try again, or start without it and run worca container proxy login'); return code; }
-    } else if (!stdin?.isTTY || flags.yes) {
+    } else if (!interactive && !noLogin) {
       out(`${c('yellow', 'proxy')}  if ${proxy} needs a login: worca container proxy login (the sidecar holds it; .env never does)`);
     }
   }
@@ -576,8 +599,9 @@ export function hardenedStatus({ a, dir, exec, bin, composeEnv, files, out, c })
   const json = a._.includes('--json');
   const p = postureRows(readPosture({ exec, bin, cwd: dir, env: composeEnv, files }));
   const ok = p.running && p.rows.every((r) => r.status === 'on');
-  if (json) out(JSON.stringify({ box: 'hardened', project: HARDENED_PROJECT, running: p.running, ok, protections: p.rows, ...(p.reason ? { reason: p.reason } : {}) }));
-  else printPosture(p, { out, c });
+  const project = hardenedProjectName({ dir, env: composeEnv });
+  if (json) out(JSON.stringify({ box: 'hardened', project, running: p.running, ok, protections: p.rows, ...(p.reason ? { reason: p.reason } : {}) }));
+  else printPosture(p, { out, c, project });
   return !p.running ? 3 : ok ? 0 : 1;
 }
 

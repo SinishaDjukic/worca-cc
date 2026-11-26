@@ -88,6 +88,15 @@ Agents run in Worca's container under their own users. A file there that its gro
 `cat` away, so Worca checks each file it reads, once, at start. A bad one stops it with a line that names the file
 and the fix. Make the files like this:
 
+**The shared profile needs a Linux Docker host.** Docker Desktop (macOS and Windows) does not enforce the owner of a
+secret file. It mounts the files on its `fakeowner` file system, where every user sees itself as the owner, so an
+agent user reads a `0600` file all the same. Mode and owner cannot show this. So Worca also opens each secret file as
+an agent user at start, and refuses to start when that read works. On Docker Desktop it refuses. Run the profile on a
+Linux host. To try it on a Mac anyway, supply the secrets as values, not files: `WORCA_BROKER_SECRET`,
+`WORCA_EGRESS_SECRET` and `WORCA_GH_APP_KEY_B64`, as the [Hardened box](hardened-box.md) does. Worca reads each value
+once at start and removes it from its environment, and agents run under other users, so they cannot read it from
+Worca's process.
+
 ```bash
 mkdir -p secrets
 docker run --rm ghcr.io/worca-org/worca:latest worca broker secrets   # prints values to copy into the two files
