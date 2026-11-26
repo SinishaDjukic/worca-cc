@@ -333,6 +333,10 @@ the Worca server (empty means the default: `api.anthropic.com`, `.github.com`, `
 and its subdomains. IP addresses and CIDR ranges work too. An empty list blocks every outbound connection. The setting
 applies when a sandbox is created; a resumed run that reconnects keeps the sandbox it had.
 
+When Worca runs in a box with `compose.egress.yml`, only the sidecar gets `WORCA_EGRESS_ALLOW`. The overlay hands
+Worca the same list as `WORCA_SANDBOX_EGRESS_ALLOW`, so the sandbox and the box follow one list. Set that variable
+yourself only to give sandboxes a different list.
+
 The model relay still works with everything blocked: the agent's model calls go to the sandbox's own loopback and come
 back to Worca over the command channel, never over the sandbox's network.
 

@@ -4,7 +4,7 @@
 // (engineModelRoute). The relay (model-relay.mjs) applies the result; the sandbox never holds the credential.
 // Refuses (errorClass 'config') what a relay cannot carry.
 import { createHash } from 'node:crypto';
-import { modelCredential, engineCredential, ENGINE_SANDBOX } from './policy.mjs';
+import { modelCredential, engineCredential, ENGINE_SANDBOX, withArticle } from './policy.mjs';
 import { OAUTH_BETA, mergeBetas } from '../../broker/service.mjs';
 import { isCopilotHost } from '../../broker/copilot.mjs';
 import { pinnedEngineClis } from './backends/e2b-template.mjs';
@@ -45,7 +45,7 @@ function parseCustomHeaders(raw) {
 export function remoteModelRoute({ spawnEnv = {}, modelEnv = null, serverEnv = {}, label }) {
   let url;
   try { url = new URL(str(spawnEnv?.ANTHROPIC_BASE_URL) || ANTHROPIC); } catch { throw refuse("This model's ANTHROPIC_BASE_URL is not a valid URL."); }
-  if (url.username || url.password) throw refuse(`This model's ANTHROPIC_BASE_URL carries a user name or password, which never enters an ${label}. Pick Local for this model.`);
+  if (url.username || url.password) throw refuse(`This model's ANTHROPIC_BASE_URL carries a user name or password, which never enters ${withArticle(label)}. Pick Local for this model.`);
   // The relay appends the call's path (and its query) to the base: a query or fragment there cannot be extended.
   // The raw text too: `https://h/?` parses to an empty search.
   if (url.search || url.hash || /[?#]/.test(str(spawnEnv?.ANTHROPIC_BASE_URL))) {
@@ -56,10 +56,10 @@ export function remoteModelRoute({ spawnEnv = {}, modelEnv = null, serverEnv = {
   const base = url.pathname === '/' ? origin : url.href;
 
   for (const x of SIGNING_FLAGS) {
-    if (truthy(spawnEnv?.[`CLAUDE_CODE_USE_${x}`])) throw refuse(`This model signs its own requests (CLAUDE_CODE_USE_${x}), which an ${label} cannot relay. Pick Local for this model.`);
+    if (truthy(spawnEnv?.[`CLAUDE_CODE_USE_${x}`])) throw refuse(`This model signs its own requests (CLAUDE_CODE_USE_${x}), which ${withArticle(label)} cannot relay. Pick Local for this model.`);
   }
   for (const k of Object.keys(modelEnv || {})) {
-    if (SECRET_NAME.test(k) && !ENTRY_KEYS.has(k)) throw refuse(`This model's setting ${k} holds a secret, which never enters an ${label}. Pick Local for this model.`);
+    if (SECRET_NAME.test(k) && !ENTRY_KEYS.has(k)) throw refuse(`This model's setting ${k} holds a secret, which never enters ${withArticle(label)}. Pick Local for this model.`);
   }
   const extraHeaders = parseCustomHeaders(spawnEnv?.ANTHROPIC_CUSTOM_HEADERS);
 
@@ -156,7 +156,7 @@ function codexRoute({ serverEnv, endpoint, upstreams, label }) {
     upstream = upstreams?.openai || ENGINE_UPSTREAMS.openai;
   }
   return {
-    engine: 'codex', upstream, origin: new URL(upstream).origin, protocol: 'openai', call: `an OpenAI Responses call from codex in an ${label}`,
+    engine: 'codex', upstream, origin: new URL(upstream).origin, protocol: 'openai', call: `an OpenAI Responses call from codex in ${withArticle(label)}`,
     allow: [['POST', '/responses'], ['GET', '/models']],
     authHeaders: () => (key ? { authorization: `Bearer ${key}` } : {}),
     extraHeaders: headers, forwardHeaders: [], secrets: [key, ...Object.values(headers)].filter(Boolean),
@@ -196,14 +196,14 @@ function copilotHost({ pat, upstreams, fetchImpl, cache }) {
 
 function copilotRoute({ serverEnv, spawnEnv, model, upstreams, fetchImpl, cache, label }) {
   const own = Object.keys(spawnEnv || {}).find((k) => /^COPILOT_PROVIDER_/.test(k));
-  if (own) throw refuse(`This run's environment sets ${own}. In an ${label} worca points copilot at its model relay itself and takes no provider of your own. Remove ${own}, or pick Local.`);
+  if (own) throw refuse(`This run's environment sets ${own}. In ${withArticle(label)} worca points copilot at its model relay itself and takes no provider of your own. Remove ${own}, or pick Local.`);
   const cred = engineCredential('copilot', serverEnv);
   if (cred.problem) throw refuse(cred.problem);
   const pat = cred.value;
   const wire = copilotWire(model);
   return {
     engine: 'copilot', upstream: () => copilotHost({ pat, upstreams, fetchImpl, cache }), protocol: wire.type === 'anthropic' ? 'anthropic' : 'openai',
-    call: `the ${wire.path} call copilot makes for ${model} in an ${label}`,
+    call: `the ${wire.path} call copilot makes for ${model} in ${withArticle(label)}`,
     allow: [['POST', wire.path]],
     // What copilot itself sends in online mode: the PAT as Bearer to the Copilot API, with the CLI's integration id.
     authHeaders: () => ({ authorization: `Bearer ${pat}` }),
@@ -256,7 +256,7 @@ function cursorRoute({ serverEnv, upstreams, fetchImpl, now, cache, label }) {
   const origin = String(upstreams?.cursor || ENGINE_UPSTREAMS.cursor).replace(/\/+$/, '');
   const secrets = [cred.value];
   return {
-    engine: 'cursor', upstream: origin, origin, protocol: 'connect', call: `a Connect call cursor-agent makes over HTTP/1.1 in an ${label}`,
+    engine: 'cursor', upstream: origin, origin, protocol: 'connect', call: `a Connect call cursor-agent makes over HTTP/1.1 in ${withArticle(label)}`,
     allow: CURSOR_PATHS,
     authHeaders: async () => ({ authorization: `Bearer ${await cursorToken({ apiKey: cred.value, origin, fetchImpl, now, cache, secrets })}` }),
     extraHeaders: {}, forwardHeaders: CURSOR_FORWARD, responseHeaders: ['connect-content-encoding'], secrets,

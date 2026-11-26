@@ -185,7 +185,7 @@ import { filePreviewOf } from './chat/file-renderers.mjs';
 import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS, feedbackIcon } from './feedback.mjs';
 import { layoutDialog, watchDialogEdges } from './dialog-layout.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
-import { loadExecEnvs, execEnvKnown, execEnvLabel, execEnvTitle, fillExecEnvSelect, setExecEnvSelectValue } from './exec-envs.mjs';
+import { loadExecEnvs, execEnvKnown, execEnvLabel, execEnvTitle, execEnvTitleWithArticle, fillExecEnvSelect, setExecEnvSelectValue } from './exec-envs.mjs';
 import { paintExecEnvStatusChip, watchExecEnvStatus } from './exec-env-status.mjs';
 import { guardModal, dialogOpen, DISCARD_MESSAGE } from './modal-guard.mjs';
 import { createVoiceController } from './ask-voice.mjs';
@@ -40668,7 +40668,7 @@ function paintRdHeader(screen, r) {
     ['rd-cost', runCostText(r, r.totalCostUsd).text + (freeRequestsSuffix(r.steps) || bridgeRequestsSuffix(r.steps)), true],
     ['rd-step', stepText, false],
   ];
-  if (r.execEnv && r.execEnv !== 'local') segs.push(['rd-exec-env', r.execEnvWaiting ? `waiting for an ${execEnvTitle(r.execEnv)} slot` : execEnvLabel(r.execEnv), false]);
+  if (r.execEnv && r.execEnv !== 'local') segs.push(['rd-exec-env', r.execEnvWaiting ? `waiting for ${execEnvTitleWithArticle(r.execEnv)} slot` : execEnvLabel(r.execEnv), false]);
   // Rebuilt only when what it says changed. Every frame of every run repaints this header, and a
   // <button> rebuilt between a press and its release loses the click (the two land on different
   // nodes). The elapsed segment changes on every frame, so it is written in place instead (the

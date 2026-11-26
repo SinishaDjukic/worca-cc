@@ -1290,6 +1290,17 @@ test('sandbox egress: allow uses the shared list, apex and subdomains for a lead
     allowOut: ['pypi.org', 'pythonhosted.org', '*.pythonhosted.org', '10.0.0.0/8', '1.1.1.1'], denyOut: ALL });
 });
 
+test('sandbox egress: in a box the overlay hands the sidecar list over as WORCA_SANDBOX_EGRESS_ALLOW, which wins', async () => {
+  const { sandboxEgress } = await sandboxPolicy();
+  assert.deepEqual(sandboxEgress({ egress: 'allow' }, { WORCA_SANDBOX_EGRESS_ALLOW: 'git.acme.example', WORCA_EGRESS_ALLOW: 'pypi.org' }),
+    { allowOut: ['git.acme.example'], denyOut: ALL });
+  assert.deepEqual(sandboxEgress({ egress: 'allow' }, { WORCA_SANDBOX_EGRESS_ALLOW: '' }).allowOut,
+    sandboxEgress({ egress: 'allow' }, {}).allowOut, 'empty means the default list, as in the sidecar');
+  const eg = readFileSync(new URL('../docker/compose.egress.yml', import.meta.url), 'utf8');
+  assert.match(eg.split(/^ {2}egress:/m)[0], /WORCA_SANDBOX_EGRESS_ALLOW: \$\{WORCA_EGRESS_ALLOW:-\}/, 'the overlay passes it to worca');
+  assert.doesNotMatch(eg.split(/^ {2}egress:/m)[0], /^\s+WORCA_EGRESS_ALLOW:/m, 'never under the name Worca\'s own policy reads');
+});
+
 test('sandbox egress: a denied host name leaves allowOut; IP and CIDR denies go into denyOut as they are', async () => {
   const { sandboxEgress } = await sandboxPolicy();
   const env = { WORCA_EGRESS_ALLOW: 'github.com,.github.com,registry.npmjs.org,1.1.1.1', WORCA_EGRESS_DENY: 'registry.npmjs.org, .github.com, 9.9.9.0/24, .invalid' };
