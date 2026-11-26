@@ -3,6 +3,7 @@
 // There is no route that sets an item, a level or doneAt: the level is derived from facts, and these routes
 // only read the view, acknowledge what was shown, and note that a screen was opened.
 import { createWorcaLevelService, WorcaLevelRequestError, VIEWED_TYPES } from '../../../src/core/worca-levels/service.mjs';
+import { prStateEvents } from '../../../src/core/artifacts.mjs';
 import { emitChanged, isFreshInstall } from '../../server.mjs';
 
 const BAD_REQUEST = 'WORCA_LEVEL_BAD_REQUEST';
@@ -21,6 +22,10 @@ export function worcaLevelService() {
 export function pokeWorcaLevel() {
   service?.pokeLevelFactsChanged();
 }
+
+// A run's stored PR state moved (merged…): a level fact changed, so every open tab re-reads. Wired here, not in
+// ui/server.mjs, which is at its size cap (tools/split-by-feature/size-caps.json).
+prStateEvents.on('changed', () => pokeWorcaLevel());
 
 const refuse = (res, message) => res.status(400).json({ error: message, code: BAD_REQUEST });
 
