@@ -109,6 +109,7 @@ import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { paintRunScope } from './run-scope-line.mjs';
 import { nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
+import { foldTabs } from './tab-fold.mjs';
 import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP, folderMembersOf } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
@@ -29757,12 +29758,15 @@ function detailTabsOf(screen) {
 //   initial   — (ctx) => key for the initially active tab; first visible otherwise
 //   buildArgs — (ctx) => extra args appended after `sec`, evaluated at ACTIVATION
 //               time so a builder sees late-corrected context (History's record)
-//   overflow  — { row: string[] }, opt-in. The keys in `row` always sit in the row;
-//               when two or more of the OTHER tabs are shown they go under a "More"
-//               menu, and the open one joins the row just before More. A table entry
+//   overflow  — { row: string[] }, opt-in. The keys in `row` are the default row; when
+//               two or more of the OTHER tabs are shown they go under a "More" menu. A
+//               row that does not fit the bar folds into it too (foldTabs: a lone other
+//               tab first, then the row from the right; never Overview or the open tab),
+//               and the open one under More joins the row just before it. A table entry
 //               may carry `menuIcon` (an icons.mjs name) for its menu row. The screen's
-//               state `relayout()` recomputes this after a level, git or visibility
-//               change; without `overflow` it does nothing.
+//               state `relayout()` recomputes this after a level, git, visibility or
+//               size change (a ResizeObserver on the bar and its buttons, released by
+//               `dispose()`); without `overflow` it does nothing.
 function initDetailTabs(screen, tabs, ctx, opts) {
   const {
     tabsSel, secsSel, tabClass, secClass, badgeClass, idPrefix,
@@ -29772,6 +29776,7 @@ function initDetailTabs(screen, tabs, ctx, opts) {
   const secs = screen.querySelector(secsSel);
   if (!bar || !secs) return;   // a screen whose template lacks the two hosts
   detailTabState.get(screen)?.menu?.close();   // never a menu left anchored to a button this rebuild drops
+  detailTabState.get(screen)?.dispose();       // nor an observer left watching those buttons
   bar.innerHTML = '';
   bar.classList.add('tabs');
   // The run card lives in the Overview section (adoptRunCard): park it back at the screen's top level, so the
@@ -29856,38 +29861,75 @@ function initDetailTabs(screen, tabs, ctx, opts) {
     more.addEventListener('click', () => {
       // Read at open time: the shown candidates, their live badge counts and the open one.
       state.menu = toggleMenu({ doc: document, anchor: more, align: 'end', label: 'More tabs',
-        items: overflowCells().filter(([k]) => inBar(k)).map(([, { tab, btn }]) => ({
+        items: [...cells].filter(([k, c]) => inBar(k) && c.btn.hasAttribute('data-overflow')).map(([, { tab, btn }]) => ({
           label: tab.label, icon: tab.menuIcon, hint: btn.querySelector(`.${badgeClass}`)?.textContent,
           checked: btn.classList.contains('active'),
           onSelect: () => { btn.click(); btn.focus({ preventScroll: true }); },
         })) });
     });
   }
-  const state = { cells, activate, relayout, menu: null };
+  const state = { cells, activate, relayout, dispose, menu: null };
   detailTabState.set(screen, state);
-  const overflowCells = () => [...cells].filter(([k]) => !overflow.row.includes(k));
+  let observer = null;
+  let cancelFrame = null;
   // A tab the interface mode and git show; `inBar` also drops one its page hid while open (the merged Agents place).
   function showsTab(k) { return cells.has(k) && levelAtLeast(cells.get(k).tab.level || 'simple') && (gitOn() || !cells.get(k).tab.needsGit); }
   function inBar(k) { return showsTab(k) && !cells.get(k).btn.hidden; }
-  // The row's order: its own tabs, the overflow ones (CSS draws only the open one), then More. With fewer than two
-  // candidates to show there is no More, and every tab keeps its table place.
+  // Which tabs go under More at the bar's width now. A folded tab is display:none and has no width, so a measured bar
+  // is unfolded (and given its More button) while the natural widths are read: relayout folds it again in the same
+  // task, before anything paints. The answer depends on those widths only, never on the fold the bar had.
+  function measureFold() {
+    const css = window.getComputedStyle(bar);
+    const px = (v) => parseFloat(v) || 0;
+    const avail = bar.clientWidth - px(css.paddingLeft) - px(css.paddingRight);
+    if (avail > 0) {
+      for (const { btn } of cells.values()) btn.removeAttribute('data-overflow');
+      if (!more.isConnected) bar.append(more);
+    }
+    const width = (node) => node.getBoundingClientRect().width;
+    const shown = (inRow) => [...cells].filter(([k]) => overflow.row.includes(k) === inRow && inBar(k))
+      .map(([key, { btn }]) => ({ key, width: width(btn) }));
+    const active = [...cells.keys()].find((k) => cells.get(k).btn.classList.contains('active'));
+    return foldTabs({ row: shown(true), rest: shown(false), active, avail, gap: px(css.columnGap), more: width(more) });
+  }
+  // The row's order: the tabs in the row, the ones under More (CSS draws only the open one), then More. With nothing
+  // under it there is no More, and every tab keeps its table place.
   function relayout() {
     if (!overflow) return;
-    const rest = overflowCells();
-    const use = rest.filter(([k]) => inBar(k)).length >= 2;
-    for (const [, { btn }] of rest) btn.toggleAttribute('data-overflow', use);
+    const had = document.activeElement;
+    const fold = measureFold();
+    for (const [k, { btn }] of cells) btn.toggleAttribute('data-overflow', overflow.row.includes(k) ? fold.extra.includes(k) : fold.rest);
+    const use = fold.rest || fold.extra.length > 0;
     const all = [...cells.values()].map((c) => c.btn);
     const over = (b) => b.hasAttribute('data-overflow');
     const order = use ? [...all.filter((b) => !over(b)), ...all.filter(over), more] : all;
-    const had = document.activeElement;
     const gone = !use && (had === more || !!state.menu?.el.contains(had));   // the focus is on More or in its menu
     if (!use) { state.menu?.close(); more.remove(); }
     // Move only when the order changed: moving a focused button drops its focus.
     if (order.length !== bar.children.length || order.some((n, i) => n !== bar.children[i])) bar.append(...order);
-    if (had && had !== document.activeElement && (gone || order.includes(had))) {
+    const folded = all.includes(had) && over(had) && !had.classList.contains('active');   // a focused tab just left the row
+    if (folded) more.focus({ preventScroll: true });
+    else if (had && had !== document.activeElement && (gone || order.includes(had))) {
       const to = order.includes(had) ? had : bar.querySelector('[role="tab"][aria-selected="true"]');
       to?.focus({ preventScroll: true });
     }
+  }
+  // A new size, re-fitted once per frame. A screen dropped without a rebuild lets go of its observer.
+  function schedule() {
+    if (cancelFrame) return;
+    const run = () => { cancelFrame = null; if (bar.isConnected) relayout(); else dispose(); };
+    if (typeof window.requestAnimationFrame === 'function') {
+      const id = window.requestAnimationFrame(run);
+      cancelFrame = () => window.cancelAnimationFrame(id);
+    } else {
+      const id = setTimeout(run, 16);
+      cancelFrame = () => clearTimeout(id);
+    }
+  }
+  function dispose() {
+    observer?.disconnect();
+    cancelFrame?.();
+    observer = cancelFrame = null;
   }
   if (!cells.size) return;
   // The opening tab is always one the interface mode shows: History prefers Diff and Running the
@@ -29895,6 +29937,12 @@ function initDetailTabs(screen, tabs, ctx, opts) {
   const want = initial ? initial(ctx) : null;
   const first = [...cells.keys()].find(showsTab);
   activate(showsTab(want) ? want : (first || cells.keys().next().value));
+  // The buttons too: a badge count that grows takes room without resizing the bar. Through `window.` like the file's
+  // other ResizeObserver sites.
+  if (overflow && typeof window.ResizeObserver === 'function') {
+    observer = new window.ResizeObserver(schedule);
+    for (const node of [bar, ...[...cells.values()].map((c) => c.btn), more]) observer.observe(node);
+  }
 }
 // A mode change can hide the tab that is open. Its pill would vanish with the section still up, so
 // the first tab the new mode shows takes over. (A deep link never lands here: tabs have no route.)
@@ -29936,10 +29984,10 @@ function hdAwayOthers(data) {
   return all.filter((d) => d && (d.choice == null || !['clarify', 'questions', 'form'].includes(d.kind)));
 }
 
-/** The run pages' tabs that stay in the row (initDetailTabs `overflow`); the others go under "More". `qa` is the page's
- *  own Q&A key. A run without a project has no Diff: its Artifacts, the result, keeps that place in the row. */
-function runTabRow(qa, noProject) {
-  return { row: ['overview', 'task', 'diff', 'changes', qa, 'logs', ...(noProject ? ['artifacts'] : [])] };
+/** The run pages' row tabs (initDetailTabs `overflow`) in priority order; the others go under "More". At a narrow
+ *  width the row's right-most tabs fold in too (foldTabs). `qa` is the page's own Q&A key. */
+function runTabRow(qa) {
+  return { row: ['overview', 'task', 'diff', 'changes', 'artifacts', qa, 'logs'] };
 }
 
 const HD_TABS = [
@@ -30017,7 +30065,7 @@ function initHdTabs(screen, record, data) {
     tabsSel: '.hd-tabs', secsSel: '.hd-sections',
     tabClass: 'hd-tab', secClass: 'hd-sec', badgeClass: 'hd-tab-badge',
     idPrefix: 'hd',
-    overflow: runTabRow('clarify', noProject),
+    overflow: runTabRow('clarify'),
     // hdCurrentRecord(), NOT the captured `record`: build() runs at CLICK time,
     // and refreshHdFromRow REPLACES histDetailState.record (deep link, and every
     // pipelines-changed forced reload). Closing over the load-time object is
@@ -32147,7 +32195,7 @@ function initRdTabs(screen, r) {
     secClass: 'rd-sec',
     badgeClass: 'rd-tab-badge',
     idPrefix: 'rd',
-    overflow: runTabRow('qa', noProject),
+    overflow: runTabRow('qa'),
   });
 }
 
