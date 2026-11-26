@@ -35,7 +35,11 @@ const nodeFetch = globalThis.fetch;   // the jsdom boots below replace the globa
 const normalize = (html) => html.replace(/ data-sig="[^"]*"/g, ' data-sig=""');
 // `gv-moving` is a transient animation class the graph drops on a timer: whether a snapshot holds it depends on load,
 // not on the DOM shape. It is stripped from both sides at compare time, so the checkpoint fixture stays untouched.
+// Where a run's agents execute (run-sandbox-note.mjs, #1634) came after the checkpoint and has nothing to do with the
+// small-runs flag: its line under the status block and its header segment are stripped the same way.
 const transient = (v) => (typeof v === 'string' ? v.replace(/ gv-moving(?=[" ])/g, '')
+  .replace(/<p class="rd-exec-line"[^>]*>[\s\S]*?<\/p>/g, '')
+  .replace(/<span class="rd-dot">·<\/span><(a|span) class="rd-exec-env[^"]*"[^>]*>[^<]*<\/\1>/g, '')
   : Array.isArray(v) ? v.map(transient) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, transient(x)])) : v);
 const check = (name, value) => {
   if (UPDATE) { golden.cases[name] = value; return; }

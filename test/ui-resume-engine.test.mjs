@@ -456,12 +456,14 @@ test('an E2B run says so: History detail chip, live header segment (and "waiting
   assert.equal(seg()?.textContent, 'E2B sandbox');
 });
 
-test('a local run shows no execution-environment chip or segment', async () => {
+test('a local run shows no sandbox chip; its run page says "not sandboxed" (native install) instead of a backend', async () => {
   const ctx = await boot({ fetchHandler: histFetch('claude', { pauseReason: 'error', limitEngine: null }) });
   ctx.go(`history/${KEY}/fcec04e8`);
   await ctx.settle(8);
   assert.ok(ctx.doc.querySelector('#hist-detail .hd-meta .hd-engine'));
   assert.equal(ctx.doc.querySelector('#hist-detail .hd-meta .hd-exec-env'), null);
   const page = await pausedRun(await boot(), { engine: 'claude' });
-  assert.equal(page.querySelector('.rd-meta .rd-exec-env'), null);
+  const seg = page.querySelector('.rd-meta .rd-exec-env');
+  assert.ok(!seg || seg.classList.contains('rd-not-sandboxed'), 'no backend segment on a local run');
+  if (seg) assert.equal(seg.textContent, 'not sandboxed');
 });
