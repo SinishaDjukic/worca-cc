@@ -120,3 +120,19 @@ test('S11-T10 startsFrom null with links: only the two link rows in one dl; no l
   mountRunFacts(host, info);
   assert.equal(host.innerHTML, html);
 });
+
+// ── Slice 16 (R-po-6): the requirement's example, and a started run with every dependency done ────────────────────────
+test('S16-T3 run 7: Waits for 2, 6 and Needed by 8, 12, in that order, each once', () => {
+  const box = mountRunFacts(hostOf(), { ...INFO, index: 7, links: { waitsFor: [2, 6], neededBy: [8, 12] } });
+  assert.deepEqual(rowsOf(box).slice(1), [['waits', 'Waits for', '2, 6'], ['needed', 'Needed by', '8, 12']]);
+  assert.equal(box.textContent.match(/Waits for/g).length, 1);
+  assert.equal(box.textContent.match(/Needed by/g).length, 1);
+});
+
+test('S16-T4 a started run with all dependencies done has no Waits for row at all, only Starts from and Needed by', () => {
+  const box = mountRunFacts(hostOf(), { ...INFO, index: 7, links: { waitsFor: [], neededBy: [12] } });
+  assert.deepEqual(rowsOf(box).map((r) => r[0]), ['starts', 'needed']);
+  assert.equal(box.querySelector('[data-fact="waits"]'), null);
+  assert.doesNotMatch(box.textContent, /Waits for/);
+  assert.equal(box.querySelector('[data-fact="needed"] dd').textContent, '12');
+});

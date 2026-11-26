@@ -354,6 +354,27 @@ test('S11-T5 a canceled dependency is never listed in links.waitsFor', () => wit
   assert.ok(waitsFor.includes(2));
 }));
 
+// ── Slice 16 (R-po-6): only a started run has facts; a run that has not started has no run page ───────────────────────
+test('S16-T1 run 7 started after runs 1 to 6 are done: links {waitsFor: [], neededBy: [12]}', () => withEnvVars(ON, () => {
+  const fx = world(root, { done: [1, 2, 3, 4, 5, 6], states: { 7: { pipe: 'running' } } });
+  assert.deepEqual(sliceOfPipeline(fx.pipelineOf(7), { live: fx.live }).links, { waitsFor: [], neededBy: [12] });
+}));
+
+test('S16-T2 a run that has not started has pipelineId null in featureView and the Runs list: nothing for a run page to open', () => withEnvVars(ON, () => {
+  const fx = world(root, S11_STATE);
+  const { view, members } = views(fx);
+  const runs = SIXTEEN_RUN_LINKS.map((l) => l.run);
+  const noPipeline = (idOf) => runs.filter((run) => idOf(run) === null);
+  const notStarted = [4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 16];
+  assert.deepEqual(noPipeline((run) => fx.pipelineOf(run)), notStarted, 'sliceOfPipeline has no pipeline to answer for');
+  assert.deepEqual(noPipeline((run) => view.get(run).pipelineId), notStarted, 'featureView');
+  const group = listRunGroups({ live: fx.live }).find((g) => g.id === fx.featureId);
+  assert.equal(group.members.length, runs.length, 'every run is a member');
+  const byRun = new Map(group.members.map((m) => [m.position, m]));
+  assert.equal(members.size, runs.length);
+  assert.deepEqual(noPipeline((run) => byRun.get(run).pipelineId), notStarted, 'the Runs list');
+}));
+
 // ---- Slice 4 (D14): the helper holds a stop behind any run, default run 2 ----
 test('setRun held takes `after`: run 4 held behind run 3 reads stop.after === 3 in featureView; the default stays 2', () => withEnvVars(ON, () => {
   const fx = world(root, { done: [1], states: { 2: { stop: 'requirement' }, 3: { pipe: 'running' }, 4: { stop: 'check', held: true, after: 3 } } });

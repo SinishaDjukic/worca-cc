@@ -362,6 +362,41 @@ test('D3: a planned run with no page yet (a waiting ticket) reads its run N as p
   assert.ok(pageOf(ctx).querySelector('.gpage-requirements [data-key="R-po-1"] a.rd-fact-link'), 'a run with a page still links');
 });
 
+test('S16-T5 (R-po-6): a run that has not started has no run page: its row on the feature page and in the Runs list opens the feature', async () => {
+  const waiting = { ...d3Member(3), pipelineId: null, ticketId: 't3', status: 'scheduled' };
+  const groups = { groups: [{ ...D3_GROUPS([waiting]).groups[0], smallRuns: true }, GROUPS.groups[1]] };
+  // The Runs list lists a group only once one of its runs is a live, scheduled or saved row: run 1 is saved.
+  const saved = [{ id: 'p1', projectKey: 'acme', title: 'Slice 1', status: 'done', mtime: Date.now() }];
+  const { ctx } = await d3Boot({ feature: () => json(D3_FEATURE('being built')), groups,
+    extra: (url) => (url.startsWith('/api/history') ? json({ pipelines: saved }) : null) });
+  ctx.go('feature/feat_1');
+  await ctx.settle(10);
+  const hrefs = (row) => [...row.querySelectorAll('a[href]')].map((a) => a.getAttribute('href'));
+  const noRunPage = (row, where) => {
+    assert.deepEqual(hrefs(row).filter((h) => h.startsWith('#running/') || h.startsWith('#history/')), [], `${where}: no run page link`);
+  };
+  const row = pageOf(ctx).querySelector('.gpage-runs .run-member[data-key="t3"]');
+  assert.ok(row, 'the waiting run has a row on the feature page');
+  assert.equal(row.querySelector('.run-member-title').getAttribute('href'), '#feature/feat_1');
+  noRunPage(row, 'feature page');
+  assert.equal(pageOf(ctx).querySelector('.gpage-runs .run-member[data-key="p1"] .run-member-title').getAttribute('href'), '#history/acme/p1',
+    'a started run still links its own page');
+  // The same member in the Runs list (the group row, expanded).
+  const list = () => ctx.window.document.getElementById('runs-list');
+  const toggle = list().querySelector('.runs-item[data-row-key*="feat_1"] .runs-expand');
+  assert.ok(toggle, 'the feature\'s group row is listed');
+  if (toggle.getAttribute('aria-expanded') !== 'true') {
+    toggle.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+    await ctx.settle(6);
+  }
+  const members = [...list().querySelectorAll('.runs-item[data-row-key*="feat_1"] > .runs-members > .runs-item')];
+  const member = (n) => members.find((m) => m.querySelector('.runs-row-title').textContent === `${n} · Slice ${n}`);
+  assert.ok(member(3), `the waiting run is a member row: ${members.map((m) => m.textContent).join(' | ')}`);
+  assert.equal(member(3).querySelector('a.runs-row').getAttribute('href'), '#feature/feat_1');
+  noRunPage(member(3), 'Runs list');
+  assert.equal(member(1).querySelector('a.runs-row').getAttribute('href'), '#history/acme/p1');
+});
+
 test('D3: a member state frame refetches the feature and flips R-po-2 from being built to met; a shape-feature frame changing one word repaints the open tab', async () => {
   let w2 = 'being built';
   const { ctx, calls } = await d3Boot({ feature: () => json(D3_FEATURE(w2)) });

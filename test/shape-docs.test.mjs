@@ -196,3 +196,10 @@ test('s15 (R-po-6): the run page bullet says Waits for and Needed by show on a s
   assert.ok(bullet, 'the run panel and run page bullet');
   assert.deepEqual(missing(bullet, [/started run/, /not started/, 'no run page', 'feature page', /point(ing)? at the row/, 'dashed bar']), []);
 });
+
+// Shaper small runs slice 16 (R-po-6): the contract's words stay in the run page bullet.
+test('S16-T6 (R-po-6): the run page bullet says a run that has not started has no run page, and names Waits for, Needed by and nothing', () => {
+  const bullet = smallPart('The four places').split(/ - \*\*/).find((b) => b.startsWith('The run panel and the Expert run page**')) || '';
+  assert.ok(bullet, 'the run panel and run page bullet');
+  assert.deepEqual(missing(bullet, ['has no run page', 'Waits for', 'Needed by', '`nothing`']), []);
+});
