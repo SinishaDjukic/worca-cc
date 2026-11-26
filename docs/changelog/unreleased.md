@@ -35,6 +35,8 @@ The setup asks only for what is missing. It writes `.env` with mode 0600 and nev
 
 `worca container status` then shows one line per protection, read from the running box. A line that is off says how to fix it.
 
+With agents under their own users, Worca now checks every secret file it reads. The broker's secret, the egress sidecar's secret and the GitHub App key must each be mode 0600 and owned by Worca's user. Otherwise Worca does not start, and says which file to fix.
+
 It is for one developer on their own machine. It runs on Docker only. It is not "no secrets": an MCP registry secret a run uses stays in its reach. Your native install and the plain container do not change.
 
 Chips: Container · Security

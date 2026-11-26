@@ -436,9 +436,17 @@ warning.
 worca reads `WORCA_BROKER_SECRET` (or the file `WORCA_BROKER_SECRET_FILE` names) once at start
 and removes both variables from its environment before it starts anything, so no child inherits
 the secret or the file's path: not an agent, a script tool, an MCP server, a terminal or a git
-hook. With agents under their own users, worca does not start while that file is readable by
-its group or by others: make it `0600`, owned by the user worca runs as (a compose secret keeps
-the host file's mode).
+hook. With agents under their own users, worca does not start while that file is readable or
+writable by its group or by others, or owned by another user: make it `0600`, owned by the user
+worca runs as (a compose secret keeps the host file's mode and owner; in the image that is uid
+1000, so `chown 1000:1000 <file> && chmod 600 <file>` on the host).
+
+The same rule holds for every secret file worca's container reads: `WORCA_EGRESS_SECRET_FILE`
+(the egress sidecar's secret) and `WORCA_GH_APP_KEY_FILE` (the GitHub App key). worca reads each
+once at start and refuses to start with one line per file that names it and the fix. Agents share
+that container, and the guardrails' Read deny on `/run/secrets/**` does not stop a shell `cat`.
+Files only another container reads (the broker's vault key and model keys, the sidecar's managed
+proxy login) are not in agents' reach and are not checked here.
 
 ### Only Claude runs
 
