@@ -90,7 +90,11 @@ worca flags on smartRunNaming   # a Labs feature, off by default
   `worca projects list`.
 - The rest: `ui`, `run --preset`, `resume`, `runs`, `logs`, `stop`, `pause`, `schedule`, `workflow`, `script`,
   `plugin`, `marketplace`, `models`, `config`, `flags`, `metrics`, `policy`, `memory team`, `container`, `broker`,
-  `proxy`, `setup`, `extension`, `readiness`, `doctor` and `version`.
+  `proxy`, `exec-env`, `e2b`, `setup`, `extension`, `readiness`, `doctor` and `version`.
+- `exec-env list|status|build` lists the execution environments, shows a project's builds as the running server sees
+  them, and builds a project's E2B template in that server. See
+  [E2B](e2b.md#building-and-rebuilding-a-project-environment).
+- `e2b sweep` removes this instance's orphan E2B sandboxes. See [E2B](e2b.md#cleaning-up-orphan-sandboxes).
 
 ## Exit codes
 
