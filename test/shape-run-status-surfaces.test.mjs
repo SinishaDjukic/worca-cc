@@ -15,6 +15,7 @@ import { getDb } from '../src/core/db.mjs';
 import { getTicket, predecessorState } from '../src/core/scheduler.mjs';
 import { listRunGroups } from '../src/core/run-groups.mjs';
 import { sliceGateState } from '../src/core/shape/features.mjs';
+import { featureStateLine } from '../ui/public/shape/feature-card.mjs';
 import { buildRunsModel, groupRow, renderRunsList } from '../ui/public/runs-list.mjs';
 import { SIXTEEN_RUN_LINKS, startable } from './helpers/shape-sixteen-runs.mjs';
 import { WALKED, walked, walkWorld, groupItem, cardStatus, pageStatus, sidebarStatus, runPageStatus, headRead, cardHost, pageHost, NOW } from './helpers/shape-surfaces.mjs';
@@ -33,9 +34,11 @@ const sorted = (m) => [...m.keys()].sort((a, b) => a - b);
 
 /** The three row surfaces carry data-mark; the run page head does not. */
 const ROW_SURFACES = ['card', 'page', 'sidebar'];
+/** The card options of a walked world: run 1's real pipeline and the whole featureView payload. */
+const cardOf = (w) => ({ own: w.own, view: w.view });
 /** The four surfaces' reads of one walked world: {card, page, sidebar, run}, each Map run → {word, dot, mark, text}. */
 function surfaces(w) {
-  const card = cardStatus(doc(), w.slices, w.snaps);
+  const card = cardStatus(doc(), w.slices, w.snaps, cardOf(w));
   const sidebar = sidebarStatus(doc(), w.group);
   const page = pageStatus(doc(), w.members);
   const d = doc();
@@ -121,7 +124,7 @@ test('R-qa-6 every not-started run\'s word matches the gate (R-arch-2)', () => w
   let checked = 0;
   for (const state of WALKED) {
     const w = walkWorld(root, state);
-    const card = cardStatus(doc(), w.slices, w.snaps);
+    const card = cardStatus(doc(), w.slices, w.snaps, cardOf(w));
     const free = new Set(startable(w.fx));
     const rows = getDb().prepare('SELECT idx, ticket_id, pipeline_id FROM shape_feature_slices WHERE feature_id = ?').all(w.fx.featureId);
     const ref = (run) => { const r = rows.find((x) => x.idx === run); return r.ticket_id ? { kind: 'ticket', id: r.ticket_id } : { kind: 'pipeline', id: r.pipeline_id }; };
@@ -197,7 +200,7 @@ test('acceptance: with the flag off, a marked feature\'s Runs list member rows r
 // ---- Shaper small runs slice 10 (R-ux-3): the order drawing is on the feature page only -----------------------------
 test('s10: no drawing on the card or the sidebar', () => withEnvVars(ON, () => {
   const w = walkWorld(root, walked('failed'));   // the busy 16-run state
-  const card = cardHost(doc(), w.slices, w.snaps);
+  const card = cardHost(doc(), w.slices, w.snaps, cardOf(w));
   const d = doc();
   const history = w.group.members.filter((m) => m.pipelineId)
     .map((m) => ({ id: m.pipelineId, projectKey: 'k', title: m.pipelineId, status: m.run.status, run: { status: m.run.status } }));
@@ -217,4 +220,44 @@ test('s10: no drawing on the card or the sidebar', () => withEnvVars(ON, () => {
   assert.equal(page.root.querySelectorAll('.gpage-order-toggle').length, 1, 'the feature page offers Show order');
   assert.equal(showOrder(page.root), 1);
   page.dispose();
+}));
+
+// ---- Shaper small runs slice 12 (R-arch-1): run 1 runs in the Chat card's own pipeline -----------------------------
+test('R-arch-1 run 1 reviewing in the card\'s own pipeline: word, dot and state line match the other surfaces', () => withEnvVars(ON, () => {
+  const w = walkWorld(root, walked('none-done'));
+  const s = surfaces(w);
+  assertWordEverywhere(s, 1, 'reviewing', 'none-done');
+  for (const name of Object.keys(s)) assert.equal(s[name].get(1).dot, s.card.get(1).dot, `${name}: run 1's dot`);
+  assert.ok(s.card.get(1).dot.includes('is-pulse'), `run 1's dot is live (${s.card.get(1).dot})`);
+  const line = featureStateLine(w.view, { snapOf: (p) => w.snaps.get(p) || null });
+  assert.equal(line, 'Run 1 reviewing · next: run 9');
+  assert.ok(String(s.card.line).startsWith(line), `the card's state line reads "${s.card.line}"`);
+}));
+
+test('R-arch-1 the card\'s pipeline is run 1\'s: the surface helper never builds it on a pipeline that is no run', () => withEnvVars(ON, () => {
+  const w = walkWorld(root, walked('none-done'));
+  assert.ok(w.own, 'the walked world names the card\'s pipeline');
+  assert.equal(w.own, w.fx.pipelineOf(1));
+  const host = cardHost(doc(), w.slices, w.snaps, cardOf(w));
+  assert.ok(host.root.querySelector(`[title="Run ${w.own}"]`), 'the card is built on run 1\'s pipeline');
+  host.dispose();
+  assert.equal(cardStatus(doc(), w.slices, w.snaps, cardOf(w)).get(1).mark, 'live');
+}));
+
+test('R-arch-1 flag off: the card\'s run 1 row reads as without its own snapshot', () => withEnvVars(ON, () => {
+  const w = walkWorld(root, walked('none-done'));
+  const run1 = (snaps, own) => {
+    const host = cardHost(doc(), w.slices, snaps, { flag: false, own, view: w.view });
+    const li = [...host.root.querySelectorAll('.run-member:not([data-key="planning"])')]
+      .find((x) => x.querySelector('.run-member-num').textContent === '1');
+    const text = li.textContent;
+    host.dispose();
+    return text;
+  };
+  // The reference card is another pipeline's and the store holds no snapshot of run 1.
+  const without = new Map([...w.snaps].filter(([pid]) => pid !== w.own));
+  const reference = run1(without, 'p0');
+  // The check can see a difference: a snapshot of run 1 that does reach the row changes its text.
+  assert.notEqual(run1(w.snaps, 'p0'), reference, 'positive control');
+  assert.equal(run1(w.snaps, w.own), reference);
 }));

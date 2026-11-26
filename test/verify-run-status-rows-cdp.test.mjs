@@ -191,3 +191,11 @@ test('s9: it adds the map surface (SURFACE=map), the worlds base, busy, held, ch
   assert.match(s, /data-from=\\?["']2\\?["']|\.from\s*===?\s*['"]?2\b/, 'after2 draws nothing from run 2');
   assert.match(s, /check\(overlaps\[[^\n]*\.length === 0/, 'links that share no run and run together fail the proof');
 });
+
+// ── Slice 12 (R-arch-1): the line surface proves run 1, which runs in the Chat card's own pipeline ────────────────────
+test('s12: the line surface adds the first world (run 1 reviewing, nothing done) and checks the card\'s run 1 row', () => {
+  const s = src();
+  assert.match(s, /['"]line-first['"]\s*:[^\n]*1:\s*\{\s*pipe:\s*'running'\s*\}[^\n]*1:\s*'n_review'/, 'SPECS line-first: run 1 running at the Reviewer');
+  assert.match(s, /\bfirst\s*:\s*\{\s*line:\s*'Run 1 reviewing · next: run 9',\s*done:\s*'0 of 16 runs done',\s*chip:\s*''/, 'LINE_WORLDS first');
+  assert.match(s, /===\s*'first'[\s\S]{0,600}reviewing/, 'the first world\'s extra card check: run 1\'s row reads reviewing');
+});

@@ -1102,7 +1102,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     el.dataset.runStatus = status;
     const pid = (s && s.pipelineId) || id.pipelineId || '';
     // Shaper's slots (feature model, rounds).
-    const shaperIn = s && s.shaper ? { own: s, card: s.shaper.card, snapOf: (p) => (s.shaper.snaps && s.shaper.snaps[p]) || null } : null;
+    // Slice 12: run 1 runs in the card's own pipeline, so with the flag on its snapshot is the card's own (`snaps` skips it).
+    const shaperIn = s && s.shaper ? { own: s, card: s.shaper.card, snapOf: (p) => (s.shaper.snaps && s.shaper.snaps[p])
+      || (p && p === s.pipelineId && flagOn('shaperSmallRuns', doc) ? s : null) } : null;
     // Shaper small runs B1: a card whose planning run carries the marker is the one card (null: dev's card, unchanged).
     const one = shaperIn ? oneCardModel(shaperIn) : null;
     oneNow = one;

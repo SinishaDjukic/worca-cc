@@ -2504,11 +2504,12 @@ test('B1 one card: the log reads "Requirements agreed" and "Runs approved"; the 
   assert.deepEqual($$('.chat-rc-log-text').map((n) => n.textContent), ['Clarify · 2 answers', 'Requirements agreed', 'Runs approved']);
   const src = readFileSync(new URL('../ui/public/chat/run-card.mjs', import.meta.url), 'utf8');
   // s4 D7: the flag gates only the rows' run status marks (the sliceMap line) and, slice 6, the stop list (the stopLines
-  // line); the marker alone picks the card.
+  // line), and, slice 12, run 1's own snapshot in snapOf (the card's own pipeline); the marker alone picks the card.
   const reads = src.split('\n').filter((l) => /flagOn\('shaperSmallRuns'/.test(l));
-  assert.equal(reads.length, 2, 'the marker, never the live flag, picks the card');
-  assert.match(reads[0], /stopLines = one && flagOn\('shaperSmallRuns', doc\)/);
-  assert.match(reads[1], /const sliceMap = one && flagOn\('shaperSmallRuns', doc\)/);
+  assert.equal(reads.length, 3, 'the marker, never the live flag, picks the card');
+  assert.match(reads[0], /p === s\.pipelineId && flagOn\('shaperSmallRuns', doc\) \? s : null/);
+  assert.match(reads[1], /stopLines = one && flagOn\('shaperSmallRuns', doc\)/);
+  assert.match(reads[2], /const sliceMap = one && flagOn\('shaperSmallRuns', doc\)/);
 });
 
 test('B1 one card: a finished marked feature builds no hidden Ask for changes field (it lived in the result block)', () => {

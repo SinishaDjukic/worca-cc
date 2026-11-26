@@ -21,7 +21,7 @@ export const NOW = Date.parse('2026-11-21T12:00:00Z');
 
 /** The six walked states. `at` names the node a building run is at (else the Implementer). */
 export const WALKED = Object.freeze([
-  { name: 'none-done', spec: { done: [], states: { 1: { pipe: 'running' } } } },
+  { name: 'none-done', spec: { done: [], states: { 1: { pipe: 'running' } } }, at: { 1: 'n_review' } },   // run 1 reviewing
   { name: 'some-done', spec: { done: [1, 3, 11] } },
   { name: 'going', spec: { done: [1, 11], states: { 3: { pipe: 'running' } } } },
   { name: 'stop-open', spec: 'base' },
@@ -49,7 +49,8 @@ function liveSnap(pid, { at = 'n_impl', pendingQuestion = null } = {}) {
 }
 
 const STOP_KIND = { requirement: 'plan', check: 'gate', objection: 'gate' };
-/** pipelineId → the one snapshot of each live run of the world (a failed or finished run has none). */
+/** pipelineId → the one snapshot of each live run of the world (a failed or finished run has none). Run 1 runs in the
+ *  planning run's own pipeline, so its snapshot carries `shaping`, as the real store's does. */
 function snapshots(fx, states = {}, at = {}) {
   const out = new Map();
   for (const [key, how] of Object.entries(states)) {
@@ -57,7 +58,8 @@ function snapshots(fx, states = {}, at = {}) {
     if ((how.pipe || 'running') !== 'running') continue;
     const pid = fx.pipelineOf(run);
     const pendingQuestion = how.stop ? { id: `q${run}`, kind: STOP_KIND[how.stop], stop: { reason: how.stop, run } } : null;
-    out.set(pid, liveSnap(pid, { at: how.stop ? 'n_refine' : at[run] || 'n_impl', pendingQuestion }));
+    const snap = liveSnap(pid, { at: how.stop ? 'n_refine' : at[run] || 'n_impl', pendingQuestion });
+    out.set(pid, pid === fx.originPipelineId ? { ...snap, shaping: { perspectives: [], rounds: [] } } : snap);
   }
   return out;
 }
@@ -81,9 +83,9 @@ export function groupItem(g, { flag = true, snaps = new Map() } = {}) {
 }
 
 /** Builds one walked world (call it with the flag on in the environment) and its payloads: featureView's slices for the
- *  card, the listRunGroups group and its members for the other surfaces, and the live runs' snapshots. As on the server,
- *  every live run has a live entry, so a building run's slice reads `running` (the fixture alone keeps only the asking
- *  runs there). */
+ *  card (with the whole view and `own`, the card's pipeline: run 1's), the listRunGroups group and its members for the
+ *  other surfaces, and the live runs' snapshots. As on the server, every live run has a live entry, so a building
+ *  run's slice reads `running` (the fixture alone keeps only the asking runs there). */
 export function walkWorld(projectDir, { name, spec, at }) {
   const built = world(projectDir, spec);
   const snaps = snapshots(built, (typeof spec === 'string' ? SIXTEEN_RUN_STATES[spec] : spec).states, at);
@@ -93,7 +95,7 @@ export function walkWorld(projectDir, { name, spec, at }) {
   const raw = listRunGroups({ live: fx.live }).find((g) => g.id === fx.featureId);
   const group = groupItem(raw, { snaps });
   const members = groupRow(group, { now: NOW }).members;
-  return { name, fx, snaps, slices: view.slices, raw, group, members };
+  return { name, fx, snaps, view, own: fx.originPipelineId, slices: view.slices, raw, group, members };
 }
 
 /** The painted dot's signature: its `is-…` classes (the pulse included) and its symbol. */
@@ -108,16 +110,18 @@ const CARD_MEMBER = (sl) => (sl.state === 'done' ? { status: 'done', endReached:
     : sl.state === 'error' ? { status: 'error' } : { status: 'running' });
 
 /** The Chat card (createRunCardController) over featureView's slices, left live in `doc.body`: `flag` is the browser's
- *  shaperSmallRuns, `marked` the card's smallRuns marker. `update()` repaints it from the same snapshot, `destroy()` is
- *  the card's own teardown, `dispose()` also removes it. */
-export function cardHost(doc, slices, snaps, { flag = true, marked = true } = {}) {
+ *  shaperSmallRuns, `marked` the card's smallRuns marker. `own` is the card's pipeline (the planning run's, which is
+ *  run 1's) and `view` the featureView payload the card reads as its feature (else a bare feature over `slices`). The
+ *  run store answers a live snapshot first, then a finished REST stub for `own`. `update()` repaints it from the same
+ *  snapshot, `destroy()` is the card's own teardown, `dispose()` also removes it. */
+export function cardHost(doc, slices, snaps, { flag = true, marked = true, own = 'p0', view = null } = {}) {
   applyFlags({ shaperSmallRuns: flag }, doc);
   const members = slices.map(CARD_MEMBER);
-  const feature = { id: 'feat-1', title: 'Charts', status: 'active', total: slices.length, done: slices.filter((s) => s.state === 'done').length,
-    halted: null, slices, ask: null, log: [], originPipelineId: 'p0', ship: { ready: false, mode: null } };
-  const cardJson = { pipelineId: 'p0', feature, log: [], ...(marked ? { smallRuns: true } : {}) };
-  const rest = { source: 'rest', terminal: true, status: 'done', pipelineId: 'p0' };
-  const runStore = { subscribe: () => () => {}, byPipeline: (pid) => (pid === 'p0' ? rest : snaps.get(pid) || null), get: () => null };
+  const feature = view || { id: 'feat-1', title: 'Charts', status: 'active', total: slices.length, done: slices.filter((s) => s.state === 'done').length,
+    halted: null, slices, ask: null, log: [], originPipelineId: own, ship: { ready: false, mode: null } };
+  const cardJson = { pipelineId: own, feature, log: [], ...(marked ? { smallRuns: true } : {}) };
+  const rest = { source: 'rest', terminal: true, status: 'done', pipelineId: own };
+  const runStore = { subscribe: () => () => {}, byPipeline: (pid) => snaps.get(pid) || (pid === own ? rest : null), get: () => null };
   const gm = groupModel({ kind: 'feature', title: 'Charts', planning: { status: 'done', endReached: true }, members }, { now: NOW });
   const listRow = { kind: 'chain', groupKind: 'feature', groupId: 'feat-1', title: 'Charts', model: gm, count: gm.count.text,
     planning: { title: 'Planning', href: '#running/r0', model: gm.planning },
@@ -125,17 +129,19 @@ export function cardHost(doc, slices, snaps, { flag = true, marked = true } = {}
       pipelineId: slices[i].pipelineId, ticketId: slices[i].ticketId, run: members[i] })) };
   const controls = { paintQuestion: () => null, releaseQuestion() {}, groupOf: () => listRow, memoFor: () => ({}) };
   const ctl = createRunCardController({ controls, runStore, tickMs: 0 });
-  const block = { id: 'card_s5', card: { type: PROGRESS_CARD_TYPE, pipelineId: 'p0', runId: 'run-p0', title: 'Charts' } };
+  const block = { id: 'card_s5', card: { type: PROGRESS_CARD_TYPE, pipelineId: own, runId: `run-${own}`, title: 'Charts' } };
   const built = ctl.build(block, { doc, win: doc.defaultView, shaperCard: () => cardJson });
   doc.body.appendChild(built.el);
   return { root: built.el, update: () => built.handle.blockChanged(block), destroy: () => built.dispose(),
     dispose() { built.dispose(); ctl.destroy(); built.el.remove(); } };
 }
 
-/** The Chat card's run rows, the marked feature card with the flag on. */
-export function cardStatus(doc, slices, snaps) {
-  const host = cardHost(doc, slices, snaps);
+/** The Chat card's run rows, the marked feature card with the flag on (`opts`: cardHost's). The Map also carries
+ *  `line`: the card status block's detail (the state line), null when absent. */
+export function cardStatus(doc, slices, snaps, opts = {}) {
+  const host = cardHost(doc, slices, snaps, opts);
   const out = rowsRead([...host.root.querySelectorAll('.run-member:not([data-key="planning"])')]);
+  out.line = host.root.querySelector('.chat-rc-status .run-status-detail')?.textContent ?? null;
   host.dispose();
   return out;
 }

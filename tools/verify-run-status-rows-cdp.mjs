@@ -170,6 +170,8 @@ const SPECS = {
   'line-next': { spec: { done: SIXTEEN_RUN_STATES.busy.done, states: Object.fromEntries(Object.entries(SIXTEEN_RUN_STATES.busy.states).filter(([r]) => r !== '6')) } },
   'line-two': { spec: { done: [1, 2, 3, 4, 9, 11], states: { 5: { pipe: 'paused' }, 8: { pipe: 'running' }, 10: { pipe: 'running' } } } },
   'line-acts': { spec: { done: [1], states: { 2: { stop: 'requirement' } } }, then: (fx) => setApproveEach(fx.featureId, true) },
+  // s12 line: run 1 (the planning run's own pipeline, the Chat card's) at the Reviewer, nothing done.
+  'line-first': { spec: { done: [], states: { 1: { pipe: 'running' } } }, at: { 1: 'n_review' } },
   // s9 map: base with run 2 done, so its links are gone.
   after2: { spec: { done: [...SIXTEEN_RUN_STATES.base.done, 2], states: Object.fromEntries(Object.entries(SIXTEEN_RUN_STATES.base.states).filter(([r]) => r !== '2')) } },
 };
@@ -617,6 +619,7 @@ const LINE_WORLDS = {
   next: { line: 'next: run 9', done: '2 of 16 runs done', chip: '4 need you' },
   two: { line: 'Run 8 building, run 10 building · next: run 13', done: '6 of 16 runs done', chip: '' },
   acts: { line: 'Nothing can go on until you act', done: '1 of 16 runs done', chip: '1 needs you' },
+  first: { line: 'Run 1 reviewing · next: run 9', done: '0 of 16 runs done', chip: '' },
 };
 const CHIP_PX = 18;   // the design system's one chip
 /** Each surface's head and status: the state line, the [data-need] chips, the count of "need you" in head and status,
@@ -694,6 +697,11 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'lin
           const ok = m.lines === 1;
           if (name === 'busy') check(ok, `${where}: the card detail is 1 line at the card's normal width (${m.lines} lines of ${m.lineHeight}px line-height, ${m.detailWidth}px wide)`);
           else if (!ok) log(`  note ${where}: the card detail takes ${m.lines} lines at ${m.detailWidth}px`);
+          // s12: run 1 runs in the card's own pipeline; its row reads the same word as the other surfaces.
+          if (name === 'first') {
+            const r1 = ((await ev(ROWS('.chat-rc-members'))) || { rows: [] }).rows.find((r) => r.run === 1);
+            check(!!r1 && r1.word === 'reviewing', `${where}: the card's run 1 row reads "reviewing" (${r1 ? r1.word : 'no row'})`);
+          }
         }
         await shotUnion(sf.root, [sf.head, sf.status], `line-${name}-${surface}-${theme}.png`);
       }
