@@ -111,7 +111,8 @@ worca flags on smartRunNaming   # a Labs feature, off by default
   `worca secrets export [--yes]` writes every vaulted secret back into its config file (0600), deletes the vault and its OS
   key and turns the flag off; it refuses while the Worca app runs for the home or `WORCA_FLAGS` sets the flag (exit 1),
   and a cancel exits 2. `worca secrets ack` stops the message about secrets moved into the vault (also Settings ›
-  About › Got it). `export`, `reset`, `ack` and `status --check` refuse to run from an agent. See
+  General › Secret vault › Got it). `export`, `reset`, `ack` and `status --check` refuse to run from an agent. In a
+  container every verb says the vault is not available there and points to the credential broker. See
   [Secrets and the vault](secrets.md).
 
 ## Exit codes

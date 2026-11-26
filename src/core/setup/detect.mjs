@@ -64,7 +64,20 @@ export function defaultProbes({ sourceEnv = () => upstreamEnv(process.env), rech
     // The Local sandbox backend's own status (`docker version`, then a count of its containers): it never starts Docker.
     docker: async () => (await import('../exec-env/backends/docker.mjs')).dockerBackend.status({ env: process.env }),
     e2b: async () => e2bFacts(process.env, (await import('../exec-env/backends/e2b.mjs')).e2bInstalled),
+    vault: () => vaultFacts(),
   };
+}
+
+/**
+ * The secret vault offer for the Model access step (docs/secrets.md), or null with the secretVault flag off (then
+ * nothing of the vault loads). It never calls the OS key store: no Keychain prompt during detection (offer.mjs).
+ */
+export async function vaultFacts({ env = process.env } = {}) {
+  const { secretVaultFlagOn } = await import('../secrets/flag.mjs');
+  if (!secretVaultFlagOn()) return null;
+  const { vaultOffer } = await import('../secrets/offer.mjs');
+  const o = vaultOffer({ env });
+  return { offer: o.offer, state: o.state, label: o.label, inFiles: o.inFiles };
 }
 
 /** What the E2B backend needs, read from `env` with no network call: the key, the SDK and the server it would use.
@@ -154,5 +167,7 @@ export async function detectSetup({ probes = defaultProbes(), budgetMs = DETECT_
       return row(id, label, 'warn', "Couldn't check this.");   // never echo err.message: it may hold a credentialed URL (A14)
     } finally { clearTimeout(timer); }
   }));
-  return { checks, ms: now() - t0 };
+  let vault = null;
+  try { vault = probes.vault ? await probes.vault() : null; } catch { vault = null; }
+  return { checks, ms: now() - t0, ...(vault ? { vault } : {}) };
 }

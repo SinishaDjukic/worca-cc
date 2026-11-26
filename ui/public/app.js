@@ -327,7 +327,7 @@ import { renderMapTab, emptyMapFilters } from './workspace-map-view.mjs';
 import { openWorkspaceGuide, shouldAutoOpenWorkspaceGuide } from './workspace-guide.mjs';
 import { createHowItWorks } from './how-it-works/how-it-works.mjs';
 import { paintAboutInto, paintVersionStatusInto, paintUpdateMarkerInto } from './about-links.mjs';
-import { loadSecretsRow } from './settings/secrets-row.mjs';
+import { loadSecretVaultCard } from './settings/secret-vault-card.mjs';
 import { createUpdateUi } from './update-view.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts, REPORT_PREVIEW_DEBOUNCE_MS } from './report-run.mjs';
 import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
@@ -17017,7 +17017,7 @@ async function loadSettings() {
     paintAbout(data.app);
     setWorcaBox(data.box);
     void loadSecurityStatus(document.getElementById('securityStatusBody'));   // Settings › General › Security
-    void loadSecretsRow(document, (url) => fetch(url).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))));
+    void loadSecretVaultCard(document, { confirm: confirmModal });   // Settings › General › Secret vault
     if (el.aboutUpdateCheck) el.aboutUpdateCheck.checked = data.updateCheck !== false;
     void refreshVersionStatus();
     paintBudgetSettings(data);

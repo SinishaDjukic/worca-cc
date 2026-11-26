@@ -4,7 +4,7 @@
 // save swap the upstream (D9).
 import { networkProxySettings, setNetworkProxy, previewNetworkProxy, networkProxyEnabled, readSettings } from './settings.mjs';
 import { proxyState, readProxyLogin, markLoginRejected, upstreamEnv, assertProxyLoginInput, savedLoginRefusal, ProxyLoginError,
-  saveProxyLogin, clearProxyLogin, parseAccount } from './proxy-credentials.mjs';
+  saveProxyLogin, clearProxyLogin, parseAccount, storedRef } from './proxy-credentials.mjs';
 import { sidecarConfigured, sidecarClient } from './egress-sidecar-client.mjs';
 import { createSidecarProxyHost } from './proxy-host-sidecar.mjs';
 import { ntHash } from './ntlm.mjs';
@@ -83,7 +83,7 @@ export function createProxyHost({ egress, apply = () => null, io = {} } = {}) {
     const auto = !enabledNow() && !!(eg && eg.autoStarted && eg.connector);
     return { ...proxyState({ env: sourceEnv(), networkProxy: auto ? viaEnvUrl(settings()) : settings(), login: readLogin(), live: live(),
       enabled: auto || enabledNow(), expectRunning: false, localUrl }),
-      localError, settings: settings() };
+      localError, settings: settings(), ...((io.loginInVault ?? (() => !!storedRef()))() ? { loginInVault: true } : {}) };
   }
 
   /** get_network_proxy: the same facts, shaped for the chat. Built from loginView (proxyState) — never the hash. */

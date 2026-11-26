@@ -287,20 +287,6 @@
                 <a class="about-val about-link" id="aboutCompare" hidden
                    target="_blank" rel="noopener noreferrer">Changes since this version</a>
               </div>
-              <div class="about-row" id="aboutSecretsRow" hidden>
-                <span class="about-key">Secrets</span>
-                <div class="about-val about-update-body">
-                  <div><span id="aboutSecretsBackend"></span> <span class="about-update" id="aboutSecretsState"></span></div>
-                  <p class="about-note" id="aboutSecretsNote" hidden></p>
-                  <!-- Secrets moved into the vault: the moved keys, until Got it (secretVault flag). -->
-                  <div class="update-callout" id="aboutSecretsNotice" data-tone="info" role="status" hidden>
-                    <p id="aboutSecretsNoticeText"></p>
-                    <ul id="aboutSecretsNoticeKeys"></ul>
-                    <p id="aboutSecretsNoticeLeft" hidden></p>
-                    <button type="button" class="btn btn-sm btn-quiet" id="aboutSecretsNoticeAck">Got it</button>
-                  </div>
-                </div>
-              </div>
               <div class="about-row">
                 <span class="about-key">Release notes</span>
                 <a class="about-val about-link" id="aboutReleaseNotes"
@@ -343,6 +329,16 @@
                   What this Worca protects, as its own server can tell. Checks that need the host (the box's networks, its mounts) show as Unknown here: run worca container status on the host for those.
                 </span></button></div></div>
               <div id="securityStatusBody"><p class="hint">Checking…</p></div>
+            </section>
+
+            <!-- Secret vault (docs/secrets.md, the secretVault flag): state, key store, counts by kind, last check and the
+                 actions, painted by settings/secret-vault-card.mjs. Hidden with the flag off (data-flag). -->
+            <section class="card settings-card" id="secret-vault-card" data-min-level="simple" data-flag="secretVault" hidden>
+              <div class="card-head"><div class="label-row"><h2>Secret vault</h2>
+                <button type="button" class="info-tip" aria-label="About the secret vault">i<span class="tip-content hidden">
+                  Encrypts the keys and tokens Worca saves, with a key the OS key store holds. It protects copies of Worca's files. It is not a sandbox: an agent that runs as you can still reach the key store.
+                </span></button></div></div>
+              <div id="secretVaultBody"><p class="hint">Checking…</p></div>
             </section>
           </section>
           <!-- /pane general -->

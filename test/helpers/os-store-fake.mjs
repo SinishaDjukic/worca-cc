@@ -131,20 +131,21 @@ const readState = (statePath) => {
     const items = {};
     for (const [a, k] of Object.entries(raw.items ?? {})) items[a] = Buffer.from(k, 'base64');
     return { state: raw.state, items, failSetKey: raw.failSetKey ?? null, delayMs: raw.delayMs ?? 0, failProbe: raw.failProbe ?? null,
-      keyReadBack: raw.keyReadBack ?? null };
+      keyReadBack: raw.keyReadBack ?? null, ...(typeof raw.label === 'string' ? { label: raw.label } : {}) };
   } catch (err) {
     if (err.code === 'ENOENT') return { state: 'available', items: {}, failSetKey: null, delayMs: 0, failProbe: null, keyReadBack: null };
     throw err;
   }
 };
 
-const saveState = (statePath, { state, items, failSetKey, delayMs = 0, failProbe = null, keyReadBack = null }) => writeJsonAtomic(statePath, {
+const saveState = (statePath, { state, items, failSetKey, delayMs = 0, failProbe = null, keyReadBack = null, label }) => writeJsonAtomic(statePath, {
   state: checkState(state),
   items: Object.fromEntries(Object.entries(items).map(([a, k]) => [a, Buffer.from(k).toString('base64')])),
   failSetKey,
   ...(delayMs ? { delayMs } : {}),
   ...(failProbe ? { failProbe: checkFailProbe(failProbe) } : {}),
   ...(keyReadBack ? { keyReadBack } : {}),
+  ...(label ? { label } : {}),
 }, { mode: 0o600 });
 
 function checkFailProbe(mode) {
@@ -188,7 +189,9 @@ export function fileFakeOsStore(statePath, { item = DEFAULT_ITEM, probeItem } = 
   const account = accountOf(item);
   const probeAccount = probeItem ? accountOf(probeItem) : `${account}-probe`;
   mkdirSync(dirname(statePath), { recursive: true });
-  return fakeCore({
+  // An optional `label` in the state file names the fake as a real store would be named (the UI screenshots).
+  const label = readState(statePath).label;
+  const core = fakeCore({
     load: () => {
       const st = readState(statePath);
       return { state: st.state, key: st.items[account] ?? null, failSetKey: st.failSetKey, delayMs: st.delayMs, failProbe: st.failProbe,
@@ -205,6 +208,8 @@ export function fileFakeOsStore(statePath, { item = DEFAULT_ITEM, probeItem } = 
     getKeyCalls: () => readFakeCalls(statePath).filter((c) => c.op === 'getKey').length,
     late: never,
   });
+  if (label) core.label = label;
+  return core;
 }
 /** The file-backed fake's calls, `[]` when no `.calls` file exists. */
 export function readFakeCalls(statePath) {

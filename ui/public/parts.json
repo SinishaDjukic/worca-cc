@@ -62,6 +62,7 @@
     "settings/settings-cards.css",
     "browser-extension/browser-extension.css",
     "settings/about-update.css",
+    "settings/secret-vault.css",
     "settings/budget-readout.css",
     "runs/cost-pause.css",
     "chat/chat-connectivity.css",

@@ -239,7 +239,7 @@ test('the About card: anchors carry target/rel, and the controls are the update 
   }
   const controls = [...card.querySelectorAll('button, input, select, textarea')].map((n) => n.id).sort();
   assert.deepEqual(controls, ['aboutCheckNow', 'aboutUpdateCheck', 'aboutUpdateChoose', 'aboutUpdateCopy',
-    'aboutUpdateDismiss', 'aboutUpdateFailedCopy', 'aboutUpdateGo', 'aboutSecretsNoticeAck'].sort());
+    'aboutUpdateDismiss', 'aboutUpdateFailedCopy', 'aboutUpdateGo'].sort());
   assert.equal(card.querySelector('.hint, .info-tip'), null, 'still no hint and no info-tip');
   assert.equal(card.querySelector('#aboutUpdateCheck').checked, true, 'the markup default matches the server default (on)');
 });

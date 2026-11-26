@@ -17,8 +17,9 @@ secrets you saved before into the vault, once:
 - The migration never writes a secret back into a JSON file on its own. A failed or interrupted migration leaves every
   secret it did not move where it was, in its config file, and tries again at the next start.
 
-Settings › About shows the backend, and `worca secrets status` says whether the vault can be read and how many
-entries it holds. `worca secrets status --check` runs the same test-record round trip without moving anything.
+Settings › General › Secret vault shows the state, the key store, how many secrets of each kind it holds and the
+last check. Its Turn on runs the same check and move now. `worca secrets status` says whether the vault can be read
+and how many entries it holds. `worca secrets status --check` runs the same test-record round trip without moving anything.
 
 ## Backends
 
@@ -30,7 +31,7 @@ entries it holds. `worca secrets status --check` runs the same test-record round
 | WSL2 without a Secret Service | Windows DPAPI, wrapped in `worca-vault.key` beside the vault |
 
 There is one key item per Worca home. Without any usable key store, nothing is vaulted and keys stay in the config files, as
-before; `worca secrets status` and Settings › About say so.
+before; `worca secrets status` and Settings › General › Secret vault say so.
 
 ## The macOS Keychain access prompt
 
@@ -64,7 +65,7 @@ After a migration that moved at least one secret, Worca lists the moved keys by 
 value), with the backend:
 
 - in the terminal, on stderr, at each `worca models`, `worca proxy`, `worca container` or pipeline start;
-- in Settings › About, under Secrets.
+- in Settings › General › Secret vault.
 
 Run `worca secrets ack` or press **Got it** in Settings to dismiss it. Either one clears the message for both places.
 
