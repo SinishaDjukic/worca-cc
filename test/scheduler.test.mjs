@@ -675,6 +675,72 @@ test('after-tickets: a hold predicate keeps a due after-ticket scheduled with ru
   assert.deepEqual(out.fired, [other.id]); assert.deepEqual(out.held, []);
 });
 
+test('chainGate: waiting keeps the ticket scheduled', async () => {
+  seedPipelineRow({ id: 'g0000021', title: 'Refactor', status: 'done', startedAt: new Date(T0).toISOString() });
+  const t = createTicket({ projectDir: DIR, title: 'Tests', request: REQ, after: { kind: 'pipeline', id: 'g0000021' }, now: T0 });
+  const seen = [];
+  const out = await runDueTickets({ now: T0 + MIN, start: okStart(), chainGate: (tk, o) => { seen.push([tk.id, typeof o.isLive, o.now]); return { state: 'waiting' }; } });
+  assert.deepEqual(out.waiting, [t.id]); assert.deepEqual(out.fired, []);
+  assert.deepEqual(seen, [[t.id, 'object', T0 + MIN]]);
+  assert.equal(getTicket(t.id).status, 'scheduled');
+  assert.equal(getTicket(t.id).runAt, AFTER_RUN_AT);
+});
+
+test('chainGate ok fires behind a stopped predecessor', async () => {
+  seedPipelineRow({ id: 'g0000022', title: 'Refactor', status: 'stopped', startedAt: new Date(T0).toISOString() });
+  const t = createTicket({ projectDir: DIR, title: 'Tests', request: REQ, after: { kind: 'pipeline', id: 'g0000022' }, now: T0 });
+  const out = await runDueTickets({ now: T0 + MIN, start: okStart(), chainGate: () => ({ state: 'ok' }) });
+  assert.deepEqual(out.fired, [t.id]); assert.deepEqual(out.missed, []);
+});
+
+test("chainGate bad misses it with its reason and the dependency's title", async () => {
+  seedPipelineRow({ id: 'g0000023', title: 'Refactor', status: 'done', startedAt: new Date(T0).toISOString() });
+  const t = createTicket({ projectDir: DIR, title: 'Tests', request: REQ, after: { kind: 'pipeline', id: 'g0000023' }, now: T0 });
+  const out = await runDueTickets({ now: T0 + MIN, start: okStart(), chainGate: () => ({ state: 'bad', reason: 'was canceled', title: 'Run 3 · Docs' }) });
+  assert.deepEqual(out.missed, [t.id]);
+  const m = getTicket(t.id);
+  assert.equal(m.status, 'missed');
+  assert.equal(m.failReason, 'The run before it was canceled.');
+  assert.match(listNotifications()[0].message, /‘Run 3 · Docs’, which was canceled/);
+});
+
+test("chainGate null or throwing falls back to dev's gate", async () => {
+  seedPipelineRow({ id: 'g0000024', title: 'Refactor', status: 'stopped', startedAt: new Date(T0).toISOString() });
+  const a = createTicket({ projectDir: DIR, title: 'Tests', request: REQ, after: { kind: 'pipeline', id: 'g0000024' }, now: T0 });
+  let out = await runDueTickets({ now: T0 + MIN, start: okStart(), chainGate: () => null });
+  assert.deepEqual(out.missed, [a.id], 'null: dev misses it behind a stopped run');
+  const b = createTicket({ projectDir: DIR, title: 'Docs', request: REQ, after: { kind: 'pipeline', id: 'g0000024' }, now: T0 });
+  out = await runDueTickets({ now: T0 + 2 * MIN, start: okStart(), chainGate: () => { throw new Error('db gone'); } });
+  assert.deepEqual(out.missed, [b.id], 'a throw: dev gate too');
+});
+
+test('a forced ticket never asks chainGate', async () => {
+  seedPipelineRow({ id: 'g0000025', title: 'Refactor', status: 'running', startedAt: new Date(T0).toISOString() });
+  const t = createTicket({ projectDir: DIR, title: 'Tests', request: REQ, after: { kind: 'pipeline', id: 'g0000025' }, now: T0 });
+  requestRunNow(t.id, { now: T0 });
+  let asked = 0;
+  const out = await runDueTickets({ now: T0 + MIN, start: okStart(), chainGate: () => { asked += 1; return { state: 'waiting' }; } });
+  assert.deepEqual(out.fired, [t.id]); assert.equal(asked, 0);
+});
+
+test('chainGate ok still honours hold', async () => {
+  seedPipelineRow({ id: 'g0000026', title: 'Refactor', status: 'stopped', startedAt: new Date(T0).toISOString() });
+  const t = createTicket({ projectDir: DIR, title: 'Tests', request: REQ, after: { kind: 'pipeline', id: 'g0000026' }, now: T0 });
+  const out = await runDueTickets({ now: T0 + MIN, start: okStart(), chainGate: () => ({ state: 'ok' }), hold: () => true });
+  assert.deepEqual(out.held, [t.id]); assert.deepEqual(out.fired, []);
+  assert.equal(getTicket(t.id).status, 'scheduled');
+});
+
+test('chainBaseBranchesOf stops at a run started from a non-adjacent branch', () => {
+  seedPipelineRow({ id: 'g0000031', title: 'S2', status: 'done', branch: { source: 'main', feature: 'feat/g0000031' } });
+  seedPipelineRow({ id: 'g0000032', title: 'S3', status: 'stopped', branch: { source: 'feat/g0000031', feature: 'feat/g0000032' } });
+  // Slice 4 is chained after slice 3 (dev's stored link) but started from slice 2's branch.
+  seedPipelineRow({ id: 'g0000033', title: 'S4', status: 'done', branch: { source: 'feat/g0000031', feature: 'feat/g0000033' } });
+  const t = createTicket({ projectDir: DIR, title: 'S4', request: REQ, after: { kind: 'pipeline', id: 'g0000032' }, sourceFromPrevious: true, now: T0 });
+  getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = 'g0000033' WHERE id = ?").run(t.id);
+  assert.deepEqual(chainBaseBranchesOf('g0000033'), ['feat/g0000031']);
+});
+
 test('a predecessor that ends badly, is canceled, removed or archived strands its dependent as missed (any-policy and Run now go through)', async () => {
   await checkRows([
     { name: 'a predecessor that ends badly makes the dependent missed, with the reason; any-policy and Run now go through', run: async () => {

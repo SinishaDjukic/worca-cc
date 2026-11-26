@@ -204,5 +204,7 @@ test('readServerSource on a split tree: the server, then every area file in inde
   writeFileSync(join(ui, 'routes/chat/ask.mjs'), '// ask\n');
   writeFileSync(join(ui, 'routes/chat/search-index.mjs'), '// search-index: an area, not an index\n');
   assert.equal(readServerSource(ui), '// server\n\n// ask\n\n// search-index: an area, not an index\n');
+  assert.equal(readServerSource(ui, { routes: false }), '// server\n', 'routes:false is exactly the server file');
+  assert.equal(readServerSource(ui, {}), readServerSource(ui), 'the default still appends the routes');
   rmSync(ui, { recursive: true, force: true });
 });

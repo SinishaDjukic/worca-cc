@@ -110,7 +110,7 @@ jobs:
           context: .
           file: docker/Dockerfile
           load: true
-          tags: ghcr.io/sinishadjukic/worca:ci
+          tags: ghcr.io/worca-org/worca:ci
           build-args: |
             WORCA_TARBALL=${{ steps.pack.outputs.tarball }}
             CLAUDE_CODE_VERSION=${{ steps.pack.outputs.claude_code }}
@@ -126,7 +126,7 @@ jobs:
           context: .
           file: docker/Dockerfile
           load: true
-          tags: ghcr.io/sinishadjukic/worca:ci-split
+          tags: ghcr.io/worca-org/worca:ci-split
           build-args: |
             WORCA_TARBALL=docker/.pack/worca-app-split.tgz
             CLAUDE_CODE_VERSION=${{ steps.pack.outputs.claude_code }}
@@ -138,7 +138,7 @@ jobs:
         if: steps.split.outputs.tree != ''
         env:
           CHROME_NO_SANDBOX: "1"
-        run: npm run parity -- run --a docker:ghcr.io/sinishadjukic/worca:ci --b docker:ghcr.io/sinishadjukic/worca:ci-split --out "$RUNNER_TEMP/parity-docker" --no-timing-gate
+        run: npm run parity -- run --a docker:ghcr.io/worca-org/worca:ci --b docker:ghcr.io/worca-org/worca:ci-split --out "$RUNNER_TEMP/parity-docker" --no-timing-gate
 
       - name: Parity (tree against the package)
         if: ${{ !cancelled() }}

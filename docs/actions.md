@@ -176,6 +176,16 @@ Next to the project's own actions, each checkout offers four buttons (turn any o
 | Open folder | `open <dir>` (Finder) | `xdg-open <dir>` (needs a display) | `explorer.exe <dir>` |
 | Copy command | Copies the git commands that put the branch in your own clone (below) | | |
 
+The Diff tab's open controls use the Editor built-in too. While a run is live, **Open in <Editor>** above the diff
+opens the run's worktree (a workspace run: the `repos/` folder that holds every member worktree), and edits you make
+there go into the run. Each file's head has an open icon, on live and finished runs, which opens that file at its first
+changed line: in the live worktree, or in the run's checkout (a linked "Use that folder" folder too). On a finished run
+that is not checked out, one click checks it out first (or uses the folder that already has its branch), then opens the
+file. Deleted files, protected paths (`.env*`, `*.pem`, `**/secrets/**`, …), archived runs and runs that cannot be
+checked out get no icon. With no editor, the editor turned off for the project, or a hosted worca without
+`WORCA_ACTIONS_REMOTE=1`, neither control shows. The route is `POST /api/runs/:id/open-in-editor` (`{ member?, file?, line? }`);
+it never checks out by itself.
+
 ### Your own editor and terminal
 
 Settings › Runs › Actions › **Editor** and **Terminal** replace the detection. Each takes a command line,
@@ -185,6 +195,10 @@ Linux, `cmd.exe /d /s /c` on Windows), so arguments, quotes, `~`, `$VAR` / `%VAR
 - **`{folder}`** (or `{worktree}`) marks where the checkout folder goes, quoted for the shell. Without it the
   folder is added at the end, so a bare command such as `xed` works. `{branch}`, `{project}` and `{runId}`
   work too.
+- **`{file}`** and **`{line}`** place the file the Diff tab opens (quoted, absolute) and its first changed line
+  (digits), for example `subl {file}:{line}` or `idea {folder} --line {line} {file}`. Opening the whole folder,
+  `{file}` becomes the folder and `{line}` becomes `1`. A line with `{file}` gets no folder added at the end. A line
+  without `{file}` opens only the folder, even from a file's icon.
 - **A macOS app** (`/Applications/Xcode.app`, or just `Xcode.app`) opens with `open -a`.
 - **An unquoted path with spaces** at the start is quoted for you, such as
   `C:\Program Files\Microsoft VS Code\Code.exe --new-window`.

@@ -34,8 +34,9 @@ import { actorOf } from '../../../src/core/identity.mjs';
 import { displayPath, listProjects, normalizeProjectPath } from '../../../src/core/projects.mjs';
 import { PROXY_AGENT_TEXT } from '../../../src/core/proxy-host.mjs';
 import { isInContainer } from '../../../src/core/remote-access.mjs';
+import { HARDENED_CLONE_ONLY_TEXT, isHardenedBox } from '../../../src/core/security-posture.mjs';
 import { addAskWebHost } from '../../../src/core/settings.mjs';
-import { applyChanges, applyRoute } from '../../../src/core/shape/changes.mjs';
+import { applyChanges, applyRoute, applyRequirementCard } from '../../../src/core/shape/changes.mjs';
 import { addFeatureNote, appendFeatureRun, currentFeatureId } from '../../../src/core/shape/features.mjs';
 import { nextRound } from '../../../src/core/shape/rounds.mjs';
 import { shipCardVerb } from '../../../src/core/shape/ship.mjs';
@@ -45,7 +46,7 @@ import { readWorkflow, writeGraphWorkflow } from '../../../src/core/workflows.mj
 import { RESCAN_CHOICES, memoGitProbe, readWorkspace, removeWorkspaceMember } from '../../../src/core/workspaces.mjs';
 import { formatInstant } from '../../../src/shared/schedule/recurrence.mjs';
 import { changesCardVerb, routeCardVerb } from '../../../src/shared/shape/route.mjs';
-import { AGENTS_DIR, ASK_DEFERRED_REPLIES_MAX, afterMembersChanged, afterProjectRegistered, agentMayBeCaller, askChatActions, askDeferred, askDeferredReplies, askEventPick, askIdParam, askInFlight, askTabBridges, askTabsEnabled, askViewer, askWebAccessFor, badRequest, broadcast, broadcastFeature, chatLinkRoots, chatLinks, designApi, designChatActions, emitChanged, failedEventTurn, flipCard, followCloneCard, fsAllowedRoots, fsLimitedHere, pinUiLevel, postAskSystemNotice, proxyHost, prunedNote, refuseAgentCaller, removeRecommendation, runs, scheduleVerb, schedulerTick, shipFeatureNow, soundCards, startAskTurn, startCloneJob, startMetricsEventTurn, startRunAs, startScopeEventTurn, tabFailure, tabTools, terminalCallerOk, toolPanelOn, workspaceMembersBusy } from '../../server.mjs';
+import { AGENTS_DIR, ASK_DEFERRED_REPLIES_MAX, afterMembersChanged, afterProjectRegistered, agentMayBeCaller, askChatActions, askDeferred, askDeferredReplies, askEventPick, askIdParam, askInFlight, askTabBridges, askTabsEnabled, askViewer, askWebAccessFor, badRequest, broadcast, broadcastFeature, chatLinkRoots, chatLinks, designApi, designChatActions, emitChanged, failedEventTurn, flipCard, followCloneCard, fsAllowedRoots, fsLimitedHere, pinUiLevel, postAskSystemNotice, proxyHost, prunedNote, refuseAgentCaller, removeRecommendation, reqChanges, runs, scheduleVerb, schedulerTick, shipFeatureNow, soundCards, startAskTurn, startCloneJob, startMetricsEventTurn, startRunAs, startScopeEventTurn, tabFailure, tabTools, terminalCallerOk, toolPanelOn, workspaceMembersBusy } from '../../server.mjs';
 import { FILE_PATH_MAX, FILE_REFS_MAX } from '../../../src/shared/file-refs.mjs';
 
 /** The cards route's handler, set by register(): the chat bridge applies a chat channel's card actions through it
@@ -445,6 +446,23 @@ async function askCardHandler(req, res) {
       if (!block) return res.status(409).json({ error: 'card vanished' });
       return res.json({ block });
     }
+    if (found.block.card && found.block.card.type === 'req-change') {
+      // Small runs C4 (D13): Change it applies the card's one change through the one change path; Not now declines.
+      const c = found.block.card;
+      const v = changesCardVerb(body);
+      if (!v.ok) return badRequest(res, v.error);
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (v.verb === 'not-now') { const block = flipCard(id, cardId, { state: 'declined' }); return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' }); }
+      askCardBusy.add(cardId);
+      let r;
+      try { r = applyRequirementCard(c, { apply: reqChanges.apply, by: actorOf(req) }); }
+      catch (err) { r = { ok: false, status: 500, error: err && err.message ? err.message : String(err) }; }
+      finally { askCardBusy.delete(cardId); }
+      if (!r.ok) return res.status(r.status || 500).json({ error: r.error, ...(r.code ? { code: r.code } : {}) });
+      const block = flipCard(id, cardId, { state: 'applied', card: { result: r.result } });
+      return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' });
+    }
     if (found.block.card && (found.block.card.type === 'changes' || found.block.card.type === 'route')) {
       // Shaper s5 (D5, D6): the card type decides the verbs; anything else is refused before any state check.
       const c = found.block.card;
@@ -462,9 +480,9 @@ async function askCardHandler(req, res) {
           addNote: (fid, n) => addFeatureNote(currentFeatureId(fid), { ...n, by }),
           appendRun: (fid, o) => appendFeatureRun(currentFeatureId(fid), { ...o, by }), tick: () => { void schedulerTick(); } };
         r = c.type === 'changes' ? await applyChanges(c, deps) : await applyRoute(c, v, deps);
-      } catch (err) { r = { ok: false, status: 500, error: err && err.message ? err.message : String(err) }; }
+      } catch (err) { r = { ok: false, status: 500, ...(err?.code === 'SHIPPING' ? { status: 409, code: 'SHIPPING' } : {}), error: err && err.message ? err.message : String(err) }; }
       finally { askCardBusy.delete(cardId); }
-      if (!r.ok) return res.status(r.status || 500).json({ error: r.error });
+      if (!r.ok) return res.status(r.status || 500).json({ error: r.error, ...(r.code ? { code: r.code } : {}) });
       if (c.featureId) broadcastFeature(currentFeatureId(c.featureId));
       if (c.type === 'changes' && c.landing.kind === 'round') broadcast({ type: 'round-changed', origin: c.landing.target.roundOf });
       const block = flipCard(id, cardId, { state: 'applied', card: { result: { ...r.result, verb: v.verb, where: v.where || null } } });
@@ -806,6 +824,7 @@ async function askCardHandler(req, res) {
       try {
         try {
           const card = found.block.card; const ch = card.change || {};
+          if (ch.kind === 'add' && isHardenedBox()) throw Object.assign(new Error(HARDENED_CLONE_ONLY_TEXT), { code: 'HARDENED_CLONE_ONLY' });
           if (ch.kind === 'add' && fsLimitedHere(req)) {
             const p = normalizeProjectPath(ch.path);
             if (!p || !(await checkInside(p, await fsAllowedRoots())).inside) {

@@ -12,7 +12,7 @@ test('findOnPath honours PATHEXT on win32', () => {
 
 test('macOS: first editor found, Terminal and Finder always', () => {
   const d = detectBuiltins({ platform: 'darwin', env: { PATH: '/usr/local/bin' }, exists: fsWith(['/usr/local/bin/cursor']) });
-  assert.deepEqual(d.editor, { label: 'Cursor', cmd: '/usr/local/bin/cursor' });
+  assert.deepEqual(d.editor, { id: 'cursor', label: 'Cursor', cmd: '/usr/local/bin/cursor' });
   assert.equal(d.terminal.label, 'Terminal');
   assert.equal(d.fileManager.label, 'Finder');
 });
@@ -36,6 +36,34 @@ test('Windows: wt then cmd; code.cmd launches through cmd.exe', () => {
   const t = builtinLaunch('terminal', 'C:\\w\\repo', d, { platform: 'win32', env: { ComSpec: 'C:\\W\\cmd.exe' } });
   assert.deepEqual(t.args, ['/d', '/s', '/c', 'start "" /D "C:\\w\\repo" cmd.exe']);
   assert.equal(t.opts.windowsVerbatimArguments, true);
+});
+
+test('editor target: per-editor argv for a file at a line, folder first; no line drops the line flag', () => {
+  const ed = (id) => ({ editor: { id, label: id, cmd: `/bin/${id}` } });
+  const t = { file: '/w/repo/src/a.mjs', line: 12 };
+  const argv = (id, target) => builtinLaunch('editor', '/w/repo', ed(id), { platform: 'linux', env: {}, target }).args;
+  assert.deepEqual(argv('code', t), ['/w/repo', '-g', '/w/repo/src/a.mjs:12']);
+  assert.deepEqual(argv('cursor', t), ['/w/repo', '-g', '/w/repo/src/a.mjs:12']);
+  assert.deepEqual(argv('code', { file: t.file, line: null }), ['/w/repo', '-g', '/w/repo/src/a.mjs']);
+  assert.deepEqual(argv('idea', t), ['/w/repo', '--line', '12', '/w/repo/src/a.mjs']);
+  assert.deepEqual(argv('webstorm', t), ['/w/repo', '--line', '12', '/w/repo/src/a.mjs']);
+  assert.deepEqual(argv('webstorm', { file: t.file, line: null }), ['/w/repo', '/w/repo/src/a.mjs']);
+  assert.deepEqual(argv('code', null), ['/w/repo'], 'no target: the folder only, as today');
+  const noId = builtinLaunch('editor', '/w/repo', { editor: { label: 'X', cmd: '/bin/x' } }, { platform: 'linux', env: {}, target: t });
+  assert.deepEqual(noId.args, ['/w/repo'], 'an editor without an id opens the folder only');
+});
+
+test('editor target: win32 code.cmd carries -g file:line through cmd.exe; a terminal ignores a target; a line editor forwards it', () => {
+  const env = { ComSpec: 'C:\\W\\cmd.exe' };
+  const d = { editor: { id: 'code', label: 'VS Code', cmd: 'C:\\b\\code.CMD' }, terminal: { label: 'Command Prompt', kind: 'cmd' } };
+  const l = builtinLaunch('editor', 'C:\\w\\repo', d, { platform: 'win32', env, target: { file: 'C:\\w\\repo\\a.mjs', line: 12 } });
+  assert.deepEqual(l.args, ['/d', '/s', '/c', '""C:\\b\\code.CMD" "C:\\w\\repo" "-g" "C:\\w\\repo\\a.mjs:12""']);
+  const plain = builtinLaunch('terminal', 'C:\\w\\repo', d, { platform: 'win32', env });
+  const targeted = builtinLaunch('terminal', 'C:\\w\\repo', d, { platform: 'win32', env, target: { file: 'C:\\w\\repo\\a.mjs', line: 1 } });
+  assert.deepEqual(targeted, plain);
+  const line = { editor: { label: 'subl', line: 'subl {file}:{line}', kind: 'line' } };
+  const s = builtinLaunch('editor', '/w/repo', line, { platform: 'linux', env: {}, target: { file: '/w/repo/a.mjs', line: 5 } });
+  assert.deepEqual(s.args, ['-c', "subl '/w/repo/a.mjs':5"]);
 });
 
 test('copy command: not pushed vs pushed, two lines, never &&', () => {

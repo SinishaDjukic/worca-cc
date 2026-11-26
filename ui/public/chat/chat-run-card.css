@@ -142,7 +142,7 @@
 .run-flow-wrap.chat-rc-well.is-deciding{background-image:none;}
 /* A narrow card (390px) wraps the head instead of pushing "Open run ›" out of the card. */
 .chat-rc .ask-rc-head{flex-wrap:wrap;height:auto;min-height:28px;row-gap:6px;}
-.chat-rc .ask-rc-open{margin-left:auto;}
+.chat-rc :is(.ask-rc-open, .chat-rc-open){margin-left:auto;}   /* .chat-rc-open: the one card's quiet Open (layout only) */
 /* A receipt with no answer list has nothing to expand. */
 .chat-rc-receipt:not(:has(> .chat-rc-receipt-list:not([hidden]))) > summary{list-style:none;cursor:default;}
 .chat-rc-receipt:not(:has(> .chat-rc-receipt-list:not([hidden]))) > summary::-webkit-details-marker{display:none;}

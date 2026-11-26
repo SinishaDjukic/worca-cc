@@ -35,6 +35,13 @@ test('isRealRun: done with a run total is real; done with only a step cost is re
   assert.equal(isRealRun(total.id), true, 'deleting a run does not take its first-real-run credit away');
 });
 
+test('isRealRun: a workflow test try (pipelines.is_test) is never real, even done and paid', async () => {
+  const tried = await seedPipeline('/tmp/rr', { status: 'done', totalCostUsd: 0.9 });
+  assert.equal(isRealRun(tried.id), true);
+  getDb().prepare('UPDATE pipelines SET is_test = 1 WHERE id = ?').run(tried.id);
+  assert.equal(isRealRun(tried.id), false, 'tries stay out of Getting started, Statistics and the levels');
+});
+
 test('isRealRun is a guarded read: unknown or missing ids are false, never a throw', () => {
   assert.equal(isRealRun('nope0000'), false);
   assert.equal(isRealRun(null), false);

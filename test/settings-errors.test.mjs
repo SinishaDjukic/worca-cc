@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { settingsErrorReply, SETTINGS_FIELD_LABELS } from '../src/core/settings-errors.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { CHAT_SOURCE_BRANCH_SETTING } from '../src/shared/chat-source-branch.mjs';
 
 const NO_KEY = /\b[a-z]+[A-Z][a-z]\w*\b|\b(?:askWeb|memoryDefrag|workspaceScan|nightMode|actions|sync|schedule|criteria|chat|search)\.\w+/;
 // [raw validator message (verbatim from src/core), ctx, field, error]
@@ -59,4 +60,11 @@ test('settingsErrorReply: table of validator messages → {error, field}; no-ctx
 
 test('the chatLinksInPanel label (issue 1064)', () => {
   assert.equal(SETTINGS_FIELD_LABELS.chatLinksInPanel, 'Open chat links in the panel');
+});
+
+test('chat.sourceBranch: its field label is the setting name, and a refusal names the field', () => {
+  assert.equal(SETTINGS_FIELD_LABELS['chat.sourceBranch'], CHAT_SOURCE_BRANCH_SETTING);
+  const reply = settingsErrorReply(new Error('chat.sourceBranch must be one of current | ask | require'), 'chat');
+  assert.equal(reply.field, 'chat.sourceBranch');
+  assert.match(reply.error, /^“Chat runs: source branch” must be one of/);
 });

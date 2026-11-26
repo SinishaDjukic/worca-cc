@@ -24,6 +24,9 @@ test('every catalogued tab exists with the same mode, flag and name as its butto
   assert.deepEqual(TABS.map((t) => t.id).sort(), buttons.sort(), 'no tab missing from the catalogue');
 });
 
+const { CHAT_SOURCE_BRANCH_SETTING } = await import('../src/shared/chat-source-branch.mjs');
+const PAINTED_HEADINGS = { 'chat-runs-settings-card': CHAT_SOURCE_BRANCH_SETTING };
+
 test('every catalogued card sits on its form tab with the same mode, flag and heading; every form-tab card is listed', () => {
   for (const c of CARDS) {
     const card = doc.getElementById(c.id);
@@ -31,8 +34,11 @@ test('every catalogued card sits on its form tab with the same mode, flag and he
     assert.equal(card.closest('.settings-pane').dataset.tab, c.tab, `${c.id} pane`);
     assert.equal(card.dataset.minLevel, c.min, `${c.id} min level`);
     assert.equal(card.dataset.flag || '', c.flag, `${c.id} flag`);
-    // The card's h2; the root folder card has none, its first field's label names it.
-    assert.equal((card.querySelector('h2') || card.querySelector('.label-row label')).textContent.trim(), c.title, `${c.id} heading`);
+    // The card's h2; the root folder card has none, its first field's label names it. A heading app.js paints from a
+    // shared module is empty in the HTML: the catalogue's title is that module's constant (Chat runs: source branch).
+    const heading = (card.querySelector('h2') || card.querySelector('.label-row label')).textContent.trim();
+    if (PAINTED_HEADINGS[c.id]) assert.equal(heading === '' ? PAINTED_HEADINGS[c.id] : heading, c.title, `${c.id} heading`);
+    else assert.equal(heading, c.title, `${c.id} heading`);
     assert.ok(FORM_TABS.includes(c.tab), `${c.id}: only form tabs scroll to a card`);
   }
   const onForms = [...doc.querySelectorAll('.settings-pane .settings-card')]

@@ -770,3 +770,16 @@ test('23: Discard leaves a settings load error on the Jobs line', async () => {
   assert.equal(bar(doc).hidden, true);
   assert.equal(msg.textContent, 'Could not load settings: disk full', 'still true: it stays');
 });
+
+test('#1450: picking "Let Claude Code decide" on a role tile saves { cliDecides: true }', async () => {
+  const roleDefaults = { claude: { deep: { model: 'claude-opus-5-5' }, everyday: { model: 'claude-opus-5' }, quick: { model: 'claude-haiku-4-5' } },
+    codex: { deep: { model: 'gpt-6.1-sol' }, everyday: { model: 'gpt-6.1-sol' }, quick: { model: 'gpt-6.1-sol' } } };
+  const { window, doc, posts } = await boot({ settings: { ...clone(SETTINGS), modelRoles: {}, roleDefaults, claudeAuth: 'signed-in' } });
+  assert.equal(tileText(doc, 'claude', 'deep'), 'Worca default · Opus 5.5');
+  press(window, tile(doc, 'claude', 'deep'));
+  await pick(window, doc, 'Let Claude Code decide');
+  assert.equal(tileText(doc, 'claude', 'deep'), 'Let Claude Code decide');
+  press(window, bar(doc).querySelector('.mdl-save'));
+  await settle();
+  assert.deepEqual(settingsPosts(posts).map((p) => p.body), [{ modelRoles: { claude: { deep: { cliDecides: true } } } }]);
+});

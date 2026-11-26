@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. Found a security problem? Don't file it here: email security@worca.dev, as the [security policy](https://github.com/SinishaDjukic/worca-cc/security/policy) describes.
+        Thanks for reporting. Found a security problem? Don't file it here: email security@worca.dev, as the [security policy](https://github.com/worca-org/worca/security/policy) describes.
   - type: textarea
     id: what-happened
     attributes:

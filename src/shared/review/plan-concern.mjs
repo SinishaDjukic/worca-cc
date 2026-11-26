@@ -50,18 +50,25 @@ export function requirementConcernOf(rounds) {
     kind: 'requirement',
     requirements: all.map(([id]) => id),
   });
-  return out.ok ? out.concern : null;
+  if (!out.ok) return null;
+  // Small runs C4 (D9): the new text a finding proposes, from the first finding per id.
+  const proposals = all.filter(([, { f }]) => typeof f.proposed === 'string' && f.proposed.trim())
+    .map(([id, { f }]) => ({ id, text: f.proposed.trim() }));
+  return proposals.length ? { ...out.concern, proposals } : out.concern;
 }
 
 /** The role reviewer's prompt block when the plan is reviewed against agreed requirements (any workflow). */
-export function requirementConcernBlock(ids) {
+export function requirementConcernBlock(ids, { proposals = false } = {}) {
   if (!Array.isArray(ids) || !ids.length) return '';
   return '## Requirement concerns\n\n' +
     `These requirements are agreed with the person: ${ids.join(', ')}. Do not ask the plan to change, narrow or drop ` +
     'one of them. If you think an agreed requirement itself is wrong or cannot be met, raise that finding with a ' +
     '`"requirement": "R-po-1"` field naming the id it concerns. Such a finding goes to the person as a question at ' +
     'the plan approval and does not send the plan back. Use the field only for the requirement itself, never for how ' +
-    'the plan covers it.\n\n';
+    'the plan covers it.' +
+    // Small runs C4 (D9): a marked run asks for the text the requirement should read instead.
+    (proposals ? ' With it, add a `"proposed"` field: the requirement\'s new text as you would agree it, in one plain ' +
+      'sentence of 300 characters at most.' : '') + '\n\n';
 }
 
 /** Appended to the person's "Ask for changes" feedback when the plan approval carried a requirement concern. */

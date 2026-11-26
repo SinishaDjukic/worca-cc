@@ -6,7 +6,7 @@ import {
   readSettings, writeSettingsKeys, assertCostLimitInputs, assertModelRolesInput, assertAskModelsInput, assertTestSettingsAccess,
   nextUsdCap, nextCostLimitResetPeriod, nextUiLevel, nextAutoGeneratePrDescription, nextSmartNaming, nextRunEngine,
   nextModelRoles, nextAskModels, nextNetworkProxy, nextProviders,
-  nextSyncSettings, nextNetworkWait, assertHideBuiltinModelsInput, DEFAULT_HIDE_BUILTIN_MODELS,
+  nextSyncSettings, nextNetworkWait, assertHideBuiltinModelsInput, DEFAULT_HIDE_BUILTIN_MODELS, assertExecEnvInput,
 } from '../settings.mjs';
 import { settingsErrorReply, userLine, INTERNAL_KEY } from '../settings-errors.mjs';
 import { assertProxyLoginInput, savedLoginRefusal, saveProxyLogin, ProxyLoginError } from '../proxy-credentials.mjs';
@@ -21,7 +21,7 @@ export const SETUP_GROUPS = Object.freeze({
   access: Object.freeze(['copilot', 'openai', 'anthropic']),
   models: Object.freeze(['modelRoles', 'askModels', 'testRoles']),
   work: Object.freeze(['uiLevel', 'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'autoGeneratePrDescription', 'smartNaming', 'runEngine',
-    'hideBuiltinModels', 'sync', 'networkWait']),
+    'hideBuiltinModels', 'sync', 'networkWait', 'execEnv']),
 });
 const PROVIDER_FIELDS = Object.freeze({
   copilot: ['accountType', 'signIn', 'importModels'],
@@ -44,6 +44,8 @@ const WORK_NEXT = Object.freeze({
   hideBuiltinModels: (_cur, v) => { assertHideBuiltinModelsInput(v); return v === DEFAULT_HIDE_BUILTIN_MODELS ? undefined : v; },
   sync: (cur, v) => nextSyncSettings(cur, v),
   networkWait: (cur, v) => nextNetworkWait(cur, v),
+  // "Where agents run" (docs/choose-a-setup.md): the default execution environment; null clears it (Local).
+  execEnv: (_cur, v) => assertExecEnvInput(v) ?? undefined,
 });
 const COST_KEYS = ['pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod'];
 const MAX_IMPORT_IDS = 200;

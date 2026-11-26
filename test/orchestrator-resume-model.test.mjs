@@ -61,6 +61,8 @@ async function resumeWith(dir, saved, claude = {}) {
   return { models: seen.models, logs, orch };
 }
 
+const isWorcaDefault = (m) => /^claude-(opus|sonnet|haiku)-5-5$/.test(m || '');
+
 test('the run-level model and effort ride the resume point, and a bare resume spawns with them', { timeout: 120000 }, async () => {
   const { dir, saved } = await pausedRun('rmodel-keep', { model: 'claude-sonnet-5', effort: 'high' });
   assert.deepEqual(saved.resumePoint.claude, { model: 'claude-sonnet-5', effort: 'high' });
@@ -80,7 +82,7 @@ test('a saved model that left the catalog is dropped with a warning; the run res
   const { dir, saved } = await pausedRun('rmodel-stale', { model: 'claude-sonnet-5' });
   saved.resumePoint.claude = { model: 'openrouter-gone-model', effort: 'high' };
   const { models, logs } = await resumeWith(dir, saved);
-  assert.ok(models.every((m) => m == null), JSON.stringify(models));
+  assert.ok(models.length && models.every(isWorcaDefault), JSON.stringify(models));   // #1450: Worca's role default, not the CLI's
   assert.ok(logs.some((l) => l.level === 'warn' && /openrouter-gone-model/.test(l.text) && /no longer in the catalog/.test(l.text)), JSON.stringify(logs.map((l) => l.text)));
 });
 
@@ -88,7 +90,7 @@ test('a point without the field (an older run, or none named) resumes exactly as
   const { dir, saved } = await pausedRun('rmodel-old', {});
   assert.equal(saved.resumePoint.claude, undefined, 'nothing named, nothing saved');
   const { models, logs } = await resumeWith(dir, saved);
-  assert.ok(models.every((m) => m == null), JSON.stringify(models));
+  assert.ok(models.length && models.every(isWorcaDefault), JSON.stringify(models));   // #1450: Worca's role default, not the CLI's
   assert.ok(!logs.some((l) => /no longer in the catalog/.test(l.text || '')));
 });
 

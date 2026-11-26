@@ -108,11 +108,11 @@ test('POST /api/ask/refs/resolve: GitHub through gh (one call per repo, cached),
       if (/wit\/workitems\?/.test(url)) return { ok: true, status: 200, json: async () => ({ value: [{ id: 123, fields: { 'System.Title': 'Login loops', 'System.State': 'Resolved', 'System.WorkItemType': 'Bug' } }] }) };
       return { ok: false, status: 404, json: async () => ({}) };
     });
-    const keys = ['gh:SinishaDjukic/worca-cc#777', 'gh:SinishaDjukic/worca-cc#5', 'adopr:acme/My%20Shop#42', 'adowi:acme#123'];
+    const keys = ['gh:worca-org/worca#777', 'gh:worca-org/worca#5', 'adopr:acme/My%20Shop#42', 'adowi:acme#123'];
     const { body } = await resolve(keys);
     assert.deepEqual(body.refs, {
-      'gh:SinishaDjukic/worca-cc#777': { ok: true, kind: 'pr', title: 'fix(promo-kit): startApp.stop()', state: 'merged' },
-      'gh:SinishaDjukic/worca-cc#5': { ok: false },
+      'gh:worca-org/worca#777': { ok: true, kind: 'pr', title: 'fix(promo-kit): startApp.stop()', state: 'merged' },
+      'gh:worca-org/worca#5': { ok: false },
       'adopr:acme/My%20Shop#42': { ok: true, kind: 'pr', title: 'ADO PR', state: 'open' },
       'adowi:acme#123': { ok: true, kind: 'workitem', title: 'Login loops', state: 'Resolved', type: 'Bug' },
     });

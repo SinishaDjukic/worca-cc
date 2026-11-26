@@ -40,16 +40,30 @@
 /* The title shares its row with the controls, so a long name wraps to a second line instead of cutting off. */
 :is(.rd-row1 > .rd-title,.hd-row1 > .hd-title){white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;}
 :is(.rd-row1,.hd-row1):has(> .rd-bar-end){align-items:flex-start;}
+/* The title keeps a readable width: once it and the controls no longer fit one row, the controls move under it. */
+:is(.rd-row1,.hd-row1):has(> .rd-bar-end){flex-wrap:wrap;row-gap:10px;}
+:is(.rd-row1 > .rd-title,.hd-row1 > .hd-title){flex:1 1 330px;}
 :is(.rd-row1,.hd-row1) > .rd-bar-end{flex-wrap:nowrap;}
+/* The state line under the title (paintStateLine): dot or symbol, state word, step, on every tab. One line; the step
+   gives way first. While a question waits it is a way to it (is-link). */
+.run-state-line{display:flex;align-items:center;min-width:0;margin-top:6px;font-size:var(--fs-body);line-height:var(--lh-body);}
+.run-state-line > .status-dot{flex:none;margin-right:8px;}
+.run-state-word{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;color:var(--ink);}
+.run-state-step{flex:0 100 auto;min-width:0;white-space:pre;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2);}
+.run-state-line.is-link{cursor:pointer;width:fit-content;max-width:calc(100% + 16px);margin:4px -8px -2px;padding:2px 8px;border-radius:var(--r-ctrl);transition:background .15s;}
+.run-state-line.is-link:hover{background:var(--hover);}
+.run-state-line.is-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* The live graph (paintRdLive): the workflow framed on the running step(s). The fog: the canvas fades out from its middle
    (the mask) and hazes toward its edges (a blur layer masked the other way), so only the running card stays clear; the
    clear 60% is FOCUS_CLEAR (graph/run-hosts.mjs). A mask reads only alpha, so any opaque token stands in for black. */
 .rd-live{cursor:pointer;border-radius:var(--r-card);animation:rd-live-in .36s ease both;}
 @keyframes rd-live-in{from{opacity:0;transform:translateY(6px);}}
 .rd-live[hidden]{display:none;}
+/* The Chat run panel shows it only once the panel is wide enough for the card's two columns. */
+@container rd (max-width: 959.98px){ .rd[data-presentation="panel"] .rd-live{display:none;} }
 .rd-live:focus-visible{outline:2px solid var(--ink);outline-offset:4px;}
 .rd-live-clip{overflow:hidden;}
-.rd-live .run-flow-wrap{height:280px;margin:0;border-color:transparent;overflow:hidden;
+.rd-live .run-flow-wrap{height:320px;margin:0;border-color:transparent;overflow:hidden;
   -webkit-mask-image:radial-gradient(closest-side, var(--ink) 60%, transparent 100%);
   mask-image:radial-gradient(closest-side, var(--ink) 60%, transparent 100%);}
 .rd-live .run-flow-wrap::after{content:"";position:absolute;inset:0;z-index:2;pointer-events:none;

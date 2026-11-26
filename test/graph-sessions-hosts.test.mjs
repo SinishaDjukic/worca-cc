@@ -216,3 +216,16 @@ test('flow order with two crossed sessions: both trays stay whole, and the one w
   assert.deepEqual(t.wires.filter((w) => order.indexOf(w.from.node) > order.indexOf(w.to.node)).map((w) => w.id), ['w5']);
   assert.deepEqual(order, ['n_task', 'n_x', 'n_y', 'n_p', 'n_q', 'n_end']);
 });
+
+test('focusZoomOn: a running step sits at 1x in the middle of the live box; steps too big for it zoom out just enough', async () => {
+  const { focusZoomOn } = await import('../ui/public/graph/run-hosts.mjs');
+  // One card (280x161 with its padding) in a 347x320 box: 1x, its centre on the box's centre.
+  assert.deepEqual(focusZoomOn({ x: 100, y: 40, w: 280, h: 161 }, { width: 347, height: 320 }),
+    { x: 347 / 2 - 240, y: 160 - 120.5, z: 1 });
+  // Two parallel cards 700 wide: zoomed to fit the box's width, still centred.
+  const t = focusZoomOn({ x: 0, y: 0, w: 700, h: 161 }, { width: 350, height: 320 });
+  assert.equal(t.z, 0.5);
+  assert.equal(t.x, 0);
+  // Never below the 0.3 floor every host shares.
+  assert.equal(focusZoomOn({ x: 0, y: 0, w: 5000, h: 100 }, { width: 350, height: 320 }).z, 0.3);
+});

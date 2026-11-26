@@ -32,10 +32,11 @@ export const ROLE_REVIEW_SINKS = Object.freeze([REFINER_SINK, 'implementer']);
 
 /** What each target reviews, as data: the port the findings leave on, the input whose fresh token continues the pass,
  *  the mock role of its slices, its prompt words, the input it reviews (`reviewedPort`, also the output that passes
- *  the reviewed file on) and the findings file's head line. The engine reads this table; it never compares a target. */
+ *  the reviewed file on), the findings file's head line, and whether it is a run's plan review (`reviewsPlan`: a run that
+ *  names its plan reviewers narrows this one). The engine reads this table; it never compares a target. */
 export const ROLE_REVIEW_TARGETS = Object.freeze({
   plan: Object.freeze({ findingsPort: 'findings', continuePort: 'revise', mockRole: 'plan-review', noun: 'plan', sectionHint: 'the plan section',
-    reviewedPort: 'plan', reviewedHead: 'Plan reviewed', requirementConcerns: true }),
+    reviewedPort: 'plan', reviewedHead: 'Plan reviewed', requirementConcerns: true, reviewsPlan: true }),
   diff: Object.freeze({ findingsPort: 'review', continuePort: 'done', mockRole: 'code-review', noun: 'diff', sectionHint: 'the file and line',
     reviewedPort: 'plan', reviewedHead: 'Diff reviewed against the plan' }),
   requirements: Object.freeze({ findingsPort: 'findings', continuePort: 'revise', mockRole: 'requirements-review', noun: 'requirements',
@@ -128,13 +129,22 @@ export function roleReviewOf(config) {
 export const roleChecklistOf = (spec) => (spec?.checklist ? ROLE_CHECKLISTS[spec.checklist] || null : null);
 
 /** The roles that run: every declared role, or (source `picked`) the declared roles the run picked, in DECLARED order.
- *  An empty result falls back to the first declared role. */
+ *  A picked role the provider keeps but the node does not declare follows, in picked order, as the provider's optional
+ *  `pickedRole(key)` names it. An empty result falls back to the first declared role. */
 export function runningRoles(spec, picked) {
   const roles = Array.isArray(spec?.roles) ? spec.roles : [];
   if (spec?.source !== 'picked') return roles;
   const provider = roleChecklistOf(spec);
-  const keys = new Set(provider ? provider.normalizePicked(picked) : (Array.isArray(picked) ? picked.map(String) : []));
+  const kept = provider ? provider.normalizePicked(picked) : (Array.isArray(picked) ? picked.map(String) : []);
+  const keys = new Set(kept);
   const out = roles.filter((r) => keys.has(r.key));
+  if (typeof provider?.pickedRole === 'function') {
+    const declared = new Set(roles.map((r) => r.key));
+    for (const key of kept) {
+      const role = declared.has(key) ? null : provider.pickedRole(key);
+      if (role) out.push(role);
+    }
+  }
   return out.length ? out : roles.slice(0, 1);
 }
 
@@ -153,6 +163,9 @@ export function rolesForRound(roles, round, lastRound = null) {
   });
 }
 
+/** A finding's proposed requirement text: one line (whitespace runs collapsed), at most 300 characters, '' when absent. */
+const proposedOf = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, 300).trim() : '');
+
 /** One reviewer's raw verdict JSON → the stored role record. Ids are `key-round-n` (`ux-1-2`). Every expected
  *  checklist id gets an entry; one the reviewer left out is `unmet`, so it can never earn a round-2 skip. A finding
  *  keeps its `requirement` only when that id is one of `requirementIds` (the run's agreed ids). */
@@ -166,7 +179,9 @@ export function roleRecord(role, round, verdict, expectedIds = [], { requirement
     section: oneLine(i.section || i.location),
     fix: oneLine(i.fix || i.detail),
     status: 'open',
-    ...(typeof i.requirement === 'string' && requirementIds.includes(i.requirement) ? { requirement: i.requirement } : {}),
+    ...(typeof i.requirement === 'string' && requirementIds.includes(i.requirement) ? { requirement: i.requirement,
+      // Small runs C4 (D9): the requirement's new text the reviewer proposes, kept only with the requirement.
+      ...(proposedOf(i.proposed) ? { proposed: proposedOf(i.proposed) } : {}) } : {}),
   }));
   const given = new Map((Array.isArray(verdict?.checklist) ? verdict.checklist : [])
     .filter((c) => expectedIds.includes(String(c?.id)))

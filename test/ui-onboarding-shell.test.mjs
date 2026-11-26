@@ -40,7 +40,7 @@ const status = (done = [], flags = {}) => ({
   done: done.length, total: 9, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: false, setupFinished: true, ...flags,
 });
 
-async function boot({ onboarding = status(['claude']), projects = [], level = null, settingsError = null, width = null, holdOnboarding = null, levelView = null } = {}) {
+async function boot({ onboarding = status(['claude']), projects = [], level = null, settingsError = null, width = null, holdOnboarding = null, settings = null, levelView = null } = {}) {
   // `level`: the server-rendered interface mode (docs/ui-levels.md); null = no attribute (gates nothing).
   const shellHtml = level ? html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`) : html;
   const dom = trackDom(new JSDOM(shellHtml, { url: 'http://localhost:4317/', pretendToBeVisual: true }));
@@ -77,6 +77,8 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
     }
     // settingsError: the error POST /api/settings answers with (a mode switch the server refuses).
     if (settingsError && url.includes('/api/settings') && init.method === 'POST') return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: settingsError }) });
+    // settings: what GET /api/settings answers (#1450's one-time notice reads modelRoles and roleDefaults).
+    if (settings && url.includes('/api/settings') && init.method !== 'POST') return json(settings);
     // levelView: a getter for the served WorcaLevelView; every worca-level call (read, ack, events) is logged in `levelCalls`.
     if (levelView && url.includes('/api/worca-level')) {
       levelCalls.push({ url, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
@@ -570,6 +572,41 @@ test('first start: a fresh install opens the setup assistant before the welcome;
       assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false);
     } },
   ]);
+});
+
+// ---- #1450: the one-time notice about Worca's role defaults ----
+const ROLE_DEFAULTS = { claude: { deep: { model: 'claude-opus-5-5' }, everyday: { model: 'claude-sonnet-5-5' }, quick: { model: 'claude-haiku-5-5' } } };
+// The notice's warn toast (#toasts), or null.
+const noticeToast = (doc) => [...doc.querySelectorAll('#toasts .toast.warn')]
+  .find((t) => t.querySelector('.tt')?.textContent === 'Steps now run on Worca’s defaults') || null;
+
+test('role-defaults notice: a warn toast shown once with an empty role (never over the welcome), seen recorded on show, Open Models goes to Models; hidden once seen or with every role set', async () => {
+  const seenWelcome = status(['claude'], { welcomeSeen: true });
+  const { doc, window, posts } = await boot({ onboarding: seenWelcome, settings: { modelRoles: {}, roleDefaults: ROLE_DEFAULTS } });
+  await until(() => noticeToast(doc));
+  const toast = noticeToast(doc);
+  assert.ok(toast, 'the warn toast is up');
+  assert.match(toast.querySelector('.td').textContent, /^Steps with no model now run on Worca's defaults \(Opus 5\.5 \/ Sonnet 5\.5 \/ Haiku 5\.5\)/);
+  assert.equal(toast.querySelector('.toast-act').textContent, 'Open Models');
+  assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), true, 'no modal opens');
+  assert.equal(doc.getElementById('toasts').contains(doc.activeElement), false, 'the toast never takes focus');
+  await until(() => posts.some((p) => p.roleDefaultsNoticeSeen === true));
+  assert.ok(posts.some((p) => p.roleDefaultsNoticeSeen === true), `seen is recorded on show, before any click: ${JSON.stringify(posts)}`);
+  click(window, toast.querySelector('.toast-act'));
+  await settle();
+  assert.equal(window.location.hash, '#models/jobs');
+  assert.equal(noticeToast(doc), null, 'Open Models closes the toast');
+
+  const again = await boot({ onboarding: { ...seenWelcome, roleDefaultsNoticeSeen: true }, settings: { modelRoles: {}, roleDefaults: ROLE_DEFAULTS } });
+  await settle(10);
+  assert.equal(noticeToast(again.doc), null, 'seen: never again');
+  const allSet = { claude: { deep: { model: 'claude-opus-5-5' }, everyday: { cliDecides: true }, quick: { model: 'claude-haiku-5-5' } } };
+  const set = await boot({ onboarding: seenWelcome, settings: { modelRoles: allSet, roleDefaults: { claude: ROLE_DEFAULTS.claude } } });
+  await settle(10);
+  assert.equal(noticeToast(set.doc), null, 'every role set: nothing to say');
+  const welcome = await boot({ settings: { modelRoles: {}, roleDefaults: ROLE_DEFAULTS } });
+  await settle(10);
+  assert.equal(noticeToast(welcome.doc), null, 'the welcome is up: no notice over it');
 });
 
 test('fresh install: open -> setup done (earned) -> Start your first run -> at most 2 modal dialogs were ever opened before the first run, and no levels welcome exists (R-po-3)', async () => {

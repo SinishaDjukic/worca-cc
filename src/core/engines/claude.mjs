@@ -26,6 +26,12 @@ import { modelSlot } from '../broker-routing.mjs';
 import { pluginModelRoute, syncPluginSlots } from '../plugin-broker-slots.mjs';
 import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
+import { openTryLog } from './try-log-redaction.mjs';
+import { pretendTryCarry, carryRedactValues, carryLines, carryStageOpts, carryEnv } from '../workflow-tests/try-carry.mjs';
+import { tryPayloadParts, addTryHooks, carriesFileSettings, settingsFilePlan, settingsCanary, stagingPrefixFor } from '../workflow-tests/try-spawn.mjs';
+
+// What a remote spawn's model route carries on worca's side; never kept into the sandbox env.
+const RELAY_OWNED_ENV_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS'];
 
 export const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
@@ -34,6 +40,9 @@ export const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAU
 export const CLAUDE_INSTRUCTION_FILES = Object.freeze(['CLAUDE.md', '.claude/CLAUDE.md', 'CLAUDE.local.md']);
 /** Glob variants of the above, relative to the project root. */
 export const CLAUDE_INSTRUCTION_GLOBS = Object.freeze(['.claude/rules/*.md']);
+const _ov = { superviseSpawn: null };   // test seam (as exec-cli.mjs's): the process supervision runClaudeProcess hands its spawn to
+export const _testing = { set({ superviseSpawn: sup = _ov.superviseSpawn } = {}) { _ov.superviseSpawn = sup; }, reset() { _ov.superviseSpawn = null; } };
+
 // Env every Claude spawn carries, over the ambient, run and model env (#810). Claude Code 2.1.302 offers
 // `subagent_type: "fork"` in -p by default: a fork inherits the parent's context, tools and model, so a
 // fan-out node's children would bypass the pinned investigator (--agents, phases.mjs investigatorAgents)
@@ -71,15 +80,19 @@ function extraSettingsOf(extraSettings) {
  *  harness only when the mounted rules hold a note with `paths:`) adds the `InstructionsLoaded` counting hook the
  *  same way — never into the user's settings files. `readGuard` (Requirements A8: the one file a read may open) adds
  *  the file-read guard (file-read-guard.mjs) on every tool, with `disableAllHooks: false`, logging each decision to
- *  `readGuardLog` (stageClaudeInvocation names it); absent (null/undefined), nothing changes. `writeGuard` (Design: a
- *  `{ allowedDirs }` agent's write folders) adds the design write guard (design/write-guard.mjs) on the write tools the
- *  same way, after the read guard and with `disableAllHooks: false`; absent (null/undefined), nothing changes. */
-export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, mainThreadGuard = null, writeGuard = null } = {}) {
+ *  `readGuardLog` (stageClaudeInvocation names it); absent (null/undefined), nothing changes. Workflow tests: `tryGuard` (D56),
+ *  `signInSettings` (D71), `safetySettings` (D81): workflow-tests/try-spawn.mjs tryPayloadParts; with either of the last two
+ *  the payload says `signIn: true` (a file only, buildSettingsArgs).
+ *  `mainThreadGuard` (session groups C40): a session host's main-thread guard; its PreToolUse entries join the runner's own.
+ *  `writeGuard` (Design: a `{ allowedDirs }` agent's write folders) adds the design write guard (design/write-guard.mjs) on
+ *  the write tools the same way, after the read guard and with `disableAllHooks: false`; absent (null/undefined), nothing changes. */
+export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, tryGuard = null, signInSettings = null, safetySettings = null, mainThreadGuard = null, writeGuard = null } = {}) {
   const hook = buildHookSettings();
   const extra = extraSettingsOf(extraSettings);
   const guard = hostGuard && hostGuardEnabled() ? hostGuardHookEntry() : null;
   const usage = typeof memoryLoadLog === 'string' && memoryLoadLog ? memoryUsageHookEntry(memoryLoadLog) : null;
-  const hasRules = !!permissionRules && Object.values(permissionRules).some((a) => Array.isArray(a) && a.length);
+  const t = tryPayloadParts(permissionRules, { tryGuard, signInSettings, safetySettings });
+  const hasRules = !!t.rules && Object.values(t.rules).some((a) => Array.isArray(a) && a.length);
   // Present-but-malformed rules (e.g. `{deny: 'Bash(curl:*)'}`) make the object
   // truthy while hasRules stays false, so the whole policy would drop out of
   // argv silently. Say it once, then take the same no-rules path (fail-open,
@@ -99,13 +112,14 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
   // the runner's own, like the host guard's; extraSettings never carries hooks (RUNNER_SETTINGS_KEYS), so it has its own key.
   const hostOnly = Array.isArray(mainThreadGuard?.hooks?.PreToolUse) && mainThreadGuard.hooks.PreToolUse.length
     ? mainThreadGuard.hooks.PreToolUse : null;
-  if (!hook && !hasRules && !guard && !extra && !usage && !read && !hostOnly && !write) return null;
-  const settings = { ...(extra ?? {}) };
+  if (!hook && !hasRules && !guard && !extra && !usage && !read && !t.tg && !t.signIn && !t.safety && !hostOnly && !write) return null;
+  const settings = { ...(extra ?? {}), ...t.top };
   if (hook) settings.hooks = { ...hook.hooks };
   if (guard) {
     settings.hooks = settings.hooks ?? {};
     settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), guard];
   }
+  addTryHooks(settings, t.tg, tryGuard);   // D56: beside the host guard (and a Pretend try's settings canary)
   if (hostOnly) {
     settings.hooks = settings.hooks ?? {};
     settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), ...hostOnly];
@@ -125,8 +139,8 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
     settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), write];
     settings.disableAllHooks = false;              // like the read guard: a user's settings cannot switch it off
   }
-  if (hasRules) settings.permissions = permissionRules;
-  return { hook: !!hook, settings };
+  if (hasRules) settings.permissions = t.rules;
+  return t.signIn || t.safety ? { hook: !!hook, settings, signIn: true } : { hook: !!hook, settings };
 }
 
 /**
@@ -316,12 +330,13 @@ export function isHookEvent(evt) {
  * @param {string|null} [settingsFile] staged path (GH #380): `--settings <path>` carries the same JSON
  * @param {{hostGuard?:boolean, extraSettings?:object|null, readGuard?:string|null, readGuardLog?:string|null, writeGuard?:{allowedDirs:string[]}|null}} [opts]
  *   host-process guard (runClaudeProcess sets it; see buildSettingsPayload), extra settings merged into the same payload
- *   (skills registry §4.1), the A8 file-read guard's one allowed file and its decision log, the Design write guard's folders
+ *   (skills registry §4.1), the A8 file-read guard's one allowed file and its decision log, a workflow-test try's guard, the Design write guard's folders
  * @returns {string[]}
  */
-export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, mainThreadGuard = null, writeGuard = null } = {}) {
-  const payload = buildSettingsPayload(permissionRules, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, mainThreadGuard, writeGuard });
+export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, tryGuard = null, signInSettings = null, safetySettings = null, mainThreadGuard = null, writeGuard = null } = {}) {
+  const payload = buildSettingsPayload(permissionRules, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, tryGuard, signInSettings, safetySettings, mainThreadGuard, writeGuard });
   if (!payload) return [];
+  if (payload.signIn && !settingsFile) throw new Error('a carried Claude Code sign-in travels in a settings file, never on the command line');   // D71
   const args = [];
   if (payload.hook) args.push('--include-hook-events');
   args.push('--settings', settingsFile || JSON.stringify(payload.settings));
@@ -345,7 +360,8 @@ export function buildHookArgs() {
  *                        tools are callable in headless -p; it MERGES with `.mcp.json`,
  *                        user scope, and plugin servers — E11). A pipeline node adds
  *                        `--strict-mcp-config` only when mcp.json holds every server it
- *                        needs (phases.mjs strictMcpFor).
+ *                        needs (phases.mjs strictMcpFor), and a pretend workflow-test try
+ *                        always does: it loads only its stand-ins (workflow tests D35).
  *   - mcpServerGrants -> unioned into `--allowedTools`. The server-WILDCARD shape
  *                        (`mcp__<server>`) is what Phase-0 gate V1 verified as
  *                        callable under `--permission-mode acceptEdits`
@@ -365,6 +381,7 @@ export function buildClaudeArgs({
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
   maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs, disallowedTools, agents,
   pluginDirs, extraSettings, memoryLoadLog, readGuard, readGuardLog,
+  tryGuard, signInSettings, safetySettings,   // workflow tests (D56, D71, D81): a test try's pieces in --settings. Absent ⇒ nothing.
   // Design: a Design agent's write folders ({ allowedDirs }), the write guard in the --settings payload. Absent ⇒ unchanged.
   writeGuard,
   // Session groups (Task 29): a session host spawn only. Absent ⇒ argv byte-identical.
@@ -399,7 +416,7 @@ export function buildClaudeArgs({
   // SINGLE inline JSON (two --settings flags would be last-wins at the CLI). [] when
   // there is neither, so the baseline argv is unchanged; a CLI that rejects these
   // flags would only ever fail when the operator opted in.
-  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, mainThreadGuard, writeGuard })) args.push(a);
+  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, tryGuard, signInSettings, safetySettings, mainThreadGuard, writeGuard })) args.push(a);
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
   const tools = Array.isArray(allowedTools) ? allowedTools.slice() : [];
   for (const s of (Array.isArray(mcpServerGrants) ? mcpServerGrants : [])) {
@@ -474,6 +491,8 @@ export function buildClaudeArgs({
  *    model sees the exact text, unlike a "read this file" instruction), the
  *    system prompt and the settings JSON become files under `dir`, and no
  *    argument carries free text any more, so the argv is short by construction.
+ *  - a carried sign-in or the person's own guards (workflow tests 3b D71/D81, `signInSettings` / `safetySettings`): the
+ *    settings always go in a file under `dir`; when the argv fits, only they move (the prompt stays inline, `staged` false).
  *  - agentsViaFile (session host spawns, C3): `files` holds `<dir>/agents.json` on BOTH branches, `--agents` names it,
  *    and `dir` is taken even when the argv is short. `staged` still means only "argv over the limit".
  * @param {object} opts  the buildClaudeArgs options
@@ -494,12 +513,15 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
     agentsEntry = { path: join(dir, 'agents.json'), content: JSON.stringify(agents) };
     opts = { ...opts, agents: undefined, agentsFile: agentsEntry.path };
   }
-  const inline = buildClaudeArgs(opts);
+  const fileSettings = carriesFileSettings(opts);
+  const inline = buildClaudeArgs(fileSettings ? { ...opts, signInSettings: null, safetySettings: null } : opts);
   const inlineLength = argvLength(bin, inline);
-  if (inlineLength <= limit) return { args: inline, stdin: null, files: agentsEntry ? [agentsEntry] : [], staged: false, inlineLength };
-  if (!dir) throw new Error('planClaudeInvocation: a staging dir is required when the argv is over the limit');
+  if (inlineLength <= limit && !fileSettings) return { args: inline, stdin: null, files: agentsEntry ? [agentsEntry] : [], staged: false, inlineLength };
+  if (!dir) throw new Error('planClaudeInvocation: a staging dir is required when the argv is over the limit or carries a sign-in');
   if (typeof dir === 'function') dir = dir();
+  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard, extraSettings: opts.extraSettings, memoryLoadLog: opts.memoryLoadLog, readGuard: opts.readGuard, readGuardLog: opts.readGuardLog, tryGuard: opts.tryGuard, signInSettings: opts.signInSettings, safetySettings: opts.safetySettings, mainThreadGuard: opts.mainThreadGuard, writeGuard: opts.writeGuard });
   const files = agentsEntry ? [agentsEntry] : [];
+  if (inlineLength <= limit) return settingsFilePlan({ opts, dir, files, payload, inlineLength, buildArgs: buildClaudeArgs });   // D71/D81
   const prompt = typeof opts.prompt === 'string' ? opts.prompt : '';
   const promptViaStdin = prompt.length > 0;             // an empty prompt stays `-p ''` — nothing to pipe
   let systemPromptFile = null;
@@ -508,7 +530,6 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
     files.push({ path: systemPromptFile, content: opts.systemPrompt });
   }
   let settingsFile = null;
-  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard, extraSettings: opts.extraSettings, memoryLoadLog: opts.memoryLoadLog, readGuard: opts.readGuard, readGuardLog: opts.readGuardLog, mainThreadGuard: opts.mainThreadGuard, writeGuard: opts.writeGuard });
   if (payload) {
     settingsFile = join(dir, 'settings.json');
     files.push({ path: settingsFile, content: JSON.stringify(payload.settings) });
@@ -524,7 +545,7 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
  *  spawn, and it keeps the spawn sequence in runClaudeProcess linear. */
 export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_INLINE_LIMIT } = {}) {
   let dir = null;
-  const makeDir = () => (dir ??= mkdtempSync(join(tmpdir(), 'worca-claude-')));
+  const makeDir = () => (dir ??= mkdtempSync(join(tmpdir(), stagingPrefixFor(opts))));
   // A8: a guarded read logs every decision of its guard to a file in this private dir: the server's path, never a
   // caller's, read back when the spawn ends (runClaudeProcess) and removed with the dir.
   const o = opts.readGuard != null ? { ...opts, readGuardLog: join(makeDir(), 'read-guard.jsonl') } : opts;
@@ -539,18 +560,26 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir, ...(o.readGuardLog ? { readGuardLog: o.readGuardLog } : {}) };
 }
 
-export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence, forwardSubagentText, agentsViaFile, mainThreadGuard, writeGuard }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
+/** Workflow tests D71b (I3): a Pretend try's carried sign-in env goes OVER the model env (as a normal run's user settings env
+ *  does), except over Worca's in-process bridge, which forwards no credential upstream and whose routing must hold. */
+export const carryOverModelEnv = (modelEnv) => !bridgeSpawnKey(modelEnv);
+
+export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence, tryGuard, pluginsOff, runLoadsUserSettings, forwardSubagentText, agentsViaFile, mainThreadGuard, writeGuard, execEnv }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error
   // message leave redacted — wrapped once here, so the broker path (which calls runClaudeProcess) is covered too.
-  const redactor = Array.isArray(redactValues) && redactValues.length ? createRedactor(redactValues) : null;
-  if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }
+  const carry = pretendTryCarry({ pluginsOff, modelEnv, asAgent, cwd, settingSources, runLoadsUserSettings, permissionRules });   // D71/D81: redacted too
+  // A remote spawn's model route adds its upstream credential to the list below (once it is open).
+  const baseRedactValues = [...(Array.isArray(redactValues) ? redactValues : []), ...carryRedactValues(carry)];
+  let redactor = baseRedactValues.length ? createRedactor(baseRedactValues) : null;
+  if (redactor || execEnv?.remote) { const emit = onEvent; onEvent = (e) => emit(redactor ? redactor.deep(e) : e); }
   return new Promise((resolveRaw, rejectRaw) => {
-    const resolveP = redactor ? (r) => resolveRaw({ ...r, text: redactor.text(r.text) }) : resolveRaw;
-    const rejectP = redactor ? (err) => {
-      if (err && typeof err.message === 'string') err.message = redactor.text(err.message);
-      if (err && typeof err.stack === 'string') err.stack = redactor.text(err.stack);
+    const resolveP = (r) => resolveRaw(redactor ? { ...r, text: redactor.text(r.text) } : r);
+    const rejectP = (err) => {
+      if (redactor && err && typeof err.message === 'string') err.message = redactor.text(err.message);
+      if (redactor && err && typeof err.stack === 'string') err.stack = redactor.text(err.stack);
       rejectRaw(err);
-    } : rejectRaw;
+    };
+    for (const text of carryLines(carry)) safeEmit(onEvent, { type: 'stderr', stream: 'err', text });   // C1, L5: before anything can fail
     // Per-model routing env (design §4.4), prepared BEFORE argv: reserved keys
     // are re-dropped here defensively — the write path already rejects them, so
     // a drop means a hand-edited settings file — and the surviving map is also
@@ -616,10 +645,13 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     // nothing, so runMock stays untouched. The preamble heads the system prompt
     // whether it is appended or (systemPromptMode replace, Requirements A1.1) replaces
     // Claude Code's own.
-    const guardOn = hostGuardEnabled();
+    // In an E2B sandbox (exec-env) no worca server runs to protect: no guard there.
+    const remote = !!execEnv?.remote;
+    const guardOn = hostGuardEnabled() && !remote;
     const guardedSystemPrompt = guardOn
       ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n')
       : systemPrompt;
+    const canary = settingsCanary({ pluginsOff, tryGuard, onEvent });   // concern 8: a Pretend try's (workflow-tests/try-spawn.mjs)
     let plan;
     try {
       plan = stageClaudeInvocation({
@@ -628,7 +660,8 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
         maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools, agents,
-        pluginDirs, extraSettings, memoryLoadLog, systemPromptMode, readGuard, noSessionPersistence,
+        pluginDirs, extraSettings, memoryLoadLog, tryGuard: canary.tryGuard, ...carryStageOpts(carry),
+        systemPromptMode, readGuard, noSessionPersistence,
         forwardSubagentText, agentsViaFile, mainThreadGuard, writeGuard,
       }, { bin: resolved.bin, limit });
     } catch (err) {
@@ -637,154 +670,197 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     }
     const { args } = plan;
     const cleanupStaged = () => {
+      canary.remove();
       if (!plan.dir) return;
       try { rmSync(plan.dir, { recursive: true, force: true }); } catch { /* best effort */ }
     };
-    if (plan.staged) {
-      console.warn(`[worca] claude argv would be ${plan.inlineLength} chars (limit ${limit}): prompt on stdin, system prompt/settings as files`);
-    }
-
-    // Scrub (guardrails), then the run-level env (wsmap D9: a fan-out node's
-    // concurrency cap; it survives scrub and replaces an ambient value), then the
-    // model env merged LAST (it survives scrub and wins collisions: explicit
-    // operator config outranks ambient-env hygiene, and a catalog entry that sets
-    // the cap wins too), then WORCA_HOST_PID on every guarded spawn (scrub would
-    // drop it — WORCA_ is not an allowlisted prefix), then no GitHub or Azure DevOps
-    // credential in any tier (src/core/host-credentials.mjs): pushes and PRs are worca's own
-    // calls, and no broker secret (composeSpawnEnv).
-    const { env: composedEnv, scrubbed } = composeSpawnEnv({
-      envScrub, envAllowlist, prefixes: ['ANTHROPIC_', 'CLAUDE_'],
-      runEnv: cleanRunEnv(runSpawnEnv), overlay: safeModelEnv, hostPid: guardOn ? process.pid : null,
-    });
-    let spawnEnv = composedEnv;
-    // With the broker on, no ambient model credential reaches the agent either (the
-    // boot guard refuses them; this is the second line): the spawn's broker token
-    // is the only one it holds, and it wins over nothing.
-    if (brokerEnabled()) {
-      for (const k of MODEL_CREDENTIAL_ENV_KEYS) if (k !== 'ANTHROPIC_AUTH_TOKEN' || !safeModelEnv?.ANTHROPIC_AUTH_TOKEN) delete spawnEnv[k];
-    }
-    // Routed off first party, a long turn behind a stream-buffering gateway must
-    // not hit Bun's ~5-min fetch timeout or the CLI's first-byte watchdog
-    // (model-env.mjs#withStreamTimeouts).
-    // Read off the FINAL env so the ambient shell, the run env and the model entry
-    // all count for both the route and an explicit value.
-    // CLAUDE_SPAWN_ENV last: no fork sub-agents, whatever any tier says.
-    spawnEnv = { ...withStreamTimeouts(spawnEnv), ...CLAUDE_SPAWN_ENV };
-    if (readGuard != null || writeGuard != null) for (const k of HOOKS_OFF_ENV_KEYS) delete spawnEnv[k];
-
-    // Opt-in spawn diagnostics (WORCA_DEBUG_SPAWN, default off — byte-identical spawn
-    // path when unset). Everything here is derived from values already computed above
-    // (safeModelEnv is null or non-empty, so the routing field is either the described
-    // env — secrets as `<set, N chars>` — or "(none)"). Emitted right before spawn so
-    // it reflects the exact bin/argv/env handed to the child, ONCE, as the same
-    // `stderr` event the child's own stderr rides (run-harness logs it at `warn`
-    // into the run stream and live-log.ndjson; nothing here also console.warns, so
-    // a run never prints the line twice). Field is `routingEnv`, not `modelEnv`:
-    // test/spawn-args.test.mjs counts "modelEnv" warnings for the dropped-key path.
-    if (debugSpawnEnabled()) {
-      const summary =
-        `[worca] spawn-debug: bin=${JSON.stringify(resolved.bin)} `
-        + `argv=${JSON.stringify(redactArgvForLog(args))} `
-        + `promptViaStdin=${plan.stdin != null} staged=${plan.staged} `
-        + `envScrub=${scrubbed ? 'on' : 'off'} childEnvKeys=${Object.keys(spawnEnv).length} `
-        + `routingEnv=[${safeModelEnv ? describeModelEnv(safeModelEnv) : '(none)'}]`;
-      safeEmit(onEvent, { type: 'stderr', stream: 'err', text: summary });
-    }
-
-    let resultText = '';
-    let assistantText = '';
-    // In stream-json mode claude reports failures (auth, unknown/unavailable
-    // model, API errors) as a terminal `result` event with is_error:true on
-    // STDOUT and exits non-zero with EMPTY stderr. Capture that text so a
-    // non-zero exit surfaces the real cause instead of an opaque "no stderr".
-    let errorDetail = '';
-    let apiErrorText = '';   // the last "API Error: …" assistant text (API_ERROR_TEXT_RE)
-    // A bridged spawn: the in-process bridge records the upstream's own reason
-    // (bridge/telemetry.mjs 'failure'), matched on this spawn's catalog id + tag
-    // as model-test.mjs does. The last fallback before the CLI's bare notice, so
-    // a CLI that exits without an API Error line still names the real cause.
-    let bridgeFailureText = '';
-    const bridgeKey = bridgeSpawnKey(modelEnv);
-    const onBridgeFailure = (e) => {
-      if (e && e.message && String(e.catalogId || '').toLowerCase() === bridgeKey.catalogId && (e.tag || '') === bridgeKey.tag) {
-        bridgeFailureText = String(e.message);
+    // Workflow tests M2: a synchronous throw from here to the spawn still removes the staging folder, and is redacted.
+    let detachBridge = () => {};
+    // M13: the try's connector-calls log, redacted once the LAST spawn writing to it has ended (try-log-redaction.mjs).
+    const redactLog = tryGuard && typeof tryGuard.logFile === 'string' ? openTryLog(tryGuard.logFile, redactor) : () => {};
+    try {
+      if (plan.staged) {
+        console.warn(`[worca] claude argv would be ${plan.inlineLength} chars (limit ${limit}): prompt on stdin, system prompt/settings as files`);
       }
-    };
-    if (bridgeKey) bridgeEvents.on('failure', onBridgeFailure);
 
-    superviseSpawn({
-      file: bin, cli: CLAUDE_CLI, args, displayBin: bin, cwd, env: spawnEnv, stdin: plan.stdin ?? null,
-      signal, asAgent, stagedDir: plan.dir || null, onEvent,
-      cleanup: () => {
-        if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure);
-        cleanupStaged();
-      },
-      stdoutErrorDetail: () => errorDetail || apiErrorText || bridgeFailureText,
-      classify: classifyError,
-      isBenignStderr: isBenignStderrLine,
-      redactText: redactor ? redactor.text : null,
-      spawnError: (err, prefix) => spawnFailure(err, prefix),
-      // A8: a guarded read also returns its guard's decisions (read before cleanup removes the log), so the caller can
-      // check that every tool call was decided (file-read-guard.mjs guardDecisionsCover).
-      onDone: (code) => ({ text: resultText || assistantText, exitCode: code, ...(plan.readGuardLog ? { readGuardDecisions: readGuardDecisions(plan.readGuardLog) } : {}) }),
-      onStdoutLine: (trimmed) => {
-        let evt;
+      // Scrub (guardrails), then the run-level env (wsmap D9: a fan-out node's
+      // concurrency cap; it survives scrub and replaces an ambient value), then the
+      // model env merged LAST (it survives scrub and wins collisions: explicit
+      // operator config outranks ambient-env hygiene, and a catalog entry that sets
+      // the cap wins too), then WORCA_HOST_PID on every guarded spawn (scrub would
+      // drop it — WORCA_ is not an allowlisted prefix), then no GitHub or Azure DevOps
+      // credential in any tier (src/core/host-credentials.mjs): pushes and PRs are worca's own
+      // calls, and no broker secret (composeSpawnEnv).
+      const { env: composedEnv, scrubbed } = composeSpawnEnv({
+        envScrub, envAllowlist, prefixes: ['ANTHROPIC_', 'CLAUDE_'],
+        runEnv: cleanRunEnv(runSpawnEnv), overlay: safeModelEnv, hostPid: guardOn ? process.pid : null,
+        tryGuard: tryGuard || null, signInEnv: carryEnv(carry), signInOverModel: carryOverModelEnv(modelEnv),   // workflow tests D56, D71b
+      });
+      let spawnEnv = composedEnv;
+      // With the broker on, no ambient model credential reaches the agent either (the
+      // boot guard refuses them; this is the second line): the spawn's broker token
+      // is the only one it holds, and it wins over nothing.
+      if (brokerEnabled()) {
+        for (const k of MODEL_CREDENTIAL_ENV_KEYS) if (k !== 'ANTHROPIC_AUTH_TOKEN' || !safeModelEnv?.ANTHROPIC_AUTH_TOKEN) delete spawnEnv[k];
+      }
+      // Routed off first party, a long turn behind a stream-buffering gateway must
+      // not hit Bun's ~5-min fetch timeout or the CLI's first-byte watchdog
+      // (model-env.mjs#withStreamTimeouts).
+      // Read off the FINAL env so the ambient shell, the run env and the model entry
+      // all count for both the route and an explicit value.
+      // CLAUDE_SPAWN_ENV last: no fork sub-agents, whatever any tier says.
+      spawnEnv = { ...withStreamTimeouts(spawnEnv), ...CLAUDE_SPAWN_ENV };
+      // Design: no hooks-off switch on a spawn with a fail-closed guard hook; a workflow-test try's guard (D56) is one too.
+      if (readGuard != null || writeGuard != null || tryGuard) for (const k of HOOKS_OFF_ENV_KEYS) delete spawnEnv[k];
+
+      // Opt-in spawn diagnostics (WORCA_DEBUG_SPAWN, default off — byte-identical spawn
+      // path when unset). Everything here is derived from values already computed above
+      // (safeModelEnv is null or non-empty, so the routing field is either the described
+      // env — secrets as `<set, N chars>` — or "(none)"). Emitted right before spawn so
+      // it reflects the exact bin/argv/env handed to the child, ONCE, as the same
+      // `stderr` event the child's own stderr rides (run-harness logs it at `warn`
+      // into the run stream and live-log.ndjson; nothing here also console.warns, so
+      // a run never prints the line twice). Field is `routingEnv`, not `modelEnv`:
+      // test/spawn-args.test.mjs counts "modelEnv" warnings for the dropped-key path.
+      if (debugSpawnEnabled()) {
+        const summary =
+          `[worca] spawn-debug: bin=${JSON.stringify(resolved.bin)} `
+          + `argv=${JSON.stringify(redactArgvForLog(args))} `
+          + `promptViaStdin=${plan.stdin != null} staged=${plan.staged} `
+          + `envScrub=${scrubbed ? 'on' : 'off'} childEnvKeys=${Object.keys(spawnEnv).length} `
+          + `routingEnv=[${safeModelEnv ? describeModelEnv(safeModelEnv) : '(none)'}]`;
+        safeEmit(onEvent, { type: 'stderr', stream: 'err', text: summary });
+      }
+
+      let resultText = '';
+      let assistantText = '';
+      // In stream-json mode claude reports failures (auth, unknown/unavailable
+      // model, API errors) as a terminal `result` event with is_error:true on
+      // STDOUT and exits non-zero with EMPTY stderr. Capture that text so a
+      // non-zero exit surfaces the real cause instead of an opaque "no stderr".
+      let errorDetail = '';
+      let apiErrorText = '';   // the last "API Error: …" assistant text (API_ERROR_TEXT_RE)
+      // A bridged spawn: the in-process bridge records the upstream's own reason
+      // (bridge/telemetry.mjs 'failure'), matched on this spawn's catalog id + tag
+      // as model-test.mjs does. The last fallback before the CLI's bare notice, so
+      // a CLI that exits without an API Error line still names the real cause.
+      let bridgeFailureText = '';
+      const bridgeKey = bridgeSpawnKey(modelEnv);
+      const onBridgeFailure = (e) => {
+        if (e && e.message && String(e.catalogId || '').toLowerCase() === bridgeKey.catalogId && (e.tag || '') === bridgeKey.tag) {
+          bridgeFailureText = String(e.message);
+        }
+      };
+      if (bridgeKey) bridgeEvents.on('failure', onBridgeFailure);
+      detachBridge = () => { if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure); };
+
+      // argv (`args`) is unchanged in both modes: paths are mirrored into the sandbox.
+      // MCP registry secrets (MCPSECRET_*) only for the servers the sandbox keeps; model-env keys always, except
+      // the relay-owned ones: the model's base URL and credential stay in worca, behind a model route
+      // (plans/model-relay-design.md §4). The route is built from the FINAL env, what a local spawn would use
+      // (with the broker on, runViaBroker's slot URL and spawn token), and refused when a relay cannot carry it.
+      let childEnv = spawnEnv;
+      let modelRoute = null;
+      if (remote) {
         try {
-          evt = JSON.parse(trimmed);
-        } catch {
-          // Non-JSON line (rare). Surface as a raw log.
-          safeEmit(onEvent, { type: 'log', text: trimmed, raw: trimmed });
-          return;
+          modelRoute = execEnv.openModelRoute({ spawnEnv, modelEnv: safeModelEnv });
+          const keep = Object.keys(safeModelEnv || {}).filter((k) => !RELAY_OWNED_ENV_KEYS.includes(k));
+          childEnv = execEnv.envFor(spawnEnv, { keep: [...keep, ...execEnv.mcpEnvRefs], route: modelRoute });
+        } catch (err) {
+          if (modelRoute) execEnv.closeModelRoute(modelRoute.id);
+          throw err;   // the catch below detaches the bridge, removes the staging folder and rejects
         }
-        const text = extractText(evt);
-        // Pause/Resume: surface the session id from the init event so the
-        // orchestrator can persist it per step (claude --resume needs it).
-        if (evt?.type === 'system' && evt?.subtype === 'init' && typeof evt.session_id === 'string') {
-          safeEmit(onEvent, { type: 'session', sessionId: evt.session_id });
-        }
-        if (evt?.type === 'assistant' && text) {
-          assistantText += text;
-          if (API_ERROR_TEXT_RE.test(text.trim())) apiErrorText = text.trim();
-        }
-        if (evt?.type === 'result' && typeof evt.result === 'string') resultText += evt.result;
-        // Remember the most specific error text we see, for the non-zero-exit path.
-        if (evt?.type === 'result' && evt.is_error) {
-          errorDetail =
-            (typeof evt.result === 'string' && evt.result.trim()) ||
-            (typeof evt.error === 'string' && evt.error.trim()) ||
-            errorDetail;
-        } else if (!errorDetail && typeof evt?.error === 'string' && evt.error.trim()) {
-          errorDetail = evt.error.trim();
-        }
-        // Surface Claude's hook lifecycle lines (only present under --include-hook-events)
-        // as a stable type:'hook-event' the orchestrator reads for sub-agent telemetry.
-        if (isHookEvent(evt)) {
-          safeEmit(onEvent, { type: 'hook-event', raw: evt });
-          return;
-        }
-        const cost = extractResultCost(evt);
-        safeEmit(onEvent, {
-          type: evt?.type || 'event',
-          raw: evt,
-          text: text || undefined,
-          ...(cost != null ? { costUsd: cost } : {}),
-        });
-        // Claude Code can announce a spent subscription allowance as a
-        // synthetic assistant frame while an async Bash/tool process keeps the
-        // CLI alive indefinitely. Waiting for process exit in that case leaves
-        // the WORCA run stuck in "running". Treat only the CLI's own synthetic
-        // usage-limit message as terminal; ordinary model text that happens to
-        // discuss a limit must remain normal output. superviseSpawn terminates
-        // the CLI (and its tool tree) before rejecting, after which the existing
-        // recovery policy turns this structured class into a graceful pause.
-        if (evt?.type === 'assistant' && evt?.message?.model === '<synthetic>' && text
-            && classifyError(text) === 'usage_limit') {
-          const err = new Error(`${bin} reported: ${text.trim()}`);
-          err.errorClass = 'usage_limit';
-          return err;
-        }
-      },
-    }).then(resolveP, rejectP);
+        if (modelRoute.secrets?.length) redactor = createRedactor([...baseRedactValues, ...modelRoute.secrets]);
+      }
+      (_ov.superviseSpawn ?? superviseSpawn)({
+        file: remote ? 'claude' : bin, cli: CLAUDE_CLI,   // in a sandbox: the template's pinned CLI on PATH
+        args, displayBin: bin, cwd, env: childEnv, stdin: plan.stdin ?? null,
+        signal, asAgent: remote ? false : asAgent, stagedDir: plan.dir || null, onEvent, execEnv: remote ? execEnv : null,
+        cleanup: () => {
+          if (modelRoute) {
+            // Calls no `result` frame covered (a spawn stopped mid-turn, or one whose sandbox printed none): worca saw
+            // them at its relay, so they are booked all the same, also those still running when the spawn ended.
+            const book = (t) => safeEmit(onEvent, { type: 'relayCost', messages: t.messages, byModel: t.byModel });
+            const rest = execEnv.closeModelRoute(modelRoute.id, book);
+            if (rest?.messages) book(rest);
+          }
+          if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure);
+          canary.verdict();   // n1: whatever the exit, before the marker goes
+          cleanupStaged();
+          redactLog();
+        },
+        stdoutErrorDetail: () => errorDetail || apiErrorText || bridgeFailureText,
+        classify: classifyError,
+        isBenignStderr: isBenignStderrLine,
+        redactText: redactor ? redactor.text : null,
+        spawnError: (err, prefix) => spawnFailure(err, prefix),
+        // A8: a guarded read also returns its guard's decisions (read before cleanup removes the log), so the caller can
+        // check that every tool call was decided (file-read-guard.mjs guardDecisionsCover).
+        onDone: canary.judgeThen((code) => ({ text: resultText || assistantText, exitCode: code, ...(plan.readGuardLog ? { readGuardDecisions: readGuardDecisions(plan.readGuardLog) } : {}) })),
+        onStdoutLine: (trimmed) => {
+          let evt;
+          try {
+            evt = JSON.parse(trimmed);
+          } catch {
+            // Non-JSON line (rare). Surface as a raw log.
+            safeEmit(onEvent, { type: 'log', text: trimmed, raw: trimmed });
+            return;
+          }
+          const text = extractText(evt);
+          // Pause/Resume: surface the session id from the init event so the
+          // orchestrator can persist it per step (claude --resume needs it).
+          canary.saw(evt);   // concern 8: the CLI started a session (its init event)
+          if (evt?.type === 'system' && evt?.subtype === 'init' && typeof evt.session_id === 'string') {
+            safeEmit(onEvent, { type: 'session', sessionId: evt.session_id });
+          }
+          if (evt?.type === 'assistant' && text) {
+            assistantText += text;
+            if (API_ERROR_TEXT_RE.test(text.trim())) apiErrorText = text.trim();
+          }
+          if (evt?.type === 'result' && typeof evt.result === 'string') resultText += evt.result;
+          // Remember the most specific error text we see, for the non-zero-exit path.
+          if (evt?.type === 'result' && evt.is_error) {
+            errorDetail =
+              (typeof evt.result === 'string' && evt.result.trim()) ||
+              (typeof evt.error === 'string' && evt.error.trim()) ||
+              errorDetail;
+          } else if (!errorDetail && typeof evt?.error === 'string' && evt.error.trim()) {
+            errorDetail = evt.error.trim();
+          }
+          // Surface Claude's hook lifecycle lines (only present under --include-hook-events)
+          // as a stable type:'hook-event' the orchestrator reads for sub-agent telemetry.
+          if (isHookEvent(evt)) {
+            safeEmit(onEvent, { type: 'hook-event', raw: evt });
+            return;
+          }
+          const cost = extractResultCost(evt);
+          // A remote result frame is the sandbox's word (security evaluation E4): it carries what the relay itself
+          // measured since the previous one, and the harness books that.
+          const relay = modelRoute && evt?.type === 'result' ? execEnv.routeUsage(modelRoute.id) : null;
+          safeEmit(onEvent, {
+            type: evt?.type || 'event',
+            raw: evt,
+            text: text || undefined,
+            ...(cost != null ? { costUsd: cost } : {}),
+            ...(relay ? { relay } : {}),
+          });
+          // Claude Code can announce a spent subscription allowance as a
+          // synthetic assistant frame while an async Bash/tool process keeps the
+          // CLI alive indefinitely. Waiting for process exit in that case leaves
+          // the WORCA run stuck in "running". Treat only the CLI's own synthetic
+          // usage-limit message as terminal; ordinary model text that happens to
+          // discuss a limit must remain normal output. superviseSpawn terminates
+          // the CLI (and its tool tree) before rejecting, after which the existing
+          // recovery policy turns this structured class into a graceful pause.
+          if (evt?.type === 'assistant' && evt?.message?.model === '<synthetic>' && text
+              && classifyError(text) === 'usage_limit') {
+            const err = new Error(`${bin} reported: ${text.trim()}`);
+            err.errorClass = 'usage_limit';
+            return err;
+          }
+        },
+      }).then(resolveP, rejectP);
+    } catch (err) { detachBridge(); cleanupStaged(); redactLog(); rejectP(err); }   // M2
   });
 }
 
@@ -906,9 +982,12 @@ async function runViaBroker(opts) {
   // when agents run under their own users (they can't read the server's processes). The
   // broker uses a personal Claude subscription only for such spawns.
   const owner = normalizeBillTo(currentOwner()) || billTo;
-  const isolated = opts.asAgent
-    ? owner === billTo && !!agentIdentityFor(owner)?.dedicated
-    : !!agentIdentity();
+  // A remote spawn runs in its run's own sandbox, which holds no token (the relay keeps it in worca): isolated
+  // when the paying person owns the run, not when a teammate resumes or answers it (model-relay-design §7).
+  const isolated = opts.execEnv?.remote ? owner === billTo
+    : opts.asAgent
+      ? owner === billTo && !!agentIdentityFor(owner)?.dedicated
+      : !!agentIdentity();
   // A spawn with its own cost cap (an Ask turn's) gets the same cap as its token's budget: the
   // CLI's --max-budget-usd is the agent's own bookkeeping, the broker's holds whatever it does.
   const budgetUsd = typeof opts.maxBudgetUsd === 'number' && Number.isFinite(opts.maxBudgetUsd) && opts.maxBudgetUsd > 0 ? opts.maxBudgetUsd : undefined;
@@ -945,9 +1024,10 @@ async function runViaBroker(opts) {
 /** Claude Code declares every capability worca uses. */
 export const claudeCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, true])));
 
-/** The adapter's run(): every spawn goes through the credential broker when it is
- *  on (WORCA_BROKER_URL, runViaBroker), else straight to runClaudeProcess. Raw
- *  stream-json envelopes; engines/index.mjs normalizes them. */
+/** The adapter's run(): every spawn, local or remote, goes through the credential broker
+ *  when it is on (WORCA_BROKER_URL, runViaBroker), else straight to runClaudeProcess. A
+ *  remote spawn reaches the broker through its sandbox's model relay. Raw stream-json
+ *  envelopes; engines/index.mjs normalizes them. */
 export function runClaudeAdapter(opts) {
   return (brokerEnabled() ? runViaBroker : runClaudeProcess)(opts);
 }

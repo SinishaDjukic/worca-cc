@@ -331,6 +331,8 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       runEngine: null, stepModels: {}, utilityModels: {},   // cascading settings (Plan 2a): null / {} change nothing
       designModels: {},                                      // Models › Engines › Design: {} changes nothing
       modelRoles: {},                                        // Models › Roles: {} changes nothing
+      execEnv: null, e2bMaxSandboxes: null, e2bMaxWaitMin: null,   // the execution environment (docs/e2b.md): null clears
+      dockerMaxSandboxes: null, dockerMaxWaitMin: null, dockerSandbox: null,   // the Local sandbox (Docker) limits (docs/local-sandbox.md)
       askEngine: null, askModels: {},                        // Chat's engine (Plan 2b, D17): null / {} change nothing
       flags: {},                                             // feature flags (docs/feature-flags.md): {} is a no-op
       tagDimensions: [],                                     // Settings › Tags › Tag dimensions: [] clears (already clear)
@@ -454,6 +456,18 @@ test('GET has askWeb; POST askWeb validates, saves, and null clears', async () =
   assert.deepEqual((await (await postJson({ askWeb: null })).json()).askWeb, { enabled: false, anyHost: false, allowedDomains: [], search: null });
 });
 
+test('POST modelRoles.claude.deep { cliDecides: true } saves ("Let Claude Code decide", #1450); with a model it is 400', async () => {
+  const file = join(home, '.worca-cc', 'settings.json');
+  const ok = await postJson({ modelRoles: { claude: { deep: { cliDecides: true } } } });
+  assert.equal(ok.status, 200, await ok.clone().text());
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).modelRoles, { claude: { deep: { cliDecides: true } } });
+  const both = await postJson({ modelRoles: { claude: { deep: { cliDecides: true, model: 'claude-opus-5-5' } } } });
+  assert.equal(both.status, 400);
+  assert.match((await both.json()).field, /^modelRoles/);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).modelRoles, { claude: { deep: { cliDecides: true } } }, 'a refused POST writes nothing');
+  assert.equal((await postJson({ modelRoles: { claude: { deep: null } } })).status, 200);
+});
+
 test('smartNaming: GET has defaults, POST saves a partial block, rejects a bad pattern, null clears', async () => {
   const get = async () => (await fetch(`${base}/api/settings`)).json();
   const g = (await get()).smartNaming;
@@ -555,6 +569,16 @@ test('chat.summariseCommands defaults on, saves false, rejects a non-boolean (#9
   assert.equal(typeof body.error, 'string');
 });
 
+test('chat.sourceBranch: a bad value is 400 on field chat.sourceBranch and writes nothing', async () => {
+  const file = join(home, '.worca-cc', 'settings.json');
+  await postJson({ enforceTags: false });   // the file exists before the byte comparison
+  const before = readFileSync(file, 'utf8');
+  const r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { sourceBranch: 'x' } }) });
+  assert.equal(r.status, 400);
+  assert.equal((await r.json()).field, 'chat.sourceBranch');
+  assert.equal(readFileSync(file, 'utf8'), before);
+});
+
 test('POST modelRoles: a model outside the catalog or a bad effort is 400 and writes nothing; ids are stored canonical', async () => {
   const file = join(home, '.worca-cc', 'settings.json');
   const ok0 = await postJson({ enforceTags: false });   // the file exists before the byte comparison
@@ -572,4 +596,23 @@ test('POST modelRoles: a model outside the catalog or a bad effort is 400 and wr
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).modelRoles, { claude: { deep: { model: 'claude-opus-5-5' } } });
   assert.equal((await postJson({ modelRoles: { claude: { deep: null } } })).status, 200);
   assert.equal('modelRoles' in JSON.parse(readFileSync(file, 'utf8')), false);
+});
+
+const getApi = async () => (await fetch(`${base}/api/settings`)).json();
+test('execution environment: GET has the raw values, POST saves and echoes them, null clears, bad values are 400', async () => {
+  const g0 = await getApi();
+  assert.deepEqual([g0.execEnv, g0.e2bMaxSandboxes, g0.e2bMaxWaitMin], [null, null, null], 'unset: the UI shows the defaults as placeholders');
+  const r = await postJson({ execEnv: 'e2b', e2bMaxSandboxes: 2, e2bMaxWaitMin: 30 });
+  assert.equal(r.status, 200);
+  const g1 = await getApi();
+  assert.deepEqual([g1.execEnv, g1.e2bMaxSandboxes, g1.e2bMaxWaitMin], ['e2b', 2, 30]);
+  for (const [body, field] of [[{ execEnv: 'podman' }, 'execEnv'], [{ e2bMaxSandboxes: 0 }, 'e2bMaxSandboxes'], [{ e2bMaxWaitMin: 2 }, 'e2bMaxWaitMin']]) {
+    const bad = await postJson(body);
+    const j = await bad.json();
+    assert.equal(bad.status, 400, JSON.stringify(j));
+    assert.equal(j.field, field, JSON.stringify(j));
+  }
+  await (await postJson({ execEnv: null, e2bMaxSandboxes: null, e2bMaxWaitMin: null })).json();
+  const g2 = await getApi();
+  assert.deepEqual([g2.execEnv, g2.e2bMaxSandboxes, g2.e2bMaxWaitMin], [null, null, null]);
 });

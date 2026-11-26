@@ -12,7 +12,7 @@ useTempHome(after);
 
 const QUICK = { name: 'Quick fix', taskKind: 'prompt', stages: [{ agent: 'planner' }, { agent: 'implementer' }, { agent: 'reviewer' }] };
 
-test('Auto on codex: no Claude sign-in probe, Codex models only, no classifier model', { timeout: 120000 }, async () => {
+test('Auto on codex: no Claude sign-in probe, Codex models only, the classifier on the Codex Quick default', { timeout: 120000 }, async () => {
   let probed = 0;
   const inputs = [];
   const orch = createOrchestrator({
@@ -25,7 +25,7 @@ test('Auto on codex: no Claude sign-in probe, Codex models only, no classifier m
   assert.equal(res.status, 'done', res.error);
   assert.equal(probed, 0);
   assert.equal(inputs[0].engine, 'codex');
-  assert.equal(inputs[0].model, '');
+  assert.equal(inputs[0].model, 'gpt-6-luna', 'an empty Quick role is Worca\'s Codex default (#1450)');
   assert.equal(inputs[0].requireModel, false);
   assert.ok(inputs[0].models.length > 0 && inputs[0].models.every((m) => m.engine === 'codex'), JSON.stringify(inputs[0].models.map((m) => m.id)));
 });

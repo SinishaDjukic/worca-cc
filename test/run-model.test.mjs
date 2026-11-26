@@ -122,6 +122,17 @@ test('group: a held current member reads "Run 3 of 3 · waiting", never the stal
   assert.ok(!g.actions.includes('start-now'));
 });
 
+test('group: hold keeps a ready group waiting: the reason is its line, no action; any other state and no hold are unchanged', () => {
+  const REASON = 'R-ops-1 is owned by no run and confirmed by no person';
+  const g = groupModel({ kind: 'feature', members: [DONE, DONE], hold: REASON }, OPTS);
+  assert.deepEqual([g.state, g.word, g.dot, g.line, g.actions, g.hold], ['ready', 'Waiting', 'grey-ring', REASON, [], REASON]);
+  assert.equal('hold' in groupModel({ kind: 'feature', members: [DONE, DONE] }, OPTS), false);
+  const live = { kind: 'feature', members: [DONE, R(inBuild)] };
+  assert.deepEqual(groupModel({ ...live, hold: REASON }, OPTS), groupModel(live, OPTS));
+  const open = { kind: 'feature', members: [DONE, DONE], pr: PR };
+  assert.deepEqual(groupModel({ ...open, hold: REASON }, OPTS), groupModel(open, OPTS));
+});
+
 test('group: shipped as one PR reads "In review · 1 PR"; count "2/3" leaves Planning out; the bar counts Planning', () => {
   const one = groupModel({ kind: 'feature', members: [DONE, DONE, DONE], pr: PR }, OPTS);
   assert.equal(one.line, 'In review · 1 PR');
@@ -473,7 +484,7 @@ test('barLine: beside a stage bar a working run names only its step; nodes mode,
 });
 
 test('D8 (pr-fix-rounds-stacking): a round never needs you through its PR or its watch; its origin does', () => {
-  const pr947 = { url: 'https://github.com/SinishaDjukic/worca-cc/pull/947', number: 947, state: 'OPEN', mergeable: 'CONFLICTING' };
+  const pr947 = { url: 'https://github.com/worca-org/worca/pull/947', number: 947, state: 'OPEN', mergeable: 'CONFLICTING' };
   const done = R({ status: 'done', endReached: true, pr: pr947 });
   const marker = { pipelineId: 'ba22d7fd', round: 8, request: 'merge dev in', by: 'watch', kinds: ['conflicts'] };
   const round = runModel({ ...done, round: marker }, OPTS);

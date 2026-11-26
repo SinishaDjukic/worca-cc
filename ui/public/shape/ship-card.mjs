@@ -1,11 +1,12 @@
 // ui/public/shape/ship-card.mjs — Shaper s4: the Ship card. One renderer for the chat card (type 'ship') and the
 // group page / Plans tab (feature-view.mjs shipBlock). Chrome: .ask-card .ask-mcard (style.css "Chat P2: Action cards").
-import { CREATE_PR_LABEL, VIEW_PR_LABEL } from '../ship-words.mjs';
+import { CREATE_PR_LABEL, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel } from '../ship-words.mjs';
 import { icon } from '../icons.mjs';
 import { renderAskChanges } from '../chat/ask-changes.mjs';
-import { buildCheckFold, buildCheckRows } from './check-row.mjs';
+import { buildCheckFold, buildCheckRows, checkMark } from './check-row.mjs';
 import { checkLine } from './plan-text.mjs';
 import { ledgerCheck } from '../../../src/shared/shape/acceptance.mjs';
+import { CONFIRM_REASON_MAX, MARK_WORDS } from '../../../src/shared/shape/ship-ledger.mjs';
 
 const MINUS = '\u2212';
 const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -37,6 +38,18 @@ export async function saveAcceptance(featureId, entries) {
       headers: { 'content-type': 'application/json' }, body: JSON.stringify({ entries }) });
     const out = await r.json().catch(() => ({}));
     return r.ok ? { ok: true, acceptance: out.acceptance || null } : { ok: false, error: out.error || `HTTP ${r.status}` };
+  } catch (e) { return { ok: false, error: errorOf(e) }; }
+}
+
+/** Feature D1: a person's mark on a marked feature's Ship (POST …/confirm): met, not-met or dropped, the last two with a
+ *  reason (owner direction da6198d8d). For the chat card and the feature page.
+ *  → { ok:true, smallRuns, acceptance } | { ok:false, error } (never throws). */
+export async function confirmRequirement(featureId, id, mark = 'met', reason = '') {
+  try {
+    const r = await fetch(`/api/shape/features/${encodeURIComponent(featureId)}/confirm`, { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, mark, ...(mark === 'met' ? {} : { reason }) }) });
+    const out = await r.json().catch(() => ({}));
+    return r.ok ? { ok: true, smallRuns: out.smallRuns || null, acceptance: out.acceptance || null } : { ok: false, error: out.error || `HTTP ${r.status}` };
   } catch (e) { return { ok: false, error: errorOf(e) }; }
 }
 
@@ -163,7 +176,11 @@ function buildLedger(doc, h, a, { editing, onMark, err, root, changed }) {
 /**
  * model: { phase:'waiting'|'ready'|'applied'|'declined', featureId, title, runs, files, added, deleted, suggested, result,
  *          acceptance? } (acceptance: featureView's ship.acceptance, present only with agreed requirements)
- * handlers: { onNotNow?() → Promise, onAskChanges?(text), onMark?(entries: the changed row's entry) → Promise<{ok, error?, acceptance?}> }
+ *          smallRuns? (Feature D1: featureView's ship.smallRuns; the small-runs Ship, phases ready and applied)
+ * handlers: { onNotNow?() → Promise, onAskChanges?(text), onMark?(entries: the changed row's entry) → Promise<{ok, error?, acceptance?}>,
+ *             onConfirm?(id, mark, reason) → Promise<{ok, error?, smallRuns?}> (Feature D1: a confirmed requirement's mark),
+ *             countShown? (Feature D1: the host's state line already says "N PRs open": the done card does not repeat it),
+ *             titleShown? (Feature D1: the host's head already shows the feature title: the small-runs card names only the step) }
  * (no onNotNow → no Not now button). The ready card's Create PR opens the dialog setShipDialogOpener registered, with
  * the button and the card (D20: focus after it closes).
  */
@@ -183,6 +200,7 @@ function shipCard(doc, m, handlers) {
     s.setAttribute('data-ship-card', 'declined');
     return { root: s, ledger: null };
   }
+  if (m.smallRuns && (m.phase === 'ready' || m.phase === 'applied')) return smallRunsShip(doc, h, m, handlers);
   const root = h('div', `ask-card ask-mcard ask-shipcard is-${m.phase}`);
   root.setAttribute('data-ship-card', m.phase);
   root.setAttribute('role', 'group');
@@ -262,6 +280,209 @@ function shipCard(doc, m, handlers) {
   root.appendChild(actions);
   syncCreate();
   return { root, ledger };
+}
+
+const pad2 = (n) => String(n).padStart(2, '0');
+/** Feature D1: what a small-runs Not met / Dropped reason field asks. */
+const REASON_HINT = { 'not-met': 'Why it is not met', dropped: 'Why it is dropped' };
+/** Feature D1: the reasons being written, per feature (id → {mark, text}). Module-level, so a page or chat repaint that
+ *  rebuilds the card keeps a half-typed reason and its field. */
+const REASON_DRAFTS = new Map();
+const draftsOf = (featureId) => { const k = String(featureId || ''); if (!REASON_DRAFTS.has(k)) REASON_DRAFTS.set(k, new Map()); return REASON_DRAFTS.get(k); };
+const clock = (at) => { const d = at ? new Date(at) : null; return d && !Number.isNaN(d.getTime()) ? `${pad2(d.getHours())}:${pad2(d.getMinutes())}` : ''; };
+let srSeq = 0;
+
+/**
+ * Feature D1: a marked feature's Ship. The model's `smallRuns` (featureView's ship.smallRuns) is read, never recomputed:
+ * the confirmed rows, each with the classic `.seg-sm` Met / Not met / Dropped picker (Not met and Dropped save once their
+ * reason field has text), the fold of the rows the runs own, the Care row and the block reason (ready), or the PRs in
+ * finish order with the Not met / Dropped lines (applied). A mark goes through `handlers.onConfirm(id, mark, reason)`; a
+ * success repaints from the answer's `smallRuns`.
+ */
+function smallRunsShip(doc, h, m, handlers) {
+  let sr = m.smallRuns;
+  const applied = m.phase === 'applied';
+  const root = h('div', `ask-card ask-mcard ask-shipcard is-${m.phase} is-small-runs`);
+  root.setAttribute('data-ship-card', m.phase);
+  root.setAttribute('role', 'group');
+  root.setAttribute('aria-label', `Ship: ${m.title || ''}`);
+  if (m.featureId) root.dataset.shipFeature = m.featureId;
+  const head = h('div', 'ask-mcard-head');
+  head.appendChild(h('span', 'ask-mcard-kind', applied ? 'Shipped' : 'Ship'));
+  if (!handlers.titleShown) { const title = h('span', 'ask-mcard-title', m.title || ''); title.title = m.title || ''; head.appendChild(title); }
+  const body = h('div', 'ask-mcard-body');
+  root.append(head, body);
+  const careRow = () => {
+    const kv = h('dl', 'rd-kv ask-shipcard-care');
+    const r = h('div', 'rd-kv-row'); r.dataset.fact = 'care';
+    r.append(h('dt', 'rd-kv-k', 'Care'), h('dd', 'rd-kv-v', [sr.care.choice, sr.care.outcome].filter(Boolean).join(' · ')));
+    kv.appendChild(r);
+    return kv;
+  };
+  const list = (cls, items) => { const l = h('div', `plan-checks srows ${cls}`); l.append(...buildCheckRows(doc, { items })); return l; };
+  if (applied) {
+    const prs = sr.order.filter((o) => o.pr);
+    if (!handlers.countShown) body.appendChild(h('div', 'ask-shipcard-done', `${count(prs.length, 'PR', 'PRs')} open`));
+    body.appendChild(h('div', 'ask-shipcard-stats', 'a PR per run, stacked in the order runs finished'));
+    body.appendChild(careRow());
+    body.appendChild(list('ask-shipcard-prs', prs.map((o) => ({ id: `#${o.pr.number ?? ''}`, idCol: true, pass: true,
+      label: `run ${o.index} · ${o.title}`, note: o.onto ? `onto #${o.onto}` : `into ${sr.base || ''}`.trim(), ariaLabel: 'open' }))));
+    // The Not met / Dropped requirements, as rows under the PRs (the PR descriptions carry the same lines: unmetLines).
+    // Small runs D3 (D5): with the server's `shown` (on the confirmed entry of the same id), its text is the note.
+    const unmet = Array.isArray(sr.unmet) ? sr.unmet : [];
+    const shownOf = (id) => (sr.confirmed || []).find((c) => c.id === id)?.shown || null;
+    if (unmet.length) body.appendChild(list('ask-shipcard-unmet', unmet.map((u) => ({ id: u.id, idCol: true, label: u.text, pass: true, state: u.mark,
+      ariaLabel: MARK_WORDS[u.mark].toLowerCase(), note: shownOf(u.id) ? shownOf(u.id).text : `${MARK_WORDS[u.mark]} · ${u.reason}` }))));
+    const actions = h('div', 'ask-mcard-actions');
+    actions.appendChild(h('span', 'ask-card-actions-spacer'));
+    const view = h('button', 'btn btn-sm btn-quiet', VIEW_PRS_LABEL); view.type = 'button'; view.dataset.act = 'ship-view-prs';
+    view.addEventListener('click', () => { const u = prs[0] && prs[0].pr.url; if (u && /^https?:\/\//.test(u) && doc.defaultView) doc.defaultView.open(u, '_blank', 'noopener'); });
+    actions.appendChild(view);
+    root.appendChild(actions);
+    return { root, ledger: null };
+  }
+  const stats = h('div', 'ask-shipcard-stats');
+  body.appendChild(stats);
+  const err = h('div', 'ask-card-err'); err.setAttribute('aria-live', 'polite');
+  const whyId = `ask-shipcard-why-${++srSeq}`;
+  let confirming = null;                                  // the id whose mark is being sent
+  const drafts = draftsOf(m.featureId);                   // id → {mark, text}: Not met / Dropped picked, its reason not saved yet
+  const confirmedEl = h('div');
+  const ownedEl = h('div', 'srows ask-shipcard-owned');
+  const careEl = h('div');
+  const whyEl = h('div');
+  body.append(confirmedEl, ownedEl, careEl, whyEl);
+  const actions = h('div', 'ask-mcard-actions');
+  actions.appendChild(h('span', 'ask-card-actions-spacer'));
+  const create = h('button', 'btn btn-sm', null); create.type = 'button'; create.dataset.act = 'ship-create';
+  create.append(icon(doc, 'pr-create', 14), h('span', null, createPrLabel(sr.order.length)));
+  actions.appendChild(create);
+  root.append(err, actions);
+  let opening = false;
+  const noteOf = (c) => {
+    const at = clock(c.at) ? ` · ${clock(c.at)}` : '';
+    // Small runs D3 (D5): the server's one status: a waiting row its text, a marked one its word and the time.
+    if (c.shown) return c.state === 'waiting' ? c.shown.text : `${c.shown.word}${at}`;
+    if (c.state === 'waiting') return `confirmed by a person · ${c.roleLabel}`;
+    if (c.mark === 'met') return `confirmed by ${c.roleLabel}${at}`;
+    return `Marked ${MARK_WORDS[c.mark]} by you${at}`;
+  };
+  /** The classic ledger's picker (buildLedger): a `.seg-sm` group under the row, and the reason field while one is due. */
+  const picker = (c) => {
+    const wrap = h('div', 'ask-shipcard-mark');
+    if (c.reason && !drafts.has(c.id)) wrap.appendChild(h('div', 'ask-shipcard-reason', c.reason));
+    const seg = h('div', 'seg seg-sm');
+    seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', `Mark ${c.id} as ${c.roleLabel}: ${c.text}`);
+    const shown = drafts.has(c.id) ? drafts.get(c.id).mark : c.mark;
+    for (const [mk, label] of MARKS) {
+      const b = h('button', null, label); b.type = 'button'; b.dataset.act = `ship-mark-${c.id}-${mk}`;
+      b.setAttribute('aria-pressed', String(shown === mk));
+      b.disabled = !!confirming;
+      b.addEventListener('click', () => pick(c, mk));
+      seg.appendChild(b);
+    }
+    wrap.appendChild(seg);
+    const d = drafts.get(c.id);
+    const due = d ? d.mark : c.state === 'needs-reason' ? c.mark : null;
+    if (due) {
+      const input = h('input', 'input input-sm'); input.type = 'text'; input.maxLength = CONFIRM_REASON_MAX;
+      input.dataset.act = `ship-mark-${c.id}-text`; input.placeholder = REASON_HINT[due];
+      input.setAttribute('aria-label', `${c.id}: ${REASON_HINT[due].toLowerCase()}`);
+      input.value = d && d.text != null ? d.text : c.mark === due && c.reason ? c.reason : '';
+      input.addEventListener('input', () => { const cur = drafts.get(c.id); if (cur) cur.text = input.value; });
+      input.disabled = !!confirming;
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commit(c, due, input); } });
+      // Chromium blurs a focused node a repaint removes, while it is still connected: only a blur that leaves the
+      // field in the document commits (the repaint's card keeps the draft through REASON_DRAFTS).
+      input.addEventListener('blur', () => { queueMicrotask(() => commit(c, due, input)); });
+      wrap.appendChild(input);
+    }
+    if (confirming === c.id) wrap.setAttribute('aria-busy', 'true');
+    return wrap;
+  };
+  const paint = () => {
+    const rows = buildCheckRows(doc, { items: sr.confirmed.map((c) => ({ id: c.id, idCol: true, label: c.text,
+      pass: c.state === 'confirmed', ...(c.state === 'confirmed' && c.mark !== 'met' ? { state: c.mark } : {}), ...(c.shown ? { mark: c.shown.mark } : {}),
+      ariaLabel: c.state === 'waiting' ? 'waiting' : c.mark === 'met' ? 'confirmed' : MARK_WORDS[c.mark].toLowerCase(), note: noteOf(c) })) });
+    const out = [];
+    sr.confirmed.forEach((c, i) => {
+      if (c.state === 'waiting') rows[i].replaceChild(checkMark(doc, 'wait'), rows[i].querySelector('.plan-check-mark'));
+      out.push(rows[i], picker(c));
+    });
+    const l = h('div', 'plan-checks srows ask-shipcard-confirmed'); l.append(...out);
+    confirmedEl.replaceChildren(...(rows.length ? [l] : []));
+    if (!ownedEl.firstChild && sr.owned.length) {
+      const items = sr.owned.map((o) => (o.shown
+        ? { id: o.id, idCol: true, label: o.text, pass: o.shown.mark === 'check', mark: o.shown.mark, ariaLabel: o.shown.word, note: o.shown.text,
+          tip: `${o.id} · ${o.text} · ${o.shown.text}` }
+        : { id: o.id, idCol: true, label: o.text, pass: true,
+          note: `${o.run ? `run ${o.run}` : 'a run'} · ${o.status === 'gap-accepted' ? 'gap accepted' : 'holds'}` }));
+      const fold = buildCheckFold(doc, { items }, 'Requirements', { text: () => `${items.length} checked by the runs' reviews and the Verifier` });
+      ownedEl.append(fold.line, fold.rows);
+    }
+    careEl.replaceChildren(careRow());
+    stats.textContent = sr.unowned && sr.unowned.length ? 'Waiting' : sr.blocked ? 'Your turn: mark what only a person can' : 'Ready to ship';
+    if (sr.blocked && sr.reason) {
+      const why = h('div', 'ask-shipcard-why'); why.id = whyId;
+      // R-comp-4 never breaks at its hyphens on a narrow screen: each requirement id is one unbreakable span.
+      for (const part of sr.reason.split(/(\bR-[A-Za-z0-9]+-\d+\b)/)) {
+        if (/^R-[A-Za-z0-9]+-\d+$/.test(part)) why.appendChild(h('span', 'ask-shipcard-id', part));
+        else if (part) why.appendChild(doc.createTextNode(part));
+      }
+      whyEl.replaceChildren(why);
+      create.setAttribute('aria-describedby', whyId);
+    } else { whyEl.replaceChildren(); create.removeAttribute('aria-describedby'); }
+    create.disabled = opening || !!confirming || sr.blocked;
+    create.classList.toggle('btn-primary', !sr.blocked);
+  };
+  /** The control `act` of this card, or of the card that replaced it (a repaint of the page or the chat card rebuilds it). */
+  const findAct = (act) => (root.isConnected ? root : doc.querySelector(`[data-ship-feature="${m.featureId}"]`) || root)
+    .querySelector(`[data-act="${act}"]`);
+  function focusAct(act) { const el = findAct(act); if (el && el.isConnected && !el.disabled) el.focus(); }
+  function pick(c, mk) {
+    if (confirming) return;
+    const act = `ship-mark-${c.id}-${mk}`;
+    if (mk === 'met') { drafts.delete(c.id); if (c.mark === 'met') { paint(); focusAct(act); return; } send(c.id, mk, '', act); return; }
+    // Not met / Dropped: the reason field opens (prefilled when it is the stored mark, to edit it).
+    drafts.set(c.id, { mark: mk, text: null });
+    paint();
+    focusAct(`ship-mark-${c.id}-text`);
+  }
+  function commit(c, mk, input) {
+    if (confirming || !input.isConnected) return;
+    const text = input.value.replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    if (c.mark === mk && c.reason === text) { drafts.delete(c.id); paint(); focusAct(`ship-mark-${c.id}-${mk}`); return; }
+    send(c.id, mk, text, `ship-mark-${c.id}-${mk}`);
+  }
+  async function send(id, mk, reason, act) {
+    err.textContent = '';
+    // Chromium blurs a disabled button: a page or chat repaint during the post gives the focus back here (featureFocusOf).
+    root.dataset.focus = act;
+    confirming = id;
+    paint();
+    let r;
+    try { r = handlers.onConfirm ? await handlers.onConfirm(id, mk, reason) : { ok: false, error: 'Open the feature page to mark it' }; }
+    catch (e) { r = { ok: false, error: errorOf(e) }; }
+    confirming = null;
+    delete root.dataset.focus;
+    if (r && r.ok) { drafts.delete(id); if (r.smallRuns) sr = r.smallRuns; }
+    else err.textContent = (r && r.error) || 'Something went wrong';
+    paint();
+    focusAct(r && r.ok ? act : drafts.has(id) ? `ship-mark-${id}-text` : act);
+  }
+  create.addEventListener('click', () => {
+    if (create.disabled) return;
+    err.textContent = '';
+    if (!openShipDialog) { err.textContent = 'Open the feature page to create its PR'; return; }
+    opening = true; paint();
+    create.setAttribute('aria-busy', 'true');
+    Promise.resolve().then(() => openShipDialog(m.featureId, { opener: create, card: root }))
+      .catch((e) => { err.textContent = errorOf(e); })
+      .finally(() => { opening = false; paint(); create.removeAttribute('aria-busy'); });
+  });
+  paint();
+  return { root, ledger: null };
 }
 
 function releaseLine(h, rel) {

@@ -160,14 +160,14 @@ test('route only: a copy tree with one route renamed reports only-in-a and only-
   assert.deepEqual([r.visualDiffs.length, r.failedFlows.length], [0, 0]);
 });
 
-test('visual only: one colour on one element (the run status word) is a visual difference on History and the live run only, exit 1', { skip, timeout: 900_000 }, async () => {
+test('visual only: one colour on one element (the run state word) is a visual difference on History and the live run only, exit 1', { skip, timeout: 900_000 }, async () => {
   const copy = mutatedCopy((c) => edit(join(c, 'ui', 'public', 'style.css'),
-    (s) => `${s}\n.run-status-word{color:#ff0000 !important}\n`));
+    (s) => `${s}\n.run-state-word{color:#ff0000 !important}\n`));
   const { code, r } = await runAgainst(copy);
   assert.equal(code, 1);
   assert.equal(r.routeDiffs.length, 0);
   assert.ok(r.visualDiffs.length > 0);
-  assert.deepEqual([...new Set(r.visualDiffs.map((v) => v.page))].sort(), ['history', 'live-run']);   // both show the run status card
+  assert.deepEqual([...new Set(r.visualDiffs.map((v) => v.page))].sort(), ['history', 'live-run']);   // both show the run's state line
   assert.ok(r.visualDiffs.every((v) => v.pixels > 0 && v.pixels < 1280 * 800 * 0.01), 'a small region, not the whole page');
 });
 
@@ -184,7 +184,7 @@ test('CI-image parity is its own workflow: docker:A (branch) vs docker:B (split 
   assert.match(wf, /fetch-depth: 0/, 'readiness split clones HEAD with git clone --shared');
   assert.match(wf, /tools\/readiness\.mjs split --rev HEAD --splitter-rev HEAD --out "\$RUNNER_TEMP\/split"/);
   assert.match(wf, /WORCA_TARBALL=docker\/\.pack\/worca-app-split\.tgz/);
-  assert.ok(wf.includes('npm run parity -- run --a docker:ghcr.io/sinishadjukic/worca:ci --b docker:ghcr.io/sinishadjukic/worca:ci-split --out "$RUNNER_TEMP/parity-docker" --no-timing-gate'));
+  assert.ok(wf.includes('npm run parity -- run --a docker:ghcr.io/worca-org/worca:ci --b docker:ghcr.io/worca-org/worca:ci-split --out "$RUNNER_TEMP/parity-docker" --no-timing-gate'));
   assert.ok(wf.includes('npm run parity -- run --a tree:. --b package:. --out "$RUNNER_TEMP/parity-pkg" --no-timing-gate'));
   assert.doesNotMatch(wf, /--a tree:\S+ --b docker:/, 'the host tree is never compared with a container: the environments differ');
   assert.doesNotMatch(wf, /continue-on-error/);

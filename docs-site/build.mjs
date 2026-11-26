@@ -29,7 +29,7 @@ const repo = path.resolve(here, '..');
 const dist = path.join(here, 'dist');
 const docs = path.join(repo, 'docs');
 
-const REPO_URL = 'https://github.com/SinishaDjukic/worca-cc';
+const REPO_URL = 'https://github.com/worca-org/worca';
 
 const pkg = JSON.parse(await readFile(path.join(repo, 'package.json'), 'utf8'));
 const version = pkg.version;

@@ -16,7 +16,7 @@ import { readStyleCss } from '../src/core/read-style-css.mjs';
 const trackDom = useDomRelease(afterEach);
 const NOW = new Date(2026, 8, 30, 15, 0).getTime();           // Wed Sep 30 2026, 15:00 local
 const at = (d, h, m) => new Date(2026, 8, d, h, m).toISOString();
-const PR947 = { url: 'https://github.com/SinishaDjukic/worca-cc/pull/947', number: 947, state: 'OPEN', mergeable: 'CONFLICTING' };
+const PR947 = { url: 'https://github.com/worca-org/worca/pull/947', number: 947, state: 'OPEN', mergeable: 'CONFLICTING' };
 const marker = (n, extra = {}) => ({ pipelineId: 'ba22d7fd', round: n, request: 'merge dev in', by: 'watch', kinds: ['conflicts'],
   outcome: { kind: 'pushed', sha: `${n}e4f5a6` }, ...extra });
 const hist = (id, extra = {}) => ({ id, projectKey: 'worca-00000002', title: id, status: 'done', pauseReason: null, startedAt: at(20, 9, 0),

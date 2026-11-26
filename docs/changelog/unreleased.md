@@ -3,6 +3,216 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## See how Worca is protected, and change it from the UI
+
+**Worca now shows how it is set up. The security setups need no settings.json editing.**
+
+Settings › General has a Security card. It shows where Worca runs. It shows the credential broker, agent users, the outbound network and the proxy login. It shows the default execution environment. What only the host can see reads Unknown.
+
+A Local run on your own machine now says "not sandboxed". The run page header says it. New run says it under Runs in. Both link to Choose a setup.
+
+The Execution environment card follows the backend you pick. Docker shows Docker's limits: sandboxes at once, wait time, memory, CPUs, processes and runtime. Save checks each one.
+
+A project's environment spec is a form now. Add tools with pinned versions and apt packages, then Save. A refused value shows its reason inline.
+
+The first Docker run builds its image. The run page says so while it builds.
+
+The setup assistant finds Docker and an E2B key. It asks where agents run. Your answer becomes the default for new runs.
+
+In the hardened box, Add project offers Clone from URL only. Open in editor is gone there. The Security card shows the box image, current or stale, and the rebuild command.
+
+When the egress sidecar is down, the proxy card says so. Its buttons wait. Retry checks again. A rejected login the operator manages now says who must fix it.
+
+Chips: Security · Sandbox · Settings · Setup assistant
+
+Read it: [Choose a setup](../choose-a-setup.md), [Hardened box](../hardened-box.md), [Local sandbox](../local-sandbox.md)
+
+Pull requests (add each number when it opens):
+
+- UI for the security setups (#1634)
+
+## Choose a setup, and a security overview
+
+**Two new pages tell you which Worca setup fits you, and what each one protects.**
+
+"Choose a setup" compares Native, Local sandbox (Docker), E2B sandbox, Hardened box and Shared instance. It says who each is for, how you work in it, where each credential lives and what you need.
+
+The security overview says what Worca treats as untrusted. The claim for a sandboxed setup is: no model key, no git token and no proxy login in an agent's reach. It does not claim "no secrets". The page lists what stays in reach, such as MCP registry secrets.
+
+Chips: setups · security overview · known limits
+
+Read it: [Choose a setup](../choose-a-setup.md), [Security overview](../security-overview.md)
+
+Pull requests (add each number when it opens):
+
+- Docs: choose a setup, and a security overview
+
+## A reference profile for a shared instance
+
+**One documented way to run Worca for a team on a server, hardened.**
+
+`docker/compose.shared.yml` adds the team setup to the usual compose files. The credential broker runs in multi mode: each person saves their own model key and GitHub token. Each person's agents run under their own user. The network has no route out except through an allow-list. The proxy login is a technical user's, which the operator supplies as a file. Nothing is published: Cloudflare Access, or an identity proxy of your own, signs people in.
+
+`docker/shared.env.example` lists every value to supply. Secrets are files, never values in the env file. The new page says how to start it, and how to check that it is safe, with commands and the answers to expect. It also says what maps to what on Kubernetes, and why Railway is the weaker option.
+
+Every signed-in person is an administrator. There is no privacy between teammates.
+
+`compose.broker.yml` and `compose.proxy.yml` now also take their shared secrets as files. Without either, Worca and the broker refuse to start and say so.
+
+Chips: Container · Security
+
+Read it: [Shared instance](../shared-instance.md)
+
+Pull requests (add each number when it opens):
+
+- Shared instance profile
+
+## The hardened box
+
+**One command starts the strictest local setup.**
+
+`worca container up --hardened` starts Worca with every protection on. The credential broker holds the model key. Agents run under their own users. The network has no route out except through an allow-list. The egress sidecar holds the proxy login.
+
+No folder from your machine is mounted. You clone projects from the remote into the box. Results leave as pushed branches and pull requests. A mounted checkout would let an agent plant a git hook that your own git then runs.
+
+The setup asks only for what is missing. It writes `.env` with mode 0600 and never overwrites your values. Every answer also works from a flag or the environment, so a script can run it. It checks Docker, Compose, the image and WSL2 first.
+
+`worca container status` then shows one line per protection, read from the running box. A line that is off says how to fix it.
+
+With agents under their own users, Worca now checks every secret file it reads. The broker's secret, the egress sidecar's secret and the GitHub App key must each be mode 0600 and owned by Worca's user. Otherwise Worca does not start, and says which file to fix.
+
+It is for one developer on their own machine. It runs on Docker only. It is not "no secrets": an MCP registry secret a run uses stays in its reach. Your native install and the plain container do not change.
+
+Chips: Container · Security
+
+Read it: [Hardened box](../hardened-box.md)
+
+Pull requests (add each number when it opens):
+
+- The hardened box
+
+## The proxy login moves out of the box
+
+**In a container, agents can no longer reach your proxy login.**
+
+The login now lives in the egress sidecar. That is a second container, and only it mounts the login's volume. It logs in to the corporate proxy for every connection: NTLMv2, Negotiate, Digest or Basic. The box gets a proxy URL with no credentials in it. The credential broker's calls to the model providers go through the sidecar too.
+
+`worca container` starts the sidecar by itself when the proxy needs a login. Log in with `worca container proxy login`. `worca container run -- proxy login` still works. A login an older version saved in the box moves to the sidecar once. Then it is deleted from the box.
+
+A login is bound to its proxy. Change the host or the port, and the login is deleted. On a shared instance the operator can supply the login as a file. `worca proxy hash` prints one from a hidden prompt.
+
+Before this, a hardened box behind a login proxy could not get out at all: neither the sidecar nor the broker could log in. This was tested against a simulated NTLM proxy, not a real corporate one.
+
+The Settings card and the setup assistant keep working in a container. Worca forwards them to the sidecar. The password passes through Worca's server for that one call, and nothing is written in the box. When the operator manages the login, both show who is logged in and the state. There is no login form then.
+
+The native install does not change.
+
+Chips: Network proxy · Container · Setup
+
+Read it: [Network proxy](../network-proxy.md#worca-in-a-container)
+
+Pull requests (add each number when it opens):
+
+- Proxy login in the egress sidecar (#1621)
+- The Settings card and the setup assistant talk to the sidecar (#1623)
+- The UI server gets the sidecar's secret, so the card and the move of an old login work (#1637)
+
+## Build the box image from the spec
+
+**`worca container build` turns your projects' specs into the box image.**
+
+It joins the specs of every project that has one, or of the projects you name with `--project`. It builds `FROM` the base, adds the apt packages, then mise and each pinned tool. Two projects that pin different versions of one tool are refused, with both named.
+
+The finished image is checked. It must have Node at Worca's minimum, git, `worca` and the base's pinned Claude Code. Then the box runs it. A failed build keeps the previous image.
+
+`--status` says whether the image is current or stale. A stale image still runs, with a warning. Nothing rebuilds by itself.
+
+The base is `WORCA_BASE_IMAGE` in the container `.env`. It must be a Worca image or one built from it. A project cannot change it. To build Worca itself on a company base image, pass `--node-base` to `npm run docker:build`.
+
+Not yet: tools outside mise and apt, and internal package mirrors at build time.
+
+Chips: worca container build · box image · base image · stale check
+
+Read it: [Building the box image](../environment-spec.md#building-the-box-image)
+
+Pull requests (add each number when it opens):
+
+- Container: build the box image from the environment spec, with an operator base image
+
+## A project environment spec
+
+**A project can now list the tools its agents need, pinned to exact versions.**
+
+Set it with `worca exec-env spec --project <key|dir> --set spec.json`. The spec lists tools by mise name, each with a pinned version, and apt packages. It holds tools only: never env vars, files or secrets. `latest` is refused. Show it with the same command, or clear it with `--clear`.
+
+`worca container build` builds the box image from it. `worca exec-env build` builds the E2B template and the Local sandbox (Docker) image from it.
+
+Chips: worca exec-env spec · pinned tools · apt packages · no secrets
+
+Read it: [Project environment spec](../environment-spec.md)
+
+Pull requests (add each number when it opens):
+
+- Exec env: a project environment spec and its CLI
+
+## Local sandbox (Docker)
+
+**A run's agents can now work in a disposable container on your own Docker.**
+
+Worca stays native. Pick it under **Runs in**, or with `worca --exec-env docker`. One container serves the whole run.
+
+Nothing of your machine is mounted. Code goes in as a git bundle. Changes come back as a filtered patch after each step. No model key enters the container.
+
+The container is hardened. No sudo. Almost every capability dropped. No new privileges. Limits on processes, memory and CPU. A stricter runtime, such as `runsc`, is one setting away.
+
+The container has no network of its own. Every connection goes through Worca, which never lets it reach your machine. Open or allow-listed hosts only, per project. Behind a proxy that needs a login, Worca's local proxy logs in. The login never enters the container.
+
+The image builds itself on first use. Project images build from the environment spec.
+
+It needs Docker Desktop or Docker Engine. Single git projects on Claude, Codex, Copilot or Cursor only.
+
+Chips: Runs · Security · Docker
+
+Read it: [Local sandbox (Docker)](../local-sandbox.md)
+
+Pull requests (add each number when it opens):
+
+- Local sandbox (Docker) backend (#1627)
+
+## Runs in an E2B sandbox
+
+**A run's agents can now work in an E2B sandbox instead of on your machine.**
+
+Pick it under **Runs in**, per project or per run, or with `worca --exec-env e2b`. One sandbox serves the whole run. Your code goes in as a git bundle. Changes come back as a filtered patch after each step.
+
+No model key and no git token enter the sandbox. Worca keeps them and relays the model calls.
+
+The sandbox network is open by default. A project can limit it to the allow-listed hosts. A project can also have its own template, built from its environment spec.
+
+It covers single git projects on Claude, Codex, Copilot or Cursor. Bedrock and Vertex are refused for a sandbox run.
+
+Chips: Runs · Security · E2B
+
+Read it: [E2B](../e2b.md)
+
+Pull requests (add each number when it opens):
+
+- Run a pipeline's agents in a remote E2B sandbox (#826)
+
+## Steady command rows in Chat
+
+**A stack of commands no longer flickers while it runs.**
+
+Each new command now only adds its own row: the rows before it and their group stay where they are, instead of being rebuilt. Stop on a running command is a quiet square icon, as in the composer, not a red button.
+
+Chips: Chat
+
+Read it: [Chat](../chat.md)
+
+Pull requests (add each number when it opens):
+
+- Chat: steady command rows, quiet Stop
+
 ## Chat composer bar, compact
 
 **A compact bottom bar.**
@@ -122,6 +332,117 @@ Read it: [Requirements](../requirements.md#pull-from-requirements)
 Pull requests (add each number when it opens):
 
 - Requirements: attach Ready features without starting them
+
+## Workflow versions (Labs)
+
+**Save a workflow as a version, choose which one new runs use, and go back.**
+
+Workflow versions (Labs, flag `workflowTests`): Save version on a workflow, choose which version new runs use, see what changed, and restore any of the last 50 saves. Every save keeps the workflow as it was just before; a version keeps the workflow's steps and settings, and runs today's agent and script text from the Library.
+
+Export can export the version in use or your draft: the Export dialog's Version field picks which, and starts on the version new runs use. An exported skill or plugin keeps the workflow's name, so exporting an older version updates it.
+
+Chips: Save version · Versions · Use for new runs · Restore · experimental: turn it on in Settings › Labs
+
+Read it: [Workflow tests › Versions](../workflow-tests.md#versions)
+
+Pull requests (add each number when it opens):
+
+- Workflow versions (#979)
+
+## Workflow tests (Labs)
+
+**Try a new version of a workflow on real examples, and see what got better or worse.**
+
+Workflow tests (Labs, flag `workflowTests`) add a Tests page to a workflow.
+- Keep real requests as examples, with their files and the answers to Worca's questions. Add one from a past run, or write one.
+- Say what a good result needs: the Basics (no error, no help needed, a cost limit, how often it is sent back for fixes) and automatic checks counted exactly, without AI (length, sections, must or must not mention, a file, a Library script).
+- Test a version: Worca tries every example 3 times on it and on the version you compare with, reuses earlier results when nothing changed, and stops at the cost limit you set.
+- Compare shows the tries passed, the cost and time per try, what got better or worse per example, and each example side by side.
+- Connectors: by default a test's tries use stand-ins for your connectors, so nothing is posted or sent, and one example's page shows what would have been sent. Choose Real to use your real connectors.
+- A test of a workflow runs one at a time; while it runs, Test a version and Try your draft once now wait.
+- Their runs stay out of the Runs list, Statistics and team metrics, but count in the spending limit.
+
+Chips: Tests · Test a version · Compare · experimental: turn it on in Settings › Labs
+
+Read it: [Workflow tests](../workflow-tests.md)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests (#979)
+
+## Workflow tests on a project (Labs)
+
+**Test workflows that change a project's code, without touching your folder.**
+
+- An example can name a Git project and a start point: a commit, kept the same until you change it, so two versions start from exactly the same code. Keep your changes that are not committed yet with it if you want. Worca says when the project has moved on, and Start from the latest moves the example.
+- Each try works in Worca's own copy of the project. Your folder and your branches are never touched, and the copy of each try is deleted after its checks. The list of changes and the full diff stay to look at.
+- Before each try, Worca can run a setup command (filled in from the project's setup, such as `npm ci`). If it fails, the test stops and no try counts as failed.
+- A new automatic check: The command passes (such as `npm test`), with its summary line. Text checks can read a file of the project.
+- Pushes, pull requests and issues are stopped, with any engine; common publish commands are stopped with Claude Code. The attempts Worca sees are listed under Would have sent. It is not a network block yet: a program's own web calls, a publish that signs in with a token kept in a file, a publish run from inside a script, or a push or web call with a token the agent reads from a file or from git's settings are not stopped.
+- Test a version says how much disk and time a test needs, and refuses to start when the disk is too full.
+- Add from a past run takes project runs too: the example starts where the run started.
+
+Chips: Tests · Where it starts · The command passes · experimental: turn it on in Settings › Labs
+
+Read it: [Workflow tests › Tests on a project](../workflow-tests.md#tests-on-a-project)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests on a project (#979)
+
+## Workflow tests: plugins off, file checks, before and after (Labs)
+
+**Tests of a workflow are no longer shaped by your own Claude Code setup, and they say what a change did to the project's tests.**
+
+- With Pretend connectors, a try loads none of your personal Claude Code plugins, skills, agents or hooks, and none of the
+  project's own hooks or plugins. The project's instructions (CLAUDE.md, agents, skills) stay on. Your sign-in and your own deny
+  rules and sandbox are carried over, and nothing else from your settings.
+- New automatic checks for a project: Changes only files under …, Leaves these files unchanged (names or patterns such as
+  `test/**`) and Changes at most N files.
+- The command passes now also runs once on the start point, before the change. Side by side shows which tests the change made
+  pass, which passed before and still pass, and which it broke (for TAP, node:test, pytest, Jest and Vitest output; other
+  commands are compared by whether they passed). Results on a start point are kept for a week.
+- The command passes can instead be met when the change breaks nothing that passed before: useful when some tests already
+  fail on the start point. A test that is skipped or deleted now, or fewer passing tests, counts as broken even when the
+  command passes.
+- A question Worca answered with its own pick (the example says "Worca picks a sensible answer") now meets Finishes without
+  needing help. A review loop that runs out of rounds fails Finishes without an error.
+- Compare says in short what changed and shows a difference only when it is big enough to trust: cost at least 20 % and
+  $0.01 a try, time at least 20 % and 10 s, sent back at least 0.5 a try, and at least 2 finished tries on each side.
+  Otherwise it shows no difference. It also shows the questions Worca asked in each try.
+- Smaller changes: a Library script check counts only when the script gives a verdict; saving a draft that is the same as a
+  version does not make a new version; Try N more asks first; a note on what an example needs to say; "Save and stop the
+  test?" and "Run it once" say what they do; in mock mode the page says so.
+- Not covered yet: it is not a network block, so do not keep forge logins in `~/.netrc` (`_netrc` on Windows) while you
+  test; a flaky test can show as broken; test names are read only from TAP, node:test, pytest, Jest and Vitest output.
+  The full list is on the page.
+
+Chips: Tests · Pretend · The command passes · experimental: turn it on in Settings › Labs
+
+Read it: [Workflow tests › Tests on a project](../workflow-tests.md#tests-on-a-project)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests: plugins off, file checks, before and after (#979)
+
+## Your criteria, checked by Worca (Labs)
+
+**Say in your own words what a good result needs, and Worca checks it on every try.**
+
+An example can list your criteria, sentences a good result makes true, and an AI model you pick checks each one on every
+try, with its reason and a quote from the result as proof; new exact checks (Every quote is in the files, Numbers come from
+the files, No personal data, Links work) need no AI. You answer Agree or Disagree, and Check the checker breaks a good
+result on purpose to see whether Worca notices, so How reliable is Worca's checking can show which criteria you can trust;
+a criterion Worca judges unreliably is shown but never decides better or worse. The AI checks count in the spending limit
+(those made for a test also in its own cost limit), and "Checked with" says who pays for them, as far as Worca can tell.
+
+Chips: Your criteria · Check the checker · By criterion · experimental: turn it on in Settings › Labs
+
+Read it: [Workflow tests › Your criteria](../workflow-tests.md#your-criteria) · [Costs](../costs.md#hard-limits)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests: your criteria (#979)
 
 ## Choose who interviews, per feature
 

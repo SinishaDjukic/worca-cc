@@ -41,8 +41,8 @@ const DEFAULTS = Object.freeze({
   runClaudeImpl: runClaude, listModels, listProjects, workspaceTarget,
   openLook: openRepoLook, openWorkspaceLook: openWorkspaceRepoLook, budget: () => budgetStatus(), onChange: () => {},
   userSignIn: () => userSignInLogged(),
-  // Model roles (D3): an unset interview slot takes the everyday role.
-  interviewSlot: () => withRole(utilityModelFor('claude', 'requirementsInterview'), 'claude', 'requirementsInterview'),
+  // Model roles (D3): an unset interview slot takes the everyday role; with none stored, D8's Opus (never a Worca default, #1450).
+  interviewSlot: () => withRole(utilityModelFor('claude', 'requirementsInterview'), 'claude', 'requirementsInterview', { floor: false }),
 });
 
 // Keys of the user settings' `env` block that sign Claude Code in or route its traffic (A1.1 D6).

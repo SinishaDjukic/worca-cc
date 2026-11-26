@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Worca moved to worca-org
+
+- Worca moved to [github.com/worca-org/worca](https://github.com/worca-org/worca). Old links, clones and forks keep working.
+- Update your remote: `git remote set-url origin https://github.com/worca-org/worca`.
+- The image is now `ghcr.io/worca-org/worca`. Change `image:` in your compose file.
+- The old name, `ghcr.io/sinishadjukic/worca`, gets the same releases for a while. A later release says when it stops. Older versions stay there.
+- The built-in plugin marketplace moves with the repo. Plugins installed from it keep their update notices.
+- To check an image signature, accept both repositories: see [Verify](docs/docker.md).
+
+### No silent Claude Code default model (#1450)
+
+- **An empty role now runs Worca's default**, not the CLI's own: Opus 5.5 / Sonnet 5.5 / Haiku 5.5 on Claude Code, and models derived by tier on Codex. No settings are migrated. A new per-role choice, **Let Claude Code decide** (Codex: **Let Codex decide**), keeps the old behaviour. On the other harnesses (and Claude Code signed out) Models › Jobs, the run card and the run log say the tool decides. See [When a role is empty](docs/models.md#when-a-role-is-empty).
+- **The Models page, the run card and the Agents tab show what "Default" resolves to**, and the Agents tab shows the model a step actually started when no one named one.
+- **Fable 5.2 is in the catalog** (premium, $8 / $40). A step about to run on a premium model nobody chose, or whose `[init]` model is premium and unchosen or differs from the requested one, **pauses** until you choose **Continue on <model>** or **Switch model and continue…**. A paused run started before this change resumes on the defaults.
+- **A usage limit scoped to one model** ("Fable limit") offers the other models on the same sign-in. The setup assistant preselects a model per role, and existing installs with an empty role see a one-time notice. The sub-agent `auto` rubric no longer offers Fable, the title retry runs on Haiku 5.5, and the broker preflight checks the default it will really use.
+
 ### Repeating schedules made from a Chat card start (#1567)
 
 - A repeating schedule made from a Chat run card (a `propose_run` with `every`) now starts each occurrence, and **Run now** on the card works. Before, every start was refused with "could not start: card is scheduled" and the schedule paused itself after three failures. The card keeps following the series: it stays scheduled with the next occurrence's time, each run is linked to the chat, and a failed occurrence is the thread's notice and the schedule's failure streak, never a failed card. Series that already exist are repaired too, with nothing to redo. A Start by hand on a scheduled card now says what to do instead of just "card is scheduled".

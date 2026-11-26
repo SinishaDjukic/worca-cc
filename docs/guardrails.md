@@ -53,14 +53,15 @@ trust — a task built from an outside issue, a repository you did not write —
 run Worca in a container ([docker.md](docker.md)): the box holds no host
 credentials, mounts only the projects you name, can run agents as their own
 user apart from Worca's settings and database, and the egress overlay limits
-the network.
+the network. [Choose a setup](choose-a-setup.md) compares the setups that do this, and the
+[Security overview](security-overview.md) says what each protects and what it does not.
 
 ## The built-in tiers
 
 - **Permissive** — no restrictions; the default on installs from before
   Normal became the default.
-- **Normal** (the default on a new install) — protects credential files (`.env*`, `*.pem`, `*.key`, SSH keys,
-  cert stores, container secrets under `/run/secrets/`) from agent Read/Edit
+- **Normal** (the default on a new install) — protects credential files (`.env*`, `*.pem`, `*.key`, `.npmrc`, `.netrc`,
+  SSH keys (`id_*`), cert stores, container secrets under `/run/secrets/`) from agent Read/Edit
   and blocks publication commands
   (`git push`, `npm/yarn/pnpm publish`). It also protects Worca's own state
   (the DB, secrets, settings and MCP registry) from Read/Edit and blocks edits

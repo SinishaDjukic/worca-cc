@@ -4,7 +4,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 
 ## Getting started
 
-- [Install](install.md) — npm, requirements, the container image and a hosted setup; running the web UI
+- [Install](install.md) — npm, requirements, the container image and a hosted setup; running the web UI ([which setup fits you](choose-a-setup.md))
 - [Getting started](getting-started.md) — the welcome dialog, the Getting started checklist and its spotlight guides
 - [UI levels](ui-levels.md) — Simple, Advanced and Expert: what each interface mode shows, and where every element sits
 - [CLI](cli.md) — common commands, exit codes and the `/worca` skill for Claude Code
@@ -60,15 +60,21 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 - [Feature flags](feature-flags.md) — the Labs features, and how to turn them on and off
 - [Requirements](requirements.md) — feature specs through a short interview (Labs)
 - [Run telemetry](run-telemetry.md) — detailed per-run model and timing statistics (Labs)
+- [Workflow tests](workflow-tests.md) — versions of a workflow, examples, Test a version and Compare, your criteria checked by Worca (Labs)
 
 ## Deployment
 
+- [Choose a setup](choose-a-setup.md) — Native, Local sandbox (Docker), E2B sandbox, Hardened box or Shared instance: which one fits you
+- [Security overview](security-overview.md) — what Worca treats as untrusted, what each setup protects, the known limits and how to report a vulnerability
 - [Worca in a container](docker.md) — Worca and every `claude` it spawns in a disposable Linux container
+- [Hardened box](hardened-box.md) — one command for the strictest local setup: no model key, git token or proxy login in agents' reach
+- [Shared instance](shared-instance.md) — the reference Compose profile for a team on one server: keys per person, the allow-list, a managed proxy login
 - [Deploy on Railway](deploy-railway.md) — the container as a hosted service behind Cloudflare Access
 - [Remote access](remote-access.md) — opt-in, behind Cloudflare Access, with Worca checking the token
 - [Credential broker](credential-broker.md) — model keys stay out of Worca's container behind short-lived tokens
 - [Instance contract](instance-contract.md) — the containers, variables, identity token and heartbeat a hosting platform relies on
 - [Network proxy](network-proxy.md) — Worca behind a corporate proxy that asks for a login
+- [Project environment spec](environment-spec.md) — a project's pinned tools and apt packages
 - [Setup assistant](setup-assistant.md) — the server API behind the machine check and setup dialog
 
 ## Contributing

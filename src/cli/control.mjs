@@ -137,9 +137,15 @@ async function controlRun(argv, action, { out, c, fail }) {
   try { reapPipelineCommands(); } catch { /* best-effort */ }
 
   const row = getDb().prepare(
-    'SELECT id, title, status, owner_pid, owner_host, heartbeat_at, updated_at, started_at FROM pipelines WHERE id = ?',
+    'SELECT id, title, status, owner_pid, owner_host, heartbeat_at, updated_at, started_at, is_test FROM pipelines WHERE id = ?',
   ).get(id);
   if (!row) fail(`no run matches "${ref}" (see: worca runs list)`);
+  // Workflow tests: a paused try is a failed try (runner.mjs pauseVerdict), so a try is never paused; the UI stops its test.
+  if (action === 'pause' && row.is_test) {
+    const msg = 'A test try cannot be paused: stop its test instead.';
+    if (json) { out(JSON.stringify({ id: row.id, action, outcome: 'refused', status: row.status, error: msg }, null, 2)); return 1; }
+    return refusal(msg);
+  }
 
   // The live boundary — stop also takes a PAUSED run (it has no owner: settled in-process) — + stop's idempotence
   // (decision 3): stop on an already-stopped run SUCCEEDS, everything else that

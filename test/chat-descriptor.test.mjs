@@ -31,7 +31,7 @@ test('every descriptor: a lockdown, a not-ready code and docs link, attachments 
     if (d.engine === 'cursor') continue;
     assert.ok(d.lockdown(), d.engine);
     assert.equal(d.notReady.code, `${d.engine}-not-ready`);
-    assert.match(d.notReady.docsUrl, /^https:\/\/github\.com\/SinishaDjukic\/worca-cc\/blob\/dev\/docs\/models\.md#/);
+    assert.match(d.notReady.docsUrl, /^https:\/\/github\.com\/worca-org\/worca\/blob\/dev\/docs\/models\.md#/);
     assert.equal(d.images, ENGINES[d.engine].chat.images);
     assert.equal(d.pdfs, ENGINES[d.engine].chat.pdfs);
     assert.equal(d.reportsCost, ENGINES[d.engine].cost);
@@ -47,7 +47,7 @@ test('every descriptor: a lockdown, a not-ready code and docs link, attachments 
 
 test('Codex and Copilot keep their words', () => {
   const codex = chatDescriptor('codex');
-  assert.equal(codex.notReady.docsUrl, 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md#codex');
+  assert.equal(codex.notReady.docsUrl, 'https://github.com/worca-org/worca/blob/dev/docs/models.md#codex');
   assert.equal(codex.notReady.prefix, "OpenAI Codex isn't ready");
   assert.equal(codex.notReady.setupLabel, 'OpenAI Codex setup');
   assert.equal(codex.notReady.flag, 'codexSetup');
@@ -55,7 +55,7 @@ test('Codex and Copilot keep their words', () => {
   assert.equal(codex.suggestionModel, 'gpt-5.6-luna');
   assert.equal(codex.titles, true);
   const copilot = chatDescriptor('copilot');
-  assert.equal(copilot.notReady.docsUrl, 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md#github-copilot-cli');
+  assert.equal(copilot.notReady.docsUrl, 'https://github.com/worca-org/worca/blob/dev/docs/models.md#github-copilot-cli');
   assert.equal(copilot.notReady.flag, 'copilotSetup');
   assert.equal(copilot.noLockdownMessage, 'Chat on Copilot is unavailable: this copilot cannot be locked down for a chat. Use a Claude chat.');
   assert.equal(copilot.shellTrippedMessage, 'GitHub Copilot tried to run a shell command although it was given none — worca stopped the turn.');

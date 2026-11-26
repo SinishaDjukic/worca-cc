@@ -12,7 +12,7 @@ import { pushBranch, isRemotePackFailure, _testing } from '../src/core/git-info.
 import { checkRows } from './helpers/rows.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 
-const WORCA01 = 'remote: error: inflate: data stream error (invalid block type)\nremote: fatal: pack has bad object at offset 7126: inflate returned -3\nerror: remote unpack failed: index-pack failed\nTo https://github.com/SinishaDjukic/worca-cc.git\n ! [remote rejected] worca-cc/show-mock-mode-in-the-ui-4fae3c66 -> worca-cc/show-mock-mode-in-the-ui-4fae3c66 (failed)\nerror: failed to push some refs to \'https://github.com/SinishaDjukic/worca-cc.git\'';
+const WORCA01 = 'remote: error: inflate: data stream error (invalid block type)\nremote: fatal: pack has bad object at offset 7126: inflate returned -3\nerror: remote unpack failed: index-pack failed\nTo https://github.com/worca-org/worca.git\n ! [remote rejected] worca-cc/show-mock-mode-in-the-ui-4fae3c66 -> worca-cc/show-mock-mode-in-the-ui-4fae3c66 (failed)\nerror: failed to push some refs to \'https://github.com/worca-org/worca.git\'';
 
 afterEach(() => _testing.reset());
 

@@ -8,6 +8,8 @@ export { PORT_EMPTY_NOTE, PORT_SWITCH_NOTE, FIXED_PORT_NOTE, SAVED_TEXT, PORT_PE
 import { PORT_EMPTY_NOTE, PORT_SWITCH_NOTE, FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
 import { UPSTREAM_TIMEOUTS } from '../../src/shared/proxy-timeouts.mjs';
 export const TESTING_TEXT = 'Testing…';
+/** In a container the login lives in the egress sidecar (docs/network-proxy.md, "Worca in a container"). */
+export const SIDECAR_NOTE = 'The egress sidecar holds the login: Worca sends it there and keeps no copy in its own container.';
 /** The login choices; exported for the setup assistant's Login select (fit-1-2). */
 export const AUTH_OPTIONS = [['auto', 'NTLMv2 (recommended)'], ['basic', 'Basic (password in cleartext)'], ['digest', 'Digest (password from HTTPS_PROXY)'], ['none', 'No login']];
 /** Login modes that need the password itself, so Log in (a saved NT hash) is off, with this hint (D16). */
@@ -96,6 +98,7 @@ function build(doc, body) {
   portNote.id = 'npFixedPortNote';
   const fixedRow = field(doc, 'npFixedPort', 'Local proxy port', fixedPort);
   fixedRow.querySelector('.drow-control').append(portNote);
+  const loginRows = [field(doc, 'npDomain', 'Domain', domain), field(doc, 'npUser', 'User name', user), field(doc, 'npPassword', 'Password', password)];
   const drows = make(doc, 'div', 'drows');
   drows.append(
     enabledRow,
@@ -103,7 +106,7 @@ function build(doc, body) {
     field(doc, 'npNoProxy', 'Hosts that go direct', noProxy),
     moreFold(doc, fixedRow, field(doc, 'npConnectS', 'Connect timeout (s)', connectS),
       field(doc, 'npAuthS', 'Login timeout (s)', authS), field(doc, 'npIdleS', 'Idle timeout (s)', idleS)),
-    field(doc, 'npDomain', 'Domain', domain), field(doc, 'npUser', 'User name', user), field(doc, 'npPassword', 'Password', password),
+    ...loginRows,
   );
   const actions = make(doc, 'div', 'add-project-actions');
   const btn = (id, text, primary = false) => { const b = make(doc, 'button', primary ? 'btn btn-primary btn-sm' : 'btn btn-sm', text); b.type = 'button'; b.id = id; return b; };
@@ -115,6 +118,10 @@ function build(doc, body) {
   const basicNote = make(doc, 'small', 'hint', '');
   basicNote.id = 'npBasicNote';
   basicNote.hidden = true;
+  // Container only: where the login lives, or that the operator manages it (status only). Filled by JS.
+  const where = make(doc, 'small', 'hint', '');
+  where.id = 'npWhereNote';
+  where.hidden = true;
   const status = make(doc, 'small', 'hint', '');
   status.id = 'npStatus';
   status.setAttribute('role', 'status');
@@ -125,9 +132,16 @@ function build(doc, body) {
   setup.type = 'button';
   setup.id = 'npSetup';
   setup.hidden = true;
-  body.append(drows, actions, basicNote, status, setup, results);
+  // Sidecar unreachable only: read the status again (nothing else can work until the sidecar answers).
+  const retry = make(doc, 'button', 'btn btn-sm', 'Retry');
+  retry.type = 'button';
+  retry.id = 'npRetry';
+  retry.hidden = true;
+  actions.prepend(retry);   // in the card's action row, before the others (they are off while it shows)
+  body.append(drows, actions, basicNote, where, status, setup, results);
   portNote.textContent = `${PORT_EMPTY_NOTE} ${PORT_SWITCH_NOTE}`;
-  return { enabled, host, port, auth, noProxy, fixedPort, connectS, authS, idleS, domain, user, password, save, login, logout, test, detect, basicNote, status, setup, results };
+  return { enabled, host, port, auth, noProxy, fixedPort, connectS, authS, idleS, domain, user, password, save, login, logout, test, detect, basicNote, status, setup, results,
+    fixedRow, loginRows, where, retry };
 }
 
 function fill(f, st) {
@@ -143,20 +157,51 @@ function fill(f, st) {
   f.idleS.value = t.idleMs ? String(t.idleMs / 1000) : '';
   if (st && st.login) { f.domain.value = st.login.domain; f.user.value = st.login.user; }
   fillStatus(f, st);
+  sidecarMode(f, st);
+}
+
+/**
+ * In a container (`st.sidecar`) the egress sidecar holds the login: no local proxy port, and a line says where the
+ * login lives. Managed by the operator (`st.managed`): status only, so no login form and nothing to save; Test stays.
+ */
+export function sidecarMode(f, st) {
+  const side = !!(st && st.sidecar);
+  const managed = side && !!st.managed;
+  if (f.fixedRow) f.fixedRow.hidden = side;
+  for (const r of f.loginRows || []) r.hidden = managed;
+  for (const b of [f.login, f.logout, f.save, f.detect]) b.hidden = managed;
+  for (const i of [f.enabled, f.host, f.port, f.auth, f.noProxy, f.connectS, f.authS, f.idleS]) i.disabled = managed;
+  if (f.where) {
+    f.where.hidden = !side;
+    f.where.textContent = managed ? (st.managedNote || '') : side ? SIDECAR_NOTE : '';
+  }
+  unreachableMode(f, st);
+}
+
+/** The egress sidecar does not answer (`st.unreachable`): every button would fail the same way, so they are off and
+ *  Retry reads the status again. The status line (the server's) says what is wrong. */
+export function unreachableMode(f, st) {
+  const down = !!(st && st.sidecar && st.unreachable);
+  f.down = down;
+  for (const b of [f.save, f.logout, f.test, f.detect]) if (b) b.disabled = down;
+  if (f.login) f.login.disabled = down || !!PASSWORD_NOTES[f.auth.value];
+  if (f.retry) f.retry.hidden = !down;
+  if (f.where && down) f.where.hidden = true;   // "the sidecar holds the login" is beside the point while it is down
 }
 
 /** The server's state line only: the inputs keep what the person typed (after a Test, ux-1-1). */
 function fillStatus(f, st) {
   f.status.textContent = statusText(st);
+  f.status.title = (st && st.lineTitle) || '';   // the address, the raw error or the time: never in the visible line
   f.status.dataset.state = st ? st.state : '';
-  if (f.setup) f.setup.hidden = !(st && st.state === 'needs-login' && f.onOpenSetup);
+  if (f.setup) f.setup.hidden = !(st && st.state === 'needs-login' && f.onOpenSetup && !st.managed);   // managed: nothing to fix here
   basicMode(f);
 }
 
 /** D5/D16: Basic and Digest keep the login in the HTTPS_PROXY URL, so Log in is off and a hint says why. */
 function basicMode(f) {
   const note = PASSWORD_NOTES[f.auth.value];
-  f.login.disabled = !!note;
+  f.login.disabled = !!note || !!f.down;
   f.basicNote.hidden = !note;
   f.basicNote.textContent = note || '';
 }
@@ -189,6 +234,11 @@ export function mountNetworkProxyCard({ doc = globalThis.document, fetchJson: fj
     const cur = f;
     cur.onOpenSetup = onOpenSetup;
     cur.setup.addEventListener('click', () => onOpenSetup?.('network'));
+    cur.retry.addEventListener('click', () => withButton(cur.retry, async () => {
+      const r = await fj('/api/proxy/status');
+      if (f === cur && r.ok) fill(cur, r.data);
+      return { ok: r.ok && !r.data?.unreachable };
+    }, { busy: 'Checking…', done: 'Reached' }));
     cur.auth.addEventListener('change', () => basicMode(cur));
     /** The form as a networkProxy patch: Save and Test send the same values. */
     const patchOf = (c) => ({

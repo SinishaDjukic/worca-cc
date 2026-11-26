@@ -85,7 +85,8 @@ const TERMINAL = new Set(['done', 'stopped', 'error']);
 // worca Chat P2 (review P2-1): what a sub-agent's chat-action call asked for, in the "Not applied: …" notice.
 const SUB_ACTION_WORDS = Object.freeze({ change_setting: 'change a setting', pause_run: 'pause a run', resume_run: 'resume a run',
   propose_stop_run: 'stop a run', send_direction: 'send a direction to a run', propose_pull_request: 'create a PR',
-  propose_changes: 'propose changes', route_message: 'route a message' });
+  propose_changes: 'propose changes', route_message: 'route a message',
+  change_requirement: 'change a requirement' });
 
 // The classified notice's raw-detail cap — the runner's own reject is already
 // tail-capped tighter than this; the slice(-N) here only bounds the unusual

@@ -6,7 +6,7 @@
 // of today's two mappers only its own ids: role ids to rolesPatchToSettingsBody (which reads any id as a role), every
 // other id to enginePatchToSettingsBody. The words a row shows when it follows something are today's.
 import { HELPER_JOBS, DESIGN_JOBS } from '../../../src/shared/model-jobs.mjs';
-import { MODEL_ROLES, ROLE_LABELS, ROLE_SUBS, roleOfSettingId, jobSlot } from '../../../src/shared/model-roles.mjs';
+import { MODEL_ROLES, ROLE_LABELS, ROLE_SUBS, roleOfSettingId, jobSlot, isCliDecides, CLI_DECIDES, decidesLabel, toolDecidesText } from '../../../src/shared/model-roles.mjs';
 import { DESIGN_ENGINE_NAMES } from '../../../src/shared/design-names.mjs';
 import { engineLabel, SIGN_IN_ENGINE_NAMES } from '../../../src/shared/engine-switch.mjs';
 import { rolesPatchToSettingsBody, enginePatchToSettingsBody, helpersNote } from '../engine-settings-view.mjs';
@@ -25,11 +25,20 @@ const WORCA_DEFAULT = "Worca's default";
 function norm(v) {
   if (typeof v === 'string') return v ? { model: v } : null;
   if (!v || typeof v !== 'object') return null;
+  if (isCliDecides(v)) return { ...CLI_DECIDES };   // #1450 "Let <tool> decide": kept, never read as "cleared"
   const model = str(v.model);
   const effort = str(v.effort);
   return model || effort ? { ...(model ? { model } : {}), ...(effort ? { effort } : {}) } : null;
 }
-const same = (a, b) => (a?.model || '') === (b?.model || '') && (a?.effort || '') === (b?.effort || '');
+const same = (a, b) => isCliDecides(a) === isCliDecides(b) && (a?.model || '') === (b?.model || '') && (a?.effort || '') === (b?.effort || '');
+/** The tool's name in "Let <tool> decide" / "From <Role> · <tool> decides". */
+const toolName = (engine) => (engine === 'codex' ? 'Codex' : engineLabel(engine));
+// Helper jobs whose unset value is NOT the role's Worca default: the title keeps its run-model / Haiku cascade, and
+// Memory defragment and the Workspace scan their factory defaults (title.mjs, orchestrator _defragAgentPair, withScanRole).
+// On Claude Code four more keep their own fallback: the Auto classifier (Sonnet 5, auto/model.mjs), Run naming and
+// Command summaries (the cheapest ready model) and the Requirements interview (its Opus default).
+const NO_WORCA_DEFAULT_RE = /\.(title|memoryDefrag|workspaceScan)$/;
+const NO_WORCA_DEFAULT_CLAUDE_RE = /^models\.claude\.(utility\.(classifier|naming|commandSummary)|requirementsInterview)$/;
 
 /** What is stored, by setting id; an id with nothing stored is absent. Values { model?, effort? } with null/'' keys
  *  dropped (a string setting becomes { model }; '' / null / { model: null, effort: null } are absent).
@@ -95,10 +104,10 @@ export function jobDefaultText(id, { engine, settings, catalog } = {}) {
   const ownDefault = `${engineLabel(e)}'s default model`;
   if (rest.startsWith('steps.')) return words(SIGN_IN_ENGINE_NAMES.includes(e) ? ownDefault : "The workflow's model");
   if (rest.startsWith('design.')) {
-    if (e === 'codex') return words("Codex's default model (GPT-5.6 Sol)");
+    if (e === 'codex') return words("Codex's default model");
     return words(e === 'copilot' || SIGN_IN_ENGINE_NAMES.includes(e) ? ownDefault : DEFAULT_MODEL);
   }
-  if (e === 'codex') return words(`${engineLabel('codex')}'s default model (GPT-5.6 Sol)`);
+  if (e === 'codex') return words(`${engineLabel('codex')}'s default model`);
   if (e !== 'claude') return words(DEFAULT_MODEL);
   const s = plain(settings);
   const job = rest.startsWith('utility.') ? rest.slice('utility.'.length) : rest;
@@ -152,11 +161,22 @@ export function buildJobs(data, draft, view) {
     const pick = valueOf(`models.${engine}.roles.${role}`);
     return pick && pick.model ? pick : null;
   };
+  // #1450: what an empty role runs here — Worca's default (GET /api/settings roleDefaults) on Claude Code (unless it is
+  // signed out) and Codex; on every other harness, or Claude Code signed out, the tool decides.
+  const defaults = plain(own(plain(settings.roleDefaults), engine));
+  const hasDefaults = Object.keys(defaults).length > 0 && !(engine === 'claude' && settings.claudeAuth === 'signed-out');
+  const knowsDefaults = Object.keys(plain(settings.roleDefaults)).length > 0;   // an older payload: today's words
+  const roleDefault = (role) => (hasDefaults && role ? str(own(plain(own(defaults, role)), 'model')) : '');
+  const roleCliDecides = (role) => !!role && isCliDecides(valueOf(`models.${engine}.roles.${role}`));
   /** What a row with no model of its own shows: its role's "From …" words when that role is set (the model's name,
-   *  else its id, as today's empty option), else today's default words. */
+   *  else its id, as today's empty option), the role's Worca default or "<tool> decides", else today's default words. */
   const fallback = (id, role) => {
     const pick = rolePick(role);
-    return pick ? { text: `From ${ROLE_LABELS[role]} · ${labelOf(pick.model, catalog)}`, effort: pick.effort || '' } : jobDefaultText(id, ctx);
+    if (pick) return { text: `From ${ROLE_LABELS[role]} · ${labelOf(pick.model, catalog)}`, effort: pick.effort || '' };
+    if (role && roleCliDecides(role)) return { text: `From ${ROLE_LABELS[role]} · ${toolName(engine)} decides`, effort: '' };
+    const dflt = NO_WORCA_DEFAULT_RE.test(id) || NO_WORCA_DEFAULT_CLAUDE_RE.test(id) ? '' : roleDefault(role);
+    if (dflt) return { text: `From ${ROLE_LABELS[role]} · ${labelOf(dflt, catalog)} (Worca default)`, effort: '' };
+    return jobDefaultText(id, ctx);
   };
 
   // clearLabel: what a tile's picker clears back to (the prototype's words). A stored effort with no model (the server
@@ -164,13 +184,19 @@ export function buildJobs(data, draft, view) {
   const roles = MODEL_ROLES.map((role) => {
     const id = `models.${engine}.roles.${role}`;
     const value = valueOf(id);
-    const label = value ? pickLabel(value, catalog) : null;
+    const decides = isCliDecides(value);
+    const label = value && !decides ? pickLabel(value, catalog) : null;
+    const dflt = roleDefault(role);
+    const emptyText = !knowsDefaults ? "Each job's own default"
+      : dflt ? `Worca default · ${labelOf(dflt, catalog)}` : toolDecidesText(engineLabel(engine));
     return {
       id, role, name: ROLE_LABELS[role], sub: ROLE_SUBS[role], value,
-      text: value && value.model ? label.text : "Each job's own default",
-      effortText: !value ? '' : value.effort ? `${value.effort} effort` : 'Model default effort',
+      text: decides ? decidesLabel(toolName(engine)) : value && value.model ? label.text : emptyText,
+      effortText: !value || decides ? '' : value.effort ? `${value.effort} effort` : 'Model default effort',
       model: label ? label.model : null,
-      clearLabel: "Each job's own default",
+      clearLabel: !knowsDefaults ? "Each job's own default" : dflt ? `Worca's default (${labelOf(dflt, catalog)})` : toolDecidesText(engineLabel(engine)),
+      // "Let Claude Code decide" / "Let Codex decide" is offered only where an empty role means a Worca default.
+      decideLabel: hasDefaults ? decidesLabel(toolName(engine)) : '',
     };
   });
 
@@ -235,9 +261,15 @@ export function buildJobs(data, draft, view) {
   // warning says nothing.
   const ready = (Array.isArray(d.engines) ? d.engines : []).find((x) => x && x.name === engine) || null;
   const label = (ready && str(ready.label)) || engineLabel(engine);
-  const reason = !ready ? ''
+  const local = !ready ? ''
     : !ready.ready ? `${label} can't start runs yet: ${String(ready.reason || 'its check did not answer').replace(/\.$/, '')}.`
       : ready.reason ? `${label} can start runs: its CLI is installed and signed in. Note: ${String(ready.reason).replace(/\.$/, '')}.` : '';
+  // A configured remote backend (GET /api/engines `sandbox`): whether Worca can sign this harness's model calls from a
+  // sandbox (the credential stays on the server; the sandbox reaches the model through Worca's relay).
+  const box = ready && ready.sandbox && Array.isArray(ready.sandbox.titles)
+    ? `Remote sandbox (${ready.sandbox.titles.join(', ')}): ${ready.sandbox.ready ? 'Worca can sign its model calls from the sandbox.'
+      : `${String(ready.sandbox.reason || 'Worca cannot sign its model calls').replace(/\.$/, '')}.`}` : '';
+  const reason = [local, box].filter(Boolean).join(' ');
   const lock = (Array.isArray(d.locks) ? d.locks : []).find((l) => l && l.name === engine) || null;
   const isDefault = defaultEngine === engine;
   const dirty = jobsDirty(draft, saved).length;

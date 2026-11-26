@@ -209,3 +209,41 @@ test('POST /api/resume: a v1 resume point is refused with 409 ENGINE_RETIRED', a
   assert.equal(getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(id).status, 'paused',
     'refusing does not mutate the run');
 });
+
+// #1450: "Continue on <model>" — POST /api/resume { confirmModel } answers a model_confirm pause, and only that one.
+const until = async (fn, ms = 8000) => {
+  const end = Date.now() + ms;
+  for (;;) { const v = await fn(); if (v) return v; if (Date.now() > end) return v; await new Promise((r) => setTimeout(r, 25)); }
+};
+test('POST /api/resume confirmModel: 409 when nothing waits, 400 on a mismatch or with a model; each refusal leaves resume_point byte-equal', async () => {
+  const projF = await mkdtemp(join(tmpdir(), 'worca-cc-pauseapi-projF-'));
+  const wt = await mkdtemp(join(tmpdir(), 'worca-cc-pauseapi-wtF-'));
+  await addProject({ name: 'pauseapi-projF', path: projF });
+  const FABLE = 'claude-fable-5-2';
+  const { id } = await seedPipeline(projF, {
+    title: 'confirm run', status: 'paused',
+    branch: { source: 'main', feature: 'f', worktreeDir: wt, reusedExisting: false },
+    resumePoint: { ...graphResumePoint({ pipelineDir: projF }), pauseReason: 'model_confirm', pauseDetail: `Paused before Plan: it would run on ${FABLE}, a premium model nobody chose.`,
+      modelConfirm: { nodeId: 'n_plan', stepKey: 'e1', model: FABLE, requested: FABLE, at: 'pre' } },
+  });
+  const rpOf = (pid) => getDb().prepare('SELECT resume_point FROM pipelines WHERE id = ?').get(pid).resume_point;
+  const before = rpOf(id);
+  const mismatch = await post('/api/resume', { pipelineId: id, confirmModel: 'claude-fable-5-1', mock: true });
+  assert.equal(mismatch.status, 400);
+  assert.deepEqual(await mismatch.json(), { code: 'confirm-mismatch', error: `The run is waiting to confirm ${FABLE}, not claude-fable-5-1.` });
+  const both = await post('/api/resume', { pipelineId: id, confirmModel: FABLE, model: 'claude-opus-5-5', mock: true });
+  assert.equal(both.status, 400);
+  assert.equal((await both.json()).code, 'confirm-and-switch');
+  const notPending = await post('/api/resume', { pipelineId: resumableId, confirmModel: FABLE, mock: true });
+  assert.equal(notPending.status, 409);
+  assert.deepEqual(await notPending.json(), { code: 'confirm-not-pending', error: 'This run is not waiting for a model confirmation.' });
+  assert.equal(rpOf(id), before, 'a refused confirm changes nothing');
+  assert.equal(getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(id).status, 'paused');
+
+  const ok = await post('/api/resume', { pipelineId: id, confirmModel: FABLE, mock: true });
+  assert.equal(ok.status, 200, await ok.clone().text());
+  const line = await until(() => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(id)
+    .map((r) => r.text).find((t) => t.startsWith('Pipeline **resumed**: continued on Fable 5.2 (premium)')));
+  assert.ok(line, 'the confirmation is audited: ' + JSON.stringify(getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(id)));
+  await rm(wt, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+});
