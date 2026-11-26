@@ -8710,6 +8710,8 @@ function setupDeps() {
     fixedPortNow: () => proxyHost.fixedPortNow(),
     applyProxy: (np, beforeFixed) => proxyHost.applyWritten(np, beforeFixed),
     reloadLogin: () => egressNow()?.reloadLogin?.(),
+    // Through proxyHost: next to the egress sidecar the login goes there, never into the box.
+    saveLogin: async (l) => { const r = await proxyHost.login(l); if (r.status !== 200) throw new Error(r.body?.error || `the proxy login answered ${r.status}`); return r.body.login; },
     checkModelRoles: (patch, o) => checkModelRolesPatch(patch, o),
     checkAskModels: (patch, o) => checkAskModelsPatch(patch, o),
     testModel: async (id) => {

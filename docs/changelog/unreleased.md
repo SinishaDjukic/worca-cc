@@ -59,15 +59,19 @@ A login is bound to its proxy. Change the host or the port, and the login is del
 
 Before this, a hardened box behind a login proxy could not get out at all: neither the sidecar nor the broker could log in. This was tested against a simulated NTLM proxy, not a real corporate one.
 
+The Settings card and the setup assistant keep working in a container. Worca forwards them to the sidecar. The password passes through Worca's server for that one call, and nothing is written in the box. When the operator manages the login, both show who is logged in and the state. There is no login form then.
+
 The native install does not change.
 
-Chips: Network proxy · Container
+Chips: Network proxy · Container · Setup
 
 Read it: [Network proxy](../network-proxy.md#worca-in-a-container)
 
 Pull requests (add each number when it opens):
 
 - Proxy login in the egress sidecar (#1621)
+- The Settings card and the setup assistant talk to the sidecar (#1623)
+
 ## Build the box image from the spec
 
 **`worca container build` turns your projects' specs into the box image.**

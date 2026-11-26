@@ -325,6 +325,13 @@ worca container proxy logout
 `worca container run -- proxy login` works too. Inside the box `worca proxy`
 talks to the sidecar. Nothing is written in the box.
 
+The Settings card and the setup assistant work as before. Worca forwards
+Status, Test, Log in, Log out, Save and Auto-detect to the sidecar. The
+password passes through Worca's server in memory for that one call, and is
+then dropped. A line under the card says that the sidecar holds the login.
+There is no local proxy port in a container, so that field is gone. Auto-detect
+fills in the proxy the sidecar uses. Chat's proxy tools use the same path.
+
 **What the sidecar keeps.** The same record as the native install (domain,
 user name, NT hash, never the password), with the same file guards, in
 `/worca/egress/proxy-login.json` on its own volume `egress-data`. Only the
@@ -383,6 +390,9 @@ secrets:
 The sidecar runs as uid 1000, so the file must be readable by that uid. The
 proxy then comes from the sidecar's `HTTPS_PROXY` alone. Every write call is
 off: log in, log out and the proxy settings answer "managed by the operator".
+The Settings card and the setup assistant's Network step show who is logged
+in and the state, with no login form, and say that the operator manages the
+login. Test still works.
 `worca proxy status` shows who is logged in and the state.
 
 ## Where the login lives
