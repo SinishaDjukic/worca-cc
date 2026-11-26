@@ -9135,7 +9135,7 @@ function askWebAccessFor(threadId, ctx) {
 async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude', chat = null, tabs = false, design = false, designChat = false } = {}) {
   const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
   return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, tabs, design, designChat, git: gitAvailable(),
-    ...(engine !== 'claude' ? { engine } : {}), shape: true, ...(chat ? { chat } : {}) });
+    ...(engine !== 'claude' ? { engine } : {}), shape: true, ...(chat ? { chat } : {}), ...(flagEnabled('secretVault') ? { vault: true } : {}) });
 }
 
 /** The Workflows chat's system prompt (D10): composer rules + catalog + scripts/web — no MCP, no commands, no hosting rule. */

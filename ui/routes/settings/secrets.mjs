@@ -12,6 +12,7 @@ import { flagEnabled, requireFlag } from '../../../src/core/flags.mjs';
 import { worcaHome } from '../../../src/core/projects.mjs';
 import { DEPLOYMENT, agentMayBeCaller, teamOriginOk } from '../../server.mjs';
 import { vaultUnavailableHere } from '../../../src/core/secrets/place.mjs';
+import { noteLastStatus } from '../../../src/core/secrets/last-status.mjs';
 
 const FLAG = 'secretVault';
 let cachePromise = null;
@@ -80,6 +81,7 @@ async function statusNow() {
   try { status = await (await cacheFor()).refresh(); } catch { status = fallback(); }
   let counts = { vault: {}, files: {} };
   try { counts = (await import('../../../src/core/secrets/summary.mjs')).secretCounts({ home: worcaHome() }); } catch { /* counts stay 0 */ }
+  noteLastStatus(overlaid(status));   // the chat reads this one (last-status.mjs): it never asks the key store itself
   return { ...overlaid(status), counts };
 }
 
@@ -171,6 +173,7 @@ export function startSecretsProbe({ log = (m) => console.log(m), probe } = {}) {
   if (vaultUnavailableHere(process.env)) { try { log('[worca-ui] secrets: not available in a container'); } catch { /* ignore */ } return undefined; }
   cacheFor(probe)
     .then((c) => c.refresh())
+    .then((s) => { noteLastStatus(overlaid(s)); return s; })
     .then((s) => `[worca-ui] secrets: ${s.label} (${overlaid(s).state})`, () => '[worca-ui] secrets: No OS key store (unavailable)')
     .then((line) => { try { log(line); } catch { /* a broken logger must not reject */ } });
   return undefined;

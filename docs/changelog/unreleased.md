@@ -17,6 +17,8 @@ Turn on checks the key store first. Then it moves the keys saved in files. Check
 
 The setup assistant offers the vault on the Model access step. So does worca setup. Detection asks the key store nothing.
 
+Chat can read the vault's state and counts. It never sees a key.
+
 The vault protects copies of your files. It is not a sandbox. An agent that runs as you can still reach the key store.
 
 In a container the vault does nothing. The egress sidecar keeps the proxy login. The credential broker keeps the model key.
