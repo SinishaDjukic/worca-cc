@@ -57,7 +57,7 @@ test('versionStatus: stable, rc, ahead and garbage', async () => {
 });
 
 test('releaseLinks: release notes always; What\'s new + compare only when outdated', () => {
-  const repo = 'https://github.com/SinishaDjukic/worca-cc';
+  const repo = 'https://github.com/worca-org/worca';
   assert.deepEqual(releaseLinks({ current: '1.13.1', latest: '1.14.0', status: 'outdated' }, repo), {
     releaseNotes: CHANGELOG_URL,
     whatsNew: 'https://docs.worca.dev/changelog/1.14.0/',

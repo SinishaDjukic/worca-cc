@@ -484,7 +484,7 @@ test('barLine: beside a stage bar a working run names only its step; nodes mode,
 });
 
 test('D8 (pr-fix-rounds-stacking): a round never needs you through its PR or its watch; its origin does', () => {
-  const pr947 = { url: 'https://github.com/SinishaDjukic/worca-cc/pull/947', number: 947, state: 'OPEN', mergeable: 'CONFLICTING' };
+  const pr947 = { url: 'https://github.com/worca-org/worca/pull/947', number: 947, state: 'OPEN', mergeable: 'CONFLICTING' };
   const done = R({ status: 'done', endReached: true, pr: pr947 });
   const marker = { pipelineId: 'ba22d7fd', round: 8, request: 'merge dev in', by: 'watch', kinds: ['conflicts'] };
   const round = runModel({ ...done, round: marker }, OPTS);

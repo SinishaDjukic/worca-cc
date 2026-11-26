@@ -7620,7 +7620,7 @@ registerRequirementsRoutes(app, { broadcast, server, deps: {
   startRun: (body, opts) => invokeStartRun(body, null, opts),   // D6: through the run handler, as PR watch does
   runSummary: requirementsRunSummary,
 } });
-const designApi = registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal, renameThread: (id, title, from) => { try { if (askGetThread(id)?.title === String(from).slice(0, 120)) askUpdateThread(id, { title: String(title).slice(0, 120) }); } catch { /* the chat went */ } }, dropGrants: (id) => previewGrants.revokeDesign(id), versions: { list: listVersions, restore: (id, n) => restoreVersion({ designId: id, n }) }, postSystemNotice: postAskSystemNotice, thumbs: designThumbs, soundCards } });
+const designApi = registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal, renameThread: (id, title, from) => { try { const t = askGetThread(id); if (t && (t.title == null || t.title === String(from).slice(0, 120))) askUpdateThread(id, { title: String(title).slice(0, 120) }); } catch { /* the chat went */ } }, dropGrants: (id) => previewGrants.revokeDesign(id), versions: { list: listVersions, restore: (id, n) => restoreVersion({ designId: id, n }) }, postSystemNotice: postAskSystemNotice, thumbs: designThumbs, soundCards } });
 registerPreviewTokenRoute(app, { flagGate: requireFlag('design'), grants: previewGrants, getDesign, viewerOf: askViewer });
 /** These routes push notes off the machine or rewrite them: a browser page must be served by THIS Worca —
  *  isLocalRequest checks the hostname, never the port, and a body-less POST needs no CORS preflight (decision E8).
@@ -9454,7 +9454,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // (§17 Q&A 1). deterministicTitle is only the turn's fallback for an
     // empty haiku result (turn.mjs _kickoffTitle), never written here.
     const titleWasAuto = thread.title == null;
-    const deterministicTitle = titleWasAuto && !synthetic ? (askSanitizeTitle(stripIntentLead(text).slice(0, 80)) || 'New chat') : thread.title;
+    const deterministicTitle = titleWasAuto && !synthetic ? ((dChat && getDesign(dChat)?.title) || askSanitizeTitle(stripIntentLead(text).slice(0, 80)) || 'New chat') : thread.title;   // a design chat falls back to its design's title
     // P3: a synthetic row keeps the EVENT as its text (buildRestoredPrompt replays it truthfully) and carries the
     // human notice as a block the panel renders instead of a bubble.
     // Ask worca beside the page: the page a message was sent from ("on Run · Diff") leads its blocks; none for a Chat-page

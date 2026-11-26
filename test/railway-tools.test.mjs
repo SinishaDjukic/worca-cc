@@ -36,15 +36,15 @@ test('redact: JWTs, GitHub/Anthropic/broker tokens, API keys, PEM, URL credentia
 
 test('imageRef: versions expand, full refs validate, :latest is refused', () => {
   const t = loadTarget('t1', { dir: DIR });
-  assert.equal(imageRef(t, '1.5.0'), 'ghcr.io/sinishadjukic/worca:1.5.0');
-  assert.equal(imageRef(t, '1.5.0-rc.2'), 'ghcr.io/sinishadjukic/worca:1.5.0-rc.2');
+  assert.equal(imageRef(t, '1.5.0'), 'ghcr.io/worca-org/worca:1.5.0');
+  assert.equal(imageRef(t, '1.5.0-rc.2'), 'ghcr.io/worca-org/worca:1.5.0-rc.2');
   assert.equal(imageRef(t, 'ghcr.io/me/worca-e2e:pr-480'), 'ghcr.io/me/worca-e2e:pr-480');
   assert.throws(() => imageRef(t, 'ghcr.io/me/worca:latest'), /not :latest/);
   for (const bad of ['', 'worca', 'ghcr.io/me/worca', 'ghcr.io/me/worca:tag;rm -rf /', '$(id)']) assert.throws(() => imageRef(t, bad), /not an image reference/, bad);
 });
 
 /** A fake world: railway (api + variable + ssh config), ssh, npm, docker; records every call. */
-function world({ vars = { GH_TOKEN: SECRET, WORCA_MOCK: '1', SEALED: null, RAILWAY_X: 'y' }, image = 'ghcr.io/sinishadjukic/worca:1.4.0', stdin = '', fetchImpl } = {}) {
+function world({ vars = { GH_TOKEN: SECRET, WORCA_MOCK: '1', SEALED: null, RAILWAY_X: 'y' }, image = 'ghcr.io/worca-org/worca:1.4.0', stdin = '', fetchImpl } = {}) {
   const calls = [];
   const out = [];
   let img = image;

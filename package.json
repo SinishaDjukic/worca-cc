@@ -1,11 +1,11 @@
 {
   "name": "@worca/app",
-  "version": "1.20.0",
+  "version": "1.21.0-rc.1",
   "description": "Worca turns a task into reviewed, merge-ready work. A deterministic multi-agent pipeline that plans, implements and reviews in isolated git worktrees, with quality gates, budgets and a human in the loop. Web UI, CLI and chat.",
   "license": "MIT",
   "author": "Bosch Digital EOOD, Atanas Atanasov, Emil Angelov",
   "contributors": [
-    "Worca Contributors (https://github.com/SinishaDjukic/worca-cc/graphs/contributors)"
+    "Worca Contributors (https://github.com/worca-org/worca/graphs/contributors)"
   ],
   "type": "module",
   "engines": {
@@ -13,11 +13,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SinishaDjukic/worca-cc.git"
+    "url": "git+https://github.com/worca-org/worca.git"
   },
   "homepage": "https://docs.worca.dev",
   "bugs": {
-    "url": "https://github.com/SinishaDjukic/worca-cc/issues"
+    "url": "https://github.com/worca-org/worca/issues"
   },
   "keywords": [
     "worca",

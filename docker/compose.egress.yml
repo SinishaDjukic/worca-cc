@@ -36,7 +36,7 @@ services:
       PLAYWRIGHT_DOWNLOAD_HOST: ${PLAYWRIGHT_DOWNLOAD_HOST:-}
 
   egress:
-    image: ghcr.io/sinishadjukic/worca:${WORCA_TAG:-latest}
+    image: ghcr.io/worca-org/worca:${WORCA_TAG:-latest}
     entrypoint: ["tini", "-s", "--", "node", "/usr/local/lib/worca-egress-proxy.mjs"]
     command: []
     environment:

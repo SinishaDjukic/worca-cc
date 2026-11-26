@@ -28,7 +28,7 @@ test('the design payload is optional, checked and stored when present; the block
   assert.match(snap.messages.at(-1).text, /^\[mock\] design status=empty pins=1$/);
   assert.deepEqual(snap.messages.at(-1).blocks.filter((b) => b.kind === 'tool'), []);
 });
-test('titles and suggestions as any chat: an untitled chat with a design gets its first-turn title; the Design button\'s titled chat is never retitled', async () => {
+test('titles and suggestions as any chat: a chat with a design gets its first-turn title, the Design button\'s too (its design\'s title is the fallback); a titled one is never retitled', async () => {
   const d = await designThread();
   const { createThread } = await import('../src/core/ask/store.mjs');
   const { getDb } = await import('../src/core/db.mjs');
@@ -38,11 +38,22 @@ test('titles and suggestions as any chat: an untitled chat with a design gets it
   await replyOf(naked.id);
   const nakedTurn = mod._testing.askJobs.get(naked.id)?.turn;
   assert.deepEqual([nakedTurn.design, nakedTurn.firstTurn, nakedTurn.suggest], [true, true, true], 'its first turn titles and suggests');
+  const button = await designThread('Bakery landing page');
+  assert.equal((await call('GET', `/api/ask/threads/${button.threadId}`)).body.thread.title, null, 'the Design button\'s chat starts untitled');
+  assert.equal((await call('POST', `/api/ask/threads/${button.threadId}/messages`, { text: 'MOCK_DESIGN_CHAT a landing page for a bakery', ...MODEL })).status, 202);
+  await replyOf(button.threadId);
+  const buttonTurn = mod._testing.askJobs.get(button.threadId)?.turn;
+  assert.deepEqual([buttonTurn.firstTurn, buttonTurn.suggest], [true, true], 'its first turn titles it');
+  await buttonTurn.titlePromise;
+  assert.equal((await call('GET', `/api/ask/threads/${button.threadId}`)).body.thread.title, 'Bakery landing page',
+    'the mock names nothing: the design\'s title is the fallback, not the prompt');
   const titled = await designThread('Kept title');
+  const { setThreadTitle } = await import('../src/core/ask/store.mjs');
+  setThreadTitle(titled.threadId, 'Kept title');                      // a chat titled before its first message
   assert.equal((await call('POST', `/api/ask/threads/${titled.threadId}/messages`, { text: 'MOCK_DESIGN_CHAT hi', ...MODEL })).status, 202);
   const snap = await replyOf(titled.threadId);
   const turn = mod._testing.askJobs.get(titled.threadId)?.turn;
-  assert.deepEqual([turn.firstTurn, turn.suggest], [false, true], 'titled at creation: no title call, a suggestion as any chat');
+  assert.deepEqual([turn.firstTurn, turn.suggest], [false, true], 'titled: no title call, a suggestion as any chat');
   assert.equal(snap.thread.title, 'Kept title');
 });
 test('the scope is the chat\'s own: the design\'s chat starts on No project, and the client\'s pinned scope counts as in any chat', async () => {
@@ -81,7 +92,7 @@ test('the turn is a normal Ask turn: the Ask system prompt with the design rules
   assert.ok(turn.systemPrompt.endsWith(`\n\n${DESIGN_CHAT_RULES}`), 'the design rules close the system prompt');
   assert.match(turn.systemPrompt, /^Rules:$/m, 'the Ask rules lead it');
   assert.ok(turn.mcp, 'the MCP servers any chat gets');
-  assert.deepEqual([turn.design, turn.surfaceLocked, turn.firstTurn, turn.suggest], [true, false, false, true]);
+  assert.deepEqual([turn.design, turn.surfaceLocked, turn.firstTurn, turn.suggest], [true, false, true, true], 'its first message titles it');
   assert.match(turn.prompt, /^\[design chat\]$/m);
 });
 test('a chat no design points at is a plain chat: a design payload is ignored and the turn has no design', async () => {

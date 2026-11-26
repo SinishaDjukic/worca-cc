@@ -38,7 +38,7 @@ services:
       CLAUDE_CODE_OAUTH_TOKEN: ""
 
   broker:
-    image: ghcr.io/sinishadjukic/worca:${WORCA_TAG:-latest}
+    image: ghcr.io/worca-org/worca:${WORCA_TAG:-latest}
     init: true
     command: ["worca", "broker"]
     environment:

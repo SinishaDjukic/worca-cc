@@ -14,7 +14,7 @@ import {
 import { join, resolve, dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { pluginsRoot, readPluginsLock } from './plugins-lock.mjs';
+import { pluginsRoot, readPluginsLock, writePluginsLock } from './plugins-lock.mjs';
 import { addPluginRepo, repoCacheDir, repoSlug, removeSnapshotRoot } from './plugin-repo.mjs';
 import { inventoryFromCache } from './plugin-inventory.mjs';
 import { gitAvailable, gitMissingError } from './git-available.mjs';
@@ -368,8 +368,9 @@ export function builtinMarketplaceSource(env = process.env) {
 /** Builtin seed (spec §4.2): register `source` as the builtin marketplace. NO git operations —
  *  lastSync:null; the first sync happens via the Plugins view's background refresh or an explicit
  *  `worca marketplace refresh`. A builtin with another url or branch (an older worca's local
- *  checkout, a changed WORCA_BUILTIN_MARKETPLACE) is replaced; the same repo added by hand becomes
- *  the builtin. seededBuiltin is set only on success, so a removed builtin never auto-returns. */
+ *  checkout, a changed WORCA_BUILTIN_MARKETPLACE, a moved GitHub repo) is replaced; the same repo
+ *  added by hand becomes the builtin. seededBuiltin is set only on success, so a removed builtin
+ *  never auto-returns. */
 export function seedBuiltinMarketplace({ source = builtinMarketplaceSource() } = {}) {
   if (!source?.url) return { seeded: false, reason: 'no-source' };
   const state = readMarketplaces();
@@ -393,6 +394,22 @@ export function seedBuiltinMarketplace({ source = builtinMarketplaceSource() } =
   state.marketplaces[id] = entry;
   state.seededBuiltin = true;
   writeMarketplaces(state);
+  if (replaced && isGithubUrl(old.url) && isGithubUrl(source.url)) adoptLockEntries(replaced, id);
   if (replaced) dropCacheUnlessInstalled(old.url);
   return { seeded: true, id, ...(replaced ? { replaced } : {}) };
+}
+
+const isGithubUrl = (url) => /^https:\/\/github\.com\/[^/]+\/[^/]+$/i.test(String(url ?? ''));
+
+/** The builtin repo moved on GitHub (a transfer or rename changes package.json `repository`, so
+ *  the builtin's id): plugins installed from the old builtin follow it, or their update hints
+ *  (plugin-latest) would look for a marketplace that is gone. Their install repo URL stays: GitHub
+ *  redirects it. Not for a local checkout swapped in or out (WORCA_BUILTIN_MARKETPLACE). */
+function adoptLockEntries(fromId, toId) {
+  const lock = readPluginsLock();
+  let moved = 0;
+  for (const e of Object.values(lock)) {
+    if (e && typeof e === 'object' && e.marketplace === fromId) { e.marketplace = toId; moved++; }
+  }
+  if (moved) writePluginsLock(lock);
 }

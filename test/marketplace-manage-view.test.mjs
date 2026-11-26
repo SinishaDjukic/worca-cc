@@ -87,12 +87,12 @@ test('adds: one row per contribution in kind order (P4 addsRows titles), its own
 });
 
 test('source: "url · path", "@ sha7", View on GitHub only with a web url; linked has no source line', () => {
-  assert.equal(sourceLine(DETAIL), 'github.com/SinishaDjukic/worca-cc · plugins/github-source');
+  assert.equal(sourceLine(DETAIL), 'github.com/worca-org/worca · plugins/github-source');
   assert.equal(sourceLine({ ...DETAIL, repo: 'https://github.com/acme/one.git', subdir: '' }), 'github.com/acme/one');
   assert.equal(sourceLine({ ...DETAIL, repo: null }), null);
   const sec = renderSource(doc, DETAIL);
   assert.equal(sec.querySelector('h3').textContent.trim(), 'Source');
-  assert.equal(sec.querySelector('.mk-src .mk-src-url.mk-mono').textContent, 'github.com/SinishaDjukic/worca-cc · plugins/github-source');
+  assert.equal(sec.querySelector('.mk-src .mk-src-url.mk-mono').textContent, 'github.com/worca-org/worca · plugins/github-source');
   assert.equal(sec.querySelector('.mk-src .mk-src-sha.mk-mono').textContent, '@ d12b77f');
   const gh = sec.querySelector('a.mk-link');
   assert.deepEqual([gh.textContent.trim(), gh.getAttribute('href'), gh.getAttribute('target'), gh.getAttribute('rel')],

@@ -76,7 +76,7 @@ export function loadTarget(name, { dir = TARGETS_DIR, read = readFileSync, exist
     keysUrl: t.KEYS_URL ? t.KEYS_URL.replace(/\/$/, '') : null,
     cloudflaredService: t.RAILWAY_CLOUDFLARED_SERVICE || 'cloudflared',
     url: t.WORCA_URL.replace(/\/$/, ''), host: new URL(t.WORCA_URL).hostname,
-    imageRepo: t.IMAGE_REPO || 'ghcr.io/sinishadjukic/worca',
+    imageRepo: t.IMAGE_REPO || 'ghcr.io/worca-org/worca',
     branchImageRepo: t.BRANCH_IMAGE_REPO || null,
     accessTokenFile: tilde(t.ACCESS_SERVICE_TOKEN_FILE) || null,
     sshKey: tilde(t.SSH_KEY) || null,
