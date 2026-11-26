@@ -568,6 +568,10 @@ above them, never a boxed tab, and never a colour of a tab's own.
   `Waiting · starts 14:00`. A group in Needs you leads with the reason: `Run 1 needs you · Checks failing`.
 - Question options are divided rows: one --line between rows, no box per option; the picked row takes the --field fill
   and the 6px corner. Recommended is the neutral chip; a confidence is a 12px figure, never a bar.
+- A pick-one option carries a round mark (a 16px ring; picked, an ink ring with an ink dot); a square check is only for
+  several picks.
+- An agent's note in a card is a short question line plus a formatted body (paragraphs, `code`, divided list rows)
+  that folds after about six lines and opens in place (`ui/public/shape/note-body.mjs`).
 - "Ask for changes" gives way to the field with Cancel and Send changes; Cancel gives the button back.
 - The bar's primary names the waiting card's primary ("Approve 2 runs"), and a click on it is that click.
 - A destructive confirm says what goes in plain words ("Stop this run?", "Stop run") and opens on the safe choice.

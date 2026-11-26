@@ -27,13 +27,12 @@
   color:var(--ink);background:none;border:0;border-top:1px solid var(--line);border-radius:0;
   padding:8px 12px 8px 8px;cursor:pointer;text-align:left;width:100%;}
 .qopt:first-child{border-top-color:transparent;}
-/* The mark: an empty 16px square, drawn entirely in CSS (no letter; the key stays in data-key). Picked, it fills ink and
-   the check is a HOLE masked out of it, so it shows the row's own colour in both themes — no painted glyph colour to
-   go wrong in dark. */
-.qopt::before{content:'';flex:0 0 auto;box-sizing:border-box;width:16px;height:16px;border-radius:var(--r-xs);
-  border:1px solid var(--line-2);background:none;}
-.qopt.sel::before{content:'';background:var(--ink);border-color:var(--ink);
-  -webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><mask id='k'><rect width='20' height='20' fill='white'/><path d='M7.1 10.2l1.8 1.9 4-4' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></mask><rect width='20' height='20' mask='url(%23k)'/></svg>") center/100% 100% no-repeat;mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><mask id='k'><rect width='20' height='20' fill='white'/><path d='M7.1 10.2l1.8 1.9 4-4' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></mask><rect width='20' height='20' mask='url(%23k)'/></svg>") center/100% 100% no-repeat;}
+/* The mark: an empty 16px circle, the pick-one mark, drawn entirely in CSS (no letter; the key stays in data-key).
+   Picked, the ring turns ink and an 8px ink dot fills the content box inside the 3px padding, so the gap between them
+   shows the row's own colour in both themes. */
+.qopt::before{content:'';flex:0 0 auto;box-sizing:border-box;width:16px;height:16px;border-radius:50%;
+  border:1px solid var(--line-2);padding:3px;background:none;background-clip:content-box;}
+.qopt.sel::before{border-color:var(--ink);background-color:var(--ink);}
 /* Night mode (Step 14): the agent's recommendation chip and per-option confidence figure. */
 .qopt .qrec{display:inline-flex;align-items:center;height:18px;margin-left:8px;padding:0 6px;border-radius:var(--r-xs);
   font-size:var(--fs-caption);font-weight:500;background:var(--line);color:var(--ink-2);}

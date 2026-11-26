@@ -70,3 +70,27 @@ test('the pages: 1280 in both themes and 375 in light; the run page, the feature
   assert.match(s, /t === '2 · 1 met · 1 dropped'/);
   assert.match(s, /s\.line === 'none' && s\.bg === 'rgba\(0, 0, 0, 0\)'/, 'Show is a quiet button');
 });
+
+test('the outline-change stop: its notes on every surface, folded and opened, in the page cells and a wide desktop', () => {
+  const s = src();
+  assert.match(s, /const NOTE_CELLS = \[\.\.\.PAGE_CELLS, \[1920, 'light'\]\];/);
+  for (const surface of ["'card'", "'feature-page'", "'run-page'", "'side-panel'", "'run-page-finding'", "'side-panel-finding'"]) assert.ok(s.includes(`[${surface},`), surface);
+  assert.match(s, /process\.env\.WORCA_FLAGS = flagOnHere \? 'shaperSmallRuns' : '-shaperSmallRuns';/, 'the findings, with the flag off');
+  assert.match(s, /A prerequisite is not in this tree/, 'the mock\'s note');
+  assert.match(s, /const LONG_NOTE = /);
+  assert.match(s, /stop: planStop\(\{ run: 8, outlineChange, node: 'n_plan' \}\)/);
+  assert.match(s, /-folded`\)/);
+  assert.match(s, /-opened`\)/);
+});
+
+test('the outline-change stop: two question lines, no inner scrollbar, nothing past the card, the pick kept', () => {
+  const s = src();
+  assert.match(s, /text\.getBoundingClientRect\(\)\.height \/ parseFloat\(getComputedStyle\(text\)\.lineHeight\)/);
+  assert.match(s, /const cap = length === 'title-120' \? 3 : 2;/);
+  assert.match(s, /!n\.classList\.contains\('is-clamped'\) && n\.clientHeight > 0 && n\.scrollHeight > n\.clientHeight \+ 1/);
+  assert.match(s, /q\.scrollWidth > q\.clientWidth/);
+  assert.match(s, /the options sit directly under the note/);
+  assert.match(s, /JSON\.stringify\(x\.picked\) === '\["change"\]'/);
+  assert.match(s, /'Show the full note'/);
+  assert.match(s, /'Show less'/);
+});

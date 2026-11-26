@@ -35,8 +35,8 @@ const TOKEN = /^(?:var\(--r-(?:xs|sm|md|lg|pill|card|ctrl)\)|0|inherit)$/;
 // D2: the five round kinds. Extend only with a selector of one of these kinds.
 // Dots: nav-rollup, tl-mark.is-open, tl-pr-start, hd-base-pill::before, rg-td, ask-rp-kicker::before, npip/nwarn,
 // mdl-st::before (the Models page's state word).
-// Knobs: .wz .tog::after. Spinners: the busy::after rings.
-const ROUND = /dot|\bava\b|-ava\b|avatar|person-ini|knob|switch::after|tog::after|spin|busy::after|\bled\b|radio|status-word::before|nav-rollup|tl-mark\.is-open|tl-pr-start|hd-base-pill::before|rg-td|kicker::before|npip|nwarn|mdl-st::before/;
+// Knobs: .wz .tog::after. Spinners: the busy::after rings. Radios: .qopt::before (the pick-one option mark).
+const ROUND = /dot|\bava\b|-ava\b|avatar|person-ini|knob|switch::after|tog::after|spin|busy::after|\bled\b|radio|status-word::before|nav-rollup|tl-mark\.is-open|tl-pr-start|hd-base-pill::before|rg-td|kicker::before|npip|nwarn|mdl-st::before|qopt::before/;
 
 test('radius tokens (decided 2026-10-19): xs 4, sm 6, md 8, lg 12, pill; card = md, ctrl = sm', () => {
   const root = ALL.find((r) => r.sel === ':root').body;   // the first :root (line 14) is the token block
@@ -393,6 +393,29 @@ test('run 4 D6: a question\'s options are divided rows, not boxes', () => {
   assert.match(body('.qopt.sel'), /background:var\(--field\);/);
   assert.equal(ALL.some((r) => /\.qconf-fill/.test(r.sel)), false);
   assert.doesNotMatch(body('.qopt::before'), /attr\(data-key\)/);
+});
+
+test('the option mark is a 16px circle; picked is an ink ring with a content-box ink dot; no mask, url or glyph', () => {
+  const body = (sel) => (ALL.find((r) => r.sel === sel) || {}).body || '';
+  const rest = body('.qopt::before');
+  for (const re of [/flex:0 0 auto;/, /box-sizing:border-box;/, /width:16px;/, /height:16px;/, /border-radius:50%;/,
+    /border:1px solid var\(--line-2\);/, /padding:3px;/, /background:none;/, /background-clip:content-box;/]) assert.match(rest, re);
+  assert.ok(rest.indexOf('background:none') < rest.indexOf('background-clip'), 'the shorthand would reset the clip');
+  const picked = body('.qopt.sel::before');
+  assert.match(picked, /border-color:var\(--ink\);/);
+  assert.match(picked, /background-color:var\(--ink\);/);
+  assert.doesNotMatch(picked, /background:|mask|url\(|gradient|shadow|\bcolor:#|content:'[^']/);
+  assert.doesNotMatch(rest, /mask|url\(|gradient|shadow|content:'[^']/);
+  const round = ALL.filter((r) => /\.qopt(?![\w-])/.test(r.sel) && /border-radius:50%/.test(r.body)).map((r) => r.sel);
+  assert.deepEqual(round, ['.qopt::before'], 'only the mark is round');
+});
+
+test('the docs state the pick-one mark and the agent note in a card', () => {
+  const doc = readFileSync(join(ROOT, 'docs/design-system.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(doc, /round mark/);
+  assert.match(doc, /square check is only for several picks/);
+  assert.match(doc, /short question line plus a formatted body/);
+  assert.match(doc, /folds after about six lines/);
 });
 
 test('run bars are neutral: no blue fill on a progress bar (A1, spec §2.3)', () => {
