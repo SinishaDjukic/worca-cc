@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { osItemName } from '../src/core/secrets/os-store.mjs';
 import { peekKey, readFakeCalls, writeFakeState } from './helpers/os-store-fake.mjs';
+import { ptyAvailable, runInTerminal } from './helpers/terminal-cli.mjs';
 import { fakeVault } from './helpers/vault-on.mjs';
 import { CANARY, secretSlots, seedLiterals } from './helpers/secret-literals.mjs';
 
@@ -45,7 +46,7 @@ function run(env, args) {
   });
 }
 
-test('the spawned CLI: migrate, status, status --check, doctor, a refused export, ack and export print no canary and no key', async () => {
+test('the spawned CLI: migrate, status, status --check, doctor, a refused export, ack and export print no canary and no key', { skip: !ptyAvailable() }, async () => {
   const dir = mkdtempSync(join(ROOT, 'cli-'));
   const worca = join(dir, 'worca');
   const home = join(worca, '.worca-cc');
@@ -78,13 +79,22 @@ test('the spawned CLI: migrate, status, status --check, doctor, a refused export
   await step(['secrets', 'status']);
   await step(['secrets', 'status', '--check']);
   await step(['doctor']);
+  // export and ack run only in a terminal, with the shown word typed (docs/secrets.md).
+  const term = async (args, code = 0) => {
+    const r = await runInTerminal(args, { env });
+    assert.equal(r.code, code, `${args.join(' ')}: ${r.output}`);
+    outs.push(r.output);
+    return r;
+  };
+  const piped = await step(['secrets', 'export'], 1);
+  assert.match(piped.stderr, /run this in your own terminal/);
   writeFakeState(state, { state: 'locked', items: { [item.account]: key } });
-  const refused = await step(['secrets', 'export', '--yes'], 1);
-  assert.match(refused.stderr, /^worca: cannot export: the OS key store is locked/);
+  const refused = await term(['secrets', 'export'], 1);
+  assert.match(refused.output, /worca: cannot export: the OS key store is locked/);
   writeFakeState(state, { state: 'available', items: { [item.account]: key } });
-  await step(['secrets', 'ack']);
-  const exported = await step(['secrets', 'export', '--yes']);
-  assert.match(exported.stdout, /Turned the secretVault flag off\./);
+  await term(['secrets', 'ack']);
+  const exported = await term(['secrets', 'export']);
+  assert.match(exported.output, /Turned the secretVault flag off\./);
   assert.equal(existsSync(join(home, 'worca-vault.enc')), false);
   assertClean([...outs, notice, JSON.stringify(readFakeCalls(state))], keyForms(key));
 });
