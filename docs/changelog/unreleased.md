@@ -3,6 +3,28 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## The proxy login moves out of the box
+
+**In a container, agents can no longer reach your proxy login.**
+
+The login now lives in the egress sidecar. That is a second container, and only it mounts the login's volume. It logs in to the corporate proxy for every connection: NTLMv2, Negotiate, Digest or Basic. The box gets a proxy URL with no credentials in it. The credential broker's calls to the model providers go through the sidecar too.
+
+`worca container` starts the sidecar by itself when the proxy needs a login. Log in with `worca container proxy login`. `worca container run -- proxy login` still works. A login an older version saved in the box moves to the sidecar once. Then it is deleted from the box.
+
+A login is bound to its proxy. Change the host or the port, and the login is deleted. On a shared instance the operator can supply the login as a file. `worca proxy hash` prints one from a hidden prompt.
+
+Before this, a hardened box behind a login proxy could not get out at all: neither the sidecar nor the broker could log in. This was tested against a simulated NTLM proxy, not a real corporate one.
+
+The native install does not change.
+
+Chips: Network proxy · Container
+
+Read it: [Network proxy](../network-proxy.md#worca-in-a-container)
+
+Pull requests (add each number when it opens):
+
+- Proxy login in the egress sidecar
+
 ## Steady command rows in Chat
 
 **A stack of commands no longer flickers while it runs.**

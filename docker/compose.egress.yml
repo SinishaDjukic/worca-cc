@@ -15,6 +15,8 @@
 #                        Bitbucket: add bitbucket.org,api.bitbucket.org (step logs: also the storage host they redirect to)
 #                        GitHub Copilot on a GHE.com tenant: add .<tenant>.ghe.com (the leading dot
 #                        also matches <tenant>.ghe.com here); worca cannot inject it into this sidecar
+#   A corporate proxy that needs a login: add -f compose.proxy.yml AFTER this file. The sidecar then
+#                        keeps this allowlist and logs in to the corporate proxy (docs/network-proxy.md).
 #   WORCA_EGRESS_MODE    leave unset here: it is a hosting platform's policy
 #                        (docs/remote-access.md), with its own matching rules.
 
@@ -41,6 +43,9 @@ services:
     command: []
     environment:
       WORCA_EGRESS_ALLOW: ${WORCA_EGRESS_ALLOW:-}
+      # Keeps the allowlist when compose.proxy.yml (added after this file) starts the sidecar that
+      # also does the corporate proxy login; the plain entry above ignores it.
+      WORCA_EGRESS_ALLOWLIST: "1"
     networks:
       - internal
       - default

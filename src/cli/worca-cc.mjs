@@ -55,6 +55,7 @@ import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
 import { cmdExtension } from './extension.mjs';
 import { cmdProxy } from './proxy.mjs';
+import { sealEgressSecret } from '../core/egress-sidecar-client.mjs';
 import { cmdSetup } from './setup.mjs';
 import { cmdRun } from './run-preset.mjs';
 import {
@@ -3656,7 +3657,7 @@ async function resolveTeamNote(team, { key, project, name, a }) {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory', 'setup', 'sessions', 'readiness']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'egress', 'extension', 'proxy', 'memory', 'setup', 'sessions', 'readiness']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3737,6 +3738,10 @@ function mistypedCommand(tokens) {
 }
 
 async function main() {
+  // The egress sidecar (src/egress/main.mjs) is its own process: no settings, no git, no policy proxy of its own.
+  if (process.argv[2] === 'egress') { const { runEgressCli } = await import('../egress/main.mjs'); return runEgressCli(process.argv.slice(3)); }
+  // The sidecar's shared secret leaves the environment before anything is spawned (src/core/egress-sidecar-client.mjs).
+  sealEgressSecret();
   // D6: the old Labs flag becomes networkProxy.enabled, once, before the proxy reads it.
   await migrateCorporateProxyFlag();
   // A hosting platform's outbound network policy (src/core/egress-policy.mjs). `worca ui` leaves

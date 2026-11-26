@@ -7,6 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { Readable } from 'node:stream';
 import { join } from 'node:path';
 
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -161,19 +162,91 @@ test('up from a Worca terminal: the compose call gets the upstream, not the loca
   } finally { rmSync(dir, { recursive: true, force: true }); rmSync(scratch, { recursive: true, force: true }); }
 });
 
-test('up with a login-only corporate proxy: no proxy in the box, one line saying how to set it up', async () => {
+/** fakeExec, plus an image that carries the egress sidecar label (`label`: its value). */
+function sidecarExec(label = '1') {
+  const calls = [];
+  const exec = (cmd, args, opts = {}) => {
+    calls.push({ cmd, args, env: opts.env, input: opts.input });
+    if (cmd === 'git') return { status: 1, stdout: '', stderr: '' };
+    if (args[0] === 'image' && args[1] === 'inspect') return label === null ? { status: 1, stdout: '', stderr: 'no such image' } : { status: 0, stdout: `${label}\n`, stderr: '' };
+    return { status: 0, stdout: '', stderr: '' };
+  };
+  return { exec, calls };
+}
+
+test('up with a login-only corporate proxy: the egress sidecar gets the proxy and holds the login, the box gets none of it', async () => {
   const dir = await containerDir();
   try {
-    const { exec, calls } = fakeExec();
+    const { exec, calls } = sidecarExec();
     const o = io();
     assert.equal(await cmdContainer(['up'], { ...o, exec, dir, env: worcaShell,
       settings: () => ({ networkProxy: { upstream: 'http://proxy.corp:3128' } }), login: savedLogin }), 0);
     const up = calls.find((k) => k.args.includes('up'));
-    assert.equal(up.env.HTTPS_PROXY, '');
-    assert.equal(up.env.HTTP_PROXY, '');
+    // compose.proxy.yml gives the box http://egress:3128; this HTTPS_PROXY reaches the sidecar only.
+    assert.ok(up.args.includes('compose.proxy.yml'), up.args.join(' '));
+    assert.equal(up.env.HTTPS_PROXY, 'http://proxy.corp:3128');
+    assert.equal(up.env.WORCA_BROKER_PROXY, 'http://egress:3128');
+    assert.equal(up.env.WORCA_EGRESS_SECRET, undefined, 'compose reads the secret from .env');
+    assert.match(readFileSync(join(dir, '.env'), 'utf8'), /^WORCA_EGRESS_SECRET=[A-Za-z0-9_-]{43}$/m);
+    assert.doesNotMatch(JSON.stringify(up), /jdoe|a{32}/, 'no login on any compose call');
     assert.equal(up.env.WORCA_CA_CERT, undefined);
     assert.ok(!up.args.includes('compose.ca.yml'));
-    assert.equal(o.lines.filter((l) => l.startsWith('proxy')).length, 1);
+    assert.ok(calls.some((k) => k.args[0] === 'image' && k.args.includes('inspect')), 'the image was checked');
+    assert.equal(o.lines.filter((l) => l.startsWith('proxy') && /holds the proxy login/.test(l)).length, 1);
+    assert.equal(o.lines.filter((l) => l.startsWith('proxy') && /wrote WORCA_EGRESS_SECRET/.test(l)).length, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('up refuses an image without the egress sidecar, with one clear line, and starts nothing', async () => {
+  for (const label of ['<no value>', null]) {
+    const dir = await containerDir('HTTPS_PROXY=http://ACME%5Cjdoe:pw@proxy.corp:3128');
+    try {
+      const { exec, calls } = sidecarExec(label);
+      const o = io();
+      assert.equal(await cmdContainer(['up'], { ...o, exec, dir, env: {}, settings: () => ({}), login: noLogin }), 1);
+      assert.ok(!calls.some((k) => k.args.includes('up')), 'nothing started');
+      const why = o.lines.find((l) => l.startsWith('FAIL'));
+      assert.match(why, label === null ? /cannot check the image .*could not be pulled/ : /older than these compose files/);
+      if (label === null) assert.ok(calls.some((k) => k.args.includes('pull') && k.args.includes('egress')), 'it tried to pull once');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
+test('a login in .env HTTPS_PROXY starts the sidecar; down keeps the overlay after proxy login was used', async () => {
+  const dir = await containerDir('HTTPS_PROXY=http://ACME%5Cjdoe:pw@proxy.corp:3128');
+  try {
+    const { exec, calls } = sidecarExec();
+    const o = io();
+    assert.equal(await cmdContainer(['up'], { ...o, exec, dir, env: {}, settings: () => ({}), login: noLogin }), 0);
+    const up = calls.find((k) => k.args.includes('up'));
+    assert.ok(up.args.includes('compose.proxy.yml'));
+    assert.equal(up.env.HTTPS_PROXY, undefined, 'compose reads .env itself: the URL goes to the sidecar only (compose.proxy.yml)');
+    // proxy login from the host: the password is piped into the sidecar, never an argument.
+    const input = Readable.from(['ACME\\jdoe\nS3cret!\n']);
+    const c2 = sidecarExec();
+    assert.equal(await cmdContainer(['proxy', 'login'], { ...io(), exec: c2.exec, dir, env: {}, settings: () => ({}), login: noLogin, stdin: input }), 0);
+    const ex = c2.calls.find((k) => k.args.includes('exec'));
+    assert.deepEqual(ex.args.slice(ex.args.indexOf('exec')), ['exec', '-T', 'egress', 'worca', 'egress', 'login']);
+    assert.equal(ex.input, 'ACME\\jdoe\nS3cret!\n');
+    assert.ok(!c2.calls.some((k) => k.args.join(' ').includes('S3cret')), 'never in argv');
+    assert.ok(c2.calls.some((k) => k.args.join(' ').includes('up -d --no-deps egress')));
+    const c3 = sidecarExec();
+    assert.equal(await cmdContainer(['down'], { ...io(), exec: c3.exec, dir, env: {}, settings: () => ({}), login: noLogin }), 0);
+    assert.ok(c3.calls.find((k) => k.args.includes('down')).args.includes('compose.proxy.yml'), 'down removes the sidecar too');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('no login anywhere: no sidecar, and proxy status says how to set one up', async () => {
+  const dir = await containerDir('HTTPS_PROXY=http://proxy.corp:3128');
+  try {
+    const { exec, calls } = sidecarExec();
+    const o = io();
+    assert.equal(await cmdContainer(['up'], { ...o, exec, dir, env: {}, settings: () => ({}), login: noLogin }), 0);
+    assert.ok(!calls.find((k) => k.args.includes('up')).args.includes('compose.proxy.yml'));
+    assert.doesNotMatch(readFileSync(join(dir, '.env'), 'utf8'), /^WORCA_EGRESS_SECRET=/m);
+    const o2 = io();
+    assert.equal(await cmdContainer(['proxy', 'status'], { ...o2, exec, dir, env: {}, settings: () => ({}), login: noLogin }), 1);
+    assert.match(o2.lines.join('\n'), /no egress sidecar is set up/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

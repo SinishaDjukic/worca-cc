@@ -604,6 +604,8 @@ import * as skClone from '../src/core/clone-project.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
 import { useEnvProxy, reinstallEnvProxy, proxyNotice } from '../src/core/env-proxy.mjs';
 import { startLiveEgress, egressNotice, egressSummary } from '../src/core/egress-policy.mjs';
+import { sealEgressSecret } from '../src/core/egress-sidecar-client.mjs';
+import { startSidecarBoot } from '../src/core/egress-sidecar-boot.mjs';
 import { detectSystemProxy } from '../src/core/system-proxy.mjs';
 import { saveProxyLogin, clearProxyLogin, parseAccount, ProxyLoginError, upstreamEnv, savedLoginRefusal } from '../src/core/proxy-credentials.mjs';
 import { createProxyHost, PROXY_AGENT_TEXT } from '../src/core/proxy-host.mjs';
@@ -619,7 +621,7 @@ import { proxyEventPrompt, proxyNoticeText } from '../src/core/ask/proxy-proposa
 // printer no longer fires (a bare listener would NOT suppress the warning and would
 // double-print every OTHER warning), then attach our single filtering listener.
 // The credential broker's secret leaves process.env before anything can spawn: no child inherits it.
-sealBrokerSecret();
+sealBrokerSecret(); sealEgressSecret();   // and the egress sidecar's (egress-sidecar-client.mjs)
 process.removeAllListeners('warning');
 process.on('warning', (w) => {
   if (w && w.name === 'ExperimentalWarning' && /SQLite/i.test(w.message)) return;
@@ -10602,6 +10604,7 @@ if (isMain) {
     });
     const egressLine = egressNotice(EGRESS_LIVE.current());
     if (egressLine) console[egressLine.level === 'warn' ? 'warn' : 'log'](`[worca-ui] ${egressLine.text}`);
+    startSidecarBoot({ networkProxy: networkProxySettings, log: (lv, t) => console[lv === 'warn' ? 'warn' : 'log'](`[worca-ui] ${t}`) });
   } catch (err) {
     console.error(`[worca-ui] outbound network policy: the policy proxy could not start (${err && err.message ? err.message : err}). Not starting.`);
     process.exit(78);

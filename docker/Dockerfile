@@ -86,7 +86,9 @@ RUN test -n "${CLAUDE_CODE_VERSION}" || { echo "CLAUDE_CODE_VERSION build arg is
 # hadolint ignore=DL3010
 COPY ${WORCA_TARBALL} /tmp/worca.tgz
 # The egress overlay's sidecar runs the policy proxy from the package as one standalone
-# file (docker/compose.egress.yml; src/core/egress-proxy.mjs imports node: modules only).
+# file (docker/compose.egress.yml; src/core/egress-proxy.mjs imports node: modules only). The
+# sidecar that also holds the corporate proxy login runs `worca egress` instead
+# (docker/compose.proxy.yml); the label dev.worca.egress-sidecar says this image has it.
 RUN app="$(npm root -g)/@worca/app" \
  && mkdir -p "${app}" \
  && tar -xzf /tmp/worca.tgz -C "${app}" --strip-components=1 --no-same-owner \
@@ -161,7 +163,8 @@ LABEL org.opencontainers.image.title="Worca" \
       org.opencontainers.image.source="https://github.com/worca-org/worca" \
       org.opencontainers.image.licenses="MIT" \
       dev.worca.claude-code.version="${CLAUDE_CODE_VERSION}" \
-      dev.worca.variant="${VARIANT}"
+      dev.worca.variant="${VARIANT}" \
+      dev.worca.egress-sidecar="1"
 
 # hadolint ignore=DL3066
 USER worca

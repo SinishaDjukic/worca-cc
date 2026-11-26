@@ -134,6 +134,18 @@ Every `claude` process follows this path: pipeline phases, Ask turns, titles, th
 button, script steps. A token belongs to one process, so it can be short-lived and dies with
 it. Sub-agents inside that process share its token.
 
+### Behind a corporate proxy
+
+The broker's calls to the providers honour `HTTPS_PROXY` and `NO_PROXY` in its own
+environment. `compose.broker.yml` sets them from `WORCA_BROKER_PROXY`, which is empty by
+default: the broker then connects directly. Behind a proxy that needs a login, run the egress
+sidecar (`compose.proxy.yml`, [network-proxy.md → Worca in a container](network-proxy.md#worca-in-a-container))
+and set `WORCA_BROKER_PROXY=http://egress:3128`. `worca container` sets it by itself whenever
+it starts the sidecar. The sidecar logs in to the corporate proxy for the broker too. The
+broker never gets the proxy login. The broker cannot log in to an NTLM proxy by itself: a
+login in its own `HTTPS_PROXY` URL goes out as Basic only. `compose.broker.yml` also puts the
+broker on the `internal` network, so a worca confined by `compose.egress.yml` reaches it.
+
 ### Slots
 
 A slot is one kind of credential with one fixed destination.
