@@ -41,3 +41,33 @@ export const row = (name, o = {}) => ({ name, version: '1.0.0', pinnedSha: 'a'.r
   contributions: { agents: 0, scripts: 0, taskSources: 1, chatChannels: 0, models: 0, mcpServers: 0, skills: 0, workflows: 0 },
   pythonMissing: false, mcpSets: [], skillSets: [], description: null, ref: null, latest: null,
   setup: { ok: true, missing: [], noProfiles: [] }, notes: [], ...o });
+
+// The server the booted-app suites (test/ui-marketplace-marketplaces*.test.mjs) talk to.
+export const POLICY = { projects: [], workspaces: [], scopes: { projects: [], workspaces: [] }, homes: [], requirements: [], blockedPlugins: [], anyEnabled: false };
+
+// The server's answers: `api(method, path, body, state)` answers what a test cares about ({status, body}); undefined →
+// the defaults below. Every request is recorded in `calls` as { method, path, body }.
+export function marketplaceApi({ api = () => undefined, marketplaces = [OFFICIAL, EXAMPLE], plugins = [], orphans = [] } = {}) {
+  const calls = [];
+  const state = { marketplaces, plugins, orphans };
+  const dflt = (method, path) => {
+    const ok = (body) => ({ status: 200, body });
+    if (method === 'POST' && path === '/api/marketplaces/refresh') return ok({ ok: true, marketplaces: state.marketplaces });
+    if (method === 'POST' && /^\/api\/marketplaces\/[^/]+\/refresh$/.test(path)) return ok({ ok: true, marketplace: state.marketplaces[0] });
+    if (method === 'GET' && path === '/api/marketplaces') return ok({ marketplaces: state.marketplaces });
+    if (method === 'GET' && path === '/api/plugins') return ok({ plugins: state.plugins, orphans: state.orphans });
+    if (path.startsWith('/api/chat/status')) return ok({ channels: [] });
+    if (path.startsWith('/api/policy/scopes')) return ok(POLICY);
+    if (path.startsWith('/api/projects')) return ok({ projects: [] });
+    return ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [] });
+  };
+  const fetchHandler = (u, opts = {}) => {
+    const path = String(u).replace(/^https?:\/\/[^/]+/, '');
+    const method = opts.method || 'GET';
+    const body = opts.body ? JSON.parse(opts.body) : undefined;
+    calls.push({ method, path, body });
+    const r = api(method, path, body, state) || dflt(method, path);
+    return Promise.resolve({ ok: r.status < 400, status: r.status, json: async () => r.body });
+  };
+  return { calls, state, fetchHandler };
+}

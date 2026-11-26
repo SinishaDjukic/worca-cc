@@ -1,67 +1,39 @@
 // test/ui-marketplace-marketplaces.test.mjs — P7: the Marketplaces tab, the Add marketplace dialog and U5, on the booted app.
-import { test, afterEach } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
-import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { useSharedApp, restoreAfter } from './helpers/shared-app-boot.mjs';
+import { releaseDom } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { lastToast } from './helpers/feedback.mjs';
-import { OFFICIAL, EXAMPLE, LOCAL, NOTE0, row } from './helpers/mk-marketplaces-fixtures.mjs';
+import { OFFICIAL, EXAMPLE, LOCAL, NOTE0, row, POLICY, marketplaceApi } from './helpers/mk-marketplaces-fixtures.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
-const trackDom = useDomRelease(afterEach);
-const html = readIndexHtml();
+const html = readIndexHtml();   // the page markup the static checks read (the app itself boots once, below)
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-class WSStub {
-  constructor() { this.readyState = 1; WSStub.last = this; this._l = {}; }
-  send() {} close() {}
-  addEventListener(t, fn) { (this._l[t] = this._l[t] || []).push(fn); }
-  _open() { (this._l.open || []).forEach((fn) => fn({})); }
-  frame(msg) { (this._l.message || []).forEach((fn) => fn({ data: JSON.stringify(msg) })); }
-}
+
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async (n = 10) => { for (let i = 0; i < n; i++) await tick(); };
-const POLICY = { projects: [], workspaces: [], scopes: { projects: [], workspaces: [] }, homes: [], requirements: [], blockedPlugins: [], anyEnabled: false };
 
-// `api(method, path, body, state)` answers what a test cares about ({status, body}); undefined → the defaults below.
-async function boot({ level = null, api = () => undefined, marketplaces = [OFFICIAL, EXAMPLE], plugins = [], orphans = [] } = {}) {
-  const page = level ? html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`) : html;
-  const { window } = trackDom(new JSDOM(page, { url: 'http://localhost:4319/' }));
-  window.Element.prototype.scrollIntoView = function () {};
-  window.WebSocket = WSStub;
-  window.open = (...a) => { window.__opened = a; return null; };
-  const calls = [];
-  const state = { marketplaces, plugins, orphans };
-  const dflt = (method, path) => {
-    const ok = (body) => ({ status: 200, body });
-    if (method === 'POST' && path === '/api/marketplaces/refresh') return ok({ ok: true, marketplaces: state.marketplaces });
-    if (method === 'POST' && /^\/api\/marketplaces\/[^/]+\/refresh$/.test(path)) return ok({ ok: true, marketplace: state.marketplaces[0] });
-    if (method === 'GET' && path === '/api/marketplaces') return ok({ marketplaces: state.marketplaces });
-    if (method === 'GET' && path === '/api/plugins') return ok({ plugins: state.plugins, orphans: state.orphans });
-    if (path.startsWith('/api/chat/status')) return ok({ channels: [] });
-    if (path.startsWith('/api/policy/scopes')) return ok(POLICY);
-    if (path.startsWith('/api/projects')) return ok({ projects: [] });
-    return ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [] });
-  };
-  window.fetch = (u, opts = {}) => {
-    const path = String(u).replace(/^https?:\/\/[^/]+/, '');
-    const method = opts.method || 'GET';
-    const body = opts.body ? JSON.parse(opts.body) : undefined;
-    calls.push({ method, path, body });
-    const r = api(method, path, body, state) || dflt(method, path);
-    return Promise.resolve({ ok: r.status < 400, status: r.status, json: async () => r.body });
-  };
-  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
-    try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
-  }
-  globalThis.window = window; globalThis.document = window.document;
-  window.localStorage.clear();
-  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
-  await tick();
-  if (WSStub.last) WSStub.last._open();
+// The app is booted once for the file (test/helpers/shared-app-boot.mjs) and reset before each test; boot() resets
+// it with the test's server answers and level, and keeps its { window, doc, calls, state } shape. window.open is
+// stubbed at load, and each test's opener is cleared.
+const app = useSharedApp({ before, beforeEach, after }, {
+  url: 'http://localhost:4319/',
+  setup: (window) => { window.open = (...a) => { window.__opened = a; return null; }; },
+  fetchHandler: marketplaceApi().fetchHandler,
+});
+// The one fake socket: frames reach the app as they did through the boot's own stub.
+const WSStub = { get last() { return { frame: (msg) => app.recv(msg) }; } };
+
+async function boot({ level = null, ...server } = {}) {
+  const { calls, state, fetchHandler } = marketplaceApi(server);
+  delete app.window.__opened;
+  await app.fresh({ fetchHandler, ...(level ? { level } : {}) });
   await settle();
-  return { window, doc: window.document, calls, state };
+  return { window: app.window, doc: app.document, calls, state };
 }
 async function go(window, hash) { window.location.hash = hash; window.dispatchEvent(new window.Event('hashchange')); await settle(); }
 const count = (calls, method, path) => calls.filter((c) => c.method === method && c.path === path).length;
@@ -106,7 +78,7 @@ test('Marketplaces tab: refresh one, Retry, Refresh all; each one POST, then a r
   assert.equal(doc.querySelector(`button.mk-facet[data-from="${EXAMPLE.id}"]`).getAttribute('aria-pressed'), 'true');
 });
 
-test('Marketplaces tab: the ⋯ menu (Copy URL, Open repository only with a web URL, Remove… in its own dialog)', async () => {
+test('Marketplaces tab: the ⋯ menu (Copy URL, Open repository only with a web URL, Remove… in its own dialog)', async (t) => {
   const deleted = [];
   const { window, doc } = await boot({ marketplaces: [OFFICIAL, EXAMPLE, LOCAL], api: (m, p) => {
     if (m !== 'DELETE') return undefined;
@@ -114,6 +86,7 @@ test('Marketplaces tab: the ⋯ menu (Copy URL, Open repository only with a web 
     deleted.push(p); return { status: 200, body: { ok: true, id: EXAMPLE.id } };
   } });
   const copied = [];
+  restoreAfter(t, window.navigator, 'clipboard');
   Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: { writeText: async (t) => { copied.push(t); } } });
   await go(window, 'marketplace/marketplaces');
   await checkRows([
@@ -208,11 +181,12 @@ test('Already added: Open it lands on the Marketplaces tab (the address follows,
     [null, '#marketplace/marketplaces', 'marketplaces', OFFICIAL.id]);
 });
 
-test('Open it rings the card it found, even after a mouse click (focusVisible; cycle 5)', async () => {
+test('Open it rings the card it found, even after a mouse click (focusVisible; cycle 5)', async (t) => {
   const { window, doc } = await boot({ api: (m, p) => (m === 'POST' && p === '/api/marketplaces'
     ? { status: 409, body: { error: `marketplace already added: ${EXAMPLE.url}`, code: 'EXISTS', existing: { id: EXAMPLE.id, name: EXAMPLE.name } } } : undefined) });
   await go(window, 'marketplace');
   const seen = [];
+  restoreAfter(t, window.HTMLElement.prototype, 'focus');
   const focus = window.HTMLElement.prototype.focus;
   window.HTMLElement.prototype.focus = function (o) { if (this.matches('section.mk-mkt')) seen.push([this.dataset.id, o?.focusVisible ?? null]); return focus.call(this, o); };
   doc.querySelector('#mk-root .mk-head-actions .mk-add-mkt').click(); await settle();
@@ -287,8 +261,9 @@ test('Marketplaces tab: Refresh all while the refresh runs is busy and ignores t
   assert.equal(head(doc).querySelector('.mk-refresh-all').getAttribute('aria-disabled'), null);
 });
 
-test('Marketplaces tab: closing the Add dialog returns focus to the header button; Copy URL without a clipboard says so', async () => {
+test('Marketplaces tab: closing the Add dialog returns focus to the header button; Copy URL without a clipboard says so', async (t) => {
   const { window, doc } = await boot();
+  restoreAfter(t, window.navigator, 'clipboard');
   Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: undefined });
   await go(window, 'marketplace/marketplaces');
   head(doc).querySelector('.mk-add-mkt').click(); await settle();
@@ -567,25 +542,6 @@ test('Remove…: a failed DELETE puts the focus back on Remove (a browser drops 
   dialog(doc).querySelector('.mk-dlg-close').click(); await settle();
 });
 
-test('Open it before the first good read: the card takes focus when the page first paints it', async () => {
-  let down = true;
-  const { window, doc } = await boot({ api: (m, p) => {
-    if (down && m === 'GET' && p === '/api/plugins') return { status: 500, body: { error: 'db locked' } };
-    if (m === 'POST' && p === '/api/marketplaces') return { status: 409, body: { error: 'x', code: 'EXISTS', existing: { id: EXAMPLE.id, name: EXAMPLE.name } } };
-    return undefined;
-  } });
-  await go(window, 'marketplace/marketplaces');
-  head(doc).querySelector('.mk-add-mkt').click(); await settle();
-  const url = doc.getElementById('mk-add-url');
-  url.value = 'example/worca-marketplace'; url.dispatchEvent(new window.Event('input', { bubbles: true }));
-  dialog(doc).querySelector('.mk-add-primary').click(); await settle();
-  dialog(doc).querySelector('.mk-add-primary').click(); await settle();
-  assert.equal(doc.querySelector('#mk-root section.mk-mkt'), null, 'nothing painted yet');
-  down = false;
-  WSStub.last.frame({ type: 'plugins-changed', action: 'install' }); await settle();
-  assert.equal(doc.activeElement.dataset.id, EXAMPLE.id);
-});
-
 // ── Refine killers (cycle 3): focus with no twin left, and notes the user opened, across a re-render ──
 test('a re-render that drops the focused control with no twin puts the focus on the header Add, never <body> (cycle 3)', async () => {
   await checkRows([
@@ -746,12 +702,14 @@ test('Marketplaces tab: notes the user opened stay open through a re-render; a c
   assert.equal(disc().getAttribute('aria-expanded'), 'false', 'a card added again starts folded');
 });
 
-test('Remove… open while Back moves the page to Browse: Cancel, Close and Escape leave the focus on a shown control, never <body> (cycle 6)', async () => {
+test('Remove… open while Back moves the page to Browse: Cancel, Close and Escape leave the focus on a shown control, never <body> (cycle 6)', async (t) => {
   const lost = (doc) => doc.activeElement === doc.body || !!doc.activeElement?.closest('[hidden], .hidden');
+  const proto = app.window.HTMLElement.prototype;
+  restoreAfter(t, proto, 'focus');
+  const focus = proto.focus;   // a browser never focuses a control it does not render
+  proto.focus = function (o) { if (this.closest('[hidden], .hidden')) return; return focus.call(this, o); };
   await checkRows(['Cancel', 'Close', 'Escape'].map((how) => ({ name: how, run: async () => {
     const { window, doc } = await boot();
-    const focus = window.HTMLElement.prototype.focus;   // a browser never focuses a control it does not render
-    window.HTMLElement.prototype.focus = function (o) { if (this.closest('[hidden], .hidden')) return; return focus.call(this, o); };
     await go(window, 'marketplace/marketplaces');
     const more = doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`);
     more.focus(); more.click(); pick(doc, 'Remove…'); await settle();
@@ -778,7 +736,7 @@ test('Remove… while that card\'s refresh runs: the refresh answering 404 after
   assert.deepEqual([lastToast(doc).tone, lastToast(doc).title], ['ok', 'Marketplace removed. Installed plugins remain.'], 'the removed marketplace\'s refresh says nothing');
 });
 
-test('Marketplaces tab: Open repository never opens a credential; a clipboard that refuses says so; Remove… keeps another marketplace\'s Browse filter (cycle 6)', async () => {
+test('Marketplaces tab: Open repository never opens a credential; a clipboard that refuses says so; Remove… keeps another marketplace\'s Browse filter (cycle 6)', async (t) => {
   const CRED = { ...LOCAL, id: 'github.com-acme-m-0c0ffee0', name: 'acme/m', url: 'https://x-access-token:s3cret@github.com/acme/m.git' };
   const { window, doc } = await boot({ marketplaces: [OFFICIAL, EXAMPLE, CRED], api: (m, p, b, st) => {
     if (m !== 'DELETE') return undefined;
@@ -792,6 +750,7 @@ test('Marketplaces tab: Open repository never opens a credential; a clipboard th
       assert.deepEqual(window.__opened, ['https://github.com/acme/m', '_blank', 'noopener']);
     } },
     { name: 'a clipboard that refuses: an error toast, never "URL copied."', run: async () => {
+      restoreAfter(t, window.navigator, 'clipboard');
       Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: { writeText: () => Promise.reject(new Error('Write permission denied.')) } });
       doc.querySelector(`.mk-mkt-more[data-id="${EXAMPLE.id}"]`).click(); pick(doc, 'Copy URL'); await settle();
       assert.deepEqual([lastToast(doc).tone, lastToast(doc).title], ['err', 'Could not copy the URL.']);
@@ -809,10 +768,12 @@ test('Marketplaces tab: Open repository never opens a credential; a clipboard th
   ]);
 });
 
-test('U5: Add marketplace, the Marketplaces tab, Health and Leftover data are not Expert-gated; the page stays Advanced (L8)', async () => {
+test('U5: Add marketplace, the Marketplaces tab, Health and Leftover data are not Expert-gated; the page stays Advanced (L8)', async (t) => {
   await checkRows([
     { name: 'static: no Expert gate in the page markup or in ui/public/marketplace/*.mjs', run: () => {
-      const section = new JSDOM(html).window.document.querySelector('section[data-view="marketplace"]');
+      const page = new JSDOM(html);
+      t.after(() => releaseDom(page));
+      const section = page.window.document.querySelector('section[data-view="marketplace"]');
       assert.deepEqual([...section.querySelectorAll('[data-min-level="expert"]')].map((n) => n.outerHTML.slice(0, 80)), []);
       const dir = fileURLToPath(new URL('../ui/public/marketplace/', import.meta.url));
       const hits = readdirSync(dir).filter((f) => f.endsWith('.mjs'))

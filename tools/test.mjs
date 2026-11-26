@@ -92,7 +92,7 @@ export function failureRecord({ tier, shard, node, files }) {
 }
 
 export function parseArgs(argv, env = process.env) {
-  const o = { tier: 'all', shard: null, writeTimings: false, timingsOut: null, failuresOut: null, concurrency: null, related: false, base: null, files: [] };
+  const o = { tier: 'all', shard: null, writeTimings: false, timingsOut: null, failuresOut: null, concurrency: null, related: false, base: null, namePattern: null, files: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = () => {
@@ -108,6 +108,7 @@ export function parseArgs(argv, env = process.env) {
     else if (a === '--failures-out') o.failuresOut = value();
     else if (a === '--related') o.related = true;
     else if (a === '--base') o.base = value();
+    else if (a === '--test-name-pattern') o.namePattern = value();
     else if (a.startsWith('--')) throw new Error(`unknown flag ${a}`);
     else o.files.push(a.replace(/\\/g, '/'));
   }
@@ -119,6 +120,8 @@ export function parseArgs(argv, env = process.env) {
   if (o.concurrency === null && Number.isInteger(envCap) && envCap > 0) o.concurrency = envCap;
   if (o.base && !o.related) throw new Error('--base needs --related');
   if (o.related && o.files.length) throw new Error('--related picks its own files: drop the file list');
+  // A name filter runs one file's tests through this hermetic runner (tools/test-each-alone.mjs); it never filters a suite.
+  if (o.namePattern !== null && !o.files.length) throw new Error('--test-name-pattern needs a file list');
   // CI's shard env splits the selected suite; it never applies to an explicit file list or --related.
   if (!o.shard && !o.files.length && !o.related) o.shard = env.WORCA_TEST_SHARD || null;
   return o;
@@ -274,7 +277,7 @@ async function main() {
   const measure = o.writeTimings || o.timingsOut;
   const failuresFile = join(work, 'failures.json');
   writeFileSync(listFile, JSON.stringify({ files, concurrency: o.concurrency, timingsOut: measure ? timingsOut : null,
-    ...(o.failuresOut ? { failuresOut: failuresFile } : {}) }));
+    ...(o.failuresOut ? { failuresOut: failuresFile } : {}), ...(o.namePattern !== null ? { testNamePatterns: [o.namePattern] } : {}) }));
 
   const env = { ...process.env, WORCA_HOME: scoped ? testHome : '.worca-cc-test', HOME: home, USERPROFILE: home,
     WORCA_NO_REAL_CLAUDE_LOG: join(testHome, 'real-claude-spawns.log'), // read by the shim and assert-none.mjs

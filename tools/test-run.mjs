@@ -12,7 +12,7 @@ import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { relative, resolve } from 'node:path';
 
-const { files, concurrency, timingsOut, failuresOut } = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const { files, concurrency, timingsOut, failuresOut, testNamePatterns } = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const perFile = {}; // sum of top-level tests: the fallback when a file reports no file-level event
 const wall = {};
 const rootRun = {}; // the file's own test run (its summary): first test registered to exit, so the tail is in it
@@ -31,6 +31,8 @@ const stream = run({
   // forever, and the whole suite with it (process audit §8c, 18 h). forceExit ends each file once its tests
   // are done. A measuring run keeps it off so the tail warnings below still see lingering processes.
   forceExit: !timingsOut,
+  // tools/test.mjs --test-name-pattern: as Node's own flag reads it (a RegExp source, or /re/flags).
+  ...(testNamePatterns ? { testNamePatterns } : {}),
 });
 // realpath: on macOS one event names a temp file under /var and another under /private/var (a symlink).
 const real = (file) => { try { return realpathSync(file); } catch { return file; } };

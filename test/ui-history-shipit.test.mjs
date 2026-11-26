@@ -1,177 +1,68 @@
 // test/ui-history-shipit.test.mjs
-import { test, afterEach } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { JSDOM } from 'jsdom';
-import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { useSharedApp, restoreAfter } from './helpers/shared-app-boot.mjs';
 import { cardAlertOf } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { backdropClick, pressEscape, discardPrompt, keepEditing, discardChanges } from './helpers/popups.mjs';
-import { readIndexHtml } from '../src/core/read-index-html.mjs';
-
-// Release each booted window after its test (see test/helpers/jsdom-release.mjs).
-const trackDom = useDomRelease(afterEach);
+import {
+  PROJECT, settle, go, KEY, WKS_KEY, ROW, row, DETAIL, RESULTS, okBudget, ok, fail, remote, REMOTES,
+  historyArms as shipArms, groupsArm, hello,
+} from './helpers/history-shipit-fixtures.mjs';
 
 // Behavior tests for the "Ship it?" confirm modal and the History DETAIL header's
 // PR control: one shared eligibility predicate (histPrEligible), a modal that
 // summarizes the change and POSTs /api/pr, and the tri-state header (Create PR /
 // OPEN link / MERGED link) kept in step with the list card behind it.
 //
-// boot()/settle()/go() are a deliberate local copy of
-// test/ui-history-detail.test.mjs:25-96 — the suites do not import each other.
-// prTokens()/dispatchPr() mirror test/ui-history-pr-phase.test.mjs:45-46.
+// The run, its detail, the remotes answer and the route table are test/helpers/history-shipit-fixtures.mjs's, shared
+// with test/ui-history-shipit-slice-breadcrumb.test.mjs. prTokens()/dispatchPr() mirror
+// test/ui-history-pr-phase.test.mjs:45-46.
 //
-// Each test gets a fresh DOM + a fresh module import (cache-busted) so module
-// top-level state (pendingShipIt, shipItClose, histDetailState) can't leak.
+// The app is booted once for the file (test/helpers/shared-app-boot.mjs) and reset before each test, which closes
+// the modal and the detail screen a test left open. The real marked + DOMPurify for the description's Preview tab
+// are a load-time hook (app.js reads __worcaTestHooks.askMarkdown once), so they are the file's.
 
-const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
+const realMarkdown = async () => ({ marked: (await import('marked')).marked, createDOMPurify: (await import('dompurify')).default });
 
-const PROJECT = '/tmp/proj';
-
-async function boot({ fetchHandler, url = 'http://localhost:4317/', hooks = null } = {}) {
-  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
-  const { window } = dom;
-  if (hooks) window.__worcaTestHooks = hooks;   // e.g. the real marked + DOMPurify for the Preview tab
-
-  // jsdom doesn't implement scrollIntoView; the viewer modal calls it on open.
-  window.Element.prototype.scrollIntoView = function () {};
-
-  const wsBox = { ws: null };
-  window.WebSocket = class {
-    constructor() {
-      this.readyState = 1;
-      this._listeners = {};
-      wsBox.ws = this;
-    }
-    send() {}
-    close() {}
-    addEventListener(type, fn) {
-      (this._listeners[type] ||= []).push(fn);
-    }
-    dispatch(type, evt) {
-      (this._listeners[type] || []).forEach((fn) => fn(evt));
-    }
-  };
-
-  const calls = [];
-  window.fetch = (u, opts) => {
-    calls.push({ url: String(u), opts: opts || {} });
-    if (fetchHandler) {
-      const r = fetchHandler(String(u), opts || {});
-      if (r) return r;
-    }
-    if (String(u).includes('/api/projects')) {
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        json: async () => ({ projects: [{ name: 'proj', path: PROJECT, exists: true }] }),
-      });
-    }
-    return Promise.resolve({
-      ok: true,
-      status: 200,
-      json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [] }),
-    });
-  };
-
-  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
-    try {
-      Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true });
-    } catch {
-      /* read-only global already present — leave it */
-    }
-  }
-  globalThis.window = window;
-  globalThis.document = window.document;
-
-  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
-  await new Promise((r) => setTimeout(r, 0)); // let loadProjects/loadConfig settle
-
-  return { window, calls, wsBox };
-}
-
-async function settle(window, n = 3) {
-  for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0));
-}
-
-function go(window, hash) {
-  window.location.hash = hash;
-  window.dispatchEvent(new window.Event('hashchange'));
-}
-
-const KEY = 'proj-alpha-abcd1234';
-const WKS_KEY = 'workspaces/team-a';
-const ROW = {
-  id: 'fcec04e8', projectKey: KEY, projectName: 'Alpha', projectDir: '/tmp/proj',
-  title: 'Implement Log-UX Review Fixes', status: 'done',
-  startedAt: '2026-08-17T20:54:42Z', branch: 'worca-cc/log-ux-fcec04e8',
-  sourceBranch: 'feat/log-ux', survived: true, added: 12, removed: 3,
-  totalCostUsd: 153.21, totalActiveMs: 6000000, mtime: 1,
-  pauseReason: null, retainedWork: null, pr: null,     // resolved: no PR yet
-};
-// Fresh object per boot: a successful ship MUTATES the row it is handed
-// (`record.pr = pr`, and the record IS the object in state.historyAll), so a
-// shared const would hand the next test a run that already has an open PR.
-const row = (over = {}) => ({ ...ROW, ...over });
-const DETAIL = {
-  state: {
-    id: ROW.id, title: ROW.title, status: 'done', startedAt: ROW.startedAt,
-    stepper: null, steps: [], subAgents: [], totalCostUsd: 153.21, totalActiveMs: 6000000,
-    branch: { source: 'feat/log-ux', feature: ROW.branch, worktreeDir: '/tmp/wt' },
-    prompt: 'Fix the log UX.',
-  },
-  results: null, overview: null, clarify: { questions: [], answers: [] },
-  reviews: [], stepQuestions: [], artifacts: [], auditMarkdown: '# saved',
-};
-const RESULTS = {
-  summary: {
-    filesNew: 1, filesChanged: 13, filesDeleted: 0,
-    linesAdded: 412, linesRemoved: 188, blockingIssues: 0, nitpicks: 0,
-  },
-  newFiles: [], changedFiles: [], keyThingsToCheck: [], nitpicks: [],
-};
-
-const DAY = 86400000;
-const okBudget = () => ({
-  pipelineLimitUsd: 5, totalLimitUsd: 50, resetPeriod: 'monthly',
-  windowStartMs: Date.now() - 3 * DAY, windowEndMs: Date.now() + 4 * DAY,
-  msUntilReset: 4 * DAY, windowSpendUsd: 12.5, allTimeSpendUsd: 12.5,
-  remainingUsd: 37.5, blocked: false,
+const app = useSharedApp({ before, beforeEach, after }, {
+  hooks: { askMarkdown: realMarkdown },
+  fetchHandler: (u) => Promise.resolve(String(u).includes('/api/projects')
+    ? { ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: PROJECT, exists: true }] }) }
+    : { ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [] }) }),
 });
 
-const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
-const fail = (status, body) => Promise.resolve({ ok: false, status, json: async () => body });
-
-const DETAIL_URL = `/api/history/${KEY}/${ROW.id}`;
-const WKS_DETAIL_URL = `/api/workspaces/team-a/runs/${ROW.id}`;
-const detailHash = `history/${KEY}/${ROW.id}`;
-const wksDetailHash = `history/${WKS_KEY}/${ROW.id}`;
-
-// ARM ORDER IS LOAD-BEARING (ui-history-routing.test.mjs:119-127): the detail URL
-// is a PREFIX of the /log and /diff URLs, and `/api/history` is a prefix of the
-// POST /api/history/pr enrichment call. Most-specific first, and every history arm
-// matches with endsWith, never includes — except the remotes arm, whose URL carries
-// a query string (it can never collide with the `/api/pr` endsWith matchers).
-function historyArms(box) {
-  return (url) => {
-    if (/\/api\/pr\/remotes\?/.test(url)) return box.remotes ? ok(box.remotes) : fail(500, { error: 'git remote failed' });
-    if (url.endsWith('/api/history/pr')) return ok({ ok: true });
-    if (url.endsWith('/diff')) return fail(404, { error: 'no diff' });
-    if (url.endsWith('/log')) return fail(404, { error: 'no log' });
-    if (url.endsWith('/api/history')) return ok({ pipelines: box.rows, ghAvailable: box.gh, ...(box.prHosts ? { prHosts: box.prHosts } : {}) });
-    if (url.endsWith(DETAIL_URL) || url.endsWith(WKS_DETAIL_URL)) return ok(box.detail);
-    if (url.endsWith('/api/budget')) return ok(box.budget);
-    return null;
-  };
+async function boot({ fetchHandler, hooks = null } = {}) {
+  await app.fresh({ fetchHandler, ...(hooks ? { hooks } : {}) });
+  return { window: app.window, calls: app.calls, wsBox: app.wsBox };
 }
 
-async function bootShip({ rows = [row()], detail = DETAIL, gh = true, prHosts = null, arms = null, deepLink = false, remotes = REMOTES, hooks = null } = {}) {
+let DETAIL_URL, WKS_DETAIL_URL, detailHash, wksDetailHash;
+
+// Each test's own run id (D3): the app keeps PR states, slice answers and the open screen by run id for the life of
+// the file. ROW and DETAIL take it, and the addresses built from it follow.
+// newRun() also starts each further boot inside one test (a loop, a second dialog) as a run of its own (C3).
+const newRun = () => {
+  ROW.id = app.uid('fcec04e8-');
+  DETAIL.state.id = ROW.id;
+  DETAIL_URL = `/api/history/${KEY}/${ROW.id}`;
+  WKS_DETAIL_URL = `/api/workspaces/team-a/runs/${ROW.id}`;
+  detailHash = `history/${KEY}/${ROW.id}`;
+  wksDetailHash = `history/${WKS_KEY}/${ROW.id}`;
+  ovHash = `${detailHash}/details/overview`;
+  SLICE_URL = `/api/shape/pipelines/${ROW.id}/slice`;
+};
+beforeEach(newRun);
+
+// The shared route table, answering the detail at this test's run id (newRun) under History and a workspace.
+const historyArms = (box) => shipArms(box, () => [DETAIL_URL, WKS_DETAIL_URL]);
+
+async function bootShip({ rows = [row()], detail = DETAIL, gh = true, prHosts = null, arms = null, remotes = REMOTES, hooks = null } = {}) {
   const box = { rows, detail, gh, prHosts, remotes, budget: okBudget() };
   const base = historyArms(box);
   const ctx = await boot({
     fetchHandler: (url, opts) => (arms && arms(url, opts, box)) || base(url, opts),
-    url: deepLink ? `http://localhost:4317/#${detailHash}` : 'http://localhost:4317/',
     hooks,
   });
   ctx.box = box;
@@ -204,13 +95,6 @@ const prArm = (body) => (url, opts) => (
   url.endsWith('/api/pr') && opts.method === 'POST' ? ok(body) : null);
 const PR_OK = { ok: true, url: 'https://x/pull/7', mergeable: 'MERGEABLE', existed: false };
 
-// Shapes mirror GET /api/pr/remotes.
-const remote = (name, owner, url) => ({ name, fetchUrl: url, pushUrl: url, host: 'github.com', owner, repo: 'repo', slug: `${owner}/repo` });
-// A run outside a chain: `chain` is just its source; `branches` are each remote's
-// remote-tracking branches (the server drops HEAD and the run's own branch only).
-const REMOTES = { ok: true, remotes: [remote('origin', 'me', 'https://github.com/me/repo.git')],
-  defaults: { pushRemote: 'origin', baseRemote: 'origin' }, remembered: null,
-  chain: ['feat/log-ux'], defaultBase: 'feat/log-ux', branches: { origin: ['feat/log-ux', 'main'] } };
 const FORK_REMOTES = { ok: true,
   remotes: [remote('origin', 'me', 'https://github.com/me/repo.git'), remote('upstream', 'up', 'git@github.com:up/repo.git')],
   defaults: { pushRemote: 'origin', baseRemote: 'upstream' }, remembered: null,
@@ -436,7 +320,7 @@ test('confirm POSTs /api/pr and swaps the header control to a link + merge pill;
   ]);
 });
 
-test('UNKNOWN mergeability schedules exactly one recheck; a later recheck updates the pill or hides it if still UNKNOWN', async () => {
+test('UNKNOWN mergeability schedules exactly one recheck; a later recheck updates the pill or hides it if still UNKNOWN', async (t) => {
   await checkRows([
     { name: 'UNKNOWN mergeability schedules exactly one recheck', run: async () => {
       const ctx = await bootShip({
@@ -448,6 +332,7 @@ test('UNKNOWN mergeability schedules exactly one recheck; a later recheck update
       });
       // prMergeRecheckMs() (app.js:8880) reads the seam at CALL time, so setting it on
       // the RETURNED window after boot is enough — the helper builds the JSDOM itself.
+      restoreAfter(t, ctx.window, '__prMergeRecheckMs');
       ctx.window.__prMergeRecheckMs = 0;
       const modal = await openModal(ctx);
       click(ctx.window, modal.querySelector('.shipit-ok'));
@@ -475,6 +360,7 @@ test('UNKNOWN mergeability schedules exactly one recheck; a later recheck update
           return null;
         },
       });
+      restoreAfter(t, ctx.window, '__prMergeRecheckMs');
       ctx.window.__prMergeRecheckMs = 0;   // fire on the next tick (no fake timers)
       const modal = await openModal(ctx);
       click(ctx.window, modal.querySelector('.shipit-ok'));
@@ -500,6 +386,7 @@ test('UNKNOWN mergeability schedules exactly one recheck; a later recheck update
           return null;
         },
       });
+      restoreAfter(t, ctx.window, '__prMergeRecheckMs');
       ctx.window.__prMergeRecheckMs = 0;
       const modal = await openModal(ctx);
       click(ctx.window, modal.querySelector('.shipit-ok'));
@@ -515,7 +402,7 @@ test('UNKNOWN mergeability schedules exactly one recheck; a later recheck update
 
 // The header pill is ONE static node reused by every run's detail: it is painted from the open run only, and a
 // merged or closed PR is final (no pill).
-test('the merge pill belongs to its run: another run, a merged PR or a late re-check never shows a stale one', async () => {
+test('the merge pill belongs to its run: another run, a merged PR or a late re-check never shows a stale one', async (t) => {
   const MERGED_PR = { state: 'MERGED', url: 'https://x/pull/9', number: 9 };
   const otherUrl = (id) => `/api/history/${KEY}/${id}`;
   // A second saved run with its own detail (the arm is ahead of the shared detail arm).
@@ -526,6 +413,7 @@ test('the merge pill belongs to its run: another run, a merged PR or a late re-c
     return null;
   } });
   const ship = async (ctx) => {
+    restoreAfter(t, ctx.window, '__prMergeRecheckMs');
     ctx.window.__prMergeRecheckMs = 0;
     const modal = await openModal(ctx);
     click(ctx.window, modal.querySelector('.shipit-ok'));
@@ -1091,8 +979,6 @@ const describeCalls = (ctx) => ctx.calls.filter((c) => c.url.endsWith('/api/pr/d
 const typeInto = (window, ta, value) => { ta.value = value; ta.dispatchEvent(new window.Event('input', { bubbles: true })); };
 const confirmOpen = (w) => !w.document.getElementById('confirm-modal').classList.contains('hidden');
 const escape = (w) => w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-const realMarkdown = async () => ({ marked: (await import('marked')).marked, createDOMPurify: (await import('dompurify')).default });
-
 // A describe request that hangs until released. With `honorAbort` it rejects the
 // way fetch does once its signal aborts; without, the response can still land
 // late (a server that answered anyway) so the stale-response guards are exercised.
@@ -1727,7 +1613,7 @@ test('s4: Ship it shows the Watch PR help line, named by the switch', async () =
 // One level: the Overview has no PR row. The card head reads the PR (its hidden .rd-pr-feed): GitHub's verdict in the
 // status line, the checks and what the watch is doing on the route's pull request row, and the Watch switch in the
 // View PR ▾ menu. One GET /api/pr/checks answers all three.
-const ovHash = `${detailHash}/details/overview`;
+let ovHash;   // set with the test's run id (beforeEach above)
 const ovPr = (w) => w.document.querySelector('#hist-detail .hd-ov-pr');
 const prRoute = (w) => w.document.querySelector('#hist-detail .rd-route .rd-route-row.is-review');
 const prMenu = (w) => w.document.querySelector('#hist-detail .rd-pr-menu');
@@ -1757,6 +1643,7 @@ test('an open PR: no Overview row; the head words GitHub\'s verdict, the route t
     [WATCH({ status: 'needs-person', reason: 'cap' }), 'Watch stopped', 'true'],
     [WATCH({ watching: false, status: null }), '', 'false'],
   ]) {
+    newRun();
     const ctx = await bootAdvanced({ rows: [openRow()], arms: (url) => (/\/api\/pr\/checks\?/.test(url) ? ok(CHECKS({ watch: state })) : null) });
     await openDetail(ctx, ovHash); await settle(ctx.window, 6);
     assert.equal(ovPr(ctx.window), null, 'no PR row on the Overview');
@@ -1841,10 +1728,9 @@ test('Overview: pr-watch-changed rereads only the exact PR', async () => {
 // D16/D22: a slice's place in its feature (the History glance line and the Ship it note)
 // ---------------------------------------------------------------------------
 
-const SLICE_URL = `/api/shape/pipelines/${ROW.id}/slice`;
+let SLICE_URL;   // set with the test's run id (beforeEach above)
 const SLICE_INFO = { featureId: 'feat_1', title: 'Charts', index: 1, total: 3, sliceTitle: 'Store tags', state: 'done',
   next: { index: 2, title: 'Slice 2', state: 'planned' } };
-const hello = (ctx) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [] }) });
 /** A slice endpoint stub; `hold` keeps the answer until `release()`. */
 function sliceArm({ info = SLICE_INFO, hold = false } = {}) {
   const a = { calls: 0, release: null };
@@ -1856,27 +1742,6 @@ function sliceArm({ info = SLICE_INFO, hold = false } = {}) {
   };
   return a;
 }
-
-// Runs redesign slice 4 (D18): a slice's History glance has no group row and no kind chip; its breadcrumb links the group.
-const CHARTS = { groups: [{ id: 'feat_1', kind: 'feature', title: 'Charts', projectKey: null, planning: null, cost: { usd: 0, byPipeline: {} },
-  members: [1, 2, 3].map((i) => ({ position: i, title: `Slice ${i}`, pipelineId: i === 1 ? ROW.id : null, ticketId: i === 1 ? null : `t${i}`,
-    status: i === 1 ? 'done' : null, pr: null, ticket: i === 1 ? null : { id: `t${i}`, status: 'scheduled', runAt: null, after: true }, adhoc: false, after: i === 1 ? null : i - 1 })) }] };
-const groupsArm = (groups) => (url) => (url.startsWith('/api/run-groups') ? ok(groups) : null);
-
-test('a done slice\'s History page: the breadcrumb links the feature page, no group row, no chip; a repaint keeps it so', async () => {
-  const ctx = await bootShip({ arms: groupsArm(CHARTS) });
-  hello(ctx);
-  await openDetail(ctx);
-  await settle(ctx.window, 4);
-  const doc = ctx.window.document;
-  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="group"]').hidden, true, 'no Feature row');
-  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-head .kind-chip'), null, 'no kind chip');
-  assert.equal(doc.querySelector('#hist-detail .hd-bar .rd-crumbs a.rd-crumb[href="#feature/feat_1"]').textContent, 'Charts');
-  assert.equal(doc.querySelector('#hist-detail .rd-slice-line'), null, 'no slice line either');
-  await openDetail(ctx);                                 // the same detail again: painted in place
-  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-head .kind-chip'), null);
-  assert.equal(doc.querySelectorAll('#hist-detail .hd-bar .rd-crumbs .rd-crumb').length, 3);
-});
 
 test('a plain run (in no group) shows no group link; at Expert it offers "Add to group…"', async () => {
   const ctx = await bootShip({ arms: groupsArm({ groups: [] }) });
@@ -1899,6 +1764,7 @@ test('Ship it for a slice with a next slice says to merge this PR first, on the 
   assert.equal(note.hidden, false);
   assert.equal(note.textContent, 'Slice 2 builds on this branch: merge this PR first.');
 
+  newRun();
   const plain = await bootShip({ arms: sliceArm({ info: null }).arm });
   hello(plain);
   const m2 = await openModal(plain);
