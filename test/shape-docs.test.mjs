@@ -226,3 +226,10 @@ test('a clash between the runs it builds on: Small runs says a run starts with a
   const para = flat(small.slice(at).split(/\n\s*\n/).slice(0, 2).join('\n'));   // a heading and its paragraph, or one paragraph
   assert.deepEqual(missing(para, [/held/i, /clash/i, /settle/i, /branch/i, 'Start now', 'Re-plan the rest', 'Cancel the rest', /restart/i]), []);
 });
+
+// Shaper small runs slice 4 (R-ux-3): Ship lists the pull requests along the real branches.
+test('slice 4: the Ship part says the PRs follow the real branches, which run gets none, and keeps the finish order for the other case', () => {
+  const part = smallPart('Ship');
+  assert.ok(part, 'the "### Ship" part');
+  assert.deepEqual(missing(part, ['along the real branches', 'gets no pull request of its own', 'in the order the runs finished']), []);
+});

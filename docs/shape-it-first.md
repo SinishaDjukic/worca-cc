@@ -660,9 +660,16 @@ with Don't slice carries nothing into a feature: it is planned and reviewed with
 
 ### Ship
 
-Ship is stacked only: Ship with `one` is refused with `STACKED_ONLY`. It opens one PR per run, run 1 (the planning run)
-included, in the order the runs finished. Each PR is based on the branch of the run that finished before it, or on the
-feature's base when it is first or that run's PR is merged. With `pr.slices` `each` and `pr.open` on, a run still opens
+Ship is stacked only: Ship with `one` is refused with `STACKED_ONLY`. With the flag on, Ship opens one PR per run along
+the real branches: from the head back along each run's recorded base; each PR is based on the branch of the one before
+it, the first on the feature's base (or on the feature's base when the PR before it is merged or its branch still merges
+back). A run whose work a listed PR already carries (taken in or combined) gets no pull request of its own. When Worca
+cannot follow every finished run's work into the list, it falls back to the order the runs finished, and the Shipped
+card says so: "stacked in the order runs finished".
+
+With the flag off (and in that fallback) it opens one PR per run, run 1 (the planning run) included, in the order the
+runs finished. Each PR is based on the branch of the run that finished before it, or on the feature's base when it is
+first or that run's PR is merged. With `pr.slices` `each` and `pr.open` on, a run still opens
 its own PR when it finishes, before these blocks. Ship is blocked:
 
 - with `ACCEPTANCE_INCOMPLETE` while a confirmed requirement is unmarked; the Ship card reads

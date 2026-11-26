@@ -10710,7 +10710,9 @@ export class RunHarness extends EventEmitter {
       r = await combineDependencies(resolve(m.projectDir), { featureId: sl.feature, index: sl.index, branch: info.branch, source: rec?.source });
     } catch (err) { throw markTerminal(err); }
     if (!r) return;
-    this.state.branches[key] = { ...this.state.branches[key], baseSha: r.tip, diffBase: r.tip, startHead: r.tip };
+    // Slice 4 (D4): what the combine merged, so Ship can tell those runs' work ships in this run's PR.
+    const combined = [...(this.state.branches[key]?.combined || []), ...r.merged.map((d) => ({ index: d.index, branch: d.branch }))];
+    this.state.branches[key] = { ...this.state.branches[key], baseSha: r.tip, diffBase: r.tip, startHead: r.tip, combined };
     this.checkpointRefs[key] = r.tip;               // the dependencies' commits are never this run's changes
     await appendAudit(this.pipeline.dir, combinedAudit(r.merged, info.branch)).catch(() => {});
     this._log('worktree', 'info', `${key}: combined the work of ${r.merged.map((d) => d.branch).join(', ')} into ${info.branch}`);

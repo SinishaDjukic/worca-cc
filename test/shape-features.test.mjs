@@ -6,7 +6,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'nod
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { replanBrief } from '../src/shared/shape/slices.mjs';
+import { replanBrief, changelogWithFeature } from '../src/shared/shape/slices.mjs';
+import { shipChangelogSlices } from '../src/core/shape/ship.mjs';
 import { world } from './helpers/shape-sixteen-runs.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
@@ -31,6 +32,7 @@ import {
 } from '../src/core/shape/features.mjs';
 // A namespace read, so a missing new export (the clash hold) fails only its own test, not the whole file.
 import * as FEATURES from '../src/core/shape/features.mjs';
+import { createPrLabel } from '../ui/public/ship-words.mjs';
 
 useTempHome(after, 'worca-shape-features-');
 
@@ -2090,3 +2092,141 @@ test('D13 busySliceOf: a run whose open stop is taking work in is going', () => 
   assert.deepEqual(busySliceOf(f.id, { live: live({ going: true }) }), { index: 1 });
   assert.equal(busySliceOf(f.id, { live: live({}) }), null, 'the same open stop without it is not going');
 });
+
+// ── Slice 4 (R-ux-3): a marked feature's Ship list follows the real branches (flag on) ──────────────────────────────
+/** A marked 4-run feature on `main`, every run done in the order `finish` names (run numbers). `branches[k]` is run k's
+ *  record as run numbers: `from` (its source; a string is a branch name) and `combined` (the runs its start merged).
+ *  Runs after the fourth stay unfinished: `running` (run 5) or not started (run 6). → { id, p, br } */
+function branchFeature(branches, { finish = [1, 2, 3, 4], slices = 4, extra = {} } = {}) {
+  const at = (k) => `2026-03-0${finish.indexOf(k) + 1}T00:00:00Z`;
+  const p = [null];
+  for (let k = 1; k <= Math.min(slices, 5); k++) {
+    p.push(finish.includes(k)
+      ? pipe('done', { steps: [{ key: 'n_impl', status: 'done', updatedAt: at(k) }] }) : pipe('running'));
+  }
+  const f = createSliceFeature({ pipelineId: p[1], projectDir: root, title: 'Charts', outline: outlineOf(slices), perspectives: ['product'], workflowId: 'wf_shape' });
+  const rows = tickets(f.id);
+  for (let k = 2; k < p.length; k++) setTicket(rows[k - 1].ticket_id, 'fired', { pipelineId: p[k] });
+  mark(p[1]);
+  const br = (x) => (typeof x === 'number' ? `feat/${p[x]}` : x);
+  const update = getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?');
+  for (let k = 1; k < p.length; k++) {
+    const { from = 'main', combined = null } = branches[k] || {};
+    update.run(JSON.stringify({ source: br(from), feature: br(k),
+      ...(combined ? { combined: combined.map((c) => ({ index: c, branch: br(c) })) } : {}), ...(extra[k] || {}) }), p[k]);
+  }
+  return { id: f.id, p, br };
+}
+/** Runs 2 and 3 build on run 1; run 4 starts from run 3 and combines run 2: 3 pull requests for 4 runs. */
+const COMBINE = { 2: { from: 1 }, 3: { from: 1 }, 4: { from: 3, combined: [2] } };
+const shipIndexes = (v) => v.ship.smallRuns.order.map((o) => o.index);
+
+test('small runs Ship (flag on): combine shape lists 3 PRs and Create reads 3', async () => {
+  const { id, p, br } = branchFeature(COMBINE);
+  await withSmallRunsAsync(true, async () => {
+    const v = featureView(id);
+    assert.deepEqual(shipIndexes(v), [1, 3, 4]);
+    assert.equal(createPrLabel(v.ship.smallRuns.order.length), 'Create 3 PRs');
+    assert.equal(v.ship.smallRuns.along, true);
+    const pids = [p[1], p[3], p[4]];
+    assert.deepEqual(v.ship.smallRuns.order.map((o) => o.pipelineId), pids);
+    // What is listed is what Ship opens, marks ready and bases.
+    assert.deepEqual(FEATURES.shipOrder(v).map((s) => s.pipelineId), pids);
+    const input = await featureShipInput(v);
+    assert.deepEqual(input.slices.map((s) => s.pipelineId), pids);
+    // Run 2's work ships inside run 4's PR, so the changelog still names it.
+    assert.deepEqual(input.carried.map((s) => s.pipelineId), [p[2]]);
+    assert.match(changelogWithFeature('', { title: input.title, slices: shipChangelogSlices(input) }), new RegExp(`^- ${v.slices[1].title}`, 'm'));
+    assert.deepEqual(pids.map((pid) => stackedPrBase(pid, ['main', br(1)])), ['main', br(1), br(3)]);
+  });
+});
+
+test('small runs Ship (flag on): each row stacks on the PR of the row before it', () => {
+  const { id, p, br } = branchFeature(COMBINE);
+  const open = getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?");
+  for (const [k, n] of [[1, 11], [2, 12], [3, 13], [4, 14]]) open.run(`https://github.com/me/repo/pull/${n}`, n, p[k]);
+  withSmallRuns(true, () => {
+    assert.deepEqual(featureView(id).ship.smallRuns.order.map((o) => [o.index, o.pr?.number, o.onto]),
+      [[1, 11, null], [3, 13, 11], [4, 14, 13]]);
+    assert.equal(FEATURES.smallRunsPrBase(p[3]), br(1));
+  });
+});
+
+// A pin: it holds before and after the change.
+test('small runs Ship (flag off): finish order unchanged', async () => {
+  const { id, p, br } = branchFeature(COMBINE);
+  await withSmallRunsAsync(false, async () => {
+    const v = featureView(id);
+    assert.deepEqual(shipIndexes(v), [1, 2, 3, 4]);
+    assert.equal('along' in v.ship.smallRuns, false);
+    assert.deepEqual(FEATURES.shipOrder(v).map((s) => s.index), [1, 2, 3, 4]);
+    assert.deepEqual((await featureShipInput(v)).slices.map((s) => s.index), [1, 2, 3, 4]);
+    assert.deepEqual([1, 2, 3, 4].map((k) => FEATURES.smallRunsPrBase(p[k])), ['main', br(1), br(2), br(3)]);
+  });
+});
+
+// A pin: it holds before and after the change.
+test('small runs Ship (flag on, fallback): an unexplained run lists 4 in finish order', () => {
+  // The combine shape without the record of what run 4 merged: nothing proves run 2's work is in a listed PR.
+  const { id, p, br } = branchFeature({ ...COMBINE, 4: { from: 3 } });
+  withSmallRuns(true, () => {
+    const v = featureView(id);
+    assert.deepEqual(shipIndexes(v), [1, 2, 3, 4]);
+    assert.equal('along' in v.ship.smallRuns, false);
+    assert.deepEqual(FEATURES.shipOrder(v).map((s) => s.index), [1, 2, 3, 4]);
+    assert.deepEqual([1, 2, 3, 4].map((k) => FEATURES.smallRunsPrBase(p[k])), ['main', br(1), br(2), br(3)]);
+  });
+});
+
+test('small runs Ship (flag on): a run that has not finished stays after the listed runs, in index order, with no base', () => {
+  const { id, p } = branchFeature(COMBINE, { slices: 6 });   // run 5 is running, run 6 has not started
+  withSmallRuns(true, () => {
+    const v = featureView(id);
+    assert.deepEqual(shipIndexes(v), [1, 3, 4, 5, 6]);
+    assert.equal(v.ship.smallRuns.along, true);
+    assert.deepEqual(FEATURES.shipOrder(v).map((s) => s.index), [1, 3, 4, 5, 6]);
+    assert.equal(FEATURES.smallRunsPrBase(p[5]), null);
+  });
+});
+
+test('small runs Ship (flag on): a MERGED predecessor puts the next listed run on the root', () => {
+  const { id, p, br } = branchFeature(COMBINE);
+  mergedPr(p[1]);
+  withSmallRuns(true, () => {
+    assert.deepEqual(shipIndexes(featureView(id)), [1, 3, 4]);
+    assert.deepEqual([1, 3, 4].map((k) => FEATURES.smallRunsPrBase(p[k])), ['main', 'main', br(3)]);
+  });
+});
+
+test('small runs Ship (flag on): a predecessor still merging back stays listed and puts the next run on the root', () => {
+  const { id, p, br } = branchFeature(COMBINE);
+  // Run 3 is on its source branch, done just now, with no merge back yet: previousBranchesOf answers pending.
+  const rec = { source: br(1), feature: br(3), sameAsSource: true, worktreeDir: root };
+  getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(rec), new Date().toISOString(), p[3]);
+  withSmallRuns(true, () => {
+    const v = featureView(id);
+    assert.deepEqual(shipIndexes(v), [1, 3, 4]);
+    assert.equal(v.ship.smallRuns.along, true);
+    assert.deepEqual([1, 3, 4].map((k) => FEATURES.smallRunsPrBase(p[k])), ['main', br(1), 'main']);
+  });
+});
+
+test('small runs PR base (flag on): a run with no PR of its own keeps its recorded source, or the root once that PR is MERGED', () => {
+  // Finish order 1, 3, 2, 4: run 2, which gets no PR, finished right after run 3, which is not its source.
+  const { p, br } = branchFeature(COMBINE, { finish: [1, 3, 2, 4] });
+  withSmallRuns(true, () => {
+    assert.equal(FEATURES.smallRunsPrBase(p[2]), br(1));
+    assert.equal(stackedPrBase(p[2], ['main', br(1)]), br(1));
+    mergedPr(p[1]);
+    assert.equal(FEATURES.smallRunsPrBase(p[2]), 'main');
+  });
+});
+
+test('small runs PR base (flag on): a run with no PR of its own whose source no run of the list owns goes to the root', () => {
+  const { id, p } = branchFeature({ ...COMBINE, 2: { from: 'feat/elsewhere' } });
+  withSmallRuns(true, () => {
+    assert.deepEqual(shipIndexes(featureView(id)), [1, 3, 4]);
+    assert.equal(FEATURES.smallRunsPrBase(p[2]), 'main');
+  });
+});
+

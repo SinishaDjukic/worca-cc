@@ -155,3 +155,22 @@ test('heldPhase: a clash-held run seeded with setClashHold, its row and one Star
   // The two files, with these exact names (no prefix), in SHOTS_DIR.
   assert.match(s, /[`'/]small-runs-held-clash-(\$\{theme\}|light|dark)\.png/);
 });
+
+test('the SHIP_LIST_ONLY phase: the Ship list of the waited and the combine shape at 1280px in both themes, 4 screenshots', () => {
+  const s = src();
+  const gate = s.match(/process\.env\.SHIP_LIST_ONLY === '1'\) \{ await (\w+)\(\); await finish\(\); \}/);
+  assert.ok(gate, 'the SHIP_LIST_ONLY=1 gate');
+  const at = s.indexOf(`async function ${gate[1]}(`);
+  assert.ok(at >= 0, 'the Ship list phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  // The two features, their branch records, and what only the rule's own output shows (the fallback would not).
+  for (const needle of ['Ship list', 'Ship combined', 'UPDATE pipelines SET branch', 'feat/run-4', 'tookIn', 'combined:',
+    'stacked along the real branches', '.ask-shipcard-stats', 'onto #1', 'onto #3', 'onto #2', '3 PRs open', 'Create 3 PRs']) {
+    assert.ok(s.includes(needle), needle);
+  }
+  // The four files, with these exact names (no prefix), in SHOTS_DIR.
+  assert.match(s, /[`'/]small-runs-ship-list-(\$\{theme\}|light|dark)\.png/);
+  assert.match(s, /[`'/]small-runs-ship-list-combined-(\$\{theme\}|light|dark)\.png/);
+});

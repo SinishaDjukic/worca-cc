@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { guardedGitEnvSync } from '../git-guard.mjs';
 import { getDb, tx } from '../db.mjs';                  // node:sqlite: tx(fn), never db.transaction (F23)
-import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf, stackedPrBaseOf, predecessorState, requestRunNow } from '../scheduler.mjs';
+import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf, stackedPrBaseOf, predecessorState, requestRunNow, workBranchOf } from '../scheduler.mjs';
+import { shipChain } from './ship.mjs';
 import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow, listRunArtifacts } from '../artifacts.mjs';
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
@@ -294,15 +295,17 @@ function smallRunsShip(f, slices, verify) {
   const ledger = ledgerOf(f, verify, shaperSmallRunsOn()
     ? { runs: slices.map((s) => ({ index: s.index, state: s.state, stop: s.stop || null })), reruns: rerunsOf(f.outline) } : {});
   const root = featureRootSource(f.id);
-  const list = orderOf(f.id, slices);
+  const chain = shipChainOf(f.id);
+  const list = orderOf(f.id, slices, chain);
   const order = list.map((s, i) => {
-    const base = i > 0 && s.pipelineId ? smallRunsPrBase(s.pipelineId) : null;
+    const base = i > 0 && s.pipelineId ? (chain ? chainBaseOf(chain, s.pipelineId) : smallRunsPrBase(s.pipelineId)) : null;
     const prev = list[i - 1];
     return { index: s.index, pipelineId: s.pipelineId, title: s.title,
       pr: s.pr && s.pr.url ? { number: s.pr.number ?? null, url: s.pr.url } : null,
       onto: base && base !== root && prev && prev.pr && prev.pr.url ? (prev.pr.number ?? null) : null };
   });
-  return { ...ledger, care: careOutcome(careOfRow(f), featureFigures(f.id), ledger.met), base: baseName(f.project_dir, root), order };
+  return { ...ledger, care: careOutcome(careOfRow(f), featureFigures(f.id), ledger.met), base: baseName(f.project_dir, root), order,
+    ...(chain ? { along: true } : {}) };
 }
 
 /** The root source as the PR names it: `origin/dev` reads `dev` when `origin` is one of the project's remotes (git-info.mjs
@@ -808,16 +811,19 @@ export async function featureShipSuggestion(view) {
 /** D24, D25: what Ship as needs per slice: its PR, its last code review summary (capped as earlierSliceChanges caps
  *  it) and its checklist markdown. */
 export async function featureShipInput(view) {
-  const slices = [];
-  for (const s of shipOrder(view)) {
+  const inputOf = (s) => {
     const reviews = s.pipelineId ? readPipelineExtras(s.pipelineId).reviews : [];
     const last = reviews.filter((v) => v.kind === 'impl' && v.summary).sort((a, b) => a.cycle - b.cycle).at(-1);
     const cl = latestChecklist(reviews);
-    slices.push({ index: s.index, title: s.title, pipelineId: s.pipelineId, pr: s.pr,
+    return { index: s.index, title: s.title, pipelineId: s.pipelineId, pr: s.pr,
       summary: last ? last.summary.slice(0, 600) : '', checklistMd: cl ? checklistMarkdown(cl.checklist).trimEnd() : '',
-      ...(s.requirements ? { requirements: s.requirements } : {}) });
-  }
-  return { id: view.id, title: view.title, slices };
+      ...(s.requirements ? { requirements: s.requirements } : {}) };
+  };
+  const slices = shipOrder(view).map(inputOf);
+  // Slice 4: a carried run gets no PR, but its work ships inside a listed run's PR, so the changelog names it.
+  const ids = new Set((shipChainOf(view.id)?.carried || []).map((c) => c.pipelineId));
+  const carried = view.slices.filter((s) => s.pipelineId && ids.has(s.pipelineId)).map(inputOf);
+  return { id: view.id, title: view.title, slices, ...(carried.length ? { carried } : {}) };
 }
 
 /** F47: the newest feature in a Re-plan the rest chain (replaced_by), so a host pointed at an old feature shows the
@@ -1370,6 +1376,9 @@ export function smallRunsPrBase(pipelineId) {
     const order = finishedSlices(at.featureId);
     const i = order.findIndex((s) => s.pipelineId === String(pipelineId));
     if (i < 0) return null;
+    // Slice 4 (D7): with the flag on, the list along the real branches decides, unless it fell back.
+    const chain = shipChainOf(at.featureId);
+    if (chain) return chainBaseOf(chain, String(pipelineId));
     const root = featureRootSource(at.featureId);
     // Slice 3 (D10): a run that took work in is based on the last branch it took in, until that run's PR is MERGED.
     const rec = branchOf(pipelineId);
@@ -1397,10 +1406,49 @@ export function shipOrder(view) {
   return orderOf(view.id, view.slices);
 }
 
-function orderOf(featureId, slices) {
+function orderOf(featureId, slices, chain = shipChainOf(featureId)) {
+  if (chain) {
+    // Slice 4 (D7, D10): the listed runs in chain order, then the runs that have not finished in index order.
+    const at = new Map(chain.order.map((o, i) => [o.pipelineId, i]));
+    const finished = new Set(chain.rows.map((r) => r.pipelineId));
+    return [...slices.filter((s) => s.pipelineId && at.has(s.pipelineId)).sort((a, b) => at.get(a.pipelineId) - at.get(b.pipelineId)),
+      ...slices.filter((s) => !s.pipelineId || !finished.has(s.pipelineId))];
+  }
   const pos = new Map(finishedSlices(featureId).map((s, i) => [s.pipelineId, i]));
   const done = (s) => !!s.pipelineId && pos.has(s.pipelineId);
   return [...slices.filter(done).sort((a, b) => pos.get(a.pipelineId) - pos.get(b.pipelineId)), ...slices.filter((s) => !done(s))];
+}
+
+/** Shaper small runs slice 4 (D2, D5, D6, D8): the one list every Ship reader follows for a marked feature with the flag
+ *  on: `shipChain` over the finished runs, with the rows and the root kept for the bases. null with the flag off, for an
+ *  unmarked feature, when the rule falls back (a finished run neither listed nor carried) and on a DB error. */
+function shipChainOf(featureId) {
+  try {
+    if (!featureId || !shaperSmallRunsOn() || !smallRunsOfFeature(featureId)) return null;
+    const names = (xs) => (Array.isArray(xs) ? xs.map((x) => x && x.branch).filter((b) => typeof b === 'string' && b) : []);
+    const rows = finishedSlices(featureId).map((s) => {
+      const rec = branchOf(s.pipelineId);
+      const branch = workBranchOf(rec);
+      return { index: s.index, pipelineId: s.pipelineId, branch: typeof branch === 'string' && branch ? branch : null,
+        source: rec && typeof rec.source === 'string' && rec.source ? rec.source : null,
+        carries: [...names(rec?.tookIn), ...names(rec?.combined)],
+        merged: readPrState(s.pipelineId)?.state === 'MERGED', pending: previousBranchesOf(s.pipelineId)?.pending === true };
+    });
+    const root = featureRootSource(featureId);
+    const chain = shipChain(rows, { root });
+    return chain && { ...chain, rows, root };
+  } catch { return null; }
+}
+
+/** A run's PR base on the chain: a listed run's chain base; a carried run (D9) its recorded source while that is a listed
+ *  or carried run's branch whose PR is not MERGED, else the root; null for a run that has not finished. */
+function chainBaseOf(chain, pipelineId) {
+  const listed = chain.order.find((o) => o.pipelineId === pipelineId);
+  if (listed) return listed.base;
+  const row = chain.rows.find((r) => r.pipelineId === pipelineId);
+  if (!row) return null;
+  const owner = row.source && chain.rows.some((r) => r.pipelineId !== pipelineId && r.branch === row.source && !r.merged);
+  return owner ? row.source : chain.root;
 }
 
 /** L12: a shaped run started from a Chat card (Plans tab). */

@@ -27316,8 +27316,12 @@ async function openFeatureShip(featureId, { opener = null, card = null } = {}) {
   const f = await safeJson(res);
   if (!res.ok || !f || !Array.isArray(f.slices) || !f.slices.length) throw new Error((f && f.error) || `HTTP ${res.status}`);
   const base = await groupShipBase(f.slices[f.slices.length - 1].pipelineId, f.projectKey);
+  // Small runs slice 4: along the real branches, the dialog counts the runs Ship lists (a carried run gets no PR).
+  const sr = f.ship && f.ship.smallRuns;
+  const listed = sr && sr.along && Array.isArray(sr.order)
+    ? sr.order.map((o) => f.slices.find((s) => s.index === o.index)).filter(Boolean) : f.slices;
   openShipItGroupModal({ kind: 'feature', id: f.id, title: f.title, projectKey: f.projectKey, base,
-    members: f.slices.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested, smallRuns: !!(f.ship && f.ship.smallRuns),
+    members: listed.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested, smallRuns: !!(f.ship && f.ship.smallRuns),
     // Feature D1: One is off for small runs, so the size hint (which may suggest One) is left out.
     hint: f.ship && f.ship.smallRuns ? '' : shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
     { opener, refocus: card ? shipCardRefocus(f.id, card) : focusGroupHead });

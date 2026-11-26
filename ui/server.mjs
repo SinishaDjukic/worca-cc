@@ -5139,7 +5139,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     // A slice whose PR was closed gets a new one (openMemberPr opens past a CLOSED PR).
     const needsPr = (s) => s.pipelineId && (!s.pr || s.pr.state === 'CLOSED');
     if (mode === 'stacked' && shown.slices.some(needsPr)) {
-      for (const s of shipOrder(shown)) {   // Feature D1: a marked feature's runs in finish order
+      for (const s of shipOrder(shown)) {   // Feature D1: a marked feature's runs along the real branches (slice 4), else in finish order
         if (!needsPr(s)) continue;
         const stop = stopped(); if (stop) return stop;
         const r = await openMemberPr(s.pipelineId, { actor });

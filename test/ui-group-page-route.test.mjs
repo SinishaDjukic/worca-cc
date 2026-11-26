@@ -102,6 +102,23 @@ test('D1: a small-runs feature\'s header follows the small-runs ledger (run-owne
   assert.doesNotMatch(modal.querySelector('.shipit-prs-hint').textContent, /one PR is easier/, 'the hint never suggests the disabled One');
 });
 
+test('slice 4: along the real branches, the feature dialog counts the listed runs: 4 runs, run 2 carried, Create 3 PRs', async () => {
+  const acceptance = { items: [], agreed: [], entries: [], covered: [], ready: true, marked: 0, total: 0 };
+  const row = (i) => ({ index: i, pipelineId: `p${i}`, title: `Slice ${i}`, pr: null, onto: null });
+  const smallRuns = { confirmed: [], owned: [], waiting: [], blocked: false, reason: null, met: { met: 0, total: 0 }, care: null, base: 'main',
+    order: [row(1), row(3), row(4)], along: true };
+  const ctx = await boot((url) => (url.startsWith('/api/pr/remotes') ? json({ ok: true, chain: ['main'], remotes: [], defaults: {} })
+    : url.startsWith('/api/shape/features/feat_1') ? json({ ...FEATURE, total: 4, done: 4, slices: [1, 2, 3, 4].map((i) => ({ index: i, pipelineId: `p${i}`, pr: null })),
+      ship: { ...FEATURE.ship, acceptance, smallRuns } }) : handler(url)));
+  ctx.go('feature/feat_1');
+  await ctx.settle(6);
+  pageOf(ctx).querySelector('.gpage-card .rd-pr-slot [data-rd-cta]').click();
+  await ctx.settle(10);
+  const modal = ctx.window.document.getElementById('shipit-modal');
+  assert.equal(modal.classList.contains('hidden'), false);
+  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create 3 PRs');
+});
+
 test('#feature/:id for an unknown id says so; #group/:id renders a user group without Overview', async () => {
   const ctx = await boot();
   ctx.go('feature/feat_gone');

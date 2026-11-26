@@ -63,8 +63,9 @@ app.get('/api/pr/remotes', async (req, res) => {
   // until the previous run's PR merges. The route is async with no try/catch (F29): a failed lookup keeps the
   // chain-root default instead of rejecting.
   let stacked = null;
-  // Shaper small runs D1: a marked feature's run stacks on the run that finished before it (stackedPrBase), named as
-  // the remote names it, as Ship's createRunPr does.
+  // Shaper small runs D1: a marked feature's run stacks on the run before it along the real branches (slice 4), else in
+  // finish order (stackedPrBase), named as the
+  // remote names it, as Ship's createRunPr does.
   try {
     stacked = stackedPrBase(pipelineId, chain);
     if (stacked) stacked = await prBaseBranch(repoDir, stacked, remoteNames);

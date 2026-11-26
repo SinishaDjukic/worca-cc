@@ -506,7 +506,7 @@ function mergeBackPending(row, now = Date.now()) {
 }
 /** The branch a finished run's work is on: its feature branch — or its source once that branch is gone
  *  again: dropped at teardown as unchanged (branchKept:false), or merged back by a run on its source branch. */
-const workBranchOf = (b) => (!b ? null
+export const workBranchOf = (b) => (!b ? null
   : (b.branchKept === false || (b.sameAsSource === true && b.mergeBack && b.mergeBack.merged === true)) ? b.source : b.feature);
 
 function pipelineGate(row, { policy, isLive, now = Date.now() }) {

@@ -4,7 +4,7 @@
 // sends in featureView and the Runs list.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -17,7 +17,8 @@ import { busySliceOf, featureView, liveSliceFrom, resumeFeature, setApproveEach,
   clashHoldOf, dependencyBranchesOf, featureBase, featureHoldsTicket, setClashHold, smallRunsPrBase, ticketHeld } from '../src/core/shape/features.mjs';
 import { sliceChainGate, heldStopTurn, latestFinishedSource, sliceSourceOf, sliceCombineGate, combineDependencies, createHeldStops } from '../src/core/shape/chain.mjs';
 import { gateStop } from '../src/shared/shape/run-stops.mjs';
-import { SIXTEEN_RUN_LINKS, sixteenRunFeature, siblingRunsFeature, startable, world, SIXTEEN_RUN_STATES } from './helpers/shape-sixteen-runs.mjs';
+import { SIXTEEN_RUN_LINKS, sixteenRunFeature, siblingRunsFeature, startable, world, SIXTEEN_RUN_STATES,
+  siblingKit, commitFile, writeShared, head, probeEnv, isAncestorExit, minute, record } from './helpers/shape-sixteen-runs.mjs';
 import { runStatus, namedWaits } from '../src/shared/shape/run-status.mjs';
 // Slice 6: a namespace read, so a missing new export fails only its own test, not the whole file.
 import * as RS from '../src/shared/shape/run-status.mjs';
@@ -653,78 +654,8 @@ test('S7-T18 Ask before each run: an open stop reads "Nothing can go on until yo
 // 2. A run's start ignored dependsOn: sliceSourceOf starts run 10 from the branch of the run that finished last only,
 //    so the combine takes the other sibling in (A2, A3).
 
-const commitFile = (cwd, file) => { writeFileSync(join(cwd, file), `${file}\n`); g(cwd, 'add', file); g(cwd, 'commit', '-qm', file); };
-/** Commit src/a.mjs (a fixture file of the temp repo) with `value` on its one line. */
-const writeShared = (cwd, value) => {
-  mkdirSync(join(cwd, 'src'), { recursive: true });
-  writeFileSync(join(cwd, 'src', 'a.mjs'), `export const a = '${value}';\n`);
-  g(cwd, 'add', 'src/a.mjs');
-  g(cwd, 'commit', '-qm', `a ${value}`);
-};
-const head = (cwd, ref) => g(cwd, 'rev-parse', ref);
-// The raw probes drop an inherited GIT_DIR / GIT_WORK_TREE so they always read the repo at cwd.
-const probeEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'GIT_DIR' && k !== 'GIT_WORK_TREE'));
-const isAncestorExit = (cwd, commit, ref) => spawnSync('git', ['merge-base', '--is-ancestor', commit, ref], { cwd, encoding: 'utf8', env: probeEnv() }).status;
+const { siblingWorld, waitedRunHarness, doneSiblings, runTen } = siblingKit({ root, RunHarness });
 const filesOn = (cwd, ref) => g(cwd, 'ls-tree', '-r', '--name-only', ref).split('\n').sort();
-const minute = (n) => new Date(Date.UTC(2026, 0, 1, 12, n)).toISOString();
-const record = (run, source = 'feat/run-7') => ({ source, feature: `feat/run-${run}` });
-
-/** A local repo with no remote and the incident's moment: run 7 done; runs 8 and 9 branched from it, each in its own
- *  worktree; run 8 has committed and is running; run 9 has written nine.txt and not committed it. Run 9's row is
- *  `running` until the test finishes it. */
-function siblingWorld({ shared = false } = {}) {
-  const dir = mkdtempSync(join(root, 'siblings-'));
-  const repo = join(dir, 'repo');
-  const wt8 = join(dir, 'wt8');
-  const wt9 = join(dir, 'wt9');
-  g(dir, 'init', '-q', '-b', 'dev', 'repo');
-  commitFile(repo, 'base.txt');
-  g(repo, 'checkout', '-q', '-b', 'feat/run-7');
-  commitFile(repo, 'seven.txt');
-  if (shared) writeShared(repo, 'seven');   // src/a.mjs, which runs 8 and 9 may both change
-  g(repo, 'checkout', '-q', 'dev');
-  g(repo, 'worktree', 'add', '-q', '-b', 'feat/run-8', wt8, 'feat/run-7');
-  g(repo, 'worktree', 'add', '-q', '-b', 'feat/run-9', wt9, 'feat/run-7');
-  commitFile(wt8, 'eight.txt');
-  writeFileSync(join(wt9, 'nine.txt'), 'nine.txt\n');
-  const fx = siblingRunsFeature({ projectDir: repo });
-  fx.finish(7, { at: minute(0), branch: { feature: 'feat/run-7' } });
-  fx.start(8, { branch: record(8) });
-  fx.start(9, { branch: record(9) });
-  return { repo, wt8, wt9, fx };
-}
-
-let eightSeq = 0;
-/** Run 8's harness with only what the take-in reads and writes (the card's run 2), recording what it logs, how often it
- *  persists and each answer it is handed. */
-function waitedRunHarness({ repo, wt8, fx }) {
-  const key = projectKey(repo);
-  const id = fx.pipelineOf(8);
-  const start = head(repo, 'feat/run-7');
-  const rec = () => ({ source: 'feat/run-7', feature: 'feat/run-8', worktreeDir: wt8, baseSha: start, diffBase: start, startHead: start });
-  const h = Object.create(RunHarness.prototype);
-  h.runShape = { slice: { feature: fx.featureId, index: 2 } };
-  h.branchInfo = { branch: 'feat/run-8', worktreeDir: wt8 };
-  h.members = [{ projectDir: repo, projectKey: key }];
-  h.memberByKey = new Map(h.members.map((m) => [m.projectKey, m]));
-  h.projectDir = repo;
-  h.isWorkspace = false;
-  h.workMode = 'git';
-  h.execEnvKind = 'local';
-  h.workDirs = new Map([[key, wt8]]);
-  h.checkpointRefs = { [key]: start };
-  h.pipeline = { id, dir: join(root, `run-eight-${++eightSeq}-${id}`) };
-  h.state = { status: 'running', branch: rec(), branches: { [key]: rec() } };
-  const persisted = [];
-  h._persist = async () => { persisted.push(structuredClone(h.state.branches[key])); return true; };
-  const logged = [];
-  h._log = (...args) => { logged.push(args); };
-  const answers = [];
-  h.answer = (qid, payload, by) => { answers.push({ id: qid, payload, by }); };
-  const record = () => h.state.branches[key];
-  return { h, logged, answers, persisted, key, start, record };
-}
-
 const noMergeStarted = (wt) => spawnSync('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: wt, env: probeEnv() }).status !== 0;
 
 // ---- Slice 3 (R-po-2, R-arch-5): a run that waited takes in what finished meanwhile ----------------------------------
@@ -1066,46 +997,6 @@ const cleanTree = (wt) => g(wt, 'status', '--porcelain');
 const auditOf = (id) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY rowid').all(id).map((r) => r.text);
 const combinedLine = (card, run) => `Combined the work of run ${card} (\`feat/run-${run}\`) into \`feat/run-10\` before the first agent.`;
 
-/** Runs 8 and 9 both committed and done, neither holding the other's work. `clash`: both change the same line of
- *  src/a.mjs. */
-function doneSiblings({ eightAt = minute(2), nineAt = minute(1), clash = false } = {}) {
-  const w = siblingWorld({ shared: clash });
-  if (clash) {
-    writeShared(w.wt8, 'eight');
-    writeFileSync(join(w.wt9, 'src', 'a.mjs'), "export const a = 'nine';\n");
-  }
-  g(w.wt9, 'add', '-A');
-  g(w.wt9, 'commit', '-qm', 'nine.txt');
-  w.fx.finish(8, { at: eightAt });
-  w.fx.finish(9, { at: nineAt });
-  return { ...w, eight: head(w.repo, 'feat/run-8'), nine: head(w.repo, 'feat/run-9') };
-}
-
-let tenSeq = 0;
-/** Run 10's worktree on a new branch from `source` (as createWorktree makes it), and a harness with only what the
- *  combine reads and writes. */
-function runTen({ repo, fx }, source) {
-  const wt10 = join(dirname(repo), 'wt10');
-  g(repo, 'worktree', 'add', '-q', '-b', 'feat/run-10', wt10, source);
-  const start = head(repo, 'feat/run-10');
-  const id = `a10${String(++tenSeq).padStart(5, '0')}`;   // 8 hex characters: appendAudit reads it from the run dir
-  const key = projectKey(repo);
-  seedPipelineRow({ id, projectKey: key, status: 'running', title: id, branch: { source, feature: 'feat/run-10' } });
-  const h = Object.create(RunHarness.prototype);
-  h.runShape = { slice: { feature: fx.featureId, index: 4 } };
-  h.members = [{ projectDir: repo, projectKey: key }];
-  h.isWorkspace = false;
-  h.pipeline = { id, dir: join(root, `run-ten-${id}`) };
-  h.state = { branches: { [key]: { source, feature: 'feat/run-10', worktreeDir: wt10, baseSha: start, diffBase: start, startHead: start } } };
-  h.checkpointRefs = { [key]: start };
-  const logged = [];
-  h._log = (...args) => { logged.push(args); };
-  const combine = () => h._combineDependencies(h.members[0], { branch: 'feat/run-10', worktreeDir: wt10 }, h.runShape.slice);
-  const record = () => h.state.branches[key];
-  const checkpoint = () => h.checkpointRefs[key];
-  return { h, wt10, start, id, logged, combine, record, checkpoint };
-}
-
 /** Runs 8 and 9 done, then run 10 started the way the scheduler and the harness do it: the source the fire path picks,
  *  the fire-time check (nothing to hold), then the combine onto run 10's fresh branch. */
 async function startRunTen(order) {
@@ -1145,6 +1036,29 @@ test('A3 (R-po-1): with run 9 finishing last instead, run 10 starts from run 9 a
   const w = await startRunTen({ eightAt: minute(1), nineAt: minute(2) });
   assert.deepEqual(w.source, { pipelineId: w.fx.pipelineOf(9), sourceBranch: 'feat/run-9' });
   assertBoth(w, { card: 2, run: 8 });
+}));
+
+// Slice 4 (D4): Ship reads what a combine merged from the run's branch record.
+test('R-qa-6 (D4): a combine records the runs it merged as `combined` on the run\'s branch record, in merge order', () => withEnvVars(ON, async () => {
+  const w = await startRunTen({ nineAt: minute(1), eightAt: minute(2) });
+  assert.deepEqual(w.ten.record().combined, [{ index: 3, branch: 'feat/run-9' }], 'run 10 started from run 8: only run 9 was merged');
+
+  const both = runTen(doneSiblings(), 'feat/run-7');
+  await both.combine();
+  assert.deepEqual(both.record().combined, [{ index: 2, branch: 'feat/run-8' }, { index: 3, branch: 'feat/run-9' }]);
+}));
+
+test('R-qa-6 (D4): a combine with nothing to merge leaves no `combined` key', () => withEnvVars(ON, async () => {
+  const w = siblingWorld();
+  commitNine(w);
+  w.fx.finish(9, { at: minute(1) });
+  const eight = waitedRunHarness(w);
+  assert.equal((await eight.h.takeInBeforeAnswer()).ok, true);
+  w.fx.finish(8, { at: minute(2), branch: eight.record() });
+  const ten = runTen(w, 'feat/run-8');   // run 8 already holds run 9's work
+  await ten.combine();
+  assert.equal(head(w.repo, 'feat/run-10'), ten.start);
+  assert.equal('combined' in ten.record(), false);
 }));
 
 test('R-po-1: a start that holds neither run takes both in, one after the other', () => withEnvVars(ON, async () => {

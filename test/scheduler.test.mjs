@@ -556,6 +556,15 @@ test('previousBranchesOf: a member whose branch was dropped (unchanged) chains f
   assert.deepEqual(previousBranchesOf('w0000009'), { sourceBranchByKey: { 'proj-a': 'worca/ws-a', 'proj-b': 'dev' } });
 });
 
+// Ship reads the same rule to follow a feature's branches. Imported here, so a missing export fails only this test.
+test('workBranchOf: the feature branch, or the source once the branch was dropped as unchanged', async () => {
+  const { workBranchOf } = await import('../src/core/scheduler.mjs');
+  assert.equal(typeof workBranchOf, 'function', 'workBranchOf is exported');
+  assert.equal(workBranchOf({ source: 'dev', feature: 'worca/b', branchKept: false }), 'dev');
+  assert.equal(workBranchOf({ source: 'dev', feature: 'worca/b', branchKept: true }), 'worca/b');
+  assert.equal(workBranchOf({ source: 'dev', feature: 'worca/b' }), 'worca/b');
+});
+
 test('afterRefOf, previousBranchesOf and dependentsOfRun read the rows', () => {
   // projectKey stated, not inherited: the assertion below is about THIS value.
   seedPipelineRow({ id: 'p0000002', title: 'Refactor', status: 'done', projectKey: 'proj-00000001', startedAt: new Date(T0).toISOString(), branch: { source: 'main', feature: 'worca/refactor-p0000002' } });

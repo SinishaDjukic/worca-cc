@@ -976,12 +976,90 @@ async function takeInPhase() {
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 }
 
-// D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in
-// (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
+// ---- Shaper small runs, slice 4: Ship lists the PRs along the real branches (the flag on, 1280px, the classic look).
+// Two marked 4-run features with explicit `feat/run-N` branch records (runs 1 to 4 stand for the outline's 7 to 10):
+// "Ship list", the waited shape (finish order 1, 3, 2, 4; run 2 took run 3 in): run 1 into the base, 3 onto #1, 2 onto #3,
+// 4 onto #2, and the stats line only the rule writes, "stacked along the real branches": small-runs-ship-list-light.png
+// and -dark.png. "Ship combined", the combine shape (run 4 started from run 3 and combined run 2): 3 PRs open, no row for
+// run 2, though run 2 has a PR of its own (the finish-order fallback would list it): small-runs-ship-list-combined-light.png
+// and -dark.png. Then the same combine seed not yet shipped: the ready card's Create reads "Create 3 PRs" (no shot).
+async function shipListPhase() {
+  const setBranches = (x, recs, finish) => {
+    recs.forEach((rec, i) => {
+      const k = i + 1;
+      const at = new Date(Date.parse(now) + (finish.indexOf(k) + 1) * 60_000).toISOString();
+      getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(rec), at, x.pid(k));
+    });
+  };
+  const withPrs = (x) => [1, 2, 3, 4].forEach((k) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?")
+    .run(`https://github.com/proof/repo/pull/${k}`, k, x.pid(k)));
+  const seed = (tag, title, recsOf, finish, { shipped = true } = {}) => {
+    const x = shipFeature(tag, title);
+    setFeatureAcceptance(x.f.id, [COMP_MET]);
+    setBranches(x, recsOf(x), finish);
+    if (shipped) { withPrs(x); recordShip(x.f.id, { mode: 'stacked' }); }
+    return x;
+  };
+  const WAITED = (x) => [{ source: 'main', feature: 'feat/run-1' }, { source: 'feat/run-3', sourceFrom: 'feat/run-1', feature: 'feat/run-2',
+    tookIn: [{ index: 3, branch: 'feat/run-3', pipelineId: x.pid(3) }] }, { source: 'feat/run-1', feature: 'feat/run-3' },
+  { source: 'feat/run-2', feature: 'feat/run-4' }];
+  const COMBINED = () => [{ source: 'main', feature: 'feat/run-1' }, { source: 'feat/run-1', feature: 'feat/run-2' },
+    { source: 'feat/run-1', feature: 'feat/run-3' }, { source: 'feat/run-3', feature: 'feat/run-4', combined: [{ index: 2, branch: 'feat/run-2' }] }];
+  const SL = seed('sl', 'Ship list', WAITED, [1, 3, 2, 4]);
+  const SC = seed('sc', 'Ship combined', COMBINED, [1, 2, 3, 4]);
+  const SQ = seed('sq', 'Ship combined ready', COMBINED, [1, 2, 3, 4], { shipped: false });
+  // The ship rule wants a passed Verifier check for the tip of the head Ship ships (run 4): the branches exist in the
+  // sandbox repo, all on its one commit.
+  for (let k = 1; k <= 4; k++) execFileSync('git', ['branch', '-f', `feat/run-${k}`], { cwd: proj });
+  const headSha = execFileSync('git', ['rev-parse', 'feat/run-4'], { cwd: proj, encoding: 'utf8' }).trim();
+  pipeline('c5sqv00001', 'done', 'Ship combined ready · Verifier');
+  setVerify(SQ.f, vCheck(SQ, 'c5sqv00001', 'clean', { headSha, result: { held: [...AGREED.map((a) => a.id), 'R-comp-4'], gaps: [] } }));
+  const runsOf = (f) => (f ? f.prs.map(([, note], i) => [f.rowRuns[i], note]) : null);
+  const ROW_RUNS = `[...document.querySelectorAll(${JSON.stringify(`${SHIP} .ask-shipcard-prs .plan-check-row`)})].filter((x) => x.offsetParent)
+    .map((x) => Number((x.textContent.match(/run (\\d+) ·/) || [])[1]) || null)`;
+  const facts = async () => { const f = await ev(SHIP_FACTS); if (f) f.rowRuns = await ev(ROW_RUNS); return f; };
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await reveal(SHIP);
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    if (await card(SL.threadId, 'shiplist', 'the Ship list card', theme) && await SHIP_READY('the Ship list card', theme)) {
+      const f = await facts();
+      check(f && f.stats === 'stacked along the real branches', `ship list, ${theme}: the stats line reads "stacked along the real branches" (${JSON.stringify(f && f.stats)})`);
+      check(f && f.stateDetail === '4 PRs open', `ship list, ${theme}: 4 PRs open (${JSON.stringify(f && f.stateDetail)})`);
+      check(JSON.stringify(runsOf(f)) === JSON.stringify([[1, 'into main'], [3, 'onto #1'], [2, 'onto #3'], [4, 'onto #2']]),
+        `ship list, ${theme}: run 1 into main, run 3 onto #1, run 2 onto #3, run 4 onto #2 (${JSON.stringify(runsOf(f))})`);
+      await capture(`small-runs-ship-list-${theme}.png`);
+    }
+    if (await card(SC.threadId, 'shipcombined', 'the Ship combined card', theme) && await SHIP_READY('the Ship combined card', theme)) {
+      const f = await facts();
+      check(f && f.stateDetail === '3 PRs open' && f.stats === 'stacked along the real branches',
+        `ship combined, ${theme}: 3 PRs open, stacked along the real branches (${JSON.stringify(f && [f.stateDetail, f.stats])})`);
+      check(JSON.stringify(runsOf(f)) === JSON.stringify([[1, 'into main'], [3, 'onto #1'], [4, 'onto #3']]),
+        `ship combined, ${theme}: rows run 1, run 3, run 4 and none for run 2 (${JSON.stringify(runsOf(f))})`);
+      await capture(`small-runs-ship-list-combined-${theme}.png`);
+    }
+  }
+  if (await card(SQ.threadId, 'shipready', 'the Ship combined ready card', 'light') && await SHIP_READY('the Ship combined ready card', 'light')) {
+    const f = await facts();
+    check(f && f.create === 'Create 3 PRs' && !f.disabled, `ship combined ready: Create reads "Create 3 PRs" (${JSON.stringify(f && f.create)})`);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in, SHIP_LIST_ONLY=1
+// the Ship list along the real branches (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
 if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }
 if (process.env.HELD_ONLY === '1') { await heldPhase(); await finish(); }
 if (process.env.TAKEIN_ONLY === '1') { await takeInPhase(); await finish(); }
+if (process.env.SHIP_LIST_ONLY === '1') { await shipListPhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {
@@ -1166,6 +1244,7 @@ const LIVE_ROWS = "[...document.querySelectorAll('.chat-rc .proto-rows .plan-che
   await cdp('Emulation.setEmulatedMedia', { features: [] });
 }
 
+await shipListPhase();
 await d2Phase();
 await d3Phase();
 await heldPhase();
