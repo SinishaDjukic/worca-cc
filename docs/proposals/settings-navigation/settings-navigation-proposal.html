@@ -1,0 +1,357 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0"><title>Worca Settings Navigation</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: a proposal read top to bottom, with one working prototype in the middle that switches between today's nine long tabs and the proposed one-page-per-topic structure, covering every Settings card. */
+:root {
+  --bg: #f3f2ee; --surface: #ffffff; --sunk: #eceae4; --line: #dedbd2;
+  --ink: #1d1e1b; --ink-2: #55574f; --ink-3: #85877d;
+  --accent: #1e6b45; --accent-soft: #e2efe6;
+  --warn: #8a5a00; --warn-soft: #f7ecd2; --info-soft: #e3edf5; --info: #23587f;
+  --display: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #171815; --surface: #20221e; --sunk: #1b1c19; --line: #34362f;
+  --ink: #eceae3; --ink-2: #b3b4aa; --ink-3: #85877d;
+  --accent: #7fcf9f; --accent-soft: #1f3327;
+  --warn: #e6bd6a; --warn-soft: #3a2f17; --info-soft: #1c2d3a; --info: #9cc6e6; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #171815; --surface: #20221e; --sunk: #1b1c19; --line: #34362f;
+  --ink: #eceae3; --ink-2: #b3b4aa; --ink-3: #85877d;
+  --accent: #7fcf9f; --accent-soft: #1f3327;
+  --warn: #e6bd6a; --warn-soft: #3a2f17; --info-soft: #1c2d3a; --info: #9cc6e6; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body) }
+.wrap { max-width: 1080px; margin: 0 auto; padding-block: 40px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 44px }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; letter-spacing: -0.01em }
+h1 { font-size: clamp(28px, 4.4vw, 40px); line-height: 1.12; font-weight: 600 }
+h2 { font-size: 22px; font-weight: 600 }
+h3 { font-size: 16px; font-weight: 600 }
+p { margin: 0; max-width: 68ch }
+.eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600 }
+.lead { font-size: 17px; color: var(--ink-2) }
+section { display: flex; flex-direction: column; gap: 16px }
+header.top { display: flex; flex-direction: column; gap: 12px }
+code { font-family: var(--mono); font-size: .9em; background: var(--sunk); padding: 1px 5px; border-radius: 4px }
+
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px }
+.fact { border-top: 2px solid var(--ink); padding-top: 10px; display: flex; flex-direction: column; gap: 2px }
+.fact b { font: 600 26px/1.1 var(--display); font-variant-numeric: tabular-nums }
+.fact span { color: var(--ink-2); font-size: 13.5px }
+
+.bars { display: flex; flex-direction: column; gap: 6px; font-size: 13.5px }
+.bar { display: grid; grid-template-columns: 150px minmax(0, 1fr) 28px; gap: 10px; align-items: center }
+.bar i { display: block; height: 12px; border-radius: 3px; background: var(--ink-3) }
+.bar.hot i { background: var(--warn) }
+.bar span:last-child { font-variant-numeric: tabular-nums; text-align: right; color: var(--ink-2) }
+
+.moves { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 0; border-top: 1px solid var(--line) }
+.move { padding: 16px 16px 16px 0; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px }
+.move p { color: var(--ink-2); font-size: 14.5px }
+.move .tag { font: 600 12px var(--mono); color: var(--accent) }
+
+.proto { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden }
+.proto-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--sunk) }
+.seg { display: inline-flex; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 2px }
+.seg button { font: 500 13px var(--body); color: var(--ink-2); background: none; border: 0; padding: 6px 12px; border-radius: 6px; cursor: pointer }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface) }
+.meter { font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums }
+.meter b { color: var(--ink) }
+.proto-body { display: grid; grid-template-columns: 220px minmax(0, 1fr); height: 560px }
+.nav { border-right: 1px solid var(--line); padding: 12px 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px }
+.nav button { all: unset; box-sizing: border-box; width: 100%; font: 500 13.5px var(--body); color: var(--ink-2); padding: 6px 10px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; gap: 6px; align-items: center }
+.nav button.sub { padding-left: 26px; font-weight: 400; font-size: 13px }
+.nav button:hover { background: var(--sunk) }
+.nav button[aria-current="true"] { color: var(--ink); background: var(--sunk); font-weight: 600 }
+.nav button .n { font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; font-weight: 400 }
+.nav button:focus-visible, .seg button:focus-visible, .ov-item:focus-visible, .search:focus-visible, .crumb button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px }
+.pane { overflow-y: auto; padding: 18px 20px 28px; display: flex; flex-direction: column; gap: 14px; background: var(--bg); min-width: 0 }
+.crumb { font-size: 12.5px; color: var(--ink-3) }
+.crumb button { all: unset; cursor: pointer; color: var(--info) }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px }
+.card .hd { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap }
+.card p { font-size: 13.5px; color: var(--ink-2) }
+.card.hit { outline: 2px solid var(--info) }
+.skel { display: flex; flex-direction: column; gap: 0 }
+.skel div { height: 34px; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between }
+.skel div::before { content: ""; width: 38%; height: 8px; border-radius: 4px; background: var(--sunk) }
+.skel div::after { content: ""; width: 54px; height: 16px; border-radius: 5px; background: var(--sunk) }
+.badges { display: inline-flex; gap: 4px; flex-wrap: wrap }
+.chip { font: 500 11px/18px var(--body); padding: 0 7px; border-radius: 5px; background: var(--sunk); color: var(--ink-2); white-space: nowrap }
+.chip.ok { background: var(--accent-soft); color: var(--accent) }
+.chip.act { background: var(--warn-soft); color: var(--warn) }
+.chip.info { background: var(--info-soft); color: var(--info) }
+.ov { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px }
+.ov-item { all: unset; box-sizing: border-box; cursor: pointer; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px }
+.ov-item:hover { border-color: var(--ink-3) }
+.ov-item .t { font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; align-items: center }
+.ov-item .s { font-size: 12.5px; color: var(--ink-2) }
+.search { width: 100%; font: 400 13.5px var(--body); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px }
+.note { font-size: 13px; color: var(--ink-3) }
+
+table { border-collapse: collapse; width: 100%; font-size: 14px }
+th, td { text-align: left; padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top }
+th { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); font-weight: 600 }
+td.sec { font-weight: 600; white-space: nowrap }
+tr.first td { border-top: 2px solid var(--ink) }
+.moved { color: var(--warn) }
+.tw { overflow-x: auto }
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; counter-reset: s }
+.step { counter-increment: s; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px }
+.step::before { content: "Step " counter(s); font: 600 12px var(--mono); color: var(--accent) }
+.step p { font-size: 14px; color: var(--ink-2) }
+
+@media (max-width: 720px) {
+  .proto-body { grid-template-columns: 1fr; height: auto }
+  .nav { border-right: 0; border-bottom: 1px solid var(--line); max-height: 200px }
+  .pane { max-height: 520px }
+  .bar { grid-template-columns: 110px minmax(0, 1fr) 24px }
+}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <span class="eyebrow">Proposal · Worca UI · Settings</span>
+    <h1>One topic per page, with a summary in front</h1>
+    <p class="lead">Each Settings tab is one page of stacked cards, and the items under it in the side list only scroll that page. General now holds 11 cards. Runs holds 14. This proposal turns each card into its own short page, puts a summary page in front of each section, and regroups the cards by what people come to do. It covers every card Settings has today.</p>
+  </header>
+
+  <section>
+    <h2>What is wrong today</h2>
+    <div class="facts">
+      <div class="fact"><b>30</b><span>cards across 9 Settings tabs, plus 5 tabs that are a single page</span></div>
+      <div class="fact"><b>14</b><span>cards on Runs, the longest page; General follows with 11</span></div>
+      <div class="fact"><b>25 of 30</b><span>cards sit on those two tabs</span></div>
+      <div class="fact"><b>0</b><span>pages that show the state of a whole section at a glance</span></div>
+    </div>
+    <div class="bars" id="bars" aria-label="Cards per tab today"></div>
+    <p>The length is a symptom. The cause is that a tab is one page, so every new feature makes a page longer. Unrelated jobs share a page: Runs mixes budgets, the corporate proxy, pull requests and where agents execute. Read-only status cards sit between forms that each have their own Save button.</p>
+  </section>
+
+  <section>
+    <h2>The proposal in six moves</h2>
+    <div class="moves">
+      <div class="move"><span class="tag">A · Pages</span><h3>Each card is a page</h3><p>Appearance, Budget, Secret vault and the rest each render alone, at the address the search already uses (<code>#settings/&lt;section&gt;/&lt;card&gt;</code>). The side list keeps two levels and looks the same.</p></div>
+      <div class="move"><span class="tag">B · Summary first</span><h3>A section opens on its overview</h3><p>Clicking a section shows one tile per page with its current state in a line: "Vault · On, 3 secrets", "Budget · $20 per run". Most visits end there.</p></div>
+      <div class="move"><span class="tag">C · Grouping</span><h3>Regroup by intent</h3><p>General and Runs split into six sections. Two are new: Security, and Execution. No section holds more than seven pages.</p></div>
+      <div class="move"><span class="tag">D · Search</span><h3>Search lands on a page</h3><p>The ⌘K box already indexes every card with its alternative words. It opens the page instead of scrolling to it.</p></div>
+      <div class="move"><span class="tag">E · Saving</span><h3>One save bar per page</h3><p>A page with unsaved changes shows a bar at the bottom: what changed, Discard, Save. Status-only pages show none.</p></div>
+      <div class="move"><span class="tag">F · Phone</span><h3>Drill in, drill out</h3><p>Under 720 px the list becomes the first screen: section, then page, with Back. The overview tiles double as that list.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Try both, with every card</h2>
+    <p>The sketch holds all 30 cards, the five single-page tabs and the Credentials card that appears with a credential broker, with their real titles, interface levels and Labs flags. Switch structure, click through the side list, and search in the proposed one. Card contents are drawn as placeholders: the cards themselves do not change.</p>
+    <div class="proto" id="proto">
+      <div class="proto-bar">
+        <div class="seg" role="group" aria-label="Structure">
+          <button id="mode-today" aria-pressed="false">Today</button>
+          <button id="mode-new" aria-pressed="true">Proposed</button>
+        </div>
+        <div class="meter" id="meter"></div>
+      </div>
+      <div class="proto-body">
+        <nav class="nav" id="nav" aria-label="Settings sections"></nav>
+        <div class="pane" id="pane"></div>
+      </div>
+    </div>
+    <p class="note"><span class="chip">A</span> Advanced and <span class="chip">E</span> Expert are the interface level a card needs. <span class="chip info">Labs</span> marks a card behind a Labs flag. The one-line states on the overview tiles are examples.</p>
+  </section>
+
+  <section>
+    <h2>Where every card goes</h2>
+    <div class="tw"><table>
+      <thead><tr><th>New section</th><th>Page</th><th>Today on</th><th>Level</th></tr></thead>
+      <tbody id="map"></tbody>
+    </table></div>
+    <p class="note">Amber marks a card that changes section. Add-ons (Marketplace, Connectors, Models) are separate screens and stay as they are.</p>
+  </section>
+
+  <section>
+    <h2>Options I would not take</h2>
+    <div class="tw"><table>
+      <thead><tr><th>Option</th><th>Why not</th></tr></thead>
+      <tbody>
+        <tr><td>Collapse the cards into an accordion</td><td>Hides the length without fixing it. An open card still pushes the rest away, and Runs would be 14 closed bars.</td></tr>
+        <tr><td>Tabs across the top of a section</td><td>Fourteen tabs do not fit, and a second navigation axis competes with the side list.</td></tr>
+        <tr><td>Keep the long page, add a sticky "on this page" list</td><td>That is what the side list already is. It makes scrolling faster, not shorter.</td></tr>
+        <tr><td>A dialog per card</td><td>Works for one quick edit. Fails for cards with status, help text and several actions, such as the vault or the proxy.</td></tr>
+        <tr><td>Three levels in the side list</td><td>Keeps Runs as one section, but deep trees are slow to scan. Two short sections read faster than one nested one.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>How to build it without a big rewrite</h2>
+    <div class="steps">
+      <div class="step"><h3>Pages</h3><p>Show one card per route. The cards and their modules stay as they are, and the card addresses the search uses already exist.</p></div>
+      <div class="step"><h3>Overviews</h3><p>Each card exports a one-line state. The Security card's rows already are that. The section route lists them as tiles.</p></div>
+      <div class="step"><h3>Regroup</h3><p>Move the cards into the new sections. Old addresses redirect. Update the search catalogue, <code>docs/ui-levels.md</code> and the help links that say "Settings › Runs › …".</p></div>
+      <div class="step"><h3>Save bar and phone</h3><p>Replace per-card Save with the page bar where a page has a form. Add the drill-in list under 720 px.</p></div>
+    </div>
+    <p>Steps one and two give most of the benefit and can ship without moving any card. Step three changes where people look for things, so it wants a changelog note and the redirects. Text elsewhere that names a location, such as "Set in Settings › Runs › Chat runs: source branch", has to follow.</p>
+  </section>
+</div>
+
+<script>
+(() => {
+  // id, title, level ('' = Simple, A, E), Labs flag, today's tab, example state, one-line description
+  const C = (id, title, lvl, labs, tab, state, desc) => ({ id, title, lvl, labs, tab, state, desc });
+  const cards = [
+    C('appearance', 'Appearance', '', false, 'General', 'Theme follows the system', 'Theme, colours and the idle screen.'),
+    C('mode', 'Interface mode', '', false, 'General', 'Advanced', 'How much of Worca the screens show: Simple, Advanced or Expert.'),
+    C('alerts', 'Alerts', '', false, 'General', 'Desktop notices and sound on', 'Notices and sounds when a run needs you.'),
+    C('started', 'Getting started', '', false, 'General', 'Guides shown', 'The short tours on first visit to a screen.'),
+    C('about', 'About', '', false, 'General', '1.21.0-rc.1 · source build', 'Version, updates, release notes and feedback.'),
+    C('assistant', 'Setup assistant', '', false, 'General', '3 of 7 steps done', 'The guided first-time setup, and where agents run.'),
+    C('ext', 'Browser extension', '', false, 'General', 'Not connected', 'Send a page or a selection from the browser to Worca.'),
+    C('root', 'Worca root folder', 'A', false, 'General', '~/.worca-cc/projects', 'Where cloned and new projects go.'),
+    C('spawn', 'Spawn diagnostics', 'E', false, 'General', 'Off', 'Extra logging for how agent processes start.'),
+    C('status', 'Status', 'A', false, 'General', 'Native install · not sandboxed', 'What is protected on this instance. Today this card is called Security.'),
+    C('vault', 'Secret vault', '', true, 'General', 'On · 3 secrets', 'Saved keys encrypted, with the key in the OS key store.'),
+    C('guard', 'Guardrails', 'A', false, 'Guardrails', 'Default set: Normal', 'What agents may do without asking. Today a tab of its own.'),
+    C('proxy', 'Network proxy', '', false, 'Runs', 'No proxy', 'The corporate proxy and its login.'),
+    C('creds', 'Credentials', '', false, 'General', 'Shown with a credential broker', 'Your own keys on a shared instance. Appears only with a broker.'),
+    C('budget', 'Budget & cost limits', '', false, 'Runs', '$20 per run', 'Spend caps per run and per day.'),
+    C('naming', 'Smart run naming', '', false, 'Runs', 'On', 'Titles and branch names written for you.'),
+    C('branch', 'Chat runs: source branch', '', false, 'Runs', 'Current branch', 'Which branch a run started from Chat begins on.'),
+    C('pr', 'Pull requests', '', false, 'Runs', 'Draft PR when done', 'How a run opens and updates its pull request.'),
+    C('away', 'Away mode', 'A', false, 'Runs', 'Off', 'Let runs answer their own questions while you are away.'),
+    C('sched', 'Scheduled runs', 'A', false, 'Runs', '2 schedules', 'Limits and defaults for runs on a timer.'),
+    C('chatn', 'Chat notifications', 'A', false, 'Runs', 'On', 'Run updates posted into Chat.'),
+    C('exec', 'Execution environment', 'E', false, 'Runs', 'Local · not sandboxed', 'Local, Local sandbox (Docker) or E2B sandbox, with their limits.'),
+    C('load', 'Machine load', 'A', false, 'Runs', '2 runs at once', 'How many runs at once, and when old runs are pruned.'),
+    C('sync', 'Sync before run', 'A', false, 'Runs', 'Fetch and fast-forward', 'Bring the branch up to date before a run starts.'),
+    C('wait', 'Wait for the network', 'A', false, 'Runs', 'Up to 10 min', 'What a run does when the connection drops.'),
+    C('actions', 'Actions', 'A', false, 'Runs', '3 actions', 'Checks and commands a run can call.'),
+    C('ws', 'Workspaces', 'A', false, 'Runs', 'Scan model: default', 'How multi-repo workspaces are scanned.'),
+    C('autos', 'Automations', 'A', true, 'Automations', 'Off', 'Start runs from git events. One page.'),
+    C('costtags', 'Cost tags', '', false, 'Labels & cost tags', '2 dimensions', 'Dimensions for cost reporting.'),
+    C('labels', 'Labels', '', true, 'Labels & cost tags', '5 labels', 'Labels you put on runs.'),
+    C('presets', 'Presets', 'A', false, 'Presets', '4 presets', 'Saved run setups. One page.'),
+    C('askengine', 'Engine & models', 'A', false, 'Chat', 'Claude', 'Which engine and models Chat uses.'),
+    C('asklinks', 'Links in answers', 'A', true, 'Chat', 'Open in the panel', 'Where file and web links in answers open.'),
+    C('asklimits', 'Limits & access', 'A', false, 'Chat', 'Read and run commands', 'What Chat may read, run and spend.'),
+    C('memory', 'Memory', 'A', false, 'Memory', '31 notes', 'What Worca remembers across runs. One page.'),
+    C('labs', 'Labs', '', false, 'Labs', '3 features on', 'Experimental features. One page.'),
+  ];
+  const byId = Object.fromEntries(cards.map((c) => [c.id, c]));
+  const todayTabs = [
+    ['General', ['assistant', 'appearance', 'alerts', 'ext', 'mode', 'root', 'spawn', 'started', 'about', 'status', 'vault']],
+    ['Labels & cost tags', ['costtags', 'labels']],
+    ['Presets', ['presets']],
+    ['Runs', ['budget', 'away', 'naming', 'branch', 'sync', 'sched', 'proxy', 'wait', 'load', 'actions', 'pr', 'ws', 'chatn', 'exec']],
+    ['Automations', ['autos']],
+    ['Labs', ['labs']],
+    ['Chat', ['askengine', 'asklinks', 'asklimits']],
+    ['Guardrails', ['guard']],
+    ['Memory', ['memory']],
+  ];
+  const sections = [
+    { id: 'general', title: 'General', why: 'How Worca looks and behaves for you.', pages: ['appearance', 'mode', 'alerts', 'started', 'about'] },
+    { id: 'system', title: 'Setup & system', why: 'Things done once, and where Worca keeps its data.', pages: ['assistant', 'ext', 'root', 'spawn'] },
+    { id: 'security', title: 'Security', why: 'One place to answer "what is protected here".', pages: ['status', 'vault', 'guard', 'proxy', 'creds'] },
+    { id: 'runs', title: 'Runs', why: 'How a run behaves: cost, names, branches, pull requests.', pages: ['budget', 'naming', 'branch', 'pr', 'away', 'sched', 'chatn'] },
+    { id: 'execution', title: 'Execution', why: 'Where and how runs execute on this machine.', pages: ['exec', 'load', 'sync', 'wait', 'actions', 'ws'] },
+    { id: 'automations', title: 'Automations', why: 'Unchanged.', pages: ['autos'] },
+    { id: 'tags', title: 'Labels & cost tags', why: 'Unchanged.', pages: ['costtags', 'labels'] },
+    { id: 'presets', title: 'Presets', why: 'Unchanged.', pages: ['presets'] },
+    { id: 'chat', title: 'Chat', why: 'Unchanged.', pages: ['askengine', 'asklinks', 'asklimits'] },
+    { id: 'memory', title: 'Memory', why: 'Unchanged.', pages: ['memory'] },
+    { id: 'labs', title: 'Labs', why: 'Unchanged.', pages: ['labs'] },
+  ];
+  const newHome = {}; for (const s of sections) for (const id of s.pages) newHome[id] = s.title;
+
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  const badges = (c) => { const b = el('span', 'badges'); if (c.lvl) b.append(el('span', 'chip', c.lvl)); if (c.labs) b.append(el('span', 'chip info', 'Labs')); return b; };
+
+  // bars: cards per tab today
+  const bars = document.getElementById('bars');
+  for (const [name, ids] of todayTabs) {
+    const n = ids.length, row = el('div', 'bar' + (n > 7 ? ' hot' : ''));
+    const track = el('span'), fill = el('i'); fill.style.width = (n / 14 * 100) + '%'; track.append(fill);
+    row.append(el('span', '', name), track, el('span', '', String(n))); bars.append(row);
+  }
+
+  // mapping table
+  const map = document.getElementById('map');
+  for (const s of sections) s.pages.forEach((id, i) => {
+    const c = byId[id], tr = el('tr', i === 0 ? 'first' : '');
+    const sec = el('td', 'sec', i === 0 ? s.title : '');
+    const page = el('td'); page.append(el('span', '', c.title + ' '), c.labs ? el('span', 'chip info', 'Labs') : '');
+    const from = el('td', c.tab !== s.title ? 'moved' : '', c.tab !== s.title ? c.tab + ' →' : c.tab);
+    tr.append(sec, page, from, el('td', '', c.lvl === 'A' ? 'Advanced' : c.lvl === 'E' ? 'Expert' : 'Simple')); map.append(tr);
+  });
+
+  // prototype
+  const nav = document.getElementById('nav'), pane = document.getElementById('pane'), meter = document.getElementById('meter');
+  let mode = 'new', tab = 'Runs', at = { section: 'security', page: null }, hit = null;
+  function card(c, full) {
+    const d = el('div', 'card' + (hit === c.id ? ' hit' : '')); d.id = 'card-' + c.id;
+    const hd = el('div', 'hd'); hd.append(el('h3', '', c.title === 'Status' && !full ? 'Security' : c.title), badges(c));
+    const sk = el('div', 'skel'); for (let i = 0; i < 3; i += 1) sk.append(el('div'));
+    d.append(hd, el('p', '', c.desc), sk); return d;
+  }
+  function navBtn(text, sub, current, go, count) {
+    const b = el('button', sub ? 'sub' : ''); b.append(el('span', '', text)); if (count != null) b.append(el('span', 'n', String(count)));
+    if (current) b.setAttribute('aria-current', 'true'); b.onclick = go; return b;
+  }
+  function draw() {
+    nav.replaceChildren(); pane.replaceChildren(); pane.scrollTop = 0;
+    document.getElementById('mode-today').setAttribute('aria-pressed', String(mode === 'today'));
+    document.getElementById('mode-new').setAttribute('aria-pressed', String(mode === 'new'));
+    if (mode === 'today') {
+      for (const [name, ids] of todayTabs) {
+        nav.append(navBtn(name, false, tab === name, () => { tab = name; draw(); }, ids.length));
+        if (tab === name && ids.length > 1) for (const id of ids) nav.append(navBtn(byId[id].title === 'Status' ? 'Security' : byId[id].title, true, false, () => document.getElementById('card-' + id).scrollIntoView({ block: 'start' })));
+      }
+      const ids = todayTabs.find((t) => t[0] === tab)[1];
+      for (const id of ids) pane.append(card(byId[id], false));
+      requestAnimationFrame(() => { const n = (pane.scrollHeight / pane.clientHeight).toFixed(1); meter.innerHTML = `${tab}: <b>${ids.length} card${ids.length === 1 ? '' : 's'}</b> on one page · ${n} screens of this frame`; });
+      return;
+    }
+    for (const s of sections) {
+      nav.append(navBtn(s.title, false, at.section === s.id && !at.page, () => { at = { section: s.id, page: null }; hit = null; draw(); }, s.pages.length > 1 ? s.pages.length : null));
+      if (at.section === s.id && s.pages.length > 1) for (const id of s.pages) nav.append(navBtn(byId[id].title, true, at.page === id, () => { at = { section: s.id, page: id }; hit = null; draw(); }));
+    }
+    const sec = sections.find((s) => s.id === at.section), single = sec.pages.length === 1;
+    const page = at.page || (single ? sec.pages[0] : null);
+    const crumb = el('div', 'crumb');
+    if (page && !single) { const back = el('button', '', sec.title); back.onclick = () => { at.page = null; hit = null; draw(); }; crumb.append('Settings › ', back, ' › ' + byId[page].title); }
+    else crumb.append('Settings › ' + sec.title);
+    pane.append(crumb);
+    if (!page) {
+      const q = el('input', 'search'); q.id = 'proto-search'; q.type = 'search'; q.placeholder = 'Search all settings, for example "proxy", "budget" or "vault"'; q.setAttribute('aria-label', 'Search settings');
+      const out = el('div', 'ov');
+      const tile = (c, s, withSection) => {
+        const b = el('button', 'ov-item'), t = el('div', 't'); t.append(el('span', '', c.title), badges(c));
+        b.append(t, el('div', 's', withSection ? s.title + ' · ' + c.state : c.state));
+        b.onclick = () => { at = { section: s.id, page: s.pages.length > 1 ? c.id : null }; hit = withSection ? c.id : null; draw(); }; return b;
+      };
+      const fill = (term) => {
+        out.replaceChildren(); const t = term.trim().toLowerCase();
+        if (!t) { for (const id of sec.pages) out.append(tile(byId[id], sec, false)); return; }
+        let n = 0;
+        for (const s of sections) for (const id of s.pages) { const c = byId[id]; if ((c.title + ' ' + c.desc + ' ' + s.title).toLowerCase().includes(t)) { out.append(tile(c, s, true)); n += 1; } }
+        if (!n) out.append(el('div', 'note', 'No setting matches "' + term + '".'));
+      };
+      q.addEventListener('input', () => fill(q.value));
+      pane.append(el('div', 'note', sec.why), q, out); fill('');
+      meter.innerHTML = `${sec.title} overview: <b>${sec.pages.length} pages</b>, each with its state`;
+    } else {
+      pane.append(card(byId[page], true));
+      meter.innerHTML = `${byId[page].title}: <b>1 card</b> on its own page · own address · Back works`;
+    }
+  }
+  document.getElementById('mode-today').onclick = () => { mode = 'today'; draw(); };
+  document.getElementById('mode-new').onclick = () => { mode = 'new'; draw(); };
+  draw();
+})();
+</script>
+</body></html>
