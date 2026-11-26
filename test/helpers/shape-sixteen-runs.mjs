@@ -85,6 +85,56 @@ export function world(projectDir, spec) {
   return fx;
 }
 
+/** The missing-work case, labelled by its run numbers: 8 and 9 build on 7, and 10 builds on 8 and 9. */
+const SIBLING_RUNS = Object.freeze([[7, []], [8, [7]], [9, [7]], [10, [8, 9]]]);
+
+/**
+ * A small-runs feature of runs 7 to 10 (slices 1 to 4; run 7 is the origin pipeline) whose pipeline rows carry real
+ * branch records. Cancels the previous features' scheduled tickets first, as `world` does.
+ * @param {{projectDir:string}} o
+ * @returns {{featureId:string, ticketOf:(run:number)=>string|null, pipelineOf:(run:number)=>string|null,
+ *   start:(run:number, how:{branch:object})=>void, finish:(run:number, how:{at:string, branch?:object})=>void}}
+ *   `start` seeds the run's `running` pipeline and fires its ticket; `finish` marks it `done` at `at` (ISO).
+ */
+export function siblingRunsFeature({ projectDir }) {
+  const db = getDb();
+  db.prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+  const key = projectKey(projectDir);
+  const newPipe = (status, branch) => {
+    const id = `sib-${String(++seq).padStart(5, '0')}`;
+    seedPipelineRow({ id, projectKey: key, status, title: id, branch });
+    return id;
+  };
+  const slice = ([run, dependsOn]) => ({ id: `s${run}`, title: `Run ${run}`, goal: `Goal ${run}`, inScope: [`do ${run}`],
+    outOfScope: [], acceptance: [`ok ${run}`], dependsOn: dependsOn.map((d) => `s${d}`), estimate: 'M' });
+  const originPipelineId = newPipe('done', { source: 'dev', feature: 'feat/run-7' });
+  const f = createSliceFeature({ pipelineId: originPipelineId, projectDir, title: 'Sibling runs', smallRuns: false,
+    outline: { why: 'because', slices: SIBLING_RUNS.map(slice) }, perspectives: ['product'], workflowId: 'wf_shape' });
+  db.prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?')
+    .run(JSON.stringify({ questions: { asked: 0, skipped: 0 }, revises: [], shapeScore: null, smallRuns: true }), originPipelineId);
+  const rows = db.prepare('SELECT * FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(f.id);
+  const indexOf = (run) => {
+    const i = SIBLING_RUNS.findIndex(([r]) => r === run);
+    if (i < 0) throw new Error(`no such run: ${run}`);
+    return i;
+  };
+  const pipes = new Map([[7, originPipelineId]]);
+  const ticketOf = (run) => rows[indexOf(run)].ticket_id || null;
+  const pipelineOf = (run) => pipes.get(run) || null;
+  const start = (run, { branch }) => {
+    const ticket = ticketOf(run);
+    const pid = newPipe('running', branch);
+    pipes.set(run, pid);
+    db.prepare('UPDATE scheduled_runs SET status = ?, pipeline_id = ? WHERE id = ?').run('fired', pid, ticket);
+  };
+  const finish = (run, { at, branch }) => {
+    indexOf(run);
+    db.prepare("UPDATE pipelines SET status = 'done', updated_at = ? WHERE id = ?").run(at, pipelineOf(run));
+    if (branch) db.prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify(branch), pipelineOf(run));
+  };
+  return { featureId: f.id, ticketOf, pipelineOf, start, finish };
+}
+
 /** The sorted run numbers of the runs not started yet (ticket scheduled, no pipeline) that the scheduler's gate lets start. */
 export function startable(fx) {
   const out = [];

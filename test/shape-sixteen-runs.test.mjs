@@ -4,7 +4,8 @@
 // sends in featureView and the Runs list.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -13,18 +14,33 @@ import { getDb } from '../src/core/db.mjs';
 import { createTicket, getTicket, predecessorState } from '../src/core/scheduler.mjs';
 import { listRunGroups } from '../src/core/run-groups.mjs';
 import { busySliceOf, featureView, liveSliceFrom, resumeFeature, setApproveEach, sliceGateState, sliceOfPipeline } from '../src/core/shape/features.mjs';
-import { sliceChainGate, heldStopTurn } from '../src/core/shape/chain.mjs';
-import { SIXTEEN_RUN_LINKS, sixteenRunFeature, startable, world, SIXTEEN_RUN_STATES } from './helpers/shape-sixteen-runs.mjs';
+import { sliceChainGate, heldStopTurn, latestFinishedSource, sliceSourceOf } from '../src/core/shape/chain.mjs';
+import { SIXTEEN_RUN_LINKS, sixteenRunFeature, siblingRunsFeature, startable, world, SIXTEEN_RUN_STATES } from './helpers/shape-sixteen-runs.mjs';
 import { runStatus, namedWaits } from '../src/shared/shape/run-status.mjs';
 // Slice 6: a namespace read, so a missing new export fails only its own test, not the whole file.
 import * as RS from '../src/shared/shape/run-status.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
+import { g, GITCONFIG } from './helpers/base-world.mjs';
+import { checkBaseMerge } from '../src/core/git-sync.mjs';
+import { RunHarness } from '../src/core/run-harness.mjs';
 
 useTempHome(after, 'worca-shape-sixteen-');
 const root = mkdtempSync(join(tmpdir(), 'worca-shape-sixteen-proj-'));
 after(() => rmSync(root, { recursive: true, force: true }));
 before(() => { getDb(); });
+// File-wide: every git command in this file (the missing-work tests' real repos) reads a temp global config, not the
+// machine's, and the variables are restored when the file ends.
+const GIT_ENV = ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'];
+const gitEnvBefore = Object.fromEntries(GIT_ENV.map((k) => [k, process.env[k]]));
+before(() => {
+  process.env.GIT_CONFIG_GLOBAL = join(root, 'gitconfig');
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+  writeFileSync(process.env.GIT_CONFIG_GLOBAL, GITCONFIG);
+});
+after(() => {
+  for (const [k, v] of Object.entries(gitEnvBefore)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+});
 
 const M1 = { 1: { stop: 'requirement' } };
 const M3_DONE = [1];
@@ -623,4 +639,147 @@ test('S7-T18 Ask before each run: an open stop reads "Nothing can go on until yo
   const view = viewOf(held);
   assert.equal(view.held?.index, 2, 'run 2\'s ticket is held');
   assert.equal(featureStateLine(view), 'Run 2 waiting for you to start');
+}));
+
+// ---- Missing work, reproduced on real git branches (R-qa-1): runs 8 and 9 build on run 7, run 10 builds on 8 and 9 ----
+// Every test here asserts TODAY'S outcome and passes on the unchanged code. The cause, in short (the full write-up with
+// file:line is missing-work-cause.md in this Shaper run's pipeline folder):
+// 1. A waited run's take-in runs before the finished sibling's work is committed: run 9 sends `done` before its teardown
+//    commits onto feat/run-9, so checkBaseMerge reads up-to-date and the take-in skips silently (A1); while the sibling
+//    is still merging back, latestFinishedSource returns {pending:true} and the take-in skips too (A4).
+// 2. A run's start ignores dependsOn: sliceSourceOf starts run 10 from the branch of the run that finished last only,
+//    so the other sibling's work is missing whichever finishes last (A2, A3).
+
+const commitFile = (cwd, file) => { writeFileSync(join(cwd, file), `${file}\n`); g(cwd, 'add', file); g(cwd, 'commit', '-qm', file); };
+const head = (cwd, ref) => g(cwd, 'rev-parse', ref);
+// The raw probes drop an inherited GIT_DIR / GIT_WORK_TREE so they always read the repo at cwd.
+const probeEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'GIT_DIR' && k !== 'GIT_WORK_TREE'));
+const isAncestorExit = (cwd, commit, ref) => spawnSync('git', ['merge-base', '--is-ancestor', commit, ref], { cwd, encoding: 'utf8', env: probeEnv() }).status;
+const filesOn = (cwd, ref) => g(cwd, 'ls-tree', '-r', '--name-only', ref).split('\n').sort();
+const minute = (n) => new Date(Date.UTC(2026, 0, 1, 12, n)).toISOString();
+const record = (run, source = 'feat/run-7') => ({ source, feature: `feat/run-${run}` });
+
+/** A local repo with no remote and the incident's moment: run 7 done; runs 8 and 9 branched from it, each in its own
+ *  worktree; run 8 has committed and is running; run 9 has written nine.txt and not committed it. Run 9's row is
+ *  `running` until the test finishes it. */
+function siblingWorld() {
+  const dir = mkdtempSync(join(root, 'siblings-'));
+  const repo = join(dir, 'repo');
+  const wt8 = join(dir, 'wt8');
+  const wt9 = join(dir, 'wt9');
+  g(dir, 'init', '-q', '-b', 'dev', 'repo');
+  commitFile(repo, 'base.txt');
+  g(repo, 'checkout', '-q', '-b', 'feat/run-7');
+  commitFile(repo, 'seven.txt');
+  g(repo, 'checkout', '-q', 'dev');
+  g(repo, 'worktree', 'add', '-q', '-b', 'feat/run-8', wt8, 'feat/run-7');
+  g(repo, 'worktree', 'add', '-q', '-b', 'feat/run-9', wt9, 'feat/run-7');
+  commitFile(wt8, 'eight.txt');
+  writeFileSync(join(wt9, 'nine.txt'), 'nine.txt\n');
+  const fx = siblingRunsFeature({ projectDir: repo });
+  fx.finish(7, { at: minute(0), branch: { feature: 'feat/run-7' } });
+  fx.start(8, { branch: record(8) });
+  fx.start(9, { branch: record(9) });
+  return { repo, wt8, wt9, fx };
+}
+
+/** Run 8's harness with only what the take-in reads, recording what it logs and each merge it asks for. */
+function waitedRunHarness({ repo, wt8, fx }) {
+  const h = Object.create(RunHarness.prototype);
+  h.runShape = { slice: { feature: fx.featureId } };
+  h.branchInfo = { branch: 'feat/run-8', worktreeDir: wt8 };
+  h.members = [{ projectDir: repo, projectKey: projectKey(repo) }];
+  h.pipeline = { id: fx.pipelineOf(8) };
+  h.isWorkspace = false;
+  const logged = [];
+  h._log = (...args) => { logged.push(args); };
+  const merges = [];
+  h._mergeLatestOnResume = (m, info, base, opts) => {
+    merges.push({ base, opts });
+    return RunHarness.prototype._mergeLatestOnResume.call(h, m, info, base, opts);
+  };
+  return { h, logged, merges };
+}
+
+const noMergeStarted = (wt) => spawnSync('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: wt, env: probeEnv() }).status !== 0;
+
+// Cause 1 (report above): run 9's row reads `done` before teardown commits its work, so run 8's take-in finds nothing
+// newer on feat/run-9 and skips with no log. Slice 3 adds the take-in of committed sibling work and its own live-order
+// test (the order `done` frame, delivery, teardown commit is read from the code, not driven here).
+test('A1 (R-qa-1): run 8 goes on while run 9 reads done with uncommitted work: the take-in finds nothing and never takes run 9 in', () => withEnvVars(ON, async () => {
+  const w = siblingWorld();
+  const { repo, wt8, wt9, fx } = w;
+  fx.finish(9, { at: minute(1) });
+  assert.deepEqual(latestFinishedSource(fx.featureId, { exclude: fx.pipelineOf(8) }),
+    { pipelineId: fx.pipelineOf(9), sourceBranch: 'feat/run-9' });
+  assert.equal(head(repo, 'feat/run-9'), head(repo, 'feat/run-7'), 'run 9\'s branch still sits at run 7\'s tip');
+  const early = await checkBaseMerge(repo, { base: 'feat/run-9', feature: 'feat/run-8' });
+  assert.deepEqual([early.status, early.behind, early.baseRef], ['up-to-date', 0, 'feat/run-9']);
+
+  const eight = head(repo, 'feat/run-8');
+  const { h, logged, merges } = waitedRunHarness(w);
+  await h._takeInLatestFinished({ smallRuns: true, onAnswer: true });
+  assert.deepEqual(merges, [{ base: 'feat/run-9', opts: { onAnswer: true } }], 'the take-in reached the merge check');
+  assert.equal(head(repo, 'feat/run-8'), eight);
+  assert.equal(noMergeStarted(wt8), true);
+  assert.deepEqual(logged, []);
+
+  // Run 9's teardown commit lands a moment later.
+  g(wt9, 'add', 'nine.txt');
+  g(wt9, 'commit', '-qm', 'nine.txt');
+  const late = await checkBaseMerge(repo, { base: 'feat/run-9', feature: 'feat/run-8' });
+  assert.deepEqual([late.status, late.behind], ['clean', 1]);
+  assert.equal(isAncestorExit(repo, head(repo, 'feat/run-9'), 'feat/run-8'), 1, 'run 9\'s commit is not in run 8\'s branch');
+}));
+
+// Cause 1, its second silent skip (report above): a finished run still merging back reads {pending:true}, and the
+// take-in neither logs nor retries. Slice 3 adds the take-in of committed sibling work and its own live-order test.
+test('A4 (R-qa-1): while the latest finished run still merges back, the take-in skips with nothing logged', () => withEnvVars(ON, async () => {
+  const w = siblingWorld();
+  const { repo, wt8, wt9, fx } = w;
+  // Run 9's work is committed, so only the pending merge back can be what keeps it out.
+  g(wt9, 'add', 'nine.txt');
+  g(wt9, 'commit', '-qm', 'nine.txt');
+  // Now, not a fixed time: mergeBackPending reads the row as pending only while its finish is recent by the real clock.
+  fx.finish(9, { at: new Date().toISOString(), branch: { ...record(9), sameAsSource: true, worktreeDir: wt9 } });
+  assert.deepEqual(latestFinishedSource(fx.featureId, { exclude: fx.pipelineOf(8) }), { pending: true });
+
+  const eight = head(repo, 'feat/run-8');
+  const { h, logged, merges } = waitedRunHarness(w);
+  await h._takeInLatestFinished({ smallRuns: true, onAnswer: true });
+  assert.deepEqual(merges, [], 'no merge is asked for');
+  assert.equal(head(repo, 'feat/run-8'), eight);
+  assert.equal(noMergeStarted(wt8), true);
+  assert.deepEqual(logged, []);
+}));
+
+/** Runs 8 and 9 both committed and done, neither holding the other's work; then run 10's branch, made from the source
+ *  the scheduler picks for its ticket (the fire path's own.sourceBranch). */
+function startRunTen({ eightAt, nineAt }) {
+  const { repo, wt9, fx } = siblingWorld();
+  g(wt9, 'add', 'nine.txt');
+  g(wt9, 'commit', '-qm', 'nine.txt');
+  fx.finish(8, { at: eightAt });
+  fx.finish(9, { at: nineAt });
+  const source = sliceSourceOf(getTicket(fx.ticketOf(10)));
+  g(repo, 'branch', 'feat/run-10', source.sourceBranch);
+  return { repo, fx, source, eight: head(repo, 'feat/run-8'), nine: head(repo, 'feat/run-9') };
+}
+
+// Cause 2 (report above): run 10 starts from the run that finished last, whatever it builds on. Slice 2 flips A2 and
+// A3 so that both commits are ancestors of run 10's branch.
+test('A2 (R-qa-1): run 10 builds on runs 8 and 9 and starts from run 8, which finished last: run 9\'s work is missing', () => withEnvVars(ON, () => {
+  const { repo, fx, source, eight, nine } = startRunTen({ nineAt: minute(1), eightAt: minute(2) });
+  assert.deepEqual(source, { pipelineId: fx.pipelineOf(8), sourceBranch: 'feat/run-8' });
+  assert.equal(isAncestorExit(repo, eight, 'feat/run-10'), 0, 'run 8\'s work is on run 10\'s branch');
+  assert.equal(isAncestorExit(repo, nine, 'feat/run-10'), 1, 'run 9\'s commit is not on run 10\'s branch');
+  assert.deepEqual(filesOn(repo, 'feat/run-10'), ['base.txt', 'eight.txt', 'seven.txt']);
+}));
+
+test('A3 (R-qa-1): with run 9 finishing last instead, run 10 starts from run 9 and run 8\'s work is missing', () => withEnvVars(ON, () => {
+  const { repo, fx, source, eight, nine } = startRunTen({ eightAt: minute(1), nineAt: minute(2) });
+  assert.deepEqual(source, { pipelineId: fx.pipelineOf(9), sourceBranch: 'feat/run-9' });
+  assert.equal(isAncestorExit(repo, nine, 'feat/run-10'), 0, 'run 9\'s work is on run 10\'s branch');
+  assert.equal(isAncestorExit(repo, eight, 'feat/run-10'), 1, 'run 8\'s commit is not on run 10\'s branch');
+  assert.deepEqual(filesOn(repo, 'feat/run-10'), ['base.txt', 'nine.txt', 'seven.txt']);
 }));
