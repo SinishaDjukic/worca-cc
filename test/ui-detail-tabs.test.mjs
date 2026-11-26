@@ -441,3 +441,181 @@ test('overflow: a rebuild closes the menu it opened and builds one More', async 
   assert.equal(old.getAttribute('aria-expanded'), 'false');
   assert.equal(s.bar.querySelectorAll('.tab-more').length, 1);
 });
+
+// --- the width fit: the row folds into More when it does not fit (tab-fold.mjs; the decision is test/ui-tab-fold.test.mjs) ---
+
+// jsdom does no layout, so a test says how wide each button is and how much room the bar has. Gap 10, bar padding 6 + 4.
+// Rows a · c · b, others d · e: the default row draws 380px, 270px without Beta, 160px without Gamma too.
+async function fitScreen({ observer = true, ...over } = {}) {
+  const s = await overflowScreen({ row: ['a', 'c', 'b'], ...over });
+  const { window } = s;
+  const widths = { a: 100, c: 100, b: 100, d: 100, e: 100, more: 50 };
+  let room = 0;
+  window.HTMLButtonElement.prototype.getBoundingClientRect = function () {
+    const drawn = this.isConnected && !(this.hasAttribute('data-overflow') && !this.classList.contains('active'));   // display:none has no width
+    return { width: drawn ? widths[this.dataset.sec || 'more'] || 0 : 0 };
+  };
+  Object.defineProperty(s.bar, 'clientWidth', { configurable: true, get: () => (room ? room + 10 : 0) });
+  s.bar.setAttribute('style', 'column-gap:10px;padding:0 4px 0 6px');
+  const observers = [];
+  if (observer) {
+    window.ResizeObserver = class {
+      constructor(cb) { this.cb = cb; this.targets = []; this.live = true; observers.push(this); }
+      observe(el) { this.targets.push(el); }
+      unobserve() {}
+      disconnect() { this.live = false; }
+    };
+  }
+  const frames = new Map();
+  let ids = 0;
+  window.requestAnimationFrame = (fn) => { frames.set(++ids, fn); return ids; };
+  window.cancelAnimationFrame = (id) => { frames.delete(id); };
+  const frame = () => { const due = [...frames.values()]; frames.clear(); for (const fn of due) fn(0); };
+  s.init();                                                   // the rebuild that picks up the stubs
+  const resize = () => observers.at(-1).cb([]);
+  const setRoom = (px) => { room = px; };
+  const fit = (px) => { setRoom(px); resize(); frame(); };
+  const folded = () => ['a', 'c', 'b', 'd', 'e'].filter((k) => s.btn(k).hasAttribute('data-overflow'));
+  const labels = () => { click(window, s.more()); const l = s.items().map((i) => i.label); click(window, s.more()); return l; };
+  return { ...s, widths, observers, frames, frame, resize, setRoom, fit, folded, labels };
+}
+
+test('width: the right-most row tabs fold into More until the row fits, and come back as it widens', async () => {
+  const s = await fitScreen();
+  assert.deepEqual(s.folded(), ['d', 'e'], 'unmeasured: the default split');
+  await checkRows([
+    { name: 'it fits', run: () => {
+      s.fit(380);
+      assert.deepEqual(s.drawn(), ['a', 'c', 'b', 'more']);
+      assert.deepEqual(s.labels(), ['Delta', 'Epsilon']);
+    } },
+    { name: 'Beta gives way', run: () => {
+      s.fit(379);
+      assert.deepEqual(s.folded(), ['b', 'd', 'e']);
+      assert.deepEqual(s.drawn(), ['a', 'c', 'more']);
+      assert.deepEqual(s.labels(), ['Beta', 'Delta', 'Epsilon'], 'the menu lists the folded row tab, in table order');
+    } },
+    { name: 'then Gamma', run: () => {
+      s.fit(160);
+      assert.deepEqual(s.drawn(), ['a', 'more']);
+      assert.deepEqual(s.labels(), ['Gamma', 'Beta', 'Delta', 'Epsilon']);
+    } },
+    { name: 'Beta stays folded while only Gamma fits', run: () => {
+      s.fit(270);
+      assert.deepEqual(s.drawn(), ['a', 'c', 'more']);
+    } },
+    { name: 'wide again: the default row, never past it', run: () => {
+      s.fit(2000);
+      assert.deepEqual(s.keys(), ['a', 'c', 'b', 'd', 'e', 'more']);
+      assert.deepEqual(s.drawn(), ['a', 'c', 'b', 'more']);
+      assert.deepEqual(s.folded(), ['d', 'e']);
+    } },
+  ]);
+});
+
+test('width: one folded tab is enough for More, and it leaves again with it', async () => {
+  const s = await fitScreen({ row: ['a', 'c', 'b', 'd', 'e'] });
+  s.fit(540);
+  assert.equal(s.more(), null);
+  s.fit(539);
+  assert.deepEqual(s.drawn(), ['a', 'c', 'b', 'd', 'more']);
+  assert.deepEqual(s.labels(), ['Epsilon']);
+  s.more().focus();
+  s.fit(540);
+  assert.equal(s.more(), null);
+  assert.deepEqual(s.keys(), ['a', 'c', 'b', 'd', 'e']);
+  assert.equal(s.doc.activeElement, s.btn('a'), 'More held the focus: the open tab takes it');
+});
+
+test('width: a lone other tab keeps its place while the row fits and goes under More first when it does not', async () => {
+  const s = await fitScreen({ level: 'advanced', row: ['a', 'c', 'b', 'e'] });   // e is expert: only d is outside the row
+  s.fit(430);
+  assert.equal(s.more(), null);
+  assert.deepEqual(s.drawn(), ['a', 'c', 'b', 'd']);
+  s.fit(429);
+  assert.deepEqual(s.drawn(), ['a', 'c', 'b', 'more']);
+  assert.deepEqual(s.labels(), ['Delta']);
+});
+
+test('width: a folded tab opened from More joins the row, lit, and another folds instead', async () => {
+  const s = await fitScreen();
+  s.fit(270);
+  click(s.window, s.more());
+  click(s.window, s.item('Beta'));
+  assert.equal(s.oneSelected(), 'b');
+  assert.deepEqual(s.drawn(), ['a', 'b', 'more']);
+  assert.deepEqual(s.folded(), ['c', 'd', 'e']);
+  assert.equal(s.doc.activeElement, s.btn('b'));
+});
+
+test('width: a focused tab that folds hands the focus to More', async () => {
+  const s = await fitScreen();
+  s.fit(380);
+  s.btn('b').focus();
+  s.fit(270);
+  assert.equal(s.doc.activeElement, s.more());
+});
+
+test('width: a button that grows re-fits the row (a badge count), and the menu follows', async () => {
+  const s = await fitScreen();
+  s.fit(380);
+  assert.ok(s.observers.at(-1).targets.includes(s.btn('c')));
+  s.widths.c = 101;
+  s.resize();
+  s.frame();
+  assert.deepEqual(s.folded(), ['b', 'd', 'e']);
+});
+
+test('width: one observer per screen, one re-fit per frame, disposed by a rebuild and by a dropped screen', async () => {
+  const s = await fitScreen();
+  assert.equal(s.observers.length, 1);
+  const [first] = s.observers;
+  for (const node of [s.bar, s.more(), ...['a', 'c', 'b', 'd', 'e'].map(s.btn)]) assert.ok(first.targets.includes(node), node.outerHTML);
+  s.resize();
+  s.resize();
+  assert.equal(s.frames.size, 1, 'two reports, one frame');
+  s.frame();
+  s.resize();
+  assert.equal(s.frames.size, 1, 'the next report gets a new frame');
+  s.init();
+  assert.equal(first.live, false);
+  assert.equal(s.frames.size, 0, 'the pending frame is cancelled');
+  assert.equal(s.observers.length, 2);
+  assert.equal(s.observers[1].live, true);
+  s.screen.remove();
+  s.resize();
+  s.frame();
+  assert.equal(s.observers[1].live, false);
+});
+
+test('width: a second relayout at the same width leaves the bar as it is', async () => {
+  const s = await fitScreen();
+  const records = [];
+  const watch = new s.window.MutationObserver((r) => records.push(...r));
+  const options = { subtree: true, childList: true, attributes: true };
+  watch.observe(s.bar, options);
+  s.tabs().relayout();
+  assert.deepEqual(records.concat(watch.takeRecords()), [], 'unmeasured: nothing is touched');
+  watch.disconnect();
+  s.fit(270);
+  const before = s.bar.innerHTML;
+  watch.observe(s.bar, options);
+  s.tabs().relayout();
+  // Measuring unfolds the row and folds it again in one task: attributes are written, no node moves.
+  assert.deepEqual(records.concat(watch.takeRecords()).filter((r) => r.type === 'childList'), []);
+  assert.equal(s.bar.innerHTML, before);
+  watch.disconnect();
+});
+
+test('width: without a ResizeObserver the bar still fits on a relayout, and a bar without overflow is never watched', async () => {
+  const s = await fitScreen({ observer: false });
+  assert.deepEqual(s.drawn(), ['a', 'c', 'b', 'more']);
+  assert.equal(s.observers.length, 0);
+  s.setRoom(270);
+  s.tabs().relayout();
+  assert.deepEqual(s.drawn(), ['a', 'c', 'more']);
+  const watched = await fitScreen();
+  const other = makeScreen(watched.window, 'hd2');
+  watched.window.__np.initDetailTabs(other, overflowTable(), { n: 13 }, optsFor('hd2'));
+  assert.equal(watched.observers.length, 1);
+});

@@ -195,12 +195,15 @@ shows, so its selects keep their content width and search shares the switch row 
 ### Tabs
 `.tabs` / `.tab`: underline tabs, 32px, never boxed (checked).
 Overflow under "More" is opt-in per row (`initDetailTabs` `overflow`); only the run pages use it. Their row holds the
-reading tabs, in table order: Overview, Task, Diff / Changes (Artifacts for a run without a project), Q&A and Logs. The
+reading tabs, in table order: Overview, Task, Diff / Changes, Artifacts, Q&A and Logs. The
 other tabs go under "More": a `.tab`-styled button (`.tab-more`, never `role=tab`) with a 12px `chevron-down` and
 `aria-haspopup="menu"`, opening the shared menu (`toggleMenu`): one row per tab with its icon, its name, its count as
 the hint and the open one checked. An open overflow tab joins the row, lit, just before "More", and leaves it when
-another tab opens. With fewer than two shown tabs to hold there is no "More" and the tab keeps its usual place. The
-label is "More", never "…", which is the run's ⋯ menu.
+another tab opens. With fewer than two shown tabs to hold, a row that fits has no "More" and the tab keeps its usual
+place. The label is "More", never "…", which is the run's ⋯ menu.
+A row that does not fit its width folds into "More" by itself (`tab-fold.mjs`; no setting and no level rule): a lone
+other tab first, then the row tabs one at a time from the right end, until it fits. They come back in reverse order as
+the width grows, up to the default row and never past it. Overview, the open tab and "More" are never folded.
 ### Filter chip
 `.filter-chip` (`aria-pressed`): 28px, 12px / 500, 1px `--line-2` border, 6px corner. Selected: `--field` fill, ink
 border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only filter chip: `mv-filter`, `wfl-chip`,
