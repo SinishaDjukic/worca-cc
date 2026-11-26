@@ -11,7 +11,6 @@ const CASES = [
   ['Read(//**/worca-cc.db*)', `${W}/worca-cc.db-wal`],
   ['Read(//**/worca.db*)', `${W}/worca.db`],
   ['Read(//**/secrets.json)', '/repo/plugins/p/data/secrets.json'],
-  ['Read(//**/proxy-login.json*)', '/srv/worca/proxy-login.json'],
   ['Read(//**/worca-vault*)', '/srv/worca/worca-vault.enc'],
   ['Read(//**/.env*)', '/repo/sub/.env.local'],
   ['Read(//**/.worca-cc/settings.json)', `${W}/settings.json`],
@@ -32,9 +31,11 @@ const CASES = [
   ['Read(~/.npmrc)', `${HOME}/.npmrc`],
   ['Read(~/.config/gh/**)', `${HOME}/.config/gh/hosts.yml`],
   ['Read(//proc/**)', '/proc/1/environ'],
-  ['Read(//run/secrets/**)', '/run/secrets/worca_broker_secret'],
-  ['Read(//var/run/secrets/**)', '/var/run/secrets/worca_broker_secret'],
-  ['Read(//worca/egress/**)', '/worca/egress/settings.json'],
+  // The corporate proxy login (an NT hash) wherever it is, Docker secrets under both names, the egress sidecar's data.
+  ['Read(//**/proxy-login.json*)', `${W}/proxy-login.json`],
+  ['Read(//run/secrets/**)', '/run/secrets/proxy_login'],
+  ['Read(//var/run/secrets/**)', '/var/run/secrets/proxy_login'],
+  ['Read(//worca/egress/**)', '/worca/egress/state/login.json'],
 ];
 
 test('spawn.mjs re-exports the one list: the Claude permission rules are the same array, same order', () => {
@@ -95,7 +96,8 @@ const win = (p) => (p.startsWith(HOME) ? WIN_HOME + p.slice(HOME.length) : `C:${
 
 test('Windows drive paths: each rule denies its sample written as a C: path, under a Windows home', () => {
   for (const [rule, path] of CASES) {
-    if (['Read(//proc/**)', 'Read(//run/secrets/**)', 'Read(//var/run/secrets/**)', 'Read(//worca/egress/**)'].includes(rule)) continue; // POSIX root folders, not a folder on every drive
+    // POSIX root folders, not folders on every drive.
+    if (['Read(//proc/**)', 'Read(//run/secrets/**)', 'Read(//var/run/secrets/**)', 'Read(//worca/egress/**)'].includes(rule)) continue;
     assert.equal(askPathDenied(win(path), { home: WIN_HOME }), rule, win(path));
   }
   assert.equal(askPathDenied('c:/repo/sub/.env', { home: WIN_HOME }), 'Read(//**/.env*)', 'a lower-case drive letter');

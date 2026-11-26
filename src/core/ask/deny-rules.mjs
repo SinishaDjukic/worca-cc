@@ -4,7 +4,7 @@
 // file tools (file-deps.mjs) check every path against the SAME rules through askPathDenied below — the two
 // engines cannot drift.
 import { homedir } from 'node:os';
-import { SECRET_FILE_RULE_PATHS } from '../secrets/files.mjs';
+import { SECRET_FILE_RULE_PATHS, VAULT_NAME_PREFIX } from '../secrets/files.mjs';
 
 // Deny beats allow, and the chat's worktrees live INSIDE the home
 // (<home>/ask/<thread>/wt/…), so the home cannot be denied as a whole: worca's
@@ -18,7 +18,7 @@ export const ASK_DENY_RULES = Object.freeze([
   'Read(//**/worca-cc.db*)',           // the DB (+ -wal/-shm/backups), wherever the home is
   'Read(//**/worca.db*)',              // the pre-rename DB file, still present on older homes
   'Read(//**/secrets.json)',           // plugins/*/data/secrets.json and any other
-  ...SECRET_FILE_RULE_PATHS.map((p) => `Read(${p})`),   // the proxy login, the vault and its key, wherever the home is
+  ...SECRET_FILE_RULE_PATHS.filter((p) => p.includes(VAULT_NAME_PREFIX)).map((p) => `Read(${p})`),   // the vault, its key and locks, wherever the home is (the proxy login: below)
   'Read(//**/.env*)',
   'Read(//**/.worca-cc/settings.json)',
   'Read(//**/.worca-cc/store/**)',     // run store: transcripts, logs, artifacts
@@ -38,9 +38,12 @@ export const ASK_DENY_RULES = Object.freeze([
   'Read(~/.npmrc)',
   'Read(~/.config/gh/**)',
   'Read(//proc/**)',                   // the server's own environment (/proc/<pid>/environ holds its GitHub and model tokens)
-  'Read(//run/secrets/**)',            // compose secret files in a container (broker, egress sidecar, GitHub App key)
-  'Read(//var/run/secrets/**)',        // the same folder through the /var/run -> /run link
-  'Read(//worca/egress/**)',           // the egress sidecar's data dir (WORCA_EGRESS_DATA_DIR): the proxy login it holds
+  // The corporate proxy login (docs/network-proxy.md "Where the login lives"): <home>/proxy-login.json holds an NT hash,
+  // enough to log in. Anywhere: a differently named home, the egress sidecar's copy, a `.tmp` beside it.
+  'Read(//**/proxy-login.json*)',
+  'Read(//run/secrets/**)',            // Docker / compose secrets (a mounted proxy login, the box's git token file)
+  'Read(//var/run/secrets/**)',        // the same folder through the /var/run -> /run symlink
+  'Read(//worca/egress/**)',           // the egress sidecar's data folder (WORCA_EGRESS_DATA_DIR's default): its login
 ]);
 
 /** The same denies minus the run store and checkouts, for a read of ONE run: the night decider and the Auto

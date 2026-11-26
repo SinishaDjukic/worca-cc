@@ -11,7 +11,7 @@ import { realpath, stat, readFile } from 'node:fs/promises';
 import { basename, join, relative, sep } from 'node:path';
 import { refusePathShape, isInside, sniffMime, decodePlainText } from '../ask-files.mjs';
 import { isSecretPath } from '../secret-paths.mjs';
-import { SECRET_FILE_GLOBS } from '../secrets/files.mjs';
+import { SECRET_FILE_GLOBS, VAULT_NAME_PREFIX } from '../secrets/files.mjs';
 import { GUARDRAIL_PRESETS } from '../guardrails.mjs';
 import { OFFICE_EXTENSIONS, mimeForPath } from '../../shared/artifact-kinds.mjs';
 
@@ -107,11 +107,13 @@ const CREDENTIAL_NAMES = Object.freeze([
   ...GUARDRAIL_PRESETS.secure.protectedPaths,
   '.git-credentials', '.pgpass', '.pypirc',
   'secrets.json', 'credentials', 'credentials.json', '*.kdbx', 'worca-cc.db*', 'worca.db*',
-  ...SECRET_FILE_GLOBS,   // isSecretPath skips the presets' `//**/` forms, so the bare globs go here
+  'proxy-login.json*',   // the corporate proxy login (an NT hash), as ASK_DENY_RULES
+  ...SECRET_FILE_GLOBS.filter((g) => g.startsWith(VAULT_NAME_PREFIX)),   // the secret vault, its key and locks
 ]);
 /** A folder that holds credentials (or worca's own state) anywhere BELOW the root the file was found in. */
 const CREDENTIAL_DIRS = new Set(['.ssh', '.aws', '.gnupg', '.kube', '.docker', '.azure', '.git', '.worca-cc']);
-const CREDENTIAL_DIR_PAIRS = Object.freeze([['.config', 'gh'], ['.config', 'gcloud']]);
+// run/secrets: Docker secrets, under /run and /var/run alike (the deny list's pair).
+const CREDENTIAL_DIR_PAIRS = Object.freeze([['.config', 'gh'], ['.config', 'gcloud'], ['run', 'secrets']]);
 
 /** Why this root-relative POSIX path looks like a credential, or null. Case-insensitive (darwin and win32 fold). */
 export function credentialReason(relPosix) {

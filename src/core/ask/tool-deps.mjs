@@ -30,6 +30,7 @@ import { PERSPECTIVE_KEYS } from '../../shared/shape/perspectives.mjs';
 import { listPresets } from '../run-presets-store.mjs';
 import { defaultGuardrailSetId } from '../guardrail-store.mjs';
 import { REMOTE_ENGINES } from '../../shared/exec-env.mjs';
+import { execEnvNames } from '../exec-env/registry.mjs';
 import { isSecretPath } from '../secret-paths.mjs';
 
 /** Who started runs (pipelines.started_by), one row per person, most active first. Scope: a
@@ -207,5 +208,7 @@ export function defaultToolDeps({ threadId, viewer = null }) {
     limits: ASK_LIMITS,
     // The engines a sandbox runs (src/shared/exec-env.mjs, from the catalog): propose_run's execEnv names them.
     remoteEngines: REMOTE_ENGINES,
+    // Every execution environment the registry knows ('local' first): propose_run's execEnv names them all.
+    execEnvNames: execEnvNames(),
   };
 }
