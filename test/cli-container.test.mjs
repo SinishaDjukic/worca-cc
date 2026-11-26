@@ -75,7 +75,7 @@ test('container helpers: detectRuntime, commonParent and composeFileArgs', async
     { name: 'composeFileArgs: base first, then one -f per overlay', run: async () => {
       assert.deepEqual(composeFileArgs([]), ['-f', 'compose.yml']);
       assert.deepEqual(composeFileArgs(['egress', 'ssh']), ['-f', 'compose.yml', '-f', 'compose.egress.yml', '-f', 'compose.ssh.yml']);
-      assert.deepEqual(OVERLAYS, ['egress', 'ssh', 'teams', 'clonein']);
+      assert.deepEqual(OVERLAYS, ['egress', 'ssh', 'teams', 'clonein', 'proxy']);
       assert.deepEqual(composeFileArgs(['ssh'], { project: true }), ['-f', 'compose.yml', '-f', 'compose.ssh.yml', '-f', 'project-mount.yml'],
         'the generated project mount goes last, so its masks sit on top of every bind');
     } },
@@ -101,7 +101,7 @@ test('initDir copies every compose file, seeds .env once (0600) and never overwr
     const { exec } = fakeExec();
     const r1 = await initDir(dir, { projects: '/Users/me/dev', exec });
     assert.equal(r1.envCreated, true);
-    for (const f of ['compose.yml', 'compose.egress.yml', 'compose.ssh.yml', 'compose.teams.yml', 'compose.clonein.yml', 'compose.dev.yml']) {
+    for (const f of ['compose.yml', 'compose.egress.yml', 'compose.ssh.yml', 'compose.teams.yml', 'compose.clonein.yml', 'compose.dev.yml', 'compose.proxy.yml']) {
       assert.ok(existsSync(join(dir, f)), `${f} copied`);
     }
     const env = readFileSync(join(dir, '.env'), 'utf8');
@@ -346,7 +346,8 @@ test('up --project: only that folder is bound, its untracked secrets are masked,
     const o = io();
     assert.equal(await cmdContainer(['up', '--project', repo, '--projects', '/Users/me/dev'], { ...o, exec, dir }), 0);
     const box = boxName(repo);
-    const first = calls.filter((k) => k.cmd === 'docker' && k.args[1] !== 'version');
+    // Compose calls only: `up` on the plain box also asks `docker ps` whether the hardened box holds the port.
+    const first = calls.filter((k) => k.cmd === 'docker' && k.args[0] === 'compose' && k.args[1] !== 'version');
     assert.deepEqual(first.map((k) => k.args), [['compose', '-f', 'compose.yml', 'down'], ['compose', '-p', box, '-f', 'compose.yml', '-f', MOUNT_FILE, 'up', '-d']],
       'the whole-folder box is stopped first, then the project starts in a box (and volumes) of its own');
     const up = first[1];
@@ -434,6 +435,28 @@ test('up --project refusals: with clone-in, with --no-project, a missing folder,
       assert.match(o.fails.at(-1), /does not exist \(remembered from an earlier up: pass --project <dir> or --no-project\)/);
       assert.ok(!calls.some((k) => k.args.includes('up')), 'compose would create the missing folder: nothing started');
     } finally { rmSync(other, { recursive: true, force: true }); }
+  } finally { rmSync(dir, { recursive: true, force: true }); rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('the hardened box mounts no host folder: --project is refused, and a running project box holds its port', { skip: POSIX_ONLY }, async () => {
+  const dir = tmp();
+  const repo = secretProject();
+  try {
+    const { exec, calls } = fakeExec();
+    const o = io();
+    for (const flag of [['--project', repo], ['--no-project']]) {
+      assert.equal(await cmdContainer(['up', '--hardened', ...flag, '--projects', '/Users/me/dev'], { ...o, exec, dir }), 2);
+      assert.match(o.fails.at(-1), /are for the plain container: the hardened box mounts no host folder/);
+    }
+    assert.equal(await cmdContainer(['up', '--project', repo], { ...o, exec, dir }), 0, 'a project-scoped plain box');
+    const running = (cmd, args, opts) => (args[0] === 'ps' && args.at(-1) === `label=com.docker.compose.project=${boxName(repo)}`
+      ? { status: 0, stdout: 'abc123\n', stderr: '' } : exec(cmd, args, opts));
+    calls.length = 0;
+    assert.equal(await cmdContainer(['up', '--hardened'], { ...o, exec: running, dir }), 1);
+    assert.match(o.fails.at(-1), /the plain container for .* is running and holds the same port: stop it first with worca container down --plain/);
+    assert.ok(!calls.some((k) => k.args.includes('up')), 'nothing started');
+    assert.ok(existsSync(join(dir, MOUNT_FILE)), 'the plain box keeps its project mount');
+    assert.equal(JSON.parse(readFileSync(join(dir, '.worca-container.json'), 'utf8')).project, repo, 'and its remembered project');
   } finally { rmSync(dir, { recursive: true, force: true }); rmSync(repo, { recursive: true, force: true }); }
 });
 

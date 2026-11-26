@@ -56,6 +56,7 @@ import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
 import { cmdExtension } from './extension.mjs';
 import { cmdProxy } from './proxy.mjs';
+import { sealEgressSecret } from '../core/egress-sidecar-client.mjs';
 import { cmdSetup } from './setup.mjs';
 import { cmdE2b } from './e2b.mjs';
 import { cmdExecEnv } from './exec-env.mjs';
@@ -354,8 +355,8 @@ Subcommands:
                               See: worca schedule help
   models <cmd> [...]          Model catalog + providers: list|providers|login|logout|import|test|set.
                               See: worca models help
-  container <cmd> [...]       Run Worca in a container: init|up|down|status|logs|pull|login|shell|run|where.
-                              See: worca container help (docs/docker.md)
+  container <cmd> [...]       Run Worca in a container: init|up|down|status|logs|pull|build|login|shell|run|where.
+                              --hardened: the hardened box. See: worca container help (docs/docker.md)
   extension [--browser <b>] [--open]
                               The browser extension packaged with this Worca: folder, version, install steps.
                               See: worca extension help (docs/browser-extension.md)
@@ -368,8 +369,10 @@ Subcommands:
                               (docs/credential-broker.md)
   e2b sweep [--dry-run] [--all]
                               Remove this instance's orphan E2B sandboxes (docs/e2b.md)
-  exec-env list|status|spec|build
-                              Execution environments; a project's sandbox spec and its builds (docs/e2b.md)
+  exec-env list|status|build  Execution environments and a project's sandbox builds (docs/e2b.md)
+  exec-env spec --project <key|dir> [--set <file.json> | --clear] [--json]
+                              A project's environment spec: pinned tools and apt packages
+                              (docs/environment-spec.md)
   help                       Print this help (same as --help).
   version                     Print the version (same as --version).
 
@@ -3667,7 +3670,7 @@ async function resolveTeamNote(team, { key, project, name, a }) {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory', 'setup', 'sessions', 'readiness', 'e2b', 'exec-env']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'egress', 'extension', 'proxy', 'memory', 'setup', 'sessions', 'readiness', 'e2b', 'exec-env']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3748,6 +3751,10 @@ function mistypedCommand(tokens) {
 }
 
 async function main() {
+  // The egress sidecar (src/egress/main.mjs) is its own process: no settings, no git, no policy proxy of its own.
+  if (process.argv[2] === 'egress') { const { runEgressCli } = await import('../egress/main.mjs'); return runEgressCli(process.argv.slice(3)); }
+  // The sidecar's shared secret leaves the environment before anything is spawned (src/core/egress-sidecar-client.mjs).
+  sealEgressSecret();
   // D6: the old Labs flag becomes networkProxy.enabled, once, before the proxy reads it.
   await migrateCorporateProxyFlag();
   // A hosting platform's outbound network policy (src/core/egress-policy.mjs). `worca ui` leaves
@@ -3808,10 +3815,10 @@ async function main() {
     if (sub === 'container') return cmdContainer(rest, { out, c, fail });
     if (sub === 'extension') return cmdExtension(rest, { out, c, fail });
     if (sub === 'proxy') return cmdProxy(rest, { out, c, fail });
+    if (sub === 'exec-env') return cmdExecEnv(rest, { out, c, fail });
     if (sub === 'setup') return cmdSetup(rest, { out });
     if (sub === 'readiness') return cmdReadiness(rest);
     if (sub === 'e2b') return cmdE2b(rest, { out, c, fail });
-    if (sub === 'exec-env') return cmdExecEnv(rest, { out, c, fail });
     if (sub === 'broker') {
       // Loaded lazily: the broker is its own process and needs none of the core graph.
       const { runBrokerCli } = await import('../broker/main.mjs');

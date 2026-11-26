@@ -9,7 +9,7 @@ import { makeSwitch } from './switch.mjs';
 import { renderCopilotSignIn } from './bridge-view.mjs';
 import { renderRolesSection, ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { renderInheritField, readInheritField } from './inherit-field.mjs';
-import { fetchJson as defaultFetchJson, renderResults, PORT_EMPTY_NOTE, PORT_SWITCH_NOTE, AUTH_OPTIONS } from './settings-network-proxy.mjs';
+import { fetchJson as defaultFetchJson, renderResults, PORT_EMPTY_NOTE, PORT_SWITCH_NOTE, AUTH_OPTIONS, SIDECAR_NOTE } from './settings-network-proxy.mjs';
 import { LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { ROLE_LABELS, MODEL_ROLES, ROLE_HARNESSES, isCliDecides, decidesLabel } from '../../src/shared/model-roles.mjs';
 import { CHAT_ENGINE_NAMES, engineLabel } from '../../src/shared/engine-switch.mjs';
@@ -267,7 +267,8 @@ export function diffRows(saved, answers, { detect = null } = {}) {
  * re-run or fix-it visit that changed nothing (NO_CHANGES_LINE).
  */
 export function nextGate(step, answers, { saved, tested = null, now = Date.now(), detect = null, entry = 'first', netSaved = '' } = {}) {
-  if (step === 'network' && answers.network.mode === 'proxy') {
+  // A login the operator manages (egress sidecar): Network shows its status only and changes nothing, so no Test is due.
+  if (step === 'network' && answers.network.mode === 'proxy' && !saved?.proxy?.managed) {
     if (!tested || tested.key !== proxyKey(answers.network) || now - tested.at >= TEST_PASS_MS) return { ok: false, reason: 'Test the connection to continue' };
   }
   if (step === 'access') {
@@ -607,7 +608,17 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     body.append(table);
   }
 
+  /** Managed by the operator (egress sidecar, WORCA_EGRESS_LOGIN_FILE): who is logged in and the state, no form. */
+  function paintManagedNetwork(p) {
+    const list = rows('sa-managed');
+    list.append(row(null, p.managedNote || 'The corporate proxy login is managed by the operator.'));
+    list.append(row(null, p.login ? `Logged in as ${p.login.label}${p.upstream ? ` to ${p.upstream}` : ''}.` : 'No login is set.'));
+    if (p.line) list.append(row(null, p.line));
+    body.append(list);
+  }
+
   function paintNetwork() {
+    if (S.saved.proxy?.managed) { paintManagedNetwork(S.saved.proxy); return; }
     const n = S.answers.network; const locked = !!S.retryLogin || !!S.netRetry || S.netJob;
     // Any edit to a value the test sent drops the pass, so changing it back still needs a new test.
     const untest = (set) => (v) => { S.tested = null; timers.clearTimeout(S.passT); set(v); };
@@ -646,17 +657,22 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
         const pw = textInput('password', n.password, untest((v) => { n.password = v; }), { autocomplete: 'off',
           ...(S.saved.proxy?.login && !locked ? { placeholder: 'Saved login in use · type to replace' } : {}) });
         body.append(field('Account', account, null), field('Password', pw, 'network.login.password'));
+        // In a container the password goes to the egress sidecar; say so where it is typed.
+        if (S.saved.proxy?.sidecar) body.append(el('small', 'hint sa-sidecar-note', SIDECAR_NOTE));
       }
       body.append(field('No proxy hosts', noProxy, 'network.networkProxy.noProxy'));
       if (!locked) {
-        body.append(btn('More: timeouts and local proxy port', 'link-btn sa-more', () => { S.more = !S.more; paintBody(); }));
-        if (S.more) {
+        body.append(btn(S.saved.proxy?.sidecar ? 'More: timeouts' : 'More: timeouts and local proxy port', 'link-btn sa-more', () => { S.more = !S.more; paintBody(); }));
+        // The egress sidecar listens on its own port: no local proxy port in a container.
+        if (S.more && !S.saved.proxy?.sidecar) {
           const fixed = textInput('number', n.fixedPort, untest((v) => { n.fixedPort = v.trim(); }), { min: '1024', max: '65535', placeholder: 'Automatic' });
           const f = field('Local proxy port', fixed, 'network.networkProxy.fixedPort');
           // What empty means, always; with a proxy already running, also that a new port applies at once while the old
           // one keeps answering for the programs holding it until the next start (egress-policy.mjs listenAlso).
           f.append(el('small', 'hint', S.saved.proxy?.running ? `${PORT_EMPTY_NOTE} ${PORT_SWITCH_NOTE}` : PORT_EMPTY_NOTE));
           body.append(f);
+        }
+        if (S.more) {
           // Shown filled in with the default; saved only when it differs, so an untouched field never reads as a change.
           for (const [k, label] of TIMEOUTS) {
             const v = n.timeouts?.[k] || UPSTREAM_TIMEOUTS[k];

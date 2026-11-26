@@ -18,51 +18,95 @@ const specFile = join(scratch, 'spec.json');
 const repo = gitDir('cli-execenv');
 const KEY = projectKey(repo);
 before(async () => { await addProject({ name: 'cli-execenv', path: repo }); });
-
-test('list names local and e2b', async () => {
-  const out = [];
-  assert.equal(await cmdExecEnv(['list'], { out: (s) => out.push(s), fail: () => {} }), 0);
-  assert.deepEqual(out.map((l) => l.split(/\s+/)[0]), ['local', 'e2b']);
-});
-test('spec --set stores the normalized spec; status shows it; a bad file fails with the reason', async () => {
+const run = async (argv, extra = {}) => {
   const out = []; const errs = [];
-  const io = { out: (s) => out.push(s), fail: (s) => errs.push(s) };
-  writeFileSync(specFile, JSON.stringify({ tools: [{ name: 'node', version: '24.21.0' }] }));
-  assert.equal(await cmdExecEnv(['spec', '--project', KEY, '--set', specFile], io), 0);
-  assert.match(out.at(-1), /spec saved: 1 tools, 0 apt packages \(sha256:/);
-  assert.equal(await cmdExecEnv(['status', '--project', repo], io), 0, 'a directory names the project too');
-  assert.equal(JSON.parse(out.at(-1)).spec.tools[0].name, 'node');
+  const code = await cmdExecEnv(argv, { out: (s) => out.push(s), fail: (s) => errs.push(s), ...extra });
+  return { code, out, errs };
+};
+
+test('help lists the verbs; an unknown verb is refused', async () => {
+  const help = (await run([])).out[0];
+  assert.match(help, /worca exec-env spec --project <key\|dir> \[--set <file\.json> \| --clear\] \[--json\]/);
+  assert.match(help, /worca exec-env build --project <key\|dir>/);
+  const r = await run(['bogus']);
+  assert.equal(r.code, 1); assert.match(r.errs[0], /unknown exec-env command: bogus/);
+});
+test('list names local and e2b', async () => {
+  const r = await run(['list']);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.out.map((l) => l.split(/\s+/)[0]), ['local', 'e2b']);
+});
+test('spec shows nothing before a spec is set', async () => {
+  const r = await run(['spec', '--project', KEY]);
+  assert.equal(r.code, 0); assert.equal(r.out[0], 'no environment spec');
+  assert.equal(JSON.parse((await run(['spec', '--project', KEY, '--json'])).out[0]), null);
+});
+test('spec --set stores the normalized spec; show prints it, as text and as JSON; a directory names the project too', async () => {
+  writeFileSync(specFile, JSON.stringify({ tools: [{ name: 'node', version: '24.21.0' }], apt: ['libpq-dev'] }));
+  let r = await run(['spec', '--project', KEY, '--set', specFile]);
+  assert.equal(r.code, 0);
+  assert.match(r.out.at(-1), /spec saved: 1 tools, 1 apt packages \(sha256:/);
+  r = await run(['spec', '--project', repo]);
+  assert.match(r.out[0], /node 24\.21\.0/); assert.match(r.out[0], /libpq-dev/);
+  r = await run(['spec', '--project', KEY, '--json']);
+  assert.equal(JSON.parse(r.out[0]).tools[0].name, 'node');
+  assert.deepEqual(JSON.parse(r.out[0]), readProjectExecEnv(KEY).spec);
+});
+test('status shows the stored spec (this shell\'s view when no server runs)', async () => {
+  const r = await run(['status', '--project', repo], { call: async () => null });
+  assert.equal(r.code, 0, 'a directory names the project too');
+  assert.equal(JSON.parse(r.out.at(-1)).spec.tools[0].name, 'node');
+});
+test('spec --set with a bad file fails with the reason and keeps the stored spec', async () => {
+  const before = readProjectExecEnv(KEY).spec;
   writeFileSync(specFile, JSON.stringify({ tools: [{ name: 'node', version: 'latest' }] }));
-  assert.equal(await cmdExecEnv(['spec', '--project', KEY, '--set', specFile], io), 1);
-  assert.match(errs.at(-1), /must be pinned/);
+  let r = await run(['spec', '--project', KEY, '--set', specFile]);
+  assert.equal(r.code, 1); assert.match(r.errs[0], /must be pinned/);
+  writeFileSync(specFile, '{ not json');
+  r = await run(['spec', '--project', KEY, '--set', specFile]);
+  assert.equal(r.code, 1);
+  r = await run(['spec', '--project', KEY, '--set', join(scratch, 'missing.json')]);
+  assert.equal(r.code, 1);
+  assert.deepEqual(readProjectExecEnv(KEY).spec, before);
 });
 test('status shows the running server\'s view (its E2B env decides the template); with no server, this shell\'s', async () => {
-  const out = []; const errs = []; const calls = [];
-  const io = { out: (s) => out.push(s), fail: (s) => errs.push(s) };
+  const calls = [];
   const view = { projectKey: KEY, spec: null, backends: [{ name: 'e2b', elsewhere: null }] };
   const call = async (path, o = {}) => { calls.push([o.method || 'GET', path]); return { ok: true, status: 200, data: view }; };
-  assert.equal(await cmdExecEnv(['status', '--project', KEY], { ...io, call }), 0);
+  let r = await run(['status', '--project', KEY], { call });
+  assert.equal(r.code, 0);
   assert.deepEqual(calls, [['GET', `/api/projects/${KEY}/exec-env`]]);
-  assert.deepEqual(JSON.parse(out.at(-1)), view); assert.deepEqual(errs, []);
+  assert.deepEqual(JSON.parse(r.out.at(-1)), view); assert.deepEqual(r.errs, []);
   for (const none of [async () => null, async () => ({ ok: false, status: 401, data: { error: 'sign in' } })]) {
-    errs.length = 0;
-    assert.equal(await cmdExecEnv(['status', '--project', KEY], { ...io, call: none }), 0);
-    assert.equal(JSON.parse(out.at(-1)).projectKey, KEY);
-    assert.match(errs[0], /computed in this shell/);
+    r = await run(['status', '--project', KEY], { call: none });
+    assert.equal(r.code, 0);
+    assert.equal(JSON.parse(r.out.at(-1)).projectKey, KEY);
+    assert.match(r.errs[0], /computed in this shell/);
   }
+});
+test('spec --clear removes it; --set with --clear, a missing --project and an unknown option are refused', async () => {
+  let r = await run(['spec', '--project', KEY, '--clear']);
+  assert.equal(r.code, 0); assert.equal(r.out[0], 'spec cleared');
+  assert.equal(readProjectExecEnv(KEY).spec, null);
+  r = await run(['spec', '--project', KEY, '--set', specFile, '--clear']);
+  assert.equal(r.code, 2); assert.match(r.errs[0], /exclude each other/);
+  r = await run(['spec']);
+  assert.equal(r.code, 2); assert.match(r.errs[0], /--project <key\|dir> is required/);
+  r = await run(['spec', '--project']);
+  assert.equal(r.code, 2); assert.match(r.errs[0], /--project needs a value/);
+  r = await run(['spec', '--project', KEY, '--bogus']);
+  assert.equal(r.code, 2); assert.match(r.errs[0], /unknown option --bogus/);
 });
 test('spec on an unregistered directory is refused and writes nothing', async () => {
   const other = gitDir('cli-execenv-other');
-  const errs = [];
   writeFileSync(specFile, JSON.stringify({ tools: [] }));
-  assert.equal(await cmdExecEnv(['spec', '--project', other, '--set', specFile], { out: () => {}, fail: (s) => errs.push(s) }), 1);
-  assert.match(errs[0], /is not a registered project/);
+  const r = await run(['spec', '--project', other, '--set', specFile]);
+  assert.equal(r.code, 1); assert.match(r.errs[0], /is not a registered project/);
   assert.equal(readProjectExecEnv(projectKey(other)).spec, null);
 });
 test('build never builds in the CLI process: with no server it fails and says why', async () => {
-  const errs = [];
-  const code = await cmdExecEnv(['build', '--project', KEY], { out: () => {}, fail: (s) => errs.push(s), call: async () => null });
-  assert.equal(code, 1); assert.match(errs[0], /run only in the server process/);
+  const r = await run(['build', '--project', KEY], { call: async () => null });
+  assert.equal(r.code, 1); assert.match(r.errs[0], /run only in the server process/);
 });
 test('build follows the server job log to the end', async () => {
   const calls = []; let polls = 0;
@@ -72,9 +116,9 @@ test('build follows the server job log to the end', async () => {
     polls += 1;
     return { ok: true, status: 200, data: polls === 1 ? { lines: ['step 1'], next: 1, job: { state: 'running' } } : { lines: ['built'], next: 2, job: { state: 'done' } } };
   };
-  const out = [];
-  assert.equal(await cmdExecEnv(['build', '--project', KEY], { out: (s) => out.push(s), fail: () => {}, call, sleep: async () => {} }), 0);
-  assert.deepEqual(out.slice(1), ['step 1', 'built']);
+  const r = await run(['build', '--project', KEY], { call, sleep: async () => {} });
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.out.slice(1), ['step 1', 'built']);
   assert.deepEqual(calls[0], ['POST', `/api/projects/${KEY}/exec-env/build`]);
   assert.equal(calls[2][1], '/api/exec-env/builds/envb_1?since=1');
 });

@@ -57,6 +57,7 @@
     "tools/install.mjs",
     "docker/compose*.yml",
     "docker/.env.example",
+    "docker/shared.env.example",
     "npm-shrinkwrap.json",
     "docker/e2b/e2b.Dockerfile",
     "docker/e2b/engine-clis.json",
