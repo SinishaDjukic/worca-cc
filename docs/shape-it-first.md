@@ -746,7 +746,7 @@ With the flag on, each run of a marked feature reads one word and one mark, the 
 A waiting run names only the unfinished runs nothing else in its list leads to: run 7 builds on runs 2 to 6, but 6
 builds on 3, 4 and 5, so it reads `waits for run 2, 6`. A named run at a stop says so inside the word
 (`waits for run 2 (needs you), 6`), and a named run that failed adds `(failed)` (`waits for run 5 (failed)`).
-`next` comes only from the server's turn: an answer held for its turn first, lowest run number first (the order held answers are delivered in),
+`next` comes only from the server's turn: an answer or a resume held for its turn first, lowest run number first (the order held answers are delivered in),
 then a change run, then the lowest free run.
 A free run without the turn shows no word.
 
@@ -781,6 +781,16 @@ run that cannot start waits on you. The card keeps its `2 of 16 runs done` after
 once (the stop lines, failed runs included), and nothing at zero. A second answer to a listed stop, from another open
 view, is refused as before.
 
+### Held resumes
+
+With the flag on, a Resume of a paused run of a marked feature while another run of the feature is going is held: the
+run stays paused and goes on at its turn, together with held answers. This holds for the run's own Resume, the
+feature card's Resume and a stop line's Resume. A held resume holds nothing, so it never keeps another run from its
+turn, but it goes before the free runs. Pause or Stop on the held run drops the hold, and so does a restart: the run
+is then simply paused. Of several runs of one feature resumed at a restart, only the lowest goes on; the others are
+held behind it. Until the row wording lands, a held resume reads as a paused run. A restart of a stopped or failed
+run is still refused while another run of the feature is going.
+
 ### Show order
 
 With the flag on, the feature page's Runs tab of a marked feature offers a `Show order` button above the run rows when
@@ -801,7 +811,7 @@ Some parts follow the marker and stay with the feature; the rest follow the flag
 
 **The flag, read live.** While it is on, these apply to every sliced feature, also for a feature with no marker: a run
 waits only for the runs it builds on, so an independent run starts while an earlier one is stopped, failed, waiting
-or paused (one run of a feature at a time), an answer held for its turn waits until no other run is going and held answers go on one at a time, lowest run first, and among
+or paused (one run of a feature at a time), an answer or a resume held for its turn waits until no other run is going and held answers go on one at a time, lowest run first, and among
 the free runs a change run starts first, then the lowest run number; a run starts from the feature's latest finished run and, on a marked feature, merges in every run it builds on that this branch lacks; a resumed run first merges the
 latest finished work; a run that waited at a stop takes in every same-base finished run it lacks before its answer goes on; a finished feature's figures are recorded on this machine; and one PR ships the latest finished
 run's branch, or is refused with `HEAD_MISSING_WORK` when that branch does not hold every run's work.

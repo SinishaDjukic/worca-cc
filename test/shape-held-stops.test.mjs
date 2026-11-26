@@ -32,7 +32,7 @@ const slice = (n) => ({ id: `s${n}`, title: `Slice ${n}`, goal: '', inScope: [],
 const STOP = gateStop({ run: 2, issues: [{ severity: 'major', title: 'x' }], fixCycles: 3 });
 
 /** A feature of `slices` runs: run 1 done, run 2 live on a stop question, run 3 live and building unless `three` is false. */
-function setup({ three = true, slices = 3, applyChange = undefined, takeIn = undefined } = {}) {
+function setup({ three = true, slices = 3, applyChange = undefined, takeIn = undefined, canResume = true, resumeReply = undefined } = {}) {
   const f = createSliceFeature({ pipelineId: pipe('done'), projectDir: root, title: 'T', outline: { why: '', slices: Array.from({ length: slices }, (_, i) => slice(i + 1)) },
     perspectives: ['product'], workflowId: 'wf_shape' });
   const tix = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(f.id).map((r) => r.ticket_id);
@@ -51,18 +51,32 @@ function setup({ three = true, slices = 3, applyChange = undefined, takeIn = und
   const e2 = entry(2, 'running');
   e2.pendingQuestion = { id: 'gate-w9-3', kind: 'gate', stop: STOP };
   const e3 = three ? entry(3, 'running') : null;
-  const liveSliceOf = (pid) => {
+  const entrySliceOf = (pid) => {
     const e = [...runs.values()].find((x) => x.pipelineId === pid);
     return e && e.status === 'running' ? liveSliceFrom({ runId: e.id, status: e.status, pendingQuestion: e.pendingQuestion, approved: true, heldStop: e.heldStop, going: !!e.takingIn }) : null;
+  };
+  // Small runs slice 7 (D9): as the server composes it, through the instance's overlay (held and delivering resumes).
+  const liveSliceOf = (pid) => (held.overlay ? held.overlay(pid, entrySliceOf(pid)) : entrySliceOf(pid));
+  // Slice 7: the fake resumeRun. It records each call; by default the run goes on (its pipeline row reads running).
+  const resumed = [];
+  const resume = async (pid, opts) => {
+    const run = getDb().prepare('SELECT idx FROM shape_feature_slices WHERE pipeline_id = ? OR ticket_id IN (SELECT id FROM scheduled_runs WHERE pipeline_id = ?)')
+      .get(pid, pid)?.idx;
+    resumed.push({ run, pid, opts });
+    if (resumeReply) return resumeReply(pid, opts);
+    setPipe(pid, 'running');
+    return { ok: true, runId: `resumed-${pid}`, pipelineId: pid };
   };
   const resolvePending = (e, { id, reason }) => {
     if (!e.pendingQuestion || e.pendingQuestion.id !== id) return false;
     e.pendingQuestion = null; resolved.push({ id, reason }); return true;
   };
+  const audits = [];
   const held = createHeldStops({ runs, liveSliceOf, broadcastFeature: (id) => repaints.push(id), resolvePending, now: Date.now,
-    ...(applyChange ? { applyChange } : {}), ...(takeIn ? { takeIn } : {}) });
+    audit: (pid, text, by) => audits.push({ pid, text, by }),
+    ...(applyChange ? { applyChange } : {}), ...(takeIn ? { takeIn } : {}), ...(canResume ? { resume } : {}) });
   const finish = (e) => { e.status = 'done'; setPipe(e.pipelineId, 'done'); };
-  return { f, e2, e3, runs, held, answers, resolved, repaints, finish, liveSliceOf, entry };
+  return { f, e2, e3, runs, held, answers, resolved, repaints, finish, liveSliceOf, entry, resumed, audits };
 }
 
 test('held while run 3 is going: deliver answers 0 times; after it finishes, once, and pendingQuestion is resolved', () => {
@@ -613,3 +627,337 @@ test('s6: the label and deliver read the one exported turnOrder', () => {
   assert.match(delivery, /import\s*\{[^}]*\bturnOrder\b[^}]*\}\s*from\s*'\.\/features\.mjs'/, 'delivery imports it');
   assert.match(delivery, /\bturnOrder\(/, 'delivery calls it');
 });
+
+// ── Small runs slice 7 (R-po-4, R-po-5): a resume waits its turn, held beside the held stop answers ───────────────
+const statusOf = (pid) => getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(pid).status;
+/** Run `n` paused with no runs-map entry (as after a restart). → its pipeline id */
+function pausedRun(w, n) {
+  const e = w.entry(n, 'paused');
+  setPipe(e.pipelineId, 'paused');
+  w.runs.delete(e.id);
+  return e.pipelineId;
+}
+/** A 6-run feature, marked unless `mark` is false: run 2 done, run 4 working, each run in `paused` paused. */
+function resumeWorld({ paused = [6], mark = true, ...over } = {}) {
+  const w = setup({ slices: 6, three: false, ...over });
+  if (mark) markFeature(w.f.id);
+  w.e2.pendingQuestion = null;
+  w.finish(w.e2);
+  w.e2.settled = true;
+  const pids = Object.fromEntries(paused.map((n) => [n, pausedRun(w, n)]));
+  const e4 = w.entry(4, 'running');
+  return { ...w, e4, pids };
+}
+const resumedRuns = (w) => w.resumed.map((r) => r.run);
+const heldAnswerTo = (pid, after) => ({ ok: true, held: true, pipelineId: pid, after });
+
+test('s7: holdResume while run 4 works returns {held, after:4}; resume is not called; heldResumeOf reads {after:4}', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld();
+  const pid = w.pids[6];
+  const painted = w.repaints.length;
+  assert.deepEqual(w.held.holdResume(pid, { by: 'ann' }), heldAnswerTo(pid, 4));
+  assert.deepEqual(w.held.heldResumeOf(pid), { after: 4 });
+  assert.ok(w.repaints.slice(painted).includes(w.f.id), 'the feature repaints');
+  const once = w.repaints.length;
+  assert.deepEqual(w.held.holdResume(pid, { by: 'ann' }), heldAnswerTo(pid, 4), 'a ticket held again on the next tick');
+  assert.equal(w.repaints.length, once, 'the same hold does not repaint again');
+  assert.equal(busySliceOf(w.f.id, { exclude: 4, live: w.liveSliceOf }), null, 'a held resume holds nothing');
+  await w.held.deliver();
+  assert.deepEqual(w.resumed, []);
+  assert.equal(statusOf(pid), 'paused');
+}));
+
+test('s7: deliver after run 4 finishes calls resume once with the stored opts', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld();
+  const pid = w.pids[6];
+  w.held.holdResume(pid, { by: 'bo' });
+  const latest = { by: 'ann', ignoreCostCap: true };
+  assert.deepEqual(w.held.holdResume(pid, latest), heldAnswerTo(pid, 4), 'held again: the latest opts are kept');
+  latest.by = 'changed afterwards';
+  w.finish(w.e4);
+  await w.held.deliver();
+  await w.held.deliver();
+  assert.deepEqual(w.resumed, [{ run: 6, pid, opts: { by: 'ann', ignoreCostCap: true, heldDelivery: true } }]);
+  assert.equal(w.held.heldResumeOf(pid), null);
+}));
+
+test('s7: held answer on run 5 and held resume on run 3 go 3, then 5; nextRuns names [3]', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld({ paused: [3] });
+  const e5 = stopped(w, 5);
+  assert.deepEqual(answerStop(w, e5), { held: true });
+  assert.deepEqual(w.held.holdResume(w.pids[3], { by: 'ann' }), heldAnswerTo(w.pids[3], 4));
+  assert.deepEqual(nextRuns(w), [3], 'only run 3 reads next');
+  w.finish(w.e4);
+  await w.held.deliver();
+  assert.deepEqual([resumedRuns(w), answeredRuns(w)], [[3], []], 'run 3 is resumed first');
+  assert.equal(e5.heldStop?.after, 3, 'run 5 stays held behind run 3');
+  setPipe(w.pids[3], 'done');
+  await w.held.deliver();
+  assert.deepEqual([resumedRuns(w), answeredRuns(w)], [[3], [5]]);
+}));
+
+test('s7 (R-arch-7): one order for both kinds: a held answer on run 3 goes before a held resume on run 5', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld({ paused: [5] });
+  const e3 = stopped(w, 3);
+  assert.deepEqual(w.held.holdResume(w.pids[5], { by: 'ann' }), heldAnswerTo(w.pids[5], 4));
+  assert.deepEqual(answerStop(w, e3), { held: true });
+  assert.deepEqual(nextRuns(w), [3]);
+  w.finish(w.e4);
+  await w.held.deliver();
+  assert.deepEqual([answeredRuns(w), resumedRuns(w)], [[3], []]);
+  assert.deepEqual(w.held.heldResumeOf(w.pids[5]), { after: 3 }, 'run 5 is now behind run 3');
+  w.finish(e3);
+  await w.held.deliver();
+  assert.deepEqual(resumedRuns(w), [5]);
+}));
+
+test('s7 (D7): a resume held again after its turn blocks the later held items of its feature', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld({ paused: [3], resumeReply: (pid) => heldAnswerTo(pid, 1) });
+  const e5 = stopped(w, 5);
+  assert.deepEqual(answerStop(w, e5), { held: true });
+  w.held.holdResume(w.pids[3], { by: 'ann' });
+  w.finish(w.e4);
+  await w.held.deliver();
+  assert.deepEqual([resumedRuns(w), answeredRuns(w)], [[3], []], 'run 5 does not overtake run 3');
+  assert.ok(w.held.heldResumeOf(w.pids[3]), 'run 3 is put back');
+  assert.ok(e5.heldStop, 'run 5 stays held');
+}));
+
+test("s7: pausing run 4 (a person's pause) delivers the held resume", () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld();
+  w.held.holdResume(w.pids[6], { by: 'ann' });
+  w.e4.status = 'paused';
+  setPipe(w.e4.pipelineId, 'paused');
+  await w.held.deliver();
+  assert.deepEqual(resumedRuns(w), [6]);
+}));
+
+test('s7: run 4 reaching an unanswered stop delivers the held resume once on the next pass', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld();
+  w.held.holdResume(w.pids[6], { by: 'ann' });
+  w.e4.pendingQuestion = { id: 'gate-s7-4', kind: 'gate', stop: STOP };
+  await w.held.deliver();
+  await w.held.deliver();
+  assert.deepEqual(resumedRuns(w), [6]);
+}));
+
+test('s7: a held resume whose turn is not due names the run now going and repaints', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld();
+  w.held.holdResume(w.pids[6], { by: 'ann' });
+  w.entry(3, 'running');
+  w.finish(w.e4);
+  const painted = w.repaints.length;
+  await w.held.deliver();
+  assert.deepEqual(w.resumed, []);
+  assert.deepEqual(w.held.heldResumeOf(w.pids[6]), { after: 3 });
+  assert.ok(w.repaints.slice(painted).includes(w.f.id));
+}));
+
+test('s7: a refused delivery drops the hold, logs and says why on the run (overlay and audit); the run stays paused', () => withEnv(SMALL_ON, async () => {
+  for (const [name, resumeReply, code] of [
+    ['a refusal', async () => ({ ok: false, error: 'pipeline cost limit reached' }), null],
+    ['a throw', async () => { throw Object.assign(new Error('main moved 2 commit(s)'), { status: 409, body: { code: 'base-moved', error: 'main moved 2 commit(s)' } }); }, 'base-moved'],
+  ]) {
+    const w = resumeWorld({ resumeReply });
+    const pid = w.pids[6];
+    w.held.holdResume(pid, { by: 'ann' });
+    w.finish(w.e4);
+    const painted = w.repaints.length;
+    const errors = await quietly(() => w.held.deliver());
+    assert.equal(w.held.heldResumeOf(pid), null, name);
+    assert.ok(errors.some((e) => /held resume not delivered: /.test(e)), `${name}: ${errors.join(' | ')}`);
+    assert.equal(statusOf(pid), 'paused', name);
+    const error = code ? 'main moved 2 commit(s)' : 'pipeline cost limit reached';
+    const why = w.held.overlay(pid, null);
+    assert.deepEqual([why?.status, why?.resuming, 'heldResume' in (why || {}), why?.resumeRefused], ['paused', undefined, false, { code, error }], `${name}: the reason reads on the run`);
+    assert.deepEqual(w.audits, [{ pid, by: 'ann', text: `The resume held for its turn did not go on: ${error}. Resume again to go on.` }], name);
+    assert.ok(w.repaints.slice(painted).includes(w.f.id), name);
+    await w.held.deliver();
+    assert.equal(w.resumed.length, 1, `${name}: not tried again`);
+    w.held.holdResume(pid, { by: 'ann' });
+    assert.equal(w.held.overlay(pid, null), null, `${name}: the next Resume clears the reason`);
+  }
+}));
+
+test('s7: dropResume removes the hold; deliver after run 4 finishes calls nothing', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld();
+  const pid = w.pids[6];
+  w.held.holdResume(pid, { by: 'ann' });
+  const painted = w.repaints.length;
+  assert.equal(w.held.dropResume(pid), true);
+  assert.ok(w.repaints.slice(painted).includes(w.f.id));
+  assert.equal(w.held.dropResume(pid), false, 'nothing left to drop');
+  assert.equal(w.held.heldResumeOf(pid), null);
+  w.finish(w.e4);
+  await w.held.deliver();
+  assert.deepEqual(w.resumed, []);
+}));
+
+test('s7: overlay reads heldResume.after while held, resuming while delivering, and neither after dropResume', () => withEnv(SMALL_ON, async () => {
+  const gate = deferred();
+  const w = resumeWorld({ resumeReply: () => gate.promise });
+  const pid = w.pids[6];
+  const entry = liveSliceFrom({ runId: 'r6', status: 'paused' });
+  assert.equal(w.held.overlay(pid, null), null, 'unchanged while neither');
+  assert.equal(w.held.overlay(pid, entry), entry, 'unchanged while neither');
+
+  w.held.holdResume(pid, { by: 'ann' });
+  const bare = w.held.overlay(pid, null);
+  assert.deepEqual(bare, { ...liveSliceFrom({ runId: null, status: 'paused' }), heldResume: { after: 4 } });
+  assert.deepEqual(w.held.overlay(pid, entry), { ...entry, heldResume: { after: 4 } });
+  assert.deepEqual(w.held.overlay(pid, bare), bare, 'idempotent');
+  w.held.dropResume(pid);
+  assert.equal(w.held.overlay(pid, null), null, 'neither after dropResume');
+
+  w.held.holdResume(pid, { by: 'ann' });
+  w.finish(w.e4);
+  const going = w.held.deliver();
+  try {
+    await ticks();
+    const delivering = w.held.overlay(pid, null);
+    assert.equal(delivering?.resuming, true);
+    assert.equal(delivering.status, 'paused');
+    assert.equal('heldResume' in delivering, false);
+    assert.equal(w.held.overlay(pid, entry).resuming, true);
+  } finally { gate.resolve({ ok: true, runId: 'r6-resumed' }); }
+  await going;
+  assert.equal(w.held.overlay(pid, null), null, 'neither once delivered');
+}));
+
+test('s7 (I2, I4): while a resume is being delivered the run is going, it is not held again and not delivered twice', () => withEnv(SMALL_ON, async () => {
+  const gate = deferred();
+  const w = resumeWorld({ resumeReply: () => gate.promise });
+  const pid = w.pids[6];
+  w.held.holdResume(pid, { by: 'ann' });
+  w.finish(w.e4);
+  const first = w.held.deliver();
+  const second = w.held.deliver();
+  try {
+    await ticks();
+    assert.equal(w.held.holdResume(pid, { by: 'ann', heldDelivery: true }), null, 'the delivery does not hold itself');
+    assert.throws(() => w.held.holdResume(pid, { by: 'bo' }), (e) => e.code === 'RESUME_IN_FLIGHT' && e.status === 409, "a person's Resume is refused");
+    assert.equal(w.held.heldResumeOf(pid), null);
+    assert.deepEqual(busySliceOf(w.f.id, { live: w.liveSliceOf }), { index: 6 });
+    assert.equal(w.resumed.length, 1);
+  } finally { gate.resolve({ ok: true, runId: 'r6-resumed' }); }
+  await Promise.all([first, second]);
+  await ticks();
+  assert.equal(w.resumed.length, 1, 'delivered once');
+}));
+
+test('s7: holdResume answers null (nothing held) with no resume dep, the flag off, an unmarked feature, no feature, or the turn due', async () => {
+  const nothing = (w, pid, why) => {
+    assert.equal(w.held.holdResume(pid, { by: 'ann' }), null, why);
+    assert.equal(w.held.heldResumeOf(pid), null, why);
+  };
+  await withEnv({ WORCA_FLAGS: undefined }, () => { const w = resumeWorld(); nothing(w, w.pids[6], 'flag off'); });
+  await withEnv(SMALL_ON, () => {
+    const unmarked = resumeWorld({ mark: false });
+    nothing(unmarked, unmarked.pids[6], 'unmarked feature');
+    const w = resumeWorld();
+    nothing(w, pipe('paused'), 'a pipeline of no feature');
+    w.finish(w.e4);
+    nothing(w, w.pids[6], 'the turn is due');
+    const noDep = resumeWorld({ canResume: false });
+    nothing(noDep, noDep.pids[6], 'no resume dep');
+  });
+});
+
+test('s7 (D12): a resume asked again once its turn is due answers null and drops the old hold', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld();
+  const pid = w.pids[6];
+  w.held.holdResume(pid, { by: 'ann' });
+  w.finish(w.e4);
+  const painted = w.repaints.length;
+  assert.equal(w.held.holdResume(pid, { by: 'bo' }), null);
+  assert.equal(w.held.heldResumeOf(pid), null);
+  assert.ok(w.repaints.slice(painted).includes(w.f.id));
+  await w.held.deliver();
+  assert.deepEqual(w.resumed, [], 'the caller goes on itself');
+}));
+
+test('s7 (D13): with the flag off a left-over held resume is delivered with no turn check', async () => {
+  let w = null;
+  await withEnv(SMALL_ON, () => { w = resumeWorld(); assert.ok(w.held.holdResume(w.pids[6], { by: 'ann' })); });
+  await withEnv({ WORCA_FLAGS: undefined }, async () => {
+    await w.held.deliver();
+    assert.deepEqual(resumedRuns(w), [6], 'run 4 is still working');
+    assert.equal(w.held.heldResumeOf(w.pids[6]), null);
+  });
+});
+
+test('s7: splitBootPicks keeps the lowest run per marked feature and holds the others after it; unmarked picks pass through', () => withEnv(SMALL_ON, async () => {
+  const marked = resumeWorld({ paused: [6, 5, 3] });
+  marked.finish(marked.e4);                          // nothing is working at a start
+  const unmarked = resumeWorld({ paused: [3, 5], mark: false });
+  const pick = (pid, by = 'cy') => ({ pipelineId: pid, by, why: 'drain' });
+  const [three, five, six] = [3, 5, 6].map((n) => marked.pids[n]);
+  const others = [pick(unmarked.pids[5]), pick(unmarked.pids[3]), pick(pipe('paused'))];
+  const picks = [pick(six, 'ann'), pick(five), pick(three), ...others];
+  const ids = (list) => list.map((p) => p.pipelineId).sort();
+  const out = marked.held.splitBootPicks(picks, { mock: true });
+  assert.deepEqual(ids(out), ids([pick(three), ...others]), 'run 3 goes on; the unmarked picks and the pick of no feature pass through');
+  assert.deepEqual(marked.held.heldResumeOf(five), { after: 3 });
+  assert.deepEqual(marked.held.heldResumeOf(six), { after: 3 });
+  assert.equal(marked.held.heldResumeOf(three), null);
+  for (const p of others) assert.equal(marked.held.heldResumeOf(p.pipelineId), null);
+  assert.deepEqual(ids(marked.held.splitBootPicks(picks, { mock: true })), ids(out), 'idempotent');
+  assert.deepEqual(marked.held.heldResumeOf(six), { after: 3 });
+}));
+
+test('s7 (D11): of boot picks [6, 4] only run 4 stays a pick; run 6 is resumed later as {by, mock}', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld({ paused: [6] });
+  const four = w.e4.pipelineId;
+  w.e4.status = 'paused';
+  setPipe(four, 'paused');
+  const picks = [{ pipelineId: w.pids[6], by: 'ann', why: 'drain' }, { pipelineId: four, by: 'bo', why: 'drain' }];
+  assert.deepEqual(w.held.splitBootPicks(picks, { mock: true }), [picks[1]]);
+  assert.deepEqual(w.held.heldResumeOf(w.pids[6]), { after: 4 });
+  w.e4.status = 'running';                            // run 4's boot resume is live
+  setPipe(four, 'running');
+  await w.held.deliver();
+  assert.deepEqual(w.resumed, []);
+  w.finish(w.e4);
+  await w.held.deliver();
+  assert.deepEqual(w.resumed, [{ run: 6, pid: w.pids[6], opts: { by: 'ann', mock: true, heldDelivery: true } }]);
+}));
+
+test('s7 flag off: splitBootPicks returns every pick and holds nothing', () => withEnv({ WORCA_FLAGS: undefined }, () => {
+  const w = resumeWorld({ paused: [3, 6] });
+  const picks = [{ pipelineId: w.pids[6], by: 'ann', why: 'drain' }, { pipelineId: w.pids[3], by: 'bo', why: 'drain' }];
+  assert.deepEqual(w.held.splitBootPicks(picks, { mock: false }), picks);
+  assert.equal(w.held.heldResumeOf(w.pids[6]), null);
+}));
+
+test('s7 (I2): a resume whose turn is due claims it until it settles; a second resume meanwhile is held after it or refused', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld({ paused: [3, 5] });
+  w.finish(w.e4);                                     // nothing is going
+  const gate = deferred();
+  const three = w.held.claimed(w.pids[3], async (ticket) => {
+    assert.equal(w.held.holdResume(w.pids[3], { by: 'ann' }, ticket), null, 'run 3 goes on');
+    assert.equal(ticket.claimed, true);
+    await gate.promise;                               // resumeRun's awaits before its runs-map entry is set
+    return { ok: true, runId: 'r3' };
+  });
+  await ticks();
+  assert.equal(w.liveSliceOf(w.pids[3])?.resuming, true, 'run 3 reads as being resumed');
+  assert.deepEqual(busySliceOf(w.f.id, { live: w.liveSliceOf }), { index: 3 });
+  const five = await w.held.claimed(w.pids[5], async (ticket) => w.held.holdResume(w.pids[5], { by: 'bo' }, ticket) || { ok: true, runId: 'r5' });
+  assert.deepEqual(five, heldAnswerTo(w.pids[5], 3), 'run 5 is held after run 3');
+  assert.throws(() => w.held.holdResume(w.pids[3], { by: 'cy' }), (e) => e.code === 'RESUME_IN_FLIGHT', 'a second resume of run 3 is refused');
+  setPipe(w.pids[3], 'running');                      // its entry is set
+  gate.resolve();
+  assert.deepEqual(await three, { ok: true, runId: 'r3' });
+  assert.equal(w.liveSliceOf(w.pids[3]), null, 'the claim is released once it settled');
+  await w.held.deliver();
+  assert.deepEqual(w.resumed, [], 'run 5 waits for run 3');
+}));
+
+test('s7: a claimed resume that refuses releases the claim; without a ticket nothing is claimed', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld();
+  w.finish(w.e4);
+  await assert.rejects(w.held.claimed(w.pids[6], async (ticket) => { w.held.holdResume(w.pids[6], {}, ticket); throw new Error('pipeline is archived'); }), /archived/);
+  assert.equal(w.liveSliceOf(w.pids[6]), null);
+  assert.equal(w.held.holdResume(w.pids[6], {}), null);
+  assert.equal(w.liveSliceOf(w.pids[6]), null, 'no ticket, no claim');
+}));

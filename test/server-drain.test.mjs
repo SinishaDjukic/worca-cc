@@ -15,7 +15,7 @@ import { addProject } from '../src/core/projects.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { graphResumePoint } from './helpers/graph-templates.mjs';
 import { withEnv } from './helpers/with-env.mjs';
-import { createSliceFeature, featureOfPipeline } from '../src/core/shape/features.mjs';
+import { busySliceOf, createSliceFeature, featureOfPipeline } from '../src/core/shape/features.mjs';
 import {
   drainTimeoutMs, sigtermGraceMs, autoResumeMode, autoResumeCandidates, DRAIN_TIMEOUT_DEFAULT_MS,
 } from '../src/core/drain.mjs';
@@ -294,6 +294,69 @@ test('flag on: a feature not marked small-runs resumes as before', () => withDra
     assert.deepEqual(out.failed, []);
     assert.deepEqual(_testing.bootResumingIds(), []);
   });
+}));
+
+// ── Shaper small runs, slice 7 (R-po-4): the boot resume takes the turn rule ──────────────────────────────────────
+/** A marked 6-run feature whose runs in `at` (run number → pipeline id) have started. */
+async function markedFeature(at) {
+  const proj = await dir('marked');
+  const { id: origin } = await seedPipeline(proj, { title: 'marked origin', status: 'done' });
+  const slices = Array.from({ length: 6 }, (_, i) => ({ id: `s${i + 1}`, title: `Slice ${i + 1}`, goal: 'Goal', inScope: ['do'], outOfScope: [],
+    acceptance: ['ok'], dependsOn: [], estimate: 'M' }));
+  const f = createSliceFeature({ pipelineId: origin, projectDir: proj, title: 'Marked', smallRuns: false,
+    outline: { why: 'because', slices }, perspectives: ['product'], workflowId: 'wf_shape' });
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), origin);
+  for (const [run, pid] of Object.entries(at)) {
+    getDb().prepare(`UPDATE scheduled_runs SET status = 'fired', pipeline_id = ?
+      WHERE id = (SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?)`).run(pid, f.id, Number(run));
+  }
+  return f;
+}
+const quietTickets = () => getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+
+test('S7: two marked picks of one feature: autoResumeOnBoot calls resume for the lower only; the other reads heldResume, not resuming', () => withDrained(['held-six', 'held-four'], async ([six, four]) => {
+  // Run 6 started first, so the boot lists it first: the run number decides, not the start time.
+  const startedAt = getDb().prepare('UPDATE pipelines SET started_at = ? WHERE id = ?');
+  startedAt.run('2026-01-01T00:00:00.000Z', six);
+  startedAt.run('2026-01-02T00:00:00.000Z', four);
+  const f = await markedFeature({ 4: four, 6: six });
+  const mine = (id) => id === four || id === six;
+  try {
+    await withEnv(ON, async () => {
+      assert.deepEqual(_testing.bootResumePicks({ env: {} }).map((p) => p.pipelineId).filter(mine), [six, four]);
+      const calls = [];
+      const resume = async (pid) => {
+        calls.push({ pid, marks: _testing.bootResumingIds().filter(mine), four: _testing.liveSliceOf(four), six: _testing.liveSliceOf(six),
+          busyBeside4: busySliceOf(f.id, { exclude: 4, live: _testing.liveSliceOf }) });
+        return { ok: true, runId: `stub-${pid}` };
+      };
+      // The early mark of onReconciled and the real one agree.
+      _testing.markBootResumes(_testing.bootResumePicks({ env: {} }));
+      assert.deepEqual(_testing.bootResumingIds().filter(mine), [four]);
+      const out = await _testing.autoResumeOnBoot({ env: {}, mock: true, resume });
+      const ours = calls.filter((c) => mine(c.pid));
+      assert.deepEqual(ours.map((c) => c.pid), [four]);
+      assert.deepEqual(ours[0].marks, [four]);
+      assert.equal(ours[0].four.resuming, true);
+      assert.deepEqual(ours[0].six?.heldResume, { after: 4 });
+      assert.ok(!ours[0].six.resuming);
+      assert.equal(ours[0].busyBeside4, null, 'run 6 holds nothing');
+      assert.deepEqual(out.resumed.map((r) => r.pipelineId).filter(mine), [four]);
+      assert.deepEqual(out.failed.map((r) => r.pipelineId).filter(mine), []);
+      assert.equal(status(six), 'paused');
+      assert.deepEqual(_testing.bootResumingIds(), []);
+    });
+  } finally { _testing.heldStops?.dropResume(six); quietTickets(); }
+}));
+
+test("S7: a stub resume answering {ok: true, held: true} leaves the pid out of resumed and writes no 'resumed automatically' audit", () => withDrained(['held-answer'], async ([id]) => {
+  const resume = async (pid) => ({ ok: true, held: true, pipelineId: pid, after: 2 });
+  const out = await _testing.autoResumeOnBoot({ env: {}, mock: true, resume });
+  assert.deepEqual(out.resumed.filter((r) => r.pipelineId === id), []);
+  assert.deepEqual(out.failed.filter((r) => r.pipelineId === id), []);
+  const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(id).map((r) => r.text);
+  assert.deepEqual(audit.filter((t) => /resumed automatically/i.test(t)), []);
+  assert.deepEqual(_testing.bootResumingIds(), []);
 }));
 
 // ── B2: /api/drain is not for anyone on the network ─────────────────────────

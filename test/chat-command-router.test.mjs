@@ -606,3 +606,12 @@ test('a stop answer refused with TAKE_IN_REFUSED replies Command failed with the
   state.pending['run-aaaa1111'] = { id: 'gate-9', kind: 'gate' };
   assert.equal(text(await send('/retry')), 'Command failed: runs 2 and 3 clash in src/a.mjs');
 });
+
+// Shaper small runs slice 7 (D18): a resume held for its turn started nothing, and the reply says so.
+test('S7: a held /resume replies that it waits its turn (after run 8)', async () => {
+  const { send } = fixture({ resume: async (pipelineId) => ({ ok: true, held: true, pipelineId, after: 8 }) });
+  const said = text(await send('/resume *3333'));
+  assert.match(said, /after run 8/);
+  assert.doesNotMatch(said, /Resuming/);
+  assert.match(said, /Resume of `\*3333` waits its turn \(after run 8\)/);
+});

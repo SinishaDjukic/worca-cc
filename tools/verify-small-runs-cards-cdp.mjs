@@ -85,7 +85,8 @@ execFileSync('git', ['commit', '-qm', 'init'], { cwd: proj });
 const imp = (rel) => import(new URL(rel, import.meta.url).href);
 const { server, runs, reqChanges } = await imp('../ui/server.mjs');
 const { getDb } = await imp('../src/core/db.mjs');
-const { projectKey } = await imp('../src/core/store.mjs');
+const { projectKey, projectStorePath } = await imp('../src/core/store.mjs');
+const { addProject } = await imp('../src/core/projects.mjs');
 const { writeStoreMeta, recordArtifact, appendAuditById } = await imp('../src/core/artifacts.mjs');
 const { createSliceFeature, recordShapePlan, changeAgreedRequirements, setFeatureAcceptance, recordShip, setClashHold } = await imp('../src/core/shape/features.mjs');
 const askStore = await imp('../src/core/ask/store.mjs');
@@ -101,7 +102,7 @@ const { resolveGraph } = await imp('../src/core/workflows.mjs');
 const { loadAgentRegistry } = await imp('../src/core/agent-registry.mjs');
 const { buildGraphManifest } = await imp('../src/shared/graph/manifest.mjs');
 const { createPrototypeDesign, startPrototypeBuild, prototypeBrief } = await imp('../src/core/shape/prototype-design.mjs');
-const { designBuilds } = await imp('../ui/server.mjs');
+const { designBuilds, _testing: { heldStops } } = await imp('../ui/server.mjs');
 srv = server;
 await new Promise((r, rej) => { srv.once('error', (err) => rej(new Error(`cannot listen on VERIFY_PORT ${process.env.VERIFY_PORT}: ${err.message}`))); srv.listen(Number(process.env.VERIFY_PORT || 0), '127.0.0.1', r); });
 const base = `http://127.0.0.1:${srv.address().port}`;
@@ -1053,13 +1054,56 @@ async function shipListPhase() {
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 }
 
+// ---- Shaper small runs, slice 7: a resume waits its turn. A marked 4-run feature, run 1 done, run 2 working (a running
+// runs-map entry), run 3 paused with a resume point and no runs-map entry. Run 3's saved page Resume is clicked: the
+// server holds it after run 2, so the page keeps the paused run and a button that reads Resume, and no runs-map entry is
+// made for run 3. 1280px, the classic look, light and dark: held-resume-light.png and held-resume-dark.png in SHOTS_DIR.
+async function heldResumePhase() {
+  const HR = seedFeature('hr', 'Held resume', ['done', 'running', 'planned', 'planned']);
+  liveRun(HR.pid(2), `Run 2 · ${TITLES[1]}`, { runShape: { slice: { feature: HR.f.id, index: 2 } } });
+  // Run 3 has what the saved page needs to offer Resume: an 8-hex id, its run folder, an onboarded project, a resume point.
+  const five = 'ab7e0003';
+  fire(HR.f, 3, five, 'paused', `Run 3 · ${TITLES[2]}`);
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify({ version: 2, ledger: [], tokens: {} }), five);
+  await mkdir(path.join(projectStorePath(key), 'pipelines', `held-resume-${five}`), { recursive: true });
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const RESUME = "[...document.querySelectorAll('#hist-detail .hd-resume')].find((b) => b.offsetParent)";
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    await open(`${base}/?heldresume-${theme}#history/${key}/${five}`);
+    await skipWelcome(); await setTheme(theme);
+    if (!(await waitFor(`!!(${RESUME})`, `run 3's Resume (${theme})`))) continue;
+    await skipWelcome();
+    check(/Resume/.test(await ev(`(${RESUME}).textContent`)), `held resume, ${theme}: the saved page offers Resume`);
+    await ev(`(${RESUME}).click()`);
+    const back = await waitFor(`(() => { const b = ${RESUME}; return !!b && !b.disabled && b.textContent.trim() === 'Resume'; })()`, `the Resume button back (${theme})`);
+    const held = await (await fetch(`${base}/api/shape/features/${HR.f.id}`)).json().catch(() => null);
+    const row = held && (held.feature || held).slices?.find((x) => x.index === 3);
+    check(back, `held resume, ${theme}: the button reads Resume again and is enabled`);
+    check(row && row.state === 'paused', `held resume, ${theme}: run 3 still reads paused (${JSON.stringify(row && row.state)})`);
+    check(![...runs.values()].some((e) => e.pipelineId === five), `held resume, ${theme}: no runs-map entry for run 3`);
+    check(JSON.stringify(heldStops.heldResumeOf(five)) === '{"after":2}', `held resume, ${theme}: the server holds it after run 2 (${JSON.stringify(heldStops.heldResumeOf(five))})`);
+    check(!(await ev("document.querySelector('#toasts')?.textContent.includes('Could not resume') || false")), `held resume, ${theme}: no refusal toast`);
+    check(!(await ev("[...document.querySelectorAll('#hist-detail *')].some((e) => e.offsetParent && /^Starting/.test(e.textContent.trim()) && !e.children.length)")),
+      `held resume, ${theme}: no phantom Starting run`);
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, `held-resume-${theme}.png`);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
 // D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in, SHIP_LIST_ONLY=1
-// the Ship list along the real branches (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
+// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
 if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }
 if (process.env.HELD_ONLY === '1') { await heldPhase(); await finish(); }
 if (process.env.TAKEIN_ONLY === '1') { await takeInPhase(); await finish(); }
 if (process.env.SHIP_LIST_ONLY === '1') { await shipListPhase(); await finish(); }
+if (process.env.HELD_RESUME_ONLY === '1') { await heldResumePhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {
@@ -1245,6 +1289,7 @@ const LIVE_ROWS = "[...document.querySelectorAll('.chat-rc .proto-rows .plan-che
 }
 
 await shipListPhase();
+await heldResumePhase();
 await d2Phase();
 await d3Phase();
 await heldPhase();

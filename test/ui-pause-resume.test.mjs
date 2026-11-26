@@ -278,3 +278,29 @@ test('#1090: the start reply\'s late starting does not undo a running the socket
   const fresh = np.upsertRun({ runId: 'r2', title: 'u', projectDir: PROJECT, status: 'starting', local: true });
   assert.equal(fresh.status, 'starting');
 });
+
+// Shaper small runs slice 7 (D16): a resume held for its turn answers {held:true} with no runId: nothing started.
+test('S7: a held /api/resume answer keeps the paused copy and restores the Resume button', async () => {
+  const row = { id: 'p7', title: 't', status: 'paused', projectKey: 'k' };
+  const history = historyArms(row);
+  const ctx = await bootLive({ fetchHandler: (url) => (url.includes('/api/resume')
+    ? Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, held: true, pipelineId: 'p7', after: 8 }) }) : history(url)) });
+  ctx.showHistory();
+  await ctx.settle();
+  ctx.showDetail('k', 'p7');
+  await ctx.settle();
+  const np = ctx.window.__np;
+  const btn = ctx.window.document.querySelector('#hist-detail .hd-resume');
+  const label = btn.textContent;
+  assert.match(label, /Resume/);
+  const hash = ctx.window.location.hash;
+  btn.click();                                        // the saved run's own Resume (resumePipeline)
+  await ctx.settle(5);
+  assert.equal(ctx.fetchCalls.filter((c) => c.url.includes('/api/resume')).length, 1);
+  assert.equal(np.getRun(undefined), undefined, 'no phantom "Starting" run (upsertRun is not called)');
+  assert.equal(btn.textContent, label, 'the button reads Resume again');
+  assert.equal(btn.disabled, false);
+  assert.equal(btn.dataset.resumeState, undefined);
+  assert.equal(ctx.window.location.hash, hash, 'no navigation');
+  assert.equal(ctx.window.document.querySelector('#toasts')?.textContent.includes('Could not resume') ?? false, false);
+});

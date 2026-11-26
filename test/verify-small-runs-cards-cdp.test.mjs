@@ -174,3 +174,20 @@ test('the SHIP_LIST_ONLY phase: the Ship list of the waited and the combine shap
   assert.match(s, /[`'/]small-runs-ship-list-(\$\{theme\}|light|dark)\.png/);
   assert.match(s, /[`'/]small-runs-ship-list-combined-(\$\{theme\}|light|dark)\.png/);
 });
+
+test('the HELD_RESUME_ONLY phase: a seeded held resume, Resume clicked, still paused, light and dark at 1280px, 2 screenshots', () => {
+  const s = src();
+  const gate = s.match(/process\.env\.HELD_RESUME_ONLY === '1'\) \{ await (\w+)\(\); await finish\(\); \}/);
+  assert.ok(gate, 'the HELD_RESUME_ONLY=1 gate');
+  const at = s.indexOf(`async function ${gate[1]}(`);
+  assert.ok(at >= 0, 'the held-resume phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  assert.match(body, /Resume/, 'the Resume button');
+  assert.match(body, /click/i, 'Resume is clicked');
+  assert.match(body, /paused/i, 'the row still reads paused');
+  assert.match(body, /\bruns\b/, 'no runs-map entry for run 5');
+  // The two files, with these exact names (no prefix), in SHOTS_DIR.
+  assert.match(s, /[`'/]held-resume-(\$\{theme\}|light|dark)\.png/);
+});

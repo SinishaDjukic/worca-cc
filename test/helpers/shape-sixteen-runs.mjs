@@ -26,13 +26,15 @@ const STOP_KIND = { requirement: 'plan', check: 'gate', objection: 'gate' };
 let seq = 0;
 
 /**
- * @param {{projectDir:string, smallRuns?:boolean}} o  `smallRuns` marks the origin run (shape_stats), not the flag.
+ * @param {{projectDir:string, smallRuns?:boolean, held?:object}} o  `smallRuns` marks the origin run (shape_stats), not
+ *   the flag. `held`: a held-stops instance (createHeldStops) whose overlay `live` reads, as the server's liveSliceOf does.
  * @returns {{featureId:string, originPipelineId:string, ticketOf:(run:number)=>string|null,
- *   pipelineOf:(run:number)=>string|null, setRun:(run:number, how:any)=>void, live:(pid:string)=>object|null}}
+ *   pipelineOf:(run:number)=>string|null, setRun:(run:number, how:any)=>void, live:(pid:string)=>object|null,
+ *   useHeld:(held:object)=>void}}  `useHeld` swaps the instance (a restart).
  *   `how`: 'unrun' | { pipe: status } | { stop: reason, held?: boolean } | { asking: true } | { approval: true }
  *   | { pipe: status, resuming: true } (being resumed at server start: no runs-map entry, liveSliceResuming's overlay)
  */
-export function sixteenRunFeature({ projectDir, smallRuns = true }) {
+export function sixteenRunFeature({ projectDir, smallRuns = true, held = null }) {
   const db = getDb();
   const key = projectKey(projectDir);
   const newPipe = (status) => {
@@ -51,7 +53,12 @@ export function sixteenRunFeature({ projectDir, smallRuns = true }) {
   const ticketOf = (run) => rows[run - 1]?.ticket_id || null;
   const pipes = new Map([[1, originPipelineId]]);
   const liveMap = new Map();
-  const live = (pid) => liveMap.get(pid) || null;
+  let heldStops = held;
+  const useHeld = (h) => { heldStops = h; };
+  const live = (pid) => {
+    const l = liveMap.get(pid) || null;
+    return heldStops?.overlay ? heldStops.overlay(pid, l) : l;
+  };
   const pipelineOf = (run) => pipes.get(run) || null;
 
   const setRun = (run, how) => {
@@ -76,7 +83,7 @@ export function sixteenRunFeature({ projectDir, smallRuns = true }) {
   };
   const cancelTicket = (run) => { db.prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id = ?").run(ticketOf(run)); };
   const setKind = (run, kind) => { db.prepare('UPDATE shape_feature_slices SET kind = ? WHERE feature_id = ? AND idx = ?').run(kind, f.id, run); };
-  return { featureId: f.id, originPipelineId, ticketOf, pipelineOf, setRun, live, cancelTicket, setKind };
+  return { featureId: f.id, originPipelineId, ticketOf, pipelineOf, setRun, live, useHeld, cancelTicket, setKind };
 }
 
 /** Named walked states (slice 2 D11): `done` run numbers finished, then each `{run: how}` applied. */
@@ -86,10 +93,10 @@ export const SIXTEEN_RUN_STATES = Object.freeze({
 });
 
 /** A fresh feature in a named state (or a literal `{done, states}`); cancels the previous features' scheduled tickets first. */
-export function world(projectDir, spec) {
+export function world(projectDir, spec, { held = null } = {}) {
   const { done, states } = typeof spec === 'string' ? SIXTEEN_RUN_STATES[spec] : spec;
   getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
-  const fx = sixteenRunFeature({ projectDir });
+  const fx = sixteenRunFeature({ projectDir, held });
   for (const r of done) fx.setRun(r, { pipe: 'done' });
   for (const [r, how] of Object.entries(states || {})) fx.setRun(Number(r), how);
   return fx;

@@ -403,6 +403,13 @@ export function liveSliceResuming() {
   return Object.freeze({ ...liveSliceFrom({ runId: null, status: 'paused' }), resuming: true });
 }
 
+/** Slice 7 (D9): the overlay of a run whose resume is held for its turn: `slice` with `heldResume: {after}`, or a bare
+ *  paused run when it has no live slice. */
+export function liveSliceHeldResume(slice, after) {
+  if (!slice) return Object.freeze({ ...liveSliceFrom({ runId: null, status: 'paused' }), heldResume: { after } });
+  return { ...slice, heldResume: { after } };
+}
+
 const auditTexts = (pid) => (pid ? getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(String(pid)).map((r) => r.text) : []);
 function clarifyOf(pid) {
   const r = readClarifyRow(pid);
@@ -565,6 +572,7 @@ function stopWords(f, rows, slices, live) {
   for (const s of slices) {
     const l = s.pipelineId ? live(s.pipelineId) : null;
     if (l && l.stop) s.stop = { ...l.stop };
+    if (l && l.heldResume) s.heldResume = { after: l.heldResume.after };   // slice 7 (D10): view data only until s8
   }
   if (shaperSmallRunsOn()) {
     const holdsByIndex = new Map();
@@ -582,7 +590,7 @@ function stopWords(f, rows, slices, live) {
       s.waitsFor = holds.waitsFor;
       if (holds.bad) s.cannotStart = { run: holds.bad.run, reason: holds.bad.reason };
     });
-    const next = nextTurnOf(f, rows, holdsByIndex, (r, i) => !!(slices[i].pipelineId && slices[i].stop && slices[i].stop.held));
+    const next = nextTurnOf(f, rows, holdsByIndex, (r, i) => !!(slices[i].pipelineId && ((slices[i].stop && slices[i].stop.held) || slices[i].heldResume)));
     if (next) slices[rows.indexOf(next)].nextTurn = true;
     return;
   }
@@ -1129,11 +1137,14 @@ export function resumeFeature(id, { live = () => null, finishing = () => false, 
 function resumeHalted(f, id, h, { live, by, now }) {
   // Shaper small runs (D10): one slice of a feature is going at a time; a refusal changes nothing.
   const smallRuns = shaperSmallRunsOn();
-  const busy = smallRuns ? busySliceOf(id, { exclude: h.index, live }) : null;
-  if (busy) return { status: 409, error: `Slice ${busy.index} is still going: resume this one when it finishes` };
   // The route resumes it like /api/resume, in the run's own mock mode, then calls rechainWaiting (F30). Small runs C4
   // (D8): a paused slice whose requirement changed since it started restarts instead, so it never resumes the old text.
-  if (h.state === 'paused' && !changedSinceStart(f, h)) return { action: 'resume', pipelineId: h.pipelineId, index: h.index, mock: f.base.mock === true };
+  const resumable = h.state === 'paused' && !changedSinceStart(f, h);
+  // Slice 7 (D14, R-po-4): on a marked feature a paused run's resume is not refused while another run goes: resumeRun
+  // holds it for its turn. A restart keeps the refusal.
+  const busy = smallRuns && !(resumable && smallRunsOfFeature(id)) ? busySliceOf(id, { exclude: h.index, live }) : null;
+  if (busy) return { status: 409, error: `Slice ${busy.index} is still going: resume this one when it finishes` };
+  if (resumable) return { action: 'resume', pipelineId: h.pipelineId, index: h.index, mock: f.base.mock === true };
   let r = null;
   tx(() => { r = restartRows(f, sliceRows(id), h, { by, now, smallRuns }); });
   if (r.error) return r;
@@ -1298,6 +1309,8 @@ export function sliceGateState(ticket, { now = Date.now(), isLive = null, live =
     if (holds.waitsFor.length) return { state: 'waiting' };
     const others = rows.filter((r) => r.index !== at.index);
     if (others.some((r) => rowGoing(r, live, { now, isLive }))) return { state: 'waiting' };
+    // Slice 7 (D8): a held resume holds nothing, but takes the turn before a free run.
+    if (others.some((r) => r.pipelineId && live(r.pipelineId)?.heldResume)) return { state: 'waiting' };
     const featureHeld = featureHeldOf(f);
     const mine = rows.find((r) => r.index === at.index);
     if (others.some((r) => turnBefore(r, mine) && dueRow(r, () => sliceHolds(f, rows, r.index, { now, isLive, bySlice }), featureHeld))) return { state: 'waiting' };

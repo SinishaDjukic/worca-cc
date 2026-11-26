@@ -240,3 +240,15 @@ test('slice 6: the run words say next and held answers follow one order', () => 
   const live = flat(DOCS['shape-it-first.md'].text()).split('**The flag, read live.**')[1]?.split('**A feature with the marker')[0] || '';
   assert.deepEqual(missing(live, ['held answers go on one at a time, lowest run first']), []);
 });
+
+// Shaper small runs slice 7 (R-po-4, R-po-5): a resume waits its turn.
+test('slice 7: Held resumes', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const part = smallPart('Held resumes');
+  assert.ok(part, 'the "### Held resumes" part');
+  assert.ok(small.indexOf('\n### Held resumes\n') > small.indexOf('\n### Open stops on the card\n'), 'after "Open stops on the card"');
+  assert.deepEqual(missing(part, ['held resume', 'restart', 'paused']), []);
+  assert.deepEqual(missing(smallPart('The run words'), [/`next` comes only from the server's turn: an answer or a resume held for its turn first/]), []);
+  const live = flat(small).split('**The flag, read live.**')[1]?.split('**A feature with the marker')[0] || '';
+  assert.deepEqual(missing(live, ['an answer or a resume held for its turn waits']), []);
+});

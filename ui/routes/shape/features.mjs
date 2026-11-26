@@ -101,9 +101,11 @@ app.post('/api/shape/features/:id/resume', async (req, res) => {
       return res.status(409).json(verify ? { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: the Verifier is not stopped, a run or round is not over, or Shaper small runs is off' } : { error: 'no slice is stopped' });
     }
     let runId = null;
+    let held = null;
     if (out.action === 'resume') {
       const r = await resumeRun(out.pipelineId, { by, mock: out.mock === true });
       runId = r && r.runId ? r.runId : null;
+      if (r && r.held) held = { held: true, after: r.after };   // small runs slice 7 (D14): it goes on at its turn
       rechainWaiting(req.params.id, out.index, { by });     // F30: an interrupted slice already missed its successor
       emitChanged('schedules-changed', 'updated');
     } else {
@@ -111,7 +113,7 @@ app.post('/api/shape/features/:id/resume', async (req, res) => {
       await schedulerTick();                                  // best effort: null while a tick is busy
     }
     broadcastFeature(req.params.id);
-    res.json({ ok: true, ...out, ...(runId ? { runId } : {}) });
+    res.json({ ok: true, ...out, ...(runId ? { runId } : {}), ...(held || {}) });
   } catch (err) { shapeRouteError(res, err); }
 });
 

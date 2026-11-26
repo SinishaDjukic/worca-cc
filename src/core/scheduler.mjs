@@ -1321,7 +1321,7 @@ export async function runDueTickets({
       continue;
     }
 
-    // A hold (Shaper small runs: the runs it builds on clash): the ticket waits for a person, not for a retry. Back to
+    // A hold (Shaper small runs: the runs it builds on clash, or the run waits its turn, slice 7): the ticket waits for a person, not for a retry. Back to
     // scheduled and unforced, so the next tick's hold is consulted; no fail_reason, no attempt, no notice.
     if (res && res.hold) {
       touchTicket(t.id, "status = 'scheduled', forced = 0, retry_at = NULL, owner_pid = NULL, owner_host = NULL", [], now);

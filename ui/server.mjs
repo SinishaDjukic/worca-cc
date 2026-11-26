@@ -876,7 +876,7 @@ async function requestIdentity(req) {
  *   pendingQuestion: any
  * }>}
  */
-const runs = new Map(); const reqChanges = createRequirementChanges({ runs, stopRun, stopPausedPipeline, schedulerTick, broadcastFeature, liveSliceOf }); const heldStops = createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, applyChange: reqChanges.applyStop, now: Date.now, takeIn: (entry) => (typeof entry.orch?.takeInBeforeAnswer === 'function' ? entry.orch.takeInBeforeAnswer() : { ok: true, merged: [] }) }); const deliverHeld = () => heldStops.deliver().catch((err) => console.error(`[worca-ui] held stop delivery failed: ${err?.message || err}`));   // small runs C3 (D9), C4 (D11, D15); slice 3: the finished same-base work first
+const runs = new Map(); const reqChanges = createRequirementChanges({ runs, stopRun, stopPausedPipeline, schedulerTick, broadcastFeature, liveSliceOf }); const heldStops = createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, applyChange: reqChanges.applyStop, now: Date.now, resume: (pid, o) => resumeRun(pid, o), refuse: (status, body) => new ResumeError(status, body), audit: (pid, text, by) => appendAuditById(pid, text, { actor: by }), takeIn: (entry) => (typeof entry.orch?.takeInBeforeAnswer === 'function' ? entry.orch.takeInBeforeAnswer() : { ok: true, merged: [] }) }); const deliverHeld = () => heldStops.deliver().catch((err) => console.error(`[worca-ui] held stop delivery failed: ${err?.message || err}`));   // small runs C3 (D9), C4 (D11, D15); slice 3: the finished same-base work first
 
 // Ids of runs genuinely live in THIS process (non-terminal entries in the runs Map).
 // Passed to reconcileStaleRunning so a same-process run is never relabeled. Both the
@@ -4103,14 +4103,14 @@ async function fireResumeTicket(ticket, pipelineId) {
       mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK),
       ...(engine ? { engine } : {}),
       ...(internal.autoLimitResume ? { autoLimitResume: true } : {}),
-    });
+    }); if (out?.held) return { ok: false, hold: true, error: `the run waits its turn (after run ${out.after})` };   // slice 7: kept for the next tick
     // The feed learns how the resumed run ends through the same recordOutcome hook a
     // schedule-started run uses (wireRun keys on entry.ticketId).
     const entry = out && out.runId ? runs.get(out.runId) : null;
     if (entry) entry.ticketId = ticket.id;
     return { ok: true, pipelineId };
   } catch (err) {
-    if (err instanceof ResumeError) {
+    if (err instanceof ResumeError) { if (err.body && err.body.code === 'RESUME_IN_FLIGHT') return { ok: false, hold: true, error: 'the run is being resumed' };   // slice 7: its held resume goes on; the next tick skips it
       return { ok: false, error: (err.body && err.body.error) || err.message, transient: false };
     }
     return { ok: false, error: err && err.message ? err.message : String(err), transient: false };
@@ -4378,13 +4378,13 @@ function networkWatch() {
   return (_networkWatch ||= createNetworkWatch({
     settings: () => effectiveNetworkWait(),
     listRuns: () => listNetworkWaitRuns(),
-    hasResumeTicket: (id) => resumeTicketsFor(id).length > 0,
+    hasResumeTicket: (id) => resumeTicketsFor(id).length > 0 || heldStops.watchSkips(id),   // slice 7: a held resume goes on at its turn; a person's Pause dropped it
     probe: (origin) => _networkProbe(origin),
     resume: async (r) => {
       const out = await resumeRun(r.id, {
         by: NETWORK_ACTOR, auto: r.resumePoint.runAuto === true, resumeCause: 'network',
         mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK),
-      });
+      }); if (out?.held) return out;   // slice 7: held for its turn, not resumed
       const since = new Date(r.resumePoint.network.since);
       appendAuditById(r.id, `Network back: ${hostOf(r.resumePoint.network.origin)} answers again. Run resumed${byActor(NETWORK_ACTOR)} (waiting since ${since.toISOString().slice(11, 16)} UTC).`, { actor: NETWORK_ACTOR });
       return out;
@@ -4916,7 +4916,7 @@ async function stopRun(runId, by = 'local') {
 function pauseRun(runId, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
-  if (entry.isTest) throw Object.assign(new Error(TEST_TRY_PAUSE_TEXT), { code: 'TEST_TRY' });
+  if (entry.isTest) throw Object.assign(new Error(TEST_TRY_PAUSE_TEXT), { code: 'TEST_TRY' }); if (entry.status === 'paused' && entry.pipelineId && heldStops.dropResume(entry.pipelineId, { paused: true })) return void cancelScheduledResumes(entry.pipelineId, { by, reason: `the run was paused${byActor(by || 'local')}` });   // slice 7 (D12)
   const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause(by || 'local');
   if (!ok) throw Object.assign(new Error('cannot pause in the current state'), { code: 'CANNOT_PAUSE' });
   entry.lastAction = { kind: 'pause', by: by || 'local', at: new Date().toISOString() };
@@ -4946,7 +4946,7 @@ async function stopPausedPipeline(pipelineId, by = 'local') {
   if (running) return running;
   const p = stopPausedPipelineOnce(pipelineId, by);
   STOPS_IN_FLIGHT.set(pipelineId, p);
-  try { return await p; } finally { STOPS_IN_FLIGHT.delete(pipelineId); recordSettledFigures({ id: pipelineId, status: 'stopped' }, { tick: () => void schedulerTick(), broadcastFeature, finishing: isFinishingRun }); }   // a stopped Verifier reads halted only now; a stopped round may start the check
+  try { return await p; } finally { STOPS_IN_FLIGHT.delete(pipelineId); heldStops.dropResume(pipelineId); recordSettledFigures({ id: pipelineId, status: 'stopped' }, { tick: () => void schedulerTick(), broadcastFeature, finishing: isFinishingRun }); }   // a stopped Verifier reads halted only now; a stopped round may start the check
 }
 
 /** One stop of a paused run. Called only through stopPausedPipeline, which joins concurrent stops. */
@@ -5057,15 +5057,15 @@ function settleStaleParkedEntries() {
   } catch (err) { console.error(`[worca-ui] stale paused entries: ${err && err.message ? err.message : err}`); }
 }
 
-const bootResuming = new Set(), bootResumingIds = () => [...bootResuming].sort(), markBootResumes = (picks) => { bootResuming.clear(); for (const p of picks || []) bootResuming.add(p.pipelineId); return picks; };   // slice 5 (D5): the pipelines the boot is about to resume, in memory only
+const bootResuming = new Set(), bootResumingIds = () => [...bootResuming].sort(), markBootResumes = (picks, { mock = isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) } = {}) => { const kept = heldStops.splitBootPicks(picks || [], { mock }); bootResuming.clear(); for (const p of kept) bootResuming.add(p.pipelineId); return kept; };   // slice 5 (D5): the pipelines the boot is about to resume, in memory only
 /** The live overlay featureView needs (L8): the entry driving this pipeline or run (liveRunEntry takes either, F26).
  *  A settled entry other than `paused` is ignored, so the pipelines row decides done / stopped / error. Slice 5: being resumed adds `resuming`. */
 function liveSliceOf(id) {
   const e = id ? liveRunEntry(id) : null;
   const resuming = !!id && bootResuming.has(id) && shaperSmallRunsOn();
   const status = String(e?.status || '');
-  if (!e || !e.orch || (SETTLED_RUN.has(status) && status !== 'paused')) return resuming ? liveSliceResuming() : null;
-  return { ...liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved, heldStop: e.heldStop || null, going: !!e.takingIn, refused: e.takeInRefused && e.takeInRefused.id === e.pendingQuestion?.id ? e.takeInRefused.reason : null }), ...(resuming && status === 'paused' ? { resuming: true } : {}) };   // slice 3 (D11, D13), slice 5 (D1)
+  if (!e || !e.orch || (SETTLED_RUN.has(status) && status !== 'paused')) return heldStops.overlay(id, resuming ? liveSliceResuming() : null);
+  return heldStops.overlay(id, { ...liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved, heldStop: e.heldStop || null, going: !!e.takingIn, refused: e.takeInRefused && e.takeInRefused.id === e.pendingQuestion?.id ? e.takeInRefused.reason : null }), ...(resuming && status === 'paused' ? { resuming: true } : {}) });   // slice 3 (D11, D13), slice 5 (D1), slice 7 (D9)
 }
 function broadcastFeature(id) { if (id) broadcast({ type: 'shape-feature', id }); }
 /** F42: the run-event and tick hooks. Gate first (no query while it is off), and never let a throw escape: in wireRun
@@ -5455,7 +5455,7 @@ async function resumeTargetDirs(saved) {
   return { projectDir, workspace: undefined };
 }
 
-async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false, auto = false, resumeCause = null, confirmModel = null } = {}) {
+function resumeRun(pipelineId, opts = {}) { return heldStops.claimed(pipelineId, (ticket) => resumeRunOnce(pipelineId, opts, ticket)); } async function resumeRunOnce(pipelineId, opts = {}, ticket = null) { const { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false, auto = false, resumeCause = null, confirmModel = null } = opts;
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   if (DRAIN.on) throw new ResumeError(503, DRAIN_REFUSAL);
   const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
@@ -5480,7 +5480,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
 
   if (saved.row.archived_at) {
     throw new ResumeError(409, { error: 'pipeline is archived' });
-  }
+  } const pre = budgetStatus(), capHit = pre.pipelineLimitUsd != null && Number(saved.row.total_cost_usd || 0) >= pre.pipelineLimitUsd && ignoreCostCap !== true && !readCostCapOverride(pipelineId); const held = pre.blocked || capHit ? null : heldStops.holdResume(pipelineId, opts, ticket); if (held) return held;   // small runs slice 7 (D3): before any write; a cost refusal answers now
   // No graph re-validation on RESUME, on purpose: _restoreFromResumePoint never
   // reads the workflow row — the frozen manifest supplies topology and port
   // identity (resolvedFromManifest: snapshot wins), so a template that drifted
@@ -8301,10 +8301,10 @@ function bootResumePicks({ interruptedIds = [], env = process.env } = {}) {   //
 function autoResumeOnBoot(opts) { return autoResumeEach(opts).finally(() => bootResuming.clear()); }   // slice 5 (D8): no "being resumed" mark outlives it
 async function autoResumeEach({ interruptedIds = [], env = process.env, mock = isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK), resume = resumeRun } = {}) {
   if (autoResumeMode(env) === 'off') return { enabled: false, resumed: [], failed: [] };
-  const picks = markBootResumes(bootResumePicks({ interruptedIds, env })), resumed = [], failed = [];
+  const picks = markBootResumes(bootResumePicks({ interruptedIds, env }), { mock }), resumed = [], failed = [];
   for (const p of picks) {
     try {
-      const out = await resume(p.pipelineId, { by: p.by, mock });
+      const out = await resume(p.pipelineId, { by: p.by, mock }); if (out?.held) continue;   // slice 7 (D17)
       resumed.push({ ...p, runId: out?.runId || null });
       appendAuditById(p.pipelineId, `Pipeline resumed automatically after ${p.why === 'drain' ? 'a restart' : 'an interruption'}${byActor(p.by)}.`, { actor: p.by });
     } catch (err) {
@@ -10924,7 +10924,7 @@ export const _testing = {
   uiControl, bearerMatches, uiToken: () => UI_TOKEN,
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
-  trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, bootResumePicks, markBootResumes, bootResumingIds, liveSliceOf, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
+  trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, bootResumePicks, markBootResumes, bootResumingIds, liveSliceOf, heldStops, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askProxyBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, automations, automationHost, automationDraftPr, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,

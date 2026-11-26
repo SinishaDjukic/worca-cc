@@ -12,7 +12,10 @@ import { WebSocket } from 'ws';
 import { JSDOM } from 'jsdom';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir, templateRepo } from './helpers/git-dir.mjs';
-import { seedPipelineRow } from './helpers/db-seed.mjs';
+import { seedPipeline, seedPipelineRow } from './helpers/db-seed.mjs';
+import { graphResumePoint } from './helpers/graph-templates.mjs';
+import { addProject } from '../src/core/projects.mjs';
+import { readCostCapOverride } from '../src/core/cost-budget.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createThread, linkRun as askLinkRun, listMessages, appendMessage as askAppendMessage } from '../src/core/ask/store.mjs';
@@ -2249,4 +2252,269 @@ test("S5: run 9's boot resume fails, the next tick starts run 10", () => withEnv
     getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
     rmSync(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
+}));
+
+// ── Shaper small runs, slice 7 (R-po-4, R-po-5): a resume waits its turn ────────────────────────────────────────────
+/** An 8-run feature on an onboarded project, marked small-runs unless `marked` is false: run 1 done; run `paused` a
+ *  paused run resumeRun can resume (worktree on disk, resume point); run `working` a running runs-map entry. */
+async function resumeServerWorld({ paused = 5, working = 8, marked = true, second = null, rp = {} } = {}) {
+  getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+  const proj = mkdtempSync(join(tmpdir(), 'worca-s7-proj-'));
+  const wt = mkdtempSync(join(tmpdir(), 'worca-s7-wt-'));
+  await addProject({ name: `s7-${nextId()}`, path: proj });
+  const origin = pipe('done');
+  const f = createSliceFeature({ pipelineId: origin, projectDir: proj, title: 'Resume waits', outline: outlineOf(8), perspectives: ['product'],
+    workflowId: 'wf_shape', startedBy: 'ann', base: { mock: true }, smallRuns: false });
+  if (marked) getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), origin);
+  const { id: pid } = await seedPipeline(proj, { title: `run ${paused}`, status: 'paused',
+    branch: { source: 'main', feature: 'f', worktreeDir: wt, reusedExisting: false }, resumePoint: graphResumePoint({ pipelineDir: proj, ...rp }) });
+  fire(f.id, paused, pid);
+  let pid2 = null;
+  if (second != null) {
+    const wt2 = mkdtempSync(join(tmpdir(), 'worca-s7-wt-'));
+    ({ id: pid2 } = await seedPipeline(proj, { title: `run ${second}`, status: 'paused',
+      branch: { source: 'main', feature: 'f', worktreeDir: wt2, reusedExisting: false }, resumePoint: graphResumePoint({ pipelineDir: proj }) }));
+    fire(f.id, second, pid2);
+  }
+  const going = working == null ? null : pipe('running');
+  if (going) fire(f.id, working, going);
+  const goingEntry = going ? liveEntry(going) : null;
+  // No other run of the feature may start by itself: these tests are about the paused run only.
+  const quiet = () => getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
+  quiet();
+  const entriesOf = (of = pid) => [...runs.values()].filter((e) => e.pipelineId === of);
+  /** The working run finishes: only a scheduler pass may deliver what waited for it. */
+  const finishWorking = () => { dropEntry(goingEntry); setPipe(going, 'done'); };
+  const cleanup = async () => {
+    quiet();
+    for (const id of [pid, pid2]) if (id) testing.heldStops?.dropResume(id);
+    if (goingEntry) dropEntry(goingEntry);
+    for (const e of [...entriesOf(), ...(pid2 ? entriesOf(pid2) : [])]) {
+      try { await e.orch?.stop?.(); } catch { /* best effort */ }
+      if (e.launch) await Promise.race([e.launch.catch(() => {}), sleep(5000)]);
+      runs.delete(e.id);
+    }
+    rmSync(proj, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    rmSync(wt, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  };
+  return { f, pid, pid2, entriesOf, finishWorking, cleanup };
+}
+const eventsOf = (pid) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(pid).map((r) => r.text);
+const storedStatus = (pid) => getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(pid).status;
+
+test('slice 7: resumeRun on paused run 5 while run 8 works returns {ok, held: true, after: 8} and writes nothing', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    const events = eventsOf(w.pid);
+    // ignoreCostCap is the first thing a resume would write.
+    const out = await testing.resumeRun(w.pid, { by: 'ann', ignoreCostCap: true });
+    assert.deepEqual(out, { ok: true, held: true, pipelineId: w.pid, after: 8 });
+    assert.deepEqual(w.entriesOf(), [], 'no runs-map entry');
+    assert.deepEqual(eventsOf(w.pid), events, 'no audit line');
+    assert.ok(!readCostCapOverride(w.pid), 'no cost override');
+    assert.equal(storedStatus(w.pid), 'paused');
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: POST /api/resume passes the held answer through, with no runId', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    const r = await post('/api/resume', { pipelineId: w.pid });
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { ok: true, held: true, pipelineId: w.pid, after: 8 });
+    assert.deepEqual(w.entriesOf(), []);
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: liveSliceOf composes the held-stops overlay', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    await testing.resumeRun(w.pid, { by: 'ann' });
+    const held = testing.liveSliceOf(w.pid);
+    assert.deepEqual(held?.heldResume, { after: 8 });
+    assert.equal(held.status, 'paused');
+    assert.ok(!held.resuming);
+    assert.equal(testing.heldStops.dropResume(w.pid), true);
+    assert.equal(testing.liveSliceOf(w.pid), null, 'neither field once dropped');
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: once run 8 is done, the next tick resumes held run 5 through resumeRun, as the person who asked', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    await testing.resumeRun(w.pid, { by: 'ann' });
+    assert.deepEqual(w.entriesOf(), []);
+    w.finishWorking();
+    for (const end = Date.now() + 5000; (await schedulerTick()) === null && Date.now() < end;) await sleep(20);
+    for (let i = 0; i < 250 && !w.entriesOf().length; i++) await sleep(20);
+    const [entry] = w.entriesOf();
+    assert.ok(entry, 'run 5 is resumed');
+    assert.equal(entry.lastAction.by, 'ann');
+    assert.equal(testing.heldStops.heldResumeOf(w.pid), null);
+  } finally { await w.cleanup(); }
+}));
+
+for (const [name, env, marked] of [['flag on, a feature not marked small-runs', SMALL_ON, false], ['flag off, a marked feature', SMALL_OFF, true]]) {
+  test(`slice 7: resumeRun on paused run 3 with run 2 working starts it at once (${name})`, () => withEnvVars(env, async () => {
+    const w = await resumeServerWorld({ paused: 3, working: 2, marked });
+    try {
+      const out = await testing.resumeRun(w.pid, { by: 'ann' });
+      assert.ok(out.runId, JSON.stringify(out));
+      assert.ok(!out.held);
+      assert.ok(runs.has(out.runId), 'a runs-map entry exists');
+      assert.equal(testing.heldStops.heldResumeOf(w.pid), null, 'no held resume is recorded');
+    } finally { await w.cleanup(); }
+  }));
+}
+
+test('slice 7: pauseRun on a held paused run drops the hold and does not throw CANNOT_PAUSE', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    // The entry this server holds for a run it paused: its harness cannot pause it again.
+    const entry = { id: `s7-paused-${w.pid}`, kind: 'run', pipelineId: w.pid, status: 'paused', events: [], pendingQuestion: null,
+      orch: { pause: () => false, state: {} } };
+    runs.set(entry.id, entry);
+    assert.equal((await testing.resumeRun(w.pid, { by: 'ann' })).held, true);
+    assert.deepEqual(testing.liveSliceOf(w.pid).heldResume, { after: 8 });
+    testing.chatActions.pause(entry.id, 'ann');
+    assert.equal(testing.heldStops.heldResumeOf(w.pid), null);
+    assert.equal('heldResume' in testing.liveSliceOf(w.pid), false);
+    assert.equal(entry.status, 'paused', 'still paused, not pausing');
+    assert.throws(() => testing.chatActions.pause(entry.id, 'ann'), (e) => e.code === 'CANNOT_PAUSE', 'with nothing held, as today');
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: stopPausedPipeline on a held run with no runs-map entry drops the hold', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    assert.equal((await testing.resumeRun(w.pid, { by: 'ann' })).held, true);
+    assert.deepEqual(w.entriesOf(), []);
+    const out = await testing.stopPausedPipeline(w.pid, 'ann');
+    assert.equal(out.status, 'stopped');
+    assert.equal(testing.heldStops.heldResumeOf(w.pid), null);
+  } finally { await w.cleanup(); }
+}));
+
+// Direction d0b6a6288 (D14, R-po-4): the feature card's and a stop line's Resume go through resumeRun, held at their turn.
+test("slice 7: the feature route's Resume on paused run 5 while run 8 works is held after run 8 and starts once run 8 is done", () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    const r = await post(`/api/shape/features/${w.f.id}/resume`, { index: 5 });
+    const body = await r.json();
+    assert.equal(r.status, 200, JSON.stringify(body));
+    assert.equal(body.action, 'resume');
+    assert.equal(body.held, true);
+    assert.equal(body.after, 8);
+    assert.equal(body.runId, undefined, 'nothing started');
+    assert.deepEqual(w.entriesOf(), []);
+    assert.deepEqual(testing.heldStops.heldResumeOf(w.pid), { after: 8 });
+    assert.equal(storedStatus(w.pid), 'paused');
+    w.finishWorking();
+    for (const end = Date.now() + 5000; (await schedulerTick()) === null && Date.now() < end;) await sleep(20);
+    for (let i = 0; i < 250 && !w.entriesOf().length; i++) await sleep(20);
+    assert.ok(w.entriesOf().length, 'run 5 is resumed at its turn');
+    assert.equal(testing.heldStops.heldResumeOf(w.pid), null);
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: a resume over its pipeline cost cap is refused at once (needsOverride), not held', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    await post('/api/settings', { pipelineCostLimitUsd: 1 });
+    getDb().prepare('UPDATE pipelines SET total_cost_usd = 2 WHERE id = ?').run(w.pid);
+    await assert.rejects(testing.resumeRun(w.pid, { by: 'ann' }), (e) => e.status === 403 && e.body?.needsOverride === true);
+    assert.equal(testing.heldStops.heldResumeOf(w.pid), null, 'nothing is held');
+    assert.equal(testing.liveSliceOf(w.pid), null);
+  } finally { await post('/api/settings', { pipelineCostLimitUsd: null }); await w.cleanup(); }
+}));
+
+test('slice 7: two resumes at once on runs 3 and 5 with nothing going: run 3 starts, run 5 is held after it', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld({ paused: 3, second: 5, working: null });
+  try {
+    const [three, five] = await Promise.all([testing.resumeRun(w.pid, { by: 'ann' }), testing.resumeRun(w.pid2, { by: 'bo' })]);
+    assert.ok(three.runId, JSON.stringify(three));
+    assert.deepEqual(five, { ok: true, held: true, pipelineId: w.pid2, after: 3 });
+    assert.deepEqual(w.entriesOf(w.pid2), [], 'run 5 started nothing');
+    assert.equal(testing.liveSliceOf(w.pid)?.resuming, undefined, 'the claim is released once run 3 is live');
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: a second Resume while a held resume is being delivered answers 409, not a second run', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    await testing.resumeRun(w.pid, { by: 'ann' });
+    w.finishWorking();
+    const delivery = testing.heldStops.deliver();
+    assert.equal(testing.liveSliceOf(w.pid)?.resuming, true, 'it reads as being resumed');
+    const r = await post('/api/resume', { pipelineId: w.pid });
+    assert.equal(r.status, 409);
+    assert.equal((await r.json()).code, 'RESUME_IN_FLIGHT');
+    await delivery;
+    assert.equal(w.entriesOf().length, 1, 'one run');
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: a scheduled-resume ticket held for its turn is kept for the next tick, not fired', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    const out = await testing.fireResumeTicket({ id: 'tk-s7', createdBy: 'ann', request: {} }, w.pid);
+    assert.deepEqual(out, { ok: false, hold: true, error: 'the run waits its turn (after run 8)' });
+    assert.deepEqual(testing.heldStops.heldResumeOf(w.pid), { after: 8 });
+    assert.deepEqual(w.entriesOf(), []);
+    assert.ok(!eventsOf(w.pid).some((t) => /resumed/i.test(t)), 'no "resumed" audit line');
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: a scheduled-resume ticket that fires while its held resume is being delivered is held, not failed', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    await testing.resumeRun(w.pid, { by: 'ann' });
+    w.finishWorking();
+    const delivery = testing.heldStops.deliver();
+    const out = await testing.fireResumeTicket({ id: 'tk-s7-flight', createdBy: 'ann', request: {} }, w.pid);
+    assert.deepEqual(out, { ok: false, hold: true, error: 'the run is being resumed' }, 'the next tick skips the resumed run');
+    await delivery;
+    assert.equal(w.entriesOf().length, 1, 'one run');
+  } finally { await w.cleanup(); }
+}));
+
+/** A network-paused resume point (network-wait.mjs) the watch would resume once the endpoint answers. */
+const netPaused = () => ({ pauseReason: 'recoverable', pauseClass: 'network',
+  network: { since: new Date(Date.now() - 10 * 60_000).toISOString(), origin: 'https://api.anthropic.com', reachable: false, waiting: false } });
+
+test('slice 7: the network watch leaves a held run alone: no resume, no "Network back" line', () => withEnvVars({ ...SMALL_ON, WORCA_NETWORK_WAIT: '1' }, async () => {
+  const w = await resumeServerWorld({ rp: netPaused() });
+  try {
+    assert.equal((await testing.resumeRun(w.pid, { by: 'ann' })).held, true);
+    testing.setNetworkProbe(async () => true);
+    for (let i = 0; i < 2; i++) assert.ok(!(await testing.networkWatchTick()).includes(w.pid));
+    assert.deepEqual(w.entriesOf(), []);
+    assert.ok(!eventsOf(w.pid).some((t) => /^Network back/.test(t)), 'no "Network back" audit line');
+    assert.deepEqual(testing.heldStops.heldResumeOf(w.pid), { after: 8 });
+  } finally { await w.cleanup(); }
+}));
+
+test('slice 7: Pause on a held run cancels its resume tickets, and neither a tick nor the network watch holds it again', () => withEnvVars({ ...SMALL_ON, WORCA_NETWORK_WAIT: '1' }, async () => {
+  const w = await resumeServerWorld({ rp: netPaused() });
+  try {
+    const entry = { id: `s7-paused-${w.pid}`, kind: 'run', pipelineId: w.pid, status: 'paused', events: [], pendingQuestion: null,
+      orch: { pause: () => false, state: {} } };
+    runs.set(entry.id, entry);
+    const r = await post('/api/schedules/resume', { pipelineId: w.pid, scheduledFor: new Date(Date.now() + 3_600_000).toISOString() });
+    assert.equal(r.status, 202, await r.text());
+    const ticket = getDb().prepare("SELECT id FROM scheduled_runs WHERE resume_pipeline_id = ? AND status = 'scheduled'").get(w.pid);
+    assert.ok(ticket);
+    assert.equal((await testing.resumeRun(w.pid, { by: 'ann' })).held, true);
+    testing.chatActions.pause(entry.id, 'ann');
+    assert.equal(getTicket(ticket.id).status, 'canceled', 'the resume ticket is canceled');
+    await schedulerTick();
+    testing.setNetworkProbe(async () => true);
+    assert.ok(!(await testing.networkWatchTick()).includes(w.pid), 'the network watch does not take it up');
+    assert.equal(testing.heldStops.heldResumeOf(w.pid), null, 'nothing holds it again');
+    assert.deepEqual(w.entriesOf().filter((e) => e !== entry), [], 'nothing started');
+    assert.equal(testing.heldStops.watchSkips(w.pid), true);
+    testing.heldStops.holdResume(w.pid, { by: 'ann' });
+    testing.heldStops.dropResume(w.pid);
+    assert.equal(testing.heldStops.watchSkips(w.pid), false, "the next Resume clears the Pause's drop");
+  } finally { runs.delete(`s7-paused-${w.pid}`); await w.cleanup(); }
 }));

@@ -23101,6 +23101,12 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
       }
       throw new Error((data && data.error) || `HTTP ${res.status}`);
     }
+    // Shaper small runs slice 7 (D16): the resume is held for its turn; nothing started, so the paused copy stays.
+    if (data && data.held === true) {
+      showResumePending(pipelineId, false);
+      if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; }
+      return;
+    }
     upsertRun({
       runId: data.runId,
       title: r.title || pipelineId,
@@ -28741,6 +28747,12 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
         return;
       }
       throw new Error((data && data.error) || `HTTP ${res.status}`);
+    }
+    // Shaper small runs slice 7 (D16): the resume is held for its turn; nothing started, so the paused copy stays.
+    if (data && data.held === true) {
+      showResumePending(p.id, false);
+      btn.disabled = false; labelEl.textContent = label; delete btn.dataset.resumeState;
+      return;
     }
     upsertRun({
       runId: data.runId, title: p.title || p.id, projectDir: p.projectDir || projectDir || '',

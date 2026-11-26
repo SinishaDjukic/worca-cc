@@ -87,7 +87,7 @@ test('M5a (slice 5, R-po-3): run 8 being resumed at boot holds the turn: its row
   assert.deepEqual(startable(fx), []);
 }));
 
-test('M5b: runs 8 and 10 going while run 5 is paused: nothing starts; a stop answer of run 5 would wait for run 8 (a resume reads no turn)', () => {
+test('M5b (stop answer): runs 8 and 10 going while run 5 is paused: nothing starts; a stop answer of run 5 would wait for run 8', () => {
   const fx = world(root, { done: M4_DONE, states: { 5: { pipe: 'paused' }, 8: { pipe: 'running' }, 10: { pipe: 'running' } } });
   assert.deepEqual(startable(fx), []);
   assert.deepEqual(busySliceOf(fx.featureId, { exclude: 5, live: fx.live }), { index: 8 });
@@ -1391,4 +1391,164 @@ test("S5 (D4): the gate is the flag alone: an unmarked feature's resuming run ho
   assert.equal(busy(fx), null, 'control: a paused run is not going');
   fx.setRun(9, RESUMING);
   assert.deepEqual(busy(fx), { index: 9 });
+}));
+
+// ---- Slice 7 (R-po-4, R-po-5, R-qa-2): a resume waits its turn ------------------------------------------------------
+/** A 16-run world read through a held-stops instance's overlay, as the server composes it, with a fake resumeRun that
+ *  records each call and stays in flight until `goOn(run)`. `make()` builds another instance (a restart). */
+function resumeKit(spec) {
+  const calls = [];
+  const flying = new Map();
+  let fx = null;
+  const make = () => createHeldStops({ runs: new Map(), liveSliceOf: (pid) => fx.live(pid), broadcastFeature: () => {},
+    resolvePending: () => true,
+    resume: (pid, opts) => { calls.push({ pid, opts }); return new Promise((resolve) => flying.set(pid, resolve)); } });
+  const held = make();
+  fx = world(root, spec, { held });
+  /** Run `run`'s resume is live: the run works and the call resolves. */
+  const goOn = (run) => {
+    const pid = fx.pipelineOf(run);
+    fx.setRun(run, { pipe: 'running' });
+    flying.get(pid)?.({ ok: true, runId: `r${run}`, pipelineId: pid });
+  };
+  return { fx, held, calls, make, goOn };
+}
+const flushed = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
+const storedStatus = (pid) => getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(pid).status;
+const ONLY_EIGHT = { done: M4_DONE, states: { 5: PAUSED, 8: WORKING } };
+
+test('M5b (s7): only run 8 going; resuming run 5 is held after run 8, startable [], delivered once after run 8 is done', () => withEnvVars(ON, async () => {
+  const k = resumeKit(ONLY_EIGHT);
+  const { fx, held, calls } = k;
+  const five = fx.pipelineOf(5);
+  assert.deepEqual(startable(fx), []);
+  assert.deepEqual(held.holdResume(five, { by: 'ann' }), { ok: true, held: true, pipelineId: five, after: 8 });
+  assert.equal(storedStatus(five), 'paused');
+  assert.deepEqual(startable(fx), [], 'the resume starts nothing');
+  await held.deliver();
+  assert.deepEqual(calls, [], 'nothing is delivered while run 8 goes');
+  fx.setRun(8, { pipe: 'done' });
+  assert.deepEqual(held.heldResumeOf(five), { after: 8 });
+  assert.deepEqual(startable(fx), [], 'the held resume goes before the free runs');
+  const first = held.deliver();
+  const second = held.deliver();
+  try {
+    await flushed();
+    assert.deepEqual(calls, [{ pid: five, opts: { by: 'ann', heldDelivery: true } }]);
+    assert.equal(fx.live(five).resuming, true);
+    assert.deepEqual(startable(fx), [], "while run 5's resume is in flight");
+  } finally { k.goOn(5); }
+  await Promise.all([first, second]);
+  await held.deliver();
+  assert.equal(calls.length, 1, 'delivered exactly once');
+  assert.deepEqual(startable(fx), [], 'run 5 works now');
+}));
+
+test('M5b (s7): the label is on run 5 while held', () => withEnvVars(ON, () => {
+  const { fx, held } = resumeKit(ONLY_EIGHT);
+  held.holdResume(fx.pipelineOf(5), { by: 'ann' });
+  const { view, members } = views(fx);
+  assert.equal(view.get(5).state, 'paused');
+  assert.deepEqual(view.get(5).heldResume, { after: 8 });
+  assert.deepEqual(turnRuns(view), [5], 'featureView next label');
+  assert.deepEqual(turnRuns(members), [5], 'Runs list next label');
+}));
+
+test('s7: pausing held run 5, or a simulated restart (a new held-stops instance), leaves run 5 paused with no heldResume and nothing delivered when run 8 finishes', () => withEnvVars(ON, async () => {
+  const drop = {
+    pause: (k) => { assert.equal(k.held.dropResume(k.fx.pipelineOf(5)), true); return k.held; },
+    restart: (k) => { const next = k.make(); k.fx.useHeld(next); return next; },
+  };
+  for (const [name, how] of Object.entries(drop)) {
+    const k = resumeKit(ONLY_EIGHT);
+    const five = k.fx.pipelineOf(5);
+    assert.ok(k.held.holdResume(five, { by: 'ann' }), name);
+    const now = how(k);
+    const row = () => featureView(k.fx.featureId, { live: k.fx.live }).slices.find((s) => s.index === 5);
+    const unheld = () => {
+      assert.equal(row().state, 'paused', name);
+      assert.equal('heldResume' in row(), false, name);
+      assert.equal('nextTurn' in row(), false, name);
+    };
+    unheld();
+    k.fx.setRun(8, { pipe: 'done' });
+    await now.deliver();
+    await flushed();
+    assert.deepEqual(k.calls, [], `${name}: nothing is delivered`);
+    unheld();
+    assert.equal(storedStatus(five), 'paused', name);
+    assert.deepEqual(startable(k.fx), [10], `${name}: the next free run has the turn`);
+  }
+}));
+
+test('s7: two boot picks (4 and 6): only 4 resumes and holds the turn; 6 is held after 4 and holds nothing', () => withEnvVars(ON, () => {
+  const { fx, held } = resumeKit({ done: [1, 2, 3], states: { 4: PAUSED, 6: PAUSED } });
+  const [four, six] = [fx.pipelineOf(4), fx.pipelineOf(6)];
+  const picks = [{ pipelineId: six, by: 'ann', why: 'drain' }, { pipelineId: four, by: 'bo', why: 'drain' }];
+  assert.deepEqual(held.splitBootPicks(picks, { mock: true }).map((p) => p.pipelineId), [four]);
+  fx.setRun(4, RESUMING);                             // the server marks the picks it keeps
+  assert.ok(!fx.live(six).resuming, 'run 6 is not being resumed');
+  assert.deepEqual(fx.live(six).heldResume, { after: 4 });
+  assert.equal(busySliceOf(fx.featureId, { exclude: 4, live: fx.live }), null, 'run 6 holds nothing');
+  assert.deepEqual(busy(fx), { index: 4 });
+  assert.deepEqual(startable(fx), []);
+}));
+
+test('s7 (R-arch-8): a held resume holds nothing, yet a free run waits for it', () => withEnvVars(ON, () => {
+  const { fx, held } = resumeKit({ done: M4_DONE, states: { 5: PAUSED, 8: WORKING, 12: PAUSED } });
+  held.holdResume(fx.pipelineOf(5), { by: 'ann' });
+  fx.setRun(8, { pipe: 'done' });
+  assert.deepEqual(held.heldResumeOf(fx.pipelineOf(5)), { after: 8 });
+  assert.equal(busy(fx), null, 'not counted as going');
+  assert.deepEqual(heldStopTurn(fx.featureId, 12, { live: fx.live }), { due: true }, "another held item's turn is not blocked");
+  assert.deepEqual(gate(fx, 10), { state: 'waiting' }, "run 10 is free but waits behind the held resume (Start now's gate)");
+  const resume = resumeFeature(fx.featureId, { live: fx.live, index: 12 });
+  assert.equal(resume.action, 'resume', `the feature's Resume is not refused: ${JSON.stringify(resume)}`);
+  const out = replan(fx);                             // read last: it cancels the waiting tickets
+  assert.ok(out.ticketId, `Re-plan the rest is not refused: ${JSON.stringify(out)}`);
+}));
+
+test('S7 (D9): liveSliceHeldResume() overlays heldResume on a slice, or on a bare paused run', () => {
+  const bare = SF.liveSliceHeldResume(null, 8);
+  assert.deepEqual(bare, { ...liveSliceFrom({ runId: null, status: 'paused' }), heldResume: { after: 8 } });
+  assert.ok(Object.isFrozen(bare));
+  const entry = liveSliceFrom({ runId: 'r5', status: 'paused' });
+  assert.deepEqual(SF.liveSliceHeldResume(entry, 8), { ...entry, heldResume: { after: 8 } });
+  assert.equal('heldResume' in entry, false, 'the input is not changed');
+});
+
+test('s7 (R-po-4, the example): run 6 resumed while run 4 works stays held, goes on once run 4 finishes or stops at a stop; after a restart it reads paused, held after nothing', () => withEnvVars(ON, async () => {
+  const ends = {
+    'run 4 finishes': { end: (k) => k.fx.setRun(4, { pipe: 'done' }), goes: true },
+    'run 4 stops at a stop': { end: (k) => k.fx.setRun(4, { stop: 'check' }), goes: true },
+    'the server restarts first': { end: (k) => { const next = k.make(); k.fx.useHeld(next); k.fx.setRun(4, { pipe: 'done' }); return next; }, goes: false },
+  };
+  for (const [name, { end, goes }] of Object.entries(ends)) {
+    const k = resumeKit({ done: [1, 2, 3], states: { 4: WORKING, 6: PAUSED } });
+    const six = k.fx.pipelineOf(6);
+    const row = () => featureView(k.fx.featureId, { live: k.fx.live }).slices.find((s) => s.index === 6);
+    assert.deepEqual(k.held.holdResume(six, { by: 'ann' }), { ok: true, held: true, pipelineId: six, after: 4 }, name);
+    await k.held.deliver();
+    assert.deepEqual(k.calls, [], `${name}: held while run 4 works`);
+    assert.deepEqual(row().heldResume, { after: 4 }, name);
+    const now = end(k) || k.held;
+    const pass = now.deliver();
+    try {
+      await flushed();
+      assert.deepEqual(k.calls.map((c) => c.pid), goes ? [six] : [], name);
+    } finally { if (k.calls.length) k.goOn(6); }
+    await pass;
+    if (!goes) {
+      assert.equal(row().state, 'paused', name);
+      assert.equal('heldResume' in row(), false, `${name}: no longer after run 4`);
+    }
+  }
+}));
+
+// A guard that holds on today's code too: a person's pause frees the turn and this slice must not change that.
+test('s7 (R-po-5, the example): the owner pauses run 8; the next free run starts', () => withEnvVars(ON, () => {
+  const fx = world(root, { done: M4_DONE, states: { 8: WORKING } });
+  assert.deepEqual(startable(fx), []);
+  fx.setRun(8, PAUSED);
+  assert.deepEqual(startable(fx), [5]);
 }));
