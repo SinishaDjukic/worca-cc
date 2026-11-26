@@ -245,6 +245,10 @@ export function modelEnvRef(value) {
   return m ? m[1] : null;
 }
 
+// A Worca vault reference (src/core/secrets/refs.mjs VAULT_REF_PREFIX + 22 base64url characters), kept here so
+// this leaf imports nothing.
+const VAULT_REF_RE = /^worca:vault:v1:[A-Za-z0-9_-]{22}$/;
+
 /**
  * Defensive spawn-time pass over a model entry's env (§4.4): drops reserved
  * keys and non-string values, and expands whole-value ${VAR} refs from
@@ -253,16 +257,25 @@ export function modelEnvRef(value) {
  * (#374) reaches `--model` verbatim, so a stray-whitespace or empty value must
  * not survive. The user catalog rejects reserved keys at write time and plugin
  * manifests strip them at normalize time, so a drop here means a hand-edited
- * settings file — the caller owns warning about `dropped`.
+ * settings file — the caller owns warning about `dropped`. A Worca vault
+ * reference resolves only through the injected `resolveRef(value, key)` (this
+ * module imports nothing); one that does not resolve, or any reference with no
+ * `resolveRef`, drops the key, so a reference never reaches a spawn as a value.
  * @param {Record<string,*>|undefined} modelEnv
  * @param {Record<string,string|undefined>} [sourceEnv]
+ * @param {{resolveRef?: (value:string, key:string) => string}} [opts]
  * @returns {{env: Record<string,string>, dropped: string[]}}
  */
-export function prepareModelEnv(modelEnv, sourceEnv = process.env) {
+export function prepareModelEnv(modelEnv, sourceEnv = process.env, { resolveRef } = {}) {
   const env = {};
   const dropped = [];
   for (const [k, v] of Object.entries(modelEnv || {})) {
     if (isReservedModelEnvKey(k) || isMcpRegistryEnvKey(k) || typeof v !== 'string') { dropped.push(k); continue; }
+    if (VAULT_REF_RE.test(v)) {
+      const t = resolveRef ? resolveRef(v, k) : '';
+      if (t) env[k] = t; else dropped.push(k);
+      continue;
+    }
     const ref = modelEnvRef(v);
     if (ref !== null) {
       const resolved = sourceEnv ? sourceEnv[ref] : undefined;

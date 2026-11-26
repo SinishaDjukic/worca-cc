@@ -21,8 +21,8 @@ useTempHome(after);
 
 const SCHEMA = [{ key: 'notifyChatIds', type: 'text', label: 'Notify', secret: false, required: false }];
 
-function fixture({ prefs } = {}) {
-  writePluginConfig('tg-chat', SCHEMA, { notifyChatIds: '100, 200' });
+async function fixture({ prefs } = {}) {
+  await writePluginConfig('tg-chat', SCHEMA, { notifyChatIds: '100, 200' });
   const sent = [];
   const channelHost = {
     list: () => [
@@ -45,7 +45,7 @@ function fixture({ prefs } = {}) {
 test('done, question and error events fan out to outbound notifyChatIds with their own messages', async () => {
   await checkRows([
     { name: 'done event fans out to every notifyChatIds of outbound channels only', run: async () => {
-      const { orch, sent, settle } = fixture();
+      const { orch, sent, settle } = await fixture();
       orch.emit('done', { status: 'done' });
       await settle();
       assert.equal(sent.length, 2, 'two chat ids, one outbound channel (inbound-only skipped)');
@@ -56,14 +56,14 @@ test('done, question and error events fan out to outbound notifyChatIds with the
       assert.match(sent[0].message.body[0].value, /\*\*Duration:\*\* 1m00s/, 'no elapsed figure: the summed time');
     } },
     { name: 'Duration prints the elapsed run time when the run has it', run: async () => {
-      const { orch, sent, settle } = fixture();
+      const { orch, sent, settle } = await fixture();
       orch.state = { totalCostUsd: 0.5, totalActiveMs: 60000, elapsedMs: 45000, elapsedSince: null };
       orch.emit('done', { status: 'done' });
       await settle();
       assert.match(sent[0].message.body[0].value, /\*\*Duration:\*\* 45s/);
     } },
     { name: 'question and error events render their specific messages', run: async () => {
-      const { orch, sent, settle } = fixture();
+      const { orch, sent, settle } = await fixture();
       orch.emit('question', { id: 'gate-1', kind: 'gate', issues: [{ severity: 'major', summary: 'X' }] });
       await settle();
       assert.match(sent[0].message.body[0].value, /\/approve \*9999/);
@@ -80,7 +80,7 @@ test('done, question and error events fan out to outbound notifyChatIds with the
 test('prefs, per-channel toggles and muting gate delivery', async () => {
   await checkRows([
     { name: 'prefs gate events; per-channel toggle disables a channel', run: async () => {
-      const { orch, sent, settle, state } = fixture();
+      const { orch, sent, settle, state } = await fixture();
       state.prefs = { notify: { done: false, error: true, question: true, paused: true }, channels: {} };
       orch.emit('done', { status: 'done' });
       await settle();
@@ -108,7 +108,7 @@ test('prefs, per-channel toggles and muting gate delivery', async () => {
       assert.equal(sent.length, 0, 'notify.error=false suppresses the error-pause');
     } },
     { name: 'muted chats are skipped and counted; unmuted keep receiving', run: async () => {
-      const { orch, sent, settle, chatContext } = fixture();
+      const { orch, sent, settle, chatContext } = await fixture();
       chatContext.set('telegram:100', { mute_until: new Date(Date.now() + 60000).toISOString() });
       orch.emit('done', { status: 'done' });
       await settle();
@@ -119,7 +119,7 @@ test('prefs, per-channel toggles and muting gate delivery', async () => {
 });
 
 test('delivery failures are contained (logged, never thrown into the run)', async () => {
-  writePluginConfig('tg-chat', SCHEMA, { notifyChatIds: '100' });
+  await writePluginConfig('tg-chat', SCHEMA, { notifyChatIds: '100' });
   const logs = [];
   const channelHost = {
     list: () => [{ plugin: 'tg-chat', channelId: 'main', platform: 'telegram', capabilities: { outbound: true }, configSchema: SCHEMA }],
@@ -139,11 +139,11 @@ test('delivery failures are contained (logged, never thrown into the run)', asyn
 });
 
 test('sendTest: explicit action, reports per-chat results, errors on missing config', async () => {
-  const { notifier } = fixture();
+  const { notifier } = await fixture();
   const out = await notifier.sendTest('tg-chat', 'main', { title: 't', body: [{ kind: 'text', value: 'x' }], severity: 'info' });
   assert.equal(out.ok, true);
   assert.equal(out.results.length, 2);
-  writePluginConfig('tg-chat', SCHEMA, { notifyChatIds: null });
+  await writePluginConfig('tg-chat', SCHEMA, { notifyChatIds: null });
   await assert.rejects(notifier.sendTest('tg-chat', 'main', { title: null, body: [], severity: 'info' }), /notifyChatIds is not configured/);
   await assert.rejects(notifier.sendTest('nope', 'main', { title: null, body: [], severity: 'info' }), /no such chat channel/);
 });
@@ -207,7 +207,7 @@ test('chatPrefs/setChatPrefs: defaults ON, merge-patch, unknown keys rejected', 
 test('the done notification warns about unapplied directions, and only then', async () => {
   await checkRows([
     { name: 'the done notification warns about directions the run never applied', run: async () => {
-      const { orch, sent, settle } = fixture();
+      const { orch, sent, settle } = await fixture();
       orch.state.directions = { posted: 2, applied: 1, pending: [{ id: 'd2', text: 'cut the roadmap' }] };
       orch.emit('done', { status: 'done' });
       await settle();
@@ -215,7 +215,7 @@ test('the done notification warns about unapplied directions, and only then', as
       assert.match(JSON.stringify(sent[0]), /Directions pending:\*\* 1/);
     } },
     { name: 'a run that applied every direction carries no such warning', run: async () => {
-      const { orch, sent, settle } = fixture();
+      const { orch, sent, settle } = await fixture();
       orch.state.directions = { posted: 2, applied: 2, pending: [] };
       orch.emit('done', { status: 'done' });
       await settle();
@@ -225,7 +225,7 @@ test('the done notification warns about unapplied directions, and only then', as
 });
 
 test('away hours: notifyAway sends one info message; notify.away=false keeps it out of chat', async () => {
-  const { sent, settle, notifier, state } = fixture();
+  const { sent, settle, notifier, state } = await fixture();
   notifier.notifyAway('Away hours started (22:00 to 07:00). worca now answers questions on 1 run.');
   await settle();
   assert.equal(sent.length, 2);
@@ -239,7 +239,7 @@ test('away hours: notifyAway sends one info message; notify.away=false keeps it 
 });
 
 test('Watch PR: notifyPrWatch renders started/published as info and needs-person as a warning; notify.prWatch=false mutes it', async () => {
-  const { sent, settle, notifier, state } = fixture();
+  const { sent, settle, notifier, state } = await fixture();
   notifier.notifyPrWatch({ kind: 'started', title: 'https://github.com/o/r/pull/1', message: 'Fix run 1 of 3 started.' });
   notifier.notifyPrWatch({ kind: 'needs-person', title: 'https://github.com/o/r/pull/1', message: 'cap' });
   await settle();

@@ -12,7 +12,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeJsonAtomic } from '../core/json-atomic.mjs';
 import { assertNetworkProxyInput, mergeNetworkProxy } from '../core/settings.mjs';
-import { readProxyLogin, clearProxyLogin, parseLoginRecord } from '../core/proxy-credentials.mjs';
+import { readProxyLogin, clearProxyLoginPlain, parseLoginRecord } from '../core/proxy-credentials.mjs';
 import { resolveUpstream, upstreamLabel } from '../core/upstream-proxy.mjs';
 
 export const SETTINGS_FILE = 'proxy-settings.json';
@@ -84,7 +84,7 @@ export function createLoginSource({ dataDir, env, loginFile = null, onDrop = () 
       if (!rec || rec.error) return rec;
       const label = upstreamLabelOf(env, np);
       if (!rec.upstream || rec.upstream !== label) {
-        clearProxyLogin({ home: dataDir });
+        clearProxyLoginPlain({ home: dataDir });
         onDrop(rec.upstream
           ? `the saved login for ${rec.user} was for ${rec.upstream}, and the corporate proxy is now ${label || 'not set'}, so it was deleted; log in again`
           : `the saved login for ${rec.user} names no corporate proxy, so it was deleted; log in again`);

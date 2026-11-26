@@ -7,13 +7,31 @@ import { currentSpecHash } from '../../../src/core/exec-env/box-image.mjs';
 import { execEnvSetting } from '../../../src/core/settings.mjs';
 import { REMOTE_MODE, proxyHost } from '../../server.mjs';
 
-/** The posture payload; `proxyStatus` is injectable for tests. */
-export async function postureNow({ env = process.env, remoteMode = REMOTE_MODE, proxyStatus = () => proxyHost.status() } = {}) {
+/** The secret vault's facts for the "Secrets at rest" row, or null with the flag off and no vault in use. Config files
+ *  only (summary.mjs): never the OS key store, so the posture never prompts for the Keychain. */
+export async function secretVaultFacts() {
+  const { secretVaultFlagOn, vaultInUse } = await import('../../../src/core/secrets/flag.mjs');
+  const flagOn = secretVaultFlagOn();
+  if (!flagOn && !vaultInUse()) return null;
+  let vaultOn = false;
+  if (vaultInUse()) {
+    try {
+      const { vault } = (await import('../../../src/core/secrets/summary.mjs')).secretCounts();
+      vaultOn = Object.values(vault).some((n) => n > 0);
+    } catch { vaultOn = false; }
+  }
+  return { flagOn, vaultOn };
+}
+
+/** The posture payload; `proxyStatus` and `vaultFacts` are injectable for tests. */
+export async function postureNow({ env = process.env, remoteMode = REMOTE_MODE, proxyStatus = () => proxyHost.status(), vaultFacts = secretVaultFacts } = {}) {
   let proxy = null;
   try { proxy = await proxyStatus(); } catch { proxy = null; }
+  let secretVault = null;
+  try { secretVault = await vaultFacts(); } catch { secretVault = null; }
   const name = execEnvSetting() || 'local';
   const label = describeExecEnvs().find((e) => e.name === name)?.label || name;
-  return securityPosture({ env, remoteMode, execEnvDefault: name, execEnvLabel: label, proxy, specHashOf: currentSpecHash });
+  return securityPosture({ env, remoteMode, execEnvDefault: name, execEnvLabel: label, proxy, specHashOf: currentSpecHash, secretVault });
 }
 
 export function register(app) {

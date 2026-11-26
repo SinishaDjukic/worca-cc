@@ -82,6 +82,9 @@ Ask it "is this run sandboxed?", "why can't I use Docker?" or "what does the har
   in use and the cap, and the wait limit.
 - **a project's sandbox environment**: its network (open or allow), its template or image, its environment spec and
   its builds, current or stale.
+- **the secret vault** (Labs flag `secretVault`): its state, the OS key store's name and how many saved secrets of each
+  kind are in it or still in files. Never a value, a name or a key. The `security:` line then carries `vault=`. Chat
+  changes nothing here: see [Secrets and the vault](secrets.md).
 - **a sandbox run**: waiting for a slot, building the image, the answer-by time and the files held for review.
 
 It states the claim exactly: no model key, no git token and no proxy login in an agent's reach. It never says "no

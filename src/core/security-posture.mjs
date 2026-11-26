@@ -10,6 +10,7 @@ import { agentIdentity } from './agent-user.mjs';
 import { readEgressPolicy } from './egress-proxy.mjs';
 import { sidecarConfigured } from './egress-sidecar-client.mjs';
 import { detectDeployment } from './deployment.mjs';
+import { secretsAtRestRow } from '../shared/secret-vault-view.mjs';
 
 /** compose.hardened.yml sets WORCA_BOX=hardened on Worca's container (the label alone is invisible from inside). */
 export const BOX_VAR = 'WORCA_BOX';
@@ -84,11 +85,12 @@ export function boxImageInside({ env = process.env, specHashOf = () => null } = 
  * @param {string} [o.execEnvLabel]       its label ("Local sandbox (Docker)")
  * @param {object|null} [o.proxy]         proxyHost.status() (state, upstream, login, managed, sidecar), or null
  * @param {(key: string) => string|null} [o.specHashOf]
+ * @param {{flagOn: boolean, vaultOn: boolean}|null} [o.secretVault]  the secret vault facts, for the "Secrets at rest" row
  * @returns {{where: string, whereLabel: string, rows: {id: string, label: string, status: string, value: string, tone: string,
  *   detail: string, title?: string}[], execEnv: {name: string, label: string, sandboxed: boolean}, boxImage: object|null}}
  */
 export function securityPosture({ env = process.env, remoteMode = false, execEnvDefault = 'local', execEnvLabel = null,
-  proxy = null, specHashOf = () => null } = {}) {
+  proxy = null, specHashOf = () => null, secretVault = null } = {}) {
   const where = whereWorcaRuns(env, { remoteMode });
   const boxed = where !== 'native';
   const rows = [];
@@ -140,6 +142,10 @@ export function securityPosture({ env = process.env, remoteMode = false, execEnv
     name !== 'local' ? "Each run's agents work in their own sandbox."
       : boxed ? `Agents run inside this ${WHERE_LABEL[where].toLowerCase()}.` : 'Agents run on this machine, not sandboxed.',
     label, name !== 'local' ? 'ok' : 'neutral');
+
+  // Secrets at rest (the secretVault flag): no row with the flag off and no vault in use.
+  const atRest = secretVault ? secretsAtRestRow({ where, flagOn: !!secretVault.flagOn, vaultOn: !!secretVault.vaultOn }) : null;
+  if (atRest) rows.push(atRest);
 
   const boxImage = where === 'native' || where === 'hosted' ? null : boxImageInside({ env, specHashOf });
   return { where, whereLabel: WHERE_LABEL[where], rows, execEnv: { name, label, sandboxed }, boxImage };

@@ -4,6 +4,7 @@
 //   get_security_posture        the rows of Settings › General › Security (security-posture.mjs)
 //   get_execution_environments  each backend: ready or why not, slots in use / cap, the wait limit, the default
 //   get_project_environment     a project's sandbox settings, its environment spec, its builds and whether they are current
+//   get_secrets_status          the secret vault's state and counts by kind (the secretVault flag only)
 //   propose_environment_spec_change / propose_environment_build   cards the user applies (env-proposal.mjs)
 // Pure: every reader and validator comes in through deps (security-deps.mjs binds the real ones). Nothing here returns
 // a login, a hash, a token, a key or a secret's value, and nothing changes the broker, agent users, the allow-list or the
@@ -45,6 +46,11 @@ export function securityToolFamily({ deps, SCHEMA, str, AskToolError, scopeError
     { name: 'get_project_environment',
       description: 'Read one project\'s sandbox environment: per backend its network mode (open | allow), its template or image field, what a run uses and from where, the build (name, builtAt, current or staleBecause) and the latest build job; plus the project\'s environment spec (pinned tools and apt packages). Read-only.',
       inputSchema: SCHEMA.obj({ projectKey: PROJECT }) },
+    ...(typeof sec.secrets === 'function' && typeof sec.secretsEnabled === 'function' && sec.secretsEnabled() ? [
+      { name: 'get_secrets_status',
+        description: 'Read the secret vault\'s state (docs/secrets.md): on, off, migration-pending, locked, key-store-unavailable, unreadable or not-available-in-container, with one sentence; the OS key store\'s name; how many saved secrets of each kind (provider and model keys, MCP secrets, plugin secrets, the proxy login) are in the vault and still in their files; and the last check. Read-only: never a value, a secret\'s name, a key or a path. The vault is at-rest encryption on a native install, not a sandbox. changeFromChat says where the user changes it.',
+        inputSchema: SCHEMA.obj({}) },
+    ] : []),
     ...(env ? [
       { name: 'propose_environment_spec_change',
         description: 'Propose setting or clearing a project\'s environment spec (docs/environment-spec.md): the pinned tools (mise names with exact versions) and Debian apt packages its sandbox template or image is built with. Give the WHOLE new list of tools and/or apt (an omitted list stays as it is), or clear: true. Validated as the project page saves it. It never changes anything itself: the user sees a card with each list before → after and applies or declines it. A saved spec changes nothing until the template or image is built again (propose_environment_build). Returns {ok:true, card} or {ok:false, errors} to fix and retry. Never claim it was applied — the card says so.',
@@ -69,6 +75,12 @@ export function securityToolFamily({ deps, SCHEMA, str, AskToolError, scopeError
       const s = securityOf('get_execution_environments');
       try { return await s.execEnvs(); }
       catch (err) { throw new AskToolError(`get_execution_environments: ${err && err.message ? err.message : err}`); }
+    },
+    async get_secrets_status() {
+      const s = securityOf('get_secrets_status');
+      if (typeof s.secrets !== 'function') throw new AskToolError('get_secrets_status: the secret vault is unavailable');
+      try { return await s.secrets(); }
+      catch (err) { throw new AskToolError(`get_secrets_status: ${err && err.message ? err.message : err}`); }
     },
     async get_project_environment(input) {
       const s = securityOf('get_project_environment');

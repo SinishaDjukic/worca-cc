@@ -216,3 +216,45 @@ test('background Test: a complete Save and a manual Edit definition each re-test
   const added = await until(async () => (await readMcpStore()).tests['billing|manual:fx']);
   assert.equal(added.ok, true, 'a membership a Save adds starts on (P1 putMember), so it is tested');
 });
+
+test('flag on: a pasted foreign vault reference is refused 400 VAULT_REF_REFUSED and secrets.json is unchanged', async () => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { writeFakeState } = await import('./helpers/os-store-fake.mjs');
+  const { newVaultRef } = await import('../src/core/secrets/refs.mjs');
+  const { mcpDir } = await import('../src/core/mcp/store.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'worca-api-mcp-vault-'));
+  writeFakeState(join(dir, 'state.json'), { state: 'available' });
+  const keep = { WORCA_FLAGS: process.env.WORCA_FLAGS, WORCA_TEST_OS_STORE: process.env.WORCA_TEST_OS_STORE };
+  Object.assign(process.env, { WORCA_FLAGS: 'secretVault', WORCA_TEST_OS_STORE: join(dir, 'state.json') });
+  try {
+    let r = await call('POST', '/api/mcp/servers', { name: 'vref', ...PG });
+    assert.equal(r.status, 200, r.text);
+    const path = `/api/mcp/sets/general/members/${enc('manual:vref')}`;
+    r = await call('PUT', path, { enabled: true, values: { database: 'postgresql://ro@db/v' }, secrets: { password: 'pw-vref-0001' } });
+    assert.equal(r.status, 200, r.text);
+    const bytes = readFileSync(join(mcpDir(), 'secrets.json'));
+    r = await call('PUT', path, { secrets: { password: newVaultRef() } });
+    assert.equal(r.status, 400, r.text);
+    assert.equal(r.body.code, 'VAULT_REF_REFUSED');
+    assert.match(r.body.error, /^The secret was not saved: /);
+    assert.ok(!r.text.includes('worca:vault:'));
+    assert.ok(readFileSync(join(mcpDir(), 'secrets.json')).equals(bytes));
+  } finally {
+    for (const [k, v] of Object.entries(keep)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an fs failure writing the MCP store answers 500 with its code and no home path', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, async () => {
+  const { chmodSync } = await import('node:fs');
+  const { mcpDir } = await import('../src/core/mcp/store.mjs');
+  chmodSync(mcpDir(), 0o500);   // read-only: the atomic write's temp file cannot be created
+  try {
+    const r = await call('POST', '/api/mcp/sets', { name: 'Readonly' });
+    assert.equal(r.status, 500, r.text);
+    assert.match(r.body.error, /^the MCP data could not be read or saved \(EACCES\)$/);
+    assert.ok(!r.text.includes(process.env.WORCA_HOME), r.text);
+  } finally { chmodSync(mcpDir(), 0o700); }
+});

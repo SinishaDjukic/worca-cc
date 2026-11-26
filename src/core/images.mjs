@@ -7,8 +7,8 @@
 import { createHash } from 'node:crypto';
 import { crc32, deflateSync } from 'node:zlib';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { imagesConfig, resolveProviderSecret } from './settings.mjs';
-import { modelEnvRef, maskModelEnvValue, isUpstreamBaseUrl, isLocalBaseUrl, envFlag } from './model-env.mjs';
+import { imagesConfig, maskStoredSecret, resolveProviderSecret } from './settings.mjs';
+import { modelEnvRef, isUpstreamBaseUrl, isLocalBaseUrl, envFlag } from './model-env.mjs';
 import { brokerEnabled } from './broker-client.mjs';
 import { sniffMime } from './ask-files.mjs';
 import { imageSize } from './ask/show-files.mjs';
@@ -50,7 +50,7 @@ const abortError = () => new DOMException('This operation was aborted', 'AbortEr
 /** Ready = an address, a model, a price (0 counts), and a key that resolves, or no key on a local or private address. */
 function readyOf(c) {
   if (!c.baseUrl || !c.model || c.price === null) return false;
-  return c.apiKey ? !!resolveProviderSecret(c.apiKey) : isLocalBaseUrl(c.baseUrl);
+  return c.apiKey ? !!resolveProviderSecret(c.apiKey, process.env, 'providers.images.apiKey') : isLocalBaseUrl(c.baseUrl);
 }
 
 /** GET /api/providers and Models › Providers: never a key, only where it comes from. */
@@ -65,8 +65,8 @@ export function imagesState() {
     keySet: !!apiKey,
     keySource: !apiKey ? null : ref ? 'env' : 'stored',
     keyRef: ref ? apiKey : null,
-    keyMasked: apiKey && !ref ? maskModelEnvValue(apiKey) : null,
-    keyMissing: !!apiKey && !resolveProviderSecret(apiKey),
+    keyMasked: apiKey && !ref ? maskStoredSecret(apiKey, 'providers.images.apiKey') : null,
+    keyMissing: !!apiKey && !resolveProviderSecret(apiKey, process.env, 'providers.images.apiKey'),
   };
 }
 
@@ -131,14 +131,16 @@ function endpoint(typed) {
   if (typeof t.model === 'string' && t.model.trim()) c.model = t.model.trim();
   let apiKey = '';
   let varRefused = false;
+  let fromStored = false;
   if (typeof t.apiKey === 'string' && t.apiKey.trim() && !t.apiKey.startsWith('••')) {
     const typedKey = t.apiKey.trim();
     const mayRead = !brokerEnabled() && ((typedKey === stored.apiKey && sameOrigin(c.baseUrl, stored.baseUrl))
       || sameOrigin(c.baseUrl, IMAGE_SERVICES[c.service].baseUrl) || isLoopback(c.baseUrl));
     if (modelEnvRef(typedKey) && !mayRead) varRefused = true;
     else apiKey = typedKey;
-  } else if (stored.apiKey && sameOrigin(c.baseUrl, stored.baseUrl)) apiKey = stored.apiKey;
-  const key = resolveProviderSecret(apiKey);
+  } else if (stored.apiKey && sameOrigin(c.baseUrl, stored.baseUrl)) { apiKey = stored.apiKey; fromStored = true; }
+  // Only the stored key resolves a vault reference; a typed one never does, even when it equals the stored reference.
+  const key = resolveProviderSecret(apiKey, process.env, fromStored ? 'providers.images.apiKey' : null);
   return { ...c, apiKey, key, unresolved: !!apiKey && !key, varRefused };
 }
 

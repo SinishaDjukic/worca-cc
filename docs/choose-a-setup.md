@@ -196,6 +196,14 @@ together on a real server yet.
 
 Details: [Shared instance](shared-instance.md), and [Deploy on Railway](deploy-railway.md) for the weaker option.
 
+## The secret vault
+
+The [secret vault](secrets.md#with-the-other-setups) is an experimental flag. It encrypts the keys and the proxy
+login Worca saves, with a key your OS key store holds. It adds encryption at rest where Worca runs natively: Native,
+Local sandbox (Docker) and E2B sandbox. It is not a sandbox: an agent that runs as your OS user can reach the key
+store, and only guardrail rules hold it back. In the Hardened box and a Shared instance it does nothing. A container
+has no OS key store, and the egress sidecar and the credential broker hold the secrets there.
+
 ## Related pages
 
 - [Security overview](security-overview.md): what Worca treats as untrusted, the claims, and the known limits.

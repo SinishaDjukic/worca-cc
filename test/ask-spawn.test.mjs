@@ -70,7 +70,8 @@ test('deny rules: spec list, every path rule // or ~/ anchored, the resolved hom
   assert.deepEqual(o.permissionRules, { allow: askWorktreeAllowRules('ask_00000001'), deny: [...ASK_DENY_RULES] });
   assert.deepEqual(ASK_DENY_RULES, [
     'Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Skill',
-    'Read(//**/worca-cc.db*)', 'Read(//**/worca.db*)', 'Read(//**/secrets.json)', 'Read(//**/.env*)',
+    'Read(//**/worca-cc.db*)', 'Read(//**/worca.db*)', 'Read(//**/secrets.json)',
+    'Read(//**/worca-vault*)', 'Read(//**/.env*)',
     'Read(//**/.worca-cc/settings.json)', 'Read(//**/.worca-cc/store/**)', 'Read(//**/.worca-cc/runs/**)',
     'Read(//**/.worca-cc/plugins/**)', 'Read(//**/.worca-cc/tmp/**)', 'Read(//**/.worca-cc/logs/**)',
     'Read(//**/.worca-cc/mcp/**)', 'Read(//**/.worca-cc/skills/**)',
