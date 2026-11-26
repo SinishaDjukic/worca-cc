@@ -198,6 +198,8 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Split extras: per-run ⋯ (Merge with next, Remove), Undo edits, "Ask me before each run" | S |
 | Split with small runs: one fold row per run (Owns, Starts from, Checked by), the challenge fold, the open-objections question, the Care row, "Ask the role to confirm" on a refused split; no "Ask me before each run" | all (rule 1) |
 | Small runs, the one card (flag `shaperSmallRuns`): the state line, the steps as one line each, the runs as one-line rows (mark, title, short state word), one primary button, ⋯ (Stop) | all (rule 1) |
+| Small runs, open stops on the one card: one line per open stop or failed run with what it holds up, its step card or Resume; the "N need you" count | all (rule 1) |
+| Small runs, run order: the link bars on pointing at a run row (Chat card, feature page); the run page facts Waits for and Needed by; Show order and its drawing on the feature page's Runs tab | S |
 | Small runs, Start step: the size, the Care dial (Lean, Balanced, Thorough) with Worca's pick and its reason, the estimate per position, "What it does" and "Gives up" for the picked position, Start requirements | all (rule 1) |
 | Small runs, Requirements step: the decisions as one question each, one expand / collapse row per role (mark, what the role did, its question), Ask for changes, Agree requirements | all (rule 1) |
 | Run page Overview: Perspective checklists (Shaper, gated): the latest review cycle as one summary line, unmet items open with their evidence, met items behind "Show N met items", earlier cycles behind "Earlier cycles" | S |
@@ -443,6 +445,7 @@ missing (`data-needs-git`), at every level.
 | The Installed tab's Team policy card and the setup checklist (the Marketplace page) | A — with the page that holds them |
 | Ask: chat, history, attachments, run card (its progress bar and stage text), proposal title / project / workflow / brief / Start | S |
 | Ask: proposal card's Source branch when "Chat runs: source branch" is Ask me on the card (or Only when the chat names one) and the card has no branch: the field, its "Pick a branch…" option and its hint; it stays shown once a branch is picked on that card | S — otherwise A, as before |
+| Ask: the environment card (a project's environment spec, a build of its template or image, or its sandbox network and template / image field): target line, before → after rows, Keep as is / Apply (Build) | S — it answers what the person asked the chat for |
 | Tool panel beside the chat and run pages: the icon strip, Overview, Terminal, Browser, Files and Design tabs, Pick element | S — never level-gated; the chat's tab tools ride the `toolPanel` flag |
 | Chat tab: Links in answers (Open chat links in the panel) | S — behind the `toolPanel` flag |
 | Pinpoint (#669): select text in a chat answer, a Markdown artifact or the Diff tab for Copy · Explain · Alternatives · Disagree · Note / Comment · Quote / Send to chat; the composer's quote chip; an artifact's pending-changes tray (sent back to the run as one direction while it still takes directions); the diff's open-comments tray (Propose fix run) | all — follows the surface it is on |

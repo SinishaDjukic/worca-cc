@@ -2,7 +2,7 @@
 // Ask agent mode (#574): the rails every command Ask runs passes BEFORE a key is typed. A rail
 // against mistakes and naive prompt injection, not a sandbox: obfuscated text can pass it
 // (docs/terminal.md "Chat"). Pure: the caller gives the folder, homes, host PID and port.
-import { isAbsolute, relative, resolve, win32 } from 'node:path';
+import { isAbsolute, relative, resolve, win32, posix } from 'node:path';
 import { evaluateKillCommand } from '../host-guard.mjs';
 import { SPAWN_ENV_BASE } from '../claude-runner.mjs';
 
@@ -16,6 +16,8 @@ const PROTECTED = [
   /\.worca-cc\b/, /\bworca(?:-cc)?\.db/, /\bsecrets\.json\b/, /(?:^|[\s/'"=<>])\.env[\w.-]*/,
   /(?:^|[\s/'"=<>~])\.ssh\b/, /(?:^|[\s/'"=<>~])\.aws\b/, /(?:^|[\s/'"=<>~])\.gnupg\b/,
   /(?:^|[\s/'"=<>~])\.netrc\b/, /\.config\/gh\b/, /(?:^|[\s'"=<>])\/proc\//,
+  // The corporate proxy login (an NT hash), Docker secrets and the egress sidecar's data folder (its default path).
+  /\bproxy-login\.json/, /(?:^|[\s'"=<>]|\/var)\/run\/secrets\b/, /(?:^|[\s'"=<>])\/worca\/egress\b/,
 ];
 // ASK_DENY_RULES anchors these at ~/ only: a project's own .claude/, .docker/, .kube/ and .npmrc are
 // ordinary files (every worca worktree has .claude/rules). Refused only under the user's home.
@@ -26,9 +28,106 @@ const PROTECTED_WIN = [
   /\.worca-cc\b/i, /\bworca(?:-cc)?\.db/i, /\bsecrets\.json\b/i, /(?:^|[\s/\\'"=<>])\.env[\w.-]*/i,
   /(?:^|[\s/\\'"=<>~])\.ssh\b/i, /(?:^|[\s/\\'"=<>~])\.aws\b/i, /(?:^|[\s/\\'"=<>~])\.gnupg\b/i,
   /(?:^|[\s/\\'"=<>~])\.netrc\b/i, /\.config[\\/]+gh\b/i, /(?:^|[\s'"=<>])\/proc\//,
+  /\bproxy-login\.json/i,
 ];
 
 const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
+
+// ── system secret folders, by path shape (not by spelling) ───────────────────────────────────────────────────────────
+// /run/secrets (also /var/run/secrets), the egress sidecar's data folder (/worca/egress or WORCA_EGRESS_DATA_DIR) and
+// any proxy-login.json. A regex on the text misses `/run//secrets`, `/run/./secrets`, `/run/x/../secrets`, `/run/sec*`,
+// `/run/secr''ets`, `/ru?/secrets`, `/run/{secrets,x}` and `cd /run && cat secrets/x`, so each path-like word is
+// unquoted, brace-expanded and normalised (`/+`, `.`, `..`), relative words are joined to every folder a `cd` in the
+// command reaches, and the segments are matched with the shell's own glob rules. This is a guard on the chat's commands,
+// not the boundary: file permissions and agent users are.
+const SECRET_SEGMENTS = Object.freeze([['run', 'secrets'], ['worca', 'egress']]);
+const SECRET_NAMES = Object.freeze(['proxy-login.json']);
+const GLOB_CHARS = /[*?[\]]/;
+const BRACE_CAP = 64;
+/** One word's brace alternatives (`a{b,c}d` → abd, acd), or null when they would pass BRACE_CAP (the caller then
+ *  refuses the command: fail closed). The work is bounded by the cap: the pending list never grows past it. */
+function braceExpand(word) {
+  const out = []; const todo = [word];
+  while (todo.length) {
+    const w = todo.shift();
+    const m = /\{([^{}]*,[^{}]*)\}/.exec(w);
+    if (!m) { out.push(w); continue; }
+    const alts = m[1].split(',');
+    if (out.length + todo.length + alts.length > BRACE_CAP) return null;
+    for (const alt of alts) todo.push(w.slice(0, m.index) + alt + w.slice(m.index + m[0].length));
+  }
+  return out;
+}
+/** One glob unit of `g` at `i` against the character `c`: [length of the unit, matched]. `[...]` / `[!...]` sets. */
+function unitAt(g, i, c) {
+  if (g[i] === '?') return [1, c !== undefined];
+  if (g[i] === '[') {
+    const j = g.indexOf(']', i + 2);
+    if (j > 0) {
+      const neg = g[i + 1] === '!' || g[i + 1] === '^';
+      const set = g.slice(i + (neg ? 2 : 1), j);
+      let hit = false;
+      for (let k = 0; k < set.length; k += 1) {
+        if (set[k + 1] === '-' && k + 2 < set.length) { if (c >= set[k] && c <= set[k + 2]) hit = true; k += 2; } else if (set[k] === c) hit = true;
+      }
+      return [j - i + 1, c !== undefined && hit !== neg];
+    }
+  }
+  return [1, g[i] === c];
+}
+/** Does the glob segment `g` (*, ?, [...]) match the literal `name`? Linear two-pointer matching with one backtrack
+ *  point (the last `*`), no RegExp: a run of stars costs nothing more. */
+function segMatches(g, name) {
+  if (!GLOB_CHARS.test(g)) return g === name;
+  let gi = 0; let ni = 0; let star = -1; let mark = 0;
+  while (ni < name.length) {
+    if (gi < g.length && g[gi] === '*') { while (g[gi] === '*') gi += 1; star = gi; mark = ni; continue; }
+    if (gi < g.length) { const [len, ok] = unitAt(g, gi, name[ni]); if (ok) { gi += len; ni += 1; continue; } }
+    if (star < 0) return false;
+    mark += 1; ni = mark; gi = star;
+  }
+  while (g[gi] === '*') gi += 1;
+  return gi === g.length;
+}
+/** True when the segments hold `want` as consecutive segments (glob-aware), or end in a protected file name. */
+function holdsSegments(segs, want) {
+  for (let i = 0; i + want.length <= segs.length; i += 1) if (want.every((w, k) => segMatches(segs[i + k], w))) return true;
+  return false;
+}
+/** The words of a command (split on blanks and shell operators), each unquoted and unescaped. */
+const wordsOf = (text) => String(text).split(/[\s;&|()<>`]+|\$\(/).filter(Boolean)
+  .map((w) => w.replace(/\\(.)/g, '$1').replace(/['"]/g, '').replace(/^[^=/~.]*=/, ''));
+export function namesSystemSecretPath(command, { cwd = '/', egressDataDir = null } = {}) {
+  const egressSegs = typeof egressDataDir === 'string' && egressDataDir.trim().length > 1 ? posix.normalize(egressDataDir.trim()).split('/').filter(Boolean) : null;
+  const targets = [...SECRET_SEGMENTS, ...(egressSegs && egressSegs.length ? [egressSegs] : [])];
+  const words = wordsOf(command);
+  // Every folder a `cd` in the command can reach, in order (a relative cd from the one before), plus the session folder.
+  const dirs = [posix.resolve('/', String(cwd || '/').replace(/\\/g, '/'))];
+  for (let i = 0; i < words.length - 1; i += 1) {
+    if (words[i] !== 'cd' && words[i] !== 'pushd') continue;
+    const alts = braceExpand(words[i + 1]);
+    if (!alts) return true;
+    for (const t of alts) dirs.push(posix.resolve(dirs[dirs.length - 1], t));
+  }
+  const bad = (abs) => {
+    const segs = posix.normalize(abs).split('/').filter(Boolean);
+    return targets.some((t) => holdsSegments(segs, t)) || (segs.length > 0 && /proxy/i.test(segs[segs.length - 1]) && SECRET_NAMES.some((n) => segMatches(segs[segs.length - 1], n)));   // a bare * is not a name
+  };
+  for (const raw of words) {
+    const alts = braceExpand(raw);
+    if (!alts) return true;   // too many alternatives to check: refused, never waved through
+    for (const w of alts) {
+      if (!w.includes('/') && !GLOB_CHARS.test(w) && !SECRET_NAMES.includes(w) && !targets.some((t) => t.includes(w))) continue;
+      if (w.startsWith('/')) { if (bad(w)) return true; continue; }
+      if (w.startsWith('~') || /^\$/.test(w)) continue;   // the home and variables: the other rules' business
+      if (dirs.some((d) => bad(posix.join(d, w)))) return true;
+    }
+    // A protected root written with quotes, braces or a wildcard is refused outright, whatever it expands to.
+    const plain = raw.replace(/\/+/g, '/');
+    if (/^\/(?:var\/)?run\b|^\/worca\b/.test(plain) && /[*?[\]{}]/.test(plain)) return true;
+  }
+  return false;
+}
 /** Rooted without a drive (/tmp, \x): Git's own MSYS root, never the session folder; `//server` (UNC) is not one. */
 const DRIVELESS = /^[\\/](?![\\/])/;
 /** `/c/x` (Git Bash) → `C:/x`; anything else as written. */
@@ -214,7 +313,8 @@ function hardToUndoIn(text, dir, root, depth = 0, P = POSIX_PATHS) {
  *   home = the worca home; userHome = the shell's $HOME (what `~` expands to); platform = the shell's OS
  *   (default: Windows rules when cwd is a drive path)
  */
-export function checkAskCommand(command, { cwd, home = null, userHome = null, hostPid, serverPort = null, platform = null } = {}) {
+export function checkAskCommand(command, { cwd, home = null, userHome = null, hostPid, serverPort = null, platform = null,
+  egressDataDir = process.env.WORCA_EGRESS_DATA_DIR || null } = {}) {
   const win = platform ? platform === 'win32' : DRIVE_PATH.test(cwd || '');
   const P = win ? WIN_PATHS : POSIX_PATHS;
   const raw = String(command ?? '').trim();
@@ -227,7 +327,10 @@ export function checkAskCommand(command, { cwd, home = null, userHome = null, ho
   const namesWorcaHome = !home ? false
     : win && DRIVE_PATH.test(home) ? new RegExp(`(?<![\\w.:\\\\/-])${winPathSource(home.replace(/[\\/]+$/, ''))}`, 'i').test(local)
       : local.includes(home);
-  if ((win ? PROTECTED_WIN : PROTECTED).some((re) => re.test(local)) || namesWorcaHome || namesHomeOnly(local, { cwd, userHome, win })) {
+  // An egress sidecar data folder set elsewhere than /worca/egress (WORCA_EGRESS_DATA_DIR) is protected the same way.
+  const egressDir = typeof egressDataDir === 'string' && egressDataDir.trim().length > 1 ? egressDataDir.trim().replace(/[\\/]+$/, '') : null;
+  const namesEgressDir = (!!egressDir && local.includes(egressDir)) || namesSystemSecretPath(raw, { cwd: win ? '/' : cwd, egressDataDir: egressDir });
+  if ((win ? PROTECTED_WIN : PROTECTED).some((re) => re.test(local)) || namesWorcaHome || namesEgressDir || namesHomeOnly(local, { cwd, userHome, win })) {
     return 'That command names a protected path (Worca\'s own files or credentials). Ask cannot read or change them.';
   }
   // Matched anywhere (inside `bash -c "…"` or `$(…)` too): gh keeps its OAuth token outside ~/.config/gh (the keychain).

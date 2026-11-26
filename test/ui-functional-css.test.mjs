@@ -296,3 +296,80 @@ test('usage rings (account-corner.css): the 24px avatar under an inner ring, the
   assert.match(tokens, /--red-ink-strong:light-dark\(/);
   assert.match(tokens, /--amber-ink-strong:light-dark\(/);
 });
+
+// Slice 13 (R-ux-5): every open stop line's step card draws as the card's own question draws, and its banner and head,
+// which repeat the line, are hidden. The DOM comes from the real paintStopList and the real stop card. jsdom's CSSOM
+// expands only some shorthands (never one holding var()), so each longhand is compared next to its shorthand.
+test('slice 13: a stop line\'s step card cascades like the card question, banner and head hidden', async () => {
+  const { paintStopList, stopLinesOf } = await import('../ui/public/shape/stop-list.mjs');
+  const { renderGateCard, stepHead } = await import('../ui/public/shape/step-card.mjs');
+  const { planStop } = await import('../src/shared/shape/run-stops.mjs');
+  // The busy state: runs 2, 4 and 11 at stops, run 5 failed.
+  const ask = (index, kind, reason) => ({ index, runId: `r${index}`, pipelineId: `p${index}`, id: `q${index}`, kind, reason, failed: false, holdsUp: [] });
+  const asks = [ask(2, 'plan', 'requirement'), ask(4, 'gate', 'check'),
+    { index: 5, runId: null, pipelineId: 'p5', id: null, kind: null, reason: null, failed: true, holdsUp: [] }, ask(11, 'gate', 'check')];
+  const slices = [[2, 'approval'], [4, 'questions'], [5, 'error'], [11, 'questions']].map(([index, state]) => ({ index, title: `Run ${index}`, state, pipelineId: `p${index}`, buildsOn: [] }));
+  const lines = stopLinesOf({ asks, ask: asks[0], slices });
+
+  /** What a host's `.qpanel` holds for one ask kind, under the renderer's own banner. */
+  function fill(panel, kind) {
+    panel.classList.remove('hidden');
+    panel.dataset.kind = kind;
+    panel.innerHTML = '<div class="qpanel-head"><b>Plan ready for your approval · v1</b><span class="qcount">Shape 3/8</span></div>';
+    if (kind === 'plan' || kind === 'gate') {
+      const stop = planStop(kind === 'plan' ? { run: 2, outlineChange: 'the runner cache needs its own run' } : { run: 4 });
+      renderGateCard(panel, { id: `q-${kind}`, kind, issues: [], plan: { round: 1 }, stop },
+        { doc: document, title: stop.head, chip: 'Plan', tagLevel: () => {}, submit: async () => true });
+    } else {
+      panel.append(stepHead(document, 'A few questions', 'Clarify'));
+      panel.insertAdjacentHTML('beforeend', '<div class="qbody"><div class="qblock"><div class="qtext">Where?</div></div></div>'
+        + '<div class="qpanel-foot"><button type="button" class="btn btn-primary">Send</button></div>');
+    }
+  }
+  const PANEL = ['display', 'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'background', 'background-color', 'border-radius'];
+  const PROPS = { '.qpanel': PANEL, '.qblock': PANEL, '.qpanel-foot': ['flex-wrap', 'gap', 'row-gap', 'border-top', 'border-top-color', 'border-color'] };
+  const bad = [];
+  for (const kind of ['plan', 'gate', 'clarify', 'form']) {
+    document.body.innerHTML = '<div class="ask-card chat-rc"><ol class="chat-rc-stops"></ol>'
+      + '<section class="chat-rc-q"><div class="chat-rc-qbody"><div class="qpanel hidden"></div></div></section></div>';
+    const slot = document.querySelector('section.chat-rc-q');
+    fill(slot.querySelector('.qpanel'), kind);
+    paintStopList(document, document.querySelector('ol.chat-rc-stops'), lines, {
+      bindQuestion: (qHost) => { fill(qHost.querySelector('.qpanel'), kind); return () => {}; },
+      paintQuestion: () => null, releaseQuestion: () => {}, resume: async () => ({ ok: true }),
+    });
+    const hosts = [...document.querySelectorAll('.chat-rc-stop-q')];
+    assert.equal(hosts.length, 3, `${kind}: one host per open line`);
+    // The proof reads real values from the card question (so equal never means two unread ones).
+    const own = slot.querySelector('.qpanel');
+    // A clarify or form panel has no top padding of its own: its questions (or its fields) carry the 16px.
+    const top = kind === 'plan' || kind === 'gate' ? '16px' : '0px';
+    assert.deepEqual([winning(own, 'padding-top').value, winning(own, 'padding-left').value], [top, '0px'], `${kind}: the card question's padding`);
+    assert.equal(winning(slot.querySelector('.qpanel-foot'), 'flex-wrap').value, 'wrap', `${kind}: the card question's foot wraps`);
+    assert.notEqual(winning(slot.querySelector('.step-head'), 'display').value, 'none', `${kind}: the card question keeps its step head`);
+    assert.equal(winning(slot.querySelector('.qpanel-head'), 'display').value, 'none', `${kind}: the card question hides the banner`);
+    for (const host of hosts) {
+      const where = `${kind}, run ${host.closest('li').dataset.run}`;
+      for (const sel of ['.qpanel-head', '.step-head']) {
+        const w = winning(host.querySelector(sel), 'display');
+        if (w.value !== 'none') bad.push(`${where}: ${sel} display is ${w.value} (by "${w.by}"), wants none`);
+      }
+      const margin = winning(host, 'margin-top').value;
+      if (margin !== '0' && margin !== '0px') bad.push(`${where}: the host's margin-top is ${margin}, wants 0`);
+      for (const [sel, props] of Object.entries(PROPS)) {
+        const mine = [...host.querySelectorAll(sel)];
+        const theirs = [...slot.querySelectorAll(sel)];
+        assert.ok(theirs.length > 0 && mine.length === theirs.length, `${where}: ${sel} count ${mine.length} vs ${theirs.length}`);
+        for (const [i, el] of mine.entries()) {
+          for (const prop of props) {
+            const a = winning(el, prop);
+            const b = winning(theirs[i], prop);
+            if (a.value !== b.value) bad.push(`${where}: ${sel}[${i}] ${prop} is ${a.value} (by "${a.by}"), the card question's is ${b.value} (by "${b.by}")`);
+          }
+        }
+      }
+    }
+  }
+  document.body.innerHTML = '';
+  assert.deepEqual(bad, []);
+});

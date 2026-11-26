@@ -120,7 +120,7 @@ import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LAB
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, rowMenuPrs, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
-import { paintRunStatus, paintStateLine, stageBarOf, syncActions, pauseResumeOwn } from './run-status-card.mjs';
+import { paintRunStatus, paintStateLine, stageBarOf, syncActions, pauseResumeOwn, sliceHeadModel } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
@@ -164,6 +164,7 @@ import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
 import { registerChatActionCards, refreshChatPrWatch } from './chat/action-cards.mjs';
 import { registerScopeSwitchCard } from './chat/scope-switch-card.mjs';
+import { registerEnvironmentCard } from './chat/environment-card.mjs';
 import { registerQuestionCard } from './chat/question-card.mjs';
 import { registerFilesCard, filesForViewer, fileViewerUrls } from './chat/files-card.mjs';
 import { createTerminalTool } from './terminal-pane.mjs';
@@ -387,6 +388,7 @@ import { activeAgents, snapshotFromState } from './ask-run-card.mjs';
 import { mountRunAgents } from './shape/run-agents.mjs';
 import { mountRunFacts } from './shape/run-facts.mjs';
 import { runAgentRows, memberShortWord } from '../../src/shared/shape/run-agents.mjs';
+import { memberStatusOf } from '../../src/shared/shape/run-status.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
 import { mountNewRunAttach, newRunScope, jsonFetcher as attachFetcher } from './requirements-attach/entries.mjs';
@@ -400,7 +402,8 @@ import { revalidate as revalidateAttached } from './requirements-attach/revalida
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
 import { renderFeature, featureModelOf, renderFeatureRequirements, paintFeatureDecisions } from './shape/feature-view.mjs';
-import { shipWaitText } from './shape/feature-card.mjs';
+import { shipWaitText, featureStateLine } from './shape/feature-card.mjs';
+import { stopLinesOf } from './shape/stop-list.mjs';
 import { renderReleaseRow } from './shape/release-row.mjs';
 import { featureFocusOf, focusFeatureControl, featureMenuItems } from './shape/feature-actions.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
@@ -36491,6 +36494,7 @@ el.groupDetail?.addEventListener('click', (e) => {
 });
 async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
+  if (reentered && host.__gp) delete host.__gp.__order;   // small runs slice 10 (D6): Show order is closed again on a return
   Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false, unmarked: 0, stackedOnly: false, feature: null, requirements: false, memberKey: '', memberPending: '', memberFailed: '' } : {}) });
   if (fresh) {
     groupMessage(host, 'feature-page-loading', 'Loading group…');
@@ -36519,6 +36523,17 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
     }
   }
   paintGroupPageNow();
+}
+/** Shaper small runs s4 (D8, D10): a marked feature's Runs rows take word and mark from runStatus, over the members'
+ *  own slices and snapshots (s5 D2: the shared adapter). */
+function featureRowStatus(row) {
+  return memberStatusOf(row.members);
+}
+/** Small runs slice 7 (D9): the marked feature page's state line and need count, from the stored feature view and the
+ *  members' live snapshots. */
+function featureLineOf(row) {
+  const snapOf = (pid) => { const mb = row.members.find((x) => x.pipelineId === pid); return (mb && mb.snap) || null; };
+  return { stateLine: featureStateLine(GROUP_PAGE.feature, { snapOf }), needCount: stopLinesOf(GROUP_PAGE.feature).length };
 }
 function paintGroupPageNow() {
   const { host, route, id, tab } = GROUP_PAGE;
@@ -36573,7 +36588,7 @@ function paintGroupPageNow() {
   const labels = [...new Set(row.members.flatMap((mb) => (histOf(mb.pipelineId) || {}).labels || []))].sort();
   paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: levelAtLeast('expert'), labels,
     unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0, stackedOnly: route === 'feature' && GROUP_PAGE.stackedOnly,
-    requirements: route === 'feature' && GROUP_PAGE.requirements, ...(route === 'feature' && GROUP_PAGE.requirements ? { shortState: memberShortWord, ship: groupShipOf(GROUP_PAGE.feature) } : {}) }, {
+    requirements: route === 'feature' && GROUP_PAGE.requirements, ...(route === 'feature' && GROUP_PAGE.requirements ? { shortState: memberShortWord, status: featureRowStatus(row), ship: groupShipOf(GROUP_PAGE.feature), ...featureLineOf(row), order: (GROUP_PAGE.feature && GROUP_PAGE.feature.slices) || null } : {}) }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
     // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.
@@ -36658,7 +36673,9 @@ function groupShipOf(f) {
 function groupFeatureSig(f) {
   const sr = f && f.ship && f.ship.smallRuns;
   return JSON.stringify([sr ? [...(sr.owned || []), ...(sr.confirmed || [])].map((e) => [e.id, e.shown ? e.shown.text : '']) : null,
-    sr && sr.care ? sr.care.line : '', sr ? [shipWaitText(f), !!sr.blocked, sr.reason || '', (sr.order || []).length] : null, (f && f.log) || []]);
+    sr && sr.care ? sr.care.line : '', sr ? [shipWaitText(f), !!sr.blocked, sr.reason || '', (sr.order || []).length] : null, (f && f.log) || [],
+    // Slice 7: what the state line and the need count read (only a view with `asks`: flag on, marked, active).
+    Array.isArray(f && f.asks) ? [f.status, f.asks, (f.slices || []).map((x) => [x.index, x.state, x.nextTurn === true, x.stop || null, !!x.cannotStart]), f.held ? f.held.index : null] : null]);
 }
 /** Every feature fetch that may reach GROUP_PAGE takes a rising ticket before it is sent; noteGroupFeatureLock drops an
  *  answer older than the last one applied, so a slow fetch never paints a stale feature over a newer one. */
@@ -36884,12 +36901,17 @@ function runsSchedItem(t) {
 const roundsSig = (r) => (r.rounds && r.rounds.length ? [r.roundsLine || '', r.roundsOwnLine ? 1 : 0, r.rounds.length,
   runsUi.groupsToggled.get(`rounds:${r.roundsId}`) ? 1 : 0, runsUi.roundsAll.has(`rounds:${r.roundsId}`) ? 1 : 0,
   r.rounds.map((rd) => [rd.n, rd.status, rd.words || '', rd.time, rd.href])] : 0);
-const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, roundsSig(r), r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
-  r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon, r.model.pr.pending ? 1 : 0] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
-  r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
-  r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '', roundsSig(m),
-    r.smallRuns ? memberShortWord(m) || '' : '',   // D2: the member's short word
-    m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.title, m.model.pr.icon, m.model.pr.pending ? 1 : 0] : 0])] : 0, (r.labels || []).join('\n')];
+const runsRowSig = (r) => {
+  const st = r.kind === 'chain' && r.smallRuns ? memberStatusOf(r.members) : null;   // s5 (D6): the shared word and mark
+  const shared = (m) => { const x = st(m); return [x ? x.word ?? '' : '', x ? x.mark ?? '' : '']; };
+  return [r.key, r.pipelineId, r.href, r.title, r.model.state, roundsSig(r), r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
+    r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon, r.model.pr.pending ? 1 : 0] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
+    r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
+    r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '', roundsSig(m),
+      r.smallRuns ? memberShortWord(m) || '' : '',   // D2: the member's short word
+      st ? shared(m) : 0,
+      m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.title, m.model.pr.icon, m.model.pr.pending ? 1 : 0] : 0])] : 0, (r.labels || []).join('\n')];
+};
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over, then the selected row stands in;
@@ -39682,7 +39704,11 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, tryIt = 
     }
   }
   const source = (rec && rec.sourceBranch) || liveSource || '';
-  const group = routeGroupOf(groupHomeOf((rec && rec.id) || pipelineId), { sourceBranch: source, histOf });
+  const home = groupHomeOf((rec && rec.id) || pipelineId);
+  const group = routeGroupOf(home, { sourceBranch: source, histOf });
+  // Shaper small runs s5 (D10): a marked feature's member reads its head from the shared run status.
+  const sliceStatus = home && home.row && home.row.smallRuns && home.member && home.member.slice
+    ? memberStatusOf(home.row.members)(home.member) : null;
   const prExempt = knownPrExempt((rec && rec.id) || pipelineId);
   return {
     m, mode, gitChrome, folder, canTry, tryIt, kept, level: currentLevel(),
@@ -39697,6 +39723,7 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, tryIt = 
     // s2: the route's own-branch row and its place in a feature or chain (read-only, from loaded data).
     branch: (rec && rec.branch) || liveBranch || '',
     group,
+    sliceStatus,
     groupPending: !group && routeGroupsPending(),   // D2: never guess the landing branch before the groups answer
     pr: own, prInput: glancePrInput(rec), prStatus, watch: (rec && rec.watch) || null,
     prExempt,   // C5: a Verifier's route says why it opens no PR
@@ -39723,7 +39750,7 @@ function routeGroupsPending() {
 function paintRunHead(screen, f, h) {
   const head = headModel(f);
   const block = screen.querySelector('.rd-sheet .run-status');
-  const m = head.status ? { ...f.m, ...head.status, lineSaysState: false } : f.m;
+  const m = sliceHeadModel(head.status ? { ...f.m, ...head.status, lineSaysState: false } : f.m, f.sliceStatus);
   paintRunStatus(block, m, { lead: false });
   // `screen` is the saved page's glance: the header is the run screen's.
   const line = screen.closest('.rd, .hd')?.querySelector('.run-state-line');
@@ -44237,6 +44264,7 @@ function scopeChatTo(project) {
   if (project && project.key) askPanel?.setScope?.({ pinned: true, projectKey: project.key, label: project.name });
 }
 registerScopeSwitchCard();
+registerEnvironmentCard();   // the environment card: a project's spec, build or sandbox settings (docs/environment-spec.md)
 registerQuestionCard();   // freeform chat D5: the ask_question card (Open in worca parity)
 // A chat's design cards (rounds, design questions, sound): drawn by the design open beside the chat (designChatHost).
 const designChatCards = registerDesignChatCards({ doc: document, studio: () => designStudio?.studio || null });

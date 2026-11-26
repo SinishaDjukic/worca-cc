@@ -187,7 +187,8 @@ outline once per round that raised any. Care sets the rounds and the run size:
 
 A workflow with no plan review step is not challenged, and the card says `Not challenged: no review step in this
 workflow`. The card shows each run as one fold row: its title and requirement ids, then **Owns**, **Starts from** and
-**Checked by** when unfolded. The checks fold and one challenge fold follow (`Challenged by 3 roles and the Challenger ·
+**Checked by** when unfolded. With the flag on, Starts from names the runs a run builds on (`waits for runs 4, 6`,
+`waits for no run`). The checks fold and one challenge fold follow (`Challenged by 3 roles and the Challenger ·
 1 change`), then the Care chosen at the start. There is no "Ask me before each run" switch: runs follow one after
 another. Objections still open after the last round are one question, **Keep the split** or **Ask for changes**, and
 approving over them is recorded as `Runs approved · 2 objections kept`.
@@ -692,22 +693,93 @@ fix cycles it stops adding runs by itself and asks you: **Add a run for the gap*
 - **The Runs list group row**: one group per feature, the planning run as run 1, the state word, the runs done of N and
   the cost, once.
 - **The run panel and the Expert run page**: what the run owns, what it starts from, and one Agents place. With the flag
-  off, the Agents tab and Overview stay as today. A stopped run's page names the stop and links where it is answered
-  (the feature's card in Chat, or the feature page for a feature no chat started); it has no answer controls.
+  off, the Agents tab and Overview stay as today. The facts add **Waits for** (left out when the run waits for nothing)
+  and **Needed by** (`nothing` when no run builds on it). These facts show on a started run's page only: a run that has
+  not started has no run page, and its row opens the feature page, where the row's word names the runs it still waits
+  for and pointing at the row puts a dashed bar on the runs that build on it. A stopped run's page names the stop and
+  links where it is answered (the feature's card in Chat, or the feature page for a feature no chat started); it has no
+  answer controls.
 - **The feature page**: Runs, Requirements (each with its owner run or confirming role, and its status) and Decisions
-  with the Care line. Its run rows are one line with the same short words as the card and the Runs list ("waiting for
+  with the Care line, and Show order on its Runs tab. Its run rows are one line with the same short words as the card and the Runs list ("waiting for
   you", "waits for run 8", "done"). Its head button reads "Create N PRs" and follows the Ship card: until the
   feature is ready to ship (the Verifier still checks, or waits for your answer) and while the ledger blocks it, it is
   off and the status line says why. An open stop shows its own head and primary, and the page offers no Re-plan beside
   it; the Verifier's stop is asked here too.
+
+### The run words
+
+With the flag on, each run of a marked feature reads one word and one mark, the same on every surface:
+
+| Word | Mark | When |
+|---|---|---|
+| `done` | green dot | The run finished. |
+| `planning`, `reviewing plan`, `writing tests`, `building`, `reviewing` | peach, pulsing | The run is going: the step it is on. |
+| `waiting for you` | amber "?" | The run is at a stop or asks you something. |
+| `after run 3` | dashed ring | You answered its stop; the answer waits for its turn. |
+| `failed` | red "!" | The run failed. |
+| `waits for run 2, 6` | grey ring | It has not started; it builds on runs that are not done. |
+| `next` (`next · small change run` for a change run) | ink ring | It has not started and goes on next. |
+| no word | grey ring | It has not started, builds on nothing unfinished, and it is not its turn. |
+
+A waiting run names only the unfinished runs nothing else in its list leads to: run 7 builds on runs 2 to 6, but 6
+builds on 3, 4 and 5, so it reads `waits for run 2, 6`. A named run at a stop says so inside the word
+(`waits for run 2 (needs you), 6`), and a named run that failed adds `(failed)` (`waits for run 5 (failed)`).
+`next` comes only from the server's turn: an answer held for its turn first, then a change run, then the lowest free run.
+A free run without the turn shows no word.
+
+The Chat card's run rows, the feature page's Runs tab, the Runs list's member rows and the run page head draw these
+marks (`markDot` in `ui/public/status-dot.mjs`).
+The `waiting for you` word reads in amber ink and `failed` in red ink; every other word keeps the row's grey.
+A done run's page keeps its ship line (Ready to ship, Merged) instead of `done`.
+
+Point at a run row on the Chat card or the feature page's Runs tab (hover, or keyboard focus) to see its links: a solid
+bar left of each run it builds on, done runs included, and a dashed bar left of each run that builds on it. A click on
+the row, or Enter or Space, keeps the marks after you move away; Esc lets go, wherever the focus is. The title still
+opens the run. Nothing dims and no row moves.
+
+### Open stops on the card
+
+With the flag on, the Chat card of an active marked feature lists every open stop and every failed run, one line each,
+in run order. A line reads `Run 2 · plan approval · holds up 7, 8, 12, 15, 16` for a stop, or
+`Run 5 failed · holds up 6, 7, 12, 16` for a failed run, with the run's own mark (amber "?" or red "!"). A line that
+holds up nothing has no `holds up` part (`Run 9 · gate`).
+
+"holds up" names the runs that are not done or canceled and build on that run, directly or through others: they cannot
+finish while it is open.
+
+You answer a stop on its line, with the same step card the run page shows. A failed line has its own Resume, which
+restarts that run only; the card's footer and ⋯ then show no second Resume. An answer held for its turn (`after run 3`)
+is not a line. The bar's Answer goes to the first line. With the flag off the card shows one open step, as before.
+
+The state line on the card and the feature page names the working run, or each working run once in run order, and the
+run with the next turn: `Run 6 reviewing · next: run 9`. It shows only the half that applies (`next: run 9`). When
+neither does, it says who must act: `Nothing can go on until you act` while a stop, a failed, paused or stopped run, or a
+run that cannot start waits on you. The card keeps its `2 of 16 runs done` after the line. The head shows `4 need you`
+once (the stop lines, failed runs included), and nothing at zero. A second answer to a listed stop, from another open
+view, is refused as before.
+
+### Show order
+
+With the flag on, the feature page's Runs tab of a marked feature offers a `Show order` button above the run rows when
+the feature has 5 runs or more and their links branch or join: some run builds on two or more runs, or two or more runs
+build on one. A plain chain, separate chains or runs without links get no button: each row's own `waits for run N`
+already says it. The button is closed each time the page opens, on another feature and when you come back from another
+view; switching the page's tabs keeps it as you left it.
+
+`Show order` opens a still drawing of the order, and `Hide order` closes it. Each run is a dot with the row's own marks,
+placed right of every run it builds on. A line joins a run that is not done to the runs it holds back; links already
+met, and links another link already implies, are not drawn, and no line passes through another run's dot. Nothing moves
+but the existing pulse of a working run. The drawing is hidden from screen readers: the rows say the same in words.
+The drawing is never on the Chat card or the Runs sidebar.
 
 ### Off
 
 Some parts follow the marker and stay with the feature; the rest follow the flag as it is now.
 
 **The flag, read live.** While it is on, these apply to every sliced feature, also for a feature with no marker: a run
-waits only for the runs it builds on, so an independent run starts while an earlier one is stopped, failed or waiting
-(one run of a feature at a time); a run starts from the feature's latest finished run; a resumed run first merges the
+waits only for the runs it builds on, so an independent run starts while an earlier one is stopped, failed, waiting
+or paused (one run of a feature at a time), an answer held for its turn waits until no other run is going, and among
+the free runs a change run starts first, then the lowest run number; a run starts from the feature's latest finished run; a resumed run first merges the
 latest finished work; a finished feature's figures are recorded on this machine; and one PR ships the latest finished
 run's branch, or is refused with `HEAD_MISSING_WORK` when that branch does not hold every run's work.
 

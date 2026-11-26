@@ -2,11 +2,13 @@
 // status text, the dot or symbol, the bars per state (D20), the model actions (D4), member rows and ship lines.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { runModel, groupModel } from '../src/shared/run-model.mjs';
-import { statusText, memberStatusText, kindLabel, paintRunStatus, syncActions, pauseResumeOwn, renderMemberRows, groupShipLine, FEATURE_KIND } from '../ui/public/run-status-card.mjs';
+import { statusText, memberStatusText, kindLabel, paintRunStatus, syncActions, pauseResumeOwn, renderMemberRows, groupShipLine, FEATURE_KIND, sliceHeadModel } from '../ui/public/run-status-card.mjs';
+import { markDot } from '../ui/public/status-dot.mjs';
 import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
@@ -410,4 +412,224 @@ test('at 375px the fold and a long criterion detail wrap: scrollWidth <= clientW
   doc.body.append(host);
   ol.querySelector('.plan-check-line').click();
   for (const el of [ol.querySelector('.run-member-main'), ...ol.querySelectorAll('.plan-check-row')]) assert.ok(el.scrollWidth <= el.clientWidth);
+});
+
+// ---- Shaper small runs s4: renderMemberRows takes word and mark from the `status` option (R-ux-1, R-arch-4) ----
+const rowsOf = (members, opts) => {
+  const d = dom();
+  const gm = groupModel({ kind: 'feature', title: 'F', planning: { status: 'done', endReached: true }, members }, { now: NOW });
+  const row = { groupKind: 'feature', model: gm, planning: { title: 'Planning', href: '#running/r0', model: gm.planning },
+    members: gm.members.map((m, i) => ({ position: i + 1, title: `Run ${i + 1}`, href: '#runs', pipelineId: `p${i + 1}`, model: m })) };
+  return renderMemberRows(d, row, opts);
+};
+const MEMBERS = [{ status: 'done', endReached: true }, { status: 'running' }, { status: 'running' }];
+const member = (ol, i) => ol.querySelectorAll('.run-member:not([data-key="planning"])')[i];
+
+test('s4 renderMemberRows: with no `status` the output is byte-identical and no row has data-mark', () => {
+  const plain = rowsOf(MEMBERS, { oneLine: true, shortState: () => 'x' });
+  const same = rowsOf(MEMBERS, { oneLine: true, shortState: () => 'x', status: undefined });
+  assert.equal(plain.outerHTML, same.outerHTML);
+  assert.equal(plain.querySelector('[data-mark]'), null);
+});
+
+test('s4 renderMemberRows: status gives the word, the markDot dot and data-mark', () => {
+  const marks = [{ word: 'done', mark: 'done' }, { word: 'after run 3', mark: 'after' }, { word: 'waiting for you', mark: 'ask' }];
+  const ol = rowsOf(MEMBERS, { oneLine: true, status: (mb) => marks[mb.position - 1] });
+  const rows = [0, 1, 2].map((i) => member(ol, i));
+  assert.deepEqual(rows.map((li) => li.dataset.mark), ['done', 'after', 'ask']);
+  assert.deepEqual(rows.map((li) => li.querySelector('.run-member-state').textContent), ['done', 'after run 3', 'waiting for you']);
+  assert.ok(rows[1].querySelector('.status-dot').classList.contains('is-dashed-ring'));
+  assert.equal(rows[1].querySelector('.status-dot').dataset.symbol, undefined);
+  assert.equal(rows[2].querySelector('.status-dot').dataset.symbol, 'question');
+  assert.ok(rows[0].querySelector('.status-dot').classList.contains('is-green'));
+  assert.equal(rows[1].dataset.state, member(rowsOf(MEMBERS, { oneLine: true }), 1).dataset.state, 'data-state keeps the dev state');
+});
+
+test('s4 renderMemberRows: word precedence: a string word (even empty), else shortState, else memberStatusText', () => {
+  const ol = rowsOf(MEMBERS, { oneLine: true, shortState: () => 'short', status: (mb) => ([{ word: '', mark: 'ring' }, { word: null, mark: 'live' }, { word: null, mark: null }][mb.position - 1]) });
+  assert.equal(member(ol, 0).querySelector('.run-member-state').textContent, '', 'an empty word is kept: no word');
+  assert.equal(member(ol, 1).querySelector('.run-member-state').textContent, 'short', 'a null word falls to shortState');
+  assert.equal(member(ol, 2).querySelector('.run-member-state').textContent, 'short');
+  const bare = rowsOf(MEMBERS, { oneLine: true, status: () => ({ word: null, mark: null }) });
+  const dev = rowsOf(MEMBERS, { oneLine: true });
+  assert.equal(bare.outerHTML, dev.outerHTML, 'a null word and null mark leave today\'s row');
+  assert.equal(member(bare, 0).dataset.mark, undefined);
+  const noShort = rowsOf(MEMBERS, { oneLine: true, status: () => ({ word: null, mark: 'live' }) });
+  assert.equal(member(noShort, 1).querySelector('.run-member-state').textContent, member(dev, 1).querySelector('.run-member-state').textContent);
+  assert.equal(member(noShort, 1).dataset.mark, 'live');
+});
+
+test('s4 renderMemberRows: the planning row never calls status and has no data-mark; a null return is today\'s row', () => {
+  const seen = [];
+  const ol = rowsOf(MEMBERS, { oneLine: true, status: (mb) => { seen.push(mb.isPlanning ? 'planning' : mb.position); return mb.position === 1 ? null : { word: 'x', mark: 'faint' }; } });
+  assert.deepEqual(seen, [1, 2, 3]);
+  assert.equal(ol.querySelector('.run-member[data-key="planning"]').dataset.mark, undefined);
+  assert.equal(member(ol, 0).dataset.mark, undefined);
+});
+
+// ---- Shaper small runs s8 (R-ux-2): renderMemberRows makes link rows from the `buildsOn` option ----
+const LINK_ATTRS = '[data-run], [data-builds-on], [tabindex]';
+const linkAttrs = (li) => [li.getAttribute('data-run'), li.getAttribute('data-builds-on'), li.getAttribute('tabindex')];
+const S8_STATUS = () => ({ word: 'x', mark: 'faint' });
+
+test('s8 renderMemberRows: with status and buildsOn a numbered row gets data-run, data-builds-on and tabindex 0', () => {
+  const lists = { 1: [], 2: [1, 7, 10], 3: null };
+  const ol = rowsOf(MEMBERS, { oneLine: true, status: S8_STATUS, buildsOn: (mb) => lists[mb.position] });
+  assert.deepEqual(linkAttrs(member(ol, 0)), ['1', '', '0'], 'an empty list is an empty attribute');
+  assert.deepEqual(linkAttrs(member(ol, 1)), ['2', '1 7 10', '0']);
+  assert.deepEqual(linkAttrs(member(ol, 2)), [null, null, null], 'a row without a list is not a link row');
+  assert.deepEqual(linkAttrs(ol.querySelector('.run-member[data-key="planning"]')), [null, null, null], 'the planning row');
+});
+
+test('s8 renderMemberRows: an unnumbered row (ad hoc, user group) is never a link row', () => {
+  const gm = groupModel({ kind: 'feature', title: 'F', members: MEMBERS }, { now: NOW });
+  const members = gm.members.map((m, i) => ({ position: i + 1, title: `Run ${i + 1}`, href: '#runs', pipelineId: `p${i + 1}`, model: m, adhoc: i === 2 }));
+  const opts = { oneLine: true, status: S8_STATUS, buildsOn: () => [1] };
+  const feature = renderMemberRows(dom(), { groupKind: 'feature', model: gm, members }, opts);
+  assert.deepEqual([...feature.querySelectorAll('.run-member')].map((li) => li.getAttribute('data-run')), ['1', '2', null]);
+  const user = renderMemberRows(dom(), { groupKind: 'user', model: gm, members }, opts);
+  assert.equal(user.querySelector(LINK_ATTRS), null);
+});
+
+test('s8 renderMemberRows without status adds no data-run, data-builds-on or tabindex', () => {
+  const plain = rowsOf(MEMBERS, { oneLine: true });
+  const asked = rowsOf(MEMBERS, { oneLine: true, buildsOn: () => [1] });
+  assert.equal(asked.outerHTML, plain.outerHTML);
+  assert.equal(asked.querySelector(LINK_ATTRS), null);
+  const marked = rowsOf(MEMBERS, { oneLine: true, status: S8_STATUS });
+  assert.equal(marked.querySelector(LINK_ATTRS), null, 'status without buildsOn');
+});
+
+test('s4 row words: "waiting for you" reads --amber-ink and "failed" --red-ink, other words keep --ink-2 (owner direction d6dd6d688)', () => {
+  const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
+  for (const scope of ['.chat-rc-members', 'div.gpage-runs']) {
+    const rule = (mark) => css.split('}').find((r) => r.includes(scope) && r.includes(`[data-mark="${mark}"]`) && r.includes('.run-member-state')) || '';
+    assert.match(rule('ask'), /color:\s*var\(--amber-ink\)/, `${scope} ask`);
+    assert.match(rule('failed'), /color:\s*var\(--red-ink\)/, `${scope} failed`);
+    assert.doesNotMatch(css, new RegExp(`${scope.replace('.', '\\.')}[^{}]*\\[data-mark="(?:after|ring|faint|done|live)"\\][^{}]*\\.run-member-state[^{}]*\\{[^}]*color`), `${scope}: no other word is coloured`);
+  }
+  const tokens = readStyleCss();
+  assert.match(tokens, /--amber-ink:/);
+  assert.match(tokens, /--red-ink:/);
+});
+
+// ── Shaper small runs s5 (R-arch-1, D8, D9): the run page head reads the shared run status ──────────────────────────
+const S5_DEV_WORD = /^(needs you|paused|waiting|working|failed|stopped|running)$/i;
+const s5Run = (state) => RUN_STATE_ROWS.find((r) => r.state === state).run;
+const s5Model = (run) => runModel(run, { now: NOW, timeZone: 'UTC' });
+const S5_WORKING = () => s5Run('working');
+const S5_ROUND = () => ({ ...S5_WORKING(), round: { n: 2, request: 'add a filter', by: 'person' } });
+const S5_AFTER = () => ({ ticket: { status: 'scheduled', after: { index: 3 } } });
+const S5_HELD = () => ({ ticket: { status: 'scheduled', held: true, after: { index: 3 } } });
+/** The head `m` paints: {word, detail, dot}. */
+function s5Head(m) {
+  const host = dom().createElement('div');
+  paintRunStatus(host, m);
+  const detail = host.querySelector('.run-status-detail');
+  return { word: host.querySelector('.run-status-word').textContent, detail: detail.hidden ? '' : detail.textContent,
+    dot: host.querySelector('.run-status-head .status-dot') };
+}
+const s5NoDevWord = (detail, where) => {
+  for (const seg of detail ? detail.split(' · ') : []) {
+    assert.ok(!S5_DEV_WORD.test(seg), `${where}: the detail restates dev's state: "${detail}"`);
+    assert.ok(!/^starts /i.test(seg), `${where}: the detail restates dev's "starts after": "${detail}"`);
+  }
+};
+
+test('s5 sliceHeadModel: the head reads the shared word and the detail holds no dev state word', async () => {
+  const rows = [
+    ['an open stop', s5Run('needs-you'), { word: 'waiting for you', mark: 'ask' }, (h, dev) => {
+      assert.equal(dev.word, 'Needs you');
+      assert.equal(h.dot.dataset.symbol, 'question');
+      assert.equal(h.detail, 'Plan · 2 questions');
+    }],
+    ['a building run keeps dev\'s step-only bar detail', S5_WORKING(), { word: 'building', mark: 'live' }, (h, dev) => {
+      assert.ok(h.dot.classList.contains('is-pulse'));
+      assert.ok(dev.detail, 'dev names the step beside the bar');
+      assert.equal(h.detail, dev.detail);
+    }],
+    ['a failed run', s5Run('failed'), { word: 'failed', mark: 'failed' }, (h) => {
+      assert.equal(h.dot.dataset.symbol, 'alert');
+      assert.match(h.detail, /^Plan · /, 'the step detail stays');
+    }],
+    ['a held answer', S5_HELD(), { word: 'after run 3', mark: 'after' }, (h, dev) => {
+      assert.equal(dev.word, 'Waiting');
+      assert.ok(h.dot.classList.contains('is-dashed-ring'));
+    }],
+    ['a run that waits to start after another', S5_AFTER(), { word: 'waits for run 3', mark: 'faint' }, (h, dev) => {
+      assert.match(dev.detail, /^starts /, 'dev says it');
+      assert.equal(h.detail, '');
+    }],
+    ['a fix round', S5_ROUND(), { word: 'building', mark: 'live' }, (h, dev) => {
+      assert.equal(dev.word, 'Running');
+      assert.match(h.detail, /^Round 2/);
+    }],
+    ['a paused run', s5Run('paused'), { word: 'after run 3', mark: 'after' }, () => {}],
+    ['a stopped run', s5Run('stopped'), { word: 'next', mark: 'ring' }, (h) => assert.ok(h.dot.classList.contains('is-ink-ring'))],
+    ['a starting run', s5Run('starting'), { word: 'planning', mark: 'live' }, () => {}],
+  ];
+  await checkRows(rows.map(([name, run, st, more]) => ({ name, run: () => {
+    const m = s5Model(run);
+    const before = structuredClone(m);
+    const dev = s5Head(m);
+    const out = sliceHeadModel(m, st);
+    assert.notEqual(out, m, 'a new object');
+    assert.deepEqual(m, before, 'the input is not changed');
+    assert.equal(out.word, st.word);
+    assert.equal(out.lineSaysState, false);
+    const h = s5Head(out);
+    assert.equal(h.word, st.word);
+    s5NoDevWord(h.detail, name);
+    more(h, dev);
+  } })));
+});
+
+test('s5 sliceHeadModel: dev state words are dropped from line and barLine in any case; the other segments stay in order', () => {
+  const m = { state: 'working', word: 'Working', dot: 'peach', pulse: true, symbol: null, actions: [],
+    line: 'RUNNING · Build · needs you · Paused · waiting · working · Failed · stopped · Starts after run 3 · Implement · Step 2 of 3',
+    barLine: 'Working · Implement · starts after run 3', lineSaysState: true };
+  const out = sliceHeadModel(m, { word: 'building', mark: 'live' });
+  assert.equal(out.line, 'Build · Implement · Step 2 of 3');
+  assert.equal(out.barLine, 'Implement');
+});
+
+test('s5 sliceHeadModel: null status, null mark and done return the same object (D9)', () => {
+  for (const run of [s5Run('ready'), s5Run('merged')]) {
+    const m = s5Model(run);
+    assert.equal(sliceHeadModel(m, null), m);
+    assert.equal(sliceHeadModel(m, { word: null, mark: null }), m);
+    assert.equal(sliceHeadModel(m, { word: 'done', mark: 'done' }), m);
+  }
+  assert.equal(s5Head(s5Model(s5Run('ready'))).word, 'Ready to ship', 'the ship line');
+});
+
+test('s5 sliceHeadModel: an empty word paints an empty head and no detail', () => {
+  const m = s5Model(S5_AFTER());
+  const out = sliceHeadModel(m, { word: '', mark: 'ring' });
+  assert.equal(out.word, '');
+  assert.equal(out.line, '');
+  assert.equal(out.barLine, null);
+  const h = s5Head(out);
+  assert.equal(h.word, '');
+  assert.equal(h.detail, '');
+  assert.ok(h.dot.classList.contains('is-grey-ring'), h.dot.className);
+});
+
+test('s5 sliceHeadModel: a stale live mark with no word never pulses over a paused, failed or stopped run', () => {
+  for (const state of ['paused', 'failed', 'stopped']) {
+    const m = s5Model(s5Run(state));
+    assert.equal(sliceHeadModel(m, { word: null, mark: 'live' }), m, state);
+    assert.ok(!s5Head(sliceHeadModel(m, { word: null, mark: 'live' })).dot.classList.contains('is-pulse'), state);
+  }
+});
+
+test('s5 sliceHeadModel: a null word keeps dev\'s head and line, only the dot changes', () => {
+  const m = s5Model(S5_AFTER());
+  const out = sliceHeadModel(m, { word: null, mark: 'live' });
+  assert.deepEqual(out, markDot(m, 'live', m.word));
+  const dev = s5Head(m);
+  const h = s5Head(out);
+  assert.deepEqual([h.word, h.detail], [dev.word, dev.detail]);
+  assert.ok(h.dot.classList.contains('is-pulse'));
+  assert.ok(!dev.dot.classList.contains('is-pulse'));
 });

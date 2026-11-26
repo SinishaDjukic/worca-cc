@@ -147,6 +147,8 @@ async function bootRunning({ budget = okBudget(), rows = [HISTORY_ROW] } = {}) {
       if (box.slice && /\/api\/shape\/pipelines\/[^/]+\/slice$/.test(url)) return ok(box.slice);
       // The run's saved state (rdLoadData), only when a test sets box.runData.
       if (box.runData && url.startsWith('/api/runs/p1?')) return ok(box.runData);
+      // s5: one saved run's detail ({id, body}), only when a test sets box.detail.
+      if (box.detail && url.endsWith(`/api/history/${KEY}/${box.detail.id}`)) return ok(box.detail.body);
       // C5: the run's PR-when-done answer, only when a test sets box.prAuto.
       if (box.prAuto && url.endsWith('/api/pipelines/p-verify/pr-auto')) return ok({ prAuto: box.prAuto });
       return null;
@@ -2755,6 +2757,64 @@ test('a live run whose state carries no elapsed figure still shows the summed ti
     assert.equal(rdHeadTime(window).textContent, '12s', 'as before: the sum of the running steps');
     assert.equal(tileTime(window), '12s');
   } finally { c.restore(); }
+});
+
+// --- Shaper small runs s5 (R-arch-1): the run page head reads the member's shared run status ---------------------------
+const S5_MEMBER = (position, pipelineId, status, slice) => ({ position, title: `Slice ${position}`, pipelineId, ticketId: null, status,
+  pr: null, ticket: null, adhoc: false, after: null, slice: { kind: null, waitsFor: [], buildsOn: [], ...slice } });
+const S5_GROUP = (members) => [{ id: 'feat_s5', kind: 'feature', title: 'Charts', smallRuns: true, projectKey: null, planning: null,
+  cost: { usd: 0, byPipeline: {} }, members }];
+async function s5Groups(ctx, members) {
+  applyFlags({ shaperSmallRuns: true }, ctx.window.document);
+  ctx.box.groups = S5_GROUP(members);
+  frame(ctx, { type: 'run-groups-changed' });
+  await settle(ctx.window, 6);
+}
+const s5HeadOf = (block) => ({ word: block.querySelector('.run-status-word').textContent,
+  detail: block.querySelector('.run-status-detail').hidden ? '' : block.querySelector('.run-status-detail').textContent,
+  dot: block.querySelector('.run-status-head .status-dot') });
+
+test('s5 run page head: a marked member with an open stop reads \'waiting for you\' with \'?\'; a done member keeps dev\'s head', async () => {
+  const ctx = await bootRunning();
+  await s5Groups(ctx, [S5_MEMBER(1, 'p0', 'done', { state: 'done' }), S5_MEMBER(2, 'p1', 'running', { state: 'questions', buildsOn: [1] })]);
+  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1 });
+  frame(ctx, { type: 'question', runId: 'r1', ...clarify() });
+  go(ctx.window, 'running/r1');
+  await settle(ctx.window, 8);
+  const screen = ctx.window.document.querySelector('#run-detail');
+  assert.equal(statusOf(screen).dataset.state, 'needs-you');
+  const head = s5HeadOf(statusOf(screen));
+  assert.equal(head.word, 'waiting for you');
+  assert.equal(head.dot.dataset.symbol, 'question');
+  assert.doesNotMatch(head.detail, /needs you/i, head.detail);
+  assert.match(stateLine(ctx.window).textContent, /^waiting for you/, 'the header state line reads the shared word');
+  assert.equal(stateLine(ctx.window).querySelector('.status-dot').dataset.symbol, 'question');
+
+  frame(ctx, { type: 'run-created', runId: 'r0', title: 'Slice one', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T09:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r0', id: 'p0', status: 'done', endReached: true, stepper: V2_MANIFEST, steps: V2_STEPS().map((x) => ({ ...x, status: 'done' })), active: [], subAgents: [], totalCostUsd: 1 });
+  go(ctx.window, 'running/r0');
+  await settle(ctx.window, 8);
+  assert.equal(statusOf(screen).dataset.state, 'ready');
+  assert.match(s5HeadOf(statusOf(screen)).word, /^Ready/, 'the ship line stays (D9)');
+});
+
+test('s5 saved run page head: a marked member that failed reads the shared word \'failed\' with \'!\' and no dev state word', async () => {
+  const ctx = await bootRunning({ rows: [HISTORY_ROW, { ...HISTORY_ROW, id: 'p2', status: 'error' }] });
+  ctx.box.detail = { id: 'p2', body: { state: { id: 'p2', status: 'error', steps: [] }, results: null } };
+  await s5Groups(ctx, [S5_MEMBER(1, 'p0', 'done', { state: 'done' }), S5_MEMBER(2, 'p2', 'error', { state: 'error', buildsOn: [1] })]);
+  go(ctx.window, `history/${KEY}/p2`);
+  await settle(ctx.window, 10);
+  const block = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-sheet .run-status');
+  assert.ok(block, 'the saved page painted its status block');
+  assert.equal(block.dataset.state, 'failed');
+  const head = s5HeadOf(block);
+  assert.equal(head.word, 'failed');
+  assert.equal(head.dot.dataset.symbol, 'alert');
+  for (const seg of head.detail.split(' · ')) assert.ok(!/^failed$/i.test(seg), head.detail);
+  const line = ctx.window.document.querySelector('#hist-detail .run-state-line');
+  assert.match(line.textContent, /^failed/, 'the saved header state line reads the shared word');
+  assert.equal(line.querySelector('.status-dot').dataset.symbol, 'alert');
 });
 
 // --- the header state line -------------------------------------------------
