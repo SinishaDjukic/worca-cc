@@ -8,6 +8,7 @@ import { pinnedClaudeCodeVersion } from '../tools/docker-build.mjs';
 import { renderProjectDockerfile, e2bBaseVersion, MISE_VERSION, MISE_SHA256, pinnedEngineClis, cliVersionsLine } from '../src/core/exec-env/backends/e2b-template.mjs';
 import { e2bClient } from '../src/core/exec-env/backends/e2b.mjs';
 import { normalizeEnvSpec } from '../src/core/exec-env/env-spec.mjs';
+import { renderSpecLayers } from '../src/core/exec-env/spec-dockerfile.mjs';
 import { e2bEnvironmentName, TEMPLATE_RE } from '../src/core/exec-env/backends/e2b.mjs';
 test('the template pins docker/CLAUDE_CODE_VERSION and stays single-stage', () => {
   const v = pinnedClaudeCodeVersion();
@@ -62,6 +63,12 @@ test('supply chain: the base image is pinned by digest, and mise is a release bi
   assert.match(df, new RegExp(`releases/download/v${MISE_VERSION.replaceAll('.', '\\.')}/mise-v${MISE_VERSION.replaceAll('.', '\\.')}-linux-\\$a`));
   assert.match(df, /sha256sum -c -/);
   assert.ok(df.includes(MISE_SHA256.x64) && df.includes(MISE_SHA256.arm64));
+});
+test('the tool layer is the shared spec renderer\'s (spec-dockerfile.mjs), with the literal PATH E2B needs, run as root', () => {
+  const df = renderProjectDockerfile(SPEC, { version: pinnedClaudeCodeVersion() });
+  const [marker, ...layers] = renderSpecLayers(SPEC, { pathTail: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' });
+  assert.ok(df.endsWith(`\n\n${[marker, 'USER root', ...layers, 'USER user', 'WORKDIR /home/user', ''].join('\n')}`));
+  assert.throws(() => renderProjectDockerfile({ ...SPEC, hash: `sha256:${'0'.repeat(64)}` }), /not in its stored form/, 'a forged spec is refused');
 });
 test('an empty spec adds no tool layer', () => {
   const df = renderProjectDockerfile(normalizeEnvSpec({}), { version: pinnedClaudeCodeVersion() });

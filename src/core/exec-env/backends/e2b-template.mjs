@@ -7,19 +7,14 @@
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { shq } from '../shell.mjs';
+import { renderSpecLayers, MISE_VERSION, MISE_SHA256, MISE_ROOT } from '../spec-dockerfile.mjs';
 
 export const E2B_DOCKERFILE = fileURLToPath(new URL('../../../../docker/e2b/e2b.Dockerfile', import.meta.url));
 export const CLAUDE_CODE_VERSION_FILE = fileURLToPath(new URL('../../../../docker/CLAUDE_CODE_VERSION', import.meta.url));
 export const ENGINE_CLIS_FILE = fileURLToPath(new URL('../../../../docker/e2b/engine-clis.json', import.meta.url));
-export const MISE_VERSION = '2026.10.7';   // the floor the Toolchain setup workflow installs
-// SHA-256 of the release binaries (SHASUMS256.txt of the GitHub release): a template build downloads and verifies one
-// instead of piping the mise.run install script into a root shell. Move together with MISE_VERSION.
-export const MISE_SHA256 = Object.freeze({
-  x64: '6eb1b890e90818417ca34c90dbbd47881917d5cd199f31b63b062ea9c6b18d85',
-  arm64: 'c7108d85a32ba17e4747d31d4a42f39f0c134f16211e204e8ef0a49d4f518fe1',
-});
-export const MISE_ROOT = '/opt/mise';
+// mise's pin and checksums live with the shared spec renderer (spec-dockerfile.mjs); re-exported for the callers here.
+export { MISE_VERSION, MISE_SHA256, MISE_ROOT };
+// E2B's Template.fromDockerfile does not expand `$PATH` in ENV: the shims go before this literal list instead.
 const SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';   // node:22-bookworm's PATH
 
 export function pinnedClaudeCodeVersion() { return readFileSync(CLAUDE_CODE_VERSION_FILE, 'utf8').trim(); }
@@ -66,29 +61,12 @@ export function cliVersionsLine({ version = pinnedClaudeCodeVersion(), clis = pi
   return [`claude-code ${version}`, ...Object.entries(ENGINE_CLI_PINS).map(([key, [, , name]]) => `${name} ${pins[key]}`)].join(', ');
 }
 
-/** worca-agent plus the spec (env-spec.mjs normalizeEnvSpec output): apt packages, then mise tools under
- *  /opt/mise with shims on PATH — through ENV and /etc/profile.d (sandbox commands run in a login shell,
- *  whose /etc/profile resets PATH). Every name is validated by the spec and single-quoted here. */
+/** worca-agent plus the spec (env-spec.mjs normalizeEnvSpec output, as stored): the shared renderer's layers
+ *  (spec-dockerfile.mjs: apt packages, then mise tools under /opt/mise with shims on PATH, through ENV and
+ *  /etc/profile.d, since sandbox commands run in a login shell whose /etc/profile resets PATH), run as root.
+ *  The renderer re-checks every value and refuses a spec whose hash does not match its content. The Local sandbox
+ *  (Docker) backend renders its project image through this function too (docker-image.mjs). */
 export function renderProjectDockerfile(spec, { version = pinnedClaudeCodeVersion(), text, clis } = {}) {
-  const lines = [renderTemplateDockerfile(version, text, clis).trimEnd(), '', `# worca: project environment ${spec.hash}`, 'USER root'];
-  if (spec.apt.length) {
-    lines.push(`RUN apt-get update \\\n && apt-get install -y --no-install-recommends ${spec.apt.map(shq).join(' ')} \\\n && rm -rf /var/lib/apt/lists/*`);
-  }
-  if (spec.tools.length) {
-    lines.push(
-      `RUN case "$(uname -m)" in x86_64) a=x64; s=${MISE_SHA256.x64};; aarch64|arm64) a=arm64; s=${MISE_SHA256.arm64};; *) echo "no mise for $(uname -m)" >&2; exit 1;; esac \\\n`
-        + ` && curl -fsSL -o /usr/local/bin/mise "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-$a" \\\n`
-        + ` && echo "$s  /usr/local/bin/mise" | sha256sum -c - \\\n`
-        + ' && chmod 0755 /usr/local/bin/mise',
-      `ENV MISE_DATA_DIR=${MISE_ROOT} MISE_CONFIG_DIR=${MISE_ROOT}/config PATH=${MISE_ROOT}/shims:${SYSTEM_PATH}`,
-      `RUN mise use --global ${spec.tools.map((t) => shq(`${t.name}@${t.version}`)).join(' ')} \\\n`
-        + ` && mise reshim \\\n`
-        // A login shell keeps ENV's MISE_* today, but the shims must find the global config even if a
-        // backend's runtime drops Dockerfile ENV: the profile script sets all three.
-        + ` && printf 'export MISE_DATA_DIR=${MISE_ROOT} MISE_CONFIG_DIR=${MISE_ROOT}/config PATH="${MISE_ROOT}/shims:$PATH"\\n' > /etc/profile.d/mise.sh \\\n`
-        + ` && chmod -R a+rX ${MISE_ROOT}`,
-    );
-  }
-  lines.push('USER user', 'WORKDIR /home/user', '');
-  return lines.join('\n');
+  const [marker, ...layers] = renderSpecLayers(spec, { pathTail: SYSTEM_PATH });
+  return [renderTemplateDockerfile(version, text, clis).trimEnd(), '', marker, 'USER root', ...layers, 'USER user', 'WORKDIR /home/user', ''].join('\n');
 }
