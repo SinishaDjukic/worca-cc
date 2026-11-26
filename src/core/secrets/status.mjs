@@ -6,6 +6,15 @@ import { worcaHome } from '../projects.mjs';
 import { BACKEND_LABELS, selectOsStore, storeTimeoutMs } from './os-store.mjs';
 import { UNLOCK_LINE, VAULT_MESSAGES } from './refs.mjs';
 import { inspectVault, moveVaultAside, vaultFile } from './vault.mjs';
+import { CONTAINER_TEXT, DOCTOR_CONTAINER_LINE, vaultUnavailableHere } from './place.mjs';
+
+/** The status in a container: no OS key store is asked, nothing is read. state `container`, reason `container`. */
+export function containerStatus() {
+  return {
+    backend: 'none', label: 'Not available in a container', state: 'container', vault: 'none',
+    reason: 'container', message: CONTAINER_TEXT, checkedAt: new Date().toISOString(),
+  };
+}
 
 /** Unreadable codes that reset may move aside. */
 const RESETTABLE = new Set(['item-missing', 'wrong-key', 'tampered']);
@@ -24,8 +33,9 @@ export function unavailableStatus() {
  * null; message its fixed text or null; `entries` the entry count of a readable vault.
  */
 export async function secretsStatus({ home, env, store } = {}) {
-  const h = home ?? worcaHome();
   const e = env ?? process.env;
+  if (vaultUnavailableHere(e)) return containerStatus();
+  const h = home ?? worcaHome();
   const s = store ?? await selectOsStore({ env: e, home: h });
   const base = { backend: s.kind, label: s.label ?? BACKEND_LABELS[s.kind] ?? BACKEND_LABELS.none };
   const notChecked = (state, reason) => ({
@@ -109,6 +119,7 @@ export const FLAG_OFF_VAULT_LINE = 'The secretVault flag is off: saved secrets a
  * FLAG_OFF_VAULT_LINE while a vault is present. A readable vault shows its entry count, never a value.
  */
 export function statusLines(status, { flagOn = false, flagOff = false } = {}) {
+  if (status.state === 'container') return ['Secrets vault: not available in a container', CONTAINER_TEXT];
   const lines = [`Secrets backend: ${status.label} (${status.state})`];
   const offLine = () => { if (flagOff && status.vault !== 'none') lines.push(FLAG_OFF_VAULT_LINE); };
   if (status.state === 'ready') {
@@ -133,6 +144,7 @@ export function statusLines(status, { flagOn = false, flagOff = false } = {}) {
 
 /** The `worca doctor` line: `secrets: LABEL (ready)`, or a warning starting `secrets: !`. */
 export function doctorLine(status) {
+  if (status.state === 'container') return { text: DOCTOR_CONTAINER_LINE, warn: false };
   if (status.state !== 'ready') return { text: `secrets: ! ${status.label} (${status.state}); run \`worca secrets status\``, warn: true };
   if (status.vault === 'unreadable') return { text: `secrets: ! ${status.label} (ready), vault unreadable; run \`worca secrets status\``, warn: true };
   return { text: `secrets: ${status.label} (ready)`, warn: false };

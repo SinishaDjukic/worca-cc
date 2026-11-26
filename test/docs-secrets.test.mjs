@@ -14,7 +14,7 @@ test('one ## section per topic, the 11 topics', () => {
     'Turning the vault on', 'Backends', 'The macOS Keychain access prompt', 'Export and downgrade',
     'The one-time message', 'A locked store', 'A lost key item and `worca secrets reset`',
     'What file theft does and does not cover', 'The accepted risk of an older vault file', 'The WSL2 DPAPI path',
-    'Turning the flag off after a migration',
+    'Turning the flag off after a migration', 'With the other setups',
   ]);
   assert.match(doc, /unverified on real hardware/);
   assert.match(doc, /When the flag is on and no vault file exists, export checks the OS store for a leftover key item, bounded by\s+the store time limit/);

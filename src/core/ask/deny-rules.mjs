@@ -38,6 +38,8 @@ export const ASK_DENY_RULES = Object.freeze([
   'Read(~/.npmrc)',
   'Read(~/.config/gh/**)',
   'Read(//proc/**)',                   // the server's own environment (/proc/<pid>/environ holds its GitHub and model tokens)
+  'Read(//run/secrets/**)',            // compose secret files in a container (broker, egress sidecar, GitHub App key)
+  'Read(//worca/egress/**)',           // the egress sidecar's data dir (WORCA_EGRESS_DATA_DIR): the proxy login it holds
 ]);
 
 /** The same denies minus the run store and checkouts, for a read of ONE run: the night decider and the Auto

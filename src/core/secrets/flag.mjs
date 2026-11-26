@@ -5,10 +5,25 @@ import { join } from 'node:path';
 import { flagEnabled } from '../flags.mjs';
 import { worcaHome } from '../projects.mjs';
 import { VAULT_FILE } from './files.mjs';
+import { vaultUnavailableHere } from './place.mjs';
 
-/** Whether the secretVault flag is on (read fresh on every call). Gates sealing new values, migration and reset. */
-export function secretVaultEnabled() {
+/** The secretVault flag itself, wherever Worca runs (read fresh). Surfaces use it to say "not available here". */
+export function secretVaultFlagOn() {
   return flagEnabled('secretVault');
+}
+
+/** True when the flag is on but Worca runs in a container, where no OS key store exists (place.mjs). */
+export function vaultNotAvailableHere(env = process.env) {
+  return secretVaultFlagOn() && vaultUnavailableHere(env) !== null;
+}
+
+/**
+ * Whether the vault works here: the secretVault flag is on (read fresh on every call) and Worca runs natively. Gates
+ * sealing new values, migration and reset. In a container it is false: the egress sidecar holds the proxy login and
+ * the credential broker the model keys, so nothing is sealed or moved (docs/secrets.md, "With the other setups").
+ */
+export function secretVaultEnabled() {
+  return flagEnabled('secretVault') && vaultUnavailableHere(process.env) === null;
 }
 
 /**
@@ -17,6 +32,7 @@ export function secretVaultEnabled() {
  * One existsSync, no store call; never throws (a home that cannot be resolved gives false).
  */
 export function vaultInUse({ home } = {}) {
+  if (vaultUnavailableHere(process.env)) return false;
   try {
     return secretVaultEnabled() || existsSync(join(home ?? worcaHome(), VAULT_FILE));
   } catch {

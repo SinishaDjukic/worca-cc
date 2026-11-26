@@ -99,7 +99,7 @@ export async function migrateSecrets({ home, env, deployment, reason = 'start', 
     assertVaultLockFree('migrate');
     let release;
     try {
-      release = await acquireLock(join(h, MIGRATE_LOCK_FILE), { timeoutMs: migrateWaitMs(e) });
+      release = await acquireLock(join(h, MIGRATE_LOCK_FILE), { timeoutMs: migrateWaitMs(e), mode: 0o600 });
     } catch (err) {
       if (err?.code !== 'LOCK_TIMEOUT') throw err;
       say(`[worca] vault: secrets were not moved: another Worca process is moving them (busy); ${RETRY}`);

@@ -19,6 +19,7 @@ import { ntHash } from './ntlm.mjs';
 import { resolveUpstream, upstreamLabel, AUTH_LABELS } from './upstream-proxy.mjs';
 import { VAULT_MESSAGES, isVaultRef, vaultActionLine } from './secrets/refs.mjs';
 import { resolveVaultRefSync, settingsVaultState } from './secrets/settings-resolver.mjs';
+import { vaultUnavailableHere } from './secrets/place.mjs';
 
 export const PROXY_LOGIN_FILE = 'proxy-login.json';
 /** Same value as egress-policy.mjs EGRESS_PROXY_VAR (that module imports this one; a test pins it). */
@@ -40,7 +41,9 @@ export const NT_HASH_FIELD = 'login.ntHash';
 
 // The store-vault module while the vault is in use (flag on, or a vault file a migration left), else null (nothing but
 // flag.mjs loads). `sealing` is the flag itself: with it off a vault left in use still releases, but new values stay plain.
+// In a container (place.mjs) the egress sidecar holds the login: never the vault, so null without loading anything.
 async function storeVault(env = process.env) {
+  if (vaultUnavailableHere(env)) return null;
   const { secretVaultEnabled, vaultInUse } = await import('./secrets/flag.mjs');
   if (!vaultInUse()) return null;
   const m = await import('./secrets/store-vault.mjs');
@@ -357,6 +360,9 @@ export function proxyLoginLiteral({ home = defaultHome(), platform = process.pla
   const raw = readLoginRecord({ home, platform, uid });
   if (!raw) return null;
   if (raw.error) return { insecure: true };
+  // A login bound to an upstream was saved by the egress sidecar (saveProxyLoginHash and the sidecar's own api): it
+  // belongs to the sidecar, and the vault never takes it.
+  if (keptUpstream(raw.record).upstream) return null;
   const hash = raw.record.ntHash;
   return hash && !isVaultRef(hash) ? { id: String(raw.record.id || ''), value: hash } : null;
 }

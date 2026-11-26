@@ -124,7 +124,7 @@ export async function exportSecrets({ home, env, store, confirm = async () => fa
 async function withMigrateLock(h, lockWaitMs, refused, fn) {
   let release;
   try {
-    release = await acquireLock(join(h, MIGRATE_LOCK_FILE), { timeoutMs: lockWaitMs });
+    release = await acquireLock(join(h, MIGRATE_LOCK_FILE), { timeoutMs: lockWaitMs, mode: 0o600 });
   } catch (err) {
     if (err?.code === 'LOCK_TIMEOUT') return refused('lock-busy');
     throw err;

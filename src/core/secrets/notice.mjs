@@ -67,7 +67,7 @@ export async function ackNotice({ home, id, held = false, lockWaitMs = ACK_LOCK_
   const h = home ?? worcaHome();
   let release = null;
   try {
-    if (!held) release = await acquireLock(join(h, MIGRATE_LOCK_FILE), { timeoutMs: lockWaitMs });
+    if (!held) release = await acquireLock(join(h, MIGRATE_LOCK_FILE), { timeoutMs: lockWaitMs, mode: 0o600 });
     const cur = readNotice({ home: h });
     if (!cur || typeof id !== 'string' || cur.id !== id) return false;
     unlinkSync(fileOf(h));

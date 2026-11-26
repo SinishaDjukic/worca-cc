@@ -272,7 +272,7 @@ export function createVault({ home = worcaHome(), store, storeTimeoutMs = defaul
           return await fn(makeTx(snap, hold));
         } finally { hold.active = false; }
       });
-    }, { timeoutMs: lockTimeoutMs }));
+    }, { timeoutMs: lockTimeoutMs, mode: 0o600 }));
     const tail = run.catch(() => {});
     queues.set(queueKey, tail);
     tail.then(() => { if (queues.get(queueKey) === tail) queues.delete(queueKey); });
@@ -352,7 +352,7 @@ export async function moveVaultAside({ home, now = new Date(), lockTimeoutMs = 3
         return name;
       }
       throw new VaultError('aside-exists');
-    }, { timeoutMs: lockTimeoutMs });
+    }, { timeoutMs: lockTimeoutMs, mode: 0o600 });
   } catch (err) {
     throw err?.code === 'LOCK_TIMEOUT' ? new VaultError('lock-busy') : err;
   }
@@ -402,7 +402,7 @@ export async function deleteVault({ home, store, snapshot, lockTimeoutMs = 30_00
       } catch (err) {
         return { vaultRemoved, keyRemoved: false, keyError: err?.code ?? 'store-unavailable' };
       }
-    }, { timeoutMs: lockTimeoutMs });
+    }, { timeoutMs: lockTimeoutMs, mode: 0o600 });
   } catch (err) {
     throw err?.code === 'LOCK_TIMEOUT' ? new VaultError('lock-busy') : err;
   }

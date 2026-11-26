@@ -107,3 +107,19 @@ start too, and a key you remove or replace is still cleaned out of the vault. Ne
 `worca secrets status` and `worca doctor` say the vault is still in use and name `worca secrets export`. Turning the
 flag off while a migration runs stops it before its next step: what it already moved stays readable, the rest stays
 in the config files.
+
+## With the other setups
+
+The vault adds encryption at rest. It works where Worca runs natively on your machine: the Native, Local sandbox
+(Docker) and E2B sandbox setups. In the two sandbox setups the vault stays on your machine, with Worca.
+
+- It is not a sandbox. An agent that runs as your OS user can ask the key store, just as Worca does. Only the guardrail
+  rules hold it back.
+- A sandboxed run never gets a model key, the vault file or a vault reference. Worca reads a vaulted model key on your
+  machine and signs the model calls there. An MCP server secret that a run uses still reaches that run, vaulted or
+  not, as described in [Security overview](security-overview.md#known-limits).
+- In a container it does nothing. A container has no OS key store, so the Hardened box, a Shared instance and the
+  plain container say **Not available in a container**, and nothing is moved there. The egress sidecar holds the
+  corporate proxy login. The [credential broker](credential-broker.md) keeps the model key out of the box.
+- A login the operator manages (`WORCA_EGRESS_LOGIN_FILE`) is never touched, and the vault never takes a login the
+  egress sidecar saved.

@@ -1465,8 +1465,9 @@ async function cmdDoctor() {
   // The secret vault's OS key store: nothing (and no vault or store module) while the vault is not in use (the flag
   // off and no vault file left). Read-only, and a warning never changes the exit code.
   try {
-    const { secretVaultEnabled, vaultInUse } = await import('../core/secrets/flag.mjs');
-    if (vaultInUse()) {
+    const { secretVaultEnabled, vaultInUse, vaultNotAvailableHere } = await import('../core/secrets/flag.mjs');
+    if (vaultNotAvailableHere()) out((await import('../core/secrets/place.mjs')).DOCTOR_CONTAINER_LINE);
+    else if (vaultInUse()) {
       const { secretsStatus, doctorLine, FLAG_OFF_VAULT_LINE } = await import('../core/secrets/status.mjs');
       const st = await secretsStatus();
       const { text, warn } = doctorLine(st);

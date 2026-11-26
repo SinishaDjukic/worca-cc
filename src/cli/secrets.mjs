@@ -6,6 +6,7 @@
 // change something (and `status --check`) refuse to run from an agent (WORCA_HOST_PID set).
 import { secretVaultEnabled, vaultInUse } from '../core/secrets/flag.mjs';
 import { VAULT_MESSAGES } from '../core/secrets/refs.mjs';
+import { CONTAINER_TEXT, vaultUnavailableHere } from '../core/secrets/place.mjs';
 import { confirm as confirmPrompt } from './models.mjs';
 
 export const SECRETS_HELP = `Usage: worca secrets <command>
@@ -52,6 +53,12 @@ export async function cmdSecrets(argv, {
   // D17: an agent spawned by Worca carries WORCA_HOST_PID; the person's own shell does not.
   if (env.WORCA_HOST_PID && (verb !== 'status' || check)) { err('worca: run this in your own terminal, not from an agent'); return 1; }
 
+  // A container has no OS key store: the vault never works there, so status says so and nothing else runs.
+  if (vaultUnavailableHere(env)) {
+    if (verb === 'status' && !check) { out('Secrets vault: not available in a container'); out(CONTAINER_TEXT); return 0; }
+    err(`worca: the secret vault is not available in a container. ${CONTAINER_TEXT}`);
+    return 2;
+  }
   if (verb === 'ack') return ack({ out });
   if (verb === 'export') return exportVault({ out, err, c, confirm, yes: rest.includes('--yes') });
   if (check) return storeCheck({ out, err });

@@ -197,7 +197,7 @@ test('a failed preflight shows store-check on the Settings secrets route, with n
   }
 });
 
-test('a container server (WORCA_CONTAINER=1) turned on makes 0 probe and 0 setKey calls and changes no byte', async () => {
+test('a container server (WORCA_CONTAINER=1) turned on makes no OS key store call at all and changes no byte', async () => {
   const dir = mkdtempSync(join(ROOT, 'container-'));
   const home = join(dir, 'tree', 'home');
   const worca = join(dir, 'tree', 'worca', '.worca-cc');
@@ -221,10 +221,9 @@ test('a container server (WORCA_CONTAINER=1) turned on makes 0 probe and 0 setKe
     const r = await fetch(`http://127.0.0.1:${port}/api/flags`, { method: 'PATCH', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ secretVault: true }) });
     assert.equal(r.status, 200);
-    // The edge primes first (its one getKey), then the gate skips the container at once.
-    assert.ok(await poll(() => readFakeCalls(state).some((c) => c.op === 'getKey')));
-    await new Promise((res) => setTimeout(res, 500));
-    assert.equal(readFakeCalls(state).filter((c) => c.op === 'probe' || c.op === 'setKey').length, 0);
+    // A container has no OS key store (secrets/place.mjs): the flag edge neither primes nor migrates, so the fake is never asked.
+    await new Promise((res) => setTimeout(res, 1500));
+    assert.deepEqual(readFakeCalls(state), []);
     const diff = diffTrees(before, snapshotTree(join(dir, 'tree'))).filter((d) => !/settings\.json$|worca-cc\.db/.test(d.path));
     assert.deepEqual(diff, []);
     const raw = JSON.parse(readFileSync(secretFiles(home, worca).settings, 'utf8'));
