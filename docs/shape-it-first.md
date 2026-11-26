@@ -631,11 +631,13 @@ run's branch into it and commit the fix), then press **Start now**: while the cl
 the same reason and starts nothing. **Re-plan the rest** and **Cancel the rest** stay in ⋯. The hold lives only while
 Worca runs: after a restart, the next check finds the clash again and holds the run again.
 
-**Work taken in after a wait.** When a run that waited at a stop goes on, it first takes in the work of every run of its
-feature on the same base that finished meanwhile, and the log shows `feat/run-9 moved · run 2 starts from it`; its pull
-request is based on that branch. An answer waits (`after run 3`) while such a run is still saving its work. On a clash
-the answer is not sent: the stop stays open and says why, and nothing moves. Settle it on the waiting run's branch
-(merge the other run's branch into it in its checkout and commit), then answer again.
+**Work taken in after a wait.** When a run that waited at a stop goes on, or a paused run is resumed, it first takes in
+the work of every run of its feature that finished meanwhile, whatever base that run started from, in finish order, and
+the log shows `feat/run-9 moved · run 2 starts from it`; its pull request is based on that branch. An answer waits
+(`after run 3`) while such a run is still saving its work. On a clash the answer is not sent: the stop stays open and
+says why, and nothing moves. Settle it on the waiting run's branch (merge the other run's branch into it in its checkout
+and commit), then answer again. A resumed run goes on without that work on a clash (its log and audit say why), and its
+next stop's answer refuses on it.
 
 ### Care and its record
 
@@ -818,7 +820,8 @@ Some parts follow the marker and stay with the feature; the rest follow the flag
 waits only for the runs it builds on, so an independent run starts while an earlier one is stopped, failed, waiting
 or paused (one run of a feature at a time), an answer or a resume held for its turn waits until no other run is going and held answers go on one at a time, lowest run first, and among
 the free runs a change run starts first, then the lowest run number; a run starts from the feature's latest finished run and, on a marked feature, merges in every run it builds on that this branch lacks; a resumed run first merges the
-latest finished work; a run that waited at a stop takes in every same-base finished run it lacks before its answer goes on; a finished feature's figures are recorded on this machine; and one PR ships the latest finished
+latest finished work (on a marked feature, every finished run it lacks, whatever its base, and it records the branch it now
+builds on as its base); a run that waited at a stop takes in every finished run it lacks, whatever its base, before its answer goes on; a finished feature's figures are recorded on this machine; and one PR ships the latest finished
 run's branch, or is refused with `HEAD_MISSING_WORK` when that branch does not hold every run's work.
 
 **A feature with the marker, flag off.** It keeps its one card, its Care and the Care row on its Ship card, its run

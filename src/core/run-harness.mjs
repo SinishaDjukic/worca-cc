@@ -451,7 +451,7 @@ export function mergesLatestOnResume({ slice, isWorkspace, smallRuns }) {
   return !!(slice && !isWorkspace && smallRuns);
 }
 
-/** Shaper small runs (slice 3, D3): a run that waited at a stop takes in the finished same-base work before its answer
+/** Shaper small runs (slice 3, D3): a run that waited at a stop takes in the finished work before its answer
  *  goes on. A slice of a feature with a run number, a single project, `smallRuns` (the flag on and the feature marked),
  *  and not a run on its source branch (its siblings' work reaches it by their merge back). */
 export function takesInBeforeAnswer({ slice, isWorkspace, smallRuns, sameAsSource }) {
@@ -2348,9 +2348,9 @@ export class RunHarness extends EventEmitter {
         if (this.runRootMode === 'detached') resumeManifest = await readRunManifest(this.runRoot);
       }
       // Shaper small runs (D9): a resumed slice takes in the feature's latest finished work first (the reattach above
-      // restored injectedPaths). baseTip prefers refs/remotes/origin/<base> over the local branch: a finished run's
-      // last push is its final state. Never the resume's outcome.
-      await this._takeInLatestFinished({ smallRuns: shaperSmallRunsOn() });
+      // restored injectedPaths). On a marked feature it takes in every finished run it lacks, as a stop's answer does,
+      // and records the branch it now builds on as its base. Never the resume's outcome.
+      await this._takeInOnResume();
       // A run paused while its graph was still building (the build stops with the run) gets it now:
       // reused when that build had finished, else rebuilt in the background. The replay above did it already.
       if (rp.setupIncomplete !== true) {
@@ -10667,6 +10667,16 @@ export class RunHarness extends EventEmitter {
     } catch (err) { this._log('worktree', 'warn', `${onAnswer ? 'after an answer' : 'resume'}: could not take in the latest finished work: ${err?.message || err}`); }
   }
 
+  /** The resume's take-in (the one call in _resume()). When a stop's answer would take in first (_takesInBeforeAnswerNow,
+   *  the flag read live), the same take-in, recorded `onResume`; its wait or refusal is logged and the run goes on.
+   *  Else dev's latest-finished merge with the live flag. Never rejects. */
+  async _takeInOnResume(deps = {}) {
+    try {
+      if (this._takesInBeforeAnswerNow()) await this.takeInBeforeAnswer(deps, { onResume: true });
+      else await this._takeInLatestFinished({ smallRuns: shaperSmallRunsOn() });
+    } catch (err) { this._log('worktree', 'warn', `resume: could not take in the finished work: ${err?.message || err}`); }
+  }
+
   /** Shaper s5 (D14): merge the feature's base into this run's fresh branch when it moved; move the diff base to the
    *  merge commit, so the base's commits never count as this run's changes.
    *  Shaper small runs (D8): `{base, onResume}` merges `base` (the latest finished run's branch) into a resumed run's
@@ -10737,15 +10747,16 @@ export class RunHarness extends EventEmitter {
 
   /**
    * Shaper small runs, slice 3 (D3, D7, D8, D9): before a stop's answer goes on, merge every finished run of the
-   * feature on this run's fire-time base whose work its branch lacks (takeInVerdict), from the SHAs the last combine
+   * feature whose work its branch lacks, whatever its base (takeInVerdict), from the SHAs the last combine
    * check read. A sibling still merging back is a wait; a clash, a failed check or merge, or a pause refuses, and the
    * branch, the index and the uncommitted files are put back as they were. Flag off, an unmarked feature, a workspace
    * or a source-branch run: no git call. The promise is kept on `_takeInFlight` until it settles (the unwind awaits
-   * it). `deps` = takeInVerdict's seams plus `mergeBaseInto`. Never rejects.
+   * it). `deps` = takeInVerdict's seams plus `mergeBaseInto`. `onResume` (_takeInOnResume, a resume's take-in) records
+   * `baseMerged.onResume` in place of `onAnswer`. Never rejects.
    * → {ok:true, merged, skipped?} | {ok:false, wait:true, after} | {ok:false, refused:true, reason}
    */
-  takeInBeforeAnswer(deps = {}) {
-    const p = this._takeInNow(deps).catch((err) => {
+  takeInBeforeAnswer(deps = {}, { onResume = false } = {}) {
+    const p = this._takeInNow(deps, { onResume }).catch((err) => {
       const reason = err && err.message ? err.message : String(err);
       this._log('worktree', 'warn', `could not take in the finished work: ${reason}`);
       return { ok: false, refused: true, reason };
@@ -10755,7 +10766,7 @@ export class RunHarness extends EventEmitter {
     return p;
   }
 
-  /** Slice 3: whether a stop's answer now takes in the finished same-base work first (takesInBeforeAnswer on this run,
+  /** Slice 3: whether a stop's answer now takes in the finished work first (takesInBeforeAnswer on this run,
    *  the flag read live). Then dev's after-answer take-in (_afterStopAnswer) is skipped: it would merge the latest
    *  finished run on any base. */
   _takesInBeforeAnswerNow() {
@@ -10767,7 +10778,7 @@ export class RunHarness extends EventEmitter {
       sameAsSource: rec?.sameAsSource === true || this.state.branch?.sameAsSource === true });
   }
 
-  async _takeInNow(deps) {
+  async _takeInNow(deps, { onResume = false } = {}) {
     const sl = this.runShape && this.runShape.slice;
     const m = this.members && this.members[0];
     const key = m && m.projectKey;
@@ -10849,7 +10860,7 @@ export class RunHarness extends EventEmitter {
       const oldSha = (r.baseRefs && r.baseRefs[old]) || r.baseSha || null;
       return { ...r, source: last.branch, sourceFrom: r.sourceFrom || old, tookIn: [...(Array.isArray(r.tookIn) ? r.tookIn : []), ...took],
         baseRefs: { ...(r.baseRefs || {}), ...(old && oldSha ? { [old]: oldSha } : {}), ...Object.fromEntries(took.map((t) => [t.branch, t.sha])) },
-        baseMerged: { base: last.branch, behind: behind.at(-1), merged: true, onAnswer: true } };
+        baseMerged: { base: last.branch, behind: behind.at(-1), merged: true, ...(onResume ? { onResume: true } : { onAnswer: true }) } };
     };
     if (this.state.branch) this.state.branch = patch(this.state.branch);
     if (this.state.branches?.[key]) this.state.branches[key] = patch(this.state.branches[key]);

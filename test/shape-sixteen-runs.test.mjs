@@ -11,10 +11,10 @@ import { dirname, join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { chainBaseBranchesOf, createTicket, getTicket, predecessorState } from '../src/core/scheduler.mjs';
+import { chainBaseBranchesOf, createTicket, getTicket, predecessorState, previousBranchesOf, workBranchOf } from '../src/core/scheduler.mjs';
 import { listRunGroups } from '../src/core/run-groups.mjs';
 import { busySliceOf, featureView, liveSliceFrom, resumeFeature, setApproveEach, sliceGateState, sliceOfPipeline,
-  clashHoldOf, dependencyBranchesOf, featureBase, featureHoldsTicket, setClashHold, smallRunsPrBase, ticketHeld, replanRest } from '../src/core/shape/features.mjs';
+  clashHoldOf, dependencyBranchesOf, featureBase, featureHoldsTicket, setClashHold, smallRunsPrBase, stackedPrBase, ticketHeld, replanRest } from '../src/core/shape/features.mjs';
 // Slice 5: a namespace read, so a missing new export fails only its own test, not the whole file.
 import * as SF from '../src/core/shape/features.mjs';
 import { sliceChainGate, heldStopTurn, latestFinishedSource, sliceSourceOf, sliceCombineGate, combineDependencies, createHeldStops } from '../src/core/shape/chain.mjs';
@@ -667,9 +667,9 @@ const read8 = (w, file) => readFileSync(join(w.wt8, file), 'utf8');
 const commitNine = (w) => { g(w.wt9, 'add', '-A'); g(w.wt9, 'commit', '-qm', 'nine.txt'); };
 
 /** A finished sibling of run 8 on `source` with one commit of its own file, in its own worktree (the card's run 4). */
-function finishRunTen(w, { source = 'feat/run-7', at = minute(2) } = {}) {
+function finishRunTen(w, { source = 'feat/run-7', at = minute(2), from = 'feat/run-7' } = {}) {
   const wt10 = join(dirname(w.repo), 'wt10');
-  g(w.repo, 'worktree', 'add', '-q', '-b', 'feat/run-10', wt10, 'feat/run-7');
+  g(w.repo, 'worktree', 'add', '-q', '-b', 'feat/run-10', wt10, from);
   commitFile(wt10, 'ten.txt');
   w.fx.start(10, { branch: record(10, source) });
   w.fx.finish(10, { at });
@@ -701,7 +701,7 @@ function liveRuns(w, eight, { nine = null } = {}) {
 
 // Cause 1 (report above): run 9's row reads `done` before teardown commits its work. The answer waits for run 9 to
 // settle, then run 9's committed work is taken in before run 8 gets it.
-test('A1 / W1 (R-po-2, live order): run 8\'s answer waits while run 9 reads done and not settled, then run 8 takes run 9 in before it goes on', () => withEnvVars(ON, async () => {
+test('A1 / W1 (R-po-2, live order): run 8\'s answer waits while run 9 reads done and not settled, then run 8 takes runs 10 and 9 in before it goes on', () => withEnvVars(ON, async () => {
   const w = siblingWorld();
   const { repo, wt8, fx } = w;
   const ten = finishRunTen(w, { source: 'feat/run-9', at: minute(0) });   // built on runs 8 and 9: another base
@@ -725,9 +725,9 @@ test('A1 / W1 (R-po-2, live order): run 8\'s answer waits while run 9 reads done
   assert.deepEqual(eight.answers, [{ id: 'gate-w1', payload: ANOTHER, by: 'ann' }]);
   assert.deepEqual(live.resolved, [{ id: 'gate-w1', reason: 'answered' }]);
   assert.equal(isAncestorExit(repo, head(repo, 'feat/run-9'), 'feat/run-8'), 0, 'run 9\'s commit is in run 8\'s branch');
-  assert.equal(isAncestorExit(repo, ten, 'feat/run-8'), 1, 'run 10, built on another base, is not taken in');
-  assert.deepEqual(filesOn(repo, 'feat/run-8'), ['base.txt', 'eight.txt', 'nine.txt', 'seven.txt']);
-  assert.deepEqual(auditOf(fx.pipelineOf(8)).filter((t) => t.startsWith('Base `')), [movedLine(9)]);
+  assert.equal(isAncestorExit(repo, ten, 'feat/run-8'), 0, 'run 10, built on another base, is taken in too');
+  assert.deepEqual(filesOn(repo, 'feat/run-8'), ['base.txt', 'eight.txt', 'nine.txt', 'seven.txt', 'ten.txt']);
+  assert.deepEqual(auditOf(fx.pipelineOf(8)).filter((t) => t.startsWith('Base `')), [movedLine(10), movedLine(9)], 'in finish order');
   assert.ok(featureLog(fx).includes('feat/run-9 moved · run 2 starts from it'), featureLog(fx).join(' | '));
   assert.equal(noMergeStarted(wt8), true);
 }));
@@ -1579,3 +1579,157 @@ test('S9 (R-arch-3): run 2 paused with a held answer and run 7 free: the marker 
   assert.deepEqual(startable(resume), []);
   assert.deepEqual(marked(resume), [[2], [2]]);
 }));
+
+// ---- R-arch-5: a resumed run takes in what finished meanwhile and records the branch it now builds on -------
+// Restart, a person's Resume and a delivered held resume all reach the harness through resume(), whose one take-in call
+// is _takeInOnResume(). The runs labelled 7, 8, 9 and 10 here are the card's runs 1 to 4, as above.
+test('RS1 (R-arch-5): a resumed run 8 takes run 9 in and records run 9\'s branch as its base, for every base reader', () => withEnvVars(ON, async () => {
+  const w = siblingWorld();
+  const { repo, wt8, fx } = w;
+  commitNine(w);
+  fx.finish(9, { at: minute(1) });
+  const nine = head(repo, 'feat/run-9');
+  const eight = waitedRunHarness(w);
+  const { start } = eight;
+  assert.equal(await eight.h._takeInOnResume(), undefined);
+
+  for (const rec of [eight.record(), eight.h.state.branch]) {
+    assert.equal(rec.source, 'feat/run-9', 'the recorded base names the branch the run now builds on');
+    assert.equal(rec.sourceFrom, 'feat/run-7');
+    assert.deepEqual(rec.tookIn, [{ index: 3, branch: 'feat/run-9', pipelineId: fx.pipelineOf(9), sha: nine }]);
+    assert.deepEqual(rec.baseMerged, { base: 'feat/run-9', behind: 1, merged: true, onResume: true }, 'onResume, and no onAnswer key');
+    assert.deepEqual([rec.baseSha, rec.diffBase, rec.startHead], [start, start, start], 'the start never moves');
+  }
+  assert.ok(eight.persisted.some((r) => r.source === 'feat/run-9'), 'the new record is persisted');
+  assert.equal(isAncestorExit(repo, nine, 'feat/run-8'), 0, 'run 9\'s commit is in run 8\'s branch');
+  assert.equal(noMergeStarted(wt8), true);
+  assert.equal(g(repo, 'diff', '--name-only', eight.h.checkpointRefs[eight.key], 'feat/run-8'), 'eight.txt', 'the diff holds only run 8\'s commits');
+  assert.ok(featureLog(fx).includes('feat/run-9 moved · run 2 starts from it'), featureLog(fx).join(' | '));
+
+  // Run 8 finishes with that record: Ship, the pull request dialog and the merge-back gate read it.
+  fx.finish(8, { at: minute(2), branch: eight.record() });
+  const pid = fx.pipelineOf(8);
+  assert.equal(smallRunsPrBase(pid), 'feat/run-9', 'Ship');
+  assert.deepEqual(chainBaseBranchesOf(pid).slice(-2), ['feat/run-7', 'feat/run-9']);
+  assert.equal(stackedPrBase(pid, chainBaseBranchesOf(pid)), 'feat/run-9', 'the pull request dialog\'s call');
+  assert.equal(workBranchOf(eight.record()), 'feat/run-8', 'the merge-back gate: the run\'s own branch');
+  assert.deepEqual(previousBranchesOf(pid), { sourceBranch: 'feat/run-8' }, 'nothing is pending on a merge back');
+}));
+
+test('RS2 (R-arch-5): a clash on resume leaves the head, the files and the record as they were, and the run goes on', () => withEnvVars(ON, async () => {
+  const w = clashWorld();
+  const eight = waitedRunHarness(w);
+  const was = snapshot(w);
+  const rec = structuredClone(eight.record());
+  await assert.doesNotReject(async () => { await eight.h._takeInOnResume(); });
+  assert.deepEqual(snapshot(w), was, 'the head, the refs and the uncommitted eight.txt are unchanged');
+  assert.equal(cleanTree(w.wt8), 'M eight.txt', 'still uncommitted');
+  assert.equal(noMergeStarted(w.wt8), true);
+  assert.deepEqual(eight.record(), rec);
+  assert.deepEqual(eight.h.state.branch, rec);
+  assert.deepEqual(eight.persisted, [], 'nothing is persisted');
+  assert.ok(auditOf(w.fx.pipelineOf(8)).includes(CONFLICT_LINE), auditOf(w.fx.pipelineOf(8)).join(' | '));
+  assert.ok(eight.logged.some((l) => l[0] === 'worktree' && l[1] === 'warn' && String(l[2]).includes(CLASH)), JSON.stringify(eight.logged));
+}));
+
+test('RS3 (R-arch-5): a sibling still merging its work back does not block the resume; the record and the head stay', () => withEnvVars(ON, async () => {
+  const w = siblingWorld();
+  const { repo, wt8, wt9, fx } = w;
+  commitNine(w);
+  // Now, not a fixed time: mergeBackPending reads the row as pending only while its finish is recent by the real clock.
+  fx.finish(9, { at: new Date().toISOString(), branch: { ...record(9), sameAsSource: true, worktreeDir: wt9 } });
+  const tip = head(repo, 'feat/run-8');
+  const eight = waitedRunHarness(w);
+  const rec = structuredClone(eight.record());
+  await assert.doesNotReject(async () => { await eight.h._takeInOnResume(); });
+  assert.equal(head(repo, 'feat/run-8'), tip);
+  assert.equal(noMergeStarted(wt8), true);
+  assert.deepEqual(eight.record(), rec);
+  assert.deepEqual(eight.persisted, []);
+  assert.deepEqual(eight.logged.map((l) => l.slice(0, 3)),
+    [['worktree', 'info', 'waiting for run 3 to finish merging its work back before taking it in']]);
+}));
+
+test('RS4 (R-arch-5, flag off): a resume leaves the record deep-equal to the one before and merges nothing', () => withEnvVars({ WORCA_FLAGS: undefined }, async () => {
+  const w = siblingWorld();
+  const { repo, fx } = w;
+  commitNine(w);
+  fx.finish(9, { at: minute(1) });
+  const was = snapshot(w);
+  const eight = waitedRunHarness(w);
+  const rec = structuredClone(eight.record());
+  await eight.h._takeInOnResume();
+  assert.deepEqual(eight.record(), rec);
+  assert.deepEqual(eight.h.state.branch, rec);
+  assert.deepEqual(eight.persisted, []);
+  assert.deepEqual(snapshot(w), was);
+  assert.equal(isAncestorExit(repo, head(repo, 'feat/run-9'), 'feat/run-8'), 1, 'run 9\'s commit is not in run 8\'s branch');
+}));
+
+// The take-in takes in every finished run the branch lacks, whatever its base: run 9 (from run 7) and run 10 (from run
+// 9's branch) both reach run 8, on a resume and on an answered stop alike.
+test('RS8: a resumed or answered run 8 takes in run 9 (from run 7) and run 10 (from run 9\'s branch), in finish order', () => withEnvVars(ON, async () => {
+  for (const how of ['resume', 'answer']) {
+    const w = siblingWorld();
+    const { repo, wt8, fx } = w;
+    commitNine(w);
+    fx.finish(9, { at: minute(1) });
+    const ten = finishRunTen(w, { source: 'feat/run-9', from: 'feat/run-9', at: minute(2) });
+    const nine = head(repo, 'feat/run-9');
+    const eight = waitedRunHarness(w);
+    const r = how === 'resume' ? await eight.h._takeInOnResume() : await eight.h.takeInBeforeAnswer();
+    if (how === 'answer') assert.deepEqual(r, { ok: true, merged: [{ index: 3, branch: 'feat/run-9' }, { index: 4, branch: 'feat/run-10' }] });
+    assert.equal(isAncestorExit(repo, nine, 'feat/run-8'), 0, `${how}: run 9's commit is in run 8's branch`);
+    assert.equal(isAncestorExit(repo, ten, 'feat/run-8'), 0, `${how}: run 10's commit is in run 8's branch`);
+    const rec = eight.record();
+    assert.equal(rec.source, 'feat/run-10', `${how}: the recorded base is the last branch taken in`);
+    assert.equal(rec.sourceFrom, 'feat/run-7');
+    assert.deepEqual(rec.tookIn.map((t) => [t.index, t.branch]), [[3, 'feat/run-9'], [4, 'feat/run-10']]);
+    assert.equal(rec.baseMerged[how === 'resume' ? 'onResume' : 'onAnswer'], true);
+    assert.equal(g(repo, 'diff', '--name-only', eight.h.checkpointRefs[eight.key], 'feat/run-8'), 'eight.txt', `${how}: the diff holds only run 8's commits`);
+    assert.equal(noMergeStarted(wt8), true);
+  }
+}));
+
+/** A bare harness whose two take-ins only record their calls; `now` is what _takesInBeforeAnswerNow answers. */
+function routedHarness(now) {
+  const h = Object.create(RunHarness.prototype);
+  const calls = [];
+  const logged = [];
+  h._takesInBeforeAnswerNow = () => now;
+  h.takeInBeforeAnswer = async (_deps, opts) => { calls.push(['takeInBeforeAnswer', opts]); return { ok: true, merged: [] }; };
+  h._takeInLatestFinished = async (opts) => { calls.push(['_takeInLatestFinished', opts]); };
+  h._log = (...args) => { logged.push(args); };
+  return { h, calls, logged };
+}
+
+test('RS5 (R-arch-5): a resume runs the stop\'s take-in when a stop\'s answer would, else dev\'s latest-finished merge with the live flag', async () => {
+  for (const [now, env, want] of [
+    [true, ON, [['takeInBeforeAnswer', { onResume: true }]]],
+    [false, ON, [['_takeInLatestFinished', { smallRuns: true }]]],
+    [false, { WORCA_FLAGS: undefined }, [['_takeInLatestFinished', { smallRuns: false }]]],
+  ]) {
+    await withEnvVars(env, async () => {
+      const { h, calls } = routedHarness(now);
+      await h._takeInOnResume();
+      assert.deepEqual(calls, want, `takes in before an answer: ${now}, WORCA_FLAGS: ${env.WORCA_FLAGS}`);
+    });
+  }
+});
+
+test('RS6 (R-arch-5): a resume take-in that throws is logged and is never the resume\'s outcome', () => withEnvVars(ON, async () => {
+  for (const [now, method] of [[true, 'takeInBeforeAnswer'], [false, '_takeInLatestFinished']]) {
+    const { h, logged } = routedHarness(now);
+    h[method] = async () => { throw new Error('boom'); };
+    await assert.doesNotReject(async () => { await h._takeInOnResume(); }, method);
+    assert.deepEqual(logged.map((l) => l.slice(0, 3)),
+      [['worktree', 'warn', 'resume: could not take in the finished work: boom']], method);
+  }
+}));
+
+test('RS7 (R-arch-5): resume has exactly one take-in call, _takeInOnResume()', () => {
+  const body = RunHarness.prototype._resume.toString();
+  assert.equal((body.match(/this\._takeInOnResume\(/g) || []).length, 1, 'one call to _takeInOnResume');
+  assert.deepEqual(body.match(/this\.(_takeInLatestFinished|takeInBeforeAnswer|_takeInNow|_mergeLatestOnResume)\(/g) || [], [],
+    'no other take-in call in the resume');
+});

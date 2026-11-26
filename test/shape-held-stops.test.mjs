@@ -267,7 +267,7 @@ test('a refused answer (422 or STOP_HELD) adds no id: a later valid answer is ta
   assert.equal(b.answers.length, 1);
 });
 
-// ── Slice 3: the run takes in finished same-base work before an answer goes on (the `takeIn` dep) ───────────────────
+// ── Slice 3: the run takes in the finished work before an answer goes on (the `takeIn` dep) ───────────────────
 const SMALL_ON = { WORCA_FLAGS: 'shaperSmallRuns' };
 const SENDING = 'this stop is already answered: its answer is being sent';
 const MERGED = { ok: true, merged: [] };
@@ -315,12 +315,16 @@ test('take-in: a sibling still committing (done, not settled) holds a direct ans
   assert.equal(w.e2.heldStop, null);
 }));
 
-test('take-in: a settling run on another base does not hold the answer', () => withEnv(SMALL_ON, async () => {
+test('take-in: a settling run on another base holds the answer too (its work is taken in, whatever its base)', () => withEnv(SMALL_ON, async () => {
   const w = takeSetup({ three: true });
   getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?')
     .run(JSON.stringify({ source: 'feat/other', feature: `feat/${w.e3.pipelineId}` }), w.e3.pipelineId);
   w.finish(w.e3);                                   // done, not settled
-  assert.equal(await w.held.answer(w.e2, 'gate-w9-3', { decision: 'continue' }, 'ann'), undefined);
+  assert.deepEqual(await w.held.answer(w.e2, 'gate-w9-3', { decision: 'continue' }, 'ann'), { held: true });
+  assert.equal(w.e2.heldStop.after, 3);
+  assert.deepEqual([w.taken, w.answers], [[], []]);
+  w.e3.settled = true;
+  await w.held.deliver();
   assert.deepEqual(w.taken, ['r2']);
   assert.equal(w.answers.length, 1);
 }));

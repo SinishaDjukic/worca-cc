@@ -59,7 +59,8 @@ test('each doc\'s new text says what off means: the marker\'s parts stay, the li
   const FACTS = {
     'shape-it-first.md': [
       'also for a feature with no marker', 'waits only for the runs it builds on', "starts from the feature's latest finished run",
-      'a resumed run first merges the latest finished work', 'HEAD_MISSING_WORK', "a finished feature's figures are recorded",
+      'a resumed run first merges the latest finished work', 'on a marked feature, every finished run it lacks, whatever its base, and it records the branch it now builds on as its base',
+      'HEAD_MISSING_WORK', "a finished feature's figures are recorded",
       'keeps its one card, its Care and the Care row on its Ship card, its run stops, the stacked-only Ship and the marks that block it',
       'no Verifier check starts', 'a stopped or failed check offers none', 'ten minutes after', 'never while Worca is still committing', 'Ship opens with no Verifier check', 'A check already open, or with a gap, keeps Ship at `NOT_READY`',
       'continue by the linear chain', 'is not checked, so ship it as one PR per run', 'no figures are recorded, figures already',
@@ -211,10 +212,10 @@ test('slice 3: "Work taken in after a wait" follows the clash part and "The flag
   assert.ok(at >= 0, 'the paragraph "Work taken in after a wait" under Small runs');
   assert.ok(at > small.indexOf('When the runs it builds on clash'), 'after "When the runs it builds on clash"');
   const para = flat(small.slice(at).split(/\n\s*\n/).slice(0, 2).join('\n'));   // a heading and its paragraph, or one paragraph
-  assert.deepEqual(missing(para, [/waited at a stop/i, /same base/i, /meanwhile|while it waited/i, '`feat/run-9 moved · run 2 starts from it`',
+  assert.deepEqual(missing(para, [/waited at a stop/i, /paused run is resumed/i, /whatever base that run started from/i, /meanwhile|while it waited/i, '`feat/run-9 moved · run 2 starts from it`',
     /pull request/i, '`after run 3`', /clash/i, /not sent/i, /stays open/i, /nothing moves/i, /settle/i, /answer again/i]), []);
   const live = flat(small).split('**The flag, read live.**')[1]?.split('**A feature with the marker')[0] || '';
-  assert.match(live, /waited at a stop takes in every same-base finished run it lacks before its answer goes on/);
+  assert.match(live, /waited at a stop takes in every finished run it lacks, whatever its base, before its answer goes on/);
 });
 
 test('a clash between the runs it builds on: Small runs says a run starts with all of them and how a held run is released', () => {

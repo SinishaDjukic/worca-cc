@@ -329,16 +329,16 @@ function shipRead({ fx }, runs) {
   };
 }
 
-test('R-qa-6: run 8 waits, takes in run 9; Ship lists 7 on the base, 9 on 7, 8 on 9, 10 on 8', () => withEnvVars(ON, async () => {
+/** Run 9 finishes while run 8 waits; `takeIn(harness)` is run 8's take-in; then run 8 finishes with the record it left
+ *  (the harness's _persist is a stand-in) and run 10 starts where the fire path picks, commits and finishes. */
+async function runsAfterTakeIn(takeIn) {
   const w = siblingWorld();
   const { repo, wt9, fx } = w;
-  // Run 9 finishes while run 8 waits at its stop.
   g(wt9, 'add', '-A');
   g(wt9, 'commit', '-qm', 'nine.txt');
   fx.finish(9, { at: minute(1), branch: record(9) });
-  // Run 8 takes run 9 in before it goes on, then finishes with that record (the harness's _persist is a stand-in).
   const eight = waitedRunHarness(w);
-  assert.equal((await eight.h.takeInBeforeAnswer()).ok, true);
+  await takeIn(eight.h);
   fx.finish(8, { at: minute(2), branch: eight.record() });
   // Run 10 starts where the fire path picks.
   assert.equal(sliceSourceOf(getTicket(fx.ticketOf(10))).sourceBranch, 'feat/run-8');
@@ -347,7 +347,12 @@ test('R-qa-6: run 8 waits, takes in run 9; Ship lists 7 on the base, 9 on 7, 8 o
   commitFile(wt10, 'ten.txt');
   fx.start(10, { branch: record(10, 'feat/run-8') });
   fx.finish(10, { at: minute(3) });
+  return w;
+}
 
+test('R-qa-6: run 8 waits, takes in run 9; Ship lists 7 on the base, 9 on 7, 8 on 9, 10 on 8', () => withEnvVars(ON, async () => {
+  const w = await runsAfterTakeIn(async (h) => assert.equal((await h.takeInBeforeAnswer()).ok, true));
+  const { repo, fx } = w;
   const nine = head(repo, 'feat/run-9');
   assert.equal(isAncestorExit(repo, nine, 'feat/run-8'), 0, 'run 9\'s commit is in run 8\'s branch');
   assert.equal(isAncestorExit(repo, nine, 'feat/run-10'), 0, 'run 9\'s commit is in run 10\'s branch');
@@ -380,6 +385,19 @@ test('combine shape (no wait): Ship lists 7, 9, 10 and no PR for run 8', () => w
   assert.deepEqual(ship.opened, pids, 'Ship opens what the card lists');
   assert.deepEqual(ship.bases, ['dev', 'feat/run-7', 'feat/run-9']);
   assert.equal(ship.along, true);
+}));
+
+test('R-arch-5 resume: run 8 resumed after run 9 finished lists 7, 9, 8, 10', () => withEnvVars(ON, async () => {
+  const w = await runsAfterTakeIn((h) => h._takeInOnResume());
+  const { fx } = w;
+  const pids = [7, 9, 8, 10].map((run) => fx.pipelineOf(run));
+  const ship = shipRead(w, [7, 9, 8, 10]);
+  assert.deepEqual(ship.card, pids, 'runs 7, 9, 8 and 10, and no other pull request');
+  assert.deepEqual(ship.opened, pids, 'Ship opens what the card lists');
+  assert.deepEqual(ship.bases, ['dev', 'feat/run-7', 'feat/run-9', 'feat/run-8']);
+  assert.equal(recordOf(fx.pipelineOf(8)).source, 'feat/run-9', 'run 8\'s recorded base');
+  assert.equal(smallRunsPrBase(fx.pipelineOf(8)), 'feat/run-9', 'Ship bases run 8 on its recorded base');
+  assert.equal(ship.along, true, 'the list came from the real branches, not from the finish order');
 }));
 
 // A pin: it holds before and after the change.

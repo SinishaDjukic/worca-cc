@@ -685,10 +685,13 @@ test('sliceCombineGate (D8): a clash that needs the whole fold names every run i
 // ── Slice 3 (R-po-2): what a run that waited at a stop takes in before it goes on (takeInVerdict) ───────────────────
 const BASE = 'feat/base';
 const REASON = 'runs 2 and 3 clash in src/a.mjs';
-/** A marked 4-run feature: run 2 is the waiting run (live), runs 3 and 4 are done, each with the record `branches` gives
- *  it (`{source}` of the shared base by default) and a finish time. → { id, p, br, own } */
+/** A marked 4-run feature: run 1 (done) is the shared base's branch, run 2 is the waiting run (live), runs 3 and 4 are
+ *  done, each with the record `branches` gives it (`{source}` of the shared base by default) and a finish time.
+ *  → { id, p, br, own } */
 function takeInFeature({ own = {}, three = {}, four = {}, at = { 3: '2026-03-02T00:00:00Z', 4: '2026-03-03T00:00:00Z' } } = {}) {
   const f = feature(4, { two: 'none' });
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = (SELECT origin_pipeline_id FROM shape_features WHERE id = ?)')
+    .run(JSON.stringify({ source: 'main', feature: BASE }), f.id);
   const br = (k) => `feat/take-${f.id}-${k}`;
   const rec = (k, over) => ({ source: BASE, feature: br(k), ...over });
   const p2 = pipe('running', { branch: rec(2, own) });
@@ -698,8 +701,9 @@ function takeInFeature({ own = {}, three = {}, four = {}, at = { 3: '2026-03-02T
   markFeature(f.id);
   return { id: f.id, p: [null, null, p2, p3, p4], br, own: { featureId: f.id, pipelineId: p2, branch: br(2) } };
 }
-/** Seams for takeInVerdict: every sibling branch resolves and is missing unless said otherwise. Every call recorded. */
-function takeInSeams({ check = () => ({ status: 'clean', files: [], fileCount: 0 }), ancestor = () => false, resolves = () => true } = {}) {
+/** Seams for takeInVerdict: every sibling branch resolves and is missing unless said otherwise (the shared base, run 1's
+ *  branch, is held). Every call recorded. */
+function takeInSeams({ check = () => ({ status: 'clean', files: [], fileCount: 0 }), ancestor = (a) => a === `refs/heads/${BASE}`, resolves = () => true } = {}) {
   const checks = [];
   const ancestors = [];
   return { checks, ancestors, deps: {
@@ -709,7 +713,7 @@ function takeInSeams({ check = () => ({ status: 'clean', files: [], fileCount: 0
 }
 const verdictOf = (w, s) => CHAIN.takeInVerdict(root, w.own, s.deps);
 
-test('takeInVerdict: nothing missing when the run holds every same-base sibling; no combine check', () => withEnvVars(SMALL_ON, async () => {
+test('takeInVerdict: nothing missing when the run holds every finished sibling; no combine check', () => withEnvVars(SMALL_ON, async () => {
   const w = takeInFeature();
   const s = takeInSeams({ ancestor: () => true });
   assert.deepEqual(await verdictOf(w, s), { status: 'none', skipped: [] });
@@ -743,8 +747,9 @@ test('takeInVerdict: a sibling whose branch no longer resolves is left out and l
 }));
 
 test('takeInVerdict: conflicts are a clash naming the runs and the file', () => withEnvVars(SMALL_ON, async () => {
-  const w = takeInFeature({ four: { source: 'feat/other' } });
-  const v = await verdictOf(w, takeInSeams({ check: (branches) => conflicts(branches) }));
+  const w = takeInFeature();
+  const held = (a) => a === `refs/heads/${BASE}` || a === `refs/heads/${w.br(4)}`;   // run 2 already holds run 4's work
+  const v = await verdictOf(w, takeInSeams({ check: (branches) => conflicts(branches), ancestor: held }));
   assert.deepEqual([v.status, v.reason, v.runs.slice().sort(), v.files], ['clash', REASON, [2, 3], ['src/a.mjs']]);
 }));
 
@@ -759,20 +764,29 @@ test('takeInVerdict: a failed check or a gone branch is an error, and a throwing
   assert.deepEqual(await verdictOf(w, takeInSeams({ ancestor: () => { throw new Error('boom'); } })), { status: 'error', error: 'boom' });
 }));
 
-test('takeInVerdict (R-arch-12): a finished run on another base is never missing, and git is not asked about it', () => withEnvVars(SMALL_ON, async () => {
-  const w = takeInFeature({ three: { source: 'feat/other' }, four: { source: 'feat/other' } });
+test('takeInVerdict: a finished run on another base is missing too, in finish order, so a wait takes in all dev would', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature({ three: { source: 'feat/other' }, four: { source: 'feat/else' } });
+  const s = takeInSeams();
+  const v = await verdictOf(w, s);
+  assert.deepEqual([v.status, v.missing?.map((m) => m.index)], ['clean', [3, 4]]);
+  assert.deepEqual(s.checks, [[w.br(2), w.br(3), w.br(4)]]);
+}));
+
+test('takeInVerdict: a waiting run with no recorded fire-time base takes in nothing, and git is not asked', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature();
+  getDb().prepare('UPDATE pipelines SET branch = NULL WHERE id = ?').run(w.p[2]);
   const s = takeInSeams();
   assert.deepEqual(await verdictOf(w, s), { status: 'none', skipped: [] });
   assert.deepEqual([s.checks, s.ancestors], [[], []]);
 }));
 
-test('takeInVerdict (D5): the base compared is the one a run started from (sourceFrom ?? source), on both sides', () => withEnvVars(SMALL_ON, async () => {
+test('takeInVerdict (D5): a run that took work in still has a fire-time base (sourceFrom ?? source); a run on its sibling\'s branch is taken in too', () => withEnvVars(SMALL_ON, async () => {
   // The waiting run and run 3 each took work in since they started from BASE; run 4 started from run 3's branch.
   const w = takeInFeature({ own: { source: 'feat/taken', sourceFrom: BASE }, three: { source: 'feat/else', sourceFrom: BASE } });
   getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?')
     .run(JSON.stringify({ source: w.br(3), feature: w.br(4) }), w.p[4]);
   const v = await verdictOf(w, takeInSeams());
-  assert.deepEqual([v.status, v.missing?.map((m) => m.index)], ['clean', [3]]);
+  assert.deepEqual([v.status, v.missing?.map((m) => m.index)], ['clean', [3, 4]]);
   assert.equal(CHAIN.fireSourceOf(w.p[2]), BASE);
   assert.equal(CHAIN.fireSourceOf(w.p[4]), w.br(3));
   assert.equal(CHAIN.fireSourceOf('nope'), null);

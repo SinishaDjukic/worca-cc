@@ -1610,7 +1610,7 @@ export class GraphOrchestrator extends RunHarness {
   }
 
   /** C3 (D10, D14): a person answered a stop. Stash it before any await (the pause window), write the one answered
-   *  line, then, unless the run stops (Change) or the answer already took in the finished same-base work (slice 3), take
+   *  line, then, unless the run stops (Change) or the answer already took in the finished work (slice 3), take
    *  in the feature's latest finished work before it goes on. */
   async _afterStopAnswer(id, stop, payload) {
     if (this.answeredBy(id) === NIGHT_ACTOR) return;

@@ -190,9 +190,10 @@ export function fireSourceOf(pipelineId, deps = {}) {
 }
 
 /**
- * Slice 3 (D1, D5, D6): what a run that waited at a stop must take in before it goes on: the feature's finished runs
- * on the same fire-time base whose work is not in `branch`, in finish order, and whether they combine with it. A run
- * still merging back is a wait; a run whose branch is gone is left out (`skipped`). Writes no ref; never throws.
+ * Slice 3 (D1, D5, D6): what a run that waited (at a stop, or paused and resumed) must take in before it goes on: every
+ * finished run of the feature whose work is not in `branch`, whatever base it started from, in finish order, and
+ * whether they combine with it. A run still merging back is a wait; a run whose branch is gone is left out (`skipped`).
+ * A run with no recorded fire-time base takes in nothing. Writes no ref; never throws.
  * `deps` = { checkCombine, isAncestor, resolves(dir, ref), recordOf(pipelineId) } seams.
  * → {status:'none', skipped} | {status:'wait', after} | {status:'clean', missing, check, skipped}
  *   | {status:'clash', reason, runs, files, missing} | {status:'error', error}   (a clash's `missing`: the harness names
@@ -200,10 +201,8 @@ export function fireSourceOf(pipelineId, deps = {}) {
  */
 export async function takeInVerdict(dir, { featureId, pipelineId, branch }, deps = {}) {
   try {
-    const own = fireSourceOf(pipelineId, deps);
-    if (!own) return { status: 'none', skipped: [] };
-    const rows = finishedSlices(featureId, { exclude: pipelineId }).filter((r) => fireSourceOf(r.pipelineId, deps) === own);
-    const found = rows.map((r) => ({ ...r, prev: previousBranchesOf(r.pipelineId) }));
+    if (!fireSourceOf(pipelineId, deps)) return { status: 'none', skipped: [] };
+    const found = finishedSlices(featureId, { exclude: pipelineId }).map((r) => ({ ...r, prev: previousBranchesOf(r.pipelineId) }));
     const pending = found.find((r) => r.prev && r.prev.pending);
     if (pending) return { status: 'wait', after: pending.index };
     const resolves = deps.resolves || (async (d, ref) => !!(await commitOf(d, ref, { timeout: 10_000 })));

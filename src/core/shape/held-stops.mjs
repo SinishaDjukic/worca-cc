@@ -13,7 +13,7 @@ import { requirementChangedFeedback } from '../../shared/shape/req-change.mjs';
  * deps: { runs: Map of runs-map entries, liveSliceOf(id), broadcastFeature(featureId), resolvePending(entry, {id, reason}),
  * applyChange?(entry, stop, by) → {changeRun} (small runs C4: throws a refusal), now(): ms,
  * takeIn?(entry) → {ok, merged} | {ok:false, wait, after} | {ok:false, refused, reason} (slice 3: the run takes in the
- * finished same-base work before its answer goes on; without it every answer is today's synchronous path),
+ * finished work before its answer goes on; without it every answer is today's synchronous path),
  * resume?(pipelineId, opts) → Promise<{ok, runId?} | {ok:true, held:true, …}> (slice 7: the server's resumeRun; without
  * it no resume is held), refuse?(status, body) → Error (the server's ResumeError), audit?(pipelineId, text, by) }.
  * → { answer, deliver, clear, holdResume, heldResumeOf, overlay, dropResume, splitBootPicks, claimed, watchSkips }
@@ -34,7 +34,7 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
   const taken = (entry, id) => { (entry.answeredStops ||= new Set()).add(id); };
   const refusal = (message, code) => Object.assign(new Error(message), { code, status: 409 });
 
-  /** Slice 3 (D3, D14): whether this stop's answer first takes in the finished same-base work: a marked feature's stop
+  /** Slice 3 (D3, D14): whether this stop's answer first takes in the finished work: a marked feature's stop
    *  with the flag on, except "Change it" (the re-plan takes in at its own start). */
   function takeInApplies(entry, pq, payload) {
     if (!takeIn || !pq || !pq.stop || !shaperSmallRunsOn()) return false;
@@ -43,16 +43,15 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     return stopOptionOf(pq.stop, payload)?.value !== 'change';
   }
 
-  /** Slice 3 (D4): the run number of another run of the entry's feature, on the same fire-time base, that is done but
-   *  still committing its work (its teardown has not settled), or null. */
+  /** Slice 3 (D4): the run number of another run of the entry's feature, on any base (the take-in takes in every
+   *  finished run), that is done but still committing its work (its teardown has not settled), or null. A run with no
+   *  recorded fire-time base takes in nothing, so nothing holds it. */
   function settlingSiblingOf(entry, at) {
-    if (!at) return null;
-    const own = fireSourceOf(entry.pipelineId);
-    if (own == null) return null;
+    if (!at || fireSourceOf(entry.pipelineId) == null) return null;
     for (const e of runs.values()) {
       if (!e || e === entry || e.status !== 'done' || e.settled === true) continue;
       const o = featureOf(e);
-      if (o && o.featureId === at.featureId && fireSourceOf(e.pipelineId) === own) return o.index;
+      if (o && o.featureId === at.featureId) return o.index;
     }
     return null;
   }
@@ -68,7 +67,7 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
    *  it is held while another slice is going ({held:true}), else handed to the run now (the caller resolves the
    *  question, as for every other answer). A stop this run has already taken (`entry.answeredStops`, in memory) refuses
    *  a later answer with its id (409 STOP_ANSWERED). Any other question goes straight to the run. A refusal changes
-   *  nothing. Slice 3: on a marked feature the run first takes in the finished same-base work, so the answer comes back
+   *  nothing. Slice 3: on a marked feature the run first takes in the finished work, so the answer comes back
    *  as a promise: held behind a run still saving its work, refused on a clash (409 TAKE_IN_REFUSED), else handed over. */
   function answer(entry, id, payload, by) {
     const pq = entry && entry.pendingQuestion;

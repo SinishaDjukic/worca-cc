@@ -302,6 +302,32 @@ shipT('D1 base: PRs opened one at a time as runs finish out of order each stack 
   assert.deepEqual(bases, ['main', w.br(1), w.br(3), w.br(4)]);
 });
 
+/** Run 2's PR base as each reader gives it: the dialog's default, POST /api/pr's --base and Ship's one-at-a-time open
+ *  (openMemberPr). `n` is the number of the next `gh pr create` in `seen`. */
+async function readers(w, seen, n) {
+  const two = w.pids[1];
+  // A POST records the PR on the run; forget it, so the next reader opens one of its own.
+  const forget = () => getDb().prepare('UPDATE pipelines SET pr_url = NULL, pr_number = NULL, pr_state = NULL WHERE id = ?').run(two);
+  const lastBase = (k) => {
+    const calls = ghCalls(seen, 'create');
+    assert.equal(calls.length, k, `gh pr create number ${k}`);
+    assert.equal(argOf(calls.at(-1), '--head'), w.br(2));
+    return argOf(calls.at(-1), '--base');
+  };
+  const q = new URLSearchParams({ id: two, projectKey: projectKey(w.dir) });
+  const dialog = (await (await fetch(`${base}/api/pr/remotes?${q}`)).json()).defaultBase;
+  const r = await post('/api/pr', { id: two, projectKey: projectKey(w.dir) });
+  assert.equal(r.status, 200, JSON.stringify(await r.json()));
+  const posted = lastBase(n);
+  forget();
+  const o = await server._testing.openMemberPr(two, { actor: 'ann' });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  const shipped = lastBase(n + 1);
+  forget();
+  return { dialog, posted, shipped };
+}
+const mergedPr = (pid) => getDb().prepare("UPDATE pipelines SET pr_url = 'https://github.com/me/repo/pull/77', pr_number = 77, pr_state = 'MERGED' WHERE id = ?").run(pid);
+
 // Slice 3 (R-arch-5): a run that took in other work is based on the recorded branch, read the same by every reader.
 shipT('P1 (R-arch-5): after run 2 takes in run 3, the dialog, POST /api/pr and Ship all base it on run 3, and on the root once run 3 merged', async () => {
   const seen = []; forge(seen);
@@ -310,30 +336,23 @@ shipT('P1 (R-arch-5): after run 2 takes in run 3, the dialog, POST /api/pr and S
   const sha = git(w.dir, 'rev-parse', w.br(3));
   getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({ source: w.br(3), sourceFrom: w.br(1), feature: w.br(2),
     tookIn: [{ index: 3, branch: w.br(3), pipelineId: three, sha }] }), two);
-  // A POST records the PR on the run; forget it, so the next reader opens one of its own.
-  const forget = () => getDb().prepare('UPDATE pipelines SET pr_url = NULL, pr_number = NULL, pr_state = NULL WHERE id = ?').run(two);
-  const lastBase = (n) => {
-    const calls = ghCalls(seen, 'create');
-    assert.equal(calls.length, n, `gh pr create number ${n}`);
-    assert.equal(argOf(calls.at(-1), '--head'), w.br(2));
-    return argOf(calls.at(-1), '--base');
-  };
-  const readers = async (n) => {
-    const q = new URLSearchParams({ id: two, projectKey: projectKey(w.dir) });
-    const dialog = (await (await fetch(`${base}/api/pr/remotes?${q}`)).json()).defaultBase;
-    const r = await post('/api/pr', { id: two, projectKey: projectKey(w.dir) });
-    assert.equal(r.status, 200, JSON.stringify(await r.json()));
-    const posted = lastBase(n);
-    forget();
-    const o = await server._testing.openMemberPr(two, { actor: 'ann' });
-    assert.equal(o.ok, true, JSON.stringify(o));
-    const shipped = lastBase(n + 1);
-    forget();
-    return { dialog, posted, shipped };
-  };
-  assert.deepEqual(await readers(1), { dialog: w.br(3), posted: w.br(3), shipped: w.br(3) }, 'run 3\'s pull request is open');
-  getDb().prepare("UPDATE pipelines SET pr_url = 'https://github.com/me/repo/pull/77', pr_number = 77, pr_state = 'MERGED' WHERE id = ?").run(three);
-  assert.deepEqual(await readers(3), { dialog: 'main', posted: 'main', shipped: 'main' }, 'run 3 is merged');
+  assert.deepEqual(await readers(w, seen, 1), { dialog: w.br(3), posted: w.br(3), shipped: w.br(3) }, 'run 3\'s pull request is open');
+  mergedPr(three);
+  assert.deepEqual(await readers(w, seen, 3), { dialog: 'main', posted: 'main', shipped: 'main' }, 'run 3 is merged');
+});
+
+// The record a resume writes (baseMerged.onResume, no onAnswer) is read as the answer's record is.
+shipT('P2 (R-arch-5): on a record a resume wrote, the dialog, POST /api/pr and Ship all base run 2 on run 3, and on the root once run 3 merged', async () => {
+  const seen = []; forge(seen);
+  const w = smallWorld({ order: [1, 3, 4, 2] });
+  const [two, three] = [w.pids[1], w.pids[2]];
+  const sha = git(w.dir, 'rev-parse', w.br(3));
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({ source: w.br(3), sourceFrom: w.br(1), feature: w.br(2),
+    tookIn: [{ index: 3, branch: w.br(3), pipelineId: three, sha }],
+    baseMerged: { base: w.br(3), behind: 1, merged: true, onResume: true } }), two);
+  assert.deepEqual(await readers(w, seen, 1), { dialog: w.br(3), posted: w.br(3), shipped: w.br(3) }, 'run 3\'s pull request is open');
+  mergedPr(three);
+  assert.deepEqual(await readers(w, seen, 3), { dialog: 'main', posted: 'main', shipped: 'main' }, 'run 3 is merged');
 });
 
 // ── Step 6: PR text is data ───────────────────────────────────────────────────────────────────────────────────────
