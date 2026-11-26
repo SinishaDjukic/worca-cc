@@ -833,7 +833,8 @@ test('no GitHub or Azure DevOps credential reaches claude: scrub off, scrub on w
     ];
     for (const d of dumps) {
       // Name the leaking variables (never their values), so a failure says which credential got through.
-      const leaked = d.split('\n').filter((l) => /secret-|from-model/.test(l)).map((l) => l.split('=')[0]);
+      // The planted values exactly: CI's own GITHUB_HEAD_REF can name a branch such as feat/secret-vault.
+      const leaked = d.split('\n').filter((l) => /^[^=]+=(secret-[A-Z_]+|from-model)$/.test(l)).map((l) => l.split('=')[0]);
       assert.deepEqual(leaked, [], 'no credential in the child env');
       for (const k of ADO_KEYS) assert.ok(!d.includes(`${k}=`), `${k} is not in the child env`);
       assert.ok(d.includes('PATH='), 'the child still got a usable env');
