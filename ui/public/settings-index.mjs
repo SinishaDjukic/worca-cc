@@ -32,6 +32,7 @@ export const CARDS = Object.freeze([
   card('general', 'getting-started-card', 'Getting started', { alts: ['tour', 'onboarding', 'guide', 'tutorial', 'welcome'] }),
   card('general', 'about-card', 'About', { alts: ['version', 'update', 'licence', 'license'] }),
   card('general', 'security-card', 'Security', { min: 'advanced', alts: ['security', 'sandbox', 'sandboxed', 'broker', 'agent users', 'allow-list', 'hardened box', 'box image', 'posture'] }),
+  card('general', 'secret-vault-card', 'Secret vault', { flag: 'secretVault', alts: ['vault', 'secrets', 'keychain', 'credential manager', 'secret service', 'encryption', 'keys'] }),
   card('tags', 'tag-dims-settings-card', 'Cost tags', { alts: ['cost dimensions', 'tags', 'tagging'] }),
   card('tags', 'labels-settings-card', 'Labels', { flag: 'runLabels', alts: ['label', 'tags', 'categories'] }),
   card('runs', 'budget-settings-card', 'Budget & cost limits', { alts: ['budget', 'cost', 'spend', 'money', 'limit', 'cap', 'price'] }),

@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { modelCredential, engineCredential, ENGINE_SANDBOX, withArticle } from './policy.mjs';
 import { OAUTH_BETA, mergeBetas } from '../../broker/service.mjs';
 import { isCopilotHost } from '../../broker/copilot.mjs';
+import { isVaultRef } from '../secrets/refs.mjs';
 import { pinnedEngineClis } from './backends/e2b-template.mjs';
 
 const ANTHROPIC = 'https://api.anthropic.com';
@@ -65,6 +66,11 @@ export function remoteModelRoute({ spawnEnv = {}, modelEnv = null, serverEnv = {
 
   const authToken = str(modelEnv?.ANTHROPIC_AUTH_TOKEN);
   const apiKey = str(modelEnv?.ANTHROPIC_API_KEY);
+  // The secret vault resolves a model's key here, on the host (model-env.mjs). A reference left unresolved means the
+  // vault could not be read: refuse rather than sign with it. Neither the reference nor the key enters the sandbox.
+  if (isVaultRef(authToken) || isVaultRef(apiKey)) {
+    throw refuse("This model's key is in the secret vault, which cannot be read right now. Unlock the OS key store (worca secrets status), then start the run again.");
+  }
   let authHeaders; let credential = null;
   if (authToken) { credential = authToken; authHeaders = () => ({ authorization: `Bearer ${authToken}` }); }
   else if (apiKey) { credential = apiKey; authHeaders = () => ({ 'x-api-key': apiKey }); }

@@ -4,7 +4,7 @@
 //     then deleted. The box keeps no login.
 //   - a container with no sidecar (raw `docker compose up`): the in-box login keeps working, with one warning.
 // The native install never gets here with anything to do: it has no WORCA_EGRESS_API_URL and no WORCA_CONTAINER.
-import { readProxyLogin, clearProxyLogin, proxyLoginFile } from './proxy-credentials.mjs';
+import { readProxyLogin, clearProxyLoginPlain, proxyLoginFile } from './proxy-credentials.mjs';
 import { sidecarConfigured, sidecarClient, SidecarError } from './egress-sidecar-client.mjs';
 import { proxyUrlHasLogin } from './env-proxy.mjs';
 import { existsSync } from 'node:fs';
@@ -39,7 +39,7 @@ export async function moveBoxLoginToSidecar({ env = process.env, home, client = 
   if (!rec) return { moved: false, deleted: false, reason: 'no login in the box' };
   if (rec.error) {
     // A password equivalent the box cannot even read safely: it goes, and the user logs in again (into the sidecar).
-    const deleted = clearProxyLogin(home !== undefined ? { home } : {});
+    const deleted = clearProxyLoginPlain(home !== undefined ? { home } : {});
     log('warn', `Corporate proxy: an old proxy login in the box cannot be used (${rec.error}), so it was deleted. Log in again: worca container proxy login`);
     return { moved: false, deleted, reason: rec.error };
   }
@@ -48,7 +48,7 @@ export async function moveBoxLoginToSidecar({ env = process.env, home, client = 
       const st = await client.status();
       if (st.status !== 200 || !st.body) throw new SidecarError(`the egress sidecar answered ${st.status}`);
       if (st.body.managed || st.body.login) {
-        const deleted = clearProxyLogin(home !== undefined ? { home } : {});
+        const deleted = clearProxyLoginPlain(home !== undefined ? { home } : {});
         log('info', `Corporate proxy: the egress sidecar already has a login${st.body.managed ? ' (managed by the operator)' : ''}, so the old login in the box was deleted`);
         return { moved: false, deleted, reason: 'sidecar has a login' };
       }
@@ -67,7 +67,7 @@ export async function moveBoxLoginToSidecar({ env = process.env, home, client = 
         log('warn', `Corporate proxy: the old login in the box was not moved (${r.body && r.body.error ? r.body.error : `the sidecar answered ${r.status}`}); it stays in the box until the next start`);
         return { moved: false, deleted: false, reason: 'login refused' };
       }
-      const deleted = clearProxyLogin(home !== undefined ? { home } : {});
+      const deleted = clearProxyLoginPlain(home !== undefined ? { home } : {});
       log('info', `Corporate proxy: moved the login for ${rec.domain ? `${rec.domain}\\${rec.user}` : rec.user} from the box to the egress sidecar and deleted it here. An older image needs a new login after this.`);
       return { moved: true, deleted, reason: 'moved' };
     } catch (err) {

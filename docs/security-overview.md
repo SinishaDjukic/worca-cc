@@ -61,6 +61,10 @@ Notes:
   to an NTLM proxy, so treat the file like a password.
 - A model key in the broker can still be spent. A rogue agent can spend credits within the broker's budgets and
   limits. It never gets the key.
+- The [secret vault](secrets.md#with-the-other-setups) (the `secretVault` flag, experimental) encrypts saved keys at
+  rest where Worca runs natively: Native, Local sandbox (Docker) and E2B sandbox. It is not a sandbox. An agent that
+  runs as your OS user can reach the key store, held back only by guardrail rules. In a container it does nothing:
+  the Hardened box and a Shared instance say "Not available in a container".
 
 ## How the network is limited
 

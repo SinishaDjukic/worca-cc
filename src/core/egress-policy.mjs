@@ -30,7 +30,7 @@ import net from 'node:net';
 import { createProxy, readEgressPolicy, normalizeHost } from './egress-proxy.mjs';
 import { createUpstreamConnector, resolveUpstream, ProxyCredentials, AUTH_LABELS, PASSWORD_MODES, fixedPortOf, localProxyUrl } from './upstream-proxy.mjs';
 import { readProxyLogin, watchProxyLogin, markLoginRejected, redactProxyLine, upstreamEnv, CORPORATE_PROXY_VAR } from './proxy-credentials.mjs';
-import { readSettings, readSettingsStrict, networkProxyEnabled, watchSettingsFile } from './settings.mjs';
+import { readSettings, readSettingsStrict, networkProxyEnabled, watchSettingsFile, primeSettingsVaultIfEnabled } from './settings.mjs';
 import { proxyUrlHasLogin } from './env-proxy.mjs';
 import { copilotBlockHost, gheEgressAllow } from './ghe-host.mjs';
 import { sidecarConfigured } from './egress-sidecar-client.mjs';
@@ -158,6 +158,7 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
   if (!policy.enforced && !corp) return off();
   if (inheritsEgressProxy(env)) return { status: 'inherited', policy, url: env[EGRESS_PROXY_VAR], sourceEnv: upstreamEnv(env), close: none };
   const s = corp ? settings() : null;
+  if (corp) await primeSettingsVaultIfEnabled();        // a vaulted login is read synchronously below (flag on only)
   const saved = corp ? login() : null;                  // never read with the proxy off
   const np0 = s && typeof s === 'object' ? s.networkProxy : undefined;
   const upstream = corp ? resolveUpstream({ env, settings: autoStart ? viaEnvUrl(np0) : np0, login: saved, anyScheme: autoStart }) : null;

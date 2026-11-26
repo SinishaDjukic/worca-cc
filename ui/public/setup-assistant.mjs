@@ -17,6 +17,7 @@ import { UPSTREAM_TIMEOUTS } from '../../src/shared/proxy-timeouts.mjs';
 import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
 import { WORCA_LEVEL_COUNT } from '../../src/shared/worca-levels.mjs';
 import { whereAgentsRunSection, EXEC_ENV_CHOICES } from './setup-where-agents-run.mjs';
+import { vaultChoiceSection } from './setup-vault-choice.mjs';
 
 export const SETUP_STEPS = Object.freeze([
   { id: 'check', label: 'Check this machine' },
@@ -218,6 +219,7 @@ export function buildApplyBody(saved, answers) {
     const patch = { ...(url !== (pv[name]?.baseUrl || '') ? { baseUrl: url } : {}), ...(key ? { apiKey: key } : {}) };
     if (Object.keys(patch).length) body.access = { ...body.access, [name]: patch };
   }
+  if (a.vault === 'move') body.access = { ...body.access, vault: 'move' };   // the vault-move step (src/core/setup/apply.mjs)
   const models = {};
   const roles = rolePatch(saved.settings?.modelRoles || {}, answers.models.modelRoles);
   if (Object.keys(roles).length) Object.assign(models, { modelRoles: roles, testRoles: answers.models.testRoles });
@@ -799,6 +801,8 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       }
       body.append(box);
     }
+    const vault = vaultChoiceSection({ doc, vault: S.detect?.vault, value: a.vault, onPick: (v) => { a.vault = v; paint(); }, seg, section });
+    if (vault) body.append(vault);   // the secretVault flag: one skippable choice (setup-vault-choice.mjs)
   }
 
   // The Team line above a step the team filled, and the roles no source here serves (T18).

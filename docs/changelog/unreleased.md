@@ -3,6 +3,34 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Keep saved keys in a secret vault
+
+**Worca can encrypt the keys it saves. The key that opens them stays in your OS key store.**
+
+This is a Labs flag: Secret vault. It is off by default.
+
+Turn it on, and provider and model keys go into one encrypted file. So do MCP secrets, plugin secrets and the proxy login.
+
+Settings › General has a Secret vault card. It shows the state and the key store. It counts what is in the vault, by kind. It never shows a key.
+
+Turn on checks the key store first. Then it moves the keys saved in files. Check now tests the key store again. Reset starts over when the vault cannot be opened.
+
+The setup assistant offers the vault on the Model access step. So does worca setup. Detection asks the key store nothing.
+
+Chat can read the vault's state and counts. It never sees a key.
+
+The vault protects copies of your files. It is not a sandbox. An agent that runs as you can still reach the key store.
+
+In a container the vault does nothing. The egress sidecar keeps the proxy login. The credential broker keeps the model key.
+
+Chips: Security · Settings · Setup assistant · Labs
+
+Read it: [Secrets and the vault](../secrets.md)
+
+Pull requests (add each number when it opens):
+
+- Secret vault handling (#1521)
+
 ## Ask Worca knows your security setup
 
 **Chat now answers questions about sandboxes and security setups. It can change a project's sandbox with a card.**

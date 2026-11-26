@@ -5,6 +5,7 @@
 import { icon } from '../icons.mjs';
 import { fieldError } from '../feedback.mjs';
 import { chip } from './kinds.mjs';
+import { addVaultNote } from '../settings/secret-vault-note.mjs';
 
 const LETTER = { source: 's', channel: 'c', modelSecrets: 'm' };
 const MONO = /(?:ChatIds|Allowlist)$/;
@@ -58,6 +59,7 @@ function unsetSecret(doc, f, id, { replaced = false } = {}) {
   input.setAttribute('autocomplete', 'off');
   input.dataset.key = f.key;
   input.value = '';
+  addVaultNote(input);
   if (replaced) input.dataset.set = '1';
   if (f.required) markRequired(input);
   wrap.append(icon(doc, 'key', 16), input);

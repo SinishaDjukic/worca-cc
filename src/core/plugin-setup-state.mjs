@@ -1,6 +1,7 @@
 // src/core/plugin-setup-state.mjs — "Needs setup" for an installed plugin (Marketplace redesign, CONTRACT §1.1 `setup`):
-// the required config fields still empty, per task source (and profile), chat channel and model secrets. Keys only.
-import { readPluginConfig, listProfileIds } from './plugin-config.mjs';
+// the required config fields still empty (a saved vault reference counts as set), per task source (and profile), chat
+// channel and model secrets. Keys only.
+import { readPluginConfig, listProfileIds, storedSecretKeys } from './plugin-config.mjs';
 import { brokerEnabled } from './broker-client.mjs';
 
 const empty = (v) => v === undefined || v === null || v === '';
@@ -8,7 +9,9 @@ const empty = (v) => v === undefined || v === null || v === '';
  *  channel-host.mjs discoverChannels' rule, so a chat channel reads "needs setup" exactly when its worker is unconfigured. */
 function missingKeys(name, schema, profile) {
   const values = readPluginConfig(name, schema, profile);
-  return schema.filter((f) => f.required && empty(values[f.key])).map((f) => f.key);
+  // A vaulted secret is saved even while the vault cannot be read: it does not need setup.
+  const saved = new Set(storedSecretKeys(name, profile));
+  return schema.filter((f) => f.required && empty(values[f.key]) && !saved.has(f.key)).map((f) => f.key);
 }
 
 export function pluginSetupState(name, manifest, { broker = brokerEnabled() } = {}) {

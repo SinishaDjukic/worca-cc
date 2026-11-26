@@ -330,6 +330,16 @@
                 </span></button></div></div>
               <div id="securityStatusBody"><p class="hint">Checking…</p></div>
             </section>
+
+            <!-- Secret vault (docs/secrets.md, the secretVault flag): state, key store, counts by kind, last check and the
+                 actions, painted by settings/secret-vault-card.mjs. Hidden with the flag off (data-flag). -->
+            <section class="card settings-card" id="secret-vault-card" data-min-level="simple" data-flag="secretVault" hidden>
+              <div class="card-head"><div class="label-row"><h2>Secret vault</h2>
+                <button type="button" class="info-tip" aria-label="About the secret vault">i<span class="tip-content hidden">
+                  Encrypts the keys and tokens Worca saves, with a key the OS key store holds. It protects copies of Worca's files. It is not a sandbox: an agent that runs as you can still reach the key store.
+                </span></button></div></div>
+              <div id="secretVaultBody"><p class="hint">Checking…</p></div>
+            </section>
           </section>
           <!-- /pane general -->
 

@@ -355,6 +355,10 @@ inside the view.
 |---|---|
 | General: Appearance, Alerts, Interface mode, Getting started, About | S |
 | General: Security (where Worca runs, credential broker, agent users, outbound network, proxy login, default execution environment, the box image in a container; the docs links) | A |
+| General: Security › Secrets at rest (flag `secretVault`: Files (0600), Vault, or files in a container) | A |
+| General: Secret vault (flag `secretVault`): State, Key store, In the vault and Still in files (counts by kind), Last check, the moved-keys message with Got it, and Turn on or Finish moving, Check now, Export to files (shows the command) and Reset | S |
+| The "Stored in the secret vault." note under a provider key, an MCP secret, a plugin secret and the proxy password (flag `secretVault`, while the vault takes saves) | S |
+| Settings › Network proxy: "The secret vault holds the login" natively, while the vault holds it (flag `secretVault`) | S |
 | Runs tab: Budget & cost limits (incl. Resume runs automatically when a usage limit resets) | S |
 | Runs tab: Pull requests (Draft the PR description with AI automatically) | S |
 | Runs tab: the filter box above its cards | S |
@@ -435,6 +439,7 @@ missing (`data-needs-git`), at every level.
 | The level welcome and celebration (the dialogs that open at boot and after a level-up) | all — they wait while a blocking prompt or another dialog is on screen (rule 1) |
 | The Getting started level line (the current level and what is next, linking to Profile) | all |
 | Setup assistant › Check this machine: the Docker and E2B sandbox rows | S |
+| Setup assistant › Model access › Secret vault (flag `secretVault`, a native install with a usable key store and keys in their files): Keep in files or Move into the vault, and the docs link; with the vault on, one line | S |
 | Setup assistant › How you work › Where agents run: Local (not sandboxed), Local sandbox (Docker) when Docker answers, E2B sandbox when set up, and the Choose a setup link; in a container or the hardened box the posture rows instead | S |
 | Setup assistant › Network, managed view: the proxy login the operator manages, status only (a rejected login says the operator must replace the login file) | S |
 | Statistics page | A |
