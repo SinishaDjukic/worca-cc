@@ -77,6 +77,13 @@ The server runs the same checks as the CLI. A refusal shows under the form, in t
 
 The form has no base image, env vars, files or secrets: a spec never holds them. The box image's base is set in the container `.env` ([The base image](#the-base-image)).
 
+## From Chat
+
+Ask Chat to pin a tool or add a package. It proposes a card with each list before and after. **Apply** saves it,
+with the same checks as the form. Chat can also propose a build of the template or image, and the project's sandbox
+network (open or allow). Nothing changes until you apply the card. Chat never changes the box's base image. See
+[Chat](chat.md#security-and-sandboxes).
+
 ## Where it is stored
 
 The spec is stored in Worca's database, under the project, in the `execEnvProject` record. It is never written into the repository.
