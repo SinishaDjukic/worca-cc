@@ -70,9 +70,9 @@ async function containerDir(extraEnv = '') {
   return dir;
 }
 const envOf = (dir) => readFileSync(join(dir, '.env'), 'utf8');
-const run = async (argv, { dir, rt = fakeRuntime() } = {}) => {
+const run = async (argv, { dir, rt = fakeRuntime(), env = { PATH: process.env.PATH } } = {}) => {
   const o = io();
-  const code = await cmdContainerBuild(argv, { ...o, exec: rt.exec, dir, now: () => new Date('2026-11-26T10:00:00Z') });
+  const code = await cmdContainerBuild(argv, { ...o, exec: rt.exec, dir, env, now: () => new Date('2026-11-26T10:00:00Z') });
   return { code, ...o, calls: rt.calls };
 };
 
@@ -268,5 +268,56 @@ test('--reset goes back to the plain image; --status then says so', async () => 
     assert.ok(!up.calls.find((k) => k.args.includes('up')).args.includes('compose.image.yml'));
     r = await run(['--reset'], { dir });
     assert.equal(r.code, 0); assert.match(r.lines[0], /no built image in use/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the base follows WORCA_TAG as compose reads it: the shell over .env', async () => {
+  resetSpecs();
+  const dir = await containerDir('WORCA_TAG=1.20.0\n');
+  try {
+    assert.match((await run(['--dry-run'], { dir })).lines.at(-1), /^FROM ghcr\.io\/worca-org\/worca:1\.20\.0$/m, '.env alone');
+    assert.match((await run(['--dry-run'], { dir, env: { WORCA_TAG: '1.21.0-rc.2' } })).lines.at(-1), /^FROM ghcr\.io\/worca-org\/worca:1\.21\.0-rc\.2$/m, 'the shell wins');
+    assert.match((await run(['--dry-run'], { dir, env: { WORCA_TAG: '' } })).lines.at(-1), /^FROM ghcr\.io\/worca-org\/worca:latest$/m, 'set but empty: compose\'s default');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the hardened box: the specs come from inside the running box; a stopped box says so and builds nothing', async () => {
+  resetSpecs();
+  const dir = await containerDir();
+  writeFileSync(join(dir, '.worca-container.json'), JSON.stringify({ hardened: true }));
+  const inBox = [{ key: 'acme-box-1', name: 'acme-box', spec: { tools: [{ name: 'go', version: '1.23.4' }], apt: ['jq'], hash: `sha256:${'a'.repeat(64)}` } }];
+  const boxRuntime = (up = true) => {
+    const rt = fakeRuntime();
+    const inner = rt.exec;
+    const exec = (cmd, args, o = {}) => {
+      if (args[0] === 'ps') { rt.calls.push({ cmd, args }); return { status: 0, stdout: up ? 'c0ffee\n' : '', stderr: '' }; }
+      if (args[0] === 'exec') { rt.calls.push({ cmd, args }); return { status: 0, stdout: `${JSON.stringify(inBox)}\n`, stderr: '' }; }
+      return inner(cmd, args, o);
+    };
+    return { exec, calls: rt.calls };
+  };
+  try {
+    let rt = boxRuntime();
+    let r = await run(['--dry-run'], { dir, rt });
+    assert.equal(r.code, 0, r.fails.join('\n'));
+    assert.match(r.lines.at(-1), /'go@1\.23\.4'/, 'the box\'s project');
+    assert.doesNotMatch(r.lines.at(-1), /python|node@/, 'not the host\'s projects');
+    assert.deepEqual(rt.calls.find((k) => k.args[0] === 'ps').args, ['ps', '-q', '--filter', 'label=com.docker.compose.project=worca-hardened', '--filter', 'label=com.docker.compose.service=worca']);
+    const ex = rt.calls.find((k) => k.args[0] === 'exec');
+    assert.deepEqual(ex.args.slice(0, 4), ['exec', '-u', 'worca', 'c0ffee']);
+    assert.match(ex.args.at(-1), /exec worca exec-env specs --json/);
+    r = await run(['--dry-run', '--project', 'acme-box'], { dir, rt: boxRuntime() });
+    assert.equal(r.code, 0, 'a project by its name in the box');
+    r = await run(['--dry-run', '--project', web], { dir, rt: boxRuntime() });
+    assert.equal(r.code, 1); assert.match(r.fails[0], /the hardened box has no project .* \(known: acme-box\)/);
+    r = await run([], { dir, rt: boxRuntime(false) });
+    assert.equal(r.code, 1);
+    assert.match(r.fails[0], /the hardened box \(compose project worca-hardened\) is not running, and its projects and their environment specs live inside it\. Start it with worca container up --hardened/);
+    assert.ok(!r.calls.some((k) => k.args[0] === 'build'), 'nothing is built');
+    r = await run(['--dry-run', '--plain'], { dir, rt: boxRuntime(false) });
+    assert.equal(r.code, 0, '--plain: the host\'s projects this once');
+    assert.match(r.lines.at(-1), /'python@3\.13\.1'/);
+    r = await run(['--status'], { dir, rt: boxRuntime(false) });
+    assert.equal(r.code, 1); assert.match(r.fails[0], /is not running/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

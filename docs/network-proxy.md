@@ -392,6 +392,9 @@ secrets:
     file: ./proxy-login.secret.json
 ```
 
+`worca container` adds a `compose.override.yml` in the container folder to every compose call it makes, after its
+own files. `worca container proxy …` never recreates a running sidecar.
+
 The sidecar runs as uid 1000, so the file must be readable by that uid. The
 proxy then comes from the sidecar's `HTTPS_PROXY` alone. Every write call is
 off: log in, log out and the proxy settings answer "managed by the operator".

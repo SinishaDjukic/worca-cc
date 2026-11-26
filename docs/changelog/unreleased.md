@@ -3,6 +3,30 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Container fixes from the first real runs
+
+**The security setups ran in real containers for the first time. These are the fixes.**
+
+The shared instance needs a Linux Docker host. Docker Desktop does not enforce who owns a secret file. Agents could read them there. Worca now opens each secret file as an agent user at start. If that read works, Worca refuses to start and says why.
+
+The hardened box asks about the proxy login again. The sidecar tests the proxy first. A 407 asks "Log in now?". A pass asks nothing. Scripts use `--proxy-user` or `--no-proxy-login`.
+
+`worca container` reads `WORCA_PORT`, `WORCA_TAG` and the project name as compose does. A value in the shell wins over `.env`.
+
+A `compose.override.yml` in the container folder is part of every call. A proxy command no longer restarts the sidecar.
+
+The image has no `VOLUME` line any more. Restarting the box leaves no anonymous volumes behind. In the hardened box the unused folders are no longer world-writable.
+
+`worca container build` in the hardened box reads the projects inside the box. A stopped box gets a clear message.
+
+Chips: Security · Container · Hardened box · Shared instance
+
+Read it: [Shared instance](../shared-instance.md), [Hardened box](../hardened-box.md), [Project environment spec](../environment-spec.md)
+
+Pull requests (add each number when it opens):
+
+- Container fixes from the first real runs (#1643)
+
 ## See how Worca is protected, and change it from the UI
 
 **Worca now shows how it is set up. The security setups need no settings.json editing.**

@@ -94,6 +94,13 @@ worca container build --reset                         # back to the plain image
 worca container up                                    # restart the box on the new image
 ```
 
+In the [Hardened box](hardened-box.md) the projects live inside the box, not on your machine. There
+`worca container build` reads the specs from the running box (`worca exec-env specs --json`, run inside it), and
+`--project` takes a project's key or name as the box lists it. Start the box first: a stopped box is refused with
+a line that says so. `--plain` reads this machine's projects instead, this once.
+
+`WORCA_TAG` is read as compose reads it: a value set in the shell wins over the container `.env`.
+
 What it does:
 
 1. It joins the specs. Each tool goes in once, and so does each apt package.

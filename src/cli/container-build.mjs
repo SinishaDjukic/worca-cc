@@ -11,7 +11,8 @@ import process from 'node:process';
 
 import { worcaHome, listProjects } from '../core/projects.mjs';
 import { readProjectExecEnv } from '../core/config.mjs';
-import { detectRuntime, dotenvValue, isLoopbackProxy } from './container.mjs';
+import { detectRuntime, dotenvValue, isLoopbackProxy, composeValue } from './container.mjs';
+import { hardenedProjectName, selectBox } from './container-hardened.mjs';
 import { keyOf } from './exec-env.mjs';
 import {
   BUILD_DIR, PROBE_SCRIPT, boxBaseImage, boxImageState, boxImageTag, checkBoxProbe, parseBoxProbe, parseLabels,
@@ -26,9 +27,13 @@ export const CONTAINER_BUILD_HELP = `worca container build — the box image fro
   worca container build --dry-run                 Print the Dockerfile; build nothing
   worca container build --reset                   Go back to the plain image (removes WORCA_IMAGE from .env)
 
+In the hardened box the projects live inside the box, so the specs are read from the running box (start it first:
+worca container up --hardened). --project then takes a project's key or name as the box lists it.
+
 Options:
   --dir <d>        Container dir (default: <worcaHome>/container)
   --runtime <r>    docker | podman (default: autodetect; env WORCA_CONTAINER_RUNTIME)
+  --hardened / --plain   read the specs from that box this once (default: the box worca container up remembered)
 
 The build starts from WORCA_BASE_IMAGE in the container .env (default: the image of WORCA_TAG). Nothing rebuilds by
 itself: a stale image is still used, with a warning. Restart the box on a new image with: worca container up
@@ -40,7 +45,7 @@ function defaultExec(cmd, args, { cwd, capture = false, env } = {}) {
 }
 
 function parse(argv) {
-  const o = { projects: [], status: false, json: false, dryRun: false, reset: false, dir: null, runtime: null, help: false };
+  const o = { projects: [], status: false, json: false, dryRun: false, reset: false, dir: null, runtime: null, help: false, box: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--project' || a === '--dir' || a === '--runtime') {
@@ -51,6 +56,7 @@ function parse(argv) {
     else if (a === '--json') o.json = true;
     else if (a === '--dry-run') o.dryRun = true;
     else if (a === '--reset') o.reset = true;
+    else if (a === '--hardened' || a === '--plain') o.box = a.slice(2);
     else if (a === 'help' || a === '--help' || a === '-h') o.help = true;
     else throw new Error(`unknown option ${a} (see: worca container build --help)`);
   }
@@ -68,6 +74,42 @@ const envReader = (dir) => {
     return m ? dotenvValue(m[1]) : '';
   };
 };
+
+/** The script `docker exec` runs in the hardened box: Worca's CLI as the worca user, on the box's data volume (the
+ *  entrypoint sets HOME and WORCA_HOME there for the server; an exec does not run the entrypoint). */
+const BOX_SPECS_SCRIPT = 'd="${WORCA_DATA_DIR:-/data}"; HOME="$d/home" WORCA_HOME="$d/worca" exec worca exec-env specs --json';
+
+/**
+ * Every project with a spec, read inside the running hardened box: [{key, name, spec}], or {error}.
+ * Its projects are cloned into the box's volume, so the host's registry knows none of them.
+ */
+export function boxSpecs({ exec, bin, dir, env }) {
+  const project = hardenedProjectName({ dir, env });
+  const ps = exec(bin, ['ps', '-q', '--filter', `label=com.docker.compose.project=${project}`, '--filter', 'label=com.docker.compose.service=worca'], { capture: true });
+  const id = ps.status === 0 ? String(ps.stdout || '').trim().split('\n')[0].trim() : '';
+  if (!id) return { error: `the hardened box (compose project ${project}) is not running, and its projects and their environment specs live inside it. Start it with worca container up --hardened, then run worca container build again` };
+  const r = exec(bin, ['exec', '-u', 'worca', id, 'sh', '-c', BOX_SPECS_SCRIPT], { capture: true });
+  let list = null;
+  try { list = JSON.parse(String(r.stdout || '').trim()); } catch { list = null; }
+  if (r.status !== 0 || !Array.isArray(list)) {
+    const why = String(r.stderr || '').trim().split('\n').pop() || `exit ${r.status}`;
+    return { error: `cannot read the environment specs in the hardened box (${why}). Its Worca may be older than this one: update the image (WORCA_TAG in .env, then worca container pull --hardened)` };
+  }
+  return list.filter((p) => p && typeof p.key === 'string' && p.spec && typeof p.spec === 'object').map((p) => ({ key: p.key, name: p.name || '', spec: p.spec }));
+}
+
+/** From the box's list: the named projects (key or name), else all of them. */
+function pickFromList(all, names) {
+  if (!all.length) throw new Error('no project in the hardened box has an environment spec (set one in the box: Projects › the project › Environment)');
+  if (!names.length) return all;
+  const out = [];
+  for (const n of names) {
+    const hit = all.find((p) => p.key === n) || all.find((p) => p.name === n);
+    if (!hit) throw new Error(`the hardened box has no project ${n} with an environment spec (known: ${all.map((p) => p.name || p.key).join(', ')})`);
+    if (!out.includes(hit)) out.push(hit);
+  }
+  return out;
+}
 
 /** The projects to build for, each with its stored spec: the named ones, else every project with a spec. */
 async function pickProjects(names) {
@@ -152,9 +194,23 @@ export async function cmdContainerBuild(argv, { out, c = (_n, s) => s, fail, exe
   if (!existsSync(join(dir, 'compose.yml'))) { fail(`no compose files in ${dir}; run: worca container init`); return 1; }
   const envFile = envReader(dir);
   let base;
-  try { base = boxBaseImage(envFile); } catch (err) { fail(err.message); return 1; }
+  // WORCA_TAG as compose reads it for the box (shell over .env); WORCA_BASE_IMAGE is the container .env's alone.
+  const baseEnv = (k) => (k === 'WORCA_TAG' ? composeValue(k, { env, envFile }) : envFile(k));
+  try { base = boxBaseImage(baseEnv); } catch (err) { fail(err.message); return 1; }
   const record = readBoxImageRecord(dir);
   const envImage = envFile('WORCA_IMAGE');
+  let state = {};
+  try { state = JSON.parse(readFileSync(join(dir, '.worca-container.json'), 'utf8')); } catch { /* none */ }
+  const hardened = selectBox(o.box, state) === 'hardened';
+  // The hardened box's specs, read once from inside it (null: the host's projects).
+  let inBox = null;
+  const readBox = () => {
+    const rt = detectRuntime(exec, o.runtime);
+    if (rt.error) return { error: rt.error };
+    const r = boxSpecs({ exec, bin: rt.bin, dir, env });
+    if (!r.error) inBox = r;
+    return r;
+  };
 
   if (o.reset) {
     if (!envImage) { out(`no built image in use: the box runs ${base}`); return 0; }
@@ -172,14 +228,22 @@ export async function cmdContainerBuild(argv, { out, c = (_n, s) => s, fail, exe
         if (r.status === 0) baseId = r.stdout.trim() || null;
       }
     }
-    const st = boxImageState({ record, envImage, base, specHashOf: currentSpecHash, baseId, withSpec: await projectsWithSpec() });
+    let specHashOf = currentSpecHash; let withSpec;
+    if (hardened) {
+      const r = readBox();
+      if (r.error) { fail(r.error); return 1; }
+      specHashOf = (key) => r.find((p) => p.key === key)?.spec?.hash ?? null;
+      withSpec = r.map((p) => ({ key: p.key, name: p.name }));
+    } else withSpec = await projectsWithSpec();
+    const st = boxImageState({ record, envImage, base, specHashOf, baseId, withSpec });
     out(o.json ? JSON.stringify({ ...st, base, record }, null, 2) : describeState(st, record, base));
     return 0;
   }
 
   let picked; let spec; let dockerfile;
+  if (hardened) { const r = readBox(); if (r.error) { fail(r.error); return 1; } }
   try {
-    picked = await pickProjects(o.projects);
+    picked = inBox ? pickFromList(inBox, o.projects) : await pickProjects(o.projects);
     spec = unionSpecs(picked);
     dockerfile = renderBoxDockerfile({ base, spec, projects: picked.map((p) => ({ key: p.key, specHash: p.spec.hash })) });
   } catch (err) { fail(err.message); return 1; }
@@ -217,7 +281,7 @@ export async function cmdContainerBuild(argv, { out, c = (_n, s) => s, fail, exe
   }
 
   writeBoxImageRecord(dir, {
-    image: tag, base, baseId, specHash: spec.hash,
+    image: tag, base, baseId, specHash: spec.hash, ...(hardened ? { box: 'hardened' } : {}),
     projects: picked.map((p) => ({ key: p.key, name: p.name, specHash: p.spec.hash })),
     tools: spec.tools.length, apt: spec.apt.length,
     node: probe.node, git: probe.git, claudeCode: probe.claude, worca: probe.worca,

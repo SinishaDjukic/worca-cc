@@ -24,8 +24,8 @@ import { readSettings } from '../core/settings.mjs';
 import { readProxyLogin } from '../core/proxy-credentials.mjs';
 import { resolveUpstream, upstreamLabel } from '../core/upstream-proxy.mjs';
 import { readLoginInput } from './proxy.mjs';
-import { HARDENED_OVERLAYS, HARDENED_HELP, HARDENED_PROJECT, selectBox, hardenedBefore, hardenedUp, hardenedStatus, runningProject } from './container-hardened.mjs';
-import { boxImageForCompose } from '../core/exec-env/box-image.mjs';
+import { HARDENED_OVERLAYS, HARDENED_HELP, selectBox, hardenedBefore, hardenedUp, hardenedStatus, runningProject, hardenedProjectName } from './container-hardened.mjs';
+import { boxImageForCompose, readBoxImageRecord } from '../core/exec-env/box-image.mjs';
 import {
   MOUNT_FILE, MAX_MASKS, boxName, resolveProjectDir, maskSettingsFor, planProjectMasks, writeProjectMount, removeProjectMount, maskLines,
   maskAliases, maskAliasRefusal,
@@ -172,11 +172,16 @@ function writeState(dir, state) {
   writeFileSync(join(dir, STATE_FILE), JSON.stringify(state, null, 2) + '\n');
 }
 
-/** `-f compose.yml -f compose.<overlay>.yml …` for the remembered or requested overlays, then the generated project
- *  mount (container-mounts.mjs) last, so its masks land on top of every bind. */
-export function composeFileArgs(overlays, { project = false } = {}) {
+/** compose reads it by itself only when no -f is given; every call here names its files, so it is named too. */
+export const OVERRIDE_FILE = 'compose.override.yml';
+
+/** `-f compose.yml -f compose.<overlay>.yml …` for the remembered or requested overlays, then the user's
+ *  compose.override.yml when there is one (a managed proxy login, say: left out, every `up` recreated the sidecar
+ *  without it), then the generated project mount (container-mounts.mjs) last, so its masks land on top of every bind. */
+export function composeFileArgs(overlays, { project = false, override = false } = {}) {
   const args = ['-f', 'compose.yml'];
   for (const o of overlays) args.push('-f', `compose.${o}.yml`);
+  if (override) args.push('-f', OVERRIDE_FILE);
   if (project) args.push('-f', MOUNT_FILE);
   return args;
 }
@@ -231,6 +236,12 @@ export function dotenvValue(raw) {
   const s = String(raw ?? '').trim();
   const q = /^(["'])(.*?)\1/.exec(s);
   return q ? q[2] : s.replace(/\s+#.*$/, '').trim();
+}
+
+/** A value as compose interpolates it: the shell's (set, even empty) wins over .env's. Callers add compose's default
+ *  (`${WORCA_PORT:-4317}` treats an empty value as unset, so `|| '4317'`). */
+export function composeValue(key, { env = process.env, envFile = () => '' } = {}) {
+  return env && env[key] !== undefined ? String(env[key]) : String(envFile(key) || '');
 }
 
 function readEnvValue(dir, key) {
@@ -343,7 +354,7 @@ export function ensureEgressSecret(dir, { random = () => randomBytes(32).toStrin
  * when it is not there yet. @returns {{ok: true} | {error: string}}
  */
 export function checkSidecarImage({ exec, bin, cwd, env, files }) {
-  let image = `ghcr.io/worca-org/worca:${env.WORCA_TAG || readEnvValue(cwd, 'WORCA_TAG') || 'latest'}`;
+  let image = `ghcr.io/worca-org/worca:${composeValue('WORCA_TAG', { env, envFile: (k) => readEnvValue(cwd, k) }) || 'latest'}`;
   const cfg = exec(bin, ['compose', ...files, 'config', '--format', 'json'], { cwd, env, capture: true });
   if (cfg.status === 0) { try { image = JSON.parse(cfg.stdout).services.egress.image || image; } catch { /* the default above */ } }
   const inspect = () => exec(bin, ['image', 'inspect', '--format', `{{ index .Config.Labels "${SIDECAR_LABEL}" }}`, image], { capture: true });
@@ -412,7 +423,10 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
       // compose.broker.yml: the broker's provider calls go through the sidecar, which logs in.
       if (!envFile('WORCA_BROKER_PROXY')) sideEnv.WORCA_BROKER_PROXY = SIDECAR_PROXY_URL;
     }
-    const img = boxImageForCompose({ dir, envFile });   // WORCA_IMAGE in .env: the image `worca container build` made
+    // WORCA_IMAGE in .env: the image `worca container build` made. The hardened box's specs live inside it, so the
+    // host cannot tell a changed one here: the build's own record stands (worca container build --status asks the box).
+    const recorded = (key) => (readBoxImageRecord(dir)?.projects || []).find((p) => p.key === key)?.specHash ?? null;
+    const img = boxImageForCompose({ dir, envFile, ...(box === 'hardened' ? { specHashOf: recorded } : {}) });
     if (img.overlay) extra.push('image');
     if (img.notice) out(`${c('yellow', 'image')}  ${img.notice}`);
     composeEnv = Object.fromEntries(Object.entries({ ...hostEnv, ...proxy.set, ...caEnv, ...sideEnv }).filter(([, v]) => v !== undefined));
@@ -426,7 +440,8 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
   // one-off containers that must not see the whole tree either.
   const nameArgs = (p) => (p ? ['-p', boxName(p)] : []);
   const envFor = (p) => (p ? { ...(composeEnv || hostEnv), WORCA_PROJECTS: p, WORCA_PROJECTS_MOUNT: p } : composeEnv);
-  const files = ({ mount = mountFile() } = {}) => [...nameArgs(project), ...composeFileArgs(ordered(), { project: mount })];
+  const override = () => existsSync(join(dir, OVERRIDE_FILE));
+  const files = ({ mount = mountFile() } = {}) => [...nameArgs(project), ...composeFileArgs(ordered(), { project: mount, override: override() })];
   const needsSidecar = () => !!sidecar || overlays.includes('proxy');
   const imageOk = () => {
     if (!needsSidecar()) return true;
@@ -464,12 +479,12 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
   if (proxyLoginVerb && readState(dir).sidecar !== true) writeState(dir, { ...readState(dir), sidecar: true });
   if (!['down', 'status', 'logs', 'pull'].includes(a.verb)) prepare();
   else if (readState(dir).sidecar === true && !overlays.includes('proxy')) extra = ['proxy'];
-  const hb = () => ({ a, dir, exec, bin: rt.bin, composeEnv, files: files(), out, c, fail, stdin, state: readState(dir),
+  const hb = () => ({ a, dir, exec, bin: rt.bin, composeEnv: composeEnv || hostEnv, files: files(), out, c, fail, stdin, state: readState(dir),
     login: (args) => cmdContainer(['proxy', 'login', ...args], { out, c, fail, exec, dir, env: hostEnv, settings, login, stdin }) });
 
   switch (a.verb) {
     case 'up': {
-      if (box === 'plain' && runningProject({ exec, bin: rt.bin, project: HARDENED_PROJECT })) { fail('the hardened box is running and holds the same port: stop it first with worca container down --hardened'); return 1; }
+      if (box === 'plain' && runningProject({ exec, bin: rt.bin, project: hardenedProjectName({ dir, env: hostEnv }) })) { fail('the hardened box is running and holds the same port: stop it first with worca container down --hardened'); return 1; }
       const before = { project, overlays };
       if (a.with !== null && box === 'plain') {
         const parsed = parseWith(a.with);
@@ -501,13 +516,13 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
           if (aliased.length) { fail(maskAliasRefusal(project, aliased)); return 1; }
           for (const line of maskLines({ projectDir: project, ...plan })) out(line.level === 'warn' ? c('yellow', line.text) : line.text);
         } else if (!overlays.includes('clonein')) {
-          out(c('yellow', `projects  ${readEnvValue(dir, 'WORCA_PROJECTS') || '$HOME/dev'}   the whole folder is mounted, unmasked: every project in it and its secret files are readable in the box (narrow it: --project <dir>)`));
+          out(c('yellow', `projects  ${composeValue('WORCA_PROJECTS', { env: envFor(project), envFile: (k) => readEnvValue(dir, k) }) || '$HOME/dev'}   the whole folder is mounted, unmasked: every project in it and its secret files are readable in the box (narrow it: --project <dir>)`));
         }
         if (before.project !== project) {
           // Another box (boxName): stop the one this dir ran before, or it keeps its own mounts and holds the port.
           // `down` keeps its volumes; `up --project <it>` or `--no-project` brings it back.
           out(`stopping the box for ${before.project || 'the whole folder'} first (its volumes are kept)`);
-          const stopped = exec(rt.bin, ['compose', ...nameArgs(before.project), ...composeFileArgs(before.overlays), 'down'],
+          const stopped = exec(rt.bin, ['compose', ...nameArgs(before.project), ...composeFileArgs(before.overlays, { override: override() }), 'down'],
             { cwd: dir, env: envFor(before.project) }).status;
           if (stopped !== 0) { fail(`could not stop the box for ${before.project || 'the whole folder'}; nothing was started`); return stopped; }
         }
@@ -515,7 +530,7 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
         else removeProjectMount(dir);
         if (a.with !== null || a.project !== null || a.noProject || project !== before.project) writeState(dir, { ...readState(dir), with: overlays, project });
       }
-      const port = readEnvValue(dir, 'WORCA_PORT') || '4317';
+      const port = composeValue('WORCA_PORT', { env: envFor(project), envFile: (k) => readEnvValue(dir, k) }) || '4317';
       if (box === 'hardened') { const code = await hardenedUp(hb()); if (code !== null) return code; }
       if (!imageOk()) return 1;
       const code = compose(['up', '-d']);
@@ -546,8 +561,9 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
       if (!PROXY_VERBS.has(pverb)) { fail('Usage: worca container proxy login|logout|status|test [--json] [--user DOMAIN\\user]'); return pverb ? 2 : 1; }
       if (!needsSidecar()) { fail('no egress sidecar is set up: log in first with worca container proxy login (or put the corporate proxy in .env HTTPS_PROXY)'); return 1; }
       if (!imageOk()) return 1;
-      // The sidecar alone: no box needed to log in.
-      const upCode = compose(['up', '-d', '--no-deps', 'egress']);
+      // The sidecar alone: no box needed to log in. --no-recreate: a running sidecar is used as it is (`up` is
+      // what applies a changed configuration), so a status or a login never restarts it.
+      const upCode = compose(['up', '-d', '--no-deps', '--no-recreate', 'egress']);
       if (upCode !== 0) return upCode;
       const json = prest.includes('--json') ? ['--json'] : [];
       if (pverb !== 'login') return compose(['exec', '-T', 'egress', 'worca', 'egress', pverb, ...json]);
