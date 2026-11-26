@@ -229,7 +229,7 @@ test('a login in .env HTTPS_PROXY starts the sidecar; down keeps the overlay aft
     assert.deepEqual(ex.args.slice(ex.args.indexOf('exec')), ['exec', '-T', 'egress', 'worca', 'egress', 'login']);
     assert.equal(ex.input, 'ACME\\jdoe\nS3cret!\n');
     assert.ok(!c2.calls.some((k) => k.args.join(' ').includes('S3cret')), 'never in argv');
-    assert.ok(c2.calls.some((k) => k.args.join(' ').includes('up -d --no-deps egress')));
+    assert.ok(c2.calls.some((k) => k.args.join(' ').includes('up -d --no-deps --no-recreate egress')), 'a running sidecar is used as it is, never recreated');
     const c3 = sidecarExec();
     assert.equal(await cmdContainer(['down'], { ...io(), exec: c3.exec, dir, env: {}, settings: () => ({}), login: noLogin }), 0);
     assert.ok(c3.calls.find((k) => k.args.includes('down')).args.includes('compose.proxy.yml'), 'down removes the sidecar too');

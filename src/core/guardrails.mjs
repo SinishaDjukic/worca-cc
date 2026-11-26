@@ -43,6 +43,7 @@ const NORMAL_PROTECTED = [
   ...DEFAULT_SECRET_PATHS,
   '*.p12', '*.pfx',        // bundled cert+key stores
   '//run/secrets/**',      // container secrets (docker/compose `secrets:`); `//` = absolute
+  '//var/run/secrets/**',  // the same folder: /var/run links to /run on Debian, and Read rules match the path as written
 ];
 
 // The launcher spellings a prefix rule can match.

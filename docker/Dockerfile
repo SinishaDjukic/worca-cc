@@ -182,7 +182,10 @@ LABEL org.opencontainers.image.title="Worca" \
 # hadolint ignore=DL3066
 USER worca
 WORKDIR /projects
-VOLUME ["/worca", "/home/worca/.claude"]
+# No VOLUME line: compose.yml mounts named volumes at /worca and /home/worca/.claude. An image VOLUME gave every
+# container that mounts something else there (the hardened box, the broker, the sidecar, the UI relay) an anonymous
+# volume per path, and each `down` + `up` left another one behind. `docker run` without -v keeps its data in the
+# container, as before (an anonymous volume was never reused by a new container either).
 EXPOSE 4317
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

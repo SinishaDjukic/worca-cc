@@ -70,7 +70,7 @@ set is never overwritten. It never prints a secret.
 | The commit identity | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` | `--git-name`, `--git-email`; the default is your git config |
 | Extra hosts for the allow-list: your package registry, an internal mirror | `WORCA_EGRESS_ALLOW` (the defaults, the git host's names, your extras) | `--allow pypi.org,files.pythonhosted.org` |
 | The corporate proxy, when one is found or given | `HTTPS_PROXY`, host and port only | `--proxy proxy.acme.example:8080`, or `--no-proxy` |
-| The proxy login | sent to the sidecar, never to `.env` | `--proxy-user 'ACME\jdoe'`, with the password on stdin |
+| The proxy login, when no login is saved. The sidecar first tests the proxy: a pass asks nothing, a 407 asks "Log in now?" | sent to the sidecar, never to `.env` | `--proxy-user 'ACME\jdoe'` (or `WORCA_PROXY_USER`), with the password on stdin; `--no-proxy-login` (or `WORCA_PROXY_NO_LOGIN=1`) for a proxy that needs none |
 | The corporate CA, for a proxy that re-signs TLS | `WORCA_CA_CERT` | `--ca-file <pem>`; the default is `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE` |
 
 `--yes` never prompts. It takes what the flags, the environment and this machine give, and refuses what is
