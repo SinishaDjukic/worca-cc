@@ -784,12 +784,14 @@ view, is refused as before.
 ### Held resumes
 
 With the flag on, a Resume of a paused run of a marked feature while another run of the feature is going is held: the
-run stays paused and goes on at its turn, together with held answers. This holds for the run's own Resume, the
-feature card's Resume and a stop line's Resume. A held resume holds nothing, so it never keeps another run from its
+run stays paused and goes on at its turn, together with held answers. This holds for the run's own Resume and the
+feature card's Resume. A held resume holds nothing, so it never keeps another run from its
 turn, but it goes before the free runs. Pause or Stop on the held run drops the hold, and so does a restart: the run
 is then simply paused. Of several runs of one feature resumed at a restart, only the lowest goes on; the others are
-held behind it. Until the row wording lands, a held resume reads as a paused run. A restart of a stopped or failed
-run is still refused while another run of the feature is going.
+held behind it. A held resume reads `after run N` on its row and on its run page head, and its Resume then reads plain
+`Resume`. Before it is pressed, a paused run's Resume reads `Resume after run N` while another run of the feature is
+going, and `Resume` otherwise; the server still decides at the press. A restart of a stopped or failed run is still
+refused while another run of the feature is going.
 
 ### Show order
 

@@ -1008,3 +1008,41 @@ test('s10: closed again after #runs and back', async () => {
   await s10Go(ctx, 'feature/feat_1');
   s10Assert(ctx, false, 'back from #chat/new');
 });
+
+// ── Shaper small runs slice 8 (R-ux-1): a held or released resume changes only the slice's resume fields ─────────
+test('s8: a feature frame that only adds heldResume or resumeAfter to run 6 repaints the feature page rows', async () => {
+  const slices = (six = {}) => [s7Sl(1, 'done'), s7Sl(4, 'running'), s7Sl(6, 'paused', six)];
+  const view = (six) => ({ ...s7Feature([]), total: 3, done: 1, slices: slices(six) });
+  const groups = { groups: [{ ...GROUPS.groups[0], smallRuns: true, members: slices().map((sl) => ({ ...member(sl.index), pipelineId: sl.pipelineId,
+    status: sl.state, slice: sl })) }] };
+  let feature = view();
+  let stall = false;      // once set, the run groups never answer: only the feature fetch can repaint the page
+  const { ctx, calls } = await d3Boot({ feature: () => json(feature), groups,
+    extra: (url) => (stall && url.startsWith('/api/run-groups') ? new Promise(() => {}) : null) });
+  ctx.go('feature/feat_1');
+  await ctx.settle(10);
+  const title = pageOf(ctx).querySelector('.gpage-title');
+  assert.equal(pageOf(ctx).querySelectorAll('.gpage-runs .run-member').length, 3, 'the fixture: the Runs tab painted');
+  stall = true;
+  // Every paint of the group page writes its title again: count those writes.
+  // The callback receives the records the observer delivers (takeRecords alone would miss the delivered ones).
+  let writes = 0;
+  const observer = new ctx.window.MutationObserver((records) => { writes += records.length; });
+  observer.observe(title, { childList: true, characterData: true, subtree: true });
+  const frame = async (next) => {
+    feature = next;
+    const before = calls.feature;
+    await ctx.settle(2);
+    writes = 0;
+    ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+    await ctx.settle(10);
+    assert.ok(calls.feature > before, 'the frame refetched the feature');
+    return writes + observer.takeRecords().length > 0;
+  };
+  assert.equal(await frame(view()), false, 'control: the same view repaints nothing');
+  assert.equal(await frame(view({ resumeAfter: 4 })), true, 'resumeAfter appears');
+  assert.equal(await frame(view({ heldResume: { after: 4 } })), true, 'the resume is held');
+  assert.equal(await frame(view({ heldResume: { after: 2 } })), true, 'held behind another run');
+  assert.equal(await frame(view()), true, 'the hold is gone');
+  observer.disconnect();
+});

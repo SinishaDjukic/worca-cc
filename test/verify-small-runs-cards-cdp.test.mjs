@@ -188,6 +188,25 @@ test('the HELD_RESUME_ONLY phase: a seeded held resume, Resume clicked, still pa
   assert.match(body, /click/i, 'Resume is clicked');
   assert.match(body, /paused/i, 'the row still reads paused');
   assert.match(body, /\bruns\b/, 'no runs-map entry for run 5');
+  assert.ok(body.includes('Resume after run 2'), 'before the click the button says which run it waits for');
   // The two files, with these exact names (no prefix), in SHOTS_DIR.
   assert.match(s, /[`'/]held-resume-(\$\{theme\}|light|dark)\.png/);
+});
+
+test('the AFTER_RUN_ONLY phase: the Resume before the press and the after-run row, light and dark at 1280px, 4 screenshots', () => {
+  const s = src();
+  const gate = s.match(/process\.env\.AFTER_RUN_ONLY === '1'\) \{ await (\w+)\(\); await finish\(\); \}/);
+  assert.ok(gate, 'the AFTER_RUN_ONLY=1 gate');
+  const at = s.indexOf(`async function ${gate[1]}(`);
+  assert.ok(at >= 0, 'the after-run phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /375/, 'the label at 375px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  assert.match(body, /click/i, 'Resume is clicked');
+  for (const needle of ['Resume after run', 'after run', 'data-mark', '#chat/new/run/']) assert.ok(body.includes(needle), needle);
+  assert.match(s, new RegExp(`await heldResumePhase\\(\\);\\nawait ${gate[1]}\\(\\);\\n`), 'in a full run, right after the held resume');
+  // The four files, with these exact names (no prefix), in SHOTS_DIR.
+  assert.match(s, /[`'/]after-run-row-(\$\{theme\}|light|dark)\.png/);
+  assert.match(s, /[`'/]resume-after-run-(\$\{theme\}|light|dark)\.png/);
 });

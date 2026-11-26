@@ -1152,3 +1152,19 @@ test('s7 T13 (R-qa-2): two views answer runs 2 and 11 for the same run and quest
   }
   assert.equal(S7_PQ.r2.stop.options.find((o) => o.value === S7_PQ.r2.stop.pick).payload.decision, 'approve', 'run 2\'s pick is an approval');
 });
+
+// ── Shaper small runs slice 8 (R-ux-2): the footer's controls carry the halted run's resumeAfter ─────────────────
+test('s8: controls carry resumeAfter 4 from halted run 6, and none when the slice has none or the halted one is the Verifier', () => {
+  const six = (over = {}) => [1, 2, 3, 4, 5, 6].map((i) => SL(i, i < 4 ? 'done' : i === 4 ? 'running' : i === 5 ? 'planned' : 'paused',
+    { pipelineId: i === 5 ? null : `p${i}`, ...(i === 6 ? over : {}) }));
+  const controlsOfView = (v) => featureCardModel({ own: null, card: card(v) }).controls;
+  const halted = { index: 6, state: 'paused', waiting: [] };
+  const c = controlsOfView(VIEW(six({ resumeAfter: 4 }), { halted }));
+  assert.deepEqual([c.halted, c.target.index, c.resumeAfter], [true, 6, 4]);
+  assert.equal('resumeAfter' in controlsOfView(VIEW(six(), { halted })), false, 'the slice has none');
+  assert.equal('resumeAfter' in controlsOfView(VIEW(six({ resumeAfter: '4' }), { halted })), false, 'only a run number');
+  // The Verifier is halted, no run is: its Resume has no slice, whatever a slice carries.
+  const verifier = controlsOfView(VIEW(six({ resumeAfter: 4 }), { halted: null, verify: { state: 'halted' } }));
+  assert.equal(verifier.halted, true);
+  assert.equal('resumeAfter' in verifier, false);
+});

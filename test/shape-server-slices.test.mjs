@@ -2518,3 +2518,15 @@ test('slice 7: Pause on a held run cancels its resume tickets, and neither a tic
     assert.equal(testing.heldStops.watchSkips(w.pid), false, "the next Resume clears the Pause's drop");
   } finally { runs.delete(`s7-paused-${w.pid}`); await w.cleanup(); }
 }));
+
+// ── Shaper small runs, slice 8 (R-ux-2): the run page learns before the press which run a Resume would wait for ──
+test('s8: GET /api/shape/pipelines/:pid/slice of paused run 5 while run 8 works returns resumeAfter 8', () => withEnvVars(SMALL_ON, async () => {
+  const w = await resumeServerWorld();
+  try {
+    const r = await get(`/api/shape/pipelines/${w.pid}/slice`);
+    assert.equal(r.status, 200);
+    const info = await r.json();
+    assert.deepEqual([info.index, info.state, info.resumeAfter], [5, 'paused', 8]);
+    assert.equal(testing.heldStops.heldResumeOf(w.pid), null, 'reading holds nothing');
+  } finally { await w.cleanup(); }
+}));

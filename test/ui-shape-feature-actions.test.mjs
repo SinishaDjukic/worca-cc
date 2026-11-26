@@ -388,3 +388,23 @@ test('held on a clash: Run 4 is held: the reason, once, with one Start now and R
   paintFeatureActions(t.doc, t.host, plain, NOOP);
   assert.equal(t.host.querySelector('.shape-feature-held-why').textContent, 'Run 4 waits for you to start');
 });
+
+// ── Shaper small runs slice 8 (R-ux-2): the footer Resume says which run it would wait for ───────────────────────
+test('s8: the footer Resume and the ⋯ Resume read "Resume after run 4" with resumeAfter 4, and "Resume" without it', async () => {
+  const waits = C({ halted: true, resumeAfter: 4 });
+  const free = C({ halted: true });
+  const label = (items) => items.find((i) => i.key === 'resume')?.label;
+  assert.equal(label(featureButtons(waits)), 'Resume after run 4');
+  assert.equal(label(featureMenu(waits, { stopOpen: true })), 'Resume after run 4');
+  assert.equal(label(featureButtons(free)), 'Resume');
+  assert.equal(label(featureMenu(free, { stopOpen: true })), 'Resume');
+  // Painted: the same control, and it still posts the feature resume; the next paint without the number reads Resume.
+  const t = setup(waits);
+  const button = () => t.host.querySelector('[data-act="feature-resume"]');
+  assert.equal(button().textContent, 'Resume after run 4');
+  button().click();
+  await settle();
+  assert.deepEqual(t.seen[0].slice(0, 2), ['act', 'resume']);
+  paintFeatureActions(t.doc, t.host, free, { act: async () => ({ ok: true }), confirm: async () => true, openPlan() {} });
+  assert.equal(button().textContent, 'Resume');
+});

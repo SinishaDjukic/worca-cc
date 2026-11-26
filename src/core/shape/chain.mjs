@@ -10,12 +10,13 @@ import { shaperSmallRunsOn, smallRunsOfFeature } from './small-runs.mjs';
 import { SHIP_LOCK, shipLocked } from './ship-lock.mjs';
 import { roundOrigin } from './rounds.mjs';
 import { SMALL_RUNS_SHIP } from '../../shared/shape/ship-ledger.mjs';
-import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, busySliceOf, featureOfPipeline, currentFeatureId, finishedSlices,
+import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, featureOfPipeline, currentFeatureId, finishedSlices,
   dependencyBranchesOf, setClashHold, clearClashHold } from './features.mjs';
 
 import { recordSettledFigures as recordFigures } from './measure.mjs';
 import { verifyAfterSettled, verifyCheckOfPipeline } from './verifier.mjs';
 export { createHeldStops } from './held-stops.mjs';
+export { heldStopTurn } from './features.mjs';
 export { recordShipCommit, shipCover, shipStopped } from './verifier.mjs';
 export { SHIPPING, featureShipping } from './ship-lock.mjs';
 
@@ -39,17 +40,6 @@ export function featureOfAnyPipeline(pipelineId) {
 export function roundWhileShipping(pipelineId) {
   const at = pipelineId ? featureOfPipeline(roundOrigin(pipelineId)) : null;
   return at && shipLocked(currentFeatureId(at.featureId)) ? SHIP_LOCK : null;
-}
-
-/**
- * Small runs C3 (D9): whether stopped run `index` of the feature may go on now. Another slice going holds it (one slice
- * of a feature at a time); another run whose answer is held does not, so two held answers never wait on each other and
- * are delivered one at a time. → {due:true} | {due:false, after}
- */
-export function heldStopTurn(featureId, index, { live = () => null, now = Date.now(), isLive = null } = {}) {
-  const open = (pid) => { const l = live(pid); return l && l.stop && l.stop.held ? { ...l, stop: { ...l.stop, held: false } } : l; };
-  const busy = busySliceOf(featureId, { exclude: index, live: open, now, isLive });
-  return busy ? { due: false, after: busy.index } : { due: true };
 }
 
 /**

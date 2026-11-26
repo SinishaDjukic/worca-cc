@@ -102,7 +102,8 @@ export function stopLineText(entry) {
 }
 
 /**
- * D5: one run's word and mark, first match wins: done; a held stop answer (`after run N`); an open stop or ask
+ * D5: one run's word and mark, first match wins: done; a held stop answer (`after run N`); a held resume (`after run
+ * N`, slice 8); an open stop or ask
  * (`waiting for you`); failed; not started (cannot start, `waits for run …`, `next`, or no word); live (today's phase
  * word). `word` null means "the caller keeps dev's text", '' means "deliberately no word".
  * @param {{slice?: object, slices?: Map<number, object>, snap?: object|null}} input
@@ -116,6 +117,8 @@ export function runStatus({ slice, slices = new Map(), snap = null } = {}) {
     const after = slice.stop.after;
     return { word: Number.isInteger(after) ? `after run ${after}` : slice.nextTurn === true ? 'next' : '', mark: 'after' };
   }
+  // Slice 8 (d8-1): a paused run whose Resume is held behind another run of its feature.
+  if (isObj(slice.heldResume) && Number.isInteger(slice.heldResume.after)) return { word: `after run ${slice.heldResume.after}`, mark: 'after' };
   if (openAsk(slice) || (isObj(snap) && snap.pendingQuestion)) return { word: 'waiting for you', mark: 'ask' };
   if (FAILED.has(state)) return { word: 'failed', mark: 'failed' };
   if (NOT_STARTED.has(state)) {
@@ -128,6 +131,16 @@ export function runStatus({ slice, slices = new Map(), snap = null } = {}) {
   }
   if (LIVE.has(state)) return { word: runShortWord(snap) || null, mark: 'live' };
   return { word: null, mark: null };
+}
+
+/**
+ * Slice 8 (d8-5): a paused run's Resume label, the one home of its text: `Resume after run N` when its Resume would wait
+ * for run N (the view's `resumeAfter`), else `Resume`.
+ * @param {unknown} after
+ * @returns {string}
+ */
+export function resumeLabel(after) {
+  return Number.isInteger(after) ? `Resume after run ${after}` : 'Resume';
 }
 
 /**

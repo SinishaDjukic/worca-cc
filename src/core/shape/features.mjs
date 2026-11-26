@@ -572,7 +572,7 @@ function stopWords(f, rows, slices, live) {
   for (const s of slices) {
     const l = s.pipelineId ? live(s.pipelineId) : null;
     if (l && l.stop) s.stop = { ...l.stop };
-    if (l && l.heldResume) s.heldResume = { after: l.heldResume.after };   // slice 7 (D10): view data only until s8
+    if (l && l.heldResume) s.heldResume = { after: l.heldResume.after };   // slice 7 (D10), read by run-status.mjs (s8)
   }
   if (shaperSmallRunsOn()) {
     const holdsByIndex = new Map();
@@ -592,6 +592,17 @@ function stopWords(f, rows, slices, live) {
     });
     const next = nextTurnOf(f, rows, holdsByIndex, (r, i) => !!(slices[i].pipelineId && ((slices[i].stop && slices[i].stop.held) || slices[i].heldResume)));
     if (next) slices[rows.indexOf(next)].nextTurn = true;
+    // Slice 8 (d8-2, d8-3): a paused run not held nor being resumed learns before the press which run its Resume would
+    // wait for, from the hold's own turn rule (heldStopTurn). Reads only.
+    if (smallRunsOfFeature(f.id)) {
+      for (const s of slices) {
+        if (!s.pipelineId || s.state !== 'paused' || s.heldResume) continue;
+        const l = live(s.pipelineId);
+        if (l && l.resuming) continue;
+        const t = heldStopTurn(f.id, s.index, { live });
+        if (t.due === false) s.resumeAfter = t.after;
+      }
+    }
     return;
   }
   for (const s of slices) {
@@ -602,7 +613,7 @@ function stopWords(f, rows, slices, live) {
 }
 
 /** Small runs: what each slice's one short word reads (run-agents.mjs cardShortWord), from the rows alone (no full view):
- *  index → {kind, state, stop?, waitsFor?, cannotStart?, nextTurn?, buildsOn?}, the words featureView's slices carry. */
+ *  index → {kind, state, stop?, waitsFor?, cannotStart?, nextTurn?, buildsOn?, heldResume?, resumeAfter?}, the words featureView's slices carry. */
 export function sliceWords(featureId, { live = () => null } = {}) {
   const f = featureRow(featureId);
   if (!f) return new Map();
@@ -961,7 +972,8 @@ export function sliceOfPipeline(pipelineId, { live = () => null } = {}) {
   const n = v.slices[at.idx] || null;
   return { featureId: v.id, title: v.title, index: at.idx, total: v.total, sliceTitle: s ? s.title : '',
     state: s ? s.state : null, next: n ? { index: n.index, title: n.title, state: n.state } : null, ...(s && s.stop ? { stop: s.stop } : {}),
-    ...(shaperSmallRunsOn() && smallRunsOfFeature(v.id) ? runFacts(v, at.idx, s) : {}) };
+    ...(shaperSmallRunsOn() && smallRunsOfFeature(v.id)
+      ? { ...runFacts(v, at.idx, s), ...(s && Number.isInteger(s.resumeAfter) ? { resumeAfter: s.resumeAfter } : {}) } : {}) };
 }
 
 const branchOf = (pid) => (pid ? j(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(String(pid))?.branch, null) : null);
@@ -1222,6 +1234,17 @@ function rowGoing(r, live, { now = Date.now(), isLive = null } = {}) {
 export function busySliceOf(featureId, { exclude = null, live = () => null, now = Date.now(), isLive = null } = {}) {
   const r = sliceRows(featureId).find((x) => x.index !== exclude && rowGoing(x, live, { now, isLive }));
   return r ? { index: r.index } : null;
+}
+
+/**
+ * Small runs C3 (D9): whether stopped run `index` of the feature may go on now. Another slice going holds it (one slice
+ * of a feature at a time); another run whose answer is held does not, so two held answers never wait on each other and
+ * are delivered one at a time. → {due:true} | {due:false, after}
+ */
+export function heldStopTurn(featureId, index, { live = () => null, now = Date.now(), isLive = null } = {}) {
+  const open = (pid) => { const l = live(pid); return l && l.stop && l.stop.held ? { ...l, stop: { ...l.stop, held: false } } : l; };
+  const busy = busySliceOf(featureId, { exclude: index, live: open, now, isLive });
+  return busy ? { due: false, after: busy.index } : { due: true };
 }
 
 // A dependency whose run halted (stopped, error, interrupted) can still be resumed or restarted: its dependent waits.

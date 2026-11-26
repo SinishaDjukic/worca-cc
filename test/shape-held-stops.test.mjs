@@ -961,3 +961,81 @@ test('s7: a claimed resume that refuses releases the claim; without a ticket not
   assert.equal(w.held.holdResume(w.pids[6], {}), null);
   assert.equal(w.liveSliceOf(w.pids[6]), null, 'no ticket, no claim');
 }));
+
+// ── Shaper small runs slice 8 (R-ux-2): the view says before the press which run a Resume would wait for ─────────
+/** Run `n`'s slice in the feature view, read through `live`. */
+const viewSlice = (w, n, live = w.liveSliceOf) => featureView(w.f.id, { live }).slices.find((s) => s.index === n);
+/** `w.liveSliceOf` with pipeline `pid` reading `slice` instead. */
+const liveWith = (w, pid, slice) => (at) => (at === pid ? slice : w.liveSliceOf(at));
+
+test('s8: saved paused run 6 (no overlay) gets resumeAfter 4 while run 4 works, and the view creates no hold', () => withEnv(SMALL_ON, () => {
+  const w = resumeWorld();
+  const pid = w.pids[6];
+  assert.equal(w.liveSliceOf(pid), null, 'the fixture: a saved paused run, with no overlay');
+  const painted = w.repaints.length;
+  const view = featureView(w.f.id, { live: w.liveSliceOf });
+  const six = view.slices[5];
+  assert.deepEqual([six.index, six.state, six.resumeAfter], [6, 'paused', 4]);
+  assert.deepEqual(view.slices.filter((s) => 'resumeAfter' in s).map((s) => s.index), [6], 'only the paused run carries it');
+  assert.equal(features.sliceOfPipeline(pid, { live: w.liveSliceOf }).resumeAfter, 4, "the run's own /slice answer");
+  assert.equal(sliceWords(w.f.id, { live: w.liveSliceOf }).get(6).resumeAfter, 4, 'the words every surface carries');
+  assert.equal(viewSlice(w, 6, liveWith(w, pid, liveSliceFrom({ runId: 'r6', status: 'paused' }))).resumeAfter, 4, 'a paused overlay qualifies too');
+  assert.equal(w.held.heldResumeOf(pid), null, 'nothing is held by reading');
+  assert.equal(w.liveSliceOf(pid), null, 'nothing is claimed by reading');
+  assert.equal(w.repaints.length, painted, 'no repaint');
+  assert.deepEqual(w.resumed, []);
+}));
+
+test("s8: the preview's 4 equals holdResume's after; once held, run 6 has heldResume {after:4} and no resumeAfter", () => withEnv(SMALL_ON, () => {
+  const w = resumeWorld();
+  const pid = w.pids[6];
+  const preview = viewSlice(w, 6).resumeAfter;
+  assert.equal(preview, 4);
+  assert.equal(w.held.holdResume(pid, { by: 'ann' }).after, preview, 'the preview and the hold name the same run');
+  const six = viewSlice(w, 6);
+  assert.deepEqual(six.heldResume, { after: 4 });
+  assert.equal('resumeAfter' in six, false, 'one fact: a held run carries no preview');
+  const at = features.sliceOfPipeline(pid, { live: w.liveSliceOf });
+  assert.equal('resumeAfter' in at, false, "nor does the run's /slice answer");
+}));
+
+test('s8: run 4 finished → run 6 has no resumeAfter, and holdResume returns null (nothing works)', () => withEnv(SMALL_ON, () => {
+  const w = resumeWorld();
+  const pid = w.pids[6];
+  assert.equal(viewSlice(w, 6).resumeAfter, 4, 'while run 4 works');
+  w.finish(w.e4);
+  assert.equal('resumeAfter' in viewSlice(w, 6), false);
+  assert.equal('resumeAfter' in features.sliceOfPipeline(pid, { live: w.liveSliceOf }), false);
+  assert.equal(w.held.holdResume(pid, { by: 'ann' }), null, 'the Resume goes on at once');
+}));
+
+test('s8: run 4 being resumed at boot (resuming overlay) → run 6 resumeAfter 4', () => withEnv(SMALL_ON, () => {
+  const w = resumeWorld();
+  const four = w.e4.pipelineId;
+  w.e4.status = 'paused';
+  setPipe(four, 'paused');
+  const live = liveWith(w, four, features.liveSliceResuming());
+  assert.equal(viewSlice(w, 6, live).resumeAfter, 4);
+  assert.equal('resumeAfter' in viewSlice(w, 4, live), false, 'the run being resumed carries none');
+}));
+
+test('s8: a paused run that is itself being resumed gets no resumeAfter, even while another run works', () => withEnv(SMALL_ON, () => {
+  const w = resumeWorld();
+  assert.equal(viewSlice(w, 6).resumeAfter, 4, 'not being resumed: it would wait');
+  assert.equal('resumeAfter' in viewSlice(w, 6, liveWith(w, w.pids[6], features.liveSliceResuming())), false);
+}));
+
+test('s8: flag off, and flag on with the feature unmarked → no resumeAfter in featureView or sliceOfPipeline', async () => {
+  const none = (w, why) => {
+    assert.deepEqual(featureView(w.f.id, { live: w.liveSliceOf }).slices.filter((s) => 'resumeAfter' in s), [], `${why}: featureView`);
+    assert.equal('resumeAfter' in features.sliceOfPipeline(w.pids[6], { live: w.liveSliceOf }), false, `${why}: sliceOfPipeline`);
+    assert.equal('resumeAfter' in sliceWords(w.f.id, { live: w.liveSliceOf }).get(6), false, `${why}: sliceWords`);
+  };
+  let marked = null;
+  await withEnv(SMALL_ON, () => {
+    marked = resumeWorld();
+    assert.equal(viewSlice(marked, 6).resumeAfter, 4, 'positive control: marked, flag on');
+    none(resumeWorld({ mark: false }), 'unmarked');
+  });
+  await withEnv({ WORCA_FLAGS: undefined }, () => none(marked, 'flag off'));
+});

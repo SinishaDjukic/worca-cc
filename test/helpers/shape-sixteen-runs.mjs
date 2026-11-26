@@ -33,6 +33,7 @@ let seq = 0;
  *   useHeld:(held:object)=>void}}  `useHeld` swaps the instance (a restart).
  *   `how`: 'unrun' | { pipe: status } | { stop: reason, held?: boolean } | { asking: true } | { approval: true }
  *   | { pipe: status, resuming: true } (being resumed at server start: no runs-map entry, liveSliceResuming's overlay)
+ *   | { pipe: 'paused', heldResume: N } (its resume is held behind run N: liveSliceHeldResume's overlay)
  */
 export function sixteenRunFeature({ projectDir, smallRuns = true, held = null }) {
   const db = getDb();
@@ -80,6 +81,7 @@ export function sixteenRunFeature({ projectDir, smallRuns = true, held = null })
     else if (how.approval) pq = { id: `q${run}`, kind: 'plan' };
     if (pq) liveMap.set(pid, liveSliceFrom({ runId: `r${run}`, status: 'running', approved: true, pendingQuestion: pq, heldStop }));
     if (how.resuming) liveMap.set(pid, features.liveSliceResuming());
+    if (Number.isInteger(how.heldResume)) liveMap.set(pid, features.liveSliceHeldResume(liveMap.get(pid) || null, how.heldResume));
   };
   const cancelTicket = (run) => { db.prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE id = ?").run(ticketOf(run)); };
   const setKind = (run, kind) => { db.prepare('UPDATE shape_feature_slices SET kind = ? WHERE feature_id = ? AND idx = ?').run(kind, f.id, run); };

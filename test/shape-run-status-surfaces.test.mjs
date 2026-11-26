@@ -16,6 +16,7 @@ import { getTicket, predecessorState } from '../src/core/scheduler.mjs';
 import { listRunGroups } from '../src/core/run-groups.mjs';
 import { sliceGateState } from '../src/core/shape/features.mjs';
 import { featureStateLine } from '../ui/public/shape/feature-card.mjs';
+import { memberStatusOf } from '../src/shared/shape/run-status.mjs';
 import { buildRunsModel, groupRow, renderRunsList } from '../ui/public/runs-list.mjs';
 import { SIXTEEN_RUN_LINKS, startable } from './helpers/shape-sixteen-runs.mjs';
 import { WALKED, walked, walkWorld, groupItem, cardStatus, pageStatus, sidebarStatus, runPageStatus, headRead, cardHost, pageHost, NOW } from './helpers/shape-surfaces.mjs';
@@ -260,4 +261,51 @@ test('R-arch-1 flag off: the card\'s run 1 row reads as without its own snapshot
   // The check can see a difference: a snapshot of run 1 that does reach the row changes its text.
   assert.notEqual(run1(w.snaps, 'p0'), reference, 'positive control');
   assert.equal(run1(w.snaps, w.own), reference);
+}));
+
+// ---- Shaper small runs slice 8 (R-ux-1): a held resume reads "after run N" on every row ---------------------------
+/** Runs 1 to 3 done, run 4 working, run 6 paused with its resume held behind run 4. Not one of the WALKED states. */
+const HELD_RESUME = { name: 'held-resume', spec: { done: [1, 2, 3], states: { 4: { pipe: 'running' }, 6: { pipe: 'paused', heldResume: 4 } } } };
+
+test('R-ux-1 held resume: run 6 reads "after run 4" on the dashed ring on every row surface', () => withEnvVars(ON, () => {
+  const w = walkWorld(root, HELD_RESUME);
+  assert.deepEqual(w.slices.find((x) => x.index === 6).heldResume, { after: 4 }, 'the fixture: the server view carries the hold');
+  const s = surfaces(w);
+  assertWordEverywhere(s, 6, 'after run 4', 'held resume');
+  for (const [name, m] of Object.entries(s)) assert.ok(m.get(6).dot.includes('is-dashed-ring'), `${name}: run 6 dashed ring (${m.get(6).dot})`);
+  for (const name of ROW_SURFACES) assert.equal(s[name].get(6).mark, 'after', name);
+  // The run page head's source.
+  assert.deepEqual(memberStatusOf(w.members)(w.members.find((m) => m.position === 6)), { word: 'after run 4', mark: 'after' });
+}));
+
+test("R-ux-1 held resume: with run 4 done and no hold, run 6 reads as a plain paused run (dev's text)", () => withEnvVars(ON, () => {
+  const w = walkWorld(root, { name: 'resume-free', spec: { done: [1, 2, 3, 4], states: { 6: { pipe: 'paused' } } } });
+  const s = surfaces(w);
+  for (const [name, m] of Object.entries(s)) {
+    assert.doesNotMatch(m.get(6).text || '', /after run/, name);
+    assert.ok(!m.get(6).dot.includes('is-dashed-ring'), `${name}: no dashed ring (${m.get(6).dot})`);
+  }
+  for (const name of ROW_SURFACES) assert.equal(s[name].get(6).mark, null, name);
+}));
+
+test("R-ux-1 flag off: run 6's member row has no data-mark and dev's text", () => withEnvVars(ON, async () => {
+  const w = walkWorld(root, HELD_RESUME);
+  await withEnvVars({ WORCA_FLAGS: undefined }, () => {
+    const six = w.fx.pipelineOf(6);
+    const row6 = (live) => {
+      const raw = listRunGroups({ live }).find((g) => g.id === w.fx.featureId);
+      const group = groupItem(raw, { flag: false });
+      const host = doc().createElement('div');
+      const history = group.members.filter((m) => m.pipelineId).map((m) => ({ id: m.pipelineId, projectKey: 'k', title: m.pipelineId, status: m.run.status, run: { status: m.run.status } }));
+      host.append(...renderRunsList(host.ownerDocument, buildRunsModel({ history, groups: [group], toggled: new Map([[`chain:${group.id}`, true]]), now: NOW })));
+      const item = [...host.querySelectorAll('.runs-members > .runs-item[data-level="member"]')]
+        .find((i) => i.querySelector('.runs-row-title').textContent.startsWith('6 · '));
+      assert.ok(item, 'run 6 has a member row');
+      assert.equal(host.querySelector('.runs-item[data-mark]'), null);
+      return item.querySelector('.runs-row-sub')?.textContent ?? null;
+    };
+    const text = row6(w.fx.live);
+    assert.doesNotMatch(String(text), /after run 4/);
+    assert.equal(text, row6((pid) => (pid === six ? null : w.fx.live(pid))), 'as with no held resume at all');
+  });
 }));

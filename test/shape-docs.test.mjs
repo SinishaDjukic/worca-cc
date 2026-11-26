@@ -252,3 +252,10 @@ test('slice 7: Held resumes', () => {
   const live = flat(small).split('**The flag, read live.**')[1]?.split('**A feature with the marker')[0] || '';
   assert.deepEqual(missing(live, ['an answer or a resume held for its turn waits']), []);
 });
+
+// Shaper small runs slice 8 (R-ux-1, R-ux-2): the row word and the Resume wording of a held resume.
+test('slice 8: Held resumes names the row word and the Resume wording', () => {
+  const part = smallPart('Held resumes');
+  assert.deepEqual(missing(part, ['after run N', 'Resume after run N']), []);
+  for (const gone of ['Until the row wording lands', "a stop line's Resume"]) assert.ok(!part.includes(gone), `no longer says: ${gone}`);
+});
