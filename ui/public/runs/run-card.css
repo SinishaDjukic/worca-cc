@@ -42,7 +42,7 @@
 :is(.rd-row1,.hd-row1):has(> .rd-bar-end){align-items:flex-start;}
 /* The title keeps a readable width: once it and the controls no longer fit one row, the controls move under it. */
 :is(.rd-row1,.hd-row1):has(> .rd-bar-end){flex-wrap:wrap;row-gap:10px;}
-:is(.rd-row1 > .rd-title,.hd-row1 > .hd-title){flex:1 1 280px;}
+:is(.rd-row1 > .rd-title,.hd-row1 > .hd-title){flex:1 1 330px;}
 :is(.rd-row1,.hd-row1) > .rd-bar-end{flex-wrap:nowrap;}
 /* The state line under the title (paintStateLine): dot or symbol, state word, step, on every tab. One line; the step
    gives way first. While a question waits it is a way to it (is-link). */

@@ -39080,17 +39080,19 @@ function paintRdGlance(screen, r) {
   // A PR-driven Needs you has no question to jump to.
   const asking = m.state === 'needs-you' && !m.prNeeds;
   for (const link of screen.querySelectorAll('.rd-header > .run-state-line, .rd-now-top')) {
-    if (link.classList.contains('is-link') === asking) continue;
-    link.classList.toggle('is-link', asking);
-    if (asking) {
-      link.setAttribute('role', 'button');
-      link.tabIndex = 0;
-      link.setAttribute('aria-label', 'Go to the questions');
-    } else {
-      link.removeAttribute('role');
-      link.removeAttribute('tabindex');
-      link.removeAttribute('aria-label');
+    if (link.classList.contains('is-link') !== asking) {
+      link.classList.toggle('is-link', asking);
+      if (asking) {
+        link.setAttribute('role', 'button');
+        link.tabIndex = 0;
+      } else {
+        link.removeAttribute('role');
+        link.removeAttribute('tabindex');
+        link.removeAttribute('aria-label');
+      }
     }
+    // A label replaces what a screen reader reads, so the header line's keeps its state; refreshed on every paint.
+    if (asking) link.setAttribute('aria-label', [link.matches('.run-state-line') && link.dataset.text, 'Go to the questions'].filter(Boolean).join('. '));
   }
 
   // Time · Cost · Changes. The time ticks (`run-time`, rdTickHosts) only while steps

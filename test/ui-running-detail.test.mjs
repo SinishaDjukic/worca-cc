@@ -2793,7 +2793,8 @@ test('the state line keeps focus across frames and jumps to the question', async
   assert.equal(line.classList.contains('is-link'), true);
   assert.equal(line.getAttribute('role'), 'button');
   assert.equal(line.getAttribute('tabindex'), '0');
-  assert.equal(line.getAttribute('aria-label'), 'Go to the questions');
+  assert.match(line.getAttribute('aria-label'), /^Needs you( · .+)?\. Go to the questions$/, 'the name still says the state');
+  assert.equal(line.getAttribute('aria-label'), `${line.textContent}. Go to the questions`);
   const kids = [...line.children];
   line.focus();
   assert.equal(window.document.activeElement, line);
