@@ -33,6 +33,7 @@ const CASES = [
   ['Read(~/.config/gh/**)', `${HOME}/.config/gh/hosts.yml`],
   ['Read(//proc/**)', '/proc/1/environ'],
   ['Read(//run/secrets/**)', '/run/secrets/worca_broker_secret'],
+  ['Read(//var/run/secrets/**)', '/var/run/secrets/worca_broker_secret'],
   ['Read(//worca/egress/**)', '/worca/egress/settings.json'],
 ];
 
@@ -94,7 +95,7 @@ const win = (p) => (p.startsWith(HOME) ? WIN_HOME + p.slice(HOME.length) : `C:${
 
 test('Windows drive paths: each rule denies its sample written as a C: path, under a Windows home', () => {
   for (const [rule, path] of CASES) {
-    if (['Read(//proc/**)', 'Read(//run/secrets/**)', 'Read(//worca/egress/**)'].includes(rule)) continue; // POSIX root folders, not a folder on every drive
+    if (['Read(//proc/**)', 'Read(//run/secrets/**)', 'Read(//var/run/secrets/**)', 'Read(//worca/egress/**)'].includes(rule)) continue; // POSIX root folders, not a folder on every drive
     assert.equal(askPathDenied(win(path), { home: WIN_HOME }), rule, win(path));
   }
   assert.equal(askPathDenied('c:/repo/sub/.env', { home: WIN_HOME }), 'Read(//**/.env*)', 'a lower-case drive letter');
@@ -122,4 +123,13 @@ test('Worca\'s secret files are denied under ~/.worca-cc and a custom home, by a
   for (const rules of [ASK_DENY_RULES, RUN_READ_DENY_RULES, REQUIREMENTS_READ_DENY_RULES]) {
     for (const p of paths) assert.ok(askPathDenied(p, { rules, home: HOME }), p);
   }
+});
+
+test('container secret files are denied through /run and its /var/run alias, and through the sidecar data dir', () => {
+  for (const p of ['/run/secrets/worca_egress_secret', '/var/run/secrets/worca_egress_secret', '/var/run/secrets/sub/key.pem']) {
+    for (const rules of [ASK_DENY_RULES, RUN_READ_DENY_RULES, REQUIREMENTS_READ_DENY_RULES]) assert.ok(askPathDenied(p, { rules, home: HOME }), p);
+  }
+  assert.equal(askPathDenied('/var/run/secrets/x', { home: HOME }), 'Read(//var/run/secrets/**)');
+  assert.ok(askPathDenied('/worca/egress/proxy-login.json', { home: HOME }));
+  for (const p of ['/var/run/docker.sock.md', '/srv/run/secrets.md', '/repo/var/run/notes.md']) assert.equal(askPathDenied(p, { home: HOME }), null, p);
 });

@@ -39,6 +39,7 @@ export const ASK_DENY_RULES = Object.freeze([
   'Read(~/.config/gh/**)',
   'Read(//proc/**)',                   // the server's own environment (/proc/<pid>/environ holds its GitHub and model tokens)
   'Read(//run/secrets/**)',            // compose secret files in a container (broker, egress sidecar, GitHub App key)
+  'Read(//var/run/secrets/**)',        // the same folder through the /var/run -> /run link
   'Read(//worca/egress/**)',           // the egress sidecar's data dir (WORCA_EGRESS_DATA_DIR): the proxy login it holds
 ]);
 

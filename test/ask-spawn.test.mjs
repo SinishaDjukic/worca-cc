@@ -77,7 +77,7 @@ test('deny rules: spec list, every path rule // or ~/ anchored, the resolved hom
     'Read(//**/.worca-cc/mcp/**)', 'Read(//**/.worca-cc/skills/**)',
     'Read(~/.ssh/**)', 'Read(~/.aws/**)', 'Read(~/.gnupg/**)', 'Read(~/.kube/**)', 'Read(~/.docker/**)',
     'Read(~/.claude/**)', 'Read(~/.netrc)', 'Read(~/.npmrc)', 'Read(~/.config/gh/**)', 'Read(//proc/**)',
-    'Read(//run/secrets/**)', 'Read(//worca/egress/**)',
+    'Read(//run/secrets/**)', 'Read(//var/run/secrets/**)', 'Read(//worca/egress/**)',
   ]);
   for (const rule of o.permissionRules.deny) {
     const m = /^\w+\((.*)\)$/.exec(rule);
