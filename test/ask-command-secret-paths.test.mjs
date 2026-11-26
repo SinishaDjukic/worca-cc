@@ -11,7 +11,7 @@ import { checkAskCommand, namesSystemSecretPath } from '../src/core/ask/command-
 
 const HOME = '/Users/zed';
 const CTX = { cwd: '/repo', home: `${HOME}/.worca-cc`, userHome: HOME, egressDataDir: null };
-const refused = (c, o = {}) => /protected path/.test(checkAskCommand(c, { ...CTX, ...o }) || '');
+const refused = (c, o = {}) => /protected path|cannot work out/.test(checkAskCommand(c, { ...CTX, ...o }) || '');
 
 const CLASSES = {
   'variable substitution: known variables are substituted, unknown ones never skip the check': [
@@ -95,7 +95,7 @@ test('fail closed: every case of the third review is refused', async () => {
 test('fail closed still lets ordinary commands through, an unknown folder included', async () => {
   await checkRows(['npm run build', 'ls run', 'cd src && ls', 'git log -- secrets.md', 'rm -rf *', 'X=1 npm test', 'cd "$(git rev-parse --show-toplevel)" && npm test',
     'cd $(mktemp -d) && ls', 'cd - && npm test', 'X=/tmp; cat $X/notes.txt', 'cd -P src && npm test', 'pushd src; npm test; popd',
-    'cd "$(git rev-parse --show-toplevel)" && grep -r TODO src', 'echo $HOME', 'bash -c "npm test"']
+    'echo $HOME', 'bash -c "npm test"']
     .map((c) => ({ name: c, run: () => assert.equal(checkAskCommand(c, CTX), null, c) })));
 });
 
@@ -116,4 +116,29 @@ test('round 4: the ANY rule fails closed in each place the review found', async 
   const rows = [];
   for (const [cls, cmds] of Object.entries(ANY_RULE)) for (const c of cmds) rows.push({ name: `${cls}: ${c}`, run: () => assert.ok(refused(c), c) });
   await checkRows(rows);
+});
+
+// Round 5: blunt rules. Anything unresolved makes the whole command UNSURE; then a protected name anywhere, or a reader
+// without explicit, unprotected paths, is refused. Tool options are not parsed.
+const UNSURE = {
+  'option values never pass as path operands under an unknown folder': ["cd $D && find -name '*.json'", 'cd $D && find -maxdepth 3 -type f',
+    'cd $D && grep -r -e token', "cd $D && rg -g '*.json' token", 'cd $D && ag -l token', 'cd $D && tar -c -f /tmp/a.tar .'],
+  'arrays, eval, namerefs, getopts, coproc and ${NAME:=…} make the command unsure': ['X=(/run); cat ${X[0]}/secrets/a', 'X=(/tmp /run); cat $X/egress/y',
+    'eval X=/run; cat $X/secrets/a', 'declare -n R=X; X=/run; cat $R/secrets/a', 'getopts a X; cat $X/secrets/a', 'coproc cat; cat /tmp/x/secrets/a',
+    'cat ${X:=/run}/secrets/a', 'X=/run; false && X=/tmp; cat $X/secrets/a'],
+  'an unknown folder may be any depth': ['cd $D && tar c ../../..', 'cd $D && cp -r ../.. /tmp/x', 'cd $D/a/b && du ../../..', 'cd $D && tree ..', 'cd $D && ls -R ../..'],
+};
+test('round 5: unsure is sticky and total; each finding is refused', async () => {
+  const rows = [];
+  for (const [cls, cmds] of Object.entries(UNSURE)) for (const c of cmds) rows.push({ name: `${cls}: ${c}`, run: () => assert.ok(refused(c), c) });
+  await checkRows(rows);
+});
+test('round 5: ordinary commands still pass, and a refused reader says how to rephrase', async () => {
+  await checkRows(['grep -rn foo src', "find . -name '*.mjs'", 'rg TODO', 'cd "$(git rev-parse --show-toplevel)" && npm test', 'npm run build', 'ls run',
+    'cd src && ls', 'git log -- secrets.md', 'rm -rf *', 'X=1 npm test', 'cd /repo && grep -rn foo src',
+    'cd $D && ls', 'echo $X']
+    .map((c) => ({ name: c, run: () => assert.equal(checkAskCommand(c, CTX), null, c) })));
+  const why = checkAskCommand('cd "$(git rev-parse --show-toplevel)" && grep -r TODO src', CTX);
+  assert.match(why, /cannot work out/);
+  assert.match(why, /Name each folder explicitly/);
 });

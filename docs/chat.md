@@ -103,13 +103,29 @@ Chat never changes the credential broker, agent users, the allow-list or the box
 sets those. In the hardened box, Chat adds a project by cloning it only. Chat's own file tools never read the proxy
 login file, `/run/secrets` or the egress sidecar's data.
 
-What the command check promises, and what it does not. In agent mode, a check runs before each of Chat's own
-commands. It refuses a command that could name the proxy login, Docker secrets or the egress sidecar's data, however
-the path is spelled. When it cannot work out a folder or a variable, it assumes the worst and refuses. It is a guard on
-Chat's own commands, on an install where Chat runs as you. It is not the security boundary. The boundary is file
-permissions, agent users and the egress sidecar. On a native install, an agent or a chat running as your OS user can
-reach every file you can read. A script that builds a path when it runs, or a symlink made earlier, is not caught. See
-[Security overview](security-overview.md).
+### Known limits of the command guard
+
+In agent mode, a check runs before each of Chat's own commands. It refuses a command that names the proxy login,
+Docker secrets or the egress sidecar's data, however the path is spelled.
+
+The check is a guard on Chat's own commands, on an install where Chat runs as you. It is not the security boundary.
+The boundary is file permissions, agent users and the egress sidecar. On a native install, an agent or a chat that
+runs as your OS user can reach every file you can read.
+
+When a command holds something the check cannot work out, it treats the whole command as unsure. That includes a
+variable set at run time, `$(…)`, `eval`, `read` or a `cd` to such a folder. An unsure command is refused when any
+word names `secrets`, `egress` or the proxy login file. It is also refused when it runs a reader that walks folders
+(`find`, `grep -r`, `rg`, `tar`, `cp -r`, and a few more) without plain paths. The refusal says how to rephrase it.
+Put a `cd` to a written-out path first, then give plain paths.
+
+What the check does not catch:
+
+- A program that builds a path when it runs: a script, `python -c`, `node -e`.
+- A symlink made earlier that points into a protected folder.
+- A tool that reads a folder it is not told about, such as a config file that names one.
+- Any other way of spelling a path. Each new one goes on this list, not into the check.
+
+See [Security overview](security-overview.md).
 
 More: [Choose a setup](choose-a-setup.md), [Security overview](security-overview.md),
 [Environment spec](environment-spec.md), [Network proxy](network-proxy.md).

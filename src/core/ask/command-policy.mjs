@@ -37,29 +37,27 @@ const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
 // WHAT THIS PROMISES, AND WHAT IT DOES NOT. This is a guard on the chat's OWN commands (run_command), on an install where
 // the chat runs as the user. It is NOT the security boundary: the boundary is file permissions, agent users and the
 // egress sidecar (the proxy login never sits where an agent can read it). On a native install an agent or a chat
-// running as the same OS user can reach every file that user can read; this guard only turns away the obvious ways a
-// chat command could name one. It refuses a command that could name Docker secrets (/run/secrets, also /var/run and
-// /private/var/run), the egress sidecar's data folder (/worca/egress or WORCA_EGRESS_DATA_DIR) or a proxy-login.json.
+// running as the same OS user can reach every file that user can read; this guard only turns away the ways a chat
+// command could name one. Protected: Docker secrets (/run/secrets, also /var/run and /private/var/run), the egress
+// sidecar's data folder (/worca/egress or WORCA_EGRESS_DATA_DIR) and any proxy-login.json. docs/chat.md "Known limits of
+// the command guard" lists what it does not catch.
 //
-// Design rule: track only what can be resolved with certainty; everything else widens to "any folder" (ANY), and with
-// an unknown prefix the command is refused when a word could COMPLETE a protected path (its leading segments match the
-// end of one, e.g. `secrets/a`, `egress`, a protected file name, glob forms included): the worst prefix is assumed.
-//   - spelling: `/+`, `.`, `..` normalised; quotes and backslashes removed; brace groups expanded (BRACE_CAP, else refused).
-//     Quotes are not honoured when splitting a line into commands, so `sh -c '…'`, `eval '…'`, `{ …; }`, `if …; fi` and
-//     here-strings are read as if their text were part of the line (the conservative reading).
-//   - globs: the shell's own rules, by a linear matcher (a wildcard never matches a leading dot); a lone `*` is a folder
-//     listing, never a name; `.worca-cc` written as a glob is refused.
-//   - folders: every cd / pushd / popd word anywhere is a folder change (its options skipped). An unknown option, a
-//     target that is not a plain path (a variable it cannot expand, a substitution, a glob), `cd -` and popd make the
-//     folder ANY. Relative words are resolved from every folder the line can reach (at most DIR_CAP, else ANY).
-//   - variables: $PWD / $OLDPWD (the folders reached), $HOME / ~ (the home), and NAME=value: a name holds every value it
-//     is given in the line; `X=v cmd` is scoped to that one command. Any other $NAME, ${…}, $(…) and `…` is ANY; the
-//     text of a substitution is checked as a command of its own (SUBST_CAP, else refused).
-//   - recursive readers (find, tar, cp, rsync, scp, zip, grep, rg, ag, xargs) given a parent of a protected folder
-//     (`/`, `/run`, `/worca`, the home, the Worca home) are refused; with an unknown folder only absolute parents count.
-//   - a glob name in the session folder (`cat p*.json`) is allowed: a project or a run holds no login.
-// Known limits, by design: a program that builds a path at run time (a script, `python -c`, `node -e`), a symlink made
-// earlier, and any spelling of a class not listed here. Those are what file permissions and agent users are for.
+// Two blunt rules instead of a shell simulator:
+//   RESOLVED. Words are unquoted, brace-expanded (BRACE_CAP), and given the values the command itself set with a plain,
+//     fully resolved NAME=value (or $PWD / $OLDPWD / $HOME / ~). Each path word is normalised (`/+`, `.`, `..`) and its
+//     segments matched with the shell's glob rules by a linear matcher (a wildcard never matches a leading dot; a lone
+//     `*` is a listing, never a name). Relative words are resolved against every folder a plain cd / pushd reaches
+//     (DIR_CAP) and against `/`. Refused: a word inside a protected folder, a protected name outside the session folder
+//     (a glob name inside it is allowed: a project or a run holds no login), a glob of `.worca-cc`, and a recursive
+//     reader given a protected folder or a parent of one.
+//   UNSURE. The moment the command holds anything the guard does not fully resolve (any other $ expansion, $( ) or
+//     backticks, eval, source / ., arrays, +=, for / select, declare / typeset / local / export NAME / readonly / read /
+//     mapfile / readarray / getopts / coproc / printf -v / unset, a cd with an unknown option or an unresolvable target,
+//     cd -, popd, more than DIR_CAP folders), one flag is set for the whole command. Then it is refused when (1) a
+//     protected name (secrets, egress, the custom egress folder's last segment, a protected file name, literal or any
+//     glob that could match it) appears in any word, or (2) it runs a recursive or enumerating reader whose words are not
+//     all explicit paths (absolute, or relative while the folder is still known) outside every protected folder and its
+//     parents, with at least one path operand. Tool options are not parsed.
 const SECRET_SEGMENTS = Object.freeze([['run', 'secrets'], ['worca', 'egress']]);
 const SECRET_NAMES = Object.freeze(['proxy-login.json']);
 const SECRET_DIRS = Object.freeze(['.worca-cc']);
@@ -128,6 +126,15 @@ const isLoneStar = (g) => /^\*+$/.test(g);
 const DIR_CAP = 64;
 const CD_WORDS = new Set(['cd', 'pushd', 'popd']);
 const CD_OPTIONS = new Set(['-P', '-L', '-e', '-@', '-n']);
+// Words after which the guard no longer knows what a name or a folder holds.
+const UNSURE_WORDS = new Set(['eval', 'source', '.', 'declare', 'typeset', 'local', 'readonly', 'read', 'mapfile', 'readarray',
+  'getopts', 'coproc', 'unset', 'for', 'select']);
+// Readers that walk a folder, and readers that read every file a glob names.
+const WALKERS = new Set(['find', 'rg', 'ag', 'tar', 'rsync', 'du', 'tree', 'zip', '7z', 'scp', 'xargs']);
+const WALK_WITH_FLAG = { grep: /^-[a-zA-Z]*[rR]|^--(?:recursive|dereference-recursive)$/, egrep: /^-[a-zA-Z]*[rR]/, fgrep: /^-[a-zA-Z]*[rR]/,
+  cp: /^-[a-zA-Z]*[rRa]|^--(?:recursive|archive)$/, ls: /^-[a-zA-Z]*R|^--recursive$/ };
+const KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'do', 'while', 'until']);
+const GLOB_READERS = new Set(['cat', 'head', 'tail', 'less', 'more', 'bat', 'strings', 'xxd', 'od']);
 
 /** `$(…)` and backtick spans, innermost first, become ANY; their text joins the list of commands to check. null past
  *  SUBST_CAP (refused). */
@@ -148,11 +155,11 @@ function liftSubstitutions(text) {
 const segmentsOfCommand = (text) => String(text).split(/;|&&?|\|\|?/).map((seg) => seg.split(/[\s<>()]+/).filter((w) => w && w !== '{' && w !== '}' && w !== '!')
   .map((w) => w.replace(/\\(.)/g, '$1').replace(/['"]/g, '')).filter(Boolean)).filter((ws) => ws.length);
 
-/** Every spelling of `w` once the known variables are substituted (a name with several values gives several), braces
- *  expanded and ~ resolved; an unknown expansion is ANY. null past BRACE_CAP (refused). */
+/** Every spelling of `w` once the plainly set names, $PWD / $OLDPWD / $HOME and ~ are substituted and braces expanded;
+ *  any other expansion is ANY. null past BRACE_CAP (refused). */
 function expandWord(w, vars, { pwd, home }) {
   let outs = [''];
-  let rest = w.startsWith('~') && (w.length === 1 || w[1] === '/') ? (home ? home + w.slice(1) : ANY + w.slice(1)) : w;
+  const rest = w.startsWith('~') && (w.length === 1 || w[1] === '/') ? (home ? home + w.slice(1) : ANY + w.slice(1)) : w;
   const re = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)|\$\{[^}]*\}|\$[0-9@*#?$!-]/g;
   let at = 0; let m;
   while ((m = re.exec(rest))) {
@@ -178,21 +185,27 @@ function expandWord(w, vars, { pwd, home }) {
 const globText = (w) => (w.startsWith(ANY) ? `/*${w.slice(1)}` : w).replace(/\u0000/g, '*');
 
 /**
- * True when the command could name a protected system secret path (see the header above). Pure and bounded: by the
- * command's length (COMMAND_MAX_CHARS), BRACE_CAP, SUBST_CAP and DIR_CAP.
+ * Why the command could name a protected system secret path, or null: 'protected' (RESOLVED, or UNSURE with a protected
+ * name) or 'unsure-reader' (UNSURE with a reader whose folders the guard cannot resolve). See the header above. Pure and
+ * bounded: by the command's length (COMMAND_MAX_CHARS), BRACE_CAP, SUBST_CAP and DIR_CAP.
  * @param {string} command
  * @param {{cwd?: string, home?: string|null, worcaHome?: string|null, egressDataDir?: string|null}} [o]
+ * @returns {null | 'protected' | 'unsure-reader'}
  */
-export function namesSystemSecretPath(command, { cwd = '/', home = null, worcaHome = null, egressDataDir = null } = {}) {
+export function systemSecretRefusal(command, { cwd = '/', home = null, worcaHome = null, egressDataDir = null } = {}) {
   const session = posix.resolve('/', String(cwd || '/').replace(/\\/g, '/'));
   const homeDir = typeof home === 'string' && home.startsWith('/') ? posix.normalize(home).replace(/\/+$/, '') || '/' : null;
   const egressSegs = typeof egressDataDir === 'string' && egressDataDir.trim().length > 1 ? segsOf(egressDataDir.trim()) : null;
   const targets = [...SECRET_SEGMENTS, ...(egressSegs && egressSegs.length ? [egressSegs] : [])];
   const locations = [...PROTECTED_LOCATIONS, ...(egressSegs && egressSegs.length ? [`/${egressSegs.join('/')}`] : []),
     ...(typeof worcaHome === 'string' && worcaHome.startsWith('/') ? [posix.normalize(worcaHome)] : [])].map(segsOf);
+  // The names that, under UNSURE, are refused in any word at any position.
+  const names = [...new Set([...targets.map((t) => t[t.length - 1]), ...SECRET_NAMES, ...SECRET_DIRS])];
 
   const lifted = liftSubstitutions(command);
-  if (!lifted) return true;
+  if (!lifted) return 'protected';
+  let unsure = lifted.inner.length > 0 || /\b[A-Za-z_][A-Za-z0-9_]*\+?=\(|\b[A-Za-z_][A-Za-z0-9_]*\+=/.test(lifted.text);   // $( ), arrays, +=
+  let dirUnknown = false;
 
   const insideSession = (abs) => abs === session || abs.startsWith(session === '/' ? '/' : `${session}/`);
   const nameHit = (g) => !!g && !isLoneStar(g) && SECRET_NAMES.some((n) => segOk(g, n));
@@ -202,131 +215,108 @@ export function namesSystemSecretPath(command, { cwd = '/', home = null, worcaHo
     if (segs.some((g) => GLOB_CHARS.test(g) && !isLoneStar(g) && SECRET_DIRS.some((d) => segMatches(g, d)))) return true;
     const last = segs[segs.length - 1];
     if (!nameHit(last)) return false;
-    // A protected name: literal anywhere; a glob only outside the session folder (a project or a run holds no login).
     return !GLOB_CHARS.test(last) || !insideSession(posix.dirname(posix.normalize(abs)));
-  };
-  /** With an unknown prefix before segment `p`: could segs[p…] complete a protected path? (the worst prefix) */
-  const completes = (segs, p) => {
-    // `x/..` pairs cancel; a `..` left over climbs into the unknown prefix, so only what follows the last one counts.
-    const norm = [];
-    for (const g of segs.slice(p)) {
-      if (g === '.' || g === '') continue;
-      if (g === '..') { if (norm.length && norm[norm.length - 1] !== '..') norm.pop(); else norm.push('..'); continue; }
-      norm.push(g);
-    }
-    const at = norm.slice(norm.lastIndexOf('..') + 1);
-    if (!at.length) return false;
-    // The protected tail at every offset: the unknown prefix may end anywhere above a known segment (fail closed).
-    if (targets.some((t) => t.some((_, k) => {
-      const tail = t.slice(k);
-      for (let q = 0; q + tail.length <= at.length; q += 1) if (tail.every((w, j) => !isLoneStar(at[q + j]) && segOk(at[q + j], w))) return true;
-      return false;
-    }))) return true;
-    if (at.some((g) => !isLoneStar(g) && SECRET_DIRS.some((d) => segOk(g, d)))) return true;
-    return nameHit(at[at.length - 1]);
   };
   /** `abs` is a protected location or a parent of one (glob-aware). */
   const ancestor = (abs) => { const a = segsOf(abs); return locations.some((l) => a.length <= l.length && a.every((g, i) => segOk(g, l[i]))); };
+  const inside = (abs) => { const a = segsOf(abs); return locations.some((l) => l.length <= a.length && l.every((w, i) => segOk(a[i], w))); };
+  const hasName = (w) => w.split('/').some((g) => g && !isLoneStar(g) && names.some((n) => segOk(g, n)));
 
+  const readers = [];   // { words } of every recursive or enumerating reader, judged once `unsure` is final
+  const allWords = [];
   for (const text of [lifted.text, ...lifted.inner]) {
-    const vars = new Map();                 // name → every value it is given in this line
-    const dirs = new Set([session]);        // every folder the line can reach
-    let anyDir = false;
+    const vars = new Map();                 // name → the values plain, fully resolved NAME=value words gave it
+    const dirs = new Set([session]);        // every folder a plain cd / pushd reaches
     const segments = segmentsOfCommand(text);
     const xargs = segments.some((ws) => ws.includes('xargs'));
     const reach = (alts) => {
-      if (anyDir) return;
       for (const t of alts) {
-        if (t.includes(ANY) || GLOB_CHARS.test(t)) { anyDir = true; return; }
+        if (t.includes(ANY) || GLOB_CHARS.test(t)) { unsure = true; dirUnknown = true; return; }
         for (const d of [...dirs]) {
           dirs.add(posix.resolve(d, t));
-          if (dirs.size > DIR_CAP) { anyDir = true; return; }
+          if (dirs.size > DIR_CAP) { unsure = true; dirUnknown = true; return; }
         }
       }
     };
-    // Names written by anything but a plain NAME=value it resolved (+=, for, read, mapfile / readarray, printf -v,
-    // declare / typeset / local / export / readonly without a value, unset): ANY for every later expansion.
-    const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-    const markAny = (n) => { if (NAME.test(n)) vars.set(n, new Set([ANY])); };
     for (const words of segments) {
-      for (let k = 0; k < words.length; k += 1) {
-        const w = words[k];
-        const plus = /^([A-Za-z_][A-Za-z0-9_]*)\+=/.exec(w);
-        if (plus) markAny(plus[1]);
-        if (w === 'for' || w === 'select') markAny(words[k + 1] || '');
-        if (w === 'printf') for (let j = k + 1; j < words.length - 1; j += 1) if (words[j] === '-v') markAny(words[j + 1]);
-        if (['read', 'mapfile', 'readarray', 'unset', 'declare', 'typeset', 'local', 'export', 'readonly'].includes(w)) {
-          for (let j = k + 1; j < words.length && !/^[;&|]/.test(words[j]); j += 1) if (!words[j].startsWith('-') && !words[j].includes('=')) markAny(words[j]);
-        }
-      }
-      // NAME=value words before the command: kept for the line when nothing follows (or after export), else for this command.
       let i = 0;
-      const lead = words[0] === 'export' || words[0] === 'declare' || words[0] === 'local' || words[0] === 'readonly';
+      const lead = words[0] === 'export';
       if (lead) i = 1;
       const scoped = new Map();
       for (; i < words.length; i += 1) {
         const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(words[i]);
         if (!m) break;
-        const vals = expandWord(m[2], vars, { pwd: anyDir ? [ANY] : [...dirs], home: homeDir });
-        if (!vals) return true;
-        // A name already ANY stays ANY: an earlier write the guard could not resolve may still hold.
-        if (vars.get(m[1])?.has(ANY)) continue;
-        scoped.set(m[1], new Set([...(scoped.get(m[1]) || []), ...vals]));
+        const vals = expandWord(m[2], vars, { pwd: [...dirs], home: homeDir });
+        if (!vals) return 'protected';
+        if (vals.some((v) => v.includes(ANY))) unsure = true;
+        // A plain, resolved value joins what the name held: a conditional assignment (`false && X=…`) may not have run.
+        else scoped.set(m[1], new Set([...(vars.get(m[1]) || []), ...(scoped.get(m[1]) || []), ...vals]));
       }
+      if (lead && i < words.length) unsure = true;   // `export NAME` without a value
       const persist = lead || i >= words.length;
       const view = new Map(vars);
-      for (const [k, v] of scoped) view.set(k, new Set([...(view.get(k) || []), ...v]));
-      if (persist) for (const [k, v] of scoped) vars.set(k, new Set([...(vars.get(k) || []), ...v]));
-      while (i < words.length && PREFIX_WORDS.has(words[i])) i += 1;
+      for (const [k, v] of scoped) view.set(k, v);
+      if (persist) for (const [k, v] of scoped) vars.set(k, v);
+      while (i < words.length && (PREFIX_WORDS.has(words[i]) || KEYWORDS.has(words[i]))) i += 1;
       const cmd = words[i] ? words[i].split('/').pop() : '';
-      const recursive = RECURSIVE_READERS.has(cmd) || xargs;
-      // A recursive reader with no path reads the folder it is in: with that folder unknown, refused.
-      const pathArgs = words.slice(i + 1).filter((w) => !w.startsWith('-'));
-      if (anyDir && ((cmd === 'find' && !pathArgs.length) || (['rg', 'ag'].includes(cmd) && pathArgs.length <= 1)
-        || (['grep', 'egrep', 'fgrep'].includes(cmd) && words.some((w) => /^-[a-zA-Z]*[rR]/.test(w) || w === '--recursive') && pathArgs.length <= 1))) return true;
+      const rest = words.slice(i + 1);
+      const walker = WALKERS.has(cmd) || xargs || (Object.hasOwn(WALK_WITH_FLAG, cmd) && rest.some((w) => WALK_WITH_FLAG[cmd].test(w)))
+        || (GLOB_READERS.has(cmd) && rest.some((w) => GLOB_CHARS.test(w)));
+      if (walker) readers.push({ words: rest, dirUnknownAt: dirUnknown });
       for (let k = 0; k < words.length; k += 1) {
         const raw = words[k];
-        const pwd = anyDir ? [ANY] : [...dirs];
-        // A folder change, wherever the word stands (`{ cd x; }`, `if …; then cd x; fi`, `sh -c 'cd x'`, `eval cd x`).
+        // `.` is `source` only as the command; the others anywhere (the cautious reading).
+        if ((UNSURE_WORDS.has(raw) && (raw !== '.' || k === i)) || (raw === '-v' && cmd === 'printf')) unsure = true;
         if (CD_WORDS.has(raw)) {
           let j = k + 1;
           while (j < words.length && words[j].startsWith('-') && words[j] !== '-') {
             if (words[j] === '--') { j += 1; break; }
-            if (!CD_OPTIONS.has(words[j])) anyDir = true;
+            if (!CD_OPTIONS.has(words[j])) { unsure = true; dirUnknown = true; }
             j += 1;
           }
           const target = words[j];
-          if (raw === 'popd' || target === '-') anyDir = true;
-          else if (target === undefined || /^[;&|]/.test(target)) { if (homeDir) reach([homeDir]); else anyDir = true; }
-          else { const alts = expandWord(target, view, { pwd, home: homeDir }); if (!alts) return true; reach(alts); }
+          if (raw === 'popd' || target === '-') { unsure = true; dirUnknown = true; }
+          else if (target === undefined) { if (homeDir) reach([homeDir]); else { unsure = true; dirUnknown = true; } }
+          else { const alts = expandWord(target, view, { pwd: [...dirs], home: homeDir }); if (!alts) return 'protected'; reach(alts); }
         }
-        const alts = expandWord(raw, view, { pwd, home: homeDir });
-        if (!alts) return true;   // too many alternatives to check: refused, never waved through
+        const alts = expandWord(raw, view, { pwd: [...dirs], home: homeDir });
+        if (!alts) return 'protected';   // too many alternatives to check: refused, never waved through
         for (const w of alts) {
+          if (w.includes(ANY)) unsure = true;
           const g = globText(w);
-          const parts = g.split('/');
-          // Each place an unknown prefix ends: the start of a relative word with an unknown folder, after an ANY segment.
-          const starts = [];
-          if (!g.startsWith('/') && anyDir) starts.push(0);
-          w.split('/').forEach((s, n) => { if (s.includes(ANY)) starts.push(n + 1, n); });
-          const absList = g.startsWith('/') ? [g] : anyDir ? [posix.join('/*', g)] : [...dirs].map((d) => posix.join(d, g));
-          if (absList.some(bad)) return true;
-          const rel = g.startsWith('/') ? parts.slice(1) : parts;
-          const shift = w.startsWith('/') ? 1 : 0;
-          if (starts.some((p) => completes(rel, Math.max(0, p - shift)))) return true;
-          // A recursive reader given a parent of a protected folder (`find /`, `tar c /run`, `cp -r ~ …`).
-          if (recursive && k > i && !w.startsWith('-') && absList.some((p) => ancestor(posix.normalize(p)))) return true;
-          // Under an unknown folder, `.`, `..`, `*` and `.*` given to a recursive reader may be a protected folder's parent.
-          if (recursive && anyDir && k > i && /^(?:\.{1,2}|\*+|\.\*)\/?$/.test(g)) return true;
+          allWords.push(g);
+          // RESOLVED: the word against every folder reached; a protected folder pair also against `/`.
+          const absList = g.startsWith('/') ? [g] : [...dirs].map((d) => posix.join(d, g));
+          if (absList.some(bad)) return 'protected';
+          if (!g.startsWith('/') && targets.some((t) => holdsSegments(segsOf(posix.join('/', g)), t))) return 'protected';
+          const known = g.startsWith('/') ? [g] : [...dirs].map((d) => posix.join(d, g));
+          if ((WALKERS.has(cmd) || xargs || walker) && k > i && !w.startsWith('-') && known.some((p) => ancestor(posix.normalize(p)))) return 'protected';
         }
         // A protected root written with quotes, braces, a wildcard or an expansion is refused outright.
         const plain = raw.replace(/\/+/g, '/');
-        if (/^\/(?:(?:private\/)?var\/)?run\b|^\/worca\b/.test(plain) && /[*?[\]{}$`\u0000]/.test(plain)) return true;
+        if (/^\/(?:(?:private\/)?var\/)?run\b|^\/worca\b/.test(plain) && /[*?[\]{}$`\u0000]/.test(plain)) return 'protected';
       }
     }
   }
-  return false;
+  if (!unsure) return null;
+  // UNSURE (1): a protected name anywhere.
+  if (allWords.some(hasName)) return 'protected';
+  // UNSURE (2): a reader is allowed only with explicit paths outside every protected folder and its parents.
+  for (const r of readers) {
+    const operands = r.words.filter((w) => !w.startsWith('-'));
+    if (!operands.length) return 'unsure-reader';
+    for (const raw of operands) {
+      const w = globText(raw);
+      if (raw.includes(ANY) || /[$`]/.test(raw) || GLOB_CHARS.test(w) || !w) return 'unsure-reader';
+      if (!w.startsWith('/') && (r.dirUnknownAt || dirUnknown)) return 'unsure-reader';
+      const abs = w.startsWith('/') ? posix.normalize(w) : posix.join(session, w);
+      if (inside(abs) || ancestor(abs)) return 'unsure-reader';
+    }
+  }
+  return null;
 }
+/** True when the command could name a protected system secret path (systemSecretRefusal). */
+export const namesSystemSecretPath = (command, o) => systemSecretRefusal(command, o) !== null;
 /** Rooted without a drive (/tmp, \x): Git's own MSYS root, never the session folder; `//server` (UNC) is not one. */
 const DRIVELESS = /^[\\/](?![\\/])/;
 /** `/c/x` (Git Bash) → `C:/x`; anything else as written. */
@@ -542,8 +532,10 @@ export function checkAskCommand(command, { cwd, home = null, userHome = null, ho
   const why = hardToUndoIn(local, cwd, cwd, 0, P);
   if (why) return `Hard-to-undo commands are blocked for Ask (${why}). Ask the user to run it in the terminal.`;
   // Last: a system secret folder by path shape (a guard on the chat's commands, not the boundary; see its header).
-  if (namesSystemSecretPath(raw, { cwd: win ? '/' : cwd, home: win ? null : userHome, worcaHome: win ? null : home, egressDataDir: egressDir })) {
-    return 'That command names a protected path (Worca\'s own files or credentials). Ask cannot read or change them.';
+  const secret = systemSecretRefusal(raw, { cwd: win ? '/' : cwd, home: win ? null : userHome, worcaHome: win ? null : home, egressDataDir: egressDir });
+  if (secret === 'protected') return 'That command names a protected path (Worca\'s own files or credentials). Ask cannot read or change them.';
+  if (secret === 'unsure-reader') {
+    return 'That command reads folders the command check cannot work out (a folder or variable set at run time, or a pattern). Name each folder explicitly: cd to a written-out path first and give the reader plain paths, for example `cd /repo && grep -rn foo src`, and run it again.';
   }
   return null;
 }
