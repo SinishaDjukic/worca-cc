@@ -7225,7 +7225,7 @@ function stepDeps(ctx, pq) {
 
 /** Small runs C3 (D12, D13): a stop's extra deps. A stop is answered on every surface: the feature card, the feature
  *  page, the run page and the run side panel (`runPage` there: the head's one-column marker); with the flag off, the run
- *  page and panel (`readOnly`) draw its findings only. An answer held for another run's turn (the feature view's
+ *  page and panel (`readOnly`) draw its findings only; with it on, every surface lists them (`findings`). An answer held for another run's turn (the feature view's
  *  `stop.held`, read through the slice info) draws the one answered line. */
 function stopDeps(ctx, pq, panel) {
   if (!pq || !pq.stop) return {};
@@ -7236,7 +7236,7 @@ function stopDeps(ctx, pq, panel) {
   const info = r && r.pipelineId ? sliceInfoFor(r.pipelineId, repaint) : null;
   const held = info && info.stop && info.stop.held ? { value: info.stop.value } : null;
   const pick = typeof panel.__stopPick === 'string' ? panel.__stopPick : null;   // the person's pick across a repaint
-  return { readOnly: !small && runScreen, ...(small && runScreen ? { runPage: true } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}),
+  return { readOnly: !small && runScreen, ...(small && runScreen ? { runPage: true } : {}), ...(small ? { findings: true } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}),
     ...(small && info?.stop?.refused ? { refused: info.stop.refused } : {}) };   // slice 3 (D11): why a held answer was not sent
 }
 

@@ -297,7 +297,9 @@ notes show on the feature's chat card. The step card itself is the same on the r
 page, in Chat and on the group page. With small runs on, a run's stop (Plan approval,
 a failed plan check, Split, Verifier gaps) draws the same card, with the same
 actions, on the feature's card in Chat, on the group page, on the run page and in
-the Chat run side panel. Answering it on one surface repaints the others (to the
+the Chat run side panel. With small runs on, the stop's card lists its findings
+under its question (the open issues, the failing checks, the Verifier's gaps or the
+concern's detail) on every surface. Answering it on one surface repaints the others (to the
 held line, or clears the question). A second answer is refused: the card reads
 "Not sent: this stop is already answered". A feature that was re-planned keeps its old
 link: it shows the newer feature with "Re-planned: the runs below replace the

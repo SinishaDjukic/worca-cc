@@ -203,19 +203,21 @@ function appendRecoveryBody(doc, panel, rec) {
   }
 }
 
-/** A requirement stop's one finding: the concern's title and detail, unranked. */
+/** A requirement stop's one finding: the concern's title (when given) and detail, unranked. */
 function concernFinding(doc, title, detail) {
   const list = doc.createElement('ul');
   list.className = 'issues';
   const li = doc.createElement('li');
   li.className = 'issue';
-  const head = doc.createElement('div');
-  head.className = 'issue-head';
-  const t = doc.createElement('span');
-  t.className = 'issue-title';
-  t.textContent = title;
-  head.appendChild(t);
-  li.appendChild(head);
+  if (title) {
+    const head = doc.createElement('div');
+    head.className = 'issue-head';
+    const t = doc.createElement('span');
+    t.className = 'issue-title';
+    t.textContent = title;
+    head.appendChild(t);
+    li.appendChild(head);
+  }
   if (detail) {
     const d = doc.createElement('div');
     d.className = 'issue-detail';
@@ -245,9 +247,11 @@ function verifyGapList(doc, gaps) {
 }
 const stopGaps = (stop) => (stop.reason === 'check' && Array.isArray(stop.gaps) && stop.gaps.length ? stop.gaps : null);
 
-/** Small runs C3 (D12): the one findings list of a stop, for the run side panel: the open issues of an objection, the
- *  failing check rows, the Verifier's gaps, or the requirement concern. It holds no count: the card's question says how many. */
-function stopFindings(doc, pq) {
+/** Small runs C3 (D12): the one findings list of a stop, on every surface that draws it: the open issues of an objection,
+ *  the failing check rows, the Verifier's gaps, or the requirement concern. It holds no count: the card's question says
+ *  how many. `answerable`: the card's question already names a concern's title, so its row carries the detail only
+ *  (none without a detail). */
+function stopFindings(doc, pq, opts = {}) {
   const stop = pq.stop;
   const issues = Array.isArray(pq.issues) ? pq.issues : [];
   if (stopGaps(stop)) return verifyGapList(doc, stop.gaps);
@@ -267,14 +271,15 @@ function stopFindings(doc, pq) {
     box.append(...buildCheckRows(doc, { items: items.length ? items : [{ label: stop.findingsLine, pass: false }] }));
     return box;
   }
+  if (pq.concern && opts.answerable) return pq.concern.detail ? concernFinding(doc, '', pq.concern.detail) : null;
   return pq.concern ? concernFinding(doc, pq.concern.title, pq.concern.detail) : outlineFinding(doc, pq, stop);
 }
 
 /** Small runs C3 (D11, D13): a marked run's stop. The card asks one question (who wants what and why; two options, each
  *  saying what it does; Worca's pick recommended and preselected; one primary naming the pick), on every surface: the
  *  feature card, the feature page, the run page and the run side panel (`runPage`: the head's one-column marker). With
- *  the flag off the run page and panel are `readOnly` and draw only the stop's findings; a held answer
- *  (`held` = {value}) draws the one answered line. */
+ *  the flag off the run page and panel are `readOnly` and draw only the stop's findings; with it on (`findings`) every
+ *  surface lists them under the question. A held answer (`held` = {value}) draws the one answered line. */
 function renderStopCard(panel, pq, deps) {
   const { doc } = deps;
   const stop = pq.stop;
@@ -315,10 +320,17 @@ function renderStopCard(panel, pq, deps) {
   const foot = q.el.querySelector('.qpanel-foot');
   if (foot) foot.classList.add('plan-actions');
   // An outline change: the question is one line; the rest of the Planner's note folds between it and the options.
-  if (stop.reason === 'requirement' && !pq.concern && pq.plan?.outlineChange) {
+  const outlineShown = stop.reason === 'requirement' && !pq.concern && !!pq.plan?.outlineChange;
+  if (outlineShown) {
     const note = buildNoteBody(doc, pq.plan.outlineChange, { key: `stop:${pq.id}`, dropTitle: true });
     if (note) q.el.querySelector('.qopts').before(note.el);
   }
+  // R-ux-4: the stop's one findings list, above the foot (and above a proposed change's texts). With small runs on
+  // (`findings`) it is the full list; with the flag off only a Verifier stop lists its open gaps (C5, D12: the card's own
+  // gap list is not drawn meanwhile). An outline change's note is already its finding.
+  const list = outlineShown ? null : deps.findings ? stopFindings(doc, pq, { answerable: true })
+    : stopGaps(stop) ? verifyGapList(doc, stop.gaps) : null;
+  if (list) { if (foot) foot.before(list); else q.el.appendChild(list); }
   // Small runs C4 (D16): a proposed requirement change shows every new text in full (what Change it applies), then how
   // it lands, below the options.
   if (stop.reason === 'requirement' && Array.isArray(stop.change)) {
@@ -336,15 +348,10 @@ function renderStopCard(panel, pq, deps) {
     const opts = q.el.querySelector('.qopts');
     if (opts) opts.before(err); else if (foot) foot.before(err); else q.el.prepend(err);
   }
-  // Small runs C5 (D12): the Verifier's bound stop lists its open gaps (the card's own gap list is not drawn meanwhile).
-  if (stopGaps(stop)) {
-    const gaps = verifyGapList(doc, stop.gaps);
-    if (foot) foot.before(gaps); else q.el.appendChild(gaps);
-  }
   panel.appendChild(q.el);
 }
 
-/** Gate (cycle limit). deps: { doc, title, chip, wireCopy, tagLevel(el, level), submit, readOnly?, runPage?, held?, pick?, refused? }. A small runs
+/** Gate (cycle limit). deps: { doc, title, chip, wireCopy, tagLevel(el, level), submit, readOnly?, runPage?, findings?, held?, pick?, refused? }. A small runs
  *  stop (`pq.stop`, a gate or a plan ask) draws as renderStopCard. */
 export function renderGateCard(panel, pq, deps) {
   if (pq && pq.stop) return renderStopCard(panel, pq, deps);

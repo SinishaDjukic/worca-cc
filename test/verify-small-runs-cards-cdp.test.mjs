@@ -210,3 +210,29 @@ test('the AFTER_RUN_ONLY phase: the Resume before the press and the after-run ro
   assert.match(s, /[`'/]after-run-row-(\$\{theme\}|light|dark)\.png/);
   assert.match(s, /[`'/]resume-after-run-(\$\{theme\}|light|dark)\.png/);
 });
+
+test('the STOP_FINDINGS_ONLY phase: a 3-finding stop on the run page, the Chat run panel and the Chat card, light and dark at 1280px, 6 screenshots', () => {
+  const s = src();
+  const gate = s.match(/process\.env\.STOP_FINDINGS_ONLY === '1'\) \{ await (\w+)\(\); await finish\(\); \}/);
+  assert.ok(gate, 'the STOP_FINDINGS_ONLY=1 gate');
+  const at = s.indexOf(`async function ${gate[1]}(`);
+  assert.ok(at >= 0, 'the stop findings phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  // The seeded run at its gate stop; no live mock run.
+  assert.match(body, /seedFeature\(/, 'a seeded marked feature');
+  assert.match(body, /liveRun\(/, 'one live run');
+  assert.match(body, /gateStop\(/, 'at a gate stop');
+  // The three surfaces.
+  assert.match(body, /#running\//, 'the run page');
+  assert.match(body, /#chat\/new\/run\//, 'the Chat run panel');
+  assert.match(body, /\bcard\(/, 'the Chat feature card');
+  // 3 rows with their titles, and 1 primary.
+  for (const needle of ['.issues > li.issue', '.issue-title', '.btn-primary']) assert.ok(body.includes(needle), needle);
+  assert.match(body, /=== 3\b/, 'the 3 rows are counted');
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  // The six files, with these exact names (no prefix), in SHOTS_DIR.
+  for (const surface of ['run-page', 'panel', 'card']) {
+    assert.match(s, new RegExp(`[\`'/]small-runs-stop-findings-${surface}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${surface} screenshots`);
+  }
+});

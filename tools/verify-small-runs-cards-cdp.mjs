@@ -14,6 +14,8 @@
 // D3 (D3_ONLY=1 runs it alone): the feature page's Requirements (one fold per role) and Decisions tabs of a marked
 //   feature before and after Ship, light and dark at 1280px and 375px, beside the prototype's `#feature` tabs;
 // the held row (HELD_ONLY=1 runs it alone): a run held on a clash, its reason and one Start now, light and dark at 1280px;
+// a stop's findings (STOP_FINDINGS_ONLY=1 runs it alone): a 3-issue gate stop lists its 3 issues on the run page, the Chat run
+//   panel and the Chat feature card, light and dark at 1280px;
 // the take-in (last; TAKEIN_ONLY=1 runs it alone): the moved step a run that waited at a stop logs once it took in a
 //   finished run's work, and its stop's "Not sent: …" line after a refused take-in, light and dark at 1280px;
 // and one reduced-motion capture of Prototype building. A live phase then follows a REAL paced mock Design build
@@ -1174,8 +1176,62 @@ async function afterRunPhase() {
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 }
 
+// ---- Shaper small runs, slice 10 (R-ux-4): a stop's findings list shows on every surface where it can be answered. A
+// marked 4-run feature, run 2 live at a gate stop with 3 open issues. With the flag on, the run page, the Chat run side
+// panel and the Chat feature card each list the 3 issues under the question (`.qpanel .issues > li.issue`, titled as the
+// issues), with one primary. 1280px, Expert, the classic look, light and dark: small-runs-stop-findings-run-page-…,
+// -panel-… and -card-… .png in SHOTS_DIR.
+const SF_ISSUES = [ISSUES[0],
+  { severity: 'major', title: 'A deleted chart stays reachable from its share link', detail: 'the share row is never revoked' },
+  { severity: 'major', title: 'The chart export leaks private column names', detail: 'CSV header is built before the column filter' }];
+async function stopFindingsPhase() {
+  { const r = await post('/api/settings', { uiLevel: 'expert' }); check(r.ok, `stop findings: the Expert level is set (${r.status})`); }
+  const SF = seedFeature('sf', 'Stop findings', ['done', 'running', 'planned', 'planned']);
+  const stop = gateStop({ run: 2, issues: SF_ISSUES, fixCycles: 3, nodeId: 'n_review' });
+  const pq = { id: 'gate-sf-3', kind: 'gate', wireId: 'w9', nodeId: 'n_review', executionId: 'x:n_review:3', deliveryNo: 3, issues: SF_ISSUES, stop };
+  const runId = liveRun(SF.pid(2), `Run 2 · ${TITLES[1]}`, { at: 'n_review', pendingQuestion: pq, runShape: { slice: { feature: SF.f.id, index: 2 } } });
+  const want = SF_ISSUES.map((i) => i.title);
+  const FACTS = (scope) => `(() => { const vis = (els) => [...els].filter((e) => e.offsetParent);
+    const q = vis(document.querySelectorAll(${JSON.stringify(`${scope} .qpanel`)})).find((x) => x.querySelector('.qopts'));
+    if (!q) return null;
+    return { rows: vis(q.querySelectorAll('.issues > li.issue')).length,
+      titles: vis(q.querySelectorAll('.issues > li.issue .issue-title')).map((t) => t.textContent.trim()),
+      primaries: vis(q.querySelectorAll('.btn-primary')).length,
+      overflow: q.scrollWidth > q.clientWidth + 1 }; })()`;
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const judgeList = async (scope, where, theme) => {
+    const listed = `(() => { const f = ${FACTS(scope)}; return !!f && f.rows > 0; })()`;
+    if (!(await waitFor(listed, `the stop's findings on the ${where} (${theme})`))) return;
+    const f = await ev(FACTS(scope));
+    check(f.rows === 3 && JSON.stringify(f.titles) === JSON.stringify(want) && f.primaries === 1 && !f.overflow,
+      `stop findings, ${where}, ${theme}: 3 issue rows titled as the issues, 1 primary, no overflow (${JSON.stringify(f)})`);
+    await reveal(`${scope} .qpanel .issues`);
+  };
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    await open(`${base}/?sfr-${theme}#running/${runId}`);
+    await skipWelcome(); await setTheme(theme);
+    await judgeList('#run-detail', 'run page', theme);
+    await capture(`small-runs-stop-findings-run-page-${theme}.png`);
+    await open(`${base}/?sfp-${theme}#chat/new/run/${SF.pid(2)}/overview`);
+    await skipWelcome(); await setTheme(theme);
+    await judgeList(PANEL, 'Chat run panel', theme);
+    await capture(`small-runs-stop-findings-panel-${theme}.png`);
+    if (await card(SF.threadId, 'sfc', 'the stop findings card', theme)) await judgeList('.chat-rc', 'Chat feature card', theme);
+    await capture(`small-runs-stop-findings-card-${theme}.png`);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
 // D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in, SHIP_LIST_ONLY=1
-// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
+// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
 if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }
 if (process.env.HELD_ONLY === '1') { await heldPhase(); await finish(); }
@@ -1183,6 +1239,7 @@ if (process.env.TAKEIN_ONLY === '1') { await takeInPhase(); await finish(); }
 if (process.env.SHIP_LIST_ONLY === '1') { await shipListPhase(); await finish(); }
 if (process.env.HELD_RESUME_ONLY === '1') { await heldResumePhase(); await finish(); }
 if (process.env.AFTER_RUN_ONLY === '1') { await afterRunPhase(); await finish(); }
+if (process.env.STOP_FINDINGS_ONLY === '1') { await stopFindingsPhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {
@@ -1370,6 +1427,7 @@ const LIVE_ROWS = "[...document.querySelectorAll('.chat-rc .proto-rows .plan-che
 await shipListPhase();
 await heldResumePhase();
 await afterRunPhase();
+await stopFindingsPhase();
 await d2Phase();
 await d3Phase();
 await heldPhase();

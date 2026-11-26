@@ -259,3 +259,10 @@ test('slice 8: Held resumes names the row word and the Resume wording', () => {
   assert.deepEqual(missing(part, ['after run N', 'Resume after run N']), []);
   for (const gone of ['Until the row wording lands', "a stop line's Resume"]) assert.ok(!part.includes(gone), `no longer says: ${gone}`);
 });
+
+// R-ux-4: a stop's findings list shows on every surface where the stop can be answered.
+test('R-ux-4: "One card, three hosts" says a small run\'s stop card lists its findings under its question on every surface', () => {
+  const para = read('shape-it-first.md').split(/\n\s*\n/).map(flat).find((p) => p.startsWith('**One card, three hosts.**')) || '';
+  assert.ok(para, 'the paragraph "One card, three hosts"');
+  assert.deepEqual(missing(para, [/small runs on/i, /lists its findings under (?:its|the) question/i, /every surface/i]), []);
+});
