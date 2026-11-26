@@ -70,8 +70,22 @@ Copy `docker/shared.env.example` to `shared.env` next to the compose files. It l
 | `tunnel_token` | a file | The cloudflared tunnel's token |
 
 Secrets are files, never values in `shared.env`. Compose mounts each one into the containers that need it, at
-`/run/secrets/…`, and the `…_FILE` variables point there. Worca refuses to start while its broker secret file is
-readable by group or others. The containers run as uid 1000:
+`/run/secrets/…`, and the `…_FILE` variables point there. A compose secret keeps the host file's mode and owner.
+Every container here runs as uid 1000, so every secret file is **owned by uid 1000 with mode 0600**:
+
+| File | Read by | Owner and mode | Checked at start |
+| --- | --- | --- | --- |
+| `broker_secret` | Worca and the broker | `1000:1000`, `0600` | Worca refuses to start otherwise |
+| `egress_secret` | Worca and the sidecar | `1000:1000`, `0600` | Worca refuses to start otherwise |
+| GitHub App key (`WORCA_GH_APP_KEY`), optional | Worca | `1000:1000`, `0600` | Worca refuses to start otherwise |
+| `broker_vault_key` | the broker only | `1000:1000`, `0600` | no: agents never run in the broker's container |
+| GitHub client secret (`WORCA_BROKER_GITHUB_CLIENT_SECRET_PATH`), optional | the broker only | `1000:1000`, `0600` | no: the same |
+| `proxy_login.json` (`WORCA_PROXY_LOGIN`), optional | the sidecar only | `1000:1000`, `0600` | no: agents never run in the sidecar |
+| `tunnel_token` | cloudflared only | `1000:1000`, `0600` | no |
+
+Agents run in Worca's container under their own users. A file there that its group or others can read is one
+`cat` away, so Worca checks each file it reads, once, at start. A bad one stops it with a line that names the file
+and the fix. Make the files like this:
 
 ```bash
 mkdir -p secrets
@@ -79,7 +93,8 @@ docker run --rm ghcr.io/worca-org/worca:latest worca broker secrets   # prints v
 openssl rand -base64 32 > secrets/broker_vault_key
 # paste the values into secrets/broker_secret, secrets/egress_secret and secrets/tunnel_token
 worca proxy hash > secrets/proxy_login.json     # only with a proxy login: DOMAIN\user and the password, hidden
-sudo chown 1000:1000 secrets/* && chmod 600 secrets/*
+sudo chown 1000:1000 secrets/* && sudo chmod 600 secrets/*
+stat -c '%U:%G %a %n' secrets/*                 # -> 1000:1000 600 for every file (names instead of 1000 if uid 1000 has one)
 ```
 
 `worca proxy hash` saves nothing. Its file holds the domain, the user and the NT hash, never the password. The
@@ -131,7 +146,9 @@ curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' https://worca.acme.exam
 curl -s -o /dev/null -w '%{http_code}\n' https://worca-keys.acme.example/
 #    -> 302
 
-# 2. Nothing is published on the server.
+# 2. Nothing is published on the server, and every secret file is 0600, owned by uid 1000.
+stat -c '%u %a %n' secrets/*
+#    -> 1000 600 for each file
 dc ps --format '{{.Service}} {{.Publishers}}'
 #    -> every service with an empty list
 

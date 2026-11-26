@@ -49,6 +49,7 @@ test('compose.shared.yml parses and keeps the hardening: no host mount, nothing 
   assert.deepEqual(c.services.cloudflared.profiles, ['tunnel']);
   assert.deepEqual(c.services.cloudflared.networks, ['internal', 'default']);
   assert.ok(!c.services.cloudflared.environment, 'the tunnel token is a file, not a variable');
+  assert.equal(c.services.cloudflared.user, '1000:1000', 'one owner for every secret file');
   // Every *_FILE variable a service sets points at a secret that service mounts.
   for (const [name, svc] of Object.entries(c.services)) {
     for (const [k, v] of Object.entries(svc.environment || {})) {
@@ -59,6 +60,19 @@ test('compose.shared.yml parses and keeps the hardening: no host mount, nothing 
     }
   }
   for (const [n, s] of Object.entries(c.secrets)) assert.match(s.file, /^\$\{(WORCA_SECRETS_DIR|WORCA_PROXY_LOGIN|WORCA_GH_APP_KEY|WORCA_BROKER_GITHUB_CLIENT_SECRET_PATH)/, `${n} comes from a file path`);
+});
+
+test('the docs and the example env state the owner and mode of every secret file, with the commands', () => {
+  const doc = readFileSync(join(ROOT, 'docs', 'shared-instance.md'), 'utf8');
+  const ex = read('shared.env.example');
+  for (const f of ['broker_secret', 'egress_secret', 'broker_vault_key', 'tunnel_token', 'proxy_login.json']) {
+    assert.match(doc, new RegExp(`\\| \`${f.replace('.', '\\.')}\`[^\\n]*\\| \`1000:1000\`, \`0600\``), `${f}: owner and mode in the table`);
+  }
+  for (const t of [doc, ex]) assert.match(t, /chown 1000:1000 secrets\/\* && sudo chmod 600 secrets\/\*/);
+  // Every secret file Worca's own container reads is one the boot check covers.
+  const box = Object.entries(shared().services.worca.environment).filter(([k, v]) => k.endsWith('_FILE') && /\/run\/secrets\//.test(String(v))).map(([k]) => k);
+  const checked = readFileSync(join(ROOT, 'src', 'core', 'secret-files.mjs'), 'utf8');
+  for (const k of box) assert.ok(checked.includes(`'${k}'`), `${k} is in BOX_SECRET_FILES`);
 });
 
 test('the base overlays accept a secret file: no compose-time requirement of the literal variable', () => {

@@ -19,7 +19,9 @@
 #     identity proxy of your own that sets a header (WORCA_IDENTITY_HEADER). Nothing is published on the host.
 #
 # Every value the operator supplies is in docker/shared.env.example. Secrets are files under ./secrets/
-# (WORCA_SECRETS_DIR), mounted as compose secrets, never variables. Owner uid 1000 (the image's worca user), mode 0600.
+# (WORCA_SECRETS_DIR), mounted as compose secrets, never variables. Every one: owner uid 1000 (the containers' user),
+# mode 0600. A compose secret keeps the host file's mode, and agents share Worca's container: Worca refuses to start
+# while a secret file it reads is readable by its group or others (src/core/secret-files.mjs).
 #
 # Every signed-in person is an administrator, and there is no privacy between teammates (docs/shared-instance.md).
 # Needs Docker Compose 2.24 or newer (!override, !reset).
@@ -109,6 +111,8 @@ services:
     # A remotely managed tunnel: its ingress sends WORCA_INSTANCE_HOST to http://worca:4317 and WORCA_KEYPAGE_HOST
     # to http://broker:8081 (never 8080). The token is a file.
     command: ["tunnel", "run", "--token-file", "/run/secrets/worca_tunnel_token"]
+    # The same uid as every other container here, so every secret file is 1000:1000, mode 0600.
+    user: "1000:1000"
     secrets:
       - worca_tunnel_token
     # Its own container, never Worca's network namespace (docs/remote-access.md, "Callers inside the box").
