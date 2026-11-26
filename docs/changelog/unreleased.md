@@ -26,7 +26,7 @@ Read it: [Network proxy](../network-proxy.md#worca-in-a-container)
 Pull requests (add each number when it opens):
 
 - Proxy login in the egress sidecar (#1621)
-- The Settings card and the setup assistant talk to the sidecar
+- The Settings card and the setup assistant talk to the sidecar (#1623)
 
 ## Steady command rows in Chat
 
