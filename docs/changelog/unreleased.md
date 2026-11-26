@@ -27,6 +27,26 @@ Pull requests (add each number when it opens):
 
 - Local sandbox (Docker) backend (#1627)
 
+## Runs in an E2B sandbox
+
+**A run's agents can now work in an E2B sandbox instead of on your machine.**
+
+Pick it under **Runs in**, per project or per run, or with `worca --exec-env e2b`. One sandbox serves the whole run. Your code goes in as a git bundle. Changes come back as a filtered patch after each step.
+
+No model key and no git token enter the sandbox. Worca keeps them and relays the model calls.
+
+The sandbox network is open by default. A project can limit it to the allow-listed hosts. A project can also have its own template, built from its environment spec.
+
+It covers single git projects on Claude, Codex, Copilot or Cursor. Bedrock and Vertex are refused for a sandbox run.
+
+Chips: Runs · Security · E2B
+
+Read it: [E2B](../e2b.md)
+
+Pull requests (add each number when it opens):
+
+- Run a pipeline's agents in a remote E2B sandbox (#826)
+
 ## Steady command rows in Chat
 
 **A stack of commands no longer flickers while it runs.**

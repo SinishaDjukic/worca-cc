@@ -37,12 +37,15 @@ export function toE2bNetwork(allowOut, extraDeny = []) {
  */
 export function sandboxEgress(config, env = process.env) {
   if (config?.egress !== 'allow') return null;
+  // In a box behind the egress overlay, only the sidecar gets WORCA_EGRESS_ALLOW. The overlay hands Worca the same
+  // list as WORCA_SANDBOX_EGRESS_ALLOW, a name Worca's own outbound policy never reads. Set (even empty), it wins.
+  const allowList = typeof env.WORCA_SANDBOX_EGRESS_ALLOW === 'string' ? env.WORCA_SANDBOX_EGRESS_ALLOW : env.WORCA_EGRESS_ALLOW;
   const deny = parseHostList(env.WORCA_EGRESS_DENY).filter((d) => d !== '.invalid');
   const denyNames = deny.filter((d) => !isAddress(d));
   // A deny entry as the platform reads it: "x" that name only, ".x" its subdomains only.
   const denied = (host) => denyNames.some((d) => hostMatches(host, d, { subdomainsOnly: true }));
   const unheld = [];
-  const allowOut = toE2bAllow(parseAllow(env.WORCA_EGRESS_ALLOW)).filter((a) => {
+  const allowOut = toE2bAllow(parseAllow(allowList)).filter((a) => {
     if (!a.startsWith('*.')) return !denied(a) && !deny.includes(a);
     const parent = a.slice(1);                               // "*.x" -> ".x"
     if (denyNames.some((d) => d === parent || (d.startsWith('.') && parent.endsWith(d)))) return false;
