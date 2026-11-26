@@ -57,6 +57,7 @@
     "tools/install.mjs",
     "docker/compose*.yml",
     "docker/.env.example",
+    "docker/shared.env.example",
     "npm-shrinkwrap.json",
     "README.md"
   ],

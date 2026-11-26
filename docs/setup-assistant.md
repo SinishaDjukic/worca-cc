@@ -168,6 +168,15 @@ password with it, so a fresh install behind an NTLM proxy passes before anything
 needs a new test. A pass counts for 9 minutes, under the server's 10-minute window. This holds for the saved
 proxy on a re-run too: **Skip for now** is the way past Network without a test, and it keeps the saved values.
 
+**In a container.** With the egress sidecar the login lives there, not in Worca's box
+([network-proxy.md → Worca in a container](network-proxy.md#worca-in-a-container)). Network works the same way.
+The server forwards the Test, the settings and the login to the sidecar. The password is held in memory for
+that one call. A line under the password says that the sidecar holds the login. **More** has the timeouts
+only: the sidecar has no local proxy port. "Found in your environment" never shows the sidecar itself; the
+form starts with the proxy the sidecar uses. When the operator manages the login (`WORCA_EGRESS_LOGIN_FILE`),
+Network shows three lines instead of the form: that the operator manages the login, who is logged in, and the
+state. **Next** needs no Test there, and the apply changes nothing on the network.
+
 **Next on Network.** After a passing test (or with Direct), **Next** posts the network group alone and shows its
 rows inline on Network. Model access opens only when it succeeded; the password is dropped right after the 202.
 A failure stays on Network with the failed step's line and offers **Retry** from that step (asking for the

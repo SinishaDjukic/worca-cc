@@ -27,7 +27,10 @@ services:
       # worca's fetch() honors HTTP(S)_PROXY (src/core/env-proxy.mjs): keep the sidecar
       # direct, or a corporate proxy from .env gets asked for "broker" and can't resolve it.
       NO_PROXY: ${NO_PROXY:-127.0.0.1,localhost},broker
-      WORCA_BROKER_SECRET: ${WORCA_BROKER_SECRET:?set WORCA_BROKER_SECRET in .env}
+      # The secret, or the file WORCA_BROKER_SECRET_FILE names (compose.shared.yml); without either, worca and the
+      # broker refuse to start and say so (compose cannot require one of two variables).
+      WORCA_BROKER_SECRET: ${WORCA_BROKER_SECRET:-}
+      WORCA_BROKER_SECRET_FILE: ${WORCA_BROKER_SECRET_FILE:-}
       WORCA_BROKER_SYSTEM_BILL_TO: ${WORCA_BROKER_SYSTEM_BILL_TO:-}
       # Optional: pushes and pull requests as the person who acted (prefer | required),
       # and what to do with MCP servers that carry a literal secret (block | warn | off).
@@ -41,9 +44,22 @@ services:
     image: ghcr.io/worca-org/worca:${WORCA_TAG:-latest}
     init: true
     command: ["worca", "broker"]
+    # On the allowlist's internal network too (compose.egress.yml), so a worca confined to it reaches the broker.
+    networks:
+      - default
+      - internal
     environment:
+      # The broker's calls to the model providers: through the egress sidecar when there is one
+      # (http://egress:3128, compose.proxy.yml; `worca container` sets it), which logs in to the
+      # corporate proxy. Empty: direct, as before.
+      HTTPS_PROXY: ${WORCA_BROKER_PROXY:-}
+      HTTP_PROXY: ${WORCA_BROKER_PROXY:-}
+      NO_PROXY: 127.0.0.1,localhost
       WORCA_BROKER_MODE: ${WORCA_BROKER_MODE:-single}
-      WORCA_BROKER_SECRET: ${WORCA_BROKER_SECRET:?set WORCA_BROKER_SECRET in .env}
+      # The secret, or the file WORCA_BROKER_SECRET_FILE names (compose.shared.yml); without either, worca and the
+      # broker refuse to start and say so (compose cannot require one of two variables).
+      WORCA_BROKER_SECRET: ${WORCA_BROKER_SECRET:-}
+      WORCA_BROKER_SECRET_FILE: ${WORCA_BROKER_SECRET_FILE:-}
       WORCA_BROKER_VAULT_KEY: ${WORCA_BROKER_VAULT_KEY:-}
       WORCA_BROKER_KEY_ANTHROPIC: ${WORCA_BROKER_KEY_ANTHROPIC:-}
       WORCA_BROKER_LOCAL_URL: ${WORCA_BROKER_LOCAL_URL:-}
@@ -84,3 +100,8 @@ services:
 
 volumes:
   broker-data:
+
+networks:
+  # compose.egress.yml declares the same network; with the broker alone it only holds the broker.
+  internal:
+    internal: true

@@ -1818,3 +1818,31 @@ test('a re-run by a Runner shows no level line', async () => {
     assert.equal(acks(h).length, 0);
   } finally { h.close(); }
 });
+
+const NOTE = 'The corporate proxy login on this instance is managed by the operator. Worca shows its status only.';
+const PROXY_MANAGED = { ...PROXY_ON, sidecar: true, managed: true, managedNote: NOTE, upstream: 'proxy.acme.example:8080',
+  login: { domain: 'ACME', user: 'svc-worca', label: 'ACME\\svc-worca' }, line: 'ready: via proxy.acme.example:8080 (NTLMv2) as ACME\\svc-worca.' };
+
+test('Network with a login the operator manages: who is logged in and the state, no form, no Test needed', async () => {
+  const h = await open({ entry: 'fix', step: 'network', proxy: PROXY_MANAGED });
+  try {
+    const text = h.$('.sa-managed').textContent;
+    assert.match(text, /managed by the operator/);
+    assert.match(text, /Logged in as ACME\\svc-worca to proxy\.acme\.example:8080\./);
+    assert.match(text, /ready: via proxy\.acme\.example:8080/);
+    for (const f of ['network.networkProxy', 'network.login.domain', 'network.login.password']) assert.equal(h.field(f), undefined, f);
+    assert.equal(h.$('.sa-test'), null);
+    assert.equal(h.next().disabled, false, 'nothing to test: the operator owns the login');
+    assert.equal(nextGate('network', { network: { mode: 'proxy' } }, { saved: { proxy: PROXY_MANAGED } }).ok, true);
+  } finally { h.close(); }
+});
+
+test('Network in a container: the password note names the sidecar, and More has no local proxy port', async () => {
+  const h = await open({ entry: 'fix', step: 'network', proxy: { ...PROXY_ON, sidecar: true, managed: false } });
+  try {
+    assert.match(h.$('.sa-sidecar-note').textContent, /egress sidecar holds the login/);
+    await h.click('.sa-more');
+    assert.equal(h.field('network.networkProxy.fixedPort'), undefined);
+    assert.ok(h.field('network.networkProxy.timeouts.connectMs'));
+  } finally { h.close(); }
+});

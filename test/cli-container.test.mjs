@@ -57,7 +57,7 @@ test('container helpers: detectRuntime, commonParent and composeFileArgs', async
     { name: 'composeFileArgs: base first, then one -f per overlay', run: async () => {
       assert.deepEqual(composeFileArgs([]), ['-f', 'compose.yml']);
       assert.deepEqual(composeFileArgs(['egress', 'ssh']), ['-f', 'compose.yml', '-f', 'compose.egress.yml', '-f', 'compose.ssh.yml']);
-      assert.deepEqual(OVERLAYS, ['egress', 'ssh', 'teams', 'clonein']);
+      assert.deepEqual(OVERLAYS, ['egress', 'ssh', 'teams', 'clonein', 'proxy']);
     } },
   ]);
 });
@@ -81,7 +81,7 @@ test('initDir copies every compose file, seeds .env once (0600) and never overwr
     const { exec } = fakeExec();
     const r1 = await initDir(dir, { projects: '/Users/me/dev', exec });
     assert.equal(r1.envCreated, true);
-    for (const f of ['compose.yml', 'compose.egress.yml', 'compose.ssh.yml', 'compose.teams.yml', 'compose.clonein.yml', 'compose.dev.yml']) {
+    for (const f of ['compose.yml', 'compose.egress.yml', 'compose.ssh.yml', 'compose.teams.yml', 'compose.clonein.yml', 'compose.dev.yml', 'compose.proxy.yml']) {
       assert.ok(existsSync(join(dir, f)), `${f} copied`);
     }
     const env = readFileSync(join(dir, '.env'), 'utf8');
