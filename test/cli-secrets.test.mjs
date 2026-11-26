@@ -12,6 +12,11 @@ import { osItemName } from '../src/core/secrets/os-store.mjs';
 import { createVault, vaultFile } from '../src/core/secrets/vault.mjs';
 import { dropItem, fileFakeOsStore, peekKey, readFakeCalls, writeFakeState } from './helpers/os-store-fake.mjs';
 import { readSecrets, secretFiles, secretSlots, seedLiterals } from './helpers/secret-literals.mjs';
+import { ptyAvailable, runInTerminal } from './helpers/terminal-cli.mjs';
+import { NEEDS_TERMINAL_TEXT, NO_YES_TEXT } from '../src/cli/secrets.mjs';
+const PTY = { skip: !ptyAvailable() };
+// A terminal run's one stream, in run()'s shape, for the checks that read stdout and stderr.
+const asRun = (r) => ({ code: r.code, stdout: r.output, stderr: '' });
 
 const CLI = resolve(fileURLToPath(new URL('..', import.meta.url)), 'src', 'cli', 'worca-cc.mjs');
 const ROOT = mkdtempSync(join(tmpdir(), 'worca-cli-secrets-'));
@@ -133,30 +138,48 @@ test('doctor: a secrets line per state, exit 0, the vault and the OS item untouc
   noCanary(ready);
 });
 
-test('reset: no TTY and no --yes cancels (2); --yes on a lost item moves it aside (0); a readable vault refuses (1); flag off (2)', async () => {
+test('reset: terminal-only: no TTY refuses (1) and --yes is refused (2), both before anything is read; nothing moves', async () => {
   const sb = sandbox();
   await withVault(sb);
-  const readable = await run(sb, ['secrets', 'reset', '--yes']);
-  assert.equal(readable.code, 1);
-  assert.match(readable.stderr, /^worca: cannot reset: the vault can be read/m);
-  assert.ok(!/\n\s+at /.test(readable.stderr), readable.stderr);
+  dropItem(sb.state, sb.item);
+  const calls = readFakeCalls(sb.state).length;
+  const piped = await run(sb, ['secrets', 'reset']);
+  assert.equal(piped.code, 1);
+  assert.equal(piped.stderr, `${NEEDS_TERMINAL_TEXT}\n`);
+  const yes = await run(sb, ['secrets', 'reset', '--yes']);
+  assert.equal(yes.code, 2);
+  assert.equal(yes.stderr, `${NO_YES_TEXT}\n`);
+  assert.ok(existsSync(vaultFile(sb.home)));
+  assert.equal(readFakeCalls(sb.state).length, calls, 'the key store was not asked');
+  for (const r of [piped, yes]) noCanary(r);
+});
+
+test('reset in a terminal: a readable vault refuses (1); a wrong word cancels (2); the shown word moves a lost item aside (0); flag off (2)', { skip: !ptyAvailable() }, async () => {
+  const sb = sandbox();
+  await withVault(sb);
+  const readable = await runInTerminal(['secrets', 'reset'], { env: sb.env });
+  assert.equal(readable.code, 1, readable.output);
+  assert.match(readable.output, /worca: cannot reset: the vault can be read/);
+  assert.equal(readable.word, null, 'refused before the prompt');
   assert.ok(existsSync(vaultFile(sb.home)));
 
   dropItem(sb.state, sb.item);
-  const cancelled = await run(sb, ['secrets', 'reset']);
-  assert.equal(cancelled.code, 2, cancelled.stderr);
+  const wrong = await runInTerminal(['secrets', 'reset'], { env: sb.env, answer: 'wrong' });
+  assert.equal(wrong.code, 2, wrong.output);
+  assert.match(wrong.word, /^RESET-[A-Z2-9]{4}$/);
+  assert.match(wrong.output, /worca: reset cancelled; nothing was moved/);
   assert.ok(existsSync(vaultFile(sb.home)));
 
-  const moved = await run(sb, ['secrets', 'reset', '--yes']);
-  assert.equal(moved.code, 0, moved.stderr);
+  const moved = await runInTerminal(['secrets', 'reset'], { env: sb.env });
+  assert.equal(moved.code, 0, moved.output);
   assert.equal(existsSync(vaultFile(sb.home)), false);
   assert.ok(readdirSync(sb.home).some((f) => f.startsWith('worca-vault.enc.unreadable-')));
-  assert.match(moved.stdout, /^Moved the vault aside to worca-vault\.enc\.unreadable-/m);
+  assert.match(moved.output, /Moved the vault aside to worca-vault\.enc\.unreadable-/);
 
-  const off = await run(sb, ['secrets', 'reset', '--yes'], { WORCA_FLAGS: '-secretVault' });
+  const off = await runInTerminal(['secrets', 'reset'], { env: { ...sb.env, WORCA_FLAGS: '-secretVault' } });
   assert.equal(off.code, 2);
-  assert.match(off.stderr, /the secretVault flag is off; nothing to reset/);
-  for (const r of [readable, cancelled, moved, off]) noCanary(r);
+  assert.match(off.output, /the secretVault flag is off; nothing to reset/);
+  for (const r of [readable, wrong, moved, off]) noCanary({ stdout: r.output, stderr: '' });
 });
 
 test('flag off: status says off and exits 0', async () => {
@@ -334,10 +357,10 @@ async function migratedSandbox() {
 }
 const noSeed = (r) => { for (const t of [r.stdout, r.stderr]) assert.ok(!t.includes(SEED) && !t.includes('worca:vault:v1:')); };
 
-test('export --yes: 9 plain literals at 0600, no vault, no item, the notice gone and the flag off; exit 0', async () => {
+test('export in a terminal, with the word typed: 9 plain literals at 0600, no vault, no item, the notice gone and the flag off; exit 0', PTY, async () => {
   const sb = await migratedSandbox();
-  const r = await run(sb, ['secrets', 'export', '--yes']);
-  assert.equal(r.code, 0, r.stderr);
+  const r = asRun(await runInTerminal(['secrets', 'export'], { env: sb.env }));
+  assert.equal(r.code, 0, r.stdout);
   assert.match(r.stdout, /^Provider and model keys: 4 written back to the config file\.$/m);
   assert.match(r.stdout, /Removed the vault and its key from test store\.\nTurned the secretVault flag off\.\n$/);
   const got = await readSecrets({ home: sb.env.HOME, worca: sb.home, vault: sb.vault });
@@ -348,42 +371,63 @@ test('export --yes: 9 plain literals at 0600, no vault, no item, the notice gone
   assert.equal(existsSync(NOTICE(sb)), false);
   assert.notEqual(JSON.parse(readFileSync(secretFiles(sb.env.HOME, sb.home).settings, 'utf8')).flags?.secretVault, true);
   noSeed(r);
-  const again = await run(sb, ['secrets', 'export', '--yes']);
-  assert.equal(again.code, 0, again.stderr);
-  assert.equal(again.stdout, 'Nothing to export: no vault.\n');
+  const again = asRun(await runInTerminal(['secrets', 'export'], { env: sb.env }));
+  assert.equal(again.code, 0, again.stdout);
+  assert.match(again.stdout, /Nothing to export: no vault\.\n$/);
 });
 
-test('export: WORCA_FLAGS=secretVault refuses flag-locked (1); no TTY without --yes cancels (2); an unknown option (2); no file changed', async () => {
+test('export: no TTY refuses (1), --yes is refused (2), an unknown option (2); no file changed', async () => {
   const sb = await migratedSandbox();
   const before = sb.bytes();
-  const locked = await run(sb, ['secrets', 'export', '--yes'], { WORCA_FLAGS: 'secretVault' });
-  assert.equal(locked.code, 1);
-  assert.equal(locked.stderr, 'worca: cannot export: the secretVault flag is set by WORCA_FLAGS; remove it there, then run export again\n');
-  const cancelled = await run(sb, ['secrets', 'export']);
-  assert.equal(cancelled.code, 2);
-  assert.match(cancelled.stderr, /export cancelled; nothing was changed \(pass --yes when not in a terminal\)/);
+  const piped = await run(sb, ['secrets', 'export']);
+  assert.equal(piped.code, 1);
+  assert.equal(piped.stderr, `${NEEDS_TERMINAL_TEXT}\n`);
+  // An environment variable never stands in for the terminal: none of these lifts the refusal.
+  const env = await run(sb, ['secrets', 'export'], { CI: '1', WORCA_YES: '1', TERM: 'xterm-256color', FORCE_TTY: '1' });
+  assert.equal(env.code, 1);
+  const yes = await run(sb, ['secrets', 'export', '--yes']);
+  assert.equal(yes.code, 2);
+  assert.equal(yes.stderr, `${NO_YES_TEXT}\n`);
   const bad = await run(sb, ['secrets', 'export', '--force']);
   assert.equal(bad.code, 2);
   assert.deepEqual(sb.bytes(), before);
   assert.ok(peekKey(sb.state, sb.item));
-  for (const r of [locked, cancelled, bad]) noSeed(r);
+  for (const r of [piped, env, yes, bad]) noSeed(r);
 });
 
-test('flag off with a vault: status shows the entry count and the export line; export works', async () => {
+test('export in a terminal: flag-locked refuses (1) before the prompt; Enter or a wrong word cancels (2); no file changed', PTY, async () => {
+  const sb = await migratedSandbox();
+  const before = sb.bytes();
+  const locked = asRun(await runInTerminal(['secrets', 'export'], { env: { ...sb.env, WORCA_FLAGS: 'secretVault' } }));
+  assert.equal(locked.code, 1);
+  assert.match(locked.stdout, /worca: cannot export: the secretVault flag is set by WORCA_FLAGS; remove it there, then run export again/);
+  for (const answer of ['enter', 'wrong']) {
+    const r = await runInTerminal(['secrets', 'export'], { env: sb.env, answer });
+    assert.equal(r.code, 2, r.output);
+    assert.match(r.word, /^EXPORT-[A-Z2-9]{4}$/);
+    assert.match(r.output, /worca: export cancelled; nothing was changed/);
+    noSeed(asRun(r));
+  }
+  assert.deepEqual(sb.bytes(), before);
+  assert.ok(peekKey(sb.state, sb.item));
+  noSeed(locked);
+});
+
+test('flag off with a vault: status shows the entry count and the export line; export works', PTY, async () => {
   const sb = await migratedSandbox();
   storeFlag(sb, false);
   const st = await run(sb, ['secrets', 'status']);
   assert.equal(st.code, 0, st.stderr);
   assert.match(st.stdout, /^Vault: readable \(\d+ entries\)$/m);
   assert.match(st.stdout, /Run `worca secrets export` to move the vaulted ones back to their config files\./);
-  const r = await run(sb, ['secrets', 'export', '--yes']);
-  assert.equal(r.code, 0, r.stderr);
+  const r = asRun(await runInTerminal(['secrets', 'export'], { env: sb.env }));
+  assert.equal(r.code, 0, r.stdout);
   assert.deepEqual(vaultEntries(sb.home), {});
   noSeed(st);
   noSeed(r);
 });
 
-test('CLI notice: a migrating start prints the names and the label on stderr only, again on the next start; ack clears it', async () => {
+test('CLI notice: a migrating start prints the names and the label on stderr only, again on the next start; ack clears it', PTY, async () => {
   const sb = await migratedSandbox();
   for (const r of [sb.first, await run(sb, ['models', 'list'])]) {
     assert.match(r.stderr, /Worca moved 9 saved secrets into the vault\. Its key is kept in test store\./);
@@ -392,14 +436,23 @@ test('CLI notice: a migrating start prints the names and the label on stderr onl
     assert.ok(!r.stdout.includes('Worca moved'));
     noSeed(r);
   }
-  const acked = await run(sb, ['secrets', 'ack']);
-  assert.equal(acked.code, 0, acked.stderr);
-  assert.equal(acked.stdout, 'Done: the message will not be shown again.\n');
+  const piped = await run(sb, ['secrets', 'ack']);
+  assert.equal(piped.code, 1, 'ack is terminal-only too');
+  assert.ok(existsSync(NOTICE(sb)));
+  const kept = await runInTerminal(['secrets', 'ack'], { env: sb.env, answer: 'wrong' });
+  assert.equal(kept.code, 2, kept.output);
+  assert.ok(existsSync(NOTICE(sb)), 'a wrong word keeps the message');
+  const acked = await runInTerminal(['secrets', 'ack'], { env: sb.env });
+  assert.equal(acked.code, 0, acked.output);
+  assert.match(acked.word, /^ACK-[A-Z2-9]{4}$/);
+  assert.match(acked.output, /Done: the message will not be shown again\.\n$/);
   assert.equal(existsSync(NOTICE(sb)), false);
   const quiet = await run(sb, ['models', 'list']);
   assert.ok(!quiet.stderr.includes('Worca moved'));
   assert.equal(quiet.stdout, sb.first.stdout, 'stdout is the same with and without the notice');
-  assert.equal((await run(sb, ['secrets', 'ack'])).stdout, 'No message to acknowledge.\n');
+  const none = await runInTerminal(['secrets', 'ack'], { env: sb.env });
+  assert.equal(none.word, null, 'nothing to acknowledge: no prompt');
+  assert.match(none.output, /No message to acknowledge\.\n$/);
 });
 
 test('status --check: passed on the fake (0), failed on a locked fake (1); no file changed', async () => {
@@ -421,7 +474,7 @@ test('status --check: passed on the fake (0), failed on a locked fake (1); no fi
 test('under WORCA_HOST_PID, export, reset, ack and status --check exit 1 and change nothing', async () => {
   const sb = await migratedSandbox();
   const before = { ...sb.bytes(), notice: readFileSync(NOTICE(sb), 'hex') };
-  for (const args of [['export', '--yes'], ['reset', '--yes'], ['ack'], ['status', '--check']]) {
+  for (const args of [['export'], ['reset'], ['ack'], ['status', '--check']]) {
     const r = await run(sb, ['secrets', ...args], { WORCA_HOST_PID: '1' });
     assert.equal(r.code, 1, args.join(' '));
     assert.equal(r.stderr, 'worca: run this in your own terminal, not from an agent\n');

@@ -12,7 +12,7 @@ test('one ## section per topic, the 11 topics', () => {
   const headings = doc.split('\n').filter((l) => l.startsWith('## ')).map((l) => l.slice(3));
   assert.deepEqual(headings, [
     'Turning the vault on', 'Backends', 'The macOS Keychain access prompt', 'Export and downgrade',
-    'The one-time message', 'A locked store', 'A lost key item and `worca secrets reset`',
+    'The one-time message', 'Terminal-only commands', 'A locked store', 'A lost key item and `worca secrets reset`',
     'What file theft does and does not cover', 'The accepted risk of an older vault file', 'The WSL2 DPAPI path',
     'Turning the flag off after a migration', 'With the other setups',
   ]);

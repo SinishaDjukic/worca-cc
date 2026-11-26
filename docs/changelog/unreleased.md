@@ -3,6 +3,24 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Vault commands need your own terminal
+
+**worca secrets export, reset and ack now run only in a terminal, after you type a word they show.**
+
+There is no --yes. No variable turns this off. A script, a pipe or an agent is refused.
+
+Chat's command check also reads commands without their quotes. It refuses a command that builds itself at run time and names the key store or Worca's CLI.
+
+The vault is at-rest encryption, not a sandbox.
+
+Chips: Security · CLI · Chat
+
+Read it: [Secrets and the vault](../secrets.md#terminal-only-commands)
+
+Pull requests (add each number when it opens):
+
+- Vault commands need your own terminal (#1650)
+
 ## Container fixes from the first real runs
 
 **The security setups ran in real containers for the first time. These are the fixes.**

@@ -69,7 +69,7 @@ test('worca secrets in a container: status says so and points to the broker; the
     const code = await cmdSecrets(['status'], { out: (s) => out.push(s), err: (s) => err.push(s), fail: (s) => err.push(s), env });
     assert.equal(code, 0);
     assert.deepEqual(out, ['Secrets vault: not available in a container', CONTAINER_TEXT]);
-    for (const verb of [['export', '--yes'], ['reset', '--yes'], ['ack'], ['status', '--check']]) {
+    for (const verb of [['export'], ['reset'], ['ack'], ['status', '--check']]) {
       const e2 = [];
       assert.equal(await cmdSecrets(verb, { out: () => {}, err: (s) => e2.push(s), fail: (s) => e2.push(s), env }), 2, verb.join(' '));
       assert.match(e2.join('\n'), /not available in a container.*credential broker/s);

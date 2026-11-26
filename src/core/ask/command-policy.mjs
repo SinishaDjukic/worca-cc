@@ -53,7 +53,7 @@ const SECRETS_VERB_RE = /(?:^|[\s/'"=(`])(?:worca|worca-cc|worca-cc\.mjs|@worca\
 // then every quote too (`worca 'secrets' 'ack'`).
 // The raw text is checked too, so a Windows path (`C:\worca\src\cli\worca-cc.mjs secrets ack`) keeps its separators.
 function secretsVerb(raw) {
-  for (const text of [raw, raw.replace(/''|""|\\/g, ''), raw.replace(/['"\\]/g, '')]) {
+  for (const text of [raw, raw.replace(/''|""|\\/g, ''), raw.replace(/['"\\]/g, ''), normalisedCommand(raw)]) {
     for (const m of text.matchAll(SECRETS_VERB_RE)) {
       const verb = m[1].toLowerCase();
       if (verb !== 'status') return verb;
@@ -66,6 +66,25 @@ function secretsVerb(raw) {
 // (`env -u WORCA_HOST_PID …`, `unset WORCA_HOST_PID; …`) could lift that refusal.
 const HOST_PID_RE = /\bWORCA_HOST_PID\b/;
 const HOST_PID_REFUSAL = 'That command touches WORCA_HOST_PID, which keeps Worca\'s secrets commands away from agents. Ask the user to run it in the terminal.';
+// The guard is text-based, so it is defence in depth (docs/chat.md "Known limits of the command guard"): the real control
+// for export, reset and ack is that they run only in a person's own terminal (src/cli/secrets.mjs).
+/** The command as the shell would see its words: ANSI-C quotes opened ($'x' → x), every quote and backslash dropped,
+ *  whitespace collapsed. The secrets, keychain and WORCA_HOST_PID patterns are matched on it too. */
+export function normalisedCommand(raw) {
+  return String(raw ?? '').replace(/\$'([^']*)'/g, '$1').replace(/['"\\]/g, '').replace(/\s+/g, ' ').trim();
+}
+/** A command that builds part of itself when it runs (eval, $(…), backticks, a variable in a command, sh -c or another
+ *  interpreter's -c/-e, a decoded string): what it finally runs cannot be read from its text. */
+const UNSURE_RE = /\beval\b|\$\(|`|\$\{|\$[A-Za-z_0-9]|\b(?:ba|z|da|k)?sh\s+-c\b|\b(?:python[0-9.]*|node|perl|ruby|php)\s+-[ce]\b|\bbase64\s+(?:-d|--decode)\b|\bxxd\s+-r\b|\$'[^']*\\/;
+/** A $'…' string with a backslash escape ($'\x73ecurity'): the shell decodes it, the text check cannot. Refused outright. */
+const ANSI_ESCAPE_RE = /\$'[^']*\\/;
+const ANSI_ESCAPE_REFUSAL = 'That command spells part of itself with $\'…\' escapes, which Ask cannot read reliably. Write the words out, or ask the user to run it in the terminal.';
+/** Worca's CLI in SECRETS_VERB_RE's token set: worca, worca-cc, worca-cc.mjs (also as a path's last segment, after / or
+ *  \), and @worca/app with an optional @version. A folder named worca in a path does not count. */
+const CLI_TOKEN = String.raw`(?<![\w.@-])(?:worca|worca-cc|worca-cc\.mjs|@worca\/app(?:@[\w.^~-]+)?)(?![\w./\\-])`;
+/** The OS key store tools, Worca's CLI, and `secrets` next to it. */
+const VAULT_WORDS_RE = new RegExp(String.raw`\b(?:security|secret-tool|keyring)\b|${CLI_TOKEN}|${CLI_TOKEN}\s+secrets\b`, 'i');
+const UNSURE_REFUSAL = 'That command builds part of itself when it runs (eval, $(…), a variable, sh -c or a decoded string) and names the OS key store or Worca\'s own CLI, so Ask cannot tell what it would run. Ask the user to run it in the terminal.';
 const SECRETS_REFUSALS = Object.freeze({
   export: "That command moves Worca's secrets out of the vault. Ask the user to run it in the terminal.",
   reset: 'That command moves the Worca vault aside. Ask the user to run it in the terminal.',
@@ -569,10 +588,11 @@ export function checkAskCommand(command, { cwd, home = null, userHome = null, ho
     return 'That command prints a GitHub credential (gh auth token). Ask cannot read credentials.';
   }
   const unquoted = raw.replace(/['"\\]/g, ''); // `'security' export`, `secu""rity export`
-  if (KEYCHAIN_READ.some((re) => re.test(raw) || re.test(unquoted))) return 'That command reads the OS keychain. Ask cannot read credentials.';
+  const norm = normalisedCommand(raw);           // `$'security' export`, `secret-tool  'look'up`
+  if (KEYCHAIN_READ.some((re) => re.test(raw) || re.test(unquoted) || re.test(norm))) return 'That command reads the OS keychain. Ask cannot read credentials.';
   const secrets = secretsVerb(raw);
   if (secrets) return SECRETS_REFUSALS[secrets];
-  if (HOST_PID_RE.test(raw)) return HOST_PID_REFUSAL;
+  if (HOST_PID_RE.test(raw) || HOST_PID_RE.test(norm)) return HOST_PID_REFUSAL;
   if (serverPort && new RegExp(`(?:localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0|\\[::1\\]):${serverPort}\\b`).test(raw)) {
     return "That command calls Worca's own API. Ask uses its tools for Worca, never the HTTP API.";
   }
@@ -584,6 +604,9 @@ export function checkAskCommand(command, { cwd, home = null, userHome = null, ho
   if (secret === 'unsure-reader') {
     return 'That command reads folders the command check cannot work out (a folder or variable set at run time, or a pattern). Name each folder explicitly: cd to a written-out path first and give the reader plain paths, for example `cd /repo && grep -rn foo src`, and run it again.';
   }
+  // The vault guard over unsure commands, after the path checks so theirs answer first (docs/chat.md, Known limits).
+  if (ANSI_ESCAPE_RE.test(raw)) return ANSI_ESCAPE_REFUSAL;
+  if (UNSURE_RE.test(raw) && (VAULT_WORDS_RE.test(norm) || VAULT_WORDS_RE.test(raw))) return UNSURE_REFUSAL;
   return null;
 }
 

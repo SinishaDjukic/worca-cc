@@ -12,6 +12,7 @@ import { VAULT_NAME_PREFIX } from '../src/core/secrets/files.mjs';
 import { osItemName } from '../src/core/secrets/os-store.mjs';
 import { createVault } from '../src/core/secrets/vault.mjs';
 import { fileFakeOsStore, peekKey, readFakeCalls, writeFakeState } from './helpers/os-store-fake.mjs';
+import { ptyAvailable, runInTerminal } from './helpers/terminal-cli.mjs';
 
 const KEYS = ['HOME', 'USERPROFILE', 'WORCA_HOME', 'WORCA_TEST_ALLOW_HOME_FALLBACK', 'WORCA_PROJECTS_ROOT', 'WORCA_FLAGS', 'WORCA_TEST_OS_STORE', 'WORCA_TEST_STORE_TIMEOUT_MS'];
 const CANARY = 'CANARY-probe-text-a81c';
@@ -214,15 +215,18 @@ test('notice routes: a failing read answers a fixed 500 and the server keeps ans
   assert.equal((await noticeGet()).status, 200);
 });
 
-test('cross-surface: a CLI ack clears the API notice, and an API ack stops the CLI print', async () => {
+test('cross-surface: a CLI ack clears the API notice, and an API ack stops the CLI print', { skip: !ptyAvailable() }, async () => {
   process.env.WORCA_FLAGS = 'secretVault';
   writeFakeState(state, { state: 'available', items: { [item.account]: peekKey(state, item) } });
   record();
   const shown = await cli(['models', 'list']);
   assert.equal(shown.code, 0, shown.stderr);
   assert.match(shown.stderr, /These keys are now in the vault:\n {2}- Provider key: openai\n/, 'positive control: the CLI prints it');
-  const acked = await cli(['secrets', 'ack']);
-  assert.equal(acked.code, 0, acked.stderr);
+  // ack runs only in a terminal, with the shown word typed (docs/secrets.md).
+  const termEnv = { ...process.env, NODE_TEST_CONTEXT: 'child-v8', WORCA_FLAGS: 'secretVault' };
+  delete termEnv.WORCA_HOST_PID;
+  const acked = await runInTerminal(['secrets', 'ack'], { env: termEnv });
+  assert.equal(acked.code, 0, acked.output);
   assert.deepEqual(await (await noticeGet()).json(), { notice: null });
   const n = record();
   assert.deepEqual(await (await noticeAck({ id: n.id })).json(), { ok: true, cleared: true });

@@ -5,12 +5,13 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
 import { isVaultRef } from '../src/core/secrets/refs.mjs';
-import { readFakeCalls, writeFakeState } from './helpers/os-store-fake.mjs';
+import { dropItem, readFakeCalls, writeFakeState } from './helpers/os-store-fake.mjs';
+import { osItemName } from '../src/core/secrets/os-store.mjs';
 
 const KEYS = ['HOME', 'USERPROFILE', 'WORCA_HOME', 'WORCA_TEST_ALLOW_HOME_FALLBACK', 'WORCA_PROJECTS_ROOT', 'WORCA_FLAGS', 'WORCA_TEST_OS_STORE', 'WORCA_TEST_STORE_TIMEOUT_MS', 'WORCA_CONTAINER'];
 const KEY = 'sk-acme-vault-ui-0001';
@@ -80,6 +81,26 @@ test('Check now, then Turn on: the check passes, the key moves, the counts follo
   assert.equal(body.status.counts.files.settings, 0);
   const reset = await post('/api/secrets/reset', { confirm: true });
   assert.equal(reset.status, 409);
+});
+
+test('Reset from Settings: its own route and confirm (no terminal prompt) move an unreadable vault aside; an agent caller is refused', async () => {
+  const home = join(userHome, '.worca-cc');
+  dropItem(state, osItemName(home));                   // the key item is gone: the vault cannot be opened
+  const keep = { WORCA_AGENT_USER: process.env.WORCA_AGENT_USER, WORCA_AGENT_HOME: process.env.WORCA_AGENT_HOME };
+  Object.assign(process.env, { WORCA_AGENT_USER: 'worca-agent', WORCA_AGENT_HOME: join(root, 'agent') });
+  try {
+    const agent = await post('/api/secrets/reset', { confirm: true });
+    assert.equal(agent.status, 403, 'a possible agent caller never resets');
+    assert.ok(existsSync(join(home, 'worca-vault.enc')));
+  } finally {
+    for (const [k, v] of Object.entries(keep)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+  const r = await post('/api/secrets/reset', { confirm: true });
+  const body = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(body));
+  assert.equal(body.outcome, 'moved');
+  assert.equal(existsSync(join(home, 'worca-vault.enc')), false);
+  assert.ok(readdirSync(home).some((f) => f.startsWith('worca-vault.enc.unreadable-')));
 });
 
 test('in a container: status says not available with no key store call, and every action answers 409', async () => {

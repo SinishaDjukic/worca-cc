@@ -43,9 +43,9 @@ not resolve until you allow access and start Worca again.
 
 `worca secrets export` writes every vaulted secret back into its own config file (each file mode 0600
 on macOS and Linux), deletes the vault file and its OS key item, turns the `secretVault` flag off and drops the
-message about moved secrets. It asks first; pass `--yes` when not in a terminal. Run it in your own terminal: it
-refuses while the Worca app runs for the same home, while `WORCA_FLAGS` sets the flag, and when an agent runs it.
-There is no web route for it.
+message about moved secrets. It runs only in your own terminal and asks you to type a word first (see
+[Terminal-only commands](#terminal-only-commands)). It refuses while the Worca app runs for the same home and while
+`WORCA_FLAGS` sets the flag. There is no web route for it.
 
 Entries no setting uses any more (a replaced key not yet cleaned up) are deleted with the vault. A secret that cannot
 be read from the vault stops the export with its name and nothing changed: clear it in Settings, then run export
@@ -68,6 +68,21 @@ value), with the backend:
 - in Settings › General › Secret vault.
 
 Run `worca secrets ack` or press **Got it** in Settings to dismiss it. Either one clears the message for both places.
+
+## Terminal-only commands
+
+`worca secrets export`, `worca secrets reset` and `worca secrets ack` run only in a person's own terminal. Each one
+needs a terminal for both input and output. It shows a word, such as `EXPORT-K7QF`, and acts only when you type that
+word back. The word changes each time.
+
+This is on purpose. There is no `--yes`, and no variable turns it off. A script, a pipe, a scheduled job or an agent
+has no terminal, so it is refused at once, before anything is read. An agent started by Worca is also refused by
+`WORCA_HOST_PID`. That check stays, but it is not the only one: an agent could clear a variable, but it cannot get a
+terminal from it.
+
+In a script, do not run them. Export is a manual recovery step: you take a vault back to plain files by hand, with the
+Worca app stopped. To reset an unreadable vault without a terminal, use Reset in Settings › General › Secret vault. It
+has its own confirm, and it refuses an agent.
 
 ## A locked store
 
