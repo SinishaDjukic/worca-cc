@@ -26,6 +26,8 @@ const mockProbes = {
   engines: fast([{ name: 'claude', label: 'Claude Code', ready: true, reason: null }, { name: 'codex', label: 'Codex', ready: false, reason: 'not signed in' }]),
   ollama: fast({ models: 3 }),
   teamSetup: () => ({ found: false, path: '/h/.worca-cc/team-setup.json' }),
+  docker: fast({ state: 'not-configured', server: 'Docker on this machine (context default)' }),
+  e2b: fast({ keySet: false, installed: true, server: 'E2B Cloud' }),
 };
 
 test('detectClaude: the tile and the check agree', async () => {
@@ -56,7 +58,7 @@ test('AC-3.1: every check, a state and a line, under 3 s', async () => {
   const { checks } = await detectSetup({ probes: mockProbes });
   assert.ok(Date.now() - t0 < 3000);
   assert.deepEqual(checks.map((c) => c.id), DETECT_CHECKS.map((c) => c.id));
-  assert.equal(checks.length, 8);
+  assert.equal(checks.length, 10);
   for (const c of checks) {
     assert.ok(['ok', 'warn', 'no'].includes(c.state), c.id);
     assert.ok(c.line.length > 0, c.id);
@@ -151,7 +153,30 @@ after(async () => {
 });
 beforeEach(() => testing?.resetSetup());
 
-test('GET /api/setup/detect answers the 8 checks from the injected probes', async () => {
+test('Docker: running, missing and down, from the Local sandbox backend\'s status; nothing is started', async () => {
+  const at = (d) => detectSetup({ probes: { ...mockProbes, docker: fast(d) } }).then(({ checks }) => checks.find((c) => c.id === 'docker'));
+  const up = await at({ state: 'connected', server: 'Docker on this machine (context default), Docker 27.3.1', running: 0 });
+  assert.deepEqual([up.state, up.line, up.facts], ['ok', 'Docker is running here. Runs can use the Local sandbox (Docker).', { state: 'up' }]);
+  const missing = await at({ state: 'not-configured', server: 'x', error: 'not installed' });
+  assert.deepEqual([missing.state, missing.facts.state], ['no', 'missing']);
+  const down = await at({ state: 'unreachable', server: 'x', error: 'Cannot connect to the Docker daemon' });
+  assert.deepEqual([down.state, down.facts.state], ['warn', 'down']);
+  assert.match(down.line, /installed but not running/);
+});
+
+test('E2B: a key and the SDK is ok, a key alone warns, no key is no; the key never shows', async () => {
+  const { e2bFacts } = await import('../src/core/setup/detect.mjs');
+  assert.deepEqual(e2bFacts({ E2B_API_KEY: 'e2b_secret_acme' }, () => true), { keySet: true, installed: true, server: 'E2B Cloud' });
+  assert.equal(e2bFacts({ E2B_API_KEY: 'k', E2B_DOMAIN: 'e2b.acme.example' }, () => true).server, 'api.e2b.acme.example');
+  assert.equal(e2bFacts({ E2B_API_KEY: 'k', E2B_API_URL: 'https://sandbox.acme.example/api' }).server, 'sandbox.acme.example');
+  const at = (e) => detectSetup({ probes: { ...mockProbes, e2b: fast(e) } }).then(({ checks }) => checks.find((c) => c.id === 'e2b'));
+  const ok = await at(e2bFacts({ E2B_API_KEY: 'e2b_secret_acme' }, () => true));
+  assert.equal(ok.state, 'ok'); assert.match(ok.line, /E2B Cloud/); assert.doesNotMatch(JSON.stringify(ok), /secret/);
+  assert.equal((await at({ keySet: true, installed: false, server: 'E2B Cloud' })).state, 'warn');
+  assert.equal((await at({ keySet: false, installed: true, server: 'E2B Cloud' })).state, 'no');
+});
+
+test('GET /api/setup/detect answers the 10 checks from the injected probes', async () => {
   testing.setSetupProbes(mockProbes);
   const r = await fetch(`${base}/api/setup/detect`);
   assert.equal(r.status, 200);

@@ -6,7 +6,7 @@
 // so the MCP path and the REST path share one writer. Also the chat's --add-dir memory mount.
 import { join } from 'node:path';
 import {
-  memoryRoot, listMemory, readMemory, writeMemory, removeMemory, renderMemoryFile, MEMORY_NAME_HELP, flattenLine,
+  memoryRoot, listMemory, readMemory, writeMemory, removeMemory, renderMemoryFile, MEMORY_NAME_HELP, flattenLine, isHeldSource,
 } from '../memory-store.mjs';
 import { mountDirs, withStoreLock, refreshMount } from '../memory-sync.mjs';
 import { memoryCaps } from '../settings.mjs';
@@ -28,6 +28,12 @@ async function loadedLocalNames(scope) {
   return (await memoryLoadPlan(scope.projectKey)).localNames;
 }
 
+/** A store file Chat may see: a held one (a sandbox run's, memory-store isHeldSource) is not there for it. */
+async function readForAgents(scope, name) {
+  const f = await readMemory(memoryRoot(), scope, name);
+  return f && !isHeldSource(f.meta.source) ? f : null;
+}
+
 export function defaultMemoryDeps({ threadId }) {
   const source = `ask:${threadId || 'unknown'}`;
   return {
@@ -35,13 +41,14 @@ export function defaultMemoryDeps({ threadId }) {
       projectByKey,
       // A project whose team memory loads team notes only: its other local notes are not this chat's memory — never
       // listed, and read_memory of one reads the team's note of that name (memoryLoadPlan). Writes still reach them.
+      // A held file (a sandbox run's) is never listed or read (readForAgents).
       list: async (scope) => {
         const only = await loadedLocalNames(scope);
-        return (await listMemory(memoryRoot(), scope)).filter((e) => !only || only.has(e.name));
+        return (await listMemory(memoryRoot(), scope, { forAgents: true })).filter((e) => !only || only.has(e.name));
       },
       read: async (scope, name) => {
         const only = await loadedLocalNames(scope);
-        return only && !only.has(name) ? null : readMemory(memoryRoot(), scope, name);
+        return only && !only.has(name) ? null : readForAgents(scope, name);
       },
       /** Compose + write one file. Omitted description/paths keep the existing file's values (an
        *  omission never erases); `append` joins the bodies with one blank line (replace on a new
@@ -49,7 +56,8 @@ export function defaultMemoryDeps({ threadId }) {
        *  cannot lose an append; a concurrent MCP child or a run's sync-back is not covered — that
        *  race is a Non-goal, and the pre-write snapshot keeps the losing version. */
       remember: (scope, { name: asked, body, description, paths, mode = 'replace' }) => withStoreLock(memoryRoot(), async () => {
-        const local = await readMemory(memoryRoot(), scope, asked);
+        // A held file is not Chat's to build on: its text never rides into a file Chat writes (replaced, not appended).
+        const local = await readForAgents(scope, asked);
         // Team memory (phase 1a, D2): with no local copy, a teammate's note of that name IS the note this write changes
         // (read_memory shows it) — an omitted hook or paths keep the team's values and `append` adds under the team's
         // body; the write is then shared and replaces the team version for everyone. Never the team's extras (`author`).

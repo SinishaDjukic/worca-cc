@@ -191,6 +191,8 @@
                     <span class="rd-status pill-run"><span class="pdot"></span><span class="rd-status-word"></span></span>
                     <span class="act-pill-slot"></span>
                   </div>
+                  <!-- The run's state on every tab (paintStateLine); the Overview card keeps only the rest. -->
+                  <div class="run-state-line" aria-live="off"></div>
                   <div class="rd-meta mono"></div>
                   <div class="rd-row3">
                     <span class="rd-base mono" hidden data-min-level="advanced" data-needs-git></span>
@@ -342,6 +344,7 @@
                   <a class="btn hd-pr-link" hidden data-min-level="advanced" data-needs-git target="_blank" rel="noopener"></a>
                   <button type="button" class="btn btn-primary hd-push" hidden data-min-level="advanced" data-needs-git></button>
                 </div>
+                <div class="run-state-line" aria-live="off"></div>
                 <!-- "Published to <remote>/<branch>" (#618): its own line, so a long branch never squeezes the title. -->
                 <p class="hd-published hint mono" hidden data-min-level="advanced" data-needs-git></p>
                 <!-- Base conflicts (#620): the stored check of each branch against its base. Painted by paintHdBase. -->

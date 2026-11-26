@@ -1837,6 +1837,83 @@ test('Network with a login the operator manages: who is logged in and the state,
   } finally { h.close(); }
 });
 
+test('Network with a managed login the proxy rejected: the line says the operator replaces the login file, not "log in again"', async () => {
+  const { stateLine } = await import('../src/core/proxy-credentials.mjs');
+  const line = stateLine({ state: 'needs-login', managed: true, login: { label: 'ACME\\svc-worca', rejected: { at: '2026-11-20T10:00:00.000Z' } } });
+  const h = await open({ entry: 'fix', step: 'network', proxy: { ...PROXY_MANAGED, state: 'needs-login', line } });
+  try {
+    const text = h.$('.sa-managed').textContent;
+    assert.match(text, /operator manages this login: they must replace the login file/);
+    assert.doesNotMatch(text, /Log in again|worca proxy login/);
+    assert.doesNotMatch(text, /Logged in as/, 'a rejected login is not shown as logged in');
+  } finally { h.close(); }
+});
+
+// ── Where agents run (How you work; docs/choose-a-setup.md) ──
+const DETECT_SANDBOXES = { checks: [...DETECT.checks, check('docker', 'ok'), check('e2b', 'no')] };
+const POSTURE_NATIVE = { where: 'native', whereLabel: 'Native install', rows: [] };
+const POSTURE_BOX = { where: 'hardened', whereLabel: 'Hardened box', rows: [
+  { id: 'broker', label: 'Credential broker', status: 'on', value: 'On', tone: 'ok', detail: 'The broker holds the model key. Worca and its agents hold none.' },
+  { id: 'network', label: 'Outbound network', status: 'unknown', value: 'Sidecar', tone: 'neutral', detail: 'Through the egress sidecar.' }] };
+
+test('Where agents run: Local and the Docker sandbox the check found; a pick is the default execution environment', async () => {
+  const h = await open({ entry: 'rerun', detect: DETECT_SANDBOXES, routes: { '/api/security/posture': reply(POSTURE_NATIVE) } });
+  try {
+    await h.goTo('work');
+    const pick = h.$('.sa-where-pick');
+    assert.deepEqual([...pick.querySelectorAll('button')].map((b) => b.dataset.value), ['local', 'docker'], 'no E2B: its check is no');
+    assert.equal(pick.querySelector('[aria-pressed="true"]').dataset.value, 'local');
+    assert.match(h.$('.sa-where-line').textContent, /not sandboxed/);
+    const link = h.$('.sa-where-guide a');
+    assert.equal(link.getAttribute('href'), 'https://github.com/worca-org/worca/blob/dev/docs/choose-a-setup.md');
+    assert.equal(link.target, '_blank');
+    await h.click(pick.querySelector('[data-value="docker"]'));
+    assert.match(h.$('.sa-where-line').textContent, /own container/);
+    await h.goTo('review');
+    assert.match(h.$('.sa-review tr[data-group="work"]').textContent, /agents in Local sandbox \(Docker\)/);
+    await h.click('.sa-next');
+    assert.equal(h.applies()[0].body.work.execEnv, 'docker');
+  } finally { h.close(); }
+});
+
+test('Where agents run: no sandbox found offers Local only and says how to get one; untouched, nothing is sent', async () => {
+  const h = await open({ entry: 'rerun' });
+  try {
+    await h.goTo('work');
+    assert.equal(h.$('.sa-where-pick'), null, 'one choice is a plain line, not a one-button control');
+    assert.match(h.$('.sa-where-line').textContent, /^Local · Agents run on this machine/);
+    assert.match(h.$('.sa-where-none').textContent, /Start Docker .* set an E2B key/);
+    assert.equal(buildApplyBody(saved(), initialAnswers({ saved: saved(), entry: 'rerun' })).work, undefined);
+  } finally { h.close(); }
+});
+
+test('Where agents run: a saved sandbox stays offered and Local clears it', async () => {
+  const h = await open({ entry: 'rerun', settings: { ...SETTINGS, execEnv: 'e2b' } });
+  try {
+    await h.goTo('work');
+    assert.equal(h.$('.sa-where-pick [aria-pressed="true"]').dataset.value, 'e2b');
+    await h.click(h.$('.sa-where-pick [data-value="local"]'));
+    await h.goTo('review'); await h.click('.sa-next');
+    assert.equal(h.applies()[0].body.work.execEnv, null);
+  } finally { h.close(); }
+});
+
+test('Where agents run in the hardened box: the posture instead of a choice', async () => {
+  const h = await open({ entry: 'rerun', detect: DETECT_SANDBOXES, routes: { '/api/security/posture': reply(POSTURE_BOX) } });
+  try {
+    await h.goTo('work');
+    assert.equal(h.$('.sa-where-pick'), null);
+    const rows = h.$$('.sa-where-posture [data-posture]');
+    assert.deepEqual(rows.map((r) => r.dataset.posture), ['broker', 'network']);
+    assert.match(rows[0].textContent, /On.*Credential broker/);
+    assert.equal(rows[0].querySelector('.badge').className, 'badge green posture-badge', 'the Security card\'s chip: green for a protection that is on');
+    assert.equal(rows[1].querySelector('.badge').textContent, 'Sidecar');
+    assert.equal(rows[1].querySelector('.badge').className, 'badge grey posture-badge');
+    assert.match(h.$('.sa-where-posture').closest('.sa-section').textContent, /runs in the hardened box/);
+    assert.ok(h.$('.sa-where-guide a'));
+  } finally { h.close(); }
+});
+
 test('Network in a container: the password note names the sidecar, and More has no local proxy port', async () => {
   const h = await open({ entry: 'fix', step: 'network', proxy: { ...PROXY_ON, sidecar: true, managed: false } });
   try {

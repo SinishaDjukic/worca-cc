@@ -298,6 +298,12 @@ test('posture: every protection on, read from the running box', () => {
   assert.equal(ca.rows.find((r) => r.id === 'no-host-mount').status, 'on', 'the read-only CA file is not a project mount');
   const login = postureRows(box({ sidecar: { state: 'ready', upstream: 'proxy.acme.example:8080', login: { label: 'ACME\\jdoe' }, policy: { mode: 'allowlist', allow: ['github.com'] } } }));
   assert.match(login.rows.find((r) => r.id === 'proxy-login').detail, /sidecar holds the login for proxy\.acme\.example:8080 \(ACME\\jdoe\)/);
+  // The sidecar's 'no-login' means "no login saved" (a real sidecar reports it for a proxy that answers 407 too).
+  const none = postureRows(box({ sidecar: { state: 'no-login', upstream: 'proxy.acme.example:8080', policy: { mode: 'allowlist', allow: ['github.com'] } } }));
+  const row = none.rows.find((r) => r.id === 'proxy-login');
+  assert.equal(row.status, 'on');
+  assert.doesNotMatch(row.detail, /needs no login/);
+  assert.match(row.detail, /no login is saved for the proxy proxy\.acme\.example:8080.*worca container proxy login/);
 });
 
 test('posture: each protection that is off says so and how to fix it', () => {
@@ -308,6 +314,7 @@ test('posture: each protection that is off says so and how to fix it', () => {
   assert.match(off({ brokerDown: true }, 'model-key').detail, /broker is not running/);
   assert.match(off({ worcaEnv: { HTTPS_PROXY: 'http://ACME%5Cjdoe:pw@proxy:8080' } }, 'proxy-login').detail, /with a login in it/);
   assert.match(off({ sidecar: { state: 'needs-login', upstream: 'proxy:8080', policy: { mode: 'allowlist' } } }, 'proxy-login').fix, /worca container proxy login/);
+  assert.match(off({ sidecar: { state: 'needs-login', managed: true, upstream: 'proxy:8080', policy: { mode: 'allowlist' } } }, 'proxy-login').fix, /operator manages this login: replace the login file/);
   assert.match(off({ nets: { 'worca-hardened_default': {} } }, 'allowlist').detail, /route out \(worca-hardened_default\)/);
   assert.match(off({ sidecar: { state: 'not-configured', policy: { mode: 'open' } } }, 'allowlist').detail, /open mode/);
   assert.match(off({ mounts: [{ Type: 'bind', Destination: '/Users/me/dev', RW: true }] }, 'no-host-mount').detail, /\/Users\/me\/dev/);

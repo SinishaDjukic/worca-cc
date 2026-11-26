@@ -4,6 +4,8 @@
 // it writes the package's compose files into <worcaHome>/container/, seeds a
 // .env once, and shells out to `docker compose` (or `podman compose`). Nothing
 // here talks to the engine; the box runs its own Worca with its own home.
+// `up --project` narrows the box to one project with its secret files masked
+// (container-mounts.mjs; plans/core-5-per-run-container-mount-design.md).
 //
 // Every verb takes { out, c, fail } from the CLI and an injectable `exec` so
 // tests never spawn a runtime.
@@ -24,6 +26,10 @@ import { resolveUpstream, upstreamLabel } from '../core/upstream-proxy.mjs';
 import { readLoginInput } from './proxy.mjs';
 import { HARDENED_OVERLAYS, HARDENED_HELP, HARDENED_PROJECT, selectBox, hardenedBefore, hardenedUp, hardenedStatus, runningProject } from './container-hardened.mjs';
 import { boxImageForCompose } from '../core/exec-env/box-image.mjs';
+import {
+  MOUNT_FILE, MAX_MASKS, boxName, resolveProjectDir, maskSettingsFor, planProjectMasks, writeProjectMount, removeProjectMount, maskLines,
+  maskAliases, maskAliasRefusal,
+} from './container-mounts.mjs';
 
 /** The compose files shipped in the package (package.json `files`). */
 export const COMPOSE_SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docker');
@@ -43,9 +49,12 @@ const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0
 export const CONTAINER_HELP = `worca container — run Worca in a container (docs/docker.md)
 
   worca container init [--projects <dir>]        Write the compose files and a .env into the container dir
-  worca container up [--with <overlays>] [--tag <t>]
+  worca container up [--with <overlays>] [--tag <t>] [--project <dir> | --no-project]
                                                  Start the box in the background and print the URL.
                                                  --with: comma-separated egress,ssh,teams,clonein (remembered)
+                                                 --project: mount only this project, its secret files masked,
+                                                 in its own box (remembered); --no-project: the whole
+                                                 WORCA_PROJECTS folder again
   worca container down                           Stop and remove the containers (volumes are kept)
   worca container status                         Which containers are up
   worca container logs [--follow]                Server logs
@@ -79,6 +88,10 @@ Options:
 The box has its own Worca home and its own Claude Code login: nothing from
 ~/.worca-cc or ~/.claude is mounted. Your repositories are mounted at the same
 path as on the host (WORCA_PROJECTS in .env), so run worktrees stay valid here.
+That folder is mounted whole and unmasked. With --project only that one folder
+is mounted, in a box of its own (own volumes, own login), and its untracked
+secret files (.env*, *.pem, *.key, .npmrc, .netrc, id_*, plus the project's
+secretPaths) read as empty files in the box.
 The plain container protects your machine, not the mounted projects.
 `;
 
@@ -102,7 +115,7 @@ export function detectRuntime(exec, want) {
 }
 
 function parse(argv) {
-  const o = { verb: argv[0] || 'help', dir: null, runtime: null, projects: null, with: null, tag: null, follow: false, box: null, passthrough: [], _: [] };
+  const o = { verb: argv[0] || 'help', dir: null, runtime: null, projects: null, with: null, tag: null, project: null, noProject: false, follow: false, box: null, passthrough: [], _: [] };
   const rest = argv.slice(1);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -112,6 +125,9 @@ function parse(argv) {
     else if (a === '--projects') o.projects = rest[++i];
     else if (a === '--with') o.with = rest[++i];
     else if (a === '--tag') o.tag = rest[++i];
+    // Only `up` takes these: `run --project <p> …` without `--` passes the worca CLI's own --project through.
+    else if (a === '--project' && o.verb === 'up') o.project = rest[++i] ?? '';
+    else if (a === '--no-project' && o.verb === 'up') o.noProject = true;
     else if (a === '--follow' || a === '-f') o.follow = true;
     else if (a === '--hardened' || a === '--plain') o.box = a.slice(2);
     else if (a === '--user') { o._.push(a, rest[++i]); }
@@ -156,10 +172,12 @@ function writeState(dir, state) {
   writeFileSync(join(dir, STATE_FILE), JSON.stringify(state, null, 2) + '\n');
 }
 
-/** `-f compose.yml -f compose.<overlay>.yml …` for the remembered or requested overlays. */
-export function composeFileArgs(overlays) {
+/** `-f compose.yml -f compose.<overlay>.yml …` for the remembered or requested overlays, then the generated project
+ *  mount (container-mounts.mjs) last, so its masks land on top of every bind. */
+export function composeFileArgs(overlays, { project = false } = {}) {
   const args = ['-f', 'compose.yml'];
   for (const o of overlays) args.push('-f', `compose.${o}.yml`);
+  if (project) args.push('-f', MOUNT_FILE);
   return args;
 }
 
@@ -348,7 +366,7 @@ export function checkSidecarImage({ exec, bin, cwd, env, files }) {
  * @param {object} io              { out, c, fail } from the CLI; `exec` and `dir` are injectable for tests
  */
 export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir: dirOverride = null, env: hostEnv = process.env,
-  settings = readSettings, login = readProxyLogin, stdin = process.stdin } = {}) {
+  settings = readSettings, login = readProxyLogin, stdin = process.stdin, aliasesOf = maskAliases } = {}) {
   if (argv[0] === 'build') return (await import('./container-build.mjs')).cmdContainerBuild(argv.slice(1), { out, c, fail, exec, dir: dirOverride, env: hostEnv });
   const a = parse(argv);
   if (a.verb === 'help' || a.verb === '--help' || a.verb === '-h') { out(`${CONTAINER_HELP}${HARDENED_HELP}`.trimEnd()); return 0; }
@@ -361,9 +379,14 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
   // The hardened box (container-hardened.mjs): its own fixed overlays, remembered by `up --hardened`.
   const box = selectBox(a.box, state);
   let overlays = box === 'hardened' ? [...HARDENED_OVERLAYS] : Array.isArray(state.with) ? state.with : [];
+  // `up --project` (container-mounts.mjs) narrows the PLAIN box to one host folder. The hardened box mounts no host
+  // folder at all (its projects are cloned into its volume), so a remembered project never applies to it.
+  const plainProject = typeof state.project === 'string' && state.project ? state.project : null;
+  let project = box === 'hardened' ? null : plainProject;
+  const mountFile = () => !!project && existsSync(join(dir, MOUNT_FILE));
   // Every compose call interpolates the same env (shell before .env), so the proxy and CA
   // fixes apply to up, run, login and shell alike. Resolved after init so a fresh .env counts.
-  let composeEnv;
+  let composeEnv;   // unset until prepare(): down, status, logs and pull inherit the shell
   let extra = [];
   let sidecar = null;   // why the egress sidecar runs, or null
   const prepare = () => {
@@ -395,27 +418,47 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
     composeEnv = Object.fromEntries(Object.entries({ ...hostEnv, ...proxy.set, ...caEnv, ...sideEnv }).filter(([, v]) => v !== undefined));
     if (a.tag) composeEnv.WORCA_TAG = a.tag;
   };
-  // compose.proxy.yml goes last: it takes over the egress service compose.egress.yml defines.
-  const files = () => { const all = [...new Set([...overlays, ...extra])]; return composeFileArgs([...all.filter((o) => o !== 'proxy'), ...(all.includes('proxy') ? ['proxy'] : [])]); };
+  // compose.proxy.yml goes last among the overlays: it takes over the egress service compose.egress.yml defines.
+  // The generated project mount (`mount`) goes after it, so its masks land on top of every bind.
+  const ordered = () => { const all = [...new Set([...overlays, ...extra])]; return [...all.filter((o) => o !== 'proxy'), ...(all.includes('proxy') ? ['proxy'] : [])]; };
+  // A project-scoped box is its own compose project (boxName: own containers and volumes) and binds only `p`, at the
+  // same path (compose.yml builds its bind from both variables), on every verb: `run`, `login` and `shell` start
+  // one-off containers that must not see the whole tree either.
+  const nameArgs = (p) => (p ? ['-p', boxName(p)] : []);
+  const envFor = (p) => (p ? { ...(composeEnv || hostEnv), WORCA_PROJECTS: p, WORCA_PROJECTS_MOUNT: p } : composeEnv);
+  const files = ({ mount = mountFile() } = {}) => [...nameArgs(project), ...composeFileArgs(ordered(), { project: mount })];
   const needsSidecar = () => !!sidecar || overlays.includes('proxy');
   const imageOk = () => {
     if (!needsSidecar()) return true;
-    const r = checkSidecarImage({ exec, bin: rt.bin, cwd: dir, env: composeEnv, files: files() });
+    const r = checkSidecarImage({ exec, bin: rt.bin, cwd: dir, env: envFor(project), files: files() });
     if (r.error) { fail(r.error); return false; }
     return true;
   };
-  const compose = (args, opts = {}) => exec(rt.bin, ['compose', ...files(), ...args], { cwd: dir, env: composeEnv, ...opts }).status;
+  const compose = (args, opts = {}) => exec(rt.bin, ['compose', ...files(), ...args], { cwd: dir, env: envFor(project), ...opts }).status;
 
   if (a.verb === 'init' || a.verb === 'up') {
     const r = await initDir(dir, { projects: a.projects, exec });
     out(`${c('bold', 'container dir')}  ${dir}${r.envCreated ? `   (${c('green', '.env created')} — edit it: WORCA_PROJECTS, tokens)` : ''}`);
     if (box === 'hardened') {
+      if (a.project !== null || a.noProject) {
+        fail('--project and --no-project are for the plain container: the hardened box mounts no host folder (its projects are cloned into its volume)');
+        return 2;
+      }
+      // hardenedBefore checks the plain box (compose project `worca`); a project-scoped plain box has its own name.
+      if (a.verb === 'up' && plainProject && runningProject({ exec, bin: rt.bin, project: boxName(plainProject) })) {
+        fail(`the plain container for ${plainProject} is running and holds the same port: stop it first with worca container down --plain`);
+        return 1;
+      }
       const code = await hardenedBefore({ a, dir, exec, bin: rt.bin, out, c, fail, env: hostEnv, settings, login, stdin, state, writeState: (s) => writeState(dir, s) });
       if (code !== null) return code;
     } else if (a.box === 'plain' && state.hardened) writeState(dir, { ...readState(dir), hardened: false });
     if (a.verb === 'init') return 0;
   }
   if (!existsSync(join(dir, 'compose.yml'))) { fail(`no compose files in ${dir}; run: worca container init`); return 1; }
+  if (project && !mountFile() && ['login', 'shell', 'run'].includes(a.verb)) {
+    fail(`the project mount for ${project} is missing; run: worca container up`);
+    return 1;
+  }
   // A login set up for the sidecar is remembered, so every later verb (down included) keeps its overlay.
   const proxyLoginVerb = (a.verb === 'proxy' && a._[0] === 'login') || (a.verb === 'run' && a.passthrough[0] === 'proxy' && a.passthrough[1] === 'login');
   if (proxyLoginVerb && readState(dir).sidecar !== true) writeState(dir, { ...readState(dir), sidecar: true });
@@ -427,11 +470,50 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
   switch (a.verb) {
     case 'up': {
       if (box === 'plain' && runningProject({ exec, bin: rt.bin, project: HARDENED_PROJECT })) { fail('the hardened box is running and holds the same port: stop it first with worca container down --hardened'); return 1; }
+      const before = { project, overlays };
       if (a.with !== null && box === 'plain') {
         const parsed = parseWith(a.with);
         if (parsed.error) { fail(parsed.error); return 1; }
         overlays = parsed;
-        writeState(dir, { ...state, with: overlays });
+      }
+      // The project-scoped box is the plain container only (the hardened box refused --project above).
+      if (box === 'plain') {
+        if (a.project !== null && a.noProject) { fail('--project and --no-project cannot go together'); return 1; }
+        if (a.noProject) project = null;
+        else if (a.project !== null || project) {
+          // A remembered project is checked again: compose would create a missing bind source as an empty folder.
+          const r = resolveProjectDir(a.project ?? project, { worcaHomeDir: worcaHome() });
+          if (r.error) { fail(a.project !== null ? r.error : `${r.error} (remembered from an earlier up: pass --project <dir> or --no-project)`); return 1; }
+          project = r.dir;
+        }
+        if (project && overlays.includes('clonein')) {
+          fail('--project mounts a host folder and clone-in mounts none: use one of them (--no-project, or --with without clonein)');
+          return 1;
+        }
+        let plan = null;
+        if (project) {
+          plan = await planProjectMasks(project, maskSettingsFor(project));
+          if (plan.masks.length > MAX_MASKS) {
+            fail(`--project: ${plan.masks.length} secret files to mask (the limit is ${MAX_MASKS}); leave some unmasked with the project's secretPathsUnmask setting, or move them out of ${project}`);
+            return 1;
+          }
+          const aliased = aliasesOf(project, plan.masks);
+          if (aliased.length) { fail(maskAliasRefusal(project, aliased)); return 1; }
+          for (const line of maskLines({ projectDir: project, ...plan })) out(line.level === 'warn' ? c('yellow', line.text) : line.text);
+        } else if (!overlays.includes('clonein')) {
+          out(c('yellow', `projects  ${readEnvValue(dir, 'WORCA_PROJECTS') || '$HOME/dev'}   the whole folder is mounted, unmasked: every project in it and its secret files are readable in the box (narrow it: --project <dir>)`));
+        }
+        if (before.project !== project) {
+          // Another box (boxName): stop the one this dir ran before, or it keeps its own mounts and holds the port.
+          // `down` keeps its volumes; `up --project <it>` or `--no-project` brings it back.
+          out(`stopping the box for ${before.project || 'the whole folder'} first (its volumes are kept)`);
+          const stopped = exec(rt.bin, ['compose', ...nameArgs(before.project), ...composeFileArgs(before.overlays), 'down'],
+            { cwd: dir, env: envFor(before.project) }).status;
+          if (stopped !== 0) { fail(`could not stop the box for ${before.project || 'the whole folder'}; nothing was started`); return stopped; }
+        }
+        if (project) writeProjectMount(dir, { projectDir: project, masks: plan.masks });
+        else removeProjectMount(dir);
+        if (a.with !== null || a.project !== null || a.noProject || project !== before.project) writeState(dir, { ...readState(dir), with: overlays, project });
       }
       const port = readEnvValue(dir, 'WORCA_PORT') || '4317';
       if (box === 'hardened') { const code = await hardenedUp(hb()); if (code !== null) return code; }
@@ -439,7 +521,7 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
       const code = compose(['up', '-d']);
       if (code !== 0) return code;
       const shown = [...overlays, ...extra];
-      out(`${c('bold', box === 'hardened' ? 'Worca (hardened box)' : 'Worca')}  http://localhost:${port}${shown.length ? `   overlays: ${shown.join(', ')}` : ''}`);
+      out(`${c('bold', box === 'hardened' ? 'Worca (hardened box)' : 'Worca')}  http://localhost:${port}${shown.length ? `   overlays: ${shown.join(', ')}` : ''}${project ? `   box: ${boxName(project)}` : ''}`);
       if (box === 'hardened') out(`  Posture:      ${c('bold', 'worca container status')}`);
       else out(`  Log in once:  ${c('bold', 'worca container login')}`);
       out(`  Stop:         ${c('bold', 'worca container down')}`);

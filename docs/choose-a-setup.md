@@ -4,20 +4,28 @@ Worca runs in five setups. They differ in where agents run, what an agent can re
 This page helps you pick one. For the reasoning behind the security claims, see the
 [Security overview](security-overview.md).
 
-Two of the five setups arrive in a later release. They are marked below, and have no page of their own yet.
-
 ## Which setup is for me
 
 | Setup | For whom | How you work | Agents sandboxed | Status |
 | --- | --- | --- | --- | --- |
 | [Native](#native) | One person trying Worca | Your own folders, directly | No | Available |
-| [Local sandbox (Docker)](#local-sandbox-docker) | A developer on a laptop with Docker | Unchanged: your own folders | Yes, one container per run | Arrives in a later release |
-| [E2B sandbox](#e2b-sandbox) | A team with an E2B server | Unchanged: your own folders | Yes, one virtual machine per run | Arrives in a later release |
+| [Local sandbox (Docker)](#local-sandbox-docker) | A developer on a laptop with Docker | Unchanged: your own folders | Yes, one container per run | Available (new) |
+| [E2B sandbox](#e2b-sandbox) | A team with an E2B server | Unchanged: your own folders | Yes, one virtual machine per run | Available (new) |
 | [Hardened box](#hardened-box) | One developer who wants the strictest local setup | Pull requests, projects cloned from the remote | Yes, Worca and its agents in containers | Available |
 | [Shared instance](#shared-instance) | A team on one server | Pull requests, projects cloned from the remote | Yes, Worca and its agents in containers | Available (reference profile) |
 
 "Sandboxed" has one claim behind it in every row: no model key, no git token and no corporate proxy login in an
 agent's reach. It does not mean "no secrets". The [Security overview](security-overview.md) lists what stays in reach.
+
+On a native install the [setup assistant](setup-assistant.md) picks between the first three for you: its
+How you work step has **Where agents run**. It offers Local always, the Local sandbox (Docker) when it finds Docker
+running, and the E2B sandbox when an E2B key is set. The pick becomes the default for new runs. In a container it
+shows how the box is set up instead.
+
+Worca says which setup it runs in. **Settings › General › Security** (Advanced level) shows where Worca runs, the
+credential broker, agent users, the outbound network, where the proxy login lives and the default execution
+environment. On a native install a Local run says **not sandboxed** in its run page header, and New run says so
+under **Runs in**. Both link here.
 
 ## Decision questions
 
@@ -34,7 +42,8 @@ Answer in order. Stop at the first answer that settles it.
    Native needs none.
 5. **Do you have an E2B server?** The E2B sandbox needs one.
 6. **Are you behind a proxy that needs a login?** In the Hardened box and the Shared instance, a separate container
-   keeps the login and agents cannot read it. In Native, the saved login is a file in your home folder that agents
+   keeps the login and agents cannot read it. In the Local sandbox (Docker) and the E2B sandbox it stays with Worca,
+   outside the sandbox. In Native, the saved login is a file in your home folder that agents
    can read. See [Where the login lives](network-proxy.md#where-the-login-lives).
 7. **Do agents work on code or issues you do not trust?** Then do not use Native. Pick a sandboxed setup.
 8. **Are you on Windows?** The Hardened box runs from a WSL2 shell. Native also runs on Windows without WSL2.
@@ -73,34 +82,37 @@ credential broker. This is the existing option, and it is not one of the five se
 
 ## Local sandbox (Docker)
 
-<!-- Link this section to docs/local-sandbox.md once the Local sandbox (Docker) lands. -->
-
-Arrives in a later release.
-
 **Who it is for.** A developer on a laptop with Docker who wants agents out of their own session but wants to keep
 working in their own folders.
 
-**Your workflow.** Unchanged. Worca stays where it is and you keep your folders. Each run gets one container on your
-own Docker. Code goes in as a git bundle plus uncommitted files. Changes come back as a filtered patch.
+**Your workflow.** Unchanged. Worca stays native and you keep your folders. Each run gets one container on your
+own Docker. Code goes in as a git bundle plus uncommitted files. Changes come back as a filtered patch. Nothing of
+your machine is mounted in the container: not your project, not your home folder, not the Docker socket.
 
-**Sandboxed.** Yes, one container per run. All steps of a workflow share it. A container shares your machine's
-kernel, so this is a weaker boundary than an E2B virtual machine.
+**Sandboxed.** Yes, one container per run. All steps of a workflow share it. Agents run as a normal user without
+sudo, and the container drops almost every Linux capability. A container shares your machine's kernel, so this is a
+weaker boundary than an E2B virtual machine.
 
-**Where each credential lives.** The same model as the E2B sandbox: the model key, the git token and the proxy login
-stay with Worca, outside the sandbox. Agents cannot read them.
+**Where each credential lives.** The same model as the E2B sandbox: no model key enters the container. Agents call
+a model relay, and Worca adds the key on your machine. The git token and the proxy login stay with Worca, outside
+the container. Agents cannot read them.
 
-**Network limit.** Planned: a network with no route out, and a way to reach the proxy. The exact limit is settled
-when it ships.
+**Network limit.** The container has no network at all. Every connection is carried to Worca on your machine, which
+applies the policy and opens it. Open (the default) reaches any public host, never your machine or your local
+network. Allow listed hosts only reaches the hosts in the list. A tool that ignores `HTTPS_PROXY` gets no network.
+Behind a proxy that needs a login, Worca's local proxy does the login.
 
-**What you need.** Docker.
+**What you need.** Docker Desktop or Docker Engine.
 
-**Status.** In progress. It is built on the E2B sandbox work and ships after it.
+**Limits.** Single git projects only. Claude, Codex, Copilot and Cursor only: Bedrock, Vertex and Foundry runs are
+refused. Workspace runs stay local.
+
+**Status.** Available, new. Its tests use a stand-in for the docker CLI. It has not yet run against a real Docker
+daemon.
+
+Details: [Local sandbox (Docker)](local-sandbox.md).
 
 ## E2B sandbox
-
-<!-- Link this section to docs/e2b.md once the E2B sandbox (#826) lands. -->
-
-Arrives in a later release.
 
 **Who it is for.** A team with an E2B server that wants agents in a sandbox and an unchanged workflow.
 
@@ -112,15 +124,18 @@ a git bundle plus uncommitted files. Changes come back as a filtered patch.
 **Where each credential lives.** No model key enters the sandbox: agents call a model relay on the Worca server. The
 git token and the proxy login stay with Worca. Agents cannot read them.
 
-**Network limit.** An allow-list. It stops casual egress only. Do not count on it against an agent that sets out to
-get data out.
+**Network limit.** Open by default. Allow listed hosts only is a per-project option, held by E2B by host name. It
+stops casual egress only. Do not count on it against an agent that sets out to get data out. The sandbox reaches the
+network from the E2B server, not through your corporate proxy.
 
-**What you need.** An E2B server. E2B Cloud receives your source code.
+**What you need.** An E2B server, self-hosted or E2B Cloud. E2B Cloud receives your source code.
 
 **Limits.** Single git projects only. Claude, Codex, Copilot and Cursor only: Bedrock, Vertex and Foundry runs are
 refused. Workspace runs stay local.
 
-**Status.** A draft pull request, not merged.
+**Status.** Available, new.
+
+Details: [Running agents in E2B sandboxes](e2b.md).
 
 ## Hardened box
 

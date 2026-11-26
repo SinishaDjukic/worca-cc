@@ -30,7 +30,8 @@ export function paintStatusDot(el, m) {
   }
   // QA 6: a PR-driven Needs you is a plain dot, but the list shows no state word beside it, so it keeps its name.
   // A chat's icon says what the chat did ("Started a run"), which no word beside it says: `dotLabel` names it.
-  if (m.symbol || m.state === 'needs-you' || m.dotLabel) {
+  // s4: a run status mark (markDot) can repaint a needs-you run as a ring; the word beside it names that state.
+  if (m.symbol || (m.state === 'needs-you' && m.dot === 'amber') || m.dotLabel) {
     el.setAttribute('role', 'img');
     el.setAttribute('aria-label', m.dotLabel || m.word);
     el.removeAttribute('aria-hidden');
@@ -48,4 +49,35 @@ export function renderStatusDot(doc, m) {
   const el = doc.createElement('span');
   paintStatusDot(el, m);
   return el;
+}
+
+/** Shaper small runs s4 (D2): the one map from a run status mark (src/shared/shape/run-status.mjs RUN_MARKS) to a dot.
+ *  `ring` is the run with the turn (`next`); markDot gives a ring with no word the grey ring (owner direction). */
+export const RUN_MARK_DOTS = Object.freeze({
+  done: Object.freeze({ dot: 'green', pulse: false, symbol: null }),
+  live: Object.freeze({ dot: 'peach', pulse: true, symbol: null }),
+  ask: Object.freeze({ dot: 'amber', pulse: false, symbol: 'question' }),
+  after: Object.freeze({ dot: 'dashed-ring', pulse: false, symbol: null }),
+  ring: Object.freeze({ dot: 'ink-ring', pulse: false, symbol: null }),
+  faint: Object.freeze({ dot: 'grey-ring', pulse: false, symbol: null }),
+  failed: Object.freeze({ dot: 'red', pulse: false, symbol: 'alert' }),
+});
+const MARK_WORD = Object.freeze({ ask: 'Needs you', failed: 'Failed' });
+
+const STILL_STATES = new Set(['paused', 'failed', 'stopped']);
+/** A `live` mark with no word over a paused, failed or stopped run model is stale (the group feed lags the run between
+ *  reloads): it must not paint a pulse. True when `st`'s mark should be ignored for model `m`. Pure. */
+export function staleLive(st, m) {
+  return !!st && st.mark === 'live' && st.word == null && !!m && STILL_STATES.has(m.state);
+}
+
+/** D2: a run model's dot repainted from a run status mark. A merged run (violet) and a PR-problem run (plain amber)
+ *  keep their dev dot on `done`, so the PR fact is not lost. A null or unknown mark returns `m` itself. `word` only
+ *  labels a symbol dot; the row text never comes from here. Pure. */
+export function markDot(m, mark, word) {
+  const d = mark && Object.hasOwn(RUN_MARK_DOTS, mark) ? RUN_MARK_DOTS[mark] : null;
+  if (!m || !d) return m;
+  if (mark === 'done' && (m.state === 'merged' || (m.state === 'needs-you' && !m.symbol))) return m;
+  const dot = mark === 'ring' && !word ? 'grey-ring' : d.dot;
+  return { ...m, dot, pulse: d.pulse, symbol: d.symbol, icon: null, word: word || MARK_WORD[mark] || m.word };
 }

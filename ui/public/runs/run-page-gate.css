@@ -29,8 +29,9 @@
 /* the model's own words, verbatim */
 :is(.rd-questions,.chat-rc-q) .qpanel[data-kind="recovery"] > .issue-detail{margin:0;padding:16px 18px;background:var(--field);
   border:1px solid var(--line);border-radius:var(--r-sm);font:var(--fs-body)/var(--lh-body) var(--mono);color:var(--ink);white-space:pre-wrap;}
-/* narrow screens: the question (or the decision) over its answers */
-@media (max-width:1080px){
+/* a narrow run page: the question (or the decision) over its answers. The page's own width, not the window's: beside
+   the Runs list a wide window leaves the 380px column no room for the answers (run-card.css's `rd` container). */
+@container rd (max-width:959.98px){
   .rd-questions .qblock,.rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]){grid-template-columns:minmax(0,1fr);grid-template-rows:none;}
   .rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]){row-gap:20px;}
   .rd-questions .qtext{grid-row:auto;margin-bottom:6px;}   /* the options keep their own 8px rhythm below it */

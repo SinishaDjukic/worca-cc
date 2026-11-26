@@ -30,7 +30,7 @@
 .crp .term-opener{display:none;}
 .crp :is(.rd > .rd-error,.hd > .hd-error){flex:none;margin:8px 16px 0;}
 .crp :is(.rd-details,.hd-details){flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;}
-.crp :is(.rd-header,.hd-header){margin:12px 16px 0;padding:16px 18px 14px;}
+.crp :is(.rd-header,.hd-header){margin:16px 16px 0;padding:0;}
 .crp :is(.rd-row1,.hd-row1){flex-wrap:wrap;gap:8px 10px;}
 .crp :is(.rd-title,.hd-title){flex:1 1 100%;font-size:18px;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;}
 .crp :is(.rd-body,.hd-body){padding:0 16px 24px;}

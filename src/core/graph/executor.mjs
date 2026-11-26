@@ -857,15 +857,17 @@ function initModelGuard(guard, outer) {
 
 // ── node time limits (E4) ─────────────────────────────────────────────────────
 
-const DEFAULT_TIME_LIMIT_MIN = 90;
-const DEFAULT_IDLE_LIMIT_MIN = 20;
+const DEFAULT_TIME_LIMIT_MIN = 600;
+const DEFAULT_IDLE_LIMIT_MIN = 300;
 const minutesOf = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
 
 /**
  * An agent node's wall-clock and idle limits in ms: the node's `config.timeLimitMinutes` /
  * `config.idleLimitMinutes`, else the workflow's `limits` of the same names, else the env
- * (`WORCA_NODE_TIME_LIMIT_MIN`, `WORCA_NODE_IDLE_LIMIT_MIN`), else 90 and 20 minutes —
- * generous enough for a normal node, short enough that a hung one does not hold the run forever.
+ * (`WORCA_NODE_TIME_LIMIT_MIN`, `WORCA_NODE_IDLE_LIMIT_MIN`), else 10 hours and 5 hours.
+ * Both defaults are long on purpose: a quiet agent is usually thinking or waiting on its own work,
+ * and a large step can run for hours. The earlier defaults (90 and 20 minutes) stopped real work,
+ * and a stopped node re-runs from the start. They remain a last guard against a node that never ends.
  */
 export function nodeTimeLimits(ctx) {
   const cfg = ctx?.node?.config || {};

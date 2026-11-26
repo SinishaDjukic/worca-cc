@@ -254,15 +254,16 @@ test('item 7: each native member of a small-runs group carries its slice (kind, 
   const of = (list, x) => list.find((g) => g.id === x.id);
   const on = withSmallRuns(true, () => listRunGroups({ live }));
   const m = of(on, f).members;
-  assert.deepEqual(m[0].slice, { kind: null, state: 'done' });
-  assert.deepEqual(m[1].slice, { kind: null, state: 'questions', stop: { reason: 'objection', held: true, after: 1 } });
-  assert.deepEqual(m[2].slice, { kind: null, state: 'planned', waitsFor: 2 });
+  assert.deepEqual(m[0].slice, { kind: null, state: 'done', buildsOn: [] });
+  // Its stop answer is held waiting its turn, so it goes on next (owner direction dd8aea6ed).
+  assert.deepEqual(m[1].slice, { kind: null, state: 'questions', stop: { reason: 'objection', held: true, after: 1 }, nextTurn: true, buildsOn: [] });
+  assert.deepEqual(m[2].slice, { kind: null, state: 'planned', waitsFor: [2], buildsOn: [2] });
   assert.equal(m.at(-1).pipelineId, loose);
   assert.equal('slice' in m.at(-1), false, 'an ad-hoc member is no slice');
   const none = (list, x) => of(list, x).members.every((y) => !('slice' in y));
   assert.ok(none(on, plain));
   assert.ok(none(withSmallRuns(false, () => listRunGroups({ live })), f));
-  assert.deepEqual(of(withSmallRuns(true, () => listRunGroups()), f).members[1].slice, { kind: null, state: 'starting' }, 'no live overlay');
+  assert.deepEqual(of(withSmallRuns(true, () => listRunGroups()), f).members[1].slice, { kind: null, state: 'starting', buildsOn: [] }, 'no live overlay');
 });
 
 test('fail closed: a marked feature with an owner-less requirement carries hold, flag on only; every other group has no such key', () => {

@@ -404,9 +404,12 @@ export function postureRows({ containers = {}, networks = [], sidecar = null, lo
   else if (!eg?.State?.Running) row('proxy-login', 'Proxy login in the sidecar', 'off', 'the egress sidecar is not running', 'worca container up --hardened');
   else if (!sidecar) row('proxy-login', 'Proxy login in the sidecar', 'unknown', 'the sidecar did not answer worca egress status', 'see worca container logs --hardened');
   else if (sidecar.state === 'not-configured' || sidecar.state === 'off') row('proxy-login', 'Proxy login in the sidecar', 'on', 'no corporate proxy: the sidecar relays direct');
-  else if (sidecar.state === 'no-login') row('proxy-login', 'Proxy login in the sidecar', 'on', `the proxy ${sidecar.upstream} needs no login`);
+  // 'no-login' is "no login saved": the sidecar cannot tell whether the proxy needs one until it asks. Nothing is in
+  // the box either way, so the row is on, but it must not claim the proxy needs none.
+  else if (sidecar.state === 'no-login') row('proxy-login', 'Proxy login in the sidecar', 'on', `no login is saved for the proxy ${sidecar.upstream}; requests go without one. If the proxy asks for a login: worca container proxy login`);
   else if (sidecar.state === 'ready') row('proxy-login', 'Proxy login in the sidecar', 'on', `the sidecar holds the login for ${sidecar.upstream}${sidecar.login?.label ? ` (${sidecar.login.label})` : ''}${sidecar.managed ? ', managed by the operator' : ''}`);
-  else if (sidecar.state === 'needs-login') row('proxy-login', 'Proxy login in the sidecar', 'off', `the proxy ${sidecar.upstream} asks for a login and none works`, 'worca container proxy login');
+  else if (sidecar.state === 'needs-login') row('proxy-login', 'Proxy login in the sidecar', 'off', `the proxy ${sidecar.upstream} asks for a login and none works`,
+    sidecar.managed ? 'the operator manages this login: replace the login file (WORCA_EGRESS_LOGIN_FILE) with a working one' : 'worca container proxy login');
   else row('proxy-login', 'Proxy login in the sidecar', 'off', `the proxy setting has an error${sidecar.error ? `: ${sidecar.error}` : ''}`, 'fix HTTPS_PROXY in .env, then worca container up --hardened');
 
   // The allow-list: Worca on internal networks only, the sidecar in allow-list mode, Worca pointed at it.

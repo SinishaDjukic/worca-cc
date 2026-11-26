@@ -3,11 +3,67 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Ask Worca knows your security setup
+
+**Chat now answers questions about sandboxes and security setups. It can change a project's sandbox with a card.**
+
+Every chat message carries one security line. It names the setup, the broker, agent users, the network, the proxy login and the default execution environment.
+
+Ask "is this run sandboxed?". Chat reads the same rows as the Security card. It says which sandboxes are ready, and why one is not. It shows the slots in use and the wait limit.
+
+A run card that asks for Docker or E2B checks it first. When Docker is not running, Chat says so and offers Local.
+
+Chat reads a sandbox run's state. It sees a run waiting for a slot, the image build, the answer-by time and the files held for review.
+
+New cards set a project's environment spec, build its template or image, and set its sandbox network. You apply each one.
+
+Chat can change the Docker limits and resources in Settings, with Revert.
+
+Chat says exactly what a setup protects. It never claims "no secrets". It never changes the broker, agent users, the allow-list or the base image.
+
+Chat can no longer read the proxy login file, Docker secrets or the egress sidecar's data. In the hardened box it adds projects by cloning only.
+
+Chips: Chat · Security · Sandbox
+
+Read it: [Chat](../chat.md#security-and-sandboxes), [Security overview](../security-overview.md), [Environment spec](../environment-spec.md)
+
+Pull requests (add each number when it opens):
+
+- Ask Worca knows the security setups (#1619)
+
+## See how Worca is protected, and change it from the UI
+
+**Worca now shows how it is set up. The security setups need no settings.json editing.**
+
+Settings › General has a Security card. It shows where Worca runs. It shows the credential broker, agent users, the outbound network and the proxy login. It shows the default execution environment. What only the host can see reads Unknown.
+
+A Local run on your own machine now says "not sandboxed". The run page header says it. New run says it under Runs in. Both link to Choose a setup.
+
+The Execution environment card follows the backend you pick. Docker shows Docker's limits: sandboxes at once, wait time, memory, CPUs, processes and runtime. Save checks each one.
+
+A project's environment spec is a form now. Add tools with pinned versions and apt packages, then Save. A refused value shows its reason inline.
+
+The first Docker run builds its image. The run page says so while it builds.
+
+The setup assistant finds Docker and an E2B key. It asks where agents run. Your answer becomes the default for new runs.
+
+In the hardened box, Add project offers Clone from URL only. Open in editor is gone there. The Security card shows the box image, current or stale, and the rebuild command.
+
+When the egress sidecar is down, the proxy card says so. Its buttons wait. Retry checks again. A rejected login the operator manages now says who must fix it.
+
+Chips: Security · Sandbox · Settings · Setup assistant
+
+Read it: [Choose a setup](../choose-a-setup.md), [Hardened box](../hardened-box.md), [Local sandbox](../local-sandbox.md)
+
+Pull requests (add each number when it opens):
+
+- UI for the security setups (#1634)
+
 ## Choose a setup, and a security overview
 
 **Two new pages tell you which Worca setup fits you, and what each one protects.**
 
-"Choose a setup" compares Native, Local sandbox (Docker), E2B sandbox, Hardened box and Shared instance. It says who each is for, how you work in it, where each credential lives and what you need. The Local sandbox and the E2B sandbox arrive in a later release.
+"Choose a setup" compares Native, Local sandbox (Docker), E2B sandbox, Hardened box and Shared instance. It says who each is for, how you work in it, where each credential lives and what you need.
 
 The security overview says what Worca treats as untrusted. The claim for a sandboxed setup is: no model key, no git token and no proxy login in an agent's reach. It does not claim "no secrets". The page lists what stays in reach, such as MCP registry secrets.
 
@@ -87,6 +143,7 @@ Pull requests (add each number when it opens):
 
 - Proxy login in the egress sidecar (#1621)
 - The Settings card and the setup assistant talk to the sidecar (#1623)
+- The UI server gets the sidecar's secret, so the card and the move of an old login work (#1637)
 
 ## Build the box image from the spec
 
@@ -116,7 +173,7 @@ Pull requests (add each number when it opens):
 
 Set it with `worca exec-env spec --project <key|dir> --set spec.json`. The spec lists tools by mise name, each with a pinned version, and apt packages. It holds tools only: never env vars, files or secrets. `latest` is refused. Show it with the same command, or clear it with `--clear`.
 
-`worca container build` builds the box image from it. Other setups build from it in later releases.
+`worca container build` builds the box image from it. `worca exec-env build` builds the E2B template and the Local sandbox (Docker) image from it.
 
 Chips: worca exec-env spec · pinned tools · apt packages · no secrets
 
@@ -125,6 +182,50 @@ Read it: [Project environment spec](../environment-spec.md)
 Pull requests (add each number when it opens):
 
 - Exec env: a project environment spec and its CLI
+
+## Local sandbox (Docker)
+
+**A run's agents can now work in a disposable container on your own Docker.**
+
+Worca stays native. Pick it under **Runs in**, or with `worca --exec-env docker`. One container serves the whole run.
+
+Nothing of your machine is mounted. Code goes in as a git bundle. Changes come back as a filtered patch after each step. No model key enters the container.
+
+The container is hardened. No sudo. Almost every capability dropped. No new privileges. Limits on processes, memory and CPU. A stricter runtime, such as `runsc`, is one setting away.
+
+The container has no network of its own. Every connection goes through Worca, which never lets it reach your machine. Open or allow-listed hosts only, per project. Behind a proxy that needs a login, Worca's local proxy logs in. The login never enters the container.
+
+The image builds itself on first use. Project images build from the environment spec.
+
+It needs Docker Desktop or Docker Engine. Single git projects on Claude, Codex, Copilot or Cursor only.
+
+Chips: Runs · Security · Docker
+
+Read it: [Local sandbox (Docker)](../local-sandbox.md)
+
+Pull requests (add each number when it opens):
+
+- Local sandbox (Docker) backend (#1627)
+
+## Runs in an E2B sandbox
+
+**A run's agents can now work in an E2B sandbox instead of on your machine.**
+
+Pick it under **Runs in**, per project or per run, or with `worca --exec-env e2b`. One sandbox serves the whole run. Your code goes in as a git bundle. Changes come back as a filtered patch after each step.
+
+No model key and no git token enter the sandbox. Worca keeps them and relays the model calls.
+
+The sandbox network is open by default. A project can limit it to the allow-listed hosts. A project can also have its own template, built from its environment spec.
+
+It covers single git projects on Claude, Codex, Copilot or Cursor. Bedrock and Vertex are refused for a sandbox run.
+
+Chips: Runs · Security · E2B
+
+Read it: [E2B](../e2b.md)
+
+Pull requests (add each number when it opens):
+
+- Run a pipeline's agents in a remote E2B sandbox (#826)
 
 ## Steady command rows in Chat
 

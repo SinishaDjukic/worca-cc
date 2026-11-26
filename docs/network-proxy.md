@@ -332,6 +332,11 @@ then dropped. A line under the card says that the sidecar holds the login.
 There is no local proxy port in a container, so that field is gone. Auto-detect
 fills in the proxy the sidecar uses. Chat's proxy tools use the same path.
 
+**When the sidecar does not answer.** The card says so in its status line:
+"The egress sidecar cannot be reached". Save, Log in, Log out, Test and
+Auto-detect are off, because each one would fail the same way. A Retry button
+reads the status again. Check that the sidecar runs (`worca container logs`).
+
 **What the sidecar keeps.** The same record as the native install (domain,
 user name, NT hash, never the password), with the same file guards, in
 `/worca/egress/proxy-login.json` on its own volume `egress-data`. Only the
@@ -395,6 +400,11 @@ in and the state, with no login form, and say that the operator manages the
 login. Test still works.
 `worca proxy status` shows who is logged in and the state.
 
+If the proxy rejects that login, nobody can log in again from Worca. The card
+and the setup assistant say so: the operator must replace the login file
+(`WORCA_EGRESS_LOGIN_FILE`) with a working one. The sidecar reads the new file
+on its next call.
+
 ## Where the login lives
 
 | Setup | Where the proxy login is stored | Can agents read it? |
@@ -404,6 +414,8 @@ login. Test still works.
 | Shared instance | In the egress sidecar: a technical user's login, optionally managed by the operator (`WORCA_EGRESS_LOGIN_FILE`) | No, as in the hardened box. |
 | Plain container (`worca container up`) with a proxy login | In the egress sidecar, which starts by itself, in open mode | No. The box has no copy. |
 | Plain container without the sidecar (raw `docker compose up`) | In the box, `/worca/.worca-cc/proxy-login.json`, with a warning at start | Yes, unless agent isolation is on. |
+| [Local sandbox (Docker)](local-sandbox.md) | With Worca on your machine, as in Native: `~/.worca-cc/proxy-login.json`. The container has no network: its connections are carried to Worca, and Worca's local proxy on `127.0.0.1` does the login | No. Nothing of your machine is mounted in the container, and the login never enters it. |
+| [E2B sandbox](e2b.md) | With Worca, where Worca runs: `~/.worca-cc/proxy-login.json` on a native install, the egress sidecar in a container setup. Worca reaches the E2B server through the proxy. The sandbox reaches the network from the E2B server, not through your proxy | No. The login never enters the sandbox. |
 
 In the hardened box and the shared instance, agents still send their traffic
 through the sidecar, which is logged in. That is the point of the proxy. With
@@ -413,8 +425,8 @@ the sidecar out or change its proxy settings, but still never read the login.
 A Railway instance normally has no corporate proxy in front of it, so it has
 no sidecar.
 
-- Local sandbox (Docker): arrives in a later release. The login stays with Worca on the server and never enters the sandbox.
-- E2B sandbox: arrives in a later release. The login stays with Worca on the server and never enters the sandbox.
+In the Local sandbox (Docker), a `docker build` of the sandbox image gets no login either: behind a proxy that needs
+one, set Docker's own proxy setting (see [Local sandbox (Docker)](local-sandbox.md#network)).
 
 To compare the setups, see [Choose a setup](choose-a-setup.md) and the [Security overview](security-overview.md).
 

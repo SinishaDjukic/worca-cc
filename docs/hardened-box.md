@@ -123,6 +123,18 @@ Each check fails with one line and starts nothing:
 A run works in a worktree on the box's volume. To see its changes, open its pull request, or fetch its branch from
 the remote. The box has no copy of your local branches: push a branch first if a run should start from it.
 
+Worca knows it runs in the hardened box: `compose.hardened.yml` sets `WORCA_BOX=hardened` on its container. The UI
+follows that:
+
+- **Add project** offers **Clone from URL** only. A line says why: a folder there would be on the box's own disk,
+  not your machine. The server refuses a folder add too (`POST /api/projects` answers 409 `HARDENED_CLONE_ONLY`),
+  and so does a chat's add-project card.
+- **Open in editor**, **Open in terminal** and **Show in folder** are not offered. They would open inside the box,
+  on nobody's screen. A saved editor or terminal command is not used there either.
+- **Settings › General › Security** says **Hardened box** and shows what Worca's own process can see: the
+  broker, the agent users, the allow-list, the proxy login in the sidecar and the default execution environment.
+  The networks and mounts show only from the host: `worca container status` reads them.
+
 ## The posture report
 
 `worca container status` on the hardened box prints one line per protection. Each line is read from the running
@@ -136,7 +148,8 @@ containers, not assumed from the files:
 | Allow-list on, no route out | every network of Worca's container is internal, the sidecar runs in allow-list mode, and Worca points at it |
 | No host project mount | the mounts of Worca's container: volumes only, plus the CA file read-only |
 
-A line that is off says how to fix it. `--json` prints the same as one JSON object, for a script. The exit code is
+A line that is off says how to fix it. A rejected proxy login that the operator manages says the operator must
+replace the login file, not `worca container proxy login`. `--json` prints the same as one JSON object, for a script. The exit code is
 0 when every line is on, 1 when one is off or unknown, and 3 when the box is not running. When Worca refused to
 start, the report shows its reason from the logs.
 
@@ -175,7 +188,9 @@ caller is closed at once: an agent in Worca's container, the sidecar, any other 
 lookup decides it. When the relay finds no such gateway, it does not start.
 
 On Docker Desktop the published port may arrive from another address. Then the relay refuses every connection, and
-the UI does not open. That fails closed. It has not been checked on Docker Desktop yet.
+the UI does not open. That fails closed. On Docker Desktop 28 for macOS it was checked: the published port arrives
+from the gateway of the relay's default network, so the UI opens, and connections from Worca's container, the broker
+and the sidecar are refused.
 
 The broker's calls to the model provider go through the sidecar too. So the allow-list keeps `api.anthropic.com`,
 and the proxy login applies to the broker.

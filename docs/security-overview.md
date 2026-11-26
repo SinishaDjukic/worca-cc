@@ -4,6 +4,11 @@ This page is for someone reviewing Worca for a company. It says what Worca treat
 protects, what it does not, and how to report a problem. To pick a setup, start with
 [Choose a setup](choose-a-setup.md).
 
+To see what your own Worca protects, open **Settings › General › Security** (Advanced level). It shows what Worca's
+own server process can tell: where it runs, the credential broker, agent users, the outbound network, the proxy
+login and the default execution environment. What only the host can see (a container's networks and mounts) reads
+**Unknown** there; `worca container status` checks it on the hardened box.
+
 ## What Worca treats as untrusted
 
 Agents, and everything they read. That covers repositories, issues, web pages, tool output and the files an agent
@@ -28,13 +33,12 @@ token and no proxy login in an agent's reach. Some secrets stay in reach (see [K
 | --- | --- | --- | --- |
 | Native | No | Git token: yes. Model key: no | No |
 | Plain container | Protects the machine, not the mounted project | Git token: yes. Model key: no, unless you add the broker | Yes with the sidecar, which starts by itself when a login is configured. No without it |
-| Local sandbox (Docker), later release | Yes, a container per run | Yes | Yes |
-| E2B sandbox, later release | Yes, a virtual machine per run | Yes | Yes |
+| [Local sandbox (Docker)](local-sandbox.md) | Yes, a container per run | Yes | Yes |
+| [E2B sandbox](e2b.md) | Yes, a virtual machine per run | Yes | Yes |
 | Hardened box | Yes, in containers | Yes | Yes |
 | Shared instance | Yes, in containers | Yes | Yes. On Railway there is normally no corporate proxy, so no login |
 
-The plain container is the existing `worca container up`. It is not one of the five setups. The Local sandbox
-(Docker) and the E2B sandbox are not in this release.
+The plain container is the existing `worca container up`. It is not one of the five setups.
 
 ## Credentials by setup
 
@@ -46,13 +50,13 @@ Can an agent read it?
 | Plain container | **Yes**, unless the broker holds it | **No**, as in Native | **No** with the sidecar. **Yes** without it, unless agent users are on | **Yes**, in a run that uses them |
 | Hardened box | **No.** In the broker | **No.** Worca holds it | **No.** In the egress sidecar | **Yes**, in a run that uses them |
 | Shared instance | **No.** Per person, in the broker | **No.** Per person, in the broker | **No.** A technical user's, supplied as a file, mounted by the sidecar only | **Yes**, in a run that uses them |
-| E2B sandbox, later release | **No.** A relay on the Worca server | **No.** With Worca | **No.** With Worca | **Yes**, in a run that uses them |
-| Local sandbox (Docker), later release | **No.** A relay on the Worca server | **No.** With Worca | **No.** With Worca | **Yes**, in a run that uses them |
+| E2B sandbox | **No.** A relay on the Worca server | **No.** With Worca | **No.** With Worca | **Yes**, in a run that uses them |
+| Local sandbox (Docker) | **No.** A relay on the Worca server | **No.** With Worca | **No.** With Worca | **Yes**, in a run that uses them |
 
 Notes:
 
 - Bedrock, Vertex and Foundry credentials are not protected in any setup. In a box they stay in the agent's
-  environment. The E2B sandbox refuses those runs.
+  environment. The E2B sandbox and the Local sandbox (Docker) refuse those runs.
 - The proxy login file holds a domain, a user name and an NT hash, never the password. An NT hash is enough to log in
   to an NTLM proxy, so treat the file like a password.
 - A model key in the broker can still be spent. A rogue agent can spend credits within the broker's budgets and
@@ -68,8 +72,8 @@ Notes:
 | Shared instance on Compose | The same as the Hardened box | The same |
 | Shared instance on Kubernetes | The same, with a NetworkPolicy in place of the internal network | The same, if your network plugin enforces NetworkPolicies. If it does not, there is no limit. This profile ships no manifests |
 | Shared instance on Railway | A proxy inside Worca's container | Weak. Railway has no internal-only network. A program that ignores the proxy variables or opens a raw socket goes straight out. DNS is not filtered. It guards against mistakes, not against a hostile task |
-| E2B sandbox, later release | An allow-list | Stops casual egress only |
-| Local sandbox (Docker), later release | Planned: a network with no route out | Settled when it ships |
+| E2B sandbox | Open by default. An allow-list per project, held by E2B by host name | Stops casual egress only. A client that names an allowed host can reach any address, and a listed name opens DNS |
+| Local sandbox (Docker) | No network in the container. Every connection is carried to Worca, which applies the policy: Open (public hosts only) or an allow-list | Strong against raw sockets: a tool that ignores `HTTPS_PROXY` gets no network. Worca never connects to your machine or a link-local address, and in Open mode to no private address. In Allow mode it holds by host name, as in the Hardened box |
 
 ## What a sandbox isolates
 
@@ -116,8 +120,11 @@ More, by setup:
   settings. More than 16 people share agent users. On Railway the network limit is weak.
 - **Hardened box:** single user. Do not publish its port on a network. It has not been checked on Docker Desktop's
   port proxy.
-- **E2B sandbox, later release:** single git projects, Claude, Codex, Copilot and Cursor only. Workspace runs stay
-  local. E2B Cloud receives your source code.
+- **E2B sandbox:** single git projects, Claude, Codex, Copilot and Cursor only. Workspace runs stay local. E2B
+  Cloud receives your source code. See [E2B → Limitations](e2b.md#limitations).
+- **Local sandbox (Docker):** single git projects, Claude, Codex, Copilot and Cursor only. Workspace runs stay
+  local. A container shares your kernel; a stricter runtime such as gVisor is one setting away. Images are built
+  behind a login proxy only with Docker's own proxy setting. See [Local sandbox (Docker) → Limits](local-sandbox.md#limits).
 - **Native:** no sandbox, by design.
 
 More on the broker: [Credential broker → Limits and accepted risks](credential-broker.md#limits-and-accepted-risks).
@@ -129,6 +136,8 @@ More on the broker: [Credential broker → Limits and accepted risks](credential
 - The Shared instance's compose files were checked with `docker compose config`. They have not been started together
   on a real server.
 - The Hardened box has not been checked on Docker Desktop for Mac or Windows.
+- The Local sandbox (Docker) has not yet run against a real Docker daemon. Its tests use a stand-in for the docker
+  CLI.
 
 ## Report a vulnerability
 

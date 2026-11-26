@@ -29,6 +29,9 @@ import { readNightDecisions } from '../night/store.mjs';
 import { PERSPECTIVE_KEYS } from '../../shared/shape/perspectives.mjs';
 import { listPresets } from '../run-presets-store.mjs';
 import { defaultGuardrailSetId } from '../guardrail-store.mjs';
+import { REMOTE_ENGINES } from '../../shared/exec-env.mjs';
+import { execEnvNames } from '../exec-env/registry.mjs';
+import { isSecretPath } from '../secret-paths.mjs';
 
 /** Who started runs (pipelines.started_by), one row per person, most active first. Scope: a
  *  projectKey or a workspaceKey, else everything. Archived and pre-attribution (NULL) runs are
@@ -199,7 +202,13 @@ export function defaultToolDeps({ threadId, viewer = null }) {
     // to 'permissive' (empty protectedPaths), so resolving per row would show the
     // model every credential file on most runs. This only ever omits more.
     protectedPaths: [...GUARDRAIL_PRESETS.secure.protectedPaths],
+    // The secret-path owner's matcher for those patterns (tools.mjs imports nothing).
+    isSecretPath,
     redact: redactAskText,
     limits: ASK_LIMITS,
+    // The engines a sandbox runs (src/shared/exec-env.mjs, from the catalog): propose_run's execEnv names them.
+    remoteEngines: REMOTE_ENGINES,
+    // Every execution environment the registry knows ('local' first): propose_run's execEnv names them all.
+    execEnvNames: execEnvNames(),
   };
 }

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { terminalTargets, terminalEnv, LIVE_WARNING } from '../src/core/terminal/context.mjs';
+import '../src/core/exec-env/index.mjs';   // loads the registry, which registers each backend's secretEnv
 import { NO_PROJECT_KEY, noProjectWorkDir } from '../src/core/store.mjs';
 import { createPipeline, newPipelineId, findPipelineRowById } from '../src/core/artifacts.mjs';
 import { membersOfRow } from '../src/core/checkout.mjs';
@@ -88,6 +89,14 @@ test('terminalEnv: run vars, action ports, stripped secrets, pipes extras', () =
   assert.equal(single.WORCA_PORT_WEB_PORT, '4402');
   assert.equal(single.TERM, 'xterm-256color');
   assert.equal(single.PAGER, undefined);
+});
+
+test('terminalEnv: the person keeps the backend keys, the Ask agent terminal does not; GitHub keys never pass', () => {
+  const base = { E2B_API_KEY: 'k', GH_TOKEN: 'g', PATH: '/bin' };
+  const person = terminalEnv({ base, sessionId: 't-1', mode: 'pty', cwd: '/w' });
+  assert.equal(person.E2B_API_KEY, 'k'); assert.equal(person.GH_TOKEN, undefined);
+  const agent = terminalEnv({ base, sessionId: 't-2', mode: 'pty', cwd: '/w', agent: true });
+  assert.equal(agent.E2B_API_KEY, undefined); assert.equal(agent.GH_TOKEN, undefined);
 });
 
 test('terminalEnv agent: no pager, no git prompt, no user rc, even under a pty', () => {

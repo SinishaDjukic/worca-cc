@@ -61,7 +61,20 @@ export function defaultProbes({ sourceEnv = () => upstreamEnv(process.env), rech
       } catch { return null; }   // nothing listening on 11434 is the normal "absent", not a failed check
     },
     teamSetup: () => { const r = readTeamSetupFile(); return r.path ? { ...r, path: r.path.replace(homedir(), '~') } : r; },
+    // The Local sandbox backend's own status (`docker version`, then a count of its containers): it never starts Docker.
+    docker: async () => (await import('../exec-env/backends/docker.mjs')).dockerBackend.status({ env: process.env }),
+    e2b: async () => e2bFacts(process.env, (await import('../exec-env/backends/e2b.mjs')).e2bInstalled),
   };
+}
+
+/** What the E2B backend needs, read from `env` with no network call: the key, the SDK and the server it would use.
+ *  Never the key itself. */
+export function e2bFacts(env = process.env, installed = () => false) {
+  const keySet = !!String(env.E2B_API_KEY || '').trim();
+  const url = String(env.E2B_API_URL || '').trim() || (env.E2B_DOMAIN ? `https://api.${env.E2B_DOMAIN}` : '');
+  let server = 'E2B Cloud';
+  if (url) { try { server = new URL(url).host; } catch { server = 'the E2B_API_URL server'; } }
+  return { keySet, installed: !!installed(), server };
 }
 
 const row = (id, label, state, line, facts) => ({ id, label, state, line, ...(facts ? { facts } : {}) });
@@ -107,6 +120,15 @@ export const DETECT_CHECKS = Object.freeze([
       : ['no', 'No Ollama is running on port 11434.'] },
   { id: 'apiKey', label: 'Anthropic API key', run: (p) => p.processEnv(), read: (env) =>
     env.ANTHROPIC_API_KEY ? ['ok', 'ANTHROPIC_API_KEY is set in your environment.'] : ['no', 'ANTHROPIC_API_KEY is not set.'] },
+  // Where agents can run (docs/choose-a-setup.md): the Local sandbox needs a running Docker, E2B a key.
+  { id: 'docker', label: 'Docker', budgetFactor: 2, run: (p) => p.docker(), read: (d) =>
+    d?.state === 'connected' ? ['ok', 'Docker is running here. Runs can use the Local sandbox (Docker).', { state: 'up' }]
+      : d?.state === 'not-configured' ? ['no', 'Docker is not installed here (or not on Worca’s PATH).', { state: 'missing' }]
+        : ['warn', 'Docker is installed but not running. Start it to use the Local sandbox (Docker).', { state: 'down' }] },
+  { id: 'e2b', label: 'E2B sandbox', run: (p) => p.e2b(), read: (e) =>
+    e?.keySet && e.installed ? ['ok', `An E2B key is set for ${e.server}. Runs can use the E2B sandbox.`, { configured: true, server: e.server }]
+      : e?.keySet ? ['warn', 'E2B_API_KEY is set, but the e2b package is not installed with Worca.', { configured: false }]
+        : ['no', 'E2B_API_KEY is not set.', { configured: false }] },
   // The team setup file (D16, T13): ~/.worca-cc/team-setup.json or WORCA_TEAM_SETUP; a refusal names the field.
   { id: 'teamSetup', label: 'Team setup', run: (p) => p.teamSetup(), read: (t) =>
     !t?.found ? ['no', 'No team setup file was found.']

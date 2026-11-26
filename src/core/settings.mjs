@@ -76,6 +76,9 @@ import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
 import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
 import { isGuideAreaId } from '../shared/how-it-works/areas.mjs';
+import { isExecEnvName, execEnvNames } from './exec-env/index.mjs';
+import { DEFAULT_E2B_MAX_SANDBOXES, DEFAULT_E2B_MAX_WAIT_MIN } from './exec-env/e2b-config.mjs';
+import { DEFAULT_DOCKER_MAX_SANDBOXES, DEFAULT_DOCKER_MAX_WAIT_MIN, sandboxResources } from './exec-env/backends/docker.mjs';
 import { normalizePins, storedPins } from '../shared/home-pins.mjs';
 import { DEFAULT_PATTERN, DEFAULT_TYPES, TYPE_RE, patternProblem } from '../shared/naming/pattern.mjs';
 import { IMAGE_SERVICES, IMAGE_SHAPES, originOf } from '../shared/image-services.mjs';
@@ -1324,6 +1327,8 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'runEngine', 'stepModels', 'utilityModels',
   'modelRoles',                              // Models › Jobs › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
   'requirementsInterview',                  // Models › Jobs › Helper jobs: the requirements interview { model, effort }
+  'execEnv', 'e2bMaxSandboxes', 'e2bMaxWaitMin', // the execution environment (docs/e2b.md)
+  'dockerMaxSandboxes', 'dockerMaxWaitMin', 'dockerSandbox', // the Local sandbox (Docker) backend (docs/local-sandbox.md)
   'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
   'designModels',                            // Models › Jobs › Design: { <engine>: { lead|builder: { model, effort } } }
   'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
@@ -1479,6 +1484,111 @@ export async function setRunEngineSetting(input) {
   await persistSettings(settings);
   return { runEngine: runEngineSetting() ?? null };
 }
+
+// ── Execution environment (plans/e2b-execution-design.md §12) ────────────────
+// `execEnv` is the user default of the `run.execEnv` cascade (local | a registered backend); the two integers
+// size the e2b mode: sandboxes at once (the capacity queue) and the wait for an answer.
+export function execEnvSetting() {
+  if (homeGuarded()) return undefined;
+  const value = readSettings().execEnv;
+  return value === null ? undefined : value;
+}
+export function assertExecEnvInput(input) {
+  if (isClearInput(input)) return null;
+  if (!isExecEnvName(input)) throw new Error(`execEnv must be one of ${execEnvNames().join(' | ')}`);
+  return input;
+}
+export async function setExecEnvSetting(input) {
+  const value = assertExecEnvInput(input);
+  const settings = readSettings();
+  if (value === null) delete settings.execEnv; else settings.execEnv = value;
+  await persistSettings(settings);
+  return { execEnv: execEnvSetting() ?? null };
+}
+
+const E2B_INTS = {
+  e2bMaxSandboxes: { valid: (v) => Number.isSafeInteger(v) && v >= 1 && v <= 64, range: '1–64', def: DEFAULT_E2B_MAX_SANDBOXES },
+  e2bMaxWaitMin: { valid: (v) => Number.isSafeInteger(v) && v >= 5 && v <= 1440, range: '5–1440', def: DEFAULT_E2B_MAX_WAIT_MIN },
+  // The Local sandbox (Docker) backend's limitSettings (docs/local-sandbox.md): settings.json only.
+  dockerMaxSandboxes: { valid: (v) => Number.isSafeInteger(v) && v >= 1 && v <= 64, range: '1–64', def: DEFAULT_DOCKER_MAX_SANDBOXES },
+  dockerMaxWaitMin: { valid: (v) => Number.isSafeInteger(v) && v >= 5 && v <= 1440, range: '5–1440', def: DEFAULT_DOCKER_MAX_WAIT_MIN },
+};
+/** The stored value or null (GET: an unset field stays empty and shows the default as its placeholder). */
+export function e2bIntSettingRaw(key) {
+  if (homeGuarded()) return null;
+  const v = readSettings()[key];
+  return E2B_INTS[key].valid(v) ? v : null;
+}
+/** The effective value (runtime). An invalid stored value warns and falls back to the default. */
+function e2bInt(key) {
+  const { valid, def } = E2B_INTS[key];
+  if (homeGuarded()) return def;
+  const v = readSettings()[key];
+  if (v === undefined || v === null) return def;
+  if (!valid(v)) { console.warn(`[worca] settings: ignoring invalid ${key} ${JSON.stringify(v)}; using ${def}`); return def; }
+  return v;
+}
+export const e2bMaxSandboxes = () => e2bInt('e2bMaxSandboxes');
+export const e2bMaxWaitMin = () => e2bInt('e2bMaxWaitMin');
+/** A backend's integer limit by its settings key (exec-env backend `limitSettings`); undefined for a
+ *  key this build has no setting for, so the backend's own capability default applies. */
+export function execEnvLimitSetting(key) { return Object.hasOwn(E2B_INTS, key) ? e2bInt(key) : undefined; }
+/** maxConcurrent | maxWaitMin of an exec-env backend: its user setting, else its capability default. */
+export function execEnvLimit(backend, which) {
+  const key = backend.limitSettings?.[which];
+  const v = key ? execEnvLimitSetting(key) : undefined;
+  return v ?? (which === 'maxConcurrent' ? backend.capabilities.defaultMaxConcurrent : backend.capabilities.defaultMaxWaitMin);
+}
+export function assertE2bIntInput(key, input) {
+  if (isClearInput(input)) return null;
+  if (!E2B_INTS[key].valid(input)) throw new Error(`${key} must be a whole number in ${E2B_INTS[key].range}`);
+  return input;
+}
+export async function setE2bIntSetting(key, input) {
+  const value = assertE2bIntInput(key, input);
+  const settings = readSettings();
+  if (value === null) delete settings[key]; else settings[key] = value;
+  await persistSettings(settings);
+  return { [key]: e2bIntSettingRaw(key) };
+}
+// The Local sandbox (Docker) container's limits (docs/local-sandbox.md): { memory, cpus, pids, runtime }, each optional.
+// sandboxResources (backends/docker.mjs) is the one check; here an invalid field is refused instead of falling back.
+const DOCKER_SANDBOX_KEYS = ['memory', 'cpus', 'pids', 'runtime'];
+const DOCKER_SANDBOX_LABELS = { memory: 'Memory per sandbox', cpus: 'CPUs per sandbox', pids: 'Processes per sandbox', runtime: 'Container runtime' };
+/** The stored dockerSandbox (only the fields set), or null. */
+export function dockerSandboxSettingRaw() {
+  if (homeGuarded()) return null;
+  const v = readSettings().dockerSandbox;
+  if (!isObj(v)) return null;
+  const out = Object.fromEntries(DOCKER_SANDBOX_KEYS.filter((k) => v[k] !== undefined && v[k] !== null && v[k] !== '').map((k) => [k, v[k]]));
+  return Object.keys(out).length ? out : null;
+}
+export function assertDockerSandboxInput(input) {
+  if (isClearInput(input)) return null;
+  if (!isObj(input)) throw new Error('dockerSandbox must be { memory, cpus, pids, runtime }');
+  const unknown = Object.keys(input).filter((k) => !DOCKER_SANDBOX_KEYS.includes(k));
+  if (unknown.length) throw new Error(`dockerSandbox: unknown field ${unknown[0]} (known: ${DOCKER_SANDBOX_KEYS.join(', ')})`);
+  const out = Object.fromEntries(DOCKER_SANDBOX_KEYS.filter((k) => !isClearInput(input[k])).map((k) => [k, input[k]]));
+  const { warnings } = sandboxResources(out);
+  const m = warnings.length ? /dockerSandbox\.(\w+): (.*?); using/.exec(warnings[0]) : null;
+  if (m) throw new Error(`${DOCKER_SANDBOX_LABELS[m[1]] || m[1]} ${m[2]}`);
+  return Object.keys(out).length ? out : null;
+}
+export async function setDockerSandboxSetting(input) {
+  const value = assertDockerSandboxInput(input);
+  const settings = readSettings();
+  if (value === null) delete settings.dockerSandbox; else settings.dockerSandbox = value;
+  await persistSettings(settings);
+  return { dockerSandbox: dockerSandboxSettingRaw() };
+}
+/** The execution environment's PATCH /api/config keys beside execEnv: the backends' limits and the Docker container's. */
+export const EXEC_ENV_SETTING_KEYS = Object.freeze([...Object.keys(E2B_INTS), 'dockerSandbox']);
+export function assertExecEnvSettingInput(key, input) {
+  return key === 'dockerSandbox' ? assertDockerSandboxInput(input) : assertE2bIntInput(key, input);
+}
+export function setExecEnvSettingKey(key, input) {
+  return key === 'dockerSandbox' ? setDockerSandboxSetting(input) : setE2bIntSetting(key, input);
+}
 const ROLE_KEY_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export function assertStepModelsInput(input) {
   if (!isObj(input)) throw new Error('stepModels must be { <engine>: { <role>: { model, effort } | null } }');
@@ -1615,6 +1725,7 @@ export const SETTING_CHECKS = Object.freeze({
   stringArray: (value) => Array.isArray(value) && value.every((item) => typeof item === 'string'),
   toolMap: (value) => !!value && typeof value === 'object' && !Array.isArray(value)
     && Object.values(value).every((v) => v === 'used' || v === 'unused'),
+  execEnv: (value) => isExecEnvName(value),
 });
 /** Check ids the project's readiness report skips (project layer only — no user inheritance). Unknown ids are kept. */
 export function readinessIgnore(scope) {

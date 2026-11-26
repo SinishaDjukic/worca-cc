@@ -12,3 +12,6 @@ services:
   worca:
     image: ${WORCA_IMAGE:?set WORCA_IMAGE to the image worca container build made}
     pull_policy: never
+    environment:
+      # Which built image the box runs: Settings › General › Security shows it, current or stale (src/core/security-posture.mjs).
+      WORCA_BOX_IMAGE: ${WORCA_IMAGE}

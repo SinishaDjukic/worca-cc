@@ -6,7 +6,7 @@
 // this side keeps only the UNTESTED gate (D9): a new proxy host, port or login mode must pass a Test first.
 import { assertNetworkProxyInput, mergeNetworkProxy } from './settings.mjs';
 import { parseUpstreamUrl, upstreamLabel } from './upstream-proxy.mjs';
-import { stateLine, STATE_TEXT } from './proxy-credentials.mjs';
+import { STATE_TEXT } from './proxy-credentials.mjs';
 import { SidecarError } from './egress-sidecar-client.mjs';
 
 /** The proxy the box's children use: compose.proxy.yml's sidecar. */
@@ -30,15 +30,24 @@ export function sidecarView(b) {
   // The proxy from the sidecar's HTTPS_PROXY (.env) fills the form too; saving it again keeps the login (same host:port).
   if (!s.upstream && b.upstream) s.upstream = `http://${b.upstream}`;
   s.enabled = s.enabled !== false && !!b.upstream;
-  return { ...b, settings: s, localUrl: SIDECAR_LOCAL_URL, localError: b.upstreamError || null, sidecar: true, managed: !!b.managed,
+  // A rejected login the operator manages: nobody logs in again from Worca, the operator replaces the file.
+  const rejected = b.managed && b.state === 'needs-login';
+  const line = rejected ? managedRejectedLine(b.login) : b.line;
+  const lineTitle = rejected ? [b.login?.label, b.upstream, b.login?.rejected?.at ? `rejected ${b.login.rejected.at}` : '', 'WORCA_EGRESS_LOGIN_FILE'].filter(Boolean).join(' · ') : undefined;
+  return { ...b, ...(line !== undefined ? { line } : {}), ...(lineTitle ? { lineTitle } : {}), settings: s, localUrl: SIDECAR_LOCAL_URL, localError: b.upstreamError || null, sidecar: true, managed: !!b.managed,
     ...(b.managed ? { managedNote: MANAGED_NOTE } : {}) };
 }
 
-/** The status when the sidecar cannot be reached: state error, the reason as the line. */
+/** The card's line while the sidecar does not answer: nothing can be read, saved or logged in until it does. */
+export const unreachableLine = () => 'No answer · Worca cannot read or change the proxy settings or the login until the egress sidecar answers. Check that it runs, then Retry.';
+/** A rejected login the operator manages, as "State · detail" in plain words (the account, proxy and time go in the tooltip). */
+export const managedRejectedLine = (login) => `Needs login · The proxy rejected the login${login?.label ? ` of ${login.label}` : ''}. The operator must replace the login file; nobody can log in again from Worca.`;
+
+/** The status when the sidecar cannot be reached: state error, `unreachable` set, the reason in the line. */
 function unreachable(err) {
   const st = { state: 'error', text: STATE_TEXT.error, error: err.message, login: null, loginError: null, running: false,
-    restartNeeded: false, warnings: [], settings: {}, localUrl: SIDECAR_LOCAL_URL, localError: err.message, sidecar: true, managed: false };
-  return { ...st, line: stateLine(st) };
+    restartNeeded: false, warnings: [], settings: {}, localUrl: SIDECAR_LOCAL_URL, localError: err.message, sidecar: true, managed: false, unreachable: true };
+  return { ...st, line: unreachableLine(), lineTitle: err.message };
 }
 
 const hostPortOf = (up) => { if (!up) return null; const p = parseUpstreamUrl(up); return p.error ? null : upstreamLabel(p.host, p.port); };

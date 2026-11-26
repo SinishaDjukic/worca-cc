@@ -36,6 +36,12 @@ export const ASK_DENY_RULES = Object.freeze([
   'Read(~/.npmrc)',
   'Read(~/.config/gh/**)',
   'Read(//proc/**)',                   // the server's own environment (/proc/<pid>/environ holds its GitHub and model tokens)
+  // The corporate proxy login (docs/network-proxy.md "Where the login lives"): <home>/proxy-login.json holds an NT hash,
+  // enough to log in. Anywhere: a differently named home, the egress sidecar's copy, a `.tmp` beside it.
+  'Read(//**/proxy-login.json*)',
+  'Read(//run/secrets/**)',            // Docker / compose secrets (a mounted proxy login, the box's git token file)
+  'Read(//var/run/secrets/**)',        // the same folder through the /var/run -> /run symlink
+  'Read(//worca/egress/**)',           // the egress sidecar's data folder (WORCA_EGRESS_DATA_DIR's default): its login
 ]);
 
 /** The same denies minus the run store and checkouts, for a read of ONE run: the night decider and the Auto
@@ -45,8 +51,8 @@ export const RUN_READ_DENY_RULES = Object.freeze(ASK_DENY_RULES.filter((r) => !/
 // Every folder Worca makes under <home>/tmp except requirements/ (a read's one-file folder and a look's checkout). The
 // rule syntax has no "all but": `tmp/*` would match requirements/ too under gitignore folder semantics, so the others are
 // named; test/file-read-guard.test.mjs fails when the code makes a tmp folder this list does not name.
-const OTHER_TMP_DIRS = Object.freeze(['agent-gen', 'ask', 'chat-selftest', 'classifier', 'codex-roles', 'copilot', 'cursor-prompts', 'gemini',
-  'goose', 'night', 'opencode', 'pinpoint', 'pr-comment-check', 'qwen', 'skills', 'workflow-tests']);
+const OTHER_TMP_DIRS = Object.freeze(['agent-gen', 'ask', 'chat-selftest', 'classifier', 'codex-roles', 'copilot', 'cursor-prompts', 'docker-fake', 'e2b-fake',
+  'gemini', 'goose', 'night', 'opencode', 'pinpoint', 'pr-comment-check', 'qwen', 'skills', 'workflow-tests']);
 
 /** Requirements reads and the product brief's look (plans/requirements-a8-design.md D3, D6, D15): Ask's denies with the
  *  tmp one narrowed to every tmp folder but requirements/ (a read's one-file folder and a look's checkout live there),

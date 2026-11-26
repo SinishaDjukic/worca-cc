@@ -194,6 +194,13 @@ on the row below, with 7px switch padding (a 311px History drawer leaves 283px).
 shows, so its selects keep their content width and search shares the switch row with copy.
 ### Tabs
 `.tabs` / `.tab`: underline tabs, 32px, never boxed (checked).
+Overflow under "More" is opt-in per row (`initDetailTabs` `overflow`); only the run pages use it. Their row holds the
+reading tabs, in table order: Overview, Task, Diff / Changes (Artifacts for a run without a project), Q&A and Logs. The
+other tabs go under "More": a `.tab`-styled button (`.tab-more`, never `role=tab`) with a 12px `chevron-down` and
+`aria-haspopup="menu"`, opening the shared menu (`toggleMenu`): one row per tab with its icon, its name, its count as
+the hint and the open one checked. An open overflow tab joins the row, lit, just before "More", and leaves it when
+another tab opens. With fewer than two shown tabs to hold there is no "More" and the tab keeps its usual place. The
+label is "More", never "…", which is the run's ⋯ menu.
 ### Filter chip
 `.filter-chip` (`aria-pressed`): 28px, 12px / 500, 1px `--line-2` border, 6px corner. Selected: `--field` fill, ink
 border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only filter chip: `mv-filter`, `wfl-chip`,
@@ -201,7 +208,7 @@ border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only f
 ### Chips and badges
 One chip: 18px, 11px / 500 sans, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are
 the reference size. Colour carries meaning only. The "Suggested" chip on the New run form's title and branch (`.sn-chip`, Smart run naming) is a permitted Labs-violet use: the whole feature is a Labs feature. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
-Chat command card's state (`.ask-cmd-pill`) and the Team policy tab count (`.tp-tab-badge`) are the same chip; on the
+Chat command card's state (`.ask-cmd-pill`), the Team policy tab count (`.tp-tab-badge`) and a small-runs feature's need count (`.kind-chip[data-need]`, neutral, after the kind chip in the Chat card and feature page heads, only while it is above zero) are the same chip; on the
 active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; a lone command is a line like that head (its summary · time ›, no card, no dot) that opens to its detail; consecutive commands share one card under a quiet disclosure head (`--ink-2`, `--hover`, › turning down), folded until the person opens it (a failure shows only as the red `N failed`; a running group puts Stop beside the head), with the rows split by one `--line`; an opened command uses `--field` boxes (command, folder chip, output panel); the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
 `--amber` outline on a transparent fill. A removable chip's × is a 14px quiet button inside the chip. A source, "Official"
 or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
@@ -210,21 +217,113 @@ Agent readiness (`ui/public/readiness-chip.mjs`) uses the same chip: the project
 "Not used"). Amber and red take the `-ink-strong` text shade, and a not-ready chip ends in a solid count of open problems
 (`.rd-n`). A failing check leads with `.issue-sev` (Must fix red, Should fix amber, Advice blue), never a dot: a dot is a
 state. The passed and ignored boxes are `.disclosure` with the `check` and `none` icons.
-### Status dot and symbols
+### Status dot and symbols (checked)
 A dot is the state: peach working (pulses), grey paused or waiting, green ready, violet merged. Needs you is an amber
 "?" only when Worca asks; a PR problem is a plain amber dot with the reason in the PR chip; failed is a red "!".
-An idle chat shows the chat bubble line icon in the dot's place.
+An idle chat shows the chat bubble line icon in the dot's place. A Shaper small-runs row maps its run status mark to a
+dot through `markDot` (`ui/public/status-dot.mjs`). This table lists every `.status-dot.is-*` modifier, and
+`test/ui-design-language.test.mjs` fails when the CSS has one without a row.
+
+| Dot | Class | Means |
+|---|---|---|
+| peach | `.status-dot.is-peach` | working or starting; a live Shaper run |
+| pulse | `.status-dot.is-pulse` | the only motion: a live run (none under reduced motion) |
+| amber | `.status-dot.is-amber` | needs you: the "?" while Worca asks, a plain dot for a PR problem |
+| red | `.status-dot.is-red` | failed, with the "!" |
+| green | `.status-dot.is-green` | ready, in review or done |
+| violet | `.status-dot.is-violet` | merged |
+| grey | `.status-dot.is-grey` | paused; an idle chat |
+| dark grey | `.status-dot.is-dark-grey` | stopped |
+| grey ring | `.status-dot.is-grey-ring` | waiting; a Shaper run that waits for runs, cannot start, or is free without the turn |
+| ink ring | `.status-dot.is-ink-ring` | the Shaper run with the next turn (`next`) |
+| dashed ring | `.status-dot.is-dashed-ring` | a Shaper stop answer held for its turn (`after run 3`), 12px, `--ink-3`, no glyph |
+### Run row link marks (checked)
+A Shaper small-runs run row on the Chat card and the feature page's Runs tab shows its links when you point at it
+(hover or keyboard focus): a 3px ink bar left of each row it builds on, and a dashed one left of each row that builds on
+it. Click, Enter or Space keeps the marks; Esc lets go. The bar is a `::before` out of the layout, so nothing moves and
+nothing dims; a hovered row that is not kept takes the `--row-open` fill. `ui/public/run-links.mjs` sets the attributes, and `test/ui-design-language.test.mjs` fails when the CSS
+has a `[data-link…]` attribute without a row here.
+
+| Mark | Attribute | Means |
+|---|---|---|
+| solid bar | `data-link="on"` | the pointed run builds on this run (done runs included) |
+| dashed bar | `data-link="by"` | this run builds on the pointed run |
+| kept row | `data-link-kept` | the kept run, with `aria-current="true"` and the `--row-selected` fill |
+
+### Run order map (checked)
+The still order of a branching small-runs feature: one status dot per run, each in a column right of every run it
+builds on (rows in run-number order), and only the links that still hold a run back, routed through the gaps between
+columns and the lanes between rows so no link crosses a dot or a number. The module is `ui/public/shape/run-order-map.mjs`
+(`runOrderLayout` is the pure layout, `renderRunOrderMap` the painter), tested by `test/ui-shape-run-order-map.test.mjs`.
+Geometry is fixed px (§Charts, no `viewBox` scaling). A dot is the shared status dot through `markDot`, never a class of
+its own, and the only motion is the live dot's pulse. The map is `aria-hidden` and never a tab stop: the run rows beside
+it are its legend and its accessible source, so it has no caption or legend of its own. Two links that share no run
+never run together: in each gap, exits take tracks from the left and entries from the right, and tracks sit 4px apart.
+A run waiting at a stop held for another run counts as not started, so its link stays.
+
+| Part | Class | Means |
+|---|---|---|
+| root | `.rom` | the map and its sideways scroll box (`aria-hidden`, `tabindex="-1"`) |
+| plot | `.rom-plot` | the drawing, sized in px by the layout |
+| links | `.rom-links` | the SVG behind the dots that holds the links |
+| link | `.rom-link` | one link that still holds a run back, 1.5px `--ink-3`, straight segments only |
+| run | `.rom-run` | one run, its status dot centred on the layout point |
+| number | `.rom-n` | the run's number above right of its dot, 11px `--ink-2` (§Charts) |
+
+The map is placed on the feature page's Runs tab only, behind a Show order / Hide order toggle (the run page's
+`.rd-route-toggle` pattern: a quiet small button with a chevron, `aria-expanded`, `aria-controls`). It is closed each time
+the page opens and offered only from 5 runs whose links branch or join (`showOrderOffered`), never for a plain chain. The
+Chat card and the Runs sidebar never show it. `ui/public/group-page.mjs` `syncShowOrder` creates and removes the node.
+
+| Part | Class | Means |
+|---|---|---|
+| block | `.gpage-order` | the Show order block, first in the Runs panel, above the rows; absent when not offered |
+| bar | `.gpage-order-bar` | right-aligns the toggle |
+| toggle | `.gpage-order-toggle` | `button.btn.btn-sm.btn-quiet`: Show order / Hide order with a 12px chevron |
+| body | `.gpage-order-body` | the part the toggle controls, `hidden` while closed |
+| hint | `.gpage-order-hint` | the one readable line under the toggle, `--fs-caption` in `--ink-2` |
+
+### Open stop list (checked)
+A marked Shaper feature's Chat card lists what holds it up: one line per open stop or failed run, in run order. The
+module is `ui/public/shape/stop-list.mjs` (`stopLinesOf` is the model, `paintStopList` the keyed painter), tested by
+`test/ui-shape-stop-list.test.mjs`. Its only host is the Chat card, `ui/public/chat/run-card.mjs`; the feature page and the
+Runs sidebar never show the list. A line's dot is the shared status dot through `markDot` (§Status dot and symbols), never a class of
+its own. The text is one line with an ellipsis, and the full text sits in `title`. Lines are divided by one `--line`.
+An open line's step card sits in `div.chat-rc-q.chat-rc-stop-q` and is drawn by the card question's own rules, with its
+step head hidden. A failed line has a Resume `button.btn.btn-sm` (§Button) and a `role="status"` error in `--red-ink`.
+There are no pills and no motion. `test/ui-design-language.test.mjs` paints the real list and fails when it emits a class
+without a row here, or when the CSS has a `.chat-rc-stop*` class without one.
+
+| Part | Class | Means |
+|---|---|---|
+| list | `.chat-rc-stops` | the list, an `ol` the card makes, `hidden` when there are no lines |
+| line | `.chat-rc-stop` | the `li` of one line (`data-run`), divided by one `--line`; the card's Stop button (`button.chat-rc-stop`, §Button) shares the name |
+| row | `.chat-rc-stop-line` | the one-line row: a 16px dot column, then the text, min 32px |
+| text | `.chat-rc-stop-text` | "Run 2 · plan approval · holds up 7, 8, 12, 15, 16" in `--ink`, `--fs-body`, one line with an ellipsis and the full text in `title` |
+| body | `.chat-rc-stop-body` | under the text, 24px in; empty, it takes no space |
+| step card | `.chat-rc-stop-q` | an open stop's step card host, also `.chat-rc-q`, drawn by the card question's rules, step head hidden |
+| Resume | `.chat-rc-stop-resume` | a failed run's Resume, the shared `.btn.btn-sm`, no rule of its own |
+| error | `.chat-rc-stop-err` | Resume's error, `role="status"`, `--red-ink`, `--fs-meta` |
 ### Usage rings
 The avatar draws only the session and long-window rings (`ui/public/usage-view.mjs`), each in one tone (`--ink-2`,
 `--amber` at the warning line, `--red` full at the limit); spend is never a ring there, it lives in the account menu's
 spend card.
 ### Card head
-The first line of a card is its headline. When the page title sits above the card (the run page, the group page),
-the state is the headline: `.run-status-word`, 1–3 words at `--fs-section` / 600 / `--lh-title`, never truncated, the
-status dot centred on it and the head buttons and the Live switch centred on its line (`.rd-sheet-head`,
-`--rd-word-line`). Under it, `.run-status-detail`: 12px `--ink-2`, at most 2 lines (the whole text as its tooltip),
-and only what no row below says ("not in dev yet", "Failed · Build · Implementation" → "Build · Implementation",
-"14 files changed in a copy", "conflicts with dev", GitHub's verdict); absent otherwise. A card with its own title
+The first line of a card is its headline. When the page title sits above the card (the group page), the state is the
+headline: `.run-status-word`, 1–3 words at `--fs-section` / 600 / `--lh-title`, never truncated, the status dot centred
+on it and the head buttons and the Live switch centred on its line (`.rd-sheet-head`, `--rd-word-line`). Under it,
+`.run-status-detail`: 12px `--ink-2`, at most 2 lines (the whole text as its tooltip), and only what no row below says
+("not in dev yet", "Failed · Build · Implementation" → "Build · Implementation", "14 files changed in a copy",
+"conflicts with dev", GitHub's verdict); absent otherwise.
+
+On the run page the state is not the card's: the header's state line under the title says it on every tab
+(`.run-state-line`: the dot or symbol, the state word at 13px / 600, then "· step or stage" in `--ink-2`, one line, the
+step cut with "…"). The card's head shows only what that line does not say, a reason, a timing or a verdict ("cost
+limit", "not in dev yet") on the head buttons' line, and nothing otherwise: the head buttons then take a row of their
+own and the card starts at its progress bar. While a question waits, the state line and the card's status block both
+lead to it. Both are painted from one model (`statusSplit`), so their words and colour cannot differ.
+
+A card with its own title
 (the chat run card) keeps the state at 13px / 600 under it. Its head is one row centred on the title's line box (no
 margin on the title, no nudge on the dot), the project is the meta line right under it, and a single run has no kind
 chip, as the run page title (a PR fix run's fix line leads with "PR fix run"); a group keeps its chip
@@ -282,7 +381,8 @@ label, host, className })` (`ui/public/workflows/menu.mjs`) emits it, and its it
 is appended inside it (a `.btn-split.mini`) and placed by its CSS; a `{ switch: true }` item is a `menuitemcheckbox`
 switch row (help line, `.switch`) whose toggle keeps the menu open. A radio row (`menuitemradio`) is one grid: a 12px ✓
 slot first (painted only when picked), the label, then the count or kind chip at the right edge in tabular figures, so
-every label starts and every number ends at one x; a count of 0 is `--ink-3`. A `{ segmented: true, label, options,
+every label starts and every number ends at one x; a count of 0 is `--ink-3`. A radio row with an `icon` (the run
+page's "More" menu) has the 16px icon between the ✓ slot and the label. A `{ segmented: true, label, options,
 value, onSelect }` item is a `.menu-h` head over one full-width `.seg` (role group of `menuitemradio`): ←/→ move inside
 it, ↑/↓ move on, and a pick keeps the menu open. The View menus (Runs, Chats; `viewMenuItems`, 256px) use it for Sort by
 and Group by. The run page's View PR ▾ is built with it. The sidebar flyouts (`.nav-fly`), the
@@ -487,9 +587,12 @@ above them, never a boxed tab, and never a colour of a tab's own.
   action, Stop, ⋯), the title (one line, cut with "…" where the column ends; the cut is CSS only, the stored name is
   whole, its tooltip holds it, and the bar repeats it once the title scrolls away). A run page's title has no kind chip:
   a run in a group has no group row in its facts block, and the breadcrumb names and links its group. A group page's
-  title keeps its kind chip (`Feature` / `Chain` / `Group`). Then the card: the status block (the state word as the card's headline with its detail under it, the head buttons at its right,
-  centred on the word's line, with the PR control among them; see Card head and PR controls. Beside the stage bar the
-  detail names only the step (`Working` / `Refine Plan`); the stage is on the bar), the route ("Where the work is") under a `--line` divider, the facts block (`.rd-kv`: Project, Labels, Cost tags and Group, in that order; 12px
+  title keeps its kind chip (`Feature` / `Chain` / `Group`). The run page's header has no box: its edges are the tabs'
+  and the content's, and under the title row it holds the state line (see Card head); `.pd-header` (project and
+  workspace pages) keeps its box. Then the card: the status block (on the group page the state word as the card's
+  headline with its detail under it; on the run page only the reason the state line leaves out), the head buttons at its
+  right, centred on that line, with the PR control among them; see Card head and PR controls. Beside the stage bar the
+  run page's state line names only the step (`Working · Refine Plan`); the stage is on the bar. Then the route ("Where the work is") under a `--line` divider, the facts block (`.rd-kv`: Project, Labels, Cost tags and Group, in that order; 12px
   `--ink-2` labels, 13px values, one row per fact and one place to edit it; a quiet button that leads a value pulls back
   by its padding so its text sits on the value column), then the tiles (`--fs-stat` sans values with tabular figures,
   `--pad-tile` padding). No PR bar, no kept-work, merge-back or Apply box: their actions are head buttons.
@@ -548,6 +651,10 @@ above them, never a boxed tab, and never a colour of a tab's own.
   `Waiting · starts 14:00`. A group in Needs you leads with the reason: `Run 1 needs you · Checks failing`.
 - Question options are divided rows: one --line between rows, no box per option; the picked row takes the --field fill
   and the 6px corner. Recommended is the neutral chip; a confidence is a 12px figure, never a bar.
+- A pick-one option carries a round mark (a 16px ring; picked, an ink ring with an ink dot); a square check is only for
+  several picks.
+- An agent's note in a card is a short question line plus a formatted body (paragraphs, `code`, divided list rows)
+  that folds after about six lines and opens in place (`ui/public/shape/note-body.mjs`).
 - "Ask for changes" gives way to the field with Cancel and Send changes; Cancel gives the button back.
 - The bar's primary names the waiting card's primary ("Approve 2 runs"), and a click on it is that click.
 - A destructive confirm says what goes in plain words ("Stop this run?", "Stop run") and opens on the safe choice.

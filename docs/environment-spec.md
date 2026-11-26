@@ -2,7 +2,7 @@
 
 A project can store an environment spec. It lists the tools and system packages the project needs to build and test.
 
-`worca container build` builds the box image from it: the container that `worca container` runs. Builds of an E2B template or a Docker backend image from the same spec arrive in later releases.
+`worca container build` builds the box image from it: the container that `worca container` runs. `worca exec-env build` builds an E2B template or a Local sandbox (Docker) image from the same spec. All three render the spec with one renderer, so the tools and packages are the same in each.
 
 ## When to use this
 
@@ -17,8 +17,8 @@ The same spec builds the image for every sandboxed setup. "Native" runs on your 
 | "Native" | none needed |
 | "Hardened box" | `worca container build` |
 | "Shared instance" | `worca container build` on the server, then `-f compose.image.yml` and `WORCA_IMAGE` in `shared.env` (the image must be on that server; compose never pulls it). Elsewhere, build the Dockerfile from `--dry-run` in your own pipeline |
-| "Local sandbox (Docker)" | a later release |
-| "E2B sandbox" | a later release |
+| "Local sandbox (Docker)" | `worca exec-env build --project <dir> --backend docker`, or the project page (see [Local sandbox (Docker)](local-sandbox.md#project-images)) |
+| "E2B sandbox" | `worca exec-env build --project <dir>`, or the project page (see [E2B](e2b.md#building-and-rebuilding-a-project-environment)) |
 
 Not supported yet:
 
@@ -64,6 +64,25 @@ worca exec-env spec --project <key|dir> --json            # print it as JSON
 `--project` takes a project key or the project's folder. The project must be registered (`worca list`).
 
 A spec that fails the checks is refused, and the stored spec stays as it was.
+
+## On the project page
+
+The project page's **Execution environment** section has the spec as a form, above the sandbox backends. There is one spec per project, whichever backend builds it.
+
+- **Tools (mise)**: one row per tool, its mise name and its pinned version. **Add tool** adds a row, **Remove** drops one. An empty row is left out.
+- **Apt packages**: the package names on one line, separated by spaces or commas.
+- **Save spec** stores it. **Clear spec** removes it, after you confirm.
+
+The server runs the same checks as the CLI. A refusal shows under the form, in the server's words (`tool node: version must be pinned (e.g. 24.21.0), not "latest"`), and what you typed stays. After a save, a build made from the old spec shows as out of date: **Rebuild environment** makes a new one. With no build yet, **Build environment** makes the first.
+
+The form has no base image, env vars, files or secrets: a spec never holds them. The box image's base is set in the container `.env` ([The base image](#the-base-image)).
+
+## From Chat
+
+Ask Chat to pin a tool or add a package. It proposes a card with each list before and after. **Apply** saves it,
+with the same checks as the form. Chat can also propose a build of the template or image, and the project's sandbox
+network (open or allow). Nothing changes until you apply the card. Chat never changes the box's base image. See
+[Chat](chat.md#security-and-sandboxes).
 
 ## Where it is stored
 
@@ -120,3 +139,10 @@ The build writes a record next to the `.env`: `.worca-box-image.json` in the con
 - a newer copy of the base was pulled.
 
 A stale image is still used. `worca container up` warns about it. Nothing rebuilds by itself: run `worca container build` again. `--status` also notes projects that have a spec but are not in the image.
+
+Worca inside the box shows the same state in **Settings › General › Security** (Advanced level): the image tag,
+**Current** or **Stale** with the reason, and the rebuild command as text. It reads it from what the box was started
+with: `compose.image.yml` passes the tag as `WORCA_BOX_IMAGE`, and the image records each project's spec hash in
+`WORCA_BOX_IMAGE_PROJECTS`. It compares those with the specs now. A newer base image shows only on the host, with
+`worca container build --status`. An image built before this release has no spec hashes: the card says **Unknown**
+until you rebuild it.
