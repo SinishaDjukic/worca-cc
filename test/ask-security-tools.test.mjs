@@ -389,3 +389,19 @@ test('command check: system secret folders by path shape — slashes, . and .., 
   assert.equal(namesSystemSecretPath('cd /data && cat egress-login/x', { cwd: '/repo', egressDataDir: '/data/egress-login' }), true);
   assert.equal(namesSystemSecretPath('cat /data/other/x', { cwd: '/repo', egressDataDir: '/data/egress-login' }), false);
 });
+
+test('command check: a glob or a brace group the model writes costs bounded work — linear stars, capped braces fail closed', () => {
+  const ctx = { cwd: '/repo', home: '/Users/zed/.worca-cc', userHome: '/Users/zed', egressDataDir: null };
+  const t0 = Date.now();
+  assert.match(checkAskCommand('cat /run/' + '*a'.repeat(40), ctx) || '', /protected path/, 'a /run word with wildcards is refused');
+  assert.equal(namesSystemSecretPath('cat /srv/' + '*a'.repeat(40) + '/' + '*a'.repeat(40) + 'b', { cwd: '/repo' }), false);
+  assert.equal(namesSystemSecretPath('cat /' + '*'.repeat(5000) + '/secrets', { cwd: '/repo' }), true, 'a run of stars still matches run');
+  assert.ok(Date.now() - t0 < 500, `stars took ${Date.now() - t0} ms`);
+  const t1 = Date.now();
+  const braces = 'cat /srv/' + '{a,b,c,d}'.repeat(30);
+  assert.equal(namesSystemSecretPath(braces, { cwd: '/repo' }), true, 'more alternatives than the cap: refused (fail closed)');
+  assert.match(checkAskCommand(braces, ctx) || '', /protected path/);
+  assert.equal(namesSystemSecretPath('cd ' + '{a,b}'.repeat(40) + ' && ls', { cwd: '/repo' }), true, 'a cd target too');
+  assert.equal(namesSystemSecretPath('cat /srv/{a,b}/{c,d}', { cwd: '/repo' }), false, 'a small group is expanded and checked');
+  assert.ok(Date.now() - t1 < 500, `braces took ${Date.now() - t1} ms`);
+});

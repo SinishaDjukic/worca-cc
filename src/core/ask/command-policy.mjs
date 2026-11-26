@@ -43,29 +43,51 @@ const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
 const SECRET_SEGMENTS = Object.freeze([['run', 'secrets'], ['worca', 'egress']]);
 const SECRET_NAMES = Object.freeze(['proxy-login.json']);
 const GLOB_CHARS = /[*?[\]]/;
-/** One word's brace alternatives (`a{b,c}d` → abd, acd), at most 64. */
+const BRACE_CAP = 64;
+/** One word's brace alternatives (`a{b,c}d` → abd, acd), or null when they would pass BRACE_CAP (the caller then
+ *  refuses the command: fail closed). The work is bounded by the cap: the pending list never grows past it. */
 function braceExpand(word) {
   const out = []; const todo = [word];
-  while (todo.length && out.length < 64) {
+  while (todo.length) {
     const w = todo.shift();
     const m = /\{([^{}]*,[^{}]*)\}/.exec(w);
     if (!m) { out.push(w); continue; }
-    for (const alt of m[1].split(',')) todo.push(w.slice(0, m.index) + alt + w.slice(m.index + m[0].length));
+    const alts = m[1].split(',');
+    if (out.length + todo.length + alts.length > BRACE_CAP) return null;
+    for (const alt of alts) todo.push(w.slice(0, m.index) + alt + w.slice(m.index + m[0].length));
   }
-  return out.concat(todo);
+  return out;
 }
-/** Does the glob segment `g` (*, ?, [...]) match the literal `name`? */
+/** One glob unit of `g` at `i` against the character `c`: [length of the unit, matched]. `[...]` / `[!...]` sets. */
+function unitAt(g, i, c) {
+  if (g[i] === '?') return [1, c !== undefined];
+  if (g[i] === '[') {
+    const j = g.indexOf(']', i + 2);
+    if (j > 0) {
+      const neg = g[i + 1] === '!' || g[i + 1] === '^';
+      const set = g.slice(i + (neg ? 2 : 1), j);
+      let hit = false;
+      for (let k = 0; k < set.length; k += 1) {
+        if (set[k + 1] === '-' && k + 2 < set.length) { if (c >= set[k] && c <= set[k + 2]) hit = true; k += 2; } else if (set[k] === c) hit = true;
+      }
+      return [j - i + 1, c !== undefined && hit !== neg];
+    }
+  }
+  return [1, g[i] === c];
+}
+/** Does the glob segment `g` (*, ?, [...]) match the literal `name`? Linear two-pointer matching with one backtrack
+ *  point (the last `*`), no RegExp: a run of stars costs nothing more. */
 function segMatches(g, name) {
   if (!GLOB_CHARS.test(g)) return g === name;
-  let re = '';
-  for (let i = 0; i < g.length; i += 1) {
-    const c = g[i];
-    if (c === '*') re += '[^/]*';
-    else if (c === '?') re += '[^/]';
-    else if (c === '[') { const j = g.indexOf(']', i + 2); if (j < 0) { re += '\\['; continue; } re += `[${g.slice(i + 1, j).replace(/^!/, '^').replace(/\\/g, '\\\\')}]`; i = j; }
-    else re += c.replace(/[.+^${}()|\\]/g, '\\$&');
+  let gi = 0; let ni = 0; let star = -1; let mark = 0;
+  while (ni < name.length) {
+    if (gi < g.length && g[gi] === '*') { while (g[gi] === '*') gi += 1; star = gi; mark = ni; continue; }
+    if (gi < g.length) { const [len, ok] = unitAt(g, gi, name[ni]); if (ok) { gi += len; ni += 1; continue; } }
+    if (star < 0) return false;
+    mark += 1; ni = mark; gi = star;
   }
-  try { return new RegExp(`^${re}$`).test(name); } catch { return true; }   // a broken glob is refused, never trusted
+  while (g[gi] === '*') gi += 1;
+  return gi === g.length;
 }
 /** True when the segments hold `want` as consecutive segments (glob-aware), or end in a protected file name. */
 function holdsSegments(segs, want) {
@@ -83,14 +105,18 @@ export function namesSystemSecretPath(command, { cwd = '/', egressDataDir = null
   const dirs = [posix.resolve('/', String(cwd || '/').replace(/\\/g, '/'))];
   for (let i = 0; i < words.length - 1; i += 1) {
     if (words[i] !== 'cd' && words[i] !== 'pushd') continue;
-    for (const t of braceExpand(words[i + 1])) dirs.push(posix.resolve(dirs[dirs.length - 1], t));
+    const alts = braceExpand(words[i + 1]);
+    if (!alts) return true;
+    for (const t of alts) dirs.push(posix.resolve(dirs[dirs.length - 1], t));
   }
   const bad = (abs) => {
     const segs = posix.normalize(abs).split('/').filter(Boolean);
     return targets.some((t) => holdsSegments(segs, t)) || (segs.length > 0 && /proxy/i.test(segs[segs.length - 1]) && SECRET_NAMES.some((n) => segMatches(segs[segs.length - 1], n)));   // a bare * is not a name
   };
   for (const raw of words) {
-    for (const w of braceExpand(raw)) {
+    const alts = braceExpand(raw);
+    if (!alts) return true;   // too many alternatives to check: refused, never waved through
+    for (const w of alts) {
       if (!w.includes('/') && !GLOB_CHARS.test(w) && !SECRET_NAMES.includes(w) && !targets.some((t) => t.includes(w))) continue;
       if (w.startsWith('/')) { if (bad(w)) return true; continue; }
       if (w.startsWith('~') || /^\$/.test(w)) continue;   // the home and variables: the other rules' business

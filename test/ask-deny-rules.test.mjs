@@ -34,7 +34,7 @@ const CASES = [
   ['Read(//**/proxy-login.json*)', `${W}/proxy-login.json`],
   ['Read(//run/secrets/**)', '/run/secrets/proxy_login'],
   ['Read(//var/run/secrets/**)', '/var/run/secrets/proxy_login'],
-  ['Read(//worca/egress/**)', '/worca/egress/proxy-login.json.tmp'],
+  ['Read(//worca/egress/**)', '/worca/egress/state/login.json'],
 ];
 
 test('spawn.mjs re-exports the one list: the Claude permission rules are the same array, same order', () => {
@@ -95,7 +95,8 @@ const win = (p) => (p.startsWith(HOME) ? WIN_HOME + p.slice(HOME.length) : `C:${
 
 test('Windows drive paths: each rule denies its sample written as a C: path, under a Windows home', () => {
   for (const [rule, path] of CASES) {
-    if (rule === 'Read(//proc/**)') continue; // a POSIX root folder, not a folder on every drive
+    // POSIX root folders, not folders on every drive.
+    if (['Read(//proc/**)', 'Read(//run/secrets/**)', 'Read(//var/run/secrets/**)', 'Read(//worca/egress/**)'].includes(rule)) continue;
     assert.equal(askPathDenied(win(path), { home: WIN_HOME }), rule, win(path));
   }
   assert.equal(askPathDenied('c:/repo/sub/.env', { home: WIN_HOME }), 'Read(//**/.env*)', 'a lower-case drive letter');
