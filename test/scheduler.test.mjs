@@ -979,6 +979,18 @@ test('chainBaseBranchesOf: walks a from-its-branch chain root first, stops at a 
   ]);
 });
 
+// Slice 3 (R-arch-5): a run that took in other runs' work records `sourceFrom` (the branch it started from) beside
+// `source` (the branch it builds on now).
+test('chainBaseBranchesOf: a record with sourceFrom ends [sourceFrom, source] and walks the chain from sourceFrom', () => {
+  chainRun('f0000001', 'dev', 'feat/run-7');
+  seedPipelineRow({ id: 'f0000002', title: 'f0000002', status: 'done', startedAt: new Date(T0).toISOString(),
+    branch: { source: 'feat/run-9', sourceFrom: 'feat/run-7', feature: 'feat/run-8' } });
+  assert.deepEqual(chainBaseBranchesOf('f0000002'), ['feat/run-7', 'feat/run-9'], 'no chain link: the two recorded branches');
+  chainFire('f0000002', { kind: 'pipeline', id: 'f0000001' });
+  assert.deepEqual(chainBaseBranchesOf('f0000002'), ['dev', 'feat/run-7', 'feat/run-9']);
+  assert.deepEqual(chainBaseBranchesOf('f0000001'), ['dev'], 'without sourceFrom, as before');
+});
+
 // ── stackedPrBaseOf: the PR dialog's default base for a run started from the previous run's branch ──
 const prOf = (id, state) =>
   getDb().prepare('UPDATE pipelines SET pr_url = ?, pr_state = ? WHERE id = ?').run(`https://github.com/o/r/pull/${id}`, state, id);

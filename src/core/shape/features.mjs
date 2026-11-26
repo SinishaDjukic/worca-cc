@@ -381,13 +381,15 @@ function sliceState(row, live, { held = true } = {}) {
 
 /** L8: the runs-map entry as featureView's `live` reads it (ui/server.mjs liveSliceOf). `waiting` is a pending plan
  *  ask, `asking` any other pending ask; `ask` names it for the feature card's open step (s2, D9). */
-export function liveSliceFrom({ runId, status, pendingQuestion = null, approved = false, heldStop = null }) {
+export function liveSliceFrom({ runId, status, pendingQuestion = null, approved = false, heldStop = null, refused = null, going = false }) {
   const pq = pendingQuestion || null;
   const plan = !!pq && pq.kind === PLAN_ASK_KIND;
   // Small runs C3 (D8): a marked run's open stop question, and whether its answer is held for another run's turn.
+  // Slice 3 (D11, D13): why a held answer was not sent (`refused`), and a take-in in flight (`going`).
   const value = heldStop ? stopOptionOf(pq && pq.stop, heldStop.payload)?.value : null;
   const stop = pq && pq.stop ? { reason: pq.stop.reason, held: !!heldStop,
-    ...(heldStop && Number.isInteger(heldStop.after) ? { after: heldStop.after } : {}), ...(value ? { value } : {}) } : null;
+    ...(heldStop && Number.isInteger(heldStop.after) ? { after: heldStop.after } : {}), ...(value ? { value } : {}),
+    ...(refused ? { refused } : {}), ...(going ? { going: true } : {}) } : null;
   return { runId, status: String(status || ''), waiting: plan, asking: !!pq && !plan, approved: !!approved,
     ask: pq ? { id: pq.id || null, kind: plan && pq.plan && pq.plan.outline ? 'outline' : pq.kind } : null, ...(stop ? { stop } : {}) };
 }
@@ -1183,7 +1185,8 @@ function rowGoing(r, live, { now = Date.now(), isLive = null } = {}) {
   // Small runs C3 (D8): a run waiting on an unanswered stop question does not hold the feature's other runs; one whose
   // answer is held waits for its turn, so it counts as going.
   const l = r.pipelineId ? live(r.pipelineId) : null;
-  if (l && l.stop && !l.stop.held) return false;
+  // Slice 3 (D13): one taking work in before its answer goes on counts as going too.
+  if (l && l.stop && !l.stop.held && !l.stop.going) return false;
   if (!BUSY.has(sliceState(r, live, { held: false }))) return false;
   if (r.pipelineId || !r.ticketId) return true;
   return predecessorState({ kind: 'ticket', id: r.ticketId }, { now, isLive }).state === 'waiting';
@@ -1368,6 +1371,11 @@ export function smallRunsPrBase(pipelineId) {
     const i = order.findIndex((s) => s.pipelineId === String(pipelineId));
     if (i < 0) return null;
     const root = featureRootSource(at.featureId);
+    // Slice 3 (D10): a run that took work in is based on the last branch it took in, until that run's PR is MERGED.
+    const rec = branchOf(pipelineId);
+    if (rec && Array.isArray(rec.tookIn) && rec.tookIn.length && typeof rec.source === 'string' && rec.source) {
+      return readPrState(rec.tookIn.at(-1).pipelineId)?.state === 'MERGED' ? root : rec.source;
+    }
     if (i === 0) return root;
     const pred = order[i - 1].pipelineId;
     if (readPrState(pred)?.state === 'MERGED') return root;

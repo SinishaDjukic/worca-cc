@@ -4,18 +4,19 @@
 // sends in featureView and the Runs list.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { createTicket, getTicket, predecessorState } from '../src/core/scheduler.mjs';
+import { chainBaseBranchesOf, createTicket, getTicket, predecessorState } from '../src/core/scheduler.mjs';
 import { listRunGroups } from '../src/core/run-groups.mjs';
 import { busySliceOf, featureView, liveSliceFrom, resumeFeature, setApproveEach, sliceGateState, sliceOfPipeline,
-  clashHoldOf, dependencyBranchesOf, featureBase, featureHoldsTicket, setClashHold, ticketHeld } from '../src/core/shape/features.mjs';
-import { sliceChainGate, heldStopTurn, latestFinishedSource, sliceSourceOf, sliceCombineGate, combineDependencies } from '../src/core/shape/chain.mjs';
+  clashHoldOf, dependencyBranchesOf, featureBase, featureHoldsTicket, setClashHold, smallRunsPrBase, ticketHeld } from '../src/core/shape/features.mjs';
+import { sliceChainGate, heldStopTurn, latestFinishedSource, sliceSourceOf, sliceCombineGate, combineDependencies, createHeldStops } from '../src/core/shape/chain.mjs';
+import { gateStop } from '../src/shared/shape/run-stops.mjs';
 import { SIXTEEN_RUN_LINKS, sixteenRunFeature, siblingRunsFeature, startable, world, SIXTEEN_RUN_STATES } from './helpers/shape-sixteen-runs.mjs';
 import { runStatus, namedWaits } from '../src/shared/shape/run-status.mjs';
 // Slice 6: a namespace read, so a missing new export fails only its own test, not the whole file.
@@ -23,7 +24,7 @@ import * as RS from '../src/shared/shape/run-status.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { g, GITCONFIG } from './helpers/base-world.mjs';
-import { checkBaseMerge, mergeBaseInto } from '../src/core/git-sync.mjs';
+import { mergeBaseInto } from '../src/core/git-sync.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
 
 useTempHome(after, 'worca-shape-sixteen-');
@@ -643,14 +644,14 @@ test('S7-T18 Ask before each run: an open stop reads "Nothing can go on until yo
 }));
 
 // ---- Missing work, reproduced on real git branches (R-qa-1): runs 8 and 9 build on run 7, run 10 builds on 8 and 9 ----
-// A1 and A4 assert TODAY'S outcome of the waited run's take-in (slice 3 changes it); A2 and A3 assert that a run starts
-// with the work of every run it builds on (slice 2). The cause, in short (the full write-up with file:line is
-// missing-work-cause.md in slice 1's pipeline folder):
-// 1. A waited run's take-in runs before the finished sibling's work is committed: run 9 sends `done` before its teardown
-//    commits onto feat/run-9, so checkBaseMerge reads up-to-date and the take-in skips silently (A1); while the sibling
-//    is still merging back, latestFinishedSource returns {pending:true} and the take-in skips too (A4).
-// 2. A run's start ignores dependsOn: sliceSourceOf starts run 10 from the branch of the run that finished last only,
-//    so the other sibling's work is missing whichever finishes last (A2, A3).
+// A1 and A4 assert that a run that waited at a stop takes in what finished meanwhile before it goes on (slice 3); A2
+// and A3 assert that a run starts with the work of every run it builds on (slice 2). The causes slice 1 found (the full
+// write-up with file:line is missing-work-cause.md in slice 1's pipeline folder):
+// 1. A waited run's take-in ran before the finished sibling's work was committed: run 9 sends `done` before its teardown
+//    commits onto feat/run-9, so an answer now waits until run 9 settles (A1); while the sibling is still merging back
+//    the take-in answers `wait` instead of skipping (A4).
+// 2. A run's start ignored dependsOn: sliceSourceOf starts run 10 from the branch of the run that finished last only,
+//    so the combine takes the other sibling in (A2, A3).
 
 const commitFile = (cwd, file) => { writeFileSync(join(cwd, file), `${file}\n`); g(cwd, 'add', file); g(cwd, 'commit', '-qm', file); };
 /** Commit src/a.mjs (a fixture file of the temp repo) with `value` on its one line. */
@@ -693,75 +694,369 @@ function siblingWorld({ shared = false } = {}) {
   return { repo, wt8, wt9, fx };
 }
 
-/** Run 8's harness with only what the take-in reads, recording what it logs and each merge it asks for. */
+let eightSeq = 0;
+/** Run 8's harness with only what the take-in reads and writes (the card's run 2), recording what it logs, how often it
+ *  persists and each answer it is handed. */
 function waitedRunHarness({ repo, wt8, fx }) {
+  const key = projectKey(repo);
+  const id = fx.pipelineOf(8);
+  const start = head(repo, 'feat/run-7');
+  const rec = () => ({ source: 'feat/run-7', feature: 'feat/run-8', worktreeDir: wt8, baseSha: start, diffBase: start, startHead: start });
   const h = Object.create(RunHarness.prototype);
-  h.runShape = { slice: { feature: fx.featureId } };
+  h.runShape = { slice: { feature: fx.featureId, index: 2 } };
   h.branchInfo = { branch: 'feat/run-8', worktreeDir: wt8 };
-  h.members = [{ projectDir: repo, projectKey: projectKey(repo) }];
-  h.pipeline = { id: fx.pipelineOf(8) };
+  h.members = [{ projectDir: repo, projectKey: key }];
+  h.memberByKey = new Map(h.members.map((m) => [m.projectKey, m]));
+  h.projectDir = repo;
   h.isWorkspace = false;
+  h.workMode = 'git';
+  h.execEnvKind = 'local';
+  h.workDirs = new Map([[key, wt8]]);
+  h.checkpointRefs = { [key]: start };
+  h.pipeline = { id, dir: join(root, `run-eight-${++eightSeq}-${id}`) };
+  h.state = { status: 'running', branch: rec(), branches: { [key]: rec() } };
+  const persisted = [];
+  h._persist = async () => { persisted.push(structuredClone(h.state.branches[key])); return true; };
   const logged = [];
   h._log = (...args) => { logged.push(args); };
-  const merges = [];
-  h._mergeLatestOnResume = (m, info, base, opts) => {
-    merges.push({ base, opts });
-    return RunHarness.prototype._mergeLatestOnResume.call(h, m, info, base, opts);
-  };
-  return { h, logged, merges };
+  const answers = [];
+  h.answer = (qid, payload, by) => { answers.push({ id: qid, payload, by }); };
+  const record = () => h.state.branches[key];
+  return { h, logged, answers, persisted, key, start, record };
 }
 
 const noMergeStarted = (wt) => spawnSync('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: wt, env: probeEnv() }).status !== 0;
 
-// Cause 1 (report above): run 9's row reads `done` before teardown commits its work, so run 8's take-in finds nothing
-// newer on feat/run-9 and skips with no log. Slice 3 adds the take-in of committed sibling work and its own live-order
-// test (the order `done` frame, delivery, teardown commit is read from the code, not driven here).
-test('A1 (R-qa-1): run 8 goes on while run 9 reads done with uncommitted work: the take-in finds nothing and never takes run 9 in', () => withEnvVars(ON, async () => {
+// ---- Slice 3 (R-po-2, R-arch-5): a run that waited takes in what finished meanwhile ----------------------------------
+// The card's run numbers are the slice numbers: the runs labelled 7, 8, 9 and 10 here are the card's runs 1 to 4.
+const STOP8 = gateStop({ run: 2, issues: [{ severity: 'major', title: 'x' }], fixCycles: 3 });
+const ANOTHER = { decision: 'another' };
+const movedLine = (run) => `Base \`feat/run-${run}\` moved: merged into \`feat/run-8\` (1 commit).`;
+const CONFLICT_LINE = 'Base `feat/run-9` moved: conflicts in 1 file.';
+const featureLog = (fx) => featureView(fx.featureId).log.map((r) => r.text);
+const read8 = (w, file) => readFileSync(join(w.wt8, file), 'utf8');
+const commitNine = (w) => { g(w.wt9, 'add', '-A'); g(w.wt9, 'commit', '-qm', 'nine.txt'); };
+
+/** A finished sibling of run 8 on `source` with one commit of its own file, in its own worktree (the card's run 4). */
+function finishRunTen(w, { source = 'feat/run-7', at = minute(2) } = {}) {
+  const wt10 = join(dirname(w.repo), 'wt10');
+  g(w.repo, 'worktree', 'add', '-q', '-b', 'feat/run-10', wt10, 'feat/run-7');
+  commitFile(wt10, 'ten.txt');
+  w.fx.start(10, { branch: record(10, source) });
+  w.fx.finish(10, { at });
+  return head(w.repo, 'feat/run-10');
+}
+
+/** The runs map as the server holds it, with the real take-in wired as createHeldStops' `takeIn`: run 8 at its open
+ *  stop and, when `nine` is given, run 9's entry. */
+function liveRuns(w, eight, { nine = null } = {}) {
+  const runs = new Map();
+  const e8 = { id: 'r8', pipelineId: w.fx.pipelineOf(8), status: 'running', heldStop: null,
+    pendingQuestion: { id: 'gate-w1', kind: 'gate', stop: STOP8 }, orch: eight.h };
+  runs.set(e8.id, e8);
+  const e9 = nine ? { id: 'r9', pipelineId: w.fx.pipelineOf(9), status: nine.status, settled: nine.settled, heldStop: null,
+    pendingQuestion: null, orch: { runShape: { slice: { feature: w.fx.featureId, index: 3 } }, answer() {} } } : null;
+  if (e9) runs.set(e9.id, e9);
+  const liveSliceOf = (pid) => {
+    const e = [...runs.values()].find((x) => x.pipelineId === pid);
+    return e && e.status === 'running' ? liveSliceFrom({ runId: e.id, status: e.status, pendingQuestion: e.pendingQuestion,
+      approved: true, heldStop: e.heldStop, going: !!e.takingIn }) : null;
+  };
+  const resolved = [];
+  const repaints = [];
+  const held = createHeldStops({ runs, liveSliceOf, broadcastFeature: (id) => repaints.push(id), now: Date.now,
+    resolvePending: (e, { id, reason }) => { resolved.push({ id, reason }); e.pendingQuestion = null; return true; },
+    takeIn: (entry) => entry.orch.takeInBeforeAnswer() });
+  return { e8, e9, held, resolved, repaints, direct: async () => held.answer(e8, 'gate-w1', ANOTHER, 'ann') };
+}
+
+// Cause 1 (report above): run 9's row reads `done` before teardown commits its work. The answer waits for run 9 to
+// settle, then run 9's committed work is taken in before run 8 gets it.
+test('A1 / W1 (R-po-2, live order): run 8\'s answer waits while run 9 reads done and not settled, then run 8 takes run 9 in before it goes on', () => withEnvVars(ON, async () => {
   const w = siblingWorld();
-  const { repo, wt8, wt9, fx } = w;
+  const { repo, wt8, fx } = w;
+  const ten = finishRunTen(w, { source: 'feat/run-9', at: minute(0) });   // built on runs 8 and 9: another base
+  const eight = waitedRunHarness(w);
+  const live = liveRuns(w, eight, { nine: { status: 'running', settled: false } });
+  assert.deepEqual(await live.direct(), { held: true }, 'run 9 is building: the answer is held');
+
+  // Run 9 sends `done`; its teardown has not committed nine.txt yet.
   fx.finish(9, { at: minute(1) });
-  assert.deepEqual(latestFinishedSource(fx.featureId, { exclude: fx.pipelineOf(8) }),
-    { pipelineId: fx.pipelineOf(9), sourceBranch: 'feat/run-9' });
-  assert.equal(head(repo, 'feat/run-9'), head(repo, 'feat/run-7'), 'run 9\'s branch still sits at run 7\'s tip');
-  const early = await checkBaseMerge(repo, { base: 'feat/run-9', feature: 'feat/run-8' });
-  assert.deepEqual([early.status, early.behind, early.baseRef], ['up-to-date', 0, 'feat/run-9']);
+  live.e9.status = 'done';
+  const tip = head(repo, 'feat/run-8');
+  await live.held.deliver();
+  assert.equal(eight.answers.length, 0, 'no answer goes out while run 9 is still committing');
+  assert.equal(live.e8.heldStop?.after, 3);
+  assert.equal(head(repo, 'feat/run-8'), tip);
 
-  const eight = head(repo, 'feat/run-8');
-  const { h, logged, merges } = waitedRunHarness(w);
-  await h._takeInLatestFinished({ smallRuns: true, onAnswer: true });
-  assert.deepEqual(merges, [{ base: 'feat/run-9', opts: { onAnswer: true } }], 'the take-in reached the merge check');
-  assert.equal(head(repo, 'feat/run-8'), eight);
+  // Teardown commits run 9's work and the run settles.
+  commitNine(w);
+  live.e9.settled = true;
+  await live.held.deliver();
+  assert.deepEqual(eight.answers, [{ id: 'gate-w1', payload: ANOTHER, by: 'ann' }]);
+  assert.deepEqual(live.resolved, [{ id: 'gate-w1', reason: 'answered' }]);
+  assert.equal(isAncestorExit(repo, head(repo, 'feat/run-9'), 'feat/run-8'), 0, 'run 9\'s commit is in run 8\'s branch');
+  assert.equal(isAncestorExit(repo, ten, 'feat/run-8'), 1, 'run 10, built on another base, is not taken in');
+  assert.deepEqual(filesOn(repo, 'feat/run-8'), ['base.txt', 'eight.txt', 'nine.txt', 'seven.txt']);
+  assert.deepEqual(auditOf(fx.pipelineOf(8)).filter((t) => t.startsWith('Base `')), [movedLine(9)]);
+  assert.ok(featureLog(fx).includes('feat/run-9 moved · run 2 starts from it'), featureLog(fx).join(' | '));
   assert.equal(noMergeStarted(wt8), true);
-  assert.deepEqual(logged, []);
-
-  // Run 9's teardown commit lands a moment later.
-  g(wt9, 'add', 'nine.txt');
-  g(wt9, 'commit', '-qm', 'nine.txt');
-  const late = await checkBaseMerge(repo, { base: 'feat/run-9', feature: 'feat/run-8' });
-  assert.deepEqual([late.status, late.behind], ['clean', 1]);
-  assert.equal(isAncestorExit(repo, head(repo, 'feat/run-9'), 'feat/run-8'), 1, 'run 9\'s commit is not in run 8\'s branch');
 }));
 
-// Cause 1, its second silent skip (report above): a finished run still merging back reads {pending:true}, and the
-// take-in neither logs nor retries. Slice 3 adds the take-in of committed sibling work and its own live-order test.
-test('A4 (R-qa-1): while the latest finished run still merges back, the take-in skips with nothing logged', () => withEnvVars(ON, async () => {
+// Cause 1, its second silent skip (report above): a finished run still merging back reads {pending:true}. The take-in
+// answers `wait`, names the run and logs it.
+test('A4 (R-po-2): while a same-base sibling still merges its work back, the take-in waits for it and says so', () => withEnvVars(ON, async () => {
   const w = siblingWorld();
   const { repo, wt8, wt9, fx } = w;
   // Run 9's work is committed, so only the pending merge back can be what keeps it out.
-  g(wt9, 'add', 'nine.txt');
-  g(wt9, 'commit', '-qm', 'nine.txt');
+  commitNine(w);
   // Now, not a fixed time: mergeBackPending reads the row as pending only while its finish is recent by the real clock.
   fx.finish(9, { at: new Date().toISOString(), branch: { ...record(9), sameAsSource: true, worktreeDir: wt9 } });
   assert.deepEqual(latestFinishedSource(fx.featureId, { exclude: fx.pipelineOf(8) }), { pending: true });
 
-  const eight = head(repo, 'feat/run-8');
-  const { h, logged, merges } = waitedRunHarness(w);
-  await h._takeInLatestFinished({ smallRuns: true, onAnswer: true });
-  assert.deepEqual(merges, [], 'no merge is asked for');
-  assert.equal(head(repo, 'feat/run-8'), eight);
+  const tip = head(repo, 'feat/run-8');
+  const { h, logged } = waitedRunHarness(w);
+  assert.deepEqual(await h.takeInBeforeAnswer(), { ok: false, wait: true, after: 3 });
+  assert.equal(head(repo, 'feat/run-8'), tip);
   assert.equal(noMergeStarted(wt8), true);
-  assert.deepEqual(logged, []);
+  assert.deepEqual(logged.map((l) => l.slice(0, 3)),
+    [['worktree', 'info', 'waiting for run 3 to finish merging its work back before taking it in']]);
 }));
+
+test('R1 (R-arch-5): after a take-in the record names the taken-in branch, keeps the start, and the diff holds only run 8\'s commits', () => withEnvVars(ON, async () => {
+  const w = siblingWorld();
+  const { repo, fx } = w;
+  commitNine(w);
+  fx.finish(9, { at: minute(1) });
+  const nine = head(repo, 'feat/run-9');
+  const eight = waitedRunHarness(w);
+  const { start } = eight;
+  assert.deepEqual(await eight.h.takeInBeforeAnswer(), { ok: true, merged: [{ index: 3, branch: 'feat/run-9' }] });
+  for (const rec of [eight.record(), eight.h.state.branch]) {
+    assert.equal(rec.source, 'feat/run-9');
+    assert.equal(rec.sourceFrom, 'feat/run-7');
+    assert.deepEqual([rec.baseSha, rec.diffBase, rec.startHead], [start, start, start], 'the start never moves');
+    assert.deepEqual(rec.tookIn, [{ index: 3, branch: 'feat/run-9', pipelineId: fx.pipelineOf(9), sha: nine }]);
+    assert.equal(rec.baseRefs['feat/run-9'], nine);
+    assert.equal(rec.baseRefs['feat/run-7'], start, 'the old source stays a base ref');
+    assert.deepEqual(rec.baseMerged, { base: 'feat/run-9', behind: 1, merged: true, onAnswer: true });
+  }
+  assert.ok(eight.persisted.some((r) => r.source === 'feat/run-9'), 'the new record is persisted');
+  assert.equal(eight.h.checkpointRefs[eight.key], nine, 'only checkpointRefs move, to the taken-in tip');
+  assert.equal(g(repo, 'diff', '--name-only', eight.h.checkpointRefs[eight.key], 'feat/run-8'), 'eight.txt');
+  assert.equal(g(repo, 'log', '--no-merges', '--format=%s', 'feat/run-9..feat/run-8'), 'eight.txt');
+  // Run 8 finishes with that record: its pull request goes onto run 9's branch.
+  fx.finish(8, { at: minute(2), branch: eight.record() });
+  assert.equal(smallRunsPrBase(fx.pipelineOf(8)), 'feat/run-9');
+  assert.deepEqual(chainBaseBranchesOf(fx.pipelineOf(8)).slice(-2), ['feat/run-7', 'feat/run-9']);
+}));
+
+test('take-in (R-po-2): every same-base sibling is merged in finish order, uncommitted work is committed first and kept', () => withEnvVars(ON, async () => {
+  const w = siblingWorld();
+  const { repo, wt8, fx } = w;
+  commitNine(w);
+  fx.finish(9, { at: minute(1) });
+  const ten = finishRunTen(w, { at: minute(2) });
+  writeFileSync(join(wt8, 'eight.txt'), 'eight changed\n');
+  const eight = waitedRunHarness(w);
+  assert.deepEqual(await eight.h.takeInBeforeAnswer(),
+    { ok: true, merged: [{ index: 3, branch: 'feat/run-9' }, { index: 4, branch: 'feat/run-10' }] });
+  assert.equal(isAncestorExit(repo, head(repo, 'feat/run-9'), 'feat/run-8'), 0);
+  assert.equal(isAncestorExit(repo, ten, 'feat/run-8'), 0);
+  assert.equal(g(repo, 'show', 'feat/run-8:eight.txt'), 'eight changed', 'the uncommitted work is committed');
+  assert.equal(cleanTree(wt8), '');
+  assert.equal(eight.record().source, 'feat/run-10', 'source names the last branch merged');
+  assert.equal(eight.record().sourceFrom, 'feat/run-7');
+  assert.deepEqual(eight.record().tookIn.map((t) => t.index), [3, 4]);
+  assert.deepEqual(auditOf(fx.pipelineOf(8)).filter((t) => t.startsWith('Base `')), [movedLine(9), movedLine(10)]);
+  assert.ok(eight.logged.some((l) => l[0] === 'worktree' && l[1] === 'info' && /took in the work of .*feat\/run-10.* before going on/.test(l[2])),
+    JSON.stringify(eight.logged));
+}));
+
+test('take-in (R-arch-5): a second take-in keeps the fire-time source and appends; nothing missing changes nothing', () => withEnvVars(ON, async () => {
+  const w = siblingWorld();
+  const { repo, fx } = w;
+  commitNine(w);
+  fx.finish(9, { at: minute(1) });
+  const eight = waitedRunHarness(w);
+  assert.equal((await eight.h.takeInBeforeAnswer()).ok, true);
+  // What _persist writes: the next verdict reads the run's fire-time source from the row.
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify(eight.record()), fx.pipelineOf(8));
+  finishRunTen(w, { at: minute(2) });
+  assert.deepEqual(await eight.h.takeInBeforeAnswer(), { ok: true, merged: [{ index: 4, branch: 'feat/run-10' }] });
+  assert.deepEqual([eight.record().source, eight.record().sourceFrom], ['feat/run-10', 'feat/run-7']);
+  assert.deepEqual(eight.record().tookIn.map((t) => t.branch), ['feat/run-9', 'feat/run-10']);
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify(eight.record()), fx.pipelineOf(8));
+
+  const [rec, tip, audit] = [structuredClone(eight.record()), head(repo, 'feat/run-8'), auditOf(fx.pipelineOf(8))];
+  assert.deepEqual(await eight.h.takeInBeforeAnswer(), { ok: true, merged: [] });
+  assert.deepEqual(eight.record(), rec);
+  assert.equal(head(repo, 'feat/run-8'), tip);
+  assert.deepEqual(auditOf(fx.pipelineOf(8)), audit);
+}));
+
+/** Runs 8 and 9 change the same line of src/a.mjs, run 9 finished; run 8 also has an uncommitted change to eight.txt. */
+function clashWorld() {
+  const w = siblingWorld({ shared: true });
+  writeShared(w.wt8, 'eight');
+  writeFileSync(join(w.wt9, 'src', 'a.mjs'), "export const a = 'nine';\n");
+  commitNine(w);
+  w.fx.finish(9, { at: minute(1) });
+  writeFileSync(join(w.wt8, 'eight.txt'), 'uncommitted\n');
+  return w;
+}
+const snapshot = (w) => ({ head: head(w.repo, 'feat/run-8'), status: cleanTree(w.wt8), refs: refsOf(w.repo), eight: read8(w, 'eight.txt') });
+/** The merge of run 9 into run 8, settled by the person in run 8's checkout. */
+function settleOnEight(w) {
+  spawnSync('git', ['merge', '-q', '--no-edit', 'feat/run-9'], { cwd: w.wt8, env: probeEnv() });   // conflicts
+  writeFileSync(join(w.wt8, 'src', 'a.mjs'), "export const a = 'eight and nine';\n");
+  g(w.wt8, 'add', 'src/a.mjs');
+  g(w.wt8, 'commit', '-q', '--no-edit');
+}
+
+test('C1 (R-qa-6, started-run clash): a direct answer is refused with the clash, the stop stays open and nothing moves', () => withEnvVars(ON, async () => {
+  const w = clashWorld();
+  const eight = waitedRunHarness(w);
+  const live = liveRuns(w, eight);
+  const was = snapshot(w);
+  await assert.rejects(live.direct(), (err) => err.code === 'TAKE_IN_REFUSED' && err.status === 409 && err.message === CLASH);
+  assert.equal(eight.answers.length, 0);
+  assert.deepEqual(snapshot(w), was);
+  assert.equal(noMergeStarted(w.wt8), true);
+  assert.equal(live.e8.pendingQuestion?.id, 'gate-w1', 'the question stays open');
+  assert.equal(live.e8.heldStop, null, 'nothing is held');
+  assert.ok(auditOf(w.fx.pipelineOf(8)).includes(CONFLICT_LINE), auditOf(w.fx.pipelineOf(8)).join(' | '));
+  assert.ok(featureLog(w.fx).includes('feat/run-9 moved · run 2 has conflicts with it in 1 file'), featureLog(w.fx).join(' | '));
+  assert.ok(eight.logged.some((l) => l[0] === 'worktree' && l[1] === 'warn' && String(l[2]).includes(CLASH)), JSON.stringify(eight.logged));
+}));
+
+test('C2 (R-po-2): after the clash is settled on run 8\'s branch, answering again delivers once with run 9\'s work', () => withEnvVars(ON, async () => {
+  const w = clashWorld();
+  const eight = waitedRunHarness(w);
+  const live = liveRuns(w, eight);
+  await assert.rejects(live.direct(), { code: 'TAKE_IN_REFUSED' });
+  settleOnEight(w);
+  assert.equal(await live.direct(), undefined, 'delivered, not held');
+  assert.deepEqual(eight.answers, [{ id: 'gate-w1', payload: ANOTHER, by: 'ann' }]);
+  assert.equal(isAncestorExit(w.repo, head(w.repo, 'feat/run-9'), 'feat/run-8'), 0);
+}));
+
+test('C3 (R-po-2): a held answer that clashes is dropped with its reason kept on the open stop; answering again is accepted', () => withEnvVars(ON, async () => {
+  const w = clashWorld();
+  // Run 9 is still going when the person answers.
+  getDb().prepare("UPDATE pipelines SET status = 'running' WHERE id = ?").run(w.fx.pipelineOf(9));
+  const eight = waitedRunHarness(w);
+  const live = liveRuns(w, eight, { nine: { status: 'running', settled: false } });
+  assert.deepEqual(await live.direct(), { held: true });
+  w.fx.finish(9, { at: minute(1) });
+  Object.assign(live.e9, { status: 'done', settled: true });
+  const was = snapshot(w);
+  await live.held.deliver();
+  assert.equal(live.e8.heldStop, null, 'the refused answer is dropped');
+  assert.equal(eight.answers.length, 0);
+  assert.deepEqual(live.resolved, [], 'the question is not resolved');
+  assert.equal(live.e8.pendingQuestion?.id, 'gate-w1');
+  assert.deepEqual(live.e8.takeInRefused, { id: 'gate-w1', reason: CLASH });
+  assert.ok(live.repaints.includes(w.fx.featureId), 'the stop repaints');
+  assert.deepEqual(snapshot(w), was);
+  assert.equal(noMergeStarted(w.wt8), true);
+
+  settleOnEight(w);
+  assert.equal(await live.direct(), undefined);
+  assert.equal(eight.answers.length, 1);
+  assert.ok(!live.e8.takeInRefused, 'the next accepted answer clears the reason');
+}));
+
+test('take-in (R-arch-7): a clash only the uncommitted work makes is undone: the head and the files are as before', () => withEnvVars(ON, async () => {
+  const w = siblingWorld({ shared: true });
+  writeFileSync(join(w.wt9, 'src', 'a.mjs'), "export const a = 'nine';\n");
+  commitNine(w);
+  w.fx.finish(9, { at: minute(1) });
+  writeFileSync(join(w.wt8, 'src', 'a.mjs'), "export const a = 'eight, not committed';\n");
+  const was = { ...snapshot(w), eight: read8(w, 'src/a.mjs') };
+  const eight = waitedRunHarness(w);
+  const rec = structuredClone(eight.record());
+  assert.deepEqual(await eight.h.takeInBeforeAnswer(), { ok: false, refused: true, reason: CLASH });
+  assert.deepEqual({ ...snapshot(w), eight: read8(w, 'src/a.mjs') }, was);
+  assert.equal(noMergeStarted(w.wt8), true);
+  assert.deepEqual(eight.record(), rec);
+}));
+
+test('take-in (R-arch-7, R-arch-8): a later merge that fails puts the branch back where it was, with the uncommitted files', () => withEnvVars(ON, async () => {
+  const w = siblingWorld();
+  commitNine(w);
+  w.fx.finish(9, { at: minute(1) });
+  finishRunTen(w, { at: minute(2) });
+  writeFileSync(join(w.wt8, 'eight.txt'), 'uncommitted\n');
+  writeFileSync(join(w.wt8, 'ten.txt'), 'untracked, in the way of the second merge\n');
+  const was = { ...snapshot(w), ten: read8(w, 'ten.txt') };
+  const eight = waitedRunHarness(w);
+  // A file Worca put in the checkout: the commit of the uncommitted work leaves it out, so it stays in the merge's way.
+  eight.h.injectedPaths = { [eight.key]: [{ kind: 'file', path: 'ten.txt' }] };
+  const rec = structuredClone(eight.record());
+  assert.deepEqual(await eight.h.takeInBeforeAnswer(),
+    { ok: false, refused: true, reason: 'could not take in the work of run 4 (feat/run-10): failed' });
+  assert.deepEqual({ ...snapshot(w), ten: read8(w, 'ten.txt') }, was);
+  assert.equal(isAncestorExit(w.repo, head(w.repo, 'feat/run-9'), 'feat/run-8'), 1, 'the first merge is undone too');
+  assert.equal(noMergeStarted(w.wt8), true);
+  assert.deepEqual(eight.record(), rec);
+}));
+
+test('take-in (D7): a checkout with uncommitted changes in worca\'s CLAUDE.md section is refused with no write', () => withEnvVars(ON, async () => {
+  const w = siblingWorld();
+  commitNine(w);
+  w.fx.finish(9, { at: minute(1) });
+  commitFile(w.wt8, 'CLAUDE.md');
+  writeFileSync(join(w.wt8, 'CLAUDE.md'), 'worca section\n');
+  const was = { ...snapshot(w), eight: read8(w, 'CLAUDE.md') };
+  const eight = waitedRunHarness(w);
+  eight.h.injectedPaths = { [eight.key]: [{ kind: 'claudeMdSection', path: 'CLAUDE.md' }] };
+  assert.deepEqual(await eight.h.takeInBeforeAnswer(),
+    { ok: false, refused: true, reason: 'run 2\'s checkout has uncommitted changes in worca\'s CLAUDE.md section' });
+  assert.deepEqual({ ...snapshot(w), eight: read8(w, 'CLAUDE.md') }, was);
+  assert.equal(noMergeStarted(w.wt8), true);
+}));
+
+test('take-in (D8): a combine check that fails refuses with its error; nothing is merged', () => withEnvVars(ON, async () => {
+  const w = siblingWorld();
+  commitNine(w);
+  w.fx.finish(9, { at: minute(1) });
+  const was = snapshot(w);
+  const eight = waitedRunHarness(w);
+  const r = await eight.h.takeInBeforeAnswer({ checkCombine: async () => ({ status: 'error', kind: 'timeout', error: 'git timed out', files: [], fileCount: 0 }) });
+  assert.deepEqual([r.ok, r.refused], [false, true]);
+  assert.match(r.reason, /git timed out/);
+  assert.deepEqual(snapshot(w), was);
+  assert.equal(noMergeStarted(w.wt8), true);
+}));
+
+test('F1 (R-arch-11): with the flag off, on an unmarked feature or on a source-branch run, the take-in makes no git call and changes no record', async () => {
+  const setups = [
+    ['flag off', { WORCA_FLAGS: undefined }, () => {}],
+    ['unmarked feature', ON, ({ fx }) => getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?')
+      .run(JSON.stringify({ smallRuns: false }), fx.pipelineOf(7))],
+    ['a run on its source branch', ON, (_w, eight) => { eight.h.state.branch.sameAsSource = true; eight.h.state.branches[eight.key].sameAsSource = true; }],
+  ];
+  for (const [why, env, apply] of setups) {
+    await withEnvVars(env, async () => {
+      const w = siblingWorld();
+      commitNine(w);
+      w.fx.finish(9, { at: minute(1) });
+      const eight = waitedRunHarness(w);
+      apply(w, eight);
+      const rec = structuredClone(eight.record());
+      const was = snapshot(w);
+      const calls = [];
+      const spy = (name) => (...args) => { calls.push([name, ...args]); return null; };
+      eight.h._git = async (...args) => { calls.push(['_git', ...args]); return { ok: true, stdout: '', stderr: '' }; };
+      assert.deepEqual(await eight.h.takeInBeforeAnswer({ checkCombine: spy('checkCombine'), isAncestor: spy('isAncestor'),
+        resolves: spy('resolves'), recordOf: spy('recordOf') }), { ok: true, merged: [], skipped: true }, why);
+      assert.deepEqual(calls, [], why);
+      assert.deepEqual(eight.record(), rec, why);
+      assert.deepEqual(snapshot(w), was, why);
+    });
+  }
+});
 
 // ---- Slice 2 (R-po-1, R-arch-4a): a run starts with the work of every run it builds on ------------------------------
 // The card's run numbers are the slice numbers: the runs labelled 7, 8, 9 and 10 here are the card's runs 1 to 4.

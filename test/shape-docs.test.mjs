@@ -204,6 +204,19 @@ test('S16-T6 (R-po-6): the run page bullet says a run that has not started has n
   assert.deepEqual(missing(bullet, ['has no run page', 'Waits for', 'Needed by', '`nothing`']), []);
 });
 
+// Shaper small runs slice 3 (R-po-2): a run that waited at a stop takes in what finished meanwhile.
+test('slice 3: "Work taken in after a wait" follows the clash part and "The flag, read live" names the take-in before an answer', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const at = small.indexOf('Work taken in after a wait');
+  assert.ok(at >= 0, 'the paragraph "Work taken in after a wait" under Small runs');
+  assert.ok(at > small.indexOf('When the runs it builds on clash'), 'after "When the runs it builds on clash"');
+  const para = flat(small.slice(at).split(/\n\s*\n/).slice(0, 2).join('\n'));   // a heading and its paragraph, or one paragraph
+  assert.deepEqual(missing(para, [/waited at a stop/i, /same base/i, /meanwhile|while it waited/i, '`feat/run-9 moved · run 2 starts from it`',
+    /pull request/i, '`after run 3`', /clash/i, /not sent/i, /stays open/i, /nothing moves/i, /settle/i, /answer again/i]), []);
+  const live = flat(small).split('**The flag, read live.**')[1]?.split('**A feature with the marker')[0] || '';
+  assert.match(live, /waited at a stop takes in every same-base finished run it lacks before its answer goes on/);
+});
+
 test('a clash between the runs it builds on: Small runs says a run starts with all of them and how a held run is released', () => {
   const small = DOCS['shape-it-first.md'].text();
   const live = flat(small).split('**The flag, read live.**')[1]?.split('**A feature with the marker')[0] || '';

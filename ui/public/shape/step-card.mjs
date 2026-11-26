@@ -328,6 +328,14 @@ function renderStopCard(panel, pq, deps) {
     const rule = renderChangeRule(doc, stop.landsAs || 'none');
     for (const el of [texts, rule]) { if (foot) foot.before(el); else q.el.appendChild(el); }
   }
+  // Slice 3 (D11): a held answer the take-in refused was dropped; the open stop says why, above its options.
+  if (deps.refused) {
+    const err = errLine(doc);
+    err.textContent = `Not sent: ${deps.refused}`;
+    err.hidden = false;
+    const opts = q.el.querySelector('.qopts');
+    if (opts) opts.before(err); else if (foot) foot.before(err); else q.el.prepend(err);
+  }
   // Small runs C5 (D12): the Verifier's bound stop lists its open gaps (the card's own gap list is not drawn meanwhile).
   if (stopGaps(stop)) {
     const gaps = verifyGapList(doc, stop.gaps);
@@ -336,7 +344,7 @@ function renderStopCard(panel, pq, deps) {
   panel.appendChild(q.el);
 }
 
-/** Gate (cycle limit). deps: { doc, title, chip, wireCopy, tagLevel(el, level), submit, readOnly?, runPage?, held?, pick? }. A small runs
+/** Gate (cycle limit). deps: { doc, title, chip, wireCopy, tagLevel(el, level), submit, readOnly?, runPage?, held?, pick?, refused? }. A small runs
  *  stop (`pq.stop`, a gate or a plan ask) draws as renderStopCard. */
 export function renderGateCard(panel, pq, deps) {
   if (pq && pq.stop) return renderStopCard(panel, pq, deps);

@@ -101,7 +101,7 @@ export function siblingRunsFeature({ projectDir }) {
   db.prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
   const key = projectKey(projectDir);
   const newPipe = (status, branch) => {
-    const id = `sib-${String(++seq).padStart(5, '0')}`;
+    const id = `5b${String(++seq).padStart(6, '0')}`;   // 8 hex characters: appendAudit reads it from a run dir
     seedPipelineRow({ id, projectKey: key, status, title: id, branch });
     return id;
   };

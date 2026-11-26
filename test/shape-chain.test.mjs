@@ -681,3 +681,101 @@ test('sliceCombineGate (D8): a clash that needs the whole fold names every run i
   assert.deepEqual(await CHAIN.sliceCombineGate(w.ticket, w.own, s.deps),
     { ok: false, hold: true, error: 'runs 1, 2 and 3 clash in src/a.mjs' });
 }));
+
+// ── Slice 3 (R-po-2): what a run that waited at a stop takes in before it goes on (takeInVerdict) ───────────────────
+const BASE = 'feat/base';
+const REASON = 'runs 2 and 3 clash in src/a.mjs';
+/** A marked 4-run feature: run 2 is the waiting run (live), runs 3 and 4 are done, each with the record `branches` gives
+ *  it (`{source}` of the shared base by default) and a finish time. → { id, p, br, own } */
+function takeInFeature({ own = {}, three = {}, four = {}, at = { 3: '2026-03-02T00:00:00Z', 4: '2026-03-03T00:00:00Z' } } = {}) {
+  const f = feature(4, { two: 'none' });
+  const br = (k) => `feat/take-${f.id}-${k}`;
+  const rec = (k, over) => ({ source: BASE, feature: br(k), ...over });
+  const p2 = pipe('running', { branch: rec(2, own) });
+  const p3 = pipe('done', { branch: rec(3, three), steps: stepAt(at[3]), updatedAt: at[3] });
+  const p4 = pipe('done', { branch: rec(4, four), steps: stepAt(at[4]), updatedAt: at[4] });
+  fire(f.t[2], p2); fire(f.t[3], p3); fire(f.t[4], p4);
+  markFeature(f.id);
+  return { id: f.id, p: [null, null, p2, p3, p4], br, own: { featureId: f.id, pipelineId: p2, branch: br(2) } };
+}
+/** Seams for takeInVerdict: every sibling branch resolves and is missing unless said otherwise. Every call recorded. */
+function takeInSeams({ check = () => ({ status: 'clean', files: [], fileCount: 0 }), ancestor = () => false, resolves = () => true } = {}) {
+  const checks = [];
+  const ancestors = [];
+  return { checks, ancestors, deps: {
+    checkCombine: async (dir, { branches }) => { checks.push([...branches]); return check(branches); },
+    isAncestor: async (dir, a, b) => { ancestors.push([a, b]); return ancestor(a, b); },
+    resolves: async (dir, ref) => resolves(ref) } };
+}
+const verdictOf = (w, s) => CHAIN.takeInVerdict(root, w.own, s.deps);
+
+test('takeInVerdict: nothing missing when the run holds every same-base sibling; no combine check', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature();
+  const s = takeInSeams({ ancestor: () => true });
+  assert.deepEqual(await verdictOf(w, s), { status: 'none', skipped: [] });
+  assert.deepEqual(s.checks, []);
+}));
+
+test('takeInVerdict: a same-base sibling still merging its work back is a wait for its run number', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature();
+  getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify({ source: BASE, feature: BASE, sameAsSource: true, worktreeDir: '/tmp/x' }), new Date().toISOString(), w.p[3]);
+  assert.deepEqual(await verdictOf(w, takeInSeams()), { status: 'wait', after: 3 });
+}));
+
+test('takeInVerdict: clean lists the missing runs in finish order with the combine check', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature({ at: { 3: '2026-03-04T00:00:00Z', 4: '2026-03-03T00:00:00Z' } });
+  const s = takeInSeams();
+  const v = await verdictOf(w, s);
+  assert.equal(v.status, 'clean');
+  assert.deepEqual(v.missing, [{ index: 4, branch: w.br(4), pipelineId: w.p[4] }, { index: 3, branch: w.br(3), pipelineId: w.p[3] }], 'finish order');
+  assert.deepEqual(s.checks, [[w.br(2), w.br(4), w.br(3)]]);
+  assert.equal(v.check.status, 'clean');
+  assert.deepEqual(v.skipped, []);
+}));
+
+test('takeInVerdict: a sibling whose branch no longer resolves is left out and listed in skipped', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature();
+  const v = await verdictOf(w, takeInSeams({ resolves: (ref) => !ref.endsWith(w.br(4)) }));
+  assert.equal(v.status, 'clean');
+  assert.deepEqual(v.missing.map((m) => m.index), [3]);
+  assert.deepEqual(v.skipped, [{ index: 4, branch: w.br(4) }]);
+}));
+
+test('takeInVerdict: conflicts are a clash naming the runs and the file', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature({ four: { source: 'feat/other' } });
+  const v = await verdictOf(w, takeInSeams({ check: (branches) => conflicts(branches) }));
+  assert.deepEqual([v.status, v.reason, v.runs.slice().sort(), v.files], ['clash', REASON, [2, 3], ['src/a.mjs']]);
+}));
+
+test('takeInVerdict: a failed check or a gone branch is an error, and a throwing seam never throws out', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature();
+  const timeout = await verdictOf(w, takeInSeams({ check: () => ({ status: 'error', kind: 'timeout', error: 'git timed out', files: [], fileCount: 0 }) }));
+  assert.equal(timeout.status, 'error');
+  assert.match(timeout.error, /git timed out/);
+  const gone = await verdictOf(w, takeInSeams({ check: (branches) => ({ status: 'no-branch', branch: branches[1], files: [], fileCount: 0 }) }));
+  assert.equal(gone.status, 'error');
+  assert.match(gone.error, /no longer exists/);
+  assert.deepEqual(await verdictOf(w, takeInSeams({ ancestor: () => { throw new Error('boom'); } })), { status: 'error', error: 'boom' });
+}));
+
+test('takeInVerdict (R-arch-12): a finished run on another base is never missing, and git is not asked about it', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature({ three: { source: 'feat/other' }, four: { source: 'feat/other' } });
+  const s = takeInSeams();
+  assert.deepEqual(await verdictOf(w, s), { status: 'none', skipped: [] });
+  assert.deepEqual([s.checks, s.ancestors], [[], []]);
+}));
+
+test('takeInVerdict (D5): the base compared is the one a run started from (sourceFrom ?? source), on both sides', () => withEnvVars(SMALL_ON, async () => {
+  // The waiting run and run 3 each took work in since they started from BASE; run 4 started from run 3's branch.
+  const w = takeInFeature({ own: { source: 'feat/taken', sourceFrom: BASE }, three: { source: 'feat/else', sourceFrom: BASE } });
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?')
+    .run(JSON.stringify({ source: w.br(3), feature: w.br(4) }), w.p[4]);
+  const v = await verdictOf(w, takeInSeams());
+  assert.deepEqual([v.status, v.missing?.map((m) => m.index)], ['clean', [3]]);
+  assert.equal(CHAIN.fireSourceOf(w.p[2]), BASE);
+  assert.equal(CHAIN.fireSourceOf(w.p[4]), w.br(3));
+  assert.equal(CHAIN.fireSourceOf('nope'), null);
+}));
+
+test('combineVerdict is exported for the take-in', () => { assert.equal(typeof CHAIN.combineVerdict, 'function'); });

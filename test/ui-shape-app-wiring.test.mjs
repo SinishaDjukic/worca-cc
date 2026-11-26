@@ -1066,6 +1066,21 @@ test('flag on: a held answer repaints the run page live to the one answered row'
   off();
 });
 
+test('slice 3, flag on: a held answer refused at delivery reopens the stop on the run page with "Not sent: …"', async () => {
+  const slice = (stop) => ({ featureId: 'feat-1', index: 8, stop: { reason: 'objection', ...stop } });
+  const { ctx, q, info, off } = await openStopRun(C3_GATE_STOP, 'running/run-rr',
+    { slice: slice({ held: false }), reply: () => res(200, { ok: true, held: true }) });
+  click(ctx, visiblePrimaries(q())[0]);
+  await ctx.settle(4);
+  const frame = async (stop) => { info.current = slice(stop); ctx.dispatch({ type: 'shape-feature', id: 'feat-1' }); await ctx.settle(6); };
+  await frame({ held: true, value: 'another', after: 7 });
+  assert.equal(q().querySelectorAll('.qopt').length, 0, 'held');
+  await frame({ held: false, refused: 'runs 2 and 3 clash in src/a.mjs' });
+  assert.equal(q().querySelectorAll('.qopt').length, C3_GATE_STOP.stop.options.length, 'the stop is open again');
+  assert.deepEqual([...q().querySelectorAll('.plan-err:not([hidden])')].map((e) => e.textContent), ['Not sent: runs 2 and 3 clash in src/a.mjs']);
+  off();
+});
+
 test('flag on: a delivered answer (question-resolved) clears the stop on the run page and on the feature card', async () => {
   const { ctx, doc, off } = await openStopRun(C3_GATE_STOP, 'running/run-rr');
   const built = chatCardBuilder('progress')(

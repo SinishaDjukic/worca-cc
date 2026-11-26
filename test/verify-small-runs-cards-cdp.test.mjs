@@ -101,7 +101,7 @@ test('D2: runs-list, run-facts, agents-place and card-members at Expert, the 10 
   // The truncation proof (fit-1-1, requirements-1-2): a long-title member; the line's natural width; the title ellipsizes.
   for (const needle of ['const D2_LONG = 4;', 'Math.abs(r.subW - r.subScroll) > 1 || r.subScroll > r.subClient', 'long.titleEllipsis && long.titleCut',
     "words.length === 8 && words.every((w) => w === 'done')"]) assert.ok(s.includes(needle), needle);
-  assert.match(s, /await d2Phase\(\);\nawait d3Phase\(\);\nawait heldPhase\(\);\nawait finish\(\);\n$/, 'D2 before D3, the held row last, before the verdict');
+  assert.match(s, /await d2Phase\(\);\nawait d3Phase\(\);\nawait heldPhase\(\);\nawait takeIn\w*\(\);\nawait finish\(\);\n$/, 'D2 before D3, the held row, then the take-in, before the verdict');
 });
 
 test('d3Phase seeds, measures both lists with the width, pairs with the prototype feature screen, and runs after D2', () => {
@@ -121,7 +121,28 @@ test('d3Phase seeds, measures both lists with the width, pairs with the prototyp
   assert.match(s, /prototypeFeatureAfter\('Decisions'/);
 });
 
-test('heldPhase: a clash-held run seeded with setClashHold, its row and one Start now at 1280px in both themes, runs last', () => {
+test('the TAKEIN_ONLY phase: the moved step and the refused stop of a seeded 4-run feature at 1280px in both themes, 4 screenshots, runs last', () => {
+  const s = src();
+  const gate = s.match(/process\.env\.TAKEIN_ONLY === '1'\) \{ await (takeIn\w*)\(\); await finish\(\); \}/);
+  assert.ok(gate, 'the TAKEIN_ONLY=1 gate');
+  assert.match(s, new RegExp(`await heldPhase\\(\\);\\nawait ${gate[1]}\\(\\);\\nawait finish\\(\\);\\n$`), 'last in a full run');
+  const at = s.indexOf(`async function ${gate[1]}(`);
+  assert.ok(at >= 0, 'the take-in phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  // Run 2's audit line, written the way the harness writes it.
+  assert.match(s, /Base \\?`feat\/run-3\\?` moved: merged into \\?`feat\/run-2\\?` \(1 commit\)\.|baseMovedAudit\(['"`]feat\/run-3['"`], ['"`]feat\/run-2['"`]/);
+  assert.match(body, /appendAudit/);
+  for (const needle of ['feat/run-3 moved · run 2 starts from it', 'takeInRefused', 'runs 2 and 3 clash in src/a.mjs', 'Not sent: ']) {
+    assert.ok(s.includes(needle), needle);
+  }
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  // The four files, with these exact names (no prefix), in SHOTS_DIR.
+  assert.match(s, /[`'/]small-runs-taken-in-(\$\{theme\}|light|dark)\.png/);
+  assert.match(s, /[`'/]small-runs-take-in-refused-(\$\{theme\}|light|dark)\.png/);
+});
+
+test('heldPhase: a clash-held run seeded with setClashHold, its row and one Start now at 1280px in both themes', () => {
   const s = src();
   assert.match(s, /process\.env\.HELD_ONLY === '1'\) \{ await heldPhase\(\); await finish\(\); \}/);
   const at = s.indexOf('async function heldPhase(');

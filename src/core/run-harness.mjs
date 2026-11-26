@@ -99,10 +99,10 @@ import { writeReadinessSnapshot } from './repo-readiness/snapshot.mjs';
 import { serialQueue } from './graph/human-evidence.mjs';
 import { deriveBranchName, uniqueBranch } from './naming.mjs';
 import { flagEnabled } from './flags.mjs';
-import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit, checkBaseMerge } from './git-sync.mjs';
+import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit, checkBaseMerge, mergeBaseInto } from './git-sync.mjs';
 import { featureBase } from './shape/features.mjs';
 import { shaperSmallRunsOn, smallRunsAtStart, smallRunsOfFeature } from './shape/small-runs.mjs';
-import { latestFinishedSource, combineDependencies, combinedAudit } from './shape/chain.mjs';
+import { latestFinishedSource, combineDependencies, combinedAudit, takeInVerdict } from './shape/chain.mjs';
 import { cleanOutcome } from './shape/rounds.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
@@ -449,6 +449,13 @@ export function combinesDependencies({ slice, freshStart, isWorkspace, smallRuns
  *  (`smallRuns` = shaperSmallRunsOn()). */
 export function mergesLatestOnResume({ slice, isWorkspace, smallRuns }) {
   return !!(slice && !isWorkspace && smallRuns);
+}
+
+/** Shaper small runs (slice 3, D3): a run that waited at a stop takes in the finished same-base work before its answer
+ *  goes on. A slice of a feature with a run number, a single project, `smallRuns` (the flag on and the feature marked),
+ *  and not a run on its source branch (its siblings' work reaches it by their merge back). */
+export function takesInBeforeAnswer({ slice, isWorkspace, smallRuns, sameAsSource }) {
+  return !!(slice && slice.feature && Number.isInteger(slice.index) && !isWorkspace && smallRuns && !sameAsSource);
 }
 
 export function firstLine(text) {
@@ -2114,6 +2121,7 @@ export class RunHarness extends EventEmitter {
     } finally {
       this._stopHeartbeat(); // clear timer + NULL owner columns (done/stopped/launch-error/paused)
       this._runSlot?.release(); this._runSlot = null;   // a paused run waits for a slot again on resume
+      await this._takeInFlight?.catch(() => {});   // slice 3 (D13): no teardown commit races a take-in's merge
       await this._stopGraphBuild();   // before teardown removes the checkout it writes into (a resume rebuilds or reuses it)
       // C1: tear the run root + worktree(s) down on done/stopped/launch-error — the branch is
       // kept (except a workspace member's branch this run never changed, and every branch of
@@ -2458,6 +2466,7 @@ export class RunHarness extends EventEmitter {
     } finally {
       this._stopHeartbeat(); // clear timer + NULL owner columns (done/stopped/launch-error/paused)
       this._runSlot?.release(); this._runSlot = null;   // a paused run waits for a slot again on resume
+      await this._takeInFlight?.catch(() => {});   // slice 3 (D13): no teardown commit races a take-in's merge
       await this._stopGraphBuild();   // before teardown removes the checkout it writes into (a resume rebuilds or reuses it)
       // Same teardown as run()'s finally — wiring only run()'s would keep legacy
       // teardown on every detached run that finishes after a resume (including every
@@ -10704,6 +10713,150 @@ export class RunHarness extends EventEmitter {
     this._log('worktree', 'info', `${key}: combined the work of ${r.merged.map((d) => d.branch).join(', ')} into ${info.branch}`);
   }
 
+  /** The checkout's uncommitted tracked work, committed before a merge into it (as teardown would).
+   *  worca's CLAUDE.md fence lives in a tracked file: an exclude pathspec would commit that file's deletion
+   *  (_commitWork unstages excluded paths), and teardown strips the fence only at the end. A checkout whose fence file
+   *  is dirty is left uncommitted ('fence'), so a merge reads it as dirty. → 'committed' | 'clean' | 'fence' */
+  async _commitWipForMerge(key, info) {
+    const gitOpts = { cwd: info.worktreeDir, ignoreAbort: true };
+    const st = await this._git(['status', '--porcelain', '--untracked-files=no'], gitOpts);
+    const fence = new Set((this.injectedPaths?.[key] ?? []).filter((e) => e && e.kind === 'claudeMdSection' && e.path).map((e) => e.path));
+    const dirty = st.ok ? st.stdout.split('\n').filter(Boolean).map((l) => l.slice(3)) : [];
+    if (!dirty.length) return 'clean';
+    if (dirty.some((p) => fence.has(p))) return 'fence';
+    const ec = await this._engineConfigState(info.worktreeDir, { ignoreAbort: true });
+    const r = await this._commitWork(info, this.state.branch,
+      { excludePathspecs: this._excludePathspecs(key), forcePaths: ec.forced, unstagePaths: ec.owned });
+    return r && r.committed ? 'committed' : 'clean';
+  }
+
+  /**
+   * Shaper small runs, slice 3 (D3, D7, D8, D9): before a stop's answer goes on, merge every finished run of the
+   * feature on this run's fire-time base whose work its branch lacks (takeInVerdict), from the SHAs the last combine
+   * check read. A sibling still merging back is a wait; a clash, a failed check or merge, or a pause refuses, and the
+   * branch, the index and the uncommitted files are put back as they were. Flag off, an unmarked feature, a workspace
+   * or a source-branch run: no git call. The promise is kept on `_takeInFlight` until it settles (the unwind awaits
+   * it). `deps` = takeInVerdict's seams plus `mergeBaseInto`. Never rejects.
+   * → {ok:true, merged, skipped?} | {ok:false, wait:true, after} | {ok:false, refused:true, reason}
+   */
+  takeInBeforeAnswer(deps = {}) {
+    const p = this._takeInNow(deps).catch((err) => {
+      const reason = err && err.message ? err.message : String(err);
+      this._log('worktree', 'warn', `could not take in the finished work: ${reason}`);
+      return { ok: false, refused: true, reason };
+    });
+    this._takeInFlight = p;
+    p.then(() => { if (this._takeInFlight === p) this._takeInFlight = null; });
+    return p;
+  }
+
+  /** Slice 3: whether a stop's answer now takes in the finished same-base work first (takesInBeforeAnswer on this run,
+   *  the flag read live). Then dev's after-answer take-in (_afterStopAnswer) is skipped: it would merge the latest
+   *  finished run on any base. */
+  _takesInBeforeAnswerNow() {
+    const sl = this.runShape && this.runShape.slice;
+    const key = this.members && this.members[0] && this.members[0].projectKey;
+    const rec = (key && this.state.branches && this.state.branches[key]) || this.state.branch;
+    const smallRuns = !!(sl && sl.feature && shaperSmallRunsOn() && smallRunsOfFeature(sl.feature));
+    return takesInBeforeAnswer({ slice: sl, isWorkspace: this.isWorkspace, smallRuns,
+      sameAsSource: rec?.sameAsSource === true || this.state.branch?.sameAsSource === true });
+  }
+
+  async _takeInNow(deps) {
+    const sl = this.runShape && this.runShape.slice;
+    const m = this.members && this.members[0];
+    const key = m && m.projectKey;
+    const info = this.branchInfo;
+    if (!m || !this._takesInBeforeAnswerNow() || !info?.worktreeDir) return { ok: true, merged: [], skipped: true };
+    const dir = resolve(m.projectDir);
+    const wt = info.worktreeDir;
+    const gitOpts = { cwd: wt, ignoreAbort: true };
+    const ask = { featureId: sl.feature, pipelineId: this.pipeline?.id || null, branch: info.branch };
+    const refuse = async (reason, clash = null) => {
+      const c = clash && clash.missing && clash.missing.find((d) => clash.runs.includes(d.index));
+      const line = c ? baseMovedAudit(c.branch, info.branch, { status: 'conflicts', files: clash.files }) : null;
+      if (line) await appendAudit(this.pipeline.dir, line).catch(() => {});
+      this._log('worktree', 'warn', `did not take in the finished work: ${reason}`);
+      return { ok: false, refused: true, reason };
+    };
+    const stopping = () => this.pauseRequested === true || this.state.status === 'stopped';
+    const pausing = `run ${sl.index} is pausing`;
+    const waiting = (after) => {
+      this._log('worktree', 'info', `waiting for run ${after} to finish merging its work back before taking it in`);
+      return { ok: false, wait: true, after };
+    };
+
+    let v = await takeInVerdict(dir, ask, deps);
+    if (v.status === 'none') return { ok: true, merged: [] };
+    if (v.status === 'wait') return waiting(v.after);
+    if (v.status !== 'clean') return refuse(v.status === 'clash' ? v.reason : v.error, v.status === 'clash' ? v : null);
+    if (stopping()) return refuse(pausing);
+
+    // D7: the uncommitted work is committed first, and a refusal after that puts it back as uncommitted files.
+    const pre = await commitOf(wt, 'HEAD');
+    const wip = await this._commitWipForMerge(key, info);
+    if (wip === 'fence') return refuse(`run ${sl.index}'s checkout has uncommitted changes in worca's CLAUDE.md section`);
+    const wipAt = wip === 'committed' ? await commitOf(wt, 'HEAD') : null;
+    const undo = async () => {
+      const now = await commitOf(wt, 'HEAD');
+      if (wipAt) {
+        if (now !== wipAt) await this._git(['reset', '-q', '--hard', wipAt], gitOpts);
+        await this._git(['reset', '-q', pre], gitOpts);
+      } else if (pre && now !== pre) {
+        await this._git(['reset', '-q', '--hard', pre], gitOpts);
+      }
+    };
+    if (wipAt) {
+      v = await takeInVerdict(dir, ask, deps);
+      if (v.status !== 'clean') {
+        await undo();
+        if (v.status === 'none') return { ok: true, merged: [] };
+        if (v.status === 'wait') return waiting(v.after);
+        return refuse(v.status === 'clash' ? v.reason : v.error, v.status === 'clash' ? v : null);
+      }
+    }
+
+    // D7: merge each missing branch from the last check's SHAs, each onto the previous merge's result.
+    const { check, missing } = v;
+    const behind = [];
+    for (const [i, d] of missing.entries()) {
+      const n = await this._git(['rev-list', '--count', `${check.heads[0]}..${check.heads[i + 1]}`], gitOpts);
+      behind.push(n.ok ? Number.parseInt(n.stdout.trim(), 10) || 0 : 0);
+    }
+    const merge = deps.mergeBaseInto || mergeBaseInto;
+    let tip = check.heads[0];
+    for (const [i, d] of missing.entries()) {
+      if (stopping()) { await undo(); return refuse(pausing); }
+      const r = await merge(dir, { feature: info.branch, baseSha: check.heads[i + 1], headSha: tip, baseRef: d.branch });
+      if (!r || !r.ok) {
+        await undo();
+        return refuse(`could not take in the work of run ${d.index} (${d.branch}): ${(r && r.kind) || 'failed'}`);
+      }
+      tip = r.to;
+    }
+
+    // D9: the recorded base names the branch this run now builds on; its start never moves.
+    const last = missing.at(-1);
+    const took = missing.map((d, i) => ({ index: d.index, branch: d.branch, pipelineId: d.pipelineId, sha: check.heads[i + 1] }));
+    const patch = (r) => {
+      if (!r) return r;
+      const old = r.source;
+      const oldSha = (r.baseRefs && r.baseRefs[old]) || r.baseSha || null;
+      return { ...r, source: last.branch, sourceFrom: r.sourceFrom || old, tookIn: [...(Array.isArray(r.tookIn) ? r.tookIn : []), ...took],
+        baseRefs: { ...(r.baseRefs || {}), ...(old && oldSha ? { [old]: oldSha } : {}), ...Object.fromEntries(took.map((t) => [t.branch, t.sha])) },
+        baseMerged: { base: last.branch, behind: behind.at(-1), merged: true, onAnswer: true } };
+    };
+    if (this.state.branch) this.state.branch = patch(this.state.branch);
+    if (this.state.branches?.[key]) this.state.branches[key] = patch(this.state.branches[key]);
+    await this._refreshMergeBases();
+    await this._persist();
+    for (const [i, d] of missing.entries()) {
+      await appendAudit(this.pipeline.dir, baseMovedAudit(d.branch, info.branch, { merged: true, behind: behind[i] })).catch(() => {});
+    }
+    this._log('worktree', 'info', `took in the work of ${missing.map((d) => d.branch).join(', ')} before going on`);
+    return { ok: true, merged: missing.map((d) => ({ index: d.index, branch: d.branch })) };
+  }
+
   async _mergeLatestOnResume(m, info, base, { onAnswer = false } = {}) {
     if (!base || base === info.branch || !info.worktreeDir) return;
     const key = m.projectKey;
@@ -10711,18 +10864,7 @@ export class RunHarness extends EventEmitter {
     const NOTHING = new Set(['up-to-date', 'no-branch']);
     const pre = await checkBaseMerge(resolve(m.projectDir), { base, feature: info.branch }).catch(() => null);
     if (pre && NOTHING.has(pre.status)) return;
-    const gitOpts = { cwd: info.worktreeDir, ignoreAbort: true };
-    const st = await this._git(['status', '--porcelain', '--untracked-files=no'], gitOpts);
-    // worca's CLAUDE.md fence lives in a tracked file: an exclude pathspec would commit that file's deletion
-    // (_commitWork unstages excluded paths), and teardown strips the fence only at the end. A checkout whose fence file
-    // is dirty is left uncommitted, so the merge below reads it as dirty and the resume is recorded, not merged.
-    const fence = new Set((this.injectedPaths?.[key] ?? []).filter((e) => e && e.kind === 'claudeMdSection' && e.path).map((e) => e.path));
-    const dirty = st.ok ? st.stdout.split('\n').filter(Boolean).map((l) => l.slice(3)) : [];
-    if (dirty.length && !dirty.some((p) => fence.has(p))) {
-      const ec = await this._engineConfigState(info.worktreeDir, { ignoreAbort: true });
-      await this._commitWork(info, this.state.branch,
-        { excludePathspecs: this._excludePathspecs(key), forcePaths: ec.forced, unstagePaths: ec.owned });
-    }
+    await this._commitWipForMerge(key, info);
     const r = await mergeBaseBeforeRun(resolve(m.projectDir), { base, feature: info.branch })
       .catch((err) => ({ merged: false, status: 'error', behind: 0, files: [], error: err?.message }));
     if (NOTHING.has(r.status)) return;

@@ -180,6 +180,12 @@ app.post('/api/pr', async (req, res) => {
     if (!isSyntacticRef(b)) return badRequest(res, `invalid base branch: ${String(body.baseBranch).slice(0, 80)}`);
     if (b === feature) return badRequest(res, 'the base branch cannot be the feature branch');
     base = b;
+  } else if (!memberKey && Array.isArray(state.branch?.tookIn) && state.branch.tookIn.length) {
+    // Slice 3 (D10): a run that took other runs' work in opens on the base the dialog offers (its recorded source until
+    // that run's PR is MERGED, then the root), walked from the same chain GET /api/pr/remotes reads.
+    const walked = chainBaseBranchesOf(state.id || id);
+    const derived = stackedPrBase(state.id || id, walked.length ? walked : [source]);
+    base = derived && isSyntacticRef(derived) && derived !== feature ? derived : source;
   }
 
   const out = await createRunPr({ id, state, target, base, memberKey, title,

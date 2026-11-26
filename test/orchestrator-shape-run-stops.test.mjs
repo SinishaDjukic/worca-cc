@@ -205,6 +205,17 @@ test('a stop answer takes in the latest finished work first; Change takes in not
   assert.ok(auditOf(s.pid()).includes('Run 2: change · decided by you'));
 });
 
+test('flag on: the answer took in the finished same-base work, so dev\'s after-answer take-in (latest run, any base) is skipped', async () => {
+  const calls = [];
+  const applies = await withFlag(true, async () => {
+    const x = sliceRun(marked, { setup: (o) => { passing(o); o._takeInLatestFinished = async (a) => { calls.push(a); }; } });
+    assert.equal((await x.done).status, 'done');
+    return x.orch._takesInBeforeAnswerNow();
+  });
+  assert.equal(applies, true, 'the fixture is a run that takes in before its answer');
+  assert.deepEqual(calls, []);
+});
+
 test('answer + pause + resume writes one answered line and replays the answer', async () => {
   const h = sliceRun(marked, { setup: passing, on: { gate: (q, orch) => { orch.answer(q.id, { decision: 'continue' }); orch.pause(); } } });
   const res = await h.done;

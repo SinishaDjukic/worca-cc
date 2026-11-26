@@ -13,7 +13,9 @@
 //   feature, in light and dark at 375px and 1280px at Expert, and the flag-off control's Agents places per page;
 // D3 (D3_ONLY=1 runs it alone): the feature page's Requirements (one fold per role) and Decisions tabs of a marked
 //   feature before and after Ship, light and dark at 1280px and 375px, beside the prototype's `#feature` tabs;
-// the held row (last; HELD_ONLY=1 runs it alone): a run held on a clash, its reason and one Start now, light and dark at 1280px;
+// the held row (HELD_ONLY=1 runs it alone): a run held on a clash, its reason and one Start now, light and dark at 1280px;
+// the take-in (last; TAKEIN_ONLY=1 runs it alone): the moved step a run that waited at a stop logs once it took in a
+//   finished run's work, and its stop's "Not sent: …" line after a refused take-in, light and dark at 1280px;
 // and one reduced-motion capture of Prototype building. A live phase then follows a REAL paced mock Design build
 // (WORCA_MOCK_DESIGN_MS=400) on the Chat card: the Lead row, a row per screen and pieces assembling, captured mid-build
 // and with reduced motion (chat-prototype-building-mid-light, chat-prototype-building-reduced-motion-light). Every list (the Verifier's gap `.srows` included) is measured:
@@ -89,6 +91,7 @@ const { createSliceFeature, recordShapePlan, changeAgreedRequirements, setFeatur
 const askStore = await imp('../src/core/ask/store.mjs');
 const { normalizeOutline } = await imp('../src/shared/shape/slices.mjs');
 const { gateStop } = await imp('../src/shared/shape/run-stops.mjs');
+const { baseMovedAudit } = await imp('../src/core/git-sync.mjs');
 const { verifyStop } = await imp('../src/shared/shape/verifier.mjs');
 const { prototypeView } = await imp('../src/shared/shape/prototype.mjs');
 const { careRunPlan } = await imp('../src/shared/shape/feature-record.mjs');
@@ -928,11 +931,57 @@ async function heldPhase() {
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 }
 
-// D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row (each command stays under
-// 10 minutes); unset, every case runs, D2 before D3, the held row last.
+// ---- Shaper small runs, slice 3: a run that waited at a stop takes in what finished meanwhile. A marked 4-run feature,
+// runs 1 and 3 done, run 2 live at its stop. Run 2's audit line is the one the harness writes once it merged run 3's
+// branch (`Base \`feat/run-3\` moved: merged into \`feat/run-2\` (1 commit).`), so the Chat card's log reads
+// `feat/run-3 moved · run 2 starts from it`: small-runs-taken-in-light.png and -dark.png. Then run 2's entry carries a
+// refused take-in (`takeInRefused`), and its open stop reads `Not sent: runs 2 and 3 clash in src/a.mjs`:
+// small-runs-take-in-refused-light.png and -dark.png. 1280px, the classic look, in SHOTS_DIR.
+const TAKEIN_REASON = 'runs 2 and 3 clash in src/a.mjs';
+const TAKEIN_STEP = 'feat/run-3 moved · run 2 starts from it';
+async function takeInPhase() {
+  const TI = seedFeature('ti', 'Take in', ['done', 'running', 'done', 'planned']);
+  const stop = gateStop({ run: 2, issues: ISSUES, fixCycles: 3, nodeId: 'n_review' });
+  const pq = { id: 'gate-ti-3', kind: 'gate', wireId: 'w9', nodeId: 'n_review', executionId: 'x:n_review:3', deliveryNo: 3, issues: ISSUES, stop };
+  const runId = liveRun(TI.pid(2), `Run 2 · ${TITLES[1]}`, { at: 'n_review', pendingQuestion: pq, runShape: { slice: { feature: TI.f.id, index: 2 } } });
+  appendAuditById(TI.pid(2), baseMovedAudit('feat/run-3', 'feat/run-2', { merged: true, behind: 1 }));
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const visibleText = (sel) => ev(`[...document.querySelectorAll(${JSON.stringify(sel)})].filter((e) => e.offsetParent && !e.hidden).map((e) => e.textContent.trim())`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    if (!(await card(TI.threadId, 'takein', 'the take-in card', theme))) continue;
+    const seen = await waitFor(`[...document.querySelectorAll('.chat-rc .chat-rc-log li')].some((li) => li.offsetParent && li.textContent.includes(${JSON.stringify(TAKEIN_STEP)}))`,
+      `the moved step (${theme})`);
+    check(seen, `take-in, ${theme}: the log reads "${TAKEIN_STEP}"`);
+    if (seen) await ev(`(() => { const li = [...document.querySelectorAll('.chat-rc .chat-rc-log li')].find((x) => x.offsetParent && x.textContent.includes(${JSON.stringify(TAKEIN_STEP)})); if (li) li.scrollIntoView({ block: 'center' }); return !!li; })()`);
+    await capture(`small-runs-taken-in-${theme}.png`);
+  }
+  runs.get(runId).takeInRefused = { id: pq.id, reason: TAKEIN_REASON };
+  for (const theme of THEMES) {
+    if (!(await card(TI.threadId, 'takein-refused', 'the refused take-in card', theme))) continue;
+    const seen = await waitFor(`[...document.querySelectorAll('.chat-rc .plan-err')].some((e) => e.offsetParent && !e.hidden && e.textContent === ${JSON.stringify(`Not sent: ${TAKEIN_REASON}`)})`,
+      `the refused stop (${theme})`);
+    const lines = await visibleText('.chat-rc .plan-err');
+    check(seen && lines.length === 1, `take-in refused, ${theme}: one "Not sent: ${TAKEIN_REASON}" line (${JSON.stringify(lines)})`);
+    if (seen) await reveal('.chat-rc .plan-err');
+    await capture(`small-runs-take-in-refused-${theme}.png`);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in
+// (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
 if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }
 if (process.env.HELD_ONLY === '1') { await heldPhase(); await finish(); }
+if (process.env.TAKEIN_ONLY === '1') { await takeInPhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {
@@ -1120,4 +1169,5 @@ const LIVE_ROWS = "[...document.querySelectorAll('.chat-rc .proto-rows .plan-che
 await d2Phase();
 await d3Phase();
 await heldPhase();
+await takeInPhase();
 await finish();

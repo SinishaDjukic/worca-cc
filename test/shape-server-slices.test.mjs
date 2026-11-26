@@ -2116,3 +2116,103 @@ test('S7-T12b run 11 as a plan approval: the second approval is refused on the p
     assert.equal(w.of(11).length, 1);
   } finally { w.cleanup(); }
 }));
+
+// ── Shaper small runs, slice 3: the answer routes over a take-in that refuses, waits or runs ─────────────────────────
+const TAKE_REASON = 'runs 2 and 3 clash in src/a.mjs';
+/** A marked feature with run 2 live at its stop, its stand-in orch answering takeInBeforeAnswer with `reply`. */
+function takeInStop({ three = false, reply = { ok: true, merged: [] } } = {}) {
+  const w = stoppedFeature({ three });
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), w.f.pid);
+  const taken = [];
+  w.e2.orch.takeInBeforeAnswer = async () => { taken.push(w.e2.id); return reply; };
+  return { ...w, taken };
+}
+
+test('slice 3 routes: POST /api/answer replies 409 TAKE_IN_REFUSED with the reason and the question stays open', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInStop({ reply: { ok: false, refused: true, reason: TAKE_REASON } });
+  try {
+    const r = await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'continue' } });
+    assert.deepEqual([r.status, await r.json()], [409, { error: TAKE_REASON, code: 'TAKE_IN_REFUSED' }]);
+    assert.equal(w.e2.pendingQuestion?.id, 'gate-w9-3');
+    assert.deepEqual([w.taken.length, w.answered.length], [1, 0]);
+  } finally { w.cleanup(); }
+}));
+
+test('slice 3 routes: POST /api/runs/:id/answer maps the same refusal to 409 TAKE_IN_REFUSED', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInStop({ reply: { ok: false, refused: true, reason: TAKE_REASON } });
+  w.e2.pendingQuestion = { id: 'plan-w9-1', kind: 'plan', stop: planStop({ run: 2 }) };
+  try {
+    const r = await post(`/api/runs/${w.e2.id}/answer`, { id: 'plan-w9-1', decision: 'approve' });
+    assert.deepEqual([r.status, await r.json()], [409, { error: TAKE_REASON, code: 'TAKE_IN_REFUSED' }]);
+    assert.equal(w.e2.pendingQuestion?.id, 'plan-w9-1');
+    assert.equal(w.answered.length, 0);
+  } finally { w.cleanup(); }
+}));
+
+test('slice 3 routes: a take-in that succeeds answers the run, resolves the question and replies 200', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInStop();
+  try {
+    const r = await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'continue' } });
+    assert.deepEqual([r.status, await r.json()], [200, { ok: true }]);
+    assert.deepEqual([w.taken.length, w.answered.length], [1, 1]);
+    assert.equal(w.e2.pendingQuestion, null);
+  } finally { w.cleanup(); }
+}));
+
+test('slice 3 routes: a take-in that waits replies {ok:true, held:true}', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInStop({ reply: { ok: false, wait: true, after: 3 } });
+  try {
+    const r = await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'continue' } });
+    assert.deepEqual(await r.json(), { ok: true, held: true });
+    assert.equal(w.e2.heldStop?.after, 3);
+    assert.equal(w.answered.length, 0);
+  } finally { w.cleanup(); }
+}));
+
+test('slice 3 (R-arch-11): answerRun stays synchronous on an unmarked feature and returns a promise only for a take-in', () => withEnvVars(SMALL_ON, async () => {
+  const unmarked = stoppedFeature({ three: false });
+  try {
+    assert.equal(testing.answerRun(unmarked.e2.id, 'gate-w9-3', { decision: 'continue' }, 'ann'), undefined);
+    assert.equal(unmarked.answered.length, 1);
+    assert.equal(unmarked.e2.pendingQuestion, null);
+  } finally { unmarked.cleanup(); }
+  const w = takeInStop();
+  try {
+    const out = testing.answerRun(w.e2.id, 'gate-w9-3', { decision: 'continue' }, 'ann');
+    assert.equal(typeof out?.then, 'function');
+    assert.equal(await out, undefined);
+    assert.equal(w.e2.pendingQuestion, null);
+  } finally { w.cleanup(); }
+}));
+
+test('slice 3 (D11, D13) liveSliceOf: a take-in in flight reads going; a refusal shows only on the question it was for', async () => {
+  const w = stoppedFeature({ three: false });
+  try {
+    const { liveSliceOf } = await import('../ui/server.mjs');
+    const plain = liveSliceOf(w.e2.pipelineId);
+    assert.deepEqual(plain.stop, { reason: 'objection', held: false });
+    w.e2.takingIn = 'gate-w9-3';
+    const taking = liveSliceOf(w.e2.pipelineId);
+    assert.deepEqual([taking.stop.going, taking.asking], [true, true]);
+    w.e2.takingIn = null;
+    w.e2.takeInRefused = { id: 'gate-w9-3', reason: TAKE_REASON };
+    assert.equal(liveSliceOf(w.e2.pipelineId).stop.refused, TAKE_REASON);
+    w.e2.takeInRefused = { id: 'gate-w9-2', reason: TAKE_REASON };
+    assert.deepEqual(liveSliceOf(w.e2.pipelineId), plain, 'a refusal of an earlier question is not shown');
+  } finally { w.cleanup(); }
+});
+
+test('slice 3 (D4): a settled run delivers the held answers that waited for its teardown', () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInStop({ three: true });
+  try {
+    const r = await post('/api/answer', { runId: w.e2.id, id: 'gate-w9-3', payload: { decision: 'continue' } });
+    assert.deepEqual(await r.json(), { ok: true, held: true });
+    // Run 3 reads done and has settled; only the settle hook runs (no scheduler tick, no run frame).
+    Object.assign(w.e3, { status: 'done', settled: true });
+    setPipe(w.e3.pipelineId, 'done');
+    await testing.afterRunSettled(plainSettle(w.e3.pipelineId));
+    for (let i = 0; i < 50 && !w.answered.length; i++) await sleep(10);
+    assert.deepEqual([w.taken.length, w.answered.length], [1, 1]);
+    assert.equal(w.e2.pendingQuestion, null);
+  } finally { w.cleanup(); }
+}));

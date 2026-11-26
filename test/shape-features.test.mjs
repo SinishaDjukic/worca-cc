@@ -2032,3 +2032,61 @@ test('clash hold: Cancel the rest drops the hold of each ticket it cancels', () 
   getDb().prepare("UPDATE shape_features SET status = 'active' WHERE id = ?").run(fx.featureId);
   assert.equal(FEATURES.clashHoldOf(ticketId), null);
 }));
+
+// ── Slice 3 (R-arch-5, D10, D11, D13): the PR base after a take-in, and the stop's refusal and "going" marks ────────
+const mergedPr = (pid) => getDb().prepare("UPDATE pipelines SET pr_url = 'https://github.com/me/repo/pull/7', pr_number = 7, pr_state = 'MERGED' WHERE id = ?").run(pid);
+/** A marked 4-run feature finishing 1, 3, 4, 2, run 2's record carrying `tookIn` (run numbers) and `source` the last
+ *  one's branch. → { p, br } */
+function tookInFeature(tookIn) {
+  const done = (day, branch = {}) => pipe('done', { branch, steps: [{ key: 'n_impl', status: 'done', updatedAt: `2026-03-0${day}T00:00:00Z` }] });
+  const p1 = done(1);
+  const f = createSliceFeature({ pipelineId: p1, projectDir: root, title: 'Charts', outline: outlineOf(4), perspectives: ['product'], workflowId: 'wf_shape' });
+  const [, r2, r3, r4] = tickets(f.id);
+  const p = [null, p1, done(5), done(2), done(3)];
+  for (const [k, r] of [[2, r2], [3, r3], [4, r4]]) setTicket(r.ticket_id, 'fired', { pipelineId: p[k] });
+  mark(p1);
+  const br = (k) => `feat/${p[k]}`;
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({
+    source: tookIn.length ? br(tookIn.at(-1)) : br(1), sourceFrom: br(1), feature: br(2),
+    tookIn: tookIn.map((k) => ({ index: k, branch: br(k), pipelineId: p[k], sha: 'a'.repeat(40) })) }), p[2]);
+  return { p, br };
+}
+
+test('R-arch-5 smallRunsPrBase: a run that took work in is based on the recorded source, not the run that finished before it', () => {
+  const { p, br } = tookInFeature([3]);
+  assert.equal(FEATURES.smallRunsPrBase(p[2]), br(3));
+  assert.equal(stackedPrBase(p[2], ['main', br(3)]), br(3));
+  mergedPr(p[4]);                                   // the finish-order predecessor's PR says nothing about this base
+  assert.equal(FEATURES.smallRunsPrBase(p[2]), br(3));
+});
+
+test('R-arch-5 smallRunsPrBase: the root once the PR of the last taken-in run is merged, and only that one', () => {
+  const { p, br } = tookInFeature([4, 3]);
+  mergedPr(p[4]);
+  assert.equal(FEATURES.smallRunsPrBase(p[2]), br(3), 'an earlier taken-in run merged: the base stays');
+  mergedPr(p[3]);
+  assert.equal(FEATURES.smallRunsPrBase(p[2]), 'main');
+});
+
+test('R-arch-5 smallRunsPrBase: an empty tookIn keeps the finish-order rule', () => {
+  const { p, br } = tookInFeature([]);
+  assert.equal(FEATURES.smallRunsPrBase(p[2]), br(4));
+});
+
+test('D11/D13 liveSliceFrom: a refused reason and a take-in in flight mark the stop; without them today\'s object', () => {
+  const input = { runId: 'r1', status: 'running', pendingQuestion: STOP_PQ, approved: true };
+  const plain = liveSliceFrom(input);
+  assert.deepEqual(plain.stop, { reason: 'objection', held: false });
+  assert.deepEqual(liveSliceFrom({ ...input, refused: null, going: false }), plain);
+  assert.deepEqual(liveSliceFrom({ ...input, refused: 'runs 2 and 3 clash in src/a.mjs' }).stop,
+    { reason: 'objection', held: false, refused: 'runs 2 and 3 clash in src/a.mjs' });
+  assert.deepEqual(liveSliceFrom({ ...input, going: true }).stop, { reason: 'objection', held: false, going: true });
+  assert.equal('stop' in liveSliceFrom({ runId: 'r', status: 'running', going: true, refused: 'x' }), false, 'no stop, no marks');
+});
+
+test('D13 busySliceOf: a run whose open stop is taking work in is going', () => {
+  const f = mk(2);
+  const live = (extra) => (pid) => (pid === f.pid ? liveSliceFrom({ runId: 'r1', status: 'running', approved: true, pendingQuestion: STOP_PQ, ...extra }) : null);
+  assert.deepEqual(busySliceOf(f.id, { live: live({ going: true }) }), { index: 1 });
+  assert.equal(busySliceOf(f.id, { live: live({}) }), null, 'the same open stop without it is not going');
+});

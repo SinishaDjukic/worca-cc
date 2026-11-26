@@ -4,7 +4,7 @@
 // which features.mjs imports, calls back into latestFinishedSlice at runtime only).
 import { getDb } from '../db.mjs';
 import { previousBranchesOf } from '../scheduler.mjs';
-import { isAncestor, runGitCapture } from '../worktree.mjs';
+import { isAncestor, runGitCapture, commitOf } from '../worktree.mjs';
 import { checkCombine, mergeBaseInto } from '../git-sync.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature } from './small-runs.mjs';
 import { SHIP_LOCK, shipLocked } from './ship-lock.mjs';
@@ -160,7 +160,7 @@ async function missingFrom(dir, start, found, ancestor) {
  * → {status:'clean', check} | {status:'clash', reason, runs, files}
  *   | {status:'no-branch', error} | {status:'error', error, transient}
  */
-async function combineVerdict(dir, start, missing, combine) {
+export async function combineVerdict(dir, start, missing, combine) {
   const indexOf = new Map(missing.map((d) => [d.branch, d.index]));
   if (Number.isInteger(start.index)) indexOf.set(start.branch, start.index);
   const runsOf = (list) => list.map((b) => indexOf.get(b)).filter(Number.isInteger);
@@ -179,6 +179,62 @@ async function combineVerdict(dir, start, missing, combine) {
   if (c.status === 'no-branch') return { status: 'no-branch', error: `branch ${c.branch} no longer exists` };
   return { status: 'error', error: `could not combine the work of ${runsText(runsOf(branches))}: ${c.error}`,
     transient: c.kind === 'failed' || c.kind === 'timeout' };
+}
+
+/** A pipeline's branch record (`pipelines.branch`, parsed), or null. */
+function branchRecordOf(pipelineId) {
+  const row = getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(String(pipelineId));
+  if (!row || !row.branch) return null;
+  const b = JSON.parse(row.branch);
+  return b && typeof b === 'object' ? b : null;
+}
+
+/** Slice 3 (D5): the branch a run started from at fire time: `sourceFrom` (kept once it took work in) else `source`.
+ *  `deps.recordOf` is the test seam. → string | null; never throws. */
+export function fireSourceOf(pipelineId, deps = {}) {
+  try {
+    const rec = (deps.recordOf || branchRecordOf)(pipelineId);
+    const s = rec ? (rec.sourceFrom ?? rec.source) : null;
+    return typeof s === 'string' && s ? s : null;
+  } catch { return null; }
+}
+
+/**
+ * Slice 3 (D1, D5, D6): what a run that waited at a stop must take in before it goes on: the feature's finished runs
+ * on the same fire-time base whose work is not in `branch`, in finish order, and whether they combine with it. A run
+ * still merging back is a wait; a run whose branch is gone is left out (`skipped`). Writes no ref; never throws.
+ * `deps` = { checkCombine, isAncestor, resolves(dir, ref), recordOf(pipelineId) } seams.
+ * → {status:'none', skipped} | {status:'wait', after} | {status:'clean', missing, check, skipped}
+ *   | {status:'clash', reason, runs, files, missing} | {status:'error', error}   (a clash's `missing`: the harness names
+ *   the clashing branch in its audit line)
+ */
+export async function takeInVerdict(dir, { featureId, pipelineId, branch }, deps = {}) {
+  try {
+    const own = fireSourceOf(pipelineId, deps);
+    if (!own) return { status: 'none', skipped: [] };
+    const rows = finishedSlices(featureId, { exclude: pipelineId }).filter((r) => fireSourceOf(r.pipelineId, deps) === own);
+    const found = rows.map((r) => ({ ...r, prev: previousBranchesOf(r.pipelineId) }));
+    const pending = found.find((r) => r.prev && r.prev.pending);
+    if (pending) return { status: 'wait', after: pending.index };
+    const resolves = deps.resolves || (async (d, ref) => !!(await commitOf(d, ref, { timeout: 10_000 })));
+    const skipped = [];
+    const kept = [];
+    for (const r of found) {
+      const b = r.prev && r.prev.sourceBranch;
+      if (!b) { skipped.push({ index: r.index, branch: null }); continue; }
+      if (!(await resolves(dir, `refs/heads/${b}`))) { skipped.push({ index: r.index, branch: b }); continue; }
+      kept.push({ index: r.index, branch: b, pipelineId: r.pipelineId });
+    }
+    const missing = await missingFrom(dir, branch, kept, deps.isAncestor || isAncestor);
+    if (!missing.length) return { status: 'none', skipped };
+    const index = featureOfPipeline(pipelineId)?.idx ?? null;
+    const v = await combineVerdict(dir, { branch, index }, missing, deps.checkCombine || checkCombine);
+    if (v.status === 'clean') return { status: 'clean', missing, check: v.check, skipped };
+    if (v.status === 'clash') return { ...v, missing };
+    return { status: 'error', error: v.error };
+  } catch (err) {
+    return { status: 'error', error: err && err.message ? err.message : String(err) };
+  }
 }
 
 /**

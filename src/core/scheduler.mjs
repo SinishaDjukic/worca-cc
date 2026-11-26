@@ -678,9 +678,13 @@ export function chainBaseBranchesOf(pipelineId) {
     return b && typeof b === 'object' ? b : null;
   };
   const row = pipelineRefRow(pipelineId);
-  const source = branchOf(row)?.source;
+  const rec = branchOf(row);
+  const source = rec?.source;
   if (typeof source !== 'string' || !source) return [];
-  const chain = [source];
+  // Slice 3 (D10): a run that took other runs' work in records the branch it started from (`sourceFrom`) beside the
+  // one it builds on now (`source`); its chain walks back from the start.
+  const from = typeof rec.sourceFrom === 'string' && rec.sourceFrom && rec.sourceFrom !== source ? rec.sourceFrom : null;
+  const chain = from ? [from, source] : [source];
   const seen = new Set([row.id]);
   let cur = row.id;
   for (let depth = 0; depth < CHAIN_DEPTH_CAP; depth++) {

@@ -407,6 +407,21 @@ test('the run page: the primary posts the pick; a stop already answered elsewher
   assert.ok(refused.$$('.qopt').every((t) => !t.disabled));
 });
 
+// Slice 3 (D11): a held answer the take-in refused is gone; the open stop says why, above its options.
+test('slice 3: a refused stop shows one "Not sent: …" alert above the options and keeps its options; otherwise none', () => {
+  const reason = 'runs 2 and 3 clash in src/a.mjs';
+  const refused = mountStop(G_STOP, { refused: reason });
+  const alerts = refused.$$('.plan-err:not([hidden])');
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].getAttribute('role'), 'alert');
+  assert.equal(alerts[0].textContent, `Not sent: ${reason}`);
+  assert.ok(alerts[0].compareDocumentPosition(refused.$('.qpanel-foot')) & 4, 'the line comes before the foot');
+  assert.equal(refused.$$('.qopt').length, G_STOP.stop.options.length);
+  assert.ok(refused.$$('.qopt').every((t) => !t.disabled));
+  assert.equal(mountStop(G_STOP).$$('.plan-err:not([hidden])').length, 0, 'no refusal, no line');
+  assert.equal(mountStop(G_STOP, { refused: reason, held: { value: 'another' } }).$$('.plan-err:not([hidden])').length, 0, 'a held answer shows its own row');
+});
+
 test('C3: a gate without stop still draws the two dev buttons; renderRecoveryCard is unchanged', () => {
   const { $$ } = mountStop(GATE);
   assert.deepEqual($$('.qpanel-foot button').map((b) => b.textContent), ['Accept as is', 'Run another cycle']);

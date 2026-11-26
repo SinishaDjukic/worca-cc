@@ -7232,11 +7232,13 @@ function stopDeps(ctx, pq, panel) {
   const info = r && r.pipelineId ? sliceInfoFor(r.pipelineId, repaint) : null;
   const held = info && info.stop && info.stop.held ? { value: info.stop.value } : null;
   const pick = typeof panel.__stopPick === 'string' ? panel.__stopPick : null;   // the person's pick across a repaint
-  return { readOnly: !small && runScreen, ...(small && runScreen ? { runPage: true } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}) };
+  return { readOnly: !small && runScreen, ...(small && runScreen ? { runPage: true } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}),
+    ...(small && info?.stop?.refused ? { refused: info.stop.refused } : {}) };   // slice 3 (D11): why a held answer was not sent
 }
 
-/** A stop's held state as read from its slice info: '' when nothing is held. */
-const heldSigOf = (info) => (info && info.stop && info.stop.held ? `held:${info.stop.value}` : '');
+/** A stop's held state as read from its slice info (and, slice 3, a refused held answer's reason): '' when neither. */
+const heldSigOf = (info) => (info && info.stop && info.stop.held ? `held:${info.stop.value}`
+  : info && info.stop && info.stop.refused ? `refused:${info.stop.refused}` : '');
 
 /** The open stops of feature `featureId` (or whose slice is not known yet), each with its held state now. */
 function openStopsHeld(featureId) {

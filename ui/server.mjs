@@ -875,7 +875,7 @@ async function requestIdentity(req) {
  *   pendingQuestion: any
  * }>}
  */
-const runs = new Map(); const reqChanges = createRequirementChanges({ runs, stopRun, stopPausedPipeline, schedulerTick, broadcastFeature, liveSliceOf }); const heldStops = createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, applyChange: reqChanges.applyStop, now: Date.now });   // small runs C3 (D9), C4 (D11, D15)
+const runs = new Map(); const reqChanges = createRequirementChanges({ runs, stopRun, stopPausedPipeline, schedulerTick, broadcastFeature, liveSliceOf }); const heldStops = createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, applyChange: reqChanges.applyStop, now: Date.now, takeIn: (entry) => (typeof entry.orch?.takeInBeforeAnswer === 'function' ? entry.orch.takeInBeforeAnswer() : { ok: true, merged: [] }) }); const deliverHeld = () => heldStops.deliver().catch((err) => console.error(`[worca-ui] held stop delivery failed: ${err?.message || err}`));   // small runs C3 (D9), C4 (D11, D15); slice 3: the finished same-base work first
 
 // Ids of runs genuinely live in THIS process (non-terminal entries in the runs Map).
 // Passed to reconcileStaleRunning so a same-process run is never relabeled. Both the
@@ -1703,7 +1703,7 @@ function wireRun(entry) {
         const key = `${entry.status}|${pq ? `${pq.kind}:${pq.id || ''}` : ''}|${orch.state?.shaping?.approved ? 1 : 0}`;
         if (key !== entry._featureKey) {
           entry._featureKey = key;
-          heldStops.deliver(); broadcastFeaturesOf(() => [featureOfAnyPipeline(entry.pipelineId)?.featureId].filter(Boolean));   // C3: delivered as the busy run settles
+          deliverHeld(); broadcastFeaturesOf(() => [featureOfAnyPipeline(entry.pipelineId)?.featureId].filter(Boolean));   // C3: delivered as the busy run settles
         }
       }
       // Shaper s5 (D16): a round reports into its origin's card, which gets none of the round's own frames.
@@ -4218,7 +4218,7 @@ const ranMergeBack = (st) => !!st && [st.branch, ...Object.values(st.branches ||
 function afterRunSettled(orch) {
   let card;
   // Git event automations (#711): a finished event run writes back now, not at the next tick.
-  if (automationsOn()) kickAutomations();
+  if (automationsOn()) kickAutomations(); if (flagEnabled('shaperSmallRuns')) void deliverHeld();   // slice 3 (D4): an answer held while this run committed its work goes on
   try {
     const st = orch.getState?.(); card = recordSettledFigures(st, { tick: () => void schedulerTick(), offerShip: offerShipCard, broadcastFeature, finishing: isFinishingRun });
     // The Ship card is offered once the last slice is done (offerShipCard checks).
@@ -4247,7 +4247,7 @@ export async function schedulerTick({ now = Date.now() } = {}) {
   if (DRAIN.on) return null;   // B2: due tickets stay due; the next start's catch-up fires them
   _schedulerBusy = true;
   try {
-    heldStops.deliver(); const out = await runDueTickets({   // C3: a held stop answer goes on before any new run fires
+    deliverHeld(); const out = await runDueTickets({   // C3: a held stop answer goes on before any new run fires
       now,
       start: fireTicket,
       isLive: liveProbe,
@@ -4879,8 +4879,8 @@ const chatNotifier = createNotifier({
 function answerRun(runId, id, payload, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
-  if (heldStops.answer(entry, id, payload, by || 'local')?.held) return { held: true };   // C3: a stop's answer waits its turn
-  resolvePending(entry, { id, reason: 'answered' });
+  const out = heldStops.answer(entry, id, payload, by || 'local'), done = (v) => (v?.held ? { held: true } : (resolvePending(entry, { id, reason: 'answered' }), undefined));   // C3: a stop's answer waits its turn
+  return out && typeof out.then === 'function' ? out.then(done) : done(out);   // slice 3 (D12): a promise only for a take-in
 }
 /** `by` = who asked (identity.mjs actorOf / chatActor); recorded on the entry and the run state.
  *  A PAUSED entry has no run loop to abort — orch.stop() would flip its status in memory only
@@ -5052,7 +5052,7 @@ function liveSliceOf(id) {
   if (!e || !e.orch) return null;
   const status = String(e.status || '');
   if (SETTLED_RUN.has(status) && status !== 'paused') return null;
-  return liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved, heldStop: e.heldStop || null });
+  return liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved, heldStop: e.heldStop || null, going: !!e.takingIn, refused: e.takeInRefused && e.takeInRefused.id === e.pendingQuestion?.id ? e.takeInRefused.reason : null });   // slice 3 (D11, D13)
 }
 function broadcastFeature(id) { if (id) broadcast({ type: 'shape-feature', id }); }
 /** F42: the run-event and tick hooks. Gate first (no query while it is off), and never let a throw escape: in wireRun

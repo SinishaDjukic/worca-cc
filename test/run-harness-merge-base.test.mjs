@@ -20,6 +20,9 @@ import { readPipelineForResume } from '../src/core/artifacts.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { autoMergeBase, DIFF_BASE_REF_PREFIX } from '../src/core/worktree.mjs';
+import { checkCombine, mergeBaseInto } from '../src/core/git-sync.mjs';
+import { siblingRunsFeature } from './helpers/shape-sixteen-runs.mjs';
+import { withEnv } from './helpers/with-env.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { templateWorld } from './helpers/git-dir.mjs';
 
@@ -706,5 +709,95 @@ test('combinesDependencies: a slice of a feature, a fresh start, a single projec
     ['a reused branch', { freshStart: false }], ['a workspace run', { isWorkspace: true }],
     ['the flag off or the feature unmarked', { smallRuns: false }]]) {
     assert.equal(HARNESS.combinesDependencies({ ...on, ...over }), false, why);
+  }
+});
+
+// ── Shaper small runs, slice 3: a run that waited takes in what finished meanwhile ──────────────────────────────────
+
+test('takesInBeforeAnswer: a slice with a number, a single project, small runs and not on its source branch, all four', () => {
+  const on = { slice: { feature: 'feat-1', index: 2 }, isWorkspace: false, smallRuns: true, sameAsSource: false };
+  assert.equal(HARNESS.takesInBeforeAnswer(on), true);
+  for (const [why, over] of [['no slice', { slice: null }], ['a slice with no feature', { slice: { index: 2 } }],
+    ['a slice with no number', { slice: { feature: 'feat-1' } }], ['a workspace run', { isWorkspace: true }],
+    ['the flag off or the feature unmarked', { smallRuns: false }], ['a run on its source branch', { sameAsSource: true }]]) {
+    assert.equal(HARNESS.takesInBeforeAnswer({ ...on, ...over }), false, why);
+  }
+});
+
+/** Run 8 (the card's run 2) with a commit of its own, run 9 (run 3) finished with one, both from run 7's branch; and a
+ *  harness holding only what the take-in and pause() read. */
+function pausedTakeIn() {
+  const dir = mkdtempSync(join(scratch, 'take-in-'));
+  const repo = join(dir, 'repo');
+  const wt8 = join(dir, 'wt8');
+  const wt9 = join(dir, 'wt9');
+  const add = (cwd, file) => { writeFileSync(join(cwd, file), `${file}\n`); git(cwd, ['add', file]); git(cwd, ['commit', '-qm', file]); };
+  git(dir, ['init', '-q', '-b', 'dev', 'repo']);
+  add(repo, 'base.txt');
+  git(repo, ['checkout', '-q', '-b', 'feat/run-7']);
+  add(repo, 'seven.txt');
+  git(repo, ['checkout', '-q', 'dev']);
+  git(repo, ['worktree', 'add', '-q', '-b', 'feat/run-8', wt8, 'feat/run-7']);
+  git(repo, ['worktree', 'add', '-q', '-b', 'feat/run-9', wt9, 'feat/run-7']);
+  add(wt8, 'eight.txt');
+  add(wt9, 'nine.txt');
+  const fx = siblingRunsFeature({ projectDir: repo });
+  const record = (n) => ({ source: 'feat/run-7', feature: `feat/run-${n}` });
+  fx.finish(7, { at: '2026-01-01T12:00:00Z', branch: { feature: 'feat/run-7' } });
+  fx.start(8, { branch: record(8) });
+  fx.start(9, { branch: record(9) });
+  fx.finish(9, { at: '2026-01-01T12:01:00Z' });
+  const key = projectKey(repo);
+  const start = sha(repo, 'feat/run-7');
+  const rec = { ...record(8), worktreeDir: wt8, baseSha: start, diffBase: start, startHead: start };
+  const h = Object.create(RunHarness.prototype);
+  Object.assign(h, { runShape: { slice: { feature: fx.featureId, index: 2 } }, branchInfo: { branch: 'feat/run-8', worktreeDir: wt8 },
+    members: [{ projectKey: key, projectDir: repo }], projectDir: repo, isWorkspace: false, workMode: 'git', execEnvKind: 'local',
+    workDirs: new Map([[key, wt8]]), checkpointRefs: { [key]: start }, pipeline: { id: fx.pipelineOf(8), dir: join(dir, `run-${fx.pipelineOf(8)}`) },
+    state: { status: 'running', branch: { ...rec }, branches: { [key]: { ...rec } } }, pauseAbort: new AbortController(),
+    pendingQuestion: null, _asksWaiting: 0, _persist: async () => true, _log: () => {}, _clockPauseAll: () => {}, _runClockPause: () => {} });
+  h.memberByKey = new Map(h.members.map((m) => [m.projectKey, m]));
+  return { h, repo, wt8 };
+}
+
+test('PZ1 take-in: a pause while the combine check runs refuses before any merge; the unwind\'s await ends only after it returned', () =>
+  withEnv({ WORCA_FLAGS: 'shaperSmallRuns' }, async () => {
+    const { h, repo, wt8 } = pausedTakeIn();
+    const was = sha(repo, 'feat/run-8');
+    let entered; let release;
+    const inCheck = new Promise((r) => { entered = r; });
+    const gate = new Promise((r) => { release = r; });
+    const merges = [];
+    const take = h.takeInBeforeAnswer({
+      checkCombine: async (dir, opts) => { entered(); await gate; return checkCombine(dir, opts); },
+      mergeBaseInto: async (dir, opts) => { merges.push(opts); return mergeBaseInto(dir, opts); },
+    });
+    const order = [];
+    const returned = take.then(() => order.push('returned'));
+    await Promise.race([inCheck, take]);
+    const inFlight = h._takeInFlight;
+    try {
+      assert.ok(inFlight, 'the take-in in flight is kept on the run');
+      assert.equal(h.pause(), true);
+      const unwound = inFlight.then(() => order.push('unwound'));
+      await new Promise((r) => setImmediate(r));
+      assert.deepEqual(order, [], 'the unwind is still waiting');
+      release();
+      await Promise.all([returned, unwound]);
+    } finally { release(); }
+    assert.deepEqual(await take, { ok: false, refused: true, reason: 'run 2 is pausing' });
+    assert.deepEqual(order, ['returned', 'unwound']);
+    assert.equal(merges.length, 0);
+    assert.equal(sha(repo, 'feat/run-8'), was);
+    assert.notEqual(gitStatus(wt8, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']), 0);
+  }));
+
+test('take-in (D13): both unwinds wait for a take-in in flight before they stop the graph build and tear down', () => {
+  const lines = readFileSync(new URL('../src/core/run-harness.mjs', import.meta.url), 'utf8').split('\n');
+  const stops = lines.flatMap((l, i) => (l.includes('await this._stopGraphBuild();') ? [i] : []));
+  assert.equal(stops.length, 2, 'the run\'s unwind and the resume\'s');
+  for (const i of stops) {
+    const unwind = lines.slice(lines.slice(0, i).findLastIndex((l) => l.includes('} finally {')), i).join('\n');
+    assert.match(unwind, /await this\._takeInFlight\?\.catch\(/, `before line ${i + 1}`);
   }
 });
