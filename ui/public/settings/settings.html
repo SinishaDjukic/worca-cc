@@ -301,8 +301,8 @@
               <div class="about-row">
                 <span class="about-key">Repository</span>
                 <a class="about-val about-link" id="aboutRepoLink"
-                   href="https://github.com/SinishaDjukic/worca-cc"
-                   target="_blank" rel="noopener noreferrer">github.com/SinishaDjukic/worca-cc</a>
+                   href="https://github.com/worca-org/worca"
+                   target="_blank" rel="noopener noreferrer">github.com/worca-org/worca</a>
               </div>
               <div class="about-row">
                 <span class="about-key">Feedback</span>
@@ -310,13 +310,13 @@
                      static fallback keeps the links usable before /api/settings lands.
                      Anchors only, and neither the label nor the href carries a version string. -->
                 <a class="about-val about-link" id="aboutBugLink"
-                   href="https://github.com/SinishaDjukic/worca-cc/issues/new?labels=bug"
+                   href="https://github.com/worca-org/worca/issues/new?labels=bug"
                    target="_blank" rel="noopener noreferrer">Report a bug</a>
               </div>
               <div class="about-row">
                 <span class="about-key"></span>
                 <a class="about-val about-link" id="aboutIdeaLink"
-                   href="https://github.com/SinishaDjukic/worca-cc/issues/new?labels=enhancement"
+                   href="https://github.com/worca-org/worca/issues/new?labels=enhancement"
                    target="_blank" rel="noopener noreferrer">Suggest an improvement</a>
               </div>
             </section>
@@ -868,6 +868,24 @@
                 </div>
               </div>
               <div id="networkProxyBody"></div>
+            </section>
+            <!-- Execution environment (docs/e2b.md): the user default of run.execEnv and the e2b mode's two limits. -->
+            <section class="card settings-card" id="e2b-settings-card" data-min-level="expert">
+              <div class="card-head"><div class="label-row"><h2>Execution environment</h2>
+                <span class="exec-env-status" id="e2b-status-chip" role="status" hidden></span></div></div>
+              <p class="hint">Where a run's agents and scripts execute. E2B runs each run in its own self-hosted sandbox; commits, pushes and PRs stay here. See docs/e2b.md.</p>
+              <p class="hint exec-env-status-server" id="e2b-status-server" hidden></p>
+              <div class="drows">
+              <div class="field drow"><label class="drow-label" for="e2b-exec-env">Default execution environment</label>
+                <div class="drow-control"><div class="select-wrap"><select id="e2b-exec-env" class="select" data-setting="execEnv">
+                  <option value="local">Local</option><option value="e2b">E2B sandbox</option></select></div></div></div>
+              <div class="field drow"><label class="drow-label" for="e2b-max-sandboxes">Sandboxes at once</label>
+                <div class="drow-control"><input id="e2b-max-sandboxes" class="input" type="number" min="1" max="64" step="1" placeholder="4" data-setting="e2bMaxSandboxes"></div></div>
+              <div class="field drow"><label class="drow-label" for="e2b-max-wait">Max wait for an answer (min)</label>
+                <div class="drow-control"><input id="e2b-max-wait" class="input" type="number" min="5" max="1440" step="1" placeholder="240" data-setting="e2bMaxWaitMin"></div></div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px"><small class="hint" id="e2b-settings-msg"></small>
+                <button type="button" class="btn btn-primary btn-sm" id="e2b-settings-save">Save</button></div>
             </section>
           </section>
           <!-- /pane runs -->

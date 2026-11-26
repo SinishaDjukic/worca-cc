@@ -13,7 +13,7 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async (n = 10) => { for (let i = 0; i < n; i++) await tick(); };
 const ZERO = { taskSources: 0, chatChannels: 0, mcpServers: 0, models: 0, agents: 0, scripts: 0, skills: 0, workflows: 0 };
-const row = (name, extra = {}) => ({ name, version: '0.1.0', pinnedSha: 'a'.repeat(40), repo: 'https://github.com/SinishaDjukic/worca-cc', subdir: `plugins/${name}`,
+const row = (name, extra = {}) => ({ name, version: '0.1.0', pinnedSha: 'a'.repeat(40), repo: 'https://github.com/worca-org/worca', subdir: `plugins/${name}`,
   marketplace: 'worca-cc', marketplaceName: 'Worca CC Official', enabled: true, linked: false, broken: false, apiMismatch: null, pythonMissing: false,
   ignored: [], mcpSets: [], skillSets: [], contributions: { ...ZERO }, description: null, ref: null, latest: null,
   setup: { ok: true, missing: [], noProfiles: [] }, notes: [], ...extra });
@@ -24,7 +24,7 @@ const PLUGINS = [
   row('github-source', { version: '0.2.0', contributions: { ...ZERO, taskSources: 1 }, latest: L('0.3.0', [{ kind: 'secret', id: 'github.webhookSecret', red: true }]) }),
   row('slack-chat', { contributions: { ...ZERO, chatChannels: 1 }, setup: { ok: false, missing: [{ kind: 'chatChannel', id: 'slack', keys: ['botToken'] }], noProfiles: [] } }),
 ];
-const MKT = { id: 'worca-cc', name: 'Worca CC Official', url: 'https://github.com/SinishaDjukic/worca-cc', ref: 'dev', builtin: true, warnings: [], lastError: null,
+const MKT = { id: 'worca-cc', name: 'Worca CC Official', url: 'https://github.com/worca-org/worca', ref: 'dev', builtin: true, warnings: [], lastError: null,
   lastSync: { sha: '735b354' + '0'.repeat(33), at: '2026-10-20T10:00:00.000Z' },
   plugins: [{ name: 'acme-jira', subdir: 'plugins/acme-jira', description: 'Jira', version: '1.2.0', installed: false, notes: [], inventory: { taskSources: [{ id: 'jira', displayName: 'Jira', secrets: [] }] } }] };
 const SCOPES = { projects: [], workspaces: [], scopes: { projects: [], workspaces: [] }, homes: [], requirements: [], blockedPlugins: [], anyEnabled: false };
@@ -197,7 +197,7 @@ test('a team-policy-changed frame runs the trusted-home install too: a plugin th
   assert.equal(installs(), 1);
 });
 
-const DETAIL = (name, inventory) => ok({ plugin: {}, inventory, repo: 'https://github.com/SinishaDjukic/worca-cc',
+const DETAIL = (name, inventory) => ok({ plugin: {}, inventory, repo: 'https://github.com/worca-org/worca',
   subdir: `plugins/${name}`, sha: 'a'.repeat(40), installedAt: null, updatedAt: null, webUrl: null });
 const PREVIEW = (from, to, access = []) => ({ pinnedSha: 'a'.repeat(40), candidateSha: 'b'.repeat(40), pinnedVersion: from,
   candidateVersion: to, previewedAt: '2026-10-20T10:00:00.000Z', access, commits: [{ sha: 'c'.repeat(40), subject: 'Fix' }],

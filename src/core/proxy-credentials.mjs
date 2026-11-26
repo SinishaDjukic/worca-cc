@@ -97,15 +97,52 @@ export function savedLoginRefusal(auth) {
  * @throws {ProxyLoginError} on a bad field; any fs/icacls error as is (no file left behind)
  */
 export function saveProxyLogin({ domain = '', user, password }, {
-  home = defaultHome(), platform = process.platform, exec = execFileSync, env = process.env, now = Date.now,
+  home = defaultHome(), platform = process.platform, exec = execFileSync, env = process.env, now = Date.now, upstream,
 } = {}) {
+  refuseInBox(env);
   const account = assertProxyLoginInput({ domain, user, password });
+  return writeLogin({ ...account, ntHash: ntHash(password).toString('hex') }, { home, platform, exec, env, now, upstream });
+}
+
+/** The box of a container setup with an egress sidecar (WORCA_EGRESS_API_URL): the login lives there, never here. */
+export const SIDECAR_LOGIN_TEXT = 'In this container the corporate proxy login lives in the egress sidecar, not in Worca\'s box. '
+  + 'Log in with `worca container proxy login` on the host (or `worca proxy login` inside the box), never by writing proxy-login.json here.';
+function refuseInBox(env) {
+  if (env && typeof env.WORCA_EGRESS_API_URL === 'string' && env.WORCA_EGRESS_API_URL.trim()) throw new ProxyLoginError('sidecar', SIDECAR_LOGIN_TEXT);
+}
+
+function writeLogin(fields, { home, platform, exec, env, now, upstream }) {
   const file = proxyLoginFile(home);
   if (!file) throw new ProxyLoginError('home', 'Worca has no home folder to save the login in');
-  const record = { v: 1, id: randomBytes(8).toString('hex'), ...account,
-    ntHash: ntHash(password).toString('hex'), savedAt: new Date(now()).toISOString(), rejected: null };
+  const record = { v: 1, id: randomBytes(8).toString('hex'), domain: fields.domain, user: fields.user,
+    ntHash: fields.ntHash, savedAt: new Date(now()).toISOString(), rejected: null, ...(upstream ? { upstream: String(upstream) } : {}) };
   writeRecord(file, record, { platform, exec, env });
   return loginView(record);
+}
+
+/** A login given as its NT hash (the egress sidecar: a login moved out of a box, or `worca proxy hash` output).
+ *  `upstream` binds it to the proxy it was saved for. @throws {ProxyLoginError} */
+export function saveProxyLoginHash({ domain = '', user, ntHash: hash }, {
+  home = defaultHome(), platform = process.platform, exec = execFileSync, env = process.env, now = Date.now, upstream,
+} = {}) {
+  refuseInBox(env);
+  const account = checkAccount({ domain, user });
+  const hex = String(hash ?? '').trim().toLowerCase();
+  if (!/^[0-9a-f]{32}$/.test(hex)) throw new ProxyLoginError('ntHash', 'the NT hash must be 32 hexadecimal characters');
+  return writeLogin({ ...account, ntHash: hex }, { home, platform, exec, env, now, upstream });
+}
+
+/** `{domain, user, ntHash}` (the sidecar's secret-file login, `worca proxy hash` output) -> a readProxyLogin()-shaped
+ *  record, or { error }. Pure. */
+export function parseLoginRecord(text) {
+  let r;
+  try { r = JSON.parse(String(text)); } catch { return { error: 'the login file is not valid JSON' }; }
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return { error: 'the login file is not a JSON object' };
+  let account;
+  try { account = checkAccount({ domain: r.domain ?? '', user: r.user }); } catch (err) { return { error: `the login file: ${err.message}` }; }
+  if (typeof r.ntHash !== 'string' || !/^[0-9a-f]{32}$/i.test(r.ntHash.trim())) return { error: 'the login file has no ntHash of 32 hexadecimal characters' };
+  return { id: 'managed', ...account, ntHash: Buffer.from(r.ntHash.trim(), 'hex'),
+    savedAt: typeof r.savedAt === 'string' ? r.savedAt : '', rejected: null };
 }
 
 /**
@@ -151,7 +188,7 @@ export function readProxyLogin({ home = defaultHome(), platform = process.platfo
   }
   const rejected = r.rejected && typeof r.rejected === 'object' ? { at: String(r.rejected.at || ''), upstream: String(r.rejected.upstream || '') } : null;
   return { id: String(r.id || ''), domain: String(r.domain || ''), user: r.user, ntHash: Buffer.from(r.ntHash, 'hex'),
-    savedAt: String(r.savedAt || ''), rejected };
+    savedAt: String(r.savedAt || ''), rejected, ...(typeof r.upstream === 'string' && r.upstream ? { upstream: r.upstream } : {}) };
 }
 
 /** Delete the saved login. @returns {boolean} true when one was there */
@@ -178,7 +215,8 @@ export function markLoginRejected(id, { upstream = '', home = defaultHome(), pla
   const stillOurs = () => { const again = readProxyLogin({ home, platform }); if (!again || again.error || again.id !== id) throw STALE; };
   try {
     writeRecord(proxyLoginFile(home), { v: 1, id: cur.id, domain: cur.domain, user: cur.user, ntHash: cur.ntHash.toString('hex'),
-      savedAt: cur.savedAt, rejected: { at: new Date(now()).toISOString(), upstream } }, { platform, exec, env, beforeRename: stillOurs });
+      savedAt: cur.savedAt, rejected: { at: new Date(now()).toISOString(), upstream }, ...(cur.upstream ? { upstream: cur.upstream } : {}) },
+    { platform, exec, env, beforeRename: stillOurs });
   } catch (err) {
     if (err === STALE) return false;
     throw err;

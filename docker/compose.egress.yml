@@ -15,6 +15,8 @@
 #                        Bitbucket: add bitbucket.org,api.bitbucket.org (step logs: also the storage host they redirect to)
 #                        GitHub Copilot on a GHE.com tenant: add .<tenant>.ghe.com (the leading dot
 #                        also matches <tenant>.ghe.com here); worca cannot inject it into this sidecar
+#   A corporate proxy that needs a login: add -f compose.proxy.yml AFTER this file. The sidecar then
+#                        keeps this allowlist and logs in to the corporate proxy (docs/network-proxy.md).
 #   WORCA_EGRESS_MODE    leave unset here: it is a hosting platform's policy
 #                        (docs/remote-access.md), with its own matching rules.
 
@@ -31,16 +33,22 @@ services:
       # sidecar it calls on this network (the broker overlay's broker:8080)
       # must be listed here or the proxy refuses it as not allowlisted.
       NO_PROXY: 127.0.0.1,localhost,broker
+      # The same list the sidecar enforces, for a sandbox run's "Allow listed hosts only" (docs/e2b.md). Its own
+      # name, so Worca's outbound policy (WORCA_EGRESS_MODE) never reads it.
+      WORCA_SANDBOX_EGRESS_ALLOW: ${WORCA_EGRESS_ALLOW:-}
       # Playwright downloads Chromium from a CDN; add it to the allowlist or
       # pre-fetch it. Listed here so the failure is legible, not silent.
       PLAYWRIGHT_DOWNLOAD_HOST: ${PLAYWRIGHT_DOWNLOAD_HOST:-}
 
   egress:
-    image: ghcr.io/sinishadjukic/worca:${WORCA_TAG:-latest}
+    image: ghcr.io/worca-org/worca:${WORCA_TAG:-latest}
     entrypoint: ["tini", "-s", "--", "node", "/usr/local/lib/worca-egress-proxy.mjs"]
     command: []
     environment:
       WORCA_EGRESS_ALLOW: ${WORCA_EGRESS_ALLOW:-}
+      # Keeps the allowlist when compose.proxy.yml (added after this file) starts the sidecar that
+      # also does the corporate proxy login; the plain entry above ignores it.
+      WORCA_EGRESS_ALLOWLIST: "1"
     networks:
       - internal
       - default

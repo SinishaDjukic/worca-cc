@@ -95,7 +95,8 @@ test('the Chat row dot rides the rail corner; the logo links show a focus ring',
 test('the composer buttons keep their size, the run panel slot hides, cards measure the transcript, the empty lead row takes no room, the rail dot', () => {
   assert.equal(ruleBody('.chat-page .ask-composer-row > :is(.btn,.ask-meter,.ask-model-btn,.ask-voice,.ask-composer-ext):not(.ask-scope-btn)'), 'flex:none;', 'Send never shrinks out of the box (v2), nor a design\'s Point and gear (they lay over the model name); the scope button is a .btn too and must stay shrinkable');
   assert.equal(ruleBody('.chat-panel[hidden]'), 'display:none;', '.chat-panel{display:flex} would beat [hidden]: an empty bordered slot');
-  assert.equal(ruleBody('.chat-convo .ask-transcript'), 'container-type:inline-size;isolation:isolate;scrollbar-gutter:stable both-edges;padding-bottom:calc(var(--chat-dock-h,120px) + var(--chat-dock-fade));', '100cqi = the transcript width; the floating dock\'s height plus its fade band is its bottom clearance');
+  assert.equal(ruleBody('.chat-convo .ask-transcript'), 'container-type:inline-size;isolation:isolate;scrollbar-gutter:stable both-edges;', '100cqi = the transcript width; the dock clearance lives on the direct-child rule only');
+  assert.equal(ruleBody('.chat-convo > .ask-transcript'), 'padding-bottom:var(--chat-dock-fade);margin-bottom:var(--chat-dock-h,120px);', 'the scrollport ends at the dock\'s top; the fade band overlays its last 32px');
   assert.equal(ruleBody('.chat-convo .ask-msg > :is(.ask-card,.ask-card-stub)'), null, 'no card width rule (#959)');
   assert.equal(ruleBody('.chat-composer-lead:empty'), 'display:none;');
   assert.equal(ruleBody('.sidebar.collapsed .nav-count.nav-dot'), 'top:6px;right:8px;');
@@ -171,4 +172,17 @@ test('the dock\'s fade leaves the transcript\'s scrollbar gutter uncovered, so t
   assert.ok(css.includes('\n.chat-dock{position:absolute;left:0;right:0;bottom:0;pointer-events:none;}'), 'the dock box, and so the composer, did not move');
   const pad = ruleBody('.ask-composer').match(/(?:^|;)padding:(\d+)px (\d+)px/);
   assert.ok(Number(pad[2]) >= Number(tokenW[1]), 'no composer part reaches the gutter');
+});
+
+test('the transcript\'s scrollport ends at the dock\'s top edge: its track never runs beside the composer', () => {
+  const clear = ruleBody('.chat-convo > .ask-transcript');
+  assert.match(clear, /(?:^|;)margin-bottom:var\(--chat-dock-h,120px\);/, 'the clearance is a margin, outside the scrollport');
+  assert.match(clear, /(?:^|;)padding-bottom:var\(--chat-dock-fade\);/);
+  for (const m of bare.matchAll(/([^{}]*)\{([^}]*)\}/g)) {
+    if (!/\.ask-transcript\b/.test(m[1])) continue;
+    assert.doesNotMatch(m[2], /(?:^|;)padding(?:-bottom)?:[^;]*--chat-dock-h/, `${m[1].trim()} must not pad by the dock height`);
+  }
+  assert.doesNotMatch(ruleBody('.chat-convo .ask-transcript'), /margin-bottom/, 'a nested Design thread gets no dock-sized gap');
+  assert.match(ruleBody('.chat-dock::before'), /top:calc\(-1 \* var\(--chat-dock-fade\)\)/);
+  assert.equal(ruleBody('.chat-dock > .ask-jump'), 'bottom:100%;');
 });

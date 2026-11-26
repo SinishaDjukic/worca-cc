@@ -25,14 +25,15 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-hero-slot .ask-composer{padding:0;--ask-col-inset:0px;}
 .chat-page[data-view="thread"] .chat-home{display:none;}
 .chat-page[data-view="home"] .ask-transcript,.chat-page[data-view="home"] .chat-dock{display:none;}
-/* The dock floats over the transcript (worca Chat mockup 2026-10-10): the transcript keeps the dock's height
-   (ask-panel.mjs mirrors it into --chat-dock-h) plus the dock's fade band as bottom clearance. Only the composer's own
+/* The dock floats over the bottom of the conversation column (worca Chat mockup 2026-10-10): the transcript's bottom
+   margin is the dock's height (ask-panel.mjs mirrors it into --chat-dock-h), so its scrollport, and its scrollbar
+   track, end at the dock's top edge. Only the composer's own
    parts take the pointer, so the transcript beside the box stays usable. No z-index: a stacking context here would
    trap a Getting started ring (.guide-target) under the guide scrim. */
 .chat-dock{position:absolute;left:0;right:0;bottom:0;pointer-events:none;}
 /* #959: the dock is opaque from its top edge down, after a --chat-dock-fade band in which the transcript fades out:
    nothing reads under the composer. Jump to latest rides that band, right above the dock, never over a line you
-   read (the transcript's bottom clearance includes the band). The fade stops at the transcript's scrollbar gutter
+   read (the band overlays the scrollport's last --chat-dock-fade). The fade stops at the transcript's scrollbar gutter
    (--scrollbar-w) on both edges, so the track stays whole. No z-index (a Getting started ring must escape). */
 .chat-dock::before{content:"";position:absolute;left:var(--scrollbar-w);right:var(--scrollbar-w);bottom:0;top:calc(-1 * var(--chat-dock-fade));background:linear-gradient(to bottom,color-mix(in srgb,var(--panel) 0%,transparent),var(--panel) var(--chat-dock-fade));pointer-events:none;}
 .chat-dock > .ask-composer{pointer-events:none;}
@@ -44,8 +45,10 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
    kind sets a width. No part of a card leaves the column, a graph well included. The transcript is its own stacking
    context, so a card's raised parts scroll under the dock, not over it. It reserves its scrollbar gutter on both
    edges, so the column, the composer and Jump to latest share one centre with classic and overlay scrollbars alike;
-   its bottom clearance is the dock's height plus the dock's fade band. */
-.chat-convo .ask-transcript{container-type:inline-size;isolation:isolate;scrollbar-gutter:stable both-edges;padding-bottom:calc(var(--chat-dock-h,120px) + var(--chat-dock-fade));}
+   the dock's height is its bottom margin (the scrollport ends at the dock's top) and the fade band its bottom padding.
+   Only the direct child: a Design thread nested in it is a transcript too and gets no dock gap. */
+.chat-convo .ask-transcript{container-type:inline-size;isolation:isolate;scrollbar-gutter:stable both-edges;}
+.chat-convo > .ask-transcript{padding-bottom:var(--chat-dock-fade);margin-bottom:var(--chat-dock-h,120px);}
 /* The composer is frosted glass (mockup .cp-pill): a translucent fill that blurs what scrolls under it, a hairline and
    a soft float. A Getting started step that rings a control in it drops the blur: a backdrop filter makes a stacking
    context, and the ring (.guide-target, z 45) must reach above the guide scrim (z 44). */

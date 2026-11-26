@@ -10,8 +10,8 @@ import { checkRows } from './helpers/rows.mjs';
 
 afterEach(() => gitInfo.reset());
 
-const ISSUE_URL = 'https://github.com/SinishaDjukic/worca-cc/issues/512';
-const ARGS = { repo: 'SinishaDjukic/worca-cc', title: 'Run report: too slow (worca 1.2.0)' };
+const ISSUE_URL = 'https://github.com/worca-org/worca/issues/512';
+const ARGS = { repo: 'worca-org/worca', title: 'Run report: too slow (worca 1.2.0)' };
 
 /** Record every invocation; answer `gh --version` so hasGh() clears. */
 function runner(answer) {
@@ -34,7 +34,7 @@ test('createIssue files the issue with both labels and returns its URL', async (
     // Read the --body-file WHILE gh would be running: the file must exist then.
     bodyPath = args[args.indexOf('--body-file') + 1];
     bodyOnDisk = await readFile(bodyPath, 'utf8');
-    return ok(`Creating issue in SinishaDjukic/worca-cc\n${ISSUE_URL}\n`);
+    return ok(`Creating issue in worca-org/worca\n${ISSUE_URL}\n`);
   });
 
   const r = await createIssue({ ...ARGS, body: 'the whole report\n```json\n{}\n```' });
@@ -42,7 +42,7 @@ test('createIssue files the issue with both labels and returns its URL', async (
   assert.deepEqual(r, { ok: true, url: ISSUE_URL, labeled: true });
   const create = calls.find((c) => c.args[0] === 'issue');
   assert.deepEqual(create.args.slice(0, 5),
-    ['issue', 'create', '--repo', 'SinishaDjukic/worca-cc', '--title'],
+    ['issue', 'create', '--repo', 'worca-org/worca', '--title'],
     '--repo is explicit: gh must not guess the target from the cwd remote');
   assert.deepEqual(create.args.filter((a, i) => create.args[i - 1] === '--label'), ['bug', 'ai']);
   assert.equal(bodyOnDisk, 'the whole report\n```json\n{}\n```',
@@ -130,11 +130,11 @@ test('ghItemSummaries: one gh api graphql per repo, a pullRequest and an issue a
     p10: null, i10: null,
   } }, errors: [{ type: 'NOT_FOUND', path: ['r', 'i7'] }] };
   const calls = runner(() => ({ ok: false, stdout: JSON.stringify(data), stderr: 'gh: Could not resolve to an Issue with the number of 7.', code: 1 }));
-  const m = await ghItemSummaries({ repo: 'SinishaDjukic/worca-cc', numbers: [7, 8, 9, 10, 7] });
+  const m = await ghItemSummaries({ repo: 'worca-org/worca', numbers: [7, 8, 9, 10, 7] });
   assert.deepEqual([...m], [[7, { kind: 'pr', title: 'Fix', state: 'draft' }], [8, { kind: 'pr', title: 'Old', state: 'merged' }], [9, { kind: 'issue', title: 'Bug', state: 'closed' }]]);
   const gql = calls.find((c) => c.args[0] === 'api');
   assert.deepEqual(gql.args.slice(0, 5), ['api', 'graphql', '--hostname', 'github.com', '-f'], 'always github.com, whatever GH_HOST says');
-  assert.match(gql.args[5], /repository\(owner: "SinishaDjukic", name: "worca-cc"\)/);
+  assert.match(gql.args[5], /repository\(owner: "worca-org", name: "worca"\)/);
   assert.match(gql.args[5], /p7: pullRequest\(number: 7\).*i7: issue\(number: 7\).*p10: pullRequest\(number: 10\).*i10: issue\(number: 10\)/);
   assert.doesNotMatch(gql.args[5], /issueOrPullRequest/, 'an App read token has no issues permission: PRs go through pullRequest');
   assert.equal((gql.args[5].match(/pullRequest\(/g) || []).length, 4, 'a number asked twice is asked once');

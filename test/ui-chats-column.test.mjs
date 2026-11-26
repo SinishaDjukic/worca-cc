@@ -41,7 +41,7 @@ function api(rec, { list = LIST, failList = false, cursor = null, totals = null 
     if (url.startsWith('/api/ask/threads?')) {
       if (failList || rec.failList) return { ok: false, status: 503, json: async () => ({}) };
       const paged = url.includes('cursor=');
-      const page = paged ? (rec.nextPage || []) : [...list];
+      const page = paged ? (rec.nextPage || []) : list.filter((t) => !url.includes('designs=1') || t.designId);
       return { ok: true, status: 200, json: async () => ({ threads: page, cursor: paged ? null : cursor,
         total: list.length, counts: { all: list.length, needs: 0, archived: 3 } }) };
     }
@@ -670,4 +670,75 @@ test('the head\'s New chat hides while the list is open; both hide on a new chat
   ctx.panel.open({ threadId: 'ask_00000002' });
   await ticks(ctx);
   assert.equal(page.dataset.fresh, 'no', 'a chat with its messages');
+});
+
+test('beside Design the list holds design chats only: its head says so, it asks designs=1, and a flip back in the same task asks nothing', async () => {
+  const list = [T('ask_00000001', { designId: 'd_0000000000a1' }), T('ask_00000002'), T('ask_00000003')];
+  const { ctx, rec, col } = await bootOn({ list });
+  const title = () => col.querySelector('.runs-head-title').textContent;
+  const rows = () => [...col.querySelectorAll('a.runs-row')].map((a) => a.dataset.rowKey);
+  assert.equal(title(), 'Chats');
+  assert.equal(rows().length, 3, 'every chat');
+  const before = listGets(rec).length;
+  ctx.panel.setListDesigns(true);
+  ctx.panel.setListDesigns(false);                   // a design chat switching to the next: its design leaves, then mounts
+  await ticks(ctx);
+  assert.equal(listGets(rec).length, before, 'a flip back in the same task changes nothing');
+  ctx.panel.setListDesigns(true);
+  await ticks(ctx);
+  assert.match(listGets(rec).at(-1), /[?&]designs=1(&|$)/, 'the list asks for design chats only');
+  assert.equal(title(), 'Design chats');
+  assert.equal(col.querySelector('#chats-list').getAttribute('aria-label'), 'Design chats');
+  assert.deepEqual(rows(), ['chat:ask_00000001'], 'the chat with a design, alone');
+  ctx.panel.setListDesigns(false);
+  await ticks(ctx);
+  assert.doesNotMatch(listGets(rec).at(-1), /designs=/, 'back to every chat');
+  assert.equal(title(), 'Chats');
+  assert.equal(rows().length, 3);
+});
+
+test('beside Design with no design chat yet, the list says so', async () => {
+  const { ctx, col } = await bootOn({ list: [T('ask_00000002')] });
+  ctx.panel.setListDesigns(true);
+  await ticks(ctx);
+  assert.equal(col.querySelector('#chats-list').textContent.trim(), 'No design chats yet.');
+});
+
+test('designChatLoading: a chat not on screen yet whose row has a design; never the chat on screen or one the list lacks', async () => {
+  const list = [T('ask_00000001', { designId: 'd_0000000000a1' }), T('ask_00000002')];
+  const { ctx } = await bootOn({ list });
+  assert.equal(ctx.panel.designChatLoading('ask_00000001'), true, 'its row has a design');
+  assert.equal(ctx.panel.designChatLoading('ask_00000002'), false, 'its row has none');
+  assert.equal(ctx.panel.designChatLoading('ask_00000009'), false, 'the list does not hold it');
+  assert.equal(ctx.panel.designChatLoading(''), false);
+  ctx.panel.open({ threadId: 'ask_00000001' });
+  await ticks(ctx);
+  assert.equal(ctx.panel.designChatLoading('ask_00000001'), false, 'the chat on screen answers through its mounted design');
+});
+
+test('beside Design the list\'s New is New design: it asks for a new design\'s start and makes no chat; back on Chat it is New chat again', async () => {
+  const routes = [];
+  const { ctx, rec, col } = await bootOn({ list: [T('ask_00000001', { designId: 'd_0000000000a1' })], deps: { onRoute: (id, o) => routes.push([id, o]) } });
+  const btn = col.querySelector('.runs-head > .chat-list-new');
+  const chatName = btn.getAttribute('aria-label');
+  assert.match(chatName, /^New chat /);
+  ctx.panel.setListDesigns(true);
+  await ticks(ctx);
+  assert.equal(btn.getAttribute('aria-label'), 'New design');
+  assert.equal(btn.title, 'New design');
+  assert.equal(btn.textContent.trim(), 'New', 'the words stay');
+  const posts = () => rec.calls.filter((c) => c === 'POST /api/ask/threads').length;
+  const before = posts();
+  routes.length = 0;
+  btn.click();
+  await ticks(ctx);
+  assert.deepEqual(routes, [[null, { replace: false, design: true }]], 'the new design\'s start, by its address');
+  assert.equal(posts(), before, 'no chat is made');
+  ctx.panel.setListDesigns(false);
+  await ticks(ctx);
+  assert.equal(btn.getAttribute('aria-label'), chatName, 'New chat again');
+  routes.length = 0;
+  btn.click();
+  await ticks(ctx);
+  assert.deepEqual(routes.at(-1), [null, { replace: false }], 'a new chat');
 });

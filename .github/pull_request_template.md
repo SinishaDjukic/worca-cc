@@ -25,4 +25,4 @@ Closes #
 
 ## Contributor terms
 
-By opening this pull request, you accept [DCO 1.1](https://github.com/SinishaDjukic/worca-cc/blob/dev/DCO) for this contribution, confirm that you have the right to submit it under the project's MIT license, and take responsibility for it, including any AI-generated content.
+By opening this pull request, you accept [DCO 1.1](https://github.com/worca-org/worca/blob/dev/DCO) for this contribution, confirm that you have the right to submit it under the project's MIT license, and take responsibility for it, including any AI-generated content.

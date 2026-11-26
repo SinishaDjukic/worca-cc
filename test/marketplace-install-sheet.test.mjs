@@ -25,7 +25,7 @@ const closeBtn = (doc) => doc.querySelector('#mk-sheet .mk-close');   // P3's la
 const step = (doc) => doc.querySelector('#mk-sheet .mk-step[aria-current="step"] .mk-step-label')?.textContent;
 const act = (doc, a) => doc.querySelector(`#mk-sheet [data-act="${a}"]`);
 const posts = (calls, url) => calls.filter(([m, u]) => m === 'POST' && u === url);
-const INSTALL = { repoUrl: 'https://github.com/SinishaDjukic/worca-cc', subdir: 'plugins/slack-chat', name: 'slack-chat', sha: SHA, marketplace: 'official' };
+const INSTALL = { repoUrl: 'https://github.com/worca-org/worca', subdir: 'plugins/slack-chat', name: 'slack-chat', sha: SHA, marketplace: 'official' };
 const gate = () => { let release; const p = new Promise((r) => { release = r; }); return { p, release }; };
 const esc = async (doc) => { doc.getElementById('mk-sheet').dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); await settle(); };
 const discardAsked = (doc) => !!doc.querySelector('dialog.discard-modal');
@@ -57,7 +57,7 @@ test('open: Review for a not-installed item; installed → openManage; { name, m
       assert.deepEqual([doc.getElementById('mk-sheet'), page.calls], [null, [['act', 'openManage', 'slack-chat']]]);
     } },
     { name: '{ name, marketplace } by id, name or url hint, else the first match', run: () => {
-      for (const marketplace of ['official', 'Worca CC Official', 'https://github.com/SinishaDjukic/worca-cc', '', 'other']) {
+      for (const marketplace of ['official', 'Worca CC Official', 'https://github.com/worca-org/worca', '', 'other']) {
         const { doc, sheet } = world();
         assert.equal(sheet.open({ name: 'slack-chat', marketplace }), true, String(marketplace));
         assert.equal(doc.getElementById('mk-sheet-title').textContent, 'slack-chat');

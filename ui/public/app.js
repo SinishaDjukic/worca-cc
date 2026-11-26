@@ -40,6 +40,9 @@ const state = {
   engine: 'claude', // New pipeline: who runs the agent nodes, per run, never remembered
   runDefaults: null,
   engineTouched: false,
+  execEnv: 'local',          // New pipeline: where the run executes (docs/e2b.md); per run, never remembered
+  execEnvDefault: 'local',   // GET /api/run-defaults' execEnv: the saved default (runExecEnvDefault says if it applies)
+  execEnvTouched: false,
   presets: [],    // GET /api/presets (run presets, #712)
   rerun: null,    // Rerun: { runId, label, setup, broken[], modified, applying } while the form holds an earlier run's setup (no preset id, no chip)
   preset: null,   // the applied preset: { id, name, scope, setup, modified, applying, broken[] } — preset mode
@@ -182,6 +185,8 @@ import { filePreviewOf } from './chat/file-renderers.mjs';
 import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS, feedbackIcon } from './feedback.mjs';
 import { layoutDialog, watchDialogEdges } from './dialog-layout.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
+import { loadExecEnvs, execEnvKnown, execEnvLabel, execEnvTitle, execEnvTitleWithArticle, fillExecEnvSelect, setExecEnvSelectValue } from './exec-envs.mjs';
+import { paintExecEnvStatusChip, watchExecEnvStatus } from './exec-env-status.mjs';
 import { guardModal, dialogOpen, DISCARD_MESSAGE } from './modal-guard.mjs';
 import { createVoiceController } from './ask-voice.mjs';
 import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, gsPillText, GETTING_STARTED_STEPS } from './getting-started.mjs';
@@ -233,6 +238,7 @@ import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
 import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, MODEL_ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
+import { remoteRefusesDefault } from '../../src/shared/exec-env.mjs';
 import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS, connectionOf } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
@@ -899,9 +905,12 @@ const el = {
   memoryScopeRow: $('#memory-scope-row'),
   memoryScopeSeg: $('#memory-scope-seg'),
   engineSelect: $('#engineSelect'),
+  execEnvSelect: $('#execEnvSelect'),
+  execEnvStatus: $('#exec-env-status'),
   engineHint: $('#engine-hint'),
   engineDefaultHint: $('#engine-default-hint'),
   engineMcpjsonHint: $('#engine-mcpjson-hint'),
+  execEnvHint: $('#exec-env-hint'),
   engineRefusal: $('#engineRefusal'),
   engineRefusalText: $('#engineRefusalText'),
   engineAllowRow: $('#engineAllowRow'),
@@ -2529,6 +2538,10 @@ function onHello(msg) {
       limitScope: r0.limitScope || null,
       limitModel: r0.limitModel || null,
       runEngine: r0.runEngine || undefined,
+      execEnv: r0.execEnv || undefined,
+      execEnvWaiting: !!r0.execEnvWaiting,
+      execEnvWaitUntil: r0.execEnvWaitUntil || undefined,
+      execEnvReview: Array.isArray(r0.execEnvReview) ? r0.execEnvReview : undefined,
       startedBy: r0.startedBy || undefined,
       lastAction: r0.lastAction || undefined,
       workspaceId: r0.workspaceId || undefined,
@@ -2693,7 +2706,8 @@ function nowHMS() {
 function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
-  pauseDetail = null, limitEngine = null, limitResetAt = null, modelConfirm = null, limitScope = null, limitModel = null, runEngine = undefined, startedBy = null, lastAction = null,
+  pauseDetail = null, limitEngine = null, limitResetAt = null, modelConfirm = null, limitScope = null, limitModel = null, runEngine = undefined,
+  execEnv = undefined, execEnvWaiting = false, execEnvWaitUntil = undefined, execEnvReview = undefined, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [], labels = [],
   shaping = null, networkWait = null, workMode = undefined,
 }) {
@@ -2716,6 +2730,10 @@ function makeRun({
     limitScope,           // 'usage_limit': 'model' (a Fable limit) | 'connection', or null
     limitModel,           // 'usage_limit': the model the limit was spent on, or null
     runEngine,            // the engine the run runs on (state frames carry it too); undefined = not known yet
+    execEnv,              // the backend name ('e2b') when its agents run in a remote sandbox (docs/e2b.md); undefined = local
+    execEnvWaiting,       // remote: still queued for a sandbox slot
+    execEnvWaitUntil,     // remote: ISO when the parked sandbox is released if the open question stays unanswered
+    execEnvReview,        // remote: [{path, why}] files from the sandbox only a person runs later (review before running)
     startedBy,            // who started it (identity.mjs), or null; 'local' is never shown
     lastAction,           // who last stopped / paused / resumed it: { kind, by, at } or null
     workspaceId,
@@ -3314,6 +3332,11 @@ function onState(r, msg) {
   if (typeof msg.prompt === 'string' && msg.prompt) r.prompt = msg.prompt;
   // The run's engine (§4.2): the step pills show only what that engine ran.
   if (typeof msg.runEngine === 'string' && msg.runEngine) r.runEngine = msg.runEngine;
+  // Where it executes (e2b only) and whether it still waits for a sandbox slot.
+  if (typeof msg.execEnv === 'string') r.execEnv = msg.execEnv;
+  r.execEnvWaiting = !!msg.execEnvWaiting;
+  r.execEnvWaitUntil = typeof msg.execEnvWaitUntil === 'string' ? msg.execEnvWaitUntil : undefined;
+  if (Array.isArray(msg.execEnvReview)) r.execEnvReview = msg.execEnvReview;
   // Swap the manifest when it FIRST arrives OR when its node-id signature changes
   // (a decomposed run rewrites the implementer node into per-phase/per-task nodes
   // mid-run). Rebuild the stepper DOM so subsequent paints address the right nodes.
@@ -5248,6 +5271,7 @@ function setRunEngine(engine) {
   keepVisible(document.getElementById('engine-row'), state.engine !== 'claude');   // Simple shows a non-Claude engine
   paintEngineHints();
   paintSessionNotes();
+  paintRunExecEnv();
   showEngineRefusal(null);
   // D10: the agent rows offer the run engine's models only — repaint them for the new engine. The Sets
   // picker too: another engine names set skills as its .agents/skills mount would.
@@ -5257,12 +5281,73 @@ function setRunEngine(engine) {
   }
 }
 
+// The environment a run gets when nobody picks one: the saved default, except a saved remote default on a run
+// no remote backend can take (an engine no sandbox runs, a workspace run, a Folder project, a run without a project),
+// which the server runs locally (resolveRunExecEnv).
+function runExecEnvDefault() {
+  const saved = state.execEnvDefault || 'local';
+  if (saved === 'local') return 'local';
+  return remoteRefusesDefault({ engine: state.engine, workspace: state.runTarget === 'workspace', workMode: formWorkMode() || 'git' }) ? 'local' : saved;
+}
+
+// Execution environment (docs/e2b.md): per run, never remembered. Simple shows the row while it is not Local,
+// or while its hint says why a saved remote default runs locally.
+function setRunExecEnv(v) {
+  state.execEnv = execEnvKnown(v) ? v : 'local';
+  if (el.execEnvSelect) el.execEnvSelect.value = state.execEnv;
+  const saved = state.execEnvDefault || 'local';
+  const why = remoteRefusesDefault({ engine: state.engine, workspace: state.runTarget === 'workspace', workMode: formWorkMode() || 'git' });
+  const skipped = state.execEnv === 'local' && saved !== 'local' && !!why;
+  if (el.execEnvHint) {
+    el.execEnvHint.hidden = !skipped;
+    if (skipped) el.execEnvHint.textContent = `Runs locally: the saved ${execEnvTitle(saved)} default does not apply to ${why}.`;
+  }
+  keepVisible(document.getElementById('exec-env-row'), state.execEnv !== 'local' || skipped);
+  paintExecEnvStatus();
+}
+/** An untouched picker follows the run's default as the engine, the target or the saved default change. */
+function paintRunExecEnv() { setRunExecEnv(state.execEnvTouched ? state.execEnv : runExecEnvDefault()); }
+
 // Boot: learn which engines this instance never starts (GET /api/engine-locks runs no preflight), so every picker
 // greys them out before anyone presses Start, and New pipeline moves off one.
 fetch('/api/engine-locks').then((r) => (r.ok ? r.json() : null)).catch(() => null).then((d) => {
   if (!Array.isArray(d?.engines)) return;
   setEngineLocks(d.engines); applyEngineLocks();
   if (engineLock(state.engine) !== null) setRunEngine('claude');
+});
+// The remote backends' live status (GET /api/exec-envs/status, docs/e2b.md): the chip beside New run's "Runs in" reads
+// the chosen backend (none on Local, none for a backend without a status), the one on Settings › Runs reads E2B with
+// its server. No buttons: the watch polls on its own while either chip is on screen.
+// state.execEnvStatus: the last answer, unset until the first (in `state`: setRunExecEnv may paint before this line).
+function execEnvStatusOf(name) { return state.execEnvStatus?.find((e) => e.name === name) || null; }
+function paintExecEnvStatus() {
+  const known = Array.isArray(state.execEnvStatus);
+  const run = state.execEnv === 'local' ? null : execEnvStatusOf(state.execEnv);
+  paintExecEnvStatusChip(el.execEnvStatus, run, { hide: state.execEnv === 'local' || (known && !run) });
+  const e2b = execEnvStatusOf('e2b');
+  paintExecEnvStatusChip(document.getElementById('e2b-status-chip'), e2b, { hide: known && !e2b });
+  const server = document.getElementById('e2b-status-server');
+  if (server) { server.hidden = !e2b?.servers?.[0]; server.textContent = e2b?.servers?.[0] ? `Server: ${e2b.servers[0].label}` : ''; }
+}
+const execEnvStatusWatch = watchExecEnvStatus({ onStatus: (list) => { state.execEnvStatus = list; paintExecEnvStatus(); } });
+// On screen = the chip has a box in the viewport: hidden (Local), another view or Settings tab, scrolled away, or a
+// hidden browser tab all stop the poll. No IntersectionObserver (jsdom): no poll.
+if (typeof IntersectionObserver === 'function') {
+  const shown = new Set();
+  const apply = () => execEnvStatusWatch.setActive(shown.size > 0 && document.visibilityState === 'visible');
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) { if (e.isIntersecting) shown.add(e.target); else shown.delete(e.target); }
+    apply();
+  });
+  for (const chip of [el.execEnvStatus, document.getElementById('e2b-status-chip')]) if (chip) io.observe(chip);
+  document.addEventListener('visibilitychange', apply);
+}
+
+// Boot: the registered execution environments (GET /api/exec-envs) fill every "Runs in" picker.
+loadExecEnvs().then(() => {
+  fillExecEnvSelect(el.execEnvSelect);
+  fillExecEnvSelect(document.getElementById('e2b-exec-env'));
+  paintRunExecEnv();
 });
 
 function runSlotDefaults() { return state.runDefaults?.steps?.[state.engine] || null; }
@@ -5413,6 +5498,10 @@ async function loadRunDefaults(projectDir) {
   const prevSteps = JSON.stringify(state.runDefaults?.steps ?? null);
   state.runDefaults = data?.engine && ENGINE_NAMES.includes(data.engine.value) ? data : null;
   if (state.runDefaults && !state.engineTouched) setRunEngine(data.engine.value); else paintEngineHints();
+  // Kept apart from state.runDefaults, which is null whenever the engine part is invalid.
+  // Kept raw: a registered backend the picker list has not named yet is re-applied when the list arrives.
+  state.execEnvDefault = typeof data?.execEnv?.value === 'string' ? data.execEnv.value : 'local';
+  paintRunExecEnv();
   // The rows show the slot defaults: repaint them only when those changed (setRunEngine repaints
   // on an engine change itself). An idle repaint re-arms the policy/MCP preview debounce.
   if (JSON.stringify(state.runDefaults?.steps ?? null) !== prevSteps) void renderWorkflowConfig(state.workflowId);
@@ -5438,6 +5527,7 @@ if (el.engineSelect) {
     notePresetChange();
   });
 }
+el.execEnvSelect?.addEventListener('change', (e) => { state.execEnvTouched = true; setRunExecEnv(e.target.value); });
 
 // Guardrails change: remember the run's set and refresh the summary hint.
 if (el.guardrailsSelect) {
@@ -6480,6 +6570,25 @@ function renderQpanel(r, root) {
   renderer.render(panel, pq, ctx);
 
   panel.classList.remove('hidden');
+  paintQpanelDeadline(r, root);
+}
+
+/** E2B (docs/e2b.md): while a question waits, the parked sandbox is kept only until "Max wait for an answer".
+ *  Say when, and what happens then. Repainted on every state frame: the deadline arrives once the sandbox parks. */
+function paintQpanelDeadline(r, root) {
+  const panel = root && root.querySelector('.qpanel');
+  if (!panel) return;
+  let line = panel.querySelector('.qpanel-deadline');
+  const at = r.pendingQuestion && r.execEnv && r.execEnv !== 'local' && r.execEnvWaitUntil ? new Date(r.execEnvWaitUntil) : null;
+  if (!at || Number.isNaN(at.getTime())) { if (line) line.remove(); return; }
+  if (!line) {
+    line = document.createElement('p');
+    line.className = 'qpanel-deadline';
+    const head = panel.querySelector('.qpanel-head');
+    if (head) head.after(line); else panel.prepend(line);
+  }
+  const hhmm = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  line.textContent = `Answer by ${hhmm}. After that worca releases the ${execEnvTitle(r.execEnv)} sandbox and pauses the run; Resume continues in a fresh sandbox.`;
 }
 
 /** The `ctx` every registered renderer receives (index §P3). `mode` tells a body
@@ -8525,6 +8634,7 @@ function onProjectChanged() {
   paintFormWorkMode();
   showEngineRefusal(null); // the refusal and any consent were for the OLD project's context
   state.engineTouched = false;
+  state.execEnvTouched = false;
   // #527: a new project starts with no sync answer; the row stays hidden until branches-fresh.
   state.sync = freshSyncState(state.sync.gen + 1);
   syncHasRemote = null;
@@ -9386,6 +9496,7 @@ function setRunTarget(target, { persist = true } = {}) {
   paintFormWorkMode();
   showEngineRefusal(null); // the refusal and any consent were for the OLD target's context
   state.engineTouched = false;
+  state.execEnvTouched = false;
   if (persist) localStorage.setItem(LAST_TARGET_KEY, t);
   // A workspace run has no project layer: its default engine is the user's (review I3).
   void loadRunDefaults(t === 'workspace' || t === 'none' ? '' : (state.projectDir || ''));
@@ -16174,6 +16285,10 @@ function buildRunBody() {
       const all = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;
       return all.length ? all : undefined;
     })(),
+    // Execution environment: sent only when it differs from the default this run gets (none known = local),
+    // so a default run's body stays byte-identical. A saved E2B default the run cannot take goes unsent:
+    // the server runs it locally and says why in the run log.
+    ...(state.execEnv !== runExecEnvDefault() ? { execEnv: state.execEnv } : {}),
   };
   // Run on the source branch: a flag on the wire, never a feature name (the run auto-names its hidden branch).
   if (el.sameAsSource && el.sameAsSource.checked) { body.sameAsSource = true; delete body.featureBranch; }
@@ -16900,6 +17015,7 @@ async function loadSettings() {
     paintSmartNamingSettings(data);
     paintMemoryModelLink(data);
     paintActionsSettings(data);
+    paintE2bSettings(data);
     paintDebugSpawnSettings(data);
     paintKeepAwakeRow(data.keepAwake !== false);
     paintPrSettings(data);
@@ -19069,7 +19185,8 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     if (name) {
       const f = await memoryApi('GET', `${base}/files/${encodeURIComponent(name)}`);
       if (my !== seq) return;
-      if (f.ok) { st.selected = name; st.editor = { name, text: f.data.text, loaded: f.data.text }; }
+      // `held`: a sandbox run wrote it (memory-store isHeldSource); Save approves it.
+      if (f.ok) { st.selected = name; st.editor = { name, text: f.data.text, loaded: f.data.text, held: !!st.report.files?.find((x) => x.name === name)?.held }; }
       else say(f.data.error || `memory file "${name}" not found`, 'err-inline');
     }
     paint();
@@ -19093,9 +19210,9 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     });
     if (r.skipped) return;
     if (!r.ok) { cardAlert(ed, { title: 'Not saved', detail: r.error }); return; }
-    st.flash = [`Memory saved: ${name}.md`, 'ok'];
+    st.flash = [`Memory ${st.editor?.held ? 'approved' : 'saved'}: ${name}.md`, 'ok'];
     st.selected = name; st.isNew = false;
-    st.editor = { ...st.editor, name, text, loaded: text, msg: '', msgErr: false };
+    st.editor = { ...st.editor, name, text, loaded: text, msg: '', msgErr: false, held: false };
     // Route only when the hash would actually change: an unchanged hash fires no hashchange, so the
     // repaint would never happen.
     if (navigate && location.hash.slice(1) !== memoryRoute(scopeKey, name)) route(name);
@@ -20057,6 +20174,24 @@ document.getElementById('act-reset')?.addEventListener('click', (e) => saveActio
   { keep: null, portLow: null, portHigh: null, editor: null, terminal: null, maxCheckouts: null, previewPorts: null },
   { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('act-save');
+
+// Settings › Runs › Execution environment (docs/e2b.md). No team layer: null clears each key.
+function paintE2bSettings(data) {
+  const set = (id, v) => { const n = document.getElementById(id); if (n) n.value = v ?? ''; };
+  // Not .value: a saved backend missing from the static options would read as '' and be saved back as a clear.
+  setExecEnvSelectValue(document.getElementById('e2b-exec-env'), data?.execEnv);
+  set('e2b-max-sandboxes', data?.e2bMaxSandboxes);
+  set('e2b-max-wait', data?.e2bMaxWaitMin);
+  settingsCardPainted('e2b-settings-save');
+}
+document.getElementById('e2b-settings-save')?.addEventListener('click', (e) => {
+  const num = (id) => { const v = (document.getElementById(id)?.value ?? '').trim(); return v === '' ? null : Number(v); };
+  const sel = document.getElementById('e2b-exec-env')?.value;
+  postSettingsCard({ execEnv: sel && sel !== 'local' ? sel : null, e2bMaxSandboxes: num('e2b-max-sandboxes'), e2bMaxWaitMin: num('e2b-max-wait') },
+    { card: document.getElementById('e2b-settings-card'), button: e.currentTarget, paint: paintE2bSettings, dirty: settingsCardDirty('e2b-settings-save') });
+});
+settingsCardDirty('e2b-settings-save');
+document.getElementById('e2b-exec-env')?.addEventListener('change', (e) => { e.target.dataset.want = e.target.value; });
 
 const scriptsApi = {
   async list() {
@@ -28361,6 +28496,13 @@ function paintHdHeaderMeta(screen, record, data) {
   eng.textContent = engineLabel(engine);
   eng.title = `Engine: ${engineLabel(engine)}${isBetaEngine(engine) ? ' (beta)' : ''} runs this run's agents`;
   meta.appendChild(eng);
+  if (st.execEnv && st.execEnv !== 'local') {
+    meta.appendChild(hdDot());
+    const x = document.createElement('span'); x.className = 'hd-exec-env';
+    x.textContent = execEnvLabel(st.execEnv);
+    x.title = `Agents and scripts of this run executed in an ${execEnvLabel(st.execEnv)}; commits stayed local`;
+    meta.appendChild(x);
+  }
   const { day, clock } = splitDateStamp(st.startedAt || record.startedAt || record.mtime);
   const hdCost = runCostText(st, st.totalCostUsd, '');
   for (const [cls, text, strong] of [
@@ -34073,6 +34215,7 @@ function chatPaintQuestion(ref, host) {
     set.add(panel);
     if (r._answering) setPanelBusy(r, true);   // an answer already in flight (paintRdQuestions' rule)
   }
+  paintQpanelDeadline(r, host);                // the E2B release time follows state frames
   return { id: pq.id || null, kind: askKindOf(pq), heading: askHeading(r, pq),
     step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, true), ...(pq.stop ? { stop: true } : {}) };
 }
@@ -35990,6 +36133,7 @@ const designChatHost = {
       createChat: createDesignChat, showStage: () => showDesignStage(threadId), setTitle, setComposer,
       onCards: () => designChatCards.repaint(), onDeleted: () => askPanel?.setDesign(threadId, null) });
     designStudio = { threadId, studio };
+    repaintChatNav();                 // a design chat is the sidebar's Design
     designKind?.ready(threadId);      // a Design tab the panel mounted before the studio existed
     toolPanel?.onContextChange();     // a design chat's tools open in its design's folder (toolPageContext chatDesign)
     void showDesignStage(threadId);   // the design shows beside its chat
@@ -36000,7 +36144,7 @@ const designChatHost = {
     const page = createDesignStartPage({ doc: document, win: window, host: slot, fetch: (...a) => fetch(...a), navigate: designNavigate, setComposer });
     designStudio = { threadId: null, studio: page };
   },
-  unmount() { const d = designStudio; designStudio = null; d?.studio.destroy(); if (d) designChatCards.repaint(); },
+  unmount() { const d = designStudio; designStudio = null; d?.studio.destroy(); if (d) { designChatCards.repaint(); repaintChatNav(); } },
 };
 onFlagChange('design', (on) => { if (!on && currentView() === 'design') showView('chat', ''); updateNavCounts(); });
 
@@ -38700,9 +38844,10 @@ function chatRunPanelContext() {
 }
 
 // chatDeps.openRunPanel (CONTRACT §3/§6): ref = {runId?, pipelineId?, projectKey?, workspaceId?},
-// opts = {tab?}. A live run opens by its run id (a pipeline id finds its live run); anything else by its
-// pipeline id, whose project key is remembered so the saved run opens before History lists it.
-function openChatRunPanel(ref = {}, { tab = '' } = {}) {
+// opts = {tab?, threadId?}. A live run opens by its run id (a pipeline id finds its live run); anything else by its
+// pipeline id, whose project key is remembered so the saved run opens before History lists it. `threadId` opens the
+// panel beside that chat (the Chat home's run tile: the chat that follows the run); else beside the chat on screen.
+function openChatRunPanel(ref = {}, { tab = '', threadId = null } = {}) {
   // D23 first: a chat card's ref carries BOTH ids (run-card.mjs runRefOf), and its run id may be a superseded paused
   // copy or a run a restarted server no longer knows. The pipeline id names the current lineage.
   let id = '';
@@ -38729,7 +38874,7 @@ function openChatRunPanel(ref = {}, { tab = '' } = {}) {
     const t = crpResolve(id);
     if ((t.kind === 'saved' ? t.id : t.runId) === crp.id) return;
   }
-  const hash = runPanel.chatPanelHash(crpThreadParam(), id, String(tab || ''));
+  const hash = runPanel.chatPanelHash(threadId && CHAT_THREAD_RE.test(threadId) ? threadId : crpThreadParam(), id, String(tab || ''));
   if (location.hash.slice(1) === hash) { routeChatRunPanel(runPanel.panelSegments(hash.slice('chat/'.length))); return; }
   location.hash = hash;
 }
@@ -40251,6 +40396,8 @@ function paintRdQuestions(screen, r) {
     // `if (r._answering) return;` and die silently. Re-apply from the model.
     if (r._answering) setPanelBusy(r, true);
   }
+  paintQpanelDeadline(r, host);           // the E2B release time follows state frames, not the rebuild key
+
 }
 
 // Live twin of hdRetainedFor. A run model has no authoritative `retainedWork`
@@ -40339,6 +40486,23 @@ function paintRdBanners(screen, r) {
     const until = new Date(nw.until).toTimeString().slice(0, 5);
     b.textContent = `Waiting for network… ${nw.host} is unreachable. worca checks again with backoff and retries the step by itself (until ${until}).`;
     banners.prepend(b);
+  }
+
+  // ---- files from the sandbox to review before running them here (docs/e2b.md) ----
+  const rv = Array.isArray(r.execEnvReview) ? r.execEnvReview.filter((x) => x && typeof x.path === 'string') : [];
+  const rvKey = rv.map((x) => x.path).join('\n');
+  const oldRv = banners.querySelector('.exec-review-banner');
+  if (oldRv && oldRv.dataset.key !== rvKey) oldRv.remove();
+  if (rv.length && !banners.querySelector('.exec-review-banner')) {
+    const b = document.createElement('div');
+    b.className = 'net-wait-banner exec-review-banner';
+    b.dataset.key = rvKey;
+    const head = document.createElement('p');
+    head.textContent = `The ${execEnvTitle(r.execEnv)} sandbox changed files that run on this machine when someone uses them. Review them before running them here:`;
+    const ul = document.createElement('ul');
+    for (const x of rv) { const li = document.createElement('li'); li.textContent = `${x.path}: ${x.why || ''}`; ul.append(li); }
+    b.append(head, ul);
+    banners.append(b);
   }
 
   // ---- the worktree notice (retained work) and the Actions row ----
@@ -40530,6 +40694,7 @@ function paintRdHeader(screen, r) {
     ['rd-cost', runCostText(r, r.totalCostUsd).text + (freeRequestsSuffix(r.steps) || bridgeRequestsSuffix(r.steps)), true],
     ['rd-step', stepText, false],
   ];
+  if (r.execEnv && r.execEnv !== 'local') segs.push(['rd-exec-env', r.execEnvWaiting ? `waiting for ${execEnvTitleWithArticle(r.execEnv)} slot` : execEnvLabel(r.execEnv), false]);
   // Rebuilt only when what it says changed. Every frame of every run repaints this header, and a
   // <button> rebuilt between a press and its release loses the click (the two land on different
   // nodes). The elapsed segment changes on every frame, so it is written in place instead (the
@@ -42025,15 +42190,7 @@ function showView(name, param = '') {
   refreshAllCounts();        // every view switch re-reads the authoritative counts
 
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== viewSection(name)));
-  // A new design opens on the Chat page (#chat/new/design) but is the sidebar's Design: that row is lit, not Chat's.
-  const navSection = name === 'chat' && /^new\/design(?:\/|$)/.test(String(param || '')) ? 'design' : viewSection(name);
-  navLinks.forEach((b) => {
-    const on = b.dataset.nav === navSection;
-    b.classList.toggle('active', on);
-    if (on) b.setAttribute('aria-current', 'page');
-    else b.removeAttribute('aria-current');
-  });
-  paintTopnavTitle(navSection === 'design' ? 'design' : name);
+  paintNav(name, param);
   howItWorks.syncRoute(name);
   setMobileNavOpen(false);   // any route (a drawer tap, back/forward, a deep link) puts the drawer away
   // Any route puts the Actions flyout away (a click inside it already did).
@@ -42492,6 +42649,32 @@ for (const t of ['input', 'change', 'click']) {
   document.getElementById('run-form')?.addEventListener(t, () => setTimeout(paintHiddenSettings, 0));
 }
 
+/** The sidebar row a route lights. A design lives on the Chat page but is the sidebar's Design: a new design's start
+ *  (#chat/new/design) and a chat whose design is on screen light Design and title the page Design, not Chat. */
+function navSectionOf(name, param) {
+  if (name !== 'chat') return viewSection(name);
+  const p = String(param || '');
+  if (/^new\/design(?:\/|$)/.test(p)) return 'design';
+  const thread = p.split('/')[0];
+  // A design chat still loading reads its chats-list row, so Design stays lit from one design chat to the next.
+  return thread && (designStudio?.threadId === thread || askPanel?.designChatLoading(thread)) ? 'design' : 'chat';
+}
+function paintNav(name, param) {
+  const navSection = navSectionOf(name, param);
+  askPanel?.setListDesigns(name === 'chat' && navSection === 'design');   // beside Design, the chats list holds design chats only
+  navLinks.forEach((b) => {
+    const on = b.dataset.nav === navSection;
+    b.classList.toggle('active', on);
+    if (on) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
+  paintTopnavTitle(navSection === 'design' ? 'design' : name);
+}
+/** A design chat's design mounted or left after the route painted (the chat loads first): light the row again. */
+function repaintChatNav() {
+  if (currentShownView === 'chat') paintNav('chat', parseHash()[1]);
+}
+
 // Nav clicks only update the hash; the single hashchange listener drives
 // showView so each navigation runs it exactly once (no double /api/runs fetch).
 navLinks.forEach((b) =>
@@ -42709,13 +42892,14 @@ function enterChatView(param = '', prevView = null) {
 /** The panel moved to another chat (a History row, New chat, a first send, a deleted chat): the address follows —
  *  pushed, so Back returns to the previous chat, or swapped (`replace`: a first send, a chat that is gone). Only
  *  while Chat shows; the echo (hashchange → enterChatView → open) is a no-op for the chat already shown. */
-function chatRoute(threadId, { replace = false } = {}) {
+function chatRoute(threadId, { replace = false, design = false } = {}) {
   if (currentShownView !== 'chat') return;
   // A swapped address keeps an open run panel's tail (P4): #chat/new/run/<id>/logs → #chat/<id>/run/<id>/logs.
   const [, cur] = parseHash();
   const parts = String(cur || '').split('/');
   const tail = replace && parts[1] === 'run' ? `/${parts.slice(1).join('/')}` : '';
-  const target = threadId ? `chat/${threadId}${tail}` : (tail ? `chat/new${tail}` : 'chat');
+  // design: a new design's start (the chats list's New beside Design), as the sidebar's Design opens it.
+  const target = design ? 'chat/new/design' : threadId ? `chat/${threadId}${tail}` : (tail ? `chat/new${tail}` : 'chat');
   if (location.hash.slice(1) === target) return;
   if (replace) {
     try { window.history.replaceState(null, '', `#${target}`); } catch { /* sandboxed */ }
@@ -43068,6 +43252,8 @@ async function applyAskPrefill() {
     // AWAITED: onProjectChanged → loadConfig → loadWorkflowsInto/loadGuardrailsInto — un-awaited, that tail lands after our own awaits and resets both pickers.
     await onProjectChanged();
   } else if (p.pinWorkflow) await targetLoad;   // U-T4: its config tail must land before the chosen workflow is set
+  // The card's Runs in pick, AFTER the target change (it clears the touched flag); touched, so the defaults keep off it.
+  if (p.execEnv) { state.execEnvTouched = true; setRunExecEnv(p.execEnv); }
   el.prompt.value = src === 'prompt' ? (p.prompt || '') : '';
   if (el.promptMarkdown) el.promptMarkdown.value = src === 'markdown' ? p.promptMarkdown : el.promptMarkdown.value;
   refreshMentionHighlights();
