@@ -15,6 +15,8 @@ export function setExecEnvList(items) {
 }
 export const execEnvKnown = (name) => list.some((e) => e.name === name);
 export const execEnvLabel = (name) => list.find((e) => e.name === name)?.label || String(name);
+/** "a Docker", "an E2B": a backend's title behind the right article. */
+export const execEnvTitleWithArticle = (name) => { const t = execEnvTitle(name); return `${/^[aeiou]/i.test(t) ? 'an' : 'a'} ${t}`; };
 export const execEnvTitle = (name) => list.find((e) => e.name === name)?.title || String(name);
 /** Rebuild a <select>'s options from the list. Keeps the value a painter ASKED for (`select.dataset.want`, set by
  *  setExecEnvSelectValue even when the option did not exist yet), else the current value, when still listed. */

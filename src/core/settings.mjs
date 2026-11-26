@@ -78,6 +78,7 @@ import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
 import { isGuideAreaId } from '../shared/how-it-works/areas.mjs';
 import { isExecEnvName, execEnvNames } from './exec-env/index.mjs';
 import { DEFAULT_E2B_MAX_SANDBOXES, DEFAULT_E2B_MAX_WAIT_MIN } from './exec-env/e2b-config.mjs';
+import { DEFAULT_DOCKER_MAX_SANDBOXES, DEFAULT_DOCKER_MAX_WAIT_MIN } from './exec-env/backends/docker.mjs';
 import { normalizePins, storedPins } from '../shared/home-pins.mjs';
 import { DEFAULT_PATTERN, DEFAULT_TYPES, TYPE_RE, patternProblem } from '../shared/naming/pattern.mjs';
 import { IMAGE_SERVICES, IMAGE_SHAPES, originOf } from '../shared/image-services.mjs';
@@ -1507,6 +1508,9 @@ export async function setExecEnvSetting(input) {
 const E2B_INTS = {
   e2bMaxSandboxes: { valid: (v) => Number.isSafeInteger(v) && v >= 1 && v <= 64, range: '1–64', def: DEFAULT_E2B_MAX_SANDBOXES },
   e2bMaxWaitMin: { valid: (v) => Number.isSafeInteger(v) && v >= 5 && v <= 1440, range: '5–1440', def: DEFAULT_E2B_MAX_WAIT_MIN },
+  // The Local sandbox (Docker) backend's limitSettings (docs/local-sandbox.md): settings.json only.
+  dockerMaxSandboxes: { valid: (v) => Number.isSafeInteger(v) && v >= 1 && v <= 64, range: '1–64', def: DEFAULT_DOCKER_MAX_SANDBOXES },
+  dockerMaxWaitMin: { valid: (v) => Number.isSafeInteger(v) && v >= 5 && v <= 1440, range: '5–1440', def: DEFAULT_DOCKER_MAX_WAIT_MIN },
 };
 /** The stored value or null (GET: an unset field stays empty and shows the default as its placeholder). */
 export function e2bIntSettingRaw(key) {

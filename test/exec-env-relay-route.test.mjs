@@ -109,7 +109,8 @@ test('unparseable base URL is refused', () => {
 });
 
 test('the label words the refusal copy', () => {
-  assert.throws(() => route({ label: 'Foo sandbox', spawnEnv: { CLAUDE_CODE_USE_VERTEX: '1' } }), /which an Foo sandbox cannot relay/);
+  assert.throws(() => route({ label: 'Foo sandbox', spawnEnv: { CLAUDE_CODE_USE_VERTEX: '1' } }), /which a Foo sandbox cannot relay/);
+  assert.throws(() => route({ label: 'E2B sandbox', spawnEnv: { CLAUDE_CODE_USE_VERTEX: '1' } }), /which an E2B sandbox cannot relay/);
 });
 
 test('the server credential is trimmed in the header and in secrets', () => {

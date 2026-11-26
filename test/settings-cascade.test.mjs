@@ -232,7 +232,7 @@ test('run.execEnv: user default, project override, the run wins, an invalid stor
   writeProjectRow({ extra: { settings: { execEnv: 'local' } } });
   assert.deepEqual(resolveRunExecEnv({ projectDir: dir }), { execEnv: 'local', source: 'project' });
   assert.deepEqual(resolveRunExecEnv({ explicit: ' e2b ', projectDir: dir }), { execEnv: 'e2b', source: 'run' });
-  writeProjectRow({ extra: { settings: { execEnv: 'docker' } } });
+  writeProjectRow({ extra: { settings: { execEnv: 'podman' } } });
   assert.deepEqual(resolveRunExecEnv({ projectDir: dir }), { execEnv: 'e2b', source: 'user' });
   // A saved e2b default does not reach a run e2b cannot take: it stays local and says why.
   assert.deepEqual(resolveRunExecEnv({ workspace: true }),

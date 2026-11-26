@@ -242,8 +242,9 @@ export class RemoteExecEnv {
   async start() {
     if (!this.environment) throw new Error(`no ${this.backend.environmentNoun} to start the ${this.label} from`);
     // `network` (null: open) is fixed at create; a reconnect keeps the policy the sandbox was made with.
+    // `onLog`: a backend's progress lines while it creates (a first-use image build, the sandbox's limits).
     this._adopt(await this._call(() => this.client.create({ environment: this.environment, tags: this.metadata, timeoutMs: SANDBOX_TIMEOUT_MS,
-      ...(this.network ? { network: this.network } : {}) })));
+      ...(this.network ? { network: this.network } : {}), onLog: (line) => this.log('info', String(line)) })));
     this.log('info', `sandbox ${this.sandboxId} created from ${this.backend.environmentNoun} ${this.environment}`);
     await this._ensureDirs([this.work, dirname(this.worktreeDir), ...this.roots]);
     await this._cloneIn();

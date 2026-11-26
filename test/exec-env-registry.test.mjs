@@ -12,10 +12,11 @@ import { createLoopbackBackend } from './helpers/loopback-backend.mjs';
 
 const root = mkdtempSync(join(tmpdir(), 'worca-registry-')); after(() => rmSync(root, { recursive: true, force: true }));
 
-test('EXEC_ENVS is derived from the registry: local first, then e2b', () => {
-  assert.deepEqual(EXEC_ENVS, ['local', 'e2b']);
+test('EXEC_ENVS is derived from the registry: local first, then e2b and docker', () => {
+  assert.deepEqual(EXEC_ENVS, ['local', 'e2b', 'docker']);
+  assert.equal(getExecBackend('docker').label, 'Local sandbox (Docker)');
   assert.equal(getExecBackend('e2b').label, 'E2B sandbox');
-  assert.throws(() => getExecBackend('docker'), /unknown execution environment "docker" \(known: local, e2b\)/);
+  assert.throws(() => getExecBackend('podman'), /unknown execution environment "podman" \(known: local, e2b, docker\)/);
 });
 
 test('a registered backend is selectable, listed with its label, and its secrets are stripped from host children', () => {
@@ -24,7 +25,7 @@ test('a registered backend is selectable, listed with its label, and its secrets
   try {
     assert.equal(selectExecEnv('loopback'), 'loopback');
     assert.equal(isExecEnvName('loopback'), true);
-    assert.deepEqual(describeExecEnvs().map((e) => [e.name, e.label]), [['local', 'Local'], ['e2b', 'E2B sandbox'], ['loopback', 'Loopback box']]);
+    assert.deepEqual(describeExecEnvs().map((e) => [e.name, e.label]), [['local', 'Local'], ['e2b', 'E2B sandbox'], ['docker', 'Local sandbox (Docker)'], ['loopback', 'Loopback box']]);
     assert.deepEqual(stripHostCredentials({ LOOPBACK_SECRET_TOKEN: 'x', KEEP: '1' }), { KEEP: '1' });
   } finally { unregister(); }
   assert.throws(() => selectExecEnv('loopback'), /unknown execution environment/);

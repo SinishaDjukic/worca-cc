@@ -194,3 +194,6 @@ export function remotePreflight({ title, engine, isWorkspace, workMode = 'git', 
 /** Why a SAVED (not explicit) remote default does not apply to a run, for every backend; null when it does.
  *  The New run dialog applies the same rule (src/shared/exec-env.mjs). */
 export { remoteRefusesDefault } from '../../shared/exec-env.mjs';
+
+/** "a Local sandbox (Docker)", "an E2B sandbox": a backend's label behind the right article. */
+export const withArticle = (label) => `${/^[aeiou]/i.test(String(label)) ? 'an' : 'a'} ${label}`;

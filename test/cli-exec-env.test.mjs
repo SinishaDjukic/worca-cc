@@ -31,10 +31,10 @@ test('help lists the verbs; an unknown verb is refused', async () => {
   const r = await run(['bogus']);
   assert.equal(r.code, 1); assert.match(r.errs[0], /unknown exec-env command: bogus/);
 });
-test('list names local and e2b', async () => {
+test('list names local, e2b and docker', async () => {
   const r = await run(['list']);
   assert.equal(r.code, 0);
-  assert.deepEqual(r.out.map((l) => l.split(/\s+/)[0]), ['local', 'e2b']);
+  assert.deepEqual(r.out.map((l) => l.split(/\s+/)[0]), ['local', 'e2b', 'docker']);
 });
 test('spec shows nothing before a spec is set', async () => {
   const r = await run(['spec', '--project', KEY]);

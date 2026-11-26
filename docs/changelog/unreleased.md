@@ -126,6 +126,30 @@ Pull requests (add each number when it opens):
 
 - Exec env: a project environment spec and its CLI
 
+## Local sandbox (Docker)
+
+**A run's agents can now work in a disposable container on your own Docker.**
+
+Worca stays native. Pick it under **Runs in**, or with `worca --exec-env docker`. One container serves the whole run.
+
+Nothing of your machine is mounted. Code goes in as a git bundle. Changes come back as a filtered patch after each step. No model key enters the container.
+
+The container is hardened. No sudo. Almost every capability dropped. No new privileges. Limits on processes, memory and CPU. A stricter runtime, such as `runsc`, is one setting away.
+
+The container has no network of its own. Every connection goes through Worca, which never lets it reach your machine. Open or allow-listed hosts only, per project. Behind a proxy that needs a login, Worca's local proxy logs in. The login never enters the container.
+
+The image builds itself on first use. Project images build from the environment spec.
+
+It needs Docker Desktop or Docker Engine. Single git projects on Claude, Codex, Copilot or Cursor only.
+
+Chips: Runs · Security · Docker
+
+Read it: [Local sandbox (Docker)](../local-sandbox.md)
+
+Pull requests (add each number when it opens):
+
+- Local sandbox (Docker) backend (#1627)
+
 ## Runs in an E2B sandbox
 
 **A run's agents can now work in an E2B sandbox instead of on your machine.**

@@ -61,6 +61,7 @@
     "npm-shrinkwrap.json",
     "docker/e2b/e2b.Dockerfile",
     "docker/e2b/engine-clis.json",
+    "docker/local-sandbox/sandbox.Dockerfile",
     "docker/CLAUDE_CODE_VERSION",
     "README.md"
   ],

@@ -605,7 +605,7 @@ test('execution environment: GET has the raw values, POST saves and echoes them,
   assert.equal(r.status, 200);
   const g1 = await getApi();
   assert.deepEqual([g1.execEnv, g1.e2bMaxSandboxes, g1.e2bMaxWaitMin], ['e2b', 2, 30]);
-  for (const [body, field] of [[{ execEnv: 'docker' }, 'execEnv'], [{ e2bMaxSandboxes: 0 }, 'e2bMaxSandboxes'], [{ e2bMaxWaitMin: 2 }, 'e2bMaxWaitMin']]) {
+  for (const [body, field] of [[{ execEnv: 'podman' }, 'execEnv'], [{ e2bMaxSandboxes: 0 }, 'e2bMaxSandboxes'], [{ e2bMaxWaitMin: 2 }, 'e2bMaxWaitMin']]) {
     const bad = await postJson(body);
     const j = await bad.json();
     assert.equal(bad.status, 400, JSON.stringify(j));

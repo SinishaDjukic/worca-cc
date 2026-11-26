@@ -387,7 +387,8 @@ Options:
   --model <m>              Claude model id
   --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta) | gemini (beta) | goose (beta) | opencode (beta) | qwen (beta)
   --exec-env <name>        Where agent and script steps execute: local (default) or a registered backend —
-                           e2b (one E2B sandbox per run; docs/e2b.md). List them: worca exec-env list
+                           e2b (one E2B sandbox per run; docs/e2b.md) | docker (one local container per run;
+                           docs/local-sandbox.md). List them: worca exec-env list
   --allow-unguarded-engine Run on an engine that cannot fully enforce the guardrail set's permission rules
   --guardrails <id>        Guardrail set the run uses: permissive | normal | secure (Strict) | a saved set's id
                            (default: the install's default set, Normal on a new install)

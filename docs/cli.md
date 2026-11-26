@@ -96,8 +96,8 @@ worca flags on smartRunNaming   # a Labs feature, off by default
 - `exec-env spec` shows, sets or clears a project's environment spec. See
   [Project environment spec](environment-spec.md).
 - `exec-env list|status|build` lists the execution environments, shows a project's builds as the running server sees
-  them, and builds a project's E2B template in that server. See
-  [E2B](e2b.md#building-and-rebuilding-a-project-environment).
+  them, and builds a project's E2B template or Local sandbox (Docker) image in that server. See
+  [E2B](e2b.md#building-and-rebuilding-a-project-environment) and [Local sandbox (Docker)](local-sandbox.md#project-images).
 - `e2b sweep` removes this instance's orphan E2B sandboxes. See [E2B](e2b.md#cleaning-up-orphan-sandboxes).
 - `container build` builds the box image from the projects' environment specs. See
   [Building the box image](environment-spec.md#building-the-box-image).
