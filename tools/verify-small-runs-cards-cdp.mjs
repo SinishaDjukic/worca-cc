@@ -606,9 +606,19 @@ const D2_MEMBERS = `(() => {
     cost: [...g.querySelectorAll(':scope > a.runs-row .runs-cost')].filter((c) => c.offsetParent).length, costTitle: g.querySelector(':scope > a.runs-row').getAttribute('title'),
     overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth };
 })()`;
-/** Visible Agents places under `scope`: the `.rd-run-agents` box plus the Agents tab buttons. */
-const AGENT_PLACES = (scope) => `(() => [...document.querySelectorAll(${JSON.stringify(`${scope} .rd-run-agents`)})].filter((x) => x.offsetParent && !x.hidden).length
-  + [...document.querySelectorAll(${JSON.stringify(`${scope} :is(.rd-tab, .hd-tab)[data-sec="agents"]`)})].filter((x) => x.offsetParent && !x.hidden).length)()`;
+/** Visible Agents places under `scope`: the `.rd-run-agents` box plus the Agents tab, in the row or under "More". */
+const AGENT_PLACES = (scope) => `(() => {
+  const seen = (sel) => [...document.querySelectorAll(sel)].filter((x) => x.offsetParent && !x.hidden).length;
+  const tab = seen(${JSON.stringify(`${scope} :is(.rd-tab, .hd-tab)[data-sec="agents"]`)});
+  let menu = 0;
+  const more = [...document.querySelectorAll(${JSON.stringify(`${scope} .tabs > .tab-more`)})].find((x) => x.offsetParent);
+  if (more && !tab) {
+    more.click();
+    menu = [...document.querySelectorAll('body > .wfv-menu .wfv-menu-l')].filter((x) => x.textContent === 'Agents').length;
+    more.click();
+  }
+  return seen(${JSON.stringify(`${scope} .rd-run-agents`)}) + tab + menu;
+})()`;
 /** The facts box: one "Starts from", each owned id once, every id and Owns label whole, and the box names neither the
  *  feature title nor the run's own "Run N". */
 const FACTS = (scope, runN) => `(() => {

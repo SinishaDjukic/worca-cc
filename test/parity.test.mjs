@@ -160,14 +160,14 @@ test('route only: a copy tree with one route renamed reports only-in-a and only-
   assert.deepEqual([r.visualDiffs.length, r.failedFlows.length], [0, 0]);
 });
 
-test('visual only: one colour on one element (the run status word) is a visual difference on History and the live run only, exit 1', { skip, timeout: 900_000 }, async () => {
+test('visual only: one colour on one element (the run state word) is a visual difference on History and the live run only, exit 1', { skip, timeout: 900_000 }, async () => {
   const copy = mutatedCopy((c) => edit(join(c, 'ui', 'public', 'style.css'),
-    (s) => `${s}\n.run-status-word{color:#ff0000 !important}\n`));
+    (s) => `${s}\n.run-state-word{color:#ff0000 !important}\n`));
   const { code, r } = await runAgainst(copy);
   assert.equal(code, 1);
   assert.equal(r.routeDiffs.length, 0);
   assert.ok(r.visualDiffs.length > 0);
-  assert.deepEqual([...new Set(r.visualDiffs.map((v) => v.page))].sort(), ['history', 'live-run']);   // both show the run status card
+  assert.deepEqual([...new Set(r.visualDiffs.map((v) => v.page))].sort(), ['history', 'live-run']);   // both show the run's state line
   assert.ok(r.visualDiffs.every((v) => v.pixels > 0 && v.pixels < 1280 * 800 * 0.01), 'a small region, not the whole page');
 });
 

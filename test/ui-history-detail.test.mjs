@@ -18,6 +18,7 @@ import {
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
+import { openTab } from './helpers/run-tabs.mjs';
 
 // ---------------------------------------------------------------------------
 // Header meta
@@ -514,7 +515,7 @@ test('tabs render with badges; Details opens on Overview, and a tab route opens 
 
   assert.deepEqual(
     tabsOf(doc).map((b) => b.dataset.sec),
-    ['overview', 'task', 'diff', 'actions', 'workflow', 'clarify', 'logs', 'agents'],   // one order on both run pages: results, then how it ran
+    ['overview', 'task', 'diff', 'clarify', 'logs', 'actions', 'workflow', 'agents'],   // one order on both run pages: the row, then what is under More
   );
   // filesNew(1) + filesChanged(13). NEVER + filesDeleted: results.mjs:32 buckets
   // 'D' rows into changedFiles (NEW_STATUS is {A,C}) while :29 ALSO counts them in
@@ -574,7 +575,7 @@ test('Artifacts tab GETs /api/runs/:id/artifacts, renders per-node groups and dr
   await openDetail(ctx);
   const doc = ctx.window.document;
   const tab = doc.querySelector('#hist-detail .hd-tab[data-sec="artifacts"]');
-  if (tab) { click(ctx.window, tab); await settle(ctx.window, 6); }
+  if (tab) { openTab(ctx.window, tab); await settle(ctx.window, 6); }
   const sec = doc.querySelector('#hist-detail .hd-sec[data-sec="artifacts"]');
   await checkRows([
     { name: 'the Artifacts tab fetches GET /api/runs/:id/artifacts and renders per-node groups', run: () => {
@@ -1170,7 +1171,7 @@ test('F-2: the Local copy row, the Overview WORKTREE row and the Actions tab rea
   await settle(ctx.window, 6);
   assert.match(wt().textContent, /released/);
   assert.equal(simpleRowOf(doc), null, 'the Local copy row goes with the checkout');
-  click(ctx.window, doc.querySelector('#hist-detail .hd-tab[data-sec="actions"]'));
+  openTab(ctx.window, doc.querySelector('#hist-detail .hd-tab[data-sec="actions"]'));
   await settle(ctx.window, 6);
   assert.ok(offersCheckout(), 'the Actions tab offers Check out again');
 });

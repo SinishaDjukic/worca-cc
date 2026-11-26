@@ -8,6 +8,7 @@ import { SESSION_STEPPER, groupedRunningState } from './helpers/session-run-stat
 import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
 import { bootDetail, openDetail, settle, DETAIL, ROW, ok } from './helpers/history-detail-boot.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
+import { openTab } from './helpers/run-tabs.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const SID = 's_aaaaaaaa';
@@ -233,7 +234,7 @@ test('v2 — the run page: a Sessions tab before Agents once the manifest has a 
   await ctx.settle();
   assert.deepEqual(tabs().slice(-2), ['sessions', 'agents'], 'the manifest arriving rebuilds the tabs');
   assert.equal(ctx.window.document.querySelector('#run-detail .rd-tab[data-sec="sessions"] .rd-tab-badge').textContent, '1');
-  ctx.window.document.querySelector('#run-detail .rd-tab[data-sec="sessions"]').click();
+  openTab(ctx.window, ctx.window.document.querySelector('#run-detail .rd-tab[data-sec="sessions"]'));
   await ctx.settle(6);
   assert.ok(ctx.calls.some((c) => c.url === '/api/runs/feed5678/sessions'), 'by the pipeline id');
   const card = ctx.window.document.querySelector('#run-detail .rd-sec[data-sec="sessions"] .rs-card');
@@ -279,7 +280,7 @@ test('History: a failed load is asked again when the tab is opened again', async
   const before = seen;
   up = true;
   doc2.querySelector('#hist-detail .hd-tab:not([data-sec="sessions"])').click();
-  doc2.querySelector('#hist-detail .hd-tab[data-sec="sessions"]').click();
+  openTab(ctx.window, doc2.querySelector('#hist-detail .hd-tab[data-sec="sessions"]'));
   await settle(ctx.window, 6);
   assert.equal(seen - before, 1, 'the copy promises a retry: reopening the tab asks again');
   assert.ok(sec.querySelector('.rs-card'), 'and the report painted');
@@ -397,7 +398,7 @@ test('v4 — the Running tab asks again only after a sessionHost frame, from the
   await ctx.settle();
   ctx.dispatch(frame);
   await ctx.settle();
-  ctx.window.document.querySelector('#run-detail .rd-tab[data-sec="sessions"]').click();
+  openTab(ctx.window, ctx.window.document.querySelector('#run-detail .rd-tab[data-sec="sessions"]'));
   await ctx.settle(6);
   const fetches = () => ctx.calls.filter((c) => c.url === '/api/runs/feed5678/sessions').length;
   assert.equal(fetches(), 1, 'the tab opened');
@@ -514,7 +515,7 @@ test('v5 — the Running page passes its own trays: a gate answered with the sam
   await ctx.settle();
   ctx.dispatch(frame({ gate: { wireId: 'w2', fromNode: 'n_review', toNode: 'n_impl', askId: 'gate-w2-1' } }));
   await ctx.settle();
-  ctx.window.document.querySelector('#run-detail .rd-tab[data-sec="sessions"]').click();
+  openTab(ctx.window, ctx.window.document.querySelector('#run-detail .rd-tab[data-sec="sessions"]'));
   await ctx.settle(6);
   const word = () => ctx.window.document.querySelector('#run-detail .rd-sec[data-sec="sessions"] .rs-state').textContent;
   assert.equal(word(), 'Between turns', 'a gate holds on Review for a person: the tray waits, so does the card');

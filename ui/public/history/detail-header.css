@@ -9,7 +9,9 @@
    `.hist-screen-detail` keeps `padding:0` so the sticky `.hd-tabs` can still pin
    flush to the scrollport top. Inner padding drops 32 -> 24 so the title lands a
    card-like distance from the border instead of 56px from the viewport edge. */
-.hd-header,.pd-header{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);margin:20px 32px 0;padding:20px 24px 18px;}
+/* The saved run's header has no box, as .rd-header; the project and workspace pages keep theirs. */
+.hd-header{margin:41px 32px 0;padding:0;}
+.pd-header{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);margin:20px 32px 0;padding:20px 24px 18px;}
 .hd-row1,.pd-row1{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;}
 @media (max-width:640px){.hd-row1 > .hd-title,.pd-row1 > .pd-title{flex:1 1 100%;}}
 .pd-row1:has(> .pd-kind:not(:empty)) > .pd-title{flex:0 1 auto;}

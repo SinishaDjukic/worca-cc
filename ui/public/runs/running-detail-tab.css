@@ -18,6 +18,10 @@
 .rd-tab-badge{padding:2px 8px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);
   font:600 var(--fs-caption) var(--mono);}
 .rd-tab.active .rd-tab-badge{background:var(--blue-bg);color:var(--blue-ink-strong);}
+/* "More" (initDetailTabs overflow, both run pages): an overflow tab is drawn only while it is the open one, just before
+   the More button, which wears .tab with its chevron close to the word. */
+.tabs > .tab[data-overflow]:not(.active){display:none;}
+.tabs > .tab-more{gap:4px;}
 /* .rd-sections needs no rule of its own — the inset comes from .rd-body's
    padding, exactly as .hd-sections does. */
 .rd-sec{margin-top:4px;}

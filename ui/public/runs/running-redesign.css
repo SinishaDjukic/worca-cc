@@ -129,6 +129,10 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .wfv-menu .wfv-menu-item[role="menuitemradio"] > .wfv-menu-l{grid-column:2;min-width:0;}
 .wfv-menu .wfv-menu-item[role="menuitemradio"] > :is(.wfv-menu-hint,.kind-chip){grid-column:3;justify-self:end;margin-left:0;}
 .wfv-menu .wfv-menu-item[role="menuitemradio"] > .wfv-menu-hint{min-width:3ch;text-align:right;font-variant-numeric:tabular-nums;}
+/* A radio row with an icon (the run pages' More menu) gives it a column of its own, between the ✓ and the label. */
+.wfv-menu .wfv-menu-item[role="menuitemradio"]:has(> .wfv-menu-ic){grid-template-columns:12px 16px minmax(0,1fr) auto;}
+.wfv-menu .wfv-menu-item[role="menuitemradio"] > .wfv-menu-ic + .wfv-menu-l{grid-column:3;}
+.wfv-menu .wfv-menu-item[role="menuitemradio"] > .wfv-menu-ic ~ :is(.wfv-menu-hint,.kind-chip){grid-column:4;}
 /* Section heads (Needs you, Running, a project, a day) are large, light ink type that stands above the rows; the light
    weight keeps them under the page title. Their count sits at the line's right end at body size (the row-level count
    stays a caption), and a gap above each later section keeps one section's last row from running into the next head.

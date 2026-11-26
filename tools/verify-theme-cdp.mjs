@@ -88,6 +88,11 @@ const TYPE_AUDIT = `(${auditType})(document.body, ${JSON.stringify(TYPE_SPEC)}, 
 const TYPE_STATES = new Set(['new', 'running-list', 'running-detail', 'running-detail-details', 'history-detail', 'history-detail-details', 'ask-sheet']);
 const FIXTURE_FILE = new URL('test/fixtures/theme-kitchen-sink.html', ROOT);
 
+/** The i-th run page tab button in RD_TABS / HD_TABS order, whatever order the row draws them in (a page expression). */
+const TAB_ORDER = ['overview', 'task', 'diff', 'changes', 'artifacts', 'actions', 'workflow', 'qa', 'clarify', 'logs', 'sessions', 'agents'];
+function tabAt(sel, i) {
+  return `[...document.querySelectorAll(${JSON.stringify(sel)})].sort((a, b) => ${JSON.stringify(TAB_ORDER)}.indexOf(a.dataset.sec) - ${JSON.stringify(TAB_ORDER)}.indexOf(b.dataset.sec))[${i}]`;
+}
 const CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser', '/usr/bin/chromium'];
 const CHROME = process.env.CHROME_BIN || CHROME_PATHS.find((p) => existsSync(p)) || CHROME_PATHS[0];
@@ -461,7 +466,10 @@ const states = [
   // Details (#running/<id>/details[/<tab>]). Each mode is its own audited state.
   ['running-detail', async () => { await go(`running/${runId}`); await until(`document.querySelector('#run-detail .rd-glance:not([hidden]) .rd-page-title')?.textContent`, 'the glance'); }],
   ['running-detail-details', async () => { await go(`running/${runId}/details`); await until(`document.querySelector('#run-detail .rd-details:not([hidden]) .rd-tabs .rd-tab')`, 'detail tabs'); await freeze('details'); }],
-  ['running-detail-tabs', async () => { const n = await ev(`document.querySelectorAll('#run-detail .rd-tab').length`); if (n < 2) throw new Error(`running-detail has ${n} tab(s): nothing to audit`); for (let i = 1; i < n; i += 1) { await ev(`document.querySelectorAll('#run-detail .rd-tab')[${i}].click();0`); await freeze('tab'); await auditCurrent(`running-detail-tab-${i}`); } }],
+  // Every tab button is audited, the ones under "More" too (a click brings one into the row); the guard counts the row.
+  // Walked in table order (tabAt): the state names are positions in the run pages' tab tables, which contrast-baseline
+  // keys on, and "More" reorders the buttons.
+  ['running-detail-tabs', async () => { const shown = await ev(`[...document.querySelectorAll('#run-detail .rd-tabs [role=tab]')].filter((b) => b.offsetParent).length`); if (shown < 2) throw new Error(`running-detail shows ${shown} tab(s): nothing to audit`); const n = await ev(`document.querySelectorAll('#run-detail .rd-tab').length`); for (let i = 1; i < n; i += 1) { await ev(`${tabAt('#run-detail .rd-tab', i)}.click();0`); await freeze('tab'); await auditCurrent(`running-detail-tab-${i}`); } }],
   // No finished Running page: a finished run IS its saved run (app.js rdSavedRoute), and after
   // the reload every go() does, #running/<id> lands on #history/… — the history-detail states.
   // The just-finished mock run LINGERS as a live row and the list hides its History row
@@ -518,7 +526,7 @@ const states = [
     await api(`/api/runs/${encodeURIComponent(pipelineId)}/tags`, { method: 'PUT', headers: json, body: JSON.stringify({ tags: [] }) });
   }],
   ['history-detail-details', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('.hd-details:not([hidden]) .hd-tabs .hd-tab')`, 'history tabs'); await freeze('details'); }],
-  ['history-detail-tabs', async () => { const n = await ev(`document.querySelectorAll('.hd-tabs .hd-tab').length`); if (n < 2) throw new Error(`history-detail has ${n} tab(s): nothing to audit`); for (let i = 1; i < n; i += 1) { await ev(`document.querySelectorAll('.hd-tabs .hd-tab')[${i}].click();0`); await until(`!document.querySelector('.hd-diff-pane') || document.querySelector('.hd-diff-pane .hd-dl-row, .hd-diff-none, .hd-diff-note')`, 'tab content'); await freeze('tab'); await auditCurrent(`history-detail-tab-${i}`); } }],
+  ['history-detail-tabs', async () => { const shown = await ev(`[...document.querySelectorAll('.hd-tabs [role=tab]')].filter((b) => b.offsetParent).length`); if (shown < 2) throw new Error(`history-detail shows ${shown} tab(s): nothing to audit`); const n = await ev(`document.querySelectorAll('.hd-tabs .hd-tab').length`); for (let i = 1; i < n; i += 1) { await ev(`${tabAt('.hd-tabs .hd-tab', i)}.click();0`); await until(`!document.querySelector('.hd-diff-pane') || document.querySelector('.hd-diff-pane .hd-dl-row, .hd-diff-none, .hd-diff-note')`, 'tab content'); await freeze('tab'); await auditCurrent(`history-detail-tab-${i}`); } }],
   // The Workflows view (full screen): the canvas with the Library open, the Library's Scripts section with general expanded,
   // the save dialog the engine opens itself, the agent sheet and the open chat.
   ['workflows', async () => { await go('workflows'); await until(`document.querySelector('[data-view="workflows"] .gv-world .node')`, 'workflow nodes'); await freeze('workflows'); }],

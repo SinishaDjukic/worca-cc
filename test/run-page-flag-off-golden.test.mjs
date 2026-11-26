@@ -9,7 +9,9 @@
 //   ln -s "$PWD/node_modules" "$D/node_modules"; cp test/run-page-flag-off-golden.test.mjs "$D/test/"
 //   (cd "$D" && UPDATE_RUN_PAGE_GOLDEN=1 node tools/test.mjs test/run-page-flag-off-golden.test.mjs)
 //   cp "$D/test/fixtures/shaper/run-page-flag-off-golden.json" test/fixtures/shaper/
-// Do NOT regenerate it on a later tree: it is the proof that flag-off output never moved.
+// Do NOT regenerate it on a later tree: it is the proof that flag-off output never moved. The one exception is a change
+// that moves dev's run page on purpose for every run, flag or not: it refreshes the live and saved cases in its own tree
+// and reviews that only its own markup moved (the plain header with "More": the tab row and the card's status head).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
