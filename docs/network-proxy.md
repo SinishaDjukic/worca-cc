@@ -404,6 +404,8 @@ login. Test still works.
 | Shared instance | In the egress sidecar: a technical user's login, optionally managed by the operator (`WORCA_EGRESS_LOGIN_FILE`) | No, as in the hardened box. |
 | Plain container (`worca container up`) with a proxy login | In the egress sidecar, which starts by itself, in open mode | No. The box has no copy. |
 | Plain container without the sidecar (raw `docker compose up`) | In the box, `/worca/.worca-cc/proxy-login.json`, with a warning at start | Yes, unless agent isolation is on. |
+| [Local sandbox (Docker)](local-sandbox.md) | With Worca on your machine, as in Native: `~/.worca-cc/proxy-login.json`. The container has no network: its connections are carried to Worca, and Worca's local proxy on `127.0.0.1` does the login | No. Nothing of your machine is mounted in the container, and the login never enters it. |
+| [E2B sandbox](e2b.md) | With Worca, where Worca runs: `~/.worca-cc/proxy-login.json` on a native install, the egress sidecar in a container setup. Worca reaches the E2B server through the proxy. The sandbox reaches the network from the E2B server, not through your proxy | No. The login never enters the sandbox. |
 
 In the hardened box and the shared instance, agents still send their traffic
 through the sidecar, which is logged in. That is the point of the proxy. With
@@ -413,8 +415,8 @@ the sidecar out or change its proxy settings, but still never read the login.
 A Railway instance normally has no corporate proxy in front of it, so it has
 no sidecar.
 
-- Local sandbox (Docker): arrives in a later release. The login stays with Worca on the server and never enters the sandbox.
-- E2B sandbox: arrives in a later release. The login stays with Worca on the server and never enters the sandbox.
+In the Local sandbox (Docker), a `docker build` of the sandbox image gets no login either: behind a proxy that needs
+one, set Docker's own proxy setting (see [Local sandbox (Docker)](local-sandbox.md#network)).
 
 To compare the setups, see [Choose a setup](choose-a-setup.md) and the [Security overview](security-overview.md).
 

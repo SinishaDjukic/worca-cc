@@ -1,6 +1,6 @@
 // src/core/host-credentials.mjs
 // One host-aware entry point for worca's own git calls against a remote, and one strip for every spawn
-// that must never see a code-host credential (agents, scripts, actions).
+// that must never see a code-host or execution-backend credential (agents, scripts, actions).
 import { parseRemoteUrl, forgeOf } from './forge.mjs';
 import { githubEnv, stripGithubCredentials, readGithubCredentials, asPersonMode } from './github-credentials.mjs';
 import { azureEnv, stripAzureCredentials, readAzureCredentials } from './azure-credentials.mjs';
@@ -27,8 +27,24 @@ function stripTrackerTokens(env) {
   return out;
 }
 
+// Execution backends' own keys (exec-env/registry.mjs registers each backend's `secretEnv`). Only worca itself
+// talks to a backend — the server, and the `worca` CLI the person runs — so no agent, script, action or git
+// child gets them. The person's own terminal pane gets them back (terminal/context.mjs pickBackendSecrets).
+const BACKEND_SECRET_ENV = [];
+export function registerHostSecretEnv(re) {
+  if (re instanceof RegExp && !BACKEND_SECRET_ENV.some((r) => String(r) === String(re))) BACKEND_SECRET_ENV.push(re);
+}
+export const isBackendSecret = (k) => BACKEND_SECRET_ENV.some((re) => re.test(k));
 export function stripHostCredentials(env) {
-  return stripTrackerTokens(stripBitbucketCredentials(stripAzureCredentials(stripGithubCredentials(env))));
+  const out = stripTrackerTokens(stripBitbucketCredentials(stripAzureCredentials(stripGithubCredentials(env))));
+  for (const k of Object.keys(out)) if (isBackendSecret(k)) delete out[k];
+  return out;
+}
+/** The backend-secret keys of `env` (string values only), e.g. { E2B_API_KEY, E2B_API_URL }. */
+export function pickBackendSecrets(env) {
+  const out = {};
+  for (const [k, v] of Object.entries(env || {})) if (typeof v === 'string' && isBackendSecret(k)) out[k] = v;
+  return out;
 }
 
 /**

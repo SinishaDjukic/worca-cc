@@ -33,6 +33,9 @@ services:
       # sidecar it calls on this network (the broker overlay's broker:8080)
       # must be listed here or the proxy refuses it as not allowlisted.
       NO_PROXY: 127.0.0.1,localhost,broker
+      # The same list the sidecar enforces, for a sandbox run's "Allow listed hosts only" (docs/e2b.md). Its own
+      # name, so Worca's outbound policy (WORCA_EGRESS_MODE) never reads it.
+      WORCA_SANDBOX_EGRESS_ALLOW: ${WORCA_EGRESS_ALLOW:-}
       # Playwright downloads Chromium from a CDN; add it to the allowlist or
       # pre-fetch it. Listed here so the failure is legible, not silent.
       PLAYWRIGHT_DOWNLOAD_HOST: ${PLAYWRIGHT_DOWNLOAD_HOST:-}

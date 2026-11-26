@@ -7,7 +7,7 @@ them into the next page and empties this file.
 
 **Two new pages tell you which Worca setup fits you, and what each one protects.**
 
-"Choose a setup" compares Native, Local sandbox (Docker), E2B sandbox, Hardened box and Shared instance. It says who each is for, how you work in it, where each credential lives and what you need. The Local sandbox and the E2B sandbox arrive in a later release.
+"Choose a setup" compares Native, Local sandbox (Docker), E2B sandbox, Hardened box and Shared instance. It says who each is for, how you work in it, where each credential lives and what you need.
 
 The security overview says what Worca treats as untrusted. The claim for a sandboxed setup is: no model key, no git token and no proxy login in an agent's reach. It does not claim "no secrets". The page lists what stays in reach, such as MCP registry secrets.
 
@@ -116,7 +116,7 @@ Pull requests (add each number when it opens):
 
 Set it with `worca exec-env spec --project <key|dir> --set spec.json`. The spec lists tools by mise name, each with a pinned version, and apt packages. It holds tools only: never env vars, files or secrets. `latest` is refused. Show it with the same command, or clear it with `--clear`.
 
-`worca container build` builds the box image from it. Other setups build from it in later releases.
+`worca container build` builds the box image from it. `worca exec-env build` builds the E2B template and the Local sandbox (Docker) image from it.
 
 Chips: worca exec-env spec · pinned tools · apt packages · no secrets
 
@@ -125,6 +125,26 @@ Read it: [Project environment spec](../environment-spec.md)
 Pull requests (add each number when it opens):
 
 - Exec env: a project environment spec and its CLI
+
+## Runs in an E2B sandbox
+
+**A run's agents can now work in an E2B sandbox instead of on your machine.**
+
+Pick it under **Runs in**, per project or per run, or with `worca --exec-env e2b`. One sandbox serves the whole run. Your code goes in as a git bundle. Changes come back as a filtered patch after each step.
+
+No model key and no git token enter the sandbox. Worca keeps them and relays the model calls.
+
+The sandbox network is open by default. A project can limit it to the allow-listed hosts. A project can also have its own template, built from its environment spec.
+
+It covers single git projects on Claude, Codex, Copilot or Cursor. Bedrock and Vertex are refused for a sandbox run.
+
+Chips: Runs · Security · E2B
+
+Read it: [E2B](../e2b.md)
+
+Pull requests (add each number when it opens):
+
+- Run a pipeline's agents in a remote E2B sandbox (#826)
 
 ## Steady command rows in Chat
 

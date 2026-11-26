@@ -12,6 +12,7 @@
 .qpanel-head{display:flex;align-items:center;gap:11px;}
 .qpanel-head svg{stroke:var(--amber-ink);flex:0 0 auto;}
 .qpanel-head b{flex:1;min-width:0;font-weight:600;font-size:var(--fs-body);color:var(--amber-ink);}
+.qpanel-deadline{margin:6px 0 0;font-size:var(--fs-meta);line-height:1.45;color:var(--amber-ink);}
 .qpanel-head .qcount{margin-left:auto;flex:0 0 auto;background:var(--amber-bg);color:var(--amber-ink);
   font-weight:700;font-size:var(--fs-caption);padding:4px 10px;border-radius:var(--r-xs);}
 .qblock{padding:13px 0 0;}
