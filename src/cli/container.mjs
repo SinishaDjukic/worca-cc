@@ -22,6 +22,7 @@ import { readSettings } from '../core/settings.mjs';
 import { readProxyLogin } from '../core/proxy-credentials.mjs';
 import { resolveUpstream, upstreamLabel } from '../core/upstream-proxy.mjs';
 import { readLoginInput } from './proxy.mjs';
+import { boxImageForCompose } from '../core/exec-env/box-image.mjs';
 
 /** The compose files shipped in the package (package.json `files`). */
 export const COMPOSE_SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docker');
@@ -48,6 +49,8 @@ export const CONTAINER_HELP = `worca container — run Worca in a container (doc
   worca container status                         Which containers are up
   worca container logs [--follow]                Server logs
   worca container pull                           Pull the newest image for the tag in .env
+  worca container build [--project <key|dir>] [--status]
+                                                 Build the box image from the projects' environment specs
   worca container login                          Log Claude Code in, once, into the box's own volume
   worca container shell                          A bash shell inside the box
   worca container run -- <worca args>            Run the Worca CLI inside the box
@@ -336,6 +339,7 @@ export function checkSidecarImage({ exec, bin, cwd, env, files }) {
  */
 export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir: dirOverride = null, env: hostEnv = process.env,
   settings = readSettings, login = readProxyLogin, stdin = process.stdin } = {}) {
+  if (argv[0] === 'build') return (await import('./container-build.mjs')).cmdContainerBuild(argv.slice(1), { out, c, fail, exec, dir: dirOverride, env: hostEnv });
   const a = parse(argv);
   if (a.verb === 'help' || a.verb === '--help' || a.verb === '-h') { out(CONTAINER_HELP.trimEnd()); return 0; }
   const dir = resolve(a.dir || dirOverride || join(worcaHome(), 'container'));
@@ -373,6 +377,9 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
       // compose.broker.yml: the broker's provider calls go through the sidecar, which logs in.
       if (!envFile('WORCA_BROKER_PROXY')) sideEnv.WORCA_BROKER_PROXY = SIDECAR_PROXY_URL;
     }
+    const img = boxImageForCompose({ dir, envFile });   // WORCA_IMAGE in .env: the image `worca container build` made
+    if (img.overlay) extra.push('image');
+    if (img.notice) out(`${c('yellow', 'image')}  ${img.notice}`);
     composeEnv = Object.fromEntries(Object.entries({ ...hostEnv, ...proxy.set, ...caEnv, ...sideEnv }).filter(([, v]) => v !== undefined));
     if (a.tag) composeEnv.WORCA_TAG = a.tag;
   };
