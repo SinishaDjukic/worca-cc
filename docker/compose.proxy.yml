@@ -1,0 +1,76 @@
+# docker/compose.proxy.yml — the egress sidecar holds the corporate proxy login (docs/network-proxy.md,
+# "Worca in a container"; docs/docker.md, "Corporate proxy and CA").
+#
+#   docker compose -f compose.yml -f compose.proxy.yml up -d
+#   (with the allowlist: -f compose.yml -f compose.egress.yml -f compose.proxy.yml, this file last)
+#
+# `worca container` adds this file by itself when a proxy login is configured (or a proxy that needs
+# one), writes WORCA_EGRESS_SECRET into .env, and checks that the image is new enough for it.
+#
+# Open mode: no allowlist, the sidecar only does the proxy login. Everything Worca's box sends out goes
+# to http://egress:3128; the sidecar chains to the corporate proxy (HTTPS_PROXY in .env) with the
+# saved login (NTLMv2, Negotiate, Digest or Basic). The login and the HTTPS_PROXY from .env (a Basic or
+# Digest password in it too) live in the sidecar only. The box gets a proxy URL without credentials.
+#
+#   WORCA_EGRESS_SECRET     32+ random characters, shared by the box and the sidecar's internal API
+#                           (`docker compose run --rm --no-deps worca worca broker secrets` prints one)
+#   Operator login (shared instance): a compose.override.yml mounts a {domain, user, ntHash} file from
+#                           `worca proxy hash` and sets WORCA_EGRESS_LOGIN_FILE on the egress service
+#                           (docs/network-proxy.md, "A login the operator manages"). The UI then shows
+#                           status only.
+#   WORCA_BROKER_PROXY      set it to http://egress:3128 with compose.broker.yml, so the broker's
+#                           calls to the model providers go through the sidecar too
+#                           (`worca container` sets it by itself).
+#
+# Needs an image with the sidecar (label dev.worca.egress-sidecar) and Docker Compose 2.24 or newer (!override).
+
+services:
+  worca:
+    depends_on:
+      - egress
+    environment:
+      # No credentials in the box: the sidecar logs in.
+      HTTPS_PROXY: http://egress:3128
+      HTTP_PROXY: http://egress:3128
+      # The sidecar decides what goes direct (NO_PROXY in .env); the box sends everything else to it.
+      NO_PROXY: 127.0.0.1,localhost,egress,broker
+      WORCA_EGRESS_API_URL: http://egress:3129
+      # The secret (worca container writes it into .env), or the file WORCA_EGRESS_SECRET_FILE names (compose.shared.yml).
+      WORCA_EGRESS_SECRET: ${WORCA_EGRESS_SECRET:-}
+      WORCA_EGRESS_SECRET_FILE: ${WORCA_EGRESS_SECRET_FILE:-}
+
+  egress:
+    image: ghcr.io/worca-org/worca:${WORCA_TAG:-latest}
+    # `worca egress` from the installed package: the relay plus the login (src/egress/main.mjs).
+    entrypoint: ["tini", "-s", "--"]
+    command: ["worca", "egress"]
+    environment:
+      WORCA_EGRESS_DATA_DIR: /worca/egress
+      # The secret (worca container writes it into .env), or the file WORCA_EGRESS_SECRET_FILE names (compose.shared.yml).
+      WORCA_EGRESS_SECRET: ${WORCA_EGRESS_SECRET:-}
+      WORCA_EGRESS_SECRET_FILE: ${WORCA_EGRESS_SECRET_FILE:-}
+      # The corporate proxy, exactly as .env has it (a login in the URL stays here).
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
+    volumes:
+      # The login lives on this volume, mounted into the sidecar only.
+      - egress-data:/worca
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3129/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    # No published ports: the proxy (3128) and the internal API (3129) are on the compose network only.
+    # !override: compose.egress.yml sets the same lists, which would otherwise be appended twice.
+    security_opt: !override
+      - no-new-privileges:true
+    cap_drop: !override
+      - ALL
+    pids_limit: 128
+    mem_limit: 256m
+    restart: unless-stopped
+
+volumes:
+  egress-data:

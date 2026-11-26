@@ -226,7 +226,7 @@ import { policyCatalogModels, cachedPolicyHomes } from '../src/core/policy/cache
 import { pickFolderNative, pickAppNative, nativeDialogAvailable } from '../src/core/folder-dialog.mjs';
 import {
   readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
-  isThisBox, LOCAL_HOSTNAMES, hostnameOf, createPeerGuard, readRouteGateways,
+  isThisBox, LOCAL_HOSTNAMES, hostnameOf, createPeerGuard, readRouteGateways, watchRelayPeers,
 } from '../src/core/remote-access.mjs';
 import { identityHeaderTrust } from '../src/core/trusted-proxies.mjs';
 import {
@@ -276,6 +276,8 @@ import {
 } from '../src/core/platform-heartbeat.mjs';
 import { freeDailyStatus } from '../src/core/openrouter-free.mjs';
 import { checkBrokerAtBoot } from '../src/core/broker-boot.mjs';
+import { secretFileRefusals } from '../src/core/secret-files.mjs';
+import { sealGithubAppKey } from '../src/core/github-app.mjs';
 import { modelSlot, missingCredentials, describeMissing, workflowNeedsModel } from '../src/core/broker-routing.mjs';
 import { syncPluginSlots } from '../src/core/plugin-broker-slots.mjs';
 import { planClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
@@ -604,6 +606,8 @@ import * as skClone from '../src/core/clone-project.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
 import { useEnvProxy, reinstallEnvProxy, proxyNotice } from '../src/core/env-proxy.mjs';
 import { startLiveEgress, egressNotice, egressSummary } from '../src/core/egress-policy.mjs';
+import { sealEgressSecret } from '../src/core/egress-sidecar-client.mjs';
+import { startSidecarBoot } from '../src/core/egress-sidecar-boot.mjs';
 import { detectSystemProxy } from '../src/core/system-proxy.mjs';
 import { saveProxyLogin, clearProxyLogin, parseAccount, ProxyLoginError, upstreamEnv, savedLoginRefusal } from '../src/core/proxy-credentials.mjs';
 import { createProxyHost, PROXY_AGENT_TEXT } from '../src/core/proxy-host.mjs';
@@ -619,7 +623,7 @@ import { proxyEventPrompt, proxyNoticeText } from '../src/core/ask/proxy-proposa
 // printer no longer fires (a bare listener would NOT suppress the warning and would
 // double-print every OTHER warning), then attach our single filtering listener.
 // The credential broker's secret leaves process.env before anything can spawn: no child inherits it.
-sealBrokerSecret();
+sealBrokerSecret(); sealEgressSecret(); sealGithubAppKey();   // and the egress sidecar's, and the GitHub App key's (read once)
 process.removeAllListeners('warning');
 process.on('warning', (w) => {
   if (w && w.name === 'ExperimentalWarning' && /SQLite/i.test(w.message)) return;
@@ -787,7 +791,8 @@ const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
 // In the image, a published port reaches worca from the container's gateway (G4).
 const PEER_GATEWAYS = DEPLOYMENT === 'container' ? readRouteGateways() : [];
 const REMOTE_ACCESS_CHECK = checkRemoteAccessConfig(REMOTE_ACCESS, { bindHost: HOST, gateways: PEER_GATEWAYS });
-const isTrustedPeer = createPeerGuard(REMOTE_ACCESS, { gateways: PEER_GATEWAYS });
+const isTrustedPeer = createPeerGuard(REMOTE_ACCESS, { gateways: PEER_GATEWAYS,
+  relays: watchRelayPeers(DEPLOYMENT === 'container' && !REMOTE_MODE ? process.env : {}) });   // the hardened box's UI relay
 const hostGuard = createHostGuard(REMOTE_ACCESS.allowedHosts);
 const isLocalRequest = (req) => isTrustedPeer(req) && hostGuard(req);
 // X1: WORCA_IDENTITY_HEADER names a person (Ask thread owner, broker bill-to, startedBy) only when the identity
@@ -8705,6 +8710,8 @@ function setupDeps() {
     fixedPortNow: () => proxyHost.fixedPortNow(),
     applyProxy: (np, beforeFixed) => proxyHost.applyWritten(np, beforeFixed),
     reloadLogin: () => egressNow()?.reloadLogin?.(),
+    // Through proxyHost: next to the egress sidecar the login goes there, never into the box.
+    saveLogin: async (l) => { const r = await proxyHost.login(l); if (r.status !== 200) throw new Error(r.body?.error || `the proxy login answered ${r.status}`); return r.body.login; },
     checkModelRoles: (patch, o) => checkModelRolesPatch(patch, o),
     checkAskModels: (patch, o) => checkAskModelsPatch(patch, o),
     testModel: async (id) => {
@@ -10602,6 +10609,7 @@ if (isMain) {
     });
     const egressLine = egressNotice(EGRESS_LIVE.current());
     if (egressLine) console[egressLine.level === 'warn' ? 'warn' : 'log'](`[worca-ui] ${egressLine.text}`);
+    startSidecarBoot({ networkProxy: networkProxySettings, log: (lv, t) => console[lv === 'warn' ? 'warn' : 'log'](`[worca-ui] ${t}`) });
   } catch (err) {
     console.error(`[worca-ui] outbound network policy: the policy proxy could not start (${err && err.message ? err.message : err}). Not starting.`);
     process.exit(78);
@@ -10633,6 +10641,10 @@ if (isMain) {
       process.exit(1);
     }
   }
+
+  // Secret files Worca read at start, with agent users on: 0600 and Worca's own (secret-files.mjs; the broker's in checkBrokerAtBoot).
+  const badSecretFiles = secretFileRefusals({ names: ['WORCA_EGRESS_SECRET_FILE', 'WORCA_GH_APP_KEY_FILE'] });
+  if (badSecretFiles.length) { for (const e of badSecretFiles) console.error(`[worca-ui] secrets: ${e}`); console.error('[worca-ui] not starting.'); process.exit(78); }
 
   // Credential broker (docs/credential-broker.md): with WORCA_BROKER_URL set, worca holds no
   // model credential. Refuse to serve while one is still reachable by agents, or while the

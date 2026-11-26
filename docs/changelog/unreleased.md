@@ -3,6 +3,129 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Choose a setup, and a security overview
+
+**Two new pages tell you which Worca setup fits you, and what each one protects.**
+
+"Choose a setup" compares Native, Local sandbox (Docker), E2B sandbox, Hardened box and Shared instance. It says who each is for, how you work in it, where each credential lives and what you need. The Local sandbox and the E2B sandbox arrive in a later release.
+
+The security overview says what Worca treats as untrusted. The claim for a sandboxed setup is: no model key, no git token and no proxy login in an agent's reach. It does not claim "no secrets". The page lists what stays in reach, such as MCP registry secrets.
+
+Chips: setups · security overview · known limits
+
+Read it: [Choose a setup](../choose-a-setup.md), [Security overview](../security-overview.md)
+
+Pull requests (add each number when it opens):
+
+- Docs: choose a setup, and a security overview
+
+## A reference profile for a shared instance
+
+**One documented way to run Worca for a team on a server, hardened.**
+
+`docker/compose.shared.yml` adds the team setup to the usual compose files. The credential broker runs in multi mode: each person saves their own model key and GitHub token. Each person's agents run under their own user. The network has no route out except through an allow-list. The proxy login is a technical user's, which the operator supplies as a file. Nothing is published: Cloudflare Access, or an identity proxy of your own, signs people in.
+
+`docker/shared.env.example` lists every value to supply. Secrets are files, never values in the env file. The new page says how to start it, and how to check that it is safe, with commands and the answers to expect. It also says what maps to what on Kubernetes, and why Railway is the weaker option.
+
+Every signed-in person is an administrator. There is no privacy between teammates.
+
+`compose.broker.yml` and `compose.proxy.yml` now also take their shared secrets as files. Without either, Worca and the broker refuse to start and say so.
+
+Chips: Container · Security
+
+Read it: [Shared instance](../shared-instance.md)
+
+Pull requests (add each number when it opens):
+
+- Shared instance profile
+
+## The hardened box
+
+**One command starts the strictest local setup.**
+
+`worca container up --hardened` starts Worca with every protection on. The credential broker holds the model key. Agents run under their own users. The network has no route out except through an allow-list. The egress sidecar holds the proxy login.
+
+No folder from your machine is mounted. You clone projects from the remote into the box. Results leave as pushed branches and pull requests. A mounted checkout would let an agent plant a git hook that your own git then runs.
+
+The setup asks only for what is missing. It writes `.env` with mode 0600 and never overwrites your values. Every answer also works from a flag or the environment, so a script can run it. It checks Docker, Compose, the image and WSL2 first.
+
+`worca container status` then shows one line per protection, read from the running box. A line that is off says how to fix it.
+
+With agents under their own users, Worca now checks every secret file it reads. The broker's secret, the egress sidecar's secret and the GitHub App key must each be mode 0600 and owned by Worca's user. Otherwise Worca does not start, and says which file to fix.
+
+It is for one developer on their own machine. It runs on Docker only. It is not "no secrets": an MCP registry secret a run uses stays in its reach. Your native install and the plain container do not change.
+
+Chips: Container · Security
+
+Read it: [Hardened box](../hardened-box.md)
+
+Pull requests (add each number when it opens):
+
+- The hardened box
+
+## The proxy login moves out of the box
+
+**In a container, agents can no longer reach your proxy login.**
+
+The login now lives in the egress sidecar. That is a second container, and only it mounts the login's volume. It logs in to the corporate proxy for every connection: NTLMv2, Negotiate, Digest or Basic. The box gets a proxy URL with no credentials in it. The credential broker's calls to the model providers go through the sidecar too.
+
+`worca container` starts the sidecar by itself when the proxy needs a login. Log in with `worca container proxy login`. `worca container run -- proxy login` still works. A login an older version saved in the box moves to the sidecar once. Then it is deleted from the box.
+
+A login is bound to its proxy. Change the host or the port, and the login is deleted. On a shared instance the operator can supply the login as a file. `worca proxy hash` prints one from a hidden prompt.
+
+Before this, a hardened box behind a login proxy could not get out at all: neither the sidecar nor the broker could log in. This was tested against a simulated NTLM proxy, not a real corporate one.
+
+The Settings card and the setup assistant keep working in a container. Worca forwards them to the sidecar. The password passes through Worca's server for that one call, and nothing is written in the box. When the operator manages the login, both show who is logged in and the state. There is no login form then.
+
+The native install does not change.
+
+Chips: Network proxy · Container · Setup
+
+Read it: [Network proxy](../network-proxy.md#worca-in-a-container)
+
+Pull requests (add each number when it opens):
+
+- Proxy login in the egress sidecar (#1621)
+- The Settings card and the setup assistant talk to the sidecar (#1623)
+
+## Build the box image from the spec
+
+**`worca container build` turns your projects' specs into the box image.**
+
+It joins the specs of every project that has one, or of the projects you name with `--project`. It builds `FROM` the base, adds the apt packages, then mise and each pinned tool. Two projects that pin different versions of one tool are refused, with both named.
+
+The finished image is checked. It must have Node at Worca's minimum, git, `worca` and the base's pinned Claude Code. Then the box runs it. A failed build keeps the previous image.
+
+`--status` says whether the image is current or stale. A stale image still runs, with a warning. Nothing rebuilds by itself.
+
+The base is `WORCA_BASE_IMAGE` in the container `.env`. It must be a Worca image or one built from it. A project cannot change it. To build Worca itself on a company base image, pass `--node-base` to `npm run docker:build`.
+
+Not yet: tools outside mise and apt, and internal package mirrors at build time.
+
+Chips: worca container build · box image · base image · stale check
+
+Read it: [Building the box image](../environment-spec.md#building-the-box-image)
+
+Pull requests (add each number when it opens):
+
+- Container: build the box image from the environment spec, with an operator base image
+
+## A project environment spec
+
+**A project can now list the tools its agents need, pinned to exact versions.**
+
+Set it with `worca exec-env spec --project <key|dir> --set spec.json`. The spec lists tools by mise name, each with a pinned version, and apt packages. It holds tools only: never env vars, files or secrets. `latest` is refused. Show it with the same command, or clear it with `--clear`.
+
+`worca container build` builds the box image from it. Other setups build from it in later releases.
+
+Chips: worca exec-env spec · pinned tools · apt packages · no secrets
+
+Read it: [Project environment spec](../environment-spec.md)
+
+Pull requests (add each number when it opens):
+
+- Exec env: a project environment spec and its CLI
+
 ## Steady command rows in Chat
 
 **A stack of commands no longer flickers while it runs.**

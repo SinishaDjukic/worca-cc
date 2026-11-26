@@ -90,7 +90,13 @@ worca flags on smartRunNaming   # a Labs feature, off by default
   `worca projects list`.
 - The rest: `ui`, `run --preset`, `resume`, `runs`, `logs`, `stop`, `pause`, `schedule`, `workflow`, `script`,
   `plugin`, `marketplace`, `models`, `config`, `flags`, `metrics`, `policy`, `memory team`, `container`, `broker`,
-  `proxy`, `setup`, `extension`, `readiness`, `doctor` and `version`.
+  `proxy`, `exec-env`, `setup`, `extension`, `readiness`, `doctor` and `version`.
+- `worca container up --hardened` starts the [Hardened box](hardened-box.md), and `worca container status`
+  then prints its posture report.
+- `exec-env spec` shows, sets or clears a project's environment spec. See
+  [Project environment spec](environment-spec.md).
+- `container build` builds the box image from the projects' environment specs. See
+  [Building the box image](environment-spec.md#building-the-box-image).
 
 ## Exit codes
 

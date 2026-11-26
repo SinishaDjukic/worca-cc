@@ -12,11 +12,21 @@
 #   CLAUDE_CODE_VERSION  the @anthropic-ai/claude-code version to pin              [required]
 #   VARIANT              slim | full                                               [slim]
 #   APT_REFRESH          any string; a new value rebuilds the OS layer (CI: Debian publish stamps)
+#   NODE_BASE_IMAGE      what Worca is built on                       [node-base, the pinned image below]
 
-# The base image is pinned by its multi-arch index digest, so a re-pushed tag cannot change what
-# the build starts from. A literal FROM (no build arg) so Dependabot can propose the bumps.
+# NODE_BASE_IMAGE builds Worca on a company base image instead (docs/docker.md, "Building it yourself"):
+#   npm run docker:build -- --node-base registry.acme.example/base/node:24-bookworm-slim
+# That image must be the official node image of the same major, or built FROM it: Debian bookworm, apt,
+# and the `node` user with uid 1000 that the steps below rename.
+ARG NODE_BASE_IMAGE=node-base
+
+# The default base is pinned by its multi-arch index digest, so a re-pushed tag cannot change what
+# the build starts from. A literal FROM (the build arg names this stage) so Dependabot can propose the bumps.
 # Its Node major is .nvmrc's, like every single-version CI job (test/supply-chain.test.mjs).
-FROM node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
+FROM node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS node-base
+
+# hadolint ignore=DL3006
+FROM ${NODE_BASE_IMAGE}
 
 ARG WORCA_TARBALL
 ARG CLAUDE_CODE_VERSION
@@ -86,7 +96,11 @@ RUN test -n "${CLAUDE_CODE_VERSION}" || { echo "CLAUDE_CODE_VERSION build arg is
 # hadolint ignore=DL3010
 COPY ${WORCA_TARBALL} /tmp/worca.tgz
 # The egress overlay's sidecar runs the policy proxy from the package as one standalone
-# file (docker/compose.egress.yml; src/core/egress-proxy.mjs imports node: modules only).
+# file (docker/compose.egress.yml; src/core/egress-proxy.mjs imports node: modules only). The
+# sidecar that also holds the corporate proxy login runs `worca egress` instead
+# (docker/compose.proxy.yml); the label dev.worca.egress-sidecar says this image has it.
+# The hardened box (docker/compose.hardened.yml) publishes the UI through the package's
+# src/core/ui-relay.mjs; the label dev.worca.hardened-box says this image has it.
 RUN app="$(npm root -g)/@worca/app" \
  && mkdir -p "${app}" \
  && tar -xzf /tmp/worca.tgz -C "${app}" --strip-components=1 --no-same-owner \
@@ -161,7 +175,9 @@ LABEL org.opencontainers.image.title="Worca" \
       org.opencontainers.image.source="https://github.com/worca-org/worca" \
       org.opencontainers.image.licenses="MIT" \
       dev.worca.claude-code.version="${CLAUDE_CODE_VERSION}" \
-      dev.worca.variant="${VARIANT}"
+      dev.worca.variant="${VARIANT}" \
+      dev.worca.egress-sidecar="1" \
+      dev.worca.hardened-box="1"
 
 # hadolint ignore=DL3066
 USER worca

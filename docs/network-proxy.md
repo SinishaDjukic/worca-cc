@@ -293,14 +293,130 @@ Not supported (Negotiate works only with the NTLM login inside it). Run [Px](htt
 
 ## Worca in a container
 
-The box from `worca container` cannot use this machine's local proxy, because
-`127.0.0.1` inside the box is the box itself. `worca container` gives the box
-your `networkProxy.upstream` (host and port only) when that proxy needs no
-login. It never passes the local proxy in. Otherwise the box gets no proxy,
-and you set the proxy up in the box's own Worca: its Settings › Network proxy,
-then `worca container run -- proxy login`. For a proxy that re-signs TLS, set
-`WORCA_CA_CERT` in the container `.env` to the CA's PEM file. See
-[docker.md → Corporate proxy and CA](docker.md#corporate-proxy-and-ca).
+In a container setup the proxy login lives in the **egress sidecar**, not in
+Worca's box. The sidecar is a second container from the same image. It runs
+`worca egress`. It relays every outbound connection and logs in to the
+corporate proxy for all of them: the box's agents, git, Worca itself, and the
+credential broker's calls to the model providers. The box gets
+`HTTPS_PROXY=http://egress:3128`, a URL with no credentials in it.
+
+`worca container` starts the sidecar by itself when the proxy needs a login:
+
+- `HTTPS_PROXY` in the container `.env` carries a user name and password, or
+- this machine's `networkProxy.upstream` needs a login, or
+- you ran `worca container proxy login` once.
+
+It adds `compose.proxy.yml`, writes `WORCA_EGRESS_SECRET` into `.env`, and
+checks that the image has the sidecar. An image that is too old is refused
+with one line, and nothing starts. The sidecar runs in open mode: it allows
+every host and only does the login. The [egress allowlist](docker.md#egress-allowlist)
+stays a separate choice on top.
+
+Log in from the host:
+
+```sh
+worca container proxy login          # DOMAIN\user, then a hidden password prompt
+printf 'ACME\\jdoe\n%s\n' "$PW" | worca container proxy login
+worca container proxy status         # who is logged in, and the state
+worca container proxy test           # CONNECT to github.com and api.anthropic.com
+worca container proxy logout
+```
+
+`worca container run -- proxy login` works too. Inside the box `worca proxy`
+talks to the sidecar. Nothing is written in the box.
+
+The Settings card and the setup assistant work as before. Worca forwards
+Status, Test, Log in, Log out, Save and Auto-detect to the sidecar. The
+password passes through Worca's server in memory for that one call, and is
+then dropped. A line under the card says that the sidecar holds the login.
+There is no local proxy port in a container, so that field is gone. Auto-detect
+fills in the proxy the sidecar uses. Chat's proxy tools use the same path.
+
+**What the sidecar keeps.** The same record as the native install (domain,
+user name, NT hash, never the password), with the same file guards, in
+`/worca/egress/proxy-login.json` on its own volume `egress-data`. Only the
+sidecar mounts that volume. The record also names the proxy it was saved for.
+A change of the proxy host or port deletes the login, so it never goes to
+another proxy. The lockout breaker ("proxy needs login") works as in the
+native install. A Basic or Digest login in the `.env` `HTTPS_PROXY` URL goes to
+the sidecar's environment only.
+
+**The sidecar's internal API.** Worca's box reaches it at
+`http://egress:3129` with the shared secret `WORCA_EGRESS_SECRET` (or
+`WORCA_EGRESS_SECRET_FILE`). Worca reads the secret once at start and removes
+it from its environment, so no agent or other child inherits it. The API never
+returns the NT hash or a password. Neither port is published.
+
+**Moving an older login.** A `proxy-login.json` that an older version saved
+in the box moves to the sidecar the first time the box starts next to it, and
+is then deleted from the box. After that, a rollback to an older image needs
+a new login.
+
+**No sidecar.** If you run `docker compose up` by hand without
+`compose.proxy.yml`, the login stays in the box as before, and Worca prints
+one warning at start.
+
+For a proxy that re-signs TLS, set `WORCA_CA_CERT` in the container `.env` to
+the CA's PEM file. See [docker.md → Corporate proxy and CA](docker.md#corporate-proxy-and-ca).
+
+This was tested against a simulated NTLM proxy (`test/helpers/fake-upstream-proxy.mjs`),
+not a real corporate one.
+
+### A login the operator manages
+
+On a shared instance the login is a technical user's. The operator can supply
+it as a file, so nobody types it into the UI:
+
+```sh
+worca proxy hash > proxy-login.secret.json   # asks for DOMAIN\user and the password; saves nothing
+chmod 600 proxy-login.secret.json
+```
+
+The file holds `{"v":1,"domain":…,"user":…,"ntHash":…}`, never the password.
+Mount it into the sidecar and point `WORCA_EGRESS_LOGIN_FILE` at it, for
+example in a `compose.override.yml`:
+
+```yaml
+services:
+  egress:
+    environment:
+      WORCA_EGRESS_LOGIN_FILE: /run/secrets/proxy_login
+    secrets: [proxy_login]
+secrets:
+  proxy_login:
+    file: ./proxy-login.secret.json
+```
+
+The sidecar runs as uid 1000, so the file must be readable by that uid. The
+proxy then comes from the sidecar's `HTTPS_PROXY` alone. Every write call is
+off: log in, log out and the proxy settings answer "managed by the operator".
+The Settings card and the setup assistant's Network step show who is logged
+in and the state, with no login form, and say that the operator manages the
+login. Test still works.
+`worca proxy status` shows who is logged in and the state.
+
+## Where the login lives
+
+| Setup | Where the proxy login is stored | Can agents read it? |
+| --- | --- | --- |
+| Native | `~/.worca-cc/proxy-login.json` | Yes. Agents run as you. |
+| Hardened box | In the egress sidecar, on its own volume | No. The box has no copy, and the API never returns it. |
+| Shared instance | In the egress sidecar: a technical user's login, optionally managed by the operator (`WORCA_EGRESS_LOGIN_FILE`) | No, as in the hardened box. |
+| Plain container (`worca container up`) with a proxy login | In the egress sidecar, which starts by itself, in open mode | No. The box has no copy. |
+| Plain container without the sidecar (raw `docker compose up`) | In the box, `/worca/.worca-cc/proxy-login.json`, with a warning at start | Yes, unless agent isolation is on. |
+
+In the hardened box and the shared instance, agents still send their traffic
+through the sidecar, which is logged in. That is the point of the proxy. With
+agents under their own users they also cannot read the sidecar's shared
+secret. Without that, an agent that reads it from Worca's process could log
+the sidecar out or change its proxy settings, but still never read the login.
+A Railway instance normally has no corporate proxy in front of it, so it has
+no sidecar.
+
+- Local sandbox (Docker): arrives in a later release. The login stays with Worca on the server and never enters the sandbox.
+- E2B sandbox: arrives in a later release. The login stays with Worca on the server and never enters the sandbox.
+
+To compare the setups, see [Choose a setup](choose-a-setup.md) and the [Security overview](security-overview.md).
 
 ## Troubleshooting
 

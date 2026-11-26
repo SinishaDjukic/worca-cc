@@ -9,7 +9,8 @@
 // tests never spawn a runtime.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, copyFileSync, appendFileSync, chmodSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,10 +21,18 @@ import { gitAvailable } from '../core/git-available.mjs';
 import { readSettings } from '../core/settings.mjs';
 import { readProxyLogin } from '../core/proxy-credentials.mjs';
 import { resolveUpstream, upstreamLabel } from '../core/upstream-proxy.mjs';
+import { readLoginInput } from './proxy.mjs';
+import { HARDENED_OVERLAYS, HARDENED_HELP, HARDENED_PROJECT, selectBox, hardenedBefore, hardenedUp, hardenedStatus, runningProject } from './container-hardened.mjs';
+import { boxImageForCompose } from '../core/exec-env/box-image.mjs';
 
 /** The compose files shipped in the package (package.json `files`). */
 export const COMPOSE_SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docker');
-export const OVERLAYS = Object.freeze(['egress', 'ssh', 'teams', 'clonein']);
+export const OVERLAYS = Object.freeze(['egress', 'ssh', 'teams', 'clonein', 'proxy']);
+/** The image label that says it has the `worca egress` sidecar (docker/Dockerfile), and the API version these files need. */
+export const SIDECAR_LABEL = 'dev.worca.egress-sidecar';
+export const SIDECAR_API_NEEDED = 1;
+export const SIDECAR_PROXY_URL = 'http://egress:3128';
+const PROXY_VERBS = new Set(['status', 'login', 'logout', 'test']);
 const STATE_FILE = '.worca-container.json';
 /** The proxy variables compose.yml interpolates into the box (case-sensitive: compose reads these names only). */
 const PROXY_KEYS = ['HTTPS_PROXY', 'HTTP_PROXY'];
@@ -41,12 +50,23 @@ export const CONTAINER_HELP = `worca container — run Worca in a container (doc
   worca container status                         Which containers are up
   worca container logs [--follow]                Server logs
   worca container pull                           Pull the newest image for the tag in .env
+  worca container build [--project <key|dir>] [--status]
+                                                 Build the box image from the projects' environment specs
   worca container login                          Log Claude Code in, once, into the box's own volume
   worca container shell                          A bash shell inside the box
   worca container run -- <worca args>            Run the Worca CLI inside the box
                                                  e.g. worca container run -- --project /path/to/repo --prompt "…"
+  worca container proxy login|logout|status|test
+                                                 The corporate proxy login, held by the egress sidecar
+                                                 (never in the box). login asks for DOMAIN\\user and a hidden
+                                                 password, or reads both from stdin
   worca container where                          Print the container dir (compose files, .env)
   worca container help
+
+The egress sidecar (compose.proxy.yml) is added by itself when the corporate proxy
+needs a login: a login in .env HTTPS_PROXY, a networkProxy.upstream on this machine
+that needs one, or after \`worca container proxy login\`. It holds the login; the box
+never does. WORCA_EGRESS_SECRET is written into .env for it.
 
 A corporate CA (PEM) is mounted into the box when WORCA_CA_CERT is set in .env,
 else from the shell's NODE_EXTRA_CA_CERTS or SSL_CERT_FILE. A proxy on this
@@ -59,11 +79,14 @@ Options:
 The box has its own Worca home and its own Claude Code login: nothing from
 ~/.worca-cc or ~/.claude is mounted. Your repositories are mounted at the same
 path as on the host (WORCA_PROJECTS in .env), so run worktrees stay valid here.
+The plain container protects your machine, not the mounted projects.
 `;
 
 /** Default exec: run and inherit the terminal. Returns { status }. */
-function defaultExec(cmd, args, { cwd, capture = false, env } = {}) {
-  const r = spawnSync(cmd, args, { cwd, env, stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit', encoding: 'utf8' });
+function defaultExec(cmd, args, { cwd, capture = false, env, input } = {}) {
+  // `input`: written to the child's stdin (a login piped into the sidecar; never an argument).
+  const stdin = input !== undefined ? 'pipe' : capture ? 'ignore' : 'inherit';
+  const r = spawnSync(cmd, args, { cwd, env, input, stdio: capture ? [stdin, 'pipe', 'pipe'] : [stdin, 'inherit', 'inherit'], encoding: 'utf8' });
   return { status: r.error ? 127 : (r.status ?? 1), stdout: r.stdout || '', stderr: r.stderr || '' };
 }
 
@@ -79,7 +102,7 @@ export function detectRuntime(exec, want) {
 }
 
 function parse(argv) {
-  const o = { verb: argv[0] || 'help', dir: null, runtime: null, projects: null, with: null, tag: null, follow: false, passthrough: [], _: [] };
+  const o = { verb: argv[0] || 'help', dir: null, runtime: null, projects: null, with: null, tag: null, follow: false, box: null, passthrough: [], _: [] };
   const rest = argv.slice(1);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -90,6 +113,8 @@ function parse(argv) {
     else if (a === '--with') o.with = rest[++i];
     else if (a === '--tag') o.tag = rest[++i];
     else if (a === '--follow' || a === '-f') o.follow = true;
+    else if (a === '--hardened' || a === '--plain') o.box = a.slice(2);
+    else if (a === '--user') { o._.push(a, rest[++i]); }
     else o._.push(a);
   }
   return o;
@@ -146,6 +171,13 @@ function parseWith(s) {
   return [...new Set(list)];
 }
 
+/** One `git config --get <key>` value from this machine, or '' (no git, or unset). */
+export function gitConfigValue(exec, key) {
+  if (!gitAvailable()) return '';
+  const r = exec('git', ['config', '--get', key], { capture: true });
+  return r.status === 0 ? String(r.stdout).trim() : '';
+}
+
 /** Copy the package's compose files into `dir` (always, they are versioned with the package)
  *  and seed .env once. Returns { dir, envCreated }. */
 export async function initDir(dir, { projects, exec, srcDir = COMPOSE_SRC_DIR, env = process.env } = {}) {
@@ -161,7 +193,7 @@ export async function initDir(dir, { projects, exec, srcDir = COMPOSE_SRC_DIR, e
       try { root = commonParent((await listProjects()).map((p) => p.path)); } catch { root = null; }
     }
     if (!root) root = join(env.HOME || env.USERPROFILE || homedir(), 'dev');
-    const git = (k) => { if (!gitAvailable()) return ''; const r = exec('git', ['config', '--get', k], { capture: true }); return r.status === 0 ? r.stdout.trim() : ''; };
+    const git = (k) => gitConfigValue(exec, k);
     const body = seedEnv(readFileSync(join(srcDir, '.env.example'), 'utf8'), {
       projects: root,
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -244,9 +276,11 @@ export function boxProxyEnv({ env = process.env, envFile = () => '', settings = 
   }
   if (fileHas('NO_PROXY')) set.NO_PROXY = undefined;
   else if (env.NO_PROXY !== undefined) set.NO_PROXY = DEFAULT_NO_PROXY;
+  // The egress sidecar (compose.proxy.yml) can log in to it: cmdContainer hands it this host and port.
+  const loginUpstream = needsLogin ? `http://${upstreamLabel(up.host, up.port)}` : undefined;
   const why = needsLogin ? `the corporate proxy ${upstreamLabel(up.host, up.port)} needs a login`
     : off ? 'the network proxy is off in settings.json' : 'no corporate proxy is configured in settings.json';
-  return { set, notice: `the box gets no proxy: this shell's ${shellLoopback[0]} is Worca's local proxy, which the box cannot reach, and ${why}. `
+  return { set, ...(loginUpstream ? { loginUpstream } : {}), notice: `the box gets no proxy: this shell's ${shellLoopback[0]} is Worca's local proxy, which the box cannot reach, and ${why}. `
     + 'Set HTTPS_PROXY in the container .env, or configure the proxy in the box\'s own Worca (its Settings › Network proxy, then `worca container run -- proxy login`)' };
 }
 
@@ -261,76 +295,191 @@ export function boxCaCert({ env = process.env, envFile = () => '', dir = '.', ex
   return exists(file) ? { file, source: pick[0] } : { missing: file, source: pick[0] };
 }
 
+/** True when a proxy URL carries a user name (a Basic or Digest login in .env HTTPS_PROXY). */
+const urlHasLogin = (v) => { try { const s = String(v || '').trim(); return !!s && !!new URL(s.includes('://') ? s : `http://${s}`).username; } catch { return false; } };
+
+/**
+ * Why the egress sidecar is needed, or null: a login was set up for it before (`state.sidecar`), .env's proxy URL
+ * carries a login, or this machine's networkProxy.upstream needs one (`loginUpstream` from boxProxyEnv).
+ */
+export function sidecarReason({ state = {}, envFile = () => '', loginUpstream } = {}) {
+  if (state.sidecar === true) return 'a proxy login was set up for the egress sidecar';
+  const k = PROXY_KEYS.find((x) => urlHasLogin(envFile(x)));
+  if (k) return `${k} in .env carries a login, which only the egress sidecar gets`;
+  if (loginUpstream) return `the corporate proxy ${loginUpstream.replace(/^http:\/\//, '')} needs a login`;
+  return null;
+}
+
+/** Make sure .env holds WORCA_EGRESS_SECRET (32 random bytes, base64url), keeping the file 0600. @returns {boolean} added */
+export function ensureEgressSecret(dir, { random = () => randomBytes(32).toString('base64url') } = {}) {
+  if (readEnvValue(dir, 'WORCA_EGRESS_SECRET')) return false;
+  const file = join(dir, '.env');
+  appendFileSync(file, `\n# The egress sidecar's shared secret (compose.proxy.yml), written by worca container.\nWORCA_EGRESS_SECRET=${random()}\n`, { mode: 0o600 });
+  try { chmodSync(file, 0o600); } catch { /* Windows */ }
+  return true;
+}
+
+/**
+ * Refuse compose files that need the sidecar with an image that does not have it (the compose files ship with the
+ * npm package, the image tag is pinned separately). Inspects the egress service's image label, pulling it once
+ * when it is not there yet. @returns {{ok: true} | {error: string}}
+ */
+export function checkSidecarImage({ exec, bin, cwd, env, files }) {
+  let image = `ghcr.io/worca-org/worca:${env.WORCA_TAG || readEnvValue(cwd, 'WORCA_TAG') || 'latest'}`;
+  const cfg = exec(bin, ['compose', ...files, 'config', '--format', 'json'], { cwd, env, capture: true });
+  if (cfg.status === 0) { try { image = JSON.parse(cfg.stdout).services.egress.image || image; } catch { /* the default above */ } }
+  const inspect = () => exec(bin, ['image', 'inspect', '--format', `{{ index .Config.Labels "${SIDECAR_LABEL}" }}`, image], { capture: true });
+  let r = inspect();
+  if (r.status !== 0) {
+    exec(bin, ['compose', ...files, 'pull', 'egress'], { cwd, env, capture: true });
+    r = inspect();
+  }
+  if (r.status !== 0) return { error: `cannot check the image ${image}: it is not on this machine and could not be pulled. The egress sidecar needs it; nothing was started.` };
+  const v = Number(String(r.stdout || '').trim());
+  if (!Number.isInteger(v) || v < SIDECAR_API_NEEDED) {
+    return { error: `the image ${image} is older than these compose files: it has no egress sidecar for the proxy login. Use a newer image (WORCA_TAG in .env, then worca container pull); nothing was started.` };
+  }
+  return { ok: true };
+}
+
 /**
  * `worca container <verb> …`. Returns the process exit code.
  * @param {string[]} argv          tokens after `container`
  * @param {object} io              { out, c, fail } from the CLI; `exec` and `dir` are injectable for tests
  */
 export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir: dirOverride = null, env: hostEnv = process.env,
-  settings = readSettings, login = readProxyLogin } = {}) {
+  settings = readSettings, login = readProxyLogin, stdin = process.stdin } = {}) {
+  if (argv[0] === 'build') return (await import('./container-build.mjs')).cmdContainerBuild(argv.slice(1), { out, c, fail, exec, dir: dirOverride, env: hostEnv });
   const a = parse(argv);
-  if (a.verb === 'help' || a.verb === '--help' || a.verb === '-h') { out(CONTAINER_HELP.trimEnd()); return 0; }
+  if (a.verb === 'help' || a.verb === '--help' || a.verb === '-h') { out(`${CONTAINER_HELP}${HARDENED_HELP}`.trimEnd()); return 0; }
   const dir = resolve(a.dir || dirOverride || join(worcaHome(), 'container'));
   if (a.verb === 'where') { out(dir); return 0; }
 
   const rt = detectRuntime(exec, a.runtime);
   if (rt.error) { fail(rt.error); return 1; }
   const state = readState(dir);
-  let overlays = Array.isArray(state.with) ? state.with : [];
+  // The hardened box (container-hardened.mjs): its own fixed overlays, remembered by `up --hardened`.
+  const box = selectBox(a.box, state);
+  let overlays = box === 'hardened' ? [...HARDENED_OVERLAYS] : Array.isArray(state.with) ? state.with : [];
   // Every compose call interpolates the same env (shell before .env), so the proxy and CA
   // fixes apply to up, run, login and shell alike. Resolved after init so a fresh .env counts.
   let composeEnv;
   let extra = [];
+  let sidecar = null;   // why the egress sidecar runs, or null
   const prepare = () => {
     const envFile = (k) => readEnvValue(dir, k);
     const proxy = boxProxyEnv({ env: hostEnv, envFile, settings, login });
-    if (proxy.notice) out(`${c('yellow', 'proxy')}  ${proxy.notice}`);
+    sidecar = sidecarReason({ state: readState(dir), envFile, loginUpstream: proxy.loginUpstream });
+    if (sidecar) {
+      // The box gets http://egress:3128 from compose.proxy.yml; HTTPS_PROXY here reaches only the sidecar.
+      if (proxy.loginUpstream) { proxy.set.HTTPS_PROXY = proxy.loginUpstream; proxy.set.HTTP_PROXY = proxy.loginUpstream; }
+      out(`${c('yellow', 'proxy')}  the egress sidecar holds the proxy login (${sidecar}); the box never does. Log in: worca container proxy login`);
+    } else if (proxy.notice) out(`${c('yellow', 'proxy')}  ${proxy.notice}`);
     const ca = boxCaCert({ env: hostEnv, envFile, dir });
     const caEnv = {};
     // From .env: unset the shell's, so compose reads the file's own value.
     if (ca?.file) { extra = ['ca']; caEnv.WORCA_CA_CERT = ca.source.startsWith('.env') ? undefined : ca.file; }
     else if (ca?.missing) out(`${c('yellow', 'ca')}  ${ca.source} names ${ca.missing}, which does not exist; the box gets no corporate CA`);
-    composeEnv = Object.fromEntries(Object.entries({ ...hostEnv, ...proxy.set, ...caEnv }).filter(([, v]) => v !== undefined));
+    const sideEnv = {};
+    if (sidecar && !overlays.includes('proxy')) extra.push('proxy');
+    if (sidecar || overlays.includes('proxy')) {
+      if (ensureEgressSecret(dir)) out(`${c('green', 'proxy')}  wrote WORCA_EGRESS_SECRET into ${join(dir, '.env')}`);
+      // From .env: compose reads the file's own value (a shell export would win otherwise).
+      sideEnv.WORCA_EGRESS_SECRET = undefined;
+      // compose.broker.yml: the broker's provider calls go through the sidecar, which logs in.
+      if (!envFile('WORCA_BROKER_PROXY')) sideEnv.WORCA_BROKER_PROXY = SIDECAR_PROXY_URL;
+    }
+    const img = boxImageForCompose({ dir, envFile });   // WORCA_IMAGE in .env: the image `worca container build` made
+    if (img.overlay) extra.push('image');
+    if (img.notice) out(`${c('yellow', 'image')}  ${img.notice}`);
+    composeEnv = Object.fromEntries(Object.entries({ ...hostEnv, ...proxy.set, ...caEnv, ...sideEnv }).filter(([, v]) => v !== undefined));
     if (a.tag) composeEnv.WORCA_TAG = a.tag;
   };
-  const files = () => composeFileArgs([...overlays, ...extra]);
+  // compose.proxy.yml goes last: it takes over the egress service compose.egress.yml defines.
+  const files = () => { const all = [...new Set([...overlays, ...extra])]; return composeFileArgs([...all.filter((o) => o !== 'proxy'), ...(all.includes('proxy') ? ['proxy'] : [])]); };
+  const needsSidecar = () => !!sidecar || overlays.includes('proxy');
+  const imageOk = () => {
+    if (!needsSidecar()) return true;
+    const r = checkSidecarImage({ exec, bin: rt.bin, cwd: dir, env: composeEnv, files: files() });
+    if (r.error) { fail(r.error); return false; }
+    return true;
+  };
   const compose = (args, opts = {}) => exec(rt.bin, ['compose', ...files(), ...args], { cwd: dir, env: composeEnv, ...opts }).status;
 
   if (a.verb === 'init' || a.verb === 'up') {
     const r = await initDir(dir, { projects: a.projects, exec });
     out(`${c('bold', 'container dir')}  ${dir}${r.envCreated ? `   (${c('green', '.env created')} — edit it: WORCA_PROJECTS, tokens)` : ''}`);
+    if (box === 'hardened') {
+      const code = await hardenedBefore({ a, dir, exec, bin: rt.bin, out, c, fail, env: hostEnv, settings, login, stdin, state, writeState: (s) => writeState(dir, s) });
+      if (code !== null) return code;
+    } else if (a.box === 'plain' && state.hardened) writeState(dir, { ...readState(dir), hardened: false });
     if (a.verb === 'init') return 0;
   }
   if (!existsSync(join(dir, 'compose.yml'))) { fail(`no compose files in ${dir}; run: worca container init`); return 1; }
+  // A login set up for the sidecar is remembered, so every later verb (down included) keeps its overlay.
+  const proxyLoginVerb = (a.verb === 'proxy' && a._[0] === 'login') || (a.verb === 'run' && a.passthrough[0] === 'proxy' && a.passthrough[1] === 'login');
+  if (proxyLoginVerb && readState(dir).sidecar !== true) writeState(dir, { ...readState(dir), sidecar: true });
   if (!['down', 'status', 'logs', 'pull'].includes(a.verb)) prepare();
+  else if (readState(dir).sidecar === true && !overlays.includes('proxy')) extra = ['proxy'];
+  const hb = () => ({ a, dir, exec, bin: rt.bin, composeEnv, files: files(), out, c, fail, stdin, state: readState(dir),
+    login: (args) => cmdContainer(['proxy', 'login', ...args], { out, c, fail, exec, dir, env: hostEnv, settings, login, stdin }) });
 
   switch (a.verb) {
     case 'up': {
-      if (a.with !== null) {
+      if (box === 'plain' && runningProject({ exec, bin: rt.bin, project: HARDENED_PROJECT })) { fail('the hardened box is running and holds the same port: stop it first with worca container down --hardened'); return 1; }
+      if (a.with !== null && box === 'plain') {
         const parsed = parseWith(a.with);
         if (parsed.error) { fail(parsed.error); return 1; }
         overlays = parsed;
         writeState(dir, { ...state, with: overlays });
       }
       const port = readEnvValue(dir, 'WORCA_PORT') || '4317';
+      if (box === 'hardened') { const code = await hardenedUp(hb()); if (code !== null) return code; }
+      if (!imageOk()) return 1;
       const code = compose(['up', '-d']);
       if (code !== 0) return code;
       const shown = [...overlays, ...extra];
-      out(`${c('bold', 'Worca')}  http://localhost:${port}${shown.length ? `   overlays: ${shown.join(', ')}` : ''}`);
-      out(`  Log in once:  ${c('bold', 'worca container login')}`);
+      out(`${c('bold', box === 'hardened' ? 'Worca (hardened box)' : 'Worca')}  http://localhost:${port}${shown.length ? `   overlays: ${shown.join(', ')}` : ''}`);
+      if (box === 'hardened') out(`  Posture:      ${c('bold', 'worca container status')}`);
+      else out(`  Log in once:  ${c('bold', 'worca container login')}`);
       out(`  Stop:         ${c('bold', 'worca container down')}`);
       return 0;
     }
     case 'down': return compose(['down']);
-    case 'status': return compose(['ps']);
+    case 'status': return box === 'hardened' ? hardenedStatus(hb()) : compose(['ps']);
     case 'logs': return compose(['logs', ...(a.follow ? ['-f'] : []), 'worca']);
     case 'pull': return compose(['pull', 'worca']);
-    case 'login': return compose(['run', '--rm', 'worca', 'claude']);
-    case 'shell': return compose(['run', '--rm', 'worca', 'bash']);
+    case 'login':
+      if (box === 'hardened') { fail('the hardened box keeps no Claude sign-in: the broker holds the model credential (WORCA_BROKER_KEY_ANTHROPIC in .env)'); return 1; }
+      return imageOk() ? compose(['run', '--rm', 'worca', 'claude']) : 1;
+    case 'shell': return imageOk() ? compose(['run', '--rm', 'worca', 'bash']) : 1;
     case 'run': {
       const args = a.passthrough.length ? a.passthrough : a._;
       if (!args.length) { fail('Usage: worca container run -- <worca args>'); return 1; }
+      if (!imageOk()) return 1;
       return compose(['run', '--rm', 'worca', 'worca', ...args]);
+    }
+    case 'proxy': {
+      const [pverb, ...prest] = a._;
+      if (!PROXY_VERBS.has(pverb)) { fail('Usage: worca container proxy login|logout|status|test [--json] [--user DOMAIN\\user]'); return pverb ? 2 : 1; }
+      if (!needsSidecar()) { fail('no egress sidecar is set up: log in first with worca container proxy login (or put the corporate proxy in .env HTTPS_PROXY)'); return 1; }
+      if (!imageOk()) return 1;
+      // The sidecar alone: no box needed to log in.
+      const upCode = compose(['up', '-d', '--no-deps', 'egress']);
+      if (upCode !== 0) return upCode;
+      const json = prest.includes('--json') ? ['--json'] : [];
+      if (pverb !== 'login') return compose(['exec', '-T', 'egress', 'worca', 'egress', pverb, ...json]);
+      // The password is read here (hidden prompt or stdin) and piped into the sidecar: never an argument, never the box.
+      let got;
+      try { got = await readLoginInput(prest, { input: stdin, prompt: process.stderr }); } catch (e) {
+        fail(e && e.code === 'ABORT_ERR' ? 'cancelled; nothing was saved' : `the login could not be read (${e && e.message ? e.message : 'error'})`);
+        return e && e.code === 'ABORT_ERR' ? 130 : 1;
+      }
+      const account = got.account.domain ? `${got.account.domain}\\${got.account.user}` : got.account.user;
+      const code = compose(['exec', '-T', 'egress', 'worca', 'egress', 'login'], { input: `${account}\n${got.password}\n` });
+      got.password = '';
+      if (code === 0) out('  If the box was started before the sidecar, start it again so it uses the sidecar: worca container up');
+      return code;
     }
     default:
       fail(`unknown container verb: ${a.verb}\n\n${CONTAINER_HELP}`);

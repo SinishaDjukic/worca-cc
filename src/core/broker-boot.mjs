@@ -4,6 +4,7 @@
 // problems instead of exiting, so ui/server.mjs prints them and exits 78 in one place.
 import { brokerConfig, currentBrokerConfig, connectBroker, cachedBrokerInfo, sealedSecretFileMode } from './broker-client.mjs';
 import { agentIdentity } from './agent-user.mjs';
+import { secretFileRefusals } from './secret-files.mjs';
 import { findLocalCredentials, credentialFiles, guardMessage } from './broker-guard.mjs';
 import { listGlobalModels, readSettings } from './settings.mjs';
 import { listPluginModels, pluginModelSecretStatus } from './plugin-models.mjs';
@@ -30,10 +31,9 @@ export async function checkBrokerAtBoot({ env = process.env, shared = false, log
   if (c.error) return { on: true, fatal: [c.error], warnings: [] };
   // X2: under agent isolation an agent user reads a secret file its group or others may read; the secret lets it
   // mint tokens charged to anyone. The sealed file's mode decides (sealBrokerSecret read it once).
-  const fileMode = env === process.env ? sealedSecretFileMode() : null;
-  if (fileMode !== null && (fileMode & 0o044) && agentIdentity(env)) {
-    return { on: true, fatal: [`WORCA_BROKER_SECRET_FILE is readable by its group or by others (mode 0${fileMode.toString(8)}), and agents run under their own users: they could read the broker secret. Make it 0600, owned by the user worca runs as. See docs/credential-broker.md.`], warnings: [] };
-  }
+  // The shared check for every secret file (secret-files.mjs): mode 0600 and Worca's own owner.
+  const fileRefusals = env === process.env && sealedSecretFileMode() !== null ? secretFileRefusals({ env, names: ['WORCA_BROKER_SECRET_FILE'] }) : [];
+  if (fileRefusals.length) return { on: true, fatal: fileRefusals, warnings: [] };
 
   // The broker first: its slots say which remote endpoints are reachable through it.
   let info;
