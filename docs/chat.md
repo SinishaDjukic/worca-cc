@@ -128,22 +128,16 @@ What the check does not catch:
 - A tool that reads a folder it is not told about, such as a config file that names one.
 - Any other way of spelling a path. Each new one goes on this list, not into the check.
 
-See [Security overview](security-overview.md).
+For the secret vault the check refuses the OS key store tools (`security`, `secret-tool`, keyring modules) and
+`worca secrets export`, `reset` and `ack`. It matches them after removing quotes and backslashes. It also refuses an
+unsure command that names those tools or Worca's own CLI, or that holds a `$'…'` string with a backslash escape.
 
-### Known limits of the command guard
+The check reads text, so it is defence in depth. That is why `worca secrets export`, `reset` and `ack` run only in a
+person's own terminal, after they type a word the command shows. No variable or option lifts that. On a native
+install, anything that runs as your OS user can reach the OS key store. The secret vault is at-rest encryption, not a
+sandbox.
 
-The check on Chat's commands reads their text. It is defence in depth, not the security boundary.
-
-For the secret vault it refuses the OS key store tools (`security`, `secret-tool`, keyring modules) and
-`worca secrets export`, `reset` and `ack`. It matches them after removing quotes and backslashes. It also refuses a
-command that builds part of itself when it runs (`eval`, `$(…)`, a variable, `sh -c`, `python -c`, a decoded string)
-when that command names those tools or Worca's own CLI.
-
-A text check can still be fooled. That is why `worca secrets export`, `reset` and `ack` run only in a person's own
-terminal, after they type a word the command shows. No variable or option lifts that.
-
-On a native install, anything that runs as your OS user can reach the OS key store. The secret vault is at-rest
-encryption, not a sandbox. See [Secrets and the vault](secrets.md).
+See [Security overview](security-overview.md) and [Secrets and the vault](secrets.md).
 
 More: [Choose a setup](choose-a-setup.md), [Security overview](security-overview.md),
 [Environment spec](environment-spec.md), [Network proxy](network-proxy.md).

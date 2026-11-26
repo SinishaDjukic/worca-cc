@@ -277,12 +277,31 @@ test('a command that builds itself at run time and names the key store tools or 
     'bash -c "$0 secrets ack" worca', 'v=lookup; secret-tool $v service worca',
     'python3 -c "import keyring"', 'node -e "require(process.argv[1])" keyring', 'echo `security` > /dev/null',
     'w=worca-cc; $w secrets reset', 'sh -c "${T} security"'])
-    assert.match(checkAskCommand(c, ctx) || '', UNSURE_MSG, c);
+    assert.notEqual(checkAskCommand(c, ctx), null, c);   // refused; #1645's path check may answer first
   assert.equal(checkAskCommand('eval "worca se""crets ack"', ctx), ACK_MSG, 'the specific refusal comes first');
 });
 
 test('run-time commands that name none of them, and paths that only contain worca, stay allowed', () => {
   for (const c of ['echo $(date)', 'ls $HOME/projects', 'bash -c "npm test"', 'eval "echo hi"', 'cat $(git rev-parse --show-toplevel)/README.md',
     'cd /w/proj/worca-cc-fork && echo $(pwd)', 'grep -r security docs'])
+    assert.equal(checkAskCommand(c, ctx), null, c);
+});
+
+test('a $\'…\' string with a backslash escape is refused outright: the shell decodes it, the check cannot', () => {
+  for (const c of [String.raw`$'\x73ecurity' dump-keychain`, String.raw`worca $'\x73ecrets' ack`, String.raw`echo $'\101' && ls`,
+    String.raw`$'\163\145\143\162\145\164-tool' lookup service worca`])
+    assert.match(checkAskCommand(c, ctx) || '', /\$'…' escapes/, c);
+  assert.equal(checkAskCommand("echo $'plain words'", ctx), null, 'a $\'…\' string without an escape reads as written');
+});
+
+test('an unsure command naming Worca\'s CLI in any of SECRETS_VERB_RE\'s spellings, or secrets next to it, is refused', () => {
+  for (const c of ['x=ack; node /opt/app/src/cli/worca-cc.mjs secrets $x', String.raw`x=ack; node C:\app\src\cli\worca-cc.mjs secrets $x`,
+    'x=ack; npx @worca/app secrets $x', 'x=ack; npx @worca/app@2.1.0 secrets $x', 'v=$(echo ack); worca-cc.mjs secrets $v',
+    'eval "$X @worca/app secrets"'])
+    assert.notEqual(checkAskCommand(c, ctx), null, c);   // refused; #1645's path check may answer first
+  // Only the vault guard sees these: no secrets word, no path, only the CLI token or a key store tool in an unsure command.
+  for (const c of ['x=reset; node /opt/app/src/cli/worca-cc.mjs $x', 'x=y; npx @worca/app@2.1.0 $x', 'v=lookup; secret-tool $v service x', 'python3 -c "import keyring"'])
+    assert.match(checkAskCommand(c, ctx) || '', UNSURE_MSG, c);
+  for (const c of ['cd /w/proj/worca/src && echo $(pwd)', 'ls $HOME/worca-cc-notes', 'echo $(date) > worca.log'])
     assert.equal(checkAskCommand(c, ctx), null, c);
 });
