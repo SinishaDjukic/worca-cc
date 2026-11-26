@@ -23,7 +23,7 @@ Read it: [Network proxy](../network-proxy.md#worca-in-a-container)
 
 Pull requests (add each number when it opens):
 
-- Proxy login in the egress sidecar
+- Proxy login in the egress sidecar (#1621)
 
 ## Steady command rows in Chat
 
