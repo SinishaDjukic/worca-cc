@@ -350,7 +350,7 @@ inside the view.
 | Runs tab: Budget & cost limits (incl. Resume runs automatically when a usage limit resets) | S |
 | Runs tab: Pull requests (Draft the PR description with AI automatically) | S |
 | Runs tab: the filter box above its cards | S |
-| Runs tab: Network proxy | S — timeouts and the local port under More |
+| Runs tab: Network proxy | S — timeouts and the local port under More; in a container a line says the egress sidecar holds the login (no local port), and a login the operator manages shows status only |
 | Labs tab (feature flags) | S — flags are independent of levels (docs/feature-flags.md) |
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |

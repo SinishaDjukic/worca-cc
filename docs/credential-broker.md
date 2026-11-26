@@ -139,6 +139,18 @@ Every `claude` process follows this path: pipeline phases, Ask turns, titles, th
 button, script steps. A token belongs to one process, so it can be short-lived and dies with
 it. Sub-agents inside that process share its token.
 
+### Behind a corporate proxy
+
+The broker's calls to the providers honour `HTTPS_PROXY` and `NO_PROXY` in its own
+environment. `compose.broker.yml` sets them from `WORCA_BROKER_PROXY`, which is empty by
+default: the broker then connects directly. Behind a proxy that needs a login, run the egress
+sidecar (`compose.proxy.yml`, [network-proxy.md → Worca in a container](network-proxy.md#worca-in-a-container))
+and set `WORCA_BROKER_PROXY=http://egress:3128`. `worca container` sets it by itself whenever
+it starts the sidecar. The sidecar logs in to the corporate proxy for the broker too. The
+broker never gets the proxy login. The broker cannot log in to an NTLM proxy by itself: a
+login in its own `HTTPS_PROXY` URL goes out as Basic only. `compose.broker.yml` also puts the
+broker on the `internal` network, so a worca confined by `compose.egress.yml` reaches it.
+
 ### Slots
 
 A slot is one kind of credential with one fixed destination.
@@ -273,7 +285,9 @@ anything you can.
 ```
 
 `compose.yml` + `compose.broker.yml`. Recommended when agents run autonomously on
-repositories you don't fully trust. See [Single mode](#single-mode).
+repositories you don't fully trust. See [Single mode](#single-mode). For the same
+protection with one command, agent users, the allow-list and no host folder mounted,
+use the [Hardened box](hardened-box.md).
 
 ### Team on a Linux server or VM (multi mode, Compose)
 
@@ -289,7 +303,9 @@ repositories you don't fully trust. See [Single mode](#single-mode).
 ```
 
 `compose.yml` + `compose.broker.yml` + `compose.isolation.yml` (+ `compose.egress.yml` to
-lock the network down). Port 8080 is never routed publicly.
+lock the network down). Port 8080 is never routed publicly. The reference profile for this
+deployment, with every value to supply and the checks to run, is the
+[Shared instance](shared-instance.md) page (`docker/compose.shared.yml`).
 
 ### Railway (multi mode)
 
@@ -327,7 +343,7 @@ model weights. Disable sleep (`sudo pmset -a sleep 0`).
 
 The same two containers: a `broker` Service on the private port inside the namespace, an
 Ingress or cloudflared Deployment for the key page only, and a NetworkPolicy in place of
-`compose.egress.yml`.
+`compose.egress.yml`. What maps to what: [Shared instance → Kubernetes](shared-instance.md#kubernetes).
 
 ## Single mode
 
@@ -427,9 +443,17 @@ warning.
 worca reads `WORCA_BROKER_SECRET` (or the file `WORCA_BROKER_SECRET_FILE` names) once at start
 and removes both variables from its environment before it starts anything, so no child inherits
 the secret or the file's path: not an agent, a script tool, an MCP server, a terminal or a git
-hook. With agents under their own users, worca does not start while that file is readable by
-its group or by others: make it `0600`, owned by the user worca runs as (a compose secret keeps
-the host file's mode).
+hook. With agents under their own users, worca does not start while that file is readable or
+writable by its group or by others, or owned by another user: make it `0600`, owned by the user
+worca runs as (a compose secret keeps the host file's mode and owner; in the image that is uid
+1000, so `chown 1000:1000 <file> && chmod 600 <file>` on the host).
+
+The same rule holds for every secret file worca's container reads: `WORCA_EGRESS_SECRET_FILE`
+(the egress sidecar's secret) and `WORCA_GH_APP_KEY_FILE` (the GitHub App key). worca reads each
+once at start and refuses to start with one line per file that names it and the fix. Agents share
+that container, and the guardrails' Read deny on `/run/secrets/**` does not stop a shell `cat`.
+Files only another container reads (the broker's vault key and model keys, the sidecar's managed
+proxy login) are not in agents' reach and are not checked here.
 
 ### Only Claude runs
 

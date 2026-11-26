@@ -1,0 +1,147 @@
+# docker/compose.shared.yml — the reference profile for a shared instance: a team on one Linux server or VM
+# (docs/shared-instance.md). Not a command: the operator runs compose with this file list, in this order:
+#
+#   docker compose --env-file shared.env -f compose.yml -f compose.broker.yml -f compose.isolation.yml \
+#     -f compose.egress.yml -f compose.proxy.yml -f compose.shared.yml --profile tunnel up -d
+#
+# compose.shared.yml goes last, after compose.proxy.yml: it sets the secret-file variables that file leaves empty.
+#
+# Together they turn on the same hardening as the hardened box (docs/hardened-box.md), for a team:
+#   - the credential broker in MULTI mode: each person saves their own model key and GitHub token on the key page;
+#     Worca and its agents hold none;
+#   - agent users per person (compose.isolation.yml): one person's agents cannot read another's processes,
+#     nor Worca's settings, database or environment;
+#   - the allow-list (compose.egress.yml): Worca sits on a network with no route out;
+#   - the egress sidecar (compose.proxy.yml) with the proxy login of a technical user, supplied by the
+#     operator as a secret file (`worca proxy hash` prints one). The UI shows its status only;
+#   - no host folder mounted: projects are cloned into the data volume; results leave as pull requests;
+#   - the sign-in in front: Cloudflare Access through the `cloudflared` tunnel below (profile `tunnel`), or an
+#     identity proxy of your own that sets a header (WORCA_IDENTITY_HEADER). Nothing is published on the host.
+#
+# Every value the operator supplies is in docker/shared.env.example. Secrets are files under ./secrets/
+# (WORCA_SECRETS_DIR), mounted as compose secrets, never variables. Every one: owner uid 1000 (the containers' user),
+# mode 0600. A compose secret keeps the host file's mode, and agents share Worca's container: Worca refuses to start
+# while a secret file it reads is readable by its group or others (src/core/secret-files.mjs).
+#
+# Every signed-in person is an administrator, and there is no privacy between teammates (docs/shared-instance.md).
+# Needs Docker Compose 2.24 or newer (!override, !reset).
+
+name: worca-shared
+
+services:
+  worca:
+    # The data volume only: nothing from the host (compose.yml's project bind mount is replaced).
+    volumes: !override
+      - worca-data:/data
+    # Reached only through the sign-in in front, on the compose network.
+    ports: !reset []
+    secrets:
+      - worca_broker_secret
+      - worca_egress_secret
+      - worca_gh_app_key
+    environment:
+      WORCA_PROJECTS_ROOT: /data/projects
+      SSH_AUTH_SOCK: ""
+      # Remote mode (docs/remote-access.md): the public host name and the identity check.
+      WORCA_ALLOWED_HOSTS: ${WORCA_INSTANCE_HOST:?set WORCA_INSTANCE_HOST (the instance's host name) in the env file}
+      WORCA_CF_ACCESS_TEAM_DOMAIN: ${WORCA_CF_ACCESS_TEAM_DOMAIN:-}
+      WORCA_CF_ACCESS_AUD: ${WORCA_CF_ACCESS_AUD:-}
+      # Or an identity proxy of your own instead of Access: the header it sets, the address it connects from, and
+      # the explicit flag that says no token is checked (docs/remote-access.md, "Worca settings").
+      WORCA_IDENTITY_HEADER: ${WORCA_IDENTITY_HEADER:-}
+      WORCA_IDENTITY_TRUSTED_PROXIES: ${WORCA_IDENTITY_TRUSTED_PROXIES:-}
+      WORCA_INSECURE_NO_IDENTITY_CHECK: ${WORCA_INSECURE_NO_IDENTITY_CHECK:-}
+      # A multi-person instance never starts without its broker.
+      WORCA_BROKER_REQUIRED: "1"
+      # Secrets as files: the variables stay empty, the _FILE names win.
+      WORCA_BROKER_SECRET: ""
+      WORCA_BROKER_SECRET_FILE: /run/secrets/worca_broker_secret
+      WORCA_EGRESS_SECRET: ""
+      WORCA_EGRESS_SECRET_FILE: /run/secrets/worca_egress_secret
+      # Pushes and pull requests as the person who acted, with the GitHub token they saved on the key page.
+      WORCA_GH_AS_PERSON: ${WORCA_GH_AS_PERSON:-required}
+      # Optional: the deployment's own GitHub App, for reads everyone sees (pull request status, checks).
+      WORCA_GH_APP_ID: ${WORCA_GH_APP_ID:-}
+      WORCA_GH_APP_KEY_FILE: ${WORCA_GH_APP_ID:+/run/secrets/worca_gh_app_key}
+      # No deployment-wide git token or model key in Worca: they are per person.
+      GH_TOKEN: ""
+      ANTHROPIC_API_KEY: ""
+      CLAUDE_CODE_OAUTH_TOKEN: ""
+    stop_grace_period: 60s
+
+  broker:
+    depends_on:
+      - egress
+    secrets:
+      - worca_broker_secret
+      - worca_broker_vault_key
+      - worca_broker_github_client_secret
+    environment:
+      WORCA_BROKER_MODE: multi
+      WORCA_BROKER_SECRET: ""
+      WORCA_BROKER_SECRET_FILE: /run/secrets/worca_broker_secret
+      WORCA_BROKER_VAULT_KEY: ""
+      WORCA_BROKER_VAULT_KEY_FILE: /run/secrets/worca_broker_vault_key
+      # No team key: each person saves their own.
+      WORCA_BROKER_KEY_ANTHROPIC: ""
+      # The key page, on its own host name behind its own sign-in.
+      WORCA_BROKER_PUBLIC_URL: https://${WORCA_KEYPAGE_HOST:?set WORCA_KEYPAGE_HOST (the key page's host name) in the env file}
+      WORCA_BROKER_RETURN_URL: https://${WORCA_INSTANCE_HOST}
+      # "Sign in with GitHub" on the key page (optional; a pasted token needs none).
+      WORCA_BROKER_GITHUB_CLIENT_SECRET: ""
+      WORCA_BROKER_GITHUB_CLIENT_SECRET_FILE: ${WORCA_BROKER_GITHUB_CLIENT_ID:+/run/secrets/worca_broker_github_client_secret}
+      # The broker's calls to the model providers go through the sidecar: the allow-list and the proxy login apply.
+      HTTPS_PROXY: http://egress:3128
+      HTTP_PROXY: http://egress:3128
+
+  egress:
+    secrets:
+      - worca_egress_secret
+      - worca_proxy_login
+    environment:
+      WORCA_EGRESS_SECRET: ""
+      WORCA_EGRESS_SECRET_FILE: /run/secrets/worca_egress_secret
+      # The technical user's login, from `worca proxy hash` (domain, user, NT hash). Managed mode: the UI shows
+      # status only, and no one can change it from Worca. Unset WORCA_PROXY_LOGIN: no proxy login.
+      WORCA_EGRESS_LOGIN_FILE: ${WORCA_PROXY_LOGIN:+/run/secrets/worca_proxy_login}
+
+  cloudflared:
+    profiles: ["tunnel"]
+    image: cloudflare/cloudflared:${CLOUDFLARED_TAG:-2026.10.3}
+    # A remotely managed tunnel: its ingress sends WORCA_INSTANCE_HOST to http://worca:4317 and WORCA_KEYPAGE_HOST
+    # to http://broker:8081 (never 8080). The token is a file.
+    command: ["tunnel", "run", "--token-file", "/run/secrets/worca_tunnel_token"]
+    # The same uid as every other container here, so every secret file is 1000:1000, mode 0600.
+    user: "1000:1000"
+    secrets:
+      - worca_tunnel_token
+    # Its own container, never Worca's network namespace (docs/remote-access.md, "Callers inside the box").
+    networks:
+      - internal
+      - default
+    depends_on:
+      - worca
+      - broker
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    restart: unless-stopped
+
+secrets:
+  worca_broker_secret:
+    file: ${WORCA_SECRETS_DIR:-./secrets}/broker_secret
+  worca_egress_secret:
+    file: ${WORCA_SECRETS_DIR:-./secrets}/egress_secret
+  worca_broker_vault_key:
+    file: ${WORCA_SECRETS_DIR:-./secrets}/broker_vault_key
+  worca_tunnel_token:
+    file: ${WORCA_SECRETS_DIR:-./secrets}/tunnel_token
+  # Optional ones point at /dev/null when they are not used, so the file list stays the same.
+  worca_proxy_login:
+    file: ${WORCA_PROXY_LOGIN:-/dev/null}
+  worca_gh_app_key:
+    file: ${WORCA_GH_APP_KEY:-/dev/null}
+  worca_broker_github_client_secret:
+    file: ${WORCA_BROKER_GITHUB_CLIENT_SECRET_PATH:-/dev/null}

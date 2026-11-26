@@ -14,6 +14,7 @@ import { dockerClient, dockerBackend, dockerPreflight, dockerNetwork, sandboxRes
   _resetDockerProbeForTests, DOCKER_MISSING } from '../src/core/exec-env/backends/docker.mjs';
 import { createFakeDocker } from '../src/core/exec-env/backends/docker-fake.mjs';
 import { defaultImageName } from '../src/core/exec-env/backends/docker-image.mjs';
+import { normalizeEnvSpec } from '../src/core/exec-env/env-spec.mjs';
 import { getExecBackend } from '../src/core/exec-env/registry.mjs';
 import { assertBackend } from '../src/core/exec-env/backend.mjs';
 import { mkdirsScript } from '../src/core/exec-env/shell.mjs';
@@ -380,7 +381,9 @@ test('settings: dockerSandbox memory, cpus, pids and runtime are checked; build 
 test('buildEnvironment builds the project image with `docker build -` and records its id', async () => {
   const fake = createFakeDocker({ root: tmp() });
   const client = dockerClient(fake.runner);
-  const spec = { version: 1, tools: [{ name: 'node', version: '24.21.0' }], apt: ['libpq-dev'], hash: 'h'.repeat(64) };
+  // A stored spec: the shared renderer (spec-dockerfile.mjs) refuses one whose hash does not match its content.
+  const spec = normalizeEnvSpec({ tools: [{ name: 'node', version: '24.21.0' }], apt: ['libpq-dev'] });
+  await assert.rejects(client.buildEnvironment({ ...spec, hash: `sha256:${'0'.repeat(64)}` }, { name: 'x' }), /not in its stored form/);
   const lines = [];
   const r = await client.buildEnvironment(spec, { name: 'worca-local-sandbox-acme-12345678', onLog: (l) => lines.push(l) });
   assert.equal(r.name, 'worca-local-sandbox-acme-12345678');

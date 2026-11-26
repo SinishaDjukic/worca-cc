@@ -6,9 +6,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { normalizeEnvSpec, envSpecHash, EnvSpecError } from '../src/core/exec-env/env-spec.mjs';
-import { readProjectExecEnv } from '../src/core/config.mjs';
-import { setProjectEnvSpec, setProjectBackendConfig, recordProjectBuild, buildStaleness, resolveRunEnvironment, projectExecEnvView } from '../src/core/exec-env/project-env.mjs';
+import { normalizeEnvSpec, envSpecHash, EnvSpecError, ENV_SPEC_VERSION } from '../src/core/exec-env/env-spec.mjs';
+import { readProjectExecEnv, updateProjectExecEnv } from '../src/core/config.mjs';
+import { setProjectEnvSpec, clearProjectEnvSpec, setProjectBackendConfig, recordProjectBuild, buildStaleness, resolveRunEnvironment, projectExecEnvView } from '../src/core/exec-env/project-env.mjs';
 import { startEnvironmentBuild, markServerProcess, buildJobLog, ExecEnvBuildError } from '../src/core/exec-env/build.mjs';
 import { getExecBackend } from '../src/core/exec-env/index.mjs';
 import { e2bServerIdentity } from '../src/core/exec-env/backends/e2b.mjs';
@@ -228,4 +228,57 @@ test('e2b egress: a project field, open unless set to allow; allow hands the run
   assert.deepEqual(view.fields.find((f) => f.key === 'egress'),
     { key: 'egress', label: field.label, hint: field.hint, help: field.help, placeholder: 'open', options: field.options, value: 'allow' });
   assert.deepEqual(Object.keys(view.fields.find((f) => f.key === 'template')).sort(), ['hint', 'key', 'label', 'value'], 'the template field is unchanged');
+});
+
+// From #1620 (the spec on its own): the stricter checks and the record's shape, kept so the spec's contract stays tested.
+test('spec: a stored spec is version 1; every refusal is an EnvSpecError with its code', () => {
+  assert.equal(normalizeEnvSpec({}).version, ENV_SPEC_VERSION);
+  for (const [input, re] of [
+    [{ tools: [{ name: 'node' }] }, /must be pinned/],
+    [{ version: 2 }, /version must be 1/],
+    [{ tools: 'node' }, /tools must be an array/],
+    [{ apt: 'curl' }, /apt must be an array/],
+    [null, /JSON object/],
+  ]) assert.throws(() => normalizeEnvSpec(input), (e) => e instanceof EnvSpecError && e.code === 'EXEC_ENV_SPEC_INVALID' && re.test(e.message), JSON.stringify(input));
+});
+
+test('spec: mise names such as npm:, pipx: and github: pass', () => {
+  const s = normalizeEnvSpec({ tools: [{ name: 'npm:prettier', version: '3.9.10' }, { name: 'github:cli/cli', version: '2.60.0' }] });
+  assert.deepEqual(s.tools.map((t) => t.name), ['github:cli/cli', 'npm:prettier']);
+});
+
+test('record: the spec lives in Worca DB under the project, in the execEnvProject record; clear removes it', () => {
+  const k = key();
+  assert.deepEqual(readProjectExecEnv(k), { config: {}, spec: null, builds: {} });
+  const spec = setProjectEnvSpec(k, { tools: [{ name: 'node', version: '24.21.0' }], apt: ['libpq-dev'] }, { now: new Date('2026-11-26T10:00:00Z') });
+  assert.equal(spec.updatedAt, '2026-11-26T10:00:00.000Z');
+  assert.deepEqual(readProjectExecEnv(k).spec, spec);
+  const again = setProjectEnvSpec(k, { tools: [{ name: 'node', version: '24.22.0' }] });
+  assert.notEqual(again.hash, spec.hash);
+  assert.equal(readProjectExecEnv(k).spec.hash, again.hash);
+  clearProjectEnvSpec(k);
+  assert.equal(readProjectExecEnv(k).spec, null);
+});
+
+test('record: a bad spec is refused and leaves the stored one alone; other projects are untouched', () => {
+  const k = key(); const other = key();
+  const spec = setProjectEnvSpec(k, { tools: [{ name: 'node', version: '24.21.0' }] });
+  setProjectEnvSpec(other, { apt: ['curl'] });
+  assert.throws(() => setProjectEnvSpec(k, { tools: [{ name: 'node', version: 'latest' }] }), EnvSpecError);
+  assert.equal(readProjectExecEnv(k).spec.hash, spec.hash);
+  assert.deepEqual(readProjectExecEnv(other).spec.apt, ['curl']);
+});
+
+test('record: the spec shares its record with the backend fields and builds, and keeps them', () => {
+  const k = key();
+  updateProjectExecEnv(k, (rec) => { rec.config.e2b = { template: 'mine' }; rec.builds.e2b = { name: 'x' }; });
+  const spec = setProjectEnvSpec(k, {});
+  assert.deepEqual(readProjectExecEnv(k), { config: { e2b: { template: 'mine' } }, spec, builds: { e2b: { name: 'x' } } });
+  clearProjectEnvSpec(k);
+  assert.deepEqual(readProjectExecEnv(k), { config: { e2b: { template: 'mine' } }, spec: null, builds: { e2b: { name: 'x' } } });
+});
+
+test('record: an invalid project key is refused loudly', () => {
+  assert.throws(() => readProjectExecEnv('not a key'));
+  assert.throws(() => setProjectEnvSpec('not a key', {}));
 });

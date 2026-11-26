@@ -5,16 +5,36 @@ it spawns run inside a disposable Linux container. An agent that goes off the
 rails damages a box, not your machine. Design and trade-offs:
 [`plans/container-isolation-design.md`](../plans/container-isolation-design.md).
 
-What the box gives you that guardrails alone cannot (see
+This page is the plain container. It protects your machine, not the projects it
+mounts. It is not one of the five setups in [Choose a setup](choose-a-setup.md);
+it is the existing option they are measured against.
+
+What it protects, beyond what guardrails alone can (see
 [guardrails.md](guardrails.md), "Honest limitations"): the agents cannot read
 host credentials (`~/.ssh`, `~/.aws`, keychains, browser profiles), cannot touch
 files outside the project folders you mount, cannot see host processes, and
-with the egress overlay cannot reach hosts you did not allow. What it does
-**not** give you: protection of the mounted project itself (the agent is meant
-to edit it) — see *Clone-in mode* for that. By default every project under
-`WORCA_PROJECTS` is mounted, secret files included; a *Project-scoped box*
-mounts one project with its secret files masked: one box per project, shared by
-every run of that project, not a separate mount per run.
+with the egress overlay cannot reach hosts you did not allow.
+
+What it does **not** protect:
+
+- The mounted projects. The agent is meant to edit them. It can also plant a
+  git hook or a git config command there, which your own git or IDE then runs
+  on your machine. By default every project under `WORCA_PROJECTS` is mounted,
+  secret files included; a [Project-scoped box](#project-scoped-box) mounts one
+  project with its secret files masked: one box per project, shared by
+  every run of that project, not a separate mount per run.
+- The model key. Without the credential broker it sits in Worca's environment,
+  or in Claude Code's sign-in, where agents can read it.
+- Worca's own settings and database. Agents run as Worca's user, unless you
+  add agent users.
+- The network. It is open unless you add the egress overlay.
+
+To compare this with the other setups, see [Choose a setup](choose-a-setup.md) and the
+[Security overview](security-overview.md).
+
+For all of that at once, use the [Hardened box](hardened-box.md): one command
+(`worca container up --hardened`) with the broker, agent users, the allow-list
+and the egress sidecar, and no host folder mounted.
 
 ## Quick start
 
@@ -36,7 +56,8 @@ worca container down
 egress,ssh,teams,clonein` on `up` adds overlays and is remembered for the other
 verbs. `--project <dir>` on `up` mounts only that project, its secret files
 masked (see [Project-scoped box](#project-scoped-box)), and is remembered too.
-`worca container help` lists everything.
+`worca container help` lists everything. `worca container up --hardened`
+starts the [Hardened box](hardened-box.md) instead.
 
 **Without npm**, the compose file alone:
 
@@ -96,16 +117,26 @@ The CLI's own updater is off inside the image; a newer CLI is a newer image tag.
 The slim image has no compiler, so node-pty (the terminal's PTY) is skipped and terminals run over pipes; the -full image builds it.
 The slim image has no browser either: an Architecture (C4) run there writes SVG only and its report says why, and a Presentation run's PDF step reports that it found no browser unless you deselect the PDF. The -full image runs Chromium headless without its own sandbox (Docker's default seccomp profile refuses it to a non-root user); the container is the boundary.
 
-**Your project needs a toolchain the image lacks?** Pull `-full`, or extend:
+**Your project needs a toolchain the image lacks?** Pull `-full`, or give the project an environment spec and build the box image from it:
+
+```bash
+worca exec-env spec --project ~/dev/acme-api --set spec.json   # pinned mise tools and apt packages
+worca container build                                          # the box image, from every project's spec
+worca container up                                             # restart the box on it
+```
+
+The build starts from `WORCA_BASE_IMAGE` in `.env`, or the image of `WORCA_TAG`. It checks the result and points the box at it. See [Building the box image](environment-spec.md#building-the-box-image).
+
+For a tool outside mise and apt, extend the image by hand:
 
 ```dockerfile
 FROM ghcr.io/worca-org/worca:1.3.0
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends rustup && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSLo /usr/local/bin/acme-lint https://tools.acme.example/acme-lint-1.4.0 && chmod 755 /usr/local/bin/acme-lint
 USER worca
 ```
 
-and point `image:` at your build in a `compose.override.yml`.
+Build it, then set `WORCA_IMAGE` in `.env` to its name. `worca container` adds `compose.image.yml`, which runs the box on that image (with raw compose: `-f compose.image.yml`). `worca container build --status` reports an image it did not build as not recorded.
 
 ## Logging Claude Code in
 
@@ -258,6 +289,9 @@ docker compose -f compose.yml -f compose.clonein.yml run --rm worca worca add --
 Needs git credentials (above). `gh repo clone` reads `GH_TOKEN`; with a read/write pair, add
 `-e GH_TOKEN="$WORCA_GH_READ_TOKEN"` to that `run`.
 
+Clone-in mode alone still runs agents as Worca's user, with the model key in reach. The
+[Hardened box](hardened-box.md) clones in the same way and adds the rest.
+
 ## Network
 
 **Inbound:** only the UI port, published on `127.0.0.1`. The server accepts
@@ -305,11 +339,32 @@ local one). `worca container up`, `run`, `login` and `shell` never pass it in:
 2. else the box gets `networkProxy.upstream` from this machine's
    `settings.json`, host and port only, when that proxy needs no login and
    `networkProxy.enabled` is not `false`;
-3. else the box gets no proxy, and one line says so. A proxy that needs a login
-   is set up in the box's own Worca: its Settings › Network proxy, then
-   `worca container run -- proxy login`.
+3. else the box gets no proxy, and one line says so.
 
 A `.env` proxy on loopback gets the same warning.
+
+**A proxy that needs a login.** The login lives in the egress sidecar, never
+in the box. `worca container` adds `compose.proxy.yml` by itself when `.env`'s
+`HTTPS_PROXY` carries a login, when this machine's `networkProxy.upstream`
+needs one, or once you ran `worca container proxy login`. The box then gets
+`HTTPS_PROXY=http://egress:3128`, and the sidecar logs in to the corporate
+proxy for every connection. `.env`'s `HTTPS_PROXY`, with any Basic or Digest
+password in it, reaches the sidecar only. `worca container` writes
+`WORCA_EGRESS_SECRET` into `.env` and refuses an image without the sidecar
+(the image label `dev.worca.egress-sidecar`). Log in with
+`worca container proxy login`. See
+[network-proxy.md → Worca in a container](network-proxy.md#worca-in-a-container).
+
+With raw compose, add the file and the secret yourself:
+
+```bash
+echo "WORCA_EGRESS_SECRET=$(openssl rand -base64 32 | tr -d '/+=')" >> .env
+docker compose -f compose.yml -f compose.proxy.yml up -d
+docker compose exec egress worca egress login      # DOMAIN\user, then the password
+```
+
+Without `compose.proxy.yml` the login stays in the box, and Worca warns at
+start.
 
 A proxy that re-signs TLS needs its CA inside the box. Put the CA, as a PEM
 file, in `.env`:
@@ -354,6 +409,12 @@ Azure Boards, `api.telegram.org`, `slack.com,.slack.com` (Socket Mode dials a
 A Jira source drives its own command-line tool: allow `<your-org>.atlassian.net`,
 and it goes through the proxy only if that tool reads the proxy variables.
 
+Behind a corporate proxy that needs a login, add `compose.proxy.yml` after
+this file (`worca container up --with egress` does it by itself when a login
+is configured). The sidecar then keeps the allowlist and also logs in to the
+corporate proxy. On its own, this overlay's sidecar relays direct and never
+reaches a corporate proxy.
+
 An entry with a leading dot (`.github.com`) allows every subdomain and the name
 itself. A refused host gets `403 egress denied: <host>`; `docker compose logs
 egress` has one `ALLOW` / `DENY` line per connection. The proxy is
@@ -390,6 +451,8 @@ URL from `docker compose logs teams-tunnel`.
 | `WORCA_PROJECTS` | `$HOME/dev` | host folder with your repos, mounted at the same path |
 | `WORCA_PROJECTS_MOUNT` | same as above | mount it elsewhere inside (loses parity) |
 | `WORCA_TAG` | `latest` | image tag |
+| `WORCA_BASE_IMAGE` | the image of `WORCA_TAG` | what `worca container build` starts from: a Worca image or one built `FROM` it ([Building the box image](environment-spec.md#building-the-box-image)) |
+| `WORCA_IMAGE` | | the box runs this local image instead (`compose.image.yml`); `worca container build` writes it |
 | `WORCA_PORT` | `4317` | host loopback port |
 | `TZ` | `UTC` | **scheduled runs use this clock** |
 | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` | | commit identity |
@@ -401,6 +464,8 @@ URL from `docker compose logs teams-tunnel`.
 | `WORCA_MEM`, `WORCA_CPUS` | `6g`, `4` | resource caps (`pids_limit` 2048 is fixed) |
 | `HTTPS_PROXY`, `NO_PROXY` | | corporate proxy, never on loopback (see [Corporate proxy and CA](#corporate-proxy-and-ca)) |
 | `WORCA_CA_CERT` | | the corporate CA (PEM) for a proxy that re-signs TLS; `compose.ca.yml` |
+| `WORCA_EGRESS_SECRET` | written by `worca container` | the egress sidecar's shared secret, 32+ characters; `compose.proxy.yml` |
+| `WORCA_BROKER_PROXY` | set by `worca container` with the sidecar | the proxy the broker's calls to model providers use (`http://egress:3128`); `compose.broker.yml` |
 | `WORCA_EGRESS_ALLOW` | see above | egress overlay allowlist |
 | `WORCA_EGRESS_MODE`, `WORCA_EGRESS_DENY` | | a hosting platform's outbound network policy (see [Egress allowlist](#egress-allowlist)); leave unset with the overlay |
 | `WORCA_SSH_SOCK` | Docker Desktop's | ssh overlay, Linux |
@@ -494,13 +559,22 @@ Claude Code pin is [`docker/CLAUDE_CODE_VERSION`](../docker/CLAUDE_CODE_VERSION)
 What the build pulls in is locked. The package ships `npm-shrinkwrap.json`, and the
 image installs exactly that tree with `npm ci` in the unpacked tarball (a global
 install of a local tarball would ignore the shrinkwrap; an `npm install -g @worca/app`
-from the registry honours it). The `node:22-bookworm-slim` base is pinned by digest
+from the registry honours it). The `node` bookworm-slim base is pinned by digest
 and the workflows' third-party actions by commit SHA; Dependabot
 ([`.github/dependabot.yml`](../.github/dependabot.yml)) proposes the bumps. Two optional
 dependencies run install scripts: `node-pty` builds its native module (or is skipped
 where there is no compiler) and `ffmpeg-static` downloads its ffmpeg binary.
 
+**On a company base image.** Some companies allow only their own base images. Build Worca on yours from a checkout:
+
+```bash
+npm run docker:build -- --node-base registry.acme.example/base/node:24-bookworm-slim --tag registry.acme.example/platform/worca:1.21.0
+```
+
+`--node-base` sets the Dockerfile's `NODE_BASE_IMAGE` build argument. Without it, the build uses the pinned `node` image. Your base must be the official `node` image of the same major, or built `FROM` it: the build needs Debian bookworm, apt, and the `node` user with uid 1000. Push the result to your registry, then set `WORCA_BASE_IMAGE` to it in the container `.env`. `worca container build` then starts from your image.
+
 Hacking on Worca inside the box: [CONTRIBUTING.md](../CONTRIBUTING.md#in-a-container).
 
-See also: [Running agents in E2B sandboxes](e2b.md), which keeps Worca on your machine and runs only the
-agents of a run in a self-hosted E2B sandbox.
+See also: the [E2B sandbox](e2b.md) and the [Local sandbox (Docker)](local-sandbox.md), which keep Worca on
+your machine and run only the agents of a run in a sandbox: a self-hosted E2B sandbox, or a container on your
+own Docker.

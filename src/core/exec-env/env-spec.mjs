@@ -1,7 +1,7 @@
 // src/core/exec-env/env-spec.mjs
-// A project's backend-neutral environment spec (plans/e2b-execution-design.md §18): the tools its sandbox needs —
-// never repo code, files, env or secrets. Stored in worca's DB (config.mjs execEnvProject.spec); set through the
-// API/CLI now, and from the Toolchain setup workflow's approved lock next (mise rows -> tools, apt: rows -> apt).
+// A project's backend-neutral environment spec: the tools its container or sandbox needs, never repo code, files, env or
+// secrets. Stored in Worca's DB (config.mjs execEnvProject.spec); set through `worca exec-env spec --set`.
+// Later: the Toolchain setup workflow's approved lock (mise rows -> tools, apt: rows -> apt).
 import { createHash } from 'node:crypto';
 
 export const ENV_SPEC_VERSION = 1;
