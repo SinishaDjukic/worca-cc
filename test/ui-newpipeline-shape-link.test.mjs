@@ -3,10 +3,11 @@
 // Chat HOME with the `shape` intent armed; the entry is consumed on any Chat entry. A Markdown handoff
 // (openNewPipeline {promptMarkdown}) selects the Markdown source; and a hello that arrives while the Chat home is open
 // re-pushes its switches without re-fetching them.
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootApp } from './helpers/run-page-boot.mjs';
-import { _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
+import { runPageOn } from './helpers/run-page-boot.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
+
 
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 const THREAD_ID = 'ask_000000c1';
@@ -30,9 +31,13 @@ function arms({ settings = { chat: { scriptTools: true } }, sources = [] } = {})
     return null;
   };
 }
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: arms() });
+const bootApp = runPageOn(app);
 async function boot(o = {}) {
-  _resetChatExtensions();                       // app.js re-registers every card and add-on per boot
   const ctx = await bootApp({ fetchHandler: arms(o) });
+  // the Chat composer is one input for the life of the shared app: an earlier test's text must not read as this one's
+  const input = ctx.window.document.querySelector('[data-chat-page] .ask-input');
+  if (input) input.value = '';
   ctx.wsBox.ws.dispatch('open', {});
   return ctx;
 }
@@ -147,23 +152,4 @@ test('openNewPipeline {promptMarkdown} selects the Markdown source and fills it;
   assert.equal(doc.getElementById('promptMarkdown').value, '# Plan\n- one');
   assert.equal(doc.getElementById('prompt').value, '');
   assert.equal(doc.getElementById('workflowSelect').value, 'wf_auto');
-});
-
-test('Chat home: the shape tile shows at once, and a hello while home is open re-pushes the switches without re-fetching them', async () => {
-  const ctx = await boot({ settings: { chat: { scriptTools: false } }, sources: [{ type: 'plugin', plugin: 'jira', sourceId: 'issues' }] });
-  ctx.go('chat/new');
-  await ctx.settle(8);
-  const doc = ctx.window.document;
-  const tile = (id) => doc.querySelector(`.chat-home-act[data-intent="${id}"]`);
-  assert.equal(tile('shape').hidden, false, 'Shaper is always on');
-  assert.equal(tile('script').hidden, true, 'scriptTools:false');
-  const switches = () => ctx.calls.filter((c) => c.url === '/api/settings' || c.url === '/api/sources').length;
-  const before = switches();
-  hello(ctx);
-  await ctx.settle(6);
-  assert.equal(tile('shape').hidden, false, 'still there after the hello');
-  assert.equal(switches(), before, 'flags re-pushed, not re-fetched');
-  assert.equal(tile('script').hidden, true, 'scripts kept its state');
-  doc.querySelector('.chat-home-act.is-more').click();
-  assert.ok([...doc.querySelectorAll('.wfv-menu .wfv-menu-l')].some((n) => n.textContent === 'Find tasks'), 'tasks kept its state');
 });

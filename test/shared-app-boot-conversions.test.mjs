@@ -12,22 +12,99 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { listTestNames } from '../tools/test-each-alone.mjs';
+
+// The speed-up tool owns the sibling rule. Loaded this way so a tool that does not load fails only the tests that need it.
+const speedup = await import('../tools/ui-boot-speedup.mjs').catch((error) => ({ error }));
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const HELPER = './helpers/shared-app-boot.mjs';
 const FIRST = 'test/ui-running-detail.test.mjs';
-// The files this slice picks from (the six largest, then the fallbacks), with the number of tests each had before.
+// The files converted first (the six largest, then the fallbacks), with the number of tests each had before.
 const BASELINE = {
   [FIRST]: 94,
   'test/ui-history-detail-tabs.test.mjs': 53,
   'test/ui-history-shipit.test.mjs': 57,
   'test/ui-workflows-app.test.mjs': 114,
-  'test/ui-one-model.test.mjs': 9,
+  'test/ui-one-model.test.mjs': 36,
   'test/ui-marketplace-marketplaces.test.mjs': 35,
   'test/ui-ask-side-shell.test.mjs': 53,
   'test/ui-run-artifacts.test.mjs': 43,
   'test/ui-projects-view.test.mjs': 39,
   'test/ui-project-add.test.mjs': 37,
+  // The batches' other files: each one's runtime count (`ℹ tests N` of `node tools/test.mjs FILE`) before its batch,
+  // so tests made in a loop, and subtests, count one each.
+  'test/run-page-flag-off-golden.test.mjs': 5,
+  'test/ui-ask-form-panel.test.mjs': 5,
+  'test/ui-chat-home-app.test.mjs': 21,
+  'test/ui-chat-run-controls.test.mjs': 22,
+  'test/ui-cost-breakdown.test.mjs': 10,
+  'test/ui-folder-run-history.test.mjs': 18,
+  'test/ui-folder-run-running.test.mjs': 19,
+  'test/ui-group-page-route.test.mjs': 33,
+  'test/ui-history-base-check.test.mjs': 25,
+  'test/ui-history-detail-diff.test.mjs': 26,
+  'test/ui-history-detail.test.mjs': 48,
+  'test/ui-limit-reset.test.mjs': 20,
+  'test/ui-log-filter-session.test.mjs': 11,
+  'test/ui-newpipeline-shape-link.test.mjs': 7,
+  'test/ui-no-project-run-page.test.mjs': 11,
+  'test/ui-plan-panel.test.mjs': 16,
+  'test/ui-question-panel.test.mjs': 4,
+  'test/ui-question-shaping.test.mjs': 13,
+  'test/ui-question-workflow.test.mjs': 6,
+  'test/ui-question.test.mjs': 10,
+  'test/ui-run-checklists.test.mjs': 2,
+  'test/ui-run-presets-save.test.mjs': 6,
+  'test/ui-run-rerun-form.test.mjs': 19,
+  'test/ui-run-sessions-tray.test.mjs': 8,
+  'test/ui-run-sessions-view.test.mjs': 24,
+  'test/ui-run-tags.test.mjs': 25,
+  'test/ui-running-auto.test.mjs': 6,
+  'test/ui-running-card.test.mjs': 2,
+  'test/ui-session-step-line.test.mjs': 6,
+  'test/ui-shape-app-wiring.test.mjs': 55,
+  'test/ui-skills-run-detail.test.mjs': 3,
+  'test/ui-skills-run-picker.test.mjs': 3,
+};
+
+// The batches that have landed, each by its helper family. A later batch appends its entry (and its BASELINE counts).
+const BATCHES = {
+  'run-page and history families': [
+    'test/run-page-flag-off-golden.test.mjs',
+    'test/ui-ask-form-panel.test.mjs',
+    'test/ui-chat-home-app.test.mjs',
+    'test/ui-chat-run-controls.test.mjs',
+    'test/ui-cost-breakdown.test.mjs',
+    'test/ui-folder-run-history.test.mjs',
+    'test/ui-folder-run-running.test.mjs',
+    'test/ui-group-page-route.test.mjs',
+    'test/ui-history-base-check.test.mjs',
+    'test/ui-history-detail-diff.test.mjs',
+    'test/ui-history-detail.test.mjs',
+    'test/ui-limit-reset.test.mjs',
+    'test/ui-log-filter-session.test.mjs',
+    'test/ui-newpipeline-shape-link.test.mjs',
+    'test/ui-no-project-run-page.test.mjs',
+    'test/ui-one-model.test.mjs',
+    'test/ui-plan-panel.test.mjs',
+    'test/ui-question-panel.test.mjs',
+    'test/ui-question-shaping.test.mjs',
+    'test/ui-question-workflow.test.mjs',
+    'test/ui-question.test.mjs',
+    'test/ui-run-checklists.test.mjs',
+    'test/ui-run-presets-save.test.mjs',
+    'test/ui-run-rerun-form.test.mjs',
+    'test/ui-run-sessions-tray.test.mjs',
+    'test/ui-run-sessions-view.test.mjs',
+    'test/ui-run-tags.test.mjs',
+    'test/ui-running-auto.test.mjs',
+    'test/ui-running-card.test.mjs',
+    'test/ui-session-step-line.test.mjs',
+    'test/ui-shape-app-wiring.test.mjs',
+    'test/ui-skills-run-detail.test.mjs',
+    'test/ui-skills-run-picker.test.mjs',
+  ],
 };
 
 const topLevel = readdirSync(join(ROOT, 'test')).filter((f) => f.endsWith('.test.mjs')).sort().map((f) => `test/${f}`);
@@ -49,8 +126,23 @@ function walk(node, visit) {
   }
 }
 
+const offenders = () => JSON.parse(readFileSync(join(ROOT, 'test', 'suite-guard-offenders.json'), 'utf8')).perTestBoot;
+
 // A converted file, and the files its tests moved to when they need other load-time state (test/NAME-WHAT.test.mjs).
-const siblings = (file) => topLevel.filter((f) => f.startsWith(file.replace(/\.test\.mjs$/, '-')) && !(f in BASELINE));
+// A sibling boots through the shared helper, is neither one of slice 11's files (read from the committed record, since
+// CI checkouts are shallow) nor a BASELINE key, and belongs only to the longest converted stem it starts with.
+let siblingInputs = null;
+function siblings(file) {
+  if (!siblingInputs) {
+    assert.ok(!speedup.error, `tools/ui-boot-speedup.mjs loads: ${speedup.error?.message}`);
+    const record = JSON.parse(readFileSync(join(ROOT, 'test', 'ui-boot-speedup.json'), 'utf8'));
+    siblingInputs = {
+      converted: speedup.convertedFiles(record, offenders(), (f) => existsSync(join(ROOT, f))),
+      excluded: new Set([...record.files, ...Object.keys(BASELINE)]),
+    };
+  }
+  return speedup.siblingsOf(file, siblingInputs.converted, topLevel, usesHelper, siblingInputs.excluded);
+}
 const family = (file) => [file, ...siblings(file)];
 const testCount = (file) => parse(file).body.filter((s) => {
   const call = s.type === 'ExpressionStatement' ? (s.expression.type === 'AwaitExpression' ? s.expression.argument : s.expression) : null;
@@ -147,6 +239,84 @@ test('every converted file has left the suite guard\'s offender list', () => {
   assert.deepEqual(files.filter((f) => listed.has(f)), []);
 });
 
+// ── the batches ─────────────────────────────────────────────────────────────
+const batchFiles = () => Object.values(BATCHES).flat();
+// The boot names a file imports from a helper (the adapters' own functions are bound to local consts instead).
+const importedBoots = (file) => imports(file).flatMap((i) => i.specifiers
+  .filter((s) => HELPER_BOOTS.includes(s.imported?.name) || (s.imported?.name === 'boot' && /-boot\.mjs$/.test(i.source.value)))
+  .map((s) => `imports ${s.imported.name} from ${i.source.value}`));
+
+test('batch 1 is the 33 run-page and history files, each with its test count in BASELINE', () => {
+  const batch = BATCHES['run-page and history families'];
+  assert.equal(new Set(batch).size, 33);
+  assert.equal(new Set(batchFiles()).size, batchFiles().length, 'no file is in two batches');
+  assert.deepEqual(batchFiles().filter((f) => !(f in BASELINE) || !topLevel.includes(f)), []);
+});
+
+test('every file of every landed batch boots through useSharedApp only, keeps its tests and left the offender list', () => {
+  const listed = new Set(offenders());
+  const problems = [];
+  for (const file of batchFiles()) {
+    if (listed.has(file)) problems.push(`${file} is still on the offender list`);
+    if (!usesHelper(file)) problems.push(`${file} does not import useSharedApp from ${HELPER}`);
+    for (const p of importedBoots(file)) problems.push(`${file} ${p}`);
+    const files = family(file);
+    for (const f of files) for (const p of ownBoots(f)) problems.push(`${f} ${p}`);
+    const total = files.reduce((n, f) => n + testCount(f), 0);
+    if (total !== BASELINE[file]) problems.push(`${file}: ${total} top-level tests across its family, it had ${BASELINE[file]}`);
+  }
+  assert.deepEqual(problems, []);
+});
+
+test('R-arch-7: every batch file and sibling imports useSharedApp from the helper and calls it once, at module top', () => {
+  const problems = [];
+  for (const file of batchFiles().flatMap(family)) {
+    const imported = imports(file).some((i) => i.source.value === HELPER && i.specifiers.some((s) => s.imported?.name === 'useSharedApp'));
+    if (!imported) problems.push(`${file} does not import useSharedApp from ${HELPER}`);
+    let calls = 0;
+    walk(parse(file), (n) => { if (n.type === 'CallExpression' && n.callee.name === 'useSharedApp') calls++; });
+    // at module top: `const app = useSharedApp(…)` or a bare `useSharedApp(…)`, never inside a function or a test
+    const top = parse(file).body.flatMap((s) => {
+      const node = s.type === 'ExportNamedDeclaration' ? s.declaration : s;
+      if (node?.type === 'VariableDeclaration') return node.declarations.map((d) => d.init);
+      return node?.type === 'ExpressionStatement' ? [node.expression] : [];
+    }).filter((n) => n?.type === 'CallExpression' && n.callee.name === 'useSharedApp').length;
+    if (calls !== 1 || top !== 1) problems.push(`${file}: ${calls} useSharedApp(…) call(s), ${top} at module top; want exactly 1, at module top`);
+  }
+  assert.deepEqual(problems, []);
+});
+
+test('every test of a batch file and its siblings is a top-level test with a unique literal name, so it can run alone', () => {
+  const problems = [];
+  for (const file of batchFiles().flatMap(family)) {
+    const { dynamic, duplicates, suites } = listTestNames(readFileSync(join(ROOT, file), 'utf8'));
+    if (dynamic.length) problems.push(`${file}: tests in a loop, block or function, or with a computed name, at line(s) ${dynamic.join(', ')}`);
+    if (duplicates.length) problems.push(`${file}: test names used more than once: ${duplicates.join(', ')}`);
+    if (suites.length) problems.push(`${file}: describe/suite calls at line(s) ${suites.join(', ')}`);
+  }
+  assert.deepEqual(problems, []);
+});
+
+test('the offender list holds at most the 158 files left after batch 1', () => {
+  assert.ok(offenders().length <= 158, `${offenders().length} files are still listed`);
+});
+
+test('a sibling file counts only for the longest converted stem it starts with, and only when it boots through the shared helper', () => {
+  const listed = new Set(offenders());
+  const cases = [
+    ['test/ui-cost-breakdown.test.mjs', 'test/ui-cost-breakdown-session.test.mjs'],
+    ['test/ui-question.test.mjs', 'test/ui-question-delegate.test.mjs'],
+    ['test/ui-history-detail.test.mjs', 'test/ui-history-detail-tabs-deep-link.test.mjs'],
+  ];
+  for (const [file, stranger] of cases) {
+    assert.ok(topLevel.includes(stranger), `${stranger} exists`);
+    assert.ok(!listed.has(file), `${file} is converted, so the rule applies to it`);
+    assert.ok(!family(file).includes(stranger), `${stranger} is not a sibling of ${file}`);
+  }
+  assert.ok(family('test/ui-history-detail-tabs.test.mjs').includes('test/ui-history-detail-tabs-deep-link.test.mjs'),
+    'the deep-link file counts for ui-history-detail-tabs');
+});
+
 // ── the run proof (opt-in) ──────────────────────────────────────────────────
 const skip = !process.env.WORCA_EACH_ALONE && 'set WORCA_EACH_ALONE=1 to run the converted files whole and test by test';
 const node = (args, extraEnv = {}) => {
@@ -202,7 +372,7 @@ test('R-arch-2 example (run): ui-running-detail runs its 94 tests with one app b
   assert.equal(total, BASELINE[FIRST], `${total} tests proved alone; it had ${BASELINE[FIRST]}`);
 });
 
-test('every other converted file passes whole with one app boot, and each of its tests passes alone (run)', { skip, timeout: 3_600_000 }, () => {
+test('every other converted file passes whole with one app boot, and each of its tests passes alone (run)', { skip, timeout: 10_800_000 }, () => {
   const others = converted().filter((f) => !family(FIRST).includes(f));
   assert.ok(others.length >= 4, `${others.length} other converted files`);
   for (const file of others) assert.equal(prove(file), testCount(file), `${file}: every test was proved`);

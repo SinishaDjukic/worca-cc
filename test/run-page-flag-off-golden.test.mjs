@@ -11,7 +11,7 @@
 // Every `/slice` answer a page stub serves is the real `ui/server.mjs` answer, fetched in `before()` under the same flag
 // state as the page it feeds. A run-page change that has nothing to do with the flag (a new badge) moves both sides
 // alike and needs no regeneration.
-import { test, before, after } from 'node:test';
+import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,16 +19,21 @@ import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
-import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
-import { bootDetail, openDetail, settle as hdSettle, DETAIL, ok } from './helpers/history-detail-boot.mjs';
+import { runPageOn, helloRun } from './helpers/run-page-boot.mjs';
+import { openDetail, settle as hdSettle, DETAIL, ok, detailOn, historyFetch } from './helpers/history-detail-boot.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createSliceFeature } from '../src/core/shape/features.mjs';
 import { careRunPlan } from '../src/shared/shape/feature-record.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
 import { buildRunsModel, renderRunsList } from '../ui/public/runs-list.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
 
 const nodeFetch = globalThis.fetch;   // captured before any jsdom boot replaces the global fetch
+
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: historyFetch() });
+const bootApp = runPageOn(app);
+const bootDetail = detailOn(app).detail;
 
 useTempHome(after, 'worca-run-page-golden-');
 
@@ -44,6 +49,8 @@ const CANON_RULES = {
   moving: [/ gv-moving(?=[" ])/g, ''],
   // The route label counter is module-level in ui/public/run-head.mjs and shared across app.js boots.
   routeLabel: [/rd-route-label-\d+/g, 'rd-route-label-N'],
+  // Each live page gets its own pipeline id (app.js caches a pipeline's /slice answer for the life of the shared app).
+  pipelineId: [/\bp-g\d+\b/g, 'p-g'],
 };
 const canonText = (html) => Object.values(CANON_RULES).reduce((s, [re, to]) => s.replace(re, to), html);
 // The Runs-list row only: the feature ids, the pipeline ids and the titles derived from them, and the ticket ids.
@@ -160,7 +167,8 @@ async function livePage(run, on) {
   const arm = sliceArm(run.slice[on]);
   const ctx = await bootApp({ fetchHandler: (u) => arm(u) || (u.endsWith('/api/history') ? ok({ pipelines: [], ghAvailable: false }) : null) });
   applyFlags({ shaperSmallRuns: on }, ctx.window.document);
-  helloRun(ctx, { runId: 'r-g', pipelineId: 'p-g', stepper: manifest(run.careRun), steps: [...STEPS, row('n_tests', 'start')],
+  // its own pipeline id: the app keeps what it fetched for a pipeline across the tests of the one shared app
+  helloRun(ctx, { runId: 'r-g', pipelineId: app.uid('p-g'), stepper: manifest(run.careRun), steps: [...STEPS, row('n_tests', 'start')],
     active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }], subAgents: SUBS, startedAt: '2026-01-01T00:00:00Z' });
   ctx.go('running/r-g');
   await ctx.settle(8);
@@ -177,8 +185,16 @@ async function savedPage(run, on) {
   const detail = { ...DETAIL, state: { ...DETAIL.state, stepper: manifest(run.careRun), steps: [...STEPS, row('n_tests'), row('n_impl')], subAgents: SUBS } };
   const ctx = await bootDetail({ detail, arms: sliceArm(run.slice[on]) });
   applyFlags({ shaperSmallRuns: on }, ctx.window.document);
+  // Every saved page shares DETAIL's pipeline id, and the shared app keeps a pipeline's /slice answer across resets:
+  // a schedules-changed frame clears that cache, so this page asks for (and paints) its own run's answer.
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'schedules-changed' }) });
+  await hdSettle(ctx.window, 4);
+  const asked = ctx.calls.length;
   await openDetail(ctx, 'details/overview');
   await hdSettle(ctx.window, 8);
+  // flag off, the saved page reads no /slice at all (hdRunPlaces returns first)
+  if (on) assert.ok(ctx.calls.slice(asked).some((c) => /\/api\/shape\/pipelines\/[^/]+\/slice$/.test(c.url)),
+    'the saved page fetched its own /slice answer');
   const d = ctx.window.document;
   return { overview: required(d, '#hist-detail .hd-sec[data-sec="overview"]').outerHTML, tabs: required(d, '#hist-detail .hd-tabs').outerHTML };
 }

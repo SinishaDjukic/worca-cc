@@ -2,10 +2,28 @@
 // base ("Conflicts in N files" + the files), and Re-check / Update branch / Resolve in a pipeline / Resolve in
 // a terminal. The status line shows at every UI level; the buttons are advanced-level, like Publish branch.
 // Results and refusals land in the member's own `.hd-base-msg` line (D19).
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootDetail, openDetail, settle, click, ok, fail, deliverRows, ROW, DETAIL, KEY } from './helpers/history-detail-boot.mjs';
+import { settle, go, click, ok, fail, deliverRows, ROW, DETAIL, KEY, detailOn, historyFetch } from './helpers/history-detail-boot.mjs';
 import { minLevelFor } from '../ui/public/ui-level.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
+
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: historyFetch() });
+const openDetailPage = detailOn(app).detail;
+
+// Each boot opens a run of its own: app.js keeps a run's base-check result lines (hdBaseMsgs) until another run opens,
+// and the one shared app outlives the tests. The row and the detail of ROW are that run's.
+let runs = 0;
+const bootDetail = async ({ rows = [ROW], detail = DETAIL, arms = null } = {}) => {
+  const id = `fcec${String(++runs).padStart(4, '0')}`;
+  const own = (r) => (r.id === ROW.id ? { ...r, id } : r);
+  const ctx = await openDetailPage({ rows: rows.map(own), detail: { ...detail, state: { ...detail.state, id } },
+    arms: (url, opts, box) => (arms && arms(url, opts, box)) || (url.endsWith(`/api/history/${KEY}/${id}`) ? ok(box.detail) : null) });
+  return Object.assign(ctx, { id, own });
+};
+// openDetail and deliverRows of history-detail-boot, for the boot's own run
+const openDetail = async (ctx) => { go(ctx.window, `history/${KEY}/${ctx.id}`); await settle(ctx.window); };
+const deliver = (ctx, rows) => deliverRows(ctx, rows.map(ctx.own));
 
 const AT = new Date(Date.now() - 3 * 60_000).toISOString();
 const CONFLICTS = { status: 'conflicts', base: 'feat/log-ux', fileCount: 2, files: ['a.js', 'b.js'], at: AT };
@@ -27,7 +45,7 @@ async function bootBase(rec, { answer = () => ok({ ok: true }), detail = withChe
     if (url.endsWith('/api/terminal')) return ok({ enabled: false, sessions: [] });
     return null;
   } });
-  await openDetail(ctx, null);
+  await openDetail(ctx);
   await settle(ctx.window, 6);
   ctx.posts = posts;
   return ctx;
@@ -68,7 +86,7 @@ test('a PR the live lookup finds after the line is painted hides Resolve in a pi
   assert.equal(shown(btn(items(ctx)[0], 'hd-base-pipeline')), true);
   const token = ctx.calls.filter((c) => c.url.endsWith('/api/history/pr') && c.opts.body).map((c) => JSON.parse(c.opts.body).token).at(-1);
   const pr = { url: 'https://github.com/o/r/pull/1', number: 1, state: 'OPEN' };
-  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'history-pr', token, done: true, items: [{ projectKey: KEY, id: ROW.id, pr }] }) });
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'history-pr', token, done: true, items: [{ projectKey: KEY, id: ctx.id, pr }] }) });
   await settle(ctx.window, 4);
   assert.equal(shown(btn(items(ctx)[0], 'hd-base-pipeline')), false);
   assert.equal(shown(btn(items(ctx)[0], 'hd-base-terminal')), true);
@@ -111,7 +129,7 @@ test('clean: only Update branch + Re-check; Update branch posts once and repaint
   click(ctx.window, btn(li, 'hd-base-update'));
   await settle(ctx.window, 6);
   assert.equal(ctx.posts.length, 1);
-  assert.match(ctx.posts[0].url, new RegExp(`/api/runs/${ROW.id}/update-branch\\?projectKey=${KEY}$`));
+  assert.match(ctx.posts[0].url, new RegExp(`/api/runs/${ctx.id}/update-branch\\?projectKey=${KEY}$`));
   assert.deepEqual(ctx.posts[0].body, {});
   [li] = items(ctx);
   assert.equal(li.querySelector('.hd-base-pill').textContent, 'Up to date with feat/log-ux');
@@ -133,7 +151,7 @@ test('after Update branch the publish button repaints: a refused push offers Pus
     if (url.endsWith('/api/terminal')) return ok({ enabled: false, sessions: [] });
     return null;
   } });
-  await openDetail(ctx, null);
+  await openDetail(ctx);
   await settle(ctx.window, 6);
   const pub = doc(ctx).querySelector('#hist-detail .hd-publish');
   assert.equal(pub.hidden, true, 'published and current: no button');
@@ -168,14 +186,18 @@ test('a newer row summary refresh keeps the loaded conflicting-file list', async
   const ctx = await bootBase(CONFLICTS);
   ctx.box.detail = withCheck({ ...newer, files: ['c.js', 'd.js'] });
 
-  await deliverRows(ctx, [{ ...ROW, baseCheck: newer }]);
+  await deliver(ctx, [{ ...ROW, baseCheck: newer }]);
 
   assert.equal(items(ctx)[0].querySelector('.hd-base-pill').textContent, 'Conflicts in 2 files');
   assert.deepEqual([...items(ctx)[0].querySelectorAll('.hd-base-files li')].map((x) => x.textContent), ['c.js', 'd.js']);
 });
 
 test('Resolve in a pipeline goes to the new run', async () => {
-  const ctx = await bootBase(CONFLICTS, { answer: () => ok({ ok: true, runId: 'run-uuid-1' }) });
+  // the server announces the new run (run-created), as it does before it answers: every app here has had its hello
+  const ctx = await bootBase(CONFLICTS, { answer: () => {
+    app.recv({ type: 'run-created', runId: 'run-uuid-1', title: 'Resolve conflicts', projectDir: '/tmp/proj', kind: 'run', status: 'starting', startedAt: new Date().toISOString() });
+    return ok({ ok: true, runId: 'run-uuid-1' });
+  } });
   click(ctx.window, btn(items(ctx)[0], 'hd-base-pipeline'));
   await settle(ctx.window, 6);
   assert.equal(ctx.posts[0].action, 'resolve-pipeline');
@@ -221,7 +243,7 @@ test('auto check on open: a branch never checked is checked once, quietly, and r
   const [li] = items(ctx);
   assert.equal(li.querySelector('.hd-base-pill').textContent, 'Conflicts in 2 files');
   assert.equal(li.querySelector('.hd-base-msg'), null, 'no result line for an automatic check');
-  await deliverRows(ctx, [ROW]);                          // a repaint of the same open does not check again
+  await deliver(ctx, [ROW]);                          // a repaint of the same open does not check again
   assert.equal(ctx.posts.length, 1);
 });
 

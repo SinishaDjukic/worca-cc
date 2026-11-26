@@ -1,14 +1,19 @@
 // test/ui-session-step-line.test.mjs — a member row says it ran inside a session, and where.
-import { test, afterEach } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { sessionRowLine, sessionRowEl } from '../ui/public/run-sessions-view.mjs';
 import { decorFromState } from '../ui/public/graph/run-decor.mjs';
 import { mountRunGraph } from '../ui/public/graph/run-hosts.mjs';
 import { SID as FIX_SID, SESSION_STEPPER, groupedRunningState } from './helpers/session-run-state.mjs';
-import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
+import { runPageOn, helloRun } from './helpers/run-page-boot.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { bootDetail, openDetail, settle as settleHd, DETAIL } from './helpers/history-detail-boot.mjs';
+import { openDetail, settle as settleHd, DETAIL, detailOn, historyFetch } from './helpers/history-detail-boot.mjs';
+import { useSharedApp, restoreAfter } from './helpers/shared-app-boot.mjs';
+
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: historyFetch() });
+const bootApp = runPageOn(app);
+const bootDetail = detailOn(app).detail;
 
 const SID = 's_aaaaaaaa';
 test('the line names the session, the turn and the dispatch; plain rows get nothing', () => {
@@ -28,7 +33,7 @@ const stamped = (st = groupedRunningState()) => ({ ...st, steps: st.steps.map((r
 const REF2 = { ...REF, turnId: `t:${FIX_SID}:7`, dispatchId: 'd:x:n_review:2:a1', memberAgentId: 'toolu_02ZZZ' };
 const cycle2 = (st) => ({ ...st, steps: [...st.steps, { key: 'x:n_review:2', executionId: 'x:n_review:2', nodeId: 'n_review', ordinal: 2, cycle: 2, status: 'done', activeMs: 1000, costUsd: 0.2, session: REF2 }] });
 const LINE2 = 'Inside session Build and review · turn 7 · dispatch d:x:n_review:2:a1';
-const trackDom = useDomRelease(afterEach);
+const trackDom = useDomRelease(after);   // this file's own windows, released at its end: never the shared app's per test
 
 test('v2 — the line reads only a real stamp: no sid, a turn id without a number and an unknown session', () => {
   assert.equal(sessionRowLine({ session: { turnId: 't:x:1' } }, {}), '', 'a stamp with no sid is no session');
@@ -78,11 +83,12 @@ test('v2 — the monitor: a member\'s exec row carries the line as its tooltip; 
   assert.equal(doc.querySelector('.xrow[data-execution-id="x:n_plan:1"]').hasAttribute('title'), false, 'a plain row gets no title attribute');
 });
 
-test('v2 — the run page: a member\'s step drawer says where it ran, under its head; a plain step says nothing; a stamp mid-step adds it', async () => {
+test('v2 — the run page: a member\'s step drawer says where it ran, under its head; a plain step says nothing; a stamp mid-step adds it', async (t) => {
   const ctx = await bootApp();
   const { window } = ctx;
   const np = window.__np;
   const copied = [];
+  restoreAfter(t, window.navigator, 'clipboard');
   Object.defineProperty(window.navigator, 'clipboard', { value: { writeText: async (t) => { copied.push(t); } }, configurable: true });
   const st = stamped();
   helloRun(ctx, { runId: 'r1' });

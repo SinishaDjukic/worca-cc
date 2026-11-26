@@ -3,14 +3,16 @@
 // preview button (opens the pan/zoom popup), the "Customize agents" tunables and "Why this?" facts
 // disclosures, and the Accept / Revise / Cancel payloads. The panel mounts only on the run page
 // (test/helpers/run-page-boot.mjs); the Runs list row just reads "Workflow review" in Needs you.
-import { test, afterEach } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { confirmDialog, cancelDialog, dialogText } from './helpers/confirm-modal.mjs';
 import { proposalFor, WEB_TASK } from './helpers/auto-proposal-fixture.mjs';
-import { bootApp, helloRun, runPanel } from './helpers/run-page-boot.mjs';
+import { runPageOn, helloRun, runPanel } from './helpers/run-page-boot.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
 
-const wins = [];
-afterEach(() => { for (const w of wins.splice(0)) w.close(); });
+const app = useSharedApp({ before, beforeEach, after });
+const bootApp = runPageOn(app);
+
 
 async function boot({ answerOk = true } = {}) {
   const answers = [];
@@ -24,7 +26,6 @@ async function boot({ answerOk = true } = {}) {
       return null;                                   // falsy => the default 200 for the boot fetches
     },
   });
-  wins.push(ctx.window);
   return { ...ctx, answers };
 }
 

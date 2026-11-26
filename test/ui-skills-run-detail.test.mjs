@@ -2,13 +2,18 @@
 // skills it got (the names agents call), the skipped ones with their reasons and a blocked layer's line,
 // live from state frames (the run page) and from the saved record (History). Pure renderer + the REAL
 // index.html/app.js in jsdom (test/helpers/run-page-boot.mjs, test/helpers/history-detail-boot.mjs).
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderRunSkills } from '../ui/public/mcp-run-picker.mjs';
 import { skillLayerText } from '../src/core/skills-registry/texts.mjs';
-import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
-import { bootDetail, openDetail, secOf, DETAIL } from './helpers/history-detail-boot.mjs';
+import { runPageOn, helloRun } from './helpers/run-page-boot.mjs';
+import { openDetail, secOf, DETAIL, detailOn, historyFetch } from './helpers/history-detail-boot.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
+
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: historyFetch() });
+const bootApp = runPageOn(app);
+const bootDetail = detailOn(app).detail;
 
 const MOUNT = {
   base: '/w/pipelines/p1/skills',

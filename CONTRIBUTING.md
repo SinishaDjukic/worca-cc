@@ -159,7 +159,14 @@ which resets the app before each test. Today's per-test boot files are listed in
 it, never add one, and convert a listed file before you rename it. Prove a converted
 file with `node tools/test.mjs FILE` (whole) and
 `node tools/test-each-alone.mjs FILE` (each test on its own; it must print
-`each alone: N/N passed`). A new test file may also cost at most 20 s, read from
+`each alone: N/N passed`). The run-page and History helpers adapt to it with `runPageOn(app)`
+(`test/helpers/run-page-boot.mjs`) and `detailOn(app)` (`test/helpers/history-detail-boot.mjs`), and `node
+tools/ui-boot-speedup.mjs record --before A,B` froze the CI seconds before the conversions in
+`test/ui-boot-speedup.json`, which `report --after C,D [--write]` compares with two later ci.yml runs. If a converted
+file breaks, quarantine it in `test/quarantine.json` with a reason, or fix it forward; never put it back on the
+offender list, which the guard refuses. Reverting a whole batch needs the admin bypass in
+[`docs/required-checks.md`](docs/required-checks.md). A new test file
+may also cost at most 20 s, read from
 `test/timings.json` (the per-file seconds CI measures); it is judged only when its
 time is in that file, so run `npm run test:timings` and commit the result. `node
 tools/suite-guard.mjs` runs the check by hand; `--list` prints the files that boot

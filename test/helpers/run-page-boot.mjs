@@ -118,3 +118,18 @@ export async function openRunPanel(ctx, { runId, question = null, run = {} }) {
   await ctx.settle();
   return runPanel(ctx);
 }
+
+// The run-page family over the one shared app of a test file (test/helpers/shared-app-boot.mjs). Takes the `app`
+// useSharedApp returned and gives a function that resets it with the test's options and returns bootApp's ctx: the
+// app plus showRunning. Imports neither the shared boot nor app.js, so this helper's other users get no side effect.
+export function runPageOn(app) {
+  return async function openRunPage({ fetchHandler, hooks, local } = {}) {
+    const options = Object.fromEntries(Object.entries({ fetchHandler, hooks, local }).filter(([, v]) => v !== undefined));
+    await app.fresh(options);
+    const showRunning = () => {
+      app.window.localStorage.removeItem('worca-cc.runs.last');
+      app.go('runs');
+    };
+    return Object.assign(app, { showRunning });
+  };
+}
