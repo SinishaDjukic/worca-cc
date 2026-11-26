@@ -1,0 +1,14 @@
+# docker/compose.image.yml — run the box on the image `worca container build` made
+# (docs/environment-spec.md, "Building the box image").
+#
+#   docker compose -f compose.yml -f compose.image.yml up -d
+#
+# `worca container` adds this file by itself when .env sets WORCA_IMAGE, and
+# `worca container build` writes that line. The image is local: compose never
+# pulls it. Remove the line (or run `worca container build --reset`) to go back
+# to the image of WORCA_TAG.
+
+services:
+  worca:
+    image: ${WORCA_IMAGE:?set WORCA_IMAGE to the image worca container build made}
+    pull_policy: never

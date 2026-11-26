@@ -70,6 +70,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 - [Credential broker](credential-broker.md) — model keys stay out of Worca's container behind short-lived tokens
 - [Instance contract](instance-contract.md) — the containers, variables, identity token and heartbeat a hosting platform relies on
 - [Network proxy](network-proxy.md) — Worca behind a corporate proxy that asks for a login
+- [Project environment spec](environment-spec.md) — a project's pinned tools and apt packages
 - [Setup assistant](setup-assistant.md) — the server API behind the machine check and setup dialog
 
 ## Contributing
