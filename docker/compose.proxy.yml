@@ -35,7 +35,9 @@ services:
       # The sidecar decides what goes direct (NO_PROXY in .env); the box sends everything else to it.
       NO_PROXY: 127.0.0.1,localhost,egress,broker
       WORCA_EGRESS_API_URL: http://egress:3129
-      WORCA_EGRESS_SECRET: ${WORCA_EGRESS_SECRET:?set WORCA_EGRESS_SECRET in .env (worca container does it for you)}
+      # The secret (worca container writes it into .env), or the file WORCA_EGRESS_SECRET_FILE names (compose.shared.yml).
+      WORCA_EGRESS_SECRET: ${WORCA_EGRESS_SECRET:-}
+      WORCA_EGRESS_SECRET_FILE: ${WORCA_EGRESS_SECRET_FILE:-}
 
   egress:
     image: ghcr.io/worca-org/worca:${WORCA_TAG:-latest}
@@ -44,7 +46,9 @@ services:
     command: ["worca", "egress"]
     environment:
       WORCA_EGRESS_DATA_DIR: /worca/egress
-      WORCA_EGRESS_SECRET: ${WORCA_EGRESS_SECRET:?set WORCA_EGRESS_SECRET in .env (worca container does it for you)}
+      # The secret (worca container writes it into .env), or the file WORCA_EGRESS_SECRET_FILE names (compose.shared.yml).
+      WORCA_EGRESS_SECRET: ${WORCA_EGRESS_SECRET:-}
+      WORCA_EGRESS_SECRET_FILE: ${WORCA_EGRESS_SECRET_FILE:-}
       # The corporate proxy, exactly as .env has it (a login in the URL stays here).
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       HTTP_PROXY: ${HTTP_PROXY:-}

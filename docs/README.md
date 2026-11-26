@@ -66,6 +66,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 
 - [Worca in a container](docker.md) — Worca and every `claude` it spawns in a disposable Linux container
 - [Hardened box](hardened-box.md) — one command for the strictest local setup: no model key, git token or proxy login in agents' reach
+- [Shared instance](shared-instance.md) — the reference Compose profile for a team on one server: keys per person, the allow-list, a managed proxy login
 - [Deploy on Railway](deploy-railway.md) — the container as a hosted service behind Cloudflare Access
 - [Remote access](remote-access.md) — opt-in, behind Cloudflare Access, with Worca checking the token
 - [Credential broker](credential-broker.md) — model keys stay out of Worca's container behind short-lived tokens

@@ -296,7 +296,9 @@ repositories you don't fully trust. See [Single mode](#single-mode).
 ```
 
 `compose.yml` + `compose.broker.yml` + `compose.isolation.yml` (+ `compose.egress.yml` to
-lock the network down). Port 8080 is never routed publicly.
+lock the network down). Port 8080 is never routed publicly. The reference profile for this
+deployment, with every value to supply and the checks to run, is the
+[Shared instance](shared-instance.md) page (`docker/compose.shared.yml`).
 
 ### Railway (multi mode)
 
@@ -334,7 +336,7 @@ model weights. Disable sleep (`sudo pmset -a sleep 0`).
 
 The same two containers: a `broker` Service on the private port inside the namespace, an
 Ingress or cloudflared Deployment for the key page only, and a NetworkPolicy in place of
-`compose.egress.yml`.
+`compose.egress.yml`. What maps to what: [Shared instance → Kubernetes](shared-instance.md#kubernetes).
 
 ## Single mode
 
