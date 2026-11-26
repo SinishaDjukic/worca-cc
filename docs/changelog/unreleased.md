@@ -29,7 +29,7 @@ Read it: [Choose a setup](../choose-a-setup.md), [Hardened box](../hardened-box.
 
 Pull requests (add each number when it opens):
 
-- UI for the security setups
+- UI for the security setups (#1634)
 
 ## Choose a setup, and a security overview
 
