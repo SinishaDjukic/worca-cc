@@ -1255,13 +1255,20 @@ function turnBefore(a, b) {
   return ca === cb ? a.index < b.index : ca;
 }
 
+/** Small runs slice 6 (decision d-1): the order held items go on in, lowest run first. A change run gets no priority
+ *  among held items. The one source of that order for the `next` label (nextTurnOf) and held-answer delivery.
+ *  → a new array of the same `{index}` items, sorted stably by index. */
+export function turnOrder(items) {
+  return [...items].sort((a, b) => a.index - b.index);
+}
+
 /** Slice 2 (D2, D3; owner direction dd8aea6ed corrects D3): the row that goes on next. A started run whose stop answer
  *  is held (`isHeld(row, i)`) waits its turn and goes on before any free run, so the lowest such row has it. Otherwise
  *  the row the scheduler starts first once nothing delays it (a going run or a merge-back delay the turn, not who has
  *  it), from the holds of the not-started rows. null when nothing is held or due, or the feature is not active. */
 function nextTurnOf(f, rows, holdsByIndex, isHeld) {
   if (f.status !== 'active') return null;
-  const held = rows.find((r, i) => isHeld(r, i));
+  const held = turnOrder(rows.filter((r, i) => isHeld(r, i)))[0];
   if (held) return held;
   const featureHeld = featureHeldOf(f);
   let next = null;

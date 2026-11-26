@@ -233,3 +233,10 @@ test('slice 4: the Ship part says the PRs follow the real branches, which run ge
   assert.ok(part, 'the "### Ship" part');
   assert.deepEqual(missing(part, ['along the real branches', 'gets no pull request of its own', 'in the order the runs finished']), []);
 });
+
+// Shaper small runs slice 6 (R-po-6, R-arch-2): `next` and the delivery of held answers follow one order.
+test('slice 6: the run words say next and held answers follow one order', () => {
+  assert.deepEqual(missing(smallPart('The run words'), ['the order held answers are delivered in', /lowest run number first/i]), []);
+  const live = flat(DOCS['shape-it-first.md'].text()).split('**The flag, read live.**')[1]?.split('**A feature with the marker')[0] || '';
+  assert.deepEqual(missing(live, ['held answers go on one at a time, lowest run first']), []);
+});

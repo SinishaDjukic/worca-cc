@@ -2,7 +2,7 @@
 // is going and delivered once none is; a refusal changes nothing. Real DB (useTempHome); runs-map entries are stand-ins.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -10,7 +10,9 @@ import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { withEnv } from './helpers/with-env.mjs';
-import { createSliceFeature, liveSliceFrom, busySliceOf } from '../src/core/shape/features.mjs';
+import * as features from '../src/core/shape/features.mjs';
+import { createSliceFeature, liveSliceFrom, busySliceOf, sliceWords, featureView } from '../src/core/shape/features.mjs';
+import { featureStateLine } from '../ui/public/shape/feature-card.mjs';
 import { createHeldStops } from '../src/core/shape/chain.mjs';
 import { answeredRefusal, gateStop, heldRefusal, planStop } from '../src/shared/shape/run-stops.mjs';
 
@@ -29,9 +31,9 @@ const setPipe = (id, status) => getDb().prepare('UPDATE pipelines SET status = ?
 const slice = (n) => ({ id: `s${n}`, title: `Slice ${n}`, goal: '', inScope: [], outOfScope: [], acceptance: [], dependsOn: [], estimate: 'M' });
 const STOP = gateStop({ run: 2, issues: [{ severity: 'major', title: 'x' }], fixCycles: 3 });
 
-/** A 3-run feature: run 1 done, run 2 live on a stop question, run 3 live and building unless `three` is false. */
-function setup({ three = true, applyChange = undefined, takeIn = undefined } = {}) {
-  const f = createSliceFeature({ pipelineId: pipe('done'), projectDir: root, title: 'T', outline: { why: '', slices: [1, 2, 3].map(slice) },
+/** A feature of `slices` runs: run 1 done, run 2 live on a stop question, run 3 live and building unless `three` is false. */
+function setup({ three = true, slices = 3, applyChange = undefined, takeIn = undefined } = {}) {
+  const f = createSliceFeature({ pipelineId: pipe('done'), projectDir: root, title: 'T', outline: { why: '', slices: Array.from({ length: slices }, (_, i) => slice(i + 1)) },
     perspectives: ['product'], workflowId: 'wf_shape' });
   const tix = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(f.id).map((r) => r.ticket_id);
   const runs = new Map();
@@ -60,7 +62,7 @@ function setup({ three = true, applyChange = undefined, takeIn = undefined } = {
   const held = createHeldStops({ runs, liveSliceOf, broadcastFeature: (id) => repaints.push(id), resolvePending, now: Date.now,
     ...(applyChange ? { applyChange } : {}), ...(takeIn ? { takeIn } : {}) });
   const finish = (e) => { e.status = 'done'; setPipe(e.pipelineId, 'done'); };
-  return { f, e2, e3, held, answers, resolved, repaints, finish, liveSliceOf, entry };
+  return { f, e2, e3, runs, held, answers, resolved, repaints, finish, liveSliceOf, entry };
 }
 
 test('held while run 3 is going: deliver answers 0 times; after it finishes, once, and pendingQuestion is resolved', () => {
@@ -253,10 +255,10 @@ const markFeature = (fid) => getDb()
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
 const ticks = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
 /** A marked feature's setup whose `takeIn` records each entry it is asked for and answers `reply(entry, nth, world)`. */
-function takeSetup({ three = false, reply = () => MERGED, mark = true, applyChange = undefined } = {}) {
+function takeSetup({ three = false, slices = 3, reply = () => MERGED, mark = true, applyChange = undefined } = {}) {
   const taken = [];
   let w = null;
-  w = setup({ three, applyChange, takeIn: async (e) => { taken.push(e.id); return reply(e, taken.length, w); } });
+  w = setup({ three, slices, applyChange, takeIn: async (e) => { taken.push(e.id); return reply(e, taken.length, w); } });
   if (mark) markFeature(w.f.id);
   return { ...w, taken };
 }
@@ -468,3 +470,146 @@ test('take-in: a take-in that throws drops the held answer and logs it', () => w
   assert.ok(errors.some((e) => /held stop answer not delivered: boom/.test(e)), errors.join(' | '));
   assert.ok(!w.e2.takingIn);
 }));
+
+// ── Slice 6: held answers go on in the order `next` names, lowest run first (one exported turnOrder) ─────────────
+const FIVE = { slices: 5, three: false };
+/** A live entry for run `n` waiting on an open stop question. */
+function stopped(w, n) {
+  const e = w.entry(n, 'running');
+  e.pendingQuestion = { id: `gate-s6-${n}`, kind: 'gate', stop: STOP };
+  return e;
+}
+const answerStop = (w, e) => w.held.answer(e, e.pendingQuestion.id, { decision: 'another' }, 'person');
+const answeredRuns = (w) => w.answers.map((a) => a.run);
+/** The runs that read `next` in the words every surface carries. */
+const nextRuns = (w) => [...sliceWords(w.f.id, { live: w.liveSliceOf })].filter(([, s]) => s.nextTurn).map(([run]) => run);
+/** Run 2 done, run 4 going, then runs 5 and 3 answered while it goes; run 5 sits in the runs map before run 3. */
+function heldFiveAndThree(w) {
+  w.e2.pendingQuestion = null;
+  w.finish(w.e2);
+  w.e2.settled = true;
+  const e5 = stopped(w, 5);
+  const e3 = stopped(w, 3);
+  const e4 = w.entry(4, 'running');
+  assert.deepEqual(answerStop(w, e5), { held: true });
+  assert.deepEqual(answerStop(w, e3), { held: true });
+  return { e3, e4, e5 };
+}
+
+test('turnOrder: lowest run first, a change run gets no priority; input not mutated', () => {
+  const items = [{ index: 5 }, { index: 3 }, { index: 4, kind: 'change' }];
+  const out = features.turnOrder(items);
+  assert.deepEqual(out.map((i) => i.index), [3, 4, 5]);
+  assert.notEqual(out, items, 'a new array');
+  assert.deepEqual(items.map((i) => i.index), [5, 3, 4], 'the input keeps its order');
+  assert.ok(out[0] === items[1] && out[1] === items[2] && out[2] === items[0], 'the same items, with their extra fields');
+  assert.deepEqual(features.turnOrder([{ index: 2, tag: 'a' }, { index: 1 }, { index: 2, tag: 'b' }]).map((i) => i.tag), [undefined, 'a', 'b'], 'stable');
+  assert.deepEqual(features.turnOrder([]), []);
+});
+
+// R-qa-3, R-po-6 (the held-answer part).
+test('s6: held answers on runs 5 and 3 deliver 3 then 5 and the label names run 3', () => withEnv(SMALL_ON, async () => {
+  const w = setup(FIVE);
+  markFeature(w.f.id);
+  const { e3, e4, e5 } = heldFiveAndThree(w);
+  assert.deepEqual(nextRuns(w), [3], 'only run 3 reads next');
+  assert.match(featureStateLine(featureView(w.f.id, { live: w.liveSliceOf })) || '', /next: run 3$/, 'the state line names run 3');
+  assert.deepEqual(answeredRuns(w), []);
+  w.finish(e4);
+  await w.held.deliver();
+  assert.deepEqual(answeredRuns(w), [3], 'run 3 goes on first');
+  assert.equal(e5.heldStop?.after, 3, 'run 5 stays held behind run 3');
+  w.finish(e3);
+  await w.held.deliver();
+  assert.deepEqual(answeredRuns(w), [3, 5]);
+  assert.equal(e5.heldStop, null);
+}));
+
+// R-arch-2: the label and the delivery come from one rule.
+test('s6: turn order: label and deliver pick the same run for the same rows', () => withEnv(SMALL_ON, async () => {
+  const shapes = [
+    { name: 'held on runs 3 and 5', first: 3, build: (w) => { const { e4 } = heldFiveAndThree(w); return e4; } },
+    { name: 'held on change run 4 and plain run 2', first: 2, build: (w) => {
+      getDb().prepare("UPDATE shape_feature_slices SET kind = 'change' WHERE feature_id = ? AND idx = 4").run(w.f.id);
+      const e4 = stopped(w, 4);
+      w.runs.delete(w.e2.id); w.runs.set(w.e2.id, w.e2);      // run 4 now sits in the runs map before run 2
+      const e3 = w.entry(3, 'running');
+      assert.deepEqual(answerStop(w, e4), { held: true });
+      assert.deepEqual(answerStop(w, w.e2), { held: true });
+      return e3;
+    } },
+  ];
+  for (const { name, first, build } of shapes) {
+    const w = setup(FIVE);
+    markFeature(w.f.id);
+    const going = build(w);
+    w.finish(going);
+    const heldRows = [...sliceWords(w.f.id, { live: w.liveSliceOf })].filter(([, s]) => s.stop?.held)
+      .map(([index, s]) => ({ index, kind: s.kind })).reverse();
+    const labelled = nextRuns(w);
+    await w.held.deliver();
+    assert.deepEqual(labelled, [first], `${name}: the label`);
+    assert.equal(answeredRuns(w)[0], first, `${name}: the delivery`);
+    assert.equal(features.turnOrder(heldRows)[0].index, first, `${name}: turnOrder`);
+  }
+}));
+
+test('s6: a held run kept behind a settling sibling blocks later held answers of its feature', () => withEnv(SMALL_ON, async () => {
+  const w = takeSetup(FIVE);
+  const { e3, e4, e5 } = heldFiveAndThree(w);
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?')
+    .run(JSON.stringify({ source: 'feat/other', feature: `feat/${e5.pipelineId}` }), e5.pipelineId);
+  w.finish(e4);                                     // done, not settled, on run 3's base and not on run 5's
+  assert.deepEqual(nextRuns(w), [3]);
+  await w.held.deliver();
+  assert.deepEqual([w.taken, answeredRuns(w)], [[], []], 'nothing overtakes run 3');
+  assert.equal(e3.heldStop?.after, 4);
+  assert.ok(e5.heldStop, 'run 5 stays held');
+  e4.settled = true;
+  await w.held.deliver();
+  assert.deepEqual([w.taken, answeredRuns(w)], [['r3'], [3]]);
+  assert.equal(e5.heldStop?.after, 3);
+}));
+
+test('s6: a held run kept held by its take-in blocks later held answers of its feature', () => withEnv(SMALL_ON, async () => {
+  const w = takeSetup({ ...FIVE, reply: (e) => (e.id === 'r3' ? { ok: false, wait: true, after: 1 } : MERGED) });
+  const { e3, e4, e5 } = heldFiveAndThree(w);
+  w.finish(e4);
+  e4.settled = true;
+  await w.held.deliver();
+  assert.deepEqual([w.taken, answeredRuns(w)], [['r3'], []], 'run 5 is not asked while run 3 stays held');
+  assert.equal(e3.heldStop?.after, 1);
+  assert.ok(e5.heldStop, 'run 5 stays held');
+}));
+
+test('s6: a refused answer first in turn blocks nothing: the next held answer goes on in the same pass', () => withEnv(SMALL_ON, async () => {
+  const w = takeSetup({ ...FIVE, reply: (e) => (e.id === 'r3' ? REFUSED : MERGED) });
+  const { e3, e4, e5 } = heldFiveAndThree(w);
+  w.finish(e4);
+  e4.settled = true;
+  await w.held.deliver();
+  assert.deepEqual([w.taken, answeredRuns(w)], [['r3', 'r5'], [5]]);
+  assert.deepEqual([e3.heldStop, e5.heldStop], [null, null]);
+  assert.equal(e3.takeInRefused?.reason, REFUSED.reason);
+}));
+
+test('s6 flag off: held answers deliver in runs-map order', () => withEnv({ WORCA_FLAGS: undefined }, async () => {
+  const w = setup(FIVE);
+  markFeature(w.f.id);
+  const { e3, e4 } = heldFiveAndThree(w);
+  w.finish(e4);
+  await w.held.deliver();
+  assert.deepEqual(answeredRuns(w), [5], 'run 5 was inserted first');
+  assert.equal(e3.heldStop?.after, 5);
+}));
+
+test('s6: the label and deliver read the one exported turnOrder', () => {
+  const src = (name) => readFileSync(new URL(`../src/core/shape/${name}`, import.meta.url), 'utf8');
+  const label = /\nfunction nextTurnOf\([\s\S]*?\n\}\n/.exec(src('features.mjs'))?.[0] || '';
+  assert.ok(label, 'nextTurnOf');
+  assert.match(label, /\bturnOrder\(/, 'the label calls turnOrder');
+  assert.doesNotMatch(label, /rows\.find\(/, 'no second rule for the held row');
+  const delivery = src('held-stops.mjs');
+  assert.match(delivery, /import\s*\{[^}]*\bturnOrder\b[^}]*\}\s*from\s*'\.\/features\.mjs'/, 'delivery imports it');
+  assert.match(delivery, /\bturnOrder\(/, 'delivery calls it');
+});

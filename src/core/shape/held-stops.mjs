@@ -4,7 +4,7 @@
 // question is resolved for every tab, and the feature card repaints. Lives outside the line-capped ui/server.mjs, which
 // only wires it (re-exported by chain.mjs).
 import { stopAnswerOk, stopOptionOf, heldRefusal, answeredRefusal, sendingRefusal } from '../../shared/shape/run-stops.mjs';
-import { featureOfPipeline } from './features.mjs';
+import { featureOfPipeline, turnOrder } from './features.mjs';
 import { heldStopTurn, fireSourceOf } from './chain.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature } from './small-runs.mjs';
 import { requirementChangedFeedback } from '../../shared/shape/req-change.mjs';
@@ -172,13 +172,31 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     return undefined;
   }
 
-  /** One pass over the runs map: null when it finished synchronously, else a promise. */
+  /** One pass over the runs map: null when it finished synchronously, else a promise. With small runs on (slice 6,
+   *  D4, D6) the held entries go in turnOrder, lowest run first, and an entry still held after its delivery blocks the
+   *  later entries of its feature; otherwise runs-map order. */
   function pass() {
-    const list = [...runs.values()];
+    if (!shaperSmallRunsOn()) {
+      const list = [...runs.values()];
+      const step = (i) => {
+        for (; i < list.length; i++) {
+          const p = deliverOne(list[i]);
+          if (p) return p.then(() => step(i + 1));
+        }
+        return null;
+      };
+      return step(0);
+    }
+    const list = turnOrder([...runs.values()].filter((e) => e && e.heldStop).map((entry) => ({ entry, ...featureOf(entry) })));
+    const blocked = new Set();
+    const after = (it) => { if (it.entry.heldStop) blocked.add(it.featureId); };
     const step = (i) => {
       for (; i < list.length; i++) {
-        const p = deliverOne(list[i]);
-        if (p) return p.then(() => step(i + 1));
+        const it = list[i];
+        if (blocked.has(it.featureId)) continue;
+        const p = deliverOne(it.entry);
+        if (p) return p.then(() => { after(it); return step(i + 1); });
+        after(it);
       }
       return null;
     };
