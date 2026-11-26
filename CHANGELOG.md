@@ -2,15 +2,6 @@
 
 ## Unreleased
 
-### Local sandbox (Docker) (#1619)
-
-- **A new place for a run to execute: Local sandbox (Docker).** Worca stays native. Each run's agents run in one disposable container on your own Docker. Pick it under **Runs in**, or `worca --exec-env docker`.
-- **Nothing of your machine is mounted.** Code goes in as a git bundle. Changes come back as a filtered patch after each step. No model key enters the container.
-- **A hardened container.** No sudo. Almost every capability dropped. No new privileges. Limits on processes, memory and CPU. A stricter runtime (`dockerSandbox.runtime`, such as `runsc`) is one setting away.
-- **No network of its own.** Every connection goes through Worca, which never lets it reach your machine. Open or Allow listed hosts only, per project. Behind a proxy that needs a login, Worca's local proxy does the login; the login never enters the container.
-- **The image builds itself on first use** from files shipped with Worca. Project images build from the environment spec. See [Local sandbox (Docker)](docs/local-sandbox.md).
-- It needs Docker Desktop or Docker Engine. Single git projects on Claude, Codex, Copilot or Cursor only.
-
 ### Worca moved to worca-org
 
 - Worca moved to [github.com/worca-org/worca](https://github.com/worca-org/worca). Old links, clones and forks keep working.

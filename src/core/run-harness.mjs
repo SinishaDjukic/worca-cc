@@ -124,7 +124,7 @@ import { mockEnabled } from './claude-runner.mjs';
 import { DEFAULT_BIN as CLAUDE_DEFAULT_BIN } from './engines/claude.mjs';
 import { carryLine } from './workflow-tests/try-carry.mjs';
 import { selectExecEnv, getExecBackend, ExecEnvLostError, ExecEnvSyncError, LOST_HINT } from './exec-env/index.mjs';
-import { instanceTag, remotePreflight } from './exec-env/policy.mjs';
+import { instanceTag, remotePreflight, withArticle } from './exec-env/policy.mjs';
 import { RemoteExecEnv, SCRIPT_SUPPORT_FILES } from './exec-env/remote-env.mjs';
 import { acquireSandboxSlot } from './exec-env/slots.mjs';
 import { priceRelayUsage, relayUsageTotal } from './exec-env/relay-usage.mjs';
@@ -9862,7 +9862,7 @@ export class RunHarness extends EventEmitter {
     const maxWait = this._execEnvLimit('maxWaitMin');
     const grace = effectiveNightConfig(this.projectDir)?.config?.graceMinutes;
     if (Number.isFinite(grace) && grace >= maxWait) {
-      this._execLog('warn', `Away mode answers after ${grace} min, but an ${b.label} waits at most ${maxWait} min for an answer; lower the Away grace or raise "Max wait for an answer".`);
+      this._execLog('warn', `Away mode answers after ${grace} min, but ${withArticle(b.label)} waits at most ${maxWait} min for an answer; lower the Away grace or raise "Max wait for an answer".`);
     }
     const client = await this._openExecClient();
     // Which environment (template) the sandbox starts from, and whether its build is stale: never blocks.
@@ -9875,7 +9875,7 @@ export class RunHarness extends EventEmitter {
         countRunning: client.countRunning ? () => client.countRunning() : null,
         onWait: ({ cap }) => {
           this.state.execEnvWaiting = true;
-          this._execLog('info', `waiting for an ${b.label} slot (${cap} of ${cap} in use)`);
+          this._execLog('info', `waiting for ${withArticle(b.label)} slot (${cap} of ${cap} in use)`);
           this._emit('state', this.getState());
         },
       });
