@@ -53,6 +53,13 @@ test('click opens that area\'s explainer; the steps and every close path work (R
   assert.equal(modal(doc), null, 'Skip closes on the first screen');
 });
 
+test('the design start opens the Design guide, not the Chat one', async () => {
+  const { window, doc, show } = await boot();
+  await show('chat/new/design');
+  click(window, visibleButtons(doc)[0]);
+  assert.equal(modal(doc).dataset.area, 'design');
+});
+
 test('opening, stepping and closing send one quiet POST, change no route and lose no typing (I-2, R-po-9)', async () => {
   const { window, doc, show, posts, requests } = await boot();
   await show('new');
