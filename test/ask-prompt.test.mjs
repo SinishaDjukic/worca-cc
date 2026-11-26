@@ -532,6 +532,7 @@ const MUST_STATE = [
   [23, () => ASK_HOSTING_RULE, 'Never ask for one in chat'],
   [23, () => ASK_HOSTING_RULE, 'do not repeat it back'],
   [23, () => ASK_HOSTING_RULE, 'revoke it'],
+  [23, () => ASK_HOSTING_RULE, 'PRs show the App as their author)'],
   [22, () => ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('22. Away mode:')), 'never claim it was applied'],
   [2, () => ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('2. ')), '[pinned by the user]'],
   [2, () => ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('2. ')), 'the scope the user explicitly selected for this chat'],
@@ -582,6 +583,9 @@ test('system rules: rule 1 advertises every model tool (compare against the mcp-
     } })),
     { name: 'rule 23 carries no control character', run: () => {
       assert.equal(CTRL_RE.test(ASK_HOSTING_RULE.replace(/\n/g, '')), false);
+    } },
+    { name: 'rule 23 names no PR attribution footer', run: () => {
+      assert.ok(!ASK_HOSTING_RULE.includes('via worca'));
     } },
   ]);
 });
@@ -671,6 +675,9 @@ test('context header: typed card lines (workflow, metrics, policy) and the team 
         { id: 'card_0000dd02', type: 'route', state: 'applied', summary: 'Where does this go: an idea: Saved for the next checkpoint' },
       ] });
       assert.ok(s5.includes('cards: changes card_0000dd01 proposed "Changes to Run 2 · same branch, same PR", route card_0000dd02 applied "Where does this go: an idea: Saved for the next checkpoint"'), s5);
+      // Small runs C4: a req-change card prints its summary line too
+      const c4 = buildContextHeader({ ...CTX, cards: [{ id: 'card_0000dd03', type: 'req-change', state: 'applied', summary: 'Changed: R-po-3' }] });
+      assert.ok(c4.includes('cards: req-change card_0000dd03 applied "Changed: R-po-3"'), c4);
     } },
   ]);
 });
@@ -987,6 +994,7 @@ test('shape section: after mcp and before commands, only with shape; the default
   for (const phrase of ['planned in slices', "`slices: 'auto'`", "`slices: 'off'`", 'On every propose_run for a coding task, shaped or not',
     'on a shaped run only its size is read']) assert.ok(s.includes(phrase), `states: ${phrase}`);
   for (const phrase of ['propose_changes', 'route_message', 'never takes either tool', 'answered on its step card']) assert.ok(s.includes(phrase), `states: ${phrase}`);
+  assert.ok(s.includes('An edit to the text of an agreed requirement (an R-id) takes change_requirement when it is listed; a new idea takes route_message.'), 'C4: route or change');
   assert.ok(!s.includes('On every other propose_run'), 'the old contradicting opening is gone');
   assert.ok(!/^\s*\d+\. /m.test(s), 'not a numbered rule');
   for (const key of ['implementer', 'planner', 'refiner', 'reviewer', 'clarify', 'decomposer']) assert.ok(!s.includes(key), `no agent key (${key})`);

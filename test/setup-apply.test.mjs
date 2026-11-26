@@ -212,6 +212,15 @@ test('AC-3.3: one write, one ordered result per side effect', async () => {
   assert.doesNotMatch(JSON.stringify(out), /"pw"/);
 });
 
+test('a cliDecides role is accepted and adds no role-test step (#1450)', async () => {
+  seed({});
+  const { deps } = fakeDeps();
+  const plan = await planSetupApply({ models: { modelRoles: { claude: { deep: { cliDecides: true }, everyday: { model: 'claude-sonnet-5-5' } } }, testRoles: true } }, deps);
+  assert.deepEqual(plan.steps.map((s) => s.id), ['role-test.claude.everyday']);
+  await commitSetupPlan(plan, deps);
+  assert.deepEqual(read().modelRoles.claude.deep, { cliDecides: true });
+});
+
 test('AC-3.3 full order: every side-effect kind, roles labelled with their engine', async () => {
   seed({});
   const { deps, calls } = fakeDeps();
@@ -846,4 +855,18 @@ test('work.hideBuiltinModels / sync / networkWait: validated, merged and written
   assert.deepEqual(plan.values.sync, { remote: 'upstream', beforeRun: false });
   await assert.rejects(planSetupApply({ work: { sync: { remote: 'https://x' } } }, deps), (e) => e.field === 'work.sync.remote' && /remote NAME/.test(e.message));
   await assert.rejects(planSetupApply({ work: { networkWait: { maxWaitMin: 0 } } }, deps), (e) => e.field === 'work.networkWait.maxWaitMin');
+});
+
+test('work.execEnv ("Where agents run"): a backend name is stored, null clears it to Local, an unknown name names the field', async () => {
+  seed({});
+  const { deps } = fakeDeps();
+  const plan = await planSetupApply({ work: { execEnv: 'docker' } }, deps);
+  assert.deepEqual(plan.written, ['execEnv']);
+  assert.equal(plan.values.execEnv, 'docker');
+  await commitSetupPlan(plan, deps);
+  assert.equal(read().execEnv, 'docker');
+  const clear = await planSetupApply({ work: { execEnv: null } }, deps);
+  assert.deepEqual(clear.written, ['execEnv']);
+  assert.equal(clear.values.execEnv, undefined);
+  await assert.rejects(planSetupApply({ work: { execEnv: 'acme-cloud' } }, deps), (e) => e.field === 'work.execEnv');
 });

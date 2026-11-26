@@ -7,8 +7,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { _testing as gitSyncTesting } from '../src/core/git-sync.mjs';
 import { _resetForTests as closeDbForTests, getDb } from '../src/core/db.mjs';
-import { writeStoreMeta, findPipelineRowById, persistPrState } from '../src/core/artifacts.mjs';
+import { writeStoreMeta, findPipelineRowById, persistMemberPrState, persistPrState } from '../src/core/artifacts.mjs';
 import { setWatch, updateWatch } from '../src/core/pr-watch.mjs';
 import { updateBranchRecords } from '../src/core/checkout.mjs';
 import { insertRunTags, readRunTags } from '../src/core/run-tags-store.mjs';
@@ -196,6 +197,79 @@ test('an open PR: resolve-pipeline defers to its Resolve (PR_OPEN); a live Watch
   updateWatch(url, { status: 'watching', activeRunId: null, activePipelineId: null });
 });
 
+test('a merged or closed PR is final: base-check, update-branch and resolve-* refuse it; the check on open skips it', async () => {
+  for (const [state, code] of [['MERGED', 'PR_MERGED'], ['CLOSED', 'PR_CLOSED']]) {
+    const wc = makeWorld(root); commitOnFeat(wc, 'f.txt', 'feature\n'); teammatePush(wc, 'f.txt', 'u\n');   // conflicts
+    const s = await seedRun(wc);
+    const head = g(wc.a, 'rev-parse', 'feat');
+    persistPrState(s.id, { url: `https://github.com/o/r/pull/${state}${s.id.slice(-6)}`, number: 2, state });
+    for (const path of ['base-check', 'update-branch', 'resolve-pipeline', 'resolve-terminal']) {
+      const r = await post(path, s.id, { projectKey: s.key });
+      assert.equal(r.status, 409, `${state} ${path}`); assert.equal(r.json.code, code, `${state} ${path}`);
+      assert.match(r.json.error, state === 'MERGED' ? /merged/ : /closed/);
+    }
+    const r = await post('base-check', s.id, { projectKey: s.key }, { auto: true });
+    assert.equal(r.status, 200, 'the check on open answers without checking the shipped branch');
+    assert.deepEqual(r.json.members, []);
+    assert.equal(brOf(s.id).baseCheck, undefined, 'nothing was checked or recorded');
+    assert.equal(brOf(s.id).baseResolve, undefined);
+    assert.equal(g(wc.a, 'rev-parse', 'feat'), head, 'the branch did not move');
+  }
+});
+
+test('workspace: a merged member is refused and skipped while an open-PR member behaves as before', async () => {
+  const wa = makeWorld(root); commitOnFeat(wa, 'g.txt', 'feature\n'); teammatePush(wa, 'f.txt', 'u\n');   // clean
+  const wb = makeWorld(root); commitOnFeat(wb, 'f.txt', 'feature\n'); teammatePush(wb, 'f.txt', 'u\n');   // conflicts
+  const projects = [
+    { projectKey: 'mem-a-00000011', projectDir: wa.a, projectName: 'api' },
+    { projectKey: 'mem-b-00000012', projectDir: wb.a, projectName: 'web' },
+  ];
+  const keys = projects.map((p) => p.projectKey); const [ka, kb] = keys;
+  const branches = Object.fromEntries(keys.map((k) => [k, { source: 'dev', feature: 'feat', branchKept: true }]));
+  const { id } = await seedWorkspacePipeline(wa.a, 'wks-bcapi-00000011', { title: 'WS2', status: 'done', projects,
+    projectKeys: keys, branches, branch: { ...branches[ka] } }, projects);
+  persistMemberPrState(id, ka, { url: `https://github.com/o/api/pull/${id.slice(-6)}`, number: 3, state: 'OPEN' });
+  persistMemberPrState(id, kb, { url: `https://github.com/o/web/pull/${id.slice(-6)}`, number: 4, state: 'MERGED' });
+  const q = { workspaceId: 'wks-bcapi-00000011' };
+  const headB = g(wb.a, 'rev-parse', 'feat');
+  for (const path of ['base-check', 'update-branch', 'resolve-pipeline', 'resolve-terminal']) {
+    const r = await post(path, id, q, { member: kb });
+    assert.equal(r.status, 409, path); assert.equal(r.json.code, 'PR_MERGED', path);
+  }
+  for (const body of [{}, { auto: true }]) {
+    const r = await post('base-check', id, q, body);
+    assert.equal(r.status, 200, JSON.stringify(body));
+    assert.deepEqual(r.json.members.map((m) => [m.projectKey, m.baseCheck.status]), [[ka, 'clean']], JSON.stringify(body));
+  }
+  const wm = JSON.parse(findPipelineRowById(id).workspace_meta);
+  assert.equal(wm.branches[kb].baseCheck, undefined, 'the merged member was never checked');
+  let r = await post('update-branch', id, q, { member: ka });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  r = await post('resolve-pipeline', id, q, { member: ka });
+  assert.equal(r.status, 409); assert.equal(r.json.code, 'PR_OPEN', 'an open PR keeps its own refusal');
+  assert.equal(g(wb.a, 'rev-parse', 'feat'), headB);
+});
+
+test('a merge recorded while the check fetches is still refused: base-check, update-branch and resolve-* read the PR state again', async () => {
+  for (const path of ['base-check', 'update-branch', 'resolve-pipeline', 'resolve-terminal']) {
+    const wc = makeWorld(root);
+    if (path === 'update-branch' || path === 'base-check') { commitOnFeat(wc, 'g.txt', 'feature\n'); teammatePush(wc, 'f.txt', 'u\n'); }   // clean
+    else { commitOnFeat(wc, 'f.txt', 'feature\n'); teammatePush(wc, 'f.txt', 'u\n'); }                            // conflicts
+    const s = await seedRun(wc);
+    const head = g(wc.a, 'rev-parse', 'feat');
+    // The PR refresh records the merge without the run lock while the route waits on the check's fetch.
+    gitSyncTesting.setRunner(async (args, o) => {
+      if (args[0] === 'fetch' && o?.cwd === wc.a) persistPrState(s.id, { url: `https://github.com/o/r/pull/late${s.id.slice(-6)}`, number: 9, state: 'MERGED' });
+      return gitSyncTesting.defaultRun(args, o);
+    });
+    let r;
+    try { r = await post(path, s.id, { projectKey: s.key }); } finally { gitSyncTesting.setRunner(null); }
+    assert.equal(r.status, 409, `${path}: ${JSON.stringify(r.json)}`); assert.equal(r.json.code, 'PR_MERGED', path);
+    assert.equal(g(wc.a, 'rev-parse', 'feat'), head, `${path}: the branch did not move`);
+    assert.equal(brOf(s.id).baseResolve, undefined, `${path}: nothing was started`);
+  }
+});
+
 test('resolve-pipeline: a start refusal removes the mark it wrote', async () => {
   const wc = makeWorld(root); commitOnFeat(wc, 'f.txt', 'feature\n'); teammatePush(wc, 'f.txt', 'u\n');
   const s = await seedRun(wc);
@@ -242,6 +316,7 @@ test('POST resolve-pipeline starts a mock run on the existing branch and marks t
   assert.equal(entry.orch.opts.branch.feature, 'feat');
   assert.deepEqual(entry.orch.opts.branch.resolves, { runId: conflict.id, member: conflict.key });
   assert.equal(entry.orch.workflowId, 'wf_pr_fix', 'the conflict fix workflow Watch PR uses');
+  assert.equal(entry.orch.execEnvKind, 'local', 'the agent merges the base: never in an E2B sandbox');
   assert.match(String(entry.orch.opts.prompt), /^The branch `feat` has merge conflicts/);
   assert.match(String(entry.orch.opts.prompt), /f\.txt/);
   // Wait for its setup, then stop it before the mock implementer is done.

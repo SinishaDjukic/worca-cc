@@ -225,6 +225,38 @@ test('auto check on open: a branch never checked is checked once, quietly, and r
   assert.equal(ctx.posts.length, 1);
 });
 
+test('a merged or closed PR is final: no line and no automatic check, even for a stale "behind" check', async () => {
+  const old = { ...CLEAN, at: new Date(Date.now() - 10 * 60_000).toISOString() };
+  for (const state of ['MERGED', 'CLOSED']) {
+    const pr = { url: 'https://github.com/o/r/pull/1546', number: 1546, state };
+    const ctx = await bootBase(old, { rows: [{ ...ROW, pr }] });
+    assert.equal(box(ctx).hidden, true, state);
+    assert.equal(items(ctx).length, 0, state);
+    assert.deepEqual(ctx.posts, [], `${state}: no base-check POST`);
+  }
+  const ctx = await bootBase(old, { rows: [{ ...ROW, pr: { url: 'https://github.com/o/r/pull/1', number: 1, state: 'OPEN' } }],
+    answer: () => ok({ ok: true, members: [{ projectKey: KEY, baseCheck: { ...CLEAN, at: now(0) } }], settled: {} }) });
+  assert.deepEqual(ctx.posts.map((x) => x.action), ['base-check'], 'an open PR is still checked');
+  assert.equal(items(ctx).length, 1);
+});
+
+test('workspace: a merged member has no line and is no reason to check; an open member keeps its line', async () => {
+  const old = new Date(Date.now() - 10 * 60_000).toISOString();
+  const branches = {
+    'api-00000001': { source: 'dev', feature: 'worca/x', baseCheck: { ...CONFLICTS, base: 'dev', at: now(-60_000) } },
+    'web-00000002': { source: 'dev', feature: 'worca/x', baseCheck: { ...CLEAN, base: 'dev', at: old } },
+  };
+  const detail = { ...DETAIL, state: { ...DETAIL.state, target: 'workspace', branches,
+    projects: [{ projectKey: 'api-00000001', projectName: 'api' }, { projectKey: 'web-00000002', projectName: 'web' }] } };
+  const members = [
+    { memberKey: 'api-00000001', pr: { url: 'https://x/api/pull/1', number: 1, state: 'OPEN' } },
+    { memberKey: 'web-00000002', pr: { url: 'https://x/web/pull/2', number: 2, state: 'MERGED' } },
+  ];
+  const ctx = await bootBase(null, { detail, rows: [{ ...ROW, members }] });
+  assert.deepEqual(items(ctx).map((li) => li.dataset.memberKey), ['api-00000001']);
+  assert.deepEqual(ctx.posts, [], 'the only stale check is the merged member\'s');
+});
+
 test('auto check on open: a check older than 5 minutes is redone; a recent one is not', async () => {
   const old = { ...CLEAN, at: new Date(Date.now() - 10 * 60_000).toISOString() };
   let ctx = await bootBase(old, { answer: () => ok({ ok: true, members: [{ projectKey: KEY, baseCheck: UP }], settled: {} }) });

@@ -6,7 +6,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -153,7 +153,7 @@ test('chatPrefs/setChatPrefs: defaults ON, merge-patch, unknown keys rejected', 
   const home = mkdtempSync(join(tmpdir(), 'worca-cc-chatprefs-'));
   process.env.HOME = home;
   try {
-    assert.deepEqual(chatPrefs(), { notify: { done: true, error: true, question: true, paused: true, away: true, prWatch: true }, channels: {}, scriptTools: true, suggestions: true, summariseCommands: true });
+    assert.deepEqual(chatPrefs(), { notify: { done: true, error: true, question: true, paused: true, away: true, prWatch: true }, channels: {}, scriptTools: true, suggestions: true, summariseCommands: true, sourceBranch: 'ask' });
     await setChatPrefs({ notify: { done: false }, channels: { 'tg-chat/main': { enabled: false } } });
     const p = chatPrefs();
     assert.equal(p.notify.done, false);
@@ -178,6 +178,16 @@ test('chatPrefs/setChatPrefs: defaults ON, merge-patch, unknown keys rejected', 
     await setChatPrefs({ notify: { done: false } });
     assert.equal(chatPrefs().suggestions, false, 'a notify patch keeps the suggestions switch');
     await assert.rejects(setChatPrefs({ suggestions: 'no' }), /chat suggestions must be true or false/);
+    // Chat runs: source branch — a mode is stored, null deletes it, anything else throws; other chat saves keep it.
+    await setChatPrefs({ sourceBranch: 'current' });
+    assert.equal(chatPrefs().sourceBranch, 'current');
+    await setChatPrefs({ summariseCommands: false });
+    assert.equal(chatPrefs().sourceBranch, 'current', 'the Chat settings card save keeps sourceBranch');
+    await assert.rejects(setChatPrefs({ sourceBranch: 'x' }), /^Error: chat\.sourceBranch must be one of current \| ask \| require$/);
+    assert.equal(chatPrefs().sourceBranch, 'current', 'a refused value writes nothing');
+    await setChatPrefs({ sourceBranch: null });
+    assert.equal(chatPrefs().sourceBranch, 'ask');
+    assert.equal('sourceBranch' in (JSON.parse(readFileSync(join(home, '.worca-cc', 'settings.json'), 'utf8')).chat || {}), false, 'null deletes the key');
     await setChatPrefs({ suggestions: true });
     assert.equal(chatPrefs().suggestions, true);
     await assert.rejects(setChatPrefs('nope'), /must be an object/);

@@ -4,7 +4,8 @@
 import { randomUUID } from 'node:crypto';
 import { getDb, tx } from './db.mjs';
 import { getTicket } from './scheduler.mjs';
-import { featureOfPipeline, ticketHeld } from './shape/features.mjs';
+import { featureOfPipeline, ticketHeld, shipHold, sliceWords } from './shape/features.mjs';
+import { shaperSmallRunsOn, smallRunsOfFeature } from './shape/small-runs.mjs';
 import { spendOfPipelines } from './stats.mjs';
 
 export class RunGroupError extends Error {
@@ -36,9 +37,16 @@ function pipelineRows(ids) {
 
 /** Every group the Runs list folds rows into: { id, kind:'feature'|'user', title, projectKey, planning, members:[{position,
  *  title, pipelineId, ticketId, status, pr, ticket, adhoc, after}] }. Features: every one not replaced by a re-plan,
- *  finished ones included. A group with no listable member is left out. */
-export function listRunGroups() {
+ *  finished ones included. A group with no listable member is left out. D2 (D1): a Shaper small-runs feature (flag on
+ *  and its origin marked) also carries `smallRuns: true`; every other group keeps dev's keys (the key is absent). `hold`: why a
+ *  small-runs feature whose runs are done is not ready to ship (features.mjs shipHold); absent when nothing holds it. Its
+ *  native members carry `slice` (sliceWords; `live` is the server's runs overlay): with the flag on, every member's
+ *  `slice` carries `buildsOn` (number[], its direct builds-on runs), and a not-started
+ *  member's `slice` also carries `waitsFor` (number[]) and `cannotStart` {run, reason}; the one run that goes on next
+ *  (a run whose stop answer is held waiting its turn, else the scheduler's next start) carries `nextTurn`. */
+export function listRunGroups({ live = () => null } = {}) {
   const db = getDb();
+  const small = shaperSmallRunsOn();
   const feats = db.prepare("SELECT id, title, origin_pipeline_id FROM shape_features WHERE status != 'replanned' ORDER BY created_at").all();
   const users = db.prepare('SELECT id, title, project_key, name_source FROM run_groups ORDER BY created_at').all();
   const fids = feats.map((f) => f.id);
@@ -73,8 +81,13 @@ export function listRunGroups() {
   };
   const out = feats.map((f) => {
     const own = slices.filter((s) => s.feature_id === f.id);
+    const marked = small && smallRunsOfFeature(f.id);
+    const hold = marked ? shipHold(f.id) : null;
+    const words = marked ? sliceWords(f.id, { live }) : null;
     return { id: f.id, kind: 'feature', title: f.title, projectKey: null, planning: planningOf(f, new Set(own.map((s) => s.pipeline_id).filter(Boolean))),
-      members: withAfter(withAdhoc(f.id, own.map((s) => member(s.idx, s.title, s.pipeline_id, s.ticket_id, false)))) };
+      members: withAfter(withAdhoc(f.id, own.map((s) => member(s.idx, s.title, s.pipeline_id, s.ticket_id, false))))
+        .map((m) => (words && !m.adhoc && words.has(m.position) ? { ...m, slice: words.get(m.position) } : m)),
+      ...(marked ? { smallRuns: true, ...(hold ? { hold } : {}) } : {}) };
   });
   for (const u of users) out.push({ id: u.id, kind: 'user', title: u.title, nameSource: u.name_source || 'user', projectKey: u.project_key || null, planning: null, members: withAfter(withAdhoc(u.id, [])) });
   return out.filter((g) => g.members.length).map((g) => ({ ...g, cost: groupCost(g) }));

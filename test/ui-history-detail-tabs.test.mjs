@@ -10,8 +10,11 @@ import {
 } from './helpers/history-detail-boot.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { openTab as openRunTab } from './helpers/run-tabs.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
+import { careRunPlan } from '../src/shared/shape/feature-record.mjs';
 
 // Click the action button of the newest toast (Retry | Details).
 const clickToastAction = (window) => {
@@ -763,7 +766,7 @@ test('Auto badge: an Auto run is badged with classifier rows under Preflight, a 
       await openDetail(ctx);
       const badge = ctx.window.document.querySelector('#hist-detail .hd-row1 .auto-badge');
       assert.equal(badge.hidden, false); assert.equal(badge.textContent, 'Auto → Quick fix'); assert.equal(badge.title, 'Auto reused the saved workflow "Quick fix"');
-      ctx.window.document.querySelector('#hd-tab-agents').click(); await settle(ctx.window);
+      openRunTab(ctx.window, ctx.window.document.querySelector('#hd-tab-agents')); await settle(ctx.window);
       const names = [...ctx.window.document.querySelectorAll('#hist-detail .hd-ag-name')].map((n) => n.textContent);
       assert.deepEqual(names, ['Auto workflow (round 1)']);
       const head = ctx.window.document.querySelector('#hist-detail .hd-ag-head').textContent;
@@ -1039,7 +1042,7 @@ test('History opens on Overview, one level: page title, status line, facts; the 
   assert.doesNotMatch(glance.textContent, /\b\d+ of \d+\b/);
 
   // A tab click rewrites the address; the graph lives in Workflow.
-  doc.querySelector('#hist-detail .hd-tab[data-sec="workflow"]').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  openRunTab(ctx.window, doc.querySelector('#hist-detail .hd-tab[data-sec="workflow"]'));
   assert.ok(secOf(doc, 'workflow').querySelector('.hd-graph .run-flow'), 'the graph lives in Workflow');
   assert.equal(ctx.window.location.hash, `#${detailHash}/details/workflow`, 'a tab click rewrites the address');
   // The card shows only while Overview is the active tab.
@@ -2232,4 +2235,108 @@ test('History › Overview: the Perspective checklists group is on the saved run
   const group = secOf(ctx.window.document, 'overview').querySelector('.shape-checklists');
   assert.ok(group, 'the group is on the saved run\'s Overview');
   assert.match(group.textContent, /Review cycle 1 · 1 met · 0 unmet · 0 n\/a/);
+});
+
+// ---------------------------------------------------------------------------
+// Shaper small runs D2 (D11, D12, D16): the saved page's one Agents place and the run's facts
+// ---------------------------------------------------------------------------
+const d2Agent = (id, key) => ({ id, kind: 'agent', key, x: 0, y: 0, label: key, ports: { inputs: [], outputs: [] } });
+const d2Manifest = (careRun) => ({ version: 2, template: { id: 'wf_shape_slice_req' },
+  graph: { nodes: [['n_clarify', 'clarify'], ['n_plan', 'planner'], ['n_refine', 'refiner'], ['n_impl', 'implementer'], ['n_review', 'reviewer'],
+    ['n_roles', 'planReviewer'], ['n_tests', 'testWriter']].map(([id, key]) => d2Agent(id, key)), wires: [] }, ...(careRun ? { careRun } : {}) });
+const d2Row = (nodeId) => ({ key: `x:${nodeId}:1`, executionId: `x:${nodeId}:1`, nodeId, ordinal: 1, cycle: 1, status: 'done', startedAt: '2026-11-21T10:00:00Z' });
+const D2_CARE_DETAIL = { ...DETAIL, state: { ...DETAIL.state, stepper: d2Manifest(careRunPlan('balanced', { runRoles: ['product'] })),
+  steps: ['n_clarify', 'n_plan', 'n_roles', 'n_refine', 'n_tests', 'n_impl', 'n_review'].map(d2Row),
+  subAgents: [{ id: 'a1', label: 'Explore repo', nodeId: 'n_impl', cycle: 1, status: 'finished' }] } };
+const D2_SLICE = { featureId: 'feat_d2', title: 'Charts everywhere', index: 2, total: 3, sliceTitle: 'Export', state: 'done', next: null, threadId: null,
+  owns: [{ id: 'R-po-1', text: 'Export the report', pass: true }],
+  startsFrom: { kind: 'feature', branch: 'main', text: 'the feature branch: nothing is finished yet' },
+  stored: { planVersion: 2, planReviewed: true, tests: { passed: 12, total: 12 } } };
+const SLICE_URL = `/api/shape/pipelines/${ROW.id}/slice`;
+const hdAgentsPlaces = (doc) => [...doc.querySelectorAll('#hist-detail .rd-run-agents')].filter((x) => !x.hidden).length
+  + [...doc.querySelectorAll('#hist-detail .hd-tab[data-sec="agents"]')].filter((x) => !x.hidden).length;
+
+test('D2 (D12): flag on, a saved Care run has 1 Agents place (no Agents tab, .rd-run-agents visible) and its facts, from a late /slice answer', async () => {
+  let release;
+  const late = new Promise((r) => { release = r; });
+  const ctx = await bootDetail({ detail: D2_CARE_DETAIL, arms: (url) => (url.endsWith(SLICE_URL) ? late.then(() => ok(D2_SLICE)) : null) });
+  applyFlags({ shaperSmallRuns: true }, ctx.window.document);
+  const doc = ctx.window.document;
+  await openDetail(ctx, 'details/overview');
+  await settle(ctx.window, 6);
+  assert.equal(doc.querySelector('#hist-detail .hd-tab[data-sec="agents"]'), null, 'the Agents tab is not shown');
+  assert.equal(hdAgentsPlaces(doc), 1);
+  const box = doc.querySelector('#hist-detail .rd-run-agents');
+  assert.ok(box.querySelector('.run-agents'));
+  const sub = box.querySelector(':scope > .rd-run-subagents');
+  assert.equal(sub.dataset.minLevel, 'expert');
+  assert.ok(sub.querySelector('.hd-ag-group, .rd-ag-group, .hint'), 'dev\'s sub-agent body');
+  assert.equal(doc.querySelector('#hist-detail .rd-run-facts'), null, 'no facts node before the answer');
+  release();
+  await settle(ctx.window, 8);
+  const facts = doc.querySelectorAll('#hist-detail .rd-run-facts');
+  assert.equal(facts.length, 1);
+  assert.equal(facts[0].nextElementSibling, box, 'before the Agents box');
+  assert.equal((doc.querySelector('#hist-detail').textContent.match(/Starts from/g) || []).length, 1);
+  const planner = [...box.querySelectorAll('.plan-check-row')].find((r) => r.querySelector('.plan-check-label').textContent === 'Planner');
+  assert.equal(planner.querySelector('.plan-check-detail').textContent, 'plan v2 · after the plan review');
+});
+
+test('D2 (D16): the saved page paints its facts at build from a cached /slice answer', async () => {
+  const ctx = await bootDetail({ detail: D2_CARE_DETAIL, arms: (url) => (url.endsWith(SLICE_URL) ? ok(D2_SLICE) : null) });
+  applyFlags({ shaperSmallRuns: true }, ctx.window.document);
+  const doc = ctx.window.document;
+  await openDetail(ctx, 'details/overview');
+  await settle(ctx.window, 8);
+  assert.equal(doc.querySelectorAll('#hist-detail .rd-run-facts').length, 1);
+  const gets = () => ctx.calls.filter((c) => c.url.endsWith(SLICE_URL)).length;
+  const n = gets();
+  click(ctx.window, doc.querySelector('#hist-detail .hd-tab[data-sec="task"]'));
+  await settle(ctx.window);
+  secOf(doc, 'overview').dataset.loaded = '';
+  click(ctx.window, doc.querySelector('#hist-detail .hd-tab[data-sec="overview"]'));
+  await settle(ctx.window);
+  assert.equal(gets(), n, 'the cached answer, no new ask');
+  assert.equal(doc.querySelectorAll('#hist-detail .rd-run-facts').length, 1);
+  assert.equal(doc.querySelector('#hist-detail .rd-run-facts').hidden, false);
+});
+
+test('D2: flag off, a saved Care run keeps dev\'s Agents tab and no .rd-run-agents, no facts', async () => {
+  const ctx = await bootDetail({ detail: D2_CARE_DETAIL, arms: (url) => (url.endsWith(SLICE_URL) ? ok(D2_SLICE) : null) });
+  const doc = ctx.window.document;
+  await openDetail(ctx, 'details/overview');
+  await settle(ctx.window, 6);
+  assert.ok(doc.querySelector('#hist-detail .hd-tab[data-sec="agents"]'));
+  assert.equal(doc.querySelector('#hist-detail .rd-run-agents'), null);
+  assert.equal(doc.querySelector('#hist-detail .rd-run-facts'), null);
+  assert.equal(hdAgentsPlaces(doc), 1);
+});
+
+// --- the header state line -------------------------------------------------
+
+test('saved run: the state line says the state on every tab; the card repeats neither word nor step', async () => {
+  const ctx = await bootDetail({ detail: OV_DETAIL });
+  await openDetail(ctx, 'details/overview');
+  const doc = ctx.window.document;
+  const line = doc.querySelector('#hist-detail .hd-header > .run-state-line');
+  assert.ok(line, 'the state line is a direct child of the header');
+  assert.equal(line.previousElementSibling.className, 'hd-row1', 'right under the title row');
+  const card = doc.querySelector('#hist-detail .hd-glance .rd-sheet .run-status');
+  for (const tab of [...doc.querySelectorAll('#hist-detail .hd-tab')]) {
+    click(ctx.window, tab);
+    await settle(ctx.window);
+    assert.equal(line.dataset.text, line.textContent, tab.dataset.sec);
+    assert.ok(line.textContent.startsWith(card.dataset.word) || line.textContent.startsWith('Ready'), `${tab.dataset.sec}: ${line.textContent}`);
+    assert.equal(line.closest('.hd-sec'), null);
+  }
+  assert.equal(line.classList.contains('is-link'), false, 'a saved run has no question to jump to');
+  const [head, ...rest] = card.dataset.text.split(' · ');
+  assert.equal(line.querySelector('.run-state-word').textContent, head);
+  assert.equal(card.querySelector('.run-status-word').hidden, true);
+  assert.equal(card.querySelector('.status-dot').hidden, true);
+  assert.equal(card.querySelector('.run-status-detail').textContent, rest.join(' · '));
+  assert.equal(card.querySelector('.run-status-head').hidden, !rest.length);
+  // The row's refresh repaints the same node.
+  await deliverRows(ctx, [{ ...ROW, mtime: 2 }]);
+  assert.equal(doc.querySelector('#hist-detail .hd-header > .run-state-line'), line);
 });

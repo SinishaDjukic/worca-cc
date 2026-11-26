@@ -40,6 +40,9 @@ const state = {
   engine: 'claude', // New pipeline: who runs the agent nodes, per run, never remembered
   runDefaults: null,
   engineTouched: false,
+  execEnv: 'local',          // New pipeline: where the run executes (docs/e2b.md); per run, never remembered
+  execEnvDefault: 'local',   // GET /api/run-defaults' execEnv: the saved default (runExecEnvDefault says if it applies)
+  execEnvTouched: false,
   presets: [],    // GET /api/presets (run presets, #712)
   rerun: null,    // Rerun: { runId, label, setup, broken[], modified, applying } while the form holds an earlier run's setup (no preset id, no chip)
   preset: null,   // the applied preset: { id, name, scope, setup, modified, applying, broken[] } — preset mode
@@ -82,11 +85,12 @@ const state = {
 };
 // The group page host (runs redesign slice 4, D16). Up here, next to `state`: the boot's synchronous showView runs
 // mountGroupPage on a #feature/… reload, and a `const` declared below that call would still be in its TDZ.
-const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0 };
+const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0, stackedOnly: false, feature: null, requirements: false, featureSeq: 0, featureApplied: 0, memberKey: '', memberPending: '', memberFailed: '' };
 
 import { icon, iconSvg } from './icons.mjs';
-import { subagentAliasLabel, subagentAliasTitle, roleOf, ROLE_LABELS } from '../../src/shared/model-roles.mjs';
+import { subagentAliasLabel, subagentAliasTitle, roleOf, ROLE_LABELS, toolDecidesText } from '../../src/shared/model-roles.mjs';
 import { HELPER_JOBS } from '../../src/shared/model-jobs.mjs';
+import { CHAT_SOURCE_BRANCH_SETTING, CHAT_SOURCE_BRANCH_ROW, CHAT_SOURCE_BRANCH_INFO, CHAT_SOURCE_BRANCH_MODES, CHAT_SOURCE_BRANCH_LABELS, normalizeChatSourceBranch } from '../../src/shared/chat-source-branch.mjs';
 import { paintMarkedSelect } from './models/brand-marks.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
 import { copyButton, copyFromButton, flashCopy, writeClipboard } from './copy-button.mjs';
@@ -116,7 +120,7 @@ import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LAB
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, rowMenuPrs, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
-import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
+import { paintRunStatus, paintStateLine, stageBarOf, syncActions, pauseResumeOwn, sliceHeadModel } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
@@ -148,6 +152,7 @@ import {
   collectSeedDecisions, seedSummary, seedableCount, renderTeamAvailableLine,
 } from './memory-view.mjs';
 import { createScriptsController, nextCopyKey } from './scripts-view.mjs';
+import { editorOpenFor, runFolderOpenFor, firstChangedLine, buildOpenFileButton, buildOpenRunButton, clearOpenError } from './diff-open-editor.mjs';
 import { renderRunPill, renderOverviewStrip, renderShipItStrip, shipItTryState, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout, withPort } from './actions-view.mjs';
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createConnectorLayers } from './mcp-servers/connectors-layers.mjs';
@@ -180,6 +185,12 @@ import { filePreviewOf } from './chat/file-renderers.mjs';
 import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS, feedbackIcon } from './feedback.mjs';
 import { layoutDialog, watchDialogEdges } from './dialog-layout.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
+import { loadExecEnvs, execEnvKnown, execEnvLabel, execEnvTitle, execEnvTitleWithArticle, fillExecEnvSelect, setExecEnvSelectValue } from './exec-envs.mjs';
+import { paintExecEnvStatusChip, watchExecEnvStatus } from './exec-env-status.mjs';
+import { paintExecEnvCardBackend, paintExecEnvCardValues, readExecEnvCard } from './exec-env-settings-card.mjs';
+import { paintProjectAddForBox, projectAddModeForBox, setWorcaBox, worcaBox } from './worca-box.mjs';
+import { execEnvSegNode, paintLocalRunNote, paintRunExecLine, runExecEnvSeg } from './run-sandbox-note.mjs';
+import { loadSecurityStatus } from './security-status-view.mjs';
 import { guardModal, dialogOpen, DISCARD_MESSAGE } from './modal-guard.mjs';
 import { createVoiceController } from './ask-voice.mjs';
 import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, gsPillText, GETTING_STARTED_STEPS } from './getting-started.mjs';
@@ -231,6 +242,7 @@ import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
 import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, MODEL_ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
+import { remoteRefusesDefault } from '../../src/shared/exec-env.mjs';
 import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS, connectionOf } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
@@ -258,6 +270,9 @@ import { createComposer, isReservedWorkflowId, isBuiltinWorkflow } from './graph
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
 import { createLibrary, folderLabel, folderKeys } from './workflows/library.mjs';
 import { createChatDock } from './workflows/chat-dock.mjs';
+import { createWorkflowVersions, workflowVersionsApi, workflowCanHaveVersions, hasVersionInUse, keepPicksForVersionInUse } from './workflows/versions-app.mjs';
+import { createWorkflowTests } from './workflows/tests-app.mjs';
+import { createExportUse } from './workflows/export-use.mjs';
 import { mintId } from '../../src/shared/graph/template.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
 // bare <select> with no preview host on this branch (the v1 read-only mini-graph
@@ -328,7 +343,7 @@ import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shar
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
-import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto } from './pr-auto-view.mjs';
+import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto, knownPrExempt } from './pr-auto-view.mjs';
 import { createRequirementsView } from './requirements-view.mjs';
 import { mountDesignView, pushDesignFrame, designHello, designNavCount, paintDesignNav } from './design/view.mjs';
 import { createDesignChat } from './design/chat.mjs';
@@ -368,7 +383,11 @@ import { needsYouItems as chatNeedsYouItems } from './runs-list.mjs';
 import { createActivityMenu } from './activity-menu.mjs';
 import { createAwayScreensaver } from './away-screensaver.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
-import { activeAgents } from './ask-run-card.mjs';
+import { activeAgents, snapshotFromState } from './ask-run-card.mjs';
+import { mountRunAgents } from './shape/run-agents.mjs';
+import { mountRunFacts } from './shape/run-facts.mjs';
+import { runAgentRows, memberShortWord } from '../../src/shared/shape/run-agents.mjs';
+import { memberStatusOf } from '../../src/shared/shape/run-status.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
 import { mountNewRunAttach, newRunScope, jsonFetcher as attachFetcher } from './requirements-attach/entries.mjs';
@@ -381,12 +400,17 @@ import { attachHashSearch } from './requirements-attach/hash-search.mjs';
 import { revalidate as revalidateAttached } from './requirements-attach/revalidate.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
-import { renderFeature, featureModelOf } from './shape/feature-view.mjs';
+import { renderFeature, featureModelOf, renderFeatureRequirements, paintFeatureDecisions } from './shape/feature-view.mjs';
+import { shipWaitText, featureStateLine } from './shape/feature-card.mjs';
+import { stopLinesOf } from './shape/stop-list.mjs';
 import { renderReleaseRow } from './shape/release-row.mjs';
 import { featureFocusOf, focusFeatureControl, featureMenuItems } from './shape/feature-actions.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
-import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget, answerFieldOpen } from './shape/step-card.mjs';
+import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget, answerFieldOpen, smallRunsAsk } from './shape/step-card.mjs';
+import { renderCareStart } from './shape/proposal.mjs';
+import { renderPrototypeBody } from './shape/prototype-body.mjs';
+import { pushPrototypeFrame, onPrototypeFrame } from './shape/prototype-build.mjs';
 import { installInputMode } from './input-mode.mjs';
 import { noteAnswer, forgetAnswer } from './shape/step-receipt.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
@@ -514,25 +538,60 @@ const SHAPE_FEATURE_HOSTS = new Map();
  *  schedules-changed frames (a slice's next state and PRs change there). */
 const SLICE_INFO = new Map();
 const SLICE_INFO_WAITERS = new Map();      // pipelineId → Set<onLoad>
-function sliceInfoFor(pipelineId, onLoad) {
-  if (!pipelineId) return null;
-  const known = SLICE_INFO.get(pipelineId);
-  if (known) return known;
-  if (typeof onLoad === 'function') {
-    if (!SLICE_INFO_WAITERS.has(pipelineId)) SLICE_INFO_WAITERS.set(pipelineId, new Set());
-    SLICE_INFO_WAITERS.get(pipelineId).add(onLoad);
-  }
-  if (SLICE_INFO.has(pipelineId)) return null;   // pending, or not a slice
+const STOP_HOME_WAITERS = new Map();       // the same, for stopHomeFor
+const STOP_HOMES = new Map();              // pipelineId → the last known home: those frames never take it away
+const SLICE_INFO_PENDING = new Set();      // pipeline ids with a fetch in flight
+const STOP_HOME_RETRIED = new Set();       // pipeline and question ids whose cached miss was asked again
+const isSliceInfo = (info) => !!info && Number.isInteger(info.index);
+function waitForSliceInfo(map, pipelineId, onLoad) {
+  if (typeof onLoad !== 'function') return;
+  if (!map.has(pipelineId)) map.set(pipelineId, new Set());
+  map.get(pipelineId).add(onLoad);
+}
+function loadSliceInfo(pipelineId) {
+  if (SLICE_INFO.has(pipelineId)) return;        // pending, or not a slice
   SLICE_INFO.set(pipelineId, null);
+  SLICE_INFO_PENDING.add(pipelineId);
   fetch(`/api/shape/pipelines/${encodeURIComponent(pipelineId)}/slice`)
     .then((r) => (r && r.ok ? r.json() : null)).catch(() => null)
     .then((info) => {
-      const waiters = [...(SLICE_INFO_WAITERS.get(pipelineId) || [])]; SLICE_INFO_WAITERS.delete(pipelineId);
+      SLICE_INFO_PENDING.delete(pipelineId);
+      const take = (map) => { const fns = [...(map.get(pipelineId) || [])]; map.delete(pipelineId); return fns; };
+      const slices = take(SLICE_INFO_WAITERS);
+      const homes = take(STOP_HOME_WAITERS);
       if (!info || !info.featureId) return;
       SLICE_INFO.set(pipelineId, info);
-      for (const fn of waiters) { try { fn(info); } catch { /* a repaint hint only */ } }
+      const was = STOP_HOMES.get(pipelineId);
+      const home = { featureId: info.featureId, threadId: info.threadId || null };
+      STOP_HOMES.set(pipelineId, home);
+      const moved = !was || was.featureId !== home.featureId || was.threadId !== home.threadId;
+      for (const fn of [...(isSliceInfo(info) ? slices : []), ...(moved ? homes : [])]) { try { fn(info); } catch { /* a repaint hint only */ } }
     });
+}
+/** A slice's info; never a Verifier run's answer (it has no slice fields). */
+function sliceInfoFor(pipelineId, onLoad) {
+  if (!pipelineId) return null;
+  const known = SLICE_INFO.get(pipelineId);
+  if (known) return isSliceInfo(known) ? known : null;
+  waitForSliceInfo(SLICE_INFO_WAITERS, pipelineId, onLoad);
+  loadSliceInfo(pipelineId);
   return null;
+}
+/** Where a run's stop is answered, a slice's or a Verifier run's: `{featureId, threadId}`, or null until it is known. A
+ *  known home stays while the cleared slice info is read again, so the question on the feature page is never torn down.
+ *  A cached miss is asked again once per question `askId` (a Verifier's ticket may not have had its pipeline yet). */
+function stopHomeFor(pipelineId, onLoad, askId = '') {
+  if (!pipelineId) return null;
+  const last = STOP_HOMES.get(pipelineId) || null;
+  if (SLICE_INFO.get(pipelineId)) return last;
+  waitForSliceInfo(STOP_HOME_WAITERS, pipelineId, onLoad);
+  const key = `${pipelineId} ${askId}`;
+  if (SLICE_INFO.has(pipelineId) && !SLICE_INFO_PENDING.has(pipelineId) && !STOP_HOME_RETRIED.has(key)) {
+    STOP_HOME_RETRIED.add(key);
+    SLICE_INFO.delete(pipelineId);
+  }
+  loadSliceInfo(pipelineId);
+  return last;
 }
 /** F33: Chat's own run panel (chatDeps.openRunPanel is openChatRunPanel once Chat is installed): it stays in Chat.
  *  The full ref: a run id alone can be a superseded paused copy, or one a restarted server no longer knows. */
@@ -560,6 +619,7 @@ async function paintShapeFeature(host) {
   if (opts.loading && host.dataset.painted !== id) {
     host.replaceChildren(Object.assign(document.createElement('p'), { className: 'feature-page-loading', textContent: 'Loading feature…' }));
   }
+  const ticket = groupFeatureTicket();
   const r = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
   const f = r && r.ok ? await r.json().catch(() => null) : null;
   if (seq !== host.__shapeSeq || SHAPE_FEATURE_HOSTS.get(host) !== id) return;
@@ -577,7 +637,7 @@ async function paintShapeFeature(host) {
   // F47: the route follows replaced_by, so f.id can be a newer feature than the host's id. Frames name f.id, and the
   // actions must reach it.
   host.__shapeShown = f.id;
-  noteGroupFeatureLock(f);                                   // Shaper requirements s3: the page header's Create PR lock
+  noteGroupFeatureLock(f, ticket);                           // Shaper requirements s3: the page header's Create PR lock
   // A rebuild drops the focus (rule: app-js-repaint-drops-focus): give it back to the same control. An action names
   // its control itself (F39: in Chromium the disabled button has already lost the focus); a WS repaint reads it.
   const act = host.__shapeFocus || featureFocusOf(document, host);
@@ -849,9 +909,12 @@ const el = {
   memoryScopeRow: $('#memory-scope-row'),
   memoryScopeSeg: $('#memory-scope-seg'),
   engineSelect: $('#engineSelect'),
+  execEnvSelect: $('#execEnvSelect'),
+  execEnvStatus: $('#exec-env-status'),
   engineHint: $('#engine-hint'),
   engineDefaultHint: $('#engine-default-hint'),
   engineMcpjsonHint: $('#engine-mcpjson-hint'),
+  execEnvHint: $('#exec-env-hint'),
   engineRefusal: $('#engineRefusal'),
   engineRefusalText: $('#engineRefusalText'),
   engineAllowRow: $('#engineAllowRow'),
@@ -1971,7 +2034,7 @@ function handleServerMessage(msg) {
   // Design frames are tagged by designId + buildId (no runId) and reach every socket: the Design view keeps the
   // nav count and the open stage. Handle them BEFORE the !msg.runId early-return below.
   if (msg.type === 'design-attached') { askPanel?.setDesign(msg.threadId, msg.designId); return; }   // start_design: the design opens beside its chat
-  if (typeof msg.type === 'string' && msg.type.startsWith('design-')) { pushDesignFrame(msg); designStudio?.studio.pushFrame(msg); if (msg.type === 'design-build' && designActivity.frame(msg)) updateNavCounts(); return; }
+  if (typeof msg.type === 'string' && msg.type.startsWith('design-')) { pushDesignFrame(msg); designStudio?.studio.pushFrame(msg); pushPrototypeFrame(msg); if (msg.type === 'design-build' && designActivity.frame(msg)) updateNavCounts(); return; }
 
   // Ask Worca frames are tagged by threadId (job frames also carry messageId +
   // seq) and ride the same broadcast socket. Handle them BEFORE the
@@ -2071,6 +2134,11 @@ function handleServerMessage(msg) {
     if (currentView() === 'requirements') void requirementsView.changed(msg.seq, msg.brief);
     return;
   }
+  // Workflow tests (D33): it carries testRunId, never runId, so it must not reach the run upsert below.
+  if (msg.type === 'workflow-tests-changed') {
+    wfvTests.changed(msg);
+    return;
+  }
   // Scheduled runs: a ticket or a repeating schedule changed (here, in another tab, from the
   // CLI, or because the scheduler tick started/missed/skipped something).
   if (msg.type === 'schedules-changed') {
@@ -2087,10 +2155,18 @@ function handleServerMessage(msg) {
     return;
   }
   // Shape it first: a feature's slices changed (an action, a slice's run, the scheduler tick). L11.
+  // Shaper small runs C1: the Prototype step moved; its planning run's card re-reads its saved state.
+  if (msg.type === 'shape-prototype') { refreshShaperCardsOf(msg.pipelineId); return; }
   if (msg.type === 'shape-feature') {
+    // Small runs C3 (D13): an open stop of this feature re-reads its slice, so an answer held in any tab draws its
+    // answered line. Read the held state before the cache clears: only a stop whose held state changed repaints.
+    const heldBefore = openStopsHeld(msg.id);
     SLICE_INFO.clear();
+    repaintHeldStops(msg.id, heldBefore);
     refreshShapeFeatures(msg.id);
     void refreshGroupFeatureLock(msg.id);
+    // Small runs: a member's short word (a stop opened, held or answered) comes with its group.
+    if (flagOn('shaperSmallRuns') && (state.runGroups || []).some((g) => g.smallRuns && (!msg.id || g.id === msg.id))) void loadRunGroups();
     refreshShaperCards();
     chatHome?.refreshPlans();
     return;
@@ -2461,7 +2537,16 @@ function onHello(msg) {
       pauseDetail: r0.pauseDetail || null,
       limitEngine: r0.limitEngine || null,
       limitResetAt: r0.limitResetAt || null,
+      // #1450: the model a confirmation pause waits on, a usage limit's scope and model (reset when absent).
+      modelConfirm: r0.modelConfirm || null,
+      limitScope: r0.limitScope || null,
+      limitModel: r0.limitModel || null,
       runEngine: r0.runEngine || undefined,
+      execEnv: r0.execEnv || undefined,
+      execEnvWaiting: !!r0.execEnvWaiting,
+      execEnvPreparing: r0.execEnvPreparing || undefined,
+      execEnvWaitUntil: r0.execEnvWaitUntil || undefined,
+      execEnvReview: Array.isArray(r0.execEnvReview) ? r0.execEnvReview : undefined,
       startedBy: r0.startedBy || undefined,
       lastAction: r0.lastAction || undefined,
       workspaceId: r0.workspaceId || undefined,
@@ -2626,7 +2711,8 @@ function nowHMS() {
 function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
-  pauseDetail = null, limitEngine = null, limitResetAt = null, runEngine = undefined, startedBy = null, lastAction = null,
+  pauseDetail = null, limitEngine = null, limitResetAt = null, modelConfirm = null, limitScope = null, limitModel = null, runEngine = undefined,
+  execEnv = undefined, execEnvWaiting = false, execEnvPreparing = undefined, execEnvWaitUntil = undefined, execEnvReview = undefined, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [], labels = [],
   shaping = null, networkWait = null, workMode = undefined,
 }) {
@@ -2645,7 +2731,15 @@ function makeRun({
     pauseDetail,          // the human-readable cause behind an 'error' pause, or null
     limitEngine,          // 'usage_limit': the engine whose own limit it is, or null (engine-switch.mjs)
     limitResetAt,         // 'usage_limit': ISO when the limit resets, or null
+    modelConfirm,         // 'model_confirm' (#1450): { model, at, … } the run waits to confirm, or null
+    limitScope,           // 'usage_limit': 'model' (a Fable limit) | 'connection', or null
+    limitModel,           // 'usage_limit': the model the limit was spent on, or null
     runEngine,            // the engine the run runs on (state frames carry it too); undefined = not known yet
+    execEnv,              // the backend name ('e2b') when its agents run in a remote sandbox (docs/e2b.md); undefined = local
+    execEnvWaiting,       // remote: still queued for a sandbox slot
+    execEnvPreparing,     // remote: 'image-build' while the backend builds its sandbox image on first use
+    execEnvWaitUntil,     // remote: ISO when the parked sandbox is released if the open question stays unanswered
+    execEnvReview,        // remote: [{path, why}] files from the sandbox only a person runs later (review before running)
     startedBy,            // who started it (identity.mjs), or null; 'local' is never shown
     lastAction,           // who last stopped / paused / resumed it: { kind, by, at } or null
     workspaceId,
@@ -3244,6 +3338,12 @@ function onState(r, msg) {
   if (typeof msg.prompt === 'string' && msg.prompt) r.prompt = msg.prompt;
   // The run's engine (§4.2): the step pills show only what that engine ran.
   if (typeof msg.runEngine === 'string' && msg.runEngine) r.runEngine = msg.runEngine;
+  // Where it executes (e2b only) and whether it still waits for a sandbox slot.
+  if (typeof msg.execEnv === 'string') r.execEnv = msg.execEnv;
+  r.execEnvWaiting = !!msg.execEnvWaiting;
+  r.execEnvPreparing = typeof msg.execEnvPreparing === 'string' ? msg.execEnvPreparing : undefined;
+  r.execEnvWaitUntil = typeof msg.execEnvWaitUntil === 'string' ? msg.execEnvWaitUntil : undefined;
+  if (Array.isArray(msg.execEnvReview)) r.execEnvReview = msg.execEnvReview;
   // Swap the manifest when it FIRST arrives OR when its node-id signature changes
   // (a decomposed run rewrites the implementer node into per-phase/per-task nodes
   // mid-run). Rebuild the stepper DOM so subsequent paints address the right nodes.
@@ -3439,7 +3539,8 @@ async function loadConfig(projectDir) {
   // then populate the dropdown + render the chosen workflow's accordion. The
   // Default workflow goes through the SAME renderer as a saved one; only its
   // storage differs (legacy per-role steps, resolved in buildNodeConfigRows).
-  if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
+  if (state.pinWorkflowId) state.workflowId = state.pinWorkflowId;   // U-T4: Run it once keeps its workflow when a project is picked
+  else if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
   await loadWorkflowsInto(state.workflowId);
   if (stale()) return;                     // the newer chain repaints guardrails itself
   await loadGuardrailsInto(state.guardrailsId);
@@ -3559,8 +3660,10 @@ const gvApi = {
     const d = await safeJson(res);
     // 422 = the shared validator's issues, rendered verbatim by the dialog.
     if (!res.ok) return { ok: false, status: res.status, issues: d && (d.issues || d.errors), error: d && d.error, id: d && d.id };
+    setTimeout(() => void wfvVersions.refresh(), 0);
     return { ok: true, workflow: (d && d.workflow) || d };
   },
+  ...workflowVersionsApi({ fetch: (...a) => fetch(...a), safeJson }),   // versionsRead, versions, saveVersion, useVersion, restoreRevision
   // {ok, error} — the refusal string comes from the JSON body, because every
   // delete this API can refuse (the built-in, a 404, a 409) says WHY there and
   // the user has to read it (MAJ-17).
@@ -3681,6 +3784,7 @@ async function initWorkflows() {
   });
   wfvLibrary = createLibrary({ doc: document, host: els.library, actions: wfvLibraryActions() });
   wfvShell = createWorkflowsShell({ doc: document, els: { ...els, inspector: insBody }, composer: gvComposer, actions: wfvShellActions() });
+  wfvVersions.mount();   // the Canvas · Versions · Tests switch, Save version, the version line (versions-app.mjs)
   wfvChat = createChatDock({
     doc: document, host: els.chat, composer: gvComposer, sessionId: WFV_SESSION,
     fetch: (...a) => fetch(...a),
@@ -3740,6 +3844,13 @@ function wfvSetLibraryOpen(open) {
   wfvShell?.paintLibToggle(open);
 }
 
+// Workflow versions and tests (plans/workflow-tests-plan.md, part2): the Versions and Tests pages' controllers.
+const wfvVersions = createWorkflowVersions({ doc: document, win: window, composer: () => gvComposer, api: gvApi,
+  confirmModal, tests: () => wfvTests });
+const wfvTests = createWorkflowTests({ doc: document, win: window, fetch: (...a) => fetch(...a), safeJson, composer: () => gvComposer,
+  api: gvApi, versions: () => wfvVersions, currentView, confirmModal, openNewPipeline, hdMarkdown,
+  mock: () => serverMock.on, runPageShows: (pid) => !!histDetailState && histDetailState.id === pid });
+
 function wfvShellActions() {
   return {
     pinState: () => { const t = gvComposer.template(); return t && t.id ? { id: t.id, pinned: homePinned(t.id) } : null; },
@@ -3758,7 +3869,7 @@ function wfvShellActions() {
     // first and the export follows; a blank canvas has nothing to export — open the saved list instead.
     exportCurrent: () => {
       const t = gvComposer.template();
-      const exportRow = (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id });
+      const exportRow = (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id, versionable: workflowCanHaveVersions(wf) });
       if (t.id && !gvComposer.isDirty()) { exportRow(t); return; }
       if (gvComposer.isPristine()) {
         wfvSetLibraryOpen(true); wfvLibrary?.open('workflows');
@@ -3910,6 +4021,7 @@ async function routeWorkflows(param = '') {
   }
   const opened = await wfvOpenSaved(head);
   if (reveal && opened !== null) await wfvRevealWorkflow(head);   // also when the discard prompt kept the canvas (D2)
+  wfvTests.route(head, sub, opened);   // #workflows/<id>/tests[/<example>|/run/<test>] (tests-app.mjs)
 }
 
 async function enterWorkflowsView(param = '', prevView = '') {
@@ -3920,6 +4032,7 @@ async function enterWorkflowsView(param = '', prevView = '') {
   const first = await initWorkflows();
   if (!first) gvComposer.fit();
   await routeWorkflows(param);
+  void wfvTests.refresh();   // frames skip a Tests page hidden behind another view: a shown one catches up on re-entry
 }
 
 // Where focus goes back when the sheet closes: the opener's id, or a Library control's focus key.
@@ -4076,6 +4189,7 @@ function wfvLibraryActions() {
     // #1127: a row of the user's opens to Edit (Save changes it); Use as template opens any row as a new unsaved copy.
     editWorkflow: (id) => wfvOpenSaved(id),
     useAsTemplate: (id) => wfvOpenSaved(id, { copy: true }),
+    ...wfvVersions.libraryActions(wfvOpenSaved),   // openVersions, versionsEnabled
     deleteWorkflow: async (wf) => {
       const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
       const ok = await confirmModal({ title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
@@ -4095,7 +4209,7 @@ function wfvLibraryActions() {
       if (!r.ok) { notify({ tone: 'err', title: 'Not deleted', detail: r.error }); return; }
       await wfvRefreshWorkflows();
     },
-    exportWorkflow: (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id }),
+    exportWorkflow: (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id, versionable: workflowCanHaveVersions(wf) }),
     newAgent: () => { location.hash = 'workflows/agents/new'; },
     newScript: () => { location.hash = 'workflows/scripts/new'; },
     viewAgent: (key) => { location.hash = `workflows/agents/${key}`; },
@@ -4178,6 +4292,25 @@ function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
 // nothing deviates from the CLI/registry baseline; otherwise model · effort and
 // any active flag. Mirrors nodeModelLine's vocabulary so the New-Pipeline row and
 // the run-graph node read the same.
+/** #1450: what a step with no model of its own runs, from GET /api/run-defaults effectiveRoles for the run's engine:
+ *  { kind: 'worca-default'|'role'|'cli-decides'|'tool-decides', role, label } — null while the payload is not there. */
+function emptyStepRole(row) {
+  const engine = state.engine || 'claude';
+  const role = roleOf(`steps.${row.key || ''}`, { name: row.label || '' });
+  const eff = state.runDefaults?.effectiveRoles?.[engine]?.[role];
+  if (!eff || !role) return null;
+  const m = eff.model ? modelById(eff.model) : null;
+  return { kind: eff.source, role: ROLE_LABELS[role], label: m ? m.label : (eff.model || ''), tool: engine === 'codex' ? 'Codex' : engineLabel(engine) };
+}
+/** The sentence a model-less step reads as on the run card (#1450): never the silent "CLI default". */
+function emptyStepText(row) {
+  const e = emptyStepRole(row);
+  if (!e) return null;
+  if (e.kind === 'worca-default') return `No model set: runs on ${e.label} (Worca’s default for ${e.role})`;
+  if (e.kind === 'role') return `No model set: runs on your ${e.role} role (${e.label})`;
+  if (e.kind === 'cli-decides') return `No model set: ${e.tool} decides (your ${e.role} role)`;
+  return toolDecidesText(e.tool === 'Codex' ? engineLabel('codex') : e.tool);
+}
 function agentSummaryText(row) {
   const parts = [];
   if (row.model) {
@@ -4193,8 +4326,11 @@ function agentSummaryText(row) {
     parts.push(`subs: ${subagentAliasLabel(row.subagentModel)}`);
   }
   if (row.askQuestions) parts.push('questions');
-  if (!parts.length) return 'default';
-  if (!row.model) parts.unshift('default');
+  // #1450: "default" names what it resolves to — the role's model, or who decides.
+  const e = row.model ? null : emptyStepRole(row);
+  const dflt = !e ? 'default' : e.kind === 'worca-default' || e.kind === 'role' ? `default: ${e.label}` : `default: ${e.tool} decides`;
+  if (!parts.length) return dflt;
+  if (!row.model) parts.unshift(dflt);
   return parts.join(' · ');
 }
 
@@ -4470,8 +4606,9 @@ async function listWorkflowsApi() {
 async function getWorkflowApi(id) {
   if (state.workflowCache[id]) return state.workflowCache[id];
   try {
-    const q = id === MEMORY_DEFRAG_WORKFLOW_ID ? `?engine=${state.engine}${state.projectDir ? `&projectDir=${encodeURIComponent(state.projectDir)}` : ''}` : '';
-    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}${q}`);
+    // use=live (workflow tests D2): the version a run uses once it has versions, never the draft; flag off: the row, as before.
+    const q = id === MEMORY_DEFRAG_WORKFLOW_ID ? `&engine=${state.engine}${state.projectDir ? `&projectDir=${encodeURIComponent(state.projectDir)}` : ''}` : '';
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}?use=live${q}`);
     const data = await safeJson(res);
     // Shape gate, both engines: a v2 graph carries `nodes`, a v1 template
     // `steps`. Demanding `steps` (the pre-P8 guard) rejected every stored row
@@ -4559,6 +4696,7 @@ async function loadWorkflowsInto(selectId) {
   // Fall back to Default if the wanted id is gone (a deleted workflow). Memory defragment holds one
   // project scope, so a workspace target SHOWS Default in its place but never persists it.
   const known = list.some((wf) => wf.id === want);
+  if (!known) state.pinWorkflowId = null;   // U-T9: a pinned workflow that is gone leaves no stale pin
   state.workflowId = !known || (isWorkspace && want === MEMORY_DEFRAG_WORKFLOW_ID) ? 'wf_default' : want;
   sel.value = state.workflowId;
   paintNeedsRepoNote();
@@ -5021,7 +5159,7 @@ function lockPinnedPair(modelSel, effortSel) {
 // One line naming what this row falls back to once its override is gone — the
 // answer to "what does 'default' actually mean here", without opening a doc.
 function defaultOriginText(row) {
-  if (!row.def.model) return 'No model set for this workflow. It falls back to the CLI’s own default.';
+  if (!row.def.model) { const t = emptyStepText(row); return t ? `${t}.` : 'No model set for this workflow. It falls back to the CLI’s own default.'; }
   const m = modelById(row.def.model);
   const label = m ? m.label : row.def.model;
   return `This workflow’s default: ${label}${row.def.effort ? ` · ${row.def.effort}` : ''}.`;
@@ -5104,6 +5242,7 @@ function renderFeedbackRows(rows) {
 if (el.workflowSelect) {
   el.workflowSelect.addEventListener('change', async () => {
     state.workflowId = el.workflowSelect.value || 'wf_default';
+    state.pinWorkflowId = null;
     paintNeedsRepoNote();
     saveActiveWorkflow(state.workflowId);
     await renderWorkflowConfig(state.workflowId);
@@ -5139,6 +5278,7 @@ function setRunEngine(engine) {
   keepVisible(document.getElementById('engine-row'), state.engine !== 'claude');   // Simple shows a non-Claude engine
   paintEngineHints();
   paintSessionNotes();
+  paintRunExecEnv();
   showEngineRefusal(null);
   // D10: the agent rows offer the run engine's models only — repaint them for the new engine. The Sets
   // picker too: another engine names set skills as its .agents/skills mount would.
@@ -5148,12 +5288,77 @@ function setRunEngine(engine) {
   }
 }
 
+// The environment a run gets when nobody picks one: the saved default, except a saved remote default on a run
+// no remote backend can take (an engine no sandbox runs, a workspace run, a Folder project, a run without a project),
+// which the server runs locally (resolveRunExecEnv).
+function runExecEnvDefault() {
+  const saved = state.execEnvDefault || 'local';
+  if (saved === 'local') return 'local';
+  return remoteRefusesDefault({ engine: state.engine, workspace: state.runTarget === 'workspace', workMode: formWorkMode() || 'git' }) ? 'local' : saved;
+}
+
+// Execution environment (docs/e2b.md): per run, never remembered. Simple shows the row while it is not Local,
+// or while its hint says why a saved remote default runs locally.
+function setRunExecEnv(v) {
+  state.execEnv = execEnvKnown(v) ? v : 'local';
+  if (el.execEnvSelect) el.execEnvSelect.value = state.execEnv;
+  const saved = state.execEnvDefault || 'local';
+  const why = remoteRefusesDefault({ engine: state.engine, workspace: state.runTarget === 'workspace', workMode: formWorkMode() || 'git' });
+  const skipped = state.execEnv === 'local' && saved !== 'local' && !!why;
+  if (el.execEnvHint) {
+    el.execEnvHint.hidden = !skipped;
+    if (skipped) el.execEnvHint.textContent = `Runs locally: the saved ${execEnvTitle(saved)} default does not apply to ${why}.`;
+  }
+  keepVisible(document.getElementById('exec-env-row'), state.execEnv !== 'local' || skipped);
+  paintLocalRunNote(document.getElementById('exec-env-local-note'), { show: state.execEnv === 'local' && !skipped && worcaBox() === 'native' });
+  paintExecEnvStatus();
+}
+/** An untouched picker follows the run's default as the engine, the target or the saved default change. */
+function paintRunExecEnv() { setRunExecEnv(state.execEnvTouched ? state.execEnv : runExecEnvDefault()); }
+
 // Boot: learn which engines this instance never starts (GET /api/engine-locks runs no preflight), so every picker
 // greys them out before anyone presses Start, and New pipeline moves off one.
 fetch('/api/engine-locks').then((r) => (r.ok ? r.json() : null)).catch(() => null).then((d) => {
   if (!Array.isArray(d?.engines)) return;
   setEngineLocks(d.engines); applyEngineLocks();
   if (engineLock(state.engine) !== null) setRunEngine('claude');
+});
+// The remote backends' live status (GET /api/exec-envs/status, docs/e2b.md): the chip beside New run's "Runs in" reads
+// the chosen backend (none on Local, none for a backend without a status), the one on Settings › Runs reads E2B with
+// its server. No buttons: the watch polls on its own while either chip is on screen.
+// state.execEnvStatus: the last answer, unset until the first (in `state`: setRunExecEnv may paint before this line).
+function execEnvStatusOf(name) { return state.execEnvStatus?.find((e) => e.name === name) || null; }
+function paintExecEnvStatus() {
+  const known = Array.isArray(state.execEnvStatus);
+  const run = state.execEnv === 'local' ? null : execEnvStatusOf(state.execEnv);
+  paintExecEnvStatusChip(el.execEnvStatus, run, { hide: state.execEnv === 'local' || (known && !run) });
+  // Settings › Runs › Execution environment: the backend its select shows (none on Local).
+  const picked = document.getElementById('e2b-exec-env')?.value || 'local';
+  const card = picked === 'local' ? null : execEnvStatusOf(picked);
+  paintExecEnvStatusChip(document.getElementById('e2b-status-chip'), card, { hide: picked === 'local' || (known && !card) });
+  const server = document.getElementById('e2b-status-server');
+  if (server) { server.hidden = !card?.servers?.[0]; server.textContent = card?.servers?.[0] ? `Server: ${card.servers[0].label}` : ''; }
+}
+const execEnvStatusWatch = watchExecEnvStatus({ onStatus: (list) => { state.execEnvStatus = list; paintExecEnvStatus(); } });
+// On screen = the chip has a box in the viewport: hidden (Local), another view or Settings tab, scrolled away, or a
+// hidden browser tab all stop the poll. No IntersectionObserver (jsdom): no poll.
+if (typeof IntersectionObserver === 'function') {
+  const shown = new Set();
+  const apply = () => execEnvStatusWatch.setActive(shown.size > 0 && document.visibilityState === 'visible');
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) { if (e.isIntersecting) shown.add(e.target); else shown.delete(e.target); }
+    apply();
+  });
+  for (const chip of [el.execEnvStatus, document.getElementById('e2b-status-chip')]) if (chip) io.observe(chip);
+  document.addEventListener('visibilitychange', apply);
+}
+
+// Boot: the registered execution environments (GET /api/exec-envs) fill every "Runs in" picker.
+loadExecEnvs().then(() => {
+  fillExecEnvSelect(el.execEnvSelect);
+  fillExecEnvSelect(document.getElementById('e2b-exec-env'));
+  paintRunExecEnv();
+  paintExecEnvCardSelection();
 });
 
 function runSlotDefaults() { return state.runDefaults?.steps?.[state.engine] || null; }
@@ -5175,15 +5380,19 @@ function paintSessionNotes(next) {
 onFlagChange('sessionGroups', () => paintSessionNotes());
 function paintEngineHints() {
   if (el.engineHint) {
-    el.engineHint.hidden = state.engine === 'claude';
+    // #1450: an engine whose every role is "the tool decides" (another harness, Claude Code signed out) warns here.
+    const eff = state.runDefaults?.effectiveRoles?.[state.engine];
+    const toolDecides = !!eff && Object.values(eff).length > 0 && Object.values(eff).every((r) => r?.source === 'tool-decides');
+    const decidesLine = toolDecides ? ` Steps with no model: ${toolDecidesText(engineLabel(state.engine))}.` : '';
+    el.engineHint.hidden = state.engine === 'claude' && !toolDecides;
     const project = Object.values(state.runDefaults?.steps?.[state.engine] || {}).some((s) => s?.source === 'project');
-    el.engineHint.textContent = state.engine === 'copilot'
+    el.engineHint.textContent = (state.engine === 'claude' ? 'Claude Code isn’t signed in.' : state.engine === 'copilot'
       ? `GitHub Copilot CLI runs this pipeline, including titles and summaries (on its default model). Step models: ${project ? 'project Settings' : 'Models › Jobs'}. Sign in once with copilot login.`
       : state.engine === 'cursor'
       ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Jobs'}.`
       : SIGN_IN_ENGINE_NAMES.includes(state.engine)
       ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Jobs'}.`
-      : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Jobs'}`;
+      : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Jobs'}`) + decidesLine;
   }
   if (el.engineDefaultHint) {
     const source = state.runDefaults?.engine?.value === state.engine ? state.runDefaults.engine.source : null;
@@ -5300,6 +5509,10 @@ async function loadRunDefaults(projectDir) {
   const prevSteps = JSON.stringify(state.runDefaults?.steps ?? null);
   state.runDefaults = data?.engine && ENGINE_NAMES.includes(data.engine.value) ? data : null;
   if (state.runDefaults && !state.engineTouched) setRunEngine(data.engine.value); else paintEngineHints();
+  // Kept apart from state.runDefaults, which is null whenever the engine part is invalid.
+  // Kept raw: a registered backend the picker list has not named yet is re-applied when the list arrives.
+  state.execEnvDefault = typeof data?.execEnv?.value === 'string' ? data.execEnv.value : 'local';
+  paintRunExecEnv();
   // The rows show the slot defaults: repaint them only when those changed (setRunEngine repaints
   // on an engine change itself). An idle repaint re-arms the policy/MCP preview debounce.
   if (JSON.stringify(state.runDefaults?.steps ?? null) !== prevSteps) void renderWorkflowConfig(state.workflowId);
@@ -5325,6 +5538,7 @@ if (el.engineSelect) {
     notePresetChange();
   });
 }
+el.execEnvSelect?.addEventListener('change', (e) => { state.execEnvTouched = true; setRunExecEnv(e.target.value); });
 
 // Guardrails change: remember the run's set and refresh the summary hint.
 if (el.guardrailsSelect) {
@@ -5659,9 +5873,11 @@ if (el.agentsPromote) {
         appendLog({ source: 'ui', level: 'error', text: `workflow defaults: ${data.error || res.status}`, ts: Date.now() });
         return;
       }
+      const versionInUse = hasVersionInUse(state.workflowCache[workflowId]);   // the defaults went into the draft (versions-app.mjs)
       // The cached template still carries the OLD defaults; drop it so the
       // reset below repaints against what was just persisted.
       delete state.workflowCache[workflowId];
+      if (versionInUse) { await keepPicksForVersionInUse(() => renderWorkflowConfig(workflowId)); return; }
       el.agentsReset.click(); // clearing the now-redundant overrides is the second half
     } catch (err) {
       appendLog({ source: 'ui', level: 'error', text: `workflow defaults error: ${err.message}`, ts: Date.now() });
@@ -6365,6 +6581,25 @@ function renderQpanel(r, root) {
   renderer.render(panel, pq, ctx);
 
   panel.classList.remove('hidden');
+  paintQpanelDeadline(r, root);
+}
+
+/** E2B (docs/e2b.md): while a question waits, the parked sandbox is kept only until "Max wait for an answer".
+ *  Say when, and what happens then. Repainted on every state frame: the deadline arrives once the sandbox parks. */
+function paintQpanelDeadline(r, root) {
+  const panel = root && root.querySelector('.qpanel');
+  if (!panel) return;
+  let line = panel.querySelector('.qpanel-deadline');
+  const at = r.pendingQuestion && r.execEnv && r.execEnv !== 'local' && r.execEnvWaitUntil ? new Date(r.execEnvWaitUntil) : null;
+  if (!at || Number.isNaN(at.getTime())) { if (line) line.remove(); return; }
+  if (!line) {
+    line = document.createElement('p');
+    line.className = 'qpanel-deadline';
+    const head = panel.querySelector('.qpanel-head');
+    if (head) head.after(line); else panel.prepend(line);
+  }
+  const hhmm = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  line.textContent = `Answer by ${hhmm}. After that worca releases the ${execEnvTitle(r.execEnv)} sandbox and pauses the run; Resume continues in a fresh sandbox.`;
 }
 
 /** The `ctx` every registered renderer receives (index §P3). `mode` tells a body
@@ -6921,7 +7156,7 @@ registerAskRenderer('clarify', {
 // Gate and recovery are step cards for every run (shaper-cards D3): their buttons post through stepPost themselves.
 registerAskRenderer('gate', {
   title: () => 'Cycle gate',
-  render: (panel, pq, ctx) => renderGateCard(panel, pq, { ...stepDeps(ctx, pq),
+  render: (panel, pq, ctx) => renderGateCard(panel, pq, { ...stepDeps(ctx, pq), ...stopDeps(ctx, pq, panel),
     wireCopy: gateWireCopy(ctx.run, pq.wireId), tagLevel, submit: (p) => stepPost(ctx.run, p) }),
 });
 registerAskRenderer('recovery', {
@@ -6933,12 +7168,39 @@ registerAskRenderer('workflow', {
   count: () => 'workflow',
   render: (panel, pq, ctx) => renderWorkflowBody(ctx.run, panel, pq),
 });
+// Shaper small runs B2: the Start step (the Care ask) of a marked planning run; a 422 paints under the dial.
+registerAskRenderer('care', {
+  title: () => 'Your turn: how much care?',
+  render: (panel, pq, ctx) => {
+    const body = renderCareStart(ctx.doc || document, pq, { ...stepDeps(ctx, pq), submit: (p) => stepPost(ctx.run, p) });
+    panel.__care = body;
+    body.render(panel);
+  },
+  collect: (panel) => (panel && panel.__care ? panel.__care.collect() : null),
+  setErrors: (panel, errors) => { if (panel && panel.__care) panel.__care.setErrors(errors); },
+});
+// Shaper small runs C1: the Prototype step; its build follows the design frames this socket hears.
+registerAskRenderer('prototype', {
+  render: (panel, pq, ctx) => {
+    // The Chat run side panel shows the step but none of its buttons: it is answered on the feature card.
+    const readOnly = !!(panel.closest && panel.closest('[data-presentation="panel"]'));
+    panel.__proto = renderPrototypeBody(panel, pq, { ...stepDeps(ctx, pq), readOnly, confirm: confirmModal, submit: (p) => stepPost(ctx.run, p),
+      reduced: () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches),
+      subscribe: (msg, fn) => { if (state.ws && state.wsReady) state.ws.send(JSON.stringify(msg)); return onPrototypeFrame(fn); } });
+    // A repaint (disposeQpanel) ends the live build's frame subscription and its animation.
+    panel.__dispose = () => { if (panel.__proto) panel.__proto.destroy(); panel.__proto = null; };
+  },
+  setErrors: (panel, errors) => { if (panel && panel.__proto) panel.__proto.setErrors(errors); },
+});
 // Shape it first (S4): registered ungated: the only way to answer a run still held when the gate goes off.
 // title/count fill the hidden .qpanel-head (F28); askHeading is what people read. Kept for completeness.
 registerAskRenderer('plan', {
   title: (pq) => (pq.plan && pq.plan.outline ? `Slices ready for your approval · v${pq.plan.round || 1}` : `Plan ready for your approval · v${(pq.plan && pq.plan.round) || 1}`),
   count: (pq) => { const c = pq.plan && pq.plan.check; return c && Number.isFinite(c.total) ? `${pq.plan.outline ? 'Outline' : 'Shape'} ${c.passed}/${c.total}` : null; },
-  render: (panel, pq, ctx) => (pq.plan && pq.plan.outline
+  // Small runs C3 (D11): a marked run's stop on a plan ask is drawn by the gate card, as one question.
+  render: (panel, pq, ctx) => (pq.stop
+    ? renderGateCard(panel, pq, { ...stepDeps(ctx, pq), ...stopDeps(ctx, pq, panel), tagLevel, submit: (p) => stepPost(ctx.run, p) })
+    : pq.plan && pq.plan.outline
     ? renderOutlineBody(panel, pq, outlineBodyDeps(ctx))
     : renderPlanBody(panel, pq, planBodyDeps(ctx))),
   setErrors: (panel, errors) => { if (panel && panel.__plan) panel.__plan.setErrors(errors); },
@@ -6954,6 +7216,63 @@ function stepDeps(ctx, pq) {
   const r = ctx.run;
   const who = pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '';
   return { doc: ctx.doc || document, run: r, title: stepTitle(pq, who), chip: stepChip(pq, r) };
+}
+
+/** Small runs C3 (D12, D13): a stop's extra deps. A stop is answered on every surface: the feature card, the feature
+ *  page, the run page and the run side panel (`runPage` there: the head's one-column marker); with the flag off, the run
+ *  page and panel (`readOnly`) draw its findings only. An answer held for another run's turn (the feature view's
+ *  `stop.held`, read through the slice info) draws the one answered line. */
+function stopDeps(ctx, pq, panel) {
+  if (!pq || !pq.stop) return {};
+  const r = ctx.run;
+  const small = flagOn('shaperSmallRuns');
+  const runScreen = !!(panel.closest && panel.closest('[data-presentation="panel"], #run-detail'));
+  const repaint = () => { if (panel.isConnected && r.pendingQuestion === pq) renderQpanel(r, panel.parentElement); };
+  const info = r && r.pipelineId ? sliceInfoFor(r.pipelineId, repaint) : null;
+  const held = info && info.stop && info.stop.held ? { value: info.stop.value } : null;
+  const pick = typeof panel.__stopPick === 'string' ? panel.__stopPick : null;   // the person's pick across a repaint
+  return { readOnly: !small && runScreen, ...(small && runScreen ? { runPage: true } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}) };
+}
+
+/** A stop's held state as read from its slice info: '' when nothing is held. */
+const heldSigOf = (info) => (info && info.stop && info.stop.held ? `held:${info.stop.value}` : '');
+
+/** The open stops of feature `featureId` (or whose slice is not known yet), each with its held state now. */
+function openStopsHeld(featureId) {
+  const out = [];
+  for (const r of runs.values()) {
+    const pq = r && r.pendingQuestion;
+    if (!pq || !pq.stop || !r.pipelineId) continue;
+    const info = SLICE_INFO.get(r.pipelineId);
+    if (info && info.featureId !== featureId) continue;
+    out.push({ r, pq, sig: heldSigOf(info) });
+  }
+  return out;
+}
+
+/** Re-read each stop's slice and repaint its panels only when the held state changed (fit: a repaint must not drop
+ *  the person's pick or focus). */
+function repaintHeldStops(featureId, before) {
+  for (const { r, pq, sig } of before) {
+    sliceInfoFor(r.pipelineId, (info) => {
+      if (info.featureId !== featureId || heldSigOf(info) === sig || r.pendingQuestion !== pq) return;
+      for (const panel of qpanelsFor(r)) repaintStopPanel(r, panel);
+    });
+  }
+}
+
+/** Rebuild a stop's panel, carrying the person's pick (as the preset) and the focused tile or primary across it. */
+function repaintStopPanel(r, panel) {
+  const sel = panel.querySelector('.qopt.sel');
+  const a = document.activeElement;
+  const had = a && a !== document.body && panel.contains(a)
+    ? (a.matches?.('.qopt') ? { tile: a.dataset.value } : a.matches?.('[data-qpanel-submit]') ? { go: true } : null) : null;
+  panel.__stopPick = sel && !sel.dataset.preset ? sel.dataset.value : null;
+  try { renderQpanel(r, panel.parentElement); } finally { delete panel.__stopPick; }
+  const cur = document.activeElement;
+  if (!had || (cur && cur !== document.body && cur.isConnected)) return;
+  const target = had.tile ? [...panel.querySelectorAll('.qopt')].find((t) => t.dataset.value === had.tile) : panel.querySelector('[data-qpanel-submit]');
+  (target || panel.querySelector('[data-qpanel-submit]'))?.focus();
 }
 
 /** The outline body's deps: the plan body's posting rule (the gate read at post time, S4) and its confirm dialog. */
@@ -7215,6 +7534,9 @@ function onDone(r, msg) {
   r.pauseDetail = msg.detail || null;
   r.limitEngine = msg.limitEngine || null;
   r.limitResetAt = msg.limitResetAt || null;
+  r.modelConfirm = msg.modelConfirm || null;
+  r.limitScope = msg.limitScope || null;
+  r.limitModel = msg.limitModel || null;
   // A paused run already finished once, as paused. Its stop (or a settle from elsewhere) sends a
   // terminal done on the same runId: finish it again, for real. Never on an `error` frame: onError
   // stays guarded, so a stray error after the pause cannot turn the parked run red.
@@ -8323,6 +8645,7 @@ function onProjectChanged() {
   paintFormWorkMode();
   showEngineRefusal(null); // the refusal and any consent were for the OLD project's context
   state.engineTouched = false;
+  state.execEnvTouched = false;
   // #527: a new project starts with no sync answer; the row stays hidden until branches-fresh.
   state.sync = freshSyncState(state.sync.gen + 1);
   syncHasRemote = null;
@@ -9184,6 +9507,7 @@ function setRunTarget(target, { persist = true } = {}) {
   paintFormWorkMode();
   showEngineRefusal(null); // the refusal and any consent were for the OLD target's context
   state.engineTouched = false;
+  state.execEnvTouched = false;
   if (persist) localStorage.setItem(LAST_TARGET_KEY, t);
   // A workspace run has no project layer: its default engine is the user's (review I3).
   void loadRunDefaults(t === 'workspace' || t === 'none' ? '' : (state.projectDir || ''));
@@ -14470,7 +14794,7 @@ function buildPdSettings(sec, key) {
   const p = projectByKey(key);
   if (!p) return;
   const host = document.createElement('div'); host.className = 'pd-settings'; sec.appendChild(host);
-  mountProjectSettings(host, { projectKey: p.key, projectDir: p.path, onTest: testModelRow });
+  mountProjectSettings(host, { projectKey: p.key, projectDir: p.path, onTest: testModelRow, confirm: (o) => confirmModal({ ...o, danger: true }) });
   const brief = document.createElement('div'); brief.className = 'pd-house-brief'; sec.appendChild(brief);
   mountHouseBrief(brief, { projectKey: p.key });
   sec.appendChild(buildPdNightCard(p));
@@ -15025,6 +15349,8 @@ let projAddAutoName = '';   // the Name the Folder path proposed: a name typed o
 let projAddAction = null;   // #693: the Folder pane's Add <root> / Open <name> action, or null
 
 function setProjAddMode(mode) {
+  mode = projectAddModeForBox(mode);         // the hardened box adds by clone only (worca-box.mjs)
+  paintProjectAddForBox(el.projectAddModal);
   const prev = projAddMode;
   // A clone already running keeps its tab (its progress line) even when git went missing meanwhile.
   projAddMode = mode === 'clone' && el.projAddClonePane && (gitOn() || cloneFollow) ? 'clone' : mode === 'folder' ? 'folder' : 'new';
@@ -15972,6 +16298,10 @@ function buildRunBody() {
       const all = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;
       return all.length ? all : undefined;
     })(),
+    // Execution environment: sent only when it differs from the default this run gets (none known = local),
+    // so a default run's body stays byte-identical. A saved E2B default the run cannot take goes unsent:
+    // the server runs it locally and says why in the run log.
+    ...(state.execEnv !== runExecEnvDefault() ? { execEnv: state.execEnv } : {}),
   };
   // Run on the source branch: a flag on the wire, never a feature name (the run auto-names its hidden branch).
   if (el.sameAsSource && el.sameAsSource.checked) { body.sameAsSource = true; delete body.featureBranch; }
@@ -16684,6 +17014,8 @@ async function loadSettings() {
     paintScreensaver(data.screensaver);
     levelCtl.confirm(data.uiLevel);
     paintAbout(data.app);
+    setWorcaBox(data.box);
+    void loadSecurityStatus(document.getElementById('securityStatusBody'));   // Settings › General › Security
     if (el.aboutUpdateCheck) el.aboutUpdateCheck.checked = data.updateCheck !== false;
     void refreshVersionStatus();
     paintBudgetSettings(data);
@@ -16692,11 +17024,13 @@ async function loadSettings() {
     paintTagDimsSettings(data);
     paintNightSettings(data);
     paintSyncSettings(data);
+    paintChatRunsSettings(data);
     paintNetworkWaitSettings(data);
     paintRunLimitsSettings(data);
     paintSmartNamingSettings(data);
     paintMemoryModelLink(data);
     paintActionsSettings(data);
+    paintE2bSettings(data);
     paintDebugSpawnSettings(data);
     paintKeepAwakeRow(data.keepAwake !== false);
     paintPrSettings(data);
@@ -17594,6 +17928,32 @@ document.getElementById('syncDefaultsSave')?.addEventListener('click', saveSyncD
 document.getElementById('syncDefaultsReset')?.addEventListener('click', (e) => postSyncDefaults(
   { sync: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('syncDefaultsSave');
+
+// Settings › Runs › Chat runs: source branch — which branch a chat run card starts from when the chat names none.
+// The card's words all come from the shared module (the HTML shell is empty), so the card, the chat and the server agree.
+function paintChatRunsSettings(data) {
+  const card = document.getElementById('chat-runs-settings-card');
+  const sel = document.getElementById('chatRunsSourceBranch');
+  if (!card || !sel) return;
+  card.querySelector('h2').textContent = CHAT_SOURCE_BRANCH_SETTING;
+  card.querySelector(`label[for="chatRunsSourceBranch"]`).textContent = CHAT_SOURCE_BRANCH_ROW;
+  const tip = document.getElementById('chatRunsInfo');
+  tip.setAttribute('aria-label', `About ${CHAT_SOURCE_BRANCH_SETTING}`);
+  tip.querySelector('.tip-content').textContent = CHAT_SOURCE_BRANCH_INFO;
+  if (sel.options.length !== CHAT_SOURCE_BRANCH_MODES.length) {
+    sel.replaceChildren(...CHAT_SOURCE_BRANCH_MODES.map((m) => {
+      const opt = document.createElement('option');
+      opt.value = m; opt.textContent = CHAT_SOURCE_BRANCH_LABELS[m];
+      return opt;
+    }));
+  }
+  sel.value = normalizeChatSourceBranch(data && data.chat && data.chat.sourceBranch);
+  settingsCardPainted('chatRunsSave');
+}
+document.getElementById('chatRunsSave')?.addEventListener('click', (e) => postSettingsCard(
+  { chat: { sourceBranch: document.getElementById('chatRunsSourceBranch').value } },
+  { card: document.getElementById('chat-runs-settings-card'), paint: paintChatRunsSettings, dirty: settingsCardDirty('chatRunsSave'), button: e.currentTarget }));
+settingsCardDirty('chatRunsSave');
 
 // Settings › Runs › Wait for the network (network-wait.mjs).
 function paintNetworkWaitSettings(data) {
@@ -18840,7 +19200,8 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     if (name) {
       const f = await memoryApi('GET', `${base}/files/${encodeURIComponent(name)}`);
       if (my !== seq) return;
-      if (f.ok) { st.selected = name; st.editor = { name, text: f.data.text, loaded: f.data.text }; }
+      // `held`: a sandbox run wrote it (memory-store isHeldSource); Save approves it.
+      if (f.ok) { st.selected = name; st.editor = { name, text: f.data.text, loaded: f.data.text, held: !!st.report.files?.find((x) => x.name === name)?.held }; }
       else say(f.data.error || `memory file "${name}" not found`, 'err-inline');
     }
     paint();
@@ -18864,9 +19225,9 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     });
     if (r.skipped) return;
     if (!r.ok) { cardAlert(ed, { title: 'Not saved', detail: r.error }); return; }
-    st.flash = [`Memory saved: ${name}.md`, 'ok'];
+    st.flash = [`Memory ${st.editor?.held ? 'approved' : 'saved'}: ${name}.md`, 'ok'];
     st.selected = name; st.isNew = false;
-    st.editor = { ...st.editor, name, text, loaded: text, msg: '', msgErr: false };
+    st.editor = { ...st.editor, name, text, loaded: text, msg: '', msgErr: false, held: false };
     // Route only when the hash would actually change: an unchanged hash fires no hashchange, so the
     // repaint would never happen.
     if (navigate && location.hash.slice(1) !== memoryRoute(scopeKey, name)) route(name);
@@ -19295,6 +19656,36 @@ async function refreshActionsModel(runId, scopeQuery) {
   paintActionsStrips(runId);
   for (const c of actionControllers) if (c.runId === runId) c.refresh();
   return r;
+}
+/**
+ * The Diff tab's open controls read the run's Actions model (diff-open-editor.mjs). From the cache, else one read; a
+ * cached live model is read again once the page says the run finished. A failed read is null: no control shows.
+ */
+async function diffEditorModel(runId, scopeQuery, { finishedNow = false } = {}) {
+  const cached = actionsModelCache.get(runId);
+  if (cached && !(cached.finished === false && finishedNow)) return cached;
+  const r = await actionsCall('GET', actionsRunUrl(runId, '/actions', scopeQuery));
+  if (!r.ok) return null;
+  actionsModelCache.set(runId, r.data);
+  return r.data;
+}
+/**
+ * Open the run (or one file at a line) in the Editor built-in. A finished run that is not checked out is checked
+ * out first (mode 'checkout'), or linked to the folder that holds its branch (mode 'use-folder'). → { ok, error? }
+ */
+async function openInEditor(runId, scopeQuery, { member, workspace = false, file, line, mode }) {
+  const failed = (r) => ({ ok: false, error: r.data?.error || `Request failed (${r.status})` });
+  if (mode === 'checkout' || mode === 'use-folder') {
+    const co = await actionsCall('POST', actionsRunUrl(runId, '/checkout', scopeQuery),
+      mode === 'use-folder' ? { members: [member], useExisting: true } : { members: [member] });
+    if (!co.ok) return failed(co);
+    await refreshActionsModel(runId, scopeQuery);
+  }
+  const body = {};
+  if (workspace && member) body.member = member;            // a single-project run needs none
+  if (file) { body.file = file; if (line) body.line = line; }
+  const r = await actionsCall('POST', actionsRunUrl(runId, '/open-in-editor', scopeQuery), body);
+  return r.ok ? { ok: true } : failed(r);
 }
 /**
  * actions-changed: a stop from the sidebar or the pill, or a crash, changes runs whose tab may never have
@@ -19798,6 +20189,27 @@ document.getElementById('act-reset')?.addEventListener('click', (e) => saveActio
   { keep: null, portLow: null, portHigh: null, editor: null, terminal: null, maxCheckouts: null, previewPorts: null },
   { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('act-save');
+
+// Settings › Runs › Execution environment (exec-env-settings-card.mjs). No team layer: null clears each key.
+const execEnvCard = () => document.getElementById('e2b-settings-card');
+function paintE2bSettings(data) {
+  // Not .value: a saved backend missing from the static options would read as '' and be saved back as a clear.
+  setExecEnvSelectValue(document.getElementById('e2b-exec-env'), data?.execEnv);
+  paintExecEnvCardValues(execEnvCard(), data);
+  paintExecEnvCardSelection();
+  settingsCardPainted('e2b-settings-save');
+}
+function paintExecEnvCardSelection() {
+  const v = document.getElementById('e2b-exec-env')?.value || 'local';
+  paintExecEnvCardBackend(execEnvCard(), v, { label: execEnvLabel(v) });
+  paintExecEnvStatus();
+}
+document.getElementById('e2b-settings-save')?.addEventListener('click', (e) => {
+  postSettingsCard(readExecEnvCard(execEnvCard()),
+    { card: execEnvCard(), button: e.currentTarget, paint: paintE2bSettings, dirty: settingsCardDirty('e2b-settings-save') });
+});
+settingsCardDirty('e2b-settings-save');
+document.getElementById('e2b-exec-env')?.addEventListener('change', (e) => { e.target.dataset.want = e.target.value; paintExecEnvCardSelection(); });
 
 const scriptsApi = {
   async list() {
@@ -20564,7 +20976,7 @@ function openJobPicker(anchor) {
   const row = jobsRow(vm, id);
   if (!row) return;
   openModelPicker({ doc: document, win: window, anchor, catalog: data.catalog, engine: vm.engine, value: row.value, clearLabel: row.clearLabel,
-    modelOnly: !!row.modelOnly, allowEffortOnly: !!row.allowEffortOnly,
+    decideLabel: row.decideLabel || '', modelOnly: !!row.modelOnly, allowEffortOnly: !!row.allowEffortOnly,
     onPick: (value) => { mvState.jobs.draft[id] = value; renderJobsTab(); } });
 }
 
@@ -22602,7 +23014,7 @@ async function confirmCostOverride(runId, btn) {
 }
 
 /** POST /api/resume's body: every option a resume carries, resent as-is after each question. */
-function resumeBody(pipelineId, { ignoreCostCap = false, pastTeamCap = false, policyReason = null, baseAck = false, engine = null, allowUnguardedEngine = false, model = null } = {}) {
+function resumeBody(pipelineId, { ignoreCostCap = false, pastTeamCap = false, policyReason = null, baseAck = false, engine = null, allowUnguardedEngine = false, model = null, confirmModel = null } = {}) {
   return {
     pipelineId, baseCheck: true,
     ...(baseAck ? { baseAck: true } : {}),
@@ -22611,6 +23023,7 @@ function resumeBody(pipelineId, { ignoreCostCap = false, pastTeamCap = false, po
     ...(engine ? { engine } : {}),
     ...(allowUnguardedEngine ? { allowUnguardedEngine: true } : {}),
     ...(model ? { model } : {}),
+    ...(confirmModel ? { confirmModel } : {}),   // #1450 "Continue on <model>"
   };
 }
 
@@ -23600,13 +24013,27 @@ function paintResumeEngineItems(menu, runEngine, pause) {
   if (!menu) return;
   const saved = runEngine || 'claude';
   const offers = usageLimitSwitches(pause || {});
-  const sig = `${saved}|${offers.join(',')}|${pause?.reason || ''}`;
+  const confirm = pause?.reason === 'model_confirm' && pause.modelConfirm?.model ? pause.modelConfirm.model : '';
+  const sig = `${saved}|${offers.join(',')}|${pause?.reason || ''}|${confirm}|${pause?.limitScope || ''}`;
   if (menu.dataset.engineSig === sig) return;
   menu.dataset.engineSig = sig;
-  // Any usage limit — the sign-in's or a provider's: a model on another connection has its own allowance.
+  // Any usage limit — the sign-in's or a provider's: a model on another connection has its own allowance. A
+  // model_confirm pause (#1450) switches too: "Switch model and continue…".
   const withModel = menu.querySelector('.resume-with-model');
-  if (withModel) withModel.hidden = pause?.reason !== 'usage_limit';
+  if (withModel) withModel.hidden = pause?.reason !== 'usage_limit' && pause?.reason !== 'model_confirm';
+  // A model-scoped limit (a "Fable limit"): another model on the same sign-in still runs, so switching leads.
+  if (withModel && pause?.reason === 'usage_limit' && pause.limitScope === 'model' && menu.firstElementChild !== withModel) menu.prepend(withModel);
+  // "Continue on <model>": confirms the premium model the run paused on (POST /api/resume confirmModel).
+  const confirmItem = menu.querySelector('.resume-confirm-model');
+  if (confirmItem) {
+    confirmItem.hidden = !confirm;
+    if (confirm) { confirmItem.dataset.model = confirm; confirmItem.querySelector('b').textContent = `Continue on ${modelById(confirm)?.label || confirm}`; }
+    else delete confirmItem.dataset.model;
+  }
   menu.dataset.limitEngine = pause?.limitEngine || '';   // read by the item's click (pickResumeModel)
+  menu.dataset.pauseReason = pause?.reason || '';
+  menu.dataset.limitScope = pause?.limitScope || '';
+  menu.dataset.limitModel = pause?.limitModel || '';
   const savedItem = menu.querySelector('.resume-on-saved');
   if (savedItem) savedItem.querySelector('b').textContent = `Resume on ${engineLabel(saved)}`;
   const tpl = menu.querySelector('.resume-on-other[data-template]') || menu.querySelector('.resume-on-other');
@@ -23622,22 +24049,40 @@ function paintResumeEngineItems(menu, runEngine, pause) {
   }
 }
 
-/** "Resume with another model…" (a usage limit): the model every remaining step runs on, picked from the ones the
- *  run's harness can run on another connection (src/shared/connections.mjs), grouped by provider. null = cancelled. */
+/** The model family a usage limit can be scoped to ("You've hit your Fable limit"), from an id; '' for none. */
+const modelFamilyOf = (id) => (/(fable|opus|sonnet|haiku)/i.exec(String(id || ''))?.[1] || '').toLowerCase();
+/** A Resume menu's pause, as its items read it at click time (paintResumeEngineItems wrote the dataset). */
+const menuPause = (menu) => ({ reason: menu.dataset.pauseReason || 'usage_limit', limitEngine: menu.dataset.limitEngine || null,
+  limitScope: menu.dataset.limitScope || null, limitModel: menu.dataset.limitModel || null });
+
+/** "Switch model and continue…" (a usage limit, or a model_confirm pause): the model every remaining step runs on.
+ *  A usage limit offers the models the run's harness can run on another connection (src/shared/connections.mjs),
+ *  grouped by provider — or, when the limit is one model family's (limitScope 'model'), the other families on the same
+ *  sign-in too, non-premium first. A model_confirm pause offers every runnable non-premium model. null = cancelled. */
 async function pickResumeModel(engine, pause) {
   let rows = [];
-  try { rows = (await safeJson(await fetch('/api/config'))).models || []; } catch { rows = []; }
+  let premium = new Set();
+  try { const data = await safeJson(await fetch('/api/config')); rows = data.models || []; premium = new Set(data.premiumModels || []); } catch { rows = []; }
   // A sign-in's limit is spent for every model on that sign-in; a provider's names itself in the pause detail.
   const spent = pause && pause.limitEngine ? `signin:${pause.limitEngine}` : null;
-  const offered = rows.filter((m) => m && runsOn(m, engine) && !m.needsSignIn && !m.hidden && m.custom !== 'project' && connectionKey(m) !== spent);
+  const runnable = (m) => m && runsOn(m, engine) && !m.needsSignIn && !m.hidden && m.custom !== 'project';
+  const family = pause?.limitScope === 'model' ? modelFamilyOf(pause.limitModel) : '';
+  let offered;
+  if (pause?.reason === 'model_confirm') offered = rows.filter((m) => runnable(m) && !premium.has(m.id));
+  else if (family) {
+    offered = rows.filter((m) => runnable(m) && modelFamilyOf(m.id) !== family);
+    offered = [...offered.filter((m) => !premium.has(m.id)), ...offered.filter((m) => premium.has(m.id))];
+  } else offered = rows.filter((m) => runnable(m) && connectionKey(m) !== spent);
   if (!offered.length) {
     await confirmModal({ title: 'No other model to resume with', message: `No model ${engineLabel(engine)} can run is set up on another connection. Add one on the Models page.`, confirmLabel: 'OK', cancelLabel: 'Close' });
     return null;
   }
   const options = modelGroups(offered, { engine }).flatMap((g) => g.models.map((m) => ({ value: m.id, text: modelOptionText(m), group: g.label })));
   const v = await promptModal({
-    title: 'Resume with another model',
-    message: 'Every remaining step of this run runs on the model you pick. A model on another provider has its own allowance.',
+    title: 'Switch model and continue',
+    message: pause?.reason === 'model_confirm' ? 'Every remaining step of this run runs on the model you pick.'
+      : family ? `Your ${family[0].toUpperCase()}${family.slice(1)} limit is spent; other models on the same sign-in still run. Every remaining step runs on the model you pick.`
+        : 'Every remaining step of this run runs on the model you pick. A model on another provider has its own allowance.',
     confirmLabel: 'Resume',
     fields: [{ id: 'model', label: 'Model', options, value: options[0].value, required: true }],
   });
@@ -25141,12 +25586,30 @@ async function histCostOverride(projectDir, id, record, btn) {
 
 // Paint the post-PR mergeability pill. MERGEABLE -> green, CONFLICTING -> red,
 // UNKNOWN -> amber "checking…" (GitHub computes mergeability asynchronously).
-function setMergePill(el, mergeable) {
+// `owner` (mergePillOwner) names the run (and member) the value belongs to: a paint for anything else clears it.
+function setMergePill(el, mergeable, owner) {
   const m = String(mergeable || 'UNKNOWN').toUpperCase();
+  el.dataset.mergeFor = owner;
   el.hidden = false;
   if (m === 'MERGEABLE') { el.className = 'hist-merge ok'; el.textContent = 'can merge'; }
   else if (m === 'CONFLICTING') { el.className = 'hist-merge bad'; el.textContent = 'conflicts'; }
   else { el.className = 'hist-merge unknown'; el.textContent = 'merge: checking…'; }
+}
+
+const mergePillOwner = (record, memberKey = null) => `${record.projectKey}/${record.id}${memberKey ? `#${memberKey}` : ''}`;
+function clearMergePill(el) {
+  el.hidden = true;
+  el.className = 'hist-merge';
+  el.textContent = '';
+  delete el.dataset.mergeFor;
+}
+/** The header pill only ever shows what the open run's OPEN PR was told (a ship, its re-check). Every PR paint
+ *  clears it for another run's value and for a merged or closed PR, which is final: nothing is left to merge. */
+function paintHdMergePill(screen, record) {
+  const el = screen.querySelector('.hd-row1 .hist-merge');
+  if (!el) return;
+  if (el.dataset.mergeFor === mergePillOwner(record) && prStateOf(record.pr) === 'OPEN') return;
+  clearMergePill(el);
 }
 
 // GitHub computes PR mergeability asynchronously, so a freshly-opened PR comes back
@@ -25160,9 +25623,12 @@ function prMergeRecheckMs() {
   return Number.isFinite(o) && o >= 0 ? o : PR_MERGE_RECHECK_MS;
 }
 
-function scheduleMergeRecheck(mergeEl, body) {
+function scheduleMergeRecheck(mergeEl, body, owner) {
+  // A Refresh rebuilt the card, or the pill now belongs to another run / the PR was merged or closed (a paint
+  // cleared its owner): the stale answer is dropped.
+  const owned = () => !!mergeEl && mergeEl.isConnected && mergeEl.dataset.mergeFor === owner;
   const t = setTimeout(async () => {
-    if (!mergeEl || !mergeEl.isConnected) return;   // a Refresh rebuilt the card — stale timer no-ops
+    if (!owned()) return;
     let mergeable = 'UNKNOWN';
     try {
       const res = await fetch('/api/pr/mergeable', {
@@ -25171,10 +25637,10 @@ function scheduleMergeRecheck(mergeEl, body) {
       const data = await safeJson(res);               // safeJson -> {} on non-JSON, never null
       if (res.ok && data) mergeable = data.mergeable;
     } catch { /* network error -> treat as still unknown -> hide below */ }
-    if (!mergeEl.isConnected) return;                 // a Refresh during the await -> no-op
+    if (!owned()) return;                             // the detail moved on during the await -> no-op
     const m = String(mergeable || 'UNKNOWN').toUpperCase();
-    if (m === 'MERGEABLE' || m === 'CONFLICTING') setMergePill(mergeEl, m);
-    else mergeEl.hidden = true;                        // still checking -> drop the stuck pill
+    if (m === 'MERGEABLE' || m === 'CONFLICTING') setMergePill(mergeEl, m, owner);
+    else clearMergePill(mergeEl);                      // still checking -> drop the stuck pill
   }, prMergeRecheckMs());
   // Node test runner: the timer keeps the loop alive; unref it where supported.
   // Real browser setTimeout returns a number (no .unref) -> the guard makes this a no-op.
@@ -25636,7 +26102,8 @@ function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) 
   const toDetails = (tab = '') => { hdGoDetails(tab); };
   // Run 3 (D13): the saved bar is the primary action, Run after, Stop and ⋯; ⋯ drives the controls CSS hides there.
   screen.querySelector('.hd-bar-more')?.addEventListener('click', (e) => {
-    toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen), align: 'end', label: 'More for this run' });
+    const extra = histDetailState ? wfvTests.runMenuItems(histDetailState.record, histDetailState.data) : [];   // G6: Use as test example
+    toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen, { extra }), align: 'end', label: 'More for this run' });
   });
   screen.querySelector('.hd-glance .rd-sheet').addEventListener('click', (e) => {
     const row = e.target.closest && e.target.closest('[data-rd-tab]');
@@ -26396,11 +26863,11 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
         void paintHdSavePreset(screen, histDetailState.data);
         const mergeEl = screen.querySelector('.hist-merge');
         if (mergeEl) {
-          setMergePill(mergeEl, dd.mergeable);
+          setMergePill(mergeEl, dd.mergeable, mergePillOwner(record));
           // GitHub computes mergeability asynchronously; re-check once so the
           // "checking…" pill never sticks.
           if (String(dd.mergeable || 'UNKNOWN').toUpperCase() === 'UNKNOWN') {
-            scheduleMergeRecheck(mergeEl, { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id });
+            scheduleMergeRecheck(mergeEl, { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id }, mergePillOwner(record));
           }
         }
       }
@@ -26682,9 +27149,10 @@ function paintWsMergePills(record, rows) {
     if (!r.mergeable) continue;
     const pill = screen.querySelector(`.hd-pr-repo[data-member-key="${cssEscape(r.member.memberKey)}"] .hist-merge`);
     if (!pill) continue;
-    setMergePill(pill, r.mergeable);
+    const owner = mergePillOwner(record, r.member.memberKey);
+    setMergePill(pill, r.mergeable, owner);
     if (String(r.mergeable).toUpperCase() === 'UNKNOWN') {
-      scheduleMergeRecheck(pill, { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id, memberKey: r.member.memberKey });
+      scheduleMergeRecheck(pill, { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id, memberKey: r.member.memberKey }, owner);
     }
   }
 }
@@ -26844,8 +27312,9 @@ async function openFeatureShip(featureId, { opener = null, card = null } = {}) {
   if (!res.ok || !f || !Array.isArray(f.slices) || !f.slices.length) throw new Error((f && f.error) || `HTTP ${res.status}`);
   const base = await groupShipBase(f.slices[f.slices.length - 1].pipelineId, f.projectKey);
   openShipItGroupModal({ kind: 'feature', id: f.id, title: f.title, projectKey: f.projectKey, base,
-    members: f.slices.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested,
-    hint: shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
+    members: f.slices.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested, smallRuns: !!(f.ship && f.ship.smallRuns),
+    // Feature D1: One is off for small runs, so the size hint (which may suggest One) is left out.
+    hint: f.ship && f.ship.smallRuns ? '' : shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
     { opener, refocus: card ? shipCardRefocus(f.id, card) : focusGroupHead });
 }
 const shipMemberOf = (mb) => { const pr = mb.model && mb.model.pr;
@@ -27264,7 +27733,9 @@ function paintHdGlance(screen, record, data) {
   paintGroupLine(glance.querySelector('.rd-kv .rd-group-line'), record.id || '', record.title || '', home);
   paintRunPlace(screen, home);
   paintRunLabels(glance.querySelector('.rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: data.state.id, labels: data.state.labels, onSaved: (l) => { data.state.labels = l; } });
-  void paintRunPrAuto(glance.querySelector('.rd-kv [data-fact="pr-auto"]'), data.state.id, st.status, () => !!histDetailState && histDetailState.data === data);
+  const hdExempt = knownPrExempt(data.state.id);
+  void paintRunPrAuto(glance.querySelector('.rd-kv [data-fact="pr-auto"]'), data.state.id, st.status, () => !!histDetailState && histDetailState.data === data)
+    .then(() => { if (!hdExempt && knownPrExempt(data.state.id) && histDetailState && histDetailState.data === data) paintHdHead(screen, hdCurrentRecord(record), data); });   // C5: the route reads it
   paintRerunOf(glance.querySelector('.rd-kv [data-fact="rerun"]'), st.rerunOf);
   paintRerunCarrier(screen.querySelector('.hd-rerun'), { id: st.id, title: record.title || st.title, status: record.status || st.status, live: runLiveHere(st.id) });
   syncFacts(glance.querySelector('.rd-kv'));
@@ -27453,16 +27924,26 @@ function gateHdResume(btn, { reason, detail }) {
 function hdPauseOf(live, screen, data, record) {
   const st = data?.state || {};
   return live
-    ? { reason: live.pauseReason, limitEngine: live.limitEngine, limitResetAt: live.limitResetAt }
+    ? { reason: live.pauseReason, limitEngine: live.limitEngine, limitResetAt: live.limitResetAt,
+      modelConfirm: live.modelConfirm || null, limitScope: live.limitScope || null, limitModel: live.limitModel || null }
     : { reason: screen.dataset.pauseReason || st.pauseReason, limitEngine: st.limitEngine ?? record.limitEngine,
-        limitResetAt: st.limitResetAt ?? record.limitResetAt ?? null };
+        limitResetAt: st.limitResetAt ?? record.limitResetAt ?? null,
+        modelConfirm: st.modelConfirm ?? record.modelConfirm ?? null, limitScope: st.limitScope ?? record.limitScope ?? null,
+        limitModel: st.limitModel ?? record.limitModel ?? null };
 }
 /** A usage limit the run's own engine hit offers "Resume on <engine>" in the Resume split's menu
  *  (paintResumeEngineItems), never as buttons of its own. The caret is Advanced and up; while the menu holds
  *  such an offer it shows at every mode, so Simple can switch too. `ready`: the ready engines, null = all. */
 function paintHdResumeSwitch(screen, record, data, live, resumable, ready = null) {
-  const offers = resumable ? usageLimitSwitches(hdPauseOf(live, screen, data, record), ready) : [];
-  keepVisible(screen.querySelector('.hd-resume-more'), offers.length > 0);
+  const pause = hdPauseOf(live, screen, data, record);
+  const offers = resumable ? usageLimitSwitches(pause, ready) : [];
+  keepVisible(screen.querySelector('.hd-resume-more'), offers.length > 0 || (resumable && pauseNeedsModelMenu(pause)));
+}
+/** #1450: a pause whose way on lives in the Resume menu only ("Continue on <model>", "Switch model and continue…"):
+ *  a model_confirm pause, or a usage limit spent on one model family. A plain Resume would pause again, so the caret
+ *  shows at every mode. */
+function pauseNeedsModelMenu(pause) {
+  return pause?.reason === 'model_confirm' || (pause?.reason === 'usage_limit' && pause?.limitScope === 'model');
 }
 
 /** The engine a saved run resumes on by default: its live run's, else the saved state's. */
@@ -27638,6 +28119,7 @@ function paintHdPr(screen, record, data) {
   if (!btn.querySelector('.ic')) setCtaContent(btn, 'pr-create', CREATE_PR_LABEL);
   const repos = screen.querySelector('.hd-pr-repos');
   if (repos) { repos.hidden = true; repos.replaceChildren(); }
+  paintHdMergePill(screen, record);
   if (!(gitOn() && isGitRun(hdRunOf(record, data)))) { paintHdPush(screen, null); return; }
   if (paintHdPush(screen, record)) return;   // a run on its source branch ships by Push, never a PR
   // Legacy workspace rows / minimal deep-link records (no members) keep the single path.
@@ -27699,11 +28181,14 @@ function hdWsRepoItem(m) {
   li.append(name, ' ');
   if (prLive(m.pr)) {
     li.appendChild(prRepoLink(m.pr));
-    const pill = document.createElement('span');     // post-ship mergeability, like the single header pill
-    pill.className = 'hist-merge';
-    pill.dataset.minLevel = 'expert';
-    pill.hidden = true;
-    li.appendChild(pill);
+    // Post-ship mergeability, like the single header pill; a merged or closed PR is final and gets none.
+    if (prStateOf(m.pr) === 'OPEN') {
+      const pill = document.createElement('span');
+      pill.className = 'hist-merge';
+      pill.dataset.minLevel = 'expert';
+      pill.hidden = true;
+      li.appendChild(pill);
+    }
   } else {
     const note = document.createElement('span');
     note.className = 'hd-pr-repo-note';
@@ -28029,6 +28514,13 @@ function paintHdHeaderMeta(screen, record, data) {
   eng.textContent = engineLabel(engine);
   eng.title = `Engine: ${engineLabel(engine)}${isBetaEngine(engine) ? ' (beta)' : ''} runs this run's agents`;
   meta.appendChild(eng);
+  if (st.execEnv && st.execEnv !== 'local') {
+    meta.appendChild(hdDot());
+    const x = document.createElement('span'); x.className = 'hd-exec-env';
+    x.textContent = execEnvLabel(st.execEnv);
+    x.title = `Agents and scripts of this run executed in an ${execEnvLabel(st.execEnv)}; commits stayed local`;
+    meta.appendChild(x);
+  }
   const { day, clock } = splitDateStamp(st.startedAt || record.startedAt || record.mtime);
   const hdCost = runCostText(st, st.totalCostUsd, '');
   for (const [cls, text, strong] of [
@@ -28629,17 +29121,21 @@ function hdCanTry(record, st, retained, provisional) {
 
 /** [{ key, name, rec, published, resolving, prOpen }] from the detail state; a row-level summary newer than the
  *  detail wins (no file list then). `published`: the branch's last recorded push. `prOpen`: the branch has an open
- *  PR, whose Overview row owns the pipeline Resolve. */
+ *  PR, whose Overview row owns the pipeline Resolve. A branch whose PR is merged or closed is final: it is left out
+ *  (after a squash merge it would always read "behind, merges cleanly"), so it gets no line and no automatic check. */
+const BASE_PR_FINAL = new Set(['MERGED', 'CLOSED']);
 function hdBaseMembers(record, data) {
   const st = (data && data.state) || {};
   if (st.target === 'workspace') {
     const names = new Map((st.projects || []).map((p) => [p.projectKey, p.projectName]));
     const rows = new Map(((record && record.members) || []).map((m) => [m.memberKey, m]));
     return Object.entries(st.branches || {}).filter(([, br]) => br && br.feature && br.branchKept !== false && !br.branchDeleted)
+      .filter(([key]) => !BASE_PR_FINAL.has(prStateOf(rows.get(key) && rows.get(key).pr)))
       .map(([key, br]) => ({ key, name: names.get(key) || key, rec: newerBaseCheck(br.baseCheck, rows.get(key) && rows.get(key).baseCheck),
         published: br.published || null, resolving: !!br.baseResolve, prOpen: prStateOf(rows.get(key) && rows.get(key).pr) === 'OPEN' }));
   }
   const br = st.branch || {};
+  if (BASE_PR_FINAL.has(prStateOf(record && record.pr))) return [];
   return br.feature ? [{ key: null, name: null, rec: newerBaseCheck(br.baseCheck, record && record.baseCheck),
     published: br.published || null, resolving: !!br.baseResolve, prOpen: prStateOf(record && record.pr) === 'OPEN' }] : [];
 }
@@ -28829,15 +29325,16 @@ function setupHdActions(screen, record, data) {
     // The engine items (paintResumeEngineItems), read at CLICK time like Resume itself. Their clones are
     // painted after setup, so one delegated listener on the menu.
     resumeMenu.addEventListener('click', (e) => {
-      const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template]), .resume-with-model');
+      const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template]), .resume-with-model, .resume-confirm-model');
       if (!item || !resumeMenu.contains(item)) return;
       e.stopPropagation();
       closeResumeMenu();
       if (resumeBtn.disabled || resumeBtn.dataset.resumeState === 'busy') return;
       const r = hdCurrentRecord(record);
       const saved = hdRunEngine(r, data);
+      if (item.classList.contains('resume-confirm-model')) { resumePipeline(r, r.projectDir || null, resumeBtn, { confirmModel: item.dataset.model }); return; }
       if (item.classList.contains('resume-with-model')) {
-        pickResumeModel(saved, { reason: 'usage_limit', limitEngine: resumeMenu.dataset.limitEngine || null })
+        pickResumeModel(saved, menuPause(resumeMenu))
           .then((model) => { if (model) resumePipeline(r, r.projectDir || null, resumeBtn, { model }); });
         return;
       }
@@ -29220,9 +29717,9 @@ const HD_TAB_ICONS = {
 // describe exactly ONE open detail; the Running detail is a second screen that
 // can be initialised while History's is still mounted. Keeping the cells on the
 // screen makes the engine reentrant and lets the state die with the node.
-const detailTabState = new WeakMap();   // screen -> { cells, activate }
+const detailTabState = new WeakMap();   // screen -> { cells, activate, relayout, menu }
 
-/** The tab cells + activate() of a screen initDetailTabs has run on, else null. */
+/** The tab state of a screen initDetailTabs has run on, else null. */
 function detailTabsOf(screen) {
   return (screen && detailTabState.get(screen)) || null;
 }
@@ -29230,7 +29727,7 @@ function detailTabsOf(screen) {
 // Table-driven pill row + lazily-built section bodies for a detail screen.
 // `tabs` is a list of { key, label, badge(ctx), visible(ctx), build(sec, ...args) }.
 // `opts` names the markup — { tabsSel, secsSel, tabClass, secClass, badgeClass,
-// idPrefix, initial?, buildArgs? } — and the five class/selector names
+// idPrefix, initial?, buildArgs?, overflow? } — and the five class/selector names
 // deliberately have NO defaults: falling back to History's class names inside the
 // Running screen would paint an unstyled tab bar that still passes every
 // structural check.
@@ -29239,14 +29736,21 @@ function detailTabsOf(screen) {
 //   initial   — (ctx) => key for the initially active tab; first visible otherwise
 //   buildArgs — (ctx) => extra args appended after `sec`, evaluated at ACTIVATION
 //               time so a builder sees late-corrected context (History's record)
+//   overflow  — { row: string[] }, opt-in. The keys in `row` always sit in the row;
+//               when two or more of the OTHER tabs are shown they go under a "More"
+//               menu, and the open one joins the row just before More. A table entry
+//               may carry `menuIcon` (an icons.mjs name) for its menu row. The screen's
+//               state `relayout()` recomputes this after a level, git or visibility
+//               change; without `overflow` it does nothing.
 function initDetailTabs(screen, tabs, ctx, opts) {
   const {
     tabsSel, secsSel, tabClass, secClass, badgeClass, idPrefix,
-    initial = null, buildArgs = null,
+    initial = null, buildArgs = null, overflow = null,
   } = opts;
   const bar = screen.querySelector(tabsSel);
   const secs = screen.querySelector(secsSel);
   if (!bar || !secs) return;   // a screen whose template lacks the two hosts
+  detailTabState.get(screen)?.menu?.close();   // never a menu left anchored to a button this rebuild drops
   bar.innerHTML = '';
   bar.classList.add('tabs');
   // The run card lives in the Overview section (adoptRunCard): park it back at the screen's top level, so the
@@ -29307,6 +29811,7 @@ function initDetailTabs(screen, tabs, ctx, opts) {
       sec.hidden = !on;
       if (on && sec.dataset.loaded !== '1') pending = { tab, sec };
     }
+    relayout();
     if (pending) {
       // Stamp AFTER the builder returns: a builder that throws leaves the tab
       // un-stamped and retries on the next activation instead of being stuck
@@ -29318,11 +29823,54 @@ function initDetailTabs(screen, tabs, ctx, opts) {
       pending.sec.dataset.loaded = '1';
     }
   }
-  detailTabState.set(screen, { cells, activate });
+  // The More button (opts.overflow): not a tab, so no tab selector or selection state sees it.
+  let more = null;
+  if (overflow) {
+    more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'tab tab-more';
+    more.setAttribute('aria-haspopup', 'menu');
+    more.setAttribute('aria-expanded', 'false');
+    more.append('More', icon(document, 'chevron-down', 12));
+    more.addEventListener('click', () => {
+      // Read at open time: the shown candidates, their live badge counts and the open one.
+      state.menu = toggleMenu({ doc: document, anchor: more, align: 'end', label: 'More tabs',
+        items: overflowCells().filter(([k]) => inBar(k)).map(([, { tab, btn }]) => ({
+          label: tab.label, icon: tab.menuIcon, hint: btn.querySelector(`.${badgeClass}`)?.textContent,
+          checked: btn.classList.contains('active'),
+          onSelect: () => { btn.click(); btn.focus({ preventScroll: true }); },
+        })) });
+    });
+  }
+  const state = { cells, activate, relayout, menu: null };
+  detailTabState.set(screen, state);
+  const overflowCells = () => [...cells].filter(([k]) => !overflow.row.includes(k));
+  // A tab the interface mode and git show; `inBar` also drops one its page hid while open (the merged Agents place).
+  function showsTab(k) { return cells.has(k) && levelAtLeast(cells.get(k).tab.level || 'simple') && (gitOn() || !cells.get(k).tab.needsGit); }
+  function inBar(k) { return showsTab(k) && !cells.get(k).btn.hidden; }
+  // The row's order: its own tabs, the overflow ones (CSS draws only the open one), then More. With fewer than two
+  // candidates to show there is no More, and every tab keeps its table place.
+  function relayout() {
+    if (!overflow) return;
+    const rest = overflowCells();
+    const use = rest.filter(([k]) => inBar(k)).length >= 2;
+    for (const [, { btn }] of rest) btn.toggleAttribute('data-overflow', use);
+    const all = [...cells.values()].map((c) => c.btn);
+    const over = (b) => b.hasAttribute('data-overflow');
+    const order = use ? [...all.filter((b) => !over(b)), ...all.filter(over), more] : all;
+    const had = document.activeElement;
+    const gone = !use && (had === more || !!state.menu?.el.contains(had));   // the focus is on More or in its menu
+    if (!use) { state.menu?.close(); more.remove(); }
+    // Move only when the order changed: moving a focused button drops its focus.
+    if (order.length !== bar.children.length || order.some((n, i) => n !== bar.children[i])) bar.append(...order);
+    if (had && had !== document.activeElement && (gone || order.includes(had))) {
+      const to = order.includes(had) ? had : bar.querySelector('[role="tab"][aria-selected="true"]');
+      to?.focus({ preventScroll: true });
+    }
+  }
   if (!cells.size) return;
   // The opening tab is always one the interface mode shows: History prefers Diff and Running the
   // live log, both advanced, so Simple lands on Overview instead of on a tab with no pill lit.
-  const showsTab = (k) => cells.has(k) && levelAtLeast(cells.get(k).tab.level || 'simple') && (gitOn() || !cells.get(k).tab.needsGit);
   const want = initial ? initial(ctx) : null;
   const first = [...cells.keys()].find(showsTab);
   activate(showsTab(want) ? want : (first || cells.keys().next().value));
@@ -29333,9 +29881,13 @@ function reselectHiddenDetailTabs() {
   for (const active of $$('.rd-tab.active, .hd-tab.active, .pd-tab.active')) {
     const shows = (b) => levelAtLeast(b.dataset.minLevel || 'simple') && (gitOn() || b.dataset.needsGit === undefined);
     if (shows(active)) continue;
-    const next = [...active.parentElement.children].find(shows);
+    const next = [...active.parentElement.children].find((b) => b.getAttribute('role') === 'tab' && shows(b));   // never "More"
     if (next) next.click();
   }
+}
+/** A level or git change: each open run page recomputes which tabs go under "More". */
+function relayoutDetailTabs() {
+  for (const screen of $$('.rd, .hd')) detailTabsOf(screen)?.relayout();
 }
 
 function hdClarifyCount(data) {
@@ -29361,6 +29913,12 @@ function hdStepRounds(data) {
 function hdAwayOthers(data) {
   const all = data && Array.isArray(data.awayAnswers) ? data.awayAnswers : [];
   return all.filter((d) => d && (d.choice == null || !['clarify', 'questions', 'form'].includes(d.kind)));
+}
+
+/** The run pages' tabs that stay in the row (initDetailTabs `overflow`); the others go under "More". `qa` is the page's
+ *  own Q&A key. A run without a project has no Diff: its Artifacts, the result, keeps that place in the row. */
+function runTabRow(qa, noProject) {
+  return { row: ['overview', 'task', 'diff', 'changes', qa, 'logs', ...(noProject ? ['artifacts'] : [])] };
 }
 
 const HD_TABS = [
@@ -29393,19 +29951,19 @@ const HD_TABS = [
   // step attribution); it only gates VISIBILITY here — buildHdArtifacts fetches the
   // attributed GET /api/runs/:id/artifacts before rendering. Hidden when a run has
   // no indexed artifact beyond the transient live-log / run-dir markers.
-  { key: 'artifacts', label: 'Artifacts', level: 'advanced',
+  { key: 'artifacts', label: 'Artifacts', menuIcon: 'cube', level: 'advanced',
     badge: (d) => {
       const n = Array.isArray(d.artifacts) ? d.artifacts.filter(isDisplayableArtifact).length : 0;
       return n ? String(n) : null;
     },
     visible: (d) => Array.isArray(d.artifacts) && d.artifacts.some(isDisplayableArtifact),
     build: (...a) => buildHdArtifacts(...a) },
-  { key: 'actions', label: 'Actions', level: 'advanced', needsGit: true, badge: () => null, visible: (d) => isGitRun(d.state),
+  { key: 'actions', label: 'Actions', menuIcon: 'play', level: 'advanced', needsGit: true, badge: () => null, visible: (d) => isGitRun(d.state),
     build: (...a) => buildHdActions(...a) },
   // The graph, moved off the page body into its own tab (as on the Running page).
   // loadHistDetailScreen paints it into `.hd-graph` before the tabs exist; the builder
   // MOVES that node, so its mounted view, decor and log links come along.
-  { key: 'workflow', label: 'Workflow', level: 'simple', badge: () => null, visible: () => true,
+  { key: 'workflow', label: 'Workflow', menuIcon: 'workflow', level: 'simple', badge: () => null, visible: () => true,
     build: (sec) => {
       const screen = sec.closest('.hd');
       const g = screen && screen.querySelector('.hd-graph');
@@ -29419,10 +29977,11 @@ const HD_TABS = [
     visible: (d) => Array.isArray(d.artifacts) && d.artifacts.some((a) => a && a.kind === 'live-log'),
     build: (...a) => buildHdLogs(...a) },
   // Session groups (Task 58): only on a run that has a session (its summaries, or a session in its manifest).
-  { key: 'sessions', label: 'Sessions', level: 'advanced', badge: (d) => sessionsBadge(d.state), visible: (d) => sessionsTabVisible(d.state), build: (...a) => buildHdSessions(...a) },
-  { key: 'agents', label: 'Agents', level: 'expert',
+  { key: 'sessions', label: 'Sessions', menuIcon: 'terminal', level: 'advanced', badge: (d) => sessionsBadge(d.state), visible: (d) => sessionsTabVisible(d.state), build: (...a) => buildHdSessions(...a) },
+  { key: 'agents', label: 'Agents', menuIcon: 'agent', level: 'expert',
     badge: (d) => ((Array.isArray(d.state.subAgents) && d.state.subAgents.length) ? String(d.state.subAgents.length) : null),
-    visible: () => true, build: (...a) => buildHdAgents(...a) },
+    // Shaper small runs D2 (D11): with the flag on, a Care run's Agents live in the Overview's one Agents place.
+    visible: (d) => !hdAgentsMerged(d.state), build: (...a) => buildHdAgents(...a) },
 ];
 
 function initHdTabs(screen, record, data) {
@@ -29437,6 +29996,7 @@ function initHdTabs(screen, record, data) {
     tabsSel: '.hd-tabs', secsSel: '.hd-sections',
     tabClass: 'hd-tab', secClass: 'hd-sec', badgeClass: 'hd-tab-badge',
     idPrefix: 'hd',
+    overflow: runTabRow('clarify', noProject),
     // hdCurrentRecord(), NOT the captured `record`: build() runs at CLICK time,
     // and refreshHdFromRow REPLACES histDetailState.record (deep link, and every
     // pipelines-changed forced reload). Closing over the load-time object is
@@ -30765,7 +31325,10 @@ function buildHdDiff(sec, record, data) {
     if (entry.f.from) {
       selectedPath.setAttribute('aria-label', `Renamed from ${entry.f.from} to ${entry.f.path}`);
     }
-    ph.append(selectedPath, hdFileCountsNode(document, entry.f));
+    const headEnd = document.createElement('span');
+    headEnd.className = 'hd-diff-head-end';          // the counts, then the open icon (diff-open-editor.mjs)
+    headEnd.append(hdFileCountsNode(document, entry.f));
+    ph.append(selectedPath, headEnd);
     pane.appendChild(ph);
 
     // Both loads, not just the patch — so the first window already has cards and
@@ -30783,7 +31346,7 @@ function buildHdDiff(sec, record, data) {
       lock.className = 'hd-diff-guarded';
       lock.textContent = 'protected path';
       lock.title = 'New comments are not stored for credential-shaped paths (.env*, *.pem, *.key, **/secrets/**, …). Existing comments still show.';
-      ph.appendChild(lock);
+      ph.insertBefore(lock, headEnd);
     }
 
     const body = document.createElement('div');
@@ -30791,6 +31354,8 @@ function buildHdDiff(sec, record, data) {
     const section = pstate.index && pstate.index.get(sectionKey(entry.project, entry.f.path));
     const meta = diffSectionMeta(entry, fileKey, section);
     lastMeta = meta;                                   // what repaintCards re-attaches against
+    const parsed = section ? parseFileSection(section.raw, { maxCodeUnits: HD_MAX_SECTION_CODE_UNITS }) : null;
+    void addOpenIcon(firstChangedLine(parsed)).catch(() => {});
     if (!section) {
       body.classList.add('hint');
       const note = document.createElement('div');
@@ -30804,7 +31369,6 @@ function buildHdDiff(sec, record, data) {
       pane.appendChild(body);
       return;
     }
-    const parsed = parseFileSection(section.raw, { maxCodeUnits: HD_MAX_SECTION_CODE_UNITS });
     if (parsed.binary || !parsed.hunks.length) {
       body.classList.add('hint');
       const note = document.createElement('div');
@@ -30842,6 +31406,19 @@ function buildHdDiff(sec, record, data) {
     const lang = langForPath(syntaxPath);
     if (lang && canHighlightParsed(parsed)) {
       void enhanceDiffBody(view, lang).catch(() => {});
+    }
+
+    // The file head's open icon, once the run's Actions model says it may show (a deleted file, a comment-only
+    // row, a protected path, an archived run or a blocked checkout get none). Dropped if another file was picked.
+    async function addOpenIcon(line) {
+      if (entry.f.status === 'D' || entry.synthetic || ctx.guarded(entry.project, entry.f.path)) return;
+      const q = runActionQuery(record.projectDir, record).toString();
+      const model = await diffEditorModel(record.id, q, { finishedNow: hdRunFinished(data) });
+      if (epoch !== pstate.selEpoch || !headEnd.isConnected) return;
+      const pick = editorOpenFor(model, { projectKey: entry.project, archived: !!data.state?.archivedAt });
+      if (!pick) return;
+      headEnd.append(buildOpenFileButton(document, { fileName: entry.f.path.split('/').pop(), label: pick.label, mode: pick.mode,
+        onOpen: () => openInEditor(record.id, q, { member: pick.member, workspace: !!model.workspace, file: entry.f.path, line, mode: pick.mode }) }));
     }
   }
 
@@ -30974,6 +31551,7 @@ function buildHdOverview(sec, record, data) {
     verdict.append(chip, document.createTextNode(' No review results captured. The run did not complete.'));
   }
   if (verdict.childNodes.length) wrap.appendChild(verdict);
+  hdRunPlaces(wrap, record, data);
   // The pull request is the card head's; the Actions tab has the controls.
   const git = gitOn() && isGitRun(hdRunOf(record, data));
   if (checks.length) below.appendChild(issueList(checks.map((c) => ({ ...c, origin: 'review' }))));
@@ -31058,6 +31636,50 @@ function buildHdOverview(sec, record, data) {
   }
 }
 
+/** Shaper small runs D2 (D12, D16): the saved Overview's run facts and its one Agents place. With the flag on, a Care run
+ *  gets C2's `.rd-run-agents` box (dev's saved page has none) holding dev's sub-agent body at Expert, in place of the
+ *  Agents tab (HD_TABS); the facts host is made only once a /slice answer carries `owns`. Flag off: nothing. */
+function hdRunPlaces(wrap, record, data) {
+  if (!flagOn('shaperSmallRuns')) return;
+  const st = data.state || {};
+  let agents = null;
+  if (hdAgentsMerged(st)) {
+    agents = document.createElement('div');
+    agents.className = 'rd-run-agents';
+    wrap.appendChild(agents);
+  }
+  const paintAgents = (info) => {
+    if (!agents) return;
+    agents.hidden = !mountRunAgents(agents, snapshotFromState(st), { stored: info && info.stored });
+    let sub = agents.querySelector(':scope > .rd-run-subagents');
+    if (!sub) {
+      sub = tagLevel(document.createElement('div'), 'expert');
+      sub.className = 'rd-run-subagents';
+      buildHdAgents(sub, record, data);
+    }
+    agents.append(sub);   // under the rows
+  };
+  let facts = null;
+  const paintFacts = (info) => {
+    if (info && 'owns' in info) {
+      if (!facts) {
+        facts = document.createElement('div');
+        facts.className = 'rd-run-facts';
+        if (agents) agents.before(facts); else wrap.appendChild(facts);
+      }
+      mountRunFacts(facts, info);
+    }
+    paintAgents(info);
+  };
+  const pid = (record && record.id) || st.id || '';
+  paintFacts(pid ? sliceInfoFor(pid, paintFacts) : null);
+}
+
+/** D11: with the flag on, a saved Care run's one Agents place is the Overview's `.rd-run-agents`. */
+function hdAgentsMerged(st) {
+  return flagOn('shaperSmallRuns') && !!(st && st.stepper && typeof st.stepper === 'object' && st.stepper.careRun);
+}
+
 /** The Task tab: the run's prompt in full, rendered as the markdown it was written in, under the run's place (project,
  *  source branch, sub-agents). `chips`: those words, empty ones dropped. */
 function runTaskCard(prompt, chips) {
@@ -31082,11 +31704,12 @@ function runTaskCard(prompt, chips) {
   return card;
 }
 /** While a graph run goes: its workflow in the card's summary column, framed on the running step(s) (the `focus` host),
- *  the way into the Workflow tab. Gone once the run ends, and never in the Chat run panel (its column is too narrow). */
+ *  the way into the Workflow tab. Gone once the run ends. In the Chat run panel it shows only while the panel is wide
+ *  enough for the card's two columns (runs/run-card.css): the narrow panel has no room for it. */
 function paintRdLive(screen, r) {
   const panel = screen.querySelector('.rd-live');
   if (!panel) return;
-  const on = !RD_TERMINAL.includes(r.status) && isGraphRun(r) && screen.dataset.presentation !== 'panel';
+  const on = !RD_TERMINAL.includes(r.status) && isGraphRun(r);
   if (on) {
     panel.hidden = false;
     paintGraphFor(panel.querySelector('.run-flow'), r.stepper, runDecorFor(r, 'focus'), r.steps);
@@ -31168,7 +31791,7 @@ function buildHdAgents(sec, record, data) {
   const skillsByGroup = stepSkillsFromSteps(st.steps);
   const graphifyByGroup = stepGraphifyFromSteps(st.steps);
   const statusOf = stepStatusByKey(st.steps, st.stepper);
-  const modelByNode = stepModelByNode(st.stepper, st.runEngine || 'claude');
+  const modelByNode = stepModelByNode(st.stepper, st.runEngine || 'claude', st.steps);
 
   for (const key of keys) {
     const list = Array.isArray(groups[key]) ? groups[key] : [];
@@ -31445,7 +32068,7 @@ const RD_TABS = [
   },
   { key: 'changes', label: 'Changes', icon: HD_TAB_ICONS.changes, level: 'simple', badge: (ctx) => { const fm = rdFolderMembers(ctx.run); const n = fm.length ? memberChangesTotal(fm) : ((changesCounts(rdFolderChanges(ctx.run)) || {}).total || 0); return n ? String(n) : null; }, visible: (ctx) => isFolderRun(ctx.run) || rdFolderMembers(ctx.run).length > 0, build: (sec, ctx) => buildRdChanges(sec, ctx) },
   {
-    key: 'artifacts', label: 'Artifacts', icon: HD_TAB_ICONS.artifacts, level: 'advanced',
+    key: 'artifacts', label: 'Artifacts', menuIcon: 'cube', icon: HD_TAB_ICONS.artifacts, level: 'advanced',
     badge: (ctx) => {
       const n = Array.isArray(ctx.run.artifacts)
         ? ctx.run.artifacts.filter(isDisplayableArtifact).length : 0;
@@ -31455,12 +32078,12 @@ const RD_TABS = [
     build: (sec, ctx) => buildRdArtifacts(sec, ctx),
   },
   {
-    key: 'actions', label: 'Actions', icon: HD_TAB_ICONS.actions, level: 'advanced', needsGit: true,
+    key: 'actions', label: 'Actions', menuIcon: 'play', icon: HD_TAB_ICONS.actions, level: 'advanced', needsGit: true,
     badge: () => null, visible: (ctx) => isGitRun(ctx.run),
     build: (sec, ctx) => buildRdActions(sec, ctx),
   },
   {
-    key: 'workflow', label: 'Workflow', icon: RD_WORKFLOW_ICON, level: 'simple',
+    key: 'workflow', label: 'Workflow', menuIcon: 'workflow', icon: RD_WORKFLOW_ICON, level: 'simple',
     badge: () => null, visible: () => true,
     build: (sec, ctx) => buildRdWorkflow(sec, ctx),
   },
@@ -31475,12 +32098,12 @@ const RD_TABS = [
     build: (sec, ctx) => buildRdLogs(sec, ctx),
   },
   {
-    key: 'sessions', label: 'Sessions', icon: HD_TAB_ICONS.sessions, level: 'advanced',
+    key: 'sessions', label: 'Sessions', menuIcon: 'terminal', icon: HD_TAB_ICONS.sessions, level: 'advanced',
     badge: (ctx) => sessionsBadge(ctx.run), visible: (ctx) => sessionsTabVisible(ctx.run),
     build: (sec, ctx) => buildRdSessions(sec, ctx),
   },
   {
-    key: 'agents', label: 'Agents', icon: HD_TAB_ICONS.agents, level: 'expert',
+    key: 'agents', label: 'Agents', menuIcon: 'agent', icon: HD_TAB_ICONS.agents, level: 'expert',
     badge: (ctx) => {
       const n = Array.isArray(ctx.run.subAgents) ? ctx.run.subAgents.length : 0;
       return n ? String(n) : null;
@@ -31503,6 +32126,7 @@ function initRdTabs(screen, r) {
     secClass: 'rd-sec',
     badgeClass: 'rd-tab-badge',
     idPrefix: 'rd',
+    overflow: runTabRow('qa', noProject),
   });
 }
 
@@ -31607,19 +32231,34 @@ async function rdFetchDiff(r) {
 // Up to this many diff rows are connected per file; the rest stay one click away on the saved run.
 const RD_DIFF_MAX_LINES = 4000;
 
-function rdRenderFileBody(pane, index, entry) {
+/**
+ * One file of the run page's Diff tab. `openCtx` ({ runId, q, model, protectedKeys }) adds the file head's
+ * open-in-editor icon (diff-open-editor.mjs); the Folder runs' Changes tab passes none.
+ */
+function rdRenderFileBody(pane, index, entry, openCtx = null) {
   pane.innerHTML = '';
+  const section = index && index.get(sectionKey(entry.project, entry.f.path));
+  const parsed = section ? parseFileSection(section.raw, { maxCodeUnits: HD_MAX_SECTION_CODE_UNITS }) : null;
   const head = document.createElement('div');
   head.className = 'hd-diff-pane-head mono';
   const path = document.createElement('h3');
   path.className = 'hd-diff-path';
   path.textContent = entry.f.path;
-  head.append(path, hdFileCountsNode(document, entry.f));
+  const headEnd = document.createElement('span');
+  headEnd.className = 'hd-diff-head-end';
+  headEnd.append(hdFileCountsNode(document, entry.f));
+  const pick = openCtx && entry.f.status !== 'D' && !openCtx.protectedKeys.has(sectionKey(entry.project, entry.f.path))
+    ? editorOpenFor(openCtx.model, { projectKey: entry.project, archived: false }) : null;
+  if (pick) {
+    const line = firstChangedLine(parsed);
+    headEnd.append(buildOpenFileButton(document, { fileName: entry.f.path.split('/').pop(), label: pick.label, mode: pick.mode,
+      onOpen: () => openInEditor(openCtx.runId, openCtx.q, { member: pick.member, workspace: !!openCtx.model.workspace,
+        file: entry.f.path, line, mode: pick.mode }) }));
+  }
+  head.append(path, headEnd);
   pane.appendChild(head);
   const body = document.createElement('div');
   body.className = 'hd-diff-body mono';
-  const section = index && index.get(sectionKey(entry.project, entry.f.path));
-  const parsed = section ? parseFileSection(section.raw, { maxCodeUnits: HD_MAX_SECTION_CODE_UNITS }) : null;
   if (!parsed || parsed.binary || !parsed.hunks.length) {
     body.classList.add('hint');
     const note = document.createElement('div');
@@ -31653,8 +32292,9 @@ function rdRenderFileBody(pane, index, entry) {
 }
 
 // The Diff tab's file list and body for a { results, patch } diff; the tool panel's Changes tab draws with it too
-// (issue 1064). `picked`: the section key to open first; `onPick(key)` after every pick. Returns the key picked.
-function paintDiffGrid(host, out, { picked = null, onPick = null } = {}) {
+// (issue 1064). `picked`: the section key to open first; `onPick(key)` after every pick; `openCtx`: rdRenderFileBody's
+// open-in-editor context (the run page only). Returns the key picked.
+function paintDiffGrid(host, out, { picked = null, onPick = null, openCtx = null } = {}) {
   const results = out.results;
   const rows = results ? hdDiffFileRows(results) : [];
   if (!rows.length) return picked;
@@ -31681,7 +32321,7 @@ function paintDiffGrid(host, out, { picked = null, onPick = null } = {}) {
   const pick = (entry, btn) => {
     for (const b of rowsHost.querySelectorAll('.rd-diff-row')) b.classList.toggle('active', b === btn);
     picked = sectionKey(entry.project, entry.f.path);
-    rdRenderFileBody(pane, index, entry);
+    rdRenderFileBody(pane, index, entry, openCtx);
     if (onPick) onPick(picked);
   };
   let first = null;
@@ -31721,22 +32361,42 @@ function buildRdDiff(sec, ctx) {
   refresh.type = 'button';
   refresh.className = 'btn btn-sm rd-diff-refresh';
   refresh.textContent = 'Refresh';
-  note.append(noteText, refresh);
+  const noteEnd = document.createElement('span');
+  noteEnd.className = 'rd-diff-note-end';          // Refresh, then Open in <Editor> while the run is live
+  noteEnd.append(refresh);
+  note.append(noteText, noteEnd);
   const host = document.createElement('div');
   host.className = 'rd-diff-host';
   sec.append(note, host);
   let epoch = 0;
   let picked = null;
+  let openBtn = null;
   const load = async () => {
     const mine = ++epoch;
     const live = !RD_TERMINAL.includes(r.status);
     refresh.hidden = !live;
     noteText.textContent = live ? 'Live: the worktree right now, against where the run started.' : 'The final diff of this run.';
     refresh.disabled = true;
+    const q = rdScopeQuery(r);
     let out;
-    try { out = await rdFetchDiff(r); } catch (e) { out = { error: e.message }; }
+    let model = null;
+    try {
+      [out, model] = await Promise.all([rdFetchDiff(r),
+        r.pipelineId ? diffEditorModel(r.pipelineId, q, { finishedNow: !live }) : null]);
+    } catch (e) { out = { error: e.message }; }
     refresh.disabled = false;
     if (mine !== epoch || !sec.isConnected) return;
+    openBtn?.remove();
+    openBtn = null;
+    clearOpenError(note);
+    const folder = live && r.pipelineId ? runFolderOpenFor(model) : null;
+    if (folder) {
+      noteText.textContent = 'Live: edits you make there go into the run.';
+      openBtn = buildOpenRunButton(document, { label: folder.label, onOpen: () => openInEditor(r.pipelineId, q, { mode: 'open' }) });
+      noteEnd.append(openBtn);
+    }
+    const openCtx = r.pipelineId && model ? { runId: r.pipelineId, q, model,
+      protectedKeys: new Set(live && Array.isArray(r._rdLiveDiff?.protectedPaths) ? r._rdLiveDiff.protectedPaths : []) } : null;
     host.innerHTML = '';
     if (out.error) { host.appendChild(histEmpty(`Could not load the diff: ${out.error}`)); return; }
     const results = out.results;
@@ -31749,7 +32409,7 @@ function buildRdDiff(sec, ctx) {
       return;
     }
     if (out.capped) noteText.textContent += ' Some new files are not listed.';
-    picked = paintDiffGrid(host, out, { picked, onPick: (k) => { picked = k; } });
+    picked = paintDiffGrid(host, out, { picked, onPick: (k) => { picked = k; }, openCtx });
     if (askSide?.shown()) askPanel?.pageChanged?.();   // Ask worca beside the page: the first file opens with no click
     rdPaintTabBadges(runDetailState.screen || sec, rdCtx(r));
   };
@@ -31970,6 +32630,7 @@ function ensureRdTabs(screen, r) {
     const tabs = detailTabsOf(screen);
     if (tabs && tabs.cells.has(want) && levelAtLeast(tabs.cells.get(want).tab.level || 'simple') && (gitOn() || !tabs.cells.get(want).tab.needsGit)) tabs.activate(want);
   }
+  rdSyncAgentsPlace(screen, rdCtx(r));   // D2 (D11): a rebuilt bar keeps the one Agents place
 }
 
 // ── Live log tab ────────────────────────────────────────────────────────────
@@ -32347,6 +33008,12 @@ function rdStateCopy(r, stepName) {
   if (r.pauseReason === 'cost_pipeline_policy') return 'Paused: team cost cap reached.';
   if (r.pauseReason === 'cost_total_policy') return 'Paused: team total cap reached.';
   if (r.pauseReason === 'night_guardrail') return r.pauseDetail || 'Paused: Away mode limit reached.';
+  if (r.pauseReason === 'model_confirm') {
+    // #1450: a premium model nobody chose — never resumed by itself; the person continues on it or switches.
+    const id = r.modelConfirm?.model || '';
+    const label = id ? (modelById(id)?.label || id) : 'a premium model';
+    return `Paused before ${step}: it would run on ${label}, a premium model nobody chose. Continue on it, or switch model.`;
+  }
   if (r.pauseReason === 'drain') return 'Paused while worca was stopping. Resume continues from here. The worktree and progress are kept.';
   if (r.pauseReason === 'time_limit') {
     const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
@@ -32385,8 +33052,8 @@ function rdStateCopy(r, stepName) {
     const by = r.status === 'stopped' && r.lastAction && r.lastAction.kind === 'stop' ? personLabel(r.lastAction.by) : '';
     return `${runStatusMeta(r).word}${by ? ` by ${by}` : ''}.${at}`;
   }
-  // The ACTIVE agent names the line (the v1 phase/cycle scalars are gone).
-  return `${activeCopy(r).text}.`;
+  // A run that is simply working: the chip beside this line already names the active agent, so there is nothing to add.
+  return '';
 }
 
 function rdOvStateBanner(host, r) {
@@ -32399,7 +33066,8 @@ function rdOvStateBanner(host, r) {
   const copy = document.createElement('span');
   copy.className = 'rd-ov-copy';
   copy.textContent = rdStateCopy(r, name);
-  host.append(chip, copy);
+  host.append(chip);
+  if (copy.textContent) host.append(copy);
   // A usage limit the engine hit: each other engine has its own allowance, so offer them here, at
   // every interface level (the Resume menu's caret is Advanced only).
   const pause = { reason: r.pauseReason, limitEngine: r.limitEngine };
@@ -32505,14 +33173,80 @@ function buildRdOverview(sec, ctx) {
   const checklists = document.createElement('div');   // Perspective checklists (spec D7)
   checklists.className = 'rd-checklists';
   checklists.hidden = true;
+  // Small runs C2 (D14): the Care roles of a marked slice run and their step word, inside the card (item 11); hidden and
+  // empty for every other run.
+  const agents = document.createElement('div');
+  agents.className = 'rd-run-agents';
+  agents.hidden = true;
   const below = document.createElement('div');
   below.className = 'hd-ov hd-ov-below';
-  wrap.append(banner);
+  wrap.append(banner, agents);
   below.append(checklists, skills);
   adoptRunCard(sec, wrap, below);
-  const paint = (c) => { rdOvStateBanner(banner, c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
+  // Shaper small runs D2 (D16): the run's facts host is made only once a /slice answer carries `owns` (a marked feature,
+  // flag on), so every other Overview keeps dev's DOM. The facts and the Agents rows' detail paint from the same answer.
+  let facts = null;
+  const ensureFactsHost = () => {
+    if (!facts) { facts = document.createElement('div'); facts.className = 'rd-run-facts'; agents.before(facts); }
+    return facts;
+  };
+  let last = ctx;
+  let doneSig = null;
+  let subSig = null;
+  const repaint = () => { if (sec.isConnected) paint(last); };
+  const paintAgents = (run, info) => {
+    const snap = run && run.stepper && run.stepper.careRun ? snapshotFromState(run) : null;
+    const full = snap ? { ...snap, pendingQuestion: run.pendingQuestion || null } : null;
+    agents.hidden = !mountRunAgents(agents, full, { stored: info && info.stored });
+    // D16: a finished agent changes what the stored facts say: drop the cached answer and ask again, once per change.
+    // The emptied entry is momentary, as the shape-feature frame's SLICE_INFO.clear() already makes it.
+    const sig = full ? runAgentRows(full).filter((r) => r.word === 'done').map((r) => r.key).join(',') : null;
+    if (info && 'owns' in info && doneSig !== null && sig !== doneSig && run.pipelineId) {
+      SLICE_INFO.delete(run.pipelineId);
+      sliceInfoFor(run.pipelineId, repaint);
+    }
+    doneSig = sig;
+    // D11: the one Agents place holds dev's sub-agent groups at Expert, repainted only when they change.
+    let sub = agents.querySelector(':scope > .rd-run-subagents');
+    if (!rdAgentsMerged(run) || agents.hidden) { if (sub) sub.remove(); subSig = null; return; }
+    if (!sub) { sub = tagLevel(document.createElement('div'), 'expert'); sub.className = 'rd-run-subagents'; subSig = null; }
+    agents.append(sub);   // after the rows
+    const sig2 = (Array.isArray(run.subAgents) ? run.subAgents : []).map((a) => `${a && a.id}:${a && a.status}`).join(',');
+    if (sig2 !== subSig) { subSig = sig2; rdAgentsBody(sub, run); }
+  };
+  const paint = (c) => {
+    last = c;
+    rdOvStateBanner(banner, c.run);
+    const info = flagOn('shaperSmallRuns') && c.run.pipelineId ? sliceInfoFor(c.run.pipelineId, repaint) : null;
+    if (info && 'owns' in info) mountRunFacts(ensureFactsHost(), info);
+    else if (facts && info) mountRunFacts(facts, null);
+    paintAgents(c.run, info);
+    paintRdChecklists(checklists, c.run);
+    paintRunSkills(skills, c.run.skillMount);
+  };
   paint(ctx);
   sec.__update = paint;
+}
+
+/** Shaper small runs D2 (D11): with the flag on, a Care run's one Agents place is the Overview's `.rd-run-agents`. */
+function rdAgentsMerged(run) {
+  return flagOn('shaperSmallRuns') && !!(run && run.stepper && typeof run.stepper === 'object' && run.stepper.careRun);
+}
+
+/** D11: initDetailTabs filters `visible` once, at build, and `careRun` can arrive later: each frame hides the Agents tab
+ *  and its section once the condition holds. An open Agents tab gives way to Overview, and its focus with it. */
+function rdSyncAgentsPlace(screen, ctx) {
+  if (!screen || !rdAgentsMerged(ctx && ctx.run)) return;
+  const btn = screen.querySelector('.rd-tab[data-sec="agents"]');
+  if (!btn) return;
+  const ov = screen.querySelector('.rd-tab[data-sec="overview"]');
+  const hadFocus = document.activeElement === btn;
+  if (btn.classList.contains('active') && ov) ov.click();
+  btn.hidden = true;
+  detailTabsOf(screen)?.relayout();                    // one candidate fewer for More
+  const sec = screen.querySelector('.rd-sec[data-sec="agents"]');
+  if (sec) sec.hidden = true;
+  if (hadFocus && ov) ov.focus();
 }
 
 // ── Agents tab ──────────────────────────────────────────────────────────────
@@ -32545,7 +33279,7 @@ function rdAgentsBody(sec, r) {
   const skillsByGroup = stepSkillsFromSteps(r.steps);
   const graphifyByGroup = stepGraphifyFromSteps(r.steps);
   const statusOf = stepStatusByKey(r.steps, r.stepper);
-  const modelByNode = stepModelByNode(r.stepper, r.runEngine || 'claude');
+  const modelByNode = stepModelByNode(r.stepper, r.runEngine || 'claude', r.steps);
   const cardsByNode = new Map();   // nodeId -> first group card, for the per-node artifact affordance
 
   for (const key of keys) {
@@ -32747,6 +33481,7 @@ function rdUpdateSections(r) {
     if (typeof sec.__update === 'function') sec.__update(ctx);
   }
   rdPaintTabBadges(screen, ctx);
+  rdSyncAgentsPlace(screen, ctx);
   paintActionsHeaders();   // the pill needs the run's pipeline id, which arrives with state frames
 }
 
@@ -33562,8 +34297,52 @@ function chatPaintQuestion(ref, host) {
     set.add(panel);
     if (r._answering) setPanelBusy(r, true);   // an answer already in flight (paintRdQuestions' rule)
   }
+  paintQpanelDeadline(r, host);                // the E2B release time follows state frames
   return { id: pq.id || null, kind: askKindOf(pq), heading: askHeading(r, pq),
-    step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, true) };
+    step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '', stepCard: isStepCard(pq, r, true), ...(pq.stop ? { stop: true } : {}) };
+}
+/** Shaper small runs C1 (R-ux-2): the Prototype step's working moment (building, reviewing, matching) on the one card,
+ *  from the card's saved state while no ask is open: the same renderer as the step's asks, with nothing to answer.
+ *  Rebuilt only when the moment, round or build changes, so the live rows keep following the design frames. */
+function chatPaintPrototypeWork(ref, host, proto) {
+  const panel = host && host.querySelector('.qpanel');
+  const r = chatLiveRun(ref);
+  if (!panel || !r || r._finished || r.pendingQuestion || !proto) { chatReleaseQuestion(host); return null; }
+  if (panel.dataset.qid !== protoWorkKey(proto) || panel.dataset.qrun !== r.runId) {
+    for (const [runId, old] of CHAT_QPANELS) { old.delete(panel); if (!old.size) CHAT_QPANELS.delete(runId); }
+  }
+  const key = paintPrototypeWork(panel, r, proto);
+  return { id: key, kind: 'prototype', heading: '', step: '', stepCard: true };
+}
+const PROTO_WORKING = new Set(['building', 'reviewing', 'matching']);
+const protoWorkKey = (proto) => `proto-work|${proto.state}|${proto.reviewRounds || 0}|${proto.buildId || ''}`;
+/** C1 (R-ux-2): the one paint of the Prototype step's working moment into a .qpanel, for the Chat card and the run page's
+ *  step area. Rebuilt only when the moment, round or build changes (the key), so the live rows keep following the
+ *  design frames. Returns the key. */
+function paintPrototypeWork(panel, r, proto) {
+  const key = protoWorkKey(proto);
+  if (panel.dataset.qid !== key || panel.dataset.qrun !== r.runId) {
+    disposeQpanel(panel);
+    panel.innerHTML = '';
+    panel.classList.remove('qpanel-workflow', 'hidden');
+    panel.dataset.kind = 'prototype';
+    askRendererFor('prototype').render(panel, { id: key, kind: 'prototype', prototype: { ...proto, moment: proto.state } }, askCtxFor(r, panel));
+    panel.dataset.qid = key;
+    panel.dataset.qrun = r.runId;
+  }
+  return key;
+}
+/** The run page's twin of the Chat card's rule: a live shaping run with no ask open and its saved card in a working
+ *  moment. The card is read once per pipeline (shaperCardFor); its answer repaints the open run page. */
+function rdPrototypeWork(r) {
+  if (!r || r._finished || r.pendingQuestion || !isShapingRun(r) || !r.pipelineId) return null;
+  const card = shaperCardFor(r.pipelineId, rdRepaintOpen);
+  const proto = card && card.prototype;
+  return proto && PROTO_WORKING.has(proto.state) ? proto : null;
+}
+function rdRepaintOpen() {
+  const r = runDetailState.screen ? runs.get(runDetailState.runId) : null;
+  if (r) repaintRunDetail(r);
 }
 // ---- Runs redesign slice 4: the one model's actions (D5, D6) and a run's group (D7), for the chat card and the pages.
 /** D7: the group a pipeline belongs to, as the list's group row, with its place in it. */
@@ -33686,6 +34465,7 @@ const chatRunControls = {
     return postAnswer(r, payload);
   },
   paintQuestion: chatPaintQuestion,
+  paintPrototypeWork: chatPaintPrototypeWork,
   releaseQuestion: chatReleaseQuestion,
   /** Shaper s3: a feature card's Resume / Re-plan the rest / Cancel the rest / Ask before each run. */
   featureAct: async (featureId, action, body) => {
@@ -33877,6 +34657,7 @@ function statusPill(r) {
     if (r.pauseReason === 'night_guardrail') return { family: 'amber', text: 'Paused · Away mode limit' };
     if (r.pauseReason === 'drain') return { family: 'amber', text: 'Paused · restart' };
     if (r.pauseReason === 'time_limit') return { family: 'amber', text: 'Paused · time limit' };
+    if (r.pauseReason === 'model_confirm') return { family: 'amber', text: 'Paused · confirm model' };
     // An error pause is parked and resumable (never dead), so it stays in the amber family.
     if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
     if (r.pauseReason === 'recoverable') return { family: 'amber', text: 'Paused · recoverable' };
@@ -34046,11 +34827,21 @@ function subModelPillHtml(model) {
 // at run time (§4.2), so it gets no pill, like '' (inherit the CLI/global default, which the
 // client cannot resolve): no entry, never a guess. An id the catalog does not know is kept, as
 // the run keeps it. v2 graph manifests only (frozen v1 snapshots recorded none).
-function stepModelByNode(stepper, runEngine = 'claude') {
+function stepModelByNode(stepper, runEngine = 'claude', steps = null) {
   const out = {};
   if (!isGraphManifest(stepper)) return out;
+  // #1450: the model each node's session actually started ([init], step.modelUsed), and who picks when no one did.
+  const used = modelUsedByNode(steps);
+  const tool = engineLabel(runEngine || 'claude');
   for (const n of stepper.graph.nodes) {
-    if (!n || n.kind !== 'agent' || !n.id || typeof n.model !== 'string' || !n.model) continue;
+    if (!n || n.kind !== 'agent' || !n.id) continue;
+    if (typeof n.model !== 'string' || !n.model) {
+      // No model in the manifest: the tool picked. Show what ran once [init] said so, else who decides.
+      // A pre-#1450 manifest (no modelSource) shows nothing new until a model is observed.
+      if (used[n.id]) out[n.id] = { model: used[n.id], effort: '', observed: true, tool };
+      else if (Object.hasOwn(n, 'modelSource')) out[n.id] = { model: '', effort: '', decides: true, tool };
+      continue;
+    }
     const entry = modelById(n.model);
     if (entry && !runsOn(entry, runEngine)) continue;
     // A node that ran the model the run's own overlay set (the Ask run card's per-agent picks, manifest.runOverlay) says
@@ -34059,9 +34850,16 @@ function stepModelByNode(stepper, runEngine = 'claude') {
     const ov = stepper.runOverlay && stepper.runOverlay.nodes && typeof stepper.runOverlay.nodes === 'object' && Object.hasOwn(stepper.runOverlay.nodes, n.id)
       ? stepper.runOverlay.nodes[n.id] : null;
     const perRun = !!(ov && typeof ov.model === 'string' && ov.model && typeof n.model === 'string' && ov.model.toLowerCase() === n.model.toLowerCase());
-    out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '', ...(perRun ? { perRun: true } : {}) };
+    const ran = used[n.id] && sameModelId(used[n.id], n.model) ? null : used[n.id] || null;
+    out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '', ...(perRun ? { perRun: true } : {}),
+      ...(n.modelSource === 'worca-default' ? { worcaDefault: true } : {}), ...(ran ? { ranOn: ran } : {}) };
   }
   return out;
+}
+/** Two ids name one model: case, a vendor prefix, `[1m]`, a dated snapshot and dots vs dashes aside (model-roles upstreamKey). */
+function sameModelId(a, b) {
+  const k = (id) => String(id ?? '').trim().toLowerCase().replace(/^[a-z0-9._-]+\//, '').replace(/\[1m\]$/, '').replace(/-\d{8}$/, '').replace(/\./g, '-');
+  return k(a) === k(b);
 }
 
 // The Agents-tab group header's model pill: the catalog label when the id is
@@ -34069,14 +34867,19 @@ function stepModelByNode(stepper, runEngine = 'claude') {
 // "· effort" only when one was set. Same quiet outline as the sub-agent rows'
 // run-model pill — it is configuration, not status.
 function stepModelPillHtml(sel) {
+  if (sel && sel.decides) return `<span class="sub-model-pill">${escapeHtml(`Default · ${sel.tool || 'Claude Code'} decides`)}</span>`;
   if (!sel || !sel.model) return '';
   const m = modelById(sel.model);
   // "· bridged" (model-bridge-design.md §8.6): the node ran through worca's own
   // bridge — the catalog knows, the manifest does not.
   // " · this run": the model came from the run's own per-run picks (manifest.runOverlay) — said in the text, like
   // " · bridged", because a title is hover-only (touch, keyboard and screen-reader users never get it).
-  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '') + (m && m.bridged ? ' · bridged' : '') + (sel.perRun ? ' · this run' : '');
-  return `<span class="sub-model-pill"${sel.perRun ? ' title="Picked for this run only"' : ''}>${escapeHtml(text)}</span>`;
+  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '') + (m && m.bridged ? ' · bridged' : '') + (sel.perRun ? ' · this run' : '')
+    + (sel.observed ? ` · ${sel.tool || 'Claude Code'}'s pick` : '') + (sel.worcaDefault ? ' · Worca default' : '');
+  // #1450: the session started another model than the one asked for.
+  const ran = sel.ranOn ? (modelById(sel.ranOn)?.label || sel.ranOn) : '';
+  const title = ran ? `Asked for ${m ? m.label : sel.model}, ran on ${ran}` : sel.perRun ? 'Picked for this run only' : '';
+  return `<span class="sub-model-pill"${title ? ` title="${escapeHtml(title)}"` : ''}>${escapeHtml(text)}</span>`;
 }
 
 // Neutral count badge for how many times an agent / sub-agent invoked the graphify
@@ -35412,6 +36215,7 @@ const designChatHost = {
       createChat: createDesignChat, showStage: () => showDesignStage(threadId), setTitle, setComposer,
       onCards: () => designChatCards.repaint(), onDeleted: () => askPanel?.setDesign(threadId, null) });
     designStudio = { threadId, studio };
+    repaintChatNav();                 // a design chat is the sidebar's Design
     designKind?.ready(threadId);      // a Design tab the panel mounted before the studio existed
     toolPanel?.onContextChange();     // a design chat's tools open in its design's folder (toolPageContext chatDesign)
     void showDesignStage(threadId);   // the design shows beside its chat
@@ -35422,7 +36226,7 @@ const designChatHost = {
     const page = createDesignStartPage({ doc: document, win: window, host: slot, fetch: (...a) => fetch(...a), navigate: designNavigate, setComposer });
     designStudio = { threadId: null, studio: page };
   },
-  unmount() { const d = designStudio; designStudio = null; d?.studio.destroy(); if (d) designChatCards.repaint(); },
+  unmount() { const d = designStudio; designStudio = null; d?.studio.destroy(); if (d) { designChatCards.repaint(); repaintChatNav(); } },
 };
 onFlagChange('design', (on) => { if (!on && currentView() === 'design') showView('chat', ''); updateNavCounts(); });
 
@@ -35571,12 +36375,14 @@ const withChainPr = (x, m) => (x && !x.pr && m.prUrl && isTerminalStatus(x.statu
 
 /** A group (a Run-after chain from schedulesView, or a feature / user group from /api/run-groups) as the list's group
  *  item: members carry their raw run from this tab's live map, else memberRun, else their ticket. */
-function runsGroupItem({ id, groupKind, title, members, cost = null, planning = null }) {
+function runsGroupItem({ id, groupKind, title, members, cost = null, planning = null, smallRuns = false, hold = null }) {
   // /api/run-groups members carry no projectKey / historyKey (src/core/run-groups.mjs member()), so a finished member's
   // href would fall back to the group page itself: the History row knows the project.
   const histPk = (pid) => (pid ? (((state.historyAll || []).find((p) => p && p.id === pid)) || {}).projectKey || '' : '');
+  const words = smallRuns && flagOn('shaperSmallRuns');
   const items = members.map((m, i) => {
     const r = m.pipelineId ? latestPipelineRun(m.pipelineId) : null;
+    const stopped = !!(r && r.pendingQuestion && r.pendingQuestion.stop);
     const h = histOf(m.pipelineId);
     // An after-ticket has no start time: never pass its AFTER_RUN_AT sentinel (runModel does not read ticket.after).
     // `m.after` (D29): the 1-based position of the member this one runs after (runChains and listRunGroups both send it),
@@ -35597,6 +36403,12 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
       ticketId: m.ticketId || null, runId: r ? r.runId : '', kind: r ? 'live' : m.pipelineId ? 'hist' : 'sched', run,
       roundOf: m.pipelineId ? runsRoundOf(r, h) : null,   // null for an origin: a member's own rounds fold under it
       memo: memoFor(m.pipelineId || m.ticketId || `${id}:${i}`),
+      // D2: a small-runs member's row says the card's short word (runs-list.mjs cardShortWord), read from its live snapshot.
+      // Its pending question rides along, as the run page's Agents panel attaches it, so a waiting member reads so.
+      // A stopped run without a Care plan says so too; a finished one without either has none and reads `done`.
+      ...(smallRuns && r && ((r.stepper && r.stepper.careRun) || (words && stopped)) ? { snap: { ...snapshotFromState(r), pendingQuestion: r.pendingQuestion || null } } : {}),
+      // The server's slice words; its stop is dropped once this tab's live run asks nothing more (a stale answer).
+      ...(words && m.slice ? { slice: r && !stopped && m.slice.stop ? { ...m.slice, stop: undefined } : m.slice } : {}),
       startedAt: (r && r.startedAt) || (h && h.startedAt) || null,       // D12: the group's dispatch time
       // D32: the member's own cost (a chain's total sums these). D5: max(live, History, the group's stored byPipeline):
       // a finished run in the live map at 0 never wins.
@@ -35624,11 +36436,12 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
   const liveCost = Object.fromEntries(items.filter((x) => x.kind === 'live' && x.run && typeof x.run.totalCostUsd === 'number')
     .map((x) => [x.pipelineId, x.run.totalCostUsd]));
   return { id, groupKind, title, members: items, planning: planningItem, groupKey: g.key, groupName: g.name, memo: memoFor(`group:${id}:${sig}`),
-    cost, liveCost, costMemo: memoFor(`cost:${id}:${sig}`) };
+    cost, liveCost, costMemo: memoFor(`cost:${id}:${sig}`), ...(smallRuns ? { smallRuns: true } : {}), ...(hold ? { hold } : {}) };   // D2 (D1)
 }
 function runsGroupItems() {
   const owned = new Set((state.runGroups || []).flatMap((g) => g.members.flatMap((m) => [m.pipelineId && `p:${m.pipelineId}`, m.ticketId && `t:${m.ticketId}`])).filter(Boolean));
-  const own = (state.runGroups || []).map((g) => runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members, cost: g.cost || null, planning: g.planning || null }));
+  const own = (state.runGroups || []).map((g) => runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members, cost: g.cost || null, planning: g.planning || null,
+    smallRuns: g.smallRuns === true, hold: (flagOn('shaperSmallRuns') && g.hold) || null }));
   // A run group stands for any chain that shares a member with it (a feature's Run-after chain).
   const chains = schedulesView.chains()
     .filter((c) => !c.members.some((m) => owned.has(`p:${m.pipelineId}`) || owned.has(`t:${m.ticketId}`)))
@@ -35680,7 +36493,8 @@ el.groupDetail?.addEventListener('click', (e) => {
 });
 async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
-  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false, unmarked: 0 } : {}) });
+  if (reentered && host.__gp) delete host.__gp.__order;   // small runs slice 10 (D6): Show order is closed again on a return
+  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false, unmarked: 0, stackedOnly: false, feature: null, requirements: false, memberKey: '', memberPending: '', memberFailed: '' } : {}) });
   if (fresh) {
     groupMessage(host, 'feature-page-loading', 'Loading group…');
     host.__gp = null;
@@ -35697,20 +36511,34 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
     if (route === 'feature') {
       // F47: a replaced feature id carries on as the newest one; the route answers the current id, or 404.
       GROUP_PAGE.resolving = true;
+      const ticket = groupFeatureTicket();
       const res = await fetch(`/api/shape/features/${encodeURIComponent(id)}`).catch(() => null);
       if (GROUP_PAGE.id !== id || GROUP_PAGE.route !== route) return;
       GROUP_PAGE.resolving = false;
       // A network error or a 5xx is not an answer; only a 404 means gone.
       GROUP_PAGE.failed = !res || (!res.ok && res.status !== 404);
       if (res && res.status === 404) GROUP_PAGE.gone = true;
-      else if (res && res.ok) { const f = await res.json().catch(() => ({})); GROUP_PAGE.featureId = f.id || id; GROUP_PAGE.unmarked = unmarkedOf(f); }
+      else if (res && res.ok) { const f = await res.json().catch(() => ({})); GROUP_PAGE.featureId = f.id || id; GROUP_PAGE.unmarked = unmarkedOf(f); GROUP_PAGE.stackedOnly = smallRunsOf(f); if (ticket >= GROUP_PAGE.featureApplied) { GROUP_PAGE.featureApplied = ticket; storeGroupFeature(f); } }
     }
   }
   paintGroupPageNow();
 }
+/** Shaper small runs s4 (D8, D10): a marked feature's Runs rows take word and mark from runStatus, over the members'
+ *  own slices and snapshots (s5 D2: the shared adapter). */
+function featureRowStatus(row) {
+  return memberStatusOf(row.members);
+}
+/** Small runs slice 7 (D9): the marked feature page's state line and need count, from the stored feature view and the
+ *  members' live snapshots. */
+function featureLineOf(row) {
+  const snapOf = (pid) => { const mb = row.members.find((x) => x.pipelineId === pid); return (mb && mb.snap) || null; };
+  return { stateLine: featureStateLine(GROUP_PAGE.feature, { snapOf }), needCount: stopLinesOf(GROUP_PAGE.feature).length };
+}
 function paintGroupPageNow() {
   const { host, route, id, tab } = GROUP_PAGE;
   if (!host || !host.isConnected || host.closest('.view.hidden') || !(el.groupShell && el.groupShell.classList.contains('detail-open'))) return;
+  // Small runs D3: a Requirements deep link keeps "Loading group…" while its feature is fetched (no Runs flash).
+  if (route === 'feature' && tab === 'requirements' && GROUP_PAGE.resolving && !host.__gp) return;
   const gid = GROUP_PAGE.featureId || id;
   const it = !GROUP_PAGE.gone && state.runGroupsLoaded ? runsGroupItems().find((g) => g.id === gid) : null;
   if (!it && !GROUP_PAGE.gone && (state.runGroupsFailed || GROUP_PAGE.failed)) {
@@ -35743,7 +36571,10 @@ function paintGroupPageNow() {
     }
     return;                                        // not loaded yet: "Loading group…" stays; loadRunGroups repaints
   }
-  const row = groupRow(it, { now: Date.now() });
+  // Small runs: the runs are done but the feature is not ready to ship (the Verifier checks, asks or stopped): say so, as
+  // the Runs list's held row does, never "Ready to ship".
+  const hold = it.hold || (route === 'feature' && GROUP_PAGE.requirements ? shipWaitText(GROUP_PAGE.feature) : '');
+  const row = groupRow(hold ? { ...it, hold } : it, { now: Date.now() });
   if (!host.__gp) {
     host.__gp = buildGroupPage(document);
     // Run 4 (D2): a Shaper card set or changed its primary's label: the bar's Answer follows it.
@@ -35755,7 +36586,8 @@ function paintGroupPageNow() {
   // Run 3 (D15): the group's Labels fact is the read-only union of its members' History labels.
   const labels = [...new Set(row.members.flatMap((mb) => (histOf(mb.pipelineId) || {}).labels || []))].sort();
   paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: levelAtLeast('expert'), labels,
-    unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0 }, {
+    unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0, stackedOnly: route === 'feature' && GROUP_PAGE.stackedOnly,
+    requirements: route === 'feature' && GROUP_PAGE.requirements, ...(route === 'feature' && GROUP_PAGE.requirements ? { shortState: memberShortWord, status: featureRowStatus(row), ship: groupShipOf(GROUP_PAGE.feature), ...featureLineOf(row), order: (GROUP_PAGE.feature && GROUP_PAGE.feature.slices) || null } : {}) }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
     // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.
@@ -35770,7 +36602,7 @@ function paintGroupPageNow() {
     },
     labelChip: (d, l) => labelChip(d, l, {}),
     onTab: (t) => { location.hash = t === 'runs' ? base : `${base}/${t}`; },
-    mountQuestion: (slot, mb) => paintGroupQuestion(slot, mb),
+    mountQuestion: (slot, mb) => paintGroupQuestion(slot, groupAsker(slot, row, mb)),
     answerLabel: () => answerLabelOf(host.__gp.querySelector('.gpage-question')),
     // Mount once per feature: paintGroupPageNow runs on every run frame, and a remount would refetch and rebuild the
     // Shaper view each time.
@@ -35785,7 +36617,23 @@ function paintGroupPageNow() {
       else if (GROUP_PAGE.reentered || changed) paintShapeFeature(h);   // away: the hidden page skipped frames
       GROUP_PAGE.reentered = false;
     },
-    mountDecisions: (h, r) => { void paintGroupDecisions(h, r); },
+    // Small runs D3 (D8): a marked feature's Decisions is its decision log; the per-run receipts stay on each run's page.
+    // Deleting the receipts' signature makes an in-flight paintGroupDecisions bail at its own check.
+    mountDecisions: (h, r) => {
+      if (route === 'feature' && GROUP_PAGE.requirements) { delete h.dataset.sig; paintFeatureDecisions(document, h, GROUP_PAGE.feature); refetchGroupFeature(r); return; }
+      h.classList.remove('plan-body', 'srows', 'shape-feature-decisions');
+      void paintGroupDecisions(h, r);
+    },
+    mountRequirements: (h, r) => {
+      refetchGroupFeature(r);
+      // Link only a run with its own page: a waiting ticket's href is the feature page (or Schedules), so it stays text.
+      return renderFeatureRequirements(document, GROUP_PAGE.feature, { runHref: (n) => {
+        const mb = r.members.find((x) => x.position === n);
+        if (!mb) return null;
+        if (mb.runId) return `#running/${mb.runId}`;
+        return mb.href && mb.href.startsWith('#history/') ? mb.href : null;
+      } });
+    },
     // A member with no run page yet (a waiting ticket) links its row's own href.
     logsHref: (mb) => {
       const page = mb.runId ? `#running/${mb.runId}` : mb.href || '#runs';
@@ -35797,12 +36645,74 @@ function paintGroupPageNow() {
 // top) because History's cached paint can call this during boot, before a `let` down here is initialised.
 /** Shaper requirements s3: a feature's unmarked agreed requirements (0 without a ledger, or with the flag off: the
  *  route then leaves ship.acceptance out). The page header's Create PR locks on it, as the Ship card does. */
-function unmarkedOf(f) { const a = f && f.ship && f.ship.acceptance; return a && !a.ready ? Math.max(0, (a.total || 0) - (a.marked || 0)) : 0; }
-/** The open feature page's lock from a fetched feature view; a change repaints the page header. */
-function noteGroupFeatureLock(f) {
+function unmarkedOf(f) {
+  // Feature D1: a small-runs feature's lock is its ledger's waiting ids. Its acceptance also counts the run-owned ids,
+  // which a person can never mark (RUN_OWNED).
+  const sr = f && f.ship && f.ship.smallRuns;
+  if (sr) return sr.blocked && Array.isArray(sr.waiting) ? sr.waiting.length + (sr.unowned || []).length : 0;
+  const a = f && f.ship && f.ship.acceptance; return a && !a.ready ? Math.max(0, (a.total || 0) - (a.marked || 0)) : 0;
+}
+/** Feature D1: a small-runs feature ships a PR per run, so its page never offers One. */
+function smallRunsOf(f) { return !!(f && f.ship && f.ship.smallRuns); }
+/** Small runs D3 (D11): the open feature page's feature view. Its Requirements tab exists only for a marked feature with
+ *  the flag on (the route sends ship.smallRuns for a marked feature with the flag off too). */
+function storeGroupFeature(f) {
+  GROUP_PAGE.feature = f;
+  GROUP_PAGE.requirements = flagOn('shaperSmallRuns') && smallRunsOf(f);
+}
+/** What the head's Create N PRs reads from a small-runs feature, as the Ship card does: it is locked until the feature is
+ *  ready to ship, then by its ledger. */
+function groupShipOf(f) {
+  const sr = f.ship.smallRuns;
+  const wait = shipWaitText(f);
+  return { n: (sr.order || []).length, blocked: !!wait || !!sr.blocked, reason: wait || sr.reason || '' };
+}
+/** What the Requirements and Decisions tabs and the head paint from: every row's status text, the Care line, the ship
+ *  lock and the log. */
+function groupFeatureSig(f) {
+  const sr = f && f.ship && f.ship.smallRuns;
+  return JSON.stringify([sr ? [...(sr.owned || []), ...(sr.confirmed || [])].map((e) => [e.id, e.shown ? e.shown.text : '']) : null,
+    sr && sr.care ? sr.care.line : '', sr ? [shipWaitText(f), !!sr.blocked, sr.reason || '', (sr.order || []).length] : null, (f && f.log) || [],
+    // Slice 7: what the state line and the need count read (only a view with `asks`: flag on, marked, active).
+    Array.isArray(f && f.asks) ? [f.status, f.asks, (f.slices || []).map((x) => [x.index, x.state, x.nextTurn === true, x.stop || null, !!x.cannotStart]), f.held ? f.held.index : null] : null]);
+}
+/** Every feature fetch that may reach GROUP_PAGE takes a rising ticket before it is sent; noteGroupFeatureLock drops an
+ *  answer older than the last one applied, so a slow fetch never paints a stale feature over a newer one. */
+function groupFeatureTicket() { return ++GROUP_PAGE.featureSeq; }
+/** The open feature page's lock from a fetched feature view; a change repaints the page header. D3: the view is kept,
+ *  and a change of what the Requirements or Decisions tab shows repaints the page too. */
+function noteGroupFeatureLock(f, ticket) {
   if (GROUP_PAGE.route !== 'feature' || !f || f.id !== GROUP_PAGE.featureId) return;
+  if (ticket < GROUP_PAGE.featureApplied) return;
+  GROUP_PAGE.featureApplied = ticket;
   const n = unmarkedOf(f);
-  if (n !== GROUP_PAGE.unmarked) { GROUP_PAGE.unmarked = n; scheduleGroupPagePaint(); }
+  const so = smallRunsOf(f);
+  const was = [groupFeatureSig(GROUP_PAGE.feature), GROUP_PAGE.requirements];
+  storeGroupFeature(f);
+  const moved = was[0] !== groupFeatureSig(f) || was[1] !== GROUP_PAGE.requirements;
+  if (n !== GROUP_PAGE.unmarked || so !== GROUP_PAGE.stackedOnly || moved) { GROUP_PAGE.unmarked = n; GROUP_PAGE.stackedOnly = so; scheduleGroupPagePaint(); }
+}
+/** D3 (D11): while Requirements or Decisions shows a marked feature, a member that moves on (its model state) refetches
+ *  the feature once per change, as paintGroupDecisions keys on it. The key lives in GROUP_PAGE (one for both tabs),
+ *  never in the DOM; the first key after the page's own fetch is seeded without a refetch. A failed refetch keeps the
+ *  painted rows and stores no key: the next change retries. */
+function refetchGroupFeature(row) {
+  const key = [...(row.planning ? [row.planning] : []), ...row.members]
+    .map((mb) => `${mb.pipelineId || mb.ticketId || ''}:${mb.model ? mb.model.state : ''}`).join(',');
+  const gp = GROUP_PAGE;
+  if (!gp.memberKey && gp.feature) { gp.memberKey = key; return; }
+  if (gp.memberKey === key || gp.memberPending === key || gp.memberFailed === key) return;
+  const fid = gp.featureId;
+  gp.memberPending = key;
+  const ticket = groupFeatureTicket();
+  void fetch(`/api/shape/features/${encodeURIComponent(fid)}`).then((r) => (r && r.ok ? r.json() : null)).catch(() => null).then((f) => {
+    if (gp.featureId !== fid) return;
+    if (gp.memberPending === key) gp.memberPending = '';
+    if (!f) { gp.memberFailed = key; return; }
+    gp.memberKey = key;
+    gp.memberFailed = '';
+    noteGroupFeatureLock(f, ticket);
+  });
 }
 /** A shape-feature frame (a mark saved here, in Chat or in another tab): re-read the open feature page's lock. A
  *  mounted Overview view of the feature refetches it anyway (refreshShapeFeatures) and notes the lock itself. */
@@ -35812,18 +36722,44 @@ async function refreshGroupFeatureLock(id) {
   for (const [host, hid] of SHAPE_FEATURE_HOSTS) {
     if (host.isConnected && !host.closest('.view.hidden') && (hid === fid || host.__shapeShown === fid)) return;
   }
+  const ticket = groupFeatureTicket();
   const res = await fetch(`/api/shape/features/${encodeURIComponent(fid)}`).catch(() => null);
-  noteGroupFeatureLock(res && res.ok ? await res.json().catch(() => null) : null);
+  noteGroupFeatureLock(res && res.ok ? await res.json().catch(() => null) : null, ticket);
 }
 function scheduleGroupPagePaint() {
   if (GROUP_PAGE.paintQueued) return;
   GROUP_PAGE.paintQueued = true;
   queueMicrotask(() => { GROUP_PAGE.paintQueued = false; paintGroupPageNow(); });
 }
+/** Whose question the group page shows. A small-runs feature (flag on): an open stop whose answer is not held, the one on
+ *  screen first (another run's stop never takes a half-picked one away), whichever member is current, since a run can
+ *  stop while another works; else the current member's; else the Verifier's. Any other group: the current member's. */
+function groupAsker(slot, row, mb) {
+  if (!flagOn('shaperSmallRuns') || GROUP_PAGE.route !== 'feature') return mb;
+  const asks = (x) => { const r = x && x.runId ? runs.get(x.runId) : null; return (r && r.pendingQuestion) || null; };
+  if (GROUP_PAGE.requirements) {
+    const open = [...(row.planning ? [row.planning] : []), ...row.members]
+      .filter((x) => { const pq = asks(x); return !!pq && !!pq.stop && !(x.slice && x.slice.stop && x.slice.stop.held); });
+    if (open.length) return open.find((x) => x.runId === slot.__runId) || open[0];
+  }
+  return asks(mb) ? mb : groupVerifierAsk() || mb;
+}
+/** The Verifier's run is no member of its feature's group: with the flag on and no member asking, its open stop is the
+ *  feature page's question (a feature no Chat thread started has no other place to answer it). */
+function groupVerifierAsk() {
+  if (!flagOn('shaperSmallRuns') || GROUP_PAGE.route !== 'feature' || !GROUP_PAGE.featureId) return null;
+  for (const r of runs.values()) {
+    const pq = r && r.pendingQuestion;
+    if (!pq || !pq.stop || pq.stop.node !== 'n_verify' || !r.pipelineId) continue;
+    const home = stopHomeFor(r.pipelineId, scheduleGroupPagePaint, pq.id);
+    if (home && home.featureId === GROUP_PAGE.featureId) return { runId: r.runId };
+  }
+  return null;
+}
 /** D12, Known bug 7: the group page's question, answered through the one question delegate. */
 function paintGroupQuestion(slot, mb) {
   const r = mb && mb.runId ? runs.get(mb.runId) : null;
-  if (!r || !r.pendingQuestion) { chatReleaseQuestion(slot); slot.hidden = true; slot.__runId = ''; return; }
+  if (!r || !r.pendingQuestion) { chatReleaseQuestion(slot); slot.hidden = true; slot.__runId = ''; delete slot.dataset.stop; return; }
   if (!slot.querySelector('.qpanel')) slot.appendChild(Object.assign(document.createElement('div'), { className: 'qpanel hidden' }));
   if (!slot.__offQ) {
     // chatLiveRun follows the pipeline's newest run (as chatPaintQuestion does), so an answer after a resume goes to
@@ -35837,6 +36773,9 @@ function paintGroupQuestion(slot, mb) {
   slot.__runId = r.runId;
   slot.__pipelineId = r.pipelineId || '';
   slot.hidden = false;
+  // Small runs: a stop (held or not) is its own head and primary: no ask banner over it (shape-it.css), no bar answer and
+  // no Re-plan in the page's ⋯.
+  if (r.pendingQuestion.stop && flagOn('shaperSmallRuns')) slot.dataset.stop = ''; else delete slot.dataset.stop;
   chatPaintQuestion({ runId: r.runId, pipelineId: r.pipelineId }, slot);
 }
 /** D6: one handler for a group's actions, from the group page and from a group's chat card (chatRunControls.act). */
@@ -35931,7 +36870,8 @@ function runsHistItem(p) {
     checks: typeof p.checks === 'number' ? p.checks : null,
     changes: folder ? { state: (p.changes && p.changes.state) || 'pending' } : null,
     files: folder ? (fc ? fc.total : null) : (typeof p.files === 'number' ? p.files : null),
-    base: gitOn() ? baseRowNote(p.baseCheck) : '',
+    // A merged or closed PR is final (the server leaves it out of the summary; a live PR state newer than the stored one too).
+    base: gitOn() && (hasWsMembers(p) || !BASE_PR_FINAL.has(prStateOf(p.pr))) ? baseRowNote(p.baseCheck) : '',
     tags: p.tags || [],
     labels: flagOn('runLabels') ? (p.labels || []) : [],
     run: histRun(p),
@@ -35960,11 +36900,17 @@ function runsSchedItem(t) {
 const roundsSig = (r) => (r.rounds && r.rounds.length ? [r.roundsLine || '', r.roundsOwnLine ? 1 : 0, r.rounds.length,
   runsUi.groupsToggled.get(`rounds:${r.roundsId}`) ? 1 : 0, runsUi.roundsAll.has(`rounds:${r.roundsId}`) ? 1 : 0,
   r.rounds.map((rd) => [rd.n, rd.status, rd.words || '', rd.time, rd.href])] : 0);
-const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, roundsSig(r), r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
-  r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon, r.model.pr.pending ? 1 : 0] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
-  r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
-  r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '', roundsSig(m),
-    m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.title, m.model.pr.icon, m.model.pr.pending ? 1 : 0] : 0])] : 0, (r.labels || []).join('\n')];
+const runsRowSig = (r) => {
+  const st = r.kind === 'chain' && r.smallRuns ? memberStatusOf(r.members) : null;   // s5 (D6): the shared word and mark
+  const shared = (m) => { const x = st(m); return [x ? x.word ?? '' : '', x ? x.mark ?? '' : '']; };
+  return [r.key, r.pipelineId, r.href, r.title, r.model.state, roundsSig(r), r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
+    r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon, r.model.pr.pending ? 1 : 0] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
+    r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
+    r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '', roundsSig(m),
+      r.smallRuns ? memberShortWord(m) || '' : '',   // D2: the member's short word
+      st ? shared(m) : 0,
+      m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.title, m.model.pr.icon, m.model.pr.pending ? 1 : 0] : 0])] : 0, (r.labels || []).join('\n')];
+};
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over, then the selected row stands in;
@@ -36556,6 +37502,7 @@ async function groupFeatureMenuItems(anchor, row) {
       return r && r.ok ? { ok: true } : { ok: false, error: out.error || 'That did not work. Try again.' };
     },
     fail: (text) => notify({ tone: 'err', title: 'That did not work', detail: text }),
+    noReplan: !!document.querySelector('#group-detail .gpage-question[data-stop]:not([hidden])'),
   }, anchor);
 }
 async function openGroupMoreMenu(anchor, row) {
@@ -36591,7 +37538,8 @@ function openAddToGroup(anchor, items, rowKey) {
   const own = items.length === 1 ? groupOfRun(pids[0])?.id : '';
   const groups = (state.runGroups || []).filter((g) => g.id !== own).map((g) => {
     const it = runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members });
-    return { id: g.id, title: g.title, model: groupModel({ kind: g.kind === 'feature' ? 'feature' : 'chain', title: g.title, members: it.members.map((x) => x.run) }) };
+    return { id: g.id, title: g.title, model: groupModel({ kind: g.kind === 'feature' ? 'feature' : 'chain', title: g.title, members: it.members.map((x) => x.run),
+      hold: (flagOn('shaperSmallRuns') && g.hold) || null }) };
   });
   const key = anchor.dataset.rowKey;
   const opener = () => shownEl(key ? el.runsList.querySelector(`.runs-more[data-row-key="${cssEscape(key)}"]`) : null)
@@ -37034,6 +37982,7 @@ function setRdMode(screen, mode, tab = '', { focus = true } = {}) {
     // The graph laid out while its section sat in a hidden subtree measured 0px wide;
     // repaint it now that it is visible.
     const r = rdOpenRun();
+    if (r) rdSyncAgentsPlace(screen, rdCtx(r));   // D2 (D11): a deep link to the merged Agents tab lands on Overview
     if (r && changed) paintRdGraph(screen, r);
   }
   if (changed && el.runDetail) el.runDetail.scrollTop = 0;
@@ -37066,17 +38015,18 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   screen.querySelector('.rd-back').addEventListener('click', () => backToRunsList());
   // Glance <-> Details are routes, so the browser's own back and forward walk them.
   const toDetails = (tab = '') => { rdGoDetails(tab); };
-  // While a question waits, the status header ("? Waiting for you / Step: …") is a way to it.
-  const statusTop = screen.querySelector('.rd-now-top');
+  // While a question waits, the state line under the title and the card's status header are ways to it.
   const toQuestions = () => { if (screen.dataset.glance === 'ask') scrollToQuestions(screen); };
-  statusTop.addEventListener('click', toQuestions);
+  for (const link of screen.querySelectorAll('.rd-header > .run-state-line, .rd-now-top')) {
+    link.addEventListener('click', toQuestions);
+    link.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toQuestions(); }
+    });
+  }
   // The live graph is a way to the Workflow tab.
   const livePanel = screen.querySelector('.rd-live');
   livePanel.addEventListener('click', () => rdGoDetails('workflow'));
   livePanel.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); rdGoDetails('workflow'); } });
-  statusTop.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toQuestions(); }
-  });
   // A Now or Activity row opens its tab.
   screen.querySelector('.rd-sheet').addEventListener('click', (e) => {
     const row = e.target.closest && e.target.closest('[data-rd-tab]');
@@ -37129,15 +38079,16 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   // CLICK time; the toggle carries the busy state, as for a plain Resume. Clones are painted after
   // setup, so one delegated listener on the menu.
   rdResumeMenu.addEventListener('click', (e) => {
-    const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template]), .resume-with-model');
+    const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template]), .resume-with-model, .resume-confirm-model');
     if (!item || !rdResumeMenu.contains(item)) return;
     e.stopPropagation();
     closeRdResumeMenu();
     const r = runs.get(runDetailState.runId);
     const pauseBtn = screen.querySelector('.rd-pause');
     if (!r || !pauseBtn || pauseBtn.disabled) return;
+    if (item.classList.contains('resume-confirm-model')) { resumeRunFromCard(r.runId, pauseBtn, { confirmModel: item.dataset.model }); return; }
     if (item.classList.contains('resume-with-model')) {
-      pickResumeModel(r.runEngine || 'claude', { reason: r.pauseReason, limitEngine: r.limitEngine })
+      pickResumeModel(r.runEngine || 'claude', { reason: r.pauseReason, limitEngine: r.limitEngine, limitScope: r.limitScope, limitModel: r.limitModel })
         .then((model) => { if (model) resumeRunFromCard(r.runId, pauseBtn, { model }); });
       return;
     }
@@ -37976,9 +38927,10 @@ function chatRunPanelContext() {
 }
 
 // chatDeps.openRunPanel (CONTRACT §3/§6): ref = {runId?, pipelineId?, projectKey?, workspaceId?},
-// opts = {tab?}. A live run opens by its run id (a pipeline id finds its live run); anything else by its
-// pipeline id, whose project key is remembered so the saved run opens before History lists it.
-function openChatRunPanel(ref = {}, { tab = '' } = {}) {
+// opts = {tab?, threadId?}. A live run opens by its run id (a pipeline id finds its live run); anything else by its
+// pipeline id, whose project key is remembered so the saved run opens before History lists it. `threadId` opens the
+// panel beside that chat (the Chat home's run tile: the chat that follows the run); else beside the chat on screen.
+function openChatRunPanel(ref = {}, { tab = '', threadId = null } = {}) {
   // D23 first: a chat card's ref carries BOTH ids (run-card.mjs runRefOf), and its run id may be a superseded paused
   // copy or a run a restarted server no longer knows. The pipeline id names the current lineage.
   let id = '';
@@ -38005,7 +38957,7 @@ function openChatRunPanel(ref = {}, { tab = '' } = {}) {
     const t = crpResolve(id);
     if ((t.kind === 'saved' ? t.id : t.runId) === crp.id) return;
   }
-  const hash = runPanel.chatPanelHash(crpThreadParam(), id, String(tab || ''));
+  const hash = runPanel.chatPanelHash(threadId && CHAT_THREAD_RE.test(threadId) ? threadId : crpThreadParam(), id, String(tab || ''));
   if (location.hash.slice(1) === hash) { routeChatRunPanel(runPanel.panelSegments(hash.slice('chat/'.length))); return; }
   location.hash = hash;
 }
@@ -38155,6 +39107,7 @@ function paintRdStatus(screen, r) {
   const m = rdModel(r);
   const block = screen.querySelector('.rd-sheet .run-status');
   paintRdHead(screen, r, m);                                 // slice 3: the card head (status line, head buttons, route)
+  paintRunExecLine(block, runExecEnvSeg(r, { box: worcaBox(), label: execEnvLabel, titleWithArticle: execEnvTitleWithArticle }));   // where its agents run
   // The run page's bar takes over the removed .rd-prog's focus stop ("Run progress"): the D30 one-line wait state
   // shows only its stage words and gives it the focus ring.
   const bar = block && block.querySelector('.run-status-bar');
@@ -38225,11 +39178,14 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     // Slice 2: Archive and Report live in the ⋯ (runMoreItems); slice 3: the head actions in the card head (run-head.mjs).
     // The full page draws the waiting question right under its header, on every tab: an Answer that only scrolls to it
     // is noise there. The Chat panel keeps it.
-    skip: [...MENU_ACTIONS, ...HEAD_ACTIONS, ...(screen.dataset.presentation === 'panel' ? [] : ['answer'])],
+    // The Prototype ask is answered on the feature card only: the panel has no Answer for it either.
+    // Small runs C3 (D12): a stop's card draws its own primary on the page and in the panel: no bar Answer beside it.
+    skip: [...MENU_ACTIONS, ...HEAD_ACTIONS, ...(screen.dataset.presentation === 'panel' && !(r.pendingQuestion && (r.pendingQuestion.kind === 'prototype' || r.pendingQuestion.stop)) ? [] : ['answer'])],
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
     labels: { answer: answerLabelOf(screen.querySelector('.rd-questions')) },
-    plain: answerFieldOpen(screen.querySelector('.rd-questions')) ? ['answer'] : [],
+    // Small runs: the step's own button is the one primary (the chat card's `plain: … (oneNow && painted)`).
+    plain: answerFieldOpen(screen.querySelector('.rd-questions')) || smallRunsAsk(r.pendingQuestion) ? ['answer'] : [],
     onAction: (id, b) => runAction({ runId: r.runId, pipelineId: r.pipelineId, title: r.title, status: st, workspaceId: r.workspaceId || null }, id, b, m),
   });
   if (split) split.hidden = !!pause && pause.hidden;      // the split wrapper follows its button
@@ -38303,21 +39259,23 @@ function paintRdGlance(screen, r) {
   // Runs redesign slice 4 (D19): the one status block, the Group row and the model's actions. The run's own bar only:
   // the Group row says where the run sits, so no chain bar and no slice line (Known bug 9).
   const m = paintRdStatus(screen, live);
-  // Only while a question waits is the status header a control (see openRunDetail). A PR-driven Needs you has no
-  // question to jump to.
-  const statusTop = screen.querySelector('.rd-now-top');
+  // Only while a question waits are the header's state line and the card's status header controls (see openRunDetail).
+  // A PR-driven Needs you has no question to jump to.
   const asking = m.state === 'needs-you' && !m.prNeeds;
-  if (statusTop && statusTop.classList.contains('is-link') !== asking) {
-    statusTop.classList.toggle('is-link', asking);
-    if (asking) {
-      statusTop.setAttribute('role', 'button');
-      statusTop.tabIndex = 0;
-      statusTop.setAttribute('aria-label', 'Go to the questions');
-    } else {
-      statusTop.removeAttribute('role');
-      statusTop.removeAttribute('tabindex');
-      statusTop.removeAttribute('aria-label');
+  for (const link of screen.querySelectorAll('.rd-header > .run-state-line, .rd-now-top')) {
+    if (link.classList.contains('is-link') !== asking) {
+      link.classList.toggle('is-link', asking);
+      if (asking) {
+        link.setAttribute('role', 'button');
+        link.tabIndex = 0;
+      } else {
+        link.removeAttribute('role');
+        link.removeAttribute('tabindex');
+        link.removeAttribute('aria-label');
+      }
     }
+    // A label replaces what a screen reader reads, so the header line's keeps its state; refreshed on every paint.
+    if (asking) link.setAttribute('aria-label', [link.matches('.run-state-line') && link.dataset.text, 'Go to the questions'].filter(Boolean).join('. '));
   }
 
   // Time · Cost · Changes. The time ticks (`run-time`, rdTickHosts) only while steps
@@ -38745,7 +39703,12 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, tryIt = 
     }
   }
   const source = (rec && rec.sourceBranch) || liveSource || '';
-  const group = routeGroupOf(groupHomeOf((rec && rec.id) || pipelineId), { sourceBranch: source, histOf });
+  const home = groupHomeOf((rec && rec.id) || pipelineId);
+  const group = routeGroupOf(home, { sourceBranch: source, histOf });
+  // Shaper small runs s5 (D10): a marked feature's member reads its head from the shared run status.
+  const sliceStatus = home && home.row && home.row.smallRuns && home.member && home.member.slice
+    ? memberStatusOf(home.row.members)(home.member) : null;
+  const prExempt = knownPrExempt((rec && rec.id) || pipelineId);
   return {
     m, mode, gitChrome, folder, canTry, tryIt, kept, level: currentLevel(),
     workspace: ws ? { members: histWsMembers(rec).map((x) => ({
@@ -38759,10 +39722,12 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, tryIt = 
     // s2: the route's own-branch row and its place in a feature or chain (read-only, from loaded data).
     branch: (rec && rec.branch) || liveBranch || '',
     group,
+    sliceStatus,
     groupPending: !group && routeGroupsPending(),   // D2: never guess the landing branch before the groups answer
     pr: own, prInput: glancePrInput(rec), prStatus, watch: (rec && rec.watch) || null,
+    prExempt,   // C5: a Verifier's route says why it opens no PR
     mock: !!(rec && rec.mock),
-    canCreatePr: !!rec && histPrEligible(rec) && !(own && open) && !recHasNoRemote(rec),
+    canCreatePr: !!rec && prExempt !== 'verify' && histPrEligible(rec) && !(own && open) && !recHasNoRemote(rec),
     noRemote: !!rec && recHasNoRemote(rec),
     push: !!rec && !!rec.sameAsSource && rec.target !== 'workspace' && rec.mergeBack?.merged === true && !!rec.sourceBranch,
     notMergedBack: !!rec && !!rec.sameAsSource && rec.mergeBack?.merged === false,
@@ -38779,11 +39744,16 @@ function routeGroupsPending() {
   return !state.runGroupsLoaded || !(schedulesView.isLoaded() || routeChainsSettled);
 }
 
-/** Slice 3: the card's status line, head buttons and route. `h`: the page's calls (headHandlers). */
+/** Slice 3: the card's status line, head buttons and route. `h`: the page's calls (headHandlers). The header's state
+ *  line and the card's status block are painted from one model: the line says the state and step, the card the rest. */
 function paintRunHead(screen, f, h) {
   const head = headModel(f);
   const block = screen.querySelector('.rd-sheet .run-status');
-  paintRunStatus(block, head.status ? { ...f.m, ...head.status, lineSaysState: false } : f.m);
+  const m = sliceHeadModel(head.status ? { ...f.m, ...head.status, lineSaysState: false } : f.m, f.sliceStatus);
+  paintRunStatus(block, m, { lead: false });
+  // `screen` is the saved page's glance: the header is the run screen's.
+  const line = screen.closest('.rd, .hd')?.querySelector('.run-state-line');
+  paintStateLine(line, m, { stageBar: stageBarOf(m) });
   const slot = screen.querySelector('.rd-head-acts .rd-pr-slot');
   const c = head.cta;
   if (!c) paintPrCta(slot, { state: 'none' });
@@ -39485,6 +40455,15 @@ function paintRdQuestions(screen, r) {
   // handle.relayout()). Inside a hidden host clientWidth is 0, so the flow would lay
   // out at the 702 default and the ResizeObserver would re-lay it a frame later — a
   // visible flash on top of the wr-rise entry. The card path already un-hides first.
+  // C1 (R-ux-2): with no ask open, the step area draws the Prototype step's working moment (the Chat card's paint).
+  const proto = pq ? null : rdPrototypeWork(r);
+  if (proto && panel) {
+    host.hidden = false;
+    const h0 = host.querySelector('.rd-ask-head');
+    if (h0) h0.textContent = '';
+    paintPrototypeWork(panel, r, proto);
+    return;
+  }
   host.hidden = pq == null;                    // drives the wr-rise entry
   const head = host.querySelector('.rd-ask-head');
   // A step card carries its own head (title + chip): the run page's heading stays empty for it (shaper-cards D16).
@@ -39508,6 +40487,8 @@ function paintRdQuestions(screen, r) {
     // `if (r._answering) return;` and die silently. Re-apply from the model.
     if (r._answering) setPanelBusy(r, true);
   }
+  paintQpanelDeadline(r, host);           // the E2B release time follows state frames, not the rebuild key
+
 }
 
 // Live twin of hdRetainedFor. A run model has no authoritative `retainedWork`
@@ -39596,6 +40577,23 @@ function paintRdBanners(screen, r) {
     const until = new Date(nw.until).toTimeString().slice(0, 5);
     b.textContent = `Waiting for network… ${nw.host} is unreachable. worca checks again with backoff and retries the step by itself (until ${until}).`;
     banners.prepend(b);
+  }
+
+  // ---- files from the sandbox to review before running them here (docs/e2b.md) ----
+  const rv = Array.isArray(r.execEnvReview) ? r.execEnvReview.filter((x) => x && typeof x.path === 'string') : [];
+  const rvKey = rv.map((x) => x.path).join('\n');
+  const oldRv = banners.querySelector('.exec-review-banner');
+  if (oldRv && oldRv.dataset.key !== rvKey) oldRv.remove();
+  if (rv.length && !banners.querySelector('.exec-review-banner')) {
+    const b = document.createElement('div');
+    b.className = 'net-wait-banner exec-review-banner';
+    b.dataset.key = rvKey;
+    const head = document.createElement('p');
+    head.textContent = `The ${execEnvTitle(r.execEnv)} sandbox changed files that run on this machine when someone uses them. Review them before running them here:`;
+    const ul = document.createElement('ul');
+    for (const x of rv) { const li = document.createElement('li'); li.textContent = `${x.path}: ${x.why || ''}`; ul.append(li); }
+    b.append(head, ul);
+    banners.append(b);
   }
 
   // ---- the worktree notice (retained work) and the Actions row ----
@@ -39756,7 +40754,9 @@ function paintRdHeader(screen, r) {
   // Run tags (#718): read-only chips after the person chip, replaced on every paint.
   for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();   // s2: the chips moved to the Cost tags row
   paintRunLabels(screen.querySelector('.rd-glance .rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: r.pipelineId || '', labels: r.labels, onSaved: (l) => { r.labels = l; } });
-  void paintRunPrAuto(screen.querySelector('.rd-glance .rd-kv [data-fact="pr-auto"]'), r.pipelineId, r.status, () => screen.isConnected && runs.get(r.runId) === r);
+  const rdExempt = knownPrExempt(r.pipelineId);
+  void paintRunPrAuto(screen.querySelector('.rd-glance .rd-kv [data-fact="pr-auto"]'), r.pipelineId, r.status, () => screen.isConnected && runs.get(r.runId) === r)
+    .then(() => { if (!rdExempt && knownPrExempt(r.pipelineId) && screen.isConnected && runs.get(r.runId) === r) paintRdHead(screen, r); });   // C5: the route reads it
   paintRunKindChip(screen.querySelector('.rd-page-meta'), workModeOf(r));
   syncFacts(screen.querySelector('.rd-glance .rd-kv'));
 
@@ -39785,6 +40785,9 @@ function paintRdHeader(screen, r) {
     ['rd-cost', runCostText(r, r.totalCostUsd).text + (freeRequestsSuffix(r.steps) || bridgeRequestsSuffix(r.steps)), true],
     ['rd-step', stepText, false],
   ];
+  // Where its agents execute (run-sandbox-note.mjs): a backend, its slot wait or first-use image build, or Local's "not sandboxed".
+  const execSeg = runExecEnvSeg(r, { box: worcaBox(), label: execEnvLabel, titleWithArticle: execEnvTitleWithArticle });
+  if (execSeg) segs.push(execSeg);
   // Rebuilt only when what it says changed. Every frame of every run repaints this header, and a
   // <button> rebuilt between a press and its release loses the click (the two land on different
   // nodes). The elapsed segment changes on every frame, so it is written in place instead (the
@@ -39803,7 +40806,7 @@ function paintRdHeader(screen, r) {
   if (rebuild) segs.forEach(([cls, txt, strong]) => {
     if (!txt) return;
     if (meta.childNodes.length) meta.appendChild(rdDot());
-    const seg = document.createElement('span');
+    const seg = cls.startsWith('rd-exec-env') ? execEnvSegNode(document, execSeg) : document.createElement('span');
     seg.className = cls + (strong ? ' strong' : '');
     seg.textContent = txt;
     if (cls === 'rd-cost' && freeRequestsSuffix(r.steps)) seg.title = estTitle(r.totalCostUsd || 0) + ' Free requests: calls this run made to OpenRouter :free models (every call, tool-loop continuations too), out of the day\'s free allowance.';
@@ -39919,6 +40922,7 @@ function paintRdHeader(screen, r) {
   const resumeAt = screen.querySelector('.rd-resume-at');
   if (resumeMore) {
     resumeMore.hidden = terminal || !paused || !r.pipelineId;
+    keepVisible(resumeMore, !resumeMore.hidden && pauseNeedsModelMenu({ reason: r.pauseReason, limitScope: r.limitScope }));
     if (resumeMore.hidden) {
       const menu = screen.querySelector('.rd-resume-menu');
       if (menu) menu.hidden = true;
@@ -39930,7 +40934,8 @@ function paintRdHeader(screen, r) {
     resumeAt.disabled = refused;
     resumeAt.title = refused ? 'This run paused on a cost cap. Continuing past it is a live decision and cannot be scheduled.' : '';
   }
-  paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine, { reason: r.pauseReason, limitEngine: r.limitEngine });
+  paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine, { reason: r.pauseReason, limitEngine: r.limitEngine,
+    modelConfirm: r.modelConfirm, limitScope: r.limitScope, limitModel: r.limitModel });
   paintRdLimitItem(screen, r);
 
   // Away mode switch: any run that is not over (a paused run stores it in its resume point).
@@ -40174,7 +41179,34 @@ async function loadOnboarding({ recheck = false } = {}) {
   gs.status = data;
   paintOnboarding();
   maybeWelcome();
+  void maybeRoleDefaultsNotice();
   return { ok: true };
+}
+
+/** #1450, shown once: an existing install with an empty Claude Code (or Codex) role learns that its steps now run on
+ *  Worca's defaults instead of the CLI's own. Never over the welcome or the setup assistant, never on a fresh install
+ *  (the assistant preselects the defaults there). A warn toast that stays until closed; roleDefaultsNoticeSeen is
+ *  recorded when it shows. */
+const ROLE_DEFAULTS_NOTICE = "Steps with no model now run on Worca's defaults (Opus 5.5 / Sonnet 5.5 / Haiku 5.5) instead of Claude Code's own default. Pick your own on the Models page, or choose 'Let Claude Code decide'.";
+async function maybeRoleDefaultsNotice() {
+  const s = gs.status;
+  if (!s || s.roleDefaultsNoticeSeen === true || s.fresh === true || gs.roleNoticeShown || setupDialog) return;
+  const welcome = document.getElementById('welcome-modal');
+  if (welcome && !welcome.classList.contains('hidden')) return;
+  let settings = null;
+  try { const res = await fetch('/api/settings'); settings = res.ok ? await safeJson(res) : null; } catch { settings = null; }
+  const defaults = settings && settings.roleDefaults && typeof settings.roleDefaults === 'object' ? settings.roleDefaults : null;
+  if (!defaults || gs.roleNoticeShown) return;
+  const roles = settings.modelRoles && typeof settings.modelRoles === 'object' ? settings.modelRoles : {};
+  const empty = ['claude', 'codex'].some((e) => defaults[e] && Object.keys(defaults[e]).some((r) => {
+    const pick = roles[e]?.[r];
+    return !(pick && (pick.model || pick.cliDecides === true));
+  }));
+  if (!empty) return;
+  gs.roleNoticeShown = true;
+  void setOnboardingPrefs({ roleDefaultsNoticeSeen: true });
+  notify({ tone: 'warn', title: 'Steps now run on Worca’s defaults', detail: ROLE_DEFAULTS_NOTICE, key: 'role-defaults',
+    action: { label: 'Open Models', run: () => { location.hash = 'models/jobs'; } } });
 }
 /** Coalesce the change broadcasts (a finished run fires several) into one refetch. */
 function scheduleOnboardingRefresh() {
@@ -40415,7 +41447,7 @@ const gsRunPageHops = (first) => {
   const on = (sel) => [`#run-detail .rd ${sel}`, ...card];
   const asking = !!document.querySelector('#run-detail .rd .rd-questions:not([hidden])');
   return [
-    { id: 'card', info: true, target: on('.rd-glance .rd-now-top'), text: first },
+    { id: 'card', info: true, target: ['#run-detail .rd .rd-header .run-state-line', ...on('.rd-glance .rd-now-top')], text: first },
     { id: 'facts', info: true, target: on('.rd-glance .rd-facts'),
       text: 'Time, cost and the files it has changed so far, kept current while it works.' },
     asking ? { id: 'ask', info: true, target: on('.rd-questions .rd-ask-head'),
@@ -41106,6 +42138,7 @@ if (typeof window !== 'undefined') {
 let currentSettingsTab = null;
 
 function showView(name, param = '') {
+  if (name !== 'new' || !newPipelinePrefill) state.pinWorkflowId = null;   // U-T4: Run it once's pin lasts only for that New run (a hand-off sets it again)
   // Runs redesign slice 4 (D16): #feature/ID is the group page; a bare #feature goes to Chat.
   if (name === 'feature' && !param) return showView('chat', '');
   if (name === 'group' && !param) return showView('runs', '');
@@ -41250,15 +42283,7 @@ function showView(name, param = '') {
   refreshAllCounts();        // every view switch re-reads the authoritative counts
 
   views.forEach((v) => v.classList.toggle('hidden', v.dataset.view !== viewSection(name)));
-  // A new design opens on the Chat page (#chat/new/design) but is the sidebar's Design: that row is lit, not Chat's.
-  const navSection = name === 'chat' && /^new\/design(?:\/|$)/.test(String(param || '')) ? 'design' : viewSection(name);
-  navLinks.forEach((b) => {
-    const on = b.dataset.nav === navSection;
-    b.classList.toggle('active', on);
-    if (on) b.setAttribute('aria-current', 'page');
-    else b.removeAttribute('aria-current');
-  });
-  paintTopnavTitle(navSection === 'design' ? 'design' : name);
+  paintNav(name, param);
   howItWorks.syncRoute(name);
   setMobileNavOpen(false);   // any route (a drawer tap, back/forward, a deep link) puts the drawer away
   // Any route puts the Actions flyout away (a click inside it already did).
@@ -41708,13 +42733,39 @@ onLevelChange(() => paintHiddenSettings());
 onLevelChange(() => repaintOpenRunGroupLine());               // the Group row's "Add to group…" is Advanced (D18)
 onLevelChange(() => scheduleGroupPagePaint());                // the group page's Logs tab is Expert
 onLevelChange(() => paintShelf());
-onLevelChange(() => reselectHiddenDetailTabs());
+onLevelChange(() => { reselectHiddenDetailTabs(); relayoutDetailTabs(); });
 onLevelChange(() => {                                       // node decorations are expert detail
   for (const host of $$('.run-flow.gv-host')) { const slot = GRAPH_MOUNTS.get(host); if (slot && slot.m.repaint) slot.m.repaint(); }
 });                          // tiles above the mode wear their level
-onGitFlip((on) => { paintFormWorkMode(); reselectHiddenDetailTabs(); refreshHdFromRow(); { const hs = histDetailState; if (hs && hs.screen && hs.data && hs.record) void paintHdPublish(hs.screen, hs.record, hs.data); } { const r = rdOpenRun(); if (r && runDetailState && runDetailState.screen) repaintRunDetail(r); } const v = currentView(); if (on && (v === 'projects' || v === 'workspaces')) void refreshSyncChips(); if (!on && v === 'workspaces') for (const item of document.querySelectorAll('.ws-item[data-workspace-id]')) paintWsSyncItem(item); if (on && v === 'new' && state.runTarget !== 'workspace') void refreshBranches(selectedProjectPath()); if (!on && projAddMode === 'clone' && !cloneFollow) setProjAddMode('folder'); if (!on && projFilter !== 'all') { projFilter = 'all'; paintProjFilters(); } });
+onGitFlip((on) => { paintFormWorkMode(); reselectHiddenDetailTabs(); relayoutDetailTabs(); refreshHdFromRow(); { const hs = histDetailState; if (hs && hs.screen && hs.data && hs.record) void paintHdPublish(hs.screen, hs.record, hs.data); } { const r = rdOpenRun(); if (r && runDetailState && runDetailState.screen) repaintRunDetail(r); } const v = currentView(); if (on && (v === 'projects' || v === 'workspaces')) void refreshSyncChips(); if (!on && v === 'workspaces') for (const item of document.querySelectorAll('.ws-item[data-workspace-id]')) paintWsSyncItem(item); if (on && v === 'new' && state.runTarget !== 'workspace') void refreshBranches(selectedProjectPath()); if (!on && projAddMode === 'clone' && !cloneFollow) setProjAddMode('folder'); if (!on && projFilter !== 'all') { projFilter = 'all'; paintProjFilters(); } });
 for (const t of ['input', 'change', 'click']) {
   document.getElementById('run-form')?.addEventListener(t, () => setTimeout(paintHiddenSettings, 0));
+}
+
+/** The sidebar row a route lights. A design lives on the Chat page but is the sidebar's Design: a new design's start
+ *  (#chat/new/design) and a chat whose design is on screen light Design and title the page Design, not Chat. */
+function navSectionOf(name, param) {
+  if (name !== 'chat') return viewSection(name);
+  const p = String(param || '');
+  if (/^new\/design(?:\/|$)/.test(p)) return 'design';
+  const thread = p.split('/')[0];
+  // A design chat still loading reads its chats-list row, so Design stays lit from one design chat to the next.
+  return thread && (designStudio?.threadId === thread || askPanel?.designChatLoading(thread)) ? 'design' : 'chat';
+}
+function paintNav(name, param) {
+  const navSection = navSectionOf(name, param);
+  askPanel?.setListDesigns(name === 'chat' && navSection === 'design');   // beside Design, the chats list holds design chats only
+  navLinks.forEach((b) => {
+    const on = b.dataset.nav === navSection;
+    b.classList.toggle('active', on);
+    if (on) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
+  paintTopnavTitle(navSection === 'design' ? 'design' : name);
+}
+/** A design chat's design mounted or left after the route painted (the chat loads first): light the row again. */
+function repaintChatNav() {
+  if (currentShownView === 'chat') paintNav('chat', parseHash()[1]);
 }
 
 // Nav clicks only update the hash; the single hashchange listener drives
@@ -41737,7 +42788,9 @@ navLinks.forEach((b) =>
   b.id = 'runs-new';
   b.dataset.minLevel = 'simple';
   b.innerHTML = iconSvg('run', 14);
-  b.append('New run');
+  b.append('New');
+  b.setAttribute('aria-label', 'New run');
+  b.title = 'New run';
   $('#runs-new-slot')?.replaceChildren(b);
 }
 $('#runs-new')?.addEventListener('click', () => {
@@ -41932,13 +42985,14 @@ function enterChatView(param = '', prevView = null) {
 /** The panel moved to another chat (a History row, New chat, a first send, a deleted chat): the address follows —
  *  pushed, so Back returns to the previous chat, or swapped (`replace`: a first send, a chat that is gone). Only
  *  while Chat shows; the echo (hashchange → enterChatView → open) is a no-op for the chat already shown. */
-function chatRoute(threadId, { replace = false } = {}) {
+function chatRoute(threadId, { replace = false, design = false } = {}) {
   if (currentShownView !== 'chat') return;
   // A swapped address keeps an open run panel's tail (P4): #chat/new/run/<id>/logs → #chat/<id>/run/<id>/logs.
   const [, cur] = parseHash();
   const parts = String(cur || '').split('/');
   const tail = replace && parts[1] === 'run' ? `/${parts.slice(1).join('/')}` : '';
-  const target = threadId ? `chat/${threadId}${tail}` : (tail ? `chat/new${tail}` : 'chat');
+  // design: a new design's start (the chats list's New beside Design), as the sidebar's Design opens it.
+  const target = design ? 'chat/new/design' : threadId ? `chat/${threadId}${tail}` : (tail ? `chat/new${tail}` : 'chat');
   if (location.hash.slice(1) === target) return;
   if (replace) {
     try { window.history.replaceState(null, '', `#${target}`); } catch { /* sandboxed */ }
@@ -42256,7 +43310,8 @@ async function applyAskPrefill() {
   if (!p) return;
   const visit = newFormVisit;   // a rerun hold belongs to this visit of the form only
   newPipelinePrefill = null;
-  setRunTarget(p.target === 'workspace' ? 'workspace' : p.target === 'none' ? 'none' : 'project');
+  state.pinWorkflowId = p.pinWorkflow ? p.workflowId : null;
+  const targetLoad = setRunTarget(p.target === 'workspace' ? 'workspace' : p.target === 'none' ? 'none' : 'project');
   // The card's engine pick (none: the defaults the project change loads decide). Touched, so they keep off it.
   if (p.engine) { state.engineTouched = true; setRunEngine(p.engine); }
   // pick the source from the prefill (a Markdown handoff, else the prompt) — the three-step reset of the segment handler
@@ -42289,7 +43344,9 @@ async function applyAskPrefill() {
     else if (p.rerun) el.projectSelect.selectedIndex = 0;
     // AWAITED: onProjectChanged → loadConfig → loadWorkflowsInto/loadGuardrailsInto — un-awaited, that tail lands after our own awaits and resets both pickers.
     await onProjectChanged();
-  }
+  } else if (p.pinWorkflow) await targetLoad;   // U-T4: its config tail must land before the chosen workflow is set
+  // The card's Runs in pick, AFTER the target change (it clears the touched flag); touched, so the defaults keep off it.
+  if (p.execEnv) { state.execEnvTouched = true; setRunExecEnv(p.execEnv); }
   el.prompt.value = src === 'prompt' ? (p.prompt || '') : '';
   if (el.promptMarkdown) el.promptMarkdown.value = src === 'markdown' ? p.promptMarkdown : el.promptMarkdown.value;
   refreshMentionHighlights();
@@ -43559,6 +44616,7 @@ Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).th
   paintKeepAwakeRow(!(d && d.keepAwake === false));
   setChatLinksPref(!(d && d.chatLinksInPanel === false));
   setPreviewPortGate(d);
+  if (setWorcaBox(d && d.box)) paintRunExecEnv();   // New run's "not sandboxed" note needs the box
   paintMemoryModelLink(d);
   paintScreensaver(d && d.screensaver);
 }).catch(() => { setChatLinksPref(true); /* null (not read yet) already counts as on; this marks the setting read */ });
@@ -43862,6 +44920,8 @@ async function exportApply(id, opts) { return exportCall(id, opts); }
 // plan invalidation, close and open; a Preview answer that lands after a bump is for a dialog that no longer exists.
 const exportModalState = { item: null, format: 'json', destination: 'global', pluginDest: 'folder', targets: null, skipped: [], targetsLoad: null, busy: false, conflicts: [], planned: false, seq: 0 };
 const exportModalHidden = () => { const m = document.getElementById('export-modal'); return !m || m.classList.contains('hidden'); };
+const exportUse = createExportUse({ doc: document, readVersions: (id) => gvApi.versionsRead(id), modalHidden: exportModalHidden,   // D17: the Version field
+  guard: () => exportGuard, syncButtons: () => exportSyncMarketplaceButtons() });
 // Set by bindExportModal. A form: a backdrop click never closes it; Escape asks once a choice changed; while
 // a Preview or an Export is out, Cancel and Escape wait for its answer.
 let exportGuard = null;
@@ -43879,6 +44939,7 @@ function openExportModal(item) {
   exportModalState.skipped = [];
   exportModalState.conflicts = [];
   exportModalState.planned = false;
+  exportUse.open(item);
   document.getElementById('export-draft').checked = false;   // draft is opt-in per export, never remembered
   exportSetBusy(false);
   document.getElementById('export-slug').value = '';
@@ -43894,11 +44955,13 @@ function openExportModal(item) {
   exportSyncSlugPreview();
   modal.classList.remove('hidden');
   exportGuard?.opened();
+  exportUse.opened(item.id);
 }
 function closeExportModal() {
   const modal = document.getElementById('export-modal');
   if (modal) modal.classList.add('hidden');
   exportModalState.seq++;                                 // a Preview still in flight has no dialog to land in
+  exportUse.close();
   exportSetDone(false);
 }
 /** Swap the form for the result view (or back). The dialog stays open so the
@@ -43975,6 +45038,7 @@ function exportSyncFormat() {
   const apply = document.getElementById('export-apply-btn');
   apply.textContent = json ? 'Download' : market ? CREATE_PR_LABEL : 'Export';
   apply.disabled = false;
+  exportUse.hold();
   const name = exportModalState.item ? exportModalState.item.name : '';
   document.getElementById('export-subtitle').textContent = json
     ? `Download "${name}" as a JSON file another Worca user can import.`
@@ -44034,9 +45098,10 @@ async function exportFetchTargets() {
   } catch (err) { return { error: err && err.message ? err.message : String(err) }; }
 }
 function exportSyncMarketplaceButtons(n = (exportModalState.targets || []).length) {
-  if (!exportIsMarketplace()) return;
+  if (!exportIsMarketplace()) { exportUse.hold(); return; }
   syncMarketplaceButtons({ plan: document.getElementById('export-plan-btn'), apply: document.getElementById('export-apply-btn') },
     { busy: exportModalState.busy, targets: n });
+  exportUse.hold();
 }
 /** A Preview or an Export starts (`busy`) or ends: Cancel is off while it runs (the guard holds Escape too). For a
  *  marketplace request both action buttons are off as well, then back by the dialog's rule
@@ -44046,7 +45111,7 @@ function exportSyncMarketplaceButtons(n = (exportModalState.targets || []).lengt
 function exportSetBusy(busy) {
   exportModalState.busy = busy;
   document.getElementById('export-cancel').disabled = busy;
-  for (const id of ['export-plugin-name', 'export-marketplace', 'export-draft']) document.getElementById(id).disabled = busy;
+  for (const id of ['export-plugin-name', 'export-marketplace', 'export-draft', 'export-use']) document.getElementById(id).disabled = busy;
   if (busy) {
     if (!exportIsMarketplace()) return;
     document.getElementById('export-plan-btn').disabled = true;
@@ -44083,7 +45148,8 @@ function exportSyncSlugPreview() {
   const el = document.getElementById('export-slug-preview');
   el.textContent = valid ? `Command: ${preview}` : 'Invalid slug (letters, digits, . _ - only)';
 }
-function exportBuildOpts() {
+function exportBuildOpts() { return exportUse.withUse(exportBuildFormatOpts()); }   // + `use` while the Version field shows (D17)
+function exportBuildFormatOpts() {
   const dest = exportModalState.destination;
   if (exportModalState.format === 'plugin') {
     if (exportModalState.pluginDest === 'marketplace') {
@@ -44170,6 +45236,7 @@ function exportUpdateApplyEnabled() {
   const resolutions = exportGatherResolutions();
   const allResolved = exportModalState.conflicts.every((cf) => resolutions[cf.path]);
   document.getElementById('export-apply-btn').disabled = !allResolved;
+  exportUse.hold();
 }
 // A plan is keyed to the slug/destination/include-agents/folder in effect when Plan ran.
 // If any of those change afterward, the shown plan (and its gathered resolutions) no longer
@@ -44207,6 +45274,7 @@ function bindExportModal() {
   document.getElementById('export-plugin-name').addEventListener('input', () => { exportSyncPluginNamePreview(); exportInvalidatePlan(); });
   document.getElementById('export-folder').addEventListener('input', () => { if (exportModalState.format === 'plugin') exportSyncPluginNamePreview(); });
   document.getElementById('export-keep-version').addEventListener('change', exportInvalidatePlan);
+  exportUse.bind(exportInvalidatePlan);   // the Version field (D17)
   // Browse…: the native OS folder dialog (the server opens it — a web page never
   // learns an absolute path from its own file picker), exactly like Add Project;
   // the in-app browser is the fallback when the native one is unsupported.
@@ -44227,6 +45295,7 @@ function bindExportModal() {
   // marketplace, a switched destination, a close) and the inputs still build the body that was sent. A
   // marketplace plan has no `created` list, so rendering it after a switch to Local folder would also throw.
   document.getElementById('export-plan-btn').addEventListener('click', async () => {
+    if (exportUse.loading()) return;                       // a synthetic click reaches a disabled button too
     const market = exportIsMarketplace();
     const nameProblem = market ? marketplaceNameProblem(exportPluginName()) : '';
     if (nameProblem) { exportSay(nameProblem, true); return; }
@@ -44257,10 +45326,11 @@ function bindExportModal() {
   // itself first; a conflict (only the skill format can raise one) stops it and is
   // shown for per-file resolution — nothing is ever written past an unresolved one.
   document.getElementById('export-apply-btn').addEventListener('click', async () => {
+    if (exportUse.loading()) return;                       // the default version is not known yet (D17)
     if (exportModalState.format === 'json') {
       // A plain download of the stored graph — the server sets Content-Disposition.
       const a = document.createElement('a');
-      a.href = `/api/workflows/${encodeURIComponent(exportModalState.item.id)}/json`;
+      a.href = exportUse.jsonUrl(`/api/workflows/${encodeURIComponent(exportModalState.item.id)}/json`);   // or of the version picked (D17)
       a.setAttribute('download', '');
       document.body.appendChild(a);
       a.click();
@@ -44296,17 +45366,17 @@ function bindExportModal() {
     }
     exportSetBusy(true);
     exportSay('Exporting…');
+    const opts = exportBuildOpts();                        // ONE body per click: the dry run and the write agree
     try {
       if (!exportModalState.planned) {
-        const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
+        const plan = await exportPlan(exportModalState.item.id, opts);
         if ((plan.conflicts || []).length) {
           exportRenderPlan(plan);
           exportSay('Resolve each conflict below, then Export.');
           return;
         }
       }
-      const opts = { ...exportBuildOpts(), resolutions: exportGatherResolutions() };
-      const applied = await exportApply(exportModalState.item.id, opts);
+      const applied = await exportApply(exportModalState.item.id, { ...opts, resolutions: exportGatherResolutions() });
       // A conflict Apply left UNWRITTEN (e.g. a TOCTOU conflict between Plan and Apply that
       // had no resolution and fell to the blanket skip) is a stale partial export — re-render
       // the fresh plan so the user can resolve it, and keep the modal open.

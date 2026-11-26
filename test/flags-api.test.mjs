@@ -131,13 +131,15 @@ test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame, hello an
     await checkRows([
       { name: 'hello carries flags', run: async () => {
         await waitFor(() => msgs.some((m) => m.type === 'hello'));
-        assert.deepEqual(msgs.find((m) => m.type === 'hello').flags, { flagsDemo: false, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false, design: true, toolPanel: false });
+        assert.deepEqual(msgs.find((m) => m.type === 'hello').flags, { flagsDemo: false, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, workflowTests: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false, design: true, toolPanel: false, shaperSmallRuns: false });
       } },
       { name: 'GET /api/flags: the documented shape, plus docsUrl', run: async () => {
         const j = await (await fetch(`${base}/api/flags`)).json();
         const row = j.flags.find((f) => f.key === 'flagsDemo');
         assert.deepEqual(Object.keys(row).sort(), ['description', 'docs', 'docsUrl', 'key', 'locked', 'on', 'requires', 'source', 'stage', 'title']);
         assert.deepEqual([row.on, row.source, row.locked], [false, 'default', false]);
+        const small = j.flags.find((f) => f.key === 'shaperSmallRuns');
+        assert.deepEqual([small?.stage, small?.on, small?.source], ['experimental', false, 'default']);
       } },
       { name: 'PATCH true stores it, answers the GET shape and broadcasts one flags frame', run: async () => {
         const r = await patch({ flagsDemo: true });
@@ -145,7 +147,7 @@ test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame, hello an
         assert.equal((await r.json()).flags.find((f) => f.key === 'flagsDemo').on, true);
         assert.deepEqual(await stored(), { flagsDemo: true });
         await waitFor(() => msgs.some((m) => m.type === 'flags'));
-        assert.deepEqual(msgs.filter((m) => m.type === 'flags').at(-1), { type: 'flags', flags: { flagsDemo: true, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false, design: true, toolPanel: false } });
+        assert.deepEqual(msgs.filter((m) => m.type === 'flags').at(-1), { type: 'flags', flags: { flagsDemo: true, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, workflowTests: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false, design: true, toolPanel: false, shaperSmallRuns: false } });
         assert.match(await (await fetch(`${base}/`)).text(), /data-flags="flagsDemo commandSummaries design"/);
         assert.equal((await (await fetch(`${base}/api/settings`)).json()).flags.flagsDemo, true);
       } },

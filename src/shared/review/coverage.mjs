@@ -53,11 +53,36 @@ const checkOf = (items, extra = {}) => {
   return { ok: passed === items.length, passed, total: items.length, items, ...extra };
 };
 
+const EXAMPLE_RE = /^\s+Example:\s*(.*)$/;
+
+/** Each criterion's example: the indented `  Example: …` line directly under its item line (outside fences), or null.
+ *  The first of two duplicate ids wins, as in criteriaList. */
+export function criteriaExamples(markdown) {
+  const out = new Map();
+  let current = null;                                   // the id whose item line came just before
+  for (const line of walk(markdown)) {
+    const m = ITEM_RE.exec(line);
+    const id = m && (m[1] || m[2]);
+    if (id && CRITERION_ID_RE.test(id)) {
+      current = out.has(id) ? null : id;
+      if (current) out.set(id, null);
+      continue;
+    }
+    const ex = current ? EXAMPLE_RE.exec(line) : null;
+    if (ex && oneLine(ex[1])) out.set(current, oneLine(ex[1]));
+    current = null;
+  }
+  return out;
+}
+
 /** A requirements file's own check: a row per criterion, plus a failing row per agreed id it lost, per repeated id
- *  and per criterion past the 6th of one perspective. */
-export function criteriaCheck(markdown, { agreed = [] } = {}) {
+ *  and per criterion past the 6th of one perspective. `requireExamples` (small runs B3): every item carries its
+ *  `example`, and each criterion without one adds a failing `no-example` row. */
+export function criteriaCheck(markdown, { agreed = [], requireExamples = false } = {}) {
   const criteria = criteriaList(markdown);
-  const items = criteria.map((c) => ({ id: c.id, label: c.text ? `${c.id} · ${c.text}` : c.id, pass: true }));
+  const examples = requireExamples ? criteriaExamples(markdown) : null;
+  const items = criteria.map((c) => ({ id: c.id, label: c.text ? `${c.id} · ${c.text}` : c.id, pass: true,
+    ...(examples ? { example: examples.get(c.id) ?? null } : {}) }));
   const have = new Set(criteria.map((c) => c.id));
   for (const id of agreed) if (!have.has(id)) items.push({ id, label: `${id} · agreed in the spec but missing`, pass: false });
   const counted = new Set();
@@ -73,6 +98,11 @@ export function criteriaCheck(markdown, { agreed = [] } = {}) {
     const n = (perPrefix.get(prefixOf(c.id)) || 0) + 1;
     perPrefix.set(prefixOf(c.id), n);
     if (n > CRITERIA_MAX_PER_PREFIX) items.push({ id: c.id, label: `${c.id} · more than ${CRITERIA_MAX_PER_PREFIX} for one perspective`, pass: false });
+  }
+  if (examples) {
+    for (const c of criteria) {
+      if (!examples.get(c.id)) items.push({ id: c.id, label: c.text ? `${c.id} · ${c.text}` : c.id, pass: false, code: 'no-example', detail: 'no example yet' });
+    }
   }
   return checkOf(items, { criteria });
 }

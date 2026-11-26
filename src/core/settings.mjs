@@ -52,7 +52,8 @@
 // is deliberately no in-module cache: worcaHome() is read fresh per operation,
 // so a saved root takes effect for new runs/listing without a server restart.
 
-import { isAnswererLead, ANSWERER_LEAD_KEYS } from '../shared/answerer.mjs';
+import { isAnswererLead, answererLeadKeys } from '../shared/answerer.mjs';
+import { CHAT_SOURCE_BRANCH_MODES, SOURCE_BRANCH_TEXT, normalizeChatSourceBranch } from '../shared/chat-source-branch.mjs';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { suggestModelHandle } from '../shared/connections.mjs';
 export { suggestModelHandle };
@@ -75,6 +76,9 @@ import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
 import { normaliseDimensions } from '../shared/tag-dimensions.mjs';
 import { isGuideAreaId } from '../shared/how-it-works/areas.mjs';
+import { isExecEnvName, execEnvNames } from './exec-env/index.mjs';
+import { DEFAULT_E2B_MAX_SANDBOXES, DEFAULT_E2B_MAX_WAIT_MIN } from './exec-env/e2b-config.mjs';
+import { DEFAULT_DOCKER_MAX_SANDBOXES, DEFAULT_DOCKER_MAX_WAIT_MIN, sandboxResources } from './exec-env/backends/docker.mjs';
 import { normalizePins, storedPins } from '../shared/home-pins.mjs';
 import { DEFAULT_PATTERN, DEFAULT_TYPES, TYPE_RE, patternProblem } from '../shared/naming/pattern.mjs';
 import { IMAGE_SERVICES, IMAGE_SHAPES, originOf } from '../shared/image-services.mjs';
@@ -1120,16 +1124,23 @@ export function chatPrefs() {
   }
   // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
   // `summariseCommands` (#911, flag commandSummaries): chat commands as one-line rows — default ON.
+  // `sourceBranch`: "Chat runs: source branch", normalised for display (the gate reads the cascade, not this).
   return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false,
-    summariseCommands: chat.summariseCommands !== false };
+    summariseCommands: chat.summariseCommands !== false, sourceBranch: normalizeChatSourceBranch(chat.sourceBranch) };
+}
+
+/** "Chat runs: source branch" input: one of the modes, or null (back to the default). Throws the shared sentence. */
+export function assertChatSourceBranchInput(value) {
+  if (value !== null && !CHAT_SOURCE_BRANCH_MODES.includes(value)) throw new Error(SOURCE_BRANCH_TEXT.invalid);
+  return value;
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?, away?},
  * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean,
- * summariseCommands?: boolean}.
+ * summariseCommands?: boolean, sourceBranch?: 'current'|'ask'|'require'|null}.
  * Unknown notify keys and a non-boolean scriptTools / suggestions / summariseCommands are rejected (400 at the API layer);
- * channels merge per key.
+ * channels merge per key. A null sourceBranch deletes it (back to 'ask'); any other value outside the modes throws.
  */
 export async function setChatPrefs(patch = {}) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('chat prefs must be an object');
@@ -1142,6 +1153,8 @@ export async function setChatPrefs(patch = {}) {
   if (hasSuggestions && typeof patch.suggestions !== 'boolean') throw new Error('chat suggestions must be true or false');
   const hasSummaries = Object.prototype.hasOwnProperty.call(patch, 'summariseCommands');
   if (hasSummaries && typeof patch.summariseCommands !== 'boolean') throw new Error('chat summariseCommands must be true or false');
+  const hasSourceBranch = Object.prototype.hasOwnProperty.call(patch, 'sourceBranch');
+  if (hasSourceBranch) assertChatSourceBranchInput(patch.sourceBranch);
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -1156,7 +1169,9 @@ export async function setChatPrefs(patch = {}) {
     ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
     ...(hasSuggestions ? { suggestions: patch.suggestions } : {}),
     ...(hasSummaries ? { summariseCommands: patch.summariseCommands } : {}),
+    ...(hasSourceBranch && patch.sourceBranch !== null ? { sourceBranch: patch.sourceBranch } : {}),
   };
+  if (hasSourceBranch && patch.sourceBranch === null) delete settings.chat.sourceBranch;
   await persistSettings(settings);
   return chatPrefs();
 }
@@ -1312,6 +1327,8 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'runEngine', 'stepModels', 'utilityModels',
   'modelRoles',                              // Models › Jobs › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
   'requirementsInterview',                  // Models › Jobs › Helper jobs: the requirements interview { model, effort }
+  'execEnv', 'e2bMaxSandboxes', 'e2bMaxWaitMin', // the execution environment (docs/e2b.md)
+  'dockerMaxSandboxes', 'dockerMaxWaitMin', 'dockerSandbox', // the Local sandbox (Docker) backend (docs/local-sandbox.md)
   'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
   'designModels',                            // Models › Jobs › Design: { <engine>: { lead|builder: { model, effort } } }
   'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
@@ -1467,6 +1484,111 @@ export async function setRunEngineSetting(input) {
   await persistSettings(settings);
   return { runEngine: runEngineSetting() ?? null };
 }
+
+// ── Execution environment (plans/e2b-execution-design.md §12) ────────────────
+// `execEnv` is the user default of the `run.execEnv` cascade (local | a registered backend); the two integers
+// size the e2b mode: sandboxes at once (the capacity queue) and the wait for an answer.
+export function execEnvSetting() {
+  if (homeGuarded()) return undefined;
+  const value = readSettings().execEnv;
+  return value === null ? undefined : value;
+}
+export function assertExecEnvInput(input) {
+  if (isClearInput(input)) return null;
+  if (!isExecEnvName(input)) throw new Error(`execEnv must be one of ${execEnvNames().join(' | ')}`);
+  return input;
+}
+export async function setExecEnvSetting(input) {
+  const value = assertExecEnvInput(input);
+  const settings = readSettings();
+  if (value === null) delete settings.execEnv; else settings.execEnv = value;
+  await persistSettings(settings);
+  return { execEnv: execEnvSetting() ?? null };
+}
+
+const E2B_INTS = {
+  e2bMaxSandboxes: { valid: (v) => Number.isSafeInteger(v) && v >= 1 && v <= 64, range: '1–64', def: DEFAULT_E2B_MAX_SANDBOXES },
+  e2bMaxWaitMin: { valid: (v) => Number.isSafeInteger(v) && v >= 5 && v <= 1440, range: '5–1440', def: DEFAULT_E2B_MAX_WAIT_MIN },
+  // The Local sandbox (Docker) backend's limitSettings (docs/local-sandbox.md): settings.json only.
+  dockerMaxSandboxes: { valid: (v) => Number.isSafeInteger(v) && v >= 1 && v <= 64, range: '1–64', def: DEFAULT_DOCKER_MAX_SANDBOXES },
+  dockerMaxWaitMin: { valid: (v) => Number.isSafeInteger(v) && v >= 5 && v <= 1440, range: '5–1440', def: DEFAULT_DOCKER_MAX_WAIT_MIN },
+};
+/** The stored value or null (GET: an unset field stays empty and shows the default as its placeholder). */
+export function e2bIntSettingRaw(key) {
+  if (homeGuarded()) return null;
+  const v = readSettings()[key];
+  return E2B_INTS[key].valid(v) ? v : null;
+}
+/** The effective value (runtime). An invalid stored value warns and falls back to the default. */
+function e2bInt(key) {
+  const { valid, def } = E2B_INTS[key];
+  if (homeGuarded()) return def;
+  const v = readSettings()[key];
+  if (v === undefined || v === null) return def;
+  if (!valid(v)) { console.warn(`[worca] settings: ignoring invalid ${key} ${JSON.stringify(v)}; using ${def}`); return def; }
+  return v;
+}
+export const e2bMaxSandboxes = () => e2bInt('e2bMaxSandboxes');
+export const e2bMaxWaitMin = () => e2bInt('e2bMaxWaitMin');
+/** A backend's integer limit by its settings key (exec-env backend `limitSettings`); undefined for a
+ *  key this build has no setting for, so the backend's own capability default applies. */
+export function execEnvLimitSetting(key) { return Object.hasOwn(E2B_INTS, key) ? e2bInt(key) : undefined; }
+/** maxConcurrent | maxWaitMin of an exec-env backend: its user setting, else its capability default. */
+export function execEnvLimit(backend, which) {
+  const key = backend.limitSettings?.[which];
+  const v = key ? execEnvLimitSetting(key) : undefined;
+  return v ?? (which === 'maxConcurrent' ? backend.capabilities.defaultMaxConcurrent : backend.capabilities.defaultMaxWaitMin);
+}
+export function assertE2bIntInput(key, input) {
+  if (isClearInput(input)) return null;
+  if (!E2B_INTS[key].valid(input)) throw new Error(`${key} must be a whole number in ${E2B_INTS[key].range}`);
+  return input;
+}
+export async function setE2bIntSetting(key, input) {
+  const value = assertE2bIntInput(key, input);
+  const settings = readSettings();
+  if (value === null) delete settings[key]; else settings[key] = value;
+  await persistSettings(settings);
+  return { [key]: e2bIntSettingRaw(key) };
+}
+// The Local sandbox (Docker) container's limits (docs/local-sandbox.md): { memory, cpus, pids, runtime }, each optional.
+// sandboxResources (backends/docker.mjs) is the one check; here an invalid field is refused instead of falling back.
+const DOCKER_SANDBOX_KEYS = ['memory', 'cpus', 'pids', 'runtime'];
+const DOCKER_SANDBOX_LABELS = { memory: 'Memory per sandbox', cpus: 'CPUs per sandbox', pids: 'Processes per sandbox', runtime: 'Container runtime' };
+/** The stored dockerSandbox (only the fields set), or null. */
+export function dockerSandboxSettingRaw() {
+  if (homeGuarded()) return null;
+  const v = readSettings().dockerSandbox;
+  if (!isObj(v)) return null;
+  const out = Object.fromEntries(DOCKER_SANDBOX_KEYS.filter((k) => v[k] !== undefined && v[k] !== null && v[k] !== '').map((k) => [k, v[k]]));
+  return Object.keys(out).length ? out : null;
+}
+export function assertDockerSandboxInput(input) {
+  if (isClearInput(input)) return null;
+  if (!isObj(input)) throw new Error('dockerSandbox must be { memory, cpus, pids, runtime }');
+  const unknown = Object.keys(input).filter((k) => !DOCKER_SANDBOX_KEYS.includes(k));
+  if (unknown.length) throw new Error(`dockerSandbox: unknown field ${unknown[0]} (known: ${DOCKER_SANDBOX_KEYS.join(', ')})`);
+  const out = Object.fromEntries(DOCKER_SANDBOX_KEYS.filter((k) => !isClearInput(input[k])).map((k) => [k, input[k]]));
+  const { warnings } = sandboxResources(out);
+  const m = warnings.length ? /dockerSandbox\.(\w+): (.*?); using/.exec(warnings[0]) : null;
+  if (m) throw new Error(`${DOCKER_SANDBOX_LABELS[m[1]] || m[1]} ${m[2]}`);
+  return Object.keys(out).length ? out : null;
+}
+export async function setDockerSandboxSetting(input) {
+  const value = assertDockerSandboxInput(input);
+  const settings = readSettings();
+  if (value === null) delete settings.dockerSandbox; else settings.dockerSandbox = value;
+  await persistSettings(settings);
+  return { dockerSandbox: dockerSandboxSettingRaw() };
+}
+/** The execution environment's PATCH /api/config keys beside execEnv: the backends' limits and the Docker container's. */
+export const EXEC_ENV_SETTING_KEYS = Object.freeze([...Object.keys(E2B_INTS), 'dockerSandbox']);
+export function assertExecEnvSettingInput(key, input) {
+  return key === 'dockerSandbox' ? assertDockerSandboxInput(input) : assertE2bIntInput(key, input);
+}
+export function setExecEnvSettingKey(key, input) {
+  return key === 'dockerSandbox' ? setDockerSandboxSetting(input) : setE2bIntSetting(key, input);
+}
 const ROLE_KEY_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export function assertStepModelsInput(input) {
   if (!isObj(input)) throw new Error('stepModels must be { <engine>: { <role>: { model, effort } | null } }');
@@ -1503,6 +1625,11 @@ export function modelRolesSetting() {
 export function normalizeRolePair(input, label = 'role') {
   if (input === null || input === undefined || input === '') return null;
   if (!isObj(input)) throw new Error(`${label} must be { model, effort } or null`);
+  // "Let <tool> decide" (#1450): exactly { cliDecides: true }, distinct from an empty role.
+  if (input.cliDecides === true) {
+    if (Object.keys(input).length !== 1) throw new Error(`${label}: cliDecides takes no model or effort`);
+    return { cliDecides: true };
+  }
   for (const key of Object.keys(input)) if (key !== 'model' && key !== 'effort') throw new Error(`${label}: unknown field "${key}"`);
   const model = typeof input.model === 'string' ? input.model.trim() : '';
   const effort = typeof input.effort === 'string' ? input.effort.trim() : '';
@@ -1572,6 +1699,11 @@ export async function setUtilityModels(input) {
 export function normalizeModelPair(engine, input, label = 'model') {
   if (input === null || input === undefined || input === '') return null;
   if (!isObj(input)) throw new Error(`${label} must be { model, effort } or null`);
+  // "Let <tool> decide" (#1450): exactly { cliDecides: true }, distinct from an empty role.
+  if (input.cliDecides === true) {
+    if (Object.keys(input).length !== 1) throw new Error(`${label}: cliDecides takes no model or effort`);
+    return { cliDecides: true };
+  }
   for (const key of Object.keys(input)) if (key !== 'model' && key !== 'effort') throw new Error(`${label}: unknown field "${key}"`);
   const model = input.model == null ? '' : (typeof input.model === 'string' ? input.model.trim() : null);
   if (model === null || model.length > MODEL_PAIR_MAX_LEN) throw new Error(`${label}.model must be a model id`);
@@ -1593,6 +1725,7 @@ export const SETTING_CHECKS = Object.freeze({
   stringArray: (value) => Array.isArray(value) && value.every((item) => typeof item === 'string'),
   toolMap: (value) => !!value && typeof value === 'object' && !Array.isArray(value)
     && Object.values(value).every((v) => v === 'used' || v === 'unused'),
+  execEnv: (value) => isExecEnvName(value),
 });
 /** Check ids the project's readiness report skips (project layer only — no user inheritance). Unknown ids are kept. */
 export function readinessIgnore(scope) {
@@ -3261,11 +3394,12 @@ export async function writeStoredFlags(map) {
 // flag, cleared when the last workspace is deleted. `setupFinished` records that the
 // Setup Assistant was completed (install-wide, like the setup); `setupChecked` is the
 // boot marker that credits an install that predates it exactly once
-// (onboarding.mjs#ensureSetupMarker). `guidesSeen` maps a how-it-works area id
+// (onboarding.mjs#ensureSetupMarker). `roleDefaultsNoticeSeen` is #1450's one-time
+// notice about Worca's role defaults. `guidesSeen` maps a how-it-works area id
 // (src/shared/how-it-works/areas.mjs) to true once that area's guide has been opened;
 // `guidesReset` is a write-only command that clears the map and workspaceGuideSeen.
 // All absent = all false and an empty map.
-const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'setupFinished', 'setupChecked']);
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'setupFinished', 'setupChecked', 'roleDefaultsNoticeSeen']);
 const ONBOARDING_KEYS = Object.freeze([...ONBOARDING_FLAGS, 'guidesSeen', 'guidesReset']);
 const SEEN_ONLY_KEYS = Object.freeze(['guidesSeen', 'workspaceGuideSeen']);
 
@@ -3419,22 +3553,23 @@ function answererMap(settings) {
   return Object.assign(Object.create(null), m && typeof m === 'object' && !Array.isArray(m) ? m : {});
 }
 
-/** The person's profile, `{ lead }` (null when never set or unknown). Never throws. */
-export function answererProfileFor(person) {
+/** The person's profile, `{ lead }` (null when never set or unknown). `smallRuns` (the live flag) admits a Compliance
+ *  lead; off, a stored one reads null. Never throws. */
+export function answererProfileFor(person, { smallRuns = false } = {}) {
   if (homeGuarded()) return { lead: null };
   const lead = answererMap(readSettings())[pinsPersonKey(person)]?.lead;
-  return { lead: isAnswererLead(lead) ? lead : null };
+  return { lead: isAnswererLead(lead, { smallRuns }) ? lead : null };
 }
 
-/** Set the person's lead. Throws { code: 'BAD_LEAD' } before any write. */
-export async function setAnswererProfileFor(person, { lead } = {}) {
-  if (!isAnswererLead(lead)) throw Object.assign(new Error(`Pick one of: ${ANSWERER_LEAD_KEYS.join(', ')}`), { code: 'BAD_LEAD' });
+/** Set the person's lead. Throws { code: 'BAD_LEAD' } before any write, naming the leads `smallRuns` allows. */
+export async function setAnswererProfileFor(person, { lead } = {}, { smallRuns = false } = {}) {
+  if (!isAnswererLead(lead, { smallRuns })) throw Object.assign(new Error(`Pick one of: ${answererLeadKeys({ smallRuns }).join(', ')}`), { code: 'BAD_LEAD' });
   const settings = readSettings();
   const map = answererMap(settings);
   map[pinsPersonKey(person)] = { lead };
   settings.answererProfiles = map;
   await persistSettings(settings);
-  return answererProfileFor(person);
+  return answererProfileFor(person, { smallRuns });
 }
 
 /** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */

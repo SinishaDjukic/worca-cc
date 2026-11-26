@@ -574,7 +574,7 @@ test('label helpers (incl. nodeLabelLookup/agentNodeIdSet) read the v2 graph; a 
         active: [{ nodeId: 'n_a', executionId: 'x:n_a:1' }, { nodeId: 'n_a2', executionId: 'x:n_a2:1' }],
         steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'start', activeMs: 10, startedAt: '2026-08-26T10:00:00Z' }] });
       assert.equal(np.statusPill(r).text, '2 agents running');
-      assert.equal(np.rdStateCopy(r, 'Planner'), '2 agents running.');
+      assert.equal(np.rdStateCopy(r, 'Planner'), '', 'a working run adds nothing to the chip, which already names the agents');
       // An error pause names its cause; any OTHER reason is the orchestrator's own
       // free text (a usage-limit line); a reasonless pause is plain "Paused" unless the deployment is
       // shared (then "Paused by <name>" / "by you": test/ui-attribution.test.mjs).

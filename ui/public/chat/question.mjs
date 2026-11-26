@@ -15,6 +15,7 @@ const isNode = (v) => !!v && typeof v === 'object' && typeof v.nodeType === 'num
  *  `foot: false` drops the footer (the host owns the submit), and Enter then picks without submitting;
  *  `head: false` draws no heading (and so no `?` disc), and `heading` names the section through aria-label;
  *  `numbers: false` drops each question's number.
+ *  `onPick(picks: Map<qid,value>)` runs after every person's pick, by click or key (the host repaints from it).
  *  opts = { lead?, strip?, register? }: the reader's lead perspective (src/shared/answerer.mjs wordsFor); none = the
  *  entry's words, unless `register: 'plain'`
  *  → { el, picks: () => Map, destroy: () => void } */
@@ -133,6 +134,7 @@ export function buildChatQuestion(doc, spec, { lead = null, strip = false, regis
     mark(entry, btn);
     for (const t of entry.tiles) delete t.dataset.preset;
     paint();
+    if (typeof spec.onPick === 'function') spec.onPick(new Map(picks));
   }
   function submit() {
     if (busy || !complete()) return;

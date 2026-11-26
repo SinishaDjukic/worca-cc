@@ -3,7 +3,7 @@
 // settle a resolution (re-check, then a fast-forward push when the branch is published). DB-aware like
 // checkout.mjs; the git work is git-sync.mjs's. Nothing here force-pushes, rebases or resets.
 import { findPipelineRowById, appendAuditById } from './artifacts.mjs';
-import { membersOfRow, updateBranchRecords, withRunLock } from './checkout.mjs';
+import { membersOfRow, updateBranchRecords, withRunLock, isTestRow, assertNotTestRow } from './checkout.mjs';
 import { checkBaseMerge, mergeBaseInto, scrubGitText, INTERACTIVE_TTL_MS } from './git-sync.mjs';
 import { branchPushedTo, branchTips, pushBranch, leftoverMarkers } from './git-info.mjs';
 import { conflictBrief } from './pr-watch.mjs';
@@ -21,8 +21,10 @@ export function toRecord(check, by = null) {
   return { ...rest, ...(by ? { by } : {}) };
 }
 
-/** A run's members whose branch can be checked: a kept feature branch with a known source, in a repo on disk. */
+/** A run's members whose branch can be checked: a kept feature branch with a known source, in a repo on disk.
+ *  A test try has none (3a, final review C1): its branch lives only in Worca's copy, and a try never fetches. */
 export function baseMembersOfRow(row) {
+  if (isTestRow(row)) return [];
   return membersOfRow(row)
     .filter((m) => m.projectDir && m.br?.feature && m.br?.source && m.br.branchKept !== false && !m.br.branchDeleted)
     .map((m) => ({ ...m, remote: effectiveSyncSettings(m.projectKey).remote || 'origin' }));
@@ -136,15 +138,18 @@ export async function settleResolutions(rowId, checked, { by = null, isActive = 
 }
 
 /** Update branch: re-check (a fetch younger than the TTL is reused), require clean, merge, record, push.
- *  `assertFree(row, m)` throws while something else owns the branch (a Watch PR fix run, PR_FIXING). */
+ *  `assertFree(row, m)` throws while something else owns the branch (a Watch PR fix run, PR_FIXING) or its PR is
+ *  final; it runs again after the check's fetch, since the PR refresh can record a merge meanwhile (no run lock). */
 export function updateRunBranch({ id, member = null, by = null, isLive, isFinishing, isActive = () => false, assertFree = () => {} } = {}) {
   return withRunLock(id, async () => {
     const row = findPipelineRowById(id);
     assertFinishedRow(row, { isLive, isFinishing });
+    assertNotTestRow(row);
     const m = pickBaseMember(row, member);
     assertNotResolving(m, isActive);
     assertFree(row, m);
     const c = await checkBaseMerge(m.projectDir, { base: m.br.source, feature: m.br.feature, remote: m.remote, maxAgeMs: INTERACTIVE_TTL_MS });
+    assertFree(findPipelineRowById(row.id) || row, m);
     const rec = toRecord(c, by);
     if (c.status !== 'clean') {
       updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseCheck = rec; });

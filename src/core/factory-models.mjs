@@ -33,7 +33,7 @@ export const FACTORY_MODELS = deepFreeze({
 /** The setting names the fallback warnings and the sign-in refusals use. */
 export const FACTORY_SETTING_LABELS = Object.freeze({
   'steps.planReviewer': 'Plan Review', 'steps.requirementsReviewer': 'Requirements Review',
-  secondOpinion: 'Second-opinion reviewer', memoryDefrag: 'Memory defragment', workspaceScan: 'Workspace scan',
+  secondOpinion: 'Second-opinion reviewer', memoryDefrag: 'Memory defragment', workspaceScan: 'Workspace scan', care: 'Care',
 });
 
 const SCAN_FANOUT_KEYS = new Set(['workspaceScanner', 'workspaceUsageMapper']);

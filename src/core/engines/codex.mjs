@@ -16,9 +16,9 @@
 // - A failed turn ends with `error` + `turn.failed`, and codex may still exit 0. A
 //   top-level `error` alone is not a failure: codex also reports its stream retries
 //   that way ("Reconnecting... 1/5 (…)") and may go on to complete the turn.
-import { mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, rmSync, renameSync, readdirSync, linkSync, copyFileSync, lstatSync, readlinkSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, symlinkSync, rmSync, renameSync, readdirSync, linkSync, copyFileSync, lstatSync, readlinkSync, statSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { execCli, cliRefusal } from './exec-cli.mjs';
 import { CODEX_CLI } from './cli-specs.mjs';
 import { join, resolve, dirname, relative } from 'node:path';
@@ -30,7 +30,7 @@ import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsIn
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
-import { CODEX_PRICES, codexCachedRate } from '../list-prices.mjs';
+import { CODEX_PRICES, CODEX_DEFAULT_MODEL, codexCachedRate } from '../list-prices.mjs';
 import { codexEndpointSpawn, findCodexEndpointEntry, hasCodexEndpoint } from './codex-endpoint.mjs';
 import { makeChatDescriptor, openaiListRates } from './chat-descriptor.mjs';
 import { chatEnginesTaking } from '../../shared/engine-switch.mjs';
@@ -64,10 +64,10 @@ export function codexThreadOf(sessionId) {
  *  - Skills: codex loads `.agents/skills` from the cwd, where the run context mounts them. */
 const CODEX_FALSE = new Set(['allowedTools', 'hookTelemetry', 'turnBudget']);
 
-/** The model a codex spawn runs when worca names none: codex's own bundled default (GPT-6.1 Sol since
- *  codex-cli 0.153.4; 0.146's was gpt-5.6-sol). `exec --json` never names the model it ran, so worca names it on
- *  every spawn: that keeps every Codex call priced (CODEX_PRICES) instead of a $0.00 "cost unknown". */
-export const CODEX_DEFAULT_MODEL = 'gpt-6.1-sol';
+/** The model a codex spawn runs when worca names none (list-prices.mjs). `exec --json` never names the model it
+ *  ran, so worca names it on every spawn: that keeps every Codex call priced (CODEX_PRICES) instead of a $0.00
+ *  "cost unknown". */
+export { CODEX_DEFAULT_MODEL };
 export const codexCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, !CODEX_FALSE.has(k)])));
 
 /** Ask Worca on Codex (cascading-settings-design.md D13): the flags that leave codex no shell, no image viewer, no native
@@ -814,12 +814,16 @@ export async function runCodexProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model: namedModel, effort, onEvent = () => {}, signal,
   bin = CODEX_DEFAULT_BIN, resumeSessionId, addDirs, writableDirs, sandbox, envScrub, envAllowlist, asAgent, usageDir = defaultUsageDir(),
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, images, askLockdown,
-  permissionRules, allowedTools, agents, appendSubagentSystemPrompt,
+  permissionRules, allowedTools, agents, appendSubagentSystemPrompt, cliDefault, tryGuard = null, execEnv,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
-  const model = namedModel || CODEX_DEFAULT_MODEL;
-  // A model on its own OpenAI-compatible endpoint (codex-endpoint.mjs): codex connects to it directly. Throws
-  // (auth class) before any spawn when the endpoint has no usable key.
+  // A remote run (exec-env, e2b): the sandbox template's pinned codex, its model calls through worca's model relay
+  // (no key in the sandbox); no host guard (no worca server runs there), no host MCP server, no host CODEX_HOME.
+  const remote = execEnv?.remote ? execEnv : null;
+  // "Let Codex decide" (#1450): no -m, so codex runs its own default (the turn may then be unpriced).
+  const model = namedModel || (cliDefault === true ? undefined : CODEX_DEFAULT_MODEL);
+  // A model on its own OpenAI-compatible endpoint (codex-endpoint.mjs): codex connects to it directly; in a sandbox the
+  // relay does, from this machine. Throws (auth class) before any spawn when the endpoint has no usable key.
   const endpoint = codexEndpointSpawn(model);
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error leave
   // redacted. The endpoint's key and header values are redacted the same way.
@@ -835,7 +839,9 @@ export async function runCodexProcess({
   if (resumeSessionId && !thread) {
     safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] codex: stored session ${JSON.stringify(String(resumeSessionId).slice(0, 12))}… is not a codex thread — starting a fresh one` });
   }
-  const guardOn = hostGuardEnabled();
+  if (remote && bin !== 'codex') safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] codex: ${bin} (this machine's binary) is ignored; the ${remote.label} runs its own pinned codex` });
+  const exe = remote ? 'codex' : bin;
+  const guardOn = hostGuardEnabled() && !remote;
   let sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : systemPrompt;
   let stdin = String(prompt ?? '');
   // No system-prompt file flag: a prompt too large for one argv value is folded
@@ -866,7 +872,14 @@ export async function runCodexProcess({
   // Guardrails: the deny rules codex can hold (codexRulePlan). A denied MCP server is never attached.
   const plan = codexRulePlan(permissionRules);
   let mcpServers = null;
-  if (mcpConfigPath) {
+  if (mcpConfigPath && remote) {
+    // codex attaches command servers only, and those run on this machine; the sandbox keeps url servers only.
+    // A remote codex attaches none: say why per server.
+    let servers = {};
+    try { servers = JSON.parse(readFileSync(mcpConfigPath, 'utf8'))?.mcpServers || {}; } catch { /* no servers */ }
+    const why = Object.entries(servers).map(([n, s]) => `${n} (${typeof s?.command === 'string' ? 'a command on the worca host' : 'codex attaches command servers only'})`);
+    if (why.length) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] MCP servers not attached on codex in the ${remote.label}: ${why.join(', ')}` });
+  } else if (mcpConfigPath) {
     let doc;
     try { doc = JSON.parse(readFileSync(mcpConfigPath, 'utf8')); } catch (err) { throw new Error(`${bin}: cannot read the MCP config ${mcpConfigPath}: ${err.message}`); }
     const all = doc && typeof doc.mcpServers === 'object' ? doc.mcpServers : {};
@@ -891,22 +904,25 @@ export async function runCodexProcess({
     ? codexInvestigatorRole({ agents, subagentSystemPrompt: appendSubagentSystemPrompt, inheritModel: !!endpoint }) : null;
   const normalizer = createCodexNormalizer({ model, priorUsage: thread ? loadUsage(usageDir, thread) : null, unpriced: !!endpoint,
     subagent: role ? { type: CODEX_INVESTIGATOR_ROLE, model: role.model } : null });
-  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(ownEnv).length ? { runEnv: ownEnv } : {}) });
+  // Workflow tests 3a (D56): a try's outward guard (stand-ins first on PATH, git with no sign-in); absent ⇒ unchanged.
+  const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(ownEnv).length ? { runEnv: ownEnv } : {}), ...(tryGuard ? { tryGuard } : {}) });
   // P3-D20: the run env stays out of this child's env (its shell would read the registry secrets), but the git ceiling
   // of a run without a project is no secret and must reach the agent's own git.
   if (typeof runSpawnEnv?.TMPDIR === 'string') env.TMPDIR = runSpawnEnv.TMPDIR;   // the run's scratch folder, no secret
   if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;
   // Command rules live in a worca-managed CODEX_HOME.
-  if (plan.prefixes.length) env.CODEX_HOME = guardedCodexHome(codexRulesFile(plan.prefixes));
+  if (!remote && plan.prefixes.length) env.CODEX_HOME = guardedCodexHome(codexRulesFile(plan.prefixes));
+  // This machine's CODEX_HOME. A remote spawn never reads it: its threads and session files live in the sandbox.
   const home = (env.CODEX_HOME && String(env.CODEX_HOME).trim()) || join(homedir(), '.codex');
-  if (thread) bringCodexThreadHome(home, thread);
+  if (thread && !remote) bringCodexThreadHome(home, thread);
   const extra = [];
   if (plan.shellOff && sandbox !== 'read-only' && !askLockdown) extra.push(...CODEX_SHELL_OFF);
   if (plan.webSearchOff) extra.push('-c', 'web_search="disabled"');
-  let roleFile = null;
+  let roleFile = null; let roleDir = null;
   if (role) {
     try {
-      const dir = join(worcaHome(), 'tmp', 'codex-roles');
+      // Remote: a private dir uploaded at its mirrored path (superviseSpawn stagedDir), so the sandbox gets this file only.
+      const dir = remote ? (roleDir = mkdtempSync(join(tmpdir(), 'worca-codex-role-'))) : join(worcaHome(), 'tmp', 'codex-roles');
       mkdirSync(dir, { recursive: true });
       roleFile = join(dir, `${CODEX_INVESTIGATOR_ROLE}-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.toml`);
       writeFileSync(roleFile, role.toml, { mode: 0o600 });
@@ -917,10 +933,35 @@ export async function runCodexProcess({
   // codex hands an MCP server only a short default env plus `env_vars`: name every variable of codex's own env, so the
   // worca server gets what a Claude chat's child inherits (proxy, CA bundle, WORCA_CODEX_BIN, codex's own keys…).
   const mcp = codexMcpOverrides(mcpServers, { passEnv: Object.keys(env), disabledTools: plan.mcpToolsOff });
-  // The endpoint's key and headers join codex's env only now, so no MCP server is handed them.
-  if (endpoint) { Object.assign(env, endpoint.env); extra.push(...endpoint.args); }
+  // Remote: codex calls the relay as its model provider with a dummy key (relay-route.mjs codexRelayArgs); the server's
+  // key, or the endpoint's key and headers, stay in worca. Opened before the args, closed on every way out.
+  let relayRoute = null;
+  if (remote) {
+    try { relayRoute = remote.openEngineRoute('codex', { endpoint, spawnEnv: env }); }
+    catch (err) { if (roleDir) rmSync(roleDir, { recursive: true, force: true }); throw redacted(err); }
+    extra.push(...relayRoute.args);
+    onEvent = remote.meteredEvents(relayRoute.id, onEvent, { cost: true });
+  } else if (endpoint) {
+    // The endpoint's key and headers join codex's env only now, so no MCP server is handed them.
+    Object.assign(env, endpoint.env); extra.push(...endpoint.args);
+  }
   const args = buildCodexArgs({ systemPrompt: sys, model: endpoint ? endpoint.model : model, effort, resumeThreadId: thread, addDirs: dirs, sandbox, mcp: [...mcp.args, ...extra],
     ...(askLockdown ? { lockdown, images } : {}) });
+  // The sandbox env: codex's own allowlist, the relay route's dummy key, and CODEX_HOME in the sandbox HOME holding the
+  // rules. The template's codex is looked up before anything goes into that HOME.
+  let childEnv = env;
+  if (remote) {
+    try {
+      const rules = plan.prefixes.length ? [{ rel: 'rules/worca.rules', data: codexRulesFile(plan.prefixes) }] : [];
+      const routed = remote.envFor(env, { engine: 'codex', route: relayRoute });
+      await remote.ensureCli(exe);
+      childEnv = { ...routed, ...(await remote.engineHome('codex', { files: rules, remove: rules.length ? [] : ['rules/worca.rules'] })) };
+    } catch (err) {
+      remote.closeModelRoute(relayRoute.id);
+      if (roleDir) rmSync(roleDir, { recursive: true, force: true }); else if (roleFile) rmSync(roleFile, { force: true });
+      throw redacted(err);
+    }
+  }
   let sawThread = thread;
   // The thread's usage once the spawn ends, stored for the next resume. `exec --json` reports usage only on
   // `turn.completed`: a turn that ended without it (the turn cap, an abort, a failed turn) still ran, and codex recorded
@@ -929,7 +970,8 @@ export async function runCodexProcess({
   const settleUsage = () => {
     const f = normalizer.finish();
     if (!sawThread) return f;
-    const now = f.completed ? null : codexRolloutUsage(home, sawThread);
+    // Remote: the session file is in the sandbox; a turn without turn.completed stays unbooked there (docs/e2b.md).
+    const now = f.completed || remote ? null : codexRolloutUsage(home, sawThread);
     if (now) {
       const delta = diffUsage(now, f.cumulativeUsage);
       if (Object.values(delta).some((v) => v > 0)) {
@@ -953,8 +995,13 @@ export async function runCodexProcess({
   const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
   const res = await superviseSpawn({
     cli: CODEX_CLI,
-    file: bin, args, displayBin: bin, cwd, env, stdin, signal: spawnSignal, asAgent, stagedDir: null, onEvent,
-    cleanup: () => { if (roleFile) rmSync(roleFile, { force: true }); },
+    file: exe, args, displayBin: bin, cwd, env: childEnv, stdin, signal: spawnSignal, asAgent: remote ? false : asAgent,
+    stagedDir: roleDir, onEvent, execEnv: remote,
+    // Remote: the role dir went up as stagedDir; its sandbox copy goes too (removeUploaded never throws).
+    cleanup: () => {
+      if (relayRoute) remote.closeEngineRoute(relayRoute.id, onEvent, { cost: true });
+      if (roleDir) { rmSync(roleDir, { recursive: true, force: true }); remote?.removeUploaded(roleDir); } else if (roleFile) rmSync(roleFile, { force: true });
+    },
     stdoutErrorDetail: () => normalizer.finish().error || '',
     classify: (m) => classifyCodexError(m),
     spawnError: (err, pfx) => Object.assign(new Error(`${pfx}: ${err.message}`), { errorClass: /ENOENT|EINVAL/.test(String(err.code || err.message)) ? 'network' : null }),

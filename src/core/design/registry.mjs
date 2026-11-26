@@ -336,6 +336,13 @@ class DesignBuilds {
     return { fast: this._caps.fast, calm: this._caps.calm };
   }
 
+  /** Resolves once the build `buildId` held here has settled (at once when it is not held): its row then holds its
+   *  end state. Shaper's Prototype step (C1) awaits its own build through this. */
+  async whenSettled(buildId) {
+    const held = this._builds.get(buildId);
+    if (held) await held.done;
+  }
+
   /** The running build `buildId`, or null: builds that are not running hold no memory (L2.6). */
   get(buildId) {
     return this._builds.get(buildId)?.build ?? null;
@@ -560,5 +567,11 @@ export function createDesignBuilds({
   broadcast, caps = designCaps(), personOf = (by) => (by && by !== 'local' ? by : null), draining = () => false,
   onLiveChange = () => {}, globalCap = caps.global, deps = {}, claimDir = claimRunDir,
 } = {}) {
-  return new DesignBuilds({ broadcast, caps, personOf, draining, onLiveChange, globalCap, deps, claimDir });
+  instance = new DesignBuilds({ broadcast, caps, personOf, draining, onLiveChange, globalCap, deps, claimDir });
+  return instance;
 }
+
+/** The server's single registry, recorded by createDesignBuilds (Shaper's Prototype step reaches it here, C1 D7); null
+ *  before one is made. The last one made wins. */
+let instance = null;
+export const designBuildsInstance = () => instance;

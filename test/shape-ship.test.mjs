@@ -171,3 +171,16 @@ test('onePrBody lists Satisfies under each slice with ids', () => {
   const plain = [{ index: 1, title: 'One', summary: 'did one', pr: null }];
   assert.equal(onePrBody([{ ...plain[0], requirements: { ids: [], check: null } }]), onePrBody(plain));
 });
+
+test('headPipelineId: the changelog, push and one PR use that slice', async () => {
+  const f = fake();
+  await shipFeature({ feature: FEATURE(), mode: 'one', headPipelineId: 'p2' }, f.deps);
+  assert.deepEqual(f.calls.filter((c) => ['commitChangelog', 'push'].includes(c[0])).map((c) => c[1]), ['p2', 'p2']);
+  assert.equal(f.calls.find((c) => c[0] === 'openOnePr')[1].pipelineId, 'p2');
+  // Without it (or naming no slice) the last row ships.
+  for (const head of [undefined, 'p9']) {
+    const g = fake();
+    await shipFeature({ feature: FEATURE(), mode: 'one', ...(head ? { headPipelineId: head } : {}) }, g.deps);
+    assert.equal(g.calls.find((c) => c[0] === 'openOnePr')[1].pipelineId, 'p3');
+  }
+});

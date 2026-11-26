@@ -347,9 +347,11 @@ Where a slot looks, in order:
 
 - **Steps:** the node's own pick, the project's step model, your or the team's
   step model, the workflow template's own model, then the role, else Worca's
-  factory default for that slot. A run started
+  factory default for that slot, else Worca's default for the role (see
+  [When a role is empty](#when-a-role-is-empty)). A run started
   with its own model (`--model`) uses that model for every unset step instead
-  of the role, and an Auto run skips the role, as it skips your step models.
+  of the role, and an Auto run skips your roles, as it skips your step models,
+  but a stage the Auto classifier leaves empty still gets Worca's default.
 - **Helper jobs:** the job's own setting, then the role, then Worca's factory
   default where the job has one, then today's fallback (for titles: the run's
   model, then the built-in Haiku). Memory defragment and the workspace scan read
@@ -361,9 +363,9 @@ design's own pick in its composer wins over the row (see [Design › Models](des
 
 Roles are kept per harness (`modelRoles.claude`, `modelRoles.codex`,
 `modelRoles.copilot`, … one per engine): a Claude run never reads the Codex
-roles, and a harness with no roles keeps today's fallbacks. With no
-`modelRoles` at all, every slot resolves exactly as it did before roles
-existed. Every engine has roles, so a Copilot, Cursor, Gemini CLI, Qwen Code,
+roles. An empty role on Claude Code or Codex runs Worca's default for it (below);
+on every other harness the tool picks its own model. Nothing in `settings.json`
+is rewritten for this. Every engine has roles, so a Copilot, Cursor, Gemini CLI, Qwen Code,
 Goose or OpenCode run takes its steps' models from that engine's roles. Helper
 jobs still run on Claude or Codex only, so the other engines' roles cover
 steps and Chat. On OpenCode, which refuses a step that names no model, roles
@@ -385,6 +387,55 @@ curl -X POST http://localhost:4317/api/settings -H 'Content-Type: application/js
 
 `null` clears a role (`{ "modelRoles": { "claude": { "quick": null } } }`).
 Chat's `change_setting` sets the same values as `models.<harness>.roles.<role>`.
+
+### When a role is empty
+
+A step or helper job with no model anywhere used to spawn with no `--model`, so
+Claude Code's own default ran. On some accounts that default is a premium model
+(Fable 5.2), which a run then used without anyone choosing it. Now an empty role
+resolves, at run time, to Worca's default:
+
+| Role | Claude Code | Codex (derived from the catalog by price tier) |
+|---|---|---|
+| Deep thinking | Opus 5.5 | the cheapest top-tier model (`gpt-5.6-sol` today) |
+| Everyday tasks | Sonnet 5.5 | the cheapest strong-tier model, Codex's own default on a tie (`gpt-6.1-sol`) |
+| Quick jobs | Haiku 5.5 | the cheapest model that is not free and takes tool calls (`gpt-6-luna`) |
+
+A Worca default carries no effort and is never a premium model. It applies on
+Claude Code unless it is signed out (a Claude id cannot run then), and on Codex
+always. A paused run started before this change resumes on these defaults too.
+Helper jobs that already had a default of their own keep it: Titles, Memory
+defragment, Workspace scan and, on Claude Code, the Auto workflow classifier
+(Sonnet 5), Run naming, Command summaries and the Requirements interview.
+`GET /api/settings` returns them as `roleDefaults` (with `claudeAuth`), and
+`GET /api/run-defaults` returns `effectiveRoles` per engine and role
+(`source`: `role`, `worca-default`, `cli-decides` or `tool-decides`). The run
+log names each step that runs on a Worca default; the audit keeps only the
+warnings (the tool decides, or Claude Code is signed out).
+
+- **Let Claude Code decide** (Codex: **Let Codex decide**) keeps the old
+  behaviour for one role: it is stored as `{ "cliDecides": true }` and spawns
+  with no model flag. A team policy cannot set it; a shared team setup leaves it
+  out.
+- **Copilot, Cursor, Gemini CLI, Qwen Code, Goose and OpenCode** (and Claude Code
+  signed out) pick their own model when a role is empty. Models › Jobs, the run
+  card and the run log say "<tool> decides: Worca can't know which model runs".
+- **Premium guard.** Before a step runs on a premium model nobody chose (a Worca
+  or factory default, an Auto classifier pick), the run pauses with
+  `model_confirm`; `--yes` runs pause too, and nothing resumes it by itself. It
+  also stops a step right after its `[init]` line when Claude Code started a
+  premium model nobody chose, or a different model than was asked for (an alias,
+  a routed model and a session-group member are never compared). **Continue on
+  <model>** (`POST /api/resume { "confirmModel": "<id>" }`, or
+  `worca resume <id> --confirm-model <model>`) runs it, and the run does not ask
+  again for that model; **Switch model and continue…** (`worca resume <id>
+  --model <model>`) picks another, and a model you pick there counts as chosen. Under Let Claude Code decide a premium pick is only logged.
+- **Onboarding.** The setup assistant preselects the defaults for each empty
+  role, and an install that already has an empty role sees a one-time notice.
+
+Known gaps: a session-group member runs on its Chat host's model and gets no
+`[init]` guard, and a model-less spawn (Let Claude Code decide, or a harness
+that decides) is not list-priced in Design's cost estimate.
 
 ### Built-in workflows take their models from the Models page
 
@@ -593,6 +644,14 @@ Copilot entries are pinned *Free* and Worca counts the requests a run
 initiated instead (the cost pill reads `$0 · N requests`). A generic
 OpenAI-compatible entry is flagged *cost not verified* until you pin a
 per-million-token price on it.
+
+Fable 5.2 (`claude-fable-5-2`, $8 / $40 per Mtok) and Fable 5.1 are premium-tier
+models. Worca never picks one by itself: the premium guard pauses a run before
+it would use one nobody chose ([When a role is empty](#when-a-role-is-empty)).
+When a usage limit is one model's own ("You've hit your Fable limit"), the
+pause records it (`limitScope: "model"`, `limitModel`), and **Switch model and
+continue…** offers the other models on the same sign-in, so the resume does not
+fail the same way.
 
 ## Importing models
 

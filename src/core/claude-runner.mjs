@@ -41,6 +41,7 @@ import { envFlag } from './model-env.mjs';
 import { DEFAULT_BIN } from './engines/claude.mjs';
 import { getEngine } from './engines/index.mjs';
 import { recordMockSpawn as recordMockSpawnImpl } from './engines/mock.mjs';
+import { remoteEngineRefusal } from '../shared/exec-env.mjs';
 export {
   buildClaudeArgs, buildEffortArgs, buildSettingsPayload, buildSettingsArgs, buildHookSettings, buildHookArgs,
   subagentHooksEnabled, debugSpawnEnabled, ARGV_INLINE_LIMIT, argvLength, redactArgvForLog,
@@ -101,6 +102,9 @@ export function mockEnabled(opts) {
  * @param {string[]} [o.tools]              --tools <list>: the built-in tool allowlist ([] ⇒ `--tools ""`,
  *   no built-ins at all; MCP tools are unaffected). Absent ⇒ flag omitted (claude defaults).
  * @param {boolean} [o.strictMcpConfig]     --strict-mcp-config: only --mcp-config servers load
+ * @param {{logFile: string}} [o.tryGuard]  workflow tests 3a: a try's outward guard
+ * @param {boolean} [o.pluginsOff]           workflow tests 3b: a Pretend try's spawn: carry the person's sign-in only (D71)
+ * @param {boolean} [o.runLoadsUserSettings] a Pretend try's spawn: a normal run of it loads the user settings (Task 5, M11)
  * @param {string[]} [o.settingSources]     --setting-sources <list> (e.g. ['project'] drops user hooks/plugins/skills)
  * @param {boolean} [o.disableSlashCommands] --disable-slash-commands
  * @param {boolean} [o.includePartialMessages] --include-partial-messages (stream_event text deltas)
@@ -164,6 +168,9 @@ export async function runClaude(o = {}) {
     // undefined here ⇒ nothing emitted ⇒ every legacy argv stays byte-identical.
     tools,
     strictMcpConfig,
+    tryGuard,
+    pluginsOff,
+    runLoadsUserSettings,
     settingSources,
     disableSlashCommands,
     includePartialMessages,
@@ -206,6 +213,9 @@ export async function runClaude(o = {}) {
     // A pipeline agent (phases.mjs): runs as WORCA_AGENT_USER when the container set one
     // up (agent-user.mjs). Server-side helpers and Ask Worca leave it unset.
     asAgent,
+    // The run's remote execution environment (src/core/exec-env/; e2b mode only): the spawn runs in its
+    // sandbox. Absent on local runs.
+    execEnv,
     // Which engine adapter runs this spawn (engines/index.mjs). Default claude.
     engine: engineName,
     // Credential broker (broker-client.mjs): who pays for this spawn, what kind it is (sets
@@ -236,9 +246,13 @@ export async function runClaude(o = {}) {
     throw err;
   }
 
+  // BEFORE getEngine, so a mock run is gated with the same words.
+  const engineRefusal = execEnv?.remote ? remoteEngineRefusal(execEnv.title || 'Remote', engineName) : null;
+  if (engineRefusal) throw new Error(engineRefusal);
   const engine = getEngine(engineName || 'claude', { mock: mockEnabled(o) });
   if (engine.name === 'mock') {
-    recordMockSpawnImpl({ engine: engineName || 'claude', sandbox, model });
+    recordMockSpawnImpl({ engine: engineName || 'claude', sandbox, model,
+      ...(execEnv?.remote ? { execEnv: execEnv.sandboxId, ...(resumeSessionId ? { resume: resumeSessionId } : {}) } : {}) });
     // runMock spawns nothing, so the MCP fields are meaningless to it —
     // workspaceWriteTargets is the one option that is mock-ONLY (§8.10) and it must be
     // named HERE too, or the mock implementer never sees it (this call is a gate, not
@@ -246,7 +260,8 @@ export async function runClaude(o = {}) {
     // systemPromptMode is not named here on purpose: the mock has no Claude Code system
     // prompt to replace, so it is a real-spawn-only option (the call below carries it). readGuard and writeGuard are
     // not named either: the mock spawns nothing, so there is no tool call to guard.
-    return engine.run({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets, permissionMode });
+    const mockOpts = { cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets, permissionMode };
+    return execEnv?.remote ? execEnv.runInProcess((opts) => engine.run(opts), mockOpts) : engine.run(mockOpts);
   }
 
   // Claude Code starts every server of the cwd's committed `.mcp.json` in -p, approved or not (probed on 2.1.293):
@@ -290,6 +305,9 @@ export async function runClaude(o = {}) {
     disallowedTools,
     tools,
     strictMcpConfig,
+    tryGuard,
+    pluginsOff,
+    runLoadsUserSettings,
     settingSources,
     disableSlashCommands,
     includePartialMessages,
@@ -314,6 +332,7 @@ export async function runClaude(o = {}) {
     memoryLoadLog,
     argvInlineLimit,
     asAgent,
+    execEnv,
     billTo,
     spawnKind,
     runId,

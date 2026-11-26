@@ -2,7 +2,7 @@
 import { JSDOM } from 'jsdom';
 import { createMarketplacePage } from '../../ui/public/marketplace/page.mjs';
 
-export const OFF = { id: 'off', name: 'Worca CC Official', url: 'https://github.com/SinishaDjukic/worca-cc', builtin: true, ref: 'dev',
+export const OFF = { id: 'off', name: 'Worca CC Official', url: 'https://github.com/worca-org/worca', builtin: true, ref: 'dev',
   lastSync: { sha: `735b354${'a'.repeat(33)}`, at: '2026-10-20T09:57:00.000Z' }, lastError: null, warnings: [],
   plugins: [
     { name: 'github-source', subdir: 'plugins/github-source', description: 'Pull tasks from GitHub Issues, write results back', version: '0.3.0', notes: [],

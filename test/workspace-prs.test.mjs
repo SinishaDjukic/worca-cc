@@ -49,8 +49,8 @@ test('rollupMemberPrs: MERGED as soon as any member is merged, else OPEN; null w
 
 test('withRelatedPrsBlock appends once, replaces on rerun, keeps human text', () => {
   const block1 = relatedPrsBlock({ workspaceName: 'Team', siblings: [{ name: 'web', url: 'https://g/o/web/pull/2', state: 'OPEN' }] });
-  const once = withRelatedPrsBlock('Title\n\n---\nStarted by ada via worca', block1);
-  assert.ok(once.startsWith('Title\n\n---\nStarted by ada via worca\n\n' + RELATED_PRS_START));
+  const once = withRelatedPrsBlock('Title\n\nSome text', block1);
+  assert.ok(once.startsWith('Title\n\nSome text\n\n' + RELATED_PRS_START));
   assert.equal(withRelatedPrsBlock(once, block1), once, 'idempotent');
   const block2 = relatedPrsBlock({ workspaceName: 'Team', siblings: [
     { name: 'web', url: 'https://g/o/web/pull/2', state: 'MERGED' }, { name: 'docs', url: 'https://g/o/docs/pull/9', state: 'OPEN' }] });

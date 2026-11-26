@@ -150,6 +150,13 @@ test('wide pane: the card splits 70:30, but a shaped run waiting on the person s
   assert.doesNotMatch(css, /data-live=/);
   assert.doesNotMatch(css, /rd-live-switch|rd-live-row/);
   assert.match(css, /\.rd-live\{cursor:pointer;/);
+  // The Chat run panel keeps the live graph once it is wide enough for two columns; a narrow panel has no room for it.
+  assert.match(css, /@container rd \(max-width: 959\.98px\)\{ \.rd\[data-presentation="panel"\] \.rd-live\{display:none;\} \}/);
+  // The title keeps a readable width: the header row wraps the controls under it instead of squeezing it to "Merg…".
+  assert.match(css, /:is\(\.rd-row1,\.hd-row1\):has\(> \.rd-bar-end\)\{flex-wrap:wrap;/);
+  // 330px: the unboxed header is 50px wider than the boxed one was, so a lower basis would keep the controls beside a
+  // title too narrow to read.
+  assert.match(css, /:is\(\.rd-row1 > \.rd-title,\.hd-row1 > \.hd-title\)\{flex:1 1 330px;\}/);
 });
 
 test('the Away mode select is not repainted while a change posts (a ⋯ pick leaves focus on ⋯)', async () => {

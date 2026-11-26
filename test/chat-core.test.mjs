@@ -310,9 +310,18 @@ test('renderDone: a usage limit an engine hit also offers /resume on each other 
   const limit = renderDone(META, { status: 'paused', reason: 'usage_limit', detail: "You've hit your usage limit", limitEngine: 'codex' });
   assert.equal(isValidMessage(limit), true);
   assert.match(limit.body[0].value, /reply: \/resume \*2951\n/);
-  assert.match(limit.body[0].value, /Or continue now on Claude Code: \/resume \*2951 claude \(may need Allow unguarded in the Worca UI\)\n   Or continue now on GitHub Copilot: \/resume \*2951 copilot \(may need Allow unguarded in the Worca UI\)\n   Or continue now on Cursor: \/resume \*2951 cursor \(may need Allow unguarded in the Worca UI\)\n   Or continue now on Gemini CLI: \/resume \*2951 gemini \(may need Allow unguarded in the Worca UI\)\n   Or continue now on Goose: \/resume \*2951 goose \(may need Allow unguarded in the Worca UI\)\n   Or continue now on OpenCode: \/resume \*2951 opencode \(may need Allow unguarded in the Worca UI\)\n   Or continue now on Qwen Code: \/resume \*2951 qwen \(may need Allow unguarded in the Worca UI\)\n   Or resume with another model in the Worca UI \(Resume › Resume with another model…\)$/);
+  assert.match(limit.body[0].value, /Or continue now on Claude Code: \/resume \*2951 claude \(may need Allow unguarded in the Worca UI\)\n   Or continue now on GitHub Copilot: \/resume \*2951 copilot \(may need Allow unguarded in the Worca UI\)\n   Or continue now on Cursor: \/resume \*2951 cursor \(may need Allow unguarded in the Worca UI\)\n   Or continue now on Gemini CLI: \/resume \*2951 gemini \(may need Allow unguarded in the Worca UI\)\n   Or continue now on Goose: \/resume \*2951 goose \(may need Allow unguarded in the Worca UI\)\n   Or continue now on OpenCode: \/resume \*2951 opencode \(may need Allow unguarded in the Worca UI\)\n   Or continue now on Qwen Code: \/resume \*2951 qwen \(may need Allow unguarded in the Worca UI\)\n   Or switch model and continue in the Worca UI \(Resume › Switch model and continue…\)$/);
   for (const payload of [
     { status: 'paused', reason: 'usage_limit', detail: "OpenRouter's free-model requests for today are used up" },
     { status: 'paused', reason: 'error', detail: 'disk full', limitEngine: 'codex' },
   ]) assert.doesNotMatch(renderDone(META, payload).body[0].value, /continue now on/, payload.reason);
+});
+
+test('#1450: a model_confirm pause names the model and the two ways on; it never reads as a usage limit', async () => {
+  const { renderDone } = await import('../src/core/chat/renderers.mjs');
+  const msg = renderDone({ runId: 'r-1', title: 'T' }, { status: 'paused', reason: 'model_confirm', detail: 'Paused before Plan: it would run on claude-fable-5-2, a premium model nobody chose.', modelConfirm: { model: 'claude-fable-5-2' } });
+  const text = JSON.stringify(msg);
+  assert.match(text, /paused — Waiting for you to confirm the model/);
+  assert.match(text, /Continue on claude-fable-5-2 or switch model in the Worca UI/);
+  assert.doesNotMatch(text, /usage limit/);
 });

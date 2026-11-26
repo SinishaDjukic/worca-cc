@@ -79,3 +79,39 @@ test('requirements first does not apply: not shipped, or no agreed requirements 
     if (facts.feature.shipped) assert.equal(render(card), today);
   }
 });
+
+// Small runs C4 (D13): the requirement-change card (type 'req-change').
+const RC = { type: 'req-change', featureId: 'f1', featureTitle: 'Reset emails', requirement: 'R-po-3', from: 'send once',
+  to: 'reset emails retry once', reason: 'one send is not enough', landsAs: 'running' };
+test('C4 req-change card: proposed, applied and declined; Change it is the one primary; the new text once', async () => {
+  const { renderReqChangeCard } = await import('../ui/public/shape/changes-card.mjs');
+  const d = new JSDOM('<!doctype html><body></body>').window.document;
+  const posted = [];
+  const el = renderReqChangeCard(d, { state: 'proposed', card: RC }, { onStart: async () => posted.push('start'), onNotNow: async () => posted.push('not-now') });
+  assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'Change');
+  assert.equal(el.querySelector('.ask-mcard-title').textContent, 'R-po-3');
+  assert.equal(el.querySelector('.ask-changescard-quote').textContent, 'one send is not enough');
+  assert.equal((el.textContent.match(/reset emails retry once/g) || []).length, 1, 'the new text once');
+  assert.equal((el.textContent.match(/R-po-3/g) || []).length, 1, 'the id once');
+  assert.deepEqual([...el.querySelectorAll('.btn-primary')].map((b) => b.textContent), ['Change it']);
+  assert.equal(el.querySelector('.ask-card-not-now').textContent, 'Not now');
+  const marked = [...el.querySelectorAll('.plan-check-row')].filter((r) => r.querySelector('[aria-label="this change"]'));
+  assert.deepEqual(marked.map((r) => r.querySelector('.plan-check-id').textContent), ['Running']);
+  el.querySelector('.btn-primary').click(); await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(posted, ['start']);
+  const applied = renderReqChangeCard(d, { state: 'applied', card: { ...RC, result: { changes: [] } } }, { onStart: async () => {}, onNotNow: async () => {} });
+  assert.equal(applied.querySelector('.ask-changescard-done').textContent, 'Changed: R-po-3');
+  assert.doesNotMatch(applied.textContent, /retry once/);
+  assert.equal(applied.querySelectorAll('button').length, 0);
+  assert.equal(renderReqChangeCard(d, { state: 'declined', card: RC }, {}).textContent, 'Not now: R-po-3');
+});
+
+test('C4 req-change card: a refused apply stays proposed, its message in .ask-card-err, the primary enabled', async () => {
+  const { renderReqChangeCard } = await import('../ui/public/shape/changes-card.mjs');
+  const d = new JSDOM('<!doctype html><body></body>').window.document;
+  const el = renderReqChangeCard(d, { state: 'proposed', card: RC }, { onStart: async () => { throw { body: { error: 'R-po-3 changed since: read it again' } }; }, onNotNow: async () => {} });
+  el.querySelector('.btn-primary').click(); await new Promise((r) => setTimeout(r, 0));
+  assert.equal(el.dataset.reqChangeCard, 'proposed');
+  assert.equal(el.querySelector('.ask-card-err').textContent, 'R-po-3 changed since: read it again');
+  assert.equal(el.querySelector('.btn-primary').disabled, false);
+});

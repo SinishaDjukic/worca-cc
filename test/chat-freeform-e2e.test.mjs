@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { seedCurrentSourceBranch } from './helpers/source-branch-current.mjs';
 import { writePluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { writePluginConfig } from '../src/core/plugin-config.mjs';
 import { setMockChannelBehavior, mockInteractionReplies, clearMockInteractionReplies } from '../src/core/chat/channel-host.mjs';
@@ -69,6 +70,7 @@ before(async () => {
   process.chdir(cwdSandbox);
   home = await mkdtemp(join(tmpdir(), 'worca-cc-ff-home-'));
   process.env.HOME = home; process.env.USERPROFILE = home;
+  seedCurrentSourceBranch(home);   // branchless chat cards on git repos keep today's path (Current (checked out))
   const cur = pluginCurrentDir(NAME);
   mkdirSync(join(cur, 'channel'), { recursive: true });
   writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({

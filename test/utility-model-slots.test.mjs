@@ -50,7 +50,7 @@ test('overview: a Claude run is unchanged unless the project overrides its slot'
   mkdirSync(dir, { recursive: true });
   const seen = [];
   await generateOverview(key, id, { force: true, runClaudeImpl: spy(seen) });
-  assert.equal(seen[0].model, undefined, 'today: the CLI default');
+  assert.equal(seen[0].model, 'claude-haiku-5-5', 'an empty Quick role: Worca\'s default (#1450), not the CLI default');
   assert.equal('engine' in seen[0], false, 'a Claude spawn carries no engine option');
   writeProjectSettings({ projectKey: key }, { 'models.claude.utility.overview': { model: 'claude-haiku-4-5' } });
   await generateOverview(key, id, { force: true, runClaudeImpl: spy(seen) });
@@ -92,7 +92,7 @@ test('classifier: off Claude the slot names a catalog model of the run engine, e
   assert.equal(resolveAutoModel(models, { engine: 'codex', setting: 'gpt-5.5' }), 'gpt-5.5');
   assert.equal(resolveAutoModel(models, { engine: 'codex', setting: '' }), '');
   assert.equal(resolveAutoModel(models, { engine: 'codex', setting: 'claude-sonnet-5' }), '', 'never a Claude id on Codex');
-  assert.equal(resolveAutoModel(models, { engine: 'codex' }), '', 'the Claude Settings pick is not Codex\'s');
+  assert.equal(resolveAutoModel(models, { engine: 'codex' }), 'gpt-6-luna', 'the Claude Settings pick is not Codex\'s: an empty Codex quick role takes Worca\'s default (#1450)');
 });
 
 test('title: Codex takes its slot; a Claude project override replaces the Settings pick; Claude without one is unchanged', async () => {

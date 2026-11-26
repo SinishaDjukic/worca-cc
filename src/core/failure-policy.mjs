@@ -50,6 +50,8 @@ export const REASON = Object.freeze({
   TIME_LIMIT: 'time_limit',       // an agent node ran past its wall-clock or idle limit (E4): resumable, re-runs the node
   TERMINATED: 'terminated',       // a CLI run got SIGTERM (docker stop, a pod eviction, a CI cancel): resumable
                                   // with `worca resume`, but nothing resumes it by itself
+  MODEL_CONFIRM: 'model_confirm', // #1450: a step would run (or Claude Code started it) on a premium model nobody chose,
+                                  // or on another model than asked for; a person confirms or switches — never auto-resumed
 });
 export const REASON_CODES = Object.freeze(Object.values(REASON));
 
@@ -96,6 +98,9 @@ export const FAILURE_POLICY = Object.freeze({
     // A node past its wall-clock or idle limit (graph/executor.mjs nodeTimeLimits). Never retried:
     // a hung node would hang again; the person looks, then resumes.
     time_limit:  both(pause(REASON.TIME_LIMIT)),
+    // #1450: the init guard (graph/executor.mjs) stopped the step at its [init] line. Both modes pause: under --yes
+    // nobody chose the model either, and an ask would be answered `continue`.
+    model_confirm: both(pause(REASON.MODEL_CONFIRM)),
     quota:       cell(pause(REASON.RECOVERABLE), prompt(pause(REASON.ERROR))),
     rate_limit:  cell(retry(RECOVERY_MAX_AUTO_ATTEMPTS, pause(REASON.RECOVERABLE)), prompt(pause(REASON.ERROR))),
     network:     cell(retry(RECOVERY_MAX_AUTO_ATTEMPTS, pause(REASON.RECOVERABLE)), prompt(pause(REASON.ERROR))),
@@ -213,6 +218,8 @@ const CONSEQUENCES = Object.freeze({
   // task source hears needs-human, or the ticket stays claimed "in progress".
   [REASON.TIME_LIMIT]:   { reportsToSource: true,  stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'node time limit reached' },
   [REASON.TERMINATED]:   { reportsToSource: true,  stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'worca was stopped' },
+  // Mandatory: an unknown reason falls back to the USAGE_LIMIT row, which would read "usage limit reached".
+  [REASON.MODEL_CONFIRM]: { reportsToSource: true, stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'Waiting for you to confirm the model' },
 });
 
 /** The consequences row for a pause reason (unknown/legacy free-text reasons read

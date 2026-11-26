@@ -112,3 +112,5 @@
 .setup-card .hint.err{color:var(--red-ink);}
 .setup-card .input::placeholder{color:var(--ink-2);}
 .setup-card .input[aria-invalid="true"].input::placeholder{color:var(--ink-2);}
+/* Where agents run (setup-where-agents-run.mjs): its lines sit on the section's own gap, no paragraph margins. */
+.setup-card :is(.sa-where-line,.sa-where-none,.sa-where-guide){margin:0;overflow-wrap:anywhere;}

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { featureButtons, featureMenu, featureMenuItems, paintFeatureActions } from '../ui/public/shape/feature-actions.mjs';
+import { featureCardModel } from '../ui/public/shape/feature-card.mjs';
 import { closeMenus } from '../ui/public/workflows/menu.mjs';
 
 const track = useDomRelease(afterEach);
@@ -34,6 +35,35 @@ test('running: Pause · Stop · ⋯; halted: Resume · Re-plan the rest · ⋯; 
   assert.deepEqual(featureMenu(C()).map((i) => i.label), ['Re-plan the rest', 'Cancel the rest', 'Ask before each run', 'Open the plan']);
   assert.deepEqual(featureMenu(C({ active: false, rest: false })).map((i) => i.label), ['Open the plan']);
   assert.deepEqual(featureButtons(null), []);
+});
+
+test('an open stop (item 10): the buttons shrink to Stop; ⋯ gains the moved model actions, deduplicated, and a halted feature\'s Resume', () => {
+  assert.deepEqual(featureButtons(C(), { stopOpen: true }), [{ key: 'stop', label: 'Stop' }]);
+  assert.deepEqual(featureButtons(C({ halted: true }), { stopOpen: true }), [], 'no Resume, no Re-plan the rest beside ⋯');
+  assert.deepEqual(featureButtons(C({ held: { index: 2 } }), { stopOpen: true }), []);
+  const moved = [{ id: 'retry' }, { id: 'report' }, { id: 'resume', disabled: 'Pausing…' }, { id: 'retry' }];
+  assert.deepEqual(featureMenu(C({ halted: true }), { moved, stopOpen: true }).map((i) => i.key),
+    ['replan', 'cancel', 'approve-each', 'plan', 'resume', 'act:retry', 'act:report']);
+  const items = featureMenu(C(), { moved, stopOpen: true });
+  assert.deepEqual(items.slice(4).map((i) => [i.key, i.label, i.disabled || null]),
+    [['act:retry', 'Retry', null], ['act:report', 'Report', null], ['act:resume', 'Resume', 'Pausing…']]);
+  assert.deepEqual(featureMenu(C(), { moved: [] }).map((i) => i.key), featureMenu(C()).map((i) => i.key), 'no stop: today\'s menu');
+});
+
+test('an open stop: a moved item calls deps.modelAct with its id; the feature Resume still posts the feature resume', async () => {
+  const { doc, host, seen, labels, menu } = setup(C({ halted: true }));
+  paintFeatureActions(doc, host, C({ halted: true }), { act: async (a) => { seen.push(['act', a]); return { ok: true }; }, confirm: async () => true,
+    openPlan() {}, modelAct: (id, b) => seen.push(['model', id, b.dataset.act]) }, { stopOpen: true, moved: [{ id: 'retry' }, { id: 'report', disabled: 'busy' }] });
+  assert.deepEqual(labels(), [''], 'only ⋯');
+  const items = menu();
+  assert.deepEqual(items.map((i) => i.textContent.trim()), ['Re-plan the rest', 'Cancel the rest', 'Ask before each run', 'Open the plan', 'Resume', 'Retry', 'Report']);
+  assert.equal(items[6].disabled || items[6].getAttribute('aria-disabled') === 'true', true, 'a disabled foot action stays disabled');
+  items[5].click();
+  await settle();
+  assert.deepEqual(seen.at(-1), ['model', 'retry', 'feature-more']);
+  menu()[4].click();
+  await settle();
+  assert.deepEqual(seen.at(-1), ['act', 'resume']);
 });
 
 test('Resume posts resume; Ask before each run posts approve-each with the flipped switch; Open the plan opens', async () => {
@@ -268,9 +298,58 @@ test('run 4 D18: featureMenuItems runs the footer ⋯ actions from another menu 
   assert.equal(w.document.activeElement, anchor);
 });
 
+test('item 6 (D12): noReplan leaves out Re-plan the rest only', () => {
+  const c = { active: true, rest: true, approveEach: false, planPipelineId: 'p0' };
+  const labels = (deps) => featureMenuItems(c, { act: async () => ({ ok: true }), confirm: async () => true, openPlan() {}, ...deps }, null).map((i) => i.label);
+  assert.deepEqual(labels({ noReplan: true }), ['Cancel the rest', 'Ask before each run', 'Open the plan']);
+  assert.deepEqual(labels({ noReplan: false }), ['Re-plan the rest', 'Cancel the rest', 'Ask before each run', 'Open the plan']);
+});
+
 test('run 4 D17: paintFeatureActions with menu:false draws no ⋯', () => {
   const dom = track(new JSDOM('<!doctype html><body></body>'));
   const host = dom.window.document.body.appendChild(dom.window.document.createElement('div'));
   paintFeatureActions(dom.window.document, host, C(), { act: async () => ({ ok: true }), confirm: async () => true, pause: async () => {}, stop() {}, openPlan() {} }, { menu: false });
   assert.equal(host.querySelector('[data-act="feature-more"]'), null);
+});
+
+// ---- Slice 6 (D14, D16): Resume shows once, on the failed run's stop line; the pointer is the first open stop ---------
+test('s6 resumeListed: the buttons and the ⋯ menu leave out Resume, everything else stays; the default is today\'s', () => {
+  const halted = C({ halted: true });
+  assert.deepEqual(featureButtons(halted, { resumeListed: true }).map((b) => b.key), ['replan']);
+  assert.deepEqual(featureButtons(halted).map((b) => b.key), ['resume', 'replan']);
+  assert.deepEqual(featureButtons(halted, { resumeListed: false }).map((b) => b.key), ['resume', 'replan']);
+  assert.deepEqual(featureMenu(halted, { stopOpen: true, resumeListed: true }).map((i) => i.key), ['replan', 'cancel', 'approve-each', 'plan']);
+  assert.deepEqual(featureMenu(halted, { stopOpen: true }).map((i) => i.key), ['replan', 'cancel', 'approve-each', 'plan', 'resume']);
+  assert.deepEqual(featureButtons(C(), { stopOpen: true, resumeListed: true }).map((b) => b.key), ['stop'], 'Stop is unchanged');
+});
+
+test('s6 resumeListed: paintFeatureActions forwards it to the footer and the menu', () => {
+  const { doc, host, labels, menu } = setup(C({ halted: true }));
+  const deps = { act: async () => ({ ok: true }), confirm: async () => true, openPlan() {} };
+  paintFeatureActions(doc, host, C({ halted: true }), deps, { resumeListed: true });
+  assert.deepEqual(labels(), ['Re-plan the rest', '']);
+  assert.equal(host.querySelector('[data-act="feature-resume"]'), null);
+  closeMenus();
+  paintFeatureActions(doc, host, C({ halted: true }), deps, { stopOpen: true, resumeListed: true });
+  assert.deepEqual(menu().map((i) => i.textContent.trim()), ['Re-plan the rest', 'Cancel the rest', 'Ask before each run', 'Open the plan']);
+  closeMenus();
+});
+
+const S6_VIEW = (asks) => ({ id: 'feat_1', title: 'Charts', status: 'active', total: 2, done: 0, halted: { index: 5, state: 'error', waiting: [] },
+  slices: [{ index: 5, state: 'error', pipelineId: 'p5' }, { index: 11, state: 'questions', pipelineId: 'p11' }], asks, ask: asks[0] || null,
+  log: [], originPipelineId: 'p0' });
+const FAILED_5 = { index: 5, runId: null, pipelineId: 'p5', id: null, kind: null, reason: null, failed: true, holdsUp: [6] };
+const OPEN_11 = { index: 11, runId: 'r11', pipelineId: 'p11', id: 'q11', kind: 'gate', reason: 'check', failed: false, holdsUp: [13] };
+
+test('s6 featureCardModel: the pointer step is the first open entry of asks; a failed entry never becomes one', () => {
+  const m = featureCardModel({ own: null, card: { pipelineId: 'p0', feature: S6_VIEW([FAILED_5, OPEN_11]), log: [] } });
+  assert.deepEqual([m.step?.index, m.step?.pipelineId, m.step?.id, m.step?.kind, m.step?.snap], [11, 'p11', 'q11', 'gate', null]);
+  const onlyFailed = featureCardModel({ own: null, card: { pipelineId: 'p0', feature: S6_VIEW([FAILED_5]), log: [] } });
+  assert.equal(onlyFailed.step, null);
+});
+
+test('s6 featureCardModel: with no run entry, a Re-plan or Verifier ask (index null) is still the pointer step', () => {
+  const verifier = { index: null, runId: 'rv', pipelineId: 'pv', id: 'vq', kind: 'gate' };
+  const m = featureCardModel({ own: null, card: { pipelineId: 'p0', feature: { ...S6_VIEW([]), halted: null, ask: verifier }, log: [] } });
+  assert.deepEqual([m.step?.index, m.step?.pipelineId, m.step?.id], [null, 'pv', 'vq']);
 });

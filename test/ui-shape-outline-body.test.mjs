@@ -6,6 +6,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderOutlineBody, outlineSummary } from '../ui/public/shape/outline-body.mjs';
+import { stepTitle } from '../ui/public/shape/step-card.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
 import { SEND_FAILED } from '../ui/public/shape/plan-body.mjs';
 import { checkSlices, outlineFixFeedback, outlineFixAllFeedback } from '../src/shared/shape/slices.mjs';
 
@@ -380,4 +382,408 @@ test('Satisfies line per slice, Left out line, the requirements check row; Merge
   assert.equal(plain.$$('[data-kind="satisfies"]').length, 0);
   assert.equal(plain.$('[data-kind="left-out"]').hidden, true);
   assert.equal(plain.$$('.plan-check-row').length, 5);
+});
+
+// ── Small runs B4: the Split step (plan.smallRuns) ───────────────────────────────────────────────────────────────────
+const srSlice = (id, requirements, o = {}) => slice(id, { requirements, ...o });
+const SR_AGREED = ['R-po-1', 'R-po-2', 'R-qa-1', 'R-sec-1'].map((id) => ({ id, text: `text of ${id}` }));
+const SR_REQS = SR_AGREED.map((a) => ({ id: a.id, text: a.text, example: `example of ${a.id}`, role: a.id.startsWith('R-qa') ? 'QA' : a.id.startsWith('R-sec') ? 'Security' : 'Product' }));
+const SR_PASS = { why: 'w', slices: [srSlice('s1', ['R-po-1', 'R-po-2']), srSlice('s2', ['R-qa-1'], { dependsOn: ['s1'] })], agreed: SR_AGREED, leftOut: [],
+  confirmed: [{ id: 'R-sec-1', role: 'Security' }] };
+const SR_ROLE = { ...SR_PASS, confirmed: [{ id: 'R-sec-1', role: 'Legal' }] };
+const SR_BROKEN = { ...SR_PASS, slices: [srSlice('s1', ['R-po-1', 'R-po-2']), srSlice('s2', ['R-po-2'], { dependsOn: ['s1'] })], confirmed: [{ id: 'R-sec-1', role: 'Legal' }] };
+const CHALLENGE = (o = {}) => ({ roles: [
+  { key: 'product', label: 'Product', findings: [{ id: 'f1', severity: 'major', section: 'split', fix: 'Merge runs 1 and 2', status: 'fixed', ids: [] }] },
+  { key: 'qa', label: 'QA', findings: [] },
+  { key: 'devil', label: 'Challenger', findings: [{ id: 'f2', severity: 'major', section: 'split', fix: 'Too many runs for one export', status: 'open', ids: [] }] },
+], challenger: true, rounds: 1, open: 1, ...o });
+const srAsk = (outline, care = 'balanced', o = {}) => ask({ outline, smallRuns: true, care, runSize: care === 'thorough' ? 2 : 3,
+  requirements: SR_REQS, challenge: CHALLENGE({ open: 0, roles: CHALLENGE().roles.map((r) => ({ ...r, findings: r.findings.filter((f) => f.status !== 'open') })) }), ...o });
+
+test('B4 refused, per Care: K checks failed, one row per (rule, id), no primary, no error text, fix-the-split head, focus on the row action', () => {
+  for (const care of ['lean', 'balanced', 'thorough']) {
+    const host = doc.createElement('div'); doc.body.appendChild(host);
+    const panel = doc.createElement('div'); panel.className = 'qpanel'; host.appendChild(panel);
+    const calls = [];
+    renderOutlineBody(panel, srAsk(SR_BROKEN, care), { doc, title: 'Your turn: approve the runs', chip: 'Runs', submit: async (p) => { calls.push(p); return true; }, confirm: async () => true });
+    const $ = (s) => panel.querySelector(s); const $$ = (s) => [...panel.querySelectorAll(s)];
+    const failing = $$('.plan-checks .plan-check-row:not(.ok)');
+    assert.deepEqual(failing.map((r) => r.querySelector('.plan-check-id').textContent), ['R-po-2', 'R-qa-1', 'R-sec-1'], care);
+    assert.equal($('.plan-check-line .plan-fold-text').textContent, '3 checks failed');
+    assert.equal($('.plan-checks').hidden, false, 'the checks fold opens');
+    assert.equal($$('.btn-primary').length, 0, care);
+    assert.equal($('.plan-err').textContent, '');
+    assert.equal($('.ask-mcard-title').textContent, 'Your turn: fix the split');
+    assert.ok($('.plan-ask-changes'));
+    assert.deepEqual(failing.map((r) => r.querySelector('.split-confirm')?.textContent || null), [null, null, 'Ask the role to confirm']);
+    assert.equal(doc.activeElement, failing[0].querySelector('button') || $('.plan-ask-changes'), 'focus on the first failing row\'s action');
+    panel.__plan.setErrors([{ path: 'decision', code: 'split-not-approvable', message: 'The split cannot be approved: …' }]);
+    assert.equal($('.plan-err').hidden, true, 'the refusal message is for API callers');
+    host.remove();
+  }
+});
+
+test('B4 confirm picked: "Security will confirm", the one Approve primary returns, the polite region announces once; Undo clears it', () => {
+  const host = doc.createElement('div'); doc.body.appendChild(host);
+  const panel = doc.createElement('div'); panel.className = 'qpanel'; host.appendChild(panel);
+  const calls = [];
+  let primaries = 0;
+  panel.addEventListener('step-primary', () => { primaries += 1; });
+  renderOutlineBody(panel, srAsk(SR_ROLE), { doc, title: 'Your turn: approve the runs', chip: 'Runs', submit: async (p) => { calls.push(p); return true; }, confirm: async () => true });
+  const $ = (s) => panel.querySelector(s); const $$ = (s) => [...panel.querySelectorAll(s)];
+  assert.equal(doc.activeElement, $('.split-confirm'));
+  $('.split-confirm').click();
+  const items = [...doc.querySelectorAll('.wfv-menu .wfv-menu-item')];
+  assert.deepEqual(items.map((b) => b.textContent), ['Product', 'Engineering', 'Design', 'DevOps', 'Security', 'Compliance', 'QA']);
+  items.find((b) => b.textContent === 'Security').click();
+  const row = $$('.plan-checks .plan-check-row').find((r) => r.textContent.includes('Security will confirm'));
+  assert.ok(row?.classList.contains('ok'));
+  assert.equal(row.querySelector('.plan-check-id').textContent, 'R-sec-1');
+  assert.equal($$('.btn-primary').length, 1);
+  assert.equal($('.btn-primary').textContent, 'Approve 2 runs');
+  assert.equal($('.split-live').getAttribute('aria-live'), 'polite');
+  assert.equal($('.split-live').textContent, 'The split can be approved now');
+  assert.equal($('.ask-mcard-title').textContent, 'Your turn: approve the runs');
+  assert.ok(primaries >= 2);
+  $('.btn-primary').click();
+  assert.deepEqual(calls[0], { decision: 'approve', edits: [{ op: 'confirm', id: 'R-sec-1', role: 'Security' }] });
+  $('.outline-undo').click();
+  assert.equal($$('.btn-primary').length, 0);
+  assert.equal($('.split-live').textContent, '');
+  host.remove();
+});
+
+test('B4 runs: fold rows with Owns, Starts from and Checked by, the ⋯ outside the fold button, no approveEach switch, the Care row', () => {
+  const { $, $$, calls } = setup({ pq: srAsk(SR_PASS) });
+  const toggles = $$('.outline-run-fold');
+  assert.equal(toggles.length, 2);
+  assert.equal(toggles[0].getAttribute('aria-expanded'), 'false');
+  toggles[0].click();
+  assert.equal(toggles[0].getAttribute('aria-expanded'), 'true');
+  const facts = $$('.outline-slice')[0].querySelector('.outline-run-facts');
+  assert.equal(facts.hidden, false);
+  assert.deepEqual([...facts.querySelectorAll('.rd-kv-k')].map((k) => k.textContent), ['Owns', 'Starts from', 'Checked by']);
+  // R-fit-3: B3's and the prototype's wording, "R-x · text e.g. …" on one line per requirement.
+  assert.deepEqual([...facts.querySelectorAll('.outline-own')].map((o) => o.textContent),
+    ['R-po-1 · text of R-po-1 e.g. example of R-po-1', 'R-po-2 · text of R-po-2 e.g. example of R-po-2']);
+  assert.match(facts.textContent, /the feature branch: it starts first/);
+  assert.match($$('.outline-run-facts')[1].textContent, /the latest finished run · waits for 1 run/);
+  assert.match($$('.outline-run-facts')[1].textContent, /Checked byQA/);
+  // R-fit-3: the row reads its number (the id column) and its R-ids comma-joined, as the prototype's splitRow.
+  assert.deepEqual($$('.outline-run-fold .outline-run-num').map((n) => n.textContent), ['1', '2']);
+  assert.deepEqual($$('.outline-run-fold .outline-run-ids').map((n) => n.textContent), ['R-po-1, R-po-2', 'R-qa-1']);
+  for (const m of $$('.outline-row-more')) assert.equal(m.closest('.outline-run-fold'), null);
+  assert.equal($('.outline-approve-each'), null);
+  assert.equal($('.sw-input'), null);
+  assert.equal($('.split-care .rd-kv-v').textContent, 'Balanced · chosen at the start');
+  assert.equal($('.outline-summary').textContent, '2 runs proposed, one after another');
+  assert.equal($('.plan-check-line .plan-fold-text').textContent, '9 checks passed');
+  assert.equal($('.btn-primary').getAttribute('title'), 'Starts run 1; the rest follow one after another');
+  $('.btn-primary').click();
+  assert.deepEqual(calls.submit[0], { decision: 'approve' }, 'no approveEach');
+});
+
+test('B4 objections: one question with Keep the split preset, each open objection once, Ask for changes makes Send changes; one challenge fold', () => {
+  const { $, $$, panel, calls } = setup({ pq: srAsk(SR_PASS, 'balanced', { challenge: CHALLENGE() }) });
+  assert.equal($$('.chat-q').length, 1);
+  assert.equal($('.qopt[data-preset="1"]').textContent.includes('Keep the split'), true);
+  assert.equal(panel.textContent.split('Too many runs for one export').length - 1, 1, 'the open objection appears once');
+  assert.equal($$('.split-challenge-line').length, 1);
+  assert.equal($('.split-challenge-line .plan-fold-text').textContent, 'Challenged by 2 roles and the Challenger · 1 change');
+  $('.split-challenge-line').click();
+  assert.match($('.split-challenge-line').nextElementSibling.textContent, /Merge runs 1 and 2/);
+  assert.match($('.split-challenge-line').nextElementSibling.textContent, /QA: no objection/);
+  assert.equal($('.btn-primary').textContent, 'Approve 2 runs');
+  [...panel.querySelectorAll('.qopt')].find((b) => b.textContent.includes('Ask for changes')).click();
+  assert.equal($$('.btn-primary').length, 1);
+  assert.equal($('.btn-primary').textContent, 'Send changes');
+  $('.btn-primary').click();
+  assert.equal(calls.submit[0].decision, 'revise');
+  assert.match(calls.submit[0].feedback, /- Challenger: Too many runs for one export/);
+  const keep = setup({ pq: srAsk(SR_PASS, 'balanced', { challenge: CHALLENGE() }) });
+  keep.$('.btn-primary').click();
+  assert.deepEqual(keep.calls.submit[0], { decision: 'approve', openObjections: 'kept' });
+});
+
+test('B4: no challenge round draws one "Not challenged" line; Lean says "Challenged by N roles"; the refused cap shows its head line', () => {
+  const none = setup({ pq: srAsk(SR_PASS, 'balanced', { challenge: { roles: [], challenger: true, rounds: 0, open: 0 } }) });
+  assert.equal(none.$('.split-challenge-line'), null);
+  assert.equal(none.$('.split-not-challenged').textContent, 'Not challenged: no review step in this workflow');
+  const lean = setup({ pq: srAsk(SR_PASS, 'lean', { challenge: { roles: [{ key: 'product', label: 'Product', findings: [] }, { key: 'security', label: 'Security', findings: [] }], challenger: false, rounds: 1, open: 0 } }) });
+  assert.equal(lean.$('.split-challenge-line .plan-fold-text').textContent, 'Challenged by 2 roles');
+  const capped = setup({ pq: srAsk(SR_BROKEN, 'balanced', { revisable: false, round: 5 }) });
+  assert.equal(capped.$('.plan-ask-changes'), null);
+  assert.equal(capped.$('.split-cap').hidden, false);
+  assert.equal(capped.$('.split-cap').textContent, 'Too many rounds: plan it as one or stop');
+  assert.equal(setup({ pq: srAsk(SR_PASS) }).$('.split-cap').hidden, true);
+});
+
+test('B4 keyboard: picking "Ask for changes" by key repaints the primary as Send changes (no click)', () => {
+  const { $, panel, calls } = setup({ pq: srAsk(SR_PASS, 'balanced', { challenge: CHALLENGE() }) });
+  const tiles = [...panel.querySelectorAll('.qopt')];
+  const keep = tiles.find((b) => b.textContent.includes('Keep the split'));
+  keep.focus();
+  keep.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  assert.equal($('.btn-primary').textContent, 'Send changes');
+  $('.btn-primary').click();
+  assert.equal(calls.submit[0].decision, 'revise');
+  keep.focus();
+  keep.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+  assert.equal($('.btn-primary').textContent, 'Approve 2 runs');
+});
+
+test('B4 title: a split asked refused (stepTitle) reads "fix the split" until a role pick fixes it, then "approve the runs"', () => {
+  const pq = srAsk(SR_ROLE);
+  const title = stepTitle({ ...pq, kind: 'plan' });
+  assert.equal(title, 'Your turn: fix the split');
+  const panel = doc.createElement('div'); panel.className = 'qpanel'; doc.body.appendChild(panel);
+  renderOutlineBody(panel, pq, { doc, title, chip: 'Runs', submit: async () => true, confirm: async () => true });
+  assert.equal(panel.querySelector('.ask-mcard-title').textContent, 'Your turn: fix the split');
+  panel.querySelector('.split-confirm').click();
+  [...doc.querySelectorAll('.wfv-menu .wfv-menu-item')].find((b) => b.textContent === 'Security').click();
+  assert.equal(panel.querySelector('.ask-mcard-title').textContent, 'Your turn: approve the runs');
+  // fit-1-3: the picked row is rebuilt; focus moves on to the Approve primary that is back.
+  assert.equal(doc.activeElement, panel.querySelector('.btn-primary'));
+  panel.remove();
+});
+
+test('B4 repaint (fit-1-3): an unfolded run stays open after an edit', () => {
+  const three = { ...SR_PASS, slices: [srSlice('s1', ['R-po-1']), srSlice('s2', ['R-po-2'], { dependsOn: ['s1'] }), srSlice('s3', ['R-qa-1'], { dependsOn: ['s2'] })] };
+  const panel = doc.createElement('div'); panel.className = 'qpanel'; doc.body.appendChild(panel);
+  renderOutlineBody(panel, srAsk(three), { doc, title: 'Your turn: approve the runs', chip: 'Runs', submit: async () => true, confirm: async () => true });
+  const fold = (id) => panel.querySelector(`[data-slice="${id}"] .outline-run-fold`);
+  fold('s3').click();
+  panel.querySelector('[data-slice="s1"] .outline-row-more').click();
+  [...doc.querySelectorAll('.wfv-menu .wfv-menu-item')].find((b) => b.textContent === 'Merge with next').click();
+  assert.equal(fold('s3').getAttribute('aria-expanded'), 'true');
+  assert.equal(panel.querySelector('[data-slice="s3"] .outline-run-facts').hidden, false);
+  assert.equal(fold('s1').getAttribute('aria-expanded'), 'false');
+  panel.remove();
+});
+
+test('B4 challenge fold: a disputed objection reason appears once', () => {
+  const challenge = CHALLENGE({ open: 0, roles: [{ key: 'qa', label: 'QA', findings: [{ id: 'f9', severity: 'major', section: 'split', fix: 'Split run 2', status: 'disputed', reason: 'Run 2 is one behaviour', ids: [] }] }] });
+  const { $, panel } = setup({ pq: srAsk(SR_PASS, 'balanced', { challenge }) });
+  $('.split-challenge-line').click();
+  assert.equal(panel.textContent.split('Run 2 is one behaviour').length - 1, 1);
+});
+
+test('B4 after a send-back: the round-2 question says the objections were raised before the changes', () => {
+  const { $ } = setup({ pq: srAsk(SR_PASS, 'balanced', { challenge: CHALLENGE(), round: 2 }) });
+  assert.match($('.split-objections').textContent, /1 objection was raised before your changes/);
+});
+
+test('owner direction d5c0afe48: every Split list draws in the one shared row layout', () => {
+  const { $, $$ } = setup({ pq: srAsk(SR_BROKEN) });
+  assert.ok($('.split-body').classList.contains('srows'));
+  // check rows: the 16px mark box first; the id column only on a row with an id (its texts line up with the other id
+  // rows), a rule row without one puts its label right after the mark (owner walk, finding 7)
+  const checkRows = [...$('.split-body > .plan-check-line:not(.split-challenge-line) + .plan-checks').querySelectorAll('.plan-check-row')];
+  const withId = checkRows.filter((row) => row.querySelector(':scope > .plan-check-id'));
+  const withoutId = checkRows.filter((row) => !row.querySelector(':scope > .plan-check-id'));
+  assert.ok(withId.length > 0 && withoutId.length > 0, 'the fixture mixes id rows and rule rows');
+  for (const row of checkRows) assert.ok(row.firstElementChild.classList.contains('plan-check-mark'), row.textContent);
+  for (const row of withId) {
+    assert.ok(row.querySelector(':scope > .plan-check-id + .plan-check-text'), row.textContent);
+    assert.notEqual(row.querySelector(':scope > .plan-check-id').textContent, '', row.textContent);
+  }
+  for (const row of withoutId) assert.ok(row.firstElementChild.nextElementSibling.classList.contains('plan-check-label'), row.textContent);
+  // run rows: the wait mark, then the fold button holding the id column and the text, the ⋯ beside it
+  for (const row of $$('.outline-run-row')) {
+    assert.ok(row.firstElementChild.classList.contains('plan-check-mark'));
+    assert.ok(row.firstElementChild.classList.contains('is-wait'));
+    assert.ok(row.querySelector(':scope > .outline-run-fold > .plan-check-id + .plan-check-text'));
+  }
+});
+
+test('owner d3ef1cb79 #1: a check list with no ids draws no id column; the challenge rows put their text after the mark', () => {
+  const { $, $$ } = setup({ pq: srAsk(SR_PASS) });
+  const rows = $$('.plan-checks .plan-check-row');
+  assert.ok(rows.length > 0);
+  for (const row of rows) assert.equal(row.querySelector('.plan-check-id'), null, row.textContent);
+  $('.split-challenge-line').click();
+  const challengeRows = [...$('.split-challenge-line').nextElementSibling.querySelectorAll('.plan-check-row')];
+  assert.ok(challengeRows.length > 0);
+  for (const row of challengeRows) assert.equal(row.querySelector('.plan-check-id'), null, row.textContent);
+});
+
+test('owner d3ef1cb79 #2: Split check sentences are regular weight in ink; role and run names keep 600', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const css = await readFile(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
+  assert.match(css, /\.srows \.plan-check-label\{[^}]*font-weight:400[^}]*color:var\(--ink\)/);
+  assert.match(css, /\.srows \.outline-run-fold \.outline-slice-title\{[^}]*font-weight:600/);
+});
+
+test('owner d3ef1cb79 #3: each open objection is a shared row: ? mark, the role in the id column, the fix, the state right-aligned', () => {
+  const { $ } = setup({ pq: srAsk(SR_PASS, 'balanced', { challenge: CHALLENGE() }) });
+  const rows = [...$('.split-objections').querySelectorAll('.plan-check-row')];
+  assert.equal(rows.length, 1);
+  const [row] = rows;
+  assert.equal(row.firstElementChild.classList.contains('plan-check-mark'), true);
+  assert.equal(row.firstElementChild.textContent, '?');
+  assert.equal(row.querySelector(':scope > .plan-check-id').textContent, 'Challenger');
+  assert.equal(row.querySelector(':scope > .plan-check-text .plan-check-label').textContent, 'Too many runs for one export');
+  assert.equal(row.lastElementChild.classList.contains('split-objection-state'), true);
+  assert.equal(row.lastElementChild.textContent, 'major · open');
+  assert.equal($('.split-objections .plan-findings'), null, 'no second, differently drawn list');
+});
+
+test('owner d3ef1cb79 #4: Ask for changes is quiet; while the objections question shows, its pick is the one way to ask', () => {
+  const plain = setup({ pq: srAsk(SR_PASS) });
+  assert.ok(plain.$('.plan-ask-changes').classList.contains('btn-quiet'));
+  assert.equal(plain.$('.plan-ask-changes').hidden, false);
+  const { $, $$, panel } = setup({ pq: srAsk(SR_PASS, 'balanced', { challenge: CHALLENGE() }) });
+  assert.equal($('.plan-ask-changes').hidden, true);
+  assert.equal($$('.plan-actions .btn-primary').length, 1);
+  [...panel.querySelectorAll('.qopt')].find((b) => b.textContent.includes('Ask for changes')).click();
+  assert.equal($('.btn-primary').textContent, 'Send changes');
+  // refused: the question hides, so the quiet Ask for changes is the way back again
+  const refused = setup({ pq: srAsk(SR_ROLE, 'balanced', { challenge: CHALLENGE() }) });
+  assert.equal(refused.$('.split-objections > :not(.split-objection-rows)').hidden, true);
+  assert.equal(refused.$('.plan-ask-changes').hidden, false);
+});
+
+test('B4 refused, rendered before the host attaches it (fresh open, live arrival): the focus lands once it is shown', async () => {
+  const panel = doc.createElement('div'); panel.className = 'qpanel';
+  doc.activeElement?.blur?.();
+  renderOutlineBody(panel, srAsk(SR_ROLE), { doc, title: 'Your turn: fix the split', chip: 'Runs', submit: async () => true, confirm: async () => true });
+  doc.body.appendChild(panel);
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(doc.activeElement, panel.querySelector('.split-confirm'));
+  panel.remove();
+});
+
+test('B4 refused beats open objections: no Keep the split question while refused; it comes back with the primary', () => {
+  const host = doc.createElement('div'); doc.body.appendChild(host);
+  const panel = doc.createElement('div'); panel.className = 'qpanel'; host.appendChild(panel);
+  renderOutlineBody(panel, srAsk(SR_ROLE, 'balanced', { challenge: CHALLENGE() }), { doc, title: 'Your turn: fix the split', chip: 'Runs', submit: async () => true, confirm: async () => true });
+  const $ = (s) => panel.querySelector(s);
+  assert.equal($('.split-objections > :not(.split-objection-rows)').hidden, true);
+  assert.equal(reachable((s) => [...panel.querySelectorAll(s)]).filter((b) => b.textContent.includes('Keep the split')).length, 0);
+  assert.equal(panel.querySelectorAll('.btn-primary').length, 0);
+  $('.split-confirm').click();
+  [...doc.querySelectorAll('.wfv-menu .wfv-menu-item')].find((b) => b.textContent === 'Security').click();
+  assert.equal($('.split-objections > :not(.split-objection-rows)').hidden, false);
+  assert.equal(panel.querySelectorAll('.btn-primary').length, 1, 'the primary follows the question again');
+  // Undo edits hides itself: the focus goes back to the failing row's action, not to <body>.
+  $('.outline-undo').focus();
+  $('.outline-undo').click();
+  assert.equal($('.split-objections > :not(.split-objection-rows)').hidden, true);
+  assert.equal(doc.activeElement, $('.split-confirm'));
+  host.remove();
+});
+
+test('B4 refused: the open objections stay on the card as rows (the ? mark, the role, the fix, open), with no Keep/approve choice', () => {
+  const { $, panel } = setup({ pq: srAsk(SR_ROLE, 'balanced', { challenge: CHALLENGE() }) });
+  const wrap = $('.split-objections');
+  assert.equal(wrap.hidden, false);
+  assert.equal(wrap.closest('[hidden]'), null);
+  const rows = [...wrap.querySelectorAll('.split-objection-rows .plan-check-row')];
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].closest('[hidden]'), null);
+  assert.equal(rows[0].querySelector('.plan-check-mark').textContent, '?');
+  assert.equal(rows[0].querySelector('.plan-check-id').textContent, 'Challenger');
+  assert.match(rows[0].querySelector('.split-objection-state').textContent, /open$/);
+  const visibleKeep = [...panel.querySelectorAll('.qopt')].filter((b) => b.textContent.includes('Keep the split') && !b.closest('[hidden]'));
+  assert.equal(visibleKeep.length, 0);
+});
+
+test('B1 one-line run rows are 32px: scoped under the chat member host, they outrank group-page.css and leave it dev\'s', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const css = await readFile(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
+  const host = String.raw`\.chat-rc-members \.run-members`;
+  // (0,5,0) beats `.run-members.is-table > .run-member{…padding:8px 0}` (0,3,0); 1px top border + 5 + 20 + 6 = 32.
+  assert.match(css, new RegExp(String.raw`${host}\.is-table\.is-one-line > \.run-member\{[^}]*min-height:32px[^}]*padding:5px 0 6px[^}]*line-height:20px`));
+  // 1280: the short state shares the title's 20px line box (a baseline row made it 21px, the row 33px).
+  assert.match(css, new RegExp(String.raw`${host}\.is-one-line \.run-member-main\{[^}]*align-items:center`));
+  // The 16px mark column and 8px gap, restated with dev's column list per width, in cascade order.
+  const table = String.raw`${host}\.is-table\.is-one-line`;
+  const cols = [
+    String.raw`\n${table}\{grid-template-columns:16px 20px minmax\(0,1fr\) max-content 16px;column-gap:8px;\}`,
+    String.raw`@container chat-rc-members \(width > 480px\)\{\s*${table}\{grid-template-columns:16px 20px minmax\(0,1fr\) max-content 64px 16px;\}`,
+    String.raw`@media \(max-width:600px\)\{\s*${table}\{grid-template-columns:16px 20px minmax\(0,1fr\) max-content;\}`,
+    String.raw`@container chat-rc-members \(width <= 360px\)\{\s*${table}\{grid-template-columns:16px 20px minmax\(0,1fr\) max-content;\}`,
+  ].map((re) => { const m = css.match(new RegExp(re)); assert.ok(m, re); return m.index; });
+  assert.deepEqual(cols, [...cols].sort((a, b) => a - b));
+  // 375: a row with no PR chip and no cost keeps one grid row (the empty ". . pr cost" row plus its gap made it 41px),
+  // at the phone width and in the chat card's narrow container alike.
+  const empty = String.raw`${table} > \.run-member:has\(> \.run-member-pr:empty\):has\(> \.run-member-cost:empty\)`;
+  assert.match(css, new RegExp(String.raw`@media \(max-width:600px\)\{[^}]*\}\s*${empty}\{grid-template-areas:"dot num main go";\}`));
+  assert.match(css, new RegExp(String.raw`@container chat-rc-members \(width <= 360px\)\{[^}]*\}\s*${empty}\{grid-template-areas:"dot num main main";\}`));
+  assert.match(css, new RegExp(String.raw`${empty} > :is\(\.run-member-pr, \.run-member-cost\)\{display:none;\}`));
+  // C2: a narrow row WITH a PR chip or a cost stays one line too (the prototype's #build rows): the chip takes the last
+  // column, the cost is dropped, at the phone width and in the narrow container alike.
+  for (const at of [String.raw`@media \(max-width:600px\)`, String.raw`@container chat-rc-members \(width <= 360px\)`]) {
+    const block = css.match(new RegExp(String.raw`${at}\{[^]*?\n\}`, 'g')).find((b) => b.includes('"dot num main pr"'));
+    assert.ok(block, at);
+    assert.match(block, new RegExp(String.raw`${table} > \.run-member\{grid-template-areas:"dot num main pr";\}`));
+    assert.match(block, /\.run-member-cost\)\{display:none;\}/);
+  }
+  // No selector starts with .run-member (the split tool would hand it to runs/group-page), and the group table is dev's.
+  assert.deepEqual(css.split('\n').filter((l) => /^\s*\.run-member/.test(l)), []);
+  const groupCss = await readFile(new URL('../ui/public/runs/group-page.css', import.meta.url), 'utf8');
+  for (const text of ['is-one-line', '--member-', '.run-member-state']) assert.ok(!groupCss.includes(text), text);
+});
+
+test('item 7: the feature page\'s one-line rows have their own twins under .gpage-runs: 32px, one line at every width, group-page.css untouched', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const css = await readFile(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
+  const host = String.raw`\.gpage-runs \.run-members`;
+  const table = String.raw`${host}\.is-table\.is-one-line`;
+  assert.match(css, new RegExp(String.raw`${table} > \.run-member\{[^}]*min-height:32px[^}]*padding:5px 0 6px[^}]*line-height:20px`));
+  assert.match(css, new RegExp(String.raw`${host}\.is-one-line \.run-member-main\{[^}]*flex-direction:row[^}]*align-items:center`));
+  assert.match(css, new RegExp(String.raw`${host}\.is-one-line \.run-member-title\{[^}]*white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;\}`));
+  assert.match(css, new RegExp(String.raw`\ndiv${table}\{grid-template-columns:16px 20px minmax\(0,1fr\) max-content 64px 16px;column-gap:8px;\}`));
+  // Narrow: one line, the PR chip in the last column, no cost. The container query is a range form (the gates read
+  // group-page.css's first max-width block by its text).
+  for (const at of [String.raw`@media \(max-width:600px\)`, String.raw`@container gpage-runs \(width <= 480px\)`]) {
+    const block = css.match(new RegExp(String.raw`${at}\{[^]*?\n\}`, 'g')).find((b) => b.includes('.gpage-runs .run-members'));
+    assert.ok(block, at);
+    assert.match(block, new RegExp(String.raw`${table}\{grid-template-columns:16px 20px minmax\(0,1fr\) max-content;`));
+    assert.match(block, new RegExp(String.raw`${table} > \.run-member\{grid-template-areas:"dot num main pr";\}`));
+    assert.match(block, /\.run-member-cost\)\{display:none;\}/);
+  }
+  assert.doesNotMatch(css, /@container gpage-runs \(max-width/);
+  assert.deepEqual(css.split('\n').filter((l) => /^\s*\.gpage/.test(l)), [], 'a rule that starts with .gpage would move to runs/group-page');
+});
+
+test('B4 phone width: the Split\'s fold lines wrap inside the card (the challenge line overflowed at 375px)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const css = await readFile(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
+  assert.match(css, /\.srows > \.plan-check-line\{[^}]*max-width:100%[^}]*white-space:normal/);
+  assert.match(css, /\.srows > \.plan-check-line \.plan-fold-text\{[^}]*min-width:0/);
+  const { $ } = setup({ pq: srAsk(SR_PASS, 'balanced', { challenge: CHALLENGE() }) });
+  assert.equal($('.split-challenge-line').parentElement, $('.split-body'));
+});
+
+// ── Slice 11 (R-po-6): the Split row's Starts from names the runs ────────────────────────────────────────────────────
+const S11_IDS = ['R-po-1', 'R-po-2', 'R-po-3', 'R-po-4', 'R-po-5', 'R-po-6', 'R-po-7'];
+const s11Outline = () => ({ why: 'w', agreed: S11_IDS.map((id) => ({ id, text: `text of ${id}` })), leftOut: [], confirmed: [],
+  slices: S11_IDS.map((id, i) => srSlice(`s${i + 1}`, [id], { dependsOn: i === 6 ? ['s6', 's4'] : i === 1 ? ['s1'] : [] })) });
+const startsOf = ($$) => $$('.outline-slice').map((s) => [...s.querySelectorAll('.outline-run-facts .rd-kv-row')]
+  .find((r) => r.querySelector('.rd-kv-k').textContent === 'Starts from')?.querySelector('.rd-kv-v').textContent);
+const openAll = ($$) => $$('.outline-run-fold').forEach((b) => { if (b.getAttribute('aria-expanded') !== 'true') b.click(); });
+
+test('S11-T6 flag on: dependsOn s6, s4 reads "waits for runs 4, 6"; one dependency "run 1"; none "no run"; an edit renumbers live', () => {
+  applyFlags({ shaperSmallRuns: true }, doc);
+  try {
+    const { $$ } = setup({ pq: srAsk(s11Outline()) });
+    openAll($$);
+    const t = startsOf($$);
+    assert.equal(t[0], 'the feature branch: it starts first');
+    assert.equal(t[1], 'the latest finished run · waits for run 1');
+    assert.equal(t[2], 'the latest finished run · waits for no run');
+    assert.equal(t[6], 'the latest finished run · waits for runs 4, 6');
+    rowMenu($$, 4).pick('Remove');
+    openAll($$);
+    assert.equal(startsOf($$)[5], 'the latest finished run · waits for runs 4, 5');
+  } finally { applyFlags({ shaperSmallRuns: false }, doc); }
+});
+
+test('S11-T7 flag off: run 3 still reads "waits for 2 runs"', () => {
+  applyFlags({ shaperSmallRuns: false }, doc);
+  const { $$ } = setup({ pq: srAsk(s11Outline()) });
+  openAll($$);
+  assert.equal(startsOf($$)[2], 'the latest finished run · waits for 2 runs');
+  assert.equal(startsOf($$)[6], 'the latest finished run · waits for 6 runs');
 });

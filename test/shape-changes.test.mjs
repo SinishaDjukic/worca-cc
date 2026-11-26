@@ -1,7 +1,7 @@
 // test/shape-changes.test.mjs
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { changesCard, applyChanges, routeCard, applyRoute, shapeToolFit, shapeThreadFacts, threadWork } from '../src/core/shape/changes.mjs';
+import { changesCard, applyChanges, routeCard, applyRoute, shapeToolFit, shapeThreadFacts, threadWork, applyRequirementCard } from '../src/core/shape/changes.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 
@@ -286,4 +286,41 @@ test('guardrails: the landing facts of a plain run read its stored guardrails_id
   assert.equal(threadWork([{ pipelineId: 'tw000002' }], deps).run.guardrailsId, 'normal');
   const legacy = { ...deps, findPipelineRowById: (id) => ({ ...deps.findPipelineRowById(id), guardrails_id: null }) };
   assert.equal(threadWork([{ pipelineId: 'tw000003' }], legacy).run.guardrailsId, null);
+});
+
+// Small runs C4 (D13): change_requirement fits a chat that follows a marked, active feature and names an agreed id.
+const reqWork = ({ status = 'active', states = ['done', 'running', 'planned'], open = null, smallRuns = true } = {}) => {
+  const w = featWork(status, states, open);
+  w.feature.title = 'Reset emails';
+  w.feature.slices = w.feature.slices.map((sl, i) => ({ ...sl, requirements: { ids: [`R-po-${i + 1}`], check: null } }));
+  w.facts.feature.title = 'Reset emails';
+  w.facts.feature.agreed = [1, 2, 3].map((i) => ({ id: `R-po-${i}`, text: `requirement ${i}` }));
+  if (smallRuns) w.smallRuns = true;
+  return w;
+};
+const REQ_IN = { featureId: 'f1', requirement: 'R-po-3', text: 'reset emails retry once', reason: 'once is enough' };
+
+test('C4: shapeToolFit(requirement) gives the req-change card with the owner\'s case; each refusal verbatim', () => {
+  const r = shapeToolFit('requirement', REQ_IN, reqWork());
+  assert.deepEqual(r, { ok: true, card: { type: 'req-change', featureId: 'f1', featureTitle: 'Reset emails', requirement: 'R-po-3',
+    from: 'requirement 3', to: 'reset emails retry once', reason: 'once is enough', landsAs: 'not-started' } });
+  assert.equal(shapeToolFit('requirement', { ...REQ_IN, requirement: 'R-po-2' }, reqWork()).card.landsAs, 'running');
+  assert.equal(shapeToolFit('requirement', { ...REQ_IN, requirement: 'R-po-1' }, reqWork()).card.landsAs, 'finished');
+  assert.equal(shapeToolFit('requirement', REQ_IN, runWork()).error, 'change_requirement is for a chat that follows a feature');
+  assert.equal(shapeToolFit('requirement', { ...REQ_IN, requirement: 'R-po-9' }, reqWork()).error, 'R-po-9 is not an agreed requirement of Reset emails');
+  assert.equal(shapeToolFit('requirement', REQ_IN, reqWork({ smallRuns: false })).error, 'Reset emails is not built with small runs');
+  assert.equal(shapeToolFit('requirement', REQ_IN, reqWork({ open: { index: 2, kind: 'plan' } })).error,
+    'Run 2 is waiting at its Plan step: the user answers it on its step card, not in the chat');
+  assert.equal(shapeToolFit('requirement', { ...REQ_IN, text: 'requirement 3' }, reqWork()).error, 'R-po-3 already reads that');
+  assert.equal(shapeToolFit('requirement', { ...REQ_IN, text: 'x'.repeat(301) }, reqWork()).error, 'text must be at most 300 characters');
+  assert.equal(shapeToolFit('requirement', { ...REQ_IN, reason: ' ' }, reqWork()).error, 'reason is required');
+  assert.equal(shapeToolFit('requirement', REQ_IN, reqWork({ status: 'canceled' })).error, 'Reset emails is canceled');
+});
+
+test('C4: applyRequirementCard applies the card\'s one change as a chat change', () => {
+  const calls = [];
+  const card = shapeToolFit('requirement', REQ_IN, reqWork()).card;
+  const r = applyRequirementCard(card, { apply: (...a) => { calls.push(a); return { ok: true, result: { changes: [] } }; }, by: 'ann' });
+  assert.equal(r.ok, true);
+  assert.deepEqual(calls, [['f1', [{ id: 'R-po-3', from: 'requirement 3', to: 'reset emails retry once' }], { kind: 'chat', by: 'ann' }]]);
 });

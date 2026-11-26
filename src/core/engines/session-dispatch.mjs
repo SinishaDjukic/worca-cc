@@ -47,7 +47,12 @@ const HOST_DISPATCH_TOOLS = Object.freeze(['Agent', 'Task']);
 /** The member's run-level options a host spawn keeps unchanged; everything else is set below or dropped. */
 const RUN_LEVEL_FIELDS = Object.freeze(['cwd', 'mcpConfigPath', 'mcpServerGrants', 'mcpjsonProjectDir', 'noGit', 'workspaceWriteTargets',
   'permissionMode', 'addDirs', 'writableDirs', 'modelEnv', 'redactValues', 'disallowedTools', 'appendSubagentSystemPrompt', 'pluginDirs',
-  'memoryLoadLog', 'permissionRules', 'envScrub', 'envAllowlist', 'asAgent', 'bin', 'engine', 'mock']);
+  'memoryLoadLog', 'permissionRules', 'envScrub', 'envAllowlist', 'asAgent', 'bin', 'engine', 'mock',
+  // Workflow tests 3b, Task 5 (security review M5): a Pretend try's host spawn stays one (no user settings, the try guard).
+  'pluginsOff', 'runLoadsUserSettings', 'tryGuard']);
+/** M5: what else a Pretend try's host keeps (only its own MCP config, its sources, Worca's extra settings). Flag-off review:
+ *  an ordinary host does not take them, so a session group behaves as it did before workflow tests. */
+const TRY_HOST_FIELDS = Object.freeze(['settingSources', 'strictMcpConfig', 'extraSettings']);
 /** C32: a definition always carries these, whatever S2 asks to drop (`tools` is never omitted). */
 const KEEP_DEFINITION_FIELDS = new Set(['description', 'prompt', 'tools']);
 const uniq = (...lists) => [...new Set(lists.flat().filter((t) => typeof t === 'string' && t))];
@@ -106,6 +111,7 @@ export function hostSpawnOpts(memberOpts, { hostSessionId, hostModel, hostEffort
   const m = memberOpts || {};
   const out = {};
   for (const k of RUN_LEVEL_FIELDS) if (m[k] !== undefined) out[k] = m[k];
+  if (m.pluginsOff === true || m.tryGuard) for (const k of TRY_HOST_FIELDS) if (m[k] !== undefined) out[k] = m[k];
   const agentOnly = hostToolsMode === 'agent-only';
   // v3 — agent-only: the host's --allowedTools is exactly Agent,Task. buildClaudeArgs unions mcpServerGrants into that
   // list (claude.mjs:372-378), so the grants go; the MCP config stays (the children reach their servers through the host).

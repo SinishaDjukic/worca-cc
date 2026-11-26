@@ -2,16 +2,17 @@
 // page, so no card fetches it twice and none reads it before it loads. There is no synchronous getter on purpose.
 
 import { perspectiveByKey } from '../../src/shared/shape/perspectives.mjs';
+import { ANSWERER_LEAD_KEYS } from '../../src/shared/answerer.mjs';
+import { CONFIRM_ROLES, roleOfPerspective } from '../../src/shared/shape/feature-record.mjs';
 
 let cached = null;
 /** How long a card waits for the profile before it words the decisions for no known lead. */
 export const ANSWERER_TIMEOUT_MS = 5000;
 let timeoutMs = ANSWERER_TIMEOUT_MS;
 
-/** The word a lead goes by on the cards (the perspective list says Architect and "DevOps and infrastructure"). */
-export const LEAD_LABELS = Object.freeze({
-  product: 'Product', architect: 'Engineering', ux: 'Design', qa: 'QA', security: 'Security', devops: 'DevOps',
-});
+/** The word a lead goes by on the cards (the perspective list says Architect and "DevOps and infrastructure"): its
+ *  CONFIRM_ROLES label, through the one perspective-to-role mapping. */
+export const LEAD_LABELS = Object.freeze(Object.fromEntries(ANSWERER_LEAD_KEYS.map((k) => [k, CONFIRM_ROLES.find((r) => r.key === roleOfPerspective(k)).label])));
 /** One label for a perspective key, on every card: `LEAD_LABELS`, else the perspective's own label, else the key. */
 export const leadLabel = (key) => (Object.hasOwn(LEAD_LABELS, key) && LEAD_LABELS[key]) || (perspectiveByKey(key) || {}).label || String(key);
 

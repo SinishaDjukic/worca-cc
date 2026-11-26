@@ -63,7 +63,7 @@ export async function readMemoryText(projectKeyValue) {
     const root = memoryRoot();
     for (const [label, scope] of [['Project', projectKeyValue ? projectScope(projectKeyValue) : null], ['Global', GLOBAL_SCOPE]]) {
       if (!scope) continue;
-      for (const e of await listMemory(root, scope)) {
+      for (const e of await listMemory(root, scope, { forAgents: true })) {
         const m = await readMemory(root, scope, e.name).catch(() => null);
         if (m && m.body) parts.push(`### ${label}: ${e.name}\n${m.body.trim()}`);
       }

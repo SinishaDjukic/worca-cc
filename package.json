@@ -1,11 +1,11 @@
 {
   "name": "@worca/app",
-  "version": "1.20.0",
+  "version": "1.21.0-rc.1",
   "description": "Worca turns a task into reviewed, merge-ready work. A deterministic multi-agent pipeline that plans, implements and reviews in isolated git worktrees, with quality gates, budgets and a human in the loop. Web UI, CLI and chat.",
   "license": "MIT",
   "author": "Bosch Digital EOOD, Atanas Atanasov, Emil Angelov",
   "contributors": [
-    "Worca Contributors (https://github.com/SinishaDjukic/worca-cc/graphs/contributors)"
+    "Worca Contributors (https://github.com/worca-org/worca/graphs/contributors)"
   ],
   "type": "module",
   "engines": {
@@ -13,11 +13,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SinishaDjukic/worca-cc.git"
+    "url": "git+https://github.com/worca-org/worca.git"
   },
   "homepage": "https://docs.worca.dev",
   "bugs": {
-    "url": "https://github.com/SinishaDjukic/worca-cc/issues"
+    "url": "https://github.com/worca-org/worca/issues"
   },
   "keywords": [
     "worca",
@@ -57,7 +57,12 @@
     "tools/install.mjs",
     "docker/compose*.yml",
     "docker/.env.example",
+    "docker/shared.env.example",
     "npm-shrinkwrap.json",
+    "docker/e2b/e2b.Dockerfile",
+    "docker/e2b/engine-clis.json",
+    "docker/local-sandbox/sandbox.Dockerfile",
+    "docker/CLAUDE_CODE_VERSION",
     "README.md"
   ],
   "scripts": {
@@ -74,6 +79,7 @@
     "smoke:plugin": "WORCA_MOCK=1 WORCA_HOME=.worca-cc-smoke node --disable-warning=ExperimentalWarning tools/smoke-plugin.mjs",
     "docker:build": "node tools/docker-build.mjs",
     "docker:smoke": "node tools/docker-smoke.mjs",
+    "e2b:build": "node docker/e2b/build.mjs",
     "ask:fixtures": "node --disable-warning=ExperimentalWarning tools/ask-capture-fixtures.mjs",
     "verify:composer": "node --disable-warning=ExperimentalWarning tools/verify-composer-cdp.mjs",
     "verify:run-monitor": "node --disable-warning=ExperimentalWarning tools/verify-run-monitor-cdp.mjs",
@@ -109,30 +115,30 @@
     "prepack": "node tools/build-extension.mjs --pack",
     "ext:lint:firefox": "node tools/build-extension.mjs --browser firefox && web-ext lint --source-dir extension/dist/firefox",
     "e2e:extension": "node tools/build-extension.mjs --test --browser chrome && playwright test -c e2e/extension/playwright.config.mjs",
-    "e2e:extension:update-linux": "docker run --rm --platform linux/amd64 -v worca-e2e-node-modules:/nm mcr.microsoft.com/playwright:v1.65.0-noble chown \"$(id -u):$(id -g)\" /nm && docker run --rm --platform linux/amd64 --ipc=host --user \"$(id -u):$(id -g)\" -e HOME=/tmp -v \"$PWD\":/work -v worca-e2e-node-modules:/work/node_modules -w /work mcr.microsoft.com/playwright:v1.65.0-noble bash -lc \"npm ci && npm run e2e:extension -- --update-snapshots\"",
+    "e2e:extension:update-linux": "docker run --rm --platform linux/amd64 -v worca-e2e-node-modules:/nm mcr.microsoft.com/playwright:v1.65.1-noble chown \"$(id -u):$(id -g)\" /nm && docker run --rm --platform linux/amd64 --ipc=host --user \"$(id -u):$(id -g)\" -e HOME=/tmp -v \"$PWD\":/work -v worca-e2e-node-modules:/work/node_modules -w /work mcr.microsoft.com/playwright:v1.65.1-noble bash -lc \"npm ci && npm run e2e:extension -- --update-snapshots\"",
     "e2e:firefox-smoke": "node tools/build-extension.mjs --browser firefox && node tools/firefox-smoke.mjs"
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "11.12.0",
-    "@lobehub/icons-static-svg": "1.103.0",
+    "@lobehub/icons-static-svg": "1.104.0",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@ricky0123/vad-web": "0.0.31",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
     "diff": "9.0.0",
     "docx-preview": "0.4.1",
-    "dompurify": "3.4.17",
+    "dompurify": "3.4.18",
     "express": "^5.3.0",
     "fflate": "0.8.3",
     "gsap": "3.15.1",
     "htmlparser2": "12.0.0",
     "jszip": "3.10.2",
-    "marked": "18.2.0",
+    "marked": "18.2.1",
     "morphdom": "2.7.8",
     "onnxruntime-web": "1.31.1",
-    "playwright-core": "1.65.0",
+    "playwright-core": "1.65.1",
     "smol-toml": "1.9.1",
-    "tar": "7.5.22",
+    "tar": "7.5.23",
     "undici": "8.12.4",
     "ws": "^8.18.0",
     "yaml": "2.9.1"
@@ -140,7 +146,7 @@
   "devDependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@fontsource/poppins": "^5.2.7",
-    "@playwright/test": "1.65.0",
+    "@playwright/test": "1.65.1",
     "acorn": "8.19.0",
     "esbuild": "^0.28.2",
     "eslint-scope": "9.1.2",
@@ -154,6 +160,7 @@
     }
   },
   "optionalDependencies": {
+    "e2b": "2.56.0",
     "ffmpeg-static": "5.3.0",
     "node-pty": "1.1.0"
   }

@@ -173,3 +173,10 @@ test('a check that lands after the dialog was reset for another open is ignored'
   assert.equal(modal.querySelector('.shipit-prs-hint').hidden, true);
   assert.equal(modal.querySelector('.shipit-prs input[value="one"]').disabled, true);
 });
+
+test('D1: a small-runs feature disables One with its reason and picks stacked, whatever the suggestion', () => {
+  const members = [{ position: 1, pr: null }, { position: 2, pr: null }, { position: 3, pr: { url: 'u', state: 'OPEN' } }];
+  assert.deepEqual(groupShipChoice({ kind: 'feature', members, suggested: 'one', smallRuns: true }),
+    { n: 2, oneOff: 'small runs ship a PR per run', mode: 'stacked' });
+  assert.equal(groupShipChoice({ kind: 'feature', members: members.slice(0, 2), suggested: 'one' }).mode, 'one', 'unmarked unchanged');
+});

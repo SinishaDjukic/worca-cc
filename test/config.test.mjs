@@ -43,10 +43,10 @@ test('resolveStepModels falls back to the global model when a role is unset', as
   assert.deepEqual(r.planner, { model: 'claude-opus-4-8', effort: undefined });
 });
 
-test('resolveStepModels with no global model leaves model undefined (today\'s behavior)', async () => {
+test('resolveStepModels with no global model fills an empty role with Worca\'s default (#1450)', async () => {
   const p = await freshProject();
   const r = await resolveStepModels(p, undefined);
-  assert.deepEqual(r.implementer, { model: undefined, effort: undefined });
+  assert.deepEqual(r.implementer, { model: 'claude-sonnet-5-5', effort: undefined });
 });
 
 test('fanOut defaults ON in the registry, registryToSteps and AGENT_STEPS', async () => {

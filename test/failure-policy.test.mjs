@@ -234,3 +234,16 @@ test('describePauseReason: a label per code, none for a manual pause', () => {
   assert.equal(describePauseReason(REASON.USAGE_LIMIT), 'session/usage limit reached');
   assert.match(describePauseReason(REASON.RECOVERABLE), /recoverable/);
 });
+
+test('model_confirm (#1450): the node cell pauses for a confirmation in both modes, labelled as such (never the usage-limit row)', async () => {
+  const { pauseConsequences, describePauseReason } = await import('../src/core/failure-policy.mjs');
+  assert.equal(REASON.MODEL_CONFIRM, 'model_confirm');
+  assert.ok(REASON_CODES.includes('model_confirm'));
+  for (const auto of [true, false]) {
+    const v = resolveFailure({ site: 'node', cls: 'model_confirm', auto });
+    assert.deepEqual([v.outcome, v.reason], ['pause', 'model_confirm']);
+  }
+  assert.equal(pauseConsequences('model_confirm').label, 'Waiting for you to confirm the model');
+  assert.equal(describePauseReason('model_confirm'), 'Waiting for you to confirm the model');
+  assert.notEqual(pauseConsequences('model_confirm'), pauseConsequences('usage_limit'));
+});

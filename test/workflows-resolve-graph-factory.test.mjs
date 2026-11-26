@@ -246,3 +246,79 @@ test('every engine has roles: a Copilot run takes its steps from the Copilot rol
   assert.equal(byKeyOf(claude, 'planner').model, 'claude-opus-5-5', 'a Claude run keeps the Claude roles');
 });
 const byKeyOf = (r, k) => Object.values(r.nodes).find((n) => n.authoredKey === k);
+
+// --- #1450: no silent Claude Code default -----------------------------------
+const byKeyAll = (r, k) => Object.values(r.nodes).filter((n) => n.authoredKey === k);
+
+test('an empty role on Claude resolves to Worca\'s default with modelSource worca-default; signed out it stays empty (null)', async () => {
+  writeUser({});
+  const r = await resolve('wf_default', { claudeAuth: auth('signed-in') });
+  assert.deepEqual([byKeyOf(r, 'planner').model, byKeyOf(r, 'planner').modelSource], ['claude-opus-5-5', 'worca-default']);
+  assert.deepEqual([byKeyOf(r, 'implementer').model, byKeyOf(r, 'implementer').modelSource], ['claude-sonnet-5-5', 'worca-default']);
+  assert.equal(byKeyOf(r, 'planner').effort, undefined);
+  const out = await resolve('wf_default', { claudeAuth: auth('signed-out') });
+  assert.deepEqual([byKeyOf(out, 'planner').model, byKeyOf(out, 'planner').modelSource], [undefined, null]);
+  assert.equal(out.signInBlocked, undefined, 'a Worca default never applies signed out, so it never blocks');
+  const unknown = await resolve('wf_default');
+  assert.equal(byKeyOf(unknown, 'planner').model, 'claude-opus-5-5', 'no auth seam (mock, tests): the default applies');
+});
+
+test('cliDecides, a run model and a template pin carry their own modelSource', async () => {
+  writeUser({ modelRoles: { claude: { deep: { cliDecides: true } } } });
+  const r = await resolve('wf_default', { claudeAuth: auth('signed-in') });
+  assert.deepEqual([byKeyOf(r, 'planner').model, byKeyOf(r, 'planner').modelSource], [undefined, 'cli-decides']);
+  assert.equal(byKeyOf(r, 'implementer').modelSource, 'worca-default', 'the other roles still take their defaults');
+  writeUser({});
+  const run = await resolve('wf_default', { runModel: 'claude-haiku-5-5' });
+  assert.deepEqual([byKeyOf(run, 'planner').model, byKeyOf(run, 'planner').modelSource], [undefined, 'run-model']);
+  await writeGraphWorkflow({
+    id: 'wf_src_tpl', name: 'Src tpl', domain: 'coding',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: { model: 'claude-sonnet-5-5' } },
+      { id: 'n_end', kind: 'end', x: 600, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+      { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_end', port: 'result' } }],
+  });
+  assert.equal((await resolve('wf_src_tpl')).nodes.n_plan.modelSource, 'template');
+  writeUser({ modelRoles: { claude: { deep: { model: 'claude-haiku-4-5' } } } });
+  assert.equal(byKeyOf(await resolve('wf_default'), 'planner').modelSource, 'role');
+});
+
+test('Auto: an empty stage gets the Worca default, a classifier pick is source auto, your roles are ignored', async () => {
+  writeUser({ modelRoles: { claude: { deep: { model: 'claude-haiku-4-5' }, everyday: { model: 'claude-haiku-4-5' } } } });
+  const planId = Object.values((await resolve('wf_default')).nodes).find((n) => n.authoredKey === 'planner').nodeId;
+  const r = await resolve('wf_default', { ignoreProjectOverrides: true, overlay: { nodes: { [planId]: { model: 'claude-fable-5-2' } } } });
+  assert.deepEqual([r.nodes[planId].model, r.nodes[planId].modelSource], ['claude-fable-5-2', 'auto']);
+  for (const nc of byKeyAll(r, 'implementer')) assert.deepEqual([nc.model, nc.modelSource], ['claude-sonnet-5-5', 'worca-default']);
+});
+
+test('codex: the derived Worca defaults, zero probe calls', async () => {
+  writeUser({});
+  const out = auth('signed-out');
+  const r = await resolve('wf_default', { engine: 'codex', claudeAuth: out });
+  assert.equal(out.calls, 0);
+  assert.deepEqual([byKeyOf(r, 'planner').model, byKeyOf(r, 'planner').modelSource], ['gpt-5.6-sol', 'worca-default']);
+  assert.equal(byKeyOf(r, 'implementer').model, 'gpt-6.1-sol');
+});
+
+test('an effort-only node takes the role\'s model (Worca default) at its own effort; the resolve reports the sign-in', async () => {
+  writeUser({});
+  await writeGraphWorkflow({
+    id: 'wf_src_eff', name: 'Src effort', domain: 'coding',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: { effort: 'high' } },
+      { id: 'n_end', kind: 'end', x: 600, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+      { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_end', port: 'result' } }],
+  });
+  const r = await resolve('wf_src_eff', { claudeAuth: auth('signed-in') });
+  assert.deepEqual([r.nodes.n_plan.model, r.nodes.n_plan.effort, r.nodes.n_plan.modelSource], ['claude-opus-5-5', 'high', 'worca-default']);
+  assert.equal(r.claudeAuth, 'signed-in');
+  writeUser({ modelRoles: { claude: { deep: { model: 'claude-sonnet-5-5', effort: 'low' } } } });
+  const role = await resolve('wf_src_eff', { claudeAuth: auth('signed-in') });
+  assert.deepEqual([role.nodes.n_plan.model, role.nodes.n_plan.effort, role.nodes.n_plan.modelSource], ['claude-sonnet-5-5', 'high', 'role']);
+  writeUser({});
+  const out = await resolve('wf_src_eff', { claudeAuth: auth('signed-out') });
+  assert.deepEqual([out.nodes.n_plan.model, out.nodes.n_plan.modelSource], [undefined, null]);
+  assert.equal(out.claudeAuth, 'signed-out');
+});
