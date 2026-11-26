@@ -7,6 +7,7 @@ import { gitState } from '../git-available.mjs';
 import { engineReadiness } from '../engines/readiness.mjs';
 import { probeReachable, ANTHROPIC_API } from '../upstream-probe.mjs';
 import { upstreamEnv } from '../proxy-credentials.mjs';
+import { sidecarConfigured } from '../egress-sidecar-client.mjs';
 import { loadUndici } from '../env-proxy.mjs';
 import { CLAUDE_SIGNED_OUT_HINT } from '../model-test.mjs';
 import { userLine } from '../settings-errors.mjs';
@@ -80,7 +81,9 @@ export const DETECT_CHECKS = Object.freeze([
         : g.reason === 'forced-off' ? ['warn', 'Worca is set not to use Git here (WORCA_GIT=0).']
           : g.reason === 'not-probed' ? ['warn', "Git hasn't been checked yet."]
             : ['no', 'Git was not found on this machine.'] },
-  { id: 'proxyEnv', label: 'Proxy in your environment', run: (p) => p.sourceEnv(), read: (env) => {
+  // Next to the egress sidecar the box's HTTPS_PROXY is the sidecar itself (http://egress:3128), never the corporate proxy:
+  // the Network step reads the sidecar's proxy from GET /api/proxy/status instead.
+  { id: 'proxyEnv', label: 'Proxy in your environment', run: (p) => (sidecarConfigured(p.processEnv ? p.processEnv() : {}) ? {} : p.sourceEnv()), read: (env) => {
     const raw = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
     const host = raw ? proxyHostOf(raw) : null;
     const noProxy = env.NO_PROXY || env.no_proxy || '';

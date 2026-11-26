@@ -85,7 +85,7 @@ app.post('/api/ask/proxy', async (req, res) => {
   if (!askProxyBridges.has(String(req.headers['x-worca-ask-proxy'] || ''))) return res.status(403).json({ error: 'proxy: unknown or finished turn' });
   if (agentMayBeCaller(req)) return res.status(403).json({ error: PROXY_AGENT_TEXT, code: 'PROXY_AGENT_BLOCKED' });
   const op = req.body && req.body.op;
-  if (op === 'status') return res.json({ result: proxyHost.chatStatus() });
+  if (op === 'status') return res.json({ result: await proxyHost.chatStatus() });   // a Promise next to the egress sidecar
   if (op === 'test') {
     // proxyHost.test() releases its lock in `finally`; a throw from checkUpstream still needs a JSON reply here
     // (the MCP child reads j.error).
