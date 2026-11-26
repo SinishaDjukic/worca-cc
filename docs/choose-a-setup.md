@@ -17,6 +17,16 @@ This page helps you pick one. For the reasoning behind the security claims, see 
 "Sandboxed" has one claim behind it in every row: no model key, no git token and no corporate proxy login in an
 agent's reach. It does not mean "no secrets". The [Security overview](security-overview.md) lists what stays in reach.
 
+On a native install the [setup assistant](setup-assistant.md) picks between the first three for you: its
+How you work step has **Where agents run**. It offers Local always, the Local sandbox (Docker) when it finds Docker
+running, and the E2B sandbox when an E2B key is set. The pick becomes the default for new runs. In a container it
+shows how the box is set up instead.
+
+Worca says which setup it runs in. **Settings › General › Security** (Advanced level) shows where Worca runs, the
+credential broker, agent users, the outbound network, where the proxy login lives and the default execution
+environment. On a native install a Local run says **not sandboxed** in its run page header, and New run says so
+under **Runs in**. Both link here.
+
 ## Decision questions
 
 Answer in order. Stop at the first answer that settles it.

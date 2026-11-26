@@ -187,6 +187,10 @@ import { layoutDialog, watchDialogEdges } from './dialog-layout.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
 import { loadExecEnvs, execEnvKnown, execEnvLabel, execEnvTitle, execEnvTitleWithArticle, fillExecEnvSelect, setExecEnvSelectValue } from './exec-envs.mjs';
 import { paintExecEnvStatusChip, watchExecEnvStatus } from './exec-env-status.mjs';
+import { paintExecEnvCardBackend, paintExecEnvCardValues, readExecEnvCard } from './exec-env-settings-card.mjs';
+import { paintProjectAddForBox, projectAddModeForBox, setWorcaBox, worcaBox } from './worca-box.mjs';
+import { execEnvSegNode, paintLocalRunNote, paintRunExecLine, runExecEnvSeg } from './run-sandbox-note.mjs';
+import { loadSecurityStatus } from './security-status-view.mjs';
 import { guardModal, dialogOpen, DISCARD_MESSAGE } from './modal-guard.mjs';
 import { createVoiceController } from './ask-voice.mjs';
 import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, gsPillText, GETTING_STARTED_STEPS } from './getting-started.mjs';
@@ -2540,6 +2544,7 @@ function onHello(msg) {
       runEngine: r0.runEngine || undefined,
       execEnv: r0.execEnv || undefined,
       execEnvWaiting: !!r0.execEnvWaiting,
+      execEnvPreparing: r0.execEnvPreparing || undefined,
       execEnvWaitUntil: r0.execEnvWaitUntil || undefined,
       execEnvReview: Array.isArray(r0.execEnvReview) ? r0.execEnvReview : undefined,
       startedBy: r0.startedBy || undefined,
@@ -2707,7 +2712,7 @@ function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
   pauseDetail = null, limitEngine = null, limitResetAt = null, modelConfirm = null, limitScope = null, limitModel = null, runEngine = undefined,
-  execEnv = undefined, execEnvWaiting = false, execEnvWaitUntil = undefined, execEnvReview = undefined, startedBy = null, lastAction = null,
+  execEnv = undefined, execEnvWaiting = false, execEnvPreparing = undefined, execEnvWaitUntil = undefined, execEnvReview = undefined, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined, tags = [], labels = [],
   shaping = null, networkWait = null, workMode = undefined,
 }) {
@@ -2732,6 +2737,7 @@ function makeRun({
     runEngine,            // the engine the run runs on (state frames carry it too); undefined = not known yet
     execEnv,              // the backend name ('e2b') when its agents run in a remote sandbox (docs/e2b.md); undefined = local
     execEnvWaiting,       // remote: still queued for a sandbox slot
+    execEnvPreparing,     // remote: 'image-build' while the backend builds its sandbox image on first use
     execEnvWaitUntil,     // remote: ISO when the parked sandbox is released if the open question stays unanswered
     execEnvReview,        // remote: [{path, why}] files from the sandbox only a person runs later (review before running)
     startedBy,            // who started it (identity.mjs), or null; 'local' is never shown
@@ -3335,6 +3341,7 @@ function onState(r, msg) {
   // Where it executes (e2b only) and whether it still waits for a sandbox slot.
   if (typeof msg.execEnv === 'string') r.execEnv = msg.execEnv;
   r.execEnvWaiting = !!msg.execEnvWaiting;
+  r.execEnvPreparing = typeof msg.execEnvPreparing === 'string' ? msg.execEnvPreparing : undefined;
   r.execEnvWaitUntil = typeof msg.execEnvWaitUntil === 'string' ? msg.execEnvWaitUntil : undefined;
   if (Array.isArray(msg.execEnvReview)) r.execEnvReview = msg.execEnvReview;
   // Swap the manifest when it FIRST arrives OR when its node-id signature changes
@@ -5303,6 +5310,7 @@ function setRunExecEnv(v) {
     if (skipped) el.execEnvHint.textContent = `Runs locally: the saved ${execEnvTitle(saved)} default does not apply to ${why}.`;
   }
   keepVisible(document.getElementById('exec-env-row'), state.execEnv !== 'local' || skipped);
+  paintLocalRunNote(document.getElementById('exec-env-local-note'), { show: state.execEnv === 'local' && !skipped && worcaBox() === 'native' });
   paintExecEnvStatus();
 }
 /** An untouched picker follows the run's default as the engine, the target or the saved default change. */
@@ -5324,10 +5332,12 @@ function paintExecEnvStatus() {
   const known = Array.isArray(state.execEnvStatus);
   const run = state.execEnv === 'local' ? null : execEnvStatusOf(state.execEnv);
   paintExecEnvStatusChip(el.execEnvStatus, run, { hide: state.execEnv === 'local' || (known && !run) });
-  const e2b = execEnvStatusOf('e2b');
-  paintExecEnvStatusChip(document.getElementById('e2b-status-chip'), e2b, { hide: known && !e2b });
+  // Settings › Runs › Execution environment: the backend its select shows (none on Local).
+  const picked = document.getElementById('e2b-exec-env')?.value || 'local';
+  const card = picked === 'local' ? null : execEnvStatusOf(picked);
+  paintExecEnvStatusChip(document.getElementById('e2b-status-chip'), card, { hide: picked === 'local' || (known && !card) });
   const server = document.getElementById('e2b-status-server');
-  if (server) { server.hidden = !e2b?.servers?.[0]; server.textContent = e2b?.servers?.[0] ? `Server: ${e2b.servers[0].label}` : ''; }
+  if (server) { server.hidden = !card?.servers?.[0]; server.textContent = card?.servers?.[0] ? `Server: ${card.servers[0].label}` : ''; }
 }
 const execEnvStatusWatch = watchExecEnvStatus({ onStatus: (list) => { state.execEnvStatus = list; paintExecEnvStatus(); } });
 // On screen = the chip has a box in the viewport: hidden (Local), another view or Settings tab, scrolled away, or a
@@ -5348,6 +5358,7 @@ loadExecEnvs().then(() => {
   fillExecEnvSelect(el.execEnvSelect);
   fillExecEnvSelect(document.getElementById('e2b-exec-env'));
   paintRunExecEnv();
+  paintExecEnvCardSelection();
 });
 
 function runSlotDefaults() { return state.runDefaults?.steps?.[state.engine] || null; }
@@ -14783,7 +14794,7 @@ function buildPdSettings(sec, key) {
   const p = projectByKey(key);
   if (!p) return;
   const host = document.createElement('div'); host.className = 'pd-settings'; sec.appendChild(host);
-  mountProjectSettings(host, { projectKey: p.key, projectDir: p.path, onTest: testModelRow });
+  mountProjectSettings(host, { projectKey: p.key, projectDir: p.path, onTest: testModelRow, confirm: (o) => confirmModal({ ...o, danger: true }) });
   const brief = document.createElement('div'); brief.className = 'pd-house-brief'; sec.appendChild(brief);
   mountHouseBrief(brief, { projectKey: p.key });
   sec.appendChild(buildPdNightCard(p));
@@ -15338,6 +15349,8 @@ let projAddAutoName = '';   // the Name the Folder path proposed: a name typed o
 let projAddAction = null;   // #693: the Folder pane's Add <root> / Open <name> action, or null
 
 function setProjAddMode(mode) {
+  mode = projectAddModeForBox(mode);         // the hardened box adds by clone only (worca-box.mjs)
+  paintProjectAddForBox(el.projectAddModal);
   const prev = projAddMode;
   // A clone already running keeps its tab (its progress line) even when git went missing meanwhile.
   projAddMode = mode === 'clone' && el.projAddClonePane && (gitOn() || cloneFollow) ? 'clone' : mode === 'folder' ? 'folder' : 'new';
@@ -17001,6 +17014,8 @@ async function loadSettings() {
     paintScreensaver(data.screensaver);
     levelCtl.confirm(data.uiLevel);
     paintAbout(data.app);
+    setWorcaBox(data.box);
+    void loadSecurityStatus(document.getElementById('securityStatusBody'));   // Settings › General › Security
     if (el.aboutUpdateCheck) el.aboutUpdateCheck.checked = data.updateCheck !== false;
     void refreshVersionStatus();
     paintBudgetSettings(data);
@@ -20175,23 +20190,26 @@ document.getElementById('act-reset')?.addEventListener('click', (e) => saveActio
   { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('act-save');
 
-// Settings › Runs › Execution environment (docs/e2b.md). No team layer: null clears each key.
+// Settings › Runs › Execution environment (exec-env-settings-card.mjs). No team layer: null clears each key.
+const execEnvCard = () => document.getElementById('e2b-settings-card');
 function paintE2bSettings(data) {
-  const set = (id, v) => { const n = document.getElementById(id); if (n) n.value = v ?? ''; };
   // Not .value: a saved backend missing from the static options would read as '' and be saved back as a clear.
   setExecEnvSelectValue(document.getElementById('e2b-exec-env'), data?.execEnv);
-  set('e2b-max-sandboxes', data?.e2bMaxSandboxes);
-  set('e2b-max-wait', data?.e2bMaxWaitMin);
+  paintExecEnvCardValues(execEnvCard(), data);
+  paintExecEnvCardSelection();
   settingsCardPainted('e2b-settings-save');
 }
+function paintExecEnvCardSelection() {
+  const v = document.getElementById('e2b-exec-env')?.value || 'local';
+  paintExecEnvCardBackend(execEnvCard(), v, { label: execEnvLabel(v) });
+  paintExecEnvStatus();
+}
 document.getElementById('e2b-settings-save')?.addEventListener('click', (e) => {
-  const num = (id) => { const v = (document.getElementById(id)?.value ?? '').trim(); return v === '' ? null : Number(v); };
-  const sel = document.getElementById('e2b-exec-env')?.value;
-  postSettingsCard({ execEnv: sel && sel !== 'local' ? sel : null, e2bMaxSandboxes: num('e2b-max-sandboxes'), e2bMaxWaitMin: num('e2b-max-wait') },
-    { card: document.getElementById('e2b-settings-card'), button: e.currentTarget, paint: paintE2bSettings, dirty: settingsCardDirty('e2b-settings-save') });
+  postSettingsCard(readExecEnvCard(execEnvCard()),
+    { card: execEnvCard(), button: e.currentTarget, paint: paintE2bSettings, dirty: settingsCardDirty('e2b-settings-save') });
 });
 settingsCardDirty('e2b-settings-save');
-document.getElementById('e2b-exec-env')?.addEventListener('change', (e) => { e.target.dataset.want = e.target.value; });
+document.getElementById('e2b-exec-env')?.addEventListener('change', (e) => { e.target.dataset.want = e.target.value; paintExecEnvCardSelection(); });
 
 const scriptsApi = {
   async list() {
@@ -39089,6 +39107,7 @@ function paintRdStatus(screen, r) {
   const m = rdModel(r);
   const block = screen.querySelector('.rd-sheet .run-status');
   paintRdHead(screen, r, m);                                 // slice 3: the card head (status line, head buttons, route)
+  paintRunExecLine(block, runExecEnvSeg(r, { box: worcaBox(), label: execEnvLabel, titleWithArticle: execEnvTitleWithArticle }));   // where its agents run
   // The run page's bar takes over the removed .rd-prog's focus stop ("Run progress"): the D30 one-line wait state
   // shows only its stage words and gives it the focus ring.
   const bar = block && block.querySelector('.run-status-bar');
@@ -40766,7 +40785,9 @@ function paintRdHeader(screen, r) {
     ['rd-cost', runCostText(r, r.totalCostUsd).text + (freeRequestsSuffix(r.steps) || bridgeRequestsSuffix(r.steps)), true],
     ['rd-step', stepText, false],
   ];
-  if (r.execEnv && r.execEnv !== 'local') segs.push(['rd-exec-env', r.execEnvWaiting ? `waiting for ${execEnvTitleWithArticle(r.execEnv)} slot` : execEnvLabel(r.execEnv), false]);
+  // Where its agents execute (run-sandbox-note.mjs): a backend, its slot wait or first-use image build, or Local's "not sandboxed".
+  const execSeg = runExecEnvSeg(r, { box: worcaBox(), label: execEnvLabel, titleWithArticle: execEnvTitleWithArticle });
+  if (execSeg) segs.push(execSeg);
   // Rebuilt only when what it says changed. Every frame of every run repaints this header, and a
   // <button> rebuilt between a press and its release loses the click (the two land on different
   // nodes). The elapsed segment changes on every frame, so it is written in place instead (the
@@ -40785,7 +40806,7 @@ function paintRdHeader(screen, r) {
   if (rebuild) segs.forEach(([cls, txt, strong]) => {
     if (!txt) return;
     if (meta.childNodes.length) meta.appendChild(rdDot());
-    const seg = document.createElement('span');
+    const seg = cls.startsWith('rd-exec-env') ? execEnvSegNode(document, execSeg) : document.createElement('span');
     seg.className = cls + (strong ? ' strong' : '');
     seg.textContent = txt;
     if (cls === 'rd-cost' && freeRequestsSuffix(r.steps)) seg.title = estTitle(r.totalCostUsd || 0) + ' Free requests: calls this run made to OpenRouter :free models (every call, tool-loop continuations too), out of the day\'s free allowance.';
@@ -44595,6 +44616,7 @@ Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).th
   paintKeepAwakeRow(!(d && d.keepAwake === false));
   setChatLinksPref(!(d && d.chatLinksInPanel === false));
   setPreviewPortGate(d);
+  if (setWorcaBox(d && d.box)) paintRunExecEnv();   // New run's "not sandboxed" note needs the box
   paintMemoryModelLink(d);
   paintScreensaver(d && d.screensaver);
 }).catch(() => { setChatLinksPref(true); /* null (not read yet) already counts as on; this marks the setting read */ });

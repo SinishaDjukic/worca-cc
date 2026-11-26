@@ -9935,6 +9935,13 @@ export class RunHarness extends EventEmitter {
         this._emit('state', this.getState());
       },
       onMaxWait: () => this._execEnvMaxWaitReached(),
+      // A first-use image build while the sandbox starts (backends/docker.mjs): the run page's "building the sandbox image".
+      onPhase: (phase) => {
+        if (phase) this.state.execEnvPreparing = phase;
+        else if (!Object.hasOwn(this.state, 'execEnvPreparing')) return;
+        else delete this.state.execEnvPreparing;
+        this._emit('state', this.getState());
+      },
       // The run page's "answer by" line: when the parked sandbox is released if the question stays open.
       onPark: (until) => {
         if (until) this.state.execEnvWaitUntil = new Date(until).toISOString();

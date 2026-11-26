@@ -2,11 +2,12 @@
 // ui/server.mjs, in source order. ui/routes/index.mjs registers each list at its segment's barrier.
 import * as m_settings_notifications_and_onboarding from './notifications-and-onboarding.mjs';
 import * as m_settings_exec_env from './exec-env.mjs';
+import * as m_settings_security from './security.mjs';
 import * as m_settings_memory from './memory.mjs';
 import * as m_settings_settings from './settings.mjs';
 import * as m_settings_config from './config.mjs';
 export const SEGMENTS = Object.freeze([
-  Object.freeze([m_settings_notifications_and_onboarding, m_settings_exec_env]),   // before app.use('/api/automations', requireFlag('gitAutomations'));
+  Object.freeze([m_settings_notifications_and_onboarding, m_settings_exec_env, m_settings_security]),   // before app.use('/api/automations', requireFlag('gitAutomations'));
   Object.freeze([m_settings_memory, m_settings_settings, m_settings_config]),   // before app.use('/api/mcp', (req, res, next) => {
   Object.freeze([]),   // before app.use((req, res, next) => {
   Object.freeze([]),   // before app.use('/api/skills', (req, res, next) => {

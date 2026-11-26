@@ -40,6 +40,9 @@ services:
     # The relay publishes the port; Docker would publish none for a container on an internal network only.
     ports: !reset []
     environment:
+      # Tells Worca it runs in the hardened box (the label above is invisible from inside): Add project offers clone
+      # only, and Settings › General › Security shows the box (src/core/security-posture.mjs).
+      WORCA_BOX: hardened
       # Trusted as a local caller, like Docker's gateway in the plain container (src/core/remote-access.mjs).
       WORCA_UI_RELAY: ui
       WORCA_PROJECTS_ROOT: /data/projects

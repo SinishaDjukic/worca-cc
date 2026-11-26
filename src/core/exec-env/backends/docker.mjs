@@ -390,7 +390,9 @@ export function dockerClient(runner, { env = process.env, resources = null, look
     return imageId(name);
   }
   /** The default image, built here on first use from the files shipped with Worca (one build at a time). */
-  async function ensureImage(image, onLog) {
+  /** `onPhase('image-build')` while the build runs and `onPhase(null)` after it (the run page's "building the sandbox
+   *  image" state); also for a run that waits on another run's build of the same image. */
+  async function ensureImage(image, onLog, onPhase = () => {}) {
     if (await imageId(image)) return;
     if (image === defaultImageName()) {
       if (!building.has(image)) {
@@ -403,7 +405,8 @@ export function dockerClient(runner, { env = process.env, resources = null, look
         })().finally(() => building.delete(image));
         building.set(image, p);
       }
-      await building.get(image);
+      onPhase('image-build');
+      try { await building.get(image); } finally { onPhase(null); }
       return;
     }
     if (image.startsWith(`${DEFAULT_IMAGE_REPO}-`)) {
@@ -438,11 +441,11 @@ export function dockerClient(runner, { env = process.env, resources = null, look
   async function stopEgress(name) { const r = relays.get(name); relays.delete(name); if (r) await r.stop().catch(() => {}); }
 
   return {
-    async create({ environment, tags = {}, timeoutMs, network = null, onLog = () => {} }) {
+    async create({ environment, tags = {}, timeoutMs, network = null, onLog = () => {}, onPhase = () => {} }) {
       if (!isImageRef(environment)) throw Object.assign(new Error(`"${environment}" is not a Docker image reference`), { errorClass: 'config' });
       const { resources: fromSettings, warnings } = resources ? { resources: { ...DEFAULT_RESOURCES, ...resources }, warnings: [] } : await settingsResources();
       for (const w of warnings) onLog(w);
-      await ensureImage(environment, onLog);
+      await ensureImage(environment, onLog, onPhase);
       const flags = assertHardened(hardeningArgs(fromSettings));
       const name = `worca-${String(tags.worcaRunId || 'run').replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 40)}-${randomBytes(3).toString('hex')}`;
       const labels = { ...Object.fromEntries(Object.entries(tags).map(([k, v]) => [LABEL(k), String(v)])), [LABEL('backend')]: 'docker',

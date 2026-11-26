@@ -360,10 +360,32 @@ test('a login the operator manages: status only, no login form, nothing to save,
   assert.equal(p.$('npStatus').textContent, READY_LINE);
 });
 
+test('the egress sidecar does not answer: the line says so, every action is off, Retry reads the status again', async (t) => {
+  const DOWN_LINE = 'The egress sidecar cannot be reached (connect ECONNREFUSED). Worca cannot read or change the proxy settings or the login until it answers: check that it runs (worca container logs), then Retry.';
+  const down = { state: 'error', line: DOWN_LINE, settings: {}, login: null, sidecar: true, managed: false, unreachable: true };
+  let n = 0;
+  const p = mount({ 'GET /api/proxy/status': () => ({ ok: true, status: 200, data: ++n === 1 ? down : { ...STATUS, sidecar: true, managed: false } }) });
+  t.after(p.close);
+  await tick();
+  assert.equal(p.$('npStatus').textContent, DOWN_LINE);
+  for (const id of ['npSave', 'npLogin', 'npLogout', 'npTest', 'npDetect']) assert.equal(p.$(id).disabled, true, id);
+  assert.equal(p.$('npWhereNote').hidden, true);
+  p.$('npAuth').value = 'auto'; p.$('npAuth').dispatchEvent(new p.dom.window.Event('change'));
+  assert.equal(p.$('npLogin').disabled, true, 'a login mode change does not turn Log in back on');
+  assert.equal(p.$('npRetry').hidden, false);
+  p.$('npRetry').click();
+  await tick(); await tick();
+  assert.equal(p.calls.filter((c) => c.url === '/api/proxy/status').length, 2);
+  assert.equal(p.$('npStatus').textContent, READY_LINE);
+  for (const id of ['npSave', 'npLogin', 'npLogout', 'npTest', 'npDetect']) assert.equal(p.$(id).disabled, false, id);
+  assert.equal(p.$('npRetry').hidden, true);
+});
+
 test('the native card shows no sidecar line', async (t) => {
   const p = mount();
   t.after(p.close);
   await tick();
   assert.equal(p.$('npWhereNote').hidden, true);
+  assert.equal(p.$('npRetry').hidden, true, 'no Retry on a native card');
   assert.equal(p.$('npFixedPort').closest('.drow').hidden, false);
 });

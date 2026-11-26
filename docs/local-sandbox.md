@@ -52,8 +52,8 @@ Docker Desktop or Docker Engine. You need no server and no account.
 3. Pick **Runs in: Local sandbox (Docker)** on New run (Advanced level), or set it as the default for a project or
    for you. From the command line: `worca --exec-env docker --project <dir> --prompt "…"`.
 
-The first run builds the sandbox image on your machine. That takes a few minutes, once. The run log shows the
-progress. The image is called `worca-local-sandbox:<version>`. A Worca upgrade that moves a pinned tool builds a
+The first run builds the sandbox image on your machine. That takes a few minutes, once. The run page says
+"building the sandbox image, first use…" while it builds, and the run log shows the progress. The image is called `worca-local-sandbox:<version>`. A Worca upgrade that moves a pinned tool builds a
 new one on its next run. Old images stay until you remove them (`docker image prune`).
 
 Worca checks at run start that the `docker` command is there and reaches its daemon. When Docker is not running,
@@ -63,13 +63,13 @@ the run is refused with one line that says so.
 
 | Setting | Where | Default | Effect |
 | --- | --- | --- | --- |
-| Where runs execute (`run.execEnv` = `docker`) | New run, project page, Settings › Runs | Local | Runs execute in a container. |
-| `dockerMaxSandboxes` | `settings.json` | 2 | How many containers run at once. More runs wait. |
-| `dockerMaxWaitMin` | `settings.json` | 240 | How long a container waits for an answer before it is released. |
-| `dockerSandbox.memory` | `settings.json` | `4g` | Memory per container, no swap. At least `512m`. |
-| `dockerSandbox.cpus` | `settings.json` | 2 | CPUs per container. |
-| `dockerSandbox.pids` | `settings.json` | 2048 | Processes per container. |
-| `dockerSandbox.runtime` | `settings.json` | none | A stricter runtime, such as `runsc` (gVisor). Passed as `--runtime`. |
+| Where runs execute (`run.execEnv` = `docker`) | New run, project page, Settings › Runs, the setup assistant's How you work › Where agents run (offered once its check finds Docker running) | Local | Runs execute in a container. |
+| `dockerMaxSandboxes` | Settings › Runs › Execution environment (Sandboxes at once), `settings.json` | 2 | How many containers run at once. More runs wait. |
+| `dockerMaxWaitMin` | Settings › Runs › Execution environment (Max wait for an answer), `settings.json` | 240 | How long a container waits for an answer before it is released. |
+| `dockerSandbox.memory` | Settings › Runs › Execution environment (Memory per sandbox), `settings.json` | `4g` | Memory per container, no swap. At least `512m`. |
+| `dockerSandbox.cpus` | Settings › Runs › Execution environment (CPUs per sandbox), `settings.json` | 2 | CPUs per container. |
+| `dockerSandbox.pids` | Settings › Runs › Execution environment (Processes per sandbox), `settings.json` | 2048 | Processes per container. |
+| `dockerSandbox.runtime` | Settings › Runs › Execution environment (Container runtime), `settings.json` | none | A stricter runtime, such as `runsc` (gVisor). Passed as `--runtime`. |
 | Docker image | project page | the default image | An image of your own for this project. |
 | Sandbox network | project page | Open | Open, or Allow listed hosts only. |
 | `WORCA_DOCKER_IMAGE` | server environment | none | An image for every project without its own. |
@@ -81,7 +81,9 @@ An example `settings.json` part:
 { "dockerMaxSandboxes": 3, "dockerSandbox": { "memory": "8g", "cpus": 4, "runtime": "runsc" } }
 ```
 
-An invalid value keeps its default. The run log names it.
+Settings › Runs › Execution environment (Expert level) shows these fields when its select is on Local sandbox
+(Docker). Save refuses an invalid value and says which. An invalid value written into `settings.json` by hand keeps
+its default; the run log names it.
 
 The image is chosen in this order: the project's Docker image setting, then the project's own build, then
 `WORCA_DOCKER_IMAGE`, then the default image. The run log says which one and why.

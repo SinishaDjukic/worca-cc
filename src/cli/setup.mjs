@@ -25,6 +25,8 @@ export const CLI_QUESTIONS = Object.freeze([
   { key: 'work.costLimitResetPeriod', label: 'Reset', parse: (s) => s },
   { key: 'work.autoGeneratePrDescription', label: 'AI-written PR descriptions', parse: yesNo },
   ...['deep', 'everyday', 'quick'].map((r) => ({ key: `models.modelRoles.claude.${r}`, label: `${ROLE_LABELS[r]} model`, parse: (s) => ({ model: s }) })),
+  // The default execution environment (docs/choose-a-setup.md); "local" clears it. Asked last: nothing checks Docker here.
+  { key: 'work.execEnv', label: 'Where agents run (local, docker or e2b)', parse: (s) => (s.toLowerCase() === 'local' ? null : s.toLowerCase()) },
 ]);
 
 const getPath = (obj, path) => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);

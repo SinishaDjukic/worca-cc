@@ -3,6 +3,34 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## See how Worca is protected, and change it from the UI
+
+**Worca now shows how it is set up. The security setups need no settings.json editing.**
+
+Settings › General has a Security card. It shows where Worca runs. It shows the credential broker, agent users, the outbound network and the proxy login. It shows the default execution environment. What only the host can see reads Unknown.
+
+A Local run on your own machine now says "not sandboxed". The run page header says it. New run says it under Runs in. Both link to Choose a setup.
+
+The Execution environment card follows the backend you pick. Docker shows Docker's limits: sandboxes at once, wait time, memory, CPUs, processes and runtime. Save checks each one.
+
+A project's environment spec is a form now. Add tools with pinned versions and apt packages, then Save. A refused value shows its reason inline.
+
+The first Docker run builds its image. The run page says so while it builds.
+
+The setup assistant finds Docker and an E2B key. It asks where agents run. Your answer becomes the default for new runs.
+
+In the hardened box, Add project offers Clone from URL only. Open in editor is gone there. The Security card shows the box image, current or stale, and the rebuild command.
+
+When the egress sidecar is down, the proxy card says so. Its buttons wait. Retry checks again. A rejected login the operator manages now says who must fix it.
+
+Chips: Security · Sandbox · Settings · Setup assistant
+
+Read it: [Choose a setup](../choose-a-setup.md), [Hardened box](../hardened-box.md), [Local sandbox](../local-sandbox.md)
+
+Pull requests (add each number when it opens):
+
+- UI for the security setups (#1634)
+
 ## Choose a setup, and a security overview
 
 **Two new pages tell you which Worca setup fits you, and what each one protects.**

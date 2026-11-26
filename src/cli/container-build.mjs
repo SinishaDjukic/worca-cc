@@ -181,7 +181,7 @@ export async function cmdContainerBuild(argv, { out, c = (_n, s) => s, fail, exe
   try {
     picked = await pickProjects(o.projects);
     spec = unionSpecs(picked);
-    dockerfile = renderBoxDockerfile({ base, spec });
+    dockerfile = renderBoxDockerfile({ base, spec, projects: picked.map((p) => ({ key: p.key, specHash: p.spec.hash })) });
   } catch (err) { fail(err.message); return 1; }
   if (o.dryRun) { out(dockerfile.trimEnd()); return 0; }
 

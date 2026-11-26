@@ -69,10 +69,20 @@ export function unionSpecs(entries) {
   } catch (err) { throw new BoxImageError(`the projects' specs together: ${err.message}`); }
 }
 
-/** The box image's Dockerfile: FROM the base, the spec's layers as root, back to the worca user. */
-export function renderBoxDockerfile({ base, spec }) {
+/** A project key as it may stand in the image's ENV line (keys are slugs; anything else is left out). */
+const PROJECT_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+/** `projects` ([{key, specHash}]) as the box image's WORCA_BOX_IMAGE_PROJECTS value: Worca inside the box compares it
+ *  with the projects' specs now (security-posture.mjs boxImageInside), without the host's build record. */
+export function boxImageProjectsValue(projects = []) {
+  return projects.filter((p) => PROJECT_KEY.test(String(p?.key)) && SPEC_HASH.test(String(p?.specHash))).map((p) => `${p.key}=${p.specHash}`).join(',');
+}
+
+/** The box image's Dockerfile: FROM the base, the spec's layers as root, back to the worca user. `projects` (the specs it
+ *  is built for, [{key, specHash}]) goes into an ENV line, so Worca in the box can tell when a spec changed since. */
+export function renderBoxDockerfile({ base, spec, projects = [] }) {
   checkImageRef(base, 'base image');
   if (!SPEC_HASH.test(String(spec?.hash))) throw new BoxImageError('the spec has no hash');
+  const forProjects = boxImageProjectsValue(projects);
   return [
     '# Worca box image, written by `worca container build` (docs/environment-spec.md). Rebuild instead of editing.',
     `FROM ${base}`,
@@ -80,6 +90,7 @@ export function renderBoxDockerfile({ base, spec }) {
     ...renderSpecLayers(spec),
     'USER worca',
     `LABEL ${SPEC_LABEL}="${spec.hash}"`,
+    ...(forProjects ? [`ENV WORCA_BOX_IMAGE_PROJECTS="${forProjects}"`] : []),
     '',
   ].join('\n');
 }

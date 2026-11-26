@@ -65,6 +65,18 @@ worca exec-env spec --project <key|dir> --json            # print it as JSON
 
 A spec that fails the checks is refused, and the stored spec stays as it was.
 
+## On the project page
+
+The project page's **Execution environment** section has the spec as a form, above the sandbox backends. There is one spec per project, whichever backend builds it.
+
+- **Tools (mise)**: one row per tool, its mise name and its pinned version. **Add tool** adds a row, **Remove** drops one. An empty row is left out.
+- **Apt packages**: the package names on one line, separated by spaces or commas.
+- **Save spec** stores it. **Clear spec** removes it, after you confirm.
+
+The server runs the same checks as the CLI. A refusal shows under the form, in the server's words (`tool node: version must be pinned (e.g. 24.21.0), not "latest"`), and what you typed stays. After a save, a build made from the old spec shows as out of date: **Rebuild environment** makes a new one. With no build yet, **Build environment** makes the first.
+
+The form has no base image, env vars, files or secrets: a spec never holds them. The box image's base is set in the container `.env` ([The base image](#the-base-image)).
+
 ## Where it is stored
 
 The spec is stored in Worca's database, under the project, in the `execEnvProject` record. It is never written into the repository.
@@ -120,3 +132,10 @@ The build writes a record next to the `.env`: `.worca-box-image.json` in the con
 - a newer copy of the base was pulled.
 
 A stale image is still used. `worca container up` warns about it. Nothing rebuilds by itself: run `worca container build` again. `--status` also notes projects that have a spec but are not in the image.
+
+Worca inside the box shows the same state in **Settings › General › Security** (Advanced level): the image tag,
+**Current** or **Stale** with the reason, and the rebuild command as text. It reads it from what the box was started
+with: `compose.image.yml` passes the tag as `WORCA_BOX_IMAGE`, and the image records each project's spec hash in
+`WORCA_BOX_IMAGE_PROJECTS`. It compares those with the specs now. A newer base image shows only on the host, with
+`worca container build --status`. An image built before this release has no spec hashes: the card says **Unknown**
+until you rebuild it.

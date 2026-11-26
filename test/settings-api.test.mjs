@@ -332,6 +332,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       designModels: {},                                      // Models › Engines › Design: {} changes nothing
       modelRoles: {},                                        // Models › Roles: {} changes nothing
       execEnv: null, e2bMaxSandboxes: null, e2bMaxWaitMin: null,   // the execution environment (docs/e2b.md): null clears
+      dockerMaxSandboxes: null, dockerMaxWaitMin: null, dockerSandbox: null,   // the Local sandbox (Docker) limits (docs/local-sandbox.md)
       askEngine: null, askModels: {},                        // Chat's engine (Plan 2b, D17): null / {} change nothing
       flags: {},                                             // feature flags (docs/feature-flags.md): {} is a no-op
       tagDimensions: [],                                     // Settings › Tags › Tag dimensions: [] clears (already clear)

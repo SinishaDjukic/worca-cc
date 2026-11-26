@@ -4,6 +4,11 @@ This page is for someone reviewing Worca for a company. It says what Worca treat
 protects, what it does not, and how to report a problem. To pick a setup, start with
 [Choose a setup](choose-a-setup.md).
 
+To see what your own Worca protects, open **Settings › General › Security** (Advanced level). It shows what Worca's
+own server process can tell: where it runs, the credential broker, agent users, the outbound network, the proxy
+login and the default execution environment. What only the host can see (a container's networks and mounts) reads
+**Unknown** there; `worca container status` checks it on the hardened box.
+
 ## What Worca treats as untrusted
 
 Agents, and everything they read. That covers repositories, issues, web pages, tool output and the files an agent
