@@ -11,7 +11,7 @@ import { JSDOM } from 'jsdom';
 // evaluates it, which re-registers and re-runs all 17 view tests inside THIS
 // process — every "# pass N" below would be wrong and the suite total would
 // double-count them.
-import { fixture, portsFn, AGENTS } from './helpers/graph-view-fixture.mjs';
+import { fixture, loopFixture, portsFn, AGENTS } from './helpers/graph-view-fixture.mjs';
 import { routeWire, routePathD, routeMid, hitRoute } from '../src/shared/graph/route.mjs';
 import { portsFnFor } from '../src/shared/graph/ports.mjs';
 import { portAnchor } from '../src/shared/graph/geometry.mjs';
@@ -923,6 +923,128 @@ test('script inspector edits commit params, timeout and ports through the undo r
   change('[data-field="param:command"]', (x) => { x.value = ''; });
   assert.equal('params' in s.c.template().nodes.find((n) => n.id === node.id).config, false, 'a blank command deletes the key');
   assert.ok(body.querySelector('textarea[data-field="param:command"]').closest('.ins-f').classList.contains('ins-missing'));
+});
+
+// ── node time limits (#1646): n_agent plays n_impl and n_rev plays n_review ──
+const tick = () => new Promise((r) => setTimeout(r, 0));          // let scheduleValidate run
+/** An open composer on two wired agent nodes, with the typing helpers of the limit fields. */
+async function limitEditor(template = loopFixture()) {
+  const s = await open({ template });
+  const field = (key) => {
+    const x = s.el.insBody.querySelector(`[data-field="${key}"]`);
+    assert.ok(x, `the ${key} field`);
+    return x;
+  };
+  return {
+    s, field,
+    select: (id) => s.c.select({ kind: 'node', id }),
+    config: (id) => s.c.template().nodes.find((n) => n.id === id).config,
+    type: async (key, value) => { const x = field(key); x.value = value; x.dispatchEvent(new s.win.Event('change', { bubbles: true })); await tick(); },
+    v23: (id) => s.c.report().errors.filter((e) => e.code === 'V23' && e.nodeId === id),
+    error: (key) => field(key).closest('.ins-f').querySelector('.field-error'),
+  };
+}
+
+test('node limits: a typed value is stored as a number on that node only, and clearing deletes the key (R-qa-9, R-ux-7)', async () => {
+  const e = await limitEditor();
+  e.select('n_agent');
+  const depth = e.s.c.undoDepth();
+  await e.type('timeLimitMinutes', '30');
+  assert.equal(e.config('n_agent').timeLimitMinutes, 30);
+  assert.equal(e.s.c.undoDepth(), depth + 1, 'one undo step');
+  assert.equal(e.field('timeLimitMinutes').value, '30');
+  assert.equal('idleLimitMinutes' in e.config('n_agent'), false);
+  assert.deepEqual(e.config('n_rev'), {}, 'the other agent node has no key');
+  for (const blank of ['', '   ']) {
+    await e.type('timeLimitMinutes', '30');
+    await e.type('timeLimitMinutes', blank);
+    assert.equal('timeLimitMinutes' in e.config('n_agent'), false, `${JSON.stringify(blank)} removes the key`);
+  }
+  assert.equal(e.field('timeLimitMinutes').value, '');
+});
+
+test('R-ux-2: n_review\'s idle limit 60 is saved on it only, shown again after a reload, and gone after clearing', async () => {
+  const e = await limitEditor();
+  e.select('n_rev');
+  await e.type('idleLimitMinutes', '60');
+  const saved = e.s.c.serialize();
+  const again = await limitEditor(saved);
+  again.select('n_rev');
+  assert.equal(again.field('idleLimitMinutes').value, '60');
+  again.select('n_agent');
+  assert.equal(again.field('idleLimitMinutes').value, '');
+  again.select('n_rev');
+  await again.type('idleLimitMinutes', '');
+  const cleared = again.s.c.serialize().nodes.find((n) => n.id === 'n_rev').config;
+  assert.equal('idleLimitMinutes' in cleared, false);
+});
+
+test('R-ux-7: a saved time limit is shown again in a fresh editor', async () => {
+  const e = await limitEditor();
+  e.select('n_agent');
+  await e.type('timeLimitMinutes', '30');
+  const again = await limitEditor(e.s.c.serialize());
+  again.select('n_agent');
+  assert.equal(again.field('timeLimitMinutes').value, '30');
+});
+
+test('R-ux-3, R-ux-6: typing 0 shows a message under the field and refuses Save until fixed or cleared; 2000 is accepted (d-1)', async () => {
+  const e = await limitEditor();
+  e.select('n_agent');
+  await tick();
+  assert.equal(e.s.el.save.disabled, false, 'precondition');
+  for (const fix of ['15', '']) {
+    await e.type('timeLimitMinutes', '0');
+    assert.equal(e.config('n_agent').timeLimitMinutes, 0, 'the invalid value stays in the draft');
+    assert.match(e.error('timeLimitMinutes')?.textContent || '', /Enter minutes above 0, or leave it empty for no limit\./);
+    assert.equal(e.field('timeLimitMinutes').getAttribute('aria-invalid'), 'true');
+    assert.equal(e.s.el.save.disabled, true);
+    assert.equal(e.s.el.errors.hidden, false, 'the validation chip counts it');
+    // The first keystroke of the fix removes the error line (fieldError's own listener).
+    e.field('timeLimitMinutes').dispatchEvent(new e.s.win.Event('input', { bubbles: true }));
+    assert.equal(e.error('timeLimitMinutes'), null);
+    await e.type('timeLimitMinutes', fix);
+    assert.equal(e.error('timeLimitMinutes'), null);
+    assert.ok(e.field('timeLimitMinutes').closest('.ins-f').nextElementSibling?.matches('.ins-hint'), 'the hint returns');
+    assert.equal(e.s.el.save.disabled, false);
+  }
+  await e.type('timeLimitMinutes', '2000');
+  assert.equal(e.config('n_agent').timeLimitMinutes, 2000);
+  assert.equal(e.error('timeLimitMinutes'), null);
+  assert.equal(e.s.el.save.disabled, false);
+});
+
+test('R-qa-4, R-qa-8: the editor and the validator accept and refuse the same values (0, -1, text, 0,5, hex, exponent / 0.5, 1440, 1441)', async () => {
+  const e = await limitEditor();
+  e.select('n_agent');
+  for (const key of ['timeLimitMinutes', 'idleLimitMinutes']) {
+    for (const [typed, stored] of [['0', 0], ['-1', -1], ['abc', 'abc'], ['  abc ', 'abc'], ['0,5', '0,5'], ['0x1e', '0x1e'], ['1e3', '1e3']]) {
+      await e.type(key, typed);
+      assert.strictEqual(e.config('n_agent')[key], stored, `${key} ${typed}`);
+      assert.equal(e.field(key).value, String(stored), 'the repaint shows what was typed');
+      assert.equal(e.v23('n_agent').length, 1, `${key} ${typed}: V23`);
+      assert.ok(e.error(key), `${key} ${typed}: the field message`);
+      assert.equal(e.s.el.save.disabled, true, `${key} ${typed}: Save refused`);
+    }
+    for (const [typed, stored] of [['0.5', 0.5], ['1440', 1440], ['1441', 1441]]) {
+      await e.type(key, typed);
+      assert.strictEqual(e.config('n_agent')[key], stored, `${key} ${typed}`);
+      assert.equal(e.v23('n_agent').length, 0, `${key} ${typed}`);
+      assert.equal(e.error(key), null);
+      assert.equal(e.s.el.save.disabled, false, `${key} ${typed}: Save allowed`);
+    }
+    await e.type(key, '');
+    assert.equal(key in e.config('n_agent'), false);
+  }
+});
+
+test('R-rel-2: a saved workflow with a workflow-wide 90 min limit opens in the editor with no error and empty node fields', async () => {
+  const e = await limitEditor({ ...loopFixture(), limits: { timeLimitMinutes: 90 } });
+  await tick();
+  assert.deepEqual(e.s.c.report().errors, []);
+  e.select('n_agent');
+  assert.equal(e.field('timeLimitMinutes').value, '');
+  assert.equal(e.field('idleLimitMinutes').value, '');
 });
 
 test('config-port edits carry their wires: rename/remove and the params-port toggle never leave an undrawable wire (one undo step)', async () => {

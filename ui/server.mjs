@@ -5469,7 +5469,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     throw new ResumeError(409, { error: 'pipeline is archived' });
   }
   // No graph re-validation on RESUME, on purpose: _restoreFromResumePoint never
-  // reads the workflow row — the frozen manifest supplies topology and port
+  // reads the workflow row (beyond the agent nodes' time limits) — the frozen manifest supplies topology and port
   // identity (resolvedFromManifest: snapshot wins), so a template that drifted
   // while the run sat paused cannot strand it. A vanished agent KEY is the one
   // resume-time hazard, and _preflightAgentKeys already refuses it (§9.4).

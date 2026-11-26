@@ -1000,6 +1000,18 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       paintInspector();
       return;
     }
+    if (node.kind === 'agent' && (name === 'timeLimitMinutes' || name === 'idleLimitMinutes')) {
+      // Empty clears the limit. Plain decimal text is stored as a number, even 0 or negative; other text (hex, an
+      // exponent, a comma) stays as typed: an invalid value stays in the draft, so V23 names it, Save stays disabled
+      // and the repaint shows the message.
+      const raw = ev.target.value.trim();
+      commit(name, () => {
+        if (raw === '') delete node.config[name];
+        else node.config[name] = /^-?\d*\.?\d+$/.test(raw) ? Number(raw) : raw;
+      });
+      paintInspector();
+      return;
+    }
     if (node.kind === 'script' && name.startsWith('port:')) {
       const [, dir, idx, fieldName] = name.split(':');
       if (fieldName === 'id') {

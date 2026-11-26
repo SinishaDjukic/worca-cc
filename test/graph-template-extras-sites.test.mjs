@@ -112,6 +112,25 @@ test('REVIEW FOCUS 4 — the seed refresh of a pristine seed row keeps membershi
   assert.deepEqual(Object.keys(mergeShippedSeed({ nodes: structuredClone(seedT.nodes), wires: [] }, seedT)), ['nodes', 'wires'], 'an ungrouped row writes the same keys as before');
 });
 
+test('a seed refresh keeps a user\'s node time limits on cards that are still agents (#1646, R-qa-10)', async () => {
+  const { mergeShippedSeed } = await import('../src/core/db.mjs');
+  const seedT = SEED_TEMPLATES.find((s) => s.id === 'wf_quick-fix');
+  const stored = { nodes: structuredClone(seedT.nodes), wires: structuredClone(seedT.wires) };
+  const cfg = (nodes, id) => nodes.find((n) => n.id === id).config;
+  cfg(stored.nodes, 'n_impl').timeLimitMinutes = 30;
+  Object.assign(cfg(stored.nodes, 'n_review'), { timeLimitMinutes: 45, idleLimitMinutes: 60 });
+  // The shipped shape turned n_review into a script card: a limit is an agent's setting and does not follow.
+  const shipped = structuredClone(seedT);
+  Object.assign(shipped.nodes.find((n) => n.id === 'n_review'), { kind: 'script', key: 'shell', config: {} });
+  const out = mergeShippedSeed(stored, shipped);
+  assert.equal(cfg(out.nodes, 'n_impl').timeLimitMinutes, 30);
+  assert.equal('idleLimitMinutes' in cfg(out.nodes, 'n_impl'), false);
+  assert.equal('timeLimitMinutes' in cfg(out.nodes, 'n_review'), false);
+  assert.equal('idleLimitMinutes' in cfg(out.nodes, 'n_review'), false);
+  const idle = mergeShippedSeed({ nodes: stored.nodes, wires: stored.wires }, seedT);
+  assert.equal(cfg(idle.nodes, 'n_review').idleLimitMinutes, 60);
+});
+
 test('guard: no copy site spells the extras by hand any more', () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
   for (const rel of ['src/core/workflows.mjs', 'src/core/workflow-share.mjs', 'src/core/plugin-workflows.mjs', 'src/shared/graph/manifest.mjs', 'src/core/db.mjs']) {

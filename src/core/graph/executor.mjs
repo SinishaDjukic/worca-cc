@@ -857,26 +857,23 @@ function initModelGuard(guard, outer) {
 
 // ── node time limits (E4) ─────────────────────────────────────────────────────
 
-const DEFAULT_TIME_LIMIT_MIN = 600;
-const DEFAULT_IDLE_LIMIT_MIN = 300;
 const minutesOf = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
 
 /**
- * An agent node's wall-clock and idle limits in ms: the node's `config.timeLimitMinutes` /
- * `config.idleLimitMinutes`, else the workflow's `limits` of the same names, else the env
- * (`WORCA_NODE_TIME_LIMIT_MIN`, `WORCA_NODE_IDLE_LIMIT_MIN`), else 10 hours and 5 hours.
- * Both defaults are long on purpose: a quiet agent is usually thinking or waiting on its own work,
- * and a large step can run for hours. The earlier defaults (90 and 20 minutes) stopped real work,
- * and a stopped node re-runs from the start. They remain a last guard against a node that never ends.
+ * An agent node's wall-clock and idle limits in ms, per node and off by default: only the node's own
+ * `config.timeLimitMinutes` / `config.idleLimitMinutes` (set in the workflow editor) count. An unset or
+ * invalid value is null, meaning no limit. A worca-wide default paused healthy runs, and a paused node
+ * re-runs from the start, so nothing else (no env var, no workflow-wide setting) supplies one.
  */
 export function nodeTimeLimits(ctx) {
   const cfg = ctx?.node?.config || {};
-  const wf = ctx?.template?.limits || {};
-  const env = (k) => minutesOf(Number(process.env[k]));
-  const wall = minutesOf(cfg.timeLimitMinutes) ?? minutesOf(wf.timeLimitMinutes) ?? env('WORCA_NODE_TIME_LIMIT_MIN') ?? DEFAULT_TIME_LIMIT_MIN;
-  const idle = minutesOf(cfg.idleLimitMinutes) ?? minutesOf(wf.idleLimitMinutes) ?? env('WORCA_NODE_IDLE_LIMIT_MIN') ?? DEFAULT_IDLE_LIMIT_MIN;
-  return { wallMs: Math.round(wall * 60000), idleMs: Math.round(idle * 60000) };
+  const ms = (v) => { const m = minutesOf(v); return m == null ? null : Math.max(1, Math.round(m * 60000)); };
+  return { wallMs: ms(cfg.timeLimitMinutes), idleMs: ms(cfg.idleLimitMinutes) };
 }
+
+// setTimeout runs a delay above 2**31-1 ms (~24.8 days) after 1 ms, so a timer is clamped to it; the message keeps the set value.
+const MAX_TIMER_MS = 2 ** 31 - 1;
+const timerMs = (ms) => Math.min(ms, MAX_TIMER_MS);
 
 const fmtMinutes = (ms) => (ms >= 60000 ? `${Math.round(ms / 60000)} min` : `${Math.max(1, Math.round(ms / 1000))} s`);
 
@@ -890,29 +887,33 @@ const fmtMinutes = (ms) => (ms >= 60000 ? `${Math.round(ms / 60000)} min` : `${M
  */
 function timeLimitGuard({ wallMs, idleMs }, outer, nodeId) {
   const ac = new AbortController();
-  const guard = { error: null, signal: outer ? AbortSignal.any([outer, ac.signal]) : ac.signal };
+  const limited = wallMs != null || idleMs != null;
+  const guard = { error: null, signal: outer && limited ? AbortSignal.any([outer, ac.signal]) : (outer || ac.signal) };
   const hit = (code, text) => {
     if (guard.error || outer?.aborted) return;
-    guard.error = Object.assign(new Error(`${nodeId || 'agent'}: ${text} — stopped; resume re-runs the node`),
+    guard.error = Object.assign(new Error(`${nodeId || 'agent'}: ${text}`),
       { code, errorClass: 'time_limit' });
     ac.abort(guard.error);
   };
   // Both timers are unref'd: a watchdog guards a spawn and never keeps the process alive by itself (the spawn's child
   // and pipes do while it runs). A spawn whose promise never settles never reaches stop(), and a session host can emit a
   // member event after the turn ended: either way a ref'd timer held a finished process open for up to 90 minutes.
-  const wall = setTimeout(() => hit('NODE_TIME_LIMIT', `ran past its ${fmtMinutes(wallMs)} time limit`), wallMs).unref();
+  // A limit that is not set (null) creates no timer: with neither set, the guard is the outer signal and its methods do nothing.
+  const where = 'set on this node in the workflow editor, where it can be raised or cleared';
+  const wall = wallMs == null ? null
+    : setTimeout(() => hit('NODE_TIME_LIMIT', `ran past its ${fmtMinutes(wallMs)} time limit (${where})`), timerMs(wallMs)).unref();
   let idle = null;
   let stopped = false;
   let pid = null;
   let armed = 0;   // bumped by every arm: output during the busy probe wins over its answer
   let lastOutput = Date.now();
   // The probe takes a quarter of a short idle limit, at most a minute: a 1 min limit is not stretched to 2.
-  const probeMs = Math.min(BUSY_PROBE_MS, Math.max(1000, Math.round(idleMs / 4)));
+  const probeMs = idleMs == null ? null : Math.min(BUSY_PROBE_MS, Math.max(1000, Math.round(idleMs / 4)));
   const arm = () => {
-    if (stopped) return;   // an event after the spawn ended re-arms nothing
+    if (stopped || idleMs == null) return;   // an event after the spawn ended re-arms nothing
     armed++;
     if (idle) clearTimeout(idle);
-    idle = setTimeout(() => void idleHit(), idleMs).unref();
+    idle = setTimeout(() => void idleHit(), timerMs(idleMs)).unref();
   };
   const idleHit = async () => {
     const at = armed;
@@ -922,12 +923,12 @@ function timeLimitGuard({ wallMs, idleMs }, outer, nodeId) {
       if (stopped || at !== armed) return;
       if (busy) { arm(); return; }
     }
-    hit('NODE_IDLE_LIMIT', `no output for ${fmtMinutes(Date.now() - lastOutput)} (idle limit ${fmtMinutes(idleMs)})`);
+    hit('NODE_IDLE_LIMIT', `no output for ${fmtMinutes(Date.now() - lastOutput)} (idle limit ${fmtMinutes(idleMs)}, ${where})`);
   };
   guard.touch = () => { if (!stopped) lastOutput = Date.now(); arm(); };
   guard.watch = (p) => { pid = p; };
   guard.touch();
-  guard.stop = () => { stopped = true; clearTimeout(wall); if (idle) clearTimeout(idle); };
+  guard.stop = () => { stopped = true; if (wall) clearTimeout(wall); if (idle) clearTimeout(idle); };
   return guard;
 }
 

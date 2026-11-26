@@ -71,3 +71,14 @@ test('without ignoreProjectOverrides an overlay merges PER NODE over the project
   assert.equal(merged.nodes.n_plan.effort, 'max');
   assert.deepEqual(merged.wires, { w5: { maxCycles: 2 } });
 });
+
+test('neither an overlay nor the project\'s agent defaults can add a node limit (#1646, R-po-2, R-qa-10)', async () => {
+  const limits = { timeLimitMinutes: 5, idleLimitMinutes: 5 };
+  await writeGraphWorkflow(GRAPH);
+  await setNodeModel(projectDir, 'wf_rga', 'n_impl', { model: 'claude-opus-5-5', ...limits });
+  for (const ignoreProjectOverrides of [false, true]) {
+    const r = await resolveGraph(projectDir, 'wf_rga', REG(), undefined, { overlay: { nodes: { n_impl: limits } }, ignoreProjectOverrides });
+    const configs = [r.nodes.n_impl, r.nodes.n_impl.config, r.template.nodes.find((n) => n.id === 'n_impl').config];
+    for (const c of configs) for (const k of Object.keys(limits)) assert.equal(k in c, false, `${k} (ignoreProjectOverrides: ${ignoreProjectOverrides})`);
+  }
+});

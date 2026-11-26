@@ -2253,9 +2253,13 @@ function refreshPromoVideoSeed(db) {
   refreshShippedSeed(db, GRAPH_PROMO_VIDEO_WORKFLOW, promoVideoGraphFingerprint, PROMO_VIDEO_SHIPPED_FINGERPRINTS);
 }
 
+/** Agent-only config keys a seed refresh keeps on a card that is still an agent (see mergeShippedSeed). */
+const NODE_KEPT_AGENT_KEYS = ['session', 'timeLimitMinutes', 'idleLimitMinutes'];
+
 /** The pure half of refreshShippedSeed: the shipped shape `t` with the user's settings carried over from the
- *  `stored` row. Carried: the AGENT_TUNABLES and `config.session` on cards that are still agents (membership is
- *  the user's setting; the fingerprint cannot see config, and a session is never topology the refresh owns), the
+ *  `stored` row. Carried: the AGENT_TUNABLES, and `config.session` and the node limits (`timeLimitMinutes`,
+ *  `idleLimitMinutes`) on cards that are still agents (membership and limits are the user's settings; the
+ *  fingerprint cannot see config, and neither is topology the refresh owns), the
  *  stored viewport VERBATIM, and the other template extras (codeGraph, the session settings). A session the new
  *  structure leaves with one step, or non-consecutive, is kept on purpose: the composer shows its V26/V27 issue and
  *  Split, never a silent drop. */
@@ -2264,7 +2268,7 @@ export function mergeShippedSeed(stored, t) {
   const merged = t.nodes.map((n) => {
     const prev = storedNodes.get(n.id);
     if (!prev || !prev.config) return n;
-    const carry = (k) => AGENT_TUNABLES.includes(k) || (k === 'session' && n.kind === 'agent');
+    const carry = (k) => AGENT_TUNABLES.includes(k) || (NODE_KEPT_AGENT_KEYS.includes(k) && n.kind === 'agent');
     const kept = Object.fromEntries(Object.entries(prev.config).filter(([k]) => carry(k)));
     return Object.keys(kept).length ? { ...n, config: { ...(n.config || {}), ...kept } } : n;
   });

@@ -37,3 +37,12 @@ test('every relative link on the page, and every link to the page, lands on a fi
   }
   assert.ok(n > 10, `the links were read (${n})`);
 });
+
+// Node time limits (#1646) are described on docs/workflows.md, in the editor section.
+test('R-rel-1: the workflow docs describe the two node limit fields, empty means no limit, and that the former limits are gone', () => {
+  const section = read('docs/workflows.md').split(/^### A full-screen editor$/m)[1].split(/^### /m)[0].replace(/\s+/g, ' ');
+  for (const part of [/Time limit/i, /Idle limit/i, /empty means no limit/i, /minutes/i, /\bMore\b/, /600/, /300/, /workflow-wide/i,
+    /WORCA_NODE_TIME_LIMIT_MIN/, /WORCA_NODE_IDLE_LIMIT_MIN/, /gone|removed|no longer/i]) assert.match(section, part);
+  const row = read('docs/ui-levels.md').split('\n').find((l) => /time limit/i.test(l) && /idle limit/i.test(l));
+  assert.ok(row, 'docs/ui-levels.md names the time limit and idle limit with the selection toolbar');
+});

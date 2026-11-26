@@ -23,7 +23,7 @@ import {
   RunHarness, isAbort, isPause, pauseErr, firstLine, jsonClone,
   clipMiddle, sumStepActive, normalizeClarifyAnswer, findDisabledPluginFor,
 } from './run-harness.mjs';
-import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW, writeGraphWorkflow, readWorkflow, isReservedWorkflowId } from './workflows.mjs';
+import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW, writeGraphWorkflow, readWorkflow, readRunnableWorkflow, isReservedWorkflowId } from './workflows.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_SLICE_REQ_WORKFLOW_IDS, withoutRequirementsInput } from './graph/builtin-workflows.mjs';
@@ -4613,10 +4613,35 @@ export class GraphOrchestrator extends RunHarness {
     this._emit('state', this.getState());
   }
 
+  /** E4 node limits (#1646): a limit pause says the limit is "set on this node in the workflow editor, where it can be
+   *  raised or cleared", so a resume takes each agent cell's `timeLimitMinutes` / `idleLimitMinutes` from the saved
+   *  workflow, matched by node id (a key the saved node lacks is cleared). Only those two keys. A run that started from
+   *  a named version reads the version in use now (readRunnableWorkflow 'live': an unpublished draft edit does not
+   *  apply), a run of the row reads the row. A workflow that is gone, archived (it counts as gone) or unreadable, or a
+   *  node it no longer has as an agent, keeps the frozen values. */
+  async _adoptSavedNodeLimits(manifest) {
+    const cells = manifest?.graph?.nodes;
+    if (!this.workflowId || !Array.isArray(cells)) return;
+    const use = Number.isInteger(manifest.workflowVersion?.no) ? 'live' : 'draft';
+    let saved = null;
+    try { saved = await readRunnableWorkflow(this.workflowId, { use }); } catch { saved = null; }
+    const byId = new Map((Array.isArray(saved?.nodes) ? saved.nodes : []).map((n) => [n.id, n]));
+    for (const cell of cells) {
+      const node = byId.get(cell.id);
+      if (cell.kind !== 'agent' || node?.kind !== 'agent') continue;
+      const config = { ...(cell.config || {}) };
+      for (const key of ['timeLimitMinutes', 'idleLimitMinutes']) {
+        if (node.config?.[key] === undefined) delete config[key]; else config[key] = node.config[key];
+      }
+      cell.config = config;
+    }
+  }
+
   /**
    * Restore the v2 run position — called by _engineRun({resume}) INSIDE the
    * shell's try, after state.*, pipeline, registry and agentPrompts are back.
-   * The snapshot is authoritative and the workflow ROW is never read: the frozen
+   * The snapshot is authoritative and the workflow ROW is read only for the agent
+   * nodes' time limits (_adoptSavedNodeLimits): the frozen
    * manifest supplies the topology, ports and effective budgets, the live
    * registry only the executor-side meta. Overlays are NOT refreshed — re-reading
    * them would let a config edit made while the run sat paused change the model
@@ -4654,6 +4679,7 @@ export class GraphOrchestrator extends RunHarness {
     if (!this.pauseRequested) this._clearPauseReason();
     const manifest = rp.manifest || this.state.stepper;
     this.state.stepper = manifest;
+    await this._adoptSavedNodeLimits(manifest);
     this.scriptRegistry = loadScriptRegistry({ scriptsDir: this.opts.scriptsDir, agentKeys: Object.keys(this.registry || {}) });
     this._adoptResolvedGraph(resolvedFromManifest(manifest, this.registry, this.scriptRegistry));
     // Silently: the start already logged and audited them. A point without lines had no drop.

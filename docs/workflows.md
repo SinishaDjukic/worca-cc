@@ -110,6 +110,15 @@ A selected card's toolbar sets its model, effort and await-all. **More** holds e
 keeps only Back, **Workflows ▾** (New canvas, Open…, Import…, Export…), the name, the Library toggle and **Save**.
 **Auto-layout** and the zoom menu sit bottom right. See [UI levels](ui-levels.md#workflows).
 
+An agent card's **More** also holds **Time limit (min)** and **Idle limit (min)**, in minutes. Both are empty by
+default, and empty means no limit: the step runs as long as it needs. A set limit is for that card only. When it is
+hit, the run pauses at that card. Raise or clear the limit in the editor and save (when the workflow has versions,
+publish it as the version in use; a draft edit does not apply), and Resume re-runs the step under the saved limit. The
+idle limit counts minutes with no output, and it waits while the agent's processes are still busy (a test suite it is
+waiting on, for example). The former worca-wide time limit and idle limit (90 and 20 minutes in the last release, then
+600 and 300), the workflow-wide `limits` and the env vars `WORCA_NODE_TIME_LIMIT_MIN` and `WORCA_NODE_IDLE_LIMIT_MIN`
+are gone: a saved workflow that still carries `limits` opens and runs with it ignored.
+
 ### The Library
 
 The card beside the canvas switches between **Workflows**, **Agents** and **Scripts**, and opens on Workflows. Every agent and script action

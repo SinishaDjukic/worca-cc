@@ -181,3 +181,93 @@ test('3.2: the row\'s resume point advances at every completion, not one complet
   assert.ok(later.length >= 1, JSON.stringify(snaps));
   for (const s of later) assert.ok(s.done.length >= 1, `the point persisted before ${s.node} started: ${JSON.stringify(snaps)}`);
 });
+
+// ── node time limits (#1646): the pause message says the limit is "set on this node in the workflow editor, where it
+// can be raised or cleared", so Resume reads each agent node's CURRENT limits from the saved workflow. Only those two
+// keys: the rest of the frozen graph stays as it started.
+const LIMIT_GRAPH = (implConfig) => ({
+  id: 'wf_resume_limits', name: 'Resume limits', domain: 'coding',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', x: 200, y: 0, config: implConfig },
+    { id: 'n_end', kind: 'end', x: 400, y: 0, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w2', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_end', port: 'result' } },
+  ],
+});
+
+async function pausedWithLimits(name, { keepRow = false } = {}) {
+  const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+  if (!keepRow) await writeGraphWorkflow(LIMIT_GRAPH({ timeLimitMinutes: 30, idleLimitMinutes: 20, sessionLabel: 'frozen' }));
+  const dir = gitDir(name);
+  const seen = { resumed: [] };
+  let orch;
+  orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_resume_limits', prompt: 'demo', auto: false, claude: { mock: true },
+    runners: { producer: pausingOnce(() => orch, seen) },
+  });
+  assert.equal((await orch.run()).status, 'paused');
+  return { dir, seen, saved: readPipelineForResume(orch.getState().id) };
+}
+
+async function resumeSeeing(dir, saved, seen) {
+  const configs = [];
+  const base = pausingOnce(() => null, seen);
+  const orch = createOrchestrator({
+    projectDir: dir, auto: false, claude: { mock: true }, resume: saved,
+    runners: { producer: async (ctx) => { configs.push({ ...ctx.node.config }); return base(ctx); } },
+  });
+  const r = await orch.resume();
+  assert.equal(r.status, 'done', r.error);
+  return configs;
+}
+
+test('resume reads an agent node\'s current time and idle limits from the saved workflow, and only those', { timeout: 120000 }, async () => {
+  const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+  const { dir, seen, saved } = await pausedWithLimits('gresume-limits');
+  // In the editor: the time limit is cleared, the idle limit raised, and another setting changed.
+  await writeGraphWorkflow(LIMIT_GRAPH({ idleLimitMinutes: 45, sessionLabel: 'edited' }));
+  const configs = await resumeSeeing(dir, saved, seen);
+  assert.equal(configs.length, 1, JSON.stringify(configs));
+  assert.equal('timeLimitMinutes' in configs[0], false, 'a cleared limit no longer applies');
+  assert.equal(configs[0].idleLimitMinutes, 45, 'a raised limit applies');
+  assert.equal(configs[0].sessionLabel, 'frozen', 'every other setting stays as the run started');
+});
+
+test('resume keeps the frozen limits when the workflow is gone', { timeout: 120000 }, async () => {
+  const { deleteWorkflow } = await import('../src/core/workflows.mjs');
+  const { dir, seen, saved } = await pausedWithLimits('gresume-limits-gone');
+  await deleteWorkflow('wf_resume_limits');
+  const configs = await resumeSeeing(dir, saved, seen);
+  assert.equal(configs[0].timeLimitMinutes, 30);
+  assert.equal(configs[0].idleLimitMinutes, 20);
+});
+
+test('resume of a versioned workflow reads the limits of the version in use, not an unpublished draft', { timeout: 120000 }, async () => {
+  const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+  const { insertVersionTx, setLiveVersionTx } = await import('../src/core/workflow-revisions.mjs');
+  const { getDb, tx } = await import('../src/core/db.mjs');
+  const publish = () => {
+    const row = getDb().prepare('SELECT * FROM workflows WHERE id = ?').get('wf_resume_limits');
+    tx(() => setLiveVersionTx('wf_resume_limits', insertVersionTx(row, { fingerprint: `f${Date.now()}` })));
+  };
+  const flagsBefore = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = 'workflowTests';
+  try {
+    await writeGraphWorkflow(LIMIT_GRAPH({ timeLimitMinutes: 30, idleLimitMinutes: 20 }));
+    publish();
+    const { dir, seen, saved } = await pausedWithLimits('gresume-limits-version', { keepRow: true });
+    assert.equal(saved.resumePoint.manifest.workflowVersion?.no, 1, 'the run started from version 1');
+    // Raised and published as the version in use, then edited again in the draft without publishing.
+    await writeGraphWorkflow(LIMIT_GRAPH({ timeLimitMinutes: 60 }));
+    publish();
+    await writeGraphWorkflow(LIMIT_GRAPH({ timeLimitMinutes: 5, idleLimitMinutes: 5 }));
+    const configs = await resumeSeeing(dir, saved, seen);
+    assert.equal(configs[0].timeLimitMinutes, 60, 'the version in use applies');
+    assert.equal('idleLimitMinutes' in configs[0], false, 'the version in use cleared it');
+  } finally {
+    if (flagsBefore === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = flagsBefore;
+  }
+});

@@ -5,7 +5,12 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { readWorkflow } from '../src/core/workflows.mjs';
-import { RESERVED_WORKFLOW_IDS, SHAPE_REQ_WORKFLOW_IDS, SHAPE_SLICE_REQ_WORKFLOW_IDS, AUTO_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
+import { RESERVED_WORKFLOW_IDS, SHAPE_REQ_WORKFLOW_IDS, SHAPE_SLICE_REQ_WORKFLOW_IDS, SHAPE_VERIFY_WORKFLOW_IDS, AUTO_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
+import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
+import { GRAPH_PRESENTATION_WORKFLOW } from '../src/core/graph/presentation-workflow.mjs';
+import { GRAPH_ARCHITECTURE_WORKFLOW } from '../src/core/graph/architecture-workflow.mjs';
+import { GRAPH_PROMO_VIDEO_WORKFLOW } from '../src/core/graph/promo-video-workflow.mjs';
+import { nodeTimeLimits } from '../src/core/graph/executor.mjs';
 
 useTempHome(after);
 
@@ -52,4 +57,28 @@ test('Shaper names its second opinion instead of pinning it', async () => {
     const roles = (await readWorkflow(id)).nodes.find((n) => n.id === 'n_roles');
     assert.equal(roles.config.roleReview.secondOpinion, 'product', id);
   }
+});
+
+test('no built-in workflow agent node carries a time or idle limit (#1646, R-qa-10)', async () => {
+  const ids = [...RESERVED_WORKFLOW_IDS.filter((id) => id !== AUTO_WORKFLOW_ID), ...SHAPE_REQ_WORKFLOW_IDS, ...SHAPE_SLICE_REQ_WORKFLOW_IDS,
+    ...SHAPE_VERIFY_WORKFLOW_IDS];
+  const graphs = [...await Promise.all(ids.map((id) => readWorkflow(id))), ...SEED_TEMPLATES, GRAPH_PRESENTATION_WORKFLOW,
+    GRAPH_ARCHITECTURE_WORKFLOW, GRAPH_PROMO_VIDEO_WORKFLOW];
+  let agents = 0;
+  const hits = [];
+  for (const wf of graphs) {
+    for (const n of wf.nodes.filter((x) => x.kind === 'agent')) {
+      agents += 1;
+      for (const k of ['timeLimitMinutes', 'idleLimitMinutes']) if (n.config && k in n.config) hits.push(`${wf.id}/${n.id}: ${k}`);
+    }
+  }
+  assert.ok(agents > 30, `walked ${agents} agent nodes`);
+  assert.deepEqual(hits, [], hits.join('\n'));
+});
+
+test('R-po-4: a Default workflow run with untouched settings has no node limit anywhere', async () => {
+  const wf = await readWorkflow('wf_default');
+  const agents = wf.nodes.filter((n) => n.kind === 'agent');
+  assert.ok(agents.length > 0);
+  for (const node of agents) assert.deepEqual(nodeTimeLimits({ node, template: wf }), { wallMs: null, idleMs: null }, node.id);
 });

@@ -614,13 +614,33 @@ test('V23 engine safety config: timeLimitMinutes / idleLimitMinutes (E4) and ver
   const withPlan = (config) => { const t = ok(); t.nodes = t.nodes.map((n) => (n.id === 'n_plan' ? A('n_plan', 'planner', config) : n)); return t; };
   const v23 = (t) => V(t).errors.filter((e) => e.code === 'V23');
   for (const k of ['timeLimitMinutes', 'idleLimitMinutes']) {
-    for (const bad of [0, -1, '30', 1441, Number.NaN]) assert.equal(v23(withPlan({ [k]: bad })).length, 1, `${k} ${bad}`);
-    for (const good of [0.5, 30, 1440]) assert.deepEqual(v23(withPlan({ [k]: good })), []);
+    for (const bad of [0, -1, '30', 'abc', Number.NaN]) {
+      const errs = v23(withPlan({ [k]: bad }));
+      assert.equal(errs.length, 1, `${k} ${bad}`);
+      assert.match(errs[0].message, /Enter minutes above 0/);
+      assert.match(errs[0].message, new RegExp(`node 'n_plan' config\\.${k}`));
+      assert.equal(errs[0].nodeId, 'n_plan');
+    }
+    // No maximum (decision d-1): 1441 and more are accepted.
+    for (const good of [0.5, 30, 1440, 1441, 100000]) assert.deepEqual(v23(withPlan({ [k]: good })), [], `${k} ${good}`);
   }
   assert.equal(v23(withPlan({ verdictOptional: 'yes' })).length, 1);
   const fine = withPlan({ timeLimitMinutes: 120, idleLimitMinutes: 30, verdictOptional: true });
   assert.deepEqual(v23(fine), []);
   assert.deepEqual(V(fine).warnings.filter((w) => w.code === 'V17'), [], 'known keys');
+});
+
+test('nodeLimitError: the one rule behind V23 and the inspector field (R-arch-3)', async () => {
+  const { nodeLimitError } = await import('../src/shared/graph/validate.mjs');
+  assert.equal(typeof nodeLimitError, 'function');
+  for (const good of [undefined, 0.5, 30, 1441, 100000]) assert.equal(nodeLimitError(good), null, String(good));
+  for (const bad of [0, -1, '30', 'abc', '0,5', '', null, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.equal(nodeLimitError(bad), 'Enter minutes above 0, or leave it empty for no limit.', String(bad));
+  }
+});
+
+test('R-rel-2, R-arch-4: a saved workflow that still carries a workflow-wide limit validates with 0 errors', () => {
+  assert.deepEqual(V({ ...ok(), limits: { timeLimitMinutes: 90 } }).errors, []);
 });
 
 test('V24 role reviews: roleReview is a known agent key; onExhausted is clean|gate on a loop wire only', () => {

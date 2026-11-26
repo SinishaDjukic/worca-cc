@@ -12,6 +12,8 @@ import { SESSION_LABEL_MAX } from '../../../src/shared/graph/constants.mjs';
 import { icon } from '../icons.mjs';
 import { subagentAliasLabel, subagentAliasTitle } from '../../../src/shared/model-roles.mjs';
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, wirableParams, hasParamsPort } from '../../../src/shared/graph/script-meta.mjs';
+import { nodeLimitError } from '../../../src/shared/graph/validate.mjs';
+import { fieldError } from '../feedback.mjs';
 // The DOM primitives and the two script forms live in ../script-forms.mjs so the
 // composer, the Scripts page's Overview tab and the Test tab share ONE copy (C3).
 import {
@@ -119,6 +121,7 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
     }
     body.appendChild(lv(toggle(doc, 'ins-awaitall', 'awaitAll', 'Await all inputs', 'gate until every wire fires',
       { checked: node.config.awaitAll === true }), 'expert', node.config.awaitAll === true));
+    for (const lim of NODE_LIMITS) body.append(...limitField(doc, node, lim));
   } else if (node.kind === 'script') {
     root.appendChild(head(doc, (meta && meta.displayName) || node.key || node.id, `${node.key} · ${node.id}`));
     const chips = h(doc, 'div', 'ins-chiprow');
@@ -167,6 +170,43 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
   body.appendChild(lv(portList(doc, ports), 'expert'));
   root.appendChild(body);
   return root;
+}
+
+// E4 node limits (#1646): per node, off by default. The composer commits them (inspectorChange) and V23 checks
+// them; both go through nodeLimitError, so the field and the validator cannot disagree.
+const NODE_LIMITS = [
+  { key: 'timeLimitMinutes', cls: 'ins-timelimit', label: 'Time limit (min)',
+    hint: 'Leave empty for no limit, or enter minutes as an upper limit.' },
+  { key: 'idleLimitMinutes', cls: 'ins-idlelimit', label: 'Idle limit (min)',
+    hint: 'Stops the step after this many minutes with no output. Leave empty for no limit.' },
+];
+
+/** One limit field plus its hint, or, for an invalid stored value, the house field error in place of the hint. */
+function limitField(doc, node, { key, cls, label, hint }) {
+  const value = node.config[key];
+  const keep = value !== undefined;
+  const wrap = lv(text(doc, cls, key, label, value ?? ''), 'expert', keep);
+  const input = wrap.querySelector('input');
+  input.setAttribute('inputmode', 'decimal');
+  input.id = `${cls}-${node.id}`;
+  wrap.querySelector('label.ins-label').htmlFor = input.id;
+  const err = keep ? nodeLimitError(value) : null;
+  if (err) {
+    fieldError(input, err, { focus: false });
+    // Typing clears the message (fieldError). An edit that ends on the stored text fires no change event, so the
+    // composer never repaints: show the message again on Enter or on leaving the field.
+    const again = (ev) => {
+      if (ev.type === 'keydown' && ev.key !== 'Enter') return;
+      if (input.isConnected && !input._fbErr && input.value.trim() === String(value).trim()) fieldError(input, err, { focus: false });
+    };
+    input.addEventListener('keydown', again);
+    input.addEventListener('blur', again);
+    return [wrap];
+  }
+  const note = lv(h(doc, 'small', 'ins-hint', hint), 'expert', keep);
+  note.id = `${input.id}-hint`;
+  input.setAttribute('aria-describedby', note.id);
+  return [wrap, note];
 }
 
 /** Loop wires carry the per-wire cycle budget; a plain wire must NOT expose one

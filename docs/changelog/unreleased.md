@@ -3,6 +3,26 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Agent steps no longer stop on a clock unless you ask
+
+**A run no longer pauses because a step took long or stayed quiet. You can still set a limit on one step.**
+
+Every agent step used to run under a worca-wide time limit and idle limit (90 and 20 minutes in the last release). Healthy runs paused on them, and Resume started the step again.
+
+Now a step has no limit. In the workflow editor, an agent card's More holds Time limit (min) and Idle limit (min). Both are empty, and empty means no limit.
+
+Set one, and only that step gets it. When it is hit, the run pauses at that step and the message says where the limit is set. Raise or clear it there and save (publish it as the version in use, when the workflow has versions), and Resume re-runs the step under the new limit. The idle limit still waits while the agent's processes are busy.
+
+The workflow-wide limits and the `WORCA_NODE_TIME_LIMIT_MIN` and `WORCA_NODE_IDLE_LIMIT_MIN` env vars are gone.
+
+Chips: Workflows · Runs
+
+Read it: [Workflows](../workflows.md#a-full-screen-editor)
+
+Pull requests (add each number when it opens):
+
+- Agent node time limits, off by default (#1646)
+
 ## Ask Worca knows your security setup
 
 **Chat now answers questions about sandboxes and security setups. It can change a project's sandbox with a card.**

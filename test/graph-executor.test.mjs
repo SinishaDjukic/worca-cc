@@ -709,46 +709,281 @@ test('#1067 E4: the time-limit watchdog never holds the process open — a spawn
     if (!pending) { pending = true; return new Promise(() => {}); }                  // never settles: stop() never runs
     late = opts.onEvent; return Promise.resolve({ text: 'ok' });
   };
+  // A node has no limit unless it sets one (#1646), so the watchdog under test needs both set.
+  const limited = () => ctx8({ node: { id: 'n_c', kind: 'agent', key: 'custom', config: { timeLimitMinutes: 90, idleLimitMinutes: 20 }, agentPrompt: 'x', tools: [] },
+    signal: new AbortController().signal });
   try {
-    void runAgentExecution(ctx8({ signal: new AbortController().signal })).catch(() => {});
+    void runAgentExecution(limited()).catch(() => {});
     while (!pending) await new Promise((r) => setImmediate(r));
     assert.equal(timers(), base, 'a pending spawn\'s watchdog holds nothing open');
-    await runAgentExecution(ctx8({ signal: new AbortController().signal })).catch(() => {});   // its outputs check is not the point
+    await runAgentExecution(limited()).catch(() => {});   // its outputs check is not the point
     late({ type: 'text', text: 'after the turn' });                                   // a session host's trailing event
     assert.equal(timers(), base, 'an event after the spawn ended re-arms no timer');
   } finally { _testing.runClaude = null; }
 });
 
-test('E4: an agent node that runs past its wall-clock or goes silent past its idle limit stops with a time_limit error', async () => {
-  const { nodeTimeLimits } = await import('../src/core/graph/executor.mjs');
-  // Defaults: generous enough for normal nodes; per node, then per workflow, override them.
-  assert.deepEqual(nodeTimeLimits({ node: { config: {} } }), { wallMs: 600 * 60000, idleMs: 300 * 60000 });
-  assert.deepEqual(nodeTimeLimits({ node: { config: { timeLimitMinutes: 5 } }, template: { limits: { idleLimitMinutes: 2, timeLimitMinutes: 9 } } }),
-    { wallMs: 5 * 60000, idleMs: 2 * 60000 });
-  // A hung agent is a live child: its pipes keep the process up (the unref'd watchdog does not), modelled by an interval.
-  // Like the real runners (claude-runner, codex, cursor...), a signal that is already aborted rejects at once: the Stop
-  // below fires 5 ms after the start, and on a loaded runner prepare() can take longer, so the spawn starts aborted. An
-  // 'abort' listener added then never fires: the fake hung, its interval held the file's process up after the 300 s test
-  // timeout, and the whole CI shard ran into the job's 30 minute limit.
-  const hang = (emitEvery) => async (opts) => new Promise((resolve, reject) => {
-    const aborted = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
-    if (opts.signal.aborted) { reject(aborted()); return; }
-    const t = setInterval(() => { if (emitEvery) opts.onEvent({ type: 'text', text: 'still here' }); }, emitEvery || 1000);
-    opts.signal.addEventListener('abort', () => { clearInterval(t); reject(aborted()); }, { once: true });
+// ── node time limits: per node, off by default (#1646) ───────────────────────
+
+// A hung agent is a live child: its pipes keep the process up (the unref'd watchdog does not), modelled by an interval.
+// Like the real runners (claude-runner, codex, cursor...), a signal that is already aborted rejects at once: the Stop
+// below fires 5 ms after the start, and on a loaded runner prepare() can take longer, so the spawn starts aborted. An
+// 'abort' listener added then never fires: the fake hung, its interval held the file's process up after the 300 s test
+// timeout, and the whole CI shard ran into the job's 30 minute limit.
+const hang = (emitEvery) => async (opts) => new Promise((resolve, reject) => {
+  const aborted = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
+  if (opts.signal.aborted) { reject(aborted()); return; }
+  const t = setInterval(() => { if (emitEvery) opts.onEvent({ type: 'text', text: 'still here' }); }, emitEvery || 1000);
+  opts.signal.addEventListener('abort', () => { clearInterval(t); reject(aborted()); }, { once: true });
+});
+const limitCtx = (config, { id = 'n_c', ...over } = {}) => ctx8({
+  node: { id, kind: 'agent', key: 'custom', config, agentPrompt: 'x', tools: [] }, nodeId: id, signal: new AbortController().signal, ...over,
+});
+
+const MIN = 60_000;
+const HOUR = 60 * MIN;
+
+/**
+ * One agent spawn under FAKED timers: the fake agent is silent until the test calls `say()` or `finish()`, and
+ * `pass(ms)` moves the clock without waiting. Nothing here arms a timer of its own, so every timer that fires is the
+ * engine's. `pid` is reported as superviseSpawn does; `busy` answers the busy-tree probe.
+ */
+async function fakedSpawn(t, config, { pid = null, busy = false, ...ctxOver } = {}) {
+  const { noteSpawned } = await import('../src/core/agent-tree.mjs');
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  let opts = null;
+  let resolve = null;
+  const probed = [];
+  _testing.treeBusy = async (p) => { probed.push(p); return busy; };
+  _testing.runClaude = (o) => new Promise((res, rej) => {
+    opts = o;
+    resolve = res;
+    if (pid != null) noteSpawned(pid);
+    const aborted = () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    if (o.signal.aborted) aborted(); else o.signal.addEventListener('abort', aborted, { once: true });
   });
-  const run = async (config, emitEvery) => {
-    const c = ctx8({ node: { id: 'n_c', kind: 'agent', key: 'custom', config, agentPrompt: 'x', tools: [] }, signal: new AbortController().signal });
-    _testing.runClaude = hang(emitEvery);
-    try { return await runAgentExecution(c).then(() => null, (e) => e); } finally { _testing.runClaude = null; }
+  const stop = new AbortController();
+  let ended = false;
+  const done = runAgentExecution(limitCtx(config, { signal: stop.signal, ...ctxOver })).then(() => null, (e) => e)
+    .finally(() => { ended = true; });
+  // A failed assertion leaves the spawn pending: end it, and only then hand the seams to the next test.
+  t.after(async () => { stop.abort(); await done; _testing.runClaude = null; _testing.treeBusy = null; });
+  const settle = async () => { for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r)); };
+  while (!opts) {
+    if (ended) assert.fail(`the spawn ended before the agent ran: ${(await done)?.message}`);
+    await new Promise((r) => setImmediate(r));
+  }
+  return {
+    probed,
+    stop: () => stop.abort(),
+    stopped: () => opts.signal.aborted,
+    pass: async (ms) => { t.mock.timers.tick(ms); await settle(); },
+    say: () => opts.onEvent({ type: 'text', text: 'still here' }),
+    done,
+    /** The agent ends on its own. The outputs check that follows is not the point: only `time_limit` is. */
+    finish: () => { resolve({ text: 'ok' }); return done; },
   };
-  const idle = await run({ idleLimitMinutes: 0.001, timeLimitMinutes: 1 }, 0);
-  assert.equal(idle.code, 'NODE_IDLE_LIMIT');
-  assert.equal(idle.errorClass, 'time_limit');
-  assert.match(idle.message, /no output for/);
-  const wall = await run({ idleLimitMinutes: 1, timeLimitMinutes: 0.002 }, 10);   // chatty, but too long
-  assert.equal(wall.code, 'NODE_TIME_LIMIT');
+}
+
+test('E4 nodeTimeLimits: node config only (R-qa-2, R-qa-5)', async () => {
+  const { nodeTimeLimits } = await import('../src/core/graph/executor.mjs');
+  const prev = { wall: process.env.WORCA_NODE_TIME_LIMIT_MIN, idle: process.env.WORCA_NODE_IDLE_LIMIT_MIN };
+  process.env.WORCA_NODE_TIME_LIMIT_MIN = '1';
+  process.env.WORCA_NODE_IDLE_LIMIT_MIN = '20';
+  try {
+    const template = { limits: { timeLimitMinutes: 9, idleLimitMinutes: 2 } };
+    assert.deepEqual(nodeTimeLimits({ node: { config: {} }, template }), { wallMs: null, idleMs: null });
+    assert.deepEqual(nodeTimeLimits({ node: { config: { timeLimitMinutes: 5 } }, template }), { wallMs: 5 * MIN, idleMs: null });
+    assert.deepEqual(nodeTimeLimits({ node: { config: { idleLimitMinutes: 0.5 } }, template }), { wallMs: null, idleMs: 30_000 });
+  } finally {
+    for (const [k, v] of [['WORCA_NODE_TIME_LIMIT_MIN', prev.wall], ['WORCA_NODE_IDLE_LIMIT_MIN', prev.idle]]) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+});
+
+test('E4 a node with no limit schedules no watchdog (R-arch-2, R-qa-1, R-qa-6)', async (t) => {
+  const { noteSpawned } = await import('../src/core/agent-tree.mjs');
+  const delays = [];
+  const real = globalThis.setTimeout;
+  t.mock.method(globalThis, 'setTimeout', (fn, ms, ...args) => { delays.push(ms); return real(fn, ms, ...args); });
+  const probed = [];
+  _testing.treeBusy = async (pid) => { probed.push(pid); return false; };
+  // The spawn reports its pid and resolves on the test's own promise: the fake arms no timer.
+  const spawn = async (config) => {
+    let release;
+    let started = false;
+    _testing.runClaude = () => new Promise((resolve) => { noteSpawned(4242); started = true; release = () => resolve({ text: 'ok' }); });
+    delays.length = 0;
+    const done = runAgentExecution(limitCtx(config)).then(() => null, (e) => e);
+    while (!started) await new Promise((r) => setImmediate(r));
+    const long = delays.filter((ms) => ms >= 1000);
+    release();
+    return { long, err: await done };
+  };
+  try {
+    const none = await spawn({});
+    assert.deepEqual(none.long, [], 'no limit: no timer of a second or more is scheduled');
+    assert.equal(probed.length, 0, 'no limit: the busy probe is never asked');
+    assert.notEqual(none.err?.errorClass, 'time_limit');
+    // Positive control: the same spawn with an idle limit does arm its timer, so the spy sees the engine's timers.
+    const idle = await spawn({ idleLimitMinutes: 600 });
+    assert.deepEqual(idle.long, [36_000_000], 'one idle timer, no wall timer beside it');
+  } finally { _testing.runClaude = null; _testing.treeBusy = null; }
+});
+
+test('R-po-1: with no limit set, a node quiet for 45 min and running for 12 hours is never stopped by time (faked timers)', async (t) => {
+  const s = await fakedSpawn(t, {}, { pid: 4242 });
+  await s.pass(45 * MIN);                       // a test suite runs, no output
+  assert.equal(s.stopped(), false, 'quiet for 45 min');
+  s.say();
+  await s.pass(12 * HOUR - 45 * MIN);           // 12 hours in total
+  assert.equal(s.stopped(), false, 'running for 12 hours');
+  await s.pass(24 * HOUR);                      // and silent past every former default, again and again
+  assert.equal(s.stopped(), false);
+  assert.equal(s.probed.length, 0, 'no busy probe without an idle limit');
+  const err = await s.finish();
+  assert.notEqual(err?.errorClass, 'time_limit');
+});
+
+test('R-qa-1: with no limit, Stop / Pause still end a long silent agent node', async (t) => {
+  const s = await fakedSpawn(t, {});
+  await s.pass(700 * MIN);                      // past the former 600 min and 300 min defaults
+  assert.equal(s.stopped(), false, 'nothing but the user ends it');
+  s.stop();
+  const err = await s.done;
+  assert.equal(err?.name, 'AbortError');
+});
+
+test('R-po-2, R-qa-2: an env var and a workflow-wide limit stop nothing on a quiet node with empty fields', async (t) => {
+  const prev = { wall: process.env.WORCA_NODE_TIME_LIMIT_MIN, idle: process.env.WORCA_NODE_IDLE_LIMIT_MIN };
+  process.env.WORCA_NODE_TIME_LIMIT_MIN = '1';
+  process.env.WORCA_NODE_IDLE_LIMIT_MIN = '20';
+  try {
+    const s = await fakedSpawn(t, {}, { template: { ...TPL8, limits: { timeLimitMinutes: 1, idleLimitMinutes: 20 } } });
+    await s.pass(2 * MIN);
+    assert.equal(s.stopped(), false, 'past the workflow-wide and env wall limit');
+    await s.pass(24 * HOUR);
+    assert.equal(s.stopped(), false, 'past the env idle limit');
+    assert.notEqual((await s.finish())?.errorClass, 'time_limit');
+  } finally {
+    for (const [k, v] of [['WORCA_NODE_TIME_LIMIT_MIN', prev.wall], ['WORCA_NODE_IDLE_LIMIT_MIN', prev.idle]]) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+});
+
+test('R-rel-2: a node paused at the former 300 min idle default resumes and runs on; a saved workflow-wide 90 min limit is ignored', async (t) => {
+  // The resumed spawn goes through the same limit computation as any spawn (plan D10): its node config is empty.
+  const s = await fakedSpawn(t, {}, { id: 'n_impl', template: { ...TPL8, limits: { timeLimitMinutes: 90 } },
+    claudeOpts: { mock: true, resumeSessionId: 's-paused' } });
+  await s.pass(91 * MIN);
+  assert.equal(s.stopped(), false, 'past the workflow-wide 90 min');
+  await s.pass(301 * MIN);
+  assert.equal(s.stopped(), false, 'past the former 300 min idle default');
+  await s.pass(24 * HOUR);
+  assert.equal(s.stopped(), false);
+  assert.notEqual((await s.finish())?.errorClass, 'time_limit');
+});
+
+test('R-po-3: n_plan (30 min time), n_impl (120 min idle) and n_review (none) each keep only their own limit', async (t) => {
+  await t.test('n_plan: only wall-clock stops it', async (t2) => {
+    const s = await fakedSpawn(t2, { timeLimitMinutes: 30 }, { id: 'n_plan' });
+    await s.pass(29 * MIN);
+    s.say();                                    // chatty, but too long
+    await s.pass(1 * MIN);
+    assert.equal(s.stopped(), true);
+    assert.equal((await s.done)?.code, 'NODE_TIME_LIMIT');
+  });
+  await t.test('n_impl: only silence stops it', async (t2) => {
+    const s = await fakedSpawn(t2, { idleLimitMinutes: 120 }, { id: 'n_impl' });
+    for (let i = 0; i < 12; i += 1) { await s.pass(HOUR); s.say(); }   // 12 hours, never quiet for 120 min
+    assert.equal(s.stopped(), false, 'no wall-clock limit');
+    await s.pass(119 * MIN);
+    assert.equal(s.stopped(), false);
+    await s.pass(1 * MIN);
+    assert.equal(s.stopped(), true);
+    assert.equal((await s.done)?.code, 'NODE_IDLE_LIMIT');
+  });
+  await t.test('n_review: neither', async (t2) => {
+    const s = await fakedSpawn(t2, {}, { id: 'n_review' });
+    await s.pass(24 * HOUR);                    // silent
+    for (let i = 0; i < 24; i += 1) { await s.pass(HOUR); s.say(); }
+    assert.equal(s.stopped(), false);
+    assert.notEqual((await s.finish())?.errorClass, 'time_limit');
+  });
+});
+
+test('R-po-5: n_impl past its 10 min time limit pauses with a message naming the node, the limit and where to change it', async (t) => {
+  const s = await fakedSpawn(t, { timeLimitMinutes: 10 }, { id: 'n_impl' });
+  await s.pass(10 * MIN - 1);
+  assert.equal(s.stopped(), false);
+  await s.pass(1);
+  const err = await s.done;
+  assert.equal(err?.code, 'NODE_TIME_LIMIT');
+  assert.equal(err.errorClass, 'time_limit');
+  for (const part of [/n_impl/, /10 min time limit/, /set on this node in the workflow editor/, /where it can be raised or cleared/]) {
+    assert.match(err.message, part);
+  }
+  assert.doesNotMatch(err.message, /resume re-runs/i, 'the run page\'s frame already says it');
+});
+
+test('R-po-6: n_impl with a 5 min idle limit, quiet for 8 min while its process tree is busy, is not paused', async (t) => {
+  const s = await fakedSpawn(t, { idleLimitMinutes: 5 }, { id: 'n_impl', pid: 4242, busy: true });
+  await s.pass(5 * MIN);
+  await s.pass(3 * MIN);
+  assert.equal(s.stopped(), false);
+  assert.ok(s.probed.length >= 1 && s.probed.every((p) => p === 4242), 'the busy probe was asked about the agent');
+  assert.notEqual((await s.finish())?.errorClass, 'time_limit');
+});
+
+test('E4 a limit past setTimeout\'s 32-bit maximum is clamped, not fired at once; a tiny one is at least 1 ms', async (t) => {
+  const { nodeTimeLimits } = await import('../src/core/graph/executor.mjs');
+  assert.deepEqual(nodeTimeLimits({ node: { config: { timeLimitMinutes: 1e-9 } } }), { wallMs: 1, idleMs: null });
+  // Real timers: Node runs a delay above 2**31-1 ms after 1 ms, so an unclamped 100000 min limit stops the node at once.
+  const delays = [];
+  const real = globalThis.setTimeout;
+  t.mock.method(globalThis, 'setTimeout', (fn, ms, ...args) => { delays.push(ms); return real(fn, ms, ...args); });
+  let opts = null;
+  let release;
+  _testing.runClaude = (o) => new Promise((resolve, reject) => {
+    opts = o; release = () => resolve({ text: 'ok' });
+    o.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+  });
+  try {
+    const done = runAgentExecution(limitCtx({ timeLimitMinutes: 100000, idleLimitMinutes: 100000 })).then(() => null, (e) => e);
+    while (!opts) await new Promise((r) => setImmediate(r));
+    await new Promise((r) => real(r, 30));
+    assert.equal(opts.signal.aborted, false, 'a 100000 min node is not stopped soon after it starts');
+    assert.ok(delays.length >= 2 && delays.every((ms) => ms <= 2 ** 31 - 1), `no delay above the maximum: ${delays}`);
+    release();
+    assert.notEqual((await done)?.errorClass, 'time_limit');
+  } finally { _testing.runClaude = null; }
+});
+
+test('E4 two nodes, own limits: each hit names its node, limit and value; the node without one runs on (R-qa-7)', async () => {
+  const run = async (id, config, fake) => {
+    _testing.runClaude = fake;
+    try { return await runAgentExecution(limitCtx(config, { id })).then(() => null, (e) => e); } finally { _testing.runClaude = null; }
+  };
+  const wall = await run('n_plan', { timeLimitMinutes: 0.002 }, hang(10));          // chatty, but too long
+  assert.equal(wall?.code, 'NODE_TIME_LIMIT');
   assert.equal(wall.errorClass, 'time_limit');
-  // A real abort (Stop/Pause) stays an abort, never a time limit.
+  assert.match(wall.message, /n_plan: ran past its 1 s time limit/);
+  assert.match(wall.message, /set on this node in the workflow editor/);
+  assert.match(wall.message, /where it can be raised or cleared/);
+  assert.doesNotMatch(wall.message, /resume re-runs/i);
+  const idle = await run('n_impl', { idleLimitMinutes: 0.001 }, hang(0));
+  assert.equal(idle?.code, 'NODE_IDLE_LIMIT');
+  assert.equal(idle.errorClass, 'time_limit');
+  assert.match(idle.message, /n_impl: no output for/);
+  assert.match(idle.message, /idle limit 1 s, set on this node in the workflow editor/);
+  assert.match(idle.message, /where it can be raised or cleared/);
+  assert.doesNotMatch(idle.message, /resume re-runs/i);
+  const none = await run('n_review', {}, () => new Promise((resolve) => setTimeout(() => resolve({ text: 'ok' }), 300)));
+  assert.notEqual(none?.errorClass, 'time_limit');
+});
+
+test('E4: a real abort (Stop/Pause) stays an abort, never a time limit', async () => {
   const ac = new AbortController();
   _testing.runClaude = hang(0);
   try {

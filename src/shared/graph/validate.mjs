@@ -42,6 +42,13 @@ export const AGENT_TUNABLES = ['model', 'effort', 'fanOut', 'askQuestions', 'sub
 /** The per-node SCRIPT tunables (P2's per-project overlays); unused by v1 writers. */
 export const SCRIPT_TUNABLES = ['params', 'timeoutMs'];
 
+/** The one rule for an agent node's `timeLimitMinutes` / `idleLimitMinutes` (V23 and the workflow editor's
+ *  field): unset, or a finite number of minutes above 0 (no maximum). Returns the message, or null when valid. */
+export function nodeLimitError(value) {
+  if (value === undefined || (typeof value === 'number' && Number.isFinite(value) && value > 0)) return null;
+  return 'Enter minutes above 0, or leave it empty for no limit.';
+}
+
 const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;   // the same set canvas-ops' isStr refuses
 
@@ -648,12 +655,10 @@ export const RULES = [
       if (promptHints !== undefined && typeof promptHints !== 'string') {
         add(`node '${n.id}' config.promptHints must be a string`, { nodeId: n.id });
       }
-      // E4 node limits (graph/executor.mjs nodeTimeLimits): minutes, above 0, at most a day.
+      // E4 node limits (graph/executor.mjs nodeTimeLimits): minutes above 0, set per node; unset means no limit.
       for (const k of ['timeLimitMinutes', 'idleLimitMinutes']) {
-        const v = n.config[k];
-        if (v !== undefined && !(typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 1440)) {
-          add(`node '${n.id}' config.${k} must be a number of minutes above 0 and at most 1440`, { nodeId: n.id });
-        }
+        const err = nodeLimitError(n.config[k]);
+        if (err) add(`node '${n.id}' config.${k}: ${err}`, { nodeId: n.id });
       }
       if (n.config.verdictOptional !== undefined && typeof n.config.verdictOptional !== 'boolean') {
         add(`node '${n.id}' config.verdictOptional must be true or false`, { nodeId: n.id });
