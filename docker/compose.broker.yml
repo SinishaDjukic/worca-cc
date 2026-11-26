@@ -41,7 +41,17 @@ services:
     image: ghcr.io/worca-org/worca:${WORCA_TAG:-latest}
     init: true
     command: ["worca", "broker"]
+    # On the allowlist's internal network too (compose.egress.yml), so a worca confined to it reaches the broker.
+    networks:
+      - default
+      - internal
     environment:
+      # The broker's calls to the model providers: through the egress sidecar when there is one
+      # (http://egress:3128, compose.proxy.yml; `worca container` sets it), which logs in to the
+      # corporate proxy. Empty: direct, as before.
+      HTTPS_PROXY: ${WORCA_BROKER_PROXY:-}
+      HTTP_PROXY: ${WORCA_BROKER_PROXY:-}
+      NO_PROXY: 127.0.0.1,localhost
       WORCA_BROKER_MODE: ${WORCA_BROKER_MODE:-single}
       WORCA_BROKER_SECRET: ${WORCA_BROKER_SECRET:?set WORCA_BROKER_SECRET in .env}
       WORCA_BROKER_VAULT_KEY: ${WORCA_BROKER_VAULT_KEY:-}
@@ -84,3 +94,8 @@ services:
 
 volumes:
   broker-data:
+
+networks:
+  # compose.egress.yml declares the same network; with the broker alone it only holds the broker.
+  internal:
+    internal: true

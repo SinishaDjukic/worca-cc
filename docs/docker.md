@@ -256,11 +256,32 @@ local one). `worca container up`, `run`, `login` and `shell` never pass it in:
 2. else the box gets `networkProxy.upstream` from this machine's
    `settings.json`, host and port only, when that proxy needs no login and
    `networkProxy.enabled` is not `false`;
-3. else the box gets no proxy, and one line says so. A proxy that needs a login
-   is set up in the box's own Worca: its Settings › Network proxy, then
-   `worca container run -- proxy login`.
+3. else the box gets no proxy, and one line says so.
 
 A `.env` proxy on loopback gets the same warning.
+
+**A proxy that needs a login.** The login lives in the egress sidecar, never
+in the box. `worca container` adds `compose.proxy.yml` by itself when `.env`'s
+`HTTPS_PROXY` carries a login, when this machine's `networkProxy.upstream`
+needs one, or once you ran `worca container proxy login`. The box then gets
+`HTTPS_PROXY=http://egress:3128`, and the sidecar logs in to the corporate
+proxy for every connection. `.env`'s `HTTPS_PROXY`, with any Basic or Digest
+password in it, reaches the sidecar only. `worca container` writes
+`WORCA_EGRESS_SECRET` into `.env` and refuses an image without the sidecar
+(the image label `dev.worca.egress-sidecar`). Log in with
+`worca container proxy login`. See
+[network-proxy.md → Worca in a container](network-proxy.md#worca-in-a-container).
+
+With raw compose, add the file and the secret yourself:
+
+```bash
+echo "WORCA_EGRESS_SECRET=$(openssl rand -base64 32 | tr -d '/+=')" >> .env
+docker compose -f compose.yml -f compose.proxy.yml up -d
+docker compose exec egress worca egress login      # DOMAIN\user, then the password
+```
+
+Without `compose.proxy.yml` the login stays in the box, and Worca warns at
+start.
 
 A proxy that re-signs TLS needs its CA inside the box. Put the CA, as a PEM
 file, in `.env`:
@@ -304,6 +325,12 @@ Azure Boards, `api.telegram.org`, `slack.com,.slack.com` (Socket Mode dials a
 `login.microsoftonline.com,login.botframework.com` plus your bot's service URL host.
 A Jira source drives its own command-line tool: allow `<your-org>.atlassian.net`,
 and it goes through the proxy only if that tool reads the proxy variables.
+
+Behind a corporate proxy that needs a login, add `compose.proxy.yml` after
+this file (`worca container up --with egress` does it by itself when a login
+is configured). The sidecar then keeps the allowlist and also logs in to the
+corporate proxy. On its own, this overlay's sidecar relays direct and never
+reaches a corporate proxy.
 
 An entry with a leading dot (`.github.com`) allows every subdomain and the name
 itself. A refused host gets `403 egress denied: <host>`; `docker compose logs
@@ -354,6 +381,8 @@ URL from `docker compose logs teams-tunnel`.
 | `WORCA_MEM`, `WORCA_CPUS` | `6g`, `4` | resource caps (`pids_limit` 2048 is fixed) |
 | `HTTPS_PROXY`, `NO_PROXY` | | corporate proxy, never on loopback (see [Corporate proxy and CA](#corporate-proxy-and-ca)) |
 | `WORCA_CA_CERT` | | the corporate CA (PEM) for a proxy that re-signs TLS; `compose.ca.yml` |
+| `WORCA_EGRESS_SECRET` | written by `worca container` | the egress sidecar's shared secret, 32+ characters; `compose.proxy.yml` |
+| `WORCA_BROKER_PROXY` | set by `worca container` with the sidecar | the proxy the broker's calls to model providers use (`http://egress:3128`); `compose.broker.yml` |
 | `WORCA_EGRESS_ALLOW` | see above | egress overlay allowlist |
 | `WORCA_EGRESS_MODE`, `WORCA_EGRESS_DENY` | | a hosting platform's outbound network policy (see [Egress allowlist](#egress-allowlist)); leave unset with the overlay |
 | `WORCA_SSH_SOCK` | Docker Desktop's | ssh overlay, Linux |
