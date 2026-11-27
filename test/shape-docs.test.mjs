@@ -87,13 +87,14 @@ test('each doc\'s new text says what off means: the marker\'s parts stay, the li
 });
 
 test('each quoted state word equals its export\'s output', () => {
+  // Slice 7: the guide quotes the flag-on words, which a judged ledger (with the runs) gives.
   const ledger = shipLedger({ agreed: [{ id: 'R-comp-4', text: 'The data stays in the EU' }],
-    kinds: [{ id: 'R-comp-4', kind: 'confirmed', role: 'compliance' }] });
+    kinds: [{ id: 'R-comp-4', kind: 'confirmed', role: 'compliance' }], runs: [] });
   const care = careRecordLine({ position: 'balanced', chosenBy: 'default', worcaPick: null });
   assert.ok(care.startsWith('Care: '));
   const words = [VERIFY_WORDS.gaps, VERIFY_WORDS.clean, MARK_WORDS.met, MARK_WORDS['not-met'], MARK_WORDS.dropped,
     care, `"${ledger.reason}"`];
-  assert.equal(ledger.reason, 'Waiting for Compliance to confirm R-comp-4');
+  assert.equal(ledger.reason, 'Waiting for you to confirm R-comp-4');
   const gone = words.filter((w) => !slices['shape-it-first.md'].includes(w));
   assert.deepEqual(gone.map((w) => `shape-it-first.md: ${w}`), []);
   assert.ok(slices['shape-it-first.md'].includes(`reads "${VERIFY_WORDS.gaps}"`) && slices['shape-it-first.md'].includes(`reads "${VERIFY_WORDS.clean}"`),
@@ -310,7 +311,7 @@ test('R-ux-4: "One card, three hosts" says a small run\'s stop card lists its fi
 // Slice 5 (R-po-2): Ship names the carried runs and its button counts the pull requests it will open.
 test('Ship guide names carried runs and the new-PR count', () => {
   const part = smallPart('Ship');
-  assert.deepEqual(missing(part, ["Run 2's work ships in run 3's pull request (#40 is open)", '#40 is not counted',
+  assert.deepEqual(missing(part, ["Run 2's work ships in run 3's pull request (#40 is open)", 'The open pull request is not counted',
     /\bnew (?:PRs?|pull requests?)\b/i, /\bclosed\b/i]), []);
 });
 
@@ -334,4 +335,14 @@ test('feature page guide: the Cost tab counts each Verifier round once and marks
 test('design system: the feature page\'s Cost table, Mark and ship, and Log at every level', () => {
   const doc = flat(read('design-system.md'));
   assert.deepEqual(missing(doc, ['Mark and ship', /\.gpage-cost|Cost table/, /\bLog\b[^.]*every (?:UI )?level/i]), []);
+});
+
+// Slice 7 (R-ux-1, R-ux-2, R-arch-4): confirm in place.
+test('s7: confirm in place in the guide and the design system', () => {
+  const guide = flat(read('shape-it-first.md'));
+  assert.deepEqual(missing(guide, ['Needs your confirmation: R-ux-2', 'waiting for you to confirm · Design', /requirements\/ship/,
+    'on this page.', 'The open pull request is not counted.']), [], 'shape-it-first.md');
+  const design = flat(read('design-system.md'));
+  assert.deepEqual(missing(design, ['Lock tip', '.rd-tip', '.run-status-link', 'The open pull request is not counted.']), [], 'design-system.md');
+  assert.doesNotMatch(`${guide} ${design}`, /#40 is not counted/);
 });

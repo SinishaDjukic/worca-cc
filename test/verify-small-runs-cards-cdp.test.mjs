@@ -76,7 +76,7 @@ test('both themes at 375px, the Welcome Skip, the 30-minute cap, reduced motion 
 test('D1 Ship: blocked, ready, not met and done beside the prototype\'s #ship at 1280px and 375px; rows measured; keyboard and focus', () => {
   const s = src();
   for (const needle of ["shipFeature('sb'", "shipFeature('sr'", "shipFeature('sd'", "shipFeature('sk'", "'R-comp-4': { kind: 'confirmed', role: 'compliance' }",
-    "recordShip(SD.f.id", "for (const width of [1280, WIDTH])", "'Waiting for Compliance to confirm R-comp-4'",
+    "recordShip(SD.f.id", "for (const width of [1280, WIDTH])", "'Waiting for you to confirm R-comp-4'",
     "'Mark R-comp-4 as Compliance: The sign-up data stays in the EU'", "shipFeature('sn'", "mark: 'not-met', reason: 'Legal has not signed the EU clause yet'",
     "app-ship-not-met-", "f.prsOpen === 1", "f.views.join() === 'View PRs'",
     "'Create 4 PRs'", "'4 PRs open'", "'into main'", "judge('ship blocked confirmed rows'", "judge('ship ready confirmed rows'", "judge('ship done PR rows'",
@@ -109,7 +109,7 @@ test('d3Phase seeds, measures both lists with the width, pairs with the prototyp
   for (const needle of ["seedFeature('d3'", "'R-comp-1': { kind: 'confirmed', role: 'compliance' }", "reqChanges.apply(D3.f.id",
     "post(`/api/shape/features/${D3.f.id}/confirm`", "recordShip(D3.f.id", '#feature/${D3.f.id}/requirements', '#feature/${D3.f.id}/decisions',
     "MEASURE(D3_REQS, '.plan-check-row', '.plan-check-mark', '.plan-check-text')", "'li:not([data-fact=\"care\"]) > .plan-check-row'",
-    '{ width, oneLine: true }', "'run 2 · changed · run 6 builds it'", "'run 3 · being built'", "'confirmed by a person · Compliance'",
+    '{ width, oneLine: true }', "'run 2 · changed · run 6 builds it'", "'run 3 · being built'", "'waiting for you to confirm · Compliance'",
     "'run 2 · met · changed by run 6'", 'Marked Not met by you · ${D3_REASON}', 'r.idLines <= 1', '!r.noteCut', '!f.careCut', 'f.link.color !== f.link.noteColor',
     'visible label widths', 'results.d3Minutes', 'for (const width of [1280, WIDTH])', "process.env.D3_ONLY === '1'", 'await skipWelcome(); await setTheme(theme);']) {
     assert.ok(s.includes(needle), needle);
@@ -304,5 +304,24 @@ test('the FEATURE_TABS_ONLY phase captures feature-cost-tab, feature-requirement
   }
   for (const narrow of ['cost-tab', 'requirements-bar']) {
     assert.match(s, new RegExp(`[\`'/]feature-${narrow}-narrow-(\\$\\{theme\\}|light)\\.png`), `the narrow ${narrow} screenshot`);
+  }
+});
+
+// Slice 7 (D17): confirm in place — the tip beside the reason, the reason's link, the chat-less pointers.
+test('s7: confirm-in-place phase', () => {
+  const s = src();
+  assert.match(s, /process\.env\.CONFIRM_ONLY === '1'\) \{ await confirmInPlacePhase\(\); await finish\(\); \}/, 'the CONFIRM_ONLY=1 gate');
+  const at = s.indexOf('async function confirmInPlacePhase(');
+  assert.ok(at >= 0, 'the confirm-in-place phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /THEMES/, 'both themes');
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /375|WIDTH/, 'and the narrow head');
+  for (const needle of ['.rd-tip', '.run-status-link', '[data-ship-card]', 'activeElement', '#40']) assert.ok(body.includes(needle), needle);
+  // A real hover, the rects, and that the tip is on top where it is drawn.
+  for (const needle of ['Input.dispatchMouseEvent', 'getBoundingClientRect', 'elementFromPoint']) assert.ok(s.includes(needle), needle);
+  for (const name of ['feature-confirm-tip', 'feature-confirm-reason', 'runs-confirm-needs', 'feature-chatless-waiting', 'ship-pr-named-once',
+    'chat-card-confirm', 'prototype-stop-feature-link']) {
+    assert.match(s, new RegExp(`[\`'/]${name}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${name} screenshots`);
   }
 });

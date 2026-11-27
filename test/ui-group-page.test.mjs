@@ -439,7 +439,8 @@ test('item 8 (D11): while Ship is blocked the status line ends with the reason; 
   const [blocked, cta] = text({ ship: { n: 2, blocked: true, reason } });
   assert.equal(blocked.split(reason).length - 1, 1, blocked);
   assert.match(blocked, /^Ready to ship/);
-  assert.deepEqual(cta, { state: 'create', label: 'Create 2 PRs', disabled: true, quiet: true, title: reason });
+  // Slice 7 (D8): the lock's words travel as `tip`, so no native tooltip opens over the status line.
+  assert.deepEqual(cta, { state: 'create', label: 'Create 2 PRs', disabled: true, quiet: true, tip: reason });
   const [open, cta2] = text({ ship: { n: 2, blocked: false, reason: '' } });
   assert.equal(open, text({})[0]);
   assert.deepEqual(cta2, { state: 'create', label: 'Create 2 PRs' });
@@ -968,4 +969,28 @@ test('R-arch-7: a page never in the layout gets no Cost tab, step log or Mark an
   assert.equal(calls.steps, undefined);
   assert.equal(calls.overview.length, 1);
   assert.equal(calls.overview[0][1]?.shipFirst ?? false, false);
+});
+
+// ── Slice 7 (D7): the confirmation hold's reason links to the Ship card, only in the marked feature's layout ─────
+test('s7: the layout page links a confirmation hold to the Ship card, and the hold wins over the state line', () => {
+  const hold = 'Needs your confirmation: R-ux-2';
+  const held = (more = {}) => {
+    const model = groupModel({ kind: 'feature', title: 'Run tags', members: [done, done], hold }, { now: NOW });
+    return { ...row(), planning: null, model, members: model.members.map((m, i) => ({ position: i + 1, title: `S${i + 1}`, href: '#x', model: m })), ...more };
+  };
+  const { root } = s6Root();
+  paintGroupPage(root, s6View({ row: held(), stateLine: 'Run 2 is being built' }), s6Deps());
+  const status = root.querySelector('.gpage-card .run-status');
+  const link = status.querySelector('a.run-status-link');
+  assert.ok(link, status.outerHTML);
+  assert.equal(link.getAttribute('href'), '#feature/feat_1/requirements/ship');
+  assert.equal(link.textContent, hold);
+  assert.doesNotMatch(status.textContent, /Run 2 is being built/);
+  const dev = s6Root().root;
+  paintGroupPage(dev, { row: held(), project: 'p', tab: 'runs' }, NOOP);
+  assert.equal(dev.querySelector('a.run-status-link'), null, 'no layout: no link');
+  const unowned = s6Root().root;
+  const model = groupModel({ kind: 'feature', title: 'T', members: [done, done], hold: 'R-ops-1 is owned by no run and confirmed by no person' }, { now: NOW });
+  paintGroupPage(unowned, s6View({ row: { ...held(), model } }), s6Deps());
+  assert.equal(unowned.querySelector('a.run-status-link'), null, 'another hold is plain text');
 });

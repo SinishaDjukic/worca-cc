@@ -686,7 +686,9 @@ shipT('carried: run 3 carries run 2 with #40 open: the view lists the line, newP
   assert.equal(groupShipChoice(view).n, 4);
   const d = paintedDialog(view);
   assert.deepEqual(textsOf(d.modal, '.shipit-prs-carried small.hint'), [CARRIED_LINE]);
-  assert.equal(d.modal.querySelector('.shipit-prs-kept')?.textContent, '#40 is not counted.');
+  assert.equal(d.modal.querySelector('.shipit-prs-kept')?.textContent, 'The open pull request is not counted.');
+  // Slice 7 (owner direction): #40 is named once, by the carried line.
+  assert.equal(d.modal.querySelector('.shipit-prs-one-why').textContent, 'Run 2 already has a pull request open');
   assert.equal(d.ok(), 'Create 4 PRs');
 }, SMALL_ON);
 

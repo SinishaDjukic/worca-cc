@@ -38,7 +38,7 @@ function shipBlock(doc, f) {
   // Feature D1 (D14): a marked feature's Ship is the small-runs card, the one card's ship step's; Mark confirmed posts
   // through the one helper both use.
   const sr = s.smallRuns && phase !== 'waiting' ? s.smallRuns : null;
-  const card = renderShipCard(doc, { phase, featureId: f.id, title: f.title, runs: f.total, files: s.files, added: s.linesAdded,
+  const card = renderShipCard(doc, { phase, featureId: f.id, title: f.title, runs: f.total, ...(typeof f.hasChat === 'boolean' ? { hasChat: f.hasChat } : {}), files: s.files, added: s.linesAdded,
     deleted: s.linesRemoved, suggested: s.suggested, result: s.result || null, ...(s.acceptance ? { acceptance: s.acceptance } : {}),
     ...(sr ? { smallRuns: sr, shipMode: s.mode || null } : {}) },
   sr ? { onConfirm: (id, mark, reason) => confirmRequirement(f.id, id, mark, reason) } : s.acceptance ? { onMark: (entries) => saveAcceptance(f.id, entries) } : {});
@@ -125,7 +125,7 @@ export function renderFeatureRequirements(doc, f, { runHref = () => null } = {})
   const byPerson = all.filter((x) => !x.owned).length;
   const byNone = all.filter((x) => x.owned && x.e.status === 'unowned').length;
   box.appendChild(h('p', 'cap shape-feature-reqs-cap', all.length
-    ? `${plural(all.length, 'requirement')} · ${all.length - byPerson - byNone} owned by a run · ${byPerson} confirmed by a person${byNone ? ` · ${byNone} owned by no run` : ''}` : '0 requirements'));
+    ? `${plural(all.length, 'requirement')} · ${all.length - byPerson - byNone} owned by a run · ${byPerson} you confirm${byNone ? ` · ${byNone} owned by no run` : ''}` : '0 requirements'));
   if (!all.length) return box;
   const roles = [...CONFIRM_ROLES, RELEASE];
   const groups = roles.map((role) => ({ role, rows: all.filter((x) => x.role === role.key) })).filter((g) => g.rows.length).map(({ role, rows }) => {

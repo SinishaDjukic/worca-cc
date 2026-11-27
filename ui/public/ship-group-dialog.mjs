@@ -30,14 +30,19 @@ const keepsPr = (view, pr) => (view.smallRuns === true && view.oneOk === true ? 
  *   since `members` along the real branches leaves those out; without it, `members` are read. With `oneOk`, `n` counts
  *   the members needsNewPr names (slice 5), so a slice draft counts as having its PR.
  * carried (slice 5): a marked feature's carried runs, [{ line, pr }] (ship.smallRuns.carried): the zone lists each line
- *   and keptOpenNote's words while Stacked is picked.
+ *   and keptOpenNote's words while Stacked is picked; slice 7: One's reason leaves out the number a carried line names.
  * → { n: members that still need a PR, oneOff: '' or why One is disabled, mode: the default pick }
  */
-export function groupShipChoice({ kind, members, all = null, suggested = null, check = null, smallRuns = false, oneOk = false }) {
+export function groupShipChoice({ kind, members, all = null, suggested = null, check = null, smallRuns = false, oneOk = false, carried = null }) {
   const owned = members.filter((m) => ownsPr(kind, m.pr));
   if (smallRuns === true) {
     const first = oneOk === true ? (all || members).find((m) => ownsPr(kind, m.pr)) : null;
-    const oneOff = oneOk !== true ? LEGACY_PER_RUN_REASON : first ? openPrReason({ index: first.position, pr: first.pr }) : '';
+    // Shaper slice 7 (D16): each PR is named once. A carried line that names this open PR already gives its number, so
+    // One's reason takes openPrReason's numberless form.
+    const named = !!first && (Array.isArray(carried) ? carried : []).some((c) => c && c.pr && c.pr.url && c.pr.url === first.pr.url
+      && c.pr.state !== 'CLOSED' && c.pr.state !== 'MERGED');
+    const oneOff = oneOk !== true ? LEGACY_PER_RUN_REASON
+      : first ? openPrReason({ index: first.position, pr: named ? { state: first.pr.state } : first.pr }) : '';
     return { n: members.filter((m) => !keepsPr({ kind, smallRuns, oneOk }, m.pr)).length, oneOff, mode: 'stacked' };
   }
   const loose = kind === 'chain' && members.some((m, i) => i > 0 && m.stacks === false);

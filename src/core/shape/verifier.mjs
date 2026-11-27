@@ -142,8 +142,9 @@ export function shipStopped(featureId, cover, probes, prs, failed = null) {
   const own = checksOf(f.outline).at(-1)?.shipSha;
   const same = Object.entries(tipsOf(f)).every(([pid, sha]) => !sha || sha === cover[pid] || sha === own);
   if (same && featureView(f.id, probes)?.ship.ready) return null;
+  const why = failed ? ` (${failed})` : '';
   return { status: 409, body: { code: 'NOT_READY', prs,
-    error: `the work changed while it was shipping, so Ship stopped${failed ? ` (${failed})` : ''}. Ship again once the Verifier has checked it, or Resume, if the card reads Stopped.` } };
+    error: `the work changed while it was shipping, so Ship stopped${why}. Ship again once the Verifier has checked it, or Resume on the feature page, if it reads Stopped.` } };
 }
 
 /**

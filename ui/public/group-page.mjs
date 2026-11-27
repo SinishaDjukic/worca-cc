@@ -5,7 +5,8 @@
 // use `gpage-`: group-picker.mjs owns `gp-`.
 import { paintRunStatus, syncActions, renderMemberRows, groupShipLine, groupBarShows } from './run-status-card.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
-import { groupKindWord, pageModel, paintCrumbs, buildFacts, setFactText, factRow, syncFacts, GROUP_FACTS } from './run-page-head.mjs';
+import { groupKindWord, pageModel, paintCrumbs, buildFacts, setFactText, factRow, syncFacts, GROUP_FACTS, featureShipHref } from './run-page-head.mjs';
+import { isConfirmHold } from '../../src/shared/shape/ship-ledger.mjs';
 import { icon } from './icons.mjs';
 import { groupHead } from './run-head.mjs';
 import { answerFieldOpen } from './shape/step-card.mjs';
@@ -292,7 +293,7 @@ function paintNeed(kindEl, text) {
 /**
  * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean, labels: [] (the
  * members' labels), unmarked?: number (a feature's unmarked requirements: its Create PR is locked), stackedOnly?: boolean (a small-runs
- * feature: the ship line never offers One), requirements?: boolean (D3: a marked feature with the flag on), shortState?:
+ * feature: the ship line never offers One), hasChat?: boolean (Shaper slice 7: false for a marked feature with no chat), requirements?: boolean (D3: a marked feature with the flag on), shortState?:
  * (member) → string|null (small runs: one-line member rows with the card's short words), status?: (member) →
  * {word, mark}|null (small runs s4: runStatus's word and mark for each row, renderMemberRows' `status`), ship?: {n, blocked, reason}|null
  * (small runs: the ledger the head's Create N PRs follows), stateLine?: string|null (small runs slice 7: the feature's state
@@ -328,14 +329,17 @@ export function paintGroupPage(root, view, deps) {
   title.title = row.title;   // D13: the heading is one line cut with "…"; the full title is the tooltip
   root.querySelector('.gpage-head .kind-chip').textContent = groupKindWord(row);   // run 3 (D7): the group's kind
   paintCrumbs(root.querySelector('.gpage-bar .rd-crumbs'), [{ label: 'Runs', href: '#runs' }, { label: row.title }]);
-  // Small runs slice 7 (D9): a marked feature's state line says which runs work and which goes next.
-  const shown = view.stateLine ? { ...pageModel(m), line: view.stateLine, lineSaysState: false } : pageModel(m);
+  // Small runs slice 7 (D9): a marked feature's state line says which runs work and which goes next. Shaper slice 7
+  // (D7): a confirmation hold wins over it, and in the feature layout its reason links to the Ship card.
+  const confirm = isConfirmHold(m.hold);
+  const shown = view.stateLine && !confirm ? { ...pageModel(m), line: view.stateLine, lineSaysState: false } : pageModel(m);
   paintNeed(root.querySelector('.gpage-head .kind-chip'), needYouText(view.needCount || 0));
   // Small runs: a disabled Create N PRs says why on the page, not only in its tooltip. A held group's line already does,
   // and so does the tab with the Ship card (Requirements in the feature layout, else Overview).
   const why = view.ship && view.ship.blocked && m.state === 'ready' && !m.hold && tab !== (layout ? 'requirements' : 'overview') ? view.ship.reason : '';
   const pm = why ? { ...shown, line: `${shown.line} · ${why}` } : shown;
-  paintRunStatus(root.querySelector('.gpage-card .run-status'), pm, { hold: true });   // run 3 (D10); slice 3: keep the last bar
+  paintRunStatus(root.querySelector('.gpage-card .run-status'), pm, { hold: true,   // run 3 (D10); slice 3: keep the last bar
+    ...(confirm && layout ? { detailHref: featureShipHref(row.groupId) } : {}) });
   // Run 3 (D15): the facts block — Project, Runs, Total cost, Labels (the read-only union of the members' labels).
   const kv = root.querySelector('.gpage-card > .rd-kv');
   const { done, total } = m.count;
@@ -386,7 +390,7 @@ export function paintGroupPage(root, view, deps) {
   runsHost.__links.repaint(row.groupId, () => keepUnchanged(runsHost, [view.shortState || view.status
     ? renderMemberRows(doc, row, { oneLine: true, shortState: view.shortState || null,
       ...(view.status ? { status: view.status, buildsOn: (mb) => mb.slice?.buildsOn ?? null } : {}) }) : renderMemberRows(doc, row)]));
-  const line = groupShipLine(row, { stackedOnly: !!view.stackedOnly });
+  const line = groupShipLine(row, { stackedOnly: !!view.stackedOnly, ...(typeof view.hasChat === 'boolean' ? { hasChat: view.hasChat } : {}) });
   const ship = root.querySelector('.gpage-ship');
   ship.textContent = line;
   ship.hidden = !line;

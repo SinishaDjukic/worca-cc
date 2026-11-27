@@ -10,6 +10,9 @@ import { FLAGS } from '../src/shared/flags/registry.mjs';
 // A namespace read, so a missing new export (LEGACY_OUTCOME_REASONS) fails only the tests that need it.
 import * as PR_AUTO from '../src/shared/pr-auto.mjs';
 import { groupShipChoice } from '../ui/public/ship-group-dialog.mjs';
+import { requirementStatus } from '../src/shared/shape/req-status.mjs';
+import { groupShipLine } from '../ui/public/run-status-card.mjs';
+import { groupModel } from '../src/shared/run-model.mjs';
 // A namespace read: the carried-run words are new exports.
 import * as LEDGER from '../src/shared/shape/ship-ledger.mjs';
 
@@ -94,4 +97,43 @@ test('the carried-run and not-counted words say no small runs', () => {
   ];
   assert.ok(words.every((w) => typeof w === 'string' && /\s/.test(w)), JSON.stringify(words));
   assert.deepEqual(words.flatMap((w) => hits(JSON.stringify(w))), []);
+});
+
+// ── Slice 7 (D15): confirm in place's new texts ───────────────────────────────────────────────────────────────
+test('s7: the confirm-in-place texts say no small runs', () => {
+  assert.equal(typeof LEDGER.confirmHold, 'function', 'ship-ledger exports confirmHold');
+  const ledger = LEDGER.shipLedger({ agreed: [{ id: 'R-ux-2', text: 'x' }], kinds: [{ id: 'R-ux-2', kind: 'confirmed', role: 'design' }], runs: [] });
+  const done = { status: 'done', endReached: true };
+  const model = groupModel({ kind: 'feature', title: 'F', members: [done, { status: 'running' }] });
+  const line = groupShipLine({ kind: 'chain', groupKind: 'feature', model, members: model.members.map((m, i) => ({ position: i + 1, model: m })) }, { hasChat: false });
+  const url = (n) => `https://github.com/me/repo/pull/${n}`;
+  const refusal = literals(readRepo('src/core/shape/verifier.mjs')).filter((l) => l.includes('Ship stopped'));
+  assert.equal(refusal.length, 1, 'the Verifier\'s Ship refusal');
+  assert.match(refusal[0], /Resume on the feature page/);
+  const words = [requirementStatus(ledger.confirmed[0]).text, ledger.reason, LEDGER.confirmHold(ledger), line,
+    LEDGER.keptOpenNote([{ index: 2, pr: { url: url(40), number: 40, state: 'OPEN' } }]), ...refusal];
+  assert.ok(words.every((w) => typeof w === 'string' && /\s/.test(w)), JSON.stringify(words));
+  assert.ok(line.endsWith('on this page.'), line);
+  assert.deepEqual(words.flatMap((w) => hits(JSON.stringify(w))), []);
+});
+
+test('s7: no waiting row reads confirmed by a person', () => {
+  for (const role of ['Product', 'Design', 'Engineering', 'QA', 'Security', 'Compliance']) {
+    const row = requirementStatus({ id: 'R-x-1', roleLabel: role, state: 'waiting', mark: null, reason: null });
+    assert.doesNotMatch(`${row.word} ${row.text}`, /confirmed by a person/, role);
+    assert.equal(row.text, `waiting for you to confirm · ${role}`);
+  }
+});
+
+/** The files whose literals may still say `confirmed by a person`: the coverage rule's words (a requirement's kind),
+ *  the one-card proposal, the flag-off Ship card note (noteOf's fallback) and the ledger row's owner key. */
+const SAYS_BY_A_PERSON = ['src/shared/shape/feature-record.mjs', 'src/shared/shape/req-status.mjs', 'src/shared/shape/slices.mjs',
+  'ui/public/shape/proposal.mjs', 'ui/public/shape/ship-card.mjs'];
+test('s7: confirmed by a person stays only in the rule words, the owner key and the flag-off fallback', () => {
+  const said = ['src', 'ui'].flatMap((root) => walkFrom(root)).sort().flatMap((file) =>
+    literals(noComments(readRepo(file)).replace(/\/\*[\s\S]*?\*\//g, '')).filter((l) => /confirmed by a person/i.test(l)).map((text) => ({ file, text })));
+  assert.deepEqual(said.filter(({ file }) => !SAYS_BY_A_PERSON.includes(file)), []);
+  // In the status function it is only the row's owner key, never words a waiting row shows.
+  assert.deepEqual(said.filter(({ file }) => file === 'src/shared/shape/req-status.mjs').map(({ text }) => text.slice(1, -1))
+    .filter((t) => t !== 'confirmed by a person'), []);
 });

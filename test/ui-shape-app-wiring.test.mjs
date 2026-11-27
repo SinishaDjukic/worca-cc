@@ -1232,3 +1232,43 @@ test('R-ux-4, flag off: the feature card\'s stop draws no findings list', async 
   assert.equal(visiblePrimaries(q).length, 1);
   built.dispose();
 });
+
+// ── Slice 7 (D11, D12, R-arch-4): a feature with no chat points to its feature page ─────────────────────────────
+test('s7: homeForRun reads the slice route; featureId only for a run with `owns` (a marked feature, flag on)', async () => {
+  const infos = {
+    plain: { featureId: 'feat_1', threadId: null },
+    marked: { featureId: 'feat_1', threadId: null, owns: [] },
+    chatted: { featureId: 'feat_1', threadId: 't-1', owns: [] },
+  };
+  const ctx = await bootApp({ fetchHandler: (url) => {
+    const m = /^\/api\/shape\/pipelines\/([^/]+)\/slice$/.exec(url);
+    return m && infos[m[1]] ? res(200, infos[m[1]]) : null;
+  } });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [] });
+  await ctx.settle();
+  const seam = ctx.window.__shapeFeature;
+  assert.equal(typeof seam.homeForRun, 'function', 'the app-side builder sits beside threadForRun');
+  assert.deepEqual(await seam.homeForRun({ pipelineId: 'plain' }), { threadId: null, featureId: null });
+  assert.deepEqual(await seam.homeForRun({ pipelineId: 'marked' }), { threadId: null, featureId: 'feat_1' });
+  const before = ctx.calls.filter((c) => c.url === '/api/shape/pipelines/chatted/slice').length;
+  assert.equal((await seam.homeForRun({ pipelineId: 'chatted' })).threadId, 't-1');
+  assert.equal(ctx.calls.filter((c) => c.url === '/api/shape/pipelines/chatted/slice').length, before + 1, 'one GET');
+});
+
+test('s7 R-arch-4: the run panel\'s Prototype stop of a chat-less feature run links to its feature page', async () => {
+  const open = async (info) => {
+    const ctx = await bootApp({ fetchHandler: (url) => (url === '/api/shape/pipelines/p-rr/slice' ? res(info ? 200 : 404, info || {}) : null) });
+    ctx.wsBox.ws.dispatch('open', {});
+    ctx.dispatch({ type: 'hello', runs: [{ ...reqRun({ id: 'proto-1', kind: 'prototype', prototype: { moment: 'offered',
+      offer: { primary: 'build', menu: 'skip', review: false }, requirements: [{ id: 'R-ux-1', text: 'The editor shows a preview' }] } }), pipelineId: 'p-rr' }] });
+    ctx.go('chat/new/run/run-rr');
+    await ctx.settle(14);
+    const screen = ctx.window.document.querySelector('[data-chat-panel] .crp-host > .rd');
+    assert.ok(screen.querySelector('.qpanel .proto-body'), 'the step is drawn');
+    return [...screen.querySelectorAll('.qpanel a.link')].map((a) => a.getAttribute('href'));
+  };
+  assert.deepEqual(await open({ featureId: 'feat_1', threadId: null, owns: [] }), ['#feature/feat_1']);
+  assert.deepEqual(await open({ featureId: 'feat_1', threadId: 't-1', owns: [] }), [], 'a feature with a chat answers on its card there');
+  assert.deepEqual(await open(null), [], 'no known home: no link');
+});

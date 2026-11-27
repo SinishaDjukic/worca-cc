@@ -169,7 +169,9 @@ test('small runs, flag on: the feature\'s Ship dialog names the carried run with
   await openDialog(ctx);
   const modal = ctx.window.document.getElementById('shipit-modal');
   assert.deepEqual([...modal.querySelectorAll('.shipit-prs-carried small.hint')].map((x) => x.textContent), [line]);
-  assert.equal(modal.querySelector('.shipit-prs-kept')?.textContent, '#40 is not counted.');
+  // Slice 7 (D16, owner direction): the carried line names #40; the note and One's reason name no number.
+  assert.equal(modal.querySelector('.shipit-prs-kept')?.textContent, 'The open pull request is not counted.');
+  assert.equal(modal.querySelector('.shipit-prs-one-why').textContent, 'Run 2 already has a pull request open');
   assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create 4 PRs');
 });
 
@@ -638,12 +640,13 @@ test('fail closed: the feature page of an owner-less feature disables Create PR,
   assert.ok(cta);
   assert.equal(cta.disabled, true);
   assert.equal(cta.classList.contains('btn-primary'), false);
-  const visible = () => [...gp.querySelectorAll('.gpage-head, .gpage-card')].map((x) => x.textContent).join(' ');
+  // Slice 7: the hover-only .rd-tip is hidden at rest, so it is not part of what the page shows.
+  const visible = () => [...gp.querySelectorAll('.gpage-head, .gpage-card')].map((x) => { const c = x.cloneNode(true); c.querySelectorAll('.rd-tip').forEach((t) => t.remove()); return c.textContent; }).join(' ');
   assert.equal(visible().split(reason).length - 1, 1, 'the reason, once');
   assert.doesNotMatch(visible(), /Ready to ship/);
   ctx.go('feature/feat_1/requirements');
   await ctx.settle(10);
-  assert.equal(gp.querySelector('.shape-feature-reqs-cap').textContent, '2 requirements · 1 owned by a run · 0 confirmed by a person · 1 owned by no run');
+  assert.equal(gp.querySelector('.shape-feature-reqs-cap').textContent, '2 requirements · 1 owned by a run · 0 you confirm · 1 owned by no run');
   assert.equal(reqNote(ctx, 'R-po-2'), 'owned by no run · confirmed by no person');
   // The member rows of a finished feature keep their own words (Step 7); the list row is held too.
   const row = ctx.window.document.querySelector('.runs-item[data-row-key="chain:feat_1"] > a.runs-row');
@@ -769,7 +772,8 @@ test('item 8: a small-runs feature\'s head reads Create 2 PRs, disabled with the
   const gp = pageOf(ctx).querySelector('.gpage');
   const cta = () => gp.querySelector('.gpage-card .rd-pr-slot [data-rd-cta]');
   const reason = 'Waiting for Compliance to confirm R-comp-1';
-  assert.deepEqual([cta().textContent, cta().disabled, cta().title], ['Create 2 PRs', true, reason]);
+  const tip = () => gp.querySelector('.gpage-card .rd-pr-slot .rd-tip')?.textContent;
+  assert.deepEqual([cta().textContent, cta().disabled, cta().title, tip()], ['Create 2 PRs', true, '', reason]);
   assert.ok(gp.querySelector('.gpage-card .run-status').textContent.includes(reason), 'the reason is visible, not only a tooltip');
   smallRuns = { ...smallRuns, waiting: [], blocked: false, reason: null, confirmed: smallRuns.confirmed.map((c) => ({ ...c, state: 'confirmed', mark: 'met' })) };
   ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
@@ -828,7 +832,8 @@ test('a feature that is not ready to ship: one primary, Create N PRs locked with
   const status = () => gp.querySelector('.gpage-card .run-status').textContent;
   const primaries = () => shownButtons(gp).filter((b) => b.classList.contains('btn-primary')).map((b) => b.textContent);
   assert.deepEqual(primaries(), ['Fix again']);
-  assert.deepEqual([cta().textContent, cta().disabled, cta().title], ['Create 2 PRs', true, 'The Verifier waits for your answer']);
+  assert.deepEqual([cta().textContent, cta().disabled, cta().title, gp.querySelector('.gpage-card .rd-pr-slot .rd-tip')?.textContent],
+    ['Create 2 PRs', true, '', 'The Verifier waits for your answer']);
   assert.match(status(), /The Verifier waits for your answer/);
   assert.doesNotMatch(status(), /Ready to ship/);
   // Still checking: no question, the same lock with its own reason.
@@ -1473,5 +1478,167 @@ test('R-ux-3 flag off: a cost, logs or overview deep link paints the page while 
     const gp = pageOf(ctx).querySelector('.gpage');
     assert.ok(gp, `${hash}: no loading hold`);
     assert.equal(s6Selected(gp), hash === 'cost' ? 'runs' : hash);
+  }
+});
+
+// ── Slice 7 (R-ux-1, R-arch-4): confirm in place ─────────────────────────────────────────────────────────────────
+const S7C_HOLD = 'Needs your confirmation: R-ux-2';
+const S7C_REASON = 'Waiting for you to confirm R-ux-2';
+const S7C_HREF = '#feature/feat_1/requirements/ship';
+/** s6Feature with R-ux-2 (Design) as the one requirement a person confirms, waiting for its mark: what the server
+ *  sends for a ready marked feature with the flag on. */
+const s7cFeature = ({ n = 6, over = {} } = {}) => {
+  const base = s6Ledger(n, 'waiting');
+  const smallRuns = { ...base, waiting: ['R-ux-2'], reason: S7C_REASON,
+    confirmed: [{ ...base.confirmed[0], id: 'R-ux-2', text: 'The words say who confirms', role: 'design', roleLabel: 'Design',
+      shown: { owner: 'confirmed by a person', role: 'Design', word: 'waiting for you to confirm', text: 'waiting for you to confirm · Design', mark: 'wait' } }] };
+  return s6Feature({ n, ship: { smallRuns }, over: { requirementKinds: [{ id: 'R-po-1', kind: 'owned', run: 1 }, { id: 'R-po-2', kind: 'owned', run: 2 },
+    { id: 'R-ux-2', kind: 'confirmed', role: 'design' }], hasChat: true, ...over } });
+};
+const s7cGroups = (n = 6, over = {}) => { const g = s6Groups(n); return { groups: [{ ...g.groups[0], hold: S7C_HOLD, ...over }, g.groups[1]] }; };
+const s7cOpen = (opts = {}) => s6Open({ feature: () => json(s7cFeature()), groups: s7cGroups(), ...opts });
+const s7cLink = (p) => p.q('.gpage-card .run-status a.run-status-link');
+const s7cRow = (p) => p.doc.querySelector('.runs-item[data-row-key="chain:feat_1"] > a.runs-row');
+
+test('s7 R-ux-1: a waiting confirmation reads Needs your confirmation and nowhere Ready to ship', async () => {
+  const p = await s7cOpen();
+  const link = s7cLink(p);
+  assert.ok(link, 'the head\'s reason is a link');
+  assert.equal(link.textContent, S7C_HOLD);
+  assert.ok(p.q('.gpage-card .run-status .run-status-head .status-dot').classList.contains('is-amber'), 'the needs-you tone');
+  assert.equal(p.q('.gpage-card .run-status .status-sym'), null, 'no "?": nothing asks');
+  assert.doesNotMatch(p.gp().textContent, /Ready to ship/);
+  const row = s7cRow(p);
+  assert.ok(row, 'the Runs list lists the group');
+  assert.ok(row.textContent.includes(S7C_HOLD), row.textContent);
+  assert.doesNotMatch(row.textContent, /Ready to ship/);
+  await p.go('feature/feat_1/requirements');
+  assert.doesNotMatch(p.gp().textContent, /Ready to ship/);
+  assert.equal(reqNote(p.ctx, 'R-ux-2'), 'waiting for you to confirm · Design');
+});
+
+test('s7 R-ux-1: the reason links to the Ship card on Requirements', async () => {
+  const p = await s7cOpen();
+  assert.equal(s6Selected(p.gp()), 'runs');
+  const link = s7cLink(p);
+  assert.ok(link);
+  assert.equal(link.getAttribute('href'), S7C_HREF);
+  link.click();
+  await p.ctx.settle(12);
+  assert.equal(s6Selected(p.gp()), 'requirements');
+  const card = s6Card(p);
+  assert.ok(card, 'the Ship card is in Requirements');
+  const scrolled = () => p.scrolls.filter((x) => x.node.matches('[data-ship-card]')).map((x) => x.arg);
+  assert.deepEqual(scrolled(), [{ block: 'start' }]);
+  assert.equal(p.doc.activeElement, card);
+  assert.equal(p.ctx.window.location.hash, '#feature/feat_1/requirements', 'the address drops /ship once revealed');
+  await p.go('feature/feat_1/requirements/ship');
+  assert.equal(scrolled().length, 2, 'the same address again reveals it again');
+  assert.equal(p.ctx.window.location.hash, '#feature/feat_1/requirements');
+});
+
+test('s7: only /requirements/ship reveals the Ship card from an address; any other third segment is ignored', async () => {
+  const p = await s7cOpen({ hash: 'feature/feat_1/requirements/zzz' });
+  assert.equal(s6Selected(p.gp()), 'requirements');
+  assert.equal(p.scrolls.filter((x) => x.node.matches('[data-ship-card]')).length, 0);
+  await p.go('feature/feat_1/requirements/ship');
+  assert.equal(p.scrolls.filter((x) => x.node.matches('[data-ship-card]')).length, 1, 'and /ship does');
+});
+
+test('s7: a /requirements/ship deep link reveals the Ship card once the feature has loaded', async () => {
+  const p = await s7cOpen({ hash: 'feature/feat_1/requirements/ship' });
+  assert.equal(s6Selected(p.gp()), 'requirements');
+  assert.equal(p.doc.activeElement, s6Card(p));
+  assert.equal(p.ctx.window.location.hash, '#feature/feat_1/requirements');
+});
+
+test('s7: following the reason link sends no request', async () => {
+  const p = await s7cOpen();
+  const link = s7cLink(p);
+  assert.ok(link);
+  const sent = p.ctx.calls.length;
+  link.click();
+  await p.ctx.settle(12);
+  assert.equal(s6Selected(p.gp()), 'requirements');
+  // Every navigation re-reads the sidebar's counts (GET /api/counts); following the link adds nothing else.
+  assert.deepEqual(p.ctx.calls.slice(sent).map((c) => `${c.opts.method || 'GET'} ${c.url}`).filter((c) => c !== 'GET /api/counts'), []);
+});
+
+test('s7 R-ux-1: the disabled Create N PRs has a styled tip, no native title, and none once the mark lands', async () => {
+  let body = s7cFeature();
+  let groups = s7cGroups();
+  const { ctx } = await d3Boot({ groups: smallGroups(), feature: () => json(body), extra: (url) => (url.startsWith('/api/run-groups') ? json(groups)
+    : url.startsWith('/api/history') ? json({ pipelines: s6History(6) }) : null) });
+  ctx.go('feature/feat_1');
+  await ctx.settle(12);
+  const gp = pageOf(ctx).querySelector('.gpage');
+  const cta = () => gp.querySelector('.gpage-card .rd-pr-slot > [data-rd-cta]');
+  assert.ok(cta(), 'the locked control stays a direct child of the PR slot');
+  assert.equal(cta().disabled, true);
+  assert.equal(cta().getAttribute('title'), null);
+  const tips = () => gp.querySelectorAll('.rd-tip');
+  assert.equal(tips().length, 1);
+  const [tip] = tips();
+  assert.equal(tip.parentElement, cta().parentElement);
+  assert.equal(tip.getAttribute('role'), 'tooltip');
+  assert.equal(tip.textContent, S7C_REASON);
+  assert.ok(tip.id);
+  assert.equal(cta().getAttribute('aria-describedby'), tip.id);
+  const status = gp.querySelector('.gpage-card .run-status');
+  for (const n of [status, status.querySelector('.run-status-detail'), status.querySelector('a.run-status-link')]) {
+    assert.ok(n, 'the reason line');
+    assert.equal(n.getAttribute('title'), null);
+  }
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(10);
+  assert.equal(tips().length, 1, 'a repaint adds no second tip');
+  const base = s7cFeature();
+  body = { ...base, ship: { ...base.ship, smallRuns: { ...base.ship.smallRuns, waiting: [], blocked: false, reason: null,
+    confirmed: base.ship.smallRuns.confirmed.map((c) => ({ ...c, state: 'confirmed', mark: 'met' })) } } };
+  groups = { groups: [s6Groups(6).groups[0], GROUPS.groups[1]] };
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  ctx.dispatch({ type: 'run-groups-changed' });
+  await ctx.settle(12);
+  assert.equal(cta().disabled, false);
+  assert.equal(tips().length, 0);
+  assert.equal(cta().getAttribute('aria-describedby'), null);
+  assert.equal(gp.querySelector('a.run-status-link'), null, 'the link goes with the hold');
+  assert.match(gp.querySelector('.gpage-card .run-status').textContent, /Ready to ship/);
+});
+
+/** Opens a 3-run feature page whose run 3 is live: History has runs 1 and 2, the hello carries run 3. */
+async function s7cLive(body, groups) {
+  const p = await s6Open({ n: 2, feature: () => json(body), groups });
+  p.ctx.dispatch({ type: 'hello', runs: [{ runId: 'r3', pipelineId: 'p3', title: 'Slice 3', projectDir: '/tmp/p', status: 'running', kind: 'run', startedAt: '2026-01-01T00:00:00Z' }] });
+  p.ctx.dispatch({ type: 'run-groups-changed' });
+  await p.ctx.settle(12);
+  return p;
+}
+const s7cMembers = () => [1, 2, 3].map((i) => ({ ...d3Member(i), status: i === 3 ? 'running' : 'done' }));
+const s7cRunning = (over = {}) => {
+  const base = s7cFeature({ n: 3 });
+  return { ...base, status: 'active', done: 2, slices: base.slices.map((s) => (s.index === 3 ? { ...s, state: 'running' } : s)),
+    ship: { ...base.ship, ready: false }, ...over };
+};
+
+test('s7: a live run keeps its own words while a confirmation waits', async () => {
+  const p = await s7cLive(s7cRunning(), s7cGroups(3, { members: s7cMembers() }));
+  assert.equal(s7cLink(p), null);
+  assert.doesNotMatch(p.q('.gpage-card .run-status').textContent, /Needs your confirmation/);
+});
+
+test('s7 R-arch-4: a chat-less feature\'s card pointers open its feature page', async () => {
+  const groups = { groups: [{ ...s6Groups(3).groups[0], members: s7cMembers() }, GROUPS.groups[1]] };
+  for (const [hasChat, tail] of [[true, 'here and in the chat.'], [false, 'on this page.']]) {
+    const p = await s7cLive(s7cRunning({ hasChat }), groups);
+    const line = `Ship card comes when all 3 runs are done, ${tail}`;
+    assert.equal(p.q('.gpage-ship').textContent, line, `hasChat ${hasChat}: the Runs tab's ship line`);
+    await p.go('feature/feat_1/requirements');
+    assert.equal(p.q('.gpage-panel[data-tab="requirements"] [data-ship-card="waiting"]')?.textContent, line, `hasChat ${hasChat}: the waiting Ship card`);
+    if (!hasChat) {
+      assert.doesNotMatch(p.gp().textContent, /here and in the chat/);
+      const pointers = [...p.gp().querySelectorAll('a[href]')].filter((a) => /\bcard\b|feature page/i.test(a.textContent));
+      for (const a of pointers) assert.ok(a.getAttribute('href').startsWith('#feature/feat_1'), a.outerHTML);
+    }
   }
 });

@@ -56,11 +56,14 @@ export function carriedLine({ index, by, pr } = {}) {
   return `${line} (${n ? `#${n} is open` : 'its pull request is open'})`;
 }
 
-/** Slice 5 (D9): why the count leaves out the carried runs' open PRs: `#40 is not counted.`, `#40 and #41 are not
- *  counted.`, in run order; '' when no carried run has an open numbered PR. */
+/** Slice 5 (D9): why the count leaves out the carried runs' open PRs. Slice 7 (D16): each PR is named once, by its
+ *  carried line, so the note names none: `The open pull request is not counted.`, `The 2 open pull requests are not
+ *  counted.`; '' when no carried run has an open numbered PR. */
 export function keptOpenNote(carried) {
-  const ns = list(carried).filter((c) => c && openPr(c.pr)).map((c) => prNumberOf(c.pr)).filter(Boolean).map((n) => `#${n}`);
-  return ns.length ? `${andList(ns)} ${ns.length === 1 ? 'is' : 'are'} not counted.` : '';
+  const n = list(carried).filter((c) => c && openPr(c.pr) && prNumberOf(c.pr)).length;
+  if (!n) return '';
+  // Two literals: "open" is an adjective here; ui-ship-words' verb guard reads a number before it as a verb's subject.
+  return n === 1 ? 'The open pull request is not counted.' : `The ${n} open` + ' pull requests are not counted.';
 }
 
 /** Feature D1 (owner direction): the marks a person gives a requirement they confirm, as the classic ledger stores them
@@ -70,6 +73,23 @@ export const CONFIRM_REASON_MAX = 300;
 /** The block reason once every confirmed requirement is marked but one not met or dropped has no reason (an unmarked
  *  one reads the waiting-for-role line). */
 export const REASON_FIRST = 'Give a reason for each one not met or dropped';
+
+/** Slice 7 (D2): the words of a ship hold while a confirmation is still open. */
+export const NEEDS_CONFIRM = 'Needs your confirmation';
+const HOLD_IDS = 3;
+
+/** Slice 7 (D2): the hold of a ledger whose confirmations still wait: `Needs your confirmation: R-ux-2`, up to 3 ids
+ *  joined with `, `, then ` and N more`. Null when nothing waits, or when a requirement is owned by no run (that
+ *  reason comes first: fail closed). A missing reason (needs-reason) is no hold. */
+export function confirmHold(ledger) {
+  const ids = list(ledger && ledger.waiting);
+  if (!ids.length || list(ledger.unowned).length) return null;
+  const more = ids.length - HOLD_IDS;
+  return `${NEEDS_CONFIRM}: ${ids.slice(0, HOLD_IDS).join(', ')}${more > 0 ? ` and ${more} more` : ''}`;
+}
+
+/** Whether a hold text is the confirmation hold (confirmHold's), not another reason. */
+export const isConfirmHold = (text) => typeof text === 'string' && text.startsWith(NEEDS_CONFIRM);
 
 /** A body's mark ('not_met' is read as 'not-met'), or null when it is none of the three. */
 export function confirmMarkOf(raw) {
@@ -116,9 +136,11 @@ export function shipLedger({ agreed = [], kinds = [], acceptance = [], verify = 
   const needs = confirmed.filter((c) => c.state === 'needs-reason');
   const labels = [...new Set(open.map((c) => c.roleLabel))];
   const unowned = owned.filter((o) => o.status === 'unowned').map((o) => o.id);
+  // Slice 7 (D5): judged (flag on, marked), the reason names you; unjudged it names the role, as before.
+  const who = judged ? 'you' : andList(labels);
   const reason = unowned.length ? unownedReason(unowned) : open.length
-    ? labels.length > 1 ? `Waiting for ${andList(labels)} to confirm ${plural(open.length, 'requirement')}`
-      : `Waiting for ${labels[0]} to confirm ${waiting[0]}${waiting.length > 1 ? ` and ${waiting.length - 1} more` : ''}`
+    ? labels.length > 1 ? `Waiting for ${who} to confirm ${plural(open.length, 'requirement')}`
+      : `Waiting for ${who} to confirm ${waiting[0]}${waiting.length > 1 ? ` and ${waiting.length - 1} more` : ''}`
     : needs.length ? REASON_FIRST : null;
   const met = owned.filter((o) => o.status === 'holds').length + confirmed.filter((c) => c.state === 'confirmed' && c.mark === 'met').length;
   const unmet = confirmed.filter((c) => c.state === 'confirmed' && c.mark !== 'met').map((c) => ({ id: c.id, text: c.text, mark: c.mark, reason: c.reason }));

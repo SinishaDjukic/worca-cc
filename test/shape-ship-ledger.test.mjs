@@ -73,7 +73,7 @@ test('shipLedger: with runs every owned and confirmed entry has shown', () => {
     assert.deepEqual(shown, requirementStatus(bare, { runs, reruns }), e.id);
   }
   assert.deepEqual(l.owned.map((o) => o.shown.text), ['run 1 · changed · run 3 builds it', 'run 2 · being built', 'owned by no run · confirmed by no person']);
-  assert.equal(l.confirmed[0].shown.text, 'confirmed by a person · Compliance');
+  assert.equal(l.confirmed[0].shown.text, 'waiting for you to confirm · Compliance');
   assert.deepEqual(l.met, { met: 2, total: 4 }, 'an owner-less requirement is not met');
 });
 
@@ -225,15 +225,63 @@ test('the button reads Create 4 PRs when 4 will open, Create PR when 1 will, #40
   assert.equal(LEDGER.newPrCount(order), 4, '#40 is not counted');
   assert.equal(createPrLabel(LEDGER.newPrCount(order)), 'Create 4 PRs');
   assert.equal(createPrLabel(LEDGER.newPrCount(listed([1, 3, 4, 5]))), 'Create 4 PRs');
-  assert.equal(LEDGER.keptOpenNote([carriedOf(2, 3, prOf(40))]), '#40 is not counted.');
+  assert.equal(LEDGER.keptOpenNote([carriedOf(2, 3, prOf(40))]), 'The open pull request is not counted.');
   assert.equal(createPrLabel(LEDGER.newPrCount(listed([1]))), 'Create PR');
 });
 
-test('keptOpenNote: one, several and no open numbered PRs among the carried runs, numbers in run order', () => {
+// Slice 7 (D16, owner direction): each pull request is named once, by the carried-run line, so the note names none.
+test('s7 keptOpenNote: one, several and no open numbered PRs among the carried runs, no number in the note', () => {
   const note = LEDGER.keptOpenNote;
-  assert.equal(note([carriedOf(2, 3, prOf(40))]), '#40 is not counted.');
-  assert.equal(note([carriedOf(2, 5, prOf(41)), carriedOf(4, 5, prOf(40))]), '#41 and #40 are not counted.', 'in run order, not sorted by number');
+  assert.equal(note([carriedOf(2, 3, prOf(40))]), 'The open pull request is not counted.');
+  assert.equal(note([carriedOf(2, 5, prOf(41)), carriedOf(4, 5, prOf(40))]), 'The 2 open pull requests are not counted.');
   assert.equal(note([carriedOf(2, 3, prOf(40, 'MERGED')), carriedOf(4, 5, prOf(41, 'CLOSED')), carriedOf(1, 3, null)]), '');
-  assert.equal(note([carriedOf(2, 3, prOf(40, 'MERGED')), carriedOf(4, 5, prOf(41))]), '#41 is not counted.');
+  assert.equal(note([carriedOf(2, 3, prOf(40, 'MERGED')), carriedOf(4, 5, prOf(41))]), 'The open pull request is not counted.');
+  for (const list of [[carriedOf(2, 3, prOf(40))], [carriedOf(2, 5, prOf(41)), carriedOf(4, 5, prOf(40))]]) {
+    assert.doesNotMatch(note(list), /#\d/, 'the number is named once, elsewhere');
+  }
   for (const none of [[], null, undefined]) assert.equal(note(none), '', String(none));
+});
+
+// ── Slice 7 (D2, D5): a confirmation that is still open holds Ship, and the words say that you confirm ───────────
+const CONF = (ids, roles = []) => ({ agreed: ids.map((id) => ({ id, text: `${id} text` })),
+  kinds: ids.map((id, i) => ({ id, kind: 'confirmed', role: roles[i] || 'design' })), runs: [{ index: 1, state: 'done' }] });
+const FIVE = ['R-ux-2', 'R-ux-5', 'R-des-1', 'R-des-2', 'R-des-3'];
+
+test('s7 confirmHold: one, three, four and five waiting ids', () => {
+  assert.equal(typeof LEDGER.confirmHold, 'function', 'ship-ledger exports confirmHold');
+  const hold = (ids) => LEDGER.confirmHold(shipLedger(CONF(ids)));
+  assert.equal(hold(FIVE.slice(0, 1)), 'Needs your confirmation: R-ux-2');
+  assert.equal(hold(FIVE.slice(0, 3)), 'Needs your confirmation: R-ux-2, R-ux-5, R-des-1');
+  assert.equal(hold(FIVE.slice(0, 4)), 'Needs your confirmation: R-ux-2, R-ux-5, R-des-1 and 1 more');
+  assert.equal(hold(FIVE), 'Needs your confirmation: R-ux-2, R-ux-5, R-des-1 and 2 more');
+});
+
+test('s7 confirmHold is null when nothing waits, when only a reason is missing, and when a requirement is owned by no run', () => {
+  assert.equal(typeof LEDGER.confirmHold, 'function', 'ship-ledger exports confirmHold');
+  const base = CONF(['R-ux-2']);
+  assert.equal(LEDGER.confirmHold(shipLedger({ ...base, acceptance: [{ id: 'R-ux-2', mark: 'met' }] })), null, 'marked');
+  assert.equal(LEDGER.confirmHold(shipLedger({ agreed: [], kinds: [], runs: [] })), null, 'nothing to confirm');
+  assert.equal(LEDGER.confirmHold(shipLedger({ ...base, acceptance: [{ id: 'R-ux-2', mark: 'not-met' }] })), null, 'needs a reason only');
+  // Fail closed: the owner-less requirement is the hold, never the confirmation.
+  const unowned = shipLedger({ agreed: [...base.agreed, { id: 'R-ops-1', text: 'x' }], kinds: [...base.kinds, { id: 'R-ops-1', kind: 'owned', run: null }], runs: base.runs });
+  assert.deepEqual(unowned.waiting, ['R-ux-2']);
+  assert.equal(LEDGER.confirmHold(unowned), null);
+});
+
+test('s7 isConfirmHold tells the confirmation hold from every other reason', () => {
+  assert.equal(LEDGER.NEEDS_CONFIRM, 'Needs your confirmation');
+  assert.equal(LEDGER.isConfirmHold('Needs your confirmation: R-ux-2'), true);
+  for (const other of ['R-ops-1 is owned by no run and confirmed by no person', 'Waiting for you to confirm R-ux-2', REASON_FIRST, '', null, undefined]) {
+    assert.equal(LEDGER.isConfirmHold(other), false, String(other));
+  }
+});
+
+test('s7 the judged block reason says you confirm; the unjudged one keeps naming the role', () => {
+  const reason = (ids, roles) => shipLedger(CONF(ids, roles)).reason;
+  assert.equal(reason(['R-ux-2']), 'Waiting for you to confirm R-ux-2');
+  assert.equal(reason(['R-ux-2', 'R-ux-5']), 'Waiting for you to confirm R-ux-2 and 1 more');
+  assert.equal(reason(['R-ux-2', 'R-ux-5', 'R-sec-1'], ['design', 'design', 'security']), 'Waiting for you to confirm 3 requirements');
+  const { runs, ...unjudged } = CONF(['R-comp-1'], ['compliance']);
+  assert.equal(shipLedger(unjudged).reason, 'Waiting for Compliance to confirm R-comp-1');
+  assert.equal(shipLedger({ ...CONF(['R-ux-2']), acceptance: [{ id: 'R-ux-2', mark: 'dropped' }] }).reason, REASON_FIRST, 'needs-reason keeps its words');
 });

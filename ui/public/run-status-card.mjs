@@ -131,7 +131,7 @@ export function kindLabel(row) {
  *  `hold` (the group page, slice 3): a live group's member between runs keeps the last bar, edge still.
  *  `lead: false` (the run pages): the state line under the title already shows the dot, the word and the step, so the
  *  block shows only statusSplit's `rest`, and no head at all when nothing is left. The data-* facts stay whole. */
-export function paintRunStatus(host, m, { hold = false, lead = true } = {}) {
+export function paintRunStatus(host, m, { hold = false, lead = true, detailHref } = {}) {
   if (!host || !m) return;
   const doc = host.ownerDocument;
   if (!host.__rs) {
@@ -163,11 +163,26 @@ export function paintRunStatus(host, m, { hold = false, lead = true } = {}) {
   host.dataset.text = st.text;                       // the one-line "State · detail" (lists and tests read this form)
   if (word.textContent !== st.head) word.textContent = st.head;
   const said = lead ? st.detail : statusSplit(m, { stageBar: !g && show }).rest;
-  detail.textContent = said;
-  detail.title = said;                                // clamped at 2 lines: the full text on hover
-  detail.hidden = !said;
+  if (typeof detailHref === 'string') {
+    // Slice 7 (D7): the status is one link (the hold's reason, to the Ship card); no title opens over it.
+    let link = host.__rs.link;
+    if (!link || link.parentElement !== detail) {
+      link = host.__rs.link = textEl(doc, 'a', 'run-status-link', '');
+      detail.replaceChildren(link);
+    }
+    if (link.getAttribute('href') !== detailHref) link.setAttribute('href', detailHref);
+    if (link.textContent !== (st.line || st.text)) link.textContent = st.line || st.text;
+    detail.removeAttribute('title');
+    detail.hidden = false;
+    word.hidden = true;
+  } else {
+    if (host.__rs.link) { host.__rs.link = null; detail.hidden = true; }   // the checkpoint's attribute order again
+    detail.textContent = said;
+    detail.title = said;                              // clamped at 2 lines: the full text on hover
+    detail.hidden = !said;
+    word.hidden = !lead;
+  }
   dot.hidden = !lead;
-  word.hidden = !lead;
   head.hidden = !lead && !said;
   if (groupBarShows(m)) {
     paintChainBar(group, { total: m.progress.total, fraction: m.progress.fraction, text: `${m.count.done} done` });
@@ -338,14 +353,15 @@ export function renderMemberRows(doc, row, { checks, oneLine = false, shortState
 /** D17: the group page's one ship line (a feature, or a chain in the one ship flow). One is offered unless
  *  `stackedOnly`: a small-runs feature with the Shaper small runs flag off ships a PR per run (One answers 409
  *  STACKED_ONLY), so the line never offers One. */
-export function groupShipLine(row, { stackedOnly = false } = {}) {
+export function groupShipLine(row, { stackedOnly = false, hasChat } = {}) {
   if (!row || !['feature', 'chain', 'user'].includes(row.groupKind) || !row.model) return '';
   const { done, total } = row.model.count;
   const native = (row.members || []).filter((mb) => !mb.adhoc);
   const order = native.map((mb) => mb.position).join(' → ');
   const indep = (row.members || []).filter((mb) => mb.adhoc).map((mb) => mb.position);
   if (done < total) {
-    return row.groupKind === 'feature' ? `Ship card comes when all ${total} runs are done, here and in the chat.`
+    // Slice 7 (D10): a feature with no chat (hasChat false) gets its Ship card only on its page.
+    return row.groupKind === 'feature' ? `Ship card comes when all ${total} runs are done, ${hasChat === false ? 'on this page.' : 'here and in the chat.'}`
       : `${CREATE_PR_LABEL} comes when all ${total} runs are done.`;
   }
   // A run that already has its own PR disables One in the dialog (groupShipChoice), so the line stops offering it.

@@ -50,7 +50,7 @@ const SHELL = (view) => `<!doctype html><html><body><section class="view" data-v
     <div class="ask-transcript"></div><div class="chat-dock" data-chat-dock></div></div></div></section></body></html>`;
 
 function setup({ view = 'home', runs = RUNS(), threads = [], workflows = null, flags = null, threadId = null, level = 'expert', holdThreads = false,
-  pins = undefined, savePins = null, reducedMotion = false } = {}) {
+  pins = undefined, savePins = null, reducedMotion = false, runHome = undefined } = {}) {
   const dom = trackDom(new JSDOM(SHELL(view), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   if (reducedMotion) window.matchMedia = (q) => ({ matches: /prefers-reduced-motion: reduce/.test(q), addEventListener() {}, removeEventListener() {} });
@@ -74,6 +74,12 @@ function setup({ view = 'home', runs = RUNS(), threads = [], workflows = null, f
     navigate: (hash) => calls.push(['navigate', hash]),
     level: () => level,
   };
+  // Slice 7 (D11): where a run is answered, `{threadId, featureId}`; only the cases that pass `runHome` have the dep
+  // (an Error makes it reject).
+  if (runHome !== undefined) {
+    deps.homeForRun = async (ref) => { calls.push(['homeForRun', ref]); await Promise.resolve(); if (runHome instanceof Error) throw runHome; return runHome; };
+    deps.openFeature = (id) => calls.push(['openFeature', id]);
+  }
   const host = doc.querySelector('[data-chat-home]');
   const home = createChatHome({ doc, host, heroSlot: doc.querySelector('[data-chat-hero-slot]'), deps });
   return {
@@ -668,4 +674,43 @@ test('the hero: one steady sentence for screen readers; whole verbs fade one int
   await settle(r.window);
   assert.equal(r.host.querySelector('.chat-home-verb-word').textContent, 'do', 'reduced motion: the plain sentence');
   r.home.destroy();
+});
+
+// ── Slice 7 (R-arch-4): with no chat, Answer leads to the feature page ──────────────────────────────────────────
+const s7Click = async (runHome, sel) => {
+  const s = setup({ runs: RUNS({ needs: [WAITING()] }), runHome });
+  await settle(s.window);
+  s.doc.querySelector(sel).click();
+  await settle(s.window);
+  const of = (name) => s.calls.filter((c) => c[0] === name);
+  return { s, panel: of('openRunPanel'), feature: of('openFeature'), thread: of('openThread') };
+};
+
+test('s7: Answer on a chat-less feature run opens its feature page', async () => {
+  const r = await s7Click({ threadId: null, featureId: 'feat_1' }, '.chat-run-tile-answer');
+  assert.deepEqual(r.feature, [['openFeature', 'feat_1']]);
+  assert.deepEqual(r.panel, []);
+  assert.deepEqual(r.thread, []);
+});
+
+test('s7: Answer still opens the chat that follows the run, even when the run has a feature', async () => {
+  const r = await s7Click({ threadId: 'ask_00000009', featureId: 'feat_1' }, '.chat-run-tile-answer');
+  assert.deepEqual(r.thread, [['openThread', 'ask_00000009']]);
+  assert.deepEqual([r.feature, r.panel], [[], []]);
+});
+
+test('s7: the title of a chat-less feature run keeps the run panel', async () => {
+  const r = await s7Click({ threadId: null, featureId: 'feat_1' }, '.chat-run-tile-open');
+  assert.deepEqual(r.s.calls.filter((c) => c[0] === 'homeForRun').length, 1, 'the new lookup is asked');
+  assert.deepEqual(r.panel, [['openRunPanel', { runId: 'r2', pipelineId: 'p2' }, { tab: 'workflow' }]]);
+  assert.deepEqual(r.feature, []);
+});
+
+test('s7: an unmarked feature\'s run keeps the run panel', async () => {
+  for (const runHome of [{ threadId: null, featureId: null }, new Error('offline')]) {
+    const r = await s7Click(runHome, '.chat-run-tile-answer');
+    assert.equal(r.s.calls.filter((c) => c[0] === 'homeForRun').length, 1, 'the new lookup is asked');
+    assert.deepEqual(r.panel, [['openRunPanel', { runId: 'r2', pipelineId: 'p2' }, { tab: 'qa' }]], String(runHome));
+    assert.deepEqual(r.feature, []);
+  }
 });

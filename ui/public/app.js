@@ -125,10 +125,10 @@ import { paintRunStatus, paintStateLine, stageBarOf, syncActions, pauseResumeOwn
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
-import { pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
+import { pageModel, runCrumbs, paintCrumbs, syncFacts, groupHrefOf } from './run-page-head.mjs';
 import { rerunGate, rerunPrefill, rerunNotes, rerunLinkModel } from './run-rerun.mjs';
 import { headModel, routeModel, routeGroupOf, renderHeadButtons, renderRoute, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
-  hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip, tryServiceOf } from './run-head.mjs';
+  hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip, tryServiceOf, withTip } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
 import { createRunsSelection, rowTarget, barModel, bulkBody, rangeKeys, labelTargets, pipelineTargets } from './runs-selection.mjs';
@@ -776,8 +776,25 @@ async function featureThreadFor(ref) {
     return (info && typeof info.threadId === 'string' && info.threadId) || null;
   } catch { return null; }
 }
+/** Shaper slice 7 (D11): where a run is answered, from ONE slice read: the chat that started its feature, else the
+ *  chat that follows the run; `featureId` only for a marked feature with the flag on (its slice info carries `owns`),
+ *  so Chat home's Answer opens that feature's page when no chat follows it. → {threadId, featureId} */
+async function featureHomeFor(ref) {
+  const pid = ref && ref.pipelineId;
+  let info = null;
+  if (pid) {
+    try {
+      const r = await fetch(`/api/shape/pipelines/${encodeURIComponent(pid)}/slice`);
+      info = r && r.ok ? await r.json() : null;
+    } catch { info = null; }
+  }
+  const own = (info && typeof info.threadId === 'string' && info.threadId) || null;
+  const threadId = own || (await findFollowingThread((...args) => fetch(...args), ref || {}).catch(() => null)) || null;
+  const featureId = info && Array.isArray(info.owns) && typeof info.featureId === 'string' ? info.featureId : null;
+  return { threadId, featureId };
+}
 if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, refresh: refreshShapeFeatures, paintAsk: (ref, host) => chatPaintQuestion(ref, host),
-  shaperCard: shaperCardFor, threadForRun: featureThreadFor };   // test seam
+  shaperCard: shaperCardFor, threadForRun: featureThreadFor, homeForRun: featureHomeFor };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
 // The open Design builds Activity lists (design/activity.mjs), from hello's list and the design-build frames. A build
 // first met in a frame reads "Design" until its title loads (asked once; a 404 or a bad body keeps "Design").
@@ -7198,7 +7215,13 @@ registerAskRenderer('prototype', {
   render: (panel, pq, ctx) => {
     // The Chat run side panel shows the step but none of its buttons: it is answered on the feature card.
     const readOnly = !!(panel.closest && panel.closest('[data-presentation="panel"]'));
-    panel.__proto = renderPrototypeBody(panel, pq, { ...stepDeps(ctx, pq), readOnly, confirm: confirmModal, submit: (p) => stepPost(ctx.run, p),
+    // Shaper slice 7 (D12): a marked feature (flag on: its slice info carries `owns`) with no chat is answered on its page.
+    const r = ctx.run;
+    const repaint = () => { if (panel.isConnected && r.pendingQuestion === pq) renderQpanel(r, panel.parentElement); };
+    const home = readOnly && r && r.pipelineId ? stopHomeFor(r.pipelineId, repaint, pq.id) : null;
+    const marked = home && Array.isArray(SLICE_INFO.get(r.pipelineId)?.owns);
+    const answerHref = marked && home.featureId && !home.threadId ? groupHrefOf({ groupKind: 'feature', groupId: home.featureId }) : null;
+    panel.__proto = renderPrototypeBody(panel, pq, { ...stepDeps(ctx, pq), readOnly, ...(answerHref ? { answerHref } : {}), confirm: confirmModal, submit: (p) => stepPost(ctx.run, p),
       reduced: () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches),
       subscribe: (msg, fn) => { if (state.ws && state.wsReady) state.ws.send(JSON.stringify(msg)); return onPrototypeFrame(fn); } });
     // A repaint (disposeQpanel) ends the live build's frame subscription and its animation.
@@ -36606,6 +36629,7 @@ async function loadRunGroups() {
     else { state.runGroups = state.runGroups || []; state.runGroupsFailed = true; }
   } catch { state.runGroups = state.runGroups || []; state.runGroupsFailed = true; }
   state.runGroupsLoaded = true;                    // every outcome: the group page tells "loading" from "no such group"
+  updateNavCounts();                               // slice 7: a confirmation hold counts in the Runs badge
   scheduleRunsPaint();
   paintGroupPageNow();
   repaintOpenRunGroupLine();                       // the Group row changes at once after Add to group
@@ -36639,9 +36663,10 @@ el.groupDetail?.addEventListener('click', (e) => {
   e.preventDefault();
   backToRunsList();
 });
-async function mountGroupPage(host, { route, id, tab, reentered = false }) {
+async function mountGroupPage(host, { route, id, tab, reentered = false, at = '' }) {
   const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
   if (fresh || tab !== 'requirements') GROUP_PAGE.at = '';   // slice 6 (D14): another feature or tab drops Mark and ship's reveal
+  if (at === 'ship') GROUP_PAGE.at = 'ship';                  // Shaper slice 7 (D6): #feature/ID/requirements/ship, after the reset
   if (reentered && host.__gp) delete host.__gp.__order;   // small runs slice 10 (D6): Show order is closed again on a return
   Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false, unmarked: 0, stackedOnly: false, feature: null, requirements: false, memberKey: '', memberPending: '', memberFailed: '' } : {}) });
   if (fresh) {
@@ -36741,7 +36766,8 @@ function paintGroupPageNow() {
   paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: layout || levelAtLeast('expert'), labels,
     unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0, stackedOnly: route === 'feature' && GROUP_PAGE.stackedOnly,
     requirements: layout, ...(layout ? { shortState: memberShortWord, status: featureRowStatus(row), ship: groupShipOf(GROUP_PAGE.feature), ...featureLineOf(row), order: (GROUP_PAGE.feature && GROUP_PAGE.feature.slices) || null,
-      expert: levelAtLeast('expert'), cost: featureCostModel(it, row.costUsd), markOpen: markOpen(GROUP_PAGE.feature) } : {}) }, {
+      expert: levelAtLeast('expert'), cost: featureCostModel(it, row.costUsd), markOpen: markOpen(GROUP_PAGE.feature),
+      ...(typeof GROUP_PAGE.feature?.hasChat === 'boolean' ? { hasChat: GROUP_PAGE.feature.hasChat } : {}) } : {}) }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
     // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.
@@ -36843,6 +36869,10 @@ function revealShipCard() {
   card.setAttribute('tabindex', '-1');
   card.scrollIntoView({ block: 'start' });
   card.focus({ preventScroll: true });
+  // Shaper slice 7 (D6): the address of a followed reason link drops `/ship`, so the same link works again.
+  if (location.hash.endsWith('/requirements/ship')) {
+    try { window.history.replaceState(null, '', location.hash.slice(0, -'/ship'.length)); } catch { /* sandboxed */ }
+  }
 }
 // Frames arrive in bursts: paint the group page once per microtask. The flag lives on GROUP_PAGE (declared at the
 // top) because History's cached paint can call this during boot, before a `let` down here is initialised.
@@ -38471,7 +38501,7 @@ function closeRunDetail({ instant = false } = {}) {
 }
 
 // Run 3 (D2): the group page's shell in the Runs pane, the twin of openRunDetail / closeRunDetail.
-function openGroupPane(route, id, tab, { reentered = false } = {}) {
+function openGroupPane(route, id, tab, { reentered = false, at = '' } = {}) {
   const shell = el.groupShell;
   const host = el.groupDetail;
   if (!shell || !host) return;
@@ -38481,7 +38511,7 @@ function openGroupPane(route, id, tab, { reentered = false } = {}) {
   shell.classList.add('detail-open');
   syncRunsPane();
   rememberRun({ group: `${route}/${encodeURIComponent(id)}` });
-  void mountGroupPage(host, { route, id, tab, reentered });
+  void mountGroupPage(host, { route, id, tab, reentered, at });
   if (!wasOpen && runsLayout() === 'slide') queueMicrotask(() => host.querySelector('.gpage-back')?.focus({ preventScroll: true }));
 }
 function closeGroupPane({ instant = false } = {}) {
@@ -39791,10 +39821,10 @@ const PR_CTA_LOOK = {
   view: { look: 'pr-view', icon: 'pull-request', label: VIEW_PR_LABEL },
   merged: { look: 'pr-merged', icon: 'merge', label: VIEW_PR_LABEL },
 };
-function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '', title = '', disabled = false, menu = false, ws = false, quiet = false } = {}) {
+function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '', title = '', tip = '', disabled = false, menu = false, ws = false, quiet = false } = {}) {
   if (!slot) return;
   slot._prClick = onClick;                         // read at click time: a repaint re-binds it
-  const sig = `${state}|${href}|${cls}|${own}|${title}|${disabled}|${menu}|${ws}|${quiet}`;
+  const sig = `${state}|${href}|${cls}|${own}|${title}|${tip}|${disabled}|${menu}|${ws}|${quiet}`;
   if (slot.dataset.sig === sig) return;
   const from = slot.dataset.state || 'none';
   slot.dataset.sig = sig;
@@ -39879,11 +39909,13 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
   }
   slot.hidden = false;
   const wait = from === 'pending' && slot.querySelector('.rd-pr-wait');
-  if (!wait) { slot.replaceChildren(ctl); return; }
+  // Shaper slice 7 (D8a): a locked small-runs Create N PRs says why in a styled tip, the control's sibling in the slot.
+  if (!wait) { slot.replaceChildren(ctl); if (tip) withTip(ctl, tip, slot); return; }
   // The spinner stays where it turns (a moved node would restart its spin) and fades out.
   const fill = document.createElement('span');
   fill.className = ['rd-pr-fill', look].filter(Boolean).join(' ');
   wait.replaceWith(ctl);
+  if (tip) withTip(ctl, tip, slot);
   slot.prepend(fill);
   slot.classList.add('is-morph');
   done(() => {
@@ -41199,6 +41231,9 @@ function runsNeedsInput() {
     history: Array.isArray(state.historyAll) ? state.historyAll : [],
     active: liveRuns().map((r) => ({ runId: r.runId })),
     designs: flagOn('design') ? designActivity.items() : [],
+    // Slice 7 (owner direction): a feature held for your confirmation counts in the Runs badge, flag on only.
+    // Activity's lists and count read needsYouItems / activityCounts, which ignore `groups`.
+    groups: flagOn('shaperSmallRuns') ? state.runGroups || [] : [],
   };
 }
 function runsNeedsCount() {
@@ -42552,9 +42587,11 @@ function showView(name, param = '') {
     } else if (name === 'history') {
       routeHistoryDetail(param, { instant: entering });
     } else if (name === 'feature' || name === 'group') {
-      const [rawId, tab = 'runs'] = String(param).split('/');
+      const [rawId, tab = 'runs', third] = String(param).split('/');
+      // Shaper slice 7 (D6): only #feature/ID/requirements/ship reveals the Ship card; any other third segment is ignored.
+      const at = name === 'feature' && tab === 'requirements' && third === 'ship' ? 'ship' : '';
       // Coming back from another view: the hidden page skipped frames, so the Overview's Shaper view repaints (D14).
-      openGroupPane(name, decodeURIComponent(rawId), tab, { reentered: prevView !== 'feature' && prevView !== 'group' });
+      openGroupPane(name, decodeURIComponent(rawId), tab, { reentered: prevView !== 'feature' && prevView !== 'group', at });
     }
     paintRunsList();
     // §5a.9: the one-time What's new note above the list (idempotent; gone for good after Got it).
@@ -44541,6 +44578,8 @@ function mountChatHome() {
       workflows: chatHomeWorkflows,
       flags: chatHomeFlags,
       threadForRun: async (ref) => (await featureThreadFor(ref)) || findFollowingThread((...args) => fetch(...args), ref),
+      homeForRun: featureHomeFor,                                         // slice 7 (D11): with a chat-less feature's id
+      openFeature: (id) => { location.hash = groupHrefOf({ groupKind: 'feature', groupId: id }); },
       openThread: (id) => openChat({ threadId: id }),
       openRunPanel: (ref, opts) => chatDeps.openRunPanel(ref, opts),     // P4 swaps chatDeps.openRunPanel for the panel
       setIntent: (id, opts) => chatIntent.set(id, opts),

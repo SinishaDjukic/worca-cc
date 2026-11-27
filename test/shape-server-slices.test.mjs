@@ -182,6 +182,34 @@ test("GET feature and the card's feature: dev's exact keys with small runs off, 
   for (const k of DEV.api) assert.deepEqual(on.api[k], off.api[k], k);
 });
 
+// Slice 7 (D10, R-arch-4): the view says whether a chat follows the feature, only for a marked one with the flag on.
+test('s7 R-arch-4: a feature started without a chat has no chat card', async () => {
+  const marker = (pid) => getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run('{"smallRuns":true}', pid);
+  const on = (fn) => withEnvVars({ WORCA_FLAGS: 'shaperSmallRuns' }, fn);
+  const both = async (id, pid) => [await view(id), (await (await get(`/api/shape/pipelines/${pid}/card`)).json()).feature];
+  const chatless = mk(1, 'done');
+  marker(chatless.pid);
+  await on(async () => {
+    for (const v of await both(chatless.id, chatless.pid)) assert.equal(v.hasChat, false);
+    await testing.offerShipCard(chatless.pid);                     // every run is done
+    assert.equal(featureThread(chatless.id), null);
+    assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM ask_run_links WHERE pipeline_id = ?').get(chatless.pid).n, 0);
+    const blocks = getDb().prepare('SELECT blocks FROM ask_messages').all().map((r) => String(r.blocks || '')).join('\n');
+    assert.equal(blocks.includes(chatless.id) || blocks.includes(chatless.pid), false, 'no chat card names it');
+  });
+  const chatted = mk(1, 'done');
+  marker(chatted.pid);
+  const thread = createThread({ title: 'charts' });
+  askLinkRun(thread.id, { runId: 'run-s7-chat', pipelineId: chatted.pid, cardId: 'card_s7' });
+  await on(async () => { for (const v of await both(chatted.id, chatted.pid)) assert.equal(v.hasChat, true); });
+  // Unmarked with the flag on, and marked with the flag off: dev's keys, no hasChat at all.
+  const plain = mk(1, 'done');
+  await on(async () => { for (const v of await both(plain.id, plain.pid)) assert.equal('hasChat' in v, false, 'unmarked'); });
+  await withEnvVars({ WORCA_FLAGS: undefined }, async () => {
+    for (const f of [chatless, chatted]) for (const v of await both(f.id, f.pid)) assert.equal('hasChat' in v, false, 'flag off');
+  });
+});
+
 test('GET feature: a settled entry is ignored (the pipelines row decides), a paused or plan-asking one is shown (F26)', async () => {
   const f = mk(2, 'stopped');
   const settled = liveEntry(f.pid, { status: 'stopped' });
@@ -2015,7 +2043,8 @@ shipT('a commit made inside the second push of the head branch: 409 NOT_READY, a
     return okRun('');
   } });
   assert.deepEqual([r.status, r.body.code, r.body.prs?.length], [409, 'NOT_READY', 3], JSON.stringify(r.body));
-  assert.match(r.body.error, /or Resume, if the card reads Stopped/);
+  assert.match(r.body.error, /or Resume on the feature page, if it reads Stopped/);
+  assert.doesNotMatch(r.body.error, /\bcard\b/, 'a feature with no chat has no card');
   assert.equal(w.pushes(w.pids[2]), 2);
   assert.equal(shipMode(w.f.id), null);
 }));

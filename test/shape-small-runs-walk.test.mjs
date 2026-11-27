@@ -285,12 +285,14 @@ test('email for website X: Start to Ship with a stop, a change and a Verifier ga
     assert.equal(v.verify.state, 'clean');
     assert.equal(checks()[1].headSha, git(dir, 'rev-parse', branches[5]), 'the real Verifier run read the head Ship pushes');
     assert.equal(v.ship.ready, true);
-    assert.equal(oneCardModel({ own: null, card: { feature: v, smallRuns: true } }).word, VERIFY_WORDS.clean);
+    // Slice 7: R-comp-4 still waits for your mark, so the checked feature asks for it before it reads Ready to ship.
+    const asked = oneCardModel({ own: null, card: { feature: v, smallRuns: true } });
+    assert.deepEqual([asked.word, asked.detail], ['Needs you', 'Needs your confirmation: R-comp-4']);
 
     // ── 6: Compliance has not marked R-comp-4 yet; Not met needs a reason ──
     r = await ship(fid);
     const blocked = await r.json();
-    assert.deepEqual([r.status, blocked.code, blocked.role, blocked.error], [409, 'ACCEPTANCE_INCOMPLETE', 'compliance', 'Waiting for Compliance to confirm R-comp-4']);
+    assert.deepEqual([r.status, blocked.code, blocked.role, blocked.error], [409, 'ACCEPTANCE_INCOMPLETE', 'compliance', 'Waiting for you to confirm R-comp-4']);
     assert.deepEqual(ghOnly(seen), []);
     assert.equal((await confirm(fid, { id: 'R-comp-4', mark: 'not-met' })).status, 400);
     r = await confirm(fid, { id: 'R-comp-4', mark: 'not-met', reason: REASON });

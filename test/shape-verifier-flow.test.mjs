@@ -164,8 +164,8 @@ test('two seeded gaps: one check, two gap runs, a re-check, then Ready to ship w
   assert.equal(v.verify.state, 'clean');
   assert.equal(v.ship.ready, true);
   const one = oneCardModel({ own: null, card: { feature: v, smallRuns: true } });
-  assert.equal(one.word, 'Ready to ship');
-  assert.equal(one.detail, 'waiting for QA', 'Feature D1: Ship waits for the requirement QA confirms');
+  assert.equal(one.word, 'Needs you');
+  assert.equal(one.detail, 'Needs your confirmation: R-qa-1', 'Feature D1: Ship waits for the requirement you confirm');
   assert.equal(featureFigures(w.f.id).gapsAtEnd, 2);
   assert.equal(featureFigures(w.f.id).runs, 6, 'the Verifier runs are not runs');
   assert.deepEqual(w.calls.offer, [rows[1].ticket_id ? getTicket(rows[1].ticket_id).pipelineId : null]);

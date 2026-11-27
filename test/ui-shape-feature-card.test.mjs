@@ -30,6 +30,7 @@ import * as FC from '../ui/public/shape/feature-card.mjs';
 import { stopLinesOf } from '../ui/public/shape/stop-list.mjs';
 import { renderGateCard, stepChip, stepTitle } from '../ui/public/shape/step-card.mjs';
 import { planStop } from '../src/shared/shape/run-stops.mjs';
+import { shipLedger } from '../src/shared/shape/ship-ledger.mjs';
 
 useTempHome(after, 'worca-shape-feature-card-');
 
@@ -1174,3 +1175,64 @@ test('s8: controls carry resumeAfter 4 from halted run 6, and none when the slic
   assert.equal(verifier.halted, true);
   assert.equal('resumeAfter' in verifier, false);
 });
+
+// ── Slice 7 (R-ux-1, D9): the one card while a confirmation is open ───────────────────────────────────────────
+{
+  const HOLD = 'Needs your confirmation: R-ux-2';
+  const KINDS = [{ id: 'R-ux-2', kind: 'confirmed', role: 'design' }];
+  /** The ledger the server sends: with `judged` (the flag on) it passes the runs, so every row has `shown`. */
+  const ledger = (judged, acceptance = []) => ({ ...shipLedger({ agreed: [{ id: 'R-ux-2', text: 'The words say who confirms' }], kinds: KINDS, acceptance,
+    ...(judged ? { runs: [{ index: 1, state: 'done' }, { index: 2, state: 'done' }] } : {}) }),
+  care: { choice: "Balanced · Worca's pick", outcome: null, line: '' }, base: 'main', order: [] });
+  const DONE2 = [1, 2].map((i) => ({ index: i, state: 'done', pipelineId: `p${i}`, rounds: [] }));
+  const view = (smallRuns, verified = true) => ({ id: 'f1', title: 'Sign-up', status: 'done', slices: DONE2, done: 2, total: 2, log: [],
+    ship: { ready: true, mode: null, smallRuns },
+    ...(verified ? { verify: { state: 'clean', round: 1, fixCycles: 2, held: 1, owned: 1, gaps: [], gapsFound: 0, pipelineId: 'pv', ticketId: 'tv' } } : {}) });
+  const one = (v) => oneCardModel({ own: null, card: { feature: v, smallRuns: true } });
+  /** The mounted Chat card's state line, without its hidden parts. */
+  const stateLine = (smallRuns) => {
+    const members = [{ status: 'done', endReached: true }, { status: 'done', endReached: true }];
+    const { built, ctl } = c2Card({ members, pids: ['p1', 'p2'], snaps: {}, view: view(smallRuns) });
+    const status = built.el.querySelector('.chat-rc-status').cloneNode(true);
+    status.querySelectorAll('[hidden]').forEach((x) => x.remove());
+    // The fixture's separate Planning row (a done run with no PR) keeps dev's member word: it is not the feature's state.
+    const card = built.el.cloneNode(true);
+    card.querySelectorAll('.run-member[data-key="planning"]').forEach((x) => x.remove());
+    const out = { status: status.querySelector('.run-status-head').textContent, card: card.textContent };
+    built.dispose(); ctl.destroy();
+    return out;
+  };
+
+  test('s7 R-ux-1: a waiting confirmation reads Needs you with Needs your confirmation: R-ux-2, never Ready to ship', () => {
+    const m = one(view(ledger(true)));
+    assert.deepEqual([m.state, m.word, m.detail], ['SR', 'Needs you', HOLD]);
+    assert.equal(one(view(ledger(true), false)).detail, HOLD, 'with no Verifier check too');
+    const shown = stateLine(ledger(true));
+    assert.equal(shown.status.split(HOLD).length - 1, 1, shown.status);
+    assert.doesNotMatch(shown.card, /Ready to ship/);
+  });
+
+  test('s7: needs-reason only is no hold: the detail is the ledger\'s reason', () => {
+    const m = one(view(ledger(true, [{ id: 'R-ux-2', mark: 'dropped' }])));
+    assert.equal(m.detail, 'Give a reason for each one not met or dropped');
+    assert.notEqual(m.word, 'Needs you');
+    const met = one(view(ledger(true, [{ id: 'R-ux-2', mark: 'met' }])));
+    assert.deepEqual([met.word, met.detail], ['Ready to ship', 'Ready to ship']);
+  });
+
+  test('s7 flag off: the card of a small-runs feature with an open confirmation is as before (an unjudged ledger)', () => {
+    const sr = ledger(false);
+    assert.ok(sr.confirmed.every((c) => !('shown' in c)), 'what the server sends with the flag off');
+    assert.deepEqual(sr.waiting, ['R-ux-2']);
+    const m = one(view(sr));
+    assert.deepEqual([m.state, m.word, m.detail], ['SR', 'Ready to ship', 'waiting for Design']);
+    const bare = one(view(sr, false));
+    assert.deepEqual([bare.state, 'word' in bare, bare.detail], ['S9', false, 'waiting for Design']);
+    // Checkpoint 217b540b4's words for a missing reason too, odd as they are: nothing changes with the flag off.
+    assert.equal(one(view(ledger(false, [{ id: 'R-ux-2', mark: 'dropped' }]))).detail, 'waiting for ');
+    const shown = stateLine(sr);
+    assert.match(shown.status, /Ready to ship/);
+    assert.match(shown.status, /waiting for Design/);
+    assert.doesNotMatch(shown.card, /Needs your confirmation|waiting for you to confirm|Needs you/);
+  });
+}

@@ -16,7 +16,7 @@ import { prototypeView } from '../../shared/shape/prototype.mjs';
 import { planVersionOf, startsFromOf, ownsOf } from '../../shared/shape/run-facts.mjs';
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
-import { shipLedger, unownedReason, careOutcome, unmetLines, newPrCount, carriedLine, needsNewPr } from '../../shared/shape/ship-ledger.mjs';
+import { shipLedger, unownedReason, confirmHold, careOutcome, unmetLines, newPrCount, carriedLine, needsNewPr } from '../../shared/shape/ship-ledger.mjs';
 import { rerunsOf } from '../../shared/shape/req-status.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
@@ -345,10 +345,13 @@ const ledgerOf = (f, verify, status = {}) => shipLedger({ agreed: f.outline.agre
   acceptance: f.outline.acceptance, verify, ...status });
 
 /** Fail closed, for the Runs list: why a feature is not ready to ship although its runs are done (an agreed requirement
- *  has no run and no person), from its row alone; null when none. The caller checks the flag and the marker. */
+ *  has no run and no person), from its row alone; slice 7 (D1): else the confirmation that is still open
+ *  (confirmHold); null when none. The caller checks the flag and the marker. */
 export function shipHold(featureId) {
   const f = featureRow(featureId);
-  return f ? unownedReason(requirementKindsOf(j(f.requirement_kinds, null), f.outline).filter((k) => k.kind === 'owned' && k.run === null).map((k) => k.id)) : null;
+  if (!f) return null;
+  return unownedReason(requirementKindsOf(j(f.requirement_kinds, null), f.outline).filter((k) => k.kind === 'owned' && k.run === null).map((k) => k.id))
+    || confirmHold(ledgerOf(f, null));
 }
 
 /** A feature's recorded figures (shape_feature_figures, one row), or null. Readable with the flag off; measure.mjs
@@ -554,6 +557,8 @@ export function featureView(id, { live = () => null, finishing = () => false, on
     ...(ch.changes.length ? { change: ch.change, changes: ch.changes } : {}),
     // Small runs C5 (D12): the latest Verifier check as the card reads it; absent before the first check.
     ...(verify ? { verify } : {}),
+    // Shaper slice 7 (D10): whether a chat follows a marked feature (flag on); read each view, stored nowhere.
+    ...(shaperSmallRunsOn() && smallRunsOfFeature(f.id) ? { hasChat: featureThread(f.id) !== null } : {}),
   };
 }
 

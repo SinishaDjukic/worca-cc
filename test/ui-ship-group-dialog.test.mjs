@@ -271,12 +271,12 @@ function carriedParts(modal) {
   return { box, kept, lines: () => [...box.querySelectorAll('small.hint')].map((x) => x.textContent) };
 }
 
-test('a marked feature with a carried run: .shipit-prs-carried shows the line, .shipit-prs-kept reads "#40 is not counted.", the confirm reads Create 4 PRs', () => {
+test('a marked feature with a carried run: .shipit-prs-carried shows the line, .shipit-prs-kept reads "The open pull request is not counted.", the confirm reads Create 4 PRs', () => {
   const modal = modalOf();
   const ctl = paintGroupShip(modal, carrying(open40, CARRIED_LINE), { setLabel: setLabel(modal) });
   const { box, kept, lines } = carriedParts(modal);
   assert.deepEqual([box.hidden, lines()], [false, [CARRIED_LINE]]);
-  assert.deepEqual([kept.hidden, kept.textContent, kept.classList.contains('hint')], [false, '#40 is not counted.', true]);
+  assert.deepEqual([kept.hidden, kept.textContent, kept.classList.contains('hint')], [false, 'The open pull request is not counted.', true]);
   assert.deepEqual([ctl.mode(), ctl.count(), parts(modal).ok.textContent], ['stacked', 4, 'Create 4 PRs']);
   assert.equal(modal.querySelectorAll('.shipit-prs-kept').length, 1);
   const after = modal.ownerDocument.defaultView.Node.DOCUMENT_POSITION_FOLLOWING;
@@ -310,11 +310,11 @@ test('a carried run\'s draft PR leaves One on: the note shows with Stacked and h
   paintGroupShip(modal, carrying({ ...open40, draft: true }, CARRIED_LINE), { setLabel: setLabel(modal) });
   const { box, kept } = carriedParts(modal);
   assert.equal(parts(modal).one.disabled, false);
-  assert.deepEqual([box.hidden, kept.hidden, kept.textContent], [false, false, '#40 is not counted.']);
+  assert.deepEqual([box.hidden, kept.hidden, kept.textContent], [false, false, 'The open pull request is not counted.']);
   pick(modal, 'one');
   assert.deepEqual([box.hidden, kept.hidden], [true, true]);
   pick(modal, 'stacked');
-  assert.deepEqual([box.hidden, kept.hidden, kept.textContent], [false, false, '#40 is not counted.']);
+  assert.deepEqual([box.hidden, kept.hidden, kept.textContent], [false, false, 'The open pull request is not counted.']);
 });
 
 test('a reopen without carried runs hides both, and resetGroupShip empties them', () => {
@@ -353,4 +353,36 @@ test('small runs with the flag off (no oneOk): a slice draft still counts as nee
   assert.equal(parts(modal).ok.textContent, 'Create 5 PRs');
   ctl.markCreated(1);                                      // run 1's draft counts as the next run without a PR
   assert.deepEqual([ctl.count(), parts(modal).ok.textContent], [4, 'Create 4 PRs']);
+});
+
+// ── Slice 7 (D16, owner direction): each pull request is named once ───────────────────────────────────────────
+/** The Pull requests zone as a person reads it: its text without the hidden elements. */
+const shownZone = (modal) => { const c = modal.querySelector('.shipit-prs').cloneNode(true); c.querySelectorAll('[hidden], .hidden').forEach((x) => x.remove()); return c.textContent; };
+const named = (text, n) => text.split(`#${n}`).length - 1;
+
+test('s7: the dialog names #40 once', () => {
+  const modal = modalOf();
+  paintGroupShip(modal, carrying(open40, CARRIED_LINE), { setLabel: setLabel(modal) });
+  const { one, why } = parts(modal);
+  const { kept, lines } = carriedParts(modal);
+  const zone = shownZone(modal);
+  assert.equal(named(zone, 40), 1, zone);
+  // Every fact stays: why One is off, who carries run 2's work, that the open one is not counted.
+  assert.deepEqual([one.disabled, why.hidden, why.textContent], [true, false, 'Run 2 already has a pull request open']);
+  assert.deepEqual(lines(), [CARRIED_LINE]);
+  assert.deepEqual([kept.hidden, kept.textContent], [false, 'The open pull request is not counted.']);
+});
+
+test('s7: One\'s reason keeps the number when no carried line names that pull request', () => {
+  const bare = modalOf();
+  paintGroupShip(bare, marked({ 2: open40 }), { setLabel: setLabel(bare) });
+  assert.equal(parts(bare).why.textContent, 'Run 2 already has pull request #40 open');
+  assert.equal(named(shownZone(bare), 40), 1);
+  // Run 1's own #43 turns One off; run 2's carried #40 is another pull request, so both are named once.
+  const other = modalOf();
+  const open43 = { url: url(43), number: 43, state: 'OPEN' };
+  paintGroupShip(other, carrying(open40, CARRIED_LINE, { members: listedBut2({ 1: open43 }), all: runs(5, { 1: open43, 2: open40 }) }), { setLabel: setLabel(other) });
+  assert.equal(parts(other).why.textContent, 'Run 1 already has pull request #43 open');
+  const zone = shownZone(other);
+  assert.deepEqual([named(zone, 43), named(zone, 40)], [1, 1], zone);
 });

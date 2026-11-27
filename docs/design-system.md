@@ -143,7 +143,9 @@ Every pull request button and link looks the same everywhere (`test/ui-pr-contro
    with one remote), Pull requests (a feature, a chain or a user group only: One / N stacked, or N separate for a user group, the suggestion under them;
    a disabled One has its reason beside it in `.shipit-prs-one-why`, which for a feature names the run and PR, as in
    "Run 2 already has pull request #40 open", while N stacked stays enabled; a feature's carried runs are `.hint` lines
-   in `.shipit-prs-carried`, then `.shipit-prs-kept` ("#40 is not counted."), both shown only while N stacked is picked;
+   in `.shipit-prs-carried`, then `.shipit-prs-kept` ("The open pull request is not counted."), both shown only while N
+   stacked is picked; each pull request is named once, so when a carried line names the PR that turns One off, One's
+   reason drops the number ("Run 2 already has a pull request open");
    the Ship card lists the same lines in `.ask-shipcard-carried` under its state line, and its "Create N PRs" counts
    only the PRs Ship will create; after a feature ships as one PR, its
    Shipped Ship card counts that PR once: "1 PR open", one row),
@@ -329,7 +331,9 @@ headline: `.run-status-word`, 1–3 words at `--fs-section` / 600 / `--lh-title`
 on it and the head buttons and the Live switch centred on its line (`.rd-sheet-head`, `--rd-word-line`). Under it,
 `.run-status-detail`: 12px `--ink-2`, at most 2 lines (the whole text as its tooltip), and only what no row below says
 ("not in dev yet", "Failed · Build · Implementation" → "Build · Implementation", "14 files changed in a copy",
-"conflicts with dev", GitHub's verdict); absent otherwise.
+"conflicts with dev", GitHub's verdict); absent otherwise. A reason that leads somewhere is the status itself as one
+`.run-status-link` in `.run-status-detail` (the word is hidden, and neither carries a tooltip): a marked feature held for
+your confirmation reads "Needs your confirmation: R-ux-2", linked to its Ship card on Requirements.
 
 On the run page the state is not the card's: the header's state line under the title says it on every tab
 (`.run-state-line`: the dot or symbol, the state word at 13px / 600, then "· step or stage" in `--ink-2`, one line, the
@@ -446,6 +450,15 @@ button keeps its `aria-label` and has no `title`, so the browser's own tooltip n
 above the button on hover or keyboard focus after .3s, and never while a menu of the row is open. Only the
 composer row draws it (the rule is scoped to that row). A tip is `display:none` at rest, never a box laid out at
 opacity 0.
+#### Lock tip
+A locked small-runs **Create N PRs** says why in `.rd-tip` (`role="tooltip"`, named by the button's
+`aria-describedby`), never a native `title`, which opens over the status line. It has the Composer bar tip's look
+(`--ink` fill, `--on-ink`, 500 11px/1.3, `--r-sm`, 5px 8px), is drawn above the button and right-aligned
+(`bottom: calc(100% + 8px)`), wraps at `min(320px, 100vw - 32px)`, and shows on the host's hover with no motion:
+`display:none` at rest. It is its own element, not the Composer tip, because that one is an `::after` scoped to the
+Composer row and cannot carry the id `aria-describedby` needs. A disabled button takes no focus, so keyboard and touch
+users read the same reason on the linked status line. In the PR slot the tip is the control's sibling; a head button
+sits in `.rd-tip-host`.
 ### Table
 `.table-wrap` > `.table`: 12px / 600 `--ink-2` headers, 13px cells, 8px 12px 8px 0 cell padding, one `--line` under
 each row, no outer box. Under 560px it stacks one block per row using each cell's `data-label`; it never scrolls sideways.

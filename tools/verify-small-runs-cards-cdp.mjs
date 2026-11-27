@@ -168,8 +168,9 @@ function thread(title, pid) {
   recordShapePlan({ threadId: th.id, cardId, title });
   return th.id;
 }
-/** A marked 4-run feature (`states[k-1]`: done, running or planned) with its Chat thread. → {f, pid(k), threadId} */
-function seedFeature(tag, title, states, { withOutline = outline, requirementKinds = null, titles = TITLES } = {}) {
+/** A marked 4-run feature (`states[k-1]`: done, running or planned) with its Chat thread (none with `chat: false`).
+ *  → {f, pid(k), threadId} */
+function seedFeature(tag, title, states, { withOutline = outline, requirementKinds = null, titles = TITLES, chat = true } = {}) {
   const pid = (k) => `c5${tag}00000${k}`;
   pipeline(pid(1), states[0], title, { smallRuns: true, care: careRec });
   const f = createSliceFeature({ pipelineId: pid(1), projectDir: proj, title, outline: withOutline, perspectives: ['product', 'architect'], workflowId: 'wf_shape',
@@ -178,7 +179,7 @@ function seedFeature(tag, title, states, { withOutline = outline, requirementKin
     const k = i + 1;
     if (k > 1 && st !== 'planned') fire(f, k, pid(k), st, `Run ${k} · ${titles[i]}`);
   });
-  return { f, pid, threadId: thread(title, pid(1)) };
+  return { f, pid, threadId: chat ? thread(title, pid(1)) : null };   // chat: false — a feature no chat started (slice 7)
 }
 function fire(f, k, pid, status, title) {
   pipeline(pid, status, title);
@@ -503,8 +504,8 @@ async function shipCells(theme, width) {
   if (await card(SB.threadId, `sb${width}`, 'the Ship blocked card', theme) && await SHIP_READY('the Ship blocked card', theme)) {
     await reveal(SHIP);
     const f = await ev(SHIP_FACTS);
-    check(f && f.why === 'Waiting for Compliance to confirm R-comp-4' && f.waiting === 1 && f.stateDetail === 'waiting for Compliance',
-      `ship blocked, ${at}: the reason once in the card; the step detail names who it waits for (D1 shipDetail, the owner's call) (${JSON.stringify(f)})`);
+    check(f && f.why === 'Waiting for you to confirm R-comp-4' && f.waiting === 1 && f.stateDetail === 'Needs your confirmation: R-comp-4',
+      `ship blocked, ${at}: the reason once in the card; the step detail is the confirmation hold (Shaper slice 7, D9) (${JSON.stringify(f)})`);
     check(f && f.create === 'Create 4 PRs' && f.disabled && !f.primary && f.described, `ship blocked, ${at}: Create 4 PRs disabled, not primary, described by the reason`);
     check(f && f.marks.length === 1 && f.marks[0] === 'Mark R-comp-4 as Compliance: The sign-up data stays in the EU' && f.pressed.length === 0 && f.care === 1,
       `ship blocked, ${at}: one unmarked Met / Not met / Dropped picker, one Care row`);
@@ -788,7 +789,7 @@ appendAuditById(D3.pid(2), 'Plan approval **approve** by proof.');
 { const r = reqChanges.apply(D3.f.id, [{ id: 'R-po-1', from: D3_AGREED[0].text, to: 'Export members as CSV with a header row' }], { kind: 'chat', by: 'proof' });
   check(r.ok && r.result.changes[0].case === 'finished', `seed: the D3 change lands on a change run (${JSON.stringify(r)})`); }
 const D3_BEFORE = { 'R-po-1': 'run 2 · changed · run 6 builds it', 'R-po-2': 'run 3 · being built', 'R-po-3': 'run 4 · to do', 'R-po-4': 'run 5 · to do',
-  'R-comp-1': 'confirmed by a person · Compliance' };
+  'R-comp-1': 'waiting for you to confirm · Compliance' };
 const D3_REASON = 'unsigned';
 const D3_AFTER = { 'R-po-1': 'run 2 · met · changed by run 6', 'R-po-2': 'run 3 · met', 'R-po-3': 'run 4 · met', 'R-po-4': 'run 5 · met',
   'R-comp-1': `Marked Not met by you · ${D3_REASON}` };
@@ -842,7 +843,7 @@ async function d3Cells(phase, theme, width, want) {
     const f = await ev(D3_REQ_FACTS);
     results.lists.push({ list: `d3 requirements facts ${phase}`, theme, width, ...f });
     check(f && f.tab === 'requirements' && f.hash === `#feature/${D3.f.id}/requirements`, `requirements, ${at}: the deep link selects Requirements (${JSON.stringify(f && [f.tab, f.hash])})`);
-    check(f && f.cap === '5 requirements · 4 owned by a run · 1 confirmed by a person' && f.roles.join() === 'product,compliance',
+    check(f && f.cap === '5 requirements · 4 owned by a run · 1 you confirm' && f.roles.join() === 'product,compliance',
       `requirements, ${at}: the caption and one fold per role, Product then Compliance (${JSON.stringify(f && [f.cap, f.roles])})`);
     const notes = f ? Object.fromEntries(f.rows.map((r) => [r.id, r.note])) : {};
     check(f && f.rows.length === 5 && Object.keys(want).every((k) => notes[k] === want[k]),
@@ -1426,15 +1427,14 @@ async function shipOnePhase() {
 // and dark). A marked 5-run feature finished in run order, run 3 started on run 1's branch and took in run 2's (`tookIn`),
 // so run 3 carries run 2; run 2 has #40 open; R-comp-4 met; a clean Verifier check for run 5's tip. The Ship card reads
 // "Run 2's work ships in run 3's pull request (#40 is open)" in .ask-shipcard-carried and "Create 4 PRs"; the Create PR
-// dialog shows the same line in .shipit-prs-carried, "#40 is not counted." and "Create 4 PRs". No carried line overflows
+// dialog shows the same line in .shipit-prs-carried, "The open pull request is not counted." and "Create 4 PRs". No carried line overflows
 // its card (scrollWidth <= clientWidth). app-ship-carried-card-THEME.png and app-ship-carried-dialog-THEME.png in
 // SHOTS_DIR, beside the run's prototype (SHIP_CARRIED_PROTOTYPE, its index.html) #screen-requirements and
 // #screen-ship-dialog: prototype-ship-carried-requirements-THEME.png and prototype-ship-carried-dialog-THEME.png.
 const CARRIED_LINE = "Run 2's work ships in run 3's pull request (#40 is open)";
-async function shipCarriedPhase() {
-  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
-  const tag = 'cy';
-  const x = seedFeature(tag, 'Ship carried', ['done', 'done', 'done', 'done', 'done'], { withOutline: soOutline, titles: SO_TITLES,
+/** Slice 5's carried-run seed: 5 done runs, run 3 took in run 2, whose #40 is open; a clean check on run 5's head. */
+function seedCarried(tag, title) {
+  const x = seedFeature(tag, title, ['done', 'done', 'done', 'done', 'done'], { withOutline: soOutline, titles: SO_TITLES,
     requirementKinds: { 'R-comp-4': { kind: 'confirmed', role: 'compliance' } } });
   setFeatureAcceptance(x.f.id, [COMP_MET]);
   figures(x.f.id);
@@ -1447,10 +1447,13 @@ async function shipCarriedPhase() {
     .run(JSON.stringify(rec), new Date(Date.parse(now) + (i + 1) * 60_000).toISOString(), x.pid(i + 1)));
   getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = 40, pr_state = 'OPEN' WHERE id = ?").run('https://github.com/proof/repo/pull/40', x.pid(2));
   const headSha = execFileSync('git', ['rev-parse', br(5)], { cwd: proj, encoding: 'utf8' }).trim();
-  pipeline(`c5${tag}v0001`, 'done', 'Ship carried · Verifier');
+  pipeline(`c5${tag}v0001`, 'done', `${title} · Verifier`);
   setVerify(x.f, vCheck(x, `c5${tag}v0001`, 'clean', { head: { index: 5, pipelineId: x.pid(5) }, headSha,
     result: { held: [...SO_AGREED.map((a) => a.id), 'R-comp-4'], gaps: [] } }));
-
+  return x;
+}
+/** The Create PR dialog asks GET /api/pr/remotes, which a sandbox project with no remote cannot answer fast: stub it. */
+async function stubRemotes() {
   await cdp('Fetch.enable', { patterns: [{ urlPattern: '*/api/pr/remotes*', requestStage: 'Request' }] });
   onCdpEvent = (m) => {
     if (m.method !== 'Fetch.requestPaused') return;
@@ -1458,6 +1461,13 @@ async function shipCarriedPhase() {
     cdp('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: 200,
       responseHeaders: [{ name: 'content-type', value: 'application/json' }], body }).catch(() => {});
   };
+}
+async function shipCarriedPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const x = seedCarried('cy', 'Ship carried');
+  const run3 = JSON.parse(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(x.pid(3)).branch);
+  check(run3.tookIn && run3.tookIn[0].index === 2, `seed: run 3 took in run 2 (${JSON.stringify(run3.tookIn)})`);
+  await stubRemotes();
   const capture = async (name) => {
     await sleep(400);
     const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
@@ -1501,8 +1511,8 @@ async function shipCarriedPhase() {
         await sleep(300);
         const d = await ev(DIALOG);
         const l = await linesOf('#shipit-modal .shipit-prs-carried small.hint', '.shipit-zone');
-        check(d && d.ok === 'Create 4 PRs' && d.kept === '#40 is not counted.',
-          `ship carried dialog, ${theme}: Create 4 PRs, "#40 is not counted." (${JSON.stringify(d)})`);
+        check(d && d.ok === 'Create 4 PRs' && d.kept === 'The open pull request is not counted.',
+          `ship carried dialog, ${theme}: Create 4 PRs, "The open pull request is not counted." (${JSON.stringify(d)})`);
         check(JSON.stringify(l.lines) === JSON.stringify([CARRIED_LINE]) && l.fits,
           `ship carried dialog, ${theme}: one line in .shipit-prs-carried, no overflow (${JSON.stringify(l)})`);
         await capture(`app-ship-carried-dialog-${theme}.png`);
@@ -1620,8 +1630,205 @@ async function featureTabsPhase() {
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 }
 
+// ---- Shaper slice 7 (R-ux-1, R-ux-2, R-arch-4): confirm in place. A marked feature with no chat, 5 runs done and R-ux-2
+// waiting for Design's confirmation: the head reads "Needs your confirmation: R-ux-2" as a link, the disabled Create N PRs
+// says why in a tip drawn above it (hovered with a real mouse move: the tip never meets the reason or the title, is on top
+// and inside the window), the link opens Requirements at the Ship card. Then the Runs list's Needs you, a chat-less
+// feature's waiting line, the Ship card and dialog naming #40 once, the Chat card's hold and the run panel's Prototype stop
+// of a chat-less feature run. Light and dark at 1280px, the tip and the reason again at 375px in light.
+// feature-confirm-tip-…, feature-confirm-reason-…, runs-confirm-needs-…, feature-chatless-waiting-…, ship-pr-named-once-…,
+// chat-card-confirm-…, prototype-stop-feature-link-… (-light.png, -dark.png), feature-confirm-tip-narrow-light.png.
+const CI_OUTLINE = normalizeOutline({ why: 'proof', leftOut: [], slices: SO_TITLES.map((title, i) => ({ id: `s${i + 1}`, title, goal: `Goal ${i + 1}`,
+  inScope: [], outOfScope: [], acceptance: [`ok ${i + 1}`], dependsOn: [], estimate: 'small', requirements: [SO_AGREED[i].id] })) },
+{ agreed: [...SO_AGREED, { id: 'R-ux-2', text: 'The words say who confirms', example: 'waiting for you to confirm' }] }).outline;
+const CI_KINDS = { 'R-ux-2': { kind: 'confirmed', role: 'design' } };
+const CI_HOLD = 'Needs your confirmation: R-ux-2';
+async function confirmInPlacePhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const DONE5 = ['done', 'done', 'done', 'done', 'done'];
+  const opts = { withOutline: CI_OUTLINE, titles: SO_TITLES, requirementKinds: CI_KINDS };
+  /** Runs 1–5 on a straight branch line and a clean Verifier check of run 5's head: ready but for the confirmation. */
+  const checked = (tag, x) => {
+    for (let k = 1; k <= 5; k++) {
+      execFileSync('git', ['branch', '-f', `feat/${tag}-${k}`], { cwd: proj });
+      getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+        .run(JSON.stringify({ source: k === 1 ? 'main' : `feat/${tag}-${k - 1}`, feature: `feat/${tag}-${k}` }), new Date(Date.parse(now) + k * 60_000).toISOString(), x.pid(k));
+    }
+    const headSha = execFileSync('git', ['rev-parse', `feat/${tag}-5`], { cwd: proj, encoding: 'utf8' }).trim();
+    pipeline(`c5${tag}v0001`, 'done', 'Verifier');
+    setVerify(x.f, vCheck(x, `c5${tag}v0001`, 'clean', { head: { index: 5, pipelineId: x.pid(5) }, headSha,
+      result: { held: [...SO_AGREED.map((a) => a.id), 'R-ux-2'], gaps: [] } }));
+    return x;
+  };
+  const held = checked('ci', seedFeature('ci', 'Confirm in place', DONE5, { ...opts, chat: false }));
+  const live = seedFeature('cl', 'Chat-less live', ['done', 'running', 'planned', 'planned', 'planned'], { ...opts, chat: false });
+  const chatted = checked('cc', seedFeature('cc', 'Confirm in chat', DONE5, opts));
+  const carried = seedCarried('cn', 'Named once');
+  // A chat-less marked feature's planning run waiting at its Prototype stop (the PROTO seed's offered moment, no thread).
+  const protoPid = 'c5cp000001';
+  const protoRec = PROTO_REC('offered', { screens: [], reviewRounds: 0 });
+  pipeline(protoPid, 'running', 'Chat-less prototype', { smallRuns: true, care: careRec, prototype: protoRec });
+  createSliceFeature({ pipelineId: protoPid, projectDir: proj, title: 'Chat-less prototype', outline: soOutline, perspectives: ['product', 'ux'],
+    workflowId: 'wf_shape', smallRuns: true, care });
+  const protoRun = liveRun(protoPid, 'Chat-less prototype', { at: 'n_refine', runShape: { perspectives: ['product', 'ux'] },
+    pendingQuestion: { id: 'proto-n_proto-1-cp-1', kind: 'prototype', nodeId: 'n_proto', prototype: { moment: 'offered', ...prototypeView(protoRec), screens: [] } } });
+  const page = `#feature/${encodeURIComponent(held.f.id)}`;
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const LINK = '#group-detail .gpage-card .run-status-link';
+  // The locked button: the PR slot's control, else a head button in its .rd-tip-host.
+  const LOCKED = "(document.querySelector('#group-detail .rd-pr-slot > [data-rd-cta][aria-describedby]') || document.querySelector('#group-detail .rd-tip-host > [aria-describedby]'))";
+  // Every rect of the hovered tip against the reason line and the page title; whether it is on top where it is drawn.
+  const TIP = `(() => { const b = ${LOCKED}; const tip = b && document.getElementById(b.getAttribute('aria-describedby'));
+    const link = document.querySelector(${JSON.stringify(LINK)}); const title = document.querySelector('#group-detail .gpage-title');
+    if (!tip || !link || !title) return { found: false, tip: !!tip, link: !!link, title: !!title };
+    const r = (n) => { const x = n.getBoundingClientRect(); return { left: x.left, top: x.top, right: x.right, bottom: x.bottom, width: x.width, height: x.height }; };
+    const hit = (a, c) => a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom;
+    const t = r(tip); const l = r(link); const h = r(title);
+    // .rd-tip takes no pointer events (pointer-events:none), so elementFromPoint would look through it: lift that for the probe.
+    tip.style.pointerEvents = 'auto';
+    const at = document.elementFromPoint(t.left + t.width / 2, t.top + t.height / 2);
+    tip.style.pointerEvents = '';
+    return { found: true, tip: t, link: l, title: h, text: tip.textContent, role: tip.getAttribute('role'), shown: getComputedStyle(tip).display,
+      hitsLink: hit(t, l), hitsTitle: hit(t, h), inside: t.left >= 0 && t.top >= 0 && t.right <= innerWidth && t.bottom <= innerHeight,
+      onTop: !!at && tip.contains(at), titled: b.hasAttribute('title') || link.hasAttribute('title'), linkText: link.textContent,
+      href: link.getAttribute('href') }; })()`;
+  /** A real mouse move onto the locked button (Chrome then applies :hover to it and its host). */
+  const hover = async () => {
+    const c = await ev(`(() => { const b = ${LOCKED}; if (!b) return null; const x = b.getBoundingClientRect(); return { x: x.left + x.width / 2, y: x.top + x.height / 2 }; })()`);
+    if (!c) return false;
+    await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 });
+    await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y });
+    await sleep(300);
+    return true;
+  };
+  const unhover = () => cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 });
+  /** The tip, then the reason link to the Ship card, at `width`. */
+  const tipAndReason = async (theme, width) => {
+    const at = `${theme}, ${width}px`;
+    await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+    await open(`${base}/?confirm-${theme}-${width}${page}/runs`);
+    await skipWelcome(); await setTheme(theme);
+    if (!await waitFor(`!!document.querySelector(${JSON.stringify(LINK)}) && !!${LOCKED}`, `the held feature's reason link and locked button (${at})`)) return;
+    await sleep(400);
+    const head = await ev("[...document.querySelectorAll('#group-detail .gpage-card .run-status-head')].map((n) => n.innerText).join(' ')");
+    const pageText = await ev("document.querySelector('#group-detail .gpage').innerText");
+    check(head.includes(CI_HOLD) && !/Ready to ship/.test(pageText), `confirm, ${at}: the head reads "${CI_HOLD}", the page nowhere "Ready to ship" (${head})`);
+    const dot = await ev("(() => { const d = document.querySelector('#group-detail .gpage-card .run-status-head .status-dot'); return d ? d.className : ''; })()");
+    check(/\bis-amber\b/.test(dot), `confirm, ${at}: the needs-you tone, the amber dot (${dot})`);
+    check(await hover(), `confirm, ${at}: hovered the disabled Create N PRs`);
+    const f = await ev(TIP);
+    results.lists.push({ list: 'confirm tip', theme, width, ...f });
+    check(f.found && f.shown === 'block' && f.tip.width > 0 && f.role === 'tooltip', `confirm tip, ${at}: shown on hover (${JSON.stringify(f)})`);
+    check(f.found && !f.hitsLink && !f.hitsTitle, `confirm tip, ${at}: its rect meets neither the reason line nor the page title (${JSON.stringify(f && [f.tip, f.link, f.title])})`);
+    check(f.found && f.inside && f.onTop, `confirm tip, ${at}: inside the window and on top where it is drawn (${JSON.stringify(f && [f.inside, f.onTop])})`);
+    check(f.found && f.text === 'Waiting for you to confirm R-ux-2', `confirm tip, ${at}: the ledger's reason (${f && f.text})`);
+    check(f.found && !f.titled && f.href === `${page}/requirements/ship` && f.linkText === CI_HOLD,
+      `confirm, ${at}: no native title on the button or the reason; the reason links to the Ship card (${JSON.stringify(f && [f.titled, f.href])})`);
+    await capture(width === 1280 ? `feature-confirm-tip-${theme}.png` : 'feature-confirm-tip-narrow-light.png');
+    await unhover();
+    await ev(`(() => { document.querySelector(${JSON.stringify(LINK)}).click(); return true; })()`);
+    if (await waitFor("!!document.activeElement && document.activeElement.matches('#group-detail [data-ship-card]')", `the Ship card focused (${at})`)) {
+      await sleep(300);
+      const r = await ev(`(() => { const c = document.activeElement; const panel = c.closest('.gpage-panel'); const top = c.getBoundingClientRect().top;
+        const rows = [...document.querySelectorAll('#group-detail .gpage-requirements [data-key="R-ux-2"] .plan-check-detail')].map((n) => n.textContent);
+        // The scroll left below the card: a page too short to bring it within 120px of the top is reported, not failed.
+        let room = 0;
+        for (let n = c.parentElement; n; n = n.parentElement) {
+          const y = getComputedStyle(n).overflowY;
+          if (/auto|scroll/.test(y) || n === document.scrollingElement) room += Math.max(0, n.scrollHeight - n.clientHeight - n.scrollTop);
+        }
+        return { hash: location.hash, tab: panel && panel.dataset.tab, top, room, inView: top >= 0 && top < innerHeight, rows, card: c.innerText }; })()`);
+      const reachable = r.top - r.room <= 120;
+      check(r.tab === 'requirements' && r.inView && (r.top <= 120 || !reachable) && r.hash === `${page}/requirements`,
+        `confirm reason, ${at}: Requirements, the Ship card focused and in view, at the top where the page is long enough, the address ends /requirements (${JSON.stringify(r && [r.tab, r.top, r.room, r.hash])})`);
+      if (r.top > 120) results.notes.push(`confirm reason, ${at}: the page is too short to bring the Ship card within 120px of the top (top ${r.top}px, ${r.room}px of scroll left)`);
+      check(r.rows.includes('waiting for you to confirm · Design') && r.card.includes('Waiting for you to confirm R-ux-2') && !/confirmed by a person/.test(r.card),
+        `confirm reason, ${at}: the row and the card's reason name you (${JSON.stringify(r.rows)})`);
+      await capture(width === 1280 ? `feature-confirm-reason-${theme}.png` : 'feature-confirm-reason-narrow-light.png');
+    }
+  };
+  for (const theme of THEMES) {
+    await tipAndReason(theme, 1280);
+    // The Runs list: the feature under Needs you, the badge counting it.
+    await ev("(() => { try { localStorage.removeItem('worca-cc.runs.last'); } catch {} return 0; })()");
+    await open(`${base}/?confirm-runs-${theme}#runs`);
+    await skipWelcome(); await setTheme(theme);
+    const ROW = `.runs-sec[data-section="needs"] .runs-item[data-row-key="chain:${held.f.id}"]`;
+    if (await waitFor(`!!document.querySelector(${JSON.stringify(ROW)})`, `the held feature under Needs you (${theme})`)) {
+      await sleep(400);
+      const r = await ev(`(() => { const row = document.querySelector(${JSON.stringify(ROW)}); const n = document.getElementById('nav-needs-count');
+        return { text: row.innerText, badge: n ? Number(n.textContent) || 0 : null }; })()`);
+      check(r.text.includes(CI_HOLD) && !/Ready to ship/.test(r.text) && r.badge >= 1, `runs list, ${theme}: the row reads the hold under Needs you, the Runs badge counts it (${JSON.stringify(r)})`);
+      await capture(`runs-confirm-needs-${theme}.png`);
+    }
+    // A chat-less feature with runs live: its Ship card comes on its page.
+    await open(`${base}/?confirm-live-${theme}#feature/${encodeURIComponent(live.f.id)}/requirements`);
+    await skipWelcome(); await setTheme(theme);
+    if (await waitFor("!!document.querySelector('#group-detail [data-ship-card=\"waiting\"]')", `the chat-less waiting line (${theme})`)) {
+      const w = await ev("document.querySelector('#group-detail [data-ship-card=\"waiting\"]').textContent");
+      check(w === 'Ship card comes when all 5 runs are done, on this page.', `chat-less, ${theme}: "${w}"`);
+      await capture(`feature-chatless-waiting-${theme}.png`);
+    }
+    // Each pull request named once: the ready Ship card, then the Create PR dialog.
+    const count40 = (sel) => ev(`(() => { const r = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.getClientRects().length); if (!r) return null;
+      const c = r.cloneNode(true); for (const n of c.querySelectorAll('[hidden]')) n.remove(); return (c.textContent.match(/#40\\b/g) || []).length; })()`);
+    if (await card(carried.threadId, 'named-once', 'the carried Ship card', theme) && await SHIP_READY('the carried Ship card', theme)) {
+      await sleep(400);
+      const n = await count40(SHIP);
+      check(n === 1, `named once, ${theme}: the ready Ship card names #40 once (${n})`);
+    }
+    await stubRemotes();
+    await open(`${base}/?named-once-${theme}#feature/${encodeURIComponent(carried.f.id)}`);
+    await skipWelcome(); await setTheme(theme);
+    const CREATE = "[...document.querySelectorAll('#group-detail .gpage-card button')].find((x) => x.offsetParent && /^Create (PR|\\d+ PRs)$/.test(x.textContent.trim()))";
+    if (await waitFor(`!!${CREATE}`, `the carried feature page's Create (${theme})`)) {
+      await sleep(400);
+      await ev(`(() => { ${CREATE}.click(); return true; })()`);
+      if (await waitFor("!!document.querySelector('#shipit-modal:not(.hidden) .shipit-prs:not([hidden])')", `the carried Create PR dialog (${theme})`)) {
+        await sleep(300);
+        const n = await count40('#shipit-modal');
+        const why = await ev("document.querySelector('#shipit-modal .shipit-prs-one-why').textContent");
+        check(n === 1 && why === 'Run 2 already has a pull request open', `named once, ${theme}: the dialog names #40 once; One's reason "${why}" (${n})`);
+        await capture(`ship-pr-named-once-${theme}.png`);
+        await ev(`(() => { const c = [...document.querySelectorAll('#shipit-modal button')].find((b) => b.offsetParent && b.textContent.trim() === 'Cancel'); if (c) c.click(); return !!c; })()`);
+        await sleep(300);
+      }
+    }
+    onCdpEvent = null;
+    await cdp('Fetch.disable');
+    // The Chat card of a chat-started marked feature with R-ux-2 waiting.
+    if (await card(chatted.threadId, 'confirm-chat', 'the Chat card with a confirmation open', theme)) {
+      // The hold states the state ("Needs your …"), so the status line shows it once, in the word's place, with no detail.
+      const st = await ev(STATUS);
+      const line = await ev("(() => { const s = [...document.querySelectorAll('.chat-rc .chat-rc-status')].find((x) => x.offsetParent); return s ? s.querySelector('.run-status-head').innerText : ''; })()");
+      const dot = await ev("(() => { const s = [...document.querySelectorAll('.chat-rc .chat-rc-status')].find((x) => x.offsetParent); const d = s && s.querySelector('.status-dot'); return d ? d.className : ''; })()");
+      check(st && [st.word, st.detail].includes(CI_HOLD) && line.split(CI_HOLD).length === 2 && !/Ready to ship/.test(line) && /\bis-amber\b/.test(dot),
+        `chat card, ${theme}: "${CI_HOLD}" once, the amber dot, never "Ready to ship" (${JSON.stringify([st, line, dot])})`);
+      await capture(`chat-card-confirm-${theme}.png`);
+    }
+    // The run panel's read-only Prototype stop of a chat-less feature's run: it links its feature page.
+    await open(`${base}/?confirm-proto-${theme}#chat/new/run/${protoRun}`);
+    await skipWelcome(); await setTheme(theme);
+    if (await waitFor(`!!document.querySelector(${JSON.stringify(`${PANEL} .qpanel a.link`)})`, `the Prototype stop's feature link (${theme})`)) {
+      const hrefs = await ev(`[...document.querySelectorAll(${JSON.stringify(`${PANEL} .qpanel a.link`)})].map((a) => a.getAttribute('href'))`);
+      check(hrefs.length === 1 && hrefs[0].startsWith('#feature/'), `prototype stop, ${theme}: one link to the feature page (${JSON.stringify(hrefs)})`);
+      await capture(`prototype-stop-feature-link-${theme}.png`);
+    }
+  }
+  // 375px (WIDTH), light: the narrow head puts the buttons under the status line; the tip still clears the reason.
+  await tipAndReason('light', WIDTH);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
 // D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in, SHIP_LIST_ONLY=1
-// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR, SHIP_CARRIED_ONLY=1 the carried runs Ship names, FEATURE_TABS_ONLY=1 the feature page's Cost, Requirements and Log tabs (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
+// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR, SHIP_CARRIED_ONLY=1 the carried runs Ship names, FEATURE_TABS_ONLY=1 the feature page's Cost, Requirements and Log tabs, CONFIRM_ONLY=1 confirm in place (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
 if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }
 if (process.env.HELD_ONLY === '1') { await heldPhase(); await finish(); }
@@ -1633,6 +1840,7 @@ if (process.env.STOP_FINDINGS_ONLY === '1') { await stopFindingsPhase(); await f
 if (process.env.SHIP_ONE_ONLY === '1') { await shipOnePhase(); await finish(); }
 if (process.env.SHIP_CARRIED_ONLY === '1') { await shipCarriedPhase(); await finish(); }
 if (process.env.FEATURE_TABS_ONLY === '1') { await featureTabsPhase(); await finish(); }
+if (process.env.CONFIRM_ONLY === '1') { await confirmInPlacePhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {

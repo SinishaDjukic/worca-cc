@@ -340,7 +340,7 @@ test('Requirements lists 5 rows; each note equals shown.text of requirementStatu
   const f = d3Feature();
   const el = reqs(f);
   assert.ok(el.matches('div.plan-body.srows.shape-feature-reqs'));
-  assert.equal(el.querySelector('p.cap.shape-feature-reqs-cap').textContent, '5 requirements · 4 owned by a run · 1 confirmed by a person');
+  assert.equal(el.querySelector('p.cap.shape-feature-reqs-cap').textContent, '5 requirements · 4 owned by a run · 1 you confirm');
   const rows = rowsOf(el);
   assert.equal(rows.length, 5);
   const sr = f.ship.smallRuns;
@@ -353,7 +353,7 @@ test('Requirements lists 5 rows; each note equals shown.text of requirementStatu
     if (r.dataset.owner === 'confirmed by a person') assert.equal(r.dataset.role, 'Compliance');
   }
   assert.deepEqual(rows.map((r) => r.querySelector('.plan-check-detail').textContent), ['run 2 · met', 'run 3 · being built', 'run 4 · to do',
-    'run 2 · changed · run 5 builds it', 'confirmed by a person · Compliance']);
+    'run 2 · changed · run 5 builds it', 'waiting for you to confirm · Compliance']);
 });
 
 test('owner direction: Requirements are grouped per role with the role fold, count and states; an all-met role is closed, a role with anything open is open', () => {
@@ -416,15 +416,15 @@ test('an owned row\'s run N is a link to runHref(N), and plain text when runHref
   assert.equal(rows[4].querySelector('a'), null, 'a confirmed row has no run link');
 });
 
-test('before and after Ship the confirmed row reads `confirmed by a person · Compliance`, then confirmed by Compliance or Marked Not met by you · reason', () => {
+test('before and after Ship the confirmed row reads `waiting for you to confirm · Compliance`, then confirmed by you or Marked Not met by you · reason', () => {
   const note = (f) => reqs(f).querySelector('[data-key="R-comp-1"] .plan-check-detail').textContent;
-  assert.equal(note(d3Feature()), 'confirmed by a person · Compliance');
-  assert.equal(note(d3Feature({ acceptance: [{ id: 'R-comp-1', mark: 'met', at: '2026-11-22T16:55:00.000Z' }] })), 'confirmed by Compliance');
+  assert.equal(note(d3Feature()), 'waiting for you to confirm · Compliance');
+  assert.equal(note(d3Feature({ acceptance: [{ id: 'R-comp-1', mark: 'met', at: '2026-11-22T16:55:00.000Z' }] })), 'confirmed by you · Compliance');
   assert.equal(note(d3Feature({ acceptance: [{ id: 'R-comp-1', mark: 'not-met', reason: 'no signed\ncopy' }] })), 'Marked Not met by you · no signed copy');
   const at = '2026-11-22T16:55:00.000Z';
   const row = reqs(d3Feature({ acceptance: [{ id: 'R-comp-1', mark: 'met', at }] })).querySelector('[data-key="R-comp-1"]');
   const d = new Date(at);
-  assert.equal(row.title, `R-comp-1 · A signed copy is kept · confirmed by Compliance · ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+  assert.equal(row.title, `R-comp-1 · A signed copy is kept · confirmed by you · Compliance · ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
 });
 
 test('a row with a note gives its mark a state-only accessible name', () => {
@@ -560,4 +560,23 @@ test('markOpen: false with every mark made, not ready, shipped, no small-runs le
   assert.equal(FeatureView.markOpen(OPEN_MARK('waiting', { mode: 'stacked' })), false, 'already shipped');
   assert.equal(FeatureView.markOpen(OPEN_MARK('waiting', { smallRuns: undefined })), false, 'no small-runs ledger');
   assert.equal(FeatureView.markOpen(null), false);
+});
+
+// ── Slice 7 (R-ux-2, R-arch-4) ─────────────────────────────────────────────────────────────────────────────────
+test('s7: the waiting row reads waiting for you to confirm · Design, and the caption counts what you confirm', () => {
+  const kinds = [{ id: 'R-ux-2', kind: 'confirmed', role: 'design' }];
+  const sr = shipLedger({ agreed: [{ id: 'R-ux-2', text: 'The words say who confirms' }], kinds, acceptance: [], runs: D3_RUNS('done') });
+  const base = d3Feature();
+  const el = reqs(feature({ id: 'f_s7', requirementKinds: kinds, ship: { ready: true, mode: null, smallRuns: { ...sr, care: base.ship.smallRuns.care, base: 'main', order: [] } } }));
+  assert.equal(el.querySelector('[data-key="R-ux-2"] .plan-check-detail').textContent, 'waiting for you to confirm · Design');
+  assert.equal(el.querySelector('p.cap.shape-feature-reqs-cap').textContent, '1 requirement · 0 owned by a run · 1 you confirm');
+  assert.doesNotMatch(el.textContent, /confirmed by a person/);
+});
+
+test('s7 R-arch-4: the feature view\'s waiting Ship card of a feature with no chat says "on this page."', () => {
+  const line = (hasChat) => mount(feature({ ...(hasChat === undefined ? {} : { hasChat }), ship: { ready: false, mode: null } }))
+    .el.querySelector('[data-ship-card="waiting"]')?.textContent;
+  assert.equal(line(false), 'Ship card comes when all 3 runs are done, on this page.');
+  assert.equal(line(true), 'Ship card comes when all 3 runs are done, here and in the chat.');
+  assert.equal(line(undefined), 'Ship card comes when all 3 runs are done, here and in the chat.');
 });

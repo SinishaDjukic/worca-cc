@@ -667,6 +667,10 @@ card. Its mark is not carried: the role marks it again, and Ship waits for it. A
 with that run, also while a gap or change run of it is still waiting (Re-plan cancels that run). A re-plan that ends
 with Don't slice carries nothing into a feature: it is planned and reviewed without the list, as before.
 
+With the flag on, the words say that you confirm and name the role as a detail: a waiting row reads
+"waiting for you to confirm · Design", a met one "confirmed by you · Design", and the Requirements caption counts
+"1 you confirm". With the flag off the rows read as before ("confirmed by a person · Design").
+
 ### Ship
 
 With the flag on, One ships the whole feature as one PR, from the latest finished run's branch. One is disabled while a
@@ -684,8 +688,9 @@ it, the first on the feature's base (or on the feature's base when the PR before
 back). A run whose work a listed PR already carries (taken in or combined) gets no pull request of its own. A run's work
 also counts as carried when a listed or carried run started from its branch, so after take-ins from other bases each
 commit ships in one pull request. Before you ship, the Ship card and the Ship dialog name each carried run, as in
-"Run 2's work ships in run 3's pull request (#40 is open)". While Stacked is picked the dialog adds "#40 is not
-counted."; with One picked it shows neither. The button's count is the number of new PRs Ship creates: the listed runs
+"Run 2's work ships in run 3's pull request (#40 is open)". While Stacked is picked the dialog adds "The open pull
+request is not counted."; with One picked it shows neither. Each pull request is named once: when that carried line
+already names the PR that turns One off, One's reason reads "Run 2 already has a pull request open", without the number. The button's count is the number of new PRs Ship creates: the listed runs
 without a PR or with a closed one ("Create 4 PRs"). When Worca
 cannot follow every finished run's work into the list, it falls back to the order the runs finished, and the Shipped
 card says so: "stacked in the order runs finished".
@@ -695,8 +700,14 @@ runs finished. Each PR is based on the branch of the run that finished before it
 first or that run's PR is merged. With `pr.slices` `each` and `pr.open` on, a run still opens
 its own PR when it finishes, before these blocks. Ship is blocked:
 
-- with `ACCEPTANCE_INCOMPLETE` while a confirmed requirement is unmarked; the Ship card reads
-  "Waiting for Compliance to confirm R-comp-4";
+- with `ACCEPTANCE_INCOMPLETE` while a confirmed requirement is unmarked; with the flag on the Ship card reads
+  "Waiting for you to confirm R-comp-4" (with the flag off it names the role, as before). With the flag on, once every
+  run is done, the feature reads "Needs your confirmation: R-ux-2" in the needs-you tone (up to three ids, then
+  "and 2 more") on its page head, its Runs list row and its Chat card, never "Ready to ship". The Runs list lists it
+  under Needs you, and the Runs badge counts it. On the page head the reason is a link to
+  `#feature/ID/requirements/ship`: it opens Requirements, scrolls the Ship card to the top and focuses it, and the
+  address then ends in `/requirements`. The disabled **Create N PRs** says the same in a tip drawn above it, never over
+  the status line;
 - with `ACCEPTANCE_INCOMPLETE` while an agreed requirement is owned by no run and confirmed by no person (with the flag
   on). The reason names it ("R-ops-1 is owned by no run and confirmed by no person"), no mark opens Ship, and the feature
   reads "Waiting" instead of "Ready to ship" everywhere. Re-plan the rest is the way out;
@@ -722,7 +733,7 @@ with the gap counts as clean. What follows from it:
   when **One** ships refuses that ship with `HAS_SLICE_PR` instead. The rule is asked again before each pull request Ship opens and after the
   changelog commit, and once more when the feature would be recorded as shipped. If it no longer holds, Ship stops with
   `NOT_READY`, names the pull requests made so far and pushes nothing more. Ship again once the Verifier has checked the
-  work, or **Resume**, if the card reads "Stopped".
+  work, or **Resume** on the feature page, if it reads "Stopped".
 
 Each PR body has exactly one `Care: …` line, then one line per requirement marked Not met or Dropped
 (`Not met: R-comp-4 · the reason`).
@@ -744,7 +755,9 @@ fix cycles it stops adding runs by itself and asks you: **Add a run for the gap*
   not started has no run page, and its row opens the feature page, where the row's word names the runs it still waits
   for and pointing at the row puts a dashed bar on the runs that build on it. A stopped run's page names the stop and
   links where it is answered (the feature's card in Chat, or the feature page for a feature no chat started); it has no
-  answer controls.
+  answer controls. With the flag on, a feature no chat started gets no chat card: its waiting line reads "Ship card
+  comes when all 5 runs are done, on this page.", Chat home's Answer on one of its runs opens its feature page, and the
+  run panel's Prototype stop links "Answer it on the feature page".
 - **The feature page**: Runs, Requirements (each with its owner run or confirming role, and its status) and Decisions
   with the Care line, and Show order on its Runs tab. Its run rows are one line with the same short words as the card and the Runs list ("waiting for
   you", "waits for run 8", "done"). Its head button reads "Create N PRs" and follows the Ship card: until the

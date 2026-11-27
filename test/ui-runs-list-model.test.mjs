@@ -3,6 +3,7 @@
 // Group by, groups and their members, the one status line, cost, and the DOM the list is built from.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
   rowTime, whenLabel, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
@@ -1308,4 +1309,56 @@ test('groupCostParts: max(stored, live) per pipeline, live-only ids included; it
   }
   assert.deepEqual(RL.groupCostParts(g), { p1: 1.5, p2: 0.5 }, 'no live costs');
   assert.equal(groupCostUsd({ members: [{ cost: 1 }, { cost: 0.5 }] }), 1.5, 'a plain chain still sums its members');
+});
+
+// ── Slice 7 (D3): a confirmation that is still open reads needs-you and sits in Needs you ───────────────────────
+test('s7: a confirmation hold sits in Needs you with the amber dot; an unowned hold stays a grey ring outside it', () => {
+  const hold = 'Needs your confirmation: R-ux-2';
+  const unowned = 'R-ops-1 is owned by no run and confirmed by no person';
+  const members = TEN.slice(0, 2).map((id, i) => ({ position: i + 1, title: `Slice ${i + 1}`, pipelineId: id, kind: 'hist', run: { status: 'done' } }));
+  const history = TEN.slice(0, 2).map((id) => histIt(id, { run: { status: 'done' }, pr: null }));
+  const of = (h) => {
+    const g = smallFeature({ members, hold: h });
+    const model = buildRunsModel({ history, groups: [g], now: NOW });
+    const needs = model.sections.find((s) => s.id === 'needs');
+    const host = doc.createElement('div');
+    host.append(...renderRunsList(doc, model));
+    return { row: groupRow(g, { now: NOW }), needs, line: host.querySelector('.runs-item[data-row-key="chain:feat_small"] > a.runs-row')?.textContent };
+  };
+  const held = of(hold);
+  assert.deepEqual([held.row.model.state, held.row.model.dot, held.row.model.symbol, held.row.model.word], ['ready', 'amber', null, 'Needs you']);
+  assert.deepEqual(held.row.model.actions, [], 'no Answer action: no run asks');
+  assert.equal(held.row.needs, true);
+  assert.equal(held.row.needsIcon, '');
+  assert.ok(held.needs, 'a Needs you section');
+  assert.deepEqual(held.needs.rows.map((r) => r.groupId), ['feat_small']);
+  assert.equal(held.needs.count, 1);
+  assert.ok(held.line.includes(hold), held.line);
+  assert.doesNotMatch(held.line, /Ready to ship/);
+  // Owner direction (replaces D3's "badge unchanged"): the top bar's Runs badge counts the held feature too.
+  assert.equal(countNeedsYou({ history, groups: [smallFeature({ members, hold })] }), 1, 'the held feature counts in the Runs badge');
+  assert.equal(countNeedsYou({ history }), 0, 'no groups passed: runs only');
+  const other = of(unowned);
+  assert.deepEqual([other.row.model.dot, other.row.needs], ['grey-ring', false]);
+  assert.equal(other.needs?.rows.length || 0, 0, 'an unowned hold is not in Needs you');
+  assert.equal(countNeedsYou({ history, groups: [smallFeature({ members, hold: unowned })] }), 0, 'an unowned hold is not counted');
+});
+
+test('s7 owner direction: the Runs badge counts a feature held for your confirmation only with the flag on', () => {
+  const hold = 'Needs your confirmation: R-ux-2';
+  const members = TEN.slice(0, 2).map((id, i) => ({ position: i + 1, title: `Slice ${i + 1}`, pipelineId: id, kind: 'hist', run: { status: 'done' } }));
+  const history = TEN.slice(0, 2).map((id) => histIt(id, { run: { status: 'done' } }));
+  const on = [smallFeature({ members, hold })];
+  assert.equal(countNeedsYou({ history, groups: on }), 1);
+  // Flag off, the server sends a marked feature with no marker and no hold (run-groups.mjs): nothing is counted, and the
+  // list keeps it out of Needs you.
+  const { smallRuns, ...plain } = smallFeature({ members });
+  assert.equal(countNeedsYou({ history, groups: [plain] }), 0, 'flag off: unchanged');
+  const model = buildRunsModel({ history, groups: [plain], now: NOW });
+  assert.equal(model.sections.find((s) => s.id === 'needs')?.rows.length || 0, 0);
+  // A stale hold on an unmarked group is never counted.
+  assert.equal(countNeedsYou({ history, groups: [{ ...plain, hold }] }), 0, 'unmarked: not counted');
+  // app.js passes the groups only while the flag is on.
+  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /groups: flagOn\('shaperSmallRuns'\) \? state\.runGroups \|\| \[\] : \[\]/);
 });

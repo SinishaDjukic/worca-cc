@@ -191,7 +191,8 @@ export function renderShipCard(doc, m, handlers = {}) {
 function shipCard(doc, m, handlers) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   if (m.phase === 'waiting') {
-    const w = h('div', 'ask-shipcard-wait', `Ship card comes when all ${m.runs} runs are done, here and in the chat.`);
+    // Slice 7 (D10): a feature with no chat gets no chat card, so the card comes only on this page.
+    const w = h('div', 'ask-shipcard-wait', `Ship card comes when all ${m.runs} runs are done, ${m.hasChat === false ? 'on this page.' : 'here and in the chat.'}`);
     w.setAttribute('data-ship-card', 'waiting');
     return { root: w, ledger: null };
   }
@@ -377,7 +378,8 @@ function smallRunsShip(doc, h, m, handlers) {
   const noteOf = (c) => {
     const at = clock(c.at) ? ` · ${clock(c.at)}` : '';
     // Small runs D3 (D5): the server's one status: a waiting row its text, a marked one its word and the time.
-    if (c.shown) return c.state === 'waiting' ? c.shown.text : `${c.shown.word}${at}`;
+    // Slice 7 (D4): a met row names you and the role (`confirmed by you · Design`), then the time.
+    if (c.shown) return c.state === 'waiting' ? c.shown.text : `${c.mark === 'met' ? c.shown.text : c.shown.word}${at}`;
     if (c.state === 'waiting') return `confirmed by a person · ${c.roleLabel}`;
     if (c.mark === 'met') return `confirmed by ${c.roleLabel}${at}`;
     return `Marked ${MARK_WORDS[c.mark]} by you${at}`;

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { createSliceFeature } from '../src/core/shape/features.mjs';
+import { createSliceFeature, setFeatureAcceptance, shipHold } from '../src/core/shape/features.mjs';
 import { listRunGroups, createRunGroup, addToGroup, removeFromGroup, RunGroupError, addRunsToGroup, restoreRunGroups, runNameInputs } from '../src/core/run-groups.mjs';
 import { buildRunsModel } from '../ui/public/runs-list.mjs';
 import { groupModel } from '../src/shared/run-model.mjs';
@@ -275,6 +275,43 @@ test('fail closed: a marked feature with an owner-less requirement carries hold,
   assert.equal(of(on, held).hold, 'R-ops-1 is owned by no run and confirmed by no person');
   for (const f of [fine, plain]) assert.equal('hold' in of(on, f), false);
   assert.equal('hold' in of(withSmallRuns(false, () => listRunGroups()), held), false);
+});
+
+// ── Slice 7 (D1): an open confirmation is the feature's hold ─────────────────────────────────────────────────────
+/** A marked (or not) 2-run feature, both runs done, whose R-ux-2 a person confirms (Design). */
+function confirmFeature({ marked = true } = {}) {
+  n += 1;
+  const ids = [`p-conf-${n}-1`, `p-conf-${n}-2`];
+  seedPipelineRow({ id: ids[0], title: 'Shape it', status: 'done' });
+  if (marked) getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run('{"smallRuns":true}', ids[0]);
+  const outline = { why: 'w', slices: [1, 2].map((i) => ({ id: `s${i}`, title: `Slice ${i}`, goal: 'g', inScope: [], outOfScope: [],
+    acceptance: [], dependsOn: [], estimate: 'small', ...(i === 1 ? { requirements: ['R-po-1'] } : {}) })),
+    agreed: [{ id: 'R-po-1', text: 'People see it' }, { id: 'R-ux-2', text: 'The words say who confirms' }], leftOut: [] };
+  const { id } = createSliceFeature({ pipelineId: ids[0], projectDir: PROJECT, title: 'Confirm', outline, perspectives: [], workflowId: 'wf_shape' });
+  getDb().prepare('UPDATE shape_features SET requirement_kinds = ? WHERE id = ?')
+    .run(JSON.stringify({ 'R-ux-2': { kind: 'confirmed', role: 'design' } }), id);
+  const t = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = 2').get(id).ticket_id;
+  seedPipelineRow({ id: ids[1], title: 'Slice 2', status: 'done' });
+  getDb().prepare('UPDATE scheduled_runs SET status = \'fired\', pipeline_id = ? WHERE id = ?').run(ids[1], t);
+  return { id, ids };
+}
+const groupOf = (flag, id) => withSmallRuns(flag, () => listRunGroups()).find((g) => g.id === id);
+
+test("s7: a waiting confirmation is the feature's hold, only for a marked feature with the flag on", () => {
+  const f = confirmFeature();
+  const plain = confirmFeature({ marked: false });
+  assert.equal(groupOf(true, f.id).hold, 'Needs your confirmation: R-ux-2');
+  assert.equal(shipHold(f.id), 'Needs your confirmation: R-ux-2');
+  assert.equal('hold' in groupOf(true, plain.id), false, 'unmarked');
+  assert.equal('hold' in groupOf(false, f.id), false, 'flag off');
+});
+
+test('s7: once marked Met the group has no hold', () => {
+  const f = confirmFeature();
+  assert.equal(groupOf(true, f.id).hold, 'Needs your confirmation: R-ux-2');
+  setFeatureAcceptance(f.id, [{ id: 'R-ux-2', mark: 'met', role: 'design', by: 'ann', at: '2026-11-22T16:55:00.000Z' }]);
+  assert.equal('hold' in groupOf(true, f.id), false);
+  assert.equal(shipHold(f.id), null);
 });
 
 // ── Feature page slice 6 (R-arch-2): Verifier rounds count once in the feature's cost, with the flag on ───────────

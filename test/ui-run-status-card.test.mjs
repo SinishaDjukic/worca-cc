@@ -633,3 +633,55 @@ test('s5 sliceHeadModel: a null word keeps dev\'s head and line, only the dot ch
   assert.ok(h.dot.classList.contains('is-pulse'));
   assert.ok(!dev.dot.classList.contains('is-pulse'));
 });
+
+// ── Slice 7 (D7, D10): the reason links to the Ship card; a feature with no chat says "on this page" ─────────────
+const S7_HOLD = 'Needs your confirmation: R-ux-2';
+const S7_HREF = '#feature/feat_1/requirements/ship';
+const s7Held = () => {
+  const done = { status: 'done', endReached: true };
+  return groupModel({ kind: 'feature', title: 'F', members: [done, done], hold: S7_HOLD }, { now: NOW });
+};
+/** The text of `node` without its hidden parts. */
+const s7Visible = (node) => { const c = node.cloneNode(true); c.querySelectorAll('[hidden]').forEach((x) => x.remove()); return c.textContent; };
+
+test('s7: with detailHref the status detail is one link, the word is hidden and nothing carries a title', () => {
+  const host = dom().createElement('div');
+  paintRunStatus(host, s7Held(), { hold: true, detailHref: S7_HREF });
+  const detail = host.querySelector('.run-status-detail');
+  const links = host.querySelectorAll('a.run-status-link');
+  assert.equal(links.length, 1);
+  const [link] = links;
+  assert.equal(link.parentElement, detail);
+  assert.equal(link.getAttribute('href'), S7_HREF);
+  assert.equal(link.textContent, S7_HOLD);
+  assert.equal(detail.hidden, false);
+  assert.equal(host.querySelector('.run-status-word').hidden, true);
+  assert.equal(s7Visible(host.querySelector('.run-status-head')).split(S7_HOLD).length - 1, 1, 'the reason, once');
+  assert.equal(host.getAttribute('title'), null);
+  assert.equal(detail.getAttribute('title'), null);
+  paintRunStatus(host, s7Held(), { hold: true, detailHref: S7_HREF });
+  assert.equal(host.querySelector('a.run-status-link'), link, 'the link is made once: a repaint keeps it');
+  assert.equal(host.querySelectorAll('a.run-status-link').length, 1);
+});
+
+test('s7: a paint without detailHref removes the link and leaves the DOM as a plain paint', () => {
+  const doc = dom();
+  const host = doc.createElement('div');
+  paintRunStatus(host, s7Held(), { hold: true, detailHref: S7_HREF });
+  assert.equal(host.querySelectorAll('a.run-status-link').length, 1, 'the link was painted first');
+  paintRunStatus(host, s7Held(), { hold: true });
+  assert.equal(host.querySelector('.run-status-detail').children.length, 0);
+  const plain = doc.createElement('div');
+  paintRunStatus(plain, s7Held(), { hold: true });
+  assert.equal(host.innerHTML, plain.innerHTML);
+});
+
+test('s7 R-arch-4: the group ship line of a feature with no chat ends "on this page."', () => {
+  const done = { status: 'done', endReached: true };
+  const model = groupModel({ kind: 'feature', title: 'F', members: [done, { status: 'running' }, { ticket: { status: 'scheduled' } }] }, { now: NOW });
+  const row = { kind: 'chain', groupKind: 'feature', model, members: model.members.map((m, i) => ({ position: i + 1, model: m })) };
+  assert.equal(groupShipLine(row, { hasChat: false }), 'Ship card comes when all 3 runs are done, on this page.');
+  for (const opts of [{ hasChat: true }, {}]) {
+    assert.equal(groupShipLine(row, opts), 'Ship card comes when all 3 runs are done, here and in the chat.', JSON.stringify(opts));
+  }
+});

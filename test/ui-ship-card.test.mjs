@@ -3,6 +3,8 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderShipCard, buildShipChatCard, shipSummaryLine, setShipDialogOpener } from '../ui/public/shape/ship-card.mjs';
+// Slice 7: the judged ledger, as the server builds it with the flag on.
+import { shipLedger } from '../src/shared/shape/ship-ledger.mjs';
 import { icon } from '../ui/public/icons.mjs';
 
 const doms = [];
@@ -499,8 +501,8 @@ test('small-runs done card with `along`: the stats line reads "stacked along the
 
 // ---- Small runs D3 (D5): the rows read the server's one `shown` status when it is there ----
 const SHOWN = (owner, word, mark, role = null, text = `${owner} · ${word}`) => ({ owner, role, word, text, mark });
-test('small-runs rows with shown: owned note shown.text, a marked confirmed note keeps D1\'s text, a waiting one still reads `confirmed by a person · Compliance`; without shown D1\'s notes stay', () => {
-  const waiting = SR({ confirmed: [{ ...SR_ROW('waiting'), shown: SHOWN('confirmed by a person', 'Compliance', 'wait', 'Compliance', 'confirmed by a person · Compliance') }],
+test('small-runs rows with shown: owned note shown.text, a marked confirmed note keeps D1\'s text, a waiting one reads its shown.text; without shown D1\'s notes stay', () => {
+  const waiting = SR({ confirmed: [{ ...SR_ROW('waiting'), shown: SHOWN('confirmed by a person', 'waiting for you to confirm', 'wait', 'Compliance', 'waiting for you to confirm · Compliance') }],
     owned: [{ id: 'R-po-1', text: 'People see it', run: 1, status: 'holds', shown: SHOWN('run 1', 'met', 'check') },
       { id: 'R-po-2', text: 'People pin it', run: 2, status: 'holds', shown: SHOWN('run 2', 'being built', 'live') }] });
   const { el } = srCard(waiting);
@@ -509,7 +511,7 @@ test('small-runs rows with shown: owned note shown.text, a marked confirmed note
   assert.deepEqual(owned.map((r) => r.querySelector('.plan-check-mark').getAttribute('aria-label')), ['met', 'being built']);
   assert.ok(owned[1].querySelector('.plan-check-mark').classList.contains('is-live'), 'the mark is shown.mark');
   assert.equal(owned[1].title, 'R-po-2 · People pin it · run 2 · being built');
-  assert.equal(el.querySelector('.ask-shipcard-confirmed .plan-check-detail').textContent, 'confirmed by a person · Compliance');
+  assert.equal(el.querySelector('.ask-shipcard-confirmed .plan-check-detail').textContent, 'waiting for you to confirm · Compliance');
   const at = '2026-11-22T16:55:00.000Z';
   const marked = SR({ ...READY_SR, confirmed: [{ ...SR_ROW('confirmed', at), shown: SHOWN('confirmed by a person', 'confirmed by Compliance', 'check', 'Compliance', 'confirmed by Compliance') }] });
   const d = new Date(at);
@@ -588,4 +590,37 @@ test('applied card shows no carried list', () => {
   const done = srCard({ ...CARRIED_SR, order: DONE_SR.order }, { phase: 'applied' }).el;
   assert.equal(done.querySelector('.ask-shipcard-carried'), null);
   assert.ok(!done.textContent.includes(CARRIED_LINE));
+});
+
+// ── Slice 7 (R-ux-2, R-arch-4, D16): the words name you, no chat says this page, #40 is named once ─────────────
+const S7_AGREED = [{ id: 'R-ux-2', text: 'The words say who confirms' }];
+const S7_KINDS = [{ id: 'R-ux-2', kind: 'confirmed', role: 'design' }];
+const s7Judged = (acceptance = []) => SR({ owned: [], ...shipLedger({ agreed: S7_AGREED, kinds: S7_KINDS, acceptance, runs: [{ index: 1, state: 'done' }] }) });
+
+test('s7 R-ux-2: the card\'s waiting row reads waiting for you to confirm · Design, a met one confirmed by you · Design', () => {
+  const { el } = srCard(s7Judged());
+  const note = (card) => card.querySelector('.ask-shipcard-confirmed .plan-check-detail').textContent;
+  assert.equal(note(el), 'waiting for you to confirm · Design');
+  assert.doesNotMatch(el.textContent, /confirmed by a person/);
+  const why = el.querySelector('.ask-shipcard-why');
+  assert.equal(why.textContent, 'Waiting for you to confirm R-ux-2');
+  assert.equal(why.querySelector('a'), null, 'plain text: it sits on the card it would link to');
+  assert.equal(el.querySelector('[data-act="ship-create"]').disabled, true);
+  const met = srCard(s7Judged([{ id: 'R-ux-2', mark: 'met', at: '2026-11-22T16:55:00.000Z' }])).el;
+  assert.match(note(met), /^confirmed by you · Design · \d\d:\d\d$/);
+});
+
+test('s7 R-arch-4: the waiting Ship card of a feature with no chat says "on this page."', () => {
+  const text = (over) => renderShipCard(docOf(), { phase: 'waiting', runs: 5, ...over }, {}).textContent;
+  assert.equal(text({ hasChat: false }), 'Ship card comes when all 5 runs are done, on this page.');
+  assert.equal(text({ hasChat: true }), 'Ship card comes when all 5 runs are done, here and in the chat.');
+  assert.equal(text({}), 'Ship card comes when all 5 runs are done, here and in the chat.');
+});
+
+test('s7: the card names #40 once', () => {
+  const sr = SR({ ...READY_SR, along: true, newPrs: 4, order: [listedRun(1), listedRun(3), listedRun(4), listedRun(5)],
+    carried: [{ index: 2, by: 3, title: 'Slice 2', pr: pr(40), line: CARRIED_LINE }] });
+  const { el } = srCard(sr);
+  assert.equal(el.textContent.split('#40').length - 1, 1, el.textContent);
+  assert.deepEqual(carriedLines(el), [CARRIED_LINE]);
 });

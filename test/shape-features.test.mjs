@@ -1787,8 +1787,9 @@ test('fail closed: flag on, an agreed requirement with no run and no person keep
     assert.equal('unowned' in v.ship.smallRuns, false);
     assert.equal(acceptanceRefusal(v), null);
   });
+  // Slice 7 (D1): with every requirement owned or confirmed, the open confirmation is the hold.
   const held = withSmallRuns(true, () => mk(2, { outline: kindsOutline(), requirementKinds: COMPLIANCE }));
-  assert.equal(shipHold(held.id), null);
+  assert.equal(shipHold(held.id), 'Needs your confirmation: R-sec-1');
   assert.equal(shipHold('feat_none'), null);
 });
 
@@ -1881,7 +1882,7 @@ test('D3: flag on, marked: every ship.smallRuns entry has shown; flag off: none'
   mark(pid);
   const on = withSmallRuns(true, () => featureView(id).ship.smallRuns);
   assert.deepEqual(on.owned.map((o) => [o.id, o.shown.text, o.shown.mark]), [['R-po-1', 'run 1 · met', 'check'], ['R-qa-1', 'run 2 · to do', 'wait']]);
-  assert.deepEqual(on.confirmed.map((c) => [c.id, c.shown.text]), [['R-sec-1', 'confirmed by a person · Compliance']]);
+  assert.deepEqual(on.confirmed.map((c) => [c.id, c.shown.text]), [['R-sec-1', 'waiting for you to confirm · Compliance']]);
   const off = withSmallRuns(false, () => featureView(id).ship.smallRuns);
   assert.ok([...off.owned, ...off.confirmed].every((e) => !('shown' in e)), 'flag off: D1\'s entries');
   assert.deepEqual(off.met, on.met);
