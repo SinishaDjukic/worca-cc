@@ -9,6 +9,12 @@ Away mode is on during your away hours, or once you turn on **Away** in the acco
 the sidebar). While it's on, Worca answers what a run would otherwise wait on: clarifying questions, mid-step
 questions, input forms, review-loop gates, proposed workflows and retries of failed steps.
 
+By default one **Away** setting covers the whole Worca: turning it on answers for everyone's runs. On a shared Worca
+where each person signs in, the administrator can turn on per-person Away (see [instance-contract.md](instance-contract.md)).
+Then **Away** is yours alone: it covers only your own runs, and a teammate turning it on or off does not change
+yours. A run you resume counts as yours from then on. A person who has never set **Away** follows the setting for the
+whole Worca.
+
 On a Shaper run Worca answers every stop too: Clarify, Requirements, the slice outline and each plan. A passing check
 is approved; a failing one goes back once with the check's findings, then is approved as written. Every answer that
 decides what to build is flagged *please check*. Two stops still wait for you: **Ask me before each run**, because you
@@ -29,9 +35,9 @@ still gives it, but flags it *please check*.
 - the limits
 - *Always wait for me on…*, for kinds of question Worca must never answer
 
-A project's **Away mode** tab overrides any of these for that project.
+A project can override any of these for itself: open the project, go to its **Settings** tab and use the **Away mode for this project** card.
 
-To mark a run, tick *Mark this run: worca may answer for me* on New pipeline, or pass `--night` on the CLI. A marked
+To mark a run, tick *Mark this run: worca may answer for me* on the **New run** page (reached from the **New** button at the top of the Runs page), or pass `--night` on the CLI. A marked
 run is answered during the day too, once a question has waited 30 minutes.
 
 On the run page, *Away mode on this run* overrides the setting for one run: *As set up*, *Answer for me now* or

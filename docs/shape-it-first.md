@@ -331,6 +331,10 @@ goes into the project's `CHANGELOG.md` under `## Unreleased`, committed on the l
 slice's branch, so it ships with the feature. A small-runs feature ships stacked only:
 see [Small runs](#small-runs-shapersmallruns).
 
+If every PR of a shipped feature is closed without merging, the ship is withdrawn: the
+feature reads as not shipped again, and its Ship card and **Create PR** come back, so you
+can ship it again.
+
 A Run-after chain ships the same way, without Shaper: once every run in it is done,
 its group page reads `Ready to ship · 2 of 2 done` with **Create PR** on the status
 line, and the dialog offers One (the last run's branch into the chain's root, with a
@@ -350,8 +354,7 @@ hourly, so the draft can take up to an hour to appear; a failure shows on the ca
 and is not retried.
 
 **The Plans tab.** The Chat home lists shaped plans on a **Plans** tab, newest first,
-with their state. A sliced feature's row opens its card underneath. The tab shows
-only while Shaper is on.
+with their state. A sliced feature's row opens its card underneath.
 
 ### Slices and code reviews carry the requirements
 
@@ -496,7 +499,7 @@ checkpoint` on the feature card, and on the next Plan step card) but not fed to 
 run is left goes to the next run added to the feature.
 
 **Chat and the Route card.** Every message in a chat goes to Chat, as in any other chat: worca never
-reroutes it. In a chat that follows a run or a feature, with Shaper on, Chat sees the run's state and PR, or the
+reroutes it. In a chat that follows a run or a feature, Chat sees the run's state and PR, or the
 feature's runs, its next run and its open step, and it has two tools it calls when your message asks for a change:
 - **propose_changes** posts the Changes card (where it lands follows the table above). It fits a finished plain run
   or a finished feature.
@@ -521,11 +524,10 @@ shows on the feature card as `dev moved · run 3 starts from it`. On conflicts n
 `by: 'watch'`, the trigger `kinds`, and once the watch lets go of it, its `outcome`. While it runs, the run's card
 reads `Running · Round 2 · fix failing checks` (the trigger words: `fix failing checks`, `fix review comments`,
 `address changes requested`, `resolve conflicts`, `merge dev in`). Its log line ends with the outcome:
-`Round 2 · fix failing checks · pushed a1b2c3d`, or `· nothing pushed: conflict markers left`. With Shaper on, no
+`Round 2 · fix failing checks · pushed a1b2c3d`, or `· nothing pushed: conflict markers left`. No
 card is posted per fix run. When the watch gives up, the run card says so under its log
 (`Watch stopped · 3 fix runs, checks still failing`) with **View PR** and **Ask for changes**. On the pull-request
-card the watch is only the PR link's tooltip (`PR #781 · watched`). With Shaper off, each fix run still gets its own
-`PR fix run` card.
+card the watch is only the PR link's tooltip (`PR #781 · watched`).
 
 ## Requirements first
 
@@ -856,9 +858,6 @@ The Requirements page is not changed, on or off.
 - Worca does not retarget a stacked PR when an earlier one merges. Use
   "Automatically delete head branches" on GitHub; automatic retargeting is a
   follow-up.
-- A slice is a scheduled run. If its ticket fires while Shaper is off, the
-  slice fails ("shape is not available on this server") and can be resumed once the
-  switch is back on.
 - Cancel the rest does not stop a slice that is already starting. Stop it from its
   own card.
 - Slices run at the default effort, like any scheduled run; the effort of the run

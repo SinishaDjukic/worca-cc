@@ -6,7 +6,7 @@ ends.
 
 ## Auto: Worca picks the workflow
 
-You don't have to choose a workflow yourself. **Auto** is first in the New pipeline **Workflow** picker and is
+You don't have to choose a workflow yourself. **Auto** is first in the New run **Workflow** picker and is
 selected by default (`--workflow auto` on the CLI).
 
 One model call reads the task text, any attached files and a small offline fingerprint of the repository. It may
@@ -57,15 +57,17 @@ work is committed to its own `worca-cc/…` branch, ready for **Create PR**.
 
 Every finished run keeps its full record, with one tab for each part:
 
-- **Overview**: the review verdict and its findings, time, cost and files changed.
-- **Diff**: every changed file with its +/− and patch.
+- **Overview**: the review verdict and its findings, time and cost, and how many files changed.
+- **Task**: the task the run was started with.
+- **Diff**: every changed file with its +/− and patch. It takes line comments ([Diff comments](diff-comments.md)).
 - **Artifacts**: the plans, reviews and other files the steps wrote.
 - **Actions**.
 - **Workflow**: the graph as it ran. At Expert it adds time and cost per step.
 - **Q&A**: the clarify answers and any questions asked mid-run.
-- **Logs** and **Agents**, at Expert.
+- **Logs**, and **Agents** at Expert.
 
-Diff, Artifacts and Actions start at Advanced (see [UI levels](ui-levels.md)).
+Overview, Task, Diff, Workflow and Q&A show in Simple mode. Artifacts and Actions start at Advanced; Logs and Agents at Expert (a live run's page shows Logs at
+Advanced). See [UI levels](ui-levels.md).
 
 A run in a Folder project works on a copy of the folder. Instead of **Diff** and **Actions** it has **Changes**, at
 every level, listing each file it added, updated or deleted. You land the work with **Apply to folder** or drop it
@@ -124,9 +126,20 @@ the control flow. Every step, verdict, cost and artifact is recorded. More in [A
 work that wasn't committed yet. **Resume at…** schedules the resume instead: at a time, or after another run ends,
 so paused runs can resume one after another.
 
+A resume doesn't redo finished work. A task that already finished in the earlier attempt is not run again, and the
+run's log says so. If its edits were taken away while the run was paused (a `git checkout .`, `git reset --hard` or
+`git stash` in the worktree), the task runs again. A file you changed to something new yourself is left as you made it.
+
 Paused runs survive a server restart. A run that was cut off mid-step comes back as *Interrupted*, and you can
 resume it from its last clean point. A step that loses the network waits for it and retries by itself, and a run
 parked by an outage resumes once the network is back.
+
+### When an agent goes quiet
+
+A step that produces no output for 5 hours is stopped as idle, and you can change that limit per step or per
+workflow (`idleLimitMinutes` in a step's config or in the workflow's `limits`; `WORCA_NODE_IDLE_LIMIT_MIN` sets the default for steps that set none). The limit no longer stops an agent that is busy: one waiting on a long job it started, such as a full test
+suite or a build, gets another window as long as that job is still working. An agent that is waiting on nothing, or a
+job that is stuck, is stopped as before.
 
 ### Isolated worktrees
 
@@ -135,12 +148,18 @@ side by side don't collide. When a run ends, its work is committed to that branc
 branch stays. A worktree isolates changes, not the host: natively, agents run as your user and can reach whatever
 you can (see [Guardrails](guardrails.md)).
 
+If agents read or wrote files outside the run's checkout, the run's page shows one quiet line under its banners, such as
+"3 steps touched 4 files outside the checkout". It is information, not an error. Click **Details** to see the paths
+grouped by step. The line turns amber when a path belongs to another run or session.
+
 ### Run on the source branch
 
 Sometimes you want the result on your own branch, not a new one. Turn on **Run on the source branch** under the
 feature branch (or pass `--on-source-branch`). The run still works on a hidden branch while it runs. When it
 finishes `done`, Worca fast-forwards your source branch onto the result and deletes the hidden branch. The run's
 page then offers **Push <source>** instead of a pull request.
+
+Before a run starts, Worca can bring the source branch up to date with the remote ([Sync before run](sync-before-run.md)).
 
 Worca only ever fast-forwards. If the source branch moved in the meantime, its checkout has uncommitted changes, or
 the run didn't finish, the work stays on its own branch, and you get the commands to merge it yourself.
@@ -163,16 +182,27 @@ the setting again when you start or schedule the card, so a card proposed earlie
 ### Following runs live
 
 **Runs** in the sidebar lists every run, live and finished. Its **View** menu shows All, Needs you, Running,
-Waiting, Finished, **Ready to ship** (finished, no PR yet) or Archived, and groups runs by project or by date.
+Waiting, Finished, **Ready to ship** (finished, no PR yet) or Archived, and groups runs by project or by date. More in [The Runs list](runs-list.md).
 
-A live run's page shows its state and current step, the time ticking, its cost and the files it changed. **Live
-view** shows the running step inside its workflow graph. **Diff** shows the worktree's changes so far, with **Open in <Editor>** at the top right (edits you make there go into the run). Each file's head, on live and finished runs, has an icon that opens the file at its first changed line; on a finished run that is not checked out, that one click checks it out first (see [Actions](actions.md#built-ins)). **Logs**
+A live run's page shows its state and current step, the time ticking, its cost and the files it changed. The
+**Workflow** tab shows the running step inside its graph. **Diff** shows the worktree's changes so far. **Open in <Editor>** is at the top right (edits you make there go into the run). Each file's head, on live and finished runs, has an icon that opens the file at its first changed line; on a finished run that is not checked out, that one click checks it out first (see [Actions](actions.md#built-ins)). **Logs**
 streams every step with search, and at Expert you can filter by source, level, step and cycle.
 
 The top bar's **Activity** pill counts what needs you and what is running. To hear about it outside the tab, turn
 on Settings › General › **Alerts** for desktop notifications and a tab badge when a run waits for you.
 
 **Archived runs** (Advanced) lists deleted runs and lets you restore them.
+
+#### Run time and agent time
+
+A run's page shows its time in the **time** tile, ticking while the run works. This is the run clock: one second per
+real second, with parallel steps counted once. The clock stands still while the run waits for you (a question, an
+approval or a recovery prompt) and while it is paused, and it stops for good when the run ends. So a run that sat on
+**Waiting for you** overnight doesn't show the night.
+
+When steps ran side by side, a second tile, **agent time**, appears. It adds up every agent's own time, so it is larger
+than the run time. Hover it for "Total time of all agents, parallel work added up". A run with no parallel work shows
+only **time**. A run saved before Worca kept the clock shows its summed agent time as its time.
 
 ### One-click pull requests
 
@@ -183,9 +213,20 @@ description as soon as the dialog opens.
 Worca then pushes the branch and opens the PR. On GitHub it uses the GitHub CLI (`gh`). On
 [Azure DevOps](azure-devops.md) it uses a personal access token, and on [Bitbucket Cloud](bitbucket.md) an access
 or API token. A run started from a GitHub issue closes the issue on merge, and a workspace run opens one linked PR
-per changed repo. Afterwards the button becomes **View PR**.
+per changed repo. Afterwards the button becomes **View PR**. A workspace run's button reads **View PRs** and lists each
+repository's PR; in the dialog, each repository row shows its own **View PR** link once its PR is open.
 
-To push the branch without a PR, use **Publish branch** (Advanced).
+To push the branch without a PR, use **Publish branch** (Advanced). Once the branch has commits the remote doesn't,
+the same button reads **Push changes** and sends them to the remote the branch is already on. A branch that already
+has a PR never offers **Publish branch**.
+
+#### Shipping from a fork
+
+If you work in a fork, set **Push remote** in the Create PR dialog to your fork and **Into** to the repository that
+owns the base branch (usually `upstream`). Worca pushes to your fork and opens the PR across the two repositories; the
+line under the pickers shows the direction, for example `me:branch → up/repo main`. A remote cloned through an SSH host
+alias counts as its real host. [Azure DevOps](azure-devops.md) and [Bitbucket Cloud](bitbucket.md) don't open PRs
+between repositories yet: push to the base repository instead.
 
 ### Watch PR and conflicts
 
@@ -214,7 +255,7 @@ branch**. If it conflicts, you get **Resolve in a pipeline** or **Resolve in a t
 
 ### Mock mode
 
-To try Worca without spending anything, turn on **Mock mode** on New pipeline (`--mock` on the CLI, or
+To try Worca without spending anything, turn on **Mock mode** on New run (`--mock` on the CLI, or
 `WORCA_MOCK=1` for a whole server). The pipeline runs against a deterministic offline mock, with no `claude` and no
 tokens. It's meant for demos, development and CI.
 

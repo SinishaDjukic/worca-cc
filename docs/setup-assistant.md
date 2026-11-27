@@ -1,7 +1,37 @@
 # Setup assistant
 
-The setup assistant checks the machine, then applies every answer at once. This page describes the server
-API it uses. The user guide for the dialog lands with the dialog itself.
+The setup assistant checks the machine, then applies every answer at once. This page starts with a guide to the
+first launch, then describes the server API the dialog uses.
+
+## First launch
+
+On a fresh install the dialog opens before the welcome, on **Let’s set up Worca**. It first checks the machine.
+Each row ends in a badge: **OK**, **Check** (Worca could not tell) or **No**.
+
+| Check | What it tells you |
+|---|---|
+| Claude Code | Whether it is installed and signed in. |
+| Git | Whether Git is installed. |
+| Proxy in your environment | The proxy the machine already sends traffic through, if any. |
+| Direct connection | Whether `api.anthropic.com` answers without a proxy. |
+| Engines | How many coding engines are ready, with one row per engine under it. |
+| Local Ollama | Whether Ollama runs here, and with how many models. |
+| Anthropic API key | Whether a key is set in your environment. It never shows the key. |
+| Team setup | Only when your team shares a setup. |
+
+A **No** is not an error: it is what Worca asks you about next, and it fills a field only when that field is
+empty. Click **Start** to go on.
+
+- **Network** is skipped on a first start when the machine reaches Anthropic directly and no proxy is set in its
+  environment. Otherwise pick **Direct** or **Proxy**. With **Proxy**, click **Test** before **Next**; **Direct**
+  needs no test.
+- **Model access**: turn on every source you can use. You need at least one.
+- **Models**, then **How you work**: pick the models, the interface mode, the limits and the other defaults. All
+  of them can be changed later in Settings.
+- **Review** lists what will be saved. Click **Apply** (the button reads **Finish** when nothing changed), then **Continue** or **Start your first run**.
+
+**Set up later** closes the dialog and goes to the welcome; if you changed an answer it asks "Discard changes?" first. To come back, open Settings › General ›
+Setup assistant and click **Run setup**.
 
 ## Server API
 

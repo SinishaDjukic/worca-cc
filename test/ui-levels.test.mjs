@@ -378,7 +378,7 @@ test('catalogue lists level elements', async () => {
     ['the level avatar art in the corner', /level avatar art in the corner/i],
     ['the account-menu level card', /account-menu level card/i],
     ['Profile (the level section)', /Profile \(the level section\)/],
-    ['the level welcome and celebration', /level welcome and celebration/i],
+    ['the level celebration and summary', /level celebration and summary/i],
     ['the Getting started level line', /Getting started level line/i],
   ].map(([name, re]) => ({ name, run: () => {
     const row = rowFor(re);

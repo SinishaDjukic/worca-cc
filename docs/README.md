@@ -7,6 +7,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 - [Install](install.md) — npm, requirements, the container image and a hosted setup; running the web UI ([which setup fits you](choose-a-setup.md))
 - [Getting started](getting-started.md) — the welcome dialog, the Getting started checklist and its spotlight guides
 - [UI levels](ui-levels.md) — Simple, Advanced and Expert: what each interface mode shows, and where every element sits
+- [Worca levels](worca-levels.md) — the five levels that show how far into Worca you have got, how to reach each one and where to see yours
 - [CLI](cli.md) — common commands, exit codes and the `/worca` skill for Claude Code
 - [Why Worca](why-worca.md) — the eight differentiators, and the use cases each one unlocks
 - [Architecture](ARCHITECTURE.md) — the whole stack in one picture, and how Auto picks a run's topology
@@ -14,16 +15,24 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 ## Runs and workflows
 
 - [Runs](runs.md) — Auto, the Default workflow, a run's record, pause and resume, worktrees, pull requests and Watch PR
+- [The Runs list](runs-list.md) — find, group, label, sort and archive runs, ship a group with one Create PR, and act on several at once
+- [Diff comments](diff-comments.md) — notes and replies on single lines of a run's diff, kept in Worca
+- [Sync before run](sync-before-run.md) — bringing the source branch up to date before a run, and what to do when it is Diverged
 - [Workflows, agents and scripts](workflows.md) — the built-in agents, the workflow editor and composer chat, sharing, and the Presentation, Architecture (C4) and Promo video workflows
 - [Scripts](scripts.md) — script cards that run your own program instead of an agent, the Library's Scripts tab, testing a script by itself
 - [Run presets](run-presets.md) — a named New run setup you pick instead of filling the form
 - [Shaper](shape-it-first.md) — plan a task with Worca before it builds, in Chat, and cut a large one into slices
 - [Scheduled runs](scheduled-runs.md) — start a run later, once or on a repeat, from the web UI, the CLI or the API
+- [Git event automations](git-automations.md) — start a workflow when an issue is opened or a pull request is created, and Auto-handle (Labs)
+- [Sessions](sessions.md) — run 2–4 consecutive agent steps in one session; off by default, the **One session** switch in Labs
+- [Design](design.md) — describe a web page, document, presentation or video in a chat and agents build it in front of you (beta)
 - [Away mode](away-mode.md) — Worca answers what a run waits on while you are away, and records every answer
 - [Keep awake](keep-awake.md) — stop the computer sleeping while a run has agents working
 
 ## Projects and workspaces
 
+- [Projects](projects.md) — adding a project, its page and settings, and the team features that belong to it
+- [Search and Activity](search.md) — find a run, chat, project, workflow, schedule, setting or plugin from the top bar, and see what needs you
 - [Storage](storage.md) — where state lives, project keys, migration
 - [Workspace map](workspace-map.md) — how a workspace scan maps relations, reviewing them, measuring a scan
 - [Actions](actions.md) — check out a finished run and run the project's commands from Worca
@@ -33,6 +42,8 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 ## Chat
 
 - [Chat](chat.md) — Ask Worca: scope, cards you confirm, agent mode, Pinpoint, memory and voice
+- [Chat basics](chat-basics.md) — queueing messages while a reply runs, reusing a message, the context ring, copy buttons and finding the run behind a pull request
+- [Memory](memory.md) — the notes Worca remembers across runs and chats: Global, Project and Team, and the ones you approve
 - [Chat home](chat-home.md) — the composer, quick actions and the tabs Chat opens on
 - [Files in the chat](show-files.md) — the files card and its viewer
 - [Voice mode](speech.md) — hands-free Chat: Whisper and Kokoro in the browser, or your own speech servers
@@ -47,6 +58,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 - [Sound](sound.md) — a voice and music for a Design video through ElevenLabs: the two cards, the key, price, files, mock mode
 - [MCP servers](mcp-servers.md) — Worca's own MCP registry: catalog, sets, copies, secrets, Test
 - [Skills](skills.md) — skills in sets: the library, imports, `/<set>:<skill>` names, Team required skills
+- [Ticket updates](ticket-updates.md) — what happens to a ticket when a run that writes back finishes (Labs)
 - [Azure DevOps](azure-devops.md) — Ship-it, clone, sync, merge tracking and the Boards source on `dev.azure.com`
 - [Bitbucket](bitbucket.md) — Ship-it, clone, sync, Watch PR and merge tracking on bitbucket.org
 
@@ -54,6 +66,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 
 - [Guardrails](guardrails.md) — per-run policy sets (Permissive, Normal, Strict), enforcement, honest limitations
 - [Costs and budgets](costs.md) — cost per run, hard limits and cost tags
+- [Usage limits](usage-limits.md) — how close each provider is to its cap, and what a run that hits one does
 - [Statistics](statistics.md) — spend and outcomes by range, person and tag, CSV export and the API
 - [Team metrics](team-metrics.md) — git-backed, team-wide records of finished runs on a `worca-metrics` branch ([record format](team-metrics-record-v1.md))
 - [Team policy](team-policy.md) — team-set cost caps, allowed models, required plugins, guardrail defaults and MCP servers from a `worca-policy` branch
@@ -75,7 +88,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 - [Instance contract](instance-contract.md) — the containers, variables, identity token and heartbeat a hosting platform relies on
 - [Network proxy](network-proxy.md) — Worca behind a corporate proxy that asks for a login
 - [Project environment spec](environment-spec.md) — a project's pinned tools and apt packages
-- [Setup assistant](setup-assistant.md) — the server API behind the machine check and setup dialog
+- [Setup assistant](setup-assistant.md) — the first-launch guide that checks the machine and applies your answers, and the server API behind it
 
 ## Contributing
 

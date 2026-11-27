@@ -1,7 +1,7 @@
 # Design
 
 Describe a web page, a document (a report, an analysis or an architecture document), a presentation, a pitch deck or
-an HTML and JavaScript video in its own chat, and real agents build it in front of you. On by default (beta); `WORCA_FLAGS=-design` turns it off, and so does the
+an HTML and JavaScript video in a chat, and real agents build it in front of you. On by default (beta); `WORCA_FLAGS=-design` turns it off, and so does the
 **Design** switch in Settings › Labs (the `design` flag). With the flag off the page is hidden and every
 `/api/design` route answers 404; what Design already spent stays in Statistics.
 
@@ -25,7 +25,7 @@ an HTML and JavaScript video in its own chat, and real agents build it in front 
    [Documents](#documents).
 4. **Attach files** with the button, by pasting or by dropping them: pictures, a logo, notes. A file worca does not
    take is named under the composer.
-5. **Send.** The design opens in a chat of its own, on the Chat page (see [In the chat](#in-the-chat)); the sidebar's
+5. **Send.** The design opens in a new chat on the Chat page (see [In the chat](#in-the-chat)); the sidebar's
    **Design** stays lit and the page is titled Design. The design's title is the first line of what you wrote (the
    first sentence, at most 60 characters); no model names it. The chat names itself from what you wrote, as any chat
    does, with the design's title as its fallback; a rename before that names both. **Rename** and **Delete** are in
@@ -34,8 +34,8 @@ an HTML and JavaScript video in its own chat, and real agents build it in front 
 
 ## In the chat
 
-A chat with a design is a chat like any other. The sidebar's **Design** is the one way in made for designing, and it
-stays lit while a chat with a design is on screen, however you opened it (a design chat picked from the list lights it
+A chat with a design is a chat like any other. The sidebar's **Design** is the way in made for designing, and any chat can start a design when you ask it for one
+(see [From any chat](#from-any-chat)). Design stays lit while a chat with a design is on screen, however you opened it (a design chat picked from the list lights it
 while it loads). Beside Design the chats list is headed **Design chats** and holds only chats with a design, the ones a
 chat's own request started included; its View, counts and Archived work on those, and its **New** starts a new design
 (the design start, as the sidebar's Design opens it). It stays open or folded as you left it, as on Chat, and Chat,

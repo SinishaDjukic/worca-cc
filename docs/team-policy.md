@@ -35,7 +35,7 @@ No run is ever blocked by a policy. The two Chat web fields are the exception to
 | Chat turn limit, per-turn cap | Settings › Chat, when you have not stored them | default |
 | Chat web access | off switches web access off for chats pinned to the project; a policy can never switch it on | soft (off only) |
 | Chat web allowlist | the most a developer may allow: hosts outside it are dropped from their own list for chats pinned to the project; it never adds a host | soft |
-| Guardrails default set / minimum tier | what the New pipeline picker starts on; a run below the tier warns | default / soft |
+| Guardrails default set / minimum tier | what the New run picker starts on; a run below the tier warns | default / soft |
 | Model roles (`models.roles`) | Deep thinking, Everyday tasks, Quick jobs per harness, by upstream model; each machine maps it to its own source | default / soft |
 | Interface level, AI-written PR descriptions, Smart run names, Coding agent, Sync before run, Wait for the network (`setup.*`) | offered in the setup assistant on Review; nothing changes before Apply | default |
 | Allowed models, step defaults, hide built-ins | pickers warn on an off-list model; roles you have not configured start from the team's | soft / default |
@@ -48,8 +48,8 @@ No run is ever blocked by a policy. The two Chat web fields are the exception to
 | Shaper features: pull requests (`pr.slices`) | `each` (a stacked PR per slice) or `one` (one PR when the feature is done), until the project sets its own; never in `workspaceRuns` (a workspace run is never sliced) | default |
 | Show Worca levels in Team metrics (`metrics.showLevels`) | bool, off unless on: the Level column and the leaderboard badges on the [Team metrics](team-metrics.md#leaderboard-and-worca-levels) page | default |
 | Record runs to team metrics, minimum Worca version | a hint when "Include my runs" is off; a banner on an older client | soft |
-| Tag dimensions (`runs.tagDimensions`) | up to 10 `{ key, label, values?, required?, default? }` run-tag keys: one New run slot each, a picker of the allowed values; `default` pre-fills it (one of the values, when there are values). A mandatory (`required`) key the run does not carry records a `tag-missing:cc` finding: mandatory keys warn, or block a start with Require mandatory tags on. Setting it replaces the developer's Settings › Tags rows and makes them read-only | soft |
-| Require mandatory tags (`runs.enforceTags`) | bool. On: a run cannot start (New run, Chat, schedules, Run after, API, CLI) while a mandatory tag has no value after pre-fill, or a tag is outside its values; a scheduled firing is skipped with the reason. Off, or unset under a policy that sets `runs.tagDimensions`: mandatory tags only warn. Unset with no policy list: the developer's own Settings › Tags switch applies | soft |
+| Tag dimensions (`runs.tagDimensions`) | up to 10 `{ key, label, values?, required?, default? }` run-tag keys: one New run slot each, a picker of the allowed values; `default` pre-fills it (one of the values, when there are values). A mandatory (`required`) key the run does not carry records a `tag-missing:cc` finding: mandatory keys warn, or block a start with Require mandatory tags on. Setting it replaces the developer's Settings › Labels & cost tags rows and makes them read-only | soft |
+| Require mandatory tags (`runs.enforceTags`) | bool. On: a run cannot start (New run, Chat, schedules, Run after, API, CLI) while a mandatory tag has no value after pre-fill, or a tag is outside its values; a scheduled firing is skipped with the reason. Off, or unset under a policy that sets `runs.tagDimensions`: mandatory tags only warn. Unset with no policy list: the developer's own Settings › Labels & cost tags switch applies | soft |
 | Catalogs: guardrail sets, models | distributed as read-only rows with a **policy** badge; model env may use `${VAR}` indirection only — secrets never go on the branch | — |
 
 A document may also carry a **`workspaceRuns`** block: the same fields, applied instead of the
@@ -106,7 +106,7 @@ local value where yours is looser than a soft team cap.
   "Continue past team cap"; the override persists on the run. The team total cap is acknowledged
   once per reset window per home. Your own local caps keep their existing behaviour and are never
   bypassed by a team acknowledgement.
-- **Run start.** New pipeline lists the policy's notes (off-list model, missing plugin, guardrails
+- **Run start.** New run lists the policy's notes (off-list model, missing plugin, guardrails
   below the minimum) — nothing there blocks Start run. `POST /api/run` and `worca run` refuse only
   a team total cap that has not been acknowledged; `pastTeamCap` / `--past-team-cap [--reason]`
   records the acknowledgement and proceeds.
