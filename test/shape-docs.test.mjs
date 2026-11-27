@@ -346,3 +346,25 @@ test('s7: confirm in place in the guide and the design system', () => {
   assert.deepEqual(missing(design, ['Lock tip', '.rd-tip', '.run-status-link', 'The open pull request is not counted.']), [], 'design-system.md');
   assert.doesNotMatch(`${guide} ${design}`, /#40 is not counted/);
 });
+
+// Shaper small runs slice 8 (R-po-3): the gate on the Verifier's gaps.
+test('s8 (R-po-3): the Verifier part says it asks from round 1 before any run, with three answers per gap', () => {
+  const part = smallPart('Runs stop, change and the Verifier');
+  assert.deepEqual(missing(part, ['from round 1', 'Add a fix run', 'Ship with the gap', 'Change the requirement', 'a reason is required']), []);
+  assert.doesNotMatch(part, /stops adding runs by itself/, 'the old bound rule is gone');
+});
+
+test('s8 (R-po-3): the Ship part names the shipped-gap line', () => {
+  assert.deepEqual(missing(smallPart('Ship'), ['ships with a gap']), []);
+});
+
+test('s8: design-system.md describes the Gap question after the Open stop list', () => {
+  const design = read('design-system.md');
+  const at = design.indexOf('\n### Gap question\n');
+  assert.ok(at >= 0, 'the heading "### Gap question"');
+  assert.ok(at > design.indexOf('\n### Open stop list (checked)\n'), 'after "Open stop list"');
+  const rest = design.slice(at + 1);
+  const next = rest.indexOf('\n### ', 1);
+  assert.deepEqual(missing(flat(next < 0 ? rest : rest.slice(0, next)), ['ui/public/shape/gap-question.mjs']), []);
+});
+

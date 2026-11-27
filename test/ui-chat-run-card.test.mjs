@@ -2662,7 +2662,8 @@ test('B1 one card: one primary button per card in S1, S3, S5, S6 (the step card\
 import { verifyStop as vfStop, VERIFY_WORDS as VF_WORDS } from '../src/shared/shape/verifier.mjs';
 const VF_PID = 'beef0009';
 const VF_GAPS = [{ id: 'R-po-2', why: 'sign-up never calls the email service', run: 4 }, { id: 'R-po-3', why: 'the export skips empty charts', run: 5 }];
-const VF_PQ = { id: 'verify-3-x', kind: 'gate', nodeId: 'n_verify', issues: [], stop: vfStop({ gaps: VF_GAPS, round: 3, fixCycles: 2 }) };
+const VF_PQ = { id: 'verify-3-x', kind: 'gate', nodeId: 'n_verify', issues: [],
+  stop: vfStop({ gaps: VF_GAPS, round: 3, fixCycles: 2, texts: { 'R-po-2': 'Sign-up sends mail', 'R-po-3': 'Charts export' } }) };
 function vfCard(state, { gaps = state === 'gaps' ? VF_GAPS : [], ask = null } = {}) {
   const states = state === 'gaps' ? ['done', 'done', 'done', 'planned', 'planned'] : ['done', 'done', 'done'];
   const v = oneView(states, { status: state === 'gaps' || state === 'halted' ? 'active' : 'done', total: states.length, log: [ONE_CL, ONE_L('Runs approved')], ask,
@@ -2681,17 +2682,15 @@ function paintVf(state, opts = {}, stub = { paintQuestion: () => null, releaseQu
   return f;
 }
 
-test('C5 one card: a Verifier stop is one question with its gap list, Worca\'s pick preselected, one primary and no foot Answer', () => {
+test('C5 one card: a Verifier stop is one gap question, a fix run preset per gap, one primary and no foot Answer', () => {
   try {
     const f = paintVf('asking', { ask: { index: null, runId: 'run-v', pipelineId: VF_PID, id: VF_PQ.id, kind: 'gate' } }, stepStub(VF_PQ, renderGateCard));
     assert.equal(f.$$('.chat-rc-q .qpanel[data-qid]').filter((p) => shownIn(p)).length, 1, 'one question');
-    assert.equal(f.$('.qopt[data-preset]')?.textContent.includes('Add a run for the gap'), true);
-    assert.equal(f.$$('.btn-primary').filter((b) => shownIn(b)).length, 1, 'one primary');
+    assert.deepEqual(f.$$('.qopt[data-preset]').map((t) => [t.dataset.value, t.textContent.includes('Add a fix run')]), [['fix', true], ['fix', true]]);
+    assert.deepEqual(f.$$('.btn-primary').filter((b) => shownIn(b)).map((b) => b.textContent), ['Send answers'], 'one primary');
     assert.equal(f.$$('button').filter((b) => shownIn(b) && /^Answer/.test(b.textContent)).length, 0, 'no foot Answer');
-    const lists = f.$$('.verify-gaps').filter((l) => shownIn(l));
-    assert.equal(lists.length, 1, "one gap list: the question's");
-    assert.ok(lists[0].closest('.qpanel'));
-    assert.equal(lists[0].querySelectorAll('.plan-check-row').length, 2);
+    assert.equal(f.$$('.qpanel[data-kind="gaps"] .qblock').filter((b) => shownIn(b)).length, 2, 'one question per gap');
+    assert.equal(f.$$('.verify-gaps').filter((l) => shownIn(l)).length, 0, 'no second list of the same gaps');
     assert.equal(f.$('.chat-rc-status .run-status-word').textContent, 'Needs you');
     assert.equal(stepChip(VF_PQ, {}), '', 'the head names the Verifier: no chip repeats it');
     assert.equal(f.$$('.qpanel .ask-mcard-kind').length, 0);

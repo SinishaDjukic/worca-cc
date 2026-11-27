@@ -682,6 +682,9 @@ carried runs included; a carried run's draft is closed. With the PR setting "One
 auto-finisher opens that one PR once every run is done, and no run opens one of its own. With the flag off, One stays
 refused with `STACKED_ONLY` ("small runs ship a PR per run"), as before.
 
+Each gap you shipped from the Verifier's question is one line on the Ship card, with its reason: "R-po-2 ships with a
+gap: covered by a later feature". The requirement's own row still reads "gap accepted".
+
 Stacked, with the flag on, opens one PR per run along
 the real branches: from the head back along each run's recorded base; each PR is based on the branch of the one before
 it, the first on the feature's base (or on the feature's base when the PR before it is merged or its branch still merges
@@ -742,8 +745,19 @@ Each PR body has exactly one `Care: …` line, then one line per requirement mar
 
 A run stops for one of three reasons: a check failed, a role objects, or a requirement would have to change. Finished
 work is never rewritten: when a changed requirement's owner has finished, the change arrives as a new small run. When
-the Verifier finds a gap, the gap becomes a small run too, and the Verifier checks again once it is done. After Care's
-fix cycles it stops adding runs by itself and asks you: **Add a run for the gap** or **Ship with the gap**.
+the Verifier finds a gap, it asks you before any run is added, from round 1 on, on every round with an open gap. Each gap
+gets one of three answers, and **Send answers** stays off until every gap has one:
+
+- **Add a fix run**: one more run closes the gap, then the Verifier checks again.
+- **Ship with the gap**: a reason is required ("R-po-2: a reason is required to ship with the gap" without one). The gap
+  is not asked again in the same series, and the Ship card lists it with its reason.
+- **Change the requirement**: you write the new text (1 to 300 characters). It goes through the same change path as a
+  change from chat: the text changes, a change run builds it, and the next Verifier round checks the new text. The run
+  that owns it must still be finished.
+
+Each fix run and change run added this way builds on the last run before it, so it starts with all the work so far.
+When every gap is shipped, the check reads "Ready to ship". When the requirement changed since the question, or its run
+is no longer finished, nothing is added and the check reads Stopped: Resume runs the Verifier again and asks again.
 
 ### The four places
 

@@ -321,6 +321,23 @@ without a row here, or when the CSS has a `.chat-rc-stop*` class without one.
 | step card | `.chat-rc-stop-q` | an open stop's step card host, also `.chat-rc-q`, drawn by the card question's rules, step head hidden |
 | Resume | `.chat-rc-stop-resume` | a failed run's Resume, the shared `.btn.btn-sm`, no rule of its own |
 | error | `.chat-rc-stop-err` | Resume's error, `role="status"`, `--red-ink`, `--fs-meta` |
+
+### Gap question
+The Verifier's question when a round finds gaps: one question per gap, before any run is added. The module is
+`ui/public/shape/gap-question.mjs` (`buildGapQuestion`), tested by `test/ui-shape-gap-question.test.mjs`; the step card
+(`ui/public/shape/step-card.mjs`) draws it on every surface that answers a stop. It is the card question
+(`buildChatQuestion`, `ui/public/chat/question.mjs`) with one `.qblock` per gap: the gap's id, its why once, and three
+`.qopt` answers (Add a fix run, Ship with the gap, Change the requirement), Add a fix run preset. No list repeats the
+gaps. It adds no class and no CSS of its own.
+
+| Part | Class | Means |
+|---|---|---|
+| panel | `.qpanel[data-kind="gaps"]` | the question's panel, one `.qblock` per gap in the stop's order |
+| reason | `input.input.input-sm` | under Ship with the gap, as the Ship card's reason input; at most 300 characters, required |
+| new text | `textarea.textarea` | under Change the requirement, holding the current text; 1 to 300 characters |
+| error | `.plan-err` (the step card's `errLine`) | a refusal, said once, under the gap it names (else above the button) |
+| send | `.qpanel-foot` `button.btn.btn-primary` | the one primary, "Send answers"; off until every gap has its answer and the text it needs |
+
 ### Usage rings
 The avatar draws only the session and long-window rings (`ui/public/usage-view.mjs`), each in one tone (`--ink-2`,
 `--amber` at the warning line, `--red` full at the limit); spend is never a ring there, it lives in the account menu's

@@ -215,20 +215,40 @@ test('C4: a refused change rethrows code and status, holds nothing and answers n
   assert.equal(n, 1, 'Keep it never applies a change');
 });
 
-test('C5: answering a Verifier-run stop (no slice, no other run going) delivers at once', async () => {
+test('C5: a Verifier-run gap stop takes only a complete answer (422 naming the gap), and delivers it normalized at once', async () => {
   const { verifyStop } = await import('../src/shared/shape/verifier.mjs');
   const runs = new Map();
   const answers = [];
-  const stop = verifyStop({ gaps: [{ id: 'R-po-2', why: 'x' }], round: 3, fixCycles: 2 });
+  const stop = verifyStop({ gaps: [{ id: 'R-po-2', why: 'x' }, { id: 'R-ux-1', why: 'y' }], round: 1, fixCycles: 2,
+    texts: { 'R-po-2': 'People export', 'R-ux-1': 'The list is dense' } });
   const e = { id: 'rv', pipelineId: pipe('running'), status: 'running', heldStop: null,
-    pendingQuestion: { id: 'verify-3-x', kind: 'gate', stop },
-    orch: { runShape: { verify: { featureId: 'feat_x', round: 3 } }, answer: (id, payload, by) => answers.push({ id, payload, by }) } };
+    pendingQuestion: { id: 'verify-1-x', kind: 'gate', stop },
+    orch: { runShape: { verify: { featureId: 'feat_x', round: 1 } }, answer: (id, payload, by) => answers.push({ id, payload, by }) } };
   runs.set(e.id, e);
   const held = createHeldStops({ runs, liveSliceOf: () => null, broadcastFeature: () => {}, resolvePending: () => true, now: Date.now });
-  assert.equal(held.answer(e, 'verify-3-x', { decision: 'another' }, 'ann'), undefined);
-  assert.deepEqual(answers, [{ id: 'verify-3-x', payload: { decision: 'another' }, by: 'ann' }]);
+  const refusedWith = (payload, gap, code, message) => assert.throws(() => held.answer(e, 'verify-1-x', payload, 'ann'), (err) => {
+    assert.equal(err.code, 'INVALID_ANSWER');
+    assert.equal(err.status, 422);
+    assert.equal(err.message, message);
+    assert.deepEqual(err.errors[0], { field: 'answers', path: `answers.${gap}`, code, message });
+    return true;
+  });
+  refusedWith({ decision: 'answer', answers: [{ id: 'R-po-2', answer: 'ship', reason: '' }, { id: 'R-ux-1', answer: 'fix' }] },
+    'R-po-2', 'reason_required', 'R-po-2: a reason is required to ship with the gap');
+  refusedWith({ decision: 'answer', answers: [{ id: 'R-po-2', answer: 'fix' }] }, 'R-ux-1', 'unanswered', 'R-ux-1 has no answer yet');
+  for (const decision of ['another', 'continue', 'revise']) {
+    assert.throws(() => held.answer(e, 'verify-1-x', { decision }, 'ann'), (err) => err.code === 'INVALID_ANSWER' && err.status === 422, decision);
+  }
+  assert.deepEqual(answers, [], 'nothing handed over');
   assert.equal(e.heldStop, null);
-  assert.throws(() => held.answer(e, 'verify-3-x', { decision: 'revise' }, 'ann'), (err) => err.code === 'INVALID_ANSWER');
+  assert.equal(e.pendingQuestion.id, 'verify-1-x', 'the question stays open');
+  assert.equal(held.answer(e, 'verify-1-x', { decision: 'answer', answers: [
+    { id: 'R-ux-1', answer: 'change', text: ' The list is\n compact ', from: 'forged' },
+    { id: 'R-po-2', answer: 'ship', reason: '  covered by a later feature ' }] }, 'ann'), undefined);
+  assert.deepEqual(answers, [{ id: 'verify-1-x', by: 'ann', payload: { decision: 'answer', answers: [
+    { id: 'R-po-2', answer: 'ship', reason: 'covered by a later feature' },
+    { id: 'R-ux-1', answer: 'change', text: 'The list is compact', from: 'The list is dense' }] } }]);
+  assert.equal(e.heldStop, null);
 });
 
 // One stop, one answer: once a stop is handed to the run (due or delivered), a later answer with its id is refused.

@@ -6,7 +6,7 @@ import { renderAskChanges } from '../chat/ask-changes.mjs';
 import { buildCheckFold, buildCheckRows, checkMark } from './check-row.mjs';
 import { checkLine } from './plan-text.mjs';
 import { ledgerCheck } from '../../../src/shared/shape/acceptance.mjs';
-import { CONFIRM_REASON_MAX, MARK_WORDS } from '../../../src/shared/shape/ship-ledger.mjs';
+import { CONFIRM_REASON_MAX, MARK_WORDS, shippedGapLine } from '../../../src/shared/shape/ship-ledger.mjs';
 
 const MINUS = '\u2212';
 const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -361,13 +361,25 @@ function smallRunsShip(doc, h, m, handlers) {
   }
   const err = h('div', 'ask-card-err'); err.setAttribute('aria-live', 'polite');
   const whyId = `ask-shipcard-why-${++srSeq}`;
+  /** A line of `cls` holding `text`. R-comp-4 never breaks at its hyphens on a narrow screen: each requirement id is one
+   *  unbreakable span. */
+  const idLine = (cls, text) => {
+    const line = h('div', cls);
+    for (const part of String(text).split(/(\bR-[A-Za-z0-9]+-\d+\b)/)) {
+      if (/^R-[A-Za-z0-9]+-\d+$/.test(part)) line.appendChild(h('span', 'ask-shipcard-id', part));
+      else if (part) line.appendChild(doc.createTextNode(part));
+    }
+    return line;
+  };
   let confirming = null;                                  // the id whose mark is being sent
   const drafts = draftsOf(m.featureId);                   // id → {mark, text}: Not met / Dropped picked, its reason not saved yet
   const confirmedEl = h('div');
   const ownedEl = h('div', 'srows ask-shipcard-owned');
+  // Slice 8 (D12): one line per gap shipped as is, with its reason (the owned row's note keeps "gap accepted" only).
+  const gapLines = (Array.isArray(sr.shippedGaps) ? sr.shippedGaps : []).map((g) => idLine('ask-shipcard-why ask-shipcard-gap', shippedGapLine(g)));
   const careEl = h('div');
   const whyEl = h('div');
-  body.append(confirmedEl, ownedEl, careEl, whyEl);
+  body.append(confirmedEl, ownedEl, ...gapLines, careEl, whyEl);
   const actions = h('div', 'ask-mcard-actions');
   actions.appendChild(h('span', 'ask-card-actions-spacer'));
   const create = h('button', 'btn btn-sm', null); create.type = 'button'; create.dataset.act = 'ship-create';
@@ -440,12 +452,7 @@ function smallRunsShip(doc, h, m, handlers) {
     careEl.replaceChildren(careRow());
     stats.textContent = sr.unowned && sr.unowned.length ? 'Waiting' : sr.blocked ? 'Your turn: mark what only a person can' : 'Ready to ship';
     if (sr.blocked && sr.reason) {
-      const why = h('div', 'ask-shipcard-why'); why.id = whyId;
-      // R-comp-4 never breaks at its hyphens on a narrow screen: each requirement id is one unbreakable span.
-      for (const part of sr.reason.split(/(\bR-[A-Za-z0-9]+-\d+\b)/)) {
-        if (/^R-[A-Za-z0-9]+-\d+$/.test(part)) why.appendChild(h('span', 'ask-shipcard-id', part));
-        else if (part) why.appendChild(doc.createTextNode(part));
-      }
+      const why = idLine('ask-shipcard-why', sr.reason); why.id = whyId;
       whyEl.replaceChildren(why);
       create.setAttribute('aria-describedby', whyId);
     } else { whyEl.replaceChildren(); create.removeAttribute('aria-describedby'); }

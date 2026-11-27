@@ -109,12 +109,17 @@ export const reasonLine = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ')
  * here once. Without `runs` the output is D1's, key for key.
  * Fail closed, only with `runs`: an owned entry of no run has status `unowned`; `unowned` (its ids, only when there are
  * any) blocks Ship, its reason first.
- * → {confirmed, owned, waiting, blocked, reason, met: {met, total}, unmet: [{id, text, mark, reason}], unowned?: [id]}
+ * → {confirmed, owned, waiting, blocked, reason, met: {met, total}, unmet: [{id, text, mark, reason}], unowned?: [id],
+ *    shippedGaps?: [{id, reason}]}
  */
 export function shipLedger({ agreed = [], kinds = [], acceptance = [], verify = null, runs = null, reruns = [] } = {}) {
   const texts = new Map(list(agreed).map((a) => [a.id, a.text || '']));
   const marks = new Map(list(acceptance).filter((e) => e && confirmMarkOf(e.mark)).map((e) => [String(e.id), e]));
-  const gaps = verify && verify.state === 'accepted' ? new Set(list(verify.gaps).map((g) => g.id)) : new Set();
+  // Slice 8 (D12): the gaps answered "ship with the gap" in this series, with their reasons (listed while the other
+  // answers' runs build too). An accepted check's gap-accepted ids are those; one from before the gate (no `shipped`)
+  // reads its gaps, as before.
+  const shippedGaps = list(verify && verify.shipped).filter((g) => g && g.id).map((g) => ({ id: g.id, reason: g.reason ?? null }));
+  const gaps = new Set(verify && verify.state === 'accepted' ? (shippedGaps.length ? shippedGaps : list(verify.gaps)).map((g) => g.id) : []);
   const judged = Array.isArray(runs);
   const confirmed = []; const owned = [];
   for (const k of list(kinds)) {
@@ -146,8 +151,14 @@ export function shipLedger({ agreed = [], kinds = [], acceptance = [], verify = 
   const unmet = confirmed.filter((c) => c.state === 'confirmed' && c.mark !== 'met').map((c) => ({ id: c.id, text: c.text, mark: c.mark, reason: c.reason }));
   if (judged) for (const e of [...owned, ...confirmed]) e.shown = requirementStatus(e, { runs, reruns });
   return { confirmed, owned, waiting, blocked: open.length + needs.length + unowned.length > 0, reason, met: { met, total: owned.length + confirmed.length }, unmet,
-    ...(unowned.length ? { unowned } : {}) };
+    ...(unowned.length ? { unowned } : {}), ...(shippedGaps.length ? { shippedGaps } : {}) };
 }
+
+/** Slice 8 (D12): the Ship card's line for a gap shipped as is: `R-po-2 ships with a gap: covered by a later feature`. */
+export const shippedGapLine = (g) => {
+  const why = reasonLine(g && g.reason);
+  return `${g && g.id} ships with a gap${why ? `: ${why}` : ''}`;
+};
 
 /** One line per Not met or Dropped requirement, for the done Ship card and each PR description:
  *  `Not met: R-comp-4 · the reason`. */

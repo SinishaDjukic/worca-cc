@@ -1,8 +1,10 @@
 // src/shared/shape/verifier.mjs — Shaper small runs C5: the Verifier, one check of a feature as a whole once its last run
-// is done. Its result file, its prompt (requirement text as one-line data in a fenced block), the bound rule over Care's
-// fix cycles, the bound stop (C3's stop shape, reason `check`), the receipt lines and the card words. Pure and
-// browser-safe: the check loop (src/core/shape/verifier.mjs), the orchestrator, the feature log and the card read it.
-import { oneLineText, CHANGE_TEXT_MAX } from './req-change.mjs';
+// is done. Its result file, its prompt (requirement text as one-line data in a fenced block), the round rule (any gap
+// asks), the gate stop (C3's stop shape, reason `check`, three answers per gap) and its validator, the receipt lines and
+// the card words. Pure and browser-safe: the check loop (src/core/shape/verifier.mjs), the orchestrator, the feature log
+// and the card read it.
+import { oneLineText, CHANGE_TEXT_MAX, normalizeChange } from './req-change.mjs';
+import { reasonLine, CONFIRM_REASON_MAX } from './ship-ledger.mjs';
 
 /** The stored states of one check (`outline.verify.checks[].state`). */
 export const VERIFY_STATES = Object.freeze(['verifying', 'gaps', 'clean', 'accepted']);
@@ -78,32 +80,92 @@ export function verifyPrompt({ owned = [], round = 1 } = {}) {
 
 const gapCount = (gaps) => (Array.isArray(gaps) ? gaps.length : Number(gaps) || 0);
 
-/** D8: round r with gaps adds gap runs while r ≤ fixCycles + extra and stops after. → 'clean' | 'runs' | 'stop' */
-export function verifyRoundPlan({ round, fixCycles, extra = 0, gaps }) {
-  if (!gapCount(gaps)) return 'clean';
-  return Number(round) <= (Number(fixCycles) || 0) + (Number(extra) || 0) ? 'runs' : 'stop';
+/** Slice 8 (D1): any gap asks, from round 1 on, whatever the round, Care's fix cycles or `extra`. → 'clean' | 'ask' */
+export function verifyRoundPlan({ gaps } = {}) {
+  return gapCount(gaps) ? 'ask' : 'clean';
 }
 
 const opt = (value, label, sub, short, payload) => ({ value, label, sub, go: label, short, payload });
 
-/** The bound stop: C3's stop shape with reason `check`; Worca picks one more gap run. */
-export function verifyStop({ gaps = [], round = 1, fixCycles = 0 } = {}) {
+/** Slice 8 (D2): the three answers each open gap gets. */
+export const GAP_ANSWERS = Object.freeze([
+  Object.freeze({ value: 'fix', label: 'Add a fix run', sub: 'One more run closes it, then the Verifier checks again' }),
+  Object.freeze({ value: 'ship', label: 'Ship with the gap', sub: 'Say why it can ship as is' }),
+  Object.freeze({ value: 'change', label: 'Change the requirement', sub: 'A change run builds the new text, then the Verifier checks it' }),
+]);
+const GAP_ANSWER_VALUES = new Set(GAP_ANSWERS.map((a) => a.value));
+
+/** The gate stop (slice 8): C3's stop shape with reason `check` and `form: 'gaps'`. Every open gap is answered (fix, ship
+ *  or change) before a run is added; Worca picks a fix run. `texts` holds each requirement's current text. */
+export function verifyStop({ gaps = [], round = 1, texts = {} } = {}) {
   const list = Array.isArray(gaps) ? gaps : [];
   const n = list.length;
   const first = list[0] || { id: '', why: NO_VERDICT };
   const why = String(first.why || NO_VERDICT).replace(/[.\s]+$/, '');
-  const rechecks = Math.max(0, (Number(round) || 1) - 1);
+  const textOf = texts && typeof texts === 'object' ? texts : {};
   return {
-    reason: 'check', run: null, node: 'n_verify', pick: 'another',
-    head: `Verifier · ${plural(n, 'gap')} still open`,
-    text: `${first.id}: ${why}${n > 1 ? ` and ${n - 1} more` : ''}. Still open after ${plural(rechecks, 're-check')}.`,
+    reason: 'check', run: null, node: 'n_verify', form: 'gaps', pick: 'fix',
+    head: `Verifier · ${plural(n, 'gap')} ${(Number(round) || 1) > 1 ? 'still open' : 'found'}`,
+    text: `${first.id}: ${why}${n > 1 ? ` and ${n - 1} more` : ''}. No run is added until each gap is answered.`,
     findingsLine: `${plural(n, 'gap')} open`,
-    gaps: list.map((g) => ({ id: g.id, why: g.why })),
-    options: [
-      opt('another', 'Add a run for the gap', 'One more small run, then the Verifier checks again', 'another gap run', { decision: 'another' }),
-      opt('continue', 'Ship with the gap', "The gap stays recorded in the feature's figures", 'shipped with the gap', { decision: 'continue' }),
-    ],
+    gaps: list.map((g) => ({ id: g.id, why: g.why, text: typeof textOf[g.id] === 'string' ? textOf[g.id] : '' })),
+    answers: GAP_ANSWERS,
+    options: [opt('answer', 'Send answers', 'Every gap answered, then Worca adds the runs', 'answered the gaps', { decision: 'answer' })],
   };
+}
+
+const refuse = (code, id, error) => ({ ok: false, code, id, error });
+const NOT_AN_ANSWER = "not one of this stop's answers";
+
+/**
+ * Slice 8 (D3): the one validator of a gate answer, `{decision:'answer', answers:[{id, answer, reason?, text?}]}`.
+ * → {ok:true, answer} (one answer per gap, in the stop's order; a ship's reason one line and capped, a change's text
+ * normalized with the stop's own text as `from`) or {ok:false, code, id, error}.
+ */
+export function verifyGateAnswer(stop, raw) {
+  const gaps = stop && Array.isArray(stop.gaps) ? stop.gaps : [];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.decision !== 'answer' || !Array.isArray(raw.answers)) {
+    return refuse('INVALID_ANSWER', null, NOT_AN_ANSWER);
+  }
+  const gapOf = new Map(gaps.map((g) => [g.id, g]));
+  const byId = new Map();
+  for (const a of raw.answers) {
+    if (!a || typeof a !== 'object' || typeof a.id !== 'string') return refuse('INVALID_ANSWER', null, NOT_AN_ANSWER);
+    const id = a.id.trim();
+    const gap = gapOf.get(id);
+    if (!gap) { const shown = clip(id, 40); return refuse('UNKNOWN_GAP', shown, `${shown} is not a gap of this check`); }
+    if (byId.has(id) || !GAP_ANSWER_VALUES.has(a.answer)) return refuse('INVALID_ANSWER', id, NOT_AN_ANSWER);
+    if (a.answer === 'fix') byId.set(id, { id, answer: 'fix' });
+    else if (a.answer === 'ship') {
+      const reason = reasonLine(a.reason).slice(0, CONFIRM_REASON_MAX);
+      if (!reason) return refuse('REASON_REQUIRED', id, `${id}: a reason is required to ship with the gap`);
+      byId.set(id, { id, answer: 'ship', reason });
+    } else {
+      const from = typeof gap.text === 'string' ? gap.text : '';
+      const c = normalizeChange({ id, to: a.text, from });
+      if (!c.ok && c.code === 'UNCHANGED') return refuse('UNCHANGED', id, `${id} already reads that`);
+      if (!c.ok) return refuse('INVALID_TEXT', id, `${id}: the new text must be 1 to ${CHANGE_TEXT_MAX} characters`);
+      byId.set(id, { id, answer: 'change', text: c.change.to, from });
+    }
+  }
+  const answers = [];
+  for (const g of gaps) {
+    if (!byId.has(g.id)) return refuse('UNANSWERED', g.id, `${g.id} has no answer yet`);
+    answers.push(byId.get(g.id));
+  }
+  return { ok: true, answer: { decision: 'answer', answers } };
+}
+
+/** The card log and audit words of a gate answer: `1 fix run · 1 changed requirement · 1 ships with a gap`. */
+export function gapAnswerSummary(answers) {
+  const list = Array.isArray(answers) ? answers : [];
+  const n = (v) => list.filter((a) => a && a.answer === v).length;
+  const fix = n('fix'); const change = n('change'); const ship = n('ship');
+  return [
+    fix ? plural(fix, 'fix run') : '',
+    change ? plural(change, 'changed requirement') : '',
+    ship ? `${ship} ${ship === 1 ? 'ships' : 'ship'} with a gap` : '',
+  ].filter(Boolean).join(' · ');
 }
 
 const checksOf = (verify) => (verify && Array.isArray(verify.checks) ? verify.checks : []);

@@ -15,6 +15,7 @@ import { groupShipLine } from '../ui/public/run-status-card.mjs';
 import { groupModel } from '../src/shared/run-model.mjs';
 // A namespace read: the carried-run words are new exports.
 import * as LEDGER from '../src/shared/shape/ship-ledger.mjs';
+import * as VERIFIER from '../src/shared/shape/verifier.mjs';
 
 const EXCEPTION = 'Shaper small runs';   // the Labs entry's title
 const OLD_REASON = 'small runs ship a PR per run';
@@ -137,3 +138,24 @@ test('s7: confirmed by a person stays only in the rule words, the owner key and 
   assert.deepEqual(said.filter(({ file }) => file === 'src/shared/shape/req-status.mjs').map(({ text }) => text.slice(1, -1))
     .filter((t) => t !== 'confirmed by a person'), []);
 });
+
+// ── Slice 8 (D15): the Verifier gate's new texts ──────────────────────────────────────────────────────────────
+test('s8: the gap gate\'s texts say no small runs', () => {
+  assert.ok(Array.isArray(VERIFIER.GAP_ANSWERS), 'verifier.mjs exports GAP_ANSWERS');
+  assert.equal(typeof LEDGER.shippedGapLine, 'function', 'ship-ledger exports shippedGapLine');
+  const gaps = [{ id: 'R-po-2', why: 'x' }, { id: 'R-ux-1', why: 'y' }];
+  const texts = { 'R-po-2': 'People export', 'R-ux-1': 'The list is dense' };
+  const stops = [1, 2].map((round) => VERIFIER.verifyStop({ gaps, round, fixCycles: 2, texts }));
+  const decide = (...answers) => ({ decision: 'answer', answers });
+  const FIX = { id: 'R-ux-1', answer: 'fix' };
+  const refusals = [
+    { decision: 'another' }, decide(), decide({ id: 'R-x-1', answer: 'fix' }),
+    decide({ id: 'R-po-2', answer: 'ship' }, FIX), decide({ id: 'R-po-2', answer: 'change', text: '' }, FIX),
+    decide({ id: 'R-po-2', answer: 'change', text: 'People export' }, FIX),
+  ].map((raw) => VERIFIER.verifyGateAnswer(stops[0], raw).error);
+  const words = [...VERIFIER.GAP_ANSWERS.flatMap((a) => [a.label, a.sub]), ...stops.flatMap((s) => [s.head, s.text, ...s.options.flatMap((o) => [o.label, o.sub])]),
+    ...refusals, LEDGER.shippedGapLine({ id: 'R-po-2', reason: 'covered by a later feature' }), LEDGER.shippedGapLine({ id: 'R-po-2' })];
+  assert.ok(words.every((w) => typeof w === 'string' && /\s/.test(w)), JSON.stringify(words));
+  assert.deepEqual(words.flatMap((w) => hits(JSON.stringify(w))), []);
+});
+

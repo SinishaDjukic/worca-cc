@@ -624,3 +624,30 @@ test('s7: the card names #40 once', () => {
   assert.equal(el.textContent.split('#40').length - 1, 1, el.textContent);
   assert.deepEqual(carriedLines(el), [CARRIED_LINE]);
 });
+
+// ── Slice 8 (R-po-3, D12): the Ship card lists each gap shipped as is ─────────────────────────────────────────
+const SHIP_GAP = { id: 'R-po-2', reason: 'covered by a later feature' };
+const gapLines = (el) => [...el.querySelectorAll('.ask-shipcard-gap')];
+
+test("the Ship card lists 'R-po-2 ships with a gap: covered by a later feature'", () => {
+  const { el } = srCard({ ...READY_SR, shippedGaps: [SHIP_GAP] });
+  const lines = gapLines(el);
+  assert.deepEqual(lines.map((l) => l.textContent), ['R-po-2 ships with a gap: covered by a later feature']);
+  assert.ok(lines[0].classList.contains('ask-shipcard-why'), 'the reason line\'s typography');
+  assert.deepEqual([...lines[0].querySelectorAll('.ask-shipcard-id')].map((x) => x.textContent), ['R-po-2'], 'the id is one unbreakable span');
+  assert.equal(el.textContent.split('covered by a later feature').length - 1, 1, 'the reason shows once');
+  assert.ok([...el.querySelectorAll('.ask-shipcard-owned .plan-check-detail')].some((d) => d.textContent === 'run 2 · gap accepted'), 'the row note stays');
+  assert.equal(el.querySelector('[data-act="ship-create"]').disabled, false, 'a shipped gap does not block Ship');
+});
+
+test('the Ship card lists one line per shipped gap from the ledger the server builds, and none without a shipped gap', () => {
+  const ledger = shipLedger({ agreed: [{ id: 'R-po-1', text: 'People see it' }, { id: 'R-po-2', text: 'People pin it' }, { id: 'R-ux-1', text: 'It is dense' }],
+    kinds: [1, 2, 3].map((n) => ({ id: ['R-po-1', 'R-po-2', 'R-ux-1'][n - 1], kind: 'owned', run: n })), acceptance: [],
+    verify: { state: 'accepted', gaps: [], shipped: [SHIP_GAP, { id: 'R-ux-1', reason: 'the next feature redraws it' }] },
+    runs: [1, 2, 3].map((index) => ({ index, state: 'done' })) });
+  const { el } = srCard(SR({ ...READY_SR, ...ledger }));
+  assert.deepEqual(gapLines(el).map((l) => l.textContent),
+    ['R-po-2 ships with a gap: covered by a later feature', 'R-ux-1 ships with a gap: the next feature redraws it']);
+  assert.equal(gapLines(srCard(READY_SR).el).length, 0);
+});
+

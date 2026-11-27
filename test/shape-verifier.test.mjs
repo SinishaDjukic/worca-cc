@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { verifyResult, verifyPrompt, verifyRoundPlan, verifyStop, gapsFoundOf, verifyLines, VERIFY_STATES,
   VERIFY_VIEW_STATES, VERIFY_WORDS } from '../src/shared/shape/verifier.mjs';
 import { verifyStop as reExported, stopAnswerOk, STOP_REASONS } from '../src/shared/shape/run-stops.mjs';
-import { gateAnswer } from '../src/core/orchestrator.mjs';
+// A namespace read, so a missing new export (GAP_ANSWERS, verifyGateAnswer, gapAnswerSummary) fails only its own tests.
+import * as V from '../src/shared/shape/verifier.mjs';
 import { careRunPlan } from '../src/shared/shape/feature-record.mjs';
 import { doneStatusWord } from '../ui/public/ship-words.mjs';
 
@@ -54,37 +55,140 @@ test('verifyPrompt: requirement text with newlines and an instruction line arriv
   assert.ok(long.split('\n').every((l) => l.length < 400));
 });
 
-test('verifyRoundPlan: runs up to fixCycles + extra, stop after; no gap is clean (Lean 1, Balanced 2, Thorough 3)', () => {
+// ---- Slice 8 (R-po-3): the gate. Any gap asks, from round 1 on; every gap is answered before a run is added ----------
+test('verifyRoundPlan: any gap asks, whatever the round, Care\'s fix cycles or extra; no gap is clean', () => {
   for (const pos of ['lean', 'balanced', 'thorough']) {
     const fixCycles = careRunPlan(pos).fixCycles;
     for (const extra of [0, 1]) {
-      for (let round = 1; round <= fixCycles + extra; round++) assert.equal(verifyRoundPlan({ round, fixCycles, extra, gaps: 1 }), 'runs', `${pos} ${round}`);
-      assert.equal(verifyRoundPlan({ round: fixCycles + extra + 1, fixCycles, extra, gaps: [{ id: 'R-po-1' }] }), 'stop', pos);
-      assert.equal(verifyRoundPlan({ round: fixCycles + extra + 1, fixCycles, extra, gaps: [] }), 'clean');
+      for (let round = 1; round <= 5; round++) {
+        assert.equal(verifyRoundPlan({ round, fixCycles, extra, gaps: 1 }), 'ask', `${pos} round ${round} extra ${extra}`);
+        assert.equal(verifyRoundPlan({ round, fixCycles, extra, gaps: [{ id: 'R-po-1' }, { id: 'R-po-2' }] }), 'ask', `${pos} round ${round}`);
+        assert.equal(verifyRoundPlan({ round, fixCycles, extra, gaps: [] }), 'clean');
+        assert.equal(verifyRoundPlan({ round, fixCycles, extra, gaps: 0 }), 'clean');
+      }
     }
   }
   assert.deepEqual([1, 2, 3], ['lean', 'balanced', 'thorough'].map((p) => careRunPlan(p).fixCycles));
 });
 
-test('verifyStop: reason check, pick another, two options C3 validators accept; re-exported from run-stops', () => {
-  const s = verifyStop({ gaps: [{ id: 'R-po-2', why: 'the email service never connects.' }], round: 3, fixCycles: 2 });
+const GAPS = [{ id: 'R-po-2', why: 'the export skips archived runs.' }, { id: 'R-ux-1', why: 'the list is cramped' }];
+const TEXTS = { 'R-po-2': 'People export every run', 'R-ux-1': 'The list is dense' };
+const gateStopOf = (over = {}) => verifyStop({ gaps: GAPS, round: 1, fixCycles: 2, texts: TEXTS, ...over });
+const FIX = (id) => ({ id, answer: 'fix' });
+const decide = (...answers) => ({ decision: 'answer', answers });
+
+test('GAP_ANSWERS: the three answers per gap, frozen', () => {
+  assert.ok(Array.isArray(V.GAP_ANSWERS), 'verifier.mjs exports GAP_ANSWERS');
+  assert.ok(Object.isFrozen(V.GAP_ANSWERS));
+  assert.deepEqual(V.GAP_ANSWERS.map((a) => [a.value, a.label, a.sub]), [
+    ['fix', 'Add a fix run', 'One more run closes it, then the Verifier checks again'],
+    ['ship', 'Ship with the gap', 'Say why it can ship as is'],
+    ['change', 'Change the requirement', 'A change run builds the new text, then the Verifier checks it'],
+  ]);
+});
+
+test('verifyStop: reason check, form gaps, pick fix, one Send answers option, each gap with its why and current text; re-exported', () => {
+  const s = gateStopOf();
   assert.equal(reExported, verifyStop);
   assert.ok(STOP_REASONS.includes(s.reason));
   assert.equal(s.reason, 'check');
   assert.equal(s.run, null);
   assert.equal(s.node, 'n_verify');
-  assert.equal(s.pick, 'another');
-  assert.equal(s.head, 'Verifier · 1 gap still open');
-  assert.equal(s.text, 'R-po-2: the email service never connects. Still open after 2 re-checks.');
-  assert.deepEqual(s.options.map((o) => [o.value, o.label, o.sub]), [
-    ['another', 'Add a run for the gap', 'One more small run, then the Verifier checks again'],
-    ['continue', 'Ship with the gap', "The gap stays recorded in the feature's figures"],
+  assert.equal(s.form, 'gaps');
+  assert.equal(s.pick, 'fix');
+  assert.equal(s.head, 'Verifier · 2 gaps found');
+  assert.equal(s.text, 'R-po-2: the export skips archived runs and 1 more. No run is added until each gap is answered.');
+  assert.deepEqual(s.gaps, [
+    { id: 'R-po-2', why: 'the export skips archived runs.', text: 'People export every run' },
+    { id: 'R-ux-1', why: 'the list is cramped', text: 'The list is dense' },
   ]);
-  for (const o of s.options) { assert.ok(stopAnswerOk(s, o.payload)); assert.deepEqual(gateAnswer(o.payload), o.payload); }
-  const two = verifyStop({ gaps: [{ id: 'R-a-1', why: 'a' }, { id: 'R-b-1', why: 'b' }], round: 2, fixCycles: 1 });
-  assert.equal(two.head, 'Verifier · 2 gaps still open');
-  assert.equal(two.text, 'R-a-1: a and 1 more. Still open after 1 re-check.');
-  assert.deepEqual(two.gaps.map((g) => g.id), ['R-a-1', 'R-b-1']);
+  assert.deepEqual(s.answers, V.GAP_ANSWERS);
+  assert.deepEqual(s.options, [{ value: 'answer', label: 'Send answers', sub: 'Every gap answered, then Worca adds the runs',
+    go: 'Send answers', short: 'answered the gaps', payload: { decision: 'answer' } }]);
+});
+
+test('verifyStop: round 1 reads gaps found, round 2 and later gaps still open', () => {
+  const one = verifyStop({ gaps: [GAPS[0]], round: 1, fixCycles: 1, texts: TEXTS });
+  assert.equal(one.head, 'Verifier · 1 gap found');
+  assert.equal(one.text, 'R-po-2: the export skips archived runs. No run is added until each gap is answered.');
+  assert.equal(gateStopOf({ round: 2 }).head, 'Verifier · 2 gaps still open');
+  assert.equal(verifyStop({ gaps: [GAPS[1]], round: 4, fixCycles: 1, texts: TEXTS }).head, 'Verifier · 1 gap still open');
+});
+
+test('round 1 with 2 gaps adds 0 runs until both gaps are answered', () => {
+  assert.equal(verifyRoundPlan({ round: 1, fixCycles: 2, extra: 0, gaps: GAPS }), 'ask', 'round 1 asks: no run is added by itself');
+  const stop = gateStopOf();
+  assert.equal(typeof V.verifyGateAnswer, 'function', 'verifier.mjs exports verifyGateAnswer');
+  const none = V.verifyGateAnswer(stop, decide());
+  assert.deepEqual([none.ok, none.code, none.id, none.error], [false, 'UNANSWERED', 'R-po-2', 'R-po-2 has no answer yet']);
+  const one = V.verifyGateAnswer(stop, decide(FIX('R-po-2')));
+  assert.deepEqual([one.ok, one.code, one.id, one.error], [false, 'UNANSWERED', 'R-ux-1', 'R-ux-1 has no answer yet']);
+  const both = V.verifyGateAnswer(stop, decide(FIX('R-po-2'), FIX('R-ux-1')));
+  assert.equal(both.ok, true, both.error);
+  assert.deepEqual(both.answer, decide(FIX('R-po-2'), FIX('R-ux-1')));
+});
+
+test('verifyGateAnswer: the normalized answer is one per gap in the stop\'s order; a change carries the stop\'s own text as from', () => {
+  const r = V.verifyGateAnswer(gateStopOf(), decide(
+    { id: 'R-ux-1', answer: 'change', text: '  The list is\n compact  ', from: 'forged by the client' },
+    { id: 'R-po-2', answer: 'ship', reason: '  covered by\n a later feature ' },
+  ));
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(r.answer, decide(
+    { id: 'R-po-2', answer: 'ship', reason: 'covered by a later feature' },
+    { id: 'R-ux-1', answer: 'change', text: 'The list is compact', from: 'The list is dense' },
+  ));
+  const long = V.verifyGateAnswer(gateStopOf(), decide({ id: 'R-po-2', answer: 'ship', reason: 'z'.repeat(900) }, FIX('R-ux-1')));
+  assert.equal(long.ok, true, long.error);
+  assert.ok(long.answer.answers[0].reason.length <= 300 && long.answer.answers[0].reason.startsWith('zzz'), 'the reason is capped at 300');
+});
+
+test('verifyGateAnswer: ship with an empty reason is rejected with REASON_REQUIRED', () => {
+  for (const reason of [undefined, '', '   ', '\n\t', 7]) {
+    const r = V.verifyGateAnswer(gateStopOf(), decide({ id: 'R-po-2', answer: 'ship', reason }, FIX('R-ux-1')));
+    assert.deepEqual([r.ok, r.code, r.id, r.error], [false, 'REASON_REQUIRED', 'R-po-2', 'R-po-2: a reason is required to ship with the gap'], String(reason));
+  }
+});
+
+test('verifyGateAnswer: a bad or unchanged new text, an unknown gap and a wrong shape are refused', () => {
+  const stop = gateStopOf();
+  const change = (text) => V.verifyGateAnswer(stop, decide(FIX('R-po-2'), { id: 'R-ux-1', answer: 'change', text }));
+  for (const text of [undefined, '', '   ', 'x'.repeat(301)]) {
+    const r = change(text);
+    assert.deepEqual([r.ok, r.code, r.id, r.error], [false, 'INVALID_TEXT', 'R-ux-1', 'R-ux-1: the new text must be 1 to 300 characters'], String(text).slice(0, 8));
+  }
+  assert.equal(change('x'.repeat(300)).ok, true);
+  const same = change('The list is dense');
+  assert.deepEqual([same.ok, same.code, same.id, same.error], [false, 'UNCHANGED', 'R-ux-1', 'R-ux-1 already reads that']);
+  const extra = V.verifyGateAnswer(stop, decide(FIX('R-po-2'), FIX('R-ux-1'), FIX('R-x-1')));
+  assert.deepEqual([extra.ok, extra.code, extra.id, extra.error], [false, 'UNKNOWN_GAP', 'R-x-1', 'R-x-1 is not a gap of this check']);
+  const long = V.verifyGateAnswer(stop, decide(FIX('R-po-2'), FIX('R-ux-1'), FIX('Z'.repeat(5000))));
+  assert.ok(long.code === 'UNKNOWN_GAP' && long.id.length <= 40 && long.error.length < 80, 'the echoed id is clipped');
+  assert.equal(V.verifyGateAnswer(stop, decide(FIX('R-po-2'), FIX('R-po-2'), FIX('R-ux-1'))).ok, false, 'a duplicate');
+  for (const raw of [null, {}, 'answer', { decision: 'another' }, { decision: 'continue' }, { decision: 'answer' }, { decision: 'answer', answers: 'fix' },
+    decide({ id: 'R-po-2', answer: 'skip' }, FIX('R-ux-1')), { decision: 'revise', answers: [FIX('R-po-2'), FIX('R-ux-1')] }]) {
+    const r = V.verifyGateAnswer(stop, raw);
+    assert.equal(r.ok, false, JSON.stringify(raw));
+  }
+  const old = V.verifyGateAnswer(stop, { decision: 'another' });
+  assert.deepEqual([old.code, old.error], ['INVALID_ANSWER', "not one of this stop's answers"]);
+});
+
+test('stopAnswerOk: a gap stop accepts only a complete answer, as verifyGateAnswer decides; other stops keep exact membership', () => {
+  const stop = gateStopOf();
+  assert.equal(stopAnswerOk(stop, decide(FIX('R-po-2'), FIX('R-ux-1'))), true);
+  assert.equal(stopAnswerOk(stop, decide(FIX('R-po-2'))), false);
+  assert.equal(stopAnswerOk(stop, decide({ id: 'R-po-2', answer: 'ship', reason: '' }, FIX('R-ux-1'))), false);
+  assert.equal(stopAnswerOk(stop, { decision: 'answer' }), false, 'the bare option payload answers no gap');
+  assert.equal(stopAnswerOk(stop, { decision: 'another' }), false);
+  const plain = { options: [{ value: 'another', payload: { decision: 'another' } }] };
+  assert.equal(stopAnswerOk(plain, { decision: 'another' }), true);
+  assert.equal(stopAnswerOk(plain, decide(FIX('R-po-2'))), false);
+});
+
+test('gapAnswerSummary: the card log and audit words', () => {
+  assert.equal(V.gapAnswerSummary([FIX('R-po-2'), { id: 'R-ux-1', answer: 'change', text: 't' }, { id: 'R-qa-1', answer: 'ship', reason: 'r' }]),
+    '1 fix run · 1 changed requirement · 1 ships with a gap');
 });
 
 test('gapsFoundOf: distinct gap ids across every check', () => {

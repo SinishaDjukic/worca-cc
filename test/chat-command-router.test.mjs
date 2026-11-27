@@ -274,6 +274,17 @@ test('/answer: ordinal validation and clarify payload mapping', async () => {
   assert.match(text(await send('/answer 1')), /use `\/approve` or `\/retry`/);
 });
 
+test('the Verifier gap stop: /approve and /retry send nothing and point to the app', async () => {
+  for (const verb of ['approve', 'retry']) {
+    const pq = { id: 'stop-1', kind: 'gate', stop: { form: 'gaps', reason: 'check' } };
+    const answered = [];
+    const f = makeRouter({ pendingQuestion: () => pq, answer: (r, id, p) => answered.push(p), listRuns: liveOne });
+    const out = await handle(f, `/${verb}`);
+    assert.deepEqual(answered, [], `/${verb} answers nothing`);
+    assert.match(out.body[0].value, /one answer per gap\. Answer it in the app/);
+  }
+});
+
 test('/answer free text: zero-option question, ordinal | text mix, literal | in a single answer', async () => {
   await checkRows([
     { name: '/answer answers a zero-option free-text question', run: async () => {

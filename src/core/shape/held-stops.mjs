@@ -8,6 +8,7 @@ import { featureOfPipeline, turnOrder, liveSliceHeldResume, liveSliceResuming, l
 import { heldStopTurn, fireSourceOf, mergingBackSliceOf, takeInClashAudit } from './chain.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature } from './small-runs.mjs';
 import { requirementChangedFeedback } from '../../shared/shape/req-change.mjs';
+import { verifyGateAnswer } from '../../shared/shape/verifier.mjs';
 
 /**
  * deps: { runs: Map of runs-map entries, liveSliceOf(id), broadcastFeature(featureId), resolvePending(entry, {id, reason}),
@@ -88,7 +89,16 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
       entry.orch.answer(id, payload, by);
       return undefined;
     }
-    if (!stopAnswerOk(pq.stop, payload)) {
+    if (pq.stop.form === 'gaps') {
+      // Slice 8 (D4): a Verifier gap stop takes only a complete answer; the refusal names the gap. The run gets the
+      // normalized answer (one per gap, in the stop's order).
+      const r = verifyGateAnswer(pq.stop, payload);
+      if (!r.ok) {
+        throw Object.assign(new Error(r.error), { code: 'INVALID_ANSWER', status: 422, errors: [{ field: 'answers',
+          path: r.id ? `answers.${r.id}` : 'answers', code: r.code.toLowerCase(), message: r.error }] });
+      }
+      payload = r.answer;
+    } else if (!stopAnswerOk(pq.stop, payload)) {
       throw Object.assign(new Error('invalid answer'), { code: 'INVALID_ANSWER',
         errors: [{ field: 'decision', path: 'decision', code: 'invalid', message: "not one of this stop's options" }] });
     }

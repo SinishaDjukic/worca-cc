@@ -639,6 +639,11 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
     if (!pq) {
       return reply(`\`${ref}\` is not waiting on a decision.${verb === 'cancel' ? ` \`/stop ${ref}\` stops the run.` : ''}`, 'warning');
     }
+    // Slice 8: the Verifier's gap stop takes one answer per gap (fix, ship with a reason, or a new text), so no single
+    // chat verb can answer it.
+    if (pq.stop?.form === 'gaps') {
+      return reply(`\`${ref}\`: the Verifier needs one answer per gap. Answer it in the app, on the feature page or the run's chat card.`, 'warning');
+    }
     const givingUp = verb === 'abort' || verb === 'cancel';
     let payload;
     let what;

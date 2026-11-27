@@ -1674,6 +1674,20 @@ test('C4: an append in the same call keeps the new text in outline.agreed and it
   assert.match(getTicket(out.added[0].ticketId, { withRequest: true }).request.prompt, /members and guests/);
 });
 
+// ---- Slice 8 (R-po-3, D8): the Verifier gate's runs build on the last run before them ---------------------------
+test('an appendFor with dependsOn stores it and the view builds on that run; without it an appended run builds on nothing', () => withSmallRuns(true, () => {
+  const a = mkC4(5, { pipelineId: pipe('done') });
+  // buildsOn is a marked feature's word: mark its origin run.
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), a.pid);
+  const out = changeAgreedRequirements(a.id, { changes: [], appendFor: [
+    { ownerIndex: 2, ids: ['R-po-2'], title: 'Close R-po-2', goal: 'g', dependsOn: ['s5'] },
+    { ownerIndex: 3, ids: ['R-po-2'], title: 'Change: R-po-2', goal: 'g' }] });
+  assert.deepEqual(out.added.map((x) => x.index), [6, 7]);
+  appendFeatureRun(a.id, { title: 'Change', goal: 'g', kind: 'change', requirements: ['R-po-2'] });
+  assert.deepEqual(outlineRow(a.id).slices.slice(5).map((s) => s.dependsOn), [['s5'], [], []]);
+  assert.deepEqual(featureView(a.id).slices.slice(5).map((s) => s.buildsOn), [[5], [], []]);
+}));
+
 test('C4: a STALE from throws and leaves the row, tickets and slice rows byte-equal', () => {
   const a = mkC4(3, { pipelineId: pipe('done') });
   const before = snapC4(a.id);

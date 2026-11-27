@@ -223,3 +223,11 @@ test('resolveShapeRequest C5: verify is internal-only, needs wf_shape_verify and
   assert.equal(resolveShapeRequest({ shape: { verify: { ...VERIFY, owned: 'R-po-1' } }, workflowId: 'wf_shape_verify' }, { internal: true }).ok, false);
   assert.equal(resolveShapeRequest({ workflowId: 'wf_shape_verify' }, { internal: true }).ok, false, 'never a plain run');
 });
+
+test('resolveShapeRequest C5: a Verifier ticket keeps its requirement texts and the gaps already shipped', () => {
+  const verify = { ...VERIFY, round: 2, texts: { 'R-po-1': 'People export', 'R-po-2': 'People pin' },
+    shipped: [{ id: 'R-po-2', reason: 'covered by a later feature' }] };
+  const r = resolveShapeRequest({ shape: { verify }, workflowId: 'wf_shape_verify' }, { internal: true });
+  assert.deepEqual(r, { ok: true, shape: { verify }, workflowId: 'wf_shape_verify' });
+});
+

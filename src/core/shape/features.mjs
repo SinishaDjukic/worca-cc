@@ -710,13 +710,14 @@ export function appendFeatureRun(featureId, { title, goal, kind, by = null, requ
 }
 
 /** The tx-free body of appendFeatureRun (D6): the slice, its ticket, the grown outline and the held notes. `f` must be
- *  the fresh row: the outline written is `f.outline` plus the new slice. */
-function appendRunRows(f, rows, { title, goal, kind, by = null, requirementsFirst = false, requirements = null, now = Date.now() }) {
+ *  the fresh row: the outline written is `f.outline` plus the new slice. Slice 8 (D8): `dependsOn` (slice ids) is what
+ *  the run builds on; the Verifier gate's runs name the last run before them, every other append none. */
+function appendRunRows(f, rows, { title, goal, kind, by = null, requirementsFirst = false, requirements = null, dependsOn = [], now = Date.now() }) {
   const db = getDb();
   const index = rows.length + 1;
   const last = rows[rows.length - 1];
   const s = { id: `s${index}`, title: String(title).slice(0, 120), goal: String(goal || ''), inScope: [], outOfScope: [],
-    acceptance: [], dependsOn: [], estimate: null, ...(kind === 'change' && Array.isArray(requirements) ? { requirements: [...requirements] } : {}) };
+    acceptance: [], dependsOn: Array.isArray(dependsOn) ? [...dependsOn] : [], estimate: null, ...(kind === 'change' && Array.isArray(requirements) ? { requirements: [...requirements] } : {}) };
   const outline = { ...f.outline, slices: [...f.outline.slices, s] };
   const feature = { id: f.id, title: f.title };
   const chained = kind !== 'follow-up';
@@ -800,7 +801,8 @@ export function changeAgreedRequirementsIn(featureId, { changes, entries = [], r
   }
   const added = [];
   for (const a of appendFor) {
-    const r = appendRunRows(f, sliceRows(featureId), { title: a.title, goal: a.goal, kind: 'change', requirements: a.ids, by, now });
+    const r = appendRunRows(f, sliceRows(featureId), { title: a.title, goal: a.goal, kind: 'change', requirements: a.ids,
+      dependsOn: a.dependsOn, by, now });
     added.push({ ownerIndex: a.ownerIndex, index: r.index, ticketId: r.ticketId });
     f = featureRow(featureId);
   }

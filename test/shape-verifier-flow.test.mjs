@@ -13,9 +13,14 @@ import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { MERGE_BACK_WAIT_MS, getTicket } from '../src/core/scheduler.mjs';
-import { createSliceFeature, featureView, liveSliceFrom, resumeFeature } from '../src/core/shape/features.mjs';
+import { createSliceFeature, featureView, liveSliceFrom, resumeFeature, dependencyBranchesOf } from '../src/core/shape/features.mjs';
+import { SHIPPING } from '../src/core/shape/ship-lock.mjs';
 import { startVerifyCheck, recordVerifyResult, verifyAfterSettled, verifyCheckOfPipeline } from '../src/core/shape/verifier.mjs';
-import { recordSettledFigures, recordShipCommit, featureOfAnyPipeline, latestFinishedSlice } from '../src/core/shape/chain.mjs';
+import { recordSettledFigures, recordShipCommit, featureOfAnyPipeline, latestFinishedSlice, sliceSourceOf } from '../src/core/shape/chain.mjs';
+import { resolveShapeRequest } from '../src/core/shape/run.mjs';
+// Namespace reads, so a missing new export fails only the tests that need it.
+import * as SHARED from '../src/shared/shape/verifier.mjs';
+import * as LEDGER from '../src/shared/shape/ship-ledger.mjs';
 import { featureFigures } from '../src/core/shape/measure.mjs';
 import { verifyStop } from '../src/shared/shape/verifier.mjs';
 import { oneCardModel } from '../ui/public/shape/feature-card.mjs';
@@ -36,11 +41,14 @@ before(() => {
   writeFileSync(join(root, 'f.txt'), 'x'); git(root, 'add', '-A'); git(root, 'commit', '-qm', 'init');
 });
 
-const AGREED = [1, 2, 3, 4].map((i) => ({ id: `R-po-${i}`, text: `requirement ${i} as agreed`, example: `example ${i}` }))
-  .concat({ id: 'R-qa-1', text: 'a person checks the copy' });
-const OUTLINE = { why: 'four runs', agreed: AGREED, slices: [1, 2, 3, 4].map((i) => ({ id: `s${i}`, title: `Part ${i}`, goal: `Goal ${i}`, inScope: [],
-  outOfScope: [], acceptance: [], dependsOn: [], estimate: 'M', requirements: [`R-po-${i}`] })) };
 const OWNED = ['R-po-1', 'R-po-2', 'R-po-3', 'R-po-4'];
+/** One agreed requirement per run (`ids[k - 1]` is run k's), plus one a person confirms. */
+const agreedFor = (ids) => ids.map((id, i) => ({ id, text: `requirement ${i + 1} as agreed`, example: `example ${i + 1}` }))
+  .concat({ id: 'R-qa-1', text: 'a person checks the copy' });
+const outlineFor = (ids) => ({ why: `${ids.length} runs`, agreed: agreedFor(ids), slices: ids.map((id, i) => ({ id: `s${i + 1}`, title: `Part ${i + 1}`,
+  goal: `Goal ${i + 1}`, inScope: [], outOfScope: [], acceptance: [], dependsOn: [], estimate: 'M', requirements: [id] })) });
+const AGREED = agreedFor(OWNED);
+const OUTLINE = outlineFor(OWNED);
 
 let seq = 0;
 const pipe = (status) => {
@@ -49,11 +57,12 @@ const pipe = (status) => {
     branch: { source: 'main', feature: `feat/${id}` } });
   return id;
 };
-const doneBranch = (pid) => { git(root, 'branch', '-f', `feat/${pid}`, 'main'); git(root, 'checkout', '-q', `feat/${pid}`);
+const doneBranch = (pid, from = 'main') => { git(root, 'branch', '-f', `feat/${pid}`, from); git(root, 'checkout', '-q', `feat/${pid}`);
   writeFileSync(join(root, `${pid}.txt`), pid); git(root, 'add', '-A'); git(root, 'commit', '-qm', pid); git(root, 'checkout', '-q', 'main'); };
 
-/** A marked 4-run feature, every run in `states` (default all done). Returns the helpers the cases share. */
-function world({ states = ['done', 'done', 'done', 'done'], position = 'balanced', approveEach = false } = {}) {
+/** A marked feature of one run per id in `ids` (default 4), every run in `states` (default all done). `chain`: each done
+ *  run's branch is forked from the latest finished run's, as the runner starts it. Returns the helpers the cases share. */
+function world({ ids = OWNED, states = ids.map(() => 'done'), position = 'balanced', approveEach = false, chain = false } = {}) {
   getDb().prepare("UPDATE scheduled_runs SET status = 'canceled' WHERE status = 'scheduled'").run();
   const runs = new Map();
   const tearingDown = new Set();   // the pipelines the server's isFinishingRun answers true for
@@ -61,7 +70,7 @@ function world({ states = ['done', 'done', 'done', 'done'], position = 'balanced
   const calls = { offer: [], ticks: 0, repaints: [] };
   const origin = pipe(states[0]);
   getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), origin);
-  const f = createSliceFeature({ pipelineId: origin, projectDir: root, title: 'Sign-up', outline: OUTLINE, perspectives: ['product'],
+  const f = createSliceFeature({ pipelineId: origin, projectDir: root, title: 'Sign-up', outline: outlineFor(ids), perspectives: ['product'],
     workflowId: 'wf_shape', smallRuns: true, care: { position, chosenBy: 'person', worcaPick: 'balanced' }, approveEach,
     requirementKinds: { 'R-qa-1': { kind: 'confirmed', role: 'qa' } } });
   const pids = [origin];
@@ -69,10 +78,11 @@ function world({ states = ['done', 'done', 'done', 'done'], position = 'balanced
   const ticketOf = (k) => getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(f.id, k).ticket_id;
   /** Fire ticket `t` as a new pipeline with `status`; a done run gets its own branch. */
   const fire = (t, status = 'done', k = null) => {
+    const before = chain ? latestFinishedSlice(f.id)?.pipelineId : null;   // read before this run's row exists
     const pid = pipe(status);
     getDb().prepare("UPDATE scheduled_runs SET status = 'fired', pipeline_id = ? WHERE id = ?").run(pid, t);
     if (k) getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = ?').run(pid, f.id, k);
-    if (status === 'done') doneBranch(pid);
+    if (status === 'done') doneBranch(pid, before ? `feat/${before}` : 'main');
     return pid;
   };
   for (let k = 2; k <= states.length; k++) {
@@ -119,8 +129,11 @@ function world({ states = ['done', 'done', 'done', 'done'], position = 'balanced
   return { headSha, round, commit, f, pids, runs, tearingDown, finishing, resume, calls, deps, settle, outline, checks, view, slicesCount, verifierSettles, gapRunsSettle, fire, ticketOf };
 }
 
-const result = (gaps) => ({ held: OWNED.filter((id) => !gaps.includes(id)),
+const result = (gaps, owned = OWNED) => ({ held: owned.filter((id) => !gaps.includes(id)),
   gaps: gaps.map((id) => ({ id, why: `${id} is missing between runs`, title: `Close ${id}` })) });
+// Slice 8: the decision the orchestrator writes — one answer per open gap; a `change` carries `from`, the text it replaces.
+const decide = (...answers) => ({ decision: 'answer', answers });
+const answersFor = (ids, answer = 'fix') => decide(...ids.map((id) => ({ id, answer })));
 
 test('two seeded gaps: one check, two gap runs, a re-check, then Ready to ship with gapsAtEnd 2', async () => {
   const w = world();
@@ -135,7 +148,7 @@ test('two seeded gaps: one check, two gap runs, a re-check, then Ready to ship w
   assert.deepEqual(t.request.shape.verify.owned, OWNED);
   assert.equal(t.title, 'Sign-up · Verifier');
   assert.equal(w.view().ship.ready, false);
-  const { pid: v1 } = w.verifierSettles({ result: result(['R-po-2', 'R-po-3']), headSha: null, decision: null });
+  const { pid: v1 } = w.verifierSettles({ result: result(['R-po-2', 'R-po-3']), headSha: null, decision: answersFor(['R-po-2', 'R-po-3']) });
   const after1 = w.checks()[0];
   assert.equal(after1.state, 'gaps');
   assert.equal(after1.pipelineId, v1);
@@ -219,7 +232,7 @@ test('two seeded gaps keeps every done run: pipeline ids, tickets and outline en
     tickets: [2, 3, 4].map((k) => JSON.stringify(getTicket(w.ticketOf(k), { withRequest: true }))), entries: JSON.stringify(w.outline().slices.slice(0, 4)) });
   const before = snap();
   w.settle(w.pids[3]);
-  w.verifierSettles({ result: result(['R-po-2', 'R-po-3']), headSha: null, decision: null });
+  w.verifierSettles({ result: result(['R-po-2', 'R-po-3']), headSha: null, decision: answersFor(['R-po-2', 'R-po-3']) });
   assert.deepEqual(snap(), before);
 });
 
@@ -228,7 +241,7 @@ test('gap runs start without asking: with Ask me before each run on, both gap ti
   w.settle(w.pids[3]);
   assert.equal(getTicket(w.checks()[0].ticketId).forced, false, 'the Verifier ticket is not a slice: never held');
   const ticksBefore = w.calls.ticks;
-  w.verifierSettles({ result: result(['R-po-2', 'R-po-3']), headSha: null, decision: null });
+  w.verifierSettles({ result: result(['R-po-2', 'R-po-3']), headSha: null, decision: answersFor(['R-po-2', 'R-po-3']) });
   const ids = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx > 4 ORDER BY idx').all(w.f.id).map((r) => r.ticket_id);
   assert.equal(ids.length, 2);
   for (const id of ids) { const t = getTicket(id); assert.equal(t.forced, true); assert.equal(t.status, 'scheduled'); }
@@ -252,7 +265,7 @@ test('a replayed settle starts no second check; a replayed head settle after a c
 test('a replayed Verifier settle appends no run', () => {
   const w = world();
   w.settle(w.pids[3]);
-  const { pid } = w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: null });
+  const { pid } = w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: answersFor(['R-po-2']) });
   const once = JSON.stringify(w.outline());
   const n = w.slicesCount();
   const dir = mkdtempSync(join(runDirs, 'run-'));
@@ -269,7 +282,13 @@ test('a failed append records no result: outline.verify and the slice rows are u
   const outlineBefore = JSON.stringify(w.outline());
   const rows = () => JSON.stringify(getDb().prepare('SELECT * FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(w.f.id));
   const rowsBefore = rows();
-  assert.throws(() => recordVerifyResult(w.f.id, 1, { result: result(['R-po-2']), headSha: null, decision: null },
+  assert.throws(() => recordVerifyResult(w.f.id, 1, { result: result(['R-po-2']), headSha: null, decision: answersFor(['R-po-2']) },
+    { afterAppend: () => { throw new Error('boom'); } }), /boom/);
+  assert.equal(JSON.stringify(w.outline()), outlineBefore);
+  assert.equal(rows(), rowsBefore);
+  // Slice 8 (I3): the changed text, the appended run and the check write commit together or not at all.
+  const change = decide({ id: 'R-po-2', answer: 'change', text: 'requirement 2, new words', from: 'requirement 2 as agreed' });
+  assert.throws(() => recordVerifyResult(w.f.id, 1, { result: result(['R-po-2']), headSha: null, decision: change },
     { afterAppend: () => { throw new Error('boom'); } }), /boom/);
   assert.equal(JSON.stringify(w.outline()), outlineBefore);
   assert.equal(rows(), rowsBefore);
@@ -282,7 +301,7 @@ test('a bound stop is the card\'s one ask; Ship waits for the Verifier in every 
   const pid = w.fire(c.ticketId, 'running');
   assert.equal(w.view().verify.state, 'verifying');
   assert.equal(w.view().ship.ready, false);
-  const stop = verifyStop({ gaps: [{ id: 'R-po-2', why: 'x' }], round: 3, fixCycles: 2 });
+  const stop = verifyStop({ gaps: [{ id: 'R-po-2', why: 'x' }], round: 3, fixCycles: 2, texts: { 'R-po-2': 'requirement 2 as agreed' } });
   const e = { id: `run-${pid}`, pipelineId: pid, status: 'running', pendingQuestion: { id: 'verify-1', kind: 'gate', stop } };
   w.runs.set(e.id, e);
   let v = w.view();
@@ -302,19 +321,19 @@ test('a bound stop is the card\'s one ask; Ship waits for the Verifier in every 
   assert.equal(v.ship.ready, false);
   // gaps: a gap run is still to build.
   getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = ?").run(pid);
-  recordVerifyResult(w.f.id, 1, { result: result(['R-po-2']), headSha: null, decision: null }, { pipelineId: pid });
+  recordVerifyResult(w.f.id, 1, { result: result(['R-po-2']), headSha: null, decision: answersFor(['R-po-2']) }, { pipelineId: pid });
   assert.equal(w.view().verify.state, 'gaps');
   assert.equal(w.view().ship.ready, false);
 });
 
-test('answering another adds one gap run and asks once more at the bound; continue reads Ready to ship with gapsAtEnd counted', async () => {
+test("legacy result files still read: 'another' adds one gap run, 'continue' reads accepted and Ready to ship with gapsAtEnd counted", async () => {
   const w = world({ position: 'lean' });
   w.settle(w.pids[3]);
-  w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: null });   // round 1 ≤ 1: a run, no ask
+  w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: answersFor(['R-po-2']) });   // round 1: answered "fix"
   assert.deepEqual(w.checks()[0].gapRuns, [5]);
   w.gapRunsSettle();
   assert.equal(w.checks()[1].round, 2);
-  // Round 2 > 1: the orchestrator asked; "another" adds one more run and carries extra 1.
+  // A result file written before the gate (round 2 > 1): "another" reads as every gap "fix" and carries extra 1.
   w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: 'another' });
   assert.equal(w.checks()[1].state, 'gaps');
   assert.equal(w.checks()[1].extra, 1);
@@ -324,12 +343,13 @@ test('answering another adds one gap run and asks once more at the bound; contin
   assert.equal(c3.round, 3);
   assert.equal(c3.extra, 1);
   assert.equal(getTicket(c3.ticketId, { withRequest: true }).request.shape.verify.extra, 1);
-  // Round 3 > 1 + 1: asked again; "continue" ships with the gap.
+  // "continue" ships with the gap, with no reason.
   await w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: 'continue' }).out;
   const v = w.view();
   assert.equal(v.verify.state, 'accepted');
   assert.equal(v.ship.ready, true);
   assert.equal(featureFigures(w.f.id).gapsAtEnd, 1);
+  assert.equal(v.ship.smallRuns.owned.find((o) => o.id === 'R-po-2').status, 'gap-accepted', 'a legacy accepted gap still reads accepted');
   assert.ok(v.log.some((l) => l.text === 'Verifier: 1 gap left open · you chose to ship with it'));
   assert.equal(w.slicesCount(), 6);
   assert.equal(w.calls.offer.length, 1);
@@ -479,7 +499,7 @@ test('a Verifier run that settled with the flag off reads halted once the flag i
 test('a gap run that settled with the flag off reads halted once the flag is on again; Resume starts round 2, then Ready to ship', async () => {
   const w = world();
   w.settle(w.pids[3]);
-  w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: null });
+  w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: answersFor(['R-po-2']) });
   const [gapPid] = flagOff(() => w.gapRunsSettle());
   assert.equal(w.checks().length, 1, 'the flag was off: no re-check');
   aged(gapPid, 0);
@@ -503,7 +523,7 @@ test('a gap run that settled with the flag off reads halted once the flag is on 
 test('gaps with the gap run still to build or running never read halted', () => {
   const w = world();
   w.settle(w.pids[3]);
-  const { pid } = w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: null });
+  const { pid } = w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: answersFor(['R-po-2']) });
   for (const p of [...w.pids, pid]) aged(p, OLD);
   assert.equal(w.view().verify.state, 'gaps', 'the gap run is still to build');
   const { idx, ticket_id: t } = getDb().prepare("SELECT idx, ticket_id FROM shape_feature_slices WHERE feature_id = ? AND kind = 'change'").get(w.f.id);
@@ -539,7 +559,7 @@ test('a Verifier run still finishing is never halted, however old its row; once 
 test('a head still finishing starts no check and offers no Resume; its own settle starts the re-check', () => {
   const w = world();
   w.settle(w.pids[3]);
-  w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: null });
+  w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: answersFor(['R-po-2']) });
   const { idx, ticket_id: t } = getDb().prepare("SELECT idx, ticket_id FROM shape_feature_slices WHERE feature_id = ? AND kind = 'change'").get(w.f.id);
   const gap = w.fire(t, 'done', idx);
   aged(gap, OLD);
@@ -641,7 +661,7 @@ test('a round that ended stopped or failed counts as over: the last run\'s settl
     w.settle(w.pids[3]);
     assert.deepEqual(states(w), [[1, 'verifying']], status);
     assert.equal(w.view().ship.ready, false);
-    w.verifierSettles({ result: result(['R-po-2']), decision: null });
+    w.verifierSettles({ result: result(['R-po-2']), decision: answersFor(['R-po-2']) });
     w.round(2, status);
     w.gapRunsSettle();
     assert.deepEqual(states(w), [[1, 'gaps'], [2, 'verifying']], status);
@@ -816,4 +836,285 @@ test("Ship's own changelog commit keeps the check; a changelog commit on anythin
   const moved = recordShipCommit(w.f.id, { ok: true, sha: w.headSha(), via: 'commit-tree' });
   assert.deepEqual([moved.ok, moved.kind], [false, 'moved']);
   assert.equal(w.view().ship.ready, false, 'a commit slipped in before it');
+});
+
+// ── Slice 8 (R-po-3): the gate on the Verifier's gaps — no run without an answer, three answers per gap ───────────────
+const sliceRowCount = (w) => w.slicesCount();
+const kindsAfter = (w, n) => getDb().prepare('SELECT idx, kind FROM shape_feature_slices WHERE feature_id = ? AND idx > ? ORDER BY idx').all(w.f.id, n).map((r) => [r.idx, r.kind]);
+const everything = (w) => JSON.stringify([w.outline(),
+  getDb().prepare('SELECT * FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(w.f.id), ticketCount()]);
+const verifyRequest = (check) => getTicket(check.ticketId, { withRequest: true }).request;
+const changeOf = (id, n, text) => ({ id, answer: 'change', text, from: `requirement ${n} as agreed` });
+const REASON = 'covered by a later feature';
+const shipOf = (id) => ({ id, answer: 'ship', reason: REASON });
+
+test('no decision, or a decision answering 1 of 2 gaps, records nothing and adds no run; the check reads halted and Resume checks again', () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  const before = everything(w);
+  const file = (decision) => ({ result: result(['R-po-2', 'R-po-3']), headSha: null, decision });
+  for (const decision of [null, answersFor(['R-po-2']), answersFor([]), { decision: 'answer' }]) {
+    assert.equal(recordVerifyResult(w.f.id, 1, file(decision)), null, JSON.stringify(decision));
+    assert.equal(everything(w), before, JSON.stringify(decision));
+  }
+  const { pid } = w.verifierSettles(file(null));
+  assert.equal(everything(w), before);
+  assert.equal(sliceRowCount(w), 4);
+  aged(pid, OLD);
+  assert.equal(w.view().verify.state, 'halted');
+  assert.equal(w.view().ship.ready, false);
+  assert.equal(w.resume().action, 'restart', 'the Verifier runs again and asks again');
+});
+
+test('fix adds one fix run', () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: answersFor(['R-po-2']) });
+  assert.equal(sliceRowCount(w), 5, 'exactly one run');
+  assert.deepEqual(kindsAfter(w, 4), [[5, 'change']]);
+  const slice = w.outline().slices[4];
+  assert.equal(slice.title, 'Close R-po-2');
+  assert.deepEqual(slice.requirements, ['R-po-2']);
+  assert.match(slice.goal, /R-po-2: requirement 2 as agreed\nWhat is missing: R-po-2 is missing between runs/);
+  assert.deepEqual(w.view().slices[4].buildsOn, [4], 'it builds on the last run before it, not on run 2 alone');
+  const c = w.checks()[0];
+  assert.equal(c.state, 'gaps');
+  assert.deepEqual(c.gapRuns, [5]);
+  assert.deepEqual(c.gapRunOf, { 'R-po-2': 5 });
+  assert.deepEqual(c.answers.map((a) => [a.id, a.answer]), [['R-po-2', 'fix']]);
+  assert.deepEqual(c.shipped, []);
+  assert.equal(w.outline().agreed.find((a) => a.id === 'R-po-2').text, 'requirement 2 as agreed', 'a fix changes no text');
+});
+
+test('change the requirement on a finished run adds one change run, and the next round checks the new text', () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  assert.deepEqual(verifyRequest(w.checks()[0]).shape.verify.texts,
+    Object.fromEntries(OWNED.map((id, i) => [id, `requirement ${i + 1} as agreed`])), 'the check carries each text it judges');
+  assert.deepEqual(verifyRequest(w.checks()[0]).shape.verify.shipped ?? [], [], 'a new series carries no shipped gap');
+  w.verifierSettles({ result: result(['R-po-3']), headSha: null, decision: decide(changeOf('R-po-3', 3, 'requirement 3, now with a filter')) });
+  assert.equal(sliceRowCount(w), 5, 'exactly one change run');
+  assert.deepEqual(kindsAfter(w, 4), [[5, 'change']]);
+  const o = w.outline();
+  assert.equal(o.agreed.find((a) => a.id === 'R-po-3').text, 'requirement 3, now with a filter');
+  assert.equal(o.slices[4].title, 'Change: R-po-3');
+  assert.deepEqual(o.slices[4].requirements, ['R-po-3']);
+  assert.match(o.slices[4].goal, /R-po-3 now reads: requirement 3, now with a filter/);
+  assert.equal(o.changes.length, 1);
+  const e = o.changes[0];
+  assert.deepEqual([e.id, e.from, e.to, e.case, e.run, e.added, e.source],
+    ['R-po-3', 'requirement 3 as agreed', 'requirement 3, now with a filter', 'finished', 3, 5, { kind: 'verify', round: 1 }]);
+  assert.deepEqual(w.view().slices[4].buildsOn, [4]);
+  assert.equal(w.checks()[0].state, 'gaps');
+  assert.deepEqual(w.checks()[0].gapRunOf, { 'R-po-3': 5 });
+  w.gapRunsSettle();
+  assert.equal(w.checks().length, 2);
+  const next = verifyRequest(w.checks()[1]);
+  assert.equal(next.shape.verify.round, 2);
+  assert.match(next.prompt, /R-po-3 · run \d+ · requirement 3, now with a filter/);
+  assert.doesNotMatch(next.prompt, /requirement 3 as agreed/);
+  assert.equal(next.shape.verify.texts['R-po-3'], 'requirement 3, now with a filter');
+});
+
+test('ship with the gap without a reason is rejected: the validator refuses it and recording writes nothing', () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  const before = everything(w);
+  const stop = verifyStop({ gaps: result(['R-po-2']).gaps, round: 1, fixCycles: 2, texts: { 'R-po-2': 'requirement 2 as agreed' } });
+  for (const reason of [undefined, '', '  ']) {
+    const decision = decide({ id: 'R-po-2', answer: 'ship', reason });
+    assert.equal(typeof SHARED.verifyGateAnswer, 'function');
+    assert.equal(SHARED.verifyGateAnswer(stop, decision).code, 'REASON_REQUIRED');
+    assert.equal(recordVerifyResult(w.f.id, 1, { result: result(['R-po-2']), headSha: null, decision }), null, String(reason));
+    assert.equal(everything(w), before);
+  }
+});
+
+test('two answers together: fix runs come first, then change runs; each gap names its run, and an older check maps them by position', () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  w.verifierSettles({ result: result(['R-po-2', 'R-po-3']), headSha: null,
+    decision: decide(changeOf('R-po-2', 2, 'requirement 2, new words'), { id: 'R-po-3', answer: 'fix' }) });
+  const o = w.outline();
+  assert.deepEqual(o.slices.slice(4).map((s) => [s.title, s.requirements]), [['Close R-po-3', ['R-po-3']], ['Change: R-po-2', ['R-po-2']]]);
+  assert.deepEqual(o.changes.map((e) => [e.id, e.added]), [['R-po-2', 6]]);
+  assert.deepEqual(w.checks()[0].gapRunOf, { 'R-po-3': 5, 'R-po-2': 6 });
+  assert.deepEqual(w.view().verify.gaps.map((g) => [g.id, g.run]), [['R-po-2', 6], ['R-po-3', 5]]);
+  assert.deepEqual(w.view().slices.slice(4).map((s) => s.buildsOn), [[4], [4]], 'both build on the last run before them');
+  // A check stored before this change has no gapRunOf and no shipped: index alignment, as before.
+  const old = w.outline();
+  delete old.verify.checks[0].gapRunOf;
+  delete old.verify.checks[0].shipped;
+  getDb().prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify(old), w.f.id);
+  assert.deepEqual(w.view().verify.gaps.map((g) => [g.id, g.run]), [['R-po-2', 5], ['R-po-3', 6]]);
+  assert.deepEqual(w.view().verify.shipped ?? [], []);
+});
+
+test('every gap shipped: no run, state accepted, Ship is ready and the ledger lists each shipped gap with its reason', async () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  await w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: decide(shipOf('R-po-2')) }).out;
+  assert.equal(sliceRowCount(w), 4, 'no run');
+  const c = w.checks()[0];
+  assert.equal(c.state, 'accepted');
+  assert.deepEqual(c.shipped, [{ id: 'R-po-2', reason: REASON }]);
+  assert.deepEqual(c.gapRunOf, {});
+  const v = w.view();
+  assert.equal(v.verify.state, 'accepted');
+  assert.deepEqual(v.verify.shipped, [{ id: 'R-po-2', reason: REASON }]);
+  assert.equal(v.ship.ready, true);
+  assert.deepEqual(v.ship.smallRuns.shippedGaps, [{ id: 'R-po-2', reason: REASON }]);
+  assert.equal(v.ship.smallRuns.owned.find((o) => o.id === 'R-po-2').status, 'gap-accepted');
+  assert.ok(v.log.some((l) => l.text === 'Verifier: 1 gap left open · you chose to ship with it'));
+  assert.equal(featureFigures(w.f.id).gapsAtEnd, 1);
+  assert.equal(w.calls.offer.length, 1);
+  // A commit after the accepted check starts a new series: nothing is carried into it.
+  const r = w.round(4, 'done');
+  w.commit(4);
+  w.settle(r);
+  assert.equal(w.checks().length, 2);
+  assert.equal(verifyRequest(w.checks()[1]).shape.verify.round, 1);
+  assert.deepEqual(verifyRequest(w.checks()[1]).shape.verify.shipped ?? [], []);
+});
+
+test('a shipped gap is carried: later rounds report it again, it is not asked again, the check reads accepted and keeps its reason', async () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  const shipped = [{ id: 'R-po-3', reason: REASON }];
+  w.verifierSettles({ result: result(['R-po-2', 'R-po-3']), headSha: null, decision: decide({ id: 'R-po-2', answer: 'fix' }, shipOf('R-po-3')) });
+  assert.equal(w.checks()[0].state, 'gaps', 'a fix is open');
+  assert.equal(sliceRowCount(w), 5);
+  w.gapRunsSettle();
+  const second = verifyRequest(w.checks()[1]);
+  assert.deepEqual(second.shape.verify.shipped, shipped);
+  const fired = resolveShapeRequest({ shape: second.shape, workflowId: second.workflowId }, { internal: true });
+  assert.equal(fired.ok, true, fired.error);
+  assert.deepEqual(fired.shape.verify.shipped, shipped, 'the fired Verifier run still knows what was shipped');
+  assert.deepEqual(fired.shape.verify.texts, second.shape.verify.texts, 'and the texts it asks about');
+  // Round 2: a gap still open beside the carried one needs an answer for the open one only.
+  const file = (decision) => ({ result: result(['R-po-2', 'R-po-3']), headSha: null, decision });
+  assert.equal(recordVerifyResult(w.f.id, 2, file(null)), null);
+  assert.equal(sliceRowCount(w), 5);
+  w.verifierSettles(file(answersFor(['R-po-2'])));
+  assert.equal(w.checks()[1].state, 'gaps');
+  assert.deepEqual(w.checks()[1].shipped, shipped, 'cumulative for the series');
+  assert.equal(sliceRowCount(w), 6);
+  w.gapRunsSettle();
+  assert.deepEqual(verifyRequest(w.checks()[2]).shape.verify.shipped, shipped);
+  // Round 3: only the carried gap is left, so the orchestrator writes an empty answer without asking.
+  await w.verifierSettles({ result: result(['R-po-3']), headSha: null, decision: decide() }).out;
+  assert.equal(w.checks()[2].state, 'accepted');
+  assert.deepEqual(w.checks()[2].shipped, shipped);
+  assert.equal(sliceRowCount(w), 6, 'no run for a shipped gap');
+  const v = w.view();
+  assert.equal(v.ship.ready, true);
+  assert.deepEqual(v.ship.smallRuns.shippedGaps, shipped);
+});
+
+test('a Ship in flight refuses the result (SHIPPING): the requirements and the runs stay as they were, then it records', () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  const before = everything(w);
+  const decision = decide({ id: 'R-po-2', answer: 'fix' }, changeOf('R-po-3', 3, 'new words'));
+  const file = { result: result(['R-po-2', 'R-po-3']), headSha: null, decision };
+  SHIPPING.add(String(w.f.id));
+  try {
+    assert.throws(() => recordVerifyResult(w.f.id, 1, file), (e) => e.code === 'SHIPPING' && e.status === 409);
+    assert.equal(everything(w), before, 'no text rewritten, no run added');
+  } finally { SHIPPING.delete(String(w.f.id)); }
+  assert.equal(recordVerifyResult(w.f.id, 1, file).check.state, 'gaps', 'recorded once the lock is gone');
+});
+
+test('a changed text that moved since the question rolls back: STALE, nothing written, the check reads halted and Resume checks again', () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  const before = everything(w);
+  const decision = decide({ id: 'R-po-2', answer: 'fix' }, { id: 'R-po-3', answer: 'change', text: 'new words', from: 'what it read before an edit in chat' });
+  const file = { result: result(['R-po-2', 'R-po-3']), headSha: null, decision };
+  assert.throws(() => recordVerifyResult(w.f.id, 1, file), (e) => e.code === 'STALE');
+  assert.equal(everything(w), before, 'not even the fix run beside it');
+  const { pid } = w.verifierSettles(file);
+  assert.equal(everything(w), before);
+  aged(pid, OLD);
+  assert.equal(w.view().verify.state, 'halted');
+  assert.equal(w.resume().action, 'restart');
+});
+
+test('a change whose owner is no longer finished rolls back with CHANGE_NOT_FINISHED: no text, no run', () => {
+  for (const status of ['running', 'paused']) {
+    const w = world();
+    w.settle(w.pids[3]);
+    setStatus(w.pids[2], status);
+    const before = everything(w);
+    assert.throws(() => recordVerifyResult(w.f.id, 1, { result: result(['R-po-3']), headSha: null, decision: decide(changeOf('R-po-3', 3, 'new words')) }),
+      (e) => e.code === 'CHANGE_NOT_FINISHED', status);
+    assert.equal(everything(w), before, status);
+  }
+});
+
+const ancestor = (commit, ref) => spawnSync('git', ['merge-base', '--is-ancestor', commit, ref], { cwd: root }).status === 0;
+
+test("in a 5-run chain, the fix run for run 2's requirement and the change run for finished run 3 each carry buildsOn [5] and start with runs 1–5's work", () => {
+  const ids = [1, 2, 3, 4, 5].map((i) => `R-po-${i}`);
+  const w = world({ ids, chain: true });
+  const commits = w.pids.map((pid) => git(root, 'rev-parse', `feat/${pid}`));
+  for (let k = 1; k < 5; k++) assert.ok(ancestor(commits[k - 1], commits[k]), `the fixture chains run ${k + 1} on run ${k}`);
+  w.settle(w.pids[4]);
+  w.verifierSettles({ result: result(['R-po-2', 'R-po-3'], ids), headSha: null,
+    decision: decide({ id: 'R-po-2', answer: 'fix' }, changeOf('R-po-3', 3, 'requirement 3, new words')) });
+  assert.equal(sliceRowCount(w), 7, 'exactly runs 6 and 7');
+  assert.deepEqual(w.outline().slices.slice(5).map((s) => s.requirements), [['R-po-2'], ['R-po-3']]);
+  assert.deepEqual(w.view().slices.slice(5).map((s) => s.buildsOn), [[5], [5]]);
+  assert.deepEqual(w.outline().slices.slice(5).map((s) => s.dependsOn), [['s5'], ['s5']]);
+  const [t6, t7] = [w.ticketOf(6), w.ticketOf(7)];
+  const from6 = sliceSourceOf(getTicket(t6));
+  assert.equal(from6.sourceBranch, `feat/${w.pids[4]}`, 'run 6 starts from run 5');
+  for (const [k, sha] of commits.entries()) assert.ok(ancestor(sha, from6.sourceBranch), `run 6 holds run ${k + 1}`);
+  assert.deepEqual(getTicket(t7).after, { kind: 'ticket', id: t6, policy: 'done' }, 'the chain stays linear');
+  const six = w.fire(t6, 'done', 6);
+  w.settle(six);
+  const from7 = sliceSourceOf(getTicket(t7));
+  for (const [k, sha] of commits.entries()) assert.ok(ancestor(sha, from7.sourceBranch), `run 7 holds run ${k + 1}`);
+  assert.deepEqual(dependencyBranchesOf(w.f.id, 7).branches.map((b) => [b.index, b.branch]), [[5, `feat/${w.pids[4]}`]]);
+  assert.ok(ancestor(commits[4], from7.sourceBranch), 'what run 7 builds on is already in its branch');
+});
+
+// The requirement's own example (R-po-3).
+test("R-po-3 example: R-po-2 and R-ux-1 are gaps; no run until both are answered; a fix run and a change run for finished run 3; the next round checks R-ux-1's new text", () => {
+  const ids = ['R-po-1', 'R-po-2', 'R-ux-1', 'R-po-4'];
+  const open = (w) => {
+    w.settle(w.pids[3]);
+    const gaps = result(['R-po-2', 'R-ux-1'], ids).gaps;
+    const stop = verifyStop({ gaps, round: 1, fixCycles: 2, texts: verifyRequest(w.checks()[0]).shape.verify.texts });
+    assert.equal(stop.form, 'gaps');
+    return { gaps, stop };
+  };
+  const newText = { id: 'R-ux-1', answer: 'change', text: 'the list shows one line per run' };
+  const w = world({ ids });
+  const { stop } = open(w);
+  assert.equal(SHARED.verifyRoundPlan({ round: 1, fixCycles: 2, extra: 0, gaps: stop.gaps }), 'ask');
+  const early = SHARED.verifyGateAnswer(stop, decide({ id: 'R-po-2', answer: 'fix' }));
+  assert.equal(early.code, 'UNANSWERED');
+  assert.equal(recordVerifyResult(w.f.id, 1, { result: result(['R-po-2', 'R-ux-1'], ids), headSha: null, decision: null }), null);
+  assert.equal(sliceRowCount(w), 4, 'no run appears until the owner answers');
+  const answered = SHARED.verifyGateAnswer(stop, decide({ id: 'R-po-2', answer: 'fix' }, newText));
+  assert.equal(answered.ok, true, answered.error);
+  w.verifierSettles({ result: result(['R-po-2', 'R-ux-1'], ids), headSha: null, decision: answered.answer });
+  assert.equal(sliceRowCount(w), 6);
+  assert.deepEqual(w.outline().slices.slice(4).map((s) => [s.title, s.requirements]), [['Close R-po-2', ['R-po-2']], ['Change: R-ux-1', ['R-ux-1']]]);
+  assert.deepEqual(w.outline().changes.map((e) => [e.id, e.case, e.run, e.added]), [['R-ux-1', 'finished', 3, 6]]);
+  w.gapRunsSettle();
+  assert.equal(w.checks().length, 2);
+  assert.match(verifyRequest(w.checks()[1]).prompt, /R-ux-1 · run \d+ · the list shows one line per run/);
+  // Had the owner shipped R-po-2 with the gap instead.
+  const w2 = world({ ids });
+  const two = open(w2);
+  const shippedAnswer = SHARED.verifyGateAnswer(two.stop, decide(shipOf('R-po-2'), newText));
+  assert.equal(shippedAnswer.ok, true, shippedAnswer.error);
+  w2.verifierSettles({ result: result(['R-po-2', 'R-ux-1'], ids), headSha: null, decision: shippedAnswer.answer });
+  assert.equal(sliceRowCount(w2), 5, 'only the change run');
+  assert.deepEqual(w2.outline().slices[4].requirements, ['R-ux-1']);
+  const listed = w2.view().ship.smallRuns.shippedGaps;
+  assert.deepEqual(listed, [{ id: 'R-po-2', reason: REASON }]);
+  assert.deepEqual(listed.map((g) => LEDGER.shippedGapLine(g)), ['R-po-2 ships with a gap: covered by a later feature']);
 });

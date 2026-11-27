@@ -301,6 +301,42 @@ const CODE_TEXT = {
 };
 
 /**
+ * Small runs C4 (D3–D6), shared with the Verifier's gate (slice 8, D7): plan where each validated change lands, by the
+ * owner's case in `slices` (featureView's). `source` is the entries' source, `asker` the asking run's number (its own
+ * requirement waits), `firstIndex` the number of the first run appended. Writes nothing.
+ * → {plan:{changes, entries, restart, appendFor, by}, after:{live, paused}}
+ */
+export function planRequirementChange(slices, list, { source, asker = null, at, by, firstIndex = slices.length + 1 }) {
+  const plan = { changes: list, entries: [], restart: [], appendFor: [], by };
+  const after = { live: [], paused: [] };
+  let nextIndex = firstIndex;
+  const appendOf = new Map();
+  for (const c of list) {
+    const owner = slices.find((s) => (s.requirements && s.requirements.ids || []).includes(c.id)) || null;
+    const self = !!owner && owner.index === asker;
+    const kase = self ? 'waiting' : owner ? changeCaseOf(owner.state) : 'none';
+    const e = { id: c.id, from: c.from, to: c.to, at, by, source,
+      case: kase, run: kase === 'none' ? null : owner.index };
+    if (self) e.self = true;
+    else if (kase === 'running') { if (!plan.restart.includes(owner.index)) { plan.restart.push(owner.index); if (owner.pipelineId) after.live.push(owner.pipelineId); } }
+    else if (kase === 'waiting' && LIVE_ASK.has(owner.state) && owner.pipelineId) { e.closedAsk = true; if (!after.live.includes(owner.pipelineId)) after.live.push(owner.pipelineId); }
+    else if (kase === 'waiting' && owner.state === 'paused' && owner.pipelineId) { if (!after.paused.includes(owner.pipelineId)) after.paused.push(owner.pipelineId); }
+    else if (kase === 'finished') {
+      let a = appendOf.get(owner.index);
+      if (!a) { a = { ownerIndex: owner.index, ids: [], index: nextIndex++ }; appendOf.set(owner.index, a); plan.appendFor.push(a); }
+      a.ids.push(c.id);
+      e.added = a.index;
+    }
+    plan.entries.push(e);
+  }
+  for (const a of plan.appendFor) {
+    const lines = a.ids.map((id) => `${id} now reads: ${list.find((c) => c.id === id).to}`);
+    Object.assign(a, { title: `Change: ${a.ids.join(', ')}`, goal: `Change the finished work so it meets the changed requirement.\n\n${lines.join('\n')}` });
+  }
+  return { plan, after };
+}
+
+/**
  * Small runs C4 (D1): the one path for a requirement change, from a chat card (source.kind 'chat') or a run's
  * requirement stop (source.kind 'run', with the asking run's pipelineId and number). Synchronous over `deps`
  * ({view, write, stopLive, stopPaused, runNow, tick, broadcast, smallRuns}): validate, read the cases from the live view,
@@ -325,34 +361,8 @@ export function applyRequirementChange(featureId, changes, source, deps) {
   }
   if (!list.length) return refusal(422, 'INVALID_ID', CODE_TEXT.INVALID_ID());
   const asker = source && source.kind === 'run' ? source.run : null;
-  const at = new Date().toISOString();
-  const slices = view.slices || [];
-  const plan = { changes: list, entries: [], restart: [], appendFor: [], by };
-  const after = { live: [], paused: [] };
-  let nextIndex = slices.length + 1;
-  const appendOf = new Map();
-  for (const c of list) {
-    const owner = slices.find((s) => (s.requirements && s.requirements.ids || []).includes(c.id)) || null;
-    const self = !!owner && owner.index === asker;
-    const kase = self ? 'waiting' : owner ? changeCaseOf(owner.state) : 'none';
-    const e = { id: c.id, from: c.from, to: c.to, at, by, source: { kind: source.kind, ...(Number.isInteger(asker) ? { run: asker } : {}) },
-      case: kase, run: kase === 'none' ? null : owner.index };
-    if (self) e.self = true;
-    else if (kase === 'running') { if (!plan.restart.includes(owner.index)) { plan.restart.push(owner.index); if (owner.pipelineId) after.live.push(owner.pipelineId); } }
-    else if (kase === 'waiting' && LIVE_ASK.has(owner.state) && owner.pipelineId) { e.closedAsk = true; if (!after.live.includes(owner.pipelineId)) after.live.push(owner.pipelineId); }
-    else if (kase === 'waiting' && owner.state === 'paused' && owner.pipelineId) { if (!after.paused.includes(owner.pipelineId)) after.paused.push(owner.pipelineId); }
-    else if (kase === 'finished') {
-      let a = appendOf.get(owner.index);
-      if (!a) { a = { ownerIndex: owner.index, ids: [], index: nextIndex++ }; appendOf.set(owner.index, a); plan.appendFor.push(a); }
-      a.ids.push(c.id);
-      e.added = a.index;
-    }
-    plan.entries.push(e);
-  }
-  for (const a of plan.appendFor) {
-    const lines = a.ids.map((id) => `${id} now reads: ${list.find((c) => c.id === id).to}`);
-    Object.assign(a, { title: `Change: ${a.ids.join(', ')}`, goal: `Change the finished work so it meets the changed requirement.\n\n${lines.join('\n')}` });
-  }
+  const { plan, after } = planRequirementChange(view.slices || [], list, { asker, at: new Date().toISOString(), by,
+    source: { kind: source.kind, ...(Number.isInteger(asker) ? { run: asker } : {}) } });
   let written;
   try { written = deps.write(view.id, plan); }
   catch (err) {

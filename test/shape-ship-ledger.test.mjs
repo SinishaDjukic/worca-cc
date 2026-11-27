@@ -285,3 +285,31 @@ test('s7 the judged block reason says you confirm; the unjudged one keeps naming
   assert.equal(shipLedger(unjudged).reason, 'Waiting for Compliance to confirm R-comp-1');
   assert.equal(shipLedger({ ...CONF(['R-ux-2']), acceptance: [{ id: 'R-ux-2', mark: 'dropped' }] }).reason, REASON_FIRST, 'needs-reason keeps its words');
 });
+
+// ── Slice 8 (R-po-3, D12): the gaps shipped as is, with their reasons ─────────────────────────────────────────
+const SHIPPED = [{ id: 'R-po-2', reason: 'covered by a later feature' }];
+
+test('shippedGapLine: the id and its reason, or the id alone', () => {
+  assert.equal(typeof LEDGER.shippedGapLine, 'function', 'ship-ledger exports shippedGapLine');
+  assert.equal(LEDGER.shippedGapLine(SHIPPED[0]), 'R-po-2 ships with a gap: covered by a later feature');
+  assert.equal(LEDGER.shippedGapLine({ id: 'R-po-2', reason: null }), 'R-po-2 ships with a gap');
+  assert.equal(LEDGER.shippedGapLine({ id: 'R-po-2' }), 'R-po-2 ships with a gap');
+});
+
+test("shipLedger: an accepted check's shipped gaps are listed and read gap-accepted, also one this round no longer reports", () => {
+  for (const gaps of [[{ id: 'R-po-2', why: 'x', run: null }], []]) {
+    const l = shipLedger({ agreed: AGREED, kinds: KINDS, acceptance: [], verify: { state: 'accepted', gaps, shipped: SHIPPED } });
+    assert.deepEqual(l.shippedGaps, SHIPPED);
+    assert.deepEqual(l.owned.map((o) => [o.id, o.status]).slice(0, 2), [['R-po-1', 'holds'], ['R-po-2', 'gap-accepted']]);
+    assert.deepEqual(l.met, { met: 2, total: 4 });
+  }
+});
+
+test('shipLedger: an accepted check from before this change (no shipped) reads as before and lists no line', () => {
+  const l = shipLedger({ agreed: AGREED, kinds: KINDS, acceptance: [], verify: { state: 'accepted', gaps: [{ id: 'R-po-2', why: 'x', run: 5 }] } });
+  assert.deepEqual(l.owned.map((o) => o.status), ['holds', 'gap-accepted', 'holds']);
+  assert.deepEqual(l.shippedGaps ?? [], []);
+  const none = shipLedger({ agreed: AGREED, kinds: KINDS, acceptance: [], verify: null });
+  assert.deepEqual(none.shippedGaps ?? [], []);
+});
+

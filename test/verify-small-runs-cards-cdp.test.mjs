@@ -46,7 +46,7 @@ test('the Verifier strings, the gap list and the measurements', () => {
   const s = src();
   for (const needle of ["'Verifying'", "'the Verifier walks the main flow · 4 of 4 runs done'", "'Ready to ship'",
     "'Verifier: 3 of 4 hold · 1 gap · run 5 added for it'",
-    "'Verified: the 4 requirements owned by runs hold in the main flow'", "'Add a run for the gap'", "'Needs you'"]) assert.ok(s.includes(needle), needle);
+    "'Verified: the 4 requirements owned by runs hold in the main flow'", "'Send answers'", "'Needs you'"]) assert.ok(s.includes(needle), needle);
   assert.match(s, /judge\('verifier gap list'/);
   assert.match(s, /judgeVerifyLine\('gap found', theme\)/, 'the Verifier line measured beside the gap rows (owner direction d86d13181)');
   assert.match(s, /judgeVerifyLine\('no gap', theme\)/);
@@ -325,3 +325,11 @@ test('s7: confirm-in-place phase', () => {
     assert.match(s, new RegExp(`[\`'/]${name}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${name} screenshots`);
   }
 });
+
+// Shaper small runs slice 8 (D14): the gap question, light and dark.
+test('the gap question: a 2-gap gate stop, shot in both themes', () => {
+  const s = src();
+  assert.match(s, /const VSTOP = verifyStop\(/);
+  assert.match(s, /shot\(`app-verifier-gap-question-\$\{theme\}`\)/);
+});
+

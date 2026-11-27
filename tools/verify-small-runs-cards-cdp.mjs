@@ -5,7 +5,7 @@
 // waiting on a live mock run. At 375px, in light and dark, each surface is captured beside its prototype screen
 // (`plans/shaper-refresh/prototype.html#id`, the moment's segment clicked):
 //   C5 `#verifier` verifying ([data-vf="vw"]) and gap found ([data-vf="vf"]), `#ship` (state line and receipt), the
-//      bound stop (`#run-stops`), on the Chat card, plus the run page and side panel of the Verifier run and a gap run;
+//      gap question (`#run-stops`), on the Chat card, plus the run page and side panel of the Verifier run and a gap run;
 //   C1 `#prototype` offered, building, built, remark proposed, confirmed ([data-proto] 0, .5, 1, 2, 3);
 //   C2 `#build` rows and `#run-panel` Agents; C3 `#run-stops` question, answered fold and waiting row;
 //   C4 `#req-change` notice and its "How a change lands" fold;
@@ -55,7 +55,7 @@ const log = (m) => process.stderr.write(`[${((Date.now() - T0) / 1000).toFixed(1
 let chrome = null; let srv = null; let home = null; let proj = null; let profile = null; let failed = 0;
 const results = { startedAt: new Date(T0).toISOString(), width: WIDTH, verdict: null, lists: [], shots: [], checks: [],
   notes: ['The detail leaves out the cost, as every S8 line does; "Ready to ship" is the word, so the detail does not repeat it.',
-    'New wording with no prototype screen (the bound stop, "Ship with the gap", the accepted receipt, the stopped line) is paired with #run-stops for layout only.'] };
+    'New wording with no prototype screen (the gap question, "Ship with the gap", the accepted receipt, the stopped line) is paired with #run-stops for layout only.'] };
 let logFile = null;
 const writeLog = (verdict) => { if (logFile) writeFileSync(logFile, JSON.stringify({ ...results, verdict }, null, 2) + '\n'); };
 async function shutdown(code) {
@@ -218,14 +218,15 @@ setVerify(VF.f, vCheck(VF, VF_RUN, 'gaps', { result: { held: HELD, gaps: [GAP] }
 const VC = seedFeature('vc', 'Member list', ['done', 'done', 'done', 'done']);
 pipeline('c5vcv00001', 'done', 'Member list · Verifier');
 setVerify(VC.f, vCheck(VC, 'c5vcv00001', 'clean', { result: { held: AGREED.map((a) => a.id), gaps: [] } }));
-// C5 the bound stop: round 3 of Balanced, one gap still open; the Verifier run asks.
+// Slice 8: the gap question. Round 1 found two gaps; the Verifier run asks before any run is added.
 const VA = seedFeature('va', 'Landing form', ['done', 'done', 'done', 'done']);
 const VA_RUN = 'c5vav00001';
 pipeline(VA_RUN, 'running', 'Landing form · Verifier');
-setVerify(VA.f, vCheck(VA, VA_RUN, 'verifying', { round: 3 }));
-const VSTOP = verifyStop({ gaps: [GAP], round: 3, fixCycles: 2 });
-const VPQ = { id: 'verify-3-x:n_verify:1', kind: 'gate', nodeId: 'n_verify', executionId: 'x:n_verify:1', issues: [], stop: VSTOP };
-liveRun(VA_RUN, 'Landing form · Verifier', { at: 'n_verify', verify: true, pendingQuestion: VPQ, runShape: VERIFY(VA.f.id, 3) });
+setVerify(VA.f, vCheck(VA, VA_RUN, 'verifying', { round: 1 }));
+const GAP2 = { id: 'R-po-3', why: 'the export skips empty charts', title: 'Export empty charts' };
+const VSTOP = verifyStop({ gaps: [GAP, GAP2], round: 1, fixCycles: 2, texts: Object.fromEntries(AGREED.map((a) => [a.id, a.text])) });
+const VPQ = { id: 'verify-1-x:n_verify:1', kind: 'gate', nodeId: 'n_verify', executionId: 'x:n_verify:1', issues: [], stop: VSTOP };
+liveRun(VA_RUN, 'Landing form · Verifier', { at: 'n_verify', verify: true, pendingQuestion: VPQ, runShape: VERIFY(VA.f.id, 1) });
 
 // C2 + C3: run 2 waits on its objection stop, run 3 builds, run 4 builds on run 2.
 const RS = seedFeature('rs', 'Charts', ['done', 'running', 'running', 'planned']);
@@ -1848,7 +1849,7 @@ for (const theme of THEMES) {
     await shipCells(theme, width);
   }
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
-  // ---- C5: verifying, gap found, the bound stop, no gap; the Verifier's and a gap run's run page and side panel.
+  // ---- C5: verifying, gap found, the gap question, no gap; the Verifier's and a gap run's run page and side panel.
   if (await card(VW.threadId, 'vw', 'the verifying card', theme)) {
     const s = await ev(STATUS);
     check(s && s.word === 'Verifying' && s.detail === 'the Verifier walks the main flow · 4 of 4 runs done', `verifying, ${theme}: word and detail (${JSON.stringify(s)})`);
@@ -1873,17 +1874,19 @@ for (const theme of THEMES) {
     await shot(`app-verifier-gap-found-${theme}`);
   }
   await prototypeShot('verifier', '[data-vf="vf"]', 'verifier-gap-found', theme);
-  if (await card(VA.threadId, 'va', 'the bound stop card', theme)) {
-    if (await waitFor("!!document.querySelector('.chat-rc .qpanel .verify-gaps')", `the bound stop's question (${theme})`)) {
+  if (await card(VA.threadId, 'va', 'the gap question card', theme)) {
+    if (await waitFor("!!document.querySelector('.chat-rc .qpanel[data-kind=\"gaps\"]')", `the gap question (${theme})`)) {
       await reveal('.chat-rc .qopt');
       const s = await ev(STATUS);
-      check(s && s.word === 'Needs you', `bound stop, ${theme}: Needs you (${JSON.stringify(s)})`);
+      check(s && s.word === 'Needs you', `gap question, ${theme}: Needs you (${JSON.stringify(s)})`);
       const c = await ev(COUNTS('.chat-rc'));
-      check(c && c.questions === 1 && c.primaries.length === 1 && c.primaries[0] === 'Add a run for the gap' && c.answer === 0 && c.gapLists === 1,
-        `bound stop, ${theme}: one question, one primary naming the pick, no Answer, one gap list (${JSON.stringify(c)})`);
-      check(c && /Add a run for the gap/.test(c.preset || ''), `bound stop, ${theme}: Worca's pick preselected`);
-      judge('bound stop gap list', theme, await ev(MEASURE(...GAP_ROWS('.chat-rc .qpanel'))), { oneLine: false });
-      await shot(`app-verifier-bound-stop-${theme}`);
+      check(c && c.questions === 1 && c.primaries.length === 1 && c.primaries[0] === 'Send answers' && c.answer === 0 && c.gapLists === 0,
+        `gap question, ${theme}: one question, one primary Send answers, no Answer, no second gap list (${JSON.stringify(c)})`);
+      check(c && /Add a fix run/.test(c.preset || ''), `gap question, ${theme}: a fix run preset`);
+      const g = await ev(`(() => { const p = document.querySelector('.chat-rc .qpanel[data-kind="gaps"]');
+        return { blocks: p.querySelectorAll('.qblock').length, tiles: p.querySelectorAll('.qopt').length }; })()`);
+      check(g && g.blocks === 2 && g.tiles === 6, `gap question, ${theme}: two gaps, three answers each (${JSON.stringify(g)})`);
+      await shot(`app-verifier-gap-question-${theme}`);
     }
   }
   if (await card(VC.threadId, 'vc', 'the no-gap card', theme)) {

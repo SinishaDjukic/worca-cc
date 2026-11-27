@@ -71,7 +71,7 @@ import { REFINER_SINK, roleReviewOf, roleChecklistOf, runningRoles, rolesForRoun
 import { DISPOSITIONS_MAX_BYTES, applyDispositions, withCounts, normalizeConflicts, dispositionsPathFor, conflictClarifications, withClarifications } from '../shared/review/findings.mjs';
 import { currentPass } from '../shared/shape/role-review.mjs';
 import { gateStop, planStop, concernStop, stopDoneText, stopOptionOf, settledLine, SETTLED_CONCERN_FEEDBACK } from '../shared/shape/run-stops.mjs';
-import { verifyResult, verifyRoundPlan, verifyStop } from '../shared/shape/verifier.mjs';
+import { verifyResult, verifyRoundPlan, verifyStop, verifyGateAnswer, gapAnswerSummary } from '../shared/shape/verifier.mjs';
 import { VERIFY_RESULT_FILE } from './shape/verifier.mjs';
 import { criteriaCheck, criteriaList, criterionIds, coverageOf, criteriaExamples } from '../shared/review/coverage.mjs';
 import { normalizeDecisions, conflictDecisions, validateDecisionPicks, decisionClarifications } from '../shared/review/decisions.mjs';
@@ -1622,7 +1622,7 @@ export class GraphOrchestrator extends RunHarness {
 
   /**
    * Small runs C5 (D9, D14): after n_verify, read the Verifier's file (bounded), judge it against the owned ids, and
-   * past Care's bound ask C3's `check` stop on this run. Writes verify-result.json {result, headSha, decision} into the
+   * (slice 8) on any round with an open gap ask the gap stop (reason `check`, `form: 'gaps'`) on this run. Writes verify-result.json {result, headSha, decision} into the
    * run dir for the settle hook (src/core/shape/verifier.mjs). An unparseable, mis-shaped or oversized file fails the run
    * (an absent one never gets here: the executor's missing-output path pauses it first).
    */
@@ -1639,19 +1639,30 @@ export class GraphOrchestrator extends RunHarness {
     }
     const ref = await this._git(['rev-parse', 'HEAD'], { cwd: ctx.projectDir });
     const headSha = ref.ok ? ref.stdout.trim() : null;
+    // Slice 8 (D5): any round with an open gap asks, from round 1 on. A gap shipped earlier in the series is carried as
+    // answered and never asked again; with none open the decision is written without asking.
+    const shippedIds = new Set((Array.isArray(v.shipped) ? v.shipped : []).map((g) => g && g.id).filter(Boolean));
+    const open = result.gaps.filter((g) => !shippedIds.has(g.id));
     let decision = null;
-    if (verifyRoundPlan({ round: v.round, fixCycles: v.fixCycles, extra: v.extra, gaps: result.gaps }) === 'stop') {
+    if (verifyRoundPlan({ round: v.round, fixCycles: v.fixCycles, extra: v.extra, gaps: open }) === 'clean') {
+      if (result.gaps.length) decision = { decision: 'answer', answers: [] };
+    } else {
       const id = `verify-${v.round}-${ctx.executionId}`;
-      if (this._stopAnswer?.id === id) decision = gateAnswer(this._stopAnswer.payload)?.decision ?? null;   // replay after a pause
+      const stop = verifyStop({ gaps: open, round: v.round, fixCycles: v.fixCycles, texts: v.texts });
+      const checked = (raw) => { const r = verifyGateAnswer(stop, raw); return r.ok ? r.answer : null; };
+      // A replay after a pause passes the same validator: a stash from before the gate (another / continue) is asked again.
+      const replayed = this._stopAnswer?.id === id ? checked(this._stopAnswer.payload) : null;
+      if (replayed) decision = replayed;
       else {
         this._stopAnswer = null;
-        const stop = verifyStop({ gaps: result.gaps, round: v.round, fixCycles: v.fixCycles });
         const payload = await this._enqueueAsk(() => this._ask({ id, kind: 'gate', nodeId: ctx.nodeId, executionId: ctx.executionId,
-          issues: [], stop, validate: gateAnswer }));
-        this._stopAnswer = { id, payload };
-        const o = stopOptionOf(stop, payload);
-        if (this.pipeline) await appendAudit(this.pipeline.dir, `Verifier: ${o ? o.short : 'answered'} · decided by you`, { actor: this.answeredBy(id) }).catch(() => {});
-        decision = gateAnswer(payload)?.decision ?? null;
+          issues: [], stop, validate: checked }));
+        // Checked again: the --yes path returns {decision:'continue'} without calling validate. A refusal writes null.
+        decision = checked(payload);
+        if (decision) {
+          this._stopAnswer = { id, payload: decision };
+          if (this.pipeline) await appendAudit(this.pipeline.dir, `Verifier: ${gapAnswerSummary(decision.answers)} · decided by you`, { actor: this.answeredBy(id) }).catch(() => {});
+        }
       }
     }
     await writeFile(join(this.pipeline.dir, VERIFY_RESULT_FILE), `${JSON.stringify({ result, headSha, decision }, null, 2)}\n`, 'utf8');

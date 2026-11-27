@@ -7189,6 +7189,8 @@ registerAskRenderer('gate', {
   title: () => 'Cycle gate',
   render: (panel, pq, ctx) => renderGateCard(panel, pq, { ...stepDeps(ctx, pq), ...stopDeps(ctx, pq, panel),
     wireCopy: gateWireCopy(ctx.run, pq.wireId), tagLevel, submit: (p) => stepPost(ctx.run, p) }),
+  // Slice 8: a Verifier gap answer's 422 names the gap it refuses (shape/gap-question.mjs).
+  setErrors: (panel, errors) => { if (panel && panel.__gaps) panel.__gaps.setErrors(errors); },
 });
 registerAskRenderer('recovery', {
   title: (pq) => `${(((pq.recovery || {}).cls) || 'recoverable').replace('_', ' ')} error: action needed`,

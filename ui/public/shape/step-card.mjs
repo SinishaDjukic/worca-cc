@@ -8,6 +8,7 @@ import { buildRoleFold } from './role-rows.mjs';
 import { splitBlockers } from '../../../src/shared/shape/slices.mjs';
 import { stopDoneText } from '../../../src/shared/shape/run-stops.mjs';
 import { buildChatQuestion } from '../chat/question.mjs';
+import { buildGapQuestion } from './gap-question.mjs';
 import { buildCheckRows } from './check-row.mjs';
 import { buildNoteBody } from './note-body.mjs';
 import { noteTitle } from '../../../src/shared/shape/outline-note.mjs';
@@ -302,6 +303,19 @@ function renderStopCard(panel, pq, deps) {
     if (deps.runPage) head.dataset.stop = '';                // shape-it.css: one column from the first paint
   }
   if (held) return;
+  // Slice 8 (D13): the Verifier's gate is one question per gap; its gaps are the questions, so no list repeats them.
+  if (stop.form === 'gaps') {
+    if (deps.refused) {
+      const err = errLine(doc);
+      err.textContent = `Not sent: ${deps.refused}`;
+      err.hidden = false;
+      panel.appendChild(err);
+    }
+    const q = buildGapQuestion(doc, stop, { submit: deps.submit });
+    panel.__gaps = q;                                       // app.js: a 422's marks land under their gaps
+    panel.appendChild(q);
+    return;
+  }
   const optionOf = (v) => stop.options.find((o) => o.value === v) || stop.options.find((o) => o.value === stop.pick);
   const q = buildChatQuestion(doc, {
     id: `stop-${pq.id}`, heading: stop.head, head: false, numbers: false,
