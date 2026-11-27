@@ -477,6 +477,7 @@ test('the CLI probe runs once per sandbox and engine, never for claude, again af
     assert.equal((await runClaude({ cwd: f.repo, prompt: 'x', execEnv: env })).text, 'done');
     assert.deepEqual(probes, ['codex'], 'probed before the first codex spawn only');
     // A reconnected env (a resumed run) probes again: the template is the sandbox's, and the answer lives with the env.
+    await env.park(60_000);                                              // the run paused: a resume reconnects to a held env
     const back = await E2bExecEnv.reconnect(env.resumeRecord(), makeEnvOpts(tmp, sdk, f, { env: server, scratchDir: env.scratchDir }));
     assert.equal((await codex(back)).text, 'done');
     assert.deepEqual(probes, ['codex', 'codex']);
