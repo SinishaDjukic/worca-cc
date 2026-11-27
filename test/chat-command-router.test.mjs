@@ -596,3 +596,22 @@ test('a completed /pause or /stop is marked done for its receipt (✅); its refu
   state.rows.push({ id: 'pipe-dddd4444', title: 'Crashed run', status: 'interrupted' });
   for (const t of ['/stop *4444', '/pause *2222', '/stop *9999', '/status zzzz']) assert.ok(!done(await send(t)), t);
 });
+
+// Slice 3 (D11): a stop answer refused by the take-in reaches the person who answered in chat. A stop sits on a gate or
+// plan question, so the chat verb that answers it is /approve or /retry (/answer never answers a gate).
+test('a stop answer refused with TAKE_IN_REFUSED replies Command failed with the reason', async () => {
+  const { send, state } = fixture({ answer: async () => {
+    throw Object.assign(new Error('runs 2 and 3 clash in src/a.mjs'), { code: 'TAKE_IN_REFUSED', status: 409 });
+  } });
+  state.pending['run-aaaa1111'] = { id: 'gate-9', kind: 'gate' };
+  assert.equal(text(await send('/retry')), 'Command failed: runs 2 and 3 clash in src/a.mjs');
+});
+
+// Shaper small runs slice 7 (D18): a resume held for its turn started nothing, and the reply says so.
+test('S7: a held /resume replies that it waits its turn (after run 8)', async () => {
+  const { send } = fixture({ resume: async (pipelineId) => ({ ok: true, held: true, pipelineId, after: 8 }) });
+  const said = text(await send('/resume *3333'));
+  assert.match(said, /after run 8/);
+  assert.doesNotMatch(said, /Resuming/);
+  assert.match(said, /Resume of `\*3333` waits its turn \(after run 8\)/);
+});

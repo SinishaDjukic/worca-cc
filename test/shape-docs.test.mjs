@@ -59,7 +59,8 @@ test('each doc\'s new text says what off means: the marker\'s parts stay, the li
   const FACTS = {
     'shape-it-first.md': [
       'also for a feature with no marker', 'waits only for the runs it builds on', "starts from the feature's latest finished run",
-      'a resumed run first merges the latest finished work', 'HEAD_MISSING_WORK', "a finished feature's figures are recorded",
+      'a resumed run first merges the latest finished work', 'on a marked feature, every finished run it lacks, whatever its base, and it records the branch it now builds on as its base',
+      'HEAD_MISSING_WORK', "a finished feature's figures are recorded",
       'keeps its one card, its Care and the Care row on its Ship card, its run stops, the stacked-only Ship and the marks that block it',
       'no Verifier check starts', 'a stopped or failed check offers none', 'ten minutes after', 'never while Worca is still committing', 'Ship opens with no Verifier check', 'A check already open, or with a gap, keeps Ship at `NOT_READY`',
       'continue by the linear chain', 'is not checked, so ship it as one PR per run', 'no figures are recorded, figures already',
@@ -202,4 +203,67 @@ test('S16-T6 (R-po-6): the run page bullet says a run that has not started has n
   const bullet = smallPart('The four places').split(/ - \*\*/).find((b) => b.startsWith('The run panel and the Expert run page**')) || '';
   assert.ok(bullet, 'the run panel and run page bullet');
   assert.deepEqual(missing(bullet, ['has no run page', 'Waits for', 'Needed by', '`nothing`']), []);
+});
+
+// Shaper small runs slice 3 (R-po-2): a run that waited at a stop takes in what finished meanwhile.
+test('slice 3: "Work taken in after a wait" follows the clash part and "The flag, read live" names the take-in before an answer', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const at = small.indexOf('Work taken in after a wait');
+  assert.ok(at >= 0, 'the paragraph "Work taken in after a wait" under Small runs');
+  assert.ok(at > small.indexOf('When the runs it builds on clash'), 'after "When the runs it builds on clash"');
+  const para = flat(small.slice(at).split(/\n\s*\n/).slice(0, 2).join('\n'));   // a heading and its paragraph, or one paragraph
+  assert.deepEqual(missing(para, [/waited at a stop/i, /paused run is resumed/i, /whatever base that run started from/i, /meanwhile|while it waited/i, '`feat/run-9 moved · run 2 starts from it`',
+    /pull request/i, '`after run 3`', /clash/i, /not sent/i, /stays open/i, /nothing moves/i, /settle/i, /answer again/i]), []);
+  const live = flat(small).split('**The flag, read live.**')[1]?.split('**A feature with the marker')[0] || '';
+  assert.match(live, /waited at a stop takes in every finished run it lacks, whatever its base, before its answer goes on/);
+});
+
+test('a clash between the runs it builds on: Small runs says a run starts with all of them and how a held run is released', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const live = flat(small).split('**The flag, read live.**')[1]?.split('**A feature with the marker')[0] || '';
+  assert.match(live, /merges in every run it builds on/, '"The flag, read live" says the start takes in every run it builds on');
+  const at = small.indexOf('When the runs it builds on clash');
+  assert.ok(at >= 0, 'the paragraph "When the runs it builds on clash"');
+  const para = flat(small.slice(at).split(/\n\s*\n/).slice(0, 2).join('\n'));   // a heading and its paragraph, or one paragraph
+  assert.deepEqual(missing(para, [/held/i, /clash/i, /settle/i, /branch/i, 'Start now', 'Re-plan the rest', 'Cancel the rest', /restart/i]), []);
+});
+
+// Shaper small runs slice 4 (R-ux-3): Ship lists the pull requests along the real branches.
+test('slice 4: the Ship part says the PRs follow the real branches, which run gets none, and keeps the finish order for the other case', () => {
+  const part = smallPart('Ship');
+  assert.ok(part, 'the "### Ship" part');
+  assert.deepEqual(missing(part, ['along the real branches', 'gets no pull request of its own', 'in the order the runs finished']), []);
+});
+
+// Shaper small runs slice 6 (R-po-6, R-arch-2): `next` and the delivery of held answers follow one order.
+test('slice 6: the run words say next and held answers follow one order', () => {
+  assert.deepEqual(missing(smallPart('The run words'), ['the order held answers are delivered in', /lowest run number first/i]), []);
+  const live = flat(DOCS['shape-it-first.md'].text()).split('**The flag, read live.**')[1]?.split('**A feature with the marker')[0] || '';
+  assert.deepEqual(missing(live, ['held answers go on one at a time, lowest run first']), []);
+});
+
+// Shaper small runs slice 7 (R-po-4, R-po-5): a resume waits its turn.
+test('slice 7: Held resumes', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const part = smallPart('Held resumes');
+  assert.ok(part, 'the "### Held resumes" part');
+  assert.ok(small.indexOf('\n### Held resumes\n') > small.indexOf('\n### Open stops on the card\n'), 'after "Open stops on the card"');
+  assert.deepEqual(missing(part, ['held resume', 'restart', 'paused']), []);
+  assert.deepEqual(missing(smallPart('The run words'), [/`next` comes only from the server's turn: an answer or a resume held for its turn first/]), []);
+  const live = flat(small).split('**The flag, read live.**')[1]?.split('**A feature with the marker')[0] || '';
+  assert.deepEqual(missing(live, ['an answer or a resume held for its turn waits']), []);
+});
+
+// Shaper small runs slice 8 (R-ux-1, R-ux-2): the row word and the Resume wording of a held resume.
+test('slice 8: Held resumes names the row word and the Resume wording', () => {
+  const part = smallPart('Held resumes');
+  assert.deepEqual(missing(part, ['after run N', 'Resume after run N']), []);
+  for (const gone of ['Until the row wording lands', "a stop line's Resume"]) assert.ok(!part.includes(gone), `no longer says: ${gone}`);
+});
+
+// R-ux-4: a stop's findings list shows on every surface where the stop can be answered.
+test('R-ux-4: "One card, three hosts" says a small run\'s stop card lists its findings under its question on every surface', () => {
+  const para = read('shape-it-first.md').split(/\n\s*\n/).map(flat).find((p) => p.startsWith('**One card, three hosts.**')) || '';
+  assert.ok(para, 'the paragraph "One card, three hosts"');
+  assert.deepEqual(missing(para, [/small runs on/i, /lists its findings under (?:its|the) question/i, /every surface/i]), []);
 });

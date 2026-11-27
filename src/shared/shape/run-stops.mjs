@@ -186,6 +186,8 @@ export const settledLine = (kind, n = 0) => (SETTLED[kind] ? SETTLED[kind](n) : 
 
 /** A second answer while one is held. */
 export const heldRefusal = (after) => `this stop is already answered: it goes on after run ${after}`;
+/** Slice 3 (D11): a second answer while the first is being taken in. */
+export const sendingRefusal = () => 'this stop is already answered: its answer is being sent';
 /** An answer to a stop this run has already taken. */
 export const answeredRefusal = () => 'this stop is already answered';
 

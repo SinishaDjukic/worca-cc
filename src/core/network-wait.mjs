@@ -81,7 +81,8 @@ export function createNetworkWatch({ settings, listRuns, hasResumeTicket, probe,
       if (!up) continue;
       for (const r of rows) {
         try {
-          await resume(r);
+          const out = await resume(r);
+          if (out && out.held) continue;             // Shaper small runs: held for its turn, not resumed
           resumed.push(r.id);
           reported.delete(r.id);
         } catch (err) {

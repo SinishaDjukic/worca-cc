@@ -390,7 +390,7 @@ import { activeAgents, snapshotFromState } from './ask-run-card.mjs';
 import { mountRunAgents } from './shape/run-agents.mjs';
 import { mountRunFacts } from './shape/run-facts.mjs';
 import { runAgentRows, memberShortWord } from '../../src/shared/shape/run-agents.mjs';
-import { memberStatusOf } from '../../src/shared/shape/run-status.mjs';
+import { memberStatusOf, resumeAfterOf, resumeLabel } from '../../src/shared/shape/run-status.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
 import { mountNewRunAttach, newRunScope, jsonFetcher as attachFetcher } from './requirements-attach/entries.mjs';
@@ -2164,8 +2164,10 @@ function handleServerMessage(msg) {
     // Small runs C3 (D13): an open stop of this feature re-reads its slice, so an answer held in any tab draws its
     // answered line. Read the held state before the cache clears: only a stop whose held state changed repaints.
     const heldBefore = openStopsHeld(msg.id);
+    const resumeRepaint = openResumesOf(msg.id);   // slice 8 (d8-9): read before the clear, as openStopsHeld
     SLICE_INFO.clear();
     repaintHeldStops(msg.id, heldBefore);
+    resumeRepaint();
     refreshShapeFeatures(msg.id);
     void refreshGroupFeatureLock(msg.id);
     // Small runs: a member's short word (a stop opened, held or answered) comes with its group.
@@ -7223,7 +7225,7 @@ function stepDeps(ctx, pq) {
 
 /** Small runs C3 (D12, D13): a stop's extra deps. A stop is answered on every surface: the feature card, the feature
  *  page, the run page and the run side panel (`runPage` there: the head's one-column marker); with the flag off, the run
- *  page and panel (`readOnly`) draw its findings only. An answer held for another run's turn (the feature view's
+ *  page and panel (`readOnly`) draw its findings only; with it on, every surface lists them (`findings`). An answer held for another run's turn (the feature view's
  *  `stop.held`, read through the slice info) draws the one answered line. */
 function stopDeps(ctx, pq, panel) {
   if (!pq || !pq.stop) return {};
@@ -7234,11 +7236,13 @@ function stopDeps(ctx, pq, panel) {
   const info = r && r.pipelineId ? sliceInfoFor(r.pipelineId, repaint) : null;
   const held = info && info.stop && info.stop.held ? { value: info.stop.value } : null;
   const pick = typeof panel.__stopPick === 'string' ? panel.__stopPick : null;   // the person's pick across a repaint
-  return { readOnly: !small && runScreen, ...(small && runScreen ? { runPage: true } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}) };
+  return { readOnly: !small && runScreen, ...(small && runScreen ? { runPage: true } : {}), ...(small ? { findings: true } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}),
+    ...(small && info?.stop?.refused ? { refused: info.stop.refused } : {}) };   // slice 3 (D11): why a held answer was not sent
 }
 
-/** A stop's held state as read from its slice info: '' when nothing is held. */
-const heldSigOf = (info) => (info && info.stop && info.stop.held ? `held:${info.stop.value}` : '');
+/** A stop's held state as read from its slice info (and, slice 3, a refused held answer's reason): '' when neither. */
+const heldSigOf = (info) => (info && info.stop && info.stop.held ? `held:${info.stop.value}`
+  : info && info.stop && info.stop.refused ? `refused:${info.stop.refused}` : '');
 
 /** The open stops of feature `featureId` (or whose slice is not known yet), each with its held state now. */
 function openStopsHeld(featureId) {
@@ -7251,6 +7255,23 @@ function openStopsHeld(featureId) {
     out.push({ r, pq, sig: heldSigOf(info) });
   }
   return out;
+}
+
+/** Slice 8 (d8-9): the open run page's (live, or saved detail) Resume repaint when its pipeline is a slice of feature
+ *  `featureId`, read from the cached slice info before a shape-feature frame clears it. → a function that repaints. */
+function openResumesOf(featureId) {
+  const out = [];
+  const ofFeature = (pid) => !!pid && SLICE_INFO.get(pid)?.featureId === featureId;
+  const screen = runDetailState.screen;
+  const live = screen ? runs.get(runDetailState.runId) : null;
+  if (live && ofFeature(live.pipelineId)) {
+    out.push(() => { const cur = runDetailState.screen === screen ? runs.get(runDetailState.runId) : null; if (cur) paintRdHeader(screen, cur); });
+  }
+  const h = histDetailState;
+  if (h && h.screen && h.screen.isConnected && h.record && h.data && ofFeature(h.record.id)) {
+    out.push(() => { if (histDetailState === h) paintHdLive(h.screen, h.record, h.data); });
+  }
+  return () => { for (const fn of out) { try { fn(); } catch { /* a relabel only */ } } };
 }
 
 /** Re-read each stop's slice and repaint its panels only when the held state changed (fit: a repaint must not drop
@@ -23100,6 +23121,15 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
       }
       throw new Error((data && data.error) || `HTTP ${res.status}`);
     }
+    // Shaper small runs slice 7 (D16): the resume is held for its turn; nothing started, so the paused copy stays.
+    if (data && data.held === true) {
+      showResumePending(pipelineId, false);
+      if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; }
+      // Slice 8 (d8-14): once held, the row and the run head say `after run N`; the Resume reads plain Resume.
+      const heldLbl = btn && btn.querySelector('.rd-btn-label');
+      if (heldLbl) heldLbl.textContent = resumeLabel(null);
+      return;
+    }
     upsertRun({
       runId: data.runId,
       title: r.title || pipelineId,
@@ -27315,8 +27345,12 @@ async function openFeatureShip(featureId, { opener = null, card = null } = {}) {
   const f = await safeJson(res);
   if (!res.ok || !f || !Array.isArray(f.slices) || !f.slices.length) throw new Error((f && f.error) || `HTTP ${res.status}`);
   const base = await groupShipBase(f.slices[f.slices.length - 1].pipelineId, f.projectKey);
+  // Small runs slice 4: along the real branches, the dialog counts the runs Ship lists (a carried run gets no PR).
+  const sr = f.ship && f.ship.smallRuns;
+  const listed = sr && sr.along && Array.isArray(sr.order)
+    ? sr.order.map((o) => f.slices.find((s) => s.index === o.index)).filter(Boolean) : f.slices;
   openShipItGroupModal({ kind: 'feature', id: f.id, title: f.title, projectKey: f.projectKey, base,
-    members: f.slices.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested, smallRuns: !!(f.ship && f.ship.smallRuns),
+    members: listed.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested, smallRuns: !!(f.ship && f.ship.smallRuns),
     // Feature D1: One is off for small runs, so the size hint (which may suggest One) is left out.
     hint: f.ship && f.ship.smallRuns ? '' : shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
     { opener, refocus: card ? shipCardRefocus(f.id, card) : focusGroupHead });
@@ -27998,6 +28032,12 @@ function paintHdActions(screen, record, data) {
   });
   // .hd-resume starts hidden in the template; the split follows it (as .rd-resume-split follows .rd-pause).
   if (split && resumeBtn) split.hidden = resumeBtn.hidden;
+  // Slice 8 (d8-6, d8-8): a shown, not busy Resume names the run it would wait for.
+  if (resumeBtn && !resumeBtn.hidden && resumeBtn.dataset.resumeState !== 'busy') {
+    paintResumeAfter(btnLabelEl(resumeBtn), record.id, () => {
+      if (histDetailState?.screen === screen) paintHdLive(screen, histDetailState.record, histDetailState.data);
+    });
+  }
 }
 // A live run in this tab has the last word (its frames are newer than any row). A parked one only ends, and a stop from
 // another tab or the CLI reaches only the row, so an ended row wins over it. (A resume mints a new, live run.)
@@ -28669,6 +28709,16 @@ function paintHdHeaderMeta(screen, record, data) {
 // detail template ships; fall back to the button itself for any caller that
 // passes a plain, icon-less button.
 function btnLabelEl(btn) { return btn.querySelector('.hd-btn-label') || btn; }
+/** Shaper small runs slice 8 (d8-6, d8-8): a paused run's Resume label from its slice info's `resumeAfter` (the server's
+ *  preview). While the info is unknown (loading, or a failed /slice), a `Resume…` label is kept and any other becomes
+ *  `Resume`. Written only when it differs. Flag off, no pipeline or no label: nothing. */
+function paintResumeAfter(labelEl, pipelineId, onLoad) {
+  if (!labelEl || !pipelineId || !flagOn('shaperSmallRuns')) return;
+  const info = sliceInfoFor(pipelineId, onLoad);
+  const now = labelEl.textContent;
+  const text = info ? resumeLabel(info.resumeAfter) : now.startsWith('Resume') ? now : resumeLabel(null);
+  if (now !== text) labelEl.textContent = text;
+}
 
 // The POST /api/resume -> upsert -> seed-log -> land-on-running recipe, shared by
 // the detail header and the cost-override path.
@@ -28736,6 +28786,13 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
         return;
       }
       throw new Error((data && data.error) || `HTTP ${res.status}`);
+    }
+    // Shaper small runs slice 7 (D16): the resume is held for its turn; nothing started, so the paused copy stays.
+    if (data && data.held === true) {
+      showResumePending(p.id, false);
+      // Slice 8 (d8-14): once held, the row and the run head say `after run N`; the Resume reads plain Resume.
+      btn.disabled = false; labelEl.textContent = resumeLabel(null); delete btn.dataset.resumeState;
+      return;
     }
     upsertRun({
       runId: data.runId, title: p.title || p.id, projectDir: p.projectDir || projectDir || '',
@@ -36682,6 +36739,12 @@ function paintGroupPageNow() {
     onTab: (t) => { location.hash = t === 'runs' ? base : `${base}/${t}`; },
     mountQuestion: (slot, mb) => paintGroupQuestion(slot, groupAsker(slot, row, mb)),
     answerLabel: () => answerLabelOf(host.__gp.querySelector('.gpage-question')),
+    // Slice 11 (d11-2): the footer Resume acts on the group's current member, so it reads that member's slice preview.
+    resumeLabel: () => {
+      if (route !== 'feature') return '';
+      const cur = [...(row.planning ? [row.planning] : []), ...row.members].find((mb) => mb.model === row.model.current) || null;
+      return resumeLabel(resumeAfterOf(GROUP_PAGE.feature && GROUP_PAGE.feature.slices, cur && cur.pipelineId));
+    },
     // Mount once per feature: paintGroupPageNow runs on every run frame, and a remount would refetch and rebuild the
     // Shaper view each time.
     // D10/D12: the group model's footer owns Pause / Stop / Resume, so the Shaper view omits what it already shows; a
@@ -36752,7 +36815,9 @@ function groupFeatureSig(f) {
   return JSON.stringify([sr ? [...(sr.owned || []), ...(sr.confirmed || [])].map((e) => [e.id, e.shown ? e.shown.text : '']) : null,
     sr && sr.care ? sr.care.line : '', sr ? [shipWaitText(f), !!sr.blocked, sr.reason || '', (sr.order || []).length] : null, (f && f.log) || [],
     // Slice 7: what the state line and the need count read (only a view with `asks`: flag on, marked, active).
-    Array.isArray(f && f.asks) ? [f.status, f.asks, (f.slices || []).map((x) => [x.index, x.state, x.nextTurn === true, x.stop || null, !!x.cannotStart]), f.held ? f.held.index : null] : null]);
+    Array.isArray(f && f.asks) ? [f.status, f.asks, (f.slices || []).map((x) => [x.index, x.state, x.nextTurn === true, x.stop || null, !!x.cannotStart,
+      // Slice 8 (d8-10): a resume held or released, or the Resume's preview, keeps the state `paused`.
+      x.heldResume ? x.heldResume.after : null, Number.isInteger(x.resumeAfter) ? x.resumeAfter : null]), f.held ? [f.held.index, f.held.reason || ''] : null] : null]);
 }
 /** Every feature fetch that may reach GROUP_PAGE takes a rising ticket before it is sent; noteGroupFeatureLock drops an
  *  answer older than the last one applied, so a slow fetch never paints a stale feature over a newer one. */
@@ -40967,7 +41032,13 @@ function paintRdHeader(screen, r) {
   // label and disabled state exactly as the busy path set them.
   const lbl = pauseBtn.querySelector('.rd-btn-label');
   const busy = !lbl;
-  if (lbl) lbl.textContent = paused ? 'Resume' : 'Pause';
+  // Slice 8 (d8-6): a paused shape run's Resume names the run it would wait for (paintResumeAfter).
+  if (lbl && paused && flagOn('shaperSmallRuns') && r.pipelineId) {
+    paintResumeAfter(lbl, r.pipelineId, () => {
+      const cur = runDetailState.screen === screen ? runs.get(runDetailState.runId) : null;
+      if (cur && cur.pipelineId === r.pipelineId) paintRdHeader(screen, cur);
+    });
+  } else if (lbl) lbl.textContent = paused ? 'Resume' : 'Pause';
   // A total-budget pause is 403'd by the server until the window resets or the
   // limit is raised, so Resume is disabled up front.
   const totalBlocked = paused && r.pauseReason === 'cost_total' && budgetState.budget?.blocked;

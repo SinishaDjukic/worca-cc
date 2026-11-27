@@ -72,6 +72,16 @@ test('createNetworkWatch: probes each origin once, resumes only eligible rows, s
   assert.equal(logs.filter((l) => /p3: total cost limit reached/.test(l)).length, 1, 'same refusal logged once');
 });
 
+test('createNetworkWatch: a resume held for its turn (Shaper small runs) is not counted as resumed', async () => {
+  const watch = createNetworkWatch({
+    settings: () => ({ enabled: true, maxWaitMs: 4 * H }), now: () => H,
+    listRuns: () => [row('paused', netRp()), { ...row('paused', netRp()), id: 'p2' }], hasResumeTicket: () => false,
+    probe: async () => true,
+    resume: async (r) => (r.id === 'p2' ? { ok: true, held: true, pipelineId: 'p2', after: 3 } : { ok: true, runId: 'r1' }),
+  });
+  assert.deepEqual(await watch.tick(), ['p1']);
+});
+
 test('createNetworkWatch: off, or the probe still failing, resumes nothing', async () => {
   const base = { now: () => H, listRuns: () => [row('paused', netRp())], hasResumeTicket: () => false, resume: async () => { throw new Error('must not resume'); } };
   assert.deepEqual(await createNetworkWatch({ ...base, settings: () => ({ enabled: false, maxWaitMs: 4 * H }), probe: async () => true }).tick(), []);
