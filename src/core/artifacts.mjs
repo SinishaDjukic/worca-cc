@@ -12,6 +12,7 @@ import { mkdir, writeFile, readFile, copyFile, readdir, access, open as openFile
 import { NON_BROWSABLE_KIND_LIST } from '../shared/artifact-kinds.mjs';
 import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { realpathSync, existsSync, statSync, lstatSync, constants as fsConstants } from 'node:fs';
 import { hostname } from 'node:os';
 import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath, isNoProjectKey, noProjectWorkDir, NO_PROJECT_KEY, testCopyKeyOf, testCopyDirFor, PROJECT_KEY_RE } from './store.mjs';
@@ -1621,6 +1622,15 @@ export function updatePipelineTitle(pipelineId, title) {
   }
 }
 
+/** Emits `changed` `{ pipelineId, from, to }` when a PR write moves a run's stored PR state (an unchanged lookup is silent). */
+export const prStateEvents = new EventEmitter();
+
+/** Emit after a write only when the state moved; a listener's throw never fails the best-effort write. */
+function announcePrState(pipelineId, from, to) {
+  if (to === from) return;
+  try { prStateEvents.emit('changed', { pipelineId, from, to }); } catch { /* best-effort */ }
+}
+
 /**
  * Persist the last observed PR facts on the pipeline row (spec §6.8).
  * Best-effort (PR facts are re-observable); NEVER touches updated_at — the
@@ -1630,15 +1640,20 @@ export function updatePipelineTitle(pipelineId, title) {
  */
 export function persistPrState(pipelineId, pr) {
   if (!pipelineId || !pr || !pr.url) return;
+  let from = null;
+  let changes = 0;
+  const to = pr.state ?? 'OPEN';
   try {
     tx(() => {
-      getDb().prepare(
+      from = getDb().prepare('SELECT pr_state FROM pipelines WHERE id = ?').get(pipelineId)?.pr_state ?? null;
+      ({ changes } = getDb().prepare(
         `UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ?, pr_checked_at = ?,
            pr_verdict = COALESCE(?, pr_verdict) WHERE id = ?`,
       ).run(pr.url, pr.number ?? null, pr.state ?? 'OPEN', new Date().toISOString(),
-        pr.verdict ? JSON.stringify(pr.verdict) : null, pipelineId);   // the verdict is written when the lookup read one, kept otherwise
+        pr.verdict ? JSON.stringify(pr.verdict) : null, pipelineId));   // the verdict is written when the lookup read one, kept otherwise
     });
-  } catch { /* best-effort */ }
+  } catch { return; /* best-effort */ }
+  if (changes > 0) announcePrState(pipelineId, from, to);
 }
 
 /**
@@ -1677,8 +1692,11 @@ export function readPrState(pipelineId) {
 export function persistMemberPrState(pipelineId, memberKey, pr) {
   if (!pipelineId || !memberKey || !pr || !pr.url) return;
   const now = new Date().toISOString();
+  let from = null;
+  let to = null;
   try {
     tx(() => {
+      from = getDb().prepare('SELECT pr_state FROM pipelines WHERE id = ?').get(pipelineId)?.pr_state ?? null;
       getDb().prepare(`
         INSERT INTO pipeline_member_prs (pipeline_id, member_key, pr_url, pr_number, pr_state, pr_checked_at)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -1690,9 +1708,11 @@ export function persistMemberPrState(pipelineId, memberKey, pr) {
       if (rollup) {
         getDb().prepare('UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ?, pr_checked_at = ? WHERE id = ?')
           .run(rollup.url, rollup.number, rollup.state, now, pipelineId);
+        to = rollup.state;
       }
     });
-  } catch { /* best-effort */ }
+  } catch { return; /* best-effort */ }
+  if (to !== null) announcePrState(pipelineId, from, to);
 }
 
 /** A workspace run's member PRs as { [memberKey]: { url, number, state } } ({} on none/any failure). */

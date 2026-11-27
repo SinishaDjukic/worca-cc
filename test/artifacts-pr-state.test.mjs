@@ -277,3 +277,25 @@ test('withPr: a failed lookup keeps the stored PR, stale', async () => {
     } },
   ]);
 });
+
+test('persistPrState emits prStateEvents `changed` only when the stored state moves (I-2, I-3)', async () => {
+  const { persistPrState, prStateEvents } = await import('../src/core/artifacts.mjs');
+  const id = await seed();
+  const seen = [];
+  const on = (e) => seen.push(e);
+  prStateEvents.on('changed', on);
+  try {
+    const url = 'https://gh/x/pull/9';
+    persistPrState(id, { url, number: 9, state: 'OPEN' });
+    persistPrState(id, { url, number: 9, state: 'OPEN' });
+    persistPrState(id, { url, number: 9, state: 'MERGED' });
+    persistPrState(id, { url, number: 9, state: 'MERGED' });
+    assert.deepEqual(seen.map((e) => [e.from, e.to]), [[null, 'OPEN'], ['OPEN', 'MERGED']]);
+    assert.equal(seen[0].pipelineId, id);
+    prStateEvents.on('changed', () => { throw new Error('listener bug'); });
+    assert.doesNotThrow(() => persistPrState(id, { url, number: 9, state: 'CLOSED' }));
+    seen.length = 0;
+    persistPrState('no-such-row', { url, number: 9, state: 'OPEN' });
+    assert.deepEqual(seen, [], 'a write that matched no row is silent');
+  } finally { prStateEvents.removeAllListeners('changed'); }
+});

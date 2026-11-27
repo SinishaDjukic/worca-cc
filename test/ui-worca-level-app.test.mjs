@@ -2,7 +2,7 @@
 // The worca level wiring in app.js: the corner shows the level avatar after boot, the dialogs open in
 // order (and never over the first-run welcome or setup), a payload-free poke refetches once (debounced)
 // and repaints, showView posts the page-viewed event per view (stats; team-metrics then refetches; team-policy
-// only refetches), a level dialog waits behind any open modal (D-14), the shelf carries the level line, and a
+// posts discovery then refetches), a level dialog waits behind any open modal (D-14), the shelf carries the level line, and a
 // level-up never touches the interface mode (I-6, R-po-2).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { WORCA_LEVELS } from '../src/shared/worca-levels.mjs';
+import { SESSION_SHOWN_KEY } from '../ui/public/worca-level/model.mjs';
 import { applyLevel } from '../ui/public/ui-level.mjs';
 import { WORCA_REFRESH_EVENTS, WORCA_RETRY_MS } from '../ui/public/worca-level/app-wiring.mjs';
 
@@ -70,6 +71,7 @@ async function boot({ view = viewAt(1), onb = onboarding(), initialHash = '', fa
   window.fetch = (u, init = {}) => {
     const url = String(u);
     calls.push({ url, method: init.method || 'GET', body: init.body });
+    if (url.includes('/discover') && ctl.discover) return ctl.discover(url);
     if (url.includes('/api/worca-level/events')) { ctl.eventPosts.push(JSON.parse(init.body)); return Promise.resolve({ ok: true, status: 204, json: async () => ({}) }); }
     if (url.includes('/api/worca-level/ack')) { const body = JSON.parse(init.body); ctl.acks.push(body.what); ctl.ackBodies.push(body); return json(ctl.view); }
     if (url.includes('/api/settings') && init.method === 'POST') {
@@ -494,22 +496,84 @@ test('a dismissed mode banner stays dismissed on the next repaint of the same se
 
 const goTo = async (window, hash) => { window.location.hash = hash; window.dispatchEvent(new window.Event('hashchange')); await settle(); };
 
-test('team-metrics: opening it posts nothing and does not refetch the level (D-19)', async () => {
-  const { window, ctl, levelPosts } = await boot({ view: viewAt(3) });
+test('opening team-metrics runs discovery then refetches the level (once per 60 s), and posts no page view', async () => {
+  const { window, ctl, calls, levelPosts } = await boot({ view: viewAt(3) });
   const before = ctl.levelGets;
+  const discovers = () => calls.filter((c) => c.url.includes('/api/team-metrics/discover') && c.method === 'POST');
   await goTo(window, '#team-metrics');
-  await goTo(window, '#team-metrics/timeline');
-  await wait(400);
+  await until(() => ctl.levelGets === before + 1);
+  assert.equal(discovers().length, 1);
+  assert.match(discovers()[0].url, /\?source=page$/, 'a page open says so, so the server may reuse a recent result');
+  await goTo(window, '#team-policy');
+  await goTo(window, '#team-metrics');
+  await wait(300);
+  assert.equal(discovers().length, 1, 'a second open inside 60 s does not post again');
   assert.deepEqual(levelPosts(), []);
-  assert.equal(ctl.levelGets, before);
 });
 
-test('team-policy: opening it re-fetches the level and posts nothing', async () => {
-  const { window, ctl, levelPosts } = await boot({ view: viewAt(3) });
+test('the level is re-read only after discovery answers', async () => {
+  const { window, ctl } = await boot({ view: viewAt(3) });
+  let release;
+  ctl.discover = () => new Promise((r) => { release = () => r({ ok: true, status: 200, json: async () => ({}) }); });
+  const before = ctl.levelGets;
+  await goTo(window, '#team-metrics');
+  await wait(300);
+  assert.equal(ctl.levelGets, before, 'no level read while discovery is pending');
+  release();
+  await until(() => ctl.levelGets === before + 1);
+});
+
+test('opening team-metrics still re-reads the level when discovery fails', async () => {
+  const { window, ctl } = await boot({ view: viewAt(3) });
+  let rejected = 0;
+  ctl.discover = () => { rejected += 1; return Promise.reject(new Error('offline')); };
+  const before = ctl.levelGets;
+  await goTo(window, '#team-metrics');
+  await until(() => ctl.levelGets === before + 1);
+  assert.equal(rejected, 1, 'the rejecting stub was reached');
+  assert.equal(ctl.levelGets, before + 1);
+});
+
+test('a live level-up is celebrated after an earlier dialog this session', async () => {
+  const { doc, window, ctl, poke } = await boot({ view: viewAt(3, { celebration: LADDER[2] }) });
+  click(window, (await until(() => doc.querySelector('.worca-dlg'))).querySelector('.worca-dlg-close'));
+  await settle();
+  assert.equal(doc.querySelector('.worca-dlg'), null);
+  ctl.view = viewAt(4, { celebration: LADDER[3] });
+  poke('worca-level-changed');
+  const dlg = await until(() => doc.querySelector('.worca-dlg'));
+  assert.equal(dlg.dataset.dialog, 'celebration');
+});
+
+test('a backlog celebration at boot still waits for a new session', async () => {
+  const { doc, window, ctl, poke } = await boot({ view: viewAt(3) });
+  window.sessionStorage.setItem(SESSION_SHOWN_KEY, '1');
+  ctl.view = viewAt(3, { celebration: LADDER[2] });
+  poke('worca-level-changed');
+  await until(() => ctl.levelGets >= 2);
+  await wait(400);
+  assert.equal(doc.querySelector('.worca-dlg'), null);
+});
+
+test('a hidden tab refetches when it becomes visible', async () => {
+  const { doc, window, ctl } = await boot({ view: viewAt(3) });
+  const before = ctl.levelGets;
+  Object.defineProperty(doc, 'visibilityState', { value: 'hidden', configurable: true });
+  doc.dispatchEvent(new window.Event('visibilitychange'));
+  await wait(400);
+  assert.equal(ctl.levelGets, before, 'hiding refetches nothing');
+  Object.defineProperty(doc, 'visibilityState', { value: 'visible', configurable: true });
+  doc.dispatchEvent(new window.Event('visibilitychange'));
+  await until(() => ctl.levelGets === before + 1);
+});
+
+test('team-policy: opening it posts policy discovery, re-fetches the level and posts no page view', async () => {
+  const { window, ctl, calls, levelPosts } = await boot({ view: viewAt(3) });
   const before = ctl.levelGets;
   await goTo(window, '#team-policy');
   await until(() => ctl.levelGets === before + 1);
   assert.equal(ctl.levelGets, before + 1);
+  assert.equal(calls.filter((c) => c.url.includes('/api/policy/discover') && c.method === 'POST').length, 1);
   await wait(300);
   assert.deepEqual(levelPosts(), []);
 });
@@ -642,7 +706,7 @@ test('D-13: Runner also shows once the run on screen has ended', async () => {
   assert.ok(await until(() => doc.querySelector('.worca-dlg')), 'the finished run is a result route');
 });
 
-test('D-14: a guide, the open account menu and a second level in one session each hold the dialog back', async () => {
+test('D-14: a guide and the open account menu each hold the dialog back; a second level reached live is still celebrated', async () => {
   const { doc, window, ctl, poke } = await boot({ view: viewAt(2) });
   await until(() => cornerImg(doc));
   const layer = doc.createElement('div');
@@ -669,6 +733,5 @@ test('D-14: a guide, the open account menu and a second level in one session eac
   assert.equal(window.sessionStorage.getItem('worca-level:shown-in-session'), '1');
   ctl.view = viewAt(4, { celebration: LADDER[3] });
   poke('worca-level-changed');
-  await wait(400);
-  assert.equal(doc.querySelector('.worca-dlg'), null, 'the second level waits for the next session');
+  assert.ok(await until(() => doc.querySelector('.worca-dlg')), 'a level reached live is celebrated even after one dialog this session');
 });

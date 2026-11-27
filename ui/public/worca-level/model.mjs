@@ -116,12 +116,12 @@ export function isLiveRunRoute(hash, statusOf) {
 
 /**
  * Which dialog may open now (D-14): null while anything else holds the person's attention, while one
- * was already shown this session, or (Runner only) before a run-result route was on screen (D-13).
+ * was already shown this session (a level reached while this page was open is the exception: it is celebrated live), or (Runner only) before a run-result route was on screen (D-13).
  * A summary outranks a celebration.
  */
 export function pickDialog(view, env = {}) {
   const blocked = env.setupOpen || env.welcomeOpen || env.dialogOpen || env.guideOpen
-    || env.menuOpen || env.liveRunOpen || env.shownThisSession;
+    || env.menuOpen || env.liveRunOpen || (env.shownThisSession && !env.liveLevelUp);
   if (blocked) return null;
   if (view.summary) return 'summary';
   if (!view.celebration) return null;

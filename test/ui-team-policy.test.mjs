@@ -167,6 +167,7 @@ test('#555: a failed Team policy Install and a failed Check now are error toasts
       });
       await go('team-policy');
       await settle();
+      discover = 0;   // opening the page posts its own discovery for the worca level; count the button's posts only
       doc.querySelector('#tp-sync .tp-check-now').click();
       await settle(8);
       assert.equal(discover, 1);

@@ -184,5 +184,10 @@ export function createWorcaLevelService({
     emitChanged(LIVE_CHANGED_EVENT);
   }
 
-  return { getState, ack, recordViewed, noteLiveEvent };
+  /** A recorded fact changed (a PR state, a discovery): tell clients to re-read. Emits only; `sync` does the writing. */
+  function pokeLevelFactsChanged() {
+    emitChanged(LIVE_CHANGED_EVENT);
+  }
+
+  return { getState, ack, recordViewed, noteLiveEvent, pokeLevelFactsChanged };
 }
