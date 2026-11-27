@@ -317,3 +317,21 @@ test('Ship guide names carried runs and the new-PR count', () => {
 test('design system lists .shipit-prs-carried and .ask-shipcard-carried', () => {
   assert.deepEqual(missing(flat(read('design-system.md')), ['.shipit-prs-carried', '.shipit-prs-kept', '.ask-shipcard-carried']), []);
 });
+
+// Feature page slice 6 (R-ux-3, R-arch-2): the five tabs, Mark and ship, and the Cost tab with the Verifier.
+test('feature page guide: the five tabs in order, the Ship card on Requirements, the step log in Log, and Mark and ship', () => {
+  const doc = flat(read('shape-it-first.md'));
+  assert.deepEqual(missing(doc, [/Runs, Requirements, Decisions, Cost(?:,| and) Log\b/, 'Mark and ship',
+    /Ship card[^.]*(?:top of|first)[^.]*Requirements|Requirements[^.]*Ship card[^.]*(?:top|first)|Ship card[^.]*Requirements[^.]*(?:top|first)/i,
+    /step log/i]), []);
+});
+
+test('feature page guide: the Cost tab counts each Verifier round once and marks a failed or stopped one', () => {
+  const doc = flat(read('shape-it-first.md'));
+  assert.deepEqual(missing(doc, [/Cost tab/i, /Verifier (?:rounds?|runs?)[^.]*\bonce\b/i, '· failed', '· stopped']), []);
+});
+
+test('design system: the feature page\'s Cost table, Mark and ship, and Log at every level', () => {
+  const doc = flat(read('design-system.md'));
+  assert.deepEqual(missing(doc, ['Mark and ship', /\.gpage-cost|Cost table/, /\bLog\b[^.]*every (?:UI )?level/i]), []);
+});

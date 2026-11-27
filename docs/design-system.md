@@ -210,6 +210,12 @@ place. The label is "More", never "…", which is the run's ⋯ menu.
 A row that does not fit its width folds into "More" by itself (`tab-fold.mjs`; no setting and no level rule): a lone
 other tab first, then the row tabs one at a time from the right end, until it fits. They come back in reverse order as
 the width grows, up to the default row and never past it. Overview, the open tab and "More" are never folded.
+The group page's tabs (Runs, Overview, Decisions, Logs; Logs at Expert) do not fold. A marked Shaper feature's page
+(flag `shaperSmallRuns`) reads Runs, Requirements, Decisions, Cost, Log instead: Log is offered at every UI level there,
+because it holds the step log, while its "Open logs" rows stay Expert-only. Its Cost table (`.gpage-cost`) is the
+Table below with two columns, Run and Cost (`.num`), one row per run and the Total in `tfoot`. While a mark is open,
+**Mark and ship** (`.gpage-markship`, `.btn-primary`) is the page bar's primary, just before the bar's actions; it
+opens Requirements at the Ship card.
 ### Filter chip
 `.filter-chip` (`aria-pressed`): 28px, 12px / 500, 1px `--line-2` border, 6px corner. Selected: `--field` fill, ink
 border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only filter chip: `mv-filter`, `wfl-chip`,

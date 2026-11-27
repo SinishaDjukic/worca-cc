@@ -12,6 +12,7 @@ import { answerFieldOpen } from './shape/step-card.mjs';
 import { needYouText } from './shape/feature-card.mjs';
 import { bindRunLinks } from './run-links.mjs';
 import { showOrderOffered, renderRunOrderMap } from './shape/run-order-map.mjs';
+import { renderFeatureCost } from './shape/feature-cost.mjs';
 
 export const GROUP_TABS = Object.freeze([['runs', 'Runs'], ['overview', 'Overview'], ['decisions', 'Decisions'], ['logs', 'Logs']]);
 const el = (doc, tag, cls, text = '') => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
@@ -115,6 +116,77 @@ export function syncRequirementsTab(root, on) {
   p.setAttribute('role', 'tabpanel');
   p.append(el(doc, 'div', 'gpage-requirements'));
   root.querySelector('.gpage-panel[data-tab="runs"]').after(p);
+}
+
+const tabButton = (doc, id, label) => {
+  const t = el(doc, 'button', 'rd-tab tab', label);
+  t.type = 'button';
+  t.setAttribute('role', 'tab');
+  t.dataset.tab = id;
+  return t;
+};
+const tabPanel = (doc, id) => {
+  const p = el(doc, 'div', 'gpage-panel');
+  p.dataset.tab = id;
+  p.setAttribute('role', 'tabpanel');
+  return p;
+};
+const setLabel = (t, text) => { if (t && t.textContent !== text) t.textContent = text; };
+
+/** Feature page slice 6 (D2, D3): a marked feature's tabs Runs · Requirements · Decisions · Cost · Log, only while it
+ *  applies. Nodes are created and removed, never only hidden. On: the Overview tab goes, its `.gpage-overview` node
+ *  (moved, never rebuilt) is the Requirements panel's first child, a Cost tab and panel follow Decisions, Logs reads
+ *  "Log" and its panel gains the step-log part. Off restores the skeleton buildGroupPage draws. Idempotent. */
+export function syncFeatureLayout(root, on) {
+  const doc = root.ownerDocument;
+  const q = (sel) => root.querySelector(sel);
+  const overview = q('.gpage-overview');
+  const logsTab = q('.gpage-tabs .rd-tab[data-tab="logs"]');
+  const logsPanel = q('.gpage-panel[data-tab="logs"]');
+  if (on) {
+    syncRequirementsTab(root, true);
+    const reqPanel = q('.gpage-panel[data-tab="requirements"]');
+    if (reqPanel.firstElementChild !== overview) reqPanel.prepend(overview);
+    q('.gpage-tabs .rd-tab[data-tab="overview"]')?.remove();
+    q('.gpage-panel[data-tab="overview"]')?.remove();
+    if (!q('.gpage-tabs .rd-tab[data-tab="cost"]')) q('.gpage-tabs .rd-tab[data-tab="decisions"]').after(tabButton(doc, 'cost', 'Cost'));
+    if (!q('.gpage-panel[data-tab="cost"]')) q('.gpage-panel[data-tab="decisions"]').after(tabPanel(doc, 'cost'));
+    setLabel(logsTab, 'Log');
+    if (!logsPanel.querySelector(':scope > .gpage-steplog')) logsPanel.append(el(doc, 'div', 'gpage-steplog'));
+    return;
+  }
+  if (!q('.gpage-panel[data-tab="overview"]')) {
+    q('.gpage-tabs .rd-tab[data-tab="runs"]').after(tabButton(doc, 'overview', 'Overview'));
+    const p = tabPanel(doc, 'overview');
+    q('.gpage-panel[data-tab="runs"]').after(p);
+    p.append(overview);
+  }
+  syncRequirementsTab(root, false);
+  q('.gpage-tabs .rd-tab[data-tab="cost"]')?.remove();
+  q('.gpage-panel[data-tab="cost"]')?.remove();
+  logsPanel.querySelector(':scope > .gpage-steplog')?.remove();
+  setLabel(logsTab, 'Logs');
+  const list = logsPanel.querySelector(':scope > ul.gpage-logs');
+  if (list.hidden) list.hidden = false;
+}
+
+/** Slice 6 (D13): "Mark and ship", the bar's primary while a mark is open, just before `.gpage-actions`. Created and
+ *  removed, and the same node while on, so focus survives a repaint. Removing it while focused focuses the selected tab. */
+export function syncMarkShip(root, on) {
+  const bar = root.querySelector('.gpage-bar');
+  const b = bar.querySelector(':scope > .gpage-markship');
+  if (!on) {
+    if (!b) return;
+    const had = root.ownerDocument.activeElement === b;
+    b.remove();
+    if (had) root.querySelector('.gpage-tabs .rd-tab[aria-selected="true"]')?.focus();
+    return;
+  }
+  if (b) return;
+  const btn = el(root.ownerDocument, 'button', 'btn btn-primary gpage-markship', 'Mark and ship');
+  btn.type = 'button';
+  btn.addEventListener('click', () => { if (root.__onMarkShip) root.__onMarkShip(); });
+  bar.querySelector(':scope > .gpage-actions').before(btn);
 }
 
 // Small runs slice 10 (D9): the one readable line under Show order; only the drawing itself is aria-hidden.
@@ -225,11 +297,15 @@ function paintNeed(kindEl, text) {
  * {word, mark}|null (small runs s4: runStatus's word and mark for each row, renderMemberRows' `status`), ship?: {n, blocked, reason}|null
  * (small runs: the ledger the head's Create N PRs follows), stateLine?: string|null (small runs slice 7: the feature's state
  * line, featureStateLine, in place of the model's line), needCount?: number (slice 7: the stop lines, the head's chip),
- * order?: object[]|null (slice 10: a marked feature's featureView slices; the Runs tab offers Show order from them) }.
+ * order?: object[]|null (slice 10: a marked feature's featureView slices; the Runs tab offers Show order from them),
+ * cost?: featureCostModel output, markOpen?: boolean, expert?: boolean (slice 6, in the feature layout only: the Cost
+ * tab's table, the bar's Mark and ship, and whether the Log tab's Open logs rows show) }.
  * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), resumeLabel?() (slice 11: the footer
  * Resume's text, '' for the plain word), mountOverview(host),
  * mountDecisions(host, row), mountRequirements?(host, row) → Node|null (D3, while `view.requirements`), logsHref(member),
- * labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
+ * labelChip(doc, label), paintHead?(acts, slot, head), mountStepLog?(host, row) (slice 6: the Log tab's step log),
+ * onMarkShip?() (slice 6: Mark and ship) } — mountOverview gets `{ shipFirst: true }` on the layout's Requirements tab.
+ * paintHead paints
  * groupHead's head (Create PR, View PR ▾, View PRs ▾) into the card head; without it the slot stays hidden.
  */
 export function paintGroupPage(root, view, deps) {
@@ -239,6 +315,14 @@ export function paintGroupPage(root, view, deps) {
   root.__onTab = deps.onTab;
   root.__onAction = deps.onAction;
   root.__onMore = deps.onMore || null;
+  root.__onMarkShip = deps.onMarkShip || null;
+  // Slice 6 (D6, D7): in the feature layout, Log is offered at every level, Cost exists, and the old Overview address
+  // opens Requirements (it holds the Ship card). The tab is resolved first: the status line reads it (D15).
+  const layout = !!view.requirements;
+  const offered = (id) => (layout ? id !== 'overview'
+    : (id !== 'overview' || !!view.overview) && (id !== 'logs' || !!view.logs) && id !== 'requirements' && id !== 'cost');
+  const want = layout && view.tab === 'overview' ? 'requirements' : view.tab;
+  const tab = (GROUP_TABS.some(([id]) => id === want) || want === 'requirements' || want === 'cost') && offered(want) ? want : 'runs';
   const title = root.querySelector('.gpage-title');
   title.textContent = row.title;
   title.title = row.title;   // D13: the heading is one line cut with "…"; the full title is the tooltip
@@ -248,8 +332,8 @@ export function paintGroupPage(root, view, deps) {
   const shown = view.stateLine ? { ...pageModel(m), line: view.stateLine, lineSaysState: false } : pageModel(m);
   paintNeed(root.querySelector('.gpage-head .kind-chip'), needYouText(view.needCount || 0));
   // Small runs: a disabled Create N PRs says why on the page, not only in its tooltip. A held group's line already does,
-  // and so does the Overview tab's Ship card.
-  const why = view.ship && view.ship.blocked && m.state === 'ready' && !m.hold && !(view.overview && view.tab === 'overview') ? view.ship.reason : '';
+  // and so does the tab with the Ship card (Requirements in the feature layout, else Overview).
+  const why = view.ship && view.ship.blocked && m.state === 'ready' && !m.hold && tab !== (layout ? 'requirements' : 'overview') ? view.ship.reason : '';
   const pm = why ? { ...shown, line: `${shown.line} · ${why}` } : shown;
   paintRunStatus(root.querySelector('.gpage-card .run-status'), pm, { hold: true });   // run 3 (D10); slice 3: keep the last bar
   // Run 3 (D15): the facts block — Project, Runs, Total cost, Labels (the read-only union of the members' labels).
@@ -285,16 +369,16 @@ export function paintGroupPage(root, view, deps) {
     deps.paintHead(root.querySelector('.gpage-card .rd-head-acts'), root.querySelector('.gpage-card .rd-pr-slot'),
       groupHead({ state: m.state, prs: groupPrList(row), unmarked: view.unmarked || 0, ship: view.ship || null }));
   }
-  // Small runs D3 (D7): the Requirements tab exists only while `view.requirements` (a marked feature, flag on).
-  syncRequirementsTab(root, !!view.requirements);
-  const offered = (id) => (id !== 'overview' || !!view.overview) && (id !== 'logs' || !!view.logs) && (id !== 'requirements' || !!view.requirements);
-  const tab = (GROUP_TABS.some(([id]) => id === view.tab) || view.tab === 'requirements') && offered(view.tab) ? view.tab : 'runs';
+  // Small runs D3 (D7): the Requirements tab exists only while `view.requirements` (a marked feature, flag on); slice 6
+  // (D2): so does the whole feature layout.
+  syncFeatureLayout(root, layout);
   for (const t of root.querySelectorAll('.gpage-tabs .rd-tab')) {
     t.hidden = !offered(t.dataset.tab);
     t.setAttribute('aria-selected', String(t.dataset.tab === tab));
     t.classList.toggle('active', t.dataset.tab === tab);
   }
   for (const p of root.querySelectorAll('.gpage-panel')) p.hidden = p.dataset.tab !== tab;
+  syncMarkShip(root, layout && !!view.markOpen);   // after the tabs: a removed, focused button focuses the selected one
   // Slice 3: a frame that changes nothing in the table keeps its nodes (a focused row, the scroll anchor).
   // s8 (D6, D14): the link marks, the kept run and a focused row survive the repaint; another feature drops the keep.
   syncShowOrder(root, view.order || null, row.groupId);   // slice 10 (D4): Show order, above the rows
@@ -308,12 +392,17 @@ export function paintGroupPage(root, view, deps) {
   ship.hidden = !line;
   // D12: the rows carry no listeners, so keepUnchanged may keep or replace them (a focused run link moves to its successor).
   if (tab === 'requirements') {
+    if (layout) deps.mountOverview(root.querySelector('.gpage-overview'), { shipFirst: true });   // slice 6 (D3): Ship card first
     const host = root.querySelector('.gpage-requirements');
-    const node = deps.mountRequirements(host, row);
+    const node = deps.mountRequirements ? deps.mountRequirements(host, row) : null;
     if (node) keepUnchanged(host, [node]);
   }
   if (tab === 'overview') deps.mountOverview(root.querySelector('.gpage-overview'));
   if (tab === 'decisions') deps.mountDecisions(root.querySelector('.gpage-decisions'), row);
+  if (layout && view.cost) keepUnchanged(root.querySelector('.gpage-panel[data-tab="cost"]'), [renderFeatureCost(doc, view.cost)]);
+  if (layout && tab === 'logs' && deps.mountStepLog) deps.mountStepLog(root.querySelector('.gpage-steplog'), row);
+  // Slice 6 (D7): the Open logs rows stay Expert-only in the layout, where Log itself is offered at every level.
+  if (layout) root.querySelector('ul.gpage-logs').hidden = !view.expert;
   const numbered = (mb) => !mb.isPlanning && !mb.adhoc && row.groupKind !== 'user';
   keepUnchanged(root.querySelector('.gpage-logs'), all.map((mb) => {
     const li = el(doc, 'li', 'gpage-log');

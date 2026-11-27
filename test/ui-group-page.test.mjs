@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { groupModel } from '../src/shared/run-model.mjs';
 import { buildGroupPage, paintGroupPage, GROUP_TABS, runReceipts, groupPrList, syncRequirementsTab } from '../ui/public/group-page.mjs';
+import * as GroupPage from '../ui/public/group-page.mjs';
 import { ACTION_LABEL } from '../src/shared/run-model.mjs';
 import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -788,4 +789,183 @@ test('s11: deps.resumeLabel names the footer Resume; without it, or when it is e
   paintGroupPage(root, view, { ...NOOP, resumeLabel: () => 'Resume after run 6' });
   paintGroupPage(root, view, { ...NOOP, resumeLabel: () => '' });
   assert.deepEqual(resumes(), ['Resume'], 'an empty label');
+});
+
+// ── Feature page slice 6 (R-ux-3): the tabs Runs · Requirements · Decisions · Cost · Log, and Mark and ship ──────
+const S6_TABS = ['runs', 'requirements', 'decisions', 'cost', 'logs'];
+const s6Doc = () => trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+const s6Root = () => { const doc = s6Doc(); const root = buildGroupPage(doc); doc.body.append(root); return { doc, root }; };
+const s6TabIds = (root) => [...root.querySelectorAll('.gpage-tabs .rd-tab')].map((t) => t.dataset.tab);
+const s6Shown = (root) => [...root.querySelectorAll('.gpage-tabs .rd-tab')].filter((t) => !t.hidden).map((t) => t.textContent);
+const s6Panel = (root, id) => root.querySelector(`.gpage-panel[data-tab="${id}"]`);
+const s6Selected = (root) => root.querySelector('.rd-tab[aria-selected="true"]').dataset.tab;
+/** The skeleton's tabs and panels, as buildGroupPage draws them. */
+const s6Shape = (root) => ({
+  tabs: [...root.querySelectorAll('.gpage-tabs .rd-tab')].map((t) => [t.dataset.tab, t.textContent, t.className, t.getAttribute('type'), t.getAttribute('role')]),
+  panels: [...root.querySelectorAll(':scope > .gpage-panel')].map((p) => [p.dataset.tab, p.className, p.getAttribute('role'), [...p.children].map((c) => c.className)]),
+});
+const S6_COST = { rows: [{ key: 'p1', num: 1, label: 'Slice 1', usd: 11.5 }], totalLabel: 'Total', totalUsd: 11.5 };
+const s6View = (more = {}) => ({ row: row(), project: 'p', tab: 'runs', overview: true, logs: true, requirements: true, expert: true, cost: S6_COST, markOpen: false, ...more });
+const s6Deps = (calls = {}) => ({ ...NOOP, mountRequirements: () => null,
+  mountOverview: (...a) => { (calls.overview ||= []).push(a); }, mountStepLog: (...a) => { (calls.steps ||= []).push(a); },
+  onMarkShip: () => { calls.mark = (calls.mark || 0) + 1; } });
+
+test('syncFeatureLayout: the tabs read Runs, Requirements, Decisions, Cost, Log, and the Overview\'s node is the first child of Requirements', () => {
+  const { root } = s6Root();
+  const overview = root.querySelector('.gpage-overview');
+  GroupPage.syncFeatureLayout(root, true);
+  GroupPage.syncFeatureLayout(root, true);
+  assert.deepEqual(s6TabIds(root), S6_TABS, 'once each');
+  assert.deepEqual([...root.querySelectorAll('.gpage-tabs .rd-tab')].map((t) => t.textContent), ['Runs', 'Requirements', 'Decisions', 'Cost', 'Log']);
+  const cost = root.querySelector('.rd-tab[data-tab="cost"]');
+  assert.ok(cost.matches('button.rd-tab.tab[type="button"][role="tab"]'));
+  assert.ok(s6Panel(root, 'cost').matches('div.gpage-panel[role="tabpanel"]'));
+  assert.equal(s6Panel(root, 'cost').previousElementSibling, s6Panel(root, 'decisions'));
+  assert.equal(s6Panel(root, 'overview'), null, 'removed, not hidden');
+  assert.equal(s6Panel(root, 'requirements').firstElementChild, overview, 'the same node, moved');
+  assert.ok(s6Panel(root, 'requirements').querySelector(':scope > .gpage-requirements'));
+  assert.equal(root.querySelectorAll('.gpage-overview').length, 1);
+  assert.equal(root.querySelectorAll('.gpage-steplog').length, 1);
+  assert.ok(s6Panel(root, 'logs').querySelector('.gpage-steplog'));
+});
+
+test('R-arch-8: the layout turned on then off leaves the tabs, panels and Overview node of a fresh page', () => {
+  const { doc, root } = s6Root();
+  const overview = root.querySelector('.gpage-overview');
+  GroupPage.syncFeatureLayout(root, true);
+  root.querySelector('ul.gpage-logs').hidden = true;
+  GroupPage.syncFeatureLayout(root, false);
+  GroupPage.syncFeatureLayout(root, false);
+  assert.deepEqual(s6TabIds(root), ['runs', 'overview', 'decisions', 'logs']);
+  assert.deepEqual(s6Shape(root), s6Shape(buildGroupPage(doc)));
+  assert.equal(s6Panel(root, 'overview').firstElementChild, overview, 'the same node, back under Overview');
+  assert.equal(root.querySelector('ul.gpage-logs').hidden, false);
+  assert.equal(root.querySelector('.gpage-steplog'), null);
+});
+
+test('a marked feature\'s page offers the five tabs; Requirements mounts the Overview view Ship first', () => {
+  const { root } = s6Root();
+  const overview = root.querySelector('.gpage-overview');
+  const calls = {};
+  paintGroupPage(root, s6View({ tab: 'requirements' }), s6Deps(calls));
+  assert.deepEqual(s6Shown(root), ['Runs', 'Requirements', 'Decisions', 'Cost', 'Log']);
+  assert.equal(s6Selected(root), 'requirements');
+  assert.equal(calls.overview.length, 1);
+  assert.equal(calls.overview[0][0], overview);
+  assert.deepEqual(calls.overview[0][1], { shipFirst: true });
+  assert.equal(s6Panel(root, 'requirements').firstElementChild, overview);
+});
+
+test('in the layout the old overview address selects Requirements; without it Overview stays', () => {
+  const { root } = s6Root();
+  paintGroupPage(root, s6View({ tab: 'overview' }), s6Deps());
+  assert.equal(s6Selected(root), 'requirements');
+  assert.equal(s6Panel(root, 'requirements').hidden, false);
+  paintGroupPage(root, s6View({ tab: 'overview', requirements: false }), s6Deps());
+  assert.equal(s6Selected(root), 'overview', 'a repaint with the layout off restores Overview');
+  assert.deepEqual(s6Shown(root), ['Runs', 'Overview', 'Decisions', 'Logs']);
+  assert.equal(root.querySelector('.rd-tab[data-tab="cost"]'), null);
+});
+
+test('the Cost tab paints the cost table in its panel', () => {
+  const { root } = s6Root();
+  paintGroupPage(root, s6View({ tab: 'cost' }), s6Deps());
+  assert.equal(s6Selected(root), 'cost');
+  assert.equal(s6Panel(root, 'cost').hidden, false);
+  assert.equal(root.querySelectorAll('.gpage-cost').length, 1);
+  assert.match(s6Panel(root, 'cost').querySelector('.gpage-cost tfoot').textContent, /Total\s*\$11\.50/);
+  paintGroupPage(root, s6View({ tab: 'cost', cost: { ...S6_COST, totalUsd: 12 } }), s6Deps());
+  assert.match(s6Panel(root, 'cost').querySelector('.gpage-cost tfoot').textContent, /\$12\.00/);
+  assert.equal(root.querySelectorAll('.gpage-cost').length, 1, 'a repaint replaces the table');
+});
+
+test('Log: the Open logs rows then the step log; below Expert the tab stays and only the Open logs rows hide', () => {
+  const { doc, root } = s6Root();
+  for (const expert of [false, true]) {
+    const calls = {};
+    const r = row();
+    paintGroupPage(root, s6View({ row: r, tab: 'logs', expert }), s6Deps(calls));
+    assert.equal(s6Selected(root), 'logs', `expert ${expert}`);
+    assert.equal(root.querySelector('.rd-tab[data-tab="logs"]').textContent, 'Log');
+    assert.equal(root.querySelector('.rd-tab[data-tab="logs"]').hidden, false);
+    const list = root.querySelector('ul.gpage-logs');
+    assert.equal(list.hidden, !expert, `expert ${expert}`);
+    assert.equal(list.querySelectorAll('li.gpage-log').length, 4);
+    assert.equal(calls.steps.length, 1);
+    const [host, passed] = calls.steps[0];
+    assert.equal(passed, r);
+    assert.ok(host.closest('.gpage-steplog'), 'the step log part');
+    assert.equal(host.closest('.gpage-panel'), s6Panel(root, 'logs'));
+    assert.ok(list.compareDocumentPosition(host) & doc.defaultView.Node.DOCUMENT_POSITION_FOLLOWING, 'the step log follows the rows');
+  }
+});
+
+test('the status line does not repeat the ship reason on the tab that shows the Ship card (Requirements in the layout)', () => {
+  const reason = 'Waiting for Compliance to confirm R-comp-4';
+  const model = groupModel({ kind: 'feature', title: 'T', members: [done, done] }, { now: NOW });
+  const ready = { ...row(), planning: null, model, members: model.members.map((m, i) => ({ position: i + 1, title: `S${i + 1}`, href: '#x', model: m })) };
+  const { root } = s6Root();
+  const status = (tab) => {
+    paintGroupPage(root, s6View({ row: ready, tab, ship: { n: 2, blocked: true, reason } }), s6Deps());
+    return root.querySelector('.gpage-card .run-status').textContent;
+  };
+  assert.ok(status('runs').includes(reason));
+  assert.equal(status('requirements').includes(reason), false);
+  assert.equal(status('overview').includes(reason), false, 'the old address shows the Ship card too');
+});
+
+test('Mark and ship: a primary button before the bar\'s actions while a mark is open; one node across repaints; removed when none is', () => {
+  const { root } = s6Root();
+  const calls = {};
+  const paint = (markOpen) => paintGroupPage(root, s6View({ markOpen }), s6Deps(calls));
+  paint(false);
+  assert.equal(root.querySelector('.gpage-markship'), null);
+  paint(true);
+  const b = root.querySelector('.gpage-bar > .gpage-markship');
+  assert.ok(b, 'in the page bar');
+  assert.ok(b.matches('button.btn.btn-primary[type="button"]'));
+  assert.equal(b.textContent, 'Mark and ship');
+  assert.equal(b.nextElementSibling, root.querySelector('.gpage-bar > .gpage-actions'));
+  for (const kept of ['.gpage-back', '.rd-crumbs', '.gpage-stop', '.gpage-more']) assert.ok(root.querySelector(`.gpage-bar > ${kept}`), `${kept} stays`);
+  b.focus();
+  paint(true);
+  assert.equal(root.querySelector('.gpage-markship'), b, 'the same node');
+  assert.equal(root.querySelectorAll('.gpage-markship').length, 1);
+  assert.equal(b.ownerDocument.activeElement, b);
+  b.click();
+  assert.equal(calls.mark, 1);
+  paint(false);
+  assert.equal(root.querySelector('.gpage-markship'), null, 'removed, not hidden');
+});
+
+test('syncMarkShip: removing the focused button moves focus to the selected tab; an unfocused one takes no focus', () => {
+  const { doc, root } = s6Root();
+  paintGroupPage(root, s6View({ tab: 'decisions' }), s6Deps());
+  GroupPage.syncMarkShip(root, true);
+  GroupPage.syncMarkShip(root, true);
+  assert.equal(root.querySelectorAll('.gpage-markship').length, 1);
+  root.querySelector('.gpage-markship').focus();
+  GroupPage.syncMarkShip(root, false);
+  assert.equal(root.querySelector('.gpage-markship'), null);
+  assert.equal(doc.activeElement, root.querySelector('.rd-tab[data-tab="decisions"]'));
+  GroupPage.syncMarkShip(root, true);
+  root.querySelector('.gpage-more').focus();
+  GroupPage.syncMarkShip(root, false);
+  assert.equal(doc.activeElement, root.querySelector('.gpage-more'));
+});
+
+test('R-arch-7: a page never in the layout gets no Cost tab, step log or Mark and ship, and its Overview stays put', () => {
+  const { root } = s6Root();
+  const overview = root.querySelector('.gpage-overview');
+  const calls = {};
+  for (const tab of ['runs', 'overview', 'decisions', 'logs', 'cost']) {
+    paintGroupPage(root, s6View({ tab, requirements: false, markOpen: true }), s6Deps(calls));
+    assert.equal(root.querySelector('.rd-tab[data-tab="cost"], .gpage-cost, .gpage-steplog, .gpage-markship'), null, tab);
+    assert.deepEqual(s6TabIds(root), ['runs', 'overview', 'decisions', 'logs'], tab);
+    assert.equal(s6Panel(root, 'overview').firstElementChild, overview, tab);
+    assert.equal(root.querySelector('ul.gpage-logs').hidden, false, tab);
+  }
+  assert.equal(calls.steps, undefined);
+  assert.equal(calls.overview.length, 1);
+  assert.equal(calls.overview[0][1]?.shipFirst ?? false, false);
 });

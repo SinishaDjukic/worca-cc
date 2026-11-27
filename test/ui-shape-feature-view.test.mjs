@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { featureHeadline, renderFeature, renderFeatureRequirements, paintFeatureDecisions } from '../ui/public/shape/feature-view.mjs';
+import * as FeatureView from '../ui/public/shape/feature-view.mjs';
 import { setShipDialogOpener, renderShipCard } from '../ui/public/shape/ship-card.mjs';
 import { shipLedger, careOutcome } from '../src/shared/shape/ship-ledger.mjs';
 import { requirementStatus } from '../src/shared/shape/req-status.mjs';
@@ -520,4 +521,43 @@ test('source scan: the status words appear in string literals only in req-status
   assert.deepEqual(hits, ['src/shared/shape/req-status.mjs']);
   const importers = files.filter((p) => p.startsWith('ui/') && /\bfrom\s+['"][^'"]*req-status\.mjs['"]/.test(readFileSync(new URL(p, root), 'utf8')));
   assert.deepEqual(importers, [], 'no ui module imports req-status.mjs (R-arch-8)');
+});
+
+// ── Feature page slice 6 (R-ux-3): the Ship card first on the Requirements tab, and the open mark ────────────────
+const HELD_VIEW = (ship) => feature({ done: 2, replanOf: 'f0', log: [{ key: 'l1', run: null, text: 'Split into 3 runs', detail: [] }],
+  slices: [slice(1, 'done', { pipelineId: 'p1' }), slice(2, 'done', { pipelineId: 'p2' }), slice(3, 'held')],
+  held: { index: 3, ticketId: 't3', reason: 'runs 1 and 2 clash in src/a.mjs' }, ship });
+const kids = (el) => [...el.children].map((c) => (c.matches('[data-ship-card]') ? 'ship' : c.className.split(' ').find((x) => x.startsWith('shape-feature-'))));
+
+test('shipFirst: the Ship card first, then the re-planned note, then the actions; no step log and no merge-order line', () => {
+  for (const [ship, phase] of [[{ ready: true, mode: null, smallRuns: SR_WAIT() }, 'ready'], [{ ready: false, mode: null, smallRuns: SR_WAIT() }, 'waiting']]) {
+    const { el } = mount(HELD_VIEW(ship), deps({ shipFirst: true }));
+    assert.ok(el.firstElementChild.matches(`[data-ship-card="${phase}"]`), `${phase}: ${el.firstElementChild.className}`);
+    assert.deepEqual(kids(el), ['ship', 'shape-feature-replanned', 'shape-feature-actions'], phase);
+    assert.equal(el.querySelector('ol.shape-feature-log'), null);
+    assert.equal(el.querySelector('.shape-feature-order'), null);
+    assert.equal(el.querySelector('.shape-feature-actions .shape-feature-held-why').textContent, 'Run 3 is held: runs 1 and 2 clash in src/a.mjs');
+  }
+});
+
+test('without shipFirst the view keeps today\'s order: note, step log, merge-order line, Ship card, actions', () => {
+  const { el } = mount(HELD_VIEW({ ready: true, mode: null, smallRuns: SR_WAIT() }));
+  assert.deepEqual(kids(el), ['shape-feature-replanned', 'shape-feature-log', 'shape-feature-order', 'ship', 'shape-feature-actions']);
+});
+
+const OPEN_MARK = (state, ship = {}) => feature({ status: 'done', done: 3,
+  ship: { ready: true, mode: null, smallRuns: { ...SR_WAIT(), confirmed: [{ ...SR_WAIT().confirmed[0], state: 'confirmed', mark: 'met' },
+    { ...SR_WAIT().confirmed[0], id: 'R-comp-5', state, mark: null }] }, ...ship } });
+
+test('markOpen: true while a confirmed requirement is waiting or needs a reason and the feature is ready to ship', () => {
+  assert.equal(FeatureView.markOpen(OPEN_MARK('waiting')), true);
+  assert.equal(FeatureView.markOpen(OPEN_MARK('needs-reason')), true);
+});
+
+test('markOpen: false with every mark made, not ready, shipped, no small-runs ledger, or no feature', () => {
+  assert.equal(FeatureView.markOpen(OPEN_MARK('confirmed')), false, 'all confirmed');
+  assert.equal(FeatureView.markOpen(OPEN_MARK('waiting', { ready: false })), false, 'not ready to ship');
+  assert.equal(FeatureView.markOpen(OPEN_MARK('waiting', { mode: 'stacked' })), false, 'already shipped');
+  assert.equal(FeatureView.markOpen(OPEN_MARK('waiting', { smallRuns: undefined })), false, 'no small-runs ledger');
+  assert.equal(FeatureView.markOpen(null), false);
 });

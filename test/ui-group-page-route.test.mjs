@@ -412,12 +412,12 @@ const liveP2 = (ctx, status) => {
   ctx.dispatch({ type: 'state', runId: 'r2', id: 'p2', status, steps: [], active: [] });
 };
 
-test('D3: a marked feature with the flag on shows Runs, Requirements, Overview, Decisions; #feature/ID/requirements selects Requirements (aria-selected=true); Decisions paints the feature log; Runs lists the planning run as run 1', async () => {
+test('D3: a marked feature with the flag on shows Runs, Requirements, Decisions, Cost, Log; #feature/ID/requirements selects Requirements (aria-selected=true); Decisions paints the feature log; Runs lists the planning run as run 1', async () => {
   const { ctx } = await d3Boot({ feature: () => json(D3_FEATURE('being built')) });
   ctx.go('feature/feat_1/requirements');
   await ctx.settle(10);
   const gp = pageOf(ctx).querySelector('.gpage');
-  assert.deepEqual([...gp.querySelectorAll('.gpage-tabs .rd-tab')].map((t) => t.textContent), ['Runs', 'Requirements', 'Overview', 'Decisions', 'Logs']);
+  assert.deepEqual([...gp.querySelectorAll('.gpage-tabs .rd-tab')].map((t) => t.textContent), ['Runs', 'Requirements', 'Decisions', 'Cost', 'Log']);
   assert.equal(gp.querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'requirements');
   assert.equal(ctx.window.location.hash, '#feature/feat_1/requirements');
   assert.equal(reqNote(ctx, 'R-po-2'), 'run 2 · being built');
@@ -994,16 +994,17 @@ test('s7 R-arch-9: with the flag off the marked feature page has no count and ke
   assert.doesNotMatch(gp.querySelector('.gpage-card .run-status').textContent, /next: run/);
 });
 
-// A run held on a clash: the feature page's Overview card shows the reason each shape-feature frame brings.
-test('the marked feature page\'s Overview shows the held reason, and a frame that changes only the reason repaints it', async () => {
+// A run held on a clash: the feature page's card, under Requirements (the old overview address opens it), shows the
+// reason each shape-feature frame brings.
+test('the marked feature page\'s Requirements shows the held reason, and a frame that changes only the reason repaints it', async () => {
   const slices = S7_SLICES.map((x) => (x.index === 9 ? s7Sl(9, 'held', { pipelineId: null }) : x));
   const held = (reason) => ({ ...s7Feature([]), slices, held: { index: 9, ticketId: 't9', ...(reason ? { reason } : {}) } });
   let feature = held(null);
   const { ctx } = await d3Boot({ feature: () => json(feature), groups: S7_GROUPS });
   ctx.go('feature/feat_1/overview');
   await ctx.settle(10);
-  const why = () => pageOf(ctx).querySelector('.gpage-overview .shape-feature-held-why')?.textContent;
-  assert.equal(why(), 'Run 9 waits for you to start', 'the fixture: the Overview draws the held row');
+  const why = () => pageOf(ctx).querySelector('.gpage-panel[data-tab="requirements"] .gpage-overview .shape-feature-held-why')?.textContent;
+  assert.equal(why(), 'Run 9 waits for you to start', 'the fixture: the card draws the held row');
   for (const reason of ['runs 2 and 4 clash in src/a.mjs', 'runs 2 and 4 clash in src/b.mjs']) {
     feature = held(reason);
     ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
@@ -1198,4 +1199,279 @@ test('R-ux-2 example: on run 6, the control reads that it resumes after run 4 (r
   const { footer, resumes } = await s11Page(s11View(states, { 6: { resumeAfter: 4 } }, 6));
   assert.deepEqual(footer().map((b) => b.textContent), []);
   assert.deepEqual(resumes(), ['Resume after run 4']);
+});
+
+// ── Feature page slice 6 (R-ux-3, R-arch-2): Runs · Requirements · Decisions · Cost · Log, Mark and ship ──────────
+const S6_TABS = ['Runs', 'Requirements', 'Decisions', 'Cost', 'Log'];
+const S6_RUNS = (n) => Array.from({ length: n }, (_, i) => i + 1);
+const s6Log = () => [{ key: 'outline', run: null, text: 'Split into 6 runs', detail: [] }, { key: 'r1-plan', run: 1, text: 'Plan approved', detail: [] }];
+/** The small-runs ledger of a ready feature: one confirmed requirement, waiting for its mark unless `state` says so. */
+const s6Ledger = (n, state = 'waiting') => {
+  const base = D3_SR('met');
+  const done = state === 'confirmed';
+  return { ...base,
+    confirmed: [{ ...base.confirmed[0], state, mark: done ? 'met' : null,
+      shown: { ...base.confirmed[0].shown, word: done ? 'met' : 'Compliance', text: `confirmed by a person · ${done ? 'met' : 'Compliance'}`, mark: done ? 'check' : 'wait' } }],
+    waiting: done ? [] : ['R-comp-1'], blocked: !done, reason: done ? null : 'Waiting for Compliance to confirm R-comp-1',
+    order: S6_RUNS(n).map((i) => ({ index: i, pipelineId: `p${i}`, title: `Slice ${i}`, pr: null, onto: null })) };
+};
+const s6Feature = ({ n = 6, state = 'waiting', ship = {}, log = s6Log(), over = {} } = {}) => ({ ...D3_FEATURE('met'), status: 'done', total: n, done: n, log,
+  slices: S6_RUNS(n).map((i) => ({ index: i, title: `Slice ${i}`, state: 'done', pipelineId: `p${i}`, pr: null })),
+  ship: { ...FEATURE.ship, ready: true, mode: null, smallRuns: s6Ledger(n, state), ...ship }, ...over });
+/** `n` runs at $2 plus the Verifier rounds `checks` ([pipelineId, round, usd, status]), as /api/run-groups sends them. */
+const s6Cost = (n, checks) => ({
+  usd: n * 2 + checks.reduce((a, c) => a + c[2], 0),
+  byPipeline: Object.fromEntries([...S6_RUNS(n).map((i) => [`p${i}`, 2]), ...checks.map(([id, , usd]) => [id, usd])]),
+  checks: Object.fromEntries(checks.map(([id, round, , status], i) => [id, { round, at: `2026-10-18T0${i + 1}:00:00Z`, status }])),
+});
+const S6_CHECKS = [['pv1', 1, 1, 'done'], ['pv2', 2, 0.5, 'done']];
+const s6Groups = (n = 6, cost = s6Cost(n, S6_CHECKS)) => ({ groups: [{ ...GROUPS.groups[0], smallRuns: true, members: S6_RUNS(n).map(d3Member), cost }, GROUPS.groups[1]] });
+const s6History = (n) => S6_RUNS(n).map((i) => ({ id: `p${i}`, projectKey: 'acme', title: `Slice ${i}`, status: 'done', mtime: Date.now() }));
+
+async function s6Open({ n = 6, feature = () => json(s6Feature({ n })), groups = s6Groups(n), hash = 'feature/feat_1', flag = true, level = '' } = {}) {
+  const { ctx, calls } = await d3Boot({ flag, groups, feature,
+    extra: (url) => (url.startsWith('/api/history') ? json({ pipelines: s6History(n) }) : null) });
+  const doc = ctx.window.document;
+  if (level) { doc.documentElement.dataset.level = level; doc.dispatchEvent(new ctx.window.Event('worca:level')); }
+  const scrolls = [];
+  ctx.window.Element.prototype.scrollIntoView = function (arg) { scrolls.push({ node: this, arg }); };
+  ctx.go(hash);
+  await ctx.settle(12);
+  const gp = () => pageOf(ctx).querySelector('.gpage');
+  const q = (sel) => pageOf(ctx).querySelector(sel);
+  const go = async (to) => { ctx.go(to); await ctx.settle(10); };
+  return { ctx, calls, doc, scrolls, gp, q, go };
+}
+const s6Shown = (gp) => [...gp.querySelectorAll('.gpage-tabs .rd-tab')].filter((t) => !t.hidden).map((t) => t.textContent);
+const s6Selected = (gp) => gp.querySelector('.rd-tab[aria-selected="true"]').dataset.tab;
+const s6CostRows = (p) => [...p.gp().querySelectorAll('.gpage-panel[data-tab="cost"] .gpage-cost tbody tr')]
+  .map((r) => [r.querySelector('td[data-label="Run"]').textContent, r.querySelector('td[data-label="Cost"]').textContent]);
+const s6Foot = (p) => p.q('.gpage-panel[data-tab="cost"] .gpage-cost tfoot')?.textContent;
+const s6Card = (p) => p.q('.gpage-panel[data-tab="requirements"] [data-ship-card]');
+const s6Button = (p) => p.q('.gpage-bar .gpage-markship');
+const s6Lines = (p) => [...p.gp().querySelectorAll('.gpage-panel[data-tab="logs"] ol.shape-feature-log .chat-rc-log-text')].map((x) => x.textContent);
+
+test('R-ux-3 example: a feature with an open mark shows the five tabs and "Mark and ship"; the button opens Requirements at the Ship card; Cost lists 6 runs plus 2 Verifier rounds and a total equal to their sum; Log holds today\'s log lines and the step log', async () => {
+  const p = await s6Open();
+  assert.deepEqual(s6Shown(p.gp()), S6_TABS);
+  assert.equal(s6Button(p)?.textContent, 'Mark and ship');
+  await p.go('feature/feat_1/cost');
+  assert.equal(s6Selected(p.gp()), 'cost');
+  const rows = s6CostRows(p);
+  assert.equal(rows.length, 8, JSON.stringify(rows));
+  rows.slice(0, 6).forEach(([run], i) => assert.match(run, new RegExp(`${i + 1}.*Slice ${i + 1}`)));
+  assert.deepEqual(rows.slice(6), [['Verifier · round 1', '$1.00'], ['Verifier · round 2', '$0.50']]);
+  const sum = rows.reduce((a, [, cost]) => a + Number(cost.slice(1)), 0);
+  assert.equal(sum, 13.5);
+  assert.match(s6Foot(p), /Total\s*\$13\.50/);
+  await p.go('feature/feat_1/logs');
+  assert.equal(s6Selected(p.gp()), 'logs');
+  const logs = p.q('.gpage-panel[data-tab="logs"]');
+  assert.equal(logs.querySelector('ul.gpage-logs').hidden, false);
+  assert.deepEqual([...logs.querySelectorAll('ul.gpage-logs a')].map((a) => a.textContent), Array(6).fill('Open logs'));
+  assert.equal(logs.querySelector('h2.section-title')?.textContent, 'Step log');
+  const list = logs.querySelector('ol.chat-rc-log.shape-feature-log');
+  assert.equal(list.getAttribute('aria-label'), 'Steps');
+  assert.deepEqual(s6Lines(p), ['Split into 6 runs', 'Plan approved']);
+  assert.ok(logs.querySelector('ul.gpage-logs').compareDocumentPosition(list) & p.ctx.window.Node.DOCUMENT_POSITION_FOLLOWING);
+  await p.go('feature/feat_1');
+  s6Button(p).click();
+  await p.ctx.settle(12);
+  assert.equal(p.ctx.window.location.hash, '#feature/feat_1/requirements');
+  assert.equal(s6Selected(p.gp()), 'requirements');
+  assert.ok(s6Card(p), 'the Ship card is in Requirements');
+  assert.equal(p.doc.activeElement, s6Card(p));
+});
+
+test('R-arch-2 example: 5 runs at $2, a Verifier round at $1 and a failed round at $0.50 read $11.50 on the Cost tab, the Total cost fact and the group row', async () => {
+  const cost = s6Cost(5, [['pvfail', 1, 0.5, 'error'], ['pvdone', 1, 1, 'done']]);
+  const p = await s6Open({ n: 5, groups: s6Groups(5, cost), hash: 'feature/feat_1/cost' });
+  assert.equal(s6Selected(p.gp()), 'cost');
+  assert.match(s6Foot(p), /Total\s*\$11\.50/);
+  const rows = s6CostRows(p);
+  assert.equal(rows.length, 7, 'each pipeline once');
+  assert.deepEqual(rows.slice(5), [['Verifier · round 1 · failed', '$0.50'], ['Verifier · round 1', '$1.00']]);
+  assert.equal(p.q('.gpage-card .rd-kv-row[data-fact="cost"] .rd-kv-v').textContent, '$11.50');
+  assert.equal(p.doc.querySelector('.runs-item[data-row-key="chain:feat_1"] > a.runs-row .runs-cost')?.textContent, '$11.50');
+});
+
+test('R-ux-3: Mark and ship opens Requirements with the Ship card first, scrolled into view and focused; a second click on Requirements does it again', async () => {
+  const p = await s6Open();
+  const b = s6Button(p);
+  assert.ok(b, 'Mark and ship shows with an open mark');
+  assert.ok(b.classList.contains('btn-primary'));
+  b.click();
+  await p.ctx.settle(12);
+  assert.equal(p.ctx.window.location.hash, '#feature/feat_1/requirements');
+  const card = s6Card(p);
+  assert.ok(card);
+  assert.equal(card.closest('[hidden]'), null, 'on screen');
+  assert.equal(card.getAttribute('tabindex'), '-1');
+  assert.equal(p.doc.activeElement, card);
+  assert.deepEqual(p.scrolls.filter((x) => x.node === card).map((x) => x.arg), [{ block: 'start' }]);
+  const panel = p.q('.gpage-panel[data-tab="requirements"]');
+  assert.equal(panel.firstElementChild, p.q('.gpage-overview'));
+  assert.equal(panel.firstElementChild.querySelector('.shape-feature').firstElementChild, card, 'the Ship card is the panel\'s first element');
+  assert.ok(card.compareDocumentPosition(panel.querySelector('.shape-feature-reqs')) & p.ctx.window.Node.DOCUMENT_POSITION_FOLLOWING, 'above the requirement folds');
+  assert.equal(panel.querySelector('ol.shape-feature-log'), null, 'the step log moved to Log');
+  // Already on Requirements: the hash stays and the card takes the focus again.
+  s6Button(p).focus();
+  s6Button(p).click();
+  await p.ctx.settle(12);
+  assert.equal(p.ctx.window.location.hash, '#feature/feat_1/requirements');
+  assert.equal(p.doc.activeElement, s6Card(p));
+  assert.equal(p.scrolls.filter((x) => x.node === s6Card(p)).length, 2);
+});
+
+test('R-ux-3: the header keeps what it has today beside Mark and ship', async () => {
+  const p = await s6Open();
+  const b = s6Button(p);
+  assert.ok(b);
+  assert.equal(b.nextElementSibling, p.q('.gpage-bar > .gpage-actions'));
+  for (const kept of ['.gpage-back', '.rd-crumbs', '.gpage-stop', '.gpage-more']) assert.ok(p.q(`.gpage-bar > ${kept}`), kept);
+  assert.equal(p.q('.gpage-more').hidden, false);
+  assert.match(p.q('.gpage-card .rd-pr-slot [data-rd-cta]').textContent, /^Create 6 PRs/);
+  assert.deepEqual([...p.gp().querySelectorAll('.gpage-card > .rd-kv > .rd-kv-row:not([hidden]) .rd-kv-k')].map((x) => x.textContent).filter((x) => x !== 'Project'),
+    ['Runs', 'Total cost']);
+});
+
+test('R-ux-3: no open mark, no Mark and ship: every mark made, the Verifier not passed, or already shipped', async () => {
+  const cases = {
+    'every mark made': s6Feature({ state: 'confirmed' }),
+    'the Verifier has gaps': s6Feature({ ship: { ready: false }, over: { status: 'active', verify: { state: 'gaps' } } }),
+    'already shipped': s6Feature({ ship: { ready: false, mode: 'stacked' } }),
+  };
+  for (const [name, body] of Object.entries(cases)) {
+    const p = await s6Open({ feature: () => json(body) });
+    for (const tab of ['', '/requirements', '/cost']) {
+      await p.go(`feature/feat_1${tab}`);
+      assert.deepEqual(s6Shown(p.gp()), S6_TABS, name);
+      assert.equal(p.q('.gpage-markship'), null, `${name} ${tab}`);
+    }
+  }
+});
+
+test('R-ux-3: Mark and ship goes with the last mark, and a focused button hands the focus to the selected tab', async () => {
+  let state = 'waiting';
+  const p = await s6Open({ feature: () => json(s6Feature({ state })) });
+  assert.ok(s6Button(p));
+  s6Button(p).focus();
+  state = 'confirmed';
+  p.ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await p.ctx.settle(12);
+  assert.equal(p.q('.gpage-markship'), null);
+  assert.equal(p.doc.activeElement, p.q('.rd-tab[data-tab="runs"]'));
+});
+
+test('R-ux-3: Simple and Advanced show the same five tabs; Log holds the step log and no Open logs row', async () => {
+  for (const level of ['simple', 'advanced']) {
+    const p = await s6Open({ level, hash: 'feature/feat_1/logs' });
+    assert.deepEqual(s6Shown(p.gp()), S6_TABS, level);
+    assert.equal(s6Selected(p.gp()), 'logs', level);
+    assert.ok(s6Button(p), `${level}: Mark and ship`);
+    assert.equal(p.q('.gpage-panel[data-tab="logs"] ul.gpage-logs').hidden, true, level);
+    assert.deepEqual(s6Lines(p), ['Split into 6 runs', 'Plan approved'], level);
+  }
+});
+
+test('R-ux-3: with no step lines Log says "No steps yet."; a feature frame brings the list and later lines', async () => {
+  let log = [];
+  const p = await s6Open({ feature: () => json(s6Feature({ log })), hash: 'feature/feat_1/logs' });
+  const logs = () => p.q('.gpage-panel[data-tab="logs"]');
+  const empty = () => [...logs().querySelectorAll('p.muted')].map((x) => x.textContent);
+  assert.deepEqual(empty(), ['No steps yet.']);
+  assert.equal(logs().querySelector('ol.shape-feature-log'), null);
+  assert.doesNotMatch(logs().textContent, /Step log/);
+  for (const next of [s6Log().slice(0, 1), s6Log()]) {
+    log = next;
+    p.ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+    await p.ctx.settle(12);
+    assert.deepEqual(s6Lines(p), next.map((l) => l.text));
+    assert.deepEqual(empty(), []);
+    assert.equal(logs().querySelector('h2.section-title').textContent, 'Step log');
+    assert.equal(logs().querySelectorAll('ol.shape-feature-log').length, 1);
+  }
+});
+
+test('R-ux-3: the old #feature/ID/overview address opens Requirements with the Ship card', async () => {
+  const p = await s6Open({ hash: 'feature/feat_1/overview' });
+  assert.equal(s6Selected(p.gp()), 'requirements');
+  assert.equal(p.gp().querySelector('.rd-tab[data-tab="overview"]'), null);
+  assert.ok(s6Card(p));
+});
+
+test('R-ux-3: a cost, logs or overview deep link shows Loading group… until the feature resolves', async () => {
+  for (const [hash, tab] of [['cost', 'cost'], ['logs', 'logs'], ['overview', 'requirements']]) {
+    const held = [];
+    const { ctx } = await d3Boot({ groups: s6Groups(), feature: () => new Promise((r) => { held.push(() => r(new Response(JSON.stringify(s6Feature()), { status: 200, headers: { 'content-type': 'application/json' } }))); }) });
+    ctx.go(`feature/feat_1/${hash}`);
+    await ctx.settle(4);
+    ctx.dispatch({ type: 'run-groups-changed' });
+    await ctx.settle(8);
+    assert.equal(pageOf(ctx).querySelector('.gpage'), null, `${hash}: no Runs flash`);
+    assert.equal(pageOf(ctx).querySelector('.feature-page-loading').textContent, 'Loading group…', hash);
+    for (const release of held.splice(0)) release();
+    await ctx.settle(10);
+    assert.equal(s6Selected(pageOf(ctx).querySelector('.gpage')), tab, hash);
+  }
+});
+
+test('R-ux-3: Runs, then Requirements, then Log fetch the feature once; Requirements paints from the page\'s view with no loading line; another host still fetches', async () => {
+  // Every fetch after the first never answers: what Requirements and Log show can only come from the stored view.
+  const p = await s6Open({ feature: (n) => (n === 1 ? json(s6Feature()) : new Promise(() => {})) });
+  await p.go('feature/feat_1/requirements');
+  assert.ok(s6Card(p), 'painted with no second fetch');
+  assert.equal(p.gp().querySelector('.feature-page-loading'), null);
+  assert.equal(p.calls.feature, 1);
+  await p.go('feature/feat_1/logs');
+  assert.deepEqual(s6Lines(p), ['Split into 6 runs', 'Plan approved']);
+  assert.equal(p.calls.feature, 1);
+  const plans = p.doc.createElement('div');
+  p.doc.body.appendChild(plans);
+  p.ctx.window.__shapeFeature.mount(plans, 'feat_1');
+  await p.ctx.settle(5);
+  assert.equal(p.calls.feature, 2, 'the Plans tab and Chat hosts fetch as today');
+});
+
+test('R-ux-3: the flag turned off on the open page brings back Overview and Logs at the next feature frame', async () => {
+  const p = await s6Open({ hash: 'feature/feat_1/requirements' });
+  assert.deepEqual(s6Shown(p.gp()), S6_TABS);
+  const overview = p.q('.gpage-overview');
+  const { applyFlags } = await import('../ui/public/flags.mjs');
+  applyFlags({ shaperSmallRuns: false }, p.doc);
+  p.ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await p.ctx.settle(12);
+  assert.deepEqual(s6Shown(p.gp()), ['Runs', 'Overview', 'Decisions', 'Logs']);
+  assert.equal(p.q('.gpage-markship, .gpage-cost, .gpage-steplog'), null);
+  assert.equal(p.q('.gpage-panel[data-tab="overview"] .gpage-overview'), overview, 'the same node');
+});
+
+// R-qa-1: with the flag off, a small-runs feature's page keeps the tabs, fetches and loading lines of checkpoint 217b540b4.
+test('R-ux-3 flag off: a small-runs feature with an open mark keeps Runs, Overview, Decisions, Logs and no Mark and ship', async () => {
+  const p = await s6Open({ flag: false });
+  assert.deepEqual(s6Shown(p.gp()), ['Runs', 'Overview', 'Decisions', 'Logs']);
+  for (const tab of ['overview', 'logs', 'cost']) {
+    await p.go(`feature/feat_1/${tab}`);
+    assert.equal(s6Selected(p.gp()), tab === 'cost' ? 'runs' : tab);
+    assert.equal(p.q('.gpage-markship, .gpage-cost, .gpage-steplog, .rd-tab[data-tab="cost"]'), null, tab);
+  }
+});
+
+test('R-ux-3 flag off: an overview deep link fetches the feature twice and says "Loading feature…" while the card loads', async () => {
+  const p = await s6Open({ flag: false, hash: 'feature/feat_1/overview', feature: (n) => (n === 1 ? json(s6Feature()) : new Promise(() => {})) });
+  assert.equal(p.calls.feature, 2);
+  assert.equal(p.q('.gpage-panel[data-tab="overview"] .gpage-overview .feature-page-loading')?.textContent, 'Loading feature…');
+});
+
+test('R-ux-3 flag off: a cost, logs or overview deep link paints the page while the feature is still loading', async () => {
+  for (const hash of ['cost', 'logs', 'overview']) {
+    const { ctx } = await d3Boot({ flag: false, groups: s6Groups(), feature: () => new Promise(() => {}) });
+    ctx.go(`feature/feat_1/${hash}`);
+    await ctx.settle(4);
+    ctx.dispatch({ type: 'run-groups-changed' });
+    await ctx.settle(8);
+    const gp = pageOf(ctx).querySelector('.gpage');
+    assert.ok(gp, `${hash}: no loading hold`);
+    assert.equal(s6Selected(gp), hash === 'cost' ? 'runs' : hash);
+  }
 });

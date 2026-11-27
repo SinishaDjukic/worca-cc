@@ -46,11 +46,20 @@ function shipBlock(doc, f) {
   return card;
 }
 
+/** Feature page slice 6 (D13): a mark is open while the feature is ready to ship, not shipped, and a confirmed
+ *  requirement still waits for its mark or for a reason. The page bar then offers Mark and ship. */
+export function markOpen(f) {
+  const s = f && f.ship;
+  if (!s || !s.smallRuns || !s.ready || s.mode) return false;
+  return (s.smallRuns.confirmed || []).some((e) => e && (e.state === 'waiting' || e.state === 'needs-reason'));
+}
+
 /**
  * deps: { act(action, body, {focus}) → Promise<{ok, error?}>, confirm, openRun(ref), openPlan(controls), snapOf?(pid),
  *         pause?(target, btn), stop?(target), mountAsk?(slot, step), runsOpen?: boolean, error?: string,
  *         omit?: string[] (feature-actions keys the host's model footer already shows), inGroup?: boolean (the group page:
- *         no merge-order line and no ⋯, the page header owns both) }
+ *         no merge-order line and no ⋯, the page header owns both), shipFirst?: boolean (slice 6: the Ship card first, no
+ *         step log or merge-order line: the feature page's Requirements tab) }
  */
 export function renderFeature(doc, f, deps) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -61,16 +70,21 @@ export function renderFeature(doc, f, deps) {
   if (f.replanOf) el.appendChild(h('div', 'shape-feature-replanned', 'Re-planned: the runs below replace the earlier outline'));
   // A slot only: the host swaps in its persistent ask element (P12), so a repaint never wipes a typed answer.
   if (m.step && deps.mountAsk) { const slot = h('div', 'shape-feature-ask'); el.appendChild(slot); deps.mountAsk(slot, m.step); }
-  const log = h('ol', 'chat-rc-log shape-feature-log'); log.setAttribute('aria-label', 'Steps');
-  el.appendChild(log);
-  paintFeatureLog(doc, log, m.log);
-  // Run 4 (D17): the group page states the merge order on its Runs tab and owns the ⋯ in its header.
-  if (f.slices.length > 1 && !deps.inGroup) {
-    const order = h('div', 'shape-feature-order', 'Merge in order: each run\'s branch starts from the one before.');
-    order.dataset.needsGit = '';
-    el.appendChild(order);
+  // Feature page slice 6 (D4): the Requirements tab shows the Ship card first; the step log lives on the Log tab, and
+  // the Runs tab states the merge order.
+  if (deps.shipFirst) el.prepend(shipBlock(doc, f));
+  else {
+    const log = h('ol', 'chat-rc-log shape-feature-log'); log.setAttribute('aria-label', 'Steps');
+    el.appendChild(log);
+    paintFeatureLog(doc, log, m.log);
+    // Run 4 (D17): the group page states the merge order on its Runs tab and owns the ⋯ in its header.
+    if (f.slices.length > 1 && !deps.inGroup) {
+      const order = h('div', 'shape-feature-order', 'Merge in order: each run\'s branch starts from the one before.');
+      order.dataset.needsGit = '';
+      el.appendChild(order);
+    }
+    el.appendChild(shipBlock(doc, f));
   }
-  el.appendChild(shipBlock(doc, f));
   const foot = h('div', 'shape-feature-actions');
   el.appendChild(foot);
   paintFeatureActions(doc, foot, m.controls, deps, { omit: deps.omit || [], menu: !deps.inGroup });

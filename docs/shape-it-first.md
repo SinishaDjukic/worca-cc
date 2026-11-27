@@ -294,7 +294,9 @@ actions with no step; its runs are on the group page. The group page has Runs,
 Overview, Decisions and Logs tabs; the feature's log, actions and Ship block sit
 under Overview, and the open step's card sits in the page's status card. Saved
 notes show on the feature's chat card. The step card itself is the same on the run
-page, in Chat and on the group page. With small runs on, a run's stop (Plan approval,
+page, in Chat and on the group page. With small runs on, a marked feature's page has
+Runs, Requirements, Decisions, Cost and Log tabs instead (see "The feature page" below).
+With small runs on, a run's stop (Plan approval,
 a failed plan check, Split, Verifier gaps) draws the same card, with the same
 actions, on the feature's card in Chat, on the group page, on the run page and in
 the Chat run side panel. With small runs on, the stop's card lists its findings
@@ -749,6 +751,16 @@ fix cycles it stops adding runs by itself and asks you: **Add a run for the gap*
   feature is ready to ship (the Verifier still checks, or waits for your answer) and while the ledger blocks it, it is
   off and the status line says why. An open stop shows its own head and primary, and the page offers no Re-plan beside
   it; the Verifier's stop is asked here too.
+  Its tabs read Runs, Requirements, Decisions, Cost, Log, at every UI level. The Ship card sits at the top of
+  Requirements, above the requirement folds, with the feature's actions under them; the old `#feature/…/overview`
+  address opens Requirements. While a mark is open (the feature is ready to ship and a confirmed requirement still waits
+  for its mark or a reason), the page bar shows **Mark and ship**: it opens Requirements, scrolls to the Ship card and
+  focuses it. Log holds the per-run "Open logs" rows (Expert only) and then the step log, the lines the card's log
+  shows ("No steps yet." before the first). The Cost tab lists each run with its cost: Planning, each numbered run,
+  each Verifier round, and one "Earlier tries and fix runs" row when those cost anything, then the Total, the same
+  number as the group row. Verifier rounds count once each in the feature's cost, re-planned rounds included. A round
+  that reads "· failed" or "· stopped" is one whose Verifier run failed or was stopped and was run again under the
+  same round number.
 
 ### The run words
 

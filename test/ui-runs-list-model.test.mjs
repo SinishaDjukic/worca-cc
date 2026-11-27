@@ -1294,3 +1294,18 @@ test('s5 sidebar words (D7): the ask word reads --amber-ink and the failed word 
   assert.match(rule('failed'), /color:\s*var\(--red-ink\)/);
   assert.doesNotMatch(css, /\.runs-members[^{}]*\[data-mark="(?:after|ring|faint|done|live)"\][^{}]*\.runs-row-sub[^{}]*\{[^}]*color/);
 });
+
+// ── Feature page slice 6 (R-arch-2): one source for the group total and the Cost tab ─────────────────────────────
+test('groupCostParts: max(stored, live) per pipeline, live-only ids included; its sum is groupCostUsd', () => {
+  const g = { cost: { usd: 2, byPipeline: { p1: 1.5, p2: 0.5 }, checks: { p2: { round: 1, at: at(30, 11, 0), status: 'done' } } } };
+  for (const [live, parts] of [
+    [{ p2: 0.9 }, { p1: 1.5, p2: 0.9 }],
+    [{ p2: 0 }, { p1: 1.5, p2: 0.5 }],
+    [{ p3: 0.3 }, { p1: 1.5, p2: 0.5, p3: 0.3 }],
+  ]) {
+    assert.deepEqual(RL.groupCostParts(g, live), parts, JSON.stringify(live));
+    assert.equal(Math.round(Object.values(parts).reduce((a, b) => a + b, 0) * 100) / 100, groupCostUsd(g, live));
+  }
+  assert.deepEqual(RL.groupCostParts(g), { p1: 1.5, p2: 0.5 }, 'no live costs');
+  assert.equal(groupCostUsd({ members: [{ cost: 1 }, { cost: 0.5 }] }), 1.5, 'a plain chain still sums its members');
+});

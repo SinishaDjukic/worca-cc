@@ -285,3 +285,24 @@ test('the SHIP_CARRIED_ONLY phase captures app-ship-carried-card and app-ship-ca
   }
   for (const screen of ['screen-requirements', 'screen-ship-dialog']) assert.ok(s.includes(screen), screen);
 });
+
+// Feature page slice 6 (R-ux-3): the Cost tab, the Ship card on Requirements and the Log tab, in both themes.
+test('the FEATURE_TABS_ONLY phase captures feature-cost-tab, feature-requirements-ship-card and feature-log-tab in light and dark', () => {
+  const s = src();
+  assert.match(s, /process\.env\.FEATURE_TABS_ONLY === '1'\) \{ await featureTabsPhase\(\); await finish\(\); \}/, 'the FEATURE_TABS_ONLY=1 gate');
+  const at = s.indexOf('async function featureTabsPhase(');
+  assert.ok(at >= 0, 'the feature tabs phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /THEMES/, 'both themes');
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /375/, 'the narrow shots at 375px');
+  // The Mark and ship click, what it must leave behind, and the bar that must not overflow.
+  for (const needle of ['.gpage-markship', '[data-ship-card]', 'activeElement', 'scrollWidth', 'clientWidth']) assert.ok(body.includes(needle), needle);
+  // The files, with these exact names (no prefix), in SHOTS_DIR.
+  for (const surface of ['cost-tab', 'requirements-ship-card', 'log-tab']) {
+    assert.match(s, new RegExp(`[\`'/]feature-${surface}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${surface} screenshots`);
+  }
+  for (const narrow of ['cost-tab', 'requirements-bar']) {
+    assert.match(s, new RegExp(`[\`'/]feature-${narrow}-narrow-(\\$\\{theme\\}|light)\\.png`), `the narrow ${narrow} screenshot`);
+  }
+});

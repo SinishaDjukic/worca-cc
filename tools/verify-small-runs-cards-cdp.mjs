@@ -22,6 +22,8 @@
 //   feature page line, the Shipped card after a One ship, an old outcome's new words and the Labs entry, at 1280px;
 // the carried runs (SHIP_CARRIED_ONLY=1 runs it alone): the Ship card's and the Create PR dialog's carried line and
 //   "Create 4 PRs", light and dark at 1280px, beside the run's prototype (SHIP_CARRIED_PROTOTYPE);
+// the feature page tabs (FEATURE_TABS_ONLY=1 runs it alone): the Cost tab, Mark and ship to the Ship card on Requirements,
+//   and the Log tab, light and dark at 1280px, the Cost tab and the bar at 375px in light;
 // and one reduced-motion capture of Prototype building. A live phase then follows a REAL paced mock Design build
 // (WORCA_MOCK_DESIGN_MS=400) on the Chat card: the Lead row, a row per screen and pieces assembling, captured mid-build
 // and with reduced motion (chat-prototype-building-mid-light, chat-prototype-building-reduced-motion-light). Every list (the Verifier's gap `.srows` included) is measured:
@@ -1523,8 +1525,103 @@ async function shipCarriedPhase() {
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 }
 
+// ---- Feature page slice 6 (R-ux-3, R-arch-2): the marked feature page's Cost tab, its Requirements tab reached with Mark and
+// ship (the Ship card first, focused and in view) and its Log tab, light and dark at 1280px, plus the Cost tab and the
+// page bar at 375px in light. The feature: 5 done runs at $2, a Verifier round at $1 after a failed one at $0.50 (both
+// round 1), clean, and R-comp-4 still waiting for Compliance's mark. feature-cost-tab-…, feature-requirements-ship-card-…,
+// feature-log-tab-… (-light.png, -dark.png), feature-cost-tab-narrow-light.png and feature-requirements-bar-narrow-light.png.
+async function featureTabsPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const tag = 'ft';
+  const x = seedFeature(tag, 'Feature tabs', ['done', 'done', 'done', 'done', 'done'], { withOutline: soOutline, titles: SO_TITLES,
+    requirementKinds: { 'R-comp-4': { kind: 'confirmed', role: 'compliance' } } });
+  figures(x.f.id);
+  for (let k = 1; k <= 5; k++) {
+    const br = `feat/${tag}-${k}`;
+    execFileSync('git', ['branch', '-f', br], { cwd: proj });
+    getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ?, total_cost_usd = 2 WHERE id = ?')
+      .run(JSON.stringify({ source: k === 1 ? 'main' : `feat/${tag}-${k - 1}`, feature: br }), new Date(Date.parse(now) + k * 60_000).toISOString(), x.pid(k));
+  }
+  const headSha = execFileSync('git', ['rev-parse', `feat/${tag}-5`], { cwd: proj, encoding: 'utf8' }).trim();
+  // Round 1 failed and was run again under the same round (verifier.mjs): two tickets, each with its own pipeline.
+  const round = (vpid, status, usd, minute) => {
+    pipeline(vpid, status, 'Feature tabs · Verifier');
+    getDb().prepare('UPDATE pipelines SET total_cost_usd = ? WHERE id = ?').run(usd, vpid);
+    const at = new Date(Date.parse(now) + minute * 60_000).toISOString();
+    getDb().prepare(`INSERT INTO scheduled_runs (id, status, pipeline_id, request, run_at, created_at, updated_at, title)
+      VALUES (?, 'fired', ?, ?, ?, ?, ?, 'Verifier')`).run(`t-${vpid}`, vpid,
+      JSON.stringify({ workflowId: 'wf_shape_verify', shape: { verify: { featureId: x.f.id, round: 1 } } }), at, at, at);
+  };
+  round(`c5${tag}v0001`, 'error', 0.5, 10);
+  round(`c5${tag}v0002`, 'done', 1, 11);
+  setVerify(x.f, vCheck(x, `c5${tag}v0002`, 'clean', { head: { index: 5, pipelineId: x.pid(5) }, headSha,
+    result: { held: [...SO_AGREED.map((a) => a.id), 'R-comp-4'], gaps: [] } }));
+  const page = `#feature/${encodeURIComponent(x.f.id)}`;
+  const capture = async (name) => {
+    // The sandbox's own toasts (the model defaults notice) would cover the tab: dismiss them first.
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const go = async (hash) => { await ev(`(() => { location.hash = ${JSON.stringify(hash)}; return true; })()`); await sleep(500); };
+  const TABS = "[...document.querySelectorAll('#group-detail .gpage-tabs .rd-tab')].filter((t) => !t.hidden).map((t) => t.textContent)";
+  const FOOT = "(document.querySelector('#group-detail .gpage-panel[data-tab=\"cost\"]:not([hidden]) .gpage-cost tfoot') || {}).textContent || ''";
+  for (const theme of THEMES) {
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await open(`${base}/?feature-tabs-${theme}${page}/cost`);
+    await skipWelcome(); await setTheme(theme);
+    if (await waitFor(`/\\$11\\.50/.test(${FOOT})`, `the Cost tab's Total (${theme})`)) {
+      check(JSON.stringify(await ev(TABS)) === JSON.stringify(['Runs', 'Requirements', 'Decisions', 'Cost', 'Log']), `feature tabs, ${theme}: Runs, Requirements, Decisions, Cost, Log`);
+      const rows = await ev("[...document.querySelectorAll('#group-detail .gpage-cost tbody tr')].map((r) => r.textContent)");
+      check(rows.length === 7 && /round 1 · failed/.test(rows[5]) && /round 1\$1\.00$/.test(rows[6]), `feature cost, ${theme}: 5 runs, the failed round, then its retry (${JSON.stringify(rows)})`);
+      const fact = await ev("(document.querySelector('#group-detail .gpage-card .rd-kv-row[data-fact=\"cost\"] .rd-kv-v') || {}).textContent || ''");
+      check(fact === '$11.50', `feature cost, ${theme}: the Total cost fact reads the same $11.50 (${fact})`);
+      await capture(`feature-cost-tab-${theme}.png`);
+    }
+    await go(`${page}/logs`);
+    if (await waitFor("!!document.querySelector('#group-detail .gpage-panel[data-tab=\"logs\"]:not([hidden]) .gpage-steplog ol.shape-feature-log li')", `the Log tab's step log (${theme})`)) {
+      const after = await ev(`(() => { const p = document.querySelector('#group-detail .gpage-panel[data-tab="logs"]');
+        return !!(p.querySelector('ul.gpage-logs li') && (p.querySelector('ul.gpage-logs').compareDocumentPosition(p.querySelector('ol.shape-feature-log')) & 4)); })()`);
+      check(after, `feature log, ${theme}: the Open logs rows, then the step log`);
+      await capture(`feature-log-tab-${theme}.png`);
+    }
+    // Mark and ship from a scrolled Runs tab: Requirements opens with its Ship card focused and inside the viewport.
+    await go(page);
+    if (await waitFor("!!document.querySelector('#group-detail .gpage-markship')", `Mark and ship (${theme})`)) {
+      await ev(`(() => { for (let n = document.querySelector('#group-detail .gpage'); n; n = n.parentElement) n.scrollTop = n.scrollHeight;
+        document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight; return true; })()`);
+      await ev("(() => { document.querySelector('#group-detail .gpage-markship').click(); return true; })()");
+      if (await waitFor("!!document.activeElement && document.activeElement.matches('#group-detail [data-ship-card]')", `the Ship card focused (${theme})`)) {
+        await sleep(300);
+        const at = await ev(`(() => { const c = document.activeElement; const r = c.getBoundingClientRect();
+          const panel = c.closest('.gpage-panel'); return { hash: location.hash, tab: panel && panel.dataset.tab, first: !!panel && panel.firstElementChild.contains(c)
+            && panel.firstElementChild.querySelector('.shape-feature').firstElementChild === c,
+            inView: r.top >= 0 && r.top < innerHeight && r.left >= 0 && r.right <= innerWidth }; })()`);
+        check(at.hash === `${page}/requirements` && at.tab === 'requirements' && at.first && at.inView,
+          `Mark and ship, ${theme}: Requirements with the Ship card first, focused and inside the viewport (${JSON.stringify(at)})`);
+        await capture(`feature-requirements-ship-card-${theme}.png`);
+      }
+    }
+    if (theme !== 'light') continue;
+    // 375px, light: the Cost table stacks, and the bar with Mark and ship never scrolls sideways.
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 375, height: 900, deviceScaleFactor: 1, mobile: false });
+    await go(`${page}/cost`);
+    if (await waitFor(`/\\$11\\.50/.test(${FOOT})`, 'the narrow Cost tab')) await capture('feature-cost-tab-narrow-light.png');
+    await go(`${page}/requirements`);
+    if (await waitFor("!!document.querySelector('#group-detail .gpage-markship')", 'the narrow page bar')) {
+      const bar = await ev("(() => { const b = document.querySelector('#group-detail .gpage-bar'); return { scrollWidth: b.scrollWidth, clientWidth: b.clientWidth }; })()");
+      check(bar.scrollWidth <= bar.clientWidth, `the page bar at 375px fits (${JSON.stringify(bar)})`);
+      await capture('feature-requirements-bar-narrow-light.png');
+    }
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
 // D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in, SHIP_LIST_ONLY=1
-// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR, SHIP_CARRIED_ONLY=1 the carried runs Ship names (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
+// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR, SHIP_CARRIED_ONLY=1 the carried runs Ship names, FEATURE_TABS_ONLY=1 the feature page's Cost, Requirements and Log tabs (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
 if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }
 if (process.env.HELD_ONLY === '1') { await heldPhase(); await finish(); }
@@ -1535,6 +1632,7 @@ if (process.env.AFTER_RUN_ONLY === '1') { await afterRunPhase(); await finish();
 if (process.env.STOP_FINDINGS_ONLY === '1') { await stopFindingsPhase(); await finish(); }
 if (process.env.SHIP_ONE_ONLY === '1') { await shipOnePhase(); await finish(); }
 if (process.env.SHIP_CARRIED_ONLY === '1') { await shipCarriedPhase(); await finish(); }
+if (process.env.FEATURE_TABS_ONLY === '1') { await featureTabsPhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {

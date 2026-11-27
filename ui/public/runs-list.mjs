@@ -503,14 +503,22 @@ export function listLine(row, { section = '', time = '' } = {}) {
   }
 }
 
+/** §2.4: a group's cost per pipeline (a group with `g.cost`), max(stored, live) each: { [pipelineId]: usd }. One
+ *  source for the group total and the feature page's Cost tab (R-arch-2). */
+export function groupCostParts(g, liveCost = {}) {
+  const by = (g.cost && g.cost.byPipeline) || {};
+  const parts = {};
+  for (const [id, stored] of Object.entries(by)) parts[id] = Math.max(Number(stored) || 0, Number(liveCost[id]) || 0);
+  // A member that started after the last /api/run-groups load is live but not in byPipeline yet: it still counts.
+  for (const [id, live] of Object.entries(liveCost)) if (!(id in by)) parts[id] = Number(live) || 0;
+  return parts;
+}
+
 /** §2.4: the group total, max(stored, live) per pipeline, held by `memo` so it never goes down (D32). */
 export function groupCostUsd(g, liveCost = {}, memo = null) {
   let usd = 0;
   if (g.cost) {
-    const by = g.cost.byPipeline || {};
-    for (const [id, stored] of Object.entries(by)) usd += Math.max(Number(stored) || 0, Number(liveCost[id]) || 0);
-    // A member that started after the last /api/run-groups load is live but not in byPipeline yet: it still counts.
-    for (const [id, live] of Object.entries(liveCost)) if (!(id in by)) usd += Number(live) || 0;
+    for (const v of Object.values(groupCostParts(g, liveCost))) usd += v;
   } else {
     usd = (g.members || []).reduce((a, m) => a + (Number(m.cost) || 0), 0);   // a plain chain: its members' rows
   }

@@ -69,6 +69,11 @@
 .gpage-actions{display:inline-flex;gap:6px;}
 .gpage-ship{margin:8px 0 0;font-size:13px;color:var(--ink-2);}
 .gpage-ship[hidden],.gpage-panel[hidden],.gpage-question[hidden]{display:none;}
+/* Feature page slice 6: the Log tab's step log under the Open logs rows, and the Cost table's run number (the member
+   rows' number style). Only existing tokens. */
+.gpage-steplog{display:grid;gap:8px;margin-top:16px;}
+.gpage-logs[hidden] + .gpage-steplog{margin-top:0;}
+.gpage-cost .row-num{display:inline-block;min-width:20px;margin-right:8px;font-size:12px;font-weight:500;color:var(--ink-2);}
 /* Before the phone block: same specificity, so on a ≤600px viewport its two-line areas win; cost stays hidden there. */
 @container chat-rc-members (max-width:480px){
   .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content 16px;}
