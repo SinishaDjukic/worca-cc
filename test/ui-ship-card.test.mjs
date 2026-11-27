@@ -449,6 +449,39 @@ test('D1 done: N PRs open, no step head, the Care row once above one .srows row 
   assert.equal(el.querySelectorAll('a[href]').length, 0, 'no raw links');
 });
 
+// ---- A feature shipped as one PR: every run holds the same url, and the card counts it once (R-po-1) ----
+const ONE_URL = 'https://x/pull/40';
+const ONE_SR = SR({ ...READY_SR, base: 'main', order: [1, 2, 3, 4, 5].map((i) => ({ index: i, pipelineId: `p${i}`, title: `Slice ${i}`,
+  pr: { number: 40, url: ONE_URL }, onto: null })) });
+const oneApplied = (sr, handlers = {}) => {
+  const doc = docOf();
+  const el = renderShipCard(doc, { phase: 'applied', featureId: `feat_one${++srFeature}`, title: 'Charts', runs: 5, smallRuns: sr, shipMode: 'one',
+    result: { mode: 'one' } }, handlers);
+  doc.body.appendChild(el);
+  return el;
+};
+
+test('small-runs done card after a One ship: 1 PR open, one row for runs 1–5, one PR holding every run', () => {
+  for (const sr of [ONE_SR, { ...ONE_SR, along: true }]) {
+    const el = oneApplied(sr);
+    assert.equal(el.querySelector('.ask-shipcard-done').textContent, '1 PR open');
+    assert.deepEqual([...el.querySelectorAll('.ask-shipcard-stats')].map((x) => x.textContent), ['one PR holding every run']);
+    const rows = [...el.querySelectorAll('.ask-shipcard-prs .plan-check-row')];
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].querySelector('.plan-check-id').textContent, '#40');
+    assert.equal(rows[0].querySelector('.plan-check-label').textContent, 'runs 1–5', 'the feature title is in the head, not repeated');
+    assert.equal(rows[0].querySelector('.plan-check-detail').textContent, 'into main');
+    assert.equal(el.querySelectorAll('.rd-kv-row[data-fact="care"]').length, 1);
+    assert.ok(el.querySelector('[data-act="ship-view-prs"]'));
+  }
+});
+
+test('small-runs done card after a One ship in the chat (countShown): no count line of its own, still one row', () => {
+  const el = oneApplied(ONE_SR, { countShown: true });
+  assert.equal(el.querySelector('.ask-shipcard-done'), null);
+  assert.equal(el.querySelectorAll('.ask-shipcard-prs .plan-check-row').length, 1);
+});
+
 // ---- Slice 4 (D11): `along` says the server listed the PRs along the real branches ----
 test('small-runs done card with `along`: the stats line reads "stacked along the real branches" above the same rows', () => {
   const read = (sr) => {

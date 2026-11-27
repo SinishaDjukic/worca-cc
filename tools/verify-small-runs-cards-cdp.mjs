@@ -18,6 +18,8 @@
 //   panel and the Chat feature card, light and dark at 1280px;
 // the take-in (last; TAKEIN_ONLY=1 runs it alone): the moved step a run that waited at a stop logs once it took in a
 //   finished run's work, and its stop's "Not sent: …" line after a refused take-in, light and dark at 1280px;
+// Ship as one PR (SHIP_ONE_ONLY=1 runs it alone): the Create PR dialog's One enabled and disabled with its reason, the
+//   feature page line, the Shipped card after a One ship, an old outcome's new words and the Labs entry, at 1280px;
 // and one reduced-motion capture of Prototype building. A live phase then follows a REAL paced mock Design build
 // (WORCA_MOCK_DESIGN_MS=400) on the Chat card: the Lead row, a row per screen and pieces assembling, captured mid-build
 // and with reduced motion (chat-prototype-building-mid-light, chat-prototype-building-reduced-motion-light). Every list (the Verifier's gap `.srows` included) is measured:
@@ -297,9 +299,11 @@ if (!wsUrl) { console.error('no devtools target after 60s'); await shutdown(1); 
 const ws = new WebSocket(wsUrl);
 await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
 let msgId = 0; const pending = new Map(); const errors = [];
+let onCdpEvent = null;   // a phase's CDP event handler (the Ship one phase's Fetch stub)
 ws.onmessage = (e) => {
   const m = JSON.parse(e.data);
   if (m.id != null) { const p = pending.get(m.id); pending.delete(m.id); if (p) (m.error ? p.rej(new Error(JSON.stringify(m.error))) : p.res(m.result)); return; }
+  if (onCdpEvent) onCdpEvent(m);
   if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
 };
 function cdp(method, params = {}, ms = 15000) {
@@ -1275,8 +1279,147 @@ async function stopFindingsPhase() {
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 }
 
+// ---- Ship the whole feature as one PR (the flag on, 1280px, the classic look, light and dark). Marked 5-run features,
+// every run finished in run order on a linear chain of branches, R-comp-4 met, a clean Verifier check for run 5's tip:
+// "Ship one" with no PR (the dialog shows One enabled; the feature page line offers ", or ship as one PR"), "Ship one
+// open" with run 2's PR #40 open (One disabled, its reason beside it, N stacked enabled), "Ship one applied" shipped as
+// One (every run holds PR #41: the Chat card reads 1 PR open with one row), a run whose stored outcome has the old
+// reason (the run page reads the new words) and the Labs entry's ship clause. app-ship-one-enabled, -disabled,
+// -group-line, -applied, -outcome and -labs, each -light.png and -dark.png, in SHOTS_DIR.
+const SO_TITLES = [...TITLES, 'Export the member list'];
+const SO_AGREED = SO_TITLES.map((t, i) => ({ id: `R-po-${i + 1}`, text: t, example: `example ${i + 1}` }));
+const soOutline = normalizeOutline({ why: 'proof', leftOut: [], slices: SO_TITLES.map((title, i) => ({ id: `s${i + 1}`, title, goal: `Goal ${i + 1}`,
+  inScope: [], outOfScope: [], acceptance: [`ok ${i + 1}`], dependsOn: [], estimate: 'small', requirements: [SO_AGREED[i].id] })) },
+{ agreed: [...SO_AGREED, { id: 'R-comp-4', text: 'The sign-up data stays in the EU', example: 'rows live in eu-west' }] }).outline;
+async function shipOnePhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const seed = (tag, title) => {
+    const x = seedFeature(tag, title, ['done', 'done', 'done', 'done', 'done'], { withOutline: soOutline, titles: SO_TITLES,
+      requirementKinds: { 'R-comp-4': { kind: 'confirmed', role: 'compliance' } } });
+    setFeatureAcceptance(x.f.id, [COMP_MET]);
+    figures(x.f.id);
+    for (let k = 1; k <= 5; k++) {
+      const br = `feat/${tag}-${k}`;
+      execFileSync('git', ['branch', '-f', br], { cwd: proj });
+      const at = new Date(Date.parse(now) + k * 60_000).toISOString();
+      getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+        .run(JSON.stringify({ source: k === 1 ? 'main' : `feat/${tag}-${k - 1}`, feature: br }), at, x.pid(k));
+    }
+    const headSha = execFileSync('git', ['rev-parse', `feat/${tag}-5`], { cwd: proj, encoding: 'utf8' }).trim();
+    const vpid = `c5${tag}v0001`;
+    pipeline(vpid, 'done', `${title} · Verifier`);
+    setVerify(x.f, vCheck(x, vpid, 'clean', { head: { index: 5, pipelineId: x.pid(5) }, headSha,
+      result: { held: [...SO_AGREED.map((a) => a.id), 'R-comp-4'], gaps: [] } }));
+    return x;
+  };
+  const prOf = (pid, n) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?")
+    .run(`https://github.com/proof/repo/pull/${n}`, n, pid);
+  const ONE = seed('so', 'Ship one');
+  const OPEN = seed('sp', 'Ship one open');
+  prOf(OPEN.pid(2), 40);
+  const DONE = seed('sa', 'Ship one applied');
+  for (let k = 1; k <= 5; k++) prOf(DONE.pid(k), 41);
+  recordShip(DONE.f.id, { mode: 'one' });
+  // A run of an older feature whose stored outcome has the old reason: the record is kept, the page reads the new words.
+  const OLD = seed('sx', 'Ship one old');
+  getDb().prepare('UPDATE pipelines SET pr_auto = ? WHERE id = ?').run(JSON.stringify({ open: 'ready', slices: 'one', scope: 'project',
+    featureId: OLD.f.id, source: { open: 'feature', slices: 'feature' },
+    outcome: { status: 'skipped', final: true, reason: 'small runs ship a PR per run', at: now } }), OLD.pid(2));
+  getDb().prepare("UPDATE shape_features SET pr_open = 'ready', pr_slices = 'one' WHERE id = ?").run(OLD.f.id);
+
+  // The sandbox repo has no remote: the dialog's base comes from a stubbed /api/pr/remotes, as the unit tests stub it.
+  await cdp('Fetch.enable', { patterns: [{ urlPattern: '*/api/pr/remotes*', requestStage: 'Request' }] });
+  onCdpEvent = (m) => {
+    if (m.method !== 'Fetch.requestPaused') return;
+    const body = Buffer.from(JSON.stringify({ ok: true, chain: ['main'], defaultBase: 'main', remotes: [], defaults: {} })).toString('base64');
+    cdp('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: 200,
+      responseHeaders: [{ name: 'content-type', value: 'application/json' }], body }).catch(() => {});
+  };
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const LINE = "(() => { const l = [...document.querySelectorAll('#group-detail .gpage-ship')].find((x) => x.offsetParent); return l ? l.textContent : null; })()";
+  const DIALOG = `(() => { const m = document.getElementById('shipit-modal'); if (!m || m.classList.contains('hidden')) return null;
+    const one = m.querySelector('.shipit-prs input[value="one"]'); const st = m.querySelector('.shipit-prs input[value="stacked"]');
+    const why = m.querySelector('.shipit-prs-one-why');
+    return { oneDisabled: one.disabled, stackedDisabled: st.disabled, why: why.hidden ? '' : why.textContent,
+      more: (m.querySelector('.shipit-prs-stacked-label') || {}).textContent || null }; })()`;
+  const closeDialog = () => ev(`(() => { const m = document.getElementById('shipit-modal'); const c = m && [...m.querySelectorAll('button')]
+    .find((b) => b.offsetParent && b.textContent.trim() === 'Cancel'); if (c) c.click(); return !!c; })()`);
+  const openDialog = async (x, name, q, theme) => {
+    await open(`${base}/?${q}-${theme}#feature/${encodeURIComponent(x.f.id)}`);
+    await skipWelcome(); await setTheme(theme);
+    if (!(await waitFor(`!!${LINE}`, `the ${name} feature page line (${theme})`))) return null;
+    await sleep(400);
+    const line = await ev(LINE);
+    // The slot's Create PR (a run with a PR of its own also shows View PR beside it).
+    await ev("(() => { const b = [...document.querySelectorAll('#group-detail .gpage-card button')].find((x) => x.offsetParent && /^Create (PR|\\d+ PRs)$/.test(x.textContent.trim())); if (b) b.click(); return !!b; })()");
+    if (!(await waitFor(`!!${DIALOG}`, `the ${name} Create PR dialog (${theme})`))) return { line, dialog: null };
+    await sleep(300);
+    return { line, dialog: await ev(DIALOG) };
+  };
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    // The group page line and the dialog, no PR: One enabled.
+    {
+      const r = await openDialog(ONE, 'Ship one', 'shiponeline', theme);
+      check(r && r.line === 'Merge in order 1 → 2 → 3 → 4 → 5, or ship as one PR',
+        `ship one, ${theme}: the feature page line offers ", or ship as one PR" (${JSON.stringify(r && r.line)})`);
+      check(r && r.dialog && r.dialog.oneDisabled === false && r.dialog.stackedDisabled === false && r.dialog.why === '',
+        `ship one, ${theme}: One is not disabled, Stacked too, no reason (${JSON.stringify(r && r.dialog)})`);
+      await capture(`app-ship-one-enabled-${theme}.png`);
+      await closeDialog(); await sleep(400);
+      await capture(`app-ship-one-group-line-${theme}.png`);
+    }
+    // Run 2's PR #40 open: One disabled with its reason in .shipit-prs-one-why, Stacked enabled.
+    {
+      const r = await openDialog(OPEN, 'Ship one open', 'shiponeopen', theme);
+      check(r && r.dialog && r.dialog.oneDisabled === true && r.dialog.stackedDisabled === false
+        && r.dialog.why === 'Run 2 already has pull request #40 open' && r.dialog.more === '4 stacked',
+      `ship one open, ${theme}: One disabled, "Run 2 already has pull request #40 open" in .shipit-prs-one-why, 4 stacked enabled (${JSON.stringify(r && r.dialog)})`);
+      await capture(`app-ship-one-disabled-${theme}.png`);
+      await closeDialog(); await sleep(300);
+    }
+    // Shipped as One: the Chat card's Ship card counts the one PR once.
+    if (await card(DONE.threadId, 'shiponeapplied', 'the Ship one applied card', theme) && await SHIP_READY('the Ship one applied card', theme)) {
+      const f = await ev(SHIP_FACTS);
+      check(f && f.stateDetail === '1 PR open' && f.prs.length === 1 && f.prs[0][0] === '#41' && f.stats === 'one PR holding every run',
+        `ship one applied, ${theme}: 1 PR open, one row #41, one PR holding every run (${JSON.stringify(f && [f.stateDetail, f.prs, f.stats])})`);
+      await reveal(SHIP);
+      await capture(`app-ship-one-applied-${theme}.png`);
+    }
+    // The stored old reason, on run 2's saved page.
+    await open(`${base}/?shiponeold-${theme}#history/${key}/${OLD.pid(2)}`);
+    await skipWelcome(); await setTheme(theme);
+    const OUT = "(() => { const o = [...document.querySelectorAll('.hd-pr-auto-outcome')].find((x) => x.offsetParent); return o ? o.textContent : null; })()";
+    if (await waitFor(`!!${OUT}`, `the old outcome line (${theme})`)) {
+      const t = await ev(OUT);
+      check(t === 'Not opened: each run of this feature ships its own pull request', `ship one outcome, ${theme}: the old reason reads in the new words (${JSON.stringify(t)})`);
+      await reveal('.hd-pr-auto-outcome');
+    }
+    await capture(`app-ship-one-outcome-${theme}.png`);
+    // The Labs entry's ship clause.
+    await open(`${base}/?shiponelabs-${theme}#settings/experimental/shaperSmallRuns`);
+    await skipWelcome(); await setTheme(theme);
+    const LABS = "(() => { const e = [...document.querySelectorAll('*')].find((x) => x.offsetParent && x.children.length === 0 && x.textContent.includes('shipped as one PR or as stacked PRs')); if (e) e.scrollIntoView({ block: 'center' }); return !!e; })()";
+    check(await waitFor(LABS, `the Labs entry (${theme})`), `ship one labs, ${theme}: the Labs entry reads "shipped as one PR or as stacked PRs"`);
+    await sleep(300);
+    await capture(`app-ship-one-labs-${theme}.png`);
+  }
+  onCdpEvent = null;
+  await cdp('Fetch.disable');
+  const stored = JSON.parse(getDb().prepare('SELECT pr_auto FROM pipelines WHERE id = ?').get(OLD.pid(2)).pr_auto);
+  check(stored.outcome.reason === 'small runs ship a PR per run', `ship one outcome: the stored reason is unchanged (${JSON.stringify(stored.outcome.reason)})`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
 // D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in, SHIP_LIST_ONLY=1
-// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
+// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
 if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }
 if (process.env.HELD_ONLY === '1') { await heldPhase(); await finish(); }
@@ -1285,6 +1428,7 @@ if (process.env.SHIP_LIST_ONLY === '1') { await shipListPhase(); await finish();
 if (process.env.HELD_RESUME_ONLY === '1') { await heldResumePhase(); await finish(); }
 if (process.env.AFTER_RUN_ONLY === '1') { await afterRunPhase(); await finish(); }
 if (process.env.STOP_FINDINGS_ONLY === '1') { await stopFindingsPhase(); await finish(); }
+if (process.env.SHIP_ONE_ONLY === '1') { await shipOnePhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {
@@ -1473,6 +1617,7 @@ await shipListPhase();
 await heldResumePhase();
 await afterRunPhase();
 await stopFindingsPhase();
+await shipOnePhase();
 await d2Phase();
 await d3Phase();
 await heldPhase();

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { bootApp } from './helpers/run-page-boot.mjs';
 import { REPLAY_FRAMES } from './helpers/run-states.mjs';
 import { SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
 
 const member = (i) => ({ position: i, title: `Slice ${i}`, pipelineId: `p${i}`, ticketId: null, status: 'done', pr: null, ticket: null, adhoc: false, after: null });
 const GROUPS = { groups: [
@@ -28,6 +29,42 @@ async function boot(fetchHandler = handler) {
 }
 // Run 3 (D1): the group page renders inside the Runs pane.
 const pageOf = (ctx) => ctx.window.document.querySelector('#runs-pane #group-detail');
+
+/** A ready small-runs feature of `slices` for the flag-on cases; `over` goes into ship.smallRuns. */
+const smallBoot = (slices, over = {}) => {
+  const acceptance = { items: [], agreed: [], entries: [], covered: [], ready: true, marked: 0, total: 0 };
+  const smallRuns = { confirmed: [], owned: [], waiting: [], blocked: false, reason: null, met: { met: 0, total: 0 }, care: null, base: 'main', order: [], ...over };
+  return boot((url) => (url.startsWith('/api/pr/remotes') ? json({ ok: true, chain: ['main'], remotes: [], defaults: {} })
+    : url.startsWith('/api/shape/features/feat_1') ? json({ ...FEATURE, total: slices.length, done: slices.length, slices,
+      ship: { ...FEATURE.ship, acceptance, smallRuns } }) : handler(url)));
+};
+const openDialog = async (ctx) => {
+  pageOf(ctx).querySelector('.gpage-card .rd-pr-slot [data-rd-cta]').click();
+  await ctx.settle(10);
+  const modal = ctx.window.document.getElementById('shipit-modal');
+  assert.equal(modal.classList.contains('hidden'), false);
+  return { one: modal.querySelector('.shipit-prs input[value="one"]'), stacked: modal.querySelector('.shipit-prs input[value="stacked"]'),
+    why: modal.querySelector('.shipit-prs-one-why'), more: modal.querySelector('.shipit-prs-stacked-label') };
+};
+
+// First in the file on purpose: onFlagChange listeners are shared by every app boot, so a live toggle is tested before any
+// other app instance exists.
+test('small runs, flag on: the line offers One, follows a live Labs toggle, and the dialog enables One', async () => {
+  const ctx = await smallBoot([1, 2].map((i) => ({ index: i, pipelineId: `p${i}`, pr: null })));
+  applyFlags({ shaperSmallRuns: true }, ctx.window.document);
+  ctx.go('feature/feat_1');
+  await ctx.settle(6);
+  const line = () => pageOf(ctx).querySelector('.gpage-ship').textContent;
+  assert.equal(line(), 'Merge in order 1 → 2, or ship as one PR');
+  applyFlags({ shaperSmallRuns: false }, ctx.window.document);
+  await ctx.settle(6);
+  assert.equal(line(), 'Merge in order 1 → 2', 'turned off on the open page');
+  applyFlags({ shaperSmallRuns: true }, ctx.window.document);
+  await ctx.settle(6);
+  assert.equal(line(), 'Merge in order 1 → 2, or ship as one PR', 'and on again');
+  const d = await openDialog(ctx);
+  assert.deepEqual([d.one.disabled, d.stacked.disabled, d.why.hidden], [false, false, true]);
+});
 
 test('#feature/:id for an existing feature renders the group page (Runs tab first)', async () => {
   const ctx = await boot();
@@ -75,7 +112,7 @@ test('Shaper requirements s3: the header Create PR follows the ledger lock; a sh
   assert.equal(cta().title, 'Mark every requirement before you create the PR · 1 left');
 });
 
-test('D1: a small-runs feature\'s header follows the small-runs ledger (run-owned ids never lock it) and offers no One', async () => {
+test('D1, flag off: a small-runs feature\'s header follows the small-runs ledger (run-owned ids never lock it) and offers no One', async () => {
   // acceptance counts every agreed id, run-owned ones included: only the confirmed ids a person marks may lock the head.
   const acceptance = { items: [], agreed: [{ id: 'R-po-1' }, { id: 'R-po-2' }, { id: 'R-comp-4' }], entries: [], covered: [], ready: false, marked: 0, total: 3 };
   const sr = (blocked) => ({ confirmed: [], owned: [], waiting: blocked ? ['R-comp-4'] : [], blocked, reason: blocked ? 'Waiting for Compliance to confirm R-comp-4' : null,
@@ -99,7 +136,22 @@ test('D1: a small-runs feature\'s header follows the small-runs ledger (run-owne
   await ctx.settle(10);
   const modal = ctx.window.document.getElementById('shipit-modal');
   assert.equal(modal.querySelector('.shipit-prs input[value="one"]').disabled, true, 'One is off');
+  assert.equal(modal.querySelector('.shipit-prs-one-why').textContent, 'small runs ship a PR per run', 'flag off: the reason as before');
   assert.doesNotMatch(modal.querySelector('.shipit-prs-hint').textContent, /one PR is easier/, 'the hint never suggests the disabled One');
+});
+
+test('small runs, flag on, along the real branches: a carried run\'s open PR turns One off and is named', async () => {
+  const slices = [1, 2, 3].map((i) => ({ index: i, pipelineId: `p${i}`,
+    pr: i === 2 ? { url: 'https://github.com/me/repo/pull/40', number: 40, state: 'OPEN' } : null }));
+  const row = (i) => ({ index: i, pipelineId: `p${i}`, title: `Slice ${i}`, pr: null, onto: null });
+  const ctx = await smallBoot(slices, { order: [row(1), row(3)], along: true });
+  const root = ctx.window.document.documentElement;
+  root.dataset.flags = `${root.dataset.flags || ''} shaperSmallRuns`;      // on from the start: no listener of an earlier boot runs
+  ctx.go('feature/feat_1');
+  await ctx.settle(6);
+  const d = await openDialog(ctx);
+  assert.deepEqual([d.one.disabled, d.why.textContent], [true, 'Run 2 already has pull request #40 open']);
+  assert.deepEqual([d.stacked.disabled, d.more.textContent], [false, '2 stacked'], 'the count stays the listed runs\'');
 });
 
 test('slice 4: along the real branches, the feature dialog counts the listed runs: 4 runs, run 2 carried, Create 3 PRs', async () => {

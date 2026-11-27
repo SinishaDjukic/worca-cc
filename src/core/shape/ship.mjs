@@ -30,7 +30,8 @@ export function shipChangelogSlices(feature) {
 }
 
 /**
- * @param {{feature:{id,title,slices:Array<{index,title,pipelineId,pr:{url}|null, summary?:string, checklistMd?:string}>, carried?:Array},
+ * @param {{feature:{id,title,slices:Array<{index,title,pipelineId,pr:{url}|null, summary?:string, checklistMd?:string}>, carried?:Array,
+ *   preamble?:string},
  *   mode:'stacked'|'one', maxBody?:number, headPipelineId?:string|null}} input
  * @param {{commitChangelog(pipelineId, update):Promise<{ok,error?,kind?}>, push(pipelineId):Promise<{ok,error?}>,
  *   openOnePr({pipelineId, title, body}):Promise<{ok,url?,existed?,error?}>, adoptOnePr({url, pipelineId, body}):Promise<{ok,error?}>,
@@ -64,18 +65,24 @@ export async function shipFeature({ feature, mode, maxBody = Infinity, headPipel
     for (const s of slices) await Promise.resolve(deps.refreshBody(s.pr.url, s.pipelineId)).catch(() => warnings.push(`slice ${s.index}: links not refreshed`));
     return { ok: true, mode, prUrl: null, warnings };
   }
-  const one = await deps.openOnePr({ pipelineId: last.pipelineId, title: feature.title, body: onePrBody(slices, null, { maxChars: maxBody }) });
+  // One: a carried run's work ships in this PR too, so it keeps its section and Satisfies line, and its draft is closed.
+  const carried = (feature.carried || []).map((s) => (s.pr && s.pr.state === 'CLOSED' ? { ...s, pr: null } : s));
+  const all = shipChangelogSlices({ ...feature, slices, carried });
+  const preamble = typeof feature.preamble === 'string' && feature.preamble ? feature.preamble : '';
+  const bodyOf = (keptUrl) => (preamble ? `${preamble}\n\n${onePrBody(all, keptUrl, { maxChars: Math.max(0, maxBody - preamble.length - 2) })}`
+    : onePrBody(all, keptUrl, { maxChars: maxBody }));
+  const one = await deps.openOnePr({ pipelineId: last.pipelineId, title: feature.title, body: bodyOf(null) });
   if (!one.ok) return { ok: false, status: 500, error: `could not create the PR: ${one.error}` };
   // P16: the forge answered with an open PR from the same head into the same base (the last slice's draft already
   // targets the root): that PR is the one PR. Make it ready and give it the combined body; never close it.
   let kept = null;
   if (one.existed) {
     kept = one.url;
-    const a = await deps.adoptOnePr({ url: one.url, pipelineId: last.pipelineId, body: onePrBody(slices, kept, { maxChars: maxBody }) });
+    const a = await deps.adoptOnePr({ url: one.url, pipelineId: last.pipelineId, body: bodyOf(kept) });
     if (!a.ok) return { ok: false, status: 500, error: `could not mark the pull request ready: ${a.error}` };
   }
   let closed = 0;
-  for (const s of slices) {
+  for (const s of all) {
     if (!s.pr || !s.pr.url || s.pr.url === kept) continue;   // a slice without a PR has nothing to close
     const c = await deps.close(s.pr.url, `Shipped as one pull request: ${one.url}`, s.pipelineId);
     if (c.ok) closed++;

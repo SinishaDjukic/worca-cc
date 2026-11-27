@@ -6,11 +6,11 @@
 // Nothing here changes a run's status or throws into the caller: every problem becomes a recorded, logged outcome.
 
 import { PR_OPEN_LABELS, prExemptText } from '../shared/pr-auto.mjs';
+import { LEGACY_PER_RUN_REASON } from '../shared/shape/ship-ledger.mjs';
 import { readRunPrAuto, setRunPrOutcome, featurePrSetting, setFeaturePrOutcome, logToRun } from './pr-auto.mjs';
 import { featureOfPipeline, featureView, featureThread, featureRootSource, featureBase, acceptanceRefusal } from './shape/features.mjs';
 import { roundOrigin } from './shape/rounds.mjs';
-import { smallRunsOfFeature } from './shape/small-runs.mjs';
-import { SMALL_RUNS_SHIP } from '../shared/shape/ship-ledger.mjs';
+import { smallRunsOfFeature, shaperSmallRunsOn } from './shape/small-runs.mjs';
 import { verifyCheckOfPipeline } from './shape/verifier.mjs';
 import { readPrState, readMemberPrStates, readPipelineStateById } from './artifacts.mjs';
 import { branchExists, commitsAhead } from './git-info.mjs';
@@ -50,6 +50,7 @@ export function prAutoFinisher() { return current; }
 const DEFAULTS = {
   readRunPrAuto, setRunPrOutcome, featurePrSetting, setFeaturePrOutcome, logToRun,
   featureOfPipeline, featureView, featureThread, featureRootSource, featureBase, acceptanceRefusal, roundOrigin, verifyCheckOfPipeline, smallRunsOfFeature,
+  smallRunsOn: () => shaperSmallRunsOn(),
   readPrState, readMemberPrStates, readState: readPipelineStateById, branchExists, commitsAhead, addNotification, withBillTo, accountCheck,
   now: () => new Date().toISOString(),
   pushRemoteUrls: async () => [], live: () => null, changed: () => {}, postNotice: () => {},
@@ -164,8 +165,9 @@ export function createPrAutoFinisher(deps = {}) {
       d.changed('pipelines-changed');
       return record(st.id, outcome('opened', final, { urls: [r.pr.url], draft, fellBack: !!r.fellBack }));
     }
-    // Feature D1 (D6): a marked feature ships a PR per run from its Ship card, never as one PR: skip quietly.
-    if (d.smallRunsOfFeature(featureId)) return record(st.id, outcome('skipped', final, { reason: SMALL_RUNS_SHIP }), { quiet: true });
+    // Feature D1 (D6): with the Shaper small runs flag off, a marked feature ships a PR per run from its Ship card, never
+    // as one PR: skip quietly. With it on, a marked feature ships as one PR like any other.
+    if (d.smallRunsOfFeature(featureId) && !d.smallRunsOn()) return record(st.id, outcome('skipped', final, { reason: LEGACY_PER_RUN_REASON }), { quiet: true });
     const view = d.featureView(featureId, { live: d.live });
     if (view?.ship?.mode) {
       const text = `the feature already shipped as ${view.ship.mode === 'one' ? 'one PR' : 'stacked PRs'}; this run's work is not in it. Create its PR from the run.`;
@@ -232,7 +234,7 @@ export function createPrAutoFinisher(deps = {}) {
     const f = d.featurePrSetting(featureId);
     if (!f || f.slices !== 'one' || f.open === 'none') return null;
     if (f.outcome && f.outcome.status !== 'held') return null;
-    if (d.smallRunsOfFeature(featureId)) { d.setFeaturePrOutcome(featureId, outcome('skipped', true, { reason: SMALL_RUNS_SHIP })); return null; }
+    if (d.smallRunsOfFeature(featureId) && !d.smallRunsOn()) { d.setFeaturePrOutcome(featureId, outcome('skipped', true, { reason: LEGACY_PER_RUN_REASON })); return null; }
     const wasHeld = f.outcome?.status === 'held';
     const view = d.featureView(featureId, { live: d.live });
     if (!view || !view.ship.ready) return null;
@@ -289,7 +291,7 @@ export function createPrAutoFinisher(deps = {}) {
       return finish(outcome('opened', true, { urls: [url], draft, fellBack }), openedLine(draft, url));
     }
     const code = r.status === 409 ? r.body?.code : null;
-    if (code === 'SHIPPING' || code === 'ROUND_LIVE' || code === 'NOT_READY') return null;   // the next settled run retries
+    if (code === 'SHIPPING' || code === 'ROUND_LIVE' || code === 'NOT_READY' || code === 'STACKED_ONLY') return null;   // the next settled run retries (STACKED_ONLY: the flag turned off mid-flight)
     if (code === 'ALREADY_SHIPPED') return quietSkip(r.body.error);
     if (code === 'ACCEPTANCE_INCOMPLETE') return held(r.body.missing?.length ?? 0);
     const reason = r.body?.error || `the pull request could not be opened (HTTP ${r.status})`;

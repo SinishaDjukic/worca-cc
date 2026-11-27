@@ -1077,7 +1077,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (!phase) { if (shipEl.parentNode) { shipEl.remove(); delete shipEl.dataset.sig; delete shipEl.dataset.phase; } return; }
     shipEl.dataset.phase = phase;
     if (!shipEl.parentNode) logEl.after(shipEl);   // parentNode: a card being built is not in the document yet
-    const sig = JSON.stringify([phase, feature.title, ship.smallRuns]);
+    const sig = JSON.stringify([phase, feature.title, ship.smallRuns, ship.mode || null]);
     if (shipEl.dataset.sig === sig) return;
     shipEl.dataset.sig = sig;
     // The focused control, else the one a mark in flight noted (Chromium blurs its disabled button to <body>).
@@ -1088,7 +1088,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // R-ux-2: the card's state line already says "N PRs open" (countShown), and the foot draws no View PR (paintFoot).
     // The one card's head already shows the feature title (titleShown): the Ship card names only its step.
     const card = renderShipCard(doc, { phase, featureId: feature.id, title: feature.title, runs: feature.total, result: ship.result || null,
-      smallRuns: ship.smallRuns }, { countShown: true, titleShown: true, onConfirm: (id, mark, reason) => confirmRequirement(feature.id, id, mark, reason) });
+      smallRuns: ship.smallRuns, shipMode: ship.mode || null }, { countShown: true, titleShown: true, onConfirm: (id, mark, reason) => confirmRequirement(feature.id, id, mark, reason) });
     card.dataset.needsGit = '';   // shipping opens pull requests: hidden while git is missing (git-gate.mjs)
     shipEl.replaceChildren(card);
     const back = had ? shipEl.querySelector(had) : null;

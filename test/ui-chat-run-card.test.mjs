@@ -2862,6 +2862,23 @@ test('chat run card: a feature run links its feature title to the feature page; 
   ]);
 });
 
+test('a marked feature shipped as one PR: the chat card\'s Ship card shows one PR row and repaints when the ship mode changes', () => {
+  const order = [1, 2, 3].map((i) => ({ index: i, pipelineId: i === 1 ? 'abcd1234' : `beef000${i}`, title: `Part ${i}`,
+    pr: { number: 40, url: 'https://x/pull/40' }, onto: null }));
+  const smallRuns = { confirmed: [], owned: [], waiting: [], blocked: false, reason: null, met: { met: 0, total: 0 }, unmet: [],
+    care: { choice: "Balanced · Worca's pick", outcome: null, line: '' }, base: 'main', order };
+  const view = (mode) => oneView(['done', 'done', 'done'], { status: 'done', ship: { ready: false, mode, smallRuns }, log: [ONE_CL, ONE_L('Runs approved')] });
+  const row = featureRow([DONE_RUN, DONE_RUN, DONE_RUN]);
+  const f = mk({ controls: { paintQuestion: () => null, releaseQuestion() {}, memoFor: () => ({}), groupOf: () => row } });
+  const rows = () => f.$$('.chat-rc-ship .ask-shipcard-prs .plan-check-row');
+  f.card.update(shaped(oneCard(view('stacked')), {}, ...DONE_OWN));
+  assert.equal(rows().length, 3, 'stacked counts as today');
+  f.card.update(shaped(oneCard(view('one')), {}, ...DONE_OWN));
+  assert.equal(rows().length, 1, 'the same ledger shipped as One repaints');
+  assert.equal(f.$('.chat-rc-ship .ask-shipcard-stats').textContent, 'one PR holding every run');
+  assert.equal(f.$('.chat-rc-status .run-status-detail').textContent, '1 PR open');
+});
+
 // Shaper small runs slice 7 (R-arch-6, D7): the state line and the need count are worded in one place only.
 test('s7 T15: the run card and the group page word no state line or need count of their own; the card\'s chip is made by paintNeed', () => {
   const read = (rel) => readFileSync(new URL(`../ui/public/${rel}`, import.meta.url), 'utf8');

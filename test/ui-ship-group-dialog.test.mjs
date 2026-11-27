@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { paintGroupShip, groupShipChoice, resetGroupShip, PER_RUN_NOTE, CHECKING_COMBINE, ONE_GROUP_NOTE, ONE_RUN_GROUP, ONE_LOOSE_REASON } from '../ui/public/ship-group-dialog.mjs';
+import * as DIALOG from '../ui/public/ship-group-dialog.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
@@ -174,9 +175,82 @@ test('a check that lands after the dialog was reset for another open is ignored'
   assert.equal(modal.querySelector('.shipit-prs input[value="one"]').disabled, true);
 });
 
-test('D1: a small-runs feature disables One with its reason and picks stacked, whatever the suggestion', () => {
-  const members = [{ position: 1, pr: null }, { position: 2, pr: null }, { position: 3, pr: { url: 'u', state: 'OPEN' } }];
-  assert.deepEqual(groupShipChoice({ kind: 'feature', members, suggested: 'one', smallRuns: true }),
-    { n: 2, oneOff: 'small runs ship a PR per run', mode: 'stacked' });
-  assert.equal(groupShipChoice({ kind: 'feature', members: members.slice(0, 2), suggested: 'one' }).mode, 'one', 'unmarked unchanged');
+// ---- A feature planned in small runs (R-po-1): One is on until a run has its own PR. `oneOk` = the flag. ----------------
+const PER_RUN_REASON = 'small runs ship a PR per run';   // with the flag off, word for word as before
+const url = (n) => `https://github.com/me/repo/pull/${n}`;
+const runs = (n, prs = {}) => Array.from({ length: n }, (_, i) => ({ position: i + 1, pr: prs[i + 1] || null }));
+const marked = (prs = {}, over = {}) => ({ kind: 'feature', suggested: 'one', hint: '', members: runs(5, prs), all: runs(5, prs), smallRuns: true, oneOk: true, ...over });
+const parts = (modal) => ({ one: modal.querySelector('.shipit-prs input[value="one"]'), stacked: modal.querySelector('.shipit-prs input[value="stacked"]'),
+  why: modal.querySelector('.shipit-prs-one-why'), ok: modal.querySelector('.shipit-ok') });
+
+test('small runs, 5 finished runs and no PR: the dialog shows One enabled and Stacked; picking One reads Create PR', () => {
+  assert.deepEqual(groupShipChoice(marked()), { n: 5, oneOff: '', mode: 'stacked' }, 'stacked stays the pick, whatever the suggestion');
+  const modal = modalOf();
+  const ctl = paintGroupShip(modal, marked(), { setLabel: setLabel(modal) });
+  const { one, stacked, why, ok } = parts(modal);
+  assert.deepEqual([one.disabled, stacked.disabled, stacked.checked], [false, false, true]);
+  assert.equal(why.hidden, true);
+  assert.equal(modal.querySelector('.shipit-prs-stacked-label').textContent, '5 stacked');
+  assert.equal(ok.textContent, 'Create 5 PRs');
+  assert.equal(modal.querySelector('.shipit-prs-hint').hidden, true, 'no size hint');
+  pick(modal, 'one');
+  assert.deepEqual([ctl.mode(), ctl.count(), ok.textContent], ['one', 1, 'Create PR']);
+});
+
+test('small runs, run 2\'s PR #40 open: One is disabled with its reason, and Stacked can still be picked', () => {
+  const view = marked({ 2: { url: url(40), number: 40, state: 'OPEN' } });
+  const reason = 'Run 2 already has pull request #40 open';
+  assert.deepEqual(groupShipChoice(view), { n: 4, oneOff: reason, mode: 'stacked' });
+  const modal = modalOf();
+  const ctl = paintGroupShip(modal, view, { setLabel: setLabel(modal) });
+  const { one, stacked, why, ok } = parts(modal);
+  assert.deepEqual([one.disabled, stacked.disabled, stacked.checked], [true, false, true]);
+  assert.deepEqual([why.hidden, why.textContent], [false, reason]);
+  assert.equal(one.getAttribute('aria-describedby'), why.id);
+  pick(modal, 'stacked');
+  assert.deepEqual([ctl.mode(), ctl.count(), ok.textContent], ['stacked', 4, 'Create 4 PRs']);
+});
+
+test('small runs: the reason reads the number from the url, names a merged PR as merged, and a closed PR or a slice draft leaves One on', () => {
+  const why = (pr) => groupShipChoice(marked({ 2: pr })).oneOff;
+  assert.equal(why({ url: url(40), state: 'OPEN' }), 'Run 2 already has pull request #40 open');
+  assert.equal(why({ url: url(40), number: 40, state: 'MERGED' }), "Run 2's pull request #40 is already merged");
+  assert.equal(why({ url: url(40), number: 40, state: 'CLOSED' }), '');
+  assert.equal(why({ url: url(40), number: 40, state: 'OPEN', draft: true }), '');
+  // The first run that owns one is named.
+  assert.equal(groupShipChoice(marked({ 4: { url: url(44), number: 44, state: 'OPEN' }, 3: { url: url(43), number: 43, state: 'OPEN' } })).oneOff,
+    'Run 3 already has pull request #43 open');
+});
+
+test('small runs: `all` wins over `members`, so a carried run\'s PR still turns One off; without `all` the members are read', () => {
+  const owned = { url: url(40), number: 40, state: 'OPEN' };
+  const listed = runs(5).filter((m) => m.position !== 2);              // run 2 is carried: it is not a listed member
+  assert.deepEqual(groupShipChoice(marked({}, { members: listed, all: runs(5, { 2: owned }) })),
+    { n: 4, oneOff: 'Run 2 already has pull request #40 open', mode: 'stacked' });
+  const noAll = marked({ 2: owned });
+  delete noAll.all;
+  assert.equal(groupShipChoice(noAll).oneOff, 'Run 2 already has pull request #40 open');
+});
+
+test('small runs with the flag off (no oneOk): One is off with the reason as before, PR or not; unmarked unchanged', () => {
+  for (const prs of [{}, { 2: { url: url(40), number: 40, state: 'OPEN' } }]) {
+    const view = marked(prs);
+    delete view.oneOk;
+    assert.deepEqual(groupShipChoice(view), { n: prs[2] ? 4 : 5, oneOff: PER_RUN_REASON, mode: 'stacked' });
+  }
+  const modal = modalOf();
+  paintGroupShip(modal, { kind: 'feature', suggested: 'one', members: runs(3), smallRuns: true }, { setLabel: setLabel(modal) });
+  assert.deepEqual([parts(modal).one.disabled, parts(modal).why.textContent], [true, PER_RUN_REASON]);
+  assert.equal(groupShipChoice({ kind: 'feature', members: runs(2), suggested: 'one' }).mode, 'one', 'unmarked unchanged');
+  assert.equal('SMALL_RUNS_REASON' in DIALOG, false, 'the old reason export is gone');
+});
+
+test('small runs, a part-way stacked ship: once run 1\'s PR is made, One turns off and names run 1', () => {
+  const modal = modalOf();
+  const ctl = paintGroupShip(modal, marked(), { setLabel: setLabel(modal) });
+  assert.equal(parts(modal).one.disabled, false);
+  ctl.markCreated(1);                                      // the server created run 1's PR, then run 2 failed
+  const { one, why, ok } = parts(modal);
+  assert.deepEqual([one.disabled, why.hidden, why.textContent], [true, false, 'Run 1 already has a pull request open']);
+  assert.deepEqual([ctl.mode(), ctl.count(), ok.textContent], ['stacked', 4, 'Create 4 PRs']);
 });

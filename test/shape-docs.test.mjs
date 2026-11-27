@@ -46,8 +46,8 @@ test('shape-it-first\'s new section states Care is fixed after Start, the three 
   const gone = missing(slices['shape-it-first.md'], [
     'Care is fixed after Start', 'pausing and resuming keep it',
     'Met, Not met or Dropped', 'Not met and Dropped need a one-line reason of at most 300 characters', 'Only Met counts as met',
-    'Ship is stacked only', 'STACKED_ONLY', 'run 1 (the planning run) included', 'in the order the runs finished',
-    'ACCEPTANCE_INCOMPLETE', 'NOT_READY', 'on record for the exact head it would ship', 'nothing of the feature is live, finishing, interrupted or pending', 'It is checked again when you press Ship', 'before each pull request Ship opens and after the changelog commit', 'a re-plan and **Resume** are refused with `SHIPPING`', 'once more when the feature would be recorded as shipped', 'With no check on record, Ship is not ready', 'a new series, round 1', 'its chip reads "Runs"', 'The Requirements page is not changed',
+    'ships the whole feature as one PR', 'already has pull request', 'STACKED_ONLY', 'run 1 (the planning run) included', 'in the order the runs finished',
+    'ACCEPTANCE_INCOMPLETE', 'NOT_READY', 'on record for the exact head it would ship', 'nothing of the feature is live, finishing, interrupted or pending', 'It is checked again when you press Ship', 'before each pull request Ship opens and after the changelog commit', 'a re-plan, **Resume** and a run\'s own **Create PR** are refused with `SHIPPING`', 'still opening when **One** ships refuses that ship with `HAS_SLICE_PR`', 'once more when the feature would be recorded as shipped', 'With no check on record, Ship is not ready', 'a new series, round 1', 'its chip reads "Runs"', 'The Requirements page is not changed',
     'Start', 'Requirements', 'Prototype', 'Ship', '**Build**', '**Verifier**',
     'Worca does not check that the person marking holds it', 'ship with the gap']);
   assert.deepEqual(gone.map((t) => `shape-it-first.md: ${t}`), []);
@@ -252,6 +252,26 @@ test('slice 4: the Ship part says the PRs follow the real branches, which run ge
   const part = smallPart('Ship');
   assert.ok(part, 'the "### Ship" part');
   assert.deepEqual(missing(part, ['along the real branches', 'gets no pull request of its own', 'in the order the runs finished']), []);
+});
+
+// One PR for a feature planned in small runs: when One is on, why it is off, what it answers and what the one PR carries.
+test('the Ship part says One ships the whole feature as one PR, when it is off and refused, and what the one PR carries', () => {
+  const part = smallPart('Ship');
+  assert.deepEqual(missing(part, ['ships the whole feature as one PR', 'already has pull request #', 'HEAD_MISSING_WORK', 'STACKED_ONLY',
+    'small runs ship a PR per run', 'Satisfies', /\bCare\b/, /carried/i]), []);
+  assert.doesNotMatch(flat(read('shape-it-first.md')), /Ship is stacked only|ships stacked only/);
+  // The older lines that said a small-runs feature never ships as one PR are gone.
+  assert.doesNotMatch(flat(read('shape-it-first.md')), /A small-runs feature opens nothing this way|the feature ships as one PR per run\./);
+  assert.doesNotMatch(flat(read('requirements.md')), /Ship is stacked, one PR per run, and/);
+});
+
+test('the flag table says Ship offers one PR or stacked PRs, stacked only with the flag off', () => {
+  assert.deepEqual(missing(slices['feature-flags.md'], ['Ship offers one PR or stacked PRs; with the flag off it is stacked only']), []);
+  assert.doesNotMatch(slices['feature-flags.md'], /Ship is stacked only/);
+});
+
+test('design-system.md says where One\'s reason sits, what it names, and that the applied card counts one PR once', () => {
+  assert.deepEqual(missing(flat(read('design-system.md')), ['.shipit-prs-one-why', 'Run 2 already has pull request #40 open', '1 PR open']), []);
 });
 
 // Shaper small runs slice 6 (R-po-6, R-arch-2): `next` and the delivery of held answers follow one order.

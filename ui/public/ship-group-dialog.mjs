@@ -2,7 +2,7 @@
 // feature or a Run-after chain, or a user group (slice 3). One or N stacked, the suggestion under it; the title and the
 // confirm follow the pick (createPrLabel). Pure DOM over the shared #shipit-modal; app.js opens, posts and closes it.
 import { createPrLabel } from './ship-words.mjs';
-import { SMALL_RUNS_SHIP } from '../../src/shared/shape/ship-ledger.mjs';
+import { LEGACY_PER_RUN_REASON, openPrReason } from '../../src/shared/shape/ship-ledger.mjs';
 
 export const PER_RUN_NOTE = 'Each PR takes its own run summary';
 export const ONE_FEATURE_NOTE = 'The PR takes every run\'s summary';
@@ -12,8 +12,6 @@ export const CHECKING_COMBINE = 'Checking whether the runs combine…';
 export const ONE_RUN_GROUP = 'A group of one run ships as its own PR';
 export const ONE_GROUP_NOTE = 'A new branch combines the runs\' branches';
 export const ONE_LOOSE_REASON = 'A run does not start from the previous run\'s branch';
-// Feature D1: a small-runs feature ships a PR per run (the server refuses One with STACKED_ONLY): the one shared string.
-export const SMALL_RUNS_REASON = SMALL_RUNS_SHIP;
 
 /** A member's own PR: open, and not an in-flight feature's slice draft (stacked marks those ready, One closes them). */
 const ownsPr = (kind, pr) => !!(pr && pr.url && pr.state !== 'CLOSED' && !(kind === 'feature' && pr.draft));
@@ -23,12 +21,19 @@ const ownsPr = (kind, pr) => !!(pr && pr.url && pr.state !== 'CLOSED' && !(kind 
  *   stacks? }] }: a chain member with `stacks: false` did not start from the previous run's branch, so One would ship
  *   only the last run's work.
  * check: a user group's combine check ({ oneOff, line }) or null while it has not answered (slice 3).
- * smallRuns: a marked feature (Feature D1): One is off with SMALL_RUNS_REASON, stacked is the pick.
+ * smallRuns: a marked feature (Feature D1): stacked is the pick. With `oneOk` (the Shaper small runs flag) One is on until
+ *   a run owns a PR, then off naming the first one (openPrReason, the server's HAS_SLICE_PR words); without it One is off
+ *   with the server's STACKED_ONLY reason. all: every run of the feature ([{ position, pr }]), carried ones included,
+ *   since `members` along the real branches leaves those out; without it, `members` are read.
  * → { n: members that still need a PR, oneOff: '' or why One is disabled, mode: the default pick }
  */
-export function groupShipChoice({ kind, members, suggested = null, check = null, smallRuns = false }) {
+export function groupShipChoice({ kind, members, all = null, suggested = null, check = null, smallRuns = false, oneOk = false }) {
   const owned = members.filter((m) => ownsPr(kind, m.pr));
-  if (smallRuns === true) return { n: members.length - owned.length, oneOff: SMALL_RUNS_REASON, mode: 'stacked' };
+  if (smallRuns === true) {
+    const first = oneOk === true ? (all || members).find((m) => ownsPr(kind, m.pr)) : null;
+    const oneOff = oneOk !== true ? LEGACY_PER_RUN_REASON : first ? openPrReason({ index: first.position, pr: first.pr }) : '';
+    return { n: members.length - owned.length, oneOff, mode: 'stacked' };
+  }
   const loose = kind === 'chain' && members.some((m, i) => i > 0 && m.stacks === false);
   const oneOff = owned.length ? ONE_OFF_REASON
     : loose ? ONE_LOOSE_REASON
@@ -63,7 +68,8 @@ export function paintGroupShip(modal, view, { setLabel }) {
   const user = view.kind === 'user';
   let check = null;
   let members = view.members.map((m) => ({ ...m }));
-  let choice = groupShipChoice({ ...view, members, check });
+  let all = view.all ? view.all.map((m) => ({ ...m })) : null;
+  let choice = groupShipChoice({ ...view, members, all, check });
   const one = q('.shipit-prs input[value="one"]');
   const stacked = q('.shipit-prs input[value="stacked"]');
   const why = q('.shipit-prs-one-why');
@@ -101,7 +107,7 @@ export function paintGroupShip(modal, view, { setLabel }) {
   stacked.onchange = paint;
   paint();
   const recompute = () => {
-    choice = groupShipChoice({ ...view, members, check });
+    choice = groupShipChoice({ ...view, members, all, check });
     paintChoice();
     if (choice.oneOff) stacked.checked = true;
     paint();
@@ -110,6 +116,13 @@ export function paintGroupShip(modal, view, { setLabel }) {
     let left = k;
     members = members.map((m) => (left > 0 && !ownsPr(view.kind, m.pr)
       ? (left--, { ...m, pr: { url: `created:${m.position}`, state: 'OPEN' } }) : m));
+    // A feature's every-run list follows: a run whose PR was just made now owns one there too.
+    if (all) {
+      all = all.map((a) => {
+        const m = members.find((x) => x.position === a.position);
+        return m && ownsPr(view.kind, m.pr) && !ownsPr(view.kind, a.pr) ? { ...a, pr: m.pr } : a;
+      });
+    }
     recompute();
   };
   const ctl = { mode, count: () => (mode() === 'one' ? 1 : choice.n), first: () => (one.checked ? one : stacked), markCreated,

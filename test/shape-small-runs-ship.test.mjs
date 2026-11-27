@@ -1,14 +1,20 @@
-// test/shape-small-runs-ship.test.mjs — Shaper small runs, Feature D1 (Ship) on the server: a marked feature ships a PR
-// per run in finish order, each stacked on the run that finished before it, gated only by the requirements a person
-// confirms, with one Care line per PR body. The confirm verb, the PUT checks, the PR dialog's base and the stubbed forge
-// (no real push: every git push and gh call goes through the recorded runner). Boot = test/shape-server-slices.test.mjs.
+// test/shape-small-runs-ship.test.mjs — Shaper small runs, Feature D1 (Ship) on the server: a marked feature ships as one
+// pull request (flag on, no run with a PR of its own) or as a PR per run in finish order, each stacked on the run that
+// finished before it; both are gated only by the requirements a person confirms, with one Care line per PR body. The
+// confirm verb, the PUT checks, the PR dialog's base and the stubbed forge (no real push: every git push and gh call goes
+// through the recorded runner). Boot = test/shape-server-slices.test.mjs.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { JSDOM } from 'jsdom';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { featureView, recordShip } from '../src/core/shape/features.mjs';
+import { featureView, featureShipInput, recordShip } from '../src/core/shape/features.mjs';
+import { prAutoView, readRunPrAuto, featurePrSetting } from '../src/core/pr-auto.mjs';
+import { prAutoFinisher } from '../src/core/pr-auto-finish.mjs';
+import { groupShipChoice } from '../ui/public/ship-group-dialog.mjs';
+import { renderRunPrFact } from '../ui/public/pr-auto-view.mjs';
 import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { NO_ADO, REMOTES_V, okRun, failRun, argOf, ghCalls, git, shipKit } from './helpers/ship-world.mjs';
 
@@ -53,16 +59,16 @@ const { shipWorld: plainWorld, cleanup } = shipKit({ nextId, outlineOf: plainOut
 after(cleanup);
 
 const FIGURES = { care: 'balanced', runs: 4, requirementsMet: { met: 0, total: 0 }, gapsAtEnd: 1, changesAfterShip: 0 };
-/** A marked 4-run feature whose runs finished in `order` (1-based run numbers), with R-comp-4 for Compliance to confirm,
- *  the Care record and recorded figures. `prs: false` (Ship opens every PR). */
-function smallWorld({ order = [1, 3, 4, 2], root = null } = {}) {
-  const w = shipWorld({ slices: 4, prs: false });
+/** A marked feature of `slices` runs (default 4) whose runs finished in `order` (1-based run numbers), with R-comp-4 for
+ *  Compliance to confirm, the Care record and recorded figures. `prs: false` (Ship opens every PR). */
+function smallWorld({ order = [1, 3, 4, 2], root = null, slices = 4 } = {}) {
+  const w = shipWorld({ slices, prs: false });
   const db = getDb();
   db.prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), w.pids[0]);
   db.prepare("UPDATE shape_features SET requirement_kinds = ?, care = 'balanced', care_chosen_by = 'default' WHERE id = ?")
     .run(JSON.stringify({ 'R-comp-4': { kind: 'confirmed', role: 'compliance' } }), w.f.id);
   db.prepare('INSERT INTO shape_feature_figures (feature_id, care, figures, recorded_at, updated_at) VALUES (?, ?, ?, ?, ?)')
-    .run(w.f.id, 'balanced', JSON.stringify(FIGURES), '2026-03-09T00:00:00Z', '2026-03-09T00:00:00Z');
+    .run(w.f.id, 'balanced', JSON.stringify({ ...FIGURES, runs: slices }), '2026-03-09T00:00:00Z', '2026-03-09T00:00:00Z');
   order.forEach((k, i) => finish(w.pids[k - 1], i));
   if (root) db.prepare('UPDATE shape_features SET source_branch = ? WHERE id = ?').run(root, w.f.id);
   return { ...w, br: (k) => `feat/${w.pids[k - 1]}` };
@@ -70,12 +76,14 @@ function smallWorld({ order = [1, 3, 4, 2], root = null } = {}) {
 const finish = (pid, i) => getDb().prepare(`INSERT INTO pipeline_steps (pipeline_id, key, status, updated_at) VALUES (?, ?, 'done', ?)`)
   .run(pid, `${i}:n_impl`, `2026-03-0${i + 1}T00:00:00Z`);
 
-/** The forge stub: every argv recorded; `gh pr create` mints PR N and keeps the body it was sent, `gh pr view … body`
+/** The forge stub (`hold(cmd, args)` → a promise holds that command, then it succeeds): every argv recorded; `gh pr create` mints PR N and keeps the body it was sent, `gh pr view … body`
  *  answers that body plus a tail; a remote-tracking `refs/remotes/origin/dev` exists. */
-function forge(seen) {
+function forge(seen, { hold = () => null } = {}) {
   let n = 0;
   const bodies = new Map();
   gitInfo.setRunner((cmd, args) => {
+    const wait = hold(cmd, args);   // a promise holds that command until it settles
+    if (wait) return wait.then(() => okRun(''));
     seen.push([cmd, ...args]);
     if (cmd === 'gh' && args[0] === '--version') return okRun('gh 2.x');
     if (cmd === 'git' && args[0] === 'remote') return okRun(REMOTES_V);
@@ -106,9 +114,199 @@ const noChangelog = (w) => {
   }
 };
 const careLines = (body) => (String(body).match(/^Care: /gm) || []).length;
+const SMALL_ON = { WORCA_FLAGS: 'shaperSmallRuns' };
+const PER_RUN_REASON = 'small runs ship a PR per run';   // the flag-off reason, word for word as before
+/** A clean Verifier check on record for the head (run `head`, the latest finished): with the flag on, Ship is ready only then. */
+function cleanCheck(w, head) {
+  const db = getDb();
+  const tip = (pid) => git(w.dir, 'rev-parse', `feat/${pid}`);
+  const pid = w.pids[head - 1];
+  const check = { round: 1, ticketId: null, pipelineId: null, head: { index: head, pipelineId: pid }, headSha: tip(pid),
+    tips: Object.fromEntries(w.pids.map((p) => [p, tip(p)])), state: 'clean', result: { held: [], gaps: [] }, gapRuns: [], extra: 0, fixCycles: 1,
+    at: '2026-01-01T00:00:00.000Z' };
+  const outline = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(w.f.id).outline);
+  db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify({ ...outline, verify: { checks: [check] } }), w.f.id);
+}
+/** A marked 5-run feature, every run finished in run order, no run with a PR, checked clean by the Verifier. */
+function fiveRuns() {
+  const w = smallWorld({ slices: 5, order: [1, 2, 3, 4, 5] });
+  cleanCheck(w, 5);
+  return w;
+}
+const seedPr = (pid, n, state = 'OPEN') => getDb().prepare('UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ? WHERE id = ?')
+  .run(`https://github.com/me/repo/pull/${n}`, n, state, pid);
+const prUrls = (w) => w.pids.map((p) => getDb().prepare('SELECT pr_url FROM pipelines WHERE id = ?').get(p).pr_url);
+const shipModeOf = (fid) => getDb().prepare('SELECT ship_mode FROM shape_features WHERE id = ?').get(fid).ship_mode;
+/** The Create PR dialog's view of the feature, from GET /api/shape/features/:id, as app.js openFeatureShip builds it. */
+async function dialogView(fid, oneOk) {
+  const f = await (await fetch(`${base}/api/shape/features/${fid}`)).json();
+  const sr = f.ship.smallRuns;
+  const listed = sr && sr.along ? sr.order.map((o) => f.slices.find((x) => x.index === o.index)) : f.slices;
+  const member = (x) => ({ position: x.index, pr: x.pr || null });
+  return { kind: 'feature', members: listed.map(member), all: f.slices.map(member), suggested: f.ship.suggested, smallRuns: !!sr, ...(oneOk ? { oneOk: true } : {}) };
+}
+
+// ── Slice 4: the whole feature as one pull request (R-po-1, R-arch-1, R-arch-6) ─────────────────────────────────────
+shipT('One: 5 finished runs and no PR, so One is enabled, and a One ship opens one PR holding all 5 runs', async () => {
+  const seen = []; forge(seen);
+  const w = fiveRuns();
+  assert.equal((await confirm(w.f.id, { id: 'R-comp-4' })).status, 200);
+  assert.deepEqual(groupShipChoice(await dialogView(w.f.id, true)), { n: 5, oneOff: '', mode: 'stacked' }, 'One is enabled, Stacked offered');
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  const created = ghCalls(seen, 'create');
+  assert.equal(created.length, 1, 'exactly one pull request');
+  assert.equal(argOf(created[0], '--head'), w.br(5));
+  assert.equal(argOf(created[0], '--base'), 'main');
+  // The head branch holds every run's commit.
+  for (let k = 1; k <= 5; k++) assert.equal(git(w.dir, 'show', `${w.br(5)}:s${k}.txt`), String(k), `run ${k}'s work is in the one PR`);
+  const body = argOf(created[0], '--body');
+  assert.deepEqual(body.match(/^## Slice \d+:/gm), [1, 2, 3, 4, 5].map((k) => `## Slice ${k}:`));
+  assert.deepEqual(body.match(/^Satisfies: .*$/gm), [1, 2, 3].map((k) => `Satisfies: R-po-${k}`), 'each owning run\'s requirement marks');
+  assert.equal(careLines(body), 1, body);
+  assert.ok(body.startsWith("Care: Balanced · Worca's pick"), body.slice(0, 120));
+  assert.deepEqual(prUrls(w), w.pids.map(() => 'https://github.com/me/repo/pull/1'), 'every run records the one PR');
+  assert.equal(featureView(w.f.id).ship.mode, 'one');
+}, SMALL_ON);
+
+shipT('One: with run 2\'s PR #40 open, One is disabled with its reason, and Stacked is still offered', async () => {
+  const seen = []; forge(seen);
+  const w = fiveRuns();
+  seedPr(w.pids[1], 40);
+  assert.equal((await confirm(w.f.id, { id: 'R-comp-4' })).status, 200);
+  const why = 'Run 2 already has pull request #40 open';
+  assert.deepEqual(groupShipChoice(await dialogView(w.f.id, true)), { n: 4, oneOff: why, mode: 'stacked' });
+  const ledger = ledgerText(w.f.id);
+  const one = await ship(w.f.id, 'one');
+  assert.equal(one.status, 409);
+  assert.deepEqual(await one.json(), { code: 'HAS_SLICE_PR', error: why });
+  assert.deepEqual(ghOnly(seen), [], 'a refusal makes no forge call');
+  assert.equal(ledgerText(w.f.id), ledger);
+  assert.equal(shipModeOf(w.f.id), null);
+  noChangelog(w);
+  const stacked = await ship(w.f.id, 'stacked');
+  assert.equal(stacked.status, 200, await stacked.clone().text());
+  assert.deepEqual(ghCalls(seen, 'create').map((a) => argOf(a, '--head')), [1, 3, 4, 5].map(w.br), '#40 is not created again');
+  assert.equal(prUrls(w)[1], 'https://github.com/me/repo/pull/40');
+}, SMALL_ON);
+
+shipT('One: while the feature ships, a run\'s own Create PR is refused with SHIPPING and opens nothing', async () => {
+  const seen = []; forge(seen);
+  const w = fiveRuns();
+  const { SHIPPING } = await import('../src/core/shape/ship-lock.mjs');
+  SHIPPING.add(String(w.f.id));
+  try {
+    const r = await post('/api/pr', { id: w.pids[1], projectDir: w.dir });
+    assert.equal(r.status, 409);
+    assert.equal((await r.json()).code, 'SHIPPING');
+  } finally { SHIPPING.delete(String(w.f.id)); }
+  assert.deepEqual(ghCalls(seen, 'create'), [], 'no PR is opened');
+  assert.equal(prUrls(w)[1], null);
+}, SMALL_ON);
+
+shipT('One: a run\'s own Create PR still in flight when a One ship is posted refuses the ship, and its PR stays the run\'s', async () => {
+  const seen = [];
+  const w = fiveRuns();
+  assert.equal((await confirm(w.f.id, { id: 'R-comp-4' })).status, 200);
+  // Hold run 2's push: its Create PR passed the Ship lock (nothing shipped yet) and is still on its way to the forge.
+  let release, pushed;
+  const held = new Promise((r) => { release = r; }), reached = new Promise((r) => { pushed = r; });
+  forge(seen, { hold: (cmd, args) => (cmd === 'git' && args[0] === 'push' && args.some((x) => String(x).includes(w.br(2))) ? (pushed(), held) : null) });
+  const runPr = post('/api/pr', { id: w.pids[1], projectDir: w.dir });
+  await reached;
+  const one = await ship(w.f.id, 'one');
+  assert.equal(one.status, 409, await one.clone().text());
+  assert.deepEqual(await one.json(), { code: 'HAS_SLICE_PR', error: 'Run 2 already has a pull request open' });
+  assert.equal(shipModeOf(w.f.id), null, 'nothing shipped');
+  release();
+  const r = await runPr;
+  assert.equal(r.status, 200, await r.clone().text());
+  const created = ghCalls(seen, 'create');
+  assert.deepEqual(created.map((a) => argOf(a, '--head')), [w.br(2)], 'only run 2\'s own PR opens, no one PR');
+  assert.equal(prUrls(w)[1], (await r.json()).url, 'run 2 keeps its own PR');
+}, SMALL_ON);
+
+shipT('One with the flag off is refused with the reason as before', async () => {
+  const seen = []; forge(seen);
+  const w = smallWorld();
+  assert.equal((await confirm(w.f.id, { id: 'R-comp-4' })).status, 200);
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 409);
+  assert.deepEqual(await r.json(), { code: 'STACKED_ONLY', error: PER_RUN_REASON });
+  assert.deepEqual(ghOnly(seen), []);
+  assert.equal(shipModeOf(w.f.id), null);
+  noChangelog(w);
+  assert.equal(groupShipChoice(await dialogView(w.f.id, false)).oneOff, PER_RUN_REASON, 'the dialog says what the server says');
+});
+
+shipT('D7: only a marked feature\'s one PR body gets a preamble: the Care line, then each Dropped line, once', async () => {
+  const seen = []; forge(seen);
+  const w = fiveRuns();
+  assert.equal((await confirm(w.f.id, { id: 'R-comp-4', mark: 'dropped', reason: 'Out of scope' })).status, 200);
+  const input = await featureShipInput(featureView(w.f.id));
+  assert.match(String(input.preamble), /^Care: [^\n]+\nDropped: R-comp-4 · Out of scope$/);
+  assert.equal('preamble' in await featureShipInput(featureView(plainWorld().f.id)), false, 'an unmarked feature has no preamble key');
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  const body = argOf(ghCalls(seen, 'create')[0], '--body');
+  assert.ok(body.startsWith(`${input.preamble}\n\n## Slice 1:`), body.slice(0, 200));
+  assert.equal(careLines(body), 1);
+  assert.equal(body.match(/^Dropped: R-comp-4 /gm).length, 1);
+}, SMALL_ON);
+
+shipT('R-arch-1 (pr-auto-finish): after a One ship merges, every run\'s requirement marks are recorded, every run is finished, and no run has its own PR', async () => {
+  const seen = []; forge(seen);
+  const w = fiveRuns();
+  const db = getDb();
+  const ANN = 'ann@acme.test';
+  assert.equal((await confirm(w.f.id, { id: 'R-comp-4' })).status, 200);
+  db.prepare("UPDATE shape_features SET pr_open = 'ready', pr_slices = 'one', pr_source = ?, pr_outcome = NULL, created_by = ? WHERE id = ?")
+    .run(JSON.stringify({ open: 'project', slices: 'project' }), ANN, w.f.id);
+  const setting = JSON.stringify({ open: 'ready', slices: 'one', scope: 'project', featureId: w.f.id, source: { open: 'feature', slices: 'feature' } });
+  for (const p of w.pids) db.prepare('UPDATE pipelines SET pr_auto = ? WHERE id = ?').run(setting, p);
+  const settle = (p) => prAutoFinisher().afterSettled({ id: p, status: 'done', startedBy: ANN, projectDir: w.dir, target: 'project',
+    branch: JSON.parse(db.prepare('SELECT branch FROM pipelines WHERE id = ?').get(p).branch) });
+  db.prepare("UPDATE pipelines SET status = 'running' WHERE id = ?").run(w.pids[4]);
+  for (const p of w.pids.slice(0, 4)) await settle(p);
+  assert.equal(ghCalls(seen, 'create').length, 0, 'no run opens a PR of its own');
+  db.prepare("UPDATE pipelines SET status = 'done' WHERE id = ?").run(w.pids[4]);
+  await settle(w.pids[4]);
+  const url = 'https://github.com/me/repo/pull/1';
+  assert.equal(ghCalls(seen, 'create').length, 1, 'the auto-finisher opens the one PR');
+  assert.equal(argOf(ghCalls(seen, 'create')[0], '--head'), w.br(5));
+  const outcome = featurePrSetting(w.f.id).outcome;
+  assert.deepEqual([outcome.status, outcome.final, outcome.urls], ['opened', true, [url]], 'one feature outcome');
+  assert.deepEqual(w.pids.map((p) => readRunPrAuto(p).outcome.status), w.pids.map(() => 'waiting'), 'no run records a PR of its own');
+  const marks = ledgerText(w.f.id);
+  // The one PR merges, and every run settles again.
+  for (const p of w.pids) db.prepare("UPDATE pipelines SET pr_state = 'MERGED' WHERE id = ?").run(p);
+  for (const p of w.pids) await settle(p);
+  await prAutoFinisher().maybeShipOne(w.f.id);
+  assert.equal(ghCalls(seen, 'create').length, 1, 'no further pull request');
+  const v = featureView(w.f.id);
+  assert.equal(v.ship.mode, 'one');
+  assert.deepEqual(v.slices.map((x) => [x.index, x.state, x.pr.url, x.pr.state]), [1, 2, 3, 4, 5].map((k) => [k, 'done', url, 'MERGED']));
+  assert.deepEqual(v.ship.smallRuns.owned.map((o) => [o.id, o.run, o.status]), [1, 2, 3].map((k) => [`R-po-${k}`, k, 'holds']));
+  assert.deepEqual(v.ship.smallRuns.confirmed.map((c) => [c.id, c.mark]), [['R-comp-4', 'met']]);
+  assert.equal(ledgerText(w.f.id), marks, 'the recorded marks are byte-identical');
+}, SMALL_ON);
+
+shipT('R-arch-6: a run outcome saved with the old reason reads in the new words, and its stored record is unchanged', async () => {
+  const w = smallWorld();
+  const db = getDb();
+  const stored = JSON.stringify({ open: 'ready', slices: 'one', scope: 'project', featureId: w.f.id, source: { open: 'feature', slices: 'feature' },
+    outcome: { status: 'skipped', final: true, reason: 'small runs ship a PR per run', at: '2026-03-01T00:00:00.000Z' } });
+  db.prepare("UPDATE shape_features SET pr_open = 'ready', pr_slices = 'one' WHERE id = ?").run(w.f.id);
+  db.prepare('UPDATE pipelines SET pr_auto = ? WHERE id = ?').run(stored, w.pids[1]);
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  doc.documentElement.dataset.flags = 'shaperSmallRuns';   // the page the app serves with the flag on
+  const line = renderRunPrFact(doc, prAutoView(w.pids[1])).querySelector('.hd-pr-auto-outcome');
+  assert.equal(line.textContent, 'Not opened: each run of this feature ships its own pull request');
+  assert.equal(db.prepare('SELECT pr_auto FROM pipelines WHERE id = ?').get(w.pids[1]).pr_auto, stored);
+}, SMALL_ON);
 
 // ── Steps 4 and 8: the gate, the confirm verb and the stacked ship ──────────────────────────────────────────────────
-shipT('D1 ship: blocked until Compliance confirms; One refused; then 4 PRs in finish order, each on the run before it', async () => {
+shipT('D1 ship: blocked until Compliance confirms; One refused when its branch lacks a run; then 4 PRs in finish order, each on the run before it', async () => {
   const seen = []; const bodies = forge(seen);
   const w = smallWorld();
   const before0 = ledgerText(w.f.id);
@@ -123,12 +321,16 @@ shipT('D1 ship: blocked until Compliance confirms; One refused; then 4 PRs in fi
   const ok = await confirm(w.f.id, { id: 'R-comp-4', role: 'qa' });
   assert.equal(ok.status, 200, await ok.clone().text());
   const before1 = ledgerText(w.f.id);
-  const one = await ship(w.f.id, 'one');
+  // Flag on: run 2 (the latest finished) sits on run 1's branch only, so One fails closed: no branch is made up for it.
+  const outline = getDb().prepare('SELECT outline FROM shape_features WHERE id = ?').get(w.f.id).outline;
+  cleanCheck(w, 2);
+  const one = await withEnvVars(SMALL_ON, () => ship(w.f.id, 'one'));
   assert.equal(one.status, 409);
-  assert.deepEqual(await one.json(), { code: 'STACKED_ONLY', error: 'small runs ship a PR per run' });
+  assert.deepEqual(await one.json(), { code: 'HEAD_MISSING_WORK', error: "run 3's work is not in the branch one PR would ship: create one PR per run" });
   assert.deepEqual(ghOnly(seen), [], 'no gh call for One');
   assert.equal(ledgerText(w.f.id), before1);
   noChangelog(w);
+  getDb().prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(outline, w.f.id);   // the stacked ship below runs flag off, unchecked
 
   const r = await ship(w.f.id, 'stacked');
   assert.equal(r.status, 200, await r.clone().text());

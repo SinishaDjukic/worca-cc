@@ -140,7 +140,10 @@ Every pull request button and link looks the same everywhere (`test/ui-pr-contro
    a button. Push says the header's `Push main` (the source branch). Buttons, menu items, aria-labels and dialog titles
    say "PR"; "pull request" only in headings and sentences; "open" is not a PR verb. The Create PR dialog's title equals
    its confirm ("Create PR", "Create 2 PRs"). Its zones, in order: Into (remote and branch on one row, the branch alone
-   with one remote), Pull requests (a feature, a chain or a user group only: One / N stacked, or N separate for a user group, the suggestion under them),
+   with one remote), Pull requests (a feature, a chain or a user group only: One / N stacked, or N separate for a user group, the suggestion under them;
+   a disabled One has its reason beside it in `.shipit-prs-one-why`, which for a feature names the run and PR, as in
+   "Run 2 already has pull request #40 open", while N stacked stays enabled; after a feature ships as one PR, its
+   Shipped Ship card counts that PR once: "1 PR open", one row),
    Title and description (with Draft), After it opens (Watch PR, Release). Its footer: a divider,
    then Cancel and the primary on the right; "Try it first" is a secondary `.btn` on the left; one primary. Field
    labels in it are nouns ("Into", "Push remote", "Draft").

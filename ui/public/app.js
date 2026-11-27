@@ -27351,7 +27351,10 @@ async function openFeatureShip(featureId, { opener = null, card = null } = {}) {
     ? sr.order.map((o) => f.slices.find((s) => s.index === o.index)).filter(Boolean) : f.slices;
   openShipItGroupModal({ kind: 'feature', id: f.id, title: f.title, projectKey: f.projectKey, base,
     members: listed.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested, smallRuns: !!(f.ship && f.ship.smallRuns),
-    // Feature D1: One is off for small runs, so the size hint (which may suggest One) is left out.
+    // Small runs: every run, carried ones included, so a carried run's own PR turns One off too; One is offered only with
+    // the flag on (the server refuses it otherwise).
+    all: f.slices.map((s) => ({ position: s.index, pr: s.pr || null })), oneOk: flagOn('shaperSmallRuns'),
+    // Feature D1: stacked stays a small-runs feature's pick, so the size hint (which may suggest One) is left out.
     hint: f.ship && f.ship.smallRuns ? '' : shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
     { opener, refocus: card ? shipCardRefocus(f.id, card) : focusGroupHead });
 }
@@ -36653,7 +36656,7 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
       // A network error or a 5xx is not an answer; only a 404 means gone.
       GROUP_PAGE.failed = !res || (!res.ok && res.status !== 404);
       if (res && res.status === 404) GROUP_PAGE.gone = true;
-      else if (res && res.ok) { const f = await res.json().catch(() => ({})); GROUP_PAGE.featureId = f.id || id; GROUP_PAGE.unmarked = unmarkedOf(f); GROUP_PAGE.stackedOnly = smallRunsOf(f); if (ticket >= GROUP_PAGE.featureApplied) { GROUP_PAGE.featureApplied = ticket; storeGroupFeature(f); } }
+      else if (res && res.ok) { const f = await res.json().catch(() => ({})); GROUP_PAGE.featureId = f.id || id; GROUP_PAGE.unmarked = unmarkedOf(f); GROUP_PAGE.stackedOnly = stackedOnlyOf(f); if (ticket >= GROUP_PAGE.featureApplied) { GROUP_PAGE.featureApplied = ticket; storeGroupFeature(f); } }
     }
   }
   paintGroupPageNow();
@@ -36793,8 +36796,16 @@ function unmarkedOf(f) {
   if (sr) return sr.blocked && Array.isArray(sr.waiting) ? sr.waiting.length + (sr.unowned || []).length : 0;
   const a = f && f.ship && f.ship.acceptance; return a && !a.ready ? Math.max(0, (a.total || 0) - (a.marked || 0)) : 0;
 }
-/** Feature D1: a small-runs feature ships a PR per run, so its page never offers One. */
+/** Feature D1: a small-runs feature (its marker, whatever the flag says). */
 function smallRunsOf(f) { return !!(f && f.ship && f.ship.smallRuns); }
+/** With the Shaper small runs flag off, a small-runs feature ships a PR per run, so its page never offers One. */
+function stackedOnlyOf(f) { return smallRunsOf(f) && !flagOn('shaperSmallRuns'); }
+// A Labs toggle on an open feature page: the ship line follows at once.
+onFlagChange('shaperSmallRuns', () => {
+  if (GROUP_PAGE.route !== 'feature' || !GROUP_PAGE.feature) return;
+  const so = stackedOnlyOf(GROUP_PAGE.feature);
+  if (so !== GROUP_PAGE.stackedOnly) { GROUP_PAGE.stackedOnly = so; scheduleGroupPagePaint(); }
+});
 /** Small runs D3 (D11): the open feature page's feature view. Its Requirements tab exists only for a marked feature with
  *  the flag on (the route sends ship.smallRuns for a marked feature with the flag off too). */
 function storeGroupFeature(f) {
@@ -36829,7 +36840,7 @@ function noteGroupFeatureLock(f, ticket) {
   if (ticket < GROUP_PAGE.featureApplied) return;
   GROUP_PAGE.featureApplied = ticket;
   const n = unmarkedOf(f);
-  const so = smallRunsOf(f);
+  const so = stackedOnlyOf(f);
   const was = [groupFeatureSig(GROUP_PAGE.feature), GROUP_PAGE.requirements];
   storeGroupFeature(f);
   const moved = was[0] !== groupFeatureSig(f) || was[1] !== GROUP_PAGE.requirements;

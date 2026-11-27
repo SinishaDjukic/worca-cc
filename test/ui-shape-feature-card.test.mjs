@@ -571,6 +571,12 @@ test('C3: a not-started chain run with no stop reads \'waits for run 2\' on the 
     const s9 = vw('clean'); delete s9.verify;
     assert.deepEqual([m(s9).state, m(s9).step], ['S9', 'ship']);
   });
+  test('a feature shipped as one PR: the ship step counts it once and reads 1 PR open', () => {
+    const order = [1, 2, 3, 4].map((n) => ({ index: n, pr: { number: 40, url: 'u40' }, onto: null }));
+    const shipped = (mode) => m({ ...vw('clean'), ship: { ready: false, mode, smallRuns: { confirmed: [], owned: [], waiting: [], blocked: false, reason: null, order } } });
+    assert.deepEqual([shipped('one').step, shipped('one').detail], ['ship', '1 PR open']);
+    assert.equal(shipped('stacked').detail, '4 PRs open', 'stacked counts as today');
+  });
 }
 
 // ---- Feature D1: the one card's ship step mounts the Ship card (ship-card.mjs) ----

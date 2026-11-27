@@ -243,3 +243,24 @@ test('the STOP_FINDINGS_ONLY phase: a 3-finding stop on the run page, the Chat r
     assert.match(s, new RegExp(`[\`'/]small-runs-stop-findings-${surface}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${surface} screenshots`);
   }
 });
+
+test('the One ship phase shoots its 6 surfaces in both themes', () => {
+  const s = src();
+  const gate = s.match(/process\.env\.SHIP_ONE_ONLY === '1'\) \{ await (\w+)\(\); await finish\(\); \}/);
+  assert.ok(gate, 'the SHIP_ONE_ONLY=1 gate');
+  const at = s.indexOf(`async function ${gate[1]}(`);
+  assert.ok(at >= 0, 'the One ship phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  // What each surface is asserted to show before its shot.
+  for (const needle of ['disabled', '.shipit-prs-one-why', 'Run 2 already has pull request #40 open', ', or ship as one PR', '1 PR open',
+    'Not opened: each run of this feature ships its own pull request', 'shipped as one PR or as stacked PRs']) {
+    assert.ok(s.includes(needle), needle);
+  }
+  // The twelve files, with these exact names (no prefix), in SHOTS_DIR.
+  for (const surface of ['enabled', 'disabled', 'group-line', 'applied', 'outcome', 'labs']) {
+    assert.match(s, new RegExp(`[\`'/]app-ship-one-${surface}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${surface} screenshots`);
+  }
+});
+

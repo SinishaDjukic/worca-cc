@@ -550,14 +550,95 @@ test('D1 shipOrder: marked → finish order, an archived run last; unmarked → 
   assert.equal(shipOrder(v), v.slices);
 });
 
-test('D1 oneShipCheck, marked: one → 409 STACKED_ONLY first; stacked → head is the latest finished run', async () => {
+// A marked feature's One check: the head holds every run's work unless `missing`; ctxOf names the head's branch.
+const markedCtx = (p) => () => ({ target: { repoDir: '/repo', feature: `feat/${p[2]}` } });
+const doneRows = (p, prs = {}) => [1, 2, 3].map((index) => ({ index, pipelineId: p[index], state: 'done', pr: prs[index] || null }));
+const PR40 = { url: 'https://github.com/me/repo/pull/40', number: 40, state: 'OPEN', draft: false };
+
+test('D1 oneShipCheck, marked, flag on: One with no PR is not refused; its head is the latest finished run', async () => {
   const { id, p } = finishing132();
-  const v = viewOf(id, [{ index: 1, pipelineId: p[1], state: 'done', pr: { url: 'u', state: 'OPEN' } }]);
-  for (const deps of [ON, OFF]) {
-    assert.deepEqual(await oneShipCheck(id, 'one', v, NEVER, deps),
+  const asked = [];
+  const ctxOf = (h) => { asked.push(h); return markedCtx(p)(); };
+  assert.deepEqual(await oneShipCheck(id, 'one', viewOf(id, doneRows(p)), ctxOf, { ...ON, isAncestor: async () => true }),
+    { head: p[2], refusal: null });
+  assert.deepEqual(asked, [p[2]]);
+  // A closed PR and a slice draft are no run's own PR.
+  const loose = doneRows(p, { 1: { ...PR40, state: 'CLOSED' }, 3: { ...PR40, draft: true } });
+  assert.deepEqual(await oneShipCheck(id, 'one', viewOf(id, loose), ctxOf, { ...ON, isAncestor: async () => true }), { head: p[2], refusal: null });
+});
+
+test('D1 oneShipCheck, marked, flag on: run 2\'s PR #40 refuses One with HAS_SLICE_PR naming it, before any branch is read', async () => {
+  const { id, p } = finishing132();
+  assert.deepEqual(await oneShipCheck(id, 'one', viewOf(id, doneRows(p, { 2: PR40 })), NEVER, ON),
+    { head: null, refusal: { status: 409, body: { code: 'HAS_SLICE_PR', error: 'Run 2 already has pull request #40 open' } } });
+});
+
+test('D1 oneShipCheck, marked, flag on: a head without run 1\'s work, or one that cannot be checked, refuses HEAD_MISSING_WORK', async () => {
+  const { id, p } = finishing132();
+  const miss = await oneShipCheck(id, 'one', viewOf(id, doneRows(p)), markedCtx(p), { ...ON, isAncestor: async () => false });
+  assert.deepEqual(miss, { head: p[2], refusal: { status: 409, body: { code: 'HEAD_MISSING_WORK',
+    error: "run 1's work is not in the branch one PR would ship: create one PR per run" } } });
+  const broken = await oneShipCheck(id, 'one', viewOf(id, doneRows(p)), () => ({ error: 'the last slice has no run' }), ON);
+  assert.deepEqual(broken, { head: p[2], refusal: { status: 409, body: { code: 'HEAD_MISSING_WORK',
+    error: 'the branch one PR would ship cannot be checked (the last slice has no run): create one PR per run' } } });
+});
+
+test('D1 oneShipCheck, marked, flag on: with no finished run there is no head and no refusal (NOT_READY comes first)', async () => {
+  quiet();
+  const f = createSliceFeature({ pipelineId: pipe('running'), projectDir: root, title: 'Ship', outline: outlineOf(2), perspectives: ['product'], workflowId: 'wf_shape' });
+  markFeature(f.id);
+  assert.equal(latestFinishedSlice(f.id), null);
+  assert.deepEqual(await oneShipCheck(f.id, 'one', viewOf(f.id, []), NEVER, ON), { head: null, refusal: null });
+});
+
+test('D1 oneShipCheck, marked, flag off: One stays 409 STACKED_ONLY with the old reason, word for word; stacked keeps the latest finished head', async () => {
+  const { id, p } = finishing132();
+  for (const prs of [{}, { 2: PR40 }]) {
+    assert.deepEqual(await oneShipCheck(id, 'one', viewOf(id, doneRows(p, prs)), NEVER, OFF),
       { head: null, refusal: { status: 409, body: { code: 'STACKED_ONLY', error: 'small runs ship a PR per run' } } });
-    assert.deepEqual(await oneShipCheck(id, 'stacked', v, NEVER, deps), { head: p[2], refusal: null });
   }
+  for (const deps of [ON, OFF]) assert.deepEqual(await oneShipCheck(id, 'stacked', viewOf(id, doneRows(p, { 2: PR40 })), NEVER, deps), { head: p[2], refusal: null });
+});
+
+// The unmarked One check must answer as before. These rows were captured once by running the same cases against a
+// `git archive 217b540b4` copy of src/. Each row: mode, flag, case, the heads ctxOf was asked for, the answer.
+const ONE_CASES = {
+  'no PR': {}, 'open PR': { pr: PR40 }, 'closed PR': { pr: { ...PR40, state: 'CLOSED' } }, 'draft slice PR': { pr: { ...PR40, draft: true } },
+  'ctx error': { ctxError: true }, 'missing slice': { missing: true },
+};
+const HAS_PR = { head: null, refusal: { status: 409, body: { code: 'HAS_SLICE_PR', error: 'a run in this feature already has a PR: create one PR per run' } } };
+const NONE = { head: null, refusal: null };
+const AT_P2 = { head: 'P2', refusal: null };
+const missingAt = (error) => ({ head: 'P2', refusal: { status: 409, body: { code: 'HEAD_MISSING_WORK', error } } });
+const ONE_ROWS_217 = [
+  ['one', 'on', 'no PR', ['P2'], AT_P2],
+  ['one', 'on', 'open PR', [], HAS_PR],
+  ['one', 'on', 'closed PR', ['P2'], AT_P2],
+  ['one', 'on', 'draft slice PR', ['P2'], AT_P2],
+  ['one', 'on', 'ctx error', ['P2'], missingAt('the branch one PR would ship cannot be checked (the last slice has no run): create one PR per run')],
+  ['one', 'on', 'missing slice', ['P2'], missingAt("run 1's work is not in the branch one PR would ship: create one PR per run")],
+  ['one', 'off', 'no PR', [], NONE],
+  ['one', 'off', 'open PR', [], HAS_PR],
+  ['one', 'off', 'closed PR', [], NONE],
+  ['one', 'off', 'draft slice PR', [], NONE],
+  ['one', 'off', 'ctx error', [], NONE],
+  ['one', 'off', 'missing slice', [], NONE],
+  ...['on', 'off'].flatMap((flag) => Object.keys(ONE_CASES).map((name) => ['stacked', flag, name, [], NONE])),
+];
+
+test('unmarked One ship check equals checkpoint 217b540b4', async () => {
+  const { id, p } = finishing132({ marked: false });
+  assert.equal(latestFinishedSlice(id).pipelineId, p[2], 'the fixture, as captured: run 2 is the head');
+  const rowsNow = [];
+  for (const mode of ['one', 'stacked']) for (const flag of ['on', 'off']) for (const [name, c] of Object.entries(ONE_CASES)) {
+    const view = viewOf(id, [{ index: 1, pipelineId: p[1], state: 'done', pr: c.pr || null }, { index: 2, pipelineId: p[2], state: 'done', pr: null },
+      { index: 3, pipelineId: null, state: 'planned', pr: null }]);
+    const asked = [];
+    const ctxOf = (head) => { asked.push(head); return c.ctxError ? { error: 'the last slice has no run' } : { target: { repoDir: '/repo', feature: `feat/${p[2]}` } }; };
+    const r = await oneShipCheck(id, mode, view, ctxOf, { ...(flag === 'on' ? ON : OFF), isAncestor: async () => !c.missing });
+    rowsNow.push(JSON.parse(JSON.stringify([mode, flag, name, asked, r]).split(p[1]).join('P1').split(p[2]).join('P2')));
+  }
+  assert.deepEqual(rowsNow, ONE_ROWS_217);
 });
 
 // ── Small runs, a run starts with the work of every run it builds on: the reason and the fire-time gate ──────────────

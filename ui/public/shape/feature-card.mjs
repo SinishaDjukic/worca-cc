@@ -137,7 +137,12 @@ const unownedOf = (sr) => !!(sr && Array.isArray(sr.unowned) && sr.unowned.lengt
 function shipDetail(view) {
   const ship = (view && view.ship) || {};
   const sr = ship.smallRuns || null;
-  if (ship.mode) return plural(sr ? sr.order.filter((o) => o.pr).length : (view.slices || []).filter((s) => s.pr && s.pr.url).length, 'PR') + ' open';
+  if (ship.mode) {
+    const prs = sr ? sr.order.filter((o) => o.pr) : [];
+    // Shipped as One: every run holds the same PR, counted once.
+    const n = !sr ? (view.slices || []).filter((s) => s.pr && s.pr.url).length : ship.mode === 'one' ? new Set(prs.map((o) => o.pr.url)).size : prs.length;
+    return `${plural(n, 'PR')} open`;
+  }
   if (unownedOf(sr)) return sr.reason;
   if (sr && sr.blocked) {
     const labels = [...new Set(sr.confirmed.filter((c) => c.state === 'waiting').map((c) => c.roleLabel))];

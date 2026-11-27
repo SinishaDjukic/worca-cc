@@ -7,9 +7,9 @@ import { previousBranchesOf, unfireTicket } from '../scheduler.mjs';
 import { isAncestor, runGitCapture, commitOf } from '../worktree.mjs';
 import { checkCombine, mergeBaseInto, baseMovedAudit } from '../git-sync.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature } from './small-runs.mjs';
-import { SHIP_LOCK, shipLocked } from './ship-lock.mjs';
+import { SHIP_LOCK, prCreating, shipLocked } from './ship-lock.mjs';
 import { roundOrigin } from './rounds.mjs';
-import { SMALL_RUNS_SHIP } from '../../shared/shape/ship-ledger.mjs';
+import { LEGACY_PER_RUN_REASON, openPrReason } from '../../shared/shape/ship-ledger.mjs';
 import { sliceOfTicket, sliceGateState, featureBase, featureRootSource, featureOfPipeline, currentFeatureId, finishedSlices,
   dependencyBranchesOf, setClashHold, clearClashHold } from './features.mjs';
 
@@ -18,7 +18,7 @@ import { verifyAfterSettled, verifyCheckOfPipeline } from './verifier.mjs';
 export { createHeldStops } from './held-stops.mjs';
 export { heldStopTurn } from './features.mjs';
 export { recordShipCommit, shipCover, shipStopped } from './verifier.mjs';
-export { SHIPPING, featureShipping } from './ship-lock.mjs';
+export { SHIPPING, featureShipping, prCreateStarted } from './ship-lock.mjs';
 
 /**
  * afterRunSettled's hook (D17): the Verifier first (small runs C5: a check may start, or a Verifier run's result is
@@ -386,22 +386,46 @@ export async function headMissingSlice(dir, headBranch, rows, deps = {}) {
 }
 
 /**
- * shipFeatureNow's one-PR refusals, in order (a marked feature: STACKED_ONLY for one, the latest finished head for stacked): a slice that already has a PR (dev's HAS_SLICE_PR, flag on or off), then
- * (flag on) the latest finished slice's branch must hold every done slice's work. `ctxOf(head)` = shipCtxOf for that
- * head; its error refuses too (fail-closed). Read-only. → {head, refusal: {status, body} | null}
+ * The One ship's last look, right before the one PR opens: a run whose own Create PR is in flight (prCreating), or that
+ * gained a PR the ship's view did not have (`readPr(pipelineId)` = the stored PR), refuses HAS_SLICE_PR, with the words
+ * oneShipCheck gives. That PR would otherwise stay open while the one PR takes its row. → {status, body} | null
+ */
+export function oneShipRaced(featureId, view, readPr) {
+  const s = view.slices.find((x) => {
+    if (!x.pipelineId) return false;
+    if (prCreating(x.pipelineId)) return true;
+    const pr = readPr(x.pipelineId);
+    return !!(pr && pr.url && pr.state !== 'CLOSED' && pr.url !== x.pr?.url);
+  });
+  if (!s) return null;
+  const pr = readPr(s.pipelineId);
+  const fresh = pr && pr.url && pr.url !== s.pr?.url ? pr : null;
+  return { status: 409, body: { code: 'HAS_SLICE_PR', error: smallRunsOfFeature(featureId)
+    ? openPrReason({ index: s.index, pr: fresh }) : 'a run in this feature already has a PR: create one PR per run' } };
+}
+
+/**
+ * shipFeatureNow's one-PR refusals, in order: a slice that already has a PR (HAS_SLICE_PR), then (flag on) the latest
+ * finished slice's branch must hold every done slice's work. A marked feature: stacked takes the latest finished head
+ * and is never refused; One is refused STACKED_ONLY with the flag off, and with it on its HAS_SLICE_PR names the first
+ * run that owns a PR (openPrReason, the words the Ship dialog shows). `ctxOf(head)` = shipCtxOf for that head; its
+ * error refuses too (fail-closed). Read-only. → {head, refusal: {status, body} | null}
  */
 export async function oneShipCheck(featureId, mode, view, ctxOf, deps = {}) {
-  // Feature D1 (D5): a marked feature (its marker, whatever the flag says) ships stacked only, from its latest finished
-  // run's branch: the changelog and the push land there.
+  const ownsPr = (s) => s.pr && s.pr.url && s.pr.state !== 'CLOSED' && !s.pr.draft;
   if (smallRunsOfFeature(featureId)) {
-    return mode === 'one' ? { head: null, refusal: { status: 409, body: { code: 'STACKED_ONLY', error: SMALL_RUNS_SHIP } } }
-      : { head: latestFinishedSlice(featureId)?.pipelineId || null, refusal: null };
+    // Feature D1: stacked ships from the latest finished run's branch, where the changelog and the push land.
+    if (mode !== 'one') return { head: latestFinishedSlice(featureId)?.pipelineId || null, refusal: null };
+    if (!shaperSmallRunsOn(deps)) return { head: null, refusal: { status: 409, body: { code: 'STACKED_ONLY', error: LEGACY_PER_RUN_REASON } } };
+    const owner = view.slices.find(ownsPr);
+    if (owner) return { head: null, refusal: { status: 409, body: { code: 'HAS_SLICE_PR', error: openPrReason({ index: owner.index, pr: owner.pr }) } } };
+  } else {
+    if (mode !== 'one') return { head: null, refusal: null };
+    if (view.slices.some(ownsPr)) {
+      return { head: null, refusal: { status: 409, body: { code: 'HAS_SLICE_PR', error: 'a run in this feature already has a PR: create one PR per run' } } };
+    }
+    if (!shaperSmallRunsOn(deps)) return { head: null, refusal: null };
   }
-  if (mode !== 'one') return { head: null, refusal: null };
-  if (view.slices.some((s) => s.pr && s.pr.url && s.pr.state !== 'CLOSED' && !s.pr.draft)) {
-    return { head: null, refusal: { status: 409, body: { code: 'HAS_SLICE_PR', error: 'a run in this feature already has a PR: create one PR per run' } } };
-  }
-  if (!shaperSmallRunsOn(deps)) return { head: null, refusal: null };
   const head = latestFinishedSlice(featureId)?.pipelineId || null;
   if (!head) return { head: null, refusal: null };
   const ctx = ctxOf(head);

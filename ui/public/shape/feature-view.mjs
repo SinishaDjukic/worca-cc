@@ -40,7 +40,7 @@ function shipBlock(doc, f) {
   const sr = s.smallRuns && phase !== 'waiting' ? s.smallRuns : null;
   const card = renderShipCard(doc, { phase, featureId: f.id, title: f.title, runs: f.total, files: s.files, added: s.linesAdded,
     deleted: s.linesRemoved, suggested: s.suggested, result: s.result || null, ...(s.acceptance ? { acceptance: s.acceptance } : {}),
-    ...(sr ? { smallRuns: sr } : {}) },
+    ...(sr ? { smallRuns: sr, shipMode: s.mode || null } : {}) },
   sr ? { onConfirm: (id, mark, reason) => confirmRequirement(f.id, id, mark, reason) } : s.acceptance ? { onMark: (entries) => saveAcceptance(f.id, entries) } : {});
   card.dataset.needsGit = '';   // shipping opens pull requests: hidden while git is missing (git-gate.mjs)
   return card;

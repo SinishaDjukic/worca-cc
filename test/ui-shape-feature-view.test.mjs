@@ -253,6 +253,17 @@ test('D1: a marked feature\'s shipBlock renders the small-runs card and Met post
   assert.ok(q(waiting, '[data-ship-card="waiting"]'), 'a marked feature still waits for its runs');
 });
 
+test('a marked feature shipped as one PR: the page\'s Ship card shows 1 PR open, one PR row and one PR holding every run', () => {
+  const order = [1, 2, 3].map((i) => ({ index: i, pipelineId: `p${i}`, title: `Slice ${i} title`, pr: { number: 40, url: 'https://x/pull/40' }, onto: null }));
+  const smallRuns = { ...SR_WAIT(), confirmed: [], waiting: [], blocked: false, reason: null, order };
+  const shipped = (mode) => mount(feature({ status: 'done', done: 3, ship: { ready: false, mode, smallRuns } })).el;
+  const el = shipped('one');
+  assert.equal(el.querySelector('.ask-shipcard-done').textContent, '1 PR open');
+  assert.equal(el.querySelector('.ask-shipcard-stats').textContent, 'one PR holding every run');
+  assert.equal(el.querySelectorAll('.ask-shipcard-prs .plan-check-row').length, 1);
+  assert.equal(shipped('stacked').querySelectorAll('.ask-shipcard-prs .plan-check-row').length, 3, 'stacked counts as today');
+});
+
 test('D1: on the feature page, Not met with a typed reason and Enter posts the mark and the reason', async () => {
   const sr = SR_WAIT();
   const { el } = mount(feature({ status: 'done', done: 3, ship: { ready: true, mode: null, smallRuns: sr } }));

@@ -2,7 +2,9 @@
 // marked feature's Ship reads (src/shared/shape/ship-ledger.mjs). Pure.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shipLedger, unownedReason, careOutcome, unmetLines, confirmMarkOf, REASON_FIRST, SMALL_RUNS_SHIP } from '../src/shared/shape/ship-ledger.mjs';
+import { shipLedger, unownedReason, careOutcome, unmetLines, confirmMarkOf, REASON_FIRST } from '../src/shared/shape/ship-ledger.mjs';
+// A namespace read, so a missing new export (openPrReason, the per-run texts) fails only its own tests, not the whole file.
+import * as LEDGER from '../src/shared/shape/ship-ledger.mjs';
 import { careChoiceText, careRecordLine } from '../src/shared/shape/feature-record.mjs';
 import { requirementStatus } from '../src/shared/shape/req-status.mjs';
 
@@ -156,5 +158,27 @@ test('careChoiceText: careRecordLine is "Care: " plus it, as before', () => {
   assert.equal(careRecordLine({}), "Care: Balanced · Worca's pick");
   assert.equal(careChoiceText({ position: 'balanced', chosenBy: 'person', worcaPick: 'balanced' }), "Balanced · Worca's pick",
     "a person who kept Worca's pick reads as Worca's pick, never 'your choice · Worca recommended Balanced'");
-  assert.equal(SMALL_RUNS_SHIP, 'small runs ship a PR per run');
+});
+
+// ---- Slice 4 (R-po-1): why One is off, in the words the dialog and the server share ----
+const at = (n) => `https://github.com/me/repo/pull/${n}`;
+
+test('openPrReason: an open PR is named with its run and number; a merged one reads already merged', () => {
+  assert.equal(LEDGER.openPrReason({ index: 2, pr: { url: at(40), number: 40, state: 'OPEN' } }), 'Run 2 already has pull request #40 open');
+  assert.equal(LEDGER.openPrReason({ index: 2, pr: { url: at(40), number: 40 } }), 'Run 2 already has pull request #40 open', 'no state: open');
+  assert.equal(LEDGER.openPrReason({ index: 2, pr: { url: at(40), number: 40, state: 'MERGED' } }), "Run 2's pull request #40 is already merged");
+});
+
+test('openPrReason: without a number it reads it from a /pull/N or /merge_requests/N url, else names none', () => {
+  assert.equal(LEDGER.openPrReason({ index: 3, pr: { url: at(41), state: 'OPEN' } }), 'Run 3 already has pull request #41 open');
+  assert.equal(LEDGER.openPrReason({ index: 3, pr: { url: at(41), number: null, state: 'MERGED' } }), "Run 3's pull request #41 is already merged");
+  assert.equal(LEDGER.openPrReason({ index: 4, pr: { url: 'https://gitlab.example/me/repo/-/merge_requests/7', state: 'OPEN' } }),
+    'Run 4 already has pull request #7 open');
+  assert.equal(LEDGER.openPrReason({ index: 1, pr: { url: 'created:1', state: 'OPEN' } }), 'Run 1 already has a pull request open');
+});
+
+test('the flag-off reason stays word for word as one legacy constant in pr-auto.mjs; SMALL_RUNS_SHIP is gone from the ledger', async () => {
+  const { LEGACY_PER_RUN_REASON } = await import('../src/shared/shape/ship-ledger.mjs');
+  assert.equal(LEGACY_PER_RUN_REASON, 'small runs ship a PR per run');
+  assert.equal('SMALL_RUNS_SHIP' in LEDGER, false, 'SMALL_RUNS_SHIP is removed');
 });

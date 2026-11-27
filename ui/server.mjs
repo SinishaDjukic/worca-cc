@@ -475,7 +475,7 @@ import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, ca
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
   liveSliceFrom, liveSliceResuming, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, isSlicePreambleLine } from '../src/core/shape/features.mjs';
-import { smallRunsChainGate, sliceFireStart, sliceCombineGate, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, createHeldStops, featureOfAnyPipeline, holdAfterSetupClash, resumeTakeInVerdict } from '../src/core/shape/chain.mjs';
+import { smallRunsChainGate, sliceFireStart, sliceCombineGate, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, oneShipRaced, createHeldStops, featureOfAnyPipeline, holdAfterSetupClash, resumeTakeInVerdict } from '../src/core/shape/chain.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts, createRequirementChanges } from '../src/core/shape/changes.mjs';
 import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
@@ -5153,7 +5153,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     const input = await featureShipInput(shown);
     const ctx = shipCtxOf(shown, { base, head });
     if (ctx.error) return { status: 409, body: { error: ctx.error } };
-    let onePr = null;
+    let onePr = null, raced = null;
     const out = await shipFeature({ feature: input, mode, maxBody: PR_BODY_MAX - 2000, ...(head ? { headPipelineId: head } : {}) }, {
       commitChangelog: (pid, update) => commitFileOnBranch(ctx.target.repoDir, {
         branch: ctx.target.feature, path: 'CHANGELOG.md', update, message: `Changelog: ${view.title}` }).then((r) => recordShipCommit(id, r)),
@@ -5164,6 +5164,8 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
         return p.ok ? { ok: true } : { ok: false, error: p.stderr };
       },
       openOnePr: async ({ pipelineId, title, body }) => {
+        raced = oneShipRaced(id, shown, readPrState);   // a run's own Create PR that started before this ship
+        if (raced) return { ok: false, error: raced.body.error };
         const r = await createPrWithDraftRetry(createRunPr, { id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
           description: body, title, actor, preamble: false, draft }, onDraftFallback);
         if (r.ok) onePr = { ...r.pr, newDraft: !!r.newDraft };
@@ -5188,6 +5190,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
       },
       refreshBody: (prUrl, pid) => refreshSliceBody(prUrl, pid, ctx.target.repoDir),
     });
+    if (raced) return raced;
     const late = stopped(out.error); if (late || !out.ok) return late || { status: out.status, body: { error: out.error } };
     // The one PR is every slice's PR, as a chain shipped as One records it on every run: the group reads In review.
     if (out.mode === 'one' && out.prUrl) {

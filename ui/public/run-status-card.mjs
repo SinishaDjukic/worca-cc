@@ -335,8 +335,9 @@ export function renderMemberRows(doc, row, { checks, oneLine = false, shortState
   return ol;
 }
 
-/** D17: the group page's one ship line (a feature, or a chain in the one ship flow). `stackedOnly`: a small-runs
- *  feature ships a PR per run (One answers 409 STACKED_ONLY), so the line never offers One. */
+/** D17: the group page's one ship line (a feature, or a chain in the one ship flow). One is offered unless
+ *  `stackedOnly`: a small-runs feature with the Shaper small runs flag off ships a PR per run (One answers 409
+ *  STACKED_ONLY), so the line never offers One. */
 export function groupShipLine(row, { stackedOnly = false } = {}) {
   if (!row || !['feature', 'chain', 'user'].includes(row.groupKind) || !row.model) return '';
   const { done, total } = row.model.count;

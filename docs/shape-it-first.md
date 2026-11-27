@@ -222,8 +222,8 @@ when you approve the outline, and every slice reads them from there:
   the last slice's branch into the feature's base, with the feature's changelog entry, like **Ship as one PR**. A
   follow-up run (it starts from the base, so the last branch does not hold every run's work) stops it: Worca tells you
   in the thread and you ship from the Ship card. With **Requirements** on, it waits until every agreed requirement is
-  marked, tells you once, and opens the PR when the last one is marked. A small-runs feature opens nothing this way: it
-  ships from its Ship card.
+  marked, tells you once, and opens the PR when the last one is marked. A small-runs feature does the same with the
+  `shaperSmallRuns` flag on; with it off, it opens nothing this way and ships stacked from its Ship card.
 
 A re-planned feature keeps the setting it had. A person's own Create PR and Ship as are unchanged. Each PR is opened as the
 person who started the run, and a run that errored or stopped opens nothing (its log says why; a resume that ends done
@@ -328,8 +328,8 @@ PR counts as every run's PR, so the group page reads `In review · 1 PR`. In the
 puts the card away; the feature still ships from its page. Until every run is done,
 the group page says when the card will come. Either way, one entry for the feature
 goes into the project's `CHANGELOG.md` under `## Unreleased`, committed on the last
-slice's branch, so it ships with the feature. A small-runs feature ships stacked only:
-see [Small runs](#small-runs-shapersmallruns).
+slice's branch, so it ships with the feature. With the flag on, a small-runs feature ships the whole feature as one
+PR, or stacked; with it off, only stacked: see [Small runs](#small-runs-shapersmallruns).
 
 A Run-after chain ships the same way, without Shaper: once every run in it is done,
 its group page reads `Ready to ship · 2 of 2 done` with **Create PR** on the status
@@ -601,7 +601,7 @@ API: `pr: { open?, slices? }` in the `POST /api/run` body (a bad value is a 400 
 ## Small runs (`shaperSmallRuns`)
 
 With the `shaperSmallRuns` flag on, a Shaper feature is built as small runs: each run owns at most a few requirements,
-and the feature ships as one PR per run. The flag is read when the planning run starts, and that run carries a
+and the feature ships as one PR or as one PR per run, stacked ([Ship](#ship)). The flag is read when the planning run starts, and that run carries a
 small-runs marker. The Split and its Care table are in [Plan in slices](#plan-in-slices), and the role folds of the
 Requirements card in [Requirements first](#requirements-first).
 
@@ -667,7 +667,16 @@ with Don't slice carries nothing into a feature: it is planned and reviewed with
 
 ### Ship
 
-Ship is stacked only: Ship with `one` is refused with `STACKED_ONLY`. With the flag on, Ship opens one PR per run along
+With the flag on, One ships the whole feature as one PR, from the latest finished run's branch. One is disabled while a
+run has a pull request of its own, and the dialog and the server name it: "Run 2 already has pull request #40 open" (or
+"Run 2's pull request #40 is already merged"); N stacked stays offered. When that branch lacks a finished run's work
+(runs that finished out of order), One is refused with `HEAD_MISSING_WORK`: create one PR per run. The one PR opens with
+the feature's Care line and its Not met / Dropped lines, once, then a section per run with its `Satisfies:` line,
+carried runs included; a carried run's draft is closed. With the PR setting "One PR for the whole feature", the PR
+auto-finisher opens that one PR once every run is done, and no run opens one of its own. With the flag off, One stays
+refused with `STACKED_ONLY` ("small runs ship a PR per run"), as before.
+
+Stacked, with the flag on, opens one PR per run along
 the real branches: from the head back along each run's recorded base; each PR is based on the branch of the one before
 it, the first on the feature's base (or on the feature's base when the PR before it is merged or its branch still merges
 back). A run whose work a listed PR already carries (taken in or combined) gets no pull request of its own. A run's work
@@ -703,8 +712,9 @@ with the gap counts as clean. What follows from it:
   not see a round on an earlier run's branch until that work is in the head. For a commit made outside Worca the card
   reads "Stopped" and **Resume** starts the check.
 - The changelog commit Ship itself makes keeps the check, so a Ship that failed part-way can go on.
-- While the feature is shipping, nothing of it starts: a round, an appended run, a requirement change, a re-plan and
-  **Resume** are refused with `SHIPPING`. The rule is asked again before each pull request Ship opens and after the
+- While the feature is shipping, nothing of it starts: a round, an appended run, a requirement change, a re-plan,
+  **Resume** and a run's own **Create PR** are refused with `SHIPPING`. A run's own **Create PR** that is still opening
+  when **One** ships refuses that ship with `HAS_SLICE_PR` instead. The rule is asked again before each pull request Ship opens and after the
   changelog commit, and once more when the feature would be recorded as shipped. If it no longer holds, Ship stops with
   `NOT_READY`, names the pull requests made so far and pushes nothing more. Ship again once the Verifier has checked the
   work, or **Resume**, if the card reads "Stopped".

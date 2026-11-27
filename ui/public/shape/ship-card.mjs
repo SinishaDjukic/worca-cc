@@ -321,12 +321,20 @@ function smallRunsShip(doc, h, m, handlers) {
   };
   const list = (cls, items) => { const l = h('div', `plan-checks srows ${cls}`); l.append(...buildCheckRows(doc, { items })); return l; };
   if (applied) {
-    const prs = sr.order.filter((o) => o.pr);
+    // Shipped as One: every run holds the same PR, so it is one row (the first run of each url), named by its runs.
+    const one = m.shipMode === 'one';
+    const withPr = sr.order.filter((o) => o.pr);
+    const prs = one ? withPr.filter((o, i) => withPr.findIndex((x) => x.pr.url === o.pr.url) === i) : withPr;
+    const labelOf = (o) => {
+      const runs = one ? withPr.filter((x) => x.pr.url === o.pr.url).map((x) => x.index) : [o.index];
+      return runs.length > 1 ? `runs ${Math.min(...runs)}–${Math.max(...runs)}` : `run ${o.index} · ${o.title}`;   // the head names the feature
+    };
     if (!handlers.countShown) body.appendChild(h('div', 'ask-shipcard-done', `${count(prs.length, 'PR', 'PRs')} open`));
-    body.appendChild(h('div', 'ask-shipcard-stats', sr.along === true ? 'stacked along the real branches' : 'a PR per run, stacked in the order runs finished'));
+    body.appendChild(h('div', 'ask-shipcard-stats', one ? 'one PR holding every run'
+      : sr.along === true ? 'stacked along the real branches' : 'a PR per run, stacked in the order runs finished'));
     body.appendChild(careRow());
     body.appendChild(list('ask-shipcard-prs', prs.map((o) => ({ id: `#${o.pr.number ?? ''}`, idCol: true, pass: true,
-      label: `run ${o.index} · ${o.title}`, note: o.onto ? `onto #${o.onto}` : `into ${sr.base || ''}`.trim(), ariaLabel: 'open' }))));
+      label: labelOf(o), note: o.onto ? `onto #${o.onto}` : `into ${sr.base || ''}`.trim(), ariaLabel: 'open' }))));
     // The Not met / Dropped requirements, as rows under the PRs (the PR descriptions carry the same lines: unmetLines).
     // Small runs D3 (D5): with the server's `shown` (on the confirmed entry of the same id), its text is the note.
     const unmet = Array.isArray(sr.unmet) ? sr.unmet : [];

@@ -848,7 +848,9 @@ export async function featureShipInput(view) {
   // Slice 4: a carried run gets no PR, but its work ships inside a listed run's PR, so the changelog names it.
   const ids = new Set((shipChainOf(view.id)?.carried || []).map((c) => c.pipelineId));
   const carried = view.slices.filter((s) => s.pipelineId && ids.has(s.pipelineId)).map(inputOf);
-  return { id: view.id, title: view.title, slices, ...(carried.length ? { carried } : {}) };
+  // A marked feature's one PR opens with its Care line and its Not met / Dropped lines, once (slice PRs carry them each).
+  const f = smallRunsOfFeature(view.id) ? featureRow(view.id) : null;
+  return { id: view.id, title: view.title, slices, ...(carried.length ? { carried } : {}), ...(f ? { preamble: carePrLines(f) } : {}) };
 }
 
 /** F47: the newest feature in a Re-plan the rest chain (replaced_by), so a host pointed at an old feature shows the

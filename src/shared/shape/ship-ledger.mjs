@@ -13,8 +13,20 @@ export const unownedReason = (ids) => {
   return xs.length ? `${xs[0]}${xs.length > 1 ? ` and ${xs.length - 1} more are` : ' is'} owned by no run and confirmed by no person` : null;
 };
 
-/** Why a marked feature never ships as one PR (chain.mjs oneShipCheck, the PR auto-finisher). */
-export const SMALL_RUNS_SHIP = 'small runs ship a PR per run';
+/** The reason a marked feature's One refusal, Ship dialog and PR auto-finisher give with the Shaper small runs flag off,
+ *  word for word as before (stored in older run and feature outcomes too; pr-auto.mjs maps it for display). */
+export const LEGACY_PER_RUN_REASON = 'small runs ship a PR per run';
+
+/** Why One is off for a marked feature while a run owns a pull request (chain.mjs oneShipCheck and the Ship dialog say
+ *  the same). `pr = { url, number?, state? }`: the number is `pr.number`, else read from a `/pull/N` or
+ *  `/merge_requests/N` url, else none. */
+export function openPrReason({ index, pr } = {}) {
+  const fromUrl = String(pr?.url || '').match(/\/(?:pull|merge_requests)\/(\d+)(?:[/?#]|$)/);
+  const n = Number.isInteger(pr?.number) && pr.number > 0 ? pr.number : fromUrl ? Number(fromUrl[1]) : null;
+  if (pr?.state === 'MERGED' && n) return `Run ${index}'s pull request #${n} is already merged`;
+  if (pr?.state === 'MERGED') return `Run ${index}'s pull request is already merged`;
+  return n ? `Run ${index} already has pull request #${n} open` : `Run ${index} already has a pull request open`;
+}
 
 const list = (v) => (Array.isArray(v) ? v : []);
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
