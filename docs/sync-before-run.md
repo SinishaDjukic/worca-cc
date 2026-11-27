@@ -6,13 +6,15 @@ Before a run starts, Worca can bring the source branch up to date with the remot
 
 ## What the status words mean
 
-Each project shows how its source branch compares with the remote:
+Each project in the Projects list shows how its source branch compares with the remote (the New run pill says
+**N behind** and **Offline** for short):
 
 - **Up to date**: nothing to do.
-- **N behind**: the remote has newer commits. A run fetches them first and moves your branch forward when that is safe.
+- **N commits behind**: the remote has newer commits. A run fetches them first and moves your branch forward when that is safe.
 - **Diverged**: both sides have new commits.
-- **Offline**: the remote could not be reached, so Worca uses the last fetch.
-- **Not on origin**: the branch exists only on your machine, so a run uses your local copy.
+- **Can’t reach origin**: the remote could not be reached, so Worca uses the last fetch. The row says when that
+  was (**Last fetched …**) and offers **Retry**.
+- **Not on origin yet**: the branch exists only on your machine, so a run uses your local copy.
 
 A project with uncommitted changes also says so. Runs use committed code only, so those changes are not part of the run.
 

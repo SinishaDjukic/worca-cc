@@ -48,7 +48,7 @@ worca ui
 ```
 
 Open `http://127.0.0.1:4317`, add a project under **Projects › Add project**, then click
-**New run** at the top of the Runs page, describe the task and press **Start run**. Turn on **Mock mode** to run
+**New** at the top of the Runs page, describe the task and press **Start run**. Turn on **Mock mode** to run
 the whole pipeline offline, with no tokens and no cost.
 
 From a terminal, inside a project:

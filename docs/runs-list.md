@@ -35,7 +35,9 @@ pull requests, it becomes **View PR** or **View PRs ▾**. The dialog's **Pull r
 
 - **One**: a single pull request for the whole group. For your own groups, Worca checks first that the runs combine,
   and it makes a new branch that joins their branches. **One** is greyed, with the reason, when a run already has a
-  PR or a run does not start from the previous run's branch.
+  PR. In a Run-after chain it is also greyed when a run does not start from the previous run's branch; in your own
+  groups, when the group has one run ("A group of one run ships as its own PR"), while Worca checks whether the runs
+  combine, or when that check says they don't. A small-runs feature always ships stacked.
 - **N separate** (or **N stacked** for a feature or a chain): one pull request per run.
 
 Under **One** you write the title and description (a [Shaper feature](shape-it-first.md) hides the description: the PR

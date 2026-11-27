@@ -10,8 +10,8 @@ comments shows a count next to its name in the file list.
 ## Leave a comment
 
 1. Open **Diff** and pick a file.
-2. Hover the line you mean and click the **+** that appears beside it (**Comment on this line**). From the keyboard, tab
-   to the line and press Tab again.
+2. Hover the line you mean and click the **+** that appears beside it (**Comment on this line**). From the keyboard, Tab
+   into the diff, move to the line with ↑ and ↓, then press Tab to reach the **+** and Enter to open it.
 3. Type in the **New comment** box (**Leave a note on this line…**). Markdown works. **Preview** shows how it will read;
    **Text** goes back to editing.
 4. Click **Comment**. **Cancel** drops the draft. Only one draft is open at a time.
@@ -32,8 +32,8 @@ A comment and its replies form a thread. Click **Reply** on the comment, or on t
 reply** box (**Reply…**). Click **Reply** to post it. Threads are one level deep: a reply is always to the thread, not to
 another reply.
 
-A thread with replies has **Hide replies (2)** and **Show replies (2)** to fold it away. That choice is only kept in the
-tab you made it in.
+A thread with replies has **Hide replies (2)** and **Show replies (2)** to fold it away. That choice lasts while the
+Diff stays open; leaving the run forgets it.
 
 ## Resolve, reopen and delete
 
@@ -53,7 +53,7 @@ its own comments, and it asks you first.
 
 While a diff has open comments, a tray lists them as **N open comments**, with **Send to chat** and, once the run is
 done, **Propose fix run** (see [Chat](chat.md#pinpoint)). A thread that was sent shows **sent to #** and the run's
-number.
+id.
 
 ## Related
 

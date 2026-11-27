@@ -11,7 +11,7 @@ under `~/.worca-cc/mcp/` ([storage.md](storage.md)). A set holds skills as well 
 The page opens on **Sets**. A list of your sets sits on the left, with **General** (marked **Built-in**) first
 and a **Find a set** box above it; team sets, when a team policy defines any, follow under **Team sets**.
 Each set shows how many servers and skills it holds and which projects use it. Click a set to see its servers
-and skills on the right, where you can **Rename** or **Duplicate** it.
+and skills on the right, where you can **Duplicate** it, and **Rename** one of your own sets.
 
 Each server in a set is one row with a short status word instead of a sentence: `Needs token`, `Needs a value`,
 `Not tested`, `Token rejected`, `Test failed`, `Test again`, `Off` or `Problem`, or a tool count and test age

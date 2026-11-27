@@ -14,8 +14,8 @@ A run tile in Needs you or Running opens the chat that follows the run, with the
 ## Pinned workflows
 
 The quick-action row has seven built-in tiles: **New run**, **Build workflow**, **Schedule a run**,
-**Track a run**, **Explain a diff**, **Write a script** and **Add project** ([Projects](projects.md)). After them comes one slot
-for a pinned workflow, then **More**.
+**Track a run**, **Explain a diff**, **Write a script** and **Add project** ([Projects](projects.md)). A pinned workflow's tile sits
+right after **New run**, and **More** ends the row: when the row is too narrow, the last built-ins move into **More** first.
 
 - **Pin any workflow.** In the Workflows Library, open a workflow row's ⋯ menu and pick
   **Pin to Chat home**. On the workflow page, the top bar's **Workflows** menu has the same item (it is

@@ -71,7 +71,7 @@ open **The note now** to see what it replaces.
 - Click **Reject** to drop it.
 
 To keep a run from using or proposing any notes, turn on **Run without memory**
-in the new-run form. It helps when you want to compare a run with and without
+in the new-run form's **Advanced** section (Advanced level and up). It helps when you want to compare a run with and without
 memory.
 
 ## Defragment
@@ -87,7 +87,8 @@ files stay in **History**. While one is live, the button reads **Open run** and
 takes you to it. A global defragment needs a registered project to run in: the
 card says "Runs on" that project, and you pick another on the New run page. You
 can also start it from the New run page with the **Memory defragment** workflow
-and its **Memory scope** control: **Global** or **Project**.
+and its **Memory scope** control: **Global** or **Project**. That control shows at
+Expert; below Expert the run uses Global.
 
 The model every defragment run uses is a helper job: change it under **Models ›
 Jobs › Helper jobs** for an engine that has that job, or under **Roles** for the others (see [models.md](models.md)).

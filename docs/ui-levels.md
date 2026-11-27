@@ -153,7 +153,7 @@ be skipped by forgetting it.
 | Team policy | E |
 | The level avatar art in the corner (the round art on the account corner and the level card) | all — a level is shown to everyone, whatever the mode |
 | The account-menu level card (the first item of the account menu, a compact card: the level's avatar and name with "View level", then "To <Next>" with the count and a small segment bar; a click or Enter goes straight to the Profile level page (`#profile/level`) and closes the menu, with no popover or dialog in between; the menu opens on a click or Enter, and nothing opens on hover or focus) | all |
-| Profile (the level section) | all — it has no sidebar entry; it opens from "View level" on the account-menu level card and the Getting started level line |
+| Profile (the level section) | all — it has no sidebar entry; it opens from "View level" on the account-menu level card, the Getting started level line and "See your level" in the level-up dialog |
 
 Levels are not Interface modes: no level element carries `data-min-level`; Try next / Open links to higher-mode pages open them with the banner.
 
@@ -434,7 +434,7 @@ missing (`data-needs-git`), at every level.
 
 | Element | Level |
 |---|---|
-| The level welcome and celebration (the dialogs that open at boot and after a level-up) | all — they wait while a blocking prompt or another dialog is on screen (rule 1) |
+| The level celebration and summary (the dialogs that open after a level-up and, once, for the levels credited at the first evaluation) | all — they wait while a blocking prompt or another dialog is on screen (rule 1) |
 | The Getting started level line (the current level and what is next, linking to Profile) | all |
 | Setup assistant › Check this machine: the Docker and E2B sandbox rows | S |
 | Setup assistant › Model access › Secret vault (flag `secretVault`, a native install with a usable key store and keys in their files): Keep in files or Move into the vault, and the docs link; with the vault on, one line | S |

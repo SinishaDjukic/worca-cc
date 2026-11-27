@@ -8,7 +8,8 @@ message, the context ring, the icon on each chat, the copy buttons, and finding 
 ## Queue messages while a reply runs
 
 You don't have to wait for Chat to finish. While a reply streams, **Add to queue** (the Send button's name) holds your
-next message. Up to 3 messages wait, per chat, and each one sends when the reply before it finishes.
+next message. Up to 3 messages wait, per chat, and each one sends when the reply before it finishes. If the reply
+finishes while you are in another chat, the queue waits for **Resume queue** instead of sending unseen.
 
 - Queued messages appear above the composer, newest on top, with the note "Sends when the reply finishes". Files
   and a quote travel with the message.
@@ -32,8 +33,8 @@ compaction nears, and red when compaction is soon. Hover it for the figure, such
 
 Click the ring for the details: **Context window** with the used, **Autocompact buffer** and **Free space**
 rows, and how much is left "until auto-compact". Once the context is large, the popover notes that each message
-re-sends about that many tokens. On the Chat page the click opens the
-Overview in the tool panel with the same Context section.
+re-sends about that many tokens. On the Chat page, for a chat that has
+started, the click opens the Overview in the tool panel with the same Context section.
 
 ## The icon on each chat
 
@@ -47,7 +48,7 @@ In the chats list, the column before a chat's title shows what the chat did:
 | Workflow | Proposed a workflow |
 | Amber **?** | Run needs you |
 
-A dot pulses while the chat is replying or running a command. Chat shows one icon, the first that
+A dot pulses while the chat is replying, running a command or following a run. Chat shows one icon, the first that
 applies in this order: needs you, started a run, follows a run, proposed a workflow. See the
 [Chats column](chat-home.md#chats-column).
 

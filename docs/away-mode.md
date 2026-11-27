@@ -37,7 +37,7 @@ still gives it, but flags it *please check*.
 
 A project can override any of these for itself: open the project, go to its **Settings** tab and use the **Away mode for this project** card.
 
-To mark a run, tick *Mark this run: worca may answer for me* on the **New run** page (reached from the **New run** button at the top of the Runs page), or pass `--night` on the CLI. A marked
+To mark a run, tick *Mark this run: worca may answer for me* on the **New run** page (reached from the **New** button at the top of the Runs page), or pass `--night` on the CLI. A marked
 run is answered during the day too, once a question has waited 30 minutes.
 
 On the run page, *Away mode on this run* overrides the setting for one run: *As set up*, *Answer for me now* or

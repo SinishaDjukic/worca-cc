@@ -136,7 +136,7 @@ parked by an outage resumes once the network is back.
 
 ### When an agent goes quiet
 
-A step that produces no output for 20 minutes is stopped as idle, and you can change that limit per step or per
+A step that produces no output for 5 hours is stopped as idle, and you can change that limit per step or per
 workflow (`idleLimitMinutes` in a step's config or in the workflow's `limits`; `WORCA_NODE_IDLE_LIMIT_MIN` sets the default for steps that set none). The limit no longer stops an agent that is busy: one waiting on a long job it started, such as a full test
 suite or a build, gets another window as long as that job is still working. An agent that is waiting on nothing, or a
 job that is stuck, is stopped as before.
@@ -184,8 +184,8 @@ the setting again when you start or schedule the card, so a card proposed earlie
 **Runs** in the sidebar lists every run, live and finished. Its **View** menu shows All, Needs you, Running,
 Waiting, Finished, **Ready to ship** (finished, no PR yet) or Archived, and groups runs by project or by date. More in [The Runs list](runs-list.md).
 
-A live run's page shows its state and current step, the time ticking, its cost and the files it changed. **Live
-view** shows the running step inside its workflow graph. **Diff** shows the worktree's changes so far. **Open in <Editor>** is at the top right (edits you make there go into the run). Each file's head, on live and finished runs, has an icon that opens the file at its first changed line; on a finished run that is not checked out, that one click checks it out first (see [Actions](actions.md#built-ins)). **Logs**
+A live run's page shows its state and current step, the time ticking, its cost and the files it changed. The
+**Workflow** tab shows the running step inside its graph. **Diff** shows the worktree's changes so far. **Open in <Editor>** is at the top right (edits you make there go into the run). Each file's head, on live and finished runs, has an icon that opens the file at its first changed line; on a finished run that is not checked out, that one click checks it out first (see [Actions](actions.md#built-ins)). **Logs**
 streams every step with search, and at Expert you can filter by source, level, step and cycle.
 
 The top bar's **Activity** pill counts what needs you and what is running. To hear about it outside the tab, turn
