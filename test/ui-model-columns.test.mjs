@@ -144,7 +144,12 @@ test('the skin: fixed, as wide as there is room up to 672px and scrolling sidewa
   const rules = cssRules(readStyleCss()).filter((x) => !x.media);
   const body = (sel) => rules.filter((x) => x.sel === sel).map((x) => x.body).join(';');
   assert.match(body('.mdl-cols-pop'), /position:fixed;z-index:58;width:min\(672px,calc\(100vw - 16px\)\);overflow-x:auto/);
-  assert.match(body('.mdl-cols'), /grid-template-columns:204px 214px minmax\(238px,1fr\)/);
+  assert.match(body('.mdl-cols-pop .mdl-cols'), /grid-template-columns:204px 214px minmax\(238px,1fr\)/);
+  assert.match(body('.mdl-cols-pop .mdl-cols'), /align-items:stretch/);
+  assert.match(body('.mdl-cols-pop .mdl-cols'), /column-gap:0/);
+  const bare = rules.filter((x) => x.sel === '.mdl-cols');
+  assert.equal(bare.length, 1);
+  assert.match(bare[0].body, /grid-template-columns:minmax\(0,1\.25fr\) minmax\(0,1fr\) 200px 28px/);
   assert.match(body('.mdl-col-list'), /overflow-y:auto/);
   assert.match(body('.mdl-cols-row[aria-selected="true"]'), /background:var\(--row-selected\)/);
   assert.match(body('.mdl-cols-hint,.mdl-cols-note'), /color:var\(--ink-2\);font-size:var\(--fs-meta\)/);
