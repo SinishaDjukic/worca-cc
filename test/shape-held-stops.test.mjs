@@ -14,6 +14,8 @@ import * as features from '../src/core/shape/features.mjs';
 import { createSliceFeature, liveSliceFrom, busySliceOf, sliceWords, featureView } from '../src/core/shape/features.mjs';
 import { featureStateLine } from '../ui/public/shape/feature-card.mjs';
 import { createHeldStops } from '../src/core/shape/chain.mjs';
+// Namespace read, so a missing new export fails only its own test, not the whole file.
+import * as CHAIN from '../src/core/shape/chain.mjs';
 import { answeredRefusal, gateStop, heldRefusal, planStop } from '../src/shared/shape/run-stops.mjs';
 import { createNetworkWatch, NETWORK_ACTOR } from '../src/core/network-wait.mjs';
 
@@ -33,7 +35,8 @@ const slice = (n) => ({ id: `s${n}`, title: `Slice ${n}`, goal: '', inScope: [],
 const STOP = gateStop({ run: 2, issues: [{ severity: 'major', title: 'x' }], fixCycles: 3 });
 
 /** A feature of `slices` runs: run 1 done, run 2 live on a stop question, run 3 live and building unless `three` is false. */
-function setup({ three = true, slices = 3, applyChange = undefined, takeIn = undefined, canResume = true, resumeReply = undefined } = {}) {
+function setup({ three = true, slices = 3, applyChange = undefined, takeIn = undefined, canResume = true, resumeReply = undefined,
+  resumeTakeIn = undefined, refuse = undefined } = {}) {
   const f = createSliceFeature({ pipelineId: pipe('done'), projectDir: root, title: 'T', outline: { why: '', slices: Array.from({ length: slices }, (_, i) => slice(i + 1)) },
     perspectives: ['product'], workflowId: 'wf_shape' });
   const tix = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? ORDER BY idx').all(f.id).map((r) => r.ticket_id);
@@ -75,9 +78,10 @@ function setup({ three = true, slices = 3, applyChange = undefined, takeIn = und
   const audits = [];
   const held = createHeldStops({ runs, liveSliceOf, broadcastFeature: (id) => repaints.push(id), resolvePending, now: Date.now,
     audit: (pid, text, by) => audits.push({ pid, text, by }),
-    ...(applyChange ? { applyChange } : {}), ...(takeIn ? { takeIn } : {}), ...(canResume ? { resume } : {}) });
+    ...(applyChange ? { applyChange } : {}), ...(takeIn ? { takeIn } : {}), ...(canResume ? { resume } : {}),
+    ...(resumeTakeIn ? { resumeTakeIn } : {}), ...(refuse ? { refuse } : {}) });
   const finish = (e) => { e.status = 'done'; setPipe(e.pipelineId, 'done'); };
-  return { f, e2, e3, runs, held, answers, resolved, repaints, finish, liveSliceOf, entry, resumed, audits };
+  return { f, e2, e3, runs, held, answers, resolved, repaints, finish, liveSliceOf, entry, resume, resumed, audits };
 }
 
 test('held while run 3 is going: deliver answers 0 times; after it finishes, once, and pendingQuestion is resolved', () => {
@@ -1246,4 +1250,239 @@ test('s8: flag off, and flag on with the feature unmarked → no resumeAfter in 
     none(resumeWorld({ mark: false }), 'unmarked');
   });
   await withEnv({ WORCA_FLAGS: undefined }, () => none(marked, 'flag off'));
+});
+
+// ── Slice 3 (R-po-6): a clash on a resume holds the run (A5) ────────────────────────────────────────────────────────
+const CLASH_REASON = 'runs 2 and 6 clash in src/a.mjs';
+const CLASH_BODY = { error: CLASH_REASON, code: 'TAKE_IN_REFUSED' };
+const CLASH_RECORD = { code: 'TAKE_IN_REFUSED', error: CLASH_REASON };
+const CLASH_LINE = 'Base `feat/r2` moved: conflicts in 1 file.';
+/** takeInVerdict's clash for a resume of `pid`: run 2's branch clashes with the run's own. */
+const clashFor = (pid) => ({ status: 'clash', reason: CLASH_REASON, runs: [2, 6], files: ['src/a.mjs'],
+  missing: [{ index: 2, branch: 'feat/r2', pipelineId: 'run-two' }], branch: `feat/${pid}` });
+/** The server's ResumeError, as its `refuse` dep builds it. */
+const asResumeError = (status, body) => Object.assign(new Error(body.error), { status, body });
+/** A resume world whose take-in check answers `verdict(pid)` and records each pipeline it is asked about. */
+function checkedWorld({ verdict = clashFor, ...over } = {}) {
+  const checked = [];
+  const w = resumeWorld({ refuse: asResumeError, resumeTakeIn: async (pid) => { checked.push(pid); return verdict(pid); }, ...over });
+  return { ...w, checked };
+}
+/** A Resume of `pid` in the server's order: holdResume, then the take-in check, and only then the run starts. */
+const press = (w, pid, opts = { by: 'local' }) => w.held.claimed(pid, async (ticket) => w.held.holdResume(pid, opts, ticket)
+  || (await w.held.takeInBeforeResume(pid, opts)) || w.resume(pid, opts));
+/** Press Resume on a run whose take-in clashes; the refusal is expected. → the error */
+async function refusedPress(w, pid) {
+  let error = null;
+  await quietly(async () => { error = await press(w, pid).then(() => null, (e) => e); });
+  assert.ok(error, 'the Resume was refused');
+  return error;
+}
+
+test('R-po-6 A5: a Resume press whose take-in clashes rejects 409 TAKE_IN_REFUSED with the clash reason, the run stays paused and is not started', () => withEnv(SMALL_ON, async () => {
+  const w = checkedWorld();
+  const pid = w.pids[6];
+  saved(w, w.e4);                                     // the turn is due
+  const err = await refusedPress(w, pid);
+  assert.deepEqual([err.status, err.body], [409, CLASH_BODY], String(err));
+  assert.deepEqual(w.checked, [pid]);
+  assert.equal(statusOf(pid), 'paused', 'not failed, not started');
+  assert.deepEqual(w.resumed, [], 'the run is not started');
+  assert.equal([...w.runs.values()].some((e) => e.pipelineId === pid), false, 'no runs-map entry');
+  assert.equal(w.held.heldResumeOf(pid), null);
+  assert.equal(w.liveSliceOf(pid)?.resuming, undefined, 'the claim is released');
+}));
+
+test('R-po-6 A5: without a refuse dep a clashing resume still throws 409 TAKE_IN_REFUSED with the reason', () => withEnv(SMALL_ON, async () => {
+  const w = checkedWorld({ refuse: undefined });
+  const pid = w.pids[6];
+  saved(w, w.e4);
+  const err = await refusedPress(w, pid);
+  assert.deepEqual([err.status, err.code, err.message], [409, 'TAKE_IN_REFUSED', CLASH_REASON]);
+}));
+
+test('R-po-6 A5: the clashing resume writes the record a clashing answer writes', () => withEnv(SMALL_ON, async () => {
+  // The answer path's refusal for the same reason.
+  const a = takeSetup({ reply: () => ({ ok: false, refused: true, reason: CLASH_REASON }) });
+  const answered = await Promise.resolve().then(() => a.held.answer(a.e2, 'gate-w9-3', { decision: 'another' }, 'local'))
+    .then(() => null, (e) => e);
+  assert.ok(answered, 'the answer was refused');
+  const w = checkedWorld();
+  const pid = w.pids[6];
+  saved(w, w.e4);
+  const painted = w.repaints.length;
+  let refused = null;
+  await quietly(async () => { refused = await w.held.takeInBeforeResume(pid, { by: 'local' }).then(() => null, (e) => e); });
+  assert.ok(refused, 'the resume was refused');
+  assert.deepEqual([refused.status, refused.body], [answered.status, { error: answered.message, code: answered.code }],
+    'the same refusal body');
+  const why = w.held.overlay(pid, null);
+  assert.deepEqual([why?.status, why?.resumeRefused], ['paused', CLASH_RECORD], 'the reason reads on the run');
+  assert.deepEqual(w.audits, [{ pid, text: CLASH_LINE, by: null }], 'one clash line, with no actor');
+  assert.equal(CHAIN.takeInClashAudit(clashFor(pid), `feat/${pid}`), CLASH_LINE, "the line the answer's take-in builds");
+  assert.deepEqual(w.repaints.slice(painted), [w.f.id], 'the feature repaints once');
+}));
+
+test('R-po-6 A5: a clash with no line to write, or an audit that fails, still refuses and records', () => withEnv(SMALL_ON, async () => {
+  for (const [why, verdict, breakAudit] of [
+    ['no clashing missing run', (pid) => ({ ...clashFor(pid), missing: [] }), false],
+    ['the audit throws', clashFor, true],
+  ]) {
+    const w = checkedWorld({ verdict });
+    const pid = w.pids[6];
+    saved(w, w.e4);
+    if (breakAudit) w.audits.push = () => { throw new Error('the audit is down'); };
+    const err = await refusedPress(w, pid);
+    assert.deepEqual([err.status, err.body], [409, CLASH_BODY], `${why}: ${err}`);
+    assert.deepEqual(w.held.overlay(pid, null)?.resumeRefused, CLASH_RECORD, why);
+    assert.equal(w.audits.length, 0, why);
+    assert.deepEqual(w.resumed, [], why);
+  }
+}));
+
+test('R-po-6 A5: a held resume delivered at its turn into a clash stays paused with the same record', () => withEnv(SMALL_ON, async () => {
+  let w = null;
+  let calls = 0;
+  // The fake resumeRun asks the check before it starts the run, as the server's resumeRunOnce does.
+  w = checkedWorld({ resumeReply: async (pid, opts) => {
+    calls += 1;
+    const waits = await w.held.takeInBeforeResume(pid, opts);
+    if (waits) return waits;
+    setPipe(pid, 'running');
+    return { ok: true, runId: `resumed-${pid}` };
+  } });
+  const pid = w.pids[6];
+  assert.deepEqual(w.held.holdResume(pid, { by: 'local' }), heldAnswerTo(pid, 4));
+  assert.deepEqual(w.checked, [], 'a held resume is not checked before its turn');
+  saved(w, w.e4);
+  await quietly(() => w.held.deliver());
+  assert.equal(w.held.heldResumeOf(pid), null);
+  assert.equal(statusOf(pid), 'paused');
+  const why = w.held.overlay(pid, null);
+  assert.deepEqual([why?.status, why?.resuming, why?.resumeRefused], ['paused', undefined, CLASH_RECORD]);
+  assert.deepEqual(w.audits, [{ pid, text: CLASH_LINE, by: null },
+    { pid, by: 'local', text: `The resume held for its turn did not go on: ${CLASH_REASON}. Resume again to go on.` }]);
+  assert.equal(w.held.watchSkips(pid), true);
+  await quietly(() => w.held.deliver());
+  assert.deepEqual([calls, w.checked.length], [1, 1], 'not tried again');
+}));
+
+test('R-po-6 A5: the network watch leaves a clash-refused run alone until the next Resume', () => withEnv(SMALL_ON, async () => {
+  const w = checkedWorld();
+  const pid = w.pids[6];
+  saved(w, w.e4);
+  const watched = [];
+  const row = networkPausedRow(pid);
+  const watch = createNetworkWatch({
+    settings: () => ({ enabled: true, maxWaitMs: 3600000 }), listRuns: () => [row],
+    hasResumeTicket: (id) => w.held.watchSkips(id), probe: async () => true,
+    resume: async (r) => { watched.push(r.id); return { ok: true }; },
+  });
+  await refusedPress(w, pid);
+  assert.equal(w.held.watchSkips(pid), true);
+  assert.deepEqual([await watch.tick(), await watch.tick()], [[], []]);
+  assert.deepEqual(watched, [], 'no further resume call');
+  assert.equal(w.held.holdResume(pid, { by: 'local' }), null, "a person's next Resume");
+  assert.equal(w.held.watchSkips(pid), false);
+  assert.deepEqual(await watch.tick(), [pid]);
+  for (const paused of [false, true]) {               // Stop, then Pause, on a clash-refused run
+    await refusedPress(w, pid);
+    assert.equal(w.held.watchSkips(pid), true, `refused again (paused: ${paused})`);
+    assert.equal(w.held.dropResume(pid, { paused }), false, 'there was no hold');
+    assert.equal(w.held.watchSkips(pid), false, `paused: ${paused}`);
+    assert.equal(w.held.overlay(pid, null), null, 'the record is gone');
+  }
+  // A cost refusal is not a clash: the watch may take the run up again (R-arch-3).
+  const cost = await refusedOnCost();
+  assert.equal(cost.w.held.watchSkips(cost.pid), false);
+}));
+
+test('A5: the next Resume clears the clash record; a clean verdict then goes on', () => withEnv(SMALL_ON, async () => {
+  let clean = false;
+  const w = checkedWorld({ verdict: (pid) => (clean ? { status: 'clean', missing: [], branch: `feat/${pid}` } : clashFor(pid)) });
+  const pid = w.pids[6];
+  saved(w, w.e4);
+  await refusedPress(w, pid);
+  assert.deepEqual(w.held.overlay(pid, null)?.resumeRefused, CLASH_RECORD);
+  clean = true;                                       // settled on the run's branch
+  assert.deepEqual(await press(w, pid), { ok: true, runId: `resumed-${pid}`, pipelineId: pid }, 'not RESUME_IN_FLIGHT');
+  assert.equal(w.held.overlay(pid, null), null, 'the record is cleared');
+  assert.deepEqual(resumedRuns(w), [6]);
+  assert.equal(w.audits.length, 1, 'only the first attempt wrote a line');
+}));
+
+test('A5: a wait verdict holds the resume behind the named run', () => withEnv(SMALL_ON, async () => {
+  const w = checkedWorld({ verdict: () => ({ status: 'wait', after: 2 }) });
+  const pid = w.pids[6];
+  saved(w, w.e4);
+  const painted = w.repaints.length;
+  assert.deepEqual(await press(w, pid, { by: 'local', heldDelivery: false }), heldAnswerTo(pid, 2));
+  assert.deepEqual(w.held.heldResumeOf(pid), { after: 2 });
+  const live = w.held.overlay(pid, null);
+  assert.deepEqual([live?.heldResume, live?.resuming, live?.resumeRefused], [{ after: 2 }, undefined, undefined]);
+  assert.ok(w.repaints.slice(painted).includes(w.f.id));
+  assert.deepEqual([w.resumed, w.audits], [[], []]);
+  assert.equal(statusOf(pid), 'paused');
+  await w.held.deliver();                             // the fake resumeRun does not check again
+  assert.deepEqual(w.resumed, [{ run: 6, pid, opts: { by: 'local', heldDelivery: true } }], 'the opts were kept');
+}));
+
+test('A5: none, clean, no-branch and error verdicts, and a throwing resumeTakeIn, return null and write no record', () => withEnv(SMALL_ON, async () => {
+  for (const [name, verdict] of [
+    ['none', () => ({ status: 'none', skipped: [] })],
+    ['clean', () => ({ status: 'clean', missing: [], skipped: [] })],
+    ['no-branch', () => ({ status: 'no-branch', error: 'branch feat/r2 no longer exists' })],
+    ['error', () => ({ status: 'error', error: 'git timed out' })],
+    ['a throw', () => { throw new Error('boom'); }],
+  ]) {
+    const w = checkedWorld({ verdict });
+    const pid = w.pids[6];
+    saved(w, w.e4);
+    let out;
+    const errors = await quietly(async () => { out = await w.held.takeInBeforeResume(pid, { by: 'local' }); });
+    assert.equal(out, null, name);
+    assert.deepEqual(w.checked, [pid], name);
+    assert.deepEqual(w.audits, [], name);
+    assert.equal(w.held.overlay(pid, null), null, `${name}: no record`);
+    assert.equal(w.held.heldResumeOf(pid), null, name);
+    assert.equal(errors.filter((e) => /resume take-in check failed/.test(e)).length, name === 'a throw' ? 1 : 0, `${name}: ${errors.join(' | ')}`);
+  }
+}));
+
+test('A5: flag off, an unmarked feature, no feature or no resumeTakeIn dep never calls the check', async () => {
+  const none = async (w, pid, why) => {
+    assert.equal(await w.held.takeInBeforeResume(pid, { by: 'local' }), null, why);
+    assert.deepEqual(w.checked || [], [], why);
+    assert.equal(w.held.overlay(pid, null), null, why);
+  };
+  await withEnv({ WORCA_FLAGS: undefined }, async () => { const w = checkedWorld(); await none(w, w.pids[6], 'flag off'); });
+  await withEnv(SMALL_ON, async () => {
+    const unmarked = checkedWorld({ mark: false });
+    await none(unmarked, unmarked.pids[6], 'unmarked feature');
+    const w = checkedWorld();
+    await none(w, pipe('paused'), 'a pipeline of no feature');
+    const noDep = resumeWorld();
+    await none(noDep, noDep.pids[6], 'no resumeTakeIn dep');
+    const control = checkedWorld({ verdict: () => ({ status: 'none', skipped: [] }) });
+    await control.held.takeInBeforeResume(control.pids[6], { by: 'local' });
+    assert.deepEqual(control.checked, [control.pids[6]], 'positive control: marked, flag on');
+  });
+});
+
+test('A5 wiring: resumeRunOnce calls takeInBeforeResume after holdResume and before setCostCapOverride, and createHeldStops gets resumeTakeIn', () => {
+  const src = readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8');
+  const start = src.indexOf('async function resumeRunOnce(');
+  assert.ok(start >= 0, 'resumeRunOnce');
+  const body = src.slice(start);
+  const at = (needle) => body.indexOf(needle);
+  const hold = at('heldStops.holdResume(');
+  const check = at('heldStops.takeInBeforeResume(');
+  const override = at('setCostCapOverride(pipelineId)');
+  assert.ok(hold >= 0 && override >= 0, 'holdResume and the cost override');
+  assert.ok(check >= 0, 'resumeRunOnce calls takeInBeforeResume');
+  assert.ok(hold < check && check < override, 'holdResume, then the take-in check, then the first write');
+  const made = src.indexOf('createHeldStops({');
+  const deps = src.slice(made, src.indexOf('const deliverHeld', made));
+  assert.match(deps, /\bresumeTakeIn\s*:/, 'createHeldStops gets resumeTakeIn');
+  assert.match(src, /\bresumeTakeInVerdict\(/, 'the dep reads the verdict from chain.mjs');
 });

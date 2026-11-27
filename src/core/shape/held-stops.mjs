@@ -5,7 +5,7 @@
 // only wires it (re-exported by chain.mjs).
 import { stopAnswerOk, stopOptionOf, heldRefusal, answeredRefusal, sendingRefusal } from '../../shared/shape/run-stops.mjs';
 import { featureOfPipeline, turnOrder, liveSliceHeldResume, liveSliceResuming, liveSliceFrom } from './features.mjs';
-import { heldStopTurn, fireSourceOf, mergingBackSliceOf } from './chain.mjs';
+import { heldStopTurn, fireSourceOf, mergingBackSliceOf, takeInClashAudit } from './chain.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature } from './small-runs.mjs';
 import { requirementChangedFeedback } from '../../shared/shape/req-change.mjs';
 
@@ -15,8 +15,11 @@ import { requirementChangedFeedback } from '../../shared/shape/req-change.mjs';
  * takeIn?(entry) → {ok, merged} | {ok:false, wait, after} | {ok:false, refused, reason} (slice 3: the run takes in the
  * finished work before its answer goes on; without it every answer is today's synchronous path),
  * resume?(pipelineId, opts) → Promise<{ok, runId?} | {ok:true, held:true, …}> (slice 7: the server's resumeRun; without
- * it no resume is held), refuse?(status, body) → Error (the server's ResumeError), audit?(pipelineId, text, by) }.
- * → { answer, deliver, clear, holdResume, heldResumeOf, overlay, dropResume, splitBootPicks, claimed, watchSkips }
+ * it no resume is held), refuse?(status, body) → Error (the server's ResumeError), audit?(pipelineId, text, by),
+ * resumeTakeIn?(pipelineId) → Promise<takeInVerdict result> (slice 3, R-po-6: the take-in verdict a resume reads before
+ * it starts; without it every resume goes on as today) }.
+ * → { answer, deliver, clear, holdResume, takeInBeforeResume, heldResumeOf, overlay, dropResume, splitBootPicks, claimed,
+ *     watchSkips }
  */
 /** A runs-map entry's feature and run number: its slice when it carries one, else its pipeline's feature row. */
 export function entryFeatureOf(entry) {
@@ -26,7 +29,7 @@ export function entryFeatureOf(entry) {
   return at ? { featureId: at.featureId, index: at.idx } : null;
 }
 
-export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, applyChange = null, takeIn = null, resume = null, refuse = null, audit = null, now = Date.now }) {
+export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, applyChange = null, takeIn = null, resume = null, refuse = null, audit = null, resumeTakeIn = null, now = Date.now }) {
   const featureOf = entryFeatureOf;
   const turnOf = (at) => (at ? heldStopTurn(at.featureId, at.index, { live: liveSliceOf, now: now() }) : { due: true });
   const repaint = (at) => { if (at) broadcastFeature(at.featureId); };
@@ -221,6 +224,38 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     return { ok: true, held: true, pipelineId, after };
   }
 
+  /** Slice 3 (R-po-6, A5): the take-in check of a resume of paused `pipelineId`, before the run starts (after
+   *  holdResume let it go on). A clash refuses the resume as a clashing answer refuses a stop: the run stays paused,
+   *  says why (`resumeRefused`, until the next Resume), the audit gets the clash line, and it throws 409
+   *  TAKE_IN_REFUSED. A run still merging back holds the resume behind it. Anything else (none, clean, no-branch, an
+   *  error, a check that throws) goes on as today. → null (go on) | {ok:true, held:true, pipelineId, after} */
+  async function takeInBeforeResume(pipelineId, opts = {}) {
+    if (!resumeTakeIn || !pipelineId || !shaperSmallRunsOn()) return null;
+    const at = featureOfPipeline(pipelineId);
+    if (!at || !smallRunsOfFeature(at.featureId)) return null;
+    let v;
+    try { v = await resumeTakeIn(pipelineId); } catch (err) {
+      console.error(`[worca-ui] resume take-in check failed: ${err && err.message ? err.message : err}`);
+      return null;
+    }
+    if (v && v.status === 'wait') {
+      const { heldDelivery, ...kept } = opts;
+      resumes.set(pipelineId, { pipelineId, featureId: at.featureId, index: at.idx, opts: kept, after: v.after });
+      paintFeature(at.featureId);
+      return { ok: true, held: true, pipelineId, after: v.after };
+    }
+    if (!v || v.status !== 'clash') return null;
+    refusedResumes.set(pipelineId, { code: 'TAKE_IN_REFUSED', error: v.reason });
+    try {
+      const line = takeInClashAudit(v, v.branch);
+      if (line && audit) audit(pipelineId, line, null);
+    } catch { /* the audit line is best-effort */ }
+    console.error(`[worca-ui] resume not started: ${v.reason}`);
+    paintFeature(at.featureId);
+    const body = { error: v.reason, code: 'TAKE_IN_REFUSED' };
+    throw refuse ? refuse(409, body) : Object.assign(new Error(v.reason), { code: 'TAKE_IN_REFUSED', status: 409 });
+  }
+
   /** Run one resume `fn(ticket)` of `pipelineId`; a claim holdResume made on its ticket is released once it settles
    *  (its runs-map entry is set, or it refused). */
   async function claimed(pipelineId, fn) {
@@ -236,8 +271,10 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
 
   const heldResumeOf = (pipelineId) => { const r = resumes.get(pipelineId); return r ? { after: r.after } : null; };
   /** Whether an unattended resume (the network watch) leaves `pipelineId` alone: its resume is held, being delivered,
-   *  or a person dropped its hold with Pause. */
-  const watchSkips = (pipelineId) => resumes.has(pipelineId) || delivering.has(pipelineId) || pausedHolds.has(pipelineId);
+   *  a person dropped its hold with Pause, or its resume was refused on a take-in clash (slice 3, until the next Resume;
+   *  other refusals, such as cost, are retried). */
+  const watchSkips = (pipelineId) => resumes.has(pipelineId) || delivering.has(pipelineId) || pausedHolds.has(pipelineId)
+    || refusedResumes.get(pipelineId)?.code === 'TAKE_IN_REFUSED';
 
   /** D9: the live slice as every turn reader sees it: `resuming` while delivering, `heldResume` while held, and
    *  `resumeRefused: {code, error}` once a held resume was refused at its turn (until the next Resume). */
@@ -394,5 +431,5 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     try { repaint(featureOf(entry)); } catch { /* the repaint is best-effort */ }
   }
 
-  return { answer, deliver, clear, holdResume, heldResumeOf, overlay, dropResume, splitBootPicks, claimed, watchSkips };
+  return { answer, deliver, clear, holdResume, takeInBeforeResume, heldResumeOf, overlay, dropResume, splitBootPicks, claimed, watchSkips };
 }

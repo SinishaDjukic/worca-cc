@@ -18,6 +18,8 @@ import { busySliceOf, featureView, liveSliceFrom, resumeFeature, setApproveEach,
 // Slice 5: a namespace read, so a missing new export fails only its own test, not the whole file.
 import * as SF from '../src/core/shape/features.mjs';
 import { sliceChainGate, heldStopTurn, latestFinishedSource, sliceSourceOf, sliceCombineGate, combineDependencies, createHeldStops } from '../src/core/shape/chain.mjs';
+// Namespace read, so a missing new export fails only its own test, not the whole file.
+import * as CHAIN from '../src/core/shape/chain.mjs';
 import { gateStop } from '../src/shared/shape/run-stops.mjs';
 import { SIXTEEN_RUN_LINKS, sixteenRunFeature, siblingRunsFeature, startable, world, SIXTEEN_RUN_STATES,
   siblingKit, commitFile, writeShared, head, probeEnv, isAncestorExit, minute, record } from './helpers/shape-sixteen-runs.mjs';
@@ -29,6 +31,7 @@ import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { g, GITCONFIG } from './helpers/base-world.mjs';
 import { mergeBaseInto } from '../src/core/git-sync.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
+import { appendAuditById } from '../src/core/artifacts.mjs';
 
 useTempHome(after, 'worca-shape-sixteen-');
 const root = mkdtempSync(join(tmpdir(), 'worca-shape-sixteen-proj-'));
@@ -1739,3 +1742,84 @@ test('RS7 (R-arch-5): resume has exactly one take-in call, _takeInOnResume()', (
   assert.deepEqual(body.match(/this\.(_takeInLatestFinished|takeInBeforeAnswer|_takeInNow|_mergeLatestOnResume)\(/g) || [], [],
     'no other take-in call in the resume');
 });
+
+// ---- R-po-6: a resume on real branches: it waits for a save, and a clash keeps it paused ----------------------------
+/** The held stops over a sibling world, with `resume` in the server's order: holdResume, the take-in check on the real
+ *  branches, then the run starts and takes the work in (`harness`'s _takeInOnResume). */
+function resumingHeld(w, harness, entries = []) {
+  const runs = new Map(entries.map((e) => [e.id, e]));
+  const started = [];
+  let held = null;
+  const resume = (pid, opts) => held.claimed(pid, async (ticket) => {
+    const waits = held.holdResume(pid, opts, ticket) || (await held.takeInBeforeResume(pid, opts));
+    if (waits) return waits;
+    started.push(pid);
+    await harness._takeInOnResume();
+    return { ok: true, runId: `resumed-${pid}` };
+  });
+  held = createHeldStops({ runs, liveSliceOf: (pid) => (held?.overlay ? held.overlay(pid, null) : null), broadcastFeature: () => {},
+    resolvePending: () => true, resume, resumeTakeIn: (pid) => CHAIN.resumeTakeInVerdict(w.repo, pid),
+    refuse: (status, body) => Object.assign(new Error(body.error), { status, body }),
+    audit: (pid, text) => appendAuditById(pid, text) });   // as the server writes it
+  return { held, resume, started };
+}
+const statusRow = (pid) => getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(pid).status;
+const pauseRow = (pid) => getDb().prepare("UPDATE pipelines SET status = 'paused' WHERE id = ?").run(pid);
+
+test("R-po-6 example: run 4 resumed while run 3 is still saving waits, and starts only after run 3's work is saved, with it in its branch", () => withEnvVars(ON, async () => {
+  // The card's runs 3 and 4 are the runs labelled 9 and 10 here.
+  const w = siblingWorld();
+  const { repo, fx } = w;
+  fx.finish(8, { at: minute(1) });
+  const wt10 = join(dirname(repo), 'wt10');
+  g(repo, 'worktree', 'add', '-q', '-b', 'feat/run-10', wt10, 'feat/run-7');
+  commitFile(wt10, 'ten.txt');
+  fx.start(10, { branch: record(10) });
+  const pid = fx.pipelineOf(10);
+  pauseRow(pid);
+  fx.finish(9, { at: minute(2) });                    // done, and nine.txt is not committed yet
+  const nine = { id: 'r9', pipelineId: fx.pipelineOf(9), status: 'done', settled: false,
+    orch: { runShape: { slice: { feature: fx.featureId, index: 3 } } } };
+  const ten = waitedRunHarness(w);
+  const start = head(repo, 'feat/run-7');
+  const rec = () => ({ source: 'feat/run-7', feature: 'feat/run-10', worktreeDir: wt10, baseSha: start, diffBase: start, startHead: start });
+  Object.assign(ten.h, { runShape: { slice: { feature: fx.featureId, index: 4 } }, branchInfo: { branch: 'feat/run-10', worktreeDir: wt10 },
+    workDirs: new Map([[ten.key, wt10]]), state: { status: 'running', branch: rec(), branches: { [ten.key]: rec() } } });
+  ten.h.pipeline = { id: pid, dir: join(root, `run-ten-resumed-${pid}`) };
+  const s = resumingHeld(w, ten.h, [nine]);
+
+  assert.deepEqual(await s.resume(pid, { by: 'local' }), { ok: true, held: true, pipelineId: pid, after: 3 });
+  assert.deepEqual(s.held.overlay(pid, null)?.heldResume, { after: 3 }, 'run 4 reads as waiting');
+  await s.held.deliver();
+  assert.deepEqual(s.started, [], 'run 3 is still saving');
+  assert.equal(statusRow(pid), 'paused');
+
+  commitNine(w);                                      // run 3 saves its work
+  nine.settled = true;
+  await s.held.deliver();
+  assert.deepEqual(s.started, [pid], 'run 4 starts after the save');
+  assert.equal(isAncestorExit(repo, head(repo, 'feat/run-9'), 'feat/run-10'), 0, "run 3's commit is in run 4's branch");
+  assert.equal(filesOn(repo, 'feat/run-10').includes('nine.txt'), true);
+}));
+
+test('R-po-6 A5: a Resume into a real clash is refused before the run starts, nothing moves, and it goes on once settled', () => withEnvVars(ON, async () => {
+  const w = clashWorld();
+  const eight = waitedRunHarness(w);
+  const pid = w.fx.pipelineOf(8);
+  pauseRow(pid);
+  const was = snapshot(w);
+  const s = resumingHeld(w, eight.h);
+  const err = console.error; console.error = () => {};
+  let refused = null;
+  try { refused = await s.resume(pid, { by: 'local' }).then(() => null, (e) => e); } finally { console.error = err; }
+  assert.deepEqual([refused?.status, refused?.body], [409, { error: CLASH, code: 'TAKE_IN_REFUSED' }], String(refused));
+  assert.deepEqual(s.started, [], 'the run is not started');
+  assert.equal(statusRow(pid), 'paused');
+  assert.deepEqual(snapshot(w), was, 'no branch and no file moves');
+  assert.equal(noMergeStarted(w.wt8), true);
+  assert.equal(auditOf(pid).filter((l) => l === CONFLICT_LINE).length, 1, "the answer's clash line, once");
+
+  settleOnEight(w);
+  assert.deepEqual(await s.resume(pid, { by: 'local' }), { ok: true, runId: `resumed-${pid}` });
+  assert.deepEqual(s.started, [pid]);
+}));

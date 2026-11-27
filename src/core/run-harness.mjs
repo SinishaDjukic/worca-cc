@@ -102,7 +102,7 @@ import { flagEnabled } from './flags.mjs';
 import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit, checkBaseMerge, mergeBaseInto } from './git-sync.mjs';
 import { featureBase } from './shape/features.mjs';
 import { shaperSmallRunsOn, smallRunsAtStart, smallRunsOfFeature } from './shape/small-runs.mjs';
-import { latestFinishedSource, combineDependencies, combinedAudit, takeInVerdict } from './shape/chain.mjs';
+import { latestFinishedSource, combineDependencies, combinedAudit, takeInVerdict, takeInClashAudit } from './shape/chain.mjs';
 import { cleanOutcome } from './shape/rounds.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
@@ -10789,8 +10789,7 @@ export class RunHarness extends EventEmitter {
     const gitOpts = { cwd: wt, ignoreAbort: true };
     const ask = { featureId: sl.feature, pipelineId: this.pipeline?.id || null, branch: info.branch };
     const refuse = async (reason, clash = null) => {
-      const c = clash && clash.missing && clash.missing.find((d) => clash.runs.includes(d.index));
-      const line = c ? baseMovedAudit(c.branch, info.branch, { status: 'conflicts', files: clash.files }) : null;
+      const line = takeInClashAudit(clash, info.branch);
       if (line) await appendAudit(this.pipeline.dir, line).catch(() => {});
       this._log('worktree', 'warn', `did not take in the finished work: ${reason}`);
       return { ok: false, refused: true, reason };

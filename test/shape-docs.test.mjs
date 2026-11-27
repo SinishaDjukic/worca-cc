@@ -218,6 +218,25 @@ test('slice 3: "Work taken in after a wait" follows the clash part and "The flag
   assert.match(live, /waited at a stop takes in every finished run it lacks, whatever its base, before its answer goes on/);
 });
 
+// Slice 3 runner rules (R-rel-1): Pause drops a held answer; finished work comes from any base; a clash holds a resume.
+test('slice 3 runner rules (R-rel-1): Open stops on the card says Pause drops a held answer', () => {
+  const part = smallPart('Open stops on the card');
+  assert.ok(part, 'the "### Open stops on the card" part');
+  const sentences = part.split(/(?<=\.)\s+/);
+  assert.ok(sentences.some((s) => /Pause/.test(s) && /drops? (a|the) held answer/i.test(s)), 'a sentence says Pause drops a held answer');
+});
+
+test('slice 3 runner rules (R-rel-1): Work taken in after a wait says "from any base" and that a clashing resume stays paused', () => {
+  const small = DOCS['shape-it-first.md'].text();
+  const at = small.indexOf('Work taken in after a wait');
+  assert.ok(at >= 0, 'the paragraph "Work taken in after a wait" under Small runs');
+  const para = flat(small.slice(at).split(/\n\s*\n/).slice(0, 2).join('\n'));
+  assert.deepEqual(missing(para, ['from any base', /Resume/, /stays paused/i, /not retried/i]), []);
+  assert.ok(!para.includes('goes on without that work'), 'no longer says a resumed run goes on without that work');
+  const live = flat(small).split('**The flag, read live.**')[1]?.split('**A feature with the marker')[0] || '';
+  assert.match(live, /on a clash it stays paused/i, '"The flag, read live" says a clashing resume stays paused');
+});
+
 test('a clash between the runs it builds on: Small runs says a run starts with all of them and how a held run is released', () => {
   const small = DOCS['shape-it-first.md'].text();
   const live = flat(small).split('**The flag, read live.**')[1]?.split('**A feature with the marker')[0] || '';

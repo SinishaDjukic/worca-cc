@@ -5,7 +5,7 @@
 import { getDb } from '../db.mjs';
 import { previousBranchesOf, unfireTicket } from '../scheduler.mjs';
 import { isAncestor, runGitCapture, commitOf } from '../worktree.mjs';
-import { checkCombine, mergeBaseInto } from '../git-sync.mjs';
+import { checkCombine, mergeBaseInto, baseMovedAudit } from '../git-sync.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature } from './small-runs.mjs';
 import { SHIP_LOCK, shipLocked } from './ship-lock.mjs';
 import { roundOrigin } from './rounds.mjs';
@@ -235,6 +235,36 @@ export async function takeInVerdict(dir, { featureId, pipelineId, branch }, deps
     if (v.status === 'clean') return { status: 'clean', missing, check: v.check, skipped };
     if (v.status === 'clash') return { ...v, missing };
     return { status: 'error', error: v.error };
+  } catch (err) {
+    return { status: 'error', error: err && err.message ? err.message : String(err) };
+  }
+}
+
+/** Slice 3 (R-po-6, D5): the audit line of a take-in clash, the one text both the answer's take-in and the resume check
+ *  write: the first `missing` branch whose run clashes, and the clash's file count. `clash` = takeInVerdict's clash.
+ *  → string | null (no clashing missing branch); never throws. */
+export function takeInClashAudit(clash, branch) {
+  try {
+    const c = clash && Array.isArray(clash.missing) && Array.isArray(clash.runs)
+      ? clash.missing.find((d) => clash.runs.includes(d.index)) : null;
+    return c ? baseMovedAudit(c.branch, branch, { status: 'conflicts', files: clash.files || [] }) : null;
+  } catch { return null; }
+}
+
+/** Slice 3 (R-po-6, D3): a paused run's take-in verdict before its resume starts, under the gate of takesInBeforeAnswer:
+ *  flag on, a marked feature, a slice run, a feature branch and not on its source branch (a workspace is the caller's
+ *  to rule out). Otherwise {status:'none', skipped:[]} with no git call. `deps` = takeInVerdict's seams.
+ *  → a takeInVerdict result, with `branch` (the run's feature branch) added; never throws. */
+export async function resumeTakeInVerdict(dir, pipelineId, deps = {}) {
+  const none = { status: 'none', skipped: [] };
+  try {
+    if (!shaperSmallRunsOn(deps)) return none;
+    const at = featureOfPipeline(pipelineId);
+    if (!at || !Number.isInteger(at.idx) || !smallRunsOfFeature(at.featureId)) return none;
+    const rec = (deps.recordOf || branchRecordOf)(pipelineId);
+    if (!rec || typeof rec.feature !== 'string' || !rec.feature || rec.sameAsSource === true) return none;
+    const v = await takeInVerdict(dir, { featureId: at.featureId, pipelineId, branch: rec.feature }, deps);
+    return { ...v, branch: rec.feature };
   } catch (err) {
     return { status: 'error', error: err && err.message ? err.message : String(err) };
   }

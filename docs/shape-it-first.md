@@ -634,12 +634,13 @@ also get new work after that check: the run then finds the clash as it sets up, 
 same way, with Start now. That attempt is not kept as a failed run: it is archived and leaves History.
 
 **Work taken in after a wait.** When a run that waited at a stop goes on, or a paused run is resumed, it first takes in
-the work of every run of its feature that finished meanwhile, whatever base that run started from, in finish order, and
+the work of every run of its feature that finished meanwhile, from any base, whatever base that run started from, in finish order, and
 the log shows `feat/run-9 moved · run 2 starts from it`; its pull request is based on that branch. An answer waits
 (`after run 3`) while such a run is still saving its work. On a clash the answer is not sent: the stop stays open and
 says why, and nothing moves. Settle it on the waiting run's branch (merge the other run's branch into it in its checkout
-and commit), then answer again. A resumed run goes on without that work on a clash (its log and audit say why), and its
-next stop's answer refuses on it.
+and commit), then answer again. A resume whose take-in clashes does not start: the run stays paused, Resume is refused
+with the clash reason, and the audit names the clash. An automatic resume (scheduled or network) is refused the same way
+and is not retried until you Resume. Settle it the same way, on the paused run's branch, then Resume again.
 
 ### Care and its record
 
@@ -780,7 +781,7 @@ finish while it is open.
 
 You answer a stop on its line, with the same step card the run page shows. A failed line has its own Resume, which
 restarts that run only; the card's footer and ⋯ then show no second Resume. An answer held for its turn (`after run 3`)
-is not a line. The bar's Answer goes to the first line. With the flag off the card shows one open step, as before.
+is not a line. Pause on that run drops the held answer, as before, and after Resume you answer the stop again. The bar's Answer goes to the first line. With the flag off the card shows one open step, as before.
 
 The state line on the card and the feature page names the working run, or each working run once in run order, and the
 run with the next turn: `Run 6 reviewing · next: run 9`. It shows only the half that applies (`next: run 9`). When
@@ -829,7 +830,7 @@ waits only for the runs it builds on, so an independent run starts while an earl
 or paused (one run of a feature at a time), an answer or a resume held for its turn waits until no other run is going and held answers go on one at a time, lowest run first, and among
 the free runs a change run starts first, then the lowest run number; a run starts from the feature's latest finished run and, on a marked feature, merges in every run it builds on that this branch lacks; a resumed run first merges the
 latest finished work (on a marked feature, every finished run it lacks, whatever its base, and it records the branch it now
-builds on as its base); a run that waited at a stop takes in every finished run it lacks, whatever its base, before its answer goes on; a finished feature's figures are recorded on this machine; and one PR ships the latest finished
+builds on as its base, and on a clash it stays paused); a run that waited at a stop takes in every finished run it lacks, whatever its base, before its answer goes on; a finished feature's figures are recorded on this machine; and one PR ships the latest finished
 run's branch, or is refused with `HEAD_MISSING_WORK` when that branch does not hold every run's work.
 
 **A feature with the marker, flag off.** It keeps its one card, its Care and the Care row on its Ship card, its run

@@ -828,6 +828,74 @@ test('takeInVerdict (D5): a run that took work in still has a fire-time base (so
 
 test('combineVerdict is exported for the take-in', () => { assert.equal(typeof CHAIN.combineVerdict, 'function'); });
 
+// ── Slice 3 (R-po-6): a resume is checked for a clash before it starts (takeInClashAudit, resumeTakeInVerdict) ──────
+test('takeInClashAudit: names the clashing missing branch and the file count; null without a clashing entry', () => {
+  const missing = [{ index: 3, branch: 'feat/r3' }, { index: 4, branch: 'feat/r4' }, { index: 5, branch: 'feat/r5' }];
+  const clash = { status: 'clash', runs: [2, 4, 5], files: ['src/a.mjs'], missing };
+  assert.equal(CHAIN.takeInClashAudit(clash, 'feat/own'), 'Base `feat/r4` moved: conflicts in 1 file.', 'the first missing run that clashes');
+  assert.equal(CHAIN.takeInClashAudit({ ...clash, files: ['src/a.mjs', 'src/b.mjs'] }, 'feat/own'),
+    'Base `feat/r4` moved: conflicts in 2 files.');
+  for (const none of [{ ...clash, runs: [2] }, { ...clash, missing: [] }, { status: 'clash', runs: [2], files: [] }, null, undefined]) {
+    assert.equal(CHAIN.takeInClashAudit(none, 'feat/own'), null, JSON.stringify(none));
+  }
+});
+
+/** takeInSeams that clash on every combine, also recording each ref it is asked to resolve. */
+function resumeSeams(over = {}) {
+  const resolved = [];
+  const s = takeInSeams({ check: (branches) => conflicts(branches), resolves: (ref) => { resolved.push(ref); return true; }, ...over });
+  return { ...s, resolved };
+}
+const setBranch = (pid, rec) => getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(rec && JSON.stringify(rec), pid);
+
+test('resumeTakeInVerdict: flag off, an unmarked feature, no feature, no branch record or sameAsSource answers none and asks git nothing', async () => {
+  const none = async (w, why, pid = w.p[2]) => {
+    const s = resumeSeams();
+    assert.deepEqual(await CHAIN.resumeTakeInVerdict(root, pid, s.deps), { status: 'none', skipped: [] }, why);
+    assert.deepEqual([s.checks, s.ancestors, s.resolved], [[], [], []], `${why}: git is not asked`);
+  };
+  await withEnvVars(SMALL_OFF, async () => none(takeInFeature(), 'flag off'));
+  await withEnvVars(SMALL_ON, async () => {
+    const unmarked = takeInFeature();
+    getDb().prepare('UPDATE pipelines SET shape_stats = NULL WHERE id = (SELECT origin_pipeline_id FROM shape_features WHERE id = ?)').run(unmarked.id);
+    await none(unmarked, 'unmarked feature');
+    await none(takeInFeature(), 'a pipeline of no feature', pipe('paused', { branch: { source: BASE, feature: 'feat/loose' } }));
+    for (const [why, rec] of [
+      ['no branch record', () => null],
+      ['no feature branch', () => ({ source: BASE })],
+      ['on its source branch', (w) => ({ source: BASE, feature: w.br(2), sameAsSource: true })],
+    ]) {
+      const w = takeInFeature();
+      setBranch(w.p[2], rec(w));
+      await none(w, why);
+    }
+  });
+});
+
+test("resumeTakeInVerdict: a marked paused run reads its own branch record's feature branch and returns takeInVerdict's clash", () => withEnvVars(SMALL_ON, async () => {
+  const w = takeInFeature();
+  getDb().prepare("UPDATE pipelines SET status = 'paused' WHERE id = ?").run(w.p[2]);
+  const holds = (a) => a === `refs/heads/${BASE}` || a === `refs/heads/${w.br(4)}`;   // run 2 already holds run 4's work
+  const s = resumeSeams({ ancestor: holds });
+  const v = await CHAIN.resumeTakeInVerdict(root, w.p[2], s.deps);
+  assert.deepEqual([v.status, v.reason, v.runs?.slice().sort(), v.files, v.branch], ['clash', REASON, [2, 3], ['src/a.mjs'], w.br(2)]);
+  assert.deepEqual(v.missing, [{ index: 3, branch: w.br(3), pipelineId: w.p[3] }]);
+  assert.equal(s.checks[0][0], w.br(2), "the combine starts from the run's own branch");
+  assert.equal(CHAIN.takeInClashAudit(v, v.branch), `Base \`${w.br(3)}\` moved: conflicts in 1 file.`);
+  const broken = await CHAIN.resumeTakeInVerdict(root, w.p[2], resumeSeams({ ancestor: () => { throw new Error('boom'); } }).deps);
+  assert.deepEqual([broken.status, broken.error], ['error', 'boom']);
+  const noRecord = await CHAIN.resumeTakeInVerdict(root, w.p[2], { recordOf: () => { throw new Error('unreadable'); } });
+  assert.equal(noRecord.status, 'error', 'it never throws');
+}));
+
+test('run-harness take-in builds its clash line through takeInClashAudit', () => {
+  const src = readFileSync(new URL('../src/core/run-harness.mjs', import.meta.url), 'utf8');
+  const body = /\n  async _takeInNow\([\s\S]*?\n  \}\n/.exec(src)?.[0] || '';
+  assert.ok(body, '_takeInNow');
+  assert.ok(body.includes('takeInClashAudit('), '_takeInNow calls takeInClashAudit');
+  assert.ok(!body.includes('baseMovedAudit(c.branch'), 'no second builder of the clash line');
+});
+
 // ── A2 (R-qa-2): run 6's PR diff after 3 take-ins from unrelated bases ──────────────────────────────────────────────
 /** The harness's take-in patch rule (_takeInNow, src/core/run-harness.mjs:10854-10866), once for one take-in `d`:
  *  `source` becomes the branch taken in, `sourceFrom` keeps the first old `source`, `tookIn` gets one entry appended. */
