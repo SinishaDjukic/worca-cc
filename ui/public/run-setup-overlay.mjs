@@ -3,7 +3,7 @@
 // cycle budget — for this run only. The result is the run's per-run `overlay` (POST /api/run); nothing here writes the
 // project's config or a preset. New Run's own rows live in app.js; this module presents the same controls over the same
 // pure helpers (node-tunables, loop-rows, run-presets-picker, model-options). Names are set with textContent only.
-import { buildNodeConfigRows } from './node-tunables.mjs';
+import { buildNodeConfigRows, pinnedHarnessText } from './node-tunables.mjs';
 import { buildFeedbackRows } from './loop-rows.mjs';
 import { configWithPreset, presetMenuGroups } from './run-presets-picker.mjs';
 import { appendModelGroups } from './model-options.mjs';
@@ -36,10 +36,11 @@ export function presetsFor(presets, workflowId, scopeRef) {
 }
 
 /**
- * The run's overlay from what the overlay shows: every agent row with a model sends `{ model, effort }` (exact whatever the
+ * The run's overlay from what the overlay shows: every agent row with a model sends `{ model, effort }`, plus `engine` when the
+ * row is pinned to a harness (exact whatever the
  * project config holds when the run starts), carrying its toggles and role picks from the applied preset's overlay verbatim;
  * every editable loop row sends `{ maxCycles }`. Nothing to send → null. Pure.
- * @param {Array<{nodeId:string, model?:string, effort?:string}>} shownRows
+ * @param {Array<{nodeId:string, model?:string, effort?:string, engine?:string}>} shownRows
  * @param {Array<{fbId:string, maxCycles:number, editable?:boolean}>} shownLoops
  * @param {{nodes?:object}|null} presetOverlay
  */
@@ -50,7 +51,8 @@ export function computeOverlay(shownRows, shownLoops, presetOverlay = null) {
     const picked = presetOverlay && presetOverlay.nodes && Object.hasOwn(presetOverlay.nodes, r.nodeId) ? presetOverlay.nodes[r.nodeId] : null;
     const extras = {};
     for (const k of PRESET_TOGGLES) if (picked && picked[k] !== undefined) extras[k] = structuredClone(picked[k]);
-    const entry = { ...(model ? { model, effort: String(r.effort || '') } : {}), ...extras };
+    const engine = model ? String(r.engine || '') : '';
+    const entry = { ...(model ? { model, effort: String(r.effort || ''), ...(engine ? { engine } : {}) } : {}), ...extras };
     if (Object.keys(entry).length) nodes[r.nodeId] = entry;
   }
   const wires = {};
@@ -164,7 +166,9 @@ export function openRunSetupOverlay({ modal, workflowId, workflowName, projectDi
     // A preset's model without an effort means that model's default effort, not the project's saved effort for the node.
     const presetNodes = (preset && preset.setup && preset.setup.overlay && preset.setup.overlay.nodes) || {};
     const defaultEffort = (nodeId) => Object.hasOwn(presetNodes, nodeId) && presetNodes[nodeId].model && !presetNodes[nodeId].effort;
-    shown = rows.map((r) => ({ nodeId: r.nodeId, label: r.label, model: r.model || '', effort: defaultEffort(r.nodeId) ? '' : r.effort || '' }));
+    // A row pinned to a harness (`engine`) is shown locked with where to change it (`pin`), and sent back with its harness.
+    shown = rows.map((r) => ({ nodeId: r.nodeId, label: r.label, model: r.model || '', effort: defaultEffort(r.nodeId) ? '' : r.effort || '',
+      engine: r.engine || '', pin: r.engine ? pinnedHarnessText(r) : '' }));
     const v2 = data.workflow.version === 2;
     loops = buildFeedbackRows(data.workflow, data.registry, wfCfg, data.scripts, data.portsFn)
       .map((l) => ({ fbId: l.fbId, label: l.label, shownValue: String(l.maxCycles), maxCycles: validCycles(l.maxCycles) ? l.maxCycles : null, editable: v2 }));
@@ -174,7 +178,7 @@ export function openRunSetupOverlay({ modal, workflowId, workflowName, projectDi
     const entry = catalogEntry(data.models, row.model);
     const sel = h(doc, 'select', { class: 'req-runsetup-effort', 'data-ui': `effort-${row.nodeId}`, 'aria-label': `${row.label} effort`, disabled: !row.model });
     sel.append(h(doc, 'option', { value: '', text: 'Default effort' }));
-    const efforts = effortsOn(entry, data.engine);
+    const efforts = effortsOn(entry, row.engine || data.engine);
     if (row.effort && !efforts.includes(row.effort)) efforts.push(row.effort);
     for (const e of efforts) sel.append(h(doc, 'option', { value: e, text: e }));
     sel.value = row.effort || '';
@@ -189,6 +193,16 @@ export function openRunSetupOverlay({ modal, workflowId, workflowName, projectDi
     if (unknown) { model.append(h(doc, 'option', { value: row.model, text: `${row.model} (not in the model list)` })); model.setAttribute('aria-invalid', 'true'); }
     model.value = row.model || '';
     let effortWrap = h(doc, 'div', { class: 'select-wrap' }, effortSelect(row));
+    if (row.pin) {
+      for (const sel of [model, effortWrap.firstChild]) {
+        sel.disabled = true;
+        sel.setAttribute('data-locked', '');
+        sel.title = row.pin;
+      }
+      return h(doc, 'div', { class: 'req-runsetup-row', 'data-node-id': row.nodeId },
+        h(doc, 'span', { class: 'req-runsetup-name', text: row.label }), h(doc, 'div', { class: 'select-wrap' }, model), effortWrap,
+        h(doc, 'p', { class: 'hint req-runsetup-pin', text: row.pin }));
+    }
     const setRow = (patch) => { shown = shown.map((r) => (r.nodeId === row.nodeId ? { ...r, ...patch } : r)); return shown.find((r) => r.nodeId === row.nodeId); };
     model.addEventListener('change', () => {
       model.removeAttribute('aria-invalid');

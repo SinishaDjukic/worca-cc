@@ -919,6 +919,7 @@ const CONTROL_CHECKS = {
     });
     await menuCheck('the kitchen-sink menu', '[data-kit="controls"] .menu')();
     await menuCheck('the kitchen-sink split menu (two-line items)', '[data-kit="controls"] .btn-split-menu')();
+    await menuCheck('the kitchen-sink model picker columns', '[data-kit="controls"] .mdl-cols-pop')();
     const why = await ev(`(() => { const w = document.querySelector('[data-kit="controls"] .switch-why:not([hidden])'); return w && { fs: getComputedStyle(w).fontSize, shown: !!w.offsetParent, text: w.textContent }; })()`);
     designChecks.push({ what: 'switch reason: the locked kitchen-sink switch shows its reason as 12px text', ok: !!why && why.shown && why.fs === '12px' && why.text.length > 0, got: why });
     const chips = await ev(`[...document.querySelectorAll('[data-kit="controls"] :is(.tag-chip,.ps-pill,.ask-cmd-pill,.tp-tab-badge)')].map((e) => { const cs = getComputedStyle(e);

@@ -20,15 +20,14 @@ import { createCommandCard, createCommandGroup, COMMAND_CARD_TYPE } from './ask-
 import { commandRuns } from './ask-command-group.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, buildRoleRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
-import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import { PR_OPEN, PR_OPEN_LABELS, prSourceText } from '../../src/shared/pr-auto.mjs';
 import { SOURCE_BRANCH_TEXT, currentBranchLabel } from '../../src/shared/chat-source-branch.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
 import { execEnvList, execEnvLabel, execEnvKnown } from './exec-envs.mjs';
 import { remoteRefusesDefault } from '../../src/shared/exec-env.mjs';
-import { runsOn, modelGroups, connectionOf, connectionLabel } from '../../src/shared/connections.mjs';
-import { appendModelGroups, modelOptionText } from './model-options.mjs';
+import { runsOn, modelGroups, connectionOf, connectionLabel, effortsOn, HARNESS_EFFORTS } from '../../src/shared/connections.mjs';
+import { openModelColumns, columnsValue, columnsLabel } from './models/model-columns.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
@@ -199,7 +198,7 @@ const THREADS_REFRESH_MS = 250;
 const HISTORY_KEY = 'worca-cc.chat.history';
 const HISTORY_OVERLAY_BELOW = 1100;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, openAddModel = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null, onToolScope = () => {}, onChatsClosed = () => {}, designChat = null }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, openAddModel = null, engineRows = () => null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null, onToolScope = () => {}, onChatsClosed = () => {}, designChat = null }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -4319,7 +4318,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const config = (cfg.config && typeof cfg.config === 'object') ? cfg.config : { steps: {}, customModels: [] };
     const runConfig = (config.workflows && config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
     const allModels = Array.isArray(cfg.models) ? cfg.models : [];
-    const models = allModels.filter((m) => m && runsOn(m, engine));
     // `models` + `engine`: the rows are built exactly as New pipeline builds them (app.js buildNodeConfigRows) — a pick
     // of the other engine shows as inherit (D10: it is skipped at run time) and rides the row as `enginePair`, so a
     // save that leaves it untouched re-sends it (pruneNodeSelection) instead of erasing it. `slotDefaults`: the
@@ -4338,10 +4336,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { wf, registry, runConfig, rows, edits: {}, reviewRoleRows: buildRoleRows(wf, rows, runConfig), reviewRoleEdits: {},
       editable: true, explicit: !projectDir, engine, defaultEngine, savedExecEnv, allModels, proposal: {}, proposed: {}, warnings: [],
       prDefault: defaults && defaults.pr && defaults.pr.scope === 'project' ? defaults.pr : null,
-      models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
+      // A row's harness decides its models and efforts (the picker lists every harness), so the lane keeps the whole
+      // catalog (`allModels`) and Claude Code's efforts as /api/config gives them; other harnesses' come from HARNESS_EFFORTS.
+      claudeEfforts: Array.isArray(cfg.efforts) ? cfg.efforts : [],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
   const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
+  /** The harness a row runs on: its pick's own (`engine`, a pinned pick), else the run's default harness. */
+  const rowHarness = (lane, row) => laneEffective(lane, row).engine || lane.engine;
+  /** The pills a harness shows: Claude Code's from /api/config (as before), every other harness's own list. */
+  const harnessEfforts = (lane, h) => (h === 'claude' ? (lane.claudeEfforts.length ? lane.claudeEfforts : [...HARNESS_EFFORTS.claude]) : [...(HARNESS_EFFORTS[h] || [])]);
+  const modelEntry = (lane, id) => (id ? lane.allModels.find((m) => m && m.id === id) || null : null);
   /** Where the card's run executes with "Default" picked: the saved run.execEnv, except a saved remote default on a run
    *  no remote backend takes (an engine no sandbox runs, a workspace run), which the server runs locally (resolveRunExecEnv). */
   function cardExecEnvDefault(lane, local) {
@@ -4353,12 +4358,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   const laneCaps = (row) => ({ asksQuestions: row.askQuestions !== null, questionsLocked: row.questionsLocked });
   const laneReviewRoleEdit = (lane, rr) => (lane.reviewRoleEdits[rr.nodeId] || {})[rr.roleKey] || null;
   const laneReviewRoleEffective = (lane, rr) => ({ ...rr, ...(laneReviewRoleEdit(lane, rr) || {}) });
-  const laneReviewRoleChanged = (lane, rr) => { const c = laneReviewRoleEffective(lane, rr); return (c.model || '') !== (rr.def.model || '') || (c.effort || '') !== (rr.def.effort || ''); };
+  const laneReviewRoleChanged = (lane, rr) => { const c = laneReviewRoleEffective(lane, rr); return (c.model || '') !== (rr.def.model || '') || (c.effort || '') !== (rr.def.effort || '') || (c.engine || '') !== (rr.def.engine || ''); };
+  /** A role row's harness: its own pick's, else its node row's. */
+  const roleHarness = (lane, rr) => { const node = lane.rows.find((r) => r.nodeId === rr.nodeId); return laneReviewRoleEffective(lane, rr).engine || (node ? rowHarness(lane, node) : lane.engine); };
   const laneReviewRoleEdited = (lane) => (lane.reviewRoleRows || []).filter((rr) => laneReviewRoleEdit(lane, rr));
   const laneEditedRows = (lane) => lane.rows.filter((r) => lane.edits[r.nodeId] || laneReviewRoleEdited(lane).some((rr) => rr.nodeId === r.nodeId));
   const laneOverrideCount = (lane) => lane.rows.filter((r) => modifiedFieldsOf(laneEffective(lane, r), r.def, laneCaps(r)).length).length
     + (lane.reviewRoleRows || []).filter((rr) => laneReviewRoleChanged(lane, rr)).length;
-  const modelLabel = (lane, id) => { const m = lane.models.find((x) => x.id === id); return m ? (m.label || m.id).replace(' (1M)', '') : id; };
+  const modelLabel = (lane, id) => { const m = modelEntry(lane, id); return m ? (m.label || m.id).replace(' (1M)', '') : id; };
   function laneSummary(lane) {
     const counts = new Map();
     let fan = 0;
@@ -4373,25 +4380,28 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   function laneSet(lane, row, patch) {
     const next = { ...(lane.edits[row.nodeId] || {}), ...patch };
-    for (const k of Object.keys(next)) if (next[k] === row[k]) delete next[k];   // back to the proposal = no edit
+    // Back to the proposal = no edit. Rows carry `engine` only when set, so an absent key and '' are equal.
+    for (const k of Object.keys(next)) if ((next[k] ?? '') === (row[k] ?? '')) delete next[k];
     if (Object.keys(next).length) lane.edits[row.nodeId] = next; else delete lane.edits[row.nodeId];
   }
   /** laneSet for a review-role row: the same "back to the row = no edit" rule, keyed by node and role. */
   function laneReviewRoleSet(lane, rr, patch) {
     const byRole = { ...(lane.reviewRoleEdits[rr.nodeId] || {}) };
     const next = { ...(byRole[rr.roleKey] || {}), ...patch };
-    for (const k of Object.keys(next)) if (next[k] === rr[k]) delete next[k];
+    for (const k of Object.keys(next)) if ((next[k] ?? '') === (rr[k] ?? '')) delete next[k];
     if (Object.keys(next).length) byRole[rr.roleKey] = next; else delete byRole[rr.roleKey];
     if (Object.keys(byRole).length) lane.reviewRoleEdits[rr.nodeId] = byRole; else delete lane.reviewRoleEdits[rr.nodeId];
   }
-  /** What a review-role row runs as a pick `{ model?, effort? }`, or null for "the node's setting". "Node's model" over
-   *  a template or project pick names the node's own model, since a pick cannot be cleared by naming nothing. */
+  /** What a review-role row runs as a pick `{ model?, effort?, engine? }`, or null for "the node's setting". "Node's model"
+   *  over a template or project pick names the node's own model (and its harness), since a pick cannot be cleared by
+   *  naming nothing. */
   function laneReviewRolePick(lane, rr) {
     const c = laneReviewRoleEffective(lane, rr);
     const node = lane.rows.find((r) => r.nodeId === rr.nodeId);
     const n = node ? laneEffective(lane, node) : {};
-    const pair = c.model ? { model: c.model, effort: c.effort } : (rr.def.model && n.model ? { model: n.model, effort: c.effort || n.effort } : { effort: c.effort });
-    const out = { ...(pair.model ? { model: pair.model } : {}), ...(pair.effort ? { effort: pair.effort } : {}) };
+    const pair = c.model ? { model: c.model, effort: c.effort, engine: c.engine }
+      : (rr.def.model && n.model ? { model: n.model, effort: c.effort || n.effort, engine: n.engine } : { effort: c.effort });
+    const out = { ...(pair.model ? { model: pair.model } : {}), ...(pair.effort ? { effort: pair.effort } : {}), ...(pair.model && pair.engine ? { engine: pair.engine } : {}) };
     return Object.keys(out).length ? out : null;
   }
   // Ask Worca's per-agent picks (card.nodes) are the lane's BASELINE edits: "changed" means the user moved a row off
@@ -4409,14 +4419,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!Object.hasOwn(lane.proposed, row.nodeId) || laneDropped(lane, row)) return null;
     const p = lane.proposed[row.nodeId];
     const c = laneEffective(lane, row);
-    return (c.model || '') === p.model && (c.effort || '') === p.effort ? p : null;
+    // Chat's picks are soft: a row pinned to a harness is no longer its pick.
+    return (c.model || '') === p.model && (c.effort || '') === p.effort && (c.engine || '') === '' ? p : null;
   };
   const laneProposedCount = (lane) => lane.rows.filter((r) => proposedPick(lane, r)).length;
   /** The project's own setting for a row, as the lane shows it: "Opus 5.5 · high", "inherit". */
   const projectPick = (lane, row) => `${row.model ? modelLabel(lane, row.model) : 'inherit'}${row.model && row.effort ? ` · ${row.effort}` : ''}`;
   /** Lay Ask Worca's picks in as the lane's baseline: each healed to the run's engine first (healForEngine — another
    *  engine's model is dropped and the row keeps the project's setting) and dropped when this catalog lacks it; a row
-   *  Settings › Memory pins keeps its pin. `lane.proposal` is what "Reset to proposal" restores. */
+   *  Settings › Memory pins keeps its pin. A pick is soft (`engine: ''`): laid over a project pick pinned to a harness,
+   *  it runs on the run's. `lane.proposal` is what "Reset to proposal" restores. */
   function applyProposal(lane, nodes) {
     lane.edits = {};
     lane.proposed = {};
@@ -4429,9 +4441,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const healed = healForEngine({ def: { model: row.model, effort: row.effort }, override: { model: p.model, effort }, model: p.model, effort },
         { models: lane.allModels, engine: lane.engine });
       if (healed.enginePair) continue;                       // a model this run's engine cannot run
-      const hit = lane.models.find((m) => typeof m.id === 'string' && m.id.toLowerCase() === p.model.toLowerCase());
+      const hit = lane.allModels.find((m) => m && typeof m.id === 'string' && runsOn(m, lane.engine) && m.id.toLowerCase() === p.model.toLowerCase());
       if (!hit) continue;                                    // left the catalog since the proposal
-      const patch = { model: hit.id, effort: (hit.efforts || []).includes(effort) ? effort : '' };
+      const patch = { model: hit.id, effort: (hit.efforts || []).includes(effort) ? effort : '', engine: '' };
       if (lane.engine === 'claude' && typeof p.subagentModel === 'string' && lane.subagentModels.includes(p.subagentModel)) patch.subagentModel = p.subagentModel;
       laneSet(lane, row, patch);
       lane.proposed[row.nodeId] = { model: patch.model, effort: patch.effort, reason: typeof p.reason === 'string' ? p.reason : '', facts: typeof p.facts === 'string' ? p.facts : '' };
@@ -4456,8 +4468,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const named = !!lane.explicit && ((!!pp && (c.model || '') === pp.model) || (!!ed && ('model' in ed || 'effort' in ed)));
       if (!ed && !named) continue;
       const e = {};
-      if (named || (c.model || '') !== (row.model || '') || (c.effort || '') !== (row.effort || '')) {
-        const pair = c.model ? { model: c.model, effort: c.effort || '' } : (row.def.model ? { model: row.def.model, effort: row.def.effort || '' } : null);
+      if (named || (c.model || '') !== (row.model || '') || (c.effort || '') !== (row.effort || '') || (c.engine || '') !== (row.engine || '')) {
+        // The pair carries the harness its pick names (the edit's, or the workflow default's for an inherit).
+        const pair = c.model ? { model: c.model, effort: c.effort || '', ...(c.engine ? { engine: c.engine } : {}) }
+          : (row.def.model ? { model: row.def.model, effort: row.def.effort || '', ...(row.def.engine ? { engine: row.def.engine } : {}) } : null);
         if (!pair && !lane.explicit) return { error: `${row.label}: "inherit" over this project's own model only works as a project default. Turn on "Save as project defaults", or pick a model` };
         if (pair) Object.assign(e, pair);
       }
@@ -4529,6 +4543,36 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return null;
   }
   const lanePending = (local) => !!(local.lane && local.lane.editable && laneEditedRows(local.lane).length);
+  /** The edits of every row and role whose effective pick (laneEffective / laneReviewRoleEffective) names a harness, each
+   *  as { ...edit, engine: <that harness> } (an edit equal to its row's engine holds no `engine` key of its own), as
+   *  { nodes: { [nodeId]: edit }, roles: { [nodeId]: { [roleKey]: edit } } }, or null with no lane. */
+  function pinnedEdits(lane) {
+    if (!lane) return null;
+    const nodes = {};
+    const roles = {};
+    for (const row of lane.rows) {
+      const c = laneEffective(lane, row);
+      if (c.engine) nodes[row.nodeId] = { ...(lane.edits[row.nodeId] || {}), engine: c.engine };
+    }
+    for (const rr of lane.reviewRoleRows || []) {
+      const c = laneReviewRoleEffective(lane, rr);
+      if (c.engine) roles[rr.nodeId] = { ...(roles[rr.nodeId] || {}), [rr.roleKey]: { ...(laneReviewRoleEdit(lane, rr) || {}), engine: c.engine } };
+    }
+    return { nodes, roles };
+  }
+  /** Lays `kept` back over a reloaded lane, through laneSet / laneReviewRoleSet, for rows still in it. */
+  function layPinned(lane, kept) {
+    for (const [nodeId, edit] of Object.entries((kept && kept.nodes) || {})) {
+      const row = lane.rows.find((r) => r.nodeId === nodeId);
+      if (row) laneSet(lane, row, edit);
+    }
+    for (const [nodeId, byRole] of Object.entries((kept && kept.roles) || {})) {
+      for (const [roleKey, edit] of Object.entries(byRole || {})) {
+        const rr = (lane.reviewRoleRows || []).find((r) => r.nodeId === nodeId && r.roleKey === roleKey);
+        if (rr) laneReviewRoleSet(lane, rr, edit);
+      }
+    }
+  }
   // D3: as much as one message may carry; /api/run's JSON window (ui/server.mjs) is sized for it at base64's 4/3
   const RP_EXTRAS_MAX_BYTES = ATTACH_MAX_MESSAGE_BYTES;
   /** The pills as /api/run extras. {extras} or {error}. */
@@ -4555,6 +4599,46 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     input.addEventListener('change', () => onChange(input.checked));
     return row;
   }
+  /** A lane row's model: the columns picker's trigger (models/model-columns.mjs). It keeps the select's contract (`value`,
+   *  `disabled`, a bubbling `change` is the row's one write path) and adds `data-engine`, the harness a pick names ('' =
+   *  soft). `soft`: the harness the row's inherit and soft picks run on; `find()` looks the same row's trigger up again
+   *  after a repaint. A pick sets value and data-engine and fires `change`. */
+  function laneModelTrigger(lane, c, label, { soft, inheritHint, disabled, title = '', find }) {
+    const value = columnsValue(c);
+    const lbl = columnsLabel(value, lane.allModels);
+    const btn = make('button', `mdl-pick ask-rp-model${lbl.inherit ? ' inherit' : ''}`);
+    btn.type = 'button';
+    btn.value = value ? value.model : '';
+    btn.dataset.engine = lbl.engine;
+    btn.setAttribute('aria-haspopup', 'dialog');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('aria-label', `Model for ${label}: ${lbl.text}${lbl.engine ? `, on ${engineLabel(lbl.engine)}` : ''}`);
+    if (lbl.engine) btn.append(markTile(doc, { kind: 'harness', key: lbl.engine, size: 'sm', label: engineLabel(lbl.engine) }));
+    btn.append(make('span', 'mdl-pick-text', lbl.text), icon(doc, 'chevron-down', 14));
+    btn.disabled = !!disabled;
+    if (title) btn.title = title;
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      openModelColumns({ doc, win, anchor: btn, catalog: lane.allModels, value, defaultEngine: soft, engines: engineRows, inheritHint,
+        label: `Model for ${label}`, onAddModel: openAddModel ? (e) => openAddModel(e) : null, refocus: find,
+        onPick: (next) => {
+          btn.value = next ? next.model : '';
+          btn.dataset.engine = (next && next.engine) || '';
+          btn.dispatchEvent(new win.Event('change', { bubbles: true }));
+        } });
+    });
+    return btn;
+  }
+  /** The trigger of the lane tile for `nodeId` (and `roleKey`, a role row), by data attributes, never a built selector. */
+  const tileTrigger = (laneSec, nodeId, roleKey = '') => {
+    const tile = [...laneSec.querySelectorAll('.ask-rp-tile')].find((t) => t.dataset.nodeId === nodeId && (t.dataset.role || '') === roleKey);
+    return tile ? tile.querySelector('button.ask-rp-model') : null;
+  };
+  /** A model change kept by today's rule: the effort stays when the model on its harness offers it, else its second. */
+  const keptEffort = (lane, model, harness, effort) => {
+    const list = effortsOn(modelEntry(lane, model), harness);
+    return list.includes(effort) ? effort : (list[1] || list[0] || '');
+  };
   /** Paint the lane section: header (sub-line + Reset), tiles, footer. Re-run on every edit.
    *  `lc` = { summary: <span>, workflowId(): string }. lane === null → the unusable state. */
   function renderLane(laneSec, lane, lc, loadingText = null) {
@@ -4633,31 +4717,31 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       } else small.textContent = `step ${i + 1} · ${row.pinned ? 'model from Settings › Memory' : row.modified ? 'project override' : 'workflow default'}`;
       name.appendChild(small);
       l1.appendChild(name);
-      // model
-      const sel = rpSelect('ask-rp-model', `Model for ${row.label}`);
-      sel.appendChild(opt('', 'inherit (workflow default)'));
-      appendModelGroups(sel, lane.models.filter((m) => (!m.hidden && !m.needsSignIn) || m.id === c.model), {
-        engine: lane.engine, text: (m) => modelOptionText(m) + (m.needsSignIn ? ' (needs sign-in)' : '') });
-      sel.value = c.model || '';
+      // model: the columns picker's trigger; the row's harness is its pick's own, else the run's.
+      const harness = rowHarness(lane, row);
+      const find = () => tileTrigger(laneSec, row.nodeId);
       // Settings › Memory pins a defragment run's pair (node-tunables.mjs `pinned`): shown, locked.
-      sel.disabled = !lane.editable || !!row.pinned;
-      if (row.pinned) sel.title = 'Set in Settings › Memory';
+      const sel = laneModelTrigger(lane, c, row.label, { soft: lane.engine, inheritHint: 'workflow default', find,
+        disabled: !lane.editable || !!row.pinned, title: row.pinned ? 'Set in Settings › Memory' : '' });
       sel.addEventListener('change', () => {
         const mid = sel.value;
-        const list = (lane.models.find((m) => m.id === mid) || {}).efforts || [];
-        const keep = list.includes(c.effort) ? c.effort : (list[1] || list[0] || '');   // the qpanel's rule (app.js buildTunablesTable)
-        laneSet(lane, row, { model: mid, effort: mid ? keep : '' });
+        const engine = sel.dataset.engine || '';
+        const keep = keptEffort(lane, mid, engine || lane.engine, c.effort);   // the qpanel's rule (app.js buildTunablesTable)
+        laneSet(lane, row, { model: mid, effort: mid ? keep : '', engine });
         renderLane(laneSec, lane, lc);
+        const now = find();
+        if (now) now.focus();
       });
       l1.appendChild(sel);
-      // effort pills — none for an engine without effort levels (Copilot, Cursor…): an empty group would leave only
-      // its "inherits workflow" label, overflowing the tile.
-      if (lane.efforts.length) {
+      // effort pills, the row's harness's — none for a harness without effort levels (Cursor…): an empty group would
+      // leave only its "inherits workflow" label, overflowing the tile.
+      const pills = harnessEfforts(lane, harness);
+      if (pills.length) {
         const eff = make('div', `ask-rp-eff${c.model ? '' : ' unset'}`);
         eff.setAttribute('role', 'radiogroup');
         eff.setAttribute('aria-label', `Effort for ${row.label}`);
-        const offered = (lane.models.find((m) => m.id === c.model) || {}).efforts || [];
-        for (const e of lane.efforts) {
+        const offered = c.model ? effortsOn(modelEntry(lane, c.model), harness) : [];
+        for (const e of pills) {
           const b = make('button', `ask-rp-effbtn${e === c.effort ? ' on' : ''}`, e);
           b.type = 'button';
           b.setAttribute('role', 'radio');
@@ -4688,7 +4772,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       subSel.title = 'Model for the sub-agents this node spawns (needs fan-out)';
       subSel.addEventListener('change', () => { laneSet(lane, row, { subagentModel: subSel.value }); renderLane(laneSec, lane, lc); });
       subWrap.appendChild(subSel);
-      if (lane.engine === 'claude') l2.appendChild(subWrap);   // §6: sub-agents are Claude only; a Codex or Cursor run has none
+      if (harness === 'claude') l2.appendChild(subWrap);   // §6: sub-agents are Claude Code only; a step on Codex or Cursor has none
       if (row.askQuestions !== null) {
         l2.appendChild(rpSwitch('questions', 'Questions', c.askQuestions, row.questionsLocked, (v) => { laneSet(lane, row, { askQuestions: v }); renderLane(laneSec, lane, lc); }, lane.editable));
       }
@@ -4720,28 +4804,30 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const name = make('div', 'ask-rp-name');
       name.appendChild(make('b', null, rr.label));
       l1.appendChild(name);
-      const sel = rpSelect('ask-rp-model', `Model for ${rr.label}`);
-      sel.appendChild(opt('', "Node's model"));
-      appendModelGroups(sel, lane.models.filter((m) => (!m.hidden && !m.needsSignIn) || m.id === c.model), {
-        engine: lane.engine, text: (m) => modelOptionText(m) + (m.needsSignIn ? ' (needs sign-in)' : '') });
-      sel.value = c.model || '';
-      sel.disabled = !lane.editable;
+      // A soft role pick runs on its node's harness; a pinned one on its own.
+      const nodeHarness = node ? rowHarness(lane, node) : lane.engine;
+      const harness = roleHarness(lane, rr);
+      const find = () => tileTrigger(laneSec, rr.nodeId, rr.roleKey);
+      const sel = laneModelTrigger(lane, c, rr.label, { soft: nodeHarness, inheritHint: "Node's model", find, disabled: !lane.editable });
       sel.addEventListener('change', () => {
         const mid = sel.value;
-        const list = (lane.models.find((m) => m.id === mid) || {}).efforts || [];
-        const keep = list.includes(c.effort) ? c.effort : (list[1] || list[0] || '');
-        laneReviewRoleSet(lane, rr, { model: mid, effort: mid ? keep : '' });
+        const engine = sel.dataset.engine || '';
+        const keep = keptEffort(lane, mid, engine || nodeHarness, c.effort);
+        laneReviewRoleSet(lane, rr, { model: mid, effort: mid ? keep : '', engine });
         renderLane(laneSec, lane, lc);
+        const now = find();
+        if (now) now.focus();
       });
       l1.appendChild(sel);
-      if (lane.efforts.length) {
+      const pills = harnessEfforts(lane, harness);
+      if (pills.length) {
         // A role naming no model runs on the node's: its pills follow the node tile's model.
         const runsOnModel = c.model || (node ? laneEffective(lane, node).model : '');
         const eff = make('div', `ask-rp-eff${c.model ? '' : ' unset'}`);
         eff.setAttribute('role', 'radiogroup');
         eff.setAttribute('aria-label', `Effort for ${rr.label}`);
-        const offered = (lane.models.find((m) => m.id === runsOnModel) || {}).efforts || [];
-        for (const e of lane.efforts) {
+        const offered = runsOnModel ? effortsOn(modelEntry(lane, runsOnModel), harness) : [];
+        for (const e of pills) {
           const b = make('button', `ask-rp-effbtn${e === c.effort ? ' on' : ''}`, e);
           b.type = 'button';
           b.setAttribute('role', 'radio');
@@ -5982,13 +6068,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     wfDesc.setAttribute('data-for', 'workflow');
     const wfField = rpField('Workflow', workflowSel);
     wfField.appendChild(wfDesc);
-    // Engine: "Default" sends none, so /api/run resolves the user's / project's engine (the label names it once the
-    // lane has read it); a proposal that names an engine preselects it. Beta engines say so.
-    const engineSel = rpSelect('ask-card-engine', 'Engine');
+    // Default harness: where every step set to inherit (or to a soft pick) runs; a step pinned to a harness keeps its
+    // own. "Default" sends none, so /api/run resolves the user's / project's engine (the label names it once the lane
+    // has read it); a proposal that names an engine preselects it. Beta engines say so.
+    const engineSel = rpSelect('ask-card-engine', 'Default harness');
     fillSelect(engineSel, [{ value: '', label: 'Default' }, ...ENGINE_NAMES.map((e) => ({ value: e, label: `${engineLabel(e)}${isBetaEngine(e) ? ' (Beta)' : ''}` }))], card.engine || '');
     // An engine this instance never starts (the credential broker is on) is greyed out; a proposal naming one falls back to Default.
     if (lockEngineOptions(engineSel)) engineSel.value = '';
-    const engineField = rpField('Engine', engineSel);
+    const engineField = rpField('Default harness', engineSel, 'Steps set to inherit run here');
     local.engine = () => engineSel.value;
     // Runs in (docs/e2b.md): "Default" sends none, so /api/run resolves run.execEnv (named once the lane has read it);
     // a proposal that names an environment preselects it.
@@ -6018,7 +6105,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     targetSec.appendChild(prRow);
     if (shapeUi) rootEl.appendChild(shapeUi.el);
     rootEl.appendChild(targetSec);
-    engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
+    // the rows heal to the new harness; pinned ones stay. A change while a reload is loading (local.lane null) carries
+    // that reload's keep, so arrowing through the select does not drop the pins.
+    engineSel.addEventListener('change', () => reloadLane({ keep: pinnedEdits(local.lane) ?? local.pendingKeep }));
     workflowSel.addEventListener('change', () => {
       if (local.workflowUnavailable) { local.workflowUnavailable = false; err.textContent = ''; refreshStartGate(); }
       paintNeedsRepo();
@@ -6602,17 +6691,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
 
     // A reload (workflow / project / target change) rebuilds the lane from scratch:
-    // `edits` are per workflow-and-project and are DISCARDED, silently.
+    // `edits` are per workflow-and-project and are DISCARDED, silently. A Default harness change keeps the rows pinned
+    // to a harness (`keep`, pinnedEdits): they do not run on the default, so the change leaves them as they were.
     // `saveDefaults`: the card's "Save as project defaults" switch (off by default), kept across lane reloads.
     const laneCtx = { summary, workflowId: () => local.workflowId(), projectDir: () => local.projectDir(),
       saveDefaults: () => !!local.saveDefaults, setSaveDefaults: (v) => { local.saveDefaults = !!v; },
       onPaint: (lane) => paintAdvanced(lane) };
     let laneSeq = 0;
-    function reloadLane() {
+    function reloadLane({ keep = null } = {}) {
       const seq = ++laneSeq;
       const workflowId = local.workflowId();
       const projectDir = local.projectDir();
       local.lane = null;
+      local.pendingKeep = keep;   // until this reload lands (or a later one replaces it)
       if (workflowId === 'wf_auto') {
         // No graph yet: the run classifies its task and picks the agents when it starts.
         renderLane(laneSec, null, laneCtx, 'Auto picks the agents when the run starts.');
@@ -6624,6 +6715,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       local.lanePending = loadLane(workflowId, projectDir, local.engine()).then((lane) => {
         if (st.destroyed || seq !== laneSeq) return;            // a later reload won
         local.lane = lane;
+        local.pendingKeep = null;
         // A workspace run fans out every workspaceFanOut agent (fanForced): the lane locks that switch there.
         if (lane) lane.workspace = local.target === 'workspace';
         // Ask Worca's per-agent picks are for the workflow it proposed: laid in again on every reload of it (another
@@ -6634,6 +6726,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           const proposedTarget = local.target === (card.target === 'workspace' ? 'workspace' : 'project') && projectDir === (card.projectDir || '');
           lane.warnings = proposedTarget && Array.isArray(card.warnings) ? card.warnings.filter((w) => typeof w === 'string') : [];
         }
+        if (lane && keep) layPinned(lane, keep);
         if (lane) {
           engineSel.options[0].textContent = `${engineLabel(lane.defaultEngine)} (default)`;
           prSel.options[0].textContent = lane.prDefault && local.target === 'project' ? `Use the setting: ${PR_OPEN_LABELS[lane.prDefault.open.value]} (${prSourceText(lane.prDefault.open.source)})` : 'Use the setting';
@@ -6830,8 +6923,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (ex.extras.length) body.extras = ex.extras;
       if (block.card && block.card.preset) applyPresetStart(body, block.card.preset);
       let res = null;
+      // Every resend is built from the last body sent, so a later one keeps an earlier one's choices.
+      let sent = body;
       try {
-        res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sent) });
       } catch { err.textContent = 'network error'; return; }
       if (!res.ok) {
         let b = null;
@@ -6841,8 +6936,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (b && (b.code === 'sync-diverged' || b.code === 'sync-fetch-failed')) {
           const choice = await chooseSyncRefusal(b);
           if (!choice) { err.textContent = 'Start cancelled.'; return; }
+          sent = { ...sent, syncPolicy: choice };
           try {
-            res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, syncPolicy: choice }) });
+            res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sent) });
           } catch { err.textContent = 'network error'; return; }
           b = null;
           if (!res.ok) { try { b = await res.json(); } catch { /* keep */ } }
@@ -6854,8 +6950,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
             text: b.error || 'An attached feature already has a run in progress. Start another run anyway?',
           });
           if (!again) { err.textContent = 'Start cancelled.'; return; }
+          sent = { ...sent, confirmAttachedRunning: true };
           try {
-            res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, confirmAttachedRunning: true }) });
+            res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sent) });
+          } catch { err.textContent = 'network error'; return; }
+          b = null;
+          if (!res.ok) { try { b = await res.json(); } catch { /* keep */ } }
+        }
+        // A step's harness (or a card moved to Normal) cannot enforce the guardrail rules: ask once, resend with the
+        // consent. A refusal the consent cannot lift (overridable false) keeps the server's error line.
+        if (!res.ok && res.status === 409 && b && ((b.code === 'engine-refused' && b.overridable === true) || b.code === 'GUARDRAILS_CARD_ENGINE')) {
+          const allow = await askTwoChoice({ title: 'Start without some guardrails?', text: b.error || '', action: 'Allow unguarded' });
+          if (!allow) { err.textContent = 'Start cancelled.'; return; }
+          sent = { ...sent, allowUnguardedEngine: true };
+          try {
+            res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sent) });
           } catch { err.textContent = 'network error'; return; }
           b = null;
           if (!res.ok) { try { b = await res.json(); } catch { /* keep */ } }

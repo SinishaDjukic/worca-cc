@@ -529,11 +529,13 @@ const GPT = { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex', efforts: ['minim
 
 test('ask-panel-card v2: the lane follows the run engine — Codex models only on a Codex run, none on a Claude run', async () => {
   await checkRows([
-    { name: 'on a Codex run the agent rows offer Codex models only, heal a Claude pick and hide sub-agents', run: async () => {
+    { name: 'on a Codex run the picker opens on OpenAI Codex, marked Default; the workflow\'s Claude pick heals; no Sub-agents', run: async () => {
       const ctx = await openWithCard(PROJECT_CARD, { runEngine: 'codex', extraModels: [GPT] });
       const lane = await laneOf(ctx);
       const plan = lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model');
-      assert.deepEqual([...plan.options].map((o) => o.value), ['', 'gpt-5.5']);
+      plan.click();
+      assert.deepEqual([pop(ctx).querySelector('[data-col="harness"] [aria-selected="true"]').dataset.key, optOf(ctx, 'harness', 'codex').querySelector('.badge').textContent, colKeys(ctx, 'model')],
+        ['codex', 'Default', ['gpt-5.5']]);
       assert.equal(lane.querySelector('.ask-rp-tile[data-node-id="n_impl"] .ask-rp-model').value, '', 'the workflow\'s Claude pick is skipped on Codex');
       assert.equal(lane.querySelector('.ask-rp-subagent'), null);
       assert.deepEqual([...lane.querySelectorAll('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-effbtn')].map((b) => b.textContent), ['minimal', 'low', 'medium', 'high']);
@@ -544,10 +546,13 @@ test('ask-panel-card v2: the lane follows the run engine — Codex models only o
       assert.ok(lane.querySelector('.ask-rp-tile'));
       assert.equal(lane.querySelector('.ask-rp-eff'), null, 'an empty group would leave its "inherits workflow" label overflowing the tile');
     } },
-    { name: 'on a Claude run a Codex model is not offered', run: async () => {
+    { name: 'on a Claude run a Codex model sits under OpenAI Codex, not Claude Code', run: async () => {
       const ctx = await openWithCard(PROJECT_CARD, { extraModels: [GPT] });
       const lane = await laneOf(ctx);
-      assert.equal([...lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model').options].some((o) => o.value === 'gpt-5.5'), false);
+      trigger(lane, 'n_plan').click();
+      assert.deepEqual(colKeys(ctx, 'model'), ['claude-opus-5-5', 'claude-fable-5-1', 'claude-haiku-4-5']);
+      optOf(ctx, 'harness', 'codex').click();
+      assert.deepEqual(colKeys(ctx, 'model'), ['gpt-5.5']);
       assert.ok(lane.querySelector('.ask-rp-subagent'));
     } },
     { name: 'on a Codex run, saving another tunable re-sends the project\'s Claude pick instead of erasing it', run: async () => {
@@ -2804,6 +2809,10 @@ const shapeLane = (rec) => {
 };
 const roleTile = (lane, key) => lane.querySelector(`.ask-rp-role[data-node-id="n_roles"][data-role="${key}"]`);
 const pickModel = (ctx, sel, id) => { sel.value = id; sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true })); };
+const pop = (ctx) => ctx.doc.querySelector('.mdl-cols-pop');
+const colKeys = (ctx, col) => [...pop(ctx).querySelectorAll(`[data-col="${col}"] [role="option"]`)].map((b) => b.dataset.key);
+const optOf = (ctx, col, key) => [...pop(ctx).querySelectorAll(`[data-col="${col}"] [role="option"]`)].find((b) => b.dataset.key === key);
+const trigger = (lane, id) => lane.querySelector(`.ask-rp-tile[data-node-id="${id}"] .ask-rp-model`);
 const start = async (ctx) => { ctx.doc.querySelector('[data-ask-card-start]').click(); for (let i = 0; i < 6; i++) await ctx.tick(); };
 
 test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
@@ -2817,12 +2826,12 @@ test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
       assert.deepEqual(rows.map((r) => r.querySelector('.ask-rp-name b').textContent), [...PERSPECTIVES.map((p) => `Plan Review · ${p.label}`),
         'Review Implementation · Correctness', 'Review Implementation · Security', 'Review Implementation · Project fit']);
       for (const r of rows) {
-        assert.equal(r.querySelectorAll('select').length, 1, r.dataset.role);
+        assert.deepEqual([r.querySelectorAll('select').length, r.querySelectorAll('button.ask-rp-model').length], [0, 1], r.dataset.role);
         assert.equal(r.querySelectorAll('[role=radiogroup]').length, 1, r.dataset.role);
         assert.equal(r.querySelectorAll('input[type=checkbox], [role=switch], .ask-rp-tile-l2, button.ask-rp-mini').length, 0, 'no switch, no reset, no line 2');
       }
       const arch = roleTile(lane, 'architect');
-      assert.equal(arch.querySelector('.ask-rp-model').options[0].textContent, "Node's model");
+      arch.querySelector('.ask-rp-model').click(); assert.equal(pop(ctx).querySelector('.mdl-cols-hint').textContent, "Node's model"); pop(ctx).querySelector('.mdl-cols-inherit').click();
       assert.equal(arch.querySelector('.ask-rp-model').value, '');
       // The built-in Shaper pins no model (its Plan Review and Second-opinion reviewer models are Worca's factory defaults
       // on the Models page), so the card has no template pick to show: every role reads the node's setting.
@@ -2839,6 +2848,15 @@ test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
       pickModel(ctx, roleTile(lane, 'security').querySelector('.ask-rp-model'), 'claude-haiku-4-5');
       await start(ctx);
       assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_roles: { roles: { security: { model: 'claude-haiku-4-5', effort: 'high' } } } } });
+    }),
+    shapeRow('a role pick from the panel rides with its harness in overlay.nodes.n_roles.roles', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
+      const lane = await laneOf(ctx);
+      roleTile(lane, 'security').querySelector('.ask-rp-model').click();
+      optOf(ctx, 'model', 'claude-haiku-4-5').click();
+      await start(ctx);
+      assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_roles: { roles: { security: { model: 'claude-haiku-4-5', effort: 'high', engine: 'claude' } } } } });
     }),
     shapeRow('an untouched shaped card posts no roles', async () => {
       const rec = {};
@@ -2867,6 +2885,59 @@ test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
       assert.equal(lane.querySelectorAll('.ask-rp-role').length, 0);
       await start(ctx);
       assert.equal(JSON.stringify(rec.runBodies[0].overlay || {}).includes('roles'), false);
+    }),
+  ]);
+});
+
+// A role row's harness (spec 2026-11-26 "The surfaces"): a soft role runs on its node's harness, "Node's model" names
+// the node's pick with its harness, a role re-pinned to its own model's harness rides, and a Default harness change keeps
+// a pinned role.
+const shapeOn = (rec, nRoles) => {
+  const h = shapeLane(rec);
+  Object.assign(rec, { extraModels: [SONNET, GPT], configWorkflows: { wf_shape: { nodes: { n_roles: nRoles }, feedbacks: {} } } });
+  return h;
+};
+const pillsOf = (tile) => [...tile.querySelectorAll('.ask-rp-effbtn')].map((b) => b.textContent);
+test('ask-panel-card: a role row follows its node\'s harness', async () => {
+  await checkRows([
+    shapeRow('on a node pinned to Codex, a role naming no model shows Codex\'s efforts and its picker marks Codex as the default', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeOn(rec, { model: 'gpt-5.5', effort: 'low', engine: 'codex' }) });
+      const lane = await laneOf(ctx);
+      assert.deepEqual(pillsOf(roleTile(lane, 'security')), ['minimal', 'low', 'medium', 'high']);
+      roleTile(lane, 'security').querySelector('.ask-rp-model').click();
+      assert.deepEqual([optOf(ctx, 'harness', 'codex').querySelector('.badge')?.textContent, optOf(ctx, 'harness', 'claude').querySelector('.badge')], ['Default', null]);
+    }),
+    shapeRow('"Node\'s model" over a role\'s own pick names the node\'s model with its harness', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeOn(rec, { model: 'gpt-5.5', effort: 'low', engine: 'codex',
+        roles: { security: { model: 'claude-haiku-4-5', effort: 'high' } } }) });
+      const lane = await laneOf(ctx);
+      roleTile(lane, 'security').querySelector('.ask-rp-model').click();
+      pop(ctx).querySelector('.mdl-cols-inherit').click();
+      await start(ctx);
+      assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_roles: { roles: { security: { model: 'gpt-5.5', effort: 'low', engine: 'codex' } } } } });
+    }),
+    shapeRow('a soft role pick re-picked on its harness rides pinned, though model and effort are unchanged', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeOn(rec, { roles: { security: { model: 'claude-haiku-4-5', effort: 'high' } } }) });
+      const lane = await laneOf(ctx);
+      roleTile(lane, 'security').querySelector('.ask-rp-model').click();
+      optOf(ctx, 'harness', 'claude').click(); optOf(ctx, 'model', 'claude-haiku-4-5').click();
+      await start(ctx);
+      assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_roles: { roles: { security: { model: 'claude-haiku-4-5', effort: 'high', engine: 'claude' } } } } });
+    }),
+    shapeRow('a Default harness change keeps a role pinned to a harness', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeOn(rec, {}) });
+      let lane = await laneOf(ctx);
+      roleTile(lane, 'security').querySelector('.ask-rp-model').click();
+      optOf(ctx, 'harness', 'claude').click(); optOf(ctx, 'model', 'claude-haiku-4-5').click();
+      const sel = ctx.doc.querySelector('.ask-card-engine');
+      sel.value = 'codex'; sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      lane = await laneOf(ctx);
+      const t = roleTile(lane, 'security').querySelector('.ask-rp-model');
+      assert.deepEqual([t.value, t.dataset.engine], ['claude-haiku-4-5', 'claude']);
     }),
   ]);
 });

@@ -20,7 +20,7 @@ export const BUTTON_SPEC = Object.freeze({
     'button.gp-row', 'button.rd-fact-act', '.dz-dots button','button.agent-row-head', 'button.hd-tree-file', 'button.hd-tree-dir', 'button.ask-filescard-thumb', 'button.ask-filescard-name', 'button.chat-home-act',
     'button.chat-home-wf', 'button.chat-home-chat', 'button.chat-home-plan-open', 'button.release-row-edit',
     '.row-btn', 'button.xtoggle', 'button.gs-tile', 'button.mk-tile', 'button.mk-facet', 'button.mk-name',
-    '.mk-upd > button.mk-disc', 'button.mdl-hx-t', 'button.mdl-tile', 'button.mdl-pick',
+    '.mk-upd > button.mk-disc', 'button.mdl-hx-t', 'button.mdl-tile', 'button.mdl-pick', 'button.mdl-cols-inherit',
     '.cost-bd-btn', 'button.chat-head-meter', '.linkish', '.hd-dl-more-btn', '.plan-fold', '.plan-persp-edit', '.qopt', '.afb-main',
     '.afb-folder', '.acct', '.sn-btn', '[class*="chip"]'],
   // .btn labels that still type "+" instead of icon(doc, 'plus'), exactly as shown; slice 3 emptied this
@@ -230,7 +230,7 @@ export const STRAY_SPEC = Object.freeze({
   allow: ['.tab', '[role="tab"]', '.seg button', '.seg-btn', '.filter-chip', '.switch', '[role="switch"]', '[role^="menuitem"]',
     '[role="option"]', '[role="radio"]', '.info-tip', '.row-btn', 'div.wfl-main', 'button.gs-tile',
     'button.ob-door', 'button.wfc-chip-btn', 'button.mk-tile', 'button.mk-facet', 'button.mk-name', '.mk-upd > button.mk-disc',
-    'button.rd-fact-act', '.dz-dots button', 'button.mdl-hx-t', 'button.mdl-tile', 'button.mdl-pick'],
+    'button.rd-fact-act', '.dz-dots button', 'button.mdl-hx-t', 'button.mdl-tile', 'button.mdl-pick', 'button.mdl-cols-inherit'],
   skip: '#wfv-canvas',
 });
 export function auditStray(root, spec, env) {

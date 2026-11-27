@@ -244,7 +244,7 @@ import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
 import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, runCostKnown, runCostLabel, engineList, ENGINE_NAMES, MODEL_ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
 import { remoteRefusesDefault } from '../../src/shared/exec-env.mjs';
-import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS, connectionOf } from '../../src/shared/connections.mjs';
+import { runsOn, effortsOn, pickEffortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS, connectionOf } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
@@ -301,7 +301,7 @@ import { decorateArtifact, decorateDiff } from './pinpoint-surfaces.mjs';
 import { trayKey as pinpointTrayKey } from './pinpoint-model.mjs';
 import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
-import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
+import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, pinnedHarnessText, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 import { buildFeedbackRows as ntBuildFeedbackRows } from './loop-rows.mjs';
 import { renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
@@ -800,14 +800,17 @@ let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2
 // 60 s. null until an answer with an `engines` array arrives — then usageLimitSwitches offers every other engine.
 // Every caller's onLoad runs when the answer lands (banner, history bar). A failed or engines-less answer is cached
 // for the same 60 s, so a repaint loop never turns into a request loop. Up here, above every painter: painters can
-// run before a later `let` line is reached (TDZ).
+// run before a later `let` line is reached (TDZ). Its second reader is the model pickers (models/model-columns.mjs):
+// their status words and broker locks read the raw rows through readyEngineRows, kept from the same answer.
 let engineReady = null; let engineReadyAt = 0; let engineReadyLoading = null; const engineReadyWaiters = new Set();
+let engineReadyRows = null;   // the raw GET /api/engines rows: null until an answer with an `engines` array
 function readyEngines(onLoad) {
   if (Date.now() - engineReadyAt < 60_000) return engineReady;
   if (typeof onLoad === 'function') engineReadyWaiters.add(onLoad);
   if (!engineReadyLoading) {
     engineReadyLoading = fetch('/api/engines').then((r) => (r.ok ? r.json() : null)).catch(() => null).then((d) => {
       engineReady = Array.isArray(d?.engines) ? d.engines.filter((e) => e.ready).map((e) => e.name) : null;   // null: offer all
+      engineReadyRows = Array.isArray(d?.engines) ? d.engines : null;
       engineReadyAt = Date.now();
       setEngineLocks(d?.engines); applyEngineLocks();
       const waiters = [...engineReadyWaiters]; engineReadyWaiters.clear();
@@ -815,6 +818,18 @@ function readyEngines(onLoad) {
     }).finally(() => { engineReadyLoading = null; });
   }
   return engineReady;
+}
+/** The readiness rows ({ name, label, ready, reason, broker? }) for the model pickers, in readyEngines' style: rows or
+ *  null, and onLoad runs when a fetch it started lands. */
+function readyEngineRows(onLoad) {
+  readyEngines(onLoad);
+  return engineReadyRows;
+}
+/** The Models view with Add model on `engine`'s sign-in. OpenCode lists its own models, so it opens at that list;
+ *  every other sign-in opens at step 1 with the harness picked. */
+function addModelOn(engine) {
+  mvState.openEditorOnLoad = engine === 'opencode' ? { step: 2, where: 'signin', engine } : { where: 'signin', engine };
+  showView('models');
 }
 /** Readiness only matters to a usage-limit pause an engine hit: any other run never asks. */
 const readyFor = (pause, onLoad) => (pause?.reason === 'usage_limit' && pause?.limitEngine ? readyEngines(onLoad) : null);
@@ -3640,7 +3655,14 @@ const gvApi = {
     const d = await safeJson(res);
     return Array.isArray(d) ? d : (d && d.agents) || [];
   },
-  config: async () => { const res = await fetch('/api/config'); const d = await safeJson(res); return { models: d.models || [], efforts: d.efforts || [], subagentModels: d.subagentModels || [] }; },
+  // defaultEngine: the harness a run starts on when nothing else names one (GET /api/run-defaults, no project), where
+  // the Workflows picker's inherit and soft picks run.
+  config: async () => {
+    const [res, def] = await Promise.all([fetch('/api/config'), fetch('/api/run-defaults').then((r) => (r.ok ? safeJson(r) : null)).catch(() => null)]);
+    const d = await safeJson(res);
+    const defaultEngine = (def && def.engine && typeof def.engine.value === 'string' && def.engine.value) || 'claude';
+    return { models: d.models || [], efforts: d.efforts || [], subagentModels: d.subagentModels || [], defaultEngine };
+  },
   listWorkflows: async () => listWorkflows(),
   listArchived: async () => {
     try {
@@ -3859,6 +3881,9 @@ const wfvTests = createWorkflowTests({ doc: document, win: window, fetch: (...a)
 
 function wfvShellActions() {
   return {
+    // The model picker's readiness (status words, broker locks) and its Add model on a harness.
+    engines: (onLoad) => readyEngineRows(onLoad),
+    addModel: (engine) => addModelOn(engine),
     pinState: () => { const t = gvComposer.template(); return t && t.id ? { id: t.id, pinned: homePinned(t.id) } : null; },
     togglePin: () => { const t = gvComposer.template(); if (t && t.id) void toggleHomePin(t); },
     back: () => { location.hash = wfvReturn || 'chat'; },
@@ -4512,7 +4537,8 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   modelSel.innerHTML = '';
   modelSel.appendChild(option('', '(default model)'));
   // D10: New pipeline offers the models the run's harness can run only (src/shared/connections.mjs) — any
-  // other would be skipped at run time. `sel.engine` names another engine for a caller that has one.
+  // other would be skipped at run time. `sel.engine` is a row pinned to its own harness (a pick naming `engine`):
+  // it lists that harness's models and the efforts a pinned pick may carry (pickEffortsOn).
   const engine = sel.engine || state.engine || 'claude';
   const ofEngine = (m) => runsOn(m, engine);
   // A bridged model whose provider is not usable (model-bridge-design.md §8.5)
@@ -4532,8 +4558,9 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   const model = modelById(modelSel.value);
   effortSel.innerHTML = '';
   effortSel.appendChild(option('', model ? '(default effort)' : '(pick a model first)'));
-  // A model on two harnesses keeps its own efforts; this run's harness offers them mapped (effortsOn).
-  const offeredEfforts = model ? effortsOn(model, engine) : [];
+  // A model on two harnesses keeps its own efforts; this run's harness offers them mapped (effortsOn). A pinned row
+  // offers its own efforts and the mapped ones, so a stored own-only effort still shows.
+  const offeredEfforts = model ? (sel.engine ? pickEffortsOn(model, engine) : effortsOn(model, engine)) : [];
   offeredEfforts.forEach((e) => effortSel.appendChild(option(e, e)));
   effortSel.value = sel.effort && offeredEfforts.includes(sel.effort) ? sel.effort : '';
 
@@ -5085,9 +5112,10 @@ function renderAgentRows(rows) {
     const rowDef = row.def || {};
     keepVisible(tagLevel(fanWrap, 'expert'), !!row.fanOut !== !!rowDef.fanOut);
     keepVisible(tagLevel(sWrap, 'expert'), (row.subagentModel || '') !== (rowDef.subagentModel || ''));
-    // Only a Claude run has a sub-agent model to pick: Codex has its own spawn_agent, Copilot's sub-agents run on the
+    // Only a step on Claude Code has a sub-agent model to pick: Codex has its own spawn_agent, Copilot's sub-agents run on the
     // node's own model, OpenCode's investigator runs on the node's model, and Cursor, Gemini CLI, Goose and Qwen Code have none.
-    if (state.engine !== 'claude') sWrap.hidden = true;
+    // A row pinned to a harness runs there whatever the run's.
+    if ((row.engine || state.engine) !== 'claude') sWrap.hidden = true;
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const lockWhy = row.questionsLocked ? (row.askQuestions ? 'Always on for this agent' : 'Always off for this agent') : null;
       const q = makeSwitch(document, { label: 'Questions', ariaLabel: `${row.label} questions`, checked: !!row.askQuestions,
@@ -5103,7 +5131,10 @@ function renderAgentRows(rows) {
     // to "what does 'default' actually mean here", without opening a doc.
     const origin = document.createElement('small');
     origin.className = 'agent-origin';
-    origin.textContent = row.pinned ? PINNED_PAIR_TEXT : defaultOriginText(row);
+    // A row pinned to another harness (a pick naming `engine`, no Settings › Memory pin) is shown locked: New run
+    // does not pick harnesses, so it says where to change it.
+    const harnessPinned = !!row.engine && !row.pinned;
+    origin.textContent = row.pinned ? PINNED_PAIR_TEXT : harnessPinned ? pinnedHarnessText(row) : defaultOriginText(row);
     body.appendChild(origin);
     // A pick of the other engine was healed off this run's row (D10) but stays stored and is
     // re-sent on save: say so, so it is never invisible — picking a model here replaces it.
@@ -5123,7 +5154,12 @@ function renderAgentRows(rows) {
     // The collapsed head IS this row's caption (`sum` above), so the controls get
     // no second one — renderModelEffortPair's caption slot stays empty and
     // paintRowSummary keeps the head in step with the live selects.
-    renderModelEffortPair(modelSel, effortSel, null, { model: row.model, effort: row.effort });
+    if (harnessPinned) {
+      renderModelEffortPair(modelSel, effortSel, null, { model: row.model, effort: row.effort, engine: row.engine });
+      lockPinnedPair(modelSel, effortSel, pinnedHarnessText(row));
+    } else {
+      renderModelEffortPair(modelSel, effortSel, null, { model: row.model, effort: row.effort });
+    }
     if (row.pinned) lockPinnedPair(modelSel, effortSel);
     host.appendChild(card);
   });
@@ -5151,14 +5187,15 @@ function paintRowSummary(row, body) {
   head.textContent = agentSummaryText({ ...row, ...liveRowValues(row, body) });
 }
 
-// Settings › Memory owns a Memory defragment run's model + effort (node-tunables.mjs `pinned`):
-// shown, never edited here. `data-locked` keeps setAgentRowsEnabled from re-enabling them.
+// Settings › Memory owns a Memory defragment run's model + effort (node-tunables.mjs `pinned`), and a row pinned to
+// another harness keeps its own pick: shown, never edited here (`title` says where it is set). `data-locked` keeps
+// setAgentRowsEnabled from re-enabling them and liveRowValues from reading them back.
 const PINNED_PAIR_TEXT = 'Set in Settings › Memory. Every Memory defragment run uses this model, whatever this project picked.';
-function lockPinnedPair(modelSel, effortSel) {
+function lockPinnedPair(modelSel, effortSel, title = 'Set in Settings › Memory') {
   for (const s of [modelSel, effortSel]) {
     s.disabled = true;
     s.dataset.locked = '1';
-    s.title = 'Set in Settings › Memory';
+    s.title = title;
   }
 }
 
@@ -5558,14 +5595,14 @@ if (el.guardrailsSelect) {
   });
 }
 
-async function saveStep(role, model, effort, fanOut, askQuestions, subagentModel) {
+async function saveStep(role, model, effort, fanOut, askQuestions, subagentModel, engine) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, step: role, model, effort, fanOut, askQuestions, subagentModel }),
+      body: JSON.stringify({ projectDir, step: role, model, effort, fanOut, askQuestions, subagentModel, engine }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -5582,7 +5619,8 @@ async function saveStep(role, model, effort, fanOut, askQuestions, subagentModel
 // What a row's controls CURRENTLY show. The visible state is the truth: reading
 // it back (rather than the last-rendered row data, or state.config, which lags an
 // in-flight save) is what keeps a toggle from reverting a model picked a moment
-// earlier. A disabled questions box is the agent's locked value, never the user's.
+// earlier. A disabled questions box is the agent's locked value, never the user's, and a locked model + effort pair
+// (data-locked) is left out, so a save of another tunable re-sends the row's own pick.
 function liveRowValues(row, body) {
   const host = body || (el.agentRows
     && el.agentRows.querySelector(`.agent-row[data-node-id="${row.nodeId}"] .agent-row-body`));
@@ -5593,8 +5631,8 @@ function liveRowValues(row, body) {
   const f = host.querySelector('.step-fanout');
   const q = host.querySelector('.step-questions');
   const sa = host.querySelector('.step-subagent');
-  if (m) out.model = m.value === '__add__' ? row.model : m.value;
-  if (e) out.effort = e.value;
+  if (m && !m.dataset.locked) out.model = m.value === '__add__' ? row.model : m.value;
+  if (e && !e.dataset.locked) out.effort = e.value;
   if (f) out.fanOut = f.checked;
   if (q && !q.disabled) out.askQuestions = q.checked;
   if (sa) out.subagentModel = sa.value;
@@ -5637,24 +5675,24 @@ async function saveAgentRow(row, next, body) {
   }
   const patch = pruneNodeSelection(row, { ...liveRowValues(row, body), ...next });
   if (row.role) {
-    await saveStep(row.role, patch.model, patch.effort, patch.fanOut, patch.askQuestions, patch.subagentModel);
+    await saveStep(row.role, patch.model, patch.effort, patch.fanOut, patch.askQuestions, patch.subagentModel, patch.engine);
   } else {
     await saveNode(state.workflowId, row.nodeId, patch.model, patch.effort, patch.fanOut, patch.askQuestions,
-      patch.subagentModel);
+      patch.subagentModel, patch.engine);
   }
   await renderWorkflowConfig(state.workflowId); // repaint captions, dots + header
 }
 
 // Persist one node's model/effort to the per-project run-config for the active
 // workflow (CONV-2): PATCH /api/config { projectDir, workflowId, nodes:{ [nodeId]:{model,effort} } }.
-async function saveNode(workflowId, nodeId, model, effort, fanOut, askQuestions, subagentModel) {
+async function saveNode(workflowId, nodeId, model, effort, fanOut, askQuestions, subagentModel, engine) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort, fanOut, askQuestions, subagentModel } } }),
+      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort, fanOut, askQuestions, subagentModel, engine } } }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -5893,12 +5931,13 @@ if (el.agentsPromote) {
 
 // One row's effective settings as a workflow-defaults block: only what deviates
 // from the agent registry is worth storing, and a locked/absent questions toggle
-// is never the user's to promote.
+// is never the user's to promote. A row's harness (`engine`) goes beside its model.
 function effectiveDefaultsOf(row) {
   const out = {};
   if (row.model) {
     out.model = row.model;
     if (row.effort) out.effort = row.effort;
+    if (row.engine) out.engine = row.engine;
   }
   out.fanOut = !!row.fanOut;
   if (row.askQuestions !== null && !row.questionsLocked) out.askQuestions = !!row.askQuestions;
@@ -44596,7 +44635,9 @@ askPanel = createAskPanel({
   openClaudeSetup: () => { openClaudeSetup(); },
   // The picker's "More harnesses": the Models view with Add model on that harness. OpenCode lists its own models, so
   // it opens at that list; every other sign-in opens at step 1 with the harness picked.
-  openAddModel: (engine) => { askSide?.uncover(); mvState.openEditorOnLoad = engine === 'opencode' ? { step: 2, where: 'signin', engine } : { where: 'signin', engine }; showView('models'); },
+  openAddModel: (engine) => { askSide?.uncover(); addModelOn(engine); },
+  // The run card's model pickers read readiness (status words, broker locks) from the same cache as the resume menus.
+  engineRows: readyEngineRows,
   loadMarkdown: loadAskMarkdown,
   hljsLoader: diffHljsLoader,
   storage: localStorage,

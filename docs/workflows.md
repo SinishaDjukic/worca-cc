@@ -47,9 +47,15 @@ ask this way, and plugins can ship forms too.
 
 ### Model and effort per agent
 
-You can pick a model and a reasoning effort (medium, high, xhigh, max) for each agent node. In Workflows, use the
-toolbar over a selected agent card. For one project, use New pipeline › **Advanced** › **Agents**. The project
-keeps your picks for its later runs, and **Save as workflow defaults** moves them into the workflow.
+You can pick a model and a reasoning effort for each agent node. In Workflows, select an agent card and use **Model** in
+its toolbar, or the **Model** field under **More**: both open one picker, **inherit** (follows the run) on top, then three
+columns, **Harness**, **Provider** and **Model**. A pick names the harness it runs on, so one workflow can plan on Claude
+Code and implement on Codex; **inherit** runs the step on the run's harness. A model two harnesses run is listed under
+each (*also on …*), and a provider that needs a key or a sign-in says so. **Effort** offers what the picked model takes on
+the picked harness. For one project, use New pipeline › **Advanced** › **Agents**: a step pinned to a harness shows there
+locked, with where to change it (*Runs on OpenAI Codex. Change it in Workflows.* for the workflow's own pick, *… Change it
+on a Chat run card.* for the project's). The project keeps your picks for its later runs, and **Save as workflow
+defaults** moves them, harness included, into the workflow.
 
 A project's pick beats a team-policy default, which beats the workflow's own. `--model` only fills nodes that have
 none. Fan-out agents also take a sub-agent model.
@@ -161,6 +167,9 @@ discovery, and comes from a fork when you can't push.
 With the flag `workflowTests` on and at least one saved [version](workflow-tests.md#versions), Export has a **Version**
 field: it starts on the version new runs use, and can export another version or **Your draft**. An exported skill or
 plugin keeps the workflow's name whichever version it holds.
+
+A step set to a harness carries it in every format. On a Worca server older than per-step harnesses the harness is
+ignored and the step runs on the run's harness; a review role set to one turns that node's role review off there.
 
 The CLI does the same with `worca workflow list`, `worca workflow export <id> --format json|claude|plugin` and
 `worca workflow import <file>`.

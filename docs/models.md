@@ -1519,7 +1519,7 @@ agent step (`propose_run` `nodes`), from the models the run's default harness ru
 - **On the card** the Agents section shows each pick beside the project's own setting
   (*project: …*), marked **Chat** with the reason and the model's facts on hover; a row
   carrying a pick or an edit has **Use project default** (*Use default* on a workspace card), and
-  **Reset to proposal** brings the picks back. The section shows at every interface mode when the
+  **Reset to proposal** brings the picks back. Each row's model is the harness › provider › model picker (**inherit** is the workflow default; on a role row, the node's model): a pick names its harness, and the row's effort pills and its Sub-agents (Claude Code only) follow that harness. **Default harness** under Advanced is where every other step runs; changing it keeps the rows pinned to a harness, and a Start a step's harness refuses asks once for **Allow unguarded**. The section shows at every interface mode when the
   card carries picks.
 - **The picks apply to that run only** — and so does any other change you make in a run card's
   Agents section. **Start run** (or **Schedule…**: the scheduled run keeps them) sends them with the run
@@ -1617,8 +1617,7 @@ picked per run, findings to Refine). Every node and role pick is cleaned in one 
 - **The record names what ran:** each role's review records the model and effort its slice
   ran on.
 - **Set them in the Chat run card** (Advanced › Agents): a node that declares roles gets one row
-  per role, labelled like `Plan Review · Architect`, with a model select ("Node's model" = no
-  pick) and effort pills. An edited row rides that run only, or becomes the project's default
+  per role, labelled like `Plan Review · Architect`, with the model picker (**inherit**, *Node's model*, is no pick; a pick names its harness, and a pick without one runs on the node's harness) and effort pills. An edited row rides that run only, or becomes the project's default
   with *Save as project defaults*. A workflow, the project config and a run overlay set them too.
 - **A pick its harness cannot run is named, never dropped silently.** Its harness is the one it names, else the
   run's default (a node) or its node's (a role). The node or role runs on what the layers below give it, its record keeps the request as `wanted`, and the run

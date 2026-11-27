@@ -5,13 +5,15 @@
 // stored). The data half (splitForPicker, pickerItems, applyPick, pickLabel, modelName) is pure and loads under node;
 // only openModelPicker touches a document, the one it is given. The button that opens it is the caller's: it wears
 // .mdl-pick (span.mdl-pick-text, span.mdl-pick-eff, a chevron icon; .inherit when the row follows something) and gets
-// aria-expanded from here while its menu is open.
+// aria-expanded from here while its menu is open. The open/close lifecycle (one open picker per document, Escape,
+// outside press and focus, scroll and resize, the anchor leaving the document) is open-picker.mjs's.
 import { runsOn, modelGroups, effortsOn, HARNESS_EFFORTS } from '../../../src/shared/connections.mjs';
 import { CLI_DECIDES, isCliDecides } from '../../../src/shared/model-roles.mjs';
 import { displayName } from './catalogue-model.mjs';
 import { modelMark } from './brand-marks.mjs';
 import { placeFlyout } from '../side-flyout.mjs';
 import { icon } from '../icons.mjs';
+import { openPicker } from './open-picker.mjs';
 
 const str = (v) => (typeof v === 'string' && v ? v : '');
 const modelOf = (value) => (value && typeof value === 'object' ? str(value.model) : '');
@@ -162,9 +164,6 @@ export function pickLabel(value, catalog) {
 }
 
 // ---- the open menu ---------------------------------------------------------------------------------------------------
-/** The open picker of each document: { anchor, close }. */
-const OPEN = new WeakMap();
-
 function make(doc, tag, cls, text) {
   const node = doc.createElement(tag);
   if (cls) node.className = cls;
@@ -232,21 +231,15 @@ function itemNode(doc, item, ctx, onAct) {
  *  first enabled one. Arrow keys (wrapping), Home, End move among enabled items; Enter/Space pick. A model, an effort
  *  or the clear item removes the menu, focuses the anchor, THEN calls onPick(newValue) (as openMenu does: a repaint
  *  inside onPick can then restore focus by data-setting); pane rows re-draw in place and focus the new pane's first
- *  enabled item. Escape (document capture listener, stopImmediatePropagation) removes it and focuses the anchor; a
+ *  enabled item. Escape (open-picker.mjs: a window capture listener, stopImmediatePropagation) removes it and focuses the anchor; a
  *  pointerdown outside it and the anchor, or focus moving outside both, removes it without moving focus. The anchor's
  *  aria-expanded follows. → { close() } (a no-op once closed) */
 export function openModelPicker({ doc, win, anchor, catalog, engine, value, clearLabel, decideLabel = '', modelOnly = false, allowEffortOnly = false, onPick }) {
-  const prev = OPEN.get(doc);
-  if (prev) {
-    prev.close();
-    if (prev.anchor === anchor) return { close() {} };
-  }
   const view = win || doc.defaultView;
   const opts = { catalog, engine, value: value ?? null, clearLabel, decideLabel, modelOnly: !!modelOnly, allowEffortOnly: !!allowEffortOnly };
   const ctx = { model: modelOf(value), modelOnly: !!modelOnly };
   const root = make(doc, 'div', 'menu ask-pop ask-pop-model mdl-pick-pop');
   root.setAttribute('role', 'menu');
-  let closed = false;
 
   const enabled = () => [...root.querySelectorAll('[role="menuitem"]:not([disabled])')];
   const focusItem = (b) => {
@@ -256,20 +249,7 @@ export function openModelPicker({ doc, win, anchor, catalog, engine, value, clea
     try { b.focus(); } catch { /* detached */ }
   };
   const place = () => placeFlyout(root, anchor, { mode: 'below', win: view });
-
-  function close(refocus) {
-    if (closed) return;
-    closed = true;
-    doc.removeEventListener('keydown', onEscape, true);
-    doc.removeEventListener('pointerdown', onPointerDown, true);
-    doc.removeEventListener('focusin', onFocusIn, true);
-    doc.removeEventListener('scroll', onScroll, true);
-    if (view) view.removeEventListener('resize', place);
-    root.remove();
-    anchor.setAttribute('aria-expanded', 'false');
-    if (OPEN.get(doc)?.anchor === anchor) OPEN.delete(doc);
-    if (refocus) { try { anchor.focus(); } catch { /* detached */ } }
-  }
+  let shell = null;
 
   function onAct(act) {
     if (act.type === 'pane') {
@@ -278,25 +258,13 @@ export function openModelPicker({ doc, win, anchor, catalog, engine, value, clea
       return;
     }
     const next = applyPick(opts.value, act, opts);
-    close(true);
-    if (typeof onPick === 'function') onPick(next);
+    shell.pick(() => { if (typeof onPick === 'function') onPick(next); });
   }
 
   function draw(pane) {
     root.replaceChildren(...pickerItems({ ...opts, pane }).map((item) => itemNode(doc, item, ctx, onAct)));
     place();
   }
-
-  function onEscape(e) {
-    if (e.key !== 'Escape') return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    close(true);
-  }
-  const outside = (t) => !!t && t.nodeType === 1 && !root.contains(t) && !anchor.contains(t);
-  function onPointerDown(e) { if (outside(e.target)) close(false); }
-  function onFocusIn(e) { if (outside(e.target)) close(false); }
-  function onScroll(e) { if (!(e.target && e.target.nodeType === 1 && root.contains(e.target))) place(); }
 
   root.addEventListener('keydown', (e) => {
     const list = enabled();
@@ -310,16 +278,9 @@ export function openModelPicker({ doc, win, anchor, catalog, engine, value, clea
     else if ((e.key === 'Enter' || e.key === ' ') && at >= 0) { e.preventDefault(); list[at].click(); }
   });
 
-  doc.body.append(root);
+  shell = openPicker({ doc, win: view, anchor, root, place });
+  if (!shell) return { close() {} };
   draw('main');
-  anchor.setAttribute('aria-expanded', 'true');
-  const handle = { anchor, close: () => close(false) };
-  OPEN.set(doc, handle);
   focusItem(enabled().find((b) => 'ticked' in b.dataset) || enabled()[0]);
-  doc.addEventListener('keydown', onEscape, true);
-  doc.addEventListener('pointerdown', onPointerDown, true);
-  doc.addEventListener('focusin', onFocusIn, true);
-  doc.addEventListener('scroll', onScroll, true);
-  if (view) view.addEventListener('resize', place);
-  return { close: () => close(false) };
+  return { close: () => shell.close(false) };
 }

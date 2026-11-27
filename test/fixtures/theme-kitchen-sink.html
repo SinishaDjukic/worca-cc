@@ -94,6 +94,34 @@
       <button type="button" class="menu-item" role="menuitem"><b>Start run now</b><small>Begins immediately</small></button>
       <button type="button" class="menu-item" role="menuitem"><b>Schedule…</b><small>Run once later, or on a repeat</small></button>
     </div>
+    <div class="menu mdl-cols-pop" role="dialog" aria-label="Kitchen model picker" style="position:static;margin-top:8px">
+      <button type="button" class="menu-item mdl-cols-inherit"><span class="mdl-cols-inherit-t">inherit</span><span class="mdl-cols-hint">follows the run</span></button>
+      <div class="menu-sep" role="separator"></div>
+      <div class="mdl-cols" style="height:120px">
+        <div class="mdl-col" data-col="harness">
+          <div class="mdl-col-h" id="kit-cols-h-harness">Harness</div>
+          <div class="mdl-col-list" role="listbox" aria-labelledby="kit-cols-h-harness">
+            <button type="button" class="menu-item mdl-cols-row" role="option" aria-selected="true" tabindex="0"><span class="mdl-cols-name">Claude Code</span><span class="badge">Default</span></button>
+            <button type="button" class="menu-item mdl-cols-row" role="option" aria-selected="false" tabindex="-1" disabled aria-disabled="true"><span class="mdl-cols-name">Cursor</span></button>
+          </div>
+        </div>
+        <div class="mdl-col" data-col="provider">
+          <div class="mdl-col-h" id="kit-cols-h-provider">Provider</div>
+          <div class="mdl-col-list" role="listbox" aria-labelledby="kit-cols-h-provider">
+            <button type="button" class="menu-item mdl-cols-row mdl-cols-prov" role="option" aria-selected="true" tabindex="0"><span class="mdl-cols-two"><span class="mdl-cols-name">Claude sign-in</span><span class="mdl-st ok">Ready</span></span></button>
+            <button type="button" class="menu-item mdl-cols-row mdl-cols-prov" role="option" aria-selected="false" tabindex="-1"><span class="mdl-cols-two"><span class="mdl-cols-name">OpenRouter</span><span class="mdl-st need">Needs key</span></span></button>
+          </div>
+        </div>
+        <div class="mdl-col" data-col="model">
+          <div class="mdl-col-h" id="kit-cols-h-model">Model · 1</div>
+          <div class="mdl-col-list" role="listbox" aria-labelledby="kit-cols-h-model">
+            <button type="button" class="menu-item mdl-cols-row" role="option" aria-selected="true" tabindex="0"><span class="mdl-cols-name">GPT-6.1 Sol</span><span class="mdl-cols-note">also on OpenAI Codex</span></button>
+          </div>
+          <p class="empty-line mdl-cols-empty">No models yet.</p>
+          <button type="button" class="btn btn-sm btn-quiet mdl-cols-add">Add model</button>
+        </div>
+      </div>
+    </div>
     <p><span class="tag-chip">client:acme <button type="button" class="tag-x" aria-label="Remove client:acme"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>
        <span class="tag-chip">project:redesign</span>
        <span class="tag-chip tag-missing">client · missing</span>

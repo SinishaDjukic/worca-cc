@@ -128,8 +128,11 @@ Judgement steps get the top price tier, and mechanical steps the cheapest capabl
 OpenAI. It picks a premium-tier model such as Fable 5.1 only when you name it.
 
 Each pick sits beside the project's own setting, with its reason on hover. Change or reset any of them before
-**Start run**. The picks apply to that run only. To keep them, turn on **Save as project defaults**. More in
-[Models](models.md#per-agent-models-for-one-run).
+**Start run**: a row's model opens the harness › provider › model picker, so a step can run on another harness than the
+run's (**inherit** keeps the workflow default). **Default harness**, under Advanced, is where every step set to inherit
+runs; changing it keeps the steps you pinned to a harness. When a step's harness cannot hold the guardrail rules, Start
+asks before it runs without them. The picks apply to that run only. To keep them, turn on **Save as project defaults**.
+More in [Models](models.md#per-agent-models-for-one-run).
 
 ## Files in the chat
 

@@ -2370,10 +2370,15 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const confirm = async (overlay, { note = '', noteOverrides = false } = {}) => {
       const fields = { ...(overlay ? { overlay } : {}), ...(note ? { note, ...(noteOverrides ? { noteOverrides: true } : {}) } : {}),
         ...(confirmRunning ? { confirmRunning: true } : {}) };
+      return send(fields, false);
+    };
+    /** One start; a refusal the consent lifts (a step's harness cannot hold the guardrail rules) asks once, and Yes sends the
+     *  same fields again with allowUnguardedEngine. The resend's own failure reads as today's (no second ask). */
+    const send = async (fields, consented) => {
       starting = true;
       for (const b of host.querySelectorAll('[data-start]')) b.disabled = true;
       try {
-        const data = await postStart(f, { ...(reason ? { reason } : {}), ...fields });
+        const data = await postStart(f, { ...(reason ? { reason } : {}), ...fields, ...(consented ? { allowUnguardedEngine: true } : {}) });
         handle.close();
         started(f, data);
         return {};
@@ -2382,6 +2387,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         redraw();
         if (seqShown !== f.seq) return {};   // the overlay closed with the page: nothing to open or say here
         if (err && err.status === 409 && err.data && err.data.code === 'RUN_IN_PROGRESS') { confirmRunning = true; return { error: RUN_IN_PROGRESS_TEXT + START_AGAIN_TEXT }; }
+        if (!consented && err && err.status === 409 && err.data && err.data.code === 'engine-refused' && err.data.overridable === true) {
+          const yes = await asConfirm({ title: 'Start without some guardrails?', message: err.data.error || '', confirmLabel: 'Allow unguarded' });
+          if (seqShown !== f.seq) return {};
+          if (!yes) return { error: 'Start cancelled.' };
+          return send(fields, true);
+        }
         if (err && err.status === 409 && err.data && Array.isArray(err.data.failing)) {
           const now = current && current.f.seq === f.seq ? current.f : f;
           handle.close();

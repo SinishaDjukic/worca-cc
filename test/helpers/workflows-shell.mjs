@@ -12,7 +12,7 @@ const html = `<!doctype html><body><div id="wfv"><div id="wfv-stage">
   <button id="wfv-autolayout"></button><button id="wfv-zoom" aria-expanded="false"><span id="wfv-zoom-label">100%</span></button>
   <div id="wfv-overlay" data-canvas-keys="off"></div></div><div id="wfv-dialog-host"></div></div></body>`;
 
-export async function bootShell({ template = fixture(), actions = {}, highlight = null, flags = '', sessionVerified = null } = {}) {
+export async function bootShell({ template = fixture(), actions = {}, highlight = null, flags = '', sessionVerified = null, config = null } = {}) {
   const dom = new JSDOM(html, { url: 'http://localhost:4317/' });
   const doc = dom.window.document;
   if (flags) doc.documentElement.dataset.flags = flags;   // what flagOn reads (<html data-flags>)
@@ -23,7 +23,7 @@ export async function bootShell({ template = fixture(), actions = {}, highlight 
   const insBody = doc.createElement('div');
   const c = createComposer({ canvas: g('wfv-canvas'), chip: g('wfv-chip'), name: g('wfv-name'), errors: g('wfv-errors'),
     autoBtn: g('wfv-autolayout'), saveBtn: g('wfv-save'), saveWrap: g('wfv-savewrap'), insBody, dialogHost: g('wfv-dialog-host') }, {
-    doc, api: { config: async () => ({ models: [{ id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ['medium', 'high'] },
+    doc, api: { config: async () => config || ({ models: [{ id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ['medium', 'high'] },
       { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'] }], efforts: ['medium', 'high', 'xhigh', 'max'], subagentModels: [] }) },
     raf: (fn) => { q.push(fn); return q.length; }, viewport: () => ({ ...RECT }), portsFn, allLevels: true, highlight,
     ...(sessionVerified ? { sessionVerified } : {}),

@@ -840,6 +840,7 @@ span.req-file-name{color:var(--ink)}
 .req-runsetup-presets{display:flex;flex-direction:column;gap:6px}
 .req-runsetup-agents,.req-runsetup-loops{display:flex;flex-direction:column;gap:8px}
 .req-runsetup-row{display:grid;grid-template-columns:minmax(90px,1fr) minmax(0,2fr) minmax(0,1.2fr);gap:8px;align-items:center}
+.req-runsetup-pin{grid-column:1/-1;margin:0;}
 .req-runsetup-loop{display:flex;gap:10px;align-items:center;justify-content:space-between}
 .req-runsetup-name{font-size:13px;font-weight:600;min-width:0;overflow-wrap:anywhere}
 .req-runsetup-cycles{width:72px;box-sizing:border-box}

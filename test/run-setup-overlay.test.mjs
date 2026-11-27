@@ -27,6 +27,8 @@ test('computeOverlay: every agent row with a model, preset toggles and roles car
   assert.deepEqual(computeOverlay(rows.slice(0, 1), [], null), { nodes: { n_a: { model: 'claude-opus-5-5', effort: 'high' } } });
   assert.equal(computeOverlay([{ nodeId: 'n_b', model: '' }], [{ fbId: 'fb_0', maxCycles: 3, editable: false }], null), null);
   assert.equal(computeOverlay([], [], null), null);
+  assert.deepEqual(computeOverlay([{ nodeId: 'a', model: 'gpt-5.5', effort: 'low', engine: 'codex' }, { nodeId: 'b', model: 'm', effort: '', engine: '' }], []),
+    { nodes: { a: { model: 'gpt-5.5', effort: 'low', engine: 'codex' }, b: { model: 'm', effort: '' } } });
 });
 
 test('presetsFor: this workflow only; any-project presets and this scope\'s, never another project\'s pin', () => {
@@ -472,4 +474,17 @@ test('copy overrides the title and the other-workflow line; the defaults stay wi
   assert.equal(o.q('h2').textContent, 'Start a run');
   assert.match(o.modal.card.textContent, /Pick another workflow on the card\./);
   assert.doesNotMatch(o.modal.card.textContent, /cancel and change it on the card/);
+});
+
+const GPT = { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex', efforts: ['minimal', 'low', 'medium', 'high'], connection: { kind: 'signin', engine: 'codex' } };
+test('a step pinned to another harness shows its model locked, says where to change it, and is sent back with its harness', async () => {
+  const o = await open({ config: async () => ({ config: { workflows: { wf_g: { nodes: { n_review: { model: 'gpt-5.5', effort: 'low', engine: 'codex' } } } } }, models: [...MODELS, GPT] }) });
+  const t = 'Runs on OpenAI Codex. Change it on a Chat run card.';
+  const m = o.q('[data-ui="model-n_review"]'); const e = o.q('[data-ui="effort-n_review"]');
+  assert.deepEqual([m.value, m.disabled, m.title, e.value, e.disabled, e.title], ['gpt-5.5', true, t, 'low', true, t]);
+  assert.equal(o.q('.req-runsetup-row[data-node-id="n_review"] .req-runsetup-pin').textContent, t);
+  assert.equal(o.q('[data-ui="model-n_plan"]').disabled, false);
+  o.q('[data-ui="runsetup-go"]').click(); await settle();
+  assert.deepEqual(o.events.confirms[0].nodes.n_review, { model: 'gpt-5.5', effort: 'low', engine: 'codex' });
+  assert.deepEqual(o.events.confirms[0].nodes.n_impl, { model: 'claude-sonnet-5-5', effort: 'medium' });
 });

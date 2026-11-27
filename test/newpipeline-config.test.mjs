@@ -451,6 +451,30 @@ test('toggling a default-row fan-out checkbox POSTs the step fanOut', async () =
   assert.equal(posts[0].fanOut, true);
 });
 
+test('a default row pinned to a harness keeps its harness in the step POST when another tunable is saved', async () => {
+  const posts = [];
+  const steps = { planner: { model: 'gpt-5.5', effort: 'low', engine: 'codex' } };
+  const models = [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high'] }, { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex', efforts: ['minimal', 'low', 'medium', 'high'] }];
+  const { window } = await boot({ fetchHandler: (url, opts) => {
+    if (url.includes('/api/config') && opts && opts.method === 'POST') {
+      posts.push(JSON.parse(opts.body));
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps, customModels: [] } }) });
+    }
+    if (url.includes('/api/config')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps, customModels: [] }, models, efforts: ['medium', 'high'], steps: [{ key: 'planner', label: 'Plan', fanOut: false }] }) });
+    }
+    return null;
+  } });
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  const cb = window.document.querySelector('.step-fanout[data-role="planner"]');
+  cb.checked = true;
+  cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(posts.length, 1);
+  assert.deepEqual([posts[0].step, posts[0].model, posts[0].effort, posts[0].engine, posts[0].fanOut], ['planner', 'gpt-5.5', 'low', 'codex', true]);
+});
+
 // A transient /api/workflows failure must not silently rebuild the dropdown to
 // Default-only — that would reroute the next run submit to wf_default while the
 // user believes their saved workflow is active.
