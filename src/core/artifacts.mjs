@@ -2109,6 +2109,8 @@ function toPipelineRow(o) {
           ...(typeof o.runEngine === 'string' && o.runEngine && o.runEngine !== 'claude' ? { runEngine: o.runEngine } : {}),
           // Session groups (C6): each session's summary — only on a run that has one, so other rows are unchanged.
           ...(o.sessionHosts && typeof o.sessionHosts === 'object' && Object.keys(o.sessionHosts).length ? { sessionHosts: o.sessionHosts } : {}),
+          // Where it executed (plans/e2b-execution-design.md): written for a remote run only.
+          ...(typeof o.execEnv === 'string' && o.execEnv !== 'local' ? { execEnv: o.execEnv } : {}),
         })
       : null,
   };
@@ -2290,11 +2292,20 @@ export function baseCheckSummary(c) {
   return { status: c.status, base: c.base ?? null, behind: Number.isFinite(c.behind) ? c.behind : null,
     fileCount: c.fileCount | 0, kind: c.kind ?? null, stale: !!c.stale, at: c.at ?? null };
 }
-/** The worst member's summary (a workspace row), else the run's own. */
+const PR_FINAL = new Set(['MERGED', 'CLOSED']);
+const prFinal = (pr) => !!pr?.url && PR_FINAL.has(String(pr.state || '').toUpperCase());
+/** The worst member's summary (a workspace row), else the run's own. A branch whose recorded PR is merged or closed
+ *  is final and has no summary: after a squash merge its check would always read "base moved". */
 export function baseCheckSummaryFor(row) {
   const branch = typeof row.branch === 'string' ? j(row.branch, null) : row.branch;
   const wm = typeof row.workspace_meta === 'string' ? j(row.workspace_meta, null) : row.workspace_meta;
-  const recs = row.target === 'workspace' && wm?.branches ? Object.values(wm.branches).map((b) => b?.baseCheck) : [branch?.baseCheck];
+  let recs;
+  if (row.target === 'workspace' && wm?.branches) {
+    const prs = row.id ? readMemberPrStates(row.id) : {};
+    recs = Object.entries(wm.branches).filter(([key]) => !prFinal(prs[key])).map(([, b]) => b?.baseCheck);
+  } else {
+    recs = prFinal({ url: row.pr_url, state: row.pr_state }) ? [] : [branch?.baseCheck];
+  }
   return recs.map(baseCheckSummary).filter(Boolean)
     .sort((a, b) => (BASE_RANK[b.status] ?? 0) - (BASE_RANK[a.status] ?? 0))[0] || null;
 }
@@ -2688,7 +2699,7 @@ async function listPipelinesNow(projectDir, opts, workspaceKey) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
            elapsed_ms, elapsed_since, heartbeat_at,
-           branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url,
+           branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, pr_state,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
@@ -2740,7 +2751,7 @@ async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
            total_cost_usd, total_active_ms, elapsed_ms, elapsed_since, heartbeat_at,
-           branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, archived_at,
+           branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, pr_state, archived_at,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
@@ -3071,6 +3082,8 @@ function rowToState(row) {
   // Shaper D28: only a shaped run carries shapeStats (run_size is write-only: Statistics reads the column)
   if (row.shape_stats) state.shapeStats = j(row.shape_stats, null);
   if (row.rerun_of) state.rerunOf = resolveRerunOf(row.rerun_of);   // one lookup, only for a rerun; a source never lists its reruns
+  const execEnv = execEnvOfRow(row);
+  if (execEnv) state.execEnv = execEnv;
   const outcome = j(row.outcome, null);
   if (outcome) {
     state.engine = 2;
@@ -3151,6 +3164,14 @@ export function runEngineOfRow(row) {
   if (outcome && typeof outcome.runEngine === 'string' && outcome.runEngine) return outcome.runEngine;
   const rp = j(row.resume_point, null);
   return typeof rp?.claude?.engine === 'string' && rp.claude.engine ? rp.claude.engine : 'claude';
+}
+/** Where a run executed: `outcome.execEnv`, else the resume point's `execEnv.kind`, else null (local). */
+export function execEnvOfRow(row) {
+  if (!row) return null;
+  const outcome = j(row.outcome, null);
+  if (outcome && typeof outcome.execEnv === 'string' && outcome.execEnv) return outcome.execEnv;
+  const rp = j(row.resume_point, null);
+  return typeof rp?.execEnv?.kind === 'string' && rp.execEnv.kind ? rp.execEnv.kind : null;
 }
 
 /** How many runs of `projectKey` started on or after `sinceIso` ran on each engine (NULL engine = 'claude').

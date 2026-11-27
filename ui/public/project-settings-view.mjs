@@ -1,6 +1,7 @@
 import { renderInheritField, readDirtyFields, inheritedOf } from './inherit-field.mjs';
 import { renderEngineSection, utilityId } from './engine-settings-view.mjs';
 import { notify, cardAlert } from './feedback.mjs';
+import { mountExecEnvPanel } from './exec-env-project-view.mjs';
 import { ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { PR_OPEN_LABELS, PR_SLICES_LABELS } from '../../src/shared/pr-auto.mjs';
 import { CHAT_SOURCE_BRANCH_ID, CHAT_SOURCE_BRANCH_SETTING, CHAT_SOURCE_BRANCH_LABELS } from '../../src/shared/chat-source-branch.mjs';
@@ -16,6 +17,14 @@ const PR_FIELDS = [
     hint: 'New runs of this project create this PR when they finish with work committed. A run can choose otherwise on the New run form.' },
   { id: 'pr.slices', label: 'Shaper features', kind: 'select', options: labelled(PR_SLICES_LABELS), format: (v) => PR_SLICES_LABELS[v] ?? null,
     hint: 'When Shaper plans a run in slices: a stacked PR per slice, or one PR when the feature is done.' },
+  { id: 'watchNewPrs', label: 'Watch new pull requests', kind: 'select',
+    options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }],
+    toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),
+    hint: 'Create PR opens with Watch PR on for this project. A workspace run needs it on in every repository.' },
+  { id: 'watch.trustedReviewers', label: 'Reviewers that may trigger a fix', kind: 'text', mono: true,
+    toValue: (text) => String(text).split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
+    format: (v) => Array.isArray(v) ? v.join(', ') : v == null ? null : String(v),
+    hint: 'Watch PR also starts a fix run on review feedback from these reviewers, usually review bots. On GitHub their PR-level comments count too, once a quick model check finds they ask for code changes. GitHub: login names. Bitbucket: account UUIDs. Azure DevOps already counts every reviewer. Comma or space separated.' },
 ];
 export const PROJECT_CARDS = Object.freeze([
   { key: 'cost', title: 'Cost', fields: [{ id: 'pipelineCostLimitUsd', label: 'Per-pipeline cap (USD)', kind: 'number', min: .01, step: .01, format: usd }, { id: 'humanRateUsdPerHour', label: 'Developer rate (USD/h)', kind: 'number', min: .01, step: .01, format: usd }] },
@@ -31,22 +40,34 @@ export const PROJECT_CARDS = Object.freeze([
     { id: 'runUserClaudeSettings', label: 'Runs load my Claude Code setup', kind: 'select', options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }],
       toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),
       hint: 'Off: pipeline agents load only this project\'s own Claude Code settings, rules and CLAUDE.md, never your ~/.claude settings, hooks, plugins or skills, so every run gets the same setup. On: they load yours too. Sign-in or proxy settings in ~/.claude/settings.json keep it on.' }] },
-  { key: 'pr', title: 'Pull requests', fields: [...PR_FIELDS, { id: 'watchNewPrs', label: 'Watch new pull requests', kind: 'select',
-    options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }],
-    toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),
-    hint: 'Create PR opens with Watch PR on for this project. A workspace run needs it on in every repository.' }] },
+  { key: 'exec', title: 'Execution environment', fields: [{ id: 'run.execEnv', label: 'Where runs execute', kind: 'select', options: [{ value: 'local', label: 'Local' }, { value: 'e2b', label: 'E2B sandbox' }] }] },
+  { key: 'pr', title: 'Pull requests', fields: PR_FIELDS },
 ]);
 const JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag'];
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the sign-in engines' helper jobs run on Claude.
 const HELPER_ENGINES = ['claude', 'codex'];
 function makeCard(doc, key, title) { const card = doc.createElement('section'); card.className = 'card pd-settings-card'; card.dataset.card = key; const heading = doc.createElement('h3'); heading.textContent = title; const body = doc.createElement('div'); body.className = 'pd-settings-body drows'; const save = doc.createElement('button'); save.type = 'button'; save.className = 'btn btn-primary btn-sm pd-settings-save'; save.textContent = 'Save'; const msg = doc.createElement('small'); msg.className = 'hint pd-settings-msg'; const actions = doc.createElement('div'); actions.className = 'add-project-actions engine-save-row'; actions.append(msg, save); card.append(heading, body, actions); return { card, body, save, msg }; }
-export function mountProjectSettings(host, { projectKey, projectDir, fetchFn = (url, options) => fetch(url, options), onTest = null }) {
+export function mountProjectSettings(host, { projectKey, projectDir, fetchFn = (url, options) => fetch(url, options), onTest = null, confirm = null }) {
   const doc = host.ownerDocument; const url = `/api/projects/${encodeURIComponent(projectKey)}/settings`; let catalog = []; let current = { own: {} };
+  // The registered backends for "Where runs execute" (GET /api/exec-envs; null = the static options), and the sandbox
+  // environment panel inside the exec card (exec-env-project-view.mjs), stopped before every re-render.
+  let execEnvOptions = null; let execEnvPanel = null;
   const render = (data) => {
+    execEnvPanel?.stop(); execEnvPanel = null;
     current = data; host.replaceChildren(); const field = (id) => ({ own: data.own[id], inherited: inheritedOf(data.layers[id]) }); const roles = data.roles || [];
     const models = makeCard(doc, 'models', 'Engine and models'); const ids = ['run.engine']; for (const engine of ENGINE_NAMES) { for (const role of roles) ids.push(`models.${engine}.steps.${role.key}`); if (HELPER_ENGINES.includes(engine)) for (const job of JOBS) ids.push(utilityId(engine, job)); }
     renderEngineSection(models.body, { level: 'project', roles, catalog, fields: Object.fromEntries(ids.map((id) => [id, field(id)])), jobs: { claude: JOBS, codex: JOBS, cursor: [], goose: [], opencode: [] }, status: models.msg, onTest, notes: { claude: 'Claude step models set here apply to the Default workflow; other workflows keep their own node picks.' } }); host.append(models.card);
-    for (const spec of PROJECT_CARDS) { const item = makeCard(doc, spec.key, spec.title); for (const row of spec.fields) item.body.append(renderInheritField(doc, { ...row, level: 'project', ...field(row.id) })); host.append(item.card); item.save.addEventListener('click', () => void save(item)); }
+    for (const spec of PROJECT_CARDS) {
+      const item = makeCard(doc, spec.key, spec.title);
+      for (const row of spec.fields) {
+        const f = field(row.id);
+        // The reviewers list is stored as an array but edited as text: join it for the input.
+        const own = row.id === 'watch.trustedReviewers' && Array.isArray(f.own) ? f.own.join(', ') : f.own;
+        item.body.append(renderInheritField(doc, { ...row, ...(row.id === 'run.execEnv' && execEnvOptions ? { options: execEnvOptions } : {}), level: 'project', ...f, own }));
+      }
+      if (spec.key === 'exec') { const panel = doc.createElement('div'); panel.className = 'exec-env-panel'; item.body.append(panel); execEnvPanel = mountExecEnvPanel(panel, { projectKey, fetchFn, confirm }); }
+      host.append(item.card); item.save.addEventListener('click', () => void save(item));
+    }
     models.save.addEventListener('click', () => void save(models));
     const naming = namingCard(data); host.append(naming.card); naming.save.addEventListener('click', () => void save(naming));
   };
@@ -80,6 +101,12 @@ export function mountProjectSettings(host, { projectKey, projectDir, fetchFn = (
     render(data);
     notify({ tone: 'ok', title: 'Saved', detail: 'New runs of this project use it.' }, { doc });
   };
-  const reload = async () => { try { const [settings, config] = await Promise.all([fetchFn(url), fetchFn(`/api/config?projectDir=${encodeURIComponent(projectDir)}`)]); const data = await settings.json(); const cfg = await config.json(); catalog = cfg.models || []; if (!settings.ok) throw new Error(data.error); render(data); } catch (error) { const box = doc.createElement('section'); box.className = 'card pd-settings-error'; cardAlert(box, { title: 'Project settings could not be read', detail: error?.message || '' }); host.replaceChildren(box); } };
+  const reload = async () => {
+    // Apart from the settings Promise.all: its one catch would turn a failed list into "could not be read".
+    const execEnvsP = fetchFn('/api/exec-envs').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    try { const [settings, config] = await Promise.all([fetchFn(url), fetchFn(`/api/config?projectDir=${encodeURIComponent(projectDir)}`)]); const data = await settings.json(); const cfg = await config.json(); catalog = cfg.models || []; if (!settings.ok) throw new Error(data.error);
+      const d = await execEnvsP;
+      execEnvOptions = Array.isArray(d?.execEnvs) ? d.execEnvs.map(({ name, label }) => ({ value: name, label })) : null;
+      render(data); } catch (error) { const box = doc.createElement('section'); box.className = 'card pd-settings-error'; cardAlert(box, { title: 'Project settings could not be read', detail: error?.message || '' }); host.replaceChildren(box); } };
   void reload(); return { reload };
 }

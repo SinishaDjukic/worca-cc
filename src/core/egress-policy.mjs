@@ -30,9 +30,10 @@ import net from 'node:net';
 import { createProxy, readEgressPolicy, normalizeHost } from './egress-proxy.mjs';
 import { createUpstreamConnector, resolveUpstream, ProxyCredentials, AUTH_LABELS, PASSWORD_MODES, fixedPortOf, localProxyUrl } from './upstream-proxy.mjs';
 import { readProxyLogin, watchProxyLogin, markLoginRejected, redactProxyLine, upstreamEnv, CORPORATE_PROXY_VAR } from './proxy-credentials.mjs';
-import { readSettings, readSettingsStrict, networkProxyEnabled, watchSettingsFile } from './settings.mjs';
+import { readSettings, readSettingsStrict, networkProxyEnabled, watchSettingsFile, primeSettingsVaultIfEnabled } from './settings.mjs';
 import { proxyUrlHasLogin } from './env-proxy.mjs';
 import { copilotBlockHost, gheEgressAllow } from './ghe-host.mjs';
+import { sidecarConfigured } from './egress-sidecar-client.mjs';
 
 /** Set by the worca that runs the proxy, so a worca CLI started under it reuses it. */
 export const EGRESS_PROXY_VAR = 'WORCA_EGRESS_PROXY_URL';
@@ -146,8 +147,10 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
   const policy = readEgressPolicy(env);
   const none = async () => {};
   // A login in HTTP(S)_PROXY would reach every child, so it starts the proxy unless it was turned off by hand.
-  const asked = !!proxyOn();
-  const autoStart = !asked && proxyUrlHasLogin(env) && networkProxyOf(settings()).enabled !== false;
+  // Next to an egress sidecar (a container setup) the sidecar logs in, never this process: no corporate chain here.
+  const sidecar = sidecarConfigured(env);
+  const asked = !sidecar && !!proxyOn();
+  const autoStart = !sidecar && !asked && proxyUrlHasLogin(env) && networkProxyOf(settings()).enabled !== false;
   const corp = asked || autoStart;
   const off = (extra = {}) => ({ status: 'off', policy, ...extra, ...(proxyUrlHasLogin(env) ? { loginWithheld: true } : {}),
     sourceEnv: upstreamEnv(env), close: none });
@@ -155,6 +158,7 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
   if (!policy.enforced && !corp) return off();
   if (inheritsEgressProxy(env)) return { status: 'inherited', policy, url: env[EGRESS_PROXY_VAR], sourceEnv: upstreamEnv(env), close: none };
   const s = corp ? settings() : null;
+  if (corp) await primeSettingsVaultIfEnabled();        // a vaulted login is read synchronously below (flag on only)
   const saved = corp ? login() : null;                  // never read with the proxy off
   const np0 = s && typeof s === 'object' ? s.networkProxy : undefined;
   const upstream = corp ? resolveUpstream({ env, settings: autoStart ? viaEnvUrl(np0) : np0, login: saved, anyScheme: autoStart }) : null;
@@ -278,7 +282,7 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
     const saved = login();
     // An auto-started proxy stays chained until networkProxy.enabled is false.
     const viaLogin = !!autoStart && !!np && np.enabled !== true && np.enabled !== false;
-    const next = np && (np.enabled === true || viaLogin)
+    const next = !sidecar && np && (np.enabled === true || viaLogin)
       ? resolveUpstream({ env: sourceEnv, settings: viaLogin ? viaEnvUrl(np) : np, login: saved && !saved.error ? saved : null, anyScheme: viaLogin }) : null;
     // Decision 6a: on, but the new upstream does not resolve: keep the running connector, never go direct.
     if (next && next.error) { upstreamError = next.error; return { changed: false, upstreamError }; }

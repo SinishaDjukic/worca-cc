@@ -556,6 +556,15 @@ test('previousBranchesOf: a member whose branch was dropped (unchanged) chains f
   assert.deepEqual(previousBranchesOf('w0000009'), { sourceBranchByKey: { 'proj-a': 'worca/ws-a', 'proj-b': 'dev' } });
 });
 
+// Ship reads the same rule to follow a feature's branches. Imported here, so a missing export fails only this test.
+test('workBranchOf: the feature branch, or the source once the branch was dropped as unchanged', async () => {
+  const { workBranchOf } = await import('../src/core/scheduler.mjs');
+  assert.equal(typeof workBranchOf, 'function', 'workBranchOf is exported');
+  assert.equal(workBranchOf({ source: 'dev', feature: 'worca/b', branchKept: false }), 'dev');
+  assert.equal(workBranchOf({ source: 'dev', feature: 'worca/b', branchKept: true }), 'worca/b');
+  assert.equal(workBranchOf({ source: 'dev', feature: 'worca/b' }), 'worca/b');
+});
+
 test('afterRefOf, previousBranchesOf and dependentsOfRun read the rows', () => {
   // projectKey stated, not inherited: the assertion below is about THIS value.
   seedPipelineRow({ id: 'p0000002', title: 'Refactor', status: 'done', projectKey: 'proj-00000001', startedAt: new Date(T0).toISOString(), branch: { source: 'main', feature: 'worca/refactor-p0000002' } });
@@ -977,6 +986,18 @@ test('chainBaseBranchesOf: walks a from-its-branch chain root first, stops at a 
       assert.deepEqual(chainBaseBranchesOf('c0000035'), []);
     } },
   ]);
+});
+
+// Slice 3 (R-arch-5): a run that took in other runs' work records `sourceFrom` (the branch it started from) beside
+// `source` (the branch it builds on now).
+test('chainBaseBranchesOf: a record with sourceFrom ends [sourceFrom, source] and walks the chain from sourceFrom', () => {
+  chainRun('f0000001', 'dev', 'feat/run-7');
+  seedPipelineRow({ id: 'f0000002', title: 'f0000002', status: 'done', startedAt: new Date(T0).toISOString(),
+    branch: { source: 'feat/run-9', sourceFrom: 'feat/run-7', feature: 'feat/run-8' } });
+  assert.deepEqual(chainBaseBranchesOf('f0000002'), ['feat/run-7', 'feat/run-9'], 'no chain link: the two recorded branches');
+  chainFire('f0000002', { kind: 'pipeline', id: 'f0000001' });
+  assert.deepEqual(chainBaseBranchesOf('f0000002'), ['dev', 'feat/run-7', 'feat/run-9']);
+  assert.deepEqual(chainBaseBranchesOf('f0000001'), ['dev'], 'without sourceFrom, as before');
 });
 
 // ── stackedPrBaseOf: the PR dialog's default base for a run started from the previous run's branch ──
@@ -1502,4 +1523,34 @@ test('summarizeRequest carries pr only when the request has one', () => {
   assert.deepEqual(summarizeRequest({ pr: { open: 'ready', slices: 'one' } }).pr, { open: 'ready', slices: 'one' });
   assert.equal('pr' in summarizeRequest({}), false);
   assert.equal('pr' in summarizeRequest({ pr: 'draft' }), false);
+});
+
+// A clash hold (Shaper small runs): start() refuses with `hold`, and the ticket waits for a person, not for a retry.
+test('runDueTickets: start() answering hold puts a forced ticket back to scheduled, unforced, with no notice', async () => {
+  seedPipelineRow({ id: 'h0000001', title: 'R', status: 'done', startedAt: new Date(T0).toISOString() });
+  const t = createTicket({ projectDir: DIR, title: 'T', request: REQ, after: { kind: 'pipeline', id: 'h0000001' }, now: T0 });
+  requestRunNow(t.id, { now: T0 + MIN });
+  const out = await runDueTickets({ now: T0 + MIN, start: async () => ({ ok: false, hold: true, error: 'x' }) });
+  assert.deepEqual(out.held, [t.id]);
+  assert.deepEqual([out.fired, out.retried, out.failed, out.skipped, out.missed], [[], [], [], [], []]);
+  const r = getTicket(t.id);
+  assert.deepEqual([r.status, r.forced, r.failReason, r.retryAt, r.attempts, r.ownerPid], ['scheduled', false, null, null, 0, null]);
+  assert.deepEqual(listNotifications(), []);
+  // Unforced again, so the next tick's hold is consulted and start is not called.
+  let started = 0;
+  const next = await runDueTickets({ now: T0 + 2 * MIN, start: async () => { started++; return { ok: true }; }, hold: () => true });
+  assert.equal(started, 0);
+  assert.deepEqual(next.held, [t.id]);
+});
+
+test('runDueTickets: a hold answer leaves fail_reason and attempts as an earlier retry left them, and clears retry_at', async () => {
+  const t = createTicket({ projectDir: DIR, title: 'T', runAtMs: T0, request: REQ, now: T0 - MIN });
+  await runDueTickets({ now: T0, start: async () => ({ ok: false, error: 'busy', transient: true }) });
+  const retry = getTicket(t.id);
+  assert.deepEqual([retry.attempts, retry.failReason], [1, 'busy']);
+  const out = await runDueTickets({ now: Date.parse(retry.retryAt) + 1000, start: async () => ({ ok: false, hold: true, error: 'x' }) });
+  assert.deepEqual(out.held, [t.id]);
+  const r = getTicket(t.id);
+  assert.deepEqual([r.status, r.forced, r.failReason, r.retryAt, r.attempts], ['scheduled', false, 'busy', null, 1]);
+  assert.deepEqual(kinds(), ['retrying'], 'only the earlier retry is in the feed');
 });

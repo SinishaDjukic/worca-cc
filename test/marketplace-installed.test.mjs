@@ -479,7 +479,7 @@ test('Team policy card: Install opens the plugin sheet on the snapshot the polic
   ], blockedPlugins: [] };
   const item = { key: 'worca-cc/azure-boards-source', name: 'azure-boards-source', iconKind: 'taskSources',
     marketplace: { id: 'worca-cc', name: 'Worca CC Official', stale: false, snapshotAt: null },
-    source: { repoUrl: 'https://github.com/SinishaDjukic/worca-cc', subdir: 'plugins/azure-boards-source', sha: 'c'.repeat(40), webUrl: null } };
+    source: { repoUrl: 'https://github.com/worca-org/worca', subdir: 'plugins/azure-boards-source', sha: 'c'.repeat(40), webUrl: null } };
   const { log, click } = world({ policy, catalog: [item], api: {
     'POST /api/plugins/teams-chat/enable': ok({ ok: true, enabled: true }),
     'POST /api/plugins/jira/update': ok({ preview: { pinnedSha: 'a'.repeat(40), candidateSha: 'a'.repeat(40), access: [] } }),

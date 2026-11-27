@@ -1,7 +1,8 @@
-// test/ui-design-view.test.mjs — the Design page (ui/public/design/view.mjs): the Library on `#design`, a design's
-// address handed to `openDesign` (its chat opens on the Chat page: test/ui-design-studio.test.mjs), a bad id, and the
-// frames' route to the nav count and the Library. The rig is a JSDOM page holding the sidebar's Design row and `#design-host`, its
-// window on the fake clock (as test/helpers/design-stage-rig.mjs), and a fake `fetch` by route.
+// test/ui-design-view.test.mjs — the Design page (ui/public/design/view.mjs): `#design` draws nothing of its own (app.js
+// sends it to the design start, test/ui-design-route.test.mjs), a design's address handed to `openDesign` (its chat opens
+// on the Chat page: test/ui-design-studio.test.mjs), a bad id, and the frames' route to the nav count. The rig is a
+// JSDOM page holding the sidebar's Design row and `#design-host`, its window on the fake clock (as
+// test/helpers/design-stage-rig.mjs), and a fake `fetch` by route.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -107,38 +108,15 @@ function rig({ detail, detailStatus, createAnswer, pictures } = {}) {
 }
 
 const DETAIL = { design: { id: DID, kind: 'web', title: 'Apsida landing page', version: 0, threadId: 'ask_1' }, plan: null, build: null, sections: [], versions: [] };
-test('#design opens the real library', async () => {
-  const { view, q, qa, route, setList } = rig();
-  setList([{ id: DID, title: 'Apsida', kind: 'web', status: 'done', updatedAt: 'x', costUsd: 4.2, thumb: null }]);
+test('#design draws no page of its own: nothing is fetched and its host stays empty', async () => {
+  const { view, doc, gets } = rig();
   await view.show('');
-  assert.ok(q('.dz-lib .dz-hero'));
-  assert.equal(qa('.dz-lib a.dz-tile').length, 1);
-  assert.equal(q('.dz-lib a.dz-tile .dz-tile-t').textContent, 'Apsida');
-  q('.dz-lib a.dz-tile').click();
-  assert.deepEqual(route.at(-1), DID, 'the tile\'s #design/<id> reaches P4\'s route as the id');
-  setList([]); await view.show('');
-  assert.equal(q('.dz-lib-body').hidden, true);
-  setList(null); await view.show('');
-  assert.match(q('.dz-lib-err').textContent, /^Could not load designs/);
-  assert.ok([...qa('.dz-lib-err button')].some((b) => b.textContent === 'Try again'));
-});
-test('the open library takes the C-5 frames: a round\'s end loads the list again; a left library takes none', async () => {
-  const { view, q, gets, clock, tick, setList } = rig({ detail: DETAIL });
-  setList([{ id: DID, title: 'Apsida', kind: 'web', status: 'building', updatedAt: 'x', costUsd: 0, thumb: null }]);
-  await view.show('');
-  const listed = () => gets.filter((u) => u === '/api/design').length;
-  const n = listed();
-  view.pushFrame(build('paused'));
-  assert.match(q('.dz-lib a.dz-tile .dz-tile-m').textContent, /Paused/, 'in place');
+  assert.equal(doc.getElementById('design-host').childElementCount, 0);
+  assert.deepEqual(gets, []);
   view.pushFrame(build('done'));
-  clock.tick(200); await tick();
-  assert.equal(listed(), n + 1);
   view.leave();
-  view.pushFrame(build('done'));
-  clock.tick(1000); await tick();
-  assert.equal(listed(), n + 1, 'the left library is gone');
 });
-test('#design/<id> opens that design\'s chat; a bad id leads back to the Library', async () => {
+test('#design/<id> opens that design\'s chat; a bad id leads back to #design', async () => {
   const { view, q, route, opened } = rig({ detail: DETAIL });
   await view.show(DID);
   assert.deepEqual(opened, [DID]);
@@ -154,44 +132,4 @@ test('frames count toward the nav; leave is cheap and idempotent; hello sets the
   view.onHello([], { rebooted: false });
   assert.equal(doc.getElementById('nav-design-count').hidden, true);
 });
-test('the library: nothing for 300 ms, then one loading line; a failure says so with Try again; an older answer paints nothing', async () => {
-  const { view, q, qa, clock, hold, tick, setList } = rig();
-  await view.show('');
-  clock.tick(1000);
-  assert.equal(q('.dz-lib-load'), null, 'a list that came in time is not covered by the loading line');
-  const release = hold('/api/design');
-  const shown = view.show('');
-  await tick();
-  clock.tick(299);
-  assert.equal(q('.dz-lib-load'), null, 'nothing changes for 300 ms');
-  clock.tick(1);
-  assert.equal(q('.dz-lib-load').textContent, 'Loading designs…');
-  assert.equal(q('.dz-lib-load').getAttribute('aria-busy'), 'true');
-  release(); await shown;
-  assert.equal(q('.dz-lib-load'), null);
-  setList(null); await view.show('');
-  assert.match(q('.dz-lib-err').textContent, /^Could not load designs/);
-  setList([]);
-  [...qa('.dz-lib-err button')].find((b) => b.textContent === 'Try again').click(); await tick();
-  assert.equal(q('.dz-lib-err'), null, 'Try again loads the list again');
-  setList(null);
-  const late = hold('/api/design');
-  const older = view.show('');
-  setList([{ id: DID, title: 'Apsida', kind: 'web', status: 'empty', updatedAt: 'x', costUsd: 0, thumb: null }]);
-  await view.show('');
-  late(); await older;
-  assert.equal(qa('.dz-lib a.dz-tile').length, 1, 'an older failure does not paint over the newer list');
-  assert.equal(q('.dz-lib-err'), null);
-});
-test('the Library\'s Send creates the design and opens it: its address goes to the route, then to its chat', async () => {
-  const { view, win, q, posts, route, opened, tick } = rig({ detail: { ...DETAIL, design: { ...DETAIL.design, id: NEW_ID } } });
-  await view.show(''); await tick();
-  const input = q('.dz-hero textarea.dz-input');
-  input.value = 'A launch page';
-  input.dispatchEvent(new win.Event('input', { bubbles: true }));
-  q('.dz-hero .ask-send').click(); await tick();
-  assert.deepEqual(posts.map((p) => p.url), ['/api/design']);
-  assert.equal(route.at(-1), NEW_ID, 'the 201 opens the new design');
-  await view.show(NEW_ID);
-  assert.deepEqual(opened, [NEW_ID]);
-});
+

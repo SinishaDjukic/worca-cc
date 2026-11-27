@@ -56,7 +56,8 @@ key.
 
 ## Support matrix
 
-Every container setup runs Linux containers, so the broker behaves the same on every host.
+Every container setup runs Linux containers, so the broker behaves the same on every container host. An E2B
+sandbox runs the agent remotely; what matters there is the worca host, which must be macOS or Linux.
 
 | Setup | macOS (Apple silicon) | Linux | Windows | Windows + WSL2 |
 | --- | --- | --- | --- | --- |
@@ -64,9 +65,13 @@ Every container setup runs Linux containers, so the broker behaves the same on e
 | Local container, one person, no broker | Supported | Supported | Supported (Linux containers) | Supported |
 | Local container, one person, broker **single** mode | Supported | Supported | Supported (Linux containers) | Supported |
 | Hosted, a team, broker **multi** mode | **Target** (local model on the host, Metal) | **Target** (Compose, Kubernetes, Railway) | Works, not a target | Works, not a target |
+| Runs in an E2B sandbox, broker on (any mode) | Works | Works | Not supported (E2B needs a macOS or Linux worca host) | Works (WSL2 counts as Linux) |
 
 - The broker is never used natively: the agent runs as your OS user and can read everything
   you can, so there is no boundary to enforce.
+- An E2B sandbox ([E2B](e2b.md)) works with the broker: no key and no broker token ever enters the
+  sandbox. worca carries the sandbox's model calls to the broker over the command's stdin and stdout and
+  attaches the spawn's token on its own side. Bedrock, Vertex and Foundry models are refused for sandbox runs.
 - Windows containers (as opposed to Linux containers on Windows) aren't supported.
 - On macOS a container has no GPU (no Metal passthrough). A local model server (Ollama, LM
   Studio, llama-server, MLX) runs on the host, and the broker reaches it.
@@ -133,6 +138,18 @@ claude exits ─► server ─ DELETE /internal/tokens/<spawnId> ─► broker
 Every `claude` process follows this path: pipeline phases, Ask turns, titles, the Models Test
 button, script steps. A token belongs to one process, so it can be short-lived and dies with
 it. Sub-agents inside that process share its token.
+
+### Behind a corporate proxy
+
+The broker's calls to the providers honour `HTTPS_PROXY` and `NO_PROXY` in its own
+environment. `compose.broker.yml` sets them from `WORCA_BROKER_PROXY`, which is empty by
+default: the broker then connects directly. Behind a proxy that needs a login, run the egress
+sidecar (`compose.proxy.yml`, [network-proxy.md → Worca in a container](network-proxy.md#worca-in-a-container))
+and set `WORCA_BROKER_PROXY=http://egress:3128`. `worca container` sets it by itself whenever
+it starts the sidecar. The sidecar logs in to the corporate proxy for the broker too. The
+broker never gets the proxy login. The broker cannot log in to an NTLM proxy by itself: a
+login in its own `HTTPS_PROXY` URL goes out as Basic only. `compose.broker.yml` also puts the
+broker on the `internal` network, so a worca confined by `compose.egress.yml` reaches it.
 
 ### Slots
 
@@ -268,7 +285,9 @@ anything you can.
 ```
 
 `compose.yml` + `compose.broker.yml`. Recommended when agents run autonomously on
-repositories you don't fully trust. See [Single mode](#single-mode).
+repositories you don't fully trust. See [Single mode](#single-mode). For the same
+protection with one command, agent users, the allow-list and no host folder mounted,
+use the [Hardened box](hardened-box.md).
 
 ### Team on a Linux server or VM (multi mode, Compose)
 
@@ -284,7 +303,9 @@ repositories you don't fully trust. See [Single mode](#single-mode).
 ```
 
 `compose.yml` + `compose.broker.yml` + `compose.isolation.yml` (+ `compose.egress.yml` to
-lock the network down). Port 8080 is never routed publicly.
+lock the network down). Port 8080 is never routed publicly. The reference profile for this
+deployment, with every value to supply and the checks to run, is the
+[Shared instance](shared-instance.md) page (`docker/compose.shared.yml`).
 
 ### Railway (multi mode)
 
@@ -322,7 +343,7 @@ model weights. Disable sleep (`sudo pmset -a sleep 0`).
 
 The same two containers: a `broker` Service on the private port inside the namespace, an
 Ingress or cloudflared Deployment for the key page only, and a NetworkPolicy in place of
-`compose.egress.yml`.
+`compose.egress.yml`. What maps to what: [Shared instance → Kubernetes](shared-instance.md#kubernetes).
 
 ## Single mode
 
@@ -422,9 +443,17 @@ warning.
 worca reads `WORCA_BROKER_SECRET` (or the file `WORCA_BROKER_SECRET_FILE` names) once at start
 and removes both variables from its environment before it starts anything, so no child inherits
 the secret or the file's path: not an agent, a script tool, an MCP server, a terminal or a git
-hook. With agents under their own users, worca does not start while that file is readable by
-its group or by others: make it `0600`, owned by the user worca runs as (a compose secret keeps
-the host file's mode).
+hook. With agents under their own users, worca does not start while that file is readable or
+writable by its group or by others, or owned by another user: make it `0600`, owned by the user
+worca runs as (a compose secret keeps the host file's mode and owner; in the image that is uid
+1000, so `chown 1000:1000 <file> && chmod 600 <file>` on the host).
+
+The same rule holds for every secret file worca's container reads: `WORCA_EGRESS_SECRET_FILE`
+(the egress sidecar's secret) and `WORCA_GH_APP_KEY_FILE` (the GitHub App key). worca reads each
+once at start and refuses to start with one line per file that names it and the fix. Agents share
+that container, and the guardrails' Read deny on `/run/secrets/**` does not stop a shell `cat`.
+Files only another container reads (the broker's vault key and model keys, the sidecar's managed
+proxy login) are not in agents' reach and are not checked here.
 
 ### Only Claude runs
 
@@ -493,6 +522,9 @@ on purpose.
 | `block` (default with the broker) | The server is left out of that run, and the run's log says which and why (never the value) |
 | `warn` (default without the broker) | The server stays; the run's log says agents can read its secret |
 | `off` | No check |
+
+In `warn` mode the secret also sits in the run's `mcp.json` while the run lasts; worca deletes that file when the
+run ends, even when the run folder is kept (a retained checkout), and a resume writes it again.
 
 The check makes the exposure visible; it can't make an MCP secret safe. Prefer MCP servers
 that need no secret, or accept the risk with `warn`.
@@ -672,6 +704,9 @@ The broker holds each request body in memory until its call ends. A body is at m
 in flight, across every agent, share 64 MiB, sized for the broker container's 256 MB memory
 limit. A call that doesn't fit gets a 503 `overloaded_error` with `retry-after: 2`, which the
 agents' clients retry.
+
+A sandbox run in E2B holds no broker token either: the relay on worca's side attaches the spawn's token, so an
+agent there can spend credits through its run's relay (within the budgets) but cannot take a token away.
 
 Not built: Amazon Bedrock and Google Vertex (the broker would have to sign requests with the
 person's cloud credentials), and plugin model keys sent any way but one `Authorization` or

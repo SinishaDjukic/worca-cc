@@ -272,6 +272,9 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     if (body.handsFree !== undefined && typeof body.handsFree !== 'boolean') return badRequest(res, 'handsFree must be true or false');
     // A voice merge (docs/speech.md): the message replaces the one just sent; startAskTurn checks it may be hidden.
     if (body.supersedes !== undefined && (typeof body.supersedes !== 'string' || !/^askm_[0-9a-f]{8}$/.test(body.supersedes))) return badRequest(res, 'supersedes must be a message id');
+    // The sender's own id for this send (never stored): it rides the user row's echo, so the sending tab empties its
+    // composer as the bubble appears — the 202 follows only once the prompt is assembled, seconds later on a slow disk.
+    if (body.sendId !== undefined && (typeof body.sendId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(body.sendId))) return badRequest(res, 'sendId must be 1-64 letters, digits, _ or -');
     // Only the Ask panel's voice merge sends supersedes; a Workflows chat refuses it before the route writes the canvas
     // or the open clarifying cards (the store's own refusal comes later, inside startAskTurn). A chat with a design is a
     // plain chat: its supersede meets the read-only pre-check below, before the pins are written.
@@ -371,7 +374,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     if (designId) closeOpenDesignQuestions(id);
     if (designState) askUpdateThread(id, { composer: designState });
     if (thread.archivedAt) askSetArchived(id, false);   // #948 s2: a message brings an archived chat back
-    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, handsFree: body.handsFree === true, supersedes: body.supersedes ?? null, client: req.worcaExtension ? 'browser-extension' : null, scopeNote }, { features: attached.features });
+    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, handsFree: body.handsFree === true, supersedes: body.supersedes ?? null, sendId: body.sendId ?? null, client: req.worcaExtension ? 'browser-extension' : null, scopeNote }, { features: attached.features });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.code ? { code: r.code } : {}), ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast

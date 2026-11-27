@@ -25,6 +25,7 @@ import { ROLE_KEY_RE } from '../shared/graph/role-review-step.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
 import { copilotBlockHost } from './ghe-host.mjs';
+import { resolveSettingsSecretSync, settingsSecretField, settingsVaultState } from './secrets/settings-resolver.mjs';
 import { providerConfig, listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, hideBuiltinEngines, readSettings, memoryDefragModel, setMemoryDefragModel, modelRolesSetting, assertDesignModelsInput } from './settings.mjs';
 /** Whether the developer stored the hide-built-ins flag (a team default applies only when not). */
 const readSettingsHideStored = () => { const s = readSettings(); return typeof s.hideBuiltinModels === 'boolean' || s.hideBuiltinModelsChosen === true; };
@@ -291,7 +292,7 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
   const bridgeShape = (m) => {
     if (!m.upstream) return {};
     const p = m.upstream.provider;
-    const key = `${p}\n${m.upstream.apiKey || ''}\n${m.upstream.baseUrl || ''}`;
+    const key = `${p}\n${m.upstream.apiKey || ''}\n${m.upstream.baseUrl || ''}\n${settingsVaultState().generation}`;
     if (!readiness.has(key)) readiness.set(key, providerReadiness(m.upstream));
     const r = readiness.get(key);
     const host = p === 'copilot' ? copilotTenant() : null;
@@ -659,6 +660,11 @@ export async function listModels(projectDir) {
   return composeCatalog(customModels, { projectDir });
 }
 
+/** A vault reference in a model's env, resolved as that env key's settings field ('' when it does not resolve). */
+function resolveModelEnvRef(value, key) {
+  try { return resolveSettingsSecretSync(value, settingsSecretField('models', 'env', key)); } catch { return ''; }
+}
+
 /**
  * The routing env for a model id (design §4.4, §9.3), or undefined when none
  * is configured. The user's GLOBAL entry wins; otherwise the winning enabled
@@ -702,7 +708,7 @@ export function resolveModelEnv(modelId, { tag } = {}) {
       throw err;
     }
     const base = bridged.source === 'global' && entry ? entry : null;
-    const { env: extra, dropped } = prepareModelEnv(base && base.env ? base.env : {});
+    const { env: extra, dropped } = prepareModelEnv(base && base.env ? base.env : {}, process.env, { resolveRef: resolveModelEnvRef });
     for (const k of dropped) {
       console.warn(`[worca] model ${JSON.stringify(bridged.id)}: dropping env key ${JSON.stringify(k)} (reserved or unresolvable \${VAR} ref)`);
     }
@@ -759,7 +765,10 @@ export function resolveModelEnv(modelId, { tag } = {}) {
     }
   }
   if (!rawEnv) return undefined;
-  const { env, dropped } = prepareModelEnv(rawEnv);
+  // Only the user's own global entry resolves a vault reference: a plugin or team-policy env naming one is
+  // dropped, so another layer can never read the person's vaulted keys (confused deputy).
+  const fromUser = !!(entry && rawEnv === entry.env);
+  const { env, dropped } = prepareModelEnv(rawEnv, process.env, fromUser ? { resolveRef: resolveModelEnvRef } : {});
   for (const k of dropped) {
     console.warn(`[worca] model ${who}: dropping env key ${JSON.stringify(k)} (reserved or unresolvable \${VAR} ref)`);
   }
@@ -1652,17 +1661,45 @@ export function writeActionsMeta(key, patch) {
   writeExtraKey(key, ACTIONS_META_KEY, { ...readActionsMeta(key), ...patch });
 }
 
-function writeExtraKey(key, name, value) {
+/** Read-modify-write ONE extra key in a single transaction: `mutate(current)` returns the new value. */
+function mutateExtraKey(key, name, mutate) {
+  let next;
   tx(() => {
     const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
     const extra = row ? parseJson(row.extra, {}) : {};
-    extra[name] = value;
+    next = mutate(extra[name]);
+    extra[name] = next;
     prepare(`
       INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
       VALUES (?, '{}', '[]', NULL, ?)
       ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
     `).run(key, JSON.stringify(extra));
   });
+  return next;
+}
+function writeExtraKey(key, name, value) { mutateExtraKey(key, name, () => value); }
+
+// ── Execution environment (project_config.extra.execEnvProject) ─────────────
+// The project's execution-environment record (src/core/exec-env/project-env.mjs; plans/e2b-execution-design.md §18):
+// per-backend project fields (e.g. { e2b: { template } }), the environment spec, and the last SUCCESSFUL build per
+// backend. Lives in worca's DB, never in the repo. Same KEY-taking contract as the team-metrics pair.
+const EXEC_ENV_KEY = 'execEnvProject';
+const emptyExecEnv = () => ({ config: {}, spec: null, builds: {} });
+function execEnvOf(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return emptyExecEnv();
+  const obj = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : {});
+  return { config: obj(v.config), spec: v.spec && typeof v.spec === 'object' ? v.spec : null, builds: obj(v.builds) };
+}
+export function readProjectExecEnv(key) {
+  assertProjectKey(key);
+  const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+  return execEnvOf((row ? parseJson(row.extra, {}) : {})[EXEC_ENV_KEY]);
+}
+/** Read-modify-write in ONE transaction: a template Save, a spec change and a finished build can race.
+ *  `mutate(record)` edits the record in place; it must never call another config writer (tx is not re-entrant). */
+export function updateProjectExecEnv(key, mutate) {
+  assertProjectKey(key);
+  return mutateExtraKey(key, EXEC_ENV_KEY, (cur) => { const next = execEnvOf(cur); mutate(next); return next; });
 }
 
 // ── Team-policy preferences (project_config.extra.teamPolicy) ──────────────

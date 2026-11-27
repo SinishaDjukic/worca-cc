@@ -437,7 +437,7 @@ app.get('/api/runs/:id/actions', async (req, res) => {
 const BASE_ERR_STATUS = { NOT_FOUND: 404, MEMBER_REQUIRED: 400, BAD_REQUEST: 400, NOT_FINISHED: 409, UP_TO_DATE: 409,
   CONFLICTS: 409, NOT_CONFLICTING: 409, NO_BRANCH: 409, DIRTY: 409, IN_USE: 409, MOVED: 409, IDENTITY: 409,
   BRANCH_CHECKED_OUT: 409, RETAINED: 409, BRANCH_MISSING: 409, TARGET_EXISTS: 409, RESOLVING: 409,
-  UNSUPPORTED_BRANCH: 409, PR_OPEN: 409, PR_FIXING: 409, TEST_TRY: 409, CHECK_FAILED: 502 };
+  UNSUPPORTED_BRANCH: 409, PR_OPEN: 409, PR_FIXING: 409, PR_MERGED: 409, PR_CLOSED: 409, TEST_TRY: 409, CHECK_FAILED: 502 };
 function sendBaseError(res, e) {
   res.status(BASE_ERR_STATUS[e?.code] || 500).json({ error: e?.message || String(e), code: e?.code || 'ERROR',
     ...(e?.baseCheck ? { baseCheck: e.baseCheck } : {}), ...(e?.holder ? { holder: e.holder } : {}),
@@ -451,6 +451,22 @@ const resolveRunActive = (runId) => { const e = runs.get(runId); return !!e && !
 function openPrOfMember(row, m) {
   const pr = row.target === 'workspace' ? readMemberPrStates(row.id)[m.projectKey] : readPrState(row.id);
   return pr?.url && pr.state === 'OPEN' ? pr : null;
+}
+/** A member's recorded PR state when it is final (MERGED or CLOSED), else null. A shipped branch is done: after a
+ *  squash merge the base always reads "N behind, merges cleanly", and updating or resolving it would push onto a
+ *  branch nobody reviews. A closed PR is final too: shipping again starts from a new PR, not from this branch's strip. */
+function finalPrOfMember(row, m) {
+  const pr = row.target === 'workspace' ? readMemberPrStates(row.id)[m.projectKey] : readPrState(row.id);
+  const state = pr?.url ? String(pr.state || '').toUpperCase() : '';
+  return state === 'MERGED' || state === 'CLOSED' ? state : null;
+}
+/** 409 PR_MERGED / PR_CLOSED for a member whose PR is final. */
+function assertPrNotFinal(row, m) {
+  const state = finalPrOfMember(row, m);
+  if (!state) return;
+  const word = state === 'MERGED' ? 'merged' : 'closed';
+  throw Object.assign(new Error(`The pull request of \`${m.br.feature}\` is ${word}: its branch is final, so it is not checked, updated or resolved here.`),
+    { code: state === 'MERGED' ? 'PR_MERGED' : 'PR_CLOSED' });
 }
 /** Watch PR owns an open PR's branch while its fix run starts, runs or publishes: a merge or push from
  *  here would move the branch under it (the watch would stop as remote-moved). */
@@ -476,8 +492,18 @@ app.post('/api/runs/:id/base-check', async (req, res) => {
     }
     const by = actorOf(req);
     const auto = req.body?.auto === true;
-    if (!auto) for (const m of baseMembersOfRow(row).filter((x) => !member || x.projectKey === member)) assertNoPrFix(row, m);
-    const { members } = await checkRunBase(row.id, { members: member ? [member] : null, by, maxAgeMs: auto ? INTERACTIVE_TTL_MS : 0 });
+    const asked = baseMembersOfRow(row).filter((x) => !member || x.projectKey === member);
+    // A merged or closed PR's branch is final: a named member (or a run's only one) is refused; the check on open
+    // and an all-members Re-check leave it out and check the rest.
+    const open = asked.filter((x) => !finalPrOfMember(row, x));
+    if (!auto && asked.length && !open.length) assertPrNotFinal(row, asked[0]);
+    if (!auto) for (const m of open) assertNoPrFix(row, m);
+    const { members: checked } = await checkRunBase(row.id, { members: open.map((x) => x.projectKey), by, maxAgeMs: auto ? INTERACTIVE_TTL_MS : 0 });
+    // The PR refresh records a merge without the run lock: read the state again after the fetch. A member that became
+    // final is neither settled (no push onto its branch) nor answered; Re-check on nothing but final members is refused.
+    const nowFinal = open.filter((x) => finalPrOfMember(row, x));
+    const members = checked.filter((m) => !nowFinal.some((x) => x.projectKey === m.projectKey));
+    if (!auto && nowFinal.length && !members.length) assertPrNotFinal(row, nowFinal[0]);
     const settled = auto ? {} : await settleResolutions(row.id, members, { by, isActive: resolveRunActive });
     emitChanged('pipelines-changed', 'updated');
     // A settle that found leftover markers recorded `conflicts/markers`: answer what is stored.
@@ -491,7 +517,7 @@ app.post('/api/runs/:id/update-branch', async (req, res) => {
     const row = runRowForScope(req, res); if (!row) return;
     if (refuseTestTryRow(res, row)) return;
     const r = await updateRunBranch({ id: row.id, member: bodyMember(req), by: actorOf(req), isLive: isLiveRun,
-      isFinishing: isFinishingRun, isActive: resolveRunActive, assertFree: assertNoPrFix });
+      isFinishing: isFinishingRun, isActive: resolveRunActive, assertFree: (r0, m) => { assertPrNotFinal(r0, m); assertNoPrFix(r0, m); } });
     emitChanged('pipelines-changed', 'updated');
     res.json({ ok: true, ...r });
   } catch (e) { sendBaseError(res, e); }
@@ -506,6 +532,7 @@ app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
     assertFinishedRow(row, { isLive: isLiveRun, isFinishing: isFinishingRun });
     const m = pickBaseMember(row, bodyMember(req));
     assertNotResolving(m, resolveRunActive);
+    assertPrNotFinal(row, m);
     // An open PR's conflicts belong to Watch PR: its Resolve (the Overview tab's PR row) pushes to the PR.
     if (openPrOfMember(row, m)) {
       return res.status(409).json({ error: `\`${m.br.feature}\` has an open pull request: use Resolve on its row in the Overview tab.`, code: 'PR_OPEN' });
@@ -527,6 +554,8 @@ app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
       return res.status(409).json({ error: `\`${m.br.feature}\` is checked out${holders?.[0] ? ` in ${holders[0]}` : ''}. Discard that checkout first: the new run needs its own worktree.`,
         code: 'BRANCH_CHECKED_OUT', ...(holders?.[0] ? { holder: holders[0] } : {}) });
     }
+    // The PR refresh records a merge without the run lock: read the state again after the awaits, before the start.
+    assertPrNotFinal(row, m);
     const parentTags = readRunTags(row.id);
     const body = {
       projectDir: m.projectDir,
@@ -538,6 +567,7 @@ app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
       sourceBranch: m.br.source,
       featureBranch: m.br.feature,
       syncBeforeStart: false,
+      execEnv: 'local',   // the agent merges the base: a sandbox cannot bring a merge back (docs/e2b.md)
       ...(row.guardrails_id ? { guardrailsId: row.guardrails_id } : {}),
       engine: runEngineOfRow(row),
       // #617: a mock run is resolved by a mock run. Best effort: the resume point records `mock: true` while it
@@ -578,6 +608,7 @@ app.post('/api/runs/:id/resolve-terminal', async (req, res) => {
     assertFinishedRow(row, { isLive: isLiveRun, isFinishing: isFinishingRun });
     const m = pickBaseMember(row, bodyMember(req));
     assertNotResolving(m, resolveRunActive);     // else useExisting would link the resolve run's live worktree
+    assertPrNotFinal(row, m);
     assertNoPrFix(row, m);
     const by = actorOf(req);
     const c = await checkBaseMerge(m.projectDir, { base: m.br.source, feature: m.br.feature, remote: m.remote, maxAgeMs: INTERACTIVE_TTL_MS });
@@ -592,6 +623,7 @@ app.post('/api/runs/:id/resolve-terminal', async (req, res) => {
     const t = terminalTargets(findPipelineRowById(row.id), { isLive: isLiveRun });
     const tm = t.members.find((x) => x.projectKey === m.projectKey);
     if (!tm?.cwd) return res.status(409).json({ error: 'This run has no checkout to open.', code: 'NO_FOLDER' });
+    assertPrNotFinal(row, m);   // again after the awaits: the PR refresh can record a merge meanwhile
     const merge = await startConflictMerge(tm.cwd, { feature: m.br.feature, baseSha: c.baseSha, baseRef: c.baseRef, remote: c.remote });
     if (!merge.ok) return res.status(merge.kind === 'failed' ? 500 : 409).json({ error: merge.error, code: merge.kind === 'dirty' ? 'DIRTY' : merge.kind === 'in-use' ? 'IN_USE' : 'MERGE_FAILED' });
     updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseResolve = resolveMark('terminal', rec, { by }); });

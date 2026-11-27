@@ -96,7 +96,7 @@ test('renderReview: slack-chat (board 1.2)', () => {
     ['mk-wash mk-wash-bad', 'note', 'Anyone holding the bot token or in an allowed channel can pause, stop and approve runs.']);
   assert.deepEqual([...secs[2].querySelectorAll('.mk-setup-line')].map((l) => [l.textContent, l.classList.contains('mk-mono')]), [['No dependencies', false]]);
   const src = secs[3].querySelector('.mk-src');
-  assert.deepEqual([src.querySelector('.mk-src-url.mk-mono').textContent, src.querySelector('.mk-src-sha.mk-mono').textContent], ['github.com/SinishaDjukic/worca-cc / plugins/slack-chat', '@ 735b354']);
+  assert.deepEqual([src.querySelector('.mk-src-url.mk-mono').textContent, src.querySelector('.mk-src-sha.mk-mono').textContent], ['github.com/worca-org/worca / plugins/slack-chat', '@ 735b354']);
   const gh = src.querySelector('a.mk-link');
   assert.deepEqual([gh.textContent, gh.getAttribute('href'), gh.target, gh.rel, !!gh.querySelector('.ic svg')], ['View on GitHub', SLACK.source.webUrl, '_blank', 'noopener', true]);
   assert.equal(body.querySelector('.pl-needs-git'), null);
@@ -120,7 +120,7 @@ test('renderReview: the other shapes', async () => {
     } },
     { name: 'no webUrl on the item: View on GitHub falls back to githubWebUrl', run: () => {
       const b = renderReview(doc, { ...SLACK, source: { ...SLACK.source, webUrl: undefined } }, {});
-      assert.equal(b.querySelector('.mk-src a.mk-link').getAttribute('href'), `https://github.com/SinishaDjukic/worca-cc/tree/${SLACK.source.sha}/plugins/slack-chat`);
+      assert.equal(b.querySelector('.mk-src a.mk-link').getAttribute('href'), `https://github.com/worca-org/worca/tree/${SLACK.source.sha}/plugins/slack-chat`);
     } },
     { name: 'a repo-root plugin (subdir "") shows the url alone; no description, no paragraph', run: () => {
       const b = renderReview(doc, item('one', { repoUrl: 'https://github.com/acme/one', subdir: '' }), {});

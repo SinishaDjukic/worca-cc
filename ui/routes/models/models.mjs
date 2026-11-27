@@ -3,12 +3,14 @@
 import { beginCopilotLogin, copilotLogout, copilotModelsForImport, endpointModelsForImport, importCopilotModels, importEndpointModels, importOpencodeModels, opencodeModelsForImport, patchOpenRouter, patchProvider, patchSpeech, pollCopilotLogin, providersState } from '../../../src/core/bridge/provider-ops.mjs';
 import { providerReadiness } from '../../../src/core/bridge/registry.mjs';
 import { CODEX_BUILTIN_MODELS, COPILOT_BUILTIN_MODELS, EFFORTS, PREDEFINED_MODELS, builtinsHidden, costUnreliableModelIds, globalModelRefs, promoteCustomModel, removeGlobalModelAndRefs } from '../../../src/core/config.mjs';
-import { CODEX_EFFORTS, COPILOT_EFFORTS, GOOSE_EFFORTS, OPENCODE_EFFORTS, UPSTREAM_PROVIDERS, maskModelEnvValue, modelEnvRef } from '../../../src/core/model-env.mjs';
+import { CODEX_EFFORTS, COPILOT_EFFORTS, GOOSE_EFFORTS, OPENCODE_EFFORTS, UPSTREAM_PROVIDERS, modelEnvRef } from '../../../src/core/model-env.mjs';
 import { canTestModel, testModel } from '../../../src/core/model-test.mjs';
 import { clearModelUses, modelUses } from '../../../src/core/model-uses.mjs';
 import { listPluginModels, pluginModelSecretStatus } from '../../../src/core/plugin-models.mjs';
 import { policyCatalogModels } from '../../../src/core/policy/cache.mjs';
-import { addGlobalModel, hideBuiltinModels, listGlobalModels, updateGlobalModel } from '../../../src/core/settings.mjs';
+import { addGlobalModel, hideBuiltinModels, listGlobalModels, maskStoredSecret, resolveProviderSecret, updateGlobalModel } from '../../../src/core/settings.mjs';
+import { VAULT_MESSAGES, isVaultRef } from '../../../src/core/secrets/refs.mjs';
+import { settingsSecretField, settingsVaultState } from '../../../src/core/secrets/settings-resolver.mjs';
 import { badRequest, emitChanged, modelTestsInFlight, resolveProjectDir } from '../../server.mjs';
 
 export function register(app) {
@@ -22,7 +24,10 @@ export function register(app) {
 // back means "keep" and is dropped from the write.
 // ---------------------------------------------------------------------------
 
-const maskEnvValue = (v) => (modelEnvRef(v) ? v : maskModelEnvValue(v));
+// A vault reference is masked through its resolved value (maskStoredSecret), never shown. `field` is its settings
+// field; an env key with no valid field name masks any reference as '••••••'.
+const envField = (k) => { try { return settingsSecretField('models', 'env', k); } catch { return null; } };
+const maskEnvValue = (v, field) => (modelEnvRef(v) ? v : maskStoredSecret(v, field));
 // A bridged entry's `upstream.apiKey` is masked like an env secret; the rest of
 // the block is routing config and passes through. `bridged`/`needsSignIn` are
 // the picker/card facts (model-bridge-design.md §8.5), one readiness check
@@ -31,15 +36,15 @@ const maskEnvValue = (v) => (modelEnvRef(v) ? v : maskModelEnvValue(v));
 const bridgeFacts = (m, readiness) => {
   if (!m.upstream) return {};
   const p = m.upstream.provider;
-  const key = `${p}\n${m.upstream.apiKey || ''}\n${m.upstream.baseUrl || ''}`;
+  const key = `${p}\n${m.upstream.apiKey || ''}\n${m.upstream.baseUrl || ''}\n${settingsVaultState().generation}`;
   if (!readiness.has(key)) readiness.set(key, providerReadiness(m.upstream));
   const r = readiness.get(key);
   return { bridged: p, needsSignIn: !r.ok, ...(r.ok ? {} : { signInReason: r.reason, signInMessage: r.message }) };
 };
 const maskedGlobalModel = (m, readiness = new Map()) => ({
   ...m,
-  ...(m.env ? { env: Object.fromEntries(Object.entries(m.env).map(([k, v]) => [k, maskEnvValue(v)])) } : {}),
-  ...(m.upstream ? { upstream: { ...m.upstream, ...(m.upstream.apiKey ? { apiKey: maskEnvValue(m.upstream.apiKey) } : {}) } } : {}),
+  ...(m.env ? { env: Object.fromEntries(Object.entries(m.env).map(([k, v]) => [k, maskEnvValue(v, envField(k))])) } : {}),
+  ...(m.upstream ? { upstream: { ...m.upstream, ...(m.upstream.apiKey ? { apiKey: maskEnvValue(m.upstream.apiKey, 'models.upstream.apiKey') } : {}) } } : {}),
   ...bridgeFacts(m, readiness),
 });
 const isMaskedEcho = (v) => typeof v === 'string' && v.startsWith('••');
@@ -65,20 +70,24 @@ const upstreamInput = (u, current) => {
  *  every masked env echo becomes the source's stored value for the same key, and a masked `upstream.apiKey` the
  *  source's stored key, so a copy works without the page ever holding the secret. A masked echo with nothing behind
  *  it is refused. Without `copyFrom` (absent, null or '') nothing changes: a masked env value is stored as written
- *  and a masked apiKey is dropped. @throws {Error} on a bad `copyFrom` or an echo with no value to copy. */
+ *  and a masked apiKey is dropped. `copied` marks the values filled from the source (addGlobalModel's copy marker:
+ *  their vault references are sealed into new entries of the copy). @throws {Error} on a bad `copyFrom` or an echo
+ *  with no value to copy. */
 const copyInput = (b) => {
   const from = b.copyFrom;
-  if (from === undefined || from === null || from === '') return { env: b.env, upstream: upstreamInput(b.upstream) };
+  if (from === undefined || from === null || from === '') return { env: b.env, upstream: upstreamInput(b.upstream), copied: undefined };
   if (typeof from !== 'string') throw new Error('copyFrom must be a model id');
   const source = listGlobalModels().find((m) => m.id.toLowerCase() === from.toLowerCase());
   if (!source) throw new Error(`unknown model to copy from ${JSON.stringify(from)}`);
   const stored = (map, k) => (map && Object.hasOwn(map, k) && typeof map[k] === 'string' && map[k] ? map[k] : '');
+  const copied = { env: [], apiKey: false };
   let env = b.env;
   if (env && typeof env === 'object' && !Array.isArray(env)) {
     env = Object.fromEntries(Object.entries(env).map(([k, v]) => {
       if (!isMaskedEcho(v)) return [k, v];
       const value = stored(source.env, k);
       if (!value) throw new Error(`${JSON.stringify(k)} has no value to copy`);
+      copied.env.push(k);
       return [k, value];
     }));
   }
@@ -87,8 +96,9 @@ const copyInput = (b) => {
     const key = stored(source.upstream, 'apiKey');
     if (!key) throw new Error('"apiKey" has no value to copy');
     upstream = { ...upstream, apiKey: key };
+    copied.apiKey = true;
   }
-  return { env, upstream };
+  return { env, upstream, copied };
 };
 
 /** Read-only plugin model entries (design §9.7): literals masked with the
@@ -105,7 +115,7 @@ const pluginModelsPayload = () => {
       id: m.id, label: m.label, efforts: m.efforts, plugin: m.plugin,
       ...(m.engine ? { engine: m.engine } : {}),   // its harness; the manifest stores none for Claude Code
       env: Object.fromEntries(Object.entries(m.env ?? {}).map(([k, v]) => [
-        k, typeof v === 'string' ? maskEnvValue(v) : `(secret: ${v.secret})`,
+        k, typeof v === 'string' ? maskEnvValue(v, null) : `(secret: ${v.secret})`,
       ])),
       secrets: status.filter((s) => m.secrets.includes(s.key)),
       ...(m.cost ? { cost: m.cost } : {}),   // manifest-pinned pricing — config, never a credential
@@ -143,8 +153,8 @@ app.get('/api/models', (req, res) => {
 app.post('/api/models', async (req, res) => {
   const b = req.body || {};
   try {
-    const { env, upstream } = copyInput(b);
-    const model = await addGlobalModel({ id: b.id, label: b.label, efforts: b.efforts, env, cost: b.cost, upstream, engine: b.engine });
+    const { env, upstream, copied } = copyInput(b);
+    const model = await addGlobalModel({ id: b.id, label: b.label, efforts: b.efforts, env, cost: b.cost, upstream, engine: b.engine }, { copied });
     res.json({ model: maskedGlobalModel(model), models: maskedGlobalModels() });
   } catch (err) {
     // copyInput and addGlobalModel throw only on validation (a bad copyFrom or a masked echo with
@@ -341,14 +351,23 @@ app.get('/api/models/:id/refs', (req, res) => {
 // The default GET surface stays masked (accidental exposure in screenshots/
 // devtools); this is a deliberate read of what the user already owns on disk
 // in ~/.worca-cc/settings.json — same trust boundary, explicit action.
-// ?key=K -> { key, value }; no key -> { env } (the whole raw map).
+// ?key=K -> { key, value }; no key -> { env } (the whole raw map). A vault reference is revealed as its resolved value,
+// never as the reference; when one does not resolve here, both forms answer 400.
+const NOT_REVEALED = `The key was not revealed: ${VAULT_MESSAGES['store-locked']}`;
+const revealed = (k, v) => (isVaultRef(v) ? resolveProviderSecret(v, process.env, envField(k)) : v);
 app.get('/api/models/:id/env-value', (req, res) => {
   const entry = listGlobalModels().find((m) => m.id.toLowerCase() === String(req.params.id).toLowerCase());
   if (!entry) return badRequest(res, `unknown model id ${JSON.stringify(req.params.id)}`);
   const key = typeof req.query.key === 'string' ? req.query.key : '';
-  if (!key) return res.json({ env: { ...(entry.env || {}) } });
+  if (!key) {
+    const env = Object.fromEntries(Object.entries(entry.env || {}).map(([k, v]) => [k, revealed(k, v)]));
+    if (Object.values(env).some((v) => v === '')) return badRequest(res, NOT_REVEALED);
+    return res.json({ env });
+  }
   if (!entry.env || !(key in entry.env)) return badRequest(res, `model has no env key ${JSON.stringify(key)}`);
-  res.json({ key, value: entry.env[key] });
+  const value = revealed(key, entry.env[key]);
+  if (value === '') return badRequest(res, NOT_REVEALED);
+  res.json({ key, value });
 });
 
 app.delete('/api/models/:id', async (req, res) => {

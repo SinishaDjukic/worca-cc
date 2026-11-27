@@ -151,7 +151,7 @@ test('hide set: JS-built surfaces and requests', async () => {
     } },
     { name: 'app.js / ask-panel wiring the boot cannot reach cheaply (source rows)', run: () => {
       for (const re of [/function prHostAvailable\(\) \{ return gitOn\(\) && /, /if \(t\.needsGit\) btn\.dataset\.needsGit = '';/,
-        /base: gitOn\(\) \? baseRowNote\(p\.baseCheck\) : ''/, /function syncApplies\(\) \{\n  if \(!gitOn\(\)\) return false;/,
+        /base: gitOn\(\) && [^\n]*\? baseRowNote\(p\.baseCheck\) : ''/, /function syncApplies\(\) \{\n  if \(!gitOn\(\)\) return false;/,
         /async function refreshSyncStatusQuiet\(\) \{\n  if \(!gitOn\(\)\) return;/,
         /levelAtLeast\(cells\.get\(k\)\.tab\.level \|\| 'simple'\) && \(gitOn\(\) \|\| !cells\.get\(k\)\.tab\.needsGit\)/,
         /if \(!box \|\| !list\) return;\n  if \(!gitOn\(\)\) \{ box\.hidden = true; return; \}/,

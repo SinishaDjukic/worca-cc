@@ -5,8 +5,29 @@ import {
   DEFAULT_GUARDRAILS, GUARDRAIL_LEVELS, GUARDRAIL_PRESETS,
   sanitizeGuardrails, validateGuardrails,
   sanitizeGuardrailsConfig, validateGuardrailsConfig, resolveGuardrails, detectPreset,
-  guardrailsToPermissionRules, mergePermissionRules, unionGuardrails, isPermissionRule,
+  guardrailsToPermissionRules, mergePermissionRules, unionGuardrails, isPermissionRule, gateRules,
 } from '../src/core/guardrails.mjs';
+import { askPathDenied } from '../src/core/ask/deny-rules.mjs';
+
+// The floor every policy with rules carries: Worca's secret files (Read+Edit) and the keychain/export command denies.
+const LAUNCHERS = ['worca', 'worca-cc', 'npx worca', 'npx worca-cc', 'npx @worca/app', 'npm exec worca', 'npm exec @worca/app'];
+const KEYCHAIN = ['security find-generic-password', 'security find-internet-password', 'security find-key', 'security dump-keychain',
+  'security export', 'secret-tool lookup', 'secret-tool search',
+  ...['export', 'reset', 'ack', 'status --check'].flatMap((verb) => LAUNCHERS.map((l) => `${l} secrets ${verb}`)),
+  'env -u WORCA_HOST_PID', 'env --unset=WORCA_HOST_PID', 'unset WORCA_HOST_PID', 'env -i', 'env --ignore-environment'].flatMap((c) => [`Bash(${c})`, `Bash(${c}:*)`]);
+
+// Whether a Bash command matches a deny rule, as Claude Code's prefix rules do: `Bash(p)` exact, `Bash(p:*)` p or p + space.
+const bashDenied = (cmd, rules) => rules.some((r) => {
+  const m = /^Bash\((.*)\)$/.exec(r);
+  if (!m) return false;
+  const p = m[1];
+  if (p.endsWith(':*')) { const q = p.slice(0, -2); return cmd === q || cmd.startsWith(q + ' '); }
+  return cmd === p;
+});
+const FLOOR = [
+  'Read(//**/proxy-login.json*)', 'Edit(//**/proxy-login.json*)', 'Read(//**/worca-vault*)', 'Edit(//**/worca-vault*)',
+  ...KEYCHAIN,
+];
 
 // ── 5-key settings layer (unchanged from v1 semantics) ───────────────────────
 
@@ -56,7 +77,8 @@ test('guardrailsToPermissionRules: protectedPaths expand to Read+Edit deny (NO W
     protectedPaths: ['.env*'], deny: ['Bash(curl:*)', 'Read(.env*)'],
   });
   assert.deepEqual(rules, {
-    deny: ['Read(.env*)', 'Edit(.env*)', 'Bash(curl:*)'],   // no Write leg — the CLI never consults it and warns per rule per spawn
+    // no Write leg — the CLI never consults it and warns per rule per spawn; the secret-file floor follows
+    deny: ['Read(.env*)', 'Edit(.env*)', 'Bash(curl:*)', ...FLOOR],
   });
 });
 
@@ -109,15 +131,17 @@ test('preset table snapshot — changing a preset is a deliberate, release-noted
     envScrub: false,
     envAllowlist: [],
     protectedPaths: [
-      '.env*', '*.pem', '*.key', 'id_rsa', 'id_ed25519', '*.p12', '*.pfx', '//run/secrets/**',
+      '.env*', '*.pem', '*.key', '.npmrc', '.netrc', 'id_*', '*.p12', '*.pfx', '//run/secrets/**', '//var/run/secrets/**',
       '//**/worca-cc.db*', '//**/worca.db*', '//**/.worca-cc/plugins/*/data/secrets.json',
       '//**/.worca-cc/settings.json', '//**/.worca-cc/mcp/**',
+      '//**/proxy-login.json*', '//**/worca-vault*',
     ],
     deny: [
       'Bash(git push)', 'Bash(git push:*)',
       'Bash(npm publish)', 'Bash(npm publish:*)',
       'Bash(yarn publish)', 'Bash(yarn publish:*)',
       'Bash(pnpm publish)', 'Bash(pnpm publish:*)',
+      ...KEYCHAIN,
       'Edit(//**/.worca-cc/plugins/**)', 'Edit(//**/.worca-cc/scripts/**)',
       'Edit(//**/.worca-cc/agents/**)', 'Edit(//**/.worca-cc/workflows/**)',
       'Edit(//**/.worca-cc/policy/**)',
@@ -128,10 +152,11 @@ test('preset table snapshot — changing a preset is a deliberate, release-noted
     envScrub: true,
     envAllowlist: [],
     protectedPaths: [
-      '.env*', '*.pem', '*.key', 'id_rsa', 'id_ed25519', '*.p12', '*.pfx', '//run/secrets/**',
+      '.env*', '*.pem', '*.key', '.npmrc', '.netrc', 'id_*', '*.p12', '*.pfx', '//run/secrets/**', '//var/run/secrets/**',
       '//**/worca-cc.db*', '//**/worca.db*', '//**/.worca-cc/plugins/*/data/secrets.json',
       '//**/.worca-cc/settings.json', '//**/.worca-cc/mcp/**',
-      '.npmrc', '.netrc', '*.tfstate*', '*.keystore', '*.jks',
+      '//**/proxy-login.json*', '//**/worca-vault*',
+      '*.tfstate*', '*.keystore', '*.jks',
       '**/secrets/**', '**/.git/config', '~/.git-credentials',
       '~/.ssh/**', '~/.aws/**', '~/.config/gcloud/**', '~/.kube/**', '~/.config/gh/**',
       '~/.npmrc', '~/.netrc', '~/.docker/config.json',
@@ -142,6 +167,7 @@ test('preset table snapshot — changing a preset is a deliberate, release-noted
       'Bash(npm publish)', 'Bash(npm publish:*)',
       'Bash(yarn publish)', 'Bash(yarn publish:*)',
       'Bash(pnpm publish)', 'Bash(pnpm publish:*)',
+      ...KEYCHAIN,
       'Edit(//**/.worca-cc/plugins/**)', 'Edit(//**/.worca-cc/scripts/**)',
       'Edit(//**/.worca-cc/agents/**)', 'Edit(//**/.worca-cc/workflows/**)',
       'Edit(//**/.worca-cc/policy/**)',
@@ -306,6 +332,80 @@ test('no preset protects a memory mount path: a defragment run is never blocked 
       for (const rel of MOUNTED) {
         assert.equal(protects(pat, rel), false, `${level}: "${pat}" would protect the memory file ${rel}`);
       }
+    }
+  }
+});
+
+// ── Worca's secret files and keychain reads (secrets in the OS store, slice 1) ─────────────────
+
+const SECRET_HOME_FILES = ['/srv/worca/worca-vault.enc', '/srv/worca/worca-vault.enc.unreadable-20261121T101500Z',
+  '/srv/worca/worca-vault.key', '/srv/worca/proxy-login.json'];
+
+test('secret files: the normal and secure presets protect both root-anchored forms and deny keychain reads', () => {
+  for (const level of ['normal', 'secure']) {
+    const p = GUARDRAIL_PRESETS[level];
+    for (const r of ['//**/proxy-login.json*', '//**/worca-vault*']) assert.ok(p.protectedPaths.includes(r), `${level}: ${r}`);
+    for (const r of ['Bash(security find-generic-password:*)', 'Bash(worca secrets export:*)', 'Bash(worca secrets reset:*)', 'Bash(npx @worca/app secrets reset)']) assert.ok(p.deny.includes(r), `${level}: ${r}`);
+    for (const r of ['Bash(worca-cc secrets export:*)', 'Bash(npx worca-cc secrets export:*)', 'Bash(npm exec worca secrets export:*)',
+      'Bash(npm exec @worca/app secrets export:*)', 'Bash(npm exec worca secrets reset:*)', 'Bash(worca secrets ack)', 'Bash(npx @worca/app secrets ack:*)',
+      'Bash(npm exec @worca/app secrets ack:*)', 'Bash(worca secrets status --check)', 'Bash(worca secrets status --check:*)',
+      'Bash(npx @worca/app secrets status --check:*)', 'Bash(env -u WORCA_HOST_PID:*)', 'Bash(unset WORCA_HOST_PID:*)', 'Bash(env -i:*)', 'Bash(env --ignore-environment:*)']) assert.ok(p.deny.includes(r), `${level}: ${r}`);
+  }
+});
+
+test('secret floor: every env -i and env --ignore-environment command is refused, the working PATH= export form included', () => {
+  const deny = guardrailsToPermissionRules(GUARDRAIL_PRESETS.normal).deny;
+  for (const cmd of ['env -i PATH=$PATH worca secrets export --yes', 'env -i worca secrets export', 'env -i A=1 worca secrets export',
+    'env --ignore-environment npx @worca/app secrets reset', 'env -i security find-generic-password -s x',
+    // A harmless env -i use is refused too: the accepted cost of the broad rule.
+    'env -i PATH=/usr/bin make test', 'env -i', 'env --ignore-environment ls']) assert.ok(bashDenied(cmd, deny), cmd);
+});
+
+test('secret floor: 80 keychain Bash rules plus 4 file rules, every one a Bash(c)/Bash(c:*) pair', () => {
+  const floor = guardrailsToPermissionRules({ ...DEFAULT_GUARDRAILS, deny: ['Bash(rm:*)'] }).deny.filter((r) => r !== 'Bash(rm:*)');
+  assert.equal(floor.length, 84);
+  const bash = floor.filter((r) => r.startsWith('Bash('));
+  assert.equal(bash.length, 80);
+  for (let i = 0; i < bash.length; i += 2) assert.equal(bash[i + 1], bash[i].slice(0, -1) + ':*)', bash[i]);
+  assert.deepEqual(floor.filter((r) => !r.startsWith('Bash(')).length, 4);
+});
+
+test('secret files: the generated rules deny the files under a custom home, outside the agent cwd', () => {
+  const sets = { normal: GUARDRAIL_PRESETS.normal, secure: GUARDRAIL_PRESETS.secure, custom: { ...DEFAULT_GUARDRAILS, deny: ['Bash(rm:*)'] } };
+  for (const [name, g] of Object.entries(sets)) {
+    const rules = guardrailsToPermissionRules(g).deny;
+    for (const f of SECRET_HOME_FILES) assert.ok(askPathDenied(f, { rules, home: '/home/u' }), `${name}: ${f}`);
+    for (const r of FLOOR) assert.ok(rules.includes(r), `${name}: ${r}`);
+  }
+});
+
+test('secret files: a set that yields no rules still yields null (permissive spawn argv unchanged)', () => {
+  assert.equal(guardrailsToPermissionRules(DEFAULT_GUARDRAILS), null);
+  assert.equal(guardrailsToPermissionRules({ ...DEFAULT_GUARDRAILS, envScrub: true }), null);
+});
+
+test('gateRules: removes the floor, so the gates weigh exactly the rules a set had before', () => {
+  const withoutFloor = (g) => {
+    const gg = sanitizeGuardrails(g);
+    const deny = [];
+    for (const p of gg.protectedPaths) for (const r of [`Read(${p})`, `Edit(${p})`]) if (!FLOOR.includes(r) && !deny.includes(r)) deny.push(r);
+    for (const r of gg.deny) if (!FLOOR.includes(r) && !deny.includes(r)) deny.push(r);
+    return deny.length ? { deny } : null;
+  };
+  for (const g of [GUARDRAIL_PRESETS.normal, GUARDRAIL_PRESETS.secure, { ...DEFAULT_GUARDRAILS, deny: ['Bash', 'WebSearch'] }, { ...DEFAULT_GUARDRAILS, deny: ['WebFetch'] }]) {
+    assert.deepEqual(gateRules(guardrailsToPermissionRules(g)), withoutFloor(g));
+  }
+  assert.deepEqual(gateRules(guardrailsToPermissionRules({ ...DEFAULT_GUARDRAILS, deny: ['Bash', 'WebSearch'] })), { deny: ['Bash', 'WebSearch'] });
+  assert.equal(gateRules(null), null);
+  assert.equal(gateRules({ deny: [...FLOOR] }), null);
+  assert.deepEqual(gateRules({ deny: [...FLOOR], allow: ['Bash(npm:*)'] }), { allow: ['Bash(npm:*)'] });
+});
+
+test('container secrets are denied under both spellings: /run/secrets and its /var/run/secrets alias', () => {
+  for (const level of ['normal', 'secure']) {
+    const deny = guardrailsToPermissionRules(GUARDRAIL_PRESETS[level]).deny;
+    for (const p of ['//run/secrets/**', '//var/run/secrets/**']) {
+      assert.ok(deny.includes(`Read(${p})`), `${level}: Read(${p})`);
     }
   }
 });

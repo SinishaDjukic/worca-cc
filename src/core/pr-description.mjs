@@ -24,7 +24,7 @@ import { RESULTS_FILE, DIFF_PATCH_FILE } from './results.mjs';
 const PATCH_CAP = 60_000;  // chars; above this, send hunk headers only
 const PROMPT_CAP = 8_000;  // chars of the run's original prompt
 /** The longest description POST /api/pr accepts: GitHub caps a PR body at 65,536
- *  characters, and the attribution footer still has to fit after it. Azure DevOps caps
+ *  characters, and the Closes line and checklist still have to fit after it. Azure DevOps caps
  *  a description at 4,000 characters; its prompt (prDescriptionSystemPrompt) asks for less. */
 export const PR_BODY_MAX = 60_000;
 /** The longest description handed back to the modal — well inside PR_BODY_MAX. */

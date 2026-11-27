@@ -13,7 +13,7 @@ import { SHA, INV, SLACK_CONFIG } from './helpers/marketplace-install-fixtures.m
 const trackDom = useDomRelease(afterEach);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const SLACK_INV = INV({ chatChannels: [{ id: 'main', displayName: 'Slack', platform: 'slack', ingress: 'connect', inbound: true, outbound: true, secrets: ['botToken', 'appToken'] }] });
-const MKT = { id: 'official', url: 'https://github.com/SinishaDjukic/worca-cc', name: 'Worca CC Official', builtin: true, warnings: [],
+const MKT = { id: 'official', url: 'https://github.com/worca-org/worca', name: 'Worca CC Official', builtin: true, warnings: [],
   lastSync: { sha: SHA, at: '2026-10-20T08:00:00.000Z' },
   plugins: [{ name: 'slack-chat', subdir: 'plugins/slack-chat', description: 'Two-way Slack channel', version: '0.1.0', inventory: SLACK_INV, installed: false }] };
 async function boot() {

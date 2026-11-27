@@ -145,7 +145,7 @@ test('with no override the builtin marketplace is the GitHub repo on dev (listin
   created.push(home);
   const list = await run(['marketplace', 'list'], { home, builtin: null });
   assert.equal(list.code, 0, list.stderr);
-  assert.match(list.stdout, /Worca CC Official\t[^\t]+\thttps:\/\/github\.com\/SinishaDjukic\/worca-cc\tnever synced\tbuilt-in/);
+  assert.match(list.stdout, /Worca CC Official\t[^\t]+\thttps:\/\/github\.com\/worca-org\/worca\tnever synced\tbuilt-in/);
 });
 
 test('marketplace add / list name a repo without a marketplace manifest by its folder, not its hashed id (G6)', async () => {

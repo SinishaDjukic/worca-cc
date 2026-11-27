@@ -14,6 +14,7 @@ import { codexReaches, runsOnText } from '../../src/shared/connections.mjs';
 import { SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { IMAGE_SERVICES, originOf, pictureSeconds } from '../../src/shared/image-services.mjs';
 import { markedSelect, modelMark } from './models/brand-marks.mjs';
+import { addVaultNote } from './settings/secret-vault-note.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -666,6 +667,7 @@ export function renderEndpointRow(providers, name, { doc = globalThis.document }
   if (keyIn.value) keyIn.dataset.original = keyIn.value;
   keyIn.placeholder = 'sk-…, or ${VAR} to read your shell env';
   ctl.appendChild(tippedField(doc, 'API key', keyIn, 'Stored masked; leave masked to keep. A model can override this key on its Connection.'));
+  addVaultNote(keyIn);
   ctl.appendChild(numberField(doc, 'mv-pv-conc', 'Max concurrent requests', k.maxConcurrent, { provider: name }));
   row.appendChild(ctl);
 

@@ -323,7 +323,7 @@ function smallRunsShip(doc, h, m, handlers) {
   if (applied) {
     const prs = sr.order.filter((o) => o.pr);
     if (!handlers.countShown) body.appendChild(h('div', 'ask-shipcard-done', `${count(prs.length, 'PR', 'PRs')} open`));
-    body.appendChild(h('div', 'ask-shipcard-stats', 'a PR per run, stacked in the order runs finished'));
+    body.appendChild(h('div', 'ask-shipcard-stats', sr.along === true ? 'stacked along the real branches' : 'a PR per run, stacked in the order runs finished'));
     body.appendChild(careRow());
     body.appendChild(list('ask-shipcard-prs', prs.map((o) => ({ id: `#${o.pr.number ?? ''}`, idCol: true, pass: true,
       label: `run ${o.index} · ${o.title}`, note: o.onto ? `onto #${o.onto}` : `into ${sr.base || ''}`.trim(), ariaLabel: 'open' }))));

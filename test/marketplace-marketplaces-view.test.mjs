@@ -72,7 +72,7 @@ test('card: a healthy built-in marketplace (Browse, refresh, ⋯; url + branch; 
   for (const b of [browse, refresh, more]) assert.equal(b.dataset.id, OFFICIAL.id);
   assert.deepEqual([card, browse, refresh, more].map((b) => b.dataset.focusKey),
     [`mkt:${OFFICIAL.id}`, `browse:${OFFICIAL.id}`, `refresh:${OFFICIAL.id}`, `more:${OFFICIAL.id}`]);
-  assert.deepEqual(kids(card.querySelector('.mk-mkt-url')), ['github.com/SinishaDjukic/worca-cc', 'dev']);
+  assert.deepEqual(kids(card.querySelector('.mk-mkt-url')), ['github.com/worca-org/worca', 'dev']);
   const health = card.querySelector('.mk-mkt-health');
   assert.deepEqual(kids(health), ['Synced 3m ago', '·', '735b354', '·', '3 plugins', '·', '2 installed']);
   assert.ok(health.querySelector('.mk-mkt-synced .status-dot.is-green'));

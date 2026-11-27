@@ -10,6 +10,7 @@
 // and a wrong base URL or key breaks every pipeline that names the model. Credentials never
 // pass through here: a key is a ${VAR} reference or nothing, and the Copilot sign-in stays
 // under Models › Providers › GitHub Copilot.
+import { isVaultRef } from '../secrets/refs.mjs';
 import { modelEnvRef, maskModelEnvValue, isLocalBaseUrl, isTranslatedApi, UPSTREAM_PROVIDERS, effortsForEngine } from '../model-env.mjs';
 
 export const MODEL_CHANGE_KINDS = Object.freeze(['add_model', 'edit_model', 'remove_model', 'provider', 'import_copilot', 'import_endpoint']);
@@ -48,9 +49,13 @@ const BREAKS_RE = /[\x00-\x1f\x7f-\x9f\u2028\u2029]/g;
 const clip = (v, n) => String(v ?? '').replace(BREAKS_RE, ' ').slice(0, n);
 const isClear = (v) => v === null || v === '';
 
-/** A stored value as the card and the tools show it: a ${VAR} ref reads, a literal is masked. */
+/**
+ * A stored value as the card and the tools show it: a ${VAR} ref reads, a literal is masked, a vault reference is
+ * '••••••' (Ask may run in a process that does not hold the vault key).
+ */
 export function maskValue(v) {
   if (typeof v !== 'string' || !v) return v;
+  if (isVaultRef(v)) return '••••••';
   return modelEnvRef(v) ? v : maskModelEnvValue(v);
 }
 
@@ -60,6 +65,7 @@ const EMBEDDED_SECRET_RE = /:\/\/[^/\s]*@|[?&](?:key|api[-_]?key|token|access_to
 /** One env value as Ask shows it: routing and tuning read (a base URL, a model id, a limit); a credential is masked. */
 export function maskEnvValue(key, v) {
   if (typeof v !== 'string' || !v || modelEnvRef(v)) return v;
+  if (isVaultRef(v)) return '••••••';
   return SECRET_ENV_RE.test(key) || EMBEDDED_SECRET_RE.test(v) ? maskModelEnvValue(v) : v;
 }
 

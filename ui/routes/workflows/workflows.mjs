@@ -5,7 +5,6 @@ import { listModels } from '../../../src/core/config.mjs';
 import { flagEnabled } from '../../../src/core/flags.mjs';
 import { gitAvailable } from '../../../src/core/git-available.mjs';
 import { GRAPH_SHAPE_WORKFLOW, PR_FIX_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_REQ_WORKFLOW_IDS, SHAPE_SLICE_REQ_WORKFLOW_IDS } from '../../../src/core/graph/builtin-workflows.mjs';
-import { startedByOf } from '../../../src/core/identity.mjs';
 import { exportWorkflowToMarketplace } from '../../../src/core/marketplace-publish.mjs';
 import { defragWorkflowView, resolveDefragModel } from '../../../src/core/memory-defrag-model.mjs';
 import { HELPER_ENGINES } from '../../../src/core/model-env.mjs';
@@ -266,7 +265,7 @@ app.post('/api/workflows/:id/export', async (req, res) => {
       const result = await exportWorkflowToMarketplace({
         workflowId: req.params.id, marketplaceId: body.marketplaceId,
         pluginName: typeof body.pluginName === 'string' ? body.pluginName : undefined,
-        draft: body.draft === true, dryRun: !!body.dryRun, startedBy: startedByOf(req), use,
+        draft: body.draft === true, dryRun: !!body.dryRun, use,
       });
       return res.json(result);
     } catch (err) {

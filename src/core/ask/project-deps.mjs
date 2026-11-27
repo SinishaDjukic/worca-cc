@@ -6,11 +6,15 @@
 // route applies it with `applyProjectChange`, behind the user's click.
 import { createProject, addProjectFolder, ProjectAddError } from '../project-create.mjs';
 import { createProjectChangeValidator } from './project-proposal.mjs';
+import { isHardenedBox } from '../security-posture.mjs';
+import { validateSandboxConfig } from './env-proposal.mjs';
 
 /** The parent's validator (dry runs only: nothing is created or registered). */
 export const validateProjectProposal = createProjectChangeValidator({
   createProject: (i) => createProject(i),
   addProjectFolder: (i) => addProjectFolder(i),
+  hardened: () => isHardenedBox(),
+  sandbox: (i) => validateSandboxConfig(i),
 });
 
 /**
@@ -38,7 +42,9 @@ export async function applyProjectChange(card, io = {}) {
 export function defaultProjectDeps() {
   return {
     projectChanges: {
-      validateChange: createProjectChangeValidator({ createProject: (i) => createProject(i), addProjectFolder: (i) => addProjectFolder(i) }),
+      // In the classic child isHardenedBox() reads the WORCA_BOX the parent forwards (spawn.mjs MCP_FORWARD_ENV).
+      validateChange: createProjectChangeValidator({ createProject: (i) => createProject(i), addProjectFolder: (i) => addProjectFolder(i),
+        hardened: () => isHardenedBox(), sandbox: (i) => validateSandboxConfig(i) }),
     },
   };
 }

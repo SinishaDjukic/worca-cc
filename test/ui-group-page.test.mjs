@@ -1,7 +1,7 @@
 // test/ui-group-page.test.mjs — the group page (ui/public/group-page.mjs, runs redesign slice 4 D13): header actions,
 // title + kind chip, meta, the status card, the tabs Runs · Overview · Decisions · Logs, the Runs table, the ship line,
 // and the plan / review receipts of the Decisions tab (D15).
-import { test, afterEach } from 'node:test';
+import { test, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
@@ -9,7 +9,17 @@ import { groupModel } from '../src/shared/run-model.mjs';
 import { buildGroupPage, paintGroupPage, GROUP_TABS, runReceipts, groupPrList, syncRequirementsTab } from '../ui/public/group-page.mjs';
 import { ACTION_LABEL } from '../src/shared/run-model.mjs';
 import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { useTempHome } from './helpers/temp-home.mjs';
+import { withEnv as withEnvVars } from './helpers/with-env.mjs';
+import { featureView } from '../src/core/shape/features.mjs';
+import { world, SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
+import { runStatus } from '../src/shared/shape/run-status.mjs';
+import { icon } from '../ui/public/icons.mjs';
 
+useTempHome(after, 'worca-group-page-s4-');
 const trackDom = useDomRelease(afterEach);
 const done = { status: 'done', endReached: true };
 const asking = RUN_STATE_ROWS.find((r) => r.state === 'needs-you').run;
@@ -437,4 +447,345 @@ test('item 8 (D11): while Ship is blocked the status line ends with the reason; 
   // The Overview tab's ready Ship card says the reason: the status line does not repeat it.
   const [onOverview] = text({ ship: { n: 2, blocked: true, reason }, overview: true, tab: 'overview' });
   assert.equal(onOverview.includes(reason), false, onOverview);
+});
+
+
+// ---- Shaper small runs s4 (R-ux-1, R-arch-4): the feature page's Runs rows read the shared run status ----
+const S4_MEMBER = (sl) => (sl.state === 'done' ? { status: 'done', endReached: true }
+  : ['planned', 'held', 'canceled'].includes(sl.state) ? { ticket: { status: 'scheduled' } }
+  : sl.state === 'error' ? { status: 'error' } : { status: 'running' });
+const s4Row = (slices) => {
+  const model = groupModel({ kind: 'feature', title: 'F', planning: done, members: slices.map(S4_MEMBER) }, { now: NOW });
+  return { kind: 'chain', groupKind: 'feature', groupId: 'feat_1', title: 'F', model, costUsd: 0,
+    planning: { title: 'Planning', href: '#running/r0', model: model.planning, cost: 0 },
+    members: model.members.map((m, i) => ({ position: slices[i].index, title: `Run ${slices[i].index}`, href: `#running/r${i}`, model: m, slice: slices[i] })) };
+};
+const s4Slices = (row) => new Map(row.members.map((mb) => [mb.position, mb.slice]));
+const s4Status = (row) => { const slices = s4Slices(row); return (mb) => runStatus({ slice: mb.slice || null, slices, snap: null }); };
+const s4Paint = (row, view = {}) => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  paintGroupPage(root, { row, project: 'acme', tab: 'runs', overview: true, requirements: true, ...view }, NOOP);
+  const li = (n) => [...root.querySelectorAll('.gpage-runs .run-member:not([data-key="planning"])')].find((x) => x.querySelector('.run-member-num').textContent === String(n));
+  return { root, li, word: (n) => li(n).querySelector('.run-member-state').textContent, dot: (n) => li(n).querySelector('.status-dot') };
+};
+const SL4 = (i, state, over = {}) => ({ index: i, state, kind: 'build', waitsFor: [], buildsOn: [], nextTurn: false, cannotStart: false, stop: null, ...over });
+
+test('s4 feature page: with `status` the rows show the dashed ring, "?" and "!" with their words (R-ux-1)', () => {
+  const row = s4Row([SL4(1, 'done'), SL4(2, 'approval', { stop: { reason: 'requirement', held: false }, buildsOn: [1] }), SL4(3, 'running', { buildsOn: [1] }),
+    SL4(4, 'held', { stop: { reason: 'check', held: true, after: 3 }, buildsOn: [1, 3] }), SL4(5, 'error', { buildsOn: [3, 4] })]);
+  const p = s4Paint(row, { shortState: () => 'dev short', status: s4Status(row) });
+  assert.equal(p.word(4), 'after run 3');
+  assert.ok(p.dot(4).classList.contains('is-dashed-ring') && !p.dot(4).classList.contains('has-sym'));
+  assert.equal(p.dot(4).dataset.symbol, undefined);
+  assert.equal(p.word(2), 'waiting for you');
+  assert.equal(p.dot(2).dataset.symbol, 'question');
+  assert.equal(p.word(5), 'failed');
+  assert.equal(p.dot(5).dataset.symbol, 'alert');
+  assert.equal(p.li(4).dataset.mark, 'after');
+  assert.equal(p.word(1), 'done');
+  assert.equal(p.word(3), 'dev short', 'a live run with no snapshot keeps the surface\'s own short word');
+  assert.ok(p.dot(3).classList.contains('is-pulse'));
+  assert.ok(![1, 2, 3, 4, 5].some((n) => /^next/.test(p.word(n))));
+});
+
+test('s4 feature page base state: run 7 waits for run 2 (needs you), 6; run 12 waits for run 7, 10; run 9 next; a free run no word; run 1 done', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'worca-s4-page-'));
+  try {
+    await withEnvVars({ WORCA_FLAGS: 'shaperSmallRuns' }, () => {
+      const fx = world(root, 'base');
+      const row = s4Row(featureView(fx.featureId, { live: fx.live }).slices);
+      const p = s4Paint(row, { shortState: () => 'dev short', status: s4Status(row) });
+      assert.equal(p.word(7), 'waits for run 2 (needs you), 6');
+      assert.equal(p.word(12), 'waits for run 7, 10');
+      assert.equal(p.word(9), 'next');
+      assert.ok(p.dot(9).classList.contains('is-ink-ring'));
+      assert.equal(p.word(13), '');
+      assert.ok(p.dot(13).classList.contains('is-grey-ring'));
+      assert.equal(p.word(1), 'done');
+      assert.ok(p.dot(1).classList.contains('is-green'));
+      assert.ok(p.dot(12).classList.contains('is-grey-ring'));
+      assert.equal(p.root.querySelector('.gpage-runs .run-member-line'), null);
+      assert.equal([...p.root.querySelectorAll('.gpage-runs .run-member-state')].filter((n) => n.textContent === 'next').length, 1);
+    });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('s4 feature page: without `status` the Runs rows are today\'s (no data-mark, no new dot class)', () => {
+  const row = s4Row([SL4(1, 'done'), SL4(2, 'held', { stop: { reason: 'check', held: true, after: 1 } })]);
+  const a = s4Paint(row, { shortState: () => 'x' });
+  assert.equal(a.root.querySelector('[data-mark]'), null);
+  assert.equal(a.root.querySelector('.is-dashed-ring, .is-ink-ring'), null);
+  const b = s4Paint(row, { shortState: () => 'x', status: undefined });
+  assert.equal(a.root.querySelector('.gpage-runs').outerHTML, b.root.querySelector('.gpage-runs').outerHTML);
+});
+
+// ---- Shaper small runs slice 7 (R-po-5): the feature page's state line and need-you count ---------------------------
+const S7_LINE = 'Run 6 reviewing · next: run 9';
+function s7Page(base = row()) {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  const paint = (more = {}, r = base) => paintGroupPage(root, { row: r, project: 'p', tab: 'runs', overview: true, requirements: true, ...more }, NOOP);
+  return { root, paint, detail: () => root.querySelector('.gpage-card .run-status-detail').textContent,
+    chips: () => [...root.querySelectorAll('.rd-title-row .kind-chip[data-need]')] };
+}
+
+test('s7 T16 feature page: `stateLine` is the status line and `needCount` is one "4 need you" chip after the kind chip', () => {
+  const p = s7Page();
+  p.paint({ stateLine: S7_LINE, needCount: 4 });
+  assert.equal(p.detail(), S7_LINE);
+  assert.deepEqual(p.chips().map((c) => c.textContent), ['4 need you']);
+  assert.deepEqual([p.chips()[0].tagName, p.chips()[0].className], ['SPAN', 'kind-chip']);
+  assert.equal(p.chips()[0].previousElementSibling, p.root.querySelector('.gpage-head .kind-chip:not([data-need])'));
+  assert.equal(p.root.querySelector('.gpage-head .kind-chip').textContent, 'Feature', 'the kind chip is untouched');
+  // No trailing \b: textContent runs the chip straight into the next word.
+  assert.equal(p.root.textContent.match(/\bneed you/g)?.length, 1, 'the count is said once on the page');
+  p.paint({ stateLine: S7_LINE, needCount: 4 });
+  assert.equal(p.chips().length, 1, 'a repaint adds no second chip');
+  p.paint({ stateLine: S7_LINE, needCount: 1 });
+  assert.deepEqual(p.chips().map((c) => c.textContent), ['1 needs you']);
+  p.paint({ stateLine: S7_LINE, needCount: 0 });
+  assert.equal(p.root.querySelector('[data-need]'), null, 'nothing at zero');
+  assert.equal(p.detail(), S7_LINE);
+});
+
+test('s7 T16 feature page: without `stateLine` and `needCount` the page is today\'s, also after a paint that had them', () => {
+  const today = s7Page();
+  today.paint();
+  assert.equal(today.root.querySelector('[data-need]'), null);
+  const empty = s7Page();
+  empty.paint({ stateLine: null, needCount: 0 });
+  assert.equal(empty.root.outerHTML, today.root.outerHTML);
+  const p = s7Page();
+  p.paint({ stateLine: S7_LINE, needCount: 4 });
+  assert.notEqual(p.detail(), today.detail(), 'the state line replaced the model\'s line');
+  p.paint();
+  assert.equal(p.root.querySelector('[data-need]'), null);
+  assert.equal(p.detail(), today.detail());
+});
+
+test('s7 T16 feature page: while Ship is blocked the reason still ends the state line', () => {
+  const reason = 'Waiting for Compliance to confirm R-comp-4';
+  const model = groupModel({ kind: 'feature', title: 'T', members: [done, done] }, { now: NOW });
+  const ready = { ...row(), planning: null, model, members: model.members.map((m, i) => ({ position: i + 1, title: `S${i + 1}`, href: '#x', model: m })) };
+  assert.equal(model.state, 'ready');
+  const p = s7Page(ready);
+  p.paint({ stateLine: S7_LINE, needCount: 0, ship: { n: 2, blocked: true, reason } });
+  assert.equal(p.detail(), `${S7_LINE} · ${reason}`);
+});
+
+// ---- Shaper small runs slice 10 (R-ux-3): "Show order" on the feature page's Runs tab ------------------------------
+const ORDER_HINT = 'A run sits to the right of every run it builds on. A line joins a run that is not done to the runs waiting for it; links that are already met are not drawn.';
+/** featureView slice rows from `[run, buildsOn]` pairs; `done` run numbers are finished, every other run is planned. */
+const orderRows = (pairs, done = []) => pairs.map(([index, buildsOn]) => SL4(index, done.includes(index) ? 'done' : 'planned',
+  { title: `Run ${index}`, buildsOn: [...buildsOn], waitsFor: done.includes(index) ? [] : buildsOn.filter((d) => !done.includes(d)) }));
+const SIXTEEN = SIXTEEN_RUN_LINKS.map(({ run, dependsOn }) => [run, dependsOn]);
+const FOUR_BRANCHING = [[1, []], [2, [1]], [3, [1]], [4, [2, 3]]];
+const SIX_CHAIN = [[1, []], [2, [1]], [3, [2]], [4, [3]], [5, [4]], [6, [5]]];
+/** A marked feature's page in a document (so focus works), painted with the 16 runs as `view.order`. */
+function orderPage() {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  doc.body.append(root);
+  const paint = (view = {}, r = row()) => paintGroupPage(root,
+    { row: r, project: 'p', tab: 'runs', overview: true, requirements: true, order: orderRows(SIXTEEN), ...view }, NOOP);
+  paint();
+  const q = (s) => root.querySelector(s);
+  return { doc, root, paint, q, toggle: () => q('.gpage-order-toggle'), body: () => q('.gpage-order-body'),
+    maps: () => root.querySelectorAll('.rom').length, panel: () => q('.gpage-panel[data-tab="runs"]') };
+}
+/** The toggle, which must be there. */
+function toggleOf(p) {
+  const t = p.toggle();
+  assert.ok(t, 'the Runs tab offers Show order');
+  return t;
+}
+function assertClosed(p, why) {
+  const t = toggleOf(p);
+  assert.equal(t.textContent, 'Show order', why);
+  assert.equal(t.getAttribute('aria-expanded'), 'false', why);
+  assert.equal(p.body().hidden, true, why);
+  assert.equal(p.maps(), 0, why);
+  assert.equal(t.lastElementChild.outerHTML, icon(p.doc, 'chevron-down', 12).outerHTML, why);
+}
+function assertOpen(p, why) {
+  const t = toggleOf(p);
+  assert.equal(t.textContent, 'Hide order', why);
+  assert.equal(t.getAttribute('aria-expanded'), 'true', why);
+  assert.equal(p.body().hidden, false, why);
+  assert.equal(p.maps(), 1, why);
+  assert.equal(t.lastElementChild.outerHTML, icon(p.doc, 'chevron-up', 12).outerHTML, why);
+}
+
+test('s10 syncShowOrder: no order slices → no node', async () => {
+  const { syncShowOrder } = await import('../ui/public/group-page.mjs');
+  assert.equal(typeof syncShowOrder, 'function', 'group-page.mjs exports syncShowOrder');
+  const today = s7Page();   // a page that never had the field
+  today.paint();
+  const todayPanel = today.root.querySelector('.gpage-panel[data-tab="runs"]').innerHTML;
+  for (const order of [undefined, null, orderRows(FOUR_BRANCHING), orderRows(SIX_CHAIN)]) {
+    const p = orderPage();   // painted with the 16 runs first: the node goes, it is not just hidden
+    p.paint({ order });
+    assert.equal(p.q('.gpage-order'), null, JSON.stringify(order?.length ?? order));
+    assert.equal(p.panel().innerHTML, todayPanel, 'the Runs panel is as without the field');
+    syncShowOrder(p.root, order || null, 'feat_1');
+    assert.equal(p.q('.gpage-order'), null);
+  }
+});
+
+test('s10 first paint closed: one Show order toggle above the rows, with the run page\'s quiet button', () => {
+  const p = orderPage();
+  assert.equal(p.root.querySelectorAll('.gpage-order').length, 1);
+  assert.equal(p.root.querySelectorAll('.gpage-order-toggle').length, 1);
+  assertClosed(p, 'first paint');
+  const t = p.toggle();
+  assert.equal(t.tagName, 'BUTTON');
+  assert.equal(t.getAttribute('type'), 'button');
+  for (const c of ['btn', 'btn-sm', 'btn-quiet']) assert.ok(t.classList.contains(c), c);
+  assert.equal(p.panel().firstElementChild, p.q('.gpage-order'), 'first in the Runs panel');
+  assert.ok(p.q('.gpage-order').compareDocumentPosition(p.q('.gpage-runs')) & 4, 'before the rows');
+  assert.match(p.body().id, /^gpage-order-\d+$/);
+  assert.equal(t.getAttribute('aria-controls'), p.body().id);
+  const other = orderPage();
+  assert.notEqual(other.body()?.id, p.body().id, 'two pages, two ids');
+});
+
+test('s10 click opens and closes the drawing', () => {
+  const p = orderPage();
+  const t = toggleOf(p);
+  t.click();
+  assertOpen(p, 'after a click');
+  assert.equal(p.toggle(), t, 'the button is not replaced');
+  assert.equal(t.getAttribute('aria-controls'), p.body().id);
+  const map = p.body().querySelector('.rom');
+  assert.ok(map, 'the drawing is in the body the button controls');
+  assert.equal(map.getAttribute('aria-hidden'), 'true');
+  assert.equal(map.querySelectorAll('.rom-run').length, 16);
+  t.click();
+  assertClosed(p, 'after a second click');
+  assert.equal(p.toggle(), t);
+});
+
+test('s10 click keeps focus; a repaint keeps the node', () => {
+  const p = orderPage();
+  const t = toggleOf(p);
+  t.focus();
+  t.click();
+  assert.equal(p.doc.activeElement, t);
+  const map = p.q('.rom');
+  p.paint();
+  p.paint();   // fresh arrays with the same slices
+  assert.equal(p.root.querySelectorAll('.gpage-order').length, 1);
+  assert.equal(p.toggle(), t);
+  assert.equal(p.doc.activeElement, t, 'focus stays on the toggle');
+  assert.equal(p.q('.rom'), map, 'an unchanged drawing keeps its node');
+  assertOpen(p, 'repaint while open keeps it open');
+});
+
+test('s10 a run turning done repaints the drawing', () => {
+  const p = orderPage();
+  const t = toggleOf(p);
+  t.focus();
+  t.click();
+  const before = p.q('.rom');
+  assert.ok(before.querySelector('.rom-link[data-from="2"]'), 'the fixture: links from run 2 are drawn');
+  p.paint({ order: orderRows(SIXTEEN, [2]) });
+  assert.notEqual(p.q('.rom'), before);
+  assert.equal(p.root.querySelectorAll('.rom-link[data-from="2"]').length, 0);
+  assert.ok(p.root.querySelector('.rom-link'), 'the other links stay');
+  assert.equal(p.toggle(), t);
+  assert.equal(p.doc.activeElement, t);
+  assertOpen(p, 'still open');
+});
+
+test('s10 opening after a repaint draws the latest slices', () => {
+  const p = orderPage();
+  toggleOf(p);
+  p.paint({ order: orderRows(SIXTEEN, [2]) });
+  p.toggle().click();
+  assertOpen(p, 'opened');
+  assert.equal(p.root.querySelectorAll('.rom-link[data-from="2"]').length, 0, 'run 2 is done in the latest paint');
+});
+
+test('s10 another groupId resets to closed', () => {
+  const p = orderPage();
+  const t = toggleOf(p);
+  t.click();
+  assertOpen(p, 'opened');
+  p.paint({}, { ...row(), groupId: 'feat_2' });
+  assertClosed(p, 'another feature');
+  assert.equal(p.toggle(), t, 'the button is kept');
+  p.paint();
+  assertClosed(p, 'back on the first feature');
+});
+
+test('s10 a tab switch keeps the choice', () => {
+  const p = orderPage();
+  toggleOf(p).click();
+  const map = p.q('.rom');
+  p.paint({ tab: 'overview' });
+  p.paint({ tab: 'runs' });
+  assertOpen(p, 'back on Runs');
+  assert.equal(p.q('.rom'), map);
+});
+
+test('s10 a missing state repaints the kept node closed', () => {
+  const p = orderPage();
+  const t = toggleOf(p);
+  t.click();
+  assertOpen(p, 'opened');
+  delete p.root.__order;
+  p.paint();
+  assert.equal(p.toggle(), t);
+  assertClosed(p, 'no state');
+});
+
+test('s10 dropping below the threshold moves focus to the Runs tab', () => {
+  const p = orderPage();
+  const t = toggleOf(p);
+  t.focus();
+  assert.equal(p.doc.activeElement, t);
+  p.paint({ order: orderRows(FOUR_BRANCHING) });
+  assert.equal(p.q('.gpage-order'), null);
+  assert.equal(p.doc.activeElement, p.q('.gpage-tabs .rd-tab[data-tab="runs"]'));
+  const elsewhere = orderPage();
+  toggleOf(elsewhere);
+  const more = elsewhere.q('.gpage-tabs .rd-tab[data-tab="decisions"]');
+  more.focus();
+  elsewhere.paint({ order: orderRows(FOUR_BRANCHING) });
+  assert.equal(elsewhere.q('.gpage-order'), null);
+  assert.equal(elsewhere.doc.activeElement, more, 'focus elsewhere is left where it is');
+});
+
+test('s10 the toggle bar is right-aligned and holds only the toggle; the body carries the one hint, readable', () => {
+  const p = orderPage();
+  const t = toggleOf(p);
+  const bar = p.q('.gpage-order > .gpage-order-bar');
+  assert.ok(bar);
+  assert.deepEqual([...bar.children], [t]);
+  assert.equal(p.q('.gpage-order > .gpage-order-body'), p.body());
+  for (const state of ['closed', 'open']) {
+    const hints = p.body().querySelectorAll('p.gpage-order-hint');
+    assert.equal(hints.length, 1, state);
+    assert.equal(hints[0].textContent, ORDER_HINT);
+    assert.equal(hints[0].closest('[aria-hidden="true"]'), null, 'only the drawing is hidden from screen readers');
+    assert.equal(p.root.textContent.split(ORDER_HINT).length - 1, 1, 'said once on the page');
+    t.click();
+  }
+});
+
+// ── Shaper small runs slice 11 (R-ux-2): the footer's Resume is named by the host ────────────────────────────────
+test('s11: deps.resumeLabel names the footer Resume; without it, or when it is empty, it reads "Resume"', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  // Run 2 paused before a working run 3: the group's current member is the paused one.
+  const view = { row: liveRow([done, { status: 'paused' }, { status: 'running' }]), project: '', tab: 'runs' };
+  const resumes = () => visibleBar(root).filter((b) => b.dataset.modelAction === 'resume').map((b) => b.textContent);
+  paintGroupPage(root, view, { ...NOOP, resumeLabel: () => 'Resume after run 6' });
+  assert.deepEqual(resumes(), ['Resume after run 6']);
+  paintGroupPage(root, view, NOOP);
+  assert.deepEqual(resumes(), ['Resume'], 'no dep');
+  paintGroupPage(root, view, { ...NOOP, resumeLabel: () => 'Resume after run 6' });
+  paintGroupPage(root, view, { ...NOOP, resumeLabel: () => '' });
+  assert.deepEqual(resumes(), ['Resume'], 'an empty label');
 });

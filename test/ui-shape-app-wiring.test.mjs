@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { bootApp, runPanel } from './helpers/run-page-boot.mjs';
 import { namedAnswer } from '../ui/public/shape/step-receipt.mjs';
 import { chatCardBuilder } from '../ui/public/chat/extensions.mjs';
+import { gateStop, planStop } from '../src/shared/shape/run-stops.mjs';
 
 const click = (ctx, el) => el.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
 const res = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
@@ -957,7 +958,8 @@ test('C1: the run page draws the building moment in its step area from the plann
   assert.ok(host.querySelector('.qpanel .proto-open'), 'the built ask replaces the working moment');
 });
 
-// Small runs C3 (D11, D12): a stop is answered on the feature card; the run side panel shows only its findings.
+// Small runs C3 (D11, D12): a stop is answered on every surface with the flag on; with it off the run side panel and
+// the run page show only its findings.
 const C3_GATE_STOP = { id: 'gate-w9-3', kind: 'gate', wireId: 'w9', nodeId: 'n_review', deliveryNo: 3,
   issues: [{ severity: 'major', title: 'Token leaks', detail: 'in logs' }],
   stop: { reason: 'objection', run: 8, pick: 'another', head: 'Run 8 · Security objects', text: 'Security: Token leaks. Still open after 3 fix cycles.',
@@ -969,7 +971,7 @@ const C3_PLAN_STOP = { id: 'plan-n_refine-2', kind: 'plan', nodeId: 'n_refine', 
     { value: 'revise', label: 'Re-plan', sub: 'The Planner fixes it', go: 'Re-plan', short: 're-plan', payload: { decision: 'revise', feedback: 'fix', source: 'check' } },
     { value: 'approve', label: 'Approve as is', sub: 'Builds it', go: 'Approve as is', short: 'approved as is', payload: { decision: 'approve' } }] } };
 
-test('C3: stop in the panel: no question, no buttons, no bar answer, exactly one findings list', async () => {
+test('C3, flag off: stop in the panel: no question, no buttons, no bar answer, exactly one findings list', async () => {
   for (const pq of [C3_GATE_STOP, C3_PLAN_STOP]) {
     const { screen, bar } = await openPanelRun(pq);
     assert.equal(screen.dataset.presentation, 'panel');
@@ -982,7 +984,7 @@ test('C3: stop in the panel: no question, no buttons, no bar answer, exactly one
   }
 });
 
-test('C3 web UI review: the run page draws a stop as the panel does: findings only, no question, no buttons', async () => {
+test('C3, flag off: the run page draws a stop as the panel does: findings only, no question, no buttons', async () => {
   for (const pq of [C3_GATE_STOP, C3_PLAN_STOP]) {
     const { screen, bar } = await openPanelRun(pq, 'running/run-rr');
     assert.notEqual(screen.dataset.presentation, 'panel');
@@ -995,51 +997,117 @@ test('C3 web UI review: the run page draws a stop as the panel does: findings on
   }
 });
 
-test('item 5: with the flag on the run page heads the stop and links where it is answered: Chat with a thread, else the feature page', async () => {
+/** Stop cards post through /api/answer (stepPost → postAnswer with no plan): record them, answer with `reply()`. */
+const stopAnswers = (posts, next = () => null, reply = () => res(200, { ok: true })) => (url, opts) => {
+  if (url === '/api/answer') { posts.push(JSON.parse(opts.body)); return reply(); }
+  return next(url, opts);
+};
+/** Open run-rr on `route` with the flag on; `slice` answers the slice info. */
+async function openStopRun(pq, route, { slice = { featureId: 'feat-1', index: 4, stop: { held: false } }, reply } = {}) {
   const { applyFlags } = await import('../ui/public/flags.mjs');
-  for (const [info, href, text] of [[{ featureId: 'feat-1', index: 4, threadId: 'ask_7' }, '#chat/ask_7', "the feature's card in Chat"],
-    [{ featureId: 'feat-1', index: 4, threadId: null }, '#feature/feat-1', 'the feature page'],
-    [{ verifier: true, featureId: 'feat-1', threadId: null }, '#feature/feat-1', 'the feature page']]) {
-    const slice = (url) => (url === '/api/shape/pipelines/p-rr/slice' ? res(200, info) : null);
-    for (const route of ['running/run-rr', 'chat/new/run/run-rr']) {
-      const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', [], slice) });
-      applyFlags({ shaperSmallRuns: true }, ctx.window.document);
-      ctx.wsBox.ws.dispatch('open', {});
-      ctx.dispatch({ type: 'hello', runs: [reqRun(C3_PLAN_STOP)] });
-      ctx.go(route);
-      await ctx.settle(8);
-      const doc = ctx.window.document;
-      const panel = route.startsWith('chat/');
-      const q = doc.querySelector(panel ? '[data-chat-panel] .crp-host > .rd .qpanel' : '#run-detail .qpanel');
-      const label = `${route} ${JSON.stringify(info)}`;
-      assert.equal(q.querySelectorAll('button, .qopt').length, 0, label);
-      assert.equal(q.querySelectorAll('.issues, .plan-checks').length, 1, label);
-      assert.deepEqual([...q.querySelectorAll('a.rd-fact-link')].map((a) => [a.getAttribute('href'), a.textContent]), panel ? [] : [[href, text]], label);
-      assert.equal(q.textContent.includes(C3_PLAN_STOP.stop.head), !panel, label);
-      applyFlags({ shaperSmallRuns: false }, doc);
+  const posts = [];
+  const info = { current: slice };
+  const sliceGet = (url) => (url === '/api/shape/pipelines/p-rr/slice' ? res(200, info.current) : null);
+  const ctx = await bootApp({ fetchHandler: stopAnswers(posts, sliceGet, reply) });
+  applyFlags({ shaperSmallRuns: true }, ctx.window.document);
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [reqRun(pq)] });
+  ctx.go(route);
+  await ctx.settle(8);
+  const doc = ctx.window.document;
+  const screen = route.startsWith('chat/') ? doc.querySelector('[data-chat-panel] .crp-host > .rd') : doc.querySelector('#run-detail');
+  const off = () => applyFlags({ shaperSmallRuns: false }, doc);
+  return { ctx, doc, screen, bar: screen.querySelector('.rd-actions'), q: () => screen.querySelector('.qpanel'), posts, info, off };
+}
+
+test('flag on: the run page and the run side panel draw the stop\'s card: every option, one primary naming the pick, which posts it', async () => {
+  for (const route of ['running/run-rr', 'chat/new/run/run-rr']) {
+    for (const pq of [C3_PLAN_STOP, C3_GATE_STOP]) {
+      const { ctx, q, bar, posts, off } = await openStopRun(pq, route);
+      const label = `${route} ${pq.id}`;
+      assert.equal(q().querySelectorAll('.qopt').length, pq.stop.options.length, label);
+      const pick = pq.stop.options.find((o) => o.value === pq.stop.pick);
+      const prim = visiblePrimaries(q());
+      assert.equal(prim.length, 1, label);
+      assert.equal(prim[0].textContent, pick.go, label);
+      assert.ok(q().textContent.includes(pq.stop.head), label);
+      assert.ok(q().querySelector('.ask-mcard-head[data-stop]'), `${label}: the one-column marker`);
+      assert.equal(q().querySelectorAll('a.rd-fact-link, .stop-home').length, 0, label);
+      assert.equal(barAnswer(bar), null, `${label}: the card's primary is the one primary`);
+      click(ctx, prim[0]);
+      await ctx.settle(4);
+      assert.deepEqual(posts, [{ runId: 'run-rr', id: pq.id, payload: pick.payload }], label);
+      off();
     }
   }
 });
 
-test('item 5: a cached miss of the Verifier\'s run is asked again once per question', async () => {
-  const { applyFlags } = await import('../ui/public/flags.mjs');
-  let gets = 0;
-  const slice = (url) => (url === '/api/shape/pipelines/p-rr/slice'
-    ? (gets += 1, gets === 1 ? res(404, { error: 'not a slice' }) : res(200, { verifier: true, featureId: 'feat-1', threadId: null })) : null);
-  const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', [], slice) });
-  applyFlags({ shaperSmallRuns: true }, ctx.window.document);
-  ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', runs: [reqRun(null)] });
-  ctx.go('running/run-rr');
+test('flag on: the Verifier\'s stop on the run page is interactive', async () => {
+  const pq = { ...C3_GATE_STOP, id: 'verify-9' };
+  const { q, off } = await openStopRun(pq, 'running/run-rr', { slice: { verifier: true, featureId: 'feat-1', threadId: null } });
+  assert.ok(q().textContent.includes(C3_GATE_STOP.stop.head));
+  assert.equal(q().querySelectorAll('.qopt').length, 2);
+  assert.equal(visiblePrimaries(q()).length, 1);
+  assert.equal(q().querySelector('a.rd-fact-link'), null);
+  off();
+});
+
+test('flag on: a held answer repaints the run page live to the one answered row', async () => {
+  const { ctx, q, info, off } = await openStopRun(C3_GATE_STOP, 'running/run-rr',
+    { slice: { featureId: 'feat-1', index: 8, stop: { reason: 'objection', held: false } }, reply: () => res(200, { ok: true, held: true }) });
+  click(ctx, visiblePrimaries(q())[0]);
+  await ctx.settle(4);
+  info.current = { featureId: 'feat-1', index: 8, stop: { reason: 'objection', held: true, value: 'another', after: 7 } };
+  ctx.dispatch({ type: 'shape-feature', id: 'feat-1' });
   await ctx.settle(6);
-  ctx.dispatch({ type: 'question', runId: 'run-rr', ...C3_GATE_STOP, id: 'verify-9' });
+  const panel = ctx.window.document.querySelector('#run-detail .qpanel');
+  assert.equal(panel.querySelectorAll('.chat-rc-log-row').length, 1);
+  assert.equal(panel.querySelector('.chat-rc-log-text').textContent, 'another cycle · decided by you');
+  assert.equal(panel.querySelectorAll('button, .qopt').length, 0);
+  off();
+});
+
+test('slice 3, flag on: a held answer refused at delivery reopens the stop on the run page with "Not sent: …"', async () => {
+  const slice = (stop) => ({ featureId: 'feat-1', index: 8, stop: { reason: 'objection', ...stop } });
+  const { ctx, q, info, off } = await openStopRun(C3_GATE_STOP, 'running/run-rr',
+    { slice: slice({ held: false }), reply: () => res(200, { ok: true, held: true }) });
+  click(ctx, visiblePrimaries(q())[0]);
+  await ctx.settle(4);
+  const frame = async (stop) => { info.current = slice(stop); ctx.dispatch({ type: 'shape-feature', id: 'feat-1' }); await ctx.settle(6); };
+  await frame({ held: true, value: 'another', after: 7 });
+  assert.equal(q().querySelectorAll('.qopt').length, 0, 'held');
+  await frame({ held: false, refused: 'runs 2 and 3 clash in src/a.mjs' });
+  assert.equal(q().querySelectorAll('.qopt').length, C3_GATE_STOP.stop.options.length, 'the stop is open again');
+  assert.deepEqual([...q().querySelectorAll('.plan-err:not([hidden])')].map((e) => e.textContent), ['Not sent: runs 2 and 3 clash in src/a.mjs']);
+  off();
+});
+
+test('flag on: a delivered answer (question-resolved) clears the stop on the run page and on the feature card', async () => {
+  const { ctx, doc, off } = await openStopRun(C3_GATE_STOP, 'running/run-rr');
+  const built = chatCardBuilder('progress')(
+    { kind: 'card', id: 'c-stop', state: 'tracked', card: { type: 'progress', pipelineId: 'p-rr', runId: 'run-rr', projectKey: 'p', title: 'Stop' } },
+    { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel() {}, openArtifact() {}, announce() {} });
+  doc.body.appendChild(built.el);
   await ctx.settle(6);
-  const pq = () => ctx.window.document.querySelector('#run-detail .qpanel');
-  assert.ok(pq().textContent.includes(C3_GATE_STOP.stop.head));
-  const a = pq().querySelector('a.rd-fact-link');
-  assert.equal(a && a.getAttribute('href'), '#feature/feat-1', `${gets} GETs`);
-  assert.equal(gets, 2);
-  applyFlags({ shaperSmallRuns: false }, ctx.window.document);
+  assert.equal(built.el.querySelectorAll('.qpanel .qopt').length, 2, 'the feature card draws the same stop');
+  assert.equal(doc.querySelectorAll('#run-detail .qpanel .qopt').length, 2);
+  ctx.dispatch({ type: 'question-resolved', runId: 'run-rr', id: C3_GATE_STOP.id });
+  await ctx.settle(6);
+  assert.equal(doc.querySelectorAll('#run-detail .qpanel .qopt').length, 0, 'the run page');
+  assert.equal(built.el.querySelectorAll('.qpanel .qopt').length, 0, 'the feature card');
+  built.dispose();
+  off();
+});
+
+test('flag on: a stop already answered elsewhere: the run page card says so and keeps its options', async () => {
+  const { ctx, q, off } = await openStopRun(C3_GATE_STOP, 'running/run-rr',
+    { reply: () => res(409, { error: 'this stop is already answered', code: 'STOP_ANSWERED' }) });
+  click(ctx, visiblePrimaries(q())[0]);
+  await ctx.settle(6);
+  const err = q().querySelector('.chat-rc-q-err');
+  assert.equal(err && err.textContent, 'Not sent: this stop is already answered');
+  assert.equal(q().querySelectorAll('.qopt').length, 2);
+  off();
 });
 
 test('C3: a plan-kind stop is drawn by the gate card on the feature card: one primary naming the pick', async () => {
@@ -1104,4 +1172,63 @@ test('C3: a shape-feature frame keeps an open stop\'s pick and focus; only a hel
   assert.equal(q().querySelector('.chat-rc-log-text').textContent, 'accepted as is · decided by you');
   assert.equal(q().querySelectorAll('.step-head, .chat-rc-receipt').length, 0, 'one answered row: no head, no box');
   assert.equal(barAnswer(built.el), null, 'held stop: no Answer in the card foot');
+});
+
+// ---- R-ux-4: a stop's findings list shows on every surface where the stop can be answered ----------------------------
+const R3_ISSUES = [
+  { severity: 'major', title: 'A chart link opens for a visitor who is not a member', detail: 'GET /c/:id skips the member check' },
+  { severity: 'major', title: 'The export drops empty charts', detail: 'an empty chart has no rows to write' },
+  { severity: 'major', title: 'Token leaks into the logs', detail: 'the request line is logged whole' },
+];
+const R3_GATE_STOP = { ...C3_GATE_STOP, id: 'gate-r3-1', issues: R3_ISSUES, stop: gateStop({ run: 8, issues: R3_ISSUES, fixCycles: 3, nodeId: 'n_review' }) };
+const R3_CHECK = { ok: false, passed: 1, total: 4, items: [{ label: 'Has tests', pass: false }, { label: 'Names the files', pass: false },
+  { label: 'States the goal', pass: false }, { label: 'Lists open questions', pass: true }] };
+const R3_PLAN_STOP = { ...C3_PLAN_STOP, id: 'plan-r3-1', plan: { round: 2, file: 'p.md', check: R3_CHECK }, stop: planStop({ run: 4, check: R3_CHECK }) };
+const featureCard = (ctx, doc) => {
+  const built = chatCardBuilder('progress')(
+    { kind: 'card', id: 'c-r3', state: 'tracked', card: { type: 'progress', pipelineId: 'p-rr', runId: 'run-rr', projectKey: 'p', title: 'Stop' } },
+    { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel() {}, openArtifact() {}, announce() {} });
+  doc.body.appendChild(built.el);
+  return built;
+};
+/** The one findings list of the stop under `root`: its row titles, and one primary beside it. */
+function threeFindings(root, pq, where) {
+  const q = root.querySelector('.qpanel');
+  assert.ok(q, `${where}: the stop's card`);
+  const gate = pq.kind === 'gate';
+  const rows = [...root.querySelectorAll(gate ? '.qpanel .issues > li.issue' : '.qpanel .plan-checks .plan-check-row')];
+  assert.equal(rows.length, 3, `${where}: 3 findings`);
+  assert.deepEqual(rows.map((r) => r.querySelector(gate ? '.issue-title' : '.plan-check-label').textContent),
+    gate ? R3_ISSUES.map((i) => i.title) : ['Has tests', 'Names the files', 'States the goal'], where);
+  assert.equal(root.querySelectorAll('.qpanel .issues, .qpanel .plan-checks').length, 1, `${where}: one findings list`);
+  assert.equal(visiblePrimaries(q).length, 1, `${where}: one primary`);
+}
+
+test('R-ux-4: a stop with 3 findings lists all 3 on the run page, the Chat run panel and the Chat feature card (flag on)', async () => {
+  for (const route of ['running/run-rr', 'chat/new/run/run-rr']) {
+    for (const pq of [R3_GATE_STOP, R3_PLAN_STOP]) {
+      const { ctx, doc, screen, off } = await openStopRun(pq, route);
+      let built = null;
+      try {
+        threeFindings(screen, pq, `${route} ${pq.id}`);
+        built = featureCard(ctx, doc);
+        await ctx.settle(6);
+        threeFindings(built.el, pq, `the feature card beside ${route} ${pq.id}`);
+      } finally { built?.dispose(); off(); }
+    }
+  }
+});
+
+test('R-ux-4, flag off: the feature card\'s stop draws no findings list', async () => {
+  const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', []) });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [reqRun(R3_GATE_STOP)] });
+  await ctx.settle();
+  const built = featureCard(ctx, ctx.window.document);
+  await ctx.settle(6);
+  const q = built.el.querySelector('.qpanel');
+  assert.equal(q.querySelectorAll('.qopt').length, 2, 'the stop is drawn');
+  assert.equal(q.querySelectorAll('.issues, .plan-checks').length, 0);
+  assert.equal(visiblePrimaries(q).length, 1);
+  built.dispose();
 });
