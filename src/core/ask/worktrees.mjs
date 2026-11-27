@@ -126,14 +126,11 @@ async function resolveTarget({ projectKey, ref, runId }) {
 /** The chats holding checkout slots, most first, for the global-cap error. Read-only: the MCP child that raises
  *  it cannot see the server's live turns, so it never removes anything (worktree-idle.mjs frees, in the server). */
 function describeCapHolders() {
-  const MAX_CHATS = 5, MAX_TITLE = 40;
-  const holders = prepare(`SELECT w.thread_id AS id, t.title AS title, count(*) AS n
-                           FROM ask_worktrees w LEFT JOIN ask_threads t ON t.id = w.thread_id
+  const MAX_CHATS = 5;
+  const holders = prepare(`SELECT w.thread_id AS id, count(*) AS n
+                           FROM ask_worktrees w
                            GROUP BY w.thread_id ORDER BY n DESC, w.thread_id`).all();
-  const label = (h) => {
-    const title = String(h.title || 'Untitled chat');
-    return `"${title.length > MAX_TITLE ? `${title.slice(0, MAX_TITLE - 1)}…` : title}" (${h.n})`;
-  };
+  const label = (h) => `${h.id} (${h.n})`;
   const shown = holders.slice(0, MAX_CHATS).map(label).join(', ');
   return holders.length > MAX_CHATS ? `${shown}, … (+${holders.length - MAX_CHATS} more chats)` : shown;
 }
