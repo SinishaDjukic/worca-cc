@@ -952,3 +952,28 @@ test('GET /api/ask/threads: a chat a chat integration opened carries its origin 
     assert.equal(row(app.id).origin, null, q);
   }
 });
+
+test('designs=1 (the list beside Design): only chats with a design, a chat that started one included; total and counts count those', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const designs = await import('../src/core/design/store.mjs');
+  const own = store.createThread({ title: 'designs own chat' });        // the Design button's chat (designs.thread_id)
+  const asked = store.createThread({ title: 'designs asking chat' });   // a chat whose start_design attached the design to it
+  const plain = store.createThread({ title: 'designs plain chat' });
+  designs.updateDesign(designs.createDesign({ kind: 'web' }).id, { threadId: own.id });
+  designs.updateDesign(designs.createDesign({ kind: 'web', originThreadId: asked.id }).id, { threadId: asked.id });
+  designs.createDesign({ kind: 'web', originThreadId: plain.id });       // asked for by a chat but attached to none
+  store.setArchived(asked.id, true);
+  const all = await (await fetch(`${base}/api/ask/threads?show=all&limit=200`)).json();
+  const mine = await (await fetch(`${base}/api/ask/threads?show=all&limit=200&designs=1`)).json();
+  const ids = mine.threads.map((t) => t.id);
+  assert.ok(ids.includes(own.id), 'the design\'s own chat');
+  assert.ok(!ids.includes(plain.id), 'a chat with no design attached is left out');
+  assert.ok(mine.threads.every((t) => typeof t.designId === 'string'), 'every row has its design');
+  assert.ok(all.threads.some((t) => t.id === plain.id), 'without designs=1 every chat is listed');
+  assert.equal(mine.total, mine.threads.length, 'total counts design chats only');
+  assert.equal(mine.counts.all, mine.threads.length);
+  const archived = await (await fetch(`${base}/api/ask/threads?show=archived&limit=200&designs=1`)).json();
+  assert.deepEqual(archived.threads.map((t) => t.id).filter((id) => id === asked.id), [asked.id], 'an archived design chat under Archived');
+  assert.equal(archived.counts.archived, archived.threads.length, 'Archived counts design chats only');
+  assert.ok(all.counts.all > mine.counts.all, 'every chat outnumbers the design chats');
+});

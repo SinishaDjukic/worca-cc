@@ -722,13 +722,19 @@ test('#1067 E4: the time-limit watchdog never holds the process open — a spawn
 test('E4: an agent node that runs past its wall-clock or goes silent past its idle limit stops with a time_limit error', async () => {
   const { nodeTimeLimits } = await import('../src/core/graph/executor.mjs');
   // Defaults: generous enough for normal nodes; per node, then per workflow, override them.
-  assert.deepEqual(nodeTimeLimits({ node: { config: {} } }), { wallMs: 90 * 60000, idleMs: 20 * 60000 });
+  assert.deepEqual(nodeTimeLimits({ node: { config: {} } }), { wallMs: 600 * 60000, idleMs: 300 * 60000 });
   assert.deepEqual(nodeTimeLimits({ node: { config: { timeLimitMinutes: 5 } }, template: { limits: { idleLimitMinutes: 2, timeLimitMinutes: 9 } } }),
     { wallMs: 5 * 60000, idleMs: 2 * 60000 });
   // A hung agent is a live child: its pipes keep the process up (the unref'd watchdog does not), modelled by an interval.
+  // Like the real runners (claude-runner, codex, cursor...), a signal that is already aborted rejects at once: the Stop
+  // below fires 5 ms after the start, and on a loaded runner prepare() can take longer, so the spawn starts aborted. An
+  // 'abort' listener added then never fires: the fake hung, its interval held the file's process up after the 300 s test
+  // timeout, and the whole CI shard ran into the job's 30 minute limit.
   const hang = (emitEvery) => async (opts) => new Promise((resolve, reject) => {
+    const aborted = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
+    if (opts.signal.aborted) { reject(aborted()); return; }
     const t = setInterval(() => { if (emitEvery) opts.onEvent({ type: 'text', text: 'still here' }); }, emitEvery || 1000);
-    opts.signal.addEventListener('abort', () => { clearInterval(t); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
+    opts.signal.addEventListener('abort', () => { clearInterval(t); reject(aborted()); }, { once: true });
   });
   const run = async (config, emitEvery) => {
     const c = ctx8({ node: { id: 'n_c', kind: 'agent', key: 'custom', config, agentPrompt: 'x', tools: [] }, signal: new AbortController().signal });
@@ -750,6 +756,38 @@ test('E4: an agent node that runs past its wall-clock or goes silent past its id
     setTimeout(() => ac.abort(), 5);
     assert.equal((await p).name, 'AbortError');
   } finally { _testing.runClaude = null; }
+});
+
+test('#1450 init guard: a premium [init] model nobody chose stops the spawn with model_confirm; no modelGuard → no guard', async () => {
+  const seenEvents = [];
+  const initThenHang = (model) => async (opts) => new Promise((resolve, reject) => {
+    opts.onEvent({ type: 'session', sessionId: 's-1', model, init: true });
+    if (opts.signal.aborted) { reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); return; }
+    const t = setTimeout(() => resolve({ text: 'done' }), 50);
+    opts.signal.addEventListener('abort', () => { clearTimeout(t); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
+  });
+  const guard = (over = {}) => ({ requested: undefined, source: null, step: 'Plan', nodeId: 'n_c', stepKey: 'custom', confirmed: [],
+    premium: (id) => id === 'claude-fable-5-2', routed: () => false, ...over });
+  const run = async (claudeOpts, model) => {
+    const c = ctx8({ node: { id: 'n_c', kind: 'agent', key: 'custom', config: {}, agentPrompt: 'x', tools: [] }, signal: new AbortController().signal,
+      claudeOpts: { mock: true, ...claudeOpts }, onEvent: (e) => seenEvents.push(e) });
+    _testing.runClaude = initThenHang(model);
+    try { return await runAgentExecution(c).then(() => null, (e) => e); } finally { _testing.runClaude = null; }
+  };
+  const err = await run({ modelGuard: guard() }, 'claude-fable-5-2');
+  assert.equal(err?.errorClass, 'model_confirm');
+  assert.deepEqual(err.modelConfirm, { nodeId: 'n_c', stepKey: 'custom', model: 'claude-fable-5-2', requested: null, at: 'init' });
+  assert.match(err.message, /Claude Code started Plan on claude-fable-5-2, a premium model nobody chose\./);
+  // No guard: the same init runs on (whatever the outputs check then says, it is never model_confirm).
+  const none = await run({}, 'claude-fable-5-2');
+  assert.notEqual(none?.errorClass, 'model_confirm');
+  // Confirmed in this run: no pause.
+  const ok = await run({ modelGuard: guard({ confirmed: ['claude-fable-5-2'] }) }, 'claude-fable-5-2');
+  assert.notEqual(ok?.errorClass, 'model_confirm');
+  // cli-decides premium: the session event carries the note for the harness.
+  seenEvents.length = 0;
+  await run({ modelGuard: guard({ source: 'cli-decides' }) }, 'claude-fable-5-2');
+  assert.equal(seenEvents.find((e) => e.type === 'session')?.modelNote, 'Claude Code picked claude-fable-5-2 (premium).');
 });
 
 test('E4: a silent agent whose process tree is still working gets another idle window; an idle tree is stopped', async () => {

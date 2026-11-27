@@ -5,7 +5,7 @@ import { mkdtemp, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { estimateGraph, estimateChoices, stepHistory, ESTIMATE_MIN_SAMPLES, PLANNING_AGENTS } from '../src/core/shape/estimate.mjs';
+import { estimateGraph, estimateChoices, stepHistory, careEstimates, ESTIMATE_MIN_SAMPLES, PLANNING_AGENTS } from '../src/core/shape/estimate.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, GRAPH_SHAPE_REQ_WORKFLOW, AUTO_WORKFLOW_STUB,
@@ -135,4 +135,36 @@ test('stepHistory: one sample per (done run, agent), loops summed, failed and ol
   assert.deepEqual(h.get('planner').cost.sort((a, b) => a - b), [1, 4]);
   assert.deepEqual(h.get('planner').ms.sort((a, b) => a - b), [1000, 4000]);
   assert.deepEqual(h.get('implementer'), { cost: [5], ms: [5000] });
+});
+
+test('stepHistory({ pipelineIds }): only the listed runs, old ones too, and [] is empty; no options keeps the 60-day window', async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'worca-cc-estimate-')));
+  homes.push(dir);
+  _resetForTests();
+  process.env.WORCA_HOME = dir;
+  const db = getDb();
+  const now = Date.parse('2026-10-14T12:00:00.000Z');
+  const run = db.prepare('INSERT INTO pipelines (id, project_key, status, started_at) VALUES (?, ?, ?, ?)');
+  run.run('a', 'k', 'done', '2026-10-10T12:00:00.000Z');
+  run.run('b', 'k', 'done', '2026-10-11T12:00:00.000Z');
+  run.run('old', 'k', 'done', '2026-07-01T12:00:00.000Z');
+  const step = db.prepare('INSERT INTO pipeline_steps (pipeline_id, key, agent_key, cost_usd, active_ms) VALUES (?, ?, ?, ?, ?)');
+  step.run('a', '0:n_impl', 'implementer', 2, 2000);
+  step.run('b', '0:n_impl', 'implementer', 7, 7000);
+  step.run('old', '0:n_impl', 'implementer', 5, 5000);
+
+  assert.deepEqual(stepHistory({ now, pipelineIds: ['a', 'old'] }).get('implementer').cost.sort((x, y) => x - y), [2, 5]);
+  assert.equal(stepHistory({ now, pipelineIds: [] }).size, 0);
+  assert.deepEqual(stepHistory({ now }).get('implementer').cost.sort((x, y) => x - y), [2, 7], 'no options: the old run stays out, b stays in');
+});
+
+test('careEstimates: runs per position times the per-run figure; null without a per-run figure; one run without a size', () => {
+  const perRun = { costUsd: 2.5, planningUsd: 1, buildUsd: 1.5, minutes: 7, samples: 3 };
+  const got = careEstimates({ requirements: 16, perRun });
+  assert.deepEqual(got.lean, { costUsd: Math.ceil(16 / 3) * 2.5, minutes: Math.ceil(16 / 3) * 7, perRun: 2.5 });
+  assert.deepEqual(got.balanced, got.lean);
+  assert.deepEqual(got.thorough, { costUsd: Math.ceil(16 / 2) * 2.5, minutes: Math.ceil(16 / 2) * 7, perRun: 2.5 });
+  assert.deepEqual(careEstimates({ requirements: 16, perRun: null }), { lean: null, balanced: null, thorough: null });
+  const one = careEstimates({ requirements: null, perRun });
+  for (const p of ['lean', 'balanced', 'thorough']) assert.deepEqual(one[p], { costUsd: 2.5, minutes: 7, perRun: 2.5 });
 });

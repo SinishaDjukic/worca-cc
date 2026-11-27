@@ -29,9 +29,13 @@ const ROW = { id: BID, designId: DID, round: 1, kind: 'first', status: 'building
  * @param {{detail?: object, detailStatus?: number, createChat?: Function, promptAnswers?: Array<object|null>,
  *   confirmAnswers?: boolean[], pictures?: object[], attach?: boolean, designId?: string, start?: boolean}} [o]
  *   `attach` (default true) mounts the Design tab at once; `showStage` attaches it on demand otherwise. `start` mounts
- *   the new design's start page instead of a studio.
+ *   the new design's start page instead of a studio, with `all` and `onAll` passed to it. `list` is the answer of
+ *   GET /api/design (default `[]`); `limits` of GET /api/design/limits (absent: the 404); `images` of GET /api/images
+ *   (absent: the 404). `creates` is a queue of [status, body] answers to POST /api/design, one per post; past its end
+ *   (or with none) the post gets the 201.
  */
-function rig({ detail = DETAIL, detailStatus, createChat, promptAnswers = [], confirmAnswers = [], pictures, attach = true, designId = DID, start = false, setComposer, onCards } = {}) {
+function rig({ detail = DETAIL, detailStatus, createChat, promptAnswers = [], confirmAnswers = [], pictures, attach = true, designId = DID, start = false, setComposer, onCards,
+  list = [], limits, all = false, onAll, images, creates = [] } = {}) {
   const clock = fakeClock();
   const dom = trackDom(new JSDOM('<!doctype html><html><body><header id="head"><span id="hs"></span></header><div id="slot"></div><div id="tab"></div></body></html>', { url: 'http://localhost/' }));
   const win = dom.window;
@@ -51,11 +55,18 @@ function rig({ detail = DETAIL, detailStatus, createChat, promptAnswers = [], co
     if (method === 'POST') {
       const body = JSON.parse(init.body ?? '{}');
       posts.push({ url, body });
-      if (url === '/api/design') return reply(201, { design: { id: NEW_ID, kind: body.kind, title: 'Untitled design', version: 0, threadId: 'ask_2' }, threadId: 'ask_2' });
+      if (url === '/api/design') {
+        const next = creates.shift();
+        if (next) return reply(...next);
+        return reply(201, { design: { id: NEW_ID, kind: body.kind, title: 'Untitled design', version: 0, threadId: 'ask_2' }, threadId: 'ask_2' });
+      }
       if (/\/preview-token$/.test(url)) return reply(200, { base: '/design-preview/TOK', expiresAt: clock.now + 43200000 });
       return reply(404, { error: 'not found' });
     }
     gets.push(url);
+    if (url === '/api/design') return reply(200, list);
+    if (url === '/api/design/limits' && limits !== undefined) return reply(200, limits);
+    if (url === '/api/images' && images !== undefined) return reply(200, images);
     if (/^\/api\/design\/d_[0-9a-f]{12}$/.test(url)) return detailStatus ? reply(detailStatus, { error: 'Design not found' }) : reply(200, detail);
     if (url === `/api/design/${DID}/pictures` && pictures !== undefined) return reply(200, pictures);
     return reply(404, { error: 'not found' });
@@ -64,9 +75,9 @@ function rig({ detail = DETAIL, detailStatus, createChat, promptAnswers = [], co
   const tab = doc.getElementById('tab');
   const deps = { doc, win, host: slot, fetch, navigate: (h) => nav.push(h), ...(setComposer ? { setComposer } : {}), ...(onCards ? { onCards } : {}) };
   if (start) {
-    const page = createDesignStartPage(deps);
+    const page = createDesignStartPage({ ...deps, all, ...(onAll ? { onAll } : {}) });
     mounted.push(page);
-    return { page, win, doc, q: (s) => doc.querySelector(s), posts, nav, tick: flush };
+    return { page, win, doc, clock, q: (s) => doc.querySelector(s), posts, gets, nav, tick: flush };
   }
   let studio = null;
   studio = createDesignStudio({
@@ -169,7 +180,7 @@ test('Point at the page with the Design tab away opens it first; unpin and onRes
   chat.onRestored(); await tick();
   assert.equal(qa('iframe').length, docs + 1, 'onRestored loads the run doc again');
 });
-test('More: Rename PATCHes and repaints the Chat head; Delete is off while the build is open, paused too, and leads to the Library', async () => {
+test('More: Rename PATCHes and repaints the Chat head; Delete is off while the build is open, paused too, and leads to the design start', async () => {
   const { studio, q, qa, sent, nav, titles, settle, tick } = rig({ detail: { ...DETAIL, design: { ...DETAIL.design, status: 'building' } }, promptAnswers: [{ title: 'Ship radar' }], confirmAnswers: [true] });
   await settle();
   const btn = q('#hs [data-dz-more]');
@@ -263,8 +274,7 @@ test('the chat composer: a chat\'s design lends it its pins, Point, gear and pay
   assert.deepEqual(s.posts.map((p) => p.url), ['/api/design']);
   assert.deepEqual([s.posts[0].body.kind, s.posts[0].body.title, s.posts[0].body.fast], ['video', 'A launch page', true]);
   assert.equal(s.nav.at(-1), `#design/${NEW_ID}`, 'the 201 opens the new design (its chat)');
-  s.q('[data-dz-all]').click();
-  assert.equal(s.nav.at(-1), '#design');
+  assert.deepEqual([s.q('[data-dz-all]'), s.q('.dz-start-foot')], [null, null], 'no All designs button under the kinds');
   const made = [];
   const createChat = (o) => { made.push(o); return { destroy() {} }; };
   const detail = { ...DETAIL, design: { ...DETAIL.design, id: NEW_ID } };
@@ -300,4 +310,96 @@ test('pictures reach the stage too: the Agents popover ends with the round\'s pi
   studio.pushFrame({ ...fields, type: 'design-picture', designId: DID, id: 2, name: 'b', file: 'assets/made/b.png' });
   studio.stage().showAgent(A1);
   assert.deepEqual([q('.dz-arow-pics .dz-aact')?.textContent, q('.dz-arow-pics .dz-acost')?.textContent], ['2 made', '$0.08']);
+});
+const TEN = Array.from({ length: 10 }, (_, i) => ({ id: `d_${String(i + 1).padStart(12, '0')}`, title: `Design ${i + 1}`, kind: 'web',
+  status: 'done', updatedAt: '2026-11-05T10:00:00Z', costUsd: 0, costKnown: true, thumb: null }));
+const tileCount = (s) => s.doc.querySelectorAll('.dz-designs a.dz-tile').length;
+
+test('a new design\'s start: the newest nine designs under the kinds, then Show all designs', async () => {
+  const alls = [];
+  const s = rig({ start: true, list: TEN, onAll: (on) => alls.push(on), setComposer: () => null });
+  await s.tick(); await s.tick();
+  assert.deepEqual([...s.q('.dz-start-in-chat').children].map((n) => n.className), ['chat-hero-slot dz-start-hero', 'dz-designs']);
+  assert.deepEqual([...s.q('.dz-start-hero').children].map((n) => n.classList[0]), ['chat-home-title', 'dz-start-composer', 'dz-kinds']);
+  assert.equal(tileCount(s), 9);
+  s.q('[data-dz-show-all]').click();
+  assert.deepEqual([tileCount(s), alls], [10, [true]]);
+  s.q('.dz-designs a.dz-tile').click();
+  assert.equal(s.nav.at(-1), `#design/${TEN[0].id}`);
+  const open = rig({ start: true, list: TEN, all: true, setComposer: () => null });
+  await open.tick(); await open.tick();
+  assert.equal(tileCount(open), 10, 'all: true starts with every design');
+});
+test('the start\'s tiles take the design frames; a hello loads the list again; destroy stops both', async () => {
+  const s = rig({ start: true, list: TEN, setComposer: () => null });
+  await s.tick(); await s.tick();
+  const listed = () => s.gets.filter((u) => u === '/api/design').length;
+  s.page.pushFrame({ type: 'design-build', designId: TEN[0].id, status: 'paused', stats: {} });
+  assert.equal(s.q('.dz-designs a.dz-tile .dz-tile-m').textContent, 'Web page · Paused');
+  const n = listed();
+  s.page.onHello({ rebooted: false }); await s.tick();
+  assert.equal(listed(), n + 1);
+  s.page.pushFrame({ type: 'design-restored', designId: TEN[0].id });
+  s.page.destroy();
+  s.clock.tick(250); await s.tick();
+  assert.deepEqual([s.q('.dz-designs'), listed()], [null, n + 1]);
+});
+test('the start\'s Build fast label reads the server\'s cap', async () => {
+  let ext = null;
+  const s = rig({ start: true, limits: { fast: 6, calm: 3 }, setComposer: (e) => { ext = e; return null; } });
+  const cap = () => ext.endNodes[0].querySelector('.dz-fast-cap');
+  assert.equal(cap().textContent, 'up to 12', 'until the answer comes');
+  await s.tick(); await s.tick();
+  assert.equal(cap().textContent, 'up to 6');
+  assert.equal(s.gets.filter((u) => u === '/api/design/limits').length, 1, 'asked once');
+  for (const bad of [undefined, { fast: '6', calm: 3 }, { fast: 6 }, { fast: 6.5, calm: 3 }, [6, 3]]) {   // undefined: the 404
+    let e2 = null;
+    const b = rig({ start: true, limits: bad, setComposer: (e) => { e2 = e; return null; } });
+    await b.tick(); await b.tick();
+    assert.equal(e2.endNodes[0].querySelector('.dz-fast-cap').textContent, 'up to 12', JSON.stringify(bad));
+  }
+  // jsdom fires `change` only on an attached checkbox: Build fast off hides the cap.
+  s.doc.body.append(ext.endNodes[0]);
+  ext.endNodes[0].querySelector('.dz-fast-input').click();
+  assert.equal(cap().hidden, true);
+});
+const READY = { configured: true, settable: true, keyMissing: false, model: 'gpt-image-2.6-flare' };
+const gated = [409, { error: 'Codex runs unguarded.', code: 'engine-gated', overridable: true, engine: 'codex', label: 'Codex', reasons: ['Codex runs unguarded.'], notes: [] }];
+
+test('the start\'s send: Pictures off is sent as off, on as on, and nothing while the service is not set up; a Document is a document', async () => {
+  let ext = null;
+  const s = rig({ start: true, images: READY, setComposer: (e) => { ext = e; return null; } });
+  await s.tick(); await s.tick();
+  const sw = ext.endNodes[0].querySelector('.dz-pics-on input[role=switch]');
+  assert.equal(sw.checked, true);
+  await ext.send({ text: 'A tea shop page', files: [], projectKey: null });
+  assert.equal(s.posts.at(-1).body.pictures, true);
+  sw.click();
+  s.q('.dz-kind-btn[data-kind="document"]').click();
+  await ext.send({ text: 'A Q3 review', files: [], projectKey: null });
+  assert.deepEqual([s.posts.at(-1).body.pictures, s.posts.at(-1).body.kind], [false, 'document']);
+  s.doc.body.append(ext.endNodes[0]);
+  ext.endNodes[0].querySelector('.dz-set-btn').click(); await s.tick();   // studio.mjs:268: the gear asks again
+  assert.equal(s.gets.filter((u) => u === '/api/images').length, 2, 'once at the start, again at each gear open');
+  let e2 = null;
+  const off = rig({ start: true, images: { configured: false, settable: true, model: '' }, setComposer: (e) => { e2 = e; return null; } });
+  await off.tick(); await off.tick();
+  await e2.send({ text: 'A page', files: [], projectKey: null });
+  assert.equal('pictures' in off.posts.at(-1).body, false);
+});
+test('the start\'s send meets the engine gate: Cancel is quiet, a refusal is the server\'s words, leaving takes an open dialog', async () => {
+  let ext = null;
+  const s = rig({ start: true, creates: [gated, [409, { error: 'That design is busy.', code: 'conflict' }], gated], setComposer: (e) => { ext = e; return null; } });
+  const press = (name) => [...s.doc.querySelectorAll('.viewer-modal button')].find((b) => b.textContent === name).click();
+  const first = ext.send({ text: 'A landing page', files: [], projectKey: null });
+  await s.tick(); await s.tick();
+  press('Cancel');
+  assert.deepEqual(await first, { ok: false, error: '', quiet: true });
+  assert.deepEqual(await ext.send({ text: 'A landing page', files: [], projectKey: null }), { ok: false, error: 'That design is busy.', quiet: false });
+  void ext.send({ text: 'A landing page', files: [], projectKey: null });
+  await s.tick(); await s.tick();
+  assert.ok(s.doc.querySelector('.viewer-modal'));
+  s.page.destroy();
+  assert.equal(s.doc.querySelector('.viewer-modal'), null, 'no dialog left on document.body');
+  assert.deepEqual(s.nav, []);
 });

@@ -9,6 +9,9 @@ import { groupKindWord, pageModel, paintCrumbs, buildFacts, setFactText, factRow
 import { icon } from './icons.mjs';
 import { groupHead } from './run-head.mjs';
 import { answerFieldOpen } from './shape/step-card.mjs';
+import { needYouText } from './shape/feature-card.mjs';
+import { bindRunLinks } from './run-links.mjs';
+import { showOrderOffered, renderRunOrderMap } from './shape/run-order-map.mjs';
 
 export const GROUP_TABS = Object.freeze([['runs', 'Runs'], ['overview', 'Overview'], ['decisions', 'Decisions'], ['logs', 'Logs']]);
 const el = (doc, tag, cls, text = '') => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
@@ -83,13 +86,95 @@ export function buildGroupPage(doc) {
     p.setAttribute('role', 'tabpanel');
     panels.push(p);
   }
-  panels[0].append(el(doc, 'div', 'gpage-runs'), el(doc, 'p', 'gpage-ship'));
+  const runsHost = el(doc, 'div', 'gpage-runs');
+  runsHost.__links = bindRunLinks(runsHost);   // s8 (D5): the link marks listen on the host, never on the rows
+  panels[0].append(runsHost, el(doc, 'p', 'gpage-ship'));
   panels[1].append(el(doc, 'div', 'gpage-overview'));
   panels[2].append(el(doc, 'div', 'gpage-decisions'));
   panels[3].append(el(doc, 'ul', 'gpage-logs'));
   root.append(bar, head, card, tabs, ...panels);
   tabs.addEventListener('click', (e) => { const t = e.target.closest('.rd-tab'); if (t && root.__onTab) root.__onTab(t.dataset.tab); });
   return root;
+}
+
+/** Shaper small runs D3 (D7): the Requirements tab, after Runs, only while it applies. It is created and removed in the
+ *  DOM (never only hidden), so a page without it keeps dev's four tabs. GROUP_TABS stays dev's. */
+export function syncRequirementsTab(root, on) {
+  const tab = root.querySelector('.gpage-tabs .rd-tab[data-tab="requirements"]');
+  const panel = root.querySelector('.gpage-panel[data-tab="requirements"]');
+  if (!on) { tab?.remove(); panel?.remove(); return; }
+  if (tab && panel) return;
+  const doc = root.ownerDocument;
+  const t = el(doc, 'button', 'rd-tab tab', 'Requirements');
+  t.type = 'button';
+  t.setAttribute('role', 'tab');
+  t.dataset.tab = 'requirements';
+  root.querySelector('.gpage-tabs .rd-tab[data-tab="runs"]').after(t);
+  const p = el(doc, 'div', 'gpage-panel');
+  p.dataset.tab = 'requirements';
+  p.setAttribute('role', 'tabpanel');
+  p.append(el(doc, 'div', 'gpage-requirements'));
+  root.querySelector('.gpage-panel[data-tab="runs"]').after(p);
+}
+
+// Small runs slice 10 (D9): the one readable line under Show order; only the drawing itself is aria-hidden.
+const ORDER_HINT = 'A run sits to the right of every run it builds on. A line joins a run that is not done to the runs waiting for it; links that are already met are not drawn.';
+let orderIds = 0;
+
+/** Slice 10 (D4, D6, D7): "Show order" on the Runs tab, the run order drawing behind a toggle. Idempotent: the node
+ *  exists only while showOrderOffered(slices) (created and removed, never only hidden, so other pages keep dev's DOM).
+ *  The open state lives on the root (`root.__order = { gid, open, slices }`); a missing state or another `gid` reads as
+ *  closed. The button is built once and never replaced, so focus survives every repaint. */
+export function syncShowOrder(root, slices, gid) {
+  const panel = root.querySelector('.gpage-panel[data-tab="runs"]');
+  const node = panel.querySelector(':scope > .gpage-order');
+  if (!slices || !showOrderOffered(slices)) {
+    delete root.__order;
+    if (!node) return;
+    const a = root.ownerDocument.activeElement;
+    const had = !!a && node.contains(a);
+    node.remove();
+    if (had) root.querySelector('.gpage-tabs .rd-tab[data-tab="runs"]')?.focus();
+    return;
+  }
+  if (!root.__order || root.__order.gid !== gid) root.__order = { gid, open: false, slices };
+  root.__order.slices = slices;
+  paintShowOrder(root, node || buildShowOrder(root, panel));
+}
+
+function buildShowOrder(root, panel) {
+  const doc = root.ownerDocument;
+  const node = el(doc, 'div', 'gpage-order');
+  const bar = el(doc, 'div', 'gpage-order-bar');
+  const body = el(doc, 'div', 'gpage-order-body');
+  body.id = `gpage-order-${(orderIds += 1)}`;
+  body.hidden = true;
+  const t = el(doc, 'button', 'btn btn-sm btn-quiet gpage-order-toggle');   // the run page's Show route control
+  t.type = 'button';
+  t.setAttribute('aria-controls', body.id);
+  t.append(el(doc, 'span'), icon(doc, 'chevron-down', 12));
+  t.addEventListener('click', () => {
+    if (!root.__order) return;
+    root.__order.open = !root.__order.open;
+    paintShowOrder(root, node);
+  });
+  bar.append(t);
+  node.append(bar, body);
+  panel.prepend(node);
+  return node;
+}
+
+function paintShowOrder(root, node) {
+  const doc = root.ownerDocument;
+  const { open, slices } = root.__order;
+  const t = node.querySelector('.gpage-order-toggle');
+  t.setAttribute('aria-expanded', String(open));
+  t.firstElementChild.textContent = open ? 'Hide order' : 'Show order';
+  const chevron = icon(doc, open ? 'chevron-up' : 'chevron-down', 12);
+  if (t.lastElementChild.outerHTML !== chevron.outerHTML) t.lastElementChild.replaceWith(chevron);
+  const body = node.querySelector('.gpage-order-body');
+  body.hidden = !open;
+  keepUnchanged(body, [el(doc, 'p', 'gpage-order-hint', ORDER_HINT), ...(open ? [renderRunOrderMap(doc, slices)] : [])]);
 }
 
 /** One ship flow (D11): a group's Create PR and View PR(s) live on the status line (docs/design-system.md
@@ -119,11 +204,32 @@ export function groupPrList(row) {
   return out;
 }
 
+/** Slice 7 (D7): the need count, the neutral kind chip after the kind chip; created on a non-zero count, removed at zero. */
+function paintNeed(kindEl, text) {
+  let chip = kindEl.parentElement.querySelector(':scope > .kind-chip[data-need]');
+  if (!text) { if (chip) chip.remove(); return; }
+  if (!chip) {
+    chip = kindEl.ownerDocument.createElement('span');
+    chip.className = 'kind-chip';
+    chip.dataset.need = '';
+    kindEl.after(chip);
+  }
+  if (chip.textContent !== text) chip.textContent = text;
+}
+
 /**
  * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean, labels: [] (the
- * members' labels), unmarked?: number (a feature's unmarked requirements: its Create PR is locked) }.
- * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
- * mountDecisions(host, row), logsHref(member), labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
+ * members' labels), unmarked?: number (a feature's unmarked requirements: its Create PR is locked), stackedOnly?: boolean (a small-runs
+ * feature: the ship line never offers One), requirements?: boolean (D3: a marked feature with the flag on), shortState?:
+ * (member) → string|null (small runs: one-line member rows with the card's short words), status?: (member) →
+ * {word, mark}|null (small runs s4: runStatus's word and mark for each row, renderMemberRows' `status`), ship?: {n, blocked, reason}|null
+ * (small runs: the ledger the head's Create N PRs follows), stateLine?: string|null (small runs slice 7: the feature's state
+ * line, featureStateLine, in place of the model's line), needCount?: number (slice 7: the stop lines, the head's chip),
+ * order?: object[]|null (slice 10: a marked feature's featureView slices; the Runs tab offers Show order from them) }.
+ * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), resumeLabel?() (slice 11: the footer
+ * Resume's text, '' for the plain word), mountOverview(host),
+ * mountDecisions(host, row), mountRequirements?(host, row) → Node|null (D3, while `view.requirements`), logsHref(member),
+ * labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
  * groupHead's head (Create PR, View PR ▾, View PRs ▾) into the card head; without it the slot stays hidden.
  */
 export function paintGroupPage(root, view, deps) {
@@ -138,7 +244,13 @@ export function paintGroupPage(root, view, deps) {
   title.title = row.title;   // D13: the heading is one line cut with "…"; the full title is the tooltip
   root.querySelector('.gpage-head .kind-chip').textContent = groupKindWord(row);   // run 3 (D7): the group's kind
   paintCrumbs(root.querySelector('.gpage-bar .rd-crumbs'), [{ label: 'Runs', href: '#runs' }, { label: row.title }]);
-  const pm = pageModel(m);
+  // Small runs slice 7 (D9): a marked feature's state line says which runs work and which goes next.
+  const shown = view.stateLine ? { ...pageModel(m), line: view.stateLine, lineSaysState: false } : pageModel(m);
+  paintNeed(root.querySelector('.gpage-head .kind-chip'), needYouText(view.needCount || 0));
+  // Small runs: a disabled Create N PRs says why on the page, not only in its tooltip. A held group's line already does,
+  // and so does the Overview tab's Ship card.
+  const why = view.ship && view.ship.blocked && m.state === 'ready' && !m.hold && !(view.overview && view.tab === 'overview') ? view.ship.reason : '';
+  const pm = why ? { ...shown, line: `${shown.line} · ${why}` } : shown;
   paintRunStatus(root.querySelector('.gpage-card .run-status'), pm, { hold: true });   // run 3 (D10); slice 3: keep the last bar
   // Run 3 (D15): the facts block — Project, Runs, Total cost, Labels (the read-only union of the members' labels).
   const kv = root.querySelector('.gpage-card > .rd-kv');
@@ -162,16 +274,21 @@ export function paintGroupPage(root, view, deps) {
   const stop = root.querySelector('.gpage-stop');
   stop.title = current ? `Stop ${current.isPlanning ? 'Planning' : `Run ${current.position}`}` : 'Stop';
   // Run 4 (D2): the question is mounted first, so the bar's Answer can name the card's own primary.
-  deps.mountQuestion(root.querySelector('.gpage-question'), current);
+  const question = root.querySelector('.gpage-question');
+  deps.mountQuestion(question, current);
+  // Small runs: an open stop's own primary is the page's one primary, as on the run page and the Chat card.
+  const stopOpen = 'stop' in question.dataset && !question.hidden;
   syncActions(root.querySelector('.gpage-actions'), headerActions(m), { own: { stop }, pool: [stop], onAction: deps.onAction,
-    disable: { 'ask-changes': "Ask for changes from the run's chat" }, labels: { answer: deps.answerLabel ? deps.answerLabel() : '' },
-    plain: answerFieldOpen(root.querySelector('.gpage-question')) ? ['answer'] : [] });
+    disable: { 'ask-changes': "Ask for changes from the run's chat" }, labels: { answer: deps.answerLabel ? deps.answerLabel() : '', resume: deps.resumeLabel ? deps.resumeLabel() : '' },
+    plain: answerFieldOpen(question) ? ['answer'] : [], ...(stopOpen ? { skip: ['answer'] } : {}) });
   if (deps.paintHead) {
     deps.paintHead(root.querySelector('.gpage-card .rd-head-acts'), root.querySelector('.gpage-card .rd-pr-slot'),
-      groupHead({ state: m.state, prs: groupPrList(row), unmarked: view.unmarked || 0 }));
+      groupHead({ state: m.state, prs: groupPrList(row), unmarked: view.unmarked || 0, ship: view.ship || null }));
   }
-  const offered = (id) => (id !== 'overview' || !!view.overview) && (id !== 'logs' || !!view.logs);
-  const tab = GROUP_TABS.some(([id]) => id === view.tab) && offered(view.tab) ? view.tab : 'runs';
+  // Small runs D3 (D7): the Requirements tab exists only while `view.requirements` (a marked feature, flag on).
+  syncRequirementsTab(root, !!view.requirements);
+  const offered = (id) => (id !== 'overview' || !!view.overview) && (id !== 'logs' || !!view.logs) && (id !== 'requirements' || !!view.requirements);
+  const tab = (GROUP_TABS.some(([id]) => id === view.tab) || view.tab === 'requirements') && offered(view.tab) ? view.tab : 'runs';
   for (const t of root.querySelectorAll('.gpage-tabs .rd-tab')) {
     t.hidden = !offered(t.dataset.tab);
     t.setAttribute('aria-selected', String(t.dataset.tab === tab));
@@ -179,11 +296,22 @@ export function paintGroupPage(root, view, deps) {
   }
   for (const p of root.querySelectorAll('.gpage-panel')) p.hidden = p.dataset.tab !== tab;
   // Slice 3: a frame that changes nothing in the table keeps its nodes (a focused row, the scroll anchor).
-  keepUnchanged(root.querySelector('.gpage-runs'), [renderMemberRows(doc, row)]);
-  const line = groupShipLine(row);
+  // s8 (D6, D14): the link marks, the kept run and a focused row survive the repaint; another feature drops the keep.
+  syncShowOrder(root, view.order || null, row.groupId);   // slice 10 (D4): Show order, above the rows
+  const runsHost = root.querySelector('.gpage-runs');
+  runsHost.__links.repaint(row.groupId, () => keepUnchanged(runsHost, [view.shortState || view.status
+    ? renderMemberRows(doc, row, { oneLine: true, shortState: view.shortState || null,
+      ...(view.status ? { status: view.status, buildsOn: (mb) => mb.slice?.buildsOn ?? null } : {}) }) : renderMemberRows(doc, row)]));
+  const line = groupShipLine(row, { stackedOnly: !!view.stackedOnly });
   const ship = root.querySelector('.gpage-ship');
   ship.textContent = line;
   ship.hidden = !line;
+  // D12: the rows carry no listeners, so keepUnchanged may keep or replace them (a focused run link moves to its successor).
+  if (tab === 'requirements') {
+    const host = root.querySelector('.gpage-requirements');
+    const node = deps.mountRequirements(host, row);
+    if (node) keepUnchanged(host, [node]);
+  }
   if (tab === 'overview') deps.mountOverview(root.querySelector('.gpage-overview'));
   if (tab === 'decisions') deps.mountDecisions(root.querySelector('.gpage-decisions'), row);
   const numbered = (mb) => !mb.isPlanning && !mb.adhoc && row.groupKind !== 'user';

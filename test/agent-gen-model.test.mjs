@@ -42,7 +42,8 @@ const get = async () => (await fetch(`${base}/api/settings`)).json();
 const post = (body) => fetch(`${base}/api/settings`, { method: 'POST', headers: JSONH, body: JSON.stringify(body) });
 const settingsJson = async () => JSON.parse(await readFile(join(home, '.worca-cc', 'settings.json'), 'utf8'));
 const UNSET = { model: null, effort: null };
-const DEFAULT = { model: null, effort: null, source: 'default', stale: null };
+// #1450: an unset pick resolves through the role layer to Worca's Everyday default, never the CLI default.
+const DEFAULT = { model: 'claude-sonnet-5-5', effort: null, source: 'settings', stale: null };
 
 async function writeStored(value) {
   await mkdir(join(home, '.worca-cc'), { recursive: true });
@@ -57,7 +58,7 @@ test('settings: agentGenModel round-trips through the API, validates BEFORE any 
   assert.deepEqual(agentGenModel(), UNSET);
   let j = await get();
   assert.deepEqual(j.agentGenModel, UNSET);
-  assert.deepEqual(j.agentGenModelEffective, DEFAULT, 'unset: the CLI default model, as before');
+  assert.deepEqual(j.agentGenModelEffective, DEFAULT, 'unset: Worca\'s Everyday default (#1450), not the CLI default');
   let r = await post({ agentGenModel: { model: 'CLAUDE-OPUS-5-5', effort: 'high' } });
   j = await r.json();
   assert.equal(r.status, 200, JSON.stringify(j));
@@ -146,7 +147,7 @@ test('GET /api/settings: a stored id the catalog no longer carries reports the C
   try {
     const j = await get();
     assert.deepEqual(j.agentGenModel, { model: 'gone-model', effort: 'high' }, 'the stored pair, as stored');
-    assert.deepEqual(j.agentGenModelEffective, { ...DEFAULT, stale: 'gone-model' });
+    assert.deepEqual(j.agentGenModelEffective, { model: null, effort: null, source: 'default', stale: 'gone-model' }, 'a stale pick still names a model, so no role applies: the CLI default');
     await writeStored({ model: 'claude-haiku-4-5', effort: 'max' });
     assert.deepEqual((await get()).agentGenModelEffective, { model: 'claude-haiku-4-5', effort: null, source: 'settings', stale: null },
       'an effort the model does not offer is dropped');
@@ -177,7 +178,7 @@ test('POST /api/agents/generate runs on the setting read at click time; unset an
   console.warn = (...a) => { warnings.push(a.join(' ')); };
   try {
     let entry = await generate();
-    assert.equal(entry.orch.claude.model, undefined, 'unset: no --model, the CLI default');
+    assert.equal(entry.orch.claude.model, 'claude-sonnet-5-5', 'unset: Worca\'s Everyday default (#1450), not the CLI default');
     assert.equal(entry.orch.claude.effort, undefined);
     await post({ agentGenModel: { model: 'claude-opus-5-5', effort: 'xhigh' } });
     entry = await generate();

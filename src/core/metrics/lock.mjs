@@ -47,10 +47,10 @@ async function inspect(file, staleMs) {
 }
 
 /** @returns {Promise<boolean>} true when this caller did the break (retry at once), false when someone else holds `.break` (poll). */
-async function breakStale(file, observed) {
+async function breakStale(file, observed, mode = 0o666) {
   const brk = `${file}.break`;
   let fh;
-  try { fh = await open(brk, 'wx'); } catch (e) {
+  try { fh = await open(brk, 'wx', mode); } catch (e) {
     if (e.code !== 'EEXIST') throw e;
     const st = await stat(brk).catch(() => null);
     if (st && Date.now() - st.mtimeMs > BREAK_STALE_MS) await rm(brk, { force: true });
@@ -65,15 +65,16 @@ async function breakStale(file, observed) {
   return true;
 }
 
-/** @returns {Promise<() => Promise<void>>} release function (idempotent) */
-export async function acquireLock(file, { staleMs = LOCK_STALE_MS, heartbeatMs = LOCK_HEARTBEAT_MS, timeoutMs = 120_000, pollMs = 50 } = {}) {
+/** @returns {Promise<() => Promise<void>>} release function (idempotent). `mode` is the lock file's (and its `.break`'s)
+ *  mode at creation; the secret vault passes 0o600 so its locks fit the owner-only rule of the files beside them. */
+export async function acquireLock(file, { staleMs = LOCK_STALE_MS, heartbeatMs = LOCK_HEARTBEAT_MS, timeoutMs = 120_000, pollMs = 50, mode = 0o666 } = {}) {
   await mkdir(dirname(file), { recursive: true });
   const deadline = Date.now() + timeoutMs;
   const token = randomBytes(8).toString('hex');
   const body = () => JSON.stringify({ pid: process.pid, token, at: new Date().toISOString() });
   for (;;) {
     try {
-      const fh = await open(file, 'wx');
+      const fh = await open(file, 'wx', mode);
       await fh.writeFile(body());
       await fh.close();
       const ours = async () => {
@@ -102,7 +103,7 @@ export async function acquireLock(file, { staleMs = LOCK_STALE_MS, heartbeatMs =
     } catch (err) {
       if (err.code !== 'EEXIST') throw err;
       const { stale, raw } = await inspect(file, staleMs);
-      if (stale && raw != null && await breakStale(file, raw)) continue;
+      if (stale && raw != null && await breakStale(file, raw, mode)) continue;
       if (Date.now() > deadline) {
         throw Object.assign(new Error(`team metrics lock is busy: ${file}`), { code: 'LOCK_TIMEOUT' });
       }

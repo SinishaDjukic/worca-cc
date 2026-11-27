@@ -7,6 +7,7 @@ import { toggleMenu } from '../workflows/menu.mjs';
 import { icon } from '../icons.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
 import { ACTION_LABEL, RUN_STATES } from '../../../src/shared/run-model.mjs';
+import { resumeLabel } from '../../../src/shared/shape/run-status.mjs';
 
 const LIVE = new Set(['starting', 'running', 'pausing']);
 export const FAILED = 'That did not work. Try again.';
@@ -15,10 +16,14 @@ export const REPLAN_CONFIRM = Object.freeze({ title: 'Re-plan the rest', confirm
 export const CANCEL_CONFIRM = Object.freeze({ title: 'Cancel the rest', confirmLabel: 'Cancel the rest', danger: true,
   message: 'The runs that have not started are canceled. A running run keeps running.' });
 
-/** The buttons beside ⋯, [{key, label, primary?, disabled?}]. `c` is featureCardModel(...).controls (null: none). */
-export function featureButtons(c) {
+/** The buttons beside ⋯, [{key, label, primary?, disabled?}]. `c` is featureCardModel(...).controls (null: none).
+ *  `stopOpen` (item 10): a stop question is open and its own primary is the card's one primary, so at most Stop shows
+ *  here (Resume moves into ⋯, Re-plan the rest is already there). */
+export function featureButtons(c, { stopOpen = false, resumeListed = false } = {}) {
+  if (stopOpen) return featureButtons(c).filter((b) => b.key === 'stop').map(({ key, label }) => ({ key, label }));
   if (!c || !c.active) return [];
-  if (c.halted) return [{ key: 'resume', label: 'Resume', primary: true }, ...(c.rest ? [{ key: 'replan', label: 'Re-plan the rest' }] : [])];
+  // Slice 6 (D14): `resumeListed`, the halted run's stop line holds its Resume, so the footer leaves it out.
+  if (c.halted) return [...(resumeListed ? [] : [{ key: 'resume', label: resumeLabel(c.resumeAfter), primary: true }]), ...(c.rest ? [{ key: 'replan', label: 'Re-plan the rest' }] : [])];
   if (c.held) return [{ key: 'start', label: ACTION_LABEL['start-now'], primary: true }];
   const t = c.target;
   if (!t || !LIVE.has(t.status)) return [];
@@ -28,13 +33,22 @@ export function featureButtons(c) {
   return out;
 }
 
-/** The ⋯ items, the same on every host, [{key, label, checked?}]. */
-export function featureMenu(c) {
+/** The ⋯ items, the same on every host, [{key, label, checked?, disabled?}]. Item 10, while a stop is open: a halted
+ *  feature's Resume (`stopOpen`), then `moved`, the model actions the footer gives up ([{id, label?, disabled?}], `disabled` the
+ *  footer's reason), each `act:<id>` with its `label` (slice 11: the footer's own text), else its ACTION_LABEL; an id already in the menu shows once. */
+export function featureMenu(c, { moved = [], stopOpen = false, resumeListed = false } = {}) {
   if (!c) return [];
   const items = [];
   if (c.rest) items.push({ key: 'replan', label: 'Re-plan the rest' }, { key: 'cancel', label: 'Cancel the rest' });
   if (c.active) items.push({ key: 'approve-each', label: 'Ask before each run', checked: !!c.approveEach });
   if (c.planPipelineId) items.push({ key: 'plan', label: 'Open the plan' });
+  if (stopOpen && c.active && c.halted && !resumeListed) items.push({ key: 'resume', label: resumeLabel(c.resumeAfter) });
+  const has = new Set(items.map((i) => i.key));
+  for (const { id, label, disabled } of moved) {
+    if (has.has(id) || has.has(`act:${id}`)) continue;
+    has.add(`act:${id}`);
+    items.push({ key: `act:${id}`, label: label || ACTION_LABEL[id] || id, ...(disabled ? { disabled } : {}) });
+  }
   return items;
 }
 
@@ -65,12 +79,14 @@ export function focusFeatureControl(host, act, fallback = null) {
  *         focusFallback?() → Element|null (where the focus goes when the control it was on and ⋯ are both gone) }
  * omit: the button keys the host's run-model footer already shows (pause / stop / resume), so none shows twice. It never
  * drops Start now: no footer shows a held run's start.
+ * stopOpen, moved (item 10): a stop question is open; the buttons shrink to Stop and ⋯ lists `moved` (featureMenu), whose
+ * picks call deps.modelAct(id, ⋯). resumeListed (slice 6, D14): a stop line holds the halted run's Resume; none here.
  */
-export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withMenu = true } = {}) {
-  const buttons = featureButtons(c).filter((b) => (b.key === 'start' || !omit.includes(b.key))
+export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withMenu = true, stopOpen = false, moved = [], resumeListed = false } = {}) {
+  const buttons = featureButtons(c, { stopOpen, resumeListed }).filter((b) => (b.key === 'start' || !omit.includes(b.key))
     && (b.key === 'pause' ? !!deps.pause : b.key === 'stop' ? !!deps.stop : true));
   const held = c && c.active && !c.halted && c.held ? c.held : null;
-  const menu = withMenu ? featureMenu(c) : [];
+  const menu = withMenu ? featureMenu(c, { moved, stopOpen, resumeListed }) : [];
   // Set before the signature check: a host hidden by the caller (run-card.mjs, a non-feature paint) must reappear
   // even when the controls it shows did not change. An error (a Ship as failure on a finished feature) shows on its own.
   host.hidden = !buttons.length && !menu.length && !deps.error;
@@ -143,7 +159,7 @@ export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withM
     // QA 6: the "?" is only for while Worca asks; a held run waits on you, so a plain amber dot
     paintStatusDot(dot, { ...RUN_STATES['needs-you'], state: 'needs-you', symbol: null });
     const word = doc.createElement('span'); word.className = 'shape-feature-held-word'; word.textContent = RUN_STATES['needs-you'].word;
-    const why = doc.createElement('span'); why.className = 'shape-feature-held-why'; why.textContent = `Run ${held.index} waits for you to start`;
+    const why = doc.createElement('span'); why.className = 'shape-feature-held-why'; why.textContent = held.reason ? `Run ${held.index} is held: ${held.reason}` : `Run ${held.index} waits for you to start`;
     row.append(dot, word, why);
     host.appendChild(row);
   }
@@ -162,7 +178,10 @@ export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withM
     more.setAttribute('aria-haspopup', 'menu');
     more.setAttribute('aria-expanded', 'false');
     more.addEventListener('click', () => toggleMenu({ doc, anchor: more, align: 'end', label: 'More actions',
-      items: menu.map((i) => ({ label: i.label, ...(i.checked != null ? { checked: i.checked } : {}), onSelect: () => pick[i.key](more) })) }));
+      items: menu.map((i) => ({ label: i.label, ...(i.checked != null ? { checked: i.checked } : {}),
+        ...(i.disabled ? { disabled: true, title: i.disabled } : {}),
+        // Item 10: a moved footer action takes the footer's own path (deps.modelAct), as its button would have.
+        onSelect: () => (i.key.startsWith('act:') ? deps.modelAct(i.key.slice(4), more) : pick[i.key](more)) })) }));
     host.appendChild(more);
   }
   host.appendChild(err);
@@ -171,7 +190,8 @@ export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withM
 
 /** Run 4 (D18): the ⋯ items as entries for a menu outside the controls host (the group page's header ⋯), with the same
  *  confirms and posts. `anchor` gets the focus back after a confirm (Chromium drops it to <body> when the dialog closes).
- *  deps: { act(action, body) → Promise<{ok, error?}>, confirm(opts) → Promise<boolean>, openPlan(c), fail?(text) } */
+ *  deps: { act(action, body) → Promise<{ok, error?}>, confirm(opts) → Promise<boolean>, openPlan(c), fail?(text),
+ *          noReplan?: boolean (a stop is open on the page: Re-plan the rest is left out) } */
 export function featureMenuItems(c, deps, anchor) {
   const fail = deps.fail || (() => {});
   const run = async (action, body) => {
@@ -189,5 +209,5 @@ export function featureMenuItems(c, deps, anchor) {
     'approve-each': () => run('approve-each', { on: !c.approveEach }),
     plan: () => deps.openPlan(c),
   };
-  return featureMenu(c).map((i) => ({ label: i.label, ...(i.checked != null ? { checked: i.checked } : {}), onSelect: () => pick[i.key]() }));
+  return featureMenu(c).filter((i) => !(deps.noReplan && i.key === 'replan')).map((i) => ({ label: i.label, ...(i.checked != null ? { checked: i.checked } : {}), onSelect: () => pick[i.key]() }));
 }

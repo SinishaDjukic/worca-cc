@@ -43,6 +43,8 @@
           </div>
           <label class="switch-row proj-add-git" id="proj-add-git-row" data-needs-git hidden><input id="proj-add-git" class="sw-input" type="checkbox" role="switch"><span class="switch"></span><span class="txt">Use git</span></label>
           <div id="proj-add-clone-pane" role="tabpanel" aria-labelledby="proj-add-tab-clone" hidden>
+            <!-- The hardened box only (worca-box.mjs): why New and Folder are not offered. -->
+            <p class="hint proj-add-box-note" id="proj-add-box-note" hidden></p>
             <div class="field">
               <label for="proj-clone-url">Repository URL</label>
               <input id="proj-clone-url" class="input" type="url" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo" />

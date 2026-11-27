@@ -502,3 +502,207 @@ test('launchers: what Choose… lists and the examples for this OS; Try runs a l
   assert.deepEqual(cleared.actionsWarnings, {});
   assert.equal((await post('/api/settings', { actions: { editor: 'x'.repeat(2001) } })).status, 400);
 });
+
+// ── open-in-editor (the Diff tab's open controls) ───────────────────────────────────────
+// The Editor is a Settings line that runs a node script writing its argv to a file, so nothing
+// launches a real IDE and a refusal is proven by the file NOT being written.
+let ARGV_OUT;
+async function useArgvEditor(tail = '{folder} {file} {line}') {
+  const script = join(homeDir, 'argv-editor.mjs');
+  ARGV_OUT = join(homeDir, 'argv.json');
+  await writeFile(script, `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(ARGV_OUT)}, JSON.stringify(process.argv.slice(2)));\n`);
+  assert.equal((await post('/api/settings', { actions: { editor: `${NODE} "${script}" ${tail}` } })).status, 200);
+  await rm(ARGV_OUT, { force: true });
+}
+async function argvOf() {
+  const { readFile } = await import('node:fs/promises');
+  try { return JSON.parse(await readFile(ARGV_OUT, 'utf8')); } catch { return null; }
+}
+const openIn = (runId, scope, body) => post(`/api/runs/${runId}/open-in-editor?${scope}`, body);
+async function liveSeed(status) {
+  const { seedPipeline } = await import('./helpers/db-seed.mjs');
+  const { worcaHome } = await import('../src/core/projects.mjs');
+  const { mkdir } = await import('node:fs/promises');
+  const s = await seedPipeline(repo, { status, branch: { source: 'main', feature: `worca-cc/live-${randomUUID().slice(0, 6)}`, runRootMode: 'detached' } });
+  const dir = join(worcaHome(), 'runs', s.id, 'repos', s.key);
+  await mkdir(join(dir, 'src'), { recursive: true });
+  await writeFile(join(dir, 'src', 'a.mjs'), 'x\n');
+  await writeFile(join(dir, '.env'), 'K=v\n');
+  getDb().prepare(`UPDATE pipelines SET branch = json_set(branch, '$.worktreeDir', ?) WHERE id = ?`).run(dir, s.id);
+  return { ...s, dir };
+}
+
+test('open-in-editor: a live run opens its worktree, and a file there at its line', async () => {
+  const mod = await import('../ui/server.mjs');
+  const s = await liveSeed('running');
+  const runId = `uuid-OPEN-${randomUUID().slice(0, 6)}`;
+  mod.runs.set(runId, { id: runId, pipelineId: s.id, kind: 'run', status: 'running', title: 'live', projectDir: repo });
+  try {
+    await useArgvEditor();
+    const r = await openIn(s.id, `projectKey=${key}`, {});
+    assert.equal(r.status, 200, await r.clone().text());
+    assert.deepEqual(await argvOf(), [s.dir, s.dir, '1'], 'no file: {file} is the folder, {line} is 1');
+    await rm(ARGV_OUT, { force: true });
+    assert.equal((await openIn(s.id, `projectKey=${key}`, { file: 'src/a.mjs', line: 3 })).status, 200);
+    assert.deepEqual(await argvOf(), [s.dir, join(s.dir, 'src', 'a.mjs'), '3']);
+  } finally { mod.runs.delete(runId); }
+});
+
+test('open-in-editor: a paused run opens its worktree', async () => {
+  const s = await liveSeed('paused');
+  await useArgvEditor();
+  assert.equal((await openIn(s.id, `projectKey=${key}`, { file: 'src/a.mjs' })).status, 200);
+  assert.deepEqual(await argvOf(), [s.dir, join(s.dir, 'src', 'a.mjs'), '1']);
+});
+
+test('open-in-editor: path escapes, the floor, a deleted file and a bad line are refused before any launch', async () => {
+  const s = await liveSeed('paused');
+  await useArgvEditor();
+  const q = `projectKey=${key}`;
+  for (const [body, status, code] of [
+    [{ file: '../x' }, 400, 'BAD_PATH'],
+    [{ file: '/etc/passwd' }, 400, 'BAD_PATH'],
+    [{ file: '.env' }, 400, 'PROTECTED_PATH'],
+    [{ file: 'src/gone.mjs', line: 2 }, 404, 'FILE_NOT_FOUND'],
+    [{ file: 'src/a.mjs', line: 0 }, 400, 'BAD_REQUEST'],
+    [{ file: 'src/a.mjs', line: 1.5 }, 400, 'BAD_REQUEST'],
+    [{ line: 4 }, 400, 'BAD_REQUEST'],
+  ]) {
+    const r = await openIn(s.id, q, body);
+    assert.equal(r.status, status, JSON.stringify(body));
+    assert.equal((await r.json()).code, code, JSON.stringify(body));
+  }
+  assert.equal(await argvOf(), null, 'the editor never ran');
+});
+
+test('open-in-editor: editor off → 409 DISABLED; no editor → 409 NOT_AVAILABLE; an exit code 3 → 409 LAUNCH_FAILED', async () => {
+  const s = await liveSeed('paused');
+  const q = `projectKey=${key}`;
+  await useArgvEditor();
+  const cfg = (await getJson(`/api/projects/${key}/actions`)).config;
+  assert.equal((await put(`/api/projects/${key}/actions`, { ...cfg, builtins: { ...cfg.builtins, editor: false } })).status, 200);
+  try {
+    const off = await openIn(s.id, q, { file: 'src/a.mjs' });
+    assert.equal(off.status, 409);
+    assert.deepEqual(await off.json(), { error: 'editor is turned off for this project', code: 'DISABLED' });
+  } finally {
+    assert.equal((await put(`/api/projects/${key}/actions`, { ...cfg, builtins: { ...cfg.builtins, editor: true } })).status, 200);
+  }
+  assert.equal(await argvOf(), null);
+  const { mkdtemp: mk } = await import('node:fs/promises');
+  const empty = await mk(join(homeDir, 'nopath-'));
+  const savedPath = process.env.PATH;
+  assert.equal((await post('/api/settings', { actions: { editor: '' } })).status, 200);
+  process.env.PATH = empty;
+  let none;
+  try { none = await openIn(s.id, q, {}); } finally { process.env.PATH = savedPath; }
+  assert.equal(none.status, 409);
+  assert.deepEqual(await none.json(), { error: 'editor is not available on this machine', code: 'NOT_AVAILABLE' });
+  assert.equal((await post('/api/settings', { actions: { editor: `${NODE} -e "process.exit(3)"` } })).status, 200);
+  const failed = await openIn(s.id, q, {});
+  assert.equal(failed.status, 409);
+  assert.deepEqual(await failed.json(), { error: 'Editor did not open: the command exited with code 3', code: 'LAUNCH_FAILED' });
+  assert.equal((await post('/api/settings', { actions: { editor: '' } })).status, 200);
+});
+
+test('open-in-editor: not checked out → 409 and nothing changes; after Check out the file opens in the checkout', async () => {
+  const { seedPipeline } = await import('./helpers/db-seed.mjs');
+  const { worcaHome } = await import('../src/core/projects.mjs');
+  git(repo, ['switch', '-q', '-c', 'worca-cc/open1']);               // a commit on the branch: Check out offers only a changed run
+  git(repo, ['commit', '-q', '--allow-empty', '-m', 'work']);
+  git(repo, ['switch', '-q', 'main']);
+  const s = await seedPipeline(repo, { status: 'done',
+    branch: { source: 'main', feature: 'worca-cc/open1', runRootMode: 'detached', worktreeRemoved: true, branchKept: true } });
+  getDb().prepare(`UPDATE pipelines SET branch = json_set(branch, '$.worktreeDir', ?) WHERE id = ?`).run(join(worcaHome(), 'runs', s.id, 'repos', s.key), s.id);
+  const q = `projectKey=${key}`;
+  await useArgvEditor();
+  const before = await getJson(`/api/runs/${s.id}/actions?${q}`);
+  assert.equal(before.checkoutBlocked, null, 'a finished run with git: Check out is offered');
+  const refused = await openIn(s.id, q, { file: 'README.md', line: 1 });
+  assert.equal(refused.status, 409);
+  assert.deepEqual(await refused.json(), { error: 'Check out the run first.', code: 'NOT_CHECKED_OUT' });
+  assert.equal((await getJson(`/api/runs/${s.id}/actions?${q}`)).members[0].state, 'not-checked-out', 'a refusal checks nothing out');
+  assert.equal(await argvOf(), null);
+  assert.equal((await post(`/api/runs/${s.id}/checkout?${q}`, { members: [key] })).status, 200);
+  const dir = (await getJson(`/api/runs/${s.id}/actions?${q}`)).members[0].checkout.worktreeDir;
+  const ok = await openIn(s.id, q, { file: 'README.md', line: 1 });
+  assert.equal(ok.status, 200, await ok.clone().text());
+  assert.deepEqual(await argvOf(), [dir, join(dir, 'README.md'), '1']);
+  await fetch(`${base}/api/runs/${s.id}/checkout?${q}`, { method: 'DELETE', headers: JSONH, body: JSON.stringify({ force: true }) });
+  assert.equal((await post('/api/settings', { actions: { editor: '' } })).status, 200);
+});
+
+test('open-in-editor: a linked folder (Use that folder) opens the file there', async () => {
+  const { seedPipeline } = await import('./helpers/db-seed.mjs');
+  git(repo, ['switch', '-q', '-c', 'worca-cc/open-held']);
+  try {
+    const s = await seedPipeline(repo, { status: 'done',
+      branch: { source: 'main', feature: 'worca-cc/open-held', runRootMode: 'detached', worktreeRemoved: true, branchKept: true } });
+    const q = `projectKey=${key}`;
+    assert.equal((await post(`/api/runs/${s.id}/checkout?${q}`, { members: [key], useExisting: true })).status, 200);
+    await useArgvEditor();
+    assert.equal((await openIn(s.id, q, { file: 'README.md', line: 2 })).status, 200);
+    const argv = await argvOf();
+    assert.equal(await realpath(argv[0]), repo);
+    assert.equal(await realpath(argv[1]), join(repo, 'README.md'));
+    assert.equal(argv[2], '2');
+    await fetch(`${base}/api/runs/${s.id}/checkout?${q}`, { method: 'DELETE', headers: JSONH, body: '{}' });
+    assert.equal((await post('/api/settings', { actions: { editor: '' } })).status, 200);
+  } finally { git(repo, ['switch', '-q', 'main']); }
+});
+
+test('open-in-editor: a live workspace run with no member opens repos/; legacy worktrees answer NO_FOLDER; finished needs a member', async () => {
+  const { seedPipelineRow } = await import('./helpers/db-seed.mjs');
+  const { worcaHome } = await import('../src/core/projects.mjs');
+  const { mkdir } = await import('node:fs/promises');
+  const projects = factsMs.map((m) => ({ projectKey: m.projectKey, projectDir: m.projectDir, projectName: m.name }));
+  const scope = `workspaceId=${factsWs.id}`;
+  const seedWs = async (status, dirOf, runRootMode) => {
+    const wsId = randomUUID().slice(0, 8);
+    const branches = {};
+    for (const m of factsMs) {
+      const dir = dirOf(wsId, m);
+      await mkdir(dir, { recursive: true });
+      branches[m.projectKey] = { source: 'main', feature: `worca-cc/w-${wsId}`, runRootMode };
+    }
+    seedPipelineRow({ id: wsId, projectKey: factsMs[0].projectKey, workspaceKey: factsWs.id, target: 'workspace', status,
+      workspaceMeta: { runRootMode, projects, branches } });
+    return wsId;
+  };
+  await useArgvEditor();
+  const detached = await seedWs('running', (w, m) => join(worcaHome(), 'runs', w, 'repos', m.projectKey), 'detached');
+  const ok = await openIn(detached, scope, {});
+  assert.equal(ok.status, 200, await ok.clone().text());
+  const repos = join(worcaHome(), 'runs', detached, 'repos');
+  assert.deepEqual(await argvOf(), [repos, repos, '1']);
+  await rm(ARGV_OUT, { force: true });
+  const legacy = await seedWs('running', (w, m) => join(m.projectDir, '.worca-cc', 'worktrees', w), 'legacy');
+  const nf = await openIn(legacy, scope, {});
+  assert.equal(nf.status, 409);
+  assert.deepEqual(await nf.json(), { error: 'This run has no shared folder. Open a file from its list instead.', code: 'NO_FOLDER' });
+  const done = await seedWs('done', (w, m) => join(worcaHome(), 'runs', w, 'repos', m.projectKey), 'detached');
+  const need = await openIn(done, scope, {});
+  assert.equal(need.status, 400);
+  assert.equal((await need.json()).error, 'member is required for a workspace run');
+  assert.equal(await argvOf(), null);
+  assert.equal((await post('/api/settings', { actions: { editor: '' } })).status, 200);
+});
+
+test('live-diff carries protectedPaths, and the cached body is never written to', async () => {
+  const mod = await import('../ui/server.mjs');
+  const patch = 'diff --git a/.env b/.env\nnew file mode 100644\n--- /dev/null\n+++ b/.env\n@@ -0,0 +1 @@\n+K=v\n'
+    + 'diff --git a/src/a.mjs b/src/a.mjs\n--- a/src/a.mjs\n+++ b/src/a.mjs\n@@ -1 +1 @@\n-x\n+y\n';
+  let calls = 0;
+  const runId = `uuid-LD-${randomUUID().slice(0, 6)}`;
+  const entry = { id: runId, pipelineId: `p-${runId}`, kind: 'run', status: 'running', title: 'ld', projectDir: repo,
+    orch: { liveDiff: async () => { calls += 1; return { results: { summary: {} }, patch, untrackedCapped: false }; } } };
+  mod.runs.set(runId, entry);
+  try {
+    const first = await getJson(`/api/runs/${runId}/live-diff`);
+    assert.deepEqual(first.protectedPaths, ['.env']);
+    assert.equal('protectedPaths' in entry._liveDiff, false, 'the cache keeps the orchestrator\'s object as it was');
+    const second = await getJson(`/api/runs/${runId}/live-diff`);
+    assert.deepEqual(second, first, 'a second read within 3 s answers the same body');
+    assert.equal(calls, 1);
+  } finally { mod.runs.delete(runId); }
+});

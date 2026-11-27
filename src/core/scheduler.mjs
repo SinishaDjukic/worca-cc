@@ -494,7 +494,7 @@ export function afterRefOf(id) {
 // run merges back; an interrupted one gets no teardown until it is resumed) with a member record that has
 // a worktree and no mergeBack yet; a record without a worktreeDir (a setup failure) never gets a teardown.
 // Bounded from the row's last write: a host killed mid-teardown must not hold its dependents forever.
-const MERGE_BACK_WAIT_MS = 10 * 60_000;
+export const MERGE_BACK_WAIT_MS = 10 * 60_000;
 function mergeBackPending(row, now = Date.now()) {
   if (!row || row.status !== 'done') return false;
   const records = row.target === 'workspace'
@@ -506,7 +506,7 @@ function mergeBackPending(row, now = Date.now()) {
 }
 /** The branch a finished run's work is on: its feature branch — or its source once that branch is gone
  *  again: dropped at teardown as unchanged (branchKept:false), or merged back by a run on its source branch. */
-const workBranchOf = (b) => (!b ? null
+export const workBranchOf = (b) => (!b ? null
   : (b.branchKept === false || (b.sameAsSource === true && b.mergeBack && b.mergeBack.merged === true)) ? b.source : b.feature);
 
 function pipelineGate(row, { policy, isLive, now = Date.now() }) {
@@ -678,9 +678,13 @@ export function chainBaseBranchesOf(pipelineId) {
     return b && typeof b === 'object' ? b : null;
   };
   const row = pipelineRefRow(pipelineId);
-  const source = branchOf(row)?.source;
+  const rec = branchOf(row);
+  const source = rec?.source;
   if (typeof source !== 'string' || !source) return [];
-  const chain = [source];
+  // Slice 3 (D10): a run that took other runs' work in records the branch it started from (`sourceFrom`) beside the
+  // one it builds on now (`source`); its chain walks back from the start.
+  const from = typeof rec.sourceFrom === 'string' && rec.sourceFrom && rec.sourceFrom !== source ? rec.sourceFrom : null;
+  const chain = from ? [from, source] : [source];
   const seen = new Set([row.id]);
   let cur = row.id;
   for (let depth = 0; depth < CHAIN_DEPTH_CAP; depth++) {
@@ -1201,9 +1205,20 @@ function safeHold(hold, t) {
   try { return hold(t) === true; } catch { return false; }
 }
 
+/** A chain gate that throws, or answers no known state, is no gate: the ticket falls back to the predecessor gate. */
+function safeChainGate(chainGate, t, opts) {
+  try {
+    const g = chainGate(t, opts);
+    return g && ['waiting', 'ok', 'bad'].includes(g.state) ? g : null;
+  } catch { return null; }
+}
+
+/** `chainGate(ticket, {now, isLive})` (optional, Shaper small runs): asked for an unforced after-ticket before its
+ *  predecessor gate. waiting → stays scheduled; ok → skips the predecessor gate (the hold still applies);
+ *  bad {reason, title} → missed with that reason; null → the predecessor gate. */
 export async function runDueTickets({
   now = Date.now(), start, isLive = null, pid = process.pid, host = hostname(), pidAlive = defaultPidAlive,
-  onlyOwned = false, staggerMs = 0, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), hold = null,
+  onlyOwned = false, staggerMs = 0, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), hold = null, chainGate = null,
 } = {}) {
   const out = { fired: [], missed: [], skipped: [], failed: [], retried: [], waiting: [], held: [] };
   let startedAny = false;
@@ -1222,7 +1237,10 @@ export async function runDueTickets({
     }
 
     if (t.after) {
-      const p = predecessorState(t.after, { policy: t.after.policy, now, isLive });
+      const g = !t.forced && chainGate ? safeChainGate(chainGate, t, { now, isLive }) : null;
+      if (g && g.state === 'waiting') { out.waiting.push(t.id); continue; }
+      if (g && g.state === 'bad') { missAfter(t, now, g); out.missed.push(t.id); continue; }
+      const p = g ? g : predecessorState(t.after, { policy: t.after.policy, now, isLive });
       if (!t.forced) {
         if (p.state === 'waiting') { out.waiting.push(t.id); continue; }
         if (p.state !== 'ok') { missAfter(t, now, p); out.missed.push(t.id); continue; }
@@ -1300,6 +1318,14 @@ export async function runDueTickets({
     if (res && res.skip) {
       skipTicket(t, (res && res.error) || 'no longer applies', { now, schedule });
       out.skipped.push(t.id);
+      continue;
+    }
+
+    // A hold (Shaper small runs: the runs it builds on clash, or the run waits its turn, slice 7): the ticket waits for a person, not for a retry. Back to
+    // scheduled and unforced, so the next tick's hold is consulted; no fail_reason, no attempt, no notice.
+    if (res && res.hold) {
+      touchTicket(t.id, "status = 'scheduled', forced = 0, retry_at = NULL, owner_pid = NULL, owner_host = NULL", [], now);
+      out.held.push(t.id);
       continue;
     }
 

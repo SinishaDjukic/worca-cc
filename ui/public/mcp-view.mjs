@@ -5,6 +5,7 @@
 // Every write goes through `api(method, path, body)` and repaints from the server's read models; no
 // secret value is ever fetched. The modal shells (#plugin-modal, confirm) are app.js's, passed in.
 import { icon } from './icons.mjs';
+import { addVaultNote } from './settings/secret-vault-note.mjs';
 import { relTime } from './plugins-view.mjs';
 import { compileDefinition, formFromDefinition, blankDefinitionForm, createDefinitionForm } from './mcp-definition-form.mjs';
 import { splitMessage } from './feedback.mjs';
@@ -110,6 +111,7 @@ function fieldInputs(doc, fields) {
     inp.value = '';   // empty keeps the definition's default, so a later default change still reaches this set
     inp.placeholder = f.secret ? '' : (f.default || '');
     inp.autocomplete = 'off';
+    if (f.secret) addVaultNote(inp);   // "Stored in the secret vault." while it takes saves (secretVault)
     inp.setAttribute('aria-label', f.label);
     row.appendChild(inp);
     if (f.secret) {

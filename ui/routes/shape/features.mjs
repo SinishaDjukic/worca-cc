@@ -2,12 +2,18 @@
 // the body of register() was moved verbatim from ui/server.mjs. Edit it here from now on.
 import { releaseVersionHint } from '../../../src/core/draft-release.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
-import { cancelRest, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, setFeatureAcceptance, shaperCard, sliceOfPipeline } from '../../../src/core/shape/features.mjs';
+import { cancelRest, clashHoldOf, clashRefusalOf, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, setFeatureAcceptance, shaperCard, sliceOfPipeline, storedAgentFacts } from '../../../src/core/shape/features.mjs';
+import { shaperSmallRunsOn } from '../../../src/core/shape/small-runs.mjs';
+import { getTicket } from '../../../src/core/scheduler.mjs';
+import { verifyCheckOfPipeline } from '../../../src/core/shape/verifier.mjs';
 import { normalizeAcceptance } from '../../../src/shared/shape/acceptance.mjs';
+import { CONFIRM_REASON_MAX, MARK_WORDS, confirmMarkOf, reasonLine } from '../../../src/shared/shape/ship-ledger.mjs';
+import { recordFeatureFigures } from '../../../src/core/shape/measure.mjs';
+import { SHIP_LOCK, shipLocked } from '../../../src/core/shape/ship-lock.mjs';
 import { prAutoFinisher } from '../../../src/core/pr-auto-finish.mjs';
 import { engineRefusalFor } from '../../../src/shared/engine-switch.mjs';
 import { parseReleaseChoice } from '../../../src/shared/release-version.mjs';
-import { ResumeError, badRequest, broadcastFeature, emitChanged, featureShipping, findShipCardIn, flipCard, liveRunEntry, liveSliceOf, resumeRun, scheduleVerb, schedulerTick, shipCtxOf, shipFeatureNow } from '../../server.mjs';
+import { ResumeError, badRequest, broadcastFeature, emitChanged, featureShipping, findShipCardIn, flipCard, isFinishingRun, liveRunEntry, liveSliceOf, resumeRun, scheduleVerb, schedulerTick, shipCtxOf, shipFeatureNow } from '../../server.mjs';
 
 export function register(app) {
 /** F29: an async handler never lets a throw escape (Express 4, no unhandledRejection handler). /api/resume's mapping. */
@@ -29,7 +35,7 @@ app.get('/api/shape/features/:id', async (req, res) => {
   try {
     // F47: a re-planned feature answers with the feature that carries on; `replanOf` names the one asked for.
     const cur = currentFeatureId(req.params.id);
-    const view = featureView(cur, { live: liveSliceOf });
+    const view = featureView(cur, { live: liveSliceOf, finishing: isFinishingRun });
     if (!view) return res.status(404).json({ error: 'unknown feature' });
     // P17: the Ship as default, once every slice is done (async: it reads each slice's results.json).
     // s4: and the release row's version hint (the repo's last tag / package.json).
@@ -43,12 +49,20 @@ app.get('/api/shape/features/:id', async (req, res) => {
 });
 
 // D16, D22: where a run sits in its feature, for the run page line, the Chat home card and Ship it (P11).
-app.get('/api/shape/pipelines/:pid/slice', (req, res) => {
+// Shaper small runs D2 (D8): a marked feature's answer (flag on: it carries `owns`) adds the Agents rows' `stored` facts.
+app.get('/api/shape/pipelines/:pid/slice', async (req, res) => {
   try {
     const out = sliceOfPipeline(req.params.pid, { live: liveSliceOf });
-    if (!out) return res.status(404).json({ error: 'not a slice' });
-    res.json({ ...out, threadId: featureThread(out.featureId)?.threadId || null });   // s2 D14: the thread that started the feature
-  } catch (err) { shapeRouteError(res, err); }
+    if (!out) {
+      // A Verifier's run is no slice: with the flag on it answers its feature alone, for its stop's link (no slice fields).
+      const check = shaperSmallRunsOn() ? verifyCheckOfPipeline(req.params.pid) : null;
+      if (!check) return res.status(404).json({ error: 'not a slice' });
+      const featureId = currentFeatureId(check.featureId);
+      return res.json({ verifier: true, featureId, threadId: featureThread(featureId)?.threadId || null });
+    }
+    const stored = 'owns' in out ? { stored: await storedAgentFacts(req.params.pid) } : {};
+    res.json({ ...out, threadId: featureThread(out.featureId)?.threadId || null, ...stored });   // s2 D14: the thread that started the feature
+  } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
 });
 
 // Shaper s2 (D10): the Chat feature card — the planning run's decision log, and once split the feature view with its
@@ -56,7 +70,7 @@ app.get('/api/shape/pipelines/:pid/slice', (req, res) => {
 app.get('/api/shape/pipelines/:pid/card', (req, res) => {
   try {
     // shaped: the entry's in-memory shaping (state.shaping is never persisted). A settled entry still carries it.
-    const out = shaperCard(req.params.pid, { live: liveSliceOf, shaped: (pid) => !!liveRunEntry(pid)?.orch?.state?.shaping });
+    const out = shaperCard(req.params.pid, { live: liveSliceOf, finishing: isFinishingRun, shaped: (pid) => !!liveRunEntry(pid)?.orch?.state?.shaping });
     if (!out) return res.status(404).json({ error: 'not a shaped run' });
     res.json(out);
   } catch (err) { shapeRouteError(res, err); }
@@ -68,20 +82,30 @@ app.post('/api/shape/features/:id/cancel', (req, res) => {
     if (shapeRefused(res, out)) return;
     emitChanged('schedules-changed', 'canceled');
     broadcastFeature(req.params.id);
-    res.json({ ok: true, ...out, feature: featureView(req.params.id, { live: liveSliceOf }) });
+    res.json({ ok: true, ...out, feature: featureView(req.params.id, { live: liveSliceOf, finishing: isFinishingRun }) });
   } catch (err) { shapeRouteError(res, err); }
 });
 
 app.post('/api/shape/features/:id/resume', async (req, res) => {
   try {
+    // Slice 6 (D13): a stop line's Resume names its run; anything but a run number is refused before anything runs.
+    const index = req.body && req.body.index !== undefined ? req.body.index : null;
+    if (index !== null && !(Number.isInteger(index) && index >= 1)) return res.status(400).json({ error: 'index must be a run number' });
+    if (shipLocked(req.params.id)) return res.status(409).json(SHIP_LOCK);
     const by = actorOf(req);
-    const out = resumeFeature(req.params.id, { live: liveSliceOf, by });
+    const out = resumeFeature(req.params.id, { live: liveSliceOf, finishing: isFinishingRun, by, ...(index !== null ? { index } : {}) });
+    if (out && out.code === 'NOT_HALTED') return res.status(409).json({ code: out.code, error: out.error });
     if (shapeRefused(res, out)) return;
-    if (out.action === 'none') return res.status(409).json({ error: 'no slice is stopped' });
+    if (out.action === 'none') {
+      const verify = featureView(req.params.id, { live: liveSliceOf, finishing: isFinishingRun }).verify;
+      return res.status(409).json(verify ? { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: the Verifier is not stopped, a run or round is not over, or Shaper small runs is off' } : { error: 'no slice is stopped' });
+    }
     let runId = null;
+    let held = null;
     if (out.action === 'resume') {
       const r = await resumeRun(out.pipelineId, { by, mock: out.mock === true });
       runId = r && r.runId ? r.runId : null;
+      if (r && r.held) held = { held: true, after: r.after };   // small runs slice 7 (D14): it goes on at its turn
       rechainWaiting(req.params.id, out.index, { by });     // F30: an interrupted slice already missed its successor
       emitChanged('schedules-changed', 'updated');
     } else {
@@ -89,12 +113,13 @@ app.post('/api/shape/features/:id/resume', async (req, res) => {
       await schedulerTick();                                  // best effort: null while a tick is busy
     }
     broadcastFeature(req.params.id);
-    res.json({ ok: true, ...out, ...(runId ? { runId } : {}) });
+    res.json({ ok: true, ...out, ...(runId ? { runId } : {}), ...(held || {}) });
   } catch (err) { shapeRouteError(res, err); }
 });
 
 app.post('/api/shape/features/:id/replan', async (req, res) => {
   try {
+    if (shipLocked(req.params.id)) return res.status(409).json(SHIP_LOCK);
     const out = replanRest(req.params.id, { live: liveSliceOf, by: actorOf(req) });
     if (shapeRefused(res, out)) return;
     emitChanged('schedules-changed', 'created');
@@ -113,8 +138,13 @@ app.post('/api/shape/features/:id/start', async (req, res) => {
     if (!view) return res.status(404).json({ error: 'unknown feature' });
     if (view.status !== 'active') return res.status(409).json({ error: `this feature is ${view.status}` });
     if (!view.held) return res.status(409).json({ error: 'no run is waiting for you to start' });
+    const requestAt = Date.now();
     const r = await scheduleVerb('run-now', view.held.ticketId, {}, { by: actorOf(req) });
     broadcastFeature(req.params.id);
+    // Small runs (D9): the runs it builds on still clash, so the tick's hold arm put it back: nothing started.
+    const ticketId = view.held.ticketId;
+    const clash = clashRefusalOf({ ticket: getTicket(ticketId), hold: clashHoldOf(ticketId), requestAt });
+    if (clash) return res.status(409).json({ error: clash, code: 'DEPENDENCY_CLASH' });
     res.status(r.status).json(r.body);
   } catch (err) { shapeRouteError(res, err); }
 });
@@ -154,11 +184,17 @@ app.put('/api/shape/features/:id/acceptance', (req, res) => {
     if (view.ship.mode) return res.status(409).json({ error: 'the feature already shipped' });
     if (featureShipping(id)) return res.status(409).json({ error: 'this feature is already shipping' });
     const agreed = (view.ship.acceptance?.items || []).map((i) => ({ id: i.id }));
-    const r = normalizeAcceptance((req.body || {}).entries, agreed);
+    const raw = (req.body || {}).entries;
+    // Feature D1 (D9): on a marked feature a run-owned id is never marked by hand, and a confirmed one only as met.
+    const refused = view.ship.smallRuns && Array.isArray(raw) ? smallRunsMarkRefusal(view, raw) : null;
+    if (refused) return res.status(refused.status).json(refused.body);
+    const r = normalizeAcceptance(raw, agreed);
     if (!r.ok) return res.status(400).json({ error: r.error, code: 'ACCEPTANCE_INVALID' });
-    const sent = new Map(r.entries.map((e) => [e.id, e]));
     const kept = new Map((view.ship.acceptance?.entries || []).map((e) => [e.id, e]));
+    const sent = new Map(r.entries.map((e) => [e.id, view.ship.smallRuns ? confirmedMark(view, e.id, kept.get(e.id), req) : e]));
     setFeatureAcceptance(id, agreed.map(({ id: rid }) => sent.get(rid) || kept.get(rid)).filter(Boolean));
+    // Shaper small runs A4: a finished feature's requirements met follow the marks. Best effort: never the response.
+    try { recordFeatureFigures(id); } catch (err) { console.error(`[worca-ui] feature figures failed: ${err?.message || err}`); }
     const acceptance = featureView(id, { live: liveSliceOf }).ship.acceptance || null;
     const th = featureThread(id);
     const found = th ? findShipCardIn(th.threadId, id) : null;
@@ -166,6 +202,68 @@ app.put('/api/shape/features/:id/acceptance', (req, res) => {
     broadcastFeature(id);
     void prAutoFinisher()?.onAcceptanceChanged(id);   // a feature whose one PR waited for the last mark opens it now
     res.json({ acceptance });
+  } catch (err) { shapeRouteError(res, err); }
+});
+
+/** Feature D1 (D9): what a requirement is on a marked feature: {kind:'owned', run} | {kind:'confirmed', role} | null. */
+const kindOf = (view, rid) => (view.requirementKinds || []).find((k) => k.id === rid) || null;
+const runOwned = (rid, k) => ({ status: 409, body: { code: 'RUN_OWNED', error: `${rid} is owned by ${k.run ? `run ${k.run}` : 'a run'}: its run and the Verifier check it` } });
+/** A marked PUT's first refusal, or null: an owned id (409 RUN_OWNED), a confirmed id marked other than met (400). */
+function smallRunsMarkRefusal(view, raw) {
+  for (const e of raw) {
+    const rid = String(e?.id ?? '');
+    const k = kindOf(view, rid);
+    if (k && k.kind === 'owned') return runOwned(rid, k);
+    if (k && e.mark !== 'met') return { status: 400, body: { code: 'ACCEPTANCE_INVALID', error: `${rid}: a requirement a person confirms is marked met` } };
+  }
+  return null;
+}
+/** A confirmed requirement's stored mark: the server's role (requirement_kinds), the person and the time; an id already
+ *  confirmed keeps its first mark. A body `role`, `by` or `at` is never read. */
+function confirmedMark(view, rid, had, req) {
+  if (had && had.mark === 'met' && had.at) return had;
+  return { id: rid, mark: 'met', role: kindOf(view, rid).role, by: actorOf(req), at: new Date().toISOString() };
+}
+
+/** Owner direction da6198d8d: a confirm body's mark and reason → {entry fields} | {status, body} (a refusal). The mark is
+ *  met (the default), not-met (`not_met` too) or dropped; the last two need a one-line reason of at most 300 characters. */
+function confirmBody(rid, body) {
+  const mark = confirmMarkOf(body.mark === undefined ? 'met' : body.mark);
+  const bad = (error) => ({ status: 400, body: { code: 'ACCEPTANCE_INVALID', error } });
+  if (!mark) return bad(`${rid}: the mark must be met, not met or dropped`);
+  if (mark === 'met') return { mark };
+  const reason = reasonLine(body.reason);
+  if (!reason) return bad(`${rid}: ${MARK_WORDS[mark].toLowerCase()} needs a reason`);
+  if (reason.length > CONFIRM_REASON_MAX) return bad(`${rid}: the reason is longer than ${CONFIRM_REASON_MAX} characters`);
+  return { mark, reason };
+}
+
+// Feature D1 (D9): Met / Not met / Dropped on a marked feature's Ship (owner direction da6198d8d). A mark can change
+// until Ship is done; the same mark again keeps its first entry. Synchronous; a refusal stores nothing.
+app.post('/api/shape/features/:id/confirm', (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const view = featureView(id, { live: liveSliceOf });
+    if (!view) return res.status(404).json({ error: 'unknown feature' });
+    if (!view.ship.smallRuns) return res.status(409).json({ code: 'NOT_SMALL_RUNS', error: 'this feature has no confirmed requirements' });
+    if (view.ship.mode) return res.status(409).json({ error: 'the feature already shipped' });
+    if (featureShipping(id)) return res.status(409).json({ error: 'this feature is already shipping' });
+    const rid = String((req.body || {}).id ?? '');
+    const k = kindOf(view, rid);
+    if (!k) return res.status(400).json({ code: 'ACCEPTANCE_INVALID', error: `${rid} is not an agreed requirement` });
+    if (k.kind === 'owned') { const o = runOwned(rid, k); return res.status(o.status).json(o.body); }
+    const want = confirmBody(rid, req.body || {});
+    if (want.status) return res.status(want.status).json(want.body);
+    const stored = view.ship.acceptance?.entries || [];
+    const kept = new Map(stored.map((e) => [e.id, e]));
+    const had = kept.get(rid);
+    const same = had && had.at && confirmMarkOf(had.mark) === want.mark && (want.mark === 'met' || reasonLine(had.reason) === want.reason);
+    const mark = same ? had : { id: rid, ...want, role: k.role, by: actorOf(req), at: new Date().toISOString() };
+    setFeatureAcceptance(id, (view.requirementKinds || []).map((x) => (x.id === rid ? mark : kept.get(x.id))).filter(Boolean));
+    try { recordFeatureFigures(id); } catch (err) { console.error(`[worca-ui] feature figures failed: ${err?.message || err}`); }
+    broadcastFeature(id);
+    const after = featureView(id, { live: liveSliceOf });
+    res.json({ acceptance: after.ship.acceptance || null, smallRuns: after.ship.smallRuns });
   } catch (err) { shapeRouteError(res, err); }
 });
 
@@ -180,7 +278,7 @@ app.get('/api/shape/plans', (req, res) => {
       // liveSliceOf keeps a `paused` entry (F26): show it as paused, not as shaping.
       const state = live ? (live.status === 'paused' ? 'paused' : live.waiting ? 'waiting' : live.approved ? 'running' : 'shaping')
         : PLAN_STATE[p.pipelineStatus || p.linkStatus] || 'shaping';
-      return { ...p, state, feature: p.featureId ? featureView(currentFeatureId(p.featureId), { live: liveSliceOf }) : null };
+      return { ...p, state, feature: p.featureId ? featureView(currentFeatureId(p.featureId), { live: liveSliceOf, finishing: isFinishingRun }) : null };
     });
     res.json({ plans: rows });
   } catch (err) { shapeRouteError(res, err); }

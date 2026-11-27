@@ -168,6 +168,15 @@ test('AC-5.6: a shared draft has no network, provider or secret field and names 
   assert.doesNotMatch(text, /networkProxy|providers|githubToken|gho_|p:8080|theme|my-local-model/);
 });
 
+test('buildTeamSetup: a cliDecides role is never exported (a team names upstream models only, #1450)', () => {
+  const catalog = [{ id: 'claude-opus-5-5', harnesses: ['claude'] }];
+  const settings = { modelRoles: { claude: { deep: { cliDecides: true }, quick: { model: 'claude-opus-5-5' } } } };
+  const { doc, text } = buildTeamSetup({ settings, catalog });
+  assert.deepEqual(doc.fields['models.roles'].value, { claude: { quick: { model: 'claude-opus-5-5' } } });
+  assert.doesNotMatch(text, /cliDecides/);
+  assert.equal(checkTeamSetup(JSON.parse(text)).ok, true);
+});
+
 test('SHARE_SETTING_KEYS lists only modelRoles and the work fields', () => {
   assert.deepEqual([...SHARE_SETTING_KEYS].sort(), ['autoGeneratePrDescription', 'costLimitResetPeriod', 'hideBuiltinModels', 'modelRoles', 'networkWait',
     'pipelineCostLimitUsd', 'runEngine', 'smartNaming', 'sync', 'totalCostLimitUsd', 'uiLevel']);

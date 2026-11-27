@@ -1,7 +1,9 @@
-// test/ui-design-engine-gate.test.mjs — Design P8 Task 2 (L8.1, L8.3, L8.25): the Library's start box meets the engine
-// gate. A 409 `engine-gated` or `engine-refused` from POST /api/design opens one consent dialog and keeps Send busy until
-// it closes; Allow unguarded re-posts the engine the dialog named, Use Claude re-posts `engine: 'claude'`, Cancel keeps
-// the text. Plain DOM in jsdom with a fake fetch (a queue of POST replies) and a fake clock; nothing reaches a server.
+// test/ui-design-engine-gate.test.mjs — Design P8 Task 2 (L8.1, L8.3, L8.25): a new design meets the engine gate
+// (library.mjs makeDesign, which the design start's send uses). A 409 `engine-gated` or `engine-refused` from POST
+// /api/design opens one consent dialog; Allow unguarded re-posts the engine the dialog named, Use Claude re-posts
+// `engine: 'claude'`, and the result says what came of it: `{ok: true, id}`, `{ok: false, error}` with the server's
+// words, or `{ok: false, error: '', canceled: true}` for Cancel and Escape. Plain DOM in jsdom with a fake fetch (a queue
+// of POST replies) and a fake clock; nothing reaches a server.
 
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +12,7 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { fakeClock } from './helpers/design-clock.mjs';
 import { cssRules } from './helpers/css-rules.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
-import { createLibrary, takeStart } from '../ui/public/design/library.mjs';
+import { makeDesign } from '../ui/public/design/library.mjs';
 import { openEngineGateDialog } from '../ui/public/design/engine-gate-dialog.mjs';
 
 const trackDom = useDomRelease(afterEach);
@@ -30,21 +32,22 @@ const gated = (o = {}) => [409, { error: CODEX_SHELL, code: 'engine-gated', over
 const refused = (o = {}) => [409, { error: GOOSE, code: 'engine-refused', overridable: false, engine: 'goose', label: 'Goose', reasons: [GOOSE], notes: [], ...o }];
 const created = (id) => [201, { design: { id }, threadId: null }];
 
-// rig(replies) -> {lib, host, doc, win, tick, posts, navs, setText, keydown, dialog, buttons, press}. `replies` is the queue
-// of [status, body] answers to POST /api/design, one per post (a post past the end answers 500); `posts` records each
-// post's body and `navs` each navigate(). GET /api/design lists nothing and GET /api/projects has none.
+const FIRST = { kind: 'web', fast: true, title: 'A landing page' };
+
+// rig(replies) -> {doc, win, tick, posts, run, gate, keydown, dialog, buttons, press}. `replies` is the queue of
+// [status, body] answers to POST /api/design, one per post (a post past the end answers 500); `posts` records each
+// post's body.
+// run(body = FIRST, engine = () => null) -> the promise of makeDesign({doc, fetch, body, engine, onGate: (g) => { gate = g; }});
+// gate() -> the open dialog's handle, or null.
+// Each rig pushes { destroy: () => gate?.close() } onto `made`, so afterEach closes a dialog a test leaves open.
 function rig(replies) {
   const clock = fakeClock();
-  const dom = trackDom(new JSDOM(`<!doctype html><html><body>
-    <main class="main"><section class="view" data-view="design"><div id="design-host"></div></section></main>
-  </body></html>`, { url: 'http://localhost/' }));
+  const dom = trackDom(new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' }));
   const win = dom.window;
   const doc = win.document;
   Object.assign(win, { setTimeout: clock.set, clearTimeout: clock.clear });
-  const host = doc.getElementById('design-host');
   const queue = [...replies];
   const posts = [];
-  const navs = [];
   async function fetch(url, init = {}) {
     const method = String(init.method ?? 'GET').toUpperCase();
     if (method === 'POST' && url === '/api/design') {
@@ -52,17 +55,11 @@ function rig(replies) {
       const next = queue.shift();
       return next ? reply(...next) : reply(500, { error: 'no reply queued' });
     }
-    if (url === '/api/design') return reply(200, []);
-    if (url === '/api/projects') return reply(200, { projects: [] });
     return reply(404, { error: 'not found' });
   }
-  const lib = createLibrary({ doc, win, host, fetch, navigate: (hash) => { navs.push(hash); }, now: () => Date.UTC(2026, 10, 9) });
-  made.push(lib);
-  const input = () => host.querySelector('textarea.dz-input');
-  const setText = (text) => {
-    input().value = text;
-    input().dispatchEvent(new win.Event('input', { bubbles: true }));
-  };
+  let gate = null;
+  const run = (body = FIRST, engine = () => null) => makeDesign({ doc, fetch, body, engine, onGate: (g) => { gate = g; } });
+  made.push({ destroy: () => gate?.close() });
   const keydown = (target, key) => {
     target.dispatchEvent(new win.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
   };
@@ -75,16 +72,12 @@ function rig(replies) {
     for (let i = 0; i < 4; i += 1) await flush();
   };
   const tick = async () => { clock.tick(250); for (let i = 0; i < 4; i += 1) await flush(); };
-  return { lib, host, doc, win, tick, posts, navs, setText, keydown, input, dialog, buttons, press };
+  return { doc, win, tick, posts, run, gate: () => gate, keydown, dialog, buttons, press };
 }
 
-const FIRST = { kind: 'web', fast: true, title: 'A landing page' };
-
-test('gated: one dialog names the engine and its reasons; Allow unguarded re-posts that engine with the consent, then opens the design', async () => {
+test('gated: one dialog names the engine and its reasons; Allow unguarded re-posts that engine with the consent, and the design is made', async () => {
   const r = rig([gated(), created('d_000000000009')]);
-  await r.lib.open(); await r.tick();
-  r.setText('A landing page');
-  r.host.querySelector('.ask-send').click(); await r.tick();
+  const result = r.run(); await r.tick();
   assert.deepEqual(r.posts, [FIRST]);
   assert.equal(r.doc.querySelectorAll('.viewer-modal').length, 1);
   assert.equal(r.dialog().querySelector('h2').textContent, 'Build on Codex?');
@@ -92,92 +85,72 @@ test('gated: one dialog names the engine and its reasons; Allow unguarded re-pos
   assert.equal(r.dialog().getAttribute('aria-labelledby'), r.dialog().querySelector('h2').id);
   assert.ok(r.dialog().textContent.includes(CODEX_SHELL), 'the reason is in the dialog');
   assert.deepEqual(r.buttons(), ['Cancel', 'Use Claude', 'Allow unguarded']);
-  assert.equal(r.host.querySelector('.dz-start-err').hidden, true, 'a gate is not a refusal under the box');
-  assert.equal(r.host.querySelector('.ask-send').disabled, true, 'Send stays busy while the dialog is open');
+  assert.ok(r.gate(), 'onGate holds the open dialog');
   await r.press('Allow unguarded');
   assert.deepEqual(r.posts[1], { ...FIRST, allowUnguarded: true, engine: 'codex' }, 'the engine the dialog named, never a re-resolve');
   assert.equal(r.dialog(), null);
-  assert.deepEqual(r.navs, ['#design/d_000000000009']);
-  assert.deepEqual(takeStart('d_000000000009'), { text: 'A landing page', files: [] });
-  assert.equal(r.input().value, '', 'the composer resets on the 201');
+  assert.equal(r.gate(), null, 'onGate hears the dialog close');
+  assert.deepEqual(await result, { ok: true, id: 'd_000000000009' });
 });
 
-test('refused: the title says it cannot build, no Allow unguarded; Use Claude re-posts engine claude; a refused claude offers neither', async () => {
+test('refused: the title says it cannot build, no Allow unguarded; Use Claude re-posts engine claude and the design is made; a refused claude offers only Cancel', async () => {
   const r = rig([refused(), created('d_00000000000a')]);
-  await r.lib.open(); await r.tick();
-  r.setText('A landing page');
-  r.host.querySelector('.ask-send').click(); await r.tick();
+  const result = r.run(); await r.tick();
   assert.equal(r.dialog().querySelector('h2').textContent, 'Goose cannot build designs');
   assert.ok(r.dialog().textContent.includes(GOOSE));
   assert.deepEqual(r.buttons(), ['Cancel', 'Use Claude']);
   await r.press('Use Claude');
   assert.deepEqual(r.posts, [FIRST, { ...FIRST, engine: 'claude' }]);
   assert.equal(r.dialog(), null);
-  assert.deepEqual(r.navs, ['#design/d_00000000000a']);
+  assert.deepEqual(await result, { ok: true, id: 'd_00000000000a' });
 
   const c = rig([refused({ engine: 'claude', label: 'Claude', error: 'no key', reasons: ['no key'] })]);
-  await c.lib.open(); await c.tick();
-  c.setText('A deck');
-  c.host.querySelector('.ask-send').click(); await c.tick();
+  void c.run(); await c.tick();
   assert.equal(c.dialog().querySelector('h2').textContent, 'Claude cannot build designs');
   assert.deepEqual(c.buttons(), ['Cancel']);
 });
 
-test('cancel, a second refusal, no second send: Enter posts nothing while the dialog is open; Cancel keeps the text; a 409 after Allow is written under the box', async () => {
+test('cancel, then a second refusal: Cancel resolves canceled after one post; a 409 after Allow is the server\'s words, with no second dialog', async () => {
   const note = 'Gemini CLI cannot read the picked project.';
   const r = rig([gated({ notes: [note] }), gated(), [409, { error: 'the credential broker is on', code: 'engine-refused', overridable: false, engine: 'codex', label: 'Codex', reasons: ['the credential broker is on'], notes: [] }]]);
-  await r.lib.open(); await r.tick();
-  r.setText('A landing page');
-  r.keydown(r.input(), 'Enter'); await r.tick();
+  const first = r.run(); await r.tick();
   assert.equal(r.posts.length, 1);
   assert.ok(r.dialog().textContent.includes(note), 'a note is a plain line too');
-  r.keydown(r.input(), 'Enter'); r.host.querySelector('.ask-send').click(); await r.tick();
-  assert.equal(r.posts.length, 1, 'no second send while the dialog is open');
   assert.equal(r.doc.querySelectorAll('.viewer-modal').length, 1, 'one dialog');
   await r.press('Cancel');
   assert.equal(r.dialog(), null);
-  assert.equal(r.input().value, 'A landing page');
-  assert.equal(r.host.querySelector('.ask-send').disabled, false, 'Send is ready again');
-  assert.equal(r.host.querySelector('.dz-start-err').hidden, true);
-  assert.deepEqual(r.navs, []);
+  assert.deepEqual(await first, { ok: false, error: '', canceled: true });
+  assert.equal(r.posts.length, 1, 'Cancel posts nothing');
 
-  r.host.querySelector('.ask-send').click(); await r.tick();
+  const second = r.run(); await r.tick();
   assert.equal(r.posts.length, 2);
   await r.press('Allow unguarded');
   assert.equal(r.posts.length, 3);
   assert.equal(r.dialog(), null, 'a second refusal opens no second dialog');
-  const err = r.host.querySelector('.dz-start-err');
-  assert.deepEqual([err.hidden, err.textContent], [false, 'the credential broker is on']);
-  assert.equal(r.input().value, 'A landing page');
-  assert.equal(r.host.querySelector('.ask-send').disabled, false);
-  assert.deepEqual(r.navs, []);
+  assert.deepEqual(await second, { ok: false, error: 'the credential broker is on' });
 });
 
-test('Escape is the dialog\'s Cancel; a 409 that is not the gate, or the gate\'s code on another status, stays a line under the box; leaving the Library takes an open dialog with it', async () => {
+test('Escape is the dialog\'s Cancel; a 409 that is not the gate, or the gate\'s code on another status, is the server\'s words with no dialog; close() takes an open dialog away', async () => {
   const r = rig([
     gated(),
     [409, { error: 'That design is busy.', code: 'conflict', engine: 'codex' }],
     [400, { error: 'nope is not an engine worca knows.', code: 'engine-refused', engine: 'nope' }],
     gated(),
   ]);
-  await r.lib.open(); await r.tick();
-  r.setText('A landing page');
-  r.host.querySelector('.ask-send').click(); await r.tick();
+  const escaped = r.run(); await r.tick();
   r.keydown(r.dialog(), 'Escape'); await r.tick();
   assert.equal(r.dialog(), null);
-  assert.equal(r.host.querySelector('.ask-send').disabled, false);
+  assert.deepEqual(await escaped, { ok: false, error: '', canceled: true });
 
-  r.host.querySelector('.ask-send').click(); await r.tick();
+  assert.deepEqual(await r.run(), { ok: false, error: 'That design is busy.' });
   assert.equal(r.dialog(), null, 'only engine-gated and engine-refused open the dialog');
-  assert.equal(r.host.querySelector('.dz-start-err').textContent, 'That design is busy.');
 
-  r.host.querySelector('.ask-send').click(); await r.tick();
+  assert.deepEqual(await r.run(), { ok: false, error: 'nope is not an engine worca knows.' });
   assert.equal(r.dialog(), null, 'only a 409 opens the dialog');
-  assert.equal(r.host.querySelector('.dz-start-err').textContent, 'nope is not an engine worca knows.');
 
-  r.host.querySelector('.ask-send').click(); await r.tick();
+  void r.run(); await r.tick();
   assert.ok(r.dialog());
-  made.pop().destroy();
+  r.gate().close();
   assert.equal(r.doc.querySelector('.viewer-modal'), null, 'no dialog left on document.body');
   r.keydown(r.doc.body, 'Escape');
   assert.equal(r.posts.length, 4);

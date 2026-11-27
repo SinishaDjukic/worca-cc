@@ -17,6 +17,9 @@
 //     patterns MUST carry a **/ prefix or they anchor to cwd and miss members
 //     on detached workspace runs.
 
+import { DEFAULT_SECRET_PATHS } from './secret-paths.mjs';
+import { SECRET_FILE_RULE_PATHS } from './secrets/files.mjs';
+
 export const DEFAULT_GUARDRAILS = Object.freeze({
   honorProjectSettings: true,
   envScrub: false,
@@ -34,21 +37,39 @@ const deepFreeze = (o) => {
   return Object.freeze(o);
 };
 
-// Credential-material file patterns every non-permissive level protects.
+// Credential-material file patterns every non-permissive level protects: the one secret-path list
+// (secret-paths.mjs: .env*, *.pem, *.key, .npmrc, .netrc, id_*) plus this module's own additions.
 const NORMAL_PROTECTED = [
-  '.env*',                 // .env, .env.local, .env.production, .envrc — any depth
-  '*.pem', '*.key',        // TLS / private key material
-  'id_rsa', 'id_ed25519',  // bare SSH keys checked into odd places
+  ...DEFAULT_SECRET_PATHS,
   '*.p12', '*.pfx',        // bundled cert+key stores
   '//run/secrets/**',      // container secrets (docker/compose `secrets:`); `//` = absolute
+  '//var/run/secrets/**',  // the same folder: /var/run links to /run on Debian, and Read rules match the path as written
 ];
 
-// Irreversible-publication commands no pipeline role ever needs.
+// The launcher spellings a prefix rule can match.
+const WORCA_LAUNCHERS = ['worca', 'worca-cc', 'npx worca', 'npx worca-cc', 'npx @worca/app', 'npm exec worca', 'npm exec @worca/app'];
+
+// Commands that read the OS keychain, write Worca's secrets out, move the vault aside, dismiss the message about the moved keys
+// moved keys or test the OS store (plain prefix forms only: a PowerShell credential read, a keyring-module read, a
+// version-pinned `npx @worca/app@1.2.3 …` or `node …/worca-cc.mjs secrets export` cannot be matched by a prefix rule;
+// the CLI's WORCA_HOST_PID refusal in src/cli/secrets.mjs backs them).
+const KEYCHAIN_DENY = [
+  'security find-generic-password', 'security find-internet-password', 'security find-key', 'security dump-keychain',
+  'security export', 'secret-tool lookup', 'secret-tool search',
+  ...['export', 'reset', 'ack', 'status --check'].flatMap((verb) => WORCA_LAUNCHERS.map((l) => `${l} secrets ${verb}`)),
+  // Lifting the CLI's agent refusal (WORCA_HOST_PID) is denied too. Every `env -i` command is refused for pipeline
+  // agents on purpose, because it strips the variable the secrets CLI uses to refuse agents; refusing a harmless
+  // `env -i` use is the accepted cost.
+  'env -u WORCA_HOST_PID', 'env --unset=WORCA_HOST_PID', 'unset WORCA_HOST_PID', 'env -i', 'env --ignore-environment',
+].flatMap((c) => [`Bash(${c})`, `Bash(${c}:*)`]);
+
+// Irreversible-publication commands no pipeline role ever needs, and the keychain reads.
 const NORMAL_DENY = [
   'Bash(git push)', 'Bash(git push:*)',
   'Bash(npm publish)', 'Bash(npm publish:*)',
   'Bash(yarn publish)', 'Bash(yarn publish:*)',
   'Bash(pnpm publish)', 'Bash(pnpm publish:*)',
+  ...KEYCHAIN_DENY,
 ];
 
 // Worca's own state (Read+Edit protected): the DB, MCP/plugin secrets, settings
@@ -63,6 +84,15 @@ const WORCA_STATE_PROTECTED = [
   '//**/.worca-cc/settings.json',
   '//**/.worca-cc/mcp/**',
 ];
+
+// Worca's secret files (the proxy login, the vault, its wrapped key and their temp and moved-aside copies),
+// root-anchored so they are denied under any home, `~/.worca-cc` or a custom one, wherever the agent's cwd is.
+const SECRET_FILES_PROTECTED = [...SECRET_FILE_RULE_PATHS];
+
+// The floor every policy with rules carries (guardrailsToPermissionRules). gateRules removes it before the engine
+// gates weigh a set, so it never changes a gate's outcome or text.
+const SECRET_FLOOR = [...SECRET_FILE_RULE_PATHS.flatMap((p) => [`Read(${p})`, `Edit(${p})`]), ...KEYCHAIN_DENY];
+const SECRET_FLOOR_RULES = Object.freeze(new Set(SECRET_FLOOR));
 
 // Code the Worca server later loads: Edit-only denies (agents may still READ
 // plugin skills etc.), so a prompt-injected agent can't plant host code or
@@ -91,7 +121,7 @@ export const GUARDRAIL_PRESETS = deepFreeze({
     honorProjectSettings: true,
     envScrub: false,
     envAllowlist: [],
-    protectedPaths: [...NORMAL_PROTECTED, ...WORCA_STATE_PROTECTED],
+    protectedPaths: [...NORMAL_PROTECTED, ...WORCA_STATE_PROTECTED, ...SECRET_FILES_PROTECTED],
     deny: [...NORMAL_DENY, ...WORCA_STATE_DENY],
   },
   secure: {
@@ -101,7 +131,7 @@ export const GUARDRAIL_PRESETS = deepFreeze({
     protectedPaths: [
       ...NORMAL_PROTECTED,
       ...WORCA_STATE_PROTECTED,
-      '.npmrc', '.netrc',            // token-bearing rc files (project-level)
+      ...SECRET_FILES_PROTECTED,
       '*.tfstate*',                  // terraform state embeds raw secrets
       '*.keystore', '*.jks',
       '**/secrets/**',               // slash-containing ⇒ needs **/ (anchoring)
@@ -284,7 +314,26 @@ export function guardrailsToPermissionRules(g) {
   // is the load-bearing secret guard; a Read deny also blocks Edit (≥2.1.208).
   for (const p of gg.protectedPaths) { push(`Read(${p})`); push(`Edit(${p})`); }
   for (const r of gg.deny) push(r);
+  // A policy with any rule also denies Worca's secret files and keychain reads; one with none stays null, so a
+  // permissive spawn's argv is unchanged.
+  if (deny.length) for (const r of SECRET_FLOOR) push(r);
   return deny.length ? { deny } : null;
+}
+
+/**
+ * `rules` without the secret-file floor, for the engine gates: they weigh exactly the rules the set had before
+ * the floor, so the floor never refuses a run on an engine that holds it only in part. Pure.
+ * @param {{deny?:string[], allow?:string[], ask?:string[]}|null|undefined} rules
+ * @returns {{deny?:string[], allow?:string[], ask?:string[]}|null}
+ */
+export function gateRules(rules) {
+  if (!rules) return null;
+  const out = {};
+  for (const key of ['deny', 'allow', 'ask']) {
+    const arr = Array.isArray(rules[key]) ? (key === 'deny' ? rules[key].filter((r) => !SECRET_FLOOR_RULES.has(r)) : rules[key]) : [];
+    if (arr.length) out[key] = arr;
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 /** De-duped union of two {deny?,allow?,ask?} rule objects. null when empty. */

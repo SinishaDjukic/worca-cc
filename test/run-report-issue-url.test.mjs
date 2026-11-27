@@ -5,7 +5,7 @@ import { buildIssueUrl, renderIssueBody, issueTitle, ISSUE_URL_MAX }
   from '../src/core/run-report.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
-const BUGS = 'https://github.com/SinishaDjukic/worca-cc/issues';
+const BUGS = 'https://github.com/worca-org/worca/issues';
 
 /**
  * A MAXIMAL payload: every opt-in field a reporter can unlock is present, each

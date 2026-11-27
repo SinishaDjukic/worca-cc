@@ -391,3 +391,24 @@ test('placed below its button with placeFlyout, and placed again when the page s
   doc.dispatchEvent(new doc.defaultView.Event('scroll'));
   assert.equal(menu.style.top, '98px');
 });
+
+test('#1450: the "Let Claude Code decide" item exists only with decideLabel, after the clear item, and maps to { cliDecides: true }', () => {
+  assert.equal(items({}).some((i) => i.act?.type === 'cli'), false);
+  const main = items({ decideLabel: 'Let Claude Code decide' });
+  assert.deepEqual([main[0].act, main[1].label, main[1].act, main[1].tick], [{ type: 'clear' }, 'Let Claude Code decide', { type: 'cli' }, false]);
+  const ticked = items({ decideLabel: 'Let Claude Code decide', value: { cliDecides: true } });
+  assert.equal(ticked[1].tick, true);
+  assert.equal(ticked[0].tick, false, 'cliDecides is not the empty role');
+  assert.deepEqual(applyPick(null, { type: 'cli' }, { catalog: CAT, engine: 'claude' }), { cliDecides: true });
+  assert.deepEqual(applyPick({ cliDecides: true }, { type: 'model', id: 'claude-opus-5-5' }, { catalog: CAT, engine: 'claude' }), { model: 'claude-opus-5-5' });
+  assert.equal(applyPick({ cliDecides: true }, { type: 'clear' }, { catalog: CAT, engine: 'claude' }), null);
+});
+
+test('#1450: openModelPicker passes decideLabel through and reports the cli pick', () => {
+  const { doc, picks, open } = setup();
+  open({ decideLabel: 'Let Claude Code decide' });
+  const row = itemNamed(doc, 'Let Claude Code decide');
+  assert.ok(row, 'the menu shows the item');
+  row.click();
+  assert.deepEqual(picks.at(-1), { cliDecides: true });
+});

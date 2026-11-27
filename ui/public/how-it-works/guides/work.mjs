@@ -35,8 +35,8 @@ export const WORK_GUIDES = {
     title: 'How Design works',
     tour: null,
     steps: [
-      { id: 'library', title: 'The Library', paras: [
-        'Design opens a Library of everything you have made, with a composer on top that asks “What should we design?”.',
+      { id: 'library', title: 'Your designs', paras: [
+        'Design opens on “What should we design?” with your newest designs under it. Show all designs lists every one, and Search designs finds one by name or kind.',
         'Describe what you want, attach a logo or notes, and send.',
       ] },
       { id: 'kinds', title: 'Pick a kind', paras: [
@@ -52,7 +52,9 @@ export const WORK_GUIDES = {
       ] },
     ],
     controls: [
-      { label: 'What should we design?', file: 'ui/public/design/library.mjs' },
+      { label: 'What should we design?', file: 'ui/public/design/studio.mjs' },
+      { label: 'Show all designs', file: 'ui/public/design/designs-grid.mjs' },
+      { label: 'Search designs', file: 'ui/public/design/designs-grid.mjs' },
       { label: 'Rename', file: 'ui/public/design/library.mjs' },
       { label: 'Delete', file: 'ui/public/design/library.mjs' },
     ],

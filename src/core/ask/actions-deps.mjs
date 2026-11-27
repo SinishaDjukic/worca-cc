@@ -79,7 +79,7 @@ async function workspaceStacks(id) {
 }
 
 /** Why Check out is refused for this row, or null when it is offered (checkout.mjs assertEligible's words). */
-function checkoutBlocked(row) {
+export function checkoutBlocked(row) {
   if (!gitAvailable()) return GIT_MISSING.message;
   if (row.archived_at) return 'the run is archived';
   if (!FINISHED.has(row.status)) return 'Check out is available once the run has finished';

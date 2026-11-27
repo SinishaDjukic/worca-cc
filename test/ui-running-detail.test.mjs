@@ -7,10 +7,13 @@ import { confirmDialog } from './helpers/confirm-modal.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { openTab } from './helpers/run-tabs.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { ASK_IN_CHAT } from '../ui/public/run-head.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
+import { careRunPlan } from '../src/shared/shape/feature-record.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -144,6 +147,10 @@ async function bootRunning({ budget = okBudget(), rows = [HISTORY_ROW] } = {}) {
       if (box.slice && /\/api\/shape\/pipelines\/[^/]+\/slice$/.test(url)) return ok(box.slice);
       // The run's saved state (rdLoadData), only when a test sets box.runData.
       if (box.runData && url.startsWith('/api/runs/p1?')) return ok(box.runData);
+      // s5: one saved run's detail ({id, body}), only when a test sets box.detail.
+      if (box.detail && url.endsWith(`/api/history/${KEY}/${box.detail.id}`)) return ok(box.detail.body);
+      // C5: the run's PR-when-done answer, only when a test sets box.prAuto.
+      if (box.prAuto && url.endsWith('/api/pipelines/p-verify/pr-auto')) return ok({ prAuto: box.prAuto });
       return null;
     },
   });
@@ -445,6 +452,20 @@ test('waiting for the network: a hello paints the banner naming the host; a stat
   assert.equal(window.document.querySelector('#run-detail .rd-banners .net-wait-banner'), null, 'the network is back: no banner');
 });
 
+test('an E2B run lists the files from the sandbox to review before running them here; a state frame adds to the list', async () => {
+  const one = [{ path: 'package.json', why: 'npm scripts postinstall added or changed' }];
+  const { window, recv } = await openDetail({ run: { execEnv: 'e2b', execEnvReview: one } });
+  const banner = () => window.document.querySelector('#run-detail .rd-banners .exec-review-banner');
+  assert.ok(banner(), 'the banner renders from the first hello');
+  assert.match(banner().textContent, /Review them before running them here/);
+  assert.match(banner().textContent, /package\.json: npm scripts postinstall/);
+  recv({ type: 'state', runId: ID, status: 'running', steps: [], execEnv: 'e2b',
+    execEnvReview: [...one, { path: '.vscode/tasks.json', why: 'VS Code workspace config' }] });
+  await settle(window);
+  assert.equal(banner().querySelectorAll('li').length, 2);
+  assert.match(banner().textContent, /\.vscode\/tasks\.json/);
+});
+
 test('the recovery body carries the network note only when the prompt waits for the network', async () => {
   const until = new Date(Date.now() + 3_600_000).toISOString();
   const net = await openDetail();
@@ -540,17 +561,21 @@ test('a NEW question replaces the panel even though one was already painted', as
 
 // --- T7: tabs ---------------------------------------------------------------
 
-test('Details has nine tabs, results first; the route picks the open one', async () => {
+test('Details has nine tabs, the reading tabs in the row and the rest under More; the route picks the open one', async () => {
   const ctx = await bootRunning();
   await openRun(ctx);
   const { window } = ctx;
   const tabs = [...window.document.querySelectorAll('#run-detail .rd-tab')];
-  assert.deepEqual(tabs.map((b) => b.dataset.sec), ['overview', 'task', 'diff', 'artifacts', 'actions', 'workflow', 'qa', 'logs', 'agents']);
+  assert.deepEqual(tabs.map((b) => b.dataset.sec), ['overview', 'task', 'diff', 'artifacts', 'qa', 'logs', 'actions', 'workflow', 'agents']);
   assert.match(tabs[0].textContent, /Overview/);
   assert.match(tabs[1].textContent, /Task/);
-  assert.match(tabs[4].textContent, /Actions/);
-  assert.match(tabs[7].textContent, /Logs/);
-  assert.match(tabs[6].textContent, /Q&A/);
+  assert.match(tabs[6].textContent, /Actions/);
+  assert.match(tabs[5].textContent, /Logs/);
+  assert.match(tabs[4].textContent, /Q&A/);
+  click(window, window.document.querySelector('#run-detail .rd-tabs > .tab-more'));
+  assert.deepEqual([...window.document.querySelectorAll('body > .wfv-menu .wfv-menu-l')].map((n) => n.textContent),
+    ['Actions', 'Workflow', 'Agents']);
+  click(window, window.document.querySelector('#run-detail .rd-tabs > .tab-more'));
   // openRun lands on #running/r1/details/logs.
   assert.equal(window.document.querySelector('#run-detail .rd').dataset.mode, 'details');
   assert.ok(tabOf(window, 'logs').classList.contains('active'), 'the routed tab is open');
@@ -687,7 +712,7 @@ test('a state frame for the open run repaints the ACTIVE section only', async ()
   assert.equal(agents.dataset.loaded, undefined, 'the hidden section was re-armed');
   // The badge tracks the live count even while its tab is hidden.
   assert.equal(tabOf(window, 'agents').querySelector('.rd-tab-badge').textContent, '3');
-  click(window, tabOf(window, 'agents'));
+  openTab(window, tabOf(window, 'agents'));
   await settle(window);
   assert.equal(agents.querySelectorAll('.rd-ag-row').length, 3, 'rebuilt against current data');
 });
@@ -1265,6 +1290,18 @@ test('a live run\'s route ends at its base branch, where the work lands once the
   assert.equal(R.querySelector('.rd-route-fold'), null);
 });
 
+test('C5: a live Verifier run (PR-exempt as verify) says why it opens no PR, once its pr-auto answer lands; no "Lands here"', async () => {
+  const ctx = await bootRunning();
+  ctx.box.prAuto = { exempt: 'verify' };
+  // Its own pipeline id: pr-auto-view's answer cache is shared by every app boot in this file (p1 is asked elsewhere).
+  const rd = await openGlance(ctx, 'running/r1', { id: 'p-verify', branch: { source: 'main', feature: 'worca-cc/verify-p1', worktreeDir: '/tmp/wt' } });
+  await settle(ctx.window, 6);
+  const rows = [...rd.querySelectorAll('.rd-route .rd-route-row')];
+  assert.equal(rows.length, 2, 'the branch and the PR row; nothing lands');
+  assert.equal(rows[1].querySelector('.rd-route-second').textContent, 'The Verifier checks the feature; it opens no PR of its own');
+  assert.ok(!/Opens when the changes are done|Lands here/.test(rd.querySelector('.rd-route').textContent));
+});
+
 test('needle (c): at Advanced and Expert the ▾ lists one Watch switch, whose click POSTs /api/pr/watch', async () => {
   await checkRows(['advanced', 'expert'].map((level) => ({ name: level, run: async () => {
     const { ctx, calls, menu, openMenu } = await prGlance({ level });
@@ -1525,6 +1562,89 @@ test('Details › Diff reads the live worktree while the run goes', async () => 
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/live-diff')).length, 1);
 });
 
+// --- Diff: open the run's changes in the editor (diff-open-editor.mjs) ------------
+const OPEN_PATCH = 'diff --git a/src/limiter.js b/src/limiter.js\n--- a/src/limiter.js\n+++ b/src/limiter.js\n@@ -3,2 +5,2 @@\n-a\n+b\n'
+  + 'diff --git a/.env b/.env\nnew file mode 100644\n--- /dev/null\n+++ b/.env\n@@ -0,0 +1 @@\n+K=v\n';
+const liveModel = (builtins = [{ key: 'editor', label: 'Cursor' }], over = {}) => ({ enabled: true, finished: false, workspace: false,
+  checkoutBlocked: 'Check out is available once the run has finished',
+  members: [{ projectKey: KEY, state: 'not-checked-out', builtins }], ...over });
+async function openLiveDiff({ model }) {
+  const posts = [];
+  const box = { model };
+  const ctx = await boot({ fetchHandler: (url, opts) => {
+    if (url.endsWith('/api/runs/r1/live-diff')) {
+      return ok({ results: { summary: { filesNew: 1, filesChanged: 1, linesAdded: 2, linesRemoved: 1 },
+        newFiles: [{ path: '.env', status: 'A', added: 1, removed: 0 }],
+        changedFiles: [{ path: 'src/limiter.js', status: 'M', added: 1, removed: 1 }] },
+        patch: OPEN_PATCH, untrackedCapped: false, protectedPaths: ['.env'] });
+    }
+    if (url.startsWith('/api/runs/p1/actions?')) return ok(typeof box.model === 'function' ? box.model() : box.model);
+    if (url.startsWith('/api/runs/p1/open-in-editor?')) { posts.push({ url, body: JSON.parse(opts.body) }); return ok({ ok: true }); }
+    if (url.endsWith('/api/history')) return ok({ pipelines: [], ghAvailable: false });
+    if (url.endsWith('/api/budget')) return ok(okBudget());
+    return null;
+  } });
+  frame(ctx, { type: 'hello', runs: [] });
+  await settle(ctx.window, 6);
+  await openGlance(ctx, 'running/r1/details/diff');
+  await settle(ctx.window, 8);
+  return { ctx, window: ctx.window, sec: secOf(ctx.window, 'diff'), posts, box };
+}
+const rowOf = (sec, path) => [...sec.querySelectorAll('.rd-diff-row')].find((b) => b.dataset.path === path);
+
+test('Diff: a live run offers Open in Cursor and opens its worktree', async () => {
+  const { window, sec, posts } = await openLiveDiff({ model: liveModel() });
+  const note = sec.querySelector('.rd-diff-note');
+  assert.equal(note.firstElementChild.textContent, 'Live: edits you make there go into the run.');
+  const end = note.querySelector('.rd-diff-note-end');
+  assert.deepEqual([...end.children].map((b) => b.className), ['btn btn-sm rd-diff-refresh', 'btn btn-sm rd-diff-open']);
+  const open = end.querySelector('.rd-diff-open');
+  assert.equal(open.textContent, 'Open in Cursor');
+  assert.equal(sec.textContent.split('Cursor').length - 1, 1, 'the editor name shows once (the icon carries it only in its tooltip)');
+  open.click();
+  await settle(window, 4);
+  assert.deepEqual(posts.map((p) => p.body), [{}], 'the whole worktree: no member, no file');
+  assert.match(posts[0].url, /^\/api\/runs\/p1\/open-in-editor\?/);
+});
+
+test('Diff: the file head icon opens the file at its first changed line; a protected file gets none', async () => {
+  const { window, sec, posts } = await openLiveDiff({ model: liveModel() });
+  rowOf(sec, 'src/limiter.js').click();
+  await settle(window, 2);
+  const icon = sec.querySelector('.hd-diff-pane-head .hd-diff-head-end > .hd-diff-open');
+  assert.equal(icon.title, 'Open limiter.js in Cursor', 'a live run opens its worktree: no checkout first');
+  icon.click();
+  await settle(window, 4);
+  assert.deepEqual(posts.map((p) => p.body), [{ file: 'src/limiter.js', line: 5 }]);
+  rowOf(sec, '.env').click();
+  await settle(window, 2);
+  assert.equal(sec.querySelector('.hd-diff-pane-head .hd-diff-path').textContent, '.env');
+  assert.equal(sec.querySelector('.hd-diff-open'), null, 'the protected floor refuses it, so no icon');
+});
+
+test("Diff: no editor → no Open button and today's hint", async () => {
+  const { sec } = await openLiveDiff({ model: liveModel([{ key: 'terminal', label: 'Terminal' }]) });
+  assert.equal(sec.querySelector('.rd-diff-note').firstElementChild.textContent, 'Live: the worktree right now, against where the run started.');
+  assert.equal(sec.querySelector('.rd-diff-refresh').hidden, false);
+  assert.equal(sec.querySelector('.rd-diff-open'), null);
+  assert.equal(sec.querySelector('.hd-diff-open'), null);
+  const off = await openLiveDiff({ model: liveModel(undefined, { enabled: false }) });
+  assert.equal(off.sec.querySelector('.rd-diff-open'), null, 'actions off (hosted): neither control');
+  assert.equal(off.sec.querySelector('.hd-diff-open'), null);
+});
+
+test('Diff: the Open button goes when the run finishes', async () => {
+  const { ctx, window, sec, box } = await openLiveDiff({ model: liveModel() });
+  assert.ok(sec.querySelector('.rd-diff-open'));
+  box.model = liveModel(undefined, { finished: true, checkoutBlocked: null });
+  const reads = () => ctx.calls.filter((c) => c.url.startsWith('/api/runs/p1/actions?')).length;
+  const before = reads();
+  frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+  await settle(window, 10);
+  assert.equal(secOf(window, 'diff').querySelector('.rd-diff-open'), null);
+  assert.ok(reads() > before, 'the stale live model is read again');
+});
+
 // --- Live view is gone: the graph lives only in the Workflow tab -------------
 
 test('live graph: a running graph run shows its workflow in the card\'s right column (no switch); a click opens Workflow', async () => {
@@ -1542,6 +1662,17 @@ test('live graph: a running graph run shows its workflow in the card\'s right co
   await settle(window, 4);
   assert.match(window.location.hash, /\/details\/workflow$/, 'a click opens the Workflow tab');
   assert.ok(secOf(window, 'workflow').querySelector('.rd-graph .run-flow'), 'the full graph lives in Workflow');
+});
+
+test('live graph: the Chat run panel keeps it (CSS hides it only while the panel is narrow)', async () => {
+  const ctx = await bootRunning();
+  const { window } = ctx;
+  const rd = await openGlance(ctx);
+  rd.dataset.presentation = 'panel';   // as presentRunScreenInPanel sets it
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: GLANCE_MANIFEST,
+    active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }], steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 0.6 });
+  await settle(window, 6);
+  assert.equal(rd.querySelector('.rd-sheet-nav > .rd-live').hidden, false, 'a running graph run shows it in the panel too');
 });
 
 // #555: a run-page action that fails is said where the user is — a toast — not only in the run log.
@@ -1681,7 +1812,7 @@ test('Agents (live): a sub-agent type named like an Object member keeps its own 
     subAgents: [row('s1', 'constructor'), row('s2', 'toString'), row('s3', '__proto__')],
   });
   const { window } = ctx;
-  click(window, tabOf(window, 'agents'));
+  openTab(window, tabOf(window, 'agents'));
   await settle(window);
   assert.deepEqual([...secOf(window, 'agents').querySelectorAll('.rd-ag-row .agent-type-pill')].map((p) => p.textContent),
     ['constructor', 'toString', '__proto__']);
@@ -2360,6 +2491,139 @@ test('the run page shows Resuming… at the Resume click, and a refusal that ask
   ]);
 });
 
+// ── Shaper small runs D2 (D11, D16): one Agents place, the run's facts, the done-key refetch ─────────────────────────
+const d2Agent = (id, key) => ({ id, kind: 'agent', key, x: 0, y: 0, label: key, ports: { inputs: [], outputs: [] } });
+const d2Manifest = (careRun) => ({ version: 2, template: { id: 'wf_shape_slice_req' },
+  graph: { nodes: [['n_clarify', 'clarify'], ['n_plan', 'planner'], ['n_refine', 'refiner'], ['n_impl', 'implementer'], ['n_review', 'reviewer'],
+    ['n_roles', 'planReviewer'], ['n_tests', 'testWriter']].map(([id, key]) => d2Agent(id, key)), wires: [] }, ...(careRun ? { careRun } : {}) });
+const d2Row = (nodeId, status = 'done') => ({ key: `x:${nodeId}:1`, executionId: `x:${nodeId}:1`, nodeId, ordinal: 1, cycle: 1, status, startedAt: '2026-11-21T10:00:00Z' });
+const D2_CARE = careRunPlan('balanced', { runRoles: ['product', 'architect'] });
+const d2Steps = (done = ['n_clarify', 'n_plan', 'n_roles', 'n_refine'], live = 'n_tests') => done.map((id) => d2Row(id)).concat(live ? [d2Row(live, 'start')] : []);
+const D2_SLICE = { featureId: 'feat_d2', title: 'Charts everywhere', index: 2, total: 3, sliceTitle: 'Export', state: 'running', next: null, threadId: null,
+  owns: [{ id: 'R-po-1', text: 'Export the report', pass: null }, { id: 'R-arch-10', text: 'It stays fast', pass: true }],
+  startsFrom: { kind: 'run', run: 1, branch: 'f/1', text: 'the latest finished run (run 1)' },
+  stored: { planVersion: 2, planReviewed: true, tests: null } };
+const sliceGets = (ctx) => ctx.calls.filter((c) => /\/api\/shape\/pipelines\/p1\/slice$/.test(c.url)).length;
+const visibleAgentsPlaces = (window) => {
+  const d = window.document;
+  const box = [...d.querySelectorAll('#run-detail .rd-run-agents')].filter((x) => !x.hidden && !x.closest('[hidden]'));
+  const tab = [...d.querySelectorAll('#run-detail .rd-tab[data-sec="agents"]')].filter((x) => !x.hidden);
+  return box.length + tab.length;
+};
+async function openCareRun({ flag = true, slice = D2_SLICE, careRun = D2_CARE, route = 'running/r1', state = {} } = {}) {
+  const ctx = await bootRunning();
+  if (flag) applyFlags({ shaperSmallRuns: true }, ctx.window.document);
+  if (slice !== undefined) ctx.box.slice = slice;
+  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Export', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  // careRun null: no manifest yet (the client swaps a manifest only when its node ids change, so careRun comes with it).
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', ...(careRun ? { stepper: d2Manifest(careRun) } : {}), steps: d2Steps(),
+    active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }], subAgents: SUBS(),
+    branch: { source: 'main', feature: 'f/2', worktreeDir: '/tmp/wt' }, ...state });
+  go(ctx.window, route);
+  await settle(ctx.window, 8);
+  return ctx;
+}
+
+test('D2 (D11): flag on, a Care run at Expert: the Agents tab is hidden, one visible .rd-run-agents with an expert .rd-run-subagents of dev\'s groups', async () => {
+  const ctx = await openCareRun();
+  const { window } = ctx;
+  assert.equal(tabOf(window, 'agents').hidden, true);
+  assert.equal(visibleAgentsPlaces(window), 1);
+  const sub = window.document.querySelector('#run-detail .rd-run-agents > .rd-run-subagents');
+  assert.ok(sub, 'dev\'s sub-agent detail is reachable');
+  assert.equal(sub.dataset.minLevel, 'expert');
+  assert.ok(sub.querySelector('.rd-ag-group'), 'dev\'s own groups');
+  assert.equal(sub.previousElementSibling.classList.contains('run-agents'), true, 'under the rows');
+});
+
+test('D2 (D11): a frame without careRun (no manifest yet), then one with it: 1 Agents place; an active, focused Agents tab hands over to Overview', async () => {
+  const ctx = await openCareRun({ careRun: null, route: 'running/r1/details/agents' });
+  const { window } = ctx;
+  assert.equal(visibleAgentsPlaces(window), 1, 'no careRun: dev\'s tab, no box');
+  assert.ok(tabOf(window, 'agents').classList.contains('active'));
+  tabOf(window, 'agents').focus();
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE), steps: d2Steps(),
+    active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }], subAgents: SUBS() });
+  await settle(window, 8);
+  assert.equal(tabOf(window, 'agents').hidden, true);
+  assert.ok(tabOf(window, 'overview').classList.contains('active'));
+  assert.equal(window.document.activeElement, tabOf(window, 'overview'));
+  assert.equal(visibleAgentsPlaces(window), 1);
+});
+
+test('D2 (D11): #running/ID/details/agents with the flag on lands on a visible Overview (active tab overview)', async () => {
+  const ctx = await openCareRun({ route: 'running/r1/details/agents' });
+  const { window } = ctx;
+  const active = window.document.querySelector('#run-detail .rd-tab.active');
+  assert.equal(active.dataset.sec, 'overview');
+  assert.equal(secOf(window, 'overview').hidden, false);
+  assert.equal(secOf(window, 'agents').hidden, true);
+});
+
+test('D2 (D10, D16): the facts paint from /slice once each; a done-key change asks again exactly once, an identical frame never', async () => {
+  const ctx = await openCareRun();
+  const { window } = ctx;
+  const d = window.document;
+  const facts = d.querySelectorAll('#run-detail .rd-run-facts');
+  assert.equal(facts.length, 1);
+  assert.equal(facts[0].nextElementSibling, d.querySelector('#run-detail .rd-run-agents'), 'before the Agents box');
+  const ov = secOf(window, 'overview').closest('.rd') || d.querySelector('#run-detail');
+  assert.equal((ov.textContent.match(/Starts from/g) || []).length, 1);
+  for (const id of ['R-po-1', 'R-arch-10']) assert.equal([...ov.querySelectorAll('.plan-check-id')].filter((x) => x.textContent === id).length, 1, id);
+  const planner = [...d.querySelectorAll('#run-detail .run-agents .plan-check-row')].find((r) => r.querySelector('.plan-check-label').textContent === 'Planner');
+  assert.equal(planner.querySelector('.plan-check-detail').textContent, 'plan v2 · after the plan review');
+  const before = sliceGets(ctx);
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE), steps: d2Steps(),
+    active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }], subAgents: SUBS() });
+  await settle(window, 8);
+  assert.equal(sliceGets(ctx), before, 'an identical frame asks nothing');
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE),
+    steps: d2Steps(['n_clarify', 'n_plan', 'n_roles', 'n_refine', 'n_tests'], 'n_impl'), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }], subAgents: SUBS() });
+  await settle(window, 8);
+  assert.equal(sliceGets(ctx), before + 1, 'a done-key change asks once');
+  assert.equal(d.querySelectorAll('#run-detail .rd-run-facts').length, 1);
+});
+
+test('D2 (D16): a /slice 500 creates no facts node; flag on, an unmarked feature or a dev run: no node, no refetch on done keys', async () => {
+  const fail = await bootRunning();
+  applyFlags({ shaperSmallRuns: true }, fail.window.document);
+  const boot500 = fail;
+  boot500.box.slice = null;
+  const orig = boot500.window.fetch;
+  boot500.window.fetch = (u, o) => (/\/slice$/.test(String(u)) ? (boot500.calls.push({ url: String(u) }), Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) })) : orig(u, o));
+  globalThis.fetch = boot500.window.fetch;
+  frame(boot500, { type: 'run-created', runId: 'r1', title: 'Export', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(boot500, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE), steps: d2Steps(), active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }] });
+  go(boot500.window, 'running/r1');
+  await settle(boot500.window, 8);
+  assert.ok(sliceGets(boot500) >= 1, 'it asked');
+  assert.equal(boot500.window.document.querySelector('#run-detail .rd-run-facts'), null);
+
+  const { owns, startsFrom, stored, ...unmarked } = D2_SLICE;
+  assert.ok(owns && startsFrom && stored);
+  for (const slice of [unmarked, null]) {
+    const ctx = await openCareRun({ slice });
+    const before = sliceGets(ctx);
+    assert.equal(ctx.window.document.querySelector('#run-detail .rd-run-facts'), null);
+    frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE),
+      steps: d2Steps(['n_clarify', 'n_plan', 'n_roles', 'n_refine', 'n_tests'], 'n_impl'), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }] });
+    await settle(ctx.window, 8);
+    assert.equal(sliceGets(ctx), before, 'no refetch for a run without owns');
+    assert.equal(ctx.window.document.querySelector('#run-detail .rd-run-facts'), null);
+  }
+});
+
+test('D2: flag off: no .rd-run-facts, no /slice ask from the Overview, dev\'s Agents tab and tab order', async () => {
+  const ctx = await openCareRun({ flag: false });
+  const { window } = ctx;
+  assert.equal(window.document.querySelector('#run-detail .rd-run-facts'), null);
+  assert.equal(window.document.querySelector('#run-detail .rd-run-subagents'), null);
+  assert.equal(tabOf(window, 'agents').hidden, false);
+  assert.equal(visibleAgentsPlaces(window), 2, 'dev: the tab and C2\'s box');
+  assert.deepEqual([...window.document.querySelectorAll('#run-detail .rd-tab')].map((b) => b.dataset.sec),
+    ['overview', 'task', 'diff', 'artifacts', 'qa', 'logs', 'actions', 'workflow', 'agents']);
+});
+
 // --- The run time is the engine's elapsed clock; the summed step time is "agent time" ----------
 // A state frame carries `elapsedMs` (folded) + `elapsedSince` (the anchor). The header and the
 // Overview time tile read it and tick 1 s per second, however many steps run at once.
@@ -2493,4 +2757,154 @@ test('a live run whose state carries no elapsed figure still shows the summed ti
     assert.equal(rdHeadTime(window).textContent, '12s', 'as before: the sum of the running steps');
     assert.equal(tileTime(window), '12s');
   } finally { c.restore(); }
+});
+
+// --- Shaper small runs s5 (R-arch-1): the run page head reads the member's shared run status ---------------------------
+const S5_MEMBER = (position, pipelineId, status, slice) => ({ position, title: `Slice ${position}`, pipelineId, ticketId: null, status,
+  pr: null, ticket: null, adhoc: false, after: null, slice: { kind: null, waitsFor: [], buildsOn: [], ...slice } });
+const S5_GROUP = (members) => [{ id: 'feat_s5', kind: 'feature', title: 'Charts', smallRuns: true, projectKey: null, planning: null,
+  cost: { usd: 0, byPipeline: {} }, members }];
+async function s5Groups(ctx, members) {
+  applyFlags({ shaperSmallRuns: true }, ctx.window.document);
+  ctx.box.groups = S5_GROUP(members);
+  frame(ctx, { type: 'run-groups-changed' });
+  await settle(ctx.window, 6);
+}
+const s5HeadOf = (block) => ({ word: block.querySelector('.run-status-word').textContent,
+  detail: block.querySelector('.run-status-detail').hidden ? '' : block.querySelector('.run-status-detail').textContent,
+  dot: block.querySelector('.run-status-head .status-dot') });
+
+test('s5 run page head: a marked member with an open stop reads \'waiting for you\' with \'?\'; a done member keeps dev\'s head', async () => {
+  const ctx = await bootRunning();
+  await s5Groups(ctx, [S5_MEMBER(1, 'p0', 'done', { state: 'done' }), S5_MEMBER(2, 'p1', 'running', { state: 'questions', buildsOn: [1] })]);
+  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1 });
+  frame(ctx, { type: 'question', runId: 'r1', ...clarify() });
+  go(ctx.window, 'running/r1');
+  await settle(ctx.window, 8);
+  const screen = ctx.window.document.querySelector('#run-detail');
+  assert.equal(statusOf(screen).dataset.state, 'needs-you');
+  const head = s5HeadOf(statusOf(screen));
+  assert.equal(head.word, 'waiting for you');
+  assert.equal(head.dot.dataset.symbol, 'question');
+  assert.doesNotMatch(head.detail, /needs you/i, head.detail);
+  assert.match(stateLine(ctx.window).textContent, /^waiting for you/, 'the header state line reads the shared word');
+  assert.equal(stateLine(ctx.window).querySelector('.status-dot').dataset.symbol, 'question');
+
+  frame(ctx, { type: 'run-created', runId: 'r0', title: 'Slice one', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T09:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r0', id: 'p0', status: 'done', endReached: true, stepper: V2_MANIFEST, steps: V2_STEPS().map((x) => ({ ...x, status: 'done' })), active: [], subAgents: [], totalCostUsd: 1 });
+  go(ctx.window, 'running/r0');
+  await settle(ctx.window, 8);
+  assert.equal(statusOf(screen).dataset.state, 'ready');
+  assert.match(s5HeadOf(statusOf(screen)).word, /^Ready/, 'the ship line stays (D9)');
+});
+
+test('s5 saved run page head: a marked member that failed reads the shared word \'failed\' with \'!\' and no dev state word', async () => {
+  const ctx = await bootRunning({ rows: [HISTORY_ROW, { ...HISTORY_ROW, id: 'p2', status: 'error' }] });
+  ctx.box.detail = { id: 'p2', body: { state: { id: 'p2', status: 'error', steps: [] }, results: null } };
+  await s5Groups(ctx, [S5_MEMBER(1, 'p0', 'done', { state: 'done' }), S5_MEMBER(2, 'p2', 'error', { state: 'error', buildsOn: [1] })]);
+  go(ctx.window, `history/${KEY}/p2`);
+  await settle(ctx.window, 10);
+  const block = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-sheet .run-status');
+  assert.ok(block, 'the saved page painted its status block');
+  assert.equal(block.dataset.state, 'failed');
+  const head = s5HeadOf(block);
+  assert.equal(head.word, 'failed');
+  assert.equal(head.dot.dataset.symbol, 'alert');
+  for (const seg of head.detail.split(' · ')) assert.ok(!/^failed$/i.test(seg), head.detail);
+  const line = ctx.window.document.querySelector('#hist-detail .run-state-line');
+  assert.match(line.textContent, /^failed/, 'the saved header state line reads the shared word');
+  assert.equal(line.querySelector('.status-dot').dataset.symbol, 'alert');
+});
+
+// --- the header state line -------------------------------------------------
+
+const stateLine = (window) => window.document.querySelector('#run-detail .rd-header > .run-state-line');
+const questionHost = (window) => window.document.querySelector('#run-detail .rd-questions');
+
+test('the state line sits under the title and says the state on every tab; the card repeats neither word nor step', async () => {
+  const ctx = await bootRunning();
+  const { window } = ctx;
+  await openGlance(ctx);
+  const line = stateLine(window);
+  assert.ok(line, 'the state line is a direct child of the header');
+  assert.equal(line.previousElementSibling.className, 'rd-row1', 'right under the title row');
+  const card = () => window.document.querySelector('#run-detail .rd-glance .rd-sheet .run-status');
+  for (const key of ['overview', 'task', 'diff', 'qa', 'logs', 'workflow']) {
+    click(window, tabOf(window, key));
+    await settle(window);
+    assert.match(stateLine(window).textContent, /^Working( · .+)?$/, `${key}: the state line`);
+    assert.equal(stateLine(window).closest('.rd-sec'), null, `${key}: outside the tab bodies`);
+  }
+  assert.equal(line.dataset.state, 'working');
+  assert.ok(line.querySelector('.status-dot'), 'its own dot');
+  assert.equal(card().querySelector('.run-status-word').hidden, true);
+  assert.equal(card().querySelector('.status-dot').hidden, true);
+  const step = line.querySelector('.run-state-step').textContent.replace(' · ', '');
+  assert.ok(step, 'a working run names its step or stage');
+  assert.ok(!card().querySelector('.run-status-detail').textContent.includes(step), 'the card never repeats the step');
+  assert.equal(card().querySelector('.run-status-head').hidden, !card().querySelector('.run-status-detail').textContent);
+  // A paused frame updates the line live; the card line reads the reason only.
+  frame(ctx, { type: 'done', runId: 'r1', status: 'paused', reason: 'cost_pipeline' });
+  await settle(window, 6);
+  assert.equal(stateLine(window), line, 'the same node');
+  assert.match(line.textContent, /^Paused( · .+)?$/);
+  assert.doesNotMatch(line.textContent, /cost/i);
+  assert.match(card().querySelector('.run-status-detail').textContent, /^cost limit$/i);
+  assert.equal(card().querySelector('.run-status-head').hidden, false);
+});
+
+test('the state line keeps focus across frames and jumps to the question', async () => {
+  const ctx = await bootRunning();
+  const { window } = ctx;
+  await openGlance(ctx);
+  const line = stateLine(window);
+  assert.equal(line.classList.contains('is-link'), false);
+  assert.equal(line.getAttribute('role'), null);
+  assert.equal(line.hasAttribute('tabindex'), false);
+  frame(ctx, { type: 'question', runId: 'r1', ...clarify() });
+  await settle(window, 6);
+  assert.equal(line.classList.contains('is-link'), true);
+  assert.equal(line.getAttribute('role'), 'button');
+  assert.equal(line.getAttribute('tabindex'), '0');
+  assert.match(line.getAttribute('aria-label'), /^Needs you( · .+)?\. Go to the questions$/, 'the name still says the state');
+  assert.equal(line.getAttribute('aria-label'), `${line.textContent}. Go to the questions`);
+  const kids = [...line.children];
+  line.focus();
+  assert.equal(window.document.activeElement, line);
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: GLANCE_MANIFEST, steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 0.9 });
+  await settle(window, 6);
+  assert.deepEqual([...line.children], kids, 'a repaint never rebuilds the line');
+  assert.equal(window.document.activeElement, line, 'and never drops its focus');
+  // Click, Enter and Space all go to the question.
+  let jumps = 0;
+  window.Element.prototype.scrollIntoView = function () { if (questionHost(window).contains(this)) jumps += 1; };
+  click(window, tabOf(window, 'logs'));
+  await settle(window);
+  click(window, line);
+  assert.equal(jumps, 1, 'click');
+  assert.ok(questionHost(window).contains(window.document.activeElement), 'focus lands in the question');
+  for (const key of ['Enter', ' ']) {
+    const ev = new window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+    line.dispatchEvent(ev);
+    assert.equal(ev.defaultPrevented, true);
+  }
+  assert.equal(jumps, 3, 'Enter and Space');
+  // Answered: the line is plain text again.
+  frame(ctx, { type: 'question-resolved', runId: 'r1', id: clarify().id });
+  await settle(window, 6);
+  assert.equal(line.classList.contains('is-link'), false);
+  assert.equal(line.getAttribute('role'), null);
+  assert.equal(line.hasAttribute('tabindex'), false);
+  click(window, line);
+  assert.equal(jumps, 3, 'no jump without a question');
+});
+
+test('the tour\'s card stop looks at the header state line first, then the card', async () => {
+  const ctx = await bootRunning();
+  await openGlance(ctx);
+  const [card] = ctx.window.__np.gsRunPageHops('hi');
+  assert.equal(card.target[0], '#run-detail .rd .rd-header .run-state-line');
+  assert.equal(card.target[1], '#run-detail .rd .rd-glance .rd-now-top');
+  assert.ok(ctx.window.document.querySelector(card.target[0]), 'it resolves');
 });

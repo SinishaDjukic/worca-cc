@@ -346,3 +346,191 @@ test('card and run agree for every size', async () => {
     }
   }
 });
+
+// ── Shaper small runs B2: the Start step's body (renderCareStart) ──
+import { renderCareStart } from '../ui/public/shape/proposal.mjs';
+import { questionFocusTarget } from '../ui/public/shape/step-card.mjs';
+import { careGivesUp, careGivesUpSentence } from '../src/shared/shape/feature-record.mjs';
+
+const careEst = (costUsd) => ({ costUsd, minutes: 10, perRun: costUsd });
+const CARE_PQ = (over = {}) => ({ id: 'care-1', kind: 'care', care: {
+  size: 'large', facts: { touches: ['payments'], requirements: 16, subsystems: [], screens: false, size: 'large' },
+  pick: { position: 'thorough', reason: 'Worca picks Thorough: it touches payments' },
+  positions: { lean: { description: 'Lean does', estimate: careEst(18) }, balanced: { description: 'Balanced does', estimate: careEst(18) }, thorough: { description: 'Thorough does', estimate: careEst(24) } },
+  estimateCap: 'Lean and Balanced differ in fix cycles and models, which recorded step costs do not show yet',
+  history: { lean: { enough: true, features: 6, line: 'Lean · 2.1 changes after ship per feature · ≈ $36 each · 6 features' },
+    balanced: { enough: false, features: 1, line: 'Balanced: not enough history yet' }, thorough: { enough: false, features: 0, line: 'Thorough: not enough history yet' } },
+  names: { everyday: 'Sonnet', strong: 'Opus', second: 'GPT' }, modelsLine: null, ...over } });
+/** The body inside a `.qpanel` in a fresh document, as the run card hosts it. */
+function careBody(pq = CARE_PQ(), deps = {}) {
+  const d = doc();
+  const panel = d.createElement('div'); panel.className = 'qpanel';
+  d.body.appendChild(panel);
+  const posted = [];
+  const r = renderCareStart(d, pq, { title: 'Your turn: how much care?', chip: 'Start', submit: (p) => { posted.push(p); return true; }, ...deps });
+  r.render(panel);
+  return { d, panel, r, posted, row: (k) => panel.querySelector(`.rd-kv-row[data-fact="${k}"]`) };
+}
+const seg = (panel) => [...panel.querySelector('.care-start > .rd-kv .seg').children];
+const click = (b) => b.dispatchEvent(new b.ownerDocument.defaultView.MouseEvent('click', { bubbles: true }));
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+test('B2 renderCareStart: one .seg with 3 buttons, the pick pressed with data-preset, under the chip Start', () => {
+  const { panel, row } = careBody();
+  assert.equal(panel.querySelectorAll('.seg').length, 1);
+  const bs = seg(panel);
+  assert.deepEqual(bs.map((b) => b.textContent), ['Lean', 'Balanced', 'Thorough']);
+  assert.deepEqual(bs.map((b) => b.getAttribute('aria-pressed')), ['false', 'false', 'true']);
+  assert.equal(bs[2].dataset.preset, '1');
+  assert.equal(panel.querySelector('.ask-mcard-kind').textContent, 'Start');
+  const segEl = panel.querySelector('.seg');
+  assert.equal(segEl.getAttribute('aria-labelledby'), row('care').querySelector('.rd-kv-k').id);
+  assert.equal(row('care').querySelector('.rd-kv-k').textContent, 'Care');
+  assert.equal(row('size').querySelector('.rd-kv-v').textContent, 'Large · about 16 requirements');
+  assert.equal(row('care').querySelector('.cap').textContent, 'Worca picks Thorough: it touches payments');
+  assert.equal(row('gives').hidden, true, 'at the pick: no Gives up row');
+  assert.equal(row('models').hidden, true, 'no modelsLine: no Models row');
+  assert.equal(row('does').querySelector('.rd-kv-v').textContent, 'Thorough does');
+});
+
+test('B2 renderCareStart: below the pick one Gives up sentence with "Recorded as your choice", the rest in a closed "All N differences" fold; back at the pick none', () => {
+  const { panel, row } = careBody();
+  const bs = seg(panel);
+  click(bs[0]);
+  const line = row('gives').querySelector('.care-gives');
+  assert.equal(line.firstChild.textContent, careGivesUpSentence('lean', 'thorough'));
+  assert.equal(line.querySelector('.cap').textContent.trim(), 'Recorded as your choice', 'the cap sits on the same line');
+  assert.equal(row('gives').querySelectorAll('.cap').length, 1);
+  const b = row('gives').querySelector('.plan-fold');
+  assert.equal(b.querySelector('.plan-fold-text').textContent, 'All 8 differences');
+  assert.equal(b.getAttribute('aria-expanded'), 'false');
+  const rows = row('gives').querySelector('.plan-checks');
+  assert.equal(rows.hidden, true, 'the fold is closed by default');
+  click(b);
+  assert.equal(rows.hidden, false);
+  assert.deepEqual([...rows.children].map((x) => x.textContent), careGivesUp('lean', 'thorough', { everyday: 'Sonnet', strong: 'Opus', second: 'GPT' }));
+  click(bs[1]);
+  assert.equal(row('gives').querySelector('.plan-fold-text').textContent, 'All 7 differences');
+  assert.equal(row('gives').querySelector('.plan-checks').hidden, false, 'the fold stays as the person left it');
+  click(bs[0]);
+  assert.equal(bs[2].dataset.preset, undefined, 'data-preset removed below the pick');
+  assert.equal(row('does').querySelector('.rd-kv-v').textContent, 'Lean does');
+  assert.equal(panel.querySelector('.care-fold .plan-fold-text').textContent, 'What Lean does');
+  assert.equal(row('estimate').querySelector('b').textContent, 'Lean ≈ $18');
+  click(bs[2]);
+  assert.equal(row('gives').hidden, true);
+  assert.equal(bs[2].dataset.preset, '1');
+});
+
+test('B2 renderCareStart: the fold lists the 8 table rows and ends with the "In every position" cap', () => {
+  const { panel } = careBody();
+  const b = panel.querySelector('.care-fold');
+  assert.equal(b.getAttribute('aria-expanded'), 'false');
+  click(b);
+  assert.equal(b.getAttribute('aria-expanded'), 'true');
+  const body = panel.querySelector('.care-fold-body');
+  assert.equal(body.querySelectorAll('.rd-kv-row:not([hidden])').length, 8);
+  assert.match(body.lastElementChild.textContent, /^In every position: every requirement is owned by one run or confirmed by a person/);
+  assert.equal(body.lastElementChild.className, 'cap');
+});
+
+test('B2 renderCareStart: estimates, the cap, History; null and thin cells read "not enough history yet", all-null rows collapse', () => {
+  const { row } = careBody();
+  const e = row('estimate').querySelector('.rd-kv-v').textContent;
+  assert.match(e, /^Lean ≈ \$18 · Balanced ≈ \$18 · Thorough ≈ \$24/);
+  assert.match(e, /the whole build, from recorded step costs/);
+  assert.match(e, /Lean and Balanced differ/);
+  const h = [...row('history').querySelectorAll('.rd-kv-v > div > div')].map((x) => x.textContent);
+  assert.deepEqual(h, ['Lean · 2.1 changes after ship per feature · ≈ $36 each · 6 features', 'Balanced: not enough history yet', 'Thorough: not enough history yet']);
+  const thin = careBody(CARE_PQ({ size: null, positions: { lean: { description: 'l', estimate: null }, balanced: { description: 'b', estimate: careEst(3) }, thorough: { description: 't', estimate: null } },
+    estimateCap: null, history: {} }));
+  assert.equal(thin.row('size').querySelector('.rd-kv-v').textContent, 'Size not known yet');
+  assert.match(thin.row('estimate').textContent, /Lean: not enough history yet · Balanced ≈ \$3\.00 · Thorough: not enough history yet/);
+  assert.match(thin.row('estimate').textContent, /one run, from recorded step costs/);
+  assert.equal(thin.row('history').querySelector('.rd-kv-v').textContent, 'Quality figures per position: not enough history yet');
+  const none = careBody(CARE_PQ({ positions: { lean: { description: 'l', estimate: null }, balanced: { description: 'b', estimate: null }, thorough: { description: 't', estimate: null } } }));
+  assert.equal(none.row('estimate').querySelector('.rd-kv-v').textContent, 'not enough history yet');
+});
+
+test('B2 renderCareStart: the models line shows only with modelsLine', () => {
+  const { row } = careBody(CARE_PQ({ modelsLine: "Models: your project's picks are kept for 3 agents" }));
+  assert.equal(row('models').hidden, false);
+  assert.equal(row('models').querySelector('.rd-kv-v').textContent, "your project's picks are kept for 3 agents");
+});
+
+test('B2 renderCareStart: exactly one btn-primary "Start requirements" in .plan-actions; questionFocusTarget returns it; it posts the position', async () => {
+  const { d, panel, posted } = careBody();
+  const prim = panel.querySelectorAll('.btn-primary');
+  assert.equal(prim.length, 1);
+  assert.equal(prim[0].textContent, 'Start requirements');
+  assert.ok(prim[0].closest('.plan-actions'));
+  assert.equal(questionFocusTarget(d.body), prim[0]);
+  click(seg(panel)[1]);
+  click(prim[0]);
+  await settle();
+  assert.deepEqual(posted, [{ care: { position: 'balanced' } }]);
+});
+
+test('B2 renderCareStart: a 422 shows in .plan-err role=alert, keeps the selection, and returns focus to the button', async () => {
+  let r = null;
+  const deps = { submit: () => { r.setErrors([{ field: 'care', message: 'Care must be Lean, Balanced or Thorough.' }]); return false; } };
+  const body = careBody(CARE_PQ(), deps);
+  r = body.r;
+  const { d, panel } = body;
+  // Chromium blurs a focused button when it is disabled (focus-after-disable): blur first, then set.
+  const proto = d.defaultView.HTMLButtonElement.prototype;
+  const desc = Object.getOwnPropertyDescriptor(proto, 'disabled');
+  Object.defineProperty(proto, 'disabled', { configurable: true, get: desc.get, set(v) { if (v) this.blur(); desc.set.call(this, v); } });
+  click(seg(panel)[0]);
+  const go = panel.querySelector('.btn-primary');
+  go.focus();
+  click(go);
+  assert.equal(go.disabled, true, 'sending: the button is disabled');
+  await settle(); await settle();
+  const err = panel.querySelector('.plan-err');
+  assert.equal(err.getAttribute('role'), 'alert');
+  assert.equal(err.hidden, false);
+  assert.equal(err.textContent, 'Care must be Lean, Balanced or Thorough.');
+  assert.ok(err.closest('.rd-kv-row[data-fact="care"]'), 'under the dial');
+  assert.equal(seg(panel)[0].getAttribute('aria-pressed'), 'true', 'the selection is kept');
+  assert.equal(go.disabled, false);
+  assert.equal(d.activeElement, go);
+  assert.deepEqual(r.collect(), { care: { position: 'lean' } });
+});
+
+// Small runs B3 (D21, D22): the flag adds Compliance to the chips and the lead menu; the lead is asked once, then kept.
+test('small runs flag: off, the chips and the lead menu list 0 Compliance; on, 1 each', async () => {
+  for (const [flags, n] of [['', 0], ['shaperSmallRuns', 1]]) {
+    stubAnswerer({ lead: 'architect' });
+    _resetAnswerer();
+    const d = flagDoc(flags);
+    const small = shapeCardExtras(d, { nudge: nudge({ size: 'small', perspectives: ['architect'] }) });
+    d.body.appendChild(small.el);
+    const more = small.el.querySelector('.shape-chip-more');
+    if (more) more.click();
+    assert.equal([...small.el.querySelectorAll('.shape-chip')].filter((c) => c.dataset.perspective === 'compliance').length, n, `chips, flags "${flags}"`);
+    const { d: d2, triggers } = await reqCard({}, { flags });
+    triggers()[0].click();
+    assert.equal(menuItems(d2).filter((i) => i.querySelector('.wfv-menu-l').textContent === 'Compliance').length, n, `lead menu, flags "${flags}"`);
+  }
+});
+
+test('small runs flag: the lead is asked once (pick a role, 1 PUT), then the saved lead is preset and nothing is sent', async () => {
+  const first = await reqCard({}, { lead: null, flags: 'shaperSmallRuns' });
+  const [lead] = first.triggers();
+  assert.equal(lead.textContent, 'pick a role');
+  assert.equal(first.ui.blocked(), true);
+  lead.click();
+  menuItems(first.d).find((i) => i.querySelector('.wfv-menu-l').textContent === 'Compliance').click();
+  assert.equal(first.ui.blocked(), false);
+  first.ui.commit();
+  await tick();
+  assert.deepEqual(puts, [{ lead: 'compliance' }]);
+  const next = await reqCard({}, { lead: 'compliance', flags: 'shaperSmallRuns' });
+  assert.equal(next.triggers()[0].textContent, 'Compliance');
+  assert.equal(next.ui.blocked(), false);
+  next.ui.commit();
+  await tick();
+  assert.deepEqual(puts, [], 'the next card sends 0 PUTs');
+  assert.equal(next.ui.body().shape.lead, 'compliance');
+});

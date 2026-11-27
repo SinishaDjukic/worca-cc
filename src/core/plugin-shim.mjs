@@ -258,6 +258,8 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
   // profiles). Absent -> DEFAULT_PROFILE, which is what every single-profile
   // source uses, so this parameter is invisible unless a plugin opts in.
   const prof = profile || DEFAULT_PROFILE;
+  // A vaulted secret in the config below is read synchronously: load the vault key first (secretVault on only).
+  await (await import('./settings.mjs')).primeSettingsVaultIfEnabled();
 
   if (mockMode()) {
     // Canned responses, no spawn, no plugin needed. The profile invariant still

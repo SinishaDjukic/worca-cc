@@ -3,9 +3,10 @@
 // Build the Worca container image locally the way CI does: `npm pack` the
 // package, then `docker build` docker/Dockerfile with that tarball.
 //
-//   npm run docker:build                                  # ghcr.io/sinishadjukic/worca:dev (slim)
+//   npm run docker:build                                  # ghcr.io/worca-org/worca:dev (slim)
 //   npm run docker:build -- --variant full                # ...:dev-full
 //   npm run docker:build -- --tag worca:test --claude-code 2.1.278
+//   npm run docker:build -- --node-base registry.acme.example/base/node:24-bookworm-slim   # a company base
 //   npm run docker:build -- --platform linux/arm64 -- --no-cache   # args after `--` go to docker build
 //
 // The Claude Code version defaults to docker/CLAUDE_CODE_VERSION (one file,
@@ -18,11 +19,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import process from 'node:process';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-export const DEFAULT_IMAGE = 'ghcr.io/sinishadjukic/worca';
+export const DEFAULT_IMAGE = 'ghcr.io/worca-org/worca';
 const PACK_DIR = join('docker', '.pack');
 
 function parseArgs(argv) {
-  const out = { variant: 'slim', tag: null, claudeCode: null, platform: null, docker: [], help: false };
+  const out = { variant: 'slim', tag: null, claudeCode: null, platform: null, nodeBase: null, docker: [], help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--') { out.docker = argv.slice(i + 1); break; }
@@ -30,6 +31,7 @@ function parseArgs(argv) {
     else if (a === '--tag' || a === '-t') out.tag = argv[++i];
     else if (a === '--claude-code') out.claudeCode = argv[++i];
     else if (a === '--platform') out.platform = argv[++i];
+    else if (a === '--node-base') out.nodeBase = argv[++i];
     else if (a === '--help' || a === '-h') out.help = true;
     else { console.error(`docker:build: unknown argument ${a}`); process.exit(2); }
   }
@@ -62,7 +64,7 @@ export function packTarball() {
 function main() {
   const a = parseArgs(process.argv.slice(2));
   if (a.help) {
-    console.log('Usage: npm run docker:build -- [--variant slim|full] [--tag <image:tag>] [--claude-code <ver>] [--platform <p>] [-- <docker build args>]');
+    console.log('Usage: npm run docker:build -- [--variant slim|full] [--tag <image:tag>] [--claude-code <ver>] [--platform <p>] [--node-base <image>] [-- <docker build args>]');
     return;
   }
   const version = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')).version;
@@ -79,6 +81,8 @@ function main() {
     '-t', tag,
   ];
   if (a.platform) args.push('--platform', a.platform);
+  // A company base instead of the pinned node image (docker/Dockerfile NODE_BASE_IMAGE).
+  if (a.nodeBase) args.push('--build-arg', `NODE_BASE_IMAGE=${a.nodeBase}`);
   args.push(...a.docker, '.');
   run('docker', args);
   console.log(`docker:build: built ${tag}`);

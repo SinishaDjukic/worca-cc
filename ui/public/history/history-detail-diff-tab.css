@@ -16,6 +16,12 @@
   margin:0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   font-size:12px;font-weight:400;
 }
+/* The file head's right side: the +/- counts, then the open-in-editor icon (diff-open-editor.mjs). */
+.hd-diff-head-end{display:flex;align-items:center;gap:8px;flex:none;}
+/* The live tab's note row: Refresh, then Open in <Editor>. */
+.rd-diff-note-end{display:flex;align-items:center;gap:8px;}
+/* A failed open shows under the pane head, lined up with the head's own padding. */
+.hd-diff-pane > .field-error{padding:0 18px;}
 /* The patch is the tall thing on this screen, so it scrolls INSIDE its pane
    rather than pushing the whole detail screen down — same cap and mechanism as
    `.hd-diff-rows` opposite it, which keeps the two panes the same height.

@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { seedCurrentSourceBranch } from './helpers/source-branch-current.mjs';
 import { setProxyEnv } from './helpers/proxy-net.mjs';
 import { writePluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { writePluginConfig } from '../src/core/plugin-config.mjs';
@@ -188,6 +189,7 @@ before(async () => {
   process.chdir(cwdSandbox);
   home = await mkdtemp(join(tmpdir(), 'worca-cc-tgff-home-'));
   process.env.HOME = home; process.env.USERPROFILE = home;
+  seedCurrentSourceBranch(home);   // branchless chat cards on git repos keep today's path (Current (checked out))
   await new Promise((r) => api.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${api.address().port}`;
   const cur = pluginCurrentDir(NAME);
@@ -202,7 +204,7 @@ before(async () => {
     '',
   ].join('\n'));
   writePluginsLock({ [NAME]: LOCK });
-  writePluginConfig(NAME, SCHEMA, CFG);
+  await writePluginConfig(NAME, SCHEMA, CFG);
   mod = await import('../ui/server.mjs');
   ({ _testing } = mod);
   ({ channelHost } = _testing);

@@ -31,6 +31,27 @@ test('brief: the coverage contract for Requirements only; another role gets the 
   assert.equal(uncoveredTitle('R-ops-1'), 'R-ops-1 · not covered by the diff');
 });
 
+const REQ_EX = '# Requirements\n\n- **R-po-1** People see the chart\n  Example: Ana opens Charts and sees 3 bars.\n'
+  + '- **R-ux-1** It reads well\n- **R-ops-1** It rolls back\n  Example: the flag off hides Charts.\n';
+
+test('C2: onlyCriteria with `examples: true` keeps the Example line under each kept item', () => {
+  assert.equal(onlyCriteria(REQ_EX, ['R-ops-1', 'R-po-1', 'R-ux-1'], { examples: true }),
+    '- **R-po-1** People see the chart\n  Example: Ana opens Charts and sees 3 bars.\n- **R-ux-1** It reads well\n'
+    + '- **R-ops-1** It rolls back\n  Example: the flag off hides Charts.\n');
+  assert.equal(onlyCriteria(REQ_EX, ['R-ux-1'], { examples: true }), '- **R-ux-1** It reads well\n');
+});
+
+test('C2: a text with examples and no option narrows byte-identical to dev (no Example line)', () => {
+  const devOut = '- **R-po-1** People see the chart\n- **R-ops-1** It rolls back\n';
+  assert.equal(onlyCriteria(REQ_EX, ['R-po-1', 'R-ops-1']), devOut);
+  assert.equal(onlyCriteria(REQ_EX, ['R-po-1', 'R-ops-1'], {}), devOut);
+  assert.equal(onlyCriteria(REQ_EX, null, { examples: true }), REQ_EX);
+});
+
+test('C2: a text without examples is byte-identical with or without the option', () => {
+  for (const ids of [['R-ops-1', 'R-po-1'], [], ['R-ux-1']]) assert.equal(onlyCriteria(REQ, ids, { examples: true }), onlyCriteria(REQ, ids));
+});
+
 test('onlyCriteria keeps only the given ids, in input order; null ids is identity', () => {
   const out = onlyCriteria(REQ, ['R-ops-1', 'R-po-1']);
   assert.deepEqual(criterionIds(out), ['R-po-1', 'R-ops-1']);

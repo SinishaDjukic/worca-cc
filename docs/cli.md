@@ -90,7 +90,32 @@ worca flags on smartRunNaming   # a Labs feature, off by default
   `worca projects list`.
 - The rest: `ui`, `run --preset`, `resume`, `runs`, `logs`, `stop`, `pause`, `schedule`, `workflow`, `script`,
   `plugin`, `marketplace`, `models`, `config`, `flags`, `metrics`, `policy`, `memory team`, `container`, `broker`,
-  `proxy`, `setup`, `extension`, `readiness`, `doctor` and `version`.
+  `proxy`, `exec-env`, `e2b`, `secrets`, `setup`, `extension`, `readiness`, `doctor` and `version`.
+- `worca container up --hardened` starts the [Hardened box](hardened-box.md), and `worca container status`
+  then prints its posture report.
+- `exec-env spec` shows, sets or clears a project's environment spec. See
+  [Project environment spec](environment-spec.md).
+- `exec-env list|status|build` lists the execution environments, shows a project's builds as the running server sees
+  them, and builds a project's E2B template or Local sandbox (Docker) image in that server. See
+  [E2B](e2b.md#building-and-rebuilding-a-project-environment) and [Local sandbox (Docker)](local-sandbox.md#project-images).
+- `e2b sweep` removes this instance's orphan E2B sandboxes. See [E2B](e2b.md#cleaning-up-orphan-sandboxes).
+- `container build` builds the box image from the projects' environment specs. See
+  [Building the box image](environment-spec.md#building-the-box-image).
+- The secret vault (the `secretVault` flag): `worca secrets status` names the OS key store that would hold the
+  vault key (macOS Keychain, Windows Credential Manager, Secret Service or Windows DPAPI on WSL2), its state
+  (ready, locked or unavailable) and whether the vault can be read. It always exits 0 and never writes.
+  `worca secrets reset` moves an unreadable vault aside (`worca-vault.enc.unreadable-…`) so a new one can
+  start; it asks first, keeps the OS key, and refuses a readable or locked vault (exit 1). `worca doctor` adds a
+  `secrets:` line while the vault is in use. `worca secrets status --check` tests the OS store round trip (a throwaway
+  item written, read back and deleted) without moving anything: exit 0 when it passes, 1 when it fails.
+  `worca secrets export` writes every vaulted secret back into its config file (0600), deletes the vault and its OS
+  key and turns the flag off; it refuses while the Worca app runs for the home or `WORCA_FLAGS` sets the flag (exit 1),
+  and a cancel exits 2. `worca secrets ack` stops the message about secrets moved into the vault (also Settings ›
+  General › Secret vault › Got it). `export`, `reset` and `ack` run only in your own terminal: each asks you to type a
+  word it shows, and there is no `--yes` (exit 1 without a terminal, 2 on a wrong word). `export`, `reset`, `ack` and
+  `status --check` refuse to run from an agent. In a
+  container every verb says the vault is not available there and points to the credential broker. See
+  [Secrets and the vault](secrets.md).
 
 ## Exit codes
 

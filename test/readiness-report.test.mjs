@@ -6,13 +6,13 @@ import { buildReport, validateReport, missingEvidence, renderMarkdown, commentBo
 const SHA = '04370c0f6cc31ae00f53c3b4c286211b970c3084';
 const ev = (id) => [{ label: `${id}.log`, href: `evidence/${id}.log` }];
 const all = (status = 'pass') => Object.keys(CHECKS).map((id) => ({ id, title: id, status, detail: 'ok', evidence: ev(id) }));
-const make = (checks = all(), openPrs = []) => buildReport({ repo: 'SinishaDjukic/worca-cc', sha: SHA, generatedAt: '2026-10-30T12:00:00Z', toolCommit: SHA, checks, openPrs });
+const make = (checks = all(), openPrs = []) => buildReport({ repo: 'worca-org/worca', sha: SHA, generatedAt: '2026-10-30T12:00:00Z', toolCommit: SHA, checks, openPrs });
 
 test('a full passing report validates, is go, and links the dev commit on GitHub', () => {
   const r = make();
   assert.deepEqual(validateReport(r), []);
   assert.equal(r.verdict.value, 'go');
-  assert.equal(r.devCommit.evidence[0].href, `https://github.com/SinishaDjukic/worca-cc/commit/${SHA}`);
+  assert.equal(r.devCommit.evidence[0].href, `https://github.com/worca-org/worca/commit/${SHA}`);
 });
 
 test('validateReport rejects an unclear row, a row without evidence and a missing check', () => {
@@ -119,7 +119,7 @@ test('verdict cause: a missing splitter prints the splitter note, never the gate
 test('Risks: every accepted delta, the capped server and the pins; its .json evidence resolves to an anchor in the comment', () => {
   const risks = { acceptedDeltas: [{ probe: 'GET //index.html', before: { status: 200, csp: null }, after: { status: 200, csp: "default-src 'self'" } }, { note: '/style.css: a Range request gets 200 with the full body instead of 206' }],
     serverLines: 9972, ceiling: 9972, pins: 11, evidence: [{ label: 'accepted-deltas.json', href: 'evidence/accepted-deltas.json' }, { label: 'dry-run.log', href: 'evidence/dry-run.log' }] };
-  const r = buildReport({ repo: 'SinishaDjukic/worca-cc', sha: SHA, generatedAt: '2026-10-30T12:00:00Z', toolCommit: SHA, checks: all(), risks });
+  const r = buildReport({ repo: 'worca-org/worca', sha: SHA, generatedAt: '2026-10-30T12:00:00Z', toolCommit: SHA, checks: all(), risks });
   assert.deepEqual(validateReport(r), []);
   const md = renderMarkdown(r);
   assert.match(md, /^## 10\. Risks and surprises$/m);
@@ -136,7 +136,7 @@ test('Risks: every accepted delta, the capped server and the pins; its .json evi
 test('Risks: a recorded ceiling raise renders one sign-off line; a bad raise entry fails validation', () => {
   const risks = { acceptedDeltas: [], serverLines: 10085, ceiling: 10085, pins: 11,
     ceilingRaises: [{ file: 'ui/server.mjs', from: 9972, to: 10085, why: 'dev growth | #711' }], evidence: [{ label: 'dry-run.log', href: 'evidence/dry-run.log' }] };
-  const r = buildReport({ repo: 'SinishaDjukic/worca-cc', sha: SHA, generatedAt: '2026-10-30T12:00:00Z', toolCommit: SHA, checks: all(), risks });
+  const r = buildReport({ repo: 'worca-org/worca', sha: SHA, generatedAt: '2026-10-30T12:00:00Z', toolCommit: SHA, checks: all(), risks });
   assert.deepEqual(validateReport(r), []);
   assert.match(renderMarkdown(r), /^- Ceiling raised: `ui\/server\.mjs` 9,972 → 10,085 lines \(dev growth \\\| #711\): needs the owner's sign-off$/m);
   for (const bad of [{ file: 'ui/server.mjs', from: 10085, to: 9972, why: 'x' }, { file: 'ui/server.mjs', from: 1, to: 2 }, { from: 1, to: 2, why: 'x' }]) {

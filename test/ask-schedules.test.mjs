@@ -14,12 +14,15 @@ import { spawnSync } from 'node:child_process';
 import { WebSocket } from 'ws';
 
 import { useTempHome } from './helpers/temp-home.mjs';
+import { useCurrentSourceBranch } from './helpers/source-branch-current.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { _stopToolProbes } from '../src/core/preflight.mjs';
 
 useTempHome(after);
+// Branchless chat cards on git repos keep today's path: "Chat runs: source branch" = Current (checked out).
+useCurrentSourceBranch(after);
 
 const origCwd = process.cwd();
 let cwdSandbox = null;

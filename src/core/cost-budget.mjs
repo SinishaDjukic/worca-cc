@@ -137,12 +137,34 @@ export function designWindowedSpendUsd(fromMs, toMs = null) {
   return roundUsd(row?.s || 0);
 }
 
-/** Pipeline + Ask Worca + requirements + Design spend since windowStartMs — THE enforcement figure
+/** Append one workflow-tests model call (plans/workflow-tests-part4-plan.md D92): a criterion checked on a try, a pair, a Check the
+ *  checker round's calls, suggested criteria or clearer words. No limit of its own: it counts toward worca's limits and, through
+ *  `test_run_id`, the test's own cost limit. A known $0 (a free model; mock calls never get here) leaves no row; P4-Q17: a $0 whose
+ *  cost is `unknown` books a $0 row with that kind, so the test can say that some checks' cost is not known. */
+export function recordTestJudgeCost({ workflowId, exampleId = null, testRunId = null, roundId = null, purpose, model = null, engine = 'claude',
+  amountUsd, costKind = 'billed', tsMs = Date.now() }) {
+  if (!workflowId || !purpose || !Number.isFinite(amountUsd) || amountUsd < 0) return;
+  if (amountUsd === 0 && costKind !== 'unknown') return;
+  prepare(`INSERT INTO wf_test_judge_ledger (workflow_id, example_id, test_run_id, round_id, purpose, model, engine, amount_usd, cost_kind, ts)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(workflowId, exampleId == null ? null : Number(exampleId), testRunId == null ? null : Number(testRunId),
+    roundId == null ? null : Number(roundId), purpose, model, engine || 'claude', amountUsd, costKind || 'billed', tsMs);
+}
+
+/** Windowed workflow-tests model spend; toMs null = open-ended (budget windows), else ts < toMs. */
+export function testJudgeWindowedSpendUsd(fromMs, toMs = null) {
+  const row = toMs == null
+    ? prepare('SELECT SUM(amount_usd) AS s FROM wf_test_judge_ledger WHERE ts >= ?').get(fromMs)
+    : prepare('SELECT SUM(amount_usd) AS s FROM wf_test_judge_ledger WHERE ts >= ? AND ts < ?').get(fromMs, toMs);
+  return roundUsd(row?.s || 0);
+}
+
+/** Pipeline + Ask Worca + requirements + Design + workflow-tests model spend since windowStartMs — THE enforcement figure
  *  (count-everywhere, ask-cost-statistics-design.md D3; requirements-design.md D9; Design M13). windowedSpendUsd /
  *  allTimeTotals stay pipeline-only for the Statistics split. */
 export function totalWindowSpendUsd(windowStartMs) {
   return roundUsd(windowedSpendUsd(windowStartMs) + askWindowedSpendUsd(windowStartMs)
-    + requirementsWindowedSpendUsd(windowStartMs) + designWindowedSpendUsd(windowStartMs));
+    + requirementsWindowedSpendUsd(windowStartMs) + designWindowedSpendUsd(windowStartMs)
+    + testJudgeWindowedSpendUsd(windowStartMs));
 }
 
 /** All-time spend + active time over ALL pipelines (archived included),
@@ -189,7 +211,7 @@ export function budgetStatus(now = new Date(), { scope = null } = {}) {
     msUntilReset: windowEndMs - now.getTime(),
     windowSpendUsd,
     allTimeSpendUsd: roundUsd(allTimeTotals().spendUsd + askWindowedSpendUsd(0) + requirementsWindowedSpendUsd(0)
-      + designWindowedSpendUsd(0)),
+      + designWindowedSpendUsd(0) + testJudgeWindowedSpendUsd(0)),
     remainingUsd: totalLimitUsd == null ? null : Math.max(0, roundUsd(totalLimitUsd - windowSpendUsd)),
     blocked,
   };

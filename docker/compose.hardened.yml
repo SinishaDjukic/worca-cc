@@ -1,0 +1,80 @@
+# docker/compose.hardened.yml — the hardened box: one developer, on their own machine (docs/hardened-box.md).
+#
+#   worca container up --hardened          # assembles the files below, asks for what is missing, starts it
+#
+# By hand, in this order (compose.ca.yml only with a corporate CA; compose.proxy.yml always last):
+#
+#   docker compose -f compose.yml -f compose.broker.yml -f compose.isolation.yml -f compose.egress.yml \
+#     -f compose.hardened.yml [-f compose.ca.yml] -f compose.proxy.yml up -d
+#
+# Together they turn on:
+#   - the credential broker in single mode (compose.broker.yml): Worca and its agents hold no model key;
+#   - agent users (compose.isolation.yml): agents cannot read Worca's settings, database or environment;
+#   - the allow-list (compose.egress.yml): Worca sits on a network with no route out;
+#   - the egress sidecar (compose.proxy.yml, `worca egress`): it relays for the allow-list and holds the
+#     corporate proxy login when the proxy needs one.
+# This file adds what is left:
+#   - no host folder is mounted. Projects are cloned from the remote into the box's volume (/data/projects),
+#     and results leave as pushed branches and pull requests. A writable mount of your checkout would let an
+#     agent plant a git hook or a config command that your own git or IDE then runs on your machine;
+#   - its own compose project (worca-hardened), so the plain container's containers and volumes stay apart;
+#   - the UI relay: Docker publishes no port for a container that is only on an internal network, so the
+#     `ui` service publishes 127.0.0.1:${WORCA_PORT} and relays to Worca only what arrives through that port
+#     (src/core/ui-relay.mjs);
+#   - the broker's calls to the model provider go through the sidecar, so the allow-list and the proxy
+#     login apply to them too.
+#
+# Needs Docker Compose 2.24 or newer (!override, !reset) and an image with the label dev.worca.hardened-box.
+
+name: worca-hardened
+
+services:
+  worca:
+    labels:
+      dev.worca.box: hardened
+    depends_on:
+      - ui
+    # Replaces every mount from compose.yml and compose.isolation.yml: the one data volume, nothing from the host.
+    volumes: !override
+      - worca-data:/data
+    # The relay publishes the port; Docker would publish none for a container on an internal network only.
+    ports: !reset []
+    environment:
+      # Tells Worca it runs in the hardened box (the label above is invisible from inside): Add project offers clone
+      # only, and Settings › General › Security shows the box (src/core/security-posture.mjs).
+      WORCA_BOX: hardened
+      # Trusted as a local caller, like Docker's gateway in the plain container (src/core/remote-access.mjs).
+      WORCA_UI_RELAY: ui
+      WORCA_PROJECTS_ROOT: /data/projects
+      # No ssh agent in the hardened box: git goes over HTTPS with the token Worca holds.
+      SSH_AUTH_SOCK: ""
+
+  ui:
+    image: ghcr.io/worca-org/worca:${WORCA_TAG:-latest}
+    entrypoint: ["tini", "-s", "--", "node", "/usr/local/lib/node_modules/@worca/app/src/core/ui-relay.mjs"]
+    command: []
+    environment:
+      WORCA_UI_RELAY_TARGET: worca:4317
+    # It relays only a peer that is this container's default-route gateway (where the published port arrives)
+    # or its own loopback (the healthcheck), and exits when it has no such gateway: an agent in Worca's container
+    # or the sidecar is never let through.
+    ports:
+      # Loopback only, as in the plain container.
+      - "127.0.0.1:${WORCA_PORT:-4317}:4317"
+    networks:
+      - internal
+      - default
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+    mem_limit: 128m
+    restart: unless-stopped
+
+  broker:
+    depends_on:
+      - egress
+    environment:
+      HTTPS_PROXY: http://egress:3128
+      HTTP_PROXY: http://egress:3128

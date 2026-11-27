@@ -43,7 +43,7 @@ const field = (host, id) => host.querySelector(`[data-setting="${id}"]`);
 test('every field says what it inherits and from where; an override shows Project', async () => {
   const { host } = harness();
   for (let i = 0; i < 4; i++) await tick();
-  assert.deepEqual([...host.querySelectorAll('.pd-settings-card')].map((c) => c.dataset.card), ['models', 'cost', 'ask', 'context', 'pr', 'smartNaming']);
+  assert.deepEqual([...host.querySelectorAll('.pd-settings-card')].map((c) => c.dataset.card), ['models', 'cost', 'ask', 'context', 'exec', 'pr', 'smartNaming']);
   const turns = field(host, 'askMaxTurns');
   assert.equal(turns.querySelector('.inherit-input').value, '9');
   assert.equal(turns.querySelector('.inherit-input').placeholder, '30 (your setting)');
@@ -183,7 +183,7 @@ test('Pull requests card: pr.open and pr.slices with Team default / Worca defaul
   const { window, host, calls } = harness({ settings: () => ({ status: 200, body: view }), patch: (body) => ({ status: 200, body: body['pr.open'] === 'ready' ? saved : view }) });
   for (let i = 0; i < 4; i++) await tick();
   const card = host.querySelector('.pd-settings-card[data-card="pr"]');
-  assert.deepEqual([...card.querySelectorAll('.inherit-field')].map((f) => f.dataset.setting), ['pr.open', 'pr.slices', 'watchNewPrs']);
+  assert.deepEqual([...card.querySelectorAll('.inherit-field')].map((f) => f.dataset.setting), ['pr.open', 'pr.slices', 'watchNewPrs', 'watch.trustedReviewers']);
   const open = field(host, 'pr.open');
   assert.equal(open.querySelector('label').textContent, 'When a run finishes');
   assert.deepEqual([...open.querySelector('.inherit-input').options].map((o) => [o.value, o.textContent]),
@@ -200,10 +200,53 @@ test('Pull requests card: pr.open and pr.slices with Team default / Worca defaul
   assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { 'pr.open': 'ready' });
 });
 
+test('Pull requests card: reviewers that may trigger a fix read as text and save as a list', async () => {
+  const view = { ...VIEW, own: { 'watch.trustedReviewers': ['review-bot-a', 'review-bot-b'] },
+    layers: { ...VIEW.layers, 'watch.trustedReviewers': { project: ['review-bot-a', 'review-bot-b'], default: [] } } };
+  const saved = { ...view, own: { 'watch.trustedReviewers': ['review-bot-a', 'review-bot-c'] } };
+  const { window, host, calls } = harness({ settings: () => ({ status: 200, body: view }), patch: (body) => ({ status: 200, body: saved }) });
+  for (let i = 0; i < 4; i++) await tick();
+  const f = field(host, 'watch.trustedReviewers');
+  assert.equal(f.querySelector('label').textContent, 'Reviewers that may trigger a fix');
+  assert.equal(f.querySelector('.inherit-input').value, 'review-bot-a, review-bot-b');
+  assert.equal(f.querySelector('.inherit-badge').hidden, false, 'a stored project list shows the Project badge');
+  const input = f.querySelector('.inherit-input');
+  input.value = ' review-bot-a, review-bot-c ';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  host.querySelector('.pd-settings-card[data-card="pr"] .pd-settings-save').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { 'watch.trustedReviewers': ['review-bot-a', 'review-bot-c'] });
+});
+
 test('Pull requests card: with no team value pr.open inherits "Worca default"', async () => {
   const view = { ...VIEW, own: {}, layers: { ...VIEW.layers, 'pr.open': { default: 'none' }, 'pr.slices': { default: 'each' } } };
   const { host } = harness({ settings: () => ({ status: 200, body: view }) });
   for (let i = 0; i < 4; i++) await tick();
   assert.equal(field(host, 'pr.open').querySelector('.inherit-input').options[0].textContent, "Don't create a PR (default)");
   assert.equal(field(host, 'pr.slices').querySelector('.inherit-input').options[0].textContent, 'A PR per slice, stacked (default)');
+});
+
+test('Chat › Chat runs: source branch: the shared labels, inherited from your settings; a pick PATCHes it, Clear PATCHes null', async () => {
+  const { CHAT_SOURCE_BRANCH_LABELS } = await import('../src/shared/chat-source-branch.mjs');
+  const id = 'chat.sourceBranch';
+  const view = { ...VIEW, own: {}, layers: { ...VIEW.layers, [id]: { user: 'ask', default: 'ask' } } };
+  const saved = { ...view, own: { [id]: 'require' }, layers: { ...view.layers, [id]: { project: 'require', user: 'ask', default: 'ask' } } };
+  const { window, host, calls } = harness({ settings: () => ({ status: 200, body: view }), patch: (body) => ({ status: 200, body: body[id] === 'require' ? saved : view }) });
+  for (let i = 0; i < 4; i++) await tick();
+  const row = field(host, id);
+  assert.ok(row.closest('.pd-settings-card[data-card="ask"]'), 'in the Chat card');
+  assert.equal(row.querySelector('label').textContent, 'Chat runs: source branch');
+  const select = row.querySelector('.inherit-input');
+  assert.match(select.options[0].textContent, /^Ask me on the card/, 'the empty value reads as the inherited one (listed once)');
+  assert.deepEqual([...select.options].slice(1).map((o) => [o.value, o.textContent]), Object.entries(CHAT_SOURCE_BRANCH_LABELS).filter(([v]) => v !== 'ask'));
+  select.value = 'require';
+  select.dispatchEvent(new window.Event('change', { bubbles: true }));
+  const card = host.querySelector('.pd-settings-card[data-card="ask"]');
+  card.querySelector('.pd-settings-save').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { [id]: 'require' });
+  field(host, id).querySelector('.inherit-clear').click();
+  host.querySelector('.pd-settings-card[data-card="ask"] .pd-settings-save').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { [id]: null });
 });

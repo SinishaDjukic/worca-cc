@@ -12,7 +12,8 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
-import { createAskTools, AskToolError, splitUnifiedDiff, isProtectedBasename, sliceBytes, isByteArtifact } from '../src/core/ask/tools.mjs';
+import { createAskTools, AskToolError, splitUnifiedDiff, sliceBytes, isByteArtifact } from '../src/core/ask/tools.mjs';
+import { isSecretPath as isProtectedBasename } from '../src/core/secret-paths.mjs';
 import { viewerKindFor, BINARY_KINDS } from '../src/shared/artifact-kinds.mjs';
 import { defaultToolDeps } from '../src/core/ask/tool-deps.mjs';
 import { closeDb, getDb } from '../src/core/db.mjs';
@@ -266,7 +267,7 @@ test('isProtectedBasename: the normal-tier patterns (* prefix/suffix), slash pat
       for (const hit of ['.env', '.env.local', '.envrc', 'server.pem', 'id_rsa', 'id_ed25519', 'x.key', 'bundle.p12', 'cert.pfx']) {
         assert.ok(isProtectedBasename(hit, pats), hit);
       }
-      for (const miss of ['env', 'environment.md', 'key.txt', 'id_rsa.pub', 'README.md', 'pem']) assert.ok(!isProtectedBasename(miss, pats), miss);
+      for (const miss of ['env', 'environment.md', 'key.txt', 'rsa.pub', 'identity.ts', 'README.md', 'pem']) assert.ok(!isProtectedBasename(miss, pats), miss);
       assert.ok(isProtectedBasename('a-secret-b', ['*secret*']));
       assert.ok(!isProtectedBasename('x', []));
       // slash-less patterns match the basename at ANY depth, as the CLI does
@@ -384,11 +385,21 @@ const fake = {
         : null),
   htmlToText,
   validateProposal: async (input) => ({ ok: true, card: { echoed: input } }),
-  protectedPaths: GUARDRAIL_PRESETS.normal.protectedPaths,
+  protectedPaths: GUARDRAIL_PRESETS.normal.protectedPaths, isSecretPath: isProtectedBasename,
   redact: redactAskText,
   limits: ASK_LIMITS,
 };
 const tools = createAskTools(fake);
+
+test('propose_run explains the "Chat runs: source branch" modes and says to ask the user for the branch', () => {
+  const def = tools.list().find((d) => d.name === 'propose_run');
+  const text = `${def.description} ${def.inputSchema.properties.sourceBranch.description}`;
+  assert.match(text, /Only when the chat names one/);
+  assert.match(text, /Ask me on the card/);
+  assert.match(text, /Current \(checked out\)/);
+  assert.match(text, /ask the user which branch/i);
+  assert.match(def.description, /never guess/i);
+});
 
 test('list(): forty-five tools with JSON-Schema inputs', () => {
   const defs = tools.list();
@@ -1132,6 +1143,13 @@ test('list_run_artifacts / read_run_artifact / get_run_progress over real deps',
   assert.doesNotMatch(t1.title, /ghp_abcdefghijklmnopqrstuvwxyz0123456789/, 'task title redacted');
 });
 
+// tools.mjs imports nothing: the secret-path owner's matcher (src/core/secret-paths.mjs) comes in as deps.isSecretPath,
+// and that owner itself only reads the file system.
+test('the secret-path owner the chat tools are given never writes', () => {
+  const src = readFileSync(new URL('../src/core/secret-paths.mjs', import.meta.url), 'utf8');
+  assert.deepEqual(src.split('\n').filter((l) => /^import /.test(l)), ["import { lstat, readdir } from 'node:fs/promises';", "import { join } from 'node:path';"]);
+});
+
 // The one repo guard for the read-only chat tool layer (§6.1): tools.mjs, tool-deps.mjs and every
 // src/core/ask/*-deps.mjs / *-proposal.mjs. Each row was a per-module source scan in that module's
 // own test file (named in the row); their mcp-stdio wiring regexes are not carried.
@@ -1356,7 +1374,7 @@ test('propose_run: shape and assess exist only with the perspective keys', async
   const schemaOf = (deps) => createAskTools({ ...fake, ...deps }).list().find((d) => d.name === 'propose_run').inputSchema;
   const today = schemaOf({});
   assert.deepEqual(Object.keys(today.properties), ['projectKey', 'workspaceId', 'noProject', 'workflowId', 'presetId', 'brief', 'source', 'title', 'guardrailsId', 'tags', 'memoryScope',
-    'engine', 'sourceBranch', 'featureBranch', 'sameAsSource', 'note', 'nodes', 'attachmentIds', 'sourceBranchByKey', 'commentIds', 'pr',
+    'engine', 'execEnv', 'sourceBranch', 'featureBranch', 'sameAsSource', 'note', 'nodes', 'attachmentIds', 'sourceBranchByKey', 'commentIds', 'pr',
     'when', 'every', 'until', 'count', 'overlap', 'maxFailures', 'after', 'afterPolicy', 'sourceFromPrevious'], 'no deps: today\'s schema');
   assert.deepEqual(today.required, ['brief']);
   await checkRows([
@@ -1505,4 +1523,20 @@ test('read_attachment: a generic binary returns a path on Claude, and neither a 
   assert.deepEqual(Object.getOwnPropertySymbols(l), [], 'no MCP content block');
   assert.equal(Object.keys(l).includes('content'), false);
   assert.match(l.note, /not an image or a PDF/);
+});
+
+test('Small runs C4: change_requirement is listed only with the small-runs bundle key; the flag-off list is unchanged', async () => {
+  const { PERSPECTIVE_KEYS } = await import('../src/shared/shape/perspectives.mjs');
+  const seen = [];
+  const st = (extra) => ({ follows: () => true, check: (kind, input) => { seen.push([kind, input]); return { ok: true }; }, ...extra });
+  const on = { perspectiveKeys: PERSPECTIVE_KEYS, chatActions: {} };
+  const names = (deps) => createAskTools({ ...fake, ...deps }).list().map((d) => d.name).filter((n) => ['propose_changes', 'route_message', 'change_requirement'].includes(n));
+  assert.deepEqual(names({ ...on, shapeTools: st({}) }), ['propose_changes', 'route_message'], 'flag off: as before');
+  assert.deepEqual(names({ ...on, shapeTools: st({ smallRuns: true }) }), ['propose_changes', 'route_message', 'change_requirement']);
+  await assert.rejects(createAskTools({ ...fake, ...on, shapeTools: st({}) }).call('change_requirement', { featureId: 'f1', requirement: 'R-po-1', text: 'x', reason: 'r' }),
+    /change_requirement: unavailable/);
+  const ok = await createAskTools({ ...fake, ...on, shapeTools: st({ smallRuns: true }) })
+    .call('change_requirement', { featureId: 'f1', requirement: 'R-po-1', text: 'retry once', reason: 'r' });
+  assert.deepEqual([ok.ok, ok.requested], [true, { kind: 'requirement', featureId: 'f1', requirement: 'R-po-1', text: 'retry once', reason: 'r' }]);
+  assert.deepEqual(seen.at(-1), ['requirement', { featureId: 'f1', requirement: 'R-po-1', text: 'retry once', reason: 'r' }]);
 });

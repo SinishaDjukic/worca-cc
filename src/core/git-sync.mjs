@@ -731,13 +731,19 @@ export async function checkBaseMerge(dir, { base, feature, remote = 'origin', fe
 /** Canonical worktree paths with refs/heads/<branch> checked out, null when git cannot list them (checkoutsOf). */
 export const branchCheckouts = (dir, branch) => checkoutsOf(dir, branch);
 
+/** A run's own merge on a machine with no git identity takes the run's, as its commits do (run-harness). */
+const RUN_IDENTITY = Object.freeze({ GIT_AUTHOR_NAME: 'orchestrator', GIT_AUTHOR_EMAIL: 'orchestrator@local',
+  GIT_COMMITTER_NAME: 'orchestrator', GIT_COMMITTER_EMAIL: 'orchestrator@local' });
+const NO_IDENTITY_RE = /Author identity unknown|Committer identity unknown|tell me who you are|unable to auto-detect email|auto-detection is disabled/i;
+
 /**
  * Update branch (#620): a merge commit of `baseSha` into `feature`. Not checked out anywhere: commit-tree on the
  * merge-tree result + a compare-and-swap update-ref (no checkout moves). Checked out in ONE clean worktree that
- * is on the branch at `headSha`: `git merge --no-ff` there. Never throws.
+ * is on the branch at `headSha`: `git merge --no-ff` there. `runIdentity` (a run's own merge): with no git identity
+ * configured, merge as the run instead of failing. Never throws.
  * → { ok:true, from, to, via:'commit-tree'|'merge', path? } | { ok:false, kind:'in-use'|'dirty'|'moved'|'identity'|'not-clean'|'failed'|'bad-request', error, path? }
  */
-export async function mergeBaseInto(dir, { feature, baseSha, headSha, baseRef, tree = null, remote = null } = {}) {
+export async function mergeBaseInto(dir, { feature, baseSha, headSha, baseRef, tree = null, remote = null, runIdentity = false } = {}) {
   if (!isSafeBranchName(feature) || !SHA_RE.test(baseSha || '') || !SHA_RE.test(headSha || '')) {
     return { ok: false, kind: 'bad-request', error: 'invalid branch or commit' };
   }
@@ -752,7 +758,12 @@ export async function mergeBaseInto(dir, { feature, baseSha, headSha, baseRef, t
     const st = await _run(['status', '--porcelain', '--untracked-files=no'], { cwd: wt });
     if (!st.ok || st.stdout.trim()) return { ok: false, kind: 'dirty', path: wt, error: `${wt} has uncommitted changes` };
     const env = remote ? await readEnvFor(wt, remote) : null;
-    const r = await _run(['merge', '--no-ff', '--no-edit', '-q', '-m', message, baseSha], { cwd: wt, timeoutMs: FF_TIMEOUT_MS, env });
+    const merge = (e) => _run(['merge', '--no-ff', '--no-edit', '-q', '-m', message, baseSha], { cwd: wt, timeoutMs: FF_TIMEOUT_MS, env: e });
+    let r = await merge(env);
+    if (!r.ok && runIdentity && NO_IDENTITY_RE.test(r.stderr)) {
+      await _run(['merge', '--abort'], { cwd: wt });
+      r = await merge({ ...(env || stripHostCredentials(process.env)), ...RUN_IDENTITY });
+    }
     if (!r.ok) {
       await _run(['merge', '--abort'], { cwd: wt });
       return { ok: false, kind: 'failed', path: wt, error: scrubGitText(r.stderr) || `git merge exited ${r.code}` };
@@ -768,7 +779,9 @@ export async function mergeBaseInto(dir, { feature, baseSha, headSha, baseRef, t
       return { ok: false, kind: m.code === 1 && SHA_RE.test(t || '') ? 'not-clean' : 'failed', error: scrubGitText(m.stderr) || 'the merge is not clean' };
     }
   }
-  const c = await _run(['commit-tree', t, '-p', headSha, '-p', baseSha, '-m', message], { cwd: dir });
+  const commit = (env) => _run(['commit-tree', t, '-p', headSha, '-p', baseSha, '-m', message], { cwd: dir, env });
+  let c = await commit(null);
+  if (!c.ok && runIdentity && NO_IDENTITY_RE.test(c.stderr)) c = await commit({ ...stripHostCredentials(process.env), ...RUN_IDENTITY });
   if (!c.ok || !SHA_RE.test(c.stdout.trim())) {
     const identity = /Author identity unknown|tell me who you are|unable to auto-detect email/i.test(c.stderr);
     return { ok: false, kind: identity ? 'identity' : 'failed', error: scrubGitText(c.stderr) || 'git commit-tree failed' };

@@ -17,18 +17,18 @@ test('loadAgentRegistry returns all shipped agents (10 coding + 8 presentation +
       'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'memoryDefragmenter',
       'planReviewer', 'planner',
       'promoCapture', 'promoExplorer', 'promoMascot', 'promoReview', 'promoScenes', 'promoSetup', 'promoVoice', 'promoWriter',
-      'refiner', 'requirementsDrafter', 'requirementsRefiner', 'requirementsReviewer', 'reviewer', 'workspaceReviewer', 'workspaceScanner',
-      'workspaceSynthesizer', 'workspaceUsageMapper'],
+      'refiner', 'requirementsDrafter', 'requirementsRefiner', 'requirementsReviewer', 'reviewer', 'testWriter', 'workspaceReviewer', 'workspaceScanner',
+      'workspaceSynthesizer', 'workspaceUsageMapper'].concat('featureVerifier').sort(),
   );
-  assert.equal(Object.keys(reg).length, 35);
-  // The four workspace agents are scope:'workspace-only'; the other 31 are 'project'.
+  assert.equal(Object.keys(reg).length, 37);
+  // The four workspace agents are scope:'workspace-only'; the other 33 are 'project'.
   const projectScoped = Object.values(reg).filter((m) => m.scope !== 'workspace-only').map((m) => m.key).sort();
   assert.deepEqual(projectScoped,
     ['architect', 'architectSetup', 'clarify', 'deckAudit', 'deckBuilder', 'deckClarify', 'deckExport', 'deckNarrative', 'deckOutputs', 'deckReviewer', 'deckSystem',
       'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'memoryDefragmenter',
       'planReviewer', 'planner',
       'promoCapture', 'promoExplorer', 'promoMascot', 'promoReview', 'promoScenes', 'promoSetup', 'promoVoice', 'promoWriter',
-      'refiner', 'requirementsDrafter', 'requirementsRefiner', 'requirementsReviewer', 'reviewer']);
+      'refiner', 'requirementsDrafter', 'requirementsRefiner', 'requirementsReviewer', 'reviewer', 'testWriter'].concat('featureVerifier').sort());
 });
 
 test('normalizeMeta.domain: default general, sentinel shared, malformed→general, valid kebab passes', () => {
@@ -65,11 +65,11 @@ test('registry insertion order follows .order ascending', () => {
     'deckClarify', 'deckNarrative', 'deckSystem', 'deckBuilder', 'deckAudit', 'deckReviewer', 'deckExport', 'deckOutputs',
     'architectSetup', 'architect',
     'promoSetup', 'promoVoice', 'promoExplorer', 'promoWriter', 'promoCapture', 'promoMascot', 'promoScenes', 'promoReview',
-    'requirementsDrafter', 'requirementsReviewer', 'requirementsRefiner',
+    'requirementsDrafter', 'requirementsReviewer', 'requirementsRefiner', 'testWriter', 'featureVerifier',
   ]);
 });
 
-test('registryToSteps: 31 project steps with labels, fanOut and questions flags, equal to AGENT_STEPS', async () => {
+test('registryToSteps: 33 project steps with labels, fanOut and questions flags, equal to AGENT_STEPS', async () => {
   const steps = registryToSteps(loadAgentRegistry());
   await checkRows([
     { name: 'registryToSteps matches the legacy AGENT_STEPS for the original 4', run: () => {
@@ -88,7 +88,7 @@ test('registryToSteps: 31 project steps with labels, fanOut and questions flags,
       assert.deepEqual(steps, AGENT_STEPS);
     } },
     { name: 'registryToSteps appends the new agents with their display names', run: () => {
-      assert.equal(steps.length, 31);
+      assert.equal(steps.length, 33);
       assert.deepEqual(steps[0], { key: 'clarify', label: 'Clarify', fanOut: true, asksQuestions: true, questionsLocked: true, questionsDefault: true });
       assert.deepEqual(steps[3], { key: 'decomposer', label: 'Decompose', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false });
       assert.deepEqual(steps[6], { key: 'manualTestsChecklist', label: 'Manual Tests Checklist', fanOut: false, asksQuestions: true, questionsLocked: false, questionsDefault: false });
@@ -102,7 +102,7 @@ test('registryToSteps: 31 project steps with labels, fanOut and questions flags,
         ['deckClarify', 'deckNarrative', 'deckSystem', 'deckBuilder', 'deckAudit', 'deckReviewer', 'deckExport', 'deckOutputs',
           'architectSetup', 'architect',
           'promoSetup', 'promoVoice', 'promoExplorer', 'promoWriter', 'promoCapture', 'promoMascot', 'promoScenes', 'promoReview',
-          'requirementsDrafter', 'requirementsReviewer', 'requirementsRefiner']);
+          'requirementsDrafter', 'requirementsReviewer', 'requirementsRefiner', 'testWriter', 'featureVerifier']);
       assert.deepEqual(steps[18], { key: 'architectSetup', label: 'C4: setup', fanOut: false, asksQuestions: true, questionsLocked: true, questionsDefault: true });
       assert.deepEqual(steps[19], { key: 'architect', label: 'C4: architect', fanOut: true, asksQuestions: false, questionsLocked: false, questionsDefault: false });
       assert.deepEqual(steps[20], { key: 'promoSetup', label: 'Promo: setup', fanOut: false, asksQuestions: true, questionsLocked: true, questionsDefault: true });

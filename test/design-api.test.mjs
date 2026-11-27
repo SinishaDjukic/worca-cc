@@ -416,7 +416,7 @@ test('continue: 202 with sections or with no body; 409, 422, 403, 503, credentia
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
   assert.deepEqual([r.status, r.json], [409, { error: 'no key', code: 'credential-missing' }]);
-  assert.deepEqual(asked, [[]], 'no role set: brokerStartRefusal gets an empty model list');
+  assert.deepEqual(asked, [['claude-opus-5-5', 'claude-sonnet-5-5']], 'no role set: brokerStartRefusal gets Worca\'s defaults (#1450)');
   assert.deepEqual([spawns.length, live.get(four.buildId), getBuild(four.buildId).status], [0, null, 'paused']);
   await call('POST', `/api/design/${four.d.id}/builds/${four.buildId}/stop`, {});
 
@@ -461,7 +461,7 @@ test('continue and answer check the broker first', async () => {
   const refusal = { code: 'credential-missing', error: 'You have not added your key yet.' };
   assert.deepEqual([cont.status, cont.json], [409, refusal]);
   assert.deepEqual([answer.status, answer.json], [409, refusal]);
-  assert.deepEqual(asked, [[], []], 'both ask with the design\'s build models');
+  assert.deepEqual(asked, [['claude-opus-5-5', 'claude-sonnet-5-5'], ['claude-opus-5-5', 'claude-sonnet-5-5']], 'both ask with the design\'s build models');
 });
 
 test('restore: 400 on a bad n, 409 while a build runs or is paused, delegates to versions, 404 without one', async () => {

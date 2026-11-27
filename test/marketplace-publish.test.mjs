@@ -203,7 +203,6 @@ test('buildPrTitle / buildPrBody: version, grouped files, left-out built-ins, va
     updated: ['plugins/x/workflows/shared-flow.json', 'plugins/x/worca-cc-plugin.json'],
     builtins: ['planner'], skippedSkills: ['bundled-skill'], indexAdded: false,
     validation: { lint: 'passed', cases: 'no cases shipped', discovery: 'finds x v0.1.1 at plugins/x/' },
-    startedBy: 'alice',
   });
   assert.match(body, /\*\*Version:\*\* 0\.1\.0 → 0\.1\.1/);
   assert.match(body, /## Created\n\n- \*\*Agents:\*\* `agents\/a\.md`, `agents\/a\.meta\.json`/);
@@ -211,6 +210,7 @@ test('buildPrTitle / buildPrBody: version, grouped files, left-out built-ins, va
   assert.match(body, /Built-in agents\/scripts:\*\* planner/);
   assert.match(body, /Built-in skills:\*\* bundled-skill/);
   assert.match(body, /Marketplace discovery: finds x v0\.1\.1/);
-  assert.match(body, /Started by alice via worca$/);
+  assert.doesNotMatch(body, /via worca/);
+  assert.match(body, /Marketplace discovery: finds x v0\.1\.1 at plugins\/x\/$/);
   assert.doesNotMatch(body, /\/tmp|\/var\/|[A-Z]:\\/);
 });

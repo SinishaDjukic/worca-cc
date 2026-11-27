@@ -169,3 +169,10 @@ test('projectModelPicks: step and node picks of every project, minus a project w
   await setNodeModel(pA, 'wf_x', 's3_0', { model: 'gpt-6-luna' });
   assert.deepEqual(modelUses()['gpt-6-luna'].map((u) => [u.kind, u.engine, u.key]), [['project-node', 'codex', 's3_0']]);
 });
+
+test('a cliDecides role names no model: it is never listed as a use (#1450)', () => {
+  writeSettings({ modelRoles: { claude: { deep: { cliDecides: true }, quick: { model: 'claude-haiku-5-5' } } } });
+  const uses = modelUses({ projects: false });
+  assert.doesNotMatch(JSON.stringify(uses), /cliDecides|undefined/);
+  assert.ok(JSON.stringify(uses).includes('claude-haiku-5-5'));
+});

@@ -2,13 +2,19 @@
 // the nudge (open decisions, both choices with estimates) on a nudged one; the facts line and the
 // lead sentence on either. null when the card has neither.
 import { buildPerspectiveChips } from './chips.mjs';
-import { chipsHiddenFor, PERSPECTIVES } from '../../../src/shared/shape/perspectives.mjs';
+import { chipsHiddenFor, perspectivesFor } from '../../../src/shared/shape/perspectives.mjs';
 import { shapeRequirementsEligible } from '../../../src/shared/shape/requirements.mjs';
-import { ANSWERER_LEAD_KEYS } from '../../../src/shared/answerer.mjs';
+import { answererLeadKeys } from '../../../src/shared/answerer.mjs';
+import { flagOn } from '../flags.mjs';
 import { loadAnswerer, saveAnswerer, leadLabel } from '../answerer.mjs';
 import { notify } from '../feedback.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
 import { icon } from '../icons.mjs';
+import { segmented } from '../ask/widgets-input.mjs';
+import { buildFacts, factRow, setFactText, syncFacts } from '../run-page-head.mjs';
+import { fold, buildCheckFold } from './check-row.mjs';
+import { stepHead, stepSender, errLine, ownButton } from './step-card.mjs';
+import { CARE_LABELS, CARE_POSITIONS, CARE_TABLE, careCell, careGivesUp, careGivesUpSentence } from '../../../src/shared/shape/feature-record.mjs';
 
 /** The facts line: `Large task · ≈ $31 · ~84 min` (the shaped choice's estimate), or `no estimate yet`. */
 function factsLine(n) {
@@ -35,13 +41,15 @@ function requirementsCard(doc, card, h, fetchFn) {
   el.appendChild(h('div', 'shape-nudge-head shape-facts', factsLine(n)));
   const picked = n.perspectives;
   const hidden = chipsHiddenFor(picked);
+  // Small runs B3 (D21, D22): the live flag offers Compliance as a chip and as a lead (no run exists yet).
+  const smallRuns = flagOn('shaperSmallRuns', doc);
   if (!shapeRequirementsEligible(n)) {
-    const chips = buildPerspectiveChips(doc, { picked, hidden, collapsed: true });
+    const chips = buildPerspectiveChips(doc, { picked, hidden, collapsed: true, smallRuns });
     el.appendChild(chips.el);
     return { el, chipsEl: chips.el, requirements: false, blocked: () => false, commit: noop, body: () => bodyOf(card, chips.value()) };
   }
 
-  const offered = PERSPECTIVES.filter((p) => !hidden.includes(p.key)).map((p) => p.key);
+  const offered = perspectivesFor({ smallRuns }).filter((p) => !hidden.includes(p.key)).map((p) => p.key);
   const supporters = new Set(picked.filter((k) => k !== 'product' && offered.includes(k)));
   let lead = null;          // the pick
   let saved = null;         // the profile's lead
@@ -72,7 +80,7 @@ function requirementsCard(doc, card, h, fetchFn) {
   function paintSentence() {
     leadBtn = picker('shape-lead', 'pick a role', 'The role that leads the requirements');
     suppBtn = picker('shape-supporters', 'no one else', 'The roles that support the lead');
-    leadBtn.addEventListener('click', () => toggleMenu({ doc, anchor: leadBtn, label: 'You lead as', items: ANSWERER_LEAD_KEYS.map((k) => ({
+    leadBtn.addEventListener('click', () => toggleMenu({ doc, anchor: leadBtn, label: 'You lead as', items: answererLeadKeys({ smallRuns }).map((k) => ({
       label: leadLabel(k), checked: k === lead, ...(k === saved ? { hint: 'you, last time' } : {}),
       onSelect: () => { lead = k; paint(); emit(); },
     })) }));
@@ -134,4 +142,132 @@ export function shapeAdvancedSummary({ engine = '', guardrails = '', agents = 0,
     parts.push(overrides ? `${a}, ${overrides} changed from workflow defaults` : `${a} on workflow defaults`);
   }
   return parts.join(' · ');
+}
+
+// ---- Shaper small runs B2: the Start step's body (the one card's `.chat-rc-q`, ask kind `care`) ----
+const CARE_ROWS = [['size', 'Size'], ['care', 'Care'], ['does', 'Does'], ['estimate', 'Estimate'], ['gives', 'Gives up'], ['history', 'History'], ['models', 'Models']];
+const CARE_EVERY = 'In every position: every requirement is owned by one run or confirmed by a person; no agent approves its own work.';
+const NOT_ENOUGH = 'not enough history yet';
+const capOf = (doc, text) => { const c = doc.createElement('div'); c.className = 'cap'; c.textContent = text; return c; };
+const lineOf = (doc, text) => { const d = doc.createElement('div'); d.textContent = text; return d; };
+/** `.rd-kv-v` is one flex line: a value of several lines goes in one block child, so its lines stack. */
+const stackOf = (doc, nodes) => { const d = doc.createElement('div'); d.append(...nodes); return d; };
+const usd = (n) => (n < 10 ? n.toFixed(2) : String(Math.round(n)));
+let careSeq = 0;
+
+/**
+ * The Start step (B2): the size, the Care dial preselected on Worca's pick with its reason, what the selected position
+ * does, the estimates, what it gives up below the pick (one sentence, the full list in a fold), the History per
+ * position, the models a person set, the "What … does" fold and one "Start requirements". `deps` = the step card's (`title`, `chip`, `submit`) plus `onPick`.
+ * @returns {{el: HTMLElement, render: (panel: HTMLElement) => void, collect: () => object, setErrors: (errors: object[]) => void}}
+ */
+export function renderCareStart(doc, pq, deps = {}) {
+  const start = (pq && pq.care) || {};
+  const pick = start.pick && CARE_POSITIONS.includes(start.pick.position) ? start.pick.position : 'balanced';
+  const names = start.names || {};
+  const positions = start.positions || {};
+  const history = start.history || {};
+  let sel = pick;
+  const el = doc.createElement('div');
+  el.className = 'care-start';
+  el.appendChild(stepHead(doc, deps.title || 'Your turn: how much care?', deps.chip || 'Start'));
+  const kv = buildFacts(doc, CARE_ROWS);
+  const value = (key) => factRow(kv, key).querySelector('.rd-kv-v');
+  const careKey = factRow(kv, 'care').querySelector('.rd-kv-k');
+  careKey.id = `care-k-${++careSeq}`;
+
+  const facts = start.facts || {};
+  value('size').textContent = start.size
+    ? `${start.size[0].toUpperCase()}${start.size.slice(1)} · about ${facts.requirements} requirements` : 'Size not known yet';
+
+  const err = errLine(doc);
+  const seg = segmented({ doc, readonly: false }, CARE_POSITIONS.map((p) => ({ value: p, label: CARE_LABELS[p] })), pick,
+    (p) => { sel = p; paint(); if (deps.onPick) deps.onPick(p); }, { idBase: `${careKey.id}-seg`, labelledBy: careKey.id });
+  const pickBtn = seg.children[CARE_POSITIONS.indexOf(pick)];
+  value('care').append(stackOf(doc, [seg, capOf(doc, start.pick && start.pick.reason ? start.pick.reason : ''), err]));
+
+  const foldBtn = doc.createElement('button');
+  foldBtn.type = 'button';
+  foldBtn.className = 'btn plan-fold care-fold';
+  const foldText = doc.createElement('span');
+  foldText.className = 'plan-fold-text';
+  const chev = doc.createElement('span');
+  chev.className = 'plan-chev'; chev.textContent = '›'; chev.setAttribute('aria-hidden', 'true');
+  foldBtn.append(foldText, chev);
+  const region = doc.createElement('div');
+  region.className = 'care-fold-body';
+  region.hidden = true;
+  fold(foldBtn, region);
+  const tableKv = buildFacts(doc, CARE_TABLE.map((r) => [r.key, r.label]));
+  region.append(tableKv, capOf(doc, CARE_EVERY));
+
+  // Gives up: one sentence with "Recorded as your choice" on the same line, then every differing row in a fold,
+  // closed by default (owner direction d9a830854). Built once, so the fold stays as the person left it.
+  const givesLine = doc.createElement('div');
+  givesLine.className = 'care-gives';
+  const givesText = doc.createTextNode('');
+  const givesCap = doc.createElement('span');
+  givesCap.className = 'cap';
+  givesCap.textContent = ' Recorded as your choice';
+  givesLine.append(givesText, givesCap);
+  const givesFold = buildCheckFold(doc, [], '', { text: (g) => `All ${g.length} differences`, rows: (d, g) => g.map((x) => lineOf(d, x)) });
+  const givesBlock = stackOf(doc, [givesLine, givesFold.line, givesFold.rows]);
+
+  function paint() {
+    value('does').textContent = positions[sel] ? positions[sel].description : '';
+    const est = value('estimate');
+    const priced = CARE_POSITIONS.map((p) => (positions[p] && positions[p].estimate) || null);
+    if (priced.every((e) => !e)) est.replaceChildren(doc.createTextNode(NOT_ENOUGH));
+    else {
+      const parts = [];
+      CARE_POSITIONS.forEach((p, i) => {
+        if (i) parts.push(doc.createTextNode(' · '));
+        const t = priced[i] ? `${CARE_LABELS[p]} ≈ $${usd(priced[i].costUsd)}` : `${CARE_LABELS[p]}: ${NOT_ENOUGH}`;
+        if (p === sel) { const b = doc.createElement('b'); b.textContent = t; parts.push(b); } else parts.push(doc.createTextNode(t));
+      });
+      const cap = doc.createElement('span');
+      cap.className = 'cap';
+      cap.textContent = ` ${start.size ? 'the whole build, from recorded step costs' : 'one run, from recorded step costs'}`;
+      est.replaceChildren(stackOf(doc, [stackOf(doc, [...parts, cap]), ...(start.estimateCap ? [capOf(doc, start.estimateCap)] : [])]));
+    }
+    const gives = careGivesUp(sel, pick, names);
+    if (gives.length) { givesText.textContent = careGivesUpSentence(sel, pick) || gives[0]; givesFold.update(gives); }
+    value('gives').replaceChildren(...(gives.length ? [givesBlock] : []));
+    if (gives.length) delete pickBtn.dataset.preset; else if (sel === pick) pickBtn.dataset.preset = '1';
+    const hist = CARE_POSITIONS.map((p) => history[p] || { enough: false, line: `${CARE_LABELS[p]}: ${NOT_ENOUGH}` });
+    value('history').replaceChildren(hist.every((x) => !x.enough)
+      ? lineOf(doc, `Quality figures per position: ${NOT_ENOUGH}`) : stackOf(doc, hist.map((x) => lineOf(doc, x.line))));
+    value('models').textContent = start.modelsLine ? start.modelsLine.replace(/^Models: /, '') : '';
+    syncFacts(kv);
+    foldText.textContent = `What ${CARE_LABELS[sel]} does`;
+    for (const r of CARE_TABLE) setFactText(tableKv, r.key, careCell(r.key, sel, names));
+    syncFacts(tableKv);
+  }
+  paint();
+  el.append(kv, foldBtn, region);
+
+  // The step card's sending state: the button is disabled while the answer posts, and enabled again before stepSender
+  // gives the focus back to it after a failure (focus-after-disable).
+  let go = null;
+  const send = stepSender({ ...deps, doc, submit: (payload) => {
+    go.disabled = true;
+    return Promise.resolve().then(() => deps.submit(payload)).finally(() => { go.disabled = false; });
+  } }, err);
+  go = ownButton(doc, 'btn-sm btn-primary care-go', 'Start requirements', () => send({ care: { position: sel } }));
+  const foot = doc.createElement('div');
+  foot.className = 'qpanel-foot plan-actions';
+  foot.appendChild(go);
+  el.appendChild(foot);
+  return {
+    el,
+    render: (panel) => panel.appendChild(el),
+    collect: () => ({ care: { position: sel } }),
+    setErrors: (errors) => {
+      const first = Array.isArray(errors) && errors.find((e) => e && e.message);
+      if (!first) return;
+      err.classList.remove('ok');
+      err.textContent = first.message;
+      err.hidden = false;
+    },
+  };
 }

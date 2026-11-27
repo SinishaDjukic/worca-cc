@@ -10,7 +10,7 @@ import { CREATE_PR_LABEL, PR_CREATED, VIEW_PR_LABEL } from '../ship-words.mjs';
 import { icon } from '../icons.mjs';
 import { registerChatCard } from './extensions.mjs';
 import { buildShipChatCard } from '../shape/ship-card.mjs';
-import { buildChangesChatCard } from '../shape/changes-card.mjs';
+import { buildChangesChatCard, buildReqChangeChatCard } from '../shape/changes-card.mjs';
 import { buildRouteChatCard } from '../shape/route-card.mjs';
 import { prWatchTooltip } from './pr-watch-words.mjs';
 import { renderAskChanges } from './ask-changes.mjs';
@@ -314,4 +314,5 @@ export function registerChatActionCards() {
   registerChatCard('ship', (block, ctx) => buildShipChatCard(block, ctx));   // Shaper s4 (ui/public/shape/ship-card.mjs)
   registerChatCard('changes', (block, ctx) => buildChangesChatCard(block, ctx));   // Shaper s5 (ui/public/shape/changes-card.mjs)
   registerChatCard('route', (block, ctx) => buildRouteChatCard(block, ctx));       // Shaper s5 (ui/public/shape/route-card.mjs)
+  registerChatCard('req-change', (block, ctx) => buildReqChangeChatCard(block, ctx));   // small runs C4 (ui/public/shape/changes-card.mjs)
 }

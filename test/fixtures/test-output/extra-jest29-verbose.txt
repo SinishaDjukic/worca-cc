@@ -1,0 +1,43 @@
+PASS jest/b.test.js
+  ✓ top level b
+  outer b
+    ✓ passes b (4 ms)
+    inner b
+      ✓ it's a "quoted" name with spaces b
+      ○ skipped skipped b
+    second inner b
+      ✓ another b
+
+FAIL jest/a.test.js
+  ✓ top level a (1 ms)
+  outer a
+    ✓ passes a (7 ms)
+    ✕ fails a (3 ms)
+    inner a
+      ✓ it's a "quoted" name with spaces a
+      ○ skipped skipped a
+    second inner a
+      ✓ another a (1 ms)
+
+  ● outer a › fails a
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 2
+    Received: 1
+
+       8 |     test('another a', () => {});
+       9 |   });
+    > 10 |   test('fails a', () => { expect(1).toBe(2); });
+         |                                     ^
+      11 | });
+      12 | test('top level a', () => {});
+      13 |
+
+      at Object.toBe (a.test.js:10:37)
+
+Test Suites: 1 failed, 1 passed, 2 total
+Tests:       1 failed, 2 skipped, 8 passed, 11 total
+Snapshots:   0 total
+Time:        1.014 s
+Ran all test suites.

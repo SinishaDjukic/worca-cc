@@ -74,6 +74,10 @@ with **Discard**. Files that changed in the folder since the run started are ski
 A run with **No project** works in its own folder. It opens on **Artifacts** at every level and has no **Diff**,
 **Changes** or **Actions**.
 
+With [Workflow tests](workflow-tests.md) on (Labs), a run of one of your saved workflows uses the version marked in use, when there is
+one, and records which version it used. The tries of a test are not runs you see here: they never appear in
+the Runs list.
+
 ![A finished run, "CSV export for contacts", on its Diff tab: 4 files changed (+36 −0) in a file tree beside the highlighted patch of src/routes/contacts.js, with the run's worca-cc/ branch, its time and cost, and the Create PR and Publish branch buttons](screenshots/run-detail.png)
 
 ## Rerun a finished run
@@ -141,13 +145,28 @@ page then offers **Push <source>** instead of a pull request.
 Worca only ever fast-forwards. If the source branch moved in the meantime, its checkout has uncommitted changes, or
 the run didn't finish, the work stays on its own branch, and you get the commands to merge it yourself.
 
+### Chat runs: source branch
+
+A run proposed in a chat starts from the branch the chat names. When it names none, the setting **Chat runs: source
+branch** (Settings › Runs) decides, and a project can override it under its Settings › Chat:
+
+- **Ask me on the card** (the default): the run card shows its Source branch field at every interface mode, with
+  "Pick a branch…" and a hint, and Start stays off until you pick one. A Start from Discord, Slack or Telegram of
+  such a card answers "confirm in worca": open the chat in worca and pick the branch on the card.
+- **Current (checked out)**: the run starts from the branch the project has checked out, as before. The card names it,
+  for example "Current (checked out): feat/x".
+- **Only when the chat names one**: the chat asks you which branch to use before it proposes the run.
+
+Folder projects, folders that are not git repositories, and machines without git never need a branch. Worca checks
+the setting again when you start or schedule the card, so a card proposed earlier follows the setting as it is now.
+
 ### Following runs live
 
 **Runs** in the sidebar lists every run, live and finished. Its **View** menu shows All, Needs you, Running,
 Waiting, Finished, **Ready to ship** (finished, no PR yet) or Archived, and groups runs by project or by date.
 
 A live run's page shows its state and current step, the time ticking, its cost and the files it changed. **Live
-view** shows the running step inside its workflow graph. **Diff** shows the worktree's changes so far. **Logs**
+view** shows the running step inside its workflow graph. **Diff** shows the worktree's changes so far, with **Open in <Editor>** at the top right (edits you make there go into the run). Each file's head, on live and finished runs, has an icon that opens the file at its first changed line; on a finished run that is not checked out, that one click checks it out first (see [Actions](actions.md#built-ins)). **Logs**
 streams every step with search, and at Expert you can filter by source, level, step and cycle.
 
 The top bar's **Activity** pill counts what needs you and what is running. To hear about it outside the tab, turn
@@ -170,8 +189,25 @@ To push the branch without a PR, use **Publish branch** (Advanced).
 
 ### Watch PR and conflicts
 
-With **Watch PR** on, Worca reads the open PR about once a minute. A failing check, a merge conflict or a requested
-change starts a fix run on the PR's branch, which pushes the fix.
+With **Watch PR** on, Worca reads the open PR about once a minute. A failing check, a merge conflict or requested
+change starts a fix run on the PR's branch, which pushes the fix. Review feedback is any unresolved inline thread
+or a review that requests changes from the PR author or a collaborator. A reviewer that is not a collaborator (a
+review bot, usually) counts too once its login is listed in the project's Settings under **Pull requests ›
+Reviewers that may trigger a fix**.
+
+On GitHub, a PR-level comment from a listed reviewer counts too, if it was posted after Watch PR was turned on
+and asks for code changes. Review bots also post notices ("review skipped", "rate limit exceeded"), placeholders
+and summaries on the PR, so before starting a run Worca asks a small helper model (the project's classifier
+helper when one is set, else the Quick jobs role) whether the comment requests changes; this costs well under a cent. A comment that doesn't is skipped
+and noted in the run's activity log. A comment that does starts a fix run: Worca quotes it in the run and replies
+with the result on the PR. Worca waits until the comment has not changed for two minutes, so a verdict still being
+written is checked once it is finished. Editing the comment later (a bot that refreshes one summary comment after
+each push, or turns a placeholder into findings) counts as a new comment and is checked again. Comments from
+anyone not listed, and comments hidden on GitHub, never start a run. If the check can't run (the helper model is
+unreachable), Worca tries again ten minutes later.
+
+The reviewer list takes GitHub login names; on Bitbucket, list the account UUID (`{…}`). Azure DevOps already
+counts every reviewer.
 
 After a run, Worca also checks whether the branch still merges into its base. If it does, you get **Update
 branch**. If it conflicts, you get **Resolve in a pipeline** or **Resolve in a terminal**.

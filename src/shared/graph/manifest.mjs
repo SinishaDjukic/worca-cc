@@ -160,6 +160,9 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       if (over.roles && typeof over.roles === 'object' && Object.keys(over.roles).length) cell.roles = over.roles;
       // A pick the run's engine dropped (role-slots pickOrDrop): only when one exists, so a run without drops is unchanged.
       if (over.wanted && typeof over.wanted === 'object') cell.wanted = over.wanted;
+      // #1450: who chose the model (workflows.mjs modelSource). Absent when undefined, so a pre-change manifest stays
+      // byte-equal; `null` (the tool decides) is written, so a resume can tell it from a pre-change run.
+      if (over.modelSource !== undefined) cell.modelSource = over.modelSource;
       // Run progress: the stage rides the manifest like color/icon, so a run (and a resume,
       // which rebuilds the manifest from the registry) never needs the live registry for it.
       if (meta?.progressStage) cell.progressStage = meta.progressStage;

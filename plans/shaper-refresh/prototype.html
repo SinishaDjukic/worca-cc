@@ -1,0 +1,1499 @@
+<title>Shaper Refresh Prototype</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Classic Worca (dev): tokens from ui/public/shell/self-hosted.css, split from light-dark() into a light :root and dark redefinitions. */
+:root{
+  --bg:#F1F1EF;--canvas-2:#FBFBF9;--panel:#FFFFFF;--surface:#FFFFFF;--field:#F6F6F4;--hover:#EBEBE8;
+  --side-bg:#FAFAFA;--side-ink:#737373;--side-sel-ink:#171717;--side-sel-bg:#EFEFEF;
+  --ink:#19191B;--ink-2:#5C5C63;--ink-3:#9A9AA1;--on-ink:#FFFFFF;--on-signal:#19191B;
+  --line:#ECECEA;--line-2:#E3E3E0;--seq:#B7B7BC;
+  --green-bg:#E2F3DF;--green:#5BAE5B;--green-ink:#2F7A38;--green-ink-strong:#2C7535;
+  --peach-bg:#FCEEDA;--peach:#EFA63C;--peach-ink:#B5751A;
+  --red-bg:#FBE3E0;--red:#E76A5A;--red-ink:#C5483A;--red-ink-strong:#B23F33;
+  --blue-bg:#DEEFF7;--blue:#5BA6CC;--blue-ink:#3782A8;--blue-ink-strong:#2B6A8C;
+  --violet-bg:#EAE6F8;--violet:#8C7FD6;--violet-ink:#6353B8;--violet-ink-strong:#5B4BB0;
+  --amber-bg:#FCE8C8;--amber:#E6962A;--amber-ink:#A66510;--amber-ink-strong:#8E550B;
+  --amber-wash:#FEF7EC;--amber-line:#F5D9A8;
+  --slate-bg:#E8ECF0;--slate:#8A96A3;--slate-ink:#58646F;
+  --knob:#FFFFFF;--switch-off:#8A8A85;
+  --scrim:rgba(25,25,27,.42);
+  --shadow-menu:0 12px 34px rgba(25,25,27,.12);
+  --shadow-sheet:0 18px 60px rgba(25,25,27,.14),0 2px 6px rgba(25,25,27,.06);
+  --r-xs:4px;--r-sm:6px;--r-md:8px;--r-lg:12px;--r-pill:999px;
+  --fs-caption:11px;--fs-meta:12px;--fs-body:13px;--fs-section:15px;--fs-subpage:18px;--fs-page:22px;
+  --sans:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --btn-hover:color-mix(in srgb,var(--ink) 7%,var(--panel));
+  --quiet-hover:color-mix(in srgb,var(--ink) 7%,transparent);
+  --row-selected:color-mix(in srgb,var(--ink) 8%,transparent);
+  --amber-ring:color-mix(in srgb,var(--amber) 55%,var(--line-2));
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#161614;--canvas-2:#1B1B19;--panel:#222220;--surface:#34342F;--field:#2C2C29;--hover:#353531;
+  --side-bg:#222220;--side-ink:#B4B4AE;--side-sel-ink:#ECECE8;--side-sel-bg:#353531;
+  --ink:#ECECE8;--ink-2:#B4B4AE;--ink-3:#9E9E98;--on-ink:#161614;
+  --line:#30302D;--line-2:#494944;--seq:#8E8E92;
+  --green-bg:#1C2F1D;--green-ink:#8FD48F;--green-ink-strong:#8FD48F;
+  --peach-bg:#33261A;--peach-ink:#F2B96A;
+  --red-bg:#34201D;--red-ink:#F08C7E;--red-ink-strong:#F08C7E;
+  --blue-bg:#1A2A33;--blue-ink:#86C4E3;--blue-ink-strong:#86C4E3;
+  --violet-bg:#262336;--violet-ink:#B3A8EE;--violet-ink-strong:#B3A8EE;
+  --amber-bg:#332715;--amber-ink:#F0B45A;--amber-ink-strong:#F0B45A;
+  --amber-wash:#322816;--amber-line:#6A5228;
+  --slate-bg:#262A2E;--slate-ink:#B3BEC8;
+  --knob:#ECECE8;--switch-off:#6B6B66;
+  --scrim:rgba(0,0,0,.62);
+  --shadow-menu:0 12px 34px rgba(0,0,0,.6);
+  --shadow-sheet:0 18px 60px rgba(0,0,0,.65),0 2px 6px rgba(0,0,0,.4);
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#161614;--canvas-2:#1B1B19;--panel:#222220;--surface:#34342F;--field:#2C2C29;--hover:#353531;
+  --side-bg:#222220;--side-ink:#B4B4AE;--side-sel-ink:#ECECE8;--side-sel-bg:#353531;
+  --ink:#ECECE8;--ink-2:#B4B4AE;--ink-3:#9E9E98;--on-ink:#161614;
+  --line:#30302D;--line-2:#494944;--seq:#8E8E92;
+  --green-bg:#1C2F1D;--green-ink:#8FD48F;--green-ink-strong:#8FD48F;
+  --peach-bg:#33261A;--peach-ink:#F2B96A;
+  --red-bg:#34201D;--red-ink:#F08C7E;--red-ink-strong:#F08C7E;
+  --blue-bg:#1A2A33;--blue-ink:#86C4E3;--blue-ink-strong:#86C4E3;
+  --violet-bg:#262336;--violet-ink:#B3A8EE;--violet-ink-strong:#B3A8EE;
+  --amber-bg:#332715;--amber-ink:#F0B45A;--amber-ink-strong:#F0B45A;
+  --amber-wash:#322816;--amber-line:#6A5228;
+  --slate-bg:#262A2E;--slate-ink:#B3BEC8;
+  --knob:#ECECE8;--switch-off:#6B6B66;
+  --scrim:rgba(0,0,0,.62);
+  --shadow-menu:0 12px 34px rgba(0,0,0,.6);
+  --shadow-sheet:0 18px 60px rgba(0,0,0,.65),0 2px 6px rgba(0,0,0,.4);
+  color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--panel);color:var(--ink);font:400 var(--fs-body)/1.5 var(--sans);-webkit-font-smoothing:antialiased;overflow-x:hidden}
+button{font:inherit;color:inherit}
+code,.mono{font-family:var(--mono);font-size:12px}
+a{color:inherit}
+svg.i{width:14px;height:14px;flex:0 0 14px;vertical-align:-2px}
+.wrap{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));max-width:1440px;margin:0 auto}
+/* top bar (dev .tbar: 48px, panel, one line under) */
+.top{display:flex;align-items:center;gap:12px;min-height:48px;border-bottom:1px solid var(--line);flex-wrap:wrap;padding:6px 0}
+.top b{font-size:var(--fs-section);font-weight:600}
+.top .sp{flex:1}
+.top .navsel{display:none;width:100%;margin:8px 0 0}
+/* frame */
+.frame{display:grid;grid-template-columns:200px minmax(0,760px) minmax(240px,280px);justify-content:center;gap:24px;padding:20px 0 48px}
+/* the journey list wears the sidebar's nav items (dev sidebar.css) */
+.jn{position:sticky;top:12px;align-self:start;max-height:calc(100vh - 24px);overflow:auto;background:var(--side-bg);border:1px solid var(--line);border-radius:var(--r-md);padding:8px}
+.jn h3{font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);margin:12px 0 4px 8px}
+.jn h3:first-child{margin-top:4px}
+.jn button{display:flex;gap:8px;width:100%;text-align:left;padding:4px 8px;border:0;border-radius:var(--r-sm);background:none;color:var(--side-ink);cursor:pointer;min-height:30px;align-items:center;font-weight:500}
+.jn button .n{font:500 11px var(--sans);color:var(--ink-3);flex:0 0 18px;font-variant-numeric:tabular-nums}
+.jn button:hover{background:var(--hover);color:var(--ink)}
+.jn button[aria-current="page"]{background:var(--side-sel-bg);color:var(--side-sel-ink);font-weight:600}
+.col{min-width:0;max-width:760px;width:100%;margin:0 auto}
+.crumb{font-size:var(--fs-meta);color:var(--ink-2);margin:0 0 4px;display:flex;gap:4px 8px;flex-wrap:wrap;align-items:center}
+.crumb a{text-decoration:none}
+.crumb a:hover{color:var(--ink);text-decoration:underline}
+.col>h2{font-size:var(--fs-subpage);line-height:1.25;font-weight:600;margin:0 0 16px}
+.concept-note{border:1px dashed var(--peach);background:var(--peach-bg);color:var(--peach-ink);border-radius:var(--r-sm);padding:8px 12px;margin:0 0 16px;font-size:var(--fs-meta)}.concept-note b{font-weight:600}
+.cx{display:block;width:100%;height:auto;color:var(--ink)}.cx text{font-family:inherit;font-size:12px;fill:currentColor}.cx .t{font-weight:600;font-size:13px}.cx .m{fill:var(--ink-2)}
+/* the prototype's own way between screens: above the screen, plain links, never under a card where it reads as a product button */
+.pager{display:flex;align-items:center;gap:12px;margin:0 0 16px;padding:0 0 8px;border-bottom:1px dashed var(--line-2);font-size:var(--fs-caption);color:var(--ink-2)}
+.pager .sp{flex:1}
+.pager{flex-wrap:wrap;justify-content:flex-end}.pager .btn{max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;display:block;line-height:28px}
+aside.notes{font-size:var(--fs-meta);min-width:0}
+aside.notes h4{font-size:var(--fs-body);font-weight:600;margin:0 0 6px}
+aside.notes .blk{margin-bottom:18px}
+aside.notes ul{margin:0;padding-left:16px;color:var(--ink-2)}
+aside.notes li{margin:4px 0}
+aside.notes .chg li{color:var(--ink)}
+@media (max-width:1320px){.frame{grid-template-columns:200px minmax(0,760px)}aside.notes{grid-column:2;border-top:1px solid var(--line);padding-top:16px}}
+@media (max-width:760px){.frame{display:block;padding-top:12px}.jn{display:none}.top .navsel{display:block}aside.notes{margin-top:24px}}
+/* buttons (dev design-system/buttons-component.css) */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;margin:0;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font-family:inherit;font-size:13px;font-weight:500;line-height:1;white-space:nowrap;text-decoration:none;cursor:pointer;box-shadow:none;transition:background-color .12s,border-color .12s}
+.btn:hover:not(:disabled){background-color:var(--btn-hover)}
+.btn svg{flex:none}
+.btn-sm{height:28px;padding:0 10px;gap:5px;font-size:var(--fs-meta)}
+.btn-primary{background:var(--ink);border-color:var(--ink);color:var(--on-ink);font-weight:600}
+.btn-primary:hover:not(:disabled){background-color:color-mix(in srgb,var(--on-ink) 8%,var(--ink))}
+.btn-quiet{background:transparent;border-color:transparent;color:var(--ink-2)}
+.btn-quiet:hover:not(:disabled){background-color:var(--quiet-hover);color:var(--ink)}
+.btn-icon{width:32px;padding:0}
+.btn-sm.btn-icon{width:28px}
+.btn:disabled,.btn[disabled]{opacity:.45;cursor:not-allowed}
+.link{border:0;background:none;padding:0;color:var(--ink);text-decoration:underline;text-underline-offset:2px;cursor:pointer;font:inherit}
+.link:hover{color:var(--ink-2)}
+:is(button,a,textarea,select,input,[tabindex]):focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+@media (pointer:coarse){.btn-sm,.btn{min-height:40px}.btn-icon{min-width:40px}}
+/* segmented control (dev .seg: one --field container, the picked segment --surface) */
+.seg{display:inline-flex;background:var(--field);border-radius:var(--r-sm);padding:2px;gap:2px}
+.seg button{height:28px;padding:0 12px;border:0;border-radius:var(--r-xs);background:transparent;color:var(--ink-2);font:500 13px/1 var(--sans);cursor:pointer;transition:.15s}
+.seg button:hover{color:var(--ink)}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(25,25,27,.06)}
+/* the role and model pickers: a small select-like control (dev .btn-sm skin) opening the one menu */
+.spick{display:inline-flex;align-items:center;gap:4px;height:28px;max-width:100%;padding:0 8px 0 10px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:500 var(--fs-meta)/1 var(--sans);cursor:pointer;white-space:nowrap;vertical-align:middle;transition:background-color .12s}
+.spick:hover{background:var(--btn-hover)}
+.spick .v{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.spick svg.i{width:12px;height:12px;flex:0 0 12px;color:var(--ink-2)}
+/* menu (dev .menu / .menu-item / .menu-sep) */
+.menu{position:absolute;z-index:20;min-width:200px;max-width:min(320px,calc(100vw - 32px));background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:4px;box-shadow:var(--shadow-menu);font-size:var(--fs-body)}
+.menu button{display:flex;gap:10px;align-items:center;width:100%;min-height:30px;padding:4px 9px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink);text-align:left;font:inherit;cursor:pointer}
+.menu button:hover,.menu button:focus{background:var(--hover);outline:none}
+.menu button .h{margin-left:auto;font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums}
+.menu button.danger{color:var(--red-ink)}
+.menu button.danger:hover,.menu button.danger:focus{background:var(--red-bg)}
+.menu .msep{height:1px;margin:4px 6px;background:var(--line);border:0}
+.menu .ck{width:12px;flex:0 0 12px;font-size:12px;text-align:center}
+.menu button .ri{color:var(--ink-2)}
+.rl{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.rl .ri{color:var(--ink-2)}
+/* chat: the person's bubble (dev .ask-user-bubble) */
+.u-msg{margin:0 0 16px auto;max-width:78%;width:fit-content;padding:10px 14px;background:var(--field);border-radius:var(--r-md) var(--r-md) var(--r-sm) var(--r-md);line-height:1.6;white-space:pre-line;overflow-wrap:anywhere}
+/* chat card (dev .ask-card.ask-mcard + metrics-card.css head) */
+.ask-mcard{border:1px solid var(--line);border-radius:var(--r-md);padding:16px 18px;margin:0 0 16px;background:var(--panel)}
+.ask-mcard-head{display:flex;gap:8px;align-items:center;min-width:0;min-height:24px}
+.ask-mcard-title{order:1;flex:0 1 auto;font-weight:600;font-size:var(--fs-section);line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.ask-mcard-kind{order:2;display:inline-flex;align-items:center;height:18px;padding:0 8px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font:500 11px/1 var(--sans);white-space:nowrap;flex:0 0 auto}
+/* the status block (dev .run-status-head: the dot centred on the state word; detail 12px under it) */
+.rc-state{display:flex;gap:8px;align-items:flex-start;margin-top:8px}
+.rc-rail{flex:0 0 auto;display:flex;justify-content:center;align-items:center;height:20px}
+.rc-word{font-weight:600}
+.rc-detail{font-size:var(--fs-meta);color:var(--ink-2);margin-top:2px}
+/* status dots (dev .status-dot: 8px, currentColor; the ? and ! are 12px filled symbols) */
+.sd{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--slate);flex:0 0 auto}
+.sd.peach{background:var(--peach);animation:wr-pulse 1.6s ease-in-out infinite}
+.sd.green{background:var(--green)}.sd.violet{background:var(--violet)}
+.sd.hollow{background:none;box-shadow:inset 0 0 0 2px var(--slate)}
+.sd.q,.sd.x{width:12px;height:12px;display:inline-grid;place-items:center;color:var(--on-signal);font:700 9px/1 var(--sans)}
+.sd.q{background:var(--amber)}
+.sd.q::after{content:"?"}
+.sd.x{background:var(--red)}
+.sd.x::after{content:"!"}
+@keyframes wr-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.82)}}
+/* facts (dev .rd-kv: 12px labels in one column, divided rows) */
+.rd-kv{margin:12px 0 0;display:grid;grid-template-columns:minmax(96px,max-content) minmax(0,1fr);column-gap:12px}
+.rd-kv-row{display:grid;grid-template-columns:subgrid;grid-column:1/-1;align-items:baseline;padding:8px 0}
+.rd-kv-row+.rd-kv-row{border-top:1px solid var(--line)}
+.rd-kv-k{font-size:var(--fs-meta);color:var(--ink-2);max-width:160px;overflow-wrap:anywhere}
+.rd-kv-v{min-width:0;overflow:hidden;text-overflow:ellipsis;overflow-wrap:anywhere}
+@media (max-width:420px){.rd-kv{grid-template-columns:minmax(0,1fr)}.rd-kv-row{row-gap:2px}.rd-kv-k{max-width:none}}
+.body{margin-top:12px}
+.ask-mcard-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+.ask-mcard-actions .sp{flex:1}
+.answered{margin-top:12px;font-size:var(--fs-meta);color:var(--ink-2);display:flex;gap:8px;align-items:center}
+/* the one chip (dev: 18px, 11/500, 4px corner, filled) */
+.chip{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font:500 11px/1 var(--sans);white-space:nowrap}
+.chip.ai{background:var(--violet-bg);color:var(--violet-ink-strong)}
+.cap{font-size:var(--fs-meta);color:var(--ink-2)}
+.fig{font-variant-numeric:tabular-nums}
+.e-only,.p-only{display:contents}
+:root[data-reg="eng"] .p-only,:root:not([data-reg="eng"]) .e-only{display:none}
+.variant{font-size:var(--fs-meta);color:var(--ink-2);display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px}
+/* folds and check rows (dev shape-it.css .plan-fold, .plan-check-row) */
+.fold-line{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+.fold{display:inline-flex;gap:6px;align-items:center;border:0;background:none;padding:2px 0;cursor:pointer;text-align:left;font:500 12px/1.4 var(--sans);color:var(--ink-2)}
+.fold:hover{color:var(--ink)}
+.fold b{color:var(--ink);font-weight:600}
+.fold svg.i{width:12px;height:12px;flex:0 0 12px;transition:transform .15s}
+.fold[aria-expanded="true"] svg.i{transform:rotate(90deg)}
+.fold-line .sp{flex:1}
+/* a role's row: its state mark in the left mark column (as on every row of the card), the chevron at the far end */
+.fold.rf{display:flex;flex:1 1 auto;width:100%;gap:8px;min-height:30px;font-size:var(--fs-body)}.fold.rf svg.i{transform:none}
+.fold.rf .rf-m{flex:0 0 14px;display:flex;justify-content:center}.fold.rf .rf-d{flex:0 1 auto;min-width:0;font-size:var(--fs-meta)}
+.fold.rf .rf-c{margin-left:auto;display:flex;color:var(--ink-3)}.fold.rf[aria-expanded="true"] .rf-c svg.i{transform:rotate(90deg)}
+.fold-body{margin:4px 0 0;padding-left:0}
+.fold-body[hidden]{display:none}
+.plan-check-row{display:flex;gap:4px 8px;align-items:flex-start;min-height:30px;padding:3px 0;font-size:var(--fs-body);flex-wrap:wrap;color:var(--ink)}
+.plan-check-row .m{flex:0 0 14px;display:flex;justify-content:center;align-items:center;align-self:flex-start;height:calc(var(--fs-body) * 1.5)}
+.plan-check-row .m svg{width:12px;height:12px}
+.plan-check-row.ok .m{color:var(--ink-3)}
+.plan-check-row.bad .m{color:var(--ink)}
+.plan-check-row .l{flex:1;min-width:0;display:flex;flex-wrap:wrap;gap:0 8px;align-items:baseline}
+.plan-check-row .d{flex:0 1 auto;min-width:0;color:var(--ink-2);font-size:var(--fs-meta)}
+.plan-check-row .btn{flex:0 0 auto;align-self:flex-start}
+.grp-h{font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);margin:10px 0 2px}
+/* single choice (dev chat/question.mjs + runs/questions-panel.css: numbered text, divided .qopt rows, a 16px square mark, the pick on --field) */
+.qblock{margin:0 0 8px}
+.qtext{font-weight:500;margin:12px 0 6px;display:flex;align-items:flex-start;gap:9px;line-height:1.45}
+.qtext .qn{flex:0 0 auto;min-width:12px;font-weight:600;color:var(--ink-2)}
+.qopts{display:flex;flex-direction:column;padding-left:21px}
+.qopt{display:flex;gap:12px;align-items:center;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none;padding:8px 12px 8px 8px;border-radius:0;cursor:pointer;min-height:40px;font:500 var(--fs-body)/1.5 var(--sans);color:var(--ink)}
+.qopt:first-child{border-top-color:transparent}
+.qopt::before{content:'';flex:0 0 16px;box-sizing:border-box;width:16px;height:16px;border-radius:var(--r-xs);border:1px solid var(--line-2)}
+.qopt:hover{background:var(--hover)}
+.qopt.sel{background:var(--field);border-radius:var(--r-sm);border-top-color:transparent}
+.qopt.sel+.qopt{border-top-color:transparent}
+.qopt:focus-visible{outline-offset:-2px}
+.qopt.sel::before{background:var(--ink);border-color:var(--ink);-webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><mask id='k'><rect width='20' height='20' fill='white'/><path d='M7.1 10.2l1.8 1.9 4-4' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></mask><rect width='20' height='20' mask='url(%23k)'/></svg>") center/100% 100% no-repeat;mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><mask id='k'><rect width='20' height='20' fill='white'/><path d='M7.1 10.2l1.8 1.9 4-4' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></mask><rect width='20' height='20' mask='url(%23k)'/></svg>") center/100% 100% no-repeat}
+.qopt-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.chat-q-opt-sub{font-size:var(--fs-meta);font-weight:400;color:var(--ink-2)}
+.qrec{display:inline-flex;align-items:center;height:18px;margin-left:auto;padding:0 6px;border-radius:var(--r-xs);font-size:var(--fs-caption);font-weight:500;background:var(--line);color:var(--ink-2);flex:none}
+/* member rows (dev group-page.css .run-member: dot, number, title, state, cost; divided, never boxed) */
+.rc-members{margin-top:12px}
+.list-h{display:flex;gap:8px;align-items:baseline;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);padding:12px 0 4px}
+.list-h:first-child{padding-top:0}
+.list-h .c{margin-left:auto;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.rc-member{display:flex;align-items:center;gap:8px;min-height:36px;padding:4px 0;min-width:0;border-top:1px solid var(--line)}
+.rc-member .rc-rail{flex:0 0 12px;height:auto}
+.rc-m-title{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink);text-decoration:none;font-weight:500}
+.rc-m-title .num{display:inline-block;min-width:14px;font:500 12px var(--sans);font-variant-numeric:tabular-nums;color:var(--ink-2);margin-right:8px}
+a.rc-m-title:hover{text-decoration:underline}
+button.rc-m-title{border:0;background:none;padding:0;text-align:left;cursor:pointer;font:inherit;font-weight:500}
+.area-t{color:var(--ink-2);font-weight:400}
+.rc-m-state{flex:0 6 auto;min-width:0;max-width:60%;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
+.rc-m-state.ink{color:var(--amber-ink-strong)}
+.rc-m-state.red{color:var(--red-ink-strong)}
+.rc-m-cost{flex:0 0 auto;text-align:right;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap}
+.rc-m-cost.over,.rc-m-state.over{color:var(--ink);font-weight:600}
+.rmark{display:inline-block;width:14px;text-align:center;font:600 12px/1 var(--sans);color:var(--ink-3)}.rmark.done{color:var(--green-ink)}.rmark.live{color:var(--peach)}.rmark.ask{color:var(--amber-ink-strong);font-weight:700}.rmark.paused{color:var(--ink-2)}
+.rd-kv-row.one{grid-template-columns:minmax(0,1fr)}
+.step-title{margin-top:12px}
+.step-rcpts{margin-top:10px}
+.rc-last{flex-wrap:nowrap;margin-top:8px}
+.rc-last .chat-rc-log{flex:1 1 0;min-width:0;margin:0;border-top:0}
+.rc-last .chat-rc-log-row{border-bottom:0}
+.rc-last .link{flex:none;font-size:var(--fs-meta);color:var(--ink-2)}
+.rc-member .btn-icon{flex:0 0 28px}
+.rc-member.focus{background:var(--row-selected);border-radius:var(--r-sm);border-top-color:transparent;padding-left:6px;padding-right:2px}
+.rc-member.focus+.rc-member{border-top-color:transparent}
+@media (max-width:520px){.rc-m-cost{display:none}.rc-m-state{max-width:50%;flex:0 0 auto}.wide,.area-t{display:none}.runs-row .rt .cnt{display:none}.rc-m-state{min-width:72px}.rc-m-state.aft{min-width:45%;max-width:45%}.plan-check-row .l{flex:1 1 calc(100% - 22px)}.plan-check-row .l~.btn{margin-left:22px}}
+/* step log (dev .chat-rc-log: divided rows, 12px --ink-2) */
+.chat-rc-log{margin-top:12px;border-top:1px solid var(--line)}
+.chat-rc-log-row{display:flex;gap:6px;align-items:baseline;font-size:var(--fs-meta);color:var(--ink-2);padding:5px 0;border-bottom:1px solid var(--line)}
+.chat-rc-log-row .m{flex:0 0 16px;display:flex;justify-content:center;align-self:center;color:var(--green-ink)}
+.chat-rc-log-row .m svg{width:12px;height:12px}
+.chat-rc-log-row .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-rc-log-row .t .link{color:var(--ink-2)}
+.chat-rc-log-row .tm{color:var(--ink-2);font-variant-numeric:tabular-nums;flex:0 0 auto}
+/* composer (dev workflow-card.css .ask-composer-box) */
+.ask-composer-box{display:flex;flex-direction:column;gap:4px;border:1px solid var(--line-2);border-radius:var(--r-lg);padding:8px 10px;background:var(--panel)}
+.ask-field{position:relative}
+.ask-field textarea{display:block;scrollbar-gutter:stable;width:100%;min-height:64px;max-height:220px;resize:vertical;border:0;border-radius:0;background:transparent;color:var(--ink);font:400 var(--fs-body)/1.6 var(--sans);padding:6px 44px 8px 6px;outline:none}
+.ask-field textarea:focus-visible{outline:none}
+.ask-composer-box:focus-within{border-color:var(--ink-3)}
+.sn-btn{position:absolute;top:4px;right:12px;width:24px;height:24px;border:0;border-radius:var(--r-sm);background:none;color:var(--violet-ink);cursor:pointer;display:grid;place-items:center}
+.sn-btn:hover{background:var(--violet-bg)}
+.ask-field.writing textarea{background:linear-gradient(90deg,transparent,var(--field),transparent);background-size:200% 100%;animation:sh 1.2s linear infinite}
+@keyframes sh{from{background-position:200% 0}to{background-position:-200% 0}}
+.ask-guide{margin:2px 6px 0;padding-top:8px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ask-guide .t{flex:1 1 240px;min-width:0}
+.ask-guide-checks{margin:2px 6px 0;padding-top:4px;border-top:1px solid var(--line)}
+.ask-guide-checks .fold-line{margin-top:4px}
+.ask-composer-row{display:flex;gap:8px;align-items:center;margin-top:4px;padding:0 2px;flex-wrap:nowrap;min-width:0}
+.ask-composer-row>*{flex:0 0 auto}.ask-composer-row>.spick{flex:0 1 auto;min-width:0}.ask-composer-row .spick .rl{min-width:0;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:420px){.ask-composer-row{gap:6px}.ask-composer-row .switch-row{gap:6px}}
+.pin{display:inline-flex;align-items:center;height:22px;padding:0 9px;border:0;border-radius:var(--r-xs);background:var(--slate-bg);color:var(--slate-ink);font:500 11px/1 var(--sans)}
+.ask-composer-row .sp{flex:1}
+/* page head (dev .rd-title: 22/700, -0.02em, one line) */
+.pg-h{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:nowrap;min-width:0}.pg-h>.btn,.pg-h>.chip{flex:0 0 auto}
+.pg .pg-h{flex-wrap:nowrap}.pg .pg-h .btn{flex:0 0 auto}
+.pg-h h1{font:700 var(--fs-page)/1.25 var(--sans);letter-spacing:-.02em;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
+.pg-h .sp{flex:1}
+/* Runs (dev runs/running-redesign.css + runs.html: one list beside one content pane; the list's width 340px) */
+.frame.fwide{grid-template-columns:200px minmax(0,1fr)}.frame.fwide>.col{max-width:none}.frame.fwide>aside.notes{grid-column:2;border-top:1px solid var(--line);padding-top:16px}
+@media (max-width:1100px){.frame.fwide{grid-template-columns:minmax(0,1fr)}.frame.fwide>.jn{display:none}.frame.fwide>aside.notes{grid-column:1}}
+.runs-shell{display:grid;grid-template-columns:clamp(280px,340px,45%) minmax(0,1fr);border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;background:var(--bg);min-height:600px}
+.runs-list-pane{display:flex;flex-direction:column;min-width:0;background:var(--panel);border-right:1px solid var(--line)}
+.runs-head{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 14px 6px 20px}
+.runs-head-title{margin:0 auto 0 0;font-size:var(--fs-section);font-weight:600}
+.runs-list{padding:0 8px 12px}
+.runs-sec+.runs-sec{margin-top:8px}
+.runs-sec-head{display:flex;gap:8px;align-items:center;padding:12px 12px 8px;font:600 var(--fs-meta)/1.5 var(--sans);color:var(--ink-2);border-bottom:1px solid var(--line)}
+.runs-sec-head .runs-count{margin-left:auto;font-weight:400}
+.runs-count{font:600 var(--fs-caption) var(--sans);color:var(--ink-2)}
+.runs-item{display:grid;grid-template-columns:28px minmax(0,1fr) 56px;align-items:start;border-bottom:1px solid var(--line)}
+.runs-item.is-needs{background:color-mix(in srgb,var(--amber) 8%,transparent);border-radius:var(--r-sm);border-bottom-color:transparent;box-shadow:inset 0 0 0 1px var(--amber-ring);margin-top:6px}
+.runs-item:has(>a.runs-row.selected){background:var(--row-selected);border-radius:var(--r-sm);border-bottom-color:transparent}
+.runs-pick{display:grid;place-items:center;height:36px}
+.runs-row{display:flex;flex-wrap:wrap;align-items:center;column-gap:8px;padding:8px 0;color:inherit;text-decoration:none;min-width:0}
+.runs-row:focus-visible{outline-offset:-2px}
+.runs-row-title{flex:1 1 50%;min-width:50%;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.runs-row-chain>.runs-row-title{font-weight:600}
+.runs-row-right{flex:0 0 auto;margin-left:auto;display:inline-flex;gap:8px;align-items:center;font-variant-numeric:tabular-nums}
+.runs-row-sub{flex:1 0 100%;color:var(--ink-2);font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.runs-row-prog{display:block;flex:1 0 100%;height:3px;margin-top:5px;border-radius:var(--r-xs);background:var(--field);overflow:hidden}
+.runs-row-prog>i{display:block;height:100%;background:var(--ink-2)}
+.runs-row-tail{display:inline-flex;justify-content:flex-end;align-items:center;height:36px}
+.runs-members{grid-column:1/-1}
+.runs-members>.runs-item{border-bottom:0}
+.runs-members .runs-pick,.runs-members .runs-row-title{padding-left:16px}
+.runs-members .runs-row{flex-wrap:nowrap;padding:4px 0}
+.runs-members .runs-row-title{flex:1 1 auto;min-width:0;font-size:var(--fs-meta);font-weight:400}
+.runs-members .runs-row-sub{order:1;flex:0 0 auto;max-width:50%;min-width:0;text-align:right}
+.runs-row-title .num{display:inline-block;min-width:14px;font:500 12px var(--sans);font-variant-numeric:tabular-nums;color:var(--ink-2);margin-right:8px}
+.runs-members .runs-row:has(>.runs-row-prog){position:relative;padding-bottom:11px}
+.runs-members .runs-row>.runs-row-prog{position:absolute;left:16px;right:0;bottom:4px;margin:0}
+.runs-members .runs-pick,.runs-members .runs-row-tail{height:26px}
+.runs-pr{display:inline-flex;gap:4px;align-items:center;font-size:var(--fs-meta)}.runs-pr.is-merged{color:var(--slate-ink)}
+.runs-pane{min-width:0;padding:20px 24px 24px}
+.runs-empty{display:grid;place-items:center;height:100%;color:var(--ink-2);text-align:center}
+@media (pointer:coarse){.runs-members .runs-pick,.runs-members .runs-row-tail{height:40px}}
+@media (max-width:760px){.runs-shell{display:block;border:0;border-radius:0;min-height:0;background:none}.runs-shell.pane-open>.runs-list-pane{display:none}.runs-shell:not(.pane-open)>.runs-pane{display:none}.runs-list-pane{border:0}.runs-pane{padding:0}}
+/* the status card on the run and feature pages (dev .rd-sheet: one card, the state word 15/600 as its headline) */
+.status-blk{margin-bottom:16px;padding:20px 24px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel)}
+.status-blk>.rc-state{margin-top:0}
+.status-blk .rc-word{font-size:var(--fs-section);line-height:1.25}
+.status-blk .rc-rail{height:19px}
+.status-blk .cap code{max-width:180px;overflow:hidden;text-overflow:ellipsis;display:inline-block;vertical-align:bottom;white-space:nowrap}
+@media (max-width:520px){.status-blk{padding:16px}}
+/* the group bar (dev .run-chain-track: neutral, 6px, the dots tell the state) */
+.gbar{display:flex;gap:2px;margin:12px 0 8px}
+.gbar i{flex:1;height:6px;border-radius:var(--r-xs);background:var(--line-2)}
+.gbar i.d{background:var(--ink-2)}.gbar i.on{background:color-mix(in srgb,var(--ink) 40%,var(--line-2))}.gbar i.a{background:color-mix(in srgb,var(--ink) 40%,var(--line-2))}.gbar i.f{background:color-mix(in srgb,var(--ink) 40%,var(--line-2))}
+/* tabs (dev .tabs/.tab: underline, 32px, never boxed) */
+.tabs{display:flex;align-items:flex-end;gap:16px;box-shadow:inset 0 -1px 0 var(--line);margin:4px 0 12px;overflow-x:auto;scrollbar-width:none}
+.tabs button{position:relative;display:inline-flex;align-items:center;height:32px;padding:0 2px;border:0;background:none;color:var(--ink-2);font:500 13px/1 var(--sans);white-space:nowrap;cursor:pointer}
+.tabs button:hover{color:var(--ink)}
+.tabs button[aria-selected="true"]{color:var(--ink)}
+.tabs button[aria-selected="true"]::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--ink)}
+.tabs button:focus-visible{outline-offset:-2px;border-radius:var(--r-sm)}
+/* the prototype preview: dev's well (.gv-well: 1px --line, 6px corner, the canvas fill) holding two small screens drawn with the classic components */
+.gv-well{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--canvas-2);padding:12px;margin:8px 0 12px;overflow-x:auto}
+.pv{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;overflow:visible}
+.pv-s{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);padding:12px;min-width:0;font-size:var(--fs-meta)}
+.pv-h{font-weight:600;margin-bottom:6px}
+.pv-f{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;margin-top:6px;color:var(--ink-2);font-size:var(--fs-caption)}
+.pv-in{border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);padding:4px 8px}
+.pv-mail{display:flex;flex-direction:column;align-items:flex-start;gap:6px;border:1px solid var(--line-2);border-radius:var(--r-sm);padding:10px;background:#FFFFFF;color:#19191B}
+.pv-mail.dk{background:#1B1B19;color:#ECECE8}
+.pv-mail i{font-style:normal;font-weight:600;border:1px solid currentColor;border-radius:var(--r-sm);padding:2px 8px}
+.pv .seg button{height:20px;padding:0 8px;font-size:var(--fs-caption)}
+.pv-row{display:flex;align-items:center;min-height:34px;border-top:1px solid var(--line)}
+.pv-row .switch-label{font-size:var(--fs-meta)}
+.rq-id{color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;display:inline-block;min-width:5.4em}
+.rowdet .rd-kv{margin-top:0}
+.care-v{display:inline-flex;align-items:center;gap:12px;flex-wrap:wrap}
+.care-h{display:flex;gap:4px 12px;flex-wrap:wrap;padding:2px 0}.care-h b{flex:0 0 72px;color:var(--ink);font-weight:500}.care-h span:first-of-type{flex:1 1 200px}
+.status-blk .ask-mcard-actions{margin-top:12px}
+@media (max-width:520px){.qopt{flex-wrap:wrap;row-gap:4px}.qopt-txt{flex:1 1 calc(100% - 40px)}.qrec{margin-left:28px}}
+/* log lines (dev run log: mono 12px) */
+.logline{display:flex;gap:10px;font:12px/1.6 var(--mono);min-width:0}
+.logline .n{flex:0 0 22px;color:var(--ink-2);text-align:right;border-right:1px solid var(--line);padding-right:8px}
+.logline .x{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* the one switch (dev ui/public/switch.mjs makeSwitch: label.switch-row > input.sw-input[role=switch] + span.switch + .switch-label;
+   settings/info-tooltips.css: 32x18 track, 14px knob always visible; on is ink, never green) */
+.switch-row{display:inline-flex;align-items:center;gap:8px;position:relative;cursor:pointer;white-space:nowrap;min-height:28px}
+.switch{width:32px;height:18px;border-radius:var(--r-pill);background:var(--switch-off);position:relative;flex:0 0 32px;transition:background-color .15s}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--knob);box-shadow:0 1px 3px rgba(0,0,0,.18);transition:left .15s}
+.sw-input:checked + .switch{background:var(--ink)}
+.sw-input:checked + .switch::after{left:16px;background:var(--on-ink)}
+.sw-input:focus-visible + .switch{outline:2px solid var(--ink);outline-offset:2px}
+.sw-input{position:absolute;width:1px;height:1px;opacity:0;margin:0;pointer-events:none}
+.switch-label{font:500 var(--fs-body)/1.5 var(--sans);color:var(--ink)}
+.ask-composer-row .switch-label,.top .switch-label{font-size:var(--fs-meta)}
+/* Met / Not met / Dropped: the segmented control */
+.marks{display:inline-flex;gap:2px;padding:2px;background:var(--field);border-radius:var(--r-sm);flex:0 0 auto}
+.marks button{border:0;background:none;height:24px;padding:0 8px;border-radius:var(--r-xs);font:500 12px/1 var(--sans);cursor:pointer;color:var(--ink-2)}
+.marks button:hover{color:var(--ink)}
+.marks button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(25,25,27,.06)}
+.flip svg.i{transform:rotate(180deg)}
+.seg-wrap{flex-wrap:wrap;max-width:100%}
+/* an open step under its row: a plain section under its own divider (no box in the card) */
+.ask-mcard .openstep{margin:0 0 4px;padding:10px 0 12px 20px;border-top:1px solid var(--line)}
+.openstep-h{font-weight:600;margin-bottom:4px}
+.openstep .rd-kv{margin-top:4px}
+.step-foot{margin-top:10px}
+.rowdet{margin:0 0 8px 20px}
+.why{font-size:var(--fs-meta);color:var(--ink-2);text-align:right;margin:8px 0 0}
+/* fields (dev .plan-typed textarea / input: --field fill, --line-2 border, ink border on focus) */
+.ask-ans{display:flex;gap:8px;align-items:center;margin-top:4px;flex:1 1 100%}
+.ask-ans input,.chgfield textarea{flex:1;min-width:0;height:28px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);color:var(--ink);font:400 var(--fs-body) var(--sans);padding:0 10px}
+.ask-ans input:focus,.chgfield textarea:focus{border-color:var(--ink);outline:none}
+.chgfield{margin-top:12px}.chgfield textarea{width:100%;min-height:64px;height:auto;padding:6px 12px;line-height:1.5;resize:vertical}
+.rd-kv-v [title]{text-decoration:underline dotted var(--ink-3);text-underline-offset:3px}
+/* dialog (dev modal: scrim, panel, 8px corner, the sheet shadow, card padding) */
+.dlg-back{position:fixed;inset:0;background:var(--scrim);display:grid;place-items:center;z-index:30;padding:16px}
+.dlg{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:24px;width:min(520px,100%);box-shadow:var(--shadow-sheet)}
+.dlg h3{font-size:var(--fs-section);line-height:1.25;font-weight:600;margin:0 0 8px}
+.dlg .btn-danger{background:var(--red-ink-strong);border-color:transparent;color:var(--panel)}
+.dlg .btn-danger:hover:not(:disabled){background:color-mix(in srgb,var(--red-ink-strong) 88%,var(--ink));color:var(--panel)}.dlg p{margin:0}
+.dlg .ask-mcard-actions{margin-top:20px}
+/* the prototype being built: each piece of a screen arrives in turn, one agent per screen */
+.pv-b [style*="--i"]{animation:pv-in .32s ease-out backwards;animation-delay:calc(.5s + var(--i) * .34s)}
+@keyframes pv-in{from{opacity:0;transform:translateY(6px)}}
+.pv-ag{display:flex;align-items:center;gap:8px;min-height:28px;font-size:var(--fs-meta);color:var(--ink-2)}.pv-ag b{color:var(--ink);font-weight:500}
+.pv-b .btn,.pv-b .switch{pointer-events:none}
+@media (prefers-reduced-motion:reduce){.pv-b [style*="--i"]{animation:none}.sd.peach{animation:none}.ask-field.writing textarea{animation:none;background:var(--field)}.fold svg.i{transition:none}}
+.menu .ck svg{width:12px;height:12px;flex:0 0 12px;vertical-align:middle}
+.menu button[aria-disabled="true"]{color:var(--ink-3);cursor:not-allowed}
+.menu button[aria-disabled="true"]:hover{background:none}
+/* Chat run panel (dev chat/chat-run-panel.css over the run page's own .rd screen: runs.html #run-detail-tpl, running-detail-bar.css, running-detail-header.css) */
+.frame.crp-on{grid-template-columns:200px minmax(0,1fr)}
+.frame.crp-on>.col{max-width:none}
+.frame.crp-on>aside.notes{grid-column:2;border-top:1px solid var(--line);padding-top:16px}
+@media (max-width:1100px){.frame.crp-on{grid-template-columns:minmax(0,1fr)}.frame.crp-on>.jn{display:none}.frame.crp-on>aside.notes{grid-column:1}}
+.chat-page{display:flex;align-items:flex-start;min-width:0}
+.chat-convo{flex:1 1 auto;min-width:0}
+.chat-page[data-panel="open"] .chat-panel{flex:none;display:flex;flex-direction:column;min-width:0;width:max(440px,min(44%,700px));margin:0 0 0 16px;position:sticky;top:12px;height:calc(100dvh - 24px);border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg);box-shadow:var(--shadow-sheet);overflow:hidden}
+.chat-panel:focus{outline:none}
+.chat-panel.is-entering{animation:crp-in .24s cubic-bezier(.2,.7,.3,1) backwards}
+@keyframes crp-in{from{opacity:0;transform:translateX(16px)}}
+@keyframes crp-up{from{opacity:0;transform:translateY(24px)}}
+.crp{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;container:crp / inline-size}
+.crp .rd{flex:1 1 auto;display:flex;flex-direction:column;min-height:0}
+.crp .rd-bar{flex:none;display:flex;align-items:center;gap:8px;padding:8px 8px 8px 16px;background:var(--bg);border-bottom:1px solid var(--line)}
+.crp .rd-bar-end{flex:1 1 auto;display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;margin-left:auto}
+.crp .rd-bar-end>*{flex:none;white-space:nowrap}
+.crp-bar-btns{display:inline-flex;align-items:center;gap:2px}
+.crp :is(.crp-full,.crp-close){display:inline-grid;place-items:center;width:32px;height:32px;padding:0;border-radius:var(--r-sm)}
+.crp .rd-details{flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;display:flex;flex-direction:column}
+.rd-header{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:16px 18px 6px}
+.crp .rd-header{margin:12px 16px 0}
+.crp .rd-title{margin:0;min-width:0;font:700 18px/1.25 var(--sans);letter-spacing:-.02em;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.rd-title+.rd-status-head{margin-top:10px}
+.rd-status-head{margin-top:0}.rd-status-head .rc-word{font-size:var(--fs-section);line-height:1.25}.rd-status-head .rc-rail{height:19px}
+.fig.over{color:var(--ink);font-weight:600}
+.rd-page .crp-head{margin:12px 0 0}.rd-page .rd-tabs{margin:12px 0}
+.crp .crp-head{display:flex;flex-direction:column;gap:12px;margin:12px 16px 0}
+.crp-head>.rd-questions{margin:0;padding:14px;border:1px solid var(--amber-line);border-radius:var(--r-md);background:var(--amber-wash)}
+.rd-questions .openstep-h{font-size:var(--fs-section);font-weight:600;margin-bottom:6px}
+.rd-questions .ask-mcard-actions .btn{flex:0 1 auto;max-width:100%;white-space:normal;text-wrap:balance;height:auto;min-height:28px;padding-top:4px;padding-bottom:4px;line-height:1.3}
+.crp .rd-body{flex:1 0 auto;padding:0 16px 24px}
+.crp .rd-tabs{position:sticky;top:0;z-index:5;background:var(--bg);margin:0 0 14px;padding-top:12px}
+.crp .rd-sec .list-h{padding-top:16px}
+.crp .rd-sec .list-h:first-child{padding-top:0}
+.crp .rd-sec .rd-kv{margin-top:4px}
+@container crp (max-width:560px){.crp .rd-bar .rd-btn-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}}
+@media (max-width:900px){
+  .chat-page[data-panel="open"] .chat-panel{position:fixed;inset:0;z-index:15;width:auto;height:auto;margin:0;border:0;border-radius:0;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+  .chat-panel.is-entering{animation-name:crp-up}
+}
+html.crp-sheet{overflow:hidden}
+/* toast (dev design-system toast: one line, bottom centre, panel) */
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:40;max-width:calc(100vw - 32px);padding:8px 14px;background:var(--ink);color:var(--on-ink);border-radius:var(--r-md);font-size:var(--fs-meta);box-shadow:var(--shadow-menu)}
+@media (prefers-reduced-motion:reduce){.chat-panel.is-entering{animation:none}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <b>Shaper refresh</b><span class="cap">end-to-end prototype · email for website X · <a href="https://claude.ai/artifact/CtKTbcmM85XQDhSd4eA3Sd" target="_blank" rel="noopener">concept board</a></span>
+    <span class="sp"></span>
+    <span class="cap">Cards worded for</span>
+    <div class="seg" role="group" aria-label="Cards worded for">
+      <button type="button" data-reg="eng" aria-pressed="true">Engineering</button><button type="button" data-reg="prod" aria-pressed="false">Product</button>
+    </div>
+    <label class="switch-row" title="Light or dark"><input type="checkbox" class="sw-input" role="switch" id="themeSw"><span class="switch" aria-hidden="true"></span><span class="switch-label">Dark</span></label>
+    <select class="navsel btn btn-sm" id="navSel" aria-label="Screen"></select>
+  </header>
+  <div class="frame">
+    <nav class="jn" id="jn" aria-label="Journey"></nav>
+    <main class="col" id="scr"></main>
+    <aside class="notes" id="notes" aria-label="Steps on dev, changes and open questions"></aside>
+  </div>
+</div>
+
+<script>
+/* ---------- icons ---------- */
+const I = {
+  more:'<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="12.5" cy="8" r="1.3" fill="currentColor"/></svg>',
+  down:'<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
+  right:'<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
+  ok:'<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  no:'<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  spark:'<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.6 4.9 4.9 1.6-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z" fill="currentColor"/></svg>',
+  pr:'<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="3.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="4" cy="12.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="12" cy="12.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4 5.1v5.8M12 10.9V6.5a2 2 0 0 0-2-2H7.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
+  dot:'<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>'
+};
+/* ---------- tiny builders ---------- */
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+const btn = (label, o = {}) => `<button type="button" class="btn btn-sm${o.pri ? ' btn-primary' : ''}${o.danger ? ' btn-danger' : ''}${o.quiet ? ' btn-quiet' : ''}"${o.go ? ` data-go="${o.go}"` : ''}${o.dis ? ' disabled' : ''}${o.tip ? ` title="${esc(o.tip)}"` : ''}${o.id ? ` data-id="${o.id}"` : ''}${o.attr || ''}>${o.icon ? I[o.icon] : ''}${label}</button>`;
+const more = (items, label = 'More actions') => `<button type="button" class="btn btn-sm btn-quiet btn-icon" aria-label="${label}" aria-haspopup="menu" data-menu="${esc(items)}">${I.more}</button>`;
+const pick = (val, items, o = {}) => `<button type="button" class="spick" aria-haspopup="menu" data-pick="${esc(items)}"${o.reg ? ' data-setreg="1"' : ''}${o.log ? ' data-log="1"' : ''}${o.check ? ` data-check="${o.check}"` : ''}${o.go ? ` data-pickgo="${o.go}"` : ''}${o.plan ? ` data-plan="${o.plan}"` : ''}${o.tip ? ` title="${esc(o.tip)}"` : ''}><span class="v">${val}</span>${I.down}</button>`;
+const dot = k => `<span class="sd ${k}" aria-hidden="true"></span>`;
+const kv = rows => `<div class="rd-kv">${rows.filter(Boolean).map(([k, v, cls]) => `<div class="rd-kv-row${cls ? ' ' + cls : ''}"><span class="rd-kv-k">${k}</span><span class="rd-kv-v">${v}</span></div>`).join('')}</div>`;
+const foot = (quiet, primary, menu) => `<div class="ask-mcard-actions"><span class="sp"></span>${quiet || ''}${primary || ''}${menu ? more(menu) : ''}</div>`;
+const card = c => `<section class="ask-mcard" aria-label="${esc(c.kind.replace(/<[^>]+>/g, ''))} card">
+  <div class="ask-mcard-head"><span class="ask-mcard-kind">${c.kind}</span><span class="ask-mcard-title" title="${esc(c.title)}">${c.title}</span></div>
+  <div class="rc-state"><span class="rc-rail">${dot(c.dot)}</span><div style="min-width:0"><div class="rc-word" aria-live="polite">${c.state}</div>${c.detail ? `<div class="rc-detail">${c.detail}</div>` : ''}</div></div>
+  ${c.facts ? kv(c.facts) : ''}${c.body ? `<div class="body">${c.body}</div>` : ''}${c.foot || ''}</section>`;
+const fold = (label, inner, o = {}) => `<div class="fold-line"><button type="button" class="fold" aria-expanded="${o.open ? 'true' : 'false'}" data-fold>${I.right}<span>${label}</span></button><span class="sp"></span>${o.action || ''}</div><div class="fold-body"${o.open ? '' : ' hidden'}>${inner}</div>`;
+const chk = (ok, label, detail, action) => `<div class="plan-check-row ${ok ? 'ok' : 'bad'}"><span class="m">${ok ? I.ok : I.no}</span><span class="l">${label}${detail ? `<span class="d">${detail}</span>` : ''}</span>${action || ''}</div>`;
+const log = rows => `<div class="chat-rc-log">${rows.map(([t, tm, m]) => `<div class="chat-rc-log-row"><span class="m">${m === 'dot' ? I.dot : I.ok}</span><span class="t" title="${esc(t.replace(/<[^>]+>/g, ''))}">${t}</span><span class="tm">${tm || ''}</span></div>`).join('')}</div>`;
+const sw = (label, on, o = {}) => `<label class="switch-row"${o.tip ? ` title="${esc(o.tip)}"` : ''}><input type="checkbox" class="sw-input" role="switch"${on ? ' checked' : ''}${o.attr || ''}><span class="switch" aria-hidden="true"></span><span class="switch-label">${label}</span></label>`;
+const E = s => `<span class="e-only">${s}</span>`, P = s => `<span class="p-only">${s}</span>`, P_ = P;
+
+/* ---------- prompts and Guide ---------- */
+const PROMPT_THIN = 'i want website X to send emails';
+/* Write it out keeps the person's own answers word for word; Guide fills only the gaps, each marked (suggested) */
+const GUESS = { 0: 'customers who reset a password or sign up; a weekly digest for those who opt in. Everyone picks which emails they get', 2: 'a reset request, a new sign-up', 3: 'our own sending domain; GDPR and CAN-SPAM (consent, unsubscribe, retention)', 4: 'a reset email arrives within a minute; every send is recorded; bounces raise an alert' };
+const WLAB = { 0: 'Who gets them', 2: 'What starts one', 3: 'Limits', 4: 'How we know it worked' };
+const writtenText = () => 'Website X: send email to our customers.\n' + [0, 2, 3, 4].map(i => `${WLAB[i]}: ${ui.ans[i] ? ui.ans[i] : GUESS[i] + ' (suggested)'}`).join('\n') + (ui.ans[0] && !/digest/i.test(ui.ans[0]) ? '\nAlso: a weekly digest for those who opt in (suggested)' : '');
+const CHECKS = {
+  prod:[['Who is it for','Who receives the emails?'],['What they get',''],['What starts it','What should trigger one?'],['Limits',''],['How you know it worked','How will you know it worked?']],
+  eng:[['Who calls it','Which flows send email: reset, sign-up, digest?'],['The behaviour',''],['Trigger and scope','What triggers a send, and what is out of scope?'],['Constraints',''],['Acceptance checks','Which checks prove it works?']]
+};
+const reg = () => document.documentElement.dataset.reg === 'prod' ? 'prod' : 'eng';
+const curAsker = () => ui.asker || (reg() === 'prod' ? 'Product' : 'Engineering');
+const ROLES = ['Product', 'Engineering', 'Design', 'QA', 'Security', 'Compliance', 'DevOps'];
+const RIC = d => `<svg class="i ri" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const ROLE_ICON = {
+  Product: RIC('<circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2"/>'),
+  Engineering: RIC('<path d="M5.5 4.5L2 8l3.5 3.5M10.5 4.5L14 8l-3.5 3.5"/>'),
+  Design: RIC('<path d="M3 13l1-3.5 7-7 2.5 2.5-7 7z"/>'),
+  QA: RIC('<rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="M5 8.2l2 2L11 6"/>'),
+  Security: RIC('<path d="M8 1.8l5 2v4c0 3-2.2 5.2-5 6.4-2.8-1.2-5-3.4-5-6.4v-4z"/>'),
+  Compliance: RIC('<path d="M8 2.5v11M5 13.5h6M3 4.5h10M3 4.5L1.5 8.5h3zM13 4.5l-1.5 4h3z"/>'),
+  DevOps: RIC('<rect x="2.5" y="2.5" width="11" height="4.5" rx="1"/><rect x="2.5" y="9" width="11" height="4.5" rx="1"/><path d="M5 4.75h.01M5 11.25h.01"/>'),
+  Release: RIC('<path d="M2.5 2.5h5l6 6-5 5-6-6z"/><circle cx="5.5" cy="5.5" r=".8"/>'),
+  'Project fit': RIC('<path d="M3 3h3.5v1.5a1.5 1.5 0 0 0 3 0V3H13v10H3z"/>'),
+  Challenger: RIC('<circle cx="8" cy="8" r="5.5"/><path d="M6.4 6.4a1.7 1.7 0 1 1 2.4 1.5c-.5.3-.8.6-.8 1.2M8 11.2v.1"/>')
+};
+const ri = r => ROLE_ICON[r] || '';
+const roleLab = r => `<span class="rl">${ri(r)}${r}</span>`;
+/* who is asking: ONE control (the composer row, right after the Shaper pin); the Shaper card repeats it only when no role is saved, as its first fact row */
+const NO_ROLE_ICON = RIC('<circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.6-2.6 2.6-4 5-4s4.4 1.4 5 4"/>');
+const askerPick = (o = {}) => pick(o.none && !ui.asker ? `<span class="rl">${NO_ROLE_ICON}Your role</span>` : roleLab(curAsker()), ROLES.join('|'), { reg: true, go: o.go, tip: 'Who is asking: Worca words its questions for you. Remembered; change it in Settings › Chat.' });
+/* Guide: ONE switch, beside the role picker; on by default once offered; its model lives in the tooltip and Settings › Models */
+const guideOn = () => ui.guide !== false;
+const guideSw = () => sw('Guide', guideOn(), { attr: ' data-guide="1"', tip: 'Guide checks your prompt for gaps before you send and can write it out · runs on Sonnet 5.5 (change it in Settings › Models)' });
+function promptText() { const cs = CHECKS[reg()]; return PROMPT_THIN + cs.map((c, i) => ui.ans[i] ? `\n${c[1].replace(/\?$/, '')}: ${ui.ans[i]}` : '').join(''); }
+function composer(o) {
+  const cs = CHECKS[reg()], open = cs.filter((c, i) => c[1] && !ui.ans[i]).length;
+  const row = ([l, q], i) => { if (!q || ui.ans[i]) return chk(true, l, ui.ans[i] ? esc(ui.ans[i]) : '');
+    if (ui.adding === i) return `<div class="plan-check-row bad"><span class="m">${I.no}</span><span class="l">${l}<span class="d">${q}</span><span class="ask-ans"><input type="text" aria-label="${esc(q)}" data-ansfor="${i}" placeholder="Your answer"> ${btn('Add', { attr: ` data-act="ansadd" data-i="${i}"` })}</span></span></div>`;
+    return chk(false, l, q, btn('Add', { quiet: true, attr: ` data-act="ansopen" data-i="${i}"` })); };
+  return `<div class="ask-composer-box">
+    <div class="ask-field"><textarea aria-label="Message" rows="${o.rows || 3}">${esc(o.text)}</textarea>
+      ${o.spark && guideOn() ? `<button type="button" class="sn-btn" data-act="write" title="Write it out · Guide · Sonnet 5.5" aria-label="Write it out">${I.spark}</button>` : ''}</div>
+    ${o.guide === 'offer' && guideOn() ? `<div class="ask-guide"><span class="t">New: Guide checks your idea for gaps before you send. It is on; switch it off below any time.</span></div>` : ''}
+    ${o.guide === 'role' && !ui.asker ? `<div class="ask-guide"><span class="t">Who is asking? Pick your role beside the Shaper pin; Worca words its questions for you.</span></div>` : ''}
+    ${o.guide === 'score' && guideOn() ? `<div class="ask-guide-checks" aria-live="polite">${fold(`<b>Prompt ${5 - open}/5</b>${open ? ' · ' + open + ' gap' + (open > 1 ? 's' : '') : ''}`, cs.map(row).join(''), { open: true, action: btn(I.spark + 'Write it out', { quiet: true, attr: ' data-act="write"' }) })}</div>` : ''}
+    ${o.guide === 'ready' && guideOn() ? `<div class="ask-guide"><span class="chip">Suggested</span><span class="t" aria-live="polite"><b style="color:var(--ink)">Prompt 5/5</b> · Large: several runs</span>${btn('Undo', { quiet: true, go: 'prompt-check', tip: 'Restores your words exactly' })}</div>` : ''}
+    ${o.guide === 'small' && guideOn() ? `<div class="ask-guide"><span class="t" aria-live="polite"><b style="color:var(--ink)">Clear enough</b> · Small: one run</span></div>` : ''}
+    <div class="ask-composer-row"><span class="pin" title="Shaper pin">Shaper</span>${askerPick({ none: o.noRole, go: o.roleGo })}${guideSw()}<span class="sp"></span>${btn('Send', { pri: true, go: o.send, attr: o.sendAttr || '' })}</div>
+  </div>`;
+}
+const aside = (keep, chg, open) => ({ keep, chg, open });
+
+/* ---------- the feature: one data set, read by every screen ---------- */
+const FEAT = 'Email for website X', SPEC = 'FEAT-12', BRANCH = 'feat/website-x-email';
+const SITE = '<p class="cap" style="margin:0 0 12px">Website X: a customer web app with sign-up and accounts.</p>';
+const ui = { q: { dig: 0, rq: 0, ob: 0 }, qa: {}, proto: 0, care: 'Thorough', comp: false, hist: 'thin', moment: 'b3', vf: 'vf', runN: 3, open: { f1: true }, tab: 'Runs', pz: {}, marks: {}, reasons: {}, ans: {}, adding: -1, panel: ['Product', 'Engineering', 'Design', 'DevOps', 'Security', 'Compliance', 'QA'], small: 0, prs: false, rm: 'before' };
+const money = x => '$' + x.toFixed(2);
+const plural = (a, w) => `${w}${a.length > 1 ? 's' : ''} ${a.join(', ')}`;
+const strip = s => String(s).replace(/<[^>]+>/g, '');
+const W = (e, p) => reg() === 'prod' ? p : e;
+const rcpt = (txt, tm) => `<div class="chat-rc-log-row"><span class="m">${I.ok}</span><span class="t" title="${esc(strip(txt))}">${txt}</span><span class="tm">${tm}</span></div>`;
+const step = (head, inner, ft) => `<div class="openstep"><div class="openstep-h">${head}</div>${inner}${ft ? `<div class="ask-mcard-actions step-foot"><span class="sp"></span>${ft}</div>` : ''}</div>`;
+/* dev's single-choice question (chat/question.mjs buildChatQuestion): divided .qopt rows, one pick, `recommended`, who wants it and why under each */
+const qopts = (q, opts, sel, attr) => `<div class="qblock"><div class="qtext"><span class="qtext-t">${q}</span></div><div class="qopts" role="group" aria-label="${esc(strip(q))}">${opts.map(([l, rec, sub], i) => `<button type="button" class="qopt${sel === i ? ' sel' : ''}" aria-pressed="${sel === i}" ${attr(i)}><span class="qopt-txt"><span class="chat-q-opt-label">${l}</span>${sub ? `<span class="chat-q-opt-sub">${sub}</span>` : ''}</span>${rec ? `<span class="qrec" title="${esc(rec)}">recommended</span>` : ''}</button>`).join('')}</div></div>`;
+
+/* 17 requirements, kept on FEAT-12 (the Requirements page). Two kinds: 16 are owned by exactly one run; 1 is confirmed by a person
+   (R-comp-4: no run owns it, Compliance marks it, Ship waits for it). Each has one example; the Test writer writes the tests from the run-owned ones. */
+const REQS = [
+  ['Product', [['R-po-1', 'A reset email arrives within a minute', 'a reset asked at 10:00 is in the inbox by 10:01'], ['R-po-2', 'Sign-up sends one confirmation email', 'a new account gets exactly one email, also after a double click'], ['R-po-3', 'Customers pick which emails they get on a preferences page', 'weekly digest switched off and saved: no digest next Monday'], ['R-po-4', 'A weekly digest for customers who opt in', 'opted in on Friday: the first digest arrives on Monday 09:00']]],
+  ['Engineering', [['R-arch-1', 'One service sends every email through a queue', 'sendEmail() from sign-up puts one job on the queue'], ['R-arch-2', 'A failed send retries 3 times, then is recorded', 'the provider fails four times: 3 retries, then one failed record']]],
+  ['Design', [['R-ux-1', 'The team edits each email in a template editor with a live preview', 'changing the subject changes the preview without saving'], ['R-ux-2', 'Emails read well on phones', 'at 375px the reset email has no sideways scroll']]],
+  ['DevOps', [['R-ops-1', 'The sending domain passes SPF, DKIM and DMARC', 'a test email to a mail checker passes all three'], ['R-ops-2', 'Bounces and failures raise an alert', 'bounces over 2% in an hour raise one alert']]],
+  ['Security', [['R-sec-1', 'Unsubscribe links are signed and single-use; sends are rate-limited', 'a used link says “already unsubscribed”; a 6th resend in an hour is refused'], ['R-sec-2', 'No personal data in logs; provider keys only in the secret store', 'a send logs the message id, never the address']]],
+  ['Compliance', [['R-comp-1', 'Consent is recorded with its lawful basis and time', 'opting in to the digest stores: consent, 12 May 10:02'], ['R-comp-2', 'Send records are deleted after 24 months', 'a record from 25 months ago is gone after the nightly job'], ['R-comp-3', 'Every email has a one-click unsubscribe', 'one click stops that email type; no sign-in asked'], ['R-comp-4', 'Signed data processing agreement with the email provider', 'the signed agreement is on file before the first real email is sent', 'Compliance']]],
+  ['QA', [['R-qa-1', 'CI sends to a test inbox on every PR', 'a PR that breaks sending fails the check within 2 minutes']]]];
+const REQ = {}; REQS.forEach(([g, rs]) => rs.forEach(([id, t, ex, by]) => { REQ[id] = { id, t, ex, g, by }; }));
+const ALL_IDS = Object.keys(REQ), RUN_IDS = ALL_IDS.filter(id => !REQ[id].by);
+/* the prototype remark changes R-ux-2; the digest decision words R-po-4 */
+const pastScreen = id => ids.indexOf(cur()) > ids.indexOf(id);
+/* the Requirements page before the requirements are agreed shows the text as it was then */
+const specDraft = () => cur() === 'from-requirements' && RM.indexOf(rmNow()) < 2, specEarly = () => specDraft() && !(rmNow() === 'shaped' && ui.qa.dig);
+const remarked = () => !ui.protoSkip && !specDraft() && (pastScreen('prototype') ? ui.remark !== false : cur() === 'prototype' && ui.proto >= 2);
+const reqText = id => id === 'R-ux-2' && remarked() ? 'Emails read well on phones and in dark mode; the preview shows both' : id === 'R-po-4' && ui.q.dig && !specEarly() ? 'A weekly digest for every customer until they opt out' : REQ[id].t;
+const reqEx = id => id === 'R-po-4' && ui.q.dig && !specEarly() ? 'a new customer gets Monday’s digest; switched off, none after' : REQ[id].ex;
+const reqRow = (id, o = {}) => `<div class="plan-check-row${o.mark === undefined ? ' ok' : ''}" title="${esc(o.tip || id)}"><span class="m">${o.mark === undefined ? I.ok : o.mark}</span><span class="l">${W(`<span class="rq-id">${id}</span>`, '')}${o.t || reqText(id)}<span class="d">${o.d || (REQ[id].by ? 'confirmed by a person: ' + REQ[id].by + ' · ' : '') + 'e.g. ' + reqEx(id)}</span></span>${o.act || ''}</div>`;
+/* the requirements, one fold per role: nothing open = a green mark and what the role did, closed; an open question = the ? mark, open on it */
+const reqGroups = (inQ = []) => REQS.map(([g, rs]) => { const q = rs.filter(([id]) => inQ.includes(id)), did = (ROLE_WORK.find(([r]) => r === g) || [])[1] || '';
+  const open = !!q.length, what = q.length ? `${rs.length - q.length} agreed · ${q.length} in question` : did;
+  return `<div class="fold-line"><button type="button" class="fold rf" aria-expanded="${open}" data-fold><span class="rf-m">${markOf(q.length ? 'ask' : 'done')}</span><b>${roleLab(g)}</b>${g === curAsker() ? '<span class="cap">(you ask as)</span>' : ''}<span class="rf-d">${what}</span><span class="rf-c">${I.right}</span></button></div><div class="fold-body"${open ? '' : ' hidden'}><div style="padding-left:22px">${rs.map(([id]) => inQ.includes(id) ? reqRow(id, { mark: markOf('ask'), d: 'in question: the decision above · e.g. ' + reqEx(id) }) : reqRow(id)).join('')}</div></div>`; }).join('');
+const specLink = (label = SPEC) => `<button type="button" class="link" data-spec="1" title="Opens ${SPEC} on the Requirements page: the runs point to it, never a copy">${label}</button>`;
+const ROLE_WORK = [['Product', 'wrote 4'], ['Engineering', 'added 2'], ['Design', 'added 2'], ['DevOps', 'added 2'], ['Security', 'added 2 · challenged the weekly digest: personal data'], ['Compliance', 'added 4 · challenged retention: it had no end date, now 24 months'], ['QA', 'added 1 · challenged “quickly”: now within a minute']];
+
+/* the split: 10 runs, one after another, 1–2 requirements each; `after` = the runs it waits for (always earlier); a run starts from the latest finished run; c = Balanced estimate in $ */
+const RUNS = [
+  { n: 1, t: 'Email provider and domain', sh: 'Sending domain', after: [], reqs: ['R-ops-1'], roles: ['Product', 'DevOps'], paths: 'infra/terraform/ses.tf, infra/dns/website-x.tf', c: 4.5 },
+  { n: 2, t: 'Email service and queue', sh: 'Email service', after: [1], reqs: ['R-arch-1', 'R-arch-2'], roles: ['Product', 'Engineering'], paths: 'src/email/send.mjs, src/email/queue.mjs', c: 6.5 },
+  { n: 3, t: 'Secrets and the CI send check', sh: 'CI check', after: [2], reqs: ['R-qa-1', 'R-sec-2'], roles: ['Product', 'QA', 'Security'], paths: 'infra/terraform/secrets.tf, .github/workflows/email.yml', c: 5 },
+  { n: 4, t: 'Consent and retention', sh: 'Consent rules', after: [2], reqs: ['R-comp-1', 'R-comp-2'], roles: ['Product', 'Compliance'], paths: 'src/consent/*, src/email/retention.mjs', c: 5.5 },
+  { n: 5, t: 'Reset and sign-up emails', sh: 'Reset emails', after: [2], reqs: ['R-po-1', 'R-po-2'], roles: ['Product', 'Security'], paths: 'src/auth/reset.mjs, src/auth/signup.mjs', c: 6.5 },
+  { n: 6, t: 'Template editor', sh: 'Template editor', after: [2], reqs: ['R-ux-1', 'R-ux-2'], roles: ['Product', 'Design'], paths: 'ui/templates/*', c: 7 },
+  { n: 7, t: 'Email preferences page', sh: 'Preferences page', after: [4, 6], reqs: ['R-po-3'], roles: ['Product', 'Design'], paths: 'ui/settings/email.mjs', c: 5 },
+  { n: 8, t: 'Unsubscribe links and rate limits', sh: 'Unsubscribe links', after: [2, 4], reqs: ['R-sec-1', 'R-comp-3'], roles: ['Product', 'Security', 'Compliance'], paths: 'src/email/unsubscribe.mjs, src/email/limits.mjs', c: 6.5 },
+  { n: 9, t: 'Weekly digest', sh: 'Weekly digest', after: [4, 7], reqs: ['R-po-4'], roles: ['Product', 'Compliance'], paths: 'src/email/digest.mjs', c: 3.5 },
+  { n: 10, t: 'Delivery log and alerts', sh: 'Delivery log', after: [2, 8], reqs: ['R-ops-2'], roles: ['Product', 'DevOps'], paths: 'src/email/log.mjs, infra/alerts/email.tf', c: 2 }
+];
+/* small runs added while the feature is built. One mechanism for all of them: a change to finished work, or a gap the Verifier finds,
+   never rewrites a finished run; it is a new small run that takes the next turn. Numbered in the order they are added (11, 12, …). */
+const RUN_CHG = { id: 'chg', t: 'Reset emails retry once', sh: 'Reset retry', after: [2], reqs: ['R-arch-2'], chg: true, roles: ['Product', 'Engineering'], paths: 'src/email/queue.mjs', c: 1.6, rt: ['15:14', '15:19'],
+  why: () => W('R-arch-2 changed at 15:03 and run 2, its owner, is finished. A change to finished work is a new small run; run 2 and its PR stay as they are.', 'The retry rule changed after it was built. One small run builds the change; what was built stays as it is.') };
+const RUN_SC = { id: 'sc', t: 'Preferences: how often', sh: 'How often', after: [7], reqs: ['R-po-3'], chg: true, roles: ['Product', 'Design'], paths: 'ui/settings/email.mjs', c: 2, rt: ['16:24', '16:30'],
+  why: () => W(`R-po-3 was edited on ${SPEC} at 15:48 (customers also pick how often) and run 7, its owner, is finished. A change to finished work is a new small run; run 7 and its PR stay as they are.`, 'A requirement was edited at 15:48 (customers also pick how often) after the page was built. One small run builds the change; what was built stays as it is.') };
+const RUN_GAP = { id: 'gap', t: 'Connect sign-up to the email service', sh: 'Sign-up connection', after: [2, 5], reqs: ['R-po-2'], fix: true, roles: ['Product', 'Security'], paths: 'src/auth/signup.mjs', c: 1.8, rt: ['16:40', '16:48'],
+  why: () => W('The Verifier walked sign-up, reset and unsubscribe against the 16 requirements the runs own: the confirmation email is never sent on sign-up. Nothing connects run 2’s email service to the sign-up flow (R-po-2). A small run for the gap; run 5 and its PR stay as they are.', 'The Verifier tried the whole thing as a customer: no confirmation email arrives on sign-up. The email service was never connected to sign-up. One small run closes the gap; what was built stays as it is.') };
+const changedRq = key => answered('rq', key) && !pickOf('rq');
+const listOf = key => RUNS.concat([changedRq(key) && RUN_CHG, MOM[key].chg && RUN_SC, MOM[key].r11 && RUN_GAP].filter(Boolean).map((r, i) => ({ ...r, n: 11 + i })));
+const ownerOf = id => RUNS.find(r => r.reqs.includes(id));
+const ownLab = r => r.fix ? 'Fixes' : r.chg ? 'Changes' : 'Owns';
+const USED = { 1: .93, 2: 1.04, 3: .9, 4: 1, 5: 1.12, 6: 1.03, 7: .96, 8: 1.21, 9: .95, 10: 1 };
+const RT = { 1: ['13:46', '14:00'], 2: ['14:00', '14:17'], 3: ['14:17', '14:33'], 4: ['14:33', '14:48'], 5: ['14:48', '15:26'], 6: ['14:57', '15:14'], 7: ['15:26', '15:40'], 8: ['15:40', '16:24'], 9: ['16:02', '16:16'], 10: ['16:24', '16:36'] };
+const rtOf = r => r.rt || RT[r.n];
+
+/* Care: ONE dial for the whole process (quality against cost), chosen at the start. Three positions; Worca's pick comes from what the feature touches.
+   Any position may be picked: below Worca's pick the card says what is given up and records the choice. */
+const CARE_K = ['Requirements', 'Prototype', 'Run size', 'Build approach', 'Reviewers', 'Challenger', 'Models', 'Fix cycles'], CARE_PICK = 'Thorough';
+const CARE = {
+  Lean: { k: .73, rows: ['the asker role plus one challenge round', 'only when you ask for it', 'up to 3 requirements', 'tests first, by the Implementer', 'Product and one more role', 'off', 'Sonnet 5.5 for every agent', '1'], hist: ['6 features', '2.1 changes after ship per feature', '≈ $36 each'] },
+  Balanced: { k: 1, rows: ['all picked roles add and challenge once', 'when there are screen requirements', 'up to 3 requirements', 'tests first, by a separate Test writer', 'the run’s roles', 'at the split', 'Opus 5.5 plans and reviews, Sonnet 5.5 builds', '2'], hist: ['9 features', '1.2 changes after ship per feature', '≈ $50 each'] },
+  Thorough: { k: 1.365, rows: ['roles challenge until no objection, at most 3 rounds', 'when there are screen requirements, reviewed by Design and Product', 'up to 2 requirements', 'tests first, by a separate Test writer', 'the run’s roles, each on its own', 'at the split and on each plan', 'Opus 5.5 plans and reviews; Product reviews on a second model', '3'], hist: ['4 features', '0.3 changes after ship per feature', '≈ $68 each'] }
+};
+const POS = Object.keys(CARE);
+const careRow = (k, p = ui.care) => CARE[p].rows[CARE_K.indexOf(k)];
+const below = () => POS.indexOf(ui.care) < POS.indexOf(CARE_PICK);
+const CARE_GIVES = { Lean: 'one reviewer besides Product on runs that touch sign-in and personal data; no Challenger at the split', Balanced: 'the requirements are challenged once, not until no objection; no Challenger on each plan; 2 fix cycles, not 3' };
+/* the recorded choice, one line wherever it shows; the outcome joins it once the feature is finished */
+const careRec = () => `${ui.care} · ` + (below() ? `your choice · Worca recommended ${CARE_PICK}` : 'Worca’s pick');
+const OUTCOME = '16 of 16 built requirements met · 1 gap found at the end · 0 changes after ship so far';
+const estRun = (r, p = ui.care) => Math.round(r.c * CARE[p].k * 10) / 10;
+const estAll = (p = ui.care) => Math.round(RUNS.reduce((s, r) => s + estRun(r, p), 0));
+const rolesOf = r => ui.care === 'Lean' ? r.roles.slice(0, 2) : r.roles;
+
+/* ---------- moments of the build: what each run is doing (one source for the card, the panel, the pages and the list) ---------- */
+const PH = ['planning', 'reviewing plan', 'writing tests', 'building', 'reviewing'], PHS = ['plan', 'plan review', 'tests', 'build', 'review'];
+const MOM = {
+  b3: { t: '14:24', lab: 'run 3 going', done: 2, st: { 3: ['live', 2] } },
+  rq: { t: '15:02', lab: 'run 5 asks', done: 4, st: { 5: ['ask', 'rq'], 6: ['live', 1] } },
+  sc: { t: '15:50', lab: 'spec changed', done: 7, st: { 8: ['live', 3] }, chg: true },
+  ob: { t: '16:06', lab: 'run 8 asks', done: 7, st: { 8: ['ask', 'ob'], 9: ['live', 1] } },
+  vw: { t: '16:38', lab: 'verifying', done: 10, st: {} },
+  vf: { t: '16:44', lab: 'a gap found', done: 10, st: { gap: ['live', 3] }, r11: true },
+  rs: { t: '16:52', lab: 'ready to ship', done: 11, st: {}, r11: true }
+};
+const PAGE_MOMENTS = ['b3', 'rq', 'sc', 'ob', 'vf', 'rs'];
+const pickOf = k => ui.q[k] || 0;
+/* a question counts as answered once the person answered it, or at any later moment (Worca's pick is assumed) */
+const answered = (k, key) => k === 'dig' ? !!ui.qa.dig : MOM[key].t > MOM[k].t || (key === k && !!ui.qa[k]);
+const nb = s => s.replace(/R-[a-z]+-\d/g, x => `<span style="white-space:nowrap">${x}</span>`);
+const QS = {
+  dig: () => ({ head: 'Security and Product disagree: weekly digest', q: 'Who gets the weekly digest?', at: '13:31',
+    opts: [['Opt-in: only customers who ask for it', 'Worca’s pick: marketing email needs consent', 'Security: emails are personal data'], ['Opt-out: every customer until they switch it off', '', 'Product: more people will see it']],
+    go: ['Use opt-in', 'Use opt-out'], done: p => `Weekly digest: ${p ? 'opt-out' : 'opt-in'} · decided by you` }),
+  rq: () => ({ head: W('Run 5 would have to change an agreed requirement', 'Reset emails: an agreed requirement would have to change'), at: '15:03', run: 5,
+    q: W('R-arch-2 retries a failed send 3 times; with the waits between tries a reset email can take 4 minutes. R-po-1 wants it within a minute.', 'A failed email is tried again 3 times, which can take 4 minutes. You asked for a reset email within a minute.'),
+    opts: [[W('Change R-arch-2: reset emails retry once, within 20 seconds', 'Change it: a reset email is tried again once, within 20 seconds'), 'Worca’s pick: keeps “within a minute” true', W('Engineering: the only way to meet R-po-1 · other emails keep 3 retries · run 2 is finished: a small change run takes the next turn', 'Engineering: the only way to keep the minute · other emails are still tried 3 times · one small run builds it next')],
+      [W('Keep R-arch-2: every email retries 3 times', 'Keep it: every email is tried again 3 times'), '', W('QA: one rule for every email is simpler to test · a late reset email is recorded as failed', 'QA: one rule is simpler to check · a late reset email counts as failed')]],
+    go: [W('Change R-arch-2', 'Change it'), W('Keep R-arch-2', 'Keep it')], done: p => W(`R-arch-2 ${p ? 'kept' : 'changed'}`, `Retry rule ${p ? 'kept' : 'changed'}`) + ' · decided by you' }),
+  ob: () => ({ head: W('Run 8 · Security objects, the Implementer disagrees', 'Unsubscribe links: Security objects, the builder disagrees'), at: '16:07', run: 8,
+    q: W('After 3 fix cycles Security still has 1 finding: sending again skips the per-address limit.', 'After 3 tries Security still has 1 problem: sending again skips the sending limit.'),
+    opts: [['Fix it: one more cycle with Security’s finding', 'Worca’s pick: the requirement’s own example fails', W('Security: R-sec-1’s example fails, a 6th resend in an hour goes out · ≈ $2', 'Security: a 6th email in an hour still goes out · ≈ $2')], ['Accept as is', '', W('Implementer: the gateway already limits resends for the whole site · R-sec-1 waits for your mark at Ship', 'The builder: the site already limits sending as a whole · you mark this requirement yourself at Ship')]],
+    go: ['Run another fix cycle', 'Accept as is'], done: p => W('Run 8', 'Unsubscribe links') + `: ${p ? 'accepted as is' : 'another fix cycle'} · decided by you` })
+};
+/* the ONE open question of a card: dev's decision pattern, Worca's pick preselected, one primary that says the pick */
+function question(k, o = {}) { const q = QS[k](), sel = pickOf(k);
+  return step(q.head, qopts(nb(q.q), q.opts, sel, i => `data-qk="${k}:${i}"`) + (o.more || ''), (o.quiet || '') + btn(q.go[sel], { pri: true, attr: ` data-answer="${k}"` }) + (o.menu ? more(o.menu) : '')); }
+/* ONE rule for every change to an agreed requirement, whatever its source (chat, the Requirements page, a run, the Verifier): it depends on where the owning run is */
+const changeRule = (n, at) => fold('<b>How a change lands</b> · by where the run that owns the requirement is', kv([['Not started', 'plans from the new text'], ['Running', 'stops, re-plans from the new text, continues · told, not asked'], ['Finished', `a new small change run is added, takes the next turn; ${W(`run ${n} and its PR stay as they are`, 'what was built stays as it is')}`]].map(([k, v], i) => [k, v + (i === at ? ' <span class="chip">this change</span>' : '')])), { open: true });
+const scNote = v => step(W('R-po-3 changed · run 7 is finished', 'A requirement changed · the preferences page is finished'),
+  `<p class="cap" style="margin:0">` + W(`Edited on ${specLink()} at 15:48: customers also pick how often (daily or weekly). Run ${v.list.find(r => r.id === 'sc').n}, a small change run, takes the next turn. You are told, not asked.`, `Edited on ${specLink('the Requirements page')} at 15:48: customers also pick how often (daily or weekly). One small run builds the change next. You are told, not asked.`) + '</p>' + changeRule(7, 2));
+
+function view(key) {
+  const M = MOM[key], list = listOf(key), m = {}, S = {}, pz = !!ui.pz[key], num = id => (list.find(r => r.id === id) || {}).n, sh = n => list.find(r => r.n === n).sh;
+  for (const r of list) { let s = M.st[r.id || r.n];
+    if (s && s[0] === 'ask' && answered(s[1], key)) s = s[1] === 'ob' ? (pickOf('ob') ? ['done', 'done · accepted as is'] : ['wait', 'another fix cycle · after run 9', 1]) : ['wait', pickOf('rq') ? 'resumes after run 6' : `waits for run ${num('chg')}`, 1];
+    S[r.n] = s || ((r.rt ? r.rt[1] <= M.t : r.n <= M.done) ? ['done'] : ['wait']); }
+  /* a stopped run holds back only the runs that wait for it; the others go on. The next turn goes to an added small run first. */
+  const held = n => S[n][0] === 'ask' || (S[n][0] === 'wait' && !!S[n][2]);
+  const free = list.filter(r => S[r.n][0] === 'wait' && !S[r.n][2] && !r.after.some(held)), nxt = free.find(r => r.id) || free[0];
+  for (const r of list) { const s = S[r.n], o = m[r.n] = { n: r.n, key, st: s[0] };
+    if (o.st === 'done') o.short = s[1] || (r.n === 8 && pickOf('ob') && ui.qa.ob && M.t > MOM.ob.t ? 'done · accepted as is' : 'done');
+    else if (o.st === 'live') { o.ph = s[1]; o.short = PH[s[1]]; if (pz) { o.st = 'paused'; o.short = 'paused'; } }
+    else if (o.st === 'ask') { o.ask = s[1]; o.short = 'waiting for you'; }
+    else { const dep = r.after.find(held); o.touched = !!s[2]; o.short = s[1] || (dep ? `waits for run ${dep}` : r === nxt ? (r.id ? 'next · small change run' : 'next') : ''); o.show = o.touched || !!dep || (r === nxt && !!r.id); }
+    const e = estRun(r) * (USED[r.n] || 1);
+    o.c = Math.round((o.st === 'done' ? e : o.st === 'wait' ? (o.touched ? e * .8 : 0) : o.st === 'ask' ? e * .8 : e * (o.ph + 1) / 6) * 100) / 100;
+  }
+  const ns = list.map(r => r.n), by = st => ns.filter(n => m[n].st === st);
+  const live = by('live'), asks = by('ask'), paused = by('paused'), done = by('done').length, N = list.length;
+  const cost = ns.reduce((s, n) => s + m[n].c, 0), ship = key === 'rs', need = ship ? shipState().need : 0, comp = ship && !ui.comp && !ui.prs;
+  const open = asks.length ? m[asks[0]].ask : '';
+  const word = pz ? 'Paused' : open ? 'Needs you' : key === 'vw' ? 'Verifying' : ship ? (ui.prs ? `${N} PRs open` : comp && !need ? 'Waiting for Compliance' : 'Ready to ship') : 'Running';
+  const dot_ = pz ? '' : open || (need && !ui.prs) ? 'q' : ship ? (comp ? '' : 'green') : 'peach';
+  const who = asks.length ? W(`Run ${asks[0]} needs you`, sh(asks[0]) + ' needs you') : M.chg ? W(`1 requirement changed · run ${num('sc')} added`, '1 requirement changed · one small run added') : need && !ui.prs ? `${need} requirement${need > 1 ? 's need' : ' needs'} your mark` : '';
+  const fig = `${done} of ${N} runs done · ${money(cost)} used of ≈ $${estAll()}`;
+  const now = live.length ? W(`run ${live[0]} ${m[live[0]].short}`, `${sh(live[0])}: ${m[live[0]].short}`) : key === 'vw' ? 'the Verifier walks the main flow' : '';
+  const detail = [who, key === 'vw' ? now : '', fig].filter(Boolean).join(' · ');
+  return { key, t: M.t, label: `${M.t} · ${M.lab}`, list, m, live, asks, paused, done, N, cost, word, dot: dot_, open, pz, ship, need,
+    detail, cdetail: open ? fig : detail, line: [who, now, ship ? (ui.prs ? W(`${N} PRs open`, 'sent for review') : need ? '' : comp ? 'waiting for Compliance' : 'ready to ship') : ''].filter(Boolean).join(' · ') || `${done}/${N} done`, sec: open || need || pz ? 'Needs you' : 'Today' };
+}
+const dotOf = st => ({ done: 'green', live: 'peach', ask: 'q', paused: '', wait: '' })[st];
+/* a run row, the same on the card, the Runs list and the feature page: mark · number · title · one short state.
+   ✓ done, ● going, ○ waiting, ? needs you. Agents, findings and fix cycles are that run's detail, never rows. */
+const MARK = { done: '✓', live: '●', wait: '○', paused: '‖', ask: '?' };
+const markOf = st => `<span class="rmark ${st}" aria-hidden="true">${MARK[st]}</span>`;
+const rowMenu = (n, m) => `Open run ${n}>crp:${n}` + (/live|ask|paused/.test(m.st) ? `|-|!Stop run ${n}…>stoprun:${n}` : '');
+const titleLink = r => `<a href="#run-page" data-runlink="${r.n}" class="rc-m-title" title="${esc(r.t)}"><span class="num">${r.n}</span>${r.t}</a>`;
+const member = (r, m) => `<div class="rc-member" data-run="${r.n}"><span class="rc-rail">${markOf(m.st)}</span>${titleLink(r)}<span class="rc-m-state${m.st === 'ask' ? ' ink' : ''}">${m.short}</span>${more(rowMenu(r.n, m), `Run ${r.n} actions`)}</div>`;
+const reqLines = r => r.reqs.map(id => `${W(id + ' · ', '')}${reqText(id)}`).join('<br>');
+/* a run starts from the latest finished run of the feature, whatever its number; stopped and resumed, it takes in the latest finished work first */
+const tipOf = (v, r) => { const started = rtOf(r)[0] <= v.t, at = started ? rtOf(r)[0] : v.t;
+  return { started, run: v.list.filter(x => x !== r && rtOf(x)[1] <= at).sort((a, b) => rtOf(a)[1] < rtOf(b)[1] ? 1 : -1)[0] }; };
+function startsFrom(v, r, lk) { const m = v.m[r.n], { started, run } = tipOf(v, r);
+  return (run ? `the latest finished run (${started ? '' : 'now '}${lk ? lk(run.n) : W('run ' + run.n, run.sh)})` : 'the feature branch: nothing is finished yet') + (m.st === 'ask' || m.touched ? ' · resumed, it takes in the latest finished work first' : ''); }
+const phaseStrip = m => PHS.map((p, i) => `${p} ${m.st === 'ask' ? (i < (m.ask === 'rq' ? 3 : 4) ? '✓' : i === (m.ask === 'rq' ? 3 : 4) ? '?' : '○') : i < m.ph ? '✓' : i === m.ph ? (m.st === 'paused' ? '‖' : '●') : '○'}`).join(' · ');
+/* the current run in full: what it owns (the R-ids, by reference), what it starts from, where it is */
+const fullDet = (v, r, m) => `<div class="rowdet">${kv([r.why ? ['Why', r.why()] : null, [ownLab(r), reqLines(r)], ['Starts from', startsFrom(v, r)], ['Step', `<span class="cap">${phaseStrip(m)}</span>`]])}</div>`;
+/* the flat run list of the card: done ticked, the current run in full, the rest folded to one line */
+function runList(v) {
+  const rows = [], rest = [], cur_ = v.live[0] || v.paused[0] || v.asks[0];
+  v.list.forEach(r => { const m = v.m[r.n];
+    if (m.st === 'wait' && !m.show) return rest.push(r);
+    rows.push(member(r, m) + (r.n === cur_ ? fullDet(v, r, m) : '')); });
+  if (v.done === v.N) return fold(`<b>${v.N} runs</b> · all done`, rows.join(''));
+  return rows.join('') + (rest.length ? fold(`<b>${rest.length > 1 ? `Runs ${rest[0].n}–${rest[rest.length - 1].n}` : `Run ${rest[0].n}`}</b> · ${rest.length} to go, one after another`, rest.map(r => member(r, v.m[r.n])).join('')) : '');
+}
+
+/* ---------- ONE card per feature for its whole life: the state line, the one open question, finished steps as one line each, the runs ---------- */
+const STAGES = ['start', 'req', 'proto', 'split', 'build', 'ship'];
+function doneLines(stage, key) {
+  const k = STAGES.indexOf(stage), at = s => STAGES.indexOf(s), L = [], t = key ? MOM[key].t : '', list = listOf(key || 'rs'), num = id => (list.find(r => r.id === id) || {}).n;
+  /* the Care choice: one receipt line (the split and Ship say it in a fact row instead) */
+  if (k > at('start') && stage !== 'split' && stage !== 'ship') L.push([`Care: ${careRec()}`, '13:26']);
+  if (stage === 'req' && ui.qa.dig) L.push([QS.dig().done(pickOf('dig')), '13:31']);
+  if (k > at('req')) L.push([`Requirements agreed · 17 · ${specLink()}`, '13:32']);
+  if (stage === 'proto' && ui.proto >= 2) L.push([`Your remark: “${esc(ui.remarkTxt || 'Preview should show dark mode')}” → ` + W('R-ux-2 updated', 'the requirement is updated'), '13:38']);
+  if (k > at('proto')) L.push([ui.protoSkip ? 'Prototype skipped' : `Prototype confirmed · 2 screens${remarked() ? ' · 1 remark' : ''}`, '13:39']);
+  if (k > at('split')) L.push(['10 runs approved', '13:46']);
+  if (stage === 'build') { ['rq', 'ob'].forEach(q => { if (!answered(q, key)) return; L.push([QS[q]().done(pickOf(q)), QS[q]().at]);
+      if (q === 'rq' && num('chg')) L.push([W(`Run ${num('chg')} added: a small change run for R-arch-2 · run 2 and its PR stay as they are`, 'One small run added for the change · what was built stays as it is'), '15:03']); });
+    if (t >= '16:40') L.push([W(`Verifier: 15 of 16 hold in the main flow · 1 gap between runs · run ${num('gap')} added: a small run for the gap`, 'Verifier: 1 gap found · one small run added for the gap'), '16:40']); }
+  if (k > at('build')) L.push([`${list.length} runs built · 2 decided by you · 1 gap fixed`, '16:48'], ['Verified: the 16 requirements owned by runs hold in the main flow', '16:50']);
+  return L;
+}
+function featCard(stage, o = {}) {
+  const L = doneLines(stage, o.key), rc = L.length ? `<div class="chat-rc-log step-rcpts">${L.map(([t, tm]) => rcpt(t, tm)).join('')}</div>` : '';
+  return card({ kind: 'Feature', title: FEAT, dot: o.dot, state: o.state, detail: o.detail, body: (o.step || '') + rc + (o.list || ''), foot: o.foot || '' });
+}
+const askChg = () => btn('Ask for changes', { quiet: true, attr: ' data-act="askchg"' });
+const shapeMenu = (first = '') => first + 'Change roles…>reviewers:1|Run as one task · ≈ $30>oneTask:1|-|!Stop shaping…>stopshape:1';
+const featMenu = () => 'Open the feature page>go:feature|-|!Stop the feature…>stopfeat:1';
+/* the card's first step: the feature's size, the Care dial (Worca's pick preselected, the estimate per position, what a lower position gives up), one button */
+function careBlock() {
+  const c = ui.care;
+  const hist = ui.hist === 'thin' ? 'Quality figures per position: not enough history yet' : POS.map(p => `<div class="care-h"><b>${p}</b><span>${CARE[p].hist[1]}</span><span class="fig">${CARE[p].hist[2]} · ${CARE[p].hist[0]}</span></div>`).join('');
+  return kv([['Size', 'Large · about 16 requirements · about 10 runs'],
+    ['Care', `<span class="care-v"><span class="seg" role="group" aria-label="Care">${POS.map(p => `<button type="button" data-care="${p}" aria-pressed="${p === c}">${p}</button>`).join('')}</span></span><div class="cap">Worca picks ${CARE_PICK}: runs touch sign-in and personal data</div>`],
+    ['Estimate', `<span class="fig">${POS.map(p => p === c ? `<b>${p} ≈ $${estAll(p)}</b>` : `${p} ≈ $${estAll(p)}`).join(' · ')}</span> <span class="cap">the whole build, from dev’s recorded step costs</span>`],
+    below() ? ['Gives up', `${c} on this feature: ${CARE_GIVES[c]}. <span class="cap">Recorded as your choice · Worca recommended ${CARE_PICK}</span>`] : null,
+    ['History', `<span class="cap">${hist}</span>`]]) +
+    fold(`What ${c} does`, kv(CARE_K.map(k => [k, careRow(k)])) + '<p class="cap" style="margin:8px 0 0">In every position: every requirement is owned by one run or confirmed by a person; no agent approves its own work.</p>');
+}
+function startCard() {
+  return featCard('start', { dot: 'q', state: 'Needs you', detail: 'Pick the Care, then the roles write the requirements',
+    step: step('Your turn: how much care?', careBlock(), btn('Start requirements', { pri: true, go: 'requirements', tip: 'The picked roles write and challenge the requirements · ≈ $1.50' }) + more(shapeMenu())) });
+}
+
+/* level 1 · Requirements: the roles add and challenge; a disagreement is the open question; answered, it folds to one line */
+function reqCard() {
+  if (!ui.qa.dig) return featCard('req', { dot: 'q', state: 'Needs you', detail: '1 decision, then you agree the requirements',
+    step: question('dig', { quiet: askChg(), menu: shapeMenu(), more: fold('<b>7 roles</b> · 16 agreed · 1 in question', reqGroups(['R-po-4']), { open: true }) }) });
+  return featCard('req', { dot: 'q', state: 'Needs you', detail: 'Agree the requirements, then the prototype',
+    step: step('Your turn: agree the requirements', `<p class="cap" style="margin:0">Kept on ${specLink()} · the runs will point to them, never copy them.</p>` + fold('<b>17 requirements</b> · 7 roles · 3 challenges · each with an example', reqGroups(), { open: true }),
+      askChg() + btn('Agree requirements', { pri: true, go: 'prototype', tip: 'Next: the prototype of the 2 screens' }) + more(shapeMenu())) });
+}
+
+/* level 2 · Prototype: offered only because 3 requirements are about screens; Design's agents build it; a remark changes a requirement */
+function protoPreview(building) {
+  const dk = ui.proto >= 2, d = dk && ui.pvDark;
+  if (building) { let i = 0; ui._pvb = 1; const h = protoPreview(); ui._pvb = 0;
+    return h.replace('class="gv-well pv"', 'class="gv-well pv pv-b" aria-busy="true"').replace(/<div class="(pv-(?:h|f|in|mail|row|s)[^"]*)"/g, (m, c) => { if (c === 'pv-s') { i = 0; return m; } return `<div class="${c}" style="--i:${i++}"`; }); }
+  return `<div class="gv-well pv" aria-label="Prototype preview: 2 screens">
+    <div class="pv-s"><div class="pv-h">Template editor</div><div class="pv-f">Subject</div><div class="pv-in">Reset your password</div><div class="pv-f">Body</div><div class="pv-in">Use the button below to choose a new password.</div>
+      <div class="pv-f">Preview${dk ? `<span class="seg" role="group" aria-label="Preview theme"><button type="button" data-pv="0" aria-pressed="${!d}">Light</button><button type="button" data-pv="1" aria-pressed="${!!d}">Dark</button></span>` : ''}</div>
+      <div class="pv-mail${d ? ' dk' : ''}"><b>Reset your password</b><span>Use the button below to choose a new password.</span><i>Choose a password</i></div></div>
+    <div class="pv-s"><div class="pv-h">Email preferences</div><div class="pv-row">${sw('Password reset', true, { attr: ' disabled', tip: 'Always sent' })}</div><div class="pv-row">${sw('Sign-up confirmation', true, { attr: ' disabled', tip: 'Always sent' })}</div><div class="pv-row">${sw('Weekly digest', !!ui.q.dig)}</div>
+      <div class="ask-mcard-actions"><span class="sp"></span>${btn('Save', { attr: ' data-toast="A prototype: nothing is saved"' })}</div></div></div>`;
+}
+function protoCard() {
+  const p = ui.proto, screens = chk(true, 'Template editor', W('R-ux-1, R-ux-2', '2 requirements')) + chk(true, 'Email preferences page', W('R-po-3', '1 requirement'));
+  if (ui.protoSkip) return featCard('split', { dot: 'peach', state: 'Splitting into runs', detail: 'The Planner proposes the runs' });
+  if (p === 0) return featCard('proto', { dot: 'q', state: 'Needs you', detail: '2 screens to prototype · ≈ $3',
+    step: step('Prototype the screens first?', screens, btn('Build prototype', { pri: true, attr: ' data-act="protobuild"', tip: 'Design’s agents build the 2 screens as a clickable page · ≈ $3' }) + more(shapeMenu('Skip the prototype>skipproto:1|'))) });
+  if (p < 1) return featCard('proto', { dot: 'peach', state: 'Building the prototype', detail: 'Design’s agents · 2 screens',
+    step: step('Design’s agents are building', `<div class="pv-ag"><span class="sd peach"></span><b>Lead</b> planned the 2 screens</div><div class="pv-ag"><span class="sd peach"></span><b>Agent 1</b> Template editor</div><div class="pv-ag"><span class="sd peach"></span><b>Agent 2</b> Email preferences page</div>` + protoPreview(true), more(shapeMenu())) });
+  if (p === 3) return featCard('split', { dot: 'peach', state: 'Splitting into runs', detail: 'The Planner proposes the runs' });
+  return featCard('proto', { dot: 'q', state: 'Needs you', detail: p === 2 ? 'Prototype rebuilt with your remark · $3.20' : 'Prototype built · 2 screens · $2.80',
+    step: step('Your turn: look, remark, confirm', protoPreview() + `<div class="fold-line"><button type="button" class="link" data-toast="Opens the prototype in Design (outside this prototype)">Open prototype</button><span class="sp"></span></div>` +
+      (p === 2 ? '' : `<div class="ask-ans"><input type="text" id="remark" aria-label="Your remark" placeholder="A remark? e.g. Preview should show dark mode">${btn('Send remark', { attr: ' data-act="remark"', tip: 'The remark changes the requirement it is about, and the prototype is rebuilt' })}</div>`),
+      btn('Confirm prototype', { pri: true, attr: ' data-act="protook"', tip: 'Next: the split into runs' }) + more(shapeMenu())) });
+}
+
+/* level 3 · Split: a Planner proposes runs of 1–2 requirements, rules check them, the roles and a Challenger challenge the cut, the person approves once */
+const SPLIT_CHECKS = [['Every requirement is owned by one run or confirmed by a person', '16 owned by a run · 1 confirmed by a person'], ['No run is too big', '1–2 requirements each'], ['Each run waits only for runs above it'], ['Every requirement has an example', 'the tests are written from them']];
+const CHALLENGES = [['QA', 'run 4 (consent) could not be tested without run 5 (retention) · merged: 11 runs became 10', true], ['Challenger', 'asked why the weekly digest is not last · it needs only consent and the preferences page: kept'], ['Product, Engineering, Design, DevOps, Security, Compliance', 'no objection']];
+function splitRow(r) {
+  const det = `<div class="fold-body rowdet" hidden>${kv([['Owns', r.reqs.map(id => `${W(id + ' · ', '')}${reqText(id)} <span class="cap">e.g. ${REQ[id].ex}</span>`).join('<br>')], ['Starts from', r.after.length ? `the latest finished run · waits for ${plural(r.after, 'run')}` : 'the feature branch: it starts first'], ['Checked by', rolesOf(r).map(roleLab).join(' · ')], reg() === 'prod' ? null : ['Touches', `<code>${r.paths}</code>`], ['Estimate', `<span class="fig">≈ ${money(estRun(r))}</span>`]])}</div>`;
+  return `<div class="rc-member"><span class="rc-rail">${markOf('wait')}</span><button type="button" class="rc-m-title fold-t" aria-expanded="false" data-rowfold title="${esc(r.t)}"><span class="num">${r.n}</span>${r.t}</button><span class="rc-m-state" title="${esc(r.reqs.map(id => REQ[id].t).join(' · '))}">${W(r.reqs.join(', '), r.reqs.length + (r.reqs.length > 1 ? ' requirements' : ' requirement'))}</span></div>${det}`;
+}
+function splitCard() {
+  const lean = ui.care === 'Lean';
+  const rows = `<div class="rc-members">${RUNS.map(splitRow).join('')}</div>`;
+  const checks = fold(`<b>${SPLIT_CHECKS.length} checks passed</b>`, SPLIT_CHECKS.map(([l, d]) => chk(true, l, d)).join(''));
+  const chal = fold(`<b>Challenged by 7 roles${lean ? '' : ' and the Challenger'}</b> · 1 change: QA merged two runs`, CHALLENGES.filter(([w]) => !lean || w !== 'Challenger').map(([w, d]) => chk(true, w, d)).join(''));
+  /* Care is chosen at the start; here only the position in use, and what changing it now re-does */
+  const care = kv([['Care', `${ui.care} · chosen at the start · <button type="button" class="link cap" data-go="start">Change: re-does the requirements, the prototype and the split · ≈ $6</button>`]]);
+  return featCard('split', { dot: 'q', state: 'Needs you', detail: '10 runs proposed, one after another · check, then approve',
+    step: step('Your turn: approve the runs', rows + checks + chal + care, askChg() + btn('Approve 10 runs', { pri: true, go: 'build', tip: 'Starts run 1; the rest follow one after another' }) + more(shapeMenu())) });
+}
+
+/* level 4 · Build: one run at a time; it stops for the person only when a check fails, a role objects and it cannot be resolved, or an agreed requirement would have to change */
+function buildCard(key) {
+  if (key === 'rs') return shipCard();
+  const v = view(key), k = v.open;
+  const ctl = v.pz ? btn('Resume', { pri: !k, attr: ` data-act="resume" data-sid="${key}"` }) : v.live.length ? btn('Pause', { attr: ` data-act="pause" data-sid="${key}"`, tip: W(`Pauses run ${v.live[0]}; nothing new starts`, 'Pauses the run going now; nothing new starts') }) : '';
+  return featCard('build', { key, dot: v.dot, state: v.word, detail: v.cdetail, step: k ? question(k, { more: k === 'rq' ? changeRule(2, 2) : '' }) : key === 'sc' ? scNote(v) : '', list: `<div class="rc-members">${runList(v)}</div>`, foot: foot(ctl, '', featMenu()) });
+}
+
+/* the agents of one run, in order: one writes, independent ones check (they do not see each other), tests come before the code */
+const PF = { 3: { Security: 1 }, 5: { Security: 2 }, 6: { Design: 1 }, 8: { Compliance: 1 } }, CF = { 2: { Correctness: 1 }, 5: { Security: 1 }, 6: { Requirements: 1 }, 8: { Security: 3 } };
+const nf = (k, tail) => k ? `${k} finding${k > 1 ? 's' : ''} · ${tail}` : '0 findings';
+function agents(r, m) {
+  const stop = m.st === 'ask' ? (m.ask === 'rq' ? 3 : 4) : -1;
+  const p = m.st === 'done' ? 5 : stop >= 0 ? stop : m.st === 'wait' ? (m.touched ? (r.n === 8 ? 4 : 3) : -1) : m.ph;
+  const T = r.reqs.length * 2 + 1, ex = `${r.reqs.length} example${r.reqs.length > 1 ? 's' : ''}`, pf = PF[r.n] || {}, cf = CF[r.n] || {};
+  const row = (i, name, doneTxt, liveTxt, bad) => { const ok = p > i, on = p === i, held = on && m.st !== 'live';
+    return `<div class="plan-check-row${bad ? ' bad' : ok ? ' ok' : ''}"><span class="m">${bad ? I.no : ok ? I.ok : dot(on && !held ? 'peach' : '')}</span><span class="l">${name}<span class="d">${bad || (ok ? doneTxt : on ? (held ? (m.st === 'paused' ? 'paused' : 'waits its turn') : liveTxt) : 'waits')}</span></span></div>`; };
+  const lean = ui.care === 'Lean', roles = rolesOf(r);
+  const rows = [row(0, 'Planner', Object.keys(pf).length ? 'plan v2 · after the plan review' : 'plan v1', 'writing the plan')]
+    .concat(roles.map(x => row(1, `Plan review · ${x}`, nf(pf[x], 'fixed in plan v2'), 'reviewing the plan on its own')))
+    .concat([row(2, lean ? 'Tests · the Implementer' : 'Test writer', `${T} tests from ${ex} · all failing first`, `writing tests from ${ex}`),
+      row(3, 'Implementer', `${T} of ${T} tests pass`, 'building', m.ask === 'rq' ? W('stopped: R-arch-2 would have to change', 'stopped: a requirement would have to change') : '')])
+    .concat(['Correctness', 'Security', 'Project fit', 'Requirements'].map(x => row(4, `Code review · ${x}`, x === 'Requirements' ? `ran ${ex} · ${cf[x] ? nf(cf[x], 'fixed') : 'all hold'}` : nf(cf[x], 'fixed'), 'running it', m.ask === 'ob' && x === 'Security' ? '1 finding open after 3 fix cycles · 2 fixed' : '')));
+  return { html: rows.join(''), n: rows.length };
+}
+/* the feature's log: one line per step, Engineering or Product words */
+function events(key) {
+  const t = MOM[key].t, L = [], list = listOf(key), num = id => (list.find(r => r.id === id) || {}).n, add_ = (tm, who, e, p, x) => L.push([tm, who, W(e, p || e), x || {}]);
+  add_('13:26', 'F', `Care: ${careRec()} · chosen at the start`, '', { dec: 1 });
+  add_('13:28', 'F', 'Requirements drafted · 7 roles wrote 17, challenged 3', 'Requirements drafted by 7 roles');
+  add_('13:31', 'F', QS.dig().done(pickOf('dig')), '', { dec: 1 });
+  add_('13:32', 'F', `Requirements agreed · 17 · kept on ${SPEC}`, '', { dec: 1 });
+  if (!ui.protoSkip) { add_('13:36', 'F', 'Prototype built by Design’s agents · 2 screens · $2.80', 'Prototype built · 2 screens');
+    if (ui.remark !== false) add_('13:38', 'F', 'Your remark: preview should show dark mode → R-ux-2 updated', 'Your remark: preview should show dark mode', { dec: 1 });
+    add_('13:39', 'F', 'Prototype confirmed by you', '', { dec: 1 }); }
+  add_('13:44', 'F', 'Split proposed · 11 runs · QA’s challenge merged two: 10', 'Split proposed · 10 runs');
+  add_('13:46', 'F', '10 runs approved by you', '', { dec: 1 });
+  list.forEach(r => { const n = String(r.n), rt = rtOf(r); add_(rt[0], n, 'Started from the latest finished run · the Planner writes the plan', 'Started'); add_(rt[1], n, 'Done · tests pass, reviews passed · on the feature branch', 'Done · added to the feature'); });
+  add_('14:56', '5', 'Stopped: R-arch-2 would have to change', 'Stopped: a requirement would have to change', { dot: 1 });
+  if (answered('rq', key)) { add_('15:03', '5', QS.rq().done(pickOf('rq')), '', { dec: 1, k: 'rq' });
+    if (num('chg')) add_('15:03', 'F', `Run ${num('chg')} added: a small change run for R-arch-2 · run 2 and its PR stay as they are`, 'One small run added for the change · what was built stays as it is', { k: 'rq' });
+    add_(num('chg') ? '15:19' : '15:14', '5', 'Resumed · took in the latest finished work first', 'Resumed'); }
+  if (num('sc')) add_('15:48', 'F', `R-po-3 edited on ${SPEC} · run 7 is finished · run ${num('sc')} added: a small change run, takes the next turn`, 'A requirement was edited · one small run builds the change next', { dot: 1 });
+  add_('16:02', '8', 'Stopped: Security objects after 3 fix cycles, the Implementer disagrees', 'Stopped: Security objects, the builder disagrees', { dot: 1 });
+  if (answered('ob', key)) { add_('16:07', '8', QS.ob().done(pickOf('ob')), '', { dec: 1, k: 'ob' });
+    if (!pickOf('ob')) add_('16:16', '8', 'Resumed · took in the latest finished work first', 'Resumed'); }
+  add_('16:38', 'F', 'Verifier walks the main flow against the 16 requirements the runs own', 'The Verifier tries the whole feature');
+  if (num('gap')) add_('16:40', 'F', `Verifier: 1 gap between runs · run ${num('gap')} added: a small run for the gap`, 'Verifier: 1 gap found · one small run added for the gap');
+  add_('16:50', 'F', 'Verified · the 16 requirements owned by runs hold · ready to ship', 'Checked again · ready to ship');
+  return L.filter(e => e[0] <= t || (e[3].k && e[3].k === key)).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+}
+const evLog = (key, f) => { const rows = events(key).filter(f || (() => true)), list = listOf(key);
+  return rows.length ? log(rows.map(([tm, who, txt, x]) => [(who !== 'F' && !f ? W(`Run ${who} · `, list.find(r => r.n === +who).sh + ' · ') : '') + txt, tm, x.dot ? 'dot' : ''])) : '<p class="cap">Nothing yet.</p>'; };
+
+/* ---------- screens ---------- */
+const SCREENS = [];
+const add = (id, grp, t, render, notes) => SCREENS.push({ id, grp, t, render, notes });
+
+/* ===== Ask ===== */
+add('guide-offer', 'Ask', 'Guide offered', () => `
+  <div class="crumb">Chat home · project website-x</div><h2>A short idea, Guide offered once</h2>${SITE}
+  ${composer({ text: PROMPT_THIN, guide: 'offer', noRole: true, send: 'start' })}`,
+  aside(['Shaper pin on Chat home', 'Helper jobs on Models', 'Dev\'s Switch (<code>ui/public/switch.mjs</code>, <code>.switch</code>)'],
+    ['Guide is one Switch in the composer row, beside the role picker, on by default once offered; the offer is one quiet line, no buttons', 'Guide\'s model is in the switch\'s tooltip and Settings › Models, not inline', 'Off is remembered; Send stays the only primary'],
+    ['A rules-only score before Guide is on?']));
+
+add('asker', 'Ask', 'Who is asking', () => `
+  <div class="crumb">Chat home · project website-x</div><h2>Who is asking, asked once</h2>${SITE}
+  ${composer({ text: PROMPT_THIN, guide: 'role', noRole: true, roleGo: 'prompt-check', send: 'start' })}`,
+  aside(['<code>src/shared/answerer.mjs</code> (one remembered lead)', 'Two registers: Product and Design plain, the rest technical'],
+    ['Who is asking is one picker in one place: the composer row, right after the Shaper pin, on every screen with the composer', 'Asked once, never blocks Send; the same picker shows the role afterwards'],
+    []));
+
+add('prompt-check', 'Ask', 'Prompt check', () => `
+  <div class="crumb">Chat home · project website-x</div><h2>Guide says what is missing, in your words</h2>${SITE}
+  ${composer({ text: promptText(), guide: 'score', spark: true, send: 'start' })}`,
+  aside(['<code>buildCheckFold</code> (<code>check-row.mjs</code>)', '<code>nudgeFor</code> (<code>src/core/shape/nudge.mjs</code>)', 'SuggestionField <code>.sn-btn</code>'],
+    ['The fold head reads <i>Prompt 2/5 · 3 gaps</i>: it opens and shuts the list, never adds', '<b>Add</b> opens a field under its row; the answer joins the prompt'],
+    []));
+
+add('written-out', 'Ask', 'Written out', () => `
+  <div class="crumb">Chat home · project website-x</div><h2>Written out, ready to send</h2>${SITE}
+  ${composer({ text: writtenText(), rows: 7, guide: 'ready', spark: true, send: 'start' })}`,
+  aside(['SuggestionField <code>.sn-chip</code> Suggested, Undo'],
+    ['Your answers stay word for word; Guide fills only the gaps, each marked <i>(suggested)</i>', 'No estimate here: the card says it once, on its first step', 'Neutral tint while writing (violet is Labs only)'],
+    []));
+
+/* ===== Concept · later: the Requirements page of FEAT-12 at six moments, walked by doing the actions =====
+   before → (Shape it) → being shaped → split → being built → (Edit, Save) → edited → shipped.
+   The build figures come from view(): "being built" is 15:47, moment sc without its change run; "edited" is moment sc; "shipped" is moment rs. */
+const RM = ['before', 'shaped', 'split', 'build', 'edited', 'ship'], RM_LAB = { before: 'before shaping', shaped: 'being shaped', split: 'split', build: 'being built', edited: 'edited', ship: 'shipped' };
+const RM_NEW = 'Customers pick which emails they get, and how often (daily or weekly), on a preferences page';
+const rmNow = () => RM.includes(ui.rm) ? ui.rm : 'before';
+const rmKey = () => ({ build: ui.rmKey || 'sc', edited: 'sc', ship: 'rs' })[rmNow()] || '';
+const rmPre = () => rmNow() === 'build' && !ui.rmKey;
+const rmList = v => v.list.filter(r => !(rmPre() && r.id === 'sc'));
+const rmMoment = () => { const k = rmKey(); return !k ? 'b3' : PAGE_MOMENTS.includes(k) ? k : 'vf'; };
+/* which moment of the page a screen's spec link opens */
+function rmFrom(id) {
+  if (id === 'requirements' || id === 'prototype') return ['shaped'];
+  if (id === 'split') return ['split'];
+  const k = id === 'ship' ? 'rs' : SCREENS.find(s => s.id === id).grp === 'Pages' ? ui.moment : momentOf(id);
+  return k === 'sc' ? ['edited'] : k === 'rs' ? (ui.prs ? ['ship'] : ['build', 'rs']) : k ? ['build', k] : ['before'];
+}
+/* a criterion's mark and its one line: the run that owns it and where that run is (the same words as the feature page's Requirements tab) */
+function rmStat(v, id) {
+  const by = REQ[id].by, mo = rmNow(), lk = r => `<button type="button" class="link" data-rmrun="${r.n}">${W('run ' + r.n, r.sh)}</button>`;
+  if (by) return mo === 'ship' || (v && v.ship && ui.comp) ? ['done', `confirmed by ${by}`] : ['wait', `confirmed by a person · ${by}`];
+  const r = ownerOf(id);
+  if (!v) return ['wait', lk(r)];
+  const m = v.m[r.n], x = rmList(v).find(q => q.id && q.reqs.includes(id)), mx = x && v.m[x.n], mk = mo === 'ship' && ui.marks[id];
+  if (mk && mk !== 'Met') return ['wait', `${lk(r)} · ${mk.toLowerCase()} · your mark at Ship`];
+  if (x && x.id === 'sc') return ['wait', W(`changed · ${lk(r)} owned it and is finished: a small change run was added`, 'changed · it was already built: a small change run was added') + ' · <button type="button" class="link" data-go="spec-changed">see the card</button>'];
+  const word = x ? (x.fix ? (mx.st === 'done' ? `met · fixed by run ${x.n}` : `gap · run ${x.n} fixes it`) : mx.st === 'done' ? `met · changed by run ${x.n}` : `changed · run ${x.n} builds it`) : m.st === 'done' ? 'met' : m.st === 'wait' ? (m.touched ? m.short : 'to do') : m.st === 'ask' ? 'waiting for you' : m.st === 'paused' ? 'paused' : 'being built';
+  return [x ? mx.st : m.st, `${lk(r)} · ${word}`];
+}
+/* an edit is judged before it is saved: wording only re-does nothing; a change of what is asked adds a small run, and the button says so first */
+const rmJudge = val => { const o = REQ['R-po-3'].t, n = x => x.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean); if (!val || val === o) return 'same';
+  const a = n(o), b = n(val); return a.filter(w => !b.includes(w)).length + b.filter(w => !a.includes(w)).length <= 2 ? 'word' : 'change'; };
+const rmSaveLabel = val => ({ same: 'Save', word: 'Save · wording only, nothing re-done', change: 'Save · adds a small run, ≈ $2.70' })[rmJudge(val)];
+function rmRow(v, id) {
+  const [st, d] = rmStat(v, id), mine = id === 'R-po-3';
+  if (mine && rmPre() && ui.rmEdit) return `<div class="plan-check-row" title="${id}"><span class="m">${markOf(st)}</span><span class="l">${W(`<span class="rq-id">${id}</span>`, '')}<span class="ask-ans" style="flex-wrap:wrap"><input type="text" id="rmedit" style="flex:1 1 100%" aria-label="Criterion text" value="${esc(RM_NEW)}">${btn(rmSaveLabel(RM_NEW), { attr: ' id="rmsaveb" data-act="rmsave"', tip: 'Worca judges the edit before it is saved: wording only, or a change that adds a small run' })}${btn('Cancel', { quiet: true, attr: ' data-act="rmcancel"' })}</span></span></div>`;
+  return reqRow(id, { mark: markOf(st), d, tip: `${id} · e.g. ${reqEx(id)}`, t: mine && rmNow() === 'edited' ? esc(ui.rmTxt || RM_NEW) : mine && rmPre() && ui.rmWord ? esc(ui.rmWord) : '', act: mine && rmPre() ? btn('Edit', { quiet: true, attr: ' data-act="rmedit"', tip: 'Edit this criterion' }) : '' });
+}
+/* Runs from this feature: ONE row for the feature (state, runs done, cost); it opens the feature's card or page */
+const rmFeatRow = o => `<div class="rc-members"><div class="rc-member"><span class="rc-rail">${dot(o.dot)}</span><a href="#${o.go}" class="rc-m-title" data-rmfeat="${o.go}" title="${esc(o.tip)}">${FEAT}</a><span class="rc-m-state${o.ink ? ' ink' : ''}">${o.state}</span><span class="rc-m-cost fig">${o.cost}</span></div></div>`;
+const READY6 = [['A goal with a success measure'], ['At least one acceptance criterion', '4'], ['The interview is finished', '3 rounds'], ['No open questions'], ['Every assumption is decided'], ['The project still exists', 'website-x']];
+function rmPage() {
+  const mo = rmNow(), key = rmKey(), v = key ? view(key) : null, pre = rmPre(), n = ALL_IDS.length, n0 = REQS[0][1].length, own = ownerOf('R-po-3').n;
+  const tm = { shaped: '13:28', split: '13:46', build: mo === 'build' && ui.rmKey ? v.t : '15:47', edited: '15:48', ship: '16:58' };
+  const seg = `<div class="variant">Prototype · moment <div class="seg seg-wrap" role="group" aria-label="Moment">${RM.map(k => `<button type="button" data-rm="${k}" aria-pressed="${k === mo}">${tm[k] ? tm[k] + ' · ' : ''}${RM_LAB[k]}</button>`).join('')}</div>${pre ? '<span>Edit works on one criterion: the preferences page</span>' : ''}</div>`;
+  const head = `<div class="crumb"><span>Requirements</span><span>›</span><span>${SPEC}</span></div>
+  <div class="pg-h"><h1 title="${FEAT}">${FEAT}</h1><span class="chip">${{ before: 'Ready', shaped: 'Being shaped', ship: 'Shipped' }[mo] || 'Being built'}</span><span class="sp"></span>${more('Look again|Your notes for Worca|-|Archive')}</div>`;
+  const ready = `<section class="status-blk" aria-label="Ready to build"><div class="openstep-h">Ready to build</div>
+    <p style="margin:4px 0 0">Large: it touches sign-in and personal data, and only Product has written criteria. <b>Shape it</b> has six more roles add and challenge, then builds it in small runs that point to this spec. A small spec offers Start in Worca here instead.</p>
+    ${fold('<b>Ready</b> · 6 of 6 checks pass', READY6.map(([l, d]) => chk(true, l, d)).join(''))}
+    <div class="fold-line"><span class="chip">Workflow · Auto</span><span class="chip">Branch from · main</span><button type="button" class="link cap" data-toast="Change the workflow and branch: as on dev">Change</button><span class="sp"></span></div>
+    <div class="ask-mcard-actions"><span class="sp"></span>${btn('Shape it', { pri: true, attr: ' data-shapeit="1"', tip: 'Opens the feature’s card in Chat at its first step' })}${more('Start in Worca as one run')}</div></section>`;
+  const N = v ? rmList(v).length : RUNS.length, used = v ? `${money(v.cost)} of ≈ $${estAll()}` : '';
+  const row = mo === 'before' ? {} : mo === 'shaped' ? { dot: 'q', go: 'requirements', ink: true, state: ui.qa.dig ? 'Being shaped · waits for your agreement' : 'Being shaped · 1 question for you', cost: '≈ $1.50', tip: 'Opens the feature’s card in Chat' }
+    : mo === 'split' ? { dot: 'peach', go: 'feature', state: `Running · 0 of ${N} runs done`, cost: `≈ $${estAll()}`, tip: 'Opens the feature page (this prototype shows it from 14:24)' }
+    : mo === 'ship' ? { dot: 'green', go: 'ship', state: W(`Shipped · ${N} runs · ${N} PRs open`, `Shipped · ${N} runs · ${N} sent for review`), cost: money(v.cost), tip: W(`#1431–#${1430 + N} · a PR per run, stacked in the order runs finished`, 'One small review per run, in the order they finished') }
+    : { dot: pre ? 'peach' : v.dot, go: key === 'rs' ? 'ship' : 'feature', ink: !pre && !!v.open, state: `${pre ? 'Running' : v.word} · ${v.done} of ${N} runs done`, cost: used, tip: pre ? 'Opens the feature page (this prototype shows it at 15:50, just after the edit)' : strip(v.detail) };
+  const runs = mo === 'before' ? '' : `<section class="status-blk" aria-label="Runs from this feature"><div class="openstep-h">Runs from this feature</div>${rmFeatRow(row)}${mo === 'ship' ? kv([['Care', `${careRec()} · ${OUTCOME}`]]) : ''}</section>`;
+  const scN = v && (v.list.find(r => r.id === 'sc') || {}).n, est = `≈ ${money(estRun(RUN_SC))}`;
+  const changed = mo !== 'edited' ? '' : `<section class="status-blk" aria-label="Changed since the feature started"><div class="openstep-h">Changed since the feature started</div>
+    ${kv([['Was', `<s>${REQ['R-po-3'].t}</s>`], ['Now', esc(ui.rmTxt || RM_NEW)], ['Edited', '15:48 on this page · nothing is asked: the edit is the decision'],
+      ['Caused', W(`Run ${own} owned R-po-3 and is finished: run ${scN}, a small change run, takes the next turn · ${est}. Run ${own} and its PR stay as they are.`, `The preferences page was already built: one small run builds the change next · ${est}. What was built stays as it is.`)]])}
+    ${changeRule(own, 2)}
+    <div class="ask-mcard-actions"><span class="sp"></span>${btn('Open the feature’s card', { go: 'spec-changed', tip: 'The card in Chat says the same: told, not asked' })}</div></section>`;
+  const nm = RUN_IDS.filter(id => ui.marks[id] && ui.marks[id] !== 'Met').length, nr = RUN_IDS.length;
+  const line = { before: '',
+    shaped: `7 roles add and challenge · ${ui.qa.dig ? QS.dig().done(pickOf('dig')) : '<button type="button" class="link" data-go="requirements">1 question waits on the feature’s card</button>'} · still editable: your edits go to the roles · what you agree on the card is what stays here`,
+    split: 'Agreed at 13:32 · each one is owned by one run or confirmed by a person · still editable: an edit goes to the run that owns it',
+    build: 'Each one says where its run is · still editable: an edit goes to the run that owns it',
+    edited: '1 changed since the feature started · the rest as before',
+    ship: (nm ? `${nr - nm} of ${nr} built criteria met · ${nm} not met or dropped at Ship` : `${nr} built criteria met`) + ' · 1 confirmed by Compliance' }[mo];
+  const crit = mo === 'before' ? REQS[0][1].map(([id]) => reqRow(id)).join('')
+    : mo === 'shaped' ? REQS.map(([g, rs], i) => `<div class="grp-h">${g} · ${i ? 'added ' + rs.length : rs.length + ' from the interview'}</div>` + rs.map(([id]) => id === 'R-po-4' && !ui.qa.dig ? reqRow(id, { mark: I.dot, d: 'in question on the card · e.g. ' + reqEx(id) }) : reqRow(id)).join('')).join('')
+    : REQS.map(([g, rs]) => `<div class="grp-h">${g}</div>` + rs.map(([id]) => rmRow(v, id)).join('')).join('');
+  const spec = `<section class="status-blk" aria-label="Spec"><div class="openstep-h">Spec</div>
+    ${kv([['Goal', 'Website X sends email to its customers: reset, sign-up, and a weekly digest they choose'], ['Interview', '3 rounds · finished · 0 open questions']])}
+    ${line ? `<p class="cap" style="margin:8px 0 0">${line}</p>` : ''}
+    ${fold(`<b>Acceptance criteria</b> · ${mo === 'before' ? n0 : mo === 'shaped' ? `${n} · ${n - n0} added by the roles` : n}`, crit, { open: true })}</section>`;
+  return seg + head + (mo === 'before' ? ready : runs) + changed + spec + (mo === 'before' ? '<section class="status-blk" aria-label="Runs from this feature"><div class="openstep-h">Runs from this feature</div><p class="cap" style="margin:4px 0 0">None yet.</p></section>' : '');
+}
+const RM_KEEP = ['The Requirements page (<code>ui/public/requirements-view.mjs</code> <code>buildCard</code>: Ready to build, Workflow and Branch chips, Change, <b>Start in Worca</b>; <code>runsCard</code>: status, cost, a link, <i>Waiting for you</i>)', 'Ready = six checks, no model asked; criteria keep stable ids that are never reused (<code>docs/requirements.md</code>)'];
+const RM_NOTES = {
+  before: aside(RM_KEEP,
+    ['One button, chosen by size: a large or sensitive spec offers <b>Shape it</b> and Start in Worca moves into ⋯; a small spec offers Start in Worca (a large spec as one run is the big chunk to avoid)', 'Shape it opens the feature’s card in Chat at its first step (size and Care); the spec is passed by reference (' + SPEC + '), never copied', 'Start in Worca is unchanged: one normal run with the whole spec as its task', 'The quick way in (Chat with the Shaper pin) creates the same ' + SPEC],
+    ['Is Shape it offered only when the six checks pass, or also through <i>Start before it’s Ready…</i> with a reason?', 'Before shaping the spec holds only Product’s criteria (R-po-…); the other roles’ requirements get their own prefixes on the same spec: right?']),
+  shaped: aside(RM_KEEP.concat(['Every section of the spec can be edited; the feature chat proposes changes as cards (dev)']),
+    ['What the roles write is written to the spec as they write it: 4 criteria become 17, grouped by the role that added them, each with its example', 'The open disagreement is not asked on the page: one line links to the feature’s card, where it is the one open question; the criterion it is about is marked', 'The spec stays editable while the roles write: an edit goes to the roles', 'Ready to build is gone once shaping starts; Runs from this feature holds one row for the feature, which opens its card', 'No second approval on the page: <b>Agree requirements</b> on the card is the one approval, and what was agreed is what is written here, each line marked with its role'],
+    ['Do the roles’ criteria show on the spec while they are still challenged (shown), or only once agreed?', 'An edit on the page while the roles write: does it join their next round (shown) or restart the round?', 'May a role reword one of Product’s criteria, or only add its own?']),
+  split: aside(RM_KEEP.concat(['What a run started with is kept frozen as v1, v2, … (dev)']),
+    ['Each criterion says which run owns it; R-comp-4 says <i>confirmed by a person · Compliance</i>: no run owns it', 'The example moves to the row’s tooltip: a row stays one line', 'Runs from this feature shows ONE row for the feature (state, runs done, cost) that opens the feature page, not ten run rows', 'The runs hold ' + SPEC + ' and their R-ids and read the current text when they plan: no frozen copy'],
+    ['Dev freezes what a run started with (v1); by reference there is no copy: should each run record which version of the text it planned from?', 'One feature row (shown), or the feature row with its runs unfolded as on the Runs list?', 'Is the owning run useful on the spec for a Product reader, or does it belong only on the feature page?']),
+  build: aside(RM_KEEP.concat(['The feature page’s Requirements tab of this prototype: the same statuses']),
+    ['Each criterion shows a status read from its owning run: met (the run finished and was reviewed), being built, to do, waiting for you, changed', 'The words are the same as on the feature page’s Requirements tab: one source, two views', 'The spec stays editable while runs build: <b>Edit</b> on a criterion, Save, and the page says what it caused (next moment)', 'Shown at 15:47, just before the edit; reached from a card’s ' + SPEC + ' link it shows that card’s moment instead', 'Anyone who can edit the spec may edit while a run is running; no lock: the ONE rule covers it (the run stops, re-plans from the new text, continues)'],
+    ['Is <i>met</i> the right word before the Verifier and the marks at Ship, or <i>built</i>?']),
+  edited: aside(RM_KEEP.concat(['<i>Changed since the run started</i>: what changed against the last start, old text struck through; <i>Undo my changes</i>; <i>Start again with v2</i> (dev)', 'Extra runs: <code>appendFeatureRun</code>']),
+    ['An edit on the page is the decision: nothing is asked; the page says what it caused', 'ONE rule, by where the owning run is: not started, it plans from the new text; running, it stops, re-plans and continues; finished, a new small change run takes the next turn', 'Run 7 owned R-po-3 and is finished: a small change run is added with its estimate; run 7 and its PR stay as they are', 'The row and the Changed card link to the feature’s card, which says the same (the next screen); the card’s ' + SPEC + ' link comes back here', 'No <i>Start again with v2</i>: the feature takes the change itself', 'Worca judges an edit before it is saved: wording only re-does nothing; a change of what is asked, or of its example, follows the rule; unsure counts as a change', 'The Save button says what the edit will cause and its cost before it is pressed; no dialog'],
+    ['<i>Undo my changes</i> after the change run was added or built: allowed? Is the undo another small change run?', 'An edit by someone who is not the feature’s owner: the owner is told on the card (shown), or asked first?']),
+  ship: aside(RM_KEEP.concat(['The Met / Not met / Dropped marks (<code>shape/ship-card.mjs</code>)']),
+    ['Every criterion says how it ended: met with the run that built it; a changed or gap-fixed one names its small run; R-comp-4 is confirmed by Compliance', 'A criterion the person marked Not met or Dropped at Ship says so here', 'The feature row says shipped with its PR count and opens the card that lists the PRs', 'One line holds the Care position, who chose it and the outcome, as at Ship', 'Like every moment but <i>edited</i>, this one leaves the R-po-3 edit out, so its figures match the Ship screen'],
+    ['After ship, is an edit to the spec a change run on this feature, or a new feature?', 'Should each criterion link to the PR that built it?', 'Does the export to a tracker carry the 17 criteria with their status?'])
+};
+add('from-requirements', 'Ask', 'Requirements page', rmPage, () => RM_NOTES[rmNow()]);
+
+/* ===== The card's first step: the size, the Care dial, one button ===== */
+add('start', '0 · Start', 'Start', () => `
+  <div class="variant">Reached with <div class="seg" role="group" aria-label="Reached with"><button type="button" data-hist="thin" aria-pressed="${ui.hist === 'thin'}">thin history</button><button type="button" data-hist="plenty" aria-pressed="${ui.hist !== 'thin'}">with history</button></div></div>
+  <div class="crumb">Chat · ${FEAT}${ui.from === 'page' ? ' · started from ' + SPEC : ''}</div><h2>${below() ? 'Any position can be picked: the card says what it gives up' : 'A light first step: the size, the Care, one button'}</h2>
+  ${ui.from === 'page' ? '' : `<div class="u-msg">${esc(writtenText())}</div>`}${startCard()}`,
+  aside(['<code>estimateGraph</code> (<code>src/core/shape/estimate.mjs</code>), <code>nudgeFor</code> (<code>src/core/shape/nudge.mjs</code>)', 'Dev’s segmented control, <code>.rd-kv</code>', 'Per-agent model and effort, presets (<code>docs/models.md</code>)'],
+    ['The card keeps a light first step: the feature’s size, the Care dial, one button', '<b>Care</b> is one dial for the whole process: requirements depth, prototype, run size, build approach, reviewers per run, Challenger, models, fix cycles', 'Worca’s pick is preselected with its reason; every position shows its estimate', 'Any position may be picked. Below Worca’s pick the card says in plain words what is given up and records it as your choice; nothing blocks, nothing asks twice', 'The recorded choice shows again on the feature page, at Ship and in the decisions', 'Fixed in every position: every requirement is owned by one run or confirmed by a person; no agent approves its own work', 'Quality figures per position come from the project’s own history, and the card says so while there is none', 'The project default is in Settings › Project'],
+    ['A team policy that sets a minimum position per project: wanted?']));
+
+/* ===== Level 1 · Requirements ===== */
+add('requirements', '1 · Requirements', 'Roles disagree', () => `<div class="crumb">Chat · ${FEAT}${ui.from === 'page' ? ' · started from ' + SPEC : ''}</div><h2>${ui.qa.dig ? 'Answered, it folds to one line' : 'Two roles disagree: that is the one question'}</h2>
+  ${ui.from === 'page' ? '' : `<div class="u-msg">${esc(writtenText())}</div>`}${reqCard()}`,
+  aside(['<code>shape/requirements-body.mjs</code>; a decision is dev’s single choice (<code>chat/question.mjs</code>): answers stacked, Worca’s pick marked <code>recommended</code>, who wants it and why under each', 'Decision cards when two roles ask for opposite changes (<code>docs/shape-it-first.md</code>)'],
+    ['One card per feature for its whole life: no Shape card and Feature card', 'The person asks as one role; the 7 picked roles each write their own requirements and challenge the others (⋯ › Change roles…)', 'How deep the roles go follows the Care position chosen at the start', 'A disagreement between roles is THE open question; one at a time; answered, it becomes one line', 'Every requirement has an example (the tests are written from it later)', 'Two kinds of requirement: owned by exactly one run, or confirmed by a person. R-comp-4 (the signed agreement) is the second kind: no run owns it, Compliance marks it, Ship waits for it', 'The requirements live on ' + SPEC + ': the card links to it'],
+    ['The disagreement is answered first, then the requirements are agreed (two clicks): or one click for both?']));
+
+/* ===== Level 2 · Prototype ===== */
+add('prototype', '2 · Prototype', 'Prototype', () => `
+  <div class="variant">Prototype · moment <div class="seg seg-wrap" role="group" aria-label="Moment">${[[0, 'offered'], [.5, 'building'], [1, 'built'], [2, 'remark'], [3, 'confirmed']].map(([k, l]) => `<button type="button" data-proto="${k}" aria-pressed="${!ui.protoSkip && ui.proto === k}">${l}</button>`).join('')}</div></div>
+  <div class="crumb">Chat · ${FEAT}</div><h2>${['A prototype, because 3 requirements are about screens', 'Design’s agents built the 2 screens', 'A remark changes the requirement', 'Confirmed: next, the split', 'Skipped: next, the split', 'The screens assemble while Design’s agents build them'][ui.protoSkip ? 4 : ui.proto === .5 ? 5 : Math.ceil(ui.proto)]}</h2>${protoCard()}`,
+  aside(['Design builds a web page with agents: a lead plans, one agent per section, the lead goes over it (<code>docs/design.md</code>)', 'The card’s step chrome and receipts (<code>shape/step-card.mjs</code>, <code>step-receipt.mjs</code>)'],
+    ['Offered only when the requirements include Design / UX criteria: here the template editor (R-ux-1, R-ux-2) and the preferences page (R-po-3)', 'For a feature with no UX requirements the step is absent: the card goes from Requirements straight to the Split', 'Build prototype is the primary; Skip is in ⋯', 'The prototype is built by Design’s agents and opens there; the card shows a small plain preview', 'While it is being built the card is animated: the screens assemble piece by piece, one agent per screen, so the wait shows progress (still when reduced motion is set)', 'A remark becomes a requirement change (R-ux-2 updated), never a note beside the spec', 'Later the code reviewers compare the built screens with it'],
+    ['The remark is typed on the card (shown), or in Chat?', 'A prototype for every screen, or only the ones with UX requirements (shown)?']));
+
+/* ===== Level 3 · Split ===== */
+add('split', '3 · Split', 'Split', () => `
+  <div class="crumb">Chat · ${FEAT}</div><h2>The split: small runs, checked, challenged, approved once</h2>${splitCard()}`,
+  aside(['<code>shape/outline-body.mjs</code>, <code>src/shared/shape/slices.mjs</code> (<code>dependsOn</code> names earlier slices), <code>createSliceFeature</code>: tickets chained one after another', '<code>buildCheckFold</code> (<code>check-row.mjs</code>), <code>.rd-kv</code>'],
+    ['A Planner proposes runs of 1–2 requirements; each row unfolds to the R-ids it owns (by reference), what it starts from and who checks it', 'A run starts from the latest finished run; the split records only which runs it waits for', 'Rules referee: every requirement is owned by one run or confirmed by a person (16 and 1), no run too big, a run waits only for runs above it, each requirement has an example', 'The same 7 roles challenge the cut, plus a Challenger; a challenge that changed the cut is one folded line', 'Care is not chosen here any more: one line says the position in use; changing it goes back to the start and re-does the requirements, the prototype and the split', 'Cut: the Care dial on this step, Care per run, At once, run slots, order, usage, the schedule'],
+    ['The estimate shows $ only, no minutes (speed is not the goal): right?']));
+
+/* ===== Level 4 · Build ===== */
+const buildCrumb = key => `<div class="crumb">Chat · ${FEAT} · ${MOM[key].t}</div>`;
+add('build', '4 · Build', 'Run 3 going', () => `${buildCrumb('b3')}<h2>One run at a time; the card says its short state</h2>${buildCard('b3')}`,
+  aside(['<code>ui/public/shape/feature-card.mjs</code> (<code>featureCardModel</code>, <code>SLICE_STATE_LABELS</code>)', 'Dev’s chain: tickets run one after another, each from the run before it (<code>src/core/scheduler.mjs</code>, <code>after: prev</code>, <code>sourceFromPrevious</code>)'],
+    ['Runs go one after another; no plan approval per run', 'A run starts from the latest finished run of the feature (dev: the run before it)', 'The run list: done ticked, the current run in full (what it owns, what it starts from, its step), the rest folded to one line', 'The run’s short state is one of: planning, reviewing plan, writing tests, building, reviewing, done', 'Per run: Planner → plan reviewers (the run’s roles, each on its own) → Test writer (tests from the requirements’ examples) → Implementer → code reviewers (Correctness, Security, Project fit, Requirements; they run it). They are in the run’s panel, never on the card', 'Finished steps are one line each above the list', 'Cut: at once, run slots, waits for a slot'],
+    ['Done runs stay as ticked rows, so the card grows late in the build: fold them to one line too?']));
+
+add('req-change', '4 · Build', 'Run 5: change', () => `${buildCrumb('rq')}<h2>${answered('rq', 'rq') ? (pickOf('rq') ? 'Kept: run 5 goes on' : 'Changed: a small change run takes the next turn') : 'A run stops: an agreed requirement would have to change'}</h2>${buildCard('rq')}`,
+  aside(['Feature card open step: one ask at a time (dev)', 'Plan concerns: a run does not build what it disagrees with (<code>plan-concern.json</code>)'],
+    ['A run never changes an agreed requirement by itself: it stops and asks, as the card’s one open question', 'Keep or Change it, Worca’s pick preselected, who wants what and why', 'Changed, the requirement is updated on ' + SPEC + ' first (never a copy on the run)', 'Then ONE rule, by where the owning run is: not started, it plans from the new text; running, it stops, re-plans and continues; finished, a new small change run takes the next turn and the finished run and its PR stay as they are', 'Here run 2 owns R-arch-2 and is finished: a small change run is added; run 5 waits for it, then takes in the latest finished work first', 'A run that waits for you does not block runs that do not wait for it: run 6 goes on'],
+    []));
+
+add('run-stops', '4 · Build', 'Run 8 objects', () => `${buildCrumb('ob')}<h2>A run stops: a role objects and it cannot be resolved</h2>${buildCard('ob')}
+  <p class="cap">A stopped run holds back only the runs that wait for it. The others go on, each from the latest finished run; resumed, the stopped run takes in the latest finished work first.</p>`,
+  aside(['Dev’s Gate when the review loop runs out of cycles (<code>step-card.mjs</code>, <code>role-rows.mjs</code>): the role rows, Accept as is · Run another cycle', 'Build answers each finding: fixed or disputed', 'A resumed run merges the base in first (<code>mergeBaseBeforeRun</code>)'],
+    ['A run stops for the person only when: a check fails, a role objects and it cannot be resolved, or an agreed requirement would have to change', 'The objection is the card’s one open question: who wants what and why', 'The findings themselves are in run 8’s panel (Agents)', 'Run 8 is waiting for you; run 9 does not wait for it, so it goes on from the latest finished run; run 10 waits for run 8 and says so', 'Resumed, run 8 takes in the latest finished work first', 'PRs are stacked in the order runs finished, not by number'],
+    ['Stop run 8 is in the row’s ⋯ only: enough?']));
+
+/* ===== the run panel: dev's run screen beside the chat (chat/run-panel.mjs); the run page is the same screen ===== */
+const CRP_I = {
+  full: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4.5"></path><path d="M14 4h6v6M20 4l-9 9"></path></svg>',
+  close: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>'
+};
+const SCREEN_MOMENT = { build: 'b3', 'req-change': 'rq', 'run-stops': 'ob', 'spec-changed': 'sc' };
+const momentOf = id => id === 'verifier' ? ui.vf : id === 'run-panel' ? ui.moment : SCREEN_MOMENT[id];
+const crpCan = id => !!momentOf(id) && momentOf(id) !== 'rs';
+const crpKey = () => momentOf(cur());
+const curRun = v => v.live[0] || v.paused[0] || v.asks[0] || v.list[v.list.length - 1].n;
+function runScreen(v, n, host) {
+  const r = v.list.find(x => x.n === n), m = v.m[n], prod = reg() === 'prod', panel = host === 'panel', e = estRun(r), ag = agents(r, m), rt = rtOf(r), started = rt[0] <= v.t;
+  const lk = x => `<button type="button" class="link" ${panel ? `data-crp="${x}"` : `data-runlink="${x}"`}>${prod ? v.list.find(q => q.n === x).sh : 'run ' + x}</button> ${markOf(v.m[x].st)}`;
+  const needs = v.list.filter(x => x.after.includes(n)).map(x => x.n), waits = r.after.filter(x => v.m[x].st !== 'done');
+  const word = m.short ? m.short.charAt(0).toUpperCase() + m.short.slice(1) : 'Waits its turn';
+  const detail = [prod ? '' : `run ${n}`, m.st === 'done' ? 'done ' + rt[1] : started ? 'started ' + rt[0] : ''].filter(Boolean).join(' · ');
+  const head = `<div class="rc-state rd-status-head"><span class="rc-rail">${dot(dotOf(m.st))}</span><div style="min-width:0"><div class="rc-word" aria-live="polite">${word}</div><div class="rc-detail">${detail}</div></div></div>`;
+  const facts = kv([r.why ? ['Why', r.why()] : null, [ownLab(r), reqLines(r)], ['Starts from', startsFrom(v, r, lk)], waits.length ? ['Waits for', waits.map(lk).join(' · ')] : null, ['Needed by', needs.length ? needs.map(lk).join(' · ') : 'nothing'],
+    ['Cost', m.c ? `<span class="fig">${money(m.c)} of ≈ ${money(e)}</span>` : `<span class="fig">≈ ${money(e)} estimated</span>`]]);
+  const ask = m.st === 'ask' ? `<div class="rd-questions" role="group" aria-label="A question for you">${question(m.ask)}</div>` : '';
+  const tabs = prod ? ['Overview', 'Q&A'] : ['Overview', 'Q&A', 'Logs'], tab = tabs.includes(ui.crpTab) ? ui.crpTab : 'Overview', mine = x => x[1] === String(n);
+  let sec = '';
+  if (tab === 'Overview') sec = `<div class="list-h">Agents<span class="c">${ag.n} · no agent approves its own work</span></div>${ag.html}
+    <div class="list-h">Requirements<span class="c">${specLink()}</span></div>${r.reqs.map(id => reqRow(id, { mark: m.st === 'done' ? undefined : dot(''), d: 'e.g. ' + REQ[id].ex + (m.st === 'done' ? ' · holds' : '') })).join('')}
+    ${prod ? '' : kv([['Touches', r.paths.split(', ').map(x => `<code>${x}</code>`).join(' · ')], ['Branch', started ? `<code>${BRANCH}--run${n}</code>` : 'made when it starts, from the latest finished run']])}
+    <div class="list-h">Steps</div>${evLog(v.key, mine)}`;
+  if (tab === 'Q&A') sec = (m.st === 'ask' ? '<p class="cap">A question waits for you above.</p>' : '') + evLog(v.key, x => mine(x) && x[3].dec).replace('Nothing yet.', 'Nothing asked or answered yet.');
+  if (tab === 'Logs') { const p = m.st === 'done' ? 5 : m.st === 'ask' ? (m.ask === 'rq' ? 3 : 4) : m.st === 'wait' ? -1 : m.ph, T = r.reqs.length * 2 + 1;
+    const L = [`planner: plan v1 for ${r.reqs.join(', ')}`, `plan-review: ${rolesOf(r).join(', ')} · no objection left`, `test-writer: ${T} tests from the examples, all fail (expected)`, `implementer: ${T} of ${T} tests pass`, 'review: correctness, security, fit, requirements passed', `land: run ${n} merged into ${BRANCH}`].slice(0, p + 1);
+    sec = L.map((l, i) => `<div class="logline"><span class="n">${i + 1}</span><span class="x" title="${esc(l)}">${l}</span></div>`).join('') || '<p class="cap">Nothing yet.</p>'; }
+  const prim = m.st === 'paused' ? btn('Resume', { pri: true, attr: ` data-act="resume" data-sid="${v.key}"` }) : m.st === 'live' ? btn('Pause', { attr: ` data-act="pause" data-sid="${v.key}"`, tip: prod ? 'Pauses this run' : `Pauses run ${n}` }) : '';
+  const items = ['Open the feature page>go:feature', prod || !started ? '' : 'Copy branch name>copybr:' + n, /live|ask|paused/.test(m.st) ? '-|' + (prod ? `!Stop this run…>stoprun:${n}` : `!Stop run ${n}…>stoprun:${n}`) : ''].filter(Boolean).join('|');
+  const body = `<header class="rd-header">${panel ? `<h2 class="rd-title" title="${esc(r.t)}">${r.t}</h2>` : ''}${head}${facts}</header>
+    ${ask ? `<div class="crp-head">${ask}</div>` : ''}
+    <div class="rd-body"><div class="rd-tabs tabs" role="tablist" aria-label="Run sections">${tabs.map(t => `<button type="button" class="rd-tab tab" role="tab" aria-selected="${t === tab}" data-crptab="${t}">${t}</button>`).join('')}</div><div class="rd-sec" role="tabpanel" aria-label="${tab}">${sec}</div></div>`;
+  return { body, prim, items };
+}
+function crpPanel() {
+  const v = view(crpKey()), n = v.m[ui.crp] ? ui.crp : curRun(v), x = runScreen(v, n, 'panel');
+  return `<div class="crp"><div class="rd" data-presentation="panel">
+    <div class="rd-bar"><span class="rd-bar-end">${x.prim}${more(x.items, 'More for this run')}
+      <span class="crp-bar-btns"><button type="button" class="btn crp-full" aria-label="Open full page" title="Open full page" data-crpfull="${n}">${CRP_I.full}</button><button type="button" class="btn crp-close" aria-label="Close run panel" title="Close" data-crpclose="1">${CRP_I.close}</button></span></span></div>
+    <section class="rd-details" aria-label="Run details">${x.body}</section></div></div>`;
+}
+function crpOpen(n) { const was = ui.crp; ui.crp = n; ui.crpEnter = was == null; render(true); ui.crpEnter = false; const p = $('.chat-panel'); p && p.focus({ preventScroll: true }); }
+function crpClose() { const n = ui.crp; ui.crp = null; render(true);
+  const l = [...document.querySelectorAll(`#scr .ask-mcard .rc-member[data-run="${n}"] .rc-m-title`)].find(x => x.getClientRects().length); l && l.focus(); }
+function crpSync() { const sheet = ui.crp != null && crpCan(cur()) && matchMedia('(max-width:900px)').matches;
+  document.documentElement.classList.toggle('crp-sheet', sheet);
+  ['.top', '#jn', '#notes', '.chat-convo', '#scr > .pager'].forEach(s => { const el = $(s); if (el) el.inert = sheet; }); }
+const snapSeg = () => `<div class="seg seg-wrap" role="group" aria-label="Moment">${PAGE_MOMENTS.map(k => `<button type="button" data-moment="${k}" aria-pressed="${ui.moment === k}">${MOM[k].t} · ${MOM[k].lab}</button>`).join('')}</div>`;
+
+add('run-panel', '4 · Build', 'Run panel', () => `<div class="variant">Prototype · moment ${snapSeg()}</div>${buildCrumb(ui.moment)}<h2>A run row opens that run beside the chat: its agents and findings</h2>${buildCard(ui.moment)}`,
+  aside(['<code>chat/run-panel.mjs</code> (<code>buildPanelShell</code>); <code>app.js</code> <code>openRunDetail(id, { host: \'panel\' })</code>; the screen: <code>runs.html #run-detail-tpl</code>', 'Role rows with their counts and findings (<code>role-rows.mjs</code>); code roles Correctness, Security, Project fit'],
+    ['The panel and the run page are one screen', 'New <b>Agents</b> section: every agent of this run in order, its state and its findings count', 'New agents on top of dev’s: a Test writer separate from the Implementer, the Requirements code reviewer', 'Owns: the run’s R-ids, read from ' + SPEC, 'Product: plain words, no ids, branch or Logs'],
+    ['Agents as a section of Overview (shown) or a tab of its own?']));
+
+add('verifier', '4 · Build', 'Verifier', () => `
+  <div class="variant">Prototype · moment <div class="seg" role="group" aria-label="Moment"><button type="button" data-vf="vw" aria-pressed="${ui.vf === 'vw'}">16:38 · verifying</button><button type="button" data-vf="vf" aria-pressed="${ui.vf === 'vf'}">16:44 · a gap found</button></div></div>
+  ${buildCrumb(ui.vf)}<h2>${ui.vf === 'vw' ? 'All runs done: the Verifier walks the whole feature' : 'A gap between runs becomes a small run for the gap'}</h2>${buildCard(ui.vf)}`,
+  aside(['Dev checks each run against its own task; nothing checks the feature as a whole', 'Extra runs: <code>appendFeatureRun</code>'],
+    ['New agent: an end-of-feature <b>Verifier</b> walks the main flow against the 16 requirements the runs own', 'Each run passed its own review, yet nothing connected run 2’s email service to sign-up: only a check over the whole feature finds that', 'The gap lands the way any change to finished work does: a small run for the gap is added and takes the next turn; run 5 and its PR stay as they are', 'It is built and checked like any run; the person is not asked', 'Then the Verifier walks again, and the card is Ready to ship'],
+    ['Should the person approve an added run above a cost (here ≈ $2.50, not asked)?']));
+
+/* ===== Ship: the same card; only the requirements that need the person's mark, and the one a person confirms ===== */
+const marksNeeded = () => ['R-po-3', 'R-ux-2'].concat(ui.qa.ob && pickOf('ob') ? ['R-sec-1'] : []);
+const MARK_WHY = { 'R-po-3': 'a person’s judgement: is the page clear?', 'R-ux-2': 'a person’s eye: read it on a phone', 'R-sec-1': 'run 8 accepted with Security’s finding open' };
+function shipState() {
+  const ms = marksNeeded().map(id => ({ id, v: ui.marks[id], why: (ui.reasons[id] || '').trim() })), need = ms.filter(x => !x.v).length;
+  return { ms, need, notMet: ms.filter(x => x.v && x.v !== 'Met').length, block: !ui.comp ? W('Waiting for Compliance to confirm R-comp-4', 'Waiting for Compliance to confirm the signed agreement') : need ? 'Mark each requirement above first' : ms.find(x => x.v !== 'Met' && !x.why) ? 'Give a reason for each one not met or dropped' : '' };
+}
+const prn = () => listOf('rs').length;
+function shipCard() {
+  const s = shipState(), v = view('rs'), prod = reg() === 'prod', N = v.N, care = kv([['Care', `${careRec()} · ${OUTCOME}`]]);
+  if (ui.prs) { const fin = v.list.slice().sort((a, b) => rtOf(a)[1] < rtOf(b)[1] ? -1 : 1);
+    return featCard('ship', { dot: 'green', state: W(`${N} PRs open`, `${N} sent for review`), detail: W(`#1431–#${1430 + N} · a PR per run, stacked in the order runs finished · the first goes to dev`, 'one small review per run, in the order they finished') + ` · ${money(v.cost)} used of ≈ $${estAll()}`,
+      step: care, list: `<div class="rc-members">${fin.map((r, i) => `<div class="rc-member"><span class="rc-rail">${dot('green')}</span><span class="rc-m-title"><span class="num">#${1431 + i}</span>${W(`run ${r.n} · `, '')}${r.t}</span><span class="rc-m-state">${i ? W('onto #' + (1430 + i), 'after the one before') : W('into dev', 'first')}</span></div>`).join('')}</div>`,
+      foot: foot('', btn(W('View PRs', 'View reviews'), { icon: 'pr', attr: ' data-ext="1"' }), featMenu()) }); }
+  const markRow = ({ id, v: mv }) => `<div class="plan-check-row" title="${id}"><span class="m">${mv === 'Met' ? I.ok : mv ? I.no : I.dot}</span><span class="l">${W(`<span class="rq-id">${id}</span>`, '')}${reqText(id)}<span class="d">${mv ? `Marked ${mv} by you` : MARK_WHY[id]}</span>${mv && mv !== 'Met' ? `<span class="ask-ans"><input type="text" aria-label="Reason for ${id}" data-reason="${id}" value="${esc(ui.reasons[id] || '')}" placeholder="${mv === 'Dropped' ? 'Why is it dropped?' : 'Where does it go?'} (required)"></span>` : ''}</span><span class="marks seg" role="group" aria-label="Mark ${id}">${['Met', 'Not met', 'Dropped'].map(x => `<button type="button" data-mark="${id}:${x}" aria-pressed="${mv === x}">${x}</button>`).join('')}</span></div>`;
+  /* the requirement no run owns: its role confirms it; Ship waits until then (in this prototype the person acts as Compliance) */
+  const compRow = `<div class="plan-check-row${ui.comp ? ' ok' : ''}" title="R-comp-4"><span class="m">${ui.comp ? I.ok : I.dot}</span><span class="l">${W('<span class="rq-id">R-comp-4</span>', '')}${reqText('R-comp-4')}<span class="d">${ui.comp ? 'confirmed by Compliance · 16:55' : 'confirmed by a person · waiting for Compliance'}</span></span>${ui.comp ? '' : btn('Mark confirmed', { attr: ' data-act="compok"', tip: 'In this prototype you act as Compliance' })}</div>`;
+  const rest = RUN_IDS.filter(id => !marksNeeded().includes(id));
+  return featCard('ship', { key: 'rs', dot: v.dot, state: v.word, detail: v.detail,
+    step: step('Your turn: mark what only a person can', s.ms.map(markRow).join('') + compRow + fold(`<b>${rest.length} checked by the runs’ reviews and the Verifier</b>`, rest.map(id => reqRow(id, { d: W(`run ${ownerOf(id).n} · `, '') + 'holds' })).join('')) + care + (s.block ? `<p class="why">${s.block}</p>` : ''),
+      btn('Try it first', { quiet: true, attr: ' data-toast="Opens the staging preview of the feature"' }) + btn(W(`Create ${N} PRs`, `Send ${N} for review`), { pri: true, icon: 'pr', dis: !!s.block, attr: ' data-act="prdlg"' })),
+    list: `<div class="rc-members">${runList(v)}</div>`, foot: foot('', '', featMenu()) });
+}
+add('ship', 'Ship', 'Ship', () => `<div class="crumb">Chat · ${FEAT} · ${ui.prs ? '16:58' : MOM.rs.t}</div><h2>${ui.prs ? W('The card stays: the PRs it made', 'The card stays: what was sent') : ui.comp ? 'Ready to ship: only what needs your mark' : 'Ship waits for the requirement a person confirms'}</h2>${shipCard()}`,
+  aside(['<code>shape/ship-card.mjs</code> (the Met / Not met / Dropped marks), <code>src/core/shape/ship.mjs</code>, dev’s Create PR dialog', 'A PR per run, stacked (<code>stackedPrBaseOf</code>); GitHub retargets the next PR when one merges'],
+    ['Ship is a step of the same card, open as soon as the Verifier is through', 'Only the requirements that need a person’s mark show; the rest were checked by the runs’ reviews and the Verifier and fold', 'A requirement confirmed by a person (R-comp-4) blocks Ship until its role marks it: one line says who is waited for', 'One line holds the Care position, who chose it and the outcome: requirements met, gaps found at the end, changes after ship', 'PRs: one per run, stacked in the order runs finished; the card stays and lists them', 'The feature stores its position, outcomes and cost: that is the history the Care dial shows'],
+    ['The Ship step opens as soon as the Verifier is through, with no Ready to ship button first: right?', 'Which requirements need a person’s mark: the ones the roles flag as judgement (shown), or a switch per requirement on ' + SPEC + '?']));
+
+add('spec-changed', 'Ship', 'Spec changed', () => `${buildCrumb('sc')}<h2>The spec changed after the split: told, not asked</h2>${buildCard('sc')}`,
+  aside(['The Requirements page notices what changed since a start (<code>changedSinceStart</code>, Start again with v2)', 'Extra runs: <code>appendFeatureRun</code>'],
+    ['The runs point to ' + SPEC + ' and their R-ids, so an edit there is seen right away', 'The card says which run owns the changed requirement: run 7 owns R-po-3', 'The same ONE rule as any change, by where the owning run is: not started, it plans from the new text; running, it stops, re-plans and continues; finished, a new small change run takes the next turn', 'Run 7 is finished: a small change run is added; run 7 and its PR stay as they are', 'The person is told, not asked: the edit on the spec was the decision', 'This is the card’s side of the <i>edited</i> moment of the Requirements page (the screen before): the ' + SPEC + ' link in the note opens it, and that page’s row and Changed card link back here', 'Shown as its own moment: the other moments leave this edit out'],
+    ['The card tells and does not ask: enough when someone else edited the spec?', 'Should the card say the change run’s cost in the note (the page does)?']));
+
+/* ===== Pages: dev's Runs list (runs-list.mjs), with the feature page or a run in the pane beside it ===== */
+const rlItem = (o, inner = '') => `<div class="runs-item${o.needs ? ' is-needs' : ''}" data-level="${o.level || 'top'}"><span class="runs-pick">${o.mark ? markOf(o.st) : dot(dotOf(o.st) || '')}</span><a class="runs-row runs-row-${o.kind || 'run'}${o.sel ? ' selected' : ''}" href="${o.href}"${o.attr || ''} title="${esc(o.tip || '')}"><span class="runs-row-title">${o.title}</span>${o.right ? `<span class="runs-row-right">${o.right}</span>` : ''}${o.sub !== undefined ? `<span class="runs-row-sub">${o.sub}</span>` : ''}${o.prog !== undefined ? `<span class="runs-row-prog" aria-hidden="true"><i style="width:${Math.round(o.prog * 100)}%"></i></span>` : ''}</a><span class="runs-row-tail">${o.tail || ''}${more(o.menu || 'Open|-|!Stop…', 'More for ' + strip(o.title.replace('</span>', ' ')))}</span>${inner}</div>`;
+const OUT = ' data-toast="Another run: outside this prototype"';
+function runsList(v, sel) {
+  const open = ui.open.f1 !== false;
+  const mem = v.list.map(r => { const m = v.m[r.n];
+    return rlItem({ level: 'member', mark: true, st: m.st, href: '#run-page', attr: ` data-runlink="${r.n}"`, sel: sel === r.n, title: `<span class="num">${r.n}</span>${r.t}`, sub: m.short, prog: m.st === 'live' ? (m.ph + 1) / 6 : undefined, tip: r.t + (m.short ? ' · ' + m.short : ''), menu: rowMenu(r.n, m).replace('>crp:', '>run:') }); }).join('');
+  const feat = rlItem({ kind: 'chain', needs: v.sec === 'Needs you', st: v.open || v.need ? 'ask' : v.pz ? 'paused' : v.ship ? 'done' : 'live', href: '#feature', attr: ' data-go="feature"', sel: sel === 'feature', title: FEAT, right: `<span class="runs-count">${v.done}/${v.N}</span>`, sub: v.line, prog: v.done === v.N ? undefined : v.done / v.N,
+    tail: `<button type="button" class="btn btn-sm btn-quiet btn-icon${open ? ' flip' : ''}" data-fopen="f1" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} the ${v.N} runs in ${FEAT}">${I.down}</button>`,
+    menu: (v.asks.length ? `${W('Answer run ' + v.asks[0], 'Answer')}>run:${v.asks[0]}|` : '') + 'Open feature>go:feature|' + (v.pz ? `Resume>resumefeat:${v.key}` : v.live.length ? `Pause>pausefeat:${v.key}` : '') + '|-|!Stop the feature…>stopfeat:1' }, open ? `<div class="runs-members" role="list">${mem}</div>` : '');
+  const dark = rlItem({ kind: 'chain', st: 'live', href: '#runs-list', attr: OUT, title: 'Dark mode for website X', right: '<span class="runs-count">1/4</span>', sub: W('run 2 building', 'building'), prog: .25, tail: `<button type="button" class="btn btn-sm btn-quiet btn-icon" aria-expanded="false" aria-label="Show the 4 runs in Dark mode for website X" data-toast="Another feature: outside this prototype">${I.down}</button>` });
+  const rate = rlItem({ st: 'live', href: '#runs-list', attr: OUT, title: 'Rate limit on login', sub: 'building', prog: .3 });
+  const yday = [['Fix the typo on the login page', '#1420'], ['Pricing page copy', '#1405']].map(([t, pr]) => rlItem({ st: 'done', href: '#runs-list', attr: OUT, title: t, right: `<span class="runs-pr is-merged">${I.pr}${W(pr + ' ', '')}Merged</span>`, sub: 'done' }));
+  const sec = (title, rows) => rows.length ? `<section class="runs-sec" aria-label="${title}"><div class="runs-sec-head"><span class="runs-sec-title">${title}</span><span class="runs-count">${rows.length}</span></div><div class="runs-sec-rows">${rows.join('')}</div></section>` : '';
+  const needs = v.sec === 'Needs you' ? [feat] : [], today = (v.sec === 'Needs you' ? [] : [feat]).concat([dark, rate]);
+  return `<div class="runs-list-pane"><div class="runs-head"><h2 class="runs-head-title">Runs</h2><button type="button" class="btn btn-sm btn-quiet" aria-haspopup="menu" data-menu="${esc('Show: All runs|Show: Needs you|-|✓Group by: Date|Group by: Project|-|Select')}">View ${I.down}</button></div>
+    <div class="runs-list" aria-label="Runs">${sec('Needs you', needs)}${sec('Today', today)}${sec('Yesterday', yday)}</div></div>`;
+}
+const runsShell = (v, sel, pane) => `<div class="runs-shell${pane ? ' pane-open' : ''}">${runsList(v, sel)}<div class="runs-pane">${pane || '<div class="runs-empty"><div><b>Pick a run</b><p class="cap">Its screen opens here, beside the list.</p></div></div>'}</div></div>`;
+add('runs-list', 'Pages', 'Runs list', () => `<div class="variant">Prototype · moment ${snapSeg()}</div>${runsShell(view(ui.moment), null, '')}`,
+  aside(['<code>ui/public/runs-list.mjs</code> (<code>renderRunsList</code>, <code>renderItem</code>, <code>groupRow</code>, <code>listLine</code>, <code>needsWhy</code>), <code>runs/running-redesign.css</code>, <code>runs/runs.html</code>'],
+    ['Dev’s list as is: Runs + View ▾, sections Needs you (amber ringed), Today, Yesterday', 'The feature is ONE group row (title, n/N, chevron, ⋯, the progress line); its runs are member rows, the same flat list as the card', 'The feature’s line says the one thing going: <i>run 3 writing tests</i>, or who needs the person', 'Cut: run slots, <i>waits for a slot</i>'],
+    []));
+
+function featurePage() {
+  const v = view(ui.moment), prod = reg() === 'prod';
+  const bar = `<div class="gbar" aria-hidden="true">${v.list.map(r => { const st = v.m[r.n].st; return `<i class="${st === 'done' ? 'd' : st === 'live' || st === 'ask' ? 'on' : ''}"></i>`; }).join('')}</div>`;
+  const prim = (v.asks.length ? btn(W(`Answer run ${v.asks[0]}`, 'Answer'), { pri: true, attr: ` data-runlink="${v.asks[0]}"` }) : v.need && !ui.prs ? btn('Mark and ship', { pri: true, go: 'ship' }) : '') +
+    (v.pz ? btn('Resume', { pri: !v.open, attr: ` data-act="resume" data-sid="${v.key}"` }) : v.live.length ? btn('Pause', { attr: ` data-act="pause" data-sid="${v.key}"` }) : '');
+  const head = `<div class="crumb"><a href="#runs-list">Runs</a><span>›</span><span>${FEAT}</span></div>
+    <div class="pg-h"><h1 title="${FEAT}">${FEAT}</h1><span class="chip">Feature</span><span class="sp"></span>${prim}${more(featMenu().replace('Open the feature page>go:feature|-|', ''))}</div>
+    <div class="status-blk"><div class="rc-state"><span class="rc-rail">${dot(v.dot)}</span><div style="min-width:0"><div class="rc-word">${v.word}</div><div class="rc-detail">${v.detail}</div></div></div>${bar}${below() ? `<div class="cap">Care: ${careRec()}</div>` : ''}</div>`;
+  const tabs = ['Runs', 'Requirements', 'Decisions', 'Cost', 'Log'], tab = tabs.includes(ui.tab) ? ui.tab : 'Runs';
+  let panel = '';
+  if (tab === 'Runs') panel = `<div class="rc-members">${v.list.map(r => member(r, v.m[r.n])).join('')}</div>`;
+  if (tab === 'Requirements') panel = `<p class="cap" style="margin:0 0 4px">17 requirements · kept on ${specLink()} · 16 owned by a run · 1 confirmed by a person</p>` + REQS.map(([g, rs]) => `<div class="list-h">${g}</div>` + rs.map(([id]) => {
+    const head = st => `<div class="rc-member" title="e.g. ${esc(REQ[id].ex)}"><span class="rc-rail">${markOf(st)}</span><span class="rc-m-title">${prod ? '' : `<span class="num">${id}</span>`}${reqText(id)}</span>`;
+    if (REQ[id].by) { const ok = v.ship && ui.comp; return head(ok ? 'done' : 'wait') + `<span class="rc-m-state">confirmed by a person · ${ok ? REQ[id].by + ' confirmed' : 'waits for ' + REQ[id].by}</span></div>`; }
+    const r = ownerOf(id), m = v.m[r.n], x = v.list.find(q => q.id && q.reqs.includes(id)), mx = x && v.m[x.n];
+    const word = x ? (x.fix ? (mx.st === 'done' ? `met · fixed by run ${x.n}` : `gap · run ${x.n} fixes it`) : mx.st === 'done' ? `met · changed by run ${x.n}` : `changed · run ${x.n} builds it`) : m.st === 'done' ? 'met' : m.st === 'wait' ? (m.touched ? m.short : 'to do') : m.st === 'ask' ? 'waiting for you' : 'being built';
+    return head(x ? mx.st : m.st) + `<span class="rc-m-state"><button type="button" class="link" data-runlink="${r.n}">${prod ? r.sh : 'run ' + r.n}</button> · ${word}</span></div>`; }).join('')).join('');
+  if (tab === 'Decisions') panel = evLog(v.key, x => x[3].dec);
+  if (tab === 'Cost') { const shaping = ui.protoSkip ? 2.5 : 5.7;
+    panel = kv([['Care', v.ship ? `${careRec()} · ${OUTCOME}` : `${careRec()} · ${careRow('Reviewers')} · fix cycles ${careRow('Fix cycles')}`], ['Build', `<span class="fig">${money(v.cost)} used of ≈ $${estAll()}</span>`], ['Shaping', `<span class="fig" title="Requirements $1.40 · Prototype ${ui.protoSkip ? 'skipped' : '$3.20'} · Split $1.10">${money(shaping)} · requirements, prototype, split</span>`]]) +
+      `<div class="list-h">Per run<span class="c">agents · used of estimate</span></div><div class="rc-members">${v.list.map(r => { const m = v.m[r.n], a = agents(r, m).n; return `<div class="rc-member"><span class="rc-rail">${markOf(m.st)}</span><a href="#run-page" data-runlink="${r.n}" class="rc-m-title"><span class="num">${r.n}</span>${r.t}</a><span class="rc-m-state fig">${a} agents · ${m.c ? money(m.c) + ' of ' : ''}≈ ${money(estRun(r))}</span></div>`; }).join('')}</div>`; }
+  if (tab === 'Log') panel = evLog(v.key);
+  return `<div class="variant">Prototype · moment ${snapSeg()}</div>${runsShell(v, 'feature', `${head}
+    <div class="tabs" role="tablist">${tabs.map(t => `<button type="button" role="tab" aria-selected="${tab === t}" data-tab="${t}">${t}</button>`).join('')}</div><div role="tabpanel">${panel}</div>`)}`;
+}
+add('feature', 'Pages', 'Feature page', featurePage,
+  aside(['<code>shape/feature-view.mjs</code>, <code>group-page.mjs</code> (<code>GROUP_TABS</code>: Overview, Decisions, Logs), <code>run-status-card.mjs</code>, <code>run-progress-bar.mjs</code>', 'Per-step cost is recorded (<code>pipeline_steps.cost_usd</code>)'],
+    ['Everything the card does not carry', 'Runs: the same flat list, every run shown', 'Requirements: each one with the run that owns it and its status (met, being built, to do, changed), or the role that confirms it', 'Decisions: every answer the person gave, in order', 'Cost: the Care position with who chose it (and, when the feature is finished, its outcome in the same line), used against the estimate, agents and cost per run', 'Log: every step', 'Cut: the schedule chart, the usage bars'],
+    ['Runs or Requirements as the first tab?']));
+
+function runPage() {
+  const v = view(ui.moment), n = v.m[ui.runN] ? ui.runN : curRun(v), r = v.list.find(q => q.n === n), x = runScreen(v, n, 'page');
+  return `<div class="variant">Prototype · moment ${snapSeg()}</div><div class="variant">Run <div class="seg seg-wrap" role="group" aria-label="Run">${v.list.map(q => `<button type="button" data-runlink="${q.n}" aria-pressed="${q.n === n}">${q.n}</button>`).join('')}</div></div>
+  ${runsShell(v, n, `<div class="crumb"><a href="#runs-list">Runs</a><span>›</span><a href="#feature">${FEAT}</a><span>›</span><span>${W('Run ' + n, r.sh)}</span></div>
+  <div class="pg-h"><h1 title="${esc(r.t)}">${r.t}</h1><span class="sp"></span>${x.prim}${more(x.items, 'More for this run')}</div>
+  <div class="rd rd-page">${x.body}</div>`)}`;
+}
+add('run-page', 'Pages', 'Run page', runPage,
+  aside(['<code>run-page-head.mjs</code> (<code>runCrumbs</code>), the run screen of <code>runs.html</code>'],
+    ['The same screen as the chat panel, full width', 'Each run’s estimate is stored with it (<code>pipelines.estimate_json</code>, new) for used against estimate'],
+    []));
+
+/* a small task: ONE run card that updates in place, Planning → Building → Ready → Sent (chat/run-card.mjs) */
+const SMALL = 'Fix the typo on the login page';
+function smallCard() {
+  const k = ui.small, prod = reg() === 'prod';
+  const st = [null, ['peach', 'Planning', 'Small: one run · ≈ $0.40 · ~4 min'], ['peach', 'Building', E('1 file · <code>ui/login.html</code>') + P('One word on the login page')], ['green', 'Ready', '$0.38 used of ≈ $0.40 · 4 of ~4 min'], ['green', E('PR #1420 open') + P('Sent for review'), E('into dev · <code>fix/login-typo</code>') + P('the engineers review it next')]][k];
+  const rc = [k > 1 ? rcpt(E('Plan passed its checks · “contiue” → “continue”') + P('Plan checked: “contiue” → “continue”'), '14:03') : '', k > 2 ? rcpt(E('Built and reviewed · 1 file · +1 −1') + P('Built and checked'), '14:06') : '', ui.tried ? rcpt('Opened the staging preview', '14:07') : ''].join('');
+  const ft = k === 3 ? foot(btn('Try it first', { quiet: true, attr: ' data-act="tryit"', tip: 'Opens the staging preview' }), btn(E('Create PR') + P('Send for review'), { pri: true, icon: 'pr', attr: ' data-act="smallpr"' }), '!Stop…>stopsmall:1') : k === 4 ? foot('', btn(E('View PR #1420') + P('View the review'), { icon: 'pr', attr: ' data-ext="1"' }), '') : foot('', '', '!Stop…>stopsmall:1');
+  return card({ kind: 'Run', title: SMALL, dot: st[0], state: st[1], detail: st[2], body: rc ? `<div class="chat-rc-log step-rcpts">${rc}</div>` : '', foot: ft });
+}
+function smallGo() { ui.small = 1; render(true); const fast = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  setTimeout(() => { if (ui.small === 1) { ui.small = 2; if (cur() === 'small-task') render(true); } }, fast ? 200 : 1000);
+  setTimeout(() => { if (ui.small === 2) { ui.small = 3; if (cur() === 'small-task') render(true); } }, fast ? 400 : 2000); }
+add('small-task', 'Small task', 'Small task', () => `
+  <div class="crumb">Chat · project website-x</div><h2>A small task is one card that updates in place</h2>
+  ${ui.small ? `<div class="u-msg">${SMALL.toLowerCase()}</div>${smallCard()}` : ''}
+  ${composer({ text: ui.small ? '' : SMALL.toLowerCase(), rows: 2, guide: ui.small ? '' : 'small', sendAttr: ' data-act="smallsend"' })}`,
+  aside(['Dev\'s run card (<code>chat/run-card.mjs</code>), Clarify asks nothing when the text is complete', '<code>estimateGraph</code> (<code>src/core/shape/estimate.mjs</code>)'],
+    ['Send makes one run card; it moves Planning → Building → Ready → Sent, each finished step a receipt line', 'The estimate is said once, on the card', 'Create PR opens dev\'s dialog; Try it first opens the staging preview'],
+    ['Show a rough figure under 3 similar runs (shown), or nothing as on dev?']));
+
+/* ---------- render ---------- */
+const $ = s => document.querySelector(s);
+const RM_WALK = [['before', 'Before', 'Ready to build offers Start in Worca (one run, as today) and Shape it, which opens the feature’s card'], ['shaped', 'Being shaped', 'The roles’ requirements are written to the spec: 4 criteria become 17; the open disagreement is one line that links to the card'],
+  ['split', 'Split', 'Each criterion says which run owns it, or which role confirms it; the feature is one row under Runs from this feature'], ['build', 'Being built', 'Each criterion says where it stands: met, being built, to do, changed'],
+  ['edited', 'Edited', 'An edit on the page lands by where the owning run is: here the run is finished, so a small change run is added'], ['ship', 'Shipped', 'Every criterion says how it ended; the feature row says shipped']];
+/* ===== Intro: what Shaper is, what it is not, how it works (the first screen) ===== */
+const introGo = (id, t) => `<button type="button" class="link" data-go="${id}">${t}</button>`;
+add('intro', 'Intro', 'What Shaper is', () => `
+  <div class="concept-note" role="note"><b>Scope.</b> Step 1, now: splitting requirements into small, well-checked runs. It is the natural next step on Shaper’s roadmap, and it is planned. Step 2, a potential direction: how Shaper and the Requirements page can collaborate and cooperate.</div>
+  <h2>Shaper: a large feature, built as small, well-checked runs</h2>
+  <p style="margin:0 0 16px">You describe what you want. Shaper turns it into agreed requirements, splits them into small runs, and builds them one after another, each checked by agents that did not write it. You decide at a few clear points; the rest goes on without you.</p>
+  <section class="status-blk" aria-label="What it is"><div class="openstep-h">What it is</div>
+    ${chk(true, 'Small runs instead of one big one', 'each run owns 1–3 requirements')}${chk(true, 'One card per feature in Chat', 'from the ask to the PRs')}${chk(true, 'Several agents at every step', 'one writes, others check, you decide')}${chk(true, 'One dial, Care', 'how much checking, and what it costs')}</section>
+  <section class="status-blk" aria-label="What it is not"><div class="openstep-h">What it is not</div>
+    ${chk(false, 'Not for small tasks', 'a typo fix stays one run, one card')}${chk(false, 'Not a way to go faster', 'runs go one after another; quality is the goal')}${chk(false, 'Not autopilot', 'you agree the requirements and approve the split')}${chk(false, 'Not instead of review', 'every run still ends in its own PR')}</section>
+  <section class="status-blk" aria-label="How it works"><div class="openstep-h">How it works</div>
+    ${kv([[introGo('start', 'Start'), 'You pick the Care: Lean, Balanced or Thorough. Worca suggests one and shows the price'],
+      [introGo('requirements', '1 · Requirements'), 'You ask as one role; the other roles add and challenge. Each requirement gets an example. You agree once'],
+      [introGo('prototype', '2 · Prototype'), 'Only when there are screens: Design’s agents build it, your remarks change the requirements'],
+      [introGo('split', '3 · Split'), 'A Planner cuts the requirements into small runs; rules and the roles check the cut. You approve once'],
+      [introGo('build', '4 · Build'), 'Run by run: plan, plan review, tests first, build, review. Each agent checks another’s work'],
+      [introGo('verifier', 'Verify'), 'One check of every requirement at the end; a gap becomes one more small run'],
+      [introGo('ship', 'Ship'), 'One PR per run. You mark what only a person can judge']])}
+    <p class="cap" style="margin:8px 0 0">A run stops for you only when a check fails, the roles cannot agree, or an agreed requirement would have to change. A change never rewrites finished work: it arrives as a new small run.</p></section>
+  <section class="status-blk" aria-label="Shaper and the Requirements page"><div class="openstep-h">Shaper and the Requirements page</div>
+    <p style="margin:4px 0 8px">Two features with different jobs, built at different times. They cross at one point: the requirements.</p>
+    ${kv([['Shaper', 'Came first. Its job is to plan and build: the roles shape a feature’s requirements, split them into small runs and build them'],
+      ['Requirements', 'Came later. Its job is to define: a feature spec written through an interview, with files and a product brief, before anyone decides to build'],
+      ['Where they cross', 'At the requirements: one defines what is wanted, the other needs exactly that to plan and build. Today each keeps its own: a spec starts one normal run, and Shaper writes its requirements itself'],
+      ['Step 1, now', 'Splitting requirements into small runs: the natural next step on Shaper’s roadmap, fully planned. It changes nothing on the Requirements page'],
+      ['Step 2', `A potential direction, not a plan: how the two features can collaborate and cooperate, to be worked out with the people behind Requirements. ${introGo('req-link', 'One possible way, to discuss')}`]])}</section>`,
+  aside(['Shaper on dev (<code>docs/shape-it-first.md</code>): questions, the plan card, plan in slices, role reviews, requirements first', 'Everything here steps on it and is built behind one flag'],
+    ['Up to 20 small runs per feature (dev: 8 slices), one after another', 'One card per feature for its whole life', 'More agents with separate jobs: a Challenger at the split, a Test writer, an end-of-feature Verifier', 'The Care dial: one choice for the whole process, any position allowed as a stated tradeoff', 'The last group, Concept · later, is one possible way for Shaper and the Requirements page to meet: a proposal to discuss, not built'],
+    ['How should Shaper and the Requirements page meet, and who decides it together?']));
+SCREENS.unshift(SCREENS.pop());
+const CONCEPT = 'Concept · later', CONCEPT_NOTE = `<div class="concept-note" role="note"><b>Step 2 · a potential direction · not in the first build.</b> One possible way for the Requirements page and Shaper to collaborate and cooperate, shown so it can be judged together with the people behind Requirements. Nothing here changes the Requirements page; when development starts, leave this out.</div>`;
+add('req-link', CONCEPT, 'Requirements and Shaper', () => `
+  <h2>One possible way: the spec holds the text, Shaper points to it</h2>
+  <figure style="margin:0 0 12px"><svg class="cx" viewBox="0 0 720 270" role="img" aria-label="The Requirements page holds the spec; Shaper receives a reference, writes the roles' requirements back, and an edit to the spec becomes a small change run">
+    <defs><marker id="cxa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+    <rect x="12" y="40" width="216" height="190" rx="4" fill="none" stroke="currentColor"/>
+    <text class="t" x="28" y="66">Requirements page</text><text x="28" y="92">${SPEC} · the spec</text><text class="m" x="28" y="114">goal, interview, files</text><text class="m" x="28" y="136">R-po-1 … R-comp-4</text><text class="m" x="28" y="158">each with an example</text><text x="28" y="206">the only place the text lives</text>
+    <rect x="492" y="40" width="216" height="190" rx="4" fill="none" stroke="currentColor"/>
+    <text class="t" x="508" y="66">Shaper · the feature’s card</text><text x="508" y="92">roles add and challenge</text><text class="m" x="508" y="114">prototype, split, runs</text><text class="m" x="508" y="136">run 5 → R-po-1, R-po-2</text><text class="m" x="508" y="158">run 7 → R-po-3</text><text x="508" y="206">holds R-ids, never the text</text>
+    <text x="360" y="72" text-anchor="middle">Shape it: a reference</text><line x1="236" y1="82" x2="484" y2="82" stroke="currentColor" marker-end="url(#cxa)"/>
+    <text x="360" y="126" text-anchor="middle">roles’ requirements written back</text><line x1="484" y1="136" x2="236" y2="136" stroke="currentColor" marker-end="url(#cxa)"/>
+    <text x="360" y="180" text-anchor="middle">an edit → a small change run</text><line x1="236" y1="190" x2="484" y2="190" stroke="currentColor" marker-end="url(#cxa)"/>
+    <text class="m" x="360" y="256" text-anchor="middle">every run reads its requirements through the reference when it plans</text>
+  </svg><figcaption class="cap">The spec stays the single source; Shaper and its runs hold only ${SPEC} and R-ids.</figcaption></figure>
+  <div class="list-h">The same on the Requirements page<span class="c">six moments · pick one, or walk them in order</span></div>
+  ${kv(RM_WALK.map(([k, l, d]) => [`<button type="button" class="link" data-rmgo="${k}">${l}</button>`, d]))}`,
+  aside(['The Requirements page behind the Labs flag <code>requirements</code> (<code>docs/requirements.md</code>): interview, spec, Ready, Start in Worca, Runs from this feature, Changed since the run started', 'Shaper’s own requirements on the feature (<code>src/shared/shape/requirements.mjs</code>)'],
+    ['This group is for validation only: nothing on its three screens is built in the first version', 'The next screen is the Requirements page of ' + SPEC + ' at six moments; each row here opens one. On that page the actions lead on: Shape it, the feature row, Edit and Save', 'On the other screens every ' + SPEC + ' link opens that page at the moment the card is at', 'First build: the requirements are written in Shaper and live on the feature, with stable R-ids so this link can be added later without rework', 'Later: the spec becomes the single source and Shaper holds only the reference'],
+    ['When is this wanted: after the first version has run on real features?', 'Is the walk right as a whole: one text on the spec, the card for decisions, the page for reading and editing?']));
+['from-requirements', 'spec-changed'].forEach(id => { const k = SCREENS.findIndex(x => x.id === id), [x] = SCREENS.splice(k, 1); x.grp = CONCEPT; SCREENS.push(x); });
+const ids = SCREENS.map(s => s.id);
+const MOVED = { 'shaper-card': 'start', breakdown: 'split', 'breakdown-check': 'split', running: 'build', 'two-asks': 'req-change', 'review-gate': 'run-stops', pause: 'build', changes: 'spec-changed' };
+function cur() { const h = location.hash.slice(1); return ids.includes(h) ? h : MOVED[h] || ids[0]; }
+function renderNav(id) {
+  let g = '', h = '', o = '';
+  SCREENS.forEach((s, i) => { if (s.grp !== g) { g = s.grp; h += `<h3>${g}</h3>`; o += `<optgroup label="${g}">`; }
+    h += `<button type="button" data-go="${s.id}"${s.id === id ? ' aria-current="page"' : ''}><span class="n">${i + 1}</span>${s.t}</button>`;
+    o += `<option value="${s.id}"${s.id === id ? ' selected' : ''}>${i + 1} · ${s.t}</option>`; });
+  $('#jn').innerHTML = h; $('#navSel').innerHTML = o.replace(/<optgroup/g, (x, i) => (i ? '</optgroup>' : '') + x) + '</optgroup>'; $('#navSel').value = id;
+}
+const LEVEL = { Intro: 'Before the walk: what Shaper is, what it is not, how it works', Ask: 'The request, before a feature exists', '0 · Start': 'The card’s first step, before level 1: the size, the Care dial, one button', '1 · Requirements': 'Level 1 of 4: the person asks as one role; the picked roles add and challenge', '2 · Prototype': 'Level 2 of 4: only when requirements are about screens', '3 · Split': 'Level 3 of 4: small runs, proposed, checked, challenged, approved once', '4 · Build': 'Level 4 of 4: one run at a time, each planned, test-first, built and reviewed by separate agents', Ship: 'The end of the feature’s card', Pages: 'The same feature and runs on dev’s pages', 'Small task': 'A small task skips the levels: one run, one card', 'Concept · later': 'Not a level and not in the first build: how the Requirements page could feed Shaper later' };
+function render(keepScroll) {
+  const id = cur(), i = ids.indexOf(id), s = SCREENS[i];
+  renderNav(id);
+  const prev = SCREENS[i - 1], next = SCREENS[i + 1];
+  const crpOn = ui.crp != null && crpCan(id), fa = document.activeElement, inCrp = !!(fa && fa.closest && fa.closest('.chat-panel'));
+  const sc = $('.crp .rd-details'), keepTop = sc && ui.crpLast === ui.crp ? sc.scrollTop : 0;
+  let main = s.render();
+  $('.frame').classList.toggle('fwide', s.grp === 'Pages');
+  if (crpOn) main = `<div class="chat-page" data-panel="open"><div class="chat-convo">${main}</div><aside class="chat-panel${ui.crpEnter ? ' is-entering' : ''}" aria-label="Run details" tabindex="-1">${crpPanel()}</aside></div>`;
+  $('.frame').classList.toggle('crp-on', crpOn);
+  $('#scr').innerHTML = `<div class="pager" aria-label="Prototype navigation"><span>Prototype · screen ${i + 1} of ${SCREENS.length} · these links are not part of Worca</span><span class="sp"></span>${prev ? `<button type="button" class="link" data-go="${prev.id}" title="${esc(prev.t)}">‹ Back</button>` : ''}${next ? `<button type="button" class="link" data-go="${next.id}" title="${esc(next.t)}">Next ›</button>` : ''}</div>${s.grp === CONCEPT ? CONCEPT_NOTE : ''}` + main;
+  const n = typeof s.notes === 'function' ? s.notes() : s.notes, li = a => a.map(x => `<li>${x}</li>`).join('');
+  $('#notes').innerHTML = `<div class="blk"><h4>Level</h4><ul><li>${LEVEL[s.grp]}</li><li class="cap">Goal: small, well-checked runs, one after another. Missing pieces and wrong behaviour are the enemy; speed is not. One card per feature; every list of runs is the same flat list (✓ done, ● going, ○ waiting, ? needs you).</li></ul></div><div class="blk"><h4>Steps on dev</h4><ul>${li(n.keep)}</ul></div><div class="blk chg"><h4>Changes</h4><ul>${li(n.chg)}</ul></div>${n.open.length ? `<div class="blk"><h4>Open</h4><ul>${li(n.open)}</ul></div>` : ''}`;
+  if (crpOn) { const on = $('.crp [data-crpfull]').dataset.crpfull; document.querySelectorAll(`.chat-convo .ask-mcard .rc-member[data-run="${on}"]`).forEach(x => { x.classList.add('focus'); x.querySelector('.rc-m-title').setAttribute('aria-current', 'true'); });
+    const sc2 = $('.crp .rd-details'); if (sc2) sc2.scrollTop = keepTop; if (inCrp && !document.activeElement.closest('.chat-panel')) $('.chat-panel').focus({ preventScroll: true }); }
+  ui.crpLast = crpOn ? ui.crp : null; crpSync();
+  if (!keepScroll) window.scrollTo(0, 0);
+}
+function go(id) { if (location.hash.slice(1) === id) render(); else location.hash = id; }
+addEventListener('hashchange', () => { ui.crp = cur() === 'run-panel' ? curRun(view(ui.moment)) : null; render(); });
+
+/* ---------- menus and dialogs ---------- */
+let menuEl = null, menuBtn = null;
+function closeMenu(f) { if (menuEl) { const re = menuEl.dataset.rerender; if (menuBtn && (/^rev/.test(menuBtn.dataset.check || '') || menuBtn.dataset.tmp)) { delete menuBtn.dataset.check; delete menuBtn.dataset.tmp; } menuEl.remove(); menuEl = null; if (f && menuBtn) menuBtn.focus(); menuBtn = null; if (re) render(true); } }
+function openMenu(b, items, onPick) {
+  closeMenu(); menuBtn = b;
+  const m = document.createElement('div'); m.className = 'menu'; m.setAttribute('role', 'menu');
+  m.innerHTML = items.split('|').map(x => { if (x === '-') return '<div class="msep" role="separator"></div>';
+    const [lab, act] = x.split('>'), danger = lab[0] === '!', ck = lab[0] === '✓', lock = lab[0] === '#', name = lab.replace(/^[!✓#]/, '');
+    const ic = ROLE_ICON[name.replace(/ \(.*/, '')] || '';
+    return `<button type="button" role="${b.dataset.check ? 'menuitemcheckbox' : 'menuitem'}"${b.dataset.check ? ` aria-checked="${ck || lock}"` : ''}${lock ? ' aria-disabled="true"' : ''}${danger ? ' class="danger"' : ''} data-v="${esc(name)}"${act ? ` data-a="${esc(act)}"` : ''}><span class="ck">${ck || lock ? I.ok : ''}</span>${ic}${name}</button>`; }).join('');
+  document.body.appendChild(m);
+  const r = b.getBoundingClientRect(), w = m.offsetWidth;
+  m.style.top = (r.bottom + scrollY + 4) + 'px';
+  m.style.left = Math.max(8 + scrollX, Math.min(r.left + scrollX, scrollX + document.documentElement.clientWidth - w - 8)) + 'px';
+  m.addEventListener('click', e => { const it = e.target.closest('button'); if (!it) return; e.stopPropagation(); onPick && onPick(it.dataset.v, it); });
+  m.addEventListener('keydown', e => { const its = [...m.querySelectorAll('button')], k = its.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') { e.preventDefault(); its[(k + 1) % its.length].focus(); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); its[(k - 1 + its.length) % its.length].focus(); } });
+  menuEl = m; const f = m.querySelector('button'); f && f.focus();
+}
+let dlgEl = null, dlgBack = null;
+function closeDlg() { if (dlgEl) { dlgEl.remove(); dlgEl = null; dlgBack && dlgBack.focus(); } }
+function openDlg(title, body, actions) {
+  closeDlg(); dlgBack = document.activeElement;
+  const d = document.createElement('div'); d.className = 'dlg-back';
+  d.innerHTML = `<div class="dlg" role="dialog" aria-modal="true" aria-label="${esc(title)}"><h3>${title}</h3>${body}<div class="ask-mcard-actions"><span class="sp"></span>${btn('Cancel', { quiet: true, attr: ' data-dlg="close"' })}${actions}</div></div>`;
+  document.body.appendChild(d); dlgEl = d; d.querySelector('.dlg .btn-primary, .dlg button').focus();
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { if (!menuEl && !dlgEl && ui.crp != null && crpCan(cur())) return crpClose(); closeMenu(true); closeDlg(); } });
+
+/* ---------- clicks ---------- */
+const ROLE_REG = { Product: 'prod', Design: 'prod' };
+function setReg(r) { document.documentElement.dataset.reg = r; document.querySelectorAll('.top [data-reg]').forEach(b => b.setAttribute('aria-pressed', b.dataset.reg === r)); }
+const panelItems = () => ROLES.map(r => (r === 'Product' || r === curAsker() ? '#' : ui.panel.includes(r) ? '✓' : '') + r + (r === 'Product' ? ' (always on)' : '')).join('|');
+function stopDlg(n) { openDlg(n ? `Stop run ${n}?` : 'Stop the feature?', n ? `<p>Stop run ${n}? Runs that build on it wait; the others go on. Done work stays on <code>${BRANCH}</code>.</p>` : `<p>Stop the run going now and don’t start the rest? Done work stays on <code>${BRANCH}</code>.</p>`, btn('Stop', { danger: true, attr: ' data-dlg="close"' })); }
+function menuAction(a) {
+  const [k, v] = a.split(':');
+  if (k === 'run') { ui.runN = +v; const sm = momentOf(cur()); if (sm) ui.moment = sm; return go('run-page'); }
+  if (k === 'go') { const sm = momentOf(cur()); if (sm && PAGE_MOMENTS.includes(sm)) ui.moment = sm; return go(v); }
+  if (k === 'crp') { if (crpCan(cur())) return crpOpen(+v); ui.runN = +v; return go('run-page'); }
+  if (k === 'stopfeat') return stopDlg();
+  if (k === 'stoprun') return stopDlg(v);
+  if (k === 'pausefeat') return pauseFeat(v, true);
+  if (k === 'resumefeat') return pauseFeat(v, false);
+  if (k === 'skipproto') { ui.protoSkip = true; ui.remark = false; return render(true); }
+  if (k === 'stopshape') return openDlg('Stop shaping?', `<p>Nothing is built yet. The requirements so far stay on ${SPEC}.</p>`, btn('Stop shaping', { danger: true, attr: ' data-dlg="close"' }));
+  if (k === 'stopsmall') return openDlg('Stop this run?', '<p>Stop the run and keep nothing it changed?</p>', btn('Stop', { danger: true, attr: ' data-dlg="close" data-act="stopsmallok"' }));
+  if (k === 'copybr') return toast(`Copied ${BRANCH}--run${v}`);
+  if (k === 'oneTask') return openDlg('Run as one task?', '<p>One run from your text: no roles, no split, no Verifier. ≈ $30.</p>', btn('Run as one task · ≈ $30', { pri: true, attr: ' data-dlg="close"' }));
+  if (k === 'reviewers') setTimeout(() => { const anchor = [...document.querySelectorAll('#scr .ask-mcard .ask-mcard-actions [aria-haspopup="menu"]')].pop(); anchor.dataset.check = 'panel'; anchor.dataset.tmp = '1'; openMenu(anchor, panelItems(), (name, it) => toggleCheck(anchor, name, it)); }, 0);
+}
+function toggleCheck(b, name, it) {
+  if (it.getAttribute('aria-disabled') === 'true') return;
+  const on = it.getAttribute('aria-checked') !== 'true', nm = name.replace(/ \(.*/, ''); it.setAttribute('aria-checked', on); it.querySelector('.ck').innerHTML = on ? I.ok : '';
+  ui.panel = on ? ui.panel.concat(nm) : ui.panel.filter(x => x !== nm);
+}
+function pauseFeat(key, on) { ui.pz[key] = on; render(true); }
+function protoBuild() { ui.protoSkip = false; ui.proto = .5; render(true); setTimeout(() => { if (ui.proto === .5) { ui.proto = 1; if (cur() === 'prototype') render(true); } }, matchMedia('(prefers-reduced-motion: reduce)').matches ? 600 : 3600); }
+document.addEventListener('click', e => {
+  const t = e.target;
+  if (menuEl && !menuEl.contains(t) && !(menuBtn && menuBtn.contains(t))) closeMenu();
+  if (dlgEl && t === dlgEl) return closeDlg();
+  const row = !t.closest('button, a, .menu') && crpCan(cur()) && t.closest('#scr .ask-mcard .rc-member[data-run]');
+  if (row) return crpOpen(+row.dataset.run);
+  const b = t.closest('button, a'); if (!b) return;
+  const d = b.dataset;
+  if (d.runlink && crpCan(cur()) && b.closest('#scr .ask-mcard .rc-member')) { e.preventDefault(); return crpOpen(+d.runlink); }
+  if (d.crp) return crpOpen(+d.crp);
+  if (d.crpclose) return crpClose();
+  if (d.crpfull) { ui.runN = +d.crpfull; ui.moment = crpKey(); ui.crp = null; return go('run-page'); }
+  if (d.crptab) { ui.crpTab = d.crptab; render(true); const tb = document.querySelector(`[data-crptab="${d.crptab}"]`); tb && tb.focus(); return; }
+  if (d.dlg === 'close') { closeDlg(); if (!d.go && !d.act) return; }
+  if (d.menu) { e.stopPropagation(); if (menuBtn === b) return closeMenu(); return openMenu(b, d.menu, (v, it) => { closeMenu(true); if (it.dataset.a) return menuAction(it.dataset.a); toast(`${v.replace(/^[^:]*: /, '')}: outside this prototype`); }); }
+  if (d.toast) return toast(d.toast);
+  if (d.ext) return toast('Opens on GitHub (outside this prototype)');
+  if (d.spec) { const [m, k] = rmFrom(cur()); ui.rm = m; ui.rmKey = k || null; ui.rmEdit = false; return go('from-requirements'); }
+  /* Concept · later: the Requirements page walk */
+  if (d.rm) { ui.rm = d.rm; ui.rmKey = null; ui.rmEdit = false; return render(true); }
+  if (d.rmgo) { ui.rm = d.rmgo; ui.rmKey = null; ui.rmEdit = false; return go('from-requirements'); }
+  if (d.rmfeat) { e.preventDefault(); if (rmNow() === 'ship') ui.comp = ui.prs = true; ui.moment = rmMoment(); return go(d.rmfeat); }
+  if (d.rmrun) { ui.runN = +d.rmrun; ui.moment = rmMoment(); return go('run-page'); }
+  if (d.act === 'rmedit') { ui.rmEdit = true; render(true); const f = $('#rmedit'); f && f.focus(); return; }
+  if (d.act === 'rmcancel') { ui.rmEdit = false; return render(true); }
+  if (d.act === 'rmsave') { const val = $('#rmedit').value.trim(); ui.rmEdit = false; const j = rmJudge(val); if (j === 'same') { render(true); return toast('Nothing changed: the runs go on'); } if (j === 'word') { ui.rmWord = val; render(true); return toast('Saved · wording only, nothing re-done'); } ui.rmTxt = val; ui.rm = 'edited'; return render(); }
+  if (d.pick) { e.stopPropagation(); if (menuBtn === b) return closeMenu();
+    return openMenu(b, d.pick, v => { closeMenu(true);
+      if (d.setreg) { ui.asker = v; setReg(ROLE_REG[v] || 'eng'); if (d.pickgo) return go(d.pickgo); return render(true); } }); }
+  /* the one open question: pick an option, then the one primary answers it */
+  if (d.qk) { const [k, i] = d.qk.split(':'); ui.q[k] = +i; return render(true); }
+  if (d.answer) { ui.qa[d.answer] = true; return render(true); }
+  if (d.shapeit) { ui.from = 'page'; return go('start'); }
+  if (d.proto !== undefined) { if (+d.proto === .5) return protoBuild(); ui.protoSkip = false; ui.proto = +d.proto; if (ui.proto >= 2) ui.remark = true; return render(true); }
+  if (d.pv !== undefined) { ui.pvDark = d.pv === '1'; return render(true); }
+  if (d.act === 'protobuild') return protoBuild();
+  if (d.act === 'remark') { ui.remarkTxt = $('#remark').value.trim(); ui.proto = 2; ui.remark = true; ui.pvDark = true; return render(true); }
+  if (d.act === 'protook') { if (ui.proto < 2) ui.remark = false; ui.proto = 3; return go('split'); }
+  if (d.care) { ui.care = d.care; return render(true); }
+  if (d.vf) { ui.vf = d.vf; ui.crp = null; return render(true); }
+  if (d.runlink) { e.preventDefault(); ui.runN = +d.runlink; const sm = momentOf(cur()); if (sm && PAGE_MOMENTS.includes(sm)) ui.moment = sm; return go('run-page'); }
+  if (d.go) { e.preventDefault(); if (d.go === 'start' && b.closest('.ask-composer-box')) ui.from = 'chat'; const sm = momentOf(cur()); if (sm && PAGE_MOMENTS.includes(sm) && /feature|runs-list/.test(d.go)) ui.moment = sm; return go(d.go); }
+  if (b.closest('.top') && d.reg) { setReg(d.reg); return render(true); }
+  if (d.hist) { ui.hist = d.hist; return render(true); }
+  if (d.fold !== undefined) { const x = b.getAttribute('aria-expanded') === 'true'; b.setAttribute('aria-expanded', !x); const body = b.closest('.fold-line').nextElementSibling; if (body) body.hidden = x; return; }
+  if (d.rowfold !== undefined) { const x = b.getAttribute('aria-expanded') === 'true'; b.setAttribute('aria-expanded', !x); const body = b.closest('.rc-member').nextElementSibling; if (body) body.hidden = x; return; }
+  if (d.moment) { ui.moment = d.moment; if (cur() === 'run-panel') ui.crp = d.moment === 'rs' ? null : curRun(view(d.moment)); return render(true); }
+  if (d.tab) { ui.tab = d.tab; return render(true); }
+  if (d.fopen) { ui.open[d.fopen] = !ui.open[d.fopen]; return render(true); }
+  if (d.mark) { const [id, v] = d.mark.split(':'); ui.marks[id] = v; return render(true); }
+  if (d.act === 'pause') return pauseFeat(d.sid, true);
+  if (d.act === 'resume') return pauseFeat(d.sid, false);
+  if (d.act === 'stopsmallok') { ui.small = 0; return render(true); }
+  if (d.act === 'askchg') { const c = b.closest('.ask-mcard'); if (c.querySelector('.chgfield')) return;
+    const f = document.createElement('div'); f.className = 'chgfield'; f.innerHTML = `<textarea aria-label="What should change" rows="2" placeholder="What should change?"></textarea><div class="ask-mcard-actions"><span class="sp"></span>${btn('Cancel', { quiet: true, attr: ' data-act="chgcancel"' })}${btn('Send changes', { pri: true, attr: ' data-act="chgsend"' })}</div>`;
+    const ft = b.closest('.ask-mcard-actions'); ft.hidden = true; ft.before(f); f.querySelector('textarea').focus(); return; }
+  if (d.act === 'chgcancel' || d.act === 'chgsend') { const c = b.closest('.ask-mcard'), f = c.querySelector('.chgfield'), ft = f.nextElementSibling;
+    f.remove(); ft.hidden = false; if (d.act === 'chgsend') { const n = document.createElement('div'); n.className = 'answered'; n.innerHTML = I.ok + ' Changes sent · Worca is rewriting this step'; ft.before(n); } return; }
+  if (d.act === 'ansopen') { ui.adding = +d.i; render(true); const inp = document.querySelector('[data-ansfor]'); inp && inp.focus(); return; }
+  if (d.act === 'ansadd') { const inp = document.querySelector(`[data-ansfor="${d.i}"]`); if (inp && inp.value.trim()) { ui.ans[+d.i] = inp.value.trim(); ui.adding = -1; render(true); } else inp && inp.focus(); return; }
+  if (d.act === 'write') { const f = document.querySelector('.ask-field'); f.classList.add('writing'); document.querySelectorAll('[data-act="write"]').forEach(x => x.disabled = true);
+    const send = document.querySelector('.ask-composer-row .btn-primary'); if (send) { send.disabled = true; send.title = 'Wait until Guide has written it out'; }
+    setTimeout(() => go('written-out'), matchMedia('(prefers-reduced-motion: reduce)').matches ? 400 : 1300); return; }
+  if (d.act === 'prdlg') { const sh = shipState(), lbl = W(`Create ${prn()} PRs`, `Send ${prn()} for review`);
+    return openDlg(lbl, kv([[W('Pull requests', 'Reviews'), W(`${prn()}, a PR per run, stacked in the order runs finished; the first goes to dev, each next one onto the one before`, `${prn()} small reviews by the engineers, one per run, in the order they finished`)], ['Release', btn('Add a release · v1.12.0', { quiet: true, attr: ' data-toast="Suggested tag, as on dev"' })], ['CHANGELOG', 'Added: email for website X (reset, sign-up, preferences, unsubscribe, weekly digest, delivery log)'], ['Care', `${careRec()} <span class="cap">(goes into the PR description)</span>`], sh.notMet ? ['Not met', sh.ms.filter(x => x.v && x.v !== 'Met').map(x => `${esc(reqText(x.id))}: ${esc(x.why)}`).join(' · ') + ' <span class="cap">(goes into the PR description)</span>'] : null]), btn(lbl, { pri: true, icon: 'pr', attr: ' data-dlg="close" data-act="prok"' })); }
+  if (d.act === 'prok') { ui.prs = true; return render(); }
+  if (d.act === 'compok') { ui.comp = true; return render(true); }
+  if (d.act === 'smallsend') return smallGo();
+  if (d.act === 'smallpr') return openDlg(W('Create PR', 'Send for review'), kv([[W('Pull request', 'Review'), W('<code>fix/login-typo</code> → dev · 1 file · +1 −1', 'One small review by the engineers')]]), btn(W('Create PR', 'Send for review'), { pri: true, icon: 'pr', attr: ' data-dlg="close" data-act="smallprok"' }));
+  if (d.act === 'smallprok') { ui.small = 4; return render(true); }
+  if (d.act === 'tryit') { ui.tried = true; return render(true); }
+});
+let toastT = 0;
+function toast(msg) { let t = $('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); document.body.appendChild(t); } t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 2400); }
+document.addEventListener('input', e => { const t = e.target; if (t.id === 'rmedit') { const sb = document.getElementById('rmsaveb'); if (sb) sb.textContent = rmSaveLabel(t.value.trim()); return; } if (t.dataset.reason) { ui.reasons[t.dataset.reason] = t.value; const s = shipState(), p = document.querySelector('[data-act="prdlg"]'), w = p && p.closest('.ask-mcard').querySelector('.why'); if (p) p.disabled = !!s.block; if (w) { w.textContent = s.block; w.hidden = !s.block; } } });
+document.addEventListener('keydown', e => { const ds = e.target.dataset || {}; if (e.key !== 'Enter') return;
+  if (ds.ansfor !== undefined) { e.preventDefault(); document.querySelector(`[data-act="ansadd"][data-i="${ds.ansfor}"]`).click(); }
+  if (e.target.id === 'rmedit') { e.preventDefault(); document.querySelector('[data-act="rmsave"]').click(); }
+  if (e.target.id === 'remark') { e.preventDefault(); document.querySelector('[data-act="remark"]').click(); } });
+$('#navSel').addEventListener('change', e => go(e.target.value));
+document.addEventListener('change', e => { const t = e.target; if (t.dataset && t.dataset.guide) { ui.guide = t.checked; render(true); const g = document.querySelector('[data-guide]'); g && g.focus(); } });
+addEventListener('resize', crpSync);
+$('#themeSw').checked = matchMedia('(prefers-color-scheme: dark)').matches;
+$('#themeSw').addEventListener('change', e => { document.documentElement.dataset.theme = e.target.checked ? 'dark' : 'light'; });
+setReg('eng');
+if (cur() === 'run-panel') ui.crp = curRun(view(ui.moment));
+render();
+</script>

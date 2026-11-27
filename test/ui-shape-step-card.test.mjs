@@ -4,8 +4,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
-import { SEND_FAILED, stepChip, stepTitle, stepKind, isStepCard, isRequirementsAsk, stepSender, stepHead, renderGateCard, renderRecoveryCard, questionFocusTarget }
+import { SEND_FAILED, smallRunsAsk, stepChip, stepTitle, stepKind, isStepCard, isRequirementsAsk, stepSender, stepHead, renderGateCard, renderRecoveryCard, questionFocusTarget }
   from '../ui/public/shape/step-card.mjs';
+import { gateStop, planStop, concernStop } from '../src/shared/shape/run-stops.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -233,4 +234,374 @@ test('U10: a requirements ask (plan.criteria or plan.error) is titled "Your turn
   for (const pq of [PLAN, SPLIT, GATE, CLARIFY, null]) assert.equal(isRequirementsAsk(pq), false);
   assert.equal(stepTitle(PLAN), 'Your turn: approve the plan');
   assert.equal(stepChip(PLAN, SHAPING), 'Plan');
+});
+
+test('B2: the care ask is a step card: chip Start, title "Your turn: how much care?"', () => {
+  const CARE = { id: 'care-1', kind: 'care', care: { pick: { position: 'balanced' } } };
+  assert.equal(isStepCard(CARE, {}, false), true);
+  assert.equal(stepChip(CARE, {}), 'Start');
+  assert.equal(stepTitle(CARE), 'Your turn: how much care?');
+  assert.equal(stepKind(CARE), 'care');
+});
+
+test('smallRunsAsk: the small-runs marker is read from the open ask alone (Care, or a plan stamped smallRuns)', () => {
+  assert.equal(smallRunsAsk({ kind: 'care' }), true);
+  assert.equal(smallRunsAsk({ kind: 'plan', plan: { smallRuns: true } }), true);
+  assert.equal(smallRunsAsk({ kind: 'plan', plan: {} }), false);
+  assert.equal(smallRunsAsk({ kind: 'clarify', questions: [] }), false);
+  assert.equal(smallRunsAsk(null), false);
+  assert.equal(smallRunsAsk(undefined), false);
+});
+
+test('C1: the prototype chip and titles; a prototype ask is a step card and a small-runs ask', () => {
+  const pq = (moment) => ({ id: 'proto-1', kind: 'prototype', prototype: { moment } });
+  assert.equal(stepChip(pq('offered'), {}), 'Prototype');
+  assert.equal(isStepCard(pq('offered'), {}, false), true);
+  assert.equal(smallRunsAsk(pq('built')), true);
+  assert.deepEqual(['offered', 'built', 'remark', 'failed'].map((m) => stepTitle(pq(m))),
+    ['Prototype the screens first?', 'Your turn: look, remark, confirm', 'Change the requirement?', 'The prototype did not build']);
+});
+
+// ── Small runs C3 (D11–D13): a stop is one question on the card, its findings only in the panel ──────────────────
+const G_STOP = { ...GATE, id: 'gate-w9-3', stop: gateStop({ run: 8, issues: GATE.issues, fixCycles: 3, nodeId: 'n_review' }) };
+const P_STOP = { id: 'plan-n_refine-2', kind: 'plan', plan: { round: 2, check: { ok: false, passed: 3, total: 5, items: [{ label: 'Has tests', pass: false, detail: 'none' }, { label: 'Ok', pass: true }] } },
+  stop: planStop({ run: 4, check: { ok: false, passed: 3, total: 5, items: [] } }) };
+const C_STOP = { id: 'plan-concern-n_impl-c2', kind: 'plan', concern: { title: 'Use the DB' }, plan: { round: 2 },
+  stop: concernStop({ run: 5, concern: { title: 'Use the DB' }, decidedBefore: true }) };
+function mountStop(pq, extra = {}, submit = async () => true) {
+  const parent = doc.createElement('div');
+  const panel = doc.createElement('div');
+  panel.className = 'qpanel';
+  parent.appendChild(panel);
+  doc.body.appendChild(parent);
+  const posts = [];
+  renderGateCard(panel, pq, { doc, title: stepTitle(pq), chip: stepChip(pq), tagLevel: () => {}, submit: (p) => { posts.push(p); return submit(p); }, ...extra });
+  return { panel, posts, $: (s) => panel.querySelector(s), $$: (s) => [...panel.querySelectorAll(s)] };
+}
+const runCount = (panel) => {
+  // Per text node: the log row's run span and text sit side by side, so the whole textContent reads "Run 8another …".
+  const walk = panel.ownerDocument.createTreeWalker(panel, 4);
+  let n = 0;
+  for (let t = walk.nextNode(); t; t = walk.nextNode()) n += (t.data.match(/Run 8\b/g) || []).length;
+  return n;
+};
+
+test('C3: a stop title is its head and its chip names no run, for a gate and a plan stop', () => {
+  assert.equal(stepTitle(G_STOP, 'Review'), 'Run 8 · Code review objects');
+  assert.equal(stepChip(G_STOP, { shaping: { feature: { id: 'f', index: 8 } } }), 'Gate');
+  assert.equal(stepTitle(P_STOP), 'Run 4 · the plan check did not pass');
+  assert.equal(stepChip(P_STOP, { shaping: { feature: { id: 'f', index: 4 } } }), 'Plan');
+  assert.ok(smallRunsAsk(G_STOP));
+});
+
+test('C3: the stop card: one primary naming the pick, two option rows with sub, the pick preset and recommended, focus on the primary', () => {
+  for (const pq of [G_STOP, P_STOP, C_STOP]) {
+    const { panel, $, $$ } = mountStop(pq);
+    const prim = $$('.btn-primary');
+    assert.equal(prim.length, 1, pq.id);
+    const pick = pq.stop.options.find((o) => o.value === pq.stop.pick);
+    assert.equal(prim[0].textContent, pick.go);
+    assert.equal($$('.qopt').length, 2);
+    assert.equal($$('.chat-q-opt-sub').length, 2);
+    assert.deepEqual($$('.qopt[data-preset="1"]').map((t) => t.dataset.value), [pq.stop.pick]);
+    assert.deepEqual($$('.qopt .qrec').map((r) => r.closest('.qopt').dataset.value), [pq.stop.pick]);
+    assert.equal(questionFocusTarget(panel), prim[0]);
+    const other = $$('.qopt').find((t) => t.dataset.value !== pq.stop.pick);
+    other.click();
+    assert.equal(prim[0].textContent, pq.stop.options.find((o) => o.value === other.dataset.value).go);
+    assert.equal($('.qanswered').textContent, '1 of 1 answered');
+  }
+});
+
+test('C3: picking Accept as is posts continue; the card says run, finding and cycles once', async () => {
+  const { panel, $, $$, posts } = mountStop(G_STOP);
+  assert.equal(runCount(panel), 1);
+  assert.equal((panel.textContent.match(/3 fix cycles/g) || []).length, 1);
+  assert.equal((panel.textContent.match(/Code review: Flaky test/g) || []).length, 1, 'who objects to what, once');
+  $$('.qopt').find((t) => t.dataset.value === 'continue').click();
+  $('.btn-primary').click();
+  await flush();
+  assert.deepEqual(posts, [{ decision: 'continue' }]);
+});
+
+test('C3: a refused answer re-enables the tiles and primary and shows the reason once', async () => {
+  const { $, $$ } = mountStop(G_STOP, {}, async () => 'not one of the options');
+  $('.btn-primary').click();
+  await flush(); await flush();
+  const err = $('.chat-rc-q-err');
+  assert.equal(err.hidden, false);
+  assert.equal(err.textContent, 'Not sent: not one of the options');
+  assert.equal($$('.chat-rc-q-err:not([hidden])').length, 1);
+  assert.ok($$('.qopt').every((t) => !t.disabled));
+  assert.equal($('.btn-primary').disabled, false);
+});
+
+test('C3: a held answer draws the one answered line as a finished-step row: no head, chip, box or control', () => {
+  const { $$, panel } = mountStop(G_STOP, { held: { value: 'another' } });
+  assert.equal($$('button').length, 0);
+  assert.equal($$('.step-head, .ask-mcard-head, .ask-mcard-chip').length, 0, 'no head and no chip');
+  assert.equal($$('.chat-rc-receipt').length, 0, 'no receipt box');
+  const rows = $$('ol.chat-rc-log > li.chat-rc-log-row');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].querySelector('.chat-rc-log-run').textContent, 'Run 8');
+  assert.equal(rows[0].querySelector('.chat-rc-log-text').textContent, 'another cycle · decided by you', 'drawn like the delivered row');
+  assert.equal(runCount(panel), 1, 'the row is the only "Run 8" in the stop area');
+});
+
+test('C3: readOnly (the side panel) draws 0 buttons, no question and exactly one findings list', () => {
+  for (const pq of [G_STOP, P_STOP, C_STOP]) {
+    const { $$, panel } = mountStop(pq, { readOnly: true });
+    assert.equal($$('button').length, 0, pq.id);
+    assert.equal($$('.qopt').length, 0);
+    assert.equal(panel.textContent.includes(pq.stop.text), false, 'no question text');
+    assert.equal($$('.issues, .plan-checks').length, 1);
+    assert.equal(runCount(panel), 0, 'the run number is on the card');
+  }
+});
+
+test('C5: readOnly (the side panel) draws the Verifier stop\'s gaps as its one findings list', async () => {
+  const { verifyStop } = await import('../src/shared/shape/verifier.mjs');
+  const gaps = [{ id: 'R-po-2', why: 'sign-up never calls the email service' }, { id: 'R-po-3', why: 'the export skips empty charts' }];
+  const pq = { id: 'verify-3', kind: 'gate', nodeId: 'n_verify', issues: [], stop: verifyStop({ gaps, round: 3, fixCycles: 2 }) };
+  const { $$ } = mountStop(pq, { readOnly: true });
+  assert.equal($$('button').length, 0);
+  assert.equal($$('.issues, .plan-checks').length, 1);
+  assert.deepEqual($$('.verify-gaps .plan-check-id').map((e) => e.textContent), ['R-po-2', 'R-po-3']);
+});
+
+// The run page of a stopped run (flag on): the same interactive card as the feature card, with the one-column head marker.
+test('the run page (runPage, not readOnly): the stop\'s head with data-stop, then the question with every option, Worca\'s pick preset and one primary naming it', async () => {
+  const { verifyStop } = await import('../src/shared/shape/verifier.mjs');
+  const V_STOP = { id: 'verify-3', kind: 'gate', nodeId: 'n_verify', issues: [], stop: verifyStop({ gaps: [{ id: 'R-po-2', why: 'no email' }], round: 3, fixCycles: 2 }) };
+  for (const pq of [G_STOP, P_STOP, C_STOP, V_STOP]) {
+    const { panel, $$, $ } = mountStop(pq, { runPage: true });
+    assert.equal($('.ask-mcard-title').textContent, pq.stop.head, pq.id);
+    assert.equal($$('.ask-mcard-title').length, 1);
+    assert.ok([...panel.children][0].matches('.ask-mcard-head[data-stop]'), 'the head carries the one-column marker (shape-it.css)');
+    assert.equal($$('.qopt').length, pq.stop.options.length);
+    assert.deepEqual($$('.qopt[data-preset="1"]').map((t) => t.dataset.value), [pq.stop.pick]);
+    const prim = $$('.btn-primary');
+    assert.equal(prim.length, 1);
+    assert.equal(prim[0].textContent, pq.stop.options.find((o) => o.value === pq.stop.pick).go);
+    assert.equal(panel.textContent.includes(pq.stop.text), true, 'the question text');
+    assert.equal($$('.stop-home, a.rd-fact-link').length, 0, 'no line to elsewhere: the stop is answered here');
+  }
+  assert.equal(mountStop(V_STOP, { runPage: true }).panel.querySelectorAll('.verify-gaps .plan-check-id').length, 1, "the Verifier's gaps");
+  assert.equal(mountStop(P_STOP, {}).panel.querySelector(':scope > [data-stop]'), null, 'no marker off the run screen');
+  const held = mountStop(G_STOP, { runPage: true, held: { value: 'another' } });
+  assert.equal(held.$$('.ask-mcard-title, .stop-home, button, .qopt').length, 0, 'held: no head and no control');
+  assert.equal(held.$$('.chat-rc-log-row').length, 1);
+  assert.equal(held.$('.chat-rc-log-text').textContent, 'another cycle · decided by you');
+});
+
+test('the run page: the primary posts the pick; a stop already answered elsewhere shows "Not sent" and keeps the options', async () => {
+  const ok = mountStop(G_STOP, { runPage: true });
+  ok.$('.btn-primary').click();
+  await flush();
+  assert.deepEqual(ok.posts, [G_STOP.stop.options.find((o) => o.value === G_STOP.stop.pick).payload]);
+  const refused = mountStop(G_STOP, { runPage: true }, async () => 'this stop is already answered');
+  refused.$('.btn-primary').click();
+  await flush(); await flush();
+  assert.equal(refused.$('.chat-rc-q-err').textContent, 'Not sent: this stop is already answered');
+  assert.equal(refused.$$('.qopt').length, G_STOP.stop.options.length);
+  assert.ok(refused.$$('.qopt').every((t) => !t.disabled));
+});
+
+// Slice 3 (D11): a held answer the take-in refused is gone; the open stop says why, above its options.
+test('slice 3: a refused stop shows one "Not sent: …" alert above the options and keeps its options; otherwise none', () => {
+  const reason = 'runs 2 and 3 clash in src/a.mjs';
+  const refused = mountStop(G_STOP, { refused: reason });
+  const alerts = refused.$$('.plan-err:not([hidden])');
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].getAttribute('role'), 'alert');
+  assert.equal(alerts[0].textContent, `Not sent: ${reason}`);
+  assert.ok(alerts[0].compareDocumentPosition(refused.$('.qpanel-foot')) & 4, 'the line comes before the foot');
+  assert.equal(refused.$$('.qopt').length, G_STOP.stop.options.length);
+  assert.ok(refused.$$('.qopt').every((t) => !t.disabled));
+  assert.equal(mountStop(G_STOP).$$('.plan-err:not([hidden])').length, 0, 'no refusal, no line');
+  assert.equal(mountStop(G_STOP, { refused: reason, held: { value: 'another' } }).$$('.plan-err:not([hidden])').length, 0, 'a held answer shows its own row');
+});
+
+test('C3: a gate without stop still draws the two dev buttons; renderRecoveryCard is unchanged', () => {
+  const { $$ } = mountStop(GATE);
+  assert.deepEqual($$('.qpanel-foot button').map((b) => b.textContent), ['Accept as is', 'Run another cycle']);
+});
+
+// ── An outline change: a short question line, then the Planner's note as a formatted, folding body ───────────────────
+const FIRST = 'A prerequisite is not in this tree';
+const NOTE = [`## Slice 2: ${FIRST}`, '', 'Run 1 did not add the tags table. '.repeat(8), '', 'The list route reads it. '.repeat(11), '',
+  'Missing:', '', '- `src/core/db.mjs`', '- `src/core/tags.mjs`', '- `ui/public/tags.mjs`', '- `test/tags.test.mjs`', '- `docs/tags.md`',
+  '- `ui/server.mjs`'].join('\n');
+const outlineStop = (id, outlineChange = NOTE) => ({ id, kind: 'plan', plan: { round: 1, outlineChange }, stop: planStop({ run: 2, outlineChange }) });
+
+test('outline stop: the question line, then the note body, then the options', () => {
+  const { panel, $, $$ } = mountStop(outlineStop('plan-outline-1'));
+  assert.equal($('.qtext-t').textContent, 'The Planner says this run cannot be built as outlined: a prerequisite is not in this tree.');
+  assert.deepEqual([...$('.qblock').children].map((c) => c.classList[0]), ['qtext', 'note-body', 'qopts']);
+  assert.equal($$('.note-body').length, 1);
+  assert.equal($('.note-body').textContent.includes(FIRST), false, 'the title is in the question line only');
+  assert.equal((panel.textContent.match(/prerequisite is not in this tree/gi) || []).length, 1);
+  assert.equal($$('.qopt').length, 2);
+  assert.equal($$('.btn-primary').length, 1);
+  assert.equal($('.btn-primary').textContent, 'Keep it');
+  assert.equal($('.note-toggle').textContent, 'Show the full note');
+});
+
+test('opening the note keeps the person\'s pick', () => {
+  const { $, $$, posts } = mountStop(outlineStop('plan-outline-2'));
+  $$('.qopt').find((t) => t.dataset.value === 'change').click();
+  for (const open of ['true', 'false']) {
+    $('.note-toggle').click();
+    assert.equal($('.note-toggle').getAttribute('aria-expanded'), open);
+    assert.deepEqual($$('.qopt.sel').map((t) => [t.dataset.value, t.getAttribute('aria-pressed')]), [['change', 'true']]);
+    assert.equal($('.btn-primary').textContent, 'Change it');
+  }
+  assert.deepEqual(posts, [], 'folding never answers');
+});
+
+test('a repaint keeps the note open', () => {
+  const pq = outlineStop('plan-outline-3');
+  mountStop(pq).$('.note-toggle').click();
+  const again = mountStop(pq);
+  assert.equal(again.$('.note-toggle').getAttribute('aria-expanded'), 'true');
+  assert.equal(again.$('.note-body li[hidden]:not(.note-more)'), null);
+  assert.equal(mountStop(outlineStop('plan-outline-4')).$('.note-toggle').getAttribute('aria-expanded'), 'false');
+});
+
+test('a note that is only its title adds no body; a note with no usable title shows whole under the short question', () => {
+  assert.equal(mountStop(outlineStop('plan-outline-5', 'The split is stale')).$('.note-body'), null);
+  const { $ } = mountStop(outlineStop('plan-outline-6', '- the tags table\n- the route'));
+  assert.equal($('.qtext-t').textContent, 'The Planner says this run cannot be built as outlined.');
+  assert.deepEqual([...$('.note-body').querySelectorAll('li')].map((li) => li.textContent), ['the tags table', 'the route']);
+});
+
+test('readOnly outline stop: the note\'s title is the finding title, the rest is the body; no title → "The outline no longer fits"', () => {
+  const { $, $$ } = mountStop(outlineStop('plan-outline-7'), { readOnly: true });
+  assert.equal($$('.issues, .plan-checks').length, 1);
+  assert.deepEqual($$('.issues > li.issue > .issue-head > .issue-title').map((t) => t.textContent), [FIRST]);
+  assert.ok($('li.issue > .note-body'));
+  assert.equal($('.issue-detail'), null);
+  assert.equal($('.note-body').textContent.includes(FIRST), false);
+  assert.deepEqual($$('button').map((b) => b.className), ['btn btn-sm btn-quiet note-toggle'], 'the fold is its only control');
+  const long = `${'a'.repeat(121)}\n\nMore.`;
+  const bare = mountStop(outlineStop('plan-outline-8', long), { readOnly: true });
+  assert.equal(bare.$('.issue-title').textContent, 'The outline no longer fits');
+  assert.deepEqual(bare.$$('.note-body p').map((p) => p.textContent), ['a'.repeat(121), 'More.']);
+  const only = mountStop(outlineStop('plan-outline-9', 'The split is stale'), { readOnly: true });
+  assert.equal(only.$('.issue-title').textContent, 'The split is stale');
+  assert.equal(only.$('.note-body'), null);
+});
+
+test('the card and the finding of one ask remember their own fold', () => {
+  const pq = outlineStop('plan-outline-10');
+  mountStop(pq).$('.note-toggle').click();
+  assert.equal(mountStop(pq, { readOnly: true }).$('.note-toggle').getAttribute('aria-expanded'), 'false');
+});
+
+test('a concern requirement stop draws no .note-body, and its text and finding are unchanged', () => {
+  const concern = { kind: 'requirement', title: 'Members only is too strict', detail: 'R-arch-2: too strict', requirements: ['R-arch-2'] };
+  const pq = { id: 'plan-concern-9', kind: 'plan', concern, plan: { round: 1, outlineChange: NOTE }, stop: planStop({ run: 2, concern, outlineChange: NOTE }) };
+  const card = mountStop(pq);
+  assert.equal(card.$('.qtext-t').textContent, 'A reviewer wants R-arch-2 changed: Members only is too strict.');
+  assert.equal(card.$('.note-body'), null);
+  const panel = mountStop(pq, { readOnly: true });
+  assert.equal(panel.$('.issue-title').textContent, concern.title);
+  assert.equal(panel.$('.issue-detail').textContent, concern.detail);
+  assert.equal(panel.$('.note-body'), null);
+});
+
+// ── R-ux-4: an answerable stop lists its findings (`findings`: set by stopDeps with small runs on) ───────────────────
+const THREE = [
+  { severity: 'major', title: 'A chart link opens for a visitor who is not a member', detail: 'GET /c/:id skips the member check', location: 'src/charts.mjs:12' },
+  { severity: 'major', title: 'The export drops empty charts', detail: 'an empty chart has no rows to write' },
+  { severity: 'major', title: 'Token leaks into the logs', detail: 'the request line is logged whole' },
+];
+const G3_STOP = { id: 'gate-r3-1', kind: 'gate', nodeId: 'n_review', issues: THREE, stop: gateStop({ run: 8, issues: THREE, fixCycles: 3, nodeId: 'n_review' }) };
+const ANSWERABLE = [{ findings: true }, { findings: true, runPage: true }];   // the feature card and page; the run page and panel
+const texts = (els) => els.map((e) => e.textContent);
+/** True when `a` comes before `b` in the document. */
+const precedes = (a, b) => !!(a.compareDocumentPosition(b) & 4);
+
+test('R-ux-4: an answerable gate stop with 3 findings lists the 3 on the feature card and the run page', () => {
+  for (const deps of ANSWERABLE) {
+    const where = JSON.stringify(deps);
+    const { $, $$ } = mountStop(G3_STOP, deps);
+    assert.equal($$('.issues > li.issue').length, 3, where);
+    assert.deepEqual(texts($$('.issues > li.issue .issue-title')), THREE.map((i) => i.title), where);
+    assert.equal($$('.issues, .plan-checks').length, 1, `${where}: one findings list`);
+    assert.ok(precedes($('.issues'), $('.qpanel-foot')), `${where}: the list comes before the foot`);
+    assert.equal($$('.btn-primary').length, 1, where);
+  }
+});
+
+test('R-ux-4: an answerable plan-check stop lists its 3 failing checks', () => {
+  const items = [{ label: 'Has tests', pass: false, detail: 'none' }, { label: 'Names the files', pass: false }, { label: 'States the goal', pass: false },
+    { label: 'Lists open questions', pass: true }];
+  const check = { ok: false, passed: 1, total: 4, items };
+  const pq = { id: 'plan-r3-checks', kind: 'plan', plan: { round: 2, check }, stop: planStop({ run: 4, check }) };
+  for (const deps of ANSWERABLE) {
+    const where = JSON.stringify(deps);
+    const { $, $$ } = mountStop(pq, deps);
+    assert.equal($$('.plan-check-row').length, 3, where);
+    assert.equal($$('.plan-check-row.ok').length, 0, `${where}: no passing row`);
+    assert.deepEqual(texts($$('.plan-check-row .plan-check-label')), ['Has tests', 'Names the files', 'States the goal'], where);
+    assert.equal($$('.issues, .plan-checks').length, 1, `${where}: one findings list`);
+    assert.ok(precedes($('.plan-checks'), $('.qpanel-foot')), `${where}: the list comes before the foot`);
+    assert.equal($$('.btn-primary').length, 1, where);
+  }
+});
+
+test('R-ux-4: a concern stop\'s row carries its detail, not its title again', () => {
+  const concern = { kind: 'requirement', title: 'Members only is too strict', detail: 'A shared chart link must open for a visitor', requirements: ['R-arch-2'],
+    proposals: [{ id: 'R-arch-2', from: 'only members open a chart', text: 'anyone with the link opens a chart', landsAs: 'finished' }] };
+  const pq = { id: 'plan-concern-r3', kind: 'plan', concern, plan: { round: 2 }, stop: planStop({ run: 2, concern }) };
+  for (const deps of ANSWERABLE) {
+    const where = JSON.stringify(deps);
+    const { panel, $, $$ } = mountStop(pq, deps);
+    assert.equal($$('.issue').length, 1, where);
+    assert.equal($$('.issue-title').length, 0, `${where}: the question already names the title`);
+    assert.equal($('.issue .issue-detail').textContent, concern.detail, where);
+    assert.equal(panel.textContent.split(concern.title).length - 1, 1, `${where}: the title once on the card`);
+    assert.ok(precedes($('.issue'), $('.req-change-texts')), `${where}: the detail reads before the change it proposes`);
+    assert.ok(precedes($('.req-change-texts'), $('.qpanel-foot')), `${where}: the change texts stay before the foot`);
+  }
+  const bare = { kind: 'requirement', title: concern.title, requirements: ['R-arch-2'] };
+  const noDetail = mountStop({ ...pq, id: 'plan-concern-r3-bare', concern: bare, stop: planStop({ run: 2, concern: bare }) }, { findings: true });
+  assert.equal(noDetail.$$('.issues, .plan-checks').length, 0, 'no detail, no list');
+});
+
+test('R-ux-4: a Verifier stop\'s gaps are its one list', async () => {
+  const { verifyStop } = await import('../src/shared/shape/verifier.mjs');
+  const gaps = [{ id: 'R-po-2', why: 'sign-up never calls the email service' }, { id: 'R-po-3', why: 'the export skips empty charts' }];
+  const pq = { id: 'verify-r3', kind: 'gate', nodeId: 'n_verify', issues: [], stop: verifyStop({ gaps, round: 3, fixCycles: 2 }) };
+  for (const deps of [{}, { runPage: true }, ...ANSWERABLE]) {
+    const where = JSON.stringify(deps);
+    const { $, $$ } = mountStop(pq, deps);
+    assert.equal($$('.verify-gaps').length, 1, where);
+    assert.deepEqual(texts($$('.verify-gaps .plan-check-id')), ['R-po-2', 'R-po-3'], where);
+    assert.equal($$('.issues, .plan-checks').length, 1, where);
+    assert.ok(precedes($('.verify-gaps'), $('.qpanel-foot')), where);
+  }
+});
+
+test('R-ux-4: an outline-change stop draws its note once and no extra list', () => {
+  for (const [i, deps] of ANSWERABLE.entries()) {
+    const { $$ } = mountStop(outlineStop(`plan-outline-r3-${i}`), deps);
+    assert.equal($$('.note-body').length, 1, JSON.stringify(deps));
+    assert.equal($$('.issues, .plan-checks').length, 0, JSON.stringify(deps));
+  }
+});
+
+test('R-ux-4: a held answer draws no findings list', () => {
+  for (const deps of ANSWERABLE) {
+    const { $$ } = mountStop(G3_STOP, { ...deps, held: { value: 'another' } });
+    assert.equal($$('.issues, .plan-checks').length, 0, JSON.stringify(deps));
+    assert.equal($$('.chat-rc-log-row').length, 1, JSON.stringify(deps));
+  }
+});
+
+test('R-ux-4: without `findings` (flag off) the answerable gate stop draws 0 issue lists', () => {
+  const { $$ } = mountStop(G3_STOP);
+  assert.equal($$('.issues, .plan-checks').length, 0);
+  assert.equal($$('.btn-primary').length, 1);
 });

@@ -246,7 +246,7 @@ test('doctorPlugin: detects missing node_modules when setup.node; heals detectio
 });
 
 test('uninstallPlugin keeps data/ by default; purge removes everything', async () => {
-  writePluginConfig(NAME, [{ key: 'token', secret: true }], { token: 'keep' });
+  await writePluginConfig(NAME, [{ key: 'token', secret: true }], { token: 'keep' });
   // Bindings live in the DB, not in data/: uninstall must drop them (CLI path
   // included) or a reinstall with a same-named profile silently rebinds.
   setBinding({ scopeType: 'project', scopeKey: 'proj-x', plugin: NAME, sourceId: 'demo' }, 'work');
@@ -342,23 +342,23 @@ test('listOrphanPluginData: empty root, ignores installed + dataless + bad-name 
   writePluginsLock(lockBefore); // restore for later tests
 });
 
-test('purgePluginData: removes orphan dir; refuses installed; unknown throws', () => {
+test('purgePluginData: removes orphan dir; refuses installed; unknown throws', async () => {
   const lockBefore = readPluginsLock();
   assert.equal(existsSync(pluginDir('ghost-a')), true, 'fixture from previous test present');
-  const r = purgePluginData('ghost-a');
+  const r = await purgePluginData('ghost-a');
   assert.equal(r.ok, true);
   assert.equal(existsSync(pluginDir('ghost-a')), false, 'whole plugin dir gone');
 
   // still installed -> refuse with code INSTALLED
   writePluginsLock({ ...lockBefore, 'ghost-installed': { pinnedSha: 'x'.repeat(40), enabled: true } });
-  assert.throws(() => purgePluginData('ghost-installed'), (e) => e.code === 'INSTALLED');
+  await assert.rejects(async () => purgePluginData('ghost-installed'), (e) => e.code === 'INSTALLED');
   writePluginsLock(lockBefore);
 
   // nothing there -> plain error
-  assert.throws(() => purgePluginData('never-existed'), /nothing to purge/);
+  await assert.rejects(async () => purgePluginData('never-existed'), /nothing to purge/);
 
   // safeName-invalid name -> same "nothing to purge" contract, never "invalid plugin name"
-  assert.throws(() => purgePluginData('9ghost'), /nothing to purge/);
+  await assert.rejects(async () => purgePluginData('9ghost'), /nothing to purge/);
 });
 
 // --- model contributions (design §9.4): inventory, uninstall guard, doctor ---
@@ -403,7 +403,7 @@ test('plugin models: inventory (base URL verbatim, env keys, secrets), doctor se
       const sick = doc.checks.find((c) => c.id === 'model-secret:ds-token');
       assert.equal(sick.ok, false);
       assert.match(sick.detail, /not set/);
-      writePluginConfig('modelful-plugin', [{ key: 'ds-token', secret: true }], { 'ds-token': 'sk-team' });
+      await writePluginConfig('modelful-plugin', [{ key: 'ds-token', secret: true }], { 'ds-token': 'sk-team' });
       doc = await doctorPlugin('modelful-plugin');
       assert.equal(doc.checks.find((c) => c.id === 'model-secret:ds-token').ok, true);
 
@@ -870,4 +870,40 @@ test('updatePlugin: swapping an existing `current` link (junction on Windows) le
   assert.equal(readlinkSync(pluginCurrentDir(name)), curTarget(name, sha2.slice(0, 7)), 'current -> new version');
   assert.equal(existsSync(join(pluginCurrentDir(name), 'worca-cc-plugin.json')), true, 'new current resolves');
   assert.equal(existsSync(oldManifest), true, 'old version files survive the swap (target not deleted through the link)');
+});
+
+// ── secretVault on: plain uninstall keeps data/ and its vault entries; purge and orphan purge release them ─────────
+test('flag on: plain uninstall keeps the entries and a reinstall reads them; purge and purgePluginData leave none', async () => {
+  const { fakeVault } = await import('./helpers/vault-on.mjs');
+  const { readPluginConfig } = await import('../src/core/plugin-config.mjs');
+  const { isVaultRef } = await import('../src/core/secrets/refs.mjs');
+  const { vaultOn, vaultOf } = fakeVault(scratch);
+  const VNAME = 'vault-store-plugin';
+  const SCHEMA = [{ key: 'token', secret: true }];
+  const entries = async (name) => (await vaultOf().list()).filter((e) => e.store === 'plugin' && e.field.startsWith(`${name}/`)).length;
+  await vaultOn(async () => {
+    // No agents or flows: earlier tests leave saved workflows that place demoAgent, which would block the uninstall.
+    const root = join(scratch, 'origin-vault');
+    const files = Object.fromEntries(Object.entries(PLUGIN_FILES(VNAME)).filter(([rel]) => !/^(agents|workflows)\//.test(rel)));
+    writeTree(root, files);
+    await git(root, 'init', '-q', '-b', 'main');
+    await git(root, 'add', '-A');
+    await git(root, 'commit', '-qm', 'c1');
+    const origin = { root };
+    const { exec } = makeExec();
+    await installPlugin({ repoUrl: origin.root, subdir: '', name: VNAME }, { exec });
+    await writePluginConfig(VNAME, SCHEMA, { token: 'tok-store-0001' });
+    assert.ok(isVaultRef(JSON.parse(readFileSync(join(pluginDataDir(VNAME), 'secrets.json'), 'utf8')).profiles.default.token));
+    assert.equal(await entries(VNAME), 1);
+    await uninstallPlugin(VNAME);
+    assert.equal(await entries(VNAME), 1, 'plain uninstall keeps data/ and its entries');
+    await installPlugin({ repoUrl: origin.root, subdir: '', name: VNAME }, { exec });
+    assert.equal(readPluginConfig(VNAME, SCHEMA).token, 'tok-store-0001', 'a reinstall reads the kept secret');
+    await uninstallPlugin(VNAME, { purge: true });
+    assert.equal(await entries(VNAME), 0, 'purge releases every entry its secrets held');
+    await writePluginConfig('ghost-vault', SCHEMA, { token: 'tok-orphan-0002' });   // an orphan data/ (never installed)
+    assert.equal(await entries('ghost-vault'), 1);
+    await purgePluginData('ghost-vault');
+    assert.equal(await entries('ghost-vault'), 0);
+  });
 });

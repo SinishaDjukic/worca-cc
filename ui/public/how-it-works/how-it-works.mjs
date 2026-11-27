@@ -51,11 +51,11 @@ export function createHowItWorks({ doc, getStatus, setStatus, postPrefs, startTo
   const currentArea = () => areaOfRoute(route);
   const byId = (id) => doc.getElementById(id);
 
-  function place(id, cls, host, before) {
+  function place(id, cls, host, before, icon = false) {
     const existing = byId(id);
     if (existing) return existing;
     if (!host) return null;
-    const el = howtoButtonElement(doc, { id, cls });
+    const el = howtoButtonElement(doc, { id, cls, icon });
     el.hidden = true;
     el.addEventListener('click', () => { const a = currentArea(); if (a) open(a); });
     host.insertBefore(el, before);
@@ -66,7 +66,7 @@ export function createHowItWorks({ doc, getStatus, setStatus, postPrefs, startTo
     const right = doc.querySelector('.topnav-r');
     top = place(TOP_ID, 'topnav-howto', right, right?.firstChild ?? null);
     const lib = byId('wfv-lib-toggle');
-    workflows = place(WORKFLOWS_ID, 'wfv-howto', lib?.parentNode ?? null, lib);
+    workflows = place(WORKFLOWS_ID, 'wfv-howto', lib?.parentNode ?? null, lib, true);   // an icon, like the Library toggle beside it
   }
 
   function titleFor(guide) {

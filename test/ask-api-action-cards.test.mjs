@@ -346,6 +346,38 @@ test('askChatTurnDeps: changes/route go to askShapeAction with the turn\'s threa
   const d = mod._testing.askChatTurnDeps('ada@example.com');
   assert.deepEqual(await d.chatAction({ kind: 'changes', pipelineId: 'aaaa0001', request: 'x' }, { threadId: 'ask_x' }),
     { ok: false, notice: 'Not applied: this chat does not follow run aaaa0001' });
+  // Small runs C4 (D14): kind 'requirement' is a Shaper card tool too.
+  assert.deepEqual(await d.chatAction({ kind: 'requirement', featureId: 'f1', requirement: 'R-po-1', text: 'x', reason: 'r' }, { threadId: 'ask_x' }),
+    { ok: false, notice: 'Not applied: this chat follows no run or feature' });
+});
+
+test('Small runs C4: a req-change card applies once through the change path, flips to applied; a refusal keeps it proposed', async () => {
+  const { getDb } = await import('../src/core/db.mjs');
+  const { createSliceFeature } = await import('../src/core/shape/features.mjs');
+  const { id: pid } = await seedPipeline(project.path, { title: 'Run 1', status: 'done' });
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), pid);
+  const outline = { why: 'two', agreed: [{ id: 'R-po-1', text: 'one as agreed' }, { id: 'R-po-2', text: 'two as agreed' }],
+    slices: [1, 2].map((i) => ({ id: `s${i}`, title: `Part ${i}`, goal: 'g', inScope: [], outOfScope: [], acceptance: [], dependsOn: [], estimate: 'M', requirements: [`R-po-${i}`] })) };
+  const f = createSliceFeature({ pipelineId: pid, projectDir: project.path, title: 'Reset emails', outline, perspectives: ['product'], workflowId: 'wf_shape',
+    smallRuns: true, care: { position: 'lean', chosenBy: 'person', worcaPick: 'balanced' } });
+  const card = (over) => ({ state: 'proposed', card: { type: 'req-change', featureId: f.id, featureTitle: 'Reset emails', requirement: 'R-po-2',
+    from: 'two as agreed', to: 'two, changed', reason: 'r', landsAs: 'not-started', ...over } });
+  const stale = seed(card({ from: 'old text' }));
+  const no = await cardPost(stale, { verb: 'start' });
+  assert.equal(no.status, 409);
+  assert.deepEqual(await no.json(), { error: 'R-po-2 changed since: read it again', code: 'STALE' });
+  assert.equal(store.listMessages(stale.threadId).at(-1).blocks[0].state, 'proposed');
+  const s = seed(card());
+  assert.equal((await cardPost(s, { verb: 'save' })).status, 400, 'a route verb on a req-change card');
+  const ok = await cardPost(s, { verb: 'start' });
+  assert.equal(ok.status, 200, await ok.clone().text());
+  const body = await ok.json();
+  assert.equal(body.block.state, 'applied');
+  assert.deepEqual(body.block.card.result.changes, [{ id: 'R-po-2', case: 'not-started', run: 2 }]);
+  assert.equal(JSON.parse(getDb().prepare('SELECT outline FROM shape_features WHERE id = ?').get(f.id).outline).agreed[1].text, 'two, changed');
+  assert.equal((await cardPost(s, { verb: 'start' })).status, 409, 'not proposed any more');
+  const d = seed(card({ from: 'two, changed', to: 'three' }));
+  assert.equal((await (await cardPost(d, { verb: 'not-now' })).json()).block.state, 'declined');
 });
 
 test('one turn\'s set_away_now and change_setting both land: the Away switch shares the settings write queue (refine cycle 2)', async () => {

@@ -21,7 +21,7 @@ page's running shell, or starts one.
 | A run with No project | its own `work/` folder while it runs or is paused; once it ends there is none (its files are its Artifacts). |
 | A chat | the chat's newest worktree of its project if it still exists, else the project's own folder. A chat with No project, or one scoped to a workspace, has no terminal (its icons are disabled with the reason), and neither has a chat before its first message. |
 | A project page | your own checkout of the project (the folder you registered), on whatever is checked out there. |
-| Any other page | no new terminal: the panel keeps the tabs of the last run, chat or project you looked at. |
+| Any other page | no terminal and no panel: the Runs list, Workflows, Settings and the like have no tool icons, so the panel steps aside there. Its tabs and shells keep running, and it opens again as you left it when you go back to that run, chat or project. |
 
 ### The tool panel
 

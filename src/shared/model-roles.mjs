@@ -17,6 +17,16 @@ export const ROLE_HARNESSES = MODEL_ENGINE_NAMES;
 // to this machine's sources (src/core/model-roles.mjs mapUpstreamModel), checked on Claude's or Codex's effort scale.
 export const TEAM_ROLE_HARNESSES = Object.freeze(['claude', 'codex']);
 
+// "Let <tool> decide" (#1450): a role stored as exactly this object runs with no model flag, so the harness picks.
+// Distinct from an empty role, which resolves to Worca's own default on Claude Code and Codex (src/core/role-defaults.mjs).
+// A flag object, not a sentinel model id: readers that treat `.model` as a catalog id see "no model" here.
+export const CLI_DECIDES = Object.freeze({ cliDecides: true });
+export const isCliDecides = (pick) => !!pick && typeof pick === 'object' && pick.cliDecides === true;
+/** The picker / tile label of a cliDecides role: "Let Claude Code decide". */
+export function decidesLabel(engineLabel) { return `Let ${engineLabel} decide`; }
+/** What an empty role shows on a harness Worca cannot know the model of. */
+export function toolDecidesText(engineLabel) { return `${engineLabel} decides: Worca can't know which model runs`; }
+
 // D4 judgement steps by agent key; "Bug Root Cause" ships only in plugins, so it is matched by its display name.
 const DEEP_STEP_KEYS = new Set(['planner', 'planReviewer', 'refiner', 'reviewer', 'deckReviewer']);
 const DEEP_STEP_NAMES = new Set(['plan', 'plan review', 'refine plan', 'review implementation', 'bug root cause', 'deck review']);

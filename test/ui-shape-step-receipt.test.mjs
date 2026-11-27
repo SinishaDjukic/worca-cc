@@ -11,11 +11,13 @@ const OUTLINE = { why: 'too big', slices: [
   { id: 's3', title: 'Three', goal: 'g3', estimate: 'S', acceptance: [], dependsOn: [], inScope: [], outOfScope: [] },
 ] };
 const SPLIT = { id: 'o1', kind: 'plan', plan: { round: 1, revisable: true, outline: OUTLINE } };
+const SPLIT_SR = { id: 'o1', kind: 'plan', plan: { round: 1, revisable: true, outline: OUTLINE, smallRuns: true, challenge: { roles: [], challenger: true, rounds: 1, open: 2 } } };
 const REQUIREMENTS = { id: 'q1', kind: 'plan', plan: { round: 1, revisable: true, criteria: { ok: true, passed: 8, total: 8, items: [], criteria: [] }, decisions: [] } };
 const REQ_ERROR = { id: 'q2', kind: 'plan', plan: { round: 1, revisable: true, error: { message: 'boom' } } };
 const GATE = { id: 'g1', kind: 'gate', issues: [] };
 const RECOVERY = { id: 'r1', kind: 'recovery', recovery: { cls: 'auth', options: [{ id: 'retry' }, { id: 'pause' }] } };
 const CLARIFY = { id: 'c1', kind: 'questions', questions: [{ id: 'a', question: 'Where?' }, { id: 'b', question: 'Who?' }] };
+const CARE = { id: 'care-1', kind: 'care', care: { pick: { position: 'thorough', reason: 'r' } } };
 const TWO = { answers: [{ id: 'a', question: 'Where?', choice: 'Chat' }, { id: 'b', question: 'Who?', choice: 'Admins' }] };
 
 const ROWS = [
@@ -31,12 +33,17 @@ const ROWS = [
   ['outline of 3, approve', SPLIT, { decision: 'approve', approveEach: false }, {}, 'Split into 3 runs'],
   ['outline of 3, approve after a merge', SPLIT, { decision: 'approve', edits: [{ op: 'merge', id: 's1' }] }, {}, 'Split into 2 runs'],
   ['outline, flat', SPLIT, { decision: 'flat' }, {}, 'Not split · planned as one run'],
+  ['small runs Split, approve keeping 2 objections', SPLIT_SR, { decision: 'approve', approveEach: false, openObjections: 'kept' }, {}, 'Runs approved · 2 objections kept'],
+  ['small runs Split, approve', SPLIT_SR, { decision: 'approve', approveEach: false }, {}, 'Runs approved'],
+  ['small runs Split, revise', SPLIT_SR, { decision: 'revise', feedback: 'x' }, {}, 'Changes asked · Runs'],
   ['gate, another', GATE, { decision: 'another' }, {}, 'Another cycle started'],
   ['gate, continue', GATE, { decision: 'continue' }, {}, 'Accepted as is'],
   ['recovery, retry', RECOVERY, { decision: 'retry' }, {}, 'Retried'],
   ['recovery, pause', RECOVERY, { decision: 'pause' }, {}, 'Paused'],
   ['recovery, abort', RECOVERY, { decision: 'abort' }, {}, 'Aborted'],
   ['clarify, shaping, 2 of 2', CLARIFY, TWO, { shaping: true }, 'Clarify · 2 answers'],
+  ['care below the pick (B2)', CARE, { care: { position: 'lean' } }, {}, 'Care: Lean · your choice · Worca recommended Thorough'],
+  ['care at the pick (B2)', CARE, { care: { position: 'thorough' } }, {}, "Care: Thorough · Worca's pick"],
 ];
 
 for (const [name, pq, payload, opts, want] of ROWS) {
@@ -138,4 +145,28 @@ test('the gate card without roleReviews keeps its issue list', async () => {
   const panel = await gateCard({ id: 'gate-n_review-3', kind: 'gate', nodeId: 'n_review', issues: GATE_ISSUES });
   assert.equal(panel.querySelectorAll('ul.issues li').length, 1);
   assert.equal(panel.querySelectorAll('.plan-roles').length, 0);
+});
+
+test('C1: the Prototype receipts: the remark that changed a requirement, the confirm, the skip; nothing for the rest', () => {
+  const pq = (prototype) => ({ id: 'proto-1', kind: 'prototype', prototype });
+  const remark = { text: 'R-ux-2 should show dark mode', id: 'R-ux-2', proposed: { text: 'a', example: 'b', was: 'c' } };
+  assert.equal(stepReceipt(pq({ moment: 'remark', remark }), { decision: 'change' }), 'Your remark: “R-ux-2 should show dark mode” → R-ux-2 updated');
+  assert.equal(stepReceipt(pq({ moment: 'remark', remark }), { decision: 'change' }, { register: 'plain' }), 'Your remark: “R-ux-2 should show dark mode” → the requirement is updated');
+  assert.equal(stepReceipt(pq({ moment: 'built', screens: [{}, {}], remarks: 1 }), { decision: 'confirm' }), 'Prototype confirmed · 2 screens · 1 remark');
+  assert.equal(stepReceipt(pq({ moment: 'built', screens: [{}], remarks: 0 }), { decision: 'confirm' }), 'Prototype confirmed · 1 screen');
+  assert.equal(stepReceipt(pq({ moment: 'offered', position: 'lean' }), { decision: 'skip' }), 'Prototype skipped · Lean builds it only when asked');
+  assert.equal(stepReceipt(pq({ moment: 'offered', position: 'balanced' }), { decision: 'skip' }), 'Prototype skipped by you');
+  assert.equal(stepReceipt(pq({ moment: 'failed' }), { decision: 'skip' }), 'Prototype skipped by you');
+  for (const [m, d] of [['offered', 'build'], ['built', 'remark'], ['remark', 'keep'], ['failed', 'build']]) assert.equal(stepReceipt(pq({ moment: m, remark }), { decision: d }), null, `${m} ${d}`);
+});
+
+test('C3: a stop\'s receipt is its answered line (stopDoneText), and the log reads the audit line back the same', async () => {
+  const { gateStop, stopDoneText } = await import('../src/shared/shape/run-stops.mjs');
+  const { buildDecisionLog } = await import('../src/shared/shape/feature-log.mjs');
+  const stop = gateStop({ run: 8, issues: [{ severity: 'major', title: 'x' }], fixCycles: 3 });
+  const pq = { id: 'gate-w9-3', kind: 'gate', issues: [], stop };
+  assert.equal(stepReceipt(pq, { decision: 'another' }), 'Run 8: another cycle · decided by you');
+  assert.equal(stepReceipt(pq, { decision: 'another' }), stopDoneText(stop, { decision: 'another' }));
+  const log = buildDecisionLog({ sliced: true, runs: [{ index: 8, events: [stepReceipt(pq, { decision: 'continue' })] }] });
+  assert.deepEqual(log.map((r) => [r.run, r.text]), [[8, 'accepted as is · decided by you']]);
 });

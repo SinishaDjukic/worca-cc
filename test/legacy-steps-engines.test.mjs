@@ -69,7 +69,8 @@ test('a per-role pick the run engine cannot run is dropped, never misapplied', a
   assert.equal(opencode.n_impl.model, undefined, 'a Claude-only pick is dropped on opencode, falling to the run layer');
 
   const claude = (await resolveGraph(PROJECT, GRAPH_DEFAULT_WORKFLOW.id, REGISTRY, '/nonexistent-agents-dir')).nodes;
-  assert.equal(claude.n_plan.model, undefined, 'an opencode-only pick is dropped on Claude Code');
+  assert.notEqual(claude.n_plan.model, 'opencode/big-pickle', 'an opencode-only pick is dropped on Claude Code');
+  assert.deepEqual([claude.n_plan.model, claude.n_plan.modelSource], ['claude-opus-5-5', 'worca-default'], 'the emptied role then takes Worca\'s default (#1450), never the foreign pick');
   assert.equal(claude.n_impl.model, 'claude-haiku-4-5');
 
   const steps = await resolveStepModels(PROJECT, undefined, 'opencode');

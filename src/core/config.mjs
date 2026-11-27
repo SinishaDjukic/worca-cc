@@ -25,6 +25,7 @@ import { ROLE_KEY_RE } from '../shared/graph/role-review-step.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
 import { copilotBlockHost } from './ghe-host.mjs';
+import { resolveSettingsSecretSync, settingsSecretField, settingsVaultState } from './secrets/settings-resolver.mjs';
 import { providerConfig, listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, hideBuiltinEngines, readSettings, memoryDefragModel, setMemoryDefragModel, modelRolesSetting, assertDesignModelsInput } from './settings.mjs';
 /** Whether the developer stored the hide-built-ins flag (a team default applies only when not). */
 const readSettingsHideStored = () => { const s = readSettings(); return typeof s.hideBuiltinModels === 'boolean' || s.hideBuiltinModelsChosen === true; };
@@ -36,7 +37,7 @@ import { PREDEFINED_LIST_PRICES, CODEX_PRICES, codexCachedRate } from './list-pr
 import { validateNightPatch } from './night/config.mjs';
 import { normalizeProjectActions, EMPTY_PROJECT_ACTIONS } from './actions/model.mjs';
 import { setCascadeModelOwnerReader, resolveSetting } from './settings-cascade.mjs';
-import { resolveRoleModel, roleOf, projectRoles, setRoleModelOwnerReader } from './model-roles.mjs';
+import { resolveRolePick, roleOf, projectRoles, setRoleModelOwnerReader, setRoleAuthReader } from './model-roles.mjs';
 
 /**
  * Recompute the agent step list FRESH from the layered registry (repo agents/ +
@@ -97,6 +98,7 @@ export { EFFORTS };
 export const PREDEFINED_MODELS = [
   { id: 'claude-opus-5-5',        label: 'Opus 5.5',        efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-5',          label: 'Opus 5',          efforts: ['medium', 'high', 'xhigh', 'max'] },
+  { id: 'claude-fable-5-2',       label: 'Fable 5.2',       efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-fable-5-1',       label: 'Fable 5.1 (1M)',  efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-8',        label: 'Opus 4.8',        efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-8[1m]',    label: 'Opus 4.8 (1M)',   efforts: ['medium', 'high', 'xhigh', 'max'] },
@@ -290,7 +292,7 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
   const bridgeShape = (m) => {
     if (!m.upstream) return {};
     const p = m.upstream.provider;
-    const key = `${p}\n${m.upstream.apiKey || ''}\n${m.upstream.baseUrl || ''}`;
+    const key = `${p}\n${m.upstream.apiKey || ''}\n${m.upstream.baseUrl || ''}\n${settingsVaultState().generation}`;
     if (!readiness.has(key)) readiness.set(key, providerReadiness(m.upstream));
     const r = readiness.get(key);
     const host = p === 'copilot' ? copilotTenant() : null;
@@ -658,6 +660,11 @@ export async function listModels(projectDir) {
   return composeCatalog(customModels, { projectDir });
 }
 
+/** A vault reference in a model's env, resolved as that env key's settings field ('' when it does not resolve). */
+function resolveModelEnvRef(value, key) {
+  try { return resolveSettingsSecretSync(value, settingsSecretField('models', 'env', key)); } catch { return ''; }
+}
+
 /**
  * The routing env for a model id (design §4.4, §9.3), or undefined when none
  * is configured. The user's GLOBAL entry wins; otherwise the winning enabled
@@ -701,7 +708,7 @@ export function resolveModelEnv(modelId, { tag } = {}) {
       throw err;
     }
     const base = bridged.source === 'global' && entry ? entry : null;
-    const { env: extra, dropped } = prepareModelEnv(base && base.env ? base.env : {});
+    const { env: extra, dropped } = prepareModelEnv(base && base.env ? base.env : {}, process.env, { resolveRef: resolveModelEnvRef });
     for (const k of dropped) {
       console.warn(`[worca] model ${JSON.stringify(bridged.id)}: dropping env key ${JSON.stringify(k)} (reserved or unresolvable \${VAR} ref)`);
     }
@@ -758,7 +765,10 @@ export function resolveModelEnv(modelId, { tag } = {}) {
     }
   }
   if (!rawEnv) return undefined;
-  const { env, dropped } = prepareModelEnv(rawEnv);
+  // Only the user's own global entry resolves a vault reference: a plugin or team-policy env naming one is
+  // dropped, so another layer can never read the person's vaulted keys (confused deputy).
+  const fromUser = !!(entry && rawEnv === entry.env);
+  const { env, dropped } = prepareModelEnv(rawEnv, process.env, fromUser ? { resolveRef: resolveModelEnvRef } : {});
   for (const k of dropped) {
     console.warn(`[worca] model ${who}: dropping env key ${JSON.stringify(k)} (reserved or unresolvable \${VAR} ref)`);
   }
@@ -777,7 +787,7 @@ export function resolveModelEnv(modelId, { tag } = {}) {
  *  id a Codex or Copilot built-in also has. Synchronous; never throws. */
 function catalogEngineRows(projectDir = null) {
   // `harnesses`: every harness the entry's connection reaches (src/shared/connections.mjs); `engine` the first.
-  const row = (m, engine = engineTag(m)) => { const connection = connectionOf({ ...m, engine }); return { id: m.id, engine, connection, harnesses: harnessesOf({ connection }) }; };
+  const row = (m, engine = engineTag(m)) => { const connection = connectionOf({ ...m, engine }); return { id: m.id, engine, connection, harnesses: harnessesOf({ connection }), label: m.label || m.name || m.id }; };
   return [
     ...listGlobalModels().map((m) => row(m)),
     ...listPluginModels().map((m) => row(m)),
@@ -794,6 +804,11 @@ function catalogRowOf(modelId, projectDir = null) {
   if (!id) return null;
   const lc = id.toLowerCase();
   return catalogEngineRows(projectDir).find((r) => r.id.toLowerCase() === lc) || null;
+}
+
+/** A catalog model's display label (synchronous; the id itself for an unknown id). */
+export function modelLabelOf(modelId, { projectDir = null } = {}) {
+  return catalogRowOf(modelId, projectDir)?.label || String(modelId ?? '');
 }
 
 /** Every harness that can run `modelId`, or null for an id no catalog layer knows (a bare Claude Code id or
@@ -831,6 +846,8 @@ export function engineOfModel(modelId, { projectDir = null } = {}) {
 setCascadeModelOwnerReader((id, { projectDir = null } = {}) => enginesOfModel(id, { projectDir }));
 // Roles check their model with the same reader (a role on a model a failed import never created falls back, D3).
 setRoleModelOwnerReader((id) => enginesOfModel(id));
+// #1450 D-n: helpers read Claude's sign-in synchronously from the role probe's memo; cold → 'unknown' → Worca default.
+setRoleAuthReader(() => roleAuthMemo?.state ?? 'unknown');
 
 /** Why a run-level model cannot run on `engine` (no harness of its connection is that engine), else null. */
 export function foreignRunModel(model, engine, projectDir = null) {
@@ -950,7 +967,9 @@ export async function resolveStepModels(projectDir, fallbackModel, engine = 'cla
     const own = cfg.steps[key] || {};
     const sel = own.model || own.effort ? own : (slots[key] || {});
     // Model roles (D3, D15): after the slot's own value and the run's model, before "no --model"; team roles included.
-    const role = !sel.model && !sel.effort && !fallback ? resolveRoleModel(eng, roleOf(`steps.${key}`, { name: label }), { roles }) : null;
+    // #1450: an empty role resolves to Worca's default (filled like a role); "Let <tool> decide" leaves it unset.
+    const pick = !sel.model && !sel.effort && !fallback ? resolveRolePick(eng, roleOf(`steps.${key}`, { name: label }), { roles }) : null;
+    const role = pick && pick.kind !== 'cli-decides' ? pick : null;
     const roleModel = role ? modelForEngine(role.model, eng, { projectDir }) : undefined;
     out[key] = { model: modelForEngine(sel.model || undefined, eng, { projectDir }) || fallback || roleModel || undefined, effort: sel.effort || (roleModel ? role.effort : undefined) };
   }
@@ -1642,17 +1661,45 @@ export function writeActionsMeta(key, patch) {
   writeExtraKey(key, ACTIONS_META_KEY, { ...readActionsMeta(key), ...patch });
 }
 
-function writeExtraKey(key, name, value) {
+/** Read-modify-write ONE extra key in a single transaction: `mutate(current)` returns the new value. */
+function mutateExtraKey(key, name, mutate) {
+  let next;
   tx(() => {
     const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
     const extra = row ? parseJson(row.extra, {}) : {};
-    extra[name] = value;
+    next = mutate(extra[name]);
+    extra[name] = next;
     prepare(`
       INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
       VALUES (?, '{}', '[]', NULL, ?)
       ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
     `).run(key, JSON.stringify(extra));
   });
+  return next;
+}
+function writeExtraKey(key, name, value) { mutateExtraKey(key, name, () => value); }
+
+// ── Execution environment (project_config.extra.execEnvProject) ─────────────
+// The project's execution-environment record (src/core/exec-env/project-env.mjs; plans/e2b-execution-design.md §18):
+// per-backend project fields (e.g. { e2b: { template } }), the environment spec, and the last SUCCESSFUL build per
+// backend. Lives in worca's DB, never in the repo. Same KEY-taking contract as the team-metrics pair.
+const EXEC_ENV_KEY = 'execEnvProject';
+const emptyExecEnv = () => ({ config: {}, spec: null, builds: {} });
+function execEnvOf(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return emptyExecEnv();
+  const obj = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : {});
+  return { config: obj(v.config), spec: v.spec && typeof v.spec === 'object' ? v.spec : null, builds: obj(v.builds) };
+}
+export function readProjectExecEnv(key) {
+  assertProjectKey(key);
+  const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+  return execEnvOf((row ? parseJson(row.extra, {}) : {})[EXEC_ENV_KEY]);
+}
+/** Read-modify-write in ONE transaction: a template Save, a spec change and a finished build can race.
+ *  `mutate(record)` edits the record in place; it must never call another config writer (tx is not re-entrant). */
+export function updateProjectExecEnv(key, mutate) {
+  assertProjectKey(key);
+  return mutateExtraKey(key, EXEC_ENV_KEY, (cur) => { const next = execEnvOf(cur); mutate(next); return next; });
 }
 
 // ── Team-policy preferences (project_config.extra.teamPolicy) ──────────────

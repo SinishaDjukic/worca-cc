@@ -3,6 +3,8 @@
 import { DIRECTION_MAX_CHARS } from '../../../src/core/directions.mjs';
 import { engineLocks } from '../../../src/core/engines/readiness.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
+import { readPipelineForResume } from '../../../src/core/artifacts.mjs';
+import { checkConfirmModel } from '../../../src/core/model-guard.mjs';
 import { readNightDecisions } from '../../../src/core/night/store.mjs';
 import { PLAN_ASK_KIND, planFileOf } from '../../../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../../../src/core/shape/save.mjs';
@@ -20,17 +22,21 @@ app.post('/api/run', rerunOfGuard, startRunHandler);
 // POST /api/answer  -> resolve a pending question for a run
 // body: { runId, id, payload }
 // ---------------------------------------------------------------------------
-app.post('/api/answer', (req, res) => {
+app.post('/api/answer', async (req, res) => {
   const { runId, id, payload } = req.body || {};
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
   if (!id) return badRequest(res, 'question id is required');
   try {
-    answerRun(runId, id, payload, actorOf(req));
-    res.json({ ok: true });
+    const out = await answerRun(runId, id, payload, actorOf(req));
+    res.json({ ok: true, ...(out && out.held ? { held: true } : {}) });   // small runs C3: a stop's answer waits its turn
   } catch (err) {
     // Gate 3 (ask forms, spec §5): the answer was validated and refused, so the
     // question stays OPEN and the client gets the field errors to mark up. Every
     // other failure keeps its 500.
+    if (err && err.code === 'STOP_HELD') return res.status(409).json({ error: err.message, code: 'STOP_HELD' });
+    if (err && err.code === 'STOP_ANSWERED') return res.status(409).json({ error: err.message, code: 'STOP_ANSWERED' });   // one stop, one answer
+    if (err && err.code === 'STALE') return res.status(409).json({ error: err.message, code: 'STALE' });   // a stop that changed under the answer
+    if (err && err.code === 'TAKE_IN_REFUSED') return res.status(409).json({ error: err.message, code: 'TAKE_IN_REFUSED' });   // slice 3: the finished work could not be taken in
     if (err && err.code === 'INVALID_ANSWER') {
       return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
     }
@@ -39,27 +45,32 @@ app.post('/api/answer', (req, res) => {
 });
 
 // POST /api/runs/:id/answer  -> answer the run's plan approval stop (shape-it-first D2/D10)
-// body: { id, decision: 'approve'|'revise'|'stop', feedback?, source? }.
-app.post('/api/runs/:id/answer', (req, res) => {
+// body: { id, decision: 'approve'|'revise'|'stop', feedback?, source?, edits?, approveEach?, openObjections? }.
+app.post('/api/runs/:id/answer', async (req, res) => {
   const runId = req.params.id;
   const entry = runs.get(runId);
   if (!entry) return res.status(404).json({ error: 'unknown run' });
-  const { id, decision, feedback, perspectives, edits, approveEach, agreedSeqs, decisions, conflicts, source } = req.body || {};
+  const { id, decision, feedback, perspectives, edits, approveEach, agreedSeqs, decisions, conflicts, source, openObjections } = req.body || {};
   const pq = entry.pendingQuestion;
   if (!pq || pq.kind !== PLAN_ASK_KIND || !id || pq.id !== id) {
     return res.status(409).json({ error: 'no plan approval with that id is waiting on this run' });
   }
   try {
-    answerRun(runId, id, { decision, ...(feedback !== undefined ? { feedback } : {}),
+    const out = await answerRun(runId, id, { decision, ...(feedback !== undefined ? { feedback } : {}),
       ...(perspectives !== undefined ? { perspectives } : {}),
       ...(edits !== undefined ? { edits } : {}),
       ...(approveEach !== undefined ? { approveEach } : {}),
+      ...(openObjections !== undefined ? { openObjections } : {}),     // small runs B4: the Split kept its open objections
       ...(agreedSeqs !== undefined ? { agreedSeqs } : {}),
       ...(decisions !== undefined ? { decisions } : {}),
       ...(conflicts !== undefined ? { conflicts } : {}),
       ...(source !== undefined ? { source } : {}) }, actorOf(req));
-    res.json({ ok: true });
+    res.json({ ok: true, ...(out && out.held ? { held: true } : {}) });
   } catch (err) {
+    if (err && err.code === 'STOP_HELD') return res.status(409).json({ error: err.message, code: 'STOP_HELD' });
+    if (err && err.code === 'STOP_ANSWERED') return res.status(409).json({ error: err.message, code: 'STOP_ANSWERED' });   // one stop, one answer
+    if (err && err.code === 'STALE') return res.status(409).json({ error: err.message, code: 'STALE' });   // a stop that changed under the answer
+    if (err && err.code === 'TAKE_IN_REFUSED') return res.status(409).json({ error: err.message, code: 'TAKE_IN_REFUSED' });   // slice 3: the finished work could not be taken in
     if (err && err.code === 'INVALID_ANSWER') {
       return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
     }
@@ -176,6 +187,7 @@ app.post('/api/pause', (req, res) => {
   } catch (err) {
     // `status`: what the run is instead, so a tab whose click lost to another pause keeps its Pausing… quietly.
     if (err?.code === 'CANNOT_PAUSE') return res.status(400).json({ error: err.message, code: 'CANNOT_PAUSE', status: runs.get(runId)?.status || null });
+    if (err?.code === 'TEST_TRY') return res.status(409).json({ error: err.message });
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -187,6 +199,11 @@ app.post('/api/pause', (req, res) => {
 // ---------------------------------------------------------------------------
 app.post('/api/resume', async (req, res) => {
   try {
+    // #1450 "Continue on <model>": refused before anything is written when the run is not waiting on that model.
+    if (req.body?.confirmModel != null) {
+      const refusal = checkConfirmModel(readPipelineForResume(String(req.body?.pipelineId || ''))?.resumePoint ?? null, req.body);
+      if (refusal) return res.status(refusal.status).json(refusal.body);
+    }
     const out = await resumeRun(req.body?.pipelineId, {
       ignoreCostCap: req.body?.ignoreCostCap === true,
       mock: !!(req.body && req.body.mock),
@@ -199,6 +216,7 @@ app.post('/api/resume', async (req, res) => {
       allowUnguardedEngine: req.body?.allowUnguardedEngine,
       model: req.body?.model,
       effort: req.body?.effort,
+      confirmModel: typeof req.body?.confirmModel === 'string' ? req.body.confirmModel : null,   // #1450 "Continue on <model>"
     });
     res.json(out);
   } catch (err) {

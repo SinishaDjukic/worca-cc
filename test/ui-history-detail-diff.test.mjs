@@ -815,3 +815,119 @@ ${bulk.join('\n')}
   const plain = [...late.window.document.querySelectorAll('#hist-detail .hd-dl-src')][0];
   assert.equal(plain.children.length, 0, 'the ineligible hunk stays plain');
 });
+
+// ---------------------------------------------------------------------------
+// Diff tab — the file head's open-in-editor icon (diff-open-editor.mjs)
+// ---------------------------------------------------------------------------
+
+const OPEN_PATCH = `diff --git a/src/a.js b/src/a.js
+--- a/src/a.js
++++ b/src/a.js
+@@ -10,3 +12,3 @@
+ keep
+-old
++new
+diff --git a/src/b.js b/src/b.js
+--- a/src/b.js
++++ b/src/b.js
+@@ -1 +3 @@
+-x
++y
+`;
+const editorModel = (member = {}, over = {}) => ({ enabled: true, finished: true, workspace: false, checkoutBlocked: null,
+  members: [{ projectKey: KEY, state: 'checked-out', builtins: [{ key: 'editor', label: 'Cursor' }], ...member }], ...over });
+const twoFiles = () => diffResults({ summary: { filesChanged: 2, linesAdded: 2, linesRemoved: 2 },
+  results: { changedFiles: [{ path: 'src/a.js', status: 'M', added: 1, removed: 1 }, { path: 'src/b.js', status: 'M', added: 1, removed: 1 }] } });
+
+/** Boot the Diff tab with an Actions model and recorded POSTs; `open` answers the open route. */
+async function bootOpen({ model, detail = diffDetail(twoFiles()), open = () => ok({ ok: true }), actions = null } = {}) {
+  const posts = [];
+  const ctx = await bootDetail({ detail, arms: (url, opts) => {
+    if (url.endsWith('/diff')) return Promise.resolve({ ok: true, status: 200, text: async () => OPEN_PATCH });
+    if (url.startsWith(`/api/runs/${ROW.id}/actions?`)) return actions ? actions() : ok(model);
+    if (url.startsWith(`/api/runs/${ROW.id}/checkout?`) && opts.method === 'POST') { posts.push({ url, body: JSON.parse(opts.body) }); return ok({ members: [] }); }
+    if (url.startsWith(`/api/runs/${ROW.id}/open-in-editor?`)) { posts.push({ url, body: JSON.parse(opts.body) }); return open(); }
+    return null;
+  } });
+  await openDetail(ctx);
+  await settle(ctx.window, 6);
+  return { ctx, doc: ctx.window.document, posts };
+}
+const openBtn = (doc) => paneOf(doc).querySelector('.hd-diff-pane-head .hd-diff-head-end > .hd-diff-open');
+
+test("file head: a checked-out run's file opens at its first changed line", async () => {
+  const { ctx, doc, posts } = await bootOpen({ model: editorModel() });
+  const b = openBtn(doc);
+  assert.ok(b, 'the icon sits in the head end, after the counts');
+  assert.ok(b.previousElementSibling, 'the counts come first');
+  assert.equal(b.title, 'Open a.js in Cursor');
+  assert.equal(b.getAttribute('aria-label'), 'Open a.js in Cursor');
+  assert.doesNotMatch(paneOf(doc).querySelector('.hd-diff-pane-head').textContent, /Cursor/, 'the editor name is only in the tooltip');
+  click(ctx.window, b);
+  await settle(ctx.window, 4);
+  assert.deepEqual(posts.map((p) => [p.url.split('?')[0], p.body]), [[`/api/runs/${ROW.id}/open-in-editor`, { file: 'src/a.js', line: 12 }]]);
+  assert.match(posts[0].url, new RegExp(`projectKey=${KEY}`));
+});
+
+test('file head: not checked out → Check out, then open (one click)', async () => {
+  const { ctx, doc, posts } = await bootOpen({ model: editorModel({ state: 'not-checked-out' }) });
+  const b = openBtn(doc);
+  assert.equal(b.title, 'Check out this run, then open a.js in Cursor');
+  click(ctx.window, b);
+  await settle(ctx.window, 6);
+  assert.deepEqual(posts.map((p) => [p.url.split('?')[0], p.body]), [
+    [`/api/runs/${ROW.id}/checkout`, { members: [KEY] }],
+    [`/api/runs/${ROW.id}/open-in-editor`, { file: 'src/a.js', line: 12 }],
+  ]);
+  assert.equal(doc.querySelector('dialog[open]'), null, 'no confirm dialog');
+});
+
+test('file head: a held branch → Use that folder, then open', async () => {
+  const { ctx, doc, posts } = await bootOpen({ model: editorModel({ state: 'not-checked-out', heldBy: '/me/clone' }) });
+  const b = openBtn(doc);
+  assert.equal(b.title, 'Use the folder that has this branch, then open a.js in Cursor');
+  click(ctx.window, b);
+  await settle(ctx.window, 6);
+  assert.deepEqual(posts.map((p) => p.body), [{ members: [KEY], useExisting: true }, { file: 'src/a.js', line: 12 }]);
+});
+
+test('file head: no icon for a deleted file / an archived run / a blocked checkout', async () => {
+  const deleted = diffResults({ summary: { filesChanged: 0, filesDeleted: 1 },
+    results: { changedFiles: [{ path: 'src/a.js', status: 'D', added: 0, removed: 2 }] } });
+  const cases = [
+    ['deleted', { model: editorModel(), detail: diffDetail(deleted) }],
+    ['archived', { model: editorModel(), detail: { ...diffDetail(twoFiles()), state: { ...DETAIL.state, archivedAt: '2026-08-18T00:00:00Z' } } }],
+    ['blocked', { model: editorModel({ state: 'not-checked-out' }, { checkoutBlocked: 'git is not installed' }) }],
+    ['no editor', { model: editorModel({ builtins: [{ key: 'terminal', label: 'Terminal' }] }) }],
+    ['actions off', { model: editorModel({}, { enabled: false }) }],
+  ];
+  for (const [name, opts] of cases) {
+    const { doc } = await bootOpen(opts);
+    assert.ok(paneOf(doc).querySelector('.hd-diff-pane-head'), `${name}: the head painted`);
+    assert.equal(openBtn(doc), null, name);
+  }
+});
+
+test("file head: a launch failure shows the route's error", async () => {
+  const { ctx, doc } = await bootOpen({ model: editorModel(), open: () => fail(409, { error: 'Editor did not open: boom', code: 'LAUNCH_FAILED' }) });
+  click(ctx.window, openBtn(doc));
+  await settle(ctx.window, 4);
+  const err = paneOf(doc).querySelector('.hd-diff-pane-head + .field-error[role="alert"]');
+  assert.ok(err, 'the error sits directly under the pane head');
+  assert.equal(err.querySelector('.fe-text').textContent, 'Editor did not open: boom');
+});
+
+test('file head: switching files before the model answers puts no icon on the new file… only its own', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { ctx, doc } = await bootOpen({ model: editorModel(), actions: () => gate.then(() => ok(editorModel())) });
+  assert.equal(openBtn(doc), null, 'still waiting for the model');
+  click(ctx.window, fileOf(doc, 'src/b.js'));
+  await settle(ctx.window, 4);
+  release();
+  await settle(ctx.window, 6);
+  const icons = paneOf(doc).querySelectorAll('.hd-diff-open');
+  assert.equal(icons.length, 1);
+  assert.equal(icons[0].title, 'Open b.js in Cursor');
+  assert.equal(paneOf(doc).querySelector('.hd-diff-path').textContent, 'src/b.js');
+});

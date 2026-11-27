@@ -1679,6 +1679,29 @@ test('networkAnswered: only a working direct connection, no proxy in the environ
   assert.equal(networkAnswered(a, null), false, 'no check, no answer');
 });
 
+test('#1450: empty Claude Code roles start on Worca\'s defaults, a saved role or "Let Claude Code decide" is kept, Review says so', () => {
+  const ROLE_DEFAULTS = { claude: { deep: { model: 'claude-opus-5-5' }, everyday: { model: 'claude-sonnet-5-5' }, quick: { model: 'claude-haiku-5-5' } } };
+  const s = saved({ settings: { ...SETTINGS, roleDefaults: ROLE_DEFAULTS, claudeAuth: 'signed-in' } });
+  const first = initialAnswers({ saved: s, entry: 'first' });
+  assert.deepEqual(first.models.modelRoles.claude, { deep: { model: 'claude-opus-5-5' }, everyday: { model: 'claude-sonnet-5-5' }, quick: { model: 'claude-haiku-5-5' } });
+  assert.deepEqual(buildApplyBody(s, first).models.modelRoles.claude, first.models.modelRoles.claude, 'the defaults ride the apply body');
+  const lines = diffRows(s, first).find((r) => r.group === 'models').lines;
+  assert.deepEqual(lines.slice(0, 3).map((l) => [l.role, l.model, !!l.defaulted]), [
+    ['Deep thinking', 'claude-opus-5-5', true], ['Everyday tasks', 'claude-sonnet-5-5', true], ['Quick jobs', 'claude-haiku-5-5', true]]);
+  assert.match(diffRows(s, first).find((r) => r.group === 'models').value, /^Deep thinking · Worca’s default \(Opus 5\.5\)/);
+
+  const mine = saved({ settings: { ...SETTINGS, roleDefaults: ROLE_DEFAULTS, modelRoles: { claude: { deep: { model: 'claude-haiku-5-5', effort: 'high' }, everyday: { cliDecides: true } } } } });
+  const rerun = initialAnswers({ saved: mine, entry: 'rerun' });
+  assert.deepEqual(rerun.models.modelRoles.claude.deep, { model: 'claude-haiku-5-5', effort: 'high' }, 'a saved role is never overwritten');
+  assert.deepEqual(rerun.models.modelRoles.claude.everyday, { cliDecides: true });
+  assert.deepEqual(rerun.models.modelRoles.claude.quick, { model: 'claude-haiku-5-5' }, 'only the empty one is filled');
+  const rerunLines = diffRows(mine, rerun).find((r) => r.group === 'models').lines;
+  assert.equal(rerunLines[1].fallback, 'Let Claude Code decide');
+
+  const out = initialAnswers({ saved: saved({ settings: { ...SETTINGS, roleDefaults: ROLE_DEFAULTS, claudeAuth: 'signed-out' } }), entry: 'first' });
+  assert.equal(out.models.modelRoles.claude, undefined, 'signed out: no Claude default is preselected');
+});
+
 // ── the ready screen and the level subtitle (Phase 8) ──
 const EARNED = { earned: true, held: 0, level: { index: 1, name: 'Curious', avatar: '/img/curious.png', hue: 235 }, missing: [],
   nextName: 'Runner', nextNeeds: ['Getting started steps 1 to 6', '3 real runs'] };
@@ -1793,5 +1816,110 @@ test('a re-run by a Runner shows no level line', async () => {
     assert.equal(h.$('.sa-ready-level'), null); assert.equal(h.$('.sa-ready-missing'), null); assert.equal(h.$('.sa-ready-next'), null);
     assert.deepEqual([...h.$('.confirm-actions').children].map((b) => b.textContent), ['Continue']);
     assert.equal(acks(h).length, 0);
+  } finally { h.close(); }
+});
+
+const NOTE = 'The corporate proxy login on this instance is managed by the operator. Worca shows its status only.';
+const PROXY_MANAGED = { ...PROXY_ON, sidecar: true, managed: true, managedNote: NOTE, upstream: 'proxy.acme.example:8080',
+  login: { domain: 'ACME', user: 'svc-worca', label: 'ACME\\svc-worca' }, line: 'ready: via proxy.acme.example:8080 (NTLMv2) as ACME\\svc-worca.' };
+
+test('Network with a login the operator manages: who is logged in and the state, no form, no Test needed', async () => {
+  const h = await open({ entry: 'fix', step: 'network', proxy: PROXY_MANAGED });
+  try {
+    const text = h.$('.sa-managed').textContent;
+    assert.match(text, /managed by the operator/);
+    assert.match(text, /Logged in as ACME\\svc-worca to proxy\.acme\.example:8080\./);
+    assert.match(text, /ready: via proxy\.acme\.example:8080/);
+    for (const f of ['network.networkProxy', 'network.login.domain', 'network.login.password']) assert.equal(h.field(f), undefined, f);
+    assert.equal(h.$('.sa-test'), null);
+    assert.equal(h.next().disabled, false, 'nothing to test: the operator owns the login');
+    assert.equal(nextGate('network', { network: { mode: 'proxy' } }, { saved: { proxy: PROXY_MANAGED } }).ok, true);
+  } finally { h.close(); }
+});
+
+test('Network with a managed login the proxy rejected: the line says the operator replaces the login file, not "log in again"', async () => {
+  const { stateLine } = await import('../src/core/proxy-credentials.mjs');
+  const line = stateLine({ state: 'needs-login', managed: true, login: { label: 'ACME\\svc-worca', rejected: { at: '2026-11-20T10:00:00.000Z' } } });
+  const h = await open({ entry: 'fix', step: 'network', proxy: { ...PROXY_MANAGED, state: 'needs-login', line } });
+  try {
+    const text = h.$('.sa-managed').textContent;
+    assert.match(text, /operator manages this login: they must replace the login file/);
+    assert.doesNotMatch(text, /Log in again|worca proxy login/);
+    assert.doesNotMatch(text, /Logged in as/, 'a rejected login is not shown as logged in');
+  } finally { h.close(); }
+});
+
+// ── Where agents run (How you work; docs/choose-a-setup.md) ──
+const DETECT_SANDBOXES = { checks: [...DETECT.checks, check('docker', 'ok'), check('e2b', 'no')] };
+const POSTURE_NATIVE = { where: 'native', whereLabel: 'Native install', rows: [] };
+const POSTURE_BOX = { where: 'hardened', whereLabel: 'Hardened box', rows: [
+  { id: 'broker', label: 'Credential broker', status: 'on', value: 'On', tone: 'ok', detail: 'The broker holds the model key. Worca and its agents hold none.' },
+  { id: 'network', label: 'Outbound network', status: 'unknown', value: 'Sidecar', tone: 'neutral', detail: 'Through the egress sidecar.' }] };
+
+test('Where agents run: Local and the Docker sandbox the check found; a pick is the default execution environment', async () => {
+  const h = await open({ entry: 'rerun', detect: DETECT_SANDBOXES, routes: { '/api/security/posture': reply(POSTURE_NATIVE) } });
+  try {
+    await h.goTo('work');
+    const pick = h.$('.sa-where-pick');
+    assert.deepEqual([...pick.querySelectorAll('button')].map((b) => b.dataset.value), ['local', 'docker'], 'no E2B: its check is no');
+    assert.equal(pick.querySelector('[aria-pressed="true"]').dataset.value, 'local');
+    assert.match(h.$('.sa-where-line').textContent, /not sandboxed/);
+    const link = h.$('.sa-where-guide a');
+    assert.equal(link.getAttribute('href'), 'https://github.com/worca-org/worca/blob/dev/docs/choose-a-setup.md');
+    assert.equal(link.target, '_blank');
+    await h.click(pick.querySelector('[data-value="docker"]'));
+    assert.match(h.$('.sa-where-line').textContent, /own container/);
+    await h.goTo('review');
+    assert.match(h.$('.sa-review tr[data-group="work"]').textContent, /agents in Local sandbox \(Docker\)/);
+    await h.click('.sa-next');
+    assert.equal(h.applies()[0].body.work.execEnv, 'docker');
+  } finally { h.close(); }
+});
+
+test('Where agents run: no sandbox found offers Local only and says how to get one; untouched, nothing is sent', async () => {
+  const h = await open({ entry: 'rerun' });
+  try {
+    await h.goTo('work');
+    assert.equal(h.$('.sa-where-pick'), null, 'one choice is a plain line, not a one-button control');
+    assert.match(h.$('.sa-where-line').textContent, /^Local · Agents run on this machine/);
+    assert.match(h.$('.sa-where-none').textContent, /Start Docker .* set an E2B key/);
+    assert.equal(buildApplyBody(saved(), initialAnswers({ saved: saved(), entry: 'rerun' })).work, undefined);
+  } finally { h.close(); }
+});
+
+test('Where agents run: a saved sandbox stays offered and Local clears it', async () => {
+  const h = await open({ entry: 'rerun', settings: { ...SETTINGS, execEnv: 'e2b' } });
+  try {
+    await h.goTo('work');
+    assert.equal(h.$('.sa-where-pick [aria-pressed="true"]').dataset.value, 'e2b');
+    await h.click(h.$('.sa-where-pick [data-value="local"]'));
+    await h.goTo('review'); await h.click('.sa-next');
+    assert.equal(h.applies()[0].body.work.execEnv, null);
+  } finally { h.close(); }
+});
+
+test('Where agents run in the hardened box: the posture instead of a choice', async () => {
+  const h = await open({ entry: 'rerun', detect: DETECT_SANDBOXES, routes: { '/api/security/posture': reply(POSTURE_BOX) } });
+  try {
+    await h.goTo('work');
+    assert.equal(h.$('.sa-where-pick'), null);
+    const rows = h.$$('.sa-where-posture [data-posture]');
+    assert.deepEqual(rows.map((r) => r.dataset.posture), ['broker', 'network']);
+    assert.match(rows[0].textContent, /On.*Credential broker/);
+    assert.equal(rows[0].querySelector('.badge').className, 'badge green posture-badge', 'the Security card\'s chip: green for a protection that is on');
+    assert.equal(rows[1].querySelector('.badge').textContent, 'Sidecar');
+    assert.equal(rows[1].querySelector('.badge').className, 'badge grey posture-badge');
+    assert.match(h.$('.sa-where-posture').closest('.sa-section').textContent, /runs in the hardened box/);
+    assert.ok(h.$('.sa-where-guide a'));
+  } finally { h.close(); }
+});
+
+test('Network in a container: the password note names the sidecar, and More has no local proxy port', async () => {
+  const h = await open({ entry: 'fix', step: 'network', proxy: { ...PROXY_ON, sidecar: true, managed: false } });
+  try {
+    assert.match(h.$('.sa-sidecar-note').textContent, /egress sidecar holds the login/);
+    await h.click('.sa-more');
+    assert.equal(h.field('network.networkProxy.fixedPort'), undefined);
+    assert.ok(h.field('network.networkProxy.timeouts.connectMs'));
   } finally { h.close(); }
 });

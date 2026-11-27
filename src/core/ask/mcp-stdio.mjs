@@ -41,6 +41,7 @@ import { defaultWorkspaceDeps } from './workspace-deps.mjs';
 import { defaultActionsDeps } from './actions-deps.mjs';
 import { defaultMcpServerDeps } from './mcp-deps.mjs';
 import { defaultProxyDeps } from './proxy-deps.mjs';
+import { defaultSecurityDeps } from './security-deps.mjs';
 import { defaultTabDeps } from './tab-deps.mjs';
 import { defaultWebDeps } from './web-deps.mjs';
 import { defaultFileDeps } from './file-deps.mjs';
@@ -102,6 +103,9 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultMcpServerDeps(),
       // Corporate proxy (docs/network-proxy.md "From Chat"): read + test over the per-turn bridge; two cards.
       ...defaultProxyDeps({ env }),
+      // Security setups and sandboxes (docs/chat.md "Security and sandboxes"): the posture, the execution environments, a
+      // project's sandbox environment, get_run's sandbox state, and the environment cards (security-tools.mjs).
+      ...defaultSecurityDeps({ env }),
       // Branch reads + fetch-only (#527): list_branches, list_projects.sync, get_run.baseMoved.
       ...defaultBranchDeps(),
       // Web access: present only when this turn's env carries WORCA_ASK_WEB (web-deps.mjs) — the

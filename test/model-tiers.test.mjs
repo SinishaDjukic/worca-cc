@@ -109,3 +109,37 @@ test('a Copilot import is pinned Free only for recording (Copilot bills premium 
     { costOf: () => ({ free: true }) });
   assert.deepEqual([local.free, local.tier], [true, 'economy'], 'a local model stays a free one');
 });
+
+test('claude-fable-5-2 is a premium-tier Anthropic built-in at $8/$40', async () => {
+  const { listPriceFor } = await import('../src/core/list-prices.mjs');
+  assert.deepEqual(listPriceFor('claude-fable-5-2'), { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10, cacheWrite1h: 16 });
+  const [f] = modelFacts([row('claude-fable-5-2')]);
+  assert.equal(f.vendor, 'anthropic');
+  assert.equal(f.tier, 'premium');
+  assert.deepEqual(f.price, { input: 8, output: 40 });
+  assert.equal(f.context, DEFAULT_CONTEXT_TOKENS, 'its window is stated nowhere: the 200k default');
+  const { PREDEFINED_MODELS } = await import('../src/core/config.mjs');
+  const i = PREDEFINED_MODELS.findIndex((m) => m.id === 'claude-fable-5-2');
+  assert.deepEqual(PREDEFINED_MODELS[i], { id: 'claude-fable-5-2', label: 'Fable 5.2', efforts: ['medium', 'high', 'xhigh', 'max'] });
+  assert.equal(PREDEFINED_MODELS[i + 1].id, 'claude-fable-5-1');
+});
+
+test('isPremiumModel: Fable 5.1/5.2 are premium, Opus 5.5 and unknown ids are not, a costOf override wins', async () => {
+  const { isPremiumModel } = await import('../src/core/model-tiers.mjs');
+  assert.equal(isPremiumModel('claude-fable-5-1'), true);
+  assert.equal(isPremiumModel('claude-fable-5-2'), true);
+  assert.equal(isPremiumModel('claude-opus-5-5'), false);
+  assert.equal(isPremiumModel('no-such-model'), false);
+  assert.equal(isPremiumModel(''), false);
+  assert.equal(isPremiumModel(undefined), false);
+  assert.equal(isPremiumModel('gpt-6-astra'), true);
+  assert.equal(isPremiumModel('claude-fable-5-2', { costOf: () => ({ free: true }) }), false);
+  assert.equal(isPremiumModel('my-model', { costOf: () => ({ perMtok: { input: 10, output: 60 } }) }), true);
+});
+
+test('CODEX_DEFAULT_MODEL lives in the zero-import list-prices leaf; the codex adapter re-exports it', async () => {
+  const lp = await import('../src/core/list-prices.mjs');
+  const cx = await import('../src/core/engines/codex.mjs');
+  assert.equal(lp.CODEX_DEFAULT_MODEL, 'gpt-6.1-sol');
+  assert.equal(cx.CODEX_DEFAULT_MODEL, lp.CODEX_DEFAULT_MODEL);
+});

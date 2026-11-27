@@ -20,7 +20,8 @@ import process from 'node:process';
 
 import { preflightNode } from '../core/preflight-node.mjs';
 import { preflightDeps } from '../core/preflight-deps.mjs';
-import { resolveRunEngine } from '../core/settings-cascade.mjs';
+import { resolveRunEngine, resolveRunExecEnv } from '../core/settings-cascade.mjs';
+import { selectExecEnv } from '../core/exec-env/index.mjs';
 import {
   addProject,
   listProjects,
@@ -43,7 +44,7 @@ import { createFormAsker } from './forms.mjs';
 import { kindLabel } from '../shared/away-mode/labels.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
 import { sigtermGraceMs } from '../core/drain.mjs';
-import { effectiveDebugSpawn, migrateCorporateProxyFlag, readinessIgnore } from '../core/settings.mjs';
+import { effectiveDebugSpawn, migrateCorporateProxyFlag, primeSettingsVaultIfEnabled, readinessIgnore, tightenSettingsFileMode } from '../core/settings.mjs';
 import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule, resolveAfterId } from './schedule.mjs';
 import { applyTagRules } from '../core/tag-dimensions.mjs';
 import { inheritedTagsAtCreation } from '../core/scheduler.mjs';
@@ -55,7 +56,10 @@ import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
 import { cmdExtension } from './extension.mjs';
 import { cmdProxy } from './proxy.mjs';
+import { sealEgressSecret, egressSecretChildEnv } from '../core/egress-sidecar-client.mjs';
 import { cmdSetup } from './setup.mjs';
+import { cmdE2b } from './e2b.mjs';
+import { cmdExecEnv } from './exec-env.mjs';
 import { cmdRun } from './run-preset.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
@@ -162,6 +166,7 @@ function parseArgs(argv) {
     '--model',
     '--engine',
     '--guardrails',
+    '--exec-env',
     '--permission-mode',
     '--workflow',
     '--install',
@@ -182,6 +187,7 @@ function parseArgs(argv) {
     '--model': 'model',
     '--engine': 'engine',
     '--guardrails': 'guardrailsId',
+    '--exec-env': 'execEnv',
     '--permission-mode': 'permissionMode',
     '--workflow': 'workflow',
     '--install': 'install',
@@ -349,18 +355,26 @@ Subcommands:
                               See: worca schedule help
   models <cmd> [...]          Model catalog + providers: list|providers|login|logout|import|test|set.
                               See: worca models help
-  container <cmd> [...]       Run Worca in a container: init|up|down|status|logs|pull|login|shell|run|where.
-                              See: worca container help (docs/docker.md)
+  container <cmd> [...]       Run Worca in a container: init|up|down|status|logs|pull|build|login|shell|run|where.
+                              --hardened: the hardened box. See: worca container help (docs/docker.md)
   extension [--browser <b>] [--open]
                               The browser extension packaged with this Worca: folder, version, install steps.
                               See: worca extension help (docs/browser-extension.md)
   proxy <cmd> [...]           Corporate proxy login: status|login|logout|test.
                               See: worca proxy help (docs/network-proxy.md)
+  secrets <cmd> [...]         The secret vault's OS key store (secretVault flag): status|export|ack|reset.
+                              See: worca secrets help
   setup --from FILE [--yes]   Apply a team setup file; asks only for what it leaves out.
                               See: docs/setup-assistant.md
   broker [serve|secrets|revoke --person <email>]
                               The credential broker: holds model keys outside worca's container
                               (docs/credential-broker.md)
+  e2b sweep [--dry-run] [--all]
+                              Remove this instance's orphan E2B sandboxes (docs/e2b.md)
+  exec-env list|status|build  Execution environments and a project's sandbox builds (docs/e2b.md)
+  exec-env spec --project <key|dir> [--set <file.json> | --clear] [--json]
+                              A project's environment spec: pinned tools and apt packages
+                              (docs/environment-spec.md)
   help                       Print this help (same as --help).
   version                     Print the version (same as --version).
 
@@ -374,6 +388,9 @@ Options:
                            (comma-separated; repeatable)
   --model <m>              Claude model id
   --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta) | gemini (beta) | goose (beta) | opencode (beta) | qwen (beta)
+  --exec-env <name>        Where agent and script steps execute: local (default) or a registered backend —
+                           e2b (one E2B sandbox per run; docs/e2b.md) | docker (one local container per run;
+                           docs/local-sandbox.md). List them: worca exec-env list
   --allow-unguarded-engine Run on an engine that cannot fully enforce the guardrail set's permission rules
   --guardrails <id>        Guardrail set the run uses: permissive | normal | secure (Strict) | a saved set's id
                            (default: the install's default set, Normal on a new install)
@@ -1027,6 +1044,8 @@ async function uiStart(a) {
   out(c('cyan', `Starting Worca UI on ${url}`));
   if (effectiveDebugSpawn().enabled) out(c('gray', `  node ${server}`));
   const env = { ...process.env, PORT: String(port), [SUPERVISOR_ENV]: String(process.pid) };   // the server checks it against its ppid
+  // main() sealed the egress sidecar's secret out of process.env; the server needs it for the sidecar API and seals it again.
+  Object.assign(env, egressSecretChildEnv());
   if (a.mock) env.WORCA_MOCK = '1';
   let child = null;
   const ac = new AbortController();
@@ -1443,6 +1462,21 @@ async function cmdDoctor() {
   } catch (err) {
     process.stderr.write(`worca doctor: terminal shell check failed: ${err?.message || err}\n`);
   }
+  // The secret vault's OS key store: nothing (and no vault or store module) while the vault is not in use (the flag
+  // off and no vault file left). Read-only, and a warning never changes the exit code.
+  try {
+    const { secretVaultEnabled, vaultInUse, vaultNotAvailableHere } = await import('../core/secrets/flag.mjs');
+    if (vaultNotAvailableHere()) out((await import('../core/secrets/place.mjs')).DOCTOR_CONTAINER_LINE);
+    else if (vaultInUse()) {
+      const { secretsStatus, doctorLine, FLAG_OFF_VAULT_LINE } = await import('../core/secrets/status.mjs');
+      const st = await secretsStatus();
+      const { text, warn } = doctorLine(st);
+      out(warn ? c('yellow', text) : text);
+      if (!secretVaultEnabled() && st.vault !== 'none') out(FLAG_OFF_VAULT_LINE);
+    }
+  } catch {
+    process.stderr.write('worca doctor: secrets check failed\n');
+  }
   try {
     // A TOTAL no-op while the effective mode is `legacy`: those paths hold every live
     // and every paused run, so sweeping them would make the documented §10 rollback
@@ -1594,9 +1628,9 @@ async function cliWorkMode(projectDir) {
 
 /** `worca resume <pipelineId>` — continue a paused pipeline from its resume point. */
 async function cmdResume(argv) {
-  const id = (argv.find((a, i) => !a.startsWith('--') && !['--reason', '--engine', '--model', '--effort'].includes(argv[i - 1])) || '').trim();
+  const id = (argv.find((a, i) => !a.startsWith('--') && !['--reason', '--engine', '--model', '--effort', '--confirm-model'].includes(argv[i - 1])) || '').trim();
   if (!id) {
-    process.stderr.write('usage: worca resume <pipelineId> [--mock] [--yes] [--engine <name>] [--model <id> [--effort <e>]] [--allow-unguarded-engine] [--ignore-cost-cap] [--past-team-cap [--reason "<why>"]]\n');
+    process.stderr.write('usage: worca resume <pipelineId> [--mock] [--yes] [--engine <name>] [--model <id> [--effort <e>]] [--confirm-model <id>] [--allow-unguarded-engine] [--ignore-cost-cap] [--past-team-cap [--reason "<why>"]]\n');
     return 1;
   }
   const mock = argv.includes('--mock');
@@ -1614,6 +1648,10 @@ async function cmdResume(argv) {
   const effortAt = argv.indexOf('--effort');
   const effort = effortAt !== -1 ? (argv[effortAt + 1] ?? '').trim() : '';
   if (modelAt !== -1 && !model) { process.stderr.write('worca resume: --model needs a model id\n'); return 1; }
+  // #1450 --confirm-model: "Continue on <model>" for a run paused waiting to confirm a premium model (POST /api/resume confirmModel).
+  const confirmAt = argv.indexOf('--confirm-model');
+  const confirmModel = confirmAt !== -1 ? (argv[confirmAt + 1] ?? '').trim() : '';
+  if (confirmAt !== -1 && !confirmModel) { process.stderr.write('worca resume: --confirm-model needs a model id\n'); return 1; }
   if (mock) process.env.WORCA_MOCK = '1';
 
   const { readPipelineForResume, reconcileStaleRunning } = await import('../core/artifacts.mjs');
@@ -1627,6 +1665,11 @@ async function cmdResume(argv) {
     return 1;
   }
   if (workModeOfRow(saved.row) === 'git' && !(await gitState()).available) { process.stderr.write(`worca: ${GIT_MISSING.message}\n`); return 1; }
+  // Workflow tests 3a (final review round 2): as the server, never resume a try (its key names the person's project).
+  if (saved.row.is_test) {
+    process.stderr.write(`pipeline ${id}: a test try cannot be resumed: finish the rest from its test\n`);
+    return 1;
+  }
   if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') {
     process.stderr.write(`pipeline ${id} is "${saved.row.status}", not resumable (paused/interrupted only)\n`);
     return 1;
@@ -1651,6 +1694,11 @@ async function cmdResume(argv) {
   if (saved.row.archived_at) {
     process.stderr.write('worca resume: pipeline is archived\n');
     return 1;
+  }
+  if (confirmModel) {
+    const { checkConfirmModel } = await import('../core/model-guard.mjs');
+    const refusal = checkConfirmModel(saved.resumePoint, { confirmModel, ...(model ? { model } : {}) });
+    if (refusal) { process.stderr.write(`worca resume: ${refusal.body.error}\n`); return 1; }
   }
   if (model) {
     const { catalogHasModel, modelRunsOn, enginesOfModel } = await import('../core/config.mjs');
@@ -1737,6 +1785,7 @@ async function cmdResume(argv) {
     claude: { mock, ...(engine ? { engine } : {}), ...(allowUnguardedEngine ? { allowUnguardedEngine: true } : {}), ...(model ? { model, ...(effort ? { effort } : {}), modelForAll: true } : {}) },
     auto,
     resume: saved,
+    ...(confirmModel ? { confirmModel } : {}),
   });
   const code = await attachAndDrive(orch, { auto }, () => orch.resume());
   await drainTeamPushes();
@@ -2368,7 +2417,7 @@ async function cmdPlugin(argv) {
         if (!name) fail(`Usage: worca plugin ${verb} <name>${verb === 'remove' ? ' [--purge]' : ''}`);
         const { readPluginsLock } = await import('../core/plugins-lock.mjs');
         if (verb === 'purge' && !Object.hasOwn(readPluginsLock(), name)) {
-          store.purgePluginData(name);   // a removed plugin's leftover data/ — what the remove note tells users to run
+          await store.purgePluginData(name);   // a removed plugin's leftover data/ — what the remove note tells users to run
           out(`purged ${name}: data/ deleted (config, secrets, state)`);
           return 0;
         }
@@ -3641,7 +3690,7 @@ async function resolveTeamNote(team, { key, project, name, a }) {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory', 'setup', 'sessions', 'readiness']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'egress', 'extension', 'proxy', 'secrets', 'memory', 'setup', 'sessions', 'readiness', 'e2b', 'exec-env']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3721,7 +3770,40 @@ function mistypedCommand(tokens) {
     + `The ${first.replace(/s$/, '')} commands are top-level: worca ${verbs.join(' | ')} (to run a prompt, use --prompt "\u2026")`;
 }
 
+/**
+ * The commands that resolve a vaulted provider or model key in this process, so main() primes the settings vault
+ * (secretVault flag on) before them: the bare pipeline run (''), `resume` (it drives the orchestrator in-process),
+ * `models`, and `proxy` and `container` (they read the vaulted proxy login). Every other command goes through the server
+ * or resolves no key, and never waits on the OS key store. With the flag on, these commands also move file-stored
+ * secrets into the vault after the prime (secrets/flag.mjs migrateSecretsIfEnabled); every other command never does.
+ */
+export const CLI_PRIME_COMMANDS = Object.freeze(['', 'resume', 'models', 'proxy', 'container']);
+
 async function main() {
+  // The egress sidecar (src/egress/main.mjs) is its own process: no settings, no git, no policy proxy of its own.
+  if (process.argv[2] === 'egress') { const { runEgressCli } = await import('../egress/main.mjs'); return runEgressCli(process.argv.slice(3)); }
+  // The sidecar's shared secret leaves the environment before anything is spawned (src/core/egress-sidecar-client.mjs).
+  sealEgressSecret();
+  tightenSettingsFileMode();   // settings.json holds provider keys: owner-only (0600) on POSIX, never fatal
+  // The settings vault's key, loaded once off the sync path (bounded by the OS store's 10 s limit; never rejects).
+  const primeName = process.argv[2] === 'help' || SUBCOMMANDS.has(process.argv[2]) ? process.argv[2] : '';
+  if (CLI_PRIME_COMMANDS.includes(primeName)) {
+    // Flag on (the prime answered): then the one-time move of file-stored secrets into the vault, on a local install only.
+    if (await primeSettingsVaultIfEnabled()) {
+      const { migrateSecretsIfEnabled } = await import('../core/secrets/flag.mjs');
+      const { detectDeployment } = await import('../core/deployment.mjs');
+      const { isRemoteMode, readRemoteAccessConfig } = await import('../core/remote-access.mjs');
+      await migrateSecretsIfEnabled({ reason: 'cli', deployment: detectDeployment(process.env, { remoteMode: isRemoteMode(readRemoteAccessConfig(process.env)) }) });
+      // D12: the pending message about moved secrets, on stderr only (scripts reading stdout see no change), until acknowledged.
+      const { readNotice } = await import('../core/secrets/notice.mjs');
+      const notice = readNotice();
+      if (notice) {
+        const { noticeLines } = await import('../shared/secrets-notice.mjs');
+        const { secretVaultEnabled } = await import('../core/secrets/flag.mjs');
+        process.stderr.write(noticeLines(notice, { surface: 'cli', settingsReachable: secretVaultEnabled() }).join('\n') + '\n');
+      }
+    }
+  }
   // D6: the old Labs flag becomes networkProxy.enabled, once, before the proxy reads it.
   await migrateCorporateProxyFlag();
   // A hosting platform's outbound network policy (src/core/egress-policy.mjs). `worca ui` leaves
@@ -3782,8 +3864,11 @@ async function main() {
     if (sub === 'container') return cmdContainer(rest, { out, c, fail });
     if (sub === 'extension') return cmdExtension(rest, { out, c, fail });
     if (sub === 'proxy') return cmdProxy(rest, { out, c, fail });
+    if (sub === 'exec-env') return cmdExecEnv(rest, { out, c, fail });
+    if (sub === 'secrets') return (await import('./secrets.mjs')).cmdSecrets(rest, { out, c, fail });
     if (sub === 'setup') return cmdSetup(rest, { out });
     if (sub === 'readiness') return cmdReadiness(rest);
+    if (sub === 'e2b') return cmdE2b(rest, { out, c, fail });
     if (sub === 'broker') {
       // Loaded lazily: the broker is its own process and needs none of the core graph.
       const { runBrokerCli } = await import('../broker/main.mjs');
@@ -3946,6 +4031,10 @@ async function main() {
     waitTicketId = made.ticket.id;
   }
   const runEngine = resolveRunEngine({ explicit: flags.engine || null, projectDir }).engine;
+  // Where agent and script steps execute (docs/e2b.md); local adds nothing to the orchestrator options.
+  const execResolved = resolveRunExecEnv({ explicit: flags.execEnv || null, projectDir, engine: runEngine, workMode: cliMode.workMode });
+  if (execResolved.fallback) process.stderr.write(`worca: ${execResolved.fallback}.\n`);
+  const execEnv = selectExecEnv(execResolved.execEnv);
   const buildOrch = async () => (await import('../core/engine-select.mjs')).createOrchestratorFor({
     projectDir,
     workMode: cliMode.workMode,
@@ -3967,6 +4056,8 @@ async function main() {
       ...(runEngine !== 'claude' ? { engine: runEngine } : {}),
       ...(flags.allowUnguardedEngine ? { allowUnguardedEngine: true } : {}),
     },
+    ...(execEnv !== 'local' ? { execEnv } : {}),
+    ...(execResolved.fallback ? { execEnvFallback: execResolved.fallback } : {}),   // the run log says why it runs locally
     auto: flags.auto,
     humanInLoop: flags.humanInLoop === false ? false : undefined,
     ...(flags.nightMode ? { nightMode: true } : {}),
