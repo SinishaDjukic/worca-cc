@@ -16,7 +16,7 @@
 import { runProgress, groupProgress, askWhat } from './run-progress.mjs';
 import { liveRoleRows } from './shape/role-review.mjs';
 import { parseAzurePrUrl } from './azure-remote.mjs';
-import { isConfirmHold } from './shape/ship-ledger.mjs';
+import { isNeedsYouHold } from './shape/ship-ledger.mjs';
 import { parseBitbucketPrUrl } from './bitbucket-remote.mjs';
 
 export const RUN_STATES = Object.freeze({
@@ -396,8 +396,8 @@ export function groupModel(group, opts = {}) {
     }
   };
   const hold = state === 'ready' && g.hold ? String(g.hold) : null;
-  // Slice 7 (D3): a confirmation that is still open needs you (amber, no "?": no run asks); any other hold waits.
-  const meta = isConfirmHold(hold) ? { ...RUN_STATES['needs-you'], symbol: null } : RUN_STATES[hold ? 'waiting' : state];
+  // Slice 7 (D3): a confirmation that is still open needs you (slice 9: so do the Verifier's notes) (amber, no "?": no run asks); any other hold waits.
+  const meta = isNeedsYouHold(hold) ? { ...RUN_STATES['needs-you'], symbol: null } : RUN_STATES[hold ? 'waiting' : state];
   const progress = groupProgress(members.map(asPart), { planning: planning ? asPart(planning) : null, memo: g.memo || null });
   // A group whose current member needs you only through its PR has no question to answer and nothing running there,
   // so it offers that PR, not Answer / Stop; `prNeeds` marks a group whose every member is finished. A PR- or

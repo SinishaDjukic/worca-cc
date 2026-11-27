@@ -313,3 +313,69 @@ test('shipLedger: an accepted check from before this change (no shipped) reads a
   assert.deepEqual(none.shippedGaps ?? [], []);
 });
 
+
+// ── Slice 9 (R-po-4): the Verifier's notes gate Ship until each is acknowledged ──────────────────────────────
+const CHECK_AT = '2026-11-27T10:00:00.000Z';
+const ACK = { by: 'ann', at: '2026-11-27T14:02:00.000Z' };
+const NOTE = (n, ack = null) => ({ id: `note-${n}`, text: n === 1 ? 'the import test takes 40 s' : 'the export has no retry', ack });
+const NOTED = (state, findings) => ({ state, gaps: [], findings, checkAt: CHECK_AT });
+const OWNED_ALL = KINDS.map((k) => (k.id === 'R-sec-1' ? { ...k, run: 2 } : k));
+const COMP_OK = [{ id: 'R-comp-4', mark: 'met', role: 'compliance', by: 'ana', at: '2026-11-22T16:55:00.000Z' }];
+/** A ledger that only notes can block: every requirement owned or marked Met, judged as the server judges it. */
+const noted = (verify, over = {}) => shipLedger({ agreed: AGREED, kinds: OWNED_ALL, acceptance: COMP_OK, runs: [1, 2].map((index) => ({ index, state: 'done' })), verify, ...over });
+const ONE_NOTE_REASON = "Acknowledge the Verifier's note to ship";
+
+test('s9 findingsReason and findingsState: one note, then notes', () => {
+  assert.equal(typeof LEDGER.findingsReason, 'function', 'ship-ledger exports findingsReason');
+  assert.equal(LEDGER.findingsReason(1), ONE_NOTE_REASON);
+  assert.equal(LEDGER.findingsReason(2), "Acknowledge the Verifier's notes to ship");
+  assert.equal(LEDGER.FINDINGS_STATE, "Your turn: acknowledge the Verifier's note");
+  assert.equal(typeof LEDGER.findingsState, 'function', 'ship-ledger exports findingsState');
+  assert.equal(LEDGER.findingsState(1), LEDGER.FINDINGS_STATE);
+  assert.equal(LEDGER.findingsState(3), "Your turn: acknowledge the Verifier's notes");
+});
+
+test('s9 shipLedger: an open note on a clean or accepted check blocks Ship, with its reason and the findings key', () => {
+  for (const state of ['clean', 'accepted']) {
+    const l = noted(NOTED(state, [NOTE(1)]));
+    assert.deepEqual([l.blocked, l.reason], [true, ONE_NOTE_REASON], state);
+    assert.deepEqual(l.findings, { items: [NOTE(1)], checkAt: CHECK_AT, open: 1 }, state);
+  }
+});
+
+test('s9 shipLedger: Ship opens only when every note is acknowledged', () => {
+  const one = noted(NOTED('clean', [NOTE(1, ACK), NOTE(2)]));
+  assert.deepEqual([one.blocked, one.reason, one.findings?.open], [true, ONE_NOTE_REASON, 1], 'one of two acknowledged');
+  const both = noted(NOTED('clean', [NOTE(1), NOTE(2)]));
+  assert.deepEqual([both.blocked, both.reason, both.findings?.open], [true, "Acknowledge the Verifier's notes to ship", 2]);
+  const all = noted(NOTED('clean', [NOTE(1, ACK), NOTE(2, ACK)]));
+  assert.deepEqual([all.blocked, all.reason], [false, null]);
+  assert.deepEqual(all.findings, { items: [NOTE(1, ACK), NOTE(2, ACK)], checkAt: CHECK_AT, open: 0 });
+});
+
+test('s9 shipLedger (D6): only a clean or accepted check lists notes; gaps, verifying and halted add no findings key', () => {
+  for (const state of ['gaps', 'verifying', 'asking', 'paused', 'halted']) {
+    const l = noted(NOTED(state, [NOTE(1)]));
+    assert.equal('findings' in l, false, state);
+    assert.deepEqual(l, noted({ state, gaps: [] }), state);
+  }
+});
+
+test('s9 (R-arch-7) shipLedger: without findings the ledger is the checkpoint\'s, key for key', () => {
+  for (const state of ['clean', 'accepted']) {
+    const plain = noted({ state, gaps: [] });
+    assert.equal('findings' in plain, false, state);
+    assert.deepEqual([plain.blocked, plain.reason], [false, null], state);
+    assert.deepEqual(noted({ state, gaps: [], findings: [], checkAt: CHECK_AT }), plain, `${state}: an empty list adds nothing`);
+  }
+});
+
+test('s9 shipLedger reason order: unowned, then waiting for you, then the missing reason, then the notes', () => {
+  const verify = NOTED('clean', [NOTE(1)]);
+  const state = (l) => [l.blocked, l.reason, l.findings?.open];
+  assert.deepEqual(state(noted(verify, { kinds: KINDS })), [true, 'R-sec-1 is owned by no run and confirmed by no person', 1]);
+  assert.deepEqual(state(noted(verify, { acceptance: [] })), [true, 'Waiting for you to confirm R-comp-4', 1]);
+  assert.deepEqual(state(noted(verify, { acceptance: [{ id: 'R-comp-4', mark: 'dropped' }] })), [true, REASON_FIRST, 1]);
+  assert.deepEqual(state(noted(verify, { acceptance: [{ id: 'R-comp-4', mark: 'dropped', reason: 'later' }] })), [true, ONE_NOTE_REASON, 1],
+    'once the reason is given, the note is what blocks');
+});

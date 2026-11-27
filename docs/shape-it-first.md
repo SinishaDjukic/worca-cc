@@ -685,6 +685,15 @@ refused with `STACKED_ONLY` ("small runs ship a PR per run"), as before.
 Each gap you shipped from the Verifier's question is one line on the Ship card, with its reason: "R-po-2 ships with a
 gap: covered by a later feature". The requirement's own row still reads "gap accepted".
 
+The Verifier can also leave notes that are not verdicts, such as "the import test takes 40 s". The Ship card lists each
+note of the check that rules Ship (a clean check, or one whose gaps you shipped) with its own **Acknowledge** button, and
+Ship stays disabled until every note is acknowledged: "Acknowledge the Verifier's note to ship" (`FINDINGS_UNACKNOWLEDGED`).
+An acknowledged note reads "acknowledged · 14:02". Only a person acknowledges a note. Away mode never acknowledges, and
+neither do `--yes` or the PR auto-finisher: with "One PR for the whole feature" the one PR waits for you and opens once
+you acknowledge. Until then the feature reads the note's reason under Needs you on the Runs list, and the Runs badge
+counts it. A new check needs its own acknowledgement, even for the same note text. A clean result with no notes adds
+nothing, and Ship opens as before.
+
 Stacked, with the flag on, opens one PR per run along
 the real branches: from the head back along each run's recorded base; each PR is based on the branch of the one before
 it, the first on the feature's base (or on the feature's base when the PR before it is merged or its branch still merges
@@ -758,6 +767,7 @@ gets one of three answers, and **Send answers** stays off until every gap has on
 Each fix run and change run added this way builds on the last run before it, so it starts with all the work so far.
 When every gap is shipped, the check reads "Ready to ship". When the requirement changed since the question, or its run
 is no longer finished, nothing is added and the check reads Stopped: Resume runs the Verifier again and asks again.
+Anything else the Verifier noticed goes in its result file's optional `findings` list, one line each (at most 8); see Ship.
 
 ### The four places
 

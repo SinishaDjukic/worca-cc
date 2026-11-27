@@ -605,3 +605,38 @@ test('a feature outcome recorded skipped under the old rule stays settled and is
   assert.equal(w.ships.length, 0);
   assert.deepEqual(w.features.f1.setting.outcome, stored);
 });
+
+// ── Slice 9 (R-po-4): an unacknowledged Verifier note holds the feature's one PR; only a person clears it ─────
+const notesRefusal = (n) => ({ error: `Acknowledge the Verifier's note${n === 1 ? '' : 's'} to ship`, code: 'FINDINGS_UNACKNOWLEDGED',
+  missing: [], notes: Array.from({ length: n }, (_, i) => `note-${i + 1}`) });
+const NOTES_HELD = (n) => `The feature's pull request waits for you to acknowledge the Verifier's note${n === 1 ? '' : 's'}. It opens once you do, or ship it from the Ship card.`;
+
+test('one: a FINDINGS_UNACKNOWLEDGED refusal is held with reason findings, ships nothing, notices once, and ships once acknowledged', async () => {
+  for (const n of [1, 2]) {
+    let open = n;
+    const w = sliceWorld(feature());
+    w.deps.acceptanceRefusal = () => (open ? notesRefusal(open) : null);
+    w.fin = createPrAutoFinisher(w.deps);
+    await w.fin.afterSettled(slice('s2'));
+    assert.equal(w.ships.length, 0, 'shipFeatureNow is never called');
+    const o = w.features.f1.setting.outcome;
+    assert.deepEqual([o.status, o.final, o.reason, o.left], ['held', false, 'findings', n]);
+    assert.deepEqual(w.notices.map((x) => x.text), [NOTES_HELD(n)]);
+    assert.ok(logTexts(w).includes(NOTES_HELD(n)), logTexts(w).join('\n'));
+    await w.fin.maybeShipOne('f1');
+    assert.deepEqual([w.ships.length, w.notices.length], [0, 1], 'still held: no second notice');
+    open = 0;
+    await w.fin.onAcceptanceChanged('f1');
+    assert.deepEqual([w.ships.length, w.features.f1.setting.outcome.status], [1, 'opened']);
+  }
+});
+
+test('one: a 409 FINDINGS_UNACKNOWLEDGED ship answer is held with reason findings, not blocked', async () => {
+  const w = sliceWorld(feature());
+  w.shipResult = () => ({ status: 409, body: notesRefusal(2) });
+  await w.fin.afterSettled(slice('s2'));
+  const o = w.features.f1.setting.outcome;
+  assert.deepEqual([o.status, o.final, o.reason, o.left], ['held', false, 'findings', 2]);
+  assert.deepEqual(w.notices.map((x) => x.text), [NOTES_HELD(2)]);
+  assert.equal(w.notifs.length, 0, 'no problem notification');
+});

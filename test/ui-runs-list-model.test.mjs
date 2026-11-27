@@ -1362,3 +1362,23 @@ test('s7 owner direction: the Runs badge counts a feature held for your confirma
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
   assert.match(app, /groups: flagOn\('shaperSmallRuns'\) \? state\.runGroups \|\| \[\] : \[\]/);
 });
+
+// ── Slice 9 (owner direction): a feature waiting only for a Verifier note's Acknowledge needs you, as a confirmation does ──
+test("s9 owner direction: a Verifier notes hold sits in Needs you and counts in the Runs badge, only with the flag on", () => {
+  const members = TEN.slice(0, 2).map((id, i) => ({ position: i + 1, title: `Slice ${i + 1}`, pipelineId: id, kind: 'hist', run: { status: 'done' } }));
+  const history = TEN.slice(0, 2).map((id) => histIt(id, { run: { status: 'done' }, pr: null }));
+  for (const hold of ["Acknowledge the Verifier's note to ship", "Acknowledge the Verifier's notes to ship"]) {
+    const g = smallFeature({ members, hold });
+    const row = groupRow(g, { now: NOW });
+    assert.deepEqual([row.model.state, row.model.dot, row.model.symbol, row.model.word], ['ready', 'amber', null, 'Needs you'], hold);
+    assert.deepEqual([row.needs, row.needsIcon], [true, ''], hold);
+    const needs = buildRunsModel({ history, groups: [g], now: NOW }).sections.find((s) => s.id === 'needs');
+    assert.deepEqual(needs?.rows.map((r) => r.groupId), ['feat_small'], hold);
+    assert.equal(countNeedsYou({ history, groups: [g] }), 1, hold);
+  }
+  // Flag off, the server sends no marker and no hold (run-groups.mjs): unchanged, not counted, not in Needs you.
+  const { smallRuns, ...plain } = smallFeature({ members });
+  assert.equal(countNeedsYou({ history, groups: [plain] }), 0, 'flag off: unchanged');
+  assert.equal(buildRunsModel({ history, groups: [plain], now: NOW }).sections.find((s) => s.id === 'needs')?.rows.length || 0, 0);
+  assert.equal(countNeedsYou({ history, groups: [{ ...plain, hold: "Acknowledge the Verifier's note to ship" }] }), 0, 'unmarked: not counted');
+});

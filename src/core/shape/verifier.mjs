@@ -20,7 +20,7 @@ import { roundOrigin } from './rounds.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature, careOfFeature } from './small-runs.mjs';
 import { refuseWhileShipping, shipLocked } from './ship-lock.mjs';
 import { requirementKindsOf, careRunPlan } from '../../shared/shape/feature-record.mjs';
-import { verifyPrompt, verifyRoundPlan, verifyStop, verifyGateAnswer, gapsFoundOf, fenceSafe } from '../../shared/shape/verifier.mjs';
+import { verifyPrompt, verifyRoundPlan, verifyStop, verifyGateAnswer, gapsFoundOf, fenceSafe, findingsOf } from '../../shared/shape/verifier.mjs';
 import { oneLineText } from '../../shared/shape/req-change.mjs';
 import { SHAPE_VERIFY_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { CHALLENGE_FILE_MAX_BYTES } from './split-step.mjs';
@@ -279,6 +279,8 @@ export function recordVerifyResult(featureId, round, { result, headSha = null, d
     const c0 = checks0[i];
     if (c0.result) { out = { check: c0, added: [], fresh: false }; return; }
     const gaps = Array.isArray(result && result.gaps) ? result.gaps : [];
+    // Slice 9 (D3): the run-dir file is a trust boundary, so its notes are re-checked here.
+    const findings = findingsOf(result && result.findings);
     const fixCycles = Number.isInteger(c0.fixCycles) ? c0.fixCycles : fixCyclesOf(featureId);
     let state = 'clean';
     let extra = c0.extra || 0;
@@ -325,11 +327,44 @@ export function recordVerifyResult(featureId, round, { result, headSha = null, d
     const f = rowOf(featureId);
     const checks = checksOf(f.outline);
     const check = { ...checks[i], pipelineId: pipelineId || checks[i].pipelineId || null, headSha: headSha || null,
-      state, result: { held: [...(result && Array.isArray(result.held) ? result.held : [])], gaps: gaps.map(({ id, why, title }) => ({ id, why, title })) },
+      state, result: { held: [...(result && Array.isArray(result.held) ? result.held : [])], gaps: gaps.map(({ id, why, title }) => ({ id, why, title })),
+        ...(findings.length ? { findings } : {}) },
       gapRuns: added.map((a) => a.index), extra, ...record };
     checks[i] = check;
     writeChecks(f, checks, now);
     out = { check, added, fresh: true };
+  });
+  return out;
+}
+
+const ackRefusal = (status, code, error) => ({ ok: false, status, code, error });
+
+/**
+ * Slice 9 (D10): a person acknowledges one of the Verifier's notes on the latest check. One tx, a Ship in flight refused
+ * first (throws SHIPPING); only `acks[note]` of that check is written, and an acknowledged note keeps its first
+ * `{by, at}`. `checkAt` is the check the person read: a newer check is STALE. The person-only HTTP route is its one
+ * caller. → {ok:true, fresh} | {ok:false, status, code?, error}
+ */
+export function acknowledgeFinding(featureId, { checkAt, note, by = null, now = Date.now() } = {}) {
+  let out = null;
+  tx(() => {
+    const f = rowOf(featureId);
+    if (!f) { out = { ok: false, status: 404, error: 'unknown feature' }; return; }
+    refuseWhileShipping(f.id);
+    const checks = checksOf(f.outline);
+    const c = checks.at(-1);
+    const notes = c && ENDED.has(c.state) && c.result && Array.isArray(c.result.findings) ? c.result.findings : [];
+    if (!notes.length) { out = ackRefusal(409, 'NO_FINDINGS', 'the Verifier left no note to acknowledge'); return; }
+    if (checkAt !== c.at) { out = ackRefusal(409, 'STALE', 'the Verifier checked again: read its notes, then acknowledge'); return; }
+    if (!notes.some((n) => n && n.id === note)) {
+      out = ackRefusal(400, 'UNKNOWN_NOTE', `${oneLineText(note).slice(0, 40)} is not a note of this check`);
+      return;
+    }
+    const acks = c.acks && typeof c.acks === 'object' ? c.acks : {};
+    if (acks[note]) { out = { ok: true, fresh: false }; return; }
+    checks[checks.length - 1] = { ...c, acks: { ...acks, [note]: { by, at: iso(now) } } };
+    writeChecks(f, checks, now);
+    out = { ok: true, fresh: true };
   });
   return out;
 }
@@ -473,5 +508,18 @@ export function verifyView(f, live = () => null, slices = null, finishing = () =
     ...(Array.isArray(c.shipped) ? { shipped: c.shipped } : {}),
     gapsFound: gapsFoundOf({ checks }), head: c.head || null, headSha: c.headSha || null, pipelineId, ticketId: c.ticketId || null,
     ...(l && l.stop ? { stop: l.stop } : {}),
+    // Slice 9 (D7): the check's notes, each with its acknowledgement or null, and the check they belong to.
+    ...checkFindings(c),
   };
+}
+
+/** Slice 9 (D7): a stored check's notes as the view reads them, `{findings: [{id, text, ack}], checkAt}`, each ack
+ *  `{by, at}` or null; `{}` when the check has none. */
+export function checkFindings(c) {
+  const notes = c && c.result && Array.isArray(c.result.findings) ? c.result.findings.filter((n) => n && n.id) : [];
+  return notes.length ? { findings: notes.map((n) => ({ id: n.id, text: n.text, ack: ackOf(c, n.id) })), checkAt: c.at || null } : {};
+}
+function ackOf(c, id) {
+  const a = c.acks && typeof c.acks === 'object' ? c.acks[id] : null;
+  return a && typeof a === 'object' ? { by: a.by ?? null, at: a.at ?? null } : null;
 }

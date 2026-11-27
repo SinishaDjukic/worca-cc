@@ -9,6 +9,8 @@ import { FLAGS } from '../src/shared/flags/registry.mjs';
 import { VERIFY_WORDS } from '../src/shared/shape/verifier.mjs';
 import { MARK_WORDS, shipLedger } from '../src/shared/shape/ship-ledger.mjs';
 import { careRecordLine } from '../src/shared/shape/feature-record.mjs';
+// A namespace read, so a missing new export (findingsReason) fails only its own test.
+import * as LEDGER from '../src/shared/shape/ship-ledger.mjs';
 
 const read = (name) => readFileSync(new URL(`../docs/${name}`, import.meta.url), 'utf8');
 const flat = (t) => t.replace(/\s+/g, ' ');
@@ -368,3 +370,21 @@ test('s8: design-system.md describes the Gap question after the Open stop list',
   assert.deepEqual(missing(flat(next < 0 ? rest : rest.slice(0, next)), ['ui/public/shape/gap-question.mjs']), []);
 });
 
+
+// Shaper small runs slice 9 (R-po-4): findings outside the verdicts need an acknowledgement.
+test('s9 (R-po-4): the guide says each note is acknowledged before Ship, never by Away mode, and names the findings key', () => {
+  assert.equal(typeof LEDGER.findingsReason, 'function', 'ship-ledger exports findingsReason');
+  assert.deepEqual(missing(smallPart('Ship'), [LEDGER.findingsReason(1), 'Acknowledge', 'Away mode never acknowledges']), []);
+  assert.deepEqual(missing(smallPart('Runs stop, change and the Verifier'), ['`findings`']), []);
+});
+
+test('s9: design-system.md describes the Ship card notes after the Gap question', () => {
+  const design = read('design-system.md');
+  const at = design.indexOf('\n### Ship card notes\n');
+  assert.ok(at >= 0, 'the heading "### Ship card notes"');
+  assert.ok(at > design.indexOf('\n### Gap question\n'), 'after "Gap question"');
+  const rest = design.slice(at + 1);
+  const next = rest.indexOf('\n### ', 1);
+  assert.deepEqual(missing(flat(next < 0 ? rest : rest.slice(0, next)), ['ui/public/shape/ship-card.mjs', '.plan-checks.srows.ask-shipcard-notes',
+    '.btn.btn-sm', 'Acknowledge', 'acknowledged · 14:02', '.ask-card-err']), []);
+});

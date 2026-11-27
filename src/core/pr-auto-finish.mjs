@@ -255,6 +255,16 @@ export function createPrAutoFinisher(deps = {}) {
       if (!wasHeld) noticeFeature(featureId, text, ctx);
       return o;
     };
+    // Slice 9 (D11): the Verifier's notes wait for a person's acknowledgement; only a person gives it.
+    const heldFindings = (left) => {
+      const text = `The feature's pull request waits for you to acknowledge the Verifier's ${left === 1 ? 'note' : 'notes'}. It opens once you do, or ship it from the Ship card.`;
+      const o = outcome('held', false, { reason: 'findings', left });
+      d.setFeaturePrOutcome(featureId, o);
+      say(logTo, 'info', text);
+      if (!wasHeld) noticeFeature(featureId, text, ctx);
+      return o;
+    };
+    const heldFor = (body) => (body?.code === 'FINDINGS_UNACKNOWLEDGED' ? heldFindings(body.notes?.length ?? 0) : held(body?.missing?.length ?? 0));
     const keptRun = view.slices.find((s) => s.pipelineId && keptBranch(s.pipelineId === triggerPipelineId && triggerState ? triggerState : d.readState(s.pipelineId)));
     if (keptRun) {
       const text = `One pull request for "${view.title}" was not opened: run ${keptRun.index} kept uncommitted work, so the last branch does not hold every slice's work. Commit it, then ship the feature from the Ship card.`;
@@ -266,7 +276,7 @@ export function createPrAutoFinisher(deps = {}) {
       return finish(outcome('blocked', true, { reason: text }), text, { problem: text });
     }
     const refusal = d.acceptanceRefusal(view);
-    if (refusal) return held(refusal.missing?.length ?? 0);
+    if (refusal) return heldFor(refusal);
     const starter = f.createdBy;   // the one PR is pushed as the feature's creator, even when the last requirement was marked by another person
     const account = await d.accountCheck({ startedBy: starter, repoUrls: await d.pushRemoteUrls(f.projectDir ? [f.projectDir] : []) });
     if (!account.ok) {
@@ -293,7 +303,7 @@ export function createPrAutoFinisher(deps = {}) {
     const code = r.status === 409 ? r.body?.code : null;
     if (code === 'SHIPPING' || code === 'ROUND_LIVE' || code === 'NOT_READY' || code === 'STACKED_ONLY') return null;   // the next settled run retries (STACKED_ONLY: the flag turned off mid-flight)
     if (code === 'ALREADY_SHIPPED') return quietSkip(r.body.error);
-    if (code === 'ACCEPTANCE_INCOMPLETE') return held(r.body.missing?.length ?? 0);
+    if (code === 'ACCEPTANCE_INCOMPLETE' || code === 'FINDINGS_UNACKNOWLEDGED') return heldFor(r.body);
     const reason = r.body?.error || `the pull request could not be opened (HTTP ${r.status})`;
     const text = `${NOT_OPENED} for "${view.title}": ${reason}`;
     return finish(outcome(r.status === 409 ? 'blocked' : 'failed', true, { reason }), text, { problem: text });

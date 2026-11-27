@@ -6,7 +6,7 @@ import { renderAskChanges } from '../chat/ask-changes.mjs';
 import { buildCheckFold, buildCheckRows, checkMark } from './check-row.mjs';
 import { checkLine } from './plan-text.mjs';
 import { ledgerCheck } from '../../../src/shared/shape/acceptance.mjs';
-import { CONFIRM_REASON_MAX, MARK_WORDS, shippedGapLine } from '../../../src/shared/shape/ship-ledger.mjs';
+import { CONFIRM_REASON_MAX, MARK_WORDS, shippedGapLine, findingsReason, findingsState } from '../../../src/shared/shape/ship-ledger.mjs';
 
 const MINUS = '\u2212';
 const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -50,6 +50,17 @@ export async function confirmRequirement(featureId, id, mark = 'met', reason = '
       headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, mark, ...(mark === 'met' ? {} : { reason }) }) });
     const out = await r.json().catch(() => ({}));
     return r.ok ? { ok: true, smallRuns: out.smallRuns || null, acceptance: out.acceptance || null } : { ok: false, error: out.error || `HTTP ${r.status}` };
+  } catch (e) { return { ok: false, error: errorOf(e) }; }
+}
+
+/** Slice 9 (D14): a person acknowledges one of the Verifier's notes on the check they read (POST …/acknowledge).
+ *  → { ok:true, smallRuns } | { ok:false, error } (never throws). */
+export async function acknowledgeNote(featureId, checkAt, note) {
+  try {
+    const r = await fetch(`/api/shape/features/${encodeURIComponent(featureId)}/acknowledge`, { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ checkAt, note }) });
+    const out = await r.json().catch(() => ({}));
+    return r.ok ? { ok: true, smallRuns: out.smallRuns || null } : { ok: false, error: out.error || `HTTP ${r.status}` };
   } catch (e) { return { ok: false, error: errorOf(e) }; }
 }
 
@@ -377,6 +388,8 @@ function smallRunsShip(doc, h, m, handlers) {
   const ownedEl = h('div', 'srows ask-shipcard-owned');
   // Slice 8 (D12): one line per gap shipped as is, with its reason (the owned row's note keeps "gap accepted" only).
   const gapLines = (Array.isArray(sr.shippedGaps) ? sr.shippedGaps : []).map((g) => idLine('ask-shipcard-why ask-shipcard-gap', shippedGapLine(g)));
+  // Slice 9 (D13): the Verifier's notes, one Acknowledge each; in the card only while there are notes.
+  const notesEl = h('div', 'plan-checks srows ask-shipcard-notes');
   const careEl = h('div');
   const whyEl = h('div');
   body.append(confirmedEl, ownedEl, ...gapLines, careEl, whyEl);
@@ -449,8 +462,26 @@ function smallRunsShip(doc, h, m, handlers) {
       const fold = buildCheckFold(doc, { items }, 'Requirements', { text: () => `${items.length} checked by the runs' reviews and the Verifier` });
       ownedEl.append(fold.line, fold.rows);
     }
+    const notes = sr.findings && Array.isArray(sr.findings.items) ? sr.findings.items : [];
+    const noteRows = buildCheckRows(doc, { items: notes.map((n) => {
+      const act = `ship-ack-${n.id}`;
+      let action = null;
+      if (!n.ack) {
+        action = h('button', 'btn btn-sm', 'Acknowledge'); action.type = 'button'; action.dataset.act = act;
+        action.disabled = !!confirming;
+        action.addEventListener('click', () => acknowledge(n.id, act));
+      }
+      return { label: n.text, pass: !!n.ack, ariaLabel: n.ack ? 'acknowledged' : 'waiting',
+        note: n.ack ? `acknowledged${clock(n.ack.at) ? ` · ${clock(n.ack.at)}` : ''}` : 'from the Verifier', ...(action ? { action } : {}) };
+    }) });
+    notes.forEach((n, i) => { if (!n.ack) noteRows[i].replaceChild(checkMark(doc, 'wait'), noteRows[i].querySelector('.plan-check-mark')); });
+    notesEl.replaceChildren(...noteRows);
+    if (!noteRows.length) notesEl.remove();
+    else if (notesEl.parentNode !== body) body.insertBefore(notesEl, careEl);
     careEl.replaceChildren(careRow());
-    stats.textContent = sr.unowned && sr.unowned.length ? 'Waiting' : sr.blocked ? 'Your turn: mark what only a person can' : 'Ready to ship';
+    const open = sr.findings && sr.findings.open > 0 ? sr.findings.open : 0;
+    stats.textContent = sr.unowned && sr.unowned.length ? 'Waiting' : sr.blocked
+      ? open && sr.reason === findingsReason(open) ? findingsState(open) : 'Your turn: mark what only a person can' : 'Ready to ship';
     if (sr.blocked && sr.reason) {
       const why = idLine('ask-shipcard-why', sr.reason); why.id = whyId;
       whyEl.replaceChildren(why);
@@ -494,6 +525,22 @@ function smallRunsShip(doc, h, m, handlers) {
     else err.textContent = (r && r.error) || 'Something went wrong';
     paint();
     focusAct(r && r.ok ? act : drafts.has(id) ? `ship-mark-${id}-text` : act);
+  }
+  async function acknowledge(note, act) {
+    if (confirming) return;
+    err.textContent = '';
+    root.dataset.focus = act;                               // Chromium blurs a disabled button (as `send` above)
+    confirming = note;
+    paint();
+    let r;
+    try { r = handlers.onAcknowledge ? await handlers.onAcknowledge(note) : { ok: false, error: 'Open the feature page to acknowledge it' }; }
+    catch (e) { r = { ok: false, error: errorOf(e) }; }
+    confirming = null;
+    delete root.dataset.focus;
+    if (r && r.ok) { if (r.smallRuns) sr = r.smallRuns; }
+    else err.textContent = (r && r.error) || 'Something went wrong';
+    paint();
+    focusAct(act);
   }
   create.addEventListener('click', () => {
     if (create.disabled) return;

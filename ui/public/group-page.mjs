@@ -6,7 +6,7 @@
 import { paintRunStatus, syncActions, renderMemberRows, groupShipLine, groupBarShows } from './run-status-card.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
 import { groupKindWord, pageModel, paintCrumbs, buildFacts, setFactText, factRow, syncFacts, GROUP_FACTS, featureShipHref } from './run-page-head.mjs';
-import { isConfirmHold } from '../../src/shared/shape/ship-ledger.mjs';
+import { isNeedsYouHold } from '../../src/shared/shape/ship-ledger.mjs';
 import { icon } from './icons.mjs';
 import { groupHead } from './run-head.mjs';
 import { answerFieldOpen } from './shape/step-card.mjs';
@@ -331,7 +331,7 @@ export function paintGroupPage(root, view, deps) {
   paintCrumbs(root.querySelector('.gpage-bar .rd-crumbs'), [{ label: 'Runs', href: '#runs' }, { label: row.title }]);
   // Small runs slice 7 (D9): a marked feature's state line says which runs work and which goes next. Shaper slice 7
   // (D7): a confirmation hold wins over it, and in the feature layout its reason links to the Ship card.
-  const confirm = isConfirmHold(m.hold);
+  const confirm = isNeedsYouHold(m.hold);   // slice 9: the notes hold links to the Ship card too
   const shown = view.stateLine && !confirm ? { ...pageModel(m), line: view.stateLine, lineSaysState: false } : pageModel(m);
   paintNeed(root.querySelector('.gpage-head .kind-chip'), needYouText(view.needCount || 0));
   // Small runs: a disabled Create N PRs says why on the page, not only in its tooltip. A held group's line already does,

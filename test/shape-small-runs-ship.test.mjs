@@ -6,6 +6,9 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { readServerSource } from '../src/core/read-server-source.mjs';
 import { JSDOM } from 'jsdom';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -16,6 +19,10 @@ import { prAutoView, readRunPrAuto, featurePrSetting } from '../src/core/pr-auto
 import { prAutoFinisher } from '../src/core/pr-auto-finish.mjs';
 import { groupShipChoice, paintGroupShip } from '../ui/public/ship-group-dialog.mjs';
 import { renderShipCard } from '../ui/public/shape/ship-card.mjs';
+// A namespace read, so a missing new export (acknowledgeNote) fails only its own test.
+import * as CARD from '../ui/public/shape/ship-card.mjs';
+import { nightModeToggle } from '../src/core/settings.mjs';
+import { SHIPPING } from '../src/core/shape/ship-lock.mjs';
 import { createPrLabel } from '../ui/public/ship-words.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { renderRunPrFact } from '../ui/public/pr-auto-view.mjs';
@@ -119,22 +126,24 @@ const noChangelog = (w) => {
 };
 const careLines = (body) => (String(body).match(/^Care: /gm) || []).length;
 const SMALL_ON = { WORCA_FLAGS: 'shaperSmallRuns' };
+const CHECK_AT = '2026-01-01T00:00:00.000Z';   // cleanCheck's `at`
 const PER_RUN_REASON = 'small runs ship a PR per run';   // the flag-off reason, word for word as before
-/** A clean Verifier check on record for the head (run `head`, the latest finished): with the flag on, Ship is ready only then. */
-function cleanCheck(w, head) {
+/** A clean Verifier check on record for the head (run `head`, the latest finished): with the flag on, Ship is ready only
+ *  then. `findings` (slice 9): the notes its result carries. */
+function cleanCheck(w, head, findings = null) {
   const db = getDb();
   const tip = (pid) => git(w.dir, 'rev-parse', `feat/${pid}`);
   const pid = w.pids[head - 1];
   const check = { round: 1, ticketId: null, pipelineId: null, head: { index: head, pipelineId: pid }, headSha: tip(pid),
-    tips: Object.fromEntries(w.pids.map((p) => [p, tip(p)])), state: 'clean', result: { held: [], gaps: [] }, gapRuns: [], extra: 0, fixCycles: 1,
-    at: '2026-01-01T00:00:00.000Z' };
+    tips: Object.fromEntries(w.pids.map((p) => [p, tip(p)])), state: 'clean', result: { held: [], gaps: [], ...(findings ? { findings } : {}) }, gapRuns: [], extra: 0, fixCycles: 1,
+    at: CHECK_AT };
   const outline = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(w.f.id).outline);
   db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify({ ...outline, verify: { checks: [check] } }), w.f.id);
 }
 /** A marked 5-run feature, every run finished in run order, no run with a PR, checked clean by the Verifier. */
-function fiveRuns() {
+function fiveRuns(findings = null) {
   const w = smallWorld({ slices: 5, order: [1, 2, 3, 4, 5] });
-  cleanCheck(w, 5);
+  cleanCheck(w, 5, findings);
   return w;
 }
 const seedPr = (pid, n, state = 'OPEN') => getDb().prepare('UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ? WHERE id = ?')
@@ -789,3 +798,217 @@ test('the stacked ship loop asks the ledger\'s needsNewPr which runs need a pull
   assert.deepEqual([null, pr('OPEN'), pr('CLOSED'), pr('MERGED')].map((p) => sliceNeedsPr({ pipelineId: 'p1', pr: p })), [true, false, true, false]);
   assert.equal(sliceNeedsPr({ pipelineId: null, pr: null }), false, 'a run not started yet has no branch to open');
 });
+
+// ── Slice 9 (R-po-4): findings outside the verdicts are acknowledged by a person before Ship ─────────────────────────
+const SLOW = 'the import test takes 40 s';
+const NOTES_ONE = "Acknowledge the Verifier's note to ship";
+const notes = (...texts) => texts.map((text, i) => ({ id: `note-${i + 1}`, text }));
+const acknowledge = (id, body) => post(`/api/shape/features/${id}/acknowledge`, body);
+const outlineText = (fid) => getDb().prepare('SELECT outline FROM shape_features WHERE id = ?').get(fid).outline;
+const checkOf = (fid) => JSON.parse(outlineText(fid)).verify.checks.at(-1);
+const createButton = (card) => card.querySelector('[data-act="ship-create"]');
+const comp = async (w) => assert.equal((await confirm(w.f.id, { id: 'R-comp-4' })).status, 200);
+const until = async (done) => { for (let i = 0; i < 250 && !done(); i++) await new Promise((r) => setTimeout(r, 20)); };
+const ANN = 'ann@acme.test';
+/** The feature's PR setting: "One PR for the whole feature", open ready (as the R-arch-1 case stores it). */
+function onePrSetting(w) {
+  const db = getDb();
+  db.prepare("UPDATE shape_features SET pr_open = 'ready', pr_slices = 'one', pr_source = ?, pr_outcome = NULL, created_by = ? WHERE id = ?")
+    .run(JSON.stringify({ open: 'project', slices: 'project' }), ANN, w.f.id);
+  const setting = JSON.stringify({ open: 'ready', slices: 'one', scope: 'project', featureId: w.f.id, source: { open: 'feature', slices: 'feature' } });
+  for (const p of w.pids) db.prepare('UPDATE pipelines SET pr_auto = ? WHERE id = ?').run(setting, p);
+}
+/** Runs `fn` with Away mode on, in a HOME of its own (settings.json lives under HOME). */
+async function withAway(fn) {
+  const keys = ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  const home = mkdtempSync(join(tmpdir(), 'worca-ship-notes-away-'));
+  process.env.HOME = home; process.env.USERPROFILE = home; process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+  try {
+    mkdirSync(join(home, '.worca-cc'), { recursive: true });
+    writeFileSync(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ nightModeToggle: 'on' }));
+    assert.equal(nightModeToggle(), 'on');
+    await fn();
+  } finally {
+    for (const k of keys) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+shipT('s9 acceptance: a clean result with one note leaves Ship disabled until Acknowledge is clicked', async () => {
+  const seen = []; forge(seen);
+  const w = fiveRuns(notes(SLOW));
+  await comp(w);
+  const f = await getFeature(w.f.id);
+  assert.equal(f.ship.ready, true, 'a note does not touch ship.ready');
+  assert.deepEqual([f.ship.smallRuns.blocked, f.ship.smallRuns.reason], [true, NOTES_ONE]);
+  assert.equal(createButton(shipCardOf(f)).disabled, true);
+  const refused = await ship(w.f.id, 'one');
+  assert.equal(refused.status, 409);
+  assert.deepEqual(await refused.json(), { error: NOTES_ONE, code: 'FINDINGS_UNACKNOWLEDGED', missing: [], notes: ['note-1'] });
+  assert.deepEqual(ghOnly(seen), [], 'no gh call before the acknowledgement');
+  const ok = await acknowledge(w.f.id, { checkAt: CHECK_AT, note: 'note-1' });
+  assert.equal(ok.status, 200, await ok.clone().text());
+  const { smallRuns } = await ok.json();
+  assert.deepEqual([smallRuns.blocked, smallRuns.reason, smallRuns.findings.open], [false, null, 0]);
+  assert.equal(typeof checkOf(w.f.id).acks['note-1'].at, 'string');
+  assert.equal(createButton(shipCardOf({ ...f, ship: { ...f.ship, smallRuns } })).disabled, false);
+  // Apart from the notes key, the acknowledged ledger is the one a result with no note gives.
+  const acked = outlineText(w.f.id);
+  const { findings, ...rest } = featureView(w.f.id).ship.smallRuns;
+  cleanCheck(w, 5);
+  assert.deepEqual(rest, featureView(w.f.id).ship.smallRuns);
+  getDb().prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(acked, w.f.id);
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.equal(ghCalls(seen, 'create').length, 1);
+}, SMALL_ON);
+
+shipT('s9 acceptance: with Away mode on, the note stays unacknowledged and Ship stays disabled', async () => {
+  await withAway(async () => {
+    const seen = []; forge(seen);
+    const w = fiveRuns(notes(SLOW));
+    await comp(w);
+    onePrSetting(w);
+    const held = await prAutoFinisher().maybeShipOne(w.f.id);
+    assert.deepEqual([held?.status, held?.reason, held?.left], ['held', 'findings', 1]);
+    assert.equal(featurePrSetting(w.f.id).outcome.status, 'held');
+    assert.equal('acks' in checkOf(w.f.id), false, 'Away mode never acknowledges');
+    assert.equal(featureView(w.f.id).ship.smallRuns.blocked, true);
+    const r = await ship(w.f.id, 'one');
+    assert.equal(r.status, 409);
+    assert.equal((await r.json()).code, 'FINDINGS_UNACKNOWLEDGED');
+    assert.equal(ghCalls(seen, 'create').length, 0, 'no pull request');
+    // A person's acknowledgement then opens the one PR the auto-finisher held.
+    assert.equal((await acknowledge(w.f.id, { checkAt: CHECK_AT, note: 'note-1' })).status, 200);
+    await until(() => featurePrSetting(w.f.id).outcome?.status === 'opened');
+    assert.equal(featurePrSetting(w.f.id).outcome.status, 'opened');
+    assert.equal(ghCalls(seen, 'create').length, 1);
+  });
+}, SMALL_ON);
+
+// The requirement's own example (R-po-4).
+shipT("R-po-4 example: all verdicts pass with one note about a slow test; with Away mode on the Ship card lists it beside Acknowledge, Ship stays disabled, and it unlocks only after the owner clicks Acknowledge", async () => {
+  await withAway(async () => {
+    const seen = []; forge(seen);
+    const w = fiveRuns(notes(SLOW));
+    await comp(w);
+    onePrSetting(w);
+    await prAutoFinisher().maybeShipOne(w.f.id);
+    const f = await getFeature(w.f.id);
+    const doc = new JSDOM('<!doctype html><body></body>').window.document;
+    const card = renderShipCard(doc, { phase: 'ready', featureId: f.id, title: f.title, runs: f.total, smallRuns: f.ship.smallRuns },
+      { onAcknowledge: (note) => CARD.acknowledgeNote(f.id, f.ship.smallRuns.findings?.checkAt, note) });
+    doc.body.appendChild(card);
+    const rows = () => [...card.querySelectorAll('.ask-shipcard-notes .plan-check-row')];
+    const buttonsOf = () => [...card.querySelectorAll('.ask-shipcard-notes button')];
+    assert.deepEqual(rows().map((r) => r.querySelector('.plan-check-label').textContent), [SLOW], 'the note is listed');
+    assert.deepEqual(buttonsOf().map((b) => b.textContent), ['Acknowledge']);
+    assert.equal(createButton(card).disabled, true, 'Ship stays disabled');
+    assert.equal('acks' in checkOf(w.f.id), false);
+    assert.equal(ghCalls(seen, 'create').length, 0);
+    const real = globalThis.fetch;
+    globalThis.fetch = (u, init) => real(String(u).startsWith('/') ? `${base}${u}` : u, init);
+    try {
+      buttonsOf()[0].click();
+      await until(() => !createButton(card).disabled);
+    } finally { globalThis.fetch = real; }
+    assert.equal(createButton(card).disabled, false, "the owner's click unlocks Ship");
+    assert.deepEqual(buttonsOf(), []);
+    assert.match(rows()[0].querySelector('.plan-check-detail').textContent, /^acknowledged · \d\d:\d\d$/);
+    assert.deepEqual(Object.keys(checkOf(w.f.id).acks), ['note-1']);
+    await until(() => featurePrSetting(w.f.id).outcome?.status === 'opened');
+    assert.equal(ghCalls(seen, 'create').length, 1);
+  });
+}, SMALL_ON);
+
+shipT('s9 acceptance: a clean result with no findings opens no gate, and Ship is enabled as today', async () => {
+  const seen = []; forge(seen);
+  const w = fiveRuns();
+  await comp(w);
+  const f = await getFeature(w.f.id);
+  assert.equal('findings' in f.ship.smallRuns, false);
+  assert.equal('findings' in f.verify, false);
+  assert.equal('checkAt' in f.verify, false);
+  assert.equal(f.ask, null, 'no question');
+  assert.deepEqual([f.ship.ready, f.ship.smallRuns.blocked, f.ship.smallRuns.reason], [true, false, null]);
+  const card = shipCardOf(f);
+  assert.equal(card.querySelector('.ask-shipcard-notes'), null);
+  assert.equal(createButton(card).disabled, false);
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.equal(ghCalls(seen, 'create').length, 1);
+}, SMALL_ON);
+
+shipT('s9: each note is acknowledged on its own, and Ship opens only after every one', async () => {
+  const seen = []; forge(seen);
+  const w = fiveRuns(notes(SLOW, 'the export has no retry'));
+  await comp(w);
+  const first = await acknowledge(w.f.id, { checkAt: CHECK_AT, note: 'note-2' });
+  assert.equal(first.status, 200, await first.clone().text());
+  const sr = (await first.json()).smallRuns;
+  assert.deepEqual([sr.blocked, sr.findings.open, sr.findings.items.map((i) => !!i.ack)], [true, 1, [false, true]]);
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 409);
+  assert.deepEqual((await r.json()).notes, ['note-1']);
+  const last = await acknowledge(w.f.id, { checkAt: CHECK_AT, note: 'note-1' });
+  assert.equal((await last.json()).smallRuns.blocked, false);
+  assert.equal((await ship(w.f.id, 'one')).status, 200);
+}, SMALL_ON);
+
+shipT('s9 (D9): a waiting confirmation keeps ACCEPTANCE_INCOMPLETE; once it is marked the refusal names the notes', async () => {
+  const seen = []; forge(seen);
+  const w = fiveRuns(notes(SLOW));
+  const waits = await ship(w.f.id, 'one');
+  assert.equal(waits.status, 409);
+  assert.deepEqual([(await waits.json()).code], ['ACCEPTANCE_INCOMPLETE']);
+  await comp(w);
+  const left = await ship(w.f.id, 'one');
+  assert.equal(left.status, 409);
+  assert.equal((await left.json()).code, 'FINDINGS_UNACKNOWLEDGED');
+  assert.deepEqual(ghOnly(seen), []);
+}, SMALL_ON);
+
+shipT('s9: a repeated acknowledgement answers 200 and keeps the first time', async () => {
+  forge([]);
+  const w = fiveRuns(notes(SLOW));
+  assert.equal((await acknowledge(w.f.id, { checkAt: CHECK_AT, note: 'note-1' })).status, 200);
+  const first = checkOf(w.f.id).acks['note-1'];
+  await new Promise((r) => setTimeout(r, 15));
+  const again = await acknowledge(w.f.id, { checkAt: CHECK_AT, note: 'note-1', by: 'mallory', at: '1999-01-01T00:00:00.000Z' });
+  assert.equal(again.status, 200);
+  assert.deepEqual(checkOf(w.f.id).acks, { 'note-1': first }, 'the body\'s by and at are never read');
+}, SMALL_ON);
+
+shipT('s9 (R-qa-10): every refusal of /acknowledge answers its code and leaves the outline byte-equal', async () => {
+  forge([]);
+  const w = fiveRuns(notes(SLOW));
+  const refused = async (id, body, status, want, why) => {
+    const before = outlineText(id);
+    const r = await acknowledge(id, body);
+    assert.equal(r.status, status, why);
+    assert.deepEqual(await r.json(), want, why);
+    assert.equal(outlineText(id), before, why);
+  };
+  const invalid = { code: 'ACK_INVALID', error: 'name the note and the check you read' };
+  for (const body of [{}, { checkAt: CHECK_AT }, { note: 'note-1' }, { checkAt: 1, note: 'note-1' }, { checkAt: CHECK_AT, note: '' }, { checkAt: CHECK_AT, note: ['note-1'] }]) {
+    await refused(w.f.id, body, 400, invalid, JSON.stringify(body));
+  }
+  await refused(w.f.id, { checkAt: '2025-12-31T00:00:00.000Z', note: 'note-1' }, 409,
+    { code: 'STALE', error: 'the Verifier checked again: read its notes, then acknowledge' }, 'a check that is no longer the latest');
+  await refused(w.f.id, { checkAt: CHECK_AT, note: 'note-9' }, 400, { code: 'UNKNOWN_NOTE', error: 'note-9 is not a note of this check' }, 'unknown note');
+  SHIPPING.add(w.f.id);
+  try {
+    await refused(w.f.id, { checkAt: CHECK_AT, note: 'note-1' }, 409, { error: 'this feature is already shipping' }, 'a Ship in flight');
+  } finally { SHIPPING.delete(w.f.id); }
+  const gone = await acknowledge('feat_nope', { checkAt: CHECK_AT, note: 'note-1' });
+  assert.deepEqual([gone.status, await gone.json()], [404, { error: 'unknown feature' }]);
+  const quiet = fiveRuns();
+  await refused(quiet.f.id, { checkAt: CHECK_AT, note: 'note-1' }, 409, { code: 'NO_FINDINGS', error: 'the Verifier left no note to acknowledge' }, 'no note');
+  const plain = plainWorld({ slices: 2, prs: false });
+  const unmarked = await acknowledge(plain.f.id, { checkAt: CHECK_AT, note: 'note-1' });
+  assert.deepEqual([unmarked.status, (await unmarked.json()).code], [409, 'NOT_SMALL_RUNS']);
+  await comp(quiet);
+  assert.equal((await ship(quiet.f.id, 'one')).status, 200);
+  await refused(quiet.f.id, { checkAt: CHECK_AT, note: 'note-1' }, 409, { error: 'the feature already shipped' }, 'already shipped');
+}, SMALL_ON);

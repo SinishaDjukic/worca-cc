@@ -4,7 +4,7 @@
 // orchestrator writes into its run dir.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +21,8 @@ import { resolveShapeRequest } from '../src/core/shape/run.mjs';
 // Namespace reads, so a missing new export fails only the tests that need it.
 import * as SHARED from '../src/shared/shape/verifier.mjs';
 import * as LEDGER from '../src/shared/shape/ship-ledger.mjs';
+import * as CORE from '../src/core/shape/verifier.mjs';
+import { setFeatureAcceptance } from '../src/core/shape/features.mjs';
 import { featureFigures } from '../src/core/shape/measure.mjs';
 import { verifyStop } from '../src/shared/shape/verifier.mjs';
 import { oneCardModel } from '../ui/public/shape/feature-card.mjs';
@@ -1117,4 +1119,135 @@ test("R-po-3 example: R-po-2 and R-ux-1 are gaps; no run until both are answered
   const listed = w2.view().ship.smallRuns.shippedGaps;
   assert.deepEqual(listed, [{ id: 'R-po-2', reason: REASON }]);
   assert.deepEqual(listed.map((g) => LEDGER.shippedGapLine(g)), ['R-po-2 ships with a gap: covered by a later feature']);
+});
+
+// ── Slice 9 (R-po-4): the Verifier's notes, stored on the check, acknowledged by a person only ────────────────
+const SLOW = 'the import test takes 40 s';
+const notesOf = (...texts) => texts.map((text, i) => ({ id: `note-${i + 1}`, text }));
+/** A clean Verifier file whose result carries `texts` as findings. */
+const notedFile = (...texts) => ({ result: { ...result([]), findings: notesOf(...texts) }, decision: null });
+const ACK_NOW = Date.parse('2026-11-27T14:02:00.000Z');
+const NO_NOTE = 'the Verifier left no note to acknowledge';
+/** A world whose first check settled clean with `texts`, R-qa-1 marked Met so only notes can block Ship. */
+async function notedWorld(...texts) {
+  const w = world();
+  setFeatureAcceptance(w.f.id, [{ id: 'R-qa-1', mark: 'met', role: 'qa', by: 'ann', at: '2026-11-27T09:00:00.000Z' }]);
+  w.settle(w.pids[3]);
+  await w.verifierSettles(texts.length ? notedFile(...texts) : { result: result([]), decision: null }).out;
+  return w;
+}
+const ackNote = (w, note, over = {}) => {
+  assert.equal(typeof CORE.acknowledgeFinding, 'function', 'core verifier exports acknowledgeFinding');
+  return CORE.acknowledgeFinding(w.f.id, { checkAt: w.checks().at(-1).at, note, by: 'ann', now: ACK_NOW, ...over });
+};
+
+test('s9: a clean settle with one note stores result.findings, and the view lists it unacknowledged and blocks Ship', async () => {
+  const w = await notedWorld(SLOW);
+  const check = w.checks()[0];
+  assert.equal(check.state, 'clean');
+  assert.deepEqual(check.result.findings, notesOf(SLOW));
+  assert.equal('acks' in check, false, 'nothing acknowledges at settle');
+  const v = w.view();
+  assert.deepEqual(v.verify.findings, [{ id: 'note-1', text: SLOW, ack: null }]);
+  assert.equal(v.verify.checkAt, check.at);
+  assert.equal(v.ship.ready, true, 'a note does not touch ship.ready');
+  assert.deepEqual([v.ship.smallRuns.blocked, v.ship.smallRuns.reason], [true, "Acknowledge the Verifier's note to ship"]);
+  assert.deepEqual(v.ship.smallRuns.findings, { items: [{ id: 'note-1', text: SLOW, ack: null }], checkAt: check.at, open: 1 });
+});
+
+test('s9 (R-arch-7): a clean settle with no note stores result as before and adds no findings key anywhere', async () => {
+  const w = await notedWorld();
+  assert.deepEqual(w.checks()[0].result, { held: OWNED, gaps: [] });
+  const v = w.view();
+  assert.equal('findings' in v.verify, false);
+  assert.equal('checkAt' in v.verify, false);
+  assert.equal('findings' in v.ship.smallRuns, false);
+  assert.deepEqual([v.ship.ready, v.ship.smallRuns.blocked, v.ship.smallRuns.reason], [true, false, null]);
+});
+
+test('s9 (D3): the run-dir file is re-checked when recorded: notes are one line, clipped, deduplicated and at most 8', async () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  const hostile = ['  ', 'a\nb', 'a\nb', 42, { text: 'c' }, 'x'.repeat(5000), ...Array.from({ length: 20 }, (_, i) => `extra ${i}`)];
+  await w.verifierSettles({ result: { ...result([]), findings: hostile }, decision: null }).out;
+  const stored = w.checks()[0].result.findings;
+  assert.ok(Array.isArray(stored), 'findings are kept');
+  assert.deepEqual(stored.map((f) => f.id), Array.from({ length: 8 }, (_, i) => `note-${i + 1}`));
+  assert.deepEqual(stored.slice(0, 2).map((f) => f.text), ['a b', 'c']);
+  assert.ok(stored.every((f) => f.text.length <= 300 && !f.text.includes('\n')));
+});
+
+test('s9 (R-arch-8): acknowledgeFinding writes only acks[note] of the check on record; a repeat keeps the first by and at', async () => {
+  const w = await notedWorld(SLOW);
+  const before = w.outline();
+  assert.deepEqual(ackNote(w, 'note-1'), { ok: true, fresh: true });
+  const want = structuredClone(before);
+  want.verify.checks.at(-1).acks = { 'note-1': { by: 'ann', at: new Date(ACK_NOW).toISOString() } };
+  assert.deepEqual(w.outline(), want, 'nothing else in the outline moved');
+  const v = w.view();
+  assert.deepEqual(v.verify.findings[0].ack, { by: 'ann', at: new Date(ACK_NOW).toISOString() });
+  assert.deepEqual([v.ship.smallRuns.blocked, v.ship.smallRuns.reason, v.ship.smallRuns.findings.open], [false, null, 0]);
+  const stored = JSON.stringify(w.outline());
+  assert.deepEqual(ackNote(w, 'note-1', { by: 'bob', now: ACK_NOW + 60_000 }), { ok: true, fresh: false });
+  assert.equal(JSON.stringify(w.outline()), stored, 'the first acknowledgement stands');
+});
+
+test('s9 acknowledgeFinding refusals: unknown feature, no note, a stale check, an unknown note, a Ship in flight; none writes', async () => {
+  const w = await notedWorld(SLOW);
+  const refused = (world_, note, over, want) => {
+    const stored = JSON.stringify(world_.outline());
+    assert.deepEqual(ackNote(world_, note, over), { ok: false, ...want });
+    assert.equal(JSON.stringify(world_.outline()), stored, want.code || want.error);
+  };
+  const gone = CORE.acknowledgeFinding?.('feat_nope', { checkAt: w.checks()[0].at, note: 'note-1' });
+  assert.deepEqual(gone, { ok: false, status: 404, error: 'unknown feature' });
+  refused(w, 'note-1', { checkAt: '2025-01-01T00:00:00.000Z' }, { status: 409, code: 'STALE', error: 'the Verifier checked again: read its notes, then acknowledge' });
+  refused(w, 'note-9', {}, { status: 400, code: 'UNKNOWN_NOTE', error: 'note-9 is not a note of this check' });
+  const stored = JSON.stringify(w.outline());
+  SHIPPING.add(w.f.id);
+  try {
+    assert.throws(() => ackNote(w, 'note-1'), (e) => e.code === 'SHIPPING' && e.status === 409);
+  } finally { SHIPPING.delete(w.f.id); }
+  assert.equal(JSON.stringify(w.outline()), stored, 'SHIPPING');
+  const clean = await notedWorld();
+  refused(clean, 'note-1', {}, { status: 409, code: 'NO_FINDINGS', error: NO_NOTE });
+  const running = world();
+  running.settle(running.pids[3]);
+  refused(running, 'note-1', {}, { status: 409, code: 'NO_FINDINGS', error: NO_NOTE });
+});
+
+test('s9: a new check starts with no acknowledgement, even for the same note text', async () => {
+  const w = await notedWorld(SLOW);
+  const first = w.checks()[0].at;
+  ackNote(w, 'note-1');
+  assert.equal(w.view().ship.smallRuns.blocked, false);
+  const r = w.round(4, 'running');
+  w.commit(4);
+  setStatus(r, 'done');
+  w.settle(r);
+  await w.verifierSettles(notedFile(SLOW)).out;
+  assert.equal(w.checks().length, 2);
+  assert.equal('acks' in w.checks()[1], false);
+  const v = w.view();
+  assert.deepEqual([v.ship.ready, v.ship.smallRuns.blocked, v.ship.smallRuns.findings.open], [true, true, 1]);
+  assert.equal(ackNote(w, 'note-1', { checkAt: first }).code, 'STALE');
+});
+
+test("s9: Ship's own changelog commit keeps the check's acknowledgement", async () => {
+  const w = await notedWorld(SLOW);
+  ackNote(w, 'note-1');
+  const acks = w.checks()[0].acks;
+  w.commit(4, 'Changelog');
+  assert.equal(recordShipCommit(w.f.id, { ok: true, sha: w.headSha(), via: 'commit-tree' }).ok, true);
+  assert.deepEqual(w.checks()[0].acks, acks);
+  assert.deepEqual([w.view().ship.ready, w.view().ship.smallRuns.blocked], [true, false]);
+});
+
+test('s9 (R-arch-8): the person-only route is the one module that imports acknowledgeFinding (never Away mode, --yes or a settle hook)', () => {
+  const base = new URL('..', import.meta.url);
+  const sources = ['src', 'ui', 'tools'].flatMap((dir) => readdirSync(new URL(`${dir}/`, base), { recursive: true })
+    .map((p) => `${dir}/${String(p).replaceAll('\\', '/')}`))
+    .filter((p) => /\.(mjs|js)$/.test(p) && !p.includes('node_modules/') && p !== 'src/core/shape/verifier.mjs');
+  const uses = /(?:import|export)\s*\{[^}]*\backnowledgeFinding\b[^}]*\}\s*from|\.\s*acknowledgeFinding\b|\{[^}]*\backnowledgeFinding\b[^}]*\}\s*=\s*await\s+import\(/;
+  assert.deepEqual(sources.filter((p) => uses.test(readFileSync(new URL(p, base), 'utf8'))), ['ui/routes/shape/features.mjs']);
 });

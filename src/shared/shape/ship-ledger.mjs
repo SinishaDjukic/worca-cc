@@ -91,6 +91,26 @@ export function confirmHold(ledger) {
 /** Whether a hold text is the confirmation hold (confirmHold's), not another reason. */
 export const isConfirmHold = (text) => typeof text === 'string' && text.startsWith(NEEDS_CONFIRM);
 
+/** Slice 9 (D8): the block reason while the Verifier's notes wait for an acknowledgement. */
+export const findingsReason = (n) => `Acknowledge the Verifier's ${n === 1 ? 'note' : 'notes'} to ship`;
+/** Slice 9: the Ship card's state line when the notes are all that blocks. */
+export const FINDINGS_STATE = "Your turn: acknowledge the Verifier's note";
+export const findingsState = (n) => (n === 1 ? FINDINGS_STATE : "Your turn: acknowledge the Verifier's notes");
+
+/** Slice 9 (D6): the notes of the check that rules Ship (its view state clean or accepted), as `{items, checkAt, open}`;
+ *  null when there are none. */
+function findingsGate(verify) {
+  if (!verify || (verify.state !== 'clean' && verify.state !== 'accepted')) return null;
+  const items = list(verify.findings).filter((f) => f && f.id).map((f) => ({ id: f.id, text: f.text, ack: f.ack ?? null }));
+  if (!items.length) return null;
+  return { items, checkAt: verify.checkAt ?? null, open: items.filter((f) => !f.ack).length };
+}
+
+/** Slice 9 (owner direction): whether a hold text needs you: the confirmation hold, or the Verifier's notes hold
+ *  (findingsReason's) — the Runs list's Needs you section and the Runs badge count both alike. */
+export const isNeedsYouHold = (text) => isConfirmHold(text)
+  || (typeof text === 'string' && (text === findingsReason(1) || text === findingsReason(2)));
+
 /** A body's mark ('not_met' is read as 'not-met'), or null when it is none of the three. */
 export function confirmMarkOf(raw) {
   const m = raw === 'not_met' ? 'not-met' : raw;
@@ -147,11 +167,14 @@ export function shipLedger({ agreed = [], kinds = [], acceptance = [], verify = 
     ? labels.length > 1 ? `Waiting for ${who} to confirm ${plural(open.length, 'requirement')}`
       : `Waiting for ${who} to confirm ${waiting[0]}${waiting.length > 1 ? ` and ${waiting.length - 1} more` : ''}`
     : needs.length ? REASON_FIRST : null;
+  const findings = findingsGate(verify);
+  const noted = findings && findings.open > 0;
   const met = owned.filter((o) => o.status === 'holds').length + confirmed.filter((c) => c.state === 'confirmed' && c.mark === 'met').length;
   const unmet = confirmed.filter((c) => c.state === 'confirmed' && c.mark !== 'met').map((c) => ({ id: c.id, text: c.text, mark: c.mark, reason: c.reason }));
   if (judged) for (const e of [...owned, ...confirmed]) e.shown = requirementStatus(e, { runs, reruns });
-  return { confirmed, owned, waiting, blocked: open.length + needs.length + unowned.length > 0, reason, met: { met, total: owned.length + confirmed.length }, unmet,
-    ...(unowned.length ? { unowned } : {}), ...(shippedGaps.length ? { shippedGaps } : {}) };
+  return { confirmed, owned, waiting, blocked: open.length + needs.length + unowned.length > 0 || !!noted,
+    reason: reason ?? (noted ? findingsReason(findings.open) : null), met: { met, total: owned.length + confirmed.length }, unmet,
+    ...(unowned.length ? { unowned } : {}), ...(shippedGaps.length ? { shippedGaps } : {}), ...(findings ? { findings } : {}) };
 }
 
 /** Slice 8 (D12): the Ship card's line for a gap shipped as is: `R-po-2 ships with a gap: covered by a later feature`. */

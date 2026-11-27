@@ -333,3 +333,25 @@ test('the gap question: a 2-gap gate stop, shot in both themes', () => {
   assert.match(s, /shot\(`app-verifier-gap-question-\$\{theme\}`\)/);
 });
 
+
+// Slice 9 (R-po-4, D15): the Verifier's note on the Ship card, before and after Acknowledge.
+test('the SHIP_NOTES_ONLY phase: the note row before and after Acknowledge, 1280px, light and dark, 4 screenshots', () => {
+  const s = src();
+  assert.ok(/process\.env\.SHIP_NOTES_ONLY === '1'\) \{ await shipNotesPhase\(\); await finish\(\); \}/.test(s), 'the SHIP_NOTES_ONLY=1 gate');
+  const at = s.indexOf('async function shipNotesPhase(');
+  assert.ok(at >= 0, 'the Ship notes phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /shipFeature\(/, 'a seeded marked feature with every run done');
+  assert.match(body, /setVerify\(/, 'its clean Verifier check on record');
+  assert.match(body, /findings/, 'with one note');
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  for (const needle of ['ship-create', 'disabled', 'btn-primary', 'acknowledged']) assert.ok(body.includes(needle), needle);
+  assert.match(body, /ship-ack-note-1|Acknowledge/, 'the note row\'s button');
+  assert.match(body, /click/i, 'Acknowledge is clicked');
+  assert.match(body, /check\(/, 'what it shoots is asserted');
+  // The four files, with these exact names (no prefix), in SHOTS_DIR.
+  for (const when of ['before', 'after']) {
+    assert.match(s, new RegExp(`[\`'/]app-ship-note-${when}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${when} screenshots`);
+  }
+});

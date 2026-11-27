@@ -2892,3 +2892,31 @@ test('s7 T15: the run card and the group page word no state line or need count o
   assert.ok(head.length > 0, 'the head builder is found');
   assert.doesNotMatch(head, /data-need|dataset\.need/, 'never built into the head: created when the count turns non-zero');
 });
+
+// Shaper small runs slice 9 (R-po-4, D14): the Chat card's Ship step posts a note's acknowledgement.
+test("s9: Acknowledge on the chat card's Ship step posts the note and the check to /acknowledge", async () => {
+  const checkAt = '2026-11-27T10:00:00.000Z';
+  const smallRuns = { confirmed: [], owned: [], waiting: [], blocked: true, reason: "Acknowledge the Verifier's note to ship", met: { met: 0, total: 0 }, unmet: [],
+    care: { choice: "Balanced · Worca's pick", outcome: null, line: '' }, base: 'main', order: [{ index: 1, pipelineId: 'abcd1234', title: 'Part 1', pr: null, onto: null }],
+    findings: { items: [{ id: 'note-1', text: 'the import test takes 40 s', ack: null }], checkAt, open: 1 } };
+  const view = oneView(['done', 'done', 'done'], { status: 'done', ship: { ready: true, mode: null, smallRuns }, log: [ONE_CL, ONE_L('Runs approved')] });
+  const row = featureRow([DONE_RUN, DONE_RUN, DONE_RUN]);
+  const f = mk({ controls: { paintQuestion: () => null, releaseQuestion() {}, memoFor: () => ({}), groupOf: () => row } });
+  f.card.update(shaped(oneCard(view), {}, ...DONE_OWN));
+  assert.ok(f.$('.chat-rc-ship [data-ship-card="ready"]'), 'the ready Ship card');
+  const button = f.$('.chat-rc-ship [data-act="ship-ack-note-1"]');
+  assert.ok(button, 'the Acknowledge button on the chat card');
+  const sent = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    sent.push([url, init?.method, init?.body ? JSON.parse(init.body) : null]);
+    return { ok: true, json: async () => ({ smallRuns: { ...smallRuns, blocked: false, reason: null,
+      findings: { items: [{ ...smallRuns.findings.items[0], ack: { by: 'ann', at: '2026-11-27T14:02:00.000Z' } }], checkAt, open: 0 } } }) };
+  };
+  try {
+    button.click();
+    await settle(); await settle();
+  } finally { globalThis.fetch = real; }
+  assert.deepEqual(sent, [['/api/shape/features/feat-1/acknowledge', 'POST', { checkAt, note: 'note-1' }]]);
+  assert.equal(f.$('.chat-rc-ship [data-act="ship-create"]').disabled, false);
+});

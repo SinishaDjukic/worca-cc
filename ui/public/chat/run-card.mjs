@@ -34,7 +34,7 @@ import { featureCardModel, oneCardModel, paintFeatureLog, needYouText } from '..
 import { buildCheckRows } from '../shape/check-row.mjs';
 import { verifyGapItems } from '../../../src/shared/shape/verifier.mjs';
 import { paintReqChange } from '../shape/req-change.mjs';
-import { renderShipCard, confirmRequirement } from '../shape/ship-card.mjs';
+import { renderShipCard, confirmRequirement, acknowledgeNote } from '../shape/ship-card.mjs';
 import { namedAnswer, forgetAnswer, REQUIREMENTS_AGREED } from '../shape/step-receipt.mjs';
 import { isRequirementsAsk, answerFieldOpen } from '../shape/step-card.mjs';
 import { renderChecklistGroups } from '../shape/checklist-view.mjs';
@@ -1088,7 +1088,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // R-ux-2: the card's state line already says "N PRs open" (countShown), and the foot draws no View PR (paintFoot).
     // The one card's head already shows the feature title (titleShown): the Ship card names only its step.
     const card = renderShipCard(doc, { phase, featureId: feature.id, title: feature.title, runs: feature.total, result: ship.result || null,
-      smallRuns: ship.smallRuns, shipMode: ship.mode || null }, { countShown: true, titleShown: true, onConfirm: (id, mark, reason) => confirmRequirement(feature.id, id, mark, reason) });
+      smallRuns: ship.smallRuns, shipMode: ship.mode || null }, { countShown: true, titleShown: true, onConfirm: (id, mark, reason) => confirmRequirement(feature.id, id, mark, reason),
+        onAcknowledge: (note) => acknowledgeNote(feature.id, ship.smallRuns?.findings?.checkAt, note) });
     card.dataset.needsGit = '';   // shipping opens pull requests: hidden while git is missing (git-gate.mjs)
     shipEl.replaceChildren(card);
     const back = had ? shipEl.querySelector(had) : null;

@@ -22,6 +22,7 @@
 //   feature page line, the Shipped card after a One ship, an old outcome's new words and the Labs entry, at 1280px;
 // the carried runs (SHIP_CARRIED_ONLY=1 runs it alone): the Ship card's and the Create PR dialog's carried line and
 //   "Create 4 PRs", light and dark at 1280px, beside the run's prototype (SHIP_CARRIED_PROTOTYPE);
+// the Verifier's note on the Ship card (SHIP_NOTES_ONLY=1 runs it alone): before and after Acknowledge, light and dark at 1280px;
 // the feature page tabs (FEATURE_TABS_ONLY=1 runs it alone): the Cost tab, Mark and ship to the Ship card on Requirements,
 //   and the Log tab, light and dark at 1280px, the Cost tab and the bar at 375px in light;
 // and one reduced-motion capture of Prototype building. A live phase then follows a REAL paced mock Design build
@@ -1828,6 +1829,65 @@ async function confirmInPlacePhase() {
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 }
 
+// Slice 9 (R-po-4): the Verifier's note on the feature page's Ship card, before and after its Acknowledge, light and dark at 1280px.
+async function shipNotesPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const x = shipFeature('sv', 'Ship with a note');
+  setFeatureAcceptance(x.f.id, [COMP_MET]);
+  figures(x.f.id);
+  // Runs 1–4 on a straight branch line, and a clean Verifier check of run 4's head with one note: ready but for the note.
+  for (let k = 1; k <= 4; k++) {
+    execFileSync('git', ['branch', '-f', `feat/sv-${k}`], { cwd: proj });
+    getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify({ source: k === 1 ? 'main' : `feat/sv-${k - 1}`, feature: `feat/sv-${k}` }), new Date(Date.parse(now) + k * 60_000).toISOString(), x.pid(k));
+  }
+  const headSha = execFileSync('git', ['rev-parse', 'feat/sv-4'], { cwd: proj, encoding: 'utf8' }).trim();
+  const vpid = 'c5svv00001';
+  pipeline(vpid, 'done', 'Verifier');
+  const NOTE = 'the import test takes 40 s';
+  const seedNote = () => setVerify(x.f, vCheck(x, vpid, 'clean', { headSha, result: { held: HELD.concat(GAP.id), gaps: [], findings: [{ id: 'note-1', text: NOTE }] } }));
+  const CARD = '#group-detail [data-ship-card="ready"]';
+  const state = () => ev(`(() => { const c = document.querySelector(${JSON.stringify(CARD)}); if (!c) return null;
+    const row = c.querySelector('.ask-shipcard-notes .plan-check-row'); const b = c.querySelector('[data-act="ship-create"]');
+    return { row: row ? row.innerText : null, detail: row ? row.querySelector('.plan-check-detail').textContent : null,
+      ack: !!c.querySelector('[data-act="ship-ack-note-1"]'), wait: !!(row && row.querySelector('.plan-check-mark.is-wait')),
+      disabled: !!(b && b.disabled), primary: !!(b && b.classList.contains('btn-primary')),
+      stats: c.querySelector('.ask-shipcard-stats')?.textContent || '' }; })()`);
+  const capture = async (name) => {
+    await sleep(400);
+    const el = await ev(`(() => { const c = document.querySelector(${JSON.stringify(CARD)}); if (c) c.scrollIntoView({ block: 'center' }); return !!c; })()`);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+    return el;
+  };
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    seedNote();
+    await open(`${base}/?ship-note-${theme}#feature/${encodeURIComponent(x.f.id)}/requirements`);
+    await skipWelcome(); await setTheme(theme);
+    if (!await waitFor(`!!document.querySelector(${JSON.stringify(`${CARD} [data-act="ship-ack-note-1"]`)})`, `the Ship card's note and its Acknowledge (${theme})`)) continue;
+    const before = await state();
+    results.lists.push({ list: 'ship note before', theme, ...before });
+    check(before.row && before.row.includes(NOTE) && before.detail === 'from the Verifier' && before.wait && before.ack,
+      `ship note, ${theme}: the note is listed with the wait mark and its Acknowledge (${JSON.stringify(before)})`);
+    check(before.disabled && !before.primary && before.stats === "Your turn: acknowledge the Verifier's note",
+      `ship note, ${theme}: Create is disabled until the note is acknowledged (${JSON.stringify(before)})`);
+    await capture(`app-ship-note-before-${theme}.png`);
+    await ev(`(() => { document.querySelector(${JSON.stringify(`${CARD} [data-act="ship-ack-note-1"]`)}).click(); return true; })()`);
+    if (!await waitFor(`!!document.querySelector(${JSON.stringify(CARD)}) && !document.querySelector(${JSON.stringify(`${CARD} [data-act="ship-ack-note-1"]`)})`, `the note acknowledged (${theme})`)) continue;
+    await sleep(300);
+    const after = await state();
+    results.lists.push({ list: 'ship note after', theme, ...after });
+    check(/^acknowledged · \d\d:\d\d$/.test(after.detail || '') && !after.wait && !after.ack,
+      `ship note, ${theme}: the row reads acknowledged with a check mark, and no button (${JSON.stringify(after)})`);
+    check(!after.disabled && after.primary && after.stats === 'Ready to ship', `ship note, ${theme}: Create is enabled and primary (${JSON.stringify(after)})`);
+    await capture(`app-ship-note-after-${theme}.png`);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
 // D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in, SHIP_LIST_ONLY=1
 // the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR, SHIP_CARRIED_ONLY=1 the carried runs Ship names, FEATURE_TABS_ONLY=1 the feature page's Cost, Requirements and Log tabs, CONFIRM_ONLY=1 confirm in place (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
@@ -1842,6 +1902,7 @@ if (process.env.SHIP_ONE_ONLY === '1') { await shipOnePhase(); await finish(); }
 if (process.env.SHIP_CARRIED_ONLY === '1') { await shipCarriedPhase(); await finish(); }
 if (process.env.FEATURE_TABS_ONLY === '1') { await featureTabsPhase(); await finish(); }
 if (process.env.CONFIRM_ONLY === '1') { await confirmInPlacePhase(); await finish(); }
+if (process.env.SHIP_NOTES_ONLY === '1') { await shipNotesPhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {

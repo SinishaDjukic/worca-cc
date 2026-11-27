@@ -16,7 +16,7 @@ import { prototypeView } from '../../shared/shape/prototype.mjs';
 import { planVersionOf, startsFromOf, ownsOf } from '../../shared/shape/run-facts.mjs';
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
-import { shipLedger, unownedReason, confirmHold, careOutcome, unmetLines, newPrCount, carriedLine, needsNewPr } from '../../shared/shape/ship-ledger.mjs';
+import { shipLedger, unownedReason, confirmHold, findingsReason, careOutcome, unmetLines, newPrCount, carriedLine, needsNewPr } from '../../shared/shape/ship-ledger.mjs';
 import { rerunsOf } from '../../shared/shape/req-status.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
@@ -27,7 +27,7 @@ import { PLAN_ASK_KIND } from './run.mjs';
 import { SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { roundsOf } from './rounds.mjs';
 import { refuseWhileShipping } from './ship-lock.mjs';
-import { verifyView, startVerifyCheck, stillFinishing, roundOpen, shipRuleOn } from './verifier.mjs';
+import { verifyView, startVerifyCheck, stillFinishing, roundOpen, shipRuleOn, checkFindings } from './verifier.mjs';
 import { getWatch, stoppedWatchFact } from '../pr-watch.mjs';
 import { clipTitle } from '../title.mjs';
 import { readRunTags } from '../run-tags-store.mjs';
@@ -278,6 +278,10 @@ export function acceptanceRefusal(view) {
   if (sr) {
     if (!sr.blocked) return null;
     const unowned = sr.unowned || [];
+    // Slice 9 (D9): the Verifier's notes are the only block.
+    if (sr.findings?.open > 0 && sr.reason === findingsReason(sr.findings.open)) {
+      return { error: sr.reason, code: 'FINDINGS_UNACKNOWLEDGED', missing: [], notes: sr.findings.items.filter((n) => !n.ack).map((n) => n.id) };
+    }
     return { error: sr.reason, code: 'ACCEPTANCE_INCOMPLETE', missing: [...sr.waiting, ...unowned],
       role: unowned.length ? null : sr.confirmed.find((c) => c.state === 'waiting')?.role || null };
   }
@@ -351,7 +355,19 @@ export function shipHold(featureId) {
   const f = featureRow(featureId);
   if (!f) return null;
   return unownedReason(requirementKindsOf(j(f.requirement_kinds, null), f.outline).filter((k) => k.kind === 'owned' && k.run === null).map((k) => k.id))
-    || confirmHold(ledgerOf(f, null));
+    || confirmHold(ledgerOf(f, null)) || notesHold(f);
+}
+
+/** Slice 9 (D12): the hold while the Verifier's notes on the latest check (stored clean or accepted) are the only thing
+ *  Ship waits for; null otherwise. */
+function notesHold(f) {
+  const c = f.outline.verify && Array.isArray(f.outline.verify.checks) ? f.outline.verify.checks.at(-1) : null;
+  if (!c || (c.state !== 'clean' && c.state !== 'accepted')) return null;
+  const notes = checkFindings(c);
+  if (!notes.findings) return null;
+  const l = ledgerOf(f, { state: c.state, gaps: c.result && Array.isArray(c.result.gaps) ? c.result.gaps : [],
+    ...(Array.isArray(c.shipped) ? { shipped: c.shipped } : {}), ...notes });
+  return l.findings?.open > 0 && l.reason === findingsReason(l.findings.open) ? l.reason : null;
 }
 
 /** A feature's recorded figures (shape_feature_figures, one row), or null. Readable with the flag off; measure.mjs

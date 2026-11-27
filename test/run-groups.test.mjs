@@ -425,3 +425,54 @@ test('flag off: a small-runs feature\'s group cost leaves the Verifier rounds ou
   const f = elevenFifty();
   assert.deepEqual(featureGroup(f.id, false).cost, { usd: 10, byPipeline: Object.fromEntries(f.ids.map((id) => [id, 2])) });
 });
+
+// ── Slice 9 (R-po-4, D12): an unacknowledged Verifier note is the feature's hold ───────────────────────────────
+const NOTES_ONE = "Acknowledge the Verifier's note to ship";
+/** The feature's one Verifier check on record: `state`, `texts` as its findings, `acked` note ids. */
+function setNotedCheck(featureId, state, texts, acked = []) {
+  const db = getDb();
+  const outline = JSON.parse(db.prepare('SELECT outline FROM shape_features WHERE id = ?').get(featureId).outline);
+  const findings = texts.map((text, i) => ({ id: `note-${i + 1}`, text }));
+  const check = { round: 1, ticketId: null, pipelineId: null, head: null, headSha: null, state,
+    result: { held: ['R-po-1'], gaps: [], findings }, gapRuns: [], extra: 0, fixCycles: 1, at: '2026-11-27T10:00:00.000Z',
+    ...(acked.length ? { acks: Object.fromEntries(acked.map((id) => [id, { by: 'ann', at: '2026-11-27T14:02:00.000Z' }])) } : {}) };
+  db.prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify({ ...outline, verify: { checks: [check] } }), featureId);
+}
+const confirmUx = (featureId) => setFeatureAcceptance(featureId, [{ id: 'R-ux-2', mark: 'met', role: 'design', by: 'ann', at: '2026-11-27T09:00:00.000Z' }]);
+
+test("s9: an unacknowledged note on a clean or accepted check is the group's hold, so it never reads ready", () => {
+  const f = confirmFeature();
+  confirmUx(f.id);
+  for (const state of ['clean', 'accepted']) {
+    setNotedCheck(f.id, state, ['the import test takes 40 s']);
+    assert.equal(groupOf(true, f.id).hold, NOTES_ONE, state);
+    assert.equal(shipHold(f.id), NOTES_ONE, state);
+  }
+  assert.equal('hold' in groupOf(false, f.id), false, 'flag off');
+  setNotedCheck(f.id, 'clean', ['a', 'b']);
+  assert.equal(groupOf(true, f.id).hold, "Acknowledge the Verifier's notes to ship");
+  setNotedCheck(f.id, 'clean', ['a', 'b'], ['note-1']);
+  assert.equal(groupOf(true, f.id).hold, NOTES_ONE, 'one still open');
+  setNotedCheck(f.id, 'clean', ['a', 'b'], ['note-1', 'note-2']);
+  assert.equal('hold' in groupOf(true, f.id), false, 'all acknowledged');
+});
+
+test('s9: the confirmation hold comes first, and a gaps or verifying check holds nothing for its notes', () => {
+  const f = confirmFeature();
+  setNotedCheck(f.id, 'clean', ['a']);
+  assert.equal(groupOf(true, f.id).hold, 'Needs your confirmation: R-ux-2');
+  confirmUx(f.id);
+  assert.equal(groupOf(true, f.id).hold, NOTES_ONE);
+  for (const state of ['gaps', 'verifying']) {
+    setNotedCheck(f.id, state, ['a']);
+    assert.equal(shipHold(f.id), null, state);
+  }
+});
+
+test("s9: an unmarked feature's group is the checkpoint's, with or without a noted check on record", () => {
+  const plain = confirmFeature({ marked: false });
+  const before = groupOf(true, plain.id);
+  assert.equal('hold' in before, false);
+  setNotedCheck(plain.id, 'clean', ['a']);
+  assert.deepEqual(groupOf(true, plain.id), before);
+});

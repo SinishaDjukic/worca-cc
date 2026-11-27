@@ -261,10 +261,10 @@ const DONE_SR = SR({ ...READY_SR, order: [
   { index: 3, pipelineId: 'p3', title: 'Share', pr: { number: 12, url: 'https://x/pull/12' }, onto: 11 },
   { index: 2, pipelineId: 'p2', title: 'Search', pr: { number: 13, url: 'https://x/pull/13' }, onto: null }] });
 let srFeature = 0;
-const srCard = (sr, { phase = 'ready', onConfirm = async () => ({ ok: true }), countShown = false, titleShown = false, featureId = `feat_sr${++srFeature}` } = {}) => {
+const srCard = (sr, { phase = 'ready', onConfirm = async () => ({ ok: true }), onAcknowledge = async () => ({ ok: true }), countShown = false, titleShown = false, featureId = `feat_sr${++srFeature}` } = {}) => {
   const doc = docOf();
   const el = renderShipCard(doc, { phase, featureId, title: 'Charts', runs: 3, smallRuns: sr, result: phase === 'applied' ? { mode: 'stacked' } : null },
-    { onConfirm, countShown, titleShown });
+    { onConfirm, onAcknowledge, countShown, titleShown });
   doc.body.appendChild(el);
   return { el, doc };
 };
@@ -651,3 +651,113 @@ test('the Ship card lists one line per shipped gap from the ledger the server bu
   assert.equal(gapLines(srCard(READY_SR).el).length, 0);
 });
 
+
+// ── Slice 9 (R-po-4, D13/D14): the Verifier's notes, one Acknowledge each ─────────────────────────────────────
+const NOTE_TEXTS = ['the import test takes 40 s', 'the export has no retry'];
+const NOTE = (n, ack = null) => ({ id: `note-${n}`, text: NOTE_TEXTS[n - 1], ack });
+const ACKED = { by: 'ann', at: '2026-11-27T14:02:00.000Z' };
+const notesReason = (open) => `Acknowledge the Verifier's note${open === 1 ? '' : 's'} to ship`;
+/** READY_SR with `items` as the check's notes, blocked while one is open, as the server's ledger builds it. */
+const NOTED = (items, over = {}) => {
+  const open = items.filter((i) => !i.ack).length;
+  return { ...READY_SR, findings: { items, checkAt: '2026-11-27T10:00:00.000Z', open }, blocked: open > 0, reason: open ? notesReason(open) : null, ...over };
+};
+const noteRows = (el) => [...el.querySelectorAll('.ask-shipcard-notes .plan-check-row')];
+const ackButtons = (el) => [...el.querySelectorAll('.ask-shipcard-notes button')];
+const ackBtn = (el, n = 1) => el.querySelector(`[data-act="ship-ack-note-${n}"]`);
+const createBtn = (el) => el.querySelector('[data-act="ship-create"]');
+const stateLine = (el) => el.querySelector('.ask-shipcard-stats').textContent;
+
+test('s9: an open note is listed with the wait mark and one Acknowledge button; Create is disabled and described by the reason', () => {
+  const { el } = srCard(NOTED([NOTE(1)], { shippedGaps: [{ id: 'R-po-2', reason: 'covered by a later feature' }] }));
+  const list = el.querySelector('.ask-shipcard-notes');
+  assert.ok(list, 'the notes list');
+  for (const cls of ['plan-checks', 'srows']) assert.ok(list.classList.contains(cls), cls);
+  const rows = noteRows(el);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].querySelector('.plan-check-label').textContent, NOTE_TEXTS[0]);
+  assert.equal(rows[0].querySelector('.plan-check-detail').textContent, 'from the Verifier');
+  assert.ok(rows[0].querySelector('.plan-check-mark.is-wait'), 'the wait mark');
+  assert.deepEqual(ackButtons(el).map((b) => [b.textContent, b.type, b.dataset.act]), [['Acknowledge', 'button', 'ship-ack-note-1']]);
+  const b = ackBtn(el);
+  assert.ok(b.classList.contains('btn') && b.classList.contains('btn-sm') && !b.classList.contains('btn-primary'));
+  const why = [...el.querySelectorAll('.ask-shipcard-why:not(.ask-shipcard-gap)')];
+  assert.deepEqual(why.map((w) => w.textContent), [notesReason(1)]);
+  assert.deepEqual([createBtn(el).disabled, createBtn(el).classList.contains('btn-primary'), createBtn(el).getAttribute('aria-describedby')], [true, false, why[0].id]);
+  assert.equal(stateLine(el), "Your turn: acknowledge the Verifier's note");
+  // After the shipped-gap lines, before Care.
+  const after = (a, c) => !!(a.compareDocumentPosition(c) & 4);
+  assert.ok(after(el.querySelector('.ask-shipcard-gap'), list), 'after the shipped-gap line');
+  assert.ok(after(list, el.querySelector('.rd-kv-row[data-fact="care"]')), 'before Care');
+});
+
+test('s9: two notes get a button each and the plural words; an acknowledged one reads its time, with a check mark and no button', () => {
+  const two = srCard(NOTED([NOTE(1), NOTE(2)])).el;
+  assert.deepEqual(ackButtons(two).map((b) => b.dataset.act), ['ship-ack-note-1', 'ship-ack-note-2']);
+  assert.equal(stateLine(two), "Your turn: acknowledge the Verifier's notes");
+  const { el, doc } = srCard(NOTED([NOTE(1, ACKED), NOTE(2)]));
+  const rows = noteRows(el);
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].querySelector('.plan-check-detail').textContent, /^acknowledged · \d\d:\d\d$/);
+  assert.equal(rows[0].querySelector('.plan-check-mark').firstElementChild.outerHTML, icon(doc, 'check', 12).outerHTML);
+  assert.equal(rows[0].querySelector('.plan-check-mark.is-wait'), null);
+  assert.deepEqual(ackButtons(el).map((b) => b.dataset.act), ['ship-ack-note-2']);
+  assert.equal(createBtn(el).disabled, true, 'one is still open');
+});
+
+test('s9: Acknowledge posts once, every control is disabled while it is pending, and the answer opens Create', async () => {
+  const calls = []; let release;
+  const { el, doc } = srCard(NOTED([NOTE(1)]), { onAcknowledge: (...a) => { calls.push(a); return new Promise((r) => { release = r; }); } });
+  blurOnDisable(doc);
+  const b = ackBtn(el);
+  assert.ok(b, 'the Acknowledge button');
+  b.focus();
+  b.click(); b.click(); ackBtn(el)?.click();
+  assert.deepEqual(calls, [['note-1']]);
+  assert.deepEqual([...el.querySelectorAll('button')].filter((x) => !x.disabled && x.closest('.ask-shipcard-notes, .ask-shipcard-mark, .ask-mcard-actions'))
+    .map((x) => x.textContent), [], 'nothing can be pressed meanwhile');
+  assert.equal((el.dataset.focus || el.querySelector('[data-focus]')?.dataset.focus), 'ship-ack-note-1', 'a page repaint can give the focus back');
+  release({ ok: true, smallRuns: NOTED([NOTE(1, ACKED)]) });
+  await tick(); await tick();
+  assert.match(noteRows(el)[0].querySelector('.plan-check-detail').textContent, /^acknowledged · \d\d:\d\d$/);
+  assert.deepEqual(ackButtons(el), []);
+  assert.deepEqual([createBtn(el).disabled, createBtn(el).classList.contains('btn-primary'), createBtn(el).hasAttribute('aria-describedby')], [false, true, false]);
+  assert.equal(stateLine(el), 'Ready to ship');
+  assert.equal(el.querySelector('.ask-shipcard-why'), null);
+});
+
+test('s9: a refused acknowledgement shows in the error line, keeps the button and gives it the focus', async () => {
+  const error = 'the Verifier checked again: read its notes, then acknowledge';
+  const { el, doc } = srCard(NOTED([NOTE(1)]), { onAcknowledge: async () => ({ ok: false, error }) });
+  blurOnDisable(doc);
+  assert.ok(ackBtn(el), 'the Acknowledge button');
+  ackBtn(el).focus();
+  ackBtn(el).click();
+  await tick(); await tick();
+  assert.equal(el.querySelector('.ask-card-err').textContent, error);
+  assert.equal(ackBtn(el).disabled, false);
+  assert.equal(doc.activeElement, ackBtn(el));
+  assert.equal(createBtn(el).disabled, true);
+});
+
+test('s9: with no findings the card has no notes list and Create is enabled, as today', () => {
+  const { el } = srCard(READY_SR);
+  assert.equal(el.querySelector('.ask-shipcard-notes'), null);
+  assert.deepEqual([createBtn(el).disabled, stateLine(el)], [false, 'Ready to ship']);
+});
+
+test('s9: the state line names the notes only when they are all that blocks', () => {
+  const both = NOTED([NOTE(1)], { confirmed: [SR_ROW('waiting')], waiting: ['R-comp-4'], reason: 'Waiting for Compliance to confirm R-comp-4' });
+  const { el } = srCard(both);
+  assert.equal(noteRows(el).length, 1, 'the note is listed beside the mark');
+  assert.equal(stateLine(el), 'Your turn: mark what only a person can');
+  assert.equal(createBtn(el).disabled, true);
+  assert.equal(stateLine(srCard(NOTED([NOTE(1)])).el), "Your turn: acknowledge the Verifier's note");
+});
+
+test('s9: a note is drawn as text, never as markup', () => {
+  const text = '<img src=x onerror=alert(1)>';
+  const { el } = srCard(NOTED([{ id: 'note-1', text, ack: null }]));
+  assert.equal(noteRows(el)[0]?.querySelector('.plan-check-label').textContent, text);
+  assert.equal(el.querySelector('.ask-shipcard-notes img'), null);
+});

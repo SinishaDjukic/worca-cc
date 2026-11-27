@@ -580,3 +580,24 @@ test('s7 R-arch-4: the feature view\'s waiting Ship card of a feature with no ch
   assert.equal(line(true), 'Ship card comes when all 3 runs are done, here and in the chat.');
   assert.equal(line(undefined), 'Ship card comes when all 3 runs are done, here and in the chat.');
 });
+
+// Slice 9 (R-po-4, D14): the feature page posts a note's acknowledgement with the check the person read.
+test('s9: Acknowledge on the feature page posts the note and the check to /acknowledge and opens Create', async () => {
+  const checkAt = '2026-11-27T10:00:00.000Z';
+  const smallRuns = { ...SR_WAIT(), confirmed: [], waiting: [], blocked: true, reason: "Acknowledge the Verifier's note to ship",
+    findings: { items: [{ id: 'note-1', text: 'the import test takes 40 s', ack: null }], checkAt, open: 1 } };
+  const answered = { ...smallRuns, blocked: false, reason: null,
+    findings: { items: [{ ...smallRuns.findings.items[0], ack: { by: 'ann', at: '2026-11-27T14:02:00.000Z' } }], checkAt, open: 0 } };
+  const { el } = mount(feature({ status: 'done', done: 3, ship: { ready: true, mode: null, smallRuns } }));
+  const button = q(el, '[data-act="ship-ack-note-1"]');
+  assert.ok(button, 'the Acknowledge button on the feature page');
+  const sent = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push([url, init.method, JSON.parse(init.body)]); return { ok: true, json: async () => ({ smallRuns: answered }) }; };
+  try {
+    button.click();
+    await flush(); await flush();
+  } finally { globalThis.fetch = real; }
+  assert.deepEqual(sent, [['/api/shape/features/f1/acknowledge', 'POST', { checkAt, note: 'note-1' }]]);
+  assert.equal(q(el, '[data-act="ship-create"]').disabled, false);
+});

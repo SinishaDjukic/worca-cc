@@ -338,6 +338,21 @@ gaps. It adds no class and no CSS of its own.
 | error | `.plan-err` (the step card's `errLine`) | a refusal, said once, under the gap it names (else above the button) |
 | send | `.qpanel-foot` `button.btn.btn-primary` | the one primary, "Send answers"; off until every gap has its answer and the text it needs |
 
+### Ship card notes
+The Verifier's notes outside the verdicts, on a marked feature's Ship card (`ui/public/shape/ship-card.mjs`, tested by
+`test/ui-ship-card.test.mjs`), right after the shipped-gap lines. One `buildCheckRows` row per note, with its own
+Acknowledge button at the end of the row: the open stop list's per-line button pattern. Create stays disabled until every
+note is acknowledged. There is no heading and no "acknowledge all". It adds no class rule of its own: the list carries
+the marker class `ask-shipcard-notes` only.
+
+| Part | Class | Means |
+|---|---|---|
+| list | `.plan-checks.srows.ask-shipcard-notes` | one row per note of the check that rules Ship, as text |
+| mark | `wait` → `check` (`checkMark`) | open, then acknowledged |
+| note | `.plan-check-detail` | "from the Verifier", then `acknowledged · 14:02` |
+| button | `button.btn.btn-sm` "Acknowledge" | one per open note (`data-act="ship-ack-note-1"`); gone once acknowledged |
+| error | `.ask-card-err` | a refusal, such as a newer check; the button stays |
+
 ### Usage rings
 The avatar draws only the session and long-window rings (`ui/public/usage-view.mjs`), each in one tone (`--ink-2`,
 `--amber` at the warning line, `--red` full at the limit); spend is never a ring there, it lives in the account menu's

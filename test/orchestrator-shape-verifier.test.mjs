@@ -179,3 +179,21 @@ test('a missing result file fails the run with VERIFY_RESULT_MISSING (an unparse
   assert.equal((await absent.done).status, 'paused');
   await assert.rejects(resultOf(absent.orch));
 });
+
+// Slice 9 (R-po-4): a note is no question, and --yes never acknowledges it. The mock writes no findings, so the test
+// writes the Verifier's file.
+test('under --yes a clean file with a note keeps result.findings in verify-result.json, asks nothing and writes no acks', { timeout: 60_000 }, async () => {
+  const note = 'the import test takes 40 s';
+  const writeNoted = async (o) => {
+    if (!VERIFIER.test(o.prompt || '')) return undefined;
+    const out = String(o.prompt).match(/Write \*\*verify\*\* to: (\S+)/)[1];
+    await writeFile(out, JSON.stringify({ checks: OWNED.map((x) => ({ id: x.id, holds: true })), findings: [note] }), 'utf8');
+    return { text: 'checked', exitCode: 0 };
+  };
+  const h = start({ ref: { texts: TEXTS }, auto: true, afterSpawn: writeNoted, tag: 'yes-note' });
+  assert.equal((await h.done).status, 'done');
+  assert.deepEqual(h.asked, [], 'a note opens no gate on the run');
+  const file = await resultOf(h.orch);
+  assert.deepEqual(file.result, { held: OWNED.map((o) => o.id), gaps: [], findings: [{ id: 'note-1', text: note }] });
+  assert.doesNotMatch(JSON.stringify(file), /"acks"/);
+});

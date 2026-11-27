@@ -32,7 +32,7 @@ import { runModel, groupModel, finishedNeedsYou, WATCH_WHY } from '../../src/sha
 import { kindChip } from './run-kind.mjs';
 import { memberShortWord } from '../../src/shared/shape/run-agents.mjs';
 import { memberStatusOf } from '../../src/shared/shape/run-status.mjs';
-import { isConfirmHold } from '../../src/shared/shape/ship-ledger.mjs';
+import { isNeedsYouHold } from '../../src/shared/shape/ship-ledger.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -290,7 +290,7 @@ export function needsYouItems({ live = [], history = [] } = {}) {
 /** Slice 7 (owner direction): the run groups held for your confirmation. `groups` = GET /api/run-groups' groups; the
  *  server sends a confirmation `hold` only on a marked feature with the Shaper small runs flag on. */
 export const confirmHeldCount = (groups) => (Array.isArray(groups) ? groups : [])
-  .filter((g) => g && g.smallRuns && isConfirmHold(g.hold)).length;
+  .filter((g) => g && g.smallRuns && isNeedsYouHold(g.hold)).length;
 
 /** The Runs badge: the Needs you count without building the list (runs on every WS frame); slice 7: plus the features
  *  held for your confirmation (`groups`, which the Runs list's Needs you section lists too). */
@@ -570,7 +570,7 @@ export function groupRow(g, { now = Date.now() } = {}) {
     runId: (cur && cur.runId) || '', pipelineId: (cur && cur.pipelineId) || '', projectKey: '',
     title: String(g.title || '(untitled)'), status: '', groupKey: String(g.groupKey || ''), groupName: String(g.groupName || ''),
     // Slice 7 (D3): a feature held for your confirmation sits in Needs you too (no member asks: no icon).
-    by: '', unread: false, needs: members.some((mb) => mb.needs) || isConfirmHold(model.hold), time: '', sortMs: now, dispatchMs: firstAt, open: false,   // set by buildRunsModel (D29)
+    by: '', unread: false, needs: members.some((mb) => mb.needs) || isNeedsYouHold(model.hold), time: '', sortMs: now, dispatchMs: firstAt, open: false,   // set by buildRunsModel (D29)
     // cmpNeeds ranks by needsIcon || icon (ask, paused, fail); a group takes its most urgent member's.
     needsIcon: NEEDS_ICON.find((ic) => members.some((mb) => mb.needs && NEEDS_ICON_OF[mb.model.state] === ic)) || '',
     model, count: model.count.text, members,

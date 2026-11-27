@@ -4,7 +4,7 @@
 // (feature-actions.mjs). featureHeadline stays for the Plans row's summary line.
 import { featureCardModel, paintFeatureLog } from './feature-card.mjs';
 import { paintFeatureActions } from './feature-actions.mjs';
-import { renderShipCard, saveAcceptance, confirmRequirement } from './ship-card.mjs';
+import { renderShipCard, saveAcceptance, confirmRequirement, acknowledgeNote } from './ship-card.mjs';
 import { buildRequirementRoleFolds } from './role-rows.mjs';
 import { reasonLine } from '../../../src/shared/shape/ship-ledger.mjs';
 import { CONFIRM_ROLES, roleOfPerspective, perspectiveOfRole } from '../../../src/shared/shape/feature-record.mjs';
@@ -41,7 +41,8 @@ function shipBlock(doc, f) {
   const card = renderShipCard(doc, { phase, featureId: f.id, title: f.title, runs: f.total, ...(typeof f.hasChat === 'boolean' ? { hasChat: f.hasChat } : {}), files: s.files, added: s.linesAdded,
     deleted: s.linesRemoved, suggested: s.suggested, result: s.result || null, ...(s.acceptance ? { acceptance: s.acceptance } : {}),
     ...(sr ? { smallRuns: sr, shipMode: s.mode || null } : {}) },
-  sr ? { onConfirm: (id, mark, reason) => confirmRequirement(f.id, id, mark, reason) } : s.acceptance ? { onMark: (entries) => saveAcceptance(f.id, entries) } : {});
+  sr ? { onConfirm: (id, mark, reason) => confirmRequirement(f.id, id, mark, reason),
+    onAcknowledge: (note) => acknowledgeNote(f.id, sr.findings?.checkAt, note) } : s.acceptance ? { onMark: (entries) => saveAcceptance(f.id, entries) } : {});
   card.dataset.needsGit = '';   // shipping opens pull requests: hidden while git is missing (git-gate.mjs)
   return card;
 }

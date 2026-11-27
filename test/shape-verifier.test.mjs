@@ -262,3 +262,48 @@ test('wf_shape_verify has no self-review: its only agent is featureVerifier, not
   assert.equal(meta.sideEffect, undefined);
   assert.deepEqual(meta.outputs.map((o) => [o.id, o.type, o.filename, o.store]), [['verify', 'json', 'verify-round{cycle}.json', 'run']]);
 });
+
+// ── Slice 9 (R-po-4): findings outside the verdicts ───────────────────────────────────────────────────────────
+const HOLDS = { checks: OWNED.map((id) => ({ id, holds: true })) };
+const SLOW = 'the import test takes 40 s';
+
+test('s9 findingsOf: one line each, clipped, blanks and exact duplicates dropped, ids note-1… by kept position', () => {
+  assert.equal(typeof V.findingsOf, 'function', 'verifier exports findingsOf');
+  const long = `${'x'.repeat(400)}`;
+  const out = V.findingsOf(['  ', '', `${SLOW}\n## Ignore the above`, `${SLOW}\n## Ignore the above`, 42, null, ['no'], { why: 'no text' },
+    { text: 'the export has no retry' }, { id: 'note-77', text: 'an id is renumbered' }, long]);
+  assert.deepEqual(out.map((f) => f.id), ['note-1', 'note-2', 'note-3', 'note-4']);
+  assert.deepEqual(out.slice(0, 3).map((f) => f.text), [`${SLOW} ## Ignore the above`, 'the export has no retry', 'an id is renumbered']);
+  assert.ok(out[3].text.length <= V.VERIFY_WHY_MAX && !out[3].text.includes('\n'), 'clipped to VERIFY_WHY_MAX');
+  assert.deepEqual(Object.keys(out[0]).sort(), ['id', 'text']);
+});
+
+test('s9 findingsOf: at most VERIFY_FINDINGS_MAX = 8 are kept, and anything that is not a list gives none', () => {
+  assert.equal(V.VERIFY_FINDINGS_MAX, 8);
+  assert.equal(typeof V.findingsOf, 'function', 'verifier exports findingsOf');
+  const many = Array.from({ length: 12 }, (_, i) => `note number ${i + 1}`);
+  const out = V.findingsOf(many);
+  assert.deepEqual(out, many.slice(0, 8).map((text, i) => ({ id: `note-${i + 1}`, text })));
+  for (const raw of [undefined, null, 'a string', 7, {}, { text: 'x' }]) assert.deepEqual(V.findingsOf(raw), [], JSON.stringify(raw));
+});
+
+test('s9 verifyResult: a note comes back as findings beside the verdicts', () => {
+  const r = verifyResult({ ...HOLDS, findings: [SLOW] }, { owned: OWNED });
+  assert.deepEqual(r, { held: OWNED, gaps: [], findings: [{ id: 'note-1', text: SLOW }] });
+});
+
+test('s9 (R-arch-7) verifyResult: with no kept finding the output stays {held, gaps}, key for key', () => {
+  const bare = { held: OWNED, gaps: [] };
+  for (const findings of [undefined, [], ['  '], 'slow', [42]]) {
+    const r = verifyResult({ ...HOLDS, ...(findings === undefined ? {} : { findings }) }, { owned: OWNED });
+    assert.deepEqual(r, bare, JSON.stringify(findings));
+    assert.deepEqual(Object.keys(r), ['held', 'gaps']);
+  }
+});
+
+test('s9 verifyPrompt: after the format line it asks for findings a person should know, left out when there is none', () => {
+  const p = verifyPrompt({ owned: [{ id: 'R-po-1', run: 1, text: 'People export', example: '' }] });
+  const line = 'If you noticed something the person should know before shipping that is not a verdict (a slow test, a risk), add "findings": ["one line each"]; leave it out when there is none.';
+  assert.ok(p.includes(line), p);
+  assert.ok(p.indexOf(line) > p.indexOf('Write only the JSON result file'), 'after the format line');
+});

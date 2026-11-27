@@ -19,6 +19,8 @@ export const VERIFY_WORDS = Object.freeze({
 
 export const VERIFY_WHY_MAX = 300;
 export const VERIFY_TITLE_MAX = 80;
+/** Slice 9 (D1): at most this many notes outside the verdicts are kept per check. */
+export const VERIFY_FINDINGS_MAX = 8;
 const NO_VERDICT = 'no verdict given';
 
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
@@ -27,6 +29,28 @@ const clip = (t, n) => { const s = oneLineText(t); return s.length > n ? `${s.sl
 const idOf = (x) => (typeof x === 'string' ? x : x && typeof x.id === 'string' ? x.id : '');
 /** A fence inside a requirement would close the data block: three backticks become three quotes. */
 export const fenceSafe = (t) => t.replace(/`{3,}/g, "'''");
+
+/**
+ * Slice 9 (D1): the Verifier's notes outside the verdicts → `[{id:'note-N', text}]`. Each entry is a string or an
+ * object with a string `text` (anything else is ignored); the text is one line and clipped to VERIFY_WHY_MAX, blanks
+ * and exact duplicates are dropped, at most VERIFY_FINDINGS_MAX are kept, and ids are renumbered by kept position.
+ * Never throws: anything that is not a list gives none.
+ */
+export function findingsOf(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const x of raw) {
+    if (out.length >= VERIFY_FINDINGS_MAX) break;
+    const t = typeof x === 'string' ? x : x && typeof x === 'object' && !Array.isArray(x) && typeof x.text === 'string' ? x.text : null;
+    if (t === null) continue;
+    const text = clip(t, VERIFY_WHY_MAX);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push({ id: `note-${out.length + 1}`, text });
+  }
+  return out;
+}
 
 const missing = () => Object.assign(new TypeError('The Verifier wrote no result'), { code: 'VERIFY_RESULT_MISSING' });
 
@@ -48,7 +72,8 @@ export function verifyResult(raw, { owned = [] } = {}) {
     gaps.push({ id, why: c ? clip(c.why, VERIFY_WHY_MAX) || 'no reason given' : NO_VERDICT,
       title: (c && clip(c.title, VERIFY_TITLE_MAX)) || clip(`Close the gap: ${id}`, VERIFY_TITLE_MAX) });
   }
-  return { held, gaps };
+  const findings = findingsOf(raw.findings);
+  return findings.length ? { held, gaps, findings } : { held, gaps };
 }
 
 /** The Verifier run's prompt: what to do, then one line per owned requirement inside one fenced `text` block. `round`
@@ -74,6 +99,7 @@ export function verifyPrompt({ owned = [], round = 1 } = {}) {
     '```',
     '',
     'Write only the JSON result file: {"checks": [{"id": "R-po-2", "holds": false, "why": "one line", "title": "the small run that closes it"}]}.',
+    'If you noticed something the person should know before shipping that is not a verdict (a slow test, a risk), add "findings": ["one line each"]; leave it out when there is none.',
     'Give every id above one entry. Change no code and commit nothing.',
   ].join('\n');
 }
