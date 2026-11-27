@@ -33,7 +33,7 @@ anything.
 2. **A non-default value stays visible.** If a guardrail set, a model override,
    a feature branch or a fan-out toggle was set in a higher mode, a lower mode
    still shows it. Use `keepVisible()` on the control, or name it in the
-   "still applied to this run" note on New pipeline.
+   "still applied to this run" note on the New run page.
 3. **The mode is a view preference, not a permission.** A deep link such as
    `#models` opens at Simple. The page shows a banner naming its level
    and offering the switch. Never disable a control or refuse a route because of
@@ -134,7 +134,7 @@ be skipped by forgetting it.
 
 | Element | Level |
 |---|---|
-| New pipeline, Getting started, Runs, Projects | S |
+| Getting started, Runs, Projects | S |
 | New run: the Runs page head (#runs-new; the top bar no longer has it) | S — the way to the New run page at every level and width; the guide's New run hop rings it after the Runs row |
 | Build: the group label, Workflows (the full-screen editor; agents and scripts live in its Library) | S |
 | Build: Requirements (behind the requirements flag) | S |
@@ -142,7 +142,8 @@ be skipped by forgetting it.
 | Chat (the first sidebar row; the app's home) | S |
 | Chat home: Start from a preset chips; "N more…" opens New run below Advanced and Settings › Presets from Advanced | S |
 | The account corner and its menu: the level card, "Signed in as" (a shared identity), the spend card and Usage, the Away and Keep awake switches, Appearance, Interface mode, Settings | S |
-| The spend ring on the avatar and the menu's spend card (with the free-request row) | S — never hidden: a blocked limit turns the ring red and full, and the card and the New pipeline note say until when |
+| The menu's spend card (with the free-request row) and its small ring (with a total limit set) | S — never hidden: a blocked limit turns the ring red and full, and the card and the New run page's note say until when. The avatar itself no longer shows spend |
+| The usage rings on the avatar (outer Session, inner Week, else Day; each the provider closest to its plan limit) and the menu's Usage row with its Limits submenu | S — plan usage per provider, not spend; hidden while no provider reports |
 | Insights: the group label, Statistics | A |
 | Workspaces | A |
 | Add-ons: the group label, Marketplace, Connectors | A |
@@ -150,13 +151,13 @@ be skipped by forgetting it.
 | Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread; its grey count and amber unread pill each hide at zero |
 | Insights: Team metrics | E |
 | Team policy | E |
-| The level avatar art in the corner (the round art on the account corner and the spend ring's avatar) | all — a level is shown to everyone, whatever the mode |
+| The level avatar art in the corner (the round art on the account corner and the level card) | all — a level is shown to everyone, whatever the mode |
 | The account-menu level card (the first item of the account menu, a compact card: the level's avatar and name with "View level", then "To <Next>" with the count and a small segment bar; a click or Enter goes straight to the Profile level page (`#profile/level`) and closes the menu, with no popover or dialog in between; the menu opens on a click or Enter, and nothing opens on hover or focus) | all |
-| Profile (the level section) | all — it has no sidebar entry; it opens from "View level" on the account-menu level card and the Getting started level line |
+| Profile (the level section) | all — it has no sidebar entry; it opens from "View level" on the account-menu level card, the Getting started level line and "See your level" in the level-up dialog |
 
 Levels are not Interface modes: no level element carries `data-min-level`; Try next / Open links to higher-mode pages open them with the banner.
 
-### New pipeline
+### New run page
 
 | Element | Level |
 |---|---|
@@ -169,7 +170,7 @@ Levels are not Interface modes: no level element carries `data-min-level`; Try n
 | "Set in Advanced mode and still applied" note | S |
 | Target switch (No project · Project) | S — its Workspace button A |
 | Task source (Markdown), source and feature branch; "Run on the source branch" toggle | A |
-| "Not sure what to build yet? Try Shaper" under the Markdown source (Shaper, gated) | A |
+| "Not sure what to build yet? Try Shaper" under the Markdown source (Shaper) | A |
 | Engine dropdown beside the workflow (greyed-out engines the credential broker refuses) | A — stays visible at every level while a non-Claude engine is picked (rule 2) |
 | Session notice under the Engine dropdown: one line per session of the chosen workflow, how it will run (One session, Labs) | A — stays visible with the Engine dropdown while a non-Claude engine is picked |
 | Runs in (execution environment: Local, E2B sandbox or Local sandbox (Docker)), the chosen sandbox's live status chip (connected · N of cap in use, unreachable, key refused, not set up) and the note when a saved sandbox default does not apply | A — stays visible at every level while a non-Local value is picked (rule 2) |
@@ -191,7 +192,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | View PR ▾ › Watch | A |
 | Summary card › a live checkout: the Results row with Discard / Unlink | S |
 | Summary card › the Actions row value (`Local copy open · since 18:12`, `Try it on this machine`) and the Actions tab's Download patch | A |
-| Plan approval (Shaper): one step card — head (title + Plan chip), summary, folded shape check, Ask for changes / Full plan / Approve and build / ⋯ (Fix all, Save to plans/, Stop); the same card with the gate off (Full plan opens the artifact viewer) | all (rule 1) |
+| Plan approval (Shaper): one step card — head (title + Plan chip), summary, folded shape check, Ask for changes / Full plan / Approve and build / ⋯ (Fix all, Save to plans/, Stop) | all (rule 1) |
 | Plan approval extras: perspectives "edit" (chips + Update plan), Fix all, Save to plans/ | S |
 | Plan approval: Open in New run | A |
 | Split approval (Plan in runs): one step card — head (title + Runs chip), the runs, the outline check, Ask for changes / Approve N runs / ⋯ (Fix all, Don't split, Stop) | all (rule 1) |
@@ -202,7 +203,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Small runs, run order: the link bars on pointing at a run row (Chat card, feature page); the run page facts Waits for and Needed by; Show order and its drawing on the feature page's Runs tab | S |
 | Small runs, Start step: the size, the Care dial (Lean, Balanced, Thorough) with Worca's pick and its reason, the estimate per position, "What it does" and "Gives up" for the picked position, Start requirements | all (rule 1) |
 | Small runs, Requirements step: the decisions as one question each, one expand / collapse row per role (mark, what the role did, its question), Ask for changes, Agree requirements | all (rule 1) |
-| Run page Overview: Perspective checklists (Shaper, gated): the latest review cycle as one summary line, unmet items open with their evidence, met items behind "Show N met items", earlier cycles behind "Earlier cycles" | S |
+| Run page Overview: Perspective checklists (Shaper): the latest review cycle as one summary line, unmet items open with their evidence, met items behind "Show N met items", earlier cycles behind "Earlier cycles" | S |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
 | Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |
 | Runs list: the View menu (Show with counts, Group by, Started by on a shared deployment, Select, Keyboard shortcuts) and its chip; the row and member checkboxes, Select all, Space / ⌘A / Esc; the list keys (↑ ↓ / J K, ↵, → ←, `.`, S, E, Space, ⇧↑ ⇧↓, ⌘A, Esc), `?` and the Keyboard shortcuts sheet; the action bar's Stop and Archive (Undo); the row ⋯ menu's Stop, Archive (Restore on an archived row), View PR and Open feature, each with its key as a hint | S |
@@ -220,7 +221,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Workflow graph with status colours, gate pip, End result; Workflow, Overview and Q&A tabs | S |
 | Run header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the Overview cost card's Away mode share | S |
 | The run card's Away mode note ("Away mode: 5 answers while you were away — 2 to check") and its See the answers, which opens the Q&A tab; each answered question there says who answered it, and its Answered for you list holds Away mode's other answers (gates, workflows, retries, Shaper stops) with their reasons | S |
-| Diff tab (live worktree while running, the final patch after) | S |
+| Diff tab: the changed files, not the Overview tab (live worktree while running, the final patch after) | S — shows in Simple mode |
 | Folder run (a Folder project): Changes tab, the Folder chip, the "<n> files · on a copy" bar with Discard and Apply to folder, the Apply to folder dialog | S |
 | Run without a project (No project): the Artifacts tab, opened first; the No project chip | S |
 | Live log pane (run page › Logs), log search / copy / auto-scroll, Summaries / Raw switch (flag `commandSummaries`) | A |
@@ -289,15 +290,12 @@ With the watch off, or waiting for a person, Resolve on a conflicted PR merges t
 base branch in once.
 
 A pull request opened from a Chat card shows the same watch on that card, as its link's tooltip
-(`PR #781 · watched`, `PR #781 · watch stopped`, or just `PR #781` while it is not watched). With Shaper on, a fix
-run is a round of the run whose PR it fixes: it shows on that run's card, not as a card of its own (see
-[Iterate in the chat](shape-it-first.md#iterate-in-the-chat-s5)). With Shaper off, every fix run on it, whether Watch PR started it or Resolve
-did, appears in that chat by itself as a live run card. The card says what started the run (merge conflicts,
-failing checks, review comments, changes requested) and links to the pull request. It ends with the outcome: the
-pushed fix, why nothing was pushed, or that the watch gave up after three fix runs. The card is saved with the
-chat, so it is there when the chat is opened later. The Chat row's dot lights when it lands in a chat that is not
-on screen. Nothing else is posted: switching the watch, a stop that needs a person, and a clean base merge show
-only in the tooltip.
+(`PR #781 · watched`, `PR #781 · watch stopped`, or just `PR #781` while it is not watched). A fix run, whether
+Watch PR started it or Resolve did, is a round of the run whose PR it fixes: it shows on that run's card, not as a
+card of its own (see [Iterate in the chat](shape-it-first.md#iterate-in-the-chat-s5)). The round says what started
+it (merge conflicts, failing checks, review comments, changes requested) and ends with the outcome: the pushed fix,
+why nothing was pushed, or that the watch gave up after three fix runs. Nothing else is posted: switching the watch,
+a stop that needs a person, and a clean base merge show only in the tooltip.
 
 ### Workflows
 
@@ -392,7 +390,7 @@ sub-path kept; `#providers/…` and `#settings/providers` land on Models › Pro
 | Models › Jobs: the Steps and Helper jobs cards and their Override buttons (Claude Code's helper jobs: Titles, Auto workflow classifier, PR description, Memory defragment, Agent generation, Second-opinion reviewer and, behind their flags, Run naming, Command summaries and Requirements interview), and the Design card behind the `design` flag | A |
 | Models › Jobs: the harness tiles, the harness line's Default for new runs, and each card's Show all. Below Expert the tab shows the default harness | E |
 | Models › Providers: GitHub Copilot (sign-in, Account, Max concurrent requests), OpenRouter, OpenAI-compatible, Anthropic-compatible, Speech, Image generation, Sound, and the rows' Import models | E |
-| Models › Catalogue: a model's "Needs setup" state, and a harness group's "Needs sign-in" or "Needs key" line with its Sign in or Set key button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
+| Models › Catalogue: a model's "Needs setup" state, and a harness group's "Needs sign-in" or "Needs key" line with its Sign in or Set key button; the New run caption's "needs sign-in" note | all (rule 1 — they block a run) |
 
 ### Requirements (behind the `requirements` flag)
 
@@ -436,7 +434,7 @@ missing (`data-needs-git`), at every level.
 
 | Element | Level |
 |---|---|
-| The level welcome and celebration (the dialogs that open at boot and after a level-up) | all — they wait while a blocking prompt or another dialog is on screen (rule 1) |
+| The level celebration and summary (the dialogs that open after a level-up and, once, for the levels credited at the first evaluation) | all — they wait while a blocking prompt or another dialog is on screen (rule 1) |
 | The Getting started level line (the current level and what is next, linking to Profile) | all |
 | Setup assistant › Check this machine: the Docker and E2B sandbox rows | S |
 | Setup assistant › Model access › Secret vault (flag `secretVault`, a native install with a usable key store and keys in their files): Keep in files or Move into the vault, and the docs link; with the vault on, one line | S |
@@ -446,7 +444,7 @@ missing (`data-needs-git`), at every level.
 | Statistics: the Requirements tile (spend, features, a link to the page; behind the `requirements` flag), the Requirements row in the Group by tables and in the Cost report (money already spent there stays listed while the flag is off) | A — with the page |
 | Team metrics page and every surface of it elsewhere | E |
 | Team policy page and its Policy / Plugins / Catalog tabs | E |
-| Team-policy notes on New pipeline; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |
+| Team-policy notes on the New run page; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |
 | The Installed tab's Team policy card and the setup checklist (the Marketplace page) | A — with the page that holds them |
 | Ask: chat, history, attachments, run card (its progress bar and stage text), proposal title / project / workflow / brief / Start | S |
 | Ask: proposal card's Source branch when "Chat runs: source branch" is Ask me on the card (or Only when the chat names one) and the card has no branch: the field, its "Pick a branch…" option and its hint; it stays shown once a branch is picked on that card | S — otherwise A, as before |
@@ -456,7 +454,7 @@ missing (`data-needs-git`), at every level.
 | Pinpoint (#669): select text in a chat answer, a Markdown artifact or the Diff tab for Copy · Explain · Alternatives · Disagree · Note / Comment · Quote / Send to chat; the composer's quote chip; an artifact's pending-changes tray (sent back to the run as one direction while it still takes directions); the diff's open-comments tray (Propose fix run) | all — follows the surface it is on |
 | Ask: the run card's Pause / Resume / Stop, its answer receipt, its result (verdict, changes, top changed files) and the composer's "→ run" direction chip | S — the run card's controls, as on the Running card |
 | Ask: the run card's question (clarify, form, cycle gate, recovery, Auto proposal) | all (rule 1) — its own controls keep the run page's levels (Auto proposal Revise A, tunables E) |
-| Ask: Chat home default pin "Shaper" (gated; help line, Beta badge; can be unpinned, see [Chat home](chat-home.md)) | S |
+| Ask: Chat home default pin "Shaper" (can be unpinned, see [Chat home](chat-home.md)) | S |
 | Ask: run card, perspective chips and the Shaper nudge (open decisions, Run as is / Shaper with estimates) | S |
 | Ask: Shaper proposal card — title + label, clamped brief, Project, Base branch, Perspectives, What happens, Advanced (collapsed; its fields keep their own levels), Start planning / Not now / Open in New run | S |
 | Ask: the run card's question, "Use defaults" / "Answer" (shaping runs) | all (rule 1) |
@@ -486,8 +484,8 @@ missing (`data-needs-git`), at every level.
 | Ask: the project switch card ("Your turn: pick a project") and the "Switched to …" divider | all (rule 4) |
 | Ask: the chevron on a reply's activity line (`Done · 7.4s · …`) | A when it opens tool rows, E when it opens only sub-agents; the line itself shows at every level |
 | Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E — a run card carrying Chat's per-agent picks shows its lane at every mode (the picks apply at Start) |
-| Chat home: heading, composer, the New run / Build workflow / Track a run / Write a script tiles, the Add project tile, the one pinned-workflow slot (and More › Pinned), More (Step away), the tabs (Needs you, Running, Recent chats, Plans while Shaper is on, Workflows) and their run tiles, the Workflows and Away mode promos | S |
-| Chat home: the Plans tab (Shaper, gated): shaped plans newest first with their state, and each sliced feature's card | S |
+| Chat home: heading, composer, the New run / Build workflow / Track a run / Write a script tiles, the Add project tile, the one pinned-workflow slot (and More › Pinned), More (Step away), the tabs (Needs you, Running, Recent chats, Plans, Workflows) and their run tiles, the Workflows and Away mode promos | S |
+| Chat home: the Plans tab (Shaper): shaped plans newest first with their state, and each sliced feature's card | S |
 | Chat home: the Schedule a run and Explain a diff tiles; More › New workspace, Remember something, Find tasks; the Schedules promo | A — with the page or surface that owns each feature |
 | Chat home: More › Team metrics, Add a model | E — with the Team metrics and Models pages |
 | Getting started: all nine tiles show at every level, ordered Simple → Advanced → Expert; steps 6 and 7 wear "Advanced", steps 8 and 9 "Expert" | S |

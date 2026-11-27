@@ -24,8 +24,10 @@ Below the tiles, the *Spend per* and *Runs per* charts break it down by hour, da
 finished, stopped and failed. You can filter or split spend by person, or by tag (see [Cost tags](#cost-tags)), and
 export the split as CSV. More in [Statistics](statistics.md).
 
-With a total limit set, a ring around your avatar in the sidebar fills toward it. It turns amber at 80% and red once
-new runs are blocked. The account menu's spend card has the figures.
+Spend is in the account menu: click your avatar at the foot of the sidebar. Its spend card shows **Spent** and
+**Saved**, or, with a total limit set, **Limit** and **Spent** beside a small ring that fills toward the limit. The ring
+turns amber at 80% and red once new runs are blocked, and **Details** opens Statistics. The rings around the avatar
+itself show plan usage per provider, not spend; **Usage** in the same menu lists each provider's limits ([Usage limits](usage-limits.md)).
 
 ### Hard limits
 
@@ -63,5 +65,5 @@ Team caps live in [Team policy](team-policy.md).
 ## Cost tags
 
 Tags let you see what spend went where, for example per client. A tag is a `key:value` pair such as `client:acme`.
-You add tags on New pipeline, on run pages and on Ask run cards, or with `--tag` on the CLI. Settings › Tags can
-make some tags mandatory. Statistics and Team metrics then show spend **By tag**.
+You add tags on the **New run** page, on run pages and on Ask run cards, or with `--tag` on the CLI. **Settings › Labels & cost
+tags** can make some tags mandatory. Statistics and Team metrics then show spend **By tag**.

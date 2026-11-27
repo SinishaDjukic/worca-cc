@@ -48,7 +48,7 @@ ask this way, and plugins can ship forms too.
 ### Model and effort per agent
 
 You can pick a model and a reasoning effort (medium, high, xhigh, max) for each agent node. In Workflows, use the
-toolbar over a selected agent card. For one project, use New pipeline › **Advanced** › **Agents**. The project
+toolbar over a selected agent card. For one project, use New run › **Advanced** › **Agents**. The project
 keeps your picks for its later runs, and **Save as workflow defaults** moves them into the workflow.
 
 A project's pick beats a team-policy default, which beats the workflow's own. `--model` only fills nodes that have
@@ -140,7 +140,7 @@ The Library's **Workflows** section, its first, lists **Yours** on top, then **B
 split into domain folders. **Edit** (or a click on the row) opens one of yours, and Save changes it. **Use as
 template** opens a workflow as a new unsaved copy that Save keeps as your own. Built-in and plugin workflows offer
 only that; yours offer it from the row's ⋯ menu. A badge beside the name says what the canvas holds: **Editing** or
-**Unsaved copy**. Saved pipelines appear in New pipeline's **Workflow** picker, and so in schedules too.
+**Unsaved copy**. Saved pipelines appear in New run's **Workflow** picker, and so in schedules too.
 
 ### Sharing a pipeline
 
@@ -178,7 +178,7 @@ AI on every try. See [Workflow tests](workflow-tests.md).
 
 ### From a brief to a slide deck
 
-The built-in **Presentation** workflow turns a request into a slide deck. Pick it in New pipeline's **Workflow**
+The built-in **Presentation** workflow turns a request into a slide deck. Pick it in New run's **Workflow**
 picker (Advanced; Simple lists only Auto and Default), have Chat propose one, or run
 `worca --workflow wf_presentation --prompt "…"`.
 
