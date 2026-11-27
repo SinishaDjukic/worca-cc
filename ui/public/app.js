@@ -27354,6 +27354,7 @@ async function openFeatureShip(featureId, { opener = null, card = null } = {}) {
     // Small runs: every run, carried ones included, so a carried run's own PR turns One off too; One is offered only with
     // the flag on (the server refuses it otherwise).
     all: f.slices.map((s) => ({ position: s.index, pr: s.pr || null })), oneOk: flagOn('shaperSmallRuns'),
+    carried: (sr && sr.carried) || [],               // slice 5 (D11): the carried runs' lines, named while Stacked is picked
     // Feature D1: stacked stays a small-runs feature's pick, so the size hint (which may suggest One) is left out.
     hint: f.ship && f.ship.smallRuns ? '' : shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
     { opener, refocus: card ? shipCardRefocus(f.id, card) : focusGroupHead });
@@ -36817,14 +36818,14 @@ function storeGroupFeature(f) {
 function groupShipOf(f) {
   const sr = f.ship.smallRuns;
   const wait = shipWaitText(f);
-  return { n: (sr.order || []).length, blocked: !!wait || !!sr.blocked, reason: wait || sr.reason || '' };
+  return { n: sr.newPrs ?? (sr.order || []).length, blocked: !!wait || !!sr.blocked, reason: wait || sr.reason || '' };
 }
 /** What the Requirements and Decisions tabs and the head paint from: every row's status text, the Care line, the ship
  *  lock and the log. */
 function groupFeatureSig(f) {
   const sr = f && f.ship && f.ship.smallRuns;
   return JSON.stringify([sr ? [...(sr.owned || []), ...(sr.confirmed || [])].map((e) => [e.id, e.shown ? e.shown.text : '']) : null,
-    sr && sr.care ? sr.care.line : '', sr ? [shipWaitText(f), !!sr.blocked, sr.reason || '', (sr.order || []).length] : null, (f && f.log) || [],
+    sr && sr.care ? sr.care.line : '', sr ? [shipWaitText(f), !!sr.blocked, sr.reason || '', sr.newPrs ?? (sr.order || []).length] : null, (f && f.log) || [],
     // Slice 7: what the state line and the need count read (only a view with `asks`: flag on, marked, active).
     Array.isArray(f && f.asks) ? [f.status, f.asks, (f.slices || []).map((x) => [x.index, x.state, x.nextTurn === true, x.stop || null, !!x.cannotStart,
       // Slice 8 (d8-10): a resume held or released, or the Resume's preview, keeps the state `paused`.

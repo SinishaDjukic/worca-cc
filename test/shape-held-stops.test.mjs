@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { readServerSource } from '../src/core/read-server-source.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
@@ -1470,7 +1471,7 @@ test('A5: flag off, an unmarked feature, no feature or no resumeTakeIn dep never
 });
 
 test('A5 wiring: resumeRunOnce calls takeInBeforeResume after holdResume and before setCostCapOverride, and createHeldStops gets resumeTakeIn', () => {
-  const src = readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8');
+  const src = readServerSource();
   const start = src.indexOf('async function resumeRunOnce(');
   assert.ok(start >= 0, 'resumeRunOnce');
   const body = src.slice(start);

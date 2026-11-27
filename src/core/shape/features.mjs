@@ -16,7 +16,7 @@ import { prototypeView } from '../../shared/shape/prototype.mjs';
 import { planVersionOf, startsFromOf, ownsOf } from '../../shared/shape/run-facts.mjs';
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
-import { shipLedger, unownedReason, careOutcome, unmetLines } from '../../shared/shape/ship-ledger.mjs';
+import { shipLedger, unownedReason, careOutcome, unmetLines, newPrCount, carriedLine, needsNewPr } from '../../shared/shape/ship-ledger.mjs';
 import { rerunsOf } from '../../shared/shape/req-status.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
@@ -297,15 +297,32 @@ function smallRunsShip(f, slices, verify) {
   const root = featureRootSource(f.id);
   const chain = shipChainOf(f.id);
   const list = orderOf(f.id, slices, chain);
+  // Slice 5 (D3): with the flag on, each PR carries its state (a CLOSED one gets a new PR), and the view adds the count of
+  // new PRs and the carried runs' lines; with the flag off the object is the checkpoint's.
+  const on = shaperSmallRunsOn();
+  const prOf = (pr) => (pr && pr.url ? { number: pr.number ?? null, url: pr.url, ...(on ? { state: pr.state ?? null } : {}) } : null);
   const order = list.map((s, i) => {
     const base = i > 0 && s.pipelineId ? (chain ? chainBaseOf(chain, s.pipelineId) : smallRunsPrBase(s.pipelineId)) : null;
     const prev = list[i - 1];
-    return { index: s.index, pipelineId: s.pipelineId, title: s.title,
-      pr: s.pr && s.pr.url ? { number: s.pr.number ?? null, url: s.pr.url } : null,
+    return { index: s.index, pipelineId: s.pipelineId, title: s.title, pr: prOf(s.pr),
       onto: base && base !== root && prev && prev.pr && prev.pr.url ? (prev.pr.number ?? null) : null };
   });
+  const carried = on && chain ? carriedOf(chain, slices, prOf) : [];
   return { ...ledger, care: careOutcome(careOfRow(f), featureFigures(f.id), ledger.met), base: baseName(f.project_dir, root), order,
-    ...(chain ? { along: true } : {}) };
+    ...(chain ? { along: true } : {}), ...(on ? { newPrs: newPrCount(order) } : {}), ...(carried.length ? { carried } : {}) };
+}
+
+/** Slice 5 (D4, D5): `shipChain`'s carried runs as Ship shows them, in run order: `by` is the carrier's run index (an
+ *  entry whose run or carrier is not among the slices is dropped) and `line` is carriedLine's words. */
+function carriedOf(chain, slices, prOf) {
+  const byPid = new Map(slices.filter((s) => s.pipelineId).map((s) => [s.pipelineId, s]));
+  return chain.carried.flatMap((c) => {
+    const s = byPid.get(c.pipelineId);
+    const carrier = byPid.get(c.by);
+    if (!s || !carrier) return [];
+    const pr = prOf(s.pr);
+    return [{ index: s.index, by: carrier.index, title: s.title, pr, line: carriedLine({ index: s.index, by: carrier.index, pr }) }];
+  }).sort((a, b) => a.index - b.index);
 }
 
 /** The root source as the PR names it: `origin/dev` reads `dev` when `origin` is one of the project's remotes (git-info.mjs
@@ -1451,6 +1468,10 @@ export function smallRunsPrBase(pipelineId) {
 export function stackedPrBase(pipelineId, chain) {
   return smallRunsPrBase(pipelineId) ?? stackedPrBaseOf(pipelineId, chain);
 }
+
+/** Slice 5: a run Ship gives a new PR (none yet, or its PR was closed: openMemberPr opens past a CLOSED PR); the Ship
+ *  screens count with the same rule (newPrCount). */
+export const sliceNeedsPr = (s) => !!s.pipelineId && needsNewPr(s.pr);
 
 /** Feature D1 (D4): the order a feature's PRs are opened and marked ready: a marked feature's finished runs in finish
  *  order, then any others in index order; otherwise `view.slices` itself. */

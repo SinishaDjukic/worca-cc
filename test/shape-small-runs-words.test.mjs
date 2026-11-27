@@ -10,6 +10,8 @@ import { FLAGS } from '../src/shared/flags/registry.mjs';
 // A namespace read, so a missing new export (LEGACY_OUTCOME_REASONS) fails only the tests that need it.
 import * as PR_AUTO from '../src/shared/pr-auto.mjs';
 import { groupShipChoice } from '../ui/public/ship-group-dialog.mjs';
+// A namespace read: the carried-run words are new exports.
+import * as LEDGER from '../src/shared/shape/ship-ledger.mjs';
 
 const EXCEPTION = 'Shaper small runs';   // the Labs entry's title
 const OLD_REASON = 'small runs ship a PR per run';
@@ -78,4 +80,18 @@ test('the Labs description says a feature ships as one PR or as stacked PRs, and
   assert.ok(description.includes('shipped as one PR or as stacked PRs'), description);
   assert.doesNotMatch(description, /shipped as one stacked PR per run/);
   assert.ok(description.includes('stacked Ship'), 'with the flag off, Ship stays stacked');
+});
+
+test('the carried-run and not-counted words say no small runs', () => {
+  const url = (n) => `https://github.com/me/repo/pull/${n}`;
+  const open = (n) => ({ url: url(n), number: n, state: 'OPEN' });
+  const words = [
+    LEDGER.carriedLine({ index: 2, by: 3, pr: open(40) }),
+    LEDGER.carriedLine({ index: 2, by: 3, pr: { url: 'created:2', state: 'OPEN' } }),
+    LEDGER.carriedLine({ index: 2, by: 3, pr: null }),
+    LEDGER.keptOpenNote([{ index: 2, pr: open(40) }]),
+    LEDGER.keptOpenNote([{ index: 2, pr: open(40) }, { index: 4, pr: open(41) }]),
+  ];
+  assert.ok(words.every((w) => typeof w === 'string' && /\s/.test(w)), JSON.stringify(words));
+  assert.deepEqual(words.flatMap((w) => hits(JSON.stringify(w))), []);
 });

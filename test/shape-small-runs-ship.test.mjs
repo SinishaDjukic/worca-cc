@@ -6,14 +6,18 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readServerSource } from '../src/core/read-server-source.mjs';
 import { JSDOM } from 'jsdom';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { featureView, featureShipInput, recordShip } from '../src/core/shape/features.mjs';
+import { featureView, featureShipInput, recordShip, sliceNeedsPr } from '../src/core/shape/features.mjs';
 import { prAutoView, readRunPrAuto, featurePrSetting } from '../src/core/pr-auto.mjs';
 import { prAutoFinisher } from '../src/core/pr-auto-finish.mjs';
-import { groupShipChoice } from '../ui/public/ship-group-dialog.mjs';
+import { groupShipChoice, paintGroupShip } from '../ui/public/ship-group-dialog.mjs';
+import { renderShipCard } from '../ui/public/shape/ship-card.mjs';
+import { createPrLabel } from '../ui/public/ship-words.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { renderRunPrFact } from '../ui/public/pr-auto-view.mjs';
 import { withEnv as withEnvVars } from './helpers/with-env.mjs';
 import { NO_ADO, REMOTES_V, okRun, failRun, argOf, ghCalls, git, shipKit } from './helpers/ship-world.mjs';
@@ -143,7 +147,8 @@ async function dialogView(fid, oneOk) {
   const sr = f.ship.smallRuns;
   const listed = sr && sr.along ? sr.order.map((o) => f.slices.find((x) => x.index === o.index)) : f.slices;
   const member = (x) => ({ position: x.index, pr: x.pr || null });
-  return { kind: 'feature', members: listed.map(member), all: f.slices.map(member), suggested: f.ship.suggested, smallRuns: !!sr, ...(oneOk ? { oneOk: true } : {}) };
+  return { kind: 'feature', members: listed.map(member), all: f.slices.map(member), suggested: f.ship.suggested, smallRuns: !!sr,
+    carried: (sr && sr.carried) || [], ...(oneOk ? { oneOk: true } : {}) };
 }
 
 // ── Slice 4: the whole feature as one pull request (R-po-1, R-arch-1, R-arch-6) ─────────────────────────────────────
@@ -633,4 +638,152 @@ shipT('D1 base: the done row names the base as the PR does: a root of origin/dev
   assert.equal(featureView(w.f.id).ship.smallRuns.base, 'dev');
   const plain = smallWorld({ root: 'feature/x' });
   assert.equal(featureView(plain.f.id).ship.smallRuns.base, 'feature/x', 'not a remote: kept');
+});
+
+// ── Slice 5 (R-po-2): Ship names the carried runs and counts the pull requests it will open ─────────────────────────
+const CARRIED_BARE = "Run 2's work ships in run 3's pull request";
+const CARRIED_LINE = `${CARRIED_BARE} (#40 is open)`;
+/** fiveRuns(), with run 3 started on run 1's branch and having taken in run 2's: run 3 carries run 2, so Ship lists
+ *  runs 1, 3, 4 and 5. */
+function carriedRuns() {
+  const w = fiveRuns();
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({ source: w.br(1), feature: w.br(3),
+    tookIn: [{ index: 2, branch: w.br(2), pipelineId: w.pids[1], sha: git(w.dir, 'rev-parse', w.br(2)) }] }), w.pids[2]);
+  return w;
+}
+const getFeature = async (fid) => (await fetch(`${base}/api/shape/features/${fid}`)).json();
+const textsOf = (root, sel) => [...root.querySelectorAll(sel)].map((x) => x.textContent);
+/** The Ship card in its ready phase, drawn from the feature as GET answers it. */
+function shipCardOf(f) {
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  return renderShipCard(doc, { phase: 'ready', featureId: f.id, title: f.title, runs: f.total, smallRuns: f.ship.smallRuns }, {});
+}
+const cardLabel = (f) => shipCardOf(f).querySelector('[data-act="ship-create"]').textContent;
+/** The Create PR dialog's Pull requests zone painted over the real #shipit-modal. */
+function paintedDialog(view) {
+  const modal = new JSDOM(readIndexHtml()).window.document.getElementById('shipit-modal');
+  const ctl = paintGroupShip(modal, view, { setLabel: (l) => { modal.querySelector('.shipit-ok').textContent = l; } });
+  const pick = (v) => { const r = modal.querySelector(`.shipit-prs input[value="${v}"]`); r.checked = true; r.dispatchEvent(new modal.ownerDocument.defaultView.Event('change')); };
+  return { modal, ctl, pick, ok: () => modal.querySelector('.shipit-ok').textContent };
+}
+
+shipT('carried: run 3 carries run 2 with #40 open: the view lists the line, newPrs is 4, the card and dialog read Create 4 PRs', async () => {
+  const seen = []; forge(seen);
+  const w = carriedRuns();
+  seedPr(w.pids[1], 40);
+  assert.equal((await confirm(w.f.id, { id: 'R-comp-4' })).status, 200);
+  const f = await getFeature(w.f.id);
+  const sr = f.ship.smallRuns;
+  assert.equal(sr.along, true);
+  assert.deepEqual(sr.order.map((o) => o.index), [1, 3, 4, 5], 'run 2 is carried: it is not listed');
+  assert.deepEqual(sr.carried, [{ index: 2, by: 3, title: 'Slice 2',
+    pr: { number: 40, url: 'https://github.com/me/repo/pull/40', state: 'OPEN' }, line: CARRIED_LINE }], '`by` is the carrier\'s run index');
+  assert.equal(sr.newPrs, 4, '#40 is not counted');
+  const card = shipCardOf(f);
+  assert.deepEqual(textsOf(card, '.ask-shipcard-carried li'), [CARRIED_LINE]);
+  assert.equal(card.querySelector('[data-act="ship-create"]').textContent, 'Create 4 PRs');
+  const view = await dialogView(w.f.id, true);
+  assert.equal(groupShipChoice(view).n, 4);
+  const d = paintedDialog(view);
+  assert.deepEqual(textsOf(d.modal, '.shipit-prs-carried small.hint'), [CARRIED_LINE]);
+  assert.equal(d.modal.querySelector('.shipit-prs-kept')?.textContent, '#40 is not counted.');
+  assert.equal(d.ok(), 'Create 4 PRs');
+}, SMALL_ON);
+
+shipT('the button count equals the PR creations: a stacked ship makes 4 gh pr create calls (runs 1, 3, 4, 5) and leaves #40 open with no close', async () => {
+  const seen = []; forge(seen);
+  const w = carriedRuns();
+  seedPr(w.pids[1], 40);
+  assert.equal((await confirm(w.f.id, { id: 'R-comp-4' })).status, 200);
+  const f = await getFeature(w.f.id);
+  const label = cardLabel(f);
+  const dialog = paintedDialog(await dialogView(w.f.id, true)).ok();
+  const r = await ship(w.f.id, 'stacked');
+  assert.equal(r.status, 200, await r.clone().text());
+  const created = ghCalls(seen, 'create');
+  assert.deepEqual(created.map((a) => argOf(a, '--head')), [1, 3, 4, 5].map(w.br));
+  assert.equal(f.ship.smallRuns.newPrs, created.length, 'newPrs is the number of PR creations');
+  assert.deepEqual([label, dialog], [createPrLabel(created.length), createPrLabel(created.length)]);
+  assert.deepEqual(ghCalls(seen, 'close'), [], '#40 is not closed');
+  assert.deepEqual(getDb().prepare('SELECT pr_url, pr_state FROM pipelines WHERE id = ?').all(w.pids[1]).map((x) => [x.pr_url, x.pr_state]),
+    [['https://github.com/me/repo/pull/40', 'OPEN']], 'run 2 keeps #40, open');
+}, SMALL_ON);
+
+shipT('the button count equals the PR creations, a listed run with a PR: its open one is not counted, a closed one is', async () => {
+  const seen = []; forge(seen);
+  const w = carriedRuns();
+  seedPr(w.pids[1], 40);
+  seedPr(w.pids[3], 41);             // run 4, listed, open: Ship creates none for it
+  seedPr(w.pids[4], 42, 'CLOSED');   // run 5, listed, closed: Ship creates a new one
+  assert.equal((await confirm(w.f.id, { id: 'R-comp-4' })).status, 200);
+  const f = await getFeature(w.f.id);
+  assert.deepEqual(f.ship.smallRuns.order.map((o) => [o.index, o.pr && o.pr.state]), [[1, null], [3, null], [4, 'OPEN'], [5, 'CLOSED']]);
+  assert.equal(f.ship.smallRuns.newPrs, 3);
+  const label = cardLabel(f);
+  const dialog = paintedDialog(await dialogView(w.f.id, true)).ok();
+  const r = await ship(w.f.id, 'stacked');
+  assert.equal(r.status, 200, await r.clone().text());
+  const created = ghCalls(seen, 'create');
+  assert.deepEqual(created.map((a) => argOf(a, '--head')), [1, 3, 5].map(w.br));
+  assert.deepEqual([label, dialog], [createPrLabel(created.length), createPrLabel(created.length)]);
+}, SMALL_ON);
+
+shipT('the button count equals the PR creations, One: 1 on the label, 1 create', async () => {
+  const seen = []; forge(seen);
+  const w = carriedRuns();
+  assert.equal((await confirm(w.f.id, { id: 'R-comp-4' })).status, 200);
+  const f = await getFeature(w.f.id);
+  assert.equal(f.ship.smallRuns.newPrs, 4);
+  assert.deepEqual(f.ship.smallRuns.carried.map((c) => [c.index, c.by, c.pr, c.line]), [[2, 3, null, CARRIED_BARE]]);
+  const d = paintedDialog(await dialogView(w.f.id, true));
+  assert.deepEqual(textsOf(d.modal, '.shipit-prs-carried small.hint'), [CARRIED_BARE], 'Stacked names the carried run');
+  d.pick('one');
+  assert.equal(d.modal.querySelector('.shipit-prs-carried').hidden, true, 'One ships every run: no carried line');
+  const label = d.ok();
+  assert.deepEqual([d.ctl.mode(), d.ctl.count(), label], ['one', 1, 'Create PR']);
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.equal(ghCalls(seen, 'create').length, d.ctl.count());
+}, SMALL_ON);
+
+shipT('carried: when the list falls back to the finish order there is no carried key, and newPrs counts the runs the ship loop walks', async () => {
+  const seen = []; forge(seen);
+  const w = smallWorld();            // finish order 1, 3, 4, 2: runs 3 and 4 cannot be followed into a list
+  cleanCheck(w, 2);                  // with the flag on, Ship is ready only once the Verifier checked the head
+  seedPr(w.pids[2], 43);
+  assert.equal((await confirm(w.f.id, { id: 'R-comp-4' })).status, 200);
+  const f = await getFeature(w.f.id);
+  const sr = f.ship.smallRuns;
+  assert.equal('along' in sr, false);
+  assert.equal('carried' in sr, false);
+  assert.equal(sr.newPrs, 3);
+  const r = await ship(w.f.id, 'stacked');
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.equal(ghCalls(seen, 'create').length, sr.newPrs);
+}, SMALL_ON);
+
+shipT('flag off: ship.smallRuns has no newPrs or carried, and order[].pr has no state', async () => {
+  const w = carriedRuns();
+  seedPr(w.pids[0], 41);
+  seedPr(w.pids[1], 40);
+  const sr = (await getFeature(w.f.id)).ship.smallRuns;
+  assert.equal('newPrs' in sr, false);
+  assert.equal('carried' in sr, false);
+  const prs = sr.order.map((o) => o.pr).filter(Boolean);
+  assert.equal(prs.length, 2);
+  for (const pr of prs) assert.deepEqual(Object.keys(pr).sort(), ['number', 'url']);
+}, { WORCA_FLAGS: undefined });
+
+test('the stacked ship loop asks the ledger\'s needsNewPr which runs need a pull request (R-arch-7), through features.mjs sliceNeedsPr', () => {
+  const src = readServerSource(undefined, { routes: false });
+  assert.match(src, /import \{[^}]*\bsliceNeedsPr\b[^}]*\} from '\.\.\/src\/core\/shape\/features\.mjs';/);
+  const at = src.indexOf('async function shipFeatureNow(');
+  assert.ok(at >= 0);
+  const body = src.slice(at, src.indexOf('\n}\n', at));
+  assert.match(body, /\.some\(sliceNeedsPr\)/);
+  assert.match(body, /!sliceNeedsPr\(s\)/);
+  assert.doesNotMatch(body, /state === 'CLOSED' *\)/, 'no second copy of the predicate');
+  const pr = (state) => ({ url: 'https://github.com/me/repo/pull/9', number: 9, state });
+  assert.deepEqual([null, pr('OPEN'), pr('CLOSED'), pr('MERGED')].map((p) => sliceNeedsPr({ pipelineId: 'p1', pr: p })), [true, false, true, false]);
+  assert.equal(sliceNeedsPr({ pipelineId: null, pr: null }), false, 'a run not started yet has no branch to open');
 });

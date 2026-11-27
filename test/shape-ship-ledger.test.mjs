@@ -7,6 +7,7 @@ import { shipLedger, unownedReason, careOutcome, unmetLines, confirmMarkOf, REAS
 import * as LEDGER from '../src/shared/shape/ship-ledger.mjs';
 import { careChoiceText, careRecordLine } from '../src/shared/shape/feature-record.mjs';
 import { requirementStatus } from '../src/shared/shape/req-status.mjs';
+import { createPrLabel } from '../ui/public/ship-words.mjs';
 
 const AGREED = [
   { id: 'R-po-1', text: 'People see it' }, { id: 'R-po-2', text: 'People pin it' },
@@ -181,4 +182,58 @@ test('the flag-off reason stays word for word as one legacy constant in pr-auto.
   const { LEGACY_PER_RUN_REASON } = await import('../src/shared/shape/ship-ledger.mjs');
   assert.equal(LEGACY_PER_RUN_REASON, 'small runs ship a PR per run');
   assert.equal('SMALL_RUNS_SHIP' in LEDGER, false, 'SMALL_RUNS_SHIP is removed');
+});
+
+// ---- Slice 5 (R-po-2): the carried runs Ship names, and the count of the pull requests it will open ----
+const CARRIED_BARE = "Run 2's work ships in run 3's pull request";
+const prOf = (n, state = 'OPEN') => ({ url: at(n), number: n, state });
+/** Runs 1–5 as the view lists them; `prs` maps a run number to its PR. */
+const listed = (indexes, prs = {}) => indexes.map((i) => ({ index: i, pipelineId: `p${i}`, title: `Slice ${i}`, pr: prs[i] || null, onto: null }));
+const carriedOf = (index, by, pr) => ({ index, by, title: `Slice ${index}`, pr, line: LEDGER.carriedLine({ index, by, pr }) });
+
+test('carriedLine: run 3 carries run 2 and #40 is open', () => {
+  assert.equal(LEDGER.carriedLine({ index: 2, by: 3, pr: prOf(40) }), "Run 2's work ships in run 3's pull request (#40 is open)");
+  assert.equal(LEDGER.carriedLine({ index: 2, by: 3, pr: { url: at(40), number: 40 } }), `${CARRIED_BARE} (#40 is open)`, 'no state: open');
+  assert.equal(LEDGER.carriedLine({ index: 2, by: 3, pr: { url: at(41), number: null, state: 'OPEN' } }), `${CARRIED_BARE} (#41 is open)`,
+    'the number is read from the url, as openPrReason reads it');
+});
+
+test('carriedLine: no number reads "its pull request is open"; a MERGED, CLOSED or missing PR gives the bare line', () => {
+  assert.equal(LEDGER.carriedLine({ index: 2, by: 3, pr: { url: 'created:2', state: 'OPEN' } }), `${CARRIED_BARE} (its pull request is open)`);
+  for (const pr of [prOf(40, 'MERGED'), prOf(40, 'CLOSED'), null, undefined]) {
+    assert.equal(LEDGER.carriedLine({ index: 2, by: 3, pr }), CARRIED_BARE, JSON.stringify(pr));
+  }
+});
+
+test('needsNewPr: no PR or a CLOSED one needs a new PR; an open, draft or merged one does not', () => {
+  for (const pr of [null, undefined, { number: 40, state: 'OPEN' }, prOf(40, 'CLOSED')]) {
+    assert.equal(LEDGER.needsNewPr(pr), true, JSON.stringify(pr));
+  }
+  for (const pr of [prOf(40), { ...prOf(40), draft: true }, prOf(40, 'MERGED'), { url: at(40) }]) {
+    assert.equal(LEDGER.needsNewPr(pr), false, JSON.stringify(pr));
+  }
+});
+
+test('newPrCount: counts listed runs that need a new PR, skips a run with no pipeline, 0 for a non-array', () => {
+  const order = [...listed([1, 2, 3], { 1: prOf(11), 2: prOf(12, 'CLOSED') }), { index: 4, pipelineId: null, title: 'Slice 4', pr: null, onto: null }];
+  assert.equal(LEDGER.newPrCount(order), 2, 'run 2 (closed) and run 3 (none); run 4 has no pipeline');
+  for (const v of [null, undefined, {}, 'x']) assert.equal(LEDGER.newPrCount(v), 0, String(v));
+});
+
+test('the button reads Create 4 PRs when 4 will open, Create PR when 1 will, #40 not counted', () => {
+  const order = listed([1, 2, 3, 4, 5], { 2: prOf(40) });
+  assert.equal(LEDGER.newPrCount(order), 4, '#40 is not counted');
+  assert.equal(createPrLabel(LEDGER.newPrCount(order)), 'Create 4 PRs');
+  assert.equal(createPrLabel(LEDGER.newPrCount(listed([1, 3, 4, 5]))), 'Create 4 PRs');
+  assert.equal(LEDGER.keptOpenNote([carriedOf(2, 3, prOf(40))]), '#40 is not counted.');
+  assert.equal(createPrLabel(LEDGER.newPrCount(listed([1]))), 'Create PR');
+});
+
+test('keptOpenNote: one, several and no open numbered PRs among the carried runs, numbers in run order', () => {
+  const note = LEDGER.keptOpenNote;
+  assert.equal(note([carriedOf(2, 3, prOf(40))]), '#40 is not counted.');
+  assert.equal(note([carriedOf(2, 5, prOf(41)), carriedOf(4, 5, prOf(40))]), '#41 and #40 are not counted.', 'in run order, not sorted by number');
+  assert.equal(note([carriedOf(2, 3, prOf(40, 'MERGED')), carriedOf(4, 5, prOf(41, 'CLOSED')), carriedOf(1, 3, null)]), '');
+  assert.equal(note([carriedOf(2, 3, prOf(40, 'MERGED')), carriedOf(4, 5, prOf(41))]), '#41 is not counted.');
+  for (const none of [[], null, undefined]) assert.equal(note(none), '', String(none));
 });

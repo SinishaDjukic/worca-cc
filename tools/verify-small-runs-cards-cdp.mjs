@@ -20,6 +20,8 @@
 //   finished run's work, and its stop's "Not sent: …" line after a refused take-in, light and dark at 1280px;
 // Ship as one PR (SHIP_ONE_ONLY=1 runs it alone): the Create PR dialog's One enabled and disabled with its reason, the
 //   feature page line, the Shipped card after a One ship, an old outcome's new words and the Labs entry, at 1280px;
+// the carried runs (SHIP_CARRIED_ONLY=1 runs it alone): the Ship card's and the Create PR dialog's carried line and
+//   "Create 4 PRs", light and dark at 1280px, beside the run's prototype (SHIP_CARRIED_PROTOTYPE);
 // and one reduced-motion capture of Prototype building. A live phase then follows a REAL paced mock Design build
 // (WORCA_MOCK_DESIGN_MS=400) on the Chat card: the Lead row, a row per screen and pieces assembling, captured mid-build
 // and with reduced motion (chat-prototype-building-mid-light, chat-prototype-building-reduced-motion-light). Every list (the Verifier's gap `.srows` included) is measured:
@@ -1418,8 +1420,111 @@ async function shipOnePhase() {
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 }
 
+// ---- Slice 5: Ship names the carried runs and counts the PRs it will open (the flag on, 1280px, the classic look, light
+// and dark). A marked 5-run feature finished in run order, run 3 started on run 1's branch and took in run 2's (`tookIn`),
+// so run 3 carries run 2; run 2 has #40 open; R-comp-4 met; a clean Verifier check for run 5's tip. The Ship card reads
+// "Run 2's work ships in run 3's pull request (#40 is open)" in .ask-shipcard-carried and "Create 4 PRs"; the Create PR
+// dialog shows the same line in .shipit-prs-carried, "#40 is not counted." and "Create 4 PRs". No carried line overflows
+// its card (scrollWidth <= clientWidth). app-ship-carried-card-THEME.png and app-ship-carried-dialog-THEME.png in
+// SHOTS_DIR, beside the run's prototype (SHIP_CARRIED_PROTOTYPE, its index.html) #screen-requirements and
+// #screen-ship-dialog: prototype-ship-carried-requirements-THEME.png and prototype-ship-carried-dialog-THEME.png.
+const CARRIED_LINE = "Run 2's work ships in run 3's pull request (#40 is open)";
+async function shipCarriedPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const tag = 'cy';
+  const x = seedFeature(tag, 'Ship carried', ['done', 'done', 'done', 'done', 'done'], { withOutline: soOutline, titles: SO_TITLES,
+    requirementKinds: { 'R-comp-4': { kind: 'confirmed', role: 'compliance' } } });
+  setFeatureAcceptance(x.f.id, [COMP_MET]);
+  figures(x.f.id);
+  const br = (k) => `feat/${tag}-${k}`;
+  for (let k = 1; k <= 5; k++) execFileSync('git', ['branch', '-f', br(k)], { cwd: proj });
+  const recs = [{ source: 'main', feature: br(1) }, { source: br(1), feature: br(2) },
+    { source: br(1), feature: br(3), tookIn: [{ index: 2, branch: br(2), pipelineId: x.pid(2) }] },
+    { source: br(3), feature: br(4) }, { source: br(4), feature: br(5) }];
+  recs.forEach((rec, i) => getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify(rec), new Date(Date.parse(now) + (i + 1) * 60_000).toISOString(), x.pid(i + 1)));
+  getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = 40, pr_state = 'OPEN' WHERE id = ?").run('https://github.com/proof/repo/pull/40', x.pid(2));
+  const headSha = execFileSync('git', ['rev-parse', br(5)], { cwd: proj, encoding: 'utf8' }).trim();
+  pipeline(`c5${tag}v0001`, 'done', 'Ship carried · Verifier');
+  setVerify(x.f, vCheck(x, `c5${tag}v0001`, 'clean', { head: { index: 5, pipelineId: x.pid(5) }, headSha,
+    result: { held: [...SO_AGREED.map((a) => a.id), 'R-comp-4'], gaps: [] } }));
+
+  await cdp('Fetch.enable', { patterns: [{ urlPattern: '*/api/pr/remotes*', requestStage: 'Request' }] });
+  onCdpEvent = (m) => {
+    if (m.method !== 'Fetch.requestPaused') return;
+    const body = Buffer.from(JSON.stringify({ ok: true, chain: ['main'], defaultBase: 'main', remotes: [], defaults: {} })).toString('base64');
+    cdp('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: 200,
+      responseHeaders: [{ name: 'content-type', value: 'application/json' }], body }).catch(() => {});
+  };
+  const capture = async (name) => {
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  /** The visible lines under `sel` and whether any overflows its own box or the card around it. */
+  const linesOf = (sel, boxSel) => ev(`(() => { const els = [...document.querySelectorAll(${JSON.stringify(sel)})].filter((x) => x.offsetParent);
+    const box = els[0] && els[0].closest(${JSON.stringify(boxSel)});
+    return { lines: els.map((x) => x.textContent), fits: els.every((x) => x.scrollWidth <= x.clientWidth + 1)
+      && (!box || box.scrollWidth <= box.clientWidth + 1) }; })()`);
+  const CARD_FACTS = `(() => { const r = [...document.querySelectorAll(${JSON.stringify(SHIP)})].find((x) => x.offsetParent); if (!r) return null;
+    const c = r.querySelector('[data-act="ship-create"]'); const l = r.querySelector('.ask-shipcard-carried');
+    return { create: c ? c.textContent : null, after: !!l && r.querySelector('.ask-shipcard-stats').nextElementSibling === l }; })()`;
+  const DIALOG = `(() => { const m = document.getElementById('shipit-modal'); if (!m || m.classList.contains('hidden')) return null;
+    const kept = m.querySelector('.shipit-prs-kept');
+    return { ok: (m.querySelector('.shipit-ok') || {}).textContent || null, kept: kept && !kept.hidden ? kept.textContent : null }; })()`;
+  const proto = process.env.SHIP_CARRIED_PROTOTYPE || '';
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    // The Ship card, ready: the carried line under the state line, and Create 4 PRs.
+    if (await card(x.threadId, 'shipcarried', 'the Ship carried card', theme) && await SHIP_READY('the Ship carried card', theme)) {
+      await waitFor(`!!document.querySelector(${JSON.stringify(`${SHIP} .ask-shipcard-carried`)})`, `the carried list (${theme})`);
+      const f = await ev(CARD_FACTS);
+      const l = await linesOf(`${SHIP} .ask-shipcard-carried li`, '.ask-shipcard');
+      check(f && f.create === 'Create 4 PRs' && f.after, `ship carried card, ${theme}: Create 4 PRs, the list right after the state line (${JSON.stringify(f)})`);
+      check(JSON.stringify(l.lines) === JSON.stringify([CARRIED_LINE]) && l.fits,
+        `ship carried card, ${theme}: one line "${CARRIED_LINE}", no overflow (${JSON.stringify(l)})`);
+      await reveal(`${SHIP} .ask-shipcard-carried`);
+      await capture(`app-ship-carried-card-${theme}.png`);
+    }
+    // The Create PR dialog from the feature page: Stacked picked, the line, the note and Create 4 PRs.
+    await open(`${base}/?shipcarried-dialog-${theme}#feature/${encodeURIComponent(x.f.id)}`);
+    await skipWelcome(); await setTheme(theme);
+    const CREATE = "[...document.querySelectorAll('#group-detail .gpage-card button')].find((x) => x.offsetParent && /^Create (PR|\\d+ PRs)$/.test(x.textContent.trim()))";
+    if (await waitFor(`!!${CREATE}`, `the Ship carried feature page's Create (${theme})`)) {
+      await sleep(400);
+      await ev(`(() => { const b = ${CREATE}; b.click(); return true; })()`);
+      if (await waitFor(`!!${DIALOG}`, `the Ship carried Create PR dialog (${theme})`)) {
+        await sleep(300);
+        const d = await ev(DIALOG);
+        const l = await linesOf('#shipit-modal .shipit-prs-carried small.hint', '.shipit-zone');
+        check(d && d.ok === 'Create 4 PRs' && d.kept === '#40 is not counted.',
+          `ship carried dialog, ${theme}: Create 4 PRs, "#40 is not counted." (${JSON.stringify(d)})`);
+        check(JSON.stringify(l.lines) === JSON.stringify([CARRIED_LINE]) && l.fits,
+          `ship carried dialog, ${theme}: one line in .shipit-prs-carried, no overflow (${JSON.stringify(l)})`);
+        await capture(`app-ship-carried-dialog-${theme}.png`);
+        await ev(`(() => { const m = document.getElementById('shipit-modal'); const c = [...m.querySelectorAll('button')]
+          .find((b) => b.offsetParent && b.textContent.trim() === 'Cancel'); if (c) c.click(); return !!c; })()`);
+        await sleep(300);
+      }
+    }
+    // The prototype's two screens beside them.
+    if (proto && existsSync(proto)) {
+      for (const [screen, name] of [['screen-requirements', 'requirements'], ['screen-ship-dialog', 'dialog']]) {
+        await open(`${pathToFileURL(proto).href}?carried-${name}-${theme}#${screen}`); await setTheme(theme); await sleep(300);
+        await reveal(`#${screen}`);
+        await capture(`prototype-ship-carried-${name}-${theme}.png`);
+      }
+    } else log(`note the prototype screens (screen-requirements, screen-ship-dialog) are skipped: set SHIP_CARRIED_PROTOTYPE`);
+  }
+  onCdpEvent = null;
+  await cdp('Fetch.disable');
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
 // D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in, SHIP_LIST_ONLY=1
-// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
+// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR, SHIP_CARRIED_ONLY=1 the carried runs Ship names (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
 if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }
 if (process.env.HELD_ONLY === '1') { await heldPhase(); await finish(); }
@@ -1429,6 +1534,7 @@ if (process.env.HELD_RESUME_ONLY === '1') { await heldResumePhase(); await finis
 if (process.env.AFTER_RUN_ONLY === '1') { await afterRunPhase(); await finish(); }
 if (process.env.STOP_FINDINGS_ONLY === '1') { await stopFindingsPhase(); await finish(); }
 if (process.env.SHIP_ONE_ONLY === '1') { await shipOnePhase(); await finish(); }
+if (process.env.SHIP_CARRIED_ONLY === '1') { await shipCarriedPhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {

@@ -3,6 +3,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderShipCard, buildShipChatCard, shipSummaryLine, setShipDialogOpener } from '../ui/public/shape/ship-card.mjs';
+import { icon } from '../ui/public/icons.mjs';
 
 const doms = [];
 afterEach(() => { for (const d of doms.splice(0)) d.window.close(); });
@@ -539,4 +540,52 @@ test('D1 done: "1 PR open"; the Not met / Dropped rows under the PRs; countShown
   const shown = srCard(DONE_SR, { phase: 'applied', countShown: true }).el;
   assert.equal(shown.querySelector('.ask-shipcard-done'), null);
   assert.doesNotMatch(shown.textContent, /PRs open/);
+});
+
+// ---- Slice 5 (R-po-2): the ready card names the carried runs; the button counts the pull requests Ship will open ----
+const CARRIED_LINE = "Run 2's work ships in run 3's pull request (#40 is open)";
+const pr = (n) => ({ number: n, url: `https://x/pull/${n}`, state: 'OPEN' });
+const listedRun = (index, p = null) => ({ index, pipelineId: `p${index}`, title: `Slice ${index}`, pr: p, onto: null });
+/** Runs 1, 3, 4, 5 and 7 listed (run 7 has its own open PR), runs 2 and 6 carried: 4 new pull requests. The second
+ *  line is not the words the entry's fields would give: the card shows the server's line. */
+const CARRIED_SR = SR({ ...READY_SR, along: true, newPrs: 4, order: [listedRun(1), listedRun(3), listedRun(4), listedRun(5), listedRun(7, pr(47))],
+  carried: [{ index: 2, by: 3, title: 'Slice 2', pr: pr(40), line: CARRIED_LINE },
+    { index: 6, by: 7, title: 'Slice 6', pr: pr(46), line: 'the server\'s line for run 6' }] });
+const carriedLines = (el) => [...el.querySelectorAll('.ask-shipcard-carried li')].map((li) => li.textContent);
+const createLabel = (el) => el.querySelector('[data-act="ship-create"]').textContent;
+
+test('ready with a carried run: one .ask-shipcard-carried li per line, after the stats line, each with the merge icon; the button reads Create 4 PRs', () => {
+  const { el, doc } = srCard(CARRIED_SR);
+  const list = el.querySelector('.ask-shipcard-carried');
+  assert.ok(list, 'the ready card has the carried list');
+  assert.equal(list.tagName, 'UL');
+  assert.equal(el.querySelectorAll('.ask-shipcard-carried').length, 1);
+  assert.equal(el.querySelector('.ask-shipcard-stats').nextElementSibling, list, 'right after the state line');
+  assert.deepEqual(carriedLines(el), [CARRIED_LINE, 'the server\'s line for run 6']);
+  const merge = icon(doc, 'merge', 14);
+  for (const li of list.querySelectorAll('li')) {
+    assert.equal(li.firstElementChild.outerHTML, merge.outerHTML, 'each line leads with the 14px merge icon');
+    assert.equal(li.lastElementChild.tagName, 'SPAN');
+    assert.equal(li.lastElementChild.textContent, li.textContent);
+  }
+  assert.equal(createLabel(el), 'Create 4 PRs');
+  assert.equal(createLabel(srCard({ ...CARRIED_SR, newPrs: 1 }).el), 'Create PR');
+  // A blocked card is still before shipping: it names the carried runs too.
+  const blocked = srCard(SR({ newPrs: 4, carried: CARRIED_SR.carried })).el;
+  assert.deepEqual(carriedLines(blocked), carriedLines(el));
+});
+
+test('no carried: no .ask-shipcard-carried element; without newPrs the label is Create 3 PRs from order.length', () => {
+  for (const sr of [READY_SR, { ...READY_SR, newPrs: 3 }, { ...READY_SR, newPrs: 3, carried: [] }]) {
+    const { el } = srCard(sr);
+    assert.equal(el.querySelector('.ask-shipcard-carried'), null);
+    assert.equal(createLabel(el), 'Create 3 PRs');
+  }
+});
+
+test('applied card shows no carried list', () => {
+  assert.equal(carriedLines(srCard(CARRIED_SR).el).length, 2, 'the ready card of the same feature lists them');
+  const done = srCard({ ...CARRIED_SR, order: DONE_SR.order }, { phase: 'applied' }).el;
+  assert.equal(done.querySelector('.ask-shipcard-carried'), null);
+  assert.ok(!done.textContent.includes(CARRIED_LINE));
 });

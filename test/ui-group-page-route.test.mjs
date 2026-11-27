@@ -154,6 +154,25 @@ test('small runs, flag on, along the real branches: a carried run\'s open PR tur
   assert.deepEqual([d.stacked.disabled, d.more.textContent], [false, '2 stacked'], 'the count stays the listed runs\'');
 });
 
+// Slice 5 (R-po-2): the app hands ship.smallRuns.carried to the dialog.
+test('small runs, flag on: the feature\'s Ship dialog names the carried run with its open PR and reads Create 4 PRs', async () => {
+  const pr = { url: 'https://github.com/me/repo/pull/40', number: 40, state: 'OPEN' };
+  const line = "Run 2's work ships in run 3's pull request (#40 is open)";
+  const slices = [1, 2, 3, 4, 5].map((i) => ({ index: i, pipelineId: `p${i}`, pr: i === 2 ? pr : null }));
+  const row = (i) => ({ index: i, pipelineId: `p${i}`, title: `Slice ${i}`, pr: null, onto: null });
+  const ctx = await smallBoot(slices, { order: [1, 3, 4, 5].map(row), along: true, newPrs: 4,
+    carried: [{ index: 2, by: 3, title: 'Slice 2', pr, line }] });
+  const root = ctx.window.document.documentElement;
+  root.dataset.flags = `${root.dataset.flags || ''} shaperSmallRuns`;      // on from the start: no listener of an earlier boot runs
+  ctx.go('feature/feat_1');
+  await ctx.settle(6);
+  await openDialog(ctx);
+  const modal = ctx.window.document.getElementById('shipit-modal');
+  assert.deepEqual([...modal.querySelectorAll('.shipit-prs-carried small.hint')].map((x) => x.textContent), [line]);
+  assert.equal(modal.querySelector('.shipit-prs-kept')?.textContent, '#40 is not counted.');
+  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create 4 PRs');
+});
+
 test('slice 4: along the real branches, the feature dialog counts the listed runs: 4 runs, run 2 carried, Create 3 PRs', async () => {
   const acceptance = { items: [], agreed: [], entries: [], covered: [], ready: true, marked: 0, total: 0 };
   const row = (i) => ({ index: i, pipelineId: `p${i}`, title: `Slice ${i}`, pr: null, onto: null });
@@ -757,6 +776,17 @@ test('item 8: a small-runs feature\'s head reads Create 2 PRs, disabled with the
   await ctx.settle(8);
   assert.deepEqual([cta().textContent, cta().disabled, cta().classList.contains('btn-primary')], ['Create 2 PRs', false, true]);
   assert.equal(gp.querySelector('.gpage-card .run-status').textContent.includes(reason), false);
+});
+
+test('slice 5: the head\'s Create N PRs counts the new PRs: a listed run with an open PR and newPrs 3 reads Create 3 PRs', async () => {
+  const pr = { url: 'https://github.com/me/repo/pull/40', number: 40, state: 'OPEN' };
+  const order = [1, 2, 3, 4].map((i) => ({ index: i, pipelineId: `p${i}`, title: `S${i}`, pr: i === 2 ? pr : null, onto: null }));
+  const smallRuns = { ...D3_SR('met'), order, newPrs: 3 };
+  const { ctx } = await d3Boot({ groups: smallGroups(), feature: () => json({ ...D3_FEATURE('met'), ship: { ...FEATURE.ship, smallRuns } }) });
+  ctx.go('feature/feat_1');
+  await ctx.settle(10);
+  const cta = pageOf(ctx).querySelector('.gpage .gpage-card .rd-pr-slot [data-rd-cta]');
+  assert.equal(cta.textContent, 'Create 3 PRs');
 });
 
 // ── the Verifier's stop and several stops on the feature page ──

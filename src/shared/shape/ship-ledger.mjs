@@ -21,8 +21,7 @@ export const LEGACY_PER_RUN_REASON = 'small runs ship a PR per run';
  *  the same). `pr = { url, number?, state? }`: the number is `pr.number`, else read from a `/pull/N` or
  *  `/merge_requests/N` url, else none. */
 export function openPrReason({ index, pr } = {}) {
-  const fromUrl = String(pr?.url || '').match(/\/(?:pull|merge_requests)\/(\d+)(?:[/?#]|$)/);
-  const n = Number.isInteger(pr?.number) && pr.number > 0 ? pr.number : fromUrl ? Number(fromUrl[1]) : null;
+  const n = prNumberOf(pr);
   if (pr?.state === 'MERGED' && n) return `Run ${index}'s pull request #${n} is already merged`;
   if (pr?.state === 'MERGED') return `Run ${index}'s pull request is already merged`;
   return n ? `Run ${index} already has pull request #${n} open` : `Run ${index} already has a pull request open`;
@@ -32,6 +31,37 @@ const list = (v) => (Array.isArray(v) ? v : []);
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const andList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 const roleLabel = (role) => CONFIRM_ROLES.find((r) => r.key === role)?.label || role;
+
+/** A PR's number: `pr.number`, else read from a `/pull/N` or `/merge_requests/N` url, else null. */
+function prNumberOf(pr) {
+  const fromUrl = String(pr?.url || '').match(/\/(?:pull|merge_requests)\/(\d+)(?:[/?#]|$)/);
+  return Number.isInteger(pr?.number) && pr.number > 0 ? pr.number : fromUrl ? Number(fromUrl[1]) : null;
+}
+
+/** Slice 5 (D1): whether Ship creates a new PR for a listed run: it has none, or only a closed one. A draft, an open or a
+ *  merged PR is kept. The server's stacked loop and both Ship screens ask this one predicate. */
+export const needsNewPr = (pr) => !pr || !pr.url || pr.state === 'CLOSED';
+
+/** Slice 5 (D2): the PRs a stacked Ship creates over the view's `order`: listed runs with a pipeline that need one. */
+export const newPrCount = (order) => list(order).filter((e) => e && e.pipelineId && needsNewPr(e.pr)).length;
+
+const openPr = (pr) => !!(pr && pr.url && pr.state !== 'CLOSED' && pr.state !== 'MERGED');
+
+/** Slice 5 (D4): the line naming a carried run: `Run 2's work ships in run 3's pull request (#40 is open)`. The
+ *  parenthesis is there only while run `index`'s own PR is open. */
+export function carriedLine({ index, by, pr } = {}) {
+  const line = `Run ${index}'s work ships in run ${by}'s pull request`;
+  if (!openPr(pr)) return line;
+  const n = prNumberOf(pr);
+  return `${line} (${n ? `#${n} is open` : 'its pull request is open'})`;
+}
+
+/** Slice 5 (D9): why the count leaves out the carried runs' open PRs: `#40 is not counted.`, `#40 and #41 are not
+ *  counted.`, in run order; '' when no carried run has an open numbered PR. */
+export function keptOpenNote(carried) {
+  const ns = list(carried).filter((c) => c && openPr(c.pr)).map((c) => prNumberOf(c.pr)).filter(Boolean).map((n) => `#${n}`);
+  return ns.length ? `${andList(ns)} ${ns.length === 1 ? 'is' : 'are'} not counted.` : '';
+}
 
 /** Feature D1 (owner direction): the marks a person gives a requirement they confirm, as the classic ledger stores them
  *  (acceptance.mjs ACCEPTANCE_MARKS). Not met and Dropped carry a one-line reason. */

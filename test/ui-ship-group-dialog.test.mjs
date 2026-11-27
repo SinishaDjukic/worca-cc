@@ -254,3 +254,103 @@ test('small runs, a part-way stacked ship: once run 1\'s PR is made, One turns o
   assert.deepEqual([one.disabled, why.hidden, why.textContent], [true, false, 'Run 1 already has a pull request open']);
   assert.deepEqual([ctl.mode(), ctl.count(), ok.textContent], ['stacked', 4, 'Create 4 PRs']);
 });
+
+// ---- Slice 5 (R-po-2): the zone names the carried runs; N counts the pull requests Ship will open ----------------
+const CARRIED_BARE = "Run 2's work ships in run 3's pull request";
+const CARRIED_LINE = `${CARRIED_BARE} (#40 is open)`;
+const listedBut2 = (prs = {}) => runs(5, prs).filter((m) => m.position !== 2);   // run 2 is carried by run 3
+const open40 = { url: url(40), number: 40, state: 'OPEN' };
+/** A marked feature whose run 2 is carried; `pr` is run 2's, `line` the server's words for it. */
+const carrying = (pr, line, over = {}) => marked({}, { members: listedBut2(), all: runs(5, pr ? { 2: pr } : {}),
+  carried: [{ index: 2, by: 3, title: 'Slice 2', pr: pr ? { number: pr.number, url: pr.url, state: pr.state } : null, line }], ...over });
+function carriedParts(modal) {
+  const box = modal.querySelector('.shipit-prs .shipit-prs-carried');
+  const kept = modal.querySelector('.shipit-prs .shipit-prs-kept');
+  assert.ok(box, 'the Pull requests zone has .shipit-prs-carried');
+  assert.ok(kept, 'the Pull requests zone has .shipit-prs-kept');
+  return { box, kept, lines: () => [...box.querySelectorAll('small.hint')].map((x) => x.textContent) };
+}
+
+test('a marked feature with a carried run: .shipit-prs-carried shows the line, .shipit-prs-kept reads "#40 is not counted.", the confirm reads Create 4 PRs', () => {
+  const modal = modalOf();
+  const ctl = paintGroupShip(modal, carrying(open40, CARRIED_LINE), { setLabel: setLabel(modal) });
+  const { box, kept, lines } = carriedParts(modal);
+  assert.deepEqual([box.hidden, lines()], [false, [CARRIED_LINE]]);
+  assert.deepEqual([kept.hidden, kept.textContent, kept.classList.contains('hint')], [false, '#40 is not counted.', true]);
+  assert.deepEqual([ctl.mode(), ctl.count(), parts(modal).ok.textContent], ['stacked', 4, 'Create 4 PRs']);
+  assert.equal(modal.querySelectorAll('.shipit-prs-kept').length, 1);
+  const after = modal.ownerDocument.defaultView.Node.DOCUMENT_POSITION_FOLLOWING;
+  assert.ok(modal.querySelector('.shipit-prs-hint').compareDocumentPosition(box) & after, 'the lines come after the suggestion');
+  assert.ok(box.compareDocumentPosition(kept) & after, 'the note under the lines');
+});
+
+test('a marked feature: one hint per carried line, the server\'s own words', () => {
+  const modal = modalOf();
+  const second = { index: 4, by: 5, title: 'Slice 4', pr: null, line: 'the server\'s line for run 4' };
+  const view = carrying(open40, CARRIED_LINE);
+  paintGroupShip(modal, { ...view, carried: [...view.carried, second] }, { setLabel: setLabel(modal) });
+  assert.deepEqual(carriedParts(modal).lines(), [CARRIED_LINE, 'the server\'s line for run 4']);
+});
+
+test('a marked feature with a carried run and no open PR (One enabled): checking One hides .shipit-prs-carried and .shipit-prs-kept and the confirm reads Create PR; Stacked shows the line again', () => {
+  const modal = modalOf();
+  const ctl = paintGroupShip(modal, carrying(null, CARRIED_BARE), { setLabel: setLabel(modal) });
+  const { box, kept, lines } = carriedParts(modal);
+  const { one, ok } = parts(modal);
+  assert.equal(one.disabled, false);
+  assert.deepEqual([box.hidden, lines(), kept.hidden, ok.textContent], [false, [CARRIED_BARE], true, 'Create 4 PRs'], 'no open PR: no note');
+  pick(modal, 'one');
+  assert.deepEqual([box.hidden, kept.hidden, ctl.mode(), ok.textContent], [true, true, 'one', 'Create PR']);
+  pick(modal, 'stacked');
+  assert.deepEqual([box.hidden, lines(), kept.hidden, ok.textContent], [false, [CARRIED_BARE], true, 'Create 4 PRs']);
+});
+
+test('a carried run\'s draft PR leaves One on: the note shows with Stacked and hides with One', () => {
+  const modal = modalOf();
+  paintGroupShip(modal, carrying({ ...open40, draft: true }, CARRIED_LINE), { setLabel: setLabel(modal) });
+  const { box, kept } = carriedParts(modal);
+  assert.equal(parts(modal).one.disabled, false);
+  assert.deepEqual([box.hidden, kept.hidden, kept.textContent], [false, false, '#40 is not counted.']);
+  pick(modal, 'one');
+  assert.deepEqual([box.hidden, kept.hidden], [true, true]);
+  pick(modal, 'stacked');
+  assert.deepEqual([box.hidden, kept.hidden, kept.textContent], [false, false, '#40 is not counted.']);
+});
+
+test('a reopen without carried runs hides both, and resetGroupShip empties them', () => {
+  const modal = modalOf();
+  paintGroupShip(modal, carrying(open40, CARRIED_LINE), { setLabel: setLabel(modal) });
+  const { box, kept, lines } = carriedParts(modal);
+  assert.equal(lines().length, 1);
+  paintGroupShip(modal, marked(), { setLabel: setLabel(modal) });
+  assert.deepEqual([box.hidden, lines(), kept.hidden, kept.textContent], [true, [], true, '']);
+  paintGroupShip(modal, carrying(open40, CARRIED_LINE), { setLabel: setLabel(modal) });
+  assert.equal(lines().length, 1, 'painted once per open');
+  resetGroupShip(modal);
+  assert.deepEqual([box.hidden, lines(), kept.hidden, kept.textContent], [true, [], true, '']);
+});
+
+test('a marked feature\'s slice draft counts as having a PR (n excludes it), while One stays enabled', () => {
+  const draft = { url: url(41), number: 41, state: 'OPEN', draft: true };
+  const view = marked({ 1: draft });
+  assert.deepEqual(groupShipChoice(view), { n: 4, oneOff: '', mode: 'stacked' });
+  const modal = modalOf();
+  const ctl = paintGroupShip(modal, view, { setLabel: setLabel(modal) });
+  const { one, why, ok } = parts(modal);
+  assert.deepEqual([one.disabled, ok.textContent], [false, 'Create 4 PRs']);
+  // A part-way stacked ship made one PR: the server skips the draft's run, so it was run 2's.
+  ctl.markCreated(1);
+  assert.deepEqual([ctl.count(), ok.textContent, why.textContent], [3, 'Create 3 PRs', 'Run 2 already has a pull request open']);
+});
+
+test('small runs with the flag off (no oneOk): a slice draft still counts as needing a PR, in n and in markCreated, as before', () => {
+  const draft = { url: url(41), number: 41, state: 'OPEN', draft: true };
+  const view = marked({ 1: draft });
+  delete view.oneOk;
+  assert.deepEqual(groupShipChoice(view), { n: 5, oneOff: PER_RUN_REASON, mode: 'stacked' });
+  const modal = modalOf();
+  const ctl = paintGroupShip(modal, view, { setLabel: setLabel(modal) });
+  assert.equal(parts(modal).ok.textContent, 'Create 5 PRs');
+  ctl.markCreated(1);                                      // run 1's draft counts as the next run without a PR
+  assert.deepEqual([ctl.count(), parts(modal).ok.textContent], [4, 'Create 4 PRs']);
+});

@@ -306,3 +306,14 @@ test('R-ux-4: "One card, three hosts" says a small run\'s stop card lists its fi
   assert.ok(para, 'the paragraph "One card, three hosts"');
   assert.deepEqual(missing(para, [/small runs on/i, /lists its findings under (?:its|the) question/i, /every surface/i]), []);
 });
+
+// Slice 5 (R-po-2): Ship names the carried runs and its button counts the pull requests it will open.
+test('Ship guide names carried runs and the new-PR count', () => {
+  const part = smallPart('Ship');
+  assert.deepEqual(missing(part, ["Run 2's work ships in run 3's pull request (#40 is open)", '#40 is not counted',
+    /\bnew (?:PRs?|pull requests?)\b/i, /\bclosed\b/i]), []);
+});
+
+test('design system lists .shipit-prs-carried and .ask-shipcard-carried', () => {
+  assert.deepEqual(missing(flat(read('design-system.md')), ['.shipit-prs-carried', '.shipit-prs-kept', '.ask-shipcard-carried']), []);
+});

@@ -264,3 +264,24 @@ test('the One ship phase shoots its 6 surfaces in both themes', () => {
   }
 });
 
+test('the SHIP_CARRIED_ONLY phase captures app-ship-carried-card and app-ship-carried-dialog in light and dark', () => {
+  const s = src();
+  const gate = s.match(/process\.env\.SHIP_CARRIED_ONLY === '1'\) \{ await (\w+)\(\); await finish\(\); \}/);
+  assert.ok(gate, 'the SHIP_CARRIED_ONLY=1 gate');
+  const at = s.indexOf(`async function ${gate[1]}(`);
+  assert.ok(at >= 0, 'the carried-run Ship phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  // The seeded shape (run 3 took in run 2) and what is asserted in the page before each shot.
+  assert.match(body, /tookIn/, 'run 3 carries run 2');
+  assert.match(s, /Run 2\\?'s work ships in run 3\\?'s pull request \(#40 is open\)/);
+  for (const needle of ['Create 4 PRs', '.ask-shipcard-carried', '.shipit-prs-carried', 'scrollWidth', 'clientWidth']) {
+    assert.ok(s.includes(needle), needle);
+  }
+  // The four app files, with these exact names (no prefix), in SHOTS_DIR, beside the prototype's two screens.
+  for (const surface of ['card', 'dialog']) {
+    assert.match(s, new RegExp(`[\`'/]app-ship-carried-${surface}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${surface} screenshots`);
+  }
+  for (const screen of ['screen-requirements', 'screen-ship-dialog']) assert.ok(s.includes(screen), screen);
+});

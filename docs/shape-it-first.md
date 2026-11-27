@@ -681,7 +681,10 @@ the real branches: from the head back along each run's recorded base; each PR is
 it, the first on the feature's base (or on the feature's base when the PR before it is merged or its branch still merges
 back). A run whose work a listed PR already carries (taken in or combined) gets no pull request of its own. A run's work
 also counts as carried when a listed or carried run started from its branch, so after take-ins from other bases each
-commit ships in one pull request. When Worca
+commit ships in one pull request. Before you ship, the Ship card and the Ship dialog name each carried run, as in
+"Run 2's work ships in run 3's pull request (#40 is open)". While Stacked is picked the dialog adds "#40 is not
+counted."; with One picked it shows neither. The button's count is the number of new PRs Ship creates: the listed runs
+without a PR or with a closed one ("Create 4 PRs"). When Worca
 cannot follow every finished run's work into the list, it falls back to the order the runs finished, and the Shipped
 card says so: "stacked in the order runs finished".
 

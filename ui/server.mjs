@@ -474,7 +474,7 @@ import { shaperSmallRunsOn } from '../src/core/shape/small-runs.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
-  liveSliceFrom, liveSliceResuming, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, isSlicePreambleLine } from '../src/core/shape/features.mjs';
+  liveSliceFrom, liveSliceResuming, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, sliceNeedsPr, isSlicePreambleLine } from '../src/core/shape/features.mjs';
 import { smallRunsChainGate, sliceFireStart, sliceCombineGate, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, oneShipRaced, createHeldStops, featureOfAnyPipeline, holdAfterSetupClash, resumeTakeInVerdict } from '../src/core/shape/chain.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts, createRequirementChanges } from '../src/core/shape/changes.mjs';
@@ -5138,11 +5138,9 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     // D5: One closes slice drafts only; a ready slice PR (made by a partly finished stacked ship) is never closed.
     const { head, refusal: shipRefusal } = await oneShipCheck(id, mode, shown, (h) => shipCtxOf(view, { base, head: h })); if (shipRefusal) return shipRefusal;
     clearShip(id);                                   // a withdrawn ship (its PRs all closed unmerged); no-op otherwise
-    // A slice whose PR was closed gets a new one (openMemberPr opens past a CLOSED PR).
-    const needsPr = (s) => s.pipelineId && (!s.pr || s.pr.state === 'CLOSED');
-    if (mode === 'stacked' && shown.slices.some(needsPr)) {
+    if (mode === 'stacked' && shown.slices.some(sliceNeedsPr)) {   // a closed PR gets a new one; the Ship screens count with it too
       for (const s of shipOrder(shown)) {   // Feature D1: a marked feature's runs along the real branches (slice 4), else in finish order
-        if (!needsPr(s)) continue;
+        if (!sliceNeedsPr(s)) continue;
         const stop = stopped(); if (stop) return stop;
         const r = await openMemberPr(s.pipelineId, { actor });
         if (!r.ok) return { status: r.status || 500, body: { error: `could not create run ${s.index}'s PR: ${r.error}. Create PR again to continue.`, prs: made } };
@@ -5164,8 +5162,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
         return p.ok ? { ok: true } : { ok: false, error: p.stderr };
       },
       openOnePr: async ({ pipelineId, title, body }) => {
-        raced = oneShipRaced(id, shown, readPrState);   // a run's own Create PR that started before this ship
-        if (raced) return { ok: false, error: raced.body.error };
+        if ((raced = oneShipRaced(id, shown, readPrState))) return { ok: false, error: raced.body.error };   // a run's own Create PR that started before this ship
         const r = await createPrWithDraftRetry(createRunPr, { id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
           description: body, title, actor, preamble: false, draft }, onDraftFallback);
         if (r.ok) onePr = { ...r.pr, newDraft: !!r.newDraft };

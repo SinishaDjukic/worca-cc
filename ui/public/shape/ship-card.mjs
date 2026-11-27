@@ -351,6 +351,13 @@ function smallRunsShip(doc, h, m, handlers) {
   }
   const stats = h('div', 'ask-shipcard-stats');
   body.appendChild(stats);
+  // Slice 5 (D7): before shipping, the runs whose work ships inside a listed run's PR, in the server's words (carriedLine).
+  const carried = Array.isArray(sr.carried) ? sr.carried : [];
+  if (carried.length) {
+    const ul = h('ul', 'ask-shipcard-carried');
+    for (const c of carried) { const li = h('li'); li.append(icon(doc, 'merge', 14), h('span', null, c.line)); ul.appendChild(li); }
+    body.appendChild(ul);
+  }
   const err = h('div', 'ask-card-err'); err.setAttribute('aria-live', 'polite');
   const whyId = `ask-shipcard-why-${++srSeq}`;
   let confirming = null;                                  // the id whose mark is being sent
@@ -363,7 +370,7 @@ function smallRunsShip(doc, h, m, handlers) {
   const actions = h('div', 'ask-mcard-actions');
   actions.appendChild(h('span', 'ask-card-actions-spacer'));
   const create = h('button', 'btn btn-sm', null); create.type = 'button'; create.dataset.act = 'ship-create';
-  create.append(icon(doc, 'pr-create', 14), h('span', null, createPrLabel(sr.order.length)));
+  create.append(icon(doc, 'pr-create', 14), h('span', null, createPrLabel(sr.newPrs ?? sr.order.length)));
   actions.appendChild(create);
   root.append(err, actions);
   let opening = false;
