@@ -22,8 +22,15 @@ export function onePrBody(slices, keptUrl = null, { maxChars = Infinity } = {}) 
     : `${build(false)}\n\n${closedAny ? "Each slice's checklist is in its closed draft." : "The slices' checklists are left out to fit."}`;
 }
 
+/** The runs the changelog entry names: the listed slices, plus the carried ones (slice 4: their work ships inside a
+ *  listed run's PR) merged in by index. Without carried runs, the listed slices as they are. */
+export function shipChangelogSlices(feature) {
+  const carried = Array.isArray(feature.carried) ? feature.carried : [];
+  return carried.length ? [...feature.slices, ...carried].sort((a, b) => a.index - b.index) : feature.slices;
+}
+
 /**
- * @param {{feature:{id,title,slices:Array<{index,title,pipelineId,pr:{url}|null, summary?:string, checklistMd?:string}>},
+ * @param {{feature:{id,title,slices:Array<{index,title,pipelineId,pr:{url}|null, summary?:string, checklistMd?:string}>, carried?:Array},
  *   mode:'stacked'|'one', maxBody?:number, headPipelineId?:string|null}} input
  * @param {{commitChangelog(pipelineId, update):Promise<{ok,error?,kind?}>, push(pipelineId):Promise<{ok,error?}>,
  *   openOnePr({pipelineId, title, body}):Promise<{ok,url?,existed?,error?}>, adoptOnePr({url, pipelineId, body}):Promise<{ok,error?}>,
@@ -44,7 +51,7 @@ export async function shipFeature({ feature, mode, maxBody = Infinity, headPipel
   if (missing) return { ok: false, status: 409, error: `slice ${missing.index} has no pull request yet` };
   // D25 first, so the entry is part of what ships (the one PR, or the last stacked PR). changelogWithFeature leaves a
   // text that already has this feature's entry as it is, so a retry after a later failure adds no second entry.
-  const cl = await deps.commitChangelog(last.pipelineId, (text) => changelogWithFeature(text, feature));
+  const cl = await deps.commitChangelog(last.pipelineId, (text) => changelogWithFeature(text, { title: feature.title, slices: shipChangelogSlices(feature) }));
   if (!cl.ok) return { ok: false, status: 409, error: `could not write the changelog: ${cl.error}` };
   const pushed = await deps.push(last.pipelineId);
   if (!pushed.ok) return { ok: false, status: 500, error: `git push failed: ${pushed.error}` };
@@ -95,4 +102,52 @@ export function shipCardVerb(body) {
   const r = parseReleaseChoice(b.release);
   if (r.error) return { ok: false, status: 400, error: r.error };
   return { ok: true, verb: b.verb, mode, release: r.value };
+}
+
+/**
+ * Shaper small runs slice 4 (D1, D2, D3, D5): the PRs a marked feature's Ship lists, along the real branches. Pure.
+ * `rows` are the finished runs in finish order (the last is the head Ship ships):
+ *   {index, pipelineId, branch (work branch), source (recorded base), carries (branches taken in or combined),
+ *    merged (its PR is MERGED), pending (its branch still merges back)}.
+ * The walk goes back from the head to the run whose branch is the current run's source (the later finisher on a tie),
+ * then is reversed. A run off the walk is carried when a listed run, or a run it carries, names its branch.
+ * → { order: [{index, pipelineId, base}], carried: [{index, pipelineId, by}] }, or null when a finished run is neither
+ *   listed nor carried (the caller then keeps the finish order).
+ */
+export function shipChain(rows, { root = null } = {}) {
+  const list = Array.isArray(rows) ? rows.filter((r) => r && typeof r === 'object') : [];
+  if (!list.length) return { order: [], carried: [] };
+  const name = (x) => (typeof x === 'string' && x ? x : null);
+  const seen = new Set();
+  const walk = [];
+  for (let cur = list.length - 1; cur >= 0 && walk.length < list.length;) {
+    seen.add(cur);
+    walk.push(cur);
+    const source = name(list[cur].source);
+    let next = -1;
+    if (source) for (let k = list.length - 1; k >= 0; k--) if (!seen.has(k) && name(list[k].branch) === source) { next = k; break; }
+    cur = next;
+  }
+  walk.reverse();
+  const order = walk.map((k, i) => {
+    const prev = i > 0 ? list[walk[i - 1]] : null;
+    const base = !prev || prev.merged || prev.pending || !name(prev.branch) ? root : name(prev.branch);
+    return { index: list[k].index, pipelineId: list[k].pipelineId, base };
+  });
+  // The carried closure: [row position, the listed run that carries it].
+  const carriedBy = new Map();
+  const queue = walk.map((k) => [k, list[k].pipelineId]);
+  while (queue.length) {
+    const [k, by] = queue.shift();
+    const carries = Array.isArray(list[k].carries) ? list[k].carries.map(name).filter(Boolean) : [];
+    for (let m = 0; m < list.length; m++) {
+      if (seen.has(m) || carriedBy.has(m) || !carries.includes(name(list[m].branch))) continue;
+      carriedBy.set(m, by);
+      queue.push([m, by]);
+    }
+  }
+  if (walk.length + carriedBy.size < list.length) return null;
+  const carried = [...carriedBy].sort((a, b) => a[0] - b[0])
+    .map(([m, by]) => ({ index: list[m].index, pipelineId: list[m].pipelineId, by }));
+  return { order, carried };
 }

@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { guardedGitEnvSync } from '../git-guard.mjs';
 import { getDb, tx } from '../db.mjs';                  // node:sqlite: tx(fn), never db.transaction (F23)
-import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf, stackedPrBaseOf, predecessorState, requestRunNow } from '../scheduler.mjs';
+import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf, stackedPrBaseOf, predecessorState, requestRunNow, workBranchOf } from '../scheduler.mjs';
+import { shipChain } from './ship.mjs';
 import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow, listRunArtifacts } from '../artifacts.mjs';
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
@@ -20,6 +21,7 @@ import { rerunsOf } from '../../shared/shape/req-status.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
 import { stopOptionOf } from '../../shared/shape/run-stops.mjs';
+import { holdsUpOf, namedWaits, neededByOf } from '../../shared/shape/run-status.mjs';
 import { CHANGES_MAX } from '../../shared/shape/req-change.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
 import { SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
@@ -173,8 +175,58 @@ export function featureHoldsTicket(ticket) {
   if (!ticket || !ticket.id) return false;
   try {
     const r = sliceOfTicket(ticket.id);
-    return !!r && r.status === 'active' && r.approveEach;
+    return !!r && r.status === 'active' && (r.approveEach || !!clashHoldOf(ticket.id));
   } catch { return false; }
+}
+
+// Shaper small runs (D5): slice tickets held because the runs they build on clash, by ticket id. In memory only: after a
+// restart the next tick fires the ticket, the combine check runs again and the hold comes back.
+const CLASH_HOLDS = new Map();
+
+/** The clash hold of a ticket while the flag is on, else null. → {reason, runs, files, at} | null */
+export function clashHoldOf(ticketId) {
+  if (!ticketId || !shaperSmallRunsOn()) return null;
+  return CLASH_HOLDS.get(String(ticketId)) || null;
+}
+
+export function setClashHold(ticketId, hold) {
+  if (ticketId) CLASH_HOLDS.set(String(ticketId), hold);
+}
+
+export function clearClashHold(ticketId) {
+  if (ticketId) CLASH_HOLDS.delete(String(ticketId));
+}
+
+/** D9: Start now's refusal: the hold's reason only when the hold arm ran for this request (the ticket is back to
+ *  scheduled and unforced, and the hold was found at or after `requestAt`). Pure. → string | null */
+export function clashRefusalOf({ ticket, hold, requestAt }) {
+  if (!ticket || !hold || ticket.status !== 'scheduled' || ticket.forced) return null;
+  return hold.at >= requestAt ? hold.reason : null;
+}
+
+/** D4: the work branch of each run slice `index` builds on directly (its `dependsOn` rows), from previousBranchesOf.
+ *  A row with no single-project branch is left out; any still merging back makes the answer pending. A follow-up
+ *  slice, an unknown feature or index, or an error → no branches. Never throws.
+ *  → {pending:true} | {branches: Array<{index, pipelineId, branch}>} */
+export function dependencyBranchesOf(featureId, index, { now = Date.now() } = {}) {
+  try {
+    const f = featureId ? featureRow(featureId) : null;
+    const s = f ? f.outline.slices[index - 1] : null;
+    if (!s) return { branches: [] };
+    const rows = sliceRows(f.id);
+    const mine = rows.find((r) => r.index === index);
+    if (!mine || mine.kind === 'follow-up') return { branches: [] };
+    const bySlice = new Map(rows.map((r) => [r.sliceId, r]));
+    const deps = (Array.isArray(s.dependsOn) ? s.dependsOn : []).map((id) => bySlice.get(id)).filter((r) => r && r.index !== index);
+    const branches = [];
+    for (const d of deps) {
+      if (!d.pipelineId) continue;
+      const prev = previousBranchesOf(d.pipelineId, { now });
+      if (prev && prev.pending) return { pending: true };
+      if (prev && prev.sourceBranch) branches.push({ index: d.index, pipelineId: d.pipelineId, branch: prev.sourceBranch });
+    }
+    return { branches };
+  } catch { return { branches: [] }; }
 }
 
 /** The slice a ticket fires (the one ticket lookup): its feature, index, the feature's status and its "Ask me before
@@ -243,15 +295,17 @@ function smallRunsShip(f, slices, verify) {
   const ledger = ledgerOf(f, verify, shaperSmallRunsOn()
     ? { runs: slices.map((s) => ({ index: s.index, state: s.state, stop: s.stop || null })), reruns: rerunsOf(f.outline) } : {});
   const root = featureRootSource(f.id);
-  const list = orderOf(f.id, slices);
+  const chain = shipChainOf(f.id);
+  const list = orderOf(f.id, slices, chain);
   const order = list.map((s, i) => {
-    const base = i > 0 && s.pipelineId ? smallRunsPrBase(s.pipelineId) : null;
+    const base = i > 0 && s.pipelineId ? (chain ? chainBaseOf(chain, s.pipelineId) : smallRunsPrBase(s.pipelineId)) : null;
     const prev = list[i - 1];
     return { index: s.index, pipelineId: s.pipelineId, title: s.title,
       pr: s.pr && s.pr.url ? { number: s.pr.number ?? null, url: s.pr.url } : null,
       onto: base && base !== root && prev && prev.pr && prev.pr.url ? (prev.pr.number ?? null) : null };
   });
-  return { ...ledger, care: careOutcome(careOfRow(f), featureFigures(f.id), ledger.met), base: baseName(f.project_dir, root), order };
+  return { ...ledger, care: careOutcome(careOfRow(f), featureFigures(f.id), ledger.met), base: baseName(f.project_dir, root), order,
+    ...(chain ? { along: true } : {}) };
 }
 
 /** The root source as the PR names it: `origin/dev` reads `dev` when `origin` is one of the project's remotes (git-info.mjs
@@ -323,22 +377,37 @@ const STUCK = new Set(['missed', 'canceled']);
 function sliceState(row, live, { held = true } = {}) {
   if (!row.pipelineId) return row.ticket ? (held && ticketHeld(row.ticket) ? 'held' : TICKET_STATE[row.ticket.status] || 'planned') : 'planned';
   const l = live(row.pipelineId);
-  if (l) return l.waiting ? 'approval' : l.asking ? 'questions' : l.status === 'paused' ? 'paused' : l.approved ? 'running' : 'shaping';
+  // Slice 5 (D3): the bare "being resumed" overlay (no runs-map entry yet) reads the row's stored state.
+  if (l && !(l.resuming && l.runId === null)) return l.waiting ? 'approval' : l.asking ? 'questions' : l.status === 'paused' ? 'paused' : l.approved ? 'running' : 'shaping';
   const p = getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(row.pipelineId);
   return (p && PIPELINE_STATE[p.status]) || 'starting';
 }
 
 /** L8: the runs-map entry as featureView's `live` reads it (ui/server.mjs liveSliceOf). `waiting` is a pending plan
  *  ask, `asking` any other pending ask; `ask` names it for the feature card's open step (s2, D9). */
-export function liveSliceFrom({ runId, status, pendingQuestion = null, approved = false, heldStop = null }) {
+export function liveSliceFrom({ runId, status, pendingQuestion = null, approved = false, heldStop = null, refused = null, going = false }) {
   const pq = pendingQuestion || null;
   const plan = !!pq && pq.kind === PLAN_ASK_KIND;
   // Small runs C3 (D8): a marked run's open stop question, and whether its answer is held for another run's turn.
+  // Slice 3 (D11, D13): why a held answer was not sent (`refused`), and a take-in in flight (`going`).
   const value = heldStop ? stopOptionOf(pq && pq.stop, heldStop.payload)?.value : null;
   const stop = pq && pq.stop ? { reason: pq.stop.reason, held: !!heldStop,
-    ...(heldStop && Number.isInteger(heldStop.after) ? { after: heldStop.after } : {}), ...(value ? { value } : {}) } : null;
+    ...(heldStop && Number.isInteger(heldStop.after) ? { after: heldStop.after } : {}), ...(value ? { value } : {}),
+    ...(refused ? { refused } : {}), ...(going ? { going: true } : {}) } : null;
   return { runId, status: String(status || ''), waiting: plan, asking: !!pq && !plan, approved: !!approved,
     ask: pq ? { id: pq.id || null, kind: plan && pq.plan && pq.plan.outline ? 'outline' : pq.kind } : null, ...(stop ? { stop } : {}) };
+}
+
+/** Slice 5 (D1): the overlay of a run being resumed at server start that has no usable runs-map entry yet. */
+export function liveSliceResuming() {
+  return Object.freeze({ ...liveSliceFrom({ runId: null, status: 'paused' }), resuming: true });
+}
+
+/** Slice 7 (D9): the overlay of a run whose resume is held for its turn: `slice` with `heldResume: {after}`, or a bare
+ *  paused run when it has no live slice. */
+export function liveSliceHeldResume(slice, after) {
+  if (!slice) return Object.freeze({ ...liveSliceFrom({ runId: null, status: 'paused' }), heldResume: { after } });
+  return { ...slice, heldResume: { after } };
 }
 
 const auditTexts = (pid) => (pid ? getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(String(pid)).map((r) => r.text) : []);
@@ -397,6 +466,9 @@ export function featureView(id, { live = () => null, finishing = () => false, on
       ...(f.outline.agreed?.length ? { requirements: sliceRequirements(f, r) } : {}) };
   });
   if (smallRunsOfFeature(f.id)) stopWords(f, rows, slices, live);
+  // Slice 6 (D1, D5): with the flag on, an active marked feature lists every open stop and failed run; the first is `ask`.
+  const asks = shaperSmallRunsOn() && smallRunsOfFeature(f.id) && f.status === 'active' ? openStopsOf(rows, slices, live) : null;
+  if (asks && asks.length) ask = asks[0];
   const roundLive = slices.some((s) => s.rounds.some((x) => LIVE_ROUND.has(x.status)));
   const ideas = getDb().prepare(`SELECT COUNT(*) AS n FROM shape_feature_notes WHERE feature_id = ? AND kind = 'idea'
     AND (run_index IS NULL OR run_index NOT IN (SELECT idx FROM shape_feature_slices WHERE feature_id = ? AND pipeline_id IS NOT NULL))`).get(f.id, f.id).n;
@@ -405,6 +477,7 @@ export function featureView(id, { live = () => null, finishing = () => false, on
   const waiting = h ? slices.filter((s) => s.index > h.index && (s.state === 'planned' || s.state === 'missed')).map((s) => s.index) : [];
   // D3: the run that waits for the owner's Start now ("Ask me before each run"); never persisted.
   const held = slices.find((s) => s.state === 'held') || null;
+  const clash = held ? clashHoldOf(held.ticketId) : null;
   // D24: Ship as once every slice is done, on a feature that is still active and not shipped. The suggestion is
   // async (featureShipSuggestion); the GET route merges it.
   const lastPrUrl = slices.length ? (slices[slices.length - 1].pr?.url || null) : null;
@@ -452,9 +525,9 @@ export function featureView(id, { live = () => null, finishing = () => false, on
     status, approveEach: f.approve_each !== 0, total: slices.length, done,
     halted: h ? { index: h.index, state: h.state, waiting } : null,
     open: slices.some((s) => ['planned', 'missed', 'held'].includes(s.state)),
-    held: held ? { index: held.index, ticketId: held.ticketId } : null,
+    held: held ? { index: held.index, ticketId: held.ticketId, ...(clash ? { reason: clash.reason } : {}) } : null,
     replacedBy: f.replaced_by || null, replan, slices, ship,
-    originPipelineId: f.origin_pipeline_id, ask, log: featureLog(f, slices, oneCard, ch.logged, f.outline.verify || null), notes: { ideas },
+    originPipelineId: f.origin_pipeline_id, ask, ...(asks ? { asks } : {}), log: featureLog(f, slices, oneCard, ch.logged, f.outline.verify || null), notes: { ideas },
     // Shaper small runs A2: the record's 2 keys, last, only with the flag on or (B2, D20) for a marked feature; an unmarked
     // feature with the flag off is dev's exact shape.
     ...(shaperSmallRunsOn() || smallRunsOfFeature(f.id) ? { care: careOfRow(f), requirementKinds: requirementKindsOf(j(f.requirement_kinds, null), f.outline) } : {}),
@@ -467,13 +540,70 @@ export function featureView(id, { live = () => null, finishing = () => false, on
   };
 }
 
-/** Small runs C3 (D15): a marked feature's slices gain `stop` (an open or held stop question) and `waitsFor` (a run not
- *  started yet that builds on a stopped run: that run's number, named from `dependsOn`). */
+const FAILED_RUN = new Set(['error', 'failed']);   // run-status.mjs FAILED: the red "!"
+
+/** Slice 6 (D2 to D4, D6): a marked feature's open stops (a live ask whose answer is not held) and failed runs, in run
+ *  order, each with the unfinished runs it holds up. `stopWords` has already set `buildsOn` on every slice. */
+function openStopsOf(rows, slices, live) {
+  const byRun = new Map(slices.map((s) => [s.index, s]));
+  const out = [];
+  rows.forEach((r, i) => {
+    const s = slices[i];
+    const l = r.pipelineId ? live(r.pipelineId) : null;
+    if (l && l.ask && !(l.stop && l.stop.held)) {
+      out.push({ index: r.index, runId: l.runId || null, pipelineId: r.pipelineId, id: l.ask.id, kind: l.ask.kind,
+        reason: (l.stop && l.stop.reason) || null, failed: false, holdsUp: holdsUpOf(r.index, byRun) });
+    } else if (FAILED_RUN.has(s.state)) {
+      out.push({ index: r.index, runId: null, pipelineId: r.pipelineId, id: null, kind: null, reason: null, failed: true,
+        holdsUp: holdsUpOf(r.index, byRun) });
+    }
+  });
+  return out.sort((a, b) => a.index - b.index);
+}
+
+/** Small runs C3 (D15): a marked feature's slices gain `stop` (an open or held stop question) and `waitsFor`. With the
+ *  flag off, `waitsFor` is a run not started yet that builds on a stopped run: that run's number, named from `dependsOn`.
+ *  With the flag on (slice 2 D4 to D8), every not-started run (`planned` or `held`) gets `waitsFor`, the sorted runs the
+ *  gate holds it on (sliceHolds), `cannotStart` {run, reason} when a run it builds on can never finish, and the one
+ *  run that goes on next carries `nextTurn: true` (nextTurnOf): a started run whose stop answer is held waiting its
+ *  turn (owner direction dd8aea6ed), else the run the scheduler starts next. */
 function stopWords(f, rows, slices, live) {
   const bySlice = new Map(rows.map((r, i) => [r.sliceId, slices[i]]));
   for (const s of slices) {
     const l = s.pipelineId ? live(s.pipelineId) : null;
     if (l && l.stop) s.stop = { ...l.stop };
+    if (l && l.heldResume) s.heldResume = { after: l.heldResume.after };   // slice 7 (D10), read by run-status.mjs (s8)
+  }
+  if (shaperSmallRunsOn()) {
+    const holdsByIndex = new Map();
+    const rowBySlice = new Map(rows.map((r) => [r.sliceId, r]));
+    // Slice 3 (D2): every slice's direct builds-on runs, started ones too (run-status.mjs namedWaits reduces by them).
+    rows.forEach((r, i) => {
+      const deps = (f.outline.slices[slices[i].index - 1]?.dependsOn || []).map((id) => rowBySlice.get(id));
+      slices[i].buildsOn = deps.filter((d) => d && d.index !== r.index).map((d) => d.index).sort((a, b) => a - b);
+    });
+    rows.forEach((r, i) => {
+      const s = slices[i];
+      if (s.pipelineId || !NOT_STARTED_STATE.has(s.state)) return;
+      const holds = sliceHolds(f, rows, r.index, { isLive: null, bySlice: rowBySlice });
+      holdsByIndex.set(r.index, holds);
+      s.waitsFor = holds.waitsFor;
+      if (holds.bad) s.cannotStart = { run: holds.bad.run, reason: holds.bad.reason };
+    });
+    const next = nextTurnOf(f, rows, holdsByIndex, (r, i) => !!(slices[i].pipelineId && ((slices[i].stop && slices[i].stop.held) || slices[i].heldResume)));
+    if (next) slices[rows.indexOf(next)].nextTurn = true;
+    // Slice 8 (d8-2, d8-3): a paused run not held nor being resumed learns before the press which run its Resume would
+    // wait for, from the hold's own turn rule (heldStopTurn). Reads only.
+    if (smallRunsOfFeature(f.id)) {
+      for (const s of slices) {
+        if (!s.pipelineId || s.state !== 'paused' || s.heldResume) continue;
+        const l = live(s.pipelineId);
+        if (l && l.resuming) continue;
+        const t = heldStopTurn(f.id, s.index, { live });
+        if (t.due === false) s.resumeAfter = t.after;
+      }
+    }
+    return;
   }
   for (const s of slices) {
     if (s.pipelineId) continue;
@@ -483,7 +613,7 @@ function stopWords(f, rows, slices, live) {
 }
 
 /** Small runs: what each slice's one short word reads (run-agents.mjs cardShortWord), from the rows alone (no full view):
- *  index → {kind, state, stop?, waitsFor?}, the words featureView's slices carry. */
+ *  index → {kind, state, stop?, waitsFor?, cannotStart?, nextTurn?, buildsOn?, heldResume?, resumeAfter?}, the words featureView's slices carry. */
 export function sliceWords(featureId, { live = () => null } = {}) {
   const f = featureRow(featureId);
   if (!f) return new Map();
@@ -508,6 +638,8 @@ const protoKey = (rec) => { const v = rec ? prototypeView(rec) : null; return v 
 export const ONE_PR_MAX_LINES = 1500;
 
 const NOT_STARTED = new Set(['planned', 'missed']);
+// Slice 2 (D7): the slice states of a run not started that gets waitsFor, cannotStart and nextTurn.
+const NOT_STARTED_STATE = new Set(['planned', 'held']);
 const LIVE_ROUND = new Set(['running', 'starting', 'paused']);
 
 /** Shaper s5 (D11): a note on the feature for the next run not started yet (NULL when none is left). A plan note
@@ -704,16 +836,19 @@ export async function featureShipSuggestion(view) {
 /** D24, D25: what Ship as needs per slice: its PR, its last code review summary (capped as earlierSliceChanges caps
  *  it) and its checklist markdown. */
 export async function featureShipInput(view) {
-  const slices = [];
-  for (const s of shipOrder(view)) {
+  const inputOf = (s) => {
     const reviews = s.pipelineId ? readPipelineExtras(s.pipelineId).reviews : [];
     const last = reviews.filter((v) => v.kind === 'impl' && v.summary).sort((a, b) => a.cycle - b.cycle).at(-1);
     const cl = latestChecklist(reviews);
-    slices.push({ index: s.index, title: s.title, pipelineId: s.pipelineId, pr: s.pr,
+    return { index: s.index, title: s.title, pipelineId: s.pipelineId, pr: s.pr,
       summary: last ? last.summary.slice(0, 600) : '', checklistMd: cl ? checklistMarkdown(cl.checklist).trimEnd() : '',
-      ...(s.requirements ? { requirements: s.requirements } : {}) });
-  }
-  return { id: view.id, title: view.title, slices };
+      ...(s.requirements ? { requirements: s.requirements } : {}) };
+  };
+  const slices = shipOrder(view).map(inputOf);
+  // Slice 4: a carried run gets no PR, but its work ships inside a listed run's PR, so the changelog names it.
+  const ids = new Set((shipChainOf(view.id)?.carried || []).map((c) => c.pipelineId));
+  const carried = view.slices.filter((s) => s.pipelineId && ids.has(s.pipelineId)).map(inputOf);
+  return { id: view.id, title: view.title, slices, ...(carried.length ? { carried } : {}) };
 }
 
 /** F47: the newest feature in a Re-plan the rest chain (replaced_by), so a host pointed at an old feature shows the
@@ -837,7 +972,8 @@ export function sliceOfPipeline(pipelineId, { live = () => null } = {}) {
   const n = v.slices[at.idx] || null;
   return { featureId: v.id, title: v.title, index: at.idx, total: v.total, sliceTitle: s ? s.title : '',
     state: s ? s.state : null, next: n ? { index: n.index, title: n.title, state: n.state } : null, ...(s && s.stop ? { stop: s.stop } : {}),
-    ...(shaperSmallRunsOn() && smallRunsOfFeature(v.id) ? runFacts(v, at.idx, s) : {}) };
+    ...(shaperSmallRunsOn() && smallRunsOfFeature(v.id)
+      ? { ...runFacts(v, at.idx, s), ...(s && Number.isInteger(s.resumeAfter) ? { resumeAfter: s.resumeAfter } : {}) } : {}) };
 }
 
 const branchOf = (pid) => (pid ? j(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(String(pid))?.branch, null) : null);
@@ -846,14 +982,20 @@ const branchOf = (pid) => (pid ? j(getDb().prepare('SELECT branch FROM pipelines
  *  and where it starts from (its stored `branch.source` against the feature base and the earlier runs' branches). */
 function runFacts(v, index, s) {
   const req = (s && s.requirements) || { ids: [], check: null };
-  const agreed = featureRow(v.id)?.outline?.agreed;
+  const f = featureRow(v.id);
+  const agreed = f?.outline?.agreed;
   const texts = Object.fromEntries((Array.isArray(agreed) ? agreed : []).map((a) => [a.id, a.text]));
   const runs = v.slices.filter((x) => x.index < index && x.pipelineId).map((x) => ({ index: x.index, feature: branchOf(x.pipelineId)?.feature || null }));
   const source = s && s.pipelineId ? branchOf(s.pipelineId)?.source || null : null;
   // D3 (D4): the Owns rows' words are the feature's own `shown` (computed once in shipLedger), never a second ledger.
   const sr = v.ship && v.ship.smallRuns;
   const shown = new Map((sr ? [...sr.owned, ...sr.confirmed] : []).filter((e) => e.shown).map((e) => [e.id, e.shown]));
-  return { owns: ownsOf({ ids: req.ids, texts, check: req.check, shown }), startsFrom: startsFromOf({ index, source, base: featureBase(v.id), runs }) };
+  // Slice 11 (D4 to D7): what the run waits for (the gate's own rule, reduced as R-po-1) and which runs build on it,
+  // nested under `links` so no top-level `waitsFor` reads as a slice's wait word (run-stops.mjs runStopWord).
+  const bySlice = new Map(v.slices.map((x) => [x.index, x]));
+  const holds = f ? sliceHolds(f, sliceRows(v.id), index) : { waitsFor: [] };
+  const links = { waitsFor: namedWaits({ waitsFor: holds.waitsFor }, bySlice), neededBy: neededByOf(index, bySlice) };
+  return { owns: ownsOf({ ids: req.ids, texts, check: req.check, shown }), startsFrom: startsFromOf({ index, source, base: featureBase(v.id), runs }), links };
 }
 
 const AGENT_TEST_NODES = Object.freeze(['n_impl', 'n_check']);
@@ -929,7 +1071,9 @@ export async function earlierSliceChanges(featureId, index) {
 
 function cancelOpenTickets(featureId, { by, now }) {
   let n = 0;
-  for (const r of sliceRows(featureId)) if (r.ticket && ['scheduled', 'missed'].includes(r.ticket.status) && cancelTicket(r.ticketId, { by, now })) n += 1;
+  for (const r of sliceRows(featureId)) {
+    if (r.ticket && ['scheduled', 'missed'].includes(r.ticket.status) && cancelTicket(r.ticketId, { by, now })) { clearClashHold(r.ticketId); n += 1; }
+  }
   return n;
 }
 
@@ -979,12 +1123,18 @@ export function rechainWaiting(id, index, { by = null, now = Date.now() } = {}) 
  *  Stopped/error/failed, or missed/canceled behind a done slice (F43) → a new ticket for slice k, re-chained so the
  *  waiting slices follow it.
  *  @returns {null|{error, status}|{action:'resume', pipelineId, index}|{action:'restart', ticketId}|{action:'none'}} */
-export function resumeFeature(id, { live = () => null, finishing = () => false, by = null, now = Date.now() } = {}) {
+export function resumeFeature(id, { live = () => null, finishing = () => false, by = null, now = Date.now(), index = null } = {}) {
   const f = featureRow(id);
   if (!f) return null;
   const refused = notActive(f);
   if (refused) return refused;
   const view = featureView(id, { live, finishing });
+  // Slice 6 (D12): a stop line's Resume names its run; a run that is not halted is refused and nothing is written.
+  if (index != null) {
+    const named = view.slices[index - 1];
+    if (!named || !HALTS.has(named.state)) return { status: 409, code: 'NOT_HALTED', error: `Run ${index} is not stopped` };
+    return resumeHalted(f, id, named, { live, by, now });
+  }
   // Small runs C5: every run done and the Verifier halted (failed, stopped, or settled with the flag off) → a fresh check,
   // with the flag on only (startVerifyCheck starts none without it).
   if (!view.halted && view.verify && view.verify.state === 'halted') {
@@ -992,14 +1142,21 @@ export function resumeFeature(id, { live = () => null, finishing = () => false, 
     return v ? { action: 'restart', ticketId: v.ticketId } : { action: 'none' };
   }
   if (!view.halted) return { action: 'none' };
-  const h = view.slices[view.halted.index - 1];
+  return resumeHalted(f, id, view.slices[view.halted.index - 1], { live, by, now });
+}
+
+/** resumeFeature's body for one halted run `h`: the busy check, a paused resume, or a restart. */
+function resumeHalted(f, id, h, { live, by, now }) {
   // Shaper small runs (D10): one slice of a feature is going at a time; a refusal changes nothing.
   const smallRuns = shaperSmallRunsOn();
-  const busy = smallRuns ? busySliceOf(id, { exclude: h.index, live }) : null;
-  if (busy) return { status: 409, error: `Slice ${busy.index} is still going: resume this one when it finishes` };
   // The route resumes it like /api/resume, in the run's own mock mode, then calls rechainWaiting (F30). Small runs C4
   // (D8): a paused slice whose requirement changed since it started restarts instead, so it never resumes the old text.
-  if (h.state === 'paused' && !changedSinceStart(f, h)) return { action: 'resume', pipelineId: h.pipelineId, index: h.index, mock: f.base.mock === true };
+  const resumable = h.state === 'paused' && !changedSinceStart(f, h);
+  // Slice 7 (D14, R-po-4): on a marked feature a paused run's resume is not refused while another run goes: resumeRun
+  // holds it for its turn. A restart keeps the refusal.
+  const busy = smallRuns && !(resumable && smallRunsOfFeature(id)) ? busySliceOf(id, { exclude: h.index, live }) : null;
+  if (busy) return { status: 409, error: `Slice ${busy.index} is still going: resume this one when it finishes` };
+  if (resumable) return { action: 'resume', pipelineId: h.pipelineId, index: h.index, mock: f.base.mock === true };
   let r = null;
   tx(() => { r = restartRows(f, sliceRows(id), h, { by, now, smallRuns }); });
   if (r.error) return r;
@@ -1063,7 +1220,10 @@ function rowGoing(r, live, { now = Date.now(), isLive = null } = {}) {
   // Small runs C3 (D8): a run waiting on an unanswered stop question does not hold the feature's other runs; one whose
   // answer is held waits for its turn, so it counts as going.
   const l = r.pipelineId ? live(r.pipelineId) : null;
-  if (l && l.stop && !l.stop.held) return false;
+  // Slice 5 (D2): a run being resumed at server start holds the turn until its resume is live or fails.
+  if (l && l.resuming && shaperSmallRunsOn()) return true;
+  // Slice 3 (D13): one taking work in before its answer goes on counts as going too.
+  if (l && l.stop && !l.stop.held && !l.stop.going) return false;
   if (!BUSY.has(sliceState(r, live, { held: false }))) return false;
   if (r.pipelineId || !r.ticketId) return true;
   return predecessorState({ kind: 'ticket', id: r.ticketId }, { now, isLive }).state === 'waiting';
@@ -1076,10 +1236,81 @@ export function busySliceOf(featureId, { exclude = null, live = () => null, now 
   return r ? { index: r.index } : null;
 }
 
+/**
+ * Small runs C3 (D9): whether stopped run `index` of the feature may go on now. Another slice going holds it (one slice
+ * of a feature at a time); another run whose answer is held does not, so two held answers never wait on each other and
+ * are delivered one at a time. → {due:true} | {due:false, after}
+ */
+export function heldStopTurn(featureId, index, { live = () => null, now = Date.now(), isLive = null } = {}) {
+  const open = (pid) => { const l = live(pid); return l && l.stop && l.stop.held ? { ...l, stop: { ...l.stop, held: false } } : l; };
+  const busy = busySliceOf(featureId, { exclude: index, live: open, now, isLive });
+  return busy ? { due: false, after: busy.index } : { due: true };
+}
+
 // A dependency whose run halted (stopped, error, interrupted) can still be resumed or restarted: its dependent waits.
 const HALTED_PIPELINE = new Set(['stopped', 'error', 'interrupted']);
 /** A slice row's current ref: its ticket (a later slice, or a restarted one), else its pipeline (slice 1 = origin). */
 const rowRef = (r) => (r.ticketId ? { kind: 'ticket', id: r.ticketId } : r.pipelineId ? { kind: 'pipeline', id: r.pipelineId } : null);
+
+/** Slice 2 (D1): what holds run `index` of feature `f` by its builds-on links (`dependsOn`), the gate's one dependency
+ *  rule. An unfinished or halted (resumable) dependency → its run number in `waitsFor` (sorted); the first missed,
+ *  canceled, could-not-start, archived or removed one, in `dependsOn` order → `bad` (predecessorState's reason, the
+ *  dependency's title). A `dependsOn` id with no slice row neither waits nor blocks. Reads only. */
+function sliceHolds(f, rows, index, { now = Date.now(), isLive = null, bySlice = new Map(rows.map((r) => [r.sliceId, r])) } = {}) {
+  const dependsOn = f.outline.slices[index - 1]?.dependsOn;
+  const deps = (Array.isArray(dependsOn) ? dependsOn : []).map((id) => bySlice.get(id)).filter((r) => r && r.index !== index);
+  const waitsFor = [];
+  let bad = null;
+  for (const d of deps) {
+    const ref = rowRef(d);
+    const p = ref ? predecessorState(ref, { policy: 'done', now, isLive }) : { state: 'gone', reason: 'was removed', title: d.title };
+    if (p.state === 'ok') continue;
+    if (p.state === 'waiting' || (p.state === 'bad' && HALTED_PIPELINE.has(p.status))) waitsFor.push(d.index);
+    else if (!bad) bad = { run: d.index, reason: p.reason, title: p.title || d.title };
+  }
+  return { waitsFor: waitsFor.sort((a, b) => a - b), bad };
+}
+
+/** "Ask me before each run" holds every slice ticket of an active feature (featureHoldsTicket, read once per feature). */
+const featureHeldOf = (f) => f.status === 'active' && f.approve_each === 1;
+
+/** Slice 2 (D2): a run that is due: not started, its ticket scheduled, the feature not holding it, no clash hold (D11),
+ *  free of its links. `holdsOf()` (its sliceHolds) is read last, only for a row the cheap checks leave due. */
+const dueRow = (r, holdsOf, featureHeld) => {
+  if (r.pipelineId || !r.ticket || r.ticket.status !== 'scheduled' || featureHeld || clashHoldOf(r.ticketId)) return false;
+  const holds = holdsOf();
+  return !!holds && !holds.waitsFor.length && !holds.bad;
+};
+
+/** Small runs C4 (D7): a change run takes its turn before any run that is not a change, then the lower run goes first. */
+function turnBefore(a, b) {
+  const ca = a.kind === 'change';
+  const cb = b.kind === 'change';
+  return ca === cb ? a.index < b.index : ca;
+}
+
+/** Small runs slice 6 (decision d-1): the order held items go on in, lowest run first. A change run gets no priority
+ *  among held items. The one source of that order for the `next` label (nextTurnOf) and held-answer delivery.
+ *  → a new array of the same `{index}` items, sorted stably by index. */
+export function turnOrder(items) {
+  return [...items].sort((a, b) => a.index - b.index);
+}
+
+/** Slice 2 (D2, D3; owner direction dd8aea6ed corrects D3): the row that goes on next. A started run whose stop answer
+ *  is held (`isHeld(row, i)`) waits its turn and goes on before any free run, so the lowest such row has it. Otherwise
+ *  the row the scheduler starts first once nothing delays it (a going run or a merge-back delay the turn, not who has
+ *  it), from the holds of the not-started rows. null when nothing is held or due, or the feature is not active. */
+function nextTurnOf(f, rows, holdsByIndex, isHeld) {
+  if (f.status !== 'active') return null;
+  const held = turnOrder(rows.filter((r, i) => isHeld(r, i)))[0];
+  if (held) return held;
+  const featureHeld = featureHeldOf(f);
+  let next = null;
+  for (const r of rows) {
+    if (dueRow(r, () => holdsByIndex.get(r.index), featureHeld) && (!next || turnBefore(r, next))) next = r;
+  }
+  return next;
+}
 
 /**
  * Shaper small runs (D4): whether slice ticket `ticket` may start now. Its builds-on links (`dependsOn`) decide, not
@@ -1096,28 +1327,16 @@ export function sliceGateState(ticket, { now = Date.now(), isLive = null, live =
     const f = featureRow(at.featureId);
     const rows = sliceRows(at.featureId);
     const bySlice = new Map(rows.map((r) => [r.sliceId, r]));
-    const depsOf = (index) => (f.outline.slices[index - 1]?.dependsOn || []).map((id) => bySlice.get(id)).filter((r) => r && r.index !== index);
-    const depState = (r) => {
-      const ref = rowRef(r);
-      return ref ? predecessorState(ref, { policy: 'done', now, isLive }) : { state: 'gone', reason: 'was removed', title: r.title };
-    };
-    let waiting = false;
-    for (const d of depsOf(at.index)) {
-      const p = depState(d);
-      if (p.state === 'ok') continue;
-      if (p.state === 'waiting' || (p.state === 'bad' && HALTED_PIPELINE.has(p.status))) { waiting = true; continue; }
-      return { state: 'bad', reason: p.reason, title: p.title || d.title };
-    }
-    if (waiting) return { state: 'waiting' };
+    const holds = sliceHolds(f, rows, at.index, { now, isLive, bySlice });
+    if (holds.bad) return { state: 'bad', reason: holds.bad.reason, title: holds.bad.title };
+    if (holds.waitsFor.length) return { state: 'waiting' };
     const others = rows.filter((r) => r.index !== at.index);
     if (others.some((r) => rowGoing(r, live, { now, isLive }))) return { state: 'waiting' };
-    const due = (r) => !r.pipelineId && r.ticket && r.ticket.status === 'scheduled'
-      && depsOf(r.index).every((d) => depState(d).state === 'ok') && !featureHoldsTicket(r.ticket);
-    // Small runs C4 (D7): a due change run takes the next turn, before any due run that is not a change.
-    const isChange = (r) => r.kind === 'change';
+    // Slice 7 (D8): a held resume holds nothing, but takes the turn before a free run.
+    if (others.some((r) => r.pipelineId && live(r.pipelineId)?.heldResume)) return { state: 'waiting' };
+    const featureHeld = featureHeldOf(f);
     const mine = rows.find((r) => r.index === at.index);
-    const before = (r) => (isChange(mine) ? isChange(r) && r.index < at.index : isChange(r) || r.index < at.index);
-    if (others.some((r) => before(r) && due(r))) return { state: 'waiting' };
+    if (others.some((r) => turnBefore(r, mine) && dueRow(r, () => sliceHolds(f, rows, r.index, { now, isLive, bySlice }), featureHeld))) return { state: 'waiting' };
     if (others.some((r) => r.pipelineId && previousBranchesOf(r.pipelineId, { now })?.pending)) return { state: 'waiting' };
     return { state: 'ok' };
   } catch { return null; }
@@ -1208,7 +1427,15 @@ export function smallRunsPrBase(pipelineId) {
     const order = finishedSlices(at.featureId);
     const i = order.findIndex((s) => s.pipelineId === String(pipelineId));
     if (i < 0) return null;
+    // Slice 4 (D7): with the flag on, the list along the real branches decides, unless it fell back.
+    const chain = shipChainOf(at.featureId);
+    if (chain) return chainBaseOf(chain, String(pipelineId));
     const root = featureRootSource(at.featureId);
+    // Slice 3 (D10): a run that took work in is based on the last branch it took in, until that run's PR is MERGED.
+    const rec = branchOf(pipelineId);
+    if (rec && Array.isArray(rec.tookIn) && rec.tookIn.length && typeof rec.source === 'string' && rec.source) {
+      return readPrState(rec.tookIn.at(-1).pipelineId)?.state === 'MERGED' ? root : rec.source;
+    }
     if (i === 0) return root;
     const pred = order[i - 1].pipelineId;
     if (readPrState(pred)?.state === 'MERGED') return root;
@@ -1230,10 +1457,49 @@ export function shipOrder(view) {
   return orderOf(view.id, view.slices);
 }
 
-function orderOf(featureId, slices) {
+function orderOf(featureId, slices, chain = shipChainOf(featureId)) {
+  if (chain) {
+    // Slice 4 (D7, D10): the listed runs in chain order, then the runs that have not finished in index order.
+    const at = new Map(chain.order.map((o, i) => [o.pipelineId, i]));
+    const finished = new Set(chain.rows.map((r) => r.pipelineId));
+    return [...slices.filter((s) => s.pipelineId && at.has(s.pipelineId)).sort((a, b) => at.get(a.pipelineId) - at.get(b.pipelineId)),
+      ...slices.filter((s) => !s.pipelineId || !finished.has(s.pipelineId))];
+  }
   const pos = new Map(finishedSlices(featureId).map((s, i) => [s.pipelineId, i]));
   const done = (s) => !!s.pipelineId && pos.has(s.pipelineId);
   return [...slices.filter(done).sort((a, b) => pos.get(a.pipelineId) - pos.get(b.pipelineId)), ...slices.filter((s) => !done(s))];
+}
+
+/** Shaper small runs slice 4 (D2, D5, D6, D8): the one list every Ship reader follows for a marked feature with the flag
+ *  on: `shipChain` over the finished runs, with the rows and the root kept for the bases. null with the flag off, for an
+ *  unmarked feature, when the rule falls back (a finished run neither listed nor carried) and on a DB error. */
+function shipChainOf(featureId) {
+  try {
+    if (!featureId || !shaperSmallRunsOn() || !smallRunsOfFeature(featureId)) return null;
+    const names = (xs) => (Array.isArray(xs) ? xs.map((x) => x && x.branch).filter((b) => typeof b === 'string' && b) : []);
+    const rows = finishedSlices(featureId).map((s) => {
+      const rec = branchOf(s.pipelineId);
+      const branch = workBranchOf(rec);
+      return { index: s.index, pipelineId: s.pipelineId, branch: typeof branch === 'string' && branch ? branch : null,
+        source: rec && typeof rec.source === 'string' && rec.source ? rec.source : null,
+        carries: [...names(rec?.tookIn), ...names(rec?.combined)],
+        merged: readPrState(s.pipelineId)?.state === 'MERGED', pending: previousBranchesOf(s.pipelineId)?.pending === true };
+    });
+    const root = featureRootSource(featureId);
+    const chain = shipChain(rows, { root });
+    return chain && { ...chain, rows, root };
+  } catch { return null; }
+}
+
+/** A run's PR base on the chain: a listed run's chain base; a carried run (D9) its recorded source while that is a listed
+ *  or carried run's branch whose PR is not MERGED, else the root; null for a run that has not finished. */
+function chainBaseOf(chain, pipelineId) {
+  const listed = chain.order.find((o) => o.pipelineId === pipelineId);
+  if (listed) return listed.base;
+  const row = chain.rows.find((r) => r.pipelineId === pipelineId);
+  if (!row) return null;
+  const owner = row.source && chain.rows.some((r) => r.pipelineId !== pipelineId && r.branch === row.source && !r.merged);
+  return owner ? row.source : chain.root;
 }
 
 /** L12: a shaped run started from a Chat card (Plans tab). */

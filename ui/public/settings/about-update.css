@@ -13,7 +13,7 @@
 .about-link:hover{text-decoration:underline;}
 /* #841: the version's update state, the Updates switch row and Check now. */
 .about-update{font-size:11px;font-weight:600;padding:1px 7px;border-radius:var(--r-xs);background:var(--green-bg);color:var(--green-ink-strong);}
-.about-update[data-state="outdated"]{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.about-update[data-state="outdated"],.about-update[data-state="warn"]{background:var(--amber-bg);color:var(--amber-ink-strong);}
 .about-update[data-state="source"]{background:var(--field);color:var(--ink-2);}
 .about-row > .about-link + .about-link{margin-left:12px;}
 .about-switch{position:relative;}

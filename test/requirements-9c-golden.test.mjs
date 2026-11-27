@@ -119,7 +119,7 @@ const EXPECTED_BRIEF = {
   modelEnv: undefined,
   noSessionPersistence: true,
   permissionMode: 'acceptEdits',
-  permissionRules: { deny: '49 rules #0ca7c98972aa' },
+  permissionRules: { deny: '57 rules #c6e63a0fe01f' },   // + the proxy login, /run/secrets (and /var/run), the egress data (#1619), the secret vault (#1521)
   prompt: '<prompt>',
   settingSources: [ 'project' ],
   spawnKind: 'aux',
@@ -137,7 +137,7 @@ const EXPECTED_INLINE_READ = {
   modelEnv: undefined,
   noSessionPersistence: true,
   permissionMode: 'acceptEdits',
-  permissionRules: { deny: '49 rules #0ca7c98972aa' },
+  permissionRules: { deny: '57 rules #c6e63a0fe01f' },   // + the proxy login, /run/secrets (and /var/run), the egress data (#1619), the secret vault (#1521)
   prompt: '<prompt>',
   settingSources: [ 'project' ],
   spawnKind: 'aux',
@@ -156,7 +156,7 @@ const EXPECTED_GUARDED_READ = {
   modelEnv: undefined,
   noSessionPersistence: true,
   permissionMode: 'acceptEdits',
-  permissionRules: { deny: '49 rules #0ca7c98972aa' },
+  permissionRules: { deny: '57 rules #c6e63a0fe01f' },   // + the proxy login, /run/secrets (and /var/run), the egress data (#1619), the secret vault (#1521)
   prompt: '<prompt>',
   readGuard: '<path>',
   settingSources: [ 'project' ],

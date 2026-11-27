@@ -84,6 +84,15 @@ ships in the package):
 - MIT (of MIT OR GPL-3.0-or-later): `jszip`
 - MIT AND Zlib: `pako`
 - MIT: `lie`, `immediate`, `setimmediate`
+## @napi-rs/keyring
+
+With the `secretVault` flag on, the vault's master key lives in the OS key store (macOS Keychain, Windows
+Credential Manager or the Linux Secret Service), reached through `@napi-rs/keyring 2.1.2` (MIT, Copyright (c) 2020
+N-API for Rust), an optional dependency loaded only by `src/core/secrets/keyring-backend.mjs`. npm installs the one
+prebuilt platform package that matches the machine; none runs an install script. Each is installed from npm under
+its own license (the text ships in the package):
+
+- MIT: `@napi-rs/keyring`, `@napi-rs/keyring-darwin-arm64`, `@napi-rs/keyring-darwin-x64`, `@napi-rs/keyring-freebsd-x64`, `@napi-rs/keyring-linux-arm-gnueabihf`, `@napi-rs/keyring-linux-arm64-gnu`, `@napi-rs/keyring-linux-arm64-musl`, `@napi-rs/keyring-linux-riscv64-gnu`, `@napi-rs/keyring-linux-x64-gnu`, `@napi-rs/keyring-linux-x64-musl`, `@napi-rs/keyring-win32-arm64-msvc`, `@napi-rs/keyring-win32-ia32-msvc`, `@napi-rs/keyring-win32-x64-msvc`
 
 ## C4 viewer layout
 

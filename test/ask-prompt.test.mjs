@@ -1,6 +1,7 @@
 // P1/T10: prompts (ask-worca-design.md §6.5): byte-stable system prompt, the
 // validated client context, the clipped [worca context] header, attachment
 // inlining and the DB-replay restore prompt.
+import { securityToolFamily } from '../src/core/ask/security-tools.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -532,6 +533,7 @@ const MUST_STATE = [
   [23, () => ASK_HOSTING_RULE, 'Never ask for one in chat'],
   [23, () => ASK_HOSTING_RULE, 'do not repeat it back'],
   [23, () => ASK_HOSTING_RULE, 'revoke it'],
+  [23, () => ASK_HOSTING_RULE, 'PRs show the App as their author)'],
   [22, () => ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('22. Away mode:')), 'never claim it was applied'],
   [2, () => ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('2. ')), '[pinned by the user]'],
   [2, () => ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('2. ')), 'the scope the user explicitly selected for this chat'],
@@ -554,7 +556,8 @@ test('system rules: rule 1 advertises every model tool (compare against the mcp-
       // Every conditional family on but web (renderWebSection names those): the list
       // test/ask-mcp-stdio.test.mjs pins name for name on the real child.
       const served = createAskTools({ limits: ASK_LIMITS, redact: (s) => s, scripts: { enabled: true },
-        models: {}, clones: {}, projectChanges: {}, workspaceChanges: {}, actions: {}, chatActions: {}, composer: {}, scopeSwitch: {}, listPresets: () => [], showFiles: {}, proxy: {}, mcpServers: {} }).list().map((t) => t.name);
+        models: {}, clones: {}, projectChanges: {}, workspaceChanges: {}, actions: {}, chatActions: {}, composer: {}, scopeSwitch: {}, listPresets: () => [], showFiles: {}, proxy: {}, mcpServers: {},
+        security: {}, envProposals: {}, toolFamilies: [securityToolFamily] }).list().map((t) => t.name);
       const rule1 = ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('1. '));
       const listed = rule1.slice(rule1.indexOf('(') + 1, rule1.indexOf(')')).split(', ');
       const elsewhere = ['propose_run', 'propose_workflow', 'save_script', 'test_script'];
@@ -582,6 +585,9 @@ test('system rules: rule 1 advertises every model tool (compare against the mcp-
     } })),
     { name: 'rule 23 carries no control character', run: () => {
       assert.equal(CTRL_RE.test(ASK_HOSTING_RULE.replace(/\n/g, '')), false);
+    } },
+    { name: 'rule 23 names no PR attribution footer', run: () => {
+      assert.ok(!ASK_HOSTING_RULE.includes('via worca'));
     } },
   ]);
 });

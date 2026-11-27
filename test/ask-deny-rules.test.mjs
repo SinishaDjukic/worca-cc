@@ -1,7 +1,7 @@
 // test/ask-deny-rules.test.mjs — one deny list, one matcher (cascading-settings-design.md D13, §8 test 15).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ASK_DENY_RULES, askDenyGlobs, askPathDenied, globMatcher } from '../src/core/ask/deny-rules.mjs';
+import { ASK_DENY_RULES, RUN_READ_DENY_RULES, REQUIREMENTS_READ_DENY_RULES, askDenyGlobs, askPathDenied, globMatcher } from '../src/core/ask/deny-rules.mjs';
 import { ASK_DENY_RULES as SPAWN_RULES, buildAskSpawnOptions } from '../src/core/ask/spawn.mjs';
 
 const HOME = '/Users/zed';
@@ -11,6 +11,7 @@ const CASES = [
   ['Read(//**/worca-cc.db*)', `${W}/worca-cc.db-wal`],
   ['Read(//**/worca.db*)', `${W}/worca.db`],
   ['Read(//**/secrets.json)', '/repo/plugins/p/data/secrets.json'],
+  ['Read(//**/worca-vault*)', '/srv/worca/worca-vault.enc'],
   ['Read(//**/.env*)', '/repo/sub/.env.local'],
   ['Read(//**/.worca-cc/settings.json)', `${W}/settings.json`],
   ['Read(//**/.worca-cc/store/**)', `${W}/store/k/run/log.txt`],
@@ -30,6 +31,11 @@ const CASES = [
   ['Read(~/.npmrc)', `${HOME}/.npmrc`],
   ['Read(~/.config/gh/**)', `${HOME}/.config/gh/hosts.yml`],
   ['Read(//proc/**)', '/proc/1/environ'],
+  // The corporate proxy login (an NT hash) wherever it is, Docker secrets under both names, the egress sidecar's data.
+  ['Read(//**/proxy-login.json*)', `${W}/proxy-login.json`],
+  ['Read(//run/secrets/**)', '/run/secrets/proxy_login'],
+  ['Read(//var/run/secrets/**)', '/var/run/secrets/proxy_login'],
+  ['Read(//worca/egress/**)', '/worca/egress/state/login.json'],
 ];
 
 test('spawn.mjs re-exports the one list: the Claude permission rules are the same array, same order', () => {
@@ -90,7 +96,8 @@ const win = (p) => (p.startsWith(HOME) ? WIN_HOME + p.slice(HOME.length) : `C:${
 
 test('Windows drive paths: each rule denies its sample written as a C: path, under a Windows home', () => {
   for (const [rule, path] of CASES) {
-    if (rule === 'Read(//proc/**)') continue; // a POSIX root folder, not a folder on every drive
+    // POSIX root folders, not folders on every drive.
+    if (['Read(//proc/**)', 'Read(//run/secrets/**)', 'Read(//var/run/secrets/**)', 'Read(//worca/egress/**)'].includes(rule)) continue;
     assert.equal(askPathDenied(win(path), { home: WIN_HOME }), rule, win(path));
   }
   assert.equal(askPathDenied('c:/repo/sub/.env', { home: WIN_HOME }), 'Read(//**/.env*)', 'a lower-case drive letter');
@@ -111,4 +118,20 @@ test('Windows: the ~/ globs sit under the rooted home; extended-length and devic
   assert.equal(askPathDenied(String.raw`\\.\C:\Users\zed\.aws\credentials`, { home: WIN_HOME }), 'Read(~/.aws/**)');
   assert.equal(askPathDenied(String.raw`\\?\UNC\server\share\repo\.env`, { home: WIN_HOME }), 'Read(//**/.env*)');
   assert.equal(askPathDenied(String.raw`\\?\C:\repo\notes.md`, { home: WIN_HOME }), null);
+});
+test('Worca\'s secret files are denied under ~/.worca-cc and a custom home, by all three lists', () => {
+  const paths = [`${W}/proxy-login.json`, '/srv/worca/proxy-login.json', '/srv/worca/worca-vault.enc',
+    '/srv/worca/worca-vault.enc.1a2b3c4d.tmp', '/srv/worca/worca-vault.enc.unreadable-20261121T101500Z', '/srv/worca/worca-vault.key'];
+  for (const rules of [ASK_DENY_RULES, RUN_READ_DENY_RULES, REQUIREMENTS_READ_DENY_RULES]) {
+    for (const p of paths) assert.ok(askPathDenied(p, { rules, home: HOME }), p);
+  }
+});
+
+test('container secret files are denied through /run and its /var/run alias, and through the sidecar data dir', () => {
+  for (const p of ['/run/secrets/worca_egress_secret', '/var/run/secrets/worca_egress_secret', '/var/run/secrets/sub/key.pem']) {
+    for (const rules of [ASK_DENY_RULES, RUN_READ_DENY_RULES, REQUIREMENTS_READ_DENY_RULES]) assert.ok(askPathDenied(p, { rules, home: HOME }), p);
+  }
+  assert.equal(askPathDenied('/var/run/secrets/x', { home: HOME }), 'Read(//var/run/secrets/**)');
+  assert.ok(askPathDenied('/worca/egress/proxy-login.json', { home: HOME }));
+  for (const p of ['/var/run/docker.sock.md', '/srv/run/secrets.md', '/repo/var/run/notes.md']) assert.equal(askPathDenied(p, { home: HOME }), null, p);
 });

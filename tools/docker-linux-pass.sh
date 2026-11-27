@@ -16,7 +16,7 @@
 #   V18  Docker's published port arrives from the container's default-route gateway and is let in (G4);
 #        another container on the same network, sending `Host: localhost`, gets 403.
 # Prints PASS/FAIL lines and exits 1 on any FAIL. Leaves nothing behind (container, network, volume).
-img="${1:-ghcr.io/sinishadjukic/worca:dev}"
+img="${1:-ghcr.io/worca-org/worca:dev}"
 port="${WORCA_PASS_PORT:-47917}"
 tag="worca-linux-pass-$$"
 fails=0

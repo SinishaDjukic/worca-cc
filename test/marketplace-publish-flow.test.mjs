@@ -114,7 +114,7 @@ test('writable GitHub marketplace: one PR adding plugins/<name>/ + its index ent
   const { bare, fork } = await makeMarket({ files: { __plugins: ['plugins/other'], 'plugins/other/worca-cc-plugin.json': '{"name":"other","version":"1.0.0"}\n' } });
   const calls = stub({ bare, fork });
   const mainBefore = await remoteTip(bare, 'main');
-  const r = await exportWorkflowToMarketplace({ workflowId, marketplaceId: 'acme', draft: true, startedBy: 'alice' });
+  const r = await exportWorkflowToMarketplace({ workflowId, marketplaceId: 'acme', draft: true });
   assert.equal(r.status, 'opened');
   assert.equal(r.prUrl, 'https://github.com/acme/market/pull/1');
   assert.deepEqual([r.name, r.subdir, r.branch, r.base, r.oldVersion, r.newVersion], ['shared-flow', 'plugins/shared-flow', BRANCH, 'main', null, '0.1.0']);
@@ -130,7 +130,7 @@ test('writable GitHub marketplace: one PR adding plugins/<name>/ + its index ent
   assert.match(pr.body, /\*\*Agents:\*\* `agents\/sharedAgent\.md`/);
   assert.match(pr.body, /Built-in agents\/scripts:\*\* planner/);
   assert.match(pr.body, /adds `plugins\/shared-flow` to `plugins`/);
-  assert.match(pr.body, /Started by alice via worca/);
+  assert.doesNotMatch(pr.body, /via worca/);
   assert.doesNotMatch(JSON.stringify(r), /worca-mkt-publish-|market\.git/, 'no scratch or local paths leak');
 });
 

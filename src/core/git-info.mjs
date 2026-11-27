@@ -1265,7 +1265,7 @@ async function watchGraphql(query, vars, { projectDir, repo, role = 'read' }) {
 const BASE_TARGET = 'target{oid ... on Commit{statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}';
 // `compare` against refs/pull/<n>/head (it lives in the base repository, fork or not): behindBy is how
 // many base commits the PR lacks.
-const WATCH_QUERY = `query PrWatch($owner:String!,$repo:String!,$number:Int!,$headRef:String!,$contextsCursor:String,$threadsCursor:String,$reviewsCursor:String,$withContexts:Boolean!,$withThreads:Boolean!,$withReviews:Boolean!,$withBase:Boolean!){repository(owner:$owner,name:$repo){pullRequest(number:$number){url state headRefName headRefOid baseRefName baseRefOid mergeable author{login} statusCheckRollup{contexts(first:100,after:$contextsCursor) @include(if:$withContexts){nodes{__typename ... on CheckRun{databaseId name status conclusion detailsUrl isRequired(pullRequestNumber:$number) checkSuite{workflowRun{databaseId}}} ... on StatusContext{context state targetUrl isRequired(pullRequestNumber:$number)}} pageInfo{hasNextPage endCursor}}} reviewThreads(first:100,after:$threadsCursor) @include(if:$withThreads){nodes{id isResolved comments(first:100){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}} reviews(first:100,after:$reviewsCursor) @include(if:$withReviews){nodes{databaseId body state author{login} authorAssociation} pageInfo{hasNextPage endCursor}} baseRef @include(if:$withBase){compare(headRef:$headRef){behindBy} ${BASE_TARGET}}}}}`;
+const WATCH_QUERY = `query PrWatch($owner:String!,$repo:String!,$number:Int!,$headRef:String!,$contextsCursor:String,$threadsCursor:String,$commentsCursor:String,$reviewsCursor:String,$withContexts:Boolean!,$withThreads:Boolean!,$withComments:Boolean!,$withReviews:Boolean!,$withBase:Boolean!){repository(owner:$owner,name:$repo){pullRequest(number:$number){url state headRefName headRefOid baseRefName baseRefOid mergeable author{login} statusCheckRollup{contexts(first:100,after:$contextsCursor) @include(if:$withContexts){nodes{__typename ... on CheckRun{databaseId name status conclusion detailsUrl isRequired(pullRequestNumber:$number) checkSuite{workflowRun{databaseId}}} ... on StatusContext{context state targetUrl isRequired(pullRequestNumber:$number)}} pageInfo{hasNextPage endCursor}}} reviewThreads(first:100,after:$threadsCursor) @include(if:$withThreads){nodes{id isResolved comments(first:100){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}} issueComments:comments(first:100,after:$commentsCursor) @include(if:$withComments){nodes{databaseId body createdAt lastEditedAt updatedAt isMinimized author{login} authorAssociation} pageInfo{hasNextPage endCursor}} reviews(first:100,after:$reviewsCursor) @include(if:$withReviews){nodes{databaseId body state author{login} authorAssociation} pageInfo{hasNextPage endCursor}} baseRef @include(if:$withBase){compare(headRef:$headRef){behindBy} ${BASE_TARGET}}}}}`;
 const BASE_CHECKS_QUERY = `query PrBaseChecks($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){baseRefName baseRef{${BASE_TARGET}}}}}`;
 const COMMENTS_QUERY = `query PrWatchComments($threadId:ID!,$commentsCursor:String){node(id:$threadId){... on PullRequestReviewThread{comments(first:100,after:$commentsCursor){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}}}}`;
 
@@ -1294,13 +1294,13 @@ export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
   const repo = `${p.owner}/${p.repo}`;
   // Each connection pages on its own cursor; a finished one is left out of later pages (@include), so
   // uneven page counts never re-read (and re-collect) a page that was already taken.
-  const cursor = { contexts: null, threads: null, reviews: null };
-  const open = { contexts: true, threads: true, reviews: true };
-  const contexts = []; const threads = []; const reviews = []; let facts = null;
+  const cursor = { contexts: null, threads: null, comments: null, reviews: null };
+  const open = { contexts: true, threads: true, comments: true, reviews: true };
+  const contexts = []; const threads = []; const comments = []; const reviews = []; let facts = null;
   for (let pages = 0; pages < 100; pages++) {
     const q = await watchGraphql(WATCH_QUERY, { owner: p.owner, repo: p.repo, number: p.number,
-      headRef: `refs/pull/${p.number}/head`, contextsCursor: cursor.contexts, threadsCursor: cursor.threads, reviewsCursor: cursor.reviews,
-      withContexts: open.contexts, withThreads: open.threads, withReviews: open.reviews, withBase: pages === 0 }, { projectDir, repo });
+      headRef: `refs/pull/${p.number}/head`, contextsCursor: cursor.contexts, threadsCursor: cursor.threads, commentsCursor: cursor.comments, reviewsCursor: cursor.reviews,
+      withContexts: open.contexts, withThreads: open.threads, withComments: open.comments, withReviews: open.reviews, withBase: pages === 0 }, { projectDir, repo });
     if (!q.ok) return q;
     const pr = q.data?.repository?.pullRequest;
     if (!pr || typeof pr.state !== 'string' || typeof pr.headRefName !== 'string' || typeof pr.headRefOid !== 'string') return { ok: false, class: 'failed', error: 'malformed GitHub snapshot' };
@@ -1315,8 +1315,10 @@ export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
     }
     const done = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
     const cc = !open.contexts || pr.statusCheckRollup === null ? done : pr.statusCheckRollup?.contexts;
-    const tt = open.threads ? pr.reviewThreads : done; const rr = open.reviews ? pr.reviews : done;
-    if (!cc || !Array.isArray(cc.nodes) || !pageOk(cc.pageInfo) || !tt || !Array.isArray(tt.nodes) || !pageOk(tt.pageInfo) || !rr || !Array.isArray(rr.nodes) || !pageOk(rr.pageInfo)) return { ok: false, class: 'failed', error: 'malformed GitHub pagination' };
+    const tt = open.threads ? pr.reviewThreads : done; const ii = open.comments && pr.issueComments ? pr.issueComments : done;
+    const rr = open.reviews ? pr.reviews : done;
+    if (!cc || !Array.isArray(cc.nodes) || !pageOk(cc.pageInfo) || !tt || !Array.isArray(tt.nodes) || !pageOk(tt.pageInfo)
+      || !ii || !Array.isArray(ii.nodes) || !pageOk(ii.pageInfo) || !rr || !Array.isArray(rr.nodes) || !pageOk(rr.pageInfo)) return { ok: false, class: 'failed', error: 'malformed GitHub pagination' };
     for (const c of cc.nodes) {
       if (typeof c.isRequired !== 'boolean') return { ok: false, class: 'failed', error: 'GitHub omitted isRequired' };
       if (c.__typename === 'StatusContext') { contexts.push({ ...c, type: 'status', headSha: facts.headSha }); continue; }
@@ -1329,12 +1331,13 @@ export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
       threads.push({ nodeId: t.id, isResolved: !!t.isResolved, comments: [...t.comments.nodes], _page: t.comments.pageInfo });
     }
     reviews.push(...rr.nodes);
-    for (const [k, conn] of [['contexts', cc], ['threads', tt], ['reviews', rr]]) {
+    for (const t of ii.nodes) if (t?.databaseId != null && t?.body != null) comments.push(t);
+    for (const [k, conn] of [['contexts', cc], ['threads', tt], ['comments', ii], ['reviews', rr]]) {
       if (!open[k]) continue;
       open[k] = conn.pageInfo.hasNextPage;
       if (open[k]) cursor[k] = conn.pageInfo.endCursor;
     }
-    if (!open.contexts && !open.threads && !open.reviews) break;
+    if (!open.contexts && !open.threads && !open.comments && !open.reviews) break;
     if (pages === 99) return { ok: false, class: 'failed', error: 'GitHub pagination ceiling exceeded' };
   }
   for (const thread of threads) {
@@ -1349,7 +1352,7 @@ export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
     }
     delete thread._page;
   }
-  return { ok: true, pr: { ...facts, contexts, threads, reviews } };
+  return { ok: true, pr: { ...facts, contexts, threads, comments, reviews } };
 }
 
 export async function ghFailedJobLog({ projectDir, prUrl, databaseId } = {}) {

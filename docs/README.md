@@ -4,7 +4,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 
 ## Getting started
 
-- [Install](install.md) — npm, requirements, the container image and a hosted setup; running the web UI
+- [Install](install.md) — npm, requirements, the container image and a hosted setup; running the web UI ([which setup fits you](choose-a-setup.md))
 - [Getting started](getting-started.md) — the welcome dialog, the Getting started checklist and its spotlight guides
 - [UI levels](ui-levels.md) — Simple, Advanced and Expert: what each interface mode shows, and where every element sits
 - [Worca levels](worca-levels.md) — the five levels that show how far into Worca you have got, how to reach each one and where to see yours
@@ -77,12 +77,17 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 
 ## Deployment
 
+- [Choose a setup](choose-a-setup.md) — Native, Local sandbox (Docker), E2B sandbox, Hardened box or Shared instance: which one fits you
+- [Security overview](security-overview.md) — what Worca treats as untrusted, what each setup protects, the known limits and how to report a vulnerability
 - [Worca in a container](docker.md) — Worca and every `claude` it spawns in a disposable Linux container
+- [Hardened box](hardened-box.md) — one command for the strictest local setup: no model key, git token or proxy login in agents' reach
+- [Shared instance](shared-instance.md) — the reference Compose profile for a team on one server: keys per person, the allow-list, a managed proxy login
 - [Deploy on Railway](deploy-railway.md) — the container as a hosted service behind Cloudflare Access
 - [Remote access](remote-access.md) — opt-in, behind Cloudflare Access, with Worca checking the token
 - [Credential broker](credential-broker.md) — model keys stay out of Worca's container behind short-lived tokens
 - [Instance contract](instance-contract.md) — the containers, variables, identity token and heartbeat a hosting platform relies on
 - [Network proxy](network-proxy.md) — Worca behind a corporate proxy that asks for a login
+- [Project environment spec](environment-spec.md) — a project's pinned tools and apt packages
 - [Setup assistant](setup-assistant.md) — the first-launch guide that checks the machine and applies your answers, and the server API behind it
 
 ## Contributing

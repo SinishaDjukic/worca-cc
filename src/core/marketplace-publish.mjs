@@ -29,7 +29,6 @@ import { parseCloneAllow, cloneAllowed } from './clone-project.mjs';
 import { hasTokenShape } from './mcp-secrets.mjs';
 import { createPr, editPrBody, ghRepoAccess, ghForkRepo, prProviderFor } from './git-info.mjs';
 import { hookFreeArgs, isSafeBranchName, scrubGitText, classifyFetchError } from './git-sync.mjs';
-import { prAttributionFooter } from './identity.mjs';
 
 export const INDEX_FILE = 'worca-cc-marketplace.json';
 export const BRANCH_PREFIX = 'worca/plugin/';
@@ -236,7 +235,7 @@ function groupByKind(paths, subdir) {
  * The generated PR description (#717 §6). Repo-relative paths, names and versions only — never a
  * local path, URL or credential. Azure trims it to 4,000 chars itself (pr/azure.mjs fitDescription).
  */
-export function buildPrBody({ name, subdir, update, oldVersion, newVersion, workflow, created, updated, builtins = [], skippedSkills = [], indexAdded, validation, startedBy = null }) {
+export function buildPrBody({ name, subdir, update, oldVersion, newVersion, workflow, created, updated, builtins = [], skippedSkills = [], indexAdded, validation }) {
   const L = ['## Plugin', '', `- **Name:** \`${name}\``,
     `- **Version:** ${describeVersion({ update, oldVersion, newVersion })}`,
     `- **Folder:** \`${subdir}/\``];
@@ -254,7 +253,7 @@ export function buildPrBody({ name, subdir, update, oldVersion, newVersion, work
   }
   L.push('', '## Validation', '', `- Plugin lint: ${validation.lint}`, `- Shipped script cases: ${validation.cases}`,
     `- Marketplace discovery: ${validation.discovery}`);
-  return L.join('\n') + prAttributionFooter(startedBy);
+  return L.join('\n');
 }
 
 const execFileP = promisify(execFile);
@@ -434,7 +433,7 @@ async function pushOnce(d, repo, push, branch, sha, scrub) {
  * PR_FAILED, plus every exportWorkflowPlugin code. Nothing is pushed before every check passed.
  * `use` (D17): what is exported, 'draft' (the default) or a saved version number.
  */
-export async function exportWorkflowToMarketplace({ workflowId, marketplaceId, pluginName, draft = false, dryRun = false, startedBy = null, repoRoot, use = 'draft' } = {}) {
+export async function exportWorkflowToMarketplace({ workflowId, marketplaceId, pluginName, draft = false, dryRun = false, repoRoot, use = 'draft' } = {}) {
   const d = _deps;
   if (!workflowId || typeof workflowId !== 'string') throw err('workflowId is required', 'BAD_REQUEST');
   if (!marketplaceId || typeof marketplaceId !== 'string') throw err('marketplaceId is required', 'BAD_REQUEST');
@@ -580,7 +579,7 @@ export async function exportWorkflowToMarketplace({ workflowId, marketplaceId, p
       updated: staged.filter((f) => f.status === 'M').map((f) => f.rel),
       builtins: [...(plan.builtins?.agents || []), ...(plan.builtins?.scripts || [])],
       skippedSkills: plan.skipped.map((s) => basename(dirname(s.path))),
-      indexAdded, validation: result.validation, startedBy,
+      indexAdded, validation: result.validation,
     });
 
     // 7. Dry run stops here: no fork, no push, no PR.

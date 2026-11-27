@@ -17,6 +17,7 @@ import { buildRoleFold, buildConflictCards } from './role-rows.mjs';
 import { renderRequirementsBody } from './requirements-body.mjs';
 import { renderAttachedBody } from './attached-body.mjs';
 import { buildFeedbackRow } from './feedback-row.mjs';
+import { buildNoteBody } from './note-body.mjs';
 
 export { SEND_FAILED };
 
@@ -107,8 +108,9 @@ export function renderPlanBody(panel, pq, deps) {
   // D19: a later run's planner said the run can't be built as outlined: that is why this plan stopped
   if (plan.outlineChange) {
     const note = h('div', 'shape-plan-outline-change');
-    note.append(h('div', 'shape-plan-outline-change-head', 'The planner says this run can\'t be built as outlined:'),
-      h('p', 'shape-plan-outline-change-text', String(plan.outlineChange)));
+    note.appendChild(h('div', 'shape-plan-outline-change-head', 'The planner says this run can\'t be built as outlined:'));
+    const text = buildNoteBody(doc, String(plan.outlineChange), { key: `plan:${pq.id}` });
+    if (text) note.appendChild(text.el);
     body.appendChild(note);
   }
 

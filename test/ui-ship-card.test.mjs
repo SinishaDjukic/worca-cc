@@ -449,6 +449,20 @@ test('D1 done: N PRs open, no step head, the Care row once above one .srows row 
   assert.equal(el.querySelectorAll('a[href]').length, 0, 'no raw links');
 });
 
+// ---- Slice 4 (D11): `along` says the server listed the PRs along the real branches ----
+test('small-runs done card with `along`: the stats line reads "stacked along the real branches" above the same rows', () => {
+  const read = (sr) => {
+    const { el } = srCard(sr, { phase: 'applied' });
+    return { done: el.querySelector('.ask-shipcard-done').textContent, stats: [...el.querySelectorAll('.ask-shipcard-stats')].map((x) => x.textContent),
+      rows: [...el.querySelectorAll('.ask-shipcard-prs .plan-check-row')].map((r) => r.textContent) };
+  };
+  const plain = read(DONE_SR);
+  const along = read({ ...DONE_SR, along: true });
+  assert.deepEqual(along.stats, ['stacked along the real branches']);
+  assert.deepEqual([along.done, along.rows], [plain.done, plain.rows]);
+  assert.equal(along.rows.length, 3);
+});
+
 // ---- Small runs D3 (D5): the rows read the server's one `shown` status when it is there ----
 const SHOWN = (owner, word, mark, role = null, text = `${owner} · ${word}`) => ({ owner, role, word, text, mark });
 test('small-runs rows with shown: owned note shown.text, a marked confirmed note keeps D1\'s text, a waiting one still reads `confirmed by a person · Compliance`; without shown D1\'s notes stay', () => {

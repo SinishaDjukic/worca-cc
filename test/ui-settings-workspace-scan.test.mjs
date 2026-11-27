@@ -76,7 +76,7 @@ test('the Workspaces card (Runs tab) shows the defaults; Save posts the four pic
   await checkRows([
     { name: 'the Workspaces card sits on the Runs tab between Machine load and Wait for the network and shows the defaults', run: async () => {
       const runsIds = [...doc.querySelectorAll('.settings-pane[data-tab="runs"] section.card.settings-card')].map((c) => c.id);
-      assert.deepEqual(runsIds, ['budget-settings-card', 'smart-naming-settings-card', 'night-settings-card', 'schedule-settings-card', 'chat-settings-card', 'chat-runs-settings-card', 'sync-settings-card', 'pr-settings-card', 'actions-settings-card', 'run-limits-settings-card', 'ws-scan-models-card', 'network-wait-settings-card', 'network-proxy-settings-card']);
+      assert.deepEqual(runsIds, ['budget-settings-card', 'smart-naming-settings-card', 'night-settings-card', 'schedule-settings-card', 'chat-settings-card', 'chat-runs-settings-card', 'sync-settings-card', 'pr-settings-card', 'actions-settings-card', 'run-limits-settings-card', 'ws-scan-models-card', 'network-wait-settings-card', 'network-proxy-settings-card', 'e2b-settings-card']);
       assert.equal(doc.querySelector('#ws-scan-models-card h2').textContent.trim(), 'Workspaces');
       assert.equal(doc.getElementById('ws-scan-models-card').dataset.minLevel, 'advanced');
       assert.deepEqual(vals(doc), ['claude-sonnet-5', 'medium', 'sonnet', 'medium']);

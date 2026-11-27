@@ -230,8 +230,25 @@ between repositories yet: push to the base repository instead.
 
 ### Watch PR and conflicts
 
-With **Watch PR** on, Worca reads the open PR about once a minute. A failing check, a merge conflict or a requested
-change starts a fix run on the PR's branch, which pushes the fix.
+With **Watch PR** on, Worca reads the open PR about once a minute. A failing check, a merge conflict or requested
+change starts a fix run on the PR's branch, which pushes the fix. Review feedback is any unresolved inline thread
+or a review that requests changes from the PR author or a collaborator. A reviewer that is not a collaborator (a
+review bot, usually) counts too once its login is listed in the project's Settings under **Pull requests ›
+Reviewers that may trigger a fix**.
+
+On GitHub, a PR-level comment from a listed reviewer counts too, if it was posted after Watch PR was turned on
+and asks for code changes. Review bots also post notices ("review skipped", "rate limit exceeded"), placeholders
+and summaries on the PR, so before starting a run Worca asks a small helper model (the project's classifier
+helper when one is set, else the Quick jobs role) whether the comment requests changes; this costs well under a cent. A comment that doesn't is skipped
+and noted in the run's activity log. A comment that does starts a fix run: Worca quotes it in the run and replies
+with the result on the PR. Worca waits until the comment has not changed for two minutes, so a verdict still being
+written is checked once it is finished. Editing the comment later (a bot that refreshes one summary comment after
+each push, or turns a placeholder into findings) counts as a new comment and is checked again. Comments from
+anyone not listed, and comments hidden on GitHub, never start a run. If the check can't run (the helper model is
+unreachable), Worca tries again ten minutes later.
+
+The reviewer list takes GitHub login names; on Bitbucket, list the account UUID (`{…}`). Azure DevOps already
+counts every reviewer.
 
 After a run, Worca also checks whether the branch still merges into its base. If it does, you get **Update
 branch**. If it conflicts, you get **Resolve in a pipeline** or **Resolve in a terminal**.

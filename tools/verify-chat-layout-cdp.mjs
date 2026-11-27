@@ -5,8 +5,10 @@
 // composer and Jump to latest, nothing under the composer, and the run proposal's fields (one-line labels, a whole
 // placeholder, an ellipsized branch with its tooltip, no pill), and the proposed workflow card's well: a graph that fits
 // is drawn whole, one still wider than its well at the 0.3 floor opens at its start edge, and no well is taller than
-// its placed graph needs. Mock mode: `worca ui start --mock` as a child on a
-// free port, with a scratch HOME and WORCA_HOME, at 1024 and 1440 px, dark theme. NOT part of `npm test`.
+// its placed graph needs. The transcript never scrolls sideways, its gutter is --chat-scrollbar-w with the dock fade
+// stopping at it, scrollers inside it keep the page's scrollbar-color (native bars), and its thumb (read from pixels)
+// is at least --chat-thumb-min long, proportional above that, inset at rest and wider on hover. Mock mode:
+// `worca ui start --mock` as a child on a free port, with a scratch HOME and WORCA_HOME, at 1024 and 1440 px, dark theme. NOT part of `npm test`.
 // Run: npm run verify:chat-layout [-- --root DIR] [--label before|after] [--report-only]
 //   --root DIR    the tree whose CLI is started and whose store seeds the chats (default: this repo)
 //   --label NAME  the screenshot prefix (default after); shots go to $CHAT_LAYOUT_SHOTS or <tmp>/worca-chat-layout-shots
@@ -69,7 +71,7 @@ try {
   if (!up || /already in use/.test(cliLog)) { console.error(`server did not start on ${port}\n${cliLog}`); await shutdown(1); }
   const api = (p, body) => fetch(`${base}${p}`, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', origin: base }, body: body ? JSON.stringify(body) : undefined }).then((r) => r.json());
 
-  // ---- seed: settings, a git project, a live mock run, two chats
+  // ---- seed: settings, a git project, a live mock run, the chats
   await api('/api/settings', { uiLevel: 'expert' });
   await api('/api/onboarding', { welcomeSeen: true });
   await api('/api/worca-level/ack', { what: 'welcome' });   // the level welcome is a second boot-time modal
@@ -136,6 +138,24 @@ try {
       { agent: 'implementer', fanOut: true }, { agent: 'reviewer' }, { agent: 'manualTestsChecklist' }, { agent: 'manualWebUiTesting' }]),
   ] });
 
+  // Chat D — an answer wider than the column: a 7-column table of long words, an inline-code path and a bare URL with
+  // nowhere to break.
+  const wide = store.createThread({ title: 'Layout: wide answer' });
+  const row = (cells) => `| ${cells.join(' | ')} |`;
+  const TABLE = [row(['Authentication', 'Responsibility', 'Configuration', 'Observability', 'Compatibility', 'Maintainability', 'Characteristics']),
+    row(Array(7).fill('---')),
+    ...Array(3).fill(row(['internationalisation', 'containerisation', 'interoperability', 'parameterisation', 'synchronisation', 'instrumentation', 'misconfiguration']))].join('\n');
+  const LONG_PATH = `src/core/${'session_authentication_handler_'.repeat(5)}test.mjs`;
+  const LONG_URL = `https://example.com/docs/${'authentication_session_reference_'.repeat(5)}index.html`;
+  store.appendMessage(wide.id, { role: 'user', text: 'Compare the parts and point me to the handler.' });
+  store.appendMessage(wide.id, { role: 'assistant', status: 'done', text: `Here is the comparison:\n\n${TABLE}\n\nThe handler is \`${LONG_PATH}\` and the reference is ${LONG_URL} for the details.` });
+  // Chat E — a thread so long that a proportional thumb would be far under the minimum.
+  const long = store.createThread({ title: 'Layout: long thread' });
+  for (let i = 0; i < 300; i += 1) {
+    store.appendMessage(long.id, { role: 'user', text: `Question ${i + 1}: why does the login fail?` });
+    store.appendMessage(long.id, { role: 'assistant', status: 'done', text: LOREM });
+  }
+
   // ---- chrome + cdp (verify-run-monitor-cdp.mjs). Scrollbars stay drawn: the proof measures classic ones.
   profile = await mkdtemp(path.join(tmpdir(), 'worca-chatlayout-profile-'));
   const CDP_PORT = await freePort();
@@ -200,7 +220,24 @@ try {
   };
   await send('Page.enable'); await send('Runtime.enable');
 
+  // The thumb, read from pixels (no DOM API gives a scrollbar part's box): a strip one pixel thick, decoded in the page.
+  // Its last pixel is bare track (the transcript is at its top), so the longest run unlike it is the thumb.
+  const thumbSpan = async ({ x, y, w, h }) => {
+    const { data } = await send('Page.captureScreenshot', { format: 'png', clip: { x, y, width: w, height: h, scale: 1 } }, 30000);
+    return ev(`new Promise((res, rej) => { const img = new Image(); img.onerror = () => rej(new Error('strip did not decode')); img.onload = () => {
+      const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+      const d = g.getImageData(0, 0, img.width, img.height).data, len = d.length / 4, ref = (len - 1) * 4;
+      let cur = 0, run = 0;
+      for (let p = 0; p < len; p += 1) { const diff = Math.max(...[0, 1, 2].map((k) => Math.abs(d[p * 4 + k] - d[ref + k]))); cur = diff > 12 ? cur + 1 : 0; run = Math.max(run, cur); }
+      res({ run, len }); }; img.src = 'data:image/png;base64,${data}'; })`);
+  };
+  const pointer = async (x, y, tag) => {
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    await settle(tag); await sleep(250); await settle(tag);
+  };
+
   // The proof forces classic 15 px scrollbars: headless Chrome draws overlay scrollbars, which hide the gutter bug.
+  // On the Chat page the transcript's own (more specific) scrollbar rules win over this stand-in: the real bar is measured.
   const CLASSIC = `(() => { const s = document.createElement('style'); s.textContent = '.ask-transcript::-webkit-scrollbar{width:15px}.ask-transcript::-webkit-scrollbar-thumb{background:#888}'; document.head.appendChild(s); return 1; })()`;
   const MEASURE = `(() => {
     const R = (e) => { const r = e.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom, w: r.width, h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2 }; };
@@ -277,14 +314,25 @@ try {
         wrapped: [...card.querySelectorAll('.ask-rp-label, .ask-rp-ctl > span:first-child')].filter((l) => l.offsetParent && lines(l) > 1).map((l) => l.textContent),
         sameRow: (() => { const f = card.querySelector('.ask-card-same-source')?.closest('.ask-rp-field'); const g = f?.parentElement; return f && g ? Math.abs(R(f).w - R(g).w) < 1 : null; })() };
     }
-    return { ...out, scrollGap: tr.scrollHeight - tr.clientHeight - tr.scrollTop };
+    const ts = getComputedStyle(tr), borders = parseFloat(ts.borderLeftWidth) + parseFloat(ts.borderRightWidth);
+    const bar = { trX: tr.scrollWidth - tr.clientWidth, gutter: (tr.offsetWidth - tr.clientWidth - borders) / 2,
+      token: parseFloat(ts.getPropertyValue('--chat-scrollbar-w')),
+      fadeL: parseFloat(getComputedStyle(page.querySelector('.chat-dock'), '::before').left),
+      box: R(tr), scrollTop: tr.scrollTop, clientH: tr.clientHeight, scrollH: tr.scrollHeight, natural: tr.clientHeight * tr.clientHeight / tr.scrollHeight };
+    // scrollbar-color inherits: anything inside the transcript that lost the page's value draws a custom bar.
+    const pageColor = getComputedStyle(document.documentElement).scrollbarColor;
+    bar.recoloured = [...tr.querySelectorAll('*')].filter((e) => getComputedStyle(e).scrollbarColor !== pageColor)
+      .map((e) => e.tagName + '.' + e.getAttribute('class') + ' ' + getComputedStyle(e).scrollbarColor);
+    return { ...out, ...bar, scrollGap: tr.scrollHeight - tr.clientHeight - tr.scrollTop };
   })()`;
   // (Wrapped labels: getClientRects() returns one rect for a wrapped inline-block or block, so the line count is the
   // height over the line height.)
 
   const near = (x, y, tol) => Math.abs(x - y) <= tol;
   const THREADS = [['cards', a.id, '.chat-rc .chat-rc-well .gv-world .node'], ['proposal', b.id, '.ask-card.ask-rp .ask-card-feature'],
-    ['workflows', c.id, '.ask-wfcard .gv-well .gv-world .node']];
+    ['workflows', c.id, '.ask-wfcard .gv-well .gv-world .node'], ['wide', wide.id, '.ask-md table'],
+    ['long', long.id, '.ask-transcript-col > .ask-msg:last-child']];
+  const CARDLESS = ['wide', 'long'];
   let n = 0;
   for (const w of WIDTHS) {
     for (const [t, id, ready] of THREADS) {
@@ -294,15 +342,19 @@ try {
       await until(`document.readyState === 'complete' && !!document.querySelector('[data-chat-page]')`);
       await ev(`document.documentElement.setAttribute('data-theme','dark'); 1`);
       await ev(CLASSIC);
-      const shown = await until(`!!document.querySelector(${JSON.stringify(ready)})`);
+      const shown = await until(`!!document.querySelector(${JSON.stringify(ready)})`, t === 'long' ? 40000 : 20000);
       check(`${w}px ${t}: the thread renders (${ready})`, shown);
       if (!shown) { await shot(`${LABEL}-${t}-${w}.png`); continue; }
       await settle(`${w} ${t}`); await sleep(400); await settle(`${w} ${t}`);
       const m = await ev(MEASURE);
-      check(`${w}px ${t}: every card's left and right edge is the text column's`, m.cards.length > 0 && m.cards.every((c) => near(c.l, m.col.l, 0.5) && near(c.r, m.col.r, 0.5)), JSON.stringify(m.cards.filter((c) => !near(c.l, m.col.l, 0.5) || !near(c.r, m.col.r, 0.5))));
+      check(`${w}px ${t}: every card's left and right edge is the text column's`, (CARDLESS.includes(t) || m.cards.length > 0) && m.cards.every((c) => near(c.l, m.col.l, 0.5) && near(c.r, m.col.r, 0.5)), JSON.stringify(m.cards.filter((c) => !near(c.l, m.col.l, 0.5) || !near(c.r, m.col.r, 0.5))));
       check(`${w}px ${t}: no part of a card leaves the text column`, m.spill.length === 0, `col ${Math.round(m.col.l)}..${Math.round(m.col.r)}: ` + m.spill.slice(0, 8).join(', '));
       check(`${w}px ${t}: every graph well is as wide as its card's content`, m.wells.every((x) => near(x.well.l, x.inner.l, 0.5) && near(x.well.r, x.inner.r, 0.5)), JSON.stringify(m.wells.map((x) => ({ well: [x.well.l, x.well.r], card: [x.inner.l, x.inner.r] }))));
       check(`${w}px ${t}: the page has no horizontal overflow`, m.overflowX <= 0, `scrollWidth - innerWidth = ${m.overflowX}`);
+      check(`${w}px ${t}: the transcript never scrolls sideways`, m.trX <= 0, `scrollWidth - clientWidth = ${m.trX}`);
+      check(`${w}px ${t}: the transcript's gutter is --chat-scrollbar-w and the dock fade stops at it`,
+        near(m.gutter, m.token, 0.5) && near(m.fadeL, m.token, 0.5), JSON.stringify({ gutter: m.gutter, token: m.token, fadeL: m.fadeL }));
+      check(`${w}px ${t}: scrollers inside the transcript stay native`, m.recoloured.length === 0, `${m.recoloured.length}: ` + m.recoloured.slice(0, 4).join(', '));
       const fits = m.wells.filter((x) => !x.pans);
       check(`${w}px ${t}: no graph wider than its well`, fits.every((x) => x.n && x.l >= x.well.l - 1 && x.r <= x.well.r + 1), JSON.stringify(fits));
       if (t === 'workflows') {
@@ -336,6 +388,32 @@ try {
         await ev(`document.querySelector('.chat-rc').scrollIntoView({ block: 'start' }); 1`);
         await settle('card'); await sleep(250);
         await shot(`${LABEL}-${t}-${w}-card.png`);
+      }
+      if (t === 'long' || t === 'cards') {
+        // A wheel first, the way a reader unpins the panel: a bare scrollTop write is pulled back to the bottom.
+        await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: Math.round(m.col.cx), y: 300, deltaX: 0, deltaY: -4000 });
+        await settle(`${w} ${t} unpin`); await sleep(250);
+        await ev(`document.querySelector('[data-chat-page] .ask-transcript').scrollTop = 0; 1`);
+        await pointer(1, 1, `${w} ${t} thumb`);
+        const top = await ev(MEASURE);
+        // On a tree without the token (the "before" pass) the strips follow the gutter that is there.
+        const gw = top.token || top.gutter, mid = top.box.r - gw / 2;
+        const down = await thumbSpan({ x: Math.floor(mid), y: top.box.t, w: 1, h: top.clientH });
+        const read = JSON.stringify({ run: down.run, natural: top.natural, scrollHeight: top.scrollH, scrollTop: top.scrollTop });
+        check(`${w}px ${t}: the thumb is read with the transcript at its top`, top.scrollTop === 0, read);
+        if (t === 'cards') check(`${w}px ${t}: above the minimum the thumb stays proportional`, top.natural <= 48 || near(down.run, top.natural, 2), read);
+        else {
+          check(`${w}px ${t}: the transcript thumb is at least --chat-thumb-min (48px) long`, top.natural < 48 && down.run >= 47, read);
+          const across = { x: top.box.r - gw, y: Math.floor(top.box.t + down.run / 2), w: gw, h: 1 };
+          const rest = await thumbSpan(across);
+          check(`${w}px ${t}: the resting thumb is inset (narrower than its gutter)`, rest.run >= 4 && rest.run <= 8, JSON.stringify({ rest, gutter: top.gutter }));
+          await pointer(mid, top.box.t + down.run / 2, `${w} ${t} hover`);
+          const hover = await thumbSpan(across);
+          const hovered = await ev(MEASURE);
+          check(`${w}px ${t}: the hovered thumb fills out, the gutter does not move`, hover.run >= rest.run + 3 && hovered.gutter === top.gutter,
+            JSON.stringify({ rest: rest.run, hover: hover.run, gutter: [top.gutter, hovered.gutter] }));
+          await shot(`${LABEL}-${t}-${w}-thumb.png`);
+        }
       }
     }
   }

@@ -261,9 +261,15 @@ export function buildJobs(data, draft, view) {
   // warning says nothing.
   const ready = (Array.isArray(d.engines) ? d.engines : []).find((x) => x && x.name === engine) || null;
   const label = (ready && str(ready.label)) || engineLabel(engine);
-  const reason = !ready ? ''
+  const local = !ready ? ''
     : !ready.ready ? `${label} can't start runs yet: ${String(ready.reason || 'its check did not answer').replace(/\.$/, '')}.`
       : ready.reason ? `${label} can start runs: its CLI is installed and signed in. Note: ${String(ready.reason).replace(/\.$/, '')}.` : '';
+  // A configured remote backend (GET /api/engines `sandbox`): whether Worca can sign this harness's model calls from a
+  // sandbox (the credential stays on the server; the sandbox reaches the model through Worca's relay).
+  const box = ready && ready.sandbox && Array.isArray(ready.sandbox.titles)
+    ? `Remote sandbox (${ready.sandbox.titles.join(', ')}): ${ready.sandbox.ready ? 'Worca can sign its model calls from the sandbox.'
+      : `${String(ready.sandbox.reason || 'Worca cannot sign its model calls').replace(/\.$/, '')}.`}` : '';
+  const reason = [local, box].filter(Boolean).join(' ');
   const lock = (Array.isArray(d.locks) ? d.locks : []).find((l) => l && l.name === engine) || null;
   const isDefault = defaultEngine === engine;
   const dirty = jobsDirty(draft, saved).length;

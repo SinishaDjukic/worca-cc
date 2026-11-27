@@ -1148,7 +1148,9 @@ test('chat run card CSS: an answer label wider than the whole row wraps inside i
 
 test('step card CSS: inside a question panel the head title wraps (375 px) and never overflows the card', () => {
   const css = readStyleCss();
-  const rule = (sel) => { const m = css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`)); return m ? m[1] : ''; };
+  // The rule whose selector is exactly `sel` (it starts its line): a longer selector ending in it, like the stop
+  // host's `.chat-rc-stop-q .qpanel .step-head`, is another rule.
+  const rule = (sel) => { const m = css.match(new RegExp(`(?<![^}\\n])${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`)); return m ? m[1] : ''; };
   assert.match(rule('.qpanel .step-head .ask-mcard-title'), /white-space:normal/);
   assert.match(rule('.qpanel .step-head .ask-mcard-title'), /min-width:0/);
   assert.match(rule('.qpanel .step-head'), /flex-wrap:wrap/);
@@ -2471,6 +2473,72 @@ test('B1 one card: in S8, the frame before groupOf knows the feature\'s row read
   assert.equal($('.chat-rc-members').hidden, true, 'the members come on the next frame');
 });
 
+// ── Shaper small runs slice 11 (R-ux-2): the one card's footer Resume says which run it would wait for ───────────
+// The Verifier's state: runs 1–3 done, run 4 paused, run 5 not started, run 6 working. The group's current member, so
+// the run the footer acts on, is run 4.
+function s11Card({ three = 'done', controls = {} } = {}) {
+  const run = (state) => RUN_STATE_ROWS.find((r) => r.state === state).run;
+  const row = featureRow([DONE_RUN, DONE_RUN, three === 'done' ? DONE_RUN : { status: three }, run('paused'), WAITING, run('working')]);
+  row.members.forEach((mb, i) => { if (i !== 4) mb.pipelineId = i ? `beef000${i + 1}` : 'abcd1234'; });
+  assert.equal(row.model.current, row.members[3].model, 'the fixture: run 4 is the current member');
+  /** A snapshot whose feature view holds `four` on run 4 and `over` on the view. */
+  const snap = (four = {}, over = {}) => {
+    const v = oneView(['done', 'done', three, 'paused', 'planned', 'running'], { total: 6, ...over });
+    Object.assign(v.slices[3], four);
+    return shaped(oneCard(v), {}, ...DONE_OWN);
+  };
+  const f = mk({ controls: { paintQuestion: () => null, releaseQuestion() {}, memoFor: () => ({}), groupOf: () => row, modelOpts: () => ({ now: NOW }), ...controls } });
+  const resumes = () => f.$$('.chat-rc-foot button').filter((b) => shownIn(b) && /^Resume\b/.test(b.textContent));
+  return { ...f, snap, resumes };
+}
+const S11_HALTED = { halted: { index: 4, state: 'paused', waiting: [] } };
+
+test('s11 (R-ux-2): the one card\'s footer shows 1 Resume reading "Resume after run 6" for paused run 4, and it still resumes run 4', () => {
+  const acted = [];
+  const { card, snap, resumes } = s11Card({ controls: { act: (t, id) => { acted.push([t.pipelineId, id]); return Promise.resolve(true); } } });
+  card.update(snap({ resumeAfter: 6 }, S11_HALTED));
+  assert.deepEqual(resumes().map((b) => [b.dataset.modelAction, b.textContent]), [['resume', 'Resume after run 6']]);
+  resumes()[0].click();
+  assert.deepEqual(acted, [['beef0004', 'resume']]);
+});
+
+test('s11 (R-ux-2): the one card\'s footer Resume goes back to plain "Resume" without resumeAfter and once held', () => {
+  const { card, snap, resumes } = s11Card();
+  const labels = () => resumes().map((b) => b.textContent);
+  card.update(snap({ resumeAfter: 6 }, S11_HALTED));
+  assert.deepEqual(labels(), ['Resume after run 6']);
+  card.update(snap({}, S11_HALTED));
+  assert.deepEqual(labels(), ['Resume'], 'no resumeAfter');
+  card.update(snap({ resumeAfter: 6 }, S11_HALTED));
+  assert.deepEqual(labels(), ['Resume after run 6'], 'the preview is back');
+  card.update(snap({ heldResume: { after: 6 } }, S11_HALTED));
+  assert.deepEqual(labels(), ['Resume'], 'held');
+});
+
+test('s11 (R-ux-2): the one card takes the label from the run its Resume acts on, not from the run the view halts at', () => {
+  // Run 3 stopped halts the view; the footer's Resume acts on paused run 4.
+  const { card, snap, resumes } = s11Card({ three: 'stopped' });
+  card.update(snap({ resumeAfter: 6 }, { halted: { index: 3, state: 'stopped', waiting: [] } }));
+  assert.deepEqual(resumes().map((b) => b.textContent), ['Resume after run 6']);
+});
+
+test('s11 (R-ux-2): while a stop is open on run 6, the ⋯ lists the moved Resume as "Resume after run 6", and "Resume" without it', () => {
+  const stop = { id: 'gate-s11-6', kind: 'gate', heading: 'Run 6 · Code review objects', step: 'Code review', stop: true };
+  const { card, doc, $, snap, resumes } = s11Card({ controls: questionStub(stop, '<div class="qpanel-foot"><button type="button" class="btn btn-primary">Go on</button></div>') });
+  const ask = { ask: { index: 6, kind: 'gate', id: stop.id, pipelineId: 'beef0006', runId: null } };   // no view.halted
+  const listed = () => {
+    $('[data-act="feature-more"]').click();                          // the ⋯ toggles: open, read, close
+    const items = [...doc.querySelectorAll('.wfv-menu-item')].map((i) => i.textContent.trim()).filter((t) => /^Resume\b/.test(t));
+    $('[data-act="feature-more"]').click();
+    return items;
+  };
+  card.update(snap({ resumeAfter: 6 }, ask));
+  assert.deepEqual(resumes().map((b) => b.textContent), [], 'the fixture: the stop moved the footer\'s Resume into the ⋯');
+  assert.deepEqual(listed(), ['Resume after run 6']);
+  card.update(snap({}, ask));
+  assert.deepEqual(listed(), ['Resume']);
+});
+
 test('B1 one card: with two askers paintQuestion runs for the one chosen question id, and one .qpanel is visible', () => {
   const asked = [];
   const pqTwo = { id: 'plan-n_refine-2', kind: 'plan', plan: {} };
@@ -2503,7 +2571,13 @@ test('B1 one card: the log reads "Requirements agreed" and "Runs approved"; the 
   const { $$ } = paintOne('S8');
   assert.deepEqual($$('.chat-rc-log-text').map((n) => n.textContent), ['Clarify · 2 answers', 'Requirements agreed', 'Runs approved']);
   const src = readFileSync(new URL('../ui/public/chat/run-card.mjs', import.meta.url), 'utf8');
-  assert.equal(/flagOn\('shaperSmallRuns'/.test(src), false, 'the marker, never the live flag, picks the card');
+  // s4 D7: the flag gates only the rows' run status marks (the sliceMap line) and, slice 6, the stop list (the stopLines
+  // line), and, slice 12, run 1's own snapshot in snapOf (the card's own pipeline); the marker alone picks the card.
+  const reads = src.split('\n').filter((l) => /flagOn\('shaperSmallRuns'/.test(l));
+  assert.equal(reads.length, 3, 'the marker, never the live flag, picks the card');
+  assert.match(reads[0], /p === s\.pipelineId && flagOn\('shaperSmallRuns', doc\) \? s : null/);
+  assert.match(reads[1], /stopLines = one && flagOn\('shaperSmallRuns', doc\)/);
+  assert.match(reads[2], /const sliceMap = one && flagOn\('shaperSmallRuns', doc\)/);
 });
 
 test('B1 one card: a finished marked feature builds no hidden Ask for changes field (it lived in the result block)', () => {
@@ -2786,4 +2860,19 @@ test('chat run card: a feature run links its feature title to the feature page; 
       assert.equal(t.$('.ask-rc-sub img'), null);
     } },
   ]);
+});
+
+// Shaper small runs slice 7 (R-arch-6, D7): the state line and the need count are worded in one place only.
+test('s7 T15: the run card and the group page word no state line or need count of their own; the card\'s chip is made by paintNeed', () => {
+  const read = (rel) => readFileSync(new URL(`../ui/public/${rel}`, import.meta.url), 'utf8');
+  const card = read('chat/run-card.mjs');
+  const page = read('group-page.mjs');
+  for (const [name, src] of [['chat/run-card.mjs', card], ['group-page.mjs', page]]) {
+    assert.doesNotMatch(src, /need you|next: run/, `${name}: the words come from feature-card.mjs`);
+    assert.match(src, /needYouText/, `${name}: it words the count with needYouText`);
+  }
+  assert.match(card, /paintNeed/, 'the head count has its own painter');
+  const head = card.slice(card.indexOf("const head = h('div', 'ask-rc-head')"), card.indexOf('head.append('));
+  assert.ok(head.length > 0, 'the head builder is found');
+  assert.doesNotMatch(head, /data-need|dataset\.need/, 'never built into the head: created when the count turns non-zero');
 });

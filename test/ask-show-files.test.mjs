@@ -237,6 +237,7 @@ test('parseShownPath: platform shapes', () => {
 test('credentialReason / showFileKindFor / imageSize / kindOf', () => {
   for (const p of ['.env', 'a/.env.production', 'k/server.PEM', 'id_ed25519', 'x/.git/config', '.aws/credentials', '.config/gh/hosts.yml', 'a/secrets/t.txt']) assert.ok(credentialReason(p), p);
   for (const p of ['shots/home.png', 'report.md', 'environment.md', 'keys.md']) assert.equal(credentialReason(p), null, p);
+  for (const p of ['worca-vault.enc', 'worca-vault.enc.unreadable-20261121T101500Z', 'data/proxy-login.json']) assert.equal(credentialReason(p), 'looks like a credential file', p);
   assert.equal(showFileKindFor('text/x-diff', 'notes.md').kind, 'markdown');
   assert.equal(showFileKindFor('application/json', 'a.json').kind, 'json');
   assert.equal(showFileKindFor('application/zip', 'a.zip'), null);

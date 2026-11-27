@@ -11,8 +11,13 @@
 //   C4 `#req-change` notice and its "How a change lands" fold;
 // D2 (D2_ONLY=1 runs it alone): the cases runs-list, run-facts, agents-place and card-members of a marked 10-run
 //   feature, in light and dark at 375px and 1280px at Expert, and the flag-off control's Agents places per page;
-// D3 (last; D3_ONLY=1 runs it alone): the feature page's Requirements (one fold per role) and Decisions tabs of a marked
+// D3 (D3_ONLY=1 runs it alone): the feature page's Requirements (one fold per role) and Decisions tabs of a marked
 //   feature before and after Ship, light and dark at 1280px and 375px, beside the prototype's `#feature` tabs;
+// the held row (HELD_ONLY=1 runs it alone): a run held on a clash, its reason and one Start now, light and dark at 1280px;
+// a stop's findings (STOP_FINDINGS_ONLY=1 runs it alone): a 3-issue gate stop lists its 3 issues on the run page, the Chat run
+//   panel and the Chat feature card, light and dark at 1280px;
+// the take-in (last; TAKEIN_ONLY=1 runs it alone): the moved step a run that waited at a stop logs once it took in a
+//   finished run's work, and its stop's "Not sent: …" line after a refused take-in, light and dark at 1280px;
 // and one reduced-motion capture of Prototype building. A live phase then follows a REAL paced mock Design build
 // (WORCA_MOCK_DESIGN_MS=400) on the Chat card: the Lead row, a row per screen and pieces assembling, captured mid-build
 // and with reduced motion (chat-prototype-building-mid-light, chat-prototype-building-reduced-motion-light). Every list (the Verifier's gap `.srows` included) is measured:
@@ -82,12 +87,14 @@ execFileSync('git', ['commit', '-qm', 'init'], { cwd: proj });
 const imp = (rel) => import(new URL(rel, import.meta.url).href);
 const { server, runs, reqChanges } = await imp('../ui/server.mjs');
 const { getDb } = await imp('../src/core/db.mjs');
-const { projectKey } = await imp('../src/core/store.mjs');
+const { projectKey, projectStorePath } = await imp('../src/core/store.mjs');
+const { addProject } = await imp('../src/core/projects.mjs');
 const { writeStoreMeta, recordArtifact, appendAuditById } = await imp('../src/core/artifacts.mjs');
-const { createSliceFeature, recordShapePlan, changeAgreedRequirements, setFeatureAcceptance, recordShip } = await imp('../src/core/shape/features.mjs');
+const { createSliceFeature, recordShapePlan, changeAgreedRequirements, setFeatureAcceptance, recordShip, setClashHold } = await imp('../src/core/shape/features.mjs');
 const askStore = await imp('../src/core/ask/store.mjs');
 const { normalizeOutline } = await imp('../src/shared/shape/slices.mjs');
 const { gateStop } = await imp('../src/shared/shape/run-stops.mjs');
+const { baseMovedAudit } = await imp('../src/core/git-sync.mjs');
 const { verifyStop } = await imp('../src/shared/shape/verifier.mjs');
 const { prototypeView } = await imp('../src/shared/shape/prototype.mjs');
 const { careRunPlan } = await imp('../src/shared/shape/feature-record.mjs');
@@ -97,7 +104,7 @@ const { resolveGraph } = await imp('../src/core/workflows.mjs');
 const { loadAgentRegistry } = await imp('../src/core/agent-registry.mjs');
 const { buildGraphManifest } = await imp('../src/shared/graph/manifest.mjs');
 const { createPrototypeDesign, startPrototypeBuild, prototypeBrief } = await imp('../src/core/shape/prototype-design.mjs');
-const { designBuilds } = await imp('../ui/server.mjs');
+const { designBuilds, _testing: { heldStops } } = await imp('../ui/server.mjs');
 srv = server;
 await new Promise((r, rej) => { srv.once('error', (err) => rej(new Error(`cannot listen on VERIFY_PORT ${process.env.VERIFY_PORT}: ${err.message}`))); srv.listen(Number(process.env.VERIFY_PORT || 0), '127.0.0.1', r); });
 const base = `http://127.0.0.1:${srv.address().port}`;
@@ -606,9 +613,19 @@ const D2_MEMBERS = `(() => {
     cost: [...g.querySelectorAll(':scope > a.runs-row .runs-cost')].filter((c) => c.offsetParent).length, costTitle: g.querySelector(':scope > a.runs-row').getAttribute('title'),
     overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth };
 })()`;
-/** Visible Agents places under `scope`: the `.rd-run-agents` box plus the Agents tab buttons. */
-const AGENT_PLACES = (scope) => `(() => [...document.querySelectorAll(${JSON.stringify(`${scope} .rd-run-agents`)})].filter((x) => x.offsetParent && !x.hidden).length
-  + [...document.querySelectorAll(${JSON.stringify(`${scope} :is(.rd-tab, .hd-tab)[data-sec="agents"]`)})].filter((x) => x.offsetParent && !x.hidden).length)()`;
+/** Visible Agents places under `scope`: the `.rd-run-agents` box plus the Agents tab, in the row or under "More". */
+const AGENT_PLACES = (scope) => `(() => {
+  const seen = (sel) => [...document.querySelectorAll(sel)].filter((x) => x.offsetParent && !x.hidden).length;
+  const tab = seen(${JSON.stringify(`${scope} :is(.rd-tab, .hd-tab)[data-sec="agents"]`)});
+  let menu = 0;
+  const more = [...document.querySelectorAll(${JSON.stringify(`${scope} .tabs > .tab-more`)})].find((x) => x.offsetParent);
+  if (more && !tab) {
+    more.click();
+    menu = [...document.querySelectorAll('body > .wfv-menu .wfv-menu-l')].filter((x) => x.textContent === 'Agents').length;
+    more.click();
+  }
+  return seen(${JSON.stringify(`${scope} .rd-run-agents`)}) + tab + menu;
+})()`;
 /** The facts box: one "Starts from", each owned id once, every id and Owns label whole, and the box names neither the
  *  feature title nor the run's own "Run N". */
 const FACTS = (scope, runN) => `(() => {
@@ -885,10 +902,389 @@ async function d3Phase() {
   log(`D3: ${results.d3Minutes} min`);
 }
 
-// D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases (each command stays under 10 minutes); unset, every case
-// runs, D2 before D3, D3 last.
+// ---- Shaper small runs, slice 2: a run held because the runs it builds on clash. A marked 4-run feature, runs 1 to 3
+// done, run 4's ticket scheduled with "Ask me before each run" off, and the clash hold set as the fire-time check sets
+// it. The Chat card's held row reads the reason, with one Start now, at 1280px in the classic look, light and dark:
+// small-runs-held-clash-light.png and small-runs-held-clash-dark.png in SHOTS_DIR.
+const HELD_REASON = 'runs 2 and 3 clash in src/a.mjs';
+async function heldPhase() {
+  const HC = seedFeature('hc', 'Clash', ['done', 'done', 'done', 'planned']);
+  getDb().prepare('UPDATE shape_features SET approve_each = 0 WHERE id = ?').run(HC.f.id);
+  const t4 = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = 4').get(HC.f.id).ticket_id;
+  setClashHold(t4, { reason: HELD_REASON, runs: [2, 3], files: ['src/a.mjs'], at: Date.now() });
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    if (!(await card(HC.threadId, 'held', 'the clash-held card', theme))) continue;
+    if (await waitFor("!!document.querySelector('.chat-rc .shape-feature-held-why')", `the held row (${theme})`)) {
+      const r = await ev(`(() => { const vis = (els) => [...els].filter((b) => b.offsetParent);
+        return { why: (vis(document.querySelectorAll('.chat-rc .shape-feature-held-why'))[0] || {}).textContent || null,
+          starts: vis(document.querySelectorAll('.chat-rc [data-act="feature-start"]')).filter((b) => b.textContent.trim() === 'Start now').length }; })()`);
+      check(r.why === `Run 4 is held: ${HELD_REASON}`, `held row, ${theme}: "Run 4 is held: ${HELD_REASON}" (${JSON.stringify(r.why)})`);
+      check(r.starts === 1, `held row, ${theme}: Start now shows once (${r.starts})`);
+      await reveal('.chat-rc .shape-feature-held');
+    }
+    // A notice (feedback.mjs) can sit over the card's footer: dismiss each one before the capture.
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, `small-runs-held-clash-${theme}.png`);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper small runs, slice 3: a run that waited at a stop takes in what finished meanwhile. A marked 4-run feature,
+// runs 1 and 3 done, run 2 live at its stop. Run 2's audit line is the one the harness writes once it merged run 3's
+// branch (`Base \`feat/run-3\` moved: merged into \`feat/run-2\` (1 commit).`), so the Chat card's log reads
+// `feat/run-3 moved · run 2 starts from it`: small-runs-taken-in-light.png and -dark.png. Then run 2's entry carries a
+// refused take-in (`takeInRefused`), and its open stop reads `Not sent: runs 2 and 3 clash in src/a.mjs`:
+// small-runs-take-in-refused-light.png and -dark.png. 1280px, the classic look, in SHOTS_DIR.
+const TAKEIN_REASON = 'runs 2 and 3 clash in src/a.mjs';
+const TAKEIN_STEP = 'feat/run-3 moved · run 2 starts from it';
+async function takeInPhase() {
+  const TI = seedFeature('ti', 'Take in', ['done', 'running', 'done', 'planned']);
+  const stop = gateStop({ run: 2, issues: ISSUES, fixCycles: 3, nodeId: 'n_review' });
+  const pq = { id: 'gate-ti-3', kind: 'gate', wireId: 'w9', nodeId: 'n_review', executionId: 'x:n_review:3', deliveryNo: 3, issues: ISSUES, stop };
+  const runId = liveRun(TI.pid(2), `Run 2 · ${TITLES[1]}`, { at: 'n_review', pendingQuestion: pq, runShape: { slice: { feature: TI.f.id, index: 2 } } });
+  appendAuditById(TI.pid(2), baseMovedAudit('feat/run-3', 'feat/run-2', { merged: true, behind: 1 }));
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const visibleText = (sel) => ev(`[...document.querySelectorAll(${JSON.stringify(sel)})].filter((e) => e.offsetParent && !e.hidden).map((e) => e.textContent.trim())`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    if (!(await card(TI.threadId, 'takein', 'the take-in card', theme))) continue;
+    const seen = await waitFor(`[...document.querySelectorAll('.chat-rc .chat-rc-log li')].some((li) => li.offsetParent && li.textContent.includes(${JSON.stringify(TAKEIN_STEP)}))`,
+      `the moved step (${theme})`);
+    check(seen, `take-in, ${theme}: the log reads "${TAKEIN_STEP}"`);
+    if (seen) await ev(`(() => { const li = [...document.querySelectorAll('.chat-rc .chat-rc-log li')].find((x) => x.offsetParent && x.textContent.includes(${JSON.stringify(TAKEIN_STEP)})); if (li) li.scrollIntoView({ block: 'center' }); return !!li; })()`);
+    await capture(`small-runs-taken-in-${theme}.png`);
+  }
+  runs.get(runId).takeInRefused = { id: pq.id, reason: TAKEIN_REASON };
+  for (const theme of THEMES) {
+    if (!(await card(TI.threadId, 'takein-refused', 'the refused take-in card', theme))) continue;
+    const seen = await waitFor(`[...document.querySelectorAll('.chat-rc .plan-err')].some((e) => e.offsetParent && !e.hidden && e.textContent === ${JSON.stringify(`Not sent: ${TAKEIN_REASON}`)})`,
+      `the refused stop (${theme})`);
+    const lines = await visibleText('.chat-rc .plan-err');
+    check(seen && lines.length === 1, `take-in refused, ${theme}: one "Not sent: ${TAKEIN_REASON}" line (${JSON.stringify(lines)})`);
+    if (seen) await reveal('.chat-rc .plan-err');
+    await capture(`small-runs-take-in-refused-${theme}.png`);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper small runs, slice 4: Ship lists the PRs along the real branches (the flag on, 1280px, the classic look).
+// Two marked 4-run features with explicit `feat/run-N` branch records (runs 1 to 4 stand for the outline's 7 to 10):
+// "Ship list", the waited shape (finish order 1, 3, 2, 4; run 2 took run 3 in): run 1 into the base, 3 onto #1, 2 onto #3,
+// 4 onto #2, and the stats line only the rule writes, "stacked along the real branches": small-runs-ship-list-light.png
+// and -dark.png. "Ship combined", the combine shape (run 4 started from run 3 and combined run 2): 3 PRs open, no row for
+// run 2, though run 2 has a PR of its own (the finish-order fallback would list it): small-runs-ship-list-combined-light.png
+// and -dark.png. Then the same combine seed not yet shipped: the ready card's Create reads "Create 3 PRs" (no shot).
+async function shipListPhase() {
+  const setBranches = (x, recs, finish) => {
+    recs.forEach((rec, i) => {
+      const k = i + 1;
+      const at = new Date(Date.parse(now) + (finish.indexOf(k) + 1) * 60_000).toISOString();
+      getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(rec), at, x.pid(k));
+    });
+  };
+  const withPrs = (x) => [1, 2, 3, 4].forEach((k) => getDb().prepare("UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = 'OPEN' WHERE id = ?")
+    .run(`https://github.com/proof/repo/pull/${k}`, k, x.pid(k)));
+  const seed = (tag, title, recsOf, finish, { shipped = true } = {}) => {
+    const x = shipFeature(tag, title);
+    setFeatureAcceptance(x.f.id, [COMP_MET]);
+    setBranches(x, recsOf(x), finish);
+    if (shipped) { withPrs(x); recordShip(x.f.id, { mode: 'stacked' }); }
+    return x;
+  };
+  const WAITED = (x) => [{ source: 'main', feature: 'feat/run-1' }, { source: 'feat/run-3', sourceFrom: 'feat/run-1', feature: 'feat/run-2',
+    tookIn: [{ index: 3, branch: 'feat/run-3', pipelineId: x.pid(3) }] }, { source: 'feat/run-1', feature: 'feat/run-3' },
+  { source: 'feat/run-2', feature: 'feat/run-4' }];
+  const COMBINED = () => [{ source: 'main', feature: 'feat/run-1' }, { source: 'feat/run-1', feature: 'feat/run-2' },
+    { source: 'feat/run-1', feature: 'feat/run-3' }, { source: 'feat/run-3', feature: 'feat/run-4', combined: [{ index: 2, branch: 'feat/run-2' }] }];
+  const SL = seed('sl', 'Ship list', WAITED, [1, 3, 2, 4]);
+  const SC = seed('sc', 'Ship combined', COMBINED, [1, 2, 3, 4]);
+  const SQ = seed('sq', 'Ship combined ready', COMBINED, [1, 2, 3, 4], { shipped: false });
+  // The ship rule wants a passed Verifier check for the tip of the head Ship ships (run 4): the branches exist in the
+  // sandbox repo, all on its one commit.
+  for (let k = 1; k <= 4; k++) execFileSync('git', ['branch', '-f', `feat/run-${k}`], { cwd: proj });
+  const headSha = execFileSync('git', ['rev-parse', 'feat/run-4'], { cwd: proj, encoding: 'utf8' }).trim();
+  pipeline('c5sqv00001', 'done', 'Ship combined ready · Verifier');
+  setVerify(SQ.f, vCheck(SQ, 'c5sqv00001', 'clean', { headSha, result: { held: [...AGREED.map((a) => a.id), 'R-comp-4'], gaps: [] } }));
+  const runsOf = (f) => (f ? f.prs.map(([, note], i) => [f.rowRuns[i], note]) : null);
+  const ROW_RUNS = `[...document.querySelectorAll(${JSON.stringify(`${SHIP} .ask-shipcard-prs .plan-check-row`)})].filter((x) => x.offsetParent)
+    .map((x) => Number((x.textContent.match(/run (\\d+) ·/) || [])[1]) || null)`;
+  const facts = async () => { const f = await ev(SHIP_FACTS); if (f) f.rowRuns = await ev(ROW_RUNS); return f; };
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await reveal(SHIP);
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    if (await card(SL.threadId, 'shiplist', 'the Ship list card', theme) && await SHIP_READY('the Ship list card', theme)) {
+      const f = await facts();
+      check(f && f.stats === 'stacked along the real branches', `ship list, ${theme}: the stats line reads "stacked along the real branches" (${JSON.stringify(f && f.stats)})`);
+      check(f && f.stateDetail === '4 PRs open', `ship list, ${theme}: 4 PRs open (${JSON.stringify(f && f.stateDetail)})`);
+      check(JSON.stringify(runsOf(f)) === JSON.stringify([[1, 'into main'], [3, 'onto #1'], [2, 'onto #3'], [4, 'onto #2']]),
+        `ship list, ${theme}: run 1 into main, run 3 onto #1, run 2 onto #3, run 4 onto #2 (${JSON.stringify(runsOf(f))})`);
+      await capture(`small-runs-ship-list-${theme}.png`);
+    }
+    if (await card(SC.threadId, 'shipcombined', 'the Ship combined card', theme) && await SHIP_READY('the Ship combined card', theme)) {
+      const f = await facts();
+      check(f && f.stateDetail === '3 PRs open' && f.stats === 'stacked along the real branches',
+        `ship combined, ${theme}: 3 PRs open, stacked along the real branches (${JSON.stringify(f && [f.stateDetail, f.stats])})`);
+      check(JSON.stringify(runsOf(f)) === JSON.stringify([[1, 'into main'], [3, 'onto #1'], [4, 'onto #3']]),
+        `ship combined, ${theme}: rows run 1, run 3, run 4 and none for run 2 (${JSON.stringify(runsOf(f))})`);
+      await capture(`small-runs-ship-list-combined-${theme}.png`);
+    }
+  }
+  if (await card(SQ.threadId, 'shipready', 'the Ship combined ready card', 'light') && await SHIP_READY('the Ship combined ready card', 'light')) {
+    const f = await facts();
+    check(f && f.create === 'Create 3 PRs' && !f.disabled, `ship combined ready: Create reads "Create 3 PRs" (${JSON.stringify(f && f.create)})`);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper small runs, slice 7: a resume waits its turn. A marked 4-run feature, run 1 done, run 2 working (a running
+// runs-map entry), run 3 paused with a resume point and no runs-map entry. Run 3's saved page Resume is clicked: the
+// server holds it after run 2, so the page keeps the paused run and a button that reads Resume, and no runs-map entry is
+// made for run 3. 1280px, the classic look, light and dark: held-resume-light.png and held-resume-dark.png in SHOTS_DIR.
+async function heldResumePhase() {
+  const HR = seedFeature('hr', 'Held resume', ['done', 'running', 'planned', 'planned']);
+  liveRun(HR.pid(2), `Run 2 · ${TITLES[1]}`, { runShape: { slice: { feature: HR.f.id, index: 2 } } });
+  // Run 3 has what the saved page needs to offer Resume: an 8-hex id, its run folder, an onboarded project, a resume point.
+  const five = 'ab7e0003';
+  fire(HR.f, 3, five, 'paused', `Run 3 · ${TITLES[2]}`);
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify({ version: 2, ledger: [], tokens: {} }), five);
+  await mkdir(path.join(projectStorePath(key), 'pipelines', `held-resume-${five}`), { recursive: true });
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const RESUME = "[...document.querySelectorAll('#hist-detail .hd-resume')].find((b) => b.offsetParent)";
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    await open(`${base}/?heldresume-${theme}#history/${key}/${five}`);
+    await skipWelcome(); await setTheme(theme);
+    if (!(await waitFor(`!!(${RESUME})`, `run 3's Resume (${theme})`))) continue;
+    await skipWelcome();
+    check(/Resume/.test(await ev(`(${RESUME}).textContent`)), `held resume, ${theme}: the saved page offers Resume`);
+    // Slice 8: before the press, the Resume says which run it would wait for.
+    check(await waitFor(`(${RESUME}).textContent.trim() === 'Resume after run 2'`, `run 3's Resume after run 2 (${theme})`),
+      `held resume, ${theme}: before the click the button reads Resume after run 2 (${JSON.stringify(await ev(`(${RESUME}).textContent.trim()`))})`);
+    await ev(`(${RESUME}).click()`);
+    const back = await waitFor(`(() => { const b = ${RESUME}; return !!b && !b.disabled && b.textContent.trim() === 'Resume'; })()`, `the Resume button back (${theme})`);
+    const held = await (await fetch(`${base}/api/shape/features/${HR.f.id}`)).json().catch(() => null);
+    const row = held && (held.feature || held).slices?.find((x) => x.index === 3);
+    check(back, `held resume, ${theme}: the button reads Resume again and is enabled`);
+    check(row && row.state === 'paused', `held resume, ${theme}: run 3 still reads paused (${JSON.stringify(row && row.state)})`);
+    check(![...runs.values()].some((e) => e.pipelineId === five), `held resume, ${theme}: no runs-map entry for run 3`);
+    check(JSON.stringify(heldStops.heldResumeOf(five)) === '{"after":2}', `held resume, ${theme}: the server holds it after run 2 (${JSON.stringify(heldStops.heldResumeOf(five))})`);
+    check(!(await ev("document.querySelector('#toasts')?.textContent.includes('Could not resume') || false")), `held resume, ${theme}: no refusal toast`);
+    check(!(await ev("[...document.querySelectorAll('#hist-detail *')].some((e) => e.offsetParent && /^Starting/.test(e.textContent.trim()) && !e.children.length)")),
+      `held resume, ${theme}: no phantom Starting run`);
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, `held-resume-${theme}.png`);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+    heldStops.dropResume(five);   // slice 8: the next theme starts from a paused run that is not held yet
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper small runs, slice 8: the `after run N` row and the Resume wording. A marked 6-run feature, runs 1–3 done,
+// run 4 working (a running runs-map entry), run 5 not started, run 6 paused with a resume point and no runs-map entry.
+// At 1280px, light and dark: run 6's saved page Resume reads "Resume after run 4" (resume-after-run-THEME.png); it is
+// clicked, the server holds it after run 4 and the button reads plain Resume; the feature page's Runs table row of run 6
+// then reads "after run 4" on the after mark (after-run-row-THEME.png). Once at 375px in light, before the click: the
+// label neither wraps nor overflows, on the saved page and in Chat's run panel.
+// Slice 11: a second marked 6-run feature in the Verifier's state, run 4 paused (a resume point, no runs-map entry) before
+// run 6 working. Nothing in it is clicked. The feature page's footer Resume and the Chat feature card's footer Resume read
+// "Resume after run 6": once at 375px in light (one line, fits), then at 1280px in light and dark
+// (feature-resume-after-run-THEME.png, chat-card-resume-after-run-THEME.png).
+const AR_TITLES = [...TITLES, 'Export the member list', 'Filter members by date'];
+const AR_AGREED = AR_TITLES.map((t, i) => ({ id: `R-po-${i + 1}`, text: t, example: `example ${i + 1}` }));
+const arOutline = normalizeOutline({ why: 'proof', leftOut: [], slices: AR_TITLES.map((title, i) => ({ id: `s${i + 1}`, title, goal: `Goal ${i + 1}`,
+  inScope: [], outOfScope: [], acceptance: [`ok ${i + 1}`], dependsOn: [], estimate: 'small', requirements: [AR_AGREED[i].id] })) }, { agreed: AR_AGREED }).outline;
+async function afterRunPhase() {
+  const AR = seedFeature('ar', 'After run', ['done', 'done', 'done', 'running', 'planned', 'planned'], { withOutline: arOutline, titles: AR_TITLES });
+  liveRun(AR.pid(4), `Run 4 · ${AR_TITLES[3]}`, { runShape: { slice: { feature: AR.f.id, index: 4 } } });
+  const six = 'ab7e0006';
+  fire(AR.f, 6, six, 'paused', `Run 6 · ${AR_TITLES[5]}`);
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify({ version: 2, ledger: [], tokens: {} }), six);
+  await mkdir(path.join(projectStorePath(key), 'pipelines', `after-run-${six}`), { recursive: true });
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  // Slice 11: the Verifier's state, run 4 paused before run 6 working.
+  const BF = seedFeature('bf', 'Before', ['done', 'done', 'done', 'planned', 'planned', 'running'], { withOutline: arOutline, titles: AR_TITLES });
+  liveRun(BF.pid(6), `Run 6 · ${AR_TITLES[5]}`, { runShape: { slice: { feature: BF.f.id, index: 6 } } });
+  const four = 'bf7e0004';
+  fire(BF.f, 4, four, 'paused', `Run 4 · ${AR_TITLES[3]}`);
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify({ version: 2, ledger: [], tokens: {} }), four);
+  const FOOT = (scope) => `[...document.querySelectorAll('${scope} [data-model-action="resume"]')].find((b) => b.offsetParent)`;
+  const PAGE_RESUME = FOOT('.gpage-actions');
+  const CARD_RESUME = FOOT('.chat-rc-foot');
+  const reads = (btn, text) => `(() => { const b = ${btn}; return !!b && b.textContent.trim() === ${JSON.stringify(text)}; })()`;
+  const RESUME = "[...document.querySelectorAll('#hist-detail .hd-resume')].find((b) => b.offsetParent)";
+  const WAITS = `(() => { const b = ${RESUME}; return !!b && b.textContent.trim() === 'Resume after run 4'; })()`;
+  // One line, no overflow: the label's line boxes and its bar.
+  const FITS = (btn) => `(() => { const b = ${btn}; if (!b) return null; const l = b.querySelector('.hd-btn-label, .rd-btn-label') || b;
+    const bar = b.closest('.rd-bar-end') || b.parentElement; const lines = new Set([...l.getClientRects()].map((r) => Math.round(r.top))).size;
+    return { text: b.textContent.trim(), lines, fits: bar.scrollWidth <= bar.clientWidth, own: b.scrollWidth <= b.clientWidth }; })()`;
+  const fitOk = (r, text = 'Resume after run 4') => !!r && r.text === text && r.lines === 1 && r.fits && r.own;
+  const ROW6 = "[...document.querySelectorAll('.gpage-runs .run-member')].find((li) => li.offsetParent && li.querySelector('.run-member-num')?.textContent.trim() === '6')";
+  // 375px, light, before any click.
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 375, height: 900, deviceScaleFactor: 1, mobile: false });
+  await open(`${base}/?afterrun-narrow#history/${key}/${six}`);
+  await skipWelcome(); await setTheme('light');
+  if (await waitFor(WAITS, "run 6's Resume after run 4 at 375px")) {
+    const r = await ev(FITS(RESUME));
+    check(fitOk(r), `after run, 375px: the saved page's Resume after run 4 keeps one line and fits (${JSON.stringify(r)})`);
+  }
+  await open(`${base}/?afterrun-panel#chat/new/run/${six}/overview`);
+  await skipWelcome(); await setTheme('light');
+  const PANEL = "[...document.querySelectorAll('.hd-resume, .rd-pause')].find((b) => b.offsetParent && b.textContent.trim().startsWith('Resume'))";
+  if (await waitFor(`(() => { const b = ${PANEL}; return !!b && b.textContent.trim() === 'Resume after run 4'; })()`, "Chat's run panel Resume after run 4 at 375px")) {
+    const r = await ev(FITS(PANEL));
+    check(fitOk(r), `after run, 375px: Chat's run panel reads Resume after run 4 on one line that fits (${JSON.stringify(r)})`);
+  }
+  // Slice 11, 375px light: both footers' Resume after run 6 keeps one line and fits.
+  await open(`${base}/?beforerun-narrow#feature/${encodeURIComponent(BF.f.id)}`);
+  await skipWelcome(); await setTheme('light');
+  if (await waitFor(reads(PAGE_RESUME, 'Resume after run 6'), 'the feature page footer Resume after run 6 at 375px')) {
+    const r = await ev(FITS(PAGE_RESUME));
+    check(fitOk(r, 'Resume after run 6'), `before run, 375px: the feature page footer's Resume after run 6 keeps one line and fits (${JSON.stringify(r)})`);
+  } else check(false, `before run, 375px: the feature page footer reads Resume after run 6 (${JSON.stringify(await ev(`(${PAGE_RESUME})?.textContent.trim()`))})`);
+  if (await card(BF.threadId, 'beforerun-card-narrow', 'the Before feature card at 375px', 'light')
+    && await waitFor(reads(CARD_RESUME, 'Resume after run 6'), 'the Chat card footer Resume after run 6 at 375px')) {
+    const r = await ev(FITS(CARD_RESUME));
+    check(fitOk(r, 'Resume after run 6'), `before run, 375px: the Chat card footer's Resume after run 6 keeps one line and fits (${JSON.stringify(r)})`);
+  } else check(false, `before run, 375px: the Chat card footer reads Resume after run 6 (${JSON.stringify(await ev(`(${CARD_RESUME})?.textContent.trim()`))})`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  for (const theme of THEMES) {
+    await open(`${base}/?afterrun-${theme}#history/${key}/${six}`);
+    await skipWelcome(); await setTheme(theme);
+    const waits = await waitFor(WAITS, `run 6's Resume after run 4 (${theme})`);
+    check(waits, `after run, ${theme}: before the press run 6's Resume reads Resume after run 4 (${JSON.stringify(await ev(`(${RESUME})?.textContent.trim()`))})`);
+    if (!waits) continue;
+    await skipWelcome();
+    await capture(`resume-after-run-${theme}.png`);
+    await ev(`(${RESUME}).click()`);
+    const back = await waitFor(`(() => { const b = ${RESUME}; return !!b && !b.disabled && b.textContent.trim() === 'Resume'; })()`, `the plain Resume back (${theme})`);
+    check(back, `after run, ${theme}: once held the button reads plain Resume and is enabled`);
+    check(JSON.stringify(heldStops.heldResumeOf(six)) === '{"after":4}', `after run, ${theme}: the server holds it after run 4 (${JSON.stringify(heldStops.heldResumeOf(six))})`);
+    check(![...runs.values()].some((e) => e.pipelineId === six), `after run, ${theme}: no runs-map entry for run 6`);
+    await open(`${base}/?afterrun-row-${theme}#feature/${encodeURIComponent(AR.f.id)}`);
+    await skipWelcome(); await setTheme(theme);
+    const row = await waitFor(`(() => { const li = ${ROW6}; return !!li && li.dataset.mark === 'after'
+      && (li.querySelector('.run-member-state')?.textContent || '').trim() === 'after run 4'; })()`, `run 6's after run 4 row (${theme})`);
+    check(row, `after run, ${theme}: the Runs table row of run 6 reads after run 4 with data-mark="after" (${JSON.stringify(await ev(`(() => { const li = ${ROW6}; return li ? [li.dataset.mark || null, li.querySelector('.run-member-state')?.textContent || null] : null; })()`))})`);
+    if (row) await capture(`after-run-row-${theme}.png`);
+    heldStops.dropResume(six);   // the next theme starts from a paused run that is not held yet
+  }
+  // Slice 11, 1280px light and dark: the footers say which run the paused run 4 would wait for, before any press.
+  const COUNT = (scope) => `[...document.querySelectorAll('${scope} button')].filter((b) => b.offsetParent && /Resume/.test(b.textContent)).length`;
+  for (const theme of THEMES) {
+    await open(`${base}/?beforerun-${theme}#feature/${encodeURIComponent(BF.f.id)}`);
+    await skipWelcome(); await setTheme(theme);
+    const page = await waitFor(reads(PAGE_RESUME, 'Resume after run 6'), `the feature page footer Resume after run 6 (${theme})`);
+    check(page, `before run, ${theme}: the feature page footer's Resume reads Resume after run 6 (${JSON.stringify(await ev(`(${PAGE_RESUME})?.textContent.trim()`))})`);
+    if (page) {
+      check(await ev(COUNT('.gpage-actions')) === 1, `before run, ${theme}: the feature page footer shows 1 Resume`);
+      await capture(`feature-resume-after-run-${theme}.png`);
+    }
+    const chat = await card(BF.threadId, `beforerun-card-${theme}`, 'the Before feature card', theme)
+      && await waitFor(reads(CARD_RESUME, 'Resume after run 6'), `the Chat card footer Resume after run 6 (${theme})`);
+    check(chat, `before run, ${theme}: the Chat card footer's Resume reads Resume after run 6 (${JSON.stringify(await ev(`(${CARD_RESUME})?.textContent.trim()`))})`);
+    if (chat) {
+      check(await ev(COUNT('.chat-rc-foot')) === 1, `before run, ${theme}: the Chat card footer shows 1 Resume`);
+      await capture(`chat-card-resume-after-run-${theme}.png`);
+    }
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper small runs, slice 10 (R-ux-4): a stop's findings list shows on every surface where it can be answered. A
+// marked 4-run feature, run 2 live at a gate stop with 3 open issues. With the flag on, the run page, the Chat run side
+// panel and the Chat feature card each list the 3 issues under the question (`.qpanel .issues > li.issue`, titled as the
+// issues), with one primary. 1280px, Expert, the classic look, light and dark: small-runs-stop-findings-run-page-…,
+// -panel-… and -card-… .png in SHOTS_DIR.
+const SF_ISSUES = [ISSUES[0],
+  { severity: 'major', title: 'A deleted chart stays reachable from its share link', detail: 'the share row is never revoked' },
+  { severity: 'major', title: 'The chart export leaks private column names', detail: 'CSV header is built before the column filter' }];
+async function stopFindingsPhase() {
+  { const r = await post('/api/settings', { uiLevel: 'expert' }); check(r.ok, `stop findings: the Expert level is set (${r.status})`); }
+  const SF = seedFeature('sf', 'Stop findings', ['done', 'running', 'planned', 'planned']);
+  const stop = gateStop({ run: 2, issues: SF_ISSUES, fixCycles: 3, nodeId: 'n_review' });
+  const pq = { id: 'gate-sf-3', kind: 'gate', wireId: 'w9', nodeId: 'n_review', executionId: 'x:n_review:3', deliveryNo: 3, issues: SF_ISSUES, stop };
+  const runId = liveRun(SF.pid(2), `Run 2 · ${TITLES[1]}`, { at: 'n_review', pendingQuestion: pq, runShape: { slice: { feature: SF.f.id, index: 2 } } });
+  const want = SF_ISSUES.map((i) => i.title);
+  const FACTS = (scope) => `(() => { const vis = (els) => [...els].filter((e) => e.offsetParent);
+    const q = vis(document.querySelectorAll(${JSON.stringify(`${scope} .qpanel`)})).find((x) => x.querySelector('.qopts'));
+    if (!q) return null;
+    return { rows: vis(q.querySelectorAll('.issues > li.issue')).length,
+      titles: vis(q.querySelectorAll('.issues > li.issue .issue-title')).map((t) => t.textContent.trim()),
+      primaries: vis(q.querySelectorAll('.btn-primary')).length,
+      overflow: q.scrollWidth > q.clientWidth + 1 }; })()`;
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const judgeList = async (scope, where, theme) => {
+    const listed = `(() => { const f = ${FACTS(scope)}; return !!f && f.rows > 0; })()`;
+    if (!(await waitFor(listed, `the stop's findings on the ${where} (${theme})`))) return;
+    const f = await ev(FACTS(scope));
+    check(f.rows === 3 && JSON.stringify(f.titles) === JSON.stringify(want) && f.primaries === 1 && !f.overflow,
+      `stop findings, ${where}, ${theme}: 3 issue rows titled as the issues, 1 primary, no overflow (${JSON.stringify(f)})`);
+    await reveal(`${scope} .qpanel .issues`);
+  };
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    await open(`${base}/?sfr-${theme}#running/${runId}`);
+    await skipWelcome(); await setTheme(theme);
+    await judgeList('#run-detail', 'run page', theme);
+    await capture(`small-runs-stop-findings-run-page-${theme}.png`);
+    await open(`${base}/?sfp-${theme}#chat/new/run/${SF.pid(2)}/overview`);
+    await skipWelcome(); await setTheme(theme);
+    await judgeList(PANEL, 'Chat run panel', theme);
+    await capture(`small-runs-stop-findings-panel-${theme}.png`);
+    if (await card(SF.threadId, 'sfc', 'the stop findings card', theme)) await judgeList('.chat-rc', 'Chat feature card', theme);
+    await capture(`small-runs-stop-findings-card-${theme}.png`);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in, SHIP_LIST_ONLY=1
+// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
 if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }
+if (process.env.HELD_ONLY === '1') { await heldPhase(); await finish(); }
+if (process.env.TAKEIN_ONLY === '1') { await takeInPhase(); await finish(); }
+if (process.env.SHIP_LIST_ONLY === '1') { await shipListPhase(); await finish(); }
+if (process.env.HELD_RESUME_ONLY === '1') { await heldResumePhase(); await finish(); }
+if (process.env.AFTER_RUN_ONLY === '1') { await afterRunPhase(); await finish(); }
+if (process.env.STOP_FINDINGS_ONLY === '1') { await stopFindingsPhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {
@@ -1073,6 +1469,12 @@ const LIVE_ROWS = "[...document.querySelectorAll('.chat-rc .proto-rows .plan-che
   await cdp('Emulation.setEmulatedMedia', { features: [] });
 }
 
+await shipListPhase();
+await heldResumePhase();
+await afterRunPhase();
+await stopFindingsPhase();
 await d2Phase();
 await d3Phase();
+await heldPhase();
+await takeInPhase();
 await finish();
