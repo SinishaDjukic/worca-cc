@@ -1482,6 +1482,7 @@ function shipChainOf(featureId) {
       const branch = workBranchOf(rec);
       return { index: s.index, pipelineId: s.pipelineId, branch: typeof branch === 'string' && branch ? branch : null,
         source: rec && typeof rec.source === 'string' && rec.source ? rec.source : null,
+        from: typeof rec?.sourceFrom === 'string' && rec.sourceFrom ? rec.sourceFrom : null,
         carries: [...names(rec?.tookIn), ...names(rec?.combined)],
         merged: readPrState(s.pipelineId)?.state === 'MERGED', pending: previousBranchesOf(s.pipelineId)?.pending === true };
     });

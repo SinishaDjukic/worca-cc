@@ -2097,7 +2097,7 @@ export class RunHarness extends EventEmitter {
       this._setStatus('error');
       await this._finalizeDirections();   // report an unread inbox on every terminal outcome
       const message = err?.message || String(err);
-      this._emit('error', { message });
+      this._emit('error', { message, ...(err?.clash ? { clash: err.clash } : {}) });   // a setup clash carries its clash (A3)
       if (this.pipeline) {
         await this._persist().catch(() => {});
         await appendAudit(this.pipeline.dir, `Pipeline **error**: ${message}`).catch(() => {});

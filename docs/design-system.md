@@ -237,7 +237,7 @@ dot through `markDot` (`ui/public/status-dot.mjs`). This table lists every `.sta
 | violet | `.status-dot.is-violet` | merged |
 | grey | `.status-dot.is-grey` | paused; an idle chat |
 | dark grey | `.status-dot.is-dark-grey` | stopped |
-| grey ring | `.status-dot.is-grey-ring` | waiting; a Shaper run that waits for runs, cannot start, or is free without the turn |
+| grey ring | `.status-dot.is-grey-ring` | waiting; a Shaper run that waits for runs, cannot start, or is free without the turn, or is held on a clash, also one found as it sets up |
 | ink ring | `.status-dot.is-ink-ring` | the Shaper run with the next turn (`next`) |
 | dashed ring | `.status-dot.is-dashed-ring` | a Shaper stop answer held for its turn (`after run 3`), 12px, `--ink-3`, no glyph |
 ### Run row link marks (checked)

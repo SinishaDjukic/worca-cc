@@ -21,6 +21,8 @@ import { projectKey } from '../src/core/store.mjs';
 import { createThread, linkRun as askLinkRun, listMessages, appendMessage as askAppendMessage } from '../src/core/ask/store.mjs';
 import { createSliceFeature, featureView, recordShapePlan, recordShip, retireFeaturesOf, featureThread, currentFeatureId, sliceGateState } from '../src/core/shape/features.mjs';
 import { getTicket, requestRunNow, cancelTicket } from '../src/core/scheduler.mjs';
+import { checkCombine } from '../src/core/git-sync.mjs';
+import { listNotifications } from '../src/core/notifications.mjs';
 import { nightModeToggle } from '../src/core/settings.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
 import { readServerSource, SERVER_MJS } from '../src/core/read-server-source.mjs';
@@ -1405,6 +1407,114 @@ test('E1 small runs: slice 4 is held while runs 2 and 3 clash; Start now answers
   } finally {
     if (runs.get(t4) && !['done', 'stopped', 'error'].includes(String(runs.get(t4).status))) await firedRun(t4);
   }
+}));
+
+/** `git` with `input` on stdin (hash-object, mktree). */
+const gitIn = (cwd, input, ...args) => {
+  const r = spawnSync('git', args, { cwd, input, encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+  return r.stdout.trim();
+};
+/** Commit `file` on `branch` with no checkout. → the new commit */
+function commitOnRef(dir, branch, file, text) {
+  const parent = git(dir, 'rev-parse', `refs/heads/${branch}`);
+  const blob = gitIn(dir, text, 'hash-object', '-w', '--stdin');
+  const tree = gitIn(dir, `${git(dir, 'ls-tree', parent)}\n100644 blob ${blob}\t${file}\n`, 'mktree');
+  const commit = git(dir, 'commit-tree', tree, '-p', parent, '-m', file);
+  git(dir, 'update-ref', `refs/heads/${branch}`, commit, parent);
+  return commit;
+}
+/** The runs-map entry of fired ticket `id`, once its launch settled. */
+async function settledRun(id, ms = 60000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms && !runs.get(id)?.settled) await sleep(25);
+  assert.ok(runs.get(id)?.settled, `the run of ticket ${id} settled`);
+  return runs.get(id);
+}
+const attemptRow = (pid) => getDb().prepare('SELECT status, archived_at FROM pipelines WHERE id = ?').get(pid);
+const runErrorNotices = (ticketId) => listNotifications().filter((n) => n.ticketId === ticketId && n.kind === 'run_error');
+/** Leave no seam, no live run and no waiting ticket of `t4` behind. */
+async function releaseSetupWorld(t4) {
+  testing.setCombineGateDeps?.(null);
+  if (runs.get(t4) && !['done', 'stopped', 'error'].includes(String(runs.get(t4).status))) await firedRun(t4);
+  if (getTicket(t4)?.status === 'scheduled') cancelTicket(t4);
+}
+
+test("E2 (R-qa-2) small runs: run 4's built-on branch moves after the clash check and clashes at setup; run 4 is held with Start now, not failed", () => withEnvVars(SMALL_ON, async () => {
+  const { w, t4, two, three } = siblingDepsWorld({ clash: false });
+  const reason = 'runs 2 and 3 clash in sibling3.txt';
+  const [twoBefore, threeBefore] = [two, three].map((b) => git(w.dir, 'rev-parse', b));
+  const start = () => post(`/api/shape/features/${w.f.id}/start`, {});
+  const verdicts = [];
+  let moved = null;
+  try {
+    testing.setCombineGateDeps({ checkCombine: async (dir, opts) => {
+      const v = await checkCombine(dir, opts);
+      verdicts.push(v.status);
+      // Run 2 moves right after the fire-time check: it now adds sibling3.txt too, with other content than run 3's.
+      if (!moved) moved = commitOnRef(w.dir, two, 'sibling3.txt', "export const a = 'moved';\n");
+      return v;
+    } });
+    await tickUntil(() => runs.get(t4));
+    const attempt = await settledRun(t4);
+    assert.equal(verdicts[0], 'clean', 'the fire-time check found the combine clean');
+    const pid = attempt.pipelineId;
+    const branch = attempt.orch.state?.branch?.feature || branchOf(pid)?.feature;
+    // 1. The same ticket waits again: not failed.
+    const ticket = getTicket(t4);
+    assert.deepEqual({ status: ticket.status, pipelineId: ticket.pipelineId, forced: ticket.forced, failReason: ticket.failReason },
+      { status: 'scheduled', pipelineId: null, forced: false, failReason: null });
+    // 2, 3. The feature holds on the clash.
+    assert.deepEqual(featureView(w.f.id).held, { index: 4, ticketId: t4, reason });
+    assert.equal(featureView(w.f.id).slices.find((s) => s.index === 4).state, 'held');
+    // 4. No failed-run notice.
+    assert.deepEqual(runErrorNotices(t4), []);
+    // 5. The attempt is archived and its empty branch is gone.
+    for (let i = 0; i < 200 && !attemptRow(pid).archived_at; i++) await sleep(25);
+    assert.ok(attemptRow(pid).archived_at, 'the attempt is archived');
+    assert.ok(branch && branch !== two && branch !== three, `the attempt had a branch of its own: ${branch}`);
+    assert.notEqual(spawnSync('git', ['rev-parse', '-q', '--verify', `refs/heads/${branch}`], { cwd: w.dir }).status, 0,
+      `${branch} no longer resolves`);
+    // 6. The built-on branches are as their owners left them.
+    assert.deepEqual([two, three].map((b) => git(w.dir, 'rev-parse', b)), [moved, threeBefore]);
+    // 7. Start now with the clash unsettled: refused with the reason.
+    testing.setCombineGateDeps(null);
+    const refused = await start();
+    assert.deepEqual([refused.status, await refused.json()], [409, { error: reason, code: 'DEPENDENCY_CLASH' }]);
+    // 8. Settled on run 2's branch, Start now fires the same ticket.
+    git(w.dir, 'update-ref', `refs/heads/${two}`, twoBefore);
+    const res = await start();
+    assert.ok(res.ok, `Start now answered ${res.status}: ${await res.clone().text()}`);
+    await tickUntil(() => getTicket(t4).status === 'fired');
+    const run = await firedRun(t4);
+    assert.equal(getTicket(t4).status, 'fired', getTicket(t4).failReason || '');
+    assert.ok(run.pid && run.pid !== pid, 'a new attempt');
+    assert.equal(getTicket(t4).pipelineId, run.pid);
+  } finally { await releaseSetupWorld(t4); }
+}));
+
+test('E3 (R-qa-2) small runs: a setup error that is not a clash still fails the run', () => withEnvVars(SMALL_ON, async () => {
+  const { w, t4 } = siblingDepsWorld({ clash: false });
+  const error = 'the run before it is still merging its work back';
+  try {
+    testing.setCombineGateDeps({ checkCombine: async (dir, opts) => {
+      const v = await checkCombine(dir, opts);
+      // Run 3 reads as still merging back right after the fire-time check: the run's own setup check finds it pending.
+      getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?').run(JSON.stringify({ source: `feat/${w.pids[0]}`,
+        feature: `feat/${w.pids[0]}`, sameAsSource: true, worktreeDir: join(w.dir, 'merging') }), new Date().toISOString(), w.pids[2]);
+      return v;
+    } });
+    await tickUntil(() => runs.get(t4));
+    const attempt = await settledRun(t4);
+    const pid = attempt.pipelineId;
+    assert.equal(attemptRow(pid).status, 'error');
+    assert.deepEqual([getTicket(t4).status, getTicket(t4).pipelineId], ['fired', pid]);
+    assert.equal(runErrorNotices(t4).length, 1);
+    const frames = attempt.events.filter((e) => e.type === 'error');
+    assert.ok(frames.some((e) => e.message === error), JSON.stringify(frames));
+    assert.ok(frames.every((e) => !('clash' in e)), 'only a clash adds `clash` to the error frame');
+    assert.equal(attemptRow(pid).archived_at, null);
+  } finally { await releaseSetupWorld(t4); }
 }));
 
 /** A one-PR world whose last slice (3) was rebuilt on `from`'s branch as feat/<tag>, finishing last. */

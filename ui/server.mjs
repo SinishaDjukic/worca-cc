@@ -475,7 +475,7 @@ import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, ca
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
   liveSliceFrom, liveSliceResuming, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, isSlicePreambleLine } from '../src/core/shape/features.mjs';
-import { smallRunsChainGate, sliceFireStart, sliceCombineGate, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, createHeldStops, featureOfAnyPipeline } from '../src/core/shape/chain.mjs';
+import { smallRunsChainGate, sliceFireStart, sliceCombineGate, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, createHeldStops, featureOfAnyPipeline, holdAfterSetupClash } from '../src/core/shape/chain.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts, createRequirementChanges } from '../src/core/shape/changes.mjs';
 import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
@@ -1667,10 +1667,10 @@ function wireRun(entry) {
       // The entry's pipeline id finds the start of a resumed run (a new UUID, the same pipeline).
       requirementsRunEvent(id, name, payload, entry.pipelineId || null);   // never throws
       if (entry.ticketId && (name === 'done' || name === 'error') && !entry._outcomeRecorded) {
-        // Scheduled runs: report how the fired run ended (feed item, failure streak).
-        // 'error' is the launch-error channel — a failure before the pipeline row exists.
+        // Scheduled runs: report how the fired run ended (feed item, failure streak). 'error' is the launch-error channel.
         entry._outcomeRecorded = true;
-        try {
+        const held = name === 'error' && payload?.clash ? holdAfterSetupClash({ ticketId: entry.ticketId, pipelineId: entry.pipelineId, clash: payload.clash }) : null;   // A3: a setup clash holds it
+        if (held) { entry.setupClashHeld = true; broadcastFeature(held.featureId); emitChanged('schedules-changed', 'outcome'); } else try {
           recordOutcome(entry.ticketId, {
             status: name === 'error' ? 'error' : ((payload && payload.status) || 'done'),
             pipelineId: entry.pipelineId || null,
@@ -3659,7 +3659,7 @@ const startRunHandler = async (req, res) => {
         syncKeepAwake();
       })
       // #620: the harness's post-run base check landed after the run's last frame; History re-reads it.
-      .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });
+      .finally(() => { entry.settled = true; if (entry.setupClashHeld) Promise.resolve().then(() => archivePipeline({ projectDir: entry.projectDir, id: entry.pipelineId, by: 'worca' })).catch((err) => console.error(`[worca-ui] setup-clash attempt not archived: ${err?.message || err}`)); emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });
 
     // A scan's launcher needs the card attribution the wizard cannot compute (the key is a hash).
     res.json(scanTarget
@@ -4185,7 +4185,7 @@ async function fireTicket(ticket) {
       Object.assign(body, prev);
     }
   }
-  const combine = await sliceCombineGate(ticket, own); if (combine) return combine;   // small runs: a clash holds it
+  const combine = await sliceCombineGate(ticket, own, combineGateDeps); if (combine) return combine;   // small runs: a clash holds it
   // Every occurrence of a series needs its own feature branch: the local date, plus the time
   // when the series runs several times a day — except a run on its source branch, which has
   // none of its own (the server ignores featureBranch for it).
@@ -4946,7 +4946,7 @@ async function stopPausedPipeline(pipelineId, by = 'local') {
   if (running) return running;
   const p = stopPausedPipelineOnce(pipelineId, by);
   STOPS_IN_FLIGHT.set(pipelineId, p);
-  try { return await p; } finally { STOPS_IN_FLIGHT.delete(pipelineId); heldStops.dropResume(pipelineId); recordSettledFigures({ id: pipelineId, status: 'stopped' }, { tick: () => void schedulerTick(), broadcastFeature, finishing: isFinishingRun }); }   // a stopped Verifier reads halted only now; a stopped round may start the check
+  try { return await p; } finally { STOPS_IN_FLIGHT.delete(pipelineId); heldStops.dropResume(pipelineId); try { if (shaperSmallRunsOn() && getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(pipelineId)?.status === 'stopped' && bootResuming.delete(pipelineId)) { broadcastFeature(featureOfPipeline(pipelineId)?.featureId); void deliverHeld(); } } catch (err) { console.error(`[worca-ui] boot mark release failed: ${err?.message || err}`); }   /* A4: a stop in the boot window frees the turn */ recordSettledFigures({ id: pipelineId, status: 'stopped' }, { tick: () => void schedulerTick(), broadcastFeature, finishing: isFinishingRun }); }   // a stopped Verifier reads halted only now; a stopped round may start the check
 }
 
 /** One stop of a paused run. Called only through stopPausedPipeline, which joins concurrent stops. */
@@ -8757,7 +8757,7 @@ const relayProxyDeps = () => ({
 const SETUP_JOBS = new Map();            // id -> { id, state, results, ok, retry, startedAt, endedAt }
 const SETUP_JOB_TTL_MS = 60 * 60_000;
 let setupRunning = null;
-let setupDepsOverride = {};
+let setupDepsOverride = {}; let combineGateDeps;   // the fire-time combine gate's test seam (setCombineGateDeps)
 let setupProbesOverride = null;
 const SETUP_AGENT_TEXT = 'Setup cannot run from inside the container while agent isolation is on. Open Worca through its published address.';
 
@@ -10904,7 +10904,7 @@ export const _testing = {
   setSystemProxyDetect: (fn) => { detectSystemProxyImpl = fn || detectSystemProxy; },
   proxyHost,
   // Setup assistant: swap the apply side effects / detect probes; resetSetup drops overrides, the lock and the jobs.
-  setSetupDeps: (o) => { setupDepsOverride = o || {}; },
+  setSetupDeps: (o) => { setupDepsOverride = o || {}; }, setCombineGateDeps: (d) => { combineGateDeps = d || undefined; },
   setSetupProbes: (p) => { setupProbesOverride = p || null; },
   resetSetup: () => { setupDepsOverride = {}; setupProbesOverride = null; setupRunning = null; SETUP_JOBS.clear(); },
   setUpdateFetcher: (fn) => { updateFetcherOverride = typeof fn === 'function' ? fn : null; updateChecker.clear(); },

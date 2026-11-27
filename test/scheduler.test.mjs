@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { hostname } from 'node:os';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
-import { getDb } from '../src/core/db.mjs';
+import { getDb, tx } from '../src/core/db.mjs';
 import { persistPrState } from '../src/core/artifacts.mjs';
 import {
   createTicket, getTicket, listTickets, updateTicket, cancelTicket, requestRunNow, claimTicket,
@@ -18,6 +18,8 @@ import {
   afterRefOf, predecessorState, previousBranchesOf, dependentsOfRun, resolveAfterRef,
   chainBaseBranchesOf, stackedPrBaseOf, markTicketFired, cancelResumeTicketsFor, runChains, CHAIN_SHIP_WINDOW_MS, skipTicket,
 } from '../src/core/scheduler.mjs';
+// Namespace read, so a missing new export fails only its own test, not the whole file.
+import * as SCHEDULER from '../src/core/scheduler.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { listNotifications, unreadCount, markRead, addNotification } from '../src/core/notifications.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -1553,4 +1555,28 @@ test('runDueTickets: a hold answer leaves fail_reason and attempts as an earlier
   const r = getTicket(t.id);
   assert.deepEqual([r.status, r.forced, r.failReason, r.retryAt, r.attempts], ['scheduled', false, 'busy', null, 1]);
   assert.deepEqual(kinds(), ['retrying'], 'only the earlier retry is in the feed');
+});
+
+// A clash found while a fired run sets up (Shaper small runs): the same ticket waits again.
+test('unfireTicket: a fired ticket of that pipeline goes back to scheduled with no fail reason; another pipeline id or status changes nothing', () => {
+  const raw = (id) => ({ ...getDb().prepare('SELECT * FROM scheduled_runs WHERE id = ?').get(id) });
+  const t = createTicket({ projectDir: DIR, title: 'T', runAtMs: T0, request: REQ, now: T0 });
+  markTicketFired(t.id, { pipelineId: 'u0000001', now: T0 });
+  getDb().prepare(`UPDATE scheduled_runs SET forced = 1, queued = 1, retry_at = ?, fail_reason = 'x', owner_pid = 1, owner_host = 'h'
+    WHERE id = ?`).run(new Date(T0).toISOString(), t.id);
+  const fired = raw(t.id);
+  assert.equal(SCHEDULER.unfireTicket(t.id, { pipelineId: 'u0000002', now: T0 + MIN }), false, 'another pipeline id');
+  assert.deepEqual(raw(t.id), fired);
+  // It opens no transaction of its own, so a caller's holds it.
+  assert.equal(tx(() => SCHEDULER.unfireTicket(t.id, { pipelineId: 'u0000001', now: T0 + MIN })), true);
+  const waiting = { ...fired, status: 'scheduled', pipeline_id: null, forced: 0, queued: 0, retry_at: null, fail_reason: null,
+    owner_pid: null, owner_host: null, updated_at: new Date(T0 + MIN).toISOString() };
+  assert.deepEqual(raw(t.id), waiting);
+  assert.deepEqual(listNotifications(), [], 'it writes no notice');
+  assert.equal(SCHEDULER.unfireTicket(t.id, { pipelineId: 'u0000001', now: T0 + 2 * MIN }), false, 'no longer fired');
+  assert.deepEqual(raw(t.id), waiting);
+  getDb().prepare("UPDATE scheduled_runs SET status = 'canceled', pipeline_id = 'u0000001' WHERE id = ?").run(t.id);
+  const canceled = raw(t.id);
+  assert.equal(SCHEDULER.unfireTicket(t.id, { pipelineId: 'u0000001', now: T0 + 3 * MIN }), false, 'a canceled ticket');
+  assert.deepEqual(raw(t.id), canceled);
 });

@@ -1429,6 +1429,17 @@ export function markTicketFired(id, { pipelineId = null, now = Date.now() } = {}
   if (pipelineId) setTicketPipeline(id, pipelineId, { now });
 }
 
+/** Shaper small runs: a clash found while fired run `pipelineId` set up undoes the fire, so the same ticket waits again
+ *  (no fail reason, unforced). A compare-and-set: only while the ticket is fired as that pipeline. No tx, no notice.
+ *  → true when the row changed. */
+export function unfireTicket(id, { pipelineId, now = Date.now() } = {}) {
+  if (!id || !pipelineId) return false;
+  const r = getDb().prepare(`UPDATE scheduled_runs SET status = 'scheduled', pipeline_id = NULL, forced = 0, queued = 0,
+    retry_at = NULL, fail_reason = NULL, owner_pid = NULL, owner_host = NULL, updated_at = ?
+    WHERE id = ? AND status = 'fired' AND pipeline_id = ?`).run(new Date(now).toISOString(), String(id), String(pipelineId));
+  return r.changes === 1;
+}
+
 /** Counts for nav badges: { scheduled, recurring, missed }. */
 export function scheduleCounts() {
   const db = getDb();

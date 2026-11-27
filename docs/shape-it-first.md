@@ -629,7 +629,9 @@ it is held, and the card's held row names the runs that clash and the files, as 
 in src/a.mjs`. Nothing is merged and no branch moves. Settle the clash on one of those runs' branches (merge the other
 run's branch into it and commit the fix), then press **Start now**: while the clash is unsettled, Start now refuses with
 the same reason and starts nothing. **Re-plan the rest** and **Cancel the rest** stay in ⋯. The hold lives only while
-Worca runs: after a restart, the next check finds the clash again and holds the run again.
+Worca runs: after a restart, the next check finds the clash again and holds the run again. A run it builds on can
+also get new work after that check: the run then finds the clash as it sets up, before its first agent, and is held the
+same way, with Start now. That attempt is not kept as a failed run: it is archived and leaves History.
 
 **Work taken in after a wait.** When a run that waited at a stop goes on, or a paused run is resumed, it first takes in
 the work of every run of its feature that finished meanwhile, whatever base that run started from, in finish order, and
@@ -667,7 +669,9 @@ with Don't slice carries nothing into a feature: it is planned and reviewed with
 Ship is stacked only: Ship with `one` is refused with `STACKED_ONLY`. With the flag on, Ship opens one PR per run along
 the real branches: from the head back along each run's recorded base; each PR is based on the branch of the one before
 it, the first on the feature's base (or on the feature's base when the PR before it is merged or its branch still merges
-back). A run whose work a listed PR already carries (taken in or combined) gets no pull request of its own. When Worca
+back). A run whose work a listed PR already carries (taken in or combined) gets no pull request of its own. A run's work
+also counts as carried when a listed or carried run started from its branch, so after take-ins from other bases each
+commit ships in one pull request. When Worca
 cannot follow every finished run's work into the list, it falls back to the order the runs finished, and the Shipped
 card says so: "stacked in the order runs finished".
 
@@ -791,7 +795,8 @@ With the flag on, a Resume of a paused run of a marked feature while another run
 run stays paused and goes on at its turn, together with held answers. This holds for the run's own Resume and the
 feature card's Resume. A held resume holds nothing, so it never keeps another run from its
 turn, but it goes before the free runs. Pause or Stop on the held run drops the hold, and so does a restart: the run
-is then simply paused. Of several runs of one feature resumed at a restart, only the lowest goes on; the others are
+is then simply paused. Stopping a run that a restart is about to resume frees its turn at once, and the next held run
+goes on. Of several runs of one feature resumed at a restart, only the lowest goes on; the others are
 held behind it. A held resume reads `after run N` on its row and on its run page head, and its Resume then reads plain
 `Resume`. Before it is pressed, a paused run's Resume reads `Resume after run N` while another run of the feature is
 going, and `Resume` otherwise; the server still decides at the press. The same wording shows on the Resume in the

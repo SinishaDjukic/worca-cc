@@ -1174,7 +1174,13 @@ test('H1 (R-arch-4a): a clash the harness finds fails the combine with the reaso
   const w = doneSiblings({ clash: true });
   const ten = runTen(w, 'feat/run-8');
   const refs = refsOf(w.repo);
-  await assert.rejects(ten.combine(), { message: CLASH });
+  await assert.rejects(ten.combine(), (e) => {
+    assert.equal(e.message, CLASH);
+    // A2/A3 (R-qa-2): a clash carries its own marker, so the server holds the run instead of failing it.
+    assert.equal(e.code, 'DEPENDENCY_CLASH');
+    assert.deepEqual({ ...e.clash, runs: [...e.clash.runs].sort() }, { reason: CLASH, runs: [2, 3], files: ['src/a.mjs'] });
+    return true;
+  });
   assert.equal(head(w.repo, 'feat/run-10'), ten.start);
   assert.equal(refsOf(w.repo), refs);
   assert.equal(noMergeStarted(ten.wt10), true);

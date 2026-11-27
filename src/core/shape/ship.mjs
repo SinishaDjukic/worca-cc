@@ -107,10 +107,13 @@ export function shipCardVerb(body) {
 /**
  * Shaper small runs slice 4 (D1, D2, D3, D5): the PRs a marked feature's Ship lists, along the real branches. Pure.
  * `rows` are the finished runs in finish order (the last is the head Ship ships):
- *   {index, pipelineId, branch (work branch), source (recorded base), carries (branches taken in or combined),
+ *   {index, pipelineId, branch (work branch), source (recorded base), from (fire-time base, optional),
+ *    carries (branches taken in or combined),
  *    merged (its PR is MERGED), pending (its branch still merges back)}.
  * The walk goes back from the head to the run whose branch is the current run's source (the later finisher on a tie),
- * then is reversed. A run off the walk is carried when a listed run, or a run it carries, names its branch.
+ * then is reversed. A run off the walk is carried when a listed run, or a run it carries, names its branch. When that
+ * leaves runs uncovered, a run is also carried when a covered run started from its branch (`from`, the fire-time base)
+ * or recorded it as its source: the covered run's branch contains that branch's commits as of its start.
  * → { order: [{index, pipelineId, base}], carried: [{index, pipelineId, by}] }, or null when a finished run is neither
  *   listed nor carried (the caller then keeps the finish order).
  */
@@ -146,7 +149,22 @@ export function shipChain(rows, { root = null } = {}) {
       queue.push([m, by]);
     }
   }
-  if (walk.length + carriedBy.size < list.length) return null;
+  if (walk.length + carriedBy.size < list.length) {
+    // The ancestry pass (A2): a covered run's branch holds the commits of the branch it started from (`from`) and of its
+    // recorded source, as of its start, so a run on one of those branches is carried by the same carrier. Only reached
+    // when the first closure leaves rows uncovered, so a chain that resolves without it is unchanged.
+    const anc = [...walk.map((k) => [k, list[k].pipelineId]), ...carriedBy];
+    while (anc.length) {
+      const [k, by] = anc.shift();
+      const bases = [name(list[k].from), name(list[k].source)].filter(Boolean);
+      for (let m = 0; m < list.length; m++) {
+        if (seen.has(m) || carriedBy.has(m) || !bases.includes(name(list[m].branch))) continue;
+        carriedBy.set(m, by);
+        anc.push([m, by]);
+      }
+    }
+    if (walk.length + carriedBy.size < list.length) return null;
+  }
   const carried = [...carriedBy].sort((a, b) => a[0] - b[0])
     .map(([m, by]) => ({ index: list[m].index, pipelineId: list[m].pipelineId, by }));
   return { order, carried };

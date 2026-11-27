@@ -3,7 +3,7 @@
 // source and the one-PR ship check. Imports features.mjs one way; features.mjs never imports this module (verifier.mjs,
 // which features.mjs imports, calls back into latestFinishedSlice at runtime only).
 import { getDb } from '../db.mjs';
-import { previousBranchesOf } from '../scheduler.mjs';
+import { previousBranchesOf, unfireTicket } from '../scheduler.mjs';
 import { isAncestor, runGitCapture, commitOf } from '../worktree.mjs';
 import { checkCombine, mergeBaseInto } from '../git-sync.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature } from './small-runs.mjs';
@@ -285,7 +285,10 @@ export async function combineDependencies(dir, { featureId, index, branch, sourc
   const start = found.branches.find((d) => d.branch === source)?.index
     ?? finishedSlices(featureId).find((s) => previousBranchesOf(s.pipelineId)?.sourceBranch === source)?.index ?? null;
   const v = await combineVerdict(dir, { branch, index: start }, missing, deps.checkCombine || checkCombine);
-  if (v.status !== 'clean') throw new Error(v.status === 'clash' ? v.reason : v.error);
+  if (v.status === 'clash') {
+    throw Object.assign(new Error(v.reason), { code: 'DEPENDENCY_CLASH', clash: { reason: v.reason, runs: v.runs, files: v.files } });
+  }
+  if (v.status !== 'clean') throw new Error(v.error);
   const merge = deps.mergeBaseInto || mergeBaseInto;
   const begin = v.check.heads[0];
   let tip = begin;
@@ -304,6 +307,26 @@ export async function combineDependencies(dir, { featureId, index, branch, sourc
     at = r.path || at;
   }
   return { tip, merged: missing.map(({ index: k, branch: b }) => ({ index: k, branch: b })) };
+}
+
+/**
+ * Small runs (A3): a clash `combineDependencies` found as fired run `pipelineId` set up becomes the same hold the
+ * fire-time gate sets: the ticket goes back to scheduled (unfireTicket's compare-and-set) and gets the clash hold.
+ * null, writing nothing, for the flag off, a ticket of no active slice of a marked feature, no `clash` or a lost
+ * compare-and-set (a Start now already fired it again). Never throws. → {held:true, featureId} | null
+ */
+export function holdAfterSetupClash({ ticketId, pipelineId, clash } = {}, { now = Date.now() } = {}) {
+  try {
+    if (!shaperSmallRunsOn() || !clash || !ticketId || !pipelineId) return null;
+    const at = activeSlice({ id: ticketId });
+    if (!at || !smallRunsOfFeature(at.featureId)) return null;
+    if (!unfireTicket(ticketId, { pipelineId, now })) return null;
+    setClashHold(ticketId, { reason: clash.reason, runs: clash.runs, files: clash.files, at: now });
+    return { held: true, featureId: at.featureId };
+  } catch (e) {
+    console.error(`[worca-ui] setup clash not held: ${e?.message || e}`);
+    return null;
+  }
 }
 
 /** The audit line of a combine: "Combined the work of run 9 (`feat/run-9`) into `feat/run-10` before the first agent." */

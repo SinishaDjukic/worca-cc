@@ -827,3 +827,116 @@ test('takeInVerdict (D5): a run that took work in still has a fire-time base (so
 }));
 
 test('combineVerdict is exported for the take-in', () => { assert.equal(typeof CHAIN.combineVerdict, 'function'); });
+
+// ── A2 (R-qa-2): run 6's PR diff after 3 take-ins from unrelated bases ──────────────────────────────────────────────
+/** The harness's take-in patch rule (_takeInNow, src/core/run-harness.mjs:10854-10866), once for one take-in `d`:
+ *  `source` becomes the branch taken in, `sourceFrom` keeps the first old `source`, `tookIn` gets one entry appended. */
+const tookInOnce = (r, d) => ({ ...r, source: d.branch, sourceFrom: r.sourceFrom || r.source, tookIn: [...(r.tookIn || []), d] });
+
+test("A2 (R-qa-2): run 6's PR diff after 3 take-ins from unrelated bases holds only its own and carried work", (t) => withEnvVars(SMALL_ON, async () => {
+  quiet();
+  const dir = mkdtempSync(join(tmpdir(), 'worca-shape-chain-takein-'));
+  try {
+    git(dir, 'init', '-q', '-b', 'main'); git(dir, 'config', 'user.email', 't@t'); git(dir, 'config', 'user.name', 't');
+    git(dir, 'config', 'commit.gpgsign', 'false');
+    writeFileSync(join(dir, 'base.txt'), 'base\n'); git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'base');
+    const br = (k) => `feat/a2-run${k}`;
+    // Runs 1 to 4 start from main, run 5 from run 1, run 6 from run 5: runs 2, 3 and 4 share no base with runs 5 and 1.
+    for (const [k, from] of [[1, 'main'], [2, 'main'], [3, 'main'], [4, 'main'], [5, br(1)], [6, br(5)]]) {
+      git(dir, 'checkout', '-q', '-b', br(k), from);
+      writeFileSync(join(dir, `run${k}.txt`), `${k}\n`); git(dir, 'add', '-A'); git(dir, 'commit', '-qm', `run${k} work`);
+    }
+    // Run 6 (checked out) takes in runs 2, 3 and 4, each as a two-parent merge like mergeBaseInto's.
+    const shas = {};
+    for (const k of [2, 3, 4]) { shas[k] = git(dir, 'rev-parse', br(k)); git(dir, 'merge', '-q', '--no-ff', '--no-edit', br(k)); }
+    git(dir, 'checkout', '-q', 'main');
+    assert.equal(git(dir, 'rev-list', '--count', '--min-parents=2', `main..${br(6)}`), '3', 'three take-in merges');
+
+    // Finish order 1, 5, 2, 3, 4, 6.
+    const at = { 1: 1, 5: 2, 2: 3, 3: 4, 4: 5, 6: 6 };
+    const seed = (k, record) => {
+      const when = `2026-03-0${at[k]}T00:00:00Z`;
+      return pipe('done', { branch: { feature: br(k), ...record }, steps: stepAt(when), updatedAt: when });
+    };
+    const p = [null, seed(1, { source: 'main' })];
+    const f = createSliceFeature({ pipelineId: p[1], projectDir: root, title: 'Take in', outline: outlineOf(6), perspectives: ['product'], workflowId: 'wf_shape' });
+    for (const k of [2, 3, 4]) p[k] = seed(k, { source: 'main' });
+    p[5] = seed(5, { source: br(1) });
+    let six = { source: br(5), feature: br(6) };
+    for (const k of [2, 3, 4]) six = tookInOnce(six, { index: k, branch: br(k), pipelineId: p[k], sha: shas[k] });
+    assert.deepEqual([six.source, six.sourceFrom, six.tookIn.map((d) => d.index)], [br(4), br(5), [2, 3, 4]]);
+    p[6] = seed(6, six);
+    const tickets = rows(f.id).map((r) => r.ticket_id);
+    for (let k = 2; k <= 6; k++) fire(tickets[k - 1], p[k]);
+    markFeature(f.id);
+    assert.deepEqual(finishedSlices(f.id).map((s) => s.index), [1, 5, 2, 3, 4, 6]);
+
+    // 1. The commits of run 6's PR diff.
+    const subjects = (base, head) => git(dir, 'log', '--no-merges', '--format=%s', `${base}..${head}`).split('\n').filter(Boolean);
+    const base = smallRunsPrBase(p[6]);
+    const diff = subjects(base, br(6));
+    const shown = `run 6's PR diff ${base}..${br(6)} lists: ${diff.join(', ')}`;
+    t.diagnostic(shown);
+    // 2. What Ship opens and what it carries.
+    const ship = await FEATURES.featureShipInput(featureView(f.id));
+    const openers = ship.slices.filter((s) => s.pipelineId);
+    const carried = (ship.carried || []).map((c) => c.pipelineId);
+    // 3. Every commit in the diff is run 6's or a carried run's.
+    const allowed = [6, ...[1, 2, 3, 4, 5].filter((k) => carried.includes(p[k]))].map((k) => `run${k} work`);
+    assert.deepEqual(diff.filter((s) => !allowed.includes(s)), [], `commits of runs that are neither run 6 nor carried by Ship; ${shown}`);
+    // 4. No commit ships in two PRs.
+    const inPr = new Map();
+    for (const o of openers) {
+      const k = p.indexOf(o.pipelineId);
+      for (const s of subjects(smallRunsPrBase(o.pipelineId), br(k))) {
+        assert.equal(inPr.get(s), undefined, `"${s}" is in the PRs of both run ${inPr.get(s)} and run ${k}`);
+        inPr.set(s, k);
+      }
+    }
+    // Runs 4 and 6 open PRs; runs 1, 2, 3 and 5 ship in run 6's.
+    assert.deepEqual(openers.map((o) => o.index), [4, 6]);
+    assert.deepEqual([...carried].sort(), [p[1], p[2], p[3], p[5]].sort());
+    assert.deepEqual([...diff].sort(), [1, 2, 3, 5, 6].map((k) => `run${k} work`), shown);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}));
+
+// ── A3 (R-qa-2): a clash found as the run sets up becomes a hold ────────────────────────────────────────────────────
+test('holdAfterSetupClash: sets the clash hold and unfires the ticket; flag off, an unmarked feature or a lost compare-and-set writes nothing', async () => {
+  const NOW = Date.parse('2026-03-10T00:00:00Z');
+  const clash = { reason: REASON, runs: [2, 3], files: ['src/a.mjs'] };
+  const raw = (id) => getDb().prepare('SELECT * FROM scheduled_runs WHERE id = ?').get(id);
+  const holdOf = (id) => withEnvVars(SMALL_ON, () => FEATURES.clashHoldOf(id));
+  const call = (args, env = SMALL_ON) => withEnvVars(env, () => CHAIN.holdAfterSetupClash(args, { now: NOW }));
+  /** Run 4 of a fresh feature, fired as `pid`, its attempt ended in error. */
+  const attempt = ({ marked = true } = {}) => withEnvVars(SMALL_ON, () => {
+    const f = feature(4);
+    markFeature(f.id);
+    if (!marked) getDb().prepare('UPDATE pipelines SET shape_stats = NULL WHERE id = (SELECT origin_pipeline_id FROM shape_features WHERE id = ?)').run(f.id);
+    const pid = pipe('error');
+    fire(f.t[4], pid);
+    return { id: f.id, args: { ticketId: f.t[4], pipelineId: pid, clash } };
+  });
+  const writesNothing = async (label, ticketId, args, env) => {
+    const was = raw(ticketId);
+    assert.equal(await call(args, env), null, label);
+    assert.deepEqual(raw(ticketId), was, `${label}: the ticket is unchanged`);
+    assert.equal(await holdOf(ticketId), null, `${label}: no hold`);
+  };
+
+  const off = await attempt();
+  await writesNothing('flag off', off.args.ticketId, off.args, SMALL_OFF);
+  const unmarked = await attempt({ marked: false });
+  await writesNothing('an unmarked feature', unmarked.args.ticketId, unmarked.args);
+  const bare = await attempt();
+  await writesNothing('no clash', bare.args.ticketId, { ...bare.args, clash: undefined });
+  // A Start now race: the ticket is already fired as another pipeline.
+  const raced = await attempt();
+  fire(raced.args.ticketId, pipe('running'));
+  await writesNothing('a lost compare-and-set', raced.args.ticketId, raced.args);
+
+  const w = await attempt();
+  assert.deepEqual(await call(w.args), { held: true, featureId: w.id });
+  const ticket = getTicket(w.args.ticketId);
+  assert.deepEqual([ticket.status, ticket.pipelineId, ticket.forced, ticket.failReason], ['scheduled', null, false, null]);
+  assert.deepEqual(await holdOf(w.args.ticketId), { ...clash, at: NOW });
+});

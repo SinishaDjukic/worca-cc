@@ -314,6 +314,49 @@ test('shipChain (R-arch-6): pure: no db, git or scheduler import; the same rows 
   assert.deepEqual(rows, was);
 });
 
+// ---- A2 (R-qa-2): the ancestry pass. A covered run's branch holds the commits of the branch it started from. ----------
+test("shipChain: a run started from an uncarried run's branch carries it (ancestry pass)", () => {
+  // Finish order 1, 5, 2, 3, 4, 6. Run 5 started from run 1, run 6 from run 5; run 6 then took in runs 2, 3 and 4.
+  const out = chainOfRows([row(1, 'dev'), row(5, 1), row(2, 'dev'), row(3, 'dev'), row(4, 'dev'),
+    row(6, 4, { from: 'feat/run-5', carries: [2, 3, 4] })]);
+  assert.ok(out, 'every finished run is listed or carried');
+  assert.deepEqual(out.order, [{ index: 4, pipelineId: 'p4', base: 'dev' }, { index: 6, pipelineId: 'p6', base: 'feat/run-4' }]);
+  assert.deepEqual(carriedBy(out), [[1, 'p6'], [2, 'p6'], [3, 'p6'], [5, 'p6']]);
+});
+
+test('shipChain: rows that resolve with the first closure are unchanged by from', () => {
+  const resolved = [
+    [row(7, 'dev'), row(9, 7), row(8, 9, { carries: [9] }), row(10, 8)],
+    [row(7, 'dev'), row(8, 7), row(9, 7), row(10, 9, { carries: [8] })],
+    [row(7, 'dev'), row(9, 7), row(8, 7), row(10, 8, { carries: [9] })],
+    [row(1, 'dev'), row(2, 1), row(3, 1, { carries: [2] }), row(4, 1), row(5, 4, { carries: [3] })],
+    [row(7, 'dev'), row(9, 7, { merged: true }), row(8, 9), row(10, 8)],
+    [row(7, 'dev'), row(9, 7, { pending: true }), row(8, 9), row(10, 8)],
+    [row(7, 'dev'), row(8, 7, { branch: 'feat/run-7' }), row(10, 7)],
+    [row(7, 8), row(8, 7)],
+    [{ index: 1, pipelineId: 'p1' }],
+    [],
+  ];
+  for (const rows of resolved) {
+    const was = chainOfRows(rows);
+    assert.ok(was, JSON.stringify(rows));
+    // Every other row's branch as each row's fire-time base: none of it may move a chain that already resolves.
+    for (let shift = 1; shift < Math.max(2, rows.length); shift++) {
+      const withFrom = rows.map((r, i) => ({ ...r, from: rows[(i + shift) % rows.length].branch || 'feat/run-7' }));
+      assert.deepEqual(chainOfRows(withFrom), was, JSON.stringify(withFrom));
+    }
+  }
+});
+
+test('shipChain: a row reachable by no walk, carry, from or source edge still falls back (null)', () => {
+  // Run 2's branch is nobody's source or fire-time base, and nothing carries it.
+  assert.equal(chainOfRows([row(1, 'dev'), row(2, 'dev'), row(3, 1, { from: 'feat/run-1' })]), null);
+  // The edges go from a covered run to its base only: a run that started from a covered run is not carried by that.
+  assert.equal(chainOfRows([row(1, 'dev'), row(2, 1, { from: 'feat/run-1' }), row(3, 1)]), null);
+  // An uncovered run's own fire-time base carries nothing.
+  assert.equal(chainOfRows([row(1, 'dev'), row(2, 'dev'), row(4, 'dev', { from: 'feat/run-2' }), row(3, 1)]), null);
+});
+
 // ---- Slice 4 (R-qa-6): Ship on real git branches. Runs 8 and 9 build on run 7, run 10 builds on 8 and 9. ---------------
 const ON = { WORCA_FLAGS: 'shaperSmallRuns' };
 const { siblingWorld, waitedRunHarness, doneSiblings, runTen } = siblingKit({ root, RunHarness });
