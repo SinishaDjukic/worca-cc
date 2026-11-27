@@ -420,6 +420,7 @@ export function createCopilotNormalizer({ model = null, sessionId: qualifiedId =
   let errorType = null;
   let sessionId = null;
   let exitCode = null;
+  const mcpFailed = new Map();     // server name -> copilot's reason, from session.mcp_servers_loaded
 
   const parentOf = (evt) => {
     const d = evt.data || {};
@@ -482,6 +483,17 @@ export function createCopilotNormalizer({ model = null, sessionId: qualifiedId =
           reason: text(d.failureKind) || 'unknown' }];
       case 'assistant.turn_retry':
         return [{ type: 'retry', parentId: parentOf(evt), httpStatus: null, reason: text(d.reason) || 'unknown' }];
+      case 'session.mcp_servers_loaded': {
+        // The servers' start-up outcome, before the first model call. A failed server (its process died or never
+        // finished the handshake) leaves the model without its tools, and copilot says so nowhere else on the stream.
+        const out = [];
+        for (const s of Array.isArray(d.servers) ? d.servers : []) {
+          if (!s || typeof s.name !== 'string' || s.status !== 'failed' || mcpFailed.has(s.name)) continue;
+          mcpFailed.set(s.name, text(s.error) || 'no reason given');
+          out.push({ type: 'stderr', stream: 'err', text: `copilot: MCP server ${s.name} failed to start — ${mcpFailed.get(s.name)}` });
+        }
+        return out;
+      }
       case 'session.warning':
         return text(d.message) ? [{ type: 'stderr', stream: 'err', text: `copilot: ${d.message}` }] : [];
       case 'session.error':
@@ -498,7 +510,8 @@ export function createCopilotNormalizer({ model = null, sessionId: qualifiedId =
   }
 
   const finalError = () => error || (exitCode != null && exitCode !== 0 ? `copilot exited with code ${exitCode}` : null);
-  return { push, finish: () => ({ text: texts.join('\n'), error: finalError(), errorType, sessionId, exitCode, model }) };
+  return { push, mcpFailure: (name) => mcpFailed.get(name) ?? null,
+    finish: () => ({ text: texts.join('\n'), error: finalError(), errorType, sessionId, exitCode, model }) };
 }
 
 // ── errors and preflight ─────────────────────────────────────────────────────
@@ -564,6 +577,8 @@ export const COPILOT_ASK_MIN_VERSION = '1.0.100';
 /** Ask Worca on Copilot: the lockdown is the read-only spawn (only the MCP servers it is handed — worca's own — and a
  *  scrubbed env) plus no custom instructions. A flag, not a list: the adapter builds it (runCopilotProcess askLockdown). */
 export const COPILOT_ASK_LOCKDOWN = true;
+/** The name of worca's own server in an Ask chat's MCP config (ask/spawn.mjs buildMcpConfig; reserved in the registry). */
+const ASK_MCP_SERVER = 'worca';
 
 /**
  * Can this copilot be locked down for an Ask chat? Every flag in COPILOT_ASK_FLAGS must exist: an older copilot
@@ -730,9 +745,14 @@ export async function runCopilotProcess({
 
   // maxTurns: the main agent's tool calls (sub-agent calls do not count).
   const cap = Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
-  const capCtrl = new AbortController();
-  let toolCalls = 0; let capped = false;
-  const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
+  // An Ask chat's only tools are worca's own server: when copilot reports that it failed to start, the turn stops before
+  // the model answers without them (it would make up an answer, or blame the engine).
+  const stopCtrl = new AbortController();
+  let toolCalls = 0; let capped = false; let toolsDown = null;
+  const spawnSignal = cap || ask ? (signal ? AbortSignal.any([signal, stopCtrl.signal]) : stopCtrl.signal) : signal;
+  // errorClass null: never retried (the next spawn starts the same server), and copilot's reason (e.g. "connection
+  // closed") is not read as a network failure.
+  const toolsDownError = () => Object.assign(new Error(`${bin}: worca's tools did not start on Copilot, so this chat cannot answer: ${toolsDown}`), { errorClass: null });
   // The session's cumulative usage, read once copilot has written it: the delta is this turn's, stored for the next resume.
   const settleUsage = () => {
     let total = null;
@@ -762,8 +782,12 @@ export async function runCopilotProcess({
       for (const e of normalizer.push(line)) {
         safeEmit(onEvent, e);
         if (cap && !capped && e.type === 'tool' && (e.parentId ?? null) === null && (toolCalls += Array.isArray(e.calls) ? e.calls.length : 1) > cap) {
-          capped = true; capCtrl.abort();
+          capped = true; stopCtrl.abort();
         }
+      }
+      if (ask && toolsDown === null) {
+        const why = normalizer.mcpFailure(ASK_MCP_SERVER);
+        if (why) { toolsDown = why; stopCtrl.abort(); }
       }
     },
   }).catch(async (err) => {
@@ -772,6 +796,7 @@ export async function runCopilotProcess({
     cleanup();
     closeRoute();
     const f = normalizer.finish();
+    if (toolsDown !== null && !signal?.aborted) throw redacted(toolsDownError());
     if (capped && !signal?.aborted) throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true }));
     // The session's own error (session.error on stdout) leads, and its class counts too.
     if (f.error && err?.name !== 'AbortError') {
@@ -784,6 +809,8 @@ export async function runCopilotProcess({
   const delta = settleUsage();
   cleanup();
   const final = normalizer.finish();
+  // Copilot may have ended before the stop reached it.
+  if (toolsDown !== null && !signal?.aborted) { closeRoute(); throw redacted(toolsDownError()); }
   if (capped && !signal?.aborted) { closeRoute(); throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true })); }
   if (final.error) {
     closeRoute();

@@ -193,6 +193,20 @@ test('tools capture: text, tool rows under Claude names, results, a failing comm
   assert.match(final.sessionId, /^[0-9a-f-]{36}$/);
 });
 
+// mcp-failed.jsonl: recorded from @github/copilot 1.0.115 with a stdio server that exits before the MCP handshake. Copilot
+// reports it on the stream only (session.mcp_servers_loaded), before the first model call, and then runs without its tools.
+test('a failed MCP server: one warning with copilot\'s reason and the server\'s stderr, and the normalizer names it', () => {
+  const why = 'MCP server process exited before completing the MCP initialize handshake (exit code 1); last stderr: Error: Cannot find module mcp-stdio.mjs';
+  const n = createCopilotNormalizer({ sessionId: 'copilot:x' });
+  const events = frames('mcp-failed.jsonl').flatMap((f) => n.push(f));
+  for (const e of events) assert.ok(EVENT_TYPES.has(e.type), e.type);
+  assert.deepEqual(events.filter((e) => e.type === 'stderr').map((e) => e.text), [`copilot: MCP server worca failed to start — ${why}`]);
+  assert.equal(n.mcpFailure('worca'), why);
+  const ok = createCopilotNormalizer();
+  for (const f of frames('tools.jsonl')) ok.push(f);
+  assert.equal(ok.mcpFailure('probe'), null, 'a connected server is no failure');
+});
+
 test('sub-agent capture: one sub-agent row, its own calls parented to it, its text kept out of the answer', () => {
   const { events, final } = replay('subagent.jsonl');
   const sub = events.filter((e) => e.type === 'subagent');
@@ -453,6 +467,28 @@ test('Ask Worca on copilot: only worca\'s MCP server, no custom instructions, no
     usageDir: join(dir, 'u'), scratchBase: join(dir, 's') });
   assert.equal(node.record().env.ASK_COMMAND_TOKEN, null);
   assert.ok(!node.record().argv.includes('--no-custom-instructions'));
+});
+
+test('a chat whose worca server failed to start stops with copilot\'s reason instead of answering without its tools', POSIX, async () => {
+  const dir = tmp();
+  const mcpPath = join(dir, 'mcp.json');
+  writeFileSync(mcpPath, JSON.stringify({ mcpServers: { worca: { type: 'stdio', command: 'node', args: ['mcp-stdio.mjs'] } } }));
+  const f = fakeCopilot(dir, { fixture: fixturePath('mcp-failed.jsonl') });
+  const events = [];
+  await assert.rejects(runCopilotProcess({ bin: f.bin, cwd: dir, prompt: 'hi', askLockdown: true, sandbox: 'read-only', mcpConfigPath: mcpPath, envScrub: true,
+    usageDir: join(dir, 'u'), scratchBase: join(dir, 's'), onEvent: (e) => events.push(e) }), (err) => {
+    assert.match(err.message, /: worca's tools did not start on Copilot, so this chat cannot answer: MCP server process exited before completing the MCP initialize handshake \(exit code 1\); last stderr: Error: Cannot find module mcp-stdio\.mjs$/);
+    assert.equal(classifyCopilotError(err), null, 'not retried: the next attempt would fail the same way');
+    return true;
+  });
+  assert.ok(!events.some((e) => e.type === 'result'), 'no answer');
+  assert.ok(events.some((e) => e.type === 'stderr' && /MCP server worca failed to start/.test(e.text)));
+  // A pipeline node keeps going (its prompt does not depend on one server): the warning is in its log.
+  const warned = [];
+  const res = await runCopilotProcess({ bin: f.bin, cwd: dir, prompt: 'hi', sandbox: 'read-only', mcpConfigPath: mcpPath,
+    usageDir: join(dir, 'u'), scratchBase: join(dir, 's'), onEvent: (e) => warned.push(e) });
+  assert.equal(res.exitCode, 0);
+  assert.ok(warned.some((e) => e.type === 'stderr' && /MCP server worca failed to start/.test(e.text)));
 });
 
 test('copilotAskSupport: every lockdown flag must be in --help', POSIX, async () => {
