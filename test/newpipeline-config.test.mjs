@@ -127,26 +127,19 @@ import { readIndexHtml } from '../src/core/read-index-html.mjs';
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-test('renderModelEffortPair fills a model dropdown (default + models + add) and filters efforts by model', async () => {
+test('renderEffortSelect lists the model\'s efforts on the row\'s harness', async () => {
   const { window } = await boot();
-  const doc = window.document;
-  // build a bare pair of selects + caption
-  const modelSel = doc.createElement('select');
-  const effortSel = doc.createElement('select');
-  const caption = doc.createElement('small');
-  // seed app state with two models
+  const effortSel = window.document.createElement('select');
   window.__np._setModels([
-    { id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: ['medium', 'high', 'max'] },
     { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'] },
+    { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex', efforts: ['minimal', 'low', 'medium', 'high'] },
   ]);
-  window.__np.renderModelEffortPair(modelSel, effortSel, caption, { model: 'claude-haiku-4-5', effort: 'high' });
-  // model dropdown: '(default model)' + 2 models + '+ Add model…' = 4 options
-  assert.equal(modelSel.options.length, 4);
-  assert.equal(modelSel.value, 'claude-haiku-4-5');
-  // effort dropdown filtered to Haiku's two efforts + the '(default effort)' row
-  assert.deepEqual([...effortSel.options].map((o) => o.value), ['', 'medium', 'high']);
-  assert.equal(effortSel.value, 'high');
-  assert.match(caption.textContent, /Haiku 4\.5 · high/);
+  window.__np.renderEffortSelect(effortSel, { model: 'claude-haiku-4-5', effort: 'high' });
+  assert.deepEqual([[...effortSel.options].map((o) => o.value), effortSel.value, effortSel.disabled], [['', 'medium', 'high'], 'high', false]);
+  window.__np.renderEffortSelect(effortSel, { model: 'gpt-5.5', effort: 'low', engine: 'codex' });
+  assert.deepEqual([...effortSel.options].map((o) => o.value), ['', 'minimal', 'low', 'medium', 'high']);
+  window.__np.renderEffortSelect(effortSel, { model: '', effort: '' });
+  assert.deepEqual([effortSel.options[0].textContent, effortSel.disabled], ['(pick a model first)', true]);
 });
 
 // A saved workflow served by the mocked API for the selector tests below.
@@ -212,7 +205,7 @@ test('selecting Default again renders the five built-in stages through the SAME 
   // but its controls still carry the legacy per-ROLE key that saveStep writes.
   const names = [...doc.querySelectorAll('#agents-rows .agent-name')].map((n) => n.textContent);
   assert.deepEqual(names, ['Clarify', 'Plan', 'Refine', 'Implement', 'Review']);
-  assert.equal(doc.querySelector('.step-model[data-role="planner"]').options.length, 4);
+  assert.ok(doc.querySelector('.step-model[data-role="planner"]').matches('button.mdl-pick'));
 });
 
 test('saved run-config preselects a node\'s model+effort and marks the row modified', async () => {
@@ -425,7 +418,7 @@ test('default-row fan-out checkbox reflects the sidecar default from /api/config
   assert.equal(window.document.querySelector('.step-fanout[data-role="clarify"]').checked, true);
   const clarify = window.document.querySelector('.step-model[data-role="clarify"]');
   const planner = window.document.querySelector('.step-model[data-role="planner"]');
-  assert.deepEqual([...clarify.options].map((o) => o.value), [...planner.options].map((o) => o.value));
+  assert.ok(clarify.matches('button.mdl-pick') && planner.matches('button.mdl-pick'));
 });
 
 test('toggling a default-row fan-out checkbox POSTs the step fanOut', async () => {

@@ -133,6 +133,7 @@ test('pick → prompt → start sends the run-only lane and writes no project co
   assert.equal(model.value, 'claude-haiku-4-5', 'the row shows the preset\'s pick');
   assert.equal(ctx.doc.querySelector('#agentsReset').hidden, true, 'no Reset: it would delete the project\'s rows');
   model.value = 'claude-opus-5-5';
+  model.dataset.engine = 'claude';
   model.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
   await waitFor(() => /Modified/.test(ctx.doc.querySelector('#preset-chip').textContent));
   const body = await submit(ctx);
@@ -140,6 +141,7 @@ test('pick → prompt → start sends the run-only lane and writes no project co
   assert.equal(body.presetId, 'rp_aaaaaaaaaaaa');
   assert.equal(body.humanInLoop, false);
   assert.equal(body.overlay.nodes.n_plan.model, 'claude-opus-5-5');
+  assert.equal(body.overlay.nodes.n_plan.engine, 'claude');
   // The overlay refuses a null toggle (fanOut/askQuestions must be true or false): an inherit is sent as the default.
   for (const pick of Object.values(body.overlay.nodes)) for (const v of Object.values(pick)) assert.notEqual(v, null);
   assert.equal(typeof body.overlay.nodes.n_plan.fanOut, 'boolean');

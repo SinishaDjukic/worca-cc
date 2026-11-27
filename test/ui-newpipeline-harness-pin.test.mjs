@@ -1,6 +1,8 @@
 // test/ui-newpipeline-harness-pin.test.mjs — New run's agent row for a step pinned to another harness (spec
-// 2026-11-26 "The surfaces"): the REAL app.js against a fetch stub. A project pick or the workflow's own pick that
-// names `engine` shows its model locked, says where to change it, and a save of another tunable sends it back with
+// 2026-11-26 "The surfaces"): the REAL app.js against a fetch stub. The row's model is the columns picker's trigger: a
+// project pick or the workflow's own pick that names `engine` stays editable and names its harness, a pick in the
+// picker saves the model with its harness (inherit clears both), a model the catalog lost shows as such, a disabled
+// trigger (Settings › Memory, no project) opens nothing, and a save of another tunable sends a pinned pick back with
 // its harness. The rig is test/ui-newpipeline-defrag-pin.test.mjs's.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -107,18 +109,72 @@ async function boot(srv) {
   return { window, doc, row };
 }
 
-const ON_CARD = 'Runs on OpenAI Codex. Change it on a Chat run card.';
 const PIN = { model: 'gpt-5.5', effort: 'low', engine: 'codex' };
-test('a project pick pinned to another harness shows its model, locked, and says to change it on a Chat run card; its Sub-agents hide', async () => {
+const opt = (doc, col, key) => [...doc.querySelectorAll(`.mdl-cols-pop [data-col="${col}"] [role="option"]`)].find((b) => b.dataset.key === key);
+
+test('a row pinned to another harness is editable: its trigger names the harness, its efforts are that harness\'s, its Sub-agents hide', async () => {
   const { doc, row } = await boot(makeServer({ stored: null, pick: PIN }));
-  assert.deepEqual([row().model.value, row().effort.value, row().model.disabled, row().effort.disabled, row().model.title, row().effort.title],
-    ['gpt-5.5', 'low', true, true, ON_CARD, ON_CARD]);
-  assert.equal(doc.querySelector('#agents-rows .agent-origin').textContent, ON_CARD);
+  const m = row().model;
+  assert.deepEqual([m.tagName, m.classList.contains('mdl-pick'), m.value, m.dataset.engine, m.disabled, row().effort.value, row().effort.disabled],
+    ['BUTTON', true, 'gpt-5.5', 'codex', false, 'low', false]);
+  assert.ok(m.querySelector('.mdl-mark'), 'the harness mark');
+  assert.deepEqual([...row().effort.options].map((o) => o.value), ['', 'minimal', 'low', 'medium', 'high']);
+  assert.doesNotMatch(doc.querySelector('#agents-rows .agent-origin').textContent, /Change it/);
+  assert.match(doc.querySelector('#agents-rows .agent-sum').textContent, /GPT-5\.5 · low · on OpenAI Codex/);
   assert.equal(row().sub.closest('.select-wrap').hidden, true);
 });
-test('the workflow\'s own pin says to change it in Workflows', async () => {
-  const { row } = await boot(makeServer({ stored: null, template: PIN }));
-  assert.deepEqual([row().model.value, row().model.disabled, row().model.title], ['gpt-5.5', true, 'Runs on OpenAI Codex. Change it in Workflows.']);
+test('the workflow\'s own pin is editable, and the origin line names its harness', async () => {
+  const { doc, row } = await boot(makeServer({ stored: null, template: PIN }));
+  assert.deepEqual([row().model.value, row().model.dataset.engine, row().model.disabled], ['gpt-5.5', 'codex', false]);
+  assert.equal(doc.querySelector('#agents-rows .agent-origin').textContent, 'This workflow’s default: GPT-5.5 · low on OpenAI Codex.');
+});
+test('a pick in the picker saves the model with its harness and resets the effort, and the focus stays on the row; inherit clears both', async () => {
+  const srv = makeServer({ stored: null });
+  const { doc, row } = await boot(srv);
+  doc.querySelector('.agent-row-head[data-node-id="n_defrag"]').click();   // open the row: a collapsed body holds no focus
+  row().model.click();
+  assert.equal(doc.querySelector('.mdl-cols-pop .mdl-cols-hint').textContent, 'workflow default');
+  opt(doc, 'harness', 'codex').click();
+  opt(doc, 'model', 'gpt-5.5').click();
+  await settle(24);
+  const sent = srv.writes.at(-1).nodes.n_defrag;
+  assert.deepEqual([sent.model, sent.effort, sent.engine], ['gpt-5.5', '', 'codex']);
+  assert.deepEqual([row().model.value, row().model.dataset.engine, doc.activeElement === row().model], ['gpt-5.5', 'codex', true]);
+  row().model.click();
+  doc.querySelector('.mdl-cols-pop .mdl-cols-inherit').click();
+  await settle(24);
+  const cleared = srv.writes.at(-1).nodes.n_defrag;
+  assert.deepEqual([cleared.model, cleared.effort, cleared.engine], ['', '', '']);
+});
+test('Review Focus 1: a stored model the catalog lost is shown as such and survives a save of another tunable', async () => {
+  const srv = makeServer({ stored: null, pick: { model: 'gone-9' } });
+  const { window, row } = await boot(srv);
+  assert.deepEqual([row().model.value, row().model.querySelector('.mdl-pick-text').textContent, row().effort.disabled], ['gone-9', 'gone-9 (not in the catalog)', true]);
+  row().fan.checked = true;
+  row().fan.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await settle(24);
+  assert.equal(srv.writes.at(-1).nodes.n_defrag.model, 'gone-9');
+});
+// A dispatched click, not .click(): .click() on a disabled button never reaches a listener, so only a dispatched one
+// shows the trigger's own guard.
+test('Review Focus 5: a disabled trigger opens nothing: a model Settings › Memory owns, and a row with no project selected', async () => {
+  const press = (window, b) => b.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  const locked = await boot(makeServer({ stored: { model: 'claude-haiku-4-5', effort: 'high' } }));
+  locked.doc.querySelector('.agent-row-head[data-node-id="n_defrag"]').click();
+  const m = locked.row().model;
+  assert.deepEqual([m.value, m.disabled, m.title], ['claude-haiku-4-5', true, 'Set in Settings › Memory']);
+  press(locked.window, m);
+  assert.equal(locked.doc.querySelector('.mdl-cols-pop'), null, 'the Memory-owned model opens nothing');
+
+  const { window, doc, row } = await boot(makeServer({ stored: null }));
+  doc.querySelector('.agent-row-head[data-node-id="n_defrag"]').click();
+  const project = doc.querySelector('#projectSelect');
+  project.value = '';
+  project.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await settle();
+  assert.deepEqual([doc.querySelector('#agentsSummary').textContent, row().model.disabled], ['select a project to change these', true]);
+  press(window, row().model);
+  assert.equal(doc.querySelector('.mdl-cols-pop'), null, 'with no project the trigger opens nothing');
 });
 test('a save of another tunable sends the pinned pick back untouched, with its harness; so does a stale pin', async () => {
   for (const pick of [PIN, { model: 'claude-haiku-4-5', effort: 'medium', engine: 'codex' }]) {

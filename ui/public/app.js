@@ -231,12 +231,13 @@ import { renderCatalogue, renderModelPanel } from './models/catalogue-view.mjs';
 import { buildJobs, jobsSaved, jobsSaveBody, jobsDirty } from './models/jobs-model.mjs';
 import { renderJobs, openOverrideMenu } from './models/jobs-view.mjs';
 import { openModelPicker } from './models/model-picker.mjs';
+import { modelTrigger, columnsValue } from './models/model-columns.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
 import { openSetupAssistant, teamNotice, TEAM_SEEN_KEY } from './setup-assistant.mjs';
-import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
+import { loadCredentials } from './credential-badges.mjs';
 import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
@@ -301,7 +302,7 @@ import { decorateArtifact, decorateDiff } from './pinpoint-surfaces.mjs';
 import { trayKey as pinpointTrayKey } from './pinpoint-model.mjs';
 import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
-import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, pinnedHarnessText, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
+import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 import { buildFeedbackRows as ntBuildFeedbackRows } from './loop-rows.mjs';
 import { renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
@@ -4348,6 +4349,8 @@ function agentSummaryText(row) {
     const m = modelById(row.model);
     parts.push(m ? m.label : row.model, row.effort || 'default effort');
   }
+  // A pick pinned to its harness says which: it runs there whatever the run's default harness.
+  if (row.engine) parts.push(`on ${engineLabel(row.engine)}`);
   if (row.fanOut) parts.push('fan-out');
   // A stored policy shows whether or not fan-out is currently on: the value
   // persists across a fan-out toggle, and hiding it while the modified dot
@@ -4398,7 +4401,7 @@ if (typeof window !== 'undefined') {
     resolveNodeTunables,
     buildFeedbackRows,
     defaultEffortFor,
-    renderModelEffortPair,
+    renderEffortSelect,
     renderAgentRows,
     renderFeedbackRows,
     renderWorkflowConfig,
@@ -4527,53 +4530,23 @@ if (typeof window !== 'undefined') {
   });
 }
 
-// Paint one model+effort select pair (and its caption) from a saved selection
-// {model,effort}. Shared by the legacy default-stage rows and the dynamic
-// per-node rows so the dropdown contents + effort filtering live in one place.
-function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
-  // Model dropdown: "(default model)", then the models grouped by connection (model-options.mjs, the grouping every
-  // picker shares) — then "+ Add model…". An option names who added it (team policy, a plugin), and the observed §4.6
-  // "cost not verified" flag still marks it.
-  modelSel.innerHTML = '';
-  modelSel.appendChild(option('', '(default model)'));
-  // D10: New pipeline offers the models the run's harness can run only (src/shared/connections.mjs) — any
-  // other would be skipped at run time. `sel.engine` is a row pinned to its own harness (a pick naming `engine`):
-  // it lists that harness's models and the efforts a pinned pick may carry (pickEffortsOn).
-  const engine = sel.engine || state.engine || 'claude';
-  const ofEngine = (m) => runsOn(m, engine);
-  // A bridged model whose provider is not usable (model-bridge-design.md §8.5)
-  // leaves the list — unless it is THIS selection, which is then labelled so.
-  const usable = (m) => ofEngine(m) && (!m.needsSignIn || m.id === sel.model);
-  // "Hide built-in models" (#422): a hidden built-in leaves the list — unless
-  // it is THIS selection, which still resolves and must stay visible.
-  appendModelGroups(modelSel, state.models.filter((m) => usable(m) && (m.custom || !m.hidden || m.id === sel.model)), {
-    engine, text: (m) => modelOptionText(m) + (m.costUnreliable ? ' ⚠cost' : '') + (m.needsSignIn ? ' (needs sign-in)' : '') + credentialSuffix(m.id) });
-  modelSel.appendChild(option('__add__', 'Add model…'));
-  modelSel.value = sel.model || '';
-
-  // Effort dropdown: filtered to the selected model's supported efforts. With no
-  // model there is no list to offer — which efforts are valid is a property of
-  // the model — so the control is disabled. It SAYS so rather than just greying
-  // out, because a dead dropdown next to a live one reads as a broken UI.
-  const model = modelById(modelSel.value);
+// Paint one Agents row's effort select from its pick {model, effort, engine}. The model itself is the row's columns
+// picker trigger (renderAgentRows); `engine` is the harness a pinned pick names, absent for a soft pick or inherit.
+function renderEffortSelect(effortSel, { model = '', effort = '', engine = '' } = {}) {
+  // Filtered to the model's supported efforts. With no model (or one the catalog lost) there is no list to offer —
+  // which efforts are valid is a property of the model — so the control is disabled. It SAYS so rather than just
+  // greying out, because a dead dropdown next to a live one reads as a broken UI.
+  const m = modelById(model);
   effortSel.innerHTML = '';
-  effortSel.appendChild(option('', model ? '(default effort)' : '(pick a model first)'));
-  // A model on two harnesses keeps its own efforts; this run's harness offers them mapped (effortsOn). A pinned row
-  // offers its own efforts and the mapped ones, so a stored own-only effort still shows.
-  const offeredEfforts = model ? (sel.engine ? pickEffortsOn(model, engine) : effortsOn(model, engine)) : [];
-  offeredEfforts.forEach((e) => effortSel.appendChild(option(e, e)));
-  effortSel.value = sel.effort && offeredEfforts.includes(sel.effort) ? sel.effort : '';
-
-  modelSel.disabled = false;
-  effortSel.disabled = !model;
-  effortSel.title = model ? '' : 'Pick a model first. The effort levels on offer are that model’s own.';
-
-  if (caption) {
-    const mLabel = model ? model.label : 'default model';
-    caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`
-      + (model && model.needsSignIn ? ' (needs sign-in under Models › Providers)' : '');
-    caption.classList.toggle('err', !!(model && model.needsSignIn));
-  }
+  effortSel.appendChild(option('', m ? '(default effort)' : '(pick a model first)'));
+  // A model on two harnesses keeps its own efforts; a soft pick offers them mapped onto the run's harness (effortsOn).
+  // A pinned pick offers its own efforts and the ones its harness maps (pickEffortsOn), so a stored own-only effort
+  // still shows.
+  const offered = m ? (engine ? pickEffortsOn(m, engine) : effortsOn(m, state.engine || 'claude')) : [];
+  offered.forEach((e) => effortSel.appendChild(option(e, e)));
+  effortSel.value = effort && offered.includes(effort) ? effort : '';
+  effortSel.disabled = !m;
+  effortSel.title = m ? '' : 'Pick a model first. The effort levels on offer are that model’s own.';
 }
 
 // The built-in Default workflow, client-side. Two jobs: (1) it is the topology
@@ -4999,8 +4972,10 @@ function paintHiddenSettings() {
 // Build the agents accordion into #agents-rows: one collapsed .agent-row per node
 // (accent + name + effective-config caption + modified dot), whose body holds the
 // same model/effort/fan-out/questions controls the old always-open .stage-cfg card
-// did — same classes and data-node-id, so the delegated change handler and
-// renderModelEffortPair are unchanged (newpipeline-ux-design.md §4.2).
+// did — same classes and data-node-id, so the delegated change handler is unchanged
+// (newpipeline-ux-design.md §4.2). The model is the columns picker's trigger
+// (models/model-columns.mjs): it offers every harness, opens on the run's default
+// harness, and a pick names the harness it was picked on.
 function renderAgentRows(rows) {
   const host = el.agentRows;
   if (!host) return;
@@ -5074,14 +5049,16 @@ function renderAgentRows(rows) {
 
     const picks = document.createElement('div');
     picks.className = 'picks';
+    // The model: the columns picker's trigger, with a <select>'s contract (`value`, `disabled`, one bubbling
+    // `change` per pick) and `data-engine`, the harness a pick names ('' = soft or inherit).
     const mWrap = document.createElement('div');
-    mWrap.className = 'select-wrap';
-    const modelSel = document.createElement('select');
-    modelSel.className = 'step-model select';
-    modelSel.dataset.nodeId = row.nodeId;
-    if (row.role) modelSel.dataset.role = row.role;
-    modelSel.setAttribute('aria-label', `${row.label} model`);
-    mWrap.appendChild(modelSel);
+    mWrap.className = 'agent-model';
+    const trigger = modelTrigger({ doc: document, win: window, value: columnsValue({ model: row.model, engine: row.engine }),
+      catalog: state.models, label: `Model for ${row.label}`, cls: 'step-model', defaultEngine: state.engine || 'claude',
+      engines: readyEngineRows, inheritHint: 'workflow default', onAddModel: addModelOn, refocus: () => agentTriggerOf(row.nodeId) });
+    trigger.dataset.nodeId = row.nodeId;
+    if (row.role) trigger.dataset.role = row.role;
+    mWrap.appendChild(trigger);
     const eWrap = document.createElement('div');
     eWrap.className = 'select-wrap';
     const effortSel = document.createElement('select');
@@ -5114,7 +5091,7 @@ function renderAgentRows(rows) {
     keepVisible(tagLevel(sWrap, 'expert'), (row.subagentModel || '') !== (rowDef.subagentModel || ''));
     // Only a step on Claude Code has a sub-agent model to pick: Codex has its own spawn_agent, Copilot's sub-agents run on the
     // node's own model, OpenCode's investigator runs on the node's model, and Cursor, Gemini CLI, Goose and Qwen Code have none.
-    // A row pinned to a harness runs there whatever the run's.
+    // A row pinned to a harness runs there whatever the run's; a pick made here hides or shows it with the save's re-render.
     if ((row.engine || state.engine) !== 'claude') sWrap.hidden = true;
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const lockWhy = row.questionsLocked ? (row.askQuestions ? 'Always on for this agent' : 'Always off for this agent') : null;
@@ -5131,10 +5108,7 @@ function renderAgentRows(rows) {
     // to "what does 'default' actually mean here", without opening a doc.
     const origin = document.createElement('small');
     origin.className = 'agent-origin';
-    // A row pinned to another harness (a pick naming `engine`, no Settings › Memory pin) is shown locked: New run
-    // does not pick harnesses, so it says where to change it.
-    const harnessPinned = !!row.engine && !row.pinned;
-    origin.textContent = row.pinned ? PINNED_PAIR_TEXT : harnessPinned ? pinnedHarnessText(row) : defaultOriginText(row);
+    origin.textContent = row.pinned ? PINNED_PAIR_TEXT : defaultOriginText(row);
     body.appendChild(origin);
     // A pick of the other engine was healed off this run's row (D10) but stays stored and is
     // re-sent on save: say so, so it is never invisible — picking a model here replaces it.
@@ -5152,15 +5126,9 @@ function renderAgentRows(rows) {
 
     card.appendChild(body);
     // The collapsed head IS this row's caption (`sum` above), so the controls get
-    // no second one — renderModelEffortPair's caption slot stays empty and
-    // paintRowSummary keeps the head in step with the live selects.
-    if (harnessPinned) {
-      renderModelEffortPair(modelSel, effortSel, null, { model: row.model, effort: row.effort, engine: row.engine });
-      lockPinnedPair(modelSel, effortSel, pinnedHarnessText(row));
-    } else {
-      renderModelEffortPair(modelSel, effortSel, null, { model: row.model, effort: row.effort });
-    }
-    if (row.pinned) lockPinnedPair(modelSel, effortSel);
+    // no second one — paintRowSummary keeps the head in step with the live controls.
+    renderEffortSelect(effortSel, { model: row.model, effort: row.effort, engine: row.engine });
+    if (row.pinned) lockPinnedPair(trigger, effortSel);
     host.appendChild(card);
   });
   applyFreeDailyToNewView();   // a :free model among the rows may need the allowance warning
@@ -5187,15 +5155,21 @@ function paintRowSummary(row, body) {
   head.textContent = agentSummaryText({ ...row, ...liveRowValues(row, body) });
 }
 
-// Settings › Memory owns a Memory defragment run's model + effort (node-tunables.mjs `pinned`), and a row pinned to
-// another harness keeps its own pick: shown, never edited here (`title` says where it is set). `data-locked` keeps
-// setAgentRowsEnabled from re-enabling them and liveRowValues from reading them back.
+/** The model trigger (button.mdl-pick.step-model) of the Agents row for `nodeId`, looked up again after a repaint. */
+function agentTriggerOf(nodeId) {
+  if (!el.agentRows) return null;
+  return [...el.agentRows.querySelectorAll('.step-model')].find((b) => b.dataset.nodeId === nodeId) || null;
+}
+
+// Settings › Memory owns a Memory defragment run's model + effort (node-tunables.mjs `pinned`): shown, never edited
+// here, and the trigger opens nothing. A row pinned to another harness is not locked: its trigger picks a model on
+// any harness. `data-locked` keeps setAgentRowsEnabled from re-enabling them and liveRowValues from reading them back.
 const PINNED_PAIR_TEXT = 'Set in Settings › Memory. Every Memory defragment run uses this model, whatever this project picked.';
-function lockPinnedPair(modelSel, effortSel, title = 'Set in Settings › Memory') {
-  for (const s of [modelSel, effortSel]) {
+function lockPinnedPair(trigger, effortSel) {
+  for (const s of [trigger, effortSel]) {
     s.disabled = true;
     s.dataset.locked = '1';
-    s.title = title;
+    s.title = 'Set in Settings › Memory';
   }
 }
 
@@ -5205,7 +5179,8 @@ function defaultOriginText(row) {
   if (!row.def.model) { const t = emptyStepText(row); return t ? `${t}.` : 'No model set for this workflow. It falls back to the CLI’s own default.'; }
   const m = modelById(row.def.model);
   const label = m ? m.label : row.def.model;
-  return `This workflow’s default: ${label}${row.def.effort ? ` · ${row.def.effort}` : ''}.`;
+  const on = row.def.engine ? ` on ${engineLabel(row.def.engine)}` : '';   // the workflow's own pin names its harness
+  return `This workflow’s default: ${label}${row.def.effort ? ` · ${row.def.effort}` : ''}${on}.`;
 }
 
 // Build the feedback-loop cycle counts as the accordion's LAST row (§4.2, D4):
@@ -5323,8 +5298,9 @@ function setRunEngine(engine) {
   paintSessionNotes();
   paintRunExecEnv();
   showEngineRefusal(null);
-  // D10: the agent rows offer the run engine's models only — repaint them for the new engine. The Sets
-  // picker too: another engine names set skills as its .agents/skills mount would.
+  // D10: the run's engine is the Agents rows' default harness: what their inherit and soft picks run on, where their
+  // pickers open, and what heals a soft pick it cannot run — repaint them for the new engine. The Sets picker too:
+  // another engine names set skills as its .agents/skills mount would.
   if (prev !== state.engine) {
     void renderWorkflowConfig(state.workflowId);
     if (currentView() === 'new') schedulePolicyLine();
@@ -5620,7 +5596,8 @@ async function saveStep(role, model, effort, fanOut, askQuestions, subagentModel
 // it back (rather than the last-rendered row data, or state.config, which lags an
 // in-flight save) is what keeps a toggle from reverting a model picked a moment
 // earlier. A disabled questions box is the agent's locked value, never the user's, and a locked model + effort pair
-// (data-locked) is left out, so a save of another tunable re-sends the row's own pick.
+// (data-locked) is left out, so a save of another tunable re-sends the row's own pick. The model trigger's harness
+// (data-engine) rides with its model, so a save of another tunable never drops or changes it.
 function liveRowValues(row, body) {
   const host = body || (el.agentRows
     && el.agentRows.querySelector(`.agent-row[data-node-id="${row.nodeId}"] .agent-row-body`));
@@ -5631,7 +5608,10 @@ function liveRowValues(row, body) {
   const f = host.querySelector('.step-fanout');
   const q = host.querySelector('.step-questions');
   const sa = host.querySelector('.step-subagent');
-  if (m && !m.dataset.locked) out.model = m.value === '__add__' ? row.model : m.value;
+  if (m && !m.dataset.locked) {
+    out.model = m.value;
+    out.engine = m.dataset.engine || '';
+  }
   if (e && !e.dataset.locked) out.effort = e.value;
   if (f) out.fanOut = f.checked;
   if (q && !q.disabled) out.askQuestions = q.checked;
@@ -5664,7 +5644,7 @@ async function saveAgentRow(row, next, body) {
     const patch = pruneNodeSelection(row, { ...liveRowValues(row, body), ...next });
     s.overlay = s.overlay || {};
     s.overlay.nodes = { ...(s.overlay.nodes || {}), [row.nodeId]: presetNodePick(patch, row.def) };
-  })) { renderWorkflowConfig(state.workflowId); return; }
+  })) { await renderWorkflowConfig(state.workflowId); return; }
   // Defence in depth: the controls are disabled without a project, but if one
   // is ever reached anyway, say so rather than letting the save no-op and the
   // re-render quietly undo the edit. Same wording as the submit guard.
@@ -5787,19 +5767,6 @@ async function saveHumanInLoop(on) {
 }
 if (el.humanInLoop) el.humanInLoop.addEventListener('change', () => saveHumanInLoop(el.humanInLoop.checked));
 
-// "+ Add model…" in any model dropdown: restore the selection and jump to the
-// global Models view with Add model open (models are added GLOBALLY —
-// configurable-models-design.md §4.9; the old per-project window.prompt flow
-// is gone).
-function goAddModel(restore) {
-  if (typeof restore === 'function') restore();
-  mvState.editing = null;
-  mvState.prefill = null;
-  // Step 1 opens on a sign-in with the run's harness picked (D10): a Codex run adds a Codex model.
-  mvState.openEditorOnLoad = { where: 'signin', engine: state.engine };   // survives the view switch: readModelsView opens it
-  showView('models');
-}
-
 // Delegated change handler for every config control inside #pipeline-config.
 // Each control carries the node id of its accordion row; agentRowsById supplies
 // that row's resolved defaults, so saveAgentRow can prune a redundant selection
@@ -5830,19 +5797,28 @@ el.pipelineConfig.addEventListener('change', (e) => {
       : { askQuestions: !!t.checked }, body);
   }
 
-  if (!(t instanceof HTMLSelectElement)) return;
-
-  if (t.classList.contains('step-model')) {
-    if (t.value === '__add__') return goAddModel(() => renderWorkflowConfig(state.workflowId));
-    // A new model invalidates the old effort (the dropdown is filtered by it), so
-    // the effort resets and the row's options are repainted immediately — the
-    // save's own re-render lands a moment later.
-    saveAgentRow(row, { model: t.value, effort: '' }, body);
+  // The model trigger (a button, models/model-columns.mjs): a pick sets its value and the harness it names
+  // (data-engine, '' = soft or inherit). A new model invalidates the old effort (the effort select is filtered by
+  // it), so the effort resets and its options are repainted immediately — the save's own re-render lands a moment
+  // later and replaces the trigger, so the focus goes to the row's new one unless it has moved elsewhere meanwhile.
+  if (t.classList && t.classList.contains('step-model')) {
+    const engine = t.dataset.engine || '';
+    const saved = saveAgentRow(row, { model: t.value, effort: '', engine }, body);
     const effortSel = body && body.querySelector('.step-effort');
-    if (effortSel) renderModelEffortPair(t, effortSel, null, { model: t.value, effort: '' });
+    if (effortSel) renderEffortSelect(effortSel, { model: t.value, effort: '', engine });
     paintRowSummary(row, body);
     schedulePolicyLine();                      // an off-list model is a team-policy note (board 8)
-  } else if (t.classList.contains('step-effort')) {
+    void saved.then(() => {
+      if (document.activeElement !== document.body) return;
+      const next = agentTriggerOf(row.nodeId);
+      if (next) next.focus();
+    });
+    return;
+  }
+
+  if (!(t instanceof HTMLSelectElement)) return;
+
+  if (t.classList.contains('step-effort')) {
     saveAgentRow(row, { effort: t.value }, body);
     paintRowSummary(row, body);
   } else if (t.classList.contains('step-subagent')) {
@@ -23905,9 +23881,9 @@ async function paintMcpjsonHint() {
   const link = Object.assign(document.createElement('a'), { href: `#projects/${encodeURIComponent(key)}/mcp`, textContent: `Approve ${names.length === 1 ? 'it' : 'them'} on the project’s Sets tab` });
   el.engineMcpjsonHint.replaceChildren(`${names.length === 1 ? '1 server' : `${names.length} servers`} from the repository’s .mcp.json won’t start (${names.join(', ')}). `, link);
 }
-/** The models the run will pick: the Agents accordion's selects, else the legacy per-role config. */
+/** The models the run will pick: the Agents accordion's model triggers, else the legacy per-role config. */
 function selectedRunModels() {
-  const picked = [...document.querySelectorAll('#agents-rows select.step-model')].map((s) => s.value).filter((v) => v && v !== '__add__');
+  const picked = [...document.querySelectorAll('#agents-rows .step-model')].map((s) => s.value).filter(Boolean);
   const models = picked.length ? picked
     : Object.values((state.config && state.config.steps) || {}).map((s) => s && s.model).filter((m) => typeof m === 'string' && m);
   return [...new Set(models)];
@@ -42562,7 +42538,7 @@ function paintSearchPlaceholder() {
 }
 // Paint one Settings tab and run its loader. Called from showView ONLY, so every
 // entry point (tab click, hash, deep link, legacy redirect, boot, a direct
-// showView call such as goAddModel) goes through exactly one render.
+// showView call such as addModelOn) goes through exactly one render.
 // `param` is already canonical: '' | '<tab>' | 'guardrails/<id>'.
 function showSettingsTab(param = '') {
   const [tab, sub] = parseSettingsParam(param);

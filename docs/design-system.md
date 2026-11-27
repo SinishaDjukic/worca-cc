@@ -571,18 +571,20 @@ above them, never a boxed tab, and never a colour of a tab's own.
 ### Model picker (columns)
 `div.menu.mdl-cols-pop` (`role="dialog"`, not modal; `openModelColumns` in `ui/public/models/model-columns.mjs`, CSS in
 `ui/public/models/models-page.css`): one step's model, picked as harness › provider › model, on the Chat run card's
-Agents rows and the Workflows view's Model button and Model field. Its trigger is `button.mdl-pick` from `modelTrigger` (same module): a select's contract (`value`, `disabled`, one bubbling `change`) plus `data-engine`. Appended to `<body>`, fixed, placed under its trigger
-with `placeFlyout`; `min(672px, 100vw − 16px)` wide (below 688px it scrolls sideways), its columns `min(420px, the
-room)` tall. The Menu skin: on top `button.menu-item.mdl-cols-inherit` (**inherit** at 500, the host's hint in 12px
-`--ink-2`, the tick last when nothing is picked), a `.menu-sep`, then three columns, 204px, 214px and the rest, split by
-1px `--line` rules, each an 11px / 600 `--ink-2` head over a `listbox` of `option` rows that scrolls on its own. Harness:
-the 18px mark, the name, `.badge` **Default** on the run's harness, a chevron. Provider: the name over its State word
-(`Ready`, `Not ready`, `Needs key`, `Needs sign-in`, `No models yet`) and a chevron, 44px. Model (`Model · N`): the
-name, a 12px `--ink-2` note (*also on OpenAI Codex*, or what it needs), the tick last. The shown harness and provider and
-the picked model take `--row-selected`; a row that cannot be picked is disabled with its reason as its tooltip. An empty
-column says `No models yet.` over a quiet small **Add model**. Keys: ↑ ↓ Home End in a column, → or Enter into the next,
-← back, Enter or Space picks, Escape closes; one Tab stop per column; no key reaches the page. Use it where a step's
-harness is chosen with its model. Never a select of models across harnesses, and never a coloured word for a state.
+Agents rows, New run's Agents rows and the Workflows view's Model button and Model field. Its trigger is
+`button.mdl-pick` from `modelTrigger` (same module): a select's contract (`value`, `disabled`, one bubbling `change`)
+plus `data-engine`. Appended to `<body>`, fixed, placed under its trigger with `placeFlyout`; `min(672px, 100vw − 16px)`
+wide (below 688px it scrolls sideways), its columns `min(420px, the room)` tall. The Menu skin: on top
+`button.menu-item.mdl-cols-inherit` (**inherit** at 500, the host's hint in 12px `--ink-2`, the tick last when nothing
+is picked), a `.menu-sep`, then three columns, 204px, 214px and the rest, split by 1px `--line` rules, each an 11px /
+600 `--ink-2` head over a `listbox` of `option` rows that scrolls on its own. Harness: the 18px mark, the name, `.badge`
+**Default** on the run's harness, a chevron. Provider: the name over its State word (`Ready`, `Not ready`, `Needs key`,
+`Needs sign-in`, `No models yet`) and a chevron, 44px. Model (`Model · N`): the name, a 12px `--ink-2` note (*also on
+OpenAI Codex*, or what it needs), the tick last. The shown harness and provider and the picked model take
+`--row-selected`; a row that cannot be picked is disabled with its reason as its tooltip. An empty column says
+`No models yet.` over a quiet small **Add model**. Keys: ↑ ↓ Home End in a column, → or Enter into the next, ← back,
+Enter or Space picks, Escape closes; one Tab stop per column; no key reaches the page. Use it where a step's harness is
+chosen with its model. Never a select of models across harnesses, and never a coloured word for a state.
 
 ## Patterns
 - Status line: "State · detail", for example "Failed · Review · Review Implementation". No colon forms. In a card head

@@ -52,10 +52,10 @@ its toolbar, or the **Model** field under **More**: both open one picker, **inhe
 columns, **Harness**, **Provider** and **Model**. A pick names the harness it runs on, so one workflow can plan on Claude
 Code and implement on Codex; **inherit** runs the step on the run's harness. A model two harnesses run is listed under
 each (*also on …*), and a provider that needs a key or a sign-in says so. **Effort** offers what the picked model takes on
-the picked harness. For one project, use New pipeline › **Advanced** › **Agents**: a step pinned to a harness shows there
-locked, with where to change it (*Runs on OpenAI Codex. Change it in Workflows.* for the workflow's own pick, *… Change it
-on a Chat run card.* for the project's). The project keeps your picks for its later runs, and **Save as workflow
-defaults** moves them, harness included, into the workflow.
+the picked harness. For one project, use New pipeline › **Advanced** › **Agents**: each row's model opens the same
+picker. A pick made there names its harness and is saved for the project, so the step stays on it in later runs, also
+when **Default harness** changes. **inherit** goes back to the workflow default. The project keeps your picks for its
+later runs, and **Save as workflow defaults** moves them, harness included, into the workflow.
 
 A project's pick beats a team-policy default, which beats the workflow's own. `--model` only fills nodes that have
 none. Fan-out agents also take a sub-agent model.

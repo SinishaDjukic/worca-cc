@@ -172,12 +172,6 @@ const found = (id) => {
   return !!n && n.classList.contains('is-found') && panelShown(n.closest('.mdl-panel').dataset.tab);
 };
 const follow = (href) => go(win, href);
-const pickOption = (sel, v) => {
-  assert.ok(sel, 'the picker is there');
-  sel.value = v;
-  assert.equal(sel.value, v, `the picker offers "${v}"`);
-  sel.dispatchEvent(new win.Event('change', { bubbles: true }));
-};
 const link = (root, sel) => {
   const a = root.querySelector(sel);
   assert.ok(a, `${sel} is linked`);
@@ -214,9 +208,14 @@ const WAYS = [
   ['Marketplace "Open in Models"', () => follow(landing('models').href), '#models', () => panelShown('catalogue')],    // marketplace/kinds.mjs:28,111
   ['plugin "Used by" Open', () => follow('#models'), '#models', () => panelShown('catalogue')],                         // marketplace-installed.test.mjs:263
   ['Ask worca model card', () => follow('#models'), '#models', () => panelShown('catalogue')],                          // ask-panel-card.test.mjs:955
-  ['"Add model…" in a New run picker', async () => { await openWf(win); pickOption(doc.querySelector('.step-model[data-node-id="n1"]'), '__add__'); }, '#models',
+  ['"Add model…" in a New run picker', async () => {
+    await openWf(win);
+    doc.querySelector('.step-model[data-node-id="n1"]').click();
+    doc.querySelector('.mdl-cols-pop [data-col="harness"] [data-key="cursor"]').click();   // no Cursor model in NEW_RUN_ARMS' catalog
+    doc.querySelector('.mdl-cols-pop .mdl-cols-add').click();
+  }, '#models',
     () => panelShown('catalogue') && !!doc.querySelector('#model-editor-modal:not(.hidden) #mv-editor-host .mdl-add[data-step="1"]'),
-    NEW_RUN_ARMS],                                                                                                       // as ui-newpipeline-engine-models.test.mjs:145-172
+    NEW_RUN_ARMS],   // as ui-newpipeline-engine-models.test.mjs "Add model under an empty Model column"
   ['Design › Pictures "Set up"', () => follow('#models/providers/images'), '#models/providers/images', () => rowOpen('images')], // ui-design-library.test.mjs:257-259
   ['account menu free requests', () => clickAccountRow('.mc-free'), '#models/providers/openrouter', () => rowOpen('openrouter')],
   ['search "openai key"', () => searchPick(ctx, 'openai key', 'OpenAI-compatible'), '#models/providers/openai', () => rowOpen('openai')],

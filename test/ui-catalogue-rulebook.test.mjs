@@ -224,10 +224,11 @@ test('the typed-plus ratchet lost the four slice-3 files', () => {
     assert.ok(!debt.typedPlus.includes(`ui/public/${f}`), f);
   for (const s of ['.mv-filter.on', '.wfl-chip[aria-pressed="true"]']) assert.ok(!debt.solidPressed.includes(s), s);
   // Run 3 (F-12): app.js and engine-settings-view.mjs typed "+" into <option> text, which cannot hold an icon; the
-  // plus is dropped ("Add model…", "Add project…", "Override a …"), so the list is empty. Run 4 (D15): release-row.mjs's
+  // plus is dropped ("Add model…", "Add project…", "Override a …"), so the list is empty. New run's rows no longer have
+  // an <option> for Add model (the columns picker has its own button). Run 4 (D15): release-row.mjs's
   // "Add a release" is a quiet small button with the plus icon.
   assert.deepEqual(debt.typedPlus, []);
-  assert.match(read('ui/public/app.js'), /option\('__add__', 'Add model…'\)/);
+  assert.doesNotMatch(read('ui/public/app.js'), /'\+ Add model…'/);
   assert.match(read('ui/public/engine-settings-view.mjs'), /doc\.createElement\('option'\), \{ value: '', textContent: `Override a/);
   assert.doesNotMatch(read('ui/public/shape/release-row.mjs'), /'\+ Add a release'/);
 });

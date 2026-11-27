@@ -48,6 +48,7 @@
 .agent-desc{display:block;margin-bottom:9px;color:var(--ink-3);font-size:12px;line-height:1.45;overflow-wrap:anywhere;}
 .agent-row-body .picks{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;}
 .agent-row-body .select-wrap{width:180px;}
+.agent-row-body .agent-model{width:220px;min-width:0;}   /* the model: the columns picker's trigger (.mdl-pick) */
 .agent-row-body .select{padding:0 36px 0 13px;font-size:var(--fs-body);border-radius:var(--r-sm);background:var(--surface);border-color:var(--line-2);}
 .agent-origin{display:block;margin-top:4px;color:var(--ink-3);font-size:var(--fs-meta);}
 .fb-field{margin-bottom:10px;}

@@ -109,7 +109,7 @@ Agents run on Claude Code by default. The other engines are all in **beta**: Ope
 [CLI agent](#cursor), Google's [Gemini CLI and Qwen Code](#gemini-cli-and-qwen-code),
 [Goose](#goose) and [OpenCode](#opencode).
 
-- Pick the run's **default harness** with **Engine** on New pipeline (Advanced) or
+- Pick the run's **default harness** with **Default harness** on New pipeline (Advanced) or
   `--engine claude|codex|copilot|cursor|gemini|goose|opencode|qwen`, or set a default with
   **Default for new runs** (a harness group's ⋯ menu on Models › Catalogue, or beside the
   harness tiles on Models › Jobs) or in a project's settings. A step whose model pick names a harness runs there
@@ -136,6 +136,8 @@ A model pick can name the harness it runs on: `engine` beside `model` (`claude`,
 - **Where.** A workflow's agent node (`config.engine`) and review role (`roleReview.roles[i].engine`), a project's node
   and role picks (`PATCH /api/config`), the Default workflow's per-role steps (`POST /api/config`) and a run overlay
   (`overlay.nodes.<id>.engine`, `….roles.<key>.engine`). Presets, a run's saved setup and **Rerun** keep it.
+- **Where to pick.** The Workflows view, the Chat run card, New pipeline › Advanced › Agents and Requirements › **Set up
+  this run** open the same harness › provider › model picker.
 - **It travels with its model.** A layer that names another model leaves the lower layer's `engine` behind. A `PATCH`
   without `engine` keeps it while the model stays the same and clears it when the model changes or is cleared; `null`
   or `''` clears it.
@@ -1151,9 +1153,9 @@ copilot login                    # follow the prompts to sign in to GitHub
 native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell),
 and the variable may point at a `.exe` or a `.cmd`.
 
-**Use it.** Pick Copilot per run under **Engine** on New pipeline (Advanced), or run `worca --engine copilot …`. To
-make it the default, use **Default for new runs** (Models › Catalogue or Models › Jobs) or a project's Settings. For
-Chat, use Settings › Chat › Engine & models.
+**Use it.** Pick Copilot per run under **Default harness** on New pipeline (Advanced), or run
+`worca --engine copilot …`. To make it the default, use **Default for new runs** (Models › Catalogue or Models › Jobs)
+or a project's Settings. For Chat, use Settings › Chat › Engine & models.
 
 **Models.** The models `copilot --model` takes are built-in catalog entries on the Copilot sign-in, listed in the GitHub Copilot group of Models › Catalogue under *Built in · Copilot sign-in*. Their catalog id is `copilot/<Copilot's id>`, such as `copilot/gpt-5.5` or `copilot/claude-sonnet-5.5`. Copilot's own ids clash with Codex's built-ins (`gpt-5.5`) and look like Claude's, and the catalog keeps one entry per id. Copilot is handed its own id. To add a model Copilot gained after this list, use **Add model** › *A sign-in* › **GitHub Copilot**.
 
