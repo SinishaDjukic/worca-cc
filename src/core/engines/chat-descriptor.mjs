@@ -5,8 +5,12 @@
 // purpose: the adapters import it.
 import { ENGINES, engineLabel, chatEnginesTaking, withArticle } from '../../shared/engine-switch.mjs';
 import { CODEX_PRICES, codexCachedRate, listPriceFor } from '../list-prices.mjs';
+import { cliNotInstalled } from '../cli-resolve.mjs';
+import { ENGINE_CLIS } from './cli-specs.mjs';
 
 const DOCS = 'https://github.com/worca-org/worca/blob/dev/docs/models.md';
+/** Where Claude Code's install and sign-in are told (docs/models.md "Claude Code"): Claude has no chat descriptor. */
+export const CLAUDE_SETUP_DOCS = `${DOCS}#claude-code`;
 /** A descriptor's `suggestionModel` that means "the chat's own model". */
 export const CHAT_MODEL = 'chat';
 const never = () => false;
@@ -22,6 +26,9 @@ const ready = async () => ({});
  *   selfTest(o)         null, or the runtime proof that the lockdown holds on this binary and this user's config
  *                       (engines/chat-selftest.mjs): resolves {refusal} or {}
  *   preflight({model})  the binary runs and is signed in: resolves {refusal} | {warning} | {}
+ *   notInstalled()      why this engine's CLI is not on this machine (its configured binary, `bin()`, is not found: a
+ *                       few stat()s, never a spawn), or null when it is found or the descriptor names no binary. The
+ *                       chat model picker leaves such an engine out (ask/models.mjs `notReady`)
  *   listRates(model)    the list price (per-million-token rates) the engine's provider bills `model` at, or null; the
  *                       Models page price wins over it (ask/chat-price.mjs chatModelRates)
  *   resumeNotFound(err) the turn's error says the stored session is gone (the turn retries once from history)
@@ -46,7 +53,7 @@ const ready = async () => ({});
  *                       worca's own MCP child too (chatSignInEnv), whose Auto classifier runs on the chat's engine
  */
 export function makeChatDescriptor({
-  engine, lockdown, askSupport = ready, selfTest = null, preflight = ready, listRates = null, resumeNotFound = never,
+  engine, lockdown, bin = null, askSupport = ready, selfTest = null, preflight = ready, listRates = null, resumeNotFound = never,
   docsAnchor, setupLabel, noLockdownMessage, shellTrippedMessage, titles = true, suggestionModel = CHAT_MODEL, prompt = {},
   notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false, turnImages = false, threadServerAlias = false, signIn = () => [],
 }) {
@@ -58,6 +65,7 @@ export function makeChatDescriptor({
     lockdown: typeof lockdown === 'function' ? lockdown : () => lockdown,
     noLockdownMessage: noLockdownMessage || `Chat on ${label} is unavailable: worca cannot lock this ${label} down for a chat. Use a Claude chat.`,
     askSupport, selfTest, preflight,
+    notInstalled: () => notInstalled(bin, ENGINE_CLIS[engine], label),
     reportsCost: ENGINES[engine]?.cost === true,
     listRates: typeof listRates === 'function' ? listRates : () => null,
     resumeNotFound,
@@ -100,6 +108,14 @@ export function chatSignInEnv(d, model, env = process.env) {
   const want = d ? d.signIn(model, env) : [];
   return Object.keys(env).filter((k) => !/^WORCA_/.test(k) && typeof env[k] === 'string' && env[k] !== ''
     && want.some((w) => (w.endsWith('_') ? k.startsWith(w) : k === w))).sort();
+}
+
+/** Why `bin()` is not found on this machine (cli-resolve.mjs cliNotInstalled), or null: found, no binary named, or no answer. */
+function notInstalled(bin, spec, label) {
+  if (typeof bin !== 'function') return null;
+  let name = null;
+  try { name = bin(); } catch { return null; }
+  return cliNotInstalled(name, spec, label);
 }
 
 /** The error a per-turn cost cap gives a chat on `d` for `model`, or null when worca can keep the turn under it:

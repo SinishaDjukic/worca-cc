@@ -76,3 +76,9 @@ test('validPick: a stored pick the catalog still offers (case-insensitive), else
   assert.equal(validPick(CAT, { model: 'gone', effort: 'low' }), null);
   assert.equal(validPick(CAT, null), null);
 });
+test('validPick: a pick on an engine not installed here is not offered, unless the open chat is on it', () => {
+  const cat = { ...CAT, models: [...CAT.models, { id: 'gpt-5.5', efforts: ['low'], engine: 'codex' }], notReady: { codex: 'not installed' } };
+  assert.equal(validPick(cat, { model: 'gpt-5.5', effort: 'low' }), null);
+  assert.deepEqual(validPick(cat, { model: 'gpt-5.5', effort: 'low' }, { lock: 'codex' }), { model: 'gpt-5.5', effort: 'low' });
+  assert.deepEqual(validPick(cat, { model: 'claude-sonnet-5-5', effort: 'high' }), { model: 'claude-sonnet-5-5', effort: 'high' });
+});

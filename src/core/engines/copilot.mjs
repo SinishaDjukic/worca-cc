@@ -805,6 +805,7 @@ export async function runCopilotProcess({
 export const copilotChat = makeChatDescriptor({
   engine: 'copilot',
   lockdown: () => COPILOT_ASK_LOCKDOWN,
+  bin: () => COPILOT_DEFAULT_BIN,
   noLockdownMessage: 'Chat on Copilot is unavailable: this copilot cannot be locked down for a chat. Use a Claude chat.',
   askSupport: (o, impl = copilotAskSupport) => impl(o),
   preflight: (_ctx, impl = copilotPreflight) => impl(),

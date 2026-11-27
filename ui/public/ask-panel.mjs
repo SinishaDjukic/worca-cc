@@ -33,7 +33,7 @@ import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
-import { engineOfEntry, chatEngineOf, chatSpawnsAgents, pickerGroups, moreHarnesses, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from './ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, chatSpawnsAgents, pickerGroups, engineNotReady, SET_UP_HARNESS, needsHarness, moreHarnesses, notInstalledHarnesses, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
@@ -2967,13 +2967,37 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   /** The engine the next message will run on: the chat's, else the picked model's. */
   function pickerEngine() { return activeEngine() || engineOfEntry(catalogEntry(st.picker.model)); }
+  /** pickerGroups' options now: an engine whose CLI is not installed here is shown only to the chat already on it. */
+  function groupOpts() { return { active: activeEngine(), notReady: st.catalog && st.catalog.notReady, current: st.picker.model }; }
 
   function updatePickerButton() {
     if (!el.modelBtnLabel) return;
+    const btn = el.modelBtnLabel.parentNode;
+    // No engine in the picker has a model a chat can take, some not being installed here: the button asks for a harness
+    // to be set up, and its menu lists them. No model, effort or mark: none of them would run.
+    if (needsHarness(st.catalog, st.catalog && st.catalog.models, groupOpts())) {
+      el.modelBtnLabel.textContent = SET_UP_HARNESS;
+      el.modelBtnEffort.textContent = '';
+      el.modelBtnEffort.hidden = true;
+      el.modelBtnEngine.textContent = '';
+      el.modelBtnEngine.hidden = true;
+      if (el.modelBtnMark) { el.modelBtnMark.remove(); el.modelBtnMark = null; }
+      if (btn) {
+        delete btn.dataset.engine;
+        btn.dataset.setup = '';
+        const name = `${SET_UP_HARNESS}: no harness on this machine can run a chat yet`;
+        btn.setAttribute('aria-label', name);
+        setTip(btn, name);
+      }
+      if (el.fitBar) el.fitBar();
+      return;
+    }
     const entry = catalogEntry(st.picker.model);
+    // A chat on an engine whose CLI is not installed here keeps its model, flagged: its next turn says why it cannot run.
+    const notReady = engineNotReady(st.catalog, pickerEngine());
     // Same '⚠' marker the run-graph node label uses (ui/public/app.js:998).
-    const flagged = !!entry && (entry.costUnreliable === true
-      || (Array.isArray(entry.secretsMissing) && entry.secretsMissing.length > 0));
+    const flagged = !!notReady || (!!entry && (entry.costUnreliable === true
+      || (Array.isArray(entry.secretsMissing) && entry.secretsMissing.length > 0)));
     el.modelBtnLabel.textContent = (entry ? entry.label : st.picker.model) + (flagged ? ' ⚠' : '');
     // A model that takes no reasoning effort shows none (the bridge leaves it out).
     el.modelBtnEffort.textContent = entry && entry.noEffort ? '' : st.picker.effort;
@@ -2982,7 +3006,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // engine word (R2, L1); an engine with no mark, or whose mark file failed to load, keeps today's word, shown
     // whenever the catalog offers more than one engine (the extension's button says the same).
     const eng = pickerEngine();
-    const btn = el.modelBtnLabel.parentNode;
     const hasMark = Object.hasOwn(HARNESS_MARKS, eng) && !st.markFailed.has(eng);
     if (el.modelBtnMark && (!hasMark || el.modelBtnMarkEngine !== eng)) { el.modelBtnMark.remove(); el.modelBtnMark = null; }
     if (hasMark && !el.modelBtnMark && btn) {
@@ -2997,7 +3020,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       el.modelBtnMark = mark;
       el.modelBtnMarkEngine = eng;
     }
-    const engName = hasMark ? '' : pickerEngineName(st.catalog ? st.catalog.models : [], eng);
+    const engName = hasMark ? '' : pickerEngineName(st.catalog ? st.catalog.models : [], eng, groupOpts());
     el.modelBtnEngine.textContent = engName;
     el.modelBtnEngine.hidden = !engName;
     // One accessible name, which is also the tip. It names the connection too: the same model can come from the
@@ -3006,7 +3029,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const via = entry && connectionOf(entry).kind === 'provider' ? ` · ${connectionLabel(entry)}` : '';
     if (btn) {
       btn.dataset.engine = eng;
-      const name = `${pickerEngineLabel(eng)} · ${el.modelBtnLabel.textContent}${effort}${via}`;
+      delete btn.dataset.setup;
+      const name = `${pickerEngineLabel(eng)} · ${el.modelBtnLabel.textContent}${effort}${via}${notReady ? ` · ${notReady}` : ''}`;
       btn.setAttribute('aria-label', name);
       setTip(btn, name);
     }
@@ -3038,7 +3062,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // A thread's pick claims both slots.
     // D12/D17: a new chat starts on the user's Ask engine; a stored pick of the OTHER engine does not override it.
     const askEngine = st.catalog && ASK_CHAT_ENGINES.includes(st.catalog.askEngine) ? st.catalog.askEngine : 'claude';
-    const storeFits = st.pickerFromStore && (st.pickerExplicit || !catalogEntry(st.picker.model) || engineOfEntry(catalogEntry(st.picker.model)) === askEngine);
+    // A stored pick on an engine whose CLI is not installed here does not fit either: the catalog leaves that engine out.
+    const storeFits = st.pickerFromStore && (st.pickerExplicit || !catalogEntry(st.picker.model) || engineOfEntry(catalogEntry(st.picker.model)) === askEngine)
+      && !engineNotReady(st.catalog, engineOfEntry(catalogEntry(st.picker.model)));
     if (st.pickerFromStore && !storeFits && !st.pickerFromThread) {
       // The stored pick is the other engine's: this chat claims neither its model nor its effort (the Ask slot's pair
       // applies), and nothing short of an explicit model choice writes over it (storeModel).
@@ -3054,7 +3080,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!wantedEntry && list.length) st.pickerExplicit = false;   // the picked model left the catalog: the fallback below is not a user pick
     // Unknown stored/default id -> the backend default -> the first model we do
     // have that is not a hidden built-in (#422; a hidden id is still a valid pick).
-    const entry = wantedEntry || catalogEntry(fallback.model) || list.find((m) => m && !m.hidden && !m.needsSignIn) || list[0] || null;
+    const entry = wantedEntry || catalogEntry(fallback.model) || list.find((m) => m && !m.hidden && !m.needsSignIn && !engineNotReady(st.catalog, engineOfEntry(m))) || list[0] || null;
     if (!entry) { updatePickerButton(); return; }  // empty catalog: keep what we have
     const effort = wantedEntry ? wanted.effort : fallback.effort;
     const next = { model: entry.id, effort: coerceEffort(entry, effort) };
@@ -3264,6 +3290,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (title) t.title = title;
       return t;
     };
+    // The harness mark the model button leads with, before an engine's name in the menu (its heading, its row in
+    // another engine's list, its More harnesses row). An engine with no mark, or whose mark file failed to load, keeps
+    // its name alone: never a broken image box.
+    const withMark = (node, engine) => {
+      if (!Object.hasOwn(HARNESS_MARKS, engine) || st.markFailed.has(engine)) return node;
+      const mark = markTile(doc, { kind: 'harness', key: engine, size: 'sm' });
+      mark.querySelector('img').addEventListener('error', () => { st.markFailed.add(engine); mark.remove(); });
+      node.prepend(mark);
+      return node;
+    };
     const modelItem = (m, engine) => {
       const active = activeEngine();
       const moves = !!active && !!engine && engine !== active;   // #943: this row moves the chat to another engine
@@ -3288,6 +3324,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (m.needsSignIn) {
         item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See Models › Providers.'));
       }
+      const notReady = engineNotReady(st.catalog, engine || engineOfEntry(m));
+      if (notReady) item.appendChild(tag('not installed', 'is-warn', notReady));   // amber: a warning, as ⚠cost
       if (moves && (readEnginePicks(storage)[engine] || {}).model === m.id) item.appendChild(tag('last used', null, 'The model you last used on this engine.'));
       // Credential broker: whether the signed-in person has the key this model spends from.
       const cb = credentialBadge(m.id);
@@ -3311,7 +3349,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const lead = active && g.engine !== active ? engineLead(g.models, readEnginePicks(storage)[g.engine], ((st.catalog && st.catalog.defaults) || {})[g.engine]) : null;
       return splitCatalog(lead ? [lead, ...g.models.filter((x) => x !== lead)] : g.models);
     };
-    const sectionsNow = () => pickerGroups(st.catalog ? st.catalog.models : [], { active: activeEngine() });
+    const sectionsNow = () => pickerGroups(st.catalog ? st.catalog.models : [], groupOpts());
     // The engine the main pane lists: the chat's, else the picked model's, else the first with models.
     const shownEngine = () => {
       const sections = sectionsNow();
@@ -3325,9 +3363,55 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       moreRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
       return moreRow;
     };
+    // A harness not installed here: Claude Code opens Connect Claude Code (which says how to install it and checks
+    // again), any other its setup docs in a new tab; without either, a disabled row with the reason. The reason is the
+    // row's tip, and a quiet "not installed" sits where a row's value goes. `lead`: the row that leads that engine's own
+    // section (only a chat already on it has one), not dimmed, its "not installed" amber as the chat's own model row.
+    const setupRow = (h, { lead = false } = {}) => {
+      const dialog = h.engine === 'claude' && typeof openClaudeSetup === 'function';
+      const open = dialog ? () => { closePopover(); openClaudeSetup(); }
+        : h.docsUrl ? () => { closePopover(); try { win.open(h.docsUrl, '_blank', 'noopener'); } catch { /* blocked */ } } : null;
+      const row = menuItem(lead ? 'ask-harness-row ask-setup-lead' : 'ask-harness-row is-missing', open);
+      row.setAttribute('data-ask-harness', h.engine);
+      row.setAttribute(lead ? 'data-ask-setup-lead' : 'data-ask-harness-missing', '');
+      if (!open) row.disabled = true;
+      row.title = !open ? h.reason : `${h.reason} ${dialog ? 'Opens Connect Claude Code.' : 'Opens its setup docs.'}`;
+      row.appendChild(make('span', null, lead ? `Set up ${pickerEngineLabel(h.engine)}` : h.label));
+      if (!lead) withMark(row, h.engine);
+      row.appendChild(make('span', 'ask-pop-row-value', 'not installed'));
+      if (open) row.appendChild(make('span', 'ask-pop-row-chev', '↗'));   // one mark for every setup, dialog or docs
+      return row;
+    };
+    const leadWithSetup = (g) => {
+      const h = g.notReady ? notInstalledHarnesses(st.catalog).find((x) => x.engine === g.engine) : null;
+      if (!h) return;
+      panel.appendChild(setupRow(h, { lead: true }));
+      panel.appendChild(make('div', 'ask-pop-divider'));
+    };
     // The chat engines with no model yet sit behind one row, so the menu grows by one line however many there are.
-    // Without a host that can open Add model (the extension, a bare panel) there is nowhere to lead, so no row.
-    const harnessesNow = () => (typeof openAddModel === 'function' ? moreHarnesses(st.catalog ? st.catalog.models : []) : []);
+    // Without a host that can open Add model (the extension, a bare panel) there is nowhere to lead, so no row. An engine
+    // not installed here is not one (catalog.notReady): those are listed below them, each opening its setup docs, so a
+    // machine with no other engine installed still has a way on. One a chat is already on has its own section instead.
+    const harnessesNow = () => (typeof openAddModel === 'function' ? moreHarnesses(st.catalog ? st.catalog.models : [], st.catalog && st.catalog.notReady) : []);
+    const missingNow = () => notInstalledHarnesses(st.catalog, sectionsNow().map((g) => g.engine));
+    const anyHarnessNow = () => harnessesNow().length > 0 || missingNow().length > 0;
+    // Each installed engine with no model yet leaves the chat for Models › Add model with that harness picked; below them,
+    // the ones not installed here.
+    const appendHarnessRows = () => {
+      const installed = harnessesNow();
+      for (const h of installed) {
+        const row = menuItem('ask-harness-row', () => { closePopover(); openAddModel(h.engine); });
+        row.setAttribute('data-ask-harness', h.engine);
+        row.title = `Set up ${h.label} in Models`;
+        row.appendChild(make('span', null, h.label));
+        withMark(row, h.engine);
+        row.appendChild(make('span', 'ask-pop-row-chev', '›'));
+        panel.appendChild(row);
+      }
+      const missing = missingNow();
+      if (installed.length && missing.length) panel.appendChild(make('div', 'ask-pop-divider'));
+      for (const h of missing) panel.appendChild(setupRow(h));
+    };
     let shownPane = 'main';
     let effortPaneKey = '';   // the model + effort list the effort pane was painted from
     const effortKeyNow = () => { const e = catalogEntry(st.picker.model); return `${st.picker.model}:${e && Array.isArray(e.efforts) ? e.efforts.join() : ''}`; };
@@ -3355,14 +3439,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         back.appendChild(make('span', null, '‹ More harnesses'));
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
-        for (const h of harnessesNow()) {
-          const row = menuItem('ask-harness-row', () => { closePopover(); openAddModel(h.engine); });
-          row.setAttribute('data-ask-harness', h.engine);
-          row.title = `Set up ${h.label} in Models`;
-          row.appendChild(make('span', null, h.label));
-          row.appendChild(make('span', 'ask-pop-row-chev', '›'));
-          panel.appendChild(row);
-        }
+        appendHarnessRows();
       } else if (pane.startsWith('more:') || pane.startsWith('engine:')) {
         // 'engine:<name>': another engine's main list, led by the model last used there (else its default), so a pick
         // moves the chat after a confirm; 'more:<name>': that engine's more models, back to the list it came from.
@@ -3376,6 +3453,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
         if (g) {
+          if (!more) leadWithSetup(g);
           const split = sectionSplit(g, activeEngine());
           appendByConnection(more ? split.rest : split.primary, g.engine);
           if (!more && split.rest.length) {
@@ -3383,6 +3461,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
             panel.appendChild(moreModelsRow(engine));
           }
         }
+      } else if (needsHarness(st.catalog, st.catalog && st.catalog.models, groupOpts())) {
+        // No engine has a model a chat can take (the model button says "Set up a harness"): the harnesses to set up are
+        // the whole menu.
+        appendHarnessRows();
+        if (!panel.childElementCount) panel.appendChild(make('div', 'ask-pop-empty', 'No harness on this machine can run a chat yet.'));
       } else {
         // D12 / #943: the shown engine's models under its name (the chat's own is marked); every other engine is one
         // row that opens its own list, so the menu stays short however many engines have models.
@@ -3391,21 +3474,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const g = sections.find((x) => x.engine === shown);
         let hasMore = false;
         if (g) {
-          if (sections.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
+          if (sections.length > 1) panel.appendChild(withMark(make('div', 'ask-pop-group', g.label), g.engine));
+          leadWithSetup(g);
           const split = sectionSplit(g, activeEngine());
           appendByConnection(split.primary, g.engine);
           hasMore = split.rest.length > 0;
         }
         const others = sections.filter((x) => x !== g);
-        if (others.length || harnessesNow().length) panel.appendChild(make('div', 'ask-pop-divider'));
+        if (others.length || anyHarnessNow()) panel.appendChild(make('div', 'ask-pop-divider'));
         for (const o of others) {
           const engineRow = menuItem('ask-engine-row', () => renderPane(`engine:${o.engine}`));
           engineRow.setAttribute('data-ask-engine-group', o.engine);
           engineRow.appendChild(make('span', null, o.label));
+          withMark(engineRow, o.engine);
           engineRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
           panel.appendChild(engineRow);
         }
-        if (harnessesNow().length) {
+        if (anyHarnessNow()) {
           const harnessRow = menuItem('ask-more-harnesses', () => renderPane('harnesses'));
           harnessRow.setAttribute('data-ask-more-harnesses', '');
           harnessRow.appendChild(make('span', null, 'More harnesses'));
@@ -4139,6 +4224,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const a = make('a', 'ask-notice-link', b.hrefLabel || 'open');
       if (isEngineSetupNotice(b)) { a.target = '_blank'; a.rel = 'noopener'; }   // §4.6: the engine's setup docs
       a.setAttribute('href', b.href);
+      n.appendChild(a);
+    }
+    if (b.claudeSetup && typeof openClaudeSetup === 'function') {
+      // Claude Code is not on this machine: Connect Claude Code says where to get it and checks again.
+      n.appendChild(doc.createTextNode(' '));
+      const a = make('a', 'ask-notice-link', 'Set up…');
+      a.href = '#';
+      a.setAttribute('data-ask-claude-setup', '');
+      a.addEventListener('click', (e) => { e.preventDefault(); openClaudeSetup(); });
       n.appendChild(a);
     }
     if (b.mcp) {

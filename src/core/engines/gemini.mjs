@@ -440,6 +440,7 @@ export function geminiChatSelfTest({ bin = geminiDefaultBin(), ...o } = {}) {
 export const geminiChat = Object.freeze({ ...makeChatDescriptor({
   engine: 'gemini',
   lockdown: () => GEMINI_ASK_LOCKDOWN,
+  bin: geminiDefaultBin,
   askSupport: (o, impl = geminiAskSupport) => impl(o),
   selfTest: (o, impl = geminiChatSelfTest) => impl(o),
   preflight: (_ctx, impl = geminiPreflight) => impl(),

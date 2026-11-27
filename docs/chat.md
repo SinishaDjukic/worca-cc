@@ -6,8 +6,12 @@ card you confirm. To drive runs from Telegram, Slack, Discord or Teams, see [Plu
 ## Which engine answers
 
 A chat runs on the model you pick. The composer's model button lists each engine that has models. An engine with
-none yet (Gemini CLI, Goose, OpenCode, Qwen Code) sits under **More harnesses**: pick one to open `Add model` on it in
-[Models > Catalogue](models.md#the-catalogue-tab). Once it has a model it gets its own row and a chat can move to it.
+none yet (Gemini CLI, Goose, OpenCode, Qwen Code) sits under **More harnesses** when it is installed on this machine:
+pick one to open `Add model` on it in [Models > Catalogue](models.md#the-catalogue-tab). Once it has a model it gets its
+own row and a chat can move to it. An engine that is not installed is listed at the foot of **More harnesses**, dimmed
+and marked *not installed*; its row opens that engine's setup section in [Models](models.md#chat), so a machine with
+one engine still has a way to add another. Claude Code's row there opens Connect Claude Code instead. When no engine
+is installed, the model button says **Set up a harness**, and its menu is that list.
 
 ## A chat that is the home page
 

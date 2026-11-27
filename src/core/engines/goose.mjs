@@ -587,6 +587,7 @@ export function gooseChatSelfTest({ bin = gooseDefaultBin(), ...o } = {}) {
 export const gooseChat = makeChatDescriptor({
   engine: 'goose',
   lockdown: () => GOOSE_ASK_LOCKDOWN,
+  bin: gooseDefaultBin,
   askSupport: (o, impl = gooseAskSupport) => impl(o),
   selfTest: (o, impl = gooseChatSelfTest) => impl(o),
   preflight: (_ctx, impl = goosePreflight) => impl(),

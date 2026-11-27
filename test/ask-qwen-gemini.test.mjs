@@ -89,7 +89,7 @@ const ROWS = [
   { id: 'gemini-3-pro', label: 'Gemini 3 Pro', custom: 'global', hasEnv: false, engine: 'gemini' },
 ];
 const mk = (prefs = { engine: 'claude', slots: {} }, avail = {}) => createAskModels({ listModels: async () => ROWS, pluginModels: () => [],
-  secretStatus: () => [], effortless: () => new Set(), askPrefs: () => prefs, ...avail });
+  secretStatus: () => [], effortless: () => new Set(), askPrefs: () => prefs, notInstalled: () => null, ...avail });   // every engine installed: CI has none
 
 test('askCatalog: Qwen and Gemini rows with their engine\'s efforts, their defaults, askEngine qwen', async () => {
   const cat = await mk({ engine: 'qwen', slots: { qwen: { model: 'qwen3-coder-plus' } } }).askCatalog();

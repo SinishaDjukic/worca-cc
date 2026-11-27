@@ -742,6 +742,20 @@ test('a classified error persists a human notice (errorClass + detail, on the as
       assert.ok(last.blocks.some((b) => b && b.kind === 'notice' && b.errorClass === 'model'),
         'the classified notice is among the frame blocks');
     } },
+    { name: 'a Claude Code that is not installed: the notice says so, not "endpoint unreachable"', run: async () => {
+      const s = seed();
+      const why = 'Claude Code is not installed: /nowhere/claude was not found. Install it, or set WORCA_CLAUDE_BIN to its path.';
+      const raw = '/nowhere/claude error: spawn /nowhere/claude ENOENT';
+      const { turn, frames } = makeTurn(s, {}, {
+        runClaudeImpl: async () => { throw Object.assign(new Error(raw), { errorClass: 'network', notInstalled: why }); },
+      });
+      await turn.run();
+      assert.equal(frames.at(-1).errorClass, 'network', 'the class is unchanged');
+      const notice = getMessage(s.asst.id).blocks.find((b) => b && b.kind === 'notice' && b.errorClass === 'network');
+      assert.equal(notice.text, why);
+      assert.equal(notice.claudeSetup, true, 'the notice links Connect Claude Code');
+      assert.equal(notice.detail, raw);
+    } },
     { name: 'an unclassified error persists NO notice block (raw message stays the only evidence)', run: async () => {
       const s = seed();
       const { turn, frames } = makeTurn(s, {}, {

@@ -1336,7 +1336,17 @@ worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`), bot
 **Which engine a chat runs on.** Chat runs on Claude Code, and on the engines worca can lock down to its own tools:
 [Codex](#codex), [GitHub Copilot CLI](#github-copilot-cli), [Gemini CLI and Qwen Code](#gemini-cli-and-qwen-code), [Goose](#goose) and
 [OpenCode](#opencode). Pick one in Settings › Chat › Engine & models, or by picking one of its models for a new chat.
-Cursor models are not offered in Chat: worca has no verified lockdown for Cursor. On every engine but Claude, a chat has no shell and no
+Cursor models are not offered in Chat: worca has no verified lockdown for Cursor. Nor is an engine whose program is not
+installed on this machine: worca looks for it (the engine's `WORCA_<ENGINE>_BIN`, else its usual name on your `PATH`)
+whenever the model picker loads, without starting it. The picker leaves such an engine out, and a new chat starts on the
+first engine that is installed (in the picker's order) when that engine is your Chat engine; install it and it is offered the next time you open the picker. A chat
+already on it keeps its model, marked *not installed* with the reason, led by a **Set up** row for that engine, and can
+move to another engine. An engine that
+is installed but not signed in stays offered: the chat says what to fix when you send. Claude Code follows the same rule
+(`WORCA_CLAUDE_BIN`, else `claude` on your `PATH`); its setup row opens Connect Claude Code, which checks again once you
+have installed it. When no engine is installed, the model button says **Set up a harness**, and its menu lists the
+engines to set up. A Claude chat sent while it is missing says "Claude Code is not installed" with the path it looked
+for, and its **Set up…** link opens the same dialog. On every engine but Claude, a chat has no shell and no
 file tools of its own, reads through worca's `read_file`, `grep` and `glob`, and stops with an error the moment the engine
 calls a tool that is neither worca's nor one of your sets' MCP servers.
 
@@ -1427,9 +1437,10 @@ click Apply.
 ### Switching a chat's engine
 
 A chat is not tied to the engine it started on. The model picker lists the models of the chat's engine, marked
-*this chat*, and one row for each other engine that has models. Open an engine's row to see its models, and pick one to
-move the chat there. The engines with no model yet are listed under **More harnesses**; a row there opens `Add model`
-with that harness picked:
+*this chat*, and one row for each other engine that has models and is installed here. Open an engine's row to see its models, and pick one to
+move the chat there. The installed engines with no model yet are listed under **More harnesses**; a row there opens `Add model`
+with that harness picked. Below them, dimmed and marked *not installed*, are the engines not installed on this machine; a
+row there opens that engine's setup section of this page in a new tab. Moving a chat:
 
 - worca first shows what changes: the tools the new engine has, images or PDFs it cannot view, whether it reports a
   cost, both models' context windows, the MCP servers from your sets it cannot start, the attachments it gets only by
@@ -1448,8 +1459,9 @@ with that harness picked:
 - Each reply records its engine, model and effort. The chat's cost is the sum over all of them. The context meter
   starts over at the switch, since the new session has no context yet.
 - Event turns (a card you answered, a finished command) run on the engine the chat is on when they start.
-- In Chat the model button leads with the engine's harness mark (its tooltip names the engine); in the browser
-  extension it names the engine in words when more than one is set up.
+- In Chat the model button leads with the engine's harness mark (its tooltip names the engine), and so do each
+  engine's heading and row in the model picker and its row under **More harnesses**; in the browser extension it
+  names the engine in words when more than one is set up.
 - Your browser remembers the last model and effort you used on each engine; another engine's list shows that model
   first, tagged *last used*. The Workflows chat and the browser extension do not switch: the extension shows the chat's engine and lists
   its models only.

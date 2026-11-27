@@ -262,7 +262,7 @@ export function superviseSpawn(o) {
       if (!err || !/^(ENOENT|EINVAL)$/.test(String(err.code))) return err;
       let hint = null;
       try { hint = explainUnspawnableCli(file, cli); } catch { /* no hint */ }
-      return hint ? Object.assign(new Error(`${err.message} — ${hint}`), { code: err.code }) : err;
+      return hint ? Object.assign(new Error(`${err.message} — ${hint}`), { code: err.code, path: err.path }) : err;
     };
     // Agent isolation (agent-user.mjs): the same command under the agent's uid, via sudo, in its
     // own process group so a stuck agent can still be SIGKILLed through sudo.

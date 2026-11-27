@@ -10,12 +10,15 @@ import { brokerEnabled, brokerEngineRefusal } from '../broker-client.mjs';
 import { effortlessModels as realEffortless } from '../bridge/upstream.mjs';
 import { findBridgedEntry, isOpenRouterEntry } from '../bridge/registry.mjs';
 import { providerConfig } from '../settings.mjs';
-import { effortsForEngine, ASK_ENGINES } from '../model-env.mjs';
+import { effortsForEngine, ASK_ENGINES, envFlag } from '../model-env.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
 import { withRole } from '../model-roles.mjs';
 import { chatDescriptor } from '../engines/chat.mjs';
+import { CLAUDE_SETUP_DOCS } from '../engines/chat-descriptor.mjs';
 import { harnessesOf, runsOn, effortsOn } from '../../shared/connections.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
+import { cliNotInstalled, configuredClaudeBin } from '../cli-resolve.mjs';
+import { CLAUDE_CLI } from '../engines/cli-specs.mjs';
 
 export const ENGINE_LABEL = Object.freeze(Object.fromEntries(ASK_ENGINES.map((e) => [e, engineLabel(e)])));
 /** The effort a chat on an engine with no effort vocabulary carries (none today: Gemini CLI and Qwen Code took one with
@@ -46,6 +49,16 @@ function realIsOpenRouterModel(id) {
     return !!e && isOpenRouterEntry(e.upstream, providerConfig('openai'));
   } catch { return false; }
 }
+/** Why `engine`'s CLI is not on this machine (its chat descriptor's check: a few stat()s, never a spawn), or null. Mock
+ *  mode (the server's own rule: WORCA_MOCK, else ORCH_MOCK) has every engine, as engines/readiness.mjs reports it.
+ *  Claude has no chat descriptor: its configured binary, as a chat's spawn finds it (engines/claude.mjs spawnFailure). */
+function realNotInstalled(engine) {
+  if (envFlag('WORCA_MOCK', 'ORCH_MOCK')) return null;
+  try {
+    if (engine === 'claude') return cliNotInstalled(configuredClaudeBin(), CLAUDE_CLI, 'Claude Code');
+    return chatDescriptor(engine)?.notInstalled() || null;
+  } catch { return null; }
+}
 /** The Models › Providers row each bridged provider is set up on. */
 const PROVIDER_ROW = Object.freeze({ copilot: 'GitHub Copilot', openai: 'OpenAI-compatible', anthropic: 'Anthropic-compatible' });
 
@@ -62,8 +75,11 @@ const PROVIDER_ROW = Object.freeze({ copilot: 'GitHub Copilot', openai: 'OpenAI-
  *   geminiAvailable?: ()=>boolean,
  *   qwenAvailable?: ()=>boolean,
  *   isOpenRouterModel?: (id:string)=>boolean,
+ *   notInstalled?: (engine:string)=>string|null,
  * }} [deps]  `<engine>Available`: whether Chat on that engine can be offered (default: its chat descriptor's lockdown);
- *   `isOpenRouterModel`: whether a bridged row reaches OpenRouter (its sign-in message names that row)
+ *   `isOpenRouterModel`: whether a bridged row reaches OpenRouter (its sign-in message names that row);
+ *   `notInstalled`: why an engine's CLI is not on this machine, or null (default: its chat descriptor's check, never in
+ *   mock mode, where every engine is there)
  */
 export function createAskModels({
   listModels = realListModels,
@@ -73,6 +89,7 @@ export function createAskModels({
   effortless = realEffortless,
   askPrefs = defaultAskPrefs,
   isOpenRouterModel = realIsOpenRouterModel,
+  notInstalled = realNotInstalled,
   ...engineAvailable
 } = {}) {
   const available = (e) => (typeof engineAvailable[`${e}Available`] === 'function' ? engineAvailable[`${e}Available`]() : !!chatDescriptor(e)?.lockdown());
@@ -119,8 +136,18 @@ export function createAskModels({
    *   secret probe — the extra listPluginModels() + one manifest/config read per
    *   plugin, all synchronous. Only validateModelEffort passes it: that path keeps
    *   id/efforts and throws the rest away, and it runs on every message POST.
+   * The rows of an engine whose CLI is not on this machine stay (a chat already on it still validates, and its turn says
+   * why it cannot run); `notReady` names each such engine with the reason, Claude too, and the pickers leave it out of a
+   * new chat and show it only to a chat already on it. A new chat never starts on it: `askEngine` and `default` take the
+   * user's Ask engine when it is installed, else the first engine (picker order) that is; with none, the Ask engine still,
+   * and the pickers ask for a harness to be set up.
+   * An engine with no rows yet is checked too, so the picker's More harnesses (the engines to add a model on) leaves it out;
+   * it lists the missing engines at its foot instead, each linking its `setupDocs` section.
+   * `notReady` and `setupDocs` are there only when something is missing, so an install with every engine keeps today's
+   * payload.
    * @returns {Promise<{models:Array<object>, efforts:string[], default:{model:string,effort:string}|null,
-   *   defaults:Record<'claude'|'codex'|'copilot', {model:string,effort:string}|null>, askEngine:'claude'|'codex'|'copilot'}>}
+   *   defaults:Record<'claude'|'codex'|'copilot', {model:string,effort:string}|null>, askEngine:'claude'|'codex'|'copilot',
+   *   notReady?:Record<string,string>, setupDocs?:Record<string,string|null>}>}
    */
   async function askCatalog({ withSecrets = true } = {}) {
     const all = await listModels('');
@@ -198,8 +225,21 @@ export function createAskModels({
     try { prefs = askPrefs() || prefs; } catch { /* today's defaults */ }
     const slots = prefs.slots || {};
     const byEngine = Object.fromEntries(ASK_ENGINES.map((e) => [e, pickDefault(models, e, slots[e] || null)]));
-    const askEngine = prefs.engine !== 'claude' && ASK_ENGINES.includes(prefs.engine) && byEngine[prefs.engine] ? prefs.engine : 'claude';
-    return { models, efforts: [...EFFORTS], default: byEngine[askEngine], defaults: byEngine, askEngine };
+    // Every chat engine is checked, rows or not (a few stat calls each, never a spawn); Claude's sign-in is the turn's
+    // check. `setupDocs` names each missing engine's setup section, which the picker's More harnesses links to.
+    const notReady = {};
+    const setupDocs = {};
+    for (const e of ASK_ENGINES) {
+      const why = notInstalled(e);
+      if (!why) continue;
+      notReady[e] = why;
+      setupDocs[e] = e === 'claude' ? CLAUDE_SETUP_DOCS : chatDescriptor(e)?.notReady?.docsUrl || null;
+    }
+    const want = ASK_ENGINES.includes(prefs.engine) ? prefs.engine : 'claude';
+    const usable = (e) => !!byEngine[e] && !notReady[e];
+    const askEngine = usable(want) ? want : ASK_ENGINES.find(usable) || (byEngine[want] ? want : 'claude');
+    return { models, efforts: [...EFFORTS], default: byEngine[askEngine], defaults: byEngine, askEngine,
+      ...(Object.keys(notReady).length ? { notReady, setupDocs } : {}) };
   }
 
   /**

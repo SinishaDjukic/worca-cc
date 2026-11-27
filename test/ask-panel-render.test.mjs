@@ -471,6 +471,27 @@ test('ask-panel-render: a classified notice renders the human line (raw detail e
       assert.equal(ctx.doc.querySelector('.ask-error-action'), null);
       assert.equal(ctx.doc.querySelector('.ask-error-line'), null);
     } },
+    { name: 'ask-panel-render: a Claude Code that is not installed: the notice links Connect Claude Code', run: async () => {
+      const why = 'Claude Code is not installed: /nowhere/claude was not found. Install it, or set WORCA_CLAUDE_BIN to its path.';
+      const snap = snapBody([
+        asstRow('askm_00000001', 1, {
+          status: 'error',
+          blocks: [{ kind: 'notice', text: why, errorClass: 'network', claudeSetup: true, detail: 'spawn /nowhere/claude ENOENT' }],
+        }),
+      ]);
+      let opened = 0;
+      const ctx = makePanel({ fetchHandler: handlerFor(snap), deps: { openClaudeSetup: () => { opened += 1; } } });
+      await openThread(ctx);
+      const notice = ctx.doc.querySelector('.ask-notice');
+      assert.equal(notice.querySelector(':scope > span').textContent, why);
+      const link = notice.querySelector('[data-ask-claude-setup]');
+      assert.equal(link.textContent, 'Set up…');
+      link.click();
+      assert.equal(opened, 1, 'the link opens Connect Claude Code');
+      const bare = makePanel({ fetchHandler: handlerFor(snap) });
+      await openThread(bare);
+      assert.equal(bare.doc.querySelector('[data-ask-claude-setup]'), null, 'no host to open it: the notice keeps its words alone');
+    } },
   ]);
 });
 

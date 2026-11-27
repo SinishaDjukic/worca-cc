@@ -7,9 +7,9 @@ import { join } from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
-  resolveCliBin, resolveCliCommand, explainUnspawnableCli, parseShim, cliReady, GENERIC_CLI, _testing,
+  resolveCliBin, resolveCliCommand, explainUnspawnableCli, parseShim, cliReady, cliNotInstalled, GENERIC_CLI, _testing,
 } from '../src/core/cli-resolve.mjs';
-import { COPILOT_CLI, CODEX_CLI, GEMINI_CLI } from '../src/core/engines/cli-specs.mjs';
+import { COPILOT_CLI, CODEX_CLI, GEMINI_CLI, CLAUDE_CLI } from '../src/core/engines/cli-specs.mjs';
 
 afterEach(() => _testing.reset());
 
@@ -206,6 +206,21 @@ test('p. memo: a resolution whose target vanished is dropped and probed again', 
     assert.equal(reads, 2);
   } finally {
     Object.defineProperty(process, 'platform', savedPlatform); process.env.PATH = savedPath;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('cliNotInstalled: a missing binary in words, naming its env var; null when it is there or none is named', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cli-not-installed-'));
+  try {
+    const missing = join(dir, 'claude');
+    assert.equal(cliNotInstalled(missing, CLAUDE_CLI, 'Claude Code'),
+      `Claude Code is not installed: ${missing} was not found. Install it, or set WORCA_CLAUDE_BIN to its path.`);
+    assert.equal(cliNotInstalled(missing, GENERIC_CLI, 'Some CLI'), `Some CLI is not installed: ${missing} was not found. Install it.`, 'no env var to name');
+    assert.equal(cliNotInstalled(process.execPath, CLAUDE_CLI, 'Claude Code'), null, 'a binary that exists');
+    assert.equal(cliNotInstalled('', CLAUDE_CLI, 'Claude Code'), null);
+    assert.equal(cliNotInstalled(null, CLAUDE_CLI, 'Claude Code'), null);
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });

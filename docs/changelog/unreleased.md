@@ -299,6 +299,26 @@ Pull requests (add each number when it opens):
 
 - Run a pipeline's agents in a remote E2B sandbox (#826)
 
+## Chat offers only installed engines
+
+**The model picker no longer lists an engine that is not on this machine.**
+
+Claude Code, Codex, Copilot CLI, Gemini CLI, Qwen Code, Goose and OpenCode appear in Chat's model picker only when their program is installed. A new chat starts on your Chat engine when it is installed, else on the first engine that is. A chat already on a missing engine keeps its model, marked *not installed* with the reason, and its models are led by a **Set up** row for that engine.
+
+An engine that is not installed is listed at the foot of **More harnesses** instead, dimmed and marked *not installed*, and its row opens that engine's setup docs; Claude Code's opens Connect Claude Code. So with only one engine installed, the picker still shows how to add another.
+
+When no engine is installed, the model button says **Set up a harness**, and its menu lists the engines to set up. A Claude chat sent while Claude Code is missing says "Claude Code is not installed", with the path it looked for, instead of "The endpoint was unreachable", with a **Set up…** link to the same dialog.
+
+The picker shows each engine's mark next to its name, as the model button does.
+
+Chips: Chat · Models
+
+Read it: [Models › Chat](../models.md#chat)
+
+Pull requests (add each number when it opens):
+
+- Chat: offer only installed engines (#1612)
+
 ## Steady command rows in Chat
 
 **A stack of commands no longer flickers while it runs.**

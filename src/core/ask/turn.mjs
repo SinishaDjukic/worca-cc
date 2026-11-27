@@ -1272,7 +1272,7 @@ class AskTurn extends EventEmitter {
    * per-frame ask-usage costUsd:null (:51); the R-C stop test in THIS file is
    * the end-to-end pin of the summary rule.
    */
-  async _complete({ kind, status, reason = null, message = null, errorClass = undefined, code = undefined }) {
+  async _complete({ kind, status, reason = null, message = null, errorClass = undefined, code = undefined, notInstalled = null }) {
     if (this._completed) return { status: this.status };
     this._completed = true;
     const d = this.deps;
@@ -1299,7 +1299,10 @@ class AskTurn extends EventEmitter {
       const detail = [message, extra].filter((s) => s && String(s).trim()).join('\n');
       this.reducer.addBlock({
         kind: 'notice',
-        text: humanErrorText(errorClass),
+        // A CLI that is not on this machine is stamped 'network' (runs pause on it); the chat names the real cause, and
+        // `claudeSetup` gives the notice a link to Connect Claude Code (only Claude's runner says notInstalled).
+        text: notInstalled || humanErrorText(errorClass),
+        ...(notInstalled ? { claudeSetup: true } : {}),
         errorClass,
         detail: detail ? String(detail).slice(-ERROR_DETAIL_MAX) : null,
       });
@@ -1737,6 +1740,7 @@ class AskTurn extends EventEmitter {
           kind: 'error',
           message: err?.message || String(err),
           errorClass: err?.errorClass ?? undefined,
+          notInstalled: (err && typeof err.notInstalled === 'string' && err.notInstalled) || null,
         });
       }
     }

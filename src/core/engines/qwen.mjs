@@ -354,6 +354,7 @@ export function qwenChatSelfTest({ bin = qwenDefaultBin(), ...o } = {}) {
 export const qwenChat = makeChatDescriptor({
   engine: 'qwen',
   lockdown: () => QWEN_ASK_LOCKDOWN,
+  bin: qwenDefaultBin,
   askSupport: (o, impl = qwenAskSupport) => impl(o),
   selfTest: (o, impl = qwenChatSelfTest) => impl(o),
   preflight: (_ctx, impl = qwenPreflight) => impl(),
