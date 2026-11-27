@@ -1,6 +1,6 @@
 # Kerberos (Negotiate) to the corporate proxy — Design
 
-Status: design for review. No code yet. Based on dev `fe77e1ed6`. A feature of its own, apart from the
+Status: design for review. No code yet. Written on dev `fe77e1ed6`; §4 and the line references checked against dev `7059ada3a` (2026-11-27). A feature of its own, apart from the
 security stack (#854, #826, #981).
 
 ## 1. Problem
@@ -8,7 +8,7 @@ security stack (#854, #826, #981).
 The local proxy chain (`src/core/upstream-proxy.mjs`, `src/core/ntlm.mjs`) logs in to a corporate proxy with
 NTLMv2 (also wrapped in `Negotiate`), Digest or Basic. A proxy that accepts only Kerberos tickets rejects the
 NTLM token once; the lockout breaker trips and Worca stops with "proxy needs login". The trip line says so
-(`tripped()`, `upstream-proxy.mjs:422`), and the docs send the user to Px (`docs/network-proxy.md`, "Kerberos
+(`tripped()`, `upstream-proxy.mjs:429`), and the docs send the user to Px (`docs/network-proxy.md`, "Kerberos
 or single sign-on").
 
 Kerberos-only proxies are common where NTLM has been switched off by policy (the Microsoft NTLM deprecation,
@@ -85,22 +85,50 @@ nothing to maintain.
 
 ## 4. What runs where
 
+The corporate-proxy login runs in two places on dev. The native install runs it inside Worca's own process. Since
+#1621, a container setup runs it in the **egress sidecar**: a second container from the same image that runs `worca
+egress` (`src/egress/main.mjs`). That sidecar builds the same `createUpstreamConnector` from `upstream-proxy.mjs`.
+So the Kerberos branch in the connector (5.1) serves both. What differs is where the tickets come from.
+
+### 4.1 Native install (phase 1)
+
 | Piece | Where | Has tickets? |
 |---|---|---|
 | Upstream connector + `kerberos` addon | The Worca process that runs `startLiveEgress()`: the UI server, or a `worca run` started from a shell that is not served by another Worca | Yes. It runs as the person, with their cache |
 | Local proxy `127.0.0.1:<port>` | Same process | Gives out tokens only on the upstream socket |
 | Agents, git, MCP, plugins, terminals | Children; `HTTPS_PROXY` = the local proxy | They never get a token. They can read the cache themselves (same uid), see 6 |
-| Docker sidecar (`egress-proxy.mjs`, node: modules only) | Container | No. It stays free of native modules. Kerberos mode is not offered there |
-| E2B sandboxes, `worca container up` | Remote, or a box | No cache. They reach the corporate proxy only through the host's local proxy, if at all (report F2/F4 cover those routes) |
-| Hosted / multi-user server (`WORCA_EGRESS_MODE` on a platform) | Server | Kerberos mode is refused: the cache belongs to the service account, not the person using the UI |
+| E2B sandboxes | Remote | No cache. They reach the corporate proxy only through Worca's routes for them (report F2/F4), never with a ticket of their own |
+| Hosted / multi-user server (`WORCA_EGRESS_MODE` on a platform) | Server | The person's own tickets are refused: the cache belongs to the service account, not the person using the UI. A technical user's keytab (4.2) is the route there |
 
 Only the connector changes. `egress-proxy.mjs` keeps calling `route()`, `tunnel()` and `forward()` as now.
+
+### 4.2 Container setup: the egress sidecar (phase 2)
+
+| Piece | Where | Has tickets? |
+|---|---|---|
+| Upstream connector + `kerberos` addon | The egress sidecar (`worca egress`, uid 1000) | Only from a keytab mounted into the sidecar (below) |
+| Worca's box: agents, git, Worca itself, the credential broker | Box; `HTTPS_PROXY=http://egress:3128` | No. Nothing in the box has a cache or a keytab, the same rule as the NT hash today |
+| The sidecar's internal API (`egress:3129`) | Sidecar | Reports the principal and the `needs-ticket` state; never a token or the keytab |
+
+The person's own tickets cannot reach the sidecar. On macOS they live in the `API:` cache (Heimdal) and Ticket Viewer,
+which no container can mount. On Windows they live in LSA. A Linux `FILE:` cache could be bind-mounted, but it expires
+in hours, needs a `kinit` on the host to refresh it, and would put a forwardable TGT inside a container. So the
+container route is a **technical user's keytab**, the Kerberos form of the operator-managed login that exists today
+(`WORCA_EGRESS_LOGIN_FILE`, docs/network-proxy.md "A login the operator manages"):
+
+- The operator mounts a keytab for a proxy service account as a compose secret and sets `WORCA_EGRESS_KEYTAB`, with `networkProxy.auth: kerberos` (or `WORCA_EGRESS_AUTH=kerberos`) and a `krb5.conf` through `WORCA_EGRESS_KRB5_CONF`. The sidecar sets `KRB5_CLIENT_KTNAME` to the keytab and `KRB5CCNAME` to a `MEMORY:` cache. MIT GSSAPI then gets the TGT from the keytab by itself and renews it before it expires, with no `kinit` and no password in Worca. This is MIT's client-keytab feature, which the spike did not test. A phase 2 spike checks it against the compose KDC.
+- Managed mode stays as it is: every write call answers "managed by the operator", and the API's status reports the principal from the keytab.
+- A keytab is a password equivalent for that account, like the NT hash. It gets the same guards as the login file: it must be readable by uid 1000 only, the sidecar refuses a group- or world-readable file, and only the sidecar mounts it.
+- The image needs `libgssapi-krb5-2`. The image is `node:24-bookworm-slim`, which has no `libgssapi_krb5.so.2` (spike, §8). It also needs the `kerberos` Linux prebuild at image build time. Both add to every image, so they go into the image build only once phase 2 is agreed.
+- `worca container proxy login` stays NTLM-only. A Kerberos keytab is an operator file, never typed in.
+
+Phase 1 (4.1) ships alone. Phase 2 starts once someone needs Kerberos in a container.
 
 ## 5. Fit with the connector, the login watcher and the lockout breaker
 
 ### 5.1 Connector
 
-Add a fourth branch to `authenticate()` (`upstream-proxy.mjs:483`), next to `basicStep` and `digestStep`:
+Add a fourth branch to `authenticate()` (`upstream-proxy.mjs:490`), next to `basicStep` and `digestStep`:
 
 ```
 kerberosStep(ctx, socket, buildHead, deadline, opts):
@@ -138,11 +166,11 @@ and KDC in a loop", still does.
 
 ### 5.3 Login watcher
 
-`watchProxyLogin` (`proxy-credentials.mjs:196`) watches `proxy-login.json`. In `kerberos` mode it is not
+`watchProxyLogin` (`proxy-credentials.mjs:431`) watches `proxy-login.json`. In `kerberos` mode it is not
 started, because no saved login exists. Instead:
 
 - For a `FILE:` cache (from `KRB5CCNAME`, or the default `/tmp/krb5cc_<uid>`), the same stat poll on that path triggers an immediate probe while in `needs-ticket`. Other cache types have no file to watch and rely on the backoff probe.
-- `isSwappable` (`egress-policy.mjs:147`) is false for `kerberos`, as for Basic and Digest: there is no login to swap in. A switch between `auto` and `kerberos` is a settings change that rebuilds the connector through `swapUpstream()`, after a passing test as today (the `UNTESTED` rule).
+- `isSwappable` (`egress-policy.mjs:177`) is false for `kerberos`, as for Basic and Digest: there is no login to swap in. A switch between `auto` and `kerberos` is a settings change that rebuilds the connector through `swapUpstream()`, after a passing test as today (the `UNTESTED` rule).
 - `worca proxy login` / `logout` with `auth: kerberos` say "single sign-on uses your system tickets; nothing to save" and exit 0. The card hides Log in and shows the principal.
 
 ### 5.4 Settings, status, Auto-detect
@@ -161,7 +189,7 @@ What changes and what does not:
 3. **The cache was already reachable.** Agents run as the same uid. On macOS and Linux they can use the person's cache directly (`curl --negotiate`, `git` with `http.emptyAuth`, `smbclient -k`) against any intranet service, whether or not Worca's Kerberos mode is on. This is the bigger exposure, and it exists today. Worca cannot close it by scrubbing `KRB5CCNAME`: the default cache needs no variable. The places where it is closed are the sandboxes with no cache (containers, E2B). For host runs the doc says this plainly, in the same place as the loopback note.
 4. **No delegation.** Never request `GSS_C_DELEG_FLAG` / `ISC_REQ_DELEGATE`, so the proxy never receives a forwardable TGT. A test asserts the flags passed to `initializeClient`.
 5. **Opt-in only.** `auto` never tries Kerberos, so turning on the proxy does not start using the person's SSO identity without them choosing it.
-6. **Not on shared servers.** Refused under a hosting platform's network policy, and on a multi-user host the card warns, as it already does for loopback.
+6. **Not the person's tickets on shared servers.** Their own cache is refused under a hosting platform's network policy, and on a multi-user host the card warns, as it already does for loopback. A shared instance uses a technical user's keytab in the sidecar (4.2), which proves only that account.
 7. **SPN and DNS.** The SPN comes from the configured host. A library that canonicalises through reverse DNS could ask for a ticket to another `HTTP/` service. That ticket is useful only to that service, which already sees the connection. Low risk, and documented with the `rdns = false` advice for `krb5.conf`.
 8. **Logs.** Tokens are never logged. `redactProxyLine` gains the `Negotiate <base64>` pattern (it may already match generic tokens; a test pins it).
 9. **Plain-HTTP proxy hop.** The token crosses the LAN in the clear, like NTLM today. The authenticator's timestamp and the proxy's replay cache bound replay to the proxy alone.
@@ -242,3 +270,4 @@ Still open:
 2. Windows: should `kerberos` mode be the recommended mode on domain-joined Windows even for NTLM proxies, since SSPI then needs no saved login at all?
 3. Should the card offer **Single sign-on** only when the module loads, or always, with a "not installed" state?
 4. Is the `needs-ticket` backoff (30 s doubling to 5 min) acceptable, or should it wait for a Test press, like `needs login`?
+5. Container setups (4.2): is a technical user's keytab in the sidecar the right phase 2, and is there a known customer who needs Kerberos in a container? Without one, phase 2 waits.
