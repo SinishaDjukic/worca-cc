@@ -1,13 +1,13 @@
 # Agent readiness
 
 Worca checks whether a project is ready for the coding agents it runs, and says what to fix. The result is a
-chip next to the project's name, in the Projects list and on the project page header:
+chip next to the project's name, in the Projects list and on the project page header (in the list it shows status only):
 
 - **Agent-ready**: every check that applies passes.
 - **Partly ready** (with a count): only should-fix checks fail.
 - **Not agent-ready** (with a count): a must-fix check fails.
 
-Click the chip for the report: the tools this project uses, what each one is missing and how to fix it, the
+Click the chip in the project page header for the report: the tools this project uses, what each one is missing and how to fix it, the
 repository checks, and the checks that pass or are skipped. **Recheck** runs the checks again; **Settings**
 opens the project's Settings tab, where **View report** brings the report back.
 
