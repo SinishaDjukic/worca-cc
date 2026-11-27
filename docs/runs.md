@@ -59,15 +59,15 @@ Every finished run keeps its full record, with one tab for each part:
 
 - **Overview**: the review verdict and its findings, time and cost, and how many files changed.
 - **Task**: the task the run was started with.
-- **Diff**: every changed file with its +/− and patch.
+- **Diff**: every changed file with its +/− and patch. It takes line comments ([Diff comments](diff-comments.md)).
 - **Artifacts**: the plans, reviews and other files the steps wrote.
 - **Actions**.
 - **Workflow**: the graph as it ran. At Expert it adds time and cost per step.
 - **Q&A**: the clarify answers and any questions asked mid-run.
 - **Logs**, and **Agents** at Expert.
 
-Overview, Task, Diff, Workflow and Q&A show in Simple mode. Artifacts, Actions and Logs start at Advanced (see
-[UI levels](ui-levels.md)).
+Overview, Task, Diff, Workflow and Q&A show in Simple mode. Artifacts and Actions start at Advanced; Logs and Agents at Expert (a live run's page shows Logs at
+Advanced). See [UI levels](ui-levels.md).
 
 A run in a Folder project works on a copy of the folder. Instead of **Diff** and **Actions** it has **Changes**, at
 every level, listing each file it added, updated or deleted. You land the work with **Apply to folder** or drop it
@@ -137,7 +137,7 @@ parked by an outage resumes once the network is back.
 ### When an agent goes quiet
 
 A step that produces no output for 20 minutes is stopped as idle, and you can change that limit per step or per
-workflow. The limit no longer stops an agent that is busy: one waiting on a long job it started, such as a full test
+workflow (`idleLimitMinutes` in a step's config or in the workflow's `limits`; `WORCA_NODE_IDLE_LIMIT_MIN` sets the default for steps that set none). The limit no longer stops an agent that is busy: one waiting on a long job it started, such as a full test
 suite or a build, gets another window as long as that job is still working. An agent that is waiting on nothing, or a
 job that is stuck, is stopped as before.
 
@@ -185,7 +185,7 @@ the setting again when you start or schedule the card, so a card proposed earlie
 Waiting, Finished, **Ready to ship** (finished, no PR yet) or Archived, and groups runs by project or by date. More in [The Runs list](runs-list.md).
 
 A live run's page shows its state and current step, the time ticking, its cost and the files it changed. **Live
-view** shows the running step inside its workflow graph. **Diff** shows the worktree's changes so far, and you can leave notes on its lines ([Diff comments](diff-comments.md)). **Open in <Editor>** is at the top right (edits you make there go into the run). Each file's head, on live and finished runs, has an icon that opens the file at its first changed line; on a finished run that is not checked out, that one click checks it out first (see [Actions](actions.md#built-ins)). **Logs**
+view** shows the running step inside its workflow graph. **Diff** shows the worktree's changes so far. **Open in <Editor>** is at the top right (edits you make there go into the run). Each file's head, on live and finished runs, has an icon that opens the file at its first changed line; on a finished run that is not checked out, that one click checks it out first (see [Actions](actions.md#built-ins)). **Logs**
 streams every step with search, and at Expert you can filter by source, level, step and cycle.
 
 The top bar's **Activity** pill counts what needs you and what is running. To hear about it outside the tab, turn

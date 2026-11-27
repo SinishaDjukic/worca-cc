@@ -9,8 +9,8 @@ A chat runs on the model you pick. The composer's model button lists each engine
 none yet (Gemini CLI, Goose, OpenCode, Qwen Code) sits under **More harnesses**: pick one to open `Add model` on it in
 [Models > Catalogue](models.md#the-catalogue-tab). Once it has a model it gets its own row and a chat can move to it.
 
-The composer is a compact bar of icons: the project button, **Requirements** and **Sets** (the layers icon), then the
-model button, which carries the mark of the engine the chat runs on, and one voice control. In a design's chat, the
+The composer is a compact bar of icons: the **+** button (attach files), the project button, **Requirements** (when the requirements flag is on in Labs) and **Sets** (the layers icon, Advanced, shown once a set in play has a member), then
+the context ring, the model button (Advanced), which carries the mark of the engine the chat runs on, and one voice control. In a design's chat, the
 **Models and Build fast** gear sits beside the model button ([Design](design.md#in-the-chat)).
 
 ## A chat that is the home page

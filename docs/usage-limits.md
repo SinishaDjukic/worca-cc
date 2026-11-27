@@ -40,7 +40,8 @@ A row reads like "86%" and "resets 14:50". A reset today shows the time alone; a
 "resets Thu 09:00". At 100% the row says **Reached**. Hover a row to see which provider reported it.
 
 The figures are whatever each provider last told Worca, while a run or chat was using it. They are not fetched on
-demand, so a block can be a little behind; its "as of" time says how much.
+demand, so a block can be a little behind; its "as of" time says how much. The exception is Gemini with a
+Login-with-Google sign-in: its quota is read every 60 seconds while a Worca page is open.
 
 ## When a limit is hit
 
@@ -62,8 +63,8 @@ When the reset time is known, the page also says "It resets at 18:00, in 2h 14m.
 - While it fires, the page says "Paused: resuming…".
 
 Unless you turn on **Resume runs automatically when a usage limit resets** (Settings › Runs › Budget & cost limits,
-off by default), nothing resumes by itself until you click **Resume at**. With it on, a run that paused on a plan's
-session or weekly limit is scheduled for you, 5 minutes after the reset, on the same engine, at most 3 times in a row.
+off by default), nothing resumes by itself until you click **Resume at**. With it on, any usage-limit pause whose reset time is known
+is scheduled for you, 5 minutes after the reset, on the same engine, at most 3 times in a row.
 Cost caps still pause for you. For a time of your own, choose **Resume at…** in the
 **Resume** menu instead. To carry on right away on another provider, see **Usage limits** in [Models](models.md).
 

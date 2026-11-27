@@ -37,8 +37,9 @@ there instead.
 ## The Projects list
 
 Each row shows the project, its branch and origin, and the agent-readiness chip: **Agent-ready**, **Partly
-ready** or **Not agent-ready**. Click the chip for the report ([agent-readiness.md](agent-readiness.md)).
-**Sync all** brings every git project up to date with its remote.
+ready** or **Not agent-ready**. The chip is status only here: open the project and click the chip in its page header for the report ([agent-readiness.md](agent-readiness.md)).
+**Sync all (N)** shows only while a project is behind and only fast-forwards; a project that can't be
+fast-forwarded is left, and a toast says so.
 
 ## The project page
 
@@ -52,8 +53,8 @@ A project's page has tabs. Overview is always there; the others appear as you mo
 | **Memory** | the notes Worca keeps for this project and the ones runs propose ([memory.md](memory.md)) |
 | **Settings** | this project's own settings, its **Away mode for this project** card, and the agent-readiness checks you can skip for it ([away-mode.md](away-mode.md)) |
 | **Sets** | the connector sets and servers this project uses ([mcp-servers.md](mcp-servers.md)) |
-| **Actions** | what Worca does with a finished run of this project, with **Try it** to test one ([actions.md](actions.md)); git projects only |
-| **Automations** | rules that start a run on a GitHub or Azure DevOps event ([git-automations.md](git-automations.md)); git projects only, and only while **Git event automations** is on in Settings › Labs |
+| **Actions** | what Worca does with a finished run of this project, with **Try it** to test one ([actions.md](actions.md)); hidden while git is not installed on this machine |
+| **Automations** | rules that start a run on a GitHub or Azure DevOps event ([git-automations.md](git-automations.md)); hidden while git is not installed on this machine, and only while **Git event automations** is on in Settings › Labs |
 
 ## Related
 
