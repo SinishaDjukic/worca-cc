@@ -16,8 +16,9 @@ name: CI
 # The workflow starts on every pull request and every dev push, docs-only ones
 # included, and every run ends in one `CI gate` job, so a required gate always
 # reports (a required check that never runs would stay pending forever). A
-# docs-only pull request runs only `changes` and `CI gate` (the `changes` job's
-# `code` filter skips the rest); a dev push runs every job.
+# docs-only pull request runs only `changes`, the fast tier (its tests read pages
+# under docs/) and `CI gate` (the `changes` job's `code` filter skips the rest);
+# a dev push runs every job.
 #
 # The fast tier runs on .nvmrc's Node only on a pull request, and on every supported
 # Node (22.19.0, 24, 26) on a dev push. The `full-node-matrix` label runs all three on
@@ -155,7 +156,8 @@ jobs:
     # step with .nvmrc and MIN_NODE.
     name: fast tests (Node ${{ matrix.node }}, ${{ matrix.shard }}/4)
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
+    # No docs-only skip here: fast tests read pages under docs/, so a docs-only pull request runs them too.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:

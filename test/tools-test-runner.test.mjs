@@ -620,7 +620,11 @@ export function gateProblems(doc) {
     const job = jobs[id] || {};
     const cond = String(job.if || '');
     if (![].concat(job.needs || []).includes('changes')) problems.push(`${id}: needs: changes is missing`);
-    if (!cond.includes('!cancelled()') || !cond.includes("needs.changes.outputs.code != 'false'"))
+    // The fast tier reads pages under docs/, so it runs on a docs-only pull request too.
+    if (id === 'test-fast') {
+      if (!cond.includes('!cancelled()') || cond.includes('needs.changes.outputs.code'))
+        problems.push('test-fast: if must hold !cancelled() and no docs-only skip (fast tests read docs/)');
+    } else if (!cond.includes('!cancelled()') || !cond.includes("needs.changes.outputs.code != 'false'"))
       problems.push(`${id}: if must hold !cancelled() and needs.changes.outputs.code != 'false'`);
   }
   if (jobs['test-slow'] && !String(jobs['test-slow'].if || '').includes("needs.changes.outputs.engine != 'false'"))
@@ -678,6 +682,10 @@ test('ci.yml CI gate: a job without needs: changes or the docs-only if is named'
   hasProblem(mutated((d) => { delete d.jobs.cdp.needs; }), /^cdp: needs: changes/, 'cdp needs');
   hasProblem(mutated((d) => { d.jobs.cdp.if = "${{ github.event_name != 'pull_request' || needs.changes.outputs.code != 'false' }}"; }), /^cdp: if/, 'cdp no !cancelled()');
   hasProblem(mutated((d) => { d.jobs.cdp.if = '${{ !cancelled() }}'; }), /^cdp: if/, 'cdp no code clause');
+});
+
+test('ci.yml CI gate: the fast tier with a docs-only skip is named', () => {
+  hasProblem(mutated((d) => { d.jobs['test-fast'].if = "${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}"; }), /^test-fast: if/, 'test-fast docs-only skip');
 });
 
 test('ci.yml CI gate: changes must output code from an every-quantifier filter step', () => {

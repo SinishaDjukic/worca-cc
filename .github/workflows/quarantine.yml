@@ -140,6 +140,8 @@ jobs:
     timeout-minutes: 90
     env:
       WORCA_TEST_SUITE_TIMEOUT_MIN: "85"
+      # No base commit to compare the offender list with here; ci.yml runs that comparison on every pull request.
+      WORCA_SUITE_GUARD_BASE: none
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }

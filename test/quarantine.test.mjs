@@ -328,6 +328,7 @@ test('quarantine.yml: the tail measure job runs the fast tier with --measure-tai
   assert.equal(job.needs, undefined);
   assert.equal(job['continue-on-error'], true);
   assert.equal(job.if, "${{ github.event_name != 'push' }}", 'never on a dev push: it holds a runner for up to 90 min');
+  assert.equal(job.env?.WORCA_SUITE_GUARD_BASE, 'none', 'the fast tier holds the suite guard test, which needs a base or none');
   const runs = job.steps.map((s) => String(s.run || '')).join('\n');
   assert.ok(runs.includes('npm run test:fast -- --measure-tails'), runs);
   assert.ok(runs.includes('$GITHUB_STEP_SUMMARY'), runs);

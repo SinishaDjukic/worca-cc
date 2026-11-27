@@ -116,8 +116,8 @@ CI keeps them strict.
 CI runs on every pull request and every push to `dev`: the fast tier on every code change,
 the slow tier when the change touches what it exercises (`test/tiers.json`;
 `npm run test:fast` and `npm run test:slow` run one tier locally). A docs-only
-pull request runs only the `changed paths` and `CI gate` jobs, and the gate
-passes. CI does not run the smoke scripts. Run `npm test` (and
+pull request runs only the `changed paths` job, the fast tier (its tests read
+pages under `docs/`) and the `CI gate` job. CI does not run the smoke scripts. Run `npm test` (and
 the relevant smoke script if you touched the engine, workspace, or plugin
 paths) locally before opening or updating a PR, and say so in the PR
 description. A failed `CI gate` lists each failing test file by shard in its job
