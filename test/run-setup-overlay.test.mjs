@@ -503,3 +503,21 @@ test('a pick in the picker sets the row\'s model and harness; inherit sends no p
   assert.deepEqual(o.events.confirms[0].nodes.n_plan, { model: 'gpt-5.5', effort: '', engine: 'codex' });
   assert.equal('n_review' in o.events.confirms[0].nodes, false);
 });
+test('a pick keeps the row\'s effort when the model offers it on the picked harness, else clears it', async () => {
+  const pinned = { config: async () => ({ config: { workflows: { wf_g: { nodes: { n_review: { model: 'gpt-5.5', effort: 'low', engine: 'codex' } } } } }, models: [...MODELS, GPT] }) };
+  // GPT-5.5 offers low on Codex; on the run's harness (Claude) it would not, so judging there would clear it
+  const kept = await open(pinned);
+  kept.q('[data-ui="model-n_review"]').click();
+  opt('model', 'gpt-5.5').click();
+  assert.equal(kept.q('[data-ui="effort-n_review"]').value, 'low', 'Codex offers low: kept');
+  kept.q('[data-ui="runsetup-go"]').click(); await settle();
+  assert.deepEqual(kept.events.confirms[0].nodes.n_review, { model: 'gpt-5.5', effort: 'low', engine: 'codex' });
+  // Opus 5.5 on Claude has no low: cleared
+  const cleared = await open(pinned);
+  cleared.q('[data-ui="model-n_review"]').click();
+  opt('harness', 'claude').click();
+  opt('model', 'claude-opus-5-5').click();
+  assert.equal(cleared.q('[data-ui="effort-n_review"]').value, '', 'Claude has no low for Opus: cleared');
+  cleared.q('[data-ui="runsetup-go"]').click(); await settle();
+  assert.deepEqual(cleared.events.confirms[0].nodes.n_review, { model: 'claude-opus-5-5', effort: '', engine: 'claude' });
+});
