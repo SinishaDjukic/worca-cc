@@ -12,7 +12,9 @@ test('verify:chat-layout keeps its #959 checks', () => {
     'the composer and the column share one centre', 'nothing under the composer', 'Jump to latest sits in the band',
     'no pill and no corner past the card', '--report-only', 'no part of a card leaves the text column',
     "every graph well is as wide as its card's content", 'the page has no horizontal overflow', 'scrollWidth - innerWidth',
-    'revalidateWorkflowProposal', "'.ask-wfcard .gv-well .gv-world .node'", 'opens at 0.3x at its start edge', 'no well taller than its placed graph']) {
+    'revalidateWorkflowProposal', "'.ask-wfcard .gv-well .gv-world .node'", 'opens at 0.3x at its start edge', 'no well taller than its placed graph',
+    'the transcript never scrolls sideways', 'tr.scrollWidth - tr.clientWidth', 'the transcript thumb is at least', 'above the minimum the thumb stays proportional',
+    'the hovered thumb fills out', "'Layout: wide answer'", "'Layout: long thread'", '--chat-scrollbar-w', 'scrollers inside the transcript stay native']) {
     assert.ok(src.includes(needle), needle);
   }
   assert.ok(!src.includes('--hide-scrollbars'), 'the proof needs classic scrollbars drawn');

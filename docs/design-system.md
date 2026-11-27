@@ -420,8 +420,11 @@ same live graph in the shared `.wf-pop` overlay (a run-hosts `monitor` host fitt
 overlay's Open run is the way to the run's Workflow tab. The transcript reserves its
 scrollbar gutter on both edges (`scrollbar-gutter:stable both-edges`), so the column, the composer and Jump to latest
 share one centre. The dock is opaque from its top edge down after a 32px fade band (`--chat-dock-fade`); it stops at the transcript's
-scrollbar gutter (`--scrollbar-w`), so the scrollbar stays visible and draggable to its end. Jump to latest
-sits in that band, right above the dock, and the transcript's bottom clearance includes it, so nothing reads under
+scrollbar gutter (`--chat-scrollbar-w`), so the scrollbar stays visible and draggable to its end. This transcript alone
+draws its own scrollbar: a 14px gutter and a thumb never shorter than 48px (`--chat-thumb-min`), 6px wide at rest and
+10px on hover while the gutter stays put (Firefox keeps its own bar in the token colours); every other scroller stays
+native. The transcript never scrolls sideways: long words wrap, and a wide table or code block scrolls in its own box.
+Jump to latest sits in that band, right above the dock, and the transcript's bottom clearance includes it, so nothing reads under
 the composer. A row rises in (`data-ask-enter`) only the first time the page shows it, in any chat; the card inside it
 never rises on its own. No part of a chat card is a pill; inner corners stay at or under the card's 8px.
 ### Composer bar
