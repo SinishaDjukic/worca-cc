@@ -135,7 +135,7 @@ who ran runs on the team. Its period has its own buttons (This month, Last month
 month is the default and the choice is kept in this browser) and ignores the page's range, tag and row
 filters. Periods are calendar periods in UTC, the same as the page's range chips.
 
-**Score.** Out of 100: merged runs 35, success rate 35, runs 15, spend per run 15. Each part is compared with
+**Score.** Out of 100: merged pull requests 35, success rate 35, runs 15, spend per run 15. Each part is compared with
 the best person on the team in the same period (a person's runs divided by the most runs anyone has, and so
 on; for spend per run, lower is better), so the score says how close someone is to the best of the team, not
 how big the team is. A card row shows the score with a bar split into the four parts, then each part's raw number
@@ -149,21 +149,30 @@ scores (to one decimal) share a rank and are joint winners. An open period says 
 closed; All time says **All-time leader**. With no runs the card says "No winner yet", and when nobody has 3
 runs it says "No winner for this period".
 
-**Merged runs** are matched to pull requests exactly as the [Timeline](#timeline) does (the Action's
+**Merged pull requests** are counted per person: the number of distinct merged pull requests behind their runs in
+the period, so two runs on one pull request count once, and a pull request shared by two people counts for each
+of them. (Earlier builds counted merged runs, so a number you saw before can be lower now.) Runs are matched to
+pull requests exactly as the [Timeline](#timeline) does (the Action's
 events, this machine's runs, GitHub through `gh`, Azure DevOps and Bitbucket through their tokens, and the
 cache). The card paints first with "Checking merged pull requests…" and repaints when the answer arrives.
 When GitHub, Azure DevOps or Bitbucket cannot be reached (no CLI or token, a refused token, or an error), runs
-whose pull request could not be checked count as not merged and the card names the provider. It also names an
-Azure DevOps repository with more pull requests than one listing covers: older runs there may count as not merged.
+whose pull request could not be checked count as not merged and the card names the provider and why: no sign-in
+on this machine, a refused sign-in, or could not be reached. It also names an Azure DevOps or Bitbucket repository
+with more pull requests than one listing covers (older runs there may count as not merged). When the request to
+Worca itself fails, the card says "Worca could not look up pull requests" and pull requests it could not check count as not merged; it names no
+git host.
 
-**Levels.** Each person in the By actor table (Overview and By person) and on the leaderboard shows a Worca
-level badge. A Worca level is worked out on each person's own machine and is private, so Team metrics only
+**Levels.** Levels are **off by default**: a team turns them on with the team-policy field
+`metrics.showLevels` ([Team policy](team-policy.md)), read from the policy this machine already holds (never
+fetched for this). Without it the Level column, the leaderboard avatars and the level lines are left out, and
+Team metrics reads no level. When on, each person in the By actor table (Overview and By person) and on the
+leaderboard shows a Worca level badge. A Worca level is worked out on each person's own machine and is private, so Team metrics only
 shows the real level (name and icon) for **you**; everyone else shows **Level unknown** with a neutral icon.
 You are found by your signed-in name, or, on a single-person install, by your git name or the key of your git
 email on the records (for a workspace, read from the first member that is a Git checkout, where its runs
 record it — not from the metrics home). If you have not reached a level yet the badge says "No level yet".
-Your level is read again each time the page loads and on **Refresh**, so a level-up shows there; when that
-read fails, the level already on screen stays.
+Your level is the one the account menu shows, so a level-up appears on the leaderboard as it happens; **Refresh**
+reads it again, and when a read fails the level already on screen stays.
 
 ## Timeline
 

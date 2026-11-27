@@ -386,9 +386,9 @@ test('Team metrics › Cost: Download CSV names the scope, range and key; chip c
 const LEVEL = { level: { index: 3, key: 'builder', name: 'Builder', avatar: '/assets/worca-levels/builder.svg' } };
 const monthStart = (back = 0) => { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - back, 1); };
 const lbRec = (id, actor, startedAt, extra = {}) => ({ ...makeRecord({ id, startedAt, actor }), ...extra });
-function lbData({ viewer = { names: ['Ana'], actorKey: null }, records } = {}) {
+function lbData({ viewer = { names: ['Ana'], actorKey: null }, records, display = { levels: true } } = {}) {
   const recent = new Date().toISOString();
-  return { ...TM_DATA, viewer, records: records || [
+  return { ...TM_DATA, viewer, display, records: records || [
     lbRec('a1', 'Ana', recent), lbRec('a2', 'Ana', recent), lbRec('a3', 'Ana', recent),
     lbRec('b1', 'Bo', recent), lbRec('b2', 'Bo', recent), lbRec('b3', 'Bo', recent, { result: 'failed' }),
   ] };
@@ -434,7 +434,7 @@ test('the viewer is also found by actor key, and without a level yet shows "No l
   const records = ['a1', 'a2', 'a3'].map((id) => lbRec(id, 'Ana B.', recent, { actorKey: '0123456789abcdef' }));
   const keyed = await openPerson({ fetchHandler: lbHandler(lbData({ viewer: { names: [], actorKey: '0123456789abcdef' }, records })) });
   assert.equal(lbRow(keyed.window.document, 'Ana B.').querySelector('.tm-lb-level').dataset.levelState, 'known');
-  const none = await openPerson({ fetchHandler: lbHandler(lbData(), { level: { level: null } }) });
+  const none = await openPerson({ fetchHandler: lbHandler(lbData(), { level: { level: null, setup: {}, ladder: [] } }) });
   assert.match(lbRow(none.window.document, 'Ana').textContent, /No level yet/);
   assert.match(lbRow(none.window.document, 'Bo').textContent, /Level unknown/);
   const stranger = await openPerson({ fetchHandler: lbHandler(lbData({ viewer: { names: [], actorKey: null } })) });
@@ -444,6 +444,19 @@ test('the viewer is also found by actor key, and without a level yet shows "No l
 test('a failing level read never breaks the page', async () => {
   const ctx = await openPerson({ fetchHandler: (u, o) => (u.includes('/api/worca-level') ? respond({ error: 'no' }, 500) : lbHandler(lbData())(u, o)) });
   assert.ok(ctx.window.document.querySelector('#tm-body .tm-lb'));
+});
+
+test('a viewer with no level yet shows "No level yet" when the level view arrives after the first paint, without a Refresh', async () => {
+  let release; const gate = new Promise((r) => { release = r; });
+  const base = lbHandler(lbData());
+  const NONE = { level: null, setup: {}, ladder: [] };
+  const ctx = await openTm({ fetchHandler: (u, o) => (u.includes('/api/worca-level') ? gate.then(() => respond(NONE)) : base(u, o)) });
+  const levelState = () => tableRow(ctx.window.document, 'Ana').querySelector('.tm-level').dataset.levelState;
+  assert.equal(levelState(), 'unknown', 'the level is not read yet');
+  release();
+  for (let i = 0; i < 8; i++) await ctx.tick();
+  assert.equal(levelState(), 'none');
+  assert.match(tableRow(ctx.window.document, 'Ana').textContent, /No level yet/);
 });
 
 // The account corner reads /api/worca-level too, so these tests switch the served answer instead of counting reads.
@@ -464,7 +477,7 @@ test('a failed level read recovers, and a level-up shows, on Refresh', async () 
   const { served, fetchHandler } = levelSwitch(null);
   const ctx = await openPerson({ fetchHandler });
   const levelOf = () => lbRow(ctx.window.document, 'Ana').querySelector('.tm-lb-level').textContent;
-  assert.match(levelOf(), /No level yet/, 'the failed read shows no level');
+  assert.match(levelOf(), /Level unknown/, 'the failed read leaves the level unread: not "No level yet"');
   served.now = LEVEL;
   await tmRefresh(ctx);
   assert.equal(levelOf(), 'Builder', 'the failed read was not kept for the session');
@@ -485,10 +498,41 @@ test('a failed level read after a good one keeps the level that was shown', asyn
   assert.equal(levelOf(), 'Builder');
 });
 
+test('a level-up reaches the leaderboard without Refresh (the account menu\'s own read)', async () => {
+  const UP = { level: { index: 4, key: 'orchestrator', name: 'Orchestrator', avatar: '/assets/worca-levels/orchestrator.svg' } };
+  const { served, fetchHandler } = levelSwitch(LEVEL);
+  const ctx = await openPerson({ fetchHandler });
+  const levelOf = () => lbRow(ctx.window.document, 'Ana').querySelector('.tm-lb-level').textContent;
+  assert.equal(levelOf(), 'Builder');
+  served.now = UP;
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'worca-level-changed' }) });
+  await new Promise((r) => setTimeout(r, 350));
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  assert.equal(levelOf(), 'Orchestrator');
+});
+
+test('levels are off without the policy: no Level column, no badges, no avatars, no level read for the page', async () => {
+  let levelReads = 0;
+  const data = { ...lbData(), display: undefined };
+  const base = lbHandler(data);
+  const ctx = await openTm({ fetchHandler: (u, o) => { if (u.includes('/api/worca-level')) levelReads += 1; return base(u, o); } });
+  const doc = ctx.window.document;
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  assert.equal(doc.querySelector('#tm-body table[data-dim="actor"] th[data-sort="level"], #tm-body .tm-level'), null, 'no Level column on Overview');
+  doc.querySelector('#tm-view [data-tm-view="person"]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.ok(doc.querySelector('#tm-body .tm-lb'), 'the leaderboard itself still shows');
+  assert.equal(doc.querySelector('#tm-body .tm-lb-level, #tm-body .tm-lb-ava, #tm-body .tm-level'), null);
+  const before = levelReads;   // the account menu's own read at boot is not Team metrics'
+  await tmRefresh(ctx);
+  assert.equal(doc.querySelector('#tm-body .tm-lb-level, #tm-body .tm-level'), null);
+  assert.equal(levelReads, before, 'Refresh does not read a level when levels are off');
+});
+
 test('an Azure DevOps or Bitbucket lookup that could not answer is named under the leaderboard', async () => {
   const open = (status) => openPerson({ fetchHandler: lbHandler(lbData(), { prs: () => respond({ prs: {}, status }) }) });
   const note = (ctx) => ctx.window.document.querySelector('#tm-body .tm-lb-merged-note')?.textContent ?? null;
-  assert.match(note(await open({ gh: 'unused', azure: 'missing' })), /^Azure DevOps could not be reached/);
+  assert.match(note(await open({ gh: 'unused', azure: 'missing' })), /^Azure DevOps has no sign-in on this machine/);
   assert.match(note(await open({ gh: 'ok', bitbucket: 'ok', bitbucketError: 'HTTP 500' })), /^Bitbucket could not be reached/);
   assert.match(note(await open({ gh: 'ok', azure: 'ok', azureTruncated: ['org/p/r'] })), /^org\/p\/r has more pull requests than one listing covers/);
   assert.equal(note(await open({ gh: 'ok', azure: 'ok', bitbucket: 'unused' })), null);
@@ -502,8 +546,13 @@ test('switching the leaderboard period re-ranks and persists', async () => {
   const winners = () => doc.querySelector('#tm-body .tm-lb-leader .tm-lb-headline').textContent;
   assert.match(winners(), /^Ana is leading /);
   assert.equal(doc.querySelector('#tm-body .tm-lb [data-lb-range="this-month"]').getAttribute('aria-pressed'), 'true');
-  doc.querySelector('#tm-body .tm-lb [data-lb-range="last-month"]').click();
+  const lmBtn = doc.querySelector('#tm-body .tm-lb [data-lb-range="last-month"]');
+  lmBtn.focus();
+  lmBtn.click();
   await tick();
+  assert.equal(doc.activeElement.dataset.lbRange, 'last-month', 'the repaint keeps focus on the pressed period');
+  for (let i = 0; i < 4; i++) await tick();   // the PR answer repaints the card again
+  assert.equal(doc.activeElement.dataset.lbRange, 'last-month', 'and so does the repaint the PR answer brings');
   assert.match(winners(), /^Cy won /);
   assert.equal(window.localStorage.getItem('worca.teamMetrics.lbRange'), 'last-month');
   const again = await openPerson({ fetchHandler: lbHandler(lbData({ records: recs })), storage: { 'worca.teamMetrics.lbRange': 'last-month' } });
@@ -512,7 +561,8 @@ test('switching the leaderboard period re-ranks and persists', async () => {
 
 test('merged runs come from the PR lookup: asked once per run, the count rises after the repaint', async () => {
   const log = [];
-  const prs = () => respond({ prs: { a1: [{ state: 'MERGED' }], a2: [{ state: 'MERGED' }], a3: [{ state: 'OPEN' }] }, status: { gh: 'ok' } });
+  const pr = (number, state) => [{ state, repo: 'acme/api', number }];
+  const prs = () => respond({ prs: { a1: pr(1, 'MERGED'), a2: pr(2, 'MERGED'), a3: pr(3, 'OPEN') }, status: { gh: 'ok' } });
   const { window, tick } = await openPerson({ fetchHandler: lbHandler(lbData(), { prs, log }) });
   const doc = window.document;
   assert.equal(log.length, 1);
@@ -525,19 +575,49 @@ test('merged runs come from the PR lookup: asked once per run, the count rises a
   assert.equal(log.length, 1, 'the same runs are never asked twice');
 });
 
-test('a failing PR lookup leaves merged at 0, says so, and shows no toast', async () => {
+test('a failing request to Worca leaves merged at 0, says so without naming a git host, and shows no toast', async () => {
   const { window } = await openPerson({ fetchHandler: lbHandler(lbData(), { prs: () => respond({ error: 'gh down' }, 502) }) });
   const doc = window.document;
-  assert.match(doc.querySelector('#tm-body .tm-lb-merged-note').textContent, /GitHub could not be reached/);
+  const note = doc.querySelector('#tm-body .tm-lb-merged-note').textContent;
+  assert.equal(note, 'Worca could not look up pull requests — pull requests it could not check count as not merged.');
+  assert.doesNotMatch(note, /GitHub|Azure|Bitbucket/);
   assert.deepEqual(merged(doc, 'Ana'), ['0', '0.0 / 35']);
   assert.equal(doc.querySelector('.toast, [data-toast]'), null);
+});
+
+test('a failed lookup\'s warning clears when Refresh succeeds', async () => {
+  let calls = 0;
+  const prs = () => (++calls === 1 ? respond({ error: 'down' }, 502) : respond({ prs: {}, status: { gh: 'ok' } }));
+  const ctx = await openPerson({ fetchHandler: lbHandler(lbData(), { prs }) });
+  const note = () => ctx.window.document.querySelector('#tm-body .tm-lb-merged-note');
+  assert.match(note().textContent, /Worca could not look up pull requests/);
+  await tmRefresh(ctx);
+  assert.equal(calls, 2, 'Refresh asked again');
+  assert.equal(note(), null, 'the old warning did not outlive the successful Refresh');
+});
+
+test('a lookup still in flight at Refresh cannot bring its error back', async () => {
+  let calls = 0;
+  let fail;
+  const gate = new Promise((r) => { fail = r; });
+  const prs = () => (++calls === 1 ? gate.then(() => respond({ error: 'down' }, 502)) : respond({ prs: {}, status: { gh: 'ok' } }));
+  const ctx = await openTm({ fetchHandler: lbHandler(lbData(), { prs }) });
+  const doc = ctx.window.document;
+  doc.querySelector('#tm-view [data-tm-view="person"]').click();
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  assert.equal(calls, 1);
+  await tmRefresh(ctx);                      // the first lookup is still out
+  fail();
+  for (let i = 0; i < 8; i++) await ctx.tick();
+  assert.ok(calls >= 2, 'the repaint after the stale answer asked again');
+  assert.equal(doc.querySelector('#tm-body .tm-lb-merged-note'), null, 'the stale 502 was dropped');
 });
 
 test('leaving for the Timeline mid-lookup: the person view is not repainted and no run is asked twice', async () => {
   const log = [];
   let release;
   const gate = new Promise((r) => { release = r; });
-  const prs = (body) => (log.length === 1 ? gate.then(() => respond({ prs: { a1: [{ state: 'MERGED' }] }, status: { gh: 'ok' } })) : respond({ prs: {}, status: { gh: 'ok' } }));
+  const prs = (body) => (log.length === 1 ? gate.then(() => respond({ prs: { a1: [{ state: 'MERGED', repo: 'acme/api', number: 1 }] }, status: { gh: 'ok' } })) : respond({ prs: {}, status: { gh: 'ok' } }));
   const ctx = await openTm({ fetchHandler: lbHandler(lbData(), { prs, log }) });
   const { window, tick } = ctx;
   const doc = window.document;

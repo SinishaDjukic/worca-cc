@@ -630,7 +630,7 @@ export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Da
   if (homeHint) wrap.append(homeHint);
   if (view) wrap.append(renderTmViewChips(view, { doc }));
   if (view === 'person') {
-    if (leaderboard) wrap.append(renderLeaderboardCard(leaderboard, { doc, levelFor: levelFor || (() => ({ state: 'unknown' })), now, mergedState, mergedGaps, lbRange }));
+    if (leaderboard) wrap.append(renderLeaderboardCard(leaderboard, { doc, levelFor: levelFor || undefined, now, mergedState, mergedGaps, lbRange }));
     const g = h(doc, 'div', 'charts-grid people-grid tm-breakdowns');
     if (agg.breakdowns.actor) {
       g.append(renderBreakdownTable('actor', agg.breakdowns.actor, { doc, sort: sort.actor || null, activeKey: filter.actor ?? null, homeSlug: agg.homeSlug ?? null, levelFor }));

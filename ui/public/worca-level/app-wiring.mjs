@@ -205,6 +205,8 @@ export function createWorcaLevelWiring({ menu, repaint, isSettled, setupOpen, in
     },
     /** Refetch now (tests; the poke path coalesces through scheduleRefresh). */
     refreshNow: load,
+    /** Read the view again now and repaint: Team metrics' Refresh asks for it, so a level-up shows. A failed read keeps the view held. */
+    reload: load,
     /** A server message arrived: refetch when it may have moved the level. */
     onServerMessage(type) { if (WORCA_REFRESH_EVENTS.has(type)) scheduleRefresh(); },
     /** A view an acknowledgement answered with: it replaces the held one (no repaint), so what was just answered stays answered. */

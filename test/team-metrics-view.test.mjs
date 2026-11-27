@@ -291,7 +291,7 @@ test('leaderboard card: no-runs and none-eligible keep the message in a muted bo
 
 test('leaderboard card: ranked grid row shows the score bar and the four parts as value over points / weight', () => {
   const recs = [...lbRuns('Ana', 3, { usd: 2 }), ...lbRuns('Ana', 1, { usd: null }), ...lbRuns('Bo', 3, { usd: 4 })];
-  const card = renderLeaderboardCard(board(recs, 'this-month', { mergedRunIds: new Set([recs[0].id]) }), { doc, levelFor: unknown, now: NOW, lbRange: 'this-month' });
+  const card = renderLeaderboardCard(board(recs, 'this-month', { mergedPrs: new Map([[recs[0].id, ['o/r#1']]]) }), { doc, levelFor: unknown, now: NOW, lbRange: 'this-month' });
   assert.equal(card.querySelector('table'), null, 'a grid, not a table');
   assert.ok(card.querySelector('.tm-lb-scroll > .tm-lb-grid[role="table"]'));
   const head = card.querySelector('.tm-lb-grid-head');
@@ -316,7 +316,7 @@ test('leaderboard card: ranked grid row shows the score bar and the four parts a
   assert.deepEqual(part(5), ['1', '35.0 / 35', null]);
   assert.deepEqual(part(6), ['100%', '35.0 / 35', null]);
   assert.equal(card.querySelector('.hint'), null, 'dedicated classes only');
-  assert.equal(card.querySelector('.tm-lb-foot').textContent, 'Each part is compared with the rest of the team in the same period. Merged runs and success ratio 35% each, runs and spend per run 15% each. Runs without a recorded cost are left out of spend per run.');
+  assert.equal(card.querySelector('.tm-lb-foot').textContent, 'Each part is compared with the best person in the same period. Merged pull requests and success rate 35% each, runs and spend per run 15% each. Runs without a recorded cost are left out of spend per run.');
   assert.equal(card.querySelector('.tm-lb-merged-note'), null);
 });
 
@@ -324,9 +324,16 @@ test('leaderboard card: merged-state notes (loading, unreachable) follow the foo
   const b = board(lbRuns('Ana', 3));
   assert.match(renderLeaderboardCard(b, { doc, levelFor: unknown, now: NOW, mergedState: 'loading' }).querySelector('.tm-lb-foot .tm-lb-merged-note').textContent, /Checking merged pull requests…/);
   const foot = (mergedGaps) => renderLeaderboardCard(b, { doc, levelFor: unknown, now: NOW, mergedGaps }).querySelector('.tm-lb-foot');
-  assert.match(foot({ providers: ['GitHub'], truncated: [] }).textContent, /spend per run\. GitHub could not be reached — runs whose pull request could not be checked count as not merged\.$/);
-  assert.match(foot({ providers: ['Azure DevOps'], truncated: [] }).querySelector('.tm-lb-merged-note').textContent, /^Azure DevOps could not be reached/);
-  assert.match(foot({ providers: ['GitHub', 'Azure DevOps', 'Bitbucket'], truncated: [] }).textContent, /GitHub, Azure DevOps, and Bitbucket could not be reached/);
+  const note = (mergedGaps) => foot(mergedGaps).querySelector('.tm-lb-merged-note').textContent;
+  const TAIL = '— runs whose pull request could not be checked count as not merged.';
+  assert.match(foot({ providers: ['GitHub'], reasons: { GitHub: 'error' }, truncated: [] }).textContent, new RegExp(`spend per run\\. GitHub could not be reached ${TAIL}$`));
+  assert.equal(note({ providers: ['Azure DevOps'], reasons: { 'Azure DevOps': 'missing' }, truncated: [] }), `Azure DevOps has no sign-in on this machine ${TAIL}`);
+  assert.equal(note({ providers: ['Bitbucket'], reasons: { Bitbucket: 'unauthenticated' }, truncated: [] }), `Bitbucket refused the sign-in ${TAIL}`);
+  assert.equal(note({ providers: ['GitHub', 'Azure DevOps', 'Bitbucket'], reasons: { GitHub: 'error', 'Azure DevOps': 'error', Bitbucket: 'error' }, truncated: [] }), `GitHub, Azure DevOps, and Bitbucket could not be reached ${TAIL}`);
+  assert.equal(note({ providers: ['GitHub', 'Azure DevOps', 'Bitbucket'], reasons: { GitHub: 'missing', 'Azure DevOps': 'unauthenticated', Bitbucket: 'error' }, truncated: [] }),
+    `GitHub has no sign-in on this machine; Azure DevOps refused the sign-in; Bitbucket could not be reached ${TAIL}`, 'one clause per reason');
+  assert.equal(note({ providers: [], reasons: {}, truncated: [], worcaError: 'HTTP 502' }), 'Worca could not look up pull requests — pull requests it could not check count as not merged.');
+  assert.doesNotMatch(note({ providers: [], reasons: {}, truncated: [], worcaError: 'HTTP 502' }), /GitHub|Azure|Bitbucket/);
   assert.match(foot({ providers: [], truncated: ['org/p/r'] }).querySelector('.tm-lb-merged-note').textContent, /^org\/p\/r has more pull requests than one listing covers — older runs there may count as not merged\.$/);
   assert.match(foot({ providers: ['Bitbucket'], truncated: ['a/b/c', 'd/e/f'] }).textContent, /Bitbucket could not be reached .* a\/b\/c, d\/e\/f have more pull requests/);
   assert.equal(foot({ providers: [], truncated: [] }).querySelector('.tm-lb-merged-note'), null);
@@ -342,6 +349,31 @@ test('leaderboard card: not-eligible cards have an avatar, "<level> · N runs" a
     [['Bo', 'Level unknown · 2 runs', 'needs 1 more run'], ['Cy', 'Level unknown · 1 run', 'needs 2 more runs']]);
   assert.equal(cards[0].querySelector('.tm-lb-ava').textContent, '?');
   assert.equal(card.querySelectorAll('.tm-lb-row').length, 1, 'Bo is not in the ranked grid');
+});
+
+test('leaderboard card: all time says "so far", not "in all time"', () => {
+  const card = renderLeaderboardCard(board([...lbRuns('Ana', 3), ...lbRuns('Bo', 2)], 'all'), { doc, levelFor: unknown, now: NOW, lbRange: 'all' });
+  assert.equal(card.querySelector('.tm-lb-todo-head').textContent, 'Not eligible yet · fewer than 3 runs so far');
+});
+
+test('leaderboard card without levelFor: no avatars, no level line, not-eligible cards read "N runs"', () => {
+  const card = renderLeaderboardCard(board([...lbRuns('Ana', 3), ...lbRuns('Bo', 2)]), { doc, now: NOW });
+  assert.equal(card.querySelector('.tm-lb-ava'), null, 'neither rows, leader nor cards carry an avatar');
+  assert.equal(card.querySelector('.tm-lb-level'), null);
+  assert.equal(card.querySelector('.tm-lb-leader-avas'), null);
+  assert.equal(card.querySelector('.tm-lb-row .tm-person').textContent, 'Ana');
+  assert.equal(card.querySelector('.tm-lb-todo-card .tm-lb-sub-line').textContent, '2 runs');
+  assert.doesNotMatch(card.textContent, /Level unknown|No level yet/);
+});
+
+test('leaderboard card: part cells carry their label for the stacked layout; the scroller is a focusable region', () => {
+  const card = renderLeaderboardCard(board(lbRuns('Ana', 3)), { doc, levelFor: unknown, now: NOW });
+  const cells = [...card.querySelectorAll('.tm-lb-row [role="cell"][data-part]')];
+  assert.deepEqual(cells.map((c) => [c.dataset.part, c.dataset.label]), [['runs', 'Runs'], ['perRun', 'Per run'], ['merged', 'Merged'], ['success', 'Success']]);
+  const scroll = card.querySelector('.tm-lb-scroll');
+  assert.equal(scroll.getAttribute('tabindex'), '0');
+  assert.equal(scroll.getAttribute('role'), 'region');
+  assert.equal(scroll.getAttribute('aria-label'), 'Leaderboard (scrolls sideways)');
 });
 
 test('period selector offers the five periods in order and marks the current one', () => {

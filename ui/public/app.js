@@ -322,7 +322,7 @@ import { mcpRunsLabel, renderMcpRunsPop, renderRunSkills } from './mcp-run-picke
 import { aggregate, toCsv, recordTags } from '../../src/shared/team-metrics/aggregate.mjs';
 import { recordFacts, heatGrid, missingKeyTodos } from '../../src/shared/team-metrics/cost-facts.mjs';
 import { buildWorkItems, prLookupFor } from '../../src/shared/team-metrics/timeline.mjs';
-import { buildLeaderboard, mergedRunIds, mergedLookupGaps, leaderboardRecords, LEADERBOARD_RANGES } from '../../src/shared/team-metrics/leaderboard.mjs';
+import { buildLeaderboard, mergedPrKeys, mergedLookupGaps, leaderboardRecords, LEADERBOARD_RANGES } from '../../src/shared/team-metrics/leaderboard.mjs';
 import { renderTimeline, renderTimelinePopover, timelineWindow, shiftAnchor, TL_MODES, TL_ZOOMS } from './team-metrics-timeline.mjs';
 import {
   renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
@@ -1927,8 +1927,8 @@ function paintUsage() {
 // The menu's level card opens with the menu (a click or Enter); nothing opens on hover or focus. A person with no level yet
 // gets the initials and a way into setup: 'rerun' at the access step for the sign-in ('fix' would pre-tick Copilot).
 const worca = createWorcaLevelWiring({
-  // repaint: the corner, then the shelf, the pill and the settings row (paintOnboarding), then the mode banner
-  menu: acctMenu, repaint: () => { paintAccount(); if (gs.status) paintOnboarding(); paintModeBanner(); }, isSettled: () => gs.settled, setupOpen: () => !!setupDialog,
+  // repaint: the corner, then the shelf, the pill and the settings row (paintOnboarding), then the mode banner, then Team metrics' levels
+  menu: acctMenu, repaint: () => { paintAccount(); if (gs.status) paintOnboarding(); paintModeBanner(); repaintTmLevels(); }, isSettled: () => gs.settled, setupOpen: () => !!setupDialog,
   hashNow: () => location.hash, runStatus: (runId) => runs.get(runId)?.status,   // the route gate: a result route is on screen, a live run is not
   initials: () => acctState.account.initials || '',
   onFinishSetup: () => { acctFly.close(); openSetup({ entry: 'first' }); },
@@ -24420,9 +24420,7 @@ const tmState = {
   tab: 'overview',                  // 'overview' | 'timeline' — the hash param (#team-metrics/timeline)
   view: storedTmView(),             // the Overview tab's chip (#718 slice 4)
   lbRange: storedChoice(TM_LB_RANGE_KEY, LEADERBOARD_RANGES, 'this-month'),   // the By person leaderboard's own period
-  viewerLevel: null,                // the viewer's Worca level as last read: null = none (or not read yet), else { key, name, avatar }
-  viewerLevelFresh: false,          // false = read it again on the next paint; every load of the page (entry, Refresh) clears it
-  viewerLevelLoading: false,
+  paintedLevel: null,               // the viewer's level as the last paint showed it (repaintTmLevels repaints only when it moves)
   viewerMatch: null,                // { data, labels }: the actor labels that are the viewer, per loaded payload
   // Timeline: calendar position, grouping (kept per viewer) and the tile filter.
   tl: {
@@ -24430,7 +24428,7 @@ const tmState = {
     mode: TL_MODES.includes(localStorage.getItem('worca.teamMetrics.tlMode')) ? localStorage.getItem('worca.teamMetrics.tlMode') : 'items',
     outside: localStorage.getItem('worca.teamMetrics.tlOutside') !== '0',   // PRs with no Worca run behind them
   },
-  // scopeId → { map: runId → PRs|null, asked:Set, status, inflight, loading, events: PR events|null, eventsInflight }
+  // scopeId → { map: runId → PRs|null, asked:Set, status, inflight, loading, gen, events: PR events|null, eventsInflight }
   prs: new Map(),
 };
 
@@ -24505,7 +24503,6 @@ async function loadTeamMetricsView({ refresh = false } = {}) {
   // event reloads the page — the chip says "Checking origin…" meanwhile.
   const qs = new URLSearchParams({ scope: tmState.scopeId, range: 'all', aggregate: '0', defer: '1' });
   if (refresh) qs.set('refresh', '1');
-  tmState.viewerLevelFresh = false;   // each load reads the viewer's level again (loadTmViewerLevel)
   let data = null;
   try {
     const res = await fetch(`/api/team-metrics?${qs}`);
@@ -24529,7 +24526,11 @@ async function loadTeamMetricsView({ refresh = false } = {}) {
   tmState.cache.set(tmState.scopeId, data);
   chip.hidden = false;
   chip.replaceChildren(renderSyncChip(data, { doc: document, now: Date.now() }));
-  if (refresh) { const p = tmPrsFor(tmState.scopeId); p.asked.clear(); p.events = null; }   // Refresh re-asks for the PRs too
+  if (refresh) {   // Refresh re-asks for the PRs too, and forgets what the lookups said: a warning outlives no successful Refresh
+    const p = tmPrsFor(tmState.scopeId);
+    p.asked.clear(); p.events = null; p.status = null; p.gen++;
+    if (data.display?.levels === true) void worca.reload();   // and, when levels show, reads the viewer's level again so a level-up shows
+  }
   renderTeamMetrics();
   body.removeAttribute('aria-busy');
   applyTmTab();
@@ -24541,7 +24542,7 @@ const TL_PR_LOOKBACK = 60 * TL_DAY;   // runs this far before the window can sti
 const TL_PR_CHUNK = 500;
 
 function tmPrsFor(scopeId) {
-  if (!tmState.prs.has(scopeId)) tmState.prs.set(scopeId, { map: new Map(), asked: new Set(), status: null, inflight: false, loading: false, events: null, eventsInflight: false });
+  if (!tmState.prs.has(scopeId)) tmState.prs.set(scopeId, { map: new Map(), asked: new Set(), status: null, inflight: false, loading: false, gen: 0, events: null, eventsInflight: false });
   return tmState.prs.get(scopeId);
 }
 
@@ -24626,6 +24627,8 @@ function mergePrStatus(a, b) {
     azureTruncated: [...new Set([...(a.azureTruncated || []), ...(b.azureTruncated || [])])],
     bitbucket: b.bitbucket && b.bitbucket !== 'unused' ? b.bitbucket : (a.bitbucket ?? b.bitbucket),
     bitbucketError: b.bitbucketError ?? a.bitbucketError ?? null,
+    bitbucketTruncated: [...new Set([...(a.bitbucketTruncated || []), ...(b.bitbucketTruncated || [])])],
+    worcaError: b.worcaError ?? a.worcaError ?? null,   // client-only: the request to Worca itself failed, no git host is to blame
     actionRepos: [...new Set([...(a.actionRepos || []), ...(b.actionRepos || [])])],
     unsupportedRepos: [...new Set([...(a.unsupportedRepos || []), ...(b.unsupportedRepos || [])])],
   };
@@ -24655,10 +24658,12 @@ async function ensureTmPrs() {
  * One lookup of the pull requests behind `need` (records), shared by the Timeline and the By person
  * leaderboard. Asked once per run per session, answer or not: a failing lookup must not loop
  * (render → ask → fail → render). Refresh clears the set and tries again. `onStart` paints the
- * "checking" state once the records are marked asked. Callers repaint with repaintTmAfterPrs.
+ * "checking" state once the records are marked asked. Callers repaint with repaintTmAfterPrs. A Refresh bumps
+ * `pr.gen`: an answer (or failure) of a lookup that started before it is dropped.
  */
 async function askTmPrs(scopeId, need, onStart) {
   const pr = tmPrsFor(scopeId);
+  const gen = pr.gen;
   pr.inflight = true; pr.loading = true;
   for (const r of need) pr.asked.add(r.id);
   onStart();
@@ -24667,12 +24672,13 @@ async function askTmPrs(scopeId, need, onStart) {
       const chunk = need.slice(i, i + TL_PR_CHUNK);
       const res = await fetch('/api/team-metrics/prs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope: scopeId, runs: chunk.map(prLookupFor) }) });
       const d = await safeJson(res);
-      if (!res.ok) { pr.status = mergePrStatus(pr.status, { gh: 'unused', ghError: (d && d.error) || `HTTP ${res.status}` }); break; }
+      if (pr.gen !== gen) break;
+      if (!res.ok) { pr.status = mergePrStatus(pr.status, { gh: 'unused', worcaError: (d && d.error) || `HTTP ${res.status}` }); break; }
       for (const [id, v] of Object.entries(d.prs || {})) pr.map.set(id, v);
       pr.status = mergePrStatus(pr.status, d.status);
     }
   } catch (err) {
-    pr.status = mergePrStatus(pr.status, { gh: 'unused', ghError: err.message });
+    if (pr.gen === gen) pr.status = mergePrStatus(pr.status, { gh: 'unused', worcaError: err.message });
   } finally {
     pr.inflight = false; pr.loading = false;
   }
@@ -24711,35 +24717,31 @@ function tmIsViewerLabel(label) {
   return tmState.viewerMatch.labels.has(String(label).toLowerCase());
 }
 
+/** The viewer's live level (worca.state.view.level: the account corner's own view): null = none yet, undefined = not read yet. */
+function tmViewerLevel() {
+  const view = worca.state.view;
+  if (!view) return undefined;
+  const l = view.level;
+  return l && l.key ? { key: l.key, name: l.name, avatar: l.avatar } : null;
+}
+
 /** The one level source for every person on the page: the viewer's own level, "Level unknown" for everyone else (levels are private to a machine). */
 function tmLevelFor(label) {
   if (!tmIsViewerLabel(label)) return { state: 'unknown' };
-  return tmState.viewerLevel ? { state: 'known', ...tmState.viewerLevel } : { state: 'none' };
+  const level = tmViewerLevel();
+  if (level === undefined) return { state: 'unknown' };
+  return level ? { state: 'known', ...level } : { state: 'none' };
 }
 
 const sameTmLevel = (a, b) => (a?.key ?? null) === (b?.key ?? null) && (a?.name ?? null) === (b?.name ?? null) && (a?.avatar ?? null) === (b?.avatar ?? null);
 
-/**
- * The viewer's level, read once per load of the page: every load (entering the page, Refresh, a changed
- * scope) asks again, so a level-up shows. A failed read keeps what was shown, without a toast, and is
- * not repeated until the next load: a failing read cannot loop (paint → ask → fail → paint).
- */
-async function loadTmViewerLevel() {
-  if (tmState.viewerLevelFresh || tmState.viewerLevelLoading) return;
-  tmState.viewerLevelLoading = true;
-  try {
-    const l = (await fetchWorcaLevel()).level;
-    const level = l && l.key ? { key: l.key, name: l.name, avatar: l.avatar } : null;
-    const changed = !sameTmLevel(level, tmState.viewerLevel);
-    tmState.viewerLevel = level;
-    tmState.viewerLevelFresh = true;
-    if (changed && tmState.data && currentView() === 'team-metrics') renderTeamMetrics();
-  } catch (err) {
-    tmState.viewerLevelFresh = true;   // asked for this load; the next load asks again
-    console.warn(`team metrics: could not read your level: ${err.message}`);
-  } finally {
-    tmState.viewerLevelLoading = false;
-  }
+/** The level wiring read a new view: repaint Team metrics when the viewer's level moved and the page shows levels. */
+function repaintTmLevels() {
+  if (!tmState.data || tmState.data.display?.levels !== true || currentView() !== 'team-metrics') return;
+  const now = tmViewerLevel();
+  // "not read yet" (undefined) and "no level" (null) paint differently, so the move from one to the other is a change.
+  if ((now === undefined) === (tmState.paintedLevel === undefined) && sameTmLevel(now, tmState.paintedLevel)) return;
+  renderTeamMetrics();
 }
 
 /** 'loading' until every run in the card's window has been asked about; what the answer could not cover is mergedLookupGaps' to say. */
@@ -24866,18 +24868,23 @@ function renderTeamMetrics() {
   if (view === 'person' && tmState.tab !== 'timeline') {
     const now = Date.now();
     const pr = tmPrsFor(tmState.scopeId);
-    leaderboard = buildLeaderboard(data.records, { range: tmState.lbRange, now, mergedRunIds: mergedRunIds(pr.map, data.records) });
+    leaderboard = buildLeaderboard(data.records, { range: tmState.lbRange, now, mergedPrs: mergedPrKeys(pr.map, data.records) });
     mergedState = tmMergedState(pr, leaderboardRecords(data.records, tmState.lbRange, now));
   }
+  // Levels show only when the team policy says so (metrics.showLevels, served as data.display.levels): without it no level is read or drawn.
+  const showLevels = data.display?.levels === true;
+  tmState.paintedLevel = showLevels ? tmViewerLevel() : null;
+  // A repaint (a period click, the PR answer) must not drop the keyboard focus on a period button.
+  const focusedRange = body.contains(document.activeElement) ? document.activeElement.dataset?.lbRange : null;
   body.classList.remove('is-loading');
-  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims, view, costEl, levelFor: tmLevelFor, leaderboard, lbRange: tmState.lbRange, mergedState, mergedGaps: leaderboard ? mergedLookupGaps(tmPrsFor(tmState.scopeId).status) : undefined }));
+  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit, tagKeys, tagDims: tmState.dims, view, costEl, levelFor: showLevels ? tmLevelFor : null, leaderboard, lbRange: tmState.lbRange, mergedState, mergedGaps: leaderboard ? mergedLookupGaps(tmPrsFor(tmState.scopeId).status) : undefined }));
+  if (focusedRange) body.querySelector(`[data-lb-range="${focusedRange}"]`)?.focus();
   tmState.lastAgg = agg;
   // The #tm-tag select, beside the range controls (replaced on every render; hidden with the flag off).
   const tagSel = renderTagFilterSelect(data.records || [], tmState.tag, { doc: document });
   if (tmState.tab === 'timeline' || view === 'cost') tagSel.hidden = true;
   const oldTag = document.getElementById('tm-tag');
   oldTag?.replaceWith(tagSel);
-  void loadTmViewerLevel();
   void ensureTmLeaderboardPrs();
   void paintPooledBudgetTile(tmState.scopeId, data.records || []);   // team policy (design board 10): advisory tile, when the scope's policy sets one
   const chips = document.getElementById('tm-filters');

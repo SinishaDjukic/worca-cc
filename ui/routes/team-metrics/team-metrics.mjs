@@ -7,6 +7,7 @@ import { personKey } from '../../../src/core/metrics/record.mjs';
 import { discoverAll, flushAll, flushProject, flushSlug, gitUserEmail, gitUserName, scheduleFlush, slugDirName } from '../../../src/core/metrics/sync.mjs';
 import { isSharedIdentity, resolveIdentity } from '../../../src/core/identity.mjs';
 import { listProjects } from '../../../src/core/projects.mjs';
+import { scopePolicyValue } from '../../../src/core/policy/scope.mjs';
 import { parseTag } from '../../../src/shared/run-tags.mjs';
 import { badRequest, sendMetricsError } from '../../server.mjs';
 
@@ -72,6 +73,8 @@ app.get('/api/team-metrics', async (req, res) => {
       refresh: read.refresh,
       fetchError: read.fetchError,
       viewer: await viewerOf(req, read.identityProjectDir),
+      // What the page may show beyond the records. Levels are off unless the team policy says exactly true (cache-only read).
+      display: { levels: (await scopePolicyValue(scope, 'metrics.showLevels')) === true },
     });
   } catch (err) { sendMetricsError(res, err); }
 });

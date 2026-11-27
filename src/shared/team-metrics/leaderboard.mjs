@@ -13,14 +13,21 @@ const PHASE = { 'this-month': 'open', quarter: 'open', year: 'open', 'last-month
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const round1 = (v) => Math.round(v * 10) / 10;
 
-/** Ids of the runs whose pull request merged. `prMap` is a Map or a plain object of runId → PR[] | null. */
-export function mergedRunIds(prMap, records = []) {
-  const out = new Set();
+/**
+ * The merged pull requests of each run: runId → keys, for the runs that have any. A key is `repo#number` (the url
+ * when there is no number), lower-cased repo — the key prs.mjs joins PRs by. `prMap` is a Map or a plain object of
+ * runId → PR[] | null.
+ * @returns {Map<string, string[]>}
+ */
+export function mergedPrKeys(prMap, records = []) {
+  const out = new Map();
   if (!prMap) return out;
   const get = prMap instanceof Map ? (id) => prMap.get(id) : (id) => prMap[id];
   for (const r of records) {
     const prs = get(r.id);
-    if (Array.isArray(prs) && prs.some((p) => String(p?.state).toUpperCase() === 'MERGED')) out.add(r.id);
+    if (!Array.isArray(prs)) continue;
+    const keys = [...new Set(prs.filter((p) => String(p?.state).toUpperCase() === 'MERGED' && (p.number ?? p.url) != null).map((p) => `${String(p.repo ?? '').toLowerCase()}#${p.number ?? p.url}`))];
+    if (keys.length) out.set(r.id, keys);
   }
   return out;
 }
@@ -41,22 +48,22 @@ export function leaderboardRecords(records, range, now = Date.now()) {
   });
 }
 
-export function buildLeaderboard(records, { range, now = Date.now(), mergedRunIds: merged = new Set(), minRuns = LEADERBOARD_MIN_RUNS } = {}) {
+export function buildLeaderboard(records, { range, now = Date.now(), mergedPrs = new Map(), minRuns = LEADERBOARD_MIN_RUNS } = {}) {
   const { startMs, endMs } = windowOf(range, now);
   const people = new Map();
   const inWindow = leaderboardRecords(records, range, now);
   const totalRuns = inWindow.length;
   for (const r of inWindow) {
     let p = people.get(r.actor);
-    if (!p) people.set(r.actor, (p = { key: r.actor, label: r.actor, runs: 0, done: 0, merged: 0, costed: 0, usd: 0 }));
+    if (!p) people.set(r.actor, (p = { key: r.actor, label: r.actor, runs: 0, done: 0, costed: 0, usd: 0, prs: new Set() }));
     p.runs++;
     if (r.result === 'done') p.done++;
-    if (merged.has(r.id)) p.merged++;
+    for (const key of mergedPrs.get(r.id) || []) p.prs.add(key);   // one pull request counts once per person, however many runs it carries
     if (isNum(r.cost?.usd)) { p.costed++; p.usd += r.cost.usd; }
   }
   const all = [...people.values()];
-  const pool = all.filter((p) => p.runs >= minRuns).map((p) => ({
-    ...p, perRunUsd: p.costed ? p.usd / p.costed : null, successRate: p.done / p.runs,
+  const pool = all.filter((p) => p.runs >= minRuns).map(({ prs, ...p }) => ({
+    ...p, merged: prs.size, perRunUsd: p.costed ? p.usd / p.costed : null, successRate: p.done / p.runs,
   }));
   const notEligible = all.filter((p) => p.runs < minRuns)
     .map((p) => ({ key: p.key, label: p.label, runs: p.runs, needs: minRuns - p.runs }))
@@ -102,13 +109,21 @@ const PROVIDER_DOWN = Object.freeze(['missing', 'unauthenticated']);
 
 /**
  * What kept the pull-request lookup (prs.mjs resolveRunPrs `status`) from a full answer: the providers that
- * could not answer (no CLI or token, a refused token, or an error), and the Azure DevOps repositories whose
- * listing was cut short. Runs behind either count as not merged, so the card says so.
- * @returns {{ providers: string[], truncated: string[] }}
+ * could not answer (no CLI or token, a refused token, or an error — `reasons` says which), the Azure DevOps and
+ * Bitbucket repositories whose listing was cut short, and a failed request to Worca itself (`worcaError`, a
+ * client-only key: it names no git host). Runs behind any of them count as not merged, so the card says so.
+ * @returns {{ providers: string[], reasons: Object<string, 'missing'|'unauthenticated'|'error'>, truncated: string[], worcaError: string|null }}
  */
 export function mergedLookupGaps(status) {
   const st = status || {};
-  const providers = PR_PROVIDERS.filter((p) => !!st[p.error] || PROVIDER_DOWN.includes(st[p.state])).map((p) => p.name);
-  const truncated = Array.isArray(st.azureTruncated) ? [...st.azureTruncated] : [];
-  return { providers, truncated };
+  const providers = [];
+  const reasons = {};
+  for (const p of PR_PROVIDERS) {
+    const reason = PROVIDER_DOWN.includes(st[p.state]) ? st[p.state] : st[p.error] ? 'error' : null;
+    if (!reason) continue;
+    providers.push(p.name);
+    reasons[p.name] = reason;
+  }
+  const truncated = [...new Set([...(Array.isArray(st.azureTruncated) ? st.azureTruncated : []), ...(Array.isArray(st.bitbucketTruncated) ? st.bitbucketTruncated : [])])];
+  return { providers, reasons, truncated, worcaError: st.worcaError ?? null };
 }

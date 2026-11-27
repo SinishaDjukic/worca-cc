@@ -107,15 +107,17 @@ function renderAvatar(doc, level) {
 
 const levelName = (level) => (levelState(level) === 'known' ? level.name || '' : LEVEL_TEXT[levelState(level)]);
 
-/** Avatar, then the name with a second line under it. */
+/** Avatar, then the name with a second line under it. Without a `level` (levels are off) there is no avatar, and no second line when `subText` is null. */
 function renderWho(doc, label, level, subText) {
   const who = h(doc, 'div', 'tm-lb-who');
   const name = h(doc, 'span', 'tm-person', label);
   name.title = label;
-  const sub = h(doc, 'span', 'tm-lb-sub-line', subText);
+  const sub = subText == null ? null : h(doc, 'span', 'tm-lb-sub-line', subText);
   const text = h(doc, 'div', 'tm-lb-who-text');
-  text.append(name, sub);
-  who.append(renderAvatar(doc, level), text);
+  text.append(name);
+  if (sub) text.append(sub);
+  if (level) who.append(renderAvatar(doc, level));
+  who.append(text);
   return { who, sub };
 }
 
@@ -123,7 +125,7 @@ function renderLeader(lb, { doc, levelFor, now }) {
   const banner = leaderboardBanner(lb, { now });
   const box = h(doc, 'div', 'tm-lb-leader');
   box.dataset.kind = banner.kind;
-  if (lb.winners.length) {
+  if (lb.winners.length && levelFor) {
     const avas = h(doc, 'div', 'tm-lb-leader-avas');
     for (const r of lb.rows.filter((row) => lb.winners.includes(row.key))) avas.append(renderAvatar(doc, levelFor(r.label)));
     box.append(avas);
@@ -150,6 +152,7 @@ function cell(doc, cls, text) {
 function partCell(doc, key, part, raw, extra) {
   const c = cell(doc, 'tm-lb-num');
   c.dataset.part = key;
+  c.dataset.label = PARTS.find(([k]) => k === key)[1];   // the stacked layout (<= 720px) shows it in place of the head row
   c.append(h(doc, 'div', 'tm-lb-val', raw), h(doc, 'div', 'tm-lb-pts', `${part.points.toFixed(1)} / ${part.weight}`));
   if (extra) c.append(h(doc, 'div', 'tm-lb-note', extra));
   return c;
@@ -188,11 +191,13 @@ function renderRows(lb, { doc, levelFor }) {
     row.setAttribute('role', 'row');
     if (lb.winners.includes(r.key)) row.dataset.winner = 'true';
     row.dataset.lbKey = r.key;
-    const level = levelFor(r.label);
+    const level = levelFor?.(r.label);
     const person = cell(doc, 'tm-lb-person');
-    const { who, sub } = renderWho(doc, r.label, level, levelName(level));
-    sub.classList.add('tm-lb-level');
-    sub.dataset.levelState = levelState(level);
+    const { who, sub } = renderWho(doc, r.label, level, level ? levelName(level) : null);
+    if (sub) {
+      sub.classList.add('tm-lb-level');
+      sub.dataset.levelState = levelState(level);
+    }
     person.append(who);
     const score = cell(doc, 'tm-lb-score');
     const bar = h(doc, 'div', 'tm-lb-bar');
@@ -214,6 +219,9 @@ function renderRows(lb, { doc, levelFor }) {
     grid.append(row);
   }
   const wrap = h(doc, 'div', 'tm-lb-scroll');
+  wrap.tabIndex = 0;                                        // a keyboard can scroll it sideways between 721 and 920px
+  wrap.setAttribute('role', 'region');
+  wrap.setAttribute('aria-label', 'Leaderboard (scrolls sideways)');
   wrap.append(grid);
   return wrap;
 }
@@ -221,20 +229,21 @@ function renderRows(lb, { doc, levelFor }) {
 function renderNotEligible(lb, { doc, levelFor }) {
   const box = h(doc, 'div', 'tm-lb-todo');
   const head = h(doc, 'h3', 'tm-lb-todo-head', 'Not eligible yet');
-  const period = lb.startMs == null ? 'all time' : leaderboardPeriodLabel(lb);
-  head.append(h(doc, 'span', 'tm-lb-dim', ` · fewer than ${MIN_RUNS} runs in ${period}`));
+  head.append(h(doc, 'span', 'tm-lb-dim', lb.startMs == null ? ` · fewer than ${MIN_RUNS} runs so far` : ` · fewer than ${MIN_RUNS} runs in ${leaderboardPeriodLabel(lb)}`));
   const list = h(doc, 'div', 'tm-lb-todo-list');
   for (const p of lb.notEligible) {
     const card = h(doc, 'div', 'tm-lb-todo-card');
-    const level = levelFor(p.label);
-    card.append(renderWho(doc, p.label, level, `${levelName(level)} · ${plural(p.runs, 'run')}`).who, h(doc, 'span', 'tm-lb-tag', `needs ${plural(p.needs, 'more run')}`));
+    const level = levelFor?.(p.label);
+    card.append(renderWho(doc, p.label, level, level ? `${levelName(level)} · ${plural(p.runs, 'run')}` : plural(p.runs, 'run')).who, h(doc, 'span', 'tm-lb-tag', `needs ${plural(p.needs, 'more run')}`));
     list.append(card);
   }
   box.append(head, list);
   return box;
 }
 
-const NO_GAPS = Object.freeze({ providers: Object.freeze([]), truncated: Object.freeze([]) });
+const NO_GAPS = Object.freeze({ providers: Object.freeze([]), reasons: Object.freeze({}), truncated: Object.freeze([]), worcaError: null });
+// One clause per reason a provider could not answer; the reasons keep this order.
+const REASONS = Object.freeze([['missing', 'no sign-in on this machine', 'has', 'have'], ['unauthenticated', 'refused the sign-in', '', ''], ['error', 'could not be reached', '', '']]);
 const listOf = (names) => new Intl.ListFormat('en', { style: 'long', type: 'conjunction' }).format(names);
 
 /** The footer's note on merged runs: "checking" while the lookup runs, then what it could not cover (leaderboard.mjs mergedLookupGaps). */
@@ -243,7 +252,12 @@ function mergedNote(mergedState, gaps) {
   const providers = gaps?.providers || [];
   const truncated = gaps?.truncated || [];
   const parts = [];
-  if (providers.length) parts.push(`${listOf(providers)} could not be reached — runs whose pull request could not be checked count as not merged.`);
+  if (gaps?.worcaError) parts.push('Worca could not look up pull requests — pull requests it could not check count as not merged.');
+  const clauses = REASONS.map(([reason, text, one, many]) => {
+    const names = providers.filter((name) => (gaps.reasons?.[name] || 'error') === reason);
+    return names.length ? `${listOf(names)} ${[names.length === 1 ? one : many, text].filter(Boolean).join(' ')}` : null;
+  }).filter(Boolean);
+  if (clauses.length) parts.push(`${clauses.join('; ')} — runs whose pull request could not be checked count as not merged.`);
   if (truncated.length) parts.push(`${truncated.join(', ')} ${truncated.length === 1 ? 'has' : 'have'} more pull requests than one listing covers — older runs there may count as not merged.`);
   return parts.join(' ') || null;
 }
@@ -258,7 +272,7 @@ export function renderLeaderboardCard(lb, { doc = globalThis.document, levelFor,
   if (lb.rows.length) card.append(renderRows(lb, { doc, levelFor }));
   if (lb.notEligible.length) card.append(renderNotEligible(lb, { doc, levelFor }));
   const note = h(doc, 'p', 'tm-lb-foot');
-  note.append('Each part is compared with the rest of the team in the same period. Merged runs and success ratio 35% each, runs and spend per run 15% each. Runs without a recorded cost are left out of spend per run.');
+  note.append('Each part is compared with the best person in the same period. Merged pull requests and success rate 35% each, runs and spend per run 15% each. Runs without a recorded cost are left out of spend per run.');
   const merged = mergedNote(mergedState, mergedGaps);
   if (merged) note.append(' ', h(doc, 'span', 'tm-lb-merged-note', merged));
   card.append(note);
