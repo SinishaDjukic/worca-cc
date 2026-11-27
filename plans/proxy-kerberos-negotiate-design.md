@@ -1,6 +1,6 @@
 # Kerberos (Negotiate) to the corporate proxy — Design
 
-Status: design for review. No code yet. Written on dev `fe77e1ed6`; §4 and the line references checked against dev `7059ada3a` (2026-11-27). A feature of its own, apart from the
+Status: design for review, issue #1680. No code yet. Written on dev `fe77e1ed6`; §4 and the line references checked against dev `7059ada3a` (2026-11-27). A feature of its own, apart from the
 security stack (#854, #826, #981).
 
 ## 1. Problem
