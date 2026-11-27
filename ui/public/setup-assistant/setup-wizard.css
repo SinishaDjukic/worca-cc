@@ -101,7 +101,7 @@
 .setup-card.dlg > .dlg-head{padding-bottom:16px;}
 .setup-card.dlg > .dlg-foot{padding-top:16px;}
 .setup-card .dlg-foot .confirm-actions{flex-wrap:wrap;}
-/* Wizard foot: the way out (Cancel / Set up later, Close, Share; Back after a failed network apply) sits on the
+/* Wizard foot: the way out (Cancel / Close setup, Close, Share; Back after a failed network apply) sits on the
    left; Skip / Discard changes, Back and the primary action stay on the right, Back and the primary side by side,
    the primary last. paintFoot always appends the left one first. */
 .setup-card .dlg-foot .confirm-actions > :first-child:not(:last-child){margin-right:auto;}
