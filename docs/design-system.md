@@ -276,7 +276,10 @@ Geometry is fixed px (§Charts, no `viewBox` scaling). A dot is the shared statu
 its own, and the only motion is the live dot's pulse. The map is `aria-hidden` and never a tab stop: the run rows beside
 it are its legend and its accessible source, so it has no caption or legend of its own. Two links that share no run
 never run together: in each gap, exits take tracks from the left and entries from the right, and tracks sit 4px apart.
-A run waiting at a stop held for another run counts as not started, so its link stays.
+A run waiting at a stop held for another run counts as not started, so its link stays. Once no link holds a run back,
+every link is drawn faint (`.rom-link.is-faint`), routed as when every run was planned. Each dot is painted over the row's
+dot (a paused run grey, a stopped or canceled run dark grey), and a mark from the run's status still wins. A change run
+that builds on nothing stands in the column after the last run before it.
 
 | Part | Class | Means |
 |---|---|---|
@@ -284,6 +287,7 @@ A run waiting at a stop held for another run counts as not started, so its link 
 | plot | `.rom-plot` | the drawing, sized in px by the layout |
 | links | `.rom-links` | the SVG behind the dots that holds the links |
 | link | `.rom-link` | one link that still holds a run back, 1.5px `--ink-3`, straight segments only |
+| faint link | `.rom-link.is-faint` | every link, once none holds a run back: `--line-2`, same width |
 | run | `.rom-run` | one run, its status dot centred on the layout point |
 | number | `.rom-n` | the run's number above right of its dot, 11px `--ink-2` (§Charts) |
 

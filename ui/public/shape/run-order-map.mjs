@@ -1,9 +1,11 @@
 // ui/public/shape/run-order-map.mjs — Shaper small runs slice 9 (R-ux-4): the still run order map of a marked feature.
 // `runOrderLayout` is pure: it places each run of featureView's `slices` in a column right of every run it builds on
-// (rows in run-number order), keeps only the links that still hold a run back (implied links left out through
-// `namedWaits`), and routes each through the gaps between columns and the lanes between rows, so no link meets a dot
-// or a number. `renderRunOrderMap` paints it: the shared status dot per run, an SVG of straight links, no motion but the
-// live dot's existing pulse. The rows beside it stay the accessible source, so the map is aria-hidden.
+// (rows in run-number order); a change run that builds on nothing (added from the chat card or a run's stop) stands in the
+// column after the last run before it. It keeps only the links that still hold a run back (implied links left out
+// through `namedWaits`); once none holds a run back, every link is drawn faint. Each link is routed through the gaps
+// between columns and the lanes between rows, so no link meets a dot or a number. `renderRunOrderMap` paints it: the
+// shared status dot per run over its row's base (a paused or stopped run shows the row's dot), an SVG of straight links,
+// no motion but the live dot's existing pulse. The rows beside it stay the accessible source, so the map is aria-hidden.
 import { namedWaits, runStatus } from '../../../src/shared/shape/run-status.mjs';
 import { RUN_STATES } from '../../../src/shared/run-model.mjs';
 import { markDot, renderStatusDot } from '../status-dot.mjs';
@@ -15,7 +17,8 @@ export const RUN_ORDER_GEOMETRY = Object.freeze({
 const { COL_W, ROW_H, PAD, DOT, DIGIT_W, GAP_X, LANE_Y, TRACK, GAP_TRACKS, LANE_TRACKS } = RUN_ORDER_GEOMETRY;
 const HALF = DOT / 2;
 const NOT_STARTED = new Set(['planned', 'held']);
-const BASE = { state: 'waiting', ...RUN_STATES.waiting };
+/** A slice state → the run model state its feature page row's dot starts from; any other state is `waiting`. */
+const ROW_STATE = Object.freeze({ paused: 'paused', stopped: 'stopped', canceled: 'stopped', error: 'failed', failed: 'failed' });
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const EMPTY = () => ({ width: 0, height: 0, runs: [], links: [], implied: [] });
 const BAND = (LANE_TRACKS - 1) * TRACK;
@@ -57,7 +60,7 @@ function spans() {
 
 /**
  * Pure. slices: featureView slice rows (`index`, `state`, `kind`, `buildsOn`, `waitsFor`, …).
- * @returns {{width: number, height: number, runs: object[], links: {from: number, to: number, points: number[][]}[],
+ * @returns {{width: number, height: number, runs: object[], links: {from: number, to: number, points: number[][], faint?: true}[],
  *   implied: {from: number, to: number}[]}}
  */
 export function runOrderLayout(slices) {
@@ -69,6 +72,7 @@ export function runOrderLayout(slices) {
   const known = (s) => (Array.isArray(s.buildsOn) ? [...new Set(s.buildsOn)] : []).filter((d) => map.has(d));
 
   // Columns: longest path over the full buildsOn graph; an edge back onto the DFS stack closes a cycle and is dropped.
+  // A change run that builds on no known run, and is not the first run, stands after the last run before it.
   const col = new Map();
   const onStack = new Set();
   const back = new Set();
@@ -80,6 +84,9 @@ export function runOrderLayout(slices) {
       if (onStack.has(d)) { back.add(`${d}>${i}`); continue; }
       c = Math.max(c, depth(d) + 1);
     }
+    const before = indexes[indexes.indexOf(i) - 1];
+    const s = map.get(i);
+    if (s.kind === 'change' && !known(s).length && before !== undefined && !onStack.has(before)) c = depth(before) + 1;
     onStack.delete(i);
     col.set(i, c);
     return c;
@@ -104,25 +111,32 @@ export function runOrderLayout(slices) {
     const st = runStatus({ slice, slices: map, snap: null });
     return {
       index, col: c, row, x, y, mark: st.mark, word: st.word, kind: slice.kind ?? null,
+      rowState: ROW_STATE[slice.state] || 'waiting',
       dot: { x0: x - HALF, y0: y - HALF, x1: x + HALF, y1: y + HALF },
       label: { x0: x + 7, y0: y - 12, x1: x + 7 + DIGIT_W * String(index).length, y1: y - 1 },
     };
   });
 
   // Links: the transitive reduction of each run's buildsOn (namedWaits), kept only while it still holds the run back.
+  // When none holds a run back, every reduced link (`met`) is drawn, faint.
   const held = [];
+  const met = [];
   const implied = [];
   for (const to of indexes) {
     const target = map.get(to);
     const builds = known(target).filter((from) => !back.has(`${from}>${to}`));
     const reduced = new Set(namedWaits({ waitsFor: builds }, map));
     for (const from of builds) {
-      if (!reduced.has(from)) implied.push({ from, to });
-      else if (map.get(from).state !== 'done' && (NOT_STARTED.has(target.state) || target.stop?.held)) held.push({ from, to });
+      if (!reduced.has(from)) { implied.push({ from, to }); continue; }
+      met.push({ from, to });
+      if (map.get(from).state !== 'done' && (NOT_STARTED.has(target.state) || target.stop?.held)) held.push({ from, to });
     }
   }
   held.sort(byPair);
+  met.sort(byPair);
   implied.sort(byPair);
+  const faint = !held.length;
+  const drawn = faint ? met : held;
 
   // Routes (D5): a link to the next column on the same row is one straight segment. Every other link leaves on its
   // source's exit track (the left band of the gap after its column), runs along the lane beside its source row (inside
@@ -130,7 +144,7 @@ export function runOrderLayout(slices) {
   // before the target's column). Exit stubs end left of the entry band, so an exit and an entry on one row never meet.
   const colX = (c) => PAD + c * COL_W;
   const laneTop = (lane) => PAD + lane * ROW_H + LANE_Y;
-  const routed = held.filter(({ from, to }) => {
+  const routed = drawn.filter(({ from, to }) => {
     const a = place.get(from);
     const b = place.get(to);
     return !(b.col - a.col === 1 && a.y === b.y);
@@ -194,16 +208,17 @@ export function runOrderLayout(slices) {
   for (const [lane, stretches] of along.channels()) {
     for (const [from, k] of colour(stretches).track) laneY.set(`${lane}|${from}`, laneTop(lane) + (k % LANE_TRACKS) * TRACK);
   }
-  const links = held.map(({ from, to }) => {
+  const links = drawn.map(({ from, to }) => {
     const a = place.get(from);
     const b = place.get(to);
     const start = [a.x + HALF, a.y];
     const end = [b.x - HALF, b.y];
-    if (b.col - a.col === 1 && a.y === b.y) return { from, to, points: [start, end] };
+    const link = (points) => (faint ? { from, to, points, faint: true } : { from, to, points });
+    if (b.col - a.col === 1 && a.y === b.y) return link([start, end]);
     const gx1 = exitX.get(from);
     const gx2 = entryX.get(to);
     const ly = laneY.get(`${laneOf(a, b)}|${from}`);
-    return { from, to, points: [start, [gx1, a.y], [gx1, ly], [gx2, ly], [gx2, b.y], end] };
+    return link([start, [gx1, a.y], [gx1, ly], [gx2, ly], [gx2, b.y], end]);
   });
 
   return {
@@ -261,7 +276,7 @@ export function renderRunOrderMap(doc, slices) {
   const lines = svg(doc, 'svg', { class: 'rom-links', width: layout.width, height: layout.height, focusable: 'false' });
   for (const link of layout.links) {
     const d = link.points.map(([x, y], i) => `${i ? 'L' : 'M'}${x} ${y}`).join('');
-    const path = svg(doc, 'path', { class: 'rom-link', d });
+    const path = svg(doc, 'path', { class: link.faint ? 'rom-link is-faint' : 'rom-link', d });
     path.dataset.from = String(link.from);
     path.dataset.to = String(link.to);
     lines.append(path);
@@ -276,7 +291,7 @@ export function renderRunOrderMap(doc, slices) {
     if (r.kind === 'change') run.dataset.kind = 'change';
     const n = el(doc, 'span', 'rom-n num');
     n.textContent = String(r.index);
-    run.append(renderStatusDot(doc, markDot(BASE, r.mark, r.word)), n);
+    run.append(renderStatusDot(doc, markDot({ state: r.rowState, ...RUN_STATES[r.rowState] }, r.mark, r.word)), n);
     plot.append(run);
   }
   root.append(plot);

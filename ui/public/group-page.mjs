@@ -192,7 +192,7 @@ export function syncMarkShip(root, on) {
 }
 
 // Small runs slice 10 (D9): the one readable line under Show order; only the drawing itself is aria-hidden.
-const ORDER_HINT = 'A run sits to the right of every run it builds on. A line joins a run that is not done to the runs waiting for it; links that are already met are not drawn.';
+const ORDER_HINT = 'A run sits to the right of every run it builds on. While a run is held back, only the links holding it are drawn; once none is, every link is drawn faint.';
 let orderIds = 0;
 
 /** Slice 12 (D9): the Runs tab's stop list, the Chat card's component (stop-list.mjs), the panel's first child. It is made

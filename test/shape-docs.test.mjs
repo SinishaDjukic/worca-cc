@@ -457,3 +457,26 @@ test('S12: design-system.md\'s Open stop list names both hosts, the closed Row b
   assert.doesNotMatch(part, /Its only host is the Chat card/);
   assert.doesNotMatch(part, /never show the list(?! on)[^.]*feature page|feature page and the Runs sidebar never show/);
 });
+
+// ---- Run order, later runs: links drawn faint once none holds a run back, the row's dot, where a Verifier run stands ---
+test('s13: Show order says every link is drawn faint once none holds a run back, a paused or stopped run shows the row\'s dot, and a Verifier run stands right of the run before it', () => {
+  const part = smallPart('Show order');
+  assert.ok(part, 'the "### Show order" part');
+  const sentences = part.split(/(?<=\.)\s+/);
+  const says = (...res) => sentences.some((s) => res.every((re) => re.test(s)));
+  assert.ok(says(/\bnone\b/i, /\bholds?\b/i, /every link/i, /\bfaint\b/i), 'once none holds a run back, every link is drawn faint');
+  assert.ok(says(/\bpaused\b/i, /\bstopped\b/i, /row['’]s dot/i), 'a paused or stopped run shows the row\'s dot');
+  assert.ok(says(/\bVerifier\b/, /last run before/i, /right of/i), 'a run the Verifier adds stands right of the last run before it');
+  assert.doesNotMatch(part, /already\s+met\b[^.]*\bnot drawn\b/i, 'met links are no longer always left out');
+});
+
+test('s13: design-system.md\'s Run order map names .rom-link.is-faint and --line-2', () => {
+  const design = read('design-system.md');
+  const at = design.indexOf('\n### Run order map (checked)\n');
+  assert.ok(at >= 0, 'the heading "### Run order map (checked)"');
+  const section = design.slice(at + 1).split(/\n##+ /)[0];
+  const row = section.split('\n').find((l) => /^\|[^|\n]*\|\s*`\.rom-link\.is-faint`\s*\|/.test(l)) || '';
+  assert.ok(row, 'a table row for `.rom-link.is-faint`');
+  assert.deepEqual(missing(row, ['--line-2']), []);
+  assert.deepEqual(missing(flat(section), [/row['’]s dot/i]), []);
+});

@@ -55,6 +55,11 @@
 // The Chat card and the Runs list carry no drawing. One 360px light shot, `order-open-busy-360-light.png`, with no page
 // scroll sideways and the map scrolling in its own box, then closed again after #runs and back (the slide layout keeps the
 // page root). SURFACE=order runs only this surface.
+// Slice 13 adds the order worlds `later` (every run done, run 17 builds on run 16 and run 18 on nothing, both change runs)
+// and `still` (base with run 3 paused, run 5 failed, run 6 stopped). later: runs 17 and 18 stand right of the run before
+// them, every path.rom-link is is-faint and strokes the resolved --line-2. still: each of those dots is its row's dot,
+// never is-grey-ring. Then the agreed mock (plans/shaper-refresh/run-order-mock.html, its resting frame, Show order open)
+// is shot per theme as `mock-order-{theme}.png` and put beside the app as `order-vs-mock-{base|later|still}-{theme}.png`.
 // NOT part of `npm test`: it needs Chrome. A hard 20-minute cap inside.
 // Run: H=$(mktemp -d); env -u FORCE_COLOR HOME=$H VERIFY_PORT=4943 SHOTS_DIR=… node --disable-warning=ExperimentalWarning tools/verify-run-status-rows-cdp.mjs
 import { spawn, execFileSync } from 'node:child_process';
@@ -119,7 +124,7 @@ const { buildGraphManifest } = await imp('../src/shared/graph/manifest.mjs');
 const { careRunPlan } = await imp('../src/shared/shape/feature-record.mjs');
 const { runRolesOf } = await imp('../src/shared/shape/requirements.mjs');
 const { careRunGraph } = await imp('../src/core/shape/care-run.mjs');
-const { world, SIXTEEN_RUN_STATES } = await imp('../test/helpers/shape-sixteen-runs.mjs');
+const { world, SIXTEEN_RUN_STATES, SIXTEEN_RUN_LINKS } = await imp('../test/helpers/shape-sixteen-runs.mjs');
 const { planStop, gateStop } = await imp('../src/shared/shape/run-stops.mjs');
 srv = server;
 await new Promise((r, rej) => { srv.once('error', (err) => rej(new Error(`cannot listen on VERIFY_PORT ${process.env.VERIFY_PORT}: ${err.message}`))); srv.listen(Number(process.env.VERIFY_PORT || 0), '127.0.0.1', r); });
@@ -190,12 +195,19 @@ const SPECS = {
   'line-first': { spec: { done: [], states: { 1: { pipe: 'running' } } }, at: { 1: 'n_review' } },
   // s9 map: base with run 2 done, so its links are gone.
   after2: { spec: { done: [...SIXTEEN_RUN_STATES.base.done, 2], states: Object.fromEntries(Object.entries(SIXTEEN_RUN_STATES.base.states).filter(([r]) => r !== '2')) } },
+  // s13 order: every run of the 16 done, run 17 a Verifier change run ([16]) and run 18 a chat change run ([]), both
+  // planned: no link holds a run back, so every link is drawn faint, and 17 and 18 stand after the run before them.
+  later: { spec: { done: SIXTEEN_RUN_LINKS.map(({ run }) => run), states: {} },
+    links: [...SIXTEEN_RUN_LINKS, { run: 17, dependsOn: [16] }, { run: 18, dependsOn: [] }],
+    then: (fx) => { fx.setKind(17, 'change'); fx.setKind(18, 'change'); } },
+  // s13 order: base with run 3 paused, run 6 stopped and run 5 failed: each map dot is its row's dot.
+  still: { spec: { done: SIXTEEN_RUN_STATES.base.done, states: { ...SIXTEEN_RUN_STATES.base.states, 3: { pipe: 'paused' }, 5: { pipe: 'error' }, 6: { pipe: 'stopped' } } } },
 };
 /** Seeds one world (cancelling the previous world's tickets and live runs) and its Chat thread; returns the routes. */
 function seed(name) {
   for (const id of liveIds.splice(0)) runs.delete(id);
-  const { spec, then, at = {} } = SPECS[name];
-  const fx = world(proj, spec);
+  const { spec, then, at = {}, links } = SPECS[name];
+  const fx = world(proj, spec, links ? { links } : {});
   if (then) then(fx);
   for (const [r, how] of Object.entries(spec.states || {})) if (how.stop || (how.pipe || 'running') === 'running') liveRun(fx.featureId, Number(r), fx.pipelineOf(Number(r)), at[r] ? { ...how, at: at[r] } : how);
   const thread = askStore.createThread({ title: `Rows ${name}` });
@@ -969,7 +981,60 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'map
 }
 
 // ---- s10 order: Show order on the feature page's Runs tab, closed first, opened by a real click, closed on return.
-const ORDER_WORLDS = ['base', 'busy'];
+const ORDER_WORLDS = ['base', 'busy', 'later', 'still'];
+/** s13: the run count each order world draws (later adds runs 17 and 18 to the 16). */
+const ORDER_RUNS = { later: 18 };
+/** s13: the open Show order map on the feature page, as MAP_READ reads it, plus each path's classes and stroke, the
+ *  resolved --line-2 and --ink-3 strokes in this theme, and each feature page row's dot class. */
+const ORDER_MAP_READ = `(() => {
+  const gp = [...document.querySelectorAll('#group-detail .gpage')].find((x) => x.offsetParent);
+  const root = gp && gp.querySelector('.rom');
+  if (!root) return null;
+  const sb = root.querySelector('svg.rom-links').getBoundingClientRect();
+  const rect = (el) => { const b = el.getBoundingClientRect(); return { x0: b.left, y0: b.top, x1: b.right, y1: b.bottom }; };
+  const tone = (v) => { const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.style.stroke = v; root.querySelector('svg.rom-links').append(p); const c = getComputedStyle(p).stroke; p.remove(); return c; };
+  const links = [...root.querySelectorAll('path.rom-link')].map((p) => {
+    const nums = (p.getAttribute('d').match(/-?\\d+(?:\\.\\d+)?/g) || []).map(Number);
+    const points = []; for (let i = 0; i + 1 < nums.length; i += 2) points.push([nums[i] + sb.left, nums[i + 1] + sb.top]);
+    return { from: Number(p.dataset.from), to: Number(p.dataset.to), points, cls: [...p.classList].join(' '), stroke: getComputedStyle(p).stroke };
+  });
+  const runs = [...root.querySelectorAll('.rom-run')].map((r) => {
+    const dot = r.querySelector('.status-dot'); const n = r.querySelector('.rom-n');
+    return { run: Number(r.dataset.run), mark: r.dataset.mark || null, dot: dot.className, dotBox: rect(dot), nBox: rect(n) };
+  });
+  const rows = [...gp.querySelectorAll('.gpage-runs .run-member')].filter((li) => li.offsetParent && li.dataset.key !== 'planning')
+    .map((li) => ({ run: Number(li.querySelector('.run-member-num')?.textContent || 0), dot: li.querySelector('.status-dot')?.className || '' }));
+  return { links, runs, rows, line2: tone('var(--line-2)'), ink3: tone('var(--ink-3)'), hint: gp.querySelector('.gpage-order-hint')?.textContent || '' };
+})()`;
+/** s13: the agreed mock's Show order at its resting frame (run 1 done, run 2 asks, run 3 builds), opened in this theme. */
+const MOCK_URL = new URL('../plans/shaper-refresh/run-order-mock.html', import.meta.url).href;
+async function mockShot(theme) {
+  await cdp('Page.navigate', { url: `${MOCK_URL}?t=${theme}` });
+  await sleep(900);
+  await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)};0`);
+  const opened = await ev(`(() => { const t = document.getElementById('page-order'); if (!t) return false; t.click(); return t.getAttribute('aria-expanded') === 'true'; })()`);
+  check(opened, `mock, ${theme}: #page-order opens the mock's Show order`);
+  await sleep(400);
+  await shotOf('.screen.page', `mock-order-${theme}.png`);
+}
+/** s13: one page with the app's open Show order (left) and the mock's (right), shot as order-vs-mock-{world}-{theme}.png. */
+async function sideBySide(name, theme) {
+  const app = path.join(SHOTS, `order-open-${name}-${theme}.png`);
+  const mock = path.join(SHOTS, `mock-order-${theme}.png`);
+  if (!existsSync(app) || !existsSync(mock)) { check(false, `order-vs-mock-${name}-${theme}.png: both halves were shot`); return; }
+  const src = (f) => `data:image/png;base64,${readFileSync(f).toString('base64')}`;
+  await cdp('Page.navigate', { url: 'about:blank' });
+  await sleep(300);
+  await ev(`(() => { document.documentElement.dataset.theme = ${JSON.stringify(theme)};
+    document.body.style.cssText = 'margin:0;padding:16px;background:${theme === 'dark' ? '#1b1b1a' : '#fff'};font:13px system-ui;color:${theme === 'dark' ? '#eee' : '#222'}';
+    document.body.innerHTML = '<div id="pair" style="display:flex;gap:24px;align-items:flex-start">'
+      + '<figure style="margin:0"><figcaption>App · ${name}</figcaption><img style="width:640px"></figure>'
+      + '<figure style="margin:0"><figcaption>Mock · resting frame</figcaption><img style="width:640px"></figure></div>';
+    const [a, m] = document.querySelectorAll('#pair img'); a.src = ${JSON.stringify(src(app))}; m.src = ${JSON.stringify(src(mock))};
+    return 0; })()`);
+  await waitFor(`[...document.querySelectorAll('#pair img')].every((i) => i.complete && i.naturalWidth > 0)`, `order-vs-mock-${name}-${theme}: both images loaded`);
+  await shotOf('#pair', `order-vs-mock-${name}-${theme}.png`);
+}
 const ORDER_NARROW = 360;
 /** The feature page's Show order block: the toggle, the body, the map, and the rects the checks compare. */
 const ORDER_READ = `(() => {
@@ -1048,16 +1113,45 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'ord
       results.order.push({ where, closed, before, open });
       if (!open) { check(false, `${where}: the feature page is on screen after the click`); continue; }
       check(open.text === 'Hide order' && open.expanded === 'true' && open.bodyHidden === false, `${where}: the click reads Hide order with aria-expanded="true" and the body shown (${JSON.stringify([open.text, open.expanded, open.bodyHidden])})`);
-      check(open.roms === 1 && open.romHidden === 'true' && open.runs === 16, `${where}: one .rom[aria-hidden="true"] with 16 .rom-run (${open.roms}, ${open.romHidden}, ${open.runs})`);
+      const want = ORDER_RUNS[name] || 16;
+      check(open.roms === 1 && open.romHidden === 'true' && open.runs === want, `${where}: one .rom[aria-hidden="true"] with ${want} .rom-run, 16 outside later (${open.roms}, ${open.romHidden}, ${open.runs})`);
       check(open.focused, `${where}: activeElement is still the .gpage-order-toggle after the click`);
       check(!!open.toggle && open.panelRight != null && Math.abs(open.toggle.r - open.panelRight) <= 1, `${where}: the toggle's right edge sits within 1px of the Runs panel's (${open.toggle && open.toggle.r} vs ${open.panelRight})`);
       check(!!before && !!before.state && !!open.state && Math.abs(before.state.y - open.state.y) < 0.5 && Math.abs(before.state.b - open.state.b) < 0.5, `${where}: the state line keeps its rect (${JSON.stringify([before && before.state, open.state])})`);
       check(!!open.first && !!open.body && open.first.y >= open.body.b - 0.5, `${where}: the first run row sits below the open body (${open.first && open.first.y} >= ${open.body && open.body.b})`);
+      // s13: faint links once none holds a run back, later runs after the run before them, the row's dot on still runs.
+      const om = await ev(ORDER_MAP_READ);
+      if (!om) check(false, `${where}: the open map is readable`);
+      else {
+        results.order.push({ where, map: { links: om.links.map((l) => [l.from, l.to, l.cls, l.stroke]), runs: om.runs.map((x) => [x.run, x.dot]), line2: om.line2 } });
+        const cross = mapCrossings(om);
+        check(cross.length === 0, `${where}: no path.rom-link meets a dot or number of a run it does not join (${JSON.stringify(cross)})`);
+        check(om.hint.includes('every link is drawn faint') && !/are not drawn/.test(om.hint), `${where}: the hint reads the s13 words (${om.hint})`);
+        const faint = om.links.filter((l) => /\bis-faint\b/.test(l.cls));
+        if (name === 'later') {
+          const x = (n) => { const r = om.runs.find((q) => q.run === n); return r ? (r.dotBox.x0 + r.dotBox.x1) / 2 : NaN; };
+          check(x(17) > x(16), `${where}: run 17's dot stands right of run 16's (${x(17)} > ${x(16)})`);
+          check(x(18) > x(17), `${where}: run 18 (buildsOn []) stands right of run 17, the run before it (${x(18)} > ${x(17)})`);
+          check(x(18) > x(1), `${where}: run 18 is not in the first column (${x(18)} > ${x(1)})`);
+          check(om.links.length === 19 && faint.length === om.links.length, `${where}: every one of the 19 path.rom-link has is-faint (${faint.length} of ${om.links.length})`);
+          const off = om.links.filter((l) => l.stroke !== om.line2);
+          check(om.line2 && om.line2 !== om.ink3 && off.length === 0, `${where}: each faint stroke is the resolved --line-2 ${om.line2} (${JSON.stringify(off.map((l) => [l.from, l.to, l.stroke]))})`);
+        } else {
+          check(faint.length === 0 && om.links.length > 0, `${where}: a link holds a run back, so no path is is-faint (${faint.length} of ${om.links.length})`);
+        }
+        if (name === 'still') {
+          const diff = [3, 5, 6].map((n) => [n, om.runs.find((q) => q.run === n)?.dot, om.rows.find((q) => q.run === n)?.dot]).filter(([, a, b]) => !a || a !== b);
+          check(diff.length === 0, `${where}: runs 3, 5 and 6 each carry their feature page row's .status-dot class (${JSON.stringify(diff)})`);
+          const ring = [3, 5, 6].filter((n) => /\bis-grey-ring\b/.test(om.runs.find((q) => q.run === n)?.dot || ''));
+          check(ring.length === 0, `${where}: none of runs 3, 5 and 6 is is-grey-ring (${JSON.stringify(ring)})`);
+        }
+      }
       await shotOf('#group-detail .gpage-panel[data-tab="runs"]', `order-open-${name}-${theme}.png`);
       // 3. another view and back: closed on return. Side by side (split, 1280px) #runs keeps this page open beside the
       // list, so it is no return; #chat/new is. The slide layout's #runs return is checked in the 360px pass below.
       check(await returnClosed(routes, '#chat/new'), `${where}: closed again on return from #chat/new`);
-      // 4. no drawing on the Chat card or the Runs list
+      // 4. no drawing on the Chat card or the Runs list (the s10 worlds: their readiness waits on 16 marked rows)
+      if (!['base', 'busy'].includes(name)) continue;
       await go(routes.card, theme);
       if (await waitFor(ready('.chat-rc-members'), `${where}: the card's 16 marked run rows`)) {
         const card = await ev(NO_DRAWING('.chat-rc'));
@@ -1087,6 +1181,14 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'ord
       check(await returnClosed(routes, '#runs'), `${where}: closed again after #runs and back (slide layout)`);
     }
     await metrics(WIDE);
+  }
+  // 6. s13: the agreed mock beside the app, per theme. base compares layout, dots and link tokens with the mock's resting
+  // frame; later and still draw states the mock does not (faint links, runs after run 16, stopped dots), so there the
+  // mock half is the token and spacing reference only.
+  for (const theme of THEMES) {
+    await metrics(WIDE);
+    await mockShot(theme);
+    for (const name of ['base', 'later', 'still']) await sideBySide(name, theme);
   }
 }
 

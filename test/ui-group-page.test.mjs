@@ -579,7 +579,7 @@ test('s7 T16 feature page: while Ship is blocked the reason still ends the state
 });
 
 // ---- Shaper small runs slice 10 (R-ux-3): "Show order" on the feature page's Runs tab ------------------------------
-const ORDER_HINT = 'A run sits to the right of every run it builds on. A line joins a run that is not done to the runs waiting for it; links that are already met are not drawn.';
+const ORDER_HINT = 'A run sits to the right of every run it builds on. While a run is held back, only the links holding it are drawn; once none is, every link is drawn faint.';
 /** featureView slice rows from `[run, buildsOn]` pairs; `done` run numbers are finished, every other run is planned. */
 const orderRows = (pairs, done = []) => pairs.map(([index, buildsOn]) => SL4(index, done.includes(index) ? 'done' : 'planned',
   { title: `Run ${index}`, buildsOn: [...buildsOn], waitsFor: done.includes(index) ? [] : buildsOn.filter((d) => !done.includes(d)) }));
@@ -772,6 +772,7 @@ test('s10 the toggle bar is right-aligned and holds only the toggle; the body ca
     const hints = p.body().querySelectorAll('p.gpage-order-hint');
     assert.equal(hints.length, 1, state);
     assert.equal(hints[0].textContent, ORDER_HINT);
+    assert.doesNotMatch(hints[0].textContent, /are not drawn/, 'met links are drawn faint once no link is open');
     assert.equal(hints[0].closest('[aria-hidden="true"]'), null, 'only the drawing is hidden from screen readers');
     assert.equal(p.root.textContent.split(ORDER_HINT).length - 1, 1, 'said once on the page');
     t.click();

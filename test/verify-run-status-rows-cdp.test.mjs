@@ -225,3 +225,13 @@ test('s13: the stops surface checks no visible banner or step head, the card\'s 
   assert.match(s, /stops-kinds-card-\$\{[A-Za-z.]*theme[A-Za-z.]*\}\.png/, 'stops-kinds-card-{theme}.png');
   assert.match(s, /stops-busy-card-360-light\.png/);
 });
+
+// ── Run order, later runs: the order surface also shoots a later run and stopped runs, each beside the agreed mock ────
+test('the order surface shoots later and still and puts each beside the mock', () => {
+  const s = src();
+  for (const w of ['later', 'still']) assert.match(s, new RegExp(`['"]${w}['"]`), w);
+  assert.ok(s.includes('run-order-mock.html'), 'the agreed mock is opened');
+  assert.ok(s.includes('order-vs-mock-'), 'the side-by-side shots');
+  assert.match(s, /is-faint/, 'the faint links are checked');
+  assert.match(s, /--line-2/, 'their stroke is compared with the token');
+});

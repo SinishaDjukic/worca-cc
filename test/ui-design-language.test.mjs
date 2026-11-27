@@ -1197,6 +1197,7 @@ test('the .rom* rules carry no animation, transition or shadow, and use only tok
     ['.rom-plot', /position:\s*relative/],
     ['.rom-links', /position:\s*absolute/, /inset:\s*0/, /overflow:\s*visible/, /pointer-events:\s*none/],
     ['.rom-link', /fill:\s*none/, /stroke:\s*var\(--ink-3\)/, /stroke-width:\s*1\.5px/],
+    ['.rom-link.is-faint', /stroke:\s*var\(--line-2\)/],
     ['.rom-run', /position:\s*absolute/],
     ['.rom-n', /var\(--fs-caption\)/, /line-height:\s*1(?![.\d])|var\(--fs-caption\)\/1(?![.\d])/, /(?:^|;)\s*color:\s*var\(--ink-2\)/],
   ]) for (const re of want) assert.match(body(sel), re, `${sel} ${re}`);

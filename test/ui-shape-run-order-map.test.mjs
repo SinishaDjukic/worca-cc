@@ -9,7 +9,7 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { ORDER_STATES, SIXTEEN_PAIRS, sixteenSlices, slicesOf } from './helpers/shape-order-slices.mjs';
 import { runStatus } from '../src/shared/shape/run-status.mjs';
-import { RUN_STATES } from '../src/shared/run-model.mjs';
+import { runModel } from '../src/shared/run-model.mjs';
 import { markDot, renderStatusDot } from '../ui/public/status-dot.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
@@ -19,9 +19,10 @@ const load = () => import('../ui/public/shape/run-order-map.mjs');
 const newDoc = () => trackDom(new JSDOM('<!doctype html><body></body>', { pretendToBeVisual: true })).window.document;
 
 const EMPTY = { width: 0, height: 0, runs: [], links: [], implied: [] };
-const BASE = { state: 'waiting', ...RUN_STATES.waiting };
 const BASE_LINKS = [[2, 7], [2, 8], [3, 4], [3, 10], [4, 5], [5, 6], [6, 7], [7, 12], [8, 15], [9, 16], [10, 12], [12, 16],
   [13, 14], [14, 15], [15, 16]];
+/** Every reduced link of the 16-run feature: the base ones plus those from runs 1 and 11, which base has finished. */
+const ALL_LINKS = [...BASE_LINKS, [1, 2], [1, 3], [11, 13]].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
 const IMPLIED = [[1, 4], [3, 5], [3, 6], [1, 7], [3, 7], [4, 7], [5, 7], [1, 8], [1, 12], [11, 14], [13, 15], [11, 16], [13, 16], [14, 16]];
 
 const pairs = (links) => links.map((l) => [l.from, l.to]);
@@ -109,12 +110,25 @@ function changeChain({ five = 'done', six = {} } = {}) {
   const links = [[1, []], [2, [1]], [3, [2]], [4, [3]], [5, [4]], [6, [5]]];
   return slicesOf(links, { done: [1, 2, 3, 4], states: { 5: { state: five }, 6: { kind: 'change', ...six } } });
 }
-/** The class a row's dot takes for slice `index`, by the one path every surface uses. */
+/**
+ * The run the feature page row holds for a slice in this state, as runModel reads it (a test-side table, so the map's
+ * own mapping is never its oracle). Any other state is a run not started, or one whose mark decides its dot.
+ */
+const ROW_RUN = {
+  paused: { status: 'paused' }, stopped: { status: 'stopped' }, error: { status: 'error' },
+  canceled: { ticket: { status: 'canceled' } }, failed: { ticket: { status: 'failed' } },
+};
+const NOT_STARTED_RUN = { ticket: { status: 'scheduled' } };
+/** The class a row's dot takes for slice `index`: the row's run model, repainted by the run's mark. */
 function rowDotClass(doc, slices, index) {
   const map = new Map(slices.map((s) => [s.index, s]));
-  const st = runStatus({ slice: map.get(index), slices: map, snap: null });
-  return renderStatusDot(doc, markDot(BASE, st.mark, st.word)).className;
+  const slice = map.get(index);
+  const st = runStatus({ slice, slices: map, snap: null });
+  return renderStatusDot(doc, markDot(runModel(ROW_RUN[slice.state] || NOT_STARTED_RUN), st.mark, st.word)).className;
 }
+/** Every run of `slices` finished. */
+const allDone = (slices) => slices.map(({ waitsFor, ...s }) => ({ ...s, state: 'done' }));
+const classesOf = (el) => [...el.classList].filter((c) => c !== 'status-dot').sort();
 const runEl = (root, index) => root.querySelector(`.rom-run[data-run="${index}"]`);
 const dotOf = (root, index) => runEl(root, index).querySelector('.status-dot');
 /** The points an SVG path's `d` draws (absolute M, L, H and V). */
@@ -245,7 +259,8 @@ test('holding: a stop held until another run finishes keeps its incoming link', 
   const atStop = (held) => slicesOf([[1, []], [2, [1]]],
     { states: { 1: { state: 'running' }, 2: { state: 'approval', stop: { reason: 'check', held } } } });
   assert.deepEqual(pairs(runOrderLayout(atStop(true)).links), [[1, 2]]);
-  assert.deepEqual(pairs(runOrderLayout(atStop(false)).links), [], 'a stop that is not held has started');
+  assert.deepEqual(runOrderLayout(atStop(false)).links.map((l) => [l.from, l.to, l.faint]), [[1, 2, true]],
+    'a stop that is not held has started, so no link is open: the link is drawn faint');
 });
 
 test('holding: a link from a canceled run stays', async () => {
@@ -254,18 +269,106 @@ test('holding: a link from a canceled run stays', async () => {
   const { 6: _six, ...rest } = states;
   const slices = sixteenSlices({ done, states: { ...rest, 5: { state: 'canceled' },
     6: { state: 'planned', waitsFor: [5], cannotStart: { run: 5, reason: 'canceled' } } } });
-  assert.ok(has(runOrderLayout(slices), 5, 6));
+  const link = runOrderLayout(slices).links.find((l) => l.from === 5 && l.to === 6);
+  assert.ok(link, '5→6 stays');
+  assert.equal(link.faint, undefined, 'a link that holds a run back is not faint');
   const dot = dotOf(renderRunOrderMap(newDoc(), slices), 5);
-  assert.ok(dot.classList.contains('is-grey-ring'), `a canceled run draws the grey ring (${dot.className})`);
+  assert.ok(dot.classList.contains('is-dark-grey'), `a canceled run draws its row's dark grey dot (${dot.className})`);
+  assert.equal(dot.classList.contains('is-grey-ring'), false, `never the hollow ring (${dot.className})`);
 });
 
-test('holding: all done draws no link', async () => {
+// ── no open link: every link, faint ──
+test('faint: all done draws every reduced link, each faint', async () => {
   const { runOrderLayout, renderRunOrderMap } = await load();
   const slices = sixteenSlices({ done: SIXTEEN_PAIRS.map(([run]) => run) });
-  assert.deepEqual(runOrderLayout(slices).links, []);
+  const { links } = runOrderLayout(slices);
+  assert.equal(ALL_LINKS.length, 18);
+  assert.deepEqual(pairs(links), ALL_LINKS);   // sorted (from, to), implied links left out
+  assert.deepEqual(links.map((l) => l.faint), ALL_LINKS.map(() => true));
   const root = renderRunOrderMap(newDoc(), slices);
   assert.equal(root.querySelectorAll('.status-dot.is-green').length, 16);
-  assert.equal(root.querySelectorAll('path.rom-link').length, 0);
+  assert.equal(root.querySelectorAll('path.rom-link.is-faint').length, 18);
+  assert.equal(root.querySelectorAll('path.rom-link:not(.is-faint)').length, 0);
+});
+
+test('faint: the faint drawing routes as the all-planned drawing', async () => {
+  const { runOrderLayout } = await load();
+  const graphs = [sixteenSlices('none'), ...randomGraphs()];
+  assert.equal(graphs.length, 201);
+  let checked = 0;
+  for (const planned of graphs) {
+    const name = JSON.stringify(planned.map((s) => [s.index, s.buildsOn]));
+    const done = runOrderLayout(allDone(planned));
+    assert.ok(done.links.every((l) => l.faint === true), `every link is faint: ${name}`);
+    assert.deepEqual(done.links.map(({ faint, ...l }) => l), runOrderLayout(planned).links, name);
+    assert.deepEqual(crossings(done), [], name);
+    assert.deepEqual(falseJoins(done), [], name);
+    checked += done.links.length;
+  }
+  assert.ok(checked > 200, `faint links checked: ${checked}`);
+});
+
+test('faint: one open link draws only open links, none faint', async () => {
+  const { runOrderLayout, renderRunOrderMap } = await load();
+  const noneFaint = (slices, want, name) => {
+    const { links } = runOrderLayout(slices);
+    assert.deepEqual(pairs(links), want, name);
+    assert.equal(links.some((l) => 'faint' in l), false, `${name}: no link carries faint`);
+    assert.equal(renderRunOrderMap(newDoc(), slices).querySelectorAll('.is-faint').length, 0, `${name}: no faint path`);
+  };
+  noneFaint(sixteenSlices('base'), BASE_LINKS, 'base');
+  noneFaint(sixteenSlices('busy'),
+    [[2, 7], [2, 8], [6, 7], [7, 12], [8, 15], [9, 16], [10, 12], [11, 13], [12, 16], [13, 14], [14, 15], [15, 16]],
+    'busy: started targets');
+  const { done, states } = ORDER_STATES.base;
+  const { 2: _two, ...rest } = states;
+  noneFaint(sixteenSlices({ done: [...done, 2], states: rest }), BASE_LINKS.filter(([from]) => from !== 2), 'run 2 done');
+  noneFaint(slicesOf([[1, []], [2, [1]], [3, [2]], [4, [3]]], { done: [1, 2], states: { 3: { state: 'running' } } }),
+    [[3, 4]], 'one open link among met ones');
+});
+
+test('faint: every target started and no link open draws every link faint', async () => {
+  const { runOrderLayout, renderRunOrderMap } = await load();
+  const slices = slicesOf([[1, []], [2, [1]], [3, [2]]],
+    { done: [1], states: { 2: { state: 'running' }, 3: { state: 'running' } } });
+  assert.deepEqual(runOrderLayout(slices).links.map((l) => [l.from, l.to, l.faint]), [[1, 2, true], [2, 3, true]]);
+  assert.equal(renderRunOrderMap(newDoc(), slices).querySelectorAll('path.rom-link.is-faint').length, 2);
+});
+
+test('faint: a graph with no links at all draws nothing', async () => {
+  const { runOrderLayout, renderRunOrderMap } = await load();
+  const slices = slicesOf([[1, []], [2, []], [3, []]], { done: [1] });
+  assert.deepEqual(runOrderLayout(slices).links, []);
+  assert.equal(renderRunOrderMap(newDoc(), slices).querySelectorAll('path.rom-link').length, 0);
+});
+
+// ── a run with no mark: the row's dot ──
+test('marks: a paused, stopped, canceled or failed run carries its row\'s dot, never the hollow ring', async () => {
+  const { runOrderLayout, renderRunOrderMap } = await load();
+  const doc = newDoc();
+  const slices = slicesOf([[1, []], [2, [1]], [3, [2]], [4, [3]], [5, [4]], [6, [5]]], { done: [1],
+    states: { 2: { state: 'paused' }, 3: { state: 'stopped' }, 4: { state: 'canceled' }, 5: { state: 'error' },
+      6: { state: 'failed' } } });
+  const root = renderRunOrderMap(doc, slices);
+  assert.deepEqual([2, 3, 4, 5, 6].map((n) => classesOf(dotOf(root, n))),
+    [['is-grey'], ['is-dark-grey'], ['is-dark-grey'], ['has-sym', 'is-red'], ['has-sym', 'is-red']]);
+  for (const n of [2, 3, 4, 5, 6]) {
+    assert.equal(dotOf(root, n).classList.contains('is-grey-ring'), false, `run ${n} is not the hollow ring`);
+    assert.equal(dotOf(root, n).className, rowDotClass(doc, slices, n), `run ${n}'s dot is the row's dot`);
+  }
+  assert.deepEqual([2, 3, 4].map((n) => dotOf(root, n).dataset.state), ['paused', 'stopped', 'stopped']);
+  assert.deepEqual(runOrderLayout(slices).runs.map((r) => r.rowState),
+    ['waiting', 'paused', 'stopped', 'stopped', 'failed', 'failed']);
+});
+
+test('marks: a paused run held behind another keeps the dashed ring', async () => {
+  const { runOrderLayout, renderRunOrderMap } = await load();
+  const slices = slicesOf([[1, []], [2, [1]], [3, [1]]],
+    { done: [1], states: { 2: { state: 'paused', heldResume: { after: 3 } }, 3: { state: 'running' } } });
+  assert.equal(byRun(runOrderLayout(slices)).get(2).rowState, 'paused');
+  const dot = dotOf(renderRunOrderMap(newDoc(), slices), 2);
+  assert.deepEqual(classesOf(dot), ['is-dashed-ring'], 'the mark wins, as on its row');
+  assert.equal(dot.dataset.state, 'paused', 'painted over the paused row\'s model');
 });
 
 test('reduction: implied links left out', async () => {
@@ -372,7 +475,8 @@ test('change run: placed right of its builds-on run and drawn with the ink ring'
   const layout = runOrderLayout(slices);
   const six = byRun(layout).get(6);
   assert.deepEqual([six.col, six.kind], [5, 'change']);
-  assert.deepEqual(layout.links.filter((l) => l.to === 6), [], 'run 5 is done, so no link into run 6');
+  assert.deepEqual(layout.links.filter((l) => l.to === 6).map((l) => [l.from, l.faint]), [[5, true]],
+    'run 5 is done and no link is open: the link into run 6 is drawn faint');
   const root = renderRunOrderMap(newDoc(), slices);
   assert.ok(dotOf(root, 6).classList.contains('is-ink-ring'), dotOf(root, 6).className);
   assert.equal(runEl(root, 6).dataset.kind, 'change');
@@ -391,6 +495,50 @@ test('change run: a link is drawn into a waiting change run', async () => {
   const root = renderRunOrderMap(newDoc(), slices);
   assert.ok(dotOf(root, 6).classList.contains('is-grey-ring'), dotOf(root, 6).className);
   assert.equal(runEl(root, 6).dataset.kind, 'change');
+});
+
+// ── later runs (R-arch-5): since s8 a Verifier fix or change run carries buildsOn [the last run before it] ──
+test('later runs: a fix run and a change run whose buildsOn is [5] stand in the column after run 5\'s', async () => {
+  const { runOrderLayout } = await load();
+  const chain = [[1, []], [2, [1]], [3, [2]], [4, [3]], [5, [4]]];
+  const later = byRun(runOrderLayout(slicesOf([...chain, [6, [5]], [7, [5]]],
+    { done: [1, 2, 3, 4, 5], states: { 6: { kind: 'change', nextTurn: true }, 7: { kind: 'change' } } })));
+  const after = later.get(5).col + 1;
+  assert.deepEqual([later.get(6).col, later.get(7).col], [after, after]);
+  assert.deepEqual([later.get(6).row, later.get(7).row], [0, 1]);
+  assert.notEqual(after, 0, 'never in the first column');
+
+  const sixteen = byRun(runOrderLayout(slicesOf([...SIXTEEN_PAIRS, [17, [16]]],
+    { done: SIXTEEN_PAIRS.map(([run]) => run), states: { 17: { kind: 'change' } } })));
+  assert.deepEqual([sixteen.get(17).col, sixteen.get(16).col + 1], [8, 8]);
+
+});
+
+// A change run from the chat card or a run's stop carries buildsOn [] (no s8 dependsOn). The drawing still stands it in
+// the column after the last run before it; the first run of a feature (also buildsOn []) stays in the first column.
+test('later runs: a change run whose buildsOn is empty stands in the column after the last run before it, the first run stays in the first', async () => {
+  const { runOrderLayout } = await load();
+  const chain = [[1, []], [2, [1]], [3, [2]], [4, [3]], [5, [4]]];
+  const chat = byRun(runOrderLayout(slicesOf([...chain, [6, []]],
+    { done: [1, 2, 3, 4, 5], states: { 6: { kind: 'change' } } })));
+  assert.equal(chat.get(1).col, 0, 'the first run stays in the first column');
+  assert.equal(chat.get(6).col, chat.get(5).col + 1, 'run 6 stands after run 5');
+  assert.notEqual(chat.get(6).col, 0, 'never in the first column');
+
+  // After a Verifier run ([5]) and another empty one: each stands after the run just before it.
+  const mixed = byRun(runOrderLayout(slicesOf([...chain, [6, [5]], [7, []], [8, []]],
+    { done: [1, 2, 3, 4, 5], states: { 6: { kind: 'change' }, 7: { kind: 'change' }, 8: { kind: 'change' } } })));
+  assert.deepEqual([6, 7, 8].map((n) => mixed.get(n).col), [5, 6, 7]);
+  const shown = runOrderLayout(slicesOf([...chain, [6, []]], { done: [1, 2, 3, 4, 5], states: { 6: { kind: 'change' } } }));
+  assert.deepEqual(shown.links.filter((l) => l.to === 6), [], 'no link is drawn: run 6 builds on nothing');
+
+  // In the 16-run feature the last run before run 17 is run 16 (column 7), not the deepest run.
+  const sixteen = byRun(runOrderLayout(slicesOf([...SIXTEEN_PAIRS, [17, []]], { states: { 17: { kind: 'change' } } })));
+  assert.equal(sixteen.get(17).col, sixteen.get(16).col + 1);
+
+  // A first run that is a change run, and outline runs that build on nothing, stay in the first column.
+  const first = byRun(runOrderLayout(slicesOf([[1, []], [2, []], [3, [1]]], { states: { 1: { kind: 'change' } } })));
+  assert.deepEqual([1, 2, 3].map((n) => first.get(n).col), [0, 0, 1]);
 });
 
 // ── painter ──
@@ -473,6 +621,15 @@ test('render: one path per drawn link', async () => {
   const { 2: _two, ...rest } = states;
   const after = renderRunOrderMap(doc, sixteenSlices({ done: [...done, 2], states: rest }));
   assert.equal(after.querySelectorAll('[data-from="2"]').length, 0, 'run 2 is done: its links are gone');
+  // Each path's classes follow its layout link: faint ones carry is-faint, and nothing else is added.
+  for (const [list, drawn] of [[slices, BASE_LINKS.length], [allDone(slices), ALL_LINKS.length]]) {
+    const painted = renderRunOrderMap(doc, list);
+    assert.equal(painted.querySelectorAll('path.rom-link').length, drawn);
+    for (const link of runOrderLayout(list).links) {
+      const path = painted.querySelector(`path.rom-link[data-from="${link.from}"][data-to="${link.to}"]`);
+      assert.deepEqual([...path.classList], link.faint ? ['rom-link', 'is-faint'] : ['rom-link'], `${link.from}→${link.to}`);
+    }
+  }
 });
 
 // ── malformed input, imports ──
@@ -497,6 +654,8 @@ test('malformed input: a cycle, a link to a missing run and a repeated run numbe
   assert.equal(loop.links.length, 1, 'the edge that closes the cycle is not drawn');
   assert.ok(byRun(loop).get(loop.links[0].to).col > byRun(loop).get(loop.links[0].from).col);
   assert.equal(renderRunOrderMap(newDoc(), cycle).querySelectorAll('.rom-run').length, 2);
+  assert.deepEqual(runOrderLayout(allDone(cycle)).links.map((l) => [l.from, l.to, l.faint]),
+    [[loop.links[0].from, loop.links[0].to, true]], 'the closing edge stays out of the faint drawing too');
 
   const missing = runOrderLayout(slicesOf([[1, []], [2, [1, 99]]]));
   assert.deepEqual(missing.runs.map((r) => [r.index, r.col]).sort(), [[1, 0], [2, 1]]);

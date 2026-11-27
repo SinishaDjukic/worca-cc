@@ -192,6 +192,7 @@ button.chat-rc-stop-line{grid-template-columns:16px minmax(0,1fr) 16px;width:cal
 .rom-plot{position:relative;}
 .rom-links{position:absolute;inset:0;overflow:visible;pointer-events:none;}
 .rom-link{fill:none;stroke:var(--ink-3);stroke-width:1.5px;}
+.rom-link.is-faint{stroke:var(--line-2);}
 /* A 0×0 box at the centre: the dot (8, 12 or 14px) overflows it evenly, with no transform for the pulse to undo. */
 .rom-run{position:absolute;width:0;height:0;display:flex;align-items:center;justify-content:center;}
 .rom-n{position:absolute;left:7px;top:-12px;font-size:var(--fs-caption);line-height:1;color:var(--ink-2);white-space:nowrap;}
