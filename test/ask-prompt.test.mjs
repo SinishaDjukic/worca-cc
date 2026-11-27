@@ -556,7 +556,7 @@ test('system rules: rule 1 advertises every model tool (compare against the mcp-
       // Every conditional family on but web (renderWebSection names those): the list
       // test/ask-mcp-stdio.test.mjs pins name for name on the real child.
       const served = createAskTools({ limits: ASK_LIMITS, redact: (s) => s, scripts: { enabled: true },
-        models: {}, clones: {}, projectChanges: {}, workspaceChanges: {}, actions: {}, chatActions: {}, composer: {}, scopeSwitch: {}, listPresets: () => [], showFiles: {}, proxy: {}, mcpServers: {},
+        models: {}, clones: {}, projectChanges: {}, workspaceChanges: {}, actions: {}, profile: {}, chatActions: {}, composer: {}, scopeSwitch: {}, listPresets: () => [], showFiles: {}, proxy: {}, mcpServers: {},
         security: {}, envProposals: {}, toolFamilies: [securityToolFamily] }).list().map((t) => t.name);
       const rule1 = ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('1. '));
       const listed = rule1.slice(rule1.indexOf('(') + 1, rule1.indexOf(')')).split(', ');
@@ -1132,4 +1132,8 @@ test('the tool tabs line is shed before the text attachments (issue 1064 slice 3
 test('the tool tabs line names a Files tab\'s path and line (issue 1064)', () => {
   const h = buildContextHeader({ tabs: [{ id: 'tab_aa1', kind: 'files', path: 'src/a.js', line: 12, openedBy: 'assistant', scope: 'chat' }], now: CTX.now });
   assert.deepEqual(h.split('\n').filter((l) => l.startsWith('tool tabs:')), ['tool tabs: tab_aa1 files src/a.js:12 (opened by you)']);
+});
+
+test('system prompt: readiness is suggested after an add or clone, never started by the assistant', () => {
+  assert.ok(buildSystemPrompt(CATALOG).includes('After a project is added or cloned, you may suggest evaluating it or setting it up for coding agents from its readiness chip; never start that run yourself.'));
 });

@@ -101,8 +101,27 @@ export function deletePreset(id, { owner = null } = {}) {
 const PIPELINE_ID_RE = /^[A-Za-z0-9._-]{1,160}$/;
 
 /**
+ * The run_setup a run's pipelines row keeps: the setup its start kept, with the run's workflow id merged in when it has
+ * none, else `{ workflowId, idOnly: true }` (a CLI start, a scan, a setup not kept), so every reader keyed on the
+ * workflow (readiness runs) finds the run. readRunSetup reads the id-only form as no setup.
+ */
+export function rowRunSetup(runSetup, workflowId) {
+  const wf = typeof workflowId === 'string' && workflowId ? workflowId : null;
+  if (typeof runSetup === 'string' && runSetup) {
+    let v = null;
+    try { v = JSON.parse(runSetup); } catch { /* not kept as is: the id-only form below */ }
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      if (!wf || (typeof v.workflowId === 'string' && v.workflowId)) return runSetup;
+      return JSON.stringify({ ...v, workflowId: wf });
+    }
+  }
+  return wf ? JSON.stringify({ workflowId: wf, idOnly: true }) : null;
+}
+
+/**
  * The setup a run kept at start (pipelines.run_setup, v62). undefined when there is no such run; `setup: null` for a
- * run started before v62, by the CLI, or a scan (and for a corrupt value). `target` is the run's own project/workspace.
+ * run started before v62, by the CLI, or a scan (the id-only form, rowRunSetup), and for a corrupt value. `target` is
+ * the run's own project/workspace.
  */
 export function readRunSetup(pipelineId) {
   if (typeof pipelineId !== 'string' || !PIPELINE_ID_RE.test(pipelineId) || pipelineId.includes('..')) return undefined;
@@ -110,7 +129,7 @@ export function readRunSetup(pipelineId) {
   if (!r) return undefined;
   let setup = null;
   if (typeof r.run_setup === 'string' && r.run_setup) {
-    try { const v = JSON.parse(r.run_setup); setup = v && typeof v === 'object' && !Array.isArray(v) ? v : null; } catch { setup = null; }
+    try { const v = JSON.parse(r.run_setup); setup = v && typeof v === 'object' && !Array.isArray(v) && v.idOnly !== true ? v : null; } catch { setup = null; }
   }
   const target = r.target === 'workspace' && r.workspace_key ? { kind: 'workspace', ref: r.workspace_key } : { kind: 'project', ref: r.project_key };
   return { setup, target };

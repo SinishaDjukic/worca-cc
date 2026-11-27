@@ -5,9 +5,10 @@ import * as m_workspace_map_run_comments from './run-comments.mjs';
 import * as m_workspace_map_workspaces from './workspaces.mjs';
 import * as m_workspace_map_scan_and_map from './scan-and-map.mjs';
 import * as m_workspace_map_runs from './runs.mjs';
+import * as m_workspace_map_readiness from './readiness.mjs';
 export const SEGMENTS = Object.freeze([
   Object.freeze([m_workspace_map_team_sync, m_workspace_map_run_comments]),   // before app.use('/api/automations', requireFlag('gitAutomations'));
-  Object.freeze([m_workspace_map_workspaces, m_workspace_map_scan_and_map, m_workspace_map_runs]),   // before app.use('/api/mcp', (req, res, next) => {
+  Object.freeze([m_workspace_map_workspaces, m_workspace_map_scan_and_map, m_workspace_map_runs, m_workspace_map_readiness]),   // before app.use('/api/mcp', (req, res, next) => {
   Object.freeze([]),   // before app.use((req, res, next) => {
   Object.freeze([]),   // before app.use('/api/skills', (req, res, next) => {
   Object.freeze([]),   // before the SPA fallback

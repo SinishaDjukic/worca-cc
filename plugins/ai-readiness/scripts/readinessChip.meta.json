@@ -1,0 +1,15 @@
+{
+  "key": "readinessChip",
+  "metaVersion": 2,
+  "displayName": "Readiness chip",
+  "description": "Reads worca's own view of which coding agents this repository is judged for, so the later steps use the same engines as the chip.",
+  "domain": "readiness",
+  "color": "teal",
+  "order": 9,
+  "runtime": "node",
+  "file": "readiness-chip.mjs",
+  "readiness": true,
+  "timeoutMs": 60000,
+  "inputs": [ { "id": "task", "type": "md", "required": false } ],
+  "outputs": [ { "id": "view", "type": "json", "filename": "readiness-chip.json" } ]
+}

@@ -47,6 +47,11 @@ test('workspaceContextBlock: empty without a workspace; heading, FULL descriptio
       assert.match(b, /share a REST contract/);
       assert.match(b, /Member projects: iam, ui\./);
     } },
+    { name: 'workspaceContextBlock: says which copy of the relations wins', run: () => {
+      const b = workspaceContextBlock({ workspaceDescription: '# Workspace: W\n\nx', projects: [{ projectName: 'a' }] });
+      assert.ok(b.includes('Where a member\'s instruction files describe the related repositories differently, this workspace context is current.'));
+      assert.equal(workspaceContextBlock({ workspaceDescription: '', projects: [] }), '', 'no description, no block');
+    } },
     { name: 'workspaceContextBlock: injects the FULL description, no cap, no ellipsis', run: () => {
       const long = '# Workspace: Big\n\n' + 'x'.repeat(5000);
       const b = workspaceContextBlock({ description: long, projects: [] });

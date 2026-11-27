@@ -1,0 +1,30 @@
+{
+  "key": "readinessGate",
+  "metaVersion": 2,
+  "displayName": "Readiness gate",
+  "description": "Computes the score after setup, writes the final scorecard, and sends the run back to Generate below 80 or on a hard failure.",
+  "domain": "readiness",
+  "color": "amber",
+  "order": 33,
+  "runtime": "node",
+  "file": "readiness-report.mjs",
+  "readiness": true,
+  "timeoutMs": 60000,
+  "verdict": { "filename": "readiness-gate-verdict-cycle{cycle}.json" },
+  "inputs": [
+    { "id": "view", "type": "json" },
+    { "id": "judgement", "type": "json" },
+    { "id": "probe", "type": "json" },
+    { "id": "map", "type": "json", "required": false }
+  ],
+  "outputs": [
+    { "id": "card", "type": "md", "when": "always", "filename": "readiness-final-cycle{cycle}.md", "artifactKind": "readiness-card",
+      "extraFiles": [
+        { "kind": "readiness-json", "glob": "readiness/final-cycle*.json" },
+        { "kind": "readiness-scorecard", "glob": "readiness/final-cycle*.html" }
+      ] },
+    { "id": "findings", "type": "md", "when": "blocking", "filename": "readiness-findings-cycle{cycle}.md", "artifactKind": "readiness-findings" },
+    { "id": "pass", "type": "void", "when": "clean" },
+    { "id": "profile", "type": "json", "when": "always", "filename": "readiness-profile-final-cycle{cycle}.json", "artifactKind": "project-profile" }
+  ]
+}

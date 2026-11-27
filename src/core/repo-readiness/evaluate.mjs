@@ -27,10 +27,12 @@ function unknownReport() {
 /**
  * Evaluate agent readiness of `dir`. Always resolves with the base report
  * `{catalogVersion, checks, repository, engines, files, partial?}`; `files` are the tool-specific instruction files (used.mjs).
+ * `committed: { exclude }` evaluates a run checkout as its teardown commit will record it (collectFacts).
  */
-export async function evaluateReadiness({ dir, projectKey, ignore = [], timeoutMs = INTERACTIVE_TIMEOUT_MS, folder = false } = {}) {
+export async function evaluateReadiness({ dir, projectKey, ignore = [], timeoutMs = INTERACTIVE_TIMEOUT_MS, folder = false, committed = null } = {}) {
   try {
-    const facts = await collectFacts(dir, { timeoutMs, folder });   // folder: a Folder project, no git in it
+    // folder: a Folder project, no git in it. committed: a run checkout, judged as its teardown commits it (facts.mjs).
+    const facts = await collectFacts(dir, { timeoutMs, folder, committed });
     if (facts.error) logError(projectKey, 'facts', facts.error);
     const { checks, repository, engines } = evaluateEngines(facts, { ignore });
     // `partial`: a timed-out or failed collection; the cache serves it but never keeps it.

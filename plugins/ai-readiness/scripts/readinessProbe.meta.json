@@ -1,0 +1,15 @@
+{
+  "key": "readinessProbe",
+  "metaVersion": 2,
+  "displayName": "Readiness probe",
+  "description": "Measures the instruction files, skills, frontmatter and confirmed commands before scoring.",
+  "domain": "readiness",
+  "color": "teal",
+  "order": 30,
+  "runtime": "node",
+  "file": "readiness-probe.mjs",
+  "readiness": true,
+  "timeoutMs": 1800000,
+  "inputs": [ { "id": "map", "type": "json" }, { "id": "view", "type": "json" } ],
+  "outputs": [ { "id": "probe", "type": "json", "filename": "readiness-probe.json" } ]
+}

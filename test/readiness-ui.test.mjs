@@ -18,11 +18,11 @@ function fnSource(name) {
 
 describe('readiness UI: chips in the projects list', () => {
   it('imports the chip renderer statically', () => {
-    assert.match(app, /import \{ renderReadinessChip, readinessAddedToast, readinessMenuModel, renderLevelLabel, LEVEL_WORDS \} from '\.\/readiness-chip\.mjs';/);
+    assert.match(app, /import \{ renderReadinessChip, chipClass, workspaceReadinessAggregate, readinessAddedToast, readinessMenuModel, renderLevelLabel, LEVEL_WORDS, READINESS_CHECK_WORKFLOW_ID, READINESS_SETUP_WORKFLOW_ID \} from '\.\/readiness-chip\.mjs';/);
   });
 
   it('turns a readiness-added frame into the one-time toast', () => {
-    assert.match(app, /msg\.type === 'readiness-added'[\s\S]{0,200}readinessAddedToast\(msg/);
+    assert.match(app, /msg\.type === 'readiness-added'[\s\S]{0,400}readinessAddedToast\(msg/);
     assert.match(app, /notify\(toast\)/);
   });
 
@@ -325,5 +325,15 @@ describe('readiness UI: the popover is built from the shared pieces (jsdom)', ()
       assert.ok(boxes[1].querySelector('summary .rp-lead.is-none'), 'the ignored box leads with the none icon');
       assert.equal(pop.querySelector('.rp-sevdot, .rp-chev, .rp-tick, .rp-gdot'), null, 'no hand-drawn marks');
     } finally { window.close(); }
+  });
+});
+
+describe('readiness UI: run constants', () => {
+  it('startReadinessRun titles a check run "AI readiness check" and builds workflow ids from the shared constants', () => {
+    const src = fnSource('startReadinessRun');
+    assert.match(src, /'AI readiness check'/);
+    assert.doesNotMatch(src, /AI readiness evaluation/);
+    assert.doesNotMatch(src, /wfp_ai-readiness_\$\{/);
+    assert.match(src, /READINESS_CHECK_WORKFLOW_ID/);
   });
 });

@@ -1,0 +1,179 @@
+{
+  "key": "readinessMap",
+  "metaVersion": 2,
+  "runnerType": "producer",
+  "mockRole": "generic-producer",
+  "domain": "readiness",
+  "displayName": "Map",
+  "description": "Reads the repository (graphify when installed), then asks whether the tools, recurring tasks, commands and gotchas it found look right.",
+  "color": "blue",
+  "scope": "project",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "explore",
+  "agentFile": "readinessMap.md",
+  "order": 11,
+  "requiresSkills": ["readiness-rubric"],
+  "asksQuestions": true,
+  "questionsLocked": true,
+  "questionsDefault": true,
+  "inputs": [
+    { "id": "task", "type": "md" },
+    { "id": "view", "type": "json" }
+  ],
+  "outputs": [
+    {
+      "id": "map", "type": "json", "filename": "readiness-map.json", "artifactKind": "readiness-map",
+      "extraFiles": [ { "kind": "readiness-graph-report", "glob": "graphify-out/GRAPH_REPORT.md" } ]
+    },
+    { "id": "report", "type": "md", "filename": "readiness-map.md", "artifactKind": "readiness-map-report" }
+  ],
+  "ask": {
+    "forms": {
+      "readiness-confirm": {
+        "version": 1,
+        "title": "Did we read your repo right?",
+        "data": {
+          "type": "object",
+          "required": ["summary", "judgedTools", "toolChoices", "recurringTasks", "commands", "gotchas"],
+          "properties": {
+            "summary": { "type": "string", "maxLength": 1500 },
+            "judgedTools": {
+              "type": "array", "minItems": 1, "maxItems": 8,
+              "items": { "type": "string", "enum": ["claude", "codex", "copilot", "cursor", "gemini", "qwen", "goose", "opencode"] }
+            },
+            "toolChoices": {
+              "type": "array", "maxItems": 8,
+              "items": {
+                "type": "object", "required": ["id", "label"],
+                "properties": {
+                  "id": { "type": "string", "maxLength": 40 },
+                  "label": { "type": "string", "maxLength": 80 }
+                }
+              }
+            },
+            "recurringTasks": {
+              "type": "array", "maxItems": 12,
+              "items": {
+                "type": "object", "required": ["id", "name"],
+                "properties": {
+                  "id": { "type": "string", "maxLength": 120 },
+                  "name": { "type": "string", "maxLength": 120 },
+                  "why": { "type": "string", "maxLength": 300 },
+                  "example": { "type": "string", "maxLength": 200 },
+                  "origin": { "type": "string", "maxLength": 160 }
+                }
+              }
+            },
+            "commands": {
+              "type": "array", "maxItems": 12,
+              "items": {
+                "type": "object", "required": ["id", "kind", "command"],
+                "properties": {
+                  "id": { "type": "string", "maxLength": 120 },
+                  "kind": { "type": "string", "enum": ["install", "test", "single-test", "lint", "typecheck", "build", "start"] },
+                  "command": { "type": "string", "maxLength": 300 },
+                  "origin": { "type": "string", "maxLength": 160 }
+                }
+              }
+            },
+            "gotchas": {
+              "type": "array", "maxItems": 12,
+              "items": {
+                "type": "object", "required": ["id", "text"],
+                "properties": {
+                  "id": { "type": "string", "maxLength": 120 },
+                  "text": { "type": "string", "maxLength": 300 },
+                  "origin": { "type": "string", "maxLength": 160 }
+                }
+              }
+            }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "required": ["tools", "looksRight", "tasks", "commands", "gotchas"],
+          "properties": {
+            "tools": {
+              "type": "array", "minItems": 1,
+              "items": { "type": "string", "enum": ["claude", "codex", "copilot", "cursor", "gemini", "qwen", "goose", "opencode"] },
+              "defaultFrom": "data.judgedTools"
+            },
+            "looksRight": { "type": "string", "enum": ["yes", "correct"], "default": "yes" },
+            "summaryFix": { "type": "string", "maxLength": 2000 },
+            "tasks": {
+              "type": "array",
+              "items": {
+                "type": "object", "required": ["id", "verdict"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "verdict": { "type": "string", "enum": ["confirm", "remove"], "default": "confirm" },
+                  "note": { "type": "string", "maxLength": 500 }
+                }
+              }
+            },
+            "missingTasks": { "type": "string", "maxLength": 2000 },
+            "commands": {
+              "type": "array",
+              "items": {
+                "type": "object", "required": ["id", "verdict"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "verdict": { "type": "string", "enum": ["correct", "wrong", "slow"], "default": "correct" },
+                  "note": { "type": "string", "maxLength": 500 }
+                }
+              }
+            },
+            "needsToRun": { "type": "string", "maxLength": 2000 },
+            "gotchas": {
+              "type": "array",
+              "items": {
+                "type": "object", "required": ["id", "verdict"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "verdict": { "type": "string", "enum": ["confirm", "wrong"], "default": "confirm" },
+                  "note": { "type": "string", "maxLength": 500 }
+                }
+              }
+            },
+            "unwritten": { "type": "string", "maxLength": 4000 }
+          }
+        },
+        "layout": [
+          { "widget": "multiselect", "field": "tools", "label": "Which tools must be ready?", "style": "chips",
+            "options": { "from": "data.toolChoices", "value": "id", "label": "label" },
+            "help": "Tools this project uses stay on; mark one Not used in Settings › Agent readiness." },
+          { "widget": "markdown", "bind": "data.summary", "label": "What this repo is" },
+          { "widget": "select", "field": "looksRight", "label": "Looks right?", "style": "cards",
+            "labels": { "yes": "Yes, keep what you found", "correct": "Let me correct it" } },
+          { "widget": "textarea", "field": "summaryFix", "label": "What the summary got wrong", "rows": 2,
+            "when": { "looksRight": "correct" } },
+          { "widget": "review-list", "bind": "data.recurringTasks", "field": "tasks", "label": "Recurring tasks",
+            "help": "Everything starts at keep. Change only what you know is wrong.",
+            "titleKey": "name", "bodyKey": "why", "metaKey": "example",
+            "labels": { "confirm": "keep", "remove": "remove" }, "when": { "looksRight": "correct" } },
+          { "widget": "textarea", "field": "missingTasks", "label": "Recurring tasks we missed", "rows": 2,
+            "when": { "looksRight": "correct" } },
+          { "widget": "review-list", "bind": "data.commands", "field": "commands", "label": "Commands",
+            "help": "Everything starts at keep. Change only what you know is wrong.",
+            "titleKey": "command", "bodyKey": "origin", "metaKey": "kind",
+            "labels": { "correct": "keep", "wrong": "wrong", "slow": "slow (skip running it)" }, "when": { "looksRight": "correct" } },
+          { "widget": "textarea", "field": "needsToRun", "label": "Services, environment variables or secrets the tests need", "rows": 2,
+            "when": { "looksRight": "correct" } },
+          { "widget": "review-list", "bind": "data.gotchas", "field": "gotchas", "label": "Gotchas",
+            "help": "Everything starts at keep. Change only what you know is wrong.",
+            "titleKey": "text", "metaKey": "origin", "labels": { "confirm": "keep", "wrong": "wrong" }, "when": { "looksRight": "correct" } },
+          { "widget": "textarea", "field": "unwritten", "label": "Rules the team follows that aren't written down", "rows": 3,
+            "when": { "looksRight": "correct" } }
+        ],
+        "example": {
+          "summary": "A Node CLI.\nOne package.\nTests use node:test.",
+          "judgedTools": ["claude"],
+          "toolChoices": [{ "id": "claude", "label": "Claude Code" }],
+          "recurringTasks": [{ "id": "add-command", "name": "Add a CLI command", "why": "8 commands share one shape", "example": "src/cli/run.mjs" }],
+          "commands": [{ "id": "test", "kind": "test", "command": "npm test" }],
+          "gotchas": [{ "id": "g1", "text": "The tests need a scratch HOME." }]
+        }
+      }
+    }
+  }
+}

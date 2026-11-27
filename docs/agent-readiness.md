@@ -71,6 +71,40 @@ or above it, and a Worca run writes its own `CLAUDE.md` above the checkout. So i
 
 Claude Code's files are read from the project folder itself, so for Claude Code an uncommitted file is fine.
 
+## Evaluating and fixing it
+
+The report and the project's Settings card offer two actions (the workflows must be installed; not offered in
+mock mode, nor for a project with no code yet):
+
+- **Evaluate in depth** starts the AI readiness check run: scores and gaps, nothing changed. Every project with
+  code gets it, ready ones too.
+- **Set up with AI** starts the AI readiness setup run, when a judged tool, the heavy directories or the test
+  command fails.
+
+Neither starts on its own. A project has one readiness run (check or setup) at a time, and a project in a
+workspace whose readiness run is live counts as busy. The report shows "Evaluated: N/100" (the newest check)
+and "Setup run: <status>"; both see runs started from worca's UI.
+
+Every way of adding a project evaluates readiness: the Add project dialog (New and Folder tabs), Use git, Clone,
+bulk add, the workspace wizard import, and the chat's project and clone cards. The toast offers Set up with AI,
+else Evaluate in depth. `worca add` and `worca add --clone` print a readiness line and the two commands. The
+chat may suggest evaluating or setting up after adding a project; it never starts a run.
+
+Setup writes `AGENTS.md` and, for the tools you keep, `CLAUDE.md` and `GEMINI.md` (each exactly
+`@AGENTS.md`), skills folders (`.claude/skills`, `.agents/skills`, `.qwen/skills`), and Cursor and Copilot path
+rules. It never creates `.github/copilot-instructions.md`. Repository state it cannot fix (`git.repo`,
+lockfiles, tracked secrets) is listed under "Outside setup" and never blocks the run. See the
+[ai-readiness plugin](../plugins/ai-readiness/README.md).
+
+## Workspaces
+
+On the workspace Overview, the Projects card shows a chip per member, and its head says "N of M agent-ready".
+The workspace level is the lowest member's, and neutral while a member is unknown. The workspace page has
+**Evaluate with AI** and **Set up with AI**, refused while a scan, another workspace run or a member's
+readiness run is live. When a scan of the workspace finishes while you are on its page, a one-time notice
+suggests Evaluate with AI when a member is not ready.
+The plugin's workspace runs reuse the workspace map for the members' relations.
+
 ## Folder projects
 
 A Folder project (a plain folder without git, or any project when git is not installed) runs on a copy of the
@@ -86,7 +120,7 @@ skipped and never counts. The setting is `readiness.ignore`, a list of check ids
 
 ## When it checks
 
-- when a project is added (a toast says so if it is not ready);
+- when a project is added, by any route (a toast says so if it is not ready);
 - when the Projects page or a project page asks for it, re-using the last result while the project's HEAD and its
   instruction files are unchanged;
 - after a run ends, after its HEAD moves, after a readiness setting or the Run engine changes (project, user
