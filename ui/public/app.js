@@ -28257,36 +28257,40 @@ async function paintHdPublish(screen, record, data) {
   const note = screen.querySelector('.hd-published');
   if (!btn || !note) return;
   const gen = ++publishPaintGen;
-  btn.hidden = true;
-  note.hidden = true;
-  if (!(gitOn() && isGitRun(hdRunOf(record, data)))) return;
+  // What is shown stays while the state is read again (hdSyncPr repaints this seconds after the page paints): the
+  // head's button row is laid out around this button, so hiding it for the read's round trip shifts the other
+  // buttons under the pointer and back. Only an answer, or a gate that needs no read, changes it.
+  const none = () => { btn.hidden = true; note.hidden = true; };
+  if (!(gitOn() && isGitRun(hdRunOf(record, data)))) return none();
   const status = String((data && data.state && data.state.status) || record.status || '').toLowerCase();
-  if (!PUBLISH_FINISHED.has(status) || !record.id) return;
+  if (!PUBLISH_FINISHED.has(status) || !record.id) return none();
   // Merged back into its source: the run's branch is gone and Push ships the work (paintHdPush).
-  if ((record.sameAsSource && record.mergeBack?.merged === true) || data?.state?.branch?.mergeBack?.merged === true) return;
-  let members;
+  if ((record.sameAsSource && record.mergeBack?.merged === true) || data?.state?.branch?.mergeBack?.merged === true) return none();
+  let members = [];
   try {
     const res = await fetch(`/api/runs/${encodeURIComponent(record.id)}/publish?${new URLSearchParams(publishScope(record))}`);
     const d = await safeJson(res);
-    if (!res.ok || !d || !Array.isArray(d.members)) return;
     // A branch with a pull request was pushed when the PR opened: never "Publish branch" for it. Ship it repaints
     // this block once the PR is recorded (hdSyncPr), and this gate covers the forge deleting the merged branch
     // and a fetch pruning its tracking ref. Push changes stays for local commits.
     const ws = record.target === 'workspace';
     const prOf = (m) => (ws ? histWsMembers(record).find((x) => x.memberKey === m.memberKey)?.pr : record.pr);
-    members = d.members.filter((m) => m && m.branch && m.state && m.state !== 'none'
-      && !(m.state === 'unpublished' && prLive(prOf(m))));
-  } catch { return; }
-  if (gen !== publishPaintGen || !members.length) return;
+    if (res.ok && d && Array.isArray(d.members)) {
+      members = d.members.filter((m) => m && m.branch && m.state && m.state !== 'none'
+        && !(m.state === 'unpublished' && prLive(prOf(m))));
+    }
+  } catch { /* no answer: nothing to offer */ }
+  if (gen !== publishPaintGen) return;              // a newer paint decides
+  if (!members.length) return none();
   const pub = members.filter((m) => m.remote && m.state !== 'unpublished');
   if (pub.length) {
     note.textContent = record.target === 'workspace'
       ? `Published: ${pub.map((m) => `${m.name || m.memberKey} → ${publishTarget(m)}`).join(', ')}`
       : `Published to ${publishTarget(pub[0])}`;
-    note.hidden = false;
   }
+  note.hidden = !pub.length;
   const moved = members.some((m) => m.state === 'moved');
-  if (!moved && !members.some((m) => m.state === 'unpublished')) return;
+  if (!moved && !members.some((m) => m.state === 'unpublished')) { btn.hidden = true; return; }
   btn.textContent = moved ? 'Push changes' : 'Publish branch';
   btn.hidden = false;
   btn.onclick = () => openPublishModal(screen, record, data, members.filter((m) => m.state !== 'diverged'));   // property: repaints re-bind it
