@@ -17,7 +17,10 @@ const GATING = {
   'firefox-e2e.yml': 'Firefox e2e (Playwright Firefox, branch and split tree)',
   'parity-docker.yml': 'parity (tree against the CI image)',
 };
-const UNGATED = ['docker-image.yml', 'docker-rebuild.yml', 'label-by-author.yml', 'pr-context.yml', 'quarantine.yml', 'refresh-test-timings.yml', 'release-npm-app.yml', 'worca-metrics-pr-events.yml'];
+// The ticket rule: a required check that judges the PR description, not the code, so the trigger and
+// cancellation rules below (GATING only) do not apply to it. The no-issue label is its bypass.
+const TICKET = { 'pr-context.yml': 'Linked issue' };
+const UNGATED = ['docker-image.yml', 'docker-rebuild.yml', 'label-by-author.yml', 'quarantine.yml', 'refresh-test-timings.yml', 'release-npm-app.yml', 'worca-metrics-pr-events.yml'];
 const PR_ONLY = "${{ github.event_name == 'pull_request' }}";
 
 const cells = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
@@ -57,7 +60,7 @@ export function tableProblems(rows, workflowFiles, docsByFile) {
     }
   }
   const got = [...new Set(rows.filter((r) => r.gates).map((r) => r.workflow))].sort();
-  const want = Object.keys(GATING).sort();
+  const want = Object.keys({ ...GATING, ...TICKET }).sort();
   if (got.join() !== want.join()) problems.push(`gating set is ${got.join(', ')}, want ${want.join(', ')}`);
   return problems;
 }
@@ -131,9 +134,14 @@ test('gating table: every workflow file is listed once and the real tree has no 
   assert.deepEqual(tableProblems(realRows(), workflowFiles(), docs()), []);
 });
 
-test('gating table: the gating set is ci.yml, parity-docker.yml and firefox-e2e.yml with their check names', () => {
+test('gating table: the gating set is ci.yml, parity-docker.yml, firefox-e2e.yml and the ticket check, with their check names', () => {
   const gating = Object.fromEntries(realRows().filter((r) => r.gates).map((r) => [r.workflow, r.check]));
-  assert.deepEqual(gating, GATING);
+  assert.deepEqual(gating, { ...GATING, ...TICKET });
+});
+
+test('gating table: the ticket check reports again when the description or a label changes', () => {
+  const types = wfDoc('pr-context.yml').on.pull_request_target.types;
+  for (const t of ['opened', 'edited', 'reopened', 'synchronize', 'labeled', 'unlabeled']) assert.ok(types.includes(t), `pr-context.yml runs on ${t}`);
 });
 
 test('gating table: each ungated workflow has a reason', () => {
@@ -163,7 +171,7 @@ test('gating table: an ungated row without a reason is named', () => {
   const p = mutatedTable((m) => { m.rows.find((r) => r.workflow === 'docker-image.yml').reason = ''; });
   hasProblem(p, /^docker-image\.yml: a workflow left ungated needs its reason$/, 'empty reason');
   const q = mutatedTable((m) => { m.rows.find((r) => r.workflow === 'docker-image.yml').gates = true; });
-  hasProblem(q, /^gating set is ci\.yml, docker-image\.yml, firefox-e2e\.yml, parity-docker\.yml, want ci\.yml, firefox-e2e\.yml, parity-docker\.yml$/, 'extra gating row');
+  hasProblem(q, /^gating set is ci\.yml, docker-image\.yml, firefox-e2e\.yml, parity-docker\.yml, pr-context\.yml, want ci\.yml, firefox-e2e\.yml, parity-docker\.yml, pr-context\.yml$/, 'extra gating row');
 });
 
 test('gating table: a malformed table throws', () => {
@@ -218,10 +226,10 @@ test('gating workflows: no pull_request trigger, or branches without dev, is nam
   hasProblem(mutatedWf('firefox-e2e.yml', (d) => { d.on.push.branches = ['main']; }), /^on\.push\.branches: must include dev$/, 'push branches main');
 });
 
-test('gating workflows: ci.yml\'s pull_request trigger counts as every PR: its real types (labeled added for full-node-matrix), and a bare pull_request: (null)', () => {
+test('gating workflows: ci.yml\'s pull_request trigger counts as every PR: its real types, and a bare pull_request: (null)', () => {
   const g = ciGroup();
   const doc = wfDoc('ci.yml');
-  for (const t of ['opened', 'synchronize', 'reopened', 'labeled']) assert.ok(doc.on.pull_request.types.includes(t), `ci.yml runs on ${t}`);
+  for (const t of ['opened', 'synchronize', 'reopened']) assert.ok(doc.on.pull_request.types.includes(t), `ci.yml runs on ${t}`);
   assert.deepEqual(gatingWorkflowProblems(doc, { prefix: 'ci-', ciGroup: g }), []);
   const bare = structuredClone(doc);
   bare.on.pull_request = null;

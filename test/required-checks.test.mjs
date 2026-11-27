@@ -78,7 +78,7 @@ function page() {
 
 const realCited = () => {
   const cited = citedChecks(page());
-  assert.equal(cited.length, 3, `${PAGE}: the "Required checks" table must cite 3 checks, found ${cited.length}`);
+  assert.equal(cited.length, 4, `${PAGE}: the "Required checks" table must cite 4 checks, found ${cited.length}`);
   return cited;
 };
 
@@ -112,11 +112,12 @@ const RED_LEG = 'A red leg that runs only on dev';
 
 // ── the cited names against the workflows ────────────────────────────────────────────────
 
-test('required checks: the page cites exactly the three gating jobs', () => {
+test('required checks: the page cites exactly the three CI gating jobs and the ticket check', () => {
   assert.deepEqual(realCited().map((r) => `${r.workflow} ${r.jobId}`).sort(), [
     '.github/workflows/ci.yml ci-gate',
     '.github/workflows/firefox-e2e.yml firefox-e2e',
     '.github/workflows/parity-docker.yml parity-docker',
+    '.github/workflows/pr-context.yml linked-issue',
   ]);
 });
 
@@ -184,7 +185,7 @@ test('required checks: step 1 links the prerequisite PRs and asks for 5 green de
   has(text, 'Prerequisite PRs', 'step 1');
   const prs = tableWithHead(body, ['Slice', 'PR', 'Merged']);
   assert.equal(prs.length, 3, `${PAGE} step 1: the Prerequisite PRs table has 3 rows`);
-  const link = /https:\/\/github\.com\/SinishaDjukic\/worca-cc\/(pull\/\d+|pulls\?q=[^\s)\]>|]+)/;
+  const link = /https:\/\/github\.com\/worca-org\/worca\/(pull\/\d+|pulls\?q=[^\s)\]>|]+)/;
   for (const [slice, name] of [[2, 'Every required check reports'], [5, 'Node test offenders'], [6, 'Browser offenders']]) {
     const rows = prs.filter((c) => (c[0] ?? '').includes(name));
     assert.equal(rows.length, 1, `${PAGE} step 1: one Prerequisite PRs row names "${name}" (slice ${slice})`);

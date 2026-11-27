@@ -9,7 +9,8 @@ name: Quarantined tests
 # No concurrency group: a shared one would cancel a pending run and leave a cancelled mark on dev. Overlapping runs
 # lose no history record: each run unions the histories of the newest few dev runs by runId.
 #
-# The `tail measure` job runs the fast tier once with forceExit off (--measure-tails) and lists each test file whose
+# The `tail measure` job (nightly and by hand, never on a dev push: it holds a runner for up to 90 min) runs the fast
+# tier once with forceExit off (--measure-tails) and lists each test file whose
 # process stayed up after its tests (top-level hooks included), longest first, in its job summary. ci.yml's tiers
 # force-close those files.
 
@@ -133,6 +134,7 @@ jobs:
   # on one runner takes ~40-60 min; the tail lines are printed per file, so a run cut off at its limit keeps what it saw.
   tail-measure:
     name: tail measure
+    if: ${{ github.event_name != 'push' }}
     runs-on: ubuntu-latest
     continue-on-error: true
     timeout-minutes: 90

@@ -537,13 +537,11 @@ test('suiteTmpOutsideWorca: a TMPDIR inside a .worca-cc folder gets a folder of 
 // (docs-only PRs too) and no job can slip past it. gateProblems is pure so each rule is proven on a
 // mutated copy without touching the real workflow. It returns one string per problem.
 const ALWAYS = '${{ always() }}';
-// PRs start on labeled too (the full-node-matrix label restores the full Node matrix). Every job's if
-// holds LABEL_OK as a top-level && conjunct, so another label's run skips every job; CI_GROUP keeps every
-// labeled run out of the PR group, so a label never cancels the open run.
-export const LABEL_OK = "(github.event.action != 'labeled' || github.event.label.name == 'full-node-matrix')";
-export const CI_GROUP = "ci-${{ github.event_name == 'pull_request' && github.event.action != 'labeled' && format('pr-{0}-{1}', github.event.pull_request.head.repo.full_name, github.head_ref) || format('push-{0}', github.run_id) }}";
-const GATE_IF = '${{ always() && ' + LABEL_OK + ' }}';
-const PR_TYPES = ['opened', 'synchronize', 'reopened', 'labeled'];
+// PRs never start on labeled: a label's run would skip the gate, and a skipped gate reads as Success to the
+// required check. The full-node-matrix label takes effect from the PR's next push (or a close and reopen).
+export const CI_GROUP = "ci-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.head.repo.full_name, github.head_ref) || format('push-{0}', github.run_id) }}";
+const GATE_IF = ALWAYS;
+const PR_TYPES = ['opened', 'synchronize', 'reopened'];
 // The top-level operands of an expression (an optional ${{ }} wrapper stripped), split on && and ||
 // outside parentheses and quotes, plus the operators found between them.
 export function topLevel(expr) {
@@ -582,9 +580,10 @@ export function gateProblems(doc) {
   const c = doc?.concurrency || {};
   if (c['cancel-in-progress'] !== "${{ github.event_name == 'pull_request' }}") problems.push(`concurrency: cancel-in-progress must be \${{ github.event_name == 'pull_request' }}, not ${JSON.stringify(c['cancel-in-progress'])}`);
   if (!String(c.group || '').includes('github.run_id')) problems.push('concurrency: the push group must be per run (github.run_id)');
-  if (c.group !== CI_GROUP) problems.push('concurrency: group must be CI_GROUP, so no labeled event joins the PR group and a label never cancels the open run');
+  if (c.group !== CI_GROUP) problems.push('concurrency: group must be CI_GROUP');
   const types = [].concat(doc?.on?.pull_request?.types || []);
-  if (!PR_TYPES.every((t) => types.includes(t))) problems.push(`on.pull_request.types must hold opened, synchronize, reopened and labeled, not ${JSON.stringify(types)}`);
+  if (!PR_TYPES.every((t) => types.includes(t))) problems.push(`on.pull_request.types must hold opened, synchronize and reopened, not ${JSON.stringify(types)}`);
+  if (types.includes('labeled')) problems.push('on.pull_request.types must not hold labeled: a label run that skips the gate reads as Success');
 
   const gate = jobs['ci-gate'];
   if (!gate) return [...problems, 'ci-gate: no job with id ci-gate'];
@@ -645,11 +644,6 @@ export function gateProblems(doc) {
     problems.push('ci-gate steps: the verdict needs FAILURES_DIR and BASE_QUARANTINE_ROOT');
 
   for (const [id, job] of Object.entries(jobs)) {
-    const { parts, ops } = topLevel(job?.if);
-    if (ops.includes('||') || !parts.includes(LABEL_OK)) problems.push(`${id}: if must hold the label guard LABEL_OK as a top-level && conjunct`);
-  }
-
-  for (const [id, job] of Object.entries(jobs)) {
     for (const s of job?.steps || []) if (String(s.run ?? '').trim() === 'exit 1') problems.push(`${id}: a step runs exactly "exit 1" (a proof step leaked in)`);
   }
   return problems;
@@ -707,40 +701,22 @@ test('ci.yml CI gate: concurrency cancels PR runs only, with a per-run push grou
   hasProblem(mutated((d) => { d.concurrency.group = 'ci-${{ github.head_ref || github.ref_name }}'; }), /^concurrency:.*run_id/, 'no run_id');
 });
 
-// ── label guard, concurrency and triggers (PR fast tier on .nvmrc only) ──
-test('ci.yml CI gate: the real ci.yml starts on labeled, and carries the label guard and group', () => {
+// ── triggers and concurrency (PR fast tier on .nvmrc only) ──
+test('ci.yml CI gate: the real ci.yml never starts on labeled, and the gate always runs', () => {
   const d = ciDoc();
-  assert.deepEqual(d.on.pull_request.types, ['opened', 'synchronize', 'reopened', 'labeled']);
+  assert.deepEqual(d.on.pull_request.types, ['opened', 'synchronize', 'reopened']);
   assert.equal(d.concurrency.group, CI_GROUP);
-  for (const [id, job] of Object.entries(d.jobs)) assert.ok(String(job.if || '').includes(LABEL_OK), `${id}: if holds LABEL_OK`);
-  assert.equal(d.jobs['ci-gate'].if, '${{ always() && ' + LABEL_OK + ' }}');
+  assert.equal(d.jobs['ci-gate'].if, ALWAYS);
 });
 
-test('ci.yml CI gate: a labeled event never joins the PR concurrency group', () => {
-  hasProblem(mutated((d) => { d.concurrency.group = d.concurrency.group.replace(" && github.event.action != 'labeled'", ''); }), /^concurrency: group must be CI_GROUP/, 'labeled conjunct removed');
-  hasProblem(mutated((d) => { d.concurrency.group = d.concurrency.group.replace("github.event.action != 'labeled'", LABEL_OK); }), /^concurrency: group must be CI_GROUP/, 'LABEL_OK-gated group');
-});
-
-test('ci.yml CI gate: a job without the label guard is named', () => {
-  for (const id of Object.keys(ciDoc().jobs).filter((j) => j !== 'ci-gate')) {
-    hasProblem(mutated((d) => { d.jobs[id].if = String(d.jobs[id].if || '').replace(LABEL_OK, 'true'); }), new RegExp(`^${id}: if must hold the label guard`), `${id} without guard`);
-  }
-});
-
-test('ci.yml CI gate: a label guard behind a top-level || is named', () => {
-  hasProblem(mutated((d) => { d.jobs.docker.if = '${{ !cancelled() || x && ' + LABEL_OK + ' }}'; }), /^docker: if must hold the label guard/, 'guard behind ||');
-});
-
-test('ci.yml CI gate: the gate\'s if must be exactly always() and the label guard', () => {
-  hasProblem(mutated((d) => { d.jobs['ci-gate'].if = '${{ always() }}'; }), /^ci-gate if:/, 'always() alone');
-  hasProblem(mutated((d) => { d.jobs['ci-gate'].if = '${{ !cancelled() && ' + LABEL_OK + ' }}'; }), /^ci-gate if:/, '!cancelled()');
+test('ci.yml CI gate: the gate\'s if must be exactly always()', () => {
+  hasProblem(mutated((d) => { d.jobs['ci-gate'].if = '${{ !cancelled() }}'; }), /^ci-gate if:/, '!cancelled()');
   hasProblem(mutated((d) => { delete d.jobs['ci-gate'].if; }), /^ci-gate if:/, 'no if');
 });
 
-test('ci.yml CI gate: pull_request types keep the defaults and labeled', () => {
-  for (const drop of ['labeled', 'synchronize']) {
-    hasProblem(mutated((d) => { d.on.pull_request.types = ['opened', 'synchronize', 'reopened', 'labeled'].filter((t) => t !== drop); }), /on\.pull_request\.types/, `without ${drop}`);
-  }
+test('ci.yml CI gate: pull_request types keep the defaults and never add labeled', () => {
+  hasProblem(mutated((d) => { d.on.pull_request.types = ['opened', 'reopened']; }), /on\.pull_request\.types must hold/, 'without synchronize');
+  hasProblem(mutated((d) => { d.on.pull_request.types = ['opened', 'synchronize', 'reopened', 'labeled']; }), /must not hold labeled/, 'with labeled');
 });
 
 test('ci.yml CI gate: the sparse checkout lists the tools directory, never a file', () => {

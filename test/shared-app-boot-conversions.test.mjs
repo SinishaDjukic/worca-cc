@@ -20,6 +20,7 @@ const speedup = await import('../tools/ui-boot-speedup.mjs').catch((error) => ({
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const HELPER = './helpers/shared-app-boot.mjs';
 const FIRST = 'test/ui-running-detail.test.mjs';
+// A floor, not an exact count: a file may gain tests without an edit here, it may never lose one.
 // The files converted first (the six largest, then the fallbacks), with the number of tests each had before, plus the
 // tests dev added to them while the conversion was in flight (ui-running-detail +6, ui-one-model +4, ui-chat-run-controls +1,
 // ui-group-page-route +16, ui-shape-app-wiring +3, ui-history-detail-tabs +1, each checked against dev when the lines were merged).
@@ -207,7 +208,7 @@ test('R-arch-2: test/ui-running-detail.test.mjs boots the app once, through useS
     assert.deepEqual(ownBoots(file), [], `${file} boots only through the shared helper`);
   }
   const total = family(FIRST).reduce((n, f) => n + testCount(f), 0);
-  assert.equal(total, BASELINE[FIRST], `${total} tests across ${family(FIRST).join(', ')}; it had ${BASELINE[FIRST]}`);
+  assert.ok(total >= BASELINE[FIRST], `${total} tests across ${family(FIRST).join(', ')}; it had ${BASELINE[FIRST]}`);
 });
 
 test('at least 5 of the largest per-test-boot files are converted, ui-running-detail among them', () => {
@@ -228,7 +229,7 @@ test('every converted file keeps at least as many tests as it had, its sibling f
   assert.ok(files.length > 0, 'no listed file is converted yet');
   for (const file of files) {
     const total = family(file).reduce((n, f) => n + testCount(f), 0);
-    assert.equal(total, BASELINE[file], `${file}: ${total} tests, it had ${BASELINE[file]}`);
+    assert.ok(total >= BASELINE[file], `${file}: ${total} tests, it had ${BASELINE[file]}`);
   }
 });
 
@@ -265,7 +266,7 @@ test('every file of every landed batch boots through useSharedApp only, keeps it
     const files = family(file);
     for (const f of files) for (const p of ownBoots(f)) problems.push(`${f} ${p}`);
     const total = files.reduce((n, f) => n + testCount(f), 0);
-    if (total !== BASELINE[file]) problems.push(`${file}: ${total} top-level tests across its family, it had ${BASELINE[file]}`);
+    if (total < BASELINE[file]) problems.push(`${file}: ${total} top-level tests across its family, it had ${BASELINE[file]}`);
   }
   assert.deepEqual(problems, []);
 });

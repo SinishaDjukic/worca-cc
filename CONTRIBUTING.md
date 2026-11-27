@@ -123,7 +123,7 @@ paths) locally before opening or updating a PR, and say so in the PR
 description. A failed `CI gate` lists each failing test file by shard in its job
 summary and marks `(quarantined)` the files on dev's quarantine list.
 Pull requests run the fast tier on `.nvmrc`'s Node only, pushes to `dev` run it on
-22.19.0, 24 and 26, and the `full-node-matrix` label runs all three on a PR.
+22.19.0, 24 and 26, and the `full-node-matrix` label runs all three on a PR from its next push.
 Making the full matrix permanent on PRs is one edit to the matrix expression in
 `.github/workflows/ci.yml`, together with `test/supply-chain.test.mjs`.
 
@@ -167,6 +167,7 @@ fast tier only.
 
 Three workflows decide whether a pull request into `dev` can merge; each runs on every
 pull request into `dev` with no `paths` filter, so its required check always reports.
+A fourth check, the ticket rule, judges the pull request's description instead of its code.
 Every other workflow is listed with the reason it does not gate.
 
 | Workflow | Gates merges | Required check | How, or why not |
@@ -179,7 +180,7 @@ Every other workflow is listed with the reason it does not gate.
 | `release-npm-app.yml` | no | — | Runs on `worca-app-v*` tags only, after merge. |
 | `label-by-author.yml` | no | — | `pull_request_target` labelling: judges who opened the PR, not the change. |
 | `worca-metrics-pr-events.yml` | no | — | `pull_request_target` metrics recorder: writes the `worca-metrics` branch, never checks code. |
-| `pr-context.yml` | no | — | `pull_request_target`: its `Linked issue` check judges the PR description, not the change, and is not one of the three required checks. |
+| `pr-context.yml` | yes | `Linked issue` | The ticket rule: fails a PR whose description names no issue; the `no-issue` label is the bypass. Judges the description, not the change. |
 | `quarantine.yml` | no | — | Non-blocking: runs the quarantined tests on `dev` pushes, nightly and by hand, and reports each pass rate; never runs on a pull request. |
 | `refresh-test-timings.yml` | no | — | Weekly schedule and manual runs only: opens or updates the timings refresh PR, which then gets the three required checks like any PR. |
 
@@ -279,7 +280,7 @@ graduate and remove one: [`docs/feature-flags.md`](docs/feature-flags.md).
 
 - **An issue comes first.** Every PR names the issue it belongs to in its description:
   `Closes #123`, or `Refs #123` when the issue should stay open. No issue yet? Open one
-  and say what the change is for. The **Linked issue** check fails without it; a
+  and say what the change is for. The **Linked issue** check fails without it, and it is required to merge; a
   maintainer can add the `no-issue` label for a PR that needs none (a typo fix, a release).
 - Area labels (`area:chat`, `area:runs`, `area:shaper`, …) are added automatically from the
   feature folders the PR touches. The mapping is the `AREAS` list in

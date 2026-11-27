@@ -1,8 +1,8 @@
 # Requiring the CI checks on dev
 
 `dev` has no branch rule that requires a check, so a red run does not stop a merge: #1505 merged with a red slow
-shard (see [Test offenders](test-offenders.md)). This page is for the repo admin. It turns the three checks below
-into required checks on `dev`. Follow the steps in order. Step 1 waits for 5 green `dev` push runs; once those are
+shard (see [Test offenders](test-offenders.md)). This page is for the repo admin. It turns the three CI checks and
+the ticket check below into required checks on `dev`. Follow the steps in order. Step 1 waits for 5 green `dev` push runs; once those are
 in, steps 2 to 4 take under 10 minutes and need no code change.
 
 ## Required checks
@@ -15,6 +15,10 @@ A required check is matched by its job name. This table is the one place the nam
 | `CI gate` | `.github/workflows/ci.yml` | `ci-gate` |
 | `parity (tree against the CI image)` | `.github/workflows/parity-docker.yml` | `parity-docker` |
 | `Firefox e2e (Playwright Firefox, branch and split tree)` | `.github/workflows/firefox-e2e.yml` | `firefox-e2e` |
+| `Linked issue` | `.github/workflows/pr-context.yml` | `linked-issue` |
+
+The last row is the ticket check: it fails a PR whose description names no issue, and the `no-issue` label is its
+bypass. It reports on pull requests only, so the `dev` push steps below speak of the three CI checks.
 
 ## 1. See the three checks report
 
@@ -25,18 +29,18 @@ Prerequisite PRs:
 
 | Slice | PR | Merged |
 |---|---|---|
-| Every required check reports on every PR | [search](https://github.com/SinishaDjukic/worca-cc/pulls?q=is%3Apr+%22Every+required+check+reports+on+every+PR%22) | |
-| Node test offenders: verdicts and fixes | [search](https://github.com/SinishaDjukic/worca-cc/pulls?q=is%3Apr+%22Node+test+offenders%22) | |
-| Browser offenders: extension Playwright and the CDP proofs | [search](https://github.com/SinishaDjukic/worca-cc/pulls?q=is%3Apr+%22Browser+offenders%22) | |
+| Every required check reports on every PR | [search](https://github.com/worca-org/worca/pulls?q=is%3Apr+%22Every+required+check+reports+on+every+PR%22) | |
+| Node test offenders: verdicts and fixes | [search](https://github.com/worca-org/worca/pulls?q=is%3Apr+%22Node+test+offenders%22) | |
+| Browser offenders: extension Playwright and the CDP proofs | [search](https://github.com/worca-org/worca/pulls?q=is%3Apr+%22Browser+offenders%22) | |
 
-Open a test PR into `dev` with a one-line docs change. Confirm that all three checks in Required checks appear on it
-and pass. Keep the test PR open for step 4.
+Open a test PR into `dev` with a one-line docs change and the `no-issue` label. Confirm that every check in Required
+checks appears on it and passes. Keep the test PR open for step 4.
 
 Green dev push runs:
 
 Wait for 5 consecutive green push runs on `dev` after the last of the slice 2, 5 and 6 merges, all three checks green
 on each commit, and link each run here. Do not start step 3 before all 5 rows are filled. Find the runs in the
-[filtered Actions list](https://github.com/SinishaDjukic/worca-cc/actions/workflows/ci.yml?query=branch%3Adev+event%3Apush)
+[filtered Actions list](https://github.com/worca-org/worca/actions/workflows/ci.yml?query=branch%3Adev+event%3Apush)
 (and the parity and Firefox e2e workflows for the same commits). Fill the rows, and any empty Merged cells above, in
 one docs PR before step 3. Where a run is already recorded in
 [Post-merge check](test-offenders.md#post-merge-check), reuse its run id here instead of collecting it again. That
@@ -79,10 +83,10 @@ opens a fresh PR.
 1. Open Settings › Rules › Rulesets › New ruleset › New branch ruleset.
 2. Name it, set Enforcement status to "Active", and under Target branches add `dev`.
 3. Under Bypass list, add the Repository admin role and set it to "For pull requests only".
-4. Turn on "Require status checks to pass". Add each of the three checks in Required checks by its exact name, with
+4. Turn on "Require status checks to pass". Add each check in Required checks by its exact name, with
    the source "GitHub Actions".
 5. Turn on "Require branches to be up to date before merging".
-6. Add nothing else (for example, not `Linked issue` from `pr-context.yml`). Save.
+6. Add nothing else. Save.
 
 From now on, an open PR into `dev` that is behind needs "Update branch" (a new run that reports all three checks)
 before it can merge. The cost: every merge into `dev` makes each open PR re-run all three checks before it can
@@ -93,12 +97,14 @@ merge. A merge queue would avoid that; it is out of scope here (no gating workfl
 On the test PR from step 1, in this order:
 
 1. Push a commit that fails a fast test. Once the CI gate finishes red, the merge box reads "Merging is blocked".
-2. Label probe: add an unrelated label (not `full-node-matrix`). Its `ci.yml` run skips the gate job, and a skipped
-   job reads as Success. Wait for that run to finish and confirm merging is still blocked. If it is not, apply
-   [Rollback](#rollback) and open an issue for the label gap before going on.
+2. Label probe: add any label, `full-node-matrix` included. No `ci.yml` run starts (a label takes effect from the
+   next push), and merging is still blocked. If a run starts, apply [Rollback](#rollback) and open an issue before
+   going on.
 3. Rollback probe: if the merge box asks for it, press "Update branch" first and wait for the checks. Then remove the
    gate from the ruleset and see the PR become mergeable. Then add it back, as in step 3.
-4. Revert the failing commit. The gate passes and merge is allowed. Close the test PR without merging.
+4. Revert the failing commit. The gate passes and merge is allowed.
+5. Ticket probe: remove the `no-issue` label. The ticket check turns red and merging is blocked again. Put the label
+   back and it passes. Close the test PR without merging.
 
 ## Rollback
 
@@ -125,4 +131,4 @@ tier runs on `dev` pushes and only on PRs that touch what it exercises. Such a f
 never on the PR that caused it. The next PR into `dev` either fixes it or adds a `test/quarantine.json` entry that
 names the failing test, with its `path`, `reason` and `exitCondition`. When the file is a listed offender, that PR
 also records the run in [Post-merge check](test-offenders.md#post-merge-check). The `full-node-matrix` label
-reproduces the Node legs on that PR.
+reproduces the Node legs on that PR from its next push.

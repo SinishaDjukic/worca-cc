@@ -21,14 +21,14 @@ name: CI
 #
 # The fast tier runs on .nvmrc's Node only on a pull request, and on every supported
 # Node (22.19.0, 24, 26) on a dev push. The `full-node-matrix` label runs all three on
-# a PR: adding it starts a run (hence `labeled`), and later pushes keep all three while
-# it stays. A run for any other label skips every job, the gate included (each job's
-# `if` holds the label guard).
+# a PR from its next push (or a close and reopen), and keeps them while it stays. Adding
+# a label starts no run: a run that skipped the gate would read as Success to the
+# required check.
 on:
   push:
     branches: [dev]
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -38,9 +38,8 @@ permissions:
 # never cancelled: each push run gets a group of its own (run_id), because a
 # shared group with cancel-in-progress: false still cancels the older *pending*
 # run when a third one queues.
-# A labeled run gets a per-run group too, so adding a label never cancels the open run.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.event.action != 'labeled' && format('pr-{0}-{1}', github.event.pull_request.head.repo.full_name, github.head_ref) || format('push-{0}', github.run_id) }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.head.repo.full_name, github.head_ref) || format('push-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -50,7 +49,7 @@ jobs:
   # test/tools-test-runner.test.mjs fails when they drift.
   changes:
     name: changed paths
-    if: ${{ github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-node-matrix') }}
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # The workflow-level `permissions: contents: read` drops every other scope; the filter
@@ -156,7 +155,7 @@ jobs:
     # step with .nvmrc and MIN_NODE.
     name: fast tests (Node ${{ matrix.node }}, ${{ matrix.shard }}/4)
     needs: changes
-    if: ${{ !cancelled() && (github.event.action != 'labeled' || github.event.label.name == 'full-node-matrix') && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -231,7 +230,7 @@ jobs:
     # checkout + npm ci.
     name: slow tests (${{ matrix.shard }}/2)
     needs: changes
-    if: ${{ !cancelled() && (github.event.action != 'labeled' || github.event.label.name == 'full-node-matrix') && (github.event_name != 'pull_request' || (needs.changes.outputs.code != 'false' && needs.changes.outputs.engine != 'false')) }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (needs.changes.outputs.code != 'false' && needs.changes.outputs.engine != 'false')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -283,7 +282,7 @@ jobs:
     # is safe while the groups run on separate runners (set CDP_PORT if they ever share a machine).
     name: headless-Chrome UI proofs (${{ matrix.group }})
     needs: changes
-    if: ${{ !cancelled() && (github.event.action != 'labeled' || github.event.label.name == 'full-node-matrix') && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -361,7 +360,7 @@ jobs:
   extension:
     name: Browser extension (build, zips, Firefox lint + smoke)
     needs: changes
-    if: ${{ !cancelled() && (github.event.action != 'labeled' || github.event.label.name == 'full-node-matrix') && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -383,7 +382,7 @@ jobs:
   extension-e2e:
     name: Browser extension (Playwright E2E)
     needs: changes
-    if: ${{ !cancelled() && (github.event.action != 'labeled' || github.event.label.name == 'full-node-matrix') && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     container:
@@ -411,7 +410,7 @@ jobs:
   docker:
     name: container image
     needs: changes
-    if: ${{ !cancelled() && (github.event.action != 'labeled' || github.event.label.name == 'full-node-matrix') && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -503,13 +502,11 @@ jobs:
   # gate must never be skipped: a job skipped by its `if` reads as Success to a required check, so
   # it runs with always(), on cancelled runs too, and tools/ci-gate.mjs decides. A cancel always fails;
   # a run a newer PR push superseded says so in its summary, and its red mark sits on the old SHA only.
-  # The one skip is a run for a label other than full-node-matrix: that run tests nothing (every job
-  # skips on the label guard), so the gate skips too and the open run's gate stays the verdict.
   # test/tools-test-runner.test.mjs enforces all of it.
   ci-gate:
     name: CI gate
     needs: [changes, test-fast, test-slow, cdp, extension, extension-e2e, docker]
-    if: ${{ always() && (github.event.action != 'labeled' || github.event.label.name == 'full-node-matrix') }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # pull-requests: read for the PR-head lookup; the workflow-level permissions drop it.
