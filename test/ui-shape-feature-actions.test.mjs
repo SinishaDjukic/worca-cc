@@ -50,6 +50,25 @@ test('an open stop (item 10): the buttons shrink to Stop; ⋯ gains the moved mo
   assert.deepEqual(featureMenu(C(), { moved: [] }).map((i) => i.key), featureMenu(C()).map((i) => i.key), 'no stop: today\'s menu');
 });
 
+test('s11 (R-ux-2): a moved item with a label lists it and still calls its action; without one it reads its ACTION_LABEL', () => {
+  const named = [{ id: 'resume', label: 'Resume after run 6', disabled: 'Pausing…' }];
+  const moved = (list) => featureMenu(C(), { moved: list, stopOpen: true }).filter((i) => i.key === 'act:resume').map((i) => [i.label, i.disabled || null]);
+  assert.deepEqual(moved(named), [['Resume after run 6', 'Pausing…']]);
+  assert.deepEqual(moved([{ id: 'resume' }]), [['Resume', null]]);
+  // Painted: the ⋯ shows the label, a pick is still the footer's `resume`, and the next paint without one reads Resume.
+  const { doc, host, seen, menu } = setup(C());
+  const deps = { act: async () => ({ ok: true }), confirm: async () => true, openPlan() {}, modelAct: (id) => seen.push(['model', id]) };
+  paintFeatureActions(doc, host, C(), deps, { stopOpen: true, moved: [{ id: 'resume', label: 'Resume after run 6' }] });
+  const item = menu().at(-1);
+  assert.equal(item.textContent.trim(), 'Resume after run 6');
+  item.click();
+  assert.deepEqual(seen, [['model', 'resume']]);
+  closeMenus();
+  paintFeatureActions(doc, host, C(), deps, { stopOpen: true, moved: [{ id: 'resume' }] });
+  assert.equal(menu().at(-1).textContent.trim(), 'Resume');
+  closeMenus();
+});
+
 test('an open stop: a moved item calls deps.modelAct with its id; the feature Resume still posts the feature resume', async () => {
   const { doc, host, seen, labels, menu } = setup(C({ halted: true }));
   paintFeatureActions(doc, host, C({ halted: true }), { act: async (a) => { seen.push(['act', a]); return { ok: true }; }, confirm: async () => true,
@@ -352,4 +371,59 @@ test('s6 featureCardModel: with no run entry, a Re-plan or Verifier ask (index n
   const verifier = { index: null, runId: 'rv', pipelineId: 'pv', id: 'vq', kind: 'gate' };
   const m = featureCardModel({ own: null, card: { pipelineId: 'p0', feature: { ...S6_VIEW([]), halted: null, ask: verifier }, log: [] } });
   assert.deepEqual([m.step?.index, m.step?.pipelineId, m.step?.id], [null, 'pv', 'vq']);
+});
+
+// A run held because the runs it builds on clash: the reason travels from view.held through the card's model to the row.
+const CLASH_VIEW = (held) => ({ id: 'feat_1', title: 'Charts', status: 'active', total: 4, done: 3, open: true, halted: null, approveEach: false,
+  held, ask: null, log: [], originPipelineId: 'p0', ship: { ready: false, mode: null },
+  slices: [1, 2, 3, 4].map((index) => ({ index, title: `Part ${index}`, state: index === 4 ? 'held' : 'done', runId: null,
+    pipelineId: index === 4 ? null : `p${index}`, ticketId: `t${index}`, pr: null })) });
+const controlsFor = (held) => featureCardModel({ own: null, card: { pipelineId: 'p0', feature: CLASH_VIEW(held), log: [] } }).controls;
+
+test('held on a clash: Run 4 is held: the reason, once, with one Start now and Re-plan the rest and Cancel the rest in ⋯', async () => {
+  const reason = 'runs 2 and 3 clash in src/a.mjs';
+  const c = controlsFor({ index: 4, ticketId: 't4', reason });
+  assert.deepEqual(c.held, { index: 4, reason });
+  const t = setup(c);
+  const row = t.host.querySelector('.shape-feature-held');
+  assert.ok(row);
+  assert.equal(row.querySelector('.shape-feature-held-why').textContent, `Run 4 is held: ${reason}`);
+  assert.equal(count(t.host, reason), 1);
+  assert.equal(count(t.host, 'waits for you to start'), 0);
+  assert.equal(count(t.host, 'Needs you'), 1);
+  const start = t.host.querySelectorAll('[data-act="feature-start"]');
+  assert.equal(start.length, 1);
+  assert.equal(start[0].textContent, 'Start now');
+  const items = t.menu().map((i) => i.textContent.trim());
+  for (const label of ['Re-plan the rest', 'Cancel the rest']) assert.ok(items.includes(label), `${label} in ${items}`);
+  closeMenus();
+  start[0].click(); await settle();
+  assert.deepEqual(t.seen.filter((x) => x[0] === 'act').map((x) => x.slice(1, 3)), [['start', null]]);
+  // The same row repaints with a new reason, and without one it reads as before.
+  paintFeatureActions(t.doc, t.host, controlsFor({ index: 4, ticketId: 't4', reason: 'runs 2 and 3 clash in src/b.mjs' }), NOOP);
+  assert.equal(t.host.querySelector('.shape-feature-held-why').textContent, 'Run 4 is held: runs 2 and 3 clash in src/b.mjs');
+  const plain = controlsFor({ index: 4, ticketId: 't4' });
+  assert.deepEqual(plain.held, { index: 4 }, 'no reason key without a reason');
+  paintFeatureActions(t.doc, t.host, plain, NOOP);
+  assert.equal(t.host.querySelector('.shape-feature-held-why').textContent, 'Run 4 waits for you to start');
+});
+
+// ── Shaper small runs slice 8 (R-ux-2): the footer Resume says which run it would wait for ───────────────────────
+test('s8: the footer Resume and the ⋯ Resume read "Resume after run 4" with resumeAfter 4, and "Resume" without it', async () => {
+  const waits = C({ halted: true, resumeAfter: 4 });
+  const free = C({ halted: true });
+  const label = (items) => items.find((i) => i.key === 'resume')?.label;
+  assert.equal(label(featureButtons(waits)), 'Resume after run 4');
+  assert.equal(label(featureMenu(waits, { stopOpen: true })), 'Resume after run 4');
+  assert.equal(label(featureButtons(free)), 'Resume');
+  assert.equal(label(featureMenu(free, { stopOpen: true })), 'Resume');
+  // Painted: the same control, and it still posts the feature resume; the next paint without the number reads Resume.
+  const t = setup(waits);
+  const button = () => t.host.querySelector('[data-act="feature-resume"]');
+  assert.equal(button().textContent, 'Resume after run 4');
+  button().click();
+  await settle();
+  assert.deepEqual(t.seen[0].slice(0, 2), ['act', 'resume']);
+  paintFeatureActions(t.doc, t.host, free, { act: async () => ({ ok: true }), confirm: async () => true, openPlan() {} });
+  assert.equal(button().textContent, 'Resume');
 });

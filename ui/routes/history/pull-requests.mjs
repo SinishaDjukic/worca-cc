@@ -63,8 +63,9 @@ app.get('/api/pr/remotes', async (req, res) => {
   // until the previous run's PR merges. The route is async with no try/catch (F29): a failed lookup keeps the
   // chain-root default instead of rejecting.
   let stacked = null;
-  // Shaper small runs D1: a marked feature's run stacks on the run that finished before it (stackedPrBase), named as
-  // the remote names it, as Ship's createRunPr does.
+  // Shaper small runs D1: a marked feature's run stacks on the run before it along the real branches (slice 4), else in
+  // finish order (stackedPrBase), named as the
+  // remote names it, as Ship's createRunPr does.
   try {
     stacked = stackedPrBase(pipelineId, chain);
     if (stacked) stacked = await prBaseBranch(repoDir, stacked, remoteNames);
@@ -180,6 +181,12 @@ app.post('/api/pr', async (req, res) => {
     if (!isSyntacticRef(b)) return badRequest(res, `invalid base branch: ${String(body.baseBranch).slice(0, 80)}`);
     if (b === feature) return badRequest(res, 'the base branch cannot be the feature branch');
     base = b;
+  } else if (!memberKey && Array.isArray(state.branch?.tookIn) && state.branch.tookIn.length) {
+    // Slice 3 (D10): a run that took other runs' work in opens on the base the dialog offers (its recorded source until
+    // that run's PR is MERGED, then the root), walked from the same chain GET /api/pr/remotes reads.
+    const walked = chainBaseBranchesOf(state.id || id);
+    const derived = stackedPrBase(state.id || id, walked.length ? walked : [source]);
+    base = derived && isSyntacticRef(derived) && derived !== feature ? derived : source;
   }
 
   const out = await createRunPr({ id, state, target, base, memberKey, title,

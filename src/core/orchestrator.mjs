@@ -1610,12 +1610,13 @@ export class GraphOrchestrator extends RunHarness {
   }
 
   /** C3 (D10, D14): a person answered a stop. Stash it before any await (the pause window), write the one answered
-   *  line, then, unless the run stops (Change), take in the feature's latest finished work before it goes on. */
+   *  line, then, unless the run stops (Change) or the answer already took in the finished work (slice 3), take
+   *  in the feature's latest finished work before it goes on. */
   async _afterStopAnswer(id, stop, payload) {
     if (this.answeredBy(id) === NIGHT_ACTOR) return;
     this._stopAnswer = { id, payload };
     if (this.pipeline) await appendAudit(this.pipeline.dir, stopDoneText(stop, payload), { actor: this.answeredBy(id) }).catch(() => {});
-    if (stopOptionOf(stop, payload)?.value === 'change') return;
+    if (stopOptionOf(stop, payload)?.value === 'change' || this._takesInBeforeAnswerNow()) return;
     await this._takeInLatestFinished({ smallRuns: this._smallRunsMarked, onAnswer: true });
   }
 

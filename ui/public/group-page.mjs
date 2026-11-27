@@ -226,7 +226,8 @@ function paintNeed(kindEl, text) {
  * (small runs: the ledger the head's Create N PRs follows), stateLine?: string|null (small runs slice 7: the feature's state
  * line, featureStateLine, in place of the model's line), needCount?: number (slice 7: the stop lines, the head's chip),
  * order?: object[]|null (slice 10: a marked feature's featureView slices; the Runs tab offers Show order from them) }.
- * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
+ * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), resumeLabel?() (slice 11: the footer
+ * Resume's text, '' for the plain word), mountOverview(host),
  * mountDecisions(host, row), mountRequirements?(host, row) → Node|null (D3, while `view.requirements`), logsHref(member),
  * labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
  * groupHead's head (Create PR, View PR ▾, View PRs ▾) into the card head; without it the slot stays hidden.
@@ -278,7 +279,7 @@ export function paintGroupPage(root, view, deps) {
   // Small runs: an open stop's own primary is the page's one primary, as on the run page and the Chat card.
   const stopOpen = 'stop' in question.dataset && !question.hidden;
   syncActions(root.querySelector('.gpage-actions'), headerActions(m), { own: { stop }, pool: [stop], onAction: deps.onAction,
-    disable: { 'ask-changes': "Ask for changes from the run's chat" }, labels: { answer: deps.answerLabel ? deps.answerLabel() : '' },
+    disable: { 'ask-changes': "Ask for changes from the run's chat" }, labels: { answer: deps.answerLabel ? deps.answerLabel() : '', resume: deps.resumeLabel ? deps.resumeLabel() : '' },
     plain: answerFieldOpen(question) ? ['answer'] : [], ...(stopOpen ? { skip: ['answer'] } : {}) });
   if (deps.paintHead) {
     deps.paintHead(root.querySelector('.gpage-card .rd-head-acts'), root.querySelector('.gpage-card .rd-pr-slot'),

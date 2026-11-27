@@ -33,17 +33,21 @@ const TARGET_STATUS = Object.freeze({ starting: 'starting', shaping: 'running', 
 /** s3: what the feature's controls act on (feature-actions.mjs). `cur` is the run the status line names. */
 function controlsOf(view, cur, m) {
   const active = view.status === 'active';
+  // Slice 8 (d8-7): the halted run's Resume would wait for run N (the server's preview); the Verifier's has no slice.
+  const haltedSlice = view.halted && Array.isArray(view.slices) ? view.slices[view.halted.index - 1] : null;
+  const resumeAfter = haltedSlice && Number.isInteger(haltedSlice.resumeAfter) ? haltedSlice.resumeAfter : null;
   return {
     // C5: a halted Verifier is Resume too (resumeFeature starts a fresh check); Re-plan the rest stays the runs'.
     featureId: view.id, active, halted: active && (!!view.halted || (!!view.verify && view.verify.state === 'halted')),
     rest: active && !!(view.open || view.halted),
     approveEach: view.approveEach !== false, planPipelineId: view.originPipelineId || null,
-    held: view.held ? { index: view.held.index } : null,
+    held: view.held ? { index: view.held.index, ...(view.held.reason ? { reason: view.held.reason } : {}) } : null,
     target: cur ? { index: cur.index, runId: (m && m.runId) || cur.runId || null, pipelineId: cur.pipelineId || null,
       status: m ? String(m.status || '') : TARGET_STATUS[cur.state] || null,
       // A run waiting at a question still reports `running`: it asks (Pause is off) while this tab sees its ask or the
       // server says the slice waits for an approval or answers.
       asks: (m && asks(m)) || cur.state === 'approval' || cur.state === 'questions' } : null,
+    ...(resumeAfter !== null ? { resumeAfter } : {}),
   };
 }
 
@@ -57,7 +61,7 @@ function shapingModel(own, log) {
  * @returns {{phase: 'shaping'|'feature', log: object[],
  *   step: {index: number|null, runId: string|null, pipelineId: string|null, kind: string, id: string|null, snap: object|null}|null,
  *   controls: {featureId: string, active: boolean, halted: boolean, rest: boolean, approveEach: boolean, planPipelineId: string|null,
- *     held: {index: number}|null,
+ *     held: {index: number}|null, resumeAfter?: number,
  *     target: {index: number, runId: string|null, pipelineId: string|null, status: string|null, asks: boolean}|null}|null,
  *   notesLine: string|null, watch: {text: string, prUrl: string|null}|null}}
  */
@@ -185,7 +189,8 @@ export function featureStateLine(view, { snapOf = () => null } = {}) {
   const next = nx ? `next: run ${nx.index}` : '';
   if (work || next) return [work, next].filter(Boolean).join(' · ');
   if (view.asks.length || all.some((s) => PERSON_ACTS.has(s.state) || s.cannotStart)) return MUST_ACT;
-  if (view.held && Number.isInteger(view.held.index)) return `Run ${view.held.index} waiting for you to start`;
+  // A clash hold names its reason once, on the held row; here it only reads held.
+  if (view.held && Number.isInteger(view.held.index)) return `Run ${view.held.index} ${view.held.reason ? 'is held' : 'waiting for you to start'}`;
   return VERIFY_WAIT.clean;
 }
 

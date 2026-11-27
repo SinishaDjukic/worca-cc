@@ -691,7 +691,7 @@ test('B2: a slice run of a marked Lean feature resolves with the saved Care (eve
     const { f, dir } = await featureFrom(isMarked);
     getDb().prepare('UPDATE shape_features SET care = ?, care_chosen_by = ?, care_worca_pick = ? WHERE id = ?').run('lean', 'person', 'thorough', f.id);
     const shape = { ...SHAPE, slices: 'off', slice: { feature: f.id, index: 2, total: 2, outline: MOCK_OUTLINE } };
-    const h = await marked(async () => { const x = start({ projectDir: dir, prompt: 'demo', shape }, approveAll); assert.equal((await x.done).status, 'done'); return x; });
+    const h = await marked(async () => { const x = start({ projectDir: dir, prompt: 'demo', shape }, approveAll); const res = await x.done; assert.equal(res.status, 'done', res.error); return x; });
     assert.equal(h.asked.filter((q) => q.kind === 'care').length, 0, 'a slice run has no Start step');
     const cells = cellsOf(h.orch);
     if (isMarked) for (const [id, model] of Object.entries(cells)) assert.equal(model, ROLES.everyday.model, id);

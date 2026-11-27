@@ -367,6 +367,8 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       }
       const out = engine ? await actions.resume(t.row.id, actor, { engine }) : await actions.resume(t.row.id, actor);
       const on = engine ? ` on ${engineLabel(engine)}` : '';
+      // Shaper small runs slice 7 (D18): a resume held for its turn started nothing.
+      if (out?.held) return reply(`Resume of \`${runRef(t.row.id)}\` waits its turn (after run ${out.after})`);
       if (out?.ok) return reply(`▶️ Resuming \`${runRef(t.row.id)}\`${on} — ${String(t.row.title || '').slice(0, 50)}`);
       // The engine gate's consent is a UI checkbox, never a chat word: the refusal sends the person there.
       const why = out?.code === 'engine-refused' ? engineRefusalFor(out.error, 'chat') : out?.error;

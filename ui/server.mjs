@@ -470,11 +470,12 @@ import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/
 import { attachRoleReviews } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeStart, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
+import { shaperSmallRunsOn } from '../src/core/shape/small-runs.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
-  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, isSlicePreambleLine } from '../src/core/shape/features.mjs';
-import { smallRunsChainGate, sliceFireStart, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, createHeldStops, featureOfAnyPipeline } from '../src/core/shape/chain.mjs';
+  liveSliceFrom, liveSliceResuming, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket, chatShipCardOffered, stackedPrBase, shipOrder, isSlicePreambleLine } from '../src/core/shape/features.mjs';
+import { smallRunsChainGate, sliceFireStart, sliceCombineGate, oneShipCheck, shipHeadRow, shipHeadBase, recordSettledFigures, recordShipCommit, shipCover, shipStopped, SHIPPING, featureShipping, roundWhileShipping, createHeldStops, featureOfAnyPipeline } from '../src/core/shape/chain.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts, createRequirementChanges } from '../src/core/shape/changes.mjs';
 import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
@@ -875,7 +876,7 @@ async function requestIdentity(req) {
  *   pendingQuestion: any
  * }>}
  */
-const runs = new Map(); const reqChanges = createRequirementChanges({ runs, stopRun, stopPausedPipeline, schedulerTick, broadcastFeature, liveSliceOf }); const heldStops = createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, applyChange: reqChanges.applyStop, now: Date.now });   // small runs C3 (D9), C4 (D11, D15)
+const runs = new Map(); const reqChanges = createRequirementChanges({ runs, stopRun, stopPausedPipeline, schedulerTick, broadcastFeature, liveSliceOf }); const heldStops = createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePending, applyChange: reqChanges.applyStop, now: Date.now, resume: (pid, o) => resumeRun(pid, o), refuse: (status, body) => new ResumeError(status, body), audit: (pid, text, by) => appendAuditById(pid, text, { actor: by }), takeIn: (entry) => (typeof entry.orch?.takeInBeforeAnswer === 'function' ? entry.orch.takeInBeforeAnswer() : { ok: true, merged: [] }) }); const deliverHeld = () => heldStops.deliver().catch((err) => console.error(`[worca-ui] held stop delivery failed: ${err?.message || err}`));   // small runs C3 (D9), C4 (D11, D15); slice 3: the finished same-base work first
 
 // Ids of runs genuinely live in THIS process (non-terminal entries in the runs Map).
 // Passed to reconcileStaleRunning so a same-process run is never relabeled. Both the
@@ -1712,7 +1713,7 @@ function wireRun(entry) {
         const key = `${entry.status}|${pq ? `${pq.kind}:${pq.id || ''}` : ''}|${orch.state?.shaping?.approved ? 1 : 0}`;
         if (key !== entry._featureKey) {
           entry._featureKey = key;
-          heldStops.deliver(); broadcastFeaturesOf(() => [featureOfAnyPipeline(entry.pipelineId)?.featureId].filter(Boolean));   // C3: delivered as the busy run settles
+          deliverHeld(); broadcastFeaturesOf(() => [featureOfAnyPipeline(entry.pipelineId)?.featureId].filter(Boolean));   // C3: delivered as the busy run settles
         }
       }
       // Shaper s5 (D16): a round reports into its origin's card, which gets none of the round's own frames.
@@ -4102,14 +4103,14 @@ async function fireResumeTicket(ticket, pipelineId) {
       mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK),
       ...(engine ? { engine } : {}),
       ...(internal.autoLimitResume ? { autoLimitResume: true } : {}),
-    });
+    }); if (out?.held) return { ok: false, hold: true, error: `the run waits its turn (after run ${out.after})` };   // slice 7: kept for the next tick
     // The feed learns how the resumed run ends through the same recordOutcome hook a
     // schedule-started run uses (wireRun keys on entry.ticketId).
     const entry = out && out.runId ? runs.get(out.runId) : null;
     if (entry) entry.ticketId = ticket.id;
     return { ok: true, pipelineId };
   } catch (err) {
-    if (err instanceof ResumeError) {
+    if (err instanceof ResumeError) { if (err.body && err.body.code === 'RESUME_IN_FLIGHT') return { ok: false, hold: true, error: 'the run is being resumed' };   // slice 7: its held resume goes on; the next tick skips it
       return { ok: false, error: (err.body && err.body.error) || err.message, transient: false };
     }
     return { ok: false, error: err && err.message ? err.message : String(err), transient: false };
@@ -4184,6 +4185,7 @@ async function fireTicket(ticket) {
       Object.assign(body, prev);
     }
   }
+  const combine = await sliceCombineGate(ticket, own); if (combine) return combine;   // small runs: a clash holds it
   // Every occurrence of a series needs its own feature branch: the local date, plus the time
   // when the series runs several times a day — except a run on its source branch, which has
   // none of its own (the server ignores featureBranch for it).
@@ -4193,8 +4195,7 @@ async function fireTicket(ticket) {
     body.featureBranch = `${body.featureBranch.trim()}-${stamp}`;
   }
   // A "Run now" click names its clicker for this one firing (scheduleVerb records it).
-  const runNowBy = RUN_NOW_BY.get(ticket.id) || null;
-  RUN_NOW_BY.delete(ticket.id);
+  const runNowBy = RUN_NOW_BY.get(ticket.id) || null; RUN_NOW_BY.delete(ticket.id);
   // Enforced tags (D11): saved at creation; a firing fills only what became mandatory since (after #718
   // inheritance above), then re-checks. A start it would refuse is SKIPPED with the reason — never started
   // untagged, and never a failure (the handler gate exempts fired tickets, D10).
@@ -4229,7 +4230,7 @@ const ranMergeBack = (st) => !!st && [st.branch, ...Object.values(st.branches ||
 function afterRunSettled(orch) {
   let card;
   // Git event automations (#711): a finished event run writes back now, not at the next tick.
-  if (automationsOn()) kickAutomations();
+  if (automationsOn()) kickAutomations(); if (flagEnabled('shaperSmallRuns')) void deliverHeld();   // slice 3 (D4): an answer held while this run committed its work goes on
   try {
     const st = orch.getState?.(); card = recordSettledFigures(st, { tick: () => void schedulerTick(), offerShip: offerShipCard, broadcastFeature, finishing: isFinishingRun });
     // The Ship card is offered once the last slice is done (offerShipCard checks).
@@ -4258,7 +4259,7 @@ export async function schedulerTick({ now = Date.now() } = {}) {
   if (DRAIN.on) return null;   // B2: due tickets stay due; the next start's catch-up fires them
   _schedulerBusy = true;
   try {
-    heldStops.deliver(); const out = await runDueTickets({   // C3: a held stop answer goes on before any new run fires
+    deliverHeld(); const out = await runDueTickets({   // C3: a held stop answer goes on before any new run fires
       now,
       start: fireTicket,
       isLive: liveProbe,
@@ -4377,13 +4378,13 @@ function networkWatch() {
   return (_networkWatch ||= createNetworkWatch({
     settings: () => effectiveNetworkWait(),
     listRuns: () => listNetworkWaitRuns(),
-    hasResumeTicket: (id) => resumeTicketsFor(id).length > 0,
+    hasResumeTicket: (id) => resumeTicketsFor(id).length > 0 || heldStops.watchSkips(id),   // slice 7: a held resume goes on at its turn; a person's Pause dropped it
     probe: (origin) => _networkProbe(origin),
     resume: async (r) => {
       const out = await resumeRun(r.id, {
         by: NETWORK_ACTOR, auto: r.resumePoint.runAuto === true, resumeCause: 'network',
         mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK),
-      });
+      }); if (out?.held) return out;   // slice 7: held for its turn, not resumed
       const since = new Date(r.resumePoint.network.since);
       appendAuditById(r.id, `Network back: ${hostOf(r.resumePoint.network.origin)} answers again. Run resumed${byActor(NETWORK_ACTOR)} (waiting since ${since.toISOString().slice(11, 16)} UTC).`, { actor: NETWORK_ACTOR });
       return out;
@@ -4890,8 +4891,8 @@ const chatNotifier = createNotifier({
 function answerRun(runId, id, payload, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
-  if (heldStops.answer(entry, id, payload, by || 'local')?.held) return { held: true };   // C3: a stop's answer waits its turn
-  resolvePending(entry, { id, reason: 'answered' });
+  const out = heldStops.answer(entry, id, payload, by || 'local'), done = (v) => (v?.held ? { held: true } : (resolvePending(entry, { id, reason: 'answered' }), undefined));   // C3: a stop's answer waits its turn
+  return out && typeof out.then === 'function' ? out.then(done) : done(out);   // slice 3 (D12): a promise only for a take-in
 }
 /** `by` = who asked (identity.mjs actorOf / chatActor); recorded on the entry and the run state.
  *  A PAUSED entry has no run loop to abort — orch.stop() would flip its status in memory only
@@ -4915,7 +4916,7 @@ async function stopRun(runId, by = 'local') {
 function pauseRun(runId, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
-  if (entry.isTest) throw Object.assign(new Error(TEST_TRY_PAUSE_TEXT), { code: 'TEST_TRY' });
+  if (entry.isTest) throw Object.assign(new Error(TEST_TRY_PAUSE_TEXT), { code: 'TEST_TRY' }); if (entry.status === 'paused' && entry.pipelineId && heldStops.dropResume(entry.pipelineId, { paused: true })) return void cancelScheduledResumes(entry.pipelineId, { by, reason: `the run was paused${byActor(by || 'local')}` });   // slice 7 (D12)
   const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause(by || 'local');
   if (!ok) throw Object.assign(new Error('cannot pause in the current state'), { code: 'CANNOT_PAUSE' });
   entry.lastAction = { kind: 'pause', by: by || 'local', at: new Date().toISOString() };
@@ -4945,7 +4946,7 @@ async function stopPausedPipeline(pipelineId, by = 'local') {
   if (running) return running;
   const p = stopPausedPipelineOnce(pipelineId, by);
   STOPS_IN_FLIGHT.set(pipelineId, p);
-  try { return await p; } finally { STOPS_IN_FLIGHT.delete(pipelineId); recordSettledFigures({ id: pipelineId, status: 'stopped' }, { tick: () => void schedulerTick(), broadcastFeature, finishing: isFinishingRun }); }   // a stopped Verifier reads halted only now; a stopped round may start the check
+  try { return await p; } finally { STOPS_IN_FLIGHT.delete(pipelineId); heldStops.dropResume(pipelineId); recordSettledFigures({ id: pipelineId, status: 'stopped' }, { tick: () => void schedulerTick(), broadcastFeature, finishing: isFinishingRun }); }   // a stopped Verifier reads halted only now; a stopped round may start the check
 }
 
 /** One stop of a paused run. Called only through stopPausedPipeline, which joins concurrent stops. */
@@ -5056,14 +5057,15 @@ function settleStaleParkedEntries() {
   } catch (err) { console.error(`[worca-ui] stale paused entries: ${err && err.message ? err.message : err}`); }
 }
 
+const bootResuming = new Set(), bootResumingIds = () => [...bootResuming].sort(), markBootResumes = (picks, { mock = isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) } = {}) => { const kept = heldStops.splitBootPicks(picks || [], { mock }); bootResuming.clear(); for (const p of kept) bootResuming.add(p.pipelineId); return kept; };   // slice 5 (D5): the pipelines the boot is about to resume, in memory only
 /** The live overlay featureView needs (L8): the entry driving this pipeline or run (liveRunEntry takes either, F26).
- *  A settled entry other than `paused` is ignored, so the pipelines row decides done / stopped / error. */
+ *  A settled entry other than `paused` is ignored, so the pipelines row decides done / stopped / error. Slice 5: being resumed adds `resuming`. */
 function liveSliceOf(id) {
   const e = id ? liveRunEntry(id) : null;
-  if (!e || !e.orch) return null;
-  const status = String(e.status || '');
-  if (SETTLED_RUN.has(status) && status !== 'paused') return null;
-  return liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved, heldStop: e.heldStop || null });
+  const resuming = !!id && bootResuming.has(id) && shaperSmallRunsOn();
+  const status = String(e?.status || '');
+  if (!e || !e.orch || (SETTLED_RUN.has(status) && status !== 'paused')) return heldStops.overlay(id, resuming ? liveSliceResuming() : null);
+  return heldStops.overlay(id, { ...liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved, heldStop: e.heldStop || null, going: !!e.takingIn, refused: e.takeInRefused && e.takeInRefused.id === e.pendingQuestion?.id ? e.takeInRefused.reason : null }), ...(resuming && status === 'paused' ? { resuming: true } : {}) });   // slice 3 (D11, D13), slice 5 (D1), slice 7 (D9)
 }
 function broadcastFeature(id) { if (id) broadcast({ type: 'shape-feature', id }); }
 /** F42: the run-event and tick hooks. Gate first (no query while it is off), and never let a throw escape: in wireRun
@@ -5139,7 +5141,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     // A slice whose PR was closed gets a new one (openMemberPr opens past a CLOSED PR).
     const needsPr = (s) => s.pipelineId && (!s.pr || s.pr.state === 'CLOSED');
     if (mode === 'stacked' && shown.slices.some(needsPr)) {
-      for (const s of shipOrder(shown)) {   // Feature D1: a marked feature's runs in finish order
+      for (const s of shipOrder(shown)) {   // Feature D1: a marked feature's runs along the real branches (slice 4), else in finish order
         if (!needsPr(s)) continue;
         const stop = stopped(); if (stop) return stop;
         const r = await openMemberPr(s.pipelineId, { actor });
@@ -5453,7 +5455,7 @@ async function resumeTargetDirs(saved) {
   return { projectDir, workspace: undefined };
 }
 
-async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false, auto = false, resumeCause = null, confirmModel = null } = {}) {
+function resumeRun(pipelineId, opts = {}) { return heldStops.claimed(pipelineId, (ticket) => resumeRunOnce(pipelineId, opts, ticket)); } async function resumeRunOnce(pipelineId, opts = {}, ticket = null) { const { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false, auto = false, resumeCause = null, confirmModel = null } = opts;
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   if (DRAIN.on) throw new ResumeError(503, DRAIN_REFUSAL);
   const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
@@ -5478,7 +5480,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
 
   if (saved.row.archived_at) {
     throw new ResumeError(409, { error: 'pipeline is archived' });
-  }
+  } const pre = budgetStatus(), capHit = pre.pipelineLimitUsd != null && Number(saved.row.total_cost_usd || 0) >= pre.pipelineLimitUsd && ignoreCostCap !== true && !readCostCapOverride(pipelineId); const held = pre.blocked || capHit ? null : heldStops.holdResume(pipelineId, opts, ticket); if (held) return held;   // small runs slice 7 (D3): before any write; a cost refusal answers now
   // No graph re-validation on RESUME, on purpose: _restoreFromResumePoint never
   // reads the workflow row — the frozen manifest supplies topology and port
   // identity (resolvedFromManifest: snapshot wins), so a template that drifted
@@ -8290,27 +8292,24 @@ function drainServer({ timeoutMs = drainTimeoutMs(), reason = 'stop' } = {}) {
  * (`interruptedIds`), each as the person who last started or resumed it. Resumes go through resumeRun's whole guard chain (budget gates
  * included); a refusal is logged and leaves the run waiting for a person.
  */
-async function autoResumeOnBoot({ interruptedIds = [], env = process.env, mock = isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) } = {}) {
-  const mode = autoResumeMode(env);
-  if (mode === 'off') return { enabled: false, resumed: [], failed: [] };
+function bootResumePicks({ interruptedIds = [], env = process.env } = {}) {   // slice 5 (D7): the runs a start resumes
+  const mode = autoResumeMode(env); if (mode === 'off') return [];
   const rows = getDb().prepare(`SELECT id, status, started_by, archived_at, resume_point FROM pipelines
-    WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL AND is_test IS NULL ORDER BY started_at ASC`).all()
-    .map((r) => { let rp = null; try { rp = r.resume_point ? JSON.parse(r.resume_point) : null; } catch { /* unreadable point */ } return { ...r, resumePoint: rp }; });
-  const picks = autoResumeCandidates(rows, {
-    interruptedNow: new Set(interruptedIds),
-    hasResumeTicket: (id) => resumeTicketsFor(id).length > 0,
-    includeInterrupted: mode === 'all',
-  });
-  const resumed = [];
-  const failed = [];
+    WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL AND is_test IS NULL ORDER BY started_at ASC`).all().map((r) => { let rp = null; try { rp = r.resume_point ? JSON.parse(r.resume_point) : null; } catch { /* unreadable point */ } return { ...r, resumePoint: rp }; });
+  return autoResumeCandidates(rows, { interruptedNow: new Set(interruptedIds), hasResumeTicket: (id) => resumeTicketsFor(id).length > 0, includeInterrupted: mode === 'all' });
+}
+function autoResumeOnBoot(opts) { return autoResumeEach(opts).finally(() => bootResuming.clear()); }   // slice 5 (D8): no "being resumed" mark outlives it
+async function autoResumeEach({ interruptedIds = [], env = process.env, mock = isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK), resume = resumeRun } = {}) {
+  if (autoResumeMode(env) === 'off') return { enabled: false, resumed: [], failed: [] };
+  const picks = markBootResumes(bootResumePicks({ interruptedIds, env }), { mock }), resumed = [], failed = [];
   for (const p of picks) {
     try {
-      const out = await resumeRun(p.pipelineId, { by: p.by, mock });
+      const out = await resume(p.pipelineId, { by: p.by, mock }); if (out?.held) continue;   // slice 7 (D17)
       resumed.push({ ...p, runId: out?.runId || null });
       appendAuditById(p.pipelineId, `Pipeline resumed automatically after ${p.why === 'drain' ? 'a restart' : 'an interruption'}${byActor(p.by)}.`, { actor: p.by });
     } catch (err) {
       failed.push({ ...p, error: (err instanceof ResumeError && err.body?.error) || err?.message || String(err) });
-    }
+    } finally { bootResuming.delete(p.pipelineId); }
   }
   if (resumed.length) console.log(`[worca-ui] auto-resume: resumed ${resumed.length} run(s): ${resumed.map((r) => r.pipelineId).join(', ')}`);
   for (const f of failed) console.warn(`[worca-ui] auto-resume: ${f.pipelineId} stays ${f.why === 'drain' ? 'paused' : 'interrupted'}: ${f.error}`);
@@ -10364,7 +10363,7 @@ app.use((err, _req, res, next) => {
  *        optional sink for the per-candidate lines both sweeps emit; omitted, each
  *        sweep keeps its own console default.
  */
-export async function bootMaintenance({ log } = {}) {
+export async function bootMaintenance({ log, onReconciled } = {}) {
   const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, recoveredAttachmentReads: 0, attachmentReadFolders: null, attachmentTempBodies: null, runRoots: null, testCopies: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null, e2b: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
@@ -10378,6 +10377,7 @@ export async function bootMaintenance({ log } = {}) {
   } catch (err) {
     console.error(`[worca-ui] stale-run reconcile failed: ${err && err.message ? err.message : err}`);
   }
+  if (typeof onReconciled === 'function') try { onReconciled(summary.reconciledIds || []); } catch (err) { console.error(`[worca-ui] boot resume marks failed: ${err?.message || err}`); }   // slice 5 (D6): before the first await
 
   // A DB stamped past 24 by a divergent ladder can still hold v1 resume points
   // (crash-reconciled runs keep theirs). One idempotent sweep per boot.
@@ -10741,7 +10741,7 @@ if (isMain) {
     console.error(`[worca-ui] builtin marketplace seed skipped: ${err && err.message ? err.message : err}`);
   }
 
-  bootMaintenance().then((summary) => {
+  bootMaintenance({ onReconciled: (ids) => markBootResumes(bootResumePicks({ interruptedIds: ids })) }).then((summary) => {
     // B3: continue what the last stop paused (and, with WORCA_AUTO_RESUME=1, what a crash interrupted).
     autoResumeOnBoot({ interruptedIds: summary?.reconciledIds || [] })
       .then((boot) => {
@@ -10759,7 +10759,7 @@ if (isMain) {
       })
       .catch((err) => console.error(`[worca-ui] auto-resume failed: ${err && err.message ? err.message : err}`));
   }, (err) => {
-    bootMaintenanceFailed = true;
+    bootMaintenanceFailed = true; bootResuming.clear();
     console.error(`[worca-ui] boot maintenance failed: ${err && err.message ? err.message : err}`);
   });
 
@@ -10924,7 +10924,7 @@ export const _testing = {
   uiControl, bearerMatches, uiToken: () => UI_TOKEN,
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
-  trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
+  trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, bootResumePicks, markBootResumes, bootResumingIds, liveSliceOf, heldStops, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askProxyBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, automations, automationHost, automationDraftPr, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,

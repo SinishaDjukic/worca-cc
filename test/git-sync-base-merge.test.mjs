@@ -200,6 +200,38 @@ test('mergeBaseInto in a clean checkout merges there; a dirty one is refused', a
   assert.equal(readFileSync(join(wt, 'g.txt'), 'utf8'), 'upstream\n', 'the checkout has the base change');
 });
 
+// A run's own merges work on a machine with no git identity (a CI runner, a fresh server).
+for (const checkedOut of [false, true]) {
+  test(`mergeBaseInto with runIdentity and no git identity, branch ${checkedOut ? 'checked out' : 'not checked out'}`, async () => {
+    const w = world();
+    commitOnFeat(w, 'f.txt', 'feature\n'); teammatePush(w, 'g.txt', 'upstream\n');
+    if (checkedOut) g(w.a, 'worktree', 'add', '-q', join(w.dir, 'co'), 'feat');
+    const c = await checkBaseMerge(w.a, { base: 'dev', feature: 'feat' });
+    const none = join(w.dir, 'gitconfig-none');
+    writeFileSync(none, '[user]\n\tuseConfigOnly = true\n[commit]\n\tgpgsign = false\n');
+    await withEnv({ GIT_CONFIG_GLOBAL: none, GIT_AUTHOR_NAME: undefined, GIT_AUTHOR_EMAIL: undefined,
+      GIT_COMMITTER_NAME: undefined, GIT_COMMITTER_EMAIL: undefined, EMAIL: undefined }, async () => {
+      const args = { feature: 'feat', baseSha: c.baseSha, headSha: c.headSha, baseRef: c.baseRef };
+      const refused = await mergeBaseInto(w.a, args);
+      assert.equal(refused.ok, false, 'without runIdentity the merge still needs the person\'s identity');
+      assert.equal(g(w.a, 'rev-parse', 'feat'), c.headSha);
+      const r = await mergeBaseInto(w.a, { ...args, runIdentity: true });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(r.via, checkedOut ? 'merge' : 'commit-tree');
+    });
+    assert.equal(g(w.a, 'log', '-1', '--format=%an <%ae>', 'feat'), 'orchestrator <orchestrator@local>');
+  });
+}
+
+test('mergeBaseInto with runIdentity keeps a configured git identity', async () => {
+  const w = world();
+  commitOnFeat(w, 'f.txt', 'feature\n'); teammatePush(w, 'g.txt', 'upstream\n');
+  const c = await checkBaseMerge(w.a, { base: 'dev', feature: 'feat' });
+  const r = await mergeBaseInto(w.a, { feature: 'feat', baseSha: c.baseSha, headSha: c.headSha, baseRef: c.baseRef, runIdentity: true });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(g(w.a, 'log', '-1', '--format=%an <%ae>', 'feat'), 't <t@t>');
+});
+
 test('startConflictMerge leaves the merge in progress with the unmerged files; a second call is idempotent', async () => {
   const w = world();
   commitOnFeat(w, 'f.txt', 'feature\n'); teammatePush(w, 'f.txt', 'upstream\n');

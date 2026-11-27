@@ -102,6 +102,23 @@ test('D1: a small-runs feature\'s header follows the small-runs ledger (run-owne
   assert.doesNotMatch(modal.querySelector('.shipit-prs-hint').textContent, /one PR is easier/, 'the hint never suggests the disabled One');
 });
 
+test('slice 4: along the real branches, the feature dialog counts the listed runs: 4 runs, run 2 carried, Create 3 PRs', async () => {
+  const acceptance = { items: [], agreed: [], entries: [], covered: [], ready: true, marked: 0, total: 0 };
+  const row = (i) => ({ index: i, pipelineId: `p${i}`, title: `Slice ${i}`, pr: null, onto: null });
+  const smallRuns = { confirmed: [], owned: [], waiting: [], blocked: false, reason: null, met: { met: 0, total: 0 }, care: null, base: 'main',
+    order: [row(1), row(3), row(4)], along: true };
+  const ctx = await boot((url) => (url.startsWith('/api/pr/remotes') ? json({ ok: true, chain: ['main'], remotes: [], defaults: {} })
+    : url.startsWith('/api/shape/features/feat_1') ? json({ ...FEATURE, total: 4, done: 4, slices: [1, 2, 3, 4].map((i) => ({ index: i, pipelineId: `p${i}`, pr: null })),
+      ship: { ...FEATURE.ship, acceptance, smallRuns } }) : handler(url)));
+  ctx.go('feature/feat_1');
+  await ctx.settle(6);
+  pageOf(ctx).querySelector('.gpage-card .rd-pr-slot [data-rd-cta]').click();
+  await ctx.settle(10);
+  const modal = ctx.window.document.getElementById('shipit-modal');
+  assert.equal(modal.classList.contains('hidden'), false);
+  assert.equal(modal.querySelector('.shipit-ok').textContent, 'Create 3 PRs');
+});
+
 test('#feature/:id for an unknown id says so; #group/:id renders a user group without Overview', async () => {
   const ctx = await boot();
   ctx.go('feature/feat_gone');
@@ -895,6 +912,24 @@ test('s7 R-arch-9: with the flag off the marked feature page has no count and ke
   assert.doesNotMatch(gp.querySelector('.gpage-card .run-status').textContent, /next: run/);
 });
 
+// A run held on a clash: the feature page's Overview card shows the reason each shape-feature frame brings.
+test('the marked feature page\'s Overview shows the held reason, and a frame that changes only the reason repaints it', async () => {
+  const slices = S7_SLICES.map((x) => (x.index === 9 ? s7Sl(9, 'held', { pipelineId: null }) : x));
+  const held = (reason) => ({ ...s7Feature([]), slices, held: { index: 9, ticketId: 't9', ...(reason ? { reason } : {}) } });
+  let feature = held(null);
+  const { ctx } = await d3Boot({ feature: () => json(feature), groups: S7_GROUPS });
+  ctx.go('feature/feat_1/overview');
+  await ctx.settle(10);
+  const why = () => pageOf(ctx).querySelector('.gpage-overview .shape-feature-held-why')?.textContent;
+  assert.equal(why(), 'Run 9 waits for you to start', 'the fixture: the Overview draws the held row');
+  for (const reason of ['runs 2 and 4 clash in src/a.mjs', 'runs 2 and 4 clash in src/b.mjs']) {
+    feature = held(reason);
+    ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+    await ctx.settle(10);
+    assert.equal(why(), `Run 9 is held: ${reason}`);
+  }
+});
+
 // ── Shaper small runs slice 10 (R-ux-3): the app hands the marked feature page its slices for "Show order" ───────────
 const s10Slices = () => SIXTEEN_RUN_LINKS.map(({ run, dependsOn }) => s7Sl(run, 'planned', { buildsOn: [...dependsOn], waitsFor: [...dependsOn] }));
 const s10Feature = (marked) => ({ ...FEATURE, status: 'active', total: 16, done: 0, slices: s10Slices(), asks: [], ask: null,
@@ -972,4 +1007,113 @@ test('s10: closed again after #runs and back', async () => {
   await s10Go(ctx, 'chat/new');
   await s10Go(ctx, 'feature/feat_1');
   s10Assert(ctx, false, 'back from #chat/new');
+});
+
+// ── Shaper small runs slice 8 (R-ux-1): a held or released resume changes only the slice's resume fields ─────────
+test('s8: a feature frame that only adds heldResume or resumeAfter to run 6 repaints the feature page rows', async () => {
+  const slices = (six = {}) => [s7Sl(1, 'done'), s7Sl(4, 'running'), s7Sl(6, 'paused', six)];
+  const view = (six) => ({ ...s7Feature([]), total: 3, done: 1, slices: slices(six) });
+  const groups = { groups: [{ ...GROUPS.groups[0], smallRuns: true, members: slices().map((sl) => ({ ...member(sl.index), pipelineId: sl.pipelineId,
+    status: sl.state, slice: sl })) }] };
+  let feature = view();
+  let stall = false;      // once set, the run groups never answer: only the feature fetch can repaint the page
+  const { ctx, calls } = await d3Boot({ feature: () => json(feature), groups,
+    extra: (url) => (stall && url.startsWith('/api/run-groups') ? new Promise(() => {}) : null) });
+  ctx.go('feature/feat_1');
+  await ctx.settle(10);
+  const title = pageOf(ctx).querySelector('.gpage-title');
+  assert.equal(pageOf(ctx).querySelectorAll('.gpage-runs .run-member').length, 3, 'the fixture: the Runs tab painted');
+  stall = true;
+  // Every paint of the group page writes its title again: count those writes.
+  // The callback receives the records the observer delivers (takeRecords alone would miss the delivered ones).
+  let writes = 0;
+  const observer = new ctx.window.MutationObserver((records) => { writes += records.length; });
+  observer.observe(title, { childList: true, characterData: true, subtree: true });
+  const frame = async (next) => {
+    feature = next;
+    const before = calls.feature;
+    await ctx.settle(2);
+    writes = 0;
+    ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+    await ctx.settle(10);
+    assert.ok(calls.feature > before, 'the frame refetched the feature');
+    return writes + observer.takeRecords().length > 0;
+  };
+  assert.equal(await frame(view()), false, 'control: the same view repaints nothing');
+  assert.equal(await frame(view({ resumeAfter: 4 })), true, 'resumeAfter appears');
+  assert.equal(await frame(view({ heldResume: { after: 4 } })), true, 'the resume is held');
+  assert.equal(await frame(view({ heldResume: { after: 2 } })), true, 'held behind another run');
+  assert.equal(await frame(view()), true, 'the hold is gone');
+  observer.disconnect();
+});
+
+// ── Shaper small runs slice 11 (R-ux-2): the page's footer Resume says which run it would wait for ───────────────
+const S11_STATUS = { ...S7_STATUS, paused: 'paused', stopped: 'stopped' };
+/** Six runs. `states[k-1]` is run k's slice state, `over[k]` its extra slice fields; the view halts at run `halted`. */
+const s11View = (states, over, halted) => ({ ...s7Feature([]), total: 6, done: states.filter((s) => s === 'done').length,
+  halted: { index: halted, state: states[halted - 1], waiting: [] }, slices: states.map((st, i) => s7Sl(i + 1, st, over[i + 1])) });
+const s11Groups = (view) => ({ groups: [{ ...GROUPS.groups[0], smallRuns: true, members: view.slices.map((sl) => ({ ...member(sl.index), pipelineId: sl.pipelineId,
+  ticketId: sl.pipelineId ? null : sl.ticketId, status: S11_STATUS[sl.state], ticket: sl.pipelineId ? null : { status: 'scheduled' }, slice: sl })) }] });
+// The Verifier's state: runs 1–3 done, run 4 paused, run 5 not started, run 6 working.
+const S11_PAUSED_FIRST = ['done', 'done', 'done', 'paused', 'planned', 'running'];
+/** The feature page on its Overview tab, where the footer and the Shaper view's own controls are both mounted. `show(next)`
+ *  delivers a feature frame; the run groups stop answering first, so only the feature fetch can repaint the page. */
+async function s11Page(first) {
+  let feature = first;
+  let stall = false;
+  const { ctx, calls } = await d3Boot({ feature: () => json(feature), groups: s11Groups(first),
+    extra: (url) => (stall && url.startsWith('/api/run-groups') ? new Promise(() => {}) : null) });
+  ctx.go('feature/feat_1/overview');
+  await ctx.settle(12);
+  const footer = () => [...pageOf(ctx).querySelectorAll('.gpage-actions [data-model-action="resume"]')].filter((b) => !b.hidden);
+  const resumes = () => shownButtons(pageOf(ctx).querySelector('.gpage')).filter((b) => /^Resume\b/.test(b.textContent)).map((b) => b.textContent);
+  const show = async (next) => {
+    stall = true;
+    feature = next;
+    const before = calls.feature;
+    ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+    await ctx.settle(10);
+    assert.ok(calls.feature > before, 'the frame refetched the feature');
+  };
+  return { ctx, footer, resumes, show };
+}
+
+test('s11 (R-ux-2): paused run 4 before working run 6: the page shows 1 Resume, in the footer, reading "Resume after run 6"', async () => {
+  const { footer, resumes } = await s11Page(s11View(S11_PAUSED_FIRST, { 4: { resumeAfter: 6 } }, 4));
+  assert.equal(footer().length, 1, 'the fixture: the footer offers run 4\'s Resume');
+  assert.equal(footer()[0].textContent, 'Resume after run 6');
+  assert.deepEqual(resumes(), ['Resume after run 6'], 'one Resume on the page, never the view\'s as well');
+});
+
+test('s11 (R-ux-2): the focused footer Resume is relabelled in place: plain "Resume" without resumeAfter and once held', async () => {
+  const view = (four) => s11View(S11_PAUSED_FIRST, { 4: four }, 4);
+  const { ctx, footer, resumes, show } = await s11Page(view({ resumeAfter: 6 }));
+  const button = footer()[0];
+  assert.equal(button.textContent, 'Resume after run 6');
+  button.focus();
+  for (const [name, four, label] of [
+    ['no resumeAfter', {}, 'Resume'],
+    ['the preview is back', { resumeAfter: 6 }, 'Resume after run 6'],
+    ['the resume is held', { heldResume: { after: 6 } }, 'Resume'],
+  ]) {
+    await show(view(four));
+    assert.deepEqual(resumes(), [label], name);
+    assert.equal(footer()[0], button, `${name}: the same button`);
+    assert.equal(ctx.window.document.activeElement, button, `${name}: it keeps the focus`);
+  }
+});
+
+test('s11 (R-ux-2): the label is the one of the run the footer resumes, not of the run the view halts at', async () => {
+  // Run 3 stopped halts the view; the footer's Resume acts on paused run 4.
+  const states = ['done', 'done', 'stopped', 'paused', 'planned', 'running'];
+  const { footer, resumes } = await s11Page(s11View(states, { 4: { resumeAfter: 6 } }, 3));
+  assert.equal(footer().length, 1, 'the fixture: the footer offers run 4\'s Resume');
+  assert.deepEqual(resumes(), ['Resume after run 6']);
+});
+
+test('R-ux-2 example: on run 6, the control reads that it resumes after run 4 (run 4 working: no footer Resume, 1 Resume on the page)', async () => {
+  const states = ['done', 'done', 'done', 'running', 'planned', 'paused'];
+  const { footer, resumes } = await s11Page(s11View(states, { 6: { resumeAfter: 4 } }, 6));
+  assert.deepEqual(footer().map((b) => b.textContent), []);
+  assert.deepEqual(resumes(), ['Resume after run 4']);
 });
