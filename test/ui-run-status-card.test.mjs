@@ -500,17 +500,17 @@ test('s8 renderMemberRows without status adds no data-run, data-builds-on or tab
   assert.equal(marked.querySelector(LINK_ATTRS), null, 'status without buildsOn');
 });
 
-test('s4 row words: "waiting for you" reads --amber-ink and "failed" --red-ink, other words keep --ink-2 (owner direction d6dd6d688)', () => {
+test('s4 row words: "waiting for you" reads --amber-ink-strong and "failed" --red-ink-strong (slice 16, H4), other words keep --ink-2 (owner direction d6dd6d688)', () => {
   const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8');
   for (const scope of ['.chat-rc-members', 'div.gpage-runs']) {
     const rule = (mark) => css.split('}').find((r) => r.includes(scope) && r.includes(`[data-mark="${mark}"]`) && r.includes('.run-member-state')) || '';
-    assert.match(rule('ask'), /color:\s*var\(--amber-ink\)/, `${scope} ask`);
-    assert.match(rule('failed'), /color:\s*var\(--red-ink\)/, `${scope} failed`);
+    assert.match(rule('ask'), /color:\s*var\(--amber-ink-strong\)/, `${scope} ask`);
+    assert.match(rule('failed'), /color:\s*var\(--red-ink-strong\)/, `${scope} failed`);
     assert.doesNotMatch(css, new RegExp(`${scope.replace('.', '\\.')}[^{}]*\\[data-mark="(?:after|ring|faint|done|live)"\\][^{}]*\\.run-member-state[^{}]*\\{[^}]*color`), `${scope}: no other word is coloured`);
   }
   const tokens = readStyleCss();
-  assert.match(tokens, /--amber-ink:/);
-  assert.match(tokens, /--red-ink:/);
+  assert.match(tokens, /--amber-ink-strong:/);
+  assert.match(tokens, /--red-ink-strong:/);
 });
 
 // ── Shaper small runs s5 (R-arch-1, D8, D9): the run page head reads the shared run status ──────────────────────────

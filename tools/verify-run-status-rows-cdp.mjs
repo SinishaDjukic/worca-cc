@@ -8,7 +8,7 @@
 //   busy    runs 2, 4 and 11 at stops, run 5 failed, run 6 building: run 9 `next`, run 7 `waits for run 2 (needs you), 6`.
 //   held    run 4's stop answer held behind run 3: `after run 3` on the dashed ring, and no row reads `next`.
 //   change  base with run 13 a change run: `next · small change run` on the ink ring.
-//   failed  run 5 failed: the red "!", run 6 `waits for run 5 (failed)`, runs 15 and 16 (cannot start) today's text.
+//   failed  run 5 failed: the red "!", run 6 `waits for run 5 (failed)`, runs 15 and 16 `cannot start · waits for run …`.
 // For each world and theme, at 1280px and deviceScaleFactor 2, it shoots the Chat card and the feature page Runs tab:
 // `rows-{world}-{card|page}-{theme}.png`. A JSON log records every row (word, data-mark, dot class, height, wrap,
 // word colour). It also checks base-world runs 7 and 12 at 375px in light. The script exits non-zero on any failed
@@ -68,7 +68,17 @@
 // reads the same rect and opacity twice 400ms apart, its top at or below the number's bottom; the number's background is
 // its nearest painted ancestor's; the page's getAnimations() holds only the live dots' pulse. The resting frame is put
 // beside the mock's as `order-vs-mock-rest-{theme}.png`. Known differences from the mock: rows keep run-number order and
-// the column gap is a fixed 64px (Open question 2), and a lit lane is cut by a lower row's number, as the mock's is.
+// the column gap is a fixed 64px (Open question 2), and (slice 16) the lane sits in the gap between rows, 6px above the
+// mock's, so no number ever cuts it.
+// Slice 16 adds the `waiting` surface (SURFACE=waiting): run 4 paused while run 9 builds. A real POST /api/resume (Resume on run
+// 4's run page) is held for its turn: `resume-held-toast-{theme}.png` (the toast "Run 9 holds the turn"),
+// `resume-menu-held-{theme}.png` (More ways to resume reads "Waiting for its turn after run 9"), `chat-resume-held-{theme}.png`
+// (the chat card's Resume reads "Waiting for its turn", disabled) and `runs-group-held-{theme}.png` (the Runs list's group
+// line "Waiting for its turn · Run 4", outside Needs you). A total cost limit below a seeded cost then refuses a press
+// (`resume-refused-{theme}.png`, "Not resumed: the cost limit is reached") and the held resume at its turn
+// (`rows-refused-{theme}.png`, the row word "not resumed: the cost limit is reached"). `rows-cannot-start-{theme}.png`
+// shoots the failed world's row "cannot start · waits for run …". Every ask and failed row word's contrast against the
+// computed --bg is written to run-status-rows-contrast.json; on the light page each must reach 4.5:1.
 // NOT part of `npm test`: it needs Chrome. A hard 20-minute cap inside.
 // Run: H=$(mktemp -d); env -u FORCE_COLOR HOME=$H VERIFY_PORT=4943 SHOTS_DIR=… node --disable-warning=ExperimentalWarning tools/verify-run-status-rows-cdp.mjs
 import { spawn, execFileSync } from 'node:child_process';
@@ -84,7 +94,7 @@ const CHROME = process.env.CHROME_BIN || CHROME_PATHS.find((p) => existsSync(p))
 const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0 ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
 if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
 const THEMES = ['light', 'dark'];
-const WORLDS = ['base', 'busy', 'held', 'change', 'failed'].filter((w) => (!process.env.WORLD || w === process.env.WORLD) && process.env.SURFACE !== 'stops' && process.env.SURFACE !== 'line' && process.env.SURFACE !== 'links' && process.env.SURFACE !== 'map' && process.env.SURFACE !== 'order');   // WORLD=held runs one world
+const WORLDS = ['base', 'busy', 'held', 'change', 'failed'].filter((w) => (!process.env.WORLD || w === process.env.WORLD) && process.env.SURFACE !== 'stops' && process.env.SURFACE !== 'line' && process.env.SURFACE !== 'links' && process.env.SURFACE !== 'map' && process.env.SURFACE !== 'order' && process.env.SURFACE !== 'waiting');   // WORLD=held runs one world
 const WIDE = 1280;
 const NARROW = 375;
 const SIDE_NARROW = 360;   // s5: the Runs list's narrow shot
@@ -92,7 +102,7 @@ const T0 = Date.now();
 const log = (m) => process.stderr.write(`[${((Date.now() - T0) / 1000).toFixed(1)}s] ${m}\n`);
 
 let chrome = null; let srv = null; let home = null; let proj = null; let profile = null; let failed = 0;
-const results = { startedAt: new Date(T0).toISOString(), rows: [], shots: [], checks: [] };
+const results = { startedAt: new Date(T0).toISOString(), rows: [], shots: [], checks: [], contrast: [] };
 async function shutdown(code) {
   try { if (chrome) chrome.kill('SIGKILL'); } catch {}
   try { if (srv) await new Promise((r) => srv.close(r)); } catch {}
@@ -122,9 +132,9 @@ await writeFile(path.join(proj, 'README.md'), '# run status rows proof\n');
 execFileSync('git', ['add', '-A'], { cwd: proj });
 execFileSync('git', ['commit', '-qm', 'init'], { cwd: proj });
 const imp = (rel) => import(new URL(rel, import.meta.url).href);
-const { server, runs } = await imp('../ui/server.mjs');
+const { server, runs, schedulerTick } = await imp('../ui/server.mjs');
 const { projectKey } = await imp('../src/core/store.mjs');
-const { writeStoreMeta } = await imp('../src/core/artifacts.mjs');
+const { writeStoreMeta, runDirForRow } = await imp('../src/core/artifacts.mjs');
 const { recordShapePlan, setApproveEach } = await imp('../src/core/shape/features.mjs');
 const askStore = await imp('../src/core/ask/store.mjs');
 const { resolveGraph } = await imp('../src/core/workflows.mjs');
@@ -135,6 +145,8 @@ const { runRolesOf } = await imp('../src/shared/shape/requirements.mjs');
 const { careRunGraph } = await imp('../src/core/shape/care-run.mjs');
 const { world, SIXTEEN_RUN_STATES, SIXTEEN_RUN_LINKS } = await imp('../test/helpers/shape-sixteen-runs.mjs');
 const { planStop, gateStop } = await imp('../src/shared/shape/run-stops.mjs');
+const { getDb } = await imp('../src/core/db.mjs');
+const { recordCostDelta } = await imp('../src/core/cost-budget.mjs');
 srv = server;
 await new Promise((r, rej) => { srv.once('error', (err) => rej(new Error(`cannot listen on VERIFY_PORT ${process.env.VERIFY_PORT}: ${err.message}`))); srv.listen(Number(process.env.VERIFY_PORT || 0), '127.0.0.1', r); });
 const base = `http://127.0.0.1:${srv.address().port}`;
@@ -209,6 +221,9 @@ const SPECS = {
   later: { spec: { done: SIXTEEN_RUN_LINKS.map(({ run }) => run), states: {} },
     links: [...SIXTEEN_RUN_LINKS, { run: 17, dependsOn: [16] }, { run: 18, dependsOn: [] }],
     then: (fx) => { fx.setKind(17, 'change'); fx.setKind(18, 'change'); } },
+  // s16 waiting: run 4 paused (its Resume is pressed for real) while run 9 builds, so the resume is held behind run 9 and
+  // run 4 is the Chat card's current run (its footer Resume acts on run 4).
+  waiting: { spec: { done: [1, 2, 3], states: { 4: { pipe: 'paused' }, 9: { pipe: 'running' } } } },
   // s13 order: base with run 3 paused, run 6 stopped and run 5 failed: each map dot is its row's dot.
   still: { spec: { done: SIXTEEN_RUN_STATES.base.done, states: { ...SIXTEEN_RUN_STATES.base.states, 3: { pipe: 'paused' }, 5: { pipe: 'error' }, 6: { pipe: 'stopped' } } } },
 };
@@ -323,7 +338,10 @@ const ROWS = (rootSel) => `(() => {
   const root = [...document.querySelectorAll(${JSON.stringify(rootSel)})].find((r) => r.offsetParent);
   if (!root) return null;
   const tone = (v) => { const p = document.createElement('span'); p.style.color = v; root.append(p); const c = getComputedStyle(p).color; p.remove(); return c; };
-  const ink = { 'amber-ink': tone('var(--amber-ink)'), 'red-ink': tone('var(--red-ink)'), 'ink-2': tone('var(--ink-2)') };
+  const ink = { 'amber-ink-strong': tone('var(--amber-ink-strong)'), 'red-ink-strong': tone('var(--red-ink-strong)'), 'ink-2': tone('var(--ink-2)') };
+  // Slice 16 (R-qa-5): the page ground as the browser computes it, from a probe painted background: var(--bg).
+  const probe = document.createElement('div'); probe.style.cssText = 'background: var(--bg)'; document.body.append(probe);
+  const bg = getComputedStyle(probe).backgroundColor; probe.remove();
   const rows = [...root.querySelectorAll('.run-member')].filter((li) => li.offsetParent && li.dataset.key !== 'planning').map((li) => {
     const st = li.querySelector('.run-member-state'); const dot = li.querySelector('.status-dot');
     const lh = st ? parseFloat(getComputedStyle(st).lineHeight) || 20 : 20;
@@ -332,8 +350,18 @@ const ROWS = (rootSel) => `(() => {
       wrap: !!st && (st.getBoundingClientRect().height > lh + 1 || st.scrollWidth > st.clientWidth + 1),
       color: st ? getComputedStyle(st).color : null, second: !!li.querySelector('.run-member-line'), sig: SIG(dot) };
   });
-  return { rows, ink };
+  return { rows, ink, bg, theme: document.documentElement.dataset.theme || '' };
 })()`;
+/** Slice 16 (R-qa-5): the WCAG contrast of two computed rgb() colours. */
+function contrastOf(fg, bgc) {
+  const lum = (c) => {
+    const [r, g, b] = String(c).match(/[\d.]+/g).slice(0, 3).map((v) => Number(v) / 255)
+      .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const [a, b] = [lum(fg), lum(bgc)].sort((x, y) => y - x);
+  return (a + 0.05) / (b + 0.05);
+}
 /** The checks one list must pass, for every world. */
 function judgeRows(where, m, width) {
   if (!m) { check(false, `${where}: the run rows are on screen`); return null; }
@@ -347,8 +375,12 @@ function judgeRows(where, m, width) {
   const sym = m.rows.filter((r) => r.symbol).map((r) => [r.mark, r.symbol]);
   check(sym.every(([mk, s]) => (mk === 'ask' && s === 'question') || (mk === 'failed' && s === 'alert')), `${where}: "?" only on an open stop, "!" only on a failed run (${JSON.stringify(sym)})`);
   for (const r of m.rows.filter((x) => x.mark === 'ask' || x.mark === 'failed')) {
-    const want = r.mark === 'ask' ? m.ink['amber-ink'] : m.ink['red-ink'];
-    check(r.color === want, `${where}: run ${r.run}'s word "${r.word}" reads ${r.mark === 'ask' ? '--amber-ink' : '--red-ink'} (${r.color} vs ${want})`);
+    const want = r.mark === 'ask' ? m.ink['amber-ink-strong'] : m.ink['red-ink-strong'];
+    check(r.color === want, `${where}: run ${r.run}'s word "${r.word}" reads ${r.mark === 'ask' ? '--amber-ink-strong' : '--red-ink-strong'} (${r.color} vs ${want})`);
+    // Slice 16 (R-qa-5): on the light page the word reads at least 4.5:1 against the computed --bg.
+    const ratio = contrastOf(r.color, m.bg);
+    results.contrast.push({ where, run: r.run, word: r.word, mark: r.mark, color: r.color, bg: m.bg, theme: m.theme, ratio: Math.round(ratio * 100) / 100 });
+    if (m.theme === 'light') check(ratio >= 4.5, `${where}: run ${r.run}'s "${r.word}" reads ${ratio.toFixed(2)}:1 on --bg ${m.bg} (at least 4.5)`);
   }
   const plain = m.rows.filter((r) => r.mark && r.mark !== 'ask' && r.mark !== 'failed' && r.color !== m.ink['ink-2']);
   check(plain.length === 0, `${where}: every other word keeps --ink-2 (${JSON.stringify(plain.map((r) => r.run))})`);
@@ -379,7 +411,7 @@ const WANT = {
     check(at(5).word === 'failed' && at(5).symbol === 'alert' && /is-red/.test(at(5).dot), `${where}: run 5 failed with the red "!"`);
     check(at(6).word === 'waits for run 5 (failed)', `${where}: run 6 waits for run 5 (failed) (${at(6).word})`);
     check(at(14).mark === null && !!at(14).word, `${where}: run 14 (its ticket canceled) keeps today's row, no mark (${at(14).word})`);
-    for (const n of [15, 16]) check(at(n).mark === 'faint' && /is-grey-ring/.test(at(n).dot) && !!at(n).word, `${where}: run ${n} (cannot start) keeps today's text on the grey ring (${at(n).word})`);
+    for (const n of [15, 16]) check(at(n).mark === 'faint' && /is-grey-ring/.test(at(n).dot) && !!at(n).word, `${where}: run ${n} (cannot start) names why on the grey ring (${at(n).word})`);
   },
 };
 const SURFACES = { card: '.chat-rc-members', page: '#group-detail div.gpage-runs',
@@ -890,8 +922,9 @@ const MAP_READ = `(() => {
   });
   return { ariaHidden: root.getAttribute('aria-hidden'), tabindex: root.getAttribute('tabindex'), links, runs };
 })()`;
-/** R-ux-6: every (link, run) pair where the sampled link comes within 7px of the centre of a dot it does not join. A
- *  lane may pass behind a lower row's number (the mock does too), so numbers are not checked here. */
+/** R-ux-6: every (link, run) pair where the sampled link comes within 7px of the centre of a dot it does not join, and
+ *  (slice 16, direction d8776dd9f) every sampled link point inside any run's number box (`.nBox`, its own ends' included),
+ *  the unit test's rule: the lane runs in the gap between rows. */
 function mapTooClose(m) {
   const out = [];
   const near = (q, a, b) => {
@@ -906,6 +939,10 @@ function mapTooClose(m) {
       let d = Infinity;
       for (let i = 1; i < l.points.length; i += 1) d = Math.min(d, near(c, l.points[i - 1], l.points[i]));
       if (d < 7) out.push(`${l.from}→${l.to} passes ${d.toFixed(1)}px from run ${r.run}'s dot`);
+    }
+    for (const r of m.runs) {
+      const b = r.nBox;
+      if (l.points.some(([x, y]) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1)) out.push(`${l.from}→${l.to} meets run ${r.run}'s number`);
     }
   }
   return out;
@@ -938,7 +975,7 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'map
       const unparsed = m.links.filter((l) => l.points.length < 2);
       check(unparsed.length === 0, `${where}: every path.rom-link d parses into at least 2 points (${JSON.stringify(unparsed.map((l) => l.d))})`);
       const cross = mapTooClose(m);
-      check(cross.length === 0, `${where}: no rendered path.rom-link comes within 7px of the centre of a .rom-run .status-dot it does not join (${JSON.stringify(cross)})`);
+      check(cross.length === 0, `${where}: no rendered path.rom-link comes within 7px of the centre of a .rom-run .status-dot it does not join, nor meets any .rom-n number (${JSON.stringify(cross)})`);
       const rowOf = (n) => (card?.rows || []).find((x) => x.run === n);
       const compared = m.runs.filter((x) => { const row = rowOf(x.run); return row && row.mark && !/\bis-violet\b/.test(row.dot); });
       const diff = compared.filter((x) => x.dot !== rowOf(x.run).dot);
@@ -1274,9 +1311,115 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'ord
     for (const name of ['base', 'later', 'still']) await sideBySide(name, theme);
     await sideBySide('base', theme, 'rest');   // R-ux-6: the app at rest (nothing pointed) beside the mock's resting frame
   }
-  log('  order vs mock, known differences: rows in run-number order and a fixed 64px column gap (Open question 2); a lit lane is cut by a lower row\'s number, as the mock\'s .e.on is by its .lbl');
+  log('  order vs mock, known differences: rows in run-number order and a fixed 64px column gap (Open question 2); the lane sits in the gap between rows, 6px above the mock\'s, clear of every number');
 }
 
+// ---- s16 waiting: a run held for its turn reads that it waits; a refused press and a refusal at the turn say why.
+const TOASTS = `[...document.querySelectorAll('#toasts .toast')].map((t) => ({ title: t.querySelector('.tt')?.textContent || '', detail: t.querySelector('.td')?.textContent || '' }))`;
+const VISIBLE = (sel) => `[...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.offsetParent)`;
+const clearToasts = () => ev(`(() => { for (const x of document.querySelectorAll('#toasts .toast .toast-x')) x.click(); return 0; })()`);
+/** Press run 4's Resume on its saved run page: a real POST /api/resume. → the toasts shown after it */
+async function pressFour(routes, theme, where) {
+  await go(routes.run(4), theme);
+  if (!await waitFor(`(() => { const b = ${VISIBLE('.hd-resume')}; return !!b && !b.disabled; })()`, `${where}: run 4's Resume`)) {
+    log(`  api: ${JSON.stringify(await ev(`fetch('/api/history/${key}/${routes.pipelineOf(4)}').then((r) => r.json()).then((d) => ({ resumable: d.state && d.state.resumable, status: d.state && d.state.status, keys: Object.keys(d) }))`))}`);
+    log(`  seen: ${JSON.stringify(await ev(`({ hash: location.hash, resume: [...document.querySelectorAll('.hd-resume')].map((b) => [!!b.offsetParent, b.hidden, b.disabled, b.title]), head: document.querySelector('#hist-detail')?.innerText.slice(0, 300) })`))}`);
+    return null;
+  }
+  await skipWelcome(); await clearToasts();
+  await sleep(1500);   // the run's slice info loads with the page: only then is the press a Shaper one (D6)
+  await ev(`(() => { const f = window.fetch; window.__resumed = []; window.fetch = async (...a) => { const r = await f(...a);
+    if (String(a[0]).includes('/api/resume')) r.clone().text().then((t) => window.__resumed.push([r.status, t])); return r; }; return 0; })()`);
+  await ev(`(${VISIBLE('.hd-resume')}).click(), 0`);
+  if (!await waitFor(`${TOASTS}.length > 0`, `${where}: a toast after the press`)) log(`  resume answered: ${JSON.stringify(await ev('window.__resumed'))}`);
+  return ev(TOASTS);
+}
+const memberWord = (n) => `(() => { const li = [...document.querySelectorAll('.chat-rc-members .run-member')].find((x) => x.offsetParent && x.querySelector('.run-member-num')?.textContent === '${n}'); return li ? li.querySelector('.run-member-state')?.textContent || '' : null; })()`;
+if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'waiting') {
+  const routes = seed('waiting');
+  // Run 4 can be resumed: a resume point and its run dir, as a real paused run has (artifacts.mjs readPipelineByKey).
+  { const four = routes.pipelineOf(4);
+    getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify({ version: 2 }), four);
+    await mkdir(await runDirForRow(getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(four)), { recursive: true });
+    const r = await post('/api/projects', { name: 'Proof', path: proj });   // a run resumes only in an onboarded project
+    check(r.ok || r.status === 409, `waiting: the proof project is onboarded (HTTP ${r.status})`); }
+  for (const theme of THEMES) {
+    await metrics(WIDE);
+    const where = `waiting, ${theme}, ${WIDE}px`;
+    const toasts = await pressFour(routes, theme, where);
+    check(!!toasts && toasts.some((t) => t.title === 'Waiting for its turn' && t.detail === 'Run 9 holds the turn'), `${where}: the held press says "Run 9 holds the turn" (${JSON.stringify(toasts)})`);
+    await shotOf('#toasts .toast', `resume-held-toast-${theme}.png`);
+    // More ways to resume, opened by its real button.
+    await waitFor(`(() => { const b = ${VISIBLE('.hd-resume-more')}; return !!b; })()`, `${where}: More ways to resume`);
+    await clearToasts();
+    await sleep(800);   // the feature frame clears the slice info; the page paints the menu note once it reloads
+    await ev(`(${VISIBLE('.hd-resume-more')}).click(), 0`);
+    await waitFor(`(() => { const m = ${VISIBLE('.hd-resume-menu')}; return !!m && m.querySelector('.resume-on-saved small').textContent === 'Waiting for its turn after run 9'; })()`, `${where}: More ways to resume reads "Waiting for its turn after run 9"`);
+    await shotOf('.hd-resume-menu', `resume-menu-held-${theme}.png`);
+    await ev(`(${VISIBLE('.hd-resume-more')})?.click(), 0`);
+    // The chat card's Resume (it acts on run 4): disabled, with its reason; Stop is still there.
+    await go(routes.card, theme);
+    const foot = `(() => { const b = [...document.querySelectorAll('.chat-rc-foot [data-model-action="resume"]')].find((x) => x.offsetParent); return b ? [b.textContent, b.disabled, b.title] : null; })()`;
+    await waitFor(`(() => { const f = ${foot}; return !!f && f[0] === 'Waiting for its turn'; })()`, `${where}: the chat card's Resume reads "Waiting for its turn"`);
+    const f = await ev(foot);
+    check(!!f && f[0] === 'Waiting for its turn' && f[1] === true && f[2] === 'Goes on after run 9', `${where}: the chat card's Resume is disabled with "Goes on after run 9" (${JSON.stringify(f)})`);
+    await skipWelcome();
+    await shotOf('.chat-rc', `chat-resume-held-${theme}.png`);
+    // The Runs list: the group line says it waits, once, and the group is not under Needs you.
+    await go(routes.side, theme);
+    await sleep(400);
+    await ev(`(() => { const b = [...document.querySelectorAll('.gpage-back')].find((x) => x.offsetParent); if (b) b.click(); return 0; })()`);
+    const sub = `(() => { const it = document.querySelector(${JSON.stringify(groupSel(routes.featureId))}); if (!it) return null;
+      return { sub: it.querySelector(':scope > a.runs-row > .runs-row-sub')?.textContent || '', section: it.closest('.runs-sec')?.dataset.section || '' }; })()`;
+    if (!await waitFor(`(() => { const r = ${sub}; return !!r && /waiting for its turn/i.test(r.sub); })()`, `${where}: the group line says it waits`)) {
+      log(`  seen: ${JSON.stringify(await ev(`(() => ({ hash: location.hash, row: ${sub}, keys: [...document.querySelectorAll('.runs-item[data-row-key]')].map((x) => x.dataset.rowKey).slice(0, 12) }))()`))}`);
+    }
+    const g = await ev(sub);
+    check(!!g && g.sub === 'Waiting for its turn · Run 4' && !/paused/i.test(g.sub) && g.section !== 'needs', `${where}: the Runs list group line reads "Waiting for its turn · Run 4", outside Needs you (${JSON.stringify(g)})`);
+    await shotOf(groupSel(routes.featureId), `runs-group-held-${theme}.png`);
+  }
+  // The cost limit: a total limit below a cost seeded on the planning run (its cost ledger), set through the settings API.
+  recordCostDelta({ pipelineId: routes.origin, amountUsd: 5 });
+  { const r = await post('/api/settings', { totalCostLimitUsd: 1 }); check(r.ok, `waiting: the total cost limit is set (HTTP ${r.status})`); }
+  for (const theme of THEMES) {
+    await metrics(WIDE);
+    const where = `waiting refused, ${theme}, ${WIDE}px`;
+    const toasts = await pressFour(routes, theme, where);
+    check(!!toasts && toasts.some((t) => t.title === 'Could not resume the run' && t.detail === 'Not resumed: the cost limit is reached'), `${where}: the refused press says "Not resumed: the cost limit is reached" (${JSON.stringify(toasts)})`);
+    await shotOf('#toasts .toast', `resume-refused-${theme}.png`);
+  }
+  // Run 9 finishes: the held resume's turn comes, and the cost limit refuses it there.
+  const nine = `run-${routes.pipelineOf(9)}`;
+  runs.delete(nine); liveIds.splice(liveIds.indexOf(nine), 1);
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = ?").run(routes.pipelineOf(9));
+  await schedulerTick();
+  await sleep(1000);
+  for (const theme of THEMES) {
+    await metrics(WIDE);
+    const where = `waiting refused at its turn, ${theme}, ${WIDE}px`;
+    await go(routes.card, theme);
+    await waitFor(`${memberWord(4)} === 'not resumed: the cost limit is reached'`, `${where}: run 4's row says why`);
+    check(await ev(memberWord(4)) === 'not resumed: the cost limit is reached', `${where}: run 4's row reads "not resumed: the cost limit is reached" (${await ev(memberWord(4))})`);
+    await skipWelcome();
+    await shotOf('.chat-rc-members', `rows-refused-${theme}.png`);
+  }
+  { const r = await post('/api/settings', { totalCostLimitUsd: null }); check(r.ok, `waiting: the total cost limit is cleared (HTTP ${r.status})`); }
+  // A run that cannot start names the run that can never finish, with its cause.
+  const failedRoutes = seed('failed');
+  for (const theme of THEMES) {
+    await metrics(WIDE);
+    const where = `cannot start, ${theme}, ${WIDE}px`;
+    await go(failedRoutes.card, theme);
+    if (!await waitFor(ready(SURFACES.card), `${where}: 16 marked run rows`)) continue;
+    const words = [await ev(memberWord(15)), await ev(memberWord(16))];
+    check(Array.isArray(words) && words.every((w) => /^cannot start · waits for run /.test(w || '')), `${where}: runs 15 and 16 read "cannot start · waits for run …" (${JSON.stringify(words)})`);
+    await skipWelcome();
+    await shotOf('.chat-rc-members', `rows-cannot-start-${theme}.png`);
+  }
+}
+
+// Slice 16 (R-qa-5): each ask and failed row word's colour, the computed --bg and their ratio.
+await writeFile(path.join(SHOTS, 'run-status-rows-contrast.json'), JSON.stringify(results.contrast, null, 2) + '\n');
 results.errors = errors;
 check(errors.length === 0, `no page errors${errors.length ? ` — ${errors.slice(0, 3).join(' | ')}` : ''}`);
 results.minutes = Math.round((Date.now() - T0) / 600) / 100;

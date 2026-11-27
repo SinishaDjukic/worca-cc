@@ -836,10 +836,12 @@ With the flag on, each run of a marked feature reads one word and one mark, the 
 | `planning`, `reviewing plan`, `writing tests`, `building`, `reviewing` | peach, pulsing | The run is going: the step it is on. |
 | `waiting for you` | amber "?" | The run is at a stop or asks you something. |
 | `after run 3` | dashed ring | You answered its stop; the answer waits for its turn. |
+| `not resumed: the cost limit is reached` | dev's dot | Its resume was held for its turn and refused there; the text names why (`not resumed: ` and the cause). |
 | `failed` | red "!" | The run failed. |
 | `waits for run 2, 6` | grey ring | It has not started; it builds on runs that are not done. |
 | `next` (`next · small change run` for a change run) | ink ring | It has not started and goes on next. |
 | no word | grey ring | It has not started, builds on nothing unfinished, and it is not its turn. |
+| `cannot start · waits for run 3 (was canceled)` | grey ring | It can never start: a run it builds on can never finish; the list is the one other rows name, plus that run with its cause. |
 
 A waiting run names only the unfinished runs nothing else in its list leads to: run 7 builds on runs 2 to 6, but 6
 builds on 3, 4 and 5, so it reads `waits for run 2, 6`. A named run at a stop says so inside the word
@@ -902,6 +904,16 @@ resume waits (`after run N`), as an answer does, and goes on once that work is s
 it. A held resume refused at its turn (for example on cost) leaves the run paused, and a run paused on the network is
 then taken up again by the network watch once its endpoint answers inside the wait window.
 
+A run held for its turn says it waits, never `paused`: the Runs list's group line reads `Run 4 waiting for its turn`
+(`Waiting for its turn · Run 4` when it is the current run), More ways to resume reads `Waiting for its turn after run 3`,
+and the Chat feature card's Resume reads `Waiting for its turn`, disabled with `Goes on after run 3` (Stop stays). A
+run whose resume or answer you already gave and that only waits for its turn does not need you: it is not counted
+under Needs you (the Runs list's section, the Runs badge and Activity), unless its feature needs you for another
+reason. A press that does not go on says why, one text per cause: `Run 3 is still saving its work` (a finished run is
+saving), `Run 3 holds the turn` (another run is going), `Not resumed: ` and the clash reason (its work clashes with a
+finished run's), and `Not resumed: the cost limit is reached` (cost or budget). A held resume refused at its turn
+shows the same text on its row, lower-cased: `not resumed: the cost limit is reached`.
+
 ### Show order
 
 With the flag on, the feature page's Runs tab of a marked feature offers a `Show order` button above the run rows when
@@ -914,7 +926,8 @@ view; switching the page's tabs keeps it as you left it.
 placed right of every run it builds on. While a run is held back, only the links that hold it are drawn: a line joins a
 run that is not done to the runs it holds back. Once none holds a run back, every link is drawn faint. Links another link
 already implies are never drawn. A link to the next column is one curve. A link that skips columns curves into the lane
-midway under its upper row, runs along it and curves out to its run; no link passes within 7px of a dot it does not
+in the gap under its upper row, below that row's dots and above the next row's numbers, runs along it and curves out to
+its run, crossing a row only between columns; no link passes through a number, nor within 7px of a dot it does not
 join. Pointing at a run's row (hover or focus) or keeping it (click, Enter or Space) lights that run's dot and the links
 drawn to and from it, and the other links dim; Esc lets go. A paused or stopped run shows the row's
 dot, not the hollow ring of a run not started. A run the Verifier adds (a fix run or a change run) builds on the last run

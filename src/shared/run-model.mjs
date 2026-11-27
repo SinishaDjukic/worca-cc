@@ -18,6 +18,7 @@ import { liveRoleRows } from './shape/role-review.mjs';
 import { parseAzurePrUrl } from './azure-remote.mjs';
 import { isNeedsYouHold } from './shape/ship-ledger.mjs';
 import { checkGroupLine } from './shape/verifier.mjs';
+import { HELD_TURN_WORD } from './shape/run-status.mjs';
 import { parseBitbucketPrUrl } from './bitbucket-remote.mjs';
 
 export const RUN_STATES = Object.freeze({
@@ -351,7 +352,11 @@ const asPart = (m) => ({ state: doneLike(m) ? 'done' : m.state === 'failed' ? 'f
  */
 export function groupModel(group, opts = {}) {
   const g = group || {};
-  const members = (g.members || []).map((m) => runModel(m, { ...opts, memo: m.memo || null }));
+  // Slice 16 (D7): a member held for its turn (groupModelOf's `heldTurn`) keeps the mark, so the line can say it waits.
+  const members = (g.members || []).map((m) => {
+    const x = runModel(m, { ...opts, memo: m.memo || null });
+    return m.heldTurn === true ? { ...x, heldTurn: true } : x;
+  });
   const planning = g.planning ? runModel(g.planning, { ...opts, memo: g.planning.memo || null }) : null;
   const all = planning ? [planning, ...members] : members;
   const total = members.length;
@@ -381,8 +386,8 @@ export function groupModel(group, opts = {}) {
         const what = rd && rd.by === 'watch' && rd.request ? rd.request : (current.progress && current.progress.label) || 'working';
         return rd ? `${where} · round ${rd.n} · ${what}` : `${where} · ${what}`;
       }
-      case 'needs-you': return `${where} · needs you`;
-      case 'paused': return `${where} · paused`;
+      case 'needs-you': return current.heldTurn ? `${where} · ${HELD_TURN_WORD}` : `${where} · needs you`;
+      case 'paused': return current.heldTurn ? `${where} · ${HELD_TURN_WORD}` : `${where} · paused`;
       case 'failed': return `${where} · failed`;
       // D18: a held run's predecessor is done, so "waiting for run N" would be stale; the feature's row says why.
       case 'waiting': return current.held ? `${where} · waiting` : idx > 0 ?`${where} · waiting for run ${idx}` : join(where, current.line.replace(/^Waiting · /, '').replace(/^Waiting$/, 'waiting'));

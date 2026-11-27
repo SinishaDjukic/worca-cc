@@ -2502,17 +2502,58 @@ test('s11 (R-ux-2): the one card\'s footer shows 1 Resume reading "Resume after 
   assert.deepEqual(acted, [['beef0004', 'resume']]);
 });
 
-test('s11 (R-ux-2): the one card\'s footer Resume goes back to plain "Resume" without resumeAfter and once held', () => {
-  const { card, snap, resumes } = s11Card();
-  const labels = () => resumes().map((b) => b.textContent);
+/** The footer's Resume controls, found by their model action (a held one no longer reads "Resume"). */
+const resumeActs = (f) => f.$$('.chat-rc-foot [data-model-action="resume"]').filter((b) => shownIn(b));
+const resumeFacts = (f) => resumeActs(f).map((b) => [b.textContent, b.disabled, b.title]);
+
+test('s11 (R-ux-2), s16 (R-qa-4): the one card\'s footer Resume goes back to plain "Resume" without resumeAfter, and reads "Waiting for its turn" once held', () => {
+  const f = s11Card();
+  const { card, snap } = f;
   card.update(snap({ resumeAfter: 6 }, S11_HALTED));
-  assert.deepEqual(labels(), ['Resume after run 6']);
+  assert.deepEqual(resumeFacts(f), [['Resume after run 6', false, '']]);
   card.update(snap({}, S11_HALTED));
-  assert.deepEqual(labels(), ['Resume'], 'no resumeAfter');
+  assert.deepEqual(resumeFacts(f), [['Resume', false, '']], 'no resumeAfter');
   card.update(snap({ resumeAfter: 6 }, S11_HALTED));
-  assert.deepEqual(labels(), ['Resume after run 6'], 'the preview is back');
+  assert.deepEqual(resumeFacts(f), [['Resume after run 6', false, '']], 'the preview is back');
   card.update(snap({ heldResume: { after: 6 } }, S11_HALTED));
-  assert.deepEqual(labels(), ['Resume'], 'held');
+  assert.deepEqual(resumeFacts(f), [['Waiting for its turn', true, 'Goes on after run 6']], 'held');
+});
+
+// ── Slice 16 (R-qa-4): the chat run card while run 4 waits for run 3, and after a refusal ─────────────────────────
+test('s16: run 4 held after run 3: the footer Resume reads "Waiting for its turn", disabled with "Goes on after run 3"; Stop stays; it comes back when the hold ends', () => {
+  const acted = [];
+  const f = s11Card({ controls: { act: (t, id) => { acted.push([t.pipelineId, id]); return Promise.resolve(true); } } });
+  const { card, snap } = f;
+  card.update(snap({ heldResume: { after: 3 } }, S11_HALTED));
+  assert.deepEqual(resumeFacts(f), [['Waiting for its turn', true, 'Goes on after run 3']]);
+  assert.equal(f.$$('.chat-rc-foot button').filter((b) => shownIn(b) && /^(Resume|Waiting for its turn)\b/.test(b.textContent)).length, 1, 'one Resume control on the card');
+  resumeActs(f)[0].click();
+  assert.deepEqual(acted, [], 'a held Resume is not pressed again');
+  const stop = f.$$('.chat-rc-foot [data-model-action="stop"]').filter((b) => shownIn(b));
+  assert.deepEqual(stop.map((b) => [b.textContent, b.disabled]), [['Stop', false]], 'Stop is still offered');
+  card.update(snap({}, S11_HALTED));
+  assert.deepEqual(resumeFacts(f), [['Resume', false, '']], 'the hold ended');
+  resumeActs(f)[0].click();
+  assert.deepEqual(acted, [['beef0004', 'resume']]);
+});
+
+test('s16: while a stop is open on run 6, the ⋯ lists held run 4\'s moved Resume as "Waiting for its turn", disabled with "Goes on after run 3"', () => {
+  const stop = { id: 'gate-s16-6', kind: 'gate', heading: 'Run 6 · Code review objects', step: 'Code review', stop: true };
+  const { card, doc, $, snap } = s11Card({ controls: questionStub(stop, '<div class="qpanel-foot"><button type="button" class="btn btn-primary">Go on</button></div>') });
+  const ask = { ask: { index: 6, kind: 'gate', id: stop.id, pipelineId: 'beef0006', runId: null } };
+  card.update(snap({ heldResume: { after: 3 } }, ask));
+  $('[data-act="feature-more"]').click();
+  const items = [...doc.querySelectorAll('.wfv-menu-item')].filter((i) => /Resume|Waiting for its turn/.test(i.textContent));
+  assert.deepEqual(items.map((i) => [i.textContent.trim(), i.disabled, i.title]), [['Waiting for its turn', true, 'Goes on after run 3']]);
+  $('[data-act="feature-more"]').click();
+});
+
+test('s16 D4: with the flag on, a run whose held resume was refused reads "not resumed: the cost limit is reached" on its row', () => {
+  const f = s11Card();
+  applyFlags({ shaperSmallRuns: true }, f.doc);
+  f.card.update(f.snap({ resumeRefused: { code: null, error: 'pipeline cost limit reached' } }, S11_HALTED));
+  const state = f.$('.chat-rc-members .run-member[data-key="beef0004"] .run-member-state');
+  assert.equal(state.textContent, 'not resumed: the cost limit is reached');
 });
 
 test('s11 (R-ux-2): the one card takes the label from the run its Resume acts on, not from the run the view halts at', () => {

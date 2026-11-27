@@ -427,3 +427,40 @@ test('s8: the footer Resume and the ⋯ Resume read "Resume after run 4" with re
   paintFeatureActions(t.doc, t.host, free, { act: async () => ({ ok: true }), confirm: async () => true, openPlan() {} });
   assert.equal(button().textContent, 'Resume');
 });
+
+// ── Shaper small runs slice 16 (R-qa-4): a held run's Resume waits, on the buttons and in the ⋯ ──────────────────
+test('s16: featureButtons and featureMenu with resumeHeld 3 give a disabled "Waiting for its turn" with "Goes on after run 3"', () => {
+  const held = C({ halted: true, resumeHeld: 3 });
+  const resume = (items) => items.filter((i) => i.key === 'resume').map((i) => [i.label, !!i.disabled]);
+  assert.deepEqual(resume(featureButtons(held)), [['Waiting for its turn', true]]);
+  assert.deepEqual(resume(featureMenu(held, { stopOpen: true })), [['Waiting for its turn', true]]);
+  assert.equal(featureMenu(held, { stopOpen: true }).find((i) => i.key === 'resume').disabled, 'Goes on after run 3', 'the menu item\'s reason');
+  assert.deepEqual(resume(featureButtons(C({ halted: true }))), [['Resume', false]]);
+  assert.deepEqual(resume(featureButtons(C({ halted: true, resumeHeld: null, resumeAfter: 4 }))), [['Resume after run 4', false]]);
+  assert.deepEqual(featureButtons(held).filter((b) => b.key !== 'resume').map((b) => b.label), ['Re-plan the rest'], 'the other control stays');
+});
+
+test('s16: painted, the held Resume button is disabled with the title, and the next paint without a hold gives a plain Resume', async () => {
+  const held = C({ halted: true, resumeHeld: 3 });
+  const t = setup(held);
+  const button = () => t.host.querySelector('[data-act="feature-resume"]');
+  assert.deepEqual([button().textContent, button().disabled, button().title], ['Waiting for its turn', true, 'Goes on after run 3']);
+  button().click();
+  await settle();
+  assert.deepEqual(t.seen, [], 'a held Resume posts nothing');
+  const item = (() => { t.host.querySelector('[data-act="feature-more"]').click(); return [...t.doc.querySelectorAll('.wfv-menu-item')].map((i) => i.textContent.trim()); })();
+  assert.ok(!item.includes('Resume'), 'no second Resume in the ⋯');
+  closeMenus();
+  paintFeatureActions(t.doc, t.host, C({ halted: true }), { act: async () => ({ ok: true }), confirm: async () => true, openPlan() {} });
+  assert.deepEqual([button().textContent, button().disabled, button().title], ['Resume', false, '']);
+});
+
+test('s16: the feature card\'s controls carry resumeHeld from the halted run\'s heldResume', () => {
+  const view = (five) => ({ ...CLASH_VIEW(null), held: null, total: 5, halted: { index: 4, state: 'paused', waiting: [] },
+    slices: [1, 2, 3, 4, 5].map((index) => ({ index, title: `Part ${index}`, state: index === 4 ? 'paused' : index === 5 ? 'planned' : 'done',
+      runId: null, pipelineId: index === 5 ? null : `p${index}`, ticketId: `t${index}`, pr: null, ...(index === 4 ? five : {}) })) });
+  const controls = (v) => featureCardModel({ own: null, card: { pipelineId: 'p0', feature: v, log: [] } }).controls;
+  assert.equal(controls(view({ heldResume: { after: 3 } })).resumeHeld, 3);
+  assert.equal(controls(view({}))?.resumeHeld ?? null, null);
+});
+

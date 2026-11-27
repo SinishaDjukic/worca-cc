@@ -412,11 +412,11 @@ test('routing: 2→7 avoids runs 5, 6 and 8', async () => {
   assert.ok(link, 'the 2→7 link is drawn');
   const runs = byRun(layout);
   for (const n of [5, 6, 8]) assert.ok(nearest(link, runs.get(n)) >= 7, `2→7 passes ${nearest(link, runs.get(n))}px from run ${n}`);
-  // Run 2 stands at (88, 24) and run 7 at (344, 24): the lane lies at y = 24 + 19.
+  // Run 2 stands at (88, 24) and run 7 at (344, 24): the lane lies at y = 24 + 13.
   assert.deepEqual(segmentsOf(link), [
-    { c: 'C', p: [[94, 24], [116.4, 24], [110, 43], [132.4, 43]] },
-    { c: 'L', p: [[132.4, 43], [299.6, 43]] },
-    { c: 'C', p: [[299.6, 43], [322, 43], [315.6, 24], [338, 24]] },
+    { c: 'C', p: [[94, 24], [116.4, 24], [110, 37], [132.4, 37]] },
+    { c: 'L', p: [[132.4, 37], [299.6, 37]] },
+    { c: 'C', p: [[299.6, 37], [322, 37], [315.6, 24], [338, 24]] },
   ]);
 });
 
@@ -434,6 +434,47 @@ test('routing: no link passes within 7px of the centre of a dot other than its t
   assert.ok(drawn > 200 && skips > 50, `the graphs draw links, skipping columns too (${drawn}, ${skips})`);
 });
 
+/** Points of a segment no more than 1px apart: a cubic moves at most 3× its control polygon's length per unit of t. */
+function everyPixel(segment) {
+  const poly = segment.p.slice(1).reduce((sum, q, i) => sum + Math.hypot(q[0] - segment.p[i][0], q[1] - segment.p[i][1]), 0);
+  const n = Math.max(1, Math.ceil(3 * poly));
+  return Array.from({ length: n + 1 }, (_, k) => pointAt(segment, k / n));
+}
+const inside = ([x, y], b) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1;
+/** Every (link, run) pair where a skip link (its two curves, and its straight lane exactly) meets a run number's box (its
+ *  own ends' included) or the dot box of a run that is not one of its ends. */
+function laneThroughBoxes(layout) {
+  const runs = byRun(layout);
+  const out = [];
+  for (const link of layout.links) {
+    if (runs.get(link.to).col - runs.get(link.from).col <= 1) continue;
+    const segs = segmentsOf(link);
+    const points = segs.filter((s) => s.c === 'C').flatMap(everyPixel);
+    const meets = (box) => points.some((q) => inside(q, box)) || segs.filter((s) => s.c === 'L').some(({ p: [a, b] }) =>
+      a[1] >= box.y0 && a[1] <= box.y1 && Math.max(a[0], b[0]) >= box.x0 && Math.min(a[0], b[0]) <= box.x1);
+    for (const r of layout.runs) {
+      if (meets(labelBox(r))) out.push(`${link.from}→${link.to} meets the number of run ${r.index}`);
+      if (r.index !== link.from && r.index !== link.to && meets(dotBox(r))) out.push(`${link.from}→${link.to} meets the dot of run ${r.index}`);
+    }
+  }
+  return out;
+}
+
+// Direction d8776dd9f replaces slice 14's lane: a link that skips columns never passes through a run's number or dot.
+test('routing: on the 16-run data and the random graphs, no skip link meets any run\'s number box or a dot it does not join', async () => {
+  const { runOrderLayout } = await load();
+  let skips = 0;
+  const graphs = routedGraphs();
+  for (const [i, slices] of graphs.entries()) {
+    const layout = runOrderLayout(slices);
+    const runs = byRun(layout);
+    skips += layout.links.filter((l) => runs.get(l.to).col - runs.get(l.from).col > 1).length;
+    const name = i < Object.keys(ORDER_STATES).length ? `16 runs, ${Object.keys(ORDER_STATES)[i]}` : JSON.stringify(slices.map((s) => [s.index, s.buildsOn]));
+    assert.deepEqual(laneThroughBoxes(layout).slice(0, 5), [], name);
+  }
+  assert.ok(skips > 50, `skip links checked: ${skips}`);
+});
+
 test('routing: a link to the next column is one curve', async () => {
   let checked = 0;
   let across = 0;
@@ -448,7 +489,7 @@ test('routing: a link to the next column is one curve', async () => {
   assert.ok(checked > 200 && across > 50, `next-column links checked, across rows too (${checked}, ${across})`);
 });
 
-test('routing: every link that skips a column runs along the lane midway under its upper row', async () => {
+test('routing: every link that skips a column runs along the lane in the gap under its upper row', async () => {
   let checked = 0;
   let down = 0;
   let up = 0;
@@ -459,8 +500,8 @@ test('routing: every link that skips a column runs along the lane midway under i
     if (a.y > b.y) up += 1;
     const segs = segmentsOf(link);
     assert.deepEqual(segs.map((s) => s.c), ['C', 'L', 'C'], name);
-    // The mock's lane: min(from.top, to.top) + dot size + rowGap/2 − dot size/2.
-    const lane = Math.min(a.y - 6, b.y - 6) + 12 + 38 / 2 - 6;
+    // The free band between rows: below the upper row's kept ring (+ 11), above the lower row's number box (+ 16).
+    const lane = Math.min(a.y, b.y) + 13;
     const [x1, x2] = [a.x + 6, b.x - 6];
     const [ax, bx, pull] = [x1 + 0.6 * 64, x2 - 0.6 * 64, 0.35 * 64];
     assert.deepEqual(segs[1].p, [[tenth(ax), lane], [tenth(bx), lane]], `${name}: the horizontal run`);
@@ -488,9 +529,9 @@ test('routing: every link leaves the source dot\'s right edge and enters the tar
   assert.ok(checked > 200, `links checked: ${checked}`);
 });
 
-// Slice 9's "links that share no run never run together" is retired: the agreed mock's lane,
-// y = min(from.top, to.top) + dot + rowGap/2 − dot/2, puts every skip link under one row on the same line. A person
-// traces one link by pointing at its run (below): it is drawn last, thicker, and the other links dim.
+// Slice 9's "links that share no run never run together" is retired: the lane, y = the upper row's centre + 13, puts
+// every skip link under one row on the same line. A person traces one link by pointing at its run (below): it is drawn
+// last, thicker, and the other links dim.
 
 // ── change run ──
 test('change run: placed right of its builds-on run and drawn with the ink ring', async () => {

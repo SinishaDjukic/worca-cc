@@ -31,8 +31,9 @@ const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const pad2 = (n) => String(n).padStart(2, '0');
 
 /** Needs you (the Runs badge's items) and Running (the live runs that are not among them). */
-function splitRuns({ live = [], history = [], active = [] } = {}) {
-  const needs = needsYouItems({ live, history });
+function splitRuns({ live = [], history = [], active = [], groups = [] } = {}) {
+  // Slice 16: a run held for its turn (flag on: app.js passes `groups`) is not in Needs you; a live one lists as Running.
+  const needs = needsYouItems({ live, history, groups });
   const asking = new Set(needs.live.map((it) => it.runId));
   return { needs, running: active.filter((it) => it && !asking.has(it.runId)) };
 }
@@ -166,9 +167,9 @@ function scheduledGroups(tickets, schedules, { now, tz, placeOf }) {
  */
 export function activityModel({
   live = [], history = [], active = [], designs = [], tickets = null, schedules = null, now = Date.now(), tz = undefined,
-  placeOf = (x) => x.projectKey || '',
+  placeOf = (x) => x.projectKey || '', groups = [],
 } = {}) {
-  const { needs, running } = splitRuns({ live, history, active });
+  const { needs, running } = splitRuns({ live, history, active, groups });
   const design = designRows(designs);
   const needRows = [...needs.live.map((it) => liveRow(it, now)), ...needs.history.map((p) => histRow(p, now))]
     .sort(cmpNeeds).map((r) => runRow(r, 'need')).concat(design.needs);

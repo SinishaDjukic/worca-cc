@@ -32,7 +32,7 @@ import { runModel, groupModel, finishedNeedsYou, WATCH_WHY, RUN_STATES } from '.
 import { checkRowWords, checkRowDot } from '../../src/shared/shape/verifier.mjs';
 import { kindChip } from './run-kind.mjs';
 import { memberShortWord } from '../../src/shared/shape/run-agents.mjs';
-import { memberStatusOf } from '../../src/shared/shape/run-status.mjs';
+import { memberStatusOf, HELD_TURN_WORD } from '../../src/shared/shape/run-status.mjs';
 import { isNeedsYouHold } from '../../src/shared/shape/ship-ledger.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -268,20 +268,33 @@ export function needsYou({ kind = 'live', status = '', ask = false, unread = fal
   return !!unread && FAILED.has(s);
 }
 
+/** Slice 16 (owner direction): the pipeline ids of the marked features' members held for their turn (heldForTurn). */
+export function heldTurnPipelines(groups) {
+  const out = new Set();
+  for (const g of Array.isArray(groups) ? groups : []) {
+    if (!g || !g.smallRuns) continue;
+    for (const mb of Array.isArray(g.members) ? g.members : []) if (mb && mb.pipelineId && heldForTurn(mb)) out.add(String(mb.pipelineId));
+  }
+  return out;
+}
+
 /** The items Needs you holds: live items that need you, and History rows that do whose run is not
  *  listed live. countNeedsYou counts exactly these; the top bar's Activity lists them. */
-export function needsYouItems({ live = [], history = [] } = {}) {
+export function needsYouItems({ live = [], history = [], groups = [] } = {}) {
   const pids = new Set(live.map((r) => r && r.pipelineId).filter(Boolean));
+  // Slice 16 (owner direction): a run of a marked feature held for its turn does not need you (`groups` = GET
+  // /api/run-groups' groups, which app.js passes only with the flag on).
+  const held = heldTurnPipelines(groups);
   // D5: while a round of a run is working, that run is Working, never Needs you through its PR. A paused round is not
   // fixing anything: it counts for its pause, and its run for its PR (plan Task 3: 1 + 1).
   const fixing = new Set([...live, ...history].map((x) => {
     const m = roundMarkerOf(x);
     return m && FIXING_ROUND.has(String(x.status || '').toLowerCase()) ? String(m.pipelineId) : '';
   }).filter(Boolean));
-  const hist = history.filter((p) => p && !pids.has(p.id)
+  const hist = history.filter((p) => p && !pids.has(p.id) && !held.has(String(p.id))
     && needsYou({ kind: 'hist', status: p.status, prNeeds: prNeedsOf(p) && !fixing.has(String(p.id)) }));
   return {
-    live: live.filter((r) => r && needsYou({ kind: 'live', status: r.status, ask: !!r.ask, unread: !!r.unread })),
+    live: live.filter((r) => r && !held.has(String(r.pipelineId || '')) && needsYou({ kind: 'live', status: r.status, ask: !!r.ask, unread: !!r.unread })),
     // D8: a History row needs you through its PR only when done (a paused one for its pause); one item per open PR.
     history: dedupeByPr(hist, { prOnly: (p) => String(p.status || '').toLowerCase() === 'done',
       at: (p) => (Number.isFinite(stampMs(p.mtime)) ? stampMs(p.mtime) : stampMs(p.startedAt)) }).kept,
@@ -469,6 +482,22 @@ const posOf = (g) => (g.current && g.current === g.planning ? 'Planning' : g.cur
 const NEEDS_ICON = ['ask', 'paused', 'fail'];                                     // NEEDS_RANK order (cmpNeeds)
 const NEEDS_ICON_OF = { 'needs-you': 'ask', paused: 'paused', failed: 'fail' };
 
+/** Slice 16 (owner direction): a member of a marked feature (flag on: only then the server sends `slice`) whose answer
+ *  or resume the person already gave and that is only held for its turn. It does not need the person. */
+export function heldForTurn(mb) {
+  const sl = mb && mb.slice && typeof mb.slice === 'object' ? mb.slice : null;
+  if (!sl) return false;
+  return (!!sl.heldResume && Number.isInteger(sl.heldResume.after)) || (!!sl.stop && typeof sl.stop === 'object' && !!sl.stop.held);
+}
+const capFirst = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Slice 16 (D7): a held member that is not the current one, said once on the group line: "Run 4 waiting for its turn". */
+function heldWhy(row) {
+  const members = row.members || [];
+  const mb = members.find((x) => x.model && x.model.heldTurn && x.model !== row.model.current);
+  return mb ? `Run ${mb.position || members.indexOf(mb) + 1} ${HELD_TURN_WORD}` : '';
+}
+
 /** D9: why a group sits in Needs you, said on its own row: "Run 1 needs you · Checks failing". '' when the group's
  *  own line already says it (the needing member is its current one and asks, pauses or failed itself). */
 function needsWhy(row) {
@@ -499,6 +528,9 @@ export function listLine(row, { section = '', time = '' } = {}) {
     // Slice 11 (D7): a Verifier round that holds the group names itself, in every section.
     if (m.check) return and(m.line, time);
     if (row.needs) { const why = needsWhy(row); if (why) return why; }
+    { const held = heldWhy(row); if (held) return held; }
+    // Slice 16 (D7): the current member is held for its turn: "Waiting for its turn · Run 4", in every section.
+    if (m.current && m.current.heldTurn && (m.state === 'paused' || m.state === 'needs-you')) return and(capFirst(HELD_TURN_WORD), p, stage);
     // The short form only where the section already says the state; a paused or waiting group keeps its word.
     if ((section === 'needs' && (m.state === 'needs-you' || m.state === 'failed'))
       || (section === 'running' && (m.state === 'working' || m.state === 'starting'))) return and(p, stage) || m.word;
@@ -570,7 +602,7 @@ export function costTitle(r) {
 function groupModelOf(g, { now = Date.now() } = {}) {
   // The badge reads GET /api/run-groups' groups as sent: their members carry a top-level status, no `run`.
   const runOf = (mb) => mb.run || (mb.status ? { status: mb.status } : {});
-  const raw = (g.members || []).map((mb) => ({ ...runOf(mb), memo: mb.memo || null }));
+  const raw = (g.members || []).map((mb) => ({ ...runOf(mb), memo: mb.memo || null, ...(heldForTurn(mb) ? { heldTurn: true } : {}) }));
   const planningRaw = g.planning ? { ...runOf(g.planning), memo: g.planning.memo || null } : null;
   return groupModel({ kind: g.groupKind === 'feature' ? 'feature' : 'chain', title: g.title, members: raw,
     planning: planningRaw, pr: g.pr || null, memo: g.memo || null, hold: g.hold || null, ...(Array.isArray(g.checks) ? { checks: g.checks } : {}) }, { now });
@@ -579,7 +611,8 @@ function groupModelOf(g, { now = Date.now() } = {}) {
 export function groupRow(g, { now = Date.now() } = {}) {
   const model = groupModelOf(g, { now });
   const members = (g.members || []).map((mb, i) => ({ ...mb, key: `member:${g.id}/${mb.pipelineId || mb.ticketId || i}`, model: model.members[i],
-    needs: needsYou({ kind: mb.kind || 'hist', status: mb.run && mb.run.status, ask: !!(mb.run && mb.run.pendingQuestion != null),
+    // Slice 16 (owner direction): a run held for its turn does not need you.
+    needs: !heldForTurn(mb) && needsYou({ kind: mb.kind || 'hist', status: mb.run && mb.run.status, ask: !!(mb.run && mb.run.pendingQuestion != null),
       prNeeds: prNeedsOf(mb.run) }) }));
   const planning = g.planning ? { ...g.planning, key: `member:${g.id}/planning`, model: model.planning } : null;
   // `cur` also matches Planning, so the row's runId / pipelineId / href point at the planning run while it is the
@@ -843,7 +876,9 @@ export function buildRunsModel({
   const groupOf = (r) => groupRows.find((x) => rowChainKeys(r).some((k) => x.memberKeys.has(k))) || null;
   // Needs before the fold (runs-list-needs-before-collapse): a member that needs you raises its group.
   // The raised group also takes the member's needs icon, so cmpNeeds ranks it (a live failed-unread member counts too).
-  for (const r of rows0) { const g = r.needs ? groupOf(r) : null; if (g) { g.needs = true; g.needsIcon ||= r.needsIcon || r.icon || ''; } }
+  // Slice 16 (owner direction): a member held for its turn does not raise its group.
+  const heldPids = heldTurnPipelines(groups);
+  for (const r of rows0) { const g = r.needs && !heldPids.has(String(r.pipelineId || '')) ? groupOf(r) : null; if (g) { g.needs = true; g.needsIcon ||= r.needsIcon || r.icon || ''; } }
   const placed = new Set();
   const top = [];
   for (const r of rows0) {

@@ -17,6 +17,9 @@ import { groupModel } from '../src/shared/run-model.mjs';
 import * as LEDGER from '../src/shared/shape/ship-ledger.mjs';
 import * as VERIFIER from '../src/shared/shape/verifier.mjs';
 import { flagRowsHtml } from '../ui/public/flags-view.mjs';
+// Namespace reads: slice 16's held and refusal words are new exports.
+import * as RUN_STATUS from '../src/shared/shape/run-status.mjs';
+import { groupRow, listLine } from '../ui/public/runs-list.mjs';
 
 const EXCEPTION = 'Shaper small runs';   // the Labs entry's title
 const OLD_REASON = 'small runs ship a PR per run';
@@ -185,6 +188,32 @@ test('s8: the gap gate\'s texts say no small runs', () => {
   ].map((raw) => VERIFIER.verifyGateAnswer(stops[0], raw).error);
   const words = [...VERIFIER.GAP_ANSWERS.flatMap((a) => [a.label, a.sub]), ...stops.flatMap((s) => [s.head, s.text, ...s.options.flatMap((o) => [o.label, o.sub])]),
     ...refusals, LEDGER.shippedGapLine({ id: 'R-po-2', reason: 'covered by a later feature' }), LEDGER.shippedGapLine({ id: 'R-po-2' })];
+  assert.ok(words.every((w) => typeof w === 'string' && /\s/.test(w)), JSON.stringify(words));
+  assert.deepEqual(words.flatMap((w) => hits(JSON.stringify(w))), []);
+});
+
+// ── Slice 16 (R-qa-4): the held, refusal and cannot-start texts ───────────────────────────────────────────────
+test('s16: the held and refusal texts say no small runs', () => {
+  for (const name of ['resumeWhy', 'resumeNote', 'heldResumeNote', 'heldResumeTitle']) {
+    assert.equal(typeof RUN_STATUS[name], 'function', `run-status.mjs exports ${name}`);
+  }
+  const replies = [
+    { ok: true, held: true, after: 3, saving: true }, { ok: true, held: true, after: 3 },
+    { code: 'TAKE_IN_REFUSED', error: 'runs 2 and 3 clash in a.mjs' }, { error: 'total cost limit reached' },
+  ];
+  const cannot = RUN_STATUS.runStatus({ slice: { index: 4, state: 'planned', cannotStart: { run: 3, reason: 'was canceled' } } }).word;
+  const refused = RUN_STATUS.runStatus({ slice: { index: 4, state: 'paused', resumeRefused: { code: null, error: 'total cost limit reached' } } }).word;
+  const line = (three) => {
+    const member = (position, status, slice = {}) => ({ position, title: `Slice ${position}`, pipelineId: `p${position}`, kind: 'hist',
+      run: { status }, slice: { index: position, state: status, ...slice } });
+    const row = groupRow({ id: 'f', groupKind: 'feature', title: 'Four runs', smallRuns: true,
+      members: [member(1, 'done'), member(2, 'done'), member(3, three), member(4, 'paused', { heldResume: { after: 3 } })] });
+    return [listLine(row, { section: 'needs' }), row.model.line];
+  };
+  const words = [...replies.map((r) => RUN_STATUS.resumeWhy(r)),
+    ...replies.flatMap((r) => { const n = RUN_STATUS.resumeNote(r, r.held ? 200 : 409); return [n.title === 'Waiting' ? n.detail : n.title, n.detail]; }),
+    RUN_STATUS.resumeLabel(null, { heldAfter: 3 }), RUN_STATUS.heldResumeNote(3), RUN_STATUS.heldResumeTitle(3), cannot, refused,
+    ...line('done'), ...line('running')];
   assert.ok(words.every((w) => typeof w === 'string' && /\s/.test(w)), JSON.stringify(words));
   assert.deepEqual(words.flatMap((w) => hits(JSON.stringify(w))), []);
 });

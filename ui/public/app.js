@@ -390,7 +390,7 @@ import { activeAgents, snapshotFromState } from './ask-run-card.mjs';
 import { mountRunAgents } from './shape/run-agents.mjs';
 import { mountRunFacts } from './shape/run-facts.mjs';
 import { runAgentRows, memberShortWord } from '../../src/shared/shape/run-agents.mjs';
-import { memberStatusOf, resumeAfterOf, resumeLabel } from '../../src/shared/shape/run-status.mjs';
+import { memberStatusOf, resumeAfterOf, resumeLabel, resumeNote } from '../../src/shared/shape/run-status.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
 import { mountNewRunAttach, newRunScope, jsonFetcher as attachFetcher } from './requirements-attach/entries.mjs';
@@ -408,7 +408,7 @@ import { shipWaitText, featureStateLine, paintFeatureLog } from './shape/feature
 import { featureCostModel } from './shape/feature-cost.mjs';
 import { stopLinesOf } from './shape/stop-list.mjs';
 import { renderReleaseRow } from './shape/release-row.mjs';
-import { featureFocusOf, focusFeatureControl, featureMenuItems } from './shape/feature-actions.mjs';
+import { featureFocusOf, focusFeatureControl, featureMenuItems, paintResumeMenuTurn } from './shape/feature-actions.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
 import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget, answerFieldOpen, smallRunsAsk } from './shape/step-card.mjs';
@@ -23102,6 +23102,7 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
   const prevLines = Array.isArray(r.logLines) ? r.logLines.slice() : [];
   const prevBtnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.textContent = ' Resuming…'; }
+  const shaper = shaperPress(pipelineId);
   showResumePending(pipelineId, true);
   try {
     const res = await fetch('/api/resume', {
@@ -23153,7 +23154,9 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
         settleFinishedParkedCopy(r, finishedAs, { navigate });
         return;
       }
-      throw new Error((data && data.error) || `HTTP ${res.status}`);
+      // Slice 16 (D5): a Shaper refusal says why in its own words.
+      const why = shaperResumeNote(shaper, data, res.status);
+      throw new Error(why ? why.detail : (data && data.error) || `HTTP ${res.status}`);
     }
     // Shaper small runs slice 7 (D16): the resume is held for its turn; nothing started, so the paused copy stays.
     if (data && data.held === true) {
@@ -23162,6 +23165,10 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
       // Slice 8 (d8-14): once held, the row and the run head say `after run N`; the Resume reads plain Resume.
       const heldLbl = btn && btn.querySelector('.rd-btn-label');
       if (heldLbl) heldLbl.textContent = resumeLabel(null);
+      // Slice 16 (D5, D10): say that it goes on later, and why; its menu says so at once (the hold's frame cleared the info).
+      const note = shaperResumeNote(shaper, data, res.status);
+      if (note) notify({ tone: note.tone, title: note.title, detail: note.detail, key: `resume-${runId}` });
+      if (shaper && btn) paintResumeMenuTurn(btn.closest('.btn-split')?.querySelector('.btn-split-menu') || null, data.after);
       return;
     }
     upsertRun({
@@ -28071,11 +28078,14 @@ function paintHdActions(screen, record, data) {
   // .hd-resume starts hidden in the template; the split follows it (as .rd-resume-split follows .rd-pause).
   if (split && resumeBtn) split.hidden = resumeBtn.hidden;
   // Slice 8 (d8-6, d8-8): a shown, not busy Resume names the run it would wait for.
-  if (resumeBtn && !resumeBtn.hidden && resumeBtn.dataset.resumeState !== 'busy') {
+  const resumeShown = !!resumeBtn && !resumeBtn.hidden && resumeBtn.dataset.resumeState !== 'busy';
+  if (resumeShown) {
     paintResumeAfter(btnLabelEl(resumeBtn), record.id, () => {
       if (histDetailState?.screen === screen) paintHdLive(screen, histDetailState.record, histDetailState.data);
     });
   }
+  // Slice 16 (D10): More ways to resume says the run waits for its turn, from the same slice info.
+  paintMenuTurn(screen.querySelector('.hd-resume-menu'), resumeShown ? heldTurnOf(record.id) : null);
 }
 // A live run in this tab has the last word (its frames are newer than any row). A parked one only ends, and a stop from
 // another tab or the CLI reaches only the row, so an ended row wins over it. (A resume mints a new, live run.)
@@ -28747,6 +28757,23 @@ function paintHdHeaderMeta(screen, record, data) {
 // detail template ships; fall back to the button itself for any caller that
 // passes a plain, icon-less button.
 function btnLabelEl(btn) { return btn.querySelector('.hd-btn-label') || btn; }
+/** Slice 16 (D10): the run its held resume waits for, from the loaded slice info: null when not held (or flag off),
+ *  undefined while the info is loading (the menu keeps what it says until it lands). */
+function heldTurnOf(pipelineId) {
+  if (!pipelineId || !flagOn('shaperSmallRuns')) return null;
+  const info = sliceInfoFor(pipelineId);
+  if (!info) return SLICE_INFO_PENDING.has(pipelineId) ? undefined : null;
+  return info.heldResume && Number.isInteger(info.heldResume.after) ? info.heldResume.after : null;
+}
+/** Slice 16 (D10): paint a More ways to resume menu's note, unless the slice info is still loading. */
+function paintMenuTurn(menu, heldAfter) {
+  if (heldAfter !== undefined) paintResumeMenuTurn(menu, heldAfter);
+}
+/** Slice 16 (D6): whether a press is a Shaper one: a run of a marked feature with the flag on, its slice info loaded.
+ *  Read at the press: the hold's own feature repaint clears the slice info before the reply lands. */
+const shaperPress = (pipelineId) => !!pipelineId && flagOn('shaperSmallRuns') && !!sliceInfoFor(pipelineId);
+/** Slice 16 (D5): the toast of a Shaper press that did not go on; null otherwise, so every other run keeps today's toast. */
+const shaperResumeNote = (shaper, body, status) => (shaper ? resumeNote(body, status) : null);
 /** Shaper small runs slice 8 (d8-6, d8-8): a paused run's Resume label from its slice info's `resumeAfter` (the server's
  *  preview). While the info is unknown (loading, or a failed /slice), a `Resume…` label is kept and any other becomes
  *  `Resume`. Written only when it differs. Flag off, no pipeline or no label: nothing. */
@@ -28779,6 +28806,7 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
   btn.dataset.resumeState = 'busy';
   const label = labelEl.textContent;
   labelEl.textContent = 'Resuming…';
+  const shaper = shaperPress(p.id);
   showResumePending(p.id, true);
   try {
     const res = await fetch('/api/resume', {
@@ -28823,13 +28851,19 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
         if (btn.isConnected) btn.focus({ preventScroll: true });   // Cancel: back to the Resume the user pressed
         return;
       }
-      throw new Error((data && data.error) || `HTTP ${res.status}`);
+      // Slice 16 (D5): a Shaper refusal says why in its own words.
+      const why = shaperResumeNote(shaper, data, res.status);
+      throw new Error(why ? why.detail : (data && data.error) || `HTTP ${res.status}`);
     }
     // Shaper small runs slice 7 (D16): the resume is held for its turn; nothing started, so the paused copy stays.
     if (data && data.held === true) {
       showResumePending(p.id, false);
       // Slice 8 (d8-14): once held, the row and the run head say `after run N`; the Resume reads plain Resume.
       btn.disabled = false; labelEl.textContent = resumeLabel(null); delete btn.dataset.resumeState;
+      // Slice 16 (D5, D10): say that it goes on later, and why; its menu says so at once (the hold's frame cleared the info).
+      const note = shaperResumeNote(shaper, data, res.status);
+      if (note) notify({ tone: note.tone, title: note.title, detail: note.detail, key: `resume-${p.id}` });
+      if (shaper) paintResumeMenuTurn(btn.closest('.btn-split')?.querySelector('.btn-split-menu') || null, data.after);
       return;
     }
     upsertRun({
@@ -41193,6 +41227,8 @@ function paintRdHeader(screen, r) {
       if (cur && cur.pipelineId === r.pipelineId) paintRdHeader(screen, cur);
     });
   } else if (lbl) lbl.textContent = paused ? 'Resume' : 'Pause';
+  // Slice 16 (D10): More ways to resume says the run waits for its turn, from the same slice info.
+  paintMenuTurn(screen.querySelector('.rd-resume-menu'), lbl && paused ? heldTurnOf(r.pipelineId) : null);
   // A total-budget pause is 403'd by the server until the window resets or the
   // limit is raised, so Resume is disabled up front.
   const totalBlocked = paused && r.pauseReason === 'cost_total' && budgetState.budget?.blocked;
@@ -41284,7 +41320,8 @@ function runsNeedsInput() {
     active: liveRuns().map((r) => ({ runId: r.runId })),
     designs: flagOn('design') ? designActivity.items() : [],
     // Slice 7 (owner direction): a feature held for your confirmation counts in the Runs badge, flag on only.
-    // Activity's lists and count read needsYouItems / activityCounts, which ignore `groups`.
+    // Activity's lists and count read needsYouItems / activityCounts: they leave out a run held for its turn (slice 16)
+    // and ignore the held-for-confirmation groups.
     groups: flagOn('shaperSmallRuns') ? state.runGroups || [] : [],
   };
 }
@@ -43130,6 +43167,8 @@ activityMenu = $('#topnav-activity') ? createActivityMenu({
     history: (Array.isArray(state.historyAll) ? state.historyAll : []).filter(Boolean).map(runsHistItem),
     active: liveRuns().sort(cmpTabRuns).map(runsLiveItem),
     designs: flagOn('design') ? designActivity.items() : [],
+    // Slice 16: a run held for its turn is not in Needs you, as on the Runs badge (flag on only).
+    groups: flagOn('shaperSmallRuns') ? state.runGroups || [] : [],
   }),
   loadSchedules: async () => {
     await withWorkspaces();                              // a workspace's ticket names its workspace

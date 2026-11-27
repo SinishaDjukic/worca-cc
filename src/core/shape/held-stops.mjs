@@ -205,7 +205,8 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     : Object.assign(new Error('this run is being resumed'), { code: 'RESUME_IN_FLIGHT', status: 409 }));
 
   /** Hold a resume of paused `pipelineId` while another run of its marked feature is going (flag on). → null (go on
-   *  now; a hold whose turn has come is dropped) | {ok:true, held:true, pipelineId, after}. While the pipeline is
+   *  now; a hold whose turn has come is dropped) | {ok:true, held:true, pipelineId, after} (plus `saving: true` when it
+   *  waits for a finished run's save, slice 16). While the pipeline is
    *  being resumed, its own held delivery (`opts.heldDelivery`) goes on and any other resume throws 409. When the turn
    *  is due and `ticket` is given, the pipeline is claimed (`ticket.claimed`) until `claimed` releases it. */
   function holdResume(pipelineId, opts = {}, ticket = null) {
@@ -221,6 +222,7 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     const where = { featureId: at.featureId, index: at.idx };
     const turn = turnOf(where);
     const after = turn.due ? savingRunOf(pipelineId, where) : turn.after;   // A1: a due turn still waits for a save
+    const saving = turn.due && after != null;     // slice 16 (D2): the hold waits for a finished run's save
     if (after == null) {
       const had = resumes.delete(pipelineId);
       if (ticket) { delivering.add(pipelineId); ticket.claimed = true; }
@@ -229,9 +231,9 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     }
     const { heldDelivery, ...kept } = opts;
     const was = resumes.get(pipelineId);
-    resumes.set(pipelineId, { pipelineId, featureId: at.featureId, index: at.idx, opts: kept, after });
+    resumes.set(pipelineId, { pipelineId, featureId: at.featureId, index: at.idx, opts: kept, after, saving });
     if (!was || was.after !== after) paintFeature(at.featureId);   // a ticket re-held each tick repaints once
-    return { ok: true, held: true, pipelineId, after };
+    return saving ? { ok: true, held: true, pipelineId, after, saving: true } : { ok: true, held: true, pipelineId, after };
   }
 
   /** Slice 3 (R-po-6, A5): the take-in check of a resume of paused `pipelineId`, before the run starts (after
@@ -250,9 +252,10 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     }
     if (v && v.status === 'wait') {
       const { heldDelivery, ...kept } = opts;
-      resumes.set(pipelineId, { pipelineId, featureId: at.featureId, index: at.idx, opts: kept, after: v.after });
+      // Slice 16 (D2): merging back counts as saving.
+      resumes.set(pipelineId, { pipelineId, featureId: at.featureId, index: at.idx, opts: kept, after: v.after, saving: true });
       paintFeature(at.featureId);
-      return { ok: true, held: true, pipelineId, after: v.after };
+      return { ok: true, held: true, pipelineId, after: v.after, saving: true };
     }
     if (!v || v.status !== 'clash') return null;
     refusedResumes.set(pipelineId, { code: 'TAKE_IN_REFUSED', error: v.reason });

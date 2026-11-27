@@ -160,9 +160,10 @@
 .chat-rc-members .run-members.is-one-line .run-member-title{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;}
 .chat-rc-members .run-members.is-one-line .run-member-main > :not(.run-member-title, .run-member-state){flex-basis:100%;}
 .chat-rc-members .run-member-state{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
-/* s4 (owner direction): an open stop's word reads amber ink, a failed run's red ink; every other word stays --ink-2. */
-.chat-rc-members .run-member[data-mark="ask"] .run-member-state{color:var(--amber-ink);}
-.chat-rc-members .run-member[data-mark="failed"] .run-member-state{color:var(--red-ink);}
+/* s4 (owner direction): an open stop's word reads amber ink, a failed run's red ink; every other word stays --ink-2.
+   Slice 16 (H4): the -strong shades, so both reach 4.5:1 on the light --bg (dark is the same value). */
+.chat-rc-members .run-member[data-mark="ask"] .run-member-state{color:var(--amber-ink-strong);}
+.chat-rc-members .run-member[data-mark="failed"] .run-member-state{color:var(--red-ink-strong);}
 /* Slice 6 (stop-list.mjs): every open stop and failed run, one line each before the question slot. A line is the run
    row's mark in the same 16px box and 32px line, then that run's own step card or its Resume (no dot class of its own). */
 .chat-rc-stops{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
@@ -246,8 +247,8 @@ div.gpage-runs .run-members.is-one-line > .run-member > .status-dot.has-ic{margi
 div.gpage-runs .run-members.is-one-line .run-member-main{flex-direction:row;flex-wrap:wrap;align-items:center;column-gap:8px;}
 div.gpage-runs .run-members.is-one-line .run-member-title{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;}
 div.gpage-runs .run-member-state{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
-div.gpage-runs .run-member[data-mark="ask"] .run-member-state{color:var(--amber-ink);}
-div.gpage-runs .run-member[data-mark="failed"] .run-member-state{color:var(--red-ink);}
+div.gpage-runs .run-member[data-mark="ask"] .run-member-state{color:var(--amber-ink-strong);}
+div.gpage-runs .run-member[data-mark="failed"] .run-member-state{color:var(--red-ink-strong);}
 @media (max-width:600px){
   div.gpage-runs .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content;}
   div.gpage-runs .run-members.is-table.is-one-line > .run-member{grid-template-areas:"dot num main pr";}
@@ -562,8 +563,8 @@ li.note-row{display:flex;gap:8px;border-top:1px solid var(--line);padding:6px 0;
 .srows.runs-members .runs-row-sub{flex:none;}
 .srows.runs-members .runs-row-right{flex:none;}
 /* s5 (D7): the sidebar's ask word in amber ink and its failed word in red ink, as on the card and the feature page. */
-.srows.runs-members .runs-item[data-mark="ask"] .runs-row-sub{color:var(--amber-ink);}
-.srows.runs-members .runs-item[data-mark="failed"] .runs-row-sub{color:var(--red-ink);}
+.srows.runs-members .runs-item[data-mark="ask"] .runs-row-sub{color:var(--amber-ink-strong);}
+.srows.runs-members .runs-item[data-mark="failed"] .runs-row-sub{color:var(--red-ink-strong);}
 /* D2 (D10): the Owns rows are one line: the id column fits R-arch-10 whole, the requirement text ellipsizes (the row's
    tooltip holds it all). The Agents rows keep 32px: a done row's detail that would wrap under its name is clipped. */
 .srows.run-facts{--row-id:6.4em;}

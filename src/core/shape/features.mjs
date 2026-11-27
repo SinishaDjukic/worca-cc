@@ -615,6 +615,11 @@ function stopWords(f, rows, slices, live) {
     if (l && l.heldResume) s.heldResume = { after: l.heldResume.after };   // slice 7 (D10), read by run-status.mjs (s8)
   }
   if (shaperSmallRunsOn()) {
+    // Slice 16 (D4): why a held resume did not go on at its turn, read by run-status.mjs.
+    for (const s of slices) {
+      const l = s.pipelineId ? live(s.pipelineId) : null;
+      if (l && l.resumeRefused) s.resumeRefused = { code: l.resumeRefused.code ?? null, error: l.resumeRefused.error };
+    }
     const holdsByIndex = new Map();
     const rowBySlice = new Map(rows.map((r) => [r.sliceId, r]));
     // Slice 3 (D2): every slice's direct builds-on runs, started ones too (run-status.mjs namedWaits reduces by them).
@@ -653,7 +658,7 @@ function stopWords(f, rows, slices, live) {
 }
 
 /** Small runs: what each slice's one short word reads (run-agents.mjs cardShortWord), from the rows alone (no full view):
- *  index → {kind, state, stop?, waitsFor?, cannotStart?, nextTurn?, buildsOn?, heldResume?, resumeAfter?}, the words featureView's slices carry. */
+ *  index → {kind, state, stop?, waitsFor?, cannotStart?, nextTurn?, buildsOn?, heldResume?, resumeAfter?, resumeRefused?}, the words featureView's slices carry. */
 export function sliceWords(featureId, { live = () => null } = {}) {
   const f = featureRow(featureId);
   if (!f) return new Map();
@@ -1017,7 +1022,10 @@ export function sliceOfPipeline(pipelineId, { live = () => null } = {}) {
   return { featureId: v.id, title: v.title, index: at.idx, total: v.total, sliceTitle: s ? s.title : '',
     state: s ? s.state : null, next: n ? { index: n.index, title: n.title, state: n.state } : null, ...(s && s.stop ? { stop: s.stop } : {}),
     ...(shaperSmallRunsOn() && smallRunsOfFeature(v.id)
-      ? { ...runFacts(v, at.idx, s), ...(s && Number.isInteger(s.resumeAfter) ? { resumeAfter: s.resumeAfter } : {}) } : {}) };
+      ? { ...runFacts(v, at.idx, s), ...(s && Number.isInteger(s.resumeAfter) ? { resumeAfter: s.resumeAfter } : {}),
+        // Slice 16 (D11): the run page's held words and refusal reason.
+        ...(s && s.heldResume ? { heldResume: { after: s.heldResume.after } } : {}),
+        ...(s && s.resumeRefused ? { resumeRefused: s.resumeRefused } : {}) } : {}) };
 }
 
 const branchOf = (pid) => (pid ? j(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(String(pid))?.branch, null) : null);

@@ -223,6 +223,24 @@ test('listLine: say each thing once (§3.1)', async () => {
   ]);
 });
 
+// Slice 16 (D16): the literals were captured by running this seed through groupRow + listLine in a
+// `git archive 217b540b4 ui/public src` copy; this tree gave the same ones before the slice's changes.
+test('s16 (R-qa-4): an unmarked feature\'s group line equals the checkpoint 217b540b4 output in every section', () => {
+  const working = { status: 'running', steps: [{ nodeId: 'n1', status: 'running' }], active: ['n1'] };
+  const paused = { status: 'paused' };
+  for (const [name, one, two, modelLine, line] of [
+    ['the paused run is current', { status: 'done' }, paused, 'Run 2 of 2 · paused', 'Paused · Run 2'],
+    ['the paused run is not current', working, paused, 'Run 1 of 2 · working', 'Run 2 paused'],
+    ['not current, on a cost limit', working, { status: 'paused', pauseReason: 'cost_pipeline' }, 'Run 1 of 2 · working', 'Run 2 paused · Cost limit'],
+  ]) {
+    const row = groupRow({ id: 'feat_plain', groupKind: 'feature', title: 'Two runs', members: [
+      { position: 1, title: 'Slice 1', pipelineId: 'u1', kind: 'hist', run: one },
+      { position: 2, title: 'Slice 2', pipelineId: 'u2', kind: 'hist', run: two }] }, { now: NOW });
+    assert.equal(row.model.line, modelLine, name);
+    for (const section of ['needs', 'running', '']) assert.equal(listLine(row, { section }), line, `${name}, section "${section}"`);
+  }
+});
+
 const LIVE3 = [liveIt('ask', { run: { status: 'running', pendingQuestion: { kind: 'plan' }, steps: [] }, ask: { kind: 'plan' } }),
   liveIt('w1', { run: { status: 'running', steps: [{ nodeId: 'n1' }], active: ['n1'] } }),
   liveIt('w2', { run: { status: 'running', steps: [{ nodeId: 'n1' }], active: ['n1'] } })];
@@ -1283,17 +1301,18 @@ test('s5 sidebar: a null word falls back to memberShortWord, then dev\'s line; t
   assert.equal(s5Sub(items.get(1)), s5Sub(dev.get(1)), 'a live run with no snapshot keeps today\'s staged line');
   assert.equal(items.get(1).querySelector('.runs-stage').outerHTML, dev.get(1).querySelector('.runs-stage').outerHTML);
   assert.equal(items.get(1).dataset.mark, 'live');
-  assert.equal(s5Sub(items.get(2)), 'waits for run 8', 'a run that cannot start keeps memberShortWord');
+  // Slice 16 (H5): a run that cannot start now has its own word, the reduced list plus the run that can never finish.
+  assert.equal(s5Sub(items.get(2)), 'cannot start · waits for run 3 (was canceled), 8', 'a run that cannot start names its cause');
   assert.equal(items.get(2).dataset.mark, 'faint');
   assert.ok(s5Dot(items.get(2)).classList.contains('is-grey-ring'));
 });
 
-test('s5 sidebar words (D7): the ask word reads --amber-ink and the failed word --red-ink; no other word is coloured', async () => {
+test('s5 sidebar words (D7): the ask word reads --amber-ink-strong and the failed word --red-ink-strong (slice 16, H4); no other word is coloured', async () => {
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const rule = (mark) => css.split('}').find((r) => r.includes('.srows.runs-members') && r.includes(`[data-mark="${mark}"]`) && r.includes('.runs-row-sub')) || '';
-  assert.match(rule('ask'), /color:\s*var\(--amber-ink\)/);
-  assert.match(rule('failed'), /color:\s*var\(--red-ink\)/);
+  assert.match(rule('ask'), /color:\s*var\(--amber-ink-strong\)/);
+  assert.match(rule('failed'), /color:\s*var\(--red-ink-strong\)/);
   assert.doesNotMatch(css, /\.runs-members[^{}]*\[data-mark="(?:after|ring|faint|done|live)"\][^{}]*\.runs-row-sub[^{}]*\{[^}]*color/);
 });
 

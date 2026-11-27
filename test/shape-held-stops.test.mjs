@@ -692,6 +692,8 @@ function resumeWorld({ paused = [6], mark = true, ...over } = {}) {
 const saved = (w, e) => { w.finish(e); e.settled = true; };
 const resumedRuns = (w) => w.resumed.map((r) => r.run);
 const heldAnswerTo = (pid, after) => ({ ok: true, held: true, pipelineId: pid, after });
+/** Slice 16 (D2): only a hold that waits for a finished run's save adds `saving: true`. */
+const savingAnswerTo = (pid, after) => ({ ...heldAnswerTo(pid, after), saving: true });
 
 test('s7: holdResume while run 4 works returns {held, after:4}; resume is not called; heldResumeOf reads {after:4}', () => withEnv(SMALL_ON, async () => {
   const w = resumeWorld();
@@ -1030,7 +1032,7 @@ test('A1: a held resume waits while run 4 is done but still saving; it goes once
   assert.deepEqual(w.held.heldResumeOf(pid), { after: 4 });
   assert.equal(statusOf(pid), 'paused');
   const painted = w.repaints.length;
-  assert.deepEqual(w.held.holdResume(pid, { by: 'local' }), heldAnswerTo(pid, 4), 'a ticket held again while run 4 saves');
+  assert.deepEqual(w.held.holdResume(pid, { by: 'local' }), savingAnswerTo(pid, 4), 'a ticket held again while run 4 saves');
   assert.deepEqual(w.held.heldResumeOf(pid), { after: 4 }, 'the hold is kept');
   assert.equal(w.repaints.length, painted, 'the same wait does not repaint again');
   w.e4.settled = true;
@@ -1046,7 +1048,7 @@ test('A1: a Resume press with the turn due while run 4 is still saving is held a
   w.finish(w.e4);
   const painted = w.repaints.length;
   const ticket = { claimed: false };
-  assert.deepEqual(w.held.holdResume(pid, { by: 'local' }, ticket), heldAnswerTo(pid, 4));
+  assert.deepEqual(w.held.holdResume(pid, { by: 'local' }, ticket), savingAnswerTo(pid, 4));
   assert.equal(ticket.claimed, false, 'nothing is claimed');
   assert.deepEqual(w.repaints.slice(painted), [w.f.id], 'the feature repaints once');
   assert.deepEqual(w.held.heldResumeOf(pid), { after: 4 });
@@ -1060,7 +1062,7 @@ test('A1: a finished run still merging back holds the resume too', () => withEnv
   const pid = w.pids[6];
   mergingBack(w, w.e4.pipelineId);
   w.runs.delete(w.e4.id);                             // no runs-map entry: only the row says it is still merging back
-  assert.deepEqual(w.held.holdResume(pid, { by: 'local' }), heldAnswerTo(pid, 4));
+  assert.deepEqual(w.held.holdResume(pid, { by: 'local' }), savingAnswerTo(pid, 4));
   await w.held.deliver();
   assert.deepEqual(w.resumed, [], 'run 4 is still merging back');
   assert.deepEqual(w.held.heldResumeOf(pid), { after: 4 });
@@ -1437,7 +1439,7 @@ test('A5: a wait verdict holds the resume behind the named run', () => withEnv(S
   const pid = w.pids[6];
   saved(w, w.e4);
   const painted = w.repaints.length;
-  assert.deepEqual(await press(w, pid, { by: 'local', heldDelivery: false }), heldAnswerTo(pid, 2));
+  assert.deepEqual(await press(w, pid, { by: 'local', heldDelivery: false }), savingAnswerTo(pid, 2), 'a merging-back wait is a saving hold');
   assert.deepEqual(w.held.heldResumeOf(pid), { after: 2 });
   const live = w.held.overlay(pid, null);
   assert.deepEqual([live?.heldResume, live?.resuming, live?.resumeRefused], [{ after: 2 }, undefined, undefined]);
@@ -1487,6 +1489,75 @@ test('A5: flag off, an unmarked feature, no feature or no resumeTakeIn dep never
     const control = checkedWorld({ verdict: () => ({ status: 'none', skipped: [] }) });
     await control.held.takeInBeforeResume(control.pids[6], { by: 'local' });
     assert.deepEqual(control.checked, [control.pids[6]], 'positive control: marked, flag on');
+  });
+});
+
+// ── Slice 16 (R-qa-4): the server says a hold is for a save, and carries why a resume was refused onto the slice ──
+const COST_RECORD = { code: null, error: 'pipeline cost limit reached' };
+
+test('s16 D2: a turn hold\'s reply keeps its exact shape, with no saving key, also while another finished run is still saving', () => withEnv(SMALL_ON, () => {
+  const w = resumeWorld();
+  const pid = w.pids[6];
+  const e3 = w.entry(3, 'running');
+  w.finish(e3);                                       // run 3 done and still saving; run 4 still works: the turn is not due
+  const reply = w.held.holdResume(pid, { by: 'local' });
+  assert.deepEqual(reply, heldAnswerTo(pid, 4));
+  assert.equal('saving' in reply, false);
+}));
+
+test('s16 D2: a press while run 4 is done and still saving answers saving: true after run 4', () => withEnv(SMALL_ON, () => {
+  const w = resumeWorld();
+  const pid = w.pids[6];
+  w.finish(w.e4);                                     // done, its teardown not settled
+  assert.deepEqual(w.held.holdResume(pid, { by: 'local' }), { ok: true, held: true, pipelineId: pid, after: 4, saving: true });
+  assert.deepEqual(w.held.heldResumeOf(pid), { after: 4 }, 'the hold itself reads as before');
+}));
+
+test('s16 D4: after a held resume refused on cost at its turn, the view and the run words carry resumeRefused {code, error}', () => withEnv(SMALL_ON, async () => {
+  const { w, pid } = await refusedOnCost();
+  assert.deepEqual(viewSlice(w, 6).resumeRefused, COST_RECORD);
+  assert.deepEqual(sliceWords(w.f.id, { live: w.liveSliceOf }).get(6).resumeRefused, COST_RECORD, 'the words every surface carries');
+  assert.deepEqual(featureView(w.f.id, { live: w.liveSliceOf }).slices.filter((s) => 'resumeRefused' in s).map((s) => s.index), [6]);
+  assert.deepEqual(features.sliceOfPipeline(pid, { live: w.liveSliceOf }).resumeRefused, COST_RECORD, "the run's own /slice answer (D11)");
+  w.held.holdResume(pid, { by: 'local' });            // the next Resume replaces the reason
+  assert.equal('resumeRefused' in viewSlice(w, 6), false);
+}));
+
+test('s16 D4: a clash press carries its record onto the slice', () => withEnv(SMALL_ON, async () => {
+  const w = checkedWorld();
+  const pid = w.pids[6];
+  saved(w, w.e4);
+  await refusedPress(w, pid);
+  assert.deepEqual(viewSlice(w, 6).resumeRefused, CLASH_RECORD);
+  assert.deepEqual(features.sliceOfPipeline(pid, { live: w.liveSliceOf }).resumeRefused, CLASH_RECORD);
+}));
+
+test("s16 D11: while a resume is held, the run's /slice answer carries heldResume {after}", () => withEnv(SMALL_ON, () => {
+  const w = resumeWorld();
+  const pid = w.pids[6];
+  assert.equal('heldResume' in features.sliceOfPipeline(pid, { live: w.liveSliceOf }), false, 'not held yet');
+  w.held.holdResume(pid, { by: 'local' });
+  assert.deepEqual(features.sliceOfPipeline(pid, { live: w.liveSliceOf }).heldResume, { after: 4 });
+}));
+
+test('s16 D4, D11: flag off, no slice carries resumeRefused and the /slice answer neither it nor heldResume', async () => {
+  let refused = null;
+  let held = null;
+  await withEnv(SMALL_ON, async () => {
+    refused = await refusedOnCost();
+    held = resumeWorld();
+    held.held.holdResume(held.pids[6], { by: 'local' });
+    assert.ok(viewSlice(refused.w, 6).resumeRefused, 'positive control: flag on');
+    assert.ok(features.sliceOfPipeline(held.pids[6], { live: held.liveSliceOf }).heldResume, 'positive control: flag on');
+  });
+  await withEnv({ WORCA_FLAGS: undefined }, () => {
+    const { w, pid } = refused;
+    assert.equal('resumeRefused' in viewSlice(w, 6), false);
+    assert.equal('resumeRefused' in sliceWords(w.f.id, { live: w.liveSliceOf }).get(6), false);
+    const at = features.sliceOfPipeline(pid, { live: w.liveSliceOf });
+    assert.deepEqual(['resumeRefused' in at, 'heldResume' in at], [false, false]);
+    const other = features.sliceOfPipeline(held.pids[6], { live: held.liveSliceOf });
+    assert.deepEqual(['resumeRefused' in other, 'heldResume' in other], [false, false]);
   });
 });
 

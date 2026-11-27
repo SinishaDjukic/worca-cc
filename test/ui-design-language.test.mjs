@@ -1300,3 +1300,20 @@ test('the .chat-rc-stop* rules: tokens only, no motion, no pill', () => {
     .filter(([, v]) => !v.split(/\s+/).every(small)).map(([p, v]) => where(r, `${p}:${v}`)));
   assert.deepEqual(pills, [], 'no radius above 8px, no pill, no circle');
 });
+
+// ---- Shaper slice 16 (R-qa-5): the coloured run row words use the stronger ink, so they read 4.5:1 on the light page ----
+test('s16: the six "waiting for you" and "failed" row word selectors use --amber-ink-strong / --red-ink-strong', () => {
+  const shape = readFileSync(join(ROOT, 'ui/public/shape/shape-it.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const hosts = [
+    (m) => `.chat-rc-members .run-member[data-mark="${m}"] .run-member-state`,
+    (m) => `div.gpage-runs .run-member[data-mark="${m}"] .run-member-state`,
+    (m) => `.srows.runs-members .runs-item[data-mark="${m}"] .runs-row-sub`,
+  ];
+  const shapeRules = rules(shape);
+  const got = hosts.flatMap((sel) => ['ask', 'failed'].map((mark) => [sel(mark),
+    shapeRules.filter((r) => splitTop(r.sel).some((x) => x.trim() === sel(mark)))
+      .flatMap((r) => decls(r.body, 'color').map(([, v]) => v.trim()))]));
+  const want = hosts.flatMap((sel) => [[sel('ask'), ['var(--amber-ink-strong)']], [sel('failed'), ['var(--red-ink-strong)']]]);
+  assert.deepEqual(got, want);
+});
+

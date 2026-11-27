@@ -325,11 +325,12 @@ test('S3-T6 buildsOn: every flag-on slice carries its direct builds-on runs in b
   });
 });
 
-test('S3-T7 cannot start on the payload: a canceled dependency reads word null, mark faint, never next', () => withEnvVars(ON, () => {
+// Slice 16 (H5) replaces direction dd181c89f's word null: the row names the run that can never finish, with its cause.
+test('S3-T7 cannot start on the payload: a canceled dependency reads "cannot start · waits for run 3 (was canceled)", mark faint, never next', () => withEnvVars(ON, () => {
   const fx = world(root, { done: [1], states: { 2: { stop: 'requirement' } } });
   fx.cancelTicket(3);
   const { view, members } = views(fx);
-  for (const m of [view, members]) assert.deepEqual(statusOf(m, 4), { word: null, mark: 'faint' });
+  for (const m of [view, members]) assert.deepEqual(statusOf(m, 4), { word: 'cannot start · waits for run 3 (was canceled)', mark: 'faint' });
 }));
 
 // ── Slice 11 (R-po-6): the run page's links on the /slice answer ─────────────────────────────────────────────────────
@@ -1788,7 +1789,8 @@ test("R-po-6 example: run 4 resumed while run 3 is still saving waits, and start
   ten.h.pipeline = { id: pid, dir: join(root, `run-ten-resumed-${pid}`) };
   const s = resumingHeld(w, ten.h, [nine]);
 
-  assert.deepEqual(await s.resume(pid, { by: 'local' }), { ok: true, held: true, pipelineId: pid, after: 3 });
+  // Slice 16 (D2): run 3 is still saving, so the hold says so.
+  assert.deepEqual(await s.resume(pid, { by: 'local' }), { ok: true, held: true, pipelineId: pid, after: 3, saving: true });
   assert.deepEqual(s.held.overlay(pid, null)?.heldResume, { after: 3 }, 'run 4 reads as waiting');
   await s.held.deliver();
   assert.deepEqual(s.started, [], 'run 3 is still saving');

@@ -698,7 +698,7 @@ test('s4 card: a held slice with no `after` reads next with the turn, else no wo
   b.done();
 });
 
-test('s4 card: next draws the --ink ring, a free run without the turn no word and the grey ring, a cannot-start run keeps today\'s text', () => {
+test('s4 card: next draws the --ink ring, a free run without the turn no word and the grey ring, a cannot-start run names its list (s16 H5)', () => {
   const slices = [S(1, 'done'), S(2, 'planned', { nextTurn: true, buildsOn: [1] }), S(3, 'planned', { buildsOn: [1] }), S(4, 'planned', { cannotStart: true, waitsFor: [2], buildsOn: [2] })];
   const c = s4Card(slices);
   assert.equal(c.word(2), 'next');
@@ -706,9 +706,8 @@ test('s4 card: next draws the --ink ring, a free run without the turn no word an
   assert.equal(c.li(2).dataset.mark, 'ring');
   assert.equal(c.word(3), '');
   assert.ok(c.dot(3).classList.contains('is-grey-ring') && !c.dot(3).classList.contains('is-ink-ring'));
-  const off = s4Card(slices, { flag: false });
-  assert.equal(c.word(4), off.word(4), 'cannot start: today\'s text (D9: the card\'s short word)');
-  off.done();
+  // Slice 16 (H5) replaces "today's text": the row names the runs it waits for.
+  assert.equal(c.word(4), 'cannot start · waits for run 2');
   assert.ok(c.dot(4).classList.contains('is-grey-ring'));
   c.done();
 });

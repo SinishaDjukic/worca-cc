@@ -37,6 +37,8 @@ function controlsOf(view, cur, m) {
   // Slice 8 (d8-7): the halted run's Resume would wait for run N (the server's preview); the Verifier's has no slice.
   const haltedSlice = view.halted && Array.isArray(view.slices) ? view.slices[view.halted.index - 1] : null;
   const resumeAfter = haltedSlice && Number.isInteger(haltedSlice.resumeAfter) ? haltedSlice.resumeAfter : null;
+  // Slice 16 (D9): the halted run's Resume is held for its turn after run N.
+  const resumeHeld = haltedSlice && haltedSlice.heldResume && Number.isInteger(haltedSlice.heldResume.after) ? haltedSlice.heldResume.after : null;
   return {
     // C5: a halted Verifier is Resume too (resumeFeature starts a fresh check); Re-plan the rest stays the runs'.
     featureId: view.id, active, halted: active && (!!view.halted || (!!view.verify && view.verify.state === 'halted')),
@@ -49,6 +51,7 @@ function controlsOf(view, cur, m) {
       // server says the slice waits for an approval or answers.
       asks: (m && asks(m)) || cur.state === 'approval' || cur.state === 'questions' } : null,
     ...(resumeAfter !== null ? { resumeAfter } : {}),
+    ...(resumeHeld !== null ? { resumeHeld } : {}),
   };
 }
 
@@ -62,7 +65,7 @@ function shapingModel(own, log) {
  * @returns {{phase: 'shaping'|'feature', log: object[],
  *   step: {index: number|null, runId: string|null, pipelineId: string|null, kind: string, id: string|null, snap: object|null}|null,
  *   controls: {featureId: string, active: boolean, halted: boolean, rest: boolean, approveEach: boolean, planPipelineId: string|null,
- *     held: {index: number}|null, resumeAfter?: number,
+ *     held: {index: number}|null, resumeAfter?: number, resumeHeld?: number,
  *     target: {index: number, runId: string|null, pipelineId: string|null, status: string|null, asks: boolean}|null}|null,
  *   notesLine: string|null, watch: {text: string, prUrl: string|null}|null}}
  */

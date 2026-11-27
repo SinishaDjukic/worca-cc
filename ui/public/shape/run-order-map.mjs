@@ -3,8 +3,9 @@
 // (rows in run-number order); a change run that builds on nothing (added from the chat card or a run's stop) stands in the
 // column after the last run before it. It keeps only the links that still hold a run back (implied links left out
 // through `namedWaits`); once none holds a run back, every link is drawn faint. Links follow the agreed mock's routing
-// (R-ux-6): one curve to the next column; a link that skips columns runs in the lane midway under its upper row, never
-// within 7px of a dot it does not join. `renderRunOrderMap` paints it: the shared status dot per run over its row's base
+// (R-ux-6): one curve to the next column; a link that skips columns runs in the lane in the free gap under its upper row
+// (below its kept rings, above the next row's numbers: slice 16), never through a number nor within 7px of a dot it
+// does not join. `renderRunOrderMap` paints it: the shared status dot per run over its row's base
 // (a paused or stopped run shows the row's dot), its number above it, an SVG of the links, no motion but the live dot's
 // existing pulse. `markRunOrderMap` lights a pointed or kept run and its drawn links (the rows' bindRunLinks drives it).
 // The rows beside it stay the accessible source, so the map is aria-hidden and listens to nothing.
@@ -37,8 +38,9 @@ const pathOf = (segments) => [`M ${segments[0].p[0].join(' ')}`, ...segments.map
 /**
  * The agreed mock's link loop (plans/shaper-refresh/run-order-mock.html `paintMap`), in centre coordinates. From the
  * source dot's right edge to the target's left edge: to the next column, one cubic with both control points at the mid
- * x; skipping columns, a cubic down (or up) into the lane midway under the upper row, a straight run along it, and a
- * cubic out to the target.
+ * x; skipping columns, a cubic down (or up) into the lane under the upper row, a straight run along it, and a cubic
+ * out to the target. Slice 16 (direction d8776dd9f): the lane lies in the free band between rows, below the upper row's
+ * kept ring (+ RING_R) and above the lower row's number box (+ ROW_H − RING_R − LABEL_PX), at a whole y.
  */
 function route(a, b) {
   const [x1, y1, x2, y2] = [a.x + HALF, a.y, b.x - HALF, b.y];
@@ -46,7 +48,7 @@ function route(a, b) {
     const mid = (x1 + x2) / 2;
     return [{ c: 'C', p: [pt(x1, y1), pt(mid, y1), pt(mid, y2), pt(x2, y2)] }];
   }
-  const lane = Math.min(y1, y2) + ROW_H / 2;
+  const lane = Math.min(y1, y2) + Math.floor((ROW_H - LABEL_PX) / 2);
   const [inX, outX, pull] = [x1 + LANE_IN * COL_W, x2 - LANE_IN * COL_W, PULL * COL_W];
   return [
     { c: 'C', p: [pt(x1, y1), pt(x1 + pull, y1), pt(inX - pull, lane), pt(inX, lane)] },

@@ -547,3 +547,35 @@ test('s15 (R-qa-3): design-system.md\'s Do and don\'t has the row that keeps "sm
 test('s15 (R-po-4): design-system.md\'s Ship card notes says the state line describes Create and no reason line repeats it', () => {
   assert.deepEqual(missing(designPart('Ship card notes'), ['.ask-shipcard-stats', /describes Create/, /no reason line repeats it/i]), []);
 });
+
+// ---- Slice 16 (R-qa-4, R-qa-5): held and refused words, row word contrast, and the lane clear of every number ------
+const sentencesOf = (part) => part.split(/(?<=\.)\s+/);
+
+test('s16 (R-qa-4): Held resumes names the held words on the group line, in More ways to resume and on Resume, and one text per cause', () => {
+  assert.deepEqual(missing(smallPart('Held resumes'), [
+    'waiting for its turn', /group line/i, 'More ways to resume', /Waiting for its turn after run (?:N\b|\d)/, /`Waiting for its turn`/,
+    /Goes on after run (?:N\b|\d)/, /Run (?:N|\d+) is still saving its work/, /Run (?:N|\d+) holds the turn/, /clash/i,
+    'Not resumed: the cost limit is reached', 'not resumed: ',
+  ]), []);
+});
+
+test('s16: The run words table has a cannot start row and a not resumed row', () => {
+  const rows = (section(read('shape-it-first.md'), 'Small runs (`shaperSmallRuns`)').split('\n### The run words\n')[1] || '')
+    .split('\n### ')[0].split('\n').filter((l) => l.startsWith('|'));
+  assert.ok(rows.some((r) => /cannot start · waits for run (?:3|N) \(was canceled\)/.test(r)), 'a "cannot start · waits for run 3 (was canceled)" row');
+  assert.ok(rows.some((r) => /`not resumed: /.test(r)), 'a "not resumed: …" row');
+});
+
+test('s16 (R-qa-5): the guide\'s Colour part gives the row words "waiting for you" and "failed" the stronger inks, for 4.5:1 on --bg', () => {
+  assert.deepEqual(missing(designPart('Colour (checked)'), ['waiting for you', /\bfailed\b/, '--amber-ink-strong', '--red-ink-strong', /4\.5\s?:\s?1/, '--bg']), []);
+});
+
+test('s16: Show order and the guide\'s Run order map say the lane runs in the gap under its upper row, clear of every number', () => {
+  for (const [where, part] of [['shape-it-first.md Show order', smallPart('Show order')], ['design-system.md Run order map', designPart('Run order map (checked)')]]) {
+    const lane = sentencesOf(part).filter((s) => /\blane\b/i.test(s));
+    assert.ok(lane.some((s) => /\bgap\b/i.test(s)), `${where}: the lane runs in the gap`);
+    assert.ok(sentencesOf(part).some((s) => /\b(?:lane|link)\b/i.test(s) && /\b(?:clear of|never|no)\b[^.]*\bnumbers?\b/i.test(s)),
+      `${where}: no link passes through a number`);
+    assert.doesNotMatch(part, /lane midway under its upper row/i, `${where}: the old lane rule is gone`);
+  }
+});

@@ -19,6 +19,7 @@ a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`,
 | violet | `--violet*` | Labs only (the merged status dot, the merged run orb and the run page route's merged circle `.rd-route-dot.is-merged` and merged words `.rd-fact-tx.is-merged` are the named exceptions, as is workflow tests' "Can be checked exactly" line under a criterion `.wft-crit-meta.is-exact` and the "Worca suggests" box `.wft-sugg` with its tag `.wft-sugg-tag`, and the "Can be checked exactly" pill `.wft-exact` in Compare by criterion (an exact check, without AI); the Marketplace chat kind tile and dot follow its kind colours, › Marketplace exceptions) | sources, "Official", policy, a badge, a chart series |
 | slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
 Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
+Shaper run row words: `waiting for you` takes `--amber-ink-strong` and `failed` `--red-ink-strong`, so both reach 4.5:1 on the page ground `--bg` (5.38:1 and 5.08:1 light; dark is the same value).
 Working and needs you must read as two states at dot size; `--peach` stays one orange.
 Surfaces: `--panel` page, `--surface` raised, `--field` field and tint fill; `--line` dividers, `--line-2` control borders.
 `--row-selected` is `--ink` at 8% over transparent (no new hue): the selected Runs row, one ink step over whatever it
@@ -271,7 +272,7 @@ has a `[data-link…]` attribute without a row here.
 The still order of a branching small-runs feature: one status dot per run, each in a column right of every run it
 builds on (rows in run-number order), and only the links that still hold a run back, routed as the agreed mock
 (`plans/shaper-refresh/run-order-mock.html`): a link to the next column is one curve, and a link that skips columns curves
-into the lane midway under its upper row, runs along it and curves out, never within 7px of a dot it does not join. The module is `ui/public/shape/run-order-map.mjs`
+into the lane in the gap under its upper row (below its dots, above the next row's numbers), runs along it and curves out, crossing a row only between columns: no link passes through a number, nor within 7px of a dot it does not join. The module is `ui/public/shape/run-order-map.mjs`
 (`runOrderLayout` is the pure layout, `renderRunOrderMap` the painter, `markRunOrderMap` the marks), tested by `test/ui-shape-run-order-map.test.mjs`.
 Geometry is fixed px (§Charts, no `viewBox` scaling). A dot is the shared status dot through `markDot`, never a class of
 its own, and the only motion is the live dot's pulse. The map is `aria-hidden` and never a tab stop: the run rows beside

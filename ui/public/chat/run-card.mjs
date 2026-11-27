@@ -28,7 +28,7 @@ import { paintRunStatus, statusText, kindLabel, syncActions, pauseResumeOwn, ren
 import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
 import { cardShortWord } from '../../../src/shared/shape/run-agents.mjs';
-import { resumeAfterOf, resumeLabel, runStatus } from '../../../src/shared/shape/run-status.mjs';
+import { heldAfterOf, heldResumeTitle, resumeAfterOf, resumeLabel, runStatus } from '../../../src/shared/shape/run-status.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { featureCardModel, oneCardModel, paintFeatureLog, needYouText } from '../shape/feature-card.mjs';
 import { buildCheckRows } from '../shape/check-row.mjs';
@@ -1017,8 +1017,11 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // Item 10: while a stop is open its question's primary is the card's one primary. The foot keeps only Stop; every
     // other action it would draw moves into the feature ⋯ (only where there is one: a feature's controls).
     const moved = stopOpen && fc ? ((m && m.actions) || []).filter((id) => id !== 'stop' && !baseSkip.includes(id)) : [];
-    // Slice 11 (d11-2): the footer's Resume acts on target(), so it reads that run's slice preview.
-    const resumeText = fc && fview ? resumeLabel(resumeAfterOf(fview.slices, target().pipelineId)) : '';
+    // Slice 11 (d11-2): the footer's Resume acts on target(), so it reads that run's slice preview. Slice 16 (D9): held for
+    // its turn, it reads so and is disabled with its reason (pressing it again would only hold it again); Stop stays.
+    const heldAfter = fc && fview ? heldAfterOf(fview.slices, target().pipelineId) : null;
+    if (heldAfter !== null) disable.resume = heldResumeTitle(heldAfter);
+    const resumeText = fc && fview ? resumeLabel(resumeAfterOf(fview.slices, target().pipelineId), { heldAfter }) : '';
     syncActions(footActions, m, {
       own,
       // Small runs C3 (R-ux-4): a stop answers only through its own question (open or held), never the foot's Answer.

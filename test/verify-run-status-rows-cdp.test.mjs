@@ -246,3 +246,29 @@ test('the order surface hovers and keeps run 3, measures the rendered links, che
     assert.ok(s.includes(w), w);
   }
 });
+
+// ── Slice 16 (R-qa-5, d8776dd9f): contrast from computed styles, numbers in the map check, and the held shots ───────
+test('s16: it measures the "waiting for you" and "failed" words\' contrast against the computed --bg and fails under 4.5', () => {
+  const s = src();
+  assert.match(s, /background:\s*var\(--bg\)/, 'the ground is read from a probe painted var(--bg)');
+  assert.match(s, /4\.5/, 'the floor');
+  assert.ok(s.includes('run-status-rows-contrast.json'), 'each word\'s mark, colour, --bg and ratio are written');
+  assert.match(s, /var\(--amber-ink-strong\)/, 'the ask word is expected in --amber-ink-strong');
+  assert.match(s, /var\(--red-ink-strong\)/, 'the failed word is expected in --red-ink-strong');
+  assert.doesNotMatch(s, /tone\(\s*['"]var\(--(?:amber|red)-ink\)['"]\s*\)/, 'no colour check against the weaker inks');
+});
+
+test('s16: the map check fails a link that meets a run number, and says the lane runs between rows', () => {
+  const s = src();
+  assert.match(s, /\.nBox\b/, 'the number boxes are checked, not only read');
+  assert.doesNotMatch(s, /lane may pass behind a lower row/, 'numbers are no longer excused');
+  assert.doesNotMatch(s, /cut by a lower row/, 'the known difference is gone');
+  assert.match(s, /gap between rows/, 'the order vs mock line names the new lane');
+});
+
+test('s16: it shoots the held group line, Resume, menu and toasts, the refused row and a run that cannot start', () => {
+  const s = src();
+  for (const w of ['runs-group-held-', 'chat-resume-held-', 'resume-menu-held-', 'resume-held-toast-', 'resume-refused-',
+    'rows-refused-', 'rows-cannot-start-']) assert.ok(s.includes(w), w);
+  assert.match(s, /\/api\/resume/, 'the hold and the refusal come from a real resume');
+});
