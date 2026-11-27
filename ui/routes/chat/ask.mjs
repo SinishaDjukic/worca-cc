@@ -131,12 +131,21 @@ app.get('/api/ask/worktrees', async (req, res) => {
       capacity: out.capacity, used: out.used, idleDays: IDLE_DAYS,
       items: out.items.map(({ path: _path, ...v }) => {
         const canDiscard = askThreadVisible({ createdBy: v.createdBy }, req);
-        // Someone who cannot discard it never needs the file names and commit subjects of another person's work.
+        const own = !viewer || v.createdBy === viewer;
+        // Someone who cannot view/discard it never needs another person's chat metadata.
+        if (!canDiscard) {
+          const { createdBy: _createdBy, title: _title, ref: _ref, projectKey: _projectKey, ...safe } = v;
+          return {
+            ...safe,
+            lost: { dirtyFiles: [], commits: [], truncated: false, fingerprint: '' },
+            canDiscard,
+            own,
+          };
+        }
         return {
           ...v,
-          ...(canDiscard ? {} : { lost: { dirtyFiles: [], commits: [], truncated: false, fingerprint: '' } }),
           canDiscard,
-          own: !viewer || v.createdBy === viewer,
+          own,
         };
       }),
     });
