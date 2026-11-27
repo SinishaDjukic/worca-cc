@@ -10843,7 +10843,7 @@ export class RunHarness extends EventEmitter {
     let tip = check.heads[0];
     for (const [i, d] of missing.entries()) {
       if (stopping()) { await undo(); return refuse(pausing); }
-      const r = await merge(dir, { feature: info.branch, baseSha: check.heads[i + 1], headSha: tip, baseRef: d.branch });
+      const r = await merge(dir, { feature: info.branch, baseSha: check.heads[i + 1], headSha: tip, baseRef: d.branch, runIdentity: true });
       if (!r || !r.ok) {
         await undo();
         return refuse(`could not take in the work of run ${d.index} (${d.branch}): ${(r && r.kind) || 'failed'}`);

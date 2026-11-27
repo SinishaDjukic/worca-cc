@@ -277,7 +277,7 @@ export async function combineDependencies(dir, { featureId, index, branch, sourc
   let tip = begin;
   let at = null;                                   // the checkout an earlier merge ran in
   for (const [i, d] of missing.entries()) {
-    const r = await merge(dir, { feature: branch, baseSha: v.check.heads[i + 1], headSha: tip, baseRef: d.branch });
+    const r = await merge(dir, { feature: branch, baseSha: v.check.heads[i + 1], headSha: tip, baseRef: d.branch, runIdentity: true });
     if (!r.ok) {
       // Never leave a partial combine: put the branch back at its start.
       if (tip !== begin) {

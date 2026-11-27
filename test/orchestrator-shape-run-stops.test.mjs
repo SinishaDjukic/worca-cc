@@ -209,7 +209,8 @@ test('flag on: the answer took in the finished same-base work, so dev\'s after-a
   const calls = [];
   const applies = await withFlag(true, async () => {
     const x = sliceRun(marked, { setup: (o) => { passing(o); o._takeInLatestFinished = async (a) => { calls.push(a); }; } });
-    assert.equal((await x.done).status, 'done');
+    const res = await x.done;
+    assert.equal(res.status, 'done', res.error);
     return x.orch._takesInBeforeAnswerNow();
   });
   assert.equal(applies, true, 'the fixture is a run that takes in before its answer');
