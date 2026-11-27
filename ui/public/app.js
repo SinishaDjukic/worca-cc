@@ -36717,8 +36717,34 @@ function featureRowStatus(row) {
 /** Small runs slice 7 (D9): the marked feature page's state line and need count, from the stored feature view and the
  *  members' live snapshots. */
 function featureLineOf(row) {
-  const snapOf = (pid) => { const mb = row.members.find((x) => x.pipelineId === pid); return (mb && mb.snap) || null; };
-  return { stateLine: featureStateLine(GROUP_PAGE.feature, { snapOf }), needCount: stopLinesOf(GROUP_PAGE.feature).length };
+  const snapOf = memberSnapOf(row);
+  return { stateLine: featureStateLine(GROUP_PAGE.feature, { snapOf }), needCount: stopLinesOf(GROUP_PAGE.feature, { snapOf }).length };
+}
+/** A group row's member snapshots by pipeline id (the feature page's state line, need count and stop list read them). */
+function memberSnapOf(row) {
+  return (pid) => { const mb = row.members.find((x) => x.pipelineId === pid); return (mb && mb.snap) || null; };
+}
+/** Slice 12 (D11): the Runs tab's stop list deps, the Chat card's wiring, built once per group page host. An opened
+ *  line's step card answers for that line's live run; a failed line's Resume posts the feature's resume route. `lines`
+ *  holds the last painted lines by key, so a delegate follows a resumed run. `focusOut` (D6) only notes the move: the
+ *  rows are repainted after the list, so paintGroupPageNow focuses them once the page has painted. */
+function groupStopDeps(gp) {
+  if (gp.__stopDeps) return gp.__stopDeps;
+  const lines = new Map();
+  const live = (key) => { const l = lines.get(key); return l && l.ref ? chatLiveRun(l.ref) : null; };
+  gp.__stopDeps = {
+    lines,
+    focusPending: false,
+    paintQuestion: chatPaintQuestion,
+    releaseQuestion: chatReleaseQuestion,
+    bindQuestion: (qHost, line) => delegateQuestion(qHost, {
+      question: () => { const r = live(line.key); return (r && r.pendingQuestion) || null; },
+      send: (payload) => { const r = live(line.key); if (r) void postAnswer(r, payload); },
+    }),
+    resume: (index) => chatRunControls.featureAct(GROUP_PAGE.featureId || GROUP_PAGE.id, 'resume', { index }),
+    focusOut: () => { gp.__stopDeps.focusPending = true; },
+  };
+  return gp.__stopDeps;
 }
 function paintGroupPageNow() {
   const { host, route, id, tab } = GROUP_PAGE;
@@ -36775,9 +36801,15 @@ function paintGroupPageNow() {
   // Slice 6 (D7): in a marked feature's layout, Log (it holds the step log) shows at every level; its Open logs rows stay
   // Expert-only (`expert`).
   const layout = route === 'feature' && GROUP_PAGE.requirements;
+  // Slice 12 (D9, D11): the marked feature's open stops, listed first on the Runs tab; while one is listed, the question
+  // slot shows no step card (its line is the way in).
+  const stops = layout ? stopLinesOf(GROUP_PAGE.feature, { snapOf: memberSnapOf(row) }) : null;
+  const stopDeps = layout ? groupStopDeps(host.__gp) : null;
+  if (stopDeps) { stopDeps.lines.clear(); for (const l of stops) stopDeps.lines.set(l.key, l); }
+  const listed = !!stops && stops.some((l) => !l.failed);
   paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: layout || levelAtLeast('expert'), labels,
     unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0, stackedOnly: route === 'feature' && GROUP_PAGE.stackedOnly,
-    requirements: layout, ...(layout ? { shortState: memberShortWord, status: featureRowStatus(row), ship: groupShipOf(GROUP_PAGE.feature), ...featureLineOf(row), order: (GROUP_PAGE.feature && GROUP_PAGE.feature.slices) || null,
+    requirements: layout, ...(layout ? { shortState: memberShortWord, status: featureRowStatus(row), ship: groupShipOf(GROUP_PAGE.feature), ...featureLineOf(row), stops, order: (GROUP_PAGE.feature && GROUP_PAGE.feature.slices) || null,
       expert: levelAtLeast('expert'), cost: featureCostModel(it, row.costUsd), markOpen: markOpen(GROUP_PAGE.feature),
       ...(typeof GROUP_PAGE.feature?.hasChat === 'boolean' ? { hasChat: GROUP_PAGE.feature.hasChat } : {}) } : {}) }, {
     onAction: (aid, b) => groupAction(row, aid, b),
@@ -36794,7 +36826,8 @@ function paintGroupPageNow() {
     },
     labelChip: (d, l) => labelChip(d, l, {}),
     onTab: (t) => { location.hash = t === 'runs' ? base : `${base}/${t}`; },
-    mountQuestion: (slot, mb) => paintGroupQuestion(slot, groupAsker(slot, row, mb)),
+    mountQuestion: (slot, mb) => paintGroupQuestion(slot, listed ? null : groupAsker(slot, row, mb)),
+    ...(stopDeps ? { stopDeps } : {}),
     answerLabel: () => answerLabelOf(host.__gp.querySelector('.gpage-question')),
     // Slice 11 (d11-2): the footer Resume acts on the group's current member, so it reads that member's slice preview.
     resumeLabel: () => {
@@ -36842,6 +36875,10 @@ function paintGroupPageNow() {
       return mb.runId || page.startsWith('#history/') ? `${page}/details/logs` : page;
     },
   });
+  if (stopDeps && stopDeps.focusPending) {
+    stopDeps.focusPending = false;
+    host.__gp.querySelector('.gpage-runs button, .gpage-runs a[href], .gpage-runs [tabindex]')?.focus();
+  }
   revealShipCard();
 }
 /** Slice 6 (D5): the Log tab's step log, the lines the Overview showed: a "Step log" heading and the list, or one muted

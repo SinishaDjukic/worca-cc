@@ -515,8 +515,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     },
   });
 
-  // Slice 6 (D10): built once; each open line mounts today's step card in its own host and, for asks that are not step
-  // cards (a Clarify renderer), the delegate answers for that line's own run with its current ask id.
+  // Slice 6 (D10): built once; the open line mounts today's step card in its own host and, for asks that are not step
+  // cards (a Clarify renderer), the delegate answers for that line's own run with its current ask id. Slice 12 (D6): a
+  // focus inside the only line, when it goes, moves to the foot once its actions are synced (paintActions runs last).
+  let focusFoot = false;
   const stopDeps = {
     paintQuestion: (r, host) => call(controls.paintQuestion, r, host),
     releaseQuestion: (host) => call(controls.releaseQuestion, host),
@@ -525,6 +527,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       send: (payload, pq) => { const l = stopByKey.get(line.key); if (l && l.ref) call(controls.answer, l.ref, pq.id, payload); },
     }),
     resume: (index) => (fm && fm.controls ? call(controls.featureAct, fm.controls.featureId, 'resume', { index }) : Promise.resolve({ ok: false })),
+    focusOut: () => { focusFoot = true; },
   };
 
   function paintAgents(s) {
@@ -1215,6 +1218,11 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     paintWatch(m, (fm && fm.watch) || rm.watch);
     paintFoot(s);           // labels and disabled rules only
     paintActions(lastM, s); // last: the model decides what shows
+    if (focusFoot) {
+      focusFoot = false;
+      const b = [...foot.querySelectorAll('button')].find((x) => !x.disabled && !x.closest('[hidden], .hidden'));
+      if (b) b.focus();
+    }
   }
 
   function relayout() { if (graph) graph.repaint(); if (zoom) zoom.repaint(); }

@@ -1642,3 +1642,142 @@ test('s7 R-arch-4: a chat-less feature\'s card pointers open its feature page', 
     }
   }
 });
+
+// ── Slice 12 (R-ux-5): the real app on the marked feature page: one line per open stop, one step card for the opened one ─
+const s12Stop = (run) => ({ id: `q${run}`, kind: 'gate', nodeId: 'n_review', issues: [], stop: { reason: 'check', run, node: 'n_review', pick: 'another',
+  head: `Run ${run} · one finding is open`, text: 'One finding is open.', findingsLine: '1 finding open', options: [
+    { value: 'another', label: 'Run another cycle', sub: 'One more fix cycle', go: 'Run another cycle', short: 'another cycle', payload: { decision: 'another' } },
+    { value: 'continue', label: 'Accept as is', sub: 'Ships with it', go: 'Accept as is', short: 'accepted', payload: { decision: 'continue' } }] } });
+const S12_CLARIFY = { id: 'q2', kind: 'clarify', nodeId: 'n_clarify', questions: [{ id: 'c1', question: 'Where?', options: ['Redis', 'Disk'] }] };
+const s12Slice = (index, state) => s7Sl(index, state, state === 'questions' ? s7Stop('check') : {});
+const S12_RUN_STATUS = { done: 'done', questions: 'running', running: 'running', paused: 'paused', error: 'error' };
+/** The marked feature page over `states` (run number → slice state). `asked` is the runs the view lists (default: the
+ *  runs at a stop), `failed` the listed runs that failed; every run that is not done is live in this tab, and a run at a
+ *  stop asks `question(run)`. */
+async function s12Open({ states, asked = null, failed = [], question = s12Stop } = {}) {
+  const numbers = Object.keys(states).map(Number);
+  const view = (at, list) => ({ ...s7Feature(list.map((i) => ({ ...s7Ask(i, failed.includes(i)), ...(at[i] === 'questions' && question(i).kind === 'clarify' ? { kind: 'questions', reason: null } : {}) }))),
+    total: numbers.length, done: numbers.filter((i) => at[i] === 'done').length, slices: numbers.map((i) => s12Slice(i, at[i])) });
+  let feature = view(states, asked || numbers.filter((i) => states[i] === 'questions'));
+  const groups = { groups: [{ ...GROUPS.groups[0], smallRuns: true, members: numbers.map((i) => ({ ...d3Member(i), status: S12_RUN_STATUS[states[i]], slice: s12Slice(i, states[i]) })) }] };
+  const posts = [];
+  const record = (url, o) => {
+    if (url === '/api/answer' || /^\/api\/runs\/[^/]+\/answer$/.test(url) || url === '/api/shape/features/feat_1/resume') {
+      posts.push({ url, body: JSON.parse(o.body) });
+      return json({ ok: true });
+    }
+    return null;
+  };
+  const { ctx } = await d3Boot({ feature: () => json(feature), groups, extra: record });
+  const live = numbers.filter((i) => states[i] !== 'done');
+  ctx.dispatch({ type: 'hello', runs: live.map((i) => ({ runId: `r${i}`, pipelineId: `p${i}`, title: `Slice ${i}`, projectDir: '/tmp/p', status: S12_RUN_STATUS[states[i]],
+    kind: 'run', startedAt: '2026-01-01T00:00:00Z', ...(states[i] === 'questions' ? { pendingQuestion: question(i) } : {}) })) });
+  // A Care plan run, so the page reads each member's live snapshot.
+  for (const i of live) ctx.dispatch({ type: 'state', runId: `r${i}`, id: `p${i}`, status: S12_RUN_STATUS[states[i]], steps: [], active: [],
+    stepper: { version: 2, template: { id: 'wf_shape_slice_req' }, careRun: { position: 'balanced' }, graph: { nodes: [], wires: [] } } });
+  await ctx.settle(6);
+  ctx.go('feature/feat_1');
+  await ctx.settle(12);
+  const doc = ctx.window.document;
+  const gp = () => pageOf(ctx).querySelector('.gpage');
+  const list = () => gp().querySelector('.gpage-panel[data-tab="runs"] > ol.chat-rc-stops');
+  const lines = () => [...(list()?.querySelectorAll(':scope > li.chat-rc-stop') || [])];
+  const line = (run) => lines().find((li) => li.dataset.run === String(run));
+  const press = async (run) => {
+    const b = line(run)?.querySelector('button.chat-rc-stop-line');
+    assert.ok(b, `run ${run}'s line is a button`);
+    b.focus();
+    b.click();
+    await ctx.settle(8);
+    return b;
+  };
+  /** Every drawn question on the page, wherever it sits (a stop card's own inner panel counts with its outer one). */
+  const cards = () => [...gp().querySelectorAll('.qpanel')].filter((p) => !p.parentElement.closest('.qpanel') && p.querySelector('.qopt, .qblock'));
+  const slot = () => gp().querySelector('.gpage-question');
+  const barAnswer = () => shownButtons(gp().querySelector('.gpage-actions')).filter((b) => b.dataset.modelAction === 'answer');
+  const chips = () => [...gp().querySelectorAll('.rd-title-row [data-need]')].map((c) => c.textContent);
+  const refresh = async (at, list2) => { feature = view(at, list2); ctx.dispatch({ type: 'shape-feature', id: 'feat_1' }); await ctx.settle(12); };
+  return { ctx, doc, gp, list, lines, line, press, cards, slot, barAnswer, chips, refresh, posts };
+}
+const S12_STATES = { 1: 'done', 2: 'questions', 3: 'questions', 4: 'questions', 5: 'paused' };
+
+test('R-ux-5 feature page: 3 stops and 1 paused run give 3 lines above the rows and no step card; opening the second line shows one step card, for that stop', async () => {
+  const p = await s12Open({ states: S12_STATES });
+  const panel = p.gp().querySelector('.gpage-panel[data-tab="runs"]');
+  assert.ok(p.list(), 'the feature page lists its stops');
+  assert.equal(panel.firstElementChild, p.list(), 'first in the Runs panel');
+  assert.deepEqual(p.lines().map((li) => li.dataset.run), ['2', '3', '4']);
+  assert.deepEqual(p.lines().map((li) => li.querySelector('.chat-rc-stop-text').textContent), ['Run 2 · plan approval', 'Run 3 · plan approval', 'Run 4 · plan approval']);
+  assert.equal(panel.querySelector('h1, h2, h3, h4, h5, h6, [role="heading"]'), null, 'no new heading');
+  assert.equal(p.cards().length, 0, 'no step card');
+  assert.equal(p.slot().hidden, true, 'the status card asks nothing: the lines are the way in');
+  assert.deepEqual(p.barAnswer(), []);
+  assert.deepEqual(p.chips(), ['3 need you']);
+  await p.press(3);
+  assert.equal(p.cards().length, 1);
+  assert.equal(p.cards()[0].closest('li.chat-rc-stop'), p.line(3));
+  assert.match(p.cards()[0].textContent, /Run 3 · one finding is open/);
+  assert.equal(p.slot().hidden, true);
+  const card = p.cards()[0];
+  p.ctx.dispatch({ type: 'state', runId: 'r2', id: 'p2', status: 'running', steps: [], active: [] });
+  await p.ctx.settle(6);
+  assert.equal(p.cards().length, 1, 'a run frame keeps the one card');
+  assert.equal(p.cards()[0], card);
+  const primary = shownButtons(card).filter((b) => b.classList.contains('btn-primary'));
+  assert.equal(primary.length, 1);
+  primary[0].click();
+  await p.ctx.settle(8);
+  assert.deepEqual(p.posts.map((x) => [x.body.runId, x.body.id, x.body.payload?.decision]), [['r3', 'q3', 'another']], 'one post, for run 3');
+  p.ctx.dispatch({ type: 'question-resolved', runId: 'r3', id: 'q3' });
+  await p.refresh({ ...S12_STATES, 3: 'running' }, [2, 4]);
+  assert.deepEqual(p.lines().map((li) => li.dataset.run), ['2', '4']);
+  assert.equal(p.cards().length, 0, 'no other line opens by itself');
+  assert.equal(p.slot().hidden, true);
+});
+
+test('S12 feature page: with a paused run as the current member, still no step card outside an opened line', async () => {
+  const p = await s12Open({ states: { 1: 'done', 2: 'paused', 3: 'questions', 4: 'questions', 5: 'questions' } });
+  assert.deepEqual(p.lines().map((li) => li.dataset.run), ['3', '4', '5']);
+  assert.equal(p.cards().length, 0);
+  assert.equal(p.slot().hidden, true);
+  assert.deepEqual(p.barAnswer(), []);
+  await p.press(4);
+  assert.equal(p.cards().length, 1);
+  assert.equal(p.cards()[0].closest('li.chat-rc-stop'), p.line(4));
+  assert.equal(p.slot().hidden, true);
+});
+
+test('S12 (D7) feature page: a paused run the view still lists gets no line, and the head counts only the listed lines', async () => {
+  const p = await s12Open({ states: S12_STATES, asked: [2, 3, 4, 5] });
+  assert.deepEqual(p.lines().map((li) => li.dataset.run), ['2', '3', '4']);
+  assert.deepEqual(p.chips(), ['3 need you']);
+});
+
+test('S12 (D11) feature page: a failed line\'s Resume posts the feature resume route for that run', async () => {
+  const p = await s12Open({ states: { 1: 'done', 2: 'questions', 3: 'error' }, asked: [2, 3], failed: [3] });
+  const resume = p.line(3)?.querySelector('button.chat-rc-stop-resume');
+  assert.ok(resume, 'the failed line has its Resume');
+  resume.click();
+  await p.ctx.settle(8);
+  assert.deepEqual(p.posts, [{ url: '/api/shape/features/feat_1/resume', body: { index: 3 } }]);
+});
+
+test('S12 (D11) feature page: a Clarify opened on its line is answered for that line\'s run', async () => {
+  const p = await s12Open({ states: { 1: 'done', 2: 'questions', 3: 'running' }, question: () => S12_CLARIFY });
+  assert.equal(p.cards().length, 0);
+  await p.press(2);
+  assert.equal(p.cards().length, 1);
+  p.line(2).querySelector('[data-qpanel-submit]').click();
+  await p.ctx.settle(8);
+  assert.deepEqual(p.posts.map((x) => [x.body.runId, x.body.id]), [['r2', 'q2']]);
+});
+
+test('S12 (D6) feature page: the only open line leaves with the focus inside: the focus lands on the Runs tab\'s rows', async () => {
+  const p = await s12Open({ states: { 1: 'done', 2: 'questions', 3: 'running' } });
+  const button = await p.press(2);
+  assert.equal(p.doc.activeElement, button);
+  await p.refresh({ 1: 'done', 2: 'running', 3: 'running' }, []);
+  assert.equal(p.lines().length, 0);
+  const runs = p.gp().querySelector('.gpage-runs');
+  assert.ok(runs.contains(p.doc.activeElement), `focus is on ${p.doc.activeElement.tagName}.${p.doc.activeElement.className}`);
+});

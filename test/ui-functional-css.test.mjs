@@ -338,8 +338,6 @@ test('slice 13: a stop line\'s step card cascades like the card question, banner
       bindQuestion: (qHost) => { fill(qHost.querySelector('.qpanel'), kind); return () => {}; },
       paintQuestion: () => null, releaseQuestion: () => {}, resume: async () => ({ ok: true }),
     });
-    const hosts = [...document.querySelectorAll('.chat-rc-stop-q')];
-    assert.equal(hosts.length, 3, `${kind}: one host per open line`);
     // The proof reads real values from the card question (so equal never means two unread ones).
     const own = slot.querySelector('.qpanel');
     // A clarify or form panel has no top padding of its own: its questions (or its fields) carry the 16px.
@@ -348,8 +346,16 @@ test('slice 13: a stop line\'s step card cascades like the card question, banner
     assert.equal(winning(slot.querySelector('.qpanel-foot'), 'flex-wrap').value, 'wrap', `${kind}: the card question's foot wraps`);
     assert.notEqual(winning(slot.querySelector('.step-head'), 'display').value, 'none', `${kind}: the card question keeps its step head`);
     assert.equal(winning(slot.querySelector('.qpanel-head'), 'display').value, 'none', `${kind}: the card question hides the banner`);
-    for (const host of hosts) {
-      const where = `${kind}, run ${host.closest('li').dataset.run}`;
+    for (const run of [2, 4, 11]) {
+      // Slice 12: a line mounts its step card when it is opened, and only one is mounted at a time.
+      const button = document.querySelector(`ol.chat-rc-stops li[data-run="${run}"] button.chat-rc-stop-line`);
+      assert.ok(button, `${kind}: run ${run}'s line is a button`);
+      button.click();
+      const hosts = [...document.querySelectorAll('.chat-rc-stop-q')];
+      assert.equal(hosts.length, 1, `${kind}: one host, for the opened line`);
+      const [host] = hosts;
+      assert.equal(host.closest('li').dataset.run, String(run), kind);
+      const where = `${kind}, run ${run}`;
       for (const sel of ['.qpanel-head', '.step-head']) {
         const w = winning(host.querySelector(sel), 'display');
         if (w.value !== 'none') bad.push(`${where}: ${sel} display is ${w.value} (by "${w.by}"), wants none`);
@@ -372,4 +378,47 @@ test('slice 13: a stop line\'s step card cascades like the card question, banner
   }
   document.body.innerHTML = '';
   assert.deepEqual(bad, []);
+});
+
+// Slice 12 (R-ux-5): the same list on the feature page, outside any chat card, and the line's chevron.
+async function s12Lines(html) {
+  const { paintStopList, stopLinesOf } = await import('../ui/public/shape/stop-list.mjs');
+  const asks = [{ index: 2, runId: 'r2', pipelineId: 'p2', id: 'q2', kind: 'gate', reason: 'check', failed: false, holdsUp: [] }];
+  document.body.innerHTML = html;
+  paintStopList(document, document.querySelector('ol.chat-rc-stops'), stopLinesOf({ asks, slices: [{ index: 2, state: 'questions', pipelineId: 'p2', buildsOn: [] }] }), {
+    bindQuestion: (qHost) => {
+      const panel = qHost.querySelector('.qpanel');
+      panel.classList.remove('hidden');
+      panel.innerHTML = '<div class="qpanel-head"><b>Plan ready</b></div><div class="step-head">Run 2</div>';
+      return () => {};
+    },
+    paintQuestion: () => null, releaseQuestion: () => {}, resume: async () => ({ ok: true }),
+  });
+  const button = document.querySelector('button.chat-rc-stop-line');
+  assert.ok(button, 'the line is a button');
+  return button;
+}
+
+test('S12: a stop line\'s step card on the feature page hides the renderer\'s banner and the step head', async () => {
+  const button = await s12Lines('<div class="gpage"><div class="gpage-panel" data-tab="runs"><ol class="chat-rc-stops"></ol></div></div>');
+  button.click();
+  for (const sel of ['.qpanel-head', '.step-head']) {
+    assert.equal(winning(document.querySelector(`.chat-rc-stop-q ${sel}`), 'display').value, 'none', sel);
+  }
+  document.body.innerHTML = '';
+});
+
+test('S12: a stop line has a third column for its chevron, in --ink-2, which turns down while the line is open', async () => {
+  const button = await s12Lines('<div class="ask-card chat-rc"><ol class="chat-rc-stops"></ol></div>');
+  const chev = button.querySelector('.chat-rc-stop-chev');
+  assert.ok(chev, 'the chevron');
+  assert.equal(winning(button, 'display').value, 'grid');
+  assert.match(winning(button, 'grid-template-columns').value || '', /^16px minmax\(0(px)?, ?1fr\) \S+$/, 'dot, text, chevron');
+  assert.equal(winning(chev, 'color').value, 'var(--ink-2)');
+  const turn = () => ['transform', 'rotate'].map((p) => winning(chev, p).value || '').filter((v) => v && v !== 'none').join(' ');
+  assert.equal(turn(), '', 'closed: it points right');
+  button.click();
+  assert.equal(button.getAttribute('aria-expanded'), 'true');
+  assert.match(turn(), /(rotate\()?90deg/, 'open: it points down');
+  document.body.innerHTML = '';
 });

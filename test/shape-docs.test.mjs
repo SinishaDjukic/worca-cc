@@ -434,3 +434,26 @@ test('s11: design-system.md\'s "Two row levels" paragraph describes the check ro
   assert.deepEqual(missing(flat(next < 0 ? rest : rest.slice(0, next)), [/check row/i, '.is-check', '--field', /shield/i,
     'RUN_MARK_DOTS', /checkbox/i, 'Ready to ship']), []);
 });
+
+// ---- Slice 12 (R-ux-5): closed stop lines, one step card, the feature page, paused runs, no Answer ------------------
+test('S12: Open stops on the card says lines open one step card and the feature page lists them, and a paused run has no line', () => {
+  const part = smallPart('Open stops on the card');
+  assert.ok(part, 'the "### Open stops on the card" part');
+  assert.deepEqual(missing(part, [/closed/i, /one step card/i, /feature page/i, /Runs tab/, /Answer is not shown while lines are listed/]), []);
+  const sentences = part.split(/(?<=\.)\s+/);
+  assert.ok(sentences.some((s) => /paused/i.test(s) && /\b(?:no (?:stop )?line|not a stop|gets no)\b/i.test(s)), 'a sentence says a paused run has no line');
+  assert.doesNotMatch(part, /The bar's Answer goes to the first line/);
+});
+
+test('S12: design-system.md\'s Open stop list names both hosts, the closed Row button, the one step card, paused runs and no Answer', () => {
+  const design = read('design-system.md');
+  const at = design.indexOf('\n### Open stop list (checked)\n');
+  assert.ok(at >= 0, 'the heading "### Open stop list (checked)"');
+  const rest = design.slice(at + 1);
+  const next = rest.indexOf('\n### ', 1);
+  const part = flat(next < 0 ? rest : rest.slice(0, next));
+  assert.deepEqual(missing(part, ['ui/public/group-page.mjs', 'ui/public/chat/run-card.mjs', /feature page/i, '.row-btn', '`.chat-rc-stop-chev`',
+    /closed/i, /(?:one|a single) step card/i, /paused/i, /Answer is not shown/i]), []);
+  assert.doesNotMatch(part, /Its only host is the Chat card/);
+  assert.doesNotMatch(part, /never show the list(?! on)[^.]*feature page|feature page and the Runs sidebar never show/);
+});

@@ -624,11 +624,11 @@ const S4_MEMBER = (sl) => (sl.state === 'done' ? { status: 'done', endReached: t
   : ['planned', 'held', 'canceled'].includes(sl.state) ? { ticket: { status: 'scheduled' } }
   : sl.state === 'error' ? { status: 'error' } : { status: 'running' });
 /** A marked feature card whose rows are `slices` (featureView slice payloads). `flag` is shaperSmallRuns. */
-function s4Card(slices, { flag = true, marked = true, snaps = {}, view = {}, controls: over = {} } = {}) {
+function s4Card(slices, { flag = true, marked = true, snaps = {}, view = {}, controls: over = {}, memberOf = S4_MEMBER } = {}) {
   const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
   const doc = dom.window.document;
   applyFlags({ shaperSmallRuns: flag }, doc);
-  const members = slices.map(S4_MEMBER);
+  const members = slices.map(memberOf);
   const v = VIEW(slices, { originPipelineId: 'p0', ...view });
   const cardJson = { pipelineId: 'p0', feature: v, log: [], ...(marked ? { smallRuns: true } : {}) };
   const rest = { source: 'rest', terminal: true, status: 'done', pipelineId: 'p0' };
@@ -805,8 +805,16 @@ const stopRow = (c, run) => stopRows(c).find((li) => li.dataset.run === String(r
 const stopTexts = (c) => stopRows(c).map((li) => li.querySelector('.chat-rc-stop-text').textContent);
 const qSecOf = (c) => c.built.el.querySelector(':scope > section.chat-rc-q');   // the card's own slot, never a stop line's host
 const tickOnce = () => new Promise((r) => setTimeout(r, 0));
+const stopButton = (c, run) => stopRow(c, run)?.querySelector('button.chat-rc-stop-line');
+/** Slice 12: press run `run`'s closed line; its step card mounts and any other open line closes. */
+function openStop(c, run) {
+  const b = stopButton(c, run);
+  assert.ok(b, `run ${run}'s line is a button`);
+  if (b.getAttribute('aria-expanded') !== 'true') b.click();
+}
+const stopCards = (c) => [...c.built.el.querySelectorAll('.chat-rc-stop-q')];
 
-test('S6 card busy: four stop lines with their step cards before the question slot, which stays hidden; run 5 has Resume', () => {
+test('S6 card busy: four lines, 0 step cards, and the slot stays hidden; opening run 4\'s line mounts its one step card', () => {
   const live2 = snap('p2', { pendingQuestion: { id: 'q2', kind: 'plan', plan: {}, stop: { reason: 'requirement', run: 2 } } });
   for (const snaps of [{}, { p2: live2 }]) {      // run 2 followed by pointer, then by a live snapshot of this tab
     const { controls } = s6Controls();
@@ -814,15 +822,21 @@ test('S6 card busy: four stop lines with their step cards before the question sl
     assert.deepEqual(stopTexts(c), S6_TEXTS);
     assert.equal(stopTexts(c)[0], 'Run 2 · plan approval · holds up 7, 8, 12, 15, 16');
     assert.equal(stopRow(c, 5).querySelector('.chat-rc-stop-resume').getAttribute('aria-label'), 'Resume run 5');
-    for (const r of [2, 4, 11]) {
-      assert.equal(stopRow(c, r).querySelectorAll('.qpanel .s6-approve').length, 1, `run ${r} has its own step card`);
-      assert.ok(!stopRow(c, r).querySelector('.qpanel').classList.contains('hidden'), `run ${r}`);
-    }
-    assert.equal(stopRow(c, 5).querySelector('.s6-approve'), null);
+    assert.equal(stopCards(c).length, 0, 'no step card while every line is closed');
+    assert.equal(c.built.el.querySelector('.s6-approve'), null);
     assert.equal(qSecOf(c).hidden, true);
-    assert.equal(qSecOf(c).querySelector('.s6-approve'), null, 'the slot never paints a listed run\'s step');
     const list = c.built.el.querySelector('ol.chat-rc-stops');
     assert.ok(list.compareDocumentPosition(qSecOf(c)) & c.win.Node.DOCUMENT_POSITION_FOLLOWING, 'the list comes before the slot');
+    openStop(c, 4);
+    assert.equal(stopCards(c).length, 1);
+    assert.equal(stopRow(c, 4).querySelectorAll('.qpanel .s6-approve').length, 1, 'run 4 has its step card');
+    assert.ok(!stopRow(c, 4).querySelector('.qpanel').classList.contains('hidden'));
+    assert.equal(c.built.el.querySelectorAll('.s6-approve').length, 1, 'and only run 4');
+    assert.equal(qSecOf(c).hidden, true);
+    assert.equal(qSecOf(c).querySelector('.s6-approve'), null, 'the slot never paints a listed run\'s step');
+    c.update({});                                   // a repaint keeps the open line
+    assert.equal(stopButton(c, 4).getAttribute('aria-expanded'), 'true');
+    assert.equal(c.built.el.querySelectorAll('.s6-approve').length, 1);
     c.done();
   }
 });
@@ -846,14 +860,17 @@ test('S6 approve run 4: its line answers run 4; the next view lists 2, 5 and 11 
   const { controls, log } = s6Controls();
   const c = s4Card(S6_SLICES, { view: asksView(), controls });
   assert.equal(stopRows(c).length, 4);
-  const [two, button2] = [stopRow(c, 2), stopRow(c, 2).querySelector('.s6-approve')];
+  const [two, button2] = [stopRow(c, 2), stopButton(c, 2)];
+  openStop(c, 4);
   const four = stopRow(c, 4);
   four.querySelector('.s6-approve').click();
   assert.deepEqual(log.answered, ['p4']);
   c.update(asksView([A2, A5, A11], { slices: S6_SLICES.map((x) => (x.index === 4 ? { ...x, state: 'running', stop: null } : x)) }));
   assert.deepEqual(stopTexts(c), [S6_TEXTS[0], S6_TEXTS[2], S6_TEXTS[3]]);
   assert.equal(stopRow(c, 2), two);
-  assert.equal(stopRow(c, 2).querySelector('.s6-approve'), button2);
+  assert.equal(stopButton(c, 2), button2);
+  assert.equal(button2.getAttribute('aria-expanded'), 'false', 'no other line opens by itself');
+  assert.equal(stopCards(c).length, 0);
   assert.ok(log.released.some((host) => four.contains(host)), 'run 4\'s host is released');
   assert.equal(qSecOf(c).hidden, true);
   assert.equal([...c.built.el.querySelectorAll('.chat-rc-receipt')].filter((r) => !r.hidden).length, 0);
@@ -879,6 +896,7 @@ test('S6 Clarify line: a question that is no step card is answered for its own r
   const q11 = s6Open(11, 'questions', null, [13, 14, 15, 16]);
   const c = s4Card(S6_SLICES, { view: { asks: [q4, q11], ask: q4 }, controls });
   assert.equal(stopRows(c).length, 2);
+  openStop(c, 11);
   stopRow(c, 11).querySelector('[data-qpanel-submit]').click();
   await tickOnce();
   assert.deepEqual(answered, [['r11', 'p11', 'q11', 'p11']], 'one post, for run 11');
@@ -887,6 +905,7 @@ test('S6 Clarify line: a question that is no step card is answered for its own r
   await tickOnce();
   assert.deepEqual(answered.at(-1), ['r11', 'p11', 'q11b', 'p11'], 'the new ask id');
   assert.equal(answered.length, 2);
+  openStop(c, 4);
   stopRow(c, 4).querySelector('[data-qpanel-submit]').click();
   await tickOnce();
   assert.deepEqual(answered.at(-1), ['r4', 'p4', 'q4', 'p4']);
@@ -933,18 +952,80 @@ test('S6 off: flag off, an unmarked card, or no entries appends no stop list; a 
   c.done();
 });
 
-test('slice 13: a card listing four stop lines has one direct-child section.chat-rc-q, and each open line\'s host is a div.chat-rc-q inside its li', () => {
+test('slice 13: a card listing four stop lines has one direct-child section.chat-rc-q, and an opened line\'s host is a div.chat-rc-q inside its li', () => {
   const { controls } = s6Controls();
   const c = s4Card(S6_SLICES, { view: asksView(), controls });
   assert.equal(stopRows(c).length, 4);
-  assert.equal(c.built.el.querySelectorAll(':scope > section.chat-rc-q').length, 1, 'the card\'s own question slot');
   for (const r of [2, 4, 11]) {
+    openStop(c, r);
+    assert.equal(c.built.el.querySelectorAll(':scope > section.chat-rc-q').length, 1, 'the card\'s own question slot');
     const hosts = stopRow(c, r).querySelectorAll('div.chat-rc-q.chat-rc-stop-q');
     assert.equal(hosts.length, 1, `run ${r}: its host takes the card question's class`);
     assert.equal(hosts[0].closest('li.chat-rc-stop'), stopRow(c, r), `run ${r}`);
     assert.ok(hosts[0].querySelector('.qpanel .s6-approve'), `run ${r}: the step card mounts in it`);
+    assert.equal(stopCards(c).length, 1, `run ${r}: the only step card`);
   }
   assert.equal(stopRow(c, 5).querySelector('.chat-rc-q'), null, 'a failed run has no question host');
+  c.done();
+});
+
+// ---- Slice 12 (R-ux-5): the card shows one line per open stop and one step card, for the opened stop only ------------
+// The example: runs 2, 3 and 4 wait at a stop, run 5 is paused. The view still lists run 5 (it lags behind the pause).
+const EX_SLICES = [S(1, 'done'), S(2, 'approval', { stop: { reason: 'requirement', held: false } }),
+  S(3, 'questions', { stop: { reason: 'check', held: false } }), S(4, 'questions', { stop: { reason: 'check', held: false } }), S(5, 'paused')];
+const EX_ASKS = [s6Open(2, 'plan', 'requirement', []), s6Open(3, 'gate', 'check', [5]), s6Open(4, 'gate', 'check', []), s6Open(5, 'gate', 'check', [])];
+
+test('R-ux-5 card: 3 stops and 1 paused run give 3 lines in today\'s words, no heading and no step card; opening the second line shows one, for that stop', () => {
+  const { controls, log } = s6Controls();
+  const c = s4Card(EX_SLICES, { view: asksView(EX_ASKS, { halted: null }), controls, snaps: { p5: snap('p5', { status: 'paused' }) } });
+  assert.deepEqual(stopRows(c).map((li) => li.dataset.run), ['2', '3', '4']);
+  assert.deepEqual(stopTexts(c), ['Run 2 · plan approval', 'Run 3 · plan approval · holds up 5', 'Run 4 · plan approval']);
+  assert.equal(stopCards(c).length, 0);
+  assert.equal(c.built.el.querySelector('.s6-approve'), null, 'no step card anywhere on the card');
+  assert.equal(qSecOf(c).hidden, true);
+  assert.deepEqual([...c.built.el.querySelectorAll('.ask-rc-head [data-need]')].map((n) => n.textContent), ['3 need you']);
+  const list = c.built.el.querySelector('ol.chat-rc-stops');
+  assert.equal(list.getAttribute('aria-label'), 'Open stops');
+  const headings = () => c.built.el.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"]').length;
+  const before = headings();
+  assert.equal(list.querySelector('h1, h2, h3, h4, h5, h6, [role="heading"]'), null, 'no new heading');
+  openStop(c, 3);
+  assert.equal(stopCards(c).length, 1);
+  assert.equal(stopCards(c)[0].closest('li.chat-rc-stop').dataset.run, '3');
+  assert.equal(c.built.el.querySelectorAll('.s6-approve').length, 1);
+  assert.equal(headings(), before);
+  c.built.el.querySelector('.s6-approve').click();
+  assert.deepEqual(log.answered, ['p3'], 'that stop\'s card');
+  c.done();
+});
+
+test('R-ux-5 card: lines listed, all closed: the card\'s foot shows no Answer button', () => {
+  // Runs 2, 4 and 11 wait for an answer and no run has failed, so the group's current member is run 2.
+  const asking = (sl) => (S6_STOP[sl.index] ? { status: 'running', pendingQuestion: { id: `q${sl.index}`, kind: 'plan' } }
+    : sl.state === 'error' ? { status: 'running' } : S4_MEMBER(sl));
+  const answers = (c) => [...c.built.el.querySelectorAll('.chat-rc-foot [data-model-action="answer"]')].filter((b) => !b.hidden);
+  const control = s4Card(S6_SLICES, { view: asksView([], { halted: null }), controls: s6Controls().controls, memberOf: asking });
+  assert.equal(answers(control).length, 1, 'the fixture: with no stop lines this card\'s foot offers Answer');
+  control.done();
+  const c = s4Card(S6_SLICES, { view: asksView(), controls: s6Controls().controls, memberOf: asking });
+  assert.equal(stopRows(c).length, 4);
+  assert.equal(stopCards(c).length, 0, 'every line is closed');
+  assert.deepEqual(answers(c), []);
+  c.done();
+});
+
+test('R-ux-5 card: the only open line leaves with the focus inside: the focus lands on a button in the card\'s foot', () => {
+  const { controls } = s6Controls();
+  const c = s4Card(S6_SLICES, { view: asksView([A2], { halted: null }), controls });
+  openStop(c, 2);
+  const approve = stopRow(c, 2).querySelector('.s6-approve');
+  approve.focus();
+  assert.equal(c.doc.activeElement, approve);
+  c.update({ asks: [], ask: null, slices: S6_SLICES.map((x) => (x.index === 2 ? { ...x, state: 'running', stop: null } : x)) });
+  assert.equal(stopRows(c).length, 0);
+  const at = c.doc.activeElement;
+  assert.ok(at.isConnected && at.matches('button') && at.closest('.chat-rc-foot') && !at.closest('[hidden]'),
+    `focus is on ${at.tagName}.${at.className}`);
   c.done();
 });
 
@@ -1116,7 +1197,7 @@ const S7_PQ = {
   r4: { id: 'q4', kind: 'gate', issues: [], stop: planStop({ run: 4 }) },
   r11: { id: 'q11', kind: 'gate', issues: [], stop: planStop({ run: 11 }) },
 };
-/** One view: each open line mounts today's real step card; `reply()` is what the post resolves (true, or the refusal). */
+/** One view: an opened line mounts today's real step card; `reply()` is what the post resolves (true, or the refusal). */
 function s7ViewOf(reply) {
   const posts = [];
   const refs = new Map();
@@ -1143,8 +1224,11 @@ test('s7 T13 (R-qa-2): two views answer runs 2 and 11 for the same run and quest
     const first = s7ViewOf(() => true);
     const second = s7ViewOf(() => refusals[run]);
     for (const v of [first, second]) {
+      openStop(v.card, 2);
       assert.deepEqual(v.refs.get('p2'), { runId: 'r2', pipelineId: 'p2', id: 'q2' });
+      openStop(v.card, 11);
       assert.deepEqual(v.refs.get('p11'), { runId: 'r11', pipelineId: 'p11', id: 'q11' });
+      openStop(v.card, run);
       stopRow(v.card, run).querySelector('.btn-primary').click();
       await tickOnce(); await tickOnce();
     }

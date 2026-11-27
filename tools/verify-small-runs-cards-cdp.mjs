@@ -102,7 +102,7 @@ const { writeStoreMeta, recordArtifact, appendAuditById } = await imp('../src/co
 const { createSliceFeature, recordShapePlan, changeAgreedRequirements, setFeatureAcceptance, recordShip, setClashHold } = await imp('../src/core/shape/features.mjs');
 const askStore = await imp('../src/core/ask/store.mjs');
 const { normalizeOutline } = await imp('../src/shared/shape/slices.mjs');
-const { gateStop } = await imp('../src/shared/shape/run-stops.mjs');
+const { gateStop, planStop } = await imp('../src/shared/shape/run-stops.mjs');
 const { baseMovedAudit } = await imp('../src/core/git-sync.mjs');
 const { verifyStop } = await imp('../src/shared/shape/verifier.mjs');
 const { prototypeView } = await imp('../src/shared/shape/prototype.mjs');
@@ -1939,8 +1939,103 @@ async function verifierRowsPhase() {
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 }
 
+// ---- Shaper small runs slice 12 (R-ux-5): one line per open stop, one step card for the opened stop. A marked 5-run
+// feature: runs 2, 3 and 4 live at a stop (a plan check, a check gate, a requirement), run 5 live and paused. The Chat
+// card and the feature page's Runs tab list 3 closed lines and no step card, and no line for run 5; opening line 2 mounts
+// exactly one step card, in run 3's line. 1280px, the classic look, light and dark: stop-list-card-closed-…,
+// stop-list-card-open-…, stop-list-feature-closed-… and stop-list-feature-open-… .png, plus stop-list-card-closed-light-360.png.
+const SL_CHECK = { ok: false, passed: 3, total: 8, items: [{ id: 'tests', label: 'Names its tests', pass: false, detail: 'no test is named' }] };
+async function stopListPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const x = seedFeature('sl', 'Stop list', ['done', 'running', 'running', 'running', 'paused'], { withOutline: soOutline, titles: SO_TITLES });
+  const shape = (k) => ({ slice: { feature: x.f.id, index: k } });
+  const planAsk = (k, stop) => ({ id: `plan-sl-${k}`, kind: 'plan', nodeId: 'n_refine', executionId: 'x:n_refine:1',
+    plan: { nodeId: 'n_refine', port: 'plan', file: 'plan.md', round: 1, revisable: true, check: SL_CHECK }, stop });
+  liveRun(x.pid(2), `Run 2 · ${SO_TITLES[1]}`, { at: 'n_refine', runShape: shape(2), pendingQuestion: planAsk(2, planStop({ run: 2, check: SL_CHECK, node: 'n_refine' })) });
+  liveRun(x.pid(3), `Run 3 · ${SO_TITLES[2]}`, { at: 'n_review', runShape: shape(3), pendingQuestion: { id: 'gate-sl-3', kind: 'gate', nodeId: 'n_review',
+    executionId: 'x:n_review:1', issues: ISSUES, stop: gateStop({ run: 3, issues: ISSUES, fixCycles: 2, nodeId: 'n_review' }) } });
+  liveRun(x.pid(4), `Run 4 · ${SO_TITLES[3]}`, { at: 'n_refine', runShape: shape(4),
+    pendingQuestion: planAsk(4, planStop({ run: 4, outlineChange: 'the export needs its own run', node: 'n_refine' })) });
+  liveRun(x.pid(5), `Run 5 · ${SO_TITLES[4]}`, { at: 'n_impl', runShape: shape(5), status: 'paused' });
+  const capture = async (name) => {
+    await ev("(() => { for (const b of document.querySelectorAll('button[aria-label=\"Dismiss\"]')) if (b.offsetParent) b.click(); return 0; })()");
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  };
+  const FACTS = (scope) => `(() => { const root = [...document.querySelectorAll(${JSON.stringify(scope)})].find((r) => r.offsetParent);
+    const list = root && root.querySelector('ol.chat-rc-stops');
+    if (!list) return null;
+    const vis = (els) => [...els].filter((e) => !e.closest('[hidden], .hidden'));
+    return { runs: [...list.querySelectorAll(':scope > li.chat-rc-stop')].map((li) => li.dataset.run),
+      lines: list.querySelectorAll('button.chat-rc-stop-line').length,
+      cards: list.querySelectorAll('.chat-rc-stop-q').length, in3: list.querySelectorAll('li[data-run="3"] .chat-rc-stop-q').length,
+      paused: list.querySelectorAll('li[data-run="5"]').length,
+      outside: vis(root.querySelectorAll('.qpanel[data-qid]')).filter((q) => !q.closest('.chat-rc-stops')).length,
+      answer: vis(root.querySelectorAll('button')).filter((b) => b.dataset.modelAction === 'answer' || /^Answer/.test(b.textContent.trim())).filter((b) => !b.closest('.chat-rc-stops')).length,
+      first: !!list.parentElement.matches('.gpage-panel') ? list.parentElement.firstElementChild === list : null,
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth }; })()`;
+  const surfaces = [
+    { name: 'card', scope: '.chat-rc', go: (theme) => card(x.threadId, `slc-${theme}`, 'the stop list card', theme) },
+    { name: 'feature', scope: '.gpage', go: async (theme) => {
+      await open(`${base}/?slf-${theme}#feature/${encodeURIComponent(x.f.id)}`);
+      await skipWelcome(); await setTheme(theme);
+      return waitFor("!!document.querySelector('.gpage-panel[data-tab=\"runs\"] > ol.chat-rc-stops li[data-run=\"3\"]')", `the feature page's stop list (${theme})`);
+    } },
+  ];
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    for (const sf of surfaces) {
+      const { name } = sf;
+      if (!(await sf.go(theme))) continue;
+      if (!(await waitFor(`(() => { const f = ${FACTS(sf.scope)}; return !!f && f.runs.length === 3; })()`, `3 stop lines on the ${sf.name} (${theme})`))) continue;
+      await sleep(400);
+      const c = await ev(FACTS(sf.scope));
+      check(c.runs.join() === '2,3,4' && c.lines === 3 && c.cards === 0 && c.paused === 0 && c.outside === 0 && c.answer === 0 && c.first !== false && !c.overflow,
+        `stop list, ${sf.name}, ${theme}: 3 closed lines (runs 2, 3, 4), 0 step cards, no line for paused run 5, no Answer, no question outside the list (${JSON.stringify(c)})`);
+      if (sf.name === 'card' && theme === 'light') {
+        // The wash and the focus ring stay inside the line button's inset: hover, then keyboard focus, line 1.
+        const ring = await ev(`(() => { const b = document.querySelector('.chat-rc ol.chat-rc-stops li[data-run="2"] button.chat-rc-stop-line');
+          const r = b.getBoundingClientRect(), dot = b.querySelector('.status-dot').getBoundingClientRect(), t = b.querySelector('.chat-rc-stop-text').getBoundingClientRect();
+          // A scripted focus() is not :focus-visible, so the served rule is read instead of the focused button's style.
+          const rules = [...document.styleSheets].flatMap((sh) => { try { return [...sh.cssRules]; } catch { return []; } });
+          const ring = rules.find((x) => x.selectorText === '.row-btn:focus-visible');
+          const wash = rules.find((x) => x.selectorText === '.row-btn:hover');
+          return { inset: [dot.left - r.left, r.right - t.right], offset: ring ? ring.style.outlineOffset : null, wash: !!wash && !!wash.style.background,
+            radius: getComputedStyle(b).borderRadius }; })()`);
+        check(ring.inset[0] >= 4 && ring.inset[1] >= 4 && ring.offset === '-2px' && ring.wash,
+          `stop list, card, light: the hover wash and the inset ring keep off the dot and the text (${JSON.stringify(ring)})`);
+      }
+      await reveal(`${sf.scope} ol.chat-rc-stops`);
+      await capture(`stop-list-${name}-closed-${theme}.png`);
+      await ev(`(() => { const b = [...document.querySelectorAll(${JSON.stringify(`${sf.scope} ol.chat-rc-stops button.chat-rc-stop-line`)})].filter((x) => x.offsetParent)[1]; if (b) b.click(); return !!b; })()`);
+      if (!(await waitFor(`(() => { const f = ${FACTS(sf.scope)}; return !!f && f.cards === 1; })()`, `one step card on the ${sf.name} (${theme})`))) continue;
+      await sleep(800);
+      const o = await ev(FACTS(sf.scope));
+      check(o.cards === 1 && o.in3 === 1 && o.runs.join() === '2,3,4' && o.paused === 0 && o.outside === 0 && !o.overflow,
+        `stop list, ${sf.name}, ${theme}: opening line 2 mounts exactly 1 step card, in run 3's line (${JSON.stringify(o)})`);
+      await reveal(`${sf.scope} ol.chat-rc-stops li[data-run="3"]`);
+      await capture(`stop-list-${name}-open-${theme}.png`);
+    }
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 360, height: 900, deviceScaleFactor: 1, mobile: false });
+  if (await card(x.threadId, 'slc-narrow', 'the stop list card at 360px', 'light')) {
+    await waitFor(`(() => { const f = ${FACTS('.chat-rc')}; return !!f && f.runs.length === 3; })()`, 'the 3 stop lines at 360px');
+    const n = await ev(`(() => [...document.querySelectorAll('.chat-rc ol.chat-rc-stops button.chat-rc-stop-line')].filter((b) => b.offsetParent).map((b) => {
+      const r = b.getBoundingClientRect(), c = b.querySelector('.chat-rc-stop-chev').getBoundingClientRect(), t = b.querySelector('.chat-rc-stop-text');
+      return { inside: c.right <= r.right + 0.5 && c.left >= r.left, title: t.title === t.textContent && !!t.title, cards: document.querySelectorAll('.chat-rc .chat-rc-stop-q').length }; }))()`);
+    check(n.length === 3 && n.every((l) => l.inside && l.title && l.cards === 0) && !(await ev('document.documentElement.scrollWidth > document.documentElement.clientWidth')),
+      `stop list, card, light, 360px: each chevron inside its button, each text keeps its title, no step card, no overflow (${JSON.stringify(n)})`);
+    await reveal('.chat-rc ol.chat-rc-stops');
+    await capture('stop-list-card-closed-light-360.png');
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
 // D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in, SHIP_LIST_ONLY=1
-// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR, SHIP_CARRIED_ONLY=1 the carried runs Ship names, FEATURE_TABS_ONLY=1 the feature page's Cost, Requirements and Log tabs, CONFIRM_ONLY=1 confirm in place, VERIFIER_ROWS_ONLY=1 the Verifier's check row (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
+// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR, SHIP_CARRIED_ONLY=1 the carried runs Ship names, FEATURE_TABS_ONLY=1 the feature page's Cost, Requirements and Log tabs, CONFIRM_ONLY=1 confirm in place, VERIFIER_ROWS_ONLY=1 the Verifier's check row, STOP_LIST_ONLY=1 the stop list's closed lines and one opened step card (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
 // ---- Shaper slice 10 (R-po-5): Away mode answered a plain gap, the person a judgement call. The feature page's Log tab and
 // the Chat card's log say who decided each gap; a live gap stop lists Away's answer above the question and says why the
 // held gap waits. Light and dark: app-verifier-away-log-… (1280px, the Log tab), app-verifier-away-card-log-… and
@@ -2028,6 +2123,7 @@ if (process.env.FEATURE_TABS_ONLY === '1') { await featureTabsPhase(); await fin
 if (process.env.CONFIRM_ONLY === '1') { await confirmInPlacePhase(); await finish(); }
 if (process.env.SHIP_NOTES_ONLY === '1') { await shipNotesPhase(); await finish(); }
 if (process.env.VERIFIER_ROWS_ONLY === '1') { await verifierRowsPhase(); await finish(); }
+if (process.env.STOP_LIST_ONLY === '1') { await stopListPhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {

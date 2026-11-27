@@ -20,6 +20,7 @@ import { world, SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
 import { runStatus } from '../src/shared/shape/run-status.mjs';
 import { icon } from '../ui/public/icons.mjs';
 import { groupRow } from '../ui/public/runs-list.mjs';
+import { stopLinesOf } from '../ui/public/shape/stop-list.mjs';
 
 useTempHome(after, 'worca-group-page-s4-');
 const trackDom = useDomRelease(afterEach);
@@ -1010,4 +1011,161 @@ test('s11 group page: the header line of a failed-round feature reads the Verifi
   assert.equal(status.dataset.state, 'failed');
   assert.doesNotMatch(root.textContent, /Ready to ship/);
   assert.equal(root.querySelectorAll('.gpage-runs .run-member').length, 1, 'rounds stay absent from the Runs tab');
+});
+
+// ── Slice 12 (R-ux-5): the feature page's stop list, first in the Runs panel; one step card, for the opened stop ─────
+const paused = RUN_STATE_ROWS.find((r) => r.state === 'paused').run;
+/** A marked feature's group: run 1 done, runs 2, 3 and 4 wait for an answer, run 5 paused. The current member is run 2.
+ *  `two` swaps run 2's raw run (it moves on once answered). */
+function s12Row(two = asking) {
+  const model = groupModel({ kind: 'feature', title: 'Run tags', members: [done, two, asking, asking, paused] }, { now: NOW });
+  return { kind: 'chain', groupKind: 'feature', groupId: 'feat_1', title: 'Run tags', model, costUsd: 4.2, planning: null,
+    members: model.members.map((m, i) => ({ position: i + 1, title: `Slice ${i + 1}`, pipelineId: `p${i + 1}`, href: `#running/r${i + 1}`, runId: `r${i + 1}`, model: m, cost: 1 })) };
+}
+const s12Ask = (index) => ({ index, runId: `r${index}`, pipelineId: `p${index}`, id: `q${index}`, kind: 'gate', reason: 'check', failed: false, holdsUp: [] });
+const s12Lines = (runs) => stopLinesOf({ asks: runs.map(s12Ask), slices: runs.map((i) => SL4(i, 'questions')) });
+/** The page in a document, with recording stop deps and a question slot that behaves as app.js's: shown for a member,
+ *  hidden for null. */
+function s12Page({ focusOut = null } = {}) {
+  const { doc, root } = s6Root();
+  const log = { painted: [], bound: [], released: [], disposed: [], mounted: [] };
+  const stopDeps = {
+    paintQuestion: (ref, host) => {
+      const panel = host.querySelector('.qpanel');
+      log.painted.push(ref.pipelineId);
+      if (!panel.querySelector('input')) { panel.append(doc.createElement('input')); panel.classList.remove('hidden'); }
+      return null;
+    },
+    releaseQuestion: (host) => log.released.push(host),
+    bindQuestion: (host, line) => { log.bound.push(line.index); return () => log.disposed.push(line.index); },
+    resume: async () => ({ ok: true }),
+    ...(focusOut ? { focusOut: () => focusOut(root) } : {}),
+  };
+  const mountQuestion = (slot, mb) => {
+    log.mounted.push(mb ? mb.position : null);
+    slot.hidden = !mb;
+    if (mb) slot.innerHTML = '<div class="qpanel"><button type="button" class="btn btn-primary" data-qpanel-submit>Send</button></div>';
+    else slot.replaceChildren();
+  };
+  const paint = (view = {}) => paintGroupPage(root, s6View({ row: s12Row(), ...view }), { ...s6Deps(), mountQuestion, stopDeps });
+  const q = (sel) => root.querySelector(sel);
+  const panel = () => s6Panel(root, 'runs');
+  const list = () => q('ol.chat-rc-stops');
+  const line = (run) => list()?.querySelector(`li[data-run="${run}"]`);
+  const press = (run) => { const b = line(run)?.querySelector('button.chat-rc-stop-line'); assert.ok(b, `run ${run}'s line is a button`); b.click(); };
+  const kids = () => [...panel().children].map((c) => c.classList[0]);
+  return { doc, root, log, paint, q, panel, list, line, press, kids, cards: () => [...root.querySelectorAll('.chat-rc-stop-q')] };
+}
+const S12_HEADINGS = 'h1, h2, h3, h4, h5, h6, [role="heading"]';
+
+test('S12 feature layout with view.stops: the Runs panel\'s first child is ol.chat-rc-stops with 3 lines and 0 step cards; no heading added', () => {
+  const today = s12Page();
+  today.paint();
+  const p = s12Page();
+  p.paint({ stops: s12Lines([2, 3, 4]) });
+  const list = p.panel().firstElementChild;
+  assert.ok(list.matches('ol.chat-rc-stops'), `the first child is ${list.tagName}.${list.className}`);
+  assert.equal(list.getAttribute('aria-label'), 'Open stops');
+  assert.equal(list.hidden, false);
+  assert.deepEqual([...list.querySelectorAll(':scope > li.chat-rc-stop')].map((li) => li.dataset.run), ['2', '3', '4']);
+  assert.deepEqual([...list.querySelectorAll('.chat-rc-stop-text')].map((x) => x.textContent),
+    ['Run 2 · plan approval', 'Run 3 · plan approval', 'Run 4 · plan approval']);
+  assert.equal(p.cards().length, 0);
+  assert.deepEqual([p.log.painted, p.log.bound], [[], []]);
+  assert.equal(list.querySelector(S12_HEADINGS), null);
+  assert.equal(p.root.querySelectorAll(S12_HEADINGS).length, today.root.querySelectorAll(S12_HEADINGS).length, 'no new heading on the page');
+  p.paint({ stops: s12Lines([2, 3, 4]) });
+  assert.equal(p.root.querySelectorAll('ol.chat-rc-stops').length, 1, 'one list');
+  assert.equal(p.panel().firstElementChild, list, 'the same node');
+});
+
+test('S12: opening line 2 mounts 1 step card and .gpage-question stays hidden when the current member is listed', () => {
+  const p = s12Page();
+  p.paint({ stops: s12Lines([2, 3, 4]) });
+  assert.deepEqual(p.log.mounted, [null], 'the listed current member draws no question slot');
+  assert.equal(p.q('.gpage-question').hidden, true);
+  p.press(3);                                       // the second line
+  assert.equal(p.cards().length, 1);
+  assert.equal(p.cards()[0].closest('li.chat-rc-stop'), p.line(3));
+  assert.deepEqual(p.log.bound, [3]);
+  const input = p.cards()[0].querySelector('input');
+  input.value = 'half typed';
+  input.focus();
+  p.paint({ stops: s12Lines([2, 3, 4]) });          // a run frame repaints the page
+  assert.equal(p.cards().length, 1);
+  assert.equal(p.line(3).querySelector('input'), input);
+  assert.equal(input.value, 'half typed');
+  assert.equal(p.doc.activeElement, input);
+  assert.deepEqual(p.log.bound, [3]);
+  assert.equal(p.q('.gpage-question').hidden, true);
+  assert.deepEqual(p.log.mounted, [null, null]);
+});
+
+test('S12 R-arch-10: no view.stops (flag off, unmarked), none listed, or no feature layout: no .chat-rc-stops node and the question slot is as today', () => {
+  for (const view of [{}, { stops: [] }, { requirements: false, stops: s12Lines([2, 3, 4]) }]) {
+    const p = s12Page();
+    p.paint(view);
+    const label = JSON.stringify({ requirements: view.requirements, stops: view.stops?.length });
+    assert.equal(p.q('.chat-rc-stops'), null, label);
+    assert.deepEqual(p.log.mounted, [2], `${label}: the current member keeps its question`);
+    assert.equal(p.q('.gpage-question').hidden, false, label);
+    assert.deepEqual(visibleBar(p.root).map((b) => b.dataset.modelAction), ['answer'], label);
+  }
+});
+
+test('S12: when the last stop leaves, the list stays hidden and empty, the open card is released, and the question slot is as today', () => {
+  const p = s12Page();
+  p.paint({ stops: s12Lines([2, 3, 4]) });
+  p.press(3);
+  p.paint({ stops: [] });
+  assert.ok(p.list(), 'the list node');
+  assert.equal(p.list().hidden, true);
+  assert.equal(p.list().children.length, 0);
+  assert.deepEqual(p.log.disposed, [3]);
+  assert.equal(p.log.released.length, 1);
+  assert.equal(p.log.mounted.at(-1), 2);
+  assert.deepEqual(visibleBar(p.root).map((b) => b.dataset.modelAction), ['answer']);
+});
+
+test('S12: with view.order offered, the Runs panel reads ol.chat-rc-stops, .gpage-order, .gpage-runs, on the first paint and after Show order is removed and rebuilt', () => {
+  const p = s12Page();
+  const stops = s12Lines([2, 3, 4]);
+  const order = ['chat-rc-stops', 'gpage-order', 'gpage-runs'];
+  p.paint({ stops, order: orderRows(SIXTEEN) });
+  assert.deepEqual(p.kids().slice(0, 3), order, 'first paint');
+  p.paint({ stops, order: orderRows(SIX_CHAIN) });  // not offered: removed
+  assert.deepEqual(p.kids().slice(0, 2), ['chat-rc-stops', 'gpage-runs']);
+  assert.equal(p.q('.gpage-order'), null);
+  p.paint({ stops, order: orderRows(SIXTEEN) });    // built again: it prepends itself, so the list is put back on top
+  assert.deepEqual(p.kids().slice(0, 3), order, 'after a rebuild');
+});
+
+test('S12: lines listed, all closed: the head shows no Answer and .gpage-question stays hidden, on the Runs tab and on the Cost tab', () => {
+  for (const tab of ['runs', 'cost']) {
+    const control = s12Page();
+    control.paint({ tab });
+    assert.deepEqual(visibleBar(control.root).map((b) => b.dataset.modelAction), ['answer'], `${tab}: the fixture offers Answer with no list`);
+    const p = s12Page();
+    p.paint({ tab, stops: s12Lines([2, 3, 4]) });
+    assert.equal(s6Selected(p.root), tab);
+    assert.deepEqual(visibleBar(p.root).map((b) => b.dataset.modelAction), [], tab);
+    assert.equal(p.q('.gpage-question').hidden, true, tab);
+    assert.equal(p.cards().length, 0, tab);
+    assert.equal(s6Panel(p.root, 'cost').querySelector('.chat-rc-stops'), null, 'the Cost tab shows no list');
+    assert.equal(p.root.querySelectorAll('.chat-rc-stops').length, 1, 'the one list, in the Runs panel');
+    assert.ok(s6Panel(p.root, 'runs').querySelector(':scope > .chat-rc-stops'), tab);
+  }
+});
+
+test('S12: the last listed line leaves with focus inside: the focus lands in .gpage-runs once the page has painted', () => {
+  let calls = 0;
+  const p = s12Page({ focusOut: (root) => { calls += 1; root.querySelector('.gpage-runs button, .gpage-runs a[href]')?.focus(); } });
+  p.paint({ stops: s12Lines([2]) });
+  p.press(2);
+  p.cards()[0].querySelector('input').focus();
+  // Run 2 is answered and moves on: its row is repainted in the same paint that drops its line.
+  p.paint({ stops: [], row: s12Row({ status: 'running' }) });
+  assert.equal(calls, 1);
+  const runs = p.q('.gpage-runs');
+  assert.ok(runs.contains(p.doc.activeElement), `focus is on ${p.doc.activeElement.tagName}.${p.doc.activeElement.className}`);
 });

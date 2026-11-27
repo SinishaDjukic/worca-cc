@@ -177,6 +177,15 @@
 .chat-rc-stop-body > .chat-rc-stop-q{margin-top:0;}
 .chat-rc-stop-q .qpanel .step-head{display:none;}
 .chat-rc-stop-err{color:var(--red-ink);font-size:var(--fs-meta);}
+/* Slice 12 (R-ux-5): an open stop's line is a Row button (.row-btn), closed until pressed, with a third column for its
+   chevron, which turns down while the line is open (no motion). The 4px inline inset keeps the hover wash and the focus
+   ring off the dot and the text; the -4px margin keeps the text column where a failed line's is. */
+button.chat-rc-stop-line{grid-template-columns:16px minmax(0,1fr) 16px;width:calc(100% + 8px);margin-inline:-4px;padding-inline:4px;}
+.chat-rc-stop-chev{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--ink-2);}
+.chat-rc-stop-chev svg{display:block;}
+.chat-rc-stop-line[aria-expanded="true"] .chat-rc-stop-chev{transform:rotate(90deg);}
+/* The feature page's step card hides the renderer's banner, as the Chat card's question does. */
+.chat-rc-stop-q .qpanel-head{display:none;}
 /* Run order map (run-order-map.mjs): the still map. Fixed px geometry (no viewBox scaling); each run is the shared
    status dot centred on its inline left/top, its number above right; links in --ink-3. No motion but the dot's pulse. */
 .rom{overflow-x:auto;}

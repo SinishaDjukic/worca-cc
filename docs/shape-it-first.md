@@ -861,9 +861,15 @@ holds up nothing has no `holds up` part (`Run 9 · gate`).
 "holds up" names the runs that are not done or canceled and build on that run, directly or through others: they cannot
 finish while it is open.
 
-You answer a stop on its line, with the same step card the run page shows. A failed line has its own Resume, which
-restarts that run only; the card's footer and ⋯ then show no second Resume. An answer held for its turn (`after run 3`)
-is not a line. Pause on that run drops the held answer, as before, and after Resume you answer the stop again. The bar's Answer goes to the first line. With the flag off the card shows one open step, as before.
+The feature page shows the same list, first on its Runs tab; its other tabs show none.
+
+Every stop line is closed when it first shows, so the list shows no step card. You answer a stop by opening its line:
+that mounts one step card, the same one the run page shows, for that run only. Opening another line closes the first,
+and closing the open line removes its card. A paused run is not a stop, so it gets no line. A failed line has its own
+Resume, which restarts that run only; the card's footer and ⋯ then show no second Resume. An answer held for its turn
+(`after run 3`) is not a line. Pause on that run drops the held answer, as before, and after Resume you answer the stop
+again. The bar's Answer is not shown while lines are listed: you open a line to answer it. With the flag off the card
+shows one open step, as before.
 
 The state line on the card and the feature page names the working run, or each working run once in run order, and the
 run with the next turn: `Run 6 reviewing · next: run 9`. It shows only the half that applies (`next: run 9`). When

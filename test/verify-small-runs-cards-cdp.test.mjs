@@ -395,3 +395,27 @@ test('the VERIFIER_ROWS_ONLY phase: the failed round on its group, asserted befo
   for (const needle of ['data-row-key', 'Verifier · round 2 · 1 gap', 'Verifier round 2 failed · 1 gap', 'check(']) assert.ok(body.includes(needle), needle);
   assert.match(s, /[`'/]runs-group-verifier-failed-(\$\{theme\}|light|dark)\.png/, 'the screenshots');
 });
+
+test('the STOP_LIST_ONLY phase asserts 3 lines, 0 then 1 step cards, and no paused line before each screenshot, in both themes at 1280px', () => {
+  const s = src();
+  assert.ok(/process\.env\.STOP_LIST_ONLY === '1'\) \{ await stopListPhase\(\); await finish\(\); \}/.test(s), 'the STOP_LIST_ONLY=1 gate');
+  const at = s.indexOf('async function stopListPhase(');
+  assert.ok(at >= 0, 'the stop list phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /seedFeature\(/, 'a seeded marked feature');
+  assert.match(body, /liveRun\(/, 'its runs at a stop are live');
+  assert.match(body, /'paused'/, 'one run is paused');
+  assert.match(body, /#feature\//, 'the feature page');
+  assert.match(body, /\bcard\(/, 'the Chat card');
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /360/, 'and the 360px card');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  for (const needle of ['chat-rc-stop-q', 'data-run="5"', 'chat-rc-stop-line', 'data-run="3"']) assert.ok(body.includes(needle), needle);
+  assert.match(body, /click/i, 'line 2 is clicked');
+  assert.match(body, /check\(/, 'what it shoots is asserted');
+  assert.ok(body.indexOf('check(') < body.indexOf('capture('), 'asserted before the first screenshot');
+  // The nine files: card and feature, closed and open, light and dark (no prefix), plus the 360px light card.
+  assert.match(s, /[`'/]stop-list-(?:\$\{\w+\}|card|feature)-(?:\$\{\w+\}|closed)-(?:\$\{\w+\}|light|dark)\.png/, 'the closed shots');
+  assert.match(s, /[`'/]stop-list-(?:\$\{\w+\}|card|feature)-(?:\$\{\w+\}|open)-(?:\$\{\w+\}|light|dark)\.png/, 'the open shots');
+  assert.match(s, /stop-list-card-closed-light-360\.png/, 'the narrow shot');
+});

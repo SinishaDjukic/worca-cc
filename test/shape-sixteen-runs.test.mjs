@@ -1823,3 +1823,13 @@ test('R-po-6 A5: a Resume into a real clash is refused before the run starts, no
   assert.deepEqual(await s.resume(pid, { by: 'local' }), { ok: true, runId: `resumed-${pid}` });
   assert.deepEqual(s.started, [pid]);
 }));
+
+// ---- Slice 12 (R-ux-5, D7): a paused run is not a stop. Pins what the server already sends. ------------------------
+test('S12: a paused run with a resolved stop question is not in asks', () => withEnvVars(ON, () => {
+  const fx = world(root, 'busy');
+  assert.deepEqual(indexes(viewOf(fx)), [2, 4, 5, 11], 'the fixture: run 4 is at a stop');
+  fx.setRun(4, { pipe: 'paused', stop: 'check' });
+  const v = viewOf(fx);
+  assert.equal(v.slices[3].state, 'paused');
+  assert.deepEqual(indexes(v), [2, 5, 11]);
+}));

@@ -303,8 +303,12 @@ Chat card and the Runs sidebar never show it. `ui/public/group-page.mjs` `syncSh
 ### Open stop list (checked)
 A marked Shaper feature's Chat card lists what holds it up: one line per open stop or failed run, in run order. The
 module is `ui/public/shape/stop-list.mjs` (`stopLinesOf` is the model, `paintStopList` the keyed painter), tested by
-`test/ui-shape-stop-list.test.mjs`. Its only host is the Chat card, `ui/public/chat/run-card.mjs`; the feature page and the
-Runs sidebar never show the list. A line's dot is the shared status dot through `markDot` (§Status dot and symbols), never a class of
+`test/ui-shape-stop-list.test.mjs`. It has two hosts: the Chat card, `ui/public/chat/run-card.mjs`, and the feature page,
+`ui/public/group-page.mjs`, where the list is the first child of the Runs tab (the other tabs and the Runs sidebar show
+none). A paused run is not a stop: it has no line. An open stop's line is a Row button (`.row-btn`, §Button) with a
+chevron, closed when first painted. A closed line mounts no step card; opening it mounts a single step card, for that
+run, and closes any other open line, so a list holds at most one. The bar's Answer is not shown while lines are listed:
+you open a line to answer it. A line's dot is the shared status dot through `markDot` (§Status dot and symbols), never a class of
 its own. The text is one line with an ellipsis, and the full text sits in `title`. Lines are divided by one `--line`.
 An open line's step card sits in `div.chat-rc-q.chat-rc-stop-q` and is drawn by the card question's own rules, with its
 step head hidden. A failed line has a Resume `button.btn.btn-sm` (§Button) and a `role="status"` error in `--red-ink`.
@@ -316,9 +320,11 @@ without a row here, or when the CSS has a `.chat-rc-stop*` class without one.
 | list | `.chat-rc-stops` | the list, an `ol` the card makes, `hidden` when there are no lines |
 | line | `.chat-rc-stop` | the `li` of one line (`data-run`), divided by one `--line`; the card's Stop button (`button.chat-rc-stop`, §Button) shares the name |
 | row | `.chat-rc-stop-line` | the one-line row: a 16px dot column, then the text, min 32px |
+| line button | `button.chat-rc-stop-line.row-btn` | an open stop's row as the shared Row button (`.row-btn`): `aria-expanded`, `aria-controls` while open, a 4px inline inset for the hover wash and the focus ring, then a third 16px column for the chevron |
+| chevron | `.chat-rc-stop-chev` | the 16px right chevron in `--ink-2`, `aria-hidden`; it points down while the line is open, with no motion |
 | text | `.chat-rc-stop-text` | "Run 2 · plan approval · holds up 7, 8, 12, 15, 16" in `--ink`, `--fs-body`, one line with an ellipsis and the full text in `title` |
-| body | `.chat-rc-stop-body` | under the text, 24px in; empty, it takes no space |
-| step card | `.chat-rc-stop-q` | an open stop's step card host, also `.chat-rc-q`, drawn by the card question's rules, step head hidden |
+| body | `.chat-rc-stop-body` | under the text, 24px in; empty, it takes no space; an open line's body is its `role="region"` |
+| step card | `.chat-rc-stop-q` | the opened line's step card host, also `.chat-rc-q`, mounted on open and unmounted on close, drawn by the card question's rules, banner and step head hidden |
 | Resume | `.chat-rc-stop-resume` | a failed run's Resume, the shared `.btn.btn-sm`, no rule of its own |
 | error | `.chat-rc-stop-err` | Resume's error, `role="status"`, `--red-ink`, `--fs-meta` |
 

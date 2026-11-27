@@ -14,6 +14,7 @@ import { needYouText } from './shape/feature-card.mjs';
 import { bindRunLinks } from './run-links.mjs';
 import { showOrderOffered, renderRunOrderMap } from './shape/run-order-map.mjs';
 import { renderFeatureCost } from './shape/feature-cost.mjs';
+import { paintStopList } from './shape/stop-list.mjs';
 
 export const GROUP_TABS = Object.freeze([['runs', 'Runs'], ['overview', 'Overview'], ['decisions', 'Decisions'], ['logs', 'Logs']]);
 const el = (doc, tag, cls, text = '') => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
@@ -194,6 +195,20 @@ export function syncMarkShip(root, on) {
 const ORDER_HINT = 'A run sits to the right of every run it builds on. A line joins a run that is not done to the runs waiting for it; links that are already met are not drawn.';
 let orderIds = 0;
 
+/** Slice 12 (D9): the Runs tab's stop list, the Chat card's component (stop-list.mjs), the panel's first child. It is made
+ *  only once a line is listed, then kept (painted empty and hidden), and put back on top when Show order prepends itself. */
+function syncStopList(root, lines, stopDeps) {
+  const panel = root.querySelector('.gpage-panel[data-tab="runs"]');
+  let list = panel.querySelector(':scope > ol.chat-rc-stops');
+  if (!list && !lines.length) return;
+  if (!list) {
+    list = el(root.ownerDocument, 'ol', 'chat-rc-stops');
+    list.setAttribute('aria-label', 'Open stops');
+  }
+  if (panel.firstElementChild !== list) panel.prepend(list);
+  paintStopList(root.ownerDocument, list, lines, stopDeps);
+}
+
 /** Slice 10 (D4, D6, D7): "Show order" on the Runs tab, the run order drawing behind a toggle. Idempotent: the node
  *  exists only while showOrderOffered(slices) (created and removed, never only hidden, so other pages keep dev's DOM).
  *  The open state lives on the root (`root.__order = { gid, open, slices }`); a missing state or another `gid` reads as
@@ -300,12 +315,13 @@ function paintNeed(kindEl, text) {
  * line, featureStateLine, in place of the model's line), needCount?: number (slice 7: the stop lines, the head's chip),
  * order?: object[]|null (slice 10: a marked feature's featureView slices; the Runs tab offers Show order from them),
  * cost?: featureCostModel output, markOpen?: boolean, expert?: boolean (slice 6, in the feature layout only: the Cost
- * tab's table, the bar's Mark and ship, and whether the Log tab's Open logs rows show) }.
+ * tab's table, the bar's Mark and ship, and whether the Log tab's Open logs rows show), stops?: stopLinesOf output
+ * (slice 12, in the feature layout only: the Runs tab's stop list) }.
  * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), resumeLabel?() (slice 11: the footer
  * Resume's text, '' for the plain word), mountOverview(host),
  * mountDecisions(host, row), mountRequirements?(host, row) → Node|null (D3, while `view.requirements`), logsHref(member),
  * labelChip(doc, label), paintHead?(acts, slot, head), mountStepLog?(host, row) (slice 6: the Log tab's step log),
- * onMarkShip?() (slice 6: Mark and ship) } — mountOverview gets `{ shipFirst: true }` on the layout's Requirements tab.
+ * onMarkShip?() (slice 6: Mark and ship), stopDeps? (slice 12: paintStopList's deps for the Runs tab's stop list) } — mountOverview gets `{ shipFirst: true }` on the layout's Requirements tab.
  * paintHead paints
  * groupHead's head (Create PR, View PR ▾, View PRs ▾) into the card head; without it the slot stays hidden.
  */
@@ -363,9 +379,12 @@ export function paintGroupPage(root, view, deps) {
   stop.title = current ? `Stop ${current.isPlanning ? 'Planning' : `Run ${current.position}`}` : 'Stop';
   // Run 4 (D2): the question is mounted first, so the bar's Answer can name the card's own primary.
   const question = root.querySelector('.gpage-question');
-  deps.mountQuestion(question, current);
+  // Slice 12 (D8, D10): while an open stop is listed, its line is the way in: no step card in the slot, no bar Answer.
+  const stops = layout && Array.isArray(view.stops) ? view.stops : null;
+  const listed = !!stops && stops.some((l) => !l.failed);
+  deps.mountQuestion(question, listed ? null : current);
   // Small runs: an open stop's own primary is the page's one primary, as on the run page and the Chat card.
-  const stopOpen = 'stop' in question.dataset && !question.hidden;
+  const stopOpen = listed || ('stop' in question.dataset && !question.hidden);
   syncActions(root.querySelector('.gpage-actions'), headerActions(m), { own: { stop }, pool: [stop], onAction: deps.onAction,
     disable: { 'ask-changes': "Ask for changes from the run's chat" }, labels: { answer: deps.answerLabel ? deps.answerLabel() : '', resume: deps.resumeLabel ? deps.resumeLabel() : '' },
     plain: answerFieldOpen(question) ? ['answer'] : [], ...(stopOpen ? { skip: ['answer'] } : {}) });
@@ -386,6 +405,7 @@ export function paintGroupPage(root, view, deps) {
   // Slice 3: a frame that changes nothing in the table keeps its nodes (a focused row, the scroll anchor).
   // s8 (D6, D14): the link marks, the kept run and a focused row survive the repaint; another feature drops the keep.
   syncShowOrder(root, view.order || null, row.groupId);   // slice 10 (D4): Show order, above the rows
+  if (stops) syncStopList(root, stops, deps.stopDeps);
   const runsHost = root.querySelector('.gpage-runs');
   runsHost.__links.repaint(row.groupId, () => keepUnchanged(runsHost, [view.shortState || view.status
     ? renderMemberRows(doc, row, { oneLine: true, shortState: view.shortState || null,

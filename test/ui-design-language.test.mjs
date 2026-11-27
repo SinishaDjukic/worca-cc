@@ -1207,11 +1207,11 @@ const STOP_MODULE = 'ui/public/shape/stop-list.mjs';
 const STOP_HEADING = '### Open stop list (checked)';
 /** The stop list's own classes. A new painter class is added here and gets a guide row. */
 const STOP_OWN = ['chat-rc-stops', 'chat-rc-stop', 'chat-rc-stop-line', 'chat-rc-stop-text', 'chat-rc-stop-body',
-  'chat-rc-stop-q', 'chat-rc-stop-resume', 'chat-rc-stop-err'];
+  'chat-rc-stop-q', 'chat-rc-stop-resume', 'chat-rc-stop-err', 'chat-rc-stop-chev'];
 /** A hook has a guide row and no rule of its own: Resume is the shared .btn.btn-sm. */
 const STOP_HOOKS = ['chat-rc-stop-resume'];
 /** Classes the painter also puts down; their own sections own them. */
-const STOP_SHARED = /^(?:status-dot|is-[\w-]+|has-sym|btn|btn-sm|chat-rc-q|qpanel|hidden|num)$/;
+const STOP_SHARED = /^(?:status-dot|is-[\w-]+|has-sym|btn|btn-sm|row-btn|chat-rc-q|qpanel|hidden|num)$/;
 const STOP_CLASS = /\.chat-rc-stop(?:s|-[\w-]+)?(?![-\w])/;
 /** The guide's stop list section, up to the next heading; '' when it is absent. */
 const stopSection = () => {
@@ -1224,7 +1224,7 @@ test('gallery: stop-list.mjs has its guide entry', async () => {
   const missing = [];
   const section = stopSection();
   if (!section) missing.push(`guide: the section "${STOP_HEADING}"`);
-  for (const file of [STOP_MODULE, 'test/ui-shape-stop-list.test.mjs', 'ui/public/chat/run-card.mjs']) {
+  for (const file of [STOP_MODULE, 'test/ui-shape-stop-list.test.mjs', 'ui/public/chat/run-card.mjs', 'ui/public/group-page.mjs']) {
     if (!section.includes(file)) missing.push(`guide: ${file} named in the section`);
   }
   if (!/\|\s*Part\s*\|\s*Class\s*\|\s*Means\s*\|/.test(section)) missing.push('guide: the table header | Part | Class | Means |');
@@ -1248,8 +1248,12 @@ test('gallery: stop-list.mjs has its guide entry', async () => {
     paintStopList(doc, host, stopLinesOf(view), {
       paintQuestion: () => {}, releaseQuestion: () => {}, bindQuestion: () => () => {}, resume: () => new Promise(() => {}),
     });
+    // Slice 12: a line's step card host exists only while its line is open.
+    const line = host.querySelector('li[data-run="2"] button.chat-rc-stop-line');
+    if (line) line.click(); else missing.push('painter: run 2\'s line is not a button');
     for (const el of [host, ...host.querySelectorAll('*')]) {
-      if (el.parentElement?.closest('.status-dot')) continue;
+      // A glyph inside the status dot or the chevron belongs to the icon set.
+      if (el.parentElement?.closest('.status-dot, .chat-rc-stop-chev')) continue;
       for (const c of (el.getAttribute('class') || '').split(/\s+/)) if (c && !STOP_SHARED.test(c)) emitted.add(c);
     }
   } catch (e) { missing.push(`module: ${STOP_MODULE} does not paint (${e.message.split('\n')[0]})`); }
