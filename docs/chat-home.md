@@ -4,7 +4,7 @@ The Chat home is the page Chat opens on: the composer, a row of quick actions, a
 (Needs you, Running, Recent chats, Workflows). A quick action only arms the composer. Nothing is sent
 until you send.
 
-The composer is a compact bar of icons, with the engine's mark on the model button; the [Chat](chat.md#which-engine-answers)
+The composer is a compact bar of icons, with the engine's mark on the model button (Advanced); the [Chat](chat.md#which-engine-answers)
 page lists them. For the small things in the composer and the chats list, see [Chat basics](chat-basics.md). Chat apps (Telegram, Slack, Discord, Teams) can start a chat and a run too: see [Plugins](plugins.md).
 
 ## Pinned workflows

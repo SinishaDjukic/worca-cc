@@ -26,20 +26,20 @@ The art files are in `ui/public/assets/worca-levels/`. The ladder is defined in 
 
 ### How to reach each level
 
-Open **Profile** (see "Where to see your level") and read **To reach <next level>**. Each item there has a dot (done or not yet), a short hint, a count such as "4 of 10 real runs" and, for an item with a page, an **Open** button that goes to it.
+Open **Profile** (see "Where to see your level") and read **To reach <next level>**. Each item there has a dot (done or not yet), a short hint, a count such as "2 of 3 real runs" and, for an item with a page, an **Open** button that goes to it.
 
 - **Curious.** Click **Finish setup** in the account menu and sign in to a model provider (**Sign in to a model** when only the provider is missing). Claude Code, Copilot or any other provider counts.
 - **Runner.** Do Getting started steps 1 to 6 and finish 3 real runs.
 - **Hooked.** Finish 10 real runs on at least 3 different days, let a run create 1 PR, and do any 2 of 5 extras: a scheduled run finished, a workspace run finished, an add-on installed, a pull request merged, or real runs on 2 projects. People on a team also have **Team set up**: turn on Team metrics and Team policy.
 - **WorcaHolic.** Run 2 features at the same time (both must finish successfully), get 5 pull requests merged, and do any 2 of 3 power moves: a repeating schedule with 3 finished runs, 2 add-ons installed at once, or real runs on 3 or more projects.
-- **Worca's Council.** Have 20 active days in any 30. A day is active when a real run of yours finished; weekends count.
+- **Worca's Council.** Have 20 active days within the last 30. A day is active when a real run of yours finished; weekends count.
 
 ### Where to see your level
 
 - **The account menu.** Click your avatar. At the top is a level card: the avatar, your level name and **View level**, then **To <next level>** with the count and a small segment bar. Click the card to open Profile. Nothing opens on hover. At the top level the card says "You've reached the top level." Before you have a level the card shows your initials, **Finish setup** or **Sign in to a model**, and what earns the first level.
 - **Profile.** The page that shows the level in full: a hero with your level, **Next level** with progress, **To reach <next level>**, and **All levels** (each level with its items, its date, and **Reached**, **You are here**, **Next** or **Later**). Profile has no sidebar entry and every Interface mode reaches it. It opens from **View level**, from **See levels** on the Getting started line, and from **See your level** in the level-up dialog.
 - **The level-up dialog.** When you reach a new highest level, a dialog says "You're <level>" with **See your level** and **Carry on**. It waits until you are not in a setup or another dialog.
-- **Toasts.** Below Runner, a finished run of yours says "2 of 3 real runs toward Runner", or "Demo runs don't count. Try one on your project." From Runner on, when you are at least three quarters of the way through one item of the next level, one toast says what is left, for example "3 more real runs on 1 more day to Hooked". Each item is offered once.
+- **Toasts.** Below Runner, a finished run of yours says "2 of 3 real runs toward Runner", or "Demo runs don't count. Try one on your project." From Runner on, when you are at least three quarters of the way through one item of the next level, one toast says what is left, for example "2 more real runs to Hooked". Each item is offered once.
 
 ### The Advanced mode offer
 
@@ -93,11 +93,11 @@ Schedules, Workspaces, Marketplace, Team metrics and Team policy are not in the 
 
 ### Item rules
 
-- **Real runs.** Every count except the first two Curious items and Getting started reads real runs only (finished, not a demo, cost something). Deleted runs still count. A run's finish is its `finished_at`, else its `updated_at` for a run from before that column existed.
+- **Real runs.** Every count except the first two Curious items, Getting started, the add-on counts and **Team set up** reads real runs only (finished, not a demo, cost something). Deleted runs still count. A run's finish is its `finished_at`, else its `updated_at` for a run from before that column existed.
 - **`hookedRuns`.** 10 real runs on at least 3 different local days. The runs of one schedule add a single day in total, the day of the schedule's first finish, so a repeating schedule earns one day.
 - **`teamSetUp`.** Shown, and required, only for a person on a team (Team metrics or Team policy is on), or once it has been done. It is done when both are on.
 - **`parallelFeatures`.** "Feature" means a pipeline run; any workflow template counts. Overlap is strict (`a.start < b.end && b.start < a.end`), so back-to-back runs do not count. Both runs must be real runs. Runs with a NULL start or end, or with `end <= start`, are ignored.
-- **`prMerged` and `prsMerged`.** A pull request counts as merged when the run's recorded state is `MERGED`. When a run has a pull request but no readable state (offline, no git host) the item is shown as unknown, not as undone, and is not met.
+- **`prMerged` and `prsMerged`.** A pull request counts as merged when the run's recorded state is `MERGED`. When a run has a pull request but no readable state (offline, no git host) the item is not met and looks like any item not done yet in Profile; the server marks it unknown, so no toast offers it.
 - **`addonsAtOnce`.** The live record keeps `addonPeak = max(addonPeak, count)`, updated at install time, so a removal later does not undo it. An add-on counts when installed, even if disabled.
 - **`councilDays`.** A day is active when one real run of the person finished on it, in the person's time zone. The runs of one schedule count one active day in total. Days without activity never reset anything.
 - **A pick item.** Done when `need` of its choices have latched; it carries the count of choices done.

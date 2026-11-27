@@ -38,7 +38,9 @@ Each note carries a state: **Local only**, **Shared**, **Team only**,
 you turned team memory on stay on this machine until you pick which to share
 with **Share existing notes…** (or **Review notes…** in the one-time offer).
 Click **Compare…** to settle a note the team holds differently from you, and
-**Undo last seeding** to take a share back.
+**Undo last seeding** to put your local notes back as they were before the
+seeding. It also releases the notes the seeding held back. Notes it already
+shared stay on the team; use **Remove from team** on a note to take it off.
 
 When Worca finds that a project's `origin` already has team memory, the
 project's **Overview** says "Your team shares memory for this repository".

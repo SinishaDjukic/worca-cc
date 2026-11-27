@@ -4,7 +4,7 @@ Diff comments are notes you leave on single lines of a run's diff, with replies 
 wrote stays next to the code. They live in Worca; nothing is posted to a pull request, and the diff and the run are
 never changed. You can also ask Chat about a comment, and Chat can answer inside the thread.
 
-**Where to find it:** open a run and go to **Diff** on its record (see [Runs](runs.md#a-runs-record)). A file with open
+**Where to find it:** open a finished run and go to **Diff** on its record (see [Runs](runs.md#a-runs-record)). A file with open
 comments shows a count next to its name in the file list.
 
 ## Leave a comment
