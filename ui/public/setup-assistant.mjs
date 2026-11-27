@@ -356,7 +356,7 @@ function paintApplyRows(doc, list, results, done) {
 /**
  * Open the assistant. entry 'first' | 'rerun' | 'fix' | 'team'; `step` opens on that step (a fix-it link); `team` is the
  * policy home a 'team' entry reviews (the account-menu notice).
- * onClose(how, { applied, next, readyShown }): how is 'later' (Set up later / Cancel / Close / Discard) or 'done' (the ready screen's button);
+ * onClose(how, { applied, next, readyShown }): how is 'later' (Skip all / Cancel / Close / Discard) or 'done' (the ready screen's button);
  * `applied` is true when the dialog saved something (an Apply, or the network apply on Next); `next` is a hash to go to
  * (the earned ready screen's "Start your first run"); `readyShown` is true once a ready screen has painted; `finishing` is true while its facts are still being asked (Setup is finished, the screen is not up yet).
  * deps.levelIndex(): the held level (0 none, null view not loaded). deps.finishSetup(): the ready screen's facts, or null.
@@ -443,7 +443,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   // Apply (and a login Retry after it) is past the point of discarding: its writes are done (architect-1-2).
   const isDirty = () => S.step !== 'apply' && !S.retryLogin && !!S.answers && !!S.opened && JSON.stringify(S.answers) !== S.opened;
   const guard = guardModal(modal, { kind: 'form', close: () => teardown('later'), busy: () => S.netJob, isDirty });
-  // Cancel / Set up later asks "Discard changes?" once an answer changed, like Escape; untouched it closes at once.
+  // Cancel / Skip all asks "Discard changes?" once an answer changed, like Escape; untouched it closes at once.
   async function cancel() {
     if (isDirty() && !(await askDiscard(doc))) return;      // Keep editing
     if (!closed) guard.cancel();
@@ -1022,7 +1022,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (S.netRetry && S.step === 'network') {             // a failed network apply: Retry from its step
       const needPw = S.netRetry.login && !String(S.answers.network.password || '').trim();
       actions.append(btn('Back', 'btn sa-back', () => goTo(stepBefore())));
-      actions.append(btn('Skip for now', 'btn btn-quiet sa-skip', () => { void skip(); }));
+      actions.append(btn('Skip step', 'btn btn-quiet sa-skip', () => { void skip(); }));
       const again = btn('Retry', 'btn btn-primary sa-next', () => applyNetwork(S.netRetry.body, S.netRetry));
       again.disabled = needPw; actions.append(again);
       status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || (needPw ? 'Type the proxy password again to retry' : '');
@@ -1038,7 +1038,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     }
     // Every step before Apply can leave the dialog, not only the first. Order: Cancel, then Skip / Use saved values,
     // then Back and Next side by side (the workspace guide's foot), in one group a narrow foot never splits.
-    actions.append(btn(entry === 'first' ? 'Set up later' : 'Cancel', 'btn btn-quiet sa-later', () => { void cancel(); }));
+    actions.append(btn(entry === 'first' ? 'Skip all' : 'Cancel', 'btn btn-quiet sa-later', () => { void cancel(); }));
     const gate = S.answers ? nextGate(S.step, S.answers, { saved: S.saved, tested: S.tested, now: now(), detect: S.detect, entry, netSaved: S.netSaved }) : { ok: false, reason: '' };
     const skipLabel = S.answers && idx() >= 1 && idx() <= 4 ? skipLabelFor(gate) : null;
     if (skipLabel) actions.append(btn(skipLabel, 'btn btn-quiet sa-skip', () => { void skip(); }));
@@ -1084,10 +1084,10 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   // network apply those are re-read first: its earlier steps may have saved some of them.
   // The second button on steps 2–5 shows only when it does something Next does not. Both labels run skip(), which
   // puts the step back to its saved values and moves on. Next blocked (an untested proxy, a missing sign-in):
-  // "Skip for now". The step differs from what is saved (the Review step's Changed): "Use saved values"
+  // "Skip step". The step differs from what is saved (the Review step's Changed): "Use saved values"
   // (not "Discard changes", which is Cancel's question and closes the dialog). Else none.
   function skipLabelFor(gate) {
-    if (!gate.ok) return 'Skip for now';
+    if (!gate.ok) return 'Skip step';
     return diffRows(S.saved, S.answers).some((r) => r.step === S.step && r.changed) ? 'Use saved values' : null;
   }
   async function skip() {

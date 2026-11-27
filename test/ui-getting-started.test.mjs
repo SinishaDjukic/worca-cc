@@ -365,6 +365,6 @@ test('app wiring: the shelf opens setup for step 0, and onboarding-changed refre
   assert.match(wiring, /WORCA_REFRESH_EVENTS = new Set\([\s\S]*'onboarding-changed'/);
 });
 
-test('docs keep "Set up later"', () => {
-  assert.match(readFileSync(new URL('../docs/getting-started.md', import.meta.url), 'utf8'), /Set up later/);
+test('docs keep "Skip all"', () => {
+  assert.match(readFileSync(new URL('../docs/getting-started.md', import.meta.url), 'utf8'), /Skip all/);
 });

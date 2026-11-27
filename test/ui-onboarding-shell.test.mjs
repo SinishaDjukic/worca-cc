@@ -552,9 +552,9 @@ test('the project tour: the dialog opens on New (canvas AddNew), the guide rings
   assert.doesNotMatch(readFileSync(appPath, 'utf8'), /give the dialog that opens its folder/);
 });
 
-test('first start: a fresh install opens the setup assistant before the welcome; Set up later shows the welcome (AC-4.1)', async () => {
+test('first start: a fresh install opens the setup assistant before the welcome; Skip all shows the welcome (AC-4.1)', async () => {
   await checkRows([
-    { name: 'fresh: #setup-modal up, #welcome-modal hidden; Set up later closes it at once and shows the welcome', run: async () => {
+    { name: 'fresh: #setup-modal up, #welcome-modal hidden; Skip all closes it at once and shows the welcome', run: async () => {
       const { doc, window, posts } = await boot({ onboarding: status(['claude'], { fresh: true }) });
       assert.ok(doc.getElementById('setup-modal'), 'the assistant is up');
       assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), true);
@@ -564,7 +564,7 @@ test('first start: a fresh install opens the setup assistant before the welcome;
       assert.equal(doc.getElementById('setup-modal'), null);
       assert.equal(doc.querySelector('.discard-modal'), null, 'no Discard changes? question');
       assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'the welcome follows');
-      assert.deepEqual(posts, [], 'Set up later writes nothing');
+      assert.deepEqual(posts, [], 'Skip all writes nothing');
     } },
     { name: 'a boot without fresh shows the welcome first, and no assistant', run: async () => {
       const { doc } = await boot();

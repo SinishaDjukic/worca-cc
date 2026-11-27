@@ -486,7 +486,7 @@ test('re-run gate: the saved proxy still needs a Test; Skip keeps it and the bod
     await h.click('.sa-next');
     assert.equal(h.next().disabled, true);
     assert.equal(h.status().textContent, 'Test the connection to continue');
-    assert.equal(h.$('.sa-skip').textContent, 'Skip for now', 'Next is blocked: the way past keeps the saved proxy');
+    assert.equal(h.$('.sa-skip').textContent, 'Skip step', 'Next is blocked: the way past keeps the saved proxy');
     await h.click('.sa-skip');
     assert.equal(h.title(), 'Where should Worca get its models?');
     await applyLimit(h);
@@ -578,7 +578,7 @@ test('Network applies on Next: unchanged values post nothing (D19); Direct after
         }
       } finally { h.close(); }
     } },
-    { name: 'Set up later after Network applied: the dialog says the proxy is saved and on', run: async () => {
+    { name: 'Skip all after Network applied: the dialog says the proxy is saved and on', run: async () => {
       const net = netServer();
       const h = await open({ entry: 'first', step: 'network', routes: net.routes });
       try {
@@ -1168,10 +1168,10 @@ test('foot order: Cancel, then Use saved values, then Back and Next side by side
   } finally { h.close(); }
 });
 
-test('close rules: Set up later / Cancel close at once untouched and ask after an edit; Escape on an edit asks; a backdrop click never closes (AC-4.1)', async () => {
+test('close rules: Skip all / Cancel close at once untouched and ask after an edit; Escape on an edit asks; a backdrop click never closes (AC-4.1)', async () => {
   let h = await open();
   try {
-    assert.equal(h.$('.sa-later').textContent, 'Set up later');
+    assert.equal(h.$('.sa-later').textContent, 'Skip all');
     await h.click('.sa-later');
     assert.deepEqual(h.closes, ['later']);
     assert.equal(discardPrompt(h.doc), null);
@@ -1408,7 +1408,7 @@ test('module source: no HTML sinks, no CSS.escape; built on layoutDialog and gua
   assert.ok(app.includes("setOnboardingPrefs({ setupFinished: true })") && app.includes('loadOnboarding({ recheck: true })') && app.includes('fetchWorcaLevel()'));
   assert.ok(app.includes('if (next) location.hash = next;') && app.includes('if (readyShown || finishing) { gs.welcomeShown = true;') && app.includes('else showWelcome();'));
   const gs = read('docs/getting-started.md');
-  assert.ok(gs.includes('Set up later')); assert.ok(gs.includes('Setup assistant › **Run setup**'));
+  assert.ok(gs.includes('Skip all')); assert.ok(gs.includes('Setup assistant › **Run setup**'));
 });
 
 const bodyOf = (w) => (typeof w.body === 'string' ? JSON.parse(w.body) : w.body);
