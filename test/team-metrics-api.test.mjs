@@ -6,7 +6,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { makeOrigin, cloneAs, useGitSandbox } from './helpers/metrics-git.mjs';
+import { makeOrigin, cloneAs, useGitSandbox, git } from './helpers/metrics-git.mjs';
+import { projectKey } from '../src/core/store.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { writeRunLedger } from '../src/core/metrics/ledger.mjs';
@@ -78,7 +79,8 @@ test('enable (here) → scopes lists the project → GET /api/team-metrics shape
   const r = await get(`/api/team-metrics?scope=project:${gwKey}&range=this-month`);
   assert.equal(r.status, 200);
   const j = await r.json();
-  assert.deepEqual(Object.keys(j).sort(), ['aggregate', 'fetchError', 'humanRateUsd', 'records', 'refresh', 'scope', 'stats', 'sync', 'viewer']);
+  assert.deepEqual(Object.keys(j).sort(), ['aggregate', 'display', 'fetchError', 'humanRateUsd', 'records', 'refresh', 'scope', 'stats', 'sync', 'viewer']);
+  assert.deepEqual(j.display, { levels: false }, 'no policy: levels are off');
   assert.equal(j.humanRateUsd, 35);
   assert.equal(typeof j.aggregate.kpis.savedUsd, 'number');
   assert.equal(j.scope.slug, 'gateway');
@@ -185,6 +187,24 @@ test('GET /api/team-metrics in workspace scope groups by workspace name', { skip
   assert.deepEqual(j.records.map((r) => r.id), ['ws1']);
   assert.ok(j.aggregate.breakdowns.project.some((r) => r.key === 'gateway'));
   await patch(`/api/workspaces/${wsId}`, { metricsProject: null });
+});
+
+test('workspace viewer: with no metrics home, the git name comes from the first Git member by project key', { skip }, async () => {
+  await patch(`/api/workspaces/${wsId}`, { metricsProject: null });
+  const [first, second] = [gw, dr].sort((a, b) => (projectKey(a) < projectKey(b) ? -1 : 1));
+  const localName = (cwd) => { try { return git(cwd, 'config', '--local', 'user.name'); } catch { return null; } };
+  const was = new Map([gw, dr].map((d) => [d, localName(d)]));
+  git(first, 'config', 'user.name', 'First By Key');
+  git(second, 'config', 'user.name', 'Second By Key');
+  try {
+    const viewer = (await (await get(`/api/team-metrics?scope=workspace:${wsId}&range=this-month`)).json()).viewer;
+    assert.deepEqual(viewer.names, ['First By Key']);
+  } finally {
+    for (const [d, name] of was) {
+      if (name === null) git(d, 'config', '--local', '--unset', 'user.name');
+      else git(d, 'config', 'user.name', name);
+    }
+  }
 });
 
 test('route all members creates a delegation marker per member and lists results', { skip }, async () => {

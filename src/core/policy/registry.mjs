@@ -84,6 +84,7 @@ export const FIELDS = Object.freeze([
   { key: 'pr.open', group: 'runs', label: 'Create a PR when a run finishes', help: 'Applies until the project or workspace sets its own.', type: 'enum', values: PR_OPEN, kinds: ['default'] },
   { key: 'pr.slices', group: 'runs', label: 'Shaper features: pull requests', help: 'each: a PR per slice, stacked. one: one PR when the feature is done. Applies until the project sets its own.', type: 'enum', values: PR_SLICES, kinds: ['default'], workspaceRuns: false },
   { key: 'metrics.record', group: 'runs', label: 'Record runs to team metrics', help: 'Expected on: the Projects cell hints when "Include my runs" is off.', type: 'bool', kinds: ['soft'] },
+  { key: 'metrics.showLevels', group: 'runs', label: 'Show Worca levels in Team metrics', help: 'Off unless set to on: the Level column and the leaderboard badges.', type: 'bool', kinds: ['default'] },
   { key: 'worca.minVersion', group: 'runs', label: 'Minimum Worca version', help: 'An older client shows a banner and logs a note.', type: 'semver', kinds: ['soft'] },
   { key: 'runs.tagDimensions', group: 'runs', label: 'Tag dimensions', help: 'Keys every run is asked for (like a cost centre), with allowed values and a default. Mandatory keys warn; with "Require mandatory tags" on they block a start.', type: 'tagDimensions', kinds: ['soft'] },
   { key: 'runs.enforceTags', group: 'runs', label: 'Require mandatory tags', help: 'On: a run cannot start while a mandatory tag has no value after pre-fill, or a tag is outside its values.', type: 'bool', kinds: ['soft'] },

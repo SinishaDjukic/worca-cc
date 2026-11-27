@@ -31,6 +31,30 @@ export async function policyForScope(scope) {
   return { meta: { kind: 'workspace', id: ws.id, name: ws.name, policyProject: ws.policyProject ?? null }, r, workspaceRun: true, projectDir: ws.policyProject ?? null };
 }
 
+/**
+ * One field's team value for a scope, from what this machine already holds: no discovery, no network (a stale or
+ * unread policy home reads as no value). `undefined` when the scope has no policy, the policy is not readable, the
+ * field is unset, or anything throws — callers treat that as "the policy says nothing".
+ */
+export async function scopePolicyValue(scope, key) {
+  try {
+    let r;
+    let workspaceRun = false;
+    if (scope.kind === 'project') {
+      const p = (await listProjects()).find((x) => x.key === scope.id);
+      if (!p) return undefined;
+      r = await resolveProjectPolicy(p.path, { discover: false });
+    } else {
+      const ws = await readWorkspace(scope.id);
+      if (!ws) return undefined;
+      r = await resolveWorkspacePolicy(ws, { discover: false });
+      workspaceRun = true;
+    }
+    if (!r?.ok) return undefined;
+    return fieldsForRun(r.doc, { workspaceRun })[key]?.value;
+  } catch { return undefined; }
+}
+
 /** The local machine's answer to a resolved policy: the fold, the plugin gaps, the blocked plugins. */
 export async function policyPayload(meta, r, { workspaceRun, projectDir }) {
   // localSnapshot is home-agnostic; mcp.required's "Yours" is the Team set of r.home (MCP registry spec §11.3).

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  LEADERBOARD_WEIGHTS, LEADERBOARD_RANGES, buildLeaderboard, mergedRunIds, mergedLookupGaps,
+  LEADERBOARD_WEIGHTS, LEADERBOARD_RANGES, buildLeaderboard, mergedPrKeys, mergedLookupGaps,
 } from '../src/shared/team-metrics/leaderboard.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 
@@ -11,6 +11,8 @@ let n = 0;
 /** `count` runs by `actor` this month; `opts` may carry usd/result/startedAt. */
 const runs = (actor, count, opts = {}) => Array.from({ length: count }, () => makeRecord({ id: `r${++n}`, actor, startedAt: '2026-09-10T10:00:00Z', ...opts }));
 const lb = (records, extra = {}) => buildLeaderboard(records, { range: 'this-month', now: NOW, ...extra });
+/** Every run id in `ids` merged its own pull request. */
+const prsOf = (ids) => new Map([...ids].map((id) => [id, [`o/r#${id}`]]));
 const row = (board, label) => board.rows.find((r) => r.label === label);
 
 test('weights are fixed and sum to 100', () => {
@@ -51,7 +53,7 @@ test('eligibility: 2 runs is not ranked, 3 is; the 3rd run moves a person into t
 
 test('a 2-run person with the best raw numbers is never a winner', () => {
   const recs = [...runs('Ana', 3, { usd: 5, result: 'failed' }), ...runs('Bo', 2, { usd: 0.01 })];
-  const b = lb(recs, { mergedRunIds: new Set(recs.filter((r) => r.actor === 'Bo').map((r) => r.id)) });
+  const b = lb(recs, { mergedPrs: prsOf(recs.filter((r) => r.actor === 'Bo').map((r) => r.id)) });
   assert.deepEqual(b.winners, ['Ana']);
   assert.ok(!b.rows.some((r) => r.label === 'Bo'));
 });
@@ -85,9 +87,9 @@ test('lower spend per run ranks higher', () => {
   assert.equal(row(b, 'Dear').parts.perRun.points, 7.5);
 });
 
-test('more merged runs ranks higher', () => {
+test('more merged pull requests ranks higher', () => {
   const recs = [...runs('A', 3), ...runs('B', 3)];
-  const b = lb(recs, { mergedRunIds: new Set([recs[0].id, recs[1].id, recs[3].id]) });
+  const b = lb(recs, { mergedPrs: prsOf([recs[0].id, recs[1].id, recs[3].id]) });
   assert.deepEqual(b.rows.map((r) => r.label), ['A', 'B']);
   assert.equal(row(b, 'A').parts.merged.points, 35);
   assert.ok(Math.abs(row(b, 'B').parts.merged.points - 17.5) < 1e-9);
@@ -104,8 +106,8 @@ test('20 % margins give the same shape of gap regardless of team size', () => {
   const a = runs('A', 8, { usd: 1.25 });
   const bb = [...runs('B', 10, { usd: 1 })];
   bb.slice(8).forEach((r) => { r.result = 'failed'; });
-  const merged = new Set([...a.slice(0, 8).map((r) => r.id), ...bb.slice(0, 8).map((r) => r.id)]);
-  const board = lb([...a, ...bb], { mergedRunIds: merged });
+  const merged = prsOf([...a.slice(0, 8).map((r) => r.id), ...bb.slice(0, 8).map((r) => r.id)]);
+  const board = lb([...a, ...bb], { mergedPrs: merged });
   const ra = row(board, 'A');
   const rb = row(board, 'B');
   assert.ok(Math.abs(ra.score - 94) < 1e-9, `A ${ra.score}`);
@@ -159,17 +161,40 @@ test('nobody merged: merged is 0 for all and nothing is NaN', () => {
 
 test('a single eligible person scores per the formula', () => {
   const recs = runs('Solo', 3, { usd: 2 });
-  const s = lb(recs, { mergedRunIds: new Set([recs[0].id]) }).rows[0];
+  const s = lb(recs, { mergedPrs: prsOf([recs[0].id]) }).rows[0];
   assert.equal(s.score, 15 + 15 + 35 + 35);
   assert.equal(lb(recs).rows[0].score, 15 + 15 + 0 + 35);
 });
 
-test('mergedRunIds: only MERGED counts; Map and object both accepted', () => {
-  const recs = ['a', 'b', 'c', 'd', 'e'].map((id) => makeRecord({ id }));
-  const map = new Map([['a', [{ state: 'MERGED' }]], ['b', [{ state: 'OPEN' }, { state: 'MERGED' }]], ['c', [{ state: 'CLOSED' }]], ['d', null], ['e', []]]);
-  assert.deepEqual([...mergedRunIds(map, recs)].sort(), ['a', 'b']);
-  assert.deepEqual([...mergedRunIds(Object.fromEntries(map), recs)].sort(), ['a', 'b']);
-  assert.equal(mergedRunIds(null, recs).size, 0);
+test('two runs sharing one merged pull request count once', () => {
+  const recs = runs('A', 3);
+  const shared = { state: 'MERGED', repo: 'O/R', number: 7 };
+  const mergedPrs = mergedPrKeys(new Map([[recs[0].id, [shared]], [recs[1].id, [{ ...shared, repo: 'o/r' }]], [recs[2].id, [{ state: 'MERGED', repo: 'o/r', number: 8 }]]]), recs);
+  assert.equal(row(lb(recs, { mergedPrs }), 'A').merged, 2, 'o/r#7 once, o/r#8 once');
+});
+
+test('one pull request shared by two people counts for each', () => {
+  const a = runs('A', 3);
+  const bb = runs('B', 3);
+  const pr = [{ state: 'MERGED', repo: 'o/r', number: 7 }];
+  const board = lb([...a, ...bb], { mergedPrs: mergedPrKeys({ [a[0].id]: pr, [bb[0].id]: pr }, [...a, ...bb]) });
+  assert.deepEqual([row(board, 'A').merged, row(board, 'B').merged], [1, 1]);
+  assert.equal(row(board, 'A').parts.merged.points, 35);
+  assert.equal(row(board, 'B').parts.merged.points, 35);
+});
+
+test('mergedPrKeys: only MERGED counts, keyed repo#number (or url); Map and object both accepted', () => {
+  const recs = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => makeRecord({ id }));
+  const map = new Map([
+    ['a', [{ state: 'MERGED', repo: 'O/R', number: 1 }]],
+    ['b', [{ state: 'OPEN', repo: 'o/r', number: 2 }, { state: 'merged', repo: 'o/r', number: 3 }]],
+    ['c', [{ state: 'CLOSED', repo: 'o/r', number: 4 }]], ['d', null], ['e', []],
+    ['f', [{ state: 'MERGED', repo: 'o/r', number: null, url: 'https://x/pr/9' }]],
+  ]);
+  const want = [['a', ['o/r#1']], ['b', ['o/r#3']], ['f', ['o/r#https://x/pr/9']]];
+  assert.deepEqual([...mergedPrKeys(map, recs)], want);
+  assert.deepEqual([...mergedPrKeys(Object.fromEntries(map), recs)], want);
+  assert.equal(mergedPrKeys(null, recs).size, 0);
 });
 
 test('input is not mutated', () => {
@@ -179,9 +204,13 @@ test('input is not mutated', () => {
   assert.deepEqual(recs, copy);
 });
 
-test('mergedLookupGaps: every provider that failed is named, and Azure listings cut short are kept', () => {
-  assert.deepEqual(mergedLookupGaps(null), { providers: [], truncated: [] });
-  assert.deepEqual(mergedLookupGaps({ gh: 'ok', azure: 'ok', bitbucket: 'unused' }), { providers: [], truncated: [] });
+test('mergedLookupGaps: every provider that failed is named with its reason, and cut-short listings are kept', () => {
+  assert.deepEqual(mergedLookupGaps(null), { providers: [], reasons: {}, truncated: [], worcaError: null });
+  assert.deepEqual(mergedLookupGaps({ gh: 'ok', azure: 'ok', bitbucket: 'unused' }), { providers: [], reasons: {}, truncated: [], worcaError: null });
+  assert.deepEqual(mergedLookupGaps({ gh: 'missing', azure: 'unauthenticated', bitbucket: 'ok', bitbucketError: 'timeout' }).reasons,
+    { GitHub: 'missing', 'Azure DevOps': 'unauthenticated', Bitbucket: 'error' });
+  assert.equal(mergedLookupGaps({ azure: 'missing', azureError: 'x' }).reasons['Azure DevOps'], 'missing', 'a sign-in problem outranks an error');
+  assert.deepEqual(mergedLookupGaps({ ghError: 'gh down' }).reasons, { GitHub: 'error' });
   assert.deepEqual(mergedLookupGaps({ gh: 'unused', azure: 'missing' }).providers, ['Azure DevOps']);
   assert.deepEqual(mergedLookupGaps({ gh: 'unused', azure: 'unauthenticated' }).providers, ['Azure DevOps']);
   assert.deepEqual(mergedLookupGaps({ gh: 'ok', azure: 'ok', azureError: 'HTTP 500' }).providers, ['Azure DevOps']);
@@ -191,6 +220,12 @@ test('mergedLookupGaps: every provider that failed is named, and Azure listings 
   assert.deepEqual(mergedLookupGaps({ ghError: 'gh down' }).providers, ['GitHub']);
   const status = { azure: 'ok', azureTruncated: ['org/proj/repo'] };
   const gaps = mergedLookupGaps(status);
-  assert.deepEqual(gaps, { providers: [], truncated: ['org/proj/repo'] });
+  assert.deepEqual(gaps, { providers: [], reasons: {}, truncated: ['org/proj/repo'], worcaError: null });
   assert.notEqual(gaps.truncated, status.azureTruncated, 'a copy, not the status array');
+});
+
+test('mergedLookupGaps: Bitbucket truncation joins Azure\'s; a Worca failure is passed through and names no provider', () => {
+  assert.deepEqual(mergedLookupGaps({ azureTruncated: ['a/b/c'], bitbucketTruncated: ['bitbucket.org/x/y'] }).truncated, ['a/b/c', 'bitbucket.org/x/y']);
+  assert.deepEqual(mergedLookupGaps({ bitbucketTruncated: ['bitbucket.org/x/y'] }).truncated, ['bitbucket.org/x/y']);
+  assert.deepEqual(mergedLookupGaps({ gh: 'unused', worcaError: 'HTTP 502' }), { providers: [], reasons: {}, truncated: [], worcaError: 'HTTP 502' });
 });

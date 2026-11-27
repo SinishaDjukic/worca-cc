@@ -16,6 +16,7 @@ import { projectKey } from '../src/core/store.mjs';
 import { POLICY_BRANCH, POLICY_FILE, publishPolicy, resolveProjectPolicy, policyEvents, _testing } from '../src/core/policy/sync.mjs';
 import { _testing as metricsTesting } from '../src/core/metrics/sync.mjs';
 import { validatePolicyChange, applyPolicyChange, defaultPolicyDeps } from '../src/core/ask/policy-deps.mjs';
+import { scopePolicyValue } from '../src/core/policy/scope.mjs';
 
 const skip = process.platform === 'win32' ? 'pre-receive hooks / sh not portable to win32' : false;
 const root = mkdtempSync(join(tmpdir(), 'worca-ask-policy-deps-'));
@@ -102,6 +103,17 @@ test('follow: billing follows gateway; an edit proposed on billing publishes to 
   assert.equal(policyOn(blBare).fields, undefined, 'the marker is untouched');
 });
 
+test('scopePolicyValue: the team value from the cached policy; undefined when there is none or the read throws', { skip }, async () => {
+  const key = 'metrics.showLevels';
+  assert.equal(await scopePolicyValue({ kind: 'project', id: gwKey }, key), undefined, 'a policy that does not set the field');
+  await applyPolicyChange(await propose({ kind: 'edit', projectKey: gwKey, set: [{ key, value: true, kind: 'default' }] }));
+  assert.equal(await scopePolicyValue({ kind: 'project', id: gwKey }, key), true);
+  assert.equal(await scopePolicyValue({ kind: 'project', id: blKey }, key), true, 'a follower reads its home');
+  assert.equal(await scopePolicyValue({ kind: 'project', id: edKey }, key), undefined, 'no policy at all');
+  assert.equal(await scopePolicyValue({ kind: 'project', id: 'nope-00000000' }, key), undefined, 'the resolver throws: off, not an error');
+  assert.equal(await scopePolicyValue({ kind: 'workspace', id: 'nope' }, key), undefined);
+});
+
 test('workspace: set the policy home, read it for workspace runs, route the rest, clear the home', { skip }, async () => {
   ws = await createWorkspace({ name: 'IoT Platform', projectPaths: [gw, bl, ed] });
   assert.match((await validatePolicyChange({ kind: 'workspace_home', workspaceId: ws.id, homeProjectKey: edKey })).errors[0], /no team policy of its own/);
@@ -116,6 +128,7 @@ test('workspace: set the policy home, read it for workspace runs, route the rest
   assert.equal(read.policy.home, 'gateway'); assert.equal(read.policy.workspaceRun, true);
   assert.equal(read.rows.find((x) => x.key === 'cost.pipelineLimitUsd').team.value, 25, 'the workspaceRuns block applies to workspace runs');
   assert.ok(Array.isArray(read.deviations));
+  assert.equal(await scopePolicyValue({ kind: 'workspace', id: ws.id }, 'metrics.showLevels'), true, 'a workspace reads its policy home');
   const none = await defaultPolicyDeps().policy.read({ kind: 'project', id: edKey });
   assert.deepEqual([none.policy, none.reason], [null, 'not-enabled']);
   await assert.rejects(defaultPolicyDeps().policy.read({ kind: 'project', id: 'nope-00000000' }), { code: 'NOT_FOUND' });

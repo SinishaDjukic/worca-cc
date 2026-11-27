@@ -153,6 +153,7 @@ export function prNotice(doc, { status = null, loading = false, prKnown = false 
       const why = status.gh === 'missing' ? 'the GitHub CLI (gh) is not installed' : 'the GitHub CLI (gh) is not signed in';
       parts.push(`Merge dates are unavailable because ${why}. Install gh and run \`gh auth login\`, or add the merge-tracking workflow to the repository with \`worca metrics pr-workflow\`.${prKnown ? '' : ' Until then, Completed counts finished runs.'}`);
     }
+    if (status.worcaError) parts.push(`Worca could not look up pull requests: ${status.worcaError}`);
     if (status.ghError) parts.push(`GitHub did not answer for some pull requests: ${status.ghError}`);
     if (status.azure === 'missing') parts.push('Merge dates for Azure DevOps repositories need a token: set `WORCA_ADO_TOKEN` (Code: Read) where worca runs.');
     if (status.azure === 'unauthenticated') parts.push('Azure DevOps refused the token in `WORCA_ADO_TOKEN`: check that it has not expired and has the Code (Read) scope.');
@@ -162,6 +163,8 @@ export function prNotice(doc, { status = null, loading = false, prKnown = false 
     if (status.bitbucket === 'missing') parts.push('Merge dates for Bitbucket repositories need a token: set `WORCA_BB_TOKEN` (Pull requests: Read) where worca runs.');
     if (status.bitbucket === 'unauthenticated') parts.push('Bitbucket refused the token in `WORCA_BB_TOKEN`: check that it has not expired and can read pull requests.');
     if (status.bitbucketError) parts.push(`Bitbucket did not answer for some pull requests: ${status.bitbucketError}`);
+    const cutBb = Array.isArray(status.bitbucketTruncated) ? status.bitbucketTruncated : [];
+    if (cutBb.length) parts.push(`${cutBb.join(', ')} ${cutBb.length === 1 ? 'has' : 'have'} more pull requests than one listing covers; older runs there may show without merge data.`);
     if ((status.unsupportedRepos || []).length) parts.push(`Merge tracking covers GitHub, Azure DevOps and Bitbucket repositories; ${status.unsupportedRepos.join(', ')} show${status.unsupportedRepos.length === 1 ? 's' : ''} without merge data.`);
   }
   if (!parts.length) return null;
