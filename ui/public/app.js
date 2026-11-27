@@ -114,6 +114,8 @@ import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBa
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { runElapsedMs, runHeadlineMs, showAgentTime } from '../../src/shared/run-elapsed.mjs';
 import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
+import { renderEngineSetup, paintSetupDocsLink, setupTitle, setupStatusLine, setupCheckedLine } from './engine-setup.mjs';
+import { engineSetup } from '../../src/shared/engine-setup.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { outcomeNote } from './run-outcome.mjs';
 import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, viewPrLabel, createPrLabel, doneStatusWord } from './ship-words.mjs';
@@ -11806,7 +11808,7 @@ function showClaudeSignedOut(hint, restore) {
   const link = document.createElement('a');
   link.href = '#';
   link.textContent = 'Sign in…';
-  link.addEventListener('click', (e) => { e.preventDefault(); openClaudeSetup(); });
+  link.addEventListener('click', (e) => { e.preventDefault(); openEngineSetup('claude'); });
   hint.classList.add('err');
   hint.replaceChildren("Claude Code isn't signed in. ", link);
   claudeSignedOutHints.set(hint, restore);
@@ -16539,7 +16541,7 @@ el.form.addEventListener('submit', async (e) => {
       // Signed out with nothing else to run on: the sign-in steps, not a paused run.
       if (res.status === 409 && data && data.code === 'claude-signed-out') {
         startSubmitInFlight = false;
-        openClaudeSetup();
+        openEngineSetup('claude');
         return notStarted(data.error);
       }
       // A preset whose references are gone (#712): the broken card names each one, Start waits for them.
@@ -41084,9 +41086,7 @@ function paintScheduleCounts(c) {
 // and PATH — never written here); this block only paints it and runs guides.
 // A guide is transient state: a reload clears it, the shelf re-summons it.
 // ---------------------------------------------------------------------------
-const gs = { status: null, settled: false, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "",
-  // Connect Claude Code › Check again: claudeChecking while it asks, claudeChecked the line every press leaves.
-  claudeChecking: false, claudeChecked: '' };
+const gs = { status: null, settled: false, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
 let gsPillHost = null;
 let gsWelcomeUnbind = null;
 let setupDialog = null;
@@ -41315,58 +41315,98 @@ function showWelcome({ force = false } = {}) {
   modal.querySelector('[data-door]')?.focus?.();
 }
 
-// ── Connect Claude Code (the one step with no control to ring) ──────────────
+// ── Connect <engine>: one setup dialog for every chat engine (ui/public/engine-setup.mjs) ─────────────────
+// Claude's is also Getting started's "claude" step (the one step with no control to ring): its status is the onboarding
+// payload's, and Check again re-reads GET /api/onboarding. Every other engine's is GET /api/engines/<engine>/setup:
+// installed here (a few stat()s), then its readiness. `engine` is the engine shown, `status` that engine's answer,
+// `checked` the line every press of Check again leaves, `asking` the engine a check is out for.
+const setupDlg = { engine: null, status: null, checked: '', asking: null };
+/** The Claude status box (signed in, signed out and where it looked, not found); also repaints the wizards' signed-out
+ *  lines, which are stale once the CLI checks out, whatever the dialog shows. */
 function paintClaudeSetupStatus() {
-  const box = document.getElementById('claude-setup-status');
-  if (!box || !gs.status) return;
-  const c = gs.status.claude || {};
+  if (!gs.status) return;
   const ok = !!gs.status.steps.claude;
-  const bin = c.bin || 'claude';
-  box.className = `ob-claude-status ${ok ? 'ok' : 'err'}`;
-  if (ok) box.textContent = c.auth === 'signed-in' ? `Found ${bin}, installed and signed in. You're set.` : `Found ${bin}. You're set.`;
-  else if (c.auth === 'signed-out') box.textContent = `Found ${bin}, installed but not signed in yet. Run claude in a terminal, type /login, then check again.`;
-  else box.textContent = c.hint || `"${bin}" is not on the PATH of the Worca server. Install it, then check again (restart the UI if PATH changed).`;
-  // Signed out: the folder the CLI read. A server with another HOME reads another sign-in than the terminal.
-  if (!ok && c.auth === 'signed-out' && c.configDirectory) box.append(lineEl('ob-claude-where', claudeCheckedWhere(c.configDirectory)));
-  if (gs.claudeChecked) box.append(lineEl('ob-claude-checked', gs.claudeChecked));
-  // The wizards' signed-out lines are stale once the CLI checks out.
   if (ok) for (const restore of [...claudeSignedOutHints.values()]) restore();
+  if (setupDlg.engine === 'claude') paintEngineSetupStatus();
 }
-function openClaudeSetup() {
-  const modal = document.getElementById('claude-setup-modal');
-  if (!modal) return;
-  paintClaudeSetupStatus();
+function paintEngineSetupStatus() {
+  const box = document.getElementById('engine-setup-status');
+  if (!box || !setupDlg.engine) return;
+  if (setupDlg.engine === 'claude') {
+    if (!gs.status) return;
+    const c = gs.status.claude || {};
+    const ok = !!gs.status.steps.claude;
+    const bin = c.bin || 'claude';
+    box.className = `ob-setup-status ${ok ? 'ok' : 'err'}`;
+    if (ok) box.textContent = c.auth === 'signed-in' ? `Found ${bin}, installed and signed in. You're set.` : `Found ${bin}. You're set.`;
+    else if (c.auth === 'signed-out') box.textContent = `Found ${bin}, installed but not signed in yet. Run claude in a terminal, type /login, then check again.`;
+    else box.textContent = c.hint || `"${bin}" is not on the PATH of the Worca server. Install it, then check again (restart the UI if PATH changed).`;
+    // Signed out: the folder the CLI read. A server with another HOME reads another sign-in than the terminal.
+    if (!ok && c.auth === 'signed-out' && c.configDirectory) box.append(lineEl('ob-setup-where', claudeCheckedWhere(c.configDirectory)));
+  } else {
+    const line = setupStatusLine(setupDlg.engine, setupDlg.status);
+    box.className = `ob-setup-status${line.ok === null ? '' : line.ok ? ' ok' : ' err'}`;
+    box.textContent = line.text;
+  }
+  if (setupDlg.checked) box.append(lineEl('ob-setup-checked', setupDlg.checked));
+}
+/** Open the setup dialog on `engine` (a chat engine; anything else opens nothing). */
+function openEngineSetup(engine = 'claude') {
+  const modal = document.getElementById('engine-setup-modal');
+  if (!modal || !engineSetup(engine)) return;
+  setupDlg.engine = engine;
+  setupDlg.status = null;
+  // A fresh open starts with no "Checked just now" line.
+  setupDlg.checked = '';
+  const title = document.getElementById('engine-setup-title');
+  if (title) title.textContent = setupTitle(engine);
+  renderEngineSetup(document, document.getElementById('engine-setup-guide'), engine);
+  paintSetupDocsLink(document.getElementById('engine-setup-docs'), engine);
+  paintEngineSetupStatus();
   modal.classList.remove('hidden');
-  claudeSetupGuard?.opened();
-  document.getElementById('claude-setup-check')?.focus?.();
-  // The page's status may predate a sign-in (or a transient signed-out probe):
-  // ask again on open instead of repeating it. A fresh open starts with no "Checked just now" line.
-  gs.claudeChecked = '';
-  recheckClaudeSetup({ manual: false });
+  engineSetupGuard?.opened();
+  document.getElementById('engine-setup-check')?.focus?.();
+  // The page's answer may predate an install or a sign-in (or a transient signed-out probe): ask again on open.
+  void recheckEngineSetup({ manual: false });
 }
 function lineEl(cls, text) { const n = document.createElement('span'); n.className = cls; n.textContent = text; return n; }
-/** Check again: "Checking…" and disabled while it asks; then a line every time (`manual`: the button, not the open). */
-async function recheckClaudeSetup({ manual = true } = {}) {
-  if (gs.claudeChecking) return;
-  const btn = document.getElementById('claude-setup-check');
-  gs.claudeChecking = true;
+/** GET /api/engines/<engine>/setup into setupDlg.status (`recheck`: Check again, past the readiness cache). */
+async function loadEngineSetup(engine, { recheck = false } = {}) {
+  let data;
+  try {
+    const res = await fetch(`/api/engines/${encodeURIComponent(engine)}/setup${recheck ? '?recheck=1' : ''}`);
+    data = await safeJson(res);
+    if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+  } catch (e) { return { ok: false, error: e?.message || 'network error' }; }
+  if (setupDlg.engine === engine) setupDlg.status = data;
+  return { ok: true };
+}
+/** Check again: "Checking…" and disabled while it asks; then a line every time (`manual`: the button, not the open).
+ *  An answer for an engine the dialog no longer shows paints nothing. */
+async function recheckEngineSetup({ manual = true } = {}) {
+  const engine = setupDlg.engine;
+  if (!engine || setupDlg.asking === engine) return;
+  const btn = document.getElementById('engine-setup-check');
+  setupDlg.asking = engine;
   if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
   let r = { ok: false, error: 'network error' };
-  try { r = await loadOnboarding({ recheck: true }); } finally {
-    gs.claudeChecking = false;
-    if (btn) { btn.disabled = false; btn.textContent = 'Check again'; }
+  try { r = engine === 'claude' ? await loadOnboarding({ recheck: true }) : await loadEngineSetup(engine, { recheck: manual }); } finally {
+    if (setupDlg.asking === engine) setupDlg.asking = null;
+    if (btn && setupDlg.engine === engine) { btn.disabled = false; btn.textContent = 'Check again'; }
   }
+  if (setupDlg.engine !== engine) return;
   const c = gs.status?.claude || {};
-  if (!r.ok) gs.claudeChecked = `Couldn't check just now: ${r.error}`;
-  else if (manual) gs.claudeChecked = gs.status?.steps?.claude ? 'Checked just now: signed in.' : c.auth ? 'Checked just now: still not signed in.' : 'Checked just now: still not found.';
-  paintClaudeSetupStatus();
+  if (!r.ok) setupDlg.checked = `Couldn't check just now: ${r.error}`;
+  else if (manual && engine === 'claude') setupDlg.checked = gs.status?.steps?.claude ? 'Checked just now: signed in.' : c.auth ? 'Checked just now: still not signed in.' : 'Checked just now: still not found.';
+  else if (manual) setupDlg.checked = setupCheckedLine(setupDlg.status);
+  paintEngineSetupStatus();
 }
-function closeClaudeSetup() { document.getElementById('claude-setup-modal')?.classList.add('hidden'); }
+function closeEngineSetup() { document.getElementById('engine-setup-modal')?.classList.add('hidden'); }
 // Read-only status: a backdrop click or Escape closes it.
-const claudeSetupEl = document.getElementById('claude-setup-modal');
-const claudeSetupGuard = claudeSetupEl ? guardModal(claudeSetupEl, { kind: 'viewer', close: () => closeClaudeSetup() }) : null;
-document.getElementById('claude-setup-close')?.addEventListener('click', closeClaudeSetup);
-document.getElementById('claude-setup-check')?.addEventListener('click', () => { void recheckClaudeSetup(); });
+const engineSetupEl = document.getElementById('engine-setup-modal');
+const engineSetupGuard = engineSetupEl ? guardModal(engineSetupEl, { kind: 'viewer', close: () => closeEngineSetup() }) : null;
+document.getElementById('engine-setup-close')?.addEventListener('click', closeEngineSetup);
+document.getElementById('engine-setup-check')?.addEventListener('click', () => { void recheckEngineSetup(); });
 
 // ── Guides ──────────────────────────────────────────────────────────────────
 // Each hop is derived from REAL UI state at the moment it is needed (which view
@@ -41862,7 +41902,7 @@ function gsScrollTop() {
 // mode lowered while a tour runs.)
 async function startGuide(step) {
   // A real run needs a model: signed out, show the sign-in steps first. Once per page, since an install on routed models has none to do.
-  if (step === 'realRun' && gs.status?.claude?.auth === 'signed-out' && !gs.claudeAsked) { gs.claudeAsked = true; openClaudeSetup(); return; }
+  if (step === 'realRun' && gs.status?.claude?.auth === 'signed-out' && !gs.claudeAsked) { gs.claudeAsked = true; openEngineSetup('claude'); return; }
   const def = GETTING_STARTED_STEPS.find((s) => s.id === step);
   const need = def && def.level;
   if (need && !levelAtLeast(need)) {
@@ -41884,7 +41924,7 @@ async function startGuide(step) {
  *  same guide carries over, so a replay explains every stop again. */
 function runGuideFor(step) {
   endGuide();
-  if (step === 'claude') { openClaudeSetup(); return; }
+  if (step === 'claude') { openEngineSetup('claude'); return; }
   gs.guide = { step, seq: ++gs.seq, hop: null, target: null, final: false, started: false, passed: new Set(), touched: false, view: currentShownView };
   for (const t of GS_WATCH_EVENTS) document.addEventListener(t, gsOnPageChange, true);
   // Some outcomes arrive after the click's own tick (a workflow loading onto the
@@ -44530,7 +44570,8 @@ askPanel = createAskPanel({
   openNewPipeline: (prefill) => { askSide?.uncover(); openNewPipeline(prefill); },
   openComposer: (id) => { openWorkflowFromAsk(id, { reveal: true }); },
   composerActions: askComposerActions(),        // Ask's draft and graph cards: the Workflows chat's actions (ask-composer-cards.mjs)
-  openClaudeSetup: () => { openClaudeSetup(); },
+  // Connect <engine> (engine-setup.mjs): the picker's rows for an engine not installed here, a signed-out Claude's notice.
+  openEngineSetup: (engine) => { openEngineSetup(engine); },
   // The picker's "More harnesses": the Models view with Add model on that harness. OpenCode lists its own models, so
   // it opens at that list; every other sign-in opens at step 1 with the harness picked.
   openAddModel: (engine) => { askSide?.uncover(); mvState.openEditorOnLoad = engine === 'opencode' ? { step: 2, where: 'signin', engine } : { where: 'signin', engine }; showView('models'); },

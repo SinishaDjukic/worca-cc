@@ -1027,7 +1027,7 @@ because the CLI is signed out, worca says so instead of showing the bare error.
 
 worca can run pipelines and chats on OpenAI's Codex CLI.
 
-1. Install the `codex` CLI (or use the one bundled with the ChatGPT desktop app) and make sure worca finds it: on `PATH`, or `WORCA_CODEX_BIN=/path/to/codex` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`.
+1. Install the `codex` CLI (`npm install -g @openai/codex`, or use the one bundled with the ChatGPT desktop app) and make sure worca finds it: on `PATH`, or `WORCA_CODEX_BIN=/path/to/codex` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`.
 2. Sign in once in a terminal: `codex login`. `codex login status` must say you are logged in.
 3. Pick Codex per run on New pipeline, or as a default with **Default for new runs** (Models › Catalogue or Models › Jobs). For Chat, Settings › Chat › Engine & models.
 
@@ -1303,7 +1303,7 @@ worca can run pipelines on [Goose](https://github.com/aaif-goose/goose)'s headle
 
 worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`), both the 1.x and the 2.x line. OpenCode is in beta in worca. Chat runs on OpenCode 1.19.4 or newer (1.x) or 2.3.2 or newer (2.x), locked down to worca's own tools (see the end of this section). Checked against opencode 1.18.23 (1.x, npm `opencode-ai`) and opencode 2.3.2 (2.x, npm `@opencode/cli` and Homebrew's `opencode` formula). worca reads the binary's major version once and runs each line its own way; the differences are noted below.
 
-1. Install OpenCode and make sure worca finds it: on `PATH`, or `WORCA_OPENCODE_BIN=/path/to/opencode` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`. worca supports OpenCode 1.x (npm `opencode-ai`) and 2.x (npm `@opencode/cli`, and Homebrew's `opencode` formula).
+1. Install OpenCode (`npm install -g @opencode/cli` for 2.x, or `brew install opencode`) and make sure worca finds it: on `PATH`, or `WORCA_OPENCODE_BIN=/path/to/opencode` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`. worca supports OpenCode 1.x (npm `opencode-ai`) and 2.x (npm `@opencode/cli`, and Homebrew's `opencode` formula).
 2. Connect a provider once in a terminal: `opencode auth login`, or set the provider's key (for example `ANTHROPIC_API_KEY`) in worca's own environment. `opencode providers list` (1.x) or `opencode auth list` (2.x) shows what OpenCode sees. Without either, only OpenCode Zen's free models run, and they send the code to opencode.ai, so Models › Jobs shows OpenCode as *Not ready* and a run is refused, unless every step names its model or you opt in (below). worca checks the credentials in the environment the agent gets: under a set that scrubs the environment, a key only worca has does not count. For Google models, set `GOOGLE_GENERATIVE_AI_API_KEY`: OpenCode 1.18 lists a `GEMINI_API_KEY` under `providers list` but does not use it, so a run stops with "Google Generative AI API key is missing".
 3. Pick OpenCode per run on New pipeline, or as a default with **Default for new runs** (Models › Catalogue or Models › Jobs).
 
@@ -1343,9 +1343,12 @@ first engine that is installed (in the picker's order) when that engine is your 
 already on it keeps its model, marked *not installed* with the reason, led by a **Set up** row for that engine, and can
 move to another engine. An engine that
 is installed but not signed in stays offered: the chat says what to fix when you send. Claude Code follows the same rule
-(`WORCA_CLAUDE_BIN`, else `claude` on your `PATH`); its setup row opens Connect Claude Code, which checks again once you
-have installed it. When no engine is installed, the model button says **Set up a harness**, and its menu lists the
-engines to set up. A Claude chat sent while it is missing says "Claude Code is not installed" with the path it looked
+(`WORCA_CLAUDE_BIN`, else `claude` on your `PATH`). Every engine's setup row opens its setup dialog (**Connect
+OpenAI Codex**, **Connect Goose**, … **Connect Claude Code**): the install command and sign-in step from that engine's section below, its
+`WORCA_<ENGINE>_BIN`, a link to the section, and **Check again**. Check again asks the server whether the program is
+installed (the same look as the picker's) and, once it is, whether the engine is ready, as Models › Jobs reports it
+(`GET /api/engines/<engine>/setup`). When no engine is installed, the model button says **Set up a harness**, and its
+menu lists the engines to set up. A Claude chat sent while it is missing says "Claude Code is not installed" with the path it looked
 for, and its **Set up…** link opens the same dialog. On every engine but Claude, a chat has no shell and no
 file tools of its own, reads through worca's `read_file`, `grep` and `glob`, and stops with an error the moment the engine
 calls a tool that is neither worca's nor one of your sets' MCP servers.
@@ -1440,7 +1443,8 @@ A chat is not tied to the engine it started on. The model picker lists the model
 *this chat*, and one row for each other engine that has models and is installed here. Open an engine's row to see its models, and pick one to
 move the chat there. The installed engines with no model yet are listed under **More harnesses**; a row there opens `Add model`
 with that harness picked. Below them, dimmed and marked *not installed*, are the engines not installed on this machine; a
-row there opens that engine's setup section of this page in a new tab. Moving a chat:
+row there opens that engine's setup dialog (in the browser extension, its setup section of this page in a new tab).
+Moving a chat:
 
 - worca first shows what changes: the tools the new engine has, images or PDFs it cannot view, whether it reports a
   cost, both models' context windows, the MCP servers from your sets it cannot start, the attachments it gets only by

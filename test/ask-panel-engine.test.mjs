@@ -366,7 +366,7 @@ test('Codex not installed: a chat already on Codex keeps its model, tagged with 
 const harnessRows = (ctx) => [...ctx.doc.querySelectorAll('.ask-pop-model [data-ask-harness]:not([data-ask-harness-missing])')].map((n) => n.textContent.replace(/›$/, ''));
 const missingRows = (ctx) => [...ctx.doc.querySelectorAll('.ask-pop-model [data-ask-harness-missing]')].map((n) => n.textContent);
 // Claude Code missing is any engine missing: left out of a new chat, listed among the harnesses to set up, kept for a
-// chat already on it. Its setup row opens Connect Claude Code (with that host), else its setup docs.
+// chat already on it. Its setup row opens Connect Claude Code (with that host), else its setup docs, as every engine's.
 const NO_CLAUDE = 'Claude Code is not installed: claude was not found. Install it, or set WORCA_CLAUDE_BIN to its path.';
 const CLAUDE_DOCS = 'https://github.com/worca-org/worca/blob/dev/docs/models.md#claude-code';
 const CATALOG_NO_CLAUDE = { ...CATALOG, askEngine: 'codex', default: CATALOG.defaults.codex, notReady: { claude: NO_CLAUDE }, setupDocs: { claude: CLAUDE_DOCS } };
@@ -378,8 +378,8 @@ const ALL_ENGINES = ['claude', 'codex', 'copilot', 'gemini', 'goose', 'opencode'
 test('Claude Code not installed: a new chat starts on an installed engine; Claude sits under More harnesses and opens Connect Claude Code', async () => {
   const { storage } = makePanel({ fetchHandler: handler() });
   storage.setItem('worca-cc.ask.model', JSON.stringify({ model: 'claude-opus-5-5', effort: 'high' }));
-  let setups = 0;
-  const ctx = makePanel({ storage, fetchHandler: handler({ catalog: CATALOG_NO_CLAUDE }), deps: { openClaudeSetup: () => { setups += 1; } } });
+  const setups = [];
+  const ctx = makePanel({ storage, fetchHandler: handler({ catalog: CATALOG_NO_CLAUDE }), deps: { openEngineSetup: (e) => { setups.push(e); } } });
   const opened = [];
   ctx.window.open = (...a) => { opened.push(a); return null; };
   ctx.panel.open(); await ctx.tick(); await ctx.tick();
@@ -391,11 +391,11 @@ test('Claude Code not installed: a new chat starts on an installed engine; Claud
   assert.deepEqual(names(ctx), ['GPT-5.5']);
   assert.deepEqual(engineRows(ctx), [], 'no Claude row among the engines');
   ctx.doc.querySelector('.ask-pop-model [data-ask-more-harnesses]').click(); await ctx.tick();
-  assert.deepEqual(missingRows(ctx), ['Claude Codenot installed↗']);
+  assert.deepEqual(missingRows(ctx), ['Claude Codenot installed›'], 'a dialog here: › as any row that stays in the app');
   const claude = ctx.doc.querySelector('.ask-pop-model [data-ask-harness="claude"]');
   assert.equal(claude.title, `${NO_CLAUDE} Opens Connect Claude Code.`);
   claude.click(); await ctx.tick();
-  assert.equal(setups, 1);
+  assert.deepEqual(setups, ['claude']);
   assert.deepEqual(opened, [], 'the dialog, not the docs');
   assert.equal(ctx.doc.querySelector('.ask-pop-model'), null, 'the menu closes');
   const bare = makePanel({ fetchHandler: handler({ catalog: CATALOG_NO_CLAUDE }) });
@@ -404,7 +404,7 @@ test('Claude Code not installed: a new chat starts on an installed engine; Claud
   bare.panel.open(); await bare.tick(); await bare.tick();
   modelBtn(bare).click(); await bare.tick();
   bare.doc.querySelector('.ask-pop-model [data-ask-more-harnesses]').click(); await bare.tick();
-  assert.deepEqual(missingRows(bare), ['Claude Codenot installed↗'], 'the same mark as every other setup row');
+  assert.deepEqual(missingRows(bare), ['Claude Codenot installed↗'], 'no dialog host: ↗, its docs open in a new tab');
   assert.equal(bare.doc.querySelector('.ask-pop-model [data-ask-harness="claude"]').title, `${NO_CLAUDE} Opens its setup docs.`);
   bare.doc.querySelector('.ask-pop-model [data-ask-harness="claude"]').click(); await bare.tick();
   assert.deepEqual(bareOpened, [[CLAUDE_DOCS, '_blank', 'noopener']], 'no Connect Claude Code host: its setup docs');
@@ -413,8 +413,8 @@ test('Claude Code not installed: a new chat starts on an installed engine; Claud
 test('no harness installed: the button says "Set up a harness", and its menu is the harnesses to set up', async () => {
   const notReady = Object.fromEntries(ALL_ENGINES.map((e) => [e, `${e} is not installed.`]));
   const setupDocs = Object.fromEntries(ALL_ENGINES.map((e) => [e, `https://docs.example.test/${e}`]));
-  let setups = 0;
-  const ctx = makePanel({ fetchHandler: handler({ catalog: { ...CATALOG, notReady, setupDocs } }), deps: { openClaudeSetup: () => { setups += 1; }, openAddModel: () => {} } });
+  const setups = [];
+  const ctx = makePanel({ fetchHandler: handler({ catalog: { ...CATALOG, notReady, setupDocs } }), deps: { openEngineSetup: (e) => { setups.push(e); }, openAddModel: () => {} } });
   ctx.panel.open(); await ctx.tick(); await ctx.tick();
   const btn = modelBtn(ctx);
   assert.equal(ctx.doc.querySelector('.ask-model-btn-label').textContent, 'Set up a harness');
@@ -430,7 +430,13 @@ test('no harness installed: the button says "Set up a harness", and its menu is 
   assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-effort-row]'), null, 'no effort to pick');
   assert.equal(ctx.doc.querySelector('.ask-pop-model [data-ask-more-harnesses]'), null);
   ctx.doc.querySelector('.ask-pop-model [data-ask-harness="claude"]').click(); await ctx.tick();
-  assert.equal(setups, 1);
+  assert.deepEqual(setups, ['claude']);
+  // Every engine's row opens its own setup dialog, not only Claude's.
+  for (const e of ALL_ENGINES.slice(1)) {
+    modelBtn(ctx).click(); await ctx.tick();
+    ctx.doc.querySelector(`.ask-pop-model [data-ask-harness="${e}"]`).click(); await ctx.tick();
+  }
+  assert.deepEqual(setups, ALL_ENGINES);
   // A machine where an installed engine only lacks a model: Add model on it leads, the missing ones below.
   const goose = { ...notReady }; delete goose.goose;
   const one = makePanel({ fetchHandler: handler({ catalog: { ...CATALOG, notReady: goose, setupDocs } }), deps: { openAddModel: () => {} } });
@@ -442,22 +448,22 @@ test('no harness installed: the button says "Set up a harness", and its menu is 
 });
 
 test('Claude Code not installed: a chat already on Claude keeps its model, flagged, its section led by "Set up Claude Code"', async () => {
-  let setups = 0;
-  const ctx = await openCodexChat({ fetchHandler: handler({ ...CLAUDE_CHAT, catalog: CATALOG_NO_CLAUDE }), deps: { openClaudeSetup: () => { setups += 1; } } });
+  const setups = [];
+  const ctx = await openCodexChat({ fetchHandler: handler({ ...CLAUDE_CHAT, catalog: CATALOG_NO_CLAUDE }), deps: { openEngineSetup: (e) => { setups.push(e); } } });
   const btn = modelBtn(ctx);
   assert.equal(btn.dataset.engine, 'claude');
   assert.match(btn.textContent, /Opus 5\.5 ⚠/);
   assert.ok(btn.getAttribute('aria-label').endsWith(` · ${NO_CLAUDE}`), 'the button names the reason');
   btn.click(); await ctx.tick();
   const lead = ctx.doc.querySelector('.ask-pop-model [data-ask-setup-lead]');
-  assert.equal(lead.textContent, 'Set up Claude Codenot installed↗');
+  assert.equal(lead.textContent, 'Set up Claude Codenot installed›');
   assert.equal(lead.title, `${NO_CLAUDE} Opens Connect Claude Code.`);
   assert.ok(lead.nextElementSibling.classList.contains('ask-pop-divider'), 'a divider, then the model');
   assert.deepEqual(names(ctx), ['Opus 5.5']);
   assert.equal(ctx.doc.querySelector('.ask-pop-model .ask-model-item .ask-model-tag.is-warn').textContent, 'not installed');
   assert.deepEqual(engineRows(ctx), ['OpenAI Codex (beta)'], 'and it can move to an installed engine');
   lead.click(); await ctx.tick();
-  assert.equal(setups, 1);
+  assert.deepEqual(setups, ['claude']);
 });
 
 test('picking a Claude model in a Codex chat previews, asks, then switches in place', async () => {
@@ -767,7 +773,7 @@ test('More harnesses: one row lists the chat engines with no models; each opens 
   assert.equal(ctx.doc.querySelector('.ask-pop-model'), null, 'the menu closes on the way to Models');
 });
 
-test('More harnesses: an engine not installed here sits at the foot, tagged, and opens its setup docs', async () => {
+test('More harnesses: an engine not installed here sits at the foot, tagged, and opens its setup docs with no dialog host', async () => {
   const notReady = { gemini: 'Gemini CLI is not installed.', qwen: 'Qwen Code is not installed.' };
   const setupDocs = { gemini: 'https://docs.example.test/gemini', qwen: 'https://docs.example.test/qwen' };
   const added = [];
@@ -788,6 +794,25 @@ test('More harnesses: an engine not installed here sits at the foot, tagged, and
   gemini.click(); await ctx.tick();
   assert.deepEqual(opened, [['https://docs.example.test/gemini', '_blank', 'noopener']]);
   assert.deepEqual(added, [], 'not Add model: a model added there would never be offered');
+  assert.equal(ctx.doc.querySelector('.ask-pop-model'), null, 'the menu closes');
+});
+
+test('More harnesses: with a dialog host, an engine not installed here opens Connect <engine>, never its docs', async () => {
+  const notReady = { gemini: 'Gemini CLI is not installed.', qwen: 'Qwen Code is not installed.' };
+  const setupDocs = { gemini: 'https://docs.example.test/gemini', qwen: 'https://docs.example.test/qwen' };
+  const setups = [];
+  const ctx = makePanel({ fetchHandler: handler({ catalog: { ...CATALOG, notReady, setupDocs } }), deps: { openAddModel: () => {}, openEngineSetup: (e) => { setups.push(e); } } });
+  const opened = [];
+  ctx.window.open = (...a) => { opened.push(a); return null; };
+  ctx.panel.open(); await ctx.tick(); await ctx.tick();
+  ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
+  ctx.doc.querySelector('.ask-pop-model [data-ask-more-harnesses]').click(); await ctx.tick();
+  assert.deepEqual(missingRows(ctx), ['Gemini CLI (beta)not installed›', 'Qwen Code (beta)not installed›']);
+  const qwen = ctx.doc.querySelector('.ask-pop-model [data-ask-harness="qwen"]');
+  assert.equal(qwen.title, 'Qwen Code is not installed. Opens Connect Qwen Code.');
+  qwen.click(); await ctx.tick();
+  assert.deepEqual(setups, ['qwen']);
+  assert.deepEqual(opened, [], 'the dialog, not the docs');
   assert.equal(ctx.doc.querySelector('.ask-pop-model'), null, 'the menu closes');
 });
 
