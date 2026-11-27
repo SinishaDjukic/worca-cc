@@ -333,3 +333,56 @@ export function verifyLogEntries(verify, opts = {}) {
 export function verifyGapItems(gaps) {
   return (Array.isArray(gaps) ? gaps : []).map((g) => ({ id: g.id, idCol: true, label: g.why, pass: false, mark: 'x', ariaLabel: 'gap' }));
 }
+
+/** Slice 11 (R-ux-4): the states of one Verifier round shown as a check row in its feature's group. The card's view
+ *  states, with `halted` split by the run's status into failed and stopped, and `clean` / `accepted` read as passed. */
+export const CHECK_ROW_STATES = Object.freeze(['verifying', 'asking', 'paused', 'failed', 'stopped', 'gaps', 'passed']);
+const gapCountOf = (gaps) => (Number.isInteger(gaps) && gaps > 0 ? gaps : null);
+const CHECK_ROW_WORD = Object.freeze({ verifying: 'checking', asking: 'needs you', paused: 'paused', failed: 'failed', stopped: 'stopped', gaps: 'gaps found', passed: 'passed' });
+/** The row's last word: the gap count where the round has one to say (asking, failed, gaps), else the state's word. */
+function checkRowWord(state, gaps) {
+  const n = gapCountOf(gaps);
+  return n !== null && (state === 'asking' || state === 'failed' || state === 'gaps') ? plural(n, 'gap') : CHECK_ROW_WORD[state] || CHECK_ROW_WORD.verifying;
+}
+const roundText = (round) => (Number.isInteger(round) && round > 0 ? String(round) : '1');
+
+/** A check row's words: `{title: 'Verifier · round 2', word: '1 gap', text: 'Verifier · round 2 · 1 gap'}`. */
+export function checkRowWords({ round, state, gaps } = {}) {
+  const title = `Verifier · round ${roundText(round)}`;
+  const word = checkRowWord(state, gaps);
+  return { title, word, text: `${title} · ${word}` };
+}
+
+const GROUP_LINE = Object.freeze({
+  verifying: { state: 'working', word: 'checking', count: false }, paused: { state: 'paused', word: 'paused', count: false },
+  asking: { state: 'needs-you', word: 'needs you', count: true }, failed: { state: 'failed', word: 'failed', count: true },
+  stopped: { state: 'stopped', word: 'stopped', count: false },
+});
+/** The group row's state and line from the newest round (`{state, line}`), or null for a passed or answered round: the
+ *  members (and the group's hold) decide then. */
+export function checkGroupLine(check) {
+  const g = check && Object.hasOwn(GROUP_LINE, check.state) ? GROUP_LINE[check.state] : null;
+  if (!g) return null;
+  const n = g.count ? gapCountOf(check.gaps) : null;
+  return { state: g.state, line: `Verifier round ${roundText(check.round)} ${g.word}${n !== null ? ` · ${plural(n, 'gap')}` : ''}` };
+}
+
+const ROW_DOT = Object.freeze({
+  verifying: { runState: 'working', mark: 'live' }, asking: { runState: 'needs-you', mark: 'ask' }, paused: { runState: 'paused', mark: null },
+  failed: { runState: 'failed', mark: 'failed' }, stopped: { runState: 'stopped', mark: null }, gaps: { runState: 'failed', mark: 'failed' },
+  passed: { runState: 'ready', mark: 'done' },
+});
+const DOT_LABEL = Object.freeze({ asking: 'Needs you', failed: 'Gaps found', gaps: 'Gaps found' });
+/** A check row's dot: the run state it is drawn over, its mark (a ui/public/status-dot.mjs RUN_MARK_DOTS key, or null)
+ *  and the symbol dot's label, null when the row's word already names the state (a screen reader hears it once). */
+export function checkRowDot(state, gaps) {
+  const s = Object.hasOwn(ROW_DOT, state) ? state : 'verifying';
+  const named = s !== 'gaps' && checkRowWord(s, gaps) === CHECK_ROW_WORD[s];
+  return { ...ROW_DOT[s], label: Object.hasOwn(DOT_LABEL, s) && !named ? DOT_LABEL[s] : null };
+}
+
+/** A Verifier run's stored title: it starts with `Verifier`, so the run reads as one wherever it shows alone. */
+export function verifierRunTitle(featureTitle, round) {
+  const base = `Verifier · ${featureTitle}`;
+  return Number.isInteger(round) && round > 0 ? `${base} · round ${round}` : base;
+}

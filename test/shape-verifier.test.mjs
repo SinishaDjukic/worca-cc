@@ -10,6 +10,8 @@ import { verifyStop as reExported, stopAnswerOk, STOP_REASONS } from '../src/sha
 import * as V from '../src/shared/shape/verifier.mjs';
 import { careRunPlan } from '../src/shared/shape/feature-record.mjs';
 import { doneStatusWord } from '../ui/public/ship-words.mjs';
+import { RUN_MARK_DOTS } from '../ui/public/status-dot.mjs';
+import { RUN_STATES } from '../src/shared/run-model.mjs';
 
 const OWNED = ['R-po-1', 'R-po-2', 'R-po-3'];
 
@@ -429,4 +431,67 @@ test('s10 the feature verifier agent definition names the kind field and its fou
   const md = readFileSync(new URL('../agents/worca-cc-feature-verifier.md', import.meta.url), 'utf8');
   assert.match(md, /["`]kind["`]/, 'the kind field');
   for (const kind of ['plain', 'judgement', 'scope', 'requirement']) assert.match(md, new RegExp(`[\`"]${kind}[\`"]`), kind);
+});
+
+// ── Slice 11 (R-ux-4): the words, the group line, the dot and the title of a Verifier round shown in its feature ─────
+const need = (name) => assert.equal(typeof V[name], 'function', `verifier.mjs exports ${name}`);
+const ROW_STATES = ['verifying', 'asking', 'paused', 'failed', 'stopped', 'gaps', 'passed'];
+
+test('s11 CHECK_ROW_STATES: the seven row states, frozen', () => {
+  assert.deepEqual(V.CHECK_ROW_STATES, ROW_STATES);
+  assert.ok(Object.isFrozen(V.CHECK_ROW_STATES));
+});
+
+test("s11 checkRowWords: 'Verifier · round 2 · 1 gap', and one last word per state", () => {
+  need('checkRowWords');
+  assert.deepEqual(V.checkRowWords({ round: 2, state: 'failed', gaps: 1 }),
+    { title: 'Verifier · round 2', word: '1 gap', text: 'Verifier · round 2 · 1 gap' });
+  for (const [state, gaps, word] of [
+    ['gaps', 1, '1 gap'], ['gaps', 2, '2 gaps'], ['asking', 1, '1 gap'], ['asking', null, 'needs you'], ['failed', 2, '2 gaps'],
+    ['failed', null, 'failed'], ['passed', 0, 'passed'], ['passed', 1, 'passed'], ['stopped', null, 'stopped'], ['stopped', 1, 'stopped'],
+    ['paused', null, 'paused'], ['paused', 1, 'paused'], ['verifying', null, 'checking']]) {
+    const w = V.checkRowWords({ round: 2, state, gaps });
+    assert.deepEqual([w.word, w.text], [word, `Verifier · round 2 · ${word}`], `${state} ${gaps}`);
+  }
+  assert.equal(V.checkRowWords({ round: 3, state: 'passed', gaps: 0 }).title, 'Verifier · round 3');
+});
+
+test('s11 checkGroupLine: the newest round on the group row; a passed or answered round leaves the members to decide', () => {
+  need('checkGroupLine');
+  const of = (state, gaps = null, round = 2) => V.checkGroupLine({ round, state, gaps });
+  assert.deepEqual(of('verifying'), { state: 'working', line: 'Verifier round 2 checking' });
+  assert.deepEqual(of('paused'), { state: 'paused', line: 'Verifier round 2 paused' });
+  assert.deepEqual(of('asking', 1), { state: 'needs-you', line: 'Verifier round 2 needs you · 1 gap' });
+  assert.deepEqual(of('asking', 2), { state: 'needs-you', line: 'Verifier round 2 needs you · 2 gaps' });
+  assert.deepEqual(of('asking'), { state: 'needs-you', line: 'Verifier round 2 needs you' }, 'no count known');
+  assert.deepEqual(of('failed', 1), { state: 'failed', line: 'Verifier round 2 failed · 1 gap' });
+  assert.deepEqual(of('failed'), { state: 'failed', line: 'Verifier round 2 failed' }, 'no count known');
+  assert.deepEqual(of('stopped', null, 3), { state: 'stopped', line: 'Verifier round 3 stopped' });
+  assert.equal(of('passed', 0), null);
+  assert.equal(of('gaps', 2), null, 'an answered gate: its fix runs are members and decide the row');
+});
+
+test('s11 checkRowDot: marks come from RUN_MARK_DOTS only, and a symbol dot has a label only when the word does not name the state', () => {
+  need('checkRowDot');
+  const MARKS = { verifying: 'live', asking: 'ask', paused: null, failed: 'failed', stopped: null, gaps: 'failed', passed: 'done' };
+  for (const [state, mark] of Object.entries(MARKS)) {
+    for (const gaps of [null, 1]) {
+      const d = V.checkRowDot(state, gaps);
+      assert.equal(d.mark, mark, `${state} ${gaps}`);
+      if (d.mark !== null) assert.ok(Object.hasOwn(RUN_MARK_DOTS, d.mark), d.mark);
+      assert.ok(Object.hasOwn(RUN_STATES, d.runState), `${state}: ${d.runState} is a run state`);
+    }
+  }
+  assert.deepEqual(V.checkRowDot('gaps', 1), { runState: 'failed', mark: 'failed', label: 'Gaps found' });
+  assert.deepEqual([V.checkRowDot('asking', 1).runState, V.checkRowDot('asking', 1).label], ['needs-you', 'Needs you']);
+  assert.equal(V.checkRowDot('failed', 1).label, 'Gaps found', 'the word is the count, so the dot says it');
+  assert.deepEqual([V.checkRowDot('failed', null).runState, V.checkRowDot('failed', null).label], ['failed', null]);
+  assert.deepEqual([V.checkRowDot('paused', null).runState, V.checkRowDot('paused', null).label], ['paused', null]);
+  assert.deepEqual([V.checkRowDot('stopped', null).runState, V.checkRowDot('stopped', null).label], ['stopped', null]);
+});
+
+test("s11 verifierRunTitle: a title that starts with 'Verifier', with the round only when it is a positive integer", () => {
+  need('verifierRunTitle');
+  assert.equal(V.verifierRunTitle('Sign-up', 2), 'Verifier · Sign-up · round 2');
+  for (const round of [undefined, null, 0, -1, 1.5, 'x']) assert.equal(V.verifierRunTitle('Sign-up', round), 'Verifier · Sign-up', String(round));
 });

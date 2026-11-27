@@ -149,7 +149,8 @@ test('two seeded gaps: one check, two gap runs, a re-check, then Ready to ship w
   assert.equal(t.request.workflowId, 'wf_shape_verify');
   assert.deepEqual(t.after, { kind: 'pipeline', id: w.pids[3], policy: 'done' });
   assert.deepEqual(t.request.shape.verify.owned, OWNED);
-  assert.equal(t.title, 'Sign-up · Verifier');
+  assert.equal(t.title, 'Verifier · Sign-up · round 1');
+  assert.equal(t.request.title, 'Verifier · Sign-up · round 1');
   assert.equal(w.view().ship.ready, false);
   const { pid: v1 } = w.verifierSettles({ result: result(['R-po-2', 'R-po-3']), headSha: null, decision: answersFor(['R-po-2', 'R-po-3']) });
   const after1 = w.checks()[0];
@@ -1336,4 +1337,24 @@ test("R-po-5 example: Away fixes the plain gap, the judgement call waits for the
   w.verifierSettles({ result: file, headSha: null, decision: SHARED.mergeGapDecision(file.gaps, away, owner.answer.answers) });
   assert.deepEqual(kindsAfter(w, 4), [[5, 'change'], [6, 'change']]);
   assert.deepEqual(gapLines(w), ['Gap R-po-1 → fix, run 5 added · decided by Away mode', 'Gap R-po-2 → fix, run 6 added · decided by you']);
+});
+
+// Slice 11 (R-ux-4): shown alone, a Verifier run is read by its stored title.
+test("s11: a Verifier run shown alone has a title that starts with 'Verifier', and a retried or later round keeps its own number", () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  const titles = (i) => { const t = getTicket(w.checks()[i].ticketId, { withRequest: true }); return [t.title, t.request.title]; };
+  assert.deepEqual(titles(0), ['Verifier · Sign-up · round 1', 'Verifier · Sign-up · round 1']);
+  for (const title of titles(0)) assert.match(title, /^Verifier/);
+  // The round halts: the retry is a new ticket under the same round.
+  const halted = w.checks()[0].ticketId;
+  w.verifierSettles(null, 'error');
+  assert.ok(startVerifyCheck(w.f.id));
+  assert.notEqual(w.checks().at(-1).ticketId, halted);
+  assert.deepEqual(titles(w.checks().length - 1), ['Verifier · Sign-up · round 1', 'Verifier · Sign-up · round 1']);
+  // A gap, its fix run, and the next check: round 2.
+  w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: answersFor(['R-po-2']) });
+  w.gapRunsSettle();
+  assert.equal(w.checks().at(-1).round, 2);
+  assert.deepEqual(titles(w.checks().length - 1), ['Verifier · Sign-up · round 2', 'Verifier · Sign-up · round 2']);
 });

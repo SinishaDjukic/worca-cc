@@ -429,7 +429,9 @@ export function liveSliceFrom({ runId, status, pendingQuestion = null, approved 
   const value = heldStop ? stopOptionOf(pq && pq.stop, heldStop.payload)?.value : null;
   const stop = pq && pq.stop ? { reason: pq.stop.reason, held: !!heldStop,
     ...(heldStop && Number.isInteger(heldStop.after) ? { after: heldStop.after } : {}), ...(value ? { value } : {}),
-    ...(refused ? { refused } : {}), ...(going ? { going: true } : {}) } : null;
+    ...(refused ? { refused } : {}), ...(going ? { going: true } : {}),
+    // Slice 11 (D14): a Verifier gate's gap count, so its check row and group line can say it.
+    ...(Array.isArray(pq.stop.gaps) ? { gapCount: pq.stop.gaps.length } : {}) } : null;
   return { runId, status: String(status || ''), waiting: plan, asking: !!pq && !plan, approved: !!approved,
     ask: pq ? { id: pq.id || null, kind: plan && pq.plan && pq.plan.outline ? 'outline' : pq.kind } : null, ...(stop ? { stop } : {}) };
 }

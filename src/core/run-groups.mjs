@@ -6,6 +6,7 @@ import { getDb, tx } from './db.mjs';
 import { getTicket } from './scheduler.mjs';
 import { featureOfPipeline, ticketHeld, shipHold, sliceWords } from './shape/features.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature } from './shape/small-runs.mjs';
+import { checkRowsOf } from './shape/verifier.mjs';
 import { spendOfPipelines } from './stats.mjs';
 
 export class RunGroupError extends Error {
@@ -43,7 +44,9 @@ function pipelineRows(ids) {
  *  native members carry `slice` (sliceWords; `live` is the server's runs overlay): with the flag on, every member's
  *  `slice` carries `buildsOn` (number[], its direct builds-on runs), and a not-started
  *  member's `slice` also carries `waitsFor` (number[]) and `cannotStart` {run, reason}; the one run that goes on next
- *  (a run whose stop answer is held waiting its turn, else the scheduler's next start) carries `nextTurn`. */
+ *  (a run whose stop answer is held waiting its turn, else the scheduler's next start) carries `nextTurn`. Slice 11: a
+ *  marked feature with a priced Verifier round (`cost.checks`) also carries `checks`, one row per round, oldest first
+ *  (verifier.mjs checkRowsOf: {round, pipelineId, at, state, gaps}); a round is never one of `members`. */
 export function listRunGroups({ live = () => null } = {}) {
   const db = getDb();
   const small = shaperSmallRunsOn();
@@ -87,10 +90,14 @@ export function listRunGroups({ live = () => null } = {}) {
     return { id: f.id, kind: 'feature', title: f.title, projectKey: null, planning: planningOf(f, new Set(own.map((s) => s.pipeline_id).filter(Boolean))),
       members: withAfter(withAdhoc(f.id, own.map((s) => member(s.idx, s.title, s.pipeline_id, s.ticket_id, false))))
         .map((m) => (words && !m.adhoc && words.has(m.position) ? { ...m, slice: words.get(m.position) } : m)),
-      ...(marked ? { smallRuns: true, ...(hold ? { hold } : {}) } : {}) };
+      ...(marked ? { smallRuns: true, ...(hold ? { hold } : {}) } : {}), marked };
   });
   for (const u of users) out.push({ id: u.id, kind: 'user', title: u.title, nameSource: u.name_source || 'user', projectKey: u.project_key || null, planning: null, members: withAfter(withAdhoc(u.id, [])) });
-  return out.filter((g) => g.members.length).map((g) => ({ ...g, cost: groupCost(g, small) }));
+  return out.filter((g) => g.members.length).map(({ marked, ...g }) => {
+    const cost = groupCost(g, small);
+    // Slice 11 (D1–D3): a marked feature's priced Verifier rounds, as check rows after its members (never members).
+    return marked && cost.checks ? { ...g, cost, checks: checkRowsOf(g.id, cost.checks, { live }) } : { ...g, cost };
+  });
 }
 
 /** Every pipeline whose cost belongs to a feature (§2.4): its origin (planning) run, its slices' runs, earlier attempts

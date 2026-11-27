@@ -685,6 +685,10 @@ above them, never a boxed tab, and never a colour of a tab's own.
   its title; a live member with stages draws the four-section block instead (a 2px bar, one step below the group
   row's 3px line, then the 11px Plan / Build / Review / Ready with its stage bold); its status names no step, only a
   state its dot does not say (needs you, paused). A member dispatched but not started yet (Starting) draws no progress. Its ⋯ stays 28px, centred.
+  A feature's Verifier round is a check row at the member level, after the runs (`.runs-item.is-check`): on the
+  `--field` ground, the shield icon and its dot in the pick column (no checkbox, no ⋯), `Verifier · round 2` and its
+  last word (`1 gap`, `checking`, `passed`). Its dot takes its mark from `RUN_MARK_DOTS` only. It is never selected
+  (Space does nothing on it) and it never says `Ready to ship`: the group row says it.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header. The Marketplace's Browse search is one exception
   (Marketplace exceptions); the Models Catalogue's own "Search models" field, with its All, In use and Needs setup

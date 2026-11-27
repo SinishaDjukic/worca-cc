@@ -787,7 +787,12 @@ is refused: shipping with a gap needs a reason, so that and changing a requireme
 ### The four places
 
 - **The Runs list group row**: one group per feature, the planning run as run 1, the state word, the runs done of N and
-  the cost, once.
+  the cost, once. The Verifier's rounds are check rows after the runs (`Verifier · round 2 · 1 gap`), never standalone
+  rows and never counted in the runs done of N; their cost was already counted. A newest round that checks, is paused,
+  waits for you, failed or stopped is said on the group row (`Verifier round 2 failed · 1 gap`), so the feature is not
+  ready yet: while a listed round checks, waits or failed, the group row says it instead of `Ready to ship`, which is
+  said once, on the group row. A Verifier run started now
+  is titled `Verifier · Sign-up · round 2` wherever it shows alone.
 - **The run panel and the Expert run page**: what the run owns, what it starts from, and one Agents place. With the flag
   off, the Agents tab and Overview stay as today. The facts add **Waits for** (left out when the run waits for nothing)
   and **Needed by** (`nothing` when no run builds on it). These facts show on a started run's page only: a run that has

@@ -380,3 +380,18 @@ test('the GAP_AWAY_ONLY phase: the log lines and the held gap question, asserted
     assert.match(s, new RegExp(`${name}-(\\$\\{theme\\}|light|dark)`), `${name} screenshots`);
   }
 });
+
+// Slice 11 (R-ux-4, D15): the Verifier's check row and the failed group row, light and dark.
+test('the VERIFIER_ROWS_ONLY phase: the failed round on its group, asserted before the screenshots in both themes at 1280px', () => {
+  const s = src();
+  assert.ok(/process\.env\.VERIFIER_ROWS_ONLY === '1'\) \{ await verifierRowsPhase\(\); await finish\(\); \}/.test(s), 'the VERIFIER_ROWS_ONLY=1 gate');
+  const at = s.indexOf('async function verifierRowsPhase(');
+  assert.ok(at >= 0, 'the Verifier rows phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /seedFeature\(/, 'a seeded marked feature');
+  assert.match(body, /'error'/, 'a failed Verifier pipeline');
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  for (const needle of ['data-row-key', 'Verifier · round 2 · 1 gap', 'Verifier round 2 failed · 1 gap', 'check(']) assert.ok(body.includes(needle), needle);
+  assert.match(s, /[`'/]runs-group-verifier-failed-(\$\{theme\}|light|dark)\.png/, 'the screenshots');
+});

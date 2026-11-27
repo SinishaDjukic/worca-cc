@@ -36548,7 +36548,7 @@ const withChainPr = (x, m) => (x && !x.pr && m.prUrl && isTerminalStatus(x.statu
 
 /** A group (a Run-after chain from schedulesView, or a feature / user group from /api/run-groups) as the list's group
  *  item: members carry their raw run from this tab's live map, else memberRun, else their ticket. */
-function runsGroupItem({ id, groupKind, title, members, cost = null, planning = null, smallRuns = false, hold = null }) {
+function runsGroupItem({ id, groupKind, title, members, cost = null, planning = null, smallRuns = false, hold = null, checks = null }) {
   // /api/run-groups members carry no projectKey / historyKey (src/core/run-groups.mjs member()), so a finished member's
   // href would fall back to the group page itself: the History row knows the project.
   const histPk = (pid) => (pid ? (((state.historyAll || []).find((p) => p && p.id === pid)) || {}).projectKey || '' : '');
@@ -36599,6 +36599,15 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
       startedAt: (r && r.startedAt) || (hp && hp.startedAt) || null,
       cost: memberCostUsd(r && r.totalCostUsd, hp && hp.totalCostUsd, cost && cost.byPipeline ? cost.byPipeline[planning.pipelineId] : undefined) };
   })() : null;
+  // Slice 11 (R-ux-4): the feature's Verifier rounds (the server's `checks`, flag on), each linked to its run page as a
+  // member is; its cost is the group's stored one (the round was already priced, slice 6).
+  const checkItems = flagOn('shaperSmallRuns') && Array.isArray(checks) ? checks.map((c) => {
+    const r = c.pipelineId ? latestPipelineRun(c.pipelineId) : null;
+    const pk = histPk(c.pipelineId);
+    return { kind: 'check', round: c.round, state: c.state, gaps: c.gaps ?? null, pipelineId: c.pipelineId, runId: r ? r.runId : '',
+      href: r ? `#running/${r.runId}` : pk ? `#history/${pk}/${c.pipelineId}` : `#feature/${encodeURIComponent(id)}`,
+      cost: cost && cost.byPipeline && typeof cost.byPipeline[c.pipelineId] === 'number' ? cost.byPipeline[c.pipelineId] : null };
+  }) : null;
   const first = members[0] || {};
   const g = runsGroupFor({ pipelineId: first.pipelineId || '', projectDir: first.projectDir || '', workspaceId: first.workspaceId || '', projectKey: first.projectKey || '' });
   // groupProgress keeps the fill monotonic through `memo` (max of every fraction seen). Adding a member lowers the true
@@ -36609,12 +36618,13 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
   const liveCost = Object.fromEntries(items.filter((x) => x.kind === 'live' && x.run && typeof x.run.totalCostUsd === 'number')
     .map((x) => [x.pipelineId, x.run.totalCostUsd]));
   return { id, groupKind, title, members: items, planning: planningItem, groupKey: g.key, groupName: g.name, memo: memoFor(`group:${id}:${sig}`),
-    cost, liveCost, costMemo: memoFor(`cost:${id}:${sig}`), ...(smallRuns ? { smallRuns: true } : {}), ...(hold ? { hold } : {}) };   // D2 (D1)
+    cost, liveCost, costMemo: memoFor(`cost:${id}:${sig}`), ...(smallRuns ? { smallRuns: true } : {}), ...(hold ? { hold } : {}),   // D2 (D1)
+    ...(checkItems && checkItems.length ? { checks: checkItems } : {}) };
 }
 function runsGroupItems() {
   const owned = new Set((state.runGroups || []).flatMap((g) => g.members.flatMap((m) => [m.pipelineId && `p:${m.pipelineId}`, m.ticketId && `t:${m.ticketId}`])).filter(Boolean));
   const own = (state.runGroups || []).map((g) => runsGroupItem({ id: g.id, groupKind: g.kind, title: g.title, members: g.members, cost: g.cost || null, planning: g.planning || null,
-    smallRuns: g.smallRuns === true, hold: (flagOn('shaperSmallRuns') && g.hold) || null }));
+    smallRuns: g.smallRuns === true, hold: (flagOn('shaperSmallRuns') && g.hold) || null, checks: g.checks || null }));
   // A run group stands for any chain that shares a member with it (a feature's Run-after chain).
   const chains = schedulesView.chains()
     .filter((c) => !c.members.some((m) => owned.has(`p:${m.pipelineId}`) || owned.has(`t:${m.ticketId}`)))
@@ -37503,7 +37513,7 @@ function foldRunsKey(open, nav, item) {
     else if (open) focusRunsNav(item.querySelector('.runs-members a.runs-row'));
     return;
   }
-  if (!open && item?.dataset.level === 'member') focusRunsNav(runsRowLink(item.parentElement.closest('.runs-item[data-level="top"]')));
+  if (!open && (item?.dataset.level === 'member' || item?.dataset.level === 'check')) focusRunsNav(runsRowLink(item.parentElement.closest('.runs-item[data-level="top"]')));
 }
 /** S / E / ⌫ / G / ⇧G: the selection through the bar's action, else the focused row's own ⋯ item (same rule, same level). */
 function runsLetterKey(action, item) {
@@ -37547,6 +37557,8 @@ document.getElementById('runs-list-pane')?.addEventListener('keydown', (e) => {
   // A stack's round link, toggle or "+n earlier" sits inside its head's item but names another run: the letter and menu
   // keys (archive, stop, delete, group, ⋯) would act on the head, so they do nothing there. Arrows still move.
   if (RUNS_ROW_ONLY_KEYS.has(action) && t.closest?.('.runs-rounds, .runs-rounds-line')) return;
+  // Slice 11 (D13): a Verifier check row is never selected and has no ⋯: Space and the row keys do nothing there.
+  if ((action === 'toggle' || RUNS_ROW_ONLY_KEYS.has(action)) && t.closest?.('.runs-item.is-check')) return;
   const item = t.closest?.('.runs-item') || null;
   const nav = t.closest?.(RUNS_NAV) || runsRowLink(item);
   e.preventDefault();
@@ -37595,8 +37607,9 @@ document.addEventListener('keydown', (e) => {
 // A11 (spec §3.2): ⌘/Ctrl-click toggles a row and enters selection; Shift-click adds the range from the anchor; a touch
 // long-press starts selecting and swallows its click. None opens the run (list-dom.mjs, shared with the Chats column).
 bindPointerSelect({ list: el.runsList, win: window, visibleKeys: visibleTopKeys,
-  getAnchor: () => runsUi.anchorKey, setAnchor: (k) => { runsUi.anchorKey = k; },
-  toggle: (k) => { runsUi.selecting = true; toggleRunsKey(k); },
+  // Slice 11 (D13): a Verifier check row (`check:` key) is never selected, by pointer either.
+  getAnchor: () => runsUi.anchorKey, setAnchor: (k) => { if (!k.startsWith('check:')) runsUi.anchorKey = k; },
+  toggle: (k) => { if (k.startsWith('check:')) return; runsUi.selecting = true; toggleRunsKey(k); },
   selectRange: (keys) => { runsUi.selecting = true; runsUi.sel.selectAll(keys); paintRunsList(); } });
 
 const selectedTargets = () => [...runsUi.sel.keys()].map((k) => runsUi.rowsByKey.get(k)).filter(Boolean).map(rowTarget);

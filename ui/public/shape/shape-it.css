@@ -556,3 +556,10 @@ li.note-row{display:flex;gap:8px;border-top:1px solid var(--line);padding:6px 0;
 .srows.run-facts .plan-check-text > .plan-check-label{flex:0 1 auto;}
 .srows.run-facts .plan-check-text > .plan-check-detail{flex:none;white-space:nowrap;}
 .srows.run-agents .plan-check-text{max-height:var(--row-line);overflow:hidden;}
+/* Slice 11 (D9, D11): a Verifier round's check row after a feature's runs, on the field ground, the shield in quiet ink
+   beside its dot in the pick column (no checkbox, no ⋯): the shield in the column's 16px indent, the dot on the members'
+   mark column. Inside a Needs you frame the ground stays inside the frame's 1px ring. Its word takes the data-mark inks above. */
+.srows.runs-members .runs-item.is-check{background:var(--field);}
+.srows.runs-members .runs-item.is-check > .runs-pick{padding-left:0;grid-template-columns:16px 12px;}
+.srows.runs-members .runs-item.is-check > .runs-pick > .ic{color:var(--ink-3);}
+.runs-item.is-needs > .srows.runs-members > .runs-item.is-check:last-child{margin:0 1px 1px;border-radius:0 0 var(--r-sm) var(--r-sm);}

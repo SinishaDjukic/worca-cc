@@ -9,7 +9,8 @@ import {
   rowTime, whenLabel, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
   buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, dateBucket, DATE_BUCKETS, DAY_BUCKETS, dayBucket, isFolded, setFolded, listLine, groupRow, rowShow, groupCostUsd, costTitle, memberCostUsd, memberLine,
 } from '../ui/public/runs-list.mjs';
-import { RUN_STATES } from '../src/shared/run-model.mjs';
+import { RUN_STATES, groupModel } from '../src/shared/run-model.mjs';
+import { icon } from '../ui/public/icons.mjs';
 import * as RL from '../ui/public/runs-list.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
@@ -1381,4 +1382,184 @@ test("s9 owner direction: a Verifier notes hold sits in Needs you and counts in 
   assert.equal(countNeedsYou({ history, groups: [plain] }), 0, 'flag off: unchanged');
   assert.equal(buildRunsModel({ history, groups: [plain], now: NOW }).sections.find((s) => s.id === 'needs')?.rows.length || 0, 0);
   assert.equal(countNeedsYou({ history, groups: [{ ...plain, hold: "Acknowledge the Verifier's note to ship" }] }), 0, 'unmarked: not counted');
+});
+
+// ── Slice 11 (R-ux-4): a Verifier round holds the group row, and shows as a check row after the runs ─────────────────
+const V_DONE = { status: 'done' };
+const verified = (checks, extra = {}) => groupModel({ kind: 'feature', title: 'F', members: [V_DONE, V_DONE], ...(checks ? { checks } : {}), ...extra }, { now: NOW });
+const round = (state, gaps = null, n = 2) => ({ round: n, state, gaps });
+const CONFIRM_HOLD = 'Needs your confirmation: R-ux-2';
+
+test("s11 groupModel: a failed newest round is the group row's state and line, with no action and no hold", () => {
+  const m = verified([round('failed', 1)], { hold: CONFIRM_HOLD });
+  assert.deepEqual([m.state, m.line, m.word, m.dot, m.symbol], ['failed', 'Verifier round 2 failed · 1 gap', 'Failed', 'red', 'alert']);
+  assert.deepEqual(m.actions, [], 'the row\'s ids point at a member run');
+  assert.equal('hold' in m, false);
+  assert.deepEqual(m.check, { round: 2, state: 'failed', gaps: 1 });
+  assert.deepEqual(m.count, { done: 2, total: 2, text: '2/2' }, 'a round is never counted');
+  assert.equal(m.members.length, 2);
+});
+
+test('s11 groupModel: only the newest round counts; a passed or answered one leaves the members to decide', () => {
+  for (const [state, gaps, want, line] of [
+    ['verifying', null, 'working', 'Verifier round 2 checking'], ['paused', null, 'paused', 'Verifier round 2 paused'],
+    ['asking', 1, 'needs-you', 'Verifier round 2 needs you · 1 gap'], ['stopped', null, 'stopped', 'Verifier round 2 stopped']]) {
+    const m = verified([round('passed', 0, 1), round(state, gaps)]);
+    assert.deepEqual([m.state, m.line, m.actions], [want, line, []], state);
+  }
+  for (const state of ['passed', 'gaps']) {
+    const m = verified([round('failed', 1, 1), round(state, 0)]);
+    assert.deepEqual([m.state, m.line, 'check' in m], ['ready', 'Ready to ship · 2 of 2 done', false], state);
+  }
+});
+
+test('s11 groupModel: a failing or live member and a PR outrank the round; without checks the result is dev\'s', () => {
+  const failing = verified([round('verifying')], { members: [V_DONE, { status: 'error' }] });
+  assert.deepEqual([failing.state, failing.line, 'check' in failing], ['failed', 'Run 2 of 2 · failed', false]);
+  const going = verified([round('failed', 1)], { members: [V_DONE, { status: 'running' }] });
+  assert.deepEqual([going.state, going.line, 'check' in going], ['starting', 'Run 2 of 2 · starting', false]);
+  const shipped = verified([round('failed', 1)], { pr: { url: 'https://github.com/o/r/pull/1', number: 1, state: 'MERGED' } });
+  assert.deepEqual([shipped.state, 'check' in shipped], ['merged', false]);
+  // The Verifier changes the row only when the members alone read ready: here it does, so the next assert is real.
+  assert.equal(verified([round('failed', 1)]).state, 'failed');
+  for (const hold of [undefined, CONFIRM_HOLD]) {
+    assert.deepEqual(verified([], { hold }), verified(null, { hold }), `hold ${hold}`);
+  }
+});
+
+const V_CHECK = (extra = {}) => ({ kind: 'check', round: 2, state: 'gaps', gaps: 1, pipelineId: 'v1', runId: '', href: '#history/k/v1', cost: 1, ...extra });
+const checkedFeature = (checks, extra = {}) => smallFeature({ cost: { usd: 3, byPipeline: { sr1: 1, sr2: 1, v1: 1 } },
+  members: ['sr1', 'sr2'].map((id, i) => ({ position: i + 1, title: `Slice ${i + 1}`, pipelineId: id, kind: 'hist', href: `#history/k/${id}`, run: { status: 'done' } })),
+  checks, ...extra });
+const checkedModel = (g) => buildRunsModel({ history: ['sr1', 'sr2', 'v1'].map((id) => histIt(id, { run: { status: 'done' }, pr: null })),
+  groups: [g], toggled: new Map([[`chain:${g.id}`, true]]), now: NOW });
+const checkedHost = (g) => { const host = doc.createElement('div'); host.append(...renderRunsList(doc, checkedModel(g))); return host; };
+const checkItem = (c) => {
+  const items = checkedHost(checkedFeature([V_CHECK(c)])).querySelectorAll('.runs-item[data-row-key="chain:feat_small"] > .runs-members > .runs-item[data-level="check"]');
+  assert.equal(items.length, 1, 'one check row');
+  const it = items[0];
+  return { it, a: it.querySelector(':scope > a.runs-row'), dot: it.querySelector(':scope > .runs-pick > .status-dot'),
+    sub: () => it.querySelector(':scope > a.runs-row > .runs-row-sub').textContent };
+};
+
+test('s11 check row: after the runs, with the shield in the pick column, no checkbox, no ⋯, its words and its cost hover', () => {
+  const c = checkItem({});
+  assert.ok(c.it.classList.contains('runs-item') && c.it.classList.contains('is-check'));
+  assert.equal(c.it.dataset.rowKey, 'check:feat_small/v1');
+  assert.equal(c.it.previousElementSibling.dataset.level, 'member', 'after the runs');
+  assert.equal(c.it.nextElementSibling, null);
+  assert.equal(c.it.querySelector('.runs-check'), null);
+  assert.equal(c.it.querySelector('.runs-more'), null);
+  const shield = icon(doc, 'shield').querySelector('svg').innerHTML;
+  const drawn = [...c.it.querySelectorAll(':scope > .runs-pick > .ic')].find((x) => x.querySelector('svg')?.innerHTML === shield);
+  assert.ok(drawn, 'the shield icon');
+  assert.equal(drawn.getAttribute('aria-hidden'), 'true');
+  assert.ok(c.a.classList.contains('runs-row-check'));
+  assert.equal(c.a.getAttribute('href'), '#history/k/v1');
+  assert.equal(c.a.dataset.line, 'Verifier · round 2 · 1 gap');
+  assert.equal(c.a.getAttribute('title'), 'Cost $1.00');
+  assert.equal(c.a.querySelector('.runs-row-title').textContent, 'Verifier · round 2');
+  assert.equal(c.sub(), '1 gap');
+  assert.doesNotMatch(c.it.textContent, /Ready to ship/);
+});
+
+test('s11 check row: its dot and mark per state, named once for a screen reader', () => {
+  const gaps = checkItem({});
+  assert.ok(gaps.dot.classList.contains('is-red'));
+  assert.equal(gaps.it.dataset.mark, 'failed');
+  assert.equal(gaps.dot.getAttribute('aria-label'), 'Gaps found');
+  const failed = checkItem({ state: 'failed', gaps: null });
+  assert.equal(failed.sub(), 'failed');
+  assert.equal(failed.it.dataset.mark, 'failed');
+  assert.equal(failed.dot.getAttribute('aria-hidden'), 'true', 'the word already says failed');
+  assert.equal(failed.dot.hasAttribute('aria-label'), false);
+  const asking = checkItem({ state: 'asking', gaps: 1, runId: 'rv', href: '#running/rv' });
+  assert.equal(asking.it.dataset.mark, 'ask');
+  assert.ok(asking.dot.classList.contains('is-amber'));
+  assert.equal(asking.dot.getAttribute('aria-label'), 'Needs you');
+  assert.equal(asking.a.dataset.state, 'needs-you');
+  assert.equal(asking.a.dataset.runId, 'rv');
+  for (const [state, cls, word] of [['paused', 'is-grey', 'paused'], ['stopped', 'is-dark-grey', 'stopped']]) {
+    const c = checkItem({ state, gaps: null });
+    assert.equal(c.sub(), word);
+    assert.equal(c.it.hasAttribute('data-mark'), false, state);
+    assert.ok(c.dot.classList.contains(cls), state);
+    assert.equal(c.dot.getAttribute('aria-hidden'), 'true', state);
+  }
+  const live = checkItem({ state: 'verifying', gaps: null });
+  assert.deepEqual([live.sub(), live.it.dataset.mark, live.dot.classList.contains('is-peach')], ['checking', 'live', true]);
+  const passed = checkItem({ state: 'passed', gaps: 0 });
+  assert.deepEqual([passed.sub(), passed.it.dataset.mark, passed.dot.classList.contains('is-green')], ['passed', 'done', true]);
+});
+
+test('s11 group row: the round\'s rows fold into the group, and a failed or asking round sits in Needs you with its icon', () => {
+  for (const [state, needs, needsIcon] of [['failed', true, 'fail'], ['asking', true, 'ask'], ['verifying', false, ''], ['paused', false, '']]) {
+    const g = checkedFeature([V_CHECK({ state, runId: 'rv' })]);
+    const row = groupRow(g, { now: NOW });
+    assert.deepEqual([row.needs, row.needsIcon], [needs, needsIcon], state);
+    assert.ok(row.memberKeys.has('p:v1') && row.memberKeys.has('r:rv'), state);
+    assert.deepEqual(row.checks?.map((c) => c.key), ['check:feat_small/v1'], state);
+    assert.equal(row.members.length, 2, state);
+    const model = checkedModel(g);
+    assert.deepEqual(rowsOf(model).map((r) => r.key), ['chain:feat_small'], `${state}: the round's History row folds into the group`);
+    assert.equal(!!model.sections.find((s) => s.id === 'needs')?.rows.length, needs, `${state}: Needs you`);
+  }
+});
+
+test('s11 badge: countNeedsYou agrees with Needs you when a Verifier round holds the group', () => {
+  const history = ['sr1', 'sr2', 'v1'].map((id) => histIt(id, { run: { status: 'done' }, pr: null }));
+  const section = (g, live = []) => buildRunsModel({ live, history, groups: [g], now: NOW }).sections.find((s) => s.id === 'needs')?.count || 0;
+  // A failed round: the group sits in Needs you, and the badge counts it.
+  const failed = checkedFeature([V_CHECK({ state: 'failed' })]);
+  assert.deepEqual([countNeedsYou({ history, groups: [failed] }), section(failed)], [1, 1], 'failed');
+  // An asking round whose live run is already counted (it asks): one, not two; the row folds into the group.
+  const asking = checkedFeature([V_CHECK({ state: 'asking', runId: 'rv' })]);
+  const liveAsk = [liveIt('rv', { pipelineId: 'v1', ask: true })];
+  const liveIn = [{ runId: 'rv', pipelineId: 'v1', status: 'running', ask: true }];
+  assert.equal(countNeedsYou({ live: liveIn, history, groups: [asking] }), 1, 'asking, live run counted once');
+  assert.equal(section(asking, liveAsk), 1, 'asking: one Needs you row');
+  assert.equal(countNeedsYou({ history, groups: [asking] }), 1, 'asking, no live run listed: the group counts');
+  // A checking round over a confirmation hold: the round holds the row, so neither the list nor the badge counts it.
+  for (const state of ['verifying', 'paused', 'stopped']) {
+    const g = checkedFeature([V_CHECK({ state })], { hold: CONFIRM_HOLD });
+    assert.deepEqual([countNeedsYou({ history, groups: [g] }), section(g)], [0, 0], state);
+  }
+  // A passed round leaves the hold to decide, as before.
+  const passed = checkedFeature([V_CHECK({ state: 'passed', gaps: 0 })], { hold: CONFIRM_HOLD });
+  assert.deepEqual([countNeedsYou({ history, groups: [passed] }), section(passed)], [1, 1], 'passed + hold');
+});
+
+test('s11 badge: a server-shaped group (GET /api/run-groups: members with a top-level status, no run) counts the same', () => {
+  // app.js runsNeedsInput passes state.runGroups as the server sent them; the badge must read their members' status.
+  const server = (state, extra = {}) => ({ id: 'feat_small', kind: 'feature', groupKind: 'feature', title: 'Ten runs', smallRuns: true,
+    members: ['sr1', 'sr2'].map((id) => ({ pipelineId: id, title: id, status: 'done' })),
+    checks: [{ round: 2, state, gaps: 1, pipelineId: 'v1' }], ...extra });
+  assert.equal(countNeedsYou({ groups: [server('failed')] }), 1, 'failed');
+  assert.equal(countNeedsYou({ groups: [server('verifying', { hold: CONFIRM_HOLD })] }), 0, 'verifying + confirmation');
+  assert.equal(countNeedsYou({ groups: [server('passed', { hold: CONFIRM_HOLD })] }), 1, 'passed + confirmation');
+});
+
+test('s11 group row: in Needs you its line is the Verifier line, not needsWhy\'s or the section\'s short form', () => {
+  const alone = checkedFeature([V_CHECK({ state: 'failed' })]);
+  assert.equal(listLine(groupRow(alone, { now: NOW }), { section: 'needs' }), 'Verifier round 2 failed · 1 gap');
+  // The round's own failed History row folds into the group and puts it in Needs you: the Verifier's line still comes
+  // first, before the section's short form. (A member that needs you through its PR is the group's current member, D7:
+  // it names itself and the round does not hold the row.)
+  const g = checkedFeature([V_CHECK({ state: 'failed' })]);
+  const model = buildRunsModel({ history: [...['sr1', 'sr2'].map((id) => histIt(id, { run: { status: 'done' }, pr: null })),
+    histIt('v1', { status: 'error', run: { status: 'error' }, pr: null })], groups: [g], toggled: new Map([['chain:feat_small', true]]), now: NOW });
+  const row = model.sections.find((s) => s.id === 'needs')?.rows.find((r) => r.key === 'chain:feat_small');
+  assert.ok(row, 'the group sits in Needs you');
+  assert.equal(listLine(row, { section: 'needs' }), 'Verifier round 2 failed · 1 gap');
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, model));
+  const sub = host.querySelector('.runs-item[data-row-key="chain:feat_small"] > a.runs-row > .runs-row-sub').textContent;
+  assert.match(sub, /^Verifier round 2 failed · 1 gap · \d\d:\d\d$/, 'the line, then the time (listLine: and(line, time))');
+});
+
+test('s11 css: the check row\'s ground is --field, with the shield in --ink-3', () => {
+  const css = readFileSync(new URL('../ui/public/shape/shape-it.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = css.match(/[^{}]*\.is-check[^{}]*\{[^}]*\}/g) || [];
+  assert.ok(rules.some((r) => /\.srows\.runs-members[^{]*\.runs-item\.is-check/.test(r) && r.includes('var(--field)')), rules.join('\n'));
+  assert.ok(rules.some((r) => r.includes('var(--ink-3)')), rules.join('\n'));
 });

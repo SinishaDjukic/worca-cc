@@ -1316,6 +1316,7 @@ async function shipOnePhase() {
     }
     const headSha = execFileSync('git', ['rev-parse', `feat/${tag}-5`], { cwd: proj, encoding: 'utf8' }).trim();
     const vpid = `c5${tag}v0001`;
+    // A pre-slice-11 Verifier run: it keeps its stored title (`… · Verifier`); new rounds are `Verifier · …`.
     pipeline(vpid, 'done', `${title} · Verifier`);
     setVerify(x.f, vCheck(x, vpid, 'clean', { head: { index: 5, pipelineId: x.pid(5) }, headSha,
       result: { held: [...SO_AGREED.map((a) => a.id), 'R-comp-4'], gaps: [] } }));
@@ -1890,8 +1891,56 @@ async function shipNotesPhase() {
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
 }
 
+// ---- Shaper slice 11 (R-ux-4): a Verifier round is a check row inside its feature's group. A marked 5-run feature, all
+// done, whose round-2 Verifier run failed with one gap on record: the open group lists runs 1–5, then the check row
+// "Verifier · round 2 · 1 gap"; no top-level row stands for that run; the group row reads "Verifier round 2 failed · 1 gap".
+// Light and dark at 1280px: runs-group-verifier-failed-light.png, -dark.png.
+async function verifierRowsPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const x = seedFeature('vr', 'Verifier rows', ['done', 'done', 'done', 'done', 'done'], { withOutline: soOutline, titles: SO_TITLES, chat: false });
+  const vpid = 'c5vrv00002';
+  pipeline(vpid, 'error', 'Verifier · Verifier rows · round 2');
+  getDb().prepare('UPDATE pipelines SET total_cost_usd = 0.5 WHERE id = ?').run(vpid);
+  getDb().prepare(`INSERT INTO scheduled_runs (id, status, pipeline_id, request, run_at, created_at, updated_at, title)
+    VALUES (?, 'fired', ?, ?, ?, ?, ?, 'Verifier · Verifier rows · round 2')`).run(`t-${vpid}`, vpid,
+    JSON.stringify({ workflowId: 'wf_shape_verify', shape: { verify: { featureId: x.f.id, round: 2 } } }), now, now, now);
+  setVerify(x.f, vCheck(x, vpid, 'gaps', { round: 2, head: { index: 5, pipelineId: x.pid(5) }, result: { held: [], gaps: [GAP] } }));
+  const GROUP = `.runs-item[data-row-key="chain:${x.f.id}"]`;
+  const rows = `(() => { const g = document.querySelector(${JSON.stringify(GROUP)}); if (!g) return null;
+    const inside = [...g.querySelectorAll(':scope > .runs-members > .runs-item')];
+    return { inside: inside.map((it) => it.dataset.level === 'check' ? it.querySelector(':scope > a.runs-row').dataset.line
+      : it.querySelector(':scope > a.runs-row > .runs-row-title').textContent),
+      line: g.querySelector(':scope > a.runs-row').dataset.line, sub: g.querySelector(':scope > a.runs-row > .runs-row-sub').textContent,
+      alone: document.querySelectorAll('.runs-item[data-level="top"] > a.runs-row[data-pipeline-id="${vpid}"]').length }; })()`;
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    await ev("(() => { try { localStorage.removeItem('worca-cc.runs.last'); } catch {} return 0; })()");
+    await open(`${base}/?verifier-rows-${theme}#runs`);
+    await skipWelcome(); await setTheme(theme);
+    if (!await waitFor(`!!document.querySelector(${JSON.stringify(GROUP)})`, `the Verifier rows group row (${theme})`)) continue;
+    await ev(`(() => { const b = document.querySelector(${JSON.stringify(`${GROUP} > .runs-row-tail .runs-expand`)}); if (b && b.getAttribute('aria-expanded') !== 'true') b.click(); return 1; })()`);
+    if (!await waitFor(`!!document.querySelector(${JSON.stringify(`${GROUP} .runs-item[data-level="check"]`)})`, `the check row (${theme})`)) continue;
+    await sleep(500);
+    const m = await ev(rows);
+    results.lists.push({ list: 'runs-list Verifier rows', theme, ...m });
+    check(m.inside.length === 6 && m.inside[5] === 'Verifier · round 2 · 1 gap' && m.inside.slice(0, 5).every((t, i) => t.startsWith(`${i + 1} · `)),
+      `verifier rows, ${theme}: runs 1–5, then the 6th row "Verifier · round 2 · 1 gap" (${JSON.stringify(m.inside)})`);
+    check(m.alone === 0, `verifier rows, ${theme}: no top-level row carries the Verifier run ${vpid} (${m.alone})`);
+    check(m.line === 'Verifier round 2 failed · 1 gap' && m.sub.startsWith('Verifier round 2 failed · 1 gap') && !/Ready to ship/.test(m.sub),
+      `verifier rows, ${theme}: the group line reads "Verifier round 2 failed · 1 gap" (${JSON.stringify([m.line, m.sub])})`);
+    await ev(`(() => { for (const b of document.querySelectorAll('button[aria-label="Dismiss"]')) if (b.offsetParent) b.click();
+      document.querySelector(${JSON.stringify(`${GROUP} .runs-item[data-level="check"]`)}).scrollIntoView({ block: 'center' }); return 0; })()`);
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, `runs-group-verifier-failed-${theme}.png`);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
 // D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in, SHIP_LIST_ONLY=1
-// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR, SHIP_CARRIED_ONLY=1 the carried runs Ship names, FEATURE_TABS_ONLY=1 the feature page's Cost, Requirements and Log tabs, CONFIRM_ONLY=1 confirm in place (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
+// the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR, SHIP_CARRIED_ONLY=1 the carried runs Ship names, FEATURE_TABS_ONLY=1 the feature page's Cost, Requirements and Log tabs, CONFIRM_ONLY=1 confirm in place, VERIFIER_ROWS_ONLY=1 the Verifier's check row (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
 // ---- Shaper slice 10 (R-po-5): Away mode answered a plain gap, the person a judgement call. The feature page's Log tab and
 // the Chat card's log say who decided each gap; a live gap stop lists Away's answer above the question and says why the
 // held gap waits. Light and dark: app-verifier-away-log-… (1280px, the Log tab), app-verifier-away-card-log-… and
@@ -1978,6 +2027,7 @@ if (process.env.SHIP_CARRIED_ONLY === '1') { await shipCarriedPhase(); await fin
 if (process.env.FEATURE_TABS_ONLY === '1') { await featureTabsPhase(); await finish(); }
 if (process.env.CONFIRM_ONLY === '1') { await confirmInPlacePhase(); await finish(); }
 if (process.env.SHIP_NOTES_ONLY === '1') { await shipNotesPhase(); await finish(); }
+if (process.env.VERIFIER_ROWS_ONLY === '1') { await verifierRowsPhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {

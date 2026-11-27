@@ -20,7 +20,7 @@ import { roundOrigin } from './rounds.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature, careOfFeature } from './small-runs.mjs';
 import { refuseWhileShipping, shipLocked } from './ship-lock.mjs';
 import { requirementKindsOf, careRunPlan } from '../../shared/shape/feature-record.mjs';
-import { verifyPrompt, verifyRoundPlan, verifyStop, verifyGateAnswer, gapsFoundOf, fenceSafe, findingsOf, answeredByOf, kindField } from '../../shared/shape/verifier.mjs';
+import { verifyPrompt, verifyRoundPlan, verifyStop, verifyGateAnswer, gapsFoundOf, fenceSafe, findingsOf, answeredByOf, kindField, verifierRunTitle } from '../../shared/shape/verifier.mjs';
 import { oneLineText } from '../../shared/shape/req-change.mjs';
 import { SHAPE_VERIFY_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { CHALLENGE_FILE_MAX_BYTES } from './split-step.mjs';
@@ -186,7 +186,7 @@ export function startVerifyCheck(featureId, { by = null, now = Date.now(), finis
     const shipped = shippedCarried(checks, round);
     const { model, ...top } = f.base || {};
     const internal = { ...(by ? { startedBy: by } : {}), ...(model ? { model } : {}) };
-    const title = `${f.title} · Verifier`;
+    const title = verifierRunTitle(f.title, round);
     const t = createTicket({
       title, projectDir: f.project_dir,
       request: { projectDir: f.project_dir, prompt: verifyPrompt({ owned, round }), title, workflowId: SHAPE_VERIFY_WORKFLOW_ID, ...top,
@@ -475,6 +475,50 @@ function viewState(f, c, pipelineId, live, slices, finishing, shipped) {
   const s = storedRunState(c, pipelineId, finishing);
   // Every run done and one still finishing: its settle starts the fresh check itself, so there is nothing to resume yet.
   return s === 'halted' && shaperSmallRunsOn() && slices && allRunsDone({ slices }) && stillFinishing(slices, finishing) ? 'verifying' : s;
+}
+
+const FAILED_RUN = new Set(['error', 'failed']);
+const STOPPED_RUN = new Set(['stopped', 'aborted']);
+/** Slice 11 (D4, D5, D14): one round's row state, first match wins: the live run (its stop, paused), the run status, then
+ *  the stored check. `gaps` is the stored result's count, else the live stop's, else null. */
+function checkRowState(c, status, l) {
+  const stored = c && c.result && Array.isArray(c.result.gaps) ? c.result.gaps.length : null;
+  const gaps = stored !== null ? stored : l && l.stop && Number.isInteger(l.stop.gapCount) ? l.stop.gapCount : null;
+  const state = l && l.stop ? 'asking'
+    : (l && l.status === 'paused') || PAUSED_RUN.has(status) ? 'paused'
+      : FAILED_RUN.has(status) ? 'failed'
+        : STOPPED_RUN.has(status) ? 'stopped'
+          : c && c.state === 'gaps' ? 'gaps'
+            : c && ENDED.has(c.state) ? 'passed' : 'verifying';
+  return { state, gaps };
+}
+
+/**
+ * Slice 11 (D3, D4): the Verifier rounds of a feature as its group's check rows. `priced` is the group's
+ * `cost.checks` ({ [pipelineId]: {round, at, status} }, run-groups.mjs groupCost), so a listed round is always a priced
+ * one. Each pipeline is matched to its stored check (pipelineOfCheck) in the outline of the feature or of a feature it
+ * `replaces`, each parsed once; `live` is the server's runs overlay by pipeline id. DB reads only; a malformed outline
+ * reads as no stored check. → [{round, pipelineId, at, state, gaps}] (state one of CHECK_ROW_STATES), oldest `at` first.
+ */
+export function checkRowsOf(featureId, priced, { live = () => null } = {}) {
+  const entries = Object.entries(priced && typeof priced === 'object' ? priced : {});
+  if (!entries.length) return [];
+  const byPipeline = new Map();
+  const seen = new Set();
+  for (let id = featureId ? String(featureId) : null; id && !seen.has(id);) {
+    seen.add(id);
+    const r = getDb().prepare('SELECT outline, replaces FROM shape_features WHERE id = ?').get(id);
+    if (!r) break;
+    for (const c of checksOf(j(r.outline, {}))) {
+      const pid = c && typeof c === 'object' ? pipelineOfCheck(c) : null;
+      if (pid && !byPipeline.has(pid)) byPipeline.set(pid, c);
+    }
+    id = r.replaces ? String(r.replaces) : null;
+  }
+  return entries.map(([pipelineId, p]) => {
+    const { state, gaps } = checkRowState(byPipeline.get(pipelineId) || null, p.status || null, live(pipelineId));
+    return { round: p.round, pipelineId, at: p.at, state, gaps };
+  }).sort((a, b) => String(a.at).localeCompare(String(b.at)) || a.round - b.round);
 }
 
 /** The rule holds for a marked feature while the flag is on. */

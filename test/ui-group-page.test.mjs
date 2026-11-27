@@ -19,6 +19,7 @@ import { featureView } from '../src/core/shape/features.mjs';
 import { world, SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
 import { runStatus } from '../src/shared/shape/run-status.mjs';
 import { icon } from '../ui/public/icons.mjs';
+import { groupRow } from '../ui/public/runs-list.mjs';
 
 useTempHome(after, 'worca-group-page-s4-');
 const trackDom = useDomRelease(afterEach);
@@ -993,4 +994,20 @@ test('s7: the layout page links a confirmation hold to the Ship card, and the ho
   const model = groupModel({ kind: 'feature', title: 'T', members: [done, done], hold: 'R-ops-1 is owned by no run and confirmed by no person' }, { now: NOW });
   paintGroupPage(unowned, s6View({ row: { ...held(), model } }), s6Deps());
   assert.equal(unowned.querySelector('a.run-status-link'), null, 'another hold is plain text');
+});
+
+// ── Slice 11 (R-ux-4): the page's header line takes the Verifier's state; the Runs tab lists no round ────────────────
+test('s11 group page: the header line of a failed-round feature reads the Verifier line', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  const built = groupRow({ id: 'feat_1', groupKind: 'feature', title: 'Run tags', smallRuns: true, cost: { usd: 3, byPipeline: { p1: 2, v1: 1 } },
+    members: [{ position: 1, title: 'Slice 1', pipelineId: 'p1', kind: 'hist', href: '#history/k/p1', run: { status: 'done' } }],
+    checks: [{ kind: 'check', round: 2, state: 'failed', gaps: 1, pipelineId: 'v1', runId: '', href: '#history/k/v1', cost: 1 }] }, { now: NOW });
+  // A marked feature's page names its members in the card's short word (app.js gives `shortState`), as in the app.
+  paintGroupPage(root, { row: built, project: 'acme', tab: 'runs', overview: true, requirements: true, shortState: () => 'done' }, NOOP);
+  const status = root.querySelector('.gpage-card .run-status');
+  assert.equal(status.querySelector('.run-status-detail').textContent, 'Verifier round 2 failed · 1 gap');
+  assert.equal(status.dataset.state, 'failed');
+  assert.doesNotMatch(root.textContent, /Ready to ship/);
+  assert.equal(root.querySelectorAll('.gpage-runs .run-member').length, 1, 'rounds stay absent from the Runs tab');
 });

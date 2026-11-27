@@ -416,3 +416,21 @@ test('s10: design-system.md Gap question describes the decided rows and the held
   const next = rest.indexOf('\n### ', 1);
   assert.deepEqual(missing(flat(next < 0 ? rest : rest.slice(0, next)), ['decided by Away mode', 'Held for you']), []);
 });
+
+// Shaper small runs slice 11 (R-ux-4): Verifier rounds show inside their feature's group.
+test('s11 (R-ux-4): the guide\'s Runs list bullet describes the check rows, the group row\'s Verifier line and the title', () => {
+  const bullet = smallPart('The four places').split(/ - \*\*/).find((b) => b.startsWith('The Runs list group row**')) || '';
+  assert.ok(bullet, 'the Runs list group row bullet');
+  assert.deepEqual(missing(bullet, ['Verifier · round 2 · 1 gap', 'check rows', 'Verifier round 2 failed · 1 gap',
+    'Verifier · Sign-up · round 2', /Ready to ship[^.]*once/]), []);
+});
+
+test('s11: design-system.md\'s "Two row levels" paragraph describes the check row', () => {
+  const design = read('design-system.md');
+  const at = design.indexOf('\n- Two row levels');
+  assert.ok(at >= 0, 'the "Two row levels" paragraph');
+  const rest = design.slice(at + 1);
+  const next = rest.indexOf('\n- ', 1);
+  assert.deepEqual(missing(flat(next < 0 ? rest : rest.slice(0, next)), [/check row/i, '.is-check', '--field', /shield/i,
+    'RUN_MARK_DOTS', /checkbox/i, 'Ready to ship']), []);
+});
