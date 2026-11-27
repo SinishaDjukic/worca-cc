@@ -1,7 +1,7 @@
 // ui/public/shape/run-order-map.mjs — Shaper small runs slice 9 (R-ux-4): the still run order map of a marked feature.
 // `runOrderLayout` is pure: it places each run of featureView's `slices` in a column right of every run it builds on
-// (rows in run-number order); a change run that builds on nothing (added from the chat card or a run's stop) stands in the
-// column after the last run before it. It keeps only the links that still hold a run back (implied links left out
+// (rows in run-number order); a change run or an extra run that builds on nothing (added from the chat card or a run's
+// stop) stands in the column after the last run before it (no link is drawn into it); a follow-up keeps its place. It keeps only the links that still hold a run back (implied links left out
 // through `namedWaits`); once none holds a run back, every link is drawn faint. Links follow the agreed mock's routing
 // (R-ux-6): one curve to the next column; a link that skips columns runs in the lane in the free gap under its upper row
 // (below its kept rings, above the next row's numbers: slice 16), never through a number nor within 7px of a dot it
@@ -22,6 +22,8 @@ const HALF = DOT / 2;
 /** The kept ring's outer radius: the run number's bottom stands this far above the dot's centre. */
 const RING_R = 11;
 const NOT_STARTED = new Set(['planned', 'held']);
+/** The chained append kinds: one that builds on nothing stands after the last run before it (a follow-up is not chained). */
+const AFTER_LAST_KINDS = new Set(['change', 'extra']);
 /** A slice state → the run model state its feature page row's dot starts from; any other state is `waiting`. */
 const ROW_STATE = Object.freeze({ paused: 'paused', stopped: 'stopped', canceled: 'stopped', error: 'failed', failed: 'failed' });
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -72,7 +74,7 @@ export function runOrderLayout(slices) {
   const known = (s) => (Array.isArray(s.buildsOn) ? [...new Set(s.buildsOn)] : []).filter((d) => map.has(d));
 
   // Columns: longest path over the full buildsOn graph; an edge back onto the DFS stack closes a cycle and is dropped.
-  // A change run that builds on no known run, and is not the first run, stands after the last run before it.
+  // A change or extra run that builds on no known run, and is not the first run, stands after the last run before it.
   const col = new Map();
   const onStack = new Set();
   const back = new Set();
@@ -86,7 +88,7 @@ export function runOrderLayout(slices) {
     }
     const before = indexes[indexes.indexOf(i) - 1];
     const s = map.get(i);
-    if (s.kind === 'change' && !known(s).length && before !== undefined && !onStack.has(before)) c = depth(before) + 1;
+    if (AFTER_LAST_KINDS.has(s.kind) && !known(s).length && before !== undefined && !onStack.has(before)) c = depth(before) + 1;
     onStack.delete(i);
     col.set(i, c);
     return c;

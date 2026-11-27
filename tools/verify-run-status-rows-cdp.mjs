@@ -57,9 +57,9 @@
 // The Chat card and the Runs list carry no drawing. One 360px light shot, `order-open-busy-360-light.png`, with no page
 // scroll sideways and the map scrolling in its own box, then closed again after #runs and back (the slide layout keeps the
 // page root). SURFACE=order runs only this surface.
-// Slice 13 adds the order worlds `later` (every run done, run 17 builds on run 16 and run 18 on nothing, both change runs)
-// and `still` (base with run 3 paused, run 5 failed, run 6 stopped). later: runs 17 and 18 stand right of the run before
-// them, every path.rom-link is is-faint and strokes the resolved --line-2. still: each of those dots is its row's dot,
+// Slice 13 adds the order worlds `later` (every run done, run 17 builds on run 16 and run 18 on nothing, both change runs;
+// s17: run 19 an extra run on nothing (dependsOn [])) and `still` (base with run 3 paused, run 5 failed, run 6 stopped). later: runs 17, 18 and 19 stand right of the run before
+// them (run 19 exactly one column right of run 18, no link drawn into it), every path.rom-link is is-faint and strokes the resolved --line-2. still: each of those dots is its row's dot,
 // never is-grey-ring. Then the agreed mock (plans/shaper-refresh/run-order-mock.html, its resting frame, Show order open)
 // is shot per theme as `mock-order-{theme}.png` and put beside the app as `order-vs-mock-{base|later|still}-{theme}.png`.
 // R-ux-6 (D11): in base, per theme, the real mouse points at run 3's row (`order-hover-base-{theme}.png`): run 3 and
@@ -218,9 +218,10 @@ const SPECS = {
   after2: { spec: { done: [...SIXTEEN_RUN_STATES.base.done, 2], states: Object.fromEntries(Object.entries(SIXTEEN_RUN_STATES.base.states).filter(([r]) => r !== '2')) } },
   // s13 order: every run of the 16 done, run 17 a Verifier change run ([16]) and run 18 a chat change run ([]), both
   // planned: no link holds a run back, so every link is drawn faint, and 17 and 18 stand after the run before them.
+  // s17: run 19 an extra run on nothing (dependsOn []), added from the chat card: it stands after run 18, no link into it.
   later: { spec: { done: SIXTEEN_RUN_LINKS.map(({ run }) => run), states: {} },
-    links: [...SIXTEEN_RUN_LINKS, { run: 17, dependsOn: [16] }, { run: 18, dependsOn: [] }],
-    then: (fx) => { fx.setKind(17, 'change'); fx.setKind(18, 'change'); } },
+    links: [...SIXTEEN_RUN_LINKS, { run: 17, dependsOn: [16] }, { run: 18, dependsOn: [] }, { run: 19, dependsOn: [] }],
+    then: (fx) => { fx.setKind(17, 'change'); fx.setKind(18, 'change'); fx.setKind(19, 'extra'); } },
   // s16 waiting: run 4 paused (its Resume is pressed for real) while run 9 builds, so the resume is held behind run 9 and
   // run 4 is the Chat card's current run (its footer Resume acts on run 4).
   waiting: { spec: { done: [1, 2, 3], states: { 4: { pipe: 'paused' }, 9: { pipe: 'running' } } } },
@@ -1006,8 +1007,9 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'map
 
 // ---- s10 order: Show order on the feature page's Runs tab, closed first, opened by a real click, closed on return.
 const ORDER_WORLDS = ['base', 'busy', 'later', 'still'];
-/** s13: the run count each order world draws (later adds runs 17 and 18 to the 16). */
-const ORDER_RUNS = { later: 18 };
+/** s13: the run count each order world draws (later adds runs 17 and 18 to the 16; s17: and run 19 an extra run on
+ *  nothing (dependsOn [])). */
+const ORDER_RUNS = { later: 19 };
 /** s13: the open Show order map on the feature page, as MAP_READ reads it, plus each path's classes and stroke, the
  *  resolved --line-2 and --ink-3 strokes in this theme, and each feature page row's dot class. */
 const ORDER_MAP_READ = `(() => {
@@ -1060,6 +1062,8 @@ async function sideBySide(name, theme, pair = name) {
   await shotOf('#pair', `order-vs-mock-${pair}-${theme}.png`);
 }
 const ORDER_NARROW = 360;
+/** s17: scroll the open map's own box to its right end, so the shot shows the last runs (19 in later). */
+const ROM_TO_END = `(() => { const r = document.querySelector('#group-detail .rom'); if (r) r.scrollLeft = r.scrollWidth; return r ? r.scrollLeft : null; })()`;
 /** The feature page's Show order block: the toggle, the body, the map, and the rects the checks compare. */
 const ORDER_READ = `(() => {
   const gp = [...document.querySelectorAll('#group-detail .gpage')].find((x) => x.offsetParent);
@@ -1252,6 +1256,10 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'ord
           check(x(17) > x(16), `${where}: run 17's dot stands right of run 16's (${x(17)} > ${x(16)})`);
           check(x(18) > x(17), `${where}: run 18 (buildsOn []) stands right of run 17, the run before it (${x(18)} > ${x(17)})`);
           check(x(18) > x(1), `${where}: run 18 is not in the first column (${x(18)} > ${x(1)})`);
+          // s17: run 19 (an extra run, buildsOn []) stands exactly one column right of run 18, never in the first column.
+          check(x(19) > x(18) && Math.abs((x(19) - x(18)) - (x(18) - x(17))) <= 1, `${where}: run 19 (extra, buildsOn []) stands one column right of run 18 (${x(19) - x(18)} vs ${x(18) - x(17)})`);
+          check(x(19) > x(1), `${where}: run 19 is not in the first column (${x(19)} > ${x(1)})`);
+          check(!om.links.some((l) => l.to === 19), `${where}: no link is drawn into run 19 (${JSON.stringify(om.links.filter((l) => l.to === 19).map((l) => [l.from, l.to]))})`);
           check(om.links.length === 19 && faint.length === om.links.length, `${where}: every one of the 19 path.rom-link has is-faint (${faint.length} of ${om.links.length})`);
           const off = om.links.filter((l) => l.stroke !== om.line2);
           check(om.line2 && om.line2 !== om.ink3 && off.length === 0, `${where}: each faint stroke is the resolved --line-2 ${om.line2} (${JSON.stringify(off.map((l) => [l.from, l.to, l.stroke]))})`);
@@ -1265,6 +1273,7 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'ord
           check(ring.length === 0, `${where}: none of runs 3, 5 and 6 is is-grey-ring (${JSON.stringify(ring)})`);
         }
       }
+      if (name === 'later') await ev(ROM_TO_END);   // s17: run 19 stands past the box's right edge; show it in the shot
       await shotOf('#group-detail .gpage-panel[data-tab="runs"]', `order-open-${name}-${theme}.png`);
       if (name === 'base') await orderMarks(theme, where);
       // 3. another view and back: closed on return. Side by side (split, 1280px) #runs keeps this page open beside the
@@ -1299,6 +1308,25 @@ if ((!process.env.WORLD && !process.env.SURFACE) || process.env.SURFACE === 'ord
       await shotOf('#group-detail .gpage-panel[data-tab="runs"]', 'order-open-busy-360-light.png');
       // The slide layout: #runs is the list itself, the page root is kept for the way back, and the toggle is closed again.
       check(await returnClosed(routes, '#runs'), `${where}: closed again after #runs and back (slide layout)`);
+    }
+    await metrics(WIDE);
+  }
+  // 5b. s17: one 360px light shot of later, open: the map is one column wider (run 19 after run 18); the page still has no
+  // sideways scroll and the map scrolls in its own box.
+  {
+    const routes = seed('later');
+    const where = `order later, light, ${ORDER_NARROW}px`;
+    await metrics(ORDER_NARROW);
+    if (await freshOrderPage(routes, 'light', where)) {
+      await scrollToToggle();
+      await clickToggle();
+      const m = await ev(ORDER_READ);
+      results.order.push({ where, open: m });
+      check(!!m && m.expanded === 'true' && m.roms === 1 && m.runs === ORDER_RUNS.later, `${where}: open with the ${ORDER_RUNS.later}-run map (${JSON.stringify(m && [m.expanded, m.roms, m.runs])})`);
+      check(!!m && m.docScroll.sw <= m.docScroll.cw, `${where}: the document has no horizontal scroll (scrollWidth ${m && m.docScroll.sw} <= ${m && m.docScroll.cw})`);
+      check(!!m && !!m.romScroll && m.romScroll.sw > m.romScroll.cw, `${where}: the map scrolls sideways inside its own box (scrollWidth ${m && m.romScroll && m.romScroll.sw} > clientWidth ${m && m.romScroll && m.romScroll.cw})`);
+      await ev(ROM_TO_END);
+      await shotOf('#group-detail .gpage-panel[data-tab="runs"]', 'order-open-later-360-light.png');
     }
     await metrics(WIDE);
   }

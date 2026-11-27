@@ -283,7 +283,7 @@ no listener of its own. The map shows pointing and keeping alike; the rows show 
 A run waiting at a stop held for another run counts as not started, so its link stays. Once no link holds a run back,
 every link is drawn faint (`.rom-link.is-faint`), routed as when every run was planned. Each dot is painted over the row's
 dot (a paused run grey, a stopped or canceled run dark grey), and a mark from the run's status still wins. A change run
-that builds on nothing stands in the column after the last run before it.
+or an extra run that builds on nothing (no link is drawn into it) stands in the column after the last run before it.
 
 | Part | Class | Means |
 |---|---|---|

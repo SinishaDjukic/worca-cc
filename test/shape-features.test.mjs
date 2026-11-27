@@ -33,6 +33,7 @@ import {
 // A namespace read, so a missing new export (the clash hold) fails only its own test, not the whole file.
 import * as FEATURES from '../src/core/shape/features.mjs';
 import { createPrLabel } from '../ui/public/ship-words.mjs';
+import { runOrderLayout } from '../ui/public/shape/run-order-map.mjs';
 
 useTempHome(after, 'worca-shape-features-');
 
@@ -1686,6 +1687,19 @@ test('an appendFor with dependsOn stores it and the view builds on that run; wit
   appendFeatureRun(a.id, { title: 'Change', goal: 'g', kind: 'change', requirements: ['R-po-2'] });
   assert.deepEqual(outlineRow(a.id).slices.slice(5).map((s) => s.dependsOn), [['s5'], [], []]);
   assert.deepEqual(featureView(a.id).slices.slice(5).map((s) => s.buildsOn), [[5], [], []]);
+}));
+
+test('an extra run appended from chat builds on nothing and Show order stands it after the last run', () => withSmallRuns(true, () => {
+  // Runs 1–5 as a chain, so "after run 5" is a column no other rule gives run 6.
+  const outline = outlineC4(5);
+  outline.slices.forEach((s, i) => { s.dependsOn = i ? [`s${i}`] : []; });
+  const a = mkC4(5, { pipelineId: pipe('done'), outline });
+  getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), a.pid);
+  appendFeatureRun(a.id, { title: 'Bigger legend', goal: 'make the legend bigger', kind: 'extra' });
+  const { slices } = featureView(a.id);
+  assert.deepEqual([slices[5].kind, slices[5].buildsOn], ['extra', []], 'the data is as stored: it builds on nothing');
+  const col = new Map(runOrderLayout(slices).runs.map((r) => [r.index, r.col]));
+  assert.deepEqual([col.get(5), col.get(6)], [4, 5], 'run 6 stands after run 5');
 }));
 
 test('C4: a STALE from throws and leaves the row, tickets and slice rows byte-equal', () => {

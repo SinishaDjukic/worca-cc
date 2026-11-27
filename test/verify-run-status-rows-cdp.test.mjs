@@ -239,6 +239,15 @@ test('the order surface shoots later and still and puts each beside the mock', (
   assert.match(s, /--line-2/, 'their stroke is compared with the token');
 });
 
+// ── R-ux-6: an extra run added later (buildsOn []) stands after the run before it, shot wide and at 360px ─────────────
+test('the later world adds an extra run on nothing and shoots it open at 360px in light', () => {
+  const s = src();
+  assert.match(s, /setKind\(19, 'extra'\)/, 'run 19 is an extra run');
+  assert.match(s, /run:\s*19,\s*dependsOn:\s*\[\]/, 'it builds on nothing');
+  assert.match(s, /ORDER_RUNS = \{[^}]*\blater: 19\b/, 'the later map draws 19 runs');
+  assert.ok(s.includes('order-open-later-360-light.png'), 'the narrow shot of the wider map');
+});
+
 // ── R-ux-6: the order surface hovers and keeps run 3, measures the drawn links and shoots the resting frame ───────────
 test('the order surface hovers and keeps run 3, measures the rendered links, checks the animations and puts the resting frame beside the mock', () => {
   const s = src();

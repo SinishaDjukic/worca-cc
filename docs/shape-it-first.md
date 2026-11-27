@@ -931,8 +931,9 @@ its run, crossing a row only between columns; no link passes through a number, n
 join. Pointing at a run's row (hover or focus) or keeping it (click, Enter or Space) lights that run's dot and the links
 drawn to and from it, and the other links dim; Esc lets go. A paused or stopped run shows the row's
 dot, not the hollow ring of a run not started. A run the Verifier adds (a fix run or a change run) builds on the last run
-before it and stands right of it; a change run from the chat card or a run's stop builds on nothing yet, and still stands
-right of the last run before it, never in the first column. Nothing moves
+before it and stands right of it; a change run or an extra run added from the chat card or a run's stop builds on
+nothing yet, has no link drawn into it, and still stands right of the last run before it, never in the first column. A
+follow-up starts from the feature base and keeps its place. Nothing moves
 but the existing pulse of a working run. The drawing is hidden from screen readers: the rows say the same in words.
 The drawing is never on the Chat card or the Runs sidebar.
 

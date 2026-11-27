@@ -606,6 +606,43 @@ test('later runs: a change run whose buildsOn is empty stands in the column afte
   assert.deepEqual([1, 2, 3].map((n) => first.get(n).col), [0, 0, 1]);
 });
 
+// An extra run (added from the chat card, kind 'extra') chains after the last run in the runner but is stored with
+// buildsOn []. The drawing stands it after the last run before it, as it does a change run. A follow-up starts from the
+// feature base and follows no run, so it keeps its column.
+test('later runs: an extra run whose buildsOn is empty stands in the column after the last run before it; a follow-up does not move', async () => {
+  const { runOrderLayout } = await load();
+  const chain = [[1, []], [2, [1]], [3, [2]], [4, [3]], [5, [4]]];
+  const slices = slicesOf([...chain, [6, []]], { done: [1, 2, 3, 4, 5], states: { 6: { kind: 'extra' } } });
+  const layout = runOrderLayout(slices);
+  const extra = byRun(layout);
+  assert.equal(extra.get(6).col, extra.get(5).col + 1, 'extra run 6 stands after run 5');
+  assert.notEqual(extra.get(6).col, 0, 'never in the first column');
+  assert.deepEqual(layout.links.filter((l) => l.to === 6), [], 'no link is drawn: run 6 builds on nothing');
+
+  // A Verifier run ([5]), then an extra and a change run on nothing: each stands after the run just before it.
+  const mixed = byRun(runOrderLayout(slicesOf([...chain, [6, [5]], [7, []], [8, []]],
+    { done: [1, 2, 3, 4, 5], states: { 6: { kind: 'change' }, 7: { kind: 'extra' }, 8: { kind: 'change' } } })));
+  assert.deepEqual([6, 7, 8].map((n) => mixed.get(n).col), [5, 6, 7]);
+
+  const sixteen = byRun(runOrderLayout(slicesOf([...SIXTEEN_PAIRS, [17, []]], { states: { 17: { kind: 'extra' } } })));
+  assert.equal(sixteen.get(17).col, sixteen.get(16).col + 1);
+
+  const follow = byRun(runOrderLayout(slicesOf([...chain, [6, []]],
+    { done: [1, 2, 3, 4, 5], states: { 6: { kind: 'follow-up' } } })));
+  assert.equal(follow.get(6).col, 0, 'a follow-up follows no run');
+
+  const first = byRun(runOrderLayout(slicesOf([[1, []], [2, [1]]], { states: { 1: { kind: 'extra' } } })));
+  assert.equal(first.get(1).col, 0, 'a first run stays in the first column');
+
+  // Painted: the extra run keeps the plain dot (no data-kind), and pointing at it lights the run but no link.
+  const p = await painted(slices);
+  assert.equal(runEl(p.map, 6).dataset.kind, undefined);
+  const drawn = pathsOf(p.map).length;
+  assert.ok(drawn > 0, 'the chain links are drawn');
+  assert.equal(p.mark(6), 0, 'no link starts or ends at run 6');
+  assert.deepEqual(marksOf(p.map), { runs: [6], lit: [], dim: drawn });
+});
+
 // ── painter ──
 test('render: root aria-hidden, every dot class from markDot and in the CSS dot set', async () => {
   const { runOrderLayout, renderRunOrderMap } = await load();
