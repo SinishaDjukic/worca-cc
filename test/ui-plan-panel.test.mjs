@@ -1,9 +1,13 @@
 // test/ui-plan-panel.test.mjs — Shape it first (spec §3.4, D10, S4): the `plan` ask on the run page. The approve
 // posts the run's own plan route (/api/runs/:id/answer).
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootApp, runPanel } from './helpers/run-page-boot.mjs';
+import { runPageOn, runPanel } from './helpers/run-page-boot.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
+
+const app = useSharedApp({ before, beforeEach, after });
+const bootApp = runPageOn(app);
 
 const RUN_ID = 'run-plan';
 const PLAN_Q = {
@@ -199,20 +203,22 @@ test('a 409 from the plan route says why it was not sent', async () => {
   assert.equal(err.textContent, 'Not sent: not waiting');
 });
 
-for (const [title, want] of [['(untitled)', ''], ['Real title', 'Real title']]) {
-  test(`Open in New run from a run titled "${title}" prefills the New run title with "${want}"`, async () => {
-    const { ctx, panel } = await openPlan({ row: { title } });
-    const titleInput = ctx.window.document.getElementById('title');
-    titleInput.value = 'stale';
-    click(ctx, panel.querySelector('.plan-more'));
-    const open = [...doc(ctx).querySelectorAll('.wfv-menu .wfv-menu-item')].find((b) => b.textContent === 'Open in New run');
-    assert.ok(open, 'Open in New run is offered');
-    click(ctx, open);
-    await ctx.settle(10);
-    assert.equal(ctx.window.location.hash, '#new');
-    assert.equal(titleInput.value, want);
-  });
+// Open in New run from the plan card: the run's title, or none for an untitled run, prefills New run's title.
+async function openInNewRunPrefills(title, want) {
+  const { ctx, panel } = await openPlan({ row: { title } });
+  const titleInput = ctx.window.document.getElementById('title');
+  titleInput.value = 'stale';
+  click(ctx, panel.querySelector('.plan-more'));
+  const open = [...doc(ctx).querySelectorAll('.wfv-menu .wfv-menu-item')].find((b) => b.textContent === 'Open in New run');
+  assert.ok(open, 'Open in New run is offered');
+  click(ctx, open);
+  await ctx.settle(10);
+  assert.equal(ctx.window.location.hash, '#new');
+  assert.equal(titleInput.value, want);
 }
+
+test('Open in New run from a run titled "(untitled)" prefills the New run title with ""', () => openInNewRunPrefills('(untitled)', ''));
+test('Open in New run from a run titled "Real title" prefills the New run title with "Real title"', () => openInNewRunPrefills('Real title', 'Real title'));
 
 test('a failing check row wraps on a narrow card: the detail keeps a real width instead of shrinking under Fix (390 px)', () => {
   const css = readStyleCss();

@@ -1,18 +1,19 @@
 // test/ui-running-auto.test.mjs — an Auto run: the deciding placeholder on the run page
 // (spec §7.3; the list row carries no graph), the row's Needs-you word while the proposal waits,
 // and the "Auto → ‹name›" header badge on the run page (spec §7.5). Boot: test/helpers/run-page-boot.mjs.
-import { test, afterEach } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { proposalFor } from './helpers/auto-proposal-fixture.mjs';
-import { bootApp, helloRun, runCard } from './helpers/run-page-boot.mjs';
+import { runPageOn, helloRun, runCard } from './helpers/run-page-boot.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
 
-const wins = [];
-afterEach(() => { for (const w of wins.splice(0)) w.close(); });
+const app = useSharedApp({ before, beforeEach, after });
+const bootApp = runPageOn(app);
+
 
 async function boot(opts) {
   const ctx = await bootApp(opts);
-  wins.push(ctx.window);
   return ctx;
 }
 

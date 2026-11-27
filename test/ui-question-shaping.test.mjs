@@ -6,9 +6,11 @@
 //
 // The run arrives in the FIRST hello, so it is built through makeRun: a page loaded while a shaping run waits at
 // Clarify must still know it is shaping.
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootApp, runPanel } from './helpers/run-page-boot.mjs';
+import { runPageOn, runPanel } from './helpers/run-page-boot.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
+
 
 const RUN_ID = 'run-shape';
 const SHAPING = { perspectives: ['ux'], rounds: [], approved: null, savedTo: null };
@@ -35,6 +37,12 @@ const FEATURE = (pq) => ({ id: 'feat_1', title: 'Charts', projectKey: 'p', statu
 // open step (.gpage-question) of the member that asks.
 const GROUPS = { groups: [{ id: 'feat_1', kind: 'feature', title: 'Charts', projectKey: null, planning: null, cost: { usd: 0, byPipeline: {} },
   members: [{ position: 1, title: 'One', pipelineId: 'pshape01', ticketId: null, status: 'running', pr: null, ticket: null, adhoc: false, after: null }] }] };
+
+// The run groups are loaded when app.js loads, so their answer is the file's.
+const app = useSharedApp({ before, beforeEach, after }, {
+  fetchHandler: (url) => (url.startsWith('/api/run-groups') ? Promise.resolve({ ok: true, status: 200, json: async () => GROUPS }) : null),
+});
+const bootApp = runPageOn(app);
 
 function recorder(status = 200, currentPq = QUESTIONS) {
   const answers = [];
@@ -169,22 +177,28 @@ async function groupPageHost(ctx) {
   return ctx.window.document.querySelector('#group-detail .gpage-card .gpage-question .qpanel');
 }
 
-for (const [name, pq, shaping, title, chip] of KINDS) {
-  test(`${name}: the run page, the chat host and the group page show the same head, chip, body text and buttons`, async () => {
-    const { ctx, panel } = await openShaping({ pq, shaping });
-    await ctx.settle();
-    const page = look(panel);
-    const chat = paintAskHost(ctx);
-    await ctx.settle();
-    const group = await groupPageHost(ctx);
-    assert.equal(page.title, title);
-    assert.equal(page.chip, chip);
-    assert.deepEqual(look(chat.panel), page);
-    assert.equal(chat.q.stepCard, true);
-    assert.ok(group, 'the group page mounts the open step');
-    assert.deepEqual(look(group), page);
-  });
+// One step kind: the run page, the chat host and the group page draw the same card.
+async function sameCardInEveryHost([, pq, shaping, title, chip]) {
+  const { ctx, panel } = await openShaping({ pq, shaping });
+  await ctx.settle();
+  const page = look(panel);
+  const chat = paintAskHost(ctx);
+  await ctx.settle();
+  const group = await groupPageHost(ctx);
+  assert.equal(page.title, title);
+  assert.equal(page.chip, chip);
+  assert.deepEqual(look(chat.panel), page);
+  assert.equal(chat.q.stepCard, true);
+  assert.ok(group, 'the group page mounts the open step');
+  assert.deepEqual(look(group), page);
 }
+
+test('Clarify: the run page, the chat host and the group page show the same head, chip, body text and buttons', () => sameCardInEveryHost(KINDS[0]));
+test('Plan: the run page, the chat host and the group page show the same head, chip, body text and buttons', () => sameCardInEveryHost(KINDS[1]));
+test('Split: the run page, the chat host and the group page show the same head, chip, body text and buttons', () => sameCardInEveryHost(KINDS[2]));
+test('run-k Plan: the run page, the chat host and the group page show the same head, chip, body text and buttons', () => sameCardInEveryHost(KINDS[3]));
+test('Gate: the run page, the chat host and the group page show the same head, chip, body text and buttons', () => sameCardInEveryHost(KINDS[4]));
+test('Recovery: the run page, the chat host and the group page show the same head, chip, body text and buttons', () => sameCardInEveryHost(KINDS[5]));
 
 test('a gate button in the paintAsk host (no delegate, the feature page) posts /api/answer {decision:"another"} exactly once', async () => {
   const { ctx, answers } = await openShaping({ pq: KINDS[4][1] });

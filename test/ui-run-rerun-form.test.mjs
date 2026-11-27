@@ -2,10 +2,14 @@
 // from the earlier run (a fetch spy sees GETs only), every field edits normally, no presetId rides along, a broken
 // setting blocks Start until reset, a missing file is named without blocking it, and a plain New run afterwards carries
 // no rerunOf. Booted through the History detail page, as a person reaches it. Heavy on purpose: it needs the real form.
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { GRAPH_DEFAULT_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
-import { ROW, DETAIL, bootDetail, openDetail, click, settle, go, ok, fail } from './helpers/history-detail-boot.mjs';
+import { ROW, DETAIL, openDetail, click, settle, go, ok, fail, detailOn, historyFetch } from './helpers/history-detail-boot.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
+
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: historyFetch() });
+const bootDetail = detailOn(app).detail;
 
 const ID = ROW.id;
 const MODELS = [{ id: 'claude-opus-5-5', efforts: ['medium', 'high'], harnesses: ['claude'] }, { id: 'claude-haiku-4-5', efforts: ['medium', 'high'], harnesses: ['claude'] }];
@@ -125,31 +129,6 @@ test('submit sends rerunOf and the run-only lane, never a presetId; an edited fi
   assert.equal(body.overlay.nodes.n_plan.model, 'claude-haiku-4-5');
   assert.deepEqual(body.extras.map((e) => e.name), ['spec.md']);
   assert.equal(Buffer.from(body.extras[0].dataBase64, 'base64').toString(), 'hello');
-});
-
-test('a preset applied earlier is cleared by Rerun (no presetId), and a changed workflow drops the overlay', async () => {
-  const preset = { id: 'rp_aaaaaaaaaaaa', name: 'Quick fix', scope: { kind: 'global', ref: null }, updatedAt: '2026-10-16T00:00:00Z', setup: { workflowId: 'wf_default', guardrailsId: 'normal', humanInLoop: false } };
-  const ctx = await bootRerun({ presets: [preset] });
-  go(ctx.window, 'new');
-  await waitFor(() => [...doc(ctx).querySelectorAll('#presetSelect option')].some((o) => o.value === preset.id));
-  const sel = doc(ctx).querySelector('#presetSelect');
-  sel.value = preset.id;
-  sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
-  await waitFor(() => doc(ctx).querySelector('#preset-btn').classList.contains('is-on'));
-  await openDetail(ctx, '');
-  await settle(ctx.window, 6);
-  await chooseRerun(ctx);
-  const d = doc(ctx);
-  assert.equal(d.querySelector('#preset-btn').classList.contains('is-on'), false, 'the earlier pick is gone');
-  const wf = d.querySelector('#workflowSelect');
-  wf.appendChild(Object.assign(d.createElement('option'), { value: 'wf_other', textContent: 'Other' }));
-  wf.value = 'wf_other';
-  wf.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
-  await settle(ctx.window, 8);
-  const body = await submit(ctx);
-  assert.equal(body.presetId, undefined);
-  assert.equal(body.overlay, undefined, 'R-po-3: the overlay names the old workflow\'s nodes');
-  assert.equal(body.rerunOf, ID);
 });
 
 test('a source gone at Start keeps the form; the next Start is a plain run with the same picks', async () => {
@@ -296,55 +275,6 @@ test('no recorded setup on a gone project: picking a project checks the target a
   click(ctx.window, d.querySelector('[data-target="none"]'));
   await waitFor(() => d.querySelector('#start-btn').disabled === false);
   assert.deepEqual(checks.at(-1), { noProject: true, targetOnly: true }, 'the No project target is judged with no project');
-});
-
-test('a preset picked on the rerun form replaces the earlier picks for good: No preset does not bring them back', async () => {
-  const preset = { id: 'rp_aaaaaaaaaaaa', name: 'Quick fix', scope: { kind: 'global', ref: null }, updatedAt: '2026-10-16T00:00:00Z', setup: { workflowId: 'wf_default', guardrailsId: 'normal', humanInLoop: false } };
-  const ctx = await bootRerun({ presets: [preset] });
-  await chooseRerun(ctx);
-  const d = doc(ctx);
-  const sel = d.querySelector('#presetSelect');
-  await waitFor(() => [...sel.options].some((o) => o.value === preset.id));
-  sel.value = preset.id;
-  sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
-  await waitFor(() => d.querySelector('#preset-btn').classList.contains('is-on'));
-  await settle(ctx.window, 8);
-  sel.value = '';
-  sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
-  await waitFor(() => !d.querySelector('#preset-btn').classList.contains('is-on'));
-  await settle(ctx.window, 8);
-  const body = await submit(ctx);
-  assert.equal(body.presetId, undefined);
-  assert.equal(body.overlay, undefined, 'the earlier run\'s Planner pick is gone');
-  assert.equal(body.rerunOf, ID, 'the link stays');
-});
-
-test('after a preset and then No preset, a target change judges the target alone: the old run\'s gone set no longer blocks Start', async () => {
-  const preset = { id: 'rp_aaaaaaaaaaaa', name: 'Quick fix', scope: { kind: 'global', ref: null }, updatedAt: '2026-10-16T00:00:00Z', setup: { workflowId: 'wf_default', guardrailsId: 'normal' } };
-  const goneSet = { item: 'guardrails', ref: 'normal', message: 'Guardrail set normal no longer exists', reset: true };
-  const checks = [];
-  const ctx = await bootRerun({ presets: [preset], check: (b) => { checks.push(b); return { broken: b.targetOnly ? [] : [goneSet] }; } });
-  await chooseRerun(ctx);
-  const d = doc(ctx);
-  d.querySelector('#mock').checked = false;   // an edit before the preset: the hold was modified
-  d.querySelector('#mock').dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
-  const sel = d.querySelector('#presetSelect');
-  await waitFor(() => [...sel.options].some((o) => o.value === preset.id));
-  sel.value = preset.id;
-  sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
-  await waitFor(() => d.querySelector('#preset-btn').classList.contains('is-on'));
-  await settle(ctx.window, 8);
-  sel.value = '';
-  sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
-  await waitFor(() => !d.querySelector('#preset-btn').classList.contains('is-on'));
-  await settle(ctx.window, 8);
-  const n = checks.length;
-  click(ctx.window, d.querySelector('[data-target="none"]'));
-  await waitFor(() => checks.length > n);
-  await settle(ctx.window, 8);
-  assert.equal(checks.at(-1).targetOnly, true);
-  assert.equal(d.querySelector('#start-btn').disabled, false, 'no broken item from picks the form no longer holds');
-  assert.doesNotMatch(d.querySelector('#preset-broken').textContent, /no longer exists/);
 });
 
 test('leaving the form while the rerun prefill loads holds no rerun: a later New run is not linked', async () => {

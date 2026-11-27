@@ -934,3 +934,105 @@ test('the merger adds last week\'s new files to test/timings.json, then prints t
   assert.deepEqual(read(), { 'test/new-fast.test.mjs': 7, 'test/new-slow.test.mjs': 9, 'test/timed-a.test.mjs': 4, 'test/timed-b.test.mjs': 2 });
   assert.match(full.stdout, /^0 test files have no recorded timing$/m);
 }, { tests: [...Object.keys(recorded), 'test/new-fast.test.mjs', 'test/new-slow.test.mjs'], timings: recorded, slow: ['test/new-slow.test.mjs'] }));
+// --test-name-pattern: one file, filtered by name through the same hermetic runner (tools/test-each-alone.mjs).
+test('parseArgs --test-name-pattern: kept with a file list; refused without one, and without a value', () => {
+  assert.equal(parseArgs(['test/a.test.mjs'], {}).namePattern, null);
+  const o = parseArgs(['test/a.test.mjs', '--test-name-pattern', '^a$'], {});
+  assert.equal(o.namePattern, '^a$');
+  assert.deepEqual(o.files, ['test/a.test.mjs']);
+  assert.throws(() => parseArgs(['--test-name-pattern', '^a$'], {}), { message: '--test-name-pattern needs a file list' });
+  assert.throws(() => parseArgs(['--related', '--test-name-pattern', '^a$'], {}), { message: '--test-name-pattern needs a file list' });
+  assert.throws(() => parseArgs(['test/a.test.mjs', '--test-name-pattern'], {}), { message: '--test-name-pattern needs a value' });
+  assert.throws(() => parseArgs(['test/a.test.mjs', '--test-name-pattern', '--write-timings'], {}), { message: '--test-name-pattern needs a value' });
+});
+
+const runTool = (script, args) => spawnSync(process.execPath, [join(TOOLS, script), ...args],
+  { encoding: 'utf8', timeout: 60_000, env: { ...process.env, NODE_TEST_CONTEXT: undefined, FORCE_COLOR: undefined } });
+
+test('--test-name-pattern without a file list exits 2 (it never filters a whole suite)', () => {
+  const r = runTool('test.mjs', ['--test-name-pattern', '^a$']);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /--test-name-pattern needs a file list/);
+});
+
+test('--test-name-pattern runs only the matching test of the file, as Node reads the pattern', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-runner-name-'));
+  try {
+    const file = join(dir, 'two.test.mjs');
+    writeFileSync(file, "import { test } from 'node:test';\ntest('a', () => {});\ntest('b', () => { throw new Error('b must not run'); });\n");
+    for (const pattern of ['^a$', '/^A$/i']) {
+      const r = runTool('test.mjs', [file, '--test-name-pattern', pattern]);
+      assert.equal(r.status, 0, `${pattern}\n${r.stdout}${r.stderr}`);
+      assert.match(r.stdout, /ℹ tests 1\b/, pattern);
+      assert.match(r.stdout, /ℹ pass 1\b/, pattern);
+    }
+  } finally { rmSync(dir, rmOpts); }
+});
+
+// --sum: the converted files' summed seconds from downloaded CI timing artifacts.
+test('sumTimings: rows in the order asked, the total rounded to 0.01 s', async () => {
+  const { sumTimings } = await import('../tools/test-timings-merge.mjs');
+  assert.equal(typeof sumTimings, 'function', 'tools/test-timings-merge.mjs exports sumTimings(measured, files)');
+  assert.deepEqual(
+    sumTimings([{ 'test/a.test.mjs': 0.1, 'test/other.test.mjs': 9 }, { 'test/b.test.mjs': 0.2 }], ['test/b.test.mjs', 'test/a.test.mjs']),
+    { rows: [{ file: 'test/b.test.mjs', seconds: 0.2 }, { file: 'test/a.test.mjs', seconds: 0.1 }], total: 0.3, missing: [], duplicated: [] },
+  );
+});
+
+test('sumTimings: a file with no timing is missing, a file timed twice is duplicated', async () => {
+  const { sumTimings } = await import('../tools/test-timings-merge.mjs');
+  assert.equal(typeof sumTimings, 'function', 'tools/test-timings-merge.mjs exports sumTimings(measured, files)');
+  const gone = sumTimings([{ 'test/a.test.mjs': 1.5 }], ['test/x.test.mjs', 'test/a.test.mjs', 'test/y.test.mjs']);
+  assert.deepEqual(gone.rows, [{ file: 'test/x.test.mjs', seconds: null }, { file: 'test/a.test.mjs', seconds: 1.5 }, { file: 'test/y.test.mjs', seconds: null }]);
+  assert.equal(gone.total, 1.5);
+  assert.deepEqual(gone.missing, ['test/x.test.mjs', 'test/y.test.mjs']);
+  assert.deepEqual(gone.duplicated, []);
+  const twice = sumTimings([{ 'test/a.test.mjs': 1 }, { 'test/a.test.mjs': 2 }], ['test/a.test.mjs']);
+  assert.deepEqual(twice.duplicated, ['test/a.test.mjs']);
+  assert.deepEqual(twice.missing, []);
+});
+
+test('test-timings-merge --sum: prints the table and exits 0, 1 or 2, and never writes test/timings.json', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-timings-sum-'));
+  const timingsFile = new URL('./timings.json', import.meta.url);
+  const before = readFileSync(timingsFile);
+  // Real file names with made-up seconds: a run that merged them would change test/timings.json.
+  const one = 'test/ui-one-model.test.mjs';
+  const two = 'test/ui-history-shipit.test.mjs';
+  try {
+    mkdirSync(join(dir, 'test-timings-fast-1'));
+    mkdirSync(join(dir, 'test-timings-fast-2'));
+    writeFileSync(join(dir, 'test-timings-fast-1', 'fast-1.json'), JSON.stringify({ [one]: 1.5 }));
+    writeFileSync(join(dir, 'test-timings-fast-2', 'fast-2.json'), JSON.stringify({ [two]: 2.25 }));
+    const sum = (...args) => runTool('test-timings-merge.mjs', ['--sum', ...args]);
+
+    const ok = sum(`${one},${two}`, dir);
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+    const table = ok.stdout.split('\n').filter((l) => l.startsWith('|'));
+    const at = (name) => table.findIndex((l) => l.includes(name));
+    assert.match(table[at(one)] ?? '', /\|\s*test\/ui-one-model\.test\.mjs\s*\|\s*1\.50?\s*\|/, ok.stdout);
+    assert.match(table[at(two)] ?? '', /\|\s*test\/ui-history-shipit\.test\.mjs\s*\|\s*2\.25\s*\|/, ok.stdout);
+    assert.match(table[at('Total')] ?? '', /\|\s*Total\s*\|\s*3\.75\s*\|/, ok.stdout);
+    assert.ok(at(one) < at(two) && at(two) < at('Total'), ok.stdout);
+
+    const missing = sum(`${one},${two},test/ui-workflows-app.test.mjs,test/ui-running-detail.test.mjs`, dir);
+    assert.equal(missing.status, 1, missing.stdout + missing.stderr);
+    const named = (missing.stdout + missing.stderr).split('\n').filter((l) => l.includes('has no timing in the given files'));
+    assert.deepEqual(named.map((l) => l.trim()).sort(), [
+      'test/ui-running-detail.test.mjs has no timing in the given files',
+      'test/ui-workflows-app.test.mjs has no timing in the given files',
+    ]);
+
+    writeFileSync(join(dir, 'test-timings-fast-2', 'again.json'), JSON.stringify({ [one]: 4 }));
+    const twice = sum(one, dir);
+    assert.equal(twice.status, 1, twice.stdout + twice.stderr);
+    assert.match(twice.stdout + twice.stderr, /test\/ui-one-model\.test\.mjs appears in 2 timing files/);
+
+    assert.equal(sum().status, 2, 'no list');
+    assert.equal(sum(one).status, 2, 'no timing files');
+    assert.ok(readFileSync(timingsFile).equals(before), '--sum never writes test/timings.json');
+  } finally {
+    if (!readFileSync(timingsFile).equals(before)) writeFileSync(timingsFile, before);
+    rmSync(dir, rmOpts);
+  }
+});

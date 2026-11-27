@@ -1,14 +1,19 @@
 // test/ui-run-sessions-view.test.mjs — one card per session: who ran, what each step cost, and whether it adds up.
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderSessionCard, sessionsTabVisible, sessionsBadge, outsideRows, renderOutsideCard, paintSessions, paintSessionsTab, membersUsdOf, _resetSessionsCache } from '../ui/public/run-sessions-view.mjs';
 import { decorFromState } from '../ui/public/graph/run-decor.mjs';
 import { SESSION_STEPPER, groupedRunningState } from './helpers/session-run-state.mjs';
-import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
-import { bootDetail, openDetail, settle, DETAIL, ROW, ok } from './helpers/history-detail-boot.mjs';
+import { runPageOn, helloRun } from './helpers/run-page-boot.mjs';
+import { openDetail, settle, DETAIL, ROW, ok, detailOn, historyFetch } from './helpers/history-detail-boot.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 import { openTab } from './helpers/run-tabs.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
+
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: historyFetch() });
+const bootApp = runPageOn(app);
+const bootDetail = detailOn(app).detail;
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const SID = 's_aaaaaaaa';

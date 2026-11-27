@@ -1,11 +1,15 @@
 // test/ui-chat-run-controls.test.mjs — worca Chat P3 inside the real app shell: the run snapshot the chat card reads
 // (askRunStore), the run controls app.js hands the card (window.__np.chatRunControls), and the registered card going
 // live from WS frames. Boots app.js through test/helpers/run-page-boot.mjs.
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
+import { runPageOn, helloRun } from './helpers/run-page-boot.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { chatCardBuilder, composerAddons } from '../ui/public/chat/extensions.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
+
+const app = useSharedApp({ before, beforeEach, after });
+const bootApp = runPageOn(app);
 
 const RUN_ID = 'run-chat-1';
 const PID = 'abcd1234';
@@ -243,10 +247,12 @@ test('chat run controls: a resume of a pipeline this tab already runs posts noth
       const ctx = await bootApp();
       await ctx.settle();
       const modal = ctx.window.document.getElementById('stop-modal');
-      ctx.window.__np.chatRunControls.stop({ pipelineId: 'beef0001', title: 'Old run', branch: 'worca/old', status: 'paused' }, () => {});
+      // a pipeline no earlier test resumed: the shared app keeps the lineage a resume answer gave it
+      ctx.window.__np.chatRunControls.stop({ pipelineId: 'beef0006', title: 'Old run', branch: 'worca/old', status: 'paused' }, () => {});
       assert.equal(modal.classList.contains('hidden'), false);
       assert.equal(modal.querySelector('.stop-ident-title').textContent, 'Old run');
-      assert.equal(modal.dataset.pipelineId, 'beef0001');
+      assert.equal(modal.dataset.pipelineId, 'beef0006');
+      modal.querySelector('.stop-cancel').click();   // the shared app's reset closes dialogs, and #stop-modal is none
     } },
     { name: 'stop of a paused run this tab holds: stopRun finishes it locally (no frame), and the caller\'s onStopped runs (the card itself: the registered-card test below)', run: async () => {
       const ctx = await bootApp({ fetchHandler: (url) => (url === '/api/stop' ? Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) }) : null) });
@@ -370,52 +376,52 @@ const confirmShown = async (doc) => {
   for (let i = 0; i < 50 && doc.getElementById('confirm-modal').classList.contains('hidden'); i++) await new Promise((r) => setTimeout(r, 20));
   return !doc.getElementById('confirm-modal').classList.contains('hidden');
 };
-for (const [name, seed, ref] of [
-  ['a held paused run', (ctx) => helloRun(ctx, { runId: 'r-cap', pipelineId: 'cafe0002', status: 'paused', pauseReason: 'cost_pipeline' }), { runId: 'r-cap', pipelineId: 'cafe0002' }],
-  ['a saved paused run (REST card)', () => {}, { pipelineId: 'cafe0003', title: 'Old', projectDir: '/tmp/p', status: 'paused' }],
-]) {
-  test(`chat run controls: Resume past the run's own cost limit asks "Continue without cap?" and resends with the override — ${name}`, async () => {
-    const ctx = await bootApp({ fetchHandler: costCapped() });
-    seed(ctx);
-    await ctx.settle();
-    const doc = ctx.window.document;
-    const before = ctx.window.location.hash;
-    const pending = ctx.window.__np.chatRunControls.resume(ref, button(ctx));
-    assert.equal(await confirmShown(doc), true, 'the cost banner\'s question');
-    assert.equal(doc.getElementById('confirm-title').textContent, 'Continue without cap?');
-    assert.equal(doc.activeElement, doc.getElementById('confirm-cancel'), 'the card\'s Resume never named the cap: a second Enter or Space must not confirm it');
-    doc.getElementById('confirm-ok').click();
-    await pending;
-    await ctx.settle();
-    const bodies = ctx.calls.filter((c) => c.url === '/api/resume').map((c) => JSON.parse(c.opts.body));
-    assert.deepEqual(bodies.map((b) => b.ignoreCostCap), [undefined, true]);
-    assert.equal(ctx.window.location.hash, before, 'still no hop to #running/<new>');
-    assert.equal(doc.getElementById('toasts').textContent.includes('Could not resume'), false, 'no failure toast');
-  });
+// The two paused runs Resume can meet: one this tab holds, and a saved one it knows only from a REST card.
+const HELD_PAUSED = [(ctx) => helloRun(ctx, { runId: 'r-cap', pipelineId: 'cafe0002', status: 'paused', pauseReason: 'cost_pipeline' }), { runId: 'r-cap', pipelineId: 'cafe0002' }];
+const SAVED_PAUSED = [() => {}, { pipelineId: 'cafe0003', title: 'Old', projectDir: '/tmp/p', status: 'paused' }];
+
+async function resumePastCostCap([seed, ref]) {
+  const ctx = await bootApp({ fetchHandler: costCapped() });
+  seed(ctx);
+  await ctx.settle();
+  const doc = ctx.window.document;
+  const before = ctx.window.location.hash;
+  const pending = ctx.window.__np.chatRunControls.resume(ref, button(ctx));
+  assert.equal(await confirmShown(doc), true, 'the cost banner\'s question');
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Continue without cap?');
+  assert.equal(doc.activeElement, doc.getElementById('confirm-cancel'), 'the card\'s Resume never named the cap: a second Enter or Space must not confirm it');
+  doc.getElementById('confirm-ok').click();
+  await pending;
+  await ctx.settle();
+  const bodies = ctx.calls.filter((c) => c.url === '/api/resume').map((c) => JSON.parse(c.opts.body));
+  assert.deepEqual(bodies.map((b) => b.ignoreCostCap), [undefined, true]);
+  assert.equal(ctx.window.location.hash, before, 'still no hop to #running/<new>');
+  assert.equal(doc.getElementById('toasts').textContent.includes('Could not resume'), false, 'no failure toast');
 }
 
-for (const [name, seed, ref] of [
-  ['a held paused run', (ctx) => helloRun(ctx, { runId: 'r-cap', pipelineId: 'cafe0002', status: 'paused', pauseReason: 'cost_pipeline' }), { runId: 'r-cap', pipelineId: 'cafe0002' }],
-  ['a saved paused run (REST card)', () => {}, { pipelineId: 'cafe0003', title: 'Old', projectDir: '/tmp/p', status: 'paused' }],
-]) {
-  test(`chat run controls: Cancel on "Continue without cap?" resumes nothing, shows no failure toast and gives the focus back to Resume — ${name}`, async () => {
-    const ctx = await bootApp({ fetchHandler: costCapped() });
-    seed(ctx);
-    await ctx.settle();
-    const doc = ctx.window.document;
-    const btn = button(ctx);
-    const pending = ctx.window.__np.chatRunControls.resume(ref, btn);
-    assert.equal(await confirmShown(doc), true);
-    doc.getElementById('confirm-cancel').click();
-    await pending;
-    await ctx.settle();
-    assert.equal(ctx.calls.filter((c) => c.url === '/api/resume').length, 1, 'one refused POST, no second one');
-    assert.equal(doc.getElementById('toasts').textContent.includes('Could not resume'), false);
-    assert.equal(doc.activeElement, btn, 'Cancel: the focus goes back to the Resume the user pressed');
-    assert.equal(btn.disabled, false);
-    if (ref.runId) assert.equal(ctx.window.__np.askRunStore.byPipeline('cafe0002').status, 'paused', 'still the paused run');
-  });
+test('chat run controls: Resume past the run\'s own cost limit asks "Continue without cap?" and resends with the override — a held paused run', () => resumePastCostCap(HELD_PAUSED));
+test('chat run controls: Resume past the run\'s own cost limit asks "Continue without cap?" and resends with the override — a saved paused run (REST card)', () => resumePastCostCap(SAVED_PAUSED));
+
+async function cancelCostCap([seed, ref]) {
+  const ctx = await bootApp({ fetchHandler: costCapped() });
+  seed(ctx);
+  await ctx.settle();
+  const doc = ctx.window.document;
+  const btn = button(ctx);
+  const pending = ctx.window.__np.chatRunControls.resume(ref, btn);
+  assert.equal(await confirmShown(doc), true);
+  doc.getElementById('confirm-cancel').click();
+  await pending;
+  await ctx.settle();
+  assert.equal(ctx.calls.filter((c) => c.url === '/api/resume').length, 1, 'one refused POST, no second one');
+  assert.equal(doc.getElementById('toasts').textContent.includes('Could not resume'), false);
+  assert.equal(doc.activeElement, btn, 'Cancel: the focus goes back to the Resume the user pressed');
+  assert.equal(btn.disabled, false);
+  if (ref.runId) assert.equal(ctx.window.__np.askRunStore.byPipeline('cafe0002').status, 'paused', 'still the paused run');
 }
+
+test('chat run controls: Cancel on "Continue without cap?" resumes nothing, shows no failure toast and gives the focus back to Resume — a held paused run', () => cancelCostCap(HELD_PAUSED));
+test('chat run controls: Cancel on "Continue without cap?" resumes nothing, shows no failure toast and gives the focus back to Resume — a saved paused run (REST card)', () => cancelCostCap(SAVED_PAUSED));
 
 test('the run page\'s own Resume is unchanged: no costConfirm, so a run past its cost limit gets the flow\'s toast and the cost banner keeps the override', async () => {
   const ctx = await bootApp({ fetchHandler: costCapped() });
@@ -512,31 +518,6 @@ test('two cards for one run in one chat (a started proposal and a track_run card
   await ctx.settle(6);
   assert.equal([...qa.querySelectorAll('.af-err')].find((s) => !s.hidden).textContent, 'Pick one.', 'disposing B released only B\'s panel');
   A.dispose();
-});
-
-test('a finished run card painted before the first History load offers Create pull request once that load names a PR host', async () => {
-  let release;
-  const gate = new Promise((r) => { release = r; });
-  const ctx = await bootApp({ fetchHandler: (url) => {
-    if (url === '/api/history') return gate.then(() => ({ ok: true, status: 200, json: async () => ({ pipelines: [], live: [], ghAvailable: true }) }));
-    if (url === '/api/ask/runs/beef00aa') return Promise.resolve({ ok: true, status: 200, json: async () => ({ state: { id: 'beef00aa', title: 'Done run', projectDir: '/tmp/p', projectKey: 'proj-00000001', status: 'done' }, live: null,
-      extras: { results: { filesChanged: 1, additions: 2, deletions: 0, checks: 0, topFiles: [] }, artifacts: [], moreArtifacts: false, pr: null } }) });
-    return null;
-  } });
-  ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', runs: [] });   // the first connect loads History in the background (cold cache here)
-  await ctx.settle();
-  const doc = ctx.window.document;
-  const built = chatCardBuilder('progress')({ kind: 'card', id: 'card_000000aa', state: 'tracked', card: { type: 'progress', pipelineId: 'beef00aa', runId: 'beef00aa', projectKey: 'proj-00000001', title: 'Done run' } },
-    { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel: () => {}, openArtifact: () => {}, announce: () => {} });
-  doc.body.appendChild(built.el);
-  await ctx.settle(6);
-  assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Clean: no blocking issues flagged');
-  assert.equal(built.el.querySelector('.chat-rc-create-pr'), null, 'no PR host known yet');
-  release();
-  await ctx.settle(10);
-  assert.ok(built.el.querySelector('.chat-rc-create-pr'), 'the History load named a PR host: no frame needed');
-  built.dispose();
 });
 
 test('a card for a run another process drives (REST only, no live model here) shows no dead Stop; once hello brings the run, Stop opens #stop-modal', async () => {

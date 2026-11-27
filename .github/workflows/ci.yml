@@ -166,6 +166,8 @@ jobs:
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -188,6 +190,9 @@ jobs:
       - name: Run fast tests
         env:
           WORCA_TEST_SHARD: ${{ matrix.shard }}/4
+          # test/suite-guard.test.mjs compares with this base (fetch-depth 2 above): on a pull request HEAD is
+          # GitHub's merge commit, so HEAD^1 is the base branch tip; on a dev push it is the previous dev commit.
+          WORCA_SUITE_GUARD_BASE: HEAD^1
         run: npm run test:fast -- --timings-out .test-timings/fast-${{ matrix.shard }}.json --failures-out .test-failures/fast-${{ matrix.node }}-${{ matrix.shard }}.json
 
       # A red shard's failure record (the test files that failed), for the CI gate's summary. The run

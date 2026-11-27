@@ -16,7 +16,7 @@ import { availableParallelism } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { handleWarning, preloadUrl, readHandles } from './test-handles.mjs';
 
-const { files, concurrency, timingsOut, failuresOut, measureTails } = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const { files, concurrency, timingsOut, failuresOut, measureTails, testNamePatterns } = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const forceExit = !measureTails;
 // Each test file's process writes the handles it held at exit into this folder.
 // Inside the list file's folder (the suite's work folder), so the suite's cleanup removes it even after a kill.
@@ -43,6 +43,8 @@ const stream = run({
   forceExit,
   // The preload's folder travels in its URL, never in the env: it reaches the test file's process only.
   ...(handlesDir ? { execArgv: ['--import', preloadUrl(handlesDir)] } : {}),
+  // tools/test.mjs --test-name-pattern, read as Node reads its own flag (a RegExp source, or /re/flags).
+  ...(testNamePatterns ? { testNamePatterns } : {}),
 });
 // realpath: on macOS one event names a temp file under /var and another under /private/var (a symlink).
 const real = (file) => { try { return realpathSync(file); } catch { return file; } };
