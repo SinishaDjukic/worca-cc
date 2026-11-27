@@ -20,13 +20,15 @@ const speedup = await import('../tools/ui-boot-speedup.mjs').catch((error) => ({
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const HELPER = './helpers/shared-app-boot.mjs';
 const FIRST = 'test/ui-running-detail.test.mjs';
-// The files converted first (the six largest, then the fallbacks), with the number of tests each had before.
+// The files converted first (the six largest, then the fallbacks), with the number of tests each had before, plus the
+// tests dev added to them while the conversion was in flight (ui-running-detail +6, ui-one-model +4, ui-chat-run-controls +1,
+// ui-group-page-route +16, ui-shape-app-wiring +3, ui-history-detail-tabs +1, each checked against dev when the lines were merged).
 const BASELINE = {
-  [FIRST]: 94,
-  'test/ui-history-detail-tabs.test.mjs': 53,
+  [FIRST]: 100,
+  'test/ui-history-detail-tabs.test.mjs': 54,
   'test/ui-history-shipit.test.mjs': 57,
   'test/ui-workflows-app.test.mjs': 114,
-  'test/ui-one-model.test.mjs': 36,
+  'test/ui-one-model.test.mjs': 40,
   'test/ui-marketplace-marketplaces.test.mjs': 35,
   'test/ui-ask-side-shell.test.mjs': 53,
   'test/ui-run-artifacts.test.mjs': 43,
@@ -37,11 +39,11 @@ const BASELINE = {
   'test/run-page-flag-off-golden.test.mjs': 5,
   'test/ui-ask-form-panel.test.mjs': 5,
   'test/ui-chat-home-app.test.mjs': 21,
-  'test/ui-chat-run-controls.test.mjs': 22,
+  'test/ui-chat-run-controls.test.mjs': 23,
   'test/ui-cost-breakdown.test.mjs': 10,
   'test/ui-folder-run-history.test.mjs': 18,
   'test/ui-folder-run-running.test.mjs': 19,
-  'test/ui-group-page-route.test.mjs': 33,
+  'test/ui-group-page-route.test.mjs': 49,
   'test/ui-history-base-check.test.mjs': 25,
   'test/ui-history-detail-diff.test.mjs': 26,
   'test/ui-history-detail.test.mjs': 48,
@@ -63,7 +65,7 @@ const BASELINE = {
   'test/ui-running-auto.test.mjs': 6,
   'test/ui-running-card.test.mjs': 2,
   'test/ui-session-step-line.test.mjs': 6,
-  'test/ui-shape-app-wiring.test.mjs': 55,
+  'test/ui-shape-app-wiring.test.mjs': 58,
   'test/ui-skills-run-detail.test.mjs': 3,
   'test/ui-skills-run-picker.test.mjs': 3,
 };
@@ -191,7 +193,7 @@ function ownBoots(file) {
   return [...new Set(found)];
 }
 
-test('R-arch-2: test/ui-running-detail.test.mjs boots the app once, through useSharedApp, and keeps its 94 tests', () => {
+test('R-arch-2: test/ui-running-detail.test.mjs boots the app once, through useSharedApp, and keeps its 100 tests', () => {
   assert.ok(usesHelper(FIRST), `${FIRST} imports useSharedApp from ${HELPER}`);
   for (const file of family(FIRST)) {
     assert.ok(usesHelper(file), `${file} imports useSharedApp`);
@@ -297,8 +299,10 @@ test('every test of a batch file and its siblings is a top-level test with a uni
   assert.deepEqual(problems, []);
 });
 
-test('the offender list holds at most the 158 files left after batch 1', () => {
-  assert.ok(offenders().length <= 158, `${offenders().length} files are still listed`);
+// 158 after batch 1, plus test/ui-run-tabs-more.test.mjs: dev added it after the list froze, while the lines were apart.
+// The cleanup slice converts it (it fakes layout and resize observers per window) and takes the cap back to 158.
+test('the offender list holds at most the 159 files left after batch 1 and the one dev added meanwhile', () => {
+  assert.ok(offenders().length <= 159, `${offenders().length} files are still listed`);
 });
 
 test('a sibling file counts only for the longest converted stem it starts with, and only when it boots through the shared helper', () => {
