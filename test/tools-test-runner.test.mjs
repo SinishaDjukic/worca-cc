@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -790,3 +790,147 @@ test('ci.yml CI gate: the verdict without FAILURES_DIR or BASE_QUARANTINE_ROOT i
       /^ci-gate steps: the verdict needs FAILURES_DIR and BASE_QUARANTINE_ROOT/, `no ${key}`);
   }
 });
+
+// ── untimed files: the stated fallback, the warning and the merger's completeness line ────────
+
+// Imported per test, so a missing export fails its own case instead of the whole file.
+const runnerExport = async (name, from = '../tools/test.mjs') => {
+  const mod = await import(from);
+  assert.equal(typeof mod[name], 'function', `${from.slice(3)} exports ${name}`);
+  return mod[name];
+};
+const untimedNames = (n) => Array.from({ length: n }, (_, i) => `test/new${String(i + 1).padStart(2, '0')}.test.mjs`);
+const recorded = { 'test/timed-a.test.mjs': 4, 'test/timed-b.test.mjs': 2 }; // mean 3.00 s, so the stated number is checkable
+const priced = 'is priced at the mean recorded time (3.00 s) until the weekly Refresh test timings PR measures it';
+const manyUntimed = `12 test files have no recorded timing: each ${priced}`;
+const oneUntimed = `1 test file has no recorded timing: each ${priced}`;
+
+test('untimedWarning: 12 untimed files return "12 test files have no recorded timing: …" with the mean shown', async () => {
+  const untimedWarning = await runnerExport('untimedWarning');
+  assert.equal(untimedWarning([...Object.keys(recorded), ...untimedNames(12)], recorded), manyUntimed);
+});
+
+test('untimedWarning: 1 untimed file returns the singular "1 test file has no recorded timing"', async () => {
+  const untimedWarning = await runnerExport('untimedWarning');
+  assert.equal(untimedWarning([...Object.keys(recorded), ...untimedNames(1)], recorded), oneUntimed);
+});
+
+test('untimedWarning: all files timed returns null (a recorded 0 s counts as timed)', async () => {
+  const untimedWarning = await runnerExport('untimedWarning');
+  assert.equal(untimedWarning(Object.keys(recorded), recorded), null);
+  assert.equal(untimedWarning(['test/zero.test.mjs'], { 'test/zero.test.mjs': 0 }), null);
+});
+
+test('fallbackWeight returns the mean of the recorded values, and 1 for an empty map', async () => {
+  const fallbackWeight = await runnerExport('fallbackWeight');
+  // Median 0, mean 3.2: only the mean passes.
+  assert.equal(fallbackWeight({ a: 10, b: 6, c: 0, d: 0, e: 0 }), 3.2);
+  assert.equal(fallbackWeight({}), 1);
+});
+
+test('annotateUntimed returns true for GITHUB_ACTIONS=true with no shard or 1/4, false for 2/4 and outside Actions', async () => {
+  const annotateUntimed = await runnerExport('annotateUntimed');
+  const actions = { GITHUB_ACTIONS: 'true' };
+  assert.equal(annotateUntimed(actions, null), true);
+  assert.equal(annotateUntimed(actions, ''), true);
+  assert.equal(annotateUntimed(actions, '1/4'), true);
+  assert.equal(annotateUntimed(actions, '2/4'), false);
+  assert.equal(annotateUntimed(actions, '11/12'), false);
+  assert.equal(annotateUntimed({}, '1/4'), false);
+  assert.equal(annotateUntimed({ GITHUB_ACTIONS: 'false' }, null), false);
+});
+
+test('completenessLine returns "0 test files have no recorded timing" when all are timed, else the warning', async () => {
+  const completenessLine = await runnerExport('completenessLine', '../tools/test-timings-merge.mjs');
+  assert.equal(completenessLine(Object.keys(recorded), recorded), '0 test files have no recorded timing');
+  assert.equal(completenessLine([...Object.keys(recorded), ...untimedNames(12)], recorded), manyUntimed);
+});
+
+/**
+ * A throwaway repo root holding a copy of the runner and the merger: what they print and write is checked on a real run
+ * over a known set of test files, never on this repo's own (its untimed count moves with every new file).
+ */
+const runnerRepo = (fn, { tests, timings: base, slow = [] }) => {
+  const root = mkdtempSync(join(tmpdir(), 'worca-cc-runner-untimed-'));
+  try {
+    mkdirSync(join(root, 'tools'));
+    mkdirSync(join(root, 'test', 'helpers'), { recursive: true });
+    for (const n of ['test.mjs', 'test-run.mjs', 'test-handles.mjs', 'test-related.mjs', 'test-timings-merge.mjs', 'quarantine.mjs']) {
+      copyFileSync(join(TOOLS, n), join(root, 'tools', n));
+    }
+    symlinkSync(fileURLToPath(new URL('../src', import.meta.url)), join(root, 'src'), 'junction'); // test-related.mjs imports it
+    cpSync(fileURLToPath(new URL('./helpers/no-real-claude', import.meta.url)), join(root, 'test', 'helpers', 'no-real-claude'), { recursive: true });
+    for (const f of tests) writeFileSync(join(root, f), "import { test } from 'node:test';\ntest('ok', () => {});\n");
+    writeFileSync(join(root, 'test', 'tiers.json'), JSON.stringify({ slow, keepFast: [] }));
+    writeFileSync(join(root, 'test', 'quarantine.json'), JSON.stringify({ entries: [] }));
+    writeFileSync(join(root, 'test', 'timings.json'), JSON.stringify(base));
+    const node = (tool, args, extra = {}) => spawnSync(process.execPath, [join(root, 'tools', tool), ...args], {
+      cwd: root, encoding: 'utf8', timeout: 60_000,
+      env: { ...process.env, NODE_TEST_CONTEXT: undefined, WORCA_TEST_SHARD: undefined, GITHUB_ACTIONS: undefined, WORCA_TEST_NO_LOCK: '1', ...extra },
+    });
+    return fn({ root, node });
+  } finally { rmSync(root, rmOpts); }
+};
+const warningLines = (stdout) => stdout.split('\n').filter((l) => /no recorded tim/.test(l));
+// 12 new fast files beside 2 timed ones, and one untimed slow file that a fast run must not count.
+const twelveNew = {
+  tests: [...Object.keys(recorded), ...untimedNames(12), 'test/slow-new.test.mjs'],
+  timings: recorded,
+  slow: ['test/slow-new.test.mjs'],
+};
+
+test('a run with 12 new files logs "12 test files have no recorded timing", once, counted over the whole tier', () => runnerRepo(({ node }) => {
+  const r = node('test.mjs', ['--tier', 'fast']);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(warningLines(r.stdout), [manyUntimed], r.stdout);
+}, twelveNew));
+
+test('every shard prints the whole tier\'s untimed count; in GitHub Actions only shard 1/n annotates it; the shard line carries no count of its own', () => runnerRepo(({ node }) => {
+  const first = node('test.mjs', ['--tier', 'fast', '--shard', '1/2'], { GITHUB_ACTIONS: 'true' });
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+  assert.deepEqual(warningLines(first.stdout), [`::warning::${manyUntimed}`], first.stdout);
+  // CI passes the shard through the env.
+  const second = node('test.mjs', ['--tier', 'fast'], { GITHUB_ACTIONS: 'true', WORCA_TEST_SHARD: '2/2' });
+  assert.equal(second.status, 0, second.stdout + second.stderr);
+  assert.deepEqual(warningLines(second.stdout), [manyUntimed], second.stdout);
+  assert.match(first.stdout, /^shard 1\/2: \d+ files$/m);
+  assert.match(second.stdout, /^shard 2\/2: \d+ files$/m);
+  const local = node('test.mjs', ['--tier', 'fast', '--shard', '1/2']);
+  assert.deepEqual(warningLines(local.stdout), [manyUntimed], 'outside Actions: no annotation prefix');
+}, twelveNew));
+
+test('no untimed warning for an explicit file list, or for a tier whose files are all timed', () => {
+  runnerRepo(({ node }) => {
+    // The tier run of this root warns, so the silence for a file list is the file list's.
+    assert.deepEqual(warningLines(node('test.mjs', ['--tier', 'fast']).stdout), [manyUntimed]);
+    const r = node('test.mjs', ['test/new01.test.mjs']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.deepEqual(warningLines(r.stdout), [], r.stdout);
+  }, twelveNew);
+  runnerRepo(({ node }) => {
+    const r = node('test.mjs', ['--tier', 'fast', '--shard', '1/1'], { GITHUB_ACTIONS: 'true' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.deepEqual(warningLines(r.stdout), [], r.stdout);
+    assert.match(r.stdout, /^shard 1\/1: 2 files$/m);
+  }, { tests: Object.keys(recorded), timings: recorded });
+});
+
+test('the merger adds last week\'s new files to test/timings.json, then prints the untimed count over the fast and slow tiers', () => runnerRepo(({ root, node }) => {
+  const shard = (name, body) => {
+    const dir = join(root, 'artifacts', `test-timings-${name}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${name}.json`), JSON.stringify(body));
+  };
+  const read = () => JSON.parse(readFileSync(join(root, 'test', 'timings.json'), 'utf8'));
+  shard('fast-1', { 'test/new-fast.test.mjs': 7 });
+  const partial = node('test-timings-merge.mjs', [join(root, 'artifacts')]);
+  assert.equal(partial.status, 0, partial.stdout + partial.stderr);
+  assert.equal(read()['test/new-fast.test.mjs'], 7);
+  assert.match(partial.stdout, /^1 test file has no recorded timing/m, 'the slow-tier file is still untimed');
+
+  shard('slow-1', { 'test/new-slow.test.mjs': 9 });
+  const full = node('test-timings-merge.mjs', [join(root, 'artifacts')]);
+  assert.equal(full.status, 0, full.stdout + full.stderr);
+  assert.deepEqual(read(), { 'test/new-fast.test.mjs': 7, 'test/new-slow.test.mjs': 9, 'test/timed-a.test.mjs': 4, 'test/timed-b.test.mjs': 2 });
+  assert.match(full.stdout, /^0 test files have no recorded timing$/m);
+}, { tests: [...Object.keys(recorded), 'test/new-fast.test.mjs', 'test/new-slow.test.mjs'], timings: recorded, slow: ['test/new-slow.test.mjs'] }));

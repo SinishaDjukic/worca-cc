@@ -67,6 +67,13 @@ without a person.
 The App token is what lets the refresh PR's required checks start; a PR opened with the default Actions token does
 not start workflows. If a secret is missing, the refresh fails with a message naming step 2 of this page.
 
+The refresh is `.github/workflows/refresh-test-timings.yml` ("Refresh test timings", Mondays 03:00 UTC). With a secret
+missing, its first check fails with `Refresh test timings needs the GitHub App secrets: see the CI gate admin checklist
+step 2` and opens no PR. Run it once by hand (Actions › Refresh test timings › Run workflow) and again a week later, or
+by hand twice, to see the same PR updated. When GitHub refuses the App's push because dev changed a workflow file (it
+has no Workflows permission), the run closes its open PR, deletes the `timings-refresh` branch, pushes it again and
+opens a fresh PR.
+
 ## 3. Require the checks on dev
 
 1. Open Settings › Rules › Rulesets › New ruleset › New branch ruleset.

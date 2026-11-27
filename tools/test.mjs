@@ -59,12 +59,27 @@ export function filesToRun(root, o) {
   return o.files.length ? { files: o.files, left: 0 } : tierFiles(root, o.tier);
 }
 
-export function planShards(files, timings, n) {
-  // A file with no recorded time weighs the MEAN, not the median: most files take ~0 s, so the
-  // median (0.2 s) priced a new file far under what new files actually cost (2.3 s on average on
-  // 2026-10-22, when 636 untimed files had piled onto one shard and made it the CI long pole).
+// A file with no recorded time weighs the MEAN, not the median: most files take ~0 s, so the
+// median (0.2 s) priced a new file far under what new files actually cost (2.3 s on average on
+// 2026-10-22, when 636 untimed files had piled onto one shard and made it the CI long pole).
+export function fallbackWeight(timings) {
   const known = Object.values(timings);
-  const mean = known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+  return known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+}
+
+/** The once-per-tier-run warning for files with no recorded time, or null when every file is timed. */
+export function untimedWarning(files, timings) {
+  const n = files.filter((f) => !(f in timings)).length;
+  if (!n) return null;
+  return `${n} test ${n === 1 ? 'file has' : 'files have'} no recorded timing: each is priced at the mean recorded time `
+    + `(${fallbackWeight(timings).toFixed(2)} s) until the weekly Refresh test timings PR measures it`;
+}
+
+/** In GitHub Actions only a run with no shard or shard 1/n annotates the warning: one annotation per tier and Node leg. */
+export const annotateUntimed = (env, shard) => env.GITHUB_ACTIONS === 'true' && (!shard || shard.startsWith('1/'));
+
+export function planShards(files, timings, n) {
+  const mean = fallbackWeight(timings);
   const w = (f) => (timings[f] ?? mean) + PER_FILE_S;
   // Code-unit tie-break, never localeCompare: every CI shard must compute the same plan.
   const order = [...files].sort((a, b) => w(b) - w(a) || (a < b ? -1 : a > b ? 1 : 0));
@@ -243,12 +258,13 @@ async function main() {
   let files = picked.files;
   if (picked.left) console.log(`quarantine: ${picked.left} test files left out (test/quarantine.json)`);
   const timings = readJson('test/timings.json', {});
+  const warning = o.files.length ? null : untimedWarning(files, timings);
+  if (warning) console.log(`${annotateUntimed(process.env, o.shard) ? '::warning::' : ''}${warning}`);
   if (o.shard) {
     const m = /^(\d+)\/(\d+)$/.exec(o.shard);
     if (!m || +m[1] < 1 || +m[1] > +m[2]) { console.error(`bad shard "${o.shard}" (want i/n)`); process.exit(2); }
     files = planShards(files, timings, +m[2])[+m[1] - 1];
-    const untimed = files.filter((f) => !(f in timings)).length;
-    console.log(`shard ${o.shard}: ${files.length} files${untimed ? ` (${untimed} with no recorded time: npm run test:timings:merge rebalances)` : ''}`);
+    console.log(`shard ${o.shard}: ${files.length} files`);
   } else {
     files = planShards(files, timings, 1)[0];
   }

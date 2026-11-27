@@ -127,6 +127,15 @@ Pull requests run the fast tier on `.nvmrc`'s Node only, pushes to `dev` run it 
 Making the full matrix permanent on PRs is one edit to the matrix expression in
 `.github/workflows/ci.yml`, together with `test/supply-chain.test.mjs`.
 
+The shards are balanced by `test/timings.json`. Each Monday the Refresh test timings
+workflow (`.github/workflows/refresh-test-timings.yml`) merges the timings of the
+newest green `dev` push run into it and opens or updates one "Refresh test timings"
+PR, which a maintainer reviews and merges like any other PR. A test file
+with no recorded time is priced at the mean recorded time, and a tier run prints
+`N test files have no recorded timing` until a refresh measures it. To refresh by
+hand: `gh run download <run-id> --pattern 'test-timings-*' --dir .test-timings`, then
+`npm run test:timings:merge -- .test-timings`.
+
 A test file, extension Playwright spec or CDP proof that fails at random can be
 quarantined: add it to `test/quarantine.json` with three fields, `path`,
 `reason` (why it is distrusted) and `exitCondition` (what lets it come back). A
