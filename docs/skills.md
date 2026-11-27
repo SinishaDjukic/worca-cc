@@ -9,7 +9,13 @@ or your Claude Code config. Everything lives on the **Connectors** page (Advance
 
 ## Where skills come from
 
-The **Skills** view (Connectors › Skills) is the catalog:
+The **Skills** view (Connectors › Skills) is the catalog: one row per skill, with a search box, a **Source** menu and
+filter chips — **All**, **Imported**, **From plugins** and **Needs attention** (an invalid skill, one that declares
+hooks or reads its plugin's other files, one with an update, or one whose plugin is off). Each chip shows how many
+skills it matches. A set's own page, reached from the set list on the left of **Sets**, shows the skills it holds
+with a short status word each (`In runs`, `Off`, `Invalid`, `Plugin disabled`, `Needs your consent`).
+
+A skill is in the catalog because it is:
 
 - **Plugin skills** — every `skills/<name>/SKILL.md` an installed plugin ships. They come and go with the plugin;
   a disabled plugin's skills are listed (`plugin disabled`) and skipped in runs.

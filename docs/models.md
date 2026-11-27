@@ -108,7 +108,7 @@ Agents run on Claude Code by default. The other engines are all in **beta**: Ope
 [CLI agent](#cursor), Google's [Gemini CLI and Qwen Code](#gemini-cli-and-qwen-code),
 [Goose](#goose) and [OpenCode](#opencode).
 
-- Pick one per run with **Engine** on New pipeline (Advanced) or
+- Pick one per run with **Engine** on New run (Advanced) or
   `--engine claude|codex|copilot|cursor|gemini|goose|opencode|qwen`, or set a default with
   **Default for new runs** (a harness group's ⋯ menu on Models › Catalogue, or beside the
   harness tiles on Models › Jobs) or in a project's settings.
@@ -122,7 +122,7 @@ Agents run on Claude Code by default. The other engines are all in **beta**: Ope
 - A model's connection decides which engines can run it
   ([Harnesses, providers and models](#harnesses-providers-and-models)).
 
-![New pipeline in Advanced mode for the nimbus-crm project: the Workflow picker on Auto beside the Engine picker set to Codex (Beta), the hint that Codex runs this pipeline including titles and summaries, a typed task to add an Idempotency-Key header to POST /contacts, and the Branches table starting from main, up to date](screenshots/engine-picker.png)
+![New run in Advanced mode for the nimbus-crm project: the Workflow picker on Auto beside the Engine picker set to Codex (Beta), the hint that Codex runs this pipeline including titles and summaries, a typed task to add an Idempotency-Key header to POST /contacts, and the Branches table starting from main, up to date](screenshots/engine-picker.png)
 
 ## The Catalogue tab
 
@@ -810,7 +810,7 @@ tool round trip, each helper call and each retry — so a small pipeline run tak
 | --- | --- |
 | The account menu, last row of the spend card | *Free requests today 941 / 1000*; amber below 10%, red at 0, the reset on hover; it opens the OpenRouter row on Models › Providers. Only with a `:free` model in the catalog |
 | A run's cost pill | *$0 · 87 free requests* for a run that used `:free` models |
-| New pipeline form | a warning when a node's model is `:free` and fewer requests are left than this install's typical run (the median of its recent runs; 90 before it has any) |
+| New run form | a warning when a node's model is `:free` and fewer requests are left than this install's typical run (the median of its recent runs; 90 before it has any) |
 | The Models › Providers tab | the allowance in the OpenRouter row, read when the tab opens |
 
 The count is OpenRouter's own (`GET /api/v1/key`, `free_model_daily_requests`), read
@@ -1029,7 +1029,7 @@ worca can run pipelines and chats on OpenAI's Codex CLI.
 
 1. Install the `codex` CLI (or use the one bundled with the ChatGPT desktop app) and make sure worca finds it: on `PATH`, or `WORCA_CODEX_BIN=/path/to/codex` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`.
 2. Sign in once in a terminal: `codex login`. `codex login status` must say you are logged in.
-3. Pick Codex per run on New pipeline, or as a default with **Default for new runs** (Models › Catalogue or Models › Jobs). For Chat, Settings › Chat › Engine & models.
+3. Pick Codex per run on New run, or as a default with **Default for new runs** (Models › Catalogue or Models › Jobs). For Chat, Settings › Chat › Engine & models.
 
 On a Codex run the helper jobs (titles, the run overview, the PR description, the Auto workflow classifier, and Away mode's night decider) run on Codex too, read-only with codex's shell switched off, because they read text worca did not write. These jobs need a codex that knows `--disable shell_tool` and `--disable unified_exec` (`codex-cli 0.146` does).
 
@@ -1040,7 +1040,7 @@ On a Codex run the helper jobs (titles, the run overview, the PR description, th
 **MCP servers on Codex.** A pipeline's MCP servers attach to its Codex nodes, with these limits:
 
 - Codex takes stdio servers only. A remote (HTTP/SSE) server from the MCP registry refuses the run; one from a project's `.mcp.json` is skipped with a warning.
-- The servers in the checkout's own `.mcp.json` attach only when Claude Code would run them without asking: those named in `enabledMcpjsonServers`, or all of them with `enableAllProjectMcpServers: true`, minus those in `disabledMcpjsonServers`. An approval counts only where a repository cannot put one: `~/.claude/settings.json`, your answers to Claude Code's own approval prompt (kept for the project in `~/.claude.json`), the project's `.claude/settings.local.json` while git does not track it, and Claude Code's managed settings. Claude Code ignores a repository's own approvals in a folder you have not trusted, and worca cannot tell which folders you trust. The committed `.claude/settings.json` can only restrict: its `disabledMcpjsonServers` and an `enableAllProjectMcpServers: false` still apply. The run names the servers it leaves out for want of approval, and so does New pipeline before Start. The project's **Sets** tab lists the servers with their status, and **Approve** names one in the project's `.claude/settings.local.json`, keeping that file out of git. Their `${VAR}` references are filled the way Claude Code fills them, as for any other server on Codex.
+- The servers in the checkout's own `.mcp.json` attach only when Claude Code would run them without asking: those named in `enabledMcpjsonServers`, or all of them with `enableAllProjectMcpServers: true`, minus those in `disabledMcpjsonServers`. An approval counts only where a repository cannot put one: `~/.claude/settings.json`, your answers to Claude Code's own approval prompt (kept for the project in `~/.claude.json`), the project's `.claude/settings.local.json` while git does not track it, and Claude Code's managed settings. Claude Code ignores a repository's own approvals in a folder you have not trusted, and worca cannot tell which folders you trust. The committed `.claude/settings.json` can only restrict: its `disabledMcpjsonServers` and an `enableAllProjectMcpServers: false` still apply. The run names the servers it leaves out for want of approval, and so does New run before Start. The project's **Sets** tab lists the servers with their status, and **Approve** names one in the project's `.claude/settings.local.json`, keeping that file out of git. Their `${VAR}` references are filled the way Claude Code fills them, as for any other server on Codex.
 - Other servers Claude Code loads on its own (user scope, plugins) are not attached on Codex.
 - Codex gives all of a run's servers one shared environment. Copies of a registry server, such as two GitHub copies with their own `GITHUB_TOKEN`, each get their own variable names there, so they attach side by side. Two other servers may not declare the same variable with different values.
 
@@ -1116,7 +1116,7 @@ copilot login                    # follow the prompts to sign in to GitHub
 native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell),
 and the variable may point at a `.exe` or a `.cmd`.
 
-**Use it.** Pick Copilot per run under **Engine** on New pipeline (Advanced), or run `worca --engine copilot …`. To
+**Use it.** Pick Copilot per run under **Engine** on New run (Advanced), or run `worca --engine copilot …`. To
 make it the default, use **Default for new runs** (Models › Catalogue or Models › Jobs) or a project's Settings. For
 Chat, use Settings › Chat › Engine & models.
 
@@ -1186,7 +1186,7 @@ worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cur
 
 1. Install the Cursor CLI (`cursor-agent`) and make sure worca finds it: on `PATH`, or `WORCA_CURSOR_BIN=/path/to/cursor-agent` in worca's environment. On Windows a `.cmd`/`.bat` launcher on `PATH` is resolved too (never through a shell), and the variable may point at a `.exe` or a `.cmd`. The `cursor` command that opens the editor is not the agent.
 2. Sign in once in a terminal: `cursor-agent login`. `cursor-agent status` must say you are logged in. Or set `CURSOR_API_KEY` in worca's own environment; worca passes it to Cursor and stores nothing.
-3. Pick Cursor per run on New pipeline, or as a default with **Default for new runs** (Models › Catalogue or Models › Jobs). Each harness tile on Models › Jobs shows whether that engine is ready.
+3. Pick Cursor per run on New run, or as a default with **Default for new runs** (Models › Catalogue or Models › Jobs). Each harness tile on Models › Jobs shows whether that engine is ready.
 
 **Models.** worca ships no Cursor models. With no model set, Cursor runs your account's default. To pick one, use **Add model** › *A sign-in* › **Cursor** with the id Cursor expects (for example `sonnet-4.5`). Cursor models take no env, no endpoint and no effort. A model id that looks like a Claude id (`sonnet-4.5`) only reaches Cursor when it is in the catalog on the Cursor harness; otherwise worca treats it as Claude's and the run uses Cursor's default (the run log says so). An id that is already a built-in (a Claude model or a Codex model such as `gpt-5.6-sol`) cannot be added as a Cursor model.
 
@@ -1226,7 +1226,7 @@ Verified on Gemini CLI 0.63.0 and Qwen Code 0.25.0. The captured streams and eve
    - **Qwen Code:** run `qwen` once in a terminal and choose how it signs in, or set a whole provider in worca's environment or `~/.qwen/.env` (for example `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL`). A key alone is not enough: Qwen Code then stops with "No auth type is selected".
 
    Neither CLI has a status command, so the harness tile's *Ready* on Models › Jobs only checks that the binary runs and that a sign-in is configured. worca never reads the credentials.
-3. Pick the engine per run on New pipeline, or as a default with **Default for new runs** (Models › Catalogue or Models › Jobs). For Chat, Settings › Chat › Engine & models.
+3. Pick the engine per run on New run, or as a default with **Default for new runs** (Models › Catalogue or Models › Jobs). For Chat, Settings › Chat › Engine & models.
 
 **Models.** worca ships none. With no model set, the CLI runs its own default (Gemini CLI: `auto`). To pick one, use **Add model** › *A sign-in* › **Gemini CLI** or **Qwen Code** with the id the CLI expects (for example `gemini-3.8-flash` or `qwen3-coder-plus`). These models take no env and no endpoint; which provider a Qwen Code model reaches is Qwen Code's own setting. Their effort is the model's thinking on Gemini CLI (low, medium, high: a thinking level on Gemini 3, a thinking budget of 1024, 8192 or 24576 tokens on Gemini 2.5), written into the settings file worca hands the CLI, and `model.reasoningEffort` on Qwen Code (low to max), written into worca's system settings; a model without reasoning ignores it.
 
@@ -1274,7 +1274,7 @@ worca can run pipelines on [Goose](https://github.com/aaif-goose/goose)'s headle
 
 1. Install the Goose CLI (`brew install block-goose-cli`) and make sure worca finds it: on `PATH`, or `WORCA_GOOSE_BIN=/path/to/goose` in worca's environment. On Windows a `.cmd`/`.bat` launcher on `PATH` is resolved too (never through a shell), and the variable may point at a `.exe` or a `.cmd`.
 2. Set up a provider once: `goose configure`, or put the provider's key (for example `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) in worca's own environment. worca stores no Goose key. With guardrails that scrub the environment, add the key's name to the project's allowlist; `GOOSE_` variables always pass.
-3. Pick Goose per run on New pipeline, or as a default with **Default for new runs** (Models › Catalogue or Models › Jobs). Its harness tile only checks that `goose --version` runs: a missing provider key shows up when the first step fails.
+3. Pick Goose per run on New run, or as a default with **Default for new runs** (Models › Catalogue or Models › Jobs). Its harness tile only checks that `goose --version` runs: a missing provider key shows up when the first step fails.
 
 **Models.** worca ships no Goose models. With no model set, Goose runs the provider and model of its own config. To pick one, use **Add model** › *A sign-in* › **Goose** with the id `provider/model` (for example `google/gemini-2.5-flash`, `openai/gpt-4o`, `ollama/qwen2.5-coder`, `openrouter/anthropic/claude-sonnet-4`). worca splits it at the first `/` into goose's `--provider` and `--model`. Goose models take no env and no endpoint. Their efforts (low, medium, high, max) set `GOOSE_THINKING_EFFORT`; what each one does is up to the provider, and some ignore it.
 
@@ -1305,7 +1305,7 @@ worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`), bot
 
 1. Install OpenCode and make sure worca finds it: on `PATH`, or `WORCA_OPENCODE_BIN=/path/to/opencode` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`. worca supports OpenCode 1.x (npm `opencode-ai`) and 2.x (npm `@opencode/cli`, and Homebrew's `opencode` formula).
 2. Connect a provider once in a terminal: `opencode auth login`, or set the provider's key (for example `ANTHROPIC_API_KEY`) in worca's own environment. `opencode providers list` (1.x) or `opencode auth list` (2.x) shows what OpenCode sees. Without either, only OpenCode Zen's free models run, and they send the code to opencode.ai, so Models › Jobs shows OpenCode as *Not ready* and a run is refused, unless every step names its model or you opt in (below). worca checks the credentials in the environment the agent gets: under a set that scrubs the environment, a key only worca has does not count. For Google models, set `GOOGLE_GENERATIVE_AI_API_KEY`: OpenCode 1.18 lists a `GEMINI_API_KEY` under `providers list` but does not use it, so a run stops with "Google Generative AI API key is missing".
-3. Pick OpenCode per run on New pipeline, or as a default with **Default for new runs** (Models › Catalogue or Models › Jobs).
+3. Pick OpenCode per run on New run, or as a default with **Default for new runs** (Models › Catalogue or Models › Jobs).
 
 **Models.** worca ships no OpenCode models. With no model set, OpenCode runs its own default (your `opencode.json` `model`, else its first provider's), which can be a free OpenCode Zen model that sends the code to opencode.ai. So worca refuses a run in which any step names no model, and never starts OpenCode without one. A run with no model at all takes your OpenCode chat model (else the OpenCode everyday role), or the catalogue's OpenCode model when it holds exactly one; with several and no role set, worca does not choose between them, and the run log lists them. To run on OpenCode's own default anyway, set `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1` in worca's environment. To pick one, use **Add model** › *A sign-in* › **OpenCode** with the id `opencode models` lists, `provider/model` (for example `anthropic/claude-sonnet-4-5`). An OpenCode model takes no env and no endpoint: OpenCode's own providers connect it. Its efforts are OpenCode's reasoning variants (`minimal`, `low`, `medium`, `high`, `max`), passed as `--variant` on 1.x and as part of the model reference (`provider/model#variant`) on 2.x; a variant the model does not have is ignored by OpenCode without a word.
 
