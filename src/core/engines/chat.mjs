@@ -7,8 +7,10 @@
 // descriptor has no flag there (or a flag no descriptor), and when a descriptor's attachments disagree with the flag.
 // A descriptor without a lockdown (Cursor) is wired and stays off: chatDescriptor() returns it, CHAT_ENGINES leaves it out.
 import { listEngines } from './index.mjs';
-import { ASK_ENGINES } from '../model-env.mjs';
 import { ENGINES } from '../../shared/engine-switch.mjs';
+import { ASK_ENGINES, envFlag } from '../model-env.mjs';
+import { cliNotInstalled, configuredClaudeBin } from '../cli-resolve.mjs';
+import { CLAUDE_CLI } from './cli-specs.mjs';
 
 export { chatCostCapRefusal, chatEngineGate } from './chat-descriptor.mjs';
 
@@ -37,4 +39,23 @@ export function chatDescriptor(engine) {
 /** Every chat descriptor, in engine order. */
 export function chatDescriptors() {
   return CHAT_ENGINES.filter((e) => e !== 'claude').map((e) => DESCRIPTORS.get(e));
+}
+
+/** The binary a chat on `engine` runs: Claude's configured one (engines/claude.mjs spawnFailure), else its descriptor's;
+ *  null for any other engine. */
+export function chatEngineBin(engine) {
+  if (engine === 'claude') { try { return configuredClaudeBin(); } catch { return null; } }
+  return chatDescriptor(engine)?.bin() || null;
+}
+
+/** Why `engine`'s CLI is not on this machine (a few stat()s of its configured binary, never a spawn), or null: found, or
+ *  no answer. Mock mode (the server's own rule: WORCA_MOCK, else ORCH_MOCK) has every engine, as engines/readiness.mjs
+ *  reports it. The chat model picker leaves such an engine out (ask/models.mjs `notReady`), and the setup dialog says it
+ *  (GET /api/engines/:name/setup). */
+export function chatEngineNotInstalled(engine) {
+  if (envFlag('WORCA_MOCK', 'ORCH_MOCK')) return null;
+  try {
+    if (engine === 'claude') return cliNotInstalled(configuredClaudeBin(), CLAUDE_CLI, 'Claude Code');
+    return chatDescriptor(engine)?.notInstalled() || null;
+  } catch { return null; }
 }

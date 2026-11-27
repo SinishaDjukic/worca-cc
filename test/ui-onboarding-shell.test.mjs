@@ -253,7 +253,7 @@ test('Connect Claude Code re-checks on open: a page that loaded while signed out
   await settle();
   click(window, doc.querySelector('.gs-tile[data-step="claude"]'));
   await settle();
-  const line = doc.getElementById('claude-setup-status');
+  const line = doc.getElementById('engine-setup-status');
   assert.match(line.textContent, /installed and signed in/);
   assert.match(line.className, /\bok\b/);
 });
@@ -266,10 +266,10 @@ test('Connect Claude Code › Check again: busy while it asks, a result line eve
   await settle();
   click(window, doc.querySelector('.gs-tile[data-step="claude"]'));
   await settle();
-  const box = doc.getElementById('claude-setup-status');
-  const btn = doc.getElementById('claude-setup-check');
-  const where = () => box.querySelector('.ob-claude-where')?.textContent;
-  const checked = () => box.querySelector('.ob-claude-checked')?.textContent;
+  const box = doc.getElementById('engine-setup-status');
+  const btn = doc.getElementById('engine-setup-check');
+  const where = () => box.querySelector('.ob-setup-where')?.textContent;
+  const checked = () => box.querySelector('.ob-setup-checked')?.textContent;
   assert.match(box.textContent, /not signed in yet/);
   assert.equal(where(), `Worca checked ${dir}. If your terminal is signed in, Worca may be running with a different HOME or CLAUDE_CONFIG_DIR.`);
   assert.equal(checked(), undefined, 'the check on open leaves no "Checked just now" line');
@@ -310,7 +310,7 @@ test('Connect Claude Code › Check again: busy while it asks, a result line eve
   assert.match(box.textContent, /installed and signed in/);
   assert.equal(checked(), 'Checked just now: signed in.');
   assert.equal(where(), undefined, 'signed in: no folder line');
-  click(window, doc.getElementById('claude-setup-close'));
+  click(window, doc.getElementById('engine-setup-close'));
   click(window, doc.querySelector('.gs-tile[data-step="claude"]'));
   await settle();
   assert.equal(checked(), undefined, 'opened again: no stale "Checked just now" line');
@@ -321,13 +321,13 @@ test('a tile guide: "Connect Claude Code" opens the setup dialog; "Chat" rings t
   click(window, doc.querySelector('.gs-pill'));
   await settle();
   click(window, doc.querySelector('.gs-tile[data-step="claude"]'));
-  const setup = doc.getElementById('claude-setup-modal');
+  const setup = doc.getElementById('engine-setup-modal');
   assert.equal(setup.classList.contains('hidden'), false);
-  assert.match(doc.getElementById('claude-setup-status').textContent, /not on the PATH/);
-  click(window, doc.getElementById('claude-setup-close'));
+  assert.match(doc.getElementById('engine-setup-status').textContent, /not on the PATH/);
+  click(window, doc.getElementById('engine-setup-close'));
   assert.equal(setup.classList.contains('hidden'), true);
   click(window, doc.querySelector('.gs-tile[data-step="claude"]'));       // open it again
-  dragOut(window, doc.getElementById('claude-setup-status'), setup);
+  dragOut(window, doc.getElementById('engine-setup-status'), setup);
   assert.equal(setup.classList.contains('hidden'), false, 'a selection dragged out of the status does not close it');
   backdropClick(window, setup);
   assert.equal(setup.classList.contains('hidden'), true, 'read-only: a backdrop click closes it');

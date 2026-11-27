@@ -199,7 +199,7 @@ const THREADS_REFRESH_MS = 250;
 const HISTORY_KEY = 'worca-cc.chat.history';
 const HISTORY_OVERLAY_BELOW = 1100;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, openAddModel = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null, onToolScope = () => {}, onChatsClosed = () => {}, designChat = null }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openEngineSetup = null, openAddModel = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null, onToolScope = () => {}, onChatsClosed = () => {}, designChat = null }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -3363,23 +3363,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       moreRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
       return moreRow;
     };
-    // A harness not installed here: Claude Code opens Connect Claude Code (which says how to install it and checks
-    // again), any other its setup docs in a new tab; without either, a disabled row with the reason. The reason is the
-    // row's tip, and a quiet "not installed" sits where a row's value goes. `lead`: the row that leads that engine's own
-    // section (only a chat already on it has one), not dimmed, its "not installed" amber as the chat's own model row.
+    // A harness not installed here opens its setup dialog (Connect <engine>: how to install it and sign it in, and Check
+    // again), the same for every engine; a host with no dialog (the extension, a bare panel) opens its setup docs in a new
+    // tab; with neither, a disabled row with the reason. The reason is the row's tip, and a quiet "not installed" sits
+    // where a row's value goes. `lead`: the row that leads that engine's own section (only a chat already on it has one),
+    // not dimmed, its "not installed" amber as the chat's own model row.
     const setupRow = (h, { lead = false } = {}) => {
-      const dialog = h.engine === 'claude' && typeof openClaudeSetup === 'function';
-      const open = dialog ? () => { closePopover(); openClaudeSetup(); }
+      const dialog = typeof openEngineSetup === 'function';
+      const open = dialog ? () => { closePopover(); openEngineSetup(h.engine); }
         : h.docsUrl ? () => { closePopover(); try { win.open(h.docsUrl, '_blank', 'noopener'); } catch { /* blocked */ } } : null;
       const row = menuItem(lead ? 'ask-harness-row ask-setup-lead' : 'ask-harness-row is-missing', open);
       row.setAttribute('data-ask-harness', h.engine);
       row.setAttribute(lead ? 'data-ask-setup-lead' : 'data-ask-harness-missing', '');
       if (!open) row.disabled = true;
-      row.title = !open ? h.reason : `${h.reason} ${dialog ? 'Opens Connect Claude Code.' : 'Opens its setup docs.'}`;
+      row.title = !open ? h.reason : `${h.reason} ${dialog ? `Opens Connect ${pickerEngineLabel(h.engine)}.` : 'Opens its setup docs.'}`;
       row.appendChild(make('span', null, lead ? `Set up ${pickerEngineLabel(h.engine)}` : h.label));
       if (!lead) withMark(row, h.engine);
       row.appendChild(make('span', 'ask-pop-row-value', 'not installed'));
-      if (open) row.appendChild(make('span', 'ask-pop-row-chev', '↗'));   // one mark for every setup, dialog or docs
+      if (open) row.appendChild(make('span', 'ask-pop-row-chev', dialog ? '›' : '↗'));   // › a dialog here, ↗ a new tab
       return row;
     };
     const leadWithSetup = (g) => {
@@ -3390,7 +3391,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
     // The chat engines with no model yet sit behind one row, so the menu grows by one line however many there are.
     // Without a host that can open Add model (the extension, a bare panel) there is nowhere to lead, so no row. An engine
-    // not installed here is not one (catalog.notReady): those are listed below them, each opening its setup docs, so a
+    // not installed here is not one (catalog.notReady): those are listed below them, each opening its setup, so a
     // machine with no other engine installed still has a way on. One a chat is already on has its own section instead.
     const harnessesNow = () => (typeof openAddModel === 'function' ? moreHarnesses(st.catalog ? st.catalog.models : [], st.catalog && st.catalog.notReady) : []);
     const missingNow = () => notInstalledHarnesses(st.catalog, sectionsNow().map((g) => g.engine));
@@ -4226,13 +4227,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       a.setAttribute('href', b.href);
       n.appendChild(a);
     }
-    if (b.claudeSetup && typeof openClaudeSetup === 'function') {
+    if (b.claudeSetup && typeof openEngineSetup === 'function') {
       // Claude Code is not on this machine: Connect Claude Code says where to get it and checks again.
       n.appendChild(doc.createTextNode(' '));
       const a = make('a', 'ask-notice-link', 'Set up…');
       a.href = '#';
       a.setAttribute('data-ask-claude-setup', '');
-      a.addEventListener('click', (e) => { e.preventDefault(); openClaudeSetup(); });
+      a.addEventListener('click', (e) => { e.preventDefault(); openEngineSetup('claude'); });
       n.appendChild(a);
     }
     if (b.mcp) {
@@ -8089,12 +8090,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           else if (b.kind === 'card' && !Number.isFinite(b.textAt)) wrap.appendChild(buildCard(b, cur));
         }
         if (cur.status === 'error') {
-          if (cur.errorCode === 'claude-signed-out' && typeof openClaudeSetup === 'function') {
+          if (cur.errorCode === 'claude-signed-out' && typeof openEngineSetup === 'function') {
             // The CLI's raw "Not logged in" → one line whose link opens Connect Claude Code.
             const line = make('div', 'ask-error-line', "Claude Code isn't signed in. ");
             const link = make('a', '', 'Sign in…');
             link.href = '#';
-            link.addEventListener('click', (e) => { e.preventDefault(); openClaudeSetup(); });
+            link.addEventListener('click', (e) => { e.preventDefault(); openEngineSetup('claude'); });
             line.appendChild(link);
             wrap.appendChild(line);
           } else {

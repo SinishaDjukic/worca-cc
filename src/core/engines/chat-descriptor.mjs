@@ -7,10 +7,8 @@ import { ENGINES, engineLabel, chatEnginesTaking, withArticle } from '../../shar
 import { CODEX_PRICES, codexCachedRate, listPriceFor } from '../list-prices.mjs';
 import { cliNotInstalled } from '../cli-resolve.mjs';
 import { ENGINE_CLIS } from './cli-specs.mjs';
+import { engineSetupDocs } from '../../shared/engine-setup.mjs';
 
-const DOCS = 'https://github.com/worca-org/worca/blob/dev/docs/models.md';
-/** Where Claude Code's install and sign-in are told (docs/models.md "Claude Code"): Claude has no chat descriptor. */
-export const CLAUDE_SETUP_DOCS = `${DOCS}#claude-code`;
 /** A descriptor's `suggestionModel` that means "the chat's own model". */
 export const CHAT_MODEL = 'chat';
 const never = () => false;
@@ -26,14 +24,16 @@ const ready = async () => ({});
  *   selfTest(o)         null, or the runtime proof that the lockdown holds on this binary and this user's config
  *                       (engines/chat-selftest.mjs): resolves {refusal} or {}
  *   preflight({model})  the binary runs and is signed in: resolves {refusal} | {warning} | {}
+ *   bin()               the binary a chat runs (null: the descriptor names none)
  *   notInstalled()      why this engine's CLI is not on this machine (its configured binary, `bin()`, is not found: a
  *                       few stat()s, never a spawn), or null when it is found or the descriptor names no binary. The
  *                       chat model picker leaves such an engine out (ask/models.mjs `notReady`)
  *   listRates(model)    the list price (per-million-token rates) the engine's provider bills `model` at, or null; the
  *                       Models page price wins over it (ask/chat-price.mjs chatModelRates)
  *   resumeNotFound(err) the turn's error says the stored session is gone (the turn retries once from history)
- *   notReady            {code, docsUrl, setupLabel, flag}: the not-ready notice and its error code; `flag` is the notice's
- *                       marker the panel opens the setup docs from
+ *   notReady            {code, docsUrl, setupLabel, flag}: the not-ready notice and its error code; `docsUrl` is the
+ *                       engine's setup section (shared/engine-setup.mjs); `flag` is the notice's marker the panel opens
+ *                       the setup docs from
  *   shellTrippedMessage the error when the watchdog saw a shell call
  *   images, pdfs        what a chat takes (engine-switch.mjs `chat`): read_attachment and read_file send an image / a PDF
  *                       as an MCP content block of their result, which this engine forwards to its model
@@ -54,7 +54,7 @@ const ready = async () => ({});
  */
 export function makeChatDescriptor({
   engine, lockdown, bin = null, askSupport = ready, selfTest = null, preflight = ready, listRates = null, resumeNotFound = never,
-  docsAnchor, setupLabel, noLockdownMessage, shellTrippedMessage, titles = true, suggestionModel = CHAT_MODEL, prompt = {},
+  setupLabel, noLockdownMessage, shellTrippedMessage, titles = true, suggestionModel = CHAT_MODEL, prompt = {},
   notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false, turnImages = false, threadServerAlias = false, signIn = () => [],
 }) {
   const label = engineLabel(engine);
@@ -65,11 +65,12 @@ export function makeChatDescriptor({
     lockdown: typeof lockdown === 'function' ? lockdown : () => lockdown,
     noLockdownMessage: noLockdownMessage || `Chat on ${label} is unavailable: worca cannot lock this ${label} down for a chat. Use a Claude chat.`,
     askSupport, selfTest, preflight,
+    bin: () => { try { return typeof bin === 'function' ? bin() || null : null; } catch { return null; } },
     notInstalled: () => notInstalled(bin, ENGINE_CLIS[engine], label),
     reportsCost: ENGINES[engine]?.cost === true,
     listRates: typeof listRates === 'function' ? listRates : () => null,
     resumeNotFound,
-    notReady: Object.freeze({ code: `${engine}-not-ready`, docsUrl: `${DOCS}#${docsAnchor || engine}`, prefix: `${short} isn't ready`, setupLabel: `${short} setup`, flag: notReadyFlag || `${engine}Setup` }),
+    notReady: Object.freeze({ code: `${engine}-not-ready`, docsUrl: engineSetupDocs(engine), prefix: `${short} isn't ready`, setupLabel: `${short} setup`, flag: notReadyFlag || `${engine}Setup` }),
     shellTrippedMessage: shellTrippedMessage || `${label} tried to run a shell command although it was given none — worca stopped the turn.`,
     images: chat.images === true, pdfs: chat.pdfs === true, turnImages: turnImages === true,
     titles: titles === true,

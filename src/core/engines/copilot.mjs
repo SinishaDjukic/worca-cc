@@ -810,7 +810,6 @@ export const copilotChat = makeChatDescriptor({
   askSupport: (o, impl = copilotAskSupport) => impl(o),
   preflight: (_ctx, impl = copilotPreflight) => impl(),
   resumeNotFound: copilotResumeNotFound,
-  docsAnchor: 'github-copilot-cli',
   shellTrippedMessage: 'GitHub Copilot tried to run a shell command although it was given none — worca stopped the turn.',
   titles: true,
   // GPT-5 Mini is one of Copilot's included models (0× premium requests on a paid plan): a suggestion after every reply

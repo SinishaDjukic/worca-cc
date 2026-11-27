@@ -211,7 +211,7 @@ test('a refused scan (409) stays in the wizard with the error as TEXT and Scan r
       assert.ok(hint.classList.contains('err'), 'red');
       assert.doesNotMatch(hint.textContent, /Scan error/);
       assert.equal(doc.querySelector('#wiz-start-scan').disabled, false, 'Scan re-enabled');
-      const setup = doc.getElementById('claude-setup-modal');
+      const setup = doc.getElementById('engine-setup-modal');
       assert.equal(setup.classList.contains('hidden'), true);
       click(window, hint.querySelector('a'));
       assert.equal(setup.classList.contains('hidden'), false, 'Sign in… opens the dialog');
@@ -487,7 +487,7 @@ test('Escape over a pop-up on the wizard closes only that pop-up and the wizard 
       click(window, doc.querySelector('#wiz-start-scan'));
       await tick(); await tick();
       click(window, doc.querySelector('#wiz-step1-hint a'));
-      const setup = doc.getElementById('claude-setup-modal');
+      const setup = doc.getElementById('engine-setup-modal');
       assert.equal(setup.classList.contains('hidden'), false, 'Sign in… opens it');
       pressEscape(window);
       assert.equal(setup.classList.contains('hidden'), true, 'the pop-up took the Escape');
@@ -898,10 +898,10 @@ test('Escape in the Connect Claude Code dialog closes the dialog, not the wizard
   click(window, doc.querySelector('#wiz-start-scan'));
   await settle();
   click(window, doc.querySelector('#wiz-step1-hint a'));          // Sign in… opens it the way a person does
-  assert.ok(!doc.querySelector('#claude-setup-modal').classList.contains('hidden'), 'the dialog is open');
+  assert.ok(!doc.querySelector('#engine-setup-modal').classList.contains('hidden'), 'the dialog is open');
   doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   await settle();
-  assert.ok(doc.querySelector('#claude-setup-modal').classList.contains('hidden'), 'the dialog closed');
+  assert.ok(doc.querySelector('#engine-setup-modal').classList.contains('hidden'), 'the dialog closed');
   assert.ok(viewShown(doc, 'workspace-create'), 'the wizard stayed');
   assert.equal(doc.querySelector('#wiz-name').value, 'Keep me');
 });

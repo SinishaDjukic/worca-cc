@@ -103,6 +103,7 @@
   "GET /api/diff-comments/counts": {"class": "probe", "reason": "local DB read"},
   "GET /api/engine-locks": {"class": "probe", "reason": "in-memory read"},
   "GET /api/engines": {"class": "probe", "reason": "WORCA_MOCK skips the engine preflights"},
+  "GET /api/engines/:name/setup": {"class": "probe", "reason": "a few stat()s of one engine's binary; WORCA_MOCK skips its readiness preflight"},
   "GET /api/exec-env/builds/:id": {"class": "probe", "reason": "buildJobLog miss answers 404"},
   "GET /api/exec-envs": {"class": "probe", "reason": "read-only: the registered backends' names and labels"},
   "GET /api/exec-envs/status": {"class": "probe", "reason": "serverMockMode answers mock statuses; no backend is called"},

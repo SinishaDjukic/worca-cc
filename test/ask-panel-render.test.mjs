@@ -411,7 +411,7 @@ test('ask-panel-render: in-app links — a notice href and the signed-out Claude
         asstRow('askm_00000001', 1, { status: 'error', text: '', blocks: [], errorMessage: 'claude exited with code 1: Not logged in · Please run /login', errorCode: 'claude-signed-out' }),
       ]);
       let opened = 0;
-      const ctx = makePanel({ fetchHandler: handlerFor(snap), deps: { openClaudeSetup: () => { opened += 1; } } });
+      const ctx = makePanel({ fetchHandler: handlerFor(snap), deps: { openEngineSetup: (e) => { opened += e === 'claude' ? 1 : 100; } } });
       await openThread(ctx);
       const line = ctx.doc.querySelector('.ask-error-line');
       assert.equal(line.textContent, "Claude Code isn't signed in. Sign in…");
@@ -480,7 +480,7 @@ test('ask-panel-render: a classified notice renders the human line (raw detail e
         }),
       ]);
       let opened = 0;
-      const ctx = makePanel({ fetchHandler: handlerFor(snap), deps: { openClaudeSetup: () => { opened += 1; } } });
+      const ctx = makePanel({ fetchHandler: handlerFor(snap), deps: { openEngineSetup: (e) => { opened += e === 'claude' ? 1 : 100; } } });
       await openThread(ctx);
       const notice = ctx.doc.querySelector('.ask-notice');
       assert.equal(notice.querySelector(':scope > span').textContent, why);

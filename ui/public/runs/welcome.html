@@ -58,26 +58,23 @@
     <!-- Connect Claude Code: the one checklist step with no control to ring. The
          tick is derived (the CLI resolves on PATH and is not signed out); "Check
          again" refetches it with a fresh sign-in check. -->
-    <div id="claude-setup-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="claude-setup-title">
-      <div class="card ob-claude dlg">
+    <!-- Connect <engine>: one setup dialog for every chat engine; ui/public/engine-setup.mjs fills the title and the guide. -->
+    <div id="engine-setup-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="engine-setup-title">
+      <div class="card ob-setup dlg">
         <div class="dlg-head">
           <div class="card-head">
-            <h2 id="claude-setup-title">Connect Claude Code</h2>
-            <button type="button" id="claude-setup-close" class="btn">Close</button>
+            <h2 id="engine-setup-title">Connect Claude Code</h2>
+            <button type="button" id="engine-setup-close" class="btn">Close</button>
           </div>
         </div>
         <div class="dlg-body">
-          <p class="ob-claude-lead">Worca drives the <strong>Claude Code</strong> CLI. Real runs need it on your <code>PATH</code>; mock runs need nothing.</p>
-          <pre class="ob-claude-cmd"><code>npm install -g @anthropic-ai/claude-code</code></pre>
-          <p class="ob-claude-note">On native Windows the <a href="https://docs.anthropic.com/en/docs/claude-code/setup" target="_blank" rel="noopener noreferrer">native installer</a> works too. A binary elsewhere: set <code>WORCA_CLAUDE_BIN</code> to its full path and restart the UI.</p>
-          <p class="ob-claude-lead ob-claude-step"><strong>Then sign it in.</strong> Start it once in a terminal and type <code>/login</code>:</p>
-          <pre class="ob-claude-cmd"><code>claude</code></pre>
-          <p class="ob-claude-note">Signing in to the Claude desktop app does not carry over. The CLI keeps its own sign-in.</p>
-          <div class="ob-claude-status" id="claude-setup-status" aria-live="polite"></div>
+          <div id="engine-setup-guide"></div>
+          <div class="ob-setup-status" id="engine-setup-status" aria-live="polite"></div>
         </div>
         <div class="dlg-foot">
           <div class="stop-actions">
-            <button type="button" id="claude-setup-check" class="btn btn-primary">Check again</button>
+            <a id="engine-setup-docs" class="ob-setup-docs-link" href="#" target="_blank" rel="noopener noreferrer">Docs <span aria-hidden="true">↗</span></a>
+            <button type="button" id="engine-setup-check" class="btn btn-primary">Check again</button>
           </div>
         </div>
       </div>

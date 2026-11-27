@@ -121,3 +121,23 @@ test('GET /api/engines: each engine\'s readiness from its own preflight; ?rechec
     await rm(binDir, { recursive: true, force: true });
   }
 });
+
+test('GET /api/engines/:name/setup: a chat engine only; a CLI not found is said with no spawn; mock has every engine', async () => {
+  assert.equal((await get('/api/engines/cursor/setup')).status, 404, 'Cursor has no chat');
+  assert.equal((await get('/api/engines/nope/setup')).status, 404);
+  const mock = await get('/api/engines/codex/setup?recheck=1');   // past the readiness an earlier test left in the cache
+  assert.equal(mock.status, 200);
+  assert.deepEqual([mock.body.installed, mock.body.ready], [true, true], 'mock: every engine there and ready');
+  const saved = { WORCA_MOCK: process.env.WORCA_MOCK, WORCA_GOOSE_BIN: process.env.WORCA_GOOSE_BIN };
+  process.env.WORCA_MOCK = '';
+  process.env.WORCA_GOOSE_BIN = join(sandboxHome, 'no-such-goose');
+  try {
+    const r = await get('/api/engines/goose/setup?recheck=1');
+    assert.equal(r.status, 200);
+    assert.equal(r.body.installed, false);
+    assert.equal(r.body.bin, process.env.WORCA_GOOSE_BIN);
+    assert.match(r.body.missing, /^Goose is not installed: .*no-such-goose was not found\. Install it, or set WORCA_GOOSE_BIN to its path\.$/);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});

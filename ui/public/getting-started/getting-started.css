@@ -103,16 +103,20 @@
   .ob-headline{font-size:18px;}
 }
 .ob-skip{display:flex;margin:16px auto 0;}
-.ob-claude{width:min(92vw,560px);padding:24px;}
-.ob-claude-lead,.ob-claude-note{margin:0;font-size:13px;line-height:1.5;color:var(--ink-2);}
-.ob-claude-lead strong{color:var(--ink);}
-.ob-claude code{font-family:var(--mono);font-size:12px;background:var(--field);padding:1px 5px;border-radius:var(--r-sm);}
-.ob-claude-cmd{margin:12px 0;padding:12px 14px;background:var(--field);border-radius:var(--r-sm);overflow:auto;}
-.ob-claude-cmd code{background:none;padding:0;font-size:12px;}
-.ob-claude-note a{color:var(--blue-ink-strong);}
-.ob-claude-step{margin-top:16px;}
-.ob-claude-status{min-height:18px;margin-top:12px;font-size:13px;line-height:1.45;}
-.ob-claude-status.ok{color:var(--green-ink);}
-.ob-claude-status.err{color:var(--red-ink);}
-.ob-claude-status :is(.ob-claude-where,.ob-claude-checked){display:block;margin-top:4px;color:var(--ink-2);}
+.viewer-modal .card.ob-setup{width:min(92vw,560px);padding:24px;}   /* beats .viewer-modal .card's 860px (0,2,0), as .keys-dlg */
+.ob-setup-lead,.ob-setup-note{margin:0;font-size:13px;line-height:1.5;color:var(--ink-2);}
+.ob-setup-lead strong{color:var(--ink);}
+.ob-setup code{font-family:var(--mono);font-size:12px;background:var(--field);padding:1px 5px;border-radius:var(--r-sm);}
+.ob-setup-cmd{margin:12px 0;padding:12px 14px;background:var(--field);border-radius:var(--r-sm);overflow:auto;}
+.ob-setup-cmd code{background:none;padding:0;font-size:12px;}
+.ob-setup-note a{color:var(--blue-ink-strong);}
+.ob-setup-step{margin-top:16px;}
+.ob-setup-note + .ob-setup-note{margin-top:8px;}
+/* Docs ↗: the engine's setup section, small and quiet at the foot's start, opposite Check again. */
+.ob-setup-docs-link{margin-right:auto;font-size:var(--fs-meta);color:var(--ink-2);text-decoration:none;}
+.ob-setup-docs-link:hover{color:var(--ink);text-decoration:underline;}
+.ob-setup-status{min-height:18px;margin-top:12px;font-size:13px;line-height:1.45;}
+.ob-setup-status.ok{color:var(--green-ink);}
+.ob-setup-status.err{color:var(--red-ink);}
+.ob-setup-status :is(.ob-setup-where,.ob-setup-checked){display:block;margin-top:4px;color:var(--ink-2);}
 

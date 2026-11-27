@@ -9,9 +9,12 @@ A chat runs on the model you pick. The composer's model button lists each engine
 none yet (Gemini CLI, Goose, OpenCode, Qwen Code) sits under **More harnesses** when it is installed on this machine:
 pick one to open `Add model` on it in [Models > Catalogue](models.md#the-catalogue-tab). Once it has a model it gets its
 own row and a chat can move to it. An engine that is not installed is listed at the foot of **More harnesses**, dimmed
-and marked *not installed*; its row opens that engine's setup section in [Models](models.md#chat), so a machine with
-one engine still has a way to add another. Claude Code's row there opens Connect Claude Code instead. When no engine
-is installed, the model button says **Set up a harness**, and its menu is that list.
+and marked *not installed*, so a machine with one engine still has a way to add another. Its row opens that engine's
+setup dialog (**Connect OpenAI Codex**, **Connect Goose**, … and **Connect Claude Code**, the same dialog for every
+engine): the install command, the `WORCA_<ENGINE>_BIN` variable for a binary elsewhere, the sign-in step, a link to the
+engine's section in [Models](models.md#chat), and **Check again**, which asks the server whether the engine is now
+installed and ready. When no engine is installed, the model button says **Set up a harness**, and its menu is that list.
+The browser extension has no dialog: its rows open the engine's setup section in a new tab.
 
 ## A chat that is the home page
 
