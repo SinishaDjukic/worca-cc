@@ -906,7 +906,10 @@ view; switching the page's tabs keeps it as you left it.
 `Show order` opens a still drawing of the order, and `Hide order` closes it. Each run is a dot with the row's own marks,
 placed right of every run it builds on. While a run is held back, only the links that hold it are drawn: a line joins a
 run that is not done to the runs it holds back. Once none holds a run back, every link is drawn faint. Links another link
-already implies are never drawn, and no line passes through another run's dot. A paused or stopped run shows the row's
+already implies are never drawn. A link to the next column is one curve. A link that skips columns curves into the lane
+midway under its upper row, runs along it and curves out to its run; no link passes within 7px of a dot it does not
+join. Pointing at a run's row (hover or focus) or keeping it (click, Enter or Space) lights that run's dot and the links
+drawn to and from it, and the other links dim; Esc lets go. A paused or stopped run shows the row's
 dot, not the hollow ring of a run not started. A run the Verifier adds (a fix run or a change run) builds on the last run
 before it and stands right of it; a change run from the chat card or a run's stop builds on nothing yet, and still stands
 right of the last run before it, never in the first column. Nothing moves

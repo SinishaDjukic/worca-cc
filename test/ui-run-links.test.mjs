@@ -448,6 +448,81 @@ test('bindRunLinks: detach removes the host listeners and the page Escape listen
   assert.doesNotThrow(() => { none.repaint('f1', () => {}); none.detach(); });
 });
 
+// ---- R-ux-6: the run the marks are shown for (onShow, shown), which the run order map follows ---------------------
+test('onShow gets the pointed run, then the kept run after the pointer leaves, then null after Esc', async () => {
+  const { bindRunLinks } = await links();
+  const p = page();
+  const seen = [];   // each call with the row marks already painted when it came
+  const binder = bindRunLinks(p.host, { onShow: (run) => seen.push({ run, marks: marks(p.host) }) });
+  const last = () => seen.at(-1);
+  binder.repaint('f1', () => {});
+  assert.equal(last()?.run, null, 'a repaint with nothing pointed or kept');
+  over(p.row(12));
+  assert.deepEqual(last(), { run: 12, marks: TWELVE }, 'called after the marks are painted');
+  out(p.row(12), p.body);
+  assert.deepEqual(last(), { run: null, marks: NONE });
+  keep(p, 3);
+  over(p.row(12));
+  assert.equal(last().run, 12, 'pointing wins over the kept run');
+  out(p.row(12), p.body);
+  assert.equal(last().run, 3, 'the kept run after the pointer leaves');
+  const calls = seen.length;
+  binder.repaint('f1', () => {});
+  assert.ok(seen.length > calls, 'a rebuild calls it again');
+  assert.equal(last().run, 3);
+  esc(p.body);
+  assert.equal(last().run, null, 'null after Esc');
+  keep(p, 3);
+  binder.repaint('f2', () => {});
+  assert.equal(last().run, null, 'another scope drops the kept run');
+});
+
+test('shown() equals the last onShow value', async () => {
+  const { bindRunLinks } = await links();
+  const p = page();
+  let told = null;
+  const binder = bindRunLinks(p.host, { onShow: (run) => { told = run; } });
+  assert.equal(typeof binder.shown, 'function', 'the binder says which run it shows');
+  const check = (want, why) => assert.deepEqual([binder.shown(), told], [want, want], why);
+  check(null, 'at first');
+  over(p.row(12));
+  check(12, 'pointed');
+  click(p.row(12));
+  out(p.row(12), p.body);
+  check(12, 'kept');
+  focusIn(p.row(3));
+  check(3, 'focus points');
+  focusOut(p.row(3), p.body);
+  check(12, 'back to the kept run');
+  esc(p.body);
+  check(null, 'let go');
+  // Without onShow it still answers, and the null host's stub shows nothing.
+  const q = page();
+  const plain = bindRunLinks(q.host);
+  over(q.row(12));
+  assert.equal(plain.shown(), 12);
+  assert.equal(bindRunLinks(null).shown(), null);
+});
+
+test('an onShow that throws leaves the row marks painted', async () => {
+  const { bindRunLinks } = await links();
+  const p = page();
+  let calls = 0;
+  const errors = [];
+  p.doc.defaultView.addEventListener('error', (e) => { errors.push(e.message); e.preventDefault(); });
+  const binder = bindRunLinks(p.host, { onShow: () => { calls += 1; throw new Error('the map broke'); } });
+  assert.equal(binder.repaint('f1', () => 'built'), 'built', 'repaint still answers with what was built');
+  over(p.row(12));
+  assert.ok(calls >= 2, `onShow was called (${calls})`);
+  assert.deepEqual(marks(p.host), TWELVE);
+  click(p.row(12));
+  out(p.row(12), p.body);
+  assertKept(p.host, 12, 'kept');
+  assert.equal(esc(p.body).defaultPrevented, true, 'Esc still lets go');
+  assertClear(p.host, 'after Esc');
+  assert.deepEqual(errors, [], 'the throw is caught');
+});
+
 // ---- one module owns the marks --------------------------------------------------------------------------------------
 test('the Chat card and the feature page bind the shared module and hold no data-link logic of their own', () => {
   for (const file of ['../ui/public/chat/run-card.mjs', '../ui/public/group-page.mjs']) {

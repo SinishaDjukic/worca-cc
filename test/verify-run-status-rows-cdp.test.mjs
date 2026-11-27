@@ -189,7 +189,10 @@ test('s9: it adds the map surface (SURFACE=map), the worlds base, busy, held, ch
   assert.match(s, /is-violet/, 'merged rows keep a model-only dot');
   assert.match(s, /\.chat-rc-members[^\n]*\.status-dot|\.status-dot[^\n]*\.chat-rc-members|chat-rc-members[\s\S]{0,400}\.status-dot/, 'the card rows\' dot classes');
   assert.match(s, /data-from=\\?["']2\\?["']|\.from\s*===?\s*['"]?2\b/, 'after2 draws nothing from run 2');
-  assert.match(s, /check\(overlaps\[[^\n]*\.length === 0/, 'links that share no run and run together fail the proof');
+  // R-ux-6 (D5): "links that share no run never run together" is retired, because the agreed mock's lane puts every skip
+  // link under one row on one line; the proof measures the rendered links against the dots instead.
+  assert.doesNotMatch(s, /check\(overlaps\[/, 'the retired overlap check is gone');
+  assert.match(s, /check\(cross\.length === 0/, 'a link within 7px of a dot it does not join fails the proof');
 });
 
 // ── Slice 12 (R-arch-1): the line surface proves run 1, which runs in the Chat card's own pipeline ────────────────────
@@ -234,4 +237,12 @@ test('the order surface shoots later and still and puts each beside the mock', (
   assert.ok(s.includes('order-vs-mock-'), 'the side-by-side shots');
   assert.match(s, /is-faint/, 'the faint links are checked');
   assert.match(s, /--line-2/, 'their stroke is compared with the token');
+});
+
+// ── R-ux-6: the order surface hovers and keeps run 3, measures the drawn links and shoots the resting frame ───────────
+test('the order surface hovers and keeps run 3, measures the rendered links, checks the animations and puts the resting frame beside the mock', () => {
+  const s = src();
+  for (const w of ['is-lit', 'is-dim', 'getPointAtLength', 'getAnimations', 'order-hover-', 'order-kept-', 'order-vs-mock-rest-']) {
+    assert.ok(s.includes(w), w);
+  }
 });

@@ -36,7 +36,7 @@ const TOKEN = /^(?:var\(--r-(?:xs|sm|md|lg|pill|card|ctrl)\)|0|inherit)$/;
 // Dots: nav-rollup, tl-mark.is-open, tl-pr-start, hd-base-pill::before, rg-td, ask-rp-kicker::before, npip/nwarn,
 // mdl-st::before (the Models page's state word).
 // Knobs: .wz .tog::after. Spinners: the busy::after rings. Radios: .qopt::before (the pick-one option mark).
-const ROUND = /dot|\bava\b|-ava\b|avatar|person-ini|knob|switch::after|tog::after|spin|busy::after|\bled\b|radio|status-word::before|nav-rollup|tl-mark\.is-open|tl-pr-start|hd-base-pill::before|rg-td|kicker::before|npip|nwarn|mdl-st::before|qopt::before/;
+const ROUND = /dot|\bava\b|-ava\b|avatar|person-ini|knob|switch::after|tog::after|spin|busy::after|\bled\b|radio|status-word::before|nav-rollup|tl-mark\.is-open|tl-pr-start|hd-base-pill::before|rg-td|kicker::before|npip|nwarn|mdl-st::before|qopt::before|rom-run\.is-lit::before/;
 
 test('radius tokens (decided 2026-10-19): xs 4, sm 6, md 8, lg 12, pill; card = md, ctrl = sm', () => {
   const root = ALL.find((r) => r.sel === ':root').body;   // the first :root (line 14) is the token block
@@ -1199,8 +1199,21 @@ test('the .rom* rules carry no animation, transition or shadow, and use only tok
     ['.rom-link', /fill:\s*none/, /stroke:\s*var\(--ink-3\)/, /stroke-width:\s*1\.5px/],
     ['.rom-link.is-faint', /stroke:\s*var\(--line-2\)/],
     ['.rom-run', /position:\s*absolute/],
-    ['.rom-n', /var\(--fs-caption\)/, /line-height:\s*1(?![.\d])|var\(--fs-caption\)\/1(?![.\d])/, /(?:^|;)\s*color:\s*var\(--ink-2\)/],
+    ['.rom-n', /var\(--fs-caption\)/, /line-height:\s*1(?![.\d])|var\(--fs-caption\)\/1(?![.\d])/, /(?:^|;)\s*color:\s*var\(--ink-2\)/,
+      /(?:^|;)\s*background(?:-color)?:\s*var\(--bg\)/],
+    // R-ux-6: the marks of a pointed or kept run.
+    ['.rom-link.is-lit', /(?:^|;)\s*stroke:\s*var\(--ink\)/, /stroke-width:\s*2px/],
+    ['.rom-link.is-dim', /(?:^|;)\s*opacity:\s*0?\.18(?!\d)/],
+    ['.rom-run.is-lit::before', /(?:^|;)\s*border:\s*2px solid var\(--ink\)/],
   ]) for (const re of want) assert.match(body(sel), re, `${sel} ${re}`);
+  // The ring sits on the still run box, never on the dot, whose pulse scales and fades it.
+  assert.deepEqual(own.filter((r) => /is-lit/.test(r.sel) && /status-dot/.test(r.sel)).map((r) => where(r, r.sel)), []);
+  // Same specificity: the lit rule comes after the faint one, so a lit faint link reads --ink.
+  const at = (sel) => own.findIndex((r) => splitTop(r.sel).includes(sel) && !r.media);
+  assert.ok(at('.rom-link.is-lit') > at('.rom-link.is-faint'), '.rom-link.is-lit follows .rom-link.is-faint');
+  // The number stands above its dot, centred, its bottom 11px over the centre (no longer above right).
+  assert.match(body('.rom-n'), /(?:^|;)\s*(?:bottom:\s*(?:11px|calc\(100% \+ 11px\))|top:\s*-22px)/, '.rom-n above its dot');
+  assert.doesNotMatch(body('.rom-n'), /(?:^|;)\s*left:\s*7px/, '.rom-n is not right of its dot');
 });
 
 // ---- Shaper small runs s14 (R-qa-4): the open stop list has its guide entry; tokens only, still ----

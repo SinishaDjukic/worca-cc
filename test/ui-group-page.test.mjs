@@ -21,6 +21,7 @@ import { runStatus } from '../src/shared/shape/run-status.mjs';
 import { icon } from '../ui/public/icons.mjs';
 import { groupRow } from '../ui/public/runs-list.mjs';
 import { stopLinesOf } from '../ui/public/shape/stop-list.mjs';
+import { sixteenSlices, ORDER_STATES } from './helpers/shape-order-slices.mjs';
 
 useTempHome(after, 'worca-group-page-s4-');
 const trackDom = useDomRelease(afterEach);
@@ -777,6 +778,91 @@ test('s10 the toggle bar is right-aligned and holds only the toggle; the body ca
     assert.equal(p.root.textContent.split(ORDER_HINT).length - 1, 1, 'said once on the page');
     t.click();
   }
+});
+
+// ---- R-ux-6: pointing at or keeping a run row marks that run and its drawn links in the open map -------------------
+/** The `base` 16 runs (1 and 11 done) with runs 2 done too: a frame that redraws the map and rebuilds the rows. */
+const orderAfter2 = () => {
+  const { done, states } = ORDER_STATES.base;
+  const { 2: _two, ...rest } = states;
+  return sixteenSlices({ done: [...done, 2], states: rest });
+};
+/** Show order's page with link rows, as app.js paints a marked feature: the rows carry the status read from `order`. */
+function linkedOrderPage() {
+  const p = orderPage();
+  const runs = (slices) => { const r = s4Row(slices); p.paint({ order: slices, status: s4Status(r) }, r); };
+  runs(sixteenSlices('base'));
+  assert.equal(p.root.querySelectorAll('.gpage-runs .run-member[data-run]').length, 16, 'the fixture: 16 link rows');
+  const win = p.doc.defaultView;
+  const fire = (el, Type, name, init = {}) => el.dispatchEvent(new win[Type](name, { bubbles: true, cancelable: true, ...init }));
+  const target = (n) => p.q(`.gpage-runs .run-member[data-run="${n}"] .run-member-num`);
+  const keys = (sel) => [...p.root.querySelectorAll(sel)].map((e) => `${e.dataset.from}→${e.dataset.to}`).sort();
+  return {
+    ...p, runs,
+    over: (n) => fire(target(n), 'PointerEvent', 'pointerover'),
+    out: (n) => fire(target(n), 'PointerEvent', 'pointerout', { relatedTarget: p.doc.body }),
+    click: (n) => fire(target(n), 'MouseEvent', 'click', { button: 0 }),
+    esc: () => fire(p.doc.body, 'KeyboardEvent', 'keydown', { key: 'Escape' }),
+    /** The map's lit runs and links, and how many links are dimmed. */
+    marks: () => ({ runs: [...p.root.querySelectorAll('.rom-run.is-lit')].map((r) => Number(r.dataset.run)),
+      lit: keys('.rom path.rom-link.is-lit'), dim: p.root.querySelectorAll('.rom path.rom-link.is-dim').length }),
+    marked: () => p.root.querySelectorAll('.rom .is-lit, .rom .is-dim').length,
+  };
+}
+/** Run 3's two drawn links in `base`; the other 13 of 15 dim. */
+const ORDER_THREE = { runs: [3], lit: ['3→10', '3→4'], dim: 13 };
+
+test('Show order open: pointing at run 3\'s row lights the map\'s run 3 and its 2 drawn links', () => {
+  const p = linkedOrderPage();
+  p.toggle().click();
+  assertOpen(p, 'opened');
+  assert.equal(p.marked(), 0, 'nothing is marked before pointing');
+  p.over(3);
+  assert.deepEqual(p.marks(), ORDER_THREE);
+  p.out(3);
+  assert.equal(p.marked(), 0, 'leaving the rows clears the map');
+});
+
+test('kept run 3 stays lit after a frame that rebuilds the map', () => {
+  const p = linkedOrderPage();
+  p.toggle().click();
+  p.over(3);
+  p.click(3);
+  p.out(3);
+  assert.deepEqual(p.marks(), ORDER_THREE, 'kept after the pointer left');
+  const before = p.q('.rom');
+  p.runs(orderAfter2());
+  assert.notEqual(p.q('.rom'), before, 'run 2 done: the map is drawn again');
+  const drawn = p.root.querySelectorAll('.rom path.rom-link').length;
+  assert.deepEqual(p.marks(), { ...ORDER_THREE, dim: drawn - 2 });
+  p.esc();
+  assert.equal(p.marked(), 0, 'Esc after keep clears every mark');
+});
+
+test('kept run 3 is lit when Show order opens after the keep', () => {
+  const p = linkedOrderPage();
+  p.click(3);
+  p.out(3);
+  assertClosed(p, 'kept while closed');
+  p.toggle().click();
+  assert.deepEqual(p.marks(), ORDER_THREE, 'opened');
+  p.toggle().click();
+  p.toggle().click();
+  assert.deepEqual(p.marks(), ORDER_THREE, 'hidden and shown again');
+});
+
+test('with Show order closed, pointing changes nothing outside the rows', () => {
+  const p = linkedOrderPage();
+  assertClosed(p, 'closed');
+  const unmarked = () => {
+    const c = p.root.cloneNode(true);
+    for (const n of c.querySelectorAll('.gpage-runs [data-link]')) n.removeAttribute('data-link');
+    return c.outerHTML;
+  };
+  const before = p.root.outerHTML;
+  p.over(3);
+  assert.ok(p.root.querySelector('.gpage-runs [data-link]'), 'the rows are marked');
+  assert.equal(unmarked(), before);
 });
 
 // ── Shaper small runs slice 11 (R-ux-2): the footer's Resume is named by the host ────────────────────────────────

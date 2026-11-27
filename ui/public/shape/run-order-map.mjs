@@ -2,65 +2,63 @@
 // `runOrderLayout` is pure: it places each run of featureView's `slices` in a column right of every run it builds on
 // (rows in run-number order); a change run that builds on nothing (added from the chat card or a run's stop) stands in the
 // column after the last run before it. It keeps only the links that still hold a run back (implied links left out
-// through `namedWaits`); once none holds a run back, every link is drawn faint. Each link is routed through the gaps
-// between columns and the lanes between rows, so no link meets a dot or a number. `renderRunOrderMap` paints it: the
-// shared status dot per run over its row's base (a paused or stopped run shows the row's dot), an SVG of straight links,
-// no motion but the live dot's existing pulse. The rows beside it stay the accessible source, so the map is aria-hidden.
+// through `namedWaits`); once none holds a run back, every link is drawn faint. Links follow the agreed mock's routing
+// (R-ux-6): one curve to the next column; a link that skips columns runs in the lane midway under its upper row, never
+// within 7px of a dot it does not join. `renderRunOrderMap` paints it: the shared status dot per run over its row's base
+// (a paused or stopped run shows the row's dot), its number above it, an SVG of the links, no motion but the live dot's
+// existing pulse. `markRunOrderMap` lights a pointed or kept run and its drawn links (the rows' bindRunLinks drives it).
+// The rows beside it stay the accessible source, so the map is aria-hidden and listens to nothing.
 import { namedWaits, runStatus } from '../../../src/shared/shape/run-status.mjs';
 import { RUN_STATES } from '../../../src/shared/run-model.mjs';
 import { markDot, renderStatusDot } from '../status-dot.mjs';
 
 export const RUN_ORDER_GEOMETRY = Object.freeze({
-  COL_W: 64, ROW_H: 36, PAD: 24, DOT: 12, LABEL_PX: 11, DIGIT_W: 7, GAP_X: 22, LANE_Y: 7, TRACK: 4, GAP_TRACKS: 9, LANE_TRACKS: 5,
+  COL_W: 64, ROW_H: 38, PAD: 24, DOT: 12, LABEL_PX: 11, DIGIT_W: 7, LANE_IN: 0.6, PULL: 0.35,
 });
 
-const { COL_W, ROW_H, PAD, DOT, DIGIT_W, GAP_X, LANE_Y, TRACK, GAP_TRACKS, LANE_TRACKS } = RUN_ORDER_GEOMETRY;
+const { COL_W, ROW_H, PAD, DOT, LABEL_PX, DIGIT_W, LANE_IN, PULL } = RUN_ORDER_GEOMETRY;
 const HALF = DOT / 2;
+/** The kept ring's outer radius: the run number's bottom stands this far above the dot's centre. */
+const RING_R = 11;
 const NOT_STARTED = new Set(['planned', 'held']);
 /** A slice state → the run model state its feature page row's dot starts from; any other state is `waiting`. */
 const ROW_STATE = Object.freeze({ paused: 'paused', stopped: 'stopped', canceled: 'stopped', error: 'failed', failed: 'failed' });
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const EMPTY = () => ({ width: 0, height: 0, runs: [], links: [], implied: [] });
-const BAND = (LANE_TRACKS - 1) * TRACK;
 
 const isObj = (x) => !!x && typeof x === 'object';
 const byPair = (a, b) => a.from - b.from || a.to - b.to;
+/** Every x of a link to 0.1px, so float noise in LANE_IN·COL_W and PULL·COL_W never reaches `d`. */
+const tenth = (v) => Math.round(v * 10) / 10;
+const pt = (x, y) => [tenth(x), y];
+/** `M p0` then each segment as `C c1 c2 p1` or `L p1`, single-spaced. */
+const pathOf = (segments) => [`M ${segments[0].p[0].join(' ')}`, ...segments.map(({ c, p }) => `${c} ${p.slice(1).flat().join(' ')}`)].join(' ');
 
 /**
- * Tracks by stretch. Each key (one run's exits, one run's entries, one run's stretch of a lane) has a stretch [lo, hi];
- * keys whose stretches come within a track pitch of each other take different tracks. Sorted by start, the first free
- * track is an optimal colouring, so a channel needs only as many tracks as stretches overlap at one point.
- * @returns {{track: Map<string|number, number>, count: number}}
+ * The agreed mock's link loop (plans/shaper-refresh/run-order-mock.html `paintMap`), in centre coordinates. From the
+ * source dot's right edge to the target's left edge: to the next column, one cubic with both control points at the mid
+ * x; skipping columns, a cubic down (or up) into the lane midway under the upper row, a straight run along it, and a
+ * cubic out to the target.
  */
-function colour(stretches) {
-  const ends = [];
-  const track = new Map();
-  const list = [...stretches].sort((p, q) => p[1][0] - q[1][0] || String(p[0]).localeCompare(String(q[0])));
-  for (const [key, [lo, hi]] of list) {
-    let k = ends.findIndex((end) => lo - end >= TRACK);
-    if (k < 0) k = ends.push(hi) - 1;
-    else ends[k] = hi;
-    track.set(key, k);
+function route(a, b) {
+  const [x1, y1, x2, y2] = [a.x + HALF, a.y, b.x - HALF, b.y];
+  if (b.col - a.col <= 1) {
+    const mid = (x1 + x2) / 2;
+    return [{ c: 'C', p: [pt(x1, y1), pt(mid, y1), pt(mid, y2), pt(x2, y2)] }];
   }
-  return { track, count: ends.length };
-}
-/** Each key's stretch: the span of every [lo, hi] it was given, grouped by channel. */
-function spans() {
-  const m = new Map();
-  return {
-    add(channel, key, lo, hi) {
-      if (!m.has(channel)) m.set(channel, new Map());
-      const c = m.get(channel);
-      const s = c.get(key);
-      c.set(key, s ? [Math.min(s[0], lo), Math.max(s[1], hi)] : [lo, hi]);
-    },
-    channels: () => [...m.entries()],
-  };
+  const lane = Math.min(y1, y2) + ROW_H / 2;
+  const [inX, outX, pull] = [x1 + LANE_IN * COL_W, x2 - LANE_IN * COL_W, PULL * COL_W];
+  return [
+    { c: 'C', p: [pt(x1, y1), pt(x1 + pull, y1), pt(inX - pull, lane), pt(inX, lane)] },
+    { c: 'L', p: [pt(inX, lane), pt(outX, lane)] },
+    { c: 'C', p: [pt(outX, lane), pt(outX + pull, lane), pt(x2 - pull, y2), pt(x2, y2)] },
+  ];
 }
 
 /**
  * Pure. slices: featureView slice rows (`index`, `state`, `kind`, `buildsOn`, `waitsFor`, …).
- * @returns {{width: number, height: number, runs: object[], links: {from: number, to: number, points: number[][], faint?: true}[],
+ * @returns {{width: number, height: number, runs: object[],
+ *   links: {from: number, to: number, segments: {c: 'C'|'L', p: number[][]}[], d: string, faint?: true}[],
  *   implied: {from: number, to: number}[]}}
  */
 export function runOrderLayout(slices) {
@@ -109,11 +107,12 @@ export function runOrderLayout(slices) {
     const slice = map.get(index);
     const { col: c, row, x, y } = place.get(index);
     const st = runStatus({ slice, slices: map, snap: null });
+    const w = DIGIT_W * String(index).length;
     return {
       index, col: c, row, x, y, mark: st.mark, word: st.word, kind: slice.kind ?? null,
       rowState: ROW_STATE[slice.state] || 'waiting',
       dot: { x0: x - HALF, y0: y - HALF, x1: x + HALF, y1: y + HALF },
-      label: { x0: x + 7, y0: y - 12, x1: x + 7 + DIGIT_W * String(index).length, y1: y - 1 },
+      label: { x0: x - w / 2, y0: y - RING_R - LABEL_PX, x1: x + w / 2, y1: y - RING_R },
     };
   });
 
@@ -138,87 +137,10 @@ export function runOrderLayout(slices) {
   const faint = !held.length;
   const drawn = faint ? met : held;
 
-  // Routes (D5): a link to the next column on the same row is one straight segment. Every other link leaves on its
-  // source's exit track (the left band of the gap after its column), runs along the lane beside its source row (inside
-  // that gap when the target is in the next column), and comes in on its target's entry track (the right band of the gap
-  // before the target's column). Exit stubs end left of the entry band, so an exit and an entry on one row never meet.
-  const colX = (c) => PAD + c * COL_W;
-  const laneTop = (lane) => PAD + lane * ROW_H + LANE_Y;
-  const routed = drawn.filter(({ from, to }) => {
-    const a = place.get(from);
-    const b = place.get(to);
-    return !(b.col - a.col === 1 && a.y === b.y);
-  });
-  // Lanes (the lane between row `lane` and row `lane + 1`): below the source row when the target row is the same or lower,
-  // else above. A source whose lane is full (more stretches at one point than LANE_TRACKS, measured on the widest x its
-  // links could take) moves to the lane on the other side of its row when that one has room.
-  const prefer = (a, b) => (b.row >= a.row ? a.row : a.row - 1);
-  const wide = spans();
-  for (const { from, to } of routed) {
-    const a = place.get(from);
-    const b = place.get(to);
-    wide.add(prefer(a, b), from, colX(a.col) + GAP_X, colX(b.col - 1) + GAP_X + (GAP_TRACKS - 1) * TRACK);
-  }
-  const lanes = new Map(wide.channels());
-  const moved = new Map();
-  const fits = (stretches) => colour(stretches).count <= LANE_TRACKS;
-  for (const lane of [...lanes.keys()].sort((p, q) => p - q)) {
-    const { track } = colour(lanes.get(lane));
-    for (const [from, k] of [...track].sort((p, q) => p[0] - q[0])) {
-      if (k < LANE_TRACKS || fits(lanes.get(lane))) continue;
-      const row = place.get(from).row;
-      const alt = lane === row ? row - 1 : row;
-      if (alt < 0) continue;
-      const here = new Map(lanes.get(lane));
-      const there = new Map(lanes.get(alt) ?? []);
-      const [lo, hi] = here.get(from);
-      const had = there.get(from);
-      there.set(from, had ? [Math.min(had[0], lo), Math.max(had[1], hi)] : [lo, hi]);
-      if (!fits(there)) continue;
-      here.delete(from);
-      lanes.set(lane, here);
-      lanes.set(alt, there);
-      moved.set(`${lane}|${from}`, alt);
-    }
-  }
-  const laneOf = (a, b) => { const l = prefer(a, b); return moved.get(`${l}|${a.index}`) ?? l; };
-  const outs = spans();
-  const ins = spans();
-  for (const { from, to } of routed) {
-    const a = place.get(from);
-    const b = place.get(to);
-    const top = laneTop(laneOf(a, b));
-    outs.add(a.col, from, Math.min(a.y, top), Math.max(a.y, top + BAND));
-    ins.add(b.col - 1, to, Math.min(b.y, top), Math.max(b.y, top + BAND));
-  }
-  // A gap's GAP_TRACKS tracks: exits take them from the left, entries from the right, so every exit track lies left of
-  // every entry track (one pitch apart at least). A gap that needs more wraps (a known gap the proof logs, D6).
-  const exitX = new Map();
-  const entryX = new Map();
-  for (const c of new Set([...outs.channels(), ...ins.channels()].map(([k]) => k))) {
-    const o = colour(outs.channels().find(([k]) => k === c)?.[1] ?? []);
-    const e = colour(ins.channels().find(([k]) => k === c)?.[1] ?? []);
-    const gx = (k) => colX(c) + GAP_X + (k % GAP_TRACKS) * TRACK;
-    for (const [from, k] of o.track) exitX.set(from, gx(k));
-    for (const [to, k] of e.track) entryX.set(to, gx(GAP_TRACKS - e.count + k));
-  }
-  const along = spans();
-  for (const { from, to } of routed) along.add(laneOf(place.get(from), place.get(to)), from, exitX.get(from), entryX.get(to));
-  const laneY = new Map();
-  for (const [lane, stretches] of along.channels()) {
-    for (const [from, k] of colour(stretches).track) laneY.set(`${lane}|${from}`, laneTop(lane) + (k % LANE_TRACKS) * TRACK);
-  }
   const links = drawn.map(({ from, to }) => {
-    const a = place.get(from);
-    const b = place.get(to);
-    const start = [a.x + HALF, a.y];
-    const end = [b.x - HALF, b.y];
-    const link = (points) => (faint ? { from, to, points, faint: true } : { from, to, points });
-    if (b.col - a.col === 1 && a.y === b.y) return link([start, end]);
-    const gx1 = exitX.get(from);
-    const gx2 = entryX.get(to);
-    const ly = laneY.get(`${laneOf(a, b)}|${from}`);
-    return link([start, [gx1, a.y], [gx1, ly], [gx2, ly], [gx2, b.y], end]);
+    const segments = route(place.get(from), place.get(to));
+    const link = { from, to, segments, d: pathOf(segments) };
+    return faint ? { ...link, faint: true } : link;
   });
 
   return {
@@ -275,8 +197,7 @@ export function renderRunOrderMap(doc, slices) {
   plot.style.height = `${layout.height}px`;
   const lines = svg(doc, 'svg', { class: 'rom-links', width: layout.width, height: layout.height, focusable: 'false' });
   for (const link of layout.links) {
-    const d = link.points.map(([x, y], i) => `${i ? 'L' : 'M'}${x} ${y}`).join('');
-    const path = svg(doc, 'path', { class: link.faint ? 'rom-link is-faint' : 'rom-link', d });
+    const path = svg(doc, 'path', { class: link.faint ? 'rom-link is-faint' : 'rom-link', d: link.d });
     path.dataset.from = String(link.from);
     path.dataset.to = String(link.to);
     lines.append(path);
@@ -296,4 +217,34 @@ export function renderRunOrderMap(doc, slices) {
   }
   root.append(plot);
   return root;
+}
+
+/**
+ * The marks of a pointed or kept run (R-ux-6), fed by bindRunLinks' `onShow`; the map itself listens to nothing. Clears
+ * every mark under `root`, then, for a drawn run, lights its `.rom-run` and every drawn link that starts or ends at it
+ * and dims every other link. The lit links move to the end of the SVG (a shared lane never paints over them); the rest
+ * keep the layout order (from, to). Changes only classes and child order. Never throws.
+ * @returns {number} how many links are lit
+ */
+export function markRunOrderMap(root, run) {
+  // Class lookups, not selectors: the map stays a plain tree walk (jsdom's selector engine binds window listeners).
+  if (!root || typeof root.getElementsByClassName !== 'function') return 0;
+  const byClass = (cls) => [...root.getElementsByClassName(cls)];
+  const paths = byClass('rom-link').filter((p) => p.localName === 'path');
+  for (const n of [...byClass('rom-run'), ...paths]) n.classList.remove('is-lit', 'is-dim');
+  const src = (p) => Number(p.dataset.from);
+  const dst = (p) => Number(p.dataset.to);
+  const dot = Number.isInteger(run) ? byClass('rom-run').find((r) => r.dataset.run === String(run)) : null;
+  const lit = dot ? paths.filter((p) => src(p) === run || dst(p) === run) : [];
+  if (dot) {
+    dot.classList.add('is-lit');
+    for (const p of paths) p.classList.add(lit.includes(p) ? 'is-lit' : 'is-dim');
+  }
+  const lines = byClass('rom-links')[0];
+  if (lines) {
+    const order = (p, q) => src(p) - src(q) || dst(p) - dst(q);
+    const want = [...paths.filter((p) => !lit.includes(p)).sort(order), ...lit.sort(order)];
+    if (want.some((p, i) => lines.children[i] !== p)) lines.append(...want);
+  }
+  return lit.length;
 }

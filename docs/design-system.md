@@ -269,13 +269,16 @@ has a `[data-link…]` attribute without a row here.
 
 ### Run order map (checked)
 The still order of a branching small-runs feature: one status dot per run, each in a column right of every run it
-builds on (rows in run-number order), and only the links that still hold a run back, routed through the gaps between
-columns and the lanes between rows so no link crosses a dot or a number. The module is `ui/public/shape/run-order-map.mjs`
-(`runOrderLayout` is the pure layout, `renderRunOrderMap` the painter), tested by `test/ui-shape-run-order-map.test.mjs`.
+builds on (rows in run-number order), and only the links that still hold a run back, routed as the agreed mock
+(`plans/shaper-refresh/run-order-mock.html`): a link to the next column is one curve, and a link that skips columns curves
+into the lane midway under its upper row, runs along it and curves out, never within 7px of a dot it does not join. The module is `ui/public/shape/run-order-map.mjs`
+(`runOrderLayout` is the pure layout, `renderRunOrderMap` the painter, `markRunOrderMap` the marks), tested by `test/ui-shape-run-order-map.test.mjs`.
 Geometry is fixed px (§Charts, no `viewBox` scaling). A dot is the shared status dot through `markDot`, never a class of
 its own, and the only motion is the live dot's pulse. The map is `aria-hidden` and never a tab stop: the run rows beside
-it are its legend and its accessible source, so it has no caption or legend of its own. Two links that share no run
-never run together: in each gap, exits take tracks from the left and entries from the right, and tracks sit 4px apart.
+it are its legend and its accessible source, so it has no caption or legend of its own. Skip links under one row share
+its lane; pointing tells them apart. Pointing at a run row or keeping it (`bindRunLinks`' `onShow` in
+`ui/public/run-links.mjs`) lights that run and its drawn links, draws them last and dims every other link; the map has
+no listener of its own. The map shows pointing and keeping alike; the rows show which run is kept.
 A run waiting at a stop held for another run counts as not started, so its link stays. Once no link holds a run back,
 every link is drawn faint (`.rom-link.is-faint`), routed as when every run was planned. Each dot is painted over the row's
 dot (a paused run grey, a stopped or canceled run dark grey), and a mark from the run's status still wins. A change run
@@ -286,10 +289,13 @@ that builds on nothing stands in the column after the last run before it.
 | root | `.rom` | the map and its sideways scroll box (`aria-hidden`, `tabindex="-1"`) |
 | plot | `.rom-plot` | the drawing, sized in px by the layout |
 | links | `.rom-links` | the SVG behind the dots that holds the links |
-| link | `.rom-link` | one link that still holds a run back, 1.5px `--ink-3`, straight segments only |
+| link | `.rom-link` | one link that still holds a run back, 1.5px `--ink-3`, a curve (and a lane run when it skips columns) |
 | faint link | `.rom-link.is-faint` | every link, once none holds a run back: `--line-2`, same width |
+| lit link | `.rom-link.is-lit` | a link of the pointed or kept run: 2px `--ink`, after `.is-faint` so a faint link lights too |
+| dimmed link | `.rom-link.is-dim` | every other link while a run is pointed or kept: `opacity: .18` |
 | run | `.rom-run` | one run, its status dot centred on the layout point |
-| number | `.rom-n` | the run's number above right of its dot, 11px `--ink-2` (§Charts) |
+| lit run | `.rom-run.is-lit::before` | the pointed or kept run's still ring: 22px, `2px solid var(--ink)`, on the run box, never on the pulsing dot; no transition |
+| number | `.rom-n` | the run's number above its dot, centred, on `--bg`, its bottom 11px over the dot's centre, 11px `--ink-2` (§Charts) |
 
 The map is placed on the feature page's Runs tab only, behind a Show order / Hide order toggle (the run page's
 `.rd-route-toggle` pattern: a quiet small button with a chevron, `aria-expanded`, `aria-controls`). It is closed each time

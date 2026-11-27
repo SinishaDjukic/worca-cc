@@ -3,6 +3,7 @@
 // (data-link="by", the dashed bar). Click, Enter or Space keeps the marks; Esc lets go, wherever focus is. The one
 // home of this logic: the Chat card and the feature page bind it on their rows' host. Marks are DOM attributes set
 // after each build, never part of the built HTML, so group-page.mjs keepUnchanged's signature is not disturbed.
+// R-ux-6: `onShow(run)` hears the run the marks are shown for after every paint, so the run order map can follow.
 
 /** The marks for pointing at `run`: 'on' for the rows it builds on, 'by' for the rows that list it. 'on' wins. */
 export function linkMarksOf(rows, run) {
@@ -21,9 +22,11 @@ const ROW = 'li[data-run]';
 const ATTRS = ['data-link', 'data-link-kept', 'aria-current'];
 
 /** Binds pointing, keeping and letting go on `host` (its rows carry no listeners). `repaint(scope, build)` wraps every
- *  rebuild of the rows: the marks, the kept row and a focused row survive it, and another `scope` drops the kept run. */
-export function bindRunLinks(host) {
-  if (!host) return { repaint: (scope, build) => build(), detach() {} };
+ *  rebuild of the rows: the marks, the kept row and a focused row survive it, and another `scope` drops the kept run.
+ *  `onShow(run|null)` is called at the end of every paint with the pointed run, else the kept one; a throw from it is
+ *  caught, so the row marks never depend on it. `shown()` answers the same run. */
+export function bindRunLinks(host, { onShow } = {}) {
+  if (!host) return { repaint: (scope, build) => build(), detach() {}, shown: () => null };
   const doc = host.ownerDocument;
   let pointed = null;
   let hovered = null;   // the row under the pointer: focus leaving the list falls back to it
@@ -51,6 +54,9 @@ export function bindRunLinks(host) {
     }
     if (kept != null && !docBound) { doc.addEventListener('keydown', onDocKey); docBound = true; }
     if (kept == null && docBound) { doc.removeEventListener('keydown', onDocKey); docBound = false; }
+    if (typeof onShow === 'function') {
+      try { onShow(pointed ?? kept); } catch { /* the map is optional; the row marks above stand */ }
+    }
   }
 
   /** Esc: lets go of everything; true when there was something to clear. */
@@ -107,6 +113,7 @@ export function bindRunLinks(host) {
   for (const [t, f] of on) host.addEventListener(t, f);
 
   return {
+    shown: () => pointed ?? kept,
     repaint(next, build) {
       if (next !== scope) { scope = next; kept = null; pointed = null; hovered = null; }
       const a = doc.activeElement;

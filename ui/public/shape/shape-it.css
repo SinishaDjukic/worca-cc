@@ -187,15 +187,22 @@ button.chat-rc-stop-line{grid-template-columns:16px minmax(0,1fr) 16px;width:cal
 /* The feature page's step card hides the renderer's banner, as the Chat card's question does. */
 .chat-rc-stop-q .qpanel-head{display:none;}
 /* Run order map (run-order-map.mjs): the still map. Fixed px geometry (no viewBox scaling); each run is the shared
-   status dot centred on its inline left/top, its number above right; links in --ink-3. No motion but the dot's pulse. */
+   status dot centred on its inline left/top, its number above it, centred, on --bg (a lane running under a lower row
+   passes behind it); links in --ink-3. R-ux-6: a pointed or kept run (markRunOrderMap) lights its links in --ink and
+   dims the rest, and rings its dot. No motion but the dot's pulse. */
 .rom{overflow-x:auto;}
 .rom-plot{position:relative;}
 .rom-links{position:absolute;inset:0;overflow:visible;pointer-events:none;}
 .rom-link{fill:none;stroke:var(--ink-3);stroke-width:1.5px;}
 .rom-link.is-faint{stroke:var(--line-2);}
+.rom-link.is-lit{stroke:var(--ink);stroke-width:2px;}
+.rom-link.is-dim{opacity:.18;}
 /* A 0×0 box at the centre: the dot (8, 12 or 14px) overflows it evenly, with no transform for the pulse to undo. */
 .rom-run{position:absolute;width:0;height:0;display:flex;align-items:center;justify-content:center;}
-.rom-n{position:absolute;left:7px;top:-12px;font-size:var(--fs-caption);line-height:1;color:var(--ink-2);white-space:nowrap;}
+/* The ring of a pointed or kept run, on the still run box, never on the pulsing dot: 22px, 2px clear of a 14px dot. */
+.rom-run.is-lit::before{content:"";position:absolute;width:22px;height:22px;box-sizing:border-box;border:2px solid var(--ink);border-radius:50%;}
+/* Centred by the flex box (no left), its bottom on the ring's outer radius. */
+.rom-n{position:absolute;bottom:11px;font-size:var(--fs-caption);line-height:1;color:var(--ink-2);background:var(--bg);white-space:nowrap;}
 /* Small runs slice 10: Show order on the feature page's Runs tab. The toggle is the run page's Show route button, right
    above the rows; the body holds the one readable hint and, while open, the map (its own sideways scroll). Still. */
 div.gpage-order{margin-bottom:8px;}

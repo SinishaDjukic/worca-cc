@@ -12,7 +12,7 @@ import { groupHead } from './run-head.mjs';
 import { answerFieldOpen } from './shape/step-card.mjs';
 import { needYouText } from './shape/feature-card.mjs';
 import { bindRunLinks } from './run-links.mjs';
-import { showOrderOffered, renderRunOrderMap } from './shape/run-order-map.mjs';
+import { showOrderOffered, renderRunOrderMap, markRunOrderMap } from './shape/run-order-map.mjs';
 import { renderFeatureCost } from './shape/feature-cost.mjs';
 import { paintStopList } from './shape/stop-list.mjs';
 
@@ -90,7 +90,8 @@ export function buildGroupPage(doc) {
     panels.push(p);
   }
   const runsHost = el(doc, 'div', 'gpage-runs');
-  runsHost.__links = bindRunLinks(runsHost);   // s8 (D5): the link marks listen on the host, never on the rows
+  // s8 (D5): the link marks listen on the host, never on the rows. R-ux-6: the open run order map follows them.
+  runsHost.__links = bindRunLinks(runsHost, { onShow: (run) => markRunOrderMap(root.querySelector('.gpage-order .rom'), run) });
   panels[0].append(runsHost, el(doc, 'p', 'gpage-ship'));
   panels[1].append(el(doc, 'div', 'gpage-overview'));
   panels[2].append(el(doc, 'div', 'gpage-decisions'));
@@ -263,6 +264,9 @@ function paintShowOrder(root, node) {
   const body = node.querySelector('.gpage-order-body');
   body.hidden = !open;
   keepUnchanged(body, [el(doc, 'p', 'gpage-order-hint', ORDER_HINT), ...(open ? [renderRunOrderMap(doc, slices)] : [])]);
+  // R-ux-6 (D10): a rebuilt or newly opened map shows the rows' pointed or kept run. The marks live only in the DOM,
+  // never in body.__sig, so they force no rebuild.
+  if (open) markRunOrderMap(body.querySelector('.rom'), root.querySelector('.gpage-runs')?.__links?.shown() ?? null);
 }
 
 /** One ship flow (D11): a group's Create PR and View PR(s) live on the status line (docs/design-system.md

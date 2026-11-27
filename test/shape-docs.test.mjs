@@ -480,3 +480,35 @@ test('s13: design-system.md\'s Run order map names .rom-link.is-faint and --line
   assert.deepEqual(missing(row, ['--line-2']), []);
   assert.deepEqual(missing(flat(section), [/row['’]s dot/i]), []);
 });
+
+// ---- R-ux-6: pointing at or keeping a row marks its links, and the links follow the mock's routing ------------------
+test('Show order says pointing at or keeping a row lights the run and its links and dims the rest, and how links route', () => {
+  const part = smallPart('Show order');
+  assert.ok(part, 'the "### Show order" part');
+  const sentences = part.split(/(?<=\.)\s+/);
+  const says = (...res) => sentences.some((s) => res.every((re) => re.test(s)));
+  assert.ok(says(/\bpoint(?:ing|s|ed)?\b/i, /\bkeep(?:ing|s)?\b|\bkept\b/i, /\brow\b/i, /\blights?\b|\bmarks?\b/i, /\blinks?\b/i),
+    'pointing at or keeping a row lights the run and its links');
+  assert.ok(says(/\bdim(?:s|med|ming)?\b/i), 'the other links dim');
+  assert.ok(says(/next column/i, /\b(?:one|a single) curve\b/i), 'a link to the next column is one curve');
+  assert.ok(says(/\bskips?\b/i, /\blane\b/i, /(?:under|below) (?:its|the) upper row/i), 'a skipping link runs in the lane under its upper row');
+  assert.ok(says(/\b7\s?px\b/i, /\bdot\b/i), 'no link passes within 7px of another run\'s dot');
+  assert.doesNotMatch(part, /no line passes through another run['’]s dot/i);
+});
+
+test('design-system.md\'s Run order map describes the marks and the curved routing', () => {
+  const design = read('design-system.md');
+  const at = design.indexOf('\n### Run order map (checked)\n');
+  assert.ok(at >= 0, 'the heading "### Run order map (checked)"');
+  const section = design.slice(at + 1).split(/\n##+ /)[0];
+  for (const cls of ['.rom-link.is-lit', '.rom-link.is-dim', '.rom-run.is-lit']) {
+    const name = cls.replaceAll('.', '\\.');
+    assert.match(section, new RegExp(`^\\|[^|\\n]*\\|\\s*\`${name}(?:::before)?\`\\s*\\|`, 'm'), `a table row for ${cls}`);
+  }
+  const text = flat(section);
+  assert.deepEqual(missing(text, [/above its dot, cent(?:red|ered), on `--bg`/i,
+    /the map shows pointing and keeping alike; the rows show which run is kept/i, /\blane\b/i, /\bcurve/i]), []);
+  assert.doesNotMatch(text, /straight segments only/i);
+  assert.doesNotMatch(text, /never run together/i);
+  assert.doesNotMatch(text, /above right of its dot/i);
+});
