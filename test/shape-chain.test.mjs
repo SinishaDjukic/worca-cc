@@ -727,6 +727,40 @@ test('takeInVerdict: a same-base sibling still merging its work back is a wait f
   assert.deepEqual(await verdictOf(w, takeInSeams()), { status: 'wait', after: 3 });
 }));
 
+/** Pipeline `pid` ran on its source branch and is done: still merging back unless `over` says otherwise. */
+const onSource = (pid, over = {}, updatedAt = new Date().toISOString()) => getDb().prepare('UPDATE pipelines SET branch = ?, updated_at = ? WHERE id = ?')
+  .run(JSON.stringify({ source: BASE, feature: BASE, sameAsSource: true, worktreeDir: '/tmp/x', ...over }), updatedAt, pid);
+
+test('mergingBackSliceOf: null when no run finished', () => {
+  quiet();
+  const f = createSliceFeature({ pipelineId: pipe('stopped'), projectDir: root, title: 'C', outline: outlineOf(2), perspectives: ['product'], workflowId: 'wf_shape' });
+  assert.equal(CHAIN.mergingBackSliceOf(f.id), null);
+});
+
+test("mergingBackSliceOf: the pending run's number; exclude skips the asker's own run; null once it merged back", () => {
+  const w = takeInFeature();
+  assert.equal(CHAIN.mergingBackSliceOf(w.id), null, 'finished runs, none merging back');
+  onSource(w.p[3]);
+  assert.equal(CHAIN.mergingBackSliceOf(w.id), 3);
+  assert.equal(CHAIN.mergingBackSliceOf(w.id, { exclude: w.p[3] }), null);
+  onSource(w.p[3], { mergeBack: { merged: true } });
+  assert.equal(CHAIN.mergingBackSliceOf(w.id), null);
+  // Past MERGE_BACK_WAIT_MS a merge back that never came holds nothing.
+  onSource(w.p[3], {}, '2026-01-01T00:00:00Z');
+  assert.equal(CHAIN.mergingBackSliceOf(w.id), null);
+});
+
+test('mergingBackSliceOf: of two pending runs, the first in finish order', () => {
+  const w = takeInFeature({ at: { 3: '2026-03-04T00:00:00Z', 4: '2026-03-03T00:00:00Z' } });
+  onSource(w.p[3]);
+  onSource(w.p[4]);
+  assert.equal(CHAIN.mergingBackSliceOf(w.id), 4);
+});
+
+test('mergingBackSliceOf: null on any error, never throws', () => {
+  assert.equal(CHAIN.mergingBackSliceOf({ toString() { throw new Error('boom'); } }), null);
+});
+
 test('takeInVerdict: clean lists the missing runs in finish order with the combine check', () => withEnvVars(SMALL_ON, async () => {
   const w = takeInFeature({ at: { 3: '2026-03-04T00:00:00Z', 4: '2026-03-03T00:00:00Z' } });
   const s = takeInSeams();

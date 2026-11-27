@@ -5,7 +5,7 @@
 // only wires it (re-exported by chain.mjs).
 import { stopAnswerOk, stopOptionOf, heldRefusal, answeredRefusal, sendingRefusal } from '../../shared/shape/run-stops.mjs';
 import { featureOfPipeline, turnOrder, liveSliceHeldResume, liveSliceResuming, liveSliceFrom } from './features.mjs';
-import { heldStopTurn, fireSourceOf } from './chain.mjs';
+import { heldStopTurn, fireSourceOf, mergingBackSliceOf } from './chain.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature } from './small-runs.mjs';
 import { requirementChangedFeedback } from '../../shared/shape/req-change.mjs';
 
@@ -43,17 +43,24 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     return stopOptionOf(pq.stop, payload)?.value !== 'change';
   }
 
-  /** Slice 3 (D4): the run number of another run of the entry's feature, on any base (the take-in takes in every
-   *  finished run), that is done but still committing its work (its teardown has not settled), or null. A run with no
-   *  recorded fire-time base takes in nothing, so nothing holds it. */
-  function settlingSiblingOf(entry, at) {
-    if (!at || fireSourceOf(entry.pipelineId) == null) return null;
+  /** Slice 3 (D4): the run number of another run (not pipeline `pipelineId`) of feature `at`, on any base (the take-in
+   *  takes in every finished run), that is done but still committing its work (its teardown has not settled), or null.
+   *  A run with no recorded fire-time base takes in nothing, so nothing holds it. */
+  function settlingSiblingOf(pipelineId, at) {
+    if (!at || fireSourceOf(pipelineId) == null) return null;
     for (const e of runs.values()) {
-      if (!e || e === entry || e.status !== 'done' || e.settled === true) continue;
+      if (!e || e.pipelineId === pipelineId || e.status !== 'done' || e.settled === true) continue;
       const o = featureOf(e);
       if (o && o.featureId === at.featureId) return o.index;
     }
     return null;
+  }
+
+  /** Slice 1 (A1, D3): the run a resume of `pipelineId` waits for: one still saving its work in memory, else one still
+   *  merging back (the resume's take-in runs after the run started, so it must not find a `wait`), or null. */
+  function savingRunOf(pipelineId, at) {
+    if (!at || fireSourceOf(pipelineId) == null) return null;
+    return settlingSiblingOf(pipelineId, at) ?? mergingBackSliceOf(at.featureId, { exclude: pipelineId });
   }
 
   /** Take the work in for `entry` (marked as going while it runs, D13). → takeIn's answer */
@@ -96,7 +103,7 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     const turn = turnOf(at);
     if (!turn.due) return hold(turn.after);
     if (!takeInApplies(entry, pq, payload)) return hand();
-    const settling = settlingSiblingOf(entry, at);
+    const settling = settlingSiblingOf(entry.pipelineId, at);
     if (settling != null) return hold(settling);
     return (async () => {
       const r = await takingIn(entry, id);
@@ -162,7 +169,7 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
       const turn = turnOf(at);
       if (!turn.due) { keepHeld(entry, h, turn.after, at); return undefined; }
       if (takeInApplies(entry, entry.pendingQuestion, h.payload)) {
-        const settling = settlingSiblingOf(entry, at);
+        const settling = settlingSiblingOf(entry.pipelineId, at);
         if (settling != null) { keepHeld(entry, h, settling, at); return undefined; }
         return deliverTakenIn(entry, h, at);
       }
@@ -198,8 +205,10 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
       if (opts.heldDelivery === true) return null;
       throw inFlight();
     }
-    const turn = turnOf({ featureId: at.featureId, index: at.idx });
-    if (turn.due) {
+    const where = { featureId: at.featureId, index: at.idx };
+    const turn = turnOf(where);
+    const after = turn.due ? savingRunOf(pipelineId, where) : turn.after;   // A1: a due turn still waits for a save
+    if (after == null) {
       const had = resumes.delete(pipelineId);
       if (ticket) { delivering.add(pipelineId); ticket.claimed = true; }
       if (had || ticket) paintFeature(at.featureId);
@@ -207,9 +216,9 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     }
     const { heldDelivery, ...kept } = opts;
     const was = resumes.get(pipelineId);
-    resumes.set(pipelineId, { pipelineId, featureId: at.featureId, index: at.idx, opts: kept, after: turn.after });
-    if (!was || was.after !== turn.after) paintFeature(at.featureId);   // a ticket re-held each tick repaints once
-    return { ok: true, held: true, pipelineId, after: turn.after };
+    resumes.set(pipelineId, { pipelineId, featureId: at.featureId, index: at.idx, opts: kept, after });
+    if (!was || was.after !== after) paintFeature(at.featureId);   // a ticket re-held each tick repaints once
+    return { ok: true, held: true, pipelineId, after };
   }
 
   /** Run one resume `fn(ticket)` of `pipelineId`; a claim holdResume made on its ticket is released once it settles
@@ -297,8 +306,9 @@ export function createHeldStops({ runs, liveSliceOf, broadcastFeature, resolvePe
     if (resumes.get(pid) !== rec) return undefined;
     if (check) {
       const turn = turnOf(rec);
-      if (!turn.due) {
-        if (turn.after !== rec.after) { rec.after = turn.after; paintFeature(rec.featureId); }
+      const after = turn.due ? savingRunOf(pid, rec) : turn.after;   // A1: a due turn still waits for a save
+      if (after != null) {
+        if (after !== rec.after) { rec.after = after; paintFeature(rec.featureId); }
         return undefined;
       }
     }

@@ -796,7 +796,10 @@ held behind it. A held resume reads `after run N` on its row and on its run page
 `Resume`. Before it is pressed, a paused run's Resume reads `Resume after run N` while another run of the feature is
 going, and `Resume` otherwise; the server still decides at the press. The same wording shows on the Resume in the
 feature page's footer and in the Chat feature card's footer, taken from the run that Resume acts on. A restart of a stopped or failed run is still
-refused while another run of the feature is going.
+refused while another run of the feature is going. While a finished run of the feature is still saving its work, a
+resume waits (`after run N`), as an answer does, and goes on once that work is saved, so the resumed run starts with
+it. A held resume refused at its turn (for example on cost) leaves the run paused, and a run paused on the network is
+then taken up again by the network watch once its endpoint answers inside the wait window.
 
 ### Show order
 

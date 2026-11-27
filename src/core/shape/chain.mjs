@@ -189,6 +189,20 @@ export function fireSourceOf(pipelineId, deps = {}) {
   } catch { return null; }
 }
 
+/** The finished runs of `featureId` but `exclude`, in finish order, each with its merge-back record (`prev`). */
+const finishedRunsOf = (featureId, exclude) => finishedSlices(featureId, { exclude }).map((r) => ({ ...r, prev: previousBranchesOf(r.pipelineId) }));
+/** The first of `found` (finishedRunsOf) still merging its work back, or undefined: the one "still merging back" rule. */
+const pendingRunOf = (found) => found.find((r) => r.prev && r.prev.pending);
+
+/** Slice 1 (A1, D3): the run number of the first finished run of `featureId` (but `exclude`) still merging its work
+ *  back, or null. Read-only; never throws. */
+export function mergingBackSliceOf(featureId, { exclude = null } = {}) {
+  try {
+    const pending = pendingRunOf(finishedRunsOf(featureId, exclude));
+    return pending ? pending.index : null;
+  } catch { return null; }
+}
+
 /**
  * Slice 3 (D1, D5, D6): what a run that waited (at a stop, or paused and resumed) must take in before it goes on: every
  * finished run of the feature whose work is not in `branch`, whatever base it started from, in finish order, and
@@ -202,8 +216,8 @@ export function fireSourceOf(pipelineId, deps = {}) {
 export async function takeInVerdict(dir, { featureId, pipelineId, branch }, deps = {}) {
   try {
     if (!fireSourceOf(pipelineId, deps)) return { status: 'none', skipped: [] };
-    const found = finishedSlices(featureId, { exclude: pipelineId }).map((r) => ({ ...r, prev: previousBranchesOf(r.pipelineId) }));
-    const pending = found.find((r) => r.prev && r.prev.pending);
+    const found = finishedRunsOf(featureId, pipelineId);
+    const pending = pendingRunOf(found);
     if (pending) return { status: 'wait', after: pending.index };
     const resolves = deps.resolves || (async (d, ref) => !!(await commitOf(d, ref, { timeout: 10_000 })));
     const skipped = [];

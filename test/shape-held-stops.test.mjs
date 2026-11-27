@@ -15,6 +15,7 @@ import { createSliceFeature, liveSliceFrom, busySliceOf, sliceWords, featureView
 import { featureStateLine } from '../ui/public/shape/feature-card.mjs';
 import { createHeldStops } from '../src/core/shape/chain.mjs';
 import { answeredRefusal, gateStop, heldRefusal, planStop } from '../src/shared/shape/run-stops.mjs';
+import { createNetworkWatch, NETWORK_ACTOR } from '../src/core/network-wait.mjs';
 
 useTempHome(after, 'worca-held-stops-');
 const root = mkdtempSync(join(tmpdir(), 'worca-held-stops-proj-'));
@@ -662,6 +663,8 @@ function resumeWorld({ paused = [6], mark = true, ...over } = {}) {
   const e4 = w.entry(4, 'running');
   return { ...w, e4, pids };
 }
+/** Run `e` finished and saved: done, and its teardown has settled. */
+const saved = (w, e) => { w.finish(e); e.settled = true; };
 const resumedRuns = (w) => w.resumed.map((r) => r.run);
 const heldAnswerTo = (pid, after) => ({ ok: true, held: true, pipelineId: pid, after });
 
@@ -688,7 +691,7 @@ test('s7: deliver after run 4 finishes calls resume once with the stored opts', 
   const latest = { by: 'ann', ignoreCostCap: true };
   assert.deepEqual(w.held.holdResume(pid, latest), heldAnswerTo(pid, 4), 'held again: the latest opts are kept');
   latest.by = 'changed afterwards';
-  w.finish(w.e4);
+  saved(w, w.e4);
   await w.held.deliver();
   await w.held.deliver();
   assert.deepEqual(w.resumed, [{ run: 6, pid, opts: { by: 'ann', ignoreCostCap: true, heldDelivery: true } }]);
@@ -701,7 +704,7 @@ test('s7: held answer on run 5 and held resume on run 3 go 3, then 5; nextRuns n
   assert.deepEqual(answerStop(w, e5), { held: true });
   assert.deepEqual(w.held.holdResume(w.pids[3], { by: 'ann' }), heldAnswerTo(w.pids[3], 4));
   assert.deepEqual(nextRuns(w), [3], 'only run 3 reads next');
-  w.finish(w.e4);
+  saved(w, w.e4);
   await w.held.deliver();
   assert.deepEqual([resumedRuns(w), answeredRuns(w)], [[3], []], 'run 3 is resumed first');
   assert.equal(e5.heldStop?.after, 3, 'run 5 stays held behind run 3');
@@ -716,11 +719,11 @@ test('s7 (R-arch-7): one order for both kinds: a held answer on run 3 goes befor
   assert.deepEqual(w.held.holdResume(w.pids[5], { by: 'ann' }), heldAnswerTo(w.pids[5], 4));
   assert.deepEqual(answerStop(w, e3), { held: true });
   assert.deepEqual(nextRuns(w), [3]);
-  w.finish(w.e4);
+  saved(w, w.e4);
   await w.held.deliver();
   assert.deepEqual([answeredRuns(w), resumedRuns(w)], [[3], []]);
   assert.deepEqual(w.held.heldResumeOf(w.pids[5]), { after: 3 }, 'run 5 is now behind run 3');
-  w.finish(e3);
+  saved(w, e3);
   await w.held.deliver();
   assert.deepEqual(resumedRuns(w), [5]);
 }));
@@ -730,7 +733,7 @@ test('s7 (D7): a resume held again after its turn blocks the later held items of
   const e5 = stopped(w, 5);
   assert.deepEqual(answerStop(w, e5), { held: true });
   w.held.holdResume(w.pids[3], { by: 'ann' });
-  w.finish(w.e4);
+  saved(w, w.e4);
   await w.held.deliver();
   assert.deepEqual([resumedRuns(w), answeredRuns(w)], [[3], []], 'run 5 does not overtake run 3');
   assert.ok(w.held.heldResumeOf(w.pids[3]), 'run 3 is put back');
@@ -759,7 +762,7 @@ test('s7: a held resume whose turn is not due names the run now going and repain
   const w = resumeWorld();
   w.held.holdResume(w.pids[6], { by: 'ann' });
   w.entry(3, 'running');
-  w.finish(w.e4);
+  saved(w, w.e4);
   const painted = w.repaints.length;
   await w.held.deliver();
   assert.deepEqual(w.resumed, []);
@@ -775,7 +778,7 @@ test('s7: a refused delivery drops the hold, logs and says why on the run (overl
     const w = resumeWorld({ resumeReply });
     const pid = w.pids[6];
     w.held.holdResume(pid, { by: 'ann' });
-    w.finish(w.e4);
+    saved(w, w.e4);
     const painted = w.repaints.length;
     const errors = await quietly(() => w.held.deliver());
     assert.equal(w.held.heldResumeOf(pid), null, name);
@@ -802,7 +805,7 @@ test('s7: dropResume removes the hold; deliver after run 4 finishes calls nothin
   assert.ok(w.repaints.slice(painted).includes(w.f.id));
   assert.equal(w.held.dropResume(pid), false, 'nothing left to drop');
   assert.equal(w.held.heldResumeOf(pid), null);
-  w.finish(w.e4);
+  saved(w, w.e4);
   await w.held.deliver();
   assert.deepEqual(w.resumed, []);
 }));
@@ -824,7 +827,7 @@ test('s7: overlay reads heldResume.after while held, resuming while delivering, 
   assert.equal(w.held.overlay(pid, null), null, 'neither after dropResume');
 
   w.held.holdResume(pid, { by: 'ann' });
-  w.finish(w.e4);
+  saved(w, w.e4);
   const going = w.held.deliver();
   try {
     await ticks();
@@ -843,7 +846,7 @@ test('s7 (I2, I4): while a resume is being delivered the run is going, it is not
   const w = resumeWorld({ resumeReply: () => gate.promise });
   const pid = w.pids[6];
   w.held.holdResume(pid, { by: 'ann' });
-  w.finish(w.e4);
+  saved(w, w.e4);
   const first = w.held.deliver();
   const second = w.held.deliver();
   try {
@@ -865,12 +868,22 @@ test('s7: holdResume answers null (nothing held) with no resume dep, the flag of
     assert.equal(w.held.heldResumeOf(pid), null, why);
   };
   await withEnv({ WORCA_FLAGS: undefined }, () => { const w = resumeWorld(); nothing(w, w.pids[6], 'flag off'); });
+  await withEnv({ WORCA_FLAGS: undefined }, () => {
+    const w = resumeWorld();
+    w.finish(w.e4);                                   // run 4 done, still saving its work
+    nothing(w, w.pids[6], 'flag off, a saving sibling');
+  });
+  await withEnv(SMALL_ON, () => {
+    const saving = resumeWorld({ mark: false });
+    saving.finish(saving.e4);
+    nothing(saving, saving.pids[6], 'unmarked feature, a saving sibling');
+  });
   await withEnv(SMALL_ON, () => {
     const unmarked = resumeWorld({ mark: false });
     nothing(unmarked, unmarked.pids[6], 'unmarked feature');
     const w = resumeWorld();
     nothing(w, pipe('paused'), 'a pipeline of no feature');
-    w.finish(w.e4);
+    saved(w, w.e4);
     nothing(w, w.pids[6], 'the turn is due');
     const noDep = resumeWorld({ canResume: false });
     nothing(noDep, noDep.pids[6], 'no resume dep');
@@ -881,7 +894,7 @@ test('s7 (D12): a resume asked again once its turn is due answers null and drops
   const w = resumeWorld();
   const pid = w.pids[6];
   w.held.holdResume(pid, { by: 'ann' });
-  w.finish(w.e4);
+  saved(w, w.e4);
   const painted = w.repaints.length;
   assert.equal(w.held.holdResume(pid, { by: 'bo' }), null);
   assert.equal(w.held.heldResumeOf(pid), null);
@@ -931,7 +944,7 @@ test('s7 (D11): of boot picks [6, 4] only run 4 stays a pick; run 6 is resumed l
   setPipe(four, 'running');
   await w.held.deliver();
   assert.deepEqual(w.resumed, []);
-  w.finish(w.e4);
+  saved(w, w.e4);
   await w.held.deliver();
   assert.deepEqual(w.resumed, [{ run: 6, pid: w.pids[6], opts: { by: 'ann', mock: true, heldDelivery: true } }]);
 }));
@@ -945,7 +958,7 @@ test('s7 flag off: splitBootPicks returns every pick and holds nothing', () => w
 
 test('s7 (I2): a resume whose turn is due claims it until it settles; a second resume meanwhile is held after it or refused', () => withEnv(SMALL_ON, async () => {
   const w = resumeWorld({ paused: [3, 5] });
-  w.finish(w.e4);                                     // nothing is going
+  saved(w, w.e4);                                     // nothing is going
   const gate = deferred();
   const three = w.held.claimed(w.pids[3], async (ticket) => {
     assert.equal(w.held.holdResume(w.pids[3], { by: 'ann' }, ticket), null, 'run 3 goes on');
@@ -969,11 +982,192 @@ test('s7 (I2): a resume whose turn is due claims it until it settles; a second r
 
 test('s7: a claimed resume that refuses releases the claim; without a ticket nothing is claimed', () => withEnv(SMALL_ON, async () => {
   const w = resumeWorld();
-  w.finish(w.e4);
+  saved(w, w.e4);
   await assert.rejects(w.held.claimed(w.pids[6], async (ticket) => { w.held.holdResume(w.pids[6], {}, ticket); throw new Error('pipeline is archived'); }), /archived/);
   assert.equal(w.liveSliceOf(w.pids[6]), null);
   assert.equal(w.held.holdResume(w.pids[6], {}), null);
   assert.equal(w.liveSliceOf(w.pids[6]), null, 'no ticket, no claim');
+}));
+
+// ── A1: a resume waits while a finished run of the feature is still saving its work, as a held answer does ────────
+/** Pipeline `pid`'s row reads done on its source branch with its merge back still pending, or done once `mergeBack` is given. */
+const mergingBack = (w, pid, mergeBack = null) => getDb().prepare("UPDATE pipelines SET status = 'done', branch = ?, updated_at = ? WHERE id = ?")
+  .run(JSON.stringify({ sameAsSource: true, worktreeDir: join(root, 'wt'), source: 'main', feature: 'main', ...(mergeBack ? { mergeBack } : {}) }),
+    new Date().toISOString(), pid);
+
+test('A1: a held resume waits while run 4 is done but still saving; it goes once run 4 has saved', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld();
+  const pid = w.pids[6];
+  assert.deepEqual(w.held.holdResume(pid, { by: 'local' }), heldAnswerTo(pid, 4), 'behind working run 4');
+  w.finish(w.e4);                                     // done, its teardown not settled
+  await w.held.deliver();
+  assert.deepEqual(w.resumed, [], 'run 4 is still saving');
+  assert.deepEqual(w.held.heldResumeOf(pid), { after: 4 });
+  assert.equal(statusOf(pid), 'paused');
+  const painted = w.repaints.length;
+  assert.deepEqual(w.held.holdResume(pid, { by: 'local' }), heldAnswerTo(pid, 4), 'a ticket held again while run 4 saves');
+  assert.deepEqual(w.held.heldResumeOf(pid), { after: 4 }, 'the hold is kept');
+  assert.equal(w.repaints.length, painted, 'the same wait does not repaint again');
+  w.e4.settled = true;
+  await w.held.deliver();
+  await w.held.deliver();
+  assert.deepEqual(w.resumed, [{ run: 6, pid, opts: { by: 'local', heldDelivery: true } }]);
+  assert.equal(w.held.heldResumeOf(pid), null);
+}));
+
+test('A1: a Resume press with the turn due while run 4 is still saving is held after run 4', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld();
+  const pid = w.pids[6];
+  w.finish(w.e4);
+  const painted = w.repaints.length;
+  const ticket = { claimed: false };
+  assert.deepEqual(w.held.holdResume(pid, { by: 'local' }, ticket), heldAnswerTo(pid, 4));
+  assert.equal(ticket.claimed, false, 'nothing is claimed');
+  assert.deepEqual(w.repaints.slice(painted), [w.f.id], 'the feature repaints once');
+  assert.deepEqual(w.held.heldResumeOf(pid), { after: 4 });
+  assert.equal(w.liveSliceOf(pid)?.resuming, undefined, 'the run does not read as being resumed');
+  assert.deepEqual(w.resumed, []);
+  assert.equal(statusOf(pid), 'paused');
+}));
+
+test('A1: a finished run still merging back holds the resume too', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld();
+  const pid = w.pids[6];
+  mergingBack(w, w.e4.pipelineId);
+  w.runs.delete(w.e4.id);                             // no runs-map entry: only the row says it is still merging back
+  assert.deepEqual(w.held.holdResume(pid, { by: 'local' }), heldAnswerTo(pid, 4));
+  await w.held.deliver();
+  assert.deepEqual(w.resumed, [], 'run 4 is still merging back');
+  assert.deepEqual(w.held.heldResumeOf(pid), { after: 4 });
+  mergingBack(w, w.e4.pipelineId, { merged: true });
+  await w.held.deliver();
+  await w.held.deliver();
+  assert.deepEqual(w.resumed, [{ run: 6, pid, opts: { by: 'local', heldDelivery: true } }]);
+}));
+
+test('A1: a delivery that finds another run still saving waits for it, repaints once and blocks the later held runs', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld({ paused: [5, 6] });
+  const [five, six] = [w.pids[5], w.pids[6]];
+  // Run 6 has no recorded fire-time base, so no saving run holds it: only run 5, still held before it, does.
+  getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({ feature: `feat/${six}` }), six);
+  assert.deepEqual(w.held.holdResume(five, { by: 'local' }), heldAnswerTo(five, 4));
+  assert.deepEqual(w.held.holdResume(six, { by: 'local' }), heldAnswerTo(six, 4));
+  const e3 = w.entry(3, 'running');
+  w.finish(e3);                                       // run 3 done, still saving
+  saved(w, w.e4);
+  const painted = w.repaints.length;
+  await w.held.deliver();
+  assert.deepEqual(w.resumed, [], 'run 6 does not overtake run 5');
+  assert.deepEqual(w.held.heldResumeOf(five), { after: 3 }, 'run 5 is now behind saving run 3');
+  assert.ok(w.held.heldResumeOf(six), 'run 6 stays held');
+  assert.deepEqual(w.repaints.slice(painted), [w.f.id], 'repainted for the new wait');
+  await w.held.deliver();
+  assert.equal(w.repaints.length, painted + 1, 'the same wait does not repaint again');
+  e3.settled = true;
+  await w.held.deliver();
+  assert.deepEqual(resumedRuns(w), [5]);
+}));
+
+test('A1: the network watch resuming a run while run 4 is still saving leaves it held for its turn', () => withEnv(SMALL_ON, async () => {
+  const w = resumeWorld();
+  const pid = w.pids[6];
+  w.finish(w.e4);
+  const watched = [];
+  const watch = createNetworkWatch({
+    settings: () => ({ enabled: true, maxWaitMs: 3600000 }), listRuns: () => [networkPausedRow(pid)],
+    hasResumeTicket: (id) => w.held.watchSkips(id), probe: async () => true,
+    // As the server's resumeRun: holdResume first, and the run goes on only when nothing holds it.
+    resume: async (r) => w.held.holdResume(r.id, { by: NETWORK_ACTOR }) || (watched.push(r.id), { ok: true }),
+  });
+  assert.deepEqual(await watch.tick(), []);
+  assert.deepEqual(watched, []);
+  assert.deepEqual(w.held.heldResumeOf(pid), { after: 4 });
+  assert.equal(w.held.watchSkips(pid), true, 'the held resume goes on at its turn');
+  w.e4.settled = true;
+  await w.held.deliver();
+  assert.deepEqual(resumedRuns(w), [6]);
+}));
+
+test('A1: a resumed run with no recorded fire-time base is not held by a saving run', () => withEnv(SMALL_ON, () => {
+  for (const signal of ['saving', 'merging back']) {
+    const w = resumeWorld();
+    const pid = w.pids[6];
+    getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(JSON.stringify({ feature: `feat/${pid}` }), pid);
+    if (signal === 'saving') w.finish(w.e4);
+    else { mergingBack(w, w.e4.pipelineId); w.runs.delete(w.e4.id); }
+    assert.equal(w.held.holdResume(pid, { by: 'local' }), null, signal);
+    assert.equal(w.held.heldResumeOf(pid), null, signal);
+  }
+}));
+
+test("A1: neither the resumed run's own done entry nor another feature's saving run holds a resume", () => withEnv(SMALL_ON, () => {
+  const w = resumeWorld();
+  const other = resumeWorld();
+  const pid = w.pids[6];
+  saved(w, w.e4);
+  w.runs.set('own6', { id: 'own6', pipelineId: pid, status: 'done', orch: { runShape: { slice: { feature: w.f.id, index: 6 } } } });
+  w.runs.set('other4', { ...other.e4, id: 'other4', status: 'done' });
+  assert.equal(w.held.holdResume(pid, { by: 'local' }), null);
+  assert.equal(w.held.heldResumeOf(pid), null);
+}));
+
+test('A1 flag off: a left-over held resume goes on while a finished run is still saving', async () => {
+  let w = null;
+  await withEnv(SMALL_ON, () => { w = resumeWorld(); assert.ok(w.held.holdResume(w.pids[6], { by: 'local' })); w.finish(w.e4); });
+  await withEnv({ WORCA_FLAGS: undefined }, async () => {
+    await w.held.deliver();
+    assert.deepEqual(resumedRuns(w), [6]);
+  });
+});
+
+// ── H3: a held resume refused on cost leaves a network-paused run to the network watch ─────────────────────────────
+/** Pipeline `pid` as the watch lists it: paused on the network just now, its endpoint unreachable then. */
+const networkPausedRow = (pid) => ({ id: pid, status: 'paused', resumePoint: { pauseReason: 'recoverable', pauseClass: 'network',
+  network: { since: new Date().toISOString(), reachable: false, origin: 'https://api.anthropic.com' } } });
+const overCost = async () => {
+  throw Object.assign(new Error('pipeline cost limit reached'), { status: 403, body: { error: 'pipeline cost limit reached', needsOverride: true } });
+};
+/** Run 6's held resume refused on cost at its turn. Then a network watch over that run, wired as the server's (no resume
+ *  ticket): its endpoint answers once `net.up`, and its own resume succeeds (the limit has been raised). */
+async function refusedOnCost() {
+  const w = resumeWorld({ resumeReply: overCost });
+  const pid = w.pids[6];
+  assert.ok(w.held.holdResume(pid, { by: 'local' }));
+  saved(w, w.e4);
+  await quietly(() => w.held.deliver());
+  assert.equal(w.resumed.length, 1, 'the held resume was tried once');
+  const net = { up: false };
+  const watched = [];
+  const row = networkPausedRow(pid);
+  const watch = createNetworkWatch({
+    settings: () => ({ enabled: true, maxWaitMs: 3600000 }), listRuns: () => [row],
+    hasResumeTicket: (id) => w.held.watchSkips(id), probe: async () => net.up,
+    resume: async (r) => { watched.push(r.id); return { ok: true }; },
+  });
+  return { w, pid, net, watch, watched };
+}
+
+test("H3 (R-arch-3): a network-paused run's held resume refused on cost is left for the network watch", () => withEnv(SMALL_ON, async () => {
+  const { w, pid, net, watch, watched } = await refusedOnCost();
+  assert.equal(w.held.heldResumeOf(pid), null);
+  assert.equal(w.held.overlay(pid, null)?.resumeRefused?.error, 'pipeline cost limit reached');
+  assert.equal(statusOf(pid), 'paused');
+  assert.equal(w.held.watchSkips(pid), false);
+  assert.deepEqual(await watch.tick(), [], 'the endpoint does not answer yet');
+  net.up = true;
+  assert.deepEqual(await watch.tick(), [pid]);
+  assert.deepEqual(watched, [pid]);
+}));
+
+test("H3: a person's Pause on a resume held again after the refusal keeps the network watch away", () => withEnv(SMALL_ON, async () => {
+  const { w, pid, net, watch, watched } = await refusedOnCost();
+  w.entry(3, 'running');
+  assert.deepEqual(w.held.holdResume(pid, { by: 'local' }), heldAnswerTo(pid, 3), 'Resume again, held behind run 3');
+  assert.equal(w.held.dropResume(pid, { paused: true }), true);
+  assert.equal(w.held.watchSkips(pid), true);
+  net.up = true;
+  assert.deepEqual(await watch.tick(), []);
+  assert.deepEqual(watched, []);
 }));
 
 // ── Shaper small runs slice 8 (R-ux-2): the view says before the press which run a Resume would wait for ─────────
@@ -1017,7 +1211,7 @@ test('s8: run 4 finished → run 6 has no resumeAfter, and holdResume returns nu
   const w = resumeWorld();
   const pid = w.pids[6];
   assert.equal(viewSlice(w, 6).resumeAfter, 4, 'while run 4 works');
-  w.finish(w.e4);
+  saved(w, w.e4);
   assert.equal('resumeAfter' in viewSlice(w, 6), false);
   assert.equal('resumeAfter' in features.sliceOfPipeline(pid, { live: w.liveSliceOf }), false);
   assert.equal(w.held.holdResume(pid, { by: 'ann' }), null, 'the Resume goes on at once');
