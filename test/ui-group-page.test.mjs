@@ -773,3 +773,19 @@ test('s10 the toggle bar is right-aligned and holds only the toggle; the body ca
     t.click();
   }
 });
+
+// ── Shaper small runs slice 11 (R-ux-2): the footer's Resume is named by the host ────────────────────────────────
+test('s11: deps.resumeLabel names the footer Resume; without it, or when it is empty, it reads "Resume"', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  // Run 2 paused before a working run 3: the group's current member is the paused one.
+  const view = { row: liveRow([done, { status: 'paused' }, { status: 'running' }]), project: '', tab: 'runs' };
+  const resumes = () => visibleBar(root).filter((b) => b.dataset.modelAction === 'resume').map((b) => b.textContent);
+  paintGroupPage(root, view, { ...NOOP, resumeLabel: () => 'Resume after run 6' });
+  assert.deepEqual(resumes(), ['Resume after run 6']);
+  paintGroupPage(root, view, NOOP);
+  assert.deepEqual(resumes(), ['Resume'], 'no dep');
+  paintGroupPage(root, view, { ...NOOP, resumeLabel: () => 'Resume after run 6' });
+  paintGroupPage(root, view, { ...NOOP, resumeLabel: () => '' });
+  assert.deepEqual(resumes(), ['Resume'], 'an empty label');
+});

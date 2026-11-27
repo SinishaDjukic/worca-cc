@@ -8,7 +8,7 @@ const COUNTS = { added: 9, modified: 4, deleted: 1 };
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 const tabs = (ctx) => [...ctx.window.document.querySelectorAll('#run-detail .rd-tab')].map((b) => b.dataset.sec);
 const $ = (ctx, sel) => ctx.window.document.querySelector(`#run-detail ${sel}`);
-const FOLDER_TABS = ['overview', 'task', 'changes', 'qa', 'logs', 'artifacts', 'workflow', 'agents'];   // the row, then what is under More
+const FOLDER_TABS = ['overview', 'task', 'changes', 'artifacts', 'qa', 'logs', 'workflow', 'agents'];   // the row, then what is under More
 
 test('a live folder run: Changes in place of Diff and Actions, from its hello or its run-created frame', async () => {
   await checkRows([

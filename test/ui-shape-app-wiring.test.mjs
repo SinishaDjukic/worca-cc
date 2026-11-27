@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { bootApp, runPanel } from './helpers/run-page-boot.mjs';
 import { namedAnswer } from '../ui/public/shape/step-receipt.mjs';
 import { chatCardBuilder } from '../ui/public/chat/extensions.mjs';
+import { gateStop, planStop } from '../src/shared/shape/run-stops.mjs';
 
 const click = (ctx, el) => el.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
 const res = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
@@ -1066,6 +1067,21 @@ test('flag on: a held answer repaints the run page live to the one answered row'
   off();
 });
 
+test('slice 3, flag on: a held answer refused at delivery reopens the stop on the run page with "Not sent: …"', async () => {
+  const slice = (stop) => ({ featureId: 'feat-1', index: 8, stop: { reason: 'objection', ...stop } });
+  const { ctx, q, info, off } = await openStopRun(C3_GATE_STOP, 'running/run-rr',
+    { slice: slice({ held: false }), reply: () => res(200, { ok: true, held: true }) });
+  click(ctx, visiblePrimaries(q())[0]);
+  await ctx.settle(4);
+  const frame = async (stop) => { info.current = slice(stop); ctx.dispatch({ type: 'shape-feature', id: 'feat-1' }); await ctx.settle(6); };
+  await frame({ held: true, value: 'another', after: 7 });
+  assert.equal(q().querySelectorAll('.qopt').length, 0, 'held');
+  await frame({ held: false, refused: 'runs 2 and 3 clash in src/a.mjs' });
+  assert.equal(q().querySelectorAll('.qopt').length, C3_GATE_STOP.stop.options.length, 'the stop is open again');
+  assert.deepEqual([...q().querySelectorAll('.plan-err:not([hidden])')].map((e) => e.textContent), ['Not sent: runs 2 and 3 clash in src/a.mjs']);
+  off();
+});
+
 test('flag on: a delivered answer (question-resolved) clears the stop on the run page and on the feature card', async () => {
   const { ctx, doc, off } = await openStopRun(C3_GATE_STOP, 'running/run-rr');
   const built = chatCardBuilder('progress')(
@@ -1156,4 +1172,63 @@ test('C3: a shape-feature frame keeps an open stop\'s pick and focus; only a hel
   assert.equal(q().querySelector('.chat-rc-log-text').textContent, 'accepted as is · decided by you');
   assert.equal(q().querySelectorAll('.step-head, .chat-rc-receipt').length, 0, 'one answered row: no head, no box');
   assert.equal(barAnswer(built.el), null, 'held stop: no Answer in the card foot');
+});
+
+// ---- R-ux-4: a stop's findings list shows on every surface where the stop can be answered ----------------------------
+const R3_ISSUES = [
+  { severity: 'major', title: 'A chart link opens for a visitor who is not a member', detail: 'GET /c/:id skips the member check' },
+  { severity: 'major', title: 'The export drops empty charts', detail: 'an empty chart has no rows to write' },
+  { severity: 'major', title: 'Token leaks into the logs', detail: 'the request line is logged whole' },
+];
+const R3_GATE_STOP = { ...C3_GATE_STOP, id: 'gate-r3-1', issues: R3_ISSUES, stop: gateStop({ run: 8, issues: R3_ISSUES, fixCycles: 3, nodeId: 'n_review' }) };
+const R3_CHECK = { ok: false, passed: 1, total: 4, items: [{ label: 'Has tests', pass: false }, { label: 'Names the files', pass: false },
+  { label: 'States the goal', pass: false }, { label: 'Lists open questions', pass: true }] };
+const R3_PLAN_STOP = { ...C3_PLAN_STOP, id: 'plan-r3-1', plan: { round: 2, file: 'p.md', check: R3_CHECK }, stop: planStop({ run: 4, check: R3_CHECK }) };
+const featureCard = (ctx, doc) => {
+  const built = chatCardBuilder('progress')(
+    { kind: 'card', id: 'c-r3', state: 'tracked', card: { type: 'progress', pipelineId: 'p-rr', runId: 'run-rr', projectKey: 'p', title: 'Stop' } },
+    { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel() {}, openArtifact() {}, announce() {} });
+  doc.body.appendChild(built.el);
+  return built;
+};
+/** The one findings list of the stop under `root`: its row titles, and one primary beside it. */
+function threeFindings(root, pq, where) {
+  const q = root.querySelector('.qpanel');
+  assert.ok(q, `${where}: the stop's card`);
+  const gate = pq.kind === 'gate';
+  const rows = [...root.querySelectorAll(gate ? '.qpanel .issues > li.issue' : '.qpanel .plan-checks .plan-check-row')];
+  assert.equal(rows.length, 3, `${where}: 3 findings`);
+  assert.deepEqual(rows.map((r) => r.querySelector(gate ? '.issue-title' : '.plan-check-label').textContent),
+    gate ? R3_ISSUES.map((i) => i.title) : ['Has tests', 'Names the files', 'States the goal'], where);
+  assert.equal(root.querySelectorAll('.qpanel .issues, .qpanel .plan-checks').length, 1, `${where}: one findings list`);
+  assert.equal(visiblePrimaries(q).length, 1, `${where}: one primary`);
+}
+
+test('R-ux-4: a stop with 3 findings lists all 3 on the run page, the Chat run panel and the Chat feature card (flag on)', async () => {
+  for (const route of ['running/run-rr', 'chat/new/run/run-rr']) {
+    for (const pq of [R3_GATE_STOP, R3_PLAN_STOP]) {
+      const { ctx, doc, screen, off } = await openStopRun(pq, route);
+      let built = null;
+      try {
+        threeFindings(screen, pq, `${route} ${pq.id}`);
+        built = featureCard(ctx, doc);
+        await ctx.settle(6);
+        threeFindings(built.el, pq, `the feature card beside ${route} ${pq.id}`);
+      } finally { built?.dispose(); off(); }
+    }
+  }
+});
+
+test('R-ux-4, flag off: the feature card\'s stop draws no findings list', async () => {
+  const ctx = await bootApp({ fetchHandler: recordAnswers('run-rr', []) });
+  ctx.wsBox.ws.dispatch('open', {});
+  ctx.dispatch({ type: 'hello', runs: [reqRun(R3_GATE_STOP)] });
+  await ctx.settle();
+  const built = featureCard(ctx, ctx.window.document);
+  await ctx.settle(6);
+  const q = built.el.querySelector('.qpanel');
+  assert.equal(q.querySelectorAll('.qopt').length, 2, 'the stop is drawn');
+  assert.equal(q.querySelectorAll('.issues, .plan-checks').length, 0);
+  assert.equal(visiblePrimaries(q).length, 1);
+  built.dispose();
 });

@@ -54,6 +54,7 @@
 
 .ask-answer{max-width:100%;font-size:13px;line-height:1.72;color:var(--ink);}
 .ask-answer-plain{white-space:pre-wrap;overflow-wrap:anywhere;}
+.ask-md{overflow-wrap:break-word;}
 .ask-md :is(h1,h2,h3,h4,h5,h6){margin:14px 0 6px;font-size:13px;font-weight:600;color:var(--ink);}
 .ask-md h1{font-size:15px;}
 .ask-md h2{font-size:13px;}
@@ -67,7 +68,7 @@
 .ask-md pre{margin:8px 0;padding:10px 12px;background:var(--field);border:1px solid var(--line);
   border-radius:var(--r-sm);overflow-x:auto;}
 .ask-md pre code{background:transparent;padding:0;font-size:11px;line-height:1.6;display:block;white-space:pre;}
-.ask-md table{border-collapse:collapse;margin:8px 0;font-size:12px;}
+.ask-md table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;margin:8px 0;font-size:12px;}
 .ask-md :is(th,td){border:1px solid var(--line);padding:4px 9px;text-align:left;}
 .ask-md th{background:var(--field);font-weight:600;}
 .ask-md input[type="checkbox"]{margin-right:6px;}

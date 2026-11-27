@@ -7,6 +7,7 @@ import { toggleMenu } from '../workflows/menu.mjs';
 import { icon } from '../icons.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
 import { ACTION_LABEL, RUN_STATES } from '../../../src/shared/run-model.mjs';
+import { resumeLabel } from '../../../src/shared/shape/run-status.mjs';
 
 const LIVE = new Set(['starting', 'running', 'pausing']);
 export const FAILED = 'That did not work. Try again.';
@@ -22,7 +23,7 @@ export function featureButtons(c, { stopOpen = false, resumeListed = false } = {
   if (stopOpen) return featureButtons(c).filter((b) => b.key === 'stop').map(({ key, label }) => ({ key, label }));
   if (!c || !c.active) return [];
   // Slice 6 (D14): `resumeListed`, the halted run's stop line holds its Resume, so the footer leaves it out.
-  if (c.halted) return [...(resumeListed ? [] : [{ key: 'resume', label: 'Resume', primary: true }]), ...(c.rest ? [{ key: 'replan', label: 'Re-plan the rest' }] : [])];
+  if (c.halted) return [...(resumeListed ? [] : [{ key: 'resume', label: resumeLabel(c.resumeAfter), primary: true }]), ...(c.rest ? [{ key: 'replan', label: 'Re-plan the rest' }] : [])];
   if (c.held) return [{ key: 'start', label: ACTION_LABEL['start-now'], primary: true }];
   const t = c.target;
   if (!t || !LIVE.has(t.status)) return [];
@@ -33,20 +34,20 @@ export function featureButtons(c, { stopOpen = false, resumeListed = false } = {
 }
 
 /** The ⋯ items, the same on every host, [{key, label, checked?, disabled?}]. Item 10, while a stop is open: a halted
- *  feature's Resume (`stopOpen`), then `moved`, the model actions the footer gives up ([{id, disabled?}], `disabled` the
- *  footer's reason), each `act:<id>` with its ACTION_LABEL; an id already in the menu shows once. */
+ *  feature's Resume (`stopOpen`), then `moved`, the model actions the footer gives up ([{id, label?, disabled?}], `disabled` the
+ *  footer's reason), each `act:<id>` with its `label` (slice 11: the footer's own text), else its ACTION_LABEL; an id already in the menu shows once. */
 export function featureMenu(c, { moved = [], stopOpen = false, resumeListed = false } = {}) {
   if (!c) return [];
   const items = [];
   if (c.rest) items.push({ key: 'replan', label: 'Re-plan the rest' }, { key: 'cancel', label: 'Cancel the rest' });
   if (c.active) items.push({ key: 'approve-each', label: 'Ask before each run', checked: !!c.approveEach });
   if (c.planPipelineId) items.push({ key: 'plan', label: 'Open the plan' });
-  if (stopOpen && c.active && c.halted && !resumeListed) items.push({ key: 'resume', label: 'Resume' });
+  if (stopOpen && c.active && c.halted && !resumeListed) items.push({ key: 'resume', label: resumeLabel(c.resumeAfter) });
   const has = new Set(items.map((i) => i.key));
-  for (const { id, disabled } of moved) {
+  for (const { id, label, disabled } of moved) {
     if (has.has(id) || has.has(`act:${id}`)) continue;
     has.add(`act:${id}`);
-    items.push({ key: `act:${id}`, label: ACTION_LABEL[id] || id, ...(disabled ? { disabled } : {}) });
+    items.push({ key: `act:${id}`, label: label || ACTION_LABEL[id] || id, ...(disabled ? { disabled } : {}) });
   }
   return items;
 }
@@ -158,7 +159,7 @@ export function paintFeatureActions(doc, host, c, deps, { omit = [], menu: withM
     // QA 6: the "?" is only for while Worca asks; a held run waits on you, so a plain amber dot
     paintStatusDot(dot, { ...RUN_STATES['needs-you'], state: 'needs-you', symbol: null });
     const word = doc.createElement('span'); word.className = 'shape-feature-held-word'; word.textContent = RUN_STATES['needs-you'].word;
-    const why = doc.createElement('span'); why.className = 'shape-feature-held-why'; why.textContent = `Run ${held.index} waits for you to start`;
+    const why = doc.createElement('span'); why.className = 'shape-feature-held-why'; why.textContent = held.reason ? `Run ${held.index} is held: ${held.reason}` : `Run ${held.index} waits for you to start`;
     row.append(dot, word, why);
     host.appendChild(row);
   }

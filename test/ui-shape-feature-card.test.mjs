@@ -1003,6 +1003,8 @@ test('s7 T5 (R-qa-9, D4): with neither half the line says who must act, by the o
     'a stop line and a held run': [VIEW([S(1, 'done'), S(2, 'approval', { stop: { reason: 'requirement', held: false } }), S(9, 'held')],
       asksView([A2], { halted: null, held: { index: 9, ticketId: 't9' } })), ACT],
     'Ask before each run holds run 9': [bare([S(1, 'done'), S(9, 'held')], { held: { index: 9, ticketId: 't9' } }), 'Run 9 waiting for you to start'],
+    // The clash reason shows once, on the held row (paintFeatureActions); the state line only says it is held.
+    'a clash holds run 9': [bare([S(1, 'done'), S(9, 'held')], { held: { index: 9, ticketId: 't9', reason: 'runs 2 and 3 clash in src/a.mjs' } }), 'Run 9 is held'],
     'none of these': [bare([S(1, 'done'), S(2, 'planned')]), 'Worca is finishing a run'],
   };
   for (const [name, [view, want]] of Object.entries(cases)) {
@@ -1149,4 +1151,20 @@ test('s7 T13 (R-qa-2): two views answer runs 2 and 11 for the same run and quest
     first.card.done(); second.card.done();
   }
   assert.equal(S7_PQ.r2.stop.options.find((o) => o.value === S7_PQ.r2.stop.pick).payload.decision, 'approve', 'run 2\'s pick is an approval');
+});
+
+// ── Shaper small runs slice 8 (R-ux-2): the footer's controls carry the halted run's resumeAfter ─────────────────
+test('s8: controls carry resumeAfter 4 from halted run 6, and none when the slice has none or the halted one is the Verifier', () => {
+  const six = (over = {}) => [1, 2, 3, 4, 5, 6].map((i) => SL(i, i < 4 ? 'done' : i === 4 ? 'running' : i === 5 ? 'planned' : 'paused',
+    { pipelineId: i === 5 ? null : `p${i}`, ...(i === 6 ? over : {}) }));
+  const controlsOfView = (v) => featureCardModel({ own: null, card: card(v) }).controls;
+  const halted = { index: 6, state: 'paused', waiting: [] };
+  const c = controlsOfView(VIEW(six({ resumeAfter: 4 }), { halted }));
+  assert.deepEqual([c.halted, c.target.index, c.resumeAfter], [true, 6, 4]);
+  assert.equal('resumeAfter' in controlsOfView(VIEW(six(), { halted })), false, 'the slice has none');
+  assert.equal('resumeAfter' in controlsOfView(VIEW(six({ resumeAfter: '4' }), { halted })), false, 'only a run number');
+  // The Verifier is halted, no run is: its Resume has no slice, whatever a slice carries.
+  const verifier = controlsOfView(VIEW(six({ resumeAfter: 4 }), { halted: null, verify: { state: 'halted' } }));
+  assert.equal(verifier.halted, true);
+  assert.equal('resumeAfter' in verifier, false);
 });

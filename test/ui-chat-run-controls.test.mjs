@@ -621,3 +621,29 @@ test('a Chat card built before the run groups load becomes a group card once the
   assert.match(doc.getElementById('confirm-modal').textContent, /Stop 2 runs\?/);
   built.dispose();
 });
+
+// Shaper small runs slice 7 (D16): a resume held for its turn answers {held:true} with no runId: nothing started.
+test('S7: a held /api/resume answer keeps the paused copy and restores the Resume button', async () => {
+  const ctx = await bootApp({ fetchHandler: (url) => (url === '/api/resume'
+    ? Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, held: true, pipelineId: 'cafe0007', after: 8 }) }) : null) });
+  helloRun(ctx, { runId: 'r-held', pipelineId: 'cafe0007', status: 'paused' });
+  await ctx.settle();
+  const np = ctx.window.__np;
+  const doc = ctx.window.document;
+  const copy = np.getRun('r-held');
+  const hash = ctx.window.location.hash;
+  const btn = button(ctx);
+  btn.innerHTML = '<span>Resume</span>';
+  await np.resumeRunFromCard('r-held', btn);
+  await ctx.settle();
+  assert.equal(ctx.calls.filter((c) => c.url === '/api/resume').length, 1);
+  assert.equal(np.getRun(undefined), undefined, 'no phantom "Starting" run (upsertRun is not called)');
+  assert.equal(np.getRun('r-held'), copy, 'the paused copy stays');
+  assert.equal(copy.status, 'paused');
+  assert.equal(copy.resumePending, false);
+  assert.equal(btn.innerHTML, '<span>Resume</span>');
+  assert.equal(btn.disabled, false);
+  assert.equal(btn.dataset.resumeState, undefined);
+  assert.equal(ctx.window.location.hash, hash, 'no navigation');
+  assert.equal(doc.getElementById('toasts').textContent.includes('Could not resume'), false);
+});

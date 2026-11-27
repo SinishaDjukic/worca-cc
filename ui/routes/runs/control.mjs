@@ -22,12 +22,12 @@ app.post('/api/run', rerunOfGuard, startRunHandler);
 // POST /api/answer  -> resolve a pending question for a run
 // body: { runId, id, payload }
 // ---------------------------------------------------------------------------
-app.post('/api/answer', (req, res) => {
+app.post('/api/answer', async (req, res) => {
   const { runId, id, payload } = req.body || {};
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
   if (!id) return badRequest(res, 'question id is required');
   try {
-    const out = answerRun(runId, id, payload, actorOf(req));
+    const out = await answerRun(runId, id, payload, actorOf(req));
     res.json({ ok: true, ...(out && out.held ? { held: true } : {}) });   // small runs C3: a stop's answer waits its turn
   } catch (err) {
     // Gate 3 (ask forms, spec §5): the answer was validated and refused, so the
@@ -36,6 +36,7 @@ app.post('/api/answer', (req, res) => {
     if (err && err.code === 'STOP_HELD') return res.status(409).json({ error: err.message, code: 'STOP_HELD' });
     if (err && err.code === 'STOP_ANSWERED') return res.status(409).json({ error: err.message, code: 'STOP_ANSWERED' });   // one stop, one answer
     if (err && err.code === 'STALE') return res.status(409).json({ error: err.message, code: 'STALE' });   // a stop that changed under the answer
+    if (err && err.code === 'TAKE_IN_REFUSED') return res.status(409).json({ error: err.message, code: 'TAKE_IN_REFUSED' });   // slice 3: the finished work could not be taken in
     if (err && err.code === 'INVALID_ANSWER') {
       return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
     }
@@ -45,7 +46,7 @@ app.post('/api/answer', (req, res) => {
 
 // POST /api/runs/:id/answer  -> answer the run's plan approval stop (shape-it-first D2/D10)
 // body: { id, decision: 'approve'|'revise'|'stop', feedback?, source?, edits?, approveEach?, openObjections? }.
-app.post('/api/runs/:id/answer', (req, res) => {
+app.post('/api/runs/:id/answer', async (req, res) => {
   const runId = req.params.id;
   const entry = runs.get(runId);
   if (!entry) return res.status(404).json({ error: 'unknown run' });
@@ -55,7 +56,7 @@ app.post('/api/runs/:id/answer', (req, res) => {
     return res.status(409).json({ error: 'no plan approval with that id is waiting on this run' });
   }
   try {
-    const out = answerRun(runId, id, { decision, ...(feedback !== undefined ? { feedback } : {}),
+    const out = await answerRun(runId, id, { decision, ...(feedback !== undefined ? { feedback } : {}),
       ...(perspectives !== undefined ? { perspectives } : {}),
       ...(edits !== undefined ? { edits } : {}),
       ...(approveEach !== undefined ? { approveEach } : {}),
@@ -69,6 +70,7 @@ app.post('/api/runs/:id/answer', (req, res) => {
     if (err && err.code === 'STOP_HELD') return res.status(409).json({ error: err.message, code: 'STOP_HELD' });
     if (err && err.code === 'STOP_ANSWERED') return res.status(409).json({ error: err.message, code: 'STOP_ANSWERED' });   // one stop, one answer
     if (err && err.code === 'STALE') return res.status(409).json({ error: err.message, code: 'STALE' });   // a stop that changed under the answer
+    if (err && err.code === 'TAKE_IN_REFUSED') return res.status(409).json({ error: err.message, code: 'TAKE_IN_REFUSED' });   // slice 3: the finished work could not be taken in
     if (err && err.code === 'INVALID_ANSWER') {
       return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
     }

@@ -109,6 +109,7 @@ import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { paintRunScope } from './run-scope-line.mjs';
 import { nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
+import { foldTabs } from './tab-fold.mjs';
 import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP, folderMembersOf } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
@@ -389,7 +390,7 @@ import { activeAgents, snapshotFromState } from './ask-run-card.mjs';
 import { mountRunAgents } from './shape/run-agents.mjs';
 import { mountRunFacts } from './shape/run-facts.mjs';
 import { runAgentRows, memberShortWord } from '../../src/shared/shape/run-agents.mjs';
-import { memberStatusOf } from '../../src/shared/shape/run-status.mjs';
+import { memberStatusOf, resumeAfterOf, resumeLabel } from '../../src/shared/shape/run-status.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
 import { mountNewRunAttach, newRunScope, jsonFetcher as attachFetcher } from './requirements-attach/entries.mjs';
@@ -2163,8 +2164,10 @@ function handleServerMessage(msg) {
     // Small runs C3 (D13): an open stop of this feature re-reads its slice, so an answer held in any tab draws its
     // answered line. Read the held state before the cache clears: only a stop whose held state changed repaints.
     const heldBefore = openStopsHeld(msg.id);
+    const resumeRepaint = openResumesOf(msg.id);   // slice 8 (d8-9): read before the clear, as openStopsHeld
     SLICE_INFO.clear();
     repaintHeldStops(msg.id, heldBefore);
+    resumeRepaint();
     refreshShapeFeatures(msg.id);
     void refreshGroupFeatureLock(msg.id);
     // Small runs: a member's short word (a stop opened, held or answered) comes with its group.
@@ -7222,7 +7225,7 @@ function stepDeps(ctx, pq) {
 
 /** Small runs C3 (D12, D13): a stop's extra deps. A stop is answered on every surface: the feature card, the feature
  *  page, the run page and the run side panel (`runPage` there: the head's one-column marker); with the flag off, the run
- *  page and panel (`readOnly`) draw its findings only. An answer held for another run's turn (the feature view's
+ *  page and panel (`readOnly`) draw its findings only; with it on, every surface lists them (`findings`). An answer held for another run's turn (the feature view's
  *  `stop.held`, read through the slice info) draws the one answered line. */
 function stopDeps(ctx, pq, panel) {
   if (!pq || !pq.stop) return {};
@@ -7233,11 +7236,13 @@ function stopDeps(ctx, pq, panel) {
   const info = r && r.pipelineId ? sliceInfoFor(r.pipelineId, repaint) : null;
   const held = info && info.stop && info.stop.held ? { value: info.stop.value } : null;
   const pick = typeof panel.__stopPick === 'string' ? panel.__stopPick : null;   // the person's pick across a repaint
-  return { readOnly: !small && runScreen, ...(small && runScreen ? { runPage: true } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}) };
+  return { readOnly: !small && runScreen, ...(small && runScreen ? { runPage: true } : {}), ...(small ? { findings: true } : {}), ...(held ? { held } : {}), ...(pick ? { pick } : {}),
+    ...(small && info?.stop?.refused ? { refused: info.stop.refused } : {}) };   // slice 3 (D11): why a held answer was not sent
 }
 
-/** A stop's held state as read from its slice info: '' when nothing is held. */
-const heldSigOf = (info) => (info && info.stop && info.stop.held ? `held:${info.stop.value}` : '');
+/** A stop's held state as read from its slice info (and, slice 3, a refused held answer's reason): '' when neither. */
+const heldSigOf = (info) => (info && info.stop && info.stop.held ? `held:${info.stop.value}`
+  : info && info.stop && info.stop.refused ? `refused:${info.stop.refused}` : '');
 
 /** The open stops of feature `featureId` (or whose slice is not known yet), each with its held state now. */
 function openStopsHeld(featureId) {
@@ -7250,6 +7255,23 @@ function openStopsHeld(featureId) {
     out.push({ r, pq, sig: heldSigOf(info) });
   }
   return out;
+}
+
+/** Slice 8 (d8-9): the open run page's (live, or saved detail) Resume repaint when its pipeline is a slice of feature
+ *  `featureId`, read from the cached slice info before a shape-feature frame clears it. → a function that repaints. */
+function openResumesOf(featureId) {
+  const out = [];
+  const ofFeature = (pid) => !!pid && SLICE_INFO.get(pid)?.featureId === featureId;
+  const screen = runDetailState.screen;
+  const live = screen ? runs.get(runDetailState.runId) : null;
+  if (live && ofFeature(live.pipelineId)) {
+    out.push(() => { const cur = runDetailState.screen === screen ? runs.get(runDetailState.runId) : null; if (cur) paintRdHeader(screen, cur); });
+  }
+  const h = histDetailState;
+  if (h && h.screen && h.screen.isConnected && h.record && h.data && ofFeature(h.record.id)) {
+    out.push(() => { if (histDetailState === h) paintHdLive(h.screen, h.record, h.data); });
+  }
+  return () => { for (const fn of out) { try { fn(); } catch { /* a relabel only */ } } };
 }
 
 /** Re-read each stop's slice and repaint its panels only when the held state changed (fit: a repaint must not drop
@@ -23099,6 +23121,15 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
       }
       throw new Error((data && data.error) || `HTTP ${res.status}`);
     }
+    // Shaper small runs slice 7 (D16): the resume is held for its turn; nothing started, so the paused copy stays.
+    if (data && data.held === true) {
+      showResumePending(pipelineId, false);
+      if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; }
+      // Slice 8 (d8-14): once held, the row and the run head say `after run N`; the Resume reads plain Resume.
+      const heldLbl = btn && btn.querySelector('.rd-btn-label');
+      if (heldLbl) heldLbl.textContent = resumeLabel(null);
+      return;
+    }
     upsertRun({
       runId: data.runId,
       title: r.title || pipelineId,
@@ -27314,8 +27345,12 @@ async function openFeatureShip(featureId, { opener = null, card = null } = {}) {
   const f = await safeJson(res);
   if (!res.ok || !f || !Array.isArray(f.slices) || !f.slices.length) throw new Error((f && f.error) || `HTTP ${res.status}`);
   const base = await groupShipBase(f.slices[f.slices.length - 1].pipelineId, f.projectKey);
+  // Small runs slice 4: along the real branches, the dialog counts the runs Ship lists (a carried run gets no PR).
+  const sr = f.ship && f.ship.smallRuns;
+  const listed = sr && sr.along && Array.isArray(sr.order)
+    ? sr.order.map((o) => f.slices.find((s) => s.index === o.index)).filter(Boolean) : f.slices;
   openShipItGroupModal({ kind: 'feature', id: f.id, title: f.title, projectKey: f.projectKey, base,
-    members: f.slices.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested, smallRuns: !!(f.ship && f.ship.smallRuns),
+    members: listed.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested, smallRuns: !!(f.ship && f.ship.smallRuns),
     // Feature D1: One is off for small runs, so the size hint (which may suggest One) is left out.
     hint: f.ship && f.ship.smallRuns ? '' : shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
     { opener, refocus: card ? shipCardRefocus(f.id, card) : focusGroupHead });
@@ -27997,6 +28032,12 @@ function paintHdActions(screen, record, data) {
   });
   // .hd-resume starts hidden in the template; the split follows it (as .rd-resume-split follows .rd-pause).
   if (split && resumeBtn) split.hidden = resumeBtn.hidden;
+  // Slice 8 (d8-6, d8-8): a shown, not busy Resume names the run it would wait for.
+  if (resumeBtn && !resumeBtn.hidden && resumeBtn.dataset.resumeState !== 'busy') {
+    paintResumeAfter(btnLabelEl(resumeBtn), record.id, () => {
+      if (histDetailState?.screen === screen) paintHdLive(screen, histDetailState.record, histDetailState.data);
+    });
+  }
 }
 // A live run in this tab has the last word (its frames are newer than any row). A parked one only ends, and a stop from
 // another tab or the CLI reaches only the row, so an ended row wins over it. (A resume mints a new, live run.)
@@ -28668,6 +28709,16 @@ function paintHdHeaderMeta(screen, record, data) {
 // detail template ships; fall back to the button itself for any caller that
 // passes a plain, icon-less button.
 function btnLabelEl(btn) { return btn.querySelector('.hd-btn-label') || btn; }
+/** Shaper small runs slice 8 (d8-6, d8-8): a paused run's Resume label from its slice info's `resumeAfter` (the server's
+ *  preview). While the info is unknown (loading, or a failed /slice), a `Resume…` label is kept and any other becomes
+ *  `Resume`. Written only when it differs. Flag off, no pipeline or no label: nothing. */
+function paintResumeAfter(labelEl, pipelineId, onLoad) {
+  if (!labelEl || !pipelineId || !flagOn('shaperSmallRuns')) return;
+  const info = sliceInfoFor(pipelineId, onLoad);
+  const now = labelEl.textContent;
+  const text = info ? resumeLabel(info.resumeAfter) : now.startsWith('Resume') ? now : resumeLabel(null);
+  if (now !== text) labelEl.textContent = text;
+}
 
 // The POST /api/resume -> upsert -> seed-log -> land-on-running recipe, shared by
 // the detail header and the cost-override path.
@@ -28735,6 +28786,13 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
         return;
       }
       throw new Error((data && data.error) || `HTTP ${res.status}`);
+    }
+    // Shaper small runs slice 7 (D16): the resume is held for its turn; nothing started, so the paused copy stays.
+    if (data && data.held === true) {
+      showResumePending(p.id, false);
+      // Slice 8 (d8-14): once held, the row and the run head say `after run N`; the Resume reads plain Resume.
+      btn.disabled = false; labelEl.textContent = resumeLabel(null); delete btn.dataset.resumeState;
+      return;
     }
     upsertRun({
       runId: data.runId, title: p.title || p.id, projectDir: p.projectDir || projectDir || '',
@@ -29739,12 +29797,15 @@ function detailTabsOf(screen) {
 //   initial   — (ctx) => key for the initially active tab; first visible otherwise
 //   buildArgs — (ctx) => extra args appended after `sec`, evaluated at ACTIVATION
 //               time so a builder sees late-corrected context (History's record)
-//   overflow  — { row: string[] }, opt-in. The keys in `row` always sit in the row;
-//               when two or more of the OTHER tabs are shown they go under a "More"
-//               menu, and the open one joins the row just before More. A table entry
+//   overflow  — { row: string[] }, opt-in. The keys in `row` are the default row; when
+//               two or more of the OTHER tabs are shown they go under a "More" menu. A
+//               row that does not fit the bar folds into it too (foldTabs: a lone other
+//               tab first, then the row from the right; never Overview or the open tab),
+//               and the open one under More joins the row just before it. A table entry
 //               may carry `menuIcon` (an icons.mjs name) for its menu row. The screen's
-//               state `relayout()` recomputes this after a level, git or visibility
-//               change; without `overflow` it does nothing.
+//               state `relayout()` recomputes this after a level, git, visibility or
+//               size change (a ResizeObserver on the bar and its buttons, released by
+//               `dispose()`); without `overflow` it does nothing.
 function initDetailTabs(screen, tabs, ctx, opts) {
   const {
     tabsSel, secsSel, tabClass, secClass, badgeClass, idPrefix,
@@ -29754,6 +29815,7 @@ function initDetailTabs(screen, tabs, ctx, opts) {
   const secs = screen.querySelector(secsSel);
   if (!bar || !secs) return;   // a screen whose template lacks the two hosts
   detailTabState.get(screen)?.menu?.close();   // never a menu left anchored to a button this rebuild drops
+  detailTabState.get(screen)?.dispose();       // nor an observer left watching those buttons
   bar.innerHTML = '';
   bar.classList.add('tabs');
   // The run card lives in the Overview section (adoptRunCard): park it back at the screen's top level, so the
@@ -29838,38 +29900,75 @@ function initDetailTabs(screen, tabs, ctx, opts) {
     more.addEventListener('click', () => {
       // Read at open time: the shown candidates, their live badge counts and the open one.
       state.menu = toggleMenu({ doc: document, anchor: more, align: 'end', label: 'More tabs',
-        items: overflowCells().filter(([k]) => inBar(k)).map(([, { tab, btn }]) => ({
+        items: [...cells].filter(([k, c]) => inBar(k) && c.btn.hasAttribute('data-overflow')).map(([, { tab, btn }]) => ({
           label: tab.label, icon: tab.menuIcon, hint: btn.querySelector(`.${badgeClass}`)?.textContent,
           checked: btn.classList.contains('active'),
           onSelect: () => { btn.click(); btn.focus({ preventScroll: true }); },
         })) });
     });
   }
-  const state = { cells, activate, relayout, menu: null };
+  const state = { cells, activate, relayout, dispose, menu: null };
   detailTabState.set(screen, state);
-  const overflowCells = () => [...cells].filter(([k]) => !overflow.row.includes(k));
+  let observer = null;
+  let cancelFrame = null;
   // A tab the interface mode and git show; `inBar` also drops one its page hid while open (the merged Agents place).
   function showsTab(k) { return cells.has(k) && levelAtLeast(cells.get(k).tab.level || 'simple') && (gitOn() || !cells.get(k).tab.needsGit); }
   function inBar(k) { return showsTab(k) && !cells.get(k).btn.hidden; }
-  // The row's order: its own tabs, the overflow ones (CSS draws only the open one), then More. With fewer than two
-  // candidates to show there is no More, and every tab keeps its table place.
+  // Which tabs go under More at the bar's width now. A folded tab is display:none and has no width, so a measured bar
+  // is unfolded (and given its More button) while the natural widths are read: relayout folds it again in the same
+  // task, before anything paints. The answer depends on those widths only, never on the fold the bar had.
+  function measureFold() {
+    const css = window.getComputedStyle(bar);
+    const px = (v) => parseFloat(v) || 0;
+    const avail = bar.clientWidth - px(css.paddingLeft) - px(css.paddingRight);
+    if (avail > 0) {
+      for (const { btn } of cells.values()) btn.removeAttribute('data-overflow');
+      if (!more.isConnected) bar.append(more);
+    }
+    const width = (node) => node.getBoundingClientRect().width;
+    const shown = (inRow) => [...cells].filter(([k]) => overflow.row.includes(k) === inRow && inBar(k))
+      .map(([key, { btn }]) => ({ key, width: width(btn) }));
+    const active = [...cells.keys()].find((k) => cells.get(k).btn.classList.contains('active'));
+    return foldTabs({ row: shown(true), rest: shown(false), active, avail, gap: px(css.columnGap), more: width(more) });
+  }
+  // The row's order: the tabs in the row, the ones under More (CSS draws only the open one), then More. With nothing
+  // under it there is no More, and every tab keeps its table place.
   function relayout() {
     if (!overflow) return;
-    const rest = overflowCells();
-    const use = rest.filter(([k]) => inBar(k)).length >= 2;
-    for (const [, { btn }] of rest) btn.toggleAttribute('data-overflow', use);
+    const had = document.activeElement;
+    const fold = measureFold();
+    for (const [k, { btn }] of cells) btn.toggleAttribute('data-overflow', overflow.row.includes(k) ? fold.extra.includes(k) : fold.rest);
+    const use = fold.rest || fold.extra.length > 0;
     const all = [...cells.values()].map((c) => c.btn);
     const over = (b) => b.hasAttribute('data-overflow');
     const order = use ? [...all.filter((b) => !over(b)), ...all.filter(over), more] : all;
-    const had = document.activeElement;
     const gone = !use && (had === more || !!state.menu?.el.contains(had));   // the focus is on More or in its menu
     if (!use) { state.menu?.close(); more.remove(); }
     // Move only when the order changed: moving a focused button drops its focus.
     if (order.length !== bar.children.length || order.some((n, i) => n !== bar.children[i])) bar.append(...order);
-    if (had && had !== document.activeElement && (gone || order.includes(had))) {
+    const folded = all.includes(had) && over(had) && !had.classList.contains('active');   // a focused tab just left the row
+    if (folded) more.focus({ preventScroll: true });
+    else if (had && had !== document.activeElement && (gone || order.includes(had))) {
       const to = order.includes(had) ? had : bar.querySelector('[role="tab"][aria-selected="true"]');
       to?.focus({ preventScroll: true });
     }
+  }
+  // A new size, re-fitted once per frame. A screen dropped without a rebuild lets go of its observer.
+  function schedule() {
+    if (cancelFrame) return;
+    const run = () => { cancelFrame = null; if (bar.isConnected) relayout(); else dispose(); };
+    if (typeof window.requestAnimationFrame === 'function') {
+      const id = window.requestAnimationFrame(run);
+      cancelFrame = () => window.cancelAnimationFrame(id);
+    } else {
+      const id = setTimeout(run, 16);
+      cancelFrame = () => clearTimeout(id);
+    }
+  }
+  function dispose() {
+    observer?.disconnect();
+    cancelFrame?.();
+    observer = cancelFrame = null;
   }
   if (!cells.size) return;
   // The opening tab is always one the interface mode shows: History prefers Diff and Running the
@@ -29877,6 +29976,12 @@ function initDetailTabs(screen, tabs, ctx, opts) {
   const want = initial ? initial(ctx) : null;
   const first = [...cells.keys()].find(showsTab);
   activate(showsTab(want) ? want : (first || cells.keys().next().value));
+  // The buttons too: a badge count that grows takes room without resizing the bar. Through `window.` like the file's
+  // other ResizeObserver sites.
+  if (overflow && typeof window.ResizeObserver === 'function') {
+    observer = new window.ResizeObserver(schedule);
+    for (const node of [bar, ...[...cells.values()].map((c) => c.btn), more]) observer.observe(node);
+  }
 }
 // A mode change can hide the tab that is open. Its pill would vanish with the section still up, so
 // the first tab the new mode shows takes over. (A deep link never lands here: tabs have no route.)
@@ -29918,10 +30023,10 @@ function hdAwayOthers(data) {
   return all.filter((d) => d && (d.choice == null || !['clarify', 'questions', 'form'].includes(d.kind)));
 }
 
-/** The run pages' tabs that stay in the row (initDetailTabs `overflow`); the others go under "More". `qa` is the page's
- *  own Q&A key. A run without a project has no Diff: its Artifacts, the result, keeps that place in the row. */
-function runTabRow(qa, noProject) {
-  return { row: ['overview', 'task', 'diff', 'changes', qa, 'logs', ...(noProject ? ['artifacts'] : [])] };
+/** The run pages' row tabs (initDetailTabs `overflow`) in priority order; the others go under "More". At a narrow
+ *  width the row's right-most tabs fold in too (foldTabs). `qa` is the page's own Q&A key. */
+function runTabRow(qa) {
+  return { row: ['overview', 'task', 'diff', 'changes', 'artifacts', qa, 'logs'] };
 }
 
 const HD_TABS = [
@@ -29999,7 +30104,7 @@ function initHdTabs(screen, record, data) {
     tabsSel: '.hd-tabs', secsSel: '.hd-sections',
     tabClass: 'hd-tab', secClass: 'hd-sec', badgeClass: 'hd-tab-badge',
     idPrefix: 'hd',
-    overflow: runTabRow('clarify', noProject),
+    overflow: runTabRow('clarify'),
     // hdCurrentRecord(), NOT the captured `record`: build() runs at CLICK time,
     // and refreshHdFromRow REPLACES histDetailState.record (deep link, and every
     // pipelines-changed forced reload). Closing over the load-time object is
@@ -32129,7 +32234,7 @@ function initRdTabs(screen, r) {
     secClass: 'rd-sec',
     badgeClass: 'rd-tab-badge',
     idPrefix: 'rd',
-    overflow: runTabRow('qa', noProject),
+    overflow: runTabRow('qa'),
   });
 }
 
@@ -36634,6 +36739,12 @@ function paintGroupPageNow() {
     onTab: (t) => { location.hash = t === 'runs' ? base : `${base}/${t}`; },
     mountQuestion: (slot, mb) => paintGroupQuestion(slot, groupAsker(slot, row, mb)),
     answerLabel: () => answerLabelOf(host.__gp.querySelector('.gpage-question')),
+    // Slice 11 (d11-2): the footer Resume acts on the group's current member, so it reads that member's slice preview.
+    resumeLabel: () => {
+      if (route !== 'feature') return '';
+      const cur = [...(row.planning ? [row.planning] : []), ...row.members].find((mb) => mb.model === row.model.current) || null;
+      return resumeLabel(resumeAfterOf(GROUP_PAGE.feature && GROUP_PAGE.feature.slices, cur && cur.pipelineId));
+    },
     // Mount once per feature: paintGroupPageNow runs on every run frame, and a remount would refetch and rebuild the
     // Shaper view each time.
     // D10/D12: the group model's footer owns Pause / Stop / Resume, so the Shaper view omits what it already shows; a
@@ -36704,7 +36815,9 @@ function groupFeatureSig(f) {
   return JSON.stringify([sr ? [...(sr.owned || []), ...(sr.confirmed || [])].map((e) => [e.id, e.shown ? e.shown.text : '']) : null,
     sr && sr.care ? sr.care.line : '', sr ? [shipWaitText(f), !!sr.blocked, sr.reason || '', (sr.order || []).length] : null, (f && f.log) || [],
     // Slice 7: what the state line and the need count read (only a view with `asks`: flag on, marked, active).
-    Array.isArray(f && f.asks) ? [f.status, f.asks, (f.slices || []).map((x) => [x.index, x.state, x.nextTurn === true, x.stop || null, !!x.cannotStart]), f.held ? f.held.index : null] : null]);
+    Array.isArray(f && f.asks) ? [f.status, f.asks, (f.slices || []).map((x) => [x.index, x.state, x.nextTurn === true, x.stop || null, !!x.cannotStart,
+      // Slice 8 (d8-10): a resume held or released, or the Resume's preview, keeps the state `paused`.
+      x.heldResume ? x.heldResume.after : null, Number.isInteger(x.resumeAfter) ? x.resumeAfter : null]), f.held ? [f.held.index, f.held.reason || ''] : null] : null]);
 }
 /** Every feature fetch that may reach GROUP_PAGE takes a rising ticket before it is sent; noteGroupFeatureLock drops an
  *  answer older than the last one applied, so a slow fetch never paints a stale feature over a newer one. */
@@ -40919,7 +41032,13 @@ function paintRdHeader(screen, r) {
   // label and disabled state exactly as the busy path set them.
   const lbl = pauseBtn.querySelector('.rd-btn-label');
   const busy = !lbl;
-  if (lbl) lbl.textContent = paused ? 'Resume' : 'Pause';
+  // Slice 8 (d8-6): a paused shape run's Resume names the run it would wait for (paintResumeAfter).
+  if (lbl && paused && flagOn('shaperSmallRuns') && r.pipelineId) {
+    paintResumeAfter(lbl, r.pipelineId, () => {
+      const cur = runDetailState.screen === screen ? runs.get(runDetailState.runId) : null;
+      if (cur && cur.pipelineId === r.pipelineId) paintRdHeader(screen, cur);
+    });
+  } else if (lbl) lbl.textContent = paused ? 'Resume' : 'Pause';
   // A total-budget pause is 403'd by the server until the window resets or the
   // limit is raised, so Resume is disabled up front.
   const totalBlocked = paused && r.pauseReason === 'cost_total' && budgetState.budget?.blocked;
