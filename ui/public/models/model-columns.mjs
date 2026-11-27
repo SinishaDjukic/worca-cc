@@ -416,3 +416,42 @@ export function openModelColumns({ doc, win, anchor, catalog, value, defaultEngi
   draw();
   return { close: () => shell.close(false) };
 }
+
+/** button.mdl-pick: the columns picker's trigger with a <select>'s contract. `value` = model id ('' = inherit),
+ *  `data-engine` = the harness a pick names ('' = soft), one bubbling `change` per pick (fired after both are set and
+ *  the focus is back on it). It draws itself from its value and again after each pick. A click opens
+ *  openModelColumns on the value the button holds at that moment. */
+export function modelTrigger({ doc, win, value, catalog, label, cls = '', defaultEngine = 'claude',
+  engines = () => null, inheritHint = '', onAddModel = null, refocus = () => null, disabled = false, title = '' }) {
+  const btn = make(doc, 'button', 'mdl-pick');
+  btn.type = 'button';
+  btn.setAttribute('aria-haspopup', 'dialog');
+  btn.setAttribute('aria-expanded', 'false');
+  const held = columnsValue(value);
+  btn.value = held ? held.model : '';
+  btn.dataset.engine = held ? str(held.engine) : '';
+  const current = () => columnsValue({ model: btn.value, engine: btn.dataset.engine });
+  function paint() {
+    const lbl = columnsLabel(current(), catalog);
+    btn.className = ['mdl-pick', cls, lbl.inherit ? 'inherit' : ''].filter(Boolean).join(' ');
+    btn.replaceChildren();
+    if (lbl.engine) btn.append(markTile(doc, { kind: 'harness', key: lbl.engine, size: 'sm', label: engineLabel(lbl.engine) }));
+    btn.append(make(doc, 'span', 'mdl-pick-text', lbl.text), icon(doc, 'chevron-down', 14));
+    btn.setAttribute('aria-label', `${label}: ${lbl.text}${lbl.engine ? `, on ${engineLabel(lbl.engine)}` : ''}`);
+  }
+  paint();
+  btn.disabled = !!disabled;
+  if (title) btn.title = title;
+  btn.addEventListener('click', () => {
+    if (btn.disabled) return;
+    openModelColumns({ doc, win, anchor: btn, catalog, value: current(), defaultEngine, engines, inheritHint, label,
+      onAddModel, refocus,
+      onPick: (next) => {
+        btn.value = next ? next.model : '';
+        btn.dataset.engine = (next && next.engine) || '';
+        paint();
+        btn.dispatchEvent(new (win || doc.defaultView).Event('change', { bubbles: true }));
+      } });
+  });
+  return btn;
+}

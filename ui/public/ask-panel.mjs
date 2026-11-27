@@ -27,7 +27,7 @@ import { lockEngineOptions } from './engine-locks.mjs';
 import { execEnvList, execEnvLabel, execEnvKnown } from './exec-envs.mjs';
 import { remoteRefusesDefault } from '../../src/shared/exec-env.mjs';
 import { runsOn, modelGroups, connectionOf, connectionLabel, effortsOn, HARNESS_EFFORTS } from '../../src/shared/connections.mjs';
-import { openModelColumns, columnsValue, columnsLabel } from './models/model-columns.mjs';
+import { modelTrigger, columnsValue } from './models/model-columns.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
@@ -4604,30 +4604,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  soft). `soft`: the harness the row's inherit and soft picks run on; `find()` looks the same row's trigger up again
    *  after a repaint. A pick sets value and data-engine and fires `change`. */
   function laneModelTrigger(lane, c, label, { soft, inheritHint, disabled, title = '', find }) {
-    const value = columnsValue(c);
-    const lbl = columnsLabel(value, lane.allModels);
-    const btn = make('button', `mdl-pick ask-rp-model${lbl.inherit ? ' inherit' : ''}`);
-    btn.type = 'button';
-    btn.value = value ? value.model : '';
-    btn.dataset.engine = lbl.engine;
-    btn.setAttribute('aria-haspopup', 'dialog');
-    btn.setAttribute('aria-expanded', 'false');
-    btn.setAttribute('aria-label', `Model for ${label}: ${lbl.text}${lbl.engine ? `, on ${engineLabel(lbl.engine)}` : ''}`);
-    if (lbl.engine) btn.append(markTile(doc, { kind: 'harness', key: lbl.engine, size: 'sm', label: engineLabel(lbl.engine) }));
-    btn.append(make('span', 'mdl-pick-text', lbl.text), icon(doc, 'chevron-down', 14));
-    btn.disabled = !!disabled;
-    if (title) btn.title = title;
-    btn.addEventListener('click', () => {
-      if (btn.disabled) return;
-      openModelColumns({ doc, win, anchor: btn, catalog: lane.allModels, value, defaultEngine: soft, engines: engineRows, inheritHint,
-        label: `Model for ${label}`, onAddModel: openAddModel ? (e) => openAddModel(e) : null, refocus: find,
-        onPick: (next) => {
-          btn.value = next ? next.model : '';
-          btn.dataset.engine = (next && next.engine) || '';
-          btn.dispatchEvent(new win.Event('change', { bubbles: true }));
-        } });
-    });
-    return btn;
+    return modelTrigger({ doc, win, value: columnsValue(c), catalog: lane.allModels, label: `Model for ${label}`, cls: 'ask-rp-model',
+      defaultEngine: soft, engines: engineRows, inheritHint, onAddModel: openAddModel ? (e) => openAddModel(e) : null, refocus: find,
+      disabled, title });
   }
   /** The trigger of the lane tile for `nodeId` (and `roleKey`, a role row), by data attributes, never a built selector. */
   const tileTrigger = (laneSec, nodeId, roleKey = '') => {
