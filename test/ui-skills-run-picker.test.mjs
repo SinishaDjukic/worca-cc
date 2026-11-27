@@ -2,9 +2,10 @@
 // app.js in jsdom (skills registry design §6 board 7, §4.5): the field is titled Sets, shows for a
 // target whose sets hold only skills, counts skills in its label, prunes stale skill keys, and an
 // unticked skill reaches the run body's mcpOptOut. Harness: test/helpers/run-page-boot.mjs.
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootApp } from './helpers/run-page-boot.mjs';
+import { runPageOn } from './helpers/run-page-boot.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
 
 const PROJECT = '/Users/me/dev/billing';
 const json = (body, status = 200) => Promise.resolve({ ok: status < 400, status, json: async () => body });
@@ -17,12 +18,17 @@ const PREVIEW = {
 };
 const SKILLS_ONLY = { ...PREVIEW, copies: [], started: 0, skills: { ...PREVIEW.skills, mounted: [skill('deploy-checklist')] } };
 
+// The project list is fetched when app.js loads, so its answer is the file's.
+const app = useSharedApp({ before, beforeEach, after }, {
+  fetchHandler: (u) => (u.includes('/api/projects') ? json({ projects: [{ name: 'billing', path: PROJECT, exists: true, key: 'billing-00000001' }] }) : null),
+});
+const bootApp = runPageOn(app);
+
 async function openNew(first) {
   let current = first;
   const ctx = await bootApp({
     fetchHandler: (u) => {
       if (u === '/api/mcp/preview') return json(current);
-      if (u.includes('/api/projects')) return json({ projects: [{ name: 'billing', path: PROJECT, exists: true, key: 'billing-00000001' }] });
       if (u === '/api/run') return json({ runId: 'r1' });
       return null;
     },

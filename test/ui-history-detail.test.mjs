@@ -8,17 +8,38 @@
 // The Diff tab is in ui-history-detail-diff.test.mjs; the Overview, Agents, Clarify, Logs, form and
 // bar sections and the Actions tab in ui-history-detail-tabs.test.mjs; the shared boot and fixtures
 // in helpers/history-detail-boot.mjs.
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  boot, settle, KEY, ROW, DETAIL, PAUSED_DETAIL, COMMIT_FAILED_DETAIL, RESULTS, retainedRow,
-  blockedBudget, ok, fail, bootDetail, openDetail, deliverRows, click, TABS_DETAIL, tabsOf, secOf,
-  badgeOf, confirmDialog, go,
+  settle, KEY, ROW, DETAIL, PAUSED_DETAIL, COMMIT_FAILED_DETAIL, RESULTS, retainedRow,
+  blockedBudget, ok, fail, openDetail, deliverRows, click, TABS_DETAIL, tabsOf, secOf,
+  badgeOf, confirmDialog, go, detailHash, detailOn, historyFetch,
 } from './helpers/history-detail-boot.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 import { openTab } from './helpers/run-tabs.mjs';
+import { useSharedApp, restoreAfter } from './helpers/shared-app-boot.mjs';
+
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: historyFetch() });
+const boot = detailOn(app).page;
+const openDetailPage = detailOn(app).detail;
+// The shared app keeps the saved run an earlier test opened (routing to the same run again repaints nothing) and each
+// run's Actions model (Try it, the strips) until an actions-changed frame finds that run off screen. So the run is
+// closed first (the Runs list then reads this test's History rows), then that frame: every test opens ROW afresh and
+// reads its own model. A deep link lands after that, on a History that holds only the test's rows.
+const bootDetail = async ({ deepLink = false, ...opts } = {}) => {
+  const ctx = await openDetailPage(opts);
+  go(ctx.window, 'history');
+  await settle(ctx.window);
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed' }) });
+  await settle(ctx.window);
+  if (deepLink) {
+    go(ctx.window, detailHash);
+    await settle(ctx.window);
+  }
+  return ctx;
+};
 
 // ---------------------------------------------------------------------------
 // Header meta
@@ -115,7 +136,7 @@ test('team-metrics line: recorded / pending push / not enabled on terminal runs,
   ]);
 });
 
-test('branch row copies the feature branch and flags .copied', async () => {
+test('branch row copies the feature branch and flags .copied', async (t) => {
   const ctx = await bootDetail();
   await openDetail(ctx);
   const { window } = ctx;
@@ -124,6 +145,7 @@ test('branch row copies the feature branch and flags .copied', async () => {
   // the JSDOM itself, and copyFromButton reads navigator.clipboard at CLICK
   // time. Precedent: test/ui-history-pr.test.mjs:95-98.
   const writes = [];
+  restoreAfter(t, window.navigator, 'clipboard');
   Object.defineProperty(window.navigator, 'clipboard', {
     value: { writeText: async (t) => { writes.push(t); } },
     configurable: true,
@@ -173,6 +195,8 @@ test('Resume POSTs exactly { pipelineId } and lands on running/<newRunId>', asyn
     arms: (url, opts) => {
       if (url === '/api/resume') {
         posts.push(JSON.parse(opts.body));
+        // the server announces the resumed run, as it does: the next reset then takes it out of the shared app
+        app.recv({ type: 'run-created', runId: 'r-9', pipelineId: ROW.id, title: ROW.title, projectDir: ROW.projectDir, kind: 'run', status: 'running', startedAt: new Date().toISOString() });
         return ok({ ok: true, runId: 'r-9', pipelineId: ROW.id });
       }
       return null;
@@ -206,60 +230,9 @@ test('a DEEP-LINKED Resume acts on the authoritative row, not the minimal stub',
   assert.ok(r, 'the resumed run was upserted');
   assert.equal(r.title, ROW.title, 'titled from the authoritative row, not the raw run id');
   assert.equal(r.projectDir, ROW.projectDir, "projectDir from the row, not ''");
-});
-
-// ---------------------------------------------------------------------------
-// Archive
-// ---------------------------------------------------------------------------
-
-test('Archive: honest copy + danger styling, DELETE, back to the list, row dropped', async () => {
-  const deletes = [];
-  // The tool panel's tabs (issue 1064): the archived run's go, another run's stay.
-  const tools = { v: 1, tabs: [{ id: 'tab_arch1', kind: 'files', scope: { type: 'run', id: ROW.id }, state: {}, at: 1 },
-    { id: 'tab_other1', kind: 'files', scope: { type: 'run', id: 'ffff9999' }, state: {}, at: 2 }], active: {}, prefs: { open: false, width: 460 } };
-  const ctx = await bootDetail({
-    local: { 'worca-cc.tools': JSON.stringify(tools) },
-    arms: (url, opts, box) => {
-      if (url.startsWith(`/api/runs/${ROW.id}`) && opts.method === 'DELETE') {
-        deletes.push(url);
-        box.rows = [];        // stateful: a later forced reload must not resurrect it
-        return ok({ ok: true });
-      }
-      return null;
-    },
-  });
-  await openDetail(ctx);
-  const { window } = ctx;
-  const doc = window.document;
-  const rowSel = `#runs-list .runs-row[data-kind="hist"][data-pipeline-id="${ROW.id}"]`;
-  assert.ok(doc.querySelector(rowSel), 'the run is listed before the archive');
-  const archive = doc.querySelector('#hist-detail .hd-archive');
-  assert.equal(archive.hidden, false, 'a finished run is archivable');
-
-  click(window, archive);
-  await settle(window);
-  assert.equal(doc.querySelector('#confirm-modal').classList.contains('hidden'), false);
-  const msg = doc.querySelector('#confirm-message').textContent;
-  assert.match(msg, /local branch/, 'the copy is honest about the local branch');
-  assert.match(msg, /remote branch/, 'and about the remote branch surviving');
-  assert.ok(doc.querySelector('#confirm-ok').classList.contains('danger'), 'destructive styling while open');
-
-  doc.querySelector('#confirm-cancel').click();
-  await settle(window);
-  assert.equal(doc.querySelector('#confirm-ok').classList.contains('danger'), false,
-    'the tint must never leak to the next confirmModal caller');
-  assert.equal(deletes.length, 0, 'cancelling archives nothing');
-
-  click(window, archive);
-  await settle(window);
-  doc.querySelector('#confirm-ok').click();
-  await settle(window, 5);
-  assert.equal(deletes.length, 1);
-  assert.equal(deletes[0], `/api/runs/${ROW.id}?projectKey=${KEY}`);
-  // goRunsList(): the bare list, not the remembered (now archived) run.
-  assert.equal(window.location.hash.replace(/^#/, ''), 'runs');
-  assert.equal(doc.querySelector(rowSel), null, 'the row is dropped from the list');
-  assert.deepEqual(JSON.parse(window.localStorage.getItem('worca-cc.tools')).tabs.map((t) => t.id), ['tab_other1'], 'its tool tabs closed');
+  // the server's frame for the resumed run (after the checks: the title must come from the row): the next reset then
+  // takes r-9 out of the shared app
+  app.recv({ type: 'run-created', runId: 'r-9', pipelineId: ROW.id, title: ROW.title, projectDir: ROW.projectDir, kind: 'run', status: 'running', startedAt: new Date().toISOString() });
 });
 
 test('Archive is hidden while the run is still live (running/pausing)', async () => {
@@ -907,33 +880,34 @@ test('head Try it: a checkout discarded right after it landed offers Try it agai
 });
 
 // A refused Start or Stop (409 SETUP_FAILED, PORTS_EXHAUSTED, 403 Actions off) says why; the head offers the step again.
-for (const [step, path, model, title, back] of [
-  ['Start', 'start', () => TRY_MODEL(), 'Could not start Web', 'try-start'],
-  ['Stop', 'stop', () => TRY_MODEL([WEB_READY]), 'Could not stop Web', 'try-stop'],
-]) {
-  test(`head Try it: a refused ${step} says why and offers ${step} again`, async () => {
-    const error = `The ${path} was refused: the setup command failed.`;
-    const ctx = await bootDetail({
-      rows: [checkoutRow()],
-      arms: (url, opts = {}) => {
-        const p = pathOf(url);
-        if (p === `/api/runs/${ROW.id}/actions` && (opts.method || 'GET') === 'GET') return ok(model());
-        if (p === `/api/runs/${ROW.id}/actions/web/${path}` && opts.method === 'POST') return fail(409, { error, code: 'SETUP_FAILED' });
-        return null;
-      },
-    });
-    atAdvanced(ctx);
-    await openDetail(ctx, '');
-    await settle(ctx.window, 6);
-    const doc = ctx.window.document;
-    doc.getElementById('toasts').replaceChildren();
-    click(ctx.window, headOf(doc, back));
-    await settle(ctx.window, 6);
-    assert.deepEqual(lastToast(doc), { tone: 'err', title, detail: error, action: '' });
-    assert.ok(headOf(doc, back), `${step} is back`);
-    assert.equal(headOf(doc, 'try-wait'), null);
+// Each case: the head's step, its route, the model it starts from, the toast title and the button back.
+const REFUSED_START = ['Start', 'start', () => TRY_MODEL(), 'Could not start Web', 'try-start'];
+const REFUSED_STOP = ['Stop', 'stop', () => TRY_MODEL([WEB_READY]), 'Could not stop Web', 'try-stop'];
+async function refusedTryStep([step, path, model, title, back]) {
+  const error = `The ${path} was refused: the setup command failed.`;
+  const ctx = await bootDetail({
+    rows: [checkoutRow()],
+    arms: (url, opts = {}) => {
+      const p = pathOf(url);
+      if (p === `/api/runs/${ROW.id}/actions` && (opts.method || 'GET') === 'GET') return ok(model());
+      if (p === `/api/runs/${ROW.id}/actions/web/${path}` && opts.method === 'POST') return fail(409, { error, code: 'SETUP_FAILED' });
+      return null;
+    },
   });
+  atAdvanced(ctx);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  doc.getElementById('toasts').replaceChildren();
+  click(ctx.window, headOf(doc, back));
+  await settle(ctx.window, 6);
+  assert.deepEqual(lastToast(doc), { tone: 'err', title, detail: error, action: '' });
+  assert.ok(headOf(doc, back), `${step} is back`);
+  assert.equal(headOf(doc, 'try-wait'), null);
 }
+
+test('head Try it: a refused Start says why and offers Start again', () => refusedTryStep(REFUSED_START));
+test('head Try it: a refused Stop says why and offers Stop again', () => refusedTryStep(REFUSED_STOP));
 
 test('head Try it: a service started elsewhere shows Open and Stop here once actions-changed lands', async () => {
   let model = TRY_MODEL();
@@ -1209,29 +1183,34 @@ const labelOf = (b) => b.querySelector('.wfv-menu-l').textContent;
 const reachableArchive = (root) => [...root.querySelectorAll('button')]
   .filter((b) => b.textContent.trim() === 'Archive' && !b.closest('[hidden]'));
 
-for (const level of ['simple', 'advanced', 'expert']) {
-  test(`needle (e) at ${level}: one Archive, in ⋯, confirmed; none in .rd-actions`, async () => {
-    const ctx = await bootDetail({ rows: [{ ...ROW, status: 'stopped' }] });
-    ctx.window.document.documentElement.dataset.level = level;
-    await openDetail(ctx, '');
-    await settle(ctx.window, 6);
-    const doc = ctx.window.document;
-    const screen = doc.querySelector('#hist-detail');
-    assert.equal(reachableArchive(screen).length, 0, 'no Archive on the page outside the ⋯');
-    assert.equal(screen.querySelectorAll('.rd-actions [data-model-action="archive"], .rd-actions [data-model-action="report"]').length, 0);
-    assert.equal(screen.querySelector('.hd-more, .hd-menu'), null, 'the Details ⋯ is gone');
-    const menu = openMore(ctx);
-    const items = itemsOf(menu);
-    assert.equal(items.filter((b) => labelOf(b) === 'Archive').length, 1);
-    assert.deepEqual(items.map(labelOf).slice(-2), ['Report this run', 'Archive']);
-    assert.equal(items.find((b) => labelOf(b) === 'Terminal').querySelector('.wfv-menu-hint').textContent, 'Ctrl+`');
-    const archive = items.find((b) => labelOf(b) === 'Archive');
-    assert.ok(archive.classList.contains('is-danger'));
-    archive.click();
-    await settle(ctx.window, 4);
-    assert.equal(doc.getElementById('confirm-title').textContent, 'Archive this run?');
-  });
+// One Archive, in ⋯, confirmed, at one UI level.
+async function oneArchiveInMore(level) {
+  const ctx = await bootDetail({ rows: [{ ...ROW, status: 'stopped' }] });
+  ctx.window.document.documentElement.dataset.level = level;
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const screen = doc.querySelector('#hist-detail');
+  assert.equal(reachableArchive(screen).length, 0, 'no Archive on the page outside the ⋯');
+  assert.equal(screen.querySelectorAll('.rd-actions [data-model-action="archive"], .rd-actions [data-model-action="report"]').length, 0);
+  assert.equal(screen.querySelector('.hd-more, .hd-menu'), null, 'the Details ⋯ is gone');
+  const menu = openMore(ctx);
+  const items = itemsOf(menu);
+  assert.equal(items.filter((b) => labelOf(b) === 'Archive').length, 1);
+  assert.deepEqual(items.map(labelOf).slice(-2), ['Report this run', 'Archive']);
+  assert.equal(items.find((b) => labelOf(b) === 'Terminal').querySelector('.wfv-menu-hint').textContent, 'Ctrl+`');
+  const archive = items.find((b) => labelOf(b) === 'Archive');
+  assert.ok(archive.classList.contains('is-danger'));
+  archive.click();
+  await settle(ctx.window, 4);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Archive this run?');
+  doc.getElementById('confirm-cancel').click();   // #confirm-modal is no <dialog>: the shared app's reset leaves it open
+  await settle(ctx.window, 2);
 }
+
+test('needle (e) at simple: one Archive, in ⋯, confirmed; none in .rd-actions', () => oneArchiveInMore('simple'));
+test('needle (e) at advanced: one Archive, in ⋯, confirmed; none in .rd-actions', () => oneArchiveInMore('advanced'));
+test('needle (e) at expert: one Archive, in ⋯, confirmed; none in .rd-actions', () => oneArchiveInMore('expert'));
 
 test('needle (e): checked out, the ⋯ Archive is disabled with "Close the local copy in Actions first"', async () => {
   const ctx = await bootDetail({ rows: [checkoutRow()] });

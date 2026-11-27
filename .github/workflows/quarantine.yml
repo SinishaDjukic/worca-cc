@@ -1,0 +1,174 @@
+name: Quarantined tests
+
+# The quarantine list (test/quarantine.json, tools/quarantine.mjs): distrusted test files, Playwright specs and CDP
+# proofs leave their blocking CI jobs and run here instead. This workflow never blocks a merge: it is not in ci.yml,
+# so the `CI gate` job does not need it, and a failing entry leaves it green (only a broken tool, exit 2, turns it
+# red). Its job summary shows each entry's result and its pass rate over the last 30 recorded runs, carried from run
+# to run in the `quarantine-history` artifact. Leaving quarantine is a manual PR that meets the entry's exitCondition.
+#
+# No concurrency group: a shared one would cancel a pending run and leave a cancelled mark on dev. Overlapping runs
+# lose no history record: each run unions the histories of the newest few dev runs by runId.
+#
+# The `tail measure` job (nightly and by hand, never on a dev push: it holds a runner for up to 90 min) runs the fast
+# tier once with forceExit off (--measure-tails) and lists each test file whose
+# process stayed up after its tests (top-level hooks included), longest first, in its job summary. ci.yml's tiers
+# force-close those files.
+
+on:
+  push:
+    branches: [dev]
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Quarantined specs run in the same pinned Playwright image as ci.yml's extension-e2e: the pixel baselines only hold
+  # there. With no spec entries the job only checks out and writes an empty result.
+  quarantined-specs:
+    name: quarantined specs (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      # == ci.yml extension-e2e's image, by tag and digest (pinned by test/extension-packaging.test.mjs).
+      image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
+      options: --ipc=host
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version-file: .nvmrc, cache: npm }
+      - name: Count quarantined specs
+        id: specs
+        shell: bash
+        run: |
+          specs="$(node tools/quarantine.mjs list --kind spec)"
+          echo "count=$(printf '%s' "$specs" | grep -c . || true)" >> "$GITHUB_OUTPUT"
+          mkdir -p quarantine-out
+      - if: ${{ steps.specs.outputs.count != '0' }}
+        run: npm ci
+      - if: ${{ steps.specs.outputs.count != '0' }}
+        run: node tools/build-extension.mjs --test --browser chrome
+      - name: Run quarantined specs
+        if: ${{ steps.specs.outputs.count != '0' }}
+        run: node tools/quarantine.mjs run --kind spec --out quarantine-out/results-specs.json
+        env: { HOME: /root }
+      - name: No quarantined specs
+        if: ${{ steps.specs.outputs.count == '0' }}
+        run: echo '{}' > quarantine-out/results-specs.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: quarantine-results-specs, path: quarantine-out/results-specs.json, retention-days: 7 }
+
+  quarantined-tests:
+    name: quarantined tests
+    needs: quarantined-specs
+    # Runs even when the spec job failed: its entries then read "not run" and do not count.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run quarantined test files
+        run: node tools/quarantine.mjs run --kind test --out quarantine-out/results-tests.json
+
+      - name: Run quarantined CDP proofs
+        env:
+          CHROME_NO_SANDBOX: "1"
+        run: node tools/quarantine.mjs run --kind proof --out quarantine-out/results-proofs.json
+
+      - name: Download the spec results
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: quarantine-results-specs
+          path: quarantine-out/specs
+
+      # The histories of the 30 newest completed dev runs (HISTORY_MAX), each in its own folder: overlapping runs each
+      # extend the same parent, so report unions them by runId and trims to 30. Any number of overlapping runs, or up
+      # to 29 runs in a row that saved no history, loses no record still inside the 30-run window. None (the first
+      # run, or expired): it starts fresh.
+      - name: Fetch the pass-rate history
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/qh"
+          for id in $(gh run list -w quarantine.yml -b dev -s completed -L 30 --json databaseId -q '.[].databaseId' || true); do
+            if gh run download "$id" -n quarantine-history -D "$RUNNER_TEMP/qh/$id"; then
+              echo "history from run $id"
+            fi
+          done
+
+      - name: Report
+        run: >-
+          node tools/quarantine.mjs report
+          --results quarantine-out/results-tests.json quarantine-out/results-proofs.json quarantine-out/specs/results-specs.json
+          --history-in "$RUNNER_TEMP/qh"
+          --history-out quarantine-out/history/quarantine-history.json
+          --run-id "${{ github.run_id }}" --sha "${{ github.sha }}" --event "${{ github.event_name }}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: quarantine-history
+          path: quarantine-out/history/quarantine-history.json
+          retention-days: 90
+
+  # Every CI tier force-closes a test file whose process lingers after its tests (and names the handles it held).
+  # This job measures those tails instead: the fast tier with forceExit off. It never blocks (ci.yml already reports a
+  # failing fast test) and needs nothing, so the pass-rate history upload above never waits on it. The whole fast tier
+  # on one runner takes ~40-60 min; the tail lines are printed per file, so a run cut off at its limit keeps what it saw.
+  tail-measure:
+    name: tail measure
+    if: ${{ github.event_name != 'push' }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    env:
+      WORCA_TEST_SUITE_TIMEOUT_MIN: "85"
+      # No base commit to compare the offender list with here; ci.yml runs that comparison on every pull request.
+      WORCA_SUITE_GUARD_BASE: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the fast tier with forceExit off
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:fast -- --measure-tails 2>&1 | tee tails.log
+
+      - name: Write the tails to the job summary
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          echo "### Test file tails (forceExit off)" >> "$GITHUB_STEP_SUMMARY"
+          lines=$(grep -E '^warning: .* stayed up ' tails.log | sed -E 's/^(.* stayed up ([0-9.]+) s .*)$/\2 \1/' | sort -rn | cut -d' ' -f2- || true)
+          if [ -n "$lines" ]; then
+            printf '%s\n' "$lines" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No tail over 2 s." >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -5,14 +5,19 @@
 // working-tree change can affect (tools/test-related.mjs). Replaces the POSIX-only shell one-liner
 // and node's index-modulo --test-shard. --timings-out writes the run's own per-file seconds to a file
 // (each CI shard uploads one; tools/test-timings-merge.mjs folds them into test/timings.json).
+// --failures-out writes a red run's failure record (the files that failed; each red CI shard uploads one and
+// tools/ci-gate.mjs names them in the gate summary); a green run writes nothing.
+// --measure-tails turns forceExit off, so each file's tail (its process staying up after its tests) is measured and
+// logged; every other run force-closes such a file and names the handles it held (tools/test-run.mjs).
 // A full suite takes a machine-wide lock (one full suite at a time, wherever it runs: two at once each
 // took 2-3x as long and tripped the timing budgets, perf audit T1), and every run has a whole-suite
 // timeout, so no test can hold `npm test` open forever (process audit §8c).
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { quarantinedPaths, readQuarantine } from './quarantine.mjs';
 import { changedFiles, relatedTests } from './test-related.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -26,21 +31,55 @@ const SUITE_STALE_MS = 2 * SUITE_TIMEOUT_MIN * 60_000;
 const readJson = (rel, dflt) => { try { return JSON.parse(readFileSync(join(ROOT, rel), 'utf8')); } catch { return dflt; } };
 const globRe = (g) => new RegExp('^' + g.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*') + '$');
 
-export function selectFiles({ all, tier = 'all', tiers = {} }) {
+// Quarantine wins over tiers: a quarantined file (test/quarantine.json) leaves fast, slow and all.
+export function selectFiles({ all, tier = 'all', tiers = {}, quarantined = new Set() }) {
   const slow = (tiers.slow || []).map(globRe);
   const keep = new Set(tiers.keepFast || []);
   const isSlow = (f) => !keep.has(f) && slow.some((re) => re.test(f));
-  if (tier === 'fast') return all.filter((f) => !isSlow(f));
-  if (tier === 'slow') return all.filter(isSlow);
-  return [...all];
+  const kept = all.filter((f) => !quarantined.has(f));
+  if (tier === 'fast') return kept.filter((f) => !isSlow(f));
+  if (tier === 'slow') return kept.filter(isSlow);
+  return kept;
 }
 
-export function planShards(files, timings, n) {
-  // A file with no recorded time weighs the MEAN, not the median: most files take ~0 s, so the
-  // median (0.2 s) priced a new file far under what new files actually cost (2.3 s on average on
-  // 2026-10-22, when 636 untimed files had piled onto one shard and made it the CI long pole).
+/**
+ * The sorted test/*.mjs files of `root` for `tier`, with its test/tiers.json and test/quarantine.json applied.
+ * `left` counts the quarantined test files among them (the same for every tier). A malformed quarantine list throws.
+ */
+export function tierFiles(root, tier) {
+  const all = readdirSync(join(root, 'test')).filter((f) => f.endsWith('.mjs')).sort().map((f) => `test/${f}`);
+  let tiers = {};
+  try { tiers = JSON.parse(readFileSync(join(root, 'test', 'tiers.json'), 'utf8')); } catch { /* no tiers: every file is fast */ }
+  const quarantined = quarantinedPaths(readQuarantine(root), 'test');
+  return { files: selectFiles({ all, tier, tiers, quarantined }), left: all.filter((f) => quarantined.has(f)).length };
+}
+
+/** The files a run takes: an explicit list (or --related's) as given, quarantined or not; else the tier's files. */
+export function filesToRun(root, o) {
+  return o.files.length ? { files: o.files, left: 0 } : tierFiles(root, o.tier);
+}
+
+// A file with no recorded time weighs the MEAN, not the median: most files take ~0 s, so the
+// median (0.2 s) priced a new file far under what new files actually cost (2.3 s on average on
+// 2026-10-22, when 636 untimed files had piled onto one shard and made it the CI long pole).
+export function fallbackWeight(timings) {
   const known = Object.values(timings);
-  const mean = known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+  return known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+}
+
+/** The once-per-tier-run warning for files with no recorded time, or null when every file is timed. */
+export function untimedWarning(files, timings) {
+  const n = files.filter((f) => !(f in timings)).length;
+  if (!n) return null;
+  return `${n} test ${n === 1 ? 'file has' : 'files have'} no recorded timing: each is priced at the mean recorded time `
+    + `(${fallbackWeight(timings).toFixed(2)} s) until the weekly Refresh test timings PR measures it`;
+}
+
+/** In GitHub Actions only a run with no shard or shard 1/n annotates the warning: one annotation per tier and Node leg. */
+export const annotateUntimed = (env, shard) => env.GITHUB_ACTIONS === 'true' && (!shard || shard.startsWith('1/'));
+
+export function planShards(files, timings, n) {
+  const mean = fallbackWeight(timings);
   const w = (f) => (timings[f] ?? mean) + PER_FILE_S;
   // Code-unit tie-break, never localeCompare: every CI shard must compute the same plan.
   const order = [...files].sort((a, b) => w(b) - w(a) || (a < b ? -1 : a > b ? 1 : 0));
@@ -64,8 +103,13 @@ export function mergeTimings(base, measured, exists) {
 export const writeTimings = (root, timings) =>
   writeFileSync(join(root, 'test', 'timings.json'), JSON.stringify(timings, null, 1) + '\n');
 
+/** One shard's failure record (what tools/ci-gate.mjs reads): files sorted by code unit, each once. */
+export function failureRecord({ tier, shard, node, files }) {
+  return { version: 1, tier, shard, node, files: [...new Set(files)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) };
+}
+
 export function parseArgs(argv, env = process.env) {
-  const o = { tier: 'all', shard: null, writeTimings: false, timingsOut: null, concurrency: null, related: false, base: null, files: [] };
+  const o = { tier: 'all', shard: null, writeTimings: false, timingsOut: null, failuresOut: null, measureTails: false, concurrency: null, related: false, base: null, namePattern: null, files: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = () => {
@@ -78,8 +122,11 @@ export function parseArgs(argv, env = process.env) {
     else if (a === '--concurrency') o.concurrency = Number(value());
     else if (a === '--write-timings') o.writeTimings = true;
     else if (a === '--timings-out') o.timingsOut = value();
+    else if (a === '--failures-out') o.failuresOut = value();
+    else if (a === '--measure-tails') o.measureTails = true;
     else if (a === '--related') o.related = true;
     else if (a === '--base') o.base = value();
+    else if (a === '--test-name-pattern') o.namePattern = value();
     else if (a.startsWith('--')) throw new Error(`unknown flag ${a}`);
     else o.files.push(a.replace(/\\/g, '/'));
   }
@@ -91,6 +138,8 @@ export function parseArgs(argv, env = process.env) {
   if (o.concurrency === null && Number.isInteger(envCap) && envCap > 0) o.concurrency = envCap;
   if (o.base && !o.related) throw new Error('--base needs --related');
   if (o.related && o.files.length) throw new Error('--related picks its own files: drop the file list');
+  // A name filter runs one file's tests through this hermetic runner (tools/test-each-alone.mjs); it never filters a suite.
+  if (o.namePattern !== null && !o.files.length) throw new Error('--test-name-pattern needs a file list');
   // CI's shard env splits the selected suite; it never applies to an explicit file list or --related.
   if (!o.shard && !o.files.length && !o.related) o.shard = env.WORCA_TEST_SHARD || null;
   return o;
@@ -207,16 +256,18 @@ async function main() {
     else if (!r.tests.length) { console.log('related: no test file depends on the changed files'); process.exit(0); }
     else { console.log(`related: ${r.tests.length} test files`); o.files = r.tests; }
   }
-  const all = o.files.length ? o.files
-    : readdirSync(join(ROOT, 'test')).filter((f) => f.endsWith('.mjs')).sort().map((f) => `test/${f}`);
-  let files = o.files.length ? all : selectFiles({ all, tier: o.tier, tiers: readJson('test/tiers.json', {}) });
+  let picked;
+  try { picked = filesToRun(ROOT, o); } catch (e) { console.error(e.message); process.exit(2); }
+  let files = picked.files;
+  if (picked.left) console.log(`quarantine: ${picked.left} test files left out (test/quarantine.json)`);
   const timings = readJson('test/timings.json', {});
+  const warning = o.files.length ? null : untimedWarning(files, timings);
+  if (warning) console.log(`${annotateUntimed(process.env, o.shard) ? '::warning::' : ''}${warning}`);
   if (o.shard) {
     const m = /^(\d+)\/(\d+)$/.exec(o.shard);
     if (!m || +m[1] < 1 || +m[1] > +m[2]) { console.error(`bad shard "${o.shard}" (want i/n)`); process.exit(2); }
     files = planShards(files, timings, +m[2])[+m[1] - 1];
-    const untimed = files.filter((f) => !(f in timings)).length;
-    console.log(`shard ${o.shard}: ${files.length} files${untimed ? ` (${untimed} with no recorded time: npm run test:timings:merge rebalances)` : ''}`);
+    console.log(`shard ${o.shard}: ${files.length} files`);
   } else {
     files = planShards(files, timings, 1)[0];
   }
@@ -243,7 +294,10 @@ async function main() {
   const listFile = join(work, 'files.json');
   const timingsOut = join(work, 'timings.json');
   const measure = o.writeTimings || o.timingsOut;
-  writeFileSync(listFile, JSON.stringify({ files, concurrency: o.concurrency, timingsOut: measure ? timingsOut : null }));
+  const failuresFile = join(work, 'failures.json');
+  writeFileSync(listFile, JSON.stringify({ files, concurrency: o.concurrency, timingsOut: measure ? timingsOut : null,
+    measureTails: o.measureTails,
+    ...(o.failuresOut ? { failuresOut: failuresFile } : {}), ...(o.namePattern !== null ? { testNamePatterns: [o.namePattern] } : {}) }));
 
   const env = { ...process.env, WORCA_HOME: scoped ? testHome : '.worca-cc-test', HOME: home, USERPROFILE: home,
     WORCA_NO_REAL_CLAUDE_LOG: join(testHome, 'real-claude-spawns.log'), // read by the shim and assert-none.mjs
@@ -279,6 +333,16 @@ async function main() {
       mkdirSync(dirname(out), { recursive: true });
       writeFileSync(out, JSON.stringify(measured, null, 1) + '\n');
     }
+  }
+  if (o.failuresOut && code !== 0) {
+    try {
+      let failed = [];
+      try { const v = JSON.parse(readFileSync(failuresFile, 'utf8')); if (Array.isArray(v)) failed = v.filter((f) => typeof f === 'string'); } catch { /* none recorded, or cut mid-write */ }
+      const out = resolve(o.failuresOut);
+      mkdirSync(dirname(out), { recursive: true });
+      writeFileSync(`${out}.tmp`, JSON.stringify(failureRecord({ tier: o.tier, shard: o.shard || '1/1', node: process.versions.node, files: failed }), null, 1) + '\n');
+      renameSync(`${out}.tmp`, out);
+    } catch (e) { console.error(`--failures-out: could not write the failure record: ${e.message}`); }
   }
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });

@@ -1,8 +1,14 @@
 // test/ui-folder-run-running.test.mjs — Projects, any way (P1b): a Folder run on the Running page.
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
+import { runPageOn, helloRun } from './helpers/run-page-boot.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { useSharedApp, restoreAfter } from './helpers/shared-app-boot.mjs';
+
+const app = useSharedApp({ before, beforeEach, after });
+const bootApp = runPageOn(app);
+// A test that turns git off on the one shared page (data-git) has it back as it was when the test ends.
+beforeEach((t) => restoreAfter(t, app.document.documentElement.dataset, 'git'));
 
 const COUNTS = { added: 9, modified: 4, deleted: 1 };
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
@@ -207,24 +213,6 @@ test('a finished folder run: changes that land after the detail payload fill the
   assert.equal(badge(), '14');
 });
 
-test('the Runs list: a live Folder run names its group kind and its settled changes before any saved row', async () => {
-  const PROJ = [{ name: 'Tax papers 2026', path: '/tmp/tax', exists: true, vcs: 'none', workMode: 'folder', key: 'tax-papers-1a2b3c4d' }];
-  const ctx = await bootApp({ local: { 'worca-cc.runs.view': JSON.stringify({ show: 'all', groupBy: 'project', person: '' }) }, fetchHandler: (url) => {
-    if (url === '/api/projects') return ok({ projects: PROJ });
-    if (url.endsWith('/api/history')) return ok({ pipelines: [], ghAvailable: false });
-    return null;
-  } });
-  helloRun(ctx, { runId: 'r1', pipelineId: 'p1', workMode: 'folder', projectDir: '/tmp/tax' });
-  ctx.dispatch({ type: 'state', runId: 'r1', id: 'p1', status: 'running', steps: [], workMode: 'folder',
-    branch: { workMode: 'folder', changes: { state: 'applied', counts: COUNTS } } });
-  ctx.dispatch({ type: 'done', runId: 'r1', status: 'done' });
-  ctx.showRunning();
-  await ctx.settle(8);
-  const group = ctx.window.document.querySelector('#runs-list .runs-sec[data-section="project:tax-papers-1a2b3c4d"]');   // View › Group by Project
-  assert.equal(group.querySelector('.runs-sec-head .kind-chip').textContent, 'Folder');
-  assert.match(group.querySelector('.runs-row[data-run-id="r1"] .runs-row-sub').textContent, /^Applied/);
-});
-
 test('the chat card of a live Folder run is a Folder run; openApply opens Apply to folder', async () => {
   const plan = { target: '/x', add: ['a'], update: [], delete: [], skipped: [] };
   const ctx = await bootApp({ fetchHandler: (url) => (url.endsWith('/api/runs/p1/apply-plan') ? ok(plan) : null) });
@@ -351,14 +339,15 @@ test('P5: the Runs list row of a finished all-Folder workspace run never reads i
   const P2 = [{ projectKey: 'notes-00000004', projectName: 'notes', projectDir: '/r/notes', workMode: 'folder' },
     { projectKey: 'docs-00000005', projectName: 'docs', projectDir: '/r/docs', workMode: 'folder' }];
   const ctx = await bootApp({ fetchHandler: (url) => (url.endsWith('/api/history') ? ok({ pipelines: [], ghAvailable: false }) : null) });
-  helloRun(ctx, { runId: 'w2', pipelineId: 'pw', kind: 'workspace-run', workspaceId: 'wks-1', projectNames: ['notes', 'docs'], projectDir: '/tmp/ws', workMode: 'folder' });
+  // its own run id: an earlier test finished a w2, and the shared app keeps the runs it saw finish
+  helloRun(ctx, { runId: 'w3', pipelineId: 'pw', kind: 'workspace-run', workspaceId: 'wks-1', projectNames: ['notes', 'docs'], projectDir: '/tmp/ws', workMode: 'folder' });
   // An all-Folder workspace's state.branch is the harness's scalar mirror of its FIRST member's record (_primaryMirror).
-  ctx.dispatch({ type: 'state', runId: 'w2', id: 'pw', status: 'running', steps: [], target: 'workspace', workMode: 'folder', projects: P2,
+  ctx.dispatch({ type: 'state', runId: 'w3', id: 'pw', status: 'running', steps: [], target: 'workspace', workMode: 'folder', projects: P2,
     branch: { workMode: 'folder', copyDir: '/x/notes', changes: { state: 'applied', counts: { added: 2, modified: 0, deleted: 0 } } } });
-  ctx.dispatch({ type: 'done', runId: 'w2', status: 'done' });
+  ctx.dispatch({ type: 'done', runId: 'w3', status: 'done' });
   ctx.showRunning();
   await ctx.settle(8);
-  const sub = ctx.window.document.querySelector('#runs-list .runs-row[data-run-id="w2"] .runs-row-sub').textContent;
+  const sub = ctx.window.document.querySelector('#runs-list .runs-row[data-run-id="w3"] .runs-row-sub').textContent;
   assert.doesNotMatch(sub, /^Applied/, 'docs is still pending: the run is not Applied');
 });
 

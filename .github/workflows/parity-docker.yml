@@ -8,6 +8,7 @@ name: Parity (CI image)
 # A required check: it runs on every pull request into dev (incl. one retargeted to dev) and every push to dev, with NO
 # paths filter, so a docs-only PR reports it too (a required check that never runs stays pending forever; see ci.yml's
 # header). The job's display name is that required check's name, so it keeps its historical wording.
+# A new push to a PR cancels that PR's older run; dev pushes are never cancelled (each gets its own group, as in ci.yml).
 # Routes, the signed-out pass, the 6 flows and visuals (0 px: both sides in one environment) are gated for the docker
 # pair; the package pair gates them too. Timings are not gated on shared runners (--no-timing-gate).
 on:
@@ -22,8 +23,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: parity-docker-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  group: parity-docker-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.head.repo.full_name, github.head_ref) || format('push-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   parity-docker:

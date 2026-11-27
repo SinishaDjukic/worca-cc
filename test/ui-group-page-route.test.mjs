@@ -1,11 +1,12 @@
 // test/ui-group-page-route.test.mjs — runs redesign slice 4 (D16): #feature/:id and #group/:id render the group page
 // (ui/public/group-page.mjs) into the feature page's section, for features, user
 // groups and Run-after chains; its Decisions tab (D15) and its Ship for a user group (D6).
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootApp } from './helpers/run-page-boot.mjs';
+import { runPageOn } from './helpers/run-page-boot.mjs';
 import { REPLAY_FRAMES } from './helpers/run-states.mjs';
 import { SIXTEEN_RUN_LINKS } from './helpers/shape-sixteen-runs.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
 
 const member = (i) => ({ position: i, title: `Slice ${i}`, pipelineId: `p${i}`, ticketId: null, status: 'done', pr: null, ticket: null, adhoc: false, after: null });
 const GROUPS = { groups: [
@@ -18,11 +19,17 @@ const json = (b, s = 200) => Promise.resolve(new Response(JSON.stringify(b), { s
 const handler = (url) => (url.startsWith('/api/run-groups') ? json(GROUPS)
   : url.startsWith('/api/shape/features/feat_1') ? json(FEATURE)
   : url.startsWith('/api/shape/features/') ? json({ error: 'unknown feature' }, 404) : null);
+// The app loads its run groups at boot and again on each reset: no groups then (a failed load keeps the groups it
+// holds); each test's own come with boot()'s run-groups-changed. A feature view an earlier test left mounted reloads
+// on the reset too, so the feature answers are the file's.
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: (url) => (url.startsWith('/api/run-groups') ? json({ groups: [] }) : handler(url)) });
+const bootApp = runPageOn(app);
 
 async function boot(fetchHandler = handler) {
   const ctx = await bootApp({ fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
   ctx.dispatch({ type: 'hello', runs: [] });
+  ctx.dispatch({ type: 'run-groups-changed' });   // the shared app loaded its groups at boot: this test's answer now
   await ctx.settle();
   return ctx;
 }
@@ -100,6 +107,9 @@ test('D1: a small-runs feature\'s header follows the small-runs ledger (run-owne
   const modal = ctx.window.document.getElementById('shipit-modal');
   assert.equal(modal.querySelector('.shipit-prs input[value="one"]').disabled, true, 'One is off');
   assert.doesNotMatch(modal.querySelector('.shipit-prs-hint').textContent, /one PR is easier/, 'the hint never suggests the disabled One');
+  modal.querySelector('.shipit-cancel').click();             // the shared app keeps the dialog: close it for the next test
+  await ctx.settle(4);
+  assert.equal(modal.classList.contains('hidden'), true, 'closed');
 });
 
 test('slice 4: along the real branches, the feature dialog counts the listed runs: 4 runs, run 2 carried, Create 3 PRs', async () => {
@@ -608,11 +618,13 @@ test('D10: with no current run, the Verifier\'s open stop is asked and answered 
 });
 
 test('D10: a cached miss of the Verifier\'s run is asked again once per question, and the feature page then asks it', async () => {
+  // a Verifier run of its own: app.js caches each pipeline's /slice answer, and an earlier test already had pv's
+  const run = { ...verifierRun, runId: 'rv-miss', pipelineId: 'pv-miss' };
   let gets = 0;
-  const extra = (url) => (url === '/api/shape/pipelines/pv/slice'
+  const extra = (url) => (url === '/api/shape/pipelines/pv-miss/slice'
     ? (gets += 1, gets === 1 ? json({ error: 'not a slice' }, 404) : json({ verifier: true, featureId: 'feat_1', threadId: null })) : null);
   const { ctx } = await d3Boot({ extra, feature: () => json(D3_FEATURE('met')) });
-  ctx.dispatch({ type: 'hello', runs: [verifierRun] });
+  ctx.dispatch({ type: 'hello', runs: [run] });
   ctx.go('feature/feat_1');
   await ctx.settle(12);
   const slot = pageOf(ctx).querySelector('.gpage-question');
