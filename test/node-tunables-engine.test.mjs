@@ -3,7 +3,7 @@
 // uses instead and remembers the pick, which a save of another tunable re-sends.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildNodeConfigRows, pruneNodeSelection, buildGraphNodeRows, buildRoleRows, pinnedHarnessText } from '../ui/public/node-tunables.mjs';
+import { buildNodeConfigRows, pruneNodeSelection, buildGraphNodeRows, buildRoleRows } from '../ui/public/node-tunables.mjs';
 
 const MODELS = [
   { id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: ['medium', 'high', 'max'] },
@@ -81,10 +81,6 @@ test('pruneNodeSelection: a pinned row re-sends its harness; a soft model over a
   const [stale] = buildNodeConfigRows(WF, REG, { nodes: { n0: { model: 'claude-haiku-4-5', effort: 'medium', engine: 'codex' } } }, { models: MODELS, engine: 'claude' });
   assert.deepEqual(pruneNodeSelection(stale, { fanOut: false }), { model: 'claude-haiku-4-5', effort: 'medium', engine: 'codex', fanOut: false, askQuestions: undefined, subagentModel: '' },
     'a pin whose model left its harness rides along untouched (the server keeps it unchecked)');
-});
-test('pinnedHarnessText: where the pick lives says where to change it', () => {
-  assert.equal(pinnedHarnessText(buildNodeConfigRows(WF, REG, PINNED, { models: MODELS, engine: 'claude' })[0]), 'Runs on OpenAI Codex. Change it on a Chat run card.');
-  assert.equal(pinnedHarnessText(tplRows({ nodes: {} })[0]), 'Runs on OpenAI Codex. Change it in Workflows.');
 });
 test('buildRoleRows: a role pick carries its harness, the pick of the layer that names the model', async () => {
   const { GRAPH_SHAPE_REQ_WORKFLOW } = await import('../src/core/graph/builtin-workflows.mjs');

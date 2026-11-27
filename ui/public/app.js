@@ -36204,8 +36204,9 @@ const requirementsView = createRequirementsView({
   // who: the signed-in person on a shared deployment (the start-before-Ready dialog's "Recorded as"), else nobody
   // openRun: a started run is where the person goes next (the run page, #running/<runId>)
   // confirm: the model switch asks it (9c board 4), in the shared confirm modal
+  // engineRows: the run setup's model picker reads each harness's readiness through it
   deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; }, who: () => viewer.name, openRun: (runId) => { location.hash = `#running/${runId}`; },
-    confirm: (o) => confirmModal(o) },
+    confirm: (o) => confirmModal(o), engineRows: readyEngineRows },
 });
 // Turning the flag off while the page is open leaves it for Chat (a hidden page must not stay up).
 onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirements') showView('chat', ''); });

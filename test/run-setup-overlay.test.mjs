@@ -419,7 +419,7 @@ test('the note and the setup controls stay locked while the panel is up, so Star
   typeInto(o.q(NOTE), 'old');
   o.q(GO).click(); await settle();
   assert.equal(o.q(NOTE).disabled, true);
-  const controls = [...o.modal.card.querySelectorAll('.req-runsetup-body select, .req-runsetup-body input')];
+  const controls = [...o.modal.card.querySelectorAll('.req-runsetup-body select, .req-runsetup-body input, .req-runsetup-body button.mdl-pick')];
   assert.ok(controls.length > 0);
   assert.ok(controls.every((el) => el.disabled), 'every setup control is locked');
   o.q('[data-ui="runsetup-anyway"]').click(); await settle();
@@ -477,14 +477,29 @@ test('copy overrides the title and the other-workflow line; the defaults stay wi
 });
 
 const GPT = { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex', efforts: ['minimal', 'low', 'medium', 'high'], connection: { kind: 'signin', engine: 'codex' } };
-test('a step pinned to another harness shows its model locked, says where to change it, and is sent back with its harness', async () => {
+const opt = (col, key) => [...document.querySelectorAll(`.mdl-cols-pop [data-col="${col}"] [role="option"]`)].find((b) => b.dataset.key === key);
+test('a step pinned to another harness is editable, offers that harness\'s efforts, and is sent with its harness', async () => {
   const o = await open({ config: async () => ({ config: { workflows: { wf_g: { nodes: { n_review: { model: 'gpt-5.5', effort: 'low', engine: 'codex' } } } } }, models: [...MODELS, GPT] }) });
-  const t = 'Runs on OpenAI Codex. Change it on a Chat run card.';
   const m = o.q('[data-ui="model-n_review"]'); const e = o.q('[data-ui="effort-n_review"]');
-  assert.deepEqual([m.value, m.disabled, m.title, e.value, e.disabled, e.title], ['gpt-5.5', true, t, 'low', true, t]);
-  assert.equal(o.q('.req-runsetup-row[data-node-id="n_review"] .req-runsetup-pin').textContent, t);
-  assert.equal(o.q('[data-ui="model-n_plan"]').disabled, false);
+  assert.deepEqual([m.tagName, m.className, m.value, m.dataset.engine, m.disabled, e.value, e.disabled], ['BUTTON', 'mdl-pick req-runsetup-model', 'gpt-5.5', 'codex', false, 'low', false]);
+  assert.deepEqual([...e.options].map((x) => x.value), ['', 'minimal', 'low', 'medium', 'high']);
+  assert.equal(o.q('.req-runsetup-pin'), null);
   o.q('[data-ui="runsetup-go"]').click(); await settle();
   assert.deepEqual(o.events.confirms[0].nodes.n_review, { model: 'gpt-5.5', effort: 'low', engine: 'codex' });
-  assert.deepEqual(o.events.confirms[0].nodes.n_impl, { model: 'claude-sonnet-5-5', effort: 'medium' });
+});
+test('a pick in the picker sets the row\'s model and harness; inherit sends no pick for that step', async () => {
+  const o = await open({ config: async () => ({ config: { workflows: { wf_g: { nodes: { n_review: { model: 'claude-opus-5-5', effort: 'high' } } } } }, models: [...MODELS, GPT] }) });
+  o.q('[data-ui="model-n_plan"]').click();
+  assert.equal(document.querySelector('.mdl-cols-pop .mdl-cols-hint').textContent, 'project or workflow default');
+  opt('harness', 'cursor').click();   // no models: the empty column, with no Add model in this dialog
+  assert.deepEqual([!!document.querySelector('.mdl-cols-pop .mdl-cols-empty'), document.querySelector('.mdl-cols-pop .mdl-cols-add')], [true, null]);
+  opt('harness', 'codex').click();
+  opt('model', 'gpt-5.5').click();
+  assert.deepEqual([o.q('[data-ui="model-n_plan"]').value, o.q('[data-ui="model-n_plan"]').dataset.engine], ['gpt-5.5', 'codex']);
+  assert.deepEqual([...o.q('[data-ui="effort-n_plan"]').options].map((x) => x.value), ['', 'minimal', 'low', 'medium', 'high']);
+  o.q('[data-ui="model-n_review"]').click();
+  document.querySelector('.mdl-cols-pop .mdl-cols-inherit').click();
+  o.q('[data-ui="runsetup-go"]').click(); await settle();
+  assert.deepEqual(o.events.confirms[0].nodes.n_plan, { model: 'gpt-5.5', effort: '', engine: 'codex' });
+  assert.equal('n_review' in o.events.confirms[0].nodes, false);
 });

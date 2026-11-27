@@ -6,7 +6,6 @@
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { runsOn } from '../../src/shared/connections.mjs';
-import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { roleReviewOf } from '../../src/shared/graph/role-review-step.mjs';
 import { cleanPick, layerPick } from '../../src/shared/graph/role-slots.mjs';
 
@@ -44,13 +43,6 @@ function projectPick(legacy, entry) {
   const winner = entry && entry.model !== undefined ? entry : legacy;
   if (winner && typeof winner.model === 'string' && winner.model && typeof winner.engine === 'string' && winner.engine) out.engine = winner.engine;
   return out;
-}
-
-/** Where a pinned row's pick lives says where to change it: the project's (an override model) on a Chat run card,
- *  the workflow's own in Workflows. */
-export function pinnedHarnessText(row) {
-  const where = row && row.override && row.override.model ? 'on a Chat run card' : 'in Workflows';
-  return `Runs on ${engineLabel(row && row.engine)}. Change it ${where}.`;
 }
 
 // Flatten workflow.steps[][] into an ordered list of node rows, joining each

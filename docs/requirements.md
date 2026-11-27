@@ -326,11 +326,12 @@ and the next time you start the feature the box opens with it. A run that starts
   card says so and Auto is used.
 - With any other workflow, **Start in Worca** first opens **Set up this run**: the workflow (fixed here; cancel
   and change it on the card to use another), a **Preset** menu with the run presets saved for that workflow, and
-  each agent's model and effort and each loop's cycle budget. Applying a preset fills in its agent and loop
-  settings only. What you change applies to this run alone: the project's settings and your presets are never
-  written. **Start run** starts it and opens the run page; **Cancel** (or Escape) starts nothing. The overlay
-  opens after the reason when you start before Ready. If the server refuses the picks, the reason is shown in
-  the overlay and you can fix it and try again.
+  each agent's model (the harness › provider › model picker, so a step can run on another harness than the
+  run's) and effort and each loop's cycle budget. Applying a preset fills in its agent and loop settings only.
+  What you change applies to this run alone: the project's settings and your presets are never written.
+  **Start run** starts it and opens the run page; **Cancel** (or Escape) starts nothing. The overlay opens after
+  the reason when you start before Ready. If the server refuses the picks, the reason is shown in the overlay
+  and you can fix it and try again.
 - The files and brief documents whose Send switch is on go with it as attached files ([Files](#files)).
 - Only runs started from Requirements are checked this way. **New run**, **Ask**, schedules and the CLI
   work as before and do not look at Requirements.

@@ -2411,6 +2411,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       workflowId: wfId, workflowName: workflowName(wfId), projectDir: setupProjectDir(f),
       scopeRef: { kind: f.scopeType === 'workspace' ? 'workspace' : 'project', ref: f.scopeKey, name: targetName(f) },
       fetchers: deps.setupFetchers || null, trigger, note: true, checkNote, onConfirm: confirm, onCancel: () => {},
+      engines: deps.engineRows || (() => null),
     });
   }
   /** A modal on the page (the start dialog's pattern): Escape closes it when `canClose()`, Tab stays inside, the page
@@ -2429,6 +2430,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         if (e.isComposing) return;   // Escape that ends an IME composition is the input method's, not the dialog's
         e.preventDefault(); e.stopPropagation(); if (canClose()) closeDialog(true); return;
       }
+      // a model picker open over the dialog (on <body>, outside the card) keeps its own Tab
+      if (e.key === 'Tab' && document.activeElement && document.activeElement.closest('.mdl-cols-pop')) return;
       if (e.key !== 'Tab') return;
       // a radio group is one stop: its checked radio. A control hidden by CSS (the sheet's ← FEAT-7 on a desktop) is no stop;
       // checkVisibility is Chrome's (jsdom has none, so there every control counts).

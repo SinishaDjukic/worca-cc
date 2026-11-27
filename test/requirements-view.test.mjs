@@ -1171,6 +1171,27 @@ test('Start with a workflow: Cancel and Escape send nothing and leave the choice
   host.remove();
 });
 
+test('Review Focus 4: in the setup dialog the picker keeps its own Tab and Escape', async () => {
+  fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
+  const { host, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  await chooseCareful(host);
+  host.querySelector('[data-ui="start-go"]').click();
+  for (let i = 0; i < 6; i++) await tick();
+  setupDlg().querySelector('[data-ui="model-n_plan"]').click();
+  assert.ok(document.querySelector('.mdl-cols-pop'));
+  const tab = new window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+  document.activeElement.dispatchEvent(tab);
+  assert.equal(tab.defaultPrevented, false, 'the dialog\'s trap lets Tab through');
+  assert.ok(document.querySelector('.mdl-cols-pop'));
+  document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  assert.equal(document.querySelector('.mdl-cols-pop'), null);
+  assert.ok(setupDlg(), 'the dialog stays open');
+  setupDlg().querySelector('[data-ui="runsetup-cancel"]').click();
+  host.remove();
+});
+
 test('Start with a workflow: a refusal stays in the overlay, nothing opens, and the next confirm can go through', async () => {
   let n = 0;
   const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }),
