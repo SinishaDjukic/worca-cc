@@ -105,6 +105,7 @@
   "test/ui-run-hosts.test.mjs",
   "test/ui-run-model-pill-engine.test.mjs",
   "test/ui-run-presets-form.test.mjs",
+  "test/ui-run-tabs-more.test.mjs",
   "test/ui-running-list.test.mjs",
   "test/ui-running-order.test.mjs",
   "test/ui-running-resume.test.mjs",

@@ -17,7 +17,7 @@ const GATING = {
   'firefox-e2e.yml': 'Firefox e2e (Playwright Firefox, branch and split tree)',
   'parity-docker.yml': 'parity (tree against the CI image)',
 };
-const UNGATED = ['docker-image.yml', 'docker-rebuild.yml', 'label-by-author.yml', 'pr-context.yml', 'release-npm-app.yml', 'worca-metrics-pr-events.yml'];
+const UNGATED = ['docker-image.yml', 'docker-rebuild.yml', 'label-by-author.yml', 'pr-context.yml', 'quarantine.yml', 'refresh-test-timings.yml', 'release-npm-app.yml', 'worca-metrics-pr-events.yml'];
 const PR_ONLY = "${{ github.event_name == 'pull_request' }}";
 
 const cells = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
@@ -218,11 +218,14 @@ test('gating workflows: no pull_request trigger, or branches without dev, is nam
   hasProblem(mutatedWf('firefox-e2e.yml', (d) => { d.on.push.branches = ['main']; }), /^on\.push\.branches: must include dev$/, 'push branches main');
 });
 
-test('gating workflows: ci.yml\'s bare pull_request: (null) counts as every PR', () => {
+test('gating workflows: ci.yml\'s pull_request trigger counts as every PR: its real types (labeled added for full-node-matrix), and a bare pull_request: (null)', () => {
   const g = ciGroup();
   const doc = wfDoc('ci.yml');
-  assert.equal(doc.on.pull_request, null, 'ci.yml writes pull_request: with no keys');
+  for (const t of ['opened', 'synchronize', 'reopened', 'labeled']) assert.ok(doc.on.pull_request.types.includes(t), `ci.yml runs on ${t}`);
   assert.deepEqual(gatingWorkflowProblems(doc, { prefix: 'ci-', ciGroup: g }), []);
+  const bare = structuredClone(doc);
+  bare.on.pull_request = null;
+  assert.deepEqual(gatingWorkflowProblems(bare, { prefix: 'ci-', ciGroup: g }), [], 'a bare pull_request: is every PR');
 });
 
 test('gating workflows: types without synchronize is named', () => {

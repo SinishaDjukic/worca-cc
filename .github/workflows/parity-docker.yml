@@ -23,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: parity-docker-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.head.repo.full_name, github.head_ref) || format('push-{0}', github.run_id) }}
+  group: parity-docker-${{ github.event_name == 'pull_request' && github.event.action != 'labeled' && format('pr-{0}-{1}', github.event.pull_request.head.repo.full_name, github.head_ref) || format('push-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

@@ -2824,7 +2824,7 @@ test('the state line sits under the title and says the state on every tab; the c
   assert.ok(!card().querySelector('.run-status-detail').textContent.includes(step), 'the card never repeats the step');
   assert.equal(card().querySelector('.run-status-head').hidden, !card().querySelector('.run-status-detail').textContent);
   // A paused frame updates the line live; the card line reads the reason only.
-  frame(ctx, { type: 'done', runId: 'r1', status: 'paused', reason: 'cost_pipeline' });
+  frame(ctx, { type: 'done', runId: R1, status: 'paused', reason: 'cost_pipeline' });
   await settle(window, 6);
   assert.equal(stateLine(window), line, 'the same node');
   assert.match(line.textContent, /^Paused( · .+)?$/);
@@ -2841,7 +2841,7 @@ test('the state line keeps focus across frames and jumps to the question', async
   assert.equal(line.classList.contains('is-link'), false);
   assert.equal(line.getAttribute('role'), null);
   assert.equal(line.hasAttribute('tabindex'), false);
-  frame(ctx, { type: 'question', runId: 'r1', ...clarify() });
+  frame(ctx, { type: 'question', runId: R1, ...clarify() });
   await settle(window, 6);
   assert.equal(line.classList.contains('is-link'), true);
   assert.equal(line.getAttribute('role'), 'button');
@@ -2851,7 +2851,7 @@ test('the state line keeps focus across frames and jumps to the question', async
   const kids = [...line.children];
   line.focus();
   assert.equal(window.document.activeElement, line);
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: GLANCE_MANIFEST, steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 0.9 });
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: GLANCE_MANIFEST, steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 0.9 });
   await settle(window, 6);
   assert.deepEqual([...line.children], kids, 'a repaint never rebuilds the line');
   assert.equal(window.document.activeElement, line, 'and never drops its focus');
@@ -2870,7 +2870,7 @@ test('the state line keeps focus across frames and jumps to the question', async
   }
   assert.equal(jumps, 3, 'Enter and Space');
   // Answered: the line is plain text again.
-  frame(ctx, { type: 'question-resolved', runId: 'r1', id: clarify().id });
+  frame(ctx, { type: 'question-resolved', runId: R1, id: clarify().id });
   await settle(window, 6);
   assert.equal(line.classList.contains('is-link'), false);
   assert.equal(line.getAttribute('role'), null);

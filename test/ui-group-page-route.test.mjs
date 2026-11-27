@@ -107,6 +107,9 @@ test('D1: a small-runs feature\'s header follows the small-runs ledger (run-owne
   const modal = ctx.window.document.getElementById('shipit-modal');
   assert.equal(modal.querySelector('.shipit-prs input[value="one"]').disabled, true, 'One is off');
   assert.doesNotMatch(modal.querySelector('.shipit-prs-hint').textContent, /one PR is easier/, 'the hint never suggests the disabled One');
+  modal.querySelector('.shipit-cancel').click();             // the shared app keeps the dialog: close it for the next test
+  await ctx.settle(4);
+  assert.equal(modal.classList.contains('hidden'), true, 'closed');
 });
 
 test('slice 4: along the real branches, the feature dialog counts the listed runs: 4 runs, run 2 carried, Create 3 PRs', async () => {

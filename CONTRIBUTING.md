@@ -180,6 +180,8 @@ Every other workflow is listed with the reason it does not gate.
 | `label-by-author.yml` | no | — | `pull_request_target` labelling: judges who opened the PR, not the change. |
 | `worca-metrics-pr-events.yml` | no | — | `pull_request_target` metrics recorder: writes the `worca-metrics` branch, never checks code. |
 | `pr-context.yml` | no | — | `pull_request_target`: its `Linked issue` check judges the PR description, not the change, and is not one of the three required checks. |
+| `quarantine.yml` | no | — | Non-blocking: runs the quarantined tests on `dev` pushes, nightly and by hand, and reports each pass rate; never runs on a pull request. |
+| `refresh-test-timings.yml` | no | — | Weekly schedule and manual runs only: opens or updates the timings refresh PR, which then gets the three required checks like any PR. |
 
 A new workflow goes in this table; `test/ci-gating-table.test.mjs` fails until it does.
 
