@@ -164,3 +164,144 @@ test('askCommandEnv on Windows keeps the system variables Git Bash needs', () =>
   assert.deepEqual(askCommandEnv(base, 'win32'), { PATH: 'C:\\bin', SystemRoot: 'C:\\Windows', USERPROFILE: 'C:\\Users\\me', TEMP: 'C:\\t', ComSpec: 'cmd' });
   assert.deepEqual(askCommandEnv(base, 'linux'), { PATH: 'C:\\bin' });
 });
+
+const KEYCHAIN_MSG = 'That command reads the OS keychain. Ask cannot read credentials.';
+const EXPORT_MSG = "That command moves Worca's secrets out of the vault. Ask the user to run it in the terminal.";
+
+test('OS keychain reads are refused, also inside bash -c and $(…)', () => {
+  for (const c of ['security find-generic-password -s worca -w', 'security -q find-generic-password -s worca',
+    'security export -k login.keychain -o /tmp/k.p12', 'security find-key -l worca', 'bash -c "security find-generic-password -s worca -w"',
+    'echo $(secret-tool lookup service worca)', 'secret-tool lookup service worca',
+    'powershell.exe -c "Get-StoredCredential -Target worca"',
+    `pwsh -c "[Security.Cryptography.ProtectedData]::Unprotect($b,$null,'CurrentUser')"`,
+    `node -e "new (require('@napi-rs/keyring').Entry)('worca-cc','x').getPassword()"`,
+    'type node_modules\\@napi-rs\\keyring\\index.js',
+    `python3 -c "import keyring; print(keyring.get_password('worca-cc','vault-key-0123456789abcdef'))"`])
+    assert.equal(checkAskCommand(c, ctx), KEYCHAIN_MSG, c);
+});
+
+test('every worca secrets export form is refused', () => {
+  for (const c of ['worca secrets export', 'npx worca secrets export', 'npx @worca/app secrets export',
+    'npm exec worca -- secrets export', 'bash -c "worca secrets export"', 'echo $(npx @worca/app secrets export)'])
+    assert.equal(checkAskCommand(c, ctx), EXPORT_MSG, c);
+  // The CLI path lies outside the home, so the protected-path check does not fire first.
+  assert.equal(checkAskCommand('node /opt/worca/src/cli/worca-cc.mjs secrets export', { ...ctx, home: '/srv/worca' }), EXPORT_MSG);
+});
+
+const RESET_MSG = 'That command moves the Worca vault aside. Ask the user to run it in the terminal.';
+
+test('every worca secrets reset form is refused with the reset message', () => {
+  for (const c of ['worca secrets reset', 'worca secrets reset --yes', 'npx worca secrets reset', 'npx @worca/app secrets reset --yes',
+    'npm exec worca -- secrets reset', 'bash -c "worca-cc secrets reset --yes"', 'echo $(npx @worca/app secrets reset)'])
+    assert.equal(checkAskCommand(c, ctx), RESET_MSG, c);
+  assert.equal(checkAskCommand('node /opt/worca/src/cli/worca-cc.mjs secrets reset --yes', { ...ctx, home: '/srv/worca' }), RESET_MSG);
+  for (const c of [`worca 'secrets' 'reset'`, 'npx worca "secrets" reset --yes', `worca secrets "export"`])
+    assert.notEqual(checkAskCommand(c, ctx), null, c);
+  assert.equal(checkAskCommand(`worca "secrets" "reset"`, ctx), RESET_MSG);
+  assert.equal(checkAskCommand('worca secrets export', ctx), EXPORT_MSG);
+});
+
+test('the proxy login is a protected name under any home', () => {
+  for (const home of [null, '/home/u/.worca-cc'])
+    assert.match(checkAskCommand('cat /srv/worca/proxy-login.json', { ...ctx, home }), /protected path/, String(home));
+  assert.match(checkAskCommand('cat /srv/worca/worca-vault.enc', { ...ctx, home: null }), /protected path/);
+});
+
+test('keychain listings, secrets status and plain text stay allowed', () => {
+  for (const c of ['security list-keychains', 'worca secrets status', 'echo secrets export'])
+    assert.equal(checkAskCommand(c, ctx), null, c);
+});
+
+const ACK_MSG = 'That command dismisses the message about the keys moved into the Worca vault. Ask the user to run it in the terminal.';
+const CHECK_MSG = "That command tests the OS key store that holds Worca's vault key. Ask the user to run it in the terminal.";
+
+test('D15: version-pinned, quoted and npm exec spellings, every ack spelling, status --check and CredEnumerate are refused', () => {
+  assert.equal(checkAskCommand('npx @worca/app@1.2.3 secrets export', ctx), EXPORT_MSG);
+  assert.equal(checkAskCommand('worca "secrets export"', ctx), EXPORT_MSG);
+  assert.equal(checkAskCommand('npm exec worca secrets reset', ctx), RESET_MSG);
+  for (const c of ['worca secrets ack', 'worca-cc secrets ack', 'npx worca secrets ack', 'npx @worca/app@2.0.0 secrets ack',
+    'npm exec @worca/app -- secrets ack', 'bash -c "worca secrets ack"', `worca 'secrets' 'ack'`, 'worca "secrets ack"'])
+    assert.equal(checkAskCommand(c, ctx), ACK_MSG, c);
+  assert.equal(checkAskCommand('node /opt/worca/src/cli/worca-cc.mjs secrets ack', { ...ctx, home: '/srv/worca' }), ACK_MSG);
+  for (const c of ['worca secrets status --check', 'npx @worca/app secrets status --check', 'worca "secrets" status --check'])
+    assert.equal(checkAskCommand(c, ctx), CHECK_MSG, c);
+  assert.equal(checkAskCommand('powershell -c "[Win32]::CredEnumerateW($null,0,[ref]$n,[ref]$p)"', ctx), KEYCHAIN_MSG);
+});
+
+const HOST_PID_MSG = 'That command touches WORCA_HOST_PID, which keeps Worca\'s secrets commands away from agents. Ask the user to run it in the terminal.';
+
+test('D15: a quote-split or backslashed verb is still refused, and any command naming WORCA_HOST_PID is refused', () => {
+  for (const c of ['worca sec""rets ack', `worca secrets a''ck`, 'worca s\\ecrets ack', 'npx @worca/app secrets e""xport'])
+    assert.notEqual(checkAskCommand(c, ctx), null, c);
+  assert.equal(checkAskCommand('worca sec""rets ack', ctx), ACK_MSG);
+  assert.equal(checkAskCommand('worca secrets s\\tatus --check', ctx), CHECK_MSG);
+  for (const c of [`worca 'secrets' 'ack'`, 'worca "secrets" "export"', `npx @worca/app 's'ecrets reset`])
+    assert.notEqual(checkAskCommand(c, ctx), null, c);
+  for (const c of [`'security' export`, '"security" find-generic-password -s worca', `secu'r'ity dump-keychain`])
+    assert.equal(checkAskCommand(c, ctx), KEYCHAIN_MSG, c);
+  for (const c of ['env -u WORCA_HOST_PID ./run.sh', 'unset WORCA_HOST_PID; ./run.sh', 'WORCA_HOST_PID= ./run.sh', 'echo $WORCA_HOST_PID'])
+    assert.equal(checkAskCommand(c, ctx), HOST_PID_MSG, c);
+});
+
+test('D15: harmless lines that only mention security … export or worca-vault are allowed', () => {
+  for (const c of ['grep -r security docs | grep export', 'grep -r worca-vault src', 'worca secrets status',
+    'worca secrets status && echo --check'])
+    assert.equal(checkAskCommand(c, ctx), null, c);
+});
+
+test('D15: the keychain reads and the vault files stay refused', () => {
+  for (const c of ['security find-generic-password', '/usr/bin/security find-generic-password -w', 'sh -c "security dump-keychain"',
+    'security export', 'sudo /usr/bin/security export',
+    // Behind VAR=x prefixes and wrappers the old command-position anchor missed.
+    'FOO=1 security export -k login.keychain', 'caffeinate security export', 'nice -n 5 security export', 'timeout 5 security export',
+    'arch -arm64 security export', '/usr/bin/env -i security export'])
+    assert.equal(checkAskCommand(c, ctx), KEYCHAIN_MSG, c);
+  for (const c of ['cat ~/.worca-cc/worca-vault.enc', 'cd /custom/home && strings worca-vault.key'])
+    assert.match(checkAskCommand(c, ctx), /protected path/, c);
+});
+
+// ── defence in depth over the secret vault (docs/chat.md "Known limits of the command guard") ──
+const UNSURE_MSG = /builds part of itself when it runs/;
+
+test('WORCA_HOST_PID and the keychain and secrets patterns are matched on the unquoted, normalised copy too', () => {
+  for (const c of ['env -u WORCA_HOST""_PID ./run.sh', "unset 'WORCA_HOST'_PID; ./run.sh", 'unset WORCA_HOST\\_PID', "env -u $'WORCA_HOST_PID' ./x"])
+    assert.equal(checkAskCommand(c, ctx), HOST_PID_MSG, c);
+  for (const c of ["secret-tool  'look'up service worca", 'sec""ret-tool lookup service worca'])
+    assert.equal(checkAskCommand(c, ctx), KEYCHAIN_MSG, c);
+  for (const c of ['worca   secrets    ack', "worca $'secrets' ack"])
+    assert.equal(checkAskCommand(c, ctx), ACK_MSG, c);
+});
+
+test('a command that builds itself at run time and names the key store tools or Worca\'s CLI is refused', () => {
+  for (const c of ['eval "$(echo c2VjdXJpdHk= | base64 -d) dump-keychain security"', 'x=secrets; worca $x ack', 'cmd=export; worca secrets $cmd',
+    'bash -c "$0 secrets ack" worca', 'v=lookup; secret-tool $v service worca',
+    'python3 -c "import keyring"', 'node -e "require(process.argv[1])" keyring', 'echo `security` > /dev/null',
+    'w=worca-cc; $w secrets reset', 'sh -c "${T} security"'])
+    assert.notEqual(checkAskCommand(c, ctx), null, c);   // refused; #1645's path check may answer first
+  assert.equal(checkAskCommand('eval "worca se""crets ack"', ctx), ACK_MSG, 'the specific refusal comes first');
+});
+
+test('run-time commands that name none of them, and paths that only contain worca, stay allowed', () => {
+  for (const c of ['echo $(date)', 'ls $HOME/projects', 'bash -c "npm test"', 'eval "echo hi"', 'cat $(git rev-parse --show-toplevel)/README.md',
+    'cd /w/proj/worca-cc-fork && echo $(pwd)', 'grep -r security docs'])
+    assert.equal(checkAskCommand(c, ctx), null, c);
+});
+
+test('a $\'…\' string with a backslash escape is refused outright: the shell decodes it, the check cannot', () => {
+  for (const c of [String.raw`$'\x73ecurity' dump-keychain`, String.raw`worca $'\x73ecrets' ack`, String.raw`echo $'\101' && ls`,
+    String.raw`$'\163\145\143\162\145\164-tool' lookup service worca`])
+    assert.match(checkAskCommand(c, ctx) || '', /\$'…' escapes/, c);
+  assert.equal(checkAskCommand("echo $'plain words'", ctx), null, 'a $\'…\' string without an escape reads as written');
+});
+
+test('an unsure command naming Worca\'s CLI in any of SECRETS_VERB_RE\'s spellings, or secrets next to it, is refused', () => {
+  for (const c of ['x=ack; node /opt/app/src/cli/worca-cc.mjs secrets $x', String.raw`x=ack; node C:\app\src\cli\worca-cc.mjs secrets $x`,
+    'x=ack; npx @worca/app secrets $x', 'x=ack; npx @worca/app@2.1.0 secrets $x', 'v=$(echo ack); worca-cc.mjs secrets $v',
+    'eval "$X @worca/app secrets"'])
+    assert.notEqual(checkAskCommand(c, ctx), null, c);   // refused; #1645's path check may answer first
+  // Only the vault guard sees these: no secrets word, no path, only the CLI token or a key store tool in an unsure command.
+  for (const c of ['x=reset; node /opt/app/src/cli/worca-cc.mjs $x', 'x=y; npx @worca/app@2.1.0 $x', 'v=lookup; secret-tool $v service x', 'python3 -c "import keyring"'])
+    assert.match(checkAskCommand(c, ctx) || '', UNSURE_MSG, c);
+  for (const c of ['cd /w/proj/worca/src && echo $(pwd)', 'ls $HOME/worca-cc-notes', 'echo $(date) > worca.log'])
+    assert.equal(checkAskCommand(c, ctx), null, c);
+});

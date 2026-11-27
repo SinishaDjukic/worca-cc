@@ -281,7 +281,7 @@ describe('end to end', () => {
     }));
     writePluginsLock({ ...readPluginsLock(), acme: { repo: 'https://example.com/r', subdir: '', pinnedSha: 'x'.repeat(40), version: '1', enabled: true } });
     // A key saved in the plugin before the broker was turned on: it must never reach a spawn.
-    writePluginConfig('acme', modelSecretsSchema('acme'), { acmeKey: 'sk-plugin-saved-should-not-leak' });
+    await writePluginConfig('acme', modelSecretsSchema('acme'), { acmeKey: 'sk-plugin-saved-should-not-leak' });
 
     const { config, errors } = readBrokerConfig({
       WORCA_BROKER_MODE: 'multi', WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_HOST: '127.0.0.1', WORCA_BROKER_PORT: '0', WORCA_BROKER_UI_PORT: '0',

@@ -3,7 +3,7 @@
 // Prove a built Worca image works end to end, offline, with $0 spend
 // (plans/container-isolation-design.md §10.1). Runs on the HOST against docker:
 //
-//   npm run docker:smoke                          # ghcr.io/sinishadjukic/worca:dev
+//   npm run docker:smoke                          # ghcr.io/worca-org/worca:dev
 //   npm run docker:smoke -- --image worca:test
 //   npm run docker:smoke -- --keep                # leave the volume/containers for inspection
 //   npm run docker:smoke -- --user 1001:1001      # run the box as this uid:gid (default on Linux:
@@ -33,7 +33,7 @@ import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 
-const DEFAULT_IMAGE = 'ghcr.io/sinishadjukic/worca:dev';
+const DEFAULT_IMAGE = 'ghcr.io/worca-org/worca:dev';
 
 function parseArgs(argv) {
   const out = { image: DEFAULT_IMAGE, keep: false, user: null };

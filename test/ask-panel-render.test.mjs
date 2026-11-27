@@ -333,10 +333,10 @@ test('ask-panel-render: a finished answer turns its refs into chips with one POS
   const listeners = new Set();
   let live = null;
   const runStore = { get: () => null, byPipeline: (pid) => (pid === '1a2b3c4d' ? live : null), subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); } };
-  const text = 'Merged https://github.com/SinishaDjukic/worca-cc/pull/777 in [the run](#history/worca-cc-ace1a602/1a2b3c4d); `owner/repo#5` stays code.';
+  const text = 'Merged https://github.com/worca-org/worca/pull/777 in [the run](#history/worca-cc-ace1a602/1a2b3c4d); `owner/repo#5` stays code.';
   const snap = snapBody([userRow('askm_00000001', 1, 'see owner/repo#6'), asstRow('askm_00000002', 2, { text })]);
   const answers = {
-    'gh:SinishaDjukic/worca-cc#777': { ok: true, kind: 'pr', title: 'fix(promo-kit): startApp.stop()', state: 'merged' },
+    'gh:worca-org/worca#777': { ok: true, kind: 'pr', title: 'fix(promo-kit): startApp.stop()', state: 'merged' },
     'run:1a2b3c4d': { ok: true, kind: 'run', id: '1a2b3c4d', runId: null, title: 'Chips plan', status: 'running', home: 'worca-cc-ace1a602' },
   };
   const posts = [];
@@ -353,10 +353,10 @@ test('ask-panel-render: a finished answer turns its refs into chips with one POS
   await ctx.tick();                       // the batched POSTs answer
   const answer = ctx.doc.querySelector('.ask-msg-assistant .ask-answer');
   const [pr, run] = answer.querySelectorAll('a.ask-ref-chip');
-  assert.deepEqual(posts.map((p) => p.sort()), [['run:1a2b3c4d'], ['gh:SinishaDjukic/worca-cc#777']], 'worca refs and forge refs: one request each');
-  assert.equal(pr.getAttribute('href'), 'https://github.com/SinishaDjukic/worca-cc/pull/777');
+  assert.deepEqual(posts.map((p) => p.sort()), [['run:1a2b3c4d'], ['gh:worca-org/worca#777']], 'worca refs and forge refs: one request each');
+  assert.equal(pr.getAttribute('href'), 'https://github.com/worca-org/worca/pull/777');
   assert.deepEqual([...pr.querySelectorAll('.ask-ref-label, .ask-ref-title, .ask-ref-pill')].map((n) => n.textContent),
-    ['SinishaDjukic/worca-cc#777', 'fix(promo-kit): startApp.stop()', 'Merged']);
+    ['worca-org/worca#777', 'fix(promo-kit): startApp.stop()', 'Merged']);
   assert.equal(run.getAttribute('href'), '#history/worca-cc-ace1a602/1a2b3c4d');
   assert.equal(run.querySelector('.ask-ref-pill').textContent, 'Running');
   assert.equal(answer.querySelector('code').textContent, 'owner/repo#5', 'inline code is never a chip');

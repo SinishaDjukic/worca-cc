@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { buildGraph, changedFiles, referencesOf, relatedTests, FULL_SUITE } from '../tools/test-related.mjs';
 import { SERVER_MJS } from '../src/core/read-server-source.mjs';
 import { STYLE_CSS } from '../src/core/read-style-css.mjs';
+import { INDEX_HTML } from '../src/core/read-index-html.mjs';
 
 const roots = [];
 after(() => { for (const r of roots) rmSync(r, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); });
@@ -117,6 +118,27 @@ test('a change to ui/public/style.css does not select the readers of index.html 
 });
 test('a change to ui/public/style.css still selects a test that reads it through public-assets', () => {
   assert.ok(relatedTests(REPO, [STYLE_CSS]).tests.includes('test/stats-view.test.mjs'));
+});
+test('a changed manifest part, or parts.json, counts as a change to the file it assembles', () => {
+  const root = repo({
+    'src/core/read-style-css.mjs': `export const STYLE_CSS = '${STYLE_CSS}';\n`,
+    'src/core/read-index-html.mjs': `export const INDEX_HTML = '${INDEX_HTML}';\n`,
+    'ui/public/parts.json': JSON.stringify({ version: 1, css: ['x/a.css'], html: ['x/a.html'] }),
+    'ui/public/x/a.css': '',
+    'ui/public/x/a.html': '',
+    'ui/public/x/loose.css': '',
+    'test/css.test.mjs': "import { STYLE_CSS } from '../src/core/read-style-css.mjs';\n",
+    'test/html.test.mjs': "import { INDEX_HTML } from '../src/core/read-index-html.mjs';\n",
+  });
+  assert.deepEqual(related(root, ['ui/public/x/a.css']).tests, ['test/css.test.mjs']);
+  assert.deepEqual(related(root, ['ui/public/x/a.html']).tests, ['test/html.test.mjs']);
+  assert.deepEqual(related(root, ['ui/public/parts.json']).tests, ['test/css.test.mjs', 'test/html.test.mjs']);
+  assert.deepEqual(related(root, ['ui/public/x/loose.css']).tests, [], 'a file the manifest does not list is not a part');
+});
+test('a change to a real stylesheet or shell part selects the tests that guard the assembled file', () => {
+  const css = relatedTests(REPO, ['ui/public/runs/run-detail.css']).tests;
+  for (const t of ['ui-design-language', 'ui-functional-css', 'ui-theme-tokens']) assert.ok(css.includes(`test/${t}.test.mjs`), t);
+  assert.ok(relatedTests(REPO, ['ui/public/runs/runs.html']).tests.includes('test/index-html.test.mjs'));
 });
 test('a change to ui/server.mjs still selects a test that reads it with readServerSource()', () => {
   assert.ok(relatedTests(REPO, [SERVER_MJS]).tests.includes('test/git-capability-api.test.mjs'));

@@ -16,7 +16,7 @@ export const WEB_LIMITS = Object.freeze({
   urlMaxChars: 2048, queryMaxChars: 256, pathMaxChars: 512, dataRunChars: 64,
   searchQueryMaxChars: 200, searchMaxBytes: 1024 * 1024, searchMaxResults: 10,
 });
-const USER_AGENT = 'worca-ask/1 (+https://github.com/SinishaDjukic/worca-cc)';
+const USER_AGENT = 'worca-ask/1 (+https://github.com/worca-org/worca)';
 const FETCH_HEADERS = Object.freeze({ 'user-agent': USER_AGENT, accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,application/json;q=0.8,*/*;q=0.1', 'accept-encoding': 'gzip, deflate, br' });
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 

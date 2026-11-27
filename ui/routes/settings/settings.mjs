@@ -7,6 +7,7 @@ import { modelSlot } from '../../../src/core/broker-routing.mjs';
 import { listModels, modelCostConfig } from '../../../src/core/config.mjs';
 import { factoryModelsPayload } from '../../../src/core/factory-models.mjs';
 import { allFlags, flagEnabled } from '../../../src/core/flags.mjs';
+import { refreshSecretsStatus } from './secrets.mjs';
 import { currentGitState } from '../../../src/core/git-available.mjs';
 import { asPersonMode } from '../../../src/core/github-credentials.mjs';
 import { WORKSPACE_SCAN_DEFAULT_MODELS } from '../../../src/core/graph/builtin-workflows.mjs';
@@ -24,9 +25,10 @@ import { resolvePrDescriptionModel } from '../../../src/core/pr-description.mjs'
 import { listProjects, normalizeProjectPath } from '../../../src/core/projects.mjs';
 import { DEFAULT_INTERVIEW_EFFORT, requirementsModel } from '../../../src/core/requirements/interview.mjs';
 import { settingsErrorReply } from '../../../src/core/settings-errors.mjs';
-import { actionsSettings, agentGenModel as storedAgentGenModel, askEngineSetting, askMaxBudgetUsd, askMaxTurns, askModelsSetting, askWeb, chatLinksInPanel, autoGeneratePrDescription, autoTestWorkers, autoWorkflowModel as storedAutoWorkflowModel, chatPrefs, commandSummaryModel as storedCommandSummaryModel, costLimitResetPeriod, debugSpawnEnabled as storedDebugSpawnEnabled, defaultProjectsRoot, designModelsSetting, defaultRoot, effectiveDebugSpawn, getWorcaRoot, hideBuiltinEngines, hideBuiltinModels, humanRateUsdPerHour, keepAwakeEnabled, memoryCaps, memoryDefragModel, modelRolesSetting, namingModel as storedNamingModel, networkWaitSettings, nightModeSettings, nightModeToggle, nightModeToggleFor, pipelineCostLimitUsd, prDescriptionModel as storedPrDescriptionModel, rawProjectsRoot, requirementsInterviewSetting, resumeAfterUsageLimit, runEngineSetting, runLimits, scheduleDefaults, screensaverSettings, secondOpinionModelSetting, smartNaming, stepModelsSetting, syncDefaults, theme as storedTheme, titleModel as storedTitleModel, totalCostLimitUsd, updateCheckEnabled, userEnforceTags, userTagDimensions, utilityModelsSetting, workspaceScanModels } from '../../../src/core/settings.mjs';
+import { actionsSettings, agentGenModel as storedAgentGenModel, askEngineSetting, askMaxBudgetUsd, askMaxTurns, askModelsSetting, askWeb, chatLinksInPanel, autoGeneratePrDescription, autoTestWorkers, autoWorkflowModel as storedAutoWorkflowModel, chatPrefs, commandSummaryModel as storedCommandSummaryModel, costLimitResetPeriod, debugSpawnEnabled as storedDebugSpawnEnabled, defaultProjectsRoot, designModelsSetting, defaultRoot, dockerSandboxSettingRaw, e2bIntSettingRaw, effectiveDebugSpawn, execEnvSetting, getWorcaRoot, hideBuiltinEngines, hideBuiltinModels, humanRateUsdPerHour, keepAwakeEnabled, memoryCaps, memoryDefragModel, modelRolesSetting, namingModel as storedNamingModel, networkWaitSettings, nightModeSettings, nightModeToggle, nightModeToggleFor, pipelineCostLimitUsd, prDescriptionModel as storedPrDescriptionModel, rawProjectsRoot, requirementsInterviewSetting, resumeAfterUsageLimit, runEngineSetting, runLimits, scheduleDefaults, screensaverSettings, secondOpinionModelSetting, smartNaming, stepModelsSetting, syncDefaults, theme as storedTheme, titleModel as storedTitleModel, totalCostLimitUsd, updateCheckEnabled, userEnforceTags, userTagDimensions, utilityModelsSetting, workspaceScanModels } from '../../../src/core/settings.mjs';
 import { describeTitleModel } from '../../../src/core/title.mjs';
 import process from 'node:process';
+import { whereWorcaRuns } from '../../../src/core/security-posture.mjs';
 import { APP_INFO, REMOTE_MODE, actionsEnabledHere, agentMayBeCaller, applySettingsPatch, autoDetectedBuiltins, awayPersonOf, effectiveUiLevel, emitMemoryChanged, liveDefragRun, memoryError, previewPortMode, refuseAgentCaller, requireFsAllowed, teamOriginOk, teamWarn } from '../../server.mjs';
 
 export function register(app) {
@@ -144,6 +146,13 @@ const settingsState = () => ({
   workspaceScanDefault: withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS) || WORKSPACE_SCAN_DEFAULT_MODELS,
   workspaceScanFromRole: !!withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS),   // the wizard stores no pick of its own then (re-scans follow the role)
   runEngine: runEngineSetting() ?? null,
+  // Raw values (unlike askMaxTurns): an unset field stays empty and Save never persists a default nobody typed.
+  execEnv: execEnvSetting() ?? null,
+  e2bMaxSandboxes: e2bIntSettingRaw('e2bMaxSandboxes'),
+  e2bMaxWaitMin: e2bIntSettingRaw('e2bMaxWaitMin'),
+  dockerMaxSandboxes: e2bIntSettingRaw('dockerMaxSandboxes'),   // Local sandbox (Docker): the same two limits
+  dockerMaxWaitMin: e2bIntSettingRaw('dockerMaxWaitMin'),
+  dockerSandbox: dockerSandboxSettingRaw(),               // { memory, cpus, pids, runtime } as stored (null = the defaults)
   stepModels: stepModelsSetting(),
   designModels: designModelsSetting(),                    // Models › Jobs › Design: { <engine>: { lead|builder: { model, effort } } }
   modelRoles: modelRolesSetting(),                         // Models › Jobs › Roles (D1): { <engine>: { deep|everyday|quick: { model, effort } } }
@@ -160,6 +169,7 @@ const settingsState = () => ({
   actions: actionsSettings(),                             // Settings › Runs › Actions (issue #529)
   actionsDetected: autoDetectedBuiltins(),                // what Editor / Terminal fall back to when left blank (null = none found)
   actionsGate: { remote: REMOTE_MODE, enabled: actionsEnabledHere(), previewPorts: previewPortMode(), previewPortsLocked: REMOTE_MODE },
+  box: whereWorcaRuns(process.env, { remoteMode: REMOTE_MODE }),   // native | container | hardened | hosted (Add project, Security)
 });
 
 /** Settings ▸ Auto workflow model: the stored id + what the classifier will actually use
@@ -249,6 +259,7 @@ app.post('/api/settings', async (req, res) => {
     has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
   try {
     const { actionsWarnings } = await applySettingsPatch(body, { person: awayPersonOf(req) });
+    refreshSecretsStatus(); // a save may have turned the secretVault flag on; fire and forget
     res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(),
       ...(actionsWarnings ? { actionsWarnings } : {}) });
   } catch (err) {

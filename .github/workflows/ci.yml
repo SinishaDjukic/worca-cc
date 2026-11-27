@@ -456,7 +456,7 @@ jobs:
           context: .
           file: docker/Dockerfile
           load: true
-          tags: ghcr.io/sinishadjukic/worca:ci
+          tags: ghcr.io/worca-org/worca:ci
           build-args: |
             WORCA_TARBALL=${{ steps.pack.outputs.tarball }}
             CLAUDE_CODE_VERSION=${{ steps.pack.outputs.claude_code }}
@@ -466,7 +466,7 @@ jobs:
           cache-to: type=gha,scope=ci-slim,mode=max
 
       - name: Mock-mode smoke inside the image
-        run: npm run docker:smoke -- --image ghcr.io/sinishadjukic/worca:ci
+        run: npm run docker:smoke -- --image ghcr.io/worca-org/worca:ci
 
       # Blocking: the Debian layer we ship. Node/npm library findings inside the
       # base image (e.g. node-tar under the bundled npm) are the node image's to
@@ -475,7 +475,7 @@ jobs:
       - name: Scan OS layer
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ghcr.io/sinishadjukic/worca:ci
+          image-ref: ghcr.io/worca-org/worca:ci
           scan-type: image
           vuln-type: os
           severity: HIGH,CRITICAL
@@ -486,7 +486,7 @@ jobs:
       - name: Report library findings (non-blocking)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ghcr.io/sinishadjukic/worca:ci
+          image-ref: ghcr.io/worca-org/worca:ci
           scan-type: image
           vuln-type: library
           severity: HIGH,CRITICAL

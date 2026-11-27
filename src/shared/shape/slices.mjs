@@ -469,7 +469,9 @@ export function sliceScopeBlock({ index, total, outline, earlier = [], refiner =
     : '';
   const change = !refiner && outlineChangeFile
     ? `\nIf slice ${index} cannot be built as the outline describes (a prerequisite an earlier slice did not deliver, a split `
-      + `that no longer fits the code), write why, in a few sentences, to: ${outlineChangeFile}\n`
+      + `that no longer fits the code), write why to: ${outlineChangeFile}\n`
+      + 'Make the first line the reason in one sentence, with no heading. Then give the detail in a few short paragraphs, '
+      + 'with file names in backticks and a list when it names several files.\n'
       + 'Then plan what can be built. Write that file only in that case: when it exists, a person reviews your plan before '
       + 'anything is built.\n'
     : '';

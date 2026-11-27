@@ -25,12 +25,13 @@ import { glanceCopy } from './run-glance.mjs';
 import { splitShown, matchesLabels } from '../../src/shared/run-labels.mjs';
 import { labelChip } from './label-picker.mjs';
 import { paintProgressBar, renderRowLine } from './run-progress-bar.mjs';
-import { renderStatusDot } from './status-dot.mjs';
+import { renderStatusDot, markDot, staleLive } from './status-dot.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { runModel, groupModel, finishedNeedsYou, WATCH_WHY } from '../../src/shared/run-model.mjs';
 import { kindChip } from './run-kind.mjs';
 import { memberShortWord } from '../../src/shared/shape/run-agents.mjs';
+import { memberStatusOf } from '../../src/shared/shape/run-status.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -970,7 +971,7 @@ function renderRounds(doc, r, { roundsOpen = new Set(), roundsAll = new Set(), n
 }
 
 function renderItem(doc, r, { section = '', level = 'top', checked, selecting, spansProjects = false, lineFrom = null, position = '', parentWhere = '', now = Date.now(),
-  roundsOpen = new Set(), roundsAll = new Set(), smallRuns = false } = {}) {
+  roundsOpen = new Set(), roundsAll = new Set(), smallRuns = false, status = null } = {}) {
   const item = doc.createElement('div');
   item.className = `runs-item${checked.has(r.key) ? ' is-checked' : ''}${r.needs && level === 'top' ? ' is-needs' : ''}`;
   item.dataset.rowKey = r.key;
@@ -983,7 +984,6 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   box.className = 'runs-check';
   box.checked = checked.has(r.key);
   box.setAttribute('aria-label', `Select ${r.title}`);
-  pick.append(renderStatusDot(doc, r.model), box);
   const a = doc.createElement('a');
   a.className = `runs-row runs-row-${r.kind}`;
   a.setAttribute('href', r.href);
@@ -1019,8 +1019,15 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   if (staged) line = DOT_SAYS.has(r.model.state) ? '' : dropLead(line, r.model.progress.label);
   // D2 (owner direction): a small-runs member says the Chat card's short word (done, building, waits for run 2); a run
   // the card has no word for (null: no Care plan, held) keeps dev's line.
-  const short = smallRuns && level === 'member' ? memberShortWord(r) : null;
-  if (short) line = short;
+  // Shaper small runs s5 (D4): a marked feature's member takes runStatus's word first (a string, '' included), then the
+  // short word, then dev's line; its mark repaints the dot. data-state-word and data-line stay dev's (the layout audit).
+  const st = typeof status === 'function' && level === 'member' ? status(r) : null;
+  const short = smallRuns && level === 'member' && !(st && typeof st.word === 'string') ? memberShortWord(r) : null;
+  if (st && typeof st.word === 'string') line = st.word;
+  else if (short) line = short;
+  const runMark = st && st.mark && !staleLive(st, r.model) ? st.mark : null;
+  if (runMark) item.dataset.mark = runMark;
+  pick.append(renderStatusDot(doc, runMark ? markDot(r.model, runMark, line) : r.model), box);
   // D6: a stack's sub-line is its newest round's (the stack line below the row); the row keeps its own line only while
   // it needs a person for its own reason, and the round line comes second.
   const stack = !!(r.rounds && r.rounds.length);
@@ -1063,9 +1070,11 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
     const list = doc.createElement('div');   // member rows are div.runs-item, so a list of them is a div with role=list
     list.className = r.smallRuns ? 'runs-members srows' : 'runs-members';   // D2 (D4): one-line .srows members
     list.setAttribute('role', 'list');
+    // s5 (D3): the shared status only for a small-runs group whose members carry slices (the flag on, a marked feature).
+    const status = r.smallRuns && r.members.some((mb) => mb.slice) ? memberStatusOf(r.members) : null;
     for (const mb of r.members) {
       list.append(renderItem(doc, { ...mb, href: mb.href || '#runs', title: mb.title || '(untitled)' },
-        { level: 'member', checked, selecting, lineFrom, now, roundsOpen, roundsAll, smallRuns: !!r.smallRuns, parentWhere: r.kind === 'chat-group' ? r.groupName || '' : '',
+        { level: 'member', checked, selecting, lineFrom, now, roundsOpen, roundsAll, smallRuns: !!r.smallRuns, status, parentWhere: r.kind === 'chat-group' ? r.groupName || '' : '',
           position: r.kind !== 'chain' || r.groupKind === 'user' || mb.adhoc ? '' : String(mb.position) }));
     }
     item.append(list);

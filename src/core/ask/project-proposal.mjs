@@ -18,17 +18,25 @@ const clip = (v, n) => String(v ?? '').replace(BREAKS_RE, ' ').slice(0, n);
 // eslint-disable-next-line no-control-regex
 const NAME_BAD_RE = /[\x00-\x1f\x7f-\x9f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
+/** The hardened box's refusal of kind "add" (POST /api/projects and the card's Apply refuse a folder there too). */
+export const HARDENED_ADD_TEXT = 'In the hardened box, add a project by cloning it from its remote: use propose_clone_project with its https:// URL. A folder here is on the box\'s own disk, not on your machine.';
+
 /**
  * @param {object} r
  * @param {(input:object) => Promise<object>} r.createProject     project-create.mjs#createProject (called with dryRun: true)
  * @param {(input:object) => Promise<object>} r.addProjectFolder  project-create.mjs#addProjectFolder (called with dryRun: true)
+ * @param {() => boolean} [r.hardened]  true in the hardened box (security-posture.mjs isHardenedBox): add is refused, clone only
+ * @param {(input:object) => Promise<object>} [r.sandbox]  kind "sandbox": a project's sandbox network and template / image
+ *   (env-proposal.mjs validateSandboxConfig); absent = the kind is unknown here
  */
 export function createProjectChangeValidator(r) {
   /** @returns {Promise<{ok:true, card:object}|{ok:false, errors:string[]}>} */
   return async function validateProjectProposal(input) {
     const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
     const kind = str(inp.kind);
-    if (kind !== 'create' && kind !== 'add') return { ok: false, errors: ['kind must be "create" or "add"'] };
+    if (kind === 'sandbox' && typeof r.sandbox === 'function') return r.sandbox(inp);
+    if (kind !== 'create' && kind !== 'add') return { ok: false, errors: [`kind must be "create" or "add"${typeof r.sandbox === 'function' ? ', or "sandbox"' : ''}`] };
+    if (kind === 'add' && typeof r.hardened === 'function' && r.hardened()) return { ok: false, errors: [HARDENED_ADD_TEXT] };
     if (inp.useGit !== undefined && typeof inp.useGit !== 'boolean') return { ok: false, errors: ['useGit must be true or false'] };
     const useGit = inp.useGit === true;
     const typed = kind === 'add' ? str(inp.name) : '';

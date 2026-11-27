@@ -94,7 +94,7 @@ const { getDb } = await mod('../src/core/db.mjs');
 await setUiLevel('advanced');   // the Marketplace page is Advanced
 await linkPlugin('jira-source', fileURLToPath(new URL('../plugins/jira-source', import.meta.url)));
 createProfile('jira-source', 'acme', 'Acme');
-writePluginConfig('jira-source', [{ key: 'baseUrl', type: 'text' }, { key: 'token', type: 'text', secret: true }],
+await writePluginConfig('jira-source', [{ key: 'baseUrl', type: 'text' }, { key: 'token', type: 'text', secret: true }],
   { baseUrl: 'https://acme.atlassian.net', token: 'tok-proof' }, 'acme');
 const { server } = await mod('../ui/server.mjs');
 srv = server;

@@ -6,11 +6,19 @@ import { syncBuiltinESMExports } from 'node:module';
 import { beforeEach } from 'node:test';
 import { useTempHome } from './temp-home.mjs';
 import { mcpDir } from '../../src/core/mcp/store.mjs';
+import { fakeVault } from './vault-on.mjs';
 
+let fake = null;
 export function freshHomes(after) {
   const root = useTempHome(after);
+  fake = fakeVault(root);   // the fake's state file is reaped with the temp root
   beforeEach(() => { process.env.WORCA_HOME = mkdtempSync(join(root, 'h-')); });
 }
+
+/** Run `fn` with the secretVault flag on over the file-backed OS-store fake (after freshHomes). */
+export const vaultOn = (fn) => fake.vaultOn(fn);
+/** The vault of the current Worca home, over the same fake. */
+export const vaultOf = () => fake.vaultOf();
 export const plain = (v) => JSON.parse(JSON.stringify(v));
 export const file = (n) => join(mcpDir(), `${n}.json`);
 export const put = (n, obj) => { mkdirSync(mcpDir(), { recursive: true }); writeFileSync(file(n), JSON.stringify({ schema: 1, ...obj })); };

@@ -25,6 +25,8 @@ import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine
 import { PR_OPEN, PR_OPEN_LABELS, prSourceText } from '../../src/shared/pr-auto.mjs';
 import { SOURCE_BRANCH_TEXT, currentBranchLabel } from '../../src/shared/chat-source-branch.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
+import { execEnvList, execEnvLabel, execEnvKnown } from './exec-envs.mjs';
+import { remoteRefusesDefault } from '../../src/shared/exec-env.mjs';
 import { runsOn, modelGroups, connectionOf, connectionLabel } from '../../src/shared/connections.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
@@ -203,6 +205,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     open: false,
     threadId: null,
     designThread: null,       // the design chat whose dock the design slot shows (syncDesign), else null
+    listDesigns: false,       // the chats list shows only chats with a design (setListDesigns: the sidebar lights Design)
+    listDesignsQueued: false, // a setListDesigns waits for the end of the task
     designStart: false,       // the design slot shows a new design's start (startDesign)
     ext: null,                // the composer's extension (setComposerExt): a design chat's or a new design's own controls
     lentTips: [],             // [{btn, title}]: the ext's buttons whose title became a tip while lent (setComposerExt gives it back)
@@ -306,6 +310,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     queueEdit: null,          // {id, item, li, ta}: the queued card whose text is being edited in place (one at a time)
     stopBy: null,             // who asked the live turn to stop: 'button' pauses the queue, 'voice' (barge-in) lets it send
     stopAfterSend: false,     // voice asked to stop while the send POST was out: stop that turn as soon as the 202 lands
+    echo: null,               // the composer's send while its POST is out: {sendId, quoted, requirements, cleared}; its echo clears the composer
     hist: { idx: -1, draft: '' },   // ArrowUp history walk: idx into historyEntries(), -1 = not walking; the draft it replaced
     basePlaceholder: INPUT_PLACEHOLDER,   // the add-ons' placeholder (addonCtx.setPlaceholder); a suggestion shows only over the default
     suggestion: null,         // the suggestion on screen ({messageId, text}) — what Tab accepts
@@ -1108,8 +1113,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         route(id, { replace: true });          // #chat → #chat/<id>, swapped: Back never lands on an empty new chat
       }
       const sentOff = st.mcp.off;
+      // The composer's own send is tagged: the server's echo of the user row carries the tag, and the composer clears
+      // as the bubble appears (pushServerFrame). The 202 comes only after the prompt is assembled, seconds later on
+      // Windows. A drained queue item is not tagged: it never touches the composer.
+      const sendId = queued ? null : `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
       const payload = {
         text,
+        ...(sendId ? { sendId } : {}),
         model: st.picker.model,
         effort: st.picker.effort,
         // The browser's zone rides along: "tomorrow 02:00" is read in it (docs/scheduled-runs.md "Chat").
@@ -1127,6 +1137,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         ...(requirementsOn() && draft.requirements && draft.requirements.length ? { requirements: draft.requirements } : {}),
       };
       const model = st.model;
+      if (sendId) st.echo = { sendId, quoted, requirements: payload.requirements, cleared: false };
       let res = null;
       let refusedBody = null;
       try {
@@ -1190,17 +1201,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       st.askedIn.add(id);                            // its replies may light the Chat row's dot, even after a switch
       // No provisional title from the prompt: the header keeps "New chat" until
       // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
-      // A drained queue item leaves the composer alone: it holds whatever the user is typing now.
-      if (!queued) {
-        el.input.value = '';
-        fitInput();                                    // a programmatic clear fires no input event
-        st.pendingFiles = [];
-        if (st.quote === quoted) st.quote = null;
-        renderChips();
-        st.hist = { idx: -1, draft: '' };
-        dropAttached(payload.requirements);            // only after the 202: a refusal keeps text and features
-        if (el.hash) el.hash.close();
-      }
+      // A drained queue item leaves the composer alone: it holds whatever the user is typing now. So does a send whose
+      // echo already cleared it: the composer may hold the next message by now.
+      if (!queued && !(st.echo && st.echo.cleared)) clearSentDraft(quoted, payload.requirements);
       subscribe(id);
       st.pinned = true;
       scheduleFlush();
@@ -1208,8 +1211,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     } finally {
       st.sending = false;
       st.stopAfterSend = false;
+      st.echo = null;
       updateSendStop();
     }
+  }
+
+  /** The composer after its message is in (the echo or the 202, whichever lands first): text, files, its quote and the
+   *  features it carried go. Only once the server has the row: a refusal keeps text and features. */
+  function clearSentDraft(quoted, requirements) {
+    el.input.value = '';
+    fitInput();                                    // a programmatic clear fires no input event
+    st.pendingFiles = [];
+    if (st.quote === quoted) st.quote = null;
+    renderChips();
+    st.hist = { idx: -1, draft: '' };
+    dropAttached(requirements);
+    if (el.hash) el.hash.close();
   }
 
   // ---- the composer's extension (docs/design.md "In the chat") ----------------------------------------------------
@@ -2319,10 +2336,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     onToolScope();
   }
 
-  /** The panel moved to another chat: app.js points the address at it (pushed, or swapped with `replace`). */
-  function route(threadId, { replace = false } = {}) {
+  /** The panel moved to another chat: app.js points the address at it (pushed, or swapped with `replace`). `design`:
+   *  a new design's start (#chat/new/design), not a chat. */
+  function route(threadId, { replace = false, design = false } = {}) {
     if (typeof onRoute !== 'function') return;
-    try { onRoute(threadId || null, { replace }); } catch { /* the address is a nicety */ }
+    try { onRoute(threadId || null, design ? { replace, design: true } : { replace }); } catch { /* the address is a nicety */ }
   }
 
   /**
@@ -2388,14 +2406,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  chat stays a chat: this transcript draws its messages and the design's cards. Any other thread, or none, gives the
    *  slot back. */
   function syncDesign(thread) {
-    const leftStart = st.designStart;
     if (st.designStart) { st.designStart = false; el.designSlot.hidden = true; setComposerExt(null); try { designChat.unmount(); } catch { /* the page's own trouble */ } }
     const clearHead = () => { el.headSlot.replaceChildren(); el.headSlot.hidden = true; };
     const want = designChat && designChat.enabled?.() !== false && thread && typeof thread.id === 'string' && typeof thread.designId === 'string' && thread.designId
       ? thread.id : null;
-    // Only the design start folds the chats list (startDesign): on any chat after it, the design's chat included, it is
-    // as the person left it (open by default).
-    if (leftStart) setHistoryOpen(initialHistoryOpen(), { persist: false });
+    // The chats list is as the person left it (open by default) on a design's start and its chat, as on any chat.
     if (want === st.designThread) { syncView(); return; }
     if (st.designThread) { setComposerExt(null); try { designChat.unmount(); } catch { /* the dock's own trouble */ } }
     clearHead();
@@ -2417,17 +2432,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (inline) { if (el.designSlot.parentNode !== el.transcript) el.transcript.appendChild(el.designSlot); }
     else if (el.designSlot.previousSibling !== el.transcript) el.transcript.after(el.designSlot);
   }
-  /** A new design chat (#chat/new/design, the sidebar's Design): the design start in the slot. Its Send creates the
-   *  design and its chat, and opens it (app.js). → false where there is no design start (the flag off). */
-  function startDesign() {
+  /** A new design chat (#chat/new/design, the sidebar's Design; #chat/new/design/all, `#design`): the design start in
+   *  the slot, with the designs under it (`all`: every one shown). Its Send creates the design and its chat, and opens it
+   *  (app.js). → false where there is no design start (the flag off). */
+  function startDesign({ all = false } = {}) {
     if (!designChat || typeof designChat.mountStart !== 'function' || st.destroyed) return false;
     newThread({ focus: false });
     st.designStart = true;
-    setHistoryOpen(false, { persist: false });   // a new design starts with the chats list folded (the person's choice is kept)
     el.designSlot.hidden = false;
     el.designSlot.removeAttribute('data-inline');
     placeDesignSlot(false);
-    try { designChat.mountStart(el.designSlot, { setComposer: (ext) => (st.designStart ? setComposerExt(ext) : null) }); } catch (e) { console.warn('[worca] the design start failed to open', e); }
+    try { designChat.mountStart(el.designSlot, { setComposer: (ext) => (st.designStart ? setComposerExt(ext) : null), all }); } catch (e) { console.warn('[worca] the design start failed to open', e); }
     paintTitle('New design');
     syncView();
     return true;
@@ -2769,17 +2784,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  capture-phase listeners read (chat/home-flip.mjs arms the glide, chat/intent.mjs drops the intent). Below 1100px
    *  the overlay closes first, as after a pick, so the new chat has its room and newThread() can focus its composer.
    *  `words` is the visible text; the list's copy reads "New", and the accessible name keeps "New chat ⌥⌘N". */
-  function newChatPlus(words = 'New chat') {
+  function newChatPlus(words = 'New chat', { list = false } = {}) {
     // Like the Runs page's New run: a small primary button with its icon and its words (the key stays in the tooltip).
+    // The list's New beside Design (st.listDesigns) starts a new design, as the sidebar's Design does.
     const b = iconButton('btn btn-sm btn-primary chat-head-btn chat-new-plus', `New chat ${keyHint(['alt', 'mod', 'N'], isMac(win))}`,
-      svgIcon(ICONS.plus, 14, 2), () => { if (historyOverlayOpen()) setHistoryOpen(false, { persist: false }); newThread(); route(null); });
+      svgIcon(ICONS.plus, 14, 2), () => {
+        if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
+        if (list && st.listDesigns) { route(null, { design: true }); return; }
+        newThread();
+        route(null);
+      });
     b.append(doc.createTextNode(words));
     b.setAttribute('data-ask-new-btn', '');
     return b;
   }
   function mountChats() {
     el.page.dataset.chats = 'on';
-    el.listNew = newChatPlus('New');   // New chat at the end of the chats list's head (the head's own shows only while the list is folded)
+    el.listNew = newChatPlus('New', { list: true });   // New chat at the end of the chats list's head (the head's own shows only while the list is folded)
+    el.listNewName = el.listNew.getAttribute('aria-label');
     el.listNew.classList.add('chat-list-new');
     chatsCol = mountChatsColumn({ host: el.history, newButton: el.listNew, fetch, storage, win, now, level: () => currentLevel(doc),
       scopeName: (sc) => chatDep('scopeName', sc) || '', currentId: () => (typeof st.wantThread === 'string' ? st.wantThread : st.threadId),
@@ -4250,7 +4272,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       });
   }
 
-  function wsBasename(p) { return String(p || '').replace(/\/+$/, '').split('/').pop() || String(p || ''); }
+  // Both separators: a Windows workspace sends c:\…\name paths.
+  function wsBasename(p) { return String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(p || ''); }
+  // The line under the Workspace select: the first few member names, the rest as a count; every name in the tooltip.
+  const WS_MEMBERS_SHOWN = 3;
+  function wsMembersLine(names) {
+    const rest = names.length - WS_MEMBERS_SHOWN;
+    return rest > 0 ? `${names.slice(0, WS_MEMBERS_SHOWN).join(', ')} and ${rest} more` : names.join(', ');
+  }
 
   // ---- Run proposal card v2 (spec 2026-09-06-ask-run-card-v2 §7.3) --------------------------------------------------
   const RP_ACC = new Set(['violet', 'blue', 'green', 'peach', 'red', 'amber']);
@@ -4322,15 +4351,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // them as its defaults ("Save as project defaults", saveLaneEdits). `explicit`: a workspace card's rows are the
     // built-in defaults, not the run's baseline (laneOverlay names its picks outright). `proposal` / `proposed` /
     // `warnings`: Ask Worca's per-agent picks (card.nodes) once applyProposal lays them in as the lane's baseline.
+    // The saved run.execEnv default, raw: the card names what it gives THIS run (cardExecEnvDefault).
+    const savedExecEnv = defaults && defaults.execEnv && typeof defaults.execEnv.value === 'string' ? defaults.execEnv.value : 'local';
     // `reviewRoleRows`: a role-review node's declared roles (node-tunables buildRoleRows); their edits live apart from
     // the node rows' in `reviewRoleEdits[nodeId][roleKey]` (`row.role` already names Default's legacy step role).
     return { wf, registry, runConfig, rows, edits: {}, reviewRoleRows: buildRoleRows(wf, rows, runConfig), reviewRoleEdits: {},
-      editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
+      editable: true, explicit: !projectDir, engine, defaultEngine, savedExecEnv, allModels, proposal: {}, proposed: {}, warnings: [],
       prDefault: defaults && defaults.pr && defaults.pr.scope === 'project' ? defaults.pr : null,
       models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
   const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
+  /** Where the card's run executes with "Default" picked: the saved run.execEnv, except a saved remote default on a run
+   *  no remote backend takes (an engine no sandbox runs, a workspace run), which the server runs locally (resolveRunExecEnv). */
+  function cardExecEnvDefault(lane, local) {
+    const saved = lane && execEnvKnown(lane.savedExecEnv) ? lane.savedExecEnv : 'local';
+    if (saved === 'local') return 'local';
+    return remoteRefusesDefault({ engine: local.engine() || lane.defaultEngine, workspace: local.target === 'workspace',
+      workMode: local.target === 'none' ? 'none' : 'git' }) ? 'local' : saved;
+  }
   const laneCaps = (row) => ({ asksQuestions: row.askQuestions !== null, questionsLocked: row.questionsLocked });
   const laneReviewRoleEdit = (lane, rr) => (lane.reviewRoleEdits[rr.nodeId] || {})[rr.roleKey] || null;
   const laneReviewRoleEffective = (lane, rr) => ({ ...rr, ...(laneReviewRoleEdit(lane, rr) || {}) });
@@ -5971,6 +6010,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (lockEngineOptions(engineSel)) engineSel.value = '';
     const engineField = rpField('Engine', engineSel);
     local.engine = () => engineSel.value;
+    // Runs in (docs/e2b.md): "Default" sends none, so /api/run resolves run.execEnv (named once the lane has read it);
+    // a proposal that names an environment preselects it.
+    const execEnvSel = rpSelect('ask-card-exec-env', 'Runs in');
+    fillSelect(execEnvSel, [{ value: '', label: 'Default' }, ...execEnvList().map((e) => ({ value: e.name, label: e.label }))], card.execEnv || '');
+    const execEnvField = rpField('Runs in', execEnvSel);
     const guardSel = rpSelect('ask-card-guardrails', 'Guardrails');
     const guardDesc = make('span', 'ask-rp-wfdesc', 'Applies to every agent in this run');
     guardDesc.setAttribute('data-for', 'guardrails');
@@ -5982,7 +6026,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     lvTag(guardField, 'advanced', !!card.guardrailsId && card.guardrailsId !== 'permissive');
     lvTag(seg, 'advanced', card.target === 'workspace' || card.target === 'none');
     lvTag(engineField, 'advanced', !!card.engine && card.engine !== 'claude');
-    wfRow.append(wfField, engineField, guardField);
+    lvTag(execEnvField, 'advanced', !!card.execEnv && card.execEnv !== 'local');
+    wfRow.append(wfField, engineField, execEnvField, guardField);
     targetSec.appendChild(wfRow);
     // Pull request when the run finishes: "Use the setting" sends nothing (the project's or workspace's value, with its source, once the lane has read it); a pick is this run's own choice.
     const prSel = rpSelect('ask-card-pr', 'Pull request when done');
@@ -6528,7 +6573,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const list = row && Array.isArray(row.projectKeys)
           ? row.projectKeys.map((k, i) => ({ projectKey: k, name: wsBasename(row.projectPaths && row.projectPaths[i]), folder: Array.isArray(row.vcs) && row.vcs[i] === 'none' }))
           : Array.isArray(card.members) ? card.members.map((m) => ({ projectKey: m.projectKey, name: m.projectName, folder: m.workMode === 'folder' })) : [];
-        members.textContent = list.map((m) => m.name).join(', ');
+        const names = list.map((m) => m.name);
+        members.textContent = wsMembersLine(names);
+        members.title = names.length > WS_MEMBERS_SHOWN ? names.join(', ') : '';
         for (const m of list) {
           if (m.folder) continue;   // listed above, but no per-member source input: never in sourceBranchByKey
           const inp = doc.createElement('input');
@@ -6613,6 +6660,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           engineSel.options[0].textContent = `${engineLabel(lane.defaultEngine)} (default)`;
           prSel.options[0].textContent = lane.prDefault && local.target === 'project' ? `Use the setting: ${PR_OPEN_LABELS[lane.prDefault.open.value]} (${prSourceText(lane.prDefault.open.source)})` : 'Use the setting';
           for (const o of engineSel.options) o.hidden = o.value !== '' && o.value === lane.defaultEngine && engineSel.value !== o.value;   // listed once
+          const envDefault = cardExecEnvDefault(lane, local);
+          execEnvSel.options[0].textContent = `${execEnvLabel(envDefault)} (default)`;
+          for (const o of execEnvSel.options) o.hidden = o.value !== '' && o.value === envDefault && execEnvSel.value !== o.value;   // listed once
         }
         wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
         renderLane(laneSec, lane, laneCtx);
@@ -6707,6 +6757,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const prOpen = (rootEl.querySelector('.ask-card-pr') || {}).value;
     const pr = { ...(prOpen ? { open: prOpen } : {}), ...(card.pr && card.pr.slices && local.target === 'project' ? { slices: card.pr.slices } : {}) };
     if (local.target !== 'none' && Object.keys(pr).length) body.pr = pr;
+    const execEnv = (rootEl.querySelector('.ask-card-exec-env') || {}).value;
+    if (execEnv) body.execEnv = execEnv;                    // none: the run.execEnv default
+    // Default on a card that proposed an environment: '' says so, or /api/run would take the card's own pick.
+    else if (card.execEnv) body.execEnv = '';
     // A tracker task: the reference, never a prompt (POST /api/run takes source OR prompt).
     if (card.source) {
       delete body.prompt;
@@ -6752,7 +6806,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  repoints the lane (reloadLane nulls local.lane) while saveLaneEdits still holds the old
    *  one, so the config written and the body posted would describe different runs. */
   function freezeTargetInputs(rootEl, on) {
-    for (const sel of ['.ask-card-workflow', '.ask-card-engine', '.ask-card-project-select', '.ask-card-workspace-select', '[data-ask-card-seg]']) {
+    for (const sel of ['.ask-card-workflow', '.ask-card-engine', '.ask-card-exec-env', '.ask-card-project-select', '.ask-card-workspace-select', '[data-ask-card-seg]']) {
       for (const node of rootEl.querySelectorAll(sel)) node.disabled = on;
     }
   }
@@ -6899,6 +6953,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // otherwise start with the row's default `global` and restructure the wrong scope (B17).
       memoryScope: card.memoryScope || null,
       engine: (rootEl.querySelector('.ask-card-engine') || {}).value || null,
+      execEnv: (rootEl.querySelector('.ask-card-exec-env') || {}).value || null,
     };
     if ((rootEl.querySelector('.ask-card-same-source') || {}).checked) p.sameAsSource = true;
     const tags = rootEl.__rp?.tagInput ? rootEl.__rp.tagInput.get() : (card.tags || []);
@@ -8334,6 +8389,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     // Defence-in-depth: the model's own threadId filter is the real router — this early return only saves an apply() call and cannot be observed from tests (the model would drop the frame identically).
     if (!st.model || frame.threadId !== st.threadId) return;
+    // The echo of the composer's own send: the message is in, so it leaves the composer as its bubble appears.
+    if (frame.type === 'ask-message' && frame.sendId && st.echo && frame.sendId === st.echo.sendId && !st.echo.cleared) {
+      st.echo.cleared = true;
+      clearSentDraft(st.echo.quoted, st.echo.requirements);
+      updateSendStop();
+    }
     const r = st.model.apply(frame);
     if (r && r.gap) { resync(); return; }
     if (!r || !r.ok) return;
@@ -8760,6 +8821,26 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     setDesign(threadId, designId) {
       if (st.destroyed || !threadId || st.threadId !== threadId) return;
       syncDesign({ id: threadId, designId: typeof designId === 'string' && designId ? designId : null });
+    },
+    /** Chat `id` is not the chat on screen yet (it loads) and its chats-list row has a design. The chat on screen
+     *  answers through its mounted design (app.js designStudio). */
+    designChatLoading: (id) => typeof id === 'string' && !!id && st.threadId !== id && !!chatsCol && chatsCol.hasDesign(id),
+    /** The sidebar lights Design (on) or not: the chats list shows only chats with a design, or every chat. Settled at
+     *  the end of the task, so a design chat switching to another (its design leaves, the next one mounts) keeps the
+     *  list as it is. */
+    setListDesigns(on) {
+      st.listDesigns = !!on;
+      if (el.listNew) {                              // its New names what it starts
+        const name = st.listDesigns ? 'New design' : el.listNewName;
+        el.listNew.title = name;
+        el.listNew.setAttribute('aria-label', name);
+      }
+      if (st.listDesignsQueued) return;
+      st.listDesignsQueued = true;
+      queueMicrotask(() => {
+        st.listDesignsQueued = false;
+        if (!st.destroyed && chatsCol && chatsCol.setDesigns(st.listDesigns)) loadHistory();
+      });
     },
     setHost,                                        // Ask worca beside the page: 'page' (the Chat section) or 'dock' (the side column)
     host: () => st.host,

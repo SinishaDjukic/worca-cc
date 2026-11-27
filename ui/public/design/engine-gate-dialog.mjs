@@ -1,9 +1,10 @@
-// ui/public/design/engine-gate-dialog.mjs — Design P8 Task 2 (L8.1, L8.3, L8.25): the one consent dialog the Library's
-// start box opens when POST /api/design answers 409 `engine-gated` or `engine-refused`, before the design exists. It is
-// the short form of the run gate's consent: a person, never a model, presses Allow unguarded. The title names the
-// engine, the server's reasons and notes are plain lines, and the buttons go safe to committing: Cancel, Use Claude,
-// Allow unguarded. Built as the Export dialog is (`.viewer-modal > .card`, layoutDialog, a 'decision' guard: Escape
-// and a backdrop click are its Cancel). Every string reaches the page as text.
+// ui/public/design/engine-gate-dialog.mjs — Design P8 Task 2 (L8.1, L8.3, L8.25): the one consent dialog a new design
+// (library.mjs makeDesign, the design start's send) opens when POST /api/design answers 409 `engine-gated` or
+// `engine-refused`, before the design exists. It is the short form of the run gate's consent: a person, never a
+// model, presses Allow unguarded. The title names the engine, the server's reasons and notes are plain lines, and the
+// buttons go safe to committing: Cancel, Use Claude, Allow unguarded. Built as the Export dialog is
+// (`.viewer-modal > .card`, layoutDialog, a 'decision' guard: Escape and a backdrop click are its Cancel). Every
+// string reaches the page as text.
 
 import { layoutDialog } from '../dialog-layout.mjs';
 import { guardModal } from '../modal-guard.mjs';
@@ -15,7 +16,7 @@ let seq = 0;   // ids for the dialog titles on one page
  * `Use Claude` shows only when `onClaude` is a function (the caller leaves it out when the refused engine is Claude
  * itself), `Allow unguarded` only when `overridable`. A button press closes the dialog, then calls its handler; Escape
  * and a backdrop click call `onCancel`. Cancel has the focus, so a stray Enter never consents. `close()` takes the
- * dialog away without calling any handler (the Library leaving), and does nothing the second time.
+ * dialog away without calling any handler (the design start leaving), and does nothing the second time.
  * @param {{doc: Document, label: string, overridable: boolean, reasons?: string[], notes?: string[],
  *   onAllow?: () => void, onClaude?: () => void, onCancel?: () => void}} opts
  * @returns {{close: () => void}}
