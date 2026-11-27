@@ -791,6 +791,7 @@ async function mockClarify(m, cycle, onEvent) {
  * Small runs C5: the Verifier's result file. The owned ids are the first field of each line of the prompt's fenced
  * `text` block; the round comes from the prompt's "Verifier check, round N" line. Env WORCA_MOCK_VERIFY is a JSON array
  * with one list of gap ids per round (`[["R-po-2"], []]`); a round with no list (the default) finds every id holding.
+ * An entry may be `{"id": "R-po-2", "kind": "judgement"}` instead of a bare id: that failing check carries the kind.
  */
 async function mockFeatureVerifier(m, prompt, onEvent) {
   const out = m.MOCK_OUT;
@@ -801,9 +802,11 @@ async function mockFeatureVerifier(m, prompt, onEvent) {
   const round = Number(text.match(/Verifier check, round (\d+)/)?.[1]) || 1;
   let table = [];
   try { table = JSON.parse(process.env.WORCA_MOCK_VERIFY || '[]'); } catch { table = []; }
-  const gaps = new Set(Array.isArray(table) && Array.isArray(table[round - 1]) ? table[round - 1] : []);
+  const entries = Array.isArray(table) && Array.isArray(table[round - 1]) ? table[round - 1] : [];
+  const gaps = new Map(entries.map((e) => (e && typeof e === 'object' ? [e.id, e.kind] : [e, undefined])));
   const checks = ids.map((id) => (gaps.has(id)
-    ? { id, holds: false, why: `the mock Verifier found ${id} missing between runs`, title: `Close the gap: ${id}` }
+    ? { id, holds: false, why: `the mock Verifier found ${id} missing between runs`, title: `Close the gap: ${id}`,
+      ...(gaps.get(id) === undefined ? {} : { kind: gaps.get(id) }) }
     : { id, holds: true, why: 'holds in the main flow' }));
   await emitLog(onEvent, `[mock] feature verifier: round ${round}, ${gaps.size} gap(s)`);
   await ensureDir(out);

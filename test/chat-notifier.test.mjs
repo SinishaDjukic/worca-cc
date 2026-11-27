@@ -16,6 +16,7 @@ import { createChatContext } from '../src/core/chat/chat-context.mjs';
 import { createNotifier } from '../src/core/chat/notifier.mjs';
 import { chatPrefs, setChatPrefs } from '../src/core/settings.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { verifyStop } from '../src/shared/shape/verifier.mjs';
 
 useTempHome(after);
 
@@ -252,4 +253,19 @@ test('Watch PR: notifyPrWatch renders started/published as info and needs-person
   notifier.notifyPrWatch({ kind: 'published', title: 'x', message: 'Pushed.' });
   await settle();
   assert.equal(sent.length, 0);
+});
+
+// Shaper small runs slice 10 (R-po-5): the gap gate reaches every chat with both requirement ids.
+test("a question event carrying a 2-gap Verifier stop is delivered to both chat ids with both requirement ids", async () => {
+  const { orch, sent, settle } = await fixture();
+  orch.emit('question', { id: 'verify-1', kind: 'gate', issues: [], stop: verifyStop({ gaps: [
+    { id: 'R-po-1', why: 'the export skips archived runs' }, { id: 'R-po-2', why: 'the list wraps onto two lines' }] }) });
+  await settle();
+  assert.deepEqual(sent.map((s) => s.chatId).sort(), ['100', '200']);
+  for (const s of sent) {
+    const text = s.message.body[0].value;
+    assert.match(text, /R-po-1/);
+    assert.match(text, /R-po-2/);
+    assert.match(text, /feature card/);
+  }
 });

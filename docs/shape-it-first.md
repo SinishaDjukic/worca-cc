@@ -428,6 +428,7 @@ answer that decides what to build *please check*. While Away is active on a Shap
 | Later slice's plan | Continues by itself when its check passed; otherwise as above |
 | The planner's outline change, or notes from the chat | Away approves the plan as written, flagged. The planner already had the notes |
 | Requirement concern or plan concern | Away approves it, keeps the requirement or plan as written, and flags it *please check* |
+| Verifier gap (Small runs) | Only for a question that opens while Away is active, and at once (no delay). Each plain gap gets **Add a fix run**; a gap the Verifier calls a judgement call, one whose fix adds a screen or scope, or one whose fix changes the requirement waits for you. Its fix runs are added once you answer the held gaps, together with yours. Away never ships with a gap or changes a requirement. One answer counts against the limits per question |
 | A card showing an error | Away tries again, flagged |
 | Later run held by **Ask me before each run** | Stays held; the card shows Needs you and Start now until you press it. You set that hold yourself |
 
@@ -768,6 +769,18 @@ Each fix run and change run added this way builds on the last run before it, so 
 When every gap is shipped, the check reads "Ready to ship". When the requirement changed since the question, or its run
 is no longer finished, nothing is added and the check reads Stopped: Resume runs the Verifier again and asks again.
 Anything else the Verifier noticed goes in its result file's optional `findings` list, one line each (at most 8); see Ship.
+
+The Verifier also names each gap's kind: plain (one more run closes it), a judgement call, a fix that adds a screen or
+scope, or a fix that changes the requirement. With Away mode active when the question opens, Away answers each plain gap
+with a fix run and the question asks you only for the rest. Each held gap says why under its title: "Held for you: the
+Verifier calls this a judgement call", "Held for you: the fix adds a screen or scope" or "Held for you: the fix changes a
+requirement". The gaps Away answered are listed above the questions, for example "R-po-1 → fix · decided by Away mode".
+Once every gap is answered, the feature's log adds one line per gap after the Verifier's line, saying who answered it:
+"Gap R-po-1 → fix, run 6 added · decided by Away mode", "Gap R-po-2 → ships with the gap · decided by you". A check
+recorded before this shows its Verifier line only.
+
+From Telegram or Discord, the gate message lists each gap. `/retry` answers every gap it lists with a fix run. `/approve`
+is refused: shipping with a gap needs a reason, so that and changing a requirement are answered on the feature card.
 
 ### The four places
 

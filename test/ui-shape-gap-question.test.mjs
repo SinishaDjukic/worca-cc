@@ -25,13 +25,13 @@ const STOP = {
     payload: { decision: 'answer' } }],
 };
 
-function mount({ submit = async () => true } = {}) {
+function mount({ submit = async () => true, stop = STOP } = {}) {
   const dom = new JSDOM('<!doctype html><body></body>');
   doms.push(dom);
   const doc = dom.window.document;
   const host = doc.body.appendChild(doc.createElement('div'));
   const posts = [];
-  host.appendChild(buildGapQuestion(doc, STOP, { submit: (p) => { posts.push(p); return submit(p); } }));
+  host.appendChild(buildGapQuestion(doc, stop, { submit: (p) => { posts.push(p); return submit(p); } }));
   const panel = host.querySelector('.qpanel[data-kind="gaps"]');
   assert.ok(panel, 'the panel is .qpanel[data-kind=gaps]');
   const blocks = () => [...panel.querySelectorAll('.qblock')];
@@ -154,4 +154,38 @@ test('a refused answer shows the server\'s reason under the gap it names and kee
   assert.equal(g.send().disabled, false, 'the person can answer again');
   assert.deepEqual(g.picked(1), ['change']);
   assert.equal(g.textOf(1).value, 'The list is dense');
+});
+
+// Slice 10 (R-po-5, D12): what Away mode already answered, and why a gap is held for the person.
+const HELD_LINE = 'Held for you: the Verifier calls this a judgement call';
+const AWAY_ROW = 'R-po-1 → fix · decided by Away mode';
+const MIXED = { ...STOP, head: 'Verifier · 1 gap found', findingsLine: '1 gap open',
+  gaps: [{ id: 'R-po-2', why: WHY_PO, text: 'People export every run', kind: 'judgement', hold: 'the Verifier calls this a judgement call' }],
+  decided: [{ id: 'R-po-1', answer: 'fix', by: 'away' }] };
+const reads = (root, text) => [...root.querySelectorAll('*')].filter((el) => el.textContent.replace(/\s+/g, ' ').trim() === text);
+
+test('a stop with a decided gap shows one Away row above the questions and no answer buttons for it', async () => {
+  const g = mount({ stop: MIXED });
+  const rows = reads(g.host, AWAY_ROW);
+  assert.ok(rows.length >= 1, `the row "${AWAY_ROW}"`);
+  const meta = rows.filter((el) => el.classList.contains('meta'));
+  assert.ok(meta.length, 'the row is .meta text');
+  assert.equal(g.host.textContent.split('decided by Away mode').length - 1, 1, 'said once');
+  assert.ok(meta[0].compareDocumentPosition(g.blocks()[0]) & 4, 'above the questions');
+  assert.deepEqual(g.blocks().map((b) => b.dataset.q), ['R-po-2'], 'no answer buttons for R-po-1');
+  g.send().click();
+  await flush();
+  assert.deepEqual(g.posts, [{ decision: 'answer', answers: [{ id: 'R-po-2', answer: 'fix' }] }]);
+});
+
+test('a held gap says why it is held, once, with that gap', () => {
+  const g = mount({ stop: { ...MIXED, gaps: [MIXED.gaps[0], STOP.gaps[1]] } });
+  assert.ok(reads(g.host, HELD_LINE).length >= 1, `the line "${HELD_LINE}"`);
+  assert.equal(g.host.textContent.split('Held for you:').length - 1, 1, 'only the held kind has the line');
+  assert.ok(g.under(0, '*').some((el) => el.textContent.replace(/\s+/g, ' ').trim() === HELD_LINE), 'with R-po-2');
+});
+
+test('a stop with no kind and nothing decided reads as before: no held line and no decided row', () => {
+  const g = mount();
+  assert.doesNotMatch(g.host.textContent, /Held for you|decided by/);
 });

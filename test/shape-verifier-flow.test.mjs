@@ -25,6 +25,7 @@ import * as CORE from '../src/core/shape/verifier.mjs';
 import { setFeatureAcceptance } from '../src/core/shape/features.mjs';
 import { featureFigures } from '../src/core/shape/measure.mjs';
 import { verifyStop } from '../src/shared/shape/verifier.mjs';
+import { renderQuestion } from '../src/core/chat/renderers.mjs';
 import { oneCardModel } from '../ui/public/shape/feature-card.mjs';
 
 useTempHome(after, 'worca-verifier-');
@@ -1250,4 +1251,89 @@ test('s9 (R-arch-8): the person-only route is the one module that imports acknow
     .filter((p) => /\.(mjs|js)$/.test(p) && !p.includes('node_modules/') && p !== 'src/core/shape/verifier.mjs');
   const uses = /(?:import|export)\s*\{[^}]*\backnowledgeFinding\b[^}]*\}\s*from|\.\s*acknowledgeFinding\b|\{[^}]*\backnowledgeFinding\b[^}]*\}\s*=\s*await\s+import\(/;
   assert.deepEqual(sources.filter((p) => uses.test(readFileSync(new URL(p, base), 'utf8'))), ['ui/routes/shape/features.mjs']);
+});
+
+// ── Slice 10 (R-po-5): the record stores who answered and the gap's kind; the card log says it ────────────────
+const answeredBy = (decision, by) => ({ ...decision, answeredBy: by });
+const gapLines = (w) => w.view().log.filter((l) => l.text.startsWith('Gap ')).map((l) => l.text);
+
+test('s10 an Away fix adds one run and logs decided by Away mode', () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision: answeredBy(answersFor(['R-po-2']), { 'R-po-2': 'away' }) });
+  assert.deepEqual(kindsAfter(w, 4), [[5, 'change']], 'exactly one fix run');
+  assert.deepEqual(w.checks()[0].answeredBy, { 'R-po-2': 'away' });
+  assert.deepEqual(gapLines(w), ['Gap R-po-2 → fix, run 5 added · decided by Away mode']);
+});
+
+test('s10 (R-po-5) answeredBy is stored with the fix runs it adds, and the card log shows both decided by lines', () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  w.verifierSettles({ result: result(['R-po-1', 'R-po-2']), headSha: null,
+    decision: answeredBy(decide({ id: 'R-po-1', answer: 'fix' }, shipOf('R-po-2')), { 'R-po-1': 'away', 'R-po-2': 'you' }) });
+  const c = w.checks()[0];
+  assert.deepEqual(c.answeredBy, { 'R-po-1': 'away', 'R-po-2': 'you' });
+  assert.deepEqual(c.gapRunOf, { 'R-po-1': 5 });
+  const texts = w.view().log.map((l) => l.text);
+  const at = texts.findIndex((t) => t.startsWith('Verifier: 2 of 4 hold'));
+  assert.ok(at >= 0, 'the receipt stays');
+  assert.deepEqual(texts.slice(at + 1, at + 3), ['Gap R-po-1 → fix, run 5 added · decided by Away mode',
+    'Gap R-po-2 → ships with the gap · decided by you']);
+});
+
+test("s10 a person's changed requirement logs its change run and decided by you", () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  w.verifierSettles({ result: result(['R-po-3']), headSha: null,
+    decision: answeredBy(decide(changeOf('R-po-3', 3, 'requirement 3, now with a filter')), { 'R-po-3': 'you' }) });
+  assert.deepEqual(gapLines(w), ['Gap R-po-3 → requirement changed, run 5 added · decided by you']);
+});
+
+test('s10 (R-arch-9) a forged id or value is dropped; another, continue and a decision without the field store none', () => {
+  const forged = world();
+  forged.settle(forged.pids[3]);
+  forged.verifierSettles({ result: result(['R-po-2', 'R-po-3']), headSha: null, decision: answeredBy(answersFor(['R-po-2', 'R-po-3']),
+    { 'R-po-2': 'away', 'R-po-3': 'robot', 'R-po-1': 'you', 'R-qa-9': 'away' }) });
+  assert.deepEqual(forged.checks()[0].answeredBy, { 'R-po-2': 'away' });
+  const nothingValid = answeredBy(answersFor(['R-po-2']), { 'R-po-2': 'robot' });
+  for (const decision of ['another', 'continue', answersFor(['R-po-2']), nothingValid]) {
+    const w = world();
+    w.settle(w.pids[3]);
+    w.verifierSettles({ result: result(['R-po-2']), headSha: null, decision });
+    const c = w.checks()[0];
+    assert.ok(c.result, `recorded: ${JSON.stringify(decision)}`);
+    assert.equal('answeredBy' in c, false, JSON.stringify(decision));
+    assert.deepEqual(gapLines(w), [], JSON.stringify(decision));
+  }
+});
+
+test('s10 (R-arch-7) the stored gap keeps its kind only when it is not plain; an unknown kind is stored as judgement', () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  const file = result(['R-po-1', 'R-po-2', 'R-po-3', 'R-po-4']);
+  [undefined, 'plain', 'scope', 'weird'].forEach((kind, i) => { if (kind) file.gaps[i].kind = kind; });
+  w.verifierSettles({ result: file, headSha: null, decision: answersFor(OWNED) });
+  const gaps = w.checks()[0].result.gaps;
+  assert.deepEqual(gaps.map((g) => g.kind), [undefined, undefined, 'scope', 'judgement']);
+  for (const g of gaps.slice(0, 2)) assert.deepEqual(Object.keys(g), ['id', 'why', 'title']);
+});
+
+test("R-po-5 example: Away fixes the plain gap, the judgement call waits for the owner, the gate message lists both, and the log says who decided each", () => {
+  const w = world();
+  w.settle(w.pids[3]);
+  const file = result(['R-po-1', 'R-po-2']);
+  file.gaps[1].kind = 'judgement';
+  const { away, held } = SHARED.awayGapSplit(file.gaps);
+  assert.deepEqual(away, [{ id: 'R-po-1', answer: 'fix' }]);
+  const stop = verifyStop({ gaps: held, round: 1, texts: verifyRequest(w.checks()[0]).shape.verify.texts, decided: away });
+  assert.deepEqual(stop.gaps.map((g) => g.id), ['R-po-2'], 'the judgement call waits');
+  const message = renderQuestion({ runId: 'pipe-c56e2951', title: 'Sign-up · Verifier' }, { id: 'verify-1', kind: 'gate', issues: [], stop }).body[0].value;
+  assert.match(message, /• R-po-1 → fix · decided by Away mode/);
+  assert.match(message, /• R-po-2: R-po-2 is missing between runs \(judgement call\)/);
+  assert.equal(sliceRowCount(w), 4, 'no run before the owner answers');
+  const owner = SHARED.verifyGateAnswer(stop, answersFor(['R-po-2']));
+  assert.equal(owner.ok, true, owner.error);
+  w.verifierSettles({ result: file, headSha: null, decision: SHARED.mergeGapDecision(file.gaps, away, owner.answer.answers) });
+  assert.deepEqual(kindsAfter(w, 4), [[5, 'change'], [6, 'change']]);
+  assert.deepEqual(gapLines(w), ['Gap R-po-1 → fix, run 5 added · decided by Away mode', 'Gap R-po-2 → fix, run 6 added · decided by you']);
 });

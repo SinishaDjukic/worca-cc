@@ -11,6 +11,7 @@ import { MARK_WORDS, shipLedger } from '../src/shared/shape/ship-ledger.mjs';
 import { careRecordLine } from '../src/shared/shape/feature-record.mjs';
 // A namespace read, so a missing new export (findingsReason) fails only its own test.
 import * as LEDGER from '../src/shared/shape/ship-ledger.mjs';
+import * as VERIFIER from '../src/shared/shape/verifier.mjs';
 
 const read = (name) => readFileSync(new URL(`../docs/${name}`, import.meta.url), 'utf8');
 const flat = (t) => t.replace(/\s+/g, ' ');
@@ -387,4 +388,31 @@ test('s9: design-system.md describes the Ship card notes after the Gap question'
   const next = rest.indexOf('\n### ', 1);
   assert.deepEqual(missing(flat(next < 0 ? rest : rest.slice(0, next)), ['ui/public/shape/ship-card.mjs', '.plan-checks.srows.ask-shipcard-notes',
     '.btn.btn-sm', 'Acknowledge', 'acknowledged · 14:02', '.ask-card-err']), []);
+});
+
+// Shaper small runs slice 10 (R-po-5, D13): who answers a Verifier gap, and who answered it.
+const heldReasons = () => ['judgement', 'scope', 'requirement'].map((k) => VERIFIER.GAP_KIND_WORDS[k].reason);
+
+test('s10 (R-po-5): the Small runs section says both answered-by words and the three hold reasons', () => {
+  assert.ok(VERIFIER.ANSWERED_BY_WORDS && VERIFIER.GAP_KIND_WORDS, 'verifier exports ANSWERED_BY_WORDS and GAP_KIND_WORDS');
+  assert.deepEqual(missing(slices['shape-it-first.md'], [VERIFIER.ANSWERED_BY_WORDS.away, VERIFIER.ANSWERED_BY_WORDS.you, ...heldReasons()]), []);
+});
+
+test('s10 (R-po-5): the Away table has a Verifier gap row', () => {
+  const part = section(read('shape-it-first.md'), 'Away mode on a Shaper run');
+  assert.ok(part, 'the section "Away mode on a Shaper run"');
+  assert.ok(part.split('\n').some((l) => l.startsWith('|') && l.includes('Verifier gap')), 'a table row "Verifier gap"');
+});
+
+test('s10: the guide says what /retry and /approve do on a gap stop', () => {
+  const doc = read('shape-it-first.md');
+  const both = flat(`${section(doc, 'Away mode on a Shaper run')}\n${DOCS['shape-it-first.md'].text()}`);
+  assert.deepEqual(missing(both, ['`/retry`', '`/approve`']), []);
+});
+
+test('s10: design-system.md Gap question describes the decided rows and the held reason', () => {
+  const design = read('design-system.md');
+  const rest = design.slice(design.indexOf('\n### Gap question\n') + 1);
+  const next = rest.indexOf('\n### ', 1);
+  assert.deepEqual(missing(flat(next < 0 ? rest : rest.slice(0, next)), ['decided by Away mode', 'Held for you']), []);
 });

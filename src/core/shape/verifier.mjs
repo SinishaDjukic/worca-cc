@@ -20,7 +20,7 @@ import { roundOrigin } from './rounds.mjs';
 import { shaperSmallRunsOn, smallRunsOfFeature, careOfFeature } from './small-runs.mjs';
 import { refuseWhileShipping, shipLocked } from './ship-lock.mjs';
 import { requirementKindsOf, careRunPlan } from '../../shared/shape/feature-record.mjs';
-import { verifyPrompt, verifyRoundPlan, verifyStop, verifyGateAnswer, gapsFoundOf, fenceSafe, findingsOf } from '../../shared/shape/verifier.mjs';
+import { verifyPrompt, verifyRoundPlan, verifyStop, verifyGateAnswer, gapsFoundOf, fenceSafe, findingsOf, answeredByOf, kindField } from '../../shared/shape/verifier.mjs';
 import { oneLineText } from '../../shared/shape/req-change.mjs';
 import { SHAPE_VERIFY_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { CHALLENGE_FILE_MAX_BYTES } from './split-step.mjs';
@@ -242,16 +242,17 @@ const notFinished = () => Object.assign(new Error('a requirement can only change
  * Slice 8 (D6, D10): the decision of a result file → {answers, legacy} | null. Every open gap needs an answer, as the
  * validator of the gate stop decides (the `from` of a change is the text it replaces); anything less, or none, is null.
  * A file written before the gate reads as before: `another` is every open gap fixed, `continue` shipped with no reason.
+ * Slice 10 (D6): `answeredBy` (gap id → `away` | `you`) is re-checked against the open gaps; legacy decisions carry none.
  */
 function decisionOf(decision, open) {
-  if (!open.length) return { answers: [], legacy: null };
-  if (decision === 'another') return { answers: open.map((g) => ({ id: g.id, answer: 'fix' })), legacy: 'another' };
-  if (decision === 'continue') return { answers: [], legacy: 'continue' };
+  if (!open.length) return { answers: [], legacy: null, answeredBy: {} };
+  if (decision === 'another') return { answers: open.map((g) => ({ id: g.id, answer: 'fix' })), legacy: 'another', answeredBy: {} };
+  if (decision === 'continue') return { answers: [], legacy: 'continue', answeredBy: {} };
   if (!decision || typeof decision !== 'object' || !Array.isArray(decision.answers)) return null;
   const from = Object.fromEntries(decision.answers.filter((a) => a && a.answer === 'change' && typeof a.id === 'string')
     .map((a) => [a.id.trim(), typeof a.from === 'string' ? a.from : '']));
   const r = verifyGateAnswer(verifyStop({ gaps: open, texts: from }), decision);
-  return r.ok ? { answers: r.answer.answers, legacy: null } : null;
+  return r.ok ? { answers: r.answer.answers, legacy: null, answeredBy: answeredByOf(decision, open) } : null;
 }
 
 /**
@@ -320,14 +321,14 @@ export function recordVerifyResult(featureId, round, { result, headSha = null, d
         } else {
           const gapRunOf = {};
           appendFor.forEach((a, k) => { for (const id of a.ids) gapRunOf[id] = added[k].index; });
-          record = { answers: d.answers, shipped, gapRunOf };
+          record = { answers: d.answers, shipped, gapRunOf, ...(Object.keys(d.answeredBy).length ? { answeredBy: d.answeredBy } : {}) };
         }
       }
     }
     const f = rowOf(featureId);
     const checks = checksOf(f.outline);
     const check = { ...checks[i], pipelineId: pipelineId || checks[i].pipelineId || null, headSha: headSha || null,
-      state, result: { held: [...(result && Array.isArray(result.held) ? result.held : [])], gaps: gaps.map(({ id, why, title }) => ({ id, why, title })),
+      state, result: { held: [...(result && Array.isArray(result.held) ? result.held : [])], gaps: gaps.map(({ id, why, title, kind }) => ({ id, why, title, ...kindField(kind) })),
         ...(findings.length ? { findings } : {}) },
       gapRuns: added.map((a) => a.index), extra, ...record };
     checks[i] = check;

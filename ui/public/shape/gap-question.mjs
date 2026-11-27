@@ -3,7 +3,10 @@
 // Ship card's) or Change the requirement (a textarea holding the current text). One "Send answers" posts every answer
 // at once; it stays disabled until each gap has its answer and the text that answer needs. A refusal is said once,
 // under the gap it names. Pure: DOM only through `doc`. The stop's words are src/shared/shape/verifier.mjs's.
+// Slice 10 (D12): the gaps Away mode already answered read as `.meta` lines above the questions (no answers of their
+// own), and a gap held for the person says why under its title.
 import { buildChatQuestion } from '../chat/question.mjs';
+import { ANSWERED_BY_WORDS } from '../../../src/shared/shape/verifier.mjs';
 import { CONFIRM_REASON_MAX } from '../../../src/shared/shape/ship-ledger.mjs';
 import { CHANGE_TEXT_MAX } from '../../../src/shared/shape/req-change.mjs';
 import { errLine } from './step-card.mjs';
@@ -41,11 +44,14 @@ export function buildGapQuestion(doc, stop, { submit, busy = false } = {}) {
   });
   const panel = q.el.querySelector('.qpanel');
   panel.dataset.kind = 'gaps';
+  const decided = Array.isArray(stop.decided) ? stop.decided : [];
+  panel.prepend(...decided.map((a) => h('div', 'qwhy meta', `${a.id} → fix · ${ANSWERED_BY_WORDS.away}`)));
 
   /** A field types: a letter in it is never an answer's key (buildChatQuestion's panel keys). */
   const typing = (el) => { el.addEventListener('keydown', (e) => e.stopPropagation()); el.addEventListener('input', paint); return el; };
   const rows = gaps.map((g) => {
     const block = [...panel.querySelectorAll('.qblock')].find((b) => b.dataset.q === g.id);
+    if (typeof g.hold === 'string' && g.hold) block.querySelector('.qtext')?.appendChild(h('span', 'qwhy', `Held for you: ${g.hold}`));
     const reason = typing(h('input', 'input input-sm'));
     reason.type = 'text'; reason.maxLength = CONFIRM_REASON_MAX; reason.placeholder = REASON_HINT;
     reason.setAttribute('aria-label', `${g.id}: ${REASON_HINT.toLowerCase()}`);

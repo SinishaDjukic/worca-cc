@@ -355,3 +355,28 @@ test('the SHIP_NOTES_ONLY phase: the note row before and after Acknowledge, 1280
     assert.match(s, new RegExp(`[\`'/]app-ship-note-${when}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${when} screenshots`);
   }
 });
+
+// Slice 10 (R-po-5, step 7): the card log's "decided by" lines and the gap question with an Away answer, light and dark.
+test('the GAP_AWAY_ONLY phase: the log lines and the held gap question, asserted before 4 screenshots in both themes', () => {
+  const s = src();
+  const gate = s.match(/process\.env\.GAP_AWAY_ONLY === '1'\) \{ await (\w+)\(\); await finish\(\); \}/);
+  assert.ok(gate, 'the GAP_AWAY_ONLY=1 gate');
+  const at = s.indexOf(`async function ${gate[1]}(`);
+  assert.ok(at >= 0, 'the Away gap phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /answeredBy/, 'a seeded check record that says who answered');
+  assert.match(body, /R-po-1/);
+  assert.match(body, /R-po-2/);
+  assert.match(body, /'away'/);
+  assert.match(body, /'you'/);
+  assert.match(body, /decided by Away mode|ANSWERED_BY_WORDS/, 'the Away log line is asserted');
+  assert.match(body, /decided by you|ANSWERED_BY_WORDS/, 'the log line of the person is asserted');
+  assert.match(body, /decided/, 'the live gap stop has a decided row');
+  assert.match(body, /judgement/, 'and a held judgement gap');
+  assert.match(body, /Held for you/);
+  assert.match(body, /check\(/, 'what it shoots is asserted');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  for (const name of ['app-verifier-away-log', 'app-verifier-away-question']) {
+    assert.match(s, new RegExp(`${name}-(\\$\\{theme\\}|light|dark)`), `${name} screenshots`);
+  }
+});

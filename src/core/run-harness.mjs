@@ -7220,6 +7220,18 @@ export class RunHarness extends EventEmitter {
     } catch { return false; }
   }
 
+  /** May Away mode decide ask `q` right now, without its grace timer (a workflow answering a stop the moment it opens)?
+   *  True only off --yes, with Away active, `q.kind` not on neverDecide and no limit reached. Asking is not deciding: a
+   *  spent limit says false and pauses nothing. Never throws (false on error). */
+  nightMayDecideNow(q) {
+    try {
+      if (this.auto || !this._night) return false;
+      const { config } = effectiveNightConfig(this.projectDir);
+      if (!this._nightStateNow(config).active || nightNeverDecides(config, q)) return false;
+      return this._nightGuardrail(config) === null;
+    } catch { return false; }
+  }
+
   /** The plan asks planRule declines: on a Shaper run only a Requirements hold whose check still fails; elsewhere the
    *  ones it always declined.
    *  Decided at arm time, so such an ask never counts down, never starts the away stretch and cannot hit a limit's pause.

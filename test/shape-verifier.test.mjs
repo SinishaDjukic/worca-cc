@@ -2,6 +2,7 @@
 // reserved workflow and its no-self-review rule.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { verifyResult, verifyPrompt, verifyRoundPlan, verifyStop, gapsFoundOf, verifyLines, VERIFY_STATES,
   VERIFY_VIEW_STATES, VERIFY_WORDS } from '../src/shared/shape/verifier.mjs';
 import { verifyStop as reExported, stopAnswerOk, STOP_REASONS } from '../src/shared/shape/run-stops.mjs';
@@ -306,4 +307,126 @@ test('s9 verifyPrompt: after the format line it asks for findings a person shoul
   const line = 'If you noticed something the person should know before shipping that is not a verdict (a slow test, a risk), add "findings": ["one line each"]; leave it out when there is none.';
   assert.ok(p.includes(line), p);
   assert.ok(p.indexOf(line) > p.indexOf('Write only the JSON result file'), 'after the format line');
+});
+
+// ── Slice 10 (R-po-5): the gap kind, the Away split, who answered, the log lines and the chat answer ──────────
+const KIND_REASONS = { judgement: 'the Verifier calls this a judgement call', scope: 'the fix adds a screen or scope',
+  requirement: 'the fix changes a requirement' };
+const gapOf = (id, kind) => ({ id, why: `${id} is missing`, title: `Close ${id}`, ...(kind ? { kind } : {}) });
+
+test('s10 verifyResult: no kind for a missing or plain kind, judgement for an unknown or non-string one, the other three as given', () => {
+  const kinds = [undefined, 'plain', 'judgement', 'scope', 'requirement', 'weird', 42, ['plain']];
+  const owned = kinds.map((_, i) => `R-po-${i + 1}`);
+  const r = verifyResult({ checks: kinds.map((kind, i) => ({ id: owned[i], holds: false, why: 'w', title: 't',
+    ...(kind === undefined ? {} : { kind }) })) }, { owned });
+  assert.deepEqual(r.gaps.map((g) => g.kind), [undefined, undefined, 'judgement', 'scope', 'requirement', 'judgement', 'judgement', 'judgement']);
+  for (const g of r.gaps.slice(0, 2)) assert.deepEqual(Object.keys(g), ['id', 'why', 'title'], `${g.id}: a plain gap carries no kind key`);
+  const silent = verifyResult({ checks: [] }, { owned: ['R-po-1'] });
+  assert.deepEqual(Object.keys(silent.gaps[0]), ['id', 'why', 'title'], 'no verdict names no kind');
+});
+
+test('s10 the word tables: the four kinds, a chip and a reason per held kind, who answered; all frozen', () => {
+  assert.deepEqual(V.GAP_KINDS, ['plain', 'judgement', 'scope', 'requirement']);
+  assert.deepEqual(Object.entries(KIND_REASONS).map(([k]) => [k, V.GAP_KIND_WORDS?.[k]?.chip, V.GAP_KIND_WORDS?.[k]?.reason]), [
+    ['judgement', 'judgement call', KIND_REASONS.judgement],
+    ['scope', 'adds a screen or scope', KIND_REASONS.scope],
+    ['requirement', 'changes a requirement', KIND_REASONS.requirement],
+  ]);
+  assert.deepEqual(V.ANSWERED_BY_WORDS, { away: 'decided by Away mode', you: 'decided by you' });
+  for (const t of [V.GAP_KINDS, V.GAP_KIND_WORDS, V.ANSWERED_BY_WORDS, V.GAP_REPLY_WORDS]) assert.ok(t && Object.isFrozen(t));
+  assert.match(String(V.GAP_REPLY_WORDS.retry), /a fix run for every gap/);
+  assert.match(String(V.GAP_REPLY_WORDS.elsewhere), /reason.*requirement.*feature card/);
+});
+
+test('s10 awayGapSplit: a plain gap goes to Away as fix, a judgement call is held', () => {
+  assert.equal(typeof V.awayGapSplit, 'function', 'verifier.mjs exports awayGapSplit');
+  const split = V.awayGapSplit([gapOf('R-po-1'), gapOf('R-po-2', 'judgement')]);
+  assert.deepEqual(split.away, [{ id: 'R-po-1', answer: 'fix' }]);
+  assert.deepEqual(split.held.map((g) => g.id), ['R-po-2']);
+});
+
+test('s10 awayGapSplit holds judgement, scope and requirement gaps, never answers ship or change, and keeps the order', () => {
+  assert.equal(typeof V.awayGapSplit, 'function', 'verifier.mjs exports awayGapSplit');
+  const split = V.awayGapSplit([gapOf('R-po-1', 'scope'), gapOf('R-po-2'), gapOf('R-po-3', 'requirement'), gapOf('R-po-4', 'plain'),
+    gapOf('R-po-5', 'judgement'), gapOf('R-po-6', 'weird')]);
+  assert.deepEqual(split.away, [{ id: 'R-po-2', answer: 'fix' }, { id: 'R-po-4', answer: 'fix' }]);
+  assert.deepEqual(split.held.map((g) => g.id), ['R-po-1', 'R-po-3', 'R-po-5', 'R-po-6']);
+});
+
+test('s10 mergeGapDecision: one answer per open gap in open order, with who answered each', () => {
+  assert.equal(typeof V.mergeGapDecision, 'function', 'verifier.mjs exports mergeGapDecision');
+  const open = [gapOf('R-po-1'), gapOf('R-po-2', 'judgement')];
+  const ship = { id: 'R-po-2', answer: 'ship', reason: 'later' };
+  assert.deepEqual(V.mergeGapDecision(open, [FIX('R-po-1')], [ship]),
+    { decision: 'answer', answers: [FIX('R-po-1'), ship], answeredBy: { 'R-po-1': 'away', 'R-po-2': 'you' } });
+  const other = V.mergeGapDecision(open, [FIX('R-po-2')], [FIX('R-po-1')]);
+  assert.deepEqual(other.answers.map((a) => a.id), ['R-po-1', 'R-po-2'], 'open order, not answer order');
+  assert.throws(() => V.mergeGapDecision(open, [FIX('R-po-1')], []), (e) => e instanceof TypeError && e.code === 'UNANSWERED');
+});
+
+test('s10 answeredByOf: only open ids and only away or you', () => {
+  assert.equal(typeof V.answeredByOf, 'function', 'verifier.mjs exports answeredByOf');
+  const open = [gapOf('R-po-1'), gapOf('R-po-2'), gapOf('R-po-3')];
+  const raw = { decision: 'answer', answers: [], answeredBy: { 'R-po-1': 'away', 'R-po-2': 'night-mode', 'R-po-3': 'you', 'R-qa-9': 'away' } };
+  assert.deepEqual(V.answeredByOf(raw, open), { 'R-po-1': 'away', 'R-po-3': 'you' });
+  for (const none of [null, {}, { answeredBy: 'away' }, { answeredBy: ['away'] }, { decision: 'another' }]) {
+    assert.deepEqual(V.answeredByOf(none, open), {}, JSON.stringify(none));
+  }
+});
+
+test('s10 verifyStop: one held gap and one decided: the head counts the held gap, which carries its kind and hold reason', () => {
+  const s = verifyStop({ gaps: [gapOf('R-po-2', 'judgement')], round: 1, texts: { 'R-po-2': 'People export every run' },
+    decided: [{ id: 'R-po-1', answer: 'fix' }] });
+  assert.equal(s.head, 'Verifier · 1 gap found');
+  assert.equal(s.findingsLine, '1 gap open');
+  assert.equal(s.text, 'R-po-2: R-po-2 is missing. No run is added until each gap is answered.');
+  assert.deepEqual(s.decided, [{ id: 'R-po-1', answer: 'fix', by: 'away' }]);
+  assert.equal(s.gaps.length, 1);
+  assert.equal(s.gaps[0].kind, 'judgement');
+  assert.equal(s.gaps[0].hold, KIND_REASONS.judgement);
+  const plain = verifyStop({ gaps: [gapOf('R-po-2', 'plain')], texts: {}, decided: [] });
+  assert.equal('decided' in plain, false, 'no decided key without an Away answer');
+  assert.deepEqual(plain.gaps, [{ id: 'R-po-2', why: 'R-po-2 is missing', text: '' }], 'a plain gap carries no kind and no hold');
+});
+
+test('s10 verifyLogEntries: each receipt at verify-N, then one line per answered gap saying who answered it', () => {
+  assert.equal(typeof V.verifyLogEntries, 'function', 'verifier.mjs exports verifyLogEntries');
+  const verify = { checks: [
+    { round: 1, state: 'verifying', result: null },
+    { round: 1, state: 'gaps', result: { held: ['R-po-4'], gaps: [gapOf('R-po-1'), gapOf('R-po-2'), gapOf('R-po-3')] }, gapRuns: [6, 7],
+      answers: [FIX('R-po-1'), { id: 'R-po-2', answer: 'ship', reason: 'later' }, { id: 'R-po-3', answer: 'change', text: 'new', from: 'old' }],
+      gapRunOf: { 'R-po-1': 6, 'R-po-3': 7 }, answeredBy: { 'R-po-1': 'away', 'R-po-2': 'you', 'R-po-3': 'you' } },
+    { round: 2, state: 'clean', result: { held: ['R-po-1'], gaps: [] }, gapRuns: [] },
+  ] };
+  const [first, second] = verifyLines(verify);
+  assert.deepEqual(V.verifyLogEntries(verify), [
+    { key: 'verify-0', text: first },
+    { key: 'verify-0-R-po-1', text: 'Gap R-po-1 → fix, run 6 added · decided by Away mode' },
+    { key: 'verify-0-R-po-2', text: 'Gap R-po-2 → ships with the gap · decided by you' },
+    { key: 'verify-0-R-po-3', text: 'Gap R-po-3 → requirement changed, run 7 added · decided by you' },
+    { key: 'verify-1', text: second },
+  ]);
+  const forged = { checks: [{ ...verify.checks[1], answeredBy: { 'R-po-1': 'robot' } }] };
+  assert.deepEqual(V.verifyLogEntries(forged).map((e) => e.key), ['verify-0'], 'an unknown value gets no line');
+  assert.deepEqual(V.verifyLogEntries(null), []);
+});
+
+test('s10 gapRetryAnswer: fix for every held gap the stop shows, never for a gap Away already answered', () => {
+  assert.equal(typeof V.gapRetryAnswer, 'function', 'verifier.mjs exports gapRetryAnswer');
+  const stop = verifyStop({ gaps: [gapOf('R-po-2', 'judgement'), gapOf('R-po-3', 'scope')], texts: {}, decided: [FIX('R-po-1')] });
+  const answer = V.gapRetryAnswer(stop);
+  assert.deepEqual(answer, decide(FIX('R-po-2'), FIX('R-po-3')));
+  assert.equal(V.verifyGateAnswer(stop, answer).ok, true);
+});
+
+test("s10 verifyPrompt: the format line carries kind and the prompt names the four kinds", () => {
+  const p = verifyPrompt({ owned: [{ id: 'R-po-1', run: 1, text: 'People export', example: '' }] });
+  assert.ok(p.includes('{"checks": [{"id": "R-po-2", "holds": false, "why": "one line", "title": "the small run that closes it", "kind": "plain"}]}'), p);
+  for (const kind of ['plain', 'judgement', 'scope', 'requirement']) assert.match(p, new RegExp(`\\b${kind}\\b`), kind);
+});
+
+test('s10 the feature verifier agent definition names the kind field and its four values', () => {
+  const md = readFileSync(new URL('../agents/worca-cc-feature-verifier.md', import.meta.url), 'utf8');
+  assert.match(md, /["`]kind["`]/, 'the kind field');
+  for (const kind of ['plain', 'judgement', 'scope', 'requirement']) assert.match(md, new RegExp(`[\`"]${kind}[\`"]`), kind);
 });

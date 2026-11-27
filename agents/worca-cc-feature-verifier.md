@@ -29,11 +29,15 @@ The engine binds every port to an absolute path in the task prompt — never har
 4. Write the result file and nothing else:
 
    ```json
-   { "checks": [ { "id": "R-po-2", "holds": false, "why": "sign-up never calls the email service", "title": "Call the email service from sign-up" } ] }
+   { "checks": [ { "id": "R-po-2", "holds": false, "why": "sign-up never calls the email service", "title": "Call the email service from sign-up", "kind": "plain" } ] }
    ```
 
    - Give every listed id exactly one entry. An id you leave out counts as a gap ("no verdict given").
    - `why`: one line, at most 300 characters, saying what is missing between the runs.
    - `title`: for a gap only, one line of at most 80 characters naming the small run that would close it.
+   - `kind`: for a gap only, what closing it takes. `"plain"`: one more run closes it as the requirement reads.
+     `"judgement"`: whether it is a gap at all is a judgement call. `"scope"`: the fix adds a screen or scope.
+     `"requirement"`: the fix changes the requirement. Away mode answers only a `plain` gap; the others wait for the
+     person, so say `plain` only when you are sure.
 
 Change no code, write no other file and commit nothing: the gaps you report become small runs of their own.

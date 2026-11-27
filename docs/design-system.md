@@ -328,13 +328,17 @@ The Verifier's question when a round finds gaps: one question per gap, before an
 (`ui/public/shape/step-card.mjs`) draws it on every surface that answers a stop. It is the card question
 (`buildChatQuestion`, `ui/public/chat/question.mjs`) with one `.qblock` per gap: the gap's id, its why once, and three
 `.qopt` answers (Add a fix run, Ship with the gap, Change the requirement), Add a fix run preset. No list repeats the
-gaps. It adds no class and no CSS of its own.
+gaps. It adds no class and no CSS of its own. A gap Away mode already answered has no `.qblock`: it is one line above the
+questions, "R-po-1 → fix · decided by Away mode". A gap held for you says why under its title, "Held for you: the
+Verifier calls this a judgement call".
 
 | Part | Class | Means |
 |---|---|---|
 | panel | `.qpanel[data-kind="gaps"]` | the question's panel, one `.qblock` per gap in the stop's order |
 | reason | `input.input.input-sm` | under Ship with the gap, as the Ship card's reason input; at most 300 characters, required |
 | new text | `textarea.textarea` | under Change the requirement, holding the current text; 1 to 300 characters |
+| decided | `.qwhy.meta` | a gap Away mode answered, above the first `.qblock`, `--ink-2` at 13px as the why; no answers |
+| held | `.qtext .qwhy` | after the why: "Held for you: " and the kind's reason, only on a gap that is not plain |
 | error | `.plan-err` (the step card's `errLine`) | a refusal, said once, under the gap it names (else above the button) |
 | send | `.qpanel-foot` `button.btn.btn-primary` | the one primary, "Send answers"; off until every gap has its answer and the text it needs |
 

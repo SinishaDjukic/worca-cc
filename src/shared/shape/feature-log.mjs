@@ -1,7 +1,7 @@
 // src/shared/shape/feature-log.mjs — Shaper s2: the feature card's step log (D7) and the receipt words it shares with
 // ui/public/shape/step-receipt.mjs (D8). Pure and browser-safe (B2: the Care words come from feature-record.mjs): the server builds the log from durable rows (the run
 // harness's audit lines, the clarify row, the feature row); the browser names a receipt with the same words.
-import { verifyLines } from './verifier.mjs';
+import { verifyLogEntries } from './verifier.mjs';
 import { careRecordLine } from './feature-record.mjs';
 import { SKIP_LINES } from './prototype.mjs';
 import { STOP_DONE_RE } from './run-stops.mjs';
@@ -158,7 +158,8 @@ export function buildDecisionLog({ clarify = null, origin = [], sliced = false, 
   (Array.isArray(changes) ? changes : []).forEach((e) => { out.push({ key: `change-${e.at}-${e.id}`, run: null, text: reqChangeLogText(e), detail: [] }); });
   // Small runs C5 (D13): one receipt per Verifier check with a result (`verify` = the feature's outline.verify). `kind`
   // draws it as a .srows row, in the gap list's mark and text columns (owner direction d86d13181).
-  verifyLines(verify).forEach((text, i) => { out.push({ key: `verify-${i}`, run: null, text, detail: [], kind: 'verify' }); });
+  // Slice 10 (D8): a check with `answeredBy` adds one line per answered gap after its receipt.
+  for (const { key, text } of verifyLogEntries(verify)) out.push({ key, run: null, text, detail: [], kind: 'verify' });
   out.unshift(...front.slice(0, 1));
   if (replan && replan.length) {
     out.push({ key: 'replan', run: null, text: replanText(replan), detail: [...replan].sort((a, b) => a - b).map((i) => { const s = sliceOf(i); return s ? `${i} · ${s.title}` : String(i); }) });

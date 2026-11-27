@@ -14,6 +14,10 @@ import { createRateLimiter, RingBuffer, TokenBucket } from '../src/core/chat/rat
 import { renderDone, renderError, renderQuestion, renderSchedule, renderTest } from '../src/core/chat/renderers.mjs';
 import { isValidMessage } from '../src/core/chat/channel-protocol.mjs';
 import { renderToHtml } from '../plugins/telegram-chat/channel/worker.mjs';
+import { verifyStop } from '../src/shared/shape/verifier.mjs';
+import { planStop, gateStop } from '../src/shared/shape/run-stops.mjs';
+// A namespace read, so a missing new export (GAP_REPLY_WORDS) fails only the test that needs it.
+import * as VERIFIER from '../src/shared/shape/verifier.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 useTempHome(after);
@@ -324,4 +328,68 @@ test('#1450: a model_confirm pause names the model and the two ways on; it never
   assert.match(text, /paused — Waiting for you to confirm the model/);
   assert.match(text, /Continue on claude-fable-5-2 or switch model in the Worca UI/);
   assert.doesNotMatch(text, /usage limit/);
+});
+
+// ── Shaper small runs slice 10 (R-po-5, D11): the gate message of the Verifier's gap stop lists the gaps ─────
+const GAP_PAIR = [{ id: 'R-po-1', why: 'the export skips archived runs' }, { id: 'R-po-2', why: 'the list wraps onto two lines', kind: 'judgement' }];
+const gapMsg = (stop) => renderQuestion(META, { id: 'verify-1', kind: 'gate', issues: [], stop });
+const gapText = (stop) => gapMsg(stop).body[0].value;
+
+test('renderQuestion: a 2-gap Verifier stop lists R-po-1 and R-po-2, says both replies and offers no /approve', () => {
+  const stop = { ...verifyStop({ gaps: GAP_PAIR }), findings: [{ id: 'note-1', text: 'the import test takes 40 s' }] };
+  const msg = gapMsg(stop);
+  assert.equal(isValidMessage(msg), true);
+  assert.equal(msg.severity, 'warning');
+  const text = msg.body[0].value;
+  const lines = text.split('\n').map((l) => l.trim());
+  assert.ok(lines.includes('• R-po-1: the export skips archived runs'), text);
+  assert.ok(lines.includes('• R-po-2: the list wraps onto two lines (judgement call)'), text);
+  assert.ok(lines.includes('Reply: `/retry *2951` — add a fix run for every gap · to ship with a gap (a reason is needed) or change a requirement, answer on the feature card'), text);
+  assert.ok(text.includes(VERIFIER.GAP_REPLY_WORDS.elsewhere));
+  assert.doesNotMatch(text, /\/approve/);
+  assert.doesNotMatch(text, /import test takes 40 s/, 'findings are not listed');
+  const html = renderToHtml(msg);
+  assert.match(html, /<code>\/retry \*2951<\/code>/);
+  assert.doesNotMatch(html, /<i>/);
+  for (const id of ['R-po-1', 'R-po-2']) assert.ok(html.includes(id), id);
+});
+
+test('renderQuestion: a gap Away answered is listed as decided by Away mode', () => {
+  const text = gapText(verifyStop({ gaps: [GAP_PAIR[1]], decided: [{ id: 'R-po-1', answer: 'fix' }] }));
+  assert.ok(text.split('\n').map((l) => l.trim()).includes('• R-po-1 → fix · decided by Away mode'), text);
+  assert.match(text, /• R-po-2: .*\(judgement call\)/);
+});
+
+test('renderQuestion: a 7-gap stop shows 5 clipped bullets, …and 2 more, and fits a Discord message', () => {
+  const gaps = Array.from({ length: 7 }, (_, i) => ({ id: `R-po-${i + 1}`, why: 'x'.repeat(300), kind: 'requirement' }));
+  const text = gapText(verifyStop({ gaps }));
+  assert.equal(text.split('\n').filter((l) => /• R-po-\d/.test(l)).length, 5, text);
+  assert.match(text, /…and 2 more/);
+  assert.doesNotMatch(text, /x{121}/, 'the why is clipped at 120');
+  assert.match(text, /x{100}/);
+  assert.ok(text.length < 2000, String(text.length));
+});
+
+// The literals are what renderQuestion at 217b540b4 returns for the same payloads, captured by running that code.
+test('renderQuestion: a gate without a gaps stop renders as at 217b540b4', () => {
+  const head = '❓ **Run:** `*2951`\n   **Title:** Fix the login redirect loop on mobile Safari and desktop too';
+  const want = (value) => ({ title: null, body: [{ kind: 'markdown', value }], severity: 'warning' });
+  const reply = '   Reply: `/approve *2951` — no more cycles, continue · `/retry *2951` — run another cycle';
+  // An unmarked feature's review gate: no stop at all.
+  const issues = Array.from({ length: 7 }, (_, i) => ({ severity: i ? 'major' : 'critical', summary: `finding ${i + 1}` }));
+  assert.deepEqual(renderQuestion(META, { id: 'gate-2', kind: 'gate', agent: 'reviewer', issues }), want(`${head}
+   **Status:** waiting for approval (reviewer)
+   • [critical] finding 1
+   • [major] finding 2
+   • [major] finding 3
+   • [major] finding 4
+   • [major] finding 5
+   • …and 2 more
+${reply}`));
+  // A Shaper plan stop and a Shaper gate stop, neither with form 'gaps'.
+  assert.deepEqual(renderQuestion(META, { id: 'plan-1', kind: 'plan', stop: planStop({ run: 2, check: { ok: false, passed: 3, total: 4 } }) }),
+    want(`${head}\n   **Status:** has questions\n   Reply: /answer *2951 1`));
+  const missingTests = [{ severity: 'major', summary: 'Missing tests' }];
+  assert.deepEqual(renderQuestion(META, { id: 'gate-3', kind: 'gate', issues: missingTests, stop: gateStop({ run: 2, issues: missingTests, fixCycles: 1 }) }),
+    want(`${head}\n   **Status:** waiting for approval\n   • [major] Missing tests\n${reply}`));
 });

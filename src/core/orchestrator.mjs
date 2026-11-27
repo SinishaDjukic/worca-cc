@@ -71,7 +71,8 @@ import { REFINER_SINK, roleReviewOf, roleChecklistOf, runningRoles, rolesForRoun
 import { DISPOSITIONS_MAX_BYTES, applyDispositions, withCounts, normalizeConflicts, dispositionsPathFor, conflictClarifications, withClarifications } from '../shared/review/findings.mjs';
 import { currentPass } from '../shared/shape/role-review.mjs';
 import { gateStop, planStop, concernStop, stopDoneText, stopOptionOf, settledLine, SETTLED_CONCERN_FEEDBACK } from '../shared/shape/run-stops.mjs';
-import { verifyResult, verifyRoundPlan, verifyStop, verifyGateAnswer, gapAnswerSummary } from '../shared/shape/verifier.mjs';
+import { verifyResult, verifyRoundPlan, verifyStop, verifyGateAnswer, gapAnswerSummary, awayGapSplit, mergeGapDecision,
+  answeredByOf, ANSWERED_BY_WORDS } from '../shared/shape/verifier.mjs';
 import { VERIFY_RESULT_FILE } from './shape/verifier.mjs';
 import { criteriaCheck, criteriaList, criterionIds, coverageOf, criteriaExamples } from '../shared/review/coverage.mjs';
 import { normalizeDecisions, conflictDecisions, validateDecisionPicks, decisionClarifications } from '../shared/review/decisions.mjs';
@@ -1648,20 +1649,48 @@ export class GraphOrchestrator extends RunHarness {
       if (result.gaps.length) decision = { decision: 'answer', answers: [] };
     } else {
       const id = `verify-${v.round}-${ctx.executionId}`;
-      const stop = verifyStop({ gaps: open, round: v.round, fixCycles: v.fixCycles, texts: v.texts });
-      const checked = (raw) => { const r = verifyGateAnswer(stop, raw); return r.ok ? r.answer : null; };
-      // A replay after a pause passes the same validator: a stash from before the gate (another / continue) is asked again.
-      const replayed = this._stopAnswer?.id === id ? checked(this._stopAnswer.payload) : null;
-      if (replayed) decision = replayed;
-      else {
-        this._stopAnswer = null;
-        const payload = await this._enqueueAsk(() => this._ask({ id, kind: 'gate', nodeId: ctx.nodeId, executionId: ctx.executionId,
-          issues: [], stop, validate: checked }));
-        // Checked again: the --yes path returns {decision:'continue'} without calling validate. A refusal writes null.
-        decision = checked(payload);
-        if (decision) {
-          this._stopAnswer = { id, payload: decision };
-          if (this.pipeline) await appendAudit(this.pipeline.dir, `Verifier: ${gapAnswerSummary(decision.answers)} · decided by you`, { actor: this.answeredBy(id) }).catch(() => {});
+      const full = verifyStop({ gaps: open, round: v.round, fixCycles: v.fixCycles, texts: v.texts });
+      const fullChecked = (raw) => { const r = verifyGateAnswer(full, raw); return r.ok ? r.answer : null; };
+      // A replay after a pause passes the full stop's validator, keeping who answered each gap: a stash from before the
+      // gate (another / continue) is asked again.
+      const stash = this._stopAnswer?.id === id ? this._stopAnswer : null;
+      const replayed = stash?.payload ? fullChecked(stash.payload) : null;
+      if (replayed) {
+        const by = answeredByOf(stash.payload, open);
+        decision = { ...replayed, ...(Object.keys(by).length ? { answeredBy: by } : {}) };
+      } else {
+        // Slice 10 (D4, D10): with Away mode active when the gate opens, each plain gap is answered fix at once (no grace
+        // timer); the rest are held for the person. A resumed gate reuses its stashed Away answers.
+        let away = Array.isArray(stash?.away) ? stash.away : null;
+        if (!away) {
+          this._stopAnswer = null;
+          away = this.nightMayDecideNow({ id, kind: 'gate', stop: full }) ? awayGapSplit(open).away : [];
+          if (away.length) {
+            this._stopAnswer = { id, away };   // before any await: the pause window
+            this._nightRecord({ id, kind: 'gate' }, { choice: `fix ${away.map((a) => a.id).join(', ')}`, strategy: 'rule',
+              flagged: false, rationale: 'plain gaps: one more run closes each', reversible: false });
+            if (this.pipeline) {
+              for (const a of away) {
+                await appendAudit(this.pipeline.dir, `Verifier: Gap ${a.id} → fix · ${ANSWERED_BY_WORDS.away}`, { actor: NIGHT_ACTOR }).catch(() => {});
+              }
+            }
+          }
+        }
+        const awayIds = new Set(away.map((a) => a.id));
+        const held = open.filter((g) => !awayIds.has(g.id));
+        if (!held.length) decision = mergeGapDecision(open, away, []);
+        else {
+          const stop = verifyStop({ gaps: held, round: v.round, fixCycles: v.fixCycles, texts: v.texts, decided: away });
+          const checked = (raw) => { const r = verifyGateAnswer(stop, raw); return r.ok ? r.answer : null; };
+          const payload = await this._enqueueAsk(() => this._ask({ id, kind: 'gate', nodeId: ctx.nodeId, executionId: ctx.executionId,
+            issues: [], stop, validate: checked }));
+          // Checked again: the --yes path returns {decision:'continue'} without calling validate. A refusal writes null.
+          const mine = checked(payload);
+          if (mine) {
+            decision = mergeGapDecision(open, away, mine.answers);
+            this._stopAnswer = { id, payload: decision };
+            if (this.pipeline) await appendAudit(this.pipeline.dir, `Verifier: ${gapAnswerSummary(mine.answers)} · decided by you`, { actor: this.answeredBy(id) }).catch(() => {});
+          }
         }
       }
     }
@@ -4645,7 +4674,8 @@ export class GraphOrchestrator extends RunHarness {
     this._planRevise = pr && typeof pr.id === 'string' && typeof pr.path === 'string' ? { id: pr.id, path: pr.path } : null;
     this._smallRunsMarked = rp.smallRunsMarked === true;
     const sa = rp.stopAnswer;
-    this._stopAnswer = sa && typeof sa.id === 'string' && sa.payload && typeof sa.payload === 'object' ? { id: sa.id, payload: { ...sa.payload } } : null;
+    this._stopAnswer = sa && typeof sa.id === 'string' && sa.payload && typeof sa.payload === 'object' ? { id: sa.id, payload: { ...sa.payload } }
+      : sa && typeof sa.id === 'string' && Array.isArray(sa.away) ? { id: sa.id, away: sa.away.map((a) => ({ ...a })) } : null;   // slice 10 (D10)
     const pa = rp.protoAnswer;
     this._protoAnswer = pa && typeof pa.key === 'string' && pa.payload && typeof pa.payload === 'object' ? { key: pa.key, payload: { ...pa.payload } } : null;
     const pca = rp.planConcernAnswer;

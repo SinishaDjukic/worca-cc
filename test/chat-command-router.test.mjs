@@ -10,6 +10,7 @@ import { worcaHome } from '../src/core/projects.mjs';
 import { createChatContext } from '../src/core/chat/chat-context.mjs';
 import { createCommandRouter } from '../src/core/chat/command-router.mjs';
 import { ACTION_DONE } from '../src/core/chat/receipts.mjs';
+import { verifyStop, verifyGateAnswer } from '../src/shared/shape/verifier.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 useTempHome(after);
@@ -274,14 +275,64 @@ test('/answer: ordinal validation and clarify payload mapping', async () => {
   assert.match(text(await send('/answer 1')), /use `\/approve` or `\/retry`/);
 });
 
-test('the Verifier gap stop: /approve and /retry send nothing and point to the app', async () => {
-  for (const verb of ['approve', 'retry']) {
-    const pq = { id: 'stop-1', kind: 'gate', stop: { form: 'gaps', reason: 'check' } };
-    const answered = [];
-    const f = makeRouter({ pendingQuestion: () => pq, answer: (r, id, p) => answered.push(p), listRuns: liveOne });
+// Shaper small runs slice 10 (R-po-5, D14): on the Verifier's gap stop /retry fixes every held gap, /approve is refused.
+/** A gap stop holding R-po-2 and R-po-3, with R-po-1 already answered by Away mode. */
+const GAP_PQ = () => ({ id: 'stop-1', kind: 'gate', stop: verifyStop({ gaps: [
+  { id: 'R-po-2', why: 'the list wraps', kind: 'judgement' }, { id: 'R-po-3', why: 'a new screen', kind: 'scope' }],
+  decided: [{ id: 'R-po-1', answer: 'fix' }] }) });
+const gapRouter = (answer = async () => {}) => {
+  const answered = [];
+  const pq = GAP_PQ();
+  const f = makeRouter({ pendingQuestion: () => pq, answer: async (...args) => { answered.push(args); return answer(...args); }, listRuns: liveOne });
+  return { f, pq, answered };
+};
+
+test('gap stop: /retry answers fix for each held gap, once, and says so', async () => {
+  for (const result of [undefined, { held: true }]) {   // a run held for its turn confirms the same way
+    const { f, pq, answered } = gapRouter(async () => result);
+    const out = await handle(f, '/retry');
+    assert.equal(answered.length, 1, text(out));
+    const [runId, id, payload, actor] = answered[0];
+    assert.deepEqual([runId, id], ['r-ab12', 'stop-1']);
+    assert.deepEqual(payload, { decision: 'answer', answers: [{ id: 'R-po-2', answer: 'fix' }, { id: 'R-po-3', answer: 'fix' }] });
+    assert.equal(verifyGateAnswer(pq.stop, payload).ok, true, 'the app validator takes it');
+    assert.ok(actor, 'attributed to the chat actor');
+    assert.notEqual(actor, 'night-mode');
+    assert.equal(out.severity, 'success');
+    assert.match(text(out), /✅/);
+    assert.match(text(out), /a fix run for each of 2 gaps/);
+  }
+});
+
+test('gap stop: /approve sends nothing and says shipping with a gap needs a reason on the feature card', async () => {
+  const { f, answered } = gapRouter();
+  const out = await handle(f, '/approve');
+  assert.deepEqual(answered, []);
+  assert.equal(out.severity, 'warning');
+  assert.match(text(out), /shipping with a gap needs a reason/i);
+  assert.match(text(out), /feature card/);
+  assert.match(text(out), /\/retry/);
+  assert.match(text(out), /a fix run for every gap/);
+});
+
+test('gap stop: /retry against a stop that moved on replies a warning with the reason, not Command failed', async () => {
+  for (const [code, message] of [['STOP_ANSWERED', 'this stop was already answered'], ['STOP_HELD', 'an answer is already held for this stop'],
+    ['INVALID_ANSWER', 'R-po-9 is not a gap of this check']]) {
+    const { f, answered } = gapRouter(async () => { throw Object.assign(new Error(message), { code, status: code === 'INVALID_ANSWER' ? 422 : 409 }); });
+    const out = await handle(f, '/retry');
+    assert.equal(answered.length, 1, code);
+    assert.equal(out.severity, 'warning', `${code}: ${text(out)}`);
+    assert.ok(text(out).includes(message), text(out));
+    assert.doesNotMatch(text(out), /Command failed/, code);
+  }
+});
+
+test('gap stop: /abort and /cancel send nothing and keep the gate reply', async () => {
+  for (const verb of ['abort', 'cancel']) {
+    const { f, answered } = gapRouter();
     const out = await handle(f, `/${verb}`);
-    assert.deepEqual(answered, [], `/${verb} answers nothing`);
-    assert.match(out.body[0].value, /one answer per gap\. Answer it in the app/);
+    assert.deepEqual(answered, [], verb);
+    assert.match(text(out), new RegExp(`Gates have no ${verb}`));
   }
 });
 

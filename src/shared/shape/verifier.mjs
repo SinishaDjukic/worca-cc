@@ -52,12 +52,33 @@ export function findingsOf(raw) {
   return out;
 }
 
+/** Slice 10 (D1): the kinds of gap the Verifier names. Only a `plain` gap may be answered by Away mode. */
+export const GAP_KINDS = Object.freeze(['plain', 'judgement', 'scope', 'requirement']);
+/** A gap's kind: missing → `plain`; one of GAP_KINDS as given; anything else → `judgement` (held, lowest risk). */
+export const gapKindOf = (k) => (k === undefined || k === null ? 'plain' : GAP_KINDS.includes(k) ? k : 'judgement');
+/** `{kind}` to spread onto a gap, only when it is not plain (every pre-slice-10 shape stays as it was). */
+export const kindField = (k) => { const kind = gapKindOf(k); return kind === 'plain' ? {} : { kind }; };
+/** The chip and the hold reason of each held kind (the gap question, the gate message). */
+export const GAP_KIND_WORDS = Object.freeze({
+  judgement: Object.freeze({ chip: 'judgement call', reason: 'the Verifier calls this a judgement call' }),
+  scope: Object.freeze({ chip: 'adds a screen or scope', reason: 'the fix adds a screen or scope' }),
+  requirement: Object.freeze({ chip: 'changes a requirement', reason: 'the fix changes a requirement' }),
+});
+/** Who answered a gap (the record's `answeredBy` values). */
+export const ANSWERED_BY_WORDS = Object.freeze({ away: 'decided by Away mode', you: 'decided by you' });
+/** The chat words of the gap stop: the gate message's reply line and the `/approve` refusal read both. */
+export const GAP_REPLY_WORDS = Object.freeze({
+  retry: 'add a fix run for every gap',
+  elsewhere: 'to ship with a gap (a reason is needed) or change a requirement, answer on the feature card',
+});
+
 const missing = () => Object.assign(new TypeError('The Verifier wrote no result'), { code: 'VERIFY_RESULT_MISSING' });
 
 /**
  * The Verifier's file → {held, gaps}. Only `owned` ids count (others are dropped); an owned id the file does not
  * mention is a gap (the role-review rule: no verdict is not a pass). File shape:
- * `{ "checks": [ { "id": "R-po-2", "holds": false, "why": "…", "title": "…" } ] }`. Throws VERIFY_RESULT_MISSING
+ * `{ "checks": [ { "id": "R-po-2", "holds": false, "why": "…", "title": "…", "kind": "plain" } ] }` (`kind` kept only
+ * when it is not plain, see gapKindOf). Throws VERIFY_RESULT_MISSING
  * unless `raw` is an object with a `checks` array.
  */
 export function verifyResult(raw, { owned = [] } = {}) {
@@ -70,7 +91,7 @@ export function verifyResult(raw, { owned = [] } = {}) {
     const c = byId.get(id);
     if (c && c.holds === true) { held.push(id); continue; }
     gaps.push({ id, why: c ? clip(c.why, VERIFY_WHY_MAX) || 'no reason given' : NO_VERDICT,
-      title: (c && clip(c.title, VERIFY_TITLE_MAX)) || clip(`Close the gap: ${id}`, VERIFY_TITLE_MAX) });
+      title: (c && clip(c.title, VERIFY_TITLE_MAX)) || clip(`Close the gap: ${id}`, VERIFY_TITLE_MAX), ...kindField(c ? c.kind : undefined) });
   }
   const findings = findingsOf(raw.findings);
   return findings.length ? { held, gaps, findings } : { held, gaps };
@@ -98,7 +119,8 @@ export function verifyPrompt({ owned = [], round = 1 } = {}) {
     ...lines,
     '```',
     '',
-    'Write only the JSON result file: {"checks": [{"id": "R-po-2", "holds": false, "why": "one line", "title": "the small run that closes it"}]}.',
+    'Write only the JSON result file: {"checks": [{"id": "R-po-2", "holds": false, "why": "one line", "title": "the small run that closes it", "kind": "plain"}]}.',
+    'For a gap, "kind" is "plain" (one more run closes it), "judgement" (a judgement call), "scope" (the fix adds a screen or scope) or "requirement" (the fix changes the requirement).',
     'If you noticed something the person should know before shipping that is not a verdict (a slow test, a risk), add "findings": ["one line each"]; leave it out when there is none.',
     'Give every id above one entry. Change no code and commit nothing.',
   ].join('\n');
@@ -122,22 +144,76 @@ export const GAP_ANSWERS = Object.freeze([
 const GAP_ANSWER_VALUES = new Set(GAP_ANSWERS.map((a) => a.value));
 
 /** The gate stop (slice 8): C3's stop shape with reason `check` and `form: 'gaps'`. Every open gap is answered (fix, ship
- *  or change) before a run is added; Worca picks a fix run. `texts` holds each requirement's current text. */
-export function verifyStop({ gaps = [], round = 1, texts = {} } = {}) {
+ *  or change) before a run is added; Worca picks a fix run. `texts` holds each requirement's current text. Slice 10: `gaps`
+ *  are the gaps held for the person (a non-plain one carries `kind` and its `hold` reason); `decided` lists the gaps Away
+ *  mode already answered (`[{id, answer:'fix', by:'away'}]`, only when non-empty). */
+export function verifyStop({ gaps = [], round = 1, texts = {}, decided = [] } = {}) {
   const list = Array.isArray(gaps) ? gaps : [];
   const n = list.length;
   const first = list[0] || { id: '', why: NO_VERDICT };
   const why = String(first.why || NO_VERDICT).replace(/[.\s]+$/, '');
   const textOf = texts && typeof texts === 'object' ? texts : {};
+  const done = (Array.isArray(decided) ? decided : []).map((a) => ({ id: a.id, answer: 'fix', by: 'away' }));
   return {
     reason: 'check', run: null, node: 'n_verify', form: 'gaps', pick: 'fix',
     head: `Verifier · ${plural(n, 'gap')} ${(Number(round) || 1) > 1 ? 'still open' : 'found'}`,
     text: `${first.id}: ${why}${n > 1 ? ` and ${n - 1} more` : ''}. No run is added until each gap is answered.`,
     findingsLine: `${plural(n, 'gap')} open`,
-    gaps: list.map((g) => ({ id: g.id, why: g.why, text: typeof textOf[g.id] === 'string' ? textOf[g.id] : '' })),
+    gaps: list.map((g) => {
+      const k = kindField(g.kind);
+      return { id: g.id, why: g.why, text: typeof textOf[g.id] === 'string' ? textOf[g.id] : '',
+        ...(k.kind ? { kind: k.kind, hold: GAP_KIND_WORDS[k.kind].reason } : {}) };
+    }),
     answers: GAP_ANSWERS,
     options: [opt('answer', 'Send answers', 'Every gap answered, then Worca adds the runs', 'answered the gaps', { decision: 'answer' })],
+    ...(done.length ? { decided: done } : {}),
   };
+}
+
+/** Slice 10 (D2): the Away rule. A plain gap → Away answers `fix`; every other kind is held for the person. Away never
+ *  answers `ship` or `change`. Input order is kept in both lists. */
+export function awayGapSplit(gaps) {
+  const away = [];
+  const held = [];
+  for (const g of Array.isArray(gaps) ? gaps : []) {
+    if (gapKindOf(g && g.kind) === 'plain') away.push({ id: g.id, answer: 'fix' });
+    else held.push(g);
+  }
+  return { away, held };
+}
+
+/** Slice 10 (D6): Away's answers plus the person's → one gate decision, answers in `open` order, with who answered each.
+ *  An open gap with neither answer is a programming error: TypeError, code UNANSWERED. */
+export function mergeGapDecision(open, away, personAnswers) {
+  const byAway = new Map((Array.isArray(away) ? away : []).map((a) => [a.id, a]));
+  const byYou = new Map((Array.isArray(personAnswers) ? personAnswers : []).map((a) => [a.id, a]));
+  const answers = [];
+  const answeredBy = {};
+  for (const g of Array.isArray(open) ? open : []) {
+    const a = byYou.get(g.id) || byAway.get(g.id);
+    if (!a) throw Object.assign(new TypeError(`${g.id} has no answer`), { code: 'UNANSWERED' });
+    answers.push(a);
+    answeredBy[g.id] = byYou.has(g.id) ? 'you' : 'away';
+  }
+  return { decision: 'answer', answers, answeredBy };
+}
+
+/** Slice 10 (D6): a decision's `answeredBy`, re-checked: only `open` ids, only `away` or `you`. Never throws. */
+export function answeredByOf(raw, open) {
+  const by = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw.answeredBy : null;
+  if (!by || typeof by !== 'object' || Array.isArray(by)) return {};
+  const out = {};
+  for (const g of Array.isArray(open) ? open : []) {
+    const id = idOf(g);
+    if (id && Object.hasOwn(by, id) && Object.hasOwn(ANSWERED_BY_WORDS, by[id])) out[id] = by[id];
+  }
+  return out;
+}
+
+/** Slice 10 (D14): a chat `/retry` on the gap stop: `fix` for every gap the stop holds for the person (never Away's rows). */
+export function gapRetryAnswer(stop) {
+  const gaps = stop && Array.isArray(stop.gaps) ? stop.gaps : [];
+  return { decision: 'answer', answers: gaps.map((g) => ({ id: g.id, answer: 'fix' })) };
 }
 
 const refuse = (code, id, error) => ({ ok: false, code, id, error });
@@ -219,6 +295,36 @@ export function verifyLines(verify, { owned = null } = {}) {
     if (c.state === 'clean') out.push(`Verified: the ${n} requirements owned by runs hold in the main flow`);
     else if (c.state === 'accepted') out.push(`Verifier: ${plural(g, 'gap')} left open · you chose to ship with it`);
     else if (c.state === 'gaps') out.push(`Verifier: ${held} of ${n} hold · ${plural(g, 'gap')}${addedText(Array.isArray(c.gapRuns) ? c.gapRuns : [])}`);
+  }
+  return out;
+}
+
+/** Slice 10 (D9): one log line per gap a check's answer named: `Gap R-po-1 → fix, run 6 added · decided by Away mode`. */
+function gapAnswerLine(a, run, by) {
+  const added = Number.isInteger(run) ? `, run ${run} added` : '';
+  const what = a.answer === 'fix' ? `fix${added}` : a.answer === 'change' ? `requirement changed${added}` : 'ships with the gap';
+  return `Gap ${a.id} → ${what} · ${ANSWERED_BY_WORDS[by]}`;
+}
+
+/** Slice 10 (D8): the card log's Verifier entries. Every verifyLines receipt at key `verify-N` (N = its index), and after
+ *  the receipt of a check with `answeredBy`, one line per answered gap at `verify-N-ID`. A gap whose `answeredBy` value
+ *  is unknown gets no line. */
+export function verifyLogEntries(verify, opts = {}) {
+  const out = [];
+  let n = 0;
+  for (const c of checksOf(verify)) {
+    const [text] = verifyLines({ checks: [c] }, opts);
+    if (text === undefined) continue;
+    const key = `verify-${n}`;
+    n += 1;
+    out.push({ key, text });
+    const by = c.answeredBy && typeof c.answeredBy === 'object' ? c.answeredBy : null;
+    if (!by) continue;
+    const runOf = c.gapRunOf && typeof c.gapRunOf === 'object' ? c.gapRunOf : {};
+    for (const a of Array.isArray(c.answers) ? c.answers : []) {
+      if (!a || typeof a.id !== 'string' || !Object.hasOwn(by, a.id) || !Object.hasOwn(ANSWERED_BY_WORDS, by[a.id])) continue;
+      out.push({ key: `${key}-${a.id}`, text: gapAnswerLine(a, runOf[a.id], by[a.id]) });
+    }
   }
   return out;
 }

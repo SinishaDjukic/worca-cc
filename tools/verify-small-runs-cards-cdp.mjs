@@ -23,6 +23,8 @@
 // the carried runs (SHIP_CARRIED_ONLY=1 runs it alone): the Ship card's and the Create PR dialog's carried line and
 //   "Create 4 PRs", light and dark at 1280px, beside the run's prototype (SHIP_CARRIED_PROTOTYPE);
 // the Verifier's note on the Ship card (SHIP_NOTES_ONLY=1 runs it alone): before and after Acknowledge, light and dark at 1280px;
+// the Verifier's Away answers (GAP_AWAY_ONLY=1 runs it alone): the Log tab's and the Chat card's "decided by" lines and the
+//   gap question with Away's answer and a held judgement call, light and dark;
 // the feature page tabs (FEATURE_TABS_ONLY=1 runs it alone): the Cost tab, Mark and ship to the Ship card on Requirements,
 //   and the Log tab, light and dark at 1280px, the Cost tab and the bar at 375px in light;
 // and one reduced-motion capture of Prototype building. A live phase then follows a REAL paced mock Design build
@@ -1890,7 +1892,80 @@ async function shipNotesPhase() {
 
 // D2_ONLY=1 runs the D2 cases alone, D3_ONLY=1 the D3 cases, HELD_ONLY=1 the clash-held row, TAKEIN_ONLY=1 the take-in, SHIP_LIST_ONLY=1
 // the Ship list along the real branches, HELD_RESUME_ONLY=1 the held resume, AFTER_RUN_ONLY=1 the after-run row and Resume wording, STOP_FINDINGS_ONLY=1 a stop's findings on every surface, SHIP_ONE_ONLY=1 Ship as one PR, SHIP_CARRIED_ONLY=1 the carried runs Ship names, FEATURE_TABS_ONLY=1 the feature page's Cost, Requirements and Log tabs, CONFIRM_ONLY=1 confirm in place (each command stays under 10 minutes); unset, every case runs, D2 before D3, the held row, then the take-in last.
+// ---- Shaper slice 10 (R-po-5): Away mode answered a plain gap, the person a judgement call. The feature page's Log tab and
+// the Chat card's log say who decided each gap; a live gap stop lists Away's answer above the question and says why the
+// held gap waits. Light and dark: app-verifier-away-log-… (1280px, the Log tab), app-verifier-away-card-log-… and
+// app-verifier-away-question-… (375px, the Chat card).
+async function gapAwayPhase() {
+  try { await addProject({ name: 'Proof', path: proj }); } catch { /* already onboarded */ }
+  const G1 = { id: 'R-po-1', why: 'the stored sign-up skips the email field', title: 'Store the email field' };
+  const G2 = { id: 'R-po-2', why: 'the welcome email reads as a judgement call', title: 'Reword the welcome email', kind: 'judgement' };
+  const x = seedFeature('aw', 'Away answers', ['done', 'done', 'done', 'done']);
+  const vpid = 'c5awv00001';
+  pipeline(vpid, 'done', 'Away answers · Verifier');
+  const fixRun = changeAgreedRequirements(x.f.id, { changes: [], appendFor: [{ ownerIndex: 1, title: G1.title, goal: G1.why, ids: [G1.id] }] }).added[0];
+  setVerify(x.f, vCheck(x, vpid, 'gaps', { result: { held: ['R-po-3', 'R-po-4'], gaps: [G1, G2] }, gapRuns: [fixRun.index],
+    answers: [{ id: G1.id, answer: 'fix' }, { id: G2.id, answer: 'ship', reason: 'the copy is reviewed later' }],
+    shipped: [{ id: G2.id, reason: 'the copy is reviewed later' }], gapRunOf: { [G1.id]: fixRun.index },
+    answeredBy: { 'R-po-1': 'away', 'R-po-2': 'you' } }));
+  const want = [`Gap R-po-1 → fix, run ${fixRun.index} added · decided by Away mode`, 'Gap R-po-2 → ships with the gap · decided by you'];
+  // The live stop: R-po-1 answered by Away mode, R-po-2 (a judgement call) held for the person.
+  const q = seedFeature('aq', 'Away question', ['done', 'done', 'done', 'done']);
+  const qpid = 'c5aqv00001';
+  pipeline(qpid, 'running', 'Away question · Verifier');
+  setVerify(q.f, vCheck(q, qpid, 'verifying', { round: 1 }));
+  const stop = verifyStop({ gaps: [G2], round: 1, texts: Object.fromEntries(AGREED.map((a) => [a.id, a.text])), decided: [{ id: G1.id, answer: 'fix' }] });
+  liveRun(qpid, 'Away question · Verifier', { at: 'n_verify', verify: true, runShape: VERIFY(q.f.id, 1),
+    pendingQuestion: { id: 'verify-1-x:n_verify:1', kind: 'gate', nodeId: 'n_verify', executionId: 'x:n_verify:1', issues: [], stop } });
+  const page = `#feature/${encodeURIComponent(x.f.id)}/logs`;
+  const FEATURE_LOG = "[...document.querySelectorAll('#group-detail .gpage-panel[data-tab=\"logs\"]:not([hidden]) ol.shape-feature-log li')].map((n) => n.textContent.replace(/\\s+/g, ' ').trim())";
+  const has = (lines, line) => lines.some((t) => t.includes(line));
+  for (const theme of THEMES) {
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await open(`${base}/?away-log-${theme}${page}`);
+    await skipWelcome(); await setTheme(theme);
+    if (await waitFor(`${FEATURE_LOG}.length > 0`, `the feature Log tab (${theme})`)) {
+      await sleep(400);
+      const lines = await ev(FEATURE_LOG);
+      results.lists.push({ list: 'away log, feature page', theme, lines });
+      check(want.every((w) => has(lines, w)), `away log, ${theme}: the Log tab says decided by Away mode and decided by you (${JSON.stringify(lines)})`);
+      const order = want.map((w) => lines.findIndex((t) => t.includes(w)));
+      const receipt = lines.findIndex((t) => t.includes('Verifier: 2 of 4 hold'));
+      check(receipt >= 0 && order[0] === receipt + 1 && order[1] === receipt + 2, `away log, ${theme}: the two gap lines follow the Verifier's line (${JSON.stringify({ receipt, order })})`);
+      await ev("(() => { const l = document.querySelector('#group-detail ol.shape-feature-log'); if (l) l.scrollIntoView({ block: 'center' }); return 0; })()");
+      await shot(`app-verifier-away-log-${theme}`);
+    }
+    await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+    if (await card(x.threadId, 'away-card', 'the Away answers card', theme)) {
+      const logs = await ev(LOGS);
+      check(want.every((w) => has(logs, w)), `away log, ${theme}: the Chat card's log says both (${JSON.stringify(logs)})`);
+      await reveal('.chat-rc .chat-rc-log-verify');
+      await shot(`app-verifier-away-card-log-${theme}`);
+    }
+    if (await card(q.threadId, 'away-q', 'the Away gap question card', theme)
+      && await waitFor("!!document.querySelector('.chat-rc .qpanel[data-kind=\"gaps\"]')", `the Away gap question (${theme})`)) {
+      await reveal('.chat-rc .qpanel[data-kind="gaps"]');
+      const g = await ev(`(() => { const p = document.querySelector('.chat-rc .qpanel[data-kind="gaps"]');
+        const t = (n) => n.textContent.replace(/\\s+/g, ' ').trim();
+        return { decided: [...p.querySelectorAll('.meta')].filter((n) => n.offsetParent).map(t),
+          held: [...p.querySelectorAll('.qblock .qwhy')].filter((n) => n.offsetParent).map(t),
+          blocks: [...p.querySelectorAll('.qblock')].map((b) => b.dataset.q),
+          above: !!(p.querySelector('.meta') && p.querySelector('.qblock') && (p.querySelector('.meta').compareDocumentPosition(p.querySelector('.qblock')) & 4)),
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth }; })()`);
+      results.lists.push({ list: 'away gap question', theme, ...g });
+      check(g.decided.length === 1 && g.decided[0] === 'R-po-1 → fix · decided by Away mode' && g.above,
+        `away question, ${theme}: one decided row above the question (${JSON.stringify(g)})`);
+      check(JSON.stringify(g.blocks) === JSON.stringify(['R-po-2']) && g.held.includes('Held for you: the Verifier calls this a judgement call'),
+        `away question, ${theme}: only the judgement call is asked, with Held for you (${JSON.stringify(g)})`);
+      check(!g.overflow, `away question, ${theme}: no horizontal overflow`);
+      await shot(`app-verifier-away-question-${theme}`);
+    }
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
 if (process.env.D2_ONLY === '1') { await d2Phase(); await finish(); }
+if (process.env.GAP_AWAY_ONLY === '1') { await gapAwayPhase(); await finish(); }
 if (process.env.D3_ONLY === '1') { await d3Phase(); await finish(); }
 if (process.env.HELD_ONLY === '1') { await heldPhase(); await finish(); }
 if (process.env.TAKEIN_ONLY === '1') { await takeInPhase(); await finish(); }
