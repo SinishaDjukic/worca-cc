@@ -98,7 +98,7 @@ app.post('/api/shape/features/:id/resume', async (req, res) => {
     if (shapeRefused(res, out)) return;
     if (out.action === 'none') {
       const verify = featureView(req.params.id, { live: liveSliceOf, finishing: isFinishingRun }).verify;
-      return res.status(409).json(verify ? { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: the Verifier is not stopped, a run or round is not over, or Shaper small runs is off' } : { error: 'no slice is stopped' });
+      return res.status(409).json(verify ? { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: the Verifier is not stopped, a run or round is not over, or the Shaper Labs switch is off' } : { error: 'no slice is stopped' });
     }
     let runId = null;
     let held = null;

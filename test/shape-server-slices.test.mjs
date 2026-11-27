@@ -1911,7 +1911,7 @@ test('a Verifier run this server is still finishing: view and card read verifyin
     assert.equal((await card()).verify.state, 'verifying');
     const refused = await post(`/api/shape/features/${f.id}/resume`, {});
     assert.equal(refused.status, 409);
-    assert.deepEqual(await refused.json(), { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: the Verifier is not stopped, a run or round is not over, or Shaper small runs is off' });
+    assert.deepEqual(await refused.json(), { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: the Verifier is not stopped, a run or round is not over, or the Shaper Labs switch is off' });
     e.settled = true;
     assert.deepEqual([(await view(f.id)).verify.state, (await view(f.id)).status, (await card()).verify.state], ['halted', 'active', 'halted']);
   } finally { dropEntry(e); }

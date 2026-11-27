@@ -667,8 +667,13 @@ const ackButtons = (el) => [...el.querySelectorAll('.ask-shipcard-notes button')
 const ackBtn = (el, n = 1) => el.querySelector(`[data-act="ship-ack-note-${n}"]`);
 const createBtn = (el) => el.querySelector('[data-act="ship-create"]');
 const stateLine = (el) => el.querySelector('.ask-shipcard-stats').textContent;
+/** The reason lines, the shipped-gap lines aside. */
+const whyLines = (el) => [...el.querySelectorAll('.ask-shipcard-why:not(.ask-shipcard-gap)')];
+const whyTexts = (el) => whyLines(el).map((w) => w.textContent);
+const saidNote = (el) => (el.textContent.match(/acknowledge the Verifier's notes?/gi) || []).length;
+const describedBy = (el) => createBtn(el).getAttribute('aria-describedby');
 
-test('s9: an open note is listed with the wait mark and one Acknowledge button; Create is disabled and described by the reason', () => {
+test('s9: an open note is listed with the wait mark and one Acknowledge button; Create is disabled and described by the state line', () => {
   const { el } = srCard(NOTED([NOTE(1)], { shippedGaps: [{ id: 'R-po-2', reason: 'covered by a later feature' }] }));
   const list = el.querySelector('.ask-shipcard-notes');
   assert.ok(list, 'the notes list');
@@ -681,9 +686,12 @@ test('s9: an open note is listed with the wait mark and one Acknowledge button; 
   assert.deepEqual(ackButtons(el).map((b) => [b.textContent, b.type, b.dataset.act]), [['Acknowledge', 'button', 'ship-ack-note-1']]);
   const b = ackBtn(el);
   assert.ok(b.classList.contains('btn') && b.classList.contains('btn-sm') && !b.classList.contains('btn-primary'));
-  const why = [...el.querySelectorAll('.ask-shipcard-why:not(.ask-shipcard-gap)')];
-  assert.deepEqual(why.map((w) => w.textContent), [notesReason(1)]);
-  assert.deepEqual([createBtn(el).disabled, createBtn(el).classList.contains('btn-primary'), createBtn(el).getAttribute('aria-describedby')], [true, false, why[0].id]);
+  // The note is said once, by the state line: no reason line repeats it.
+  assert.deepEqual(whyTexts(el), []);
+  assert.equal(saidNote(el), 1, el.textContent);
+  const stats = el.querySelector('.ask-shipcard-stats');
+  assert.ok(stats.id, 'the state line has an id to be named by');
+  assert.deepEqual([createBtn(el).disabled, createBtn(el).classList.contains('btn-primary'), createBtn(el).getAttribute('aria-describedby')], [true, false, stats.id]);
   assert.equal(stateLine(el), "Your turn: acknowledge the Verifier's note");
   // After the shipped-gap lines, before Care.
   const after = (a, c) => !!(a.compareDocumentPosition(c) & 4);
@@ -747,12 +755,43 @@ test('s9: with no findings the card has no notes list and Create is enabled, as 
 });
 
 test('s9: the state line names the notes only when they are all that blocks', () => {
-  const both = NOTED([NOTE(1)], { confirmed: [SR_ROW('waiting')], waiting: ['R-comp-4'], reason: 'Waiting for Compliance to confirm R-comp-4' });
+  // The reason a judged feature's ledger builds while a confirmed requirement waits.
+  const reason = 'Waiting for you to confirm R-comp-4';
+  const both = NOTED([NOTE(1)], { confirmed: [SR_ROW('waiting')], waiting: ['R-comp-4'], reason });
   const { el } = srCard(both);
   assert.equal(noteRows(el).length, 1, 'the note is listed beside the mark');
   assert.equal(stateLine(el), 'Your turn: mark what only a person can');
-  assert.equal(createBtn(el).disabled, true);
+  assert.deepEqual(whyTexts(el), [reason], 'the other block keeps its reason line');
+  assert.deepEqual([createBtn(el).disabled, describedBy(el)], [true, whyLines(el)[0].id]);
   assert.equal(stateLine(srCard(NOTED([NOTE(1)])).el), "Your turn: acknowledge the Verifier's note");
+});
+
+test('s15: two open notes say it once too: the state line, no reason line, and Create described by that line', () => {
+  const { el } = srCard(NOTED([NOTE(1), NOTE(2)]));
+  assert.equal(stateLine(el), "Your turn: acknowledge the Verifier's notes");
+  assert.deepEqual(whyTexts(el), []);
+  assert.equal(saidNote(el), 1, el.textContent);
+  const stats = el.querySelector('.ask-shipcard-stats');
+  assert.ok(stats.id, 'the state line has an id to be named by');
+  assert.deepEqual([createBtn(el).disabled, describedBy(el)], [true, stats.id]);
+});
+
+test('s15: a repaint moves the description between the state line and the reason line as the blocks change', async () => {
+  const reason = 'Waiting for you to confirm R-comp-4';
+  // The first answer reopens a mark beside the note; the second closes it again, leaving the note alone.
+  const answers = [NOTED([NOTE(1, ACKED), NOTE(2)], { confirmed: [SR_ROW('waiting')], waiting: ['R-comp-4'], reason }),
+    NOTED([NOTE(1, ACKED), NOTE(2)])];
+  const { el } = srCard(NOTED([NOTE(1), NOTE(2)]), { onAcknowledge: async () => ({ ok: true, smallRuns: answers.shift() }) });
+  const stats = el.querySelector('.ask-shipcard-stats');
+  assert.ok(stats.id, 'the state line has an id to be named by');
+  assert.deepEqual([whyTexts(el), describedBy(el)], [[], stats.id]);
+  ackBtn(el, 1).click();
+  await tick(); await tick();
+  assert.deepEqual(whyTexts(el), [reason]);
+  assert.equal(describedBy(el), whyLines(el)[0].id);
+  ackBtn(el, 2).click();
+  await tick(); await tick();
+  assert.deepEqual([whyTexts(el), describedBy(el)], [[], stats.id]);
 });
 
 test('s9: a note is drawn as text, never as markup', () => {

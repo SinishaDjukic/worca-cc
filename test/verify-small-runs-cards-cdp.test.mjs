@@ -350,6 +350,12 @@ test('the SHIP_NOTES_ONLY phase: the note row before and after Acknowledge, 1280
   assert.match(body, /ship-ack-note-1|Acknowledge/, 'the note row\'s button');
   assert.match(body, /click/i, 'Acknowledge is clicked');
   assert.match(body, /check\(/, 'what it shoots is asserted');
+  // Before Acknowledge the note is said once: no reason line, and Create described by the state line.
+  for (const needle of ['whys', 'describedBy', '.ask-shipcard-why', 'ask-shipcard-gap', 'aria-describedby', '.ask-shipcard-stats']) {
+    assert.ok(body.includes(needle), needle);
+  }
+  assert.match(body, /before\.whys === 0/, 'the before state has no reason line');
+  assert.match(body, /before\.describedBy\b/, 'and Create is described by the state line');
   // The four files, with these exact names (no prefix), in SHOTS_DIR.
   for (const when of ['before', 'after']) {
     assert.match(s, new RegExp(`[\`'/]app-ship-note-${when}-(\\$\\{theme\\}|light|dark)\\.png`), `the ${when} screenshots`);
@@ -418,4 +424,24 @@ test('the STOP_LIST_ONLY phase asserts 3 lines, 0 then 1 step cards, and no paus
   assert.match(s, /[`'/]stop-list-(?:\$\{\w+\}|card|feature)-(?:\$\{\w+\}|closed)-(?:\$\{\w+\}|light|dark)\.png/, 'the closed shots');
   assert.match(s, /[`'/]stop-list-(?:\$\{\w+\}|card|feature)-(?:\$\{\w+\}|open)-(?:\$\{\w+\}|light|dark)\.png/, 'the open shots');
   assert.match(s, /stop-list-card-closed-light-360\.png/, 'the narrow shot');
+});
+
+// Slice 15 (R-qa-3, D11): the Labs entry's words, light and dark.
+test('the LABS_WORDS_ONLY phase: the Labs entry says small runs only in its title, asserted before 2 screenshots at 1280px', () => {
+  const s = src();
+  const gate = s.match(/process\.env\.LABS_WORDS_ONLY === '1'\) \{ await (\w+)\(\); await finish\(\); \}/);
+  assert.ok(gate, 'the LABS_WORDS_ONLY=1 gate');
+  const at = s.indexOf(`async function ${gate[1]}(`);
+  assert.ok(at >= 0, 'the Labs words phase');
+  const body = s.slice(at, s.indexOf('\n}\n', at));
+  assert.match(body, /1280/, 'at 1280px');
+  assert.match(body, /THEMES|'dark'/, 'both themes');
+  // The Labs row, its title and description, every tooltip and aria label, and the small-runs match.
+  for (const needle of ['settings/experimental/shaperSmallRuns', '#flag-row-shaperSmallRuns', '.flag-row-title', '.flag-row-desc',
+    'aria-label', 'title', 'small[ -]runs', 'Shaper small runs']) {
+    assert.ok(body.includes(needle), needle);
+  }
+  assert.match(body, /check\(/, 'what it shoots is asserted');
+  assert.ok(body.indexOf('check(') < body.indexOf('capture('), 'asserted before the first screenshot');
+  assert.match(s, /[`'/]app-labs-words-(\$\{theme\}|light|dark)\.png/, 'the screenshots');
 });

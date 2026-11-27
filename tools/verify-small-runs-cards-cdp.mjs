@@ -23,6 +23,7 @@
 // the carried runs (SHIP_CARRIED_ONLY=1 runs it alone): the Ship card's and the Create PR dialog's carried line and
 //   "Create 4 PRs", light and dark at 1280px, beside the run's prototype (SHIP_CARRIED_PROTOTYPE);
 // the Verifier's note on the Ship card (SHIP_NOTES_ONLY=1 runs it alone): before and after Acknowledge, light and dark at 1280px;
+// the Labs entry's words (LABS_WORDS_ONLY=1 runs it alone): "small runs" only in its title, light and dark at 1280px;
 // the Verifier's Away answers (GAP_AWAY_ONLY=1 runs it alone): the Log tab's and the Chat card's "decided by" lines and the
 //   gap question with Away's answer and a held judgement call, light and dark;
 // the feature page tabs (FEATURE_TABS_ONLY=1 runs it alone): the Cost tab, Mark and ship to the Ship card on Requirements,
@@ -1855,7 +1856,9 @@ async function shipNotesPhase() {
     return { row: row ? row.innerText : null, detail: row ? row.querySelector('.plan-check-detail').textContent : null,
       ack: !!c.querySelector('[data-act="ship-ack-note-1"]'), wait: !!(row && row.querySelector('.plan-check-mark.is-wait')),
       disabled: !!(b && b.disabled), primary: !!(b && b.classList.contains('btn-primary')),
-      stats: c.querySelector('.ask-shipcard-stats')?.textContent || '' }; })()`);
+      stats: c.querySelector('.ask-shipcard-stats')?.textContent || '',
+      whys: c.querySelectorAll('.ask-shipcard-why:not(.ask-shipcard-gap)').length,
+      describedBy: !!(b && c.querySelector('.ask-shipcard-stats')?.id && b.getAttribute('aria-describedby') === c.querySelector('.ask-shipcard-stats').id) }; })()`);
   const capture = async (name) => {
     await sleep(400);
     const el = await ev(`(() => { const c = document.querySelector(${JSON.stringify(CARD)}); if (c) c.scrollIntoView({ block: 'center' }); return !!c; })()`);
@@ -1877,6 +1880,8 @@ async function shipNotesPhase() {
       `ship note, ${theme}: the note is listed with the wait mark and its Acknowledge (${JSON.stringify(before)})`);
     check(before.disabled && !before.primary && before.stats === "Your turn: acknowledge the Verifier's note",
       `ship note, ${theme}: Create is disabled until the note is acknowledged (${JSON.stringify(before)})`);
+    check(before.whys === 0 && before.describedBy,
+      `ship note, ${theme}: the note is said once, no reason line, and Create is described by the state line (${JSON.stringify(before)})`);
     await capture(`app-ship-note-before-${theme}.png`);
     await ev(`(() => { document.querySelector(${JSON.stringify(`${CARD} [data-act="ship-ack-note-1"]`)}).click(); return true; })()`);
     if (!await waitFor(`!!document.querySelector(${JSON.stringify(CARD)}) && !document.querySelector(${JSON.stringify(`${CARD} [data-act="ship-ack-note-1"]`)})`, `the note acknowledged (${theme})`)) continue;
@@ -1889,6 +1894,42 @@ async function shipNotesPhase() {
     await capture(`app-ship-note-after-${theme}.png`);
   }
   await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+// ---- Shaper slice 15 (R-qa-3): the Labs entry says "small runs" only in its title. Light and dark at 1280px: the row
+// #flag-row-shaperSmallRuns, its title "Shaper small runs", its description the registry's, and no other text, title or
+// aria-label saying small runs. app-labs-words-light.png, -dark.png.
+async function labsWordsPhase() {
+  const { FLAGS } = await imp('../src/shared/flags/registry.mjs');
+  const description = FLAGS.find((f) => f.key === 'shaperSmallRuns').description;
+  const ROW = '#flag-row-shaperSmallRuns';
+  const READ = `(() => { const r = document.querySelector(${JSON.stringify(ROW)}); if (!r || !r.offsetParent) return null;
+    const strip = (t) => (t || '').split('Shaper small runs').join('');
+    const named = [r, ...r.querySelectorAll('*')].flatMap((e) => [e.getAttribute('title'), e.getAttribute('aria-label')]).filter((v) => v != null);
+    return { title: r.querySelector('.flag-row-title')?.textContent || '', desc: r.querySelector('.flag-row-desc')?.textContent || '',
+      leaks: [r.textContent, ...named].map(strip).filter((t) => /small[ -]runs/i.test(t)) }; })()`;
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const theme of THEMES) {
+    await open(`${base}/?labs-words-${theme}#settings/experimental/shaperSmallRuns`);
+    await skipWelcome(); await setTheme(theme);
+    if (!await waitFor(`!!${READ}`, `the Labs entry (${theme})`)) continue;
+    const row = await ev(READ);
+    results.lists.push({ list: 'labs words', theme, ...row });
+    check(row.title.startsWith('Shaper small runs'), `labs words, ${theme}: the title is Shaper small runs (${JSON.stringify(row.title)})`);
+    check(row.desc === description, `labs words, ${theme}: the description is the registry's (${JSON.stringify(row.desc)})`);
+    check(row.leaks.length === 0, `labs words, ${theme}: no text, title or aria-label says small runs but the title (${JSON.stringify(row.leaks)})`);
+    await capture(`app-labs-words-${theme}.png`);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: 900, deviceScaleFactor: 1, mobile: false });
+  /** The row scrolled into view, then the screenshot into SHOTS_DIR. */
+  async function capture(name) {
+    await ev(`(() => { document.querySelector(${JSON.stringify(ROW)}).scrollIntoView({ block: 'center' }); return 0; })()`);
+    await sleep(400);
+    const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+    const file = path.join(SHOTS, name);
+    await writeFile(file, Buffer.from(data, 'base64'));
+    results.shots.push(file);
+  }
 }
 
 // ---- Shaper slice 11 (R-ux-4): a Verifier round is a check row inside its feature's group. A marked 5-run feature, all
@@ -2124,6 +2165,7 @@ if (process.env.CONFIRM_ONLY === '1') { await confirmInPlacePhase(); await finis
 if (process.env.SHIP_NOTES_ONLY === '1') { await shipNotesPhase(); await finish(); }
 if (process.env.VERIFIER_ROWS_ONLY === '1') { await verifierRowsPhase(); await finish(); }
 if (process.env.STOP_LIST_ONLY === '1') { await stopListPhase(); await finish(); }
+if (process.env.LABS_WORDS_ONLY === '1') { await labsWordsPhase(); await finish(); }
 
 for (const theme of THEMES) {
   for (const width of [1280, WIDTH]) {

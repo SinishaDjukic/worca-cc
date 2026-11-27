@@ -610,6 +610,12 @@ and the feature ships as one PR or as one PR per run, stacked ([Ship](#ship)). T
 small-runs marker. The Split and its Care table are in [Plan in slices](#plan-in-slices), and the role folds of the
 Requirements card in [Requirements first](#requirements-first).
 
+**The words.** On screen, nothing says "small runs" except the Labs entry's title, Shaper small runs. The Labs
+description reads "a chain of runs that each own a few requirements", and the refusals name what is missing: a
+requirement change on a feature that "has no runs that own its requirements", or a Resume with nothing to resume
+because "the Shaper Labs switch is off". With the flag off, a marked feature's Ship dialog keeps its old One reason, and
+a stored old outcome reads "each run of this feature ships its own pull request".
+
 ### The card's steps
 
 The feature has one card, and its step heads read as the card shows them:
@@ -695,7 +701,8 @@ An acknowledged note reads "acknowledged · 14:02". Only a person acknowledges a
 neither do `--yes` or the PR auto-finisher: with "One PR for the whole feature" the one PR waits for you and opens once
 you acknowledge. Until then the feature reads the note's reason under Needs you on the Runs list, and the Runs badge
 counts it. A new check needs its own acknowledgement, even for the same note text. A clean result with no notes adds
-nothing, and Ship opens as before.
+nothing, and Ship opens as before. When a note is all that blocks Ship, the card says so once, in its state line, and the
+disabled Ship button is described by that line.
 
 Stacked, with the flag on, opens one PR per run along
 the real branches: from the head back along each run's recorded base; each PR is based on the branch of the one before

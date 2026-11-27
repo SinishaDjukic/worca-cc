@@ -512,3 +512,38 @@ test('design-system.md\'s Run order map describes the marks and the curved routi
   assert.doesNotMatch(text, /never run together/i);
   assert.doesNotMatch(text, /above right of its dot/i);
 });
+
+// ---- Slice 15 (R-qa-3, R-po-4): no "small runs" left on screen, and a lone Verifier note is said once ---------------
+/** The `### heading` part of design-system.md, up to the next `### ` or `## ` (flattened), or ''. */
+function designPart(heading) {
+  const design = read('design-system.md');
+  const at = design.indexOf(`\n### ${heading}\n`);
+  return at < 0 ? '' : flat(design.slice(at + 1).split(/\n##+ /)[0]);
+}
+
+test('s15 (R-qa-3): the guide\'s The words paragraph names the Labs title, the new words, the refusals and what stays with the flag off', () => {
+  const small = section(read('shape-it-first.md'), 'Small runs (`shaperSmallRuns`)');
+  const words = flat(small.split(/\n\s*\n/).find((p) => p.trim().startsWith('**The words.**')) || '');
+  assert.ok(words, 'a "**The words.**" paragraph in the Small runs section');
+  assert.deepEqual(missing(words, [/["“]small runs["”]/, 'Shaper small runs', 'a chain of runs that each own a few requirements',
+    'has no runs that own its requirements', 'the Shaper Labs switch is off', /flag off/i, /One reason/,
+    'each run of this feature ships its own pull request']), []);
+});
+
+test('s15 (R-po-4): the guide says a note that is all that blocks Ship is said once, in the state line', () => {
+  assert.deepEqual(missing(smallPart('Ship'), [
+    'When a note is all that blocks Ship, the card says so once, in its state line, and the disabled Ship button is described by that line.']), []);
+});
+
+test('s15 (R-qa-3): design-system.md\'s Do and don\'t has the row that keeps "small runs" off the screen', () => {
+  const table = section(read('design-system.md'), 'Do and don\'t');
+  const row = table.split('\n').find((l) => l.startsWith('|') && l.includes('"small runs"')) || '';
+  assert.ok(row, 'a table row naming "small runs"');
+  const [, say, dont] = row.split('|');
+  assert.deepEqual(missing(say, ['"a chain of runs that each own a few requirements"']), []);
+  assert.deepEqual(missing(dont, ['"small runs"', /tooltip/i, /aria label/i]), []);
+});
+
+test('s15 (R-po-4): design-system.md\'s Ship card notes says the state line describes Create and no reason line repeats it', () => {
+  assert.deepEqual(missing(designPart('Ship card notes'), ['.ask-shipcard-stats', /describes Create/, /no reason line repeats it/i]), []);
+});

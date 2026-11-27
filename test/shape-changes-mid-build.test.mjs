@@ -342,7 +342,7 @@ test('a refused change leaves the feature, tickets and slices byte-identical', (
   assert.deepEqual(w.log.stops, []);
   getDb().prepare('UPDATE pipelines SET shape_stats = NULL WHERE id = ?').run(w.pids[0]);
   const off = w.chat([ch(2)]);
-  assert.deepEqual([off.code, off.status, off.error], ['NOT_SMALL_RUNS', 409, 'requirement changes need Shaper small runs']);
+  assert.deepEqual([off.code, off.status, off.error], ['NOT_SMALL_RUNS', 409, 'requirement changes need a feature whose runs own its requirements']);
   assert.equal(snapshot(w.f.id), before);
   getDb().prepare('UPDATE pipelines SET shape_stats = ? WHERE id = ?').run(JSON.stringify({ smallRuns: true }), w.pids[0]);
   cancelRest(w.f.id);

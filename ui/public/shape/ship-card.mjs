@@ -361,7 +361,7 @@ function smallRunsShip(doc, h, m, handlers) {
     root.appendChild(actions);
     return { root, ledger: null };
   }
-  const stats = h('div', 'ask-shipcard-stats');
+  const stats = h('div', 'ask-shipcard-stats'); const seq = ++srSeq;
   body.appendChild(stats);
   // Slice 5 (D7): before shipping, the runs whose work ships inside a listed run's PR, in the server's words (carriedLine).
   const carried = Array.isArray(sr.carried) ? sr.carried : [];
@@ -371,7 +371,7 @@ function smallRunsShip(doc, h, m, handlers) {
     body.appendChild(ul);
   }
   const err = h('div', 'ask-card-err'); err.setAttribute('aria-live', 'polite');
-  const whyId = `ask-shipcard-why-${++srSeq}`;
+  const whyId = `ask-shipcard-why-${seq}`; const stateId = `ask-shipcard-state-${seq}`;
   /** A line of `cls` holding `text`. R-comp-4 never breaks at its hyphens on a narrow screen: each requirement id is one
    *  unbreakable span. */
   const idLine = (cls, text) => {
@@ -480,9 +480,16 @@ function smallRunsShip(doc, h, m, handlers) {
     else if (notesEl.parentNode !== body) body.insertBefore(notesEl, careEl);
     careEl.replaceChildren(careRow());
     const open = sr.findings && sr.findings.open > 0 ? sr.findings.open : 0;
+    // The notes are all that blocks: the state line says so once and describes Create; no reason line repeats it.
+    const notesOnly = !(sr.unowned && sr.unowned.length) && !!(sr.blocked && open && sr.reason === findingsReason(open));
     stats.textContent = sr.unowned && sr.unowned.length ? 'Waiting' : sr.blocked
-      ? open && sr.reason === findingsReason(open) ? findingsState(open) : 'Your turn: mark what only a person can' : 'Ready to ship';
-    if (sr.blocked && sr.reason) {
+      ? notesOnly ? findingsState(open) : 'Your turn: mark what only a person can' : 'Ready to ship';
+    // The id is set only while the state line describes Create, so every other card's markup stays as it was.
+    if (notesOnly) stats.id = stateId; else stats.removeAttribute('id');
+    if (notesOnly) {
+      whyEl.replaceChildren();
+      create.setAttribute('aria-describedby', stateId);
+    } else if (sr.blocked && sr.reason) {
       const why = idLine('ask-shipcard-why', sr.reason); why.id = whyId;
       whyEl.replaceChildren(why);
       create.setAttribute('aria-describedby', whyId);

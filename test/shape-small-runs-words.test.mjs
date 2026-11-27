@@ -16,6 +16,7 @@ import { groupModel } from '../src/shared/run-model.mjs';
 // A namespace read: the carried-run words are new exports.
 import * as LEDGER from '../src/shared/shape/ship-ledger.mjs';
 import * as VERIFIER from '../src/shared/shape/verifier.mjs';
+import { flagRowsHtml } from '../ui/public/flags-view.mjs';
 
 const EXCEPTION = 'Shaper small runs';   // the Labs entry's title
 const OLD_REASON = 'small runs ship a PR per run';
@@ -34,15 +35,23 @@ const FOUND = ['src', 'ui'].flatMap((root) => walkFrom(root)).sort()
 
 /** Each entry is a literal's file and its first 60 characters. */
 const head = ({ file, text }) => ({ file, text: text.slice(0, 60) });
-const KNOWN = [
-  { file: 'src/core/ask/tools.mjs', text: 'Shaper small runs: when the user asks to change the text of ' },   // change_requirement
-  { file: 'src/core/shape/changes.mjs', text: '${f.title} is not built with small runs' },
-  { file: 'src/core/shape/changes.mjs', text: 'requirement changes need Shaper small runs' },
-  { file: 'src/shared/flags/registry.mjs', text: 'Shaper builds a feature as small runs, checked as a whole by' },   // the Labs description
-  { file: 'ui/routes/shape/features.mjs', text: 'nothing to resume now: the Verifier is not stopped, a run or' },   // NOTHING_TO_RESUME
-];
+const KNOWN = [];
 const byPlace = (a, b) => `${a.file}\n${a.text}`.localeCompare(`${b.file}\n${b.text}`);
 const legacyKeys = () => Object.keys(PR_AUTO.LEGACY_OUTCOME_REASONS || {});
+/** What of `found` is neither the Labs title nor a legacy record key. */
+const leftOver = (found) => {
+  const legacy = new Set(legacyKeys());
+  return found.filter(({ text }) => text !== EXCEPTION && !legacy.has(text)).map(head);
+};
+/** The Labs row of `flag` as Settings draws it: the pieces of its text, titles and aria labels that say small runs
+ *  once the Labs title itself is taken out. Empty means clean. */
+const labsLeaks = (flag) => {
+  const markup = flagRowsHtml([{ ...flag, on: false, locked: false, docsUrl: null }]);
+  const named = [...markup.matchAll(/\s(?:title|aria-label)="([^"]*)"/g)].map((m) => m[1]);
+  return [...markup.split(/<[^>]*>/), ...named].map((piece) => piece.replaceAll(EXCEPTION, ''))
+    .filter((piece) => /small[ -]runs/i.test(piece));
+};
+const labsFlag = () => FLAGS.find((f) => f.key === 'shaperSmallRuns');
 
 test('the scan reads literals, not comments or bare tokens (mutation check)', () => {
   assert.deepEqual(hits("const a = 'small runs ship a PR per run';"), [OLD_REASON]);
@@ -52,9 +61,30 @@ test('the scan reads literals, not comments or bare tokens (mutation check)', ()
 });
 
 test('every small-runs literal is the Labs title, a legacy record key or a known one', () => {
-  const legacy = new Set(legacyKeys());
-  const left = FOUND.filter(({ text }) => text !== EXCEPTION && !legacy.has(text)).map(head);
-  assert.deepEqual(left.sort(byPlace), [...KNOWN].sort(byPlace));
+  assert.deepEqual(leftOver(FOUND).sort(byPlace), [...KNOWN].sort(byPlace));
+});
+
+// ── R-qa-3: the Labs entry ────────────────────────────────────────────────────────────────────────────────────
+const LABS_DESCRIPTION = 'Shaper builds a feature as a chain of runs that each own a few requirements, checked as a whole by a Verifier and shipped as one PR or as stacked PRs. Features with no marker also start from the latest finished work. Off: runs follow the linear chain, and a feature started with it on keeps its card, Care and stacked Ship, but no Verifier check starts.';
+
+test('the Labs entry says small runs only in its title', () => {
+  const flag = labsFlag();
+  const markup = flagRowsHtml([{ ...flag, on: false, locked: false, docsUrl: null }]);
+  assert.ok(markup.includes(`aria-label="${EXCEPTION}"`), 'the switch is named by the title');
+  assert.deepEqual(labsLeaks(flag), []);
+  assert.doesNotMatch(flag.description, /small[ -]runs/i);
+  assert.equal(flag.description, LABS_DESCRIPTION);
+});
+
+test('a Labs description that says small runs fails (mutation check)', () => {
+  const doctored = 'Shaper builds a feature as small runs.';
+  assert.equal(labsLeaks({ ...labsFlag(), description: doctored }).length, 1, 'the rendered row');
+  const registry = readRepo('src/shared/flags/registry.mjs');
+  const source = registry.replace(/(key: 'shaperSmallRuns',[\s\S]*?description: )("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`[^`]*`)/,
+    (all, before) => `${before}'${doctored}'`);
+  assert.notEqual(source, registry, 'the description literal was replaced');
+  assert.deepEqual(leftOver(hits(source).map((text) => ({ file: 'src/shared/flags/registry.mjs', text }))),
+    [{ file: 'src/shared/flags/registry.mjs', text: doctored }]);
 });
 
 test('the One reason is gone from every flag-on word; it stays only as the legacy constant the flag-off paths share', () => {

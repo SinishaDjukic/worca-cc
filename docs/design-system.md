@@ -363,7 +363,8 @@ The Verifier's notes outside the verdicts, on a marked feature's Ship card (`ui/
 `test/ui-ship-card.test.mjs`), right after the shipped-gap lines. One `buildCheckRows` row per note, with its own
 Acknowledge button at the end of the row: the open stop list's per-line button pattern. Create stays disabled until every
 note is acknowledged. There is no heading and no "acknowledge all". It adds no class rule of its own: the list carries
-the marker class `ask-shipcard-notes` only.
+the marker class `ask-shipcard-notes` only. When the notes are all that blocks, the state line (`.ask-shipcard-stats`)
+says it and describes Create; no reason line repeats it.
 
 | Part | Class | Means |
 |---|---|---|
@@ -780,5 +781,6 @@ The Design page's stage (`ui/public/design/`) shows real agents at work, so it m
 | A fixed chart height | A chart that grows with its width | A 461px chart pushes the numbers off the screen and scales its own labels |
 | The plus icon | A typed "+" | Glyphs render at the font's whim and are not one icon set |
 | Ids in a tooltip | Ids in visible text | People read names, not engine ids |
+| What the run does ("a chain of runs that each own a few requirements") | "small runs" in visible text, a tooltip or an aria label | The Labs title names the switch; every other word describes what you see |
 | Shadows on menus only | Resting shadows | Shadow means "floats above"; at rest it is noise |
 | Amber for needs-you | Amber as decoration | Colour must keep one meaning |

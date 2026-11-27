@@ -247,7 +247,7 @@ export function shapeToolFit(kind, input, work) {
 function requirementFit(raw, input, work) {
   const no = (error) => ({ ok: false, error });
   const f = work.feature;
-  if (!work.smallRuns) return no(`${f.title} is not built with small runs`);
+  if (!work.smallRuns) return no(`${f.title} has no runs that own its requirements`);
   if (f.status !== 'active' && f.status !== 'done') return no(`${f.title} is ${f.status}`);
   const id = String(input.requirement || '').trim();
   const a = ((work.facts && work.facts.feature && work.facts.feature.agreed) || []).find((x) => x.id === id);
@@ -348,7 +348,7 @@ export function applyRequirementChange(featureId, changes, source, deps) {
   const by = (source && source.by) || null;
   const view = deps.view(featureId);
   if (!view) return refusal(404, 'FEATURE_NOT_FOUND', 'feature not found');
-  if (!deps.smallRuns(view.id)) return refusal(409, 'NOT_SMALL_RUNS', 'requirement changes need Shaper small runs');
+  if (!deps.smallRuns(view.id)) return refusal(409, 'NOT_SMALL_RUNS', 'requirement changes need a feature whose runs own its requirements');
   if (view.status !== 'active' && view.status !== 'done') return refusal(409, 'FEATURE_NOT_ACTIVE', `${view.title} is ${view.status}`);
   const agreed = new Map(((view.ship && view.ship.acceptance && view.ship.acceptance.agreed) || []).map((a) => [a.id, a.text]));
   const list = [];
