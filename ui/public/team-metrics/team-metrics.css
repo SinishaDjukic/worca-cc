@@ -309,28 +309,28 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .tm-lb [data-part="success"]{--tm-lb-part:var(--tm-lb-success);}
 .tm-lb .card-head{align-items:flex-start;gap:16px;flex-wrap:wrap;margin:0;}
 .tm-lb .card-head h2{font-size:18px;font-weight:600;}
-.tm-lb-sub{margin:4px 0 0;font-size:13px;color:var(--ink-3);}
+.tm-lb-sub{margin:4px 0 0;font-size:13px;color:var(--ink-2);}
 .tm-lb-range{background:var(--field);border-radius:var(--r-md);padding:3px;gap:2px;flex-wrap:wrap;max-width:100%;}
-.tm-lb-range button{height:auto;padding:6px 14px;border-radius:var(--r-sm);font-size:13px;white-space:nowrap;color:var(--ink-2);}
+.tm-lb-range button{height:28px;padding:0 14px;border-radius:var(--r-sm);font-size:13px;white-space:nowrap;color:var(--ink-2);}
 .tm-lb-range button.on,.tm-lb-range button[aria-pressed="true"]{background:var(--hover);color:var(--ink);}
 
 .tm-lb-ava{width:24px;height:24px;border-radius:50%;flex:none;display:block;box-sizing:border-box;}
 .tm-lb-glyph{display:inline-flex;align-items:center;justify-content:center;
-  background:var(--line);color:var(--ink-3);font-size:12px;font-weight:700;}
+  background:var(--line);color:var(--ink-2);font-size:12px;font-weight:700;}
 .tm-lb-leader{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:18px 20px;
   background:var(--field);border:1px solid var(--line);border-radius:var(--r-md);}
 .tm-lb-leader-avas{display:flex;}
 .tm-lb-leader-avas .tm-lb-ava{width:44px;height:44px;border:2px solid var(--field);font-size:18px;}
 .tm-lb-leader-avas .tm-lb-ava + .tm-lb-ava{margin-left:-10px;}
 .tm-lb-leader-text{flex:1;min-width:min(220px,100%);}
-.tm-lb-kicker{font-size:11px;font-weight:600;color:var(--amber-ink);}
-.tm-lb-headline{font-size:18px;font-weight:600;margin-top:2px;text-wrap:pretty;}
-.tm-lb-detail{font-size:13px;color:var(--ink-3);margin-top:2px;}
+.tm-lb-kicker{font-size:11px;font-weight:600;color:var(--amber-ink-strong);}
+.tm-lb-headline{font-size:18px;font-weight:600;margin-top:2px;text-wrap:pretty;overflow-wrap:anywhere;}
+.tm-lb-detail{font-size:13px;color:var(--ink-2);margin-top:2px;}
 .tm-lb-leader[data-kind="none"]{background:transparent;}
 .tm-lb-leader[data-kind="none"] .tm-lb-headline{font-size:15px;font-weight:500;color:var(--ink-2);margin:0;}
 .tm-lb-leader-score{text-align:right;}
 .tm-lb-leader-num{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;}
-.tm-lb-leader-of{font-size:12px;color:var(--ink-3);}
+.tm-lb-leader-of{font-size:12px;color:var(--ink-2);}
 
 /* From 721px to 920px the grid scrolls sideways inside its wrapper (a focusable region); the card itself never widens.
    At 720px and under each row stacks (the media query below). */
@@ -341,7 +341,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .tm-lb-grid-head{padding:0 12px 10px;font-size:13px;font-weight:500;color:var(--ink-2);border-bottom:1px solid var(--line);}
 .tm-lb-grid-head .tm-lb-num{display:flex;align-items:center;justify-content:flex-end;gap:6px;}
 .tm-lb-dot{width:8px;height:8px;border-radius:0;background:var(--tm-lb-part);flex:none;}
-.tm-lb-weight{color:var(--ink-3);font-weight:400;}
+.tm-lb-weight{color:var(--ink-2);font-weight:400;}
 .tm-lb-row{padding:12px;border-bottom:1px solid var(--line);}
 .tm-lb-row[data-winner]{background:light-dark(var(--amber-wash),oklch(0.27 0.02 85));border-radius:var(--r-md);}
 .tm-lb-rank{font-size:13px;color:var(--ink-2);font-variant-numeric:tabular-nums;}
@@ -349,24 +349,24 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .tm-lb-who{display:flex;align-items:center;gap:10px;min-width:0;}
 .tm-lb-who-text{display:flex;flex-direction:column;min-width:0;flex:1;}
 .tm-lb-who .tm-person{display:block;max-width:none;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.tm-lb-sub-line{font-size:12px;color:var(--ink-3);}
+.tm-lb-sub-line{font-size:12px;color:var(--ink-2);}
 .tm-lb-score{display:flex;flex-direction:column;gap:6px;}
 .tm-lb-score-num{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;}
 .tm-lb-bar{display:flex;gap:1px;height:6px;border-radius:var(--r-xs);overflow:hidden;background:light-dark(var(--line),oklch(0.3 0 0));}
 .tm-lb-seg{display:block;flex:none;background:var(--tm-lb-part);}
 .tm-lb-row .tm-lb-num{text-align:right;font-variant-numeric:tabular-nums;}
 .tm-lb-val{font-size:13px;}
-.tm-lb-pts{font-size:12px;color:var(--ink-3);}
-.tm-lb-note{font-size:11px;color:var(--ink-3);opacity:.8;}
+.tm-lb-pts{font-size:12px;color:var(--ink-2);}
+.tm-lb-note{font-size:11px;color:var(--ink-2);}
 
 .tm-lb-todo{display:flex;flex-direction:column;gap:8px;}
 .tm-lb-todo-head{margin:0;font-size:13px;font-weight:500;color:var(--ink-2);}
-.tm-lb-dim{color:var(--ink-3);font-weight:400;}
+.tm-lb-dim{color:var(--ink-2);font-weight:400;}
 .tm-lb-todo-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:8px;}
 .tm-lb-todo-card{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px dashed var(--line-2);border-radius:var(--r-md);min-width:0;}
 .tm-lb-todo-card .tm-lb-who{flex:1;}
 .tm-lb-tag{font-size:12px;color:var(--ink-2);background:var(--field);border-radius:var(--r-sm);padding:3px 8px;white-space:nowrap;}
-.tm-lb-foot{margin:0;font-size:12px;color:var(--ink-3);text-wrap:pretty;}
+.tm-lb-foot{margin:0;font-size:12px;color:var(--ink-2);text-wrap:pretty;}
 /* Stacked rows: rank and person, then the score at full width, then the four parts two by two, each with its label
    (data-label). The head row is clipped, not display:none, so the table keeps its column headers for a screen reader. */
 @media (max-width:720px){
@@ -377,5 +377,5 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
   .tm-lb-row > .tm-lb-num[data-part="runs"],.tm-lb-row > .tm-lb-num[data-part="merged"]{grid-column:2;}
   .tm-lb-row > .tm-lb-num[data-part="perRun"],.tm-lb-row > .tm-lb-num[data-part="success"]{grid-column:3;}
   .tm-lb-row .tm-lb-num{text-align:left;}
-  .tm-lb-row .tm-lb-num::before{content:attr(data-label);display:block;font-size:11px;color:var(--ink-3);}
+  .tm-lb-row .tm-lb-num::before{content:attr(data-label);display:block;font-size:11px;color:var(--ink-2);}
 }
