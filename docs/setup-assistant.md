@@ -30,7 +30,7 @@ empty. Click **Start** to go on.
   of them can be changed later in Settings.
 - **Review** lists what will be saved. Click **Apply** (the button reads **Finish** when nothing changed), then **Continue** or **Start your first run**.
 
-**Close setup** closes the dialog and goes to the welcome; if you changed an answer it asks "Discard changes?" first. To come back, open Settings › General ›
+**Skip all** closes the dialog and goes to the welcome; if you changed an answer it asks "Discard changes?" first. To come back, open Settings › General ›
 Setup assistant and click **Run setup**.
 
 ## Server API
@@ -176,7 +176,7 @@ this machine knows is left out with a warning, such as
 (`/api/settings`, `/api/proxy/status`, `/api/providers`, `/api/config`) plus `GET /api/setup/detect`.
 Detection fills a field only when the saved value is empty, and only on a first start. The head shows
 a segmented progress bar (one segment per step), "Step N of 7", the step's title and a subtitle. The foot holds
-the status line and the buttons: the way out (Cancel, or Close setup on a first start; Close on the Apply step) on
+the status line and the buttons: the way out (Cancel, or Skip all on a first start; Close on the Apply step) on
 the left; the second button below, Back and the primary action on the right, Back and the primary side by side.
 Cancel shows on every step up to Review. Once an answer changed it asks "Discard changes?" (Keep editing /
 Discard), like Escape; untouched it closes at once.
@@ -219,7 +219,7 @@ A failure stays on Network with the failed step's line and offers **Retry** from
 password again when the login step still has to run) or **Skip step**. An apply refused with `UNTESTED` stays on
 Network too. Values that match the saved ones post nothing, so on a re-run **Next** just moves on. Once saved,
 the dialog says so in one line ("The corporate proxy is saved and on."), Review lists Network as **Saved**
-rather than **Changed**, and closing the dialog with **Close setup** keeps it. When nothing else changed,
+rather than **Changed**, and closing the dialog with **Skip all** keeps it. When nothing else changed,
 Review offers **Finish**.
 
 **Re-run.** Settings › General › Setup assistant › **Run setup** opens the dialog with the saved values
@@ -291,7 +291,7 @@ sources offer it." on Models and on Review.
 updated the recommended setup · Review". Review lists only the rows that differ from what is saved, and nothing
 changes before **Apply**. When nothing differs, Review says "Your setup already matches your team's
 recommendation." and offers **Finish**. The notice hides once that review ends with Apply then Continue, or with
-Finish; **Close setup** keeps it.
+Finish; **Skip all** keeps it.
 
 **Share as team setup.** After a successful Apply, **Share as team setup** downloads `team-setup.json` from
 your saved settings ([`POST /api/setup/team/draft`](#post-apisetupteamdraft)). It has no network settings,

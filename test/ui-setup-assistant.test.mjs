@@ -578,7 +578,7 @@ test('Network applies on Next: unchanged values post nothing (D19); Direct after
         }
       } finally { h.close(); }
     } },
-    { name: 'Close setup after Network applied: the dialog says the proxy is saved and on', run: async () => {
+    { name: 'Skip all after Network applied: the dialog says the proxy is saved and on', run: async () => {
       const net = netServer();
       const h = await open({ entry: 'first', step: 'network', routes: net.routes });
       try {
@@ -1168,10 +1168,10 @@ test('foot order: Cancel, then Use saved values, then Back and Next side by side
   } finally { h.close(); }
 });
 
-test('close rules: Close setup / Cancel close at once untouched and ask after an edit; Escape on an edit asks; a backdrop click never closes (AC-4.1)', async () => {
+test('close rules: Skip all / Cancel close at once untouched and ask after an edit; Escape on an edit asks; a backdrop click never closes (AC-4.1)', async () => {
   let h = await open();
   try {
-    assert.equal(h.$('.sa-later').textContent, 'Close setup');
+    assert.equal(h.$('.sa-later').textContent, 'Skip all');
     await h.click('.sa-later');
     assert.deepEqual(h.closes, ['later']);
     assert.equal(discardPrompt(h.doc), null);
@@ -1408,7 +1408,7 @@ test('module source: no HTML sinks, no CSS.escape; built on layoutDialog and gua
   assert.ok(app.includes("setOnboardingPrefs({ setupFinished: true })") && app.includes('loadOnboarding({ recheck: true })') && app.includes('fetchWorcaLevel()'));
   assert.ok(app.includes('if (next) location.hash = next;') && app.includes('if (readyShown || finishing) { gs.welcomeShown = true;') && app.includes('else showWelcome();'));
   const gs = read('docs/getting-started.md');
-  assert.ok(gs.includes('Close setup')); assert.ok(gs.includes('Setup assistant › **Run setup**'));
+  assert.ok(gs.includes('Skip all')); assert.ok(gs.includes('Setup assistant › **Run setup**'));
 });
 
 const bodyOf = (w) => (typeof w.body === 'string' ? JSON.parse(w.body) : w.body);
