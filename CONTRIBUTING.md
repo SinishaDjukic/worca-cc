@@ -163,6 +163,26 @@ cannot cut. CI's tail lengths are in the
 Quarantined tests workflow, in the `tail measure` job summary; they cover the
 fast tier only.
 
+### Checks that gate merges
+
+Three workflows decide whether a pull request into `dev` can merge; each runs on every
+pull request into `dev` with no `paths` filter, so its required check always reports.
+Every other workflow is listed with the reason it does not gate.
+
+| Workflow | Gates merges | Required check | How, or why not |
+|---|---|---|---|
+| `ci.yml` | yes | `CI gate` | The always-running gate job; every other `ci.yml` job reports through it. |
+| `parity-docker.yml` | yes | `parity (tree against the CI image)` | Its own check, on every PR into `dev`. |
+| `firefox-e2e.yml` | yes | `Firefox e2e (Playwright Firefox, branch and split tree)` | Its own check, on every PR into `dev`. |
+| `docker-image.yml` | no | — | Reusable `workflow_call`: builds images for release tags and the weekly rebuild, never runs on a PR. |
+| `docker-rebuild.yml` | no | — | Weekly schedule and manual runs only. |
+| `release-npm-app.yml` | no | — | Runs on `worca-app-v*` tags only, after merge. |
+| `label-by-author.yml` | no | — | `pull_request_target` labelling: judges who opened the PR, not the change. |
+| `worca-metrics-pr-events.yml` | no | — | `pull_request_target` metrics recorder: writes the `worca-metrics` branch, never checks code. |
+| `pr-context.yml` | no | — | `pull_request_target`: its `Linked issue` check judges the PR description, not the change, and is not one of the three required checks. |
+
+A new workflow goes in this table; `test/ci-gating-table.test.mjs` fails until it does.
+
 While you work, `npm run test:related` runs only the test files your
 uncommitted changes can affect (`-- --base origin/dev` for everything on your
 branch). It follows imports and the paths tests load by name, and falls back to

@@ -113,6 +113,9 @@ test('renderSummary: failed heading and a raw-result row per job; superseded hea
   const passed = renderSummary(gateVerdict(all('skipped', { changes: 'success' })));
   assert.ok(passed.startsWith('CI gate: passed'), passed);
   assert.equal((passed.match(/\| skipped \|/g) || []).length, 6, passed);
+  // A docs-only PR's summary names each skipped job, not just a count.
+  for (const job of ['test-fast', 'test-slow', 'cdp', 'extension', 'extension-e2e', 'docker']) assert.ok(passed.includes(`| ${job} | skipped |`), `${job}: ${passed}`);
+  assert.ok(passed.includes('| changes | success |'), passed);
 
   const sup = renderSummary(gateVerdict(all('success', { 'test-fast': 'cancelled' }), { superseded: true }), { prHeadSha: SHA_B });
   assert.ok(sup.startsWith(`CI gate: superseded by ${SHA_B.slice(0, 7)}`), sup);
