@@ -506,7 +506,7 @@ function mergeBackPending(row, now = Date.now()) {
 }
 /** The branch a finished run's work is on: its feature branch — or its source once that branch is gone
  *  again: dropped at teardown as unchanged (branchKept:false), or merged back by a run on its source branch. */
-const workBranchOf = (b) => (!b ? null
+export const workBranchOf = (b) => (!b ? null
   : (b.branchKept === false || (b.sameAsSource === true && b.mergeBack && b.mergeBack.merged === true)) ? b.source : b.feature);
 
 function pipelineGate(row, { policy, isLive, now = Date.now() }) {
@@ -678,9 +678,13 @@ export function chainBaseBranchesOf(pipelineId) {
     return b && typeof b === 'object' ? b : null;
   };
   const row = pipelineRefRow(pipelineId);
-  const source = branchOf(row)?.source;
+  const rec = branchOf(row);
+  const source = rec?.source;
   if (typeof source !== 'string' || !source) return [];
-  const chain = [source];
+  // Slice 3 (D10): a run that took other runs' work in records the branch it started from (`sourceFrom`) beside the
+  // one it builds on now (`source`); its chain walks back from the start.
+  const from = typeof rec.sourceFrom === 'string' && rec.sourceFrom && rec.sourceFrom !== source ? rec.sourceFrom : null;
+  const chain = from ? [from, source] : [source];
   const seen = new Set([row.id]);
   let cur = row.id;
   for (let depth = 0; depth < CHAIN_DEPTH_CAP; depth++) {
@@ -1317,6 +1321,14 @@ export async function runDueTickets({
       continue;
     }
 
+    // A hold (Shaper small runs: the runs it builds on clash, or the run waits its turn, slice 7): the ticket waits for a person, not for a retry. Back to
+    // scheduled and unforced, so the next tick's hold is consulted; no fail_reason, no attempt, no notice.
+    if (res && res.hold) {
+      touchTicket(t.id, "status = 'scheduled', forced = 0, retry_at = NULL, owner_pid = NULL, owner_host = NULL", [], now);
+      out.held.push(t.id);
+      continue;
+    }
+
     const reason = (res && res.error) || 'the run could not be started';
     const backoff = RETRY_BACKOFF_MIN[Math.min(t.attempts, RETRY_BACKOFF_MIN.length - 1)] * 60_000;
     const deadline = Date.parse(t.runAt) + Math.max(effectiveGraceMs(t, schedule), ON_TIME_SLACK_MS);
@@ -1415,6 +1427,17 @@ export function scheduleSignature() {
 export function markTicketFired(id, { pipelineId = null, now = Date.now() } = {}) {
   markFired(String(id), pipelineId, now);
   if (pipelineId) setTicketPipeline(id, pipelineId, { now });
+}
+
+/** Shaper small runs: a clash found while fired run `pipelineId` set up undoes the fire, so the same ticket waits again
+ *  (no fail reason, unforced). A compare-and-set: only while the ticket is fired as that pipeline. No tx, no notice.
+ *  → true when the row changed. */
+export function unfireTicket(id, { pipelineId, now = Date.now() } = {}) {
+  if (!id || !pipelineId) return false;
+  const r = getDb().prepare(`UPDATE scheduled_runs SET status = 'scheduled', pipeline_id = NULL, forced = 0, queued = 0,
+    retry_at = NULL, fail_reason = NULL, owner_pid = NULL, owner_host = NULL, updated_at = ?
+    WHERE id = ? AND status = 'fired' AND pipeline_id = ?`).run(new Date(now).toISOString(), String(id), String(pipelineId));
+  return r.changes === 1;
 }
 
 /** Counts for nav badges: { scheduled, recurring, missed }. */

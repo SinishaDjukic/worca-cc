@@ -207,3 +207,13 @@ test('POST /api/run: a WORKSPACE run resolves the overlay over its primary membe
     for (const d of dirs) await rm(d, { recursive: true, force: true, maxRetries: 10 });
   }
 });
+
+test('POST /api/run: a pinned pick is checked on its own harness, before anything is scheduled', { timeout: 60000 }, async () => {
+  const body = { projectDir: project.path, workflowId: 'wf_default', guardrailsId: 'permissive', prompt: 'demo task', scheduledFor: DAY() };
+  const bad = await post('/api/run', { ...body, overlay: { nodes: { n_plan: { model: 'claude-opus-5-5', engine: 'codex' } } } });
+  assert.equal(bad.status, 400);
+  assert.match((await bad.json()).error, /node "n_plan": claude-opus-5-5 runs on Claude Code, not on OpenAI Codex — pick a model that harness runs/);
+  const alone = await post('/api/run', { ...body, overlay: { nodes: { n_plan: { engine: 'codex' } } } });
+  assert.match((await alone.json()).error, /node "n_plan": engine needs a model beside it/);
+  assert.equal((await post('/api/run', { ...body, overlay: { nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex' } } } })).status, 202);
+});

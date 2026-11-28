@@ -31,6 +31,8 @@ import { sessionsOf, sessionCandidates, sessionLegal, sessionIdOf, pruneSessions
 import { LABEL_H } from '../../../src/shared/graph/geometry.mjs';
 import { flagOn } from '../flags.mjs';
 import { SESSION_SUBAGENTS_VERIFIED } from '../../../src/shared/engine-switch.mjs';
+import { pickEffortsOn } from '../../../src/shared/connections.mjs';
+import { columnsValue, nodeModelPatch } from '../models/model-columns.mjs';
 
 export const UNDO_LIMIT = 50;
 /** The ONE reserved workflow id: the server prepends this built-in to
@@ -833,12 +835,14 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   let models = [];
   let efforts = [];
   let subagentModels = [];
+  let defaultEngine = 'claude';   // the harness a step set to inherit (or a soft pick) runs on: the run's default
   let modelsSet = false;          // an explicit setModels() wins over the mount fetch
 
-  function applyModels({ models: m = [], efforts: e = [], subagentModels: sm = [] } = {}) {
+  function applyModels({ models: m = [], efforts: e = [], subagentModels: sm = [], defaultEngine: de = 'claude' } = {}) {
     models = Array.isArray(m) ? m : [];
     efforts = Array.isArray(e) ? e : [];
     subagentModels = Array.isArray(sm) ? sm : [];
+    defaultEngine = typeof de === 'string' && de ? de : 'claude';
     modelById = new Map(models.filter(Boolean).map((m) => [m.id, m.label || m.id]));
     paintInspector();
     // /api/config lands AFTER the first loadTemplate: repaint so the label rows show model labels, not raw ids.
@@ -929,7 +933,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       const sid = memberSid(node.id);
       const spec = sid ? sessionById(sid) : null;
       const session = spec ? { sid, label: spec.settings.label, index: spec.members.indexOf(node.id) + 1, count: spec.members.length } : null;
-      return renderNodeInspector(node, { template: tpl, portsFn, meta, models, efforts, subagentModels, editorFor: insEditorFor, session, doc });
+      return renderNodeInspector(node, { template: tpl, portsFn, meta, models, efforts, subagentModels, editorFor: insEditorFor, session, defaultEngine, doc });
     }
     const wire = wireById(s.id);
     return wire ? renderWireInspector(wire, { loop: view.isLoopWire(wire.id), doc }) : renderEmptyInspector({ doc });
@@ -979,6 +983,18 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     }
     const node = nodeById(owner.id);
     if (!node) return;
+    // The Model field is the columns picker's trigger: its value and data-engine are one pick, written as model and
+    // engine in ONE commit, with an effort the picked harness lacks dropped (nodeModelPatch; null deletes the key).
+    if (node.kind === 'agent' && name === 'model') {
+      const next = columnsValue({ model: ev.target.value, engine: ev.target.dataset ? ev.target.dataset.engine : '' });
+      const patch = nodeModelPatch(next, { catalog: models, effort: node.config.effort || '', defaultEngine, effortsOf: pickEffortsOn });
+      commit('model', () => {
+        node.config = { ...(node.config || {}) };
+        for (const [k, v] of Object.entries(patch)) { if (v == null) delete node.config[k]; else node.config[k] = v; }
+      });
+      paintInspector();
+      return;
+    }
     if (node.kind === 'script' && name.startsWith('param:')) {
       const id = name.slice('param:'.length);
       const decl = ((scripts[node.key] && scripts[node.key].params) || []).find((p) => p.id === id);
@@ -1378,7 +1394,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     /** Session authoring (05 §3): each call is ONE commit, or `{ok:false, reason}` and no commit. */
     sessions: { join: joinSession, leave: leaveSession, ungroup: ungroupSession, split: splitSession, setSetting: setSessionSetting, byId: sessionById },
     docToken: () => token,
-    models: () => ({ models, efforts, subagentModels }),
+    models: () => ({ models, efforts, subagentModels, defaultEngine }),
     /** The sub-agents gate the Composer draws with (the app passes none: SESSION_SUBAGENTS_VERIFIED; tests open it). */
     sessionVerified: () => sessionVerified,
     metaOf: (node) => (node && node.kind === 'agent' ? (agents[node.key] || null) : node && node.kind === 'script' ? (scripts[node.key] || null) : null),

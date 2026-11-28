@@ -1,32 +1,44 @@
 // test/ui-running-detail.test.mjs
-import { test, afterEach } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { JSDOM } from 'jsdom';
 import { confirmDialog } from './helpers/confirm-modal.mjs';
-import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
 import { lastToast } from './helpers/feedback.mjs';
-import { checkRows } from './helpers/rows.mjs';
+import { checkRows as checkEachRow } from './helpers/rows.mjs';
+import { openTab } from './helpers/run-tabs.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { ASK_IN_CHAT } from '../ui/public/run-head.mjs';
-import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
 import { careRunPlan } from '../src/shared/shape/feature-record.mjs';
 
-// Release each booted window after its test (see test/helpers/jsdom-release.mjs).
-const trackDom = useDomRelease(afterEach);
-
 // The Running detail screen's body: live pipeline graph, banners, question panel.
 //
-// boot() / settle() / go() are copied verbatim from test/ui-running-routing.test.mjs
-// (itself copied from test/ui-history-routing.test.mjs:25-96); the open() / recv()
-// WebSocket drivers come from test/ui-pipeline-tabs.test.mjs:31-33.
-
-const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
+// The app is booted once for the whole file (test/helpers/shared-app-boot.mjs) and reset before each test. boot()
+// keeps its name and its { window, calls, recv } shape: it resets the app with the test's fetch handler. Each test,
+// and each later boot inside a test, mints its own run and pipeline ids, so no id of an earlier one meets the app's
+// private run state.
+// The reset lands on Chat, so entering Runs reloads History as a first boot did.
 
 const PROJECT = '/tmp/proj';
-const ID = 'auth-fix';
+
+// The boot's own answers: the project list, and a benign default for everything else.
+const bootFetch = (u) => Promise.resolve(String(u).includes('/api/projects')
+  ? { ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: PROJECT, exists: true }] }) }
+  : { ok: true, status: 200,
+    json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [], pipelines: 0, projects: 0, workspaces: 0 }) });
+
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: bootFetch });
+
+// Per-test ids (D3): the app keeps runs, PR states and slice answers by id for the life of the file.
+let ID, R1, R2, R3, P1, P2;
+const mintIds = () => {
+  ID = app.uid('auth-fix-');
+  R1 = app.uid('r1-'); R2 = app.uid('r2-'); R3 = app.uid('r3-');
+  P1 = app.uid('p1-'); P2 = app.uid('p2-');
+};
+let bootedInTest = false;
+beforeEach(() => { mintIds(); bootedInTest = false; });
 
 const STEPPER2 = { steps: [{ label: 'Plan', nodes: [{ id: 'a', label: 'Planner' }] },
                            { label: 'Build', nodes: [{ id: 'b', label: 'Implementer' }] }] };
@@ -34,47 +46,15 @@ const STEPPER3 = { steps: [{ label: 'Plan', nodes: [{ id: 'a', label: 'Planner' 
                            { label: 'Build', nodes: [{ id: 'b', label: 'Implementer' }] },
                            { label: 'Review', nodes: [{ id: 'c', label: 'Reviewer' }] }] };
 
-async function boot({ url = 'http://localhost:4317/', fetchHandler } = {}) {
-  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
-  const { window } = dom;
-  window.Element.prototype.scrollIntoView = function () {};
+// A table row starts like a test of its own: fresh ids before the row builds its fixtures.
+const checkRows = (rows) => checkEachRow(rows.map((row) => ({ ...row, run: () => { mintIds(); bootedInTest = false; return row.run(); } })));
 
-  let lastWs = null;
-  window.WebSocket = class {
-    constructor() { this.readyState = 1; this._l = {}; lastWs = this; }
-    send() {}
-    close() {}
-    addEventListener(t, fn) { (this._l[t] ||= []).push(fn); }
-  };
-
-  const calls = [];
-  window.fetch = (u, opts) => {
-    calls.push({ url: String(u), opts: opts || {} });
-    if (fetchHandler) { const r = fetchHandler(String(u), opts || {}); if (r) return r; }
-    if (String(u).includes('/api/projects')) {
-      return Promise.resolve({ ok: true, status: 200,
-        json: async () => ({ projects: [{ name: 'proj', path: PROJECT, exists: true }] }) });
-    }
-    return Promise.resolve({ ok: true, status: 200,
-      json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [], pipelines: 0, projects: 0, workspaces: 0 }) });
-  };
-
-  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
-    try {
-      Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true });
-    } catch { /* read-only global already present */ }
-  }
-  globalThis.window = window;
-  globalThis.document = window.document;
-  window.localStorage.clear();
-
-  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
-  await new Promise((r) => setTimeout(r, 0));
-
-  const open = () => lastWs._l.open?.forEach((fn) => fn());
-  const recv = (obj) => lastWs._l.message.forEach((fn) => fn({ data: JSON.stringify(obj) }));
-  open();
-  return { window, calls, recv };
+async function boot({ fetchHandler } = {}) {
+  // A second boot in one test (a table row, a loop, a reboot) is a new app as far as ids go (C3).
+  if (bootedInTest) mintIds();
+  bootedInTest = true;
+  await app.fresh(fetchHandler ? { fetchHandler } : {});
+  return { window: app.window, calls: app.calls, recv: app.recv };
 }
 
 async function settle(window, n = 3) {
@@ -145,7 +125,9 @@ async function bootRunning({ budget = okBudget(), rows = [HISTORY_ROW] } = {}) {
       // D16: the slice endpoint, only when a test sets box.slice (else the boot's benign default: not a slice).
       if (box.slice && /\/api\/shape\/pipelines\/[^/]+\/slice$/.test(url)) return ok(box.slice);
       // The run's saved state (rdLoadData), only when a test sets box.runData.
-      if (box.runData && url.startsWith('/api/runs/p1?')) return ok(box.runData);
+      if (box.runData && url.startsWith(`/api/runs/${P1}?`)) return ok(box.runData);
+      // s5: one saved run's detail ({id, body}), only when a test sets box.detail.
+      if (box.detail && url.endsWith(`/api/history/${KEY}/${box.detail.id}`)) return ok(box.detail.body);
       // C5: the run's PR-when-done answer, only when a test sets box.prAuto.
       if (box.prAuto && url.endsWith('/api/pipelines/p-verify/pr-auto')) return ok({ prAuto: box.prAuto });
       return null;
@@ -182,7 +164,7 @@ const SUBS = () => ([
 // r.logLines, which is exactly what §5.6 says it does.
 async function openRun(ctx, over = {}, logs = []) {
   frame(ctx, {
-    type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT,
+    type: 'run-created', runId: R1, title: 'Add dark mode', projectDir: PROJECT,
     status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run',
   });
   // `phase` rides on the STATE frame, deliberately. onState calls the same
@@ -195,17 +177,17 @@ async function openRun(ctx, over = {}, logs = []) {
   // `nodeKindFor(r, 'running')` returns 'now' exactly as `'start'` does, so the
   // frontier node still glows. `id:'p1'` is what onState turns into r.pipelineId.
   frame(ctx, {
-    type: 'state', runId: 'r1', id: 'p1', status: 'running',
+    type: 'state', runId: R1, id: P1, status: 'running',
     phase: 'implement', cycle: 1,
     steps: STEPS(), subAgents: SUBS(), totalCostUsd: 1.5,
     branch: { source: 'main', feature: 'worca-cc/dark-p1', worktreeDir: '/tmp/wt' },
     prompt: 'Add a dark mode toggle to the settings page.',
     ...over,
   });
-  for (const l of logs) frame(ctx, { type: 'log', runId: 'r1', ...l });
+  for (const l of logs) frame(ctx, { type: 'log', runId: R1, ...l });
   // The tab tests below drive Details › Live log, so they land there directly; the
   // glance itself is covered by the glance tests further down.
-  go(ctx.window, 'running/r1/details/logs');
+  go(ctx.window, `running/${R1}/details/logs`);
   await settle(ctx.window, 6);
   return ctx.window.document.querySelector('#run-detail .rd-header');
 }
@@ -261,14 +243,14 @@ test('"Continue without cap" confirms, then resumes with ignoreCostCap', async (
       fetchHandler: (u, opts) => {
         if (u.includes('/api/resume')) {
           posts.push(JSON.parse(opts.body));
-          return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, runId: 'auth-fix-2', pipelineId: 'p1' }) });
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, runId: `${ID}-2`, pipelineId: P1 }) });
         }
         return null;
       },
     },
   });
   const { window } = ctx;
-  window.__np.getRun(ID).pipelineId = 'p1';
+  window.__np.getRun(ID).pipelineId = P1;
   ctx.recv({ type: 'done', runId: ID, status: 'paused', reason: 'cost_pipeline' });
   await settle(window);
 
@@ -283,7 +265,7 @@ test('"Continue without cap" confirms, then resumes with ignoreCostCap', async (
   window.document.querySelector('#confirm-ok').dispatchEvent(new window.Event('click', { bubbles: true }));
   await settle(window, 5);
 
-  assert.deepEqual(posts, [{ pipelineId: 'p1', baseCheck: true, ignoreCostCap: true }],
+  assert.deepEqual(posts, [{ pipelineId: P1, baseCheck: true, ignoreCostCap: true }],
     'POST /api/resume carries the cap override');
 });
 
@@ -305,7 +287,7 @@ test('retained work renders from branch.commitFailed and binds Discard exactly o
     },
   });
   const { window, recv } = ctx;
-  window.__np.getRun(ID).pipelineId = 'p1';
+  window.__np.getRun(ID).pipelineId = P1;
   const RETAINED = {
     type: 'state', runId: ID, status: 'done', steps: [],
     branch: { source: 'main', feature: 'worca-cc/auth', worktreeDir: '/tmp/wt',
@@ -350,7 +332,7 @@ test('a successful discard clears the Running kept head for good and re-arms the
     },
   });
   const { window, recv } = ctx;
-  window.__np.getRun(ID).pipelineId = 'p1';
+  window.__np.getRun(ID).pipelineId = P1;
   const RETAINED = {
     type: 'state', runId: ID, status: 'done', steps: [],
     branch: { source: 'main', feature: 'worca-cc/auth', worktreeDir: '/tmp/wt',
@@ -382,7 +364,7 @@ test('a successful discard clears the Running kept head for good and re-arms the
 
 test('a recovery-patch artifact adds the alternate-recovery link once', async () => {
   const { window, recv } = await openDetail();
-  window.__np.getRun(ID).pipelineId = 'p1';
+  window.__np.getRun(ID).pipelineId = P1;
   recv({ type: 'artifact', runId: ID, kind: 'retained-work-patch', path: '/tmp/x.patch' });
   recv({
     type: 'state', runId: ID, status: 'done', steps: [],
@@ -395,7 +377,7 @@ test('a recovery-patch artifact adds the alternate-recovery link once', async ()
   const patchLinks = () => [...window.document.querySelectorAll('#run-detail .rd-route .rd-route-second a.rd-fact-link')].filter((a) => a.textContent === 'Download patch');
   let links = patchLinks();
   assert.equal(links.length, 1, 'the link renders off the recorded artifact');
-  assert.match(links[0].getAttribute('href'), /\/api\/runs\/p1\/recovery-patch/);
+  assert.match(links[0].getAttribute('href'), new RegExp(`/api/runs/${P1}/recovery-patch`));
 
   recv({ type: 'state', runId: ID, status: 'done', steps: [],
          branch: { feature: 'worca-cc/auth', worktreeDir: '/tmp/wt',
@@ -425,7 +407,7 @@ test('the gate and recovery bodies render on the detail page too (D6)', async ()
   assert.equal(gpanel.querySelectorAll('.issues .issue').length, 1);
 
   const rec = await openDetail();
-  rec.recv({ type: 'question', runId: ID, id: 'r1', kind: 'recovery',
+  rec.recv({ type: 'question', runId: ID, id: R1, kind: 'recovery',
              recovery: { cls: 'auth', message: 'token expired' } });
   await settle(rec.window);
   const rpanel = rec.window.document.querySelector('#run-detail .rd-questions .qpanel');
@@ -447,6 +429,20 @@ test('waiting for the network: a hello paints the banner naming the host; a stat
   recv({ type: 'state', runId: ID, status: 'running', steps: [], networkWait: null });
   await settle(window);
   assert.equal(window.document.querySelector('#run-detail .rd-banners .net-wait-banner'), null, 'the network is back: no banner');
+});
+
+test('an E2B run lists the files from the sandbox to review before running them here; a state frame adds to the list', async () => {
+  const one = [{ path: 'package.json', why: 'npm scripts postinstall added or changed' }];
+  const { window, recv } = await openDetail({ run: { execEnv: 'e2b', execEnvReview: one } });
+  const banner = () => window.document.querySelector('#run-detail .rd-banners .exec-review-banner');
+  assert.ok(banner(), 'the banner renders from the first hello');
+  assert.match(banner().textContent, /Review them before running them here/);
+  assert.match(banner().textContent, /package\.json: npm scripts postinstall/);
+  recv({ type: 'state', runId: ID, status: 'running', steps: [], execEnv: 'e2b',
+    execEnvReview: [...one, { path: '.vscode/tasks.json', why: 'VS Code workspace config' }] });
+  await settle(window);
+  assert.equal(banner().querySelectorAll('li').length, 2);
+  assert.match(banner().textContent, /\.vscode\/tasks\.json/);
 });
 
 test('the recovery body carries the network note only when the prompt waits for the network', async () => {
@@ -544,17 +540,21 @@ test('a NEW question replaces the panel even though one was already painted', as
 
 // --- T7: tabs ---------------------------------------------------------------
 
-test('Details has nine tabs, results first; the route picks the open one', async () => {
+test('Details has nine tabs, the reading tabs in the row and the rest under More; the route picks the open one', async () => {
   const ctx = await bootRunning();
   await openRun(ctx);
   const { window } = ctx;
   const tabs = [...window.document.querySelectorAll('#run-detail .rd-tab')];
-  assert.deepEqual(tabs.map((b) => b.dataset.sec), ['overview', 'task', 'diff', 'artifacts', 'actions', 'workflow', 'qa', 'logs', 'agents']);
+  assert.deepEqual(tabs.map((b) => b.dataset.sec), ['overview', 'task', 'diff', 'artifacts', 'qa', 'logs', 'actions', 'workflow', 'agents']);
   assert.match(tabs[0].textContent, /Overview/);
   assert.match(tabs[1].textContent, /Task/);
-  assert.match(tabs[4].textContent, /Actions/);
-  assert.match(tabs[7].textContent, /Logs/);
-  assert.match(tabs[6].textContent, /Q&A/);
+  assert.match(tabs[6].textContent, /Actions/);
+  assert.match(tabs[5].textContent, /Logs/);
+  assert.match(tabs[4].textContent, /Q&A/);
+  click(window, window.document.querySelector('#run-detail .rd-tabs > .tab-more'));
+  assert.deepEqual([...window.document.querySelectorAll('body > .wfv-menu .wfv-menu-l')].map((n) => n.textContent),
+    ['Actions', 'Workflow', 'Agents']);
+  click(window, window.document.querySelector('#run-detail .rd-tabs > .tab-more'));
   // openRun lands on #running/r1/details/logs.
   assert.equal(window.document.querySelector('#run-detail .rd').dataset.mode, 'details');
   assert.ok(tabOf(window, 'logs').classList.contains('active'), 'the routed tab is open');
@@ -569,7 +569,7 @@ test('Details has nine tabs, results first; the route picks the open one', async
   // A tab click rewrites the address in place (no extra history entry).
   click(window, tabOf(window, 'overview'));
   await settle(window);
-  assert.equal(window.location.hash, '#running/r1/details/overview');
+  assert.equal(window.location.hash, `#running/${R1}/details/overview`);
 });
 
 test('the Live log tab is the CARD pipeline: bar, switch, hydrated lines, shared filter', async () => {
@@ -608,7 +608,7 @@ test('the Live log tab is the CARD pipeline: bar, switch, hydrated lines, shared
   source.value = 'planner';
   source.dispatchEvent(new window.Event('change', { bubbles: true }));
   await settle(window);
-  const r = window.__np.getRun('r1');
+  const r = window.__np.getRun(R1);
   assert.equal(r.logFilter.source, 'planner');
   assert.equal(sec.querySelectorAll('.log .log-line').length, 1);
   assert.match(sec.querySelector('.log .log-line').textContent, /pass one/);
@@ -677,7 +677,7 @@ test('a state frame for the open run repaints the ACTIVE section only', async ()
   await settle(window);
 
   frame(ctx, {
-    type: 'state', runId: 'r1', id: 'p1', status: 'running',
+    type: 'state', runId: R1, id: P1, status: 'running',
     steps: STEPS(), totalCostUsd: 9.75,
     subAgents: [...SUBS(), { id: 'a3', label: 'Third', nodeId: 'implement', cycle: 1, status: 'running' }],
     branch: { source: 'main', feature: 'worca-cc/dark-p1', worktreeDir: '/tmp/wt' },
@@ -691,7 +691,7 @@ test('a state frame for the open run repaints the ACTIVE section only', async ()
   assert.equal(agents.dataset.loaded, undefined, 'the hidden section was re-armed');
   // The badge tracks the live count even while its tab is hidden.
   assert.equal(tabOf(window, 'agents').querySelector('.rd-tab-badge').textContent, '3');
-  click(window, tabOf(window, 'agents'));
+  openTab(window, tabOf(window, 'agents'));
   await settle(window);
   assert.equal(agents.querySelectorAll('.rd-ag-row').length, 3, 'rebuilt against current data');
 });
@@ -701,19 +701,19 @@ test('a log frame appends into the open pane without rebuilding it', async () =>
   await openRun(ctx);
   const { window } = ctx;
   const sec = secOf(window, 'logs');
-  frame(ctx, { type: 'log', runId: 'r1', source: 'planner', level: 'info', text: 'one', ts: 0, stepIndex: 0, cycle: 1 });
+  frame(ctx, { type: 'log', runId: R1, source: 'planner', level: 'info', text: 'one', ts: 0, stepIndex: 0, cycle: 1 });
   await settle(window);
   const box = rdBox(window);
   assert.equal(box.querySelectorAll('.log-line').length, 1);
 
-  frame(ctx, { type: 'log', runId: 'r1', source: 'planner', level: 'info', text: 'two', ts: 0, stepIndex: 0, cycle: 1 });
+  frame(ctx, { type: 'log', runId: R1, source: 'planner', level: 'info', text: 'two', ts: 0, stepIndex: 0, cycle: 1 });
   await settle(window);
   assert.equal(rdBox(window), box, 'the pane node survives — no full rebuild');
   assert.equal(box.querySelectorAll('.log-line').length, 2);
 
   // Facets GROW as new sources/steps/cycles appear (History's build-once fill is
   // the bug being avoided), and a new cycle still draws its separator.
-  frame(ctx, { type: 'log', runId: 'r1', source: 'reviewer', level: 'error', text: 'boom', ts: 0, stepIndex: 5, cycle: 2 });
+  frame(ctx, { type: 'log', runId: R1, source: 'reviewer', level: 'error', text: 'boom', ts: 0, stepIndex: 5, cycle: 2 });
   await settle(window);
   const bar = sec.querySelector('.log-filters');
   assert.deepEqual([...bar.querySelector('.log-f-source').options].map((o) => o.value),
@@ -728,23 +728,23 @@ test('frames for another run reach the run model but never touch the open detail
   const ctx = await bootRunning();
   await openRun(ctx);
   const { window } = ctx;
-  frame(ctx, { type: 'log', runId: 'r1', source: 'planner', level: 'info', text: 'mine', ts: 0, stepIndex: 0, cycle: 1 });
+  frame(ctx, { type: 'log', runId: R1, source: 'planner', level: 'info', text: 'mine', ts: 0, stepIndex: 0, cycle: 1 });
   await settle(window);
   frame(ctx, {
-    type: 'run-created', runId: 'r2', title: 'Other run', projectDir: PROJECT,
+    type: 'run-created', runId: R2, title: 'Other run', projectDir: PROJECT,
     status: 'running', startedAt: '2026-08-19T11:00:00Z', kind: 'run',
   });
-  frame(ctx, { type: 'log', runId: 'r2', source: 'planner', level: 'info', text: 'theirs', ts: 0, stepIndex: 0, cycle: 1 });
-  frame(ctx, { type: 'state', runId: 'r2', id: 'p2', status: 'running', steps: STEPS(), totalCostUsd: 99 });
+  frame(ctx, { type: 'log', runId: R2, source: 'planner', level: 'info', text: 'theirs', ts: 0, stepIndex: 0, cycle: 1 });
+  frame(ctx, { type: 'state', runId: R2, id: P2, status: 'running', steps: STEPS(), totalCostUsd: 99 });
   await settle(window);
 
   const box = rdBox(window);
-  assert.equal(box.querySelectorAll('.log-line').length, 1, "r2's lines stay out of r1's pane");
+  assert.equal(box.querySelectorAll('.log-line').length, 1, `${R2}'s lines stay out of ${R1}'s pane`);
   assert.match(box.textContent, /mine/);
   assert.doesNotMatch(box.textContent, /theirs/);
   assert.equal(window.document.querySelector('#run-detail .rd-header .rd-title').textContent, 'Add dark mode');
   // The page DID learn about r2.
-  assert.ok(window.__np.getRun('r2'), 'r2 is in the run model');
+  assert.ok(window.__np.getRun(R2), `${R2} is in the run model`);
 });
 
 test('the existing 1 s interval ticks the open detail', async () => {
@@ -759,7 +759,7 @@ test('the existing 1 s interval ticks the open detail', async () => {
   const { window } = ctx;
   // ONE timer: the detail screen joins the existing interval's host list rather
   // than getting an interval of its own.
-  const r = window.__np.getRun('r1');
+  const r = window.__np.getRun(R1);
   const hosts = window.__np.rdTickHosts(r);
   assert.equal(hosts.length, 1, 'only the open detail screen (the list card is gone; r.el is null)');
   assert.ok(hosts[0].contains(window.document.querySelector('#run-detail .rd-header')),
@@ -788,7 +788,7 @@ test('a run that finishes while its page is open keeps the page, goes terminal, 
       const ctx = await bootRunning();
       await openRun(ctx);
       const { window } = ctx;
-      frame(ctx, { type: 'log', runId: 'r1', source: 'planner', level: 'info', text: 'one', ts: 0, stepIndex: 0, cycle: 1 });
+      frame(ctx, { type: 'log', runId: R1, source: 'planner', level: 'info', text: 'one', ts: 0, stepIndex: 0, cycle: 1 });
       await settle(window);
       assert.equal(rdBox(window).querySelectorAll('.log-line').length, 1);
       // The graph is built when Workflow first opens (Overview leads the tabs): visit it, then
@@ -803,11 +803,11 @@ test('a run that finishes while its page is open keeps the page, goes terminal, 
       assert.equal(window.document.querySelector('#run-detail .rd-graph').classList.contains('settled'), false,
         'a live run never carries .settled');
 
-      frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+      frame(ctx, { type: 'done', runId: R1, status: 'done' });
       await settle(window, 6);
 
       // History has no finished row for p1 yet: the page stays exactly where it was.
-      assert.equal(window.location.hash, '#running/r1/details/logs');
+      assert.equal(window.location.hash, `#running/${R1}/details/logs`);
       assert.ok(window.document.getElementById('run-shell').classList.contains('detail-open'));
       assert.ok(window.document.querySelector('#run-detail .rd-header'), 'the screen is still mounted');
 
@@ -823,7 +823,7 @@ test('a run that finishes while its page is open keeps the page, goes terminal, 
 
       // The log stops growing: a stray late frame lands on a finished run and the
       // pane is unchanged.
-      frame(ctx, { type: 'log', runId: 'r1', source: 'planner', level: 'info', text: 'late', ts: 0, stepIndex: 0, cycle: 1 });
+      frame(ctx, { type: 'log', runId: R1, source: 'planner', level: 'info', text: 'late', ts: 0, stepIndex: 0, cycle: 1 });
       await settle(window);
       assert.doesNotMatch(rdBox(window).textContent, /late/);
     } },
@@ -833,7 +833,7 @@ test('a run that finishes while its page is open keeps the page, goes terminal, 
       const { window } = ctx;
       click(window, tabOf(window, 'overview'));
       await settle(window);
-      frame(ctx, { type: 'done', runId: 'r1', status: 'stopped' });
+      frame(ctx, { type: 'done', runId: R1, status: 'stopped' });
       await settle(window, 6);
       const copy = secOf(window, 'overview').querySelector('.rd-ov-copy').textContent;
       assert.match(copy, /^Stopped\. Finished at \d\d:\d\d:\d\d\.$/);
@@ -850,21 +850,21 @@ test('a run that finished while open moves to its saved run on the same tab once
       const { window } = ctx;
       click(window, tabOf(window, 'logs'));
       await settle(window);
-      assert.equal(ctx.box.rows.some((p) => p.id === 'p1'), false, 'History loaded before p1 was saved');
+      assert.equal(ctx.box.rows.some((p) => p.id === P1), false, `History loaded before ${P1} was saved`);
       // The refetch after the finish brings its finished row: the page hands over.
-      ctx.box.rows = [HISTORY_ROW, { ...HISTORY_ROW, id: 'p1', status: 'done' }];
-      frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+      ctx.box.rows = [HISTORY_ROW, { ...HISTORY_ROW, id: P1, status: 'done' }];
+      frame(ctx, { type: 'done', runId: R1, status: 'done' });
       await settle(window, 8);
-      assert.equal(window.location.hash, `#history/${KEY}/p1/details/logs`, 'the same tab, on the saved run');
+      assert.equal(window.location.hash, `#history/${KEY}/${P1}/details/logs`, 'the same tab, on the saved run');
     } },
     { name: 'a History row that is still live is not the saved run yet', run: async () => {
       const ctx = await bootRunning();
       await openRun(ctx);
       const { window } = ctx;
-      ctx.box.rows = [HISTORY_ROW, { ...HISTORY_ROW, id: 'p1', status: 'running', live: true }];
-      frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+      ctx.box.rows = [HISTORY_ROW, { ...HISTORY_ROW, id: P1, status: 'running', live: true }];
+      frame(ctx, { type: 'done', runId: R1, status: 'done' });
       await settle(window, 8);
-      assert.equal(window.location.hash, '#running/r1/details/logs', 'its final state may not be on disk yet');
+      assert.equal(window.location.hash, `#running/${R1}/details/logs`, 'its final state may not be on disk yet');
     } },
   ]);
 });
@@ -872,36 +872,36 @@ test('a run that finished while open moves to its saved run on the same tab once
 test('opening a finished run goes straight to its saved run (glance or tab); with no saved row it stays on the Running page', async () => {
   await checkRows([
     { name: 'opening a finished run goes straight to its saved run (glance or tab)', run: async () => {
-      const ctx = await bootRunning({ rows: [HISTORY_ROW, { ...HISTORY_ROW, id: 'p1', status: 'done' }] });
+      const ctx = await bootRunning({ rows: [HISTORY_ROW, { ...HISTORY_ROW, id: P1, status: 'done' }] });
       await openRun(ctx);
       const { window } = ctx;
-      frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+      frame(ctx, { type: 'done', runId: R1, status: 'done' });
       await settle(window, 6);
-      assert.equal(window.location.hash, `#history/${KEY}/p1/details/logs`);
-      go(window, 'running/r1');
+      assert.equal(window.location.hash, `#history/${KEY}/${P1}/details/logs`);
+      go(window, `running/${R1}`);
       await settle(window, 6);
-      assert.equal(window.location.hash, `#history/${KEY}/p1`, 'the glance opens the saved glance');
-      go(window, 'running/r1/details/diff');
+      assert.equal(window.location.hash, `#history/${KEY}/${P1}`, 'the glance opens the saved glance');
+      go(window, `running/${R1}/details/diff`);
       await settle(window, 6);
-      assert.equal(window.location.hash, `#history/${KEY}/p1/details/diff`, 'a tab opens the same tab');
+      assert.equal(window.location.hash, `#history/${KEY}/${P1}/details/diff`, 'a tab opens the same tab');
     } },
     { name: 'a finished run with no saved row stays on the Running page', run: async () => {
       // No pipeline id, or History without its row (an older run from the same dir does not count).
       const ctx = await bootRunning({ rows: [HISTORY_ROW] });
       frame(ctx, {
-        type: 'run-created', runId: 'r3', title: 'No id yet', projectDir: PROJECT,
+        type: 'run-created', runId: R3, title: 'No id yet', projectDir: PROJECT,
         status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run',
       });
-      go(ctx.window, 'running/r3');
+      go(ctx.window, `running/${R3}`);
       await settle(ctx.window, 6);
       // onError (app.js) routes straight to finishRun(r, 'error').
-      frame(ctx, { type: 'error', runId: 'r3' });
+      frame(ctx, { type: 'error', runId: R3 });
       await settle(ctx.window, 6);
-      assert.equal(ctx.window.location.hash, '#running/r3', 'no pipelineId: nothing to hand over to');
+      assert.equal(ctx.window.location.hash, `#running/${R3}`, 'no pipelineId: nothing to hand over to');
       await openRun(ctx);
-      frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+      frame(ctx, { type: 'done', runId: R1, status: 'done' });
       await settle(ctx.window, 6);
-      assert.equal(ctx.window.location.hash, '#running/r1/details/logs', 'p1 has no row yet');
+      assert.equal(ctx.window.location.hash, `#running/${R1}/details/logs`, `${P1} has no row yet`);
     } },
   ]);
 });
@@ -989,16 +989,16 @@ test('a running script card shows its last captured line; agent lines never repa
   assert.equal(liveOf(), null, 'no line captured yet');
   const timers = useAppTimers(t);
   try {
-    frame(ctx, { type: 'log', runId: 'r1', source: 'implementer', level: 'info', text: 'agent chatter', nodeId: 'n_impl' });
-    frame(ctx, { type: 'log', runId: 'r1', source: 'runTests', level: 'info', text: '  212 passing  ', nodeId: 'n_tests', executionId: 'x:n_tests:1' });
-    frame(ctx, { type: 'log', runId: 'r1', source: 'runTests', level: 'info', text: '3 failing', nodeId: 'n_tests', executionId: 'x:n_tests:1' });
+    frame(ctx, { type: 'log', runId: R1, source: 'implementer', level: 'info', text: 'agent chatter', nodeId: 'n_impl' });
+    frame(ctx, { type: 'log', runId: R1, source: 'runTests', level: 'info', text: '  212 passing  ', nodeId: 'n_tests', executionId: 'x:n_tests:1' });
+    frame(ctx, { type: 'log', runId: R1, source: 'runTests', level: 'info', text: '3 failing', nodeId: 'n_tests', executionId: 'x:n_tests:1' });
     assert.equal(liveOf(), null, 'coalesced: nothing repaints synchronously on a log frame');
     await timers.advance(320);   // > LIVE_LINE_MS (250)
     assert.equal(liveOf().textContent, '3 failing', 'one repaint carries the newest line');
     assert.equal(window.document.querySelector('#run-detail .rd-graph .node[data-node-id="n_impl"] .xfoot .xlive'), null, 'agents have no live band');
     // A loop re-runs the card: execution 2 is active and has captured nothing yet. A line stands only for the
     // execution that wrote it, so execution 1's last line must not be shown as execution 2's.
-    frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: SCRIPT_MANIFEST,
+    frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: SCRIPT_MANIFEST,
       active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:2' }],
       steps: [
         { key: 'x:n_impl:1', executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, kind: 'cycle', cycle: 1, status: 'done', activeMs: 1000, costUsd: 0.1 },
@@ -1008,12 +1008,12 @@ test('a running script card shows its last captured line; agent lines never repa
       subAgents: [] });
     await timers.settle(6);
     assert.equal(liveOf(), null, 'the previous execution\'s last line is not the new execution\'s');
-    frame(ctx, { type: 'log', runId: 'r1', source: 'runTests', level: 'info', text: 'retrying', nodeId: 'n_tests', executionId: 'x:n_tests:2' });
+    frame(ctx, { type: 'log', runId: R1, source: 'runTests', level: 'info', text: 'retrying', nodeId: 'n_tests', executionId: 'x:n_tests:2' });
     await timers.advance(320);
     assert.equal(liveOf().textContent, 'retrying');
     // One ellipsised line: the band never carries a 64 KiB log line (the runner's cap) into the DOM, and the
     // trailing-blank cut is linear (a /\s+$/ regex is quadratic on a long blank run that is not at the end).
-    frame(ctx, { type: 'log', runId: 'r1', source: 'runTests', level: 'info', text: `x${' '.repeat(70000)}y   `, nodeId: 'n_tests', executionId: 'x:n_tests:2' });
+    frame(ctx, { type: 'log', runId: R1, source: 'runTests', level: 'info', text: `x${' '.repeat(70000)}y   `, nodeId: 'n_tests', executionId: 'x:n_tests:2' });
     await timers.advance(320);
     assert.equal(liveOf().textContent.length, 240);
     assert.ok(liveOf().textContent.startsWith('x '));
@@ -1042,10 +1042,10 @@ const GLANCE_STEPS = () => ([
   { key: 'x:n_docs:1', executionId: 'x:n_docs:1', nodeId: 'n_docs', ordinal: 1, cycle: 1, kind: 'cycle', status: 'start', startedAt: T(2), endedAt: null, activeMs: 1000, runningSince: T(2), costUsd: 0 },
 ]);
 
-async function openGlance(ctx, hash = 'running/r1', over = {}) {
-  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Rate limit uploads', projectDir: PROJECT,
+async function openGlance(ctx, hash = `running/${R1}`, over = {}) {
+  frame(ctx, { type: 'run-created', runId: R1, title: 'Rate limit uploads', projectDir: PROJECT,
     status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: GLANCE_MANIFEST,
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: GLANCE_MANIFEST,
     active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }, { nodeId: 'n_docs', executionId: 'x:n_docs:1' }],
     steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 0.5, ...over });
   go(ctx.window, hash);
@@ -1058,7 +1058,7 @@ test('Details is a route: the run route opens Overview with the card; a Now row 
   const { window } = ctx;
   const rd = await openGlance(ctx);
   // One level: #running/<id> is Details on its Overview tab, the run card that tab's body.
-  assert.equal(window.location.hash, '#running/r1');
+  assert.equal(window.location.hash, `#running/${R1}`);
   assert.equal(rd.dataset.mode, 'details');
   assert.equal(rd.querySelector('.rd-details').hidden, false);
   assert.ok(tabOf(window, 'overview').classList.contains('active'), 'the glance route opens Overview');
@@ -1071,7 +1071,7 @@ test('Details is a route: the run route opens Overview with the card; a Now row 
   click(window, rd.querySelector('.rd-nowlist [data-rd-tab="workflow"]'));
   window.dispatchEvent(new window.Event('hashchange'));
   await settle(window, 4);
-  assert.equal(window.location.hash, '#running/r1/details/workflow');
+  assert.equal(window.location.hash, `#running/${R1}/details/workflow`);
   assert.equal(rd.dataset.mode, 'details');
   assert.ok(tabOf(window, 'workflow').classList.contains('active'), 'the row\'s tab is open');
   assert.ok(secOf(window, 'workflow').querySelector('.rd-graph .run-flow'), 'the graph lives in Workflow');
@@ -1081,7 +1081,7 @@ test('Details is a route: the run route opens Overview with the card; a Now row 
   window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   window.dispatchEvent(new window.Event('hashchange'));
   await settle(window, 4);
-  assert.equal(window.location.hash, '#running/r1/details/workflow', 'side by side, Escape keeps the pane and its tab');
+  assert.equal(window.location.hash, `#running/${R1}/details/workflow`, 'side by side, Escape keeps the pane and its tab');
   // Narrow (slide) layout: Escape goes back to the list.
   window.document.getElementById('runs-shell').dataset.layout = 'slide';
   window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -1100,13 +1100,13 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   };
   // Still `live` in History (the refetch after the finish has not landed), so the Running
   // page shows the result itself rather than handing over to the saved run.
-  const row = { ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main', pr: null };
+  const row = { ...HISTORY_ROW, id: P1, live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main', pr: null };
   const ctx = await boot({
     fetchHandler: (url) => {
       if (url.endsWith('/api/history/pr')) return ok({ ok: true });
       if (url.endsWith('/api/history')) return ok({ pipelines: [row], ghAvailable: true });
       if (url.endsWith('/api/budget')) return ok(okBudget());
-      if (url.includes('/api/runs/p1?projectDir=')) return ok({ state: { status: 'done' }, results, clarify: { questions: [], answers: [] } });
+      if (url.includes(`/api/runs/${P1}?projectDir=`)) return ok({ state: { status: 'done' }, results, clarify: { questions: [], answers: [] } });
       return null;
     },
   });
@@ -1114,7 +1114,7 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   await settle(ctx.window, 6);
   const { window } = ctx;
   const rd = await openGlance(ctx);
-  frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+  frame(ctx, { type: 'done', runId: R1, status: 'done' });
   await settle(window, 10);
   assert.equal(rd.dataset.glance, 'done');
   // No PR yet: the one run model's state and line (runs redesign slice 4), the same words as the Runs list.
@@ -1157,21 +1157,21 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   assert.equal(after.title, 'Start a follow-up run');
   assert.equal(after.getAttribute('aria-label'), 'Start a follow-up run');
   click(window, pr);
-  assert.equal(window.location.hash, `#history/${KEY}/p1`, 'it hands over to the ship-it flow');
+  assert.equal(window.location.hash, `#history/${KEY}/${P1}`, 'it hands over to the ship-it flow');
 });
 
 test('a finished run whose branch has only a closed pull request: Create pull request opens Ship it', async () => {
   // The history-pr rows carry a CLOSED PR (the Runs list draws its glyph). It must not
   // block the hand-over: only an open or merged PR does, as on the saved run's header.
-  const row = { ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main',
+  const row = { ...HISTORY_ROW, id: P1, live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main',
     pr: { state: 'CLOSED', url: 'https://github.com/o/r/pull/7', number: 7 } };
   const ctx = await boot({
     fetchHandler: (url) => {
       if (url.endsWith('/api/history/pr')) return ok({ ok: true });
       if (url.endsWith('/api/history')) return ok({ pipelines: [row], ghAvailable: true });
       if (url.endsWith('/api/budget')) return ok(okBudget());
-      if (url.includes(`/api/history/${KEY}/p1`)) return ok({ state: { status: 'done', steps: [] }, results: null });
-      if (url.includes('/api/runs/p1?projectDir=')) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
+      if (url.includes(`/api/history/${KEY}/${P1}`)) return ok({ state: { status: 'done', steps: [] }, results: null });
+      if (url.includes(`/api/runs/${P1}?projectDir=`)) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
       return null;
     },
   });
@@ -1179,7 +1179,7 @@ test('a finished run whose branch has only a closed pull request: Create pull re
   await settle(ctx.window, 6);
   const { window } = ctx;
   const rd = await openGlance(ctx);
-  frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+  frame(ctx, { type: 'done', runId: R1, status: 'done' });
   await settle(window, 10);
   const pr = rd.querySelector('.rd-head-acts .rd-pr-slot .rd-create-pr');
   assert.ok(pr, 'a closed PR still offers Create pull request');
@@ -1187,7 +1187,7 @@ test('a finished run whose branch has only a closed pull request: Create pull re
   // Folded (a fresh store's default): the end state's one line.
   assert.equal(rd.querySelector('.rd-route .rd-route-fold.is-closed').textContent, 'o/r#7 closed without merging');
   click(window, pr);
-  assert.equal(window.location.hash, `#history/${KEY}/p1`);
+  assert.equal(window.location.hash, `#history/${KEY}/${P1}`);
   window.dispatchEvent(new window.Event('hashchange'));
   await settle(window, 10);
   assert.equal(window.document.getElementById('shipit-modal').classList.contains('hidden'), false,
@@ -1197,7 +1197,7 @@ test('a finished run whose branch has only a closed pull request: Create pull re
 // Slice 3: the run's own PR is the card head's View PR │ ▾ (its ▾ holds Watch, Copy PR link and Fix conflicts) and the
 // tracker's PR step; no PR bar, no View PR in the bar.
 const PR_URL = 'https://github.com/o/r/pull/781';
-const prRow = (state, extra = {}) => ({ ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main',
+const prRow = (state, extra = {}) => ({ ...HISTORY_ROW, id: P1, live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main',
   pr: { state, url: PR_URL, number: 781, ...extra } });
 // The server's own shape (git-info.mjs rollupChecks / prMergeStatus): failing checks ARE the verdict, so no detail.
 const CHECKS = { checks: { state: 'failing', failed: 1, pending: 0, total: 15 }, mergeable: 'MERGEABLE',
@@ -1212,7 +1212,7 @@ async function prGlance({ row = prRow('OPEN'), level = 'advanced', checks = () =
       if (u.endsWith('/api/history/pr')) return ok({ ok: true });
       if (u.endsWith('/api/history')) return ok({ pipelines: [row], ghAvailable: true });
       if (u.endsWith('/api/budget')) return ok(okBudget());
-      if (u.includes('/api/runs/p1?projectDir=')) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
+      if (u.includes(`/api/runs/${P1}?projectDir=`)) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
       return more(u, opts);
     },
   });
@@ -1220,7 +1220,7 @@ async function prGlance({ row = prRow('OPEN'), level = 'advanced', checks = () =
   frame(ctx, { type: 'hello', runs: [] });
   await settle(ctx.window, 6);
   await openGlance(ctx);
-  frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+  frame(ctx, { type: 'done', runId: R1, status: 'done' });
   await settle(ctx.window, 10);
   const scr = ctx.window.document.querySelector('#run-detail');
   const caret = () => scr.querySelector('.rd-head-acts .rd-pr-split .rd-pr-more');
@@ -1260,7 +1260,7 @@ test('slice 3: an open PR is View PR │ ▾ in the card head and the route\'s p
 
 test('a live run\'s route ends at its base branch, where the work lands once the pull request is merged; no fold', async () => {
   const ctx = await bootRunning();
-  const rd = await openGlance(ctx, 'running/r1', { branch: { source: 'main', feature: 'worca-cc/rate-p1', worktreeDir: '/tmp/wt' } });
+  const rd = await openGlance(ctx, `running/${R1}`, { branch: { source: 'main', feature: 'worca-cc/rate-p1', worktreeDir: '/tmp/wt' } });
   const R = rd.querySelector('.rd-route');
   const rows = R.querySelectorAll('.rd-route-row');
   assert.equal(rows.length, 3, 'a live git run paints the route');
@@ -1273,7 +1273,7 @@ test('C5: a live Verifier run (PR-exempt as verify) says why it opens no PR, onc
   const ctx = await bootRunning();
   ctx.box.prAuto = { exempt: 'verify' };
   // Its own pipeline id: pr-auto-view's answer cache is shared by every app boot in this file (p1 is asked elsewhere).
-  const rd = await openGlance(ctx, 'running/r1', { id: 'p-verify', branch: { source: 'main', feature: 'worca-cc/verify-p1', worktreeDir: '/tmp/wt' } });
+  const rd = await openGlance(ctx, `running/${R1}`, { id: 'p-verify', branch: { source: 'main', feature: 'worca-cc/verify-p1', worktreeDir: '/tmp/wt' } });
   await settle(ctx.window, 6);
   const rows = [...rd.querySelectorAll('.rd-route .rd-route-row')];
   assert.equal(rows.length, 2, 'the branch and the PR row; nothing lands');
@@ -1292,7 +1292,7 @@ test('needle (c): at Advanced and Expert the ▾ lists one Watch switch, whose c
     assert.deepEqual(itemsOf(m).map(labelOf), ['Watch', 'Copy PR link']);
     click(ctx.window, sw[0]);
     await settle(ctx.window, 6);
-    assert.deepEqual(calls.watch, [{ id: 'p1', projectKey: KEY, watch: true }]);
+    assert.deepEqual(calls.watch, [{ id: P1, projectKey: KEY, watch: true }]);
     assert.equal(sw[0].getAttribute('aria-checked'), 'true');
     assert.ok(menu() && menu().isConnected, 'a toggle keeps the menu open');
   } })));
@@ -1432,7 +1432,7 @@ test('slice 3: a merged PR is View PR │ ▾ with the merge glyph, no checks fe
 
 test('slice 3: a PR that merges while its page is open never gets its checks words or Watch back', async () => {
   const url = 'https://github.com/o/r/pull/790';
-  const row = { ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main',
+  const row = { ...HISTORY_ROW, id: P1, live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main',
     pr: { state: 'OPEN', url, number: 790, checks: { state: 'pending', total: 15, failed: 0, pending: 3 } } };
   const ANSWER = { checks: { state: 'pending', total: 15, failed: 0, pending: 3 }, mergeable: 'MERGEABLE',
     status: { tone: 'run', label: 'Checks running', detail: '3 of 15 checks running' }, watch: { watching: true, status: 'idle' } };
@@ -1449,7 +1449,7 @@ test('slice 3: a PR that merges while its page is open never gets its checks wor
       if (u.endsWith('/api/history/pr')) return ok({ ok: true });
       if (u.endsWith('/api/history')) return ok({ pipelines: [structuredClone(row)], ghAvailable: true });
       if (u.endsWith('/api/budget')) return ok(okBudget());
-      if (u.includes('/api/runs/p1?projectDir=')) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
+      if (u.includes(`/api/runs/${P1}?projectDir=`)) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
       return null;
     },
   });
@@ -1457,14 +1457,14 @@ test('slice 3: a PR that merges while its page is open never gets its checks wor
   frame(ctx, { type: 'hello', runs: [] });
   await settle(ctx.window, 6);
   const rd = await openGlance(ctx);
-  frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+  frame(ctx, { type: 'done', runId: R1, status: 'done' });
   await settle(ctx.window, 10);
   const R = rd.querySelector('.rd-route');
   const rows = () => R.querySelectorAll('.rd-route-row');
   assert.ok(rows()[1].querySelector('button.rd-fact-watch'), 'the open PR reads Watching');
   assert.match(rows()[1].querySelector('.rd-route-second').textContent, /3 of 15 checks running/);
   hold = true;
-  frame(ctx, { type: 'pr-watch-changed', projectKey: row.projectKey, pipelineId: 'p1' });
+  frame(ctx, { type: 'pr-watch-changed', projectKey: row.projectKey, pipelineId: P1 });
   await settle(ctx.window, 4);
   assert.equal(held.length, 1, 'the refresh read is in flight');
   row.pr = { state: 'MERGED', url, number: 790 };
@@ -1479,7 +1479,7 @@ test('slice 3: a PR that merges while its page is open never gets its checks wor
   assert.doesNotMatch(R.textContent, /checks running/, 'the late answer paints no checks words');
   hold = false;
   const before = reads;
-  frame(ctx, { type: 'pr-watch-changed', projectKey: row.projectKey, pipelineId: 'p1' });
+  frame(ctx, { type: 'pr-watch-changed', projectKey: row.projectKey, pipelineId: P1 });
   await settle(ctx.window, 10);
   assert.equal(reads, before, 'a refresh reads no checks for a merged PR');
 });
@@ -1490,7 +1490,7 @@ test('slice 3: a pr-watch-changed frame re-reads the PR and the route\'s pull re
   const watch = () => scr.querySelectorAll('.rd-route .rd-route-row')[1].querySelector('.rd-route-second');
   assert.equal(watch().querySelector('button.rd-fact-watch').textContent, 'Watching');
   answer = { ...CHECKS, watch: { watching: true, status: 'fixing', activePipelineId: 'fx1' } };
-  frame(ctx, { type: 'pr-watch-changed', projectKey: KEY, pipelineId: 'p1' });
+  frame(ctx, { type: 'pr-watch-changed', projectKey: KEY, pipelineId: P1 });
   await settle(ctx.window, 10);
   assert.equal(watch().querySelector('.rd-fact-watch.is-run').textContent, 'Fixing');
   const fix = [...watch().querySelectorAll('a.rd-fact-link')].find((a) => a.textContent === 'View fix run');
@@ -1498,7 +1498,7 @@ test('slice 3: a pr-watch-changed frame re-reads the PR and the route\'s pull re
 });
 
 test('slice 3 (D12): How to merge on the live page opens the merge commands in the viewer', async () => {
-  const row = { ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/feat-ps', sourceBranch: 'main', pr: null, sameAsSource: true,
+  const row = { ...HISTORY_ROW, id: P1, live: true, survived: true, branch: 'worca-cc/feat-ps', sourceBranch: 'main', pr: null, sameAsSource: true,
     mergeBack: { merged: false, members: [{ projectKey: KEY, source: 'main', branch: 'worca-cc/feat-ps', merged: false, kind: 'dirty',
       reason: 'main is checked out with 2 uncommitted change(s)' }] } };
   const { ctx, scr, doc } = await prGlance({ row });
@@ -1514,7 +1514,7 @@ test('Details › Diff reads the live worktree while the run goes', async () => 
   const patch = 'diff --git a/src/limiter.js b/src/limiter.js\nnew file mode 100644\n--- /dev/null\n+++ b/src/limiter.js\n@@ -0,0 +1,2 @@\n+export const a = 1;\n+export const b = 2;\n';
   const ctx = await boot({
     fetchHandler: (url) => {
-      if (url.endsWith('/api/runs/r1/live-diff')) {
+      if (url.endsWith(`/api/runs/${R1}/live-diff`)) {
         return ok({ results: { summary: { filesNew: 1, filesChanged: 0, linesAdded: 2, linesRemoved: 0 },
           newFiles: [{ path: 'src/limiter.js', status: 'A', added: 2, removed: 0 }], changedFiles: [] }, patch, untrackedCapped: false });
       }
@@ -1526,7 +1526,7 @@ test('Details › Diff reads the live worktree while the run goes', async () => 
   frame(ctx, { type: 'hello', runs: [] });
   await settle(ctx.window, 6);
   const { window } = ctx;
-  await openGlance(ctx, 'running/r1/details/diff');
+  await openGlance(ctx, `running/${R1}/details/diff`);
   await settle(window, 8);
   const sec = secOf(window, 'diff');
   assert.equal(sec.hidden, false);
@@ -1536,7 +1536,7 @@ test('Details › Diff reads the live worktree while the run goes', async () => 
   assert.equal(sec.querySelectorAll('.hd-dl-row.hd-dl-add').length, 2, 'the patch lines render');
   assert.equal(tabOf(window, 'diff').querySelector('.rd-tab-badge').textContent, '1');
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/live-diff')).length, 1, 'fetched once, not per frame');
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: GLANCE_MANIFEST, steps: GLANCE_STEPS() });
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: GLANCE_MANIFEST, steps: GLANCE_STEPS() });
   await settle(window, 4);
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/live-diff')).length, 1);
 });
@@ -1551,21 +1551,21 @@ async function openLiveDiff({ model }) {
   const posts = [];
   const box = { model };
   const ctx = await boot({ fetchHandler: (url, opts) => {
-    if (url.endsWith('/api/runs/r1/live-diff')) {
+    if (url.endsWith(`/api/runs/${R1}/live-diff`)) {
       return ok({ results: { summary: { filesNew: 1, filesChanged: 1, linesAdded: 2, linesRemoved: 1 },
         newFiles: [{ path: '.env', status: 'A', added: 1, removed: 0 }],
         changedFiles: [{ path: 'src/limiter.js', status: 'M', added: 1, removed: 1 }] },
         patch: OPEN_PATCH, untrackedCapped: false, protectedPaths: ['.env'] });
     }
-    if (url.startsWith('/api/runs/p1/actions?')) return ok(typeof box.model === 'function' ? box.model() : box.model);
-    if (url.startsWith('/api/runs/p1/open-in-editor?')) { posts.push({ url, body: JSON.parse(opts.body) }); return ok({ ok: true }); }
+    if (url.startsWith(`/api/runs/${P1}/actions?`)) return ok(typeof box.model === 'function' ? box.model() : box.model);
+    if (url.startsWith(`/api/runs/${P1}/open-in-editor?`)) { posts.push({ url, body: JSON.parse(opts.body) }); return ok({ ok: true }); }
     if (url.endsWith('/api/history')) return ok({ pipelines: [], ghAvailable: false });
     if (url.endsWith('/api/budget')) return ok(okBudget());
     return null;
   } });
   frame(ctx, { type: 'hello', runs: [] });
   await settle(ctx.window, 6);
-  await openGlance(ctx, 'running/r1/details/diff');
+  await openGlance(ctx, `running/${R1}/details/diff`);
   await settle(ctx.window, 8);
   return { ctx, window: ctx.window, sec: secOf(ctx.window, 'diff'), posts, box };
 }
@@ -1583,7 +1583,7 @@ test('Diff: a live run offers Open in Cursor and opens its worktree', async () =
   open.click();
   await settle(window, 4);
   assert.deepEqual(posts.map((p) => p.body), [{}], 'the whole worktree: no member, no file');
-  assert.match(posts[0].url, /^\/api\/runs\/p1\/open-in-editor\?/);
+  assert.match(posts[0].url, new RegExp(`^/api/runs/${P1}/open-in-editor\\?`));
 });
 
 test('Diff: the file head icon opens the file at its first changed line; a protected file gets none', async () => {
@@ -1616,9 +1616,9 @@ test('Diff: the Open button goes when the run finishes', async () => {
   const { ctx, window, sec, box } = await openLiveDiff({ model: liveModel() });
   assert.ok(sec.querySelector('.rd-diff-open'));
   box.model = liveModel(undefined, { finished: true, checkoutBlocked: null });
-  const reads = () => ctx.calls.filter((c) => c.url.startsWith('/api/runs/p1/actions?')).length;
+  const reads = () => ctx.calls.filter((c) => c.url.startsWith(`/api/runs/${P1}/actions?`)).length;
   const before = reads();
-  frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+  frame(ctx, { type: 'done', runId: R1, status: 'done' });
   await settle(window, 10);
   assert.equal(secOf(window, 'diff').querySelector('.rd-diff-open'), null);
   assert.ok(reads() > before, 'the stale live model is read again');
@@ -1648,7 +1648,7 @@ test('live graph: the Chat run panel keeps it (CSS hides it only while the panel
   const { window } = ctx;
   const rd = await openGlance(ctx);
   rd.dataset.presentation = 'panel';   // as presentRunScreenInPanel sets it
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: GLANCE_MANIFEST,
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: GLANCE_MANIFEST,
     active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }], steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 0.6 });
   await settle(window, 6);
   assert.equal(rd.querySelector('.rd-sheet-nav > .rd-live').hidden, false, 'a running graph run shows it in the panel too');
@@ -1673,7 +1673,7 @@ test('a failed resume raises an error toast whose Retry replays the same options
         } },
       });
       const { window, recv } = ctx;
-      window.__np.getRun(ID).pipelineId = 'p1';
+      window.__np.getRun(ID).pipelineId = P1;
       recv({ type: 'state', runId: ID, status: 'paused', steps: [] });
       await settle(window);
       await window.__np.resumeRunFromCard(ID, null, { ignoreCostCap: true });
@@ -1738,8 +1738,8 @@ test('a refused pause raises an error toast; a refused Away-mode change puts the
 test('Escape typed in the terminal pane belongs to the shell: the run screen stays (#573)', async () => {
   const ctx = await bootRunning();
   const { window } = ctx;
-  const rd = await openGlance(ctx, 'running/r1/details/workflow');
-  assert.equal(window.location.hash, '#running/r1/details/workflow');
+  const rd = await openGlance(ctx, `running/${R1}/details/workflow`);
+  assert.equal(window.location.hash, `#running/${R1}/details/workflow`);
   // The slide layout, where the page's own Escape would step back to the list.
   window.document.getElementById('runs-shell').dataset.layout = 'slide';
   const pane = window.document.querySelector('body > .term-pane');
@@ -1749,7 +1749,7 @@ test('Escape typed in the terminal pane belongs to the shell: the run screen sta
   input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   window.dispatchEvent(new window.Event('hashchange'));
   await settle(window, 4);
-  assert.equal(window.location.hash, '#running/r1/details/workflow');
+  assert.equal(window.location.hash, `#running/${R1}/details/workflow`);
   assert.equal(rd.dataset.mode, 'details');
 });
 
@@ -1791,7 +1791,7 @@ test('Agents (live): a sub-agent type named like an Object member keeps its own 
     subAgents: [row('s1', 'constructor'), row('s2', 'toString'), row('s3', '__proto__')],
   });
   const { window } = ctx;
-  click(window, tabOf(window, 'agents'));
+  openTab(window, tabOf(window, 'agents'));
   await settle(window);
   assert.deepEqual([...secOf(window, 'agents').querySelectorAll('.rd-ag-row .agent-type-pill')].map((p) => p.textContent),
     ['constructor', 'toString', '__proto__']);
@@ -1803,9 +1803,9 @@ const runBarOf = (screen) => screen.querySelector('.rd-glance .rd-sheet .run-sta
 
 test('the run page carries the progress bar in its status block, and no chain bar or slice line', async () => {
   const ctx = await bootRunning();
-  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1 });
-  go(ctx.window, 'running/r1');
+  frame(ctx, { type: 'run-created', runId: R1, title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1 });
+  go(ctx.window, `running/${R1}`);
   await settle(ctx.window, 6);
   const screen = ctx.window.document.querySelector('#run-detail');
   const bar = runBarOf(screen);
@@ -1825,9 +1825,9 @@ test('the run page carries the progress bar in its status block, and no chain ba
 
 test('a failed run has no bar and draws the "!" symbol (D20)', async () => {
   const ctx = await bootRunning();
-  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'error', stepper: V2_MANIFEST, steps: V2_STEPS(), subAgents: [], totalCostUsd: 1 });
-  go(ctx.window, 'running/r1');
+  frame(ctx, { type: 'run-created', runId: R1, title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'error', stepper: V2_MANIFEST, steps: V2_STEPS(), subAgents: [], totalCostUsd: 1 });
+  go(ctx.window, `running/${R1}`);
   await settle(ctx.window, 6);
   const screen = ctx.window.document.querySelector('#run-detail');
   assert.equal(runBarOf(screen).hidden, true);
@@ -1837,9 +1837,9 @@ test('a failed run has no bar and draws the "!" symbol (D20)', async () => {
 
 async function openProgressRun(over = {}) {
   const ctx = await bootRunning();
-  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1, ...over });
-  go(ctx.window, 'running/r1');
+  frame(ctx, { type: 'run-created', runId: R1, title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1, ...over });
+  go(ctx.window, `running/${R1}`);
   await settle(ctx.window, 6);
   return { ctx, screen: ctx.window.document.querySelector('#run-detail') };
 }
@@ -1848,7 +1848,7 @@ test('a question turns the run page bar amber and the status line says what need
   const { ctx, screen } = await openProgressRun();
   assert.equal(runBarOf(screen).dataset.tone, 'blue');
   assert.ok(runBarOf(screen).querySelector('.run-prog-fill'));
-  frame(ctx, { type: 'question', runId: 'r1', ...clarify() });
+  frame(ctx, { type: 'question', runId: R1, ...clarify() });
   await settle(ctx.window, 6);
   assert.equal(runBarOf(screen).dataset.tone, 'amber');
   assert.equal(statusOf(screen).dataset.state, 'needs-you');
@@ -1859,7 +1859,7 @@ test('a question turns the run page bar amber and the status line says what need
 test('a finished run that reached the end reads Ready and hides its bar (D20)', async () => {
   const { ctx, screen } = await openProgressRun();
   const steps = V2_STEPS().map((s) => ({ ...s, status: 'done' }));
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'done', endReached: true, stepper: V2_MANIFEST, steps, active: [], subAgents: [], totalCostUsd: 1 });
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'done', endReached: true, stepper: V2_MANIFEST, steps, active: [], subAgents: [], totalCostUsd: 1 });
   await settle(ctx.window, 6);
   assert.equal(statusOf(screen).dataset.state, 'ready');
   assert.equal(runBarOf(screen).hidden, true, 'a finished run states its end once, in the status line');
@@ -1871,9 +1871,9 @@ test('the progress tone equals the status family for every status, with and with
     const np = ctx.window.__np;
     // A question frame sticks to the run, so each status is checked without it first, then with it.
     for (const pendingQuestion of [false, true]) {
-      frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status, stepper: V2_MANIFEST, steps: V2_STEPS(), active: [], subAgents: [], totalCostUsd: 1 });
-      if (pendingQuestion) frame(ctx, { type: 'question', runId: 'r1', ...clarify() });
-      const r = np.getRun('r1');
+      frame(ctx, { type: 'state', runId: R1, id: P1, status, stepper: V2_MANIFEST, steps: V2_STEPS(), active: [], subAgents: [], totalCostUsd: 1 });
+      if (pendingQuestion) frame(ctx, { type: 'question', runId: R1, ...clarify() });
+      const r = np.getRun(R1);
       assert.equal(Boolean(r.pendingQuestion), pendingQuestion, `${status}: the question frame reached the run`);
       assert.equal(np.runDecorFor(r).stageProgress.tone, np.runStatusMeta(r).family, `${status} ${pendingQuestion ? '+ question' : ''}`);
     }
@@ -1899,11 +1899,11 @@ const STAGED_V2 = () => {
 };
 const CHAIN_OF_THREE = () => [{ id: 'p:p0', title: 'Chain', members: [
   { pipelineId: 'p0', ticketId: null, state: 'done', title: 'Zero', projectDir: PROJECT },
-  { pipelineId: 'p1', ticketId: null, state: 'current', title: 'Add dark mode', projectDir: PROJECT },
+  { pipelineId: P1, ticketId: null, state: 'current', title: 'Add dark mode', projectDir: PROJECT },
   { pipelineId: null, ticketId: 'tick3', state: 'waiting', title: 'Third', projectDir: PROJECT },
 ] }];
 const FEATURE_OF_THREE = () => [{ id: 'feat_1', kind: 'feature', title: 'Charts', projectKey: null, planning: null, cost: { usd: 0, byPipeline: {} },
-  members: [1, 2, 3].map((i) => ({ position: i, title: `Slice ${i}`, pipelineId: `p${i - 1}`, ticketId: null, status: i === 1 ? 'done' : 'running', pr: null, ticket: null, adhoc: false, after: null })) }];
+  members: [1, 2, 3].map((i) => ({ position: i, title: `Slice ${i}`, pipelineId: i === 2 ? P1 : `p${i - 1}`, ticketId: null, status: i === 1 ? 'done' : 'running', pr: null, ticket: null, adhoc: false, after: null })) }];
 // A run in a group has no group row in its facts block and no kind chip: the breadcrumb names its place and links the group.
 const groupLineOf = (screen) => screen.querySelector('.rd-glance .rd-sheet .rd-kv [data-fact="group"]');
 const headChip = (screen) => screen.querySelector('.rd-glance .rd-page-head .kind-chip');
@@ -1911,9 +1911,9 @@ const crumbs = (screen) => [...screen.querySelectorAll('.rd-bar .rd-crumbs .rd-c
 const groupCrumbHref = (screen) => (crumbs(screen)[1] || [])[1] || null;
 
 async function openChainRun(ctx) {
-  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: STAGED_V2(), steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1 });
-  go(ctx.window, 'running/r1');
+  frame(ctx, { type: 'run-created', runId: R1, title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: STAGED_V2(), steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1 });
+  go(ctx.window, `running/${R1}`);
   await settle(ctx.window, 8);
   return ctx.window.document.querySelector('#run-detail');
 }
@@ -1941,7 +1941,7 @@ test('a live slice\'s breadcrumb links the feature page; no chip; a repaint keep
   assert.equal(headChip(screen), null);
   assert.equal(groupCrumbHref(screen), '#feature/feat_1');
   assert.equal(screen.querySelector('.rd-slice-line'), null, 'no slice line');
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: STAGED_V2(), steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 2 });
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: STAGED_V2(), steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 2 });
   await settle(ctx.window, 4);
   assert.equal(headChip(screen), null);
   assert.equal(screen.querySelectorAll('.rd-bar .rd-crumbs .rd-crumb').length, 3, 'painting twice leaves one breadcrumb');
@@ -1965,7 +1965,7 @@ test('a failing /api/schedules is not refetched by repaints; the run reads as in
   const asked = ctx.calls.filter((c) => c.url.endsWith('/api/schedules')).length;
   assert.ok(asked >= 1, 'the chain lookup asked');
   for (let i = 0; i < 3; i++) {
-    frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: STAGED_V2(), steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1 + i });
+    frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: STAGED_V2(), steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1 + i });
     await settle(ctx.window, 4);
   }
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/api/schedules')).length, asked, 'repaints do not refetch a failing lookup');
@@ -1982,7 +1982,7 @@ test('run page: Apply to branch clears the kept head, and a later state frame do
     },
   });
   const { window, recv } = ctx;
-  window.__np.getRun(ID).pipelineId = 'p1';
+  window.__np.getRun(ID).pipelineId = P1;
   const RETAINED = {
     type: 'state', runId: ID, status: 'done', steps: [],
     branch: { source: 'main', feature: 'worca-cc/auth', worktreeDir: '/tmp/wt',
@@ -2003,19 +2003,19 @@ test('run page: Apply to branch clears the kept head, and a later state frame do
 // `actions`: the Actions model (a function reads it per request), or 'fail'; `arms(url, opts)` answers other calls first.
 async function checkoutGlance(level, { actions = null, arms = null } = {}) {
   const CO = { members: [{ projectKey: KEY, worktreeDir: '/tmp/co', branch: 'worca-cc/dark-p1', at: new Date().toISOString(), policy: 'on-demand' }] };
-  const box = { rows: [{ ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main', pr: null, checkout: CO }] };
+  const box = { rows: [{ ...HISTORY_ROW, id: P1, live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main', pr: null, checkout: CO }] };
   const ctx = await boot({
     fetchHandler: (url, opts) => {
       const armed = arms && arms(url, opts);
       if (armed) return armed;
-      if (actions && url.includes('/api/runs/p1/actions?')) {
+      if (actions && url.includes(`/api/runs/${P1}/actions?`)) {
         if (actions === 'fail') return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
         return ok(typeof actions === 'function' ? actions() : actions);
       }
       if (url.endsWith('/api/history/pr')) return ok({ ok: true });
       if (url.endsWith('/api/history')) return ok({ pipelines: box.rows, ghAvailable: true });
       if (url.endsWith('/api/budget')) return ok(okBudget());
-      if (url.includes('/api/runs/p1?projectDir=')) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
+      if (url.includes(`/api/runs/${P1}?projectDir=`)) return ok({ state: { status: 'done' }, results: null, clarify: { questions: [], answers: [] } });
       return null;
     },
   });
@@ -2023,7 +2023,7 @@ async function checkoutGlance(level, { actions = null, arms = null } = {}) {
   frame(ctx, { type: 'hello', runs: [] });
   await settle(ctx.window, 6);
   await openGlance(ctx);
-  frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
+  frame(ctx, { type: 'done', runId: R1, status: 'done' });
   await settle(ctx.window, 10);
   const discard = async () => {
     box.rows = [{ ...box.rows[0], checkout: null }];
@@ -2074,14 +2074,14 @@ test('run page card head, Simple: a checked-out run shows Start <first service>,
 
 test('run page card head: an Actions model that cannot be read says Checked out and is not asked for on every paint', async () => {
   const { ctx, doc } = await checkoutGlance('advanced', { actions: 'fail' });
-  for (let i = 0; i < 3; i++) { frame(ctx, { type: 'done', runId: 'r1', status: 'done' }); await settle(ctx.window, 4); }
+  for (let i = 0; i < 3; i++) { frame(ctx, { type: 'done', runId: R1, status: 'done' }); await settle(ctx.window, 4); }
   assert.equal(runHead(doc, 'try-note')?.textContent, 'Checked out');
-  const reads = ctx.calls.filter((c) => c.url.includes('/api/runs/p1/actions?')).length;
+  const reads = ctx.calls.filter((c) => c.url.includes(`/api/runs/${P1}/actions?`)).length;
   assert.ok(reads >= 1 && reads <= 2, `one read (two with the Overview strip), not one per paint: ${reads}`);
 });
 
-const GLANCE_WEB_READY = { instanceId: `act:p1:${KEY}:web`, runId: 'p1', member: KEY, actionId: 'web', label: 'Web', kind: 'service',
-  status: 'ready', ports: { PORT: 4417 }, url: 'http://localhost:4417', startedAt: 1, readyError: null };
+const GLANCE_WEB_READY = () => ({ instanceId: `act:${P1}:${KEY}:web`, runId: P1, member: KEY, actionId: 'web', label: 'Web', kind: 'service',
+  status: 'ready', ports: { PORT: 4417 }, url: 'http://localhost:4417', startedAt: 1, readyError: null });
 
 test('run page card head: a project with no service links its Actions tab', async () => {
   const model = { ...GLANCE_MODEL, members: [{ ...GLANCE_MODEL.members[0], actions: [{ id: 'test', label: 'Test', kind: 'task' }] }] };
@@ -2098,10 +2098,10 @@ test('run page card head: Start <first service> starts it, then Open :port and S
   const { ctx, doc } = await checkoutGlance('advanced', {
     actions: () => model,
     arms: (url, opts) => {
-      if (!url.includes('/api/runs/p1/actions/web/start') || opts.method !== 'POST') return null;
+      if (!url.includes(`/api/runs/${P1}/actions/web/start`) || opts.method !== 'POST') return null;
       posts.push(JSON.parse(opts.body));
-      model = { ...GLANCE_MODEL, instances: [GLANCE_WEB_READY] };
-      return ok(GLANCE_WEB_READY);
+      model = { ...GLANCE_MODEL, instances: [GLANCE_WEB_READY()] };
+      return ok(GLANCE_WEB_READY());
     },
   });
   runHead(doc, 'try-start').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
@@ -2120,7 +2120,7 @@ test('run page card head, Simple: a service started elsewhere shows Open here on
   // frame too), as on a screen whose Details tabs never opened.
   for (const el of doc.querySelectorAll('#run-detail *')) el.__actionsCtl?.destroy();
   for (const el of doc.querySelectorAll('#run-detail .act-strip')) el.remove();
-  model = { ...GLANCE_MODEL, instances: [GLANCE_WEB_READY] };
+  model = { ...GLANCE_MODEL, instances: [GLANCE_WEB_READY()] };
   frame(ctx, { type: 'actions-changed' });
   await settle(ctx.window, 6);
   assert.equal(runHead(doc, 'try-open')?.textContent, 'Open :4417');
@@ -2131,9 +2131,9 @@ test('run page card head, Simple: a service started elsewhere shows Open here on
 // ---------------------------------------------------------------------------
 // `live: true`: History has not caught up with the stop yet. A terminal row hands the page off to the saved run
 // (rdSavedRow), so the live page shows a finished run only in that window.
-const liveRow = (over = {}) => ({ ...HISTORY_ROW, id: 'p1', title: 'Rate limit uploads', status: 'stopped', live: true, ...over });
-const liveCheckout = { members: [{ projectKey: KEY, worktreeDir: '/tmp/co', branch: 'worca/p1',
-  at: new Date().toISOString(), policy: 'on-demand', setup: { status: 'ok' } }] };
+const liveRow = (over = {}) => ({ ...HISTORY_ROW, id: P1, title: 'Rate limit uploads', status: 'stopped', live: true, ...over });
+const liveCheckout = () => ({ members: [{ projectKey: KEY, worktreeDir: '/tmp/co', branch: `worca/${P1}`,
+  at: new Date().toISOString(), policy: 'on-demand', setup: { status: 'ok' } }] });
 const openRdMore = (ctx) => {
   const doc = ctx.window.document;
   doc.querySelector('#run-detail .rd-bar-more').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
@@ -2143,7 +2143,7 @@ const rdLabel = (b) => b.querySelector('.wfv-menu-l').textContent;
 
 test('Rerun, live page: greyed with its visible hint while the run runs, enabled once it has ended; inert when greyed', async () => {
   const ctx = await bootRunning({ rows: [liveRow()] });
-  await openGlance(ctx, 'running/r1', { status: 'running' });
+  await openGlance(ctx, `running/${R1}`, { status: 'running' });
   const running = openRdMore(ctx).find((b) => rdLabel(b) === 'Rerun');
   assert.ok(running, 'offered on a run with a pipeline id');
   assert.equal(running.disabled, true);
@@ -2155,7 +2155,7 @@ test('Rerun, live page: greyed with its visible hint while the run runs, enabled
   ctx.window.document.querySelector('body > .wfv-menu')?.remove();
 
   const ended = await bootRunning({ rows: [liveRow()] });
-  await openGlance(ended, 'running/r1', { status: 'stopped', active: [] });
+  await openGlance(ended, `running/${R1}`, { status: 'stopped', active: [] });
   const items = openRdMore(ended);
   const rerun = items.find((b) => rdLabel(b) === 'Rerun');
   assert.equal(rerun.disabled, false);
@@ -2166,8 +2166,8 @@ test('Rerun, live page: greyed with its visible hint while the run runs, enabled
 
 test('Rerun of …: the live page links the run it was copied from (from its state, no saved-run read), or says it is gone, as text only', async () => {
   const ctx = await bootRunning();
-  const rd = await openGlance(ctx, 'running/r1', { rerunOf: { id: 'src00001', key: KEY, title: 'Old <b>run</b>', exists: true } });
-  assert.equal(ctx.calls.filter((c) => c.url.startsWith('/api/runs/p1?')).length, 0, 'a live run never reads its saved run for the link');
+  const rd = await openGlance(ctx, `running/${R1}`, { rerunOf: { id: 'src00001', key: KEY, title: 'Old <b>run</b>', exists: true } });
+  assert.equal(ctx.calls.filter((c) => c.url.startsWith(`/api/runs/${P1}?`)).length, 0, 'a live run never reads its saved run for the link');
   const row = rd.querySelector('.rd-kv [data-fact="rerun"]');
   assert.equal(row.hidden, false);
   const a = row.querySelector('a');
@@ -2176,20 +2176,20 @@ test('Rerun of …: the live page links the run it was copied from (from its sta
   assert.equal(row.querySelector('b'), null);
 
   const gone = await bootRunning();
-  const rd2 = await openGlance(gone, 'running/r1', { rerunOf: { id: 'src00001', key: null, title: null, exists: false } });
+  const rd2 = await openGlance(gone, `running/${R1}`, { rerunOf: { id: 'src00001', key: null, title: null, exists: false } });
   const row2 = rd2.querySelector('.rd-kv [data-fact="rerun"]');
   assert.equal(row2.hidden, false);
   assert.equal(row2.querySelector('a'), null);
   assert.equal(row2.querySelector('.rd-kv-v').textContent, 'Copied from a run that no longer exists');
 
   const plain = await bootRunning();
-  const rd3 = await openGlance(plain, 'running/r1');
+  const rd3 = await openGlance(plain, `running/${R1}`);
   assert.equal(rd3.querySelector('.rd-kv [data-fact="rerun"]').hidden, true, 'a run that is no rerun has no row');
 });
 
 test('needle (e), live: a stopped run has one Archive, in ⋯; confirming archives it and shows the list', async () => {
   const ctx = await bootRunning({ rows: [liveRow()] });
-  const rd = await openGlance(ctx, 'running/r1', { status: 'stopped', active: [] });
+  const rd = await openGlance(ctx, `running/${R1}`, { status: 'stopped', active: [] });
   const doc = ctx.window.document;
   assert.equal([...rd.querySelectorAll('button')].filter((b) => b.textContent.trim() === 'Archive' && !b.closest('[hidden]')).length, 0);
   assert.equal(rd.querySelectorAll('.rd-actions [data-model-action="archive"], .rd-actions [data-model-action="report"], .rd-actions [data-model-action="resume"]').length, 0);
@@ -2203,15 +2203,15 @@ test('needle (e), live: a stopped run has one Archive, in ⋯; confirming archiv
   assert.equal(doc.getElementById('confirm-title').textContent, 'Archive this run?');
   doc.querySelector('#confirm-ok').click();
   await settle(ctx.window, 6);
-  assert.equal(ctx.calls.filter((c) => c.opts.method === 'DELETE' && /\/api\/runs\/p1\?/.test(c.url)).length, 1);
+  assert.equal(ctx.calls.filter((c) => c.opts.method === 'DELETE' && new RegExp(`/api/runs/${P1}\\?`).test(c.url)).length, 1);
   assert.equal(lastToast(doc).title, 'Run archived');
   assert.equal(ctx.window.location.hash, '#runs');
   assert.equal(doc.querySelector('#run-shell').classList.contains('detail-open'), false);
 });
 
 test('needle (e), live: checked out, the ⋯ Archive is disabled with "Close the local copy in Actions first"', async () => {
-  const ctx = await bootRunning({ rows: [liveRow({ checkout: liveCheckout })] });
-  await openGlance(ctx, 'running/r1', { status: 'stopped', active: [] });
+  const ctx = await bootRunning({ rows: [liveRow({ checkout: liveCheckout() })] });
+  await openGlance(ctx, `running/${R1}`, { status: 'stopped', active: [] });
   const archive = openRdMore(ctx).find((b) => rdLabel(b) === 'Archive');
   assert.equal(archive.disabled, true);
   assert.equal(archive.title, 'Close the local copy in Actions first');
@@ -2219,7 +2219,7 @@ test('needle (e), live: checked out, the ⋯ Archive is disabled with "Close the
 
 test('slice 2, live: a finished run History has not listed yet still offers Archive, addressed by the run itself', async () => {
   const ctx = await bootRunning({ rows: [] });
-  await openGlance(ctx, 'running/r1', { status: 'stopped', active: [] });
+  await openGlance(ctx, `running/${R1}`, { status: 'stopped', active: [] });
   const doc = ctx.window.document;
   const archive = openRdMore(ctx).find((b) => rdLabel(b) === 'Archive');
   assert.ok(archive, 'no History row is needed to offer Archive');
@@ -2229,7 +2229,7 @@ test('slice 2, live: a finished run History has not listed yet still offers Arch
   assert.equal(doc.getElementById('confirm-title').textContent, 'Archive this run?');
   doc.querySelector('#confirm-ok').click();
   await settle(ctx.window, 6);
-  const del = ctx.calls.filter((c) => c.opts.method === 'DELETE' && /\/api\/runs\/p1\?/.test(c.url));
+  const del = ctx.calls.filter((c) => c.opts.method === 'DELETE' && new RegExp(`/api/runs/${P1}\\?`).test(c.url));
   assert.equal(del.length, 1);
   assert.equal(new URL(del[0].url, 'http://x').searchParams.get('projectDir'), PROJECT);
   assert.equal(lastToast(doc).title, 'Run archived');
@@ -2237,10 +2237,10 @@ test('slice 2, live: a finished run History has not listed yet still offers Arch
 
 test('slice 2, live: a checkout that arrives through a History refresh (no new frame) gates the next ⋯ open', async () => {
   const ctx = await bootRunning({ rows: [liveRow()] });
-  await openGlance(ctx, 'running/r1', { status: 'stopped', active: [] });
+  await openGlance(ctx, `running/${R1}`, { status: 'stopped', active: [] });
   assert.equal(openRdMore(ctx).find((b) => rdLabel(b) === 'Archive').disabled, false);
   openRdMore(ctx);                                         // the toggle closes it
-  ctx.box.rows = [liveRow({ checkout: liveCheckout })];
+  ctx.box.rows = [liveRow({ checkout: liveCheckout() })];
   frame(ctx, { type: 'pipelines-changed' });
   await settle(ctx.window, 8);
   const archive = openRdMore(ctx).find((b) => rdLabel(b) === 'Archive');
@@ -2260,22 +2260,22 @@ test('slice 2, live: a running run lists Away mode in ⋯, and no Archive or Rep
 
 // s2 (D2, D7): the route of a live chain run lands in the chain's base, never in Run 1's branch; the route adds no
 // second chain lookup, and a failed one ends the pending state.
-const CHAIN_OF_TWO = () => [{ id: 'p:p1', title: 'Chain', members: [
-  { pipelineId: 'p1', ticketId: null, state: 'done', title: 'One', projectDir: PROJECT },
-  { pipelineId: 'p2', ticketId: null, state: 'current', title: 'Two', projectDir: PROJECT, stacks: true },
+const CHAIN_OF_TWO = () => [{ id: `p:${P1}`, title: 'Chain', members: [
+  { pipelineId: P1, ticketId: null, state: 'done', title: 'One', projectDir: PROJECT },
+  { pipelineId: P2, ticketId: null, state: 'current', title: 'Two', projectDir: PROJECT, stacks: true },
 ] }];
-const RUN1_ROW = { ...HISTORY_ROW, id: 'p1', title: 'One', branch: 'feat/c1', sourceBranch: 'dev' };
+const RUN1_ROW = () => ({ ...HISTORY_ROW, id: P1, title: 'One', branch: 'feat/c1', sourceBranch: 'dev' });
 async function openChainRoute(ctx) {
-  frame(ctx, { type: 'run-created', runId: 'r2', title: 'Two', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
-  frame(ctx, { type: 'state', runId: 'r2', id: 'p2', status: 'running', stepper: GLANCE_MANIFEST, active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }],
+  frame(ctx, { type: 'run-created', runId: R2, title: 'Two', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: R2, id: P2, status: 'running', stepper: GLANCE_MANIFEST, active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }],
     steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 0.5, branch: { source: 'feat/c1', feature: 'feat/c2', worktreeDir: '/tmp/wt' } });
-  go(ctx.window, 'running/r2');
+  go(ctx.window, `running/${R2}`);
   await settle(ctx.window, 8);
   return ctx.window.document.querySelector('#run-detail .rd-route');
 }
 
 test('s2: a deep-linked live chain run builds on Run 1 and lands when the chain ships; one /api/schedules ask', async () => {
-  const ctx = await bootRunning({ rows: [RUN1_ROW] });
+  const ctx = await bootRunning({ rows: [RUN1_ROW()] });
   ctx.box.chains = CHAIN_OF_TWO();
   const route = await openChainRoute(ctx);
   const rows = route.querySelectorAll('.rd-route-row');
@@ -2286,7 +2286,7 @@ test('s2: a deep-linked live chain run builds on Run 1 and lands when the chain 
   const asked = () => ctx.calls.filter((c) => c.url.endsWith('/api/schedules')).length;
   assert.equal(asked(), 1, 'the Runs-section entry load only');
   for (let i = 0; i < 2; i++) {
-    frame(ctx, { type: 'state', runId: 'r2', id: 'p2', status: 'running', stepper: GLANCE_MANIFEST, active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }],
+    frame(ctx, { type: 'state', runId: R2, id: P2, status: 'running', stepper: GLANCE_MANIFEST, active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }],
       steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 1 + i });
     await settle(ctx.window, 4);
   }
@@ -2314,9 +2314,9 @@ const reply = (status, body) => ({ ok: status < 400, status, json: async () => b
 
 async function openRunPage(status) {
   const ctx = await bootRunning();
-  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status, stepper: V2_MANIFEST, steps: V2_STEPS(), active: [], subAgents: [], totalCostUsd: 1 });
-  go(ctx.window, 'running/r1');
+  frame(ctx, { type: 'run-created', runId: R1, title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: R1, id: P1, status, stepper: V2_MANIFEST, steps: V2_STEPS(), active: [], subAgents: [], totalCostUsd: 1 });
+  go(ctx.window, `running/${R1}`);
   await settle(ctx.window, 6);
   ctx.screen = ctx.window.document.querySelector('#run-detail');
   return ctx;
@@ -2334,12 +2334,12 @@ test('the run page shows Pausing… at the Pause click, keeps it through a stale
         assert.match(statusOf(ctx.screen).dataset.text, /pausing/i, 'the run page says pausing at the click');
         assert.equal(btn.disabled, true, 'Pause stays disabled while the request runs');
         // The socket reconnects under load; the server took this snapshot before it handled the pause.
-        frame(ctx, { type: 'hello', runs: [live('r1', { pipelineId: 'p1', status: 'running' })] });
+        frame(ctx, { type: 'hello', runs: [live(R1, { pipelineId: P1, status: 'running' })] });
         await settle(ctx.window, 2);
         assert.match(statusOf(ctx.screen).dataset.text, /pausing/i, 'a stale hello does not flip it back to Running');
         hold.release(reply(200, { ok: true }));
         await settle(ctx.window, 2);
-        frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'paused' });
+        frame(ctx, { type: 'state', runId: R1, id: P1, status: 'paused' });
         await settle(ctx.window, 2);
         assert.equal(statusOf(ctx.screen).dataset.state, 'paused');
         assert.doesNotMatch(statusOf(ctx.screen).dataset.text, /pausing/i, 'the server status takes over');
@@ -2371,7 +2371,7 @@ test('the run page shows Pausing… at the Pause click, keeps it through a stale
         assert.match(statusOf(ctx.screen).dataset.text, /pausing/i, 'no flash of Running');
         assert.notEqual(lastToast(ctx.window.document)?.title, 'Could not pause the run', 'not reported as a failure');
         // Any next status replaces it, even 'running' (nothing is left waiting on this tab's pause).
-        frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }] });
+        frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }] });
         await settle(ctx.window, 2);
         assert.equal(statusOf(ctx.screen).dataset.state, 'working');
       } finally { hold.restore(); }
@@ -2417,7 +2417,7 @@ test('a CANNOT_PAUSE refusal keeps Pause disabled while it reads Pausing…, and
     const btn = ctx.screen.querySelector('.rd-pause');
     assert.match(statusOf(ctx.screen).dataset.text, /pausing/i);
     assert.equal(btn.disabled, true, 'Pause is not clickable while the run reads Pausing…');
-    frame(ctx, { type: 'cost', runId: 'r1', totalCostUsd: 2 });
+    frame(ctx, { type: 'cost', runId: R1, totalCostUsd: 2 });
     await settle(ctx.window, 2);
     assert.equal(btn.disabled, true, 'a frame landing before the status does not re-enable it');
     return { ctx, btn };
@@ -2425,7 +2425,7 @@ test('a CANNOT_PAUSE refusal keeps Pause disabled while it reads Pausing…, and
   await checkRows([
     { name: 'the next status is paused: the control is Resume, enabled', run: async () => {
       const { ctx, btn } = await refuse();
-      frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'paused' });
+      frame(ctx, { type: 'state', runId: R1, id: P1, status: 'paused' });
       await settle(ctx.window, 2);
       assert.equal(btn.dataset.action, 'resume');
       assert.equal(btn.querySelector('.rd-btn-label').textContent, 'Resume');
@@ -2433,7 +2433,7 @@ test('a CANNOT_PAUSE refusal keeps Pause disabled while it reads Pausing…, and
     } },
     { name: 'the next status is running again: Pause, enabled, not stuck', run: async () => {
       const { ctx, btn } = await refuse();
-      frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }] });
+      frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }] });
       await settle(ctx.window, 2);
       assert.equal(btn.dataset.action, 'pause');
       assert.equal(btn.disabled, false, 'Pause can be clicked again');
@@ -2482,20 +2482,20 @@ const D2_SLICE = { featureId: 'feat_d2', title: 'Charts everywhere', index: 2, t
   owns: [{ id: 'R-po-1', text: 'Export the report', pass: null }, { id: 'R-arch-10', text: 'It stays fast', pass: true }],
   startsFrom: { kind: 'run', run: 1, branch: 'f/1', text: 'the latest finished run (run 1)' },
   stored: { planVersion: 2, planReviewed: true, tests: null } };
-const sliceGets = (ctx) => ctx.calls.filter((c) => /\/api\/shape\/pipelines\/p1\/slice$/.test(c.url)).length;
+const sliceGets = (ctx) => ctx.calls.filter((c) => new RegExp(`/api/shape/pipelines/${P1}/slice$`).test(c.url)).length;
 const visibleAgentsPlaces = (window) => {
   const d = window.document;
   const box = [...d.querySelectorAll('#run-detail .rd-run-agents')].filter((x) => !x.hidden && !x.closest('[hidden]'));
   const tab = [...d.querySelectorAll('#run-detail .rd-tab[data-sec="agents"]')].filter((x) => !x.hidden);
   return box.length + tab.length;
 };
-async function openCareRun({ flag = true, slice = D2_SLICE, careRun = D2_CARE, route = 'running/r1', state = {} } = {}) {
+async function openCareRun({ flag = true, slice = D2_SLICE, careRun = D2_CARE, route = `running/${R1}`, state = {} } = {}) {
   const ctx = await bootRunning();
   if (flag) applyFlags({ shaperSmallRuns: true }, ctx.window.document);
   if (slice !== undefined) ctx.box.slice = slice;
-  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Export', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'run-created', runId: R1, title: 'Export', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
   // careRun null: no manifest yet (the client swaps a manifest only when its node ids change, so careRun comes with it).
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', ...(careRun ? { stepper: d2Manifest(careRun) } : {}), steps: d2Steps(),
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', ...(careRun ? { stepper: d2Manifest(careRun) } : {}), steps: d2Steps(),
     active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }], subAgents: SUBS(),
     branch: { source: 'main', feature: 'f/2', worktreeDir: '/tmp/wt' }, ...state });
   go(ctx.window, route);
@@ -2516,12 +2516,12 @@ test('D2 (D11): flag on, a Care run at Expert: the Agents tab is hidden, one vis
 });
 
 test('D2 (D11): a frame without careRun (no manifest yet), then one with it: 1 Agents place; an active, focused Agents tab hands over to Overview', async () => {
-  const ctx = await openCareRun({ careRun: null, route: 'running/r1/details/agents' });
+  const ctx = await openCareRun({ careRun: null, route: `running/${R1}/details/agents` });
   const { window } = ctx;
   assert.equal(visibleAgentsPlaces(window), 1, 'no careRun: dev\'s tab, no box');
   assert.ok(tabOf(window, 'agents').classList.contains('active'));
   tabOf(window, 'agents').focus();
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE), steps: d2Steps(),
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: d2Manifest(D2_CARE), steps: d2Steps(),
     active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }], subAgents: SUBS() });
   await settle(window, 8);
   assert.equal(tabOf(window, 'agents').hidden, true);
@@ -2531,7 +2531,7 @@ test('D2 (D11): a frame without careRun (no manifest yet), then one with it: 1 A
 });
 
 test('D2 (D11): #running/ID/details/agents with the flag on lands on a visible Overview (active tab overview)', async () => {
-  const ctx = await openCareRun({ route: 'running/r1/details/agents' });
+  const ctx = await openCareRun({ route: `running/${R1}/details/agents` });
   const { window } = ctx;
   const active = window.document.querySelector('#run-detail .rd-tab.active');
   assert.equal(active.dataset.sec, 'overview');
@@ -2552,11 +2552,11 @@ test('D2 (D10, D16): the facts paint from /slice once each; a done-key change as
   const planner = [...d.querySelectorAll('#run-detail .run-agents .plan-check-row')].find((r) => r.querySelector('.plan-check-label').textContent === 'Planner');
   assert.equal(planner.querySelector('.plan-check-detail').textContent, 'plan v2 · after the plan review');
   const before = sliceGets(ctx);
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE), steps: d2Steps(),
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: d2Manifest(D2_CARE), steps: d2Steps(),
     active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }], subAgents: SUBS() });
   await settle(window, 8);
   assert.equal(sliceGets(ctx), before, 'an identical frame asks nothing');
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE),
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: d2Manifest(D2_CARE),
     steps: d2Steps(['n_clarify', 'n_plan', 'n_roles', 'n_refine', 'n_tests'], 'n_impl'), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }], subAgents: SUBS() });
   await settle(window, 8);
   assert.equal(sliceGets(ctx), before + 1, 'a done-key change asks once');
@@ -2571,9 +2571,9 @@ test('D2 (D16): a /slice 500 creates no facts node; flag on, an unmarked feature
   const orig = boot500.window.fetch;
   boot500.window.fetch = (u, o) => (/\/slice$/.test(String(u)) ? (boot500.calls.push({ url: String(u) }), Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) })) : orig(u, o));
   globalThis.fetch = boot500.window.fetch;
-  frame(boot500, { type: 'run-created', runId: 'r1', title: 'Export', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
-  frame(boot500, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE), steps: d2Steps(), active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }] });
-  go(boot500.window, 'running/r1');
+  frame(boot500, { type: 'run-created', runId: R1, title: 'Export', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(boot500, { type: 'state', runId: R1, id: P1, status: 'running', stepper: d2Manifest(D2_CARE), steps: d2Steps(), active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }] });
+  go(boot500.window, `running/${R1}`);
   await settle(boot500.window, 8);
   assert.ok(sliceGets(boot500) >= 1, 'it asked');
   assert.equal(boot500.window.document.querySelector('#run-detail .rd-run-facts'), null);
@@ -2584,7 +2584,7 @@ test('D2 (D16): a /slice 500 creates no facts node; flag on, an unmarked feature
     const ctx = await openCareRun({ slice });
     const before = sliceGets(ctx);
     assert.equal(ctx.window.document.querySelector('#run-detail .rd-run-facts'), null);
-    frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: d2Manifest(D2_CARE),
+    frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: d2Manifest(D2_CARE),
       steps: d2Steps(['n_clarify', 'n_plan', 'n_roles', 'n_refine', 'n_tests'], 'n_impl'), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }] });
     await settle(ctx.window, 8);
     assert.equal(sliceGets(ctx), before, 'no refetch for a run without owns');
@@ -2600,7 +2600,7 @@ test('D2: flag off: no .rd-run-facts, no /slice ask from the Overview, dev\'s Ag
   assert.equal(tabOf(window, 'agents').hidden, false);
   assert.equal(visibleAgentsPlaces(window), 2, 'dev: the tab and C2\'s box');
   assert.deepEqual([...window.document.querySelectorAll('#run-detail .rd-tab')].map((b) => b.dataset.sec),
-    ['overview', 'task', 'diff', 'artifacts', 'actions', 'workflow', 'qa', 'logs', 'agents']);
+    ['overview', 'task', 'diff', 'artifacts', 'qa', 'logs', 'actions', 'workflow', 'agents']);
 });
 
 // --- The run time is the engine's elapsed clock; the summed step time is "agent time" ----------
@@ -2644,7 +2644,7 @@ test('two steps in parallel: the run time advances 1 s per second', async () => 
     assert.equal(rdHeadTime(window).textContent, '12s');
     assert.equal(tileTime(window), '12s');
     // A third step joins: still one second per second.
-    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', elapsedMs: 10_000, elapsedSince: c.t0, steps: running(3, c.t0) });
+    frame(c.ctx, { type: 'state', runId: R1, id: P1, status: 'running', elapsedMs: 10_000, elapsedSince: c.t0, steps: running(3, c.t0) });
     await settle(window);
     assert.equal(rdHeadTime(window).textContent, '12s');
     assert.equal(tileTime(window), '12s');
@@ -2660,13 +2660,13 @@ test('the run time stands still while a question waits', async () => {
     const { window } = c;
     // The question frame can reach the browser before the parked state frame: no stale tick.
     c.at(4000, false);
-    frame(c.ctx, { type: 'question', runId: 'r1', ...clarify() });
+    frame(c.ctx, { type: 'question', runId: R1, ...clarify() });
     await settle(window);
     c.at(9000);
     assert.equal(rdHeadTime(window).textContent, '10s', 'the anchor is ignored while a person must answer');
     assert.equal(tileTime(window), '10s');
     // The engine's parked frame: folded at the moment the question opened.
-    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', elapsedMs: 14_000, elapsedSince: null,
+    frame(c.ctx, { type: 'state', runId: R1, id: P1, status: 'running', elapsedMs: 14_000, elapsedSince: null,
       steps: running(1, null) });
     await settle(window);
     c.at(60_000);
@@ -2692,11 +2692,11 @@ test('agent time tile appears when parallel work exceeds the run time and ticks;
     assert.equal(rdTile(window, 'agent time').querySelector('b').textContent, '42s', 'two steps: 2 s per second of agent time');
     // A frame in the same second does not rebuild the ticking row.
     const row = window.document.querySelector('#run-detail .rd-facts .rd-stats');
-    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', elapsedMs: 10_000, elapsedSince: c.t0, steps: running(2, c.t0, 20_000) });
+    frame(c.ctx, { type: 'state', runId: R1, id: P1, status: 'running', elapsedMs: 10_000, elapsedSince: c.t0, steps: running(2, c.t0, 20_000) });
     await settle(window);
     assert.equal(window.document.querySelector('#run-detail .rd-facts .rd-stats'), row, 'the row is kept while only the ticking texts moved');
     // The parallel work ends below the run time: the tile goes.
-    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', elapsedMs: 200_000, elapsedSince: c.t0, steps: running(1, c.t0, 20_000) });
+    frame(c.ctx, { type: 'state', runId: R1, id: P1, status: 'running', elapsedMs: 200_000, elapsedSince: c.t0, steps: running(1, c.t0, 20_000) });
     await settle(window);
     assert.equal(rdTile(window, 'agent time'), null, 'the tile disappearing rebuilds the row');
   } finally { c.restore(); }
@@ -2715,7 +2715,7 @@ test('the finished run shows the engine\'s elapsed figure, same as the last live
     c.at(2000);
     assert.equal(rdHeadTime(window).textContent, '12s', 'the last live value');
     const done = running(2, null, 22_000).map((s) => ({ ...s, status: 'done' }));
-    frame(c.ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'done', elapsedMs: 12_000, elapsedSince: null, steps: done });
+    frame(c.ctx, { type: 'state', runId: R1, id: P1, status: 'done', elapsedMs: 12_000, elapsedSince: null, steps: done });
     await settle(window, 6);
     c.at(90_000);
     assert.equal(rdHeadTime(window).textContent, '12s', 'no jump at the end, and no tick after it');
@@ -2736,4 +2736,154 @@ test('a live run whose state carries no elapsed figure still shows the summed ti
     assert.equal(rdHeadTime(window).textContent, '12s', 'as before: the sum of the running steps');
     assert.equal(tileTime(window), '12s');
   } finally { c.restore(); }
+});
+
+// --- Shaper small runs s5 (R-arch-1): the run page head reads the member's shared run status ---------------------------
+const S5_MEMBER = (position, pipelineId, status, slice) => ({ position, title: `Slice ${position}`, pipelineId, ticketId: null, status,
+  pr: null, ticket: null, adhoc: false, after: null, slice: { kind: null, waitsFor: [], buildsOn: [], ...slice } });
+const S5_GROUP = (members) => [{ id: 'feat_s5', kind: 'feature', title: 'Charts', smallRuns: true, projectKey: null, planning: null,
+  cost: { usd: 0, byPipeline: {} }, members }];
+async function s5Groups(ctx, members) {
+  applyFlags({ shaperSmallRuns: true }, ctx.window.document);
+  ctx.box.groups = S5_GROUP(members);
+  frame(ctx, { type: 'run-groups-changed' });
+  await settle(ctx.window, 6);
+}
+const s5HeadOf = (block) => ({ word: block.querySelector('.run-status-word').textContent,
+  detail: block.querySelector('.run-status-detail').hidden ? '' : block.querySelector('.run-status-detail').textContent,
+  dot: block.querySelector('.run-status-head .status-dot') });
+
+test('s5 run page head: a marked member with an open stop reads \'waiting for you\' with \'?\'; a done member keeps dev\'s head', async () => {
+  const ctx = await bootRunning();
+  await s5Groups(ctx, [S5_MEMBER(1, 'p0', 'done', { state: 'done' }), S5_MEMBER(2, 'p1', 'running', { state: 'questions', buildsOn: [1] })]);
+  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: V2_MANIFEST, steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 1 });
+  frame(ctx, { type: 'question', runId: 'r1', ...clarify() });
+  go(ctx.window, 'running/r1');
+  await settle(ctx.window, 8);
+  const screen = ctx.window.document.querySelector('#run-detail');
+  assert.equal(statusOf(screen).dataset.state, 'needs-you');
+  const head = s5HeadOf(statusOf(screen));
+  assert.equal(head.word, 'waiting for you');
+  assert.equal(head.dot.dataset.symbol, 'question');
+  assert.doesNotMatch(head.detail, /needs you/i, head.detail);
+  assert.match(stateLine(ctx.window).textContent, /^waiting for you/, 'the header state line reads the shared word');
+  assert.equal(stateLine(ctx.window).querySelector('.status-dot').dataset.symbol, 'question');
+
+  frame(ctx, { type: 'run-created', runId: 'r0', title: 'Slice one', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T09:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r0', id: 'p0', status: 'done', endReached: true, stepper: V2_MANIFEST, steps: V2_STEPS().map((x) => ({ ...x, status: 'done' })), active: [], subAgents: [], totalCostUsd: 1 });
+  go(ctx.window, 'running/r0');
+  await settle(ctx.window, 8);
+  assert.equal(statusOf(screen).dataset.state, 'ready');
+  assert.match(s5HeadOf(statusOf(screen)).word, /^Ready/, 'the ship line stays (D9)');
+});
+
+test('s5 saved run page head: a marked member that failed reads the shared word \'failed\' with \'!\' and no dev state word', async () => {
+  const ctx = await bootRunning({ rows: [HISTORY_ROW, { ...HISTORY_ROW, id: 'p2', status: 'error' }] });
+  ctx.box.detail = { id: 'p2', body: { state: { id: 'p2', status: 'error', steps: [] }, results: null } };
+  await s5Groups(ctx, [S5_MEMBER(1, 'p0', 'done', { state: 'done' }), S5_MEMBER(2, 'p2', 'error', { state: 'error', buildsOn: [1] })]);
+  go(ctx.window, `history/${KEY}/p2`);
+  await settle(ctx.window, 10);
+  const block = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-sheet .run-status');
+  assert.ok(block, 'the saved page painted its status block');
+  assert.equal(block.dataset.state, 'failed');
+  const head = s5HeadOf(block);
+  assert.equal(head.word, 'failed');
+  assert.equal(head.dot.dataset.symbol, 'alert');
+  for (const seg of head.detail.split(' · ')) assert.ok(!/^failed$/i.test(seg), head.detail);
+  const line = ctx.window.document.querySelector('#hist-detail .run-state-line');
+  assert.match(line.textContent, /^failed/, 'the saved header state line reads the shared word');
+  assert.equal(line.querySelector('.status-dot').dataset.symbol, 'alert');
+});
+
+// --- the header state line -------------------------------------------------
+
+const stateLine = (window) => window.document.querySelector('#run-detail .rd-header > .run-state-line');
+const questionHost = (window) => window.document.querySelector('#run-detail .rd-questions');
+
+test('the state line sits under the title and says the state on every tab; the card repeats neither word nor step', async () => {
+  const ctx = await bootRunning();
+  const { window } = ctx;
+  await openGlance(ctx);
+  const line = stateLine(window);
+  assert.ok(line, 'the state line is a direct child of the header');
+  assert.equal(line.previousElementSibling.className, 'rd-row1', 'right under the title row');
+  const card = () => window.document.querySelector('#run-detail .rd-glance .rd-sheet .run-status');
+  for (const key of ['overview', 'task', 'diff', 'qa', 'logs', 'workflow']) {
+    click(window, tabOf(window, key));
+    await settle(window);
+    assert.match(stateLine(window).textContent, /^Working( · .+)?$/, `${key}: the state line`);
+    assert.equal(stateLine(window).closest('.rd-sec'), null, `${key}: outside the tab bodies`);
+  }
+  assert.equal(line.dataset.state, 'working');
+  assert.ok(line.querySelector('.status-dot'), 'its own dot');
+  assert.equal(card().querySelector('.run-status-word').hidden, true);
+  assert.equal(card().querySelector('.status-dot').hidden, true);
+  const step = line.querySelector('.run-state-step').textContent.replace(' · ', '');
+  assert.ok(step, 'a working run names its step or stage');
+  assert.ok(!card().querySelector('.run-status-detail').textContent.includes(step), 'the card never repeats the step');
+  assert.equal(card().querySelector('.run-status-head').hidden, !card().querySelector('.run-status-detail').textContent);
+  // A paused frame updates the line live; the card line reads the reason only.
+  frame(ctx, { type: 'done', runId: R1, status: 'paused', reason: 'cost_pipeline' });
+  await settle(window, 6);
+  assert.equal(stateLine(window), line, 'the same node');
+  assert.match(line.textContent, /^Paused( · .+)?$/);
+  assert.doesNotMatch(line.textContent, /cost/i);
+  assert.match(card().querySelector('.run-status-detail').textContent, /^cost limit$/i);
+  assert.equal(card().querySelector('.run-status-head').hidden, false);
+});
+
+test('the state line keeps focus across frames and jumps to the question', async () => {
+  const ctx = await bootRunning();
+  const { window } = ctx;
+  await openGlance(ctx);
+  const line = stateLine(window);
+  assert.equal(line.classList.contains('is-link'), false);
+  assert.equal(line.getAttribute('role'), null);
+  assert.equal(line.hasAttribute('tabindex'), false);
+  frame(ctx, { type: 'question', runId: R1, ...clarify() });
+  await settle(window, 6);
+  assert.equal(line.classList.contains('is-link'), true);
+  assert.equal(line.getAttribute('role'), 'button');
+  assert.equal(line.getAttribute('tabindex'), '0');
+  assert.match(line.getAttribute('aria-label'), /^Needs you( · .+)?\. Go to the questions$/, 'the name still says the state');
+  assert.equal(line.getAttribute('aria-label'), `${line.textContent}. Go to the questions`);
+  const kids = [...line.children];
+  line.focus();
+  assert.equal(window.document.activeElement, line);
+  frame(ctx, { type: 'state', runId: R1, id: P1, status: 'running', stepper: GLANCE_MANIFEST, steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 0.9 });
+  await settle(window, 6);
+  assert.deepEqual([...line.children], kids, 'a repaint never rebuilds the line');
+  assert.equal(window.document.activeElement, line, 'and never drops its focus');
+  // Click, Enter and Space all go to the question.
+  let jumps = 0;
+  window.Element.prototype.scrollIntoView = function () { if (questionHost(window).contains(this)) jumps += 1; };
+  click(window, tabOf(window, 'logs'));
+  await settle(window);
+  click(window, line);
+  assert.equal(jumps, 1, 'click');
+  assert.ok(questionHost(window).contains(window.document.activeElement), 'focus lands in the question');
+  for (const key of ['Enter', ' ']) {
+    const ev = new window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+    line.dispatchEvent(ev);
+    assert.equal(ev.defaultPrevented, true);
+  }
+  assert.equal(jumps, 3, 'Enter and Space');
+  // Answered: the line is plain text again.
+  frame(ctx, { type: 'question-resolved', runId: R1, id: clarify().id });
+  await settle(window, 6);
+  assert.equal(line.classList.contains('is-link'), false);
+  assert.equal(line.getAttribute('role'), null);
+  assert.equal(line.hasAttribute('tabindex'), false);
+  click(window, line);
+  assert.equal(jumps, 3, 'no jump without a question');
+});
+
+test('the tour\'s card stop looks at the header state line first, then the card', async () => {
+  const ctx = await bootRunning();
+  await openGlance(ctx);
+  const [card] = ctx.window.__np.gsRunPageHops('hi');
+  assert.equal(card.target[0], '#run-detail .rd .rd-header .run-state-line');
+  assert.equal(card.target[1], '#run-detail .rd .rd-glance .rd-now-top');
+  assert.ok(ctx.window.document.querySelector(card.target[0]), 'it resolves');
 });

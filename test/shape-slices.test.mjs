@@ -7,6 +7,8 @@ import {
   settleLeftOut, sliceRequirementIds,
   SMALL_RUN_IDS, SMALL_RUN_LABELS, RUN_REQUIREMENTS_MAX, SMALL_RUNS_MAX, BUILDS_ON_MAX, SMALL_RUNS_OUTLINE_CAP,
 } from '../src/shared/shape/slices.mjs';
+// A namespace read, so a missing new export (careRunCount) fails only its own test.
+import * as SLICES from '../src/shared/shape/slices.mjs';
 import { createHash } from 'node:crypto';
 import { criterionIds, criteriaList, criteriaExamples } from '../src/shared/review/coverage.mjs';
 import { checkShape, isTestable } from '../src/shared/shape/shape.mjs';
@@ -243,6 +245,7 @@ test('sliceScopeBlock: outlineChangeFile tells the Planner (never the refiner) w
   const plan = sliceScopeBlock({ index: 2, total: 2, outline: o, outlineChangeFile: '/p/outline-change.md' });
   assert.ok(plan.includes('/p/outline-change.md'));
   assert.ok(plan.includes('only in that case'));
+  for (const shape of ['first line', 'no heading', 'few short paragraphs', 'backticks', 'a list']) assert.ok(plan.includes(shape), shape);
   assert.ok(plan.startsWith(base.slice(0, -1)), 'the note is appended after the existing text');
   const ref = sliceScopeBlock({ index: 2, total: 2, outline: o, refiner: true, outlineChangeFile: '/p/outline-change.md' });
   assert.equal(ref, sliceScopeBlock({ index: 2, total: 2, outline: o, refiner: true }));
@@ -748,3 +751,19 @@ test('slicingBlock smallRuns: at most 20, 1 to 2 under thorough, the confirmed k
   assert.ok(req.includes('put every R-id in exactly one slice, or in confirmed with one of: Product, Engineering, Design, DevOps, Security, Compliance or QA.\n'));
 });
 
+// Ask screens slice 9: the one formula for a feature's number of runs, shared by careEstimates and the Start card.
+test('careRunCount: ceil over the per-run cap; null without a positive integer count', () => {
+  for (const [requirements, care, want] of [
+    [16, 'thorough', 8], [16, 'balanced', 6], [16, 'lean', 6], [20, 'thorough', 10], [3, 'balanced', 1], [3, 'thorough', 2],
+  ]) {
+    assert.equal(SLICES.careRunCount(requirements, care), want, `${requirements} at ${care}`);
+  }
+  for (const requirements of [null, undefined, 0, -2, 2.5, '16']) {
+    for (const care of ['lean', 'balanced', 'thorough']) {
+      assert.equal(SLICES.careRunCount(requirements, care), null, `${JSON.stringify(requirements)} at ${care}`);
+    }
+  }
+  // An unknown position uses the balanced cap.
+  assert.equal(SLICES.careRunCount(16, 'nonsense'), 6);
+  assert.equal(SLICES.careRunCount(16, undefined), 6);
+});

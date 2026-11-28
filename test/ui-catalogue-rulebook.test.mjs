@@ -147,12 +147,12 @@ test('Team policy: sentence-case labels, a sans sync chip, grey "not installed",
 // The 19 dialogs in index.html. The model editor's card and the plugin modal's actions are JS-built, so their static
 // markup has no footer button; the proof's dialog-sizes state and the source pins below cover them.
 const DIALOGS = ['#model-editor-modal', '#viewer-card', '#folder-browser', '#mode-modal', '#confirm-modal',
-  '#report-modal', '#export-modal', '#shipit-modal', '#publish-modal', '#welcome-modal', '#claude-setup-modal', '#stop-modal',
+  '#report-modal', '#export-modal', '#shipit-modal', '#publish-modal', '#welcome-modal', '#engine-setup-modal', '#stop-modal',
   '#project-add-modal', '#project-git-modal', '#project-bulk-modal', '#plugin-modal', '#scan-model-modal',
   '#update-modal', '#update-overlay'];
 // D12: the action rows, and the head Close / Full screen buttons.
 const FOOT = ['.confirm-actions', '.stop-actions', '.add-project-actions', '.mode-foot', '.report-head-actions', '.publish-actions',
-  '.shipit-actions', '.mv-editor-btns', '.viewer-actions', '[data-card-actions]'].map((s) => `${s} .btn`).concat('#plugin-modal-close', '#claude-setup-close').join(', ');
+  '.shipit-actions', '.mv-editor-btns', '.viewer-actions', '[data-card-actions]'].map((s) => `${s} .btn`).concat('#plugin-modal-close', '#engine-setup-close').join(', ');
 test('dialogs: footer actions are 32px .btn, cards keep the shared 24px padding, the danger OK is .btn-danger', () => {
   assert.equal(page.querySelectorAll('.viewer-modal[id]').length, DIALOGS.length, 'a new dialog joins DIALOGS');
   const small = [];
@@ -224,10 +224,11 @@ test('the typed-plus ratchet lost the four slice-3 files', () => {
     assert.ok(!debt.typedPlus.includes(`ui/public/${f}`), f);
   for (const s of ['.mv-filter.on', '.wfl-chip[aria-pressed="true"]']) assert.ok(!debt.solidPressed.includes(s), s);
   // Run 3 (F-12): app.js and engine-settings-view.mjs typed "+" into <option> text, which cannot hold an icon; the
-  // plus is dropped ("Add model…", "Add project…", "Override a …"), so the list is empty. Run 4 (D15): release-row.mjs's
+  // plus is dropped ("Add model…", "Add project…", "Override a …"), so the list is empty. New run's rows no longer have
+  // an <option> for Add model (the columns picker has its own button). Run 4 (D15): release-row.mjs's
   // "Add a release" is a quiet small button with the plus icon.
   assert.deepEqual(debt.typedPlus, []);
-  assert.match(read('ui/public/app.js'), /option\('__add__', 'Add model…'\)/);
+  assert.doesNotMatch(read('ui/public/app.js'), /'\+ Add model…'/);
   assert.match(read('ui/public/engine-settings-view.mjs'), /doc\.createElement\('option'\), \{ value: '', textContent: `Override a/);
   assert.doesNotMatch(read('ui/public/shape/release-row.mjs'), /'\+ Add a release'/);
 });

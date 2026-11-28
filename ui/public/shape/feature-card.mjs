@@ -11,6 +11,9 @@ import { FEATURE_KIND } from '../run-status-card.mjs';
 import { prototypeDetail } from './prototype-body.mjs';
 import { REQUIREMENTS_AGREED } from '../../../src/shared/shape/feature-log.mjs';
 import { VERIFY_WORDS } from '../../../src/shared/shape/verifier.mjs';
+import { confirmHold } from '../../../src/shared/shape/ship-ledger.mjs';
+import { runStatus } from '../../../src/shared/shape/run-status.mjs';
+import { stopLinesOf } from './stop-list.mjs';
 
 export const SLICE_STATE_LABELS = Object.freeze({
   planned: 'Planned', starting: 'Starting', shaping: 'Planning', questions: 'Waiting for your answers', approval: 'Waiting for your plan approval',
@@ -31,17 +34,24 @@ const TARGET_STATUS = Object.freeze({ starting: 'starting', shaping: 'running', 
 /** s3: what the feature's controls act on (feature-actions.mjs). `cur` is the run the status line names. */
 function controlsOf(view, cur, m) {
   const active = view.status === 'active';
+  // Slice 8 (d8-7): the halted run's Resume would wait for run N (the server's preview); the Verifier's has no slice.
+  const haltedSlice = view.halted && Array.isArray(view.slices) ? view.slices[view.halted.index - 1] : null;
+  const resumeAfter = haltedSlice && Number.isInteger(haltedSlice.resumeAfter) ? haltedSlice.resumeAfter : null;
+  // Slice 16 (D9): the halted run's Resume is held for its turn after run N.
+  const resumeHeld = haltedSlice && haltedSlice.heldResume && Number.isInteger(haltedSlice.heldResume.after) ? haltedSlice.heldResume.after : null;
   return {
     // C5: a halted Verifier is Resume too (resumeFeature starts a fresh check); Re-plan the rest stays the runs'.
     featureId: view.id, active, halted: active && (!!view.halted || (!!view.verify && view.verify.state === 'halted')),
     rest: active && !!(view.open || view.halted),
     approveEach: view.approveEach !== false, planPipelineId: view.originPipelineId || null,
-    held: view.held ? { index: view.held.index } : null,
+    held: view.held ? { index: view.held.index, ...(view.held.reason ? { reason: view.held.reason } : {}) } : null,
     target: cur ? { index: cur.index, runId: (m && m.runId) || cur.runId || null, pipelineId: cur.pipelineId || null,
       status: m ? String(m.status || '') : TARGET_STATUS[cur.state] || null,
       // A run waiting at a question still reports `running`: it asks (Pause is off) while this tab sees its ask or the
       // server says the slice waits for an approval or answers.
       asks: (m && asks(m)) || cur.state === 'approval' || cur.state === 'questions' } : null,
+    ...(resumeAfter !== null ? { resumeAfter } : {}),
+    ...(resumeHeld !== null ? { resumeHeld } : {}),
   };
 }
 
@@ -55,7 +65,7 @@ function shapingModel(own, log) {
  * @returns {{phase: 'shaping'|'feature', log: object[],
  *   step: {index: number|null, runId: string|null, pipelineId: string|null, kind: string, id: string|null, snap: object|null}|null,
  *   controls: {featureId: string, active: boolean, halted: boolean, rest: boolean, approveEach: boolean, planPipelineId: string|null,
- *     held: {index: number}|null,
+ *     held: {index: number}|null, resumeAfter?: number, resumeHeld?: number,
  *     target: {index: number, runId: string|null, pipelineId: string|null, status: string|null, asks: boolean}|null}|null,
  *   notesLine: string|null, watch: {text: string, prUrl: string|null}|null}}
  */
@@ -73,10 +83,13 @@ export function featureCardModel({ own = null, card = null, snapOf = () => null 
   // Small runs C5: the Verifier run's bound stop is the card's open step once every run is done.
   const vf = view.verify && view.verify.pipelineId ? snapOf(view.verify.pipelineId) : null;
   const liveAsk = slices.find((s) => asks(snap(s)));
+  // Slice 6 (D16): with the stop list, the pointer is the first open stop; a failed run never is. With no run entry, a
+  // Re-plan or Verifier ask (index null) stays the pointer (D11).
+  const ptr = Array.isArray(view.asks) ? (view.asks.find((a) => a && !a.failed) || (view.ask && view.ask.index == null ? view.ask : null)) : view.ask;
   const step = liveAsk ? stepOf(liveAsk.index, snap(liveAsk))
     : asks(rp) ? stepOf(null, rp)
     : asks(vf) ? stepOf(null, vf)
-    : view.ask ? { index: view.ask.index, runId: view.ask.runId || null, pipelineId: view.ask.pipelineId || null, kind: view.ask.kind, id: view.ask.id || null, snap: null } : null;
+    : ptr ? { index: ptr.index, runId: ptr.runId || null, pipelineId: ptr.pipelineId || null, kind: ptr.kind, id: ptr.id || null, snap: null } : null;
   // s5: ideas saved from the chat (D11), and a watch that gave up on a run's PR (D23)
   const ideas = (view.notes && view.notes.ideas) || 0;
   const watched = slices.find((s) => s.watch);
@@ -121,6 +134,10 @@ const ONE_DETAIL = Object.freeze({
 });
 /** Fail closed: the ship ledger holds an agreed requirement with no run and no person (ship-ledger.mjs). */
 const unownedOf = (sr) => !!(sr && Array.isArray(sr.unowned) && sr.unowned.length);
+/** Shaper slice 7 (D9): a judged ledger (the server passed the runs: the Shaper small runs flag is on) carries `shown`
+ *  on its rows. Only then does an open confirmation hold the card; with the flag off the card is as before. */
+const judgedOf = (sr) => !!sr && [...(sr.confirmed || []), ...(sr.owned || [])].some((e) => e && 'shown' in e);
+const confirmOf = (sr) => (judgedOf(sr) ? confirmHold(sr) : null);
 /** Feature D1 (D16): the ship step's detail: `waiting for Compliance` while a confirmed requirement waits (role labels
  *  joined by "and"), the Ship card mounted or not (the owner's call: the state detail says who it waits for); the ledger's
  *  reason while a requirement has no run and no person;
@@ -128,8 +145,16 @@ const unownedOf = (sr) => !!(sr && Array.isArray(sr.unowned) && sr.unowned.lengt
 function shipDetail(view) {
   const ship = (view && view.ship) || {};
   const sr = ship.smallRuns || null;
-  if (ship.mode) return plural(sr ? sr.order.filter((o) => o.pr).length : (view.slices || []).filter((s) => s.pr && s.pr.url).length, 'PR') + ' open';
+  if (ship.mode) {
+    const prs = sr ? sr.order.filter((o) => o.pr) : [];
+    // Shipped as One: every run holds the same PR, counted once.
+    const n = !sr ? (view.slices || []).filter((s) => s.pr && s.pr.url).length : ship.mode === 'one' ? new Set(prs.map((o) => o.pr.url)).size : prs.length;
+    return `${plural(n, 'PR')} open`;
+  }
   if (unownedOf(sr)) return sr.reason;
+  const hold = confirmOf(sr);
+  if (hold) return hold;
+  if (sr && sr.blocked && judgedOf(sr)) return sr.reason;   // slice 7: only a reason is missing
   if (sr && sr.blocked) {
     const labels = [...new Set(sr.confirmed.filter((c) => c.state === 'waiting').map((c) => c.roleLabel))];
     return `waiting for ${labels.join(' and ')}`;
@@ -149,6 +174,46 @@ export function shipWaitText(view) {
   if (ship.mode) return 'Already shipped';
   if (view.status === 'replanning') return 'The rest is being re-planned';
   return VERIFY_WAIT[view.verify && view.verify.state] || 'The Verifier has not checked the feature yet';
+}
+
+/** Shaper small runs slice 7 (D4): the who-must-act lines of the run-order mock, when no run works and none has the turn. */
+const MUST_ACT = 'Nothing can go on until you act';
+const PERSON_ACTS = new Set(['paused', 'stopped']);
+
+/**
+ * Slice 7 (D1 to D5): the feature's state line, the one producer for the Chat card and the feature page. The working
+ * runs (shared runStatus mark `live`) in run order, then the run with the server's `nextTurn`; with neither, who must
+ * act. null unless the view carries `asks` (flag on, marked) and is active, and null once every run is done, so each surface
+ * keeps today's line.
+ * @param {object|null} view featureView's payload
+ * @param {{snapOf?: (pipelineId: string) => object|null}} [opts]
+ * @returns {string|null}
+ */
+export function featureStateLine(view, { snapOf = () => null } = {}) {
+  if (!view || !Array.isArray(view.asks) || view.status !== 'active') return null;
+  const all = Array.isArray(view.slices) ? view.slices : [];
+  // Every run done: the Verifier and ship words own the line (shipWaitText on the page, the runs-done figure on the card).
+  if (all.length && all.every((s) => s.state === 'done')) return null;
+  const slices = new Map(all.map((s) => [s.index, s]));
+  const working = [...all].sort((a, b) => a.index - b.index).flatMap((s) => {
+    const st = runStatus({ slice: s, slices, snap: s.pipelineId ? snapOf(s.pipelineId) : null });
+    if (st.mark !== 'live') return [];
+    return [`${s.index} ${st.word || (Object.hasOwn(SLICE_STATE_LABELS, s.state) ? SLICE_STATE_LABELS[s.state] : '').toLowerCase()}`];
+  });
+  const work = working.map((w, i) => `${i ? 'run' : 'Run'} ${w}`).join(', ');
+  const nx = all.find((s) => s.nextTurn === true);
+  const next = nx ? `next: run ${nx.index}` : '';
+  if (work || next) return [work, next].filter(Boolean).join(' · ');
+  if (view.asks.length || all.some((s) => PERSON_ACTS.has(s.state) || s.cannotStart)) return MUST_ACT;
+  // A clash hold names its reason once, on the held row; here it only reads held.
+  if (view.held && Number.isInteger(view.held.index)) return `Run ${view.held.index} ${view.held.reason ? 'is held' : 'waiting for you to start'}`;
+  return VERIFY_WAIT.clean;
+}
+
+/** Slice 7 (D6): the head's count of stop lines; '' (no chip) at zero. */
+export function needYouText(n) {
+  if (!Number.isInteger(n) || n <= 0) return '';
+  return n === 1 ? '1 needs you' : `${n} need you`;
 }
 
 /** The open ask's question, when this tab holds it (the pointer-only step of a slice has none). */
@@ -214,11 +279,17 @@ export function oneCardModel({ own = null, card = null, snapOf = () => null } = 
   const vs = view && view.verify ? view.verify.state : null;
   const verify = state === 'SV' || state === 'SR' || (state === 'S8' && vs && !['clean', 'accepted', 'verifying'].includes(vs)) ? view.verify : null;
   // Fail closed: the Verifier's own "Ready to ship" gives way while a requirement has no run and no person.
-  const heldShip = state === 'SR' && unownedOf(view.ship && view.ship.smallRuns);
-  const vx = verify ? { verify, word: heldShip ? ICON_WORD.scheduled : VERIFY_WORDS[verify.state] || null } : {};
-  const line = verify && verify.state === 'halted' && state === 'S8' ? VERIFY_HALTED : detail;
+  // Slice 7 (D9): so does it while a confirmation is open (flag on): the person is needed.
+  const sr = view && view.ship && view.ship.smallRuns;
+  const confirm = state === 'SR' && !unownedOf(sr) && !!confirmOf(sr);
+  const heldShip = state === 'SR' && (unownedOf(sr) || confirm);
+  const vx = verify ? { verify, word: confirm ? ICON_WORD.ask : heldShip ? ICON_WORD.scheduled : VERIFY_WORDS[verify.state] || null } : {};
+  // Slice 7 (D5): S8 leads with the feature's state line and keeps its runs-done figure after it.
+  const stateLine = state === 'S8' ? featureStateLine(view, { snapOf }) : null;
+  const line = verify && verify.state === 'halted' && state === 'S8' ? VERIFY_HALTED : stateLine ? `${stateLine} · ${detail}` : detail;
+  const need = Array.isArray(view && view.asks) ? { need: stopLinesOf(view, { snapOf }).length } : {};
   // Small runs C4 (D17): the requirement change the Build step's notice shows, while its landing run is not done.
-  return { state, step, detail: line, question, receipts: base.log, runs: !!view, kindWord: FEATURE_KIND, base, change: (view && view.change) || null, ...vx };
+  return { state, step, detail: line, question, receipts: base.log, runs: !!view, kindWord: FEATURE_KIND, base, change: (view && view.change) || null, ...vx, ...need };
 }
 
 const sigOf = (host, list) => { const sig = JSON.stringify(list); if (host.dataset.sig === sig) return false; host.dataset.sig = sig; return true; };

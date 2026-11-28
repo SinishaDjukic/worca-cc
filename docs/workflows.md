@@ -47,9 +47,15 @@ ask this way, and plugins can ship forms too.
 
 ### Model and effort per agent
 
-You can pick a model and a reasoning effort (medium, high, xhigh, max) for each agent node. In Workflows, use the
-toolbar over a selected agent card. For one project, use New pipeline › **Advanced** › **Agents**. The project
-keeps your picks for its later runs, and **Save as workflow defaults** moves them into the workflow.
+You can pick a model and a reasoning effort for each agent node. In Workflows, select an agent card and use **Model** in
+its toolbar, or the **Model** field under **More**: both open one picker, **inherit** (follows the run) on top, then three
+columns, **Harness**, **Provider** and **Model**. A pick names the harness it runs on, so one workflow can plan on Claude
+Code and implement on Codex; **inherit** runs the step on the run's harness. A model two harnesses run is listed under
+each (*also on …*), and a provider that needs a key or a sign-in says so. **Effort** offers what the picked model takes on
+the picked harness. For one project, use New run › **Advanced** › **Agents**: each row's model opens the same
+picker. A pick made there names its harness and is saved for the project, so the step stays on it in later runs, also
+when **Default harness** changes. **inherit** goes back to the workflow default. The project keeps your picks for its
+later runs, and **Save as workflow defaults** moves them, harness included, into the workflow.
 
 A project's pick beats a team-policy default, which beats the workflow's own. `--model` only fills nodes that have
 none. Fan-out agents also take a sub-agent model.
@@ -140,7 +146,7 @@ The Library's **Workflows** section, its first, lists **Yours** on top, then **B
 split into domain folders. **Edit** (or a click on the row) opens one of yours, and Save changes it. **Use as
 template** opens a workflow as a new unsaved copy that Save keeps as your own. Built-in and plugin workflows offer
 only that; yours offer it from the row's ⋯ menu. A badge beside the name says what the canvas holds: **Editing** or
-**Unsaved copy**. Saved pipelines appear in New pipeline's **Workflow** picker, and so in schedules too.
+**Unsaved copy**. Saved pipelines appear in New run's **Workflow** picker, and so in schedules too.
 
 ### Sharing a pipeline
 
@@ -162,6 +168,9 @@ With the flag `workflowTests` on and at least one saved [version](workflow-tests
 field: it starts on the version new runs use, and can export another version or **Your draft**. An exported skill or
 plugin keeps the workflow's name whichever version it holds.
 
+A step set to a harness carries it in every format. On a Worca server older than per-step harnesses the harness is
+ignored and the step runs on the run's harness; a review role set to one turns that node's role review off there.
+
 The CLI does the same with `worca workflow list`, `worca workflow export <id> --format json|claude|plugin` and
 `worca workflow import <file>`.
 
@@ -178,7 +187,7 @@ AI on every try. See [Workflow tests](workflow-tests.md).
 
 ### From a brief to a slide deck
 
-The built-in **Presentation** workflow turns a request into a slide deck. Pick it in New pipeline's **Workflow**
+The built-in **Presentation** workflow turns a request into a slide deck. Pick it in New run's **Workflow**
 picker (Advanced; Simple lists only Auto and Default), have Chat propose one, or run
 `worca --workflow wf_presentation --prompt "…"`.
 

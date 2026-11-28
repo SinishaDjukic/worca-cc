@@ -72,7 +72,7 @@ const ROWS = [
   { id: 'copilot/claude-sonnet-5.5', label: 'Claude Sonnet 5.5', efforts: ['low', 'medium', 'high'], custom: false, hasEnv: false, engine: 'copilot', builtin: true },
 ];
 const mk = (prefs = { engine: 'claude', slots: {} }, { copilotAvailable = () => true } = {}) => createAskModels({ listModels: async () => ROWS, pluginModels: () => [],
-  secretStatus: () => [], effortless: () => new Set(), askPrefs: () => prefs, codexAvailable: () => true, copilotAvailable });
+  secretStatus: () => [], effortless: () => new Set(), askPrefs: () => prefs, codexAvailable: () => true, copilotAvailable, notInstalled: () => null });   // every engine installed: CI has none
 
 test('askCatalog: Copilot rows, their default, and askEngine copilot', async () => {
   const cat = await mk({ engine: 'copilot', slots: { copilot: { model: 'copilot/claude-sonnet-5.5', effort: 'high' } } }).askCatalog();

@@ -246,3 +246,12 @@ test('v3 — a fresh Auto run that reuses a workflow with a session resolves it 
   const line = `session ${SID}: sub-agents on Claude Code (2 steps: Plan, Review Implementation; main agent the first step's model)`;
   assert.equal(audit.split(line).length - 1, 1, audit);   // audited once: the bootstrap call resolved nothing
 });
+
+test('a session whose members sit on two harnesses runs separately; one wholly on Codex is a Codex session', async () => {
+  const split = gateFor({ pins: { n_review: { model: 'gpt-5.5', engine: 'codex' } } });
+  assert.deepEqual(await split._sessionGate(), [`session ${SID}: separate sessions — the steps run on different harnesses`]);
+  const codex = gateFor({ pins: { n_impl: { model: 'gpt-5.5', engine: 'codex' }, n_review: { model: 'gpt-5.5', engine: 'codex' } } });
+  const lines = await codex._sessionGate();
+  assert.equal(codex._sessionDecisions.get(SID).engine, 'codex');
+  assert.match(lines[0], new RegExp(`^session ${SID}: sub-agents on OpenAI Codex \\(2 steps: Implementation, Review Implementation;`));
+});

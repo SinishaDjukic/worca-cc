@@ -113,3 +113,15 @@ test('a node nobody gave a model exports none: no frontmatter model, no effort, 
     assert.doesNotMatch(block, /- Effort:/);
   }
 });
+
+test('a node pinned to another harness exports no model and no effort, as a Worca default does', async () => {
+  const dest = await tmp();
+  const tpl = await writeKeyGraph({ name: 'Pinned', keys: [{ key: 'planner', config: { model: 'gpt-5.5', engine: 'codex', effort: 'high' } }, { key: 'implementer', config: { model: 'opus', effort: 'high' } }, 'reviewer'] });
+  await applyExport({ workflowId: tpl.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
+  const skill = await readFile(join(dest, '.claude/skills/pinned/SKILL.md'), 'utf8');
+  const at = (k) => skill.indexOf(`Dispatch \`worca-cc-${k}\``);
+  const plannerBlock = skill.slice(at('planner'), at('implementer'));
+  assert.doesNotMatch(plannerBlock, /- Model:/);
+  assert.doesNotMatch(plannerBlock, /- Effort:/);
+  assert.match(skill.slice(at('implementer'), at('code-reviewer')), /- Model: dispatch with `model: opus`/);
+});

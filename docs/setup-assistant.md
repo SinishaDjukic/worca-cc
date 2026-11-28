@@ -1,7 +1,37 @@
 # Setup assistant
 
-The setup assistant checks the machine, then applies every answer at once. This page describes the server
-API it uses. The user guide for the dialog lands with the dialog itself.
+The setup assistant checks the machine, then applies every answer at once. This page starts with a guide to the
+first launch, then describes the server API the dialog uses.
+
+## First launch
+
+On a fresh install the dialog opens before the welcome, on **Let’s set up Worca**. It first checks the machine.
+Each row ends in a badge: **OK**, **Check** (Worca could not tell) or **No**.
+
+| Check | What it tells you |
+|---|---|
+| Claude Code | Whether it is installed and signed in. |
+| Git | Whether Git is installed. |
+| Proxy in your environment | The proxy the machine already sends traffic through, if any. |
+| Direct connection | Whether `api.anthropic.com` answers without a proxy. |
+| Engines | How many coding engines are ready, with one row per engine under it. |
+| Local Ollama | Whether Ollama runs here, and with how many models. |
+| Anthropic API key | Whether a key is set in your environment. It never shows the key. |
+| Team setup | Only when your team shares a setup. |
+
+A **No** is not an error: it is what Worca asks you about next, and it fills a field only when that field is
+empty. Click **Start** to go on.
+
+- **Network** is skipped on a first start when the machine reaches Anthropic directly and no proxy is set in its
+  environment. Otherwise pick **Direct** or **Proxy**. With **Proxy**, click **Test** before **Next**; **Direct**
+  needs no test.
+- **Model access**: turn on every source you can use. You need at least one.
+- **Models**, then **How you work**: pick the models, the interface mode, the limits and the other defaults. All
+  of them can be changed later in Settings.
+- **Review** lists what will be saved. Click **Apply** (the button reads **Finish** when nothing changed), then **Continue** or **Start your first run**.
+
+**Skip all** closes the dialog and goes to the welcome; if you changed an answer it asks "Discard changes?" first. To come back, open Settings › General ›
+Setup assistant and click **Run setup**.
 
 ## Server API
 
@@ -16,8 +46,9 @@ Checks the machine and answers within about 3 seconds:
 ```
 
 There is one row per check, always in this order: `claude`, `git`, `proxyEnv`, `direct`, `harnesses`,
-`ollama`, `apiKey`. `state` is `ok`, `warn` or `no`, and `line` is one plain-words sentence. Some rows also
-carry `facts`: the proxy host for `proxyEnv`, the engines for `harnesses`, the model count for `ollama`.
+`ollama`, `apiKey`, `docker`, `e2b`, `teamSetup`. `state` is `ok`, `warn` or `no`, and `line` is one
+plain-words sentence. Some rows also carry `facts`: the proxy host for `proxyEnv`, the engines for `harnesses`,
+the model count for `ollama`, `up` / `missing` / `down` for `docker`, `configured` for `e2b`.
 The `harnesses` row (shown as Engines) counts the ready engines in its `line`; each `facts.engines[]` entry
 carries its own short `line` (at most 160 characters; the full `reason` is kept), and the dialog shows one
 sub-row per engine under it.
@@ -26,6 +57,10 @@ sub-row per engine under it.
   check that fails is `warn` with "Couldn't check this."
 - `proxyEnv` shows `host:port` only, never a proxy login. `apiKey` says whether `ANTHROPIC_API_KEY` is set,
   never its value.
+- `docker` asks the Local sandbox backend for its status (`docker version`, then a count of its containers). It
+  never starts Docker. It has 5 seconds. `e2b` reads `E2B_API_KEY` and whether the `e2b` package is installed,
+  with no network call; its line names the server (E2B Cloud, or the host of `E2B_API_URL` / `E2B_DOMAIN`),
+  never the key.
 - The `claude` row and the Getting started "Connect Claude Code" tick come from the same detection, so they
   always agree.
 - `?recheck=1` skips the remembered answers.
@@ -44,7 +79,8 @@ assistant step:
                "anthropic": { "baseUrl": "https://llm.acme.example", "apiKey": "…" } },
   "models":  { "modelRoles": { "claude": { "everyday": { "model": "claude-sonnet-5-5" } } }, "askModels": { "claude": { "model": "claude-opus-5-5", "effort": "high" } }, "testRoles": true },
   "work":    { "uiLevel": "simple", "pipelineCostLimitUsd": 5, "totalCostLimitUsd": 50, "costLimitResetPeriod": "weekly",
-               "autoGeneratePrDescription": true, "smartNaming": { "suggestTitle": true }, "runEngine": "claude" },
+               "autoGeneratePrDescription": true, "smartNaming": { "suggestTitle": true }, "runEngine": "claude",
+               "execEnv": "docker" },
   "fromStep": "copilot-signin"
 }
 ```
@@ -140,7 +176,7 @@ this machine knows is left out with a warning, such as
 (`/api/settings`, `/api/proxy/status`, `/api/providers`, `/api/config`) plus `GET /api/setup/detect`.
 Detection fills a field only when the saved value is empty, and only on a first start. The head shows
 a segmented progress bar (one segment per step), "Step N of 7", the step's title and a subtitle. The foot holds
-the status line and the buttons: the way out (Cancel, or Set up later on a first start; Close on the Apply step) on
+the status line and the buttons: the way out (Cancel, or Skip all on a first start; Close on the Apply step) on
 the left; the second button below, Back and the primary action on the right, Back and the primary side by side.
 Cancel shows on every step up to Review. Once an answer changed it asks "Discard changes?" (Keep editing /
 Discard), like Escape; untouched it closes at once.
@@ -148,7 +184,7 @@ Discard), like Escape; untouched it closes at once.
 On steps 2–5 a second button appears before Back and the primary one only when it does something **Next** does not. Both
 labels put the step back to its saved values and move on:
 
-- **Skip for now** while **Next** is blocked (an untested proxy, a missing sign-in, no source picked).
+- **Skip step** while **Next** is blocked (an untested proxy, a missing sign-in, no source picked).
 - **Use saved values** when the step differs from what is saved (the rows Review marks **Changed**).
 - No second button when the step is as saved and **Next** is open.
 
@@ -158,7 +194,7 @@ labels put the step back to its saved values and move on:
 | 2 Network | Skipped on a first start when the check found a working direct connection and no proxy in the environment (Review's **Change** still opens it). Otherwise: direct, or through a corporate proxy: host and port (**Auto-detect** fills them in from the system settings, see [Auto-detect](network-proxy.md#auto-detect)), login mode, account and password (NTLMv2 only), the hosts that go direct, and under **More** the timeouts (filled in with their defaults) and the local proxy port. **Reset to defaults** puts the login mode, the no-proxy hosts, the local port and the timeouts back. A proxy found in `HTTPS_PROXY` on a first start shows as one "Found in your environment" line with **Change**. **Next** saves and applies these values at once (only when they changed), with its progress inline. |
 | 3 Model access | Which sources to use: Claude Code sign-in, GitHub Copilot, OpenAI-compatible, Anthropic-compatible. Copilot shows the plan and the device sign-in inside the dialog. With the credential broker on, keys and the Copilot sign-in stay on the broker's key page: the dialog re-checks the Copilot sign-in when you come back to its tab, and **Check again** re-checks it on demand. Already connected: Claude Code's **Sign in again** shows the terminal steps (`claude`, then `/logout` and `/login`) and a **Check again** that reads the sign-in past its cache; Copilot's **Use another account** asks first, signs out and runs the device sign-in in the dialog; a saved API key is replaced by typing a new one. |
 | 4 Models | The roles of Models › Jobs: Deep thinking, Everyday tasks and Quick jobs per engine, with an engine switch at every level: Claude, every engine the machine check found ready, your run engine, and any engine that already has roles. Set them here and every step, helper job, Chat and the workspace scan follow them (see [models.md](models.md#model-roles)). Copilot models picked here are imported by Apply (with the credential broker on too); the list shows the models GitHub's own picker offers, under GitHub Copilot. Below them, **Default model for Chat** (model and effort) for Chat's saved engine; its empty choice, "Same as Everyday tasks", stores nothing. A Copilot model picked there is imported too. |
-| 5 How you work | Interface mode, the per-run and total limits, the reset period, AI-written PR descriptions and smart run names. |
+| 5 How you work | Interface mode, the per-run and total limits, the reset period, AI-written PR descriptions and smart run names. Then **Where agents run**: the default execution environment (`execEnv`). Local (not sandboxed) is always offered; Local sandbox (Docker) when the check found Docker running; E2B sandbox when an E2B key is set; a saved choice stays offered. No pick keeps the saved value. In a container, the hardened box or a hosted Worca it shows the instance's posture (`GET /api/security/posture`) instead of a choice. A link opens [Choose a setup](choose-a-setup.md). |
 | 6 Review | One row per group. With changed roles, "Test models after applying" sits above Apply (on by default): the tests run on the Apply step, once the network, sign-ins and imports are saved. A row that differs from the saved value carries **Changed**, and **Change** jumps back. The Models row lists the Chat model too. A re-run lists only the changed rows, plus Network as **Saved** once Next applied it. |
 | 7 Apply | One row per apply step, filled from the `setup-apply` frames (or the poll). |
 
@@ -166,15 +202,24 @@ labels put the step back to its saved values and move on:
 the host, port, login mode, direct hosts and account on screen. **Test** sends the typed domain, user and
 password with it, so a fresh install behind an NTLM proxy passes before anything is saved; editing any of them
 needs a new test. A pass counts for 9 minutes, under the server's 10-minute window. This holds for the saved
-proxy on a re-run too: **Skip for now** is the way past Network without a test, and it keeps the saved values.
+proxy on a re-run too: **Skip step** is the way past Network without a test, and it keeps the saved values.
+
+**In a container.** With the egress sidecar the login lives there, not in Worca's box
+([network-proxy.md → Worca in a container](network-proxy.md#worca-in-a-container)). Network works the same way.
+The server forwards the Test, the settings and the login to the sidecar. The password is held in memory for
+that one call. A line under the password says that the sidecar holds the login. **More** has the timeouts
+only: the sidecar has no local proxy port. "Found in your environment" never shows the sidecar itself; the
+form starts with the proxy the sidecar uses. When the operator manages the login (`WORCA_EGRESS_LOGIN_FILE`),
+Network shows three lines instead of the form: that the operator manages the login, who is logged in, and the
+state. **Next** needs no Test there, and the apply changes nothing on the network.
 
 **Next on Network.** After a passing test (or with Direct), **Next** posts the network group alone and shows its
 rows inline on Network. Model access opens only when it succeeded; the password is dropped right after the 202.
 A failure stays on Network with the failed step's line and offers **Retry** from that step (asking for the
-password again when the login step still has to run) or **Skip for now**. An apply refused with `UNTESTED` stays on
+password again when the login step still has to run) or **Skip step**. An apply refused with `UNTESTED` stays on
 Network too. Values that match the saved ones post nothing, so on a re-run **Next** just moves on. Once saved,
 the dialog says so in one line ("The corporate proxy is saved and on."), Review lists Network as **Saved**
-rather than **Changed**, and closing the dialog with **Set up later** keeps it. When nothing else changed,
+rather than **Changed**, and closing the dialog with **Skip all** keeps it. When nothing else changed,
 Review offers **Finish**.
 
 **Re-run.** Settings › General › Setup assistant › **Run setup** opens the dialog with the saved values
@@ -246,7 +291,7 @@ sources offer it." on Models and on Review.
 updated the recommended setup · Review". Review lists only the rows that differ from what is saved, and nothing
 changes before **Apply**. When nothing differs, Review says "Your setup already matches your team's
 recommendation." and offers **Finish**. The notice hides once that review ends with Apply then Continue, or with
-Finish; **Set up later** keeps it.
+Finish; **Skip all** keeps it.
 
 **Share as team setup.** After a successful Apply, **Share as team setup** downloads `team-setup.json` from
 your saved settings ([`POST /api/setup/team/draft`](#post-apisetupteamdraft)). It has no network settings,
@@ -255,8 +300,8 @@ own source.
 
 **`worca setup --from FILE [--yes]`.** Applies a team setup file with one settings write. It asks one question
 for each of these that the file leaves out: Interface level, Coding agent, Per-run limit ($), Total limit ($),
-Reset, AI-written PR descriptions, and the Deep thinking, Everyday tasks and Quick jobs models. Enter keeps the
-current value. A role the file names but no source here serves counts as set. Then it prints one line per changed
+Reset, AI-written PR descriptions, the Deep thinking, Everyday tasks and Quick jobs models, and last Where agents
+run (`local`, `docker` or `e2b`; `local` clears the default). Enter keeps the current value. A role the file names but no source here serves counts as set. Then it prints one line per changed
 setting (one per changed sub-key for Sync before run, Wait for the network and Smart run names) and asks
 `Apply these changes? [y/N]`; anything but yes exits 1 with "Nothing changed.". `--yes` asks nothing. A
 refused file exits 2 and names the field. It never changes the network or model access: use the setup assistant

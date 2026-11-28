@@ -151,7 +151,8 @@
 .chat-rc-members .run-members.is-table.is-one-line > .run-member{align-items:start;min-height:32px;box-sizing:border-box;padding:5px 0 6px;line-height:20px;}
 .chat-rc-members .run-members.is-one-line > .run-member > .status-dot{justify-self:center;margin-top:6px;}
 /* C3: a run waiting on the person draws dev's 12px symbol dot (14px with an icon): the same centre, on the first line. */
-.chat-rc-members .run-members.is-one-line > .run-member > .status-dot.has-sym{margin-top:4px;}
+.chat-rc-members .run-members.is-one-line > .run-member > .status-dot.has-sym,
+.chat-rc-members .run-members.is-one-line > .run-member > .status-dot.is-dashed-ring{margin-top:4px;}
 .chat-rc-members .run-members.is-one-line > .run-member > .status-dot.has-ic{margin-top:3px;}
 /* Title, then the short state right-aligned on the same line; a Requirements fold wraps under. */
 .chat-rc-members .run-members.is-one-line .run-member-main{flex-direction:row;flex-wrap:wrap;align-items:center;column-gap:8px;}
@@ -159,6 +160,56 @@
 .chat-rc-members .run-members.is-one-line .run-member-title{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;}
 .chat-rc-members .run-members.is-one-line .run-member-main > :not(.run-member-title, .run-member-state){flex-basis:100%;}
 .chat-rc-members .run-member-state{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
+/* s4 (owner direction): an open stop's word reads amber ink, a failed run's red ink; every other word stays --ink-2.
+   Slice 16 (H4): the -strong shades, so both reach 4.5:1 on the light --bg (dark is the same value). */
+.chat-rc-members .run-member[data-mark="ask"] .run-member-state{color:var(--amber-ink-strong);}
+.chat-rc-members .run-member[data-mark="failed"] .run-member-state{color:var(--red-ink-strong);}
+/* Slice 6 (stop-list.mjs): every open stop and failed run, one line each before the question slot. A line is the run
+   row's mark in the same 16px box and 32px line, then that run's own step card or its Resume (no dot class of its own). */
+.chat-rc-stops{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
+.chat-rc-stop + .chat-rc-stop{border-top:1px solid var(--line);}
+.chat-rc-stop-line{display:grid;grid-template-columns:16px minmax(0,1fr);column-gap:8px;align-items:center;min-height:32px;padding:5px 0 6px;box-sizing:border-box;line-height:20px;}
+.chat-rc-stop-line > .status-dot{justify-self:center;}
+.chat-rc-stop-text{color:var(--ink);font-size:var(--fs-body);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-rc-stop-body{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:0 0 8px 24px;}
+.chat-rc-stop-body:empty{display:none;}
+.chat-rc-stop-q{flex:1 1 100%;min-width:0;}
+/* Slice 13: the stop line is the step card's head (run and kind once); the question text below keeps the reason. */
+.chat-rc-stop-body > .chat-rc-stop-q{margin-top:0;}
+.chat-rc-stop-q .qpanel .step-head{display:none;}
+.chat-rc-stop-err{color:var(--red-ink);font-size:var(--fs-meta);}
+/* Slice 12 (R-ux-5): an open stop's line is a Row button (.row-btn), closed until pressed, with a third column for its
+   chevron, which turns down while the line is open (no motion). The 4px inline inset keeps the hover wash and the focus
+   ring off the dot and the text; the -4px margin keeps the text column where a failed line's is. */
+button.chat-rc-stop-line{grid-template-columns:16px minmax(0,1fr) 16px;width:calc(100% + 8px);margin-inline:-4px;padding-inline:4px;}
+.chat-rc-stop-chev{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--ink-2);}
+.chat-rc-stop-chev svg{display:block;}
+.chat-rc-stop-line[aria-expanded="true"] .chat-rc-stop-chev{transform:rotate(90deg);}
+/* The feature page's step card hides the renderer's banner, as the Chat card's question does. */
+.chat-rc-stop-q .qpanel-head{display:none;}
+/* Run order map (run-order-map.mjs): the still map. Fixed px geometry (no viewBox scaling); each run is the shared
+   status dot centred on its inline left/top, its number above it, centred, on --bg (a lane running under a lower row
+   passes behind it); links in --ink-3. R-ux-6: a pointed or kept run (markRunOrderMap) lights its links in --ink and
+   dims the rest, and rings its dot. No motion but the dot's pulse. */
+.rom{overflow-x:auto;}
+.rom-plot{position:relative;}
+.rom-links{position:absolute;inset:0;overflow:visible;pointer-events:none;}
+.rom-link{fill:none;stroke:var(--ink-3);stroke-width:1.5px;}
+.rom-link.is-faint{stroke:var(--line-2);}
+.rom-link.is-lit{stroke:var(--ink);stroke-width:2px;}
+.rom-link.is-dim{opacity:.18;}
+/* A 0×0 box at the centre: the dot (8, 12 or 14px) overflows it evenly, with no transform for the pulse to undo. */
+.rom-run{position:absolute;width:0;height:0;display:flex;align-items:center;justify-content:center;}
+/* The ring of a pointed or kept run, on the still run box, never on the pulsing dot: 22px, 2px clear of a 14px dot. */
+.rom-run.is-lit::before{content:"";position:absolute;width:22px;height:22px;box-sizing:border-box;border:2px solid var(--ink);border-radius:50%;}
+/* Centred by the flex box (no left), its bottom on the ring's outer radius. */
+.rom-n{position:absolute;bottom:11px;font-size:var(--fs-caption);line-height:1;color:var(--ink-2);background:var(--bg);white-space:nowrap;}
+/* Small runs slice 10: Show order on the feature page's Runs tab. The toggle is the run page's Show route button, right
+   above the rows; the body holds the one readable hint and, while open, the map (its own sideways scroll). Still. */
+div.gpage-order{margin-bottom:8px;}
+div.gpage-order-bar{display:flex;justify-content:flex-end;}
+div.gpage-order-body{padding-top:4px;}
+div.gpage-order-body > .gpage-order-hint{margin:0 0 8px;max-width:70ch;font-size:var(--fs-caption);color:var(--ink-2);}
 /* A narrow row with no PR chip and no cost keeps one grid row: the stacked ". . pr cost" row and its gap would add 9px.
    C2: every narrow one-line row stays one 32px line, as the prototype's #build rows. A PR chip takes the last column
    (the chevron's; the whole-row link opens the run); the cost is dropped, as dev drops it in a narrow chat card, and
@@ -190,11 +241,14 @@
 div.gpage-runs .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content 64px 16px;column-gap:8px;}
 div.gpage-runs .run-members.is-table.is-one-line > .run-member{align-items:start;min-height:32px;box-sizing:border-box;padding:5px 0 6px;line-height:20px;}
 div.gpage-runs .run-members.is-one-line > .run-member > .status-dot{justify-self:center;margin-top:6px;}
-div.gpage-runs .run-members.is-one-line > .run-member > .status-dot.has-sym{margin-top:4px;}
+div.gpage-runs .run-members.is-one-line > .run-member > .status-dot.has-sym,
+div.gpage-runs .run-members.is-one-line > .run-member > .status-dot.is-dashed-ring{margin-top:4px;}
 div.gpage-runs .run-members.is-one-line > .run-member > .status-dot.has-ic{margin-top:3px;}
 div.gpage-runs .run-members.is-one-line .run-member-main{flex-direction:row;flex-wrap:wrap;align-items:center;column-gap:8px;}
 div.gpage-runs .run-members.is-one-line .run-member-title{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;}
 div.gpage-runs .run-member-state{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;}
+div.gpage-runs .run-member[data-mark="ask"] .run-member-state{color:var(--amber-ink-strong);}
+div.gpage-runs .run-member[data-mark="failed"] .run-member-state{color:var(--red-ink-strong);}
 @media (max-width:600px){
   div.gpage-runs .run-members.is-table.is-one-line{grid-template-columns:16px 20px minmax(0,1fr) max-content;}
   div.gpage-runs .run-members.is-table.is-one-line > .run-member{grid-template-areas:"dot num main pr";}
@@ -207,6 +261,35 @@ div.gpage-runs .run-member-state{color:var(--ink-2);font-size:var(--fs-meta);whi
   div.gpage-runs .run-members.is-table.is-one-line > .run-member:has(> .run-member-pr:empty){grid-template-areas:"dot num main main";}
   div.gpage-runs .run-members.is-table.is-one-line > .run-member > :is(.run-member-go, .run-member-pr:empty, .run-member-cost){display:none;}
 }
+/* s8 (R-ux-2): run row link marks (run-links.mjs sets the attributes). A link row (data-run) is focusable and a click on
+   it keeps the marks, so its title's stretched overlay is off: the title text still opens the run, and the underline and
+   chevron answer the title's own hover or focus. The bar is a ::before out of the layout, left of the row (in the host's
+   padding, clear of the dot): solid for a run the pointed one builds on, dashed for a run that builds on it. A kept row
+   takes the selected fill. Nothing else changes: no dimming, no layout property, no motion. */
+.chat-rc-members .run-member[data-run]{cursor:default;}
+.chat-rc-members .run-member[data-run]:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.chat-rc-members .run-member[data-run] .run-member-title::after{content:none;}
+.chat-rc-members .run-members .run-member[data-run]:hover .run-member-title{text-decoration:none;}
+.chat-rc-members .run-members .run-member[data-run] .run-member-title:is(:hover,:focus-visible){text-decoration:underline;}
+.chat-rc-members .run-members .run-member[data-run]:hover .run-member-go{opacity:0;}
+.chat-rc-members .run-members .run-member[data-run]:has(.run-member-title:is(:hover,:focus-visible)) .run-member-go{opacity:1;}
+.chat-rc-members .run-member[data-run]::before{content:"";position:absolute;left:-8px;top:8px;bottom:8px;width:3px;color:var(--ink);background:currentColor;pointer-events:none;opacity:0;}
+.chat-rc-members .run-member[data-run][data-link="on"]::before{opacity:1;}
+.chat-rc-members .run-member[data-run][data-link="by"]::before{-webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'><rect width='3' height='4'/></svg>") 0 0/3px 8px repeat-y;mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'><rect width='3' height='4'/></svg>") 0 0/3px 8px repeat-y;opacity:1;}
+.chat-rc-members .run-member[data-run]:hover:not([data-link-kept]){background:var(--row-open);}
+.chat-rc-members .run-member[data-run][data-link-kept]{background:var(--row-selected);}
+div.gpage-runs .run-member[data-run]{cursor:default;}
+div.gpage-runs .run-member[data-run]:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+div.gpage-runs .run-member[data-run] .run-member-title::after{content:none;}
+div.gpage-runs .run-members .run-member[data-run]:hover .run-member-title{text-decoration:none;}
+div.gpage-runs .run-members .run-member[data-run] .run-member-title:is(:hover,:focus-visible){text-decoration:underline;}
+div.gpage-runs .run-members .run-member[data-run]:hover .run-member-go{opacity:0;}
+div.gpage-runs .run-members .run-member[data-run]:has(.run-member-title:is(:hover,:focus-visible)) .run-member-go{opacity:1;}
+div.gpage-runs .run-member[data-run]::before{content:"";position:absolute;left:-8px;top:8px;bottom:8px;width:3px;color:var(--ink);background:currentColor;pointer-events:none;opacity:0;}
+div.gpage-runs .run-member[data-run][data-link="on"]::before{opacity:1;}
+div.gpage-runs .run-member[data-run][data-link="by"]::before{-webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'><rect width='3' height='4'/></svg>") 0 0/3px 8px repeat-y;mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 8'><rect width='3' height='4'/></svg>") 0 0/3px 8px repeat-y;opacity:1;}
+div.gpage-runs .run-member[data-run]:hover:not([data-link-kept]){background:var(--row-open);}
+div.gpage-runs .run-member[data-run][data-link-kept]{background:var(--row-selected);}
 /* A stop on the feature page has its own head (the question's): the plan ask's banner is hidden, for a stop only. */
 div.gpage-question[data-stop] .qpanel-head{display:none;}
 /* The run page and panel of a stopped run: the stop's head over its question. A gate's two columns (decision,
@@ -408,6 +491,23 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .shape-plan-outline-change{padding:8px 10px;border-radius:var(--r-ctrl);background:var(--amber-wash);border:1px solid var(--amber-line);}
 .shape-plan-outline-change-head{font-weight:600;color:var(--amber-ink);}
 .shape-plan-outline-change-text{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;}
+.shape-plan-outline-change > .note-body{margin-top:4px;}
+/* An agent's note in a card (note-body.mjs): normal --ink-2 text, paragraphs, inline code and divided list rows, folded
+   after about six lines and opened in place — never an inner scrollbar. */
+.note-body{font-weight:400;font-size:var(--fs-body);color:var(--ink-2);overflow-wrap:anywhere;min-width:0;}
+.issue > .note-body{grid-column:-2 / -1;}   /* the .issue-detail column: the last one, in the one- and two-column list */
+.note-body [hidden]{display:none;}
+.note-p{margin:0 0 8px;}
+.note-p:last-child,.note-rows:last-child{margin-bottom:0;}
+.note-body code{font-family:var(--mono);font-size:var(--fs-meta);background:var(--field);border-radius:var(--r-sm);padding:1px 4px;}
+.note-rows{list-style:none;margin:0 0 8px;padding:0;border-bottom:1px solid var(--line);}
+li.note-row{display:flex;gap:8px;border-top:1px solid var(--line);padding:6px 0;}
+.note-n{flex:none;color:var(--ink-2);}
+.note-text{min-width:0;}
+.note-mid{display:flex;min-width:0;font-family:var(--mono);}
+.note-mid-head{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.note-mid-tail{flex:none;white-space:nowrap;}
+.note-body .is-clamped{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:var(--note-clamp);overflow:hidden;}
 .shipit-slice-note[hidden]{display:none;}
 .chat-home-plans{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none;}
 .chat-home-plan{display:flex;flex-direction:column;gap:4px;}
@@ -462,6 +562,9 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .srows.runs-members .runs-row-title{min-width:0;}
 .srows.runs-members .runs-row-sub{flex:none;}
 .srows.runs-members .runs-row-right{flex:none;}
+/* s5 (D7): the sidebar's ask word in amber ink and its failed word in red ink, as on the card and the feature page. */
+.srows.runs-members .runs-item[data-mark="ask"] .runs-row-sub{color:var(--amber-ink-strong);}
+.srows.runs-members .runs-item[data-mark="failed"] .runs-row-sub{color:var(--red-ink-strong);}
 /* D2 (D10): the Owns rows are one line: the id column fits R-arch-10 whole, the requirement text ellipsizes (the row's
    tooltip holds it all). The Agents rows keep 32px: a done row's detail that would wrap under its name is clipped. */
 .srows.run-facts{--row-id:6.4em;}
@@ -471,3 +574,10 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .srows.run-facts .plan-check-text > .plan-check-label{flex:0 1 auto;}
 .srows.run-facts .plan-check-text > .plan-check-detail{flex:none;white-space:nowrap;}
 .srows.run-agents .plan-check-text{max-height:var(--row-line);overflow:hidden;}
+/* Slice 11 (D9, D11): a Verifier round's check row after a feature's runs, on the field ground, the shield in quiet ink
+   beside its dot in the pick column (no checkbox, no ⋯): the shield in the column's 16px indent, the dot on the members'
+   mark column. Inside a Needs you frame the ground stays inside the frame's 1px ring. Its word takes the data-mark inks above. */
+.srows.runs-members .runs-item.is-check{background:var(--field);}
+.srows.runs-members .runs-item.is-check > .runs-pick{padding-left:0;grid-template-columns:16px 12px;}
+.srows.runs-members .runs-item.is-check > .runs-pick > .ic{color:var(--ink-3);}
+.runs-item.is-needs > .srows.runs-members > .runs-item.is-check:last-child{margin:0 1px 1px;border-radius:0 0 var(--r-sm) var(--r-sm);}

@@ -1886,3 +1886,139 @@ test('G with a selection opens the picker for the whole selection, not only the 
   await settle(window, 10);
   assert.deepEqual([...groupPosts.at(-1).body.pipelineIds].sort(), ['pw000001', 'pw000002']);
 });
+
+// --- Shaper small runs s5 (R-arch-1, D6): the member rows read the shared run status, and repaint when only it changes --
+test('s5 sidebar boot: run 7\'s member row reads the shared word and repaints on a slice-only change', async () => {
+  const member = (position, status, slice) => ({ position, title: `Slice ${position}`, pipelineId: `ps50000${position}`, ticketId: null, status, pr: null,
+    ticket: null, adhoc: false, after: null, slice: { kind: null, waitsFor: [], buildsOn: [], ...slice } });
+  const seven = (slice) => ({ position: 7, title: 'Slice 7', pipelineId: null, ticketId: 't7', status: null, pr: null,
+    ticket: { id: 't7', status: 'scheduled', runAt: null, after: true }, adhoc: false, after: 6,
+    slice: { kind: null, state: 'planned', waitsFor: [2, 6], buildsOn: [1, 2, 6], ...slice } });
+  const group = (two, last) => ({ id: 'feat_0000000000s5', kind: 'feature', title: 'Merge gate', smallRuns: true, projectKey: null, planning: null,
+    cost: { usd: 0, byPipeline: {} },
+    members: [member(1, 'done', { state: 'done' }), member(2, 'running', two), member(6, 'running', { state: 'running', buildsOn: [3, 5] }), seven(last)] });
+  const asking = { state: 'questions', buildsOn: [1] };
+  const runGroups = [group(asking, {})];
+  // The group folds its members' History rows: without one the list has no row to group.
+  const history = [[1, 'done'], [2, 'running'], [6, 'running']].map(([n, status]) => ({ id: `ps50000${n}`, projectKey: KEY, projectName: 'proj',
+    projectDir: PROJECT, title: `Slice ${n}`, status, startedAt: '2026-09-29T09:00:00Z', mtime: n }));
+  const { window, doc, recv } = await boot({ runGroups, history });
+  recv({ type: 'hello', flags: { shaperSmallRuns: true }, runs: [] });
+  go(window, 'runs'); await settle(window);
+  recv({ type: 'run-groups-changed' }); await settle(window, 8);
+  const row = () => [...doc.querySelectorAll('#runs-list .runs-item[data-row-key="chain:feat_0000000000s5"] .runs-members > .runs-item[data-level="member"]')]
+    .find((it) => it.querySelector('.runs-row-title').textContent.startsWith('7 · '));
+  const sub = () => row().querySelector(':scope > a.runs-row > .runs-row-sub').textContent;
+  assert.ok(row(), 'the unfinished group lists its members');
+  assert.equal(sub(), 'waits for run 2 (needs you), 6');
+  assert.equal(row().dataset.mark, 'faint');
+  // Only run 2's slice changes: run 7's own payload and every one of dev's row facts stay, so only the shared word moved.
+  runGroups[0] = group({ state: 'error', buildsOn: [1] }, {});
+  recv({ type: 'run-groups-changed' }); await settle(window, 8);
+  assert.equal(sub(), 'waits for run 2 (failed), 6');
+  // Only run 7's slice changes.
+  runGroups[0] = group({ state: 'error', buildsOn: [1] }, { waitsFor: [6] });
+  recv({ type: 'run-groups-changed' }); await settle(window, 8);
+  assert.equal(sub(), 'waits for run 6');
+});
+
+// ── Slice 11 (R-ux-4): the Verifier's check row in the booted list: its links, and that it is never selected ─────────
+const CHECK_GROUP_KEY = 'chain:feat_000000000s11';
+const checkWorld = () => {
+  const member = (position) => ({ position, title: `Slice ${position}`, pipelineId: `pv00000${position}`, ticketId: null, status: 'done', pr: null,
+    ticket: null, adhoc: false, after: null });
+  const group = { id: 'feat_000000000s11', kind: 'feature', title: 'Sign-up', smallRuns: true, projectKey: null, planning: null,
+    cost: { usd: 5, byPipeline: { pv000001: 2, pv000002: 2, pv000009: 1 },
+      checks: { pv000009: { round: 2, at: '2026-09-29T09:30:00Z', status: 'error' } } },
+    members: [member(1), member(2)],
+    checks: [{ round: 2, pipelineId: 'pv000009', at: '2026-09-29T09:30:00Z', state: 'failed', gaps: 1 }] };
+  const history = [...[[1, 'done'], [2, 'done'], [9, 'error']].map(([n, status]) => ({ id: `pv00000${n}`, projectKey: KEY, projectName: 'proj',
+    projectDir: PROJECT, title: n === 9 ? 'Verifier · Sign-up · round 2' : `Slice ${n}`, status, startedAt: '2026-09-29T09:00:00Z', mtime: 10 + n })),
+    ...HIST];
+  return { group, history };
+};
+async function checkBoot({ flag = true, runs = [], state = 'failed' } = {}) {
+  const { group, history } = checkWorld();
+  group.checks[0].state = state;
+  const ctx = await boot({ runGroups: [group], history });
+  ctx.recv({ type: 'hello', flags: { shaperSmallRuns: flag }, runs });
+  go(ctx.window, 'runs'); await settle(ctx.window);
+  ctx.recv({ type: 'run-groups-changed' }); await settle(ctx.window, 8);
+  const item = () => groupItem(ctx.doc, CHECK_GROUP_KEY);
+  assert.ok(item(), 'the group row');
+  const expand = item().querySelector(':scope > .runs-row-tail .runs-expand');
+  if (expand.getAttribute('aria-expanded') !== 'true') { click(ctx.window, expand); await settle(ctx.window); }
+  const check = () => item().querySelector(':scope > .runs-members > .runs-item[data-level="check"] > a.runs-row');
+  const checked = () => ctx.doc.querySelectorAll('#runs-list .runs-item.is-checked').length;
+  return { ...ctx, item, check, checked, bulkBar: () => ctx.doc.getElementById('runs-bulk') };
+}
+
+test('s11 booted list: the check row follows the runs and links the round\'s page, and the round has no row of its own', async () => {
+  const w = await checkBoot();
+  assert.ok(w.check(), 'the check row');
+  assert.equal(w.check().dataset.line, 'Verifier · round 2 · 1 gap');
+  assert.equal(w.check().getAttribute('href'), `#history/${KEY}/pv000009`);
+  assert.equal(w.check().getAttribute('title'), 'Cost $1.00');
+  assert.equal(w.item().querySelector(':scope > a.runs-row').dataset.line, 'Verifier round 2 failed · 1 gap');
+  assert.equal(w.doc.querySelectorAll('#runs-list .runs-item[data-level="top"] > a.runs-row[data-pipeline-id="pv000009"]').length, 0);
+  assert.doesNotMatch(w.item().textContent, /Ready to ship/);
+});
+
+test('s11 booted list: a live asking round links its run page, and a click opens it', async () => {
+  const w = await checkBoot({ state: 'asking', runs: [live('rv', { pipelineId: 'pv000009', title: 'Verifier · Sign-up · round 2' })] });
+  assert.ok(w.check(), 'the check row');
+  assert.equal(w.check().getAttribute('href'), '#running/rv');
+  assert.equal(w.check().dataset.runId, 'rv');
+  assert.equal(w.check().dataset.state, 'needs-you');
+  assert.equal(w.doc.querySelectorAll('#runs-list .runs-item[data-level="top"] > a.runs-row[data-run-id="rv"]').length, 0);
+  click(w.window, w.check()); await settle(w.window, 8);
+  assert.match(w.window.location.hash, /^#running\/rv/);
+});
+
+test('s11 booted list: with the flag off there is no check row, and the round keeps its own row', async () => {
+  const w = await checkBoot({ flag: false });
+  assert.equal(w.doc.querySelector('#runs-list .runs-item[data-level="check"]'), null);
+  assert.ok(w.doc.querySelector('#runs-list .runs-item[data-level="top"] > a.runs-row[data-pipeline-id="pv000009"]'));
+});
+
+test('s11 keys: Space and E on a check row select and archive nothing, the arrows move, Left returns to the group row', async () => {
+  const w = await checkBoot();
+  const focus = () => { assert.ok(w.check(), 'the check row'); w.check().focus(); return w.check(); };
+  for (const key of [' ', 'e']) {
+    press(w.window, focus(), key); await settle(w.window, 8);
+    assert.equal(w.checked(), 0, `key "${key}"`);
+    assert.equal(w.bulkBar().hidden, true, `key "${key}"`);
+  }
+  assert.equal(w.posts.length, 0, 'nothing was archived');
+  const from = focus();
+  press(w.window, from, 'ArrowDown'); await settle(w.window);
+  assert.notEqual(w.doc.activeElement, w.check(), 'the focus moved on');
+  assert.notEqual(w.doc.activeElement, w.doc.body);
+  press(w.window, focus(), 'ArrowUp'); await settle(w.window);
+  assert.equal(w.doc.activeElement.closest('.runs-item').dataset.level, 'member', 'up to run 2');
+  press(w.window, focus(), 'ArrowLeft'); await settle(w.window);
+  assert.equal(w.doc.activeElement, w.item().querySelector(':scope > a.runs-row'));
+  // Shift+arrow extends over the top-level rows, as from a member: never the check row.
+  press(w.window, focus(), 'ArrowDown', { shiftKey: true }); await settle(w.window, 8);
+  const keys = [...w.doc.querySelectorAll('#runs-list .runs-item.is-checked')].map((i) => i.dataset.rowKey);
+  assert.ok(keys.includes(CHECK_GROUP_KEY), keys.join(' '));
+  assert.ok(!keys.some((k) => k.startsWith('check:')), keys.join(' '));
+});
+
+test('s11 pointer: a Cmd-click, a Shift-click and a long press on a check row select nothing', async () => {
+  const w = await checkBoot();
+  assert.ok(w.check(), 'the check row');
+  for (const mod of [{ metaKey: true }, { shiftKey: true }]) {
+    w.check().dispatchEvent(new w.window.MouseEvent('click', { bubbles: true, cancelable: true, ...mod }));
+    await settle(w.window, 8);
+    assert.equal(w.checked(), 0, JSON.stringify(mod));
+    assert.equal(w.bulkBar().hidden, true, JSON.stringify(mod));
+  }
+  const down = new w.window.Event('pointerdown', { bubbles: true });
+  Object.defineProperty(down, 'pointerType', { value: 'touch' });
+  w.check().dispatchEvent(down);
+  await new Promise((r) => setTimeout(r, 600));   // list-dom.mjs's long press is 500 ms
+  await settle(w.window, 8);
+  assert.equal(w.checked(), 0, 'long press');
+  assert.equal(w.bulkBar().hidden, true, 'long press');
+});

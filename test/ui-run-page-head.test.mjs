@@ -5,6 +5,8 @@ import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 import { groupKindWord, pageModel, runCrumbs, paintCrumbs, buildFacts, syncFacts, setFactText, RUN_FACTS, GROUP_FACTS }
   from '../ui/public/run-page-head.mjs';
+// A namespace read, so a missing new export (featureShipHref) fails only its own test.
+import * as PAGE_HEAD from '../ui/public/run-page-head.mjs';
 
 const doc = () => new JSDOM('<!doctype html><body></body>').window.document;
 const home = (over = {}) => ({ row: { groupKind: 'feature', groupId: 'feat_1', title: 'Run tags' }, planning: false, position: 2, total: 3, ...over });
@@ -98,4 +100,10 @@ test('the run title is one line cut with "…": no clamp, same type', () => {
   assert.doesNotMatch(b, /line-clamp|-webkit-box|overflow-wrap/);
   // The group page's title shares the class; its flex base keeps its kind chip beside it.
   assert.equal(ruleBody('.gpage .gpage-title'), 'flex:1 1 160px;min-width:min(100%,160px);');
+});
+
+test('s7 featureShipHref: the one route to a feature\'s Ship card, encoded as groupHrefOf', () => {
+  assert.equal(typeof PAGE_HEAD.featureShipHref, 'function', 'run-page-head exports featureShipHref');
+  assert.equal(PAGE_HEAD.featureShipHref('feat_1'), '#feature/feat_1/requirements/ship');
+  assert.equal(PAGE_HEAD.featureShipHref('a b'), '#feature/a%20b/requirements/ship');
 });

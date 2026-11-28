@@ -51,11 +51,11 @@ const BASE = (f) => ({
   'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Sprint' },
   'POST /api/requirements/4/note-check': { conflicts: [] },
 });
-function make() {
+function make(deps = {}) {
   const host = document.createElement('div');
   const opened = [];
   const view = createRequirementsView({ host, subEl: document.createElement('div'), msgEl: document.createElement('p'),
-    deps: { route: () => {}, openRun: (id) => opened.push(id) } });
+    deps: { route: () => {}, openRun: (id) => opened.push(id), ...deps } });
   document.body.append(host);
   return { host, view, opened };
 }
@@ -213,4 +213,53 @@ test('the runs list shows each start\'s note as text, clamped with Show more, an
   const marks = [...host.querySelectorAll('.req-run-override')];
   assert.deepEqual(marks.map((m) => m.textContent), ['Overrode the spec']);
   host.remove();
+});
+
+test('a start the guardrails refuse for a step\'s harness asks once; Allow unguarded resends with the consent; Cancel says so', async () => {
+  const refusal = { error: 'Plan runs on OpenAI Codex, which cannot enforce the Normal rules.', code: 'engine-refused', overridable: true, engines: ['codex'] };
+  const route = { 'POST /api/requirements/4/start': (c) => (c.body.allowUnguardedEngine ? STARTED : { __status: 409, body: refusal }) };
+  const asked = [];
+  let calls = fakeApi({ ...BASE(() => feature()), ...route });
+  let m = make({ confirm: async (plan) => { asked.push(plan); return true; } });
+  await m.view.show('feature/4');
+  m.host.querySelector('[data-ui="start-go"]').click(); await settle();
+  ui('runsetup-go').click(); await settle();
+  assert.deepEqual(asked, [{ title: 'Start without some guardrails?', message: refusal.error, confirmLabel: 'Allow unguarded' }]);
+  assert.deepEqual(posts(calls, 'start').map((c) => c.body), [{ workflowId: 'wf_auto' }, { workflowId: 'wf_auto', allowUnguardedEngine: true }]);
+  assert.deepEqual(m.opened, ['r9']);
+  m.host.remove();
+  calls = fakeApi({ ...BASE(() => feature()), ...route });
+  m = make({ confirm: async () => false });
+  await m.view.show('feature/4');
+  m.host.querySelector('[data-ui="start-go"]').click(); await settle();
+  ui('runsetup-go').click(); await settle();
+  assert.deepEqual([posts(calls, 'start').length, document.querySelector('.req-runsetup-msg').textContent], [1, 'Start cancelled.']);
+  m.host.remove();
+  overlay()?.remove();   // a cancelled start leaves the overlay open, on the body
+});
+
+test('a harness refusal the consent cannot lift asks nothing and reads as the server says', async () => {
+  const hard = { error: 'codex is off while the credential broker is on', code: 'engine-refused', overridable: false };
+  const asked = [];
+  const calls = fakeApi({ ...BASE(() => feature()), 'POST /api/requirements/4/start': { __status: 409, body: hard } });
+  const m = make({ confirm: async (plan) => { asked.push(plan); return true; } });
+  await m.view.show('feature/4');
+  m.host.querySelector('[data-ui="start-go"]').click(); await settle();
+  ui('runsetup-go').click(); await settle();
+  assert.deepEqual([asked, posts(calls, 'start').length, document.querySelector('.req-runsetup-msg').textContent, m.opened], [[], 1, hard.error, []]);
+  m.host.remove();
+  overlay()?.remove();   // the refusal leaves the overlay open, on the body
+});
+test('a consented resend after a harness refusal keeps the note', async () => {
+  const refusal = { error: 'Plan runs on OpenAI Codex.', code: 'engine-refused', overridable: true };
+  const calls = fakeApi({ ...BASE(() => feature()), 'POST /api/requirements/4/start': (c) => (c.body.allowUnguardedEngine ? STARTED : { __status: 409, body: refusal }) });
+  const m = make({ confirm: async () => true });
+  await m.view.show('feature/4');
+  m.host.querySelector('[data-ui="start-go"]').click(); await settle();
+  type(ui('runsetup-note'), 'Keep it small');
+  ui('runsetup-go').click(); await settle(16);   // note-check, the refusal, the ask, the resend
+  const sent = posts(calls, 'start').map((c) => c.body);
+  assert.deepEqual(sent, [{ workflowId: 'wf_auto', note: 'Keep it small' }, { ...sent[0], allowUnguardedEngine: true }]);
+  assert.deepEqual([m.opened, overlay()], [['r9'], null]);
+  m.host.remove();
 });

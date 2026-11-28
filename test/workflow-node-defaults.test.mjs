@@ -111,3 +111,12 @@ test('the legacy per-role config still outranks a workflow default on wf_default
   const planner = Object.values(nodes).find((n) => n.key === 'planner');
   assert.equal(planner.model, 'claude-haiku-4-5');
 });
+
+test('a defaults patch naming the stored model and no engine keeps the engine; null or another model clears it', async () => {
+  await writeGraphWorkflow(graph('wf_eng_a', 'E', [{ id: 'n_a', key: 'planner', config: { model: 'gpt-5.5', engine: 'codex' } }]));
+  const cfg = async (patch) => (await setWorkflowNodeDefaults('wf_eng_a', { n_a: patch })).nodes.find((n) => n.id === 'n_a').config;
+  assert.deepEqual(await cfg({ model: 'gpt-5.5', effort: 'low' }), { model: 'gpt-5.5', effort: 'low', engine: 'codex' });
+  assert.deepEqual(await cfg({ model: 'gpt-5.5', engine: null }), { model: 'gpt-5.5' });
+  await cfg({ model: 'gpt-5.5', engine: 'codex' });
+  assert.deepEqual(await cfg({ model: 'gpt-5.6-sol' }), { model: 'gpt-5.6-sol' });
+});

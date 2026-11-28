@@ -39,7 +39,7 @@ const freshBody = (dir, over = {}) => {
 };
 const ok = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 
-async function boot({ fresh = null, syncGet = null, syncPost = null, run = null, workspaces = [] } = {}) {
+async function boot({ fresh = null, syncGet = null, syncPost = null, run = null, workspaces = [], runDefaults = null, execEnvs = null } = {}) {
   const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -56,9 +56,10 @@ async function boot({ fresh = null, syncGet = null, syncPost = null, run = null,
     const method = opts.method || 'GET';
     calls.push({ url: u, method, body: opts.body ? JSON.parse(opts.body) : null });
     // The server always answers the run defaults; Claude with nothing set (Plan 2a).
-    if (u.includes('/api/run-defaults')) return Promise.resolve(ok({ engine: { value: 'claude', source: 'default' }, steps: { claude: {}, codex: {} } }));
+    if (u.includes('/api/run-defaults')) return Promise.resolve(ok({ engine: { value: 'claude', source: 'default' }, steps: { claude: {}, codex: {} }, ...(runDefaults || {}) }));
     if (u.includes('/api/projects')) return Promise.resolve(ok({ projects: PROJECTS }));
     if (u.includes('/api/workspaces')) return Promise.resolve(ok({ workspaces }));
+    if (execEnvs && u.includes('/api/exec-envs')) return Promise.resolve(ok({ execEnvs }));
     if (u.includes('/api/branches')) {
       const q = new URL(u, 'http://x').searchParams;
       const dir = q.get('projectDir') || '';
@@ -233,6 +234,7 @@ test('engine: the hint and the checkbox row really hide (explicit [hidden] rules
   const css = readStyleCss();
   assert.match(css, /#engine-hint\[hidden\]/);
   assert.match(css, /#engineAllowRow\[hidden\]/);
+  assert.match(css, /#exec-env-hint\[hidden\]/);
 });
 
 test('engine: the Codex hint says the whole pipeline runs on Codex and where its models live', async () => {
@@ -267,7 +269,7 @@ test('engine: OpenCode is the fifth choice; it sends engine opencode and says he
   assert.equal(ctx.posted.at(-1).engine, 'opencode');
 });
 
-test('engine: on Cursor the agent rows offer Cursor models only and no sub-agent model', async () => {
+test('engine: on Cursor the row\'s picker opens on Cursor, and there is no sub-agent model', async () => {
   const ctx = await boot();
   const np = ctx.window.__np;
   np._setModels([
@@ -279,8 +281,11 @@ test('engine: on Cursor the agent rows offer Cursor models only and no sub-agent
   np.renderAgentRows([{ nodeId: 'n1', key: 'planner', label: 'Plan', color: '', stepIndex: 0, parallel: false,
     model: '', effort: '', fanOut: false, subagentModel: '', askQuestions: null, def, override: {}, modified: false }]);
   const model = ctx.doc.querySelector('#agents-rows .step-model');
-  assert.deepEqual([...model.options].map((o) => o.value).filter((v) => v !== '__add__'), ['', 'my-cursor-m']);
-  assert.equal(model.options[0].textContent, '(default model)');
+  model.click();
+  const pop = ctx.doc.querySelector('.mdl-cols-pop');
+  const shown = pop.querySelector('[data-col="harness"] [aria-selected="true"]');
+  assert.deepEqual([shown.dataset.key, shown.querySelector('.badge').textContent], ['cursor', 'Default']);
+  assert.deepEqual([...pop.querySelectorAll('[data-col="model"] [role="option"]')].map((b) => b.dataset.key), ['my-cursor-m']);
   assert.equal(ctx.doc.querySelector('#agents-rows .step-subagent').closest('.select-wrap').hidden, true);
 });
 
@@ -297,7 +302,7 @@ for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']])
     assert.equal(ctx.posted.at(-1).engine, engine);
   });
 
-  test(`engine: on ${label} the agent rows offer ${label} models only and no sub-agent model`, async () => {
+  test(`engine: on ${label} the row's picker opens on ${label}, and there is no sub-agent model`, async () => {
     const ctx = await boot();
     const np = ctx.window.__np;
     np._setModels([
@@ -310,7 +315,111 @@ for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']])
     np.renderAgentRows([{ nodeId: 'n1', key: 'planner', label: 'Plan', color: '', stepIndex: 0, parallel: false,
       model: '', effort: '', fanOut: false, subagentModel: '', askQuestions: null, def, override: {}, modified: false }]);
     const model = ctx.doc.querySelector('#agents-rows .step-model');
-    assert.deepEqual([...model.options].map((o) => o.value).filter((v) => v !== '__add__'), ['', `my-${engine}-m`]);
+    model.click();
+    const pop = ctx.doc.querySelector('.mdl-cols-pop');
+    const shown = pop.querySelector('[data-col="harness"] [aria-selected="true"]');
+    assert.deepEqual([shown.dataset.key, shown.querySelector('.badge').textContent], [engine, 'Default']);
+    assert.deepEqual([...pop.querySelectorAll('[data-col="model"] [role="option"]')].map((b) => b.dataset.key), [`my-${engine}-m`]);
     assert.equal(ctx.doc.querySelector('#agents-rows .step-subagent').closest('.select-wrap').hidden, true);
   });
 }
+
+const pickExecEnv = (ctx, v) => { const s = ctx.doc.getElementById('execEnvSelect'); s.value = v; s.dispatchEvent(new ctx.doc.defaultView.Event('change', { bubbles: true })); };
+
+test('execution environment: a server without the field, or a local default, sends nothing', async () => {
+  for (const runDefaults of [null, { execEnv: { value: 'local', source: 'default' } }]) {
+    const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults });
+    assert.equal(ctx.doc.getElementById('execEnvSelect').value, 'local');
+    assert.equal(ctx.doc.getElementById('exec-env-row').dataset.minLevel, 'advanced');
+    await submit(ctx);
+    assert.equal('execEnv' in ctx.posted.at(-1), false, JSON.stringify(runDefaults));
+  }
+});
+
+test('execution environment: an Ask card\'s Runs in pick survives the target change and the defaults that load after it', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults: { execEnv: { value: 'local', source: 'default' } } });
+  ctx.window.__np.openNewPipeline({ target: 'project', projectDir: PROJECTS[1].path, workflowId: 'wf_default', guardrailsId: 'normal',
+    prompt: 'x', title: 'X', featureBranch: '', execEnv: 'e2b' });
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
+  for (let i = 0; i < 12; i++) await tick();
+  assert.equal(ctx.doc.getElementById('execEnvSelect').value, 'e2b');
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).execEnv, 'e2b');
+});
+
+test('execution environment: picking E2B sends execEnv e2b', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
+  pickExecEnv(ctx, 'e2b');
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).execEnv, 'e2b');
+});
+
+test('execution environment: an e2b default preselects E2B; choosing Local sends execEnv local', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults: { execEnv: { value: 'e2b', source: 'user' } } });
+  await waitFor(() => ctx.doc.getElementById('execEnvSelect').value === 'e2b');
+  assert.equal(ctx.doc.getElementById('exec-env-row').dataset.levelKeep !== undefined, true, 'Simple still shows a non-local default');
+  pickExecEnv(ctx, 'local');
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).execEnv, 'local');
+});
+
+test('execution environment: an e2b default applies to every remote engine; a workspace run falls back to Local with a hint', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults: { execEnv: { value: 'e2b', source: 'user' } } });
+  const select = ctx.doc.getElementById('execEnvSelect');
+  const hint = ctx.doc.getElementById('exec-env-hint');
+  const row = ctx.doc.getElementById('exec-env-row');
+  await waitFor(() => select.value === 'e2b');
+  assert.equal(hint.hidden, true);
+  pick(ctx, 'codex');
+  assert.equal(select.value, 'e2b', 'codex takes the saved E2B default');
+  assert.equal(hint.hidden, true);
+  await submit(ctx);
+  assert.equal('execEnv' in ctx.posted.at(-1), false, 'unsent: the run gets the saved default');
+  ctx.doc.querySelector('#target-seg button[data-target="workspace"]').click();
+  await waitFor(() => select.value === 'local');
+  assert.equal(hint.hidden, false, 'a workspace run cannot take the E2B default');
+  assert.match(hint.textContent, /saved E2B default does not apply to a workspace run/);
+  assert.notEqual(row.dataset.levelKeep, undefined, 'Simple still shows the row with its hint');
+});
+
+test('execution environment: codex takes the saved E2B default: an explicit E2B pick equals it, so nothing is sent', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), runDefaults: { execEnv: { value: 'e2b', source: 'user' } } });
+  await waitFor(() => ctx.doc.getElementById('execEnvSelect').value === 'e2b');
+  pick(ctx, 'codex');
+  pickExecEnv(ctx, 'e2b');
+  assert.equal(ctx.doc.getElementById('exec-env-hint').hidden, true);
+  await submit(ctx);
+  assert.equal('execEnv' in ctx.posted.at(-1), false);
+});
+
+test('execution environment: a saved default of another backend follows the same rule, and the hint names it', async () => {
+  const execEnvs = [{ name: 'local', label: 'Local', title: 'Local' }, { name: 'e2b', label: 'E2B sandbox', title: 'E2B' },
+    { name: 'loopback', label: 'Loopback sandbox', title: 'Loopback' }];
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }), execEnvs, runDefaults: { execEnv: { value: 'loopback', source: 'user' } } });
+  const select = ctx.doc.getElementById('execEnvSelect');
+  const hint = ctx.doc.getElementById('exec-env-hint');
+  await waitFor(() => select.value === 'loopback');
+  assert.equal(hint.hidden, true);
+  ctx.doc.querySelector('#target-seg button[data-target="workspace"]').click();
+  await waitFor(() => select.value === 'local');
+  assert.equal(hint.hidden, false);
+  assert.match(hint.textContent, /saved Loopback default does not apply to a workspace run/);
+  // Back to a project before any submit: no workspace is selected, so the workspace target cannot start.
+  ctx.doc.querySelector('#target-seg button[data-target="project"]').click();
+  await waitFor(() => select.value === 'loopback');
+  await submit(ctx);
+  assert.equal('execEnv' in ctx.posted.at(-1), false, 'the run gets the saved default: nothing to send');
+});
+
+test('engine: on Claude, a liftable refusal for a step pinned to Codex offers the consent, and starting again sends it', async () => {
+  const refusal = { error: 'engine codex (Plan): guardrail set "normal" has permission rules this engine cannot enforce', code: 'engine-refused', overridable: true, engines: ['codex'] };
+  const ctx = await boot({ run: (_body, n) => (n === 1 ? ok(refusal, 409) : ok({ runId: 'r2' })) });
+  const doc = ctx.doc;
+  await submit(ctx);
+  await waitFor(() => !doc.getElementById('engineRefusal').hidden);
+  assert.equal(doc.getElementById('engineAllowRow').hidden, false);
+  doc.getElementById('engineAllowUnguarded').checked = true;
+  await submit(ctx);
+  const resent = ctx.posted.at(-1);
+  assert.deepEqual(['engine' in resent, resent.allowUnguardedEngine], [false, true]);
+});

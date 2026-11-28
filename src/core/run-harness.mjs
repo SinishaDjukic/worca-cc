@@ -57,18 +57,20 @@ import {
 import { hasProjectSetting, utilityModelFor, resolveSetting } from './settings-cascade.mjs';
 import { withRole, roleModelFor, jobSlot, roleOf, roleAuthState } from './model-roles.mjs';
 import { roleDefaultFor, ROLE_DEFAULT_HARNESSES } from './role-defaults.mjs';
+import { secretPathsFor } from './secret-paths.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY, memoryLoadedPath, readFrozenSet, frozenManifest, writeFrozenCopies, renderRoleNotes } from './memory-sync.mjs';
 import { captureProposals } from './memory-proposals.mjs';
 import { createUsageTally, drainMemoryLoads, memoryLoadLogPath, noteOfMemoryRel, recordMemoryUsage, rulesHaveScopedNote } from './memory-usage.mjs';
-import { memoryRoot, listMemory, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
+import { memoryRoot, listMemory, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief, SANDBOX_SOURCE_PREFIX, isHeldSource } from './memory-store.mjs';
 import { isTeamMemoryOn, refreshTeamLayerWithin, mountTeamLayer, queueTeamChanges, teamChangesFromSync, teamClientText, memoryLoadPlans, loadFilteredDirs } from './memory-team.mjs';
 import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
   scanStrayEntries, copyRunManifestTo, removeInjectedPaths, stripClaudeMdFence,
-  RETAIN_REASONS,
+  RETAIN_REASONS, removeRunMcpConfig,
 } from './run-manifest.mjs';
 import { removeRunScratch } from './run-manifest.mjs';
+import { manifestEngines, manifestWithoutEngines } from '../shared/graph/manifest.mjs';
 import { assembleRunContext, renderContextAudit, renderSkillAudit, MCP_GRANT_MODE, discoverProjectSettings, skillsRelFor, realDirsBelow } from './run-context.mjs';
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
 import { createTelemetryRecorder, TELEMETRY_FILE } from './telemetry/recorder.mjs';
@@ -82,7 +84,7 @@ import { modelLabelOf, resolveStepModels, observeModelCost, resolveModelCost, mo
 import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet, defaultGuardrailSetId } from './guardrail-store.mjs';
-import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
+import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules, gateRules } from './guardrails.mjs';
 import { collectRequiredSkills, validateSkills, injectSkills, pluginSkillDirs, pluginAssetDirs } from './skills.mjs';
 import { isBrowsableKind, BULK_ARTIFACT_THRESHOLD } from '../shared/artifact-kinds.mjs';
 import { RUN_SWITCH_OPTIONS, awayAnswerCounts } from '../shared/away-mode/labels.mjs';
@@ -98,10 +100,10 @@ import { writeReadinessSnapshot } from './repo-readiness/snapshot.mjs';
 import { serialQueue } from './graph/human-evidence.mjs';
 import { deriveBranchName, uniqueBranch } from './naming.mjs';
 import { flagEnabled } from './flags.mjs';
-import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit, checkBaseMerge } from './git-sync.mjs';
+import { syncBaseForRun, ensureLocalBranch, fetchRemote, fastForwardTo, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS, mergeBaseBeforeRun, baseMovedAudit, checkBaseMerge, mergeBaseInto } from './git-sync.mjs';
 import { featureBase } from './shape/features.mjs';
 import { shaperSmallRunsOn, smallRunsAtStart, smallRunsOfFeature } from './shape/small-runs.mjs';
-import { latestFinishedSource } from './shape/chain.mjs';
+import { latestFinishedSource, combineDependencies, combinedAudit, takeInVerdict, takeInClashAudit } from './shape/chain.mjs';
 import { cleanOutcome } from './shape/rounds.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
@@ -122,6 +124,13 @@ import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots } from './b
 import { mockEnabled } from './claude-runner.mjs';
 import { DEFAULT_BIN as CLAUDE_DEFAULT_BIN } from './engines/claude.mjs';
 import { carryLine } from './workflow-tests/try-carry.mjs';
+import { selectExecEnv, getExecBackend, ExecEnvLostError, ExecEnvSyncError, LOST_HINT } from './exec-env/index.mjs';
+import { instanceTag, remotePreflight, remoteHarnessRefusal, withArticle } from './exec-env/policy.mjs';
+import { RemoteExecEnv, SCRIPT_SUPPORT_FILES } from './exec-env/remote-env.mjs';
+import { acquireSandboxSlot } from './exec-env/slots.mjs';
+import { priceRelayUsage, relayUsageTotal } from './exec-env/relay-usage.mjs';
+import { resolveRunEnvironment } from './exec-env/project-env.mjs';
+import { execEnvLimit } from './settings.mjs';
 import { modelSlot, manifestModels, manifestNeedsModel, missingCredentials, describeMissing } from './broker-routing.mjs';
 import { syncPluginSlots } from './plugin-broker-slots.mjs';
 import { recoveryDelayMs, sleepAbortable } from './recovery-backoff.mjs';
@@ -192,6 +201,7 @@ import { usageLimitSwitches, engineList, engineLabel, engineReportsCost, SESSION
 import { splitTurnCost, splitCarried, reconcileTurn, usageTokens } from './session-cost.mjs';
 import { sessionHostEvent, sessionAuditLine } from './session-trace.mjs';
 import { resolveSessions } from '../shared/graph/sessions.mjs';
+import { roleReviewOf } from '../shared/graph/role-review-step.mjs';
 import { chooseSessionMode, CLAUDE_AGENTS_FILE_MIN } from './session-mode.mjs';
 import { HOST_TOOLS_MODE, CHILD_INHERITS_PARENT } from './engines/session-dispatch.mjs';
 import { HOST_MAIN_THREAD_GUARD, HOST_GUARD_CONTEXT_FIELD, SESSION_SHARED_RUNTIME } from './session-host.mjs';
@@ -267,10 +277,16 @@ function errDetail(res, max = 200) {
   return text ? `: ${clip(text, max)}` : '';
 }
 
+/** How a check names its harness: 'engine codex', and on a run whose steps use more than one harness the steps on it,
+ *  'engine codex (Plan, Review Implementation)' (RunHarness#_harnessPlan's `steps`, empty on a one-harness run). */
+function enginePrefix(name, steps = []) {
+  return Array.isArray(steps) && steps.length ? `engine ${name} (${steps.join(', ')})` : `engine ${name}`;
+}
+
 /** The engine gate's refusal (RunHarness#_engineGate): a plain error, no recovery class.
- *  `engineRefused` lets engineStartRefusal tell a preflight refusal from any other error. */
-function engineRefusal(name, why) {
-  return Object.assign(new Error(`engine ${name}: ${why}`), { errorClass: null, engineRefused: true });
+ *  `engineRefused` lets engineStartRefusal tell a preflight refusal from any other error; `engine` names the harness. */
+function engineRefusal(name, why, steps = []) {
+  return Object.assign(new Error(`${enginePrefix(name, steps)}: ${why}`), { errorClass: null, engineRefused: true, engine: name });
 }
 
 /** A rule list for a log line: the first three rules, then how many more. */
@@ -432,10 +448,23 @@ export function mergesFeatureBase({ slice, freshStart, isWorkspace }) {
   return !!(slice && slice.index >= 2 && freshStart && !isWorkspace);
 }
 
+/** Shaper small runs (slice 2, D2): a slice run's fresh branch takes in every run it builds on before the first agent.
+ *  A slice of a feature, a fresh start, a single project, and `smallRuns` (the flag on and the feature marked). */
+export function combinesDependencies({ slice, freshStart, isWorkspace, smallRuns }) {
+  return !!(slice && slice.feature && freshStart && !isWorkspace && smallRuns);
+}
+
 /** Shaper small runs (D9): a resumed slice run first merges the feature's latest finished work. Single project, flag on
  *  (`smallRuns` = shaperSmallRunsOn()). */
 export function mergesLatestOnResume({ slice, isWorkspace, smallRuns }) {
   return !!(slice && !isWorkspace && smallRuns);
+}
+
+/** Shaper small runs (slice 3, D3): a run that waited at a stop takes in the finished work before its answer
+ *  goes on. A slice of a feature with a run number, a single project, `smallRuns` (the flag on and the feature marked),
+ *  and not a run on its source branch (its siblings' work reaches it by their merge back). */
+export function takesInBeforeAnswer({ slice, isWorkspace, smallRuns, sameAsSource }) {
+  return !!(slice && slice.feature && Number.isInteger(slice.index) && !isWorkspace && smallRuns && !sameAsSource);
 }
 
 export function firstLine(text) {
@@ -959,6 +988,16 @@ export class RunHarness extends EventEmitter {
       // before anything is created.
       engine: selectRunEngine(this.opts.claude?.engine || savedEngine),
     };
+    // Where the run's agent and script steps execute (src/core/exec-env/). Kept off this.claude, which
+    // is spread into spawn options. A resume takes the kind from its point.
+    const savedExec = this.opts.resume?.resumePoint?.execEnv;
+    this.execEnvKind = selectExecEnv(this.opts.execEnv || savedExec?.kind || 'local');
+    this._savedExecEnv = savedExec || null;
+    // The remote environment came from a saved default, not this start's own pick (runExecEnvOpts, the CLI): a run
+    // whose steps use more than one harness then runs locally instead of being refused (_execEnvDefaultFallback).
+    this._execEnvDefault = this.opts.execEnvDefault === true;
+    this.execEnv = null;              // the live RemoteExecEnv (remote runs only)
+    this._execEnvRelease = null;
     // Resume with another model: every remaining step runs on this.claude.model (a usage limit spent on the provider
     // the run's steps were on). Rides the resume point while the model does. Kept off this.claude (spawn options).
     this._modelForAll = this.opts.claude?.modelForAll === true
@@ -966,8 +1005,12 @@ export class RunHarness extends EventEmitter {
     // Kept off this.claude, which is spread into spawn options.
     this._allowUnguardedEngine = !!this.opts.claude?.allowUnguardedEngine
       || (savedClaude?.allowUnguardedEngine === true && this.claude.engine === savedEngine);
-    this._resumeEngineSwitch = this.opts.resume && this.claude.engine !== savedEngine
-      ? { from: savedEngine, to: this.claude.engine }
+    // A switch: a resume naming another engine than the saved one, or naming one while the frozen manifest pins a step
+    // to another harness (continuing on the run's own default harness moves the pinned steps too). `pins`: whether it
+    // held one. Every step then runs on the resume's harness (_stepEngine).
+    const pinnedElsewhere = manifestEngines(this.opts.resume?.resumePoint?.manifest).some((e) => e !== this.claude.engine);
+    this._resumeEngineSwitch = this.opts.resume && (this.claude.engine !== savedEngine || (!!this.opts.claude?.engine && pinnedElsewhere))
+      ? { from: savedEngine, to: this.claude.engine, pins: pinnedElsewhere }
       : null;
     // A resumed run keeps the model it was started with (`worca --model`, the UI's
     // start pair): the resume sites pass none, so it rides the resume point — which
@@ -1222,6 +1265,7 @@ export class RunHarness extends EventEmitter {
       title: this.opts.title || null,
       projectDir: this.projectDir,
       runEngine: this.claude.engine,
+      ...(this.execEnvKind !== 'local' ? { execEnv: this.execEnvKind } : {}),
       ...(this._projectPipelineCap() !== undefined ? { pipelineCapUsd: this._projectPipelineCap() } : {}),
       status: 'idle',
       phase: 'idle',
@@ -1563,7 +1607,7 @@ export class RunHarness extends EventEmitter {
     // OpenRouter free allowance, a gateway's quota): another harness on the same provider would hit it too, so
     // none is offered; the pause names the provider, and a resume can pick another model.
     const conn = reason === REASON.USAGE_LIMIT && ctx && !freeDaily ? this._limitConnection(nc, ctx?.role ?? null) : null;
-    const limitEngine = conn?.kind === 'signin' ? (this.claude.engine || 'claude') : null;
+    const limitEngine = conn?.kind === 'signin' ? this._stepEngine(nc, ctx?.role ?? null) : null;
     const limitText = conn && conn.kind !== 'signin' && !detail ? `${connectionLabel({ connection: conn })} limit — ${text}` : text;
     // D3/D11: when the limit comes back, read from the RAW message (`text` may be the OpenRouter
     // hint or carry a connection label). Independent of limitEngine: a shell/setup-site limit has none.
@@ -1694,6 +1738,9 @@ export class RunHarness extends EventEmitter {
       // a missing agent key must never reach dispatch as an empty-prompt node.
       this._preflightAgentKeys(topology.agentKeys);
       this.state.stepper = topology.manifest;
+      // A saved remote default this run's harnesses cannot take steps aside before the engine checks and the first frame.
+      this._execEnvDefaultFallback();
+      this._noteRunEngines();
       this._emit('state', this.getState());
 
       // 1) Load agent prompts + preflight tool detection (parallel; both safe).
@@ -1729,6 +1776,11 @@ export class RunHarness extends EventEmitter {
       this._engineProjectRules = await this._engineChecks((m) => this.guardrailHonorByKey?.get(m.projectKey) !== false, { guardrails: this.guardrails });
       await this._engineMcpGate();
       this._pendingAudits.push(...this._engineGate());
+      // The remote preflight: before any worktree exists, so a refusal is a launch error.
+      { const r = this.execEnvStartRefusal(); if (r) throw markTerminal(new Error(r)); }
+      // A saved remote default this run cannot take (resolveRunExecEnv's fallback, from the server or the CLI): it
+      // runs locally, and its log says why (the reason names the backend).
+      if (this.opts.execEnvFallback) this._log('exec-env', 'warn', this.opts.execEnvFallback);
       this._pendingAudits.push(...await this._sessionGate());
       this._log(
         'preflight',
@@ -1918,6 +1970,7 @@ export class RunHarness extends EventEmitter {
       // audit line), so the adopted graph is what they see.
       const decided = await this._decideTopology();
       if (decided) topology = decided;
+      if (decided) this._noteRunEngines();
       // Session groups (C19): an Auto run adopts its graph only now, so its gate beside the engine gate saw the bootstrap
       // (no session): the adopted workflow's sessions are resolved here, still once (the pending audits are flushed above).
       if (decided) for (const line of await this._sessionGate()) await appendAudit(this.pipeline.dir, line);
@@ -1997,6 +2050,7 @@ export class RunHarness extends EventEmitter {
       // itself into that map.
       await this._mountMemory();
       await this._registerEngineConfig();   // an engine's checkout config files (Cursor, Gemini CLI) join the §8.8 set (both modes)
+      await this._startExecEnv();           // remote only: the run's sandbox, once the §8.8 set is complete
       this._checkAbort();
       // D7: every setup step above is done — a pause from here on has nothing to
       // replay, so _completePaused strips any `setupIncomplete` stamp instead.
@@ -2072,7 +2126,7 @@ export class RunHarness extends EventEmitter {
       this._setStatus('error');
       await this._finalizeDirections();   // report an unread inbox on every terminal outcome
       const message = err?.message || String(err);
-      this._emit('error', { message });
+      this._emit('error', { message, ...(err?.clash ? { clash: err.clash } : {}) });   // a setup clash carries its clash (A3)
       if (this.pipeline) {
         await this._persist().catch(() => {});
         await appendAudit(this.pipeline.dir, `Pipeline **error**: ${message}`).catch(() => {});
@@ -2096,12 +2150,14 @@ export class RunHarness extends EventEmitter {
     } finally {
       this._stopHeartbeat(); // clear timer + NULL owner columns (done/stopped/launch-error/paused)
       this._runSlot?.release(); this._runSlot = null;   // a paused run waits for a slot again on resume
+      await this._takeInFlight?.catch(() => {});   // slice 3 (D13): no teardown commit races a take-in's merge
       await this._stopGraphBuild();   // before teardown removes the checkout it writes into (a resume rebuilds or reuses it)
       // C1: tear the run root + worktree(s) down on done/stopped/launch-error — the branch is
       // kept (except a workspace member's branch this run never changed, and every branch of
       // a read-only scan), only the disposable checkout is removed. But NEVER on a pause: the checkout (with any uncommitted agent
       // work) and the run root are the things we resume into (§8.13).
       if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
+        await this._finishExecEnv();   // remote: the last sync, then the sandbox goes (before the teardown commit)
         await this._teardownRunRoot().catch(() => {});
         await this._keepCheckoutByPolicy().catch((e) => this._log('worktree', 'warn', `keep policy: ${e?.message || e}`));
         await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));
@@ -2152,6 +2208,8 @@ export class RunHarness extends EventEmitter {
     // the 'resume' site below would end the paused run. The row stays paused, so the
     // user can resume again with the missing flag.
     const engineGateNodes = await this._engineResumeGate(rp);
+    // The remote preflight, likewise before the claim: a refused resume keeps the row paused.
+    { const r = this.execEnvStartRefusal(); if (r) throw markTerminal(new Error(r)); }
     // The snapshot can be stale: a stop (claimPausedForStop, in this process or another) may have
     // claimed the row since it was read. Take the row over ATOMICALLY, here: after the engine hooks,
     // so a rejected point or gate leaves the row alone, and before the rehydration awaits anything.
@@ -2221,8 +2279,12 @@ export class RunHarness extends EventEmitter {
           : `model ${JSON.stringify(this._staleResumeModel)} the run was started with is no longer in the catalog — resuming on the default model`);
       }
       if (this._resumeEngineSwitch) {
-        const { from, to } = this._resumeEngineSwitch;
-        this._log('orchestrator', 'warn', `the run's saved engine is ${from} — resuming on ${to} as asked; a paused step starts a fresh session`);
+        const { from, to, pins } = this._resumeEngineSwitch;
+        this._log('orchestrator', 'warn', !pins
+          ? `the run's saved engine is ${from} — resuming on ${to} as asked; a paused step starts a fresh session`
+          : from === to
+            ? `resuming every step on ${to} as asked, steps set to another harness included; a paused step starts a fresh session`
+            : `the run's saved engine is ${from} — resuming every step on ${to} as asked, steps set to another harness included; a paused step starts a fresh session`);
       }
       this.stepModels = rp.stepModels || null;
       this.workflowId = rp.workflowId || this.workflowId;
@@ -2278,6 +2340,12 @@ export class RunHarness extends EventEmitter {
       // E5: keep the point on the row until the first new snapshot replaces it — a crash during the
       // first node after a resume must leave the run resumable. Only what described the PAUSE goes
       // (its reason, who paused, the paused harness's ownership token): the run is running again.
+      // A resume that switched harness drops the steps' pins before this first write: a failure or a crash before the
+      // graph engine adopts the manifest must not leave the old pins for a later plain resume to run again.
+      if (this._resumeEngineSwitch?.pins) {
+        if (rp.manifest) rp.manifest = manifestWithoutEngines(rp.manifest);
+        if (this.state.stepper) this.state.stepper = manifestWithoutEngines(this.state.stepper);
+      }
       this.state.resumePoint = runningPoint(rp);
       this._setStatus('running');
       await this._persist();
@@ -2319,9 +2387,9 @@ export class RunHarness extends EventEmitter {
         if (this.runRootMode === 'detached') resumeManifest = await readRunManifest(this.runRoot);
       }
       // Shaper small runs (D9): a resumed slice takes in the feature's latest finished work first (the reattach above
-      // restored injectedPaths). baseTip prefers refs/remotes/origin/<base> over the local branch: a finished run's
-      // last push is its final state. Never the resume's outcome.
-      await this._takeInLatestFinished({ smallRuns: shaperSmallRunsOn() });
+      // restored injectedPaths). On a marked feature it takes in every finished run it lacks, as a stop's answer does,
+      // and records the branch it now builds on as its base. Never the resume's outcome.
+      await this._takeInOnResume();
       // A run paused while its graph was still building (the build stops with the run) gets it now:
       // reused when that build had finished, else rebuilt in the background. The replay above did it already.
       if (rp.setupIncomplete !== true) {
@@ -2365,6 +2433,7 @@ export class RunHarness extends EventEmitter {
       // then remount fresh from the store.
       await this._mountMemory({ resume: true });
       await this._registerEngineConfig();
+      await this._resumeExecEnv();   // remote only: reconnect to the parked sandbox (or create it)
 
       const dispatched = await this._engineRun({ resume: rp, rehydrated });
       this._checkAbort();
@@ -2436,12 +2505,14 @@ export class RunHarness extends EventEmitter {
     } finally {
       this._stopHeartbeat(); // clear timer + NULL owner columns (done/stopped/launch-error/paused)
       this._runSlot?.release(); this._runSlot = null;   // a paused run waits for a slot again on resume
+      await this._takeInFlight?.catch(() => {});   // slice 3 (D13): no teardown commit races a take-in's merge
       await this._stopGraphBuild();   // before teardown removes the checkout it writes into (a resume rebuilds or reuses it)
       // Same teardown as run()'s finally — wiring only run()'s would keep legacy
       // teardown on every detached run that finishes after a resume (including every
       // crash-interrupted run, §8.12's primary scenario): run root leaked until the
       // next boot, no stray scan, no injected-path cleanup.
       if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
+        await this._finishExecEnv();
         await this._teardownRunRoot().catch(() => {});
         await this._keepCheckoutByPolicy().catch((e) => this._log('worktree', 'warn', `keep policy: ${e?.message || e}`));
         await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));
@@ -2729,6 +2800,8 @@ export class RunHarness extends EventEmitter {
       return await this._settleStopped();
     } finally {
       this._stopHeartbeat();
+      // remote: the parked sandbox goes whatever else failed (its changes were synced at park time).
+      await this._dropSavedSandbox();
       // resume()'s teardown on a stop: commit the work onto the kept branch, remove the checkout.
       if (reattached) {
         await this._teardownRunRoot().catch(() => {});
@@ -3041,10 +3114,11 @@ export class RunHarness extends EventEmitter {
                                                 ...(sameAsSource ? { sameAsSource: true } : {}) };
           // Shaper s5 (D14): a feature's next run starts from the moved base. Slice k ≥ 2, single project, fresh branch only.
           const sl = this.runShape && this.runShape.slice;
-          if (mergesFeatureBase({ slice: sl, freshStart, isWorkspace: this.isWorkspace })) await this._mergeFeatureBase(m, info, sl);
+          await this._startFromFeature(m, info, sl, freshStart);
           const short = (s) => String(s).slice(0, 10);
           if ((freshStart || recreated) && diffBase && (baseMoved || (checkoutHead && diffBase !== checkoutHead))) {
-            await appendAudit(this.pipeline.dir, `Diff base for \`${m.projectKey}\` moved to the run's start \`${short(diffBase)}\`.`).catch(() => {});
+            const startAt = this.state.branches[m.projectKey]?.diffBase || diffBase;   // after the combine and base merge
+            await appendAudit(this.pipeline.dir, `Diff base for \`${m.projectKey}\` moved to the run's start \`${short(startAt)}\`.`).catch(() => {});
           } else if (!freshStart && !recreated && diffBase) {
             await appendAudit(this.pipeline.dir, reuseBase
               ? `Diff base for \`${m.projectKey}\` is \`${short(diffBase)}\`, where \`${info.branch}\` forks from \`${reuseBase.against}\` (reused branch).`
@@ -3602,70 +3676,130 @@ export class RunHarness extends EventEmitter {
    * Claude Code). Every capability the engine lacks becomes one warn log line, and so
    * does every Claude model the run names (the engine runs its own default model
    * instead, see _engineModel); the returned lines are the audit trail's copy.
+   * Runs once per non-Claude harness the run's steps use (_harnessPlan), each judged on the steps on it; on a run that
+   * uses more than one harness every line names the harness and its steps.
    * @param {object[]} [nodes] the run's node ctxs; a resume passes the ones
    *   _engineResumeGate read off its point, since its graph is not restored yet
    * @returns {string[]}
    */
-  _engineGate(nodes = Object.values(this.resolved?.nodeCtx || {})) {
-    const name = this.claude.engine || 'claude';
-    if (name === 'claude') {
+  _engineGate(nodes = this._checkNodes()) {
+    const dflt = this.claude.engine || 'claude';
+    const plan = this._harnessPlan(nodes);
+    if (dflt === 'claude') {
       // The run's own model (--model / the start body) naming another engine's model: refused, never dropped —
       // dropping it would run every node on the CLI default model, often the most expensive one.
-      const why = foreignRunModel(this.claude.model, name, this.projectDir);
-      if (why) throw engineRefusal(name, why);
-      // A model a person set that needs the Claude Code sign-in while it is signed out (resolveGraph signInBlocked):
-      // refused naming the setting and the model, before any spawn. Unset on resume, which never resolves.
-      if (this._signInBlocked?.length) throw engineRefusal(name, signInRefusalText(this._signInBlocked, this._signInLabels));
-      return [];
+      const why = foreignRunModel(this.claude.model, dflt, this.projectDir);
+      if (why) throw engineRefusal(dflt, why, plan.steps[dflt]);
     }
+    // A model a person set that needs the Claude Code sign-in while it is signed out (resolveGraph signInBlocked):
+    // refused naming the setting and the model, before any spawn, whenever a step runs on Claude Code. Unset on
+    // resume, which never resolves.
+    if (plan.engines.includes('claude') && this._signInBlocked?.length) {
+      throw engineRefusal('claude', signInRefusalText(this._signInBlocked, this._signInLabels), plan.steps.claude);
+    }
+    const lines = [];
+    for (const name of plan.engines) {
+      if (name === 'claude') continue;
+      lines.push(...this._engineGateOn(name, nodes, plan.steps[name]));
+    }
+    for (const l of lines) this._log('orchestrator', 'warn', l);
+    return lines;
+  }
+
+  /** _engineGate for one non-Claude harness of the run: its refusals (judged on the steps on it) and its lines. */
+  _engineGateOn(name, nodes, steps = []) {
+    const P = enginePrefix(name, steps);
     const projectRules = this._engineProjectRules ?? null;
-    const why = this._engineRefusal({ rules: this.guardrailPermissionRules, guardrailsId: this.guardrailsId, projectRules, nodes });
-    if (why) throw engineRefusal(name, why);
+    const on = nodes.filter((nc) => this._stepEngine(nc) === name);
+    // The gate weighs the guardrail rules without the secret-file floor (gateRules); the spawn still carries it.
+    const gRules = gateRules(this.guardrailPermissionRules);
+    const why = this._engineRefusal({ rules: gRules, guardrailsId: this.guardrailsId, projectRules, nodes: on, name, allNodes: nodes });
+    if (why) throw engineRefusal(name, why, steps);
     const caps = getEngine(name).capabilities;
     const lines = Object.entries(caps).filter(([, v]) => v === false)
-      .map(([k]) => `engine ${name}: no ${k} — ${CAPABILITY_FALLBACKS[k] || 'not available'}`);
+      .map(([k]) => `${P}: no ${k} — ${CAPABILITY_FALLBACKS[k] || 'not available'}`);
     if (caps.cost === false) {
       // The caps _checkCostLimits enforces, read the same way: neither can see this engine's spend.
       const teamFields = this.policyRun?.fields || {};
       const pipe = effectiveCap({ local: pipelineCostLimitUsd(this._settingsScope()), team: teamFields['cost.pipelineLimitUsd'] || null });
-      if (pipe.cap != null) lines.push(`engine ${name}: the pipeline cost limit cannot count ${name}'s spend (cost unknown)`);
+      if (pipe.cap != null) lines.push(`${P}: the pipeline cost limit cannot count ${name}'s spend (cost unknown)`);
       const tot = effectiveCap({ local: totalCostLimitUsd(), team: teamFields['cost.totalLimitUsd'] || null });
-      if (tot.cap != null) lines.push(`engine ${name}: the total cost limit cannot count ${name}'s spend (cost unknown)`);
+      if (tot.cap != null) lines.push(`${P}: the total cost limit cannot count ${name}'s spend (cost unknown)`);
     }
-    if (caps.permissionRules === false && hasPermissionRules(this.guardrailPermissionRules)) {
-      lines.push(`engine ${name}: guardrail set "${this.guardrailsId}": permission rules NOT enforced on ${name} (--allow-unguarded-engine)`);
+    if (caps.permissionRules === false && hasPermissionRules(gRules)) {
+      lines.push(`${P}: guardrail set "${this.guardrailsId}": permission rules NOT enforced on ${name} (--allow-unguarded-engine)`);
     }
     if (caps.permissionRules === false && hasPermissionRules(projectRules)) {
-      lines.push(`engine ${name}: the project's .claude/settings.json deny rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleList(projectRules)}`);
+      lines.push(`${P}: the project's .claude/settings.json deny rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleList(projectRules)}`);
     }
     if (caps.permissionRules !== false) {
       // An engine that holds part of the rules: say which it holds, which it holds only in part and which it does
       // not (those two passed the gate only with --allow-unguarded-engine).
-      const both = (f) => [...new Set([...f(this.guardrailPermissionRules), ...f(projectRules)])];
-      const partial = both((r) => this._enginePartial(r));
-      const enforced = both((r) => (Array.isArray(r?.deny) ? r.deny : []).filter((x) => !this._engineUnenforced(r).includes(x) && !this._enginePartial(r).includes(x)));
-      if (enforced.length) lines.push(`engine ${name}: deny rules enforced on ${name}: ${ruleNames(enforced)}`);
-      if (partial.length) lines.push(`engine ${name}: deny rules held on ${name} only in part, as ${this._enginePartialKind()} — ${this._engineRuleReach()} (--allow-unguarded-engine): ${ruleNames(partial)}`);
-      const gSkip = this._engineUnenforced(this.guardrailPermissionRules);
-      if (gSkip.length) lines.push(`engine ${name}: guardrail set "${this.guardrailsId}": rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(gSkip)}`);
-      const pSkip = this._engineUnenforced(projectRules);
-      if (pSkip.length) lines.push(`engine ${name}: the project's .claude/settings.json deny rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(pSkip)}`);
-      if (hostGuardEnabled()) lines.push(`engine ${name}: the host-guard hook does not run on ${name} (its preamble still does)`);
+      const both = (f) => [...new Set([...f(gRules), ...f(projectRules)])];
+      const partial = both((r) => this._enginePartial(r, name));
+      const enforced = both((r) => (Array.isArray(r?.deny) ? r.deny : []).filter((x) => !this._engineUnenforced(r, name).includes(x) && !this._enginePartial(r, name).includes(x)));
+      if (enforced.length) lines.push(`${P}: deny rules enforced on ${name}: ${ruleNames(enforced)}`);
+      if (partial.length) lines.push(`${P}: deny rules held on ${name} only in part, as ${this._enginePartialKind(name)} — ${this._engineRuleReach(name)} (--allow-unguarded-engine): ${ruleNames(partial)}`);
+      const gSkip = this._engineUnenforced(gRules, name);
+      if (gSkip.length) lines.push(`${P}: guardrail set "${this.guardrailsId}": rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(gSkip)}`);
+      const pSkip = this._engineUnenforced(projectRules, name);
+      if (pSkip.length) lines.push(`${P}: the project's .claude/settings.json deny rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(pSkip)}`);
+      if (hostGuardEnabled()) lines.push(`${P}: the host-guard hook does not run on ${name} (its preamble still does)`);
     }
     // A node model this harness cannot run (its connection reaches other harnesses only) is dropped, and said so.
-    for (const m of this._engineGateModels(nodes)) {
+    for (const m of this._engineGateModels(nodes, name)) {
       const harnesses = enginesOfModel(m, { projectDir: this.projectDir });
       if (!harnesses || harnesses.includes(name)) continue;
-      if (this._engineModel(m)) continue;   // copilot runs a Claude id the catalog does not hold (its own naming) as named
+      if (this._engineModel(m, name)) continue;   // copilot runs a Claude id the catalog does not hold (its own naming) as named
       const what = `model "${m}" runs on ${harnesses.map(engineLabel).join(' or ')}`;
       lines.push(name === 'codex'
-        ? `engine ${name}: ${what} — the nodes that name it run on ${name}'s default model, ${CODEX_DEFAULT_MODEL}`
+        ? `${P}: ${what} — the nodes that name it run on ${name}'s default model, ${CODEX_DEFAULT_MODEL}`
         : harnesses.includes('claude')
-          ? `engine ${name}: ${what} — the nodes that name it run on ${name}'s default model, so their cost stays unknown`
-          : `engine ${name}: ${what} — the nodes that name it run on ${name}'s default model`);
+          ? `${P}: ${what} — the nodes that name it run on ${name}'s default model, so their cost stays unknown`
+          : `${P}: ${what} — the nodes that name it run on ${name}'s default model`);
     }
-    for (const l of lines) this._log('orchestrator', 'warn', l);
     return lines;
+  }
+
+  /** The agent nodes the start checks judge: `this._gateNodes` (a resume's frozen nodes, set by _engineResumeGate and
+   *  engineResumeRefusal; the early resolve's, set by _earlyHarnesses), else the resolved graph's.
+   *  _adoptResolvedGraph clears `_gateNodes`, so a run judges its own resolved graph once it has one. With neither: [],
+   *  so `_harnessPlan()` is the default harness alone and never throws. */
+  _checkNodes() {
+    if (Array.isArray(this._gateNodes)) return this._gateNodes;
+    return Object.values(this.resolved?.nodeCtx || {}).filter((nc) => nc && typeof nc === 'object' && (!nc.kind || nc.kind === 'agent'));
+  }
+
+  /** U and the steps on each harness. Every harness is `_stepEngine(nc, role)`: after a switch or under Model for all, U
+   *  is the default harness alone. `steps[engine]` lists 'Plan' (meta.displayName, else key) or 'Plan Review · Security'
+   *  (a role whose harness is not its node's; label from roleReviewOf(nc.config), else the key), in node order, and only
+   *  when U has more than one harness.
+   *  @returns {{engines: string[], steps: Record<string, string[]>}} */
+  _harnessPlan(nodes = this._checkNodes()) {
+    const set = new Set([this.claude.engine || 'claude']);
+    const steps = new Map();
+    const add = (engine, label) => {
+      set.add(engine);
+      if (!steps.has(engine)) steps.set(engine, []);
+      if (!steps.get(engine).includes(label)) steps.get(engine).push(label);
+    };
+    for (const nc of Array.isArray(nodes) ? nodes : []) {
+      if (!nc || typeof nc !== 'object' || (nc.kind && nc.kind !== 'agent')) continue;
+      const label = nc.meta?.displayName || nc.key || nc.nodeId;
+      const own = this._stepEngine(nc);
+      add(own, label);
+      const keys = nc.roles && typeof nc.roles === 'object' ? Object.keys(nc.roles) : [];
+      if (!keys.length) continue;
+      let spec = null;
+      try { spec = roleReviewOf(nc.config); } catch { spec = null; }
+      for (const key of keys) {
+        const engine = this._stepEngine(nc, key);
+        if (engine === own) continue;
+        add(engine, `${label} · ${spec?.roles?.find((r) => r.key === key)?.label || key}`);
+      }
+    }
+    const engines = [...set].sort();
+    return { engines, steps: engines.length > 1 ? Object.fromEntries(steps) : {} };
   }
 
   /**
@@ -3692,20 +3826,23 @@ export class RunHarness extends EventEmitter {
       this._sessionsDisabled = true;
       lines.push('Sessions disabled by WORCA_SESSIONS_DISABLE=1: every session runs as separate sessions.');
     } else {
-      const engine = this.claude.engine || 'claude';
+      const runEngine = this.claude.engine || 'claude';
       const mock = mockEnabled(this.claude);                 // an env-only WORCA_MOCK run counts (critique minor 8)
-      const caps = { ...getEngine(engine).capabilities };
-      let cliVersion = null;
-      if (engine === 'claude') {
-        if (mock) cliVersion = CLAUDE_AGENTS_FILE_MIN;
-        else {
-          let probe = null;
-          try { probe = await this._claudeCaps(); } catch { probe = null; }
-          cliVersion = probe?.version ?? null;
-          caps.forwardSubagentText = probe?.forwardSubagentText === true;   // M-11: no flag in --help, no session
+      // A session's harness is its members' (_stepEngine), not the run's: its caps, the Claude probe and the lines read it.
+      let claudeProbe;
+      const harnessFacts = async (engine) => {
+        const caps = { ...getEngine(engine).capabilities };
+        let cliVersion = null;
+        if (engine === 'claude') {
+          if (mock) cliVersion = CLAUDE_AGENTS_FILE_MIN;
+          else {
+            if (claudeProbe === undefined) { try { claudeProbe = await this._claudeCaps(); } catch { claudeProbe = null; } }
+            cliVersion = claudeProbe?.version ?? null;
+            caps.forwardSubagentText = claudeProbe?.forwardSubagentText === true;   // M-11: no flag in --help, no session
+          }
         }
-      }
-      const verified = this._sessionVerifiedForTest || (mock ? { [engine]: true } : SESSION_SUBAGENTS_VERIFIED);   // C13
+        return { caps, cliVersion };
+      };
       const k = { toolsMode: HOST_TOOLS_MODE, mainThreadGuard: HOST_MAIN_THREAD_GUARD, guardField: HOST_GUARD_CONTEXT_FIELD,
         inherits: CHILD_INHERITS_PARENT, sharedRuntime: SESSION_SHARED_RUNTIME, ...this._sessionConstsForTest };
       const flagOn = flagEnabled('sessionGroups');
@@ -3720,11 +3857,17 @@ export class RunHarness extends EventEmitter {
         const firstMemberModel = pairOf(members[0]).model || null;
         const hostModel = settings.hostModel || null;
         const modelEnvs = [...members.map((id) => envOf(pairOf(id).model)), envOf(hostModel || firstMemberModel)];
-        let d = chooseSessionMode({ spec, engine, caps, flagOn, env: process.env, cliVersion, verified, modelEnvs });
+        const engines = members.map((id) => this._stepEngine(nodeOf(id)));
+        const engine = engines[0] || runEngine;
+        const { caps, cliVersion } = await harnessFacts(engine);
+        const verified = this._sessionVerifiedForTest || (mock ? { [engine]: true } : SESSION_SUBAGENTS_VERIFIED);   // C13
+        let d = chooseSessionMode({ spec, engine, caps, flagOn, env: process.env, cliVersion, verified, modelEnvs, engines });
         // `shared` skips the sub-agent gate (it needs none), but its runtime is Task 65's: until then it runs separate, never
         // as hosted sub-agents behind the closed gate (C18; the validator lets the mode in through the API, imports and chat ops).
         if (d.mode === 'shared' && !k.sharedRuntime) d = { mode: 'separate', requested: 'shared', reason: 'one conversation is not available yet' };
-        this._sessionDecisions.set(sid, { mode: d.mode, requested: d.requested ?? null, reason: d.reason ?? null, firstMemberModel });
+        // The decision names its harness only when it is not the run's (a one-harness run's decision keeps its shape).
+        this._sessionDecisions.set(sid, { mode: d.mode, requested: d.requested ?? null, reason: d.reason ?? null, firstMemberModel,
+          ...(engine !== runEngine ? { engine } : {}) });
         const Engine = engineLabel(engine);
         const steps = `${members.length} steps: ${members.map(labelOf).join(', ')}`;
         if (d.mode === 'shared') { lines.push(`session ${sid}: one conversation on ${Engine} (${steps})`); continue; }
@@ -3753,8 +3896,8 @@ export class RunHarness extends EventEmitter {
    * deny rules of the members' own `.claude/settings.json` (Claude Code reads that file
    * itself, another engine does not), from _engineChecks.
    */
-  _engineRefusal({ rules, guardrailsId, projectRules = null, nodes, allowed = this._allowUnguardedEngine }) {
-    const name = this.claude.engine || 'claude';
+  _engineRefusal({ rules: allRules, guardrailsId, projectRules = null, nodes, allowed = this._allowUnguardedEngine, name = this.claude.engine || 'claude', allNodes = nodes }) {
+    const rules = gateRules(allRules);   // the secret-file floor never refuses a run (guardrails.mjs gateRules)
     const caps = getEngine(name).capabilities;
     // The credential broker's promise is that worca holds no model credential; this engine
     // signs in with its own, which the broker can neither bill nor revoke.
@@ -3769,23 +3912,23 @@ export class RunHarness extends EventEmitter {
     if (caps.permissionRules === false && hasPermissionRules(projectRules) && !allowed) {
       return `the project's .claude/settings.json denies ${ruleList(projectRules)}, which this engine cannot enforce — pass --allow-unguarded-engine to run it without them`;
     }
-    const gSkip = caps.permissionRules === false ? [] : this._engineUnenforced(rules);
+    const gSkip = caps.permissionRules === false ? [] : this._engineUnenforced(rules, name);
     if (gSkip.length && !allowed) {
       return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce (${ruleNames(gSkip)}) — ${permissive}, or pass --allow-unguarded-engine to run it without them`;
     }
-    const pSkip = caps.permissionRules === false ? [] : this._engineUnenforced(projectRules);
+    const pSkip = caps.permissionRules === false ? [] : this._engineUnenforced(projectRules, name);
     if (pSkip.length && !allowed) {
       return `the project's .claude/settings.json denies ${ruleNames(pSkip)}, which this engine cannot enforce — pass --allow-unguarded-engine to run it without them`;
     }
     // Some rules hold only in part (the adapter's ruleKind/ruleReach; codex: CODEX_COMMAND_RULE_REACH): running on them is
     // a choice, like running without a rule.
-    const gPart = caps.permissionRules === false ? [] : this._enginePartial(rules);
+    const gPart = caps.permissionRules === false ? [] : this._enginePartial(rules, name);
     if (gPart.length && !allowed) {
-      return `guardrail set "${guardrailsId}" has ${this._enginePartialKind()} this engine holds only in part (${ruleNames(gPart)}): ${this._engineRuleReach()} — ${permissive}, or pass --allow-unguarded-engine to run it with them as a partial guard`;
+      return `guardrail set "${guardrailsId}" has ${this._enginePartialKind(name)} this engine holds only in part (${ruleNames(gPart)}): ${this._engineRuleReach(name)} — ${permissive}, or pass --allow-unguarded-engine to run it with them as a partial guard`;
     }
-    const pPart = caps.permissionRules === false ? [] : this._enginePartial(projectRules);
+    const pPart = caps.permissionRules === false ? [] : this._enginePartial(projectRules, name);
     if (pPart.length && !allowed) {
-      return `the project's .claude/settings.json denies ${ruleNames(pPart)}, which this engine holds only in part: ${this._engineRuleReach()} — pass --allow-unguarded-engine to run it with them as a partial guard`;
+      return `the project's .claude/settings.json denies ${ruleNames(pPart)}, which this engine holds only in part: ${this._engineRuleReach(name)} — pass --allow-unguarded-engine to run it with them as a partial guard`;
     }
     if (caps.mcpTools === false) {
       const n = nodes.find((nc) => Array.isArray(nc?.tools) && nc.tools.some((t) => String(t).startsWith('mcp__')));
@@ -3795,7 +3938,7 @@ export class RunHarness extends EventEmitter {
     // A Claude model never runs on another engine anyway (_engineModel drops it, and the audit says so), so
     // only a routed model this engine itself owns is refused — except a Codex model on its own
     // OpenAI-compatible endpoint, which codex connects to itself (engines/codex-endpoint.mjs).
-    for (const m of this._engineGateModels(nodes)) {
+    for (const m of this._engineGateModels(allNodes, name)) {
       if (modelRunsOn(m, name, { projectDir: this.projectDir }) !== false) continue;   // its connection reaches this harness
       if ((modelHasBaseUrlRouting(m) || bridgedModelInfo(m)) && engineOfModel(m, { projectDir: this.projectDir }) === name) {
         return `model "${m}" is routed to a custom endpoint for Claude Code and cannot run on ${name}`;
@@ -3804,38 +3947,45 @@ export class RunHarness extends EventEmitter {
     return null;
   }
 
-  /** The deny rules of `rules` this run's engine cannot hold: all of them on an engine without permission
-   *  rules, the adapter's answer on one that holds part (codex: command prefixes), none on Claude. */
-  _engineUnenforced(rules) {
-    const name = this.claude.engine || 'claude';
+  /** The deny rules of `rules` a harness (`name`, the run's by default) cannot hold: all of them on an engine without
+   *  permission rules, the adapter's answer on one that holds part (codex: command prefixes), none on Claude. */
+  _engineUnenforced(rules, name = this.claude.engine || 'claude') {
     if (name === 'claude' || !hasPermissionRules(rules)) return [];
     const adapter = getEngine(name);
     if (adapter.capabilities.permissionRules === false) return Object.values(rules).flat().filter((r) => typeof r === 'string');
     return typeof adapter.unenforcedRules === 'function' ? adapter.unenforcedRules(rules) : [];
   }
 
-  /** The deny rules of `rules` this run's engine holds only in part (codex: command rules, CODEX_COMMAND_RULE_REACH). */
-  _enginePartial(rules) {
-    const name = this.claude.engine || 'claude';
+  /** The deny rules of `rules` a harness holds only in part (codex: command rules, CODEX_COMMAND_RULE_REACH). */
+  _enginePartial(rules, name = this.claude.engine || 'claude') {
     if (name === 'claude' || !hasPermissionRules(rules)) return [];
     const adapter = getEngine(name);
     return adapter.capabilities.permissionRules !== false && typeof adapter.partialRules === 'function' ? adapter.partialRules(rules) : [];
   }
 
   /** In words, how far this run's engine holds the rules it holds only in part (the adapter's `ruleReach`). */
-  _engineRuleReach() {
-    return getEngine(this.claude.engine || 'claude').ruleReach || CODEX_COMMAND_RULE_REACH;
+  _engineRuleReach(name = this.claude.engine || 'claude') {
+    return getEngine(name).ruleReach || CODEX_COMMAND_RULE_REACH;
   }
 
   /** What this run's engine turns partly-held deny rules into (the adapter's `ruleKind`): codex's are command rules;
    *  copilot also holds Edit/Write path rules in part (its write rules skip the shell); cursor's are permission-file rules. */
-  _enginePartialKind() {
-    return getEngine(this.claude.engine || 'claude').ruleKind || 'command rules';
+  _enginePartialKind(name = this.claude.engine || 'claude') {
+    return getEngine(name).ruleKind || 'command rules';
   }
 
-  /** The distinct models a run names: the run's own, then each node's. */
-  _engineGateModels(nodes) {
-    return [...new Set([this.claude.model, ...nodes.map((nc) => nc?.model)].filter(Boolean))];
+  /** The distinct models a harness (`name`, the run's by default) runs: the run's own on the default harness only, then
+   *  each node's whose step runs on `name`, and each pinned role's on `name`. */
+  _engineGateModels(nodes, name = this.claude.engine || 'claude') {
+    const out = name === (this.claude.engine || 'claude') ? [this.claude.model] : [];
+    for (const nc of Array.isArray(nodes) ? nodes : []) {
+      if (!nc) continue;
+      if (this._stepEngine(nc) === name) out.push(nc.model);
+      for (const [key, rec] of Object.entries(nc.roles && typeof nc.roles === 'object' ? nc.roles : {})) {
+        if (rec?.engine && rec.model && this._stepEngine(nc, key) === name) out.push(rec.model);
+      }
+    }
+    return [...new Set(out.filter(Boolean))];
   }
 
   /**
@@ -3847,14 +3997,19 @@ export class RunHarness extends EventEmitter {
    * @returns {Promise<object[]>}
    */
   async _engineResumeGate(rp) {
-    const name = this.claude.engine || 'claude';
-    if (name === 'claude') return [];
-    const { id, rules, projectRules } = await this._engineSetRules(rp.guardrailsId || 'permissive');
+    // The frozen nodes first: the checks run for the harnesses they will run on (_harnessPlan reads _stepEngine).
     const nodes = await this._engineGateNodes(rp);
-    const why = this._engineRefusal({ rules, guardrailsId: id, projectRules, nodes });
-    if (why) throw engineRefusal(name, why);
+    this._gateNodes = nodes;
+    const plan = this._harnessPlan(nodes);
+    const others = plan.engines.filter((e) => e !== 'claude');
+    if (!others.length) return nodes;
+    const { id, rules, projectRules } = await this._engineSetRules(rp.guardrailsId || 'permissive', { plan });
+    for (const name of others) {
+      const why = this._engineRefusal({ rules, guardrailsId: id, projectRules, nodes: nodes.filter((nc) => this._stepEngine(nc) === name), name, allNodes: nodes });
+      if (why) throw engineRefusal(name, why, plan.steps[name]);
+    }
     this.mcpOptOut = Array.isArray(rp.mcpOptOut) ? rp.mcpOptOut : [];
-    await this._engineMcpGate();
+    await this._engineMcpGate(plan);
     return nodes;
   }
 
@@ -3864,12 +4019,12 @@ export class RunHarness extends EventEmitter {
    * fallback: the set's permission rules, and through _engineChecks the engine's
    * preflight and the deny rules of each honoring member's own .claude/settings.json.
    */
-  async _engineSetRules(guardrailsId, { quiet = false } = {}) {
+  async _engineSetRules(guardrailsId, { quiet = false, plan } = {}) {
     const id = guardrailsId || 'permissive';
     const set = (await readGuardrailSet(id)) || (await readGuardrailSet('permissive'));
     const rules = guardrailsToPermissionRules(unionGuardrails([set.settings]));
     const honor = set.settings.honorProjectSettings !== false;
-    this._engineProjectRules = await this._engineChecks(() => honor, { quiet, guardrails: unionGuardrails([set.settings]) });
+    this._engineProjectRules = await this._engineChecks(() => honor, { quiet, guardrails: unionGuardrails([set.settings]), ...(plan ? { plan } : {}) });
     return { id, rules, projectRules: this._engineProjectRules };
   }
 
@@ -3880,27 +4035,41 @@ export class RunHarness extends EventEmitter {
    * the UI server can answer at once instead of through the run's error event. run()
    * checks them all again, with the node-level ones and the team policy's MCP copies.
    * Null when the gate lets the run through, or when the check itself failed for another
-   * reason (run() then reports that on the run); else the refusal and whether
-   * allowUnguardedEngine would lift it.
-   * @returns {Promise<{error:string, overridable:boolean}|null>}
+   * reason (run() then reports that on the run); else the refusal, whether
+   * allowUnguardedEngine would lift it, and the harnesses it is about. Runs on every default harness: a step pinned
+   * to another one is checked here too, on the steps resolved for the start body (_earlyHarnesses).
+   * @returns {Promise<{error:string, overridable:boolean, engines:string[]}|null>}
    */
   async engineStartRefusal() {
-    return this._engineEarlyRefusal(this.guardrailsId, async () => []);
+    const early = await this._earlyHarnesses();
+    // Before any engine check: while a remote backend is set, a preflight refusal is only a warning.
+    this._execEnvDefaultFallback();
+    return this._engineEarlyRefusal(this.guardrailsId, async () => early);
   }
 
   /**
    * engineStartRefusal for a resume: the same refusals _engineResumeGate makes, read off
    * the resume point (its guardrail set, its frozen agent nodes, its MCP opt-outs), so the
    * UI server can answer a refused resume — a switch to another engine, say — before it
-   * replies, instead of through the run's error event. Null on Claude, or when the gate
-   * lets the resume through.
-   * @returns {Promise<{error:string, overridable:boolean}|null>}
+   * replies, instead of through the run's error event. Null when no step runs on a non-Claude harness, or when the
+   * gate lets the resume through.
+   * @returns {Promise<{error:string, overridable:boolean, engines:string[]}|null>}
    */
   async engineResumeRefusal() {
     const rp = this.resumeOpts?.resumePoint;
     if (!rp) return null;
     this.mcpOptOut = Array.isArray(rp.mcpOptOut) ? rp.mcpOptOut : [];
-    return this._engineEarlyRefusal(rp.guardrailsId || 'permissive', () => this._engineGateNodes(rp));
+    return this._engineEarlyRefusal(rp.guardrailsId || 'permissive', async () => {
+      const nodes = await this._engineGateNodes(rp);
+      this._gateNodes = nodes;
+      return { ...this._harnessPlan(nodes), signInBlocked: null, nodes };
+    });
+  }
+
+  /** U before the run exists. Base: the default harness alone (GraphOrchestrator resolves the start body's graph).
+   *  @returns {Promise<{engines:string[], steps:Record<string,string[]>, signInBlocked:object[]|null}>} */
+  async _earlyHarnesses() {
+    return { engines: [this.claude.engine || 'claude'], steps: {}, signInBlocked: null };
   }
 
   /** This run target's Team set input from the policy cache (mcp/registry.mjs cachedTeamFor); null when none or unreadable. */
@@ -3911,33 +4080,54 @@ export class RunHarness extends EventEmitter {
     } catch { return null; }
   }
 
-  /** The shared body of engineStartRefusal / engineResumeRefusal. */
-  async _engineEarlyRefusal(guardrailsId, gateNodes) {
-    const name = this.claude.engine || 'claude';
-    if (name === 'claude') return null;
+  /** The shared body of engineStartRefusal / engineResumeRefusal. `gate()` answers U and the steps on each harness
+   *  (`{ engines, steps, signInBlocked, signInLabels?, nodes? }`; a resume adds its frozen nodes for the node-level
+   *  checks, a start leaves them to run()). Every harness refusal names its harness in `engines`. */
+  async _engineEarlyRefusal(guardrailsId, gate) {
+    const dflt = this.claude.engine || 'claude';
+    let plan;
+    try { plan = await gate(); } catch { return null; }
+    if (!plan || !Array.isArray(plan.engines)) return null;
+    // A step pinned to Claude Code on another default harness while Claude Code is signed out: refused, naming it.
+    if (dflt !== 'claude' && plan.signInBlocked?.length) {
+      return { error: `${enginePrefix('claude', plan.steps?.claude)}: ${signInRefusalText(plan.signInBlocked, plan.signInLabels || null)}`, overridable: false, engines: ['claude'] };
+    }
+    const others = plan.engines.filter((e) => e !== 'claude');
+    if (!others.length) return null;
     // An OpenCode run with no model auto-names worca's default before the refusal reads whether a spawn
     // names no model, so this gate no longer refuses it (and the same orchestrator runs with the model
     // _run()'s own call would name; _ensureOpencodeDefaultModel is a no-op when the model is already set).
     await this._ensureOpencodeDefaultModel();
-    let args, mcp;
+    let base, layer;
     try {
-      const { id, rules, projectRules } = await this._engineSetRules(guardrailsId, { quiet: true });
-      args = { rules, guardrailsId: id, projectRules, nodes: await gateNodes() };
+      const { id, rules, projectRules } = await this._engineSetRules(guardrailsId, { quiet: true, plan });
+      base = { rules, guardrailsId: id, projectRules };
       // The run's team policy is resolved only once it runs: before that, the copies its Team set
       // attaches come from the policy cache, as the previews read them.
       const team = this.policyRun ? undefined : await this._cachedTeam();
-      mcp = this._engineMcpRefusal(await this._mcpLayerToJudge((await this._resolveMcp(new Set(), { team }))?.result));
+      layer = await this._mcpLayerToJudge((await this._resolveMcp(new Set(), { team }))?.result);
     } catch (err) {
       // The preflight's refusal (codex missing or signed out): the consent cannot lift it.
-      if (err?.engineRefused) return { error: err.message, overridable: false };
+      if (err?.engineRefused) return { error: err.message, overridable: false, engines: [err.engine || dflt] };
       return null;
     }
-    const strict = this._engineRefusal(args) || mcp;
-    if (!strict) return null;
-    const lenient = this._engineRefusal({ ...args, allowed: true }) || mcp;
-    return lenient
-      ? { error: `engine ${name}: ${lenient}`, overridable: false }
-      : { error: `engine ${name}: ${strict}`, overridable: true };
+    const strict = [];
+    const needs = [];
+    for (const name of others) {
+      // A start leaves the node-level checks (an mcp__ grant, a routed model) to run(); a resume judges its frozen steps.
+      const nodes = Array.isArray(plan.nodes) ? plan.nodes.filter((nc) => this._stepEngine(nc) === name) : [];
+      const args = { ...base, nodes, name };
+      const mcp = this._engineMcpRefusal(layer, name);
+      const why = this._engineRefusal(args) || mcp;
+      if (!why) continue;
+      const P = enginePrefix(name, plan.steps?.[name]);
+      const lenient = this._engineRefusal({ ...args, allowed: true }) || mcp;
+      if (lenient) return { error: `${P}: ${lenient}`, overridable: false, engines: [name] };
+      strict.push(`${P}: ${why}`);
+      needs.push(name);
+    }
+    if (!strict.length) return null;
+    return { error: strict.join('; '), overridable: true, engines: needs.sort() };
   }
 
   /**
@@ -3947,9 +4137,12 @@ export class RunHarness extends EventEmitter {
    * _assembleContext resolves it for the run, and refuses too if this early look missed a
    * copy (a resume, whose team policy is resolved later).
    */
-  async _engineMcpGate() {
-    const why = this._engineMcpRefusal(await this._mcpLayerToJudge((await this._resolveMcp(new Set()))?.result));
-    if (why) throw engineRefusal(this.claude.engine, why);
+  async _engineMcpGate(plan = this._harnessPlan()) {
+    const layer = await this._mcpLayerToJudge((await this._resolveMcp(new Set()))?.result);
+    for (const name of plan.engines) {
+      const why = this._engineMcpRefusal(layer, name);
+      if (why) throw engineRefusal(name, why, plan.steps[name]);
+    }
   }
 
   /** The registry layer an early engine check judges (before mcp.json exists): the resolved one, or on a pretend
@@ -3965,23 +4158,26 @@ export class RunHarness extends EventEmitter {
    *  .mcp.json servers Claude Code has approved are in mcp.json on every such engine, so they meet the same checks;
    *  the others are named by the run context (run-context.mjs attachCommittedMcp). Never throws. */
   _engineMcpWarnings(rc) {
-    const name = this.claude.engine || 'claude';
-    if (name === 'claude' || !rc) return [];
+    const plan = this._harnessPlan();
+    const others = plan.engines.filter((e) => e !== 'claude');
+    if (!others.length || !rc) return [];
     let written = {};
     try { if (rc.mcpConfigPath) written = JSON.parse(readFileSync(rc.mcpConfigPath, 'utf8'))?.mcpServers || {}; } catch { /* unreadable: nothing to say */ }
     const out = [];
-    const native = (rc.mcpServerNames || []).filter((n) => !Object.hasOwn(written, n));
-    if (native.length) out.push(`engine ${name}: MCP servers Claude Code loads on its own are not attached on ${name}: ${native.join(', ')}`);
-    const unattachable = getEngine(name).unattachableMcp;
-    const problems = typeof unattachable === 'function' ? unattachable(written) : [];
-    if (problems.length) out.push(`engine ${name}: MCP servers not attached on ${name} — ${describeUnattachableMcp(name, problems)}`);
+    for (const name of others) {
+      const P = enginePrefix(name, plan.steps[name]);
+      const native = (rc.mcpServerNames || []).filter((n) => !Object.hasOwn(written, n));
+      if (native.length) out.push(`${P}: MCP servers Claude Code loads on its own are not attached on ${name}: ${native.join(', ')}`);
+      const unattachable = getEngine(name).unattachableMcp;
+      const problems = typeof unattachable === 'function' ? unattachable(written) : [];
+      if (problems.length) out.push(`${P}: MCP servers not attached on ${name} — ${describeUnattachableMcp(name, problems)}`);
+    }
     return out;
   }
 
-  /** Why this run's engine refuses these MCP registry copies ({copies, servers}: a registry result), or null:
-   *  the copies the adapter cannot attach, grouped by its reason (Codex attaches stdio servers only, for one). */
-  _engineMcpRefusal(layer) {
-    const name = this.claude.engine || 'claude';
+  /** Why a harness (`name`, the run's by default) refuses these MCP registry copies ({copies, servers}: a registry
+   *  result), or null: the copies the adapter cannot attach, grouped by its reason (Codex attaches stdio servers only). */
+  _engineMcpRefusal(layer, name = this.claude.engine || 'claude') {
     const copies = layer?.copies;
     if (name === 'claude' || !copies?.length) return null;
     if (getEngine(name).capabilities.mcpTools === false) {
@@ -4069,11 +4265,27 @@ export class RunHarness extends EventEmitter {
    *  Away-mode decider's. `fallback` stands for a spawn that names none. */
   async _engineSpawnModels(engine, fallback) {
     const own = (m) => modelForEngine(m || undefined, engine, { projectDir: this.projectDir }) || null;
+    const dflt = this.claude.engine || 'claude';
+    if (engine !== dflt) {
+      // A harness only pinned steps reach: the models of the steps and pinned roles on it (none named: the fallback).
+      const ms = [];
+      for (const nc of this._checkNodes()) {
+        if (this._stepEngine(nc) === engine) ms.push(own(nc.model) || fallback);
+        for (const [key, rec] of Object.entries(nc?.roles && typeof nc.roles === 'object' ? nc.roles : {})) {
+          if (rec?.engine && this._stepEngine(nc, key) === engine) ms.push(own(rec.model) || fallback);
+        }
+      }
+      return new Set(ms.length ? ms : [fallback]);
+    }
     const runModel = own(this.claude.model) || fallback;
     const steps = this.stepModels || await resolveStepModels(this.projectDir, this.claude.model, engine);
+    // The frozen cells on another harness are not this harness's spawns.
+    const stepper = this.state?.stepper;
+    const onDefault = Array.isArray(stepper?.graph?.nodes)
+      ? { ...stepper, graph: { ...stepper.graph, nodes: stepper.graph.nodes.filter((n) => !n?.engine || n.engine === dflt) } } : stepper;
     const named = [
       ...Object.values(steps || {}).map((s) => s?.model),
-      ...manifestModels(this.state?.stepper || []),
+      ...manifestModels(onDefault || []),
       ...(this._helperEngine() === engine ? ['title', 'overview', 'prDescription', 'memoryDefrag'].map((job) => this._utilitySlot(job).model || fallback) : []),
       effectiveNightConfig(this.projectDir).config?.deciderModel,
     ];
@@ -4086,23 +4298,36 @@ export class RunHarness extends EventEmitter {
    * which spawns nothing; then the DENY rules of each honoring member's own
    * `.claude/settings.json` (run-context.mjs#discoverProjectSettings, the file Claude
    * Code reads itself). A preflight refusal throws. Returns the merged deny rules, or null.
+   * A codex run also keeps whether it needs codex's sign-in (`_codexSignIn`), which the sync
+   * remote preflight (_execEnvPreflight) reads.
    * @param {(member:object)=>boolean} honors whether a member's project settings are honored
    * @param {{quiet?:boolean, guardrails?:object}} [opts] quiet: skip the preflight's warning line (a
    *   check made before the run exists; run() checks again and warns then); guardrails: the run's set, whose env
    *   scrub the OpenCode check reads its credentials through
    * @returns {Promise<{deny:string[]}|null>}
    */
-  async _engineChecks(honors, { quiet = false, guardrails = null } = {}) {
-    const name = this.claude.engine || 'claude';
-    if (name === 'claude') return null;
-    const adapter = getEngine(name);
-    if (!this.claude.mock && typeof adapter.preflight === 'function') {
-      const r = await adapter.preflight({ ...(this.claude.bin ? { bin: this.claude.bin } : {}),
-        ...(name === 'codex' ? { signIn: await this._codexNeedsSignIn() } : {}),
+  async _engineChecks(honors, { quiet = false, guardrails = null, plan = this._harnessPlan() } = {}) {
+    const dflt = this.claude.engine || 'claude';
+    const others = plan.engines.filter((e) => e !== 'claude');
+    if (!others.length) return null;
+    if (!this.claude.mock && others.includes('codex')) this._codexSignIn = await this._codexNeedsSignIn();
+    // A remote run's agents run the sandbox template's own pinned CLI, whose model calls worca's relay signs with the
+    // server's credential: the backend's preflight checks that credential (e2bPreflight → engineCredential). Its helper jobs still run this machine's CLI when
+    // they stay on the run engine (helperEngineFor: codex, copilot), so that CLI is checked too, and its failure warns,
+    // naming those jobs: the agents do not need it.
+    const remote = this._execBackend;
+    for (const name of others) {
+      const adapter = getEngine(name);
+      if (this.claude.mock || (remote && helperEngineFor(name) !== name) || typeof adapter.preflight !== 'function') continue;
+      // The run's bin belongs to the run's engine: a harness only steps reach is checked on its own default binary.
+      const r = await adapter.preflight({ ...(name === dflt && this.claude.bin ? { bin: this.claude.bin } : {}), ...(name === 'codex' ? { signIn: this._codexSignIn } : {}),
         ...(name === 'opencode' ? { defaultModel: await this._opencodeOnDefaultModel(), envScrub: !!guardrails?.envScrub,
           envAllowlist: guardrails?.envScrub ? guardrails.envAllowlist : undefined } : {}) });
-      if (r?.refusal) throw engineRefusal(name, r.refusal);
-      if (r?.warning && !quiet) this._log('orchestrator', 'warn', `engine ${name}: ${r.warning}`);
+      if (r?.refusal && !remote) throw engineRefusal(name, r.refusal, plan.steps[name]);
+      const why = r?.refusal || r?.warning;
+      if (why && !quiet) {
+        this._log('orchestrator', 'warn', `${enginePrefix(name, plan.steps[name])}: ${why}${remote ? `. The agents run the ${remote.label}'s own ${name}, but the title, overview, PR description, Auto classifier and Away decider jobs run on this machine's ${name}: they fail until it works here.` : ''}`);
+      }
     }
     let rules = null;
     for (const m of this.members) {
@@ -4119,11 +4344,10 @@ export class RunHarness extends EventEmitter {
     return [];
   }
 
-  /** The model a node's spawn gets on this run's engine. A Claude model means nothing to
+  /** The model a node's spawn gets on `engine` (the run's, else the step's harness). A Claude model means nothing to
    *  another engine, so it is dropped there and that engine runs its own default model
    *  (the gate says so at run start). */
-  _engineModel(model) {
-    const engine = this.claude.engine || 'claude';
+  _engineModel(model, engine = this.claude.engine || 'claude') {
     // Copilot names its models its own way (gpt-5.4, claude-sonnet-4.6, auto): a catalog model is kept when it runs on
     // Copilot (its copilot/<id> built-ins, the user's Copilot rows); an id the catalog does not hold is handed to copilot
     // as named, except a Claude Code id or alias (opus, claude-opus-4-8: copilot versions its Claude ids with a dot).
@@ -4138,8 +4362,8 @@ export class RunHarness extends EventEmitter {
   /** The permission rules a node's spawn carries. Claude Code reads each checkout's .claude/settings.json itself;
    *  another engine does not, so there the members' own deny rules (_engineChecks) join the guardrail set's — on a
    *  workspace run the run context has merged them already, on a single-project or legacy run nothing else does. */
-  _spawnPermissionRules() {
-    const rules = (this.claude.engine || 'claude') === 'claude'
+  _spawnPermissionRules(engine = this.claude.engine || 'claude') {
+    const rules = engine === 'claude'
       ? this.guardrailPermissionRules
       : mergePermissionRules(this.guardrailPermissionRules, this._engineProjectRules);
     return rules || undefined;
@@ -4148,13 +4372,14 @@ export class RunHarness extends EventEmitter {
   /** The connection of the model a node's step ran on (its own, else the run's; a step with neither is on the
    *  harness's own sign-in); for a role-review slice, the model that role ran on (_rolePair). Never throws. */
   _limitConnection(nc, role = null) {
-    const engine = this.claude.engine || 'claude';
+    const engine = this._stepEngine(nc, role);
     let model = null;
     try { model = nc ? (role ? this._rolePair(nc, role) : this._nodeModelPair(nc)).model : this._engineModel(this.claude.model); } catch { model = null; }
     return (model && modelConnection(model, { projectDir: this.projectDir })) || { kind: 'signin', engine };
   }
 
   _nodeModelPair(nc) {
+    const engine = this._stepEngine(nc);
     if (this._modelForAll) {
       const all = this._engineModel(this.claude.model);
       // #1450 D-f: the run's own model (a resume's "Switch model", `--model`) is a person's choice: `source: 'run'`.
@@ -4163,13 +4388,12 @@ export class RunHarness extends EventEmitter {
     // #1450: a Worca default is below every choice a person made, a session's explicit hostModel too (C26): a member
     // whose only model is the default stays bare, so the main agent's model reaches it.
     if (nc?.modelSource === 'worca-default' && this._sessionHostModelOf(nc.nodeId)) return { model: undefined, effort: nc.effort };
-    const own = this._engineModel(nc?.model);
+    const own = this._engineModel(nc?.model, engine);
     // A model on two harnesses keeps its own engine's efforts; this harness takes the nearest one (effortOn).
-    if (own) return { model: own, effort: nc.effort ? (effortOn(nc.effort, this.claude.engine || 'claude') || undefined) : nc.effort };
-    const run = this._engineModel(this.claude.model);
+    if (own) return { model: own, effort: nc.effort ? (effortOn(nc.effort, engine) || undefined) : nc.effort };
+    const run = this._engineModel(this.claude.model, engine);
     const effort = nc?.model ? undefined : nc?.effort;
     if (run || this._modelForAll || !nc) return { model: run, effort };
-    const engine = this.claude.engine || 'claude';
     // "Let Codex decide": the adapter names no model (it would otherwise name CODEX_DEFAULT_MODEL).
     if (nc.modelSource === 'cli-decides') return engine === 'codex' ? { model: undefined, effort, cliDefault: true } : { model: undefined, effort };
     // #1450 D-i, the spawn backstop: a node no one gave a model (a pre-change manifest has no modelSource) or whose pick
@@ -4178,7 +4402,7 @@ export class RunHarness extends EventEmitter {
     if (nc.modelSource !== null && ROLE_DEFAULT_HARNESSES.includes(engine) && !this._sessionHostModelOf(nc.nodeId)) {
       const role = roleOf(`steps.${nc.authoredKey || nc.key || ''}`, { name: nc.meta?.displayName || '' });
       const dflt = roleDefaultFor(engine, role, { claudeAuth: roleAuthState() });
-      const model = dflt ? this._engineModel(dflt.model) : undefined;
+      const model = dflt ? this._engineModel(dflt.model, engine) : undefined;
       if (model) return { model, effort, source: 'worca-default' };
     }
     return { model: undefined, effort };
@@ -4200,8 +4424,8 @@ export class RunHarness extends EventEmitter {
   _rolePair(nc, key) {
     if (this._modelForAll) return this._nodeModelPair(nc);
     const pick = nc?.roles?.[key];
-    const engine = this.claude.engine || 'claude';
-    const own = pick?.model ? this._engineModel(pick.model) : undefined;
+    const engine = this._stepEngine(nc, key);
+    const own = pick?.model ? this._engineModel(pick.model, engine) : undefined;
     if (own) return { model: own, effort: pick.effort ? (effortOn(pick.effort, engine) || undefined) : undefined };
     const node = this._nodeModelPair(nc);
     if (!pick?.model && pick?.effort) return { ...node, effort: effortOn(pick.effort, engine) || undefined };
@@ -4260,10 +4484,21 @@ export class RunHarness extends EventEmitter {
     return modelForEngine(this.claude.model || null, 'claude', { projectDir: this.projectDir }) || null;
   }
 
-  /** What a node's dispatch ctx carries for the run's engine: its name, whether it
+  /** The harness a step runs on: its role's pin while that model runs there (_engineModel), else its node's `engine`, else
+   *  the default harness. After a resume that switched harness (`this._resumeEngineSwitch`) and under Model for all
+   *  (`this._modelForAll`), every step is on the default. `nc` may be null: the default harness. */
+  _stepEngine(nc, role = null) {
+    const dflt = this.claude.engine || 'claude';
+    if (!nc || this._resumeEngineSwitch || this._modelForAll) return dflt;
+    const pick = role && nc.roles && typeof nc.roles === 'object' ? nc.roles[role] : null;
+    if (pick && typeof pick.engine === 'string' && pick.engine && pick.model && this._engineModel(pick.model, pick.engine)) return pick.engine;
+    return typeof nc.engine === 'string' && nc.engine ? nc.engine : dflt;
+  }
+
+  /** What a node's dispatch ctx carries for the step's harness: its name, whether it
    *  has a grantable sub-agent tool, and no fan-out when it has none. */
-  _engineNodeOpts(nc) {
-    const engine = this.claude.engine || 'claude';
+  _engineNodeOpts(nc, role = null) {
+    const engine = this._stepEngine(nc, role);
     const subagents = getEngine(engine).capabilities.subagents !== false;
     return { engine, subagents, fanOut: !!nc?.fanOut && subagents };
   }
@@ -4317,7 +4552,8 @@ export class RunHarness extends EventEmitter {
     // Skills registry: another engine reads set skills from `.agents/skills`, so they are planned BEFORE the
     // assembly and mounted by it with every other skill (one owner: renames, records, orphan pruning, teardown).
     // On Claude they load through --plugin-dir and are planned after it, in _resolveSkills.
-    const skillPlan = (this.claude.engine || 'claude') !== 'claude' ? await this._planSkills() : null;
+    const harnessPlan = this._harnessPlan();
+    const skillPlan = harnessPlan.engines.some((e) => e !== 'claude') ? await this._planSkills() : null;
     // P1 (S31): a folder member's own skills come from its copy-time manifest — a copy has no index to ask.
     const shippedFiles = new Map();
     for (const m of this.members) {
@@ -4346,6 +4582,7 @@ export class RunHarness extends EventEmitter {
       agentIsolated: !!agentIdentity(),
       settingsScope: this._settingsScope(),
       engine: this.claude.engine || 'claude',
+      engines: harnessPlan.engines,
       setSkills: this._setSkillSources(skillPlan),
       registry: async (taken) => (reg = await this._resolveMcp(taken)),
       ...(this._testConnectors() === 'pretend' ? { mcpStandIn: async (layer) => (standIn = await pretendServers(layer, { pipelineDir: this.pipeline.dir })) } : {}),
@@ -4386,8 +4623,13 @@ export class RunHarness extends EventEmitter {
         servers: Object.fromEntries(copies.map((c) => [c.name, loaded[c.name]])),
       };
     }
-    const mcpWhy = this._engineMcpRefusal(this.mcpLayer);
-    if (mcpWhy) throw engineRefusal(this.claude.engine, mcpWhy);
+    {
+      const plan = this._harnessPlan();
+      for (const name of plan.engines) {
+        const mcpWhy = this._engineMcpRefusal(this.mcpLayer, name);
+        if (mcpWhy) throw engineRefusal(name, mcpWhy, plan.steps[name]);
+      }
+    }
     // §11.4: MCP deviations need the resolution, so they land here, after _resolvePolicy (which
     // resets the list on resume). Persisted now, with the WHOLE list: when this is the run's first
     // _persistPolicyState (a saved workflow; an Auto run's classifier spawn persists earlier), the
@@ -4541,7 +4783,7 @@ export class RunHarness extends EventEmitter {
   /** The claude binary this run's agent spawns use: the run's own, else claude-runner's default (WORCA_CLAUDE_BIN /
    *  ORCH_CLAUDE_BIN / `claude`). The capability probe asks this one, so what it learns (the try guard's structured
    *  deny, --mcp-config, --plugin-dir) is about the CLI that actually runs, never another `claude` on PATH. */
-  _claudeBin() { return this.claude?.bin || CLAUDE_DEFAULT_BIN; }
+  _claudeBin() { return ((this.claude?.engine || 'claude') === 'claude' && this.claude?.bin) || CLAUDE_DEFAULT_BIN; }
 
   /** `claude --help` / `--version`, parsed once per run (§8.18 V5; skills §4.1 reads `pluginDir`). */
   _claudeCaps() { return (this._capsProbe ||= probeClaudeCapabilities(this._claudeBin())); }
@@ -4598,7 +4840,7 @@ export class RunHarness extends EventEmitter {
     // §4.1 host gates, only when something would load on Claude: managed `disableSideloadFlags`, or a CLI
     // without --plugin-dir. Either skips the whole layer with one warning — never a dead spawn. Another engine
     // reads the copies from `.agents/skills`, never through --plugin-dir (this.claude.bin is its binary).
-    const blocked = !mounted.length || (this.claude.engine || 'claude') !== 'claude' ? null
+    const blocked = !mounted.length || !this._harnessPlan().engines.includes('claude') ? null
       : this._skillHostFacts().sideloadDisabled ? 'sideload-disabled'
       : (await this._pluginDirSupported()) ? null : 'cli-no-plugin-dir';
     let mount = { base: null, pluginDirs: [], plugins: [], failed: [] };
@@ -4620,7 +4862,7 @@ export class RunHarness extends EventEmitter {
    * [] on Claude (set skills load through --plugin-dir there) and for a plan with nothing to mount.
    */
   _setSkillSources(plan) {
-    if ((this.claude.engine || 'claude') === 'claude' || !plan || plan.none || plan.blocked) return [];
+    if (!this._harnessPlan().engines.some((e) => e !== 'claude') || !plan || plan.none || plan.blocked) return [];
     return (plan.mount.plugins || []).flatMap((p) => p.skills.map((name) => {
       const m = plan.mounted.find((x) => x.pluginName === p.pluginName && x.name === name);
       return { key: `${p.pluginName}:${name}`, name, source: join(p.dir, 'skills', name), prefix: `${m?.setSlug || p.pluginName}-`, origin: `set ${m?.setName ?? p.pluginName}` };
@@ -4664,7 +4906,10 @@ export class RunHarness extends EventEmitter {
     }
     const { result, mounted, skipped, mount } = plan;
     const engine = this.claude.engine || 'claude';
-    const onEngine = engine !== 'claude';
+    // A step on a non-Claude harness reads the copies from `.agents/skills`; a step on Claude Code through --plugin-dir.
+    const U = this._harnessPlan().engines;
+    const onEngine = U.some((e) => e !== 'claude');
+    const onClaude = U.includes('claude');
     // Another engine with no `.agents/skills` mount for this run cannot see the copies at all.
     const blocked = plan.blocked || (onEngine && mounted.length && !mountedAs ? 'engine-no-skill-mount' : null);
     const firstLine = (err) => String(err?.message || err).split('\n')[0];
@@ -4697,8 +4942,8 @@ export class RunHarness extends EventEmitter {
     // The names agents call on another engine: the folders in `.agents/skills`.
     const agentNames = onEngine && !blocked ? kept.map((m) => mountedAs[`${m.pluginName}:${m.name}`]) : null;
     this.skillLayer = {
-      base: mount.base, pluginDirs: blocked || onEngine ? [] : mount.pluginDirs, plugins, mounted: kept, skipped: allSkipped, blocked,
-      ...(agentNames ? { rel: skillsRelFor(engine), names: agentNames } : {}),
+      base: mount.base, pluginDirs: blocked || !onClaude ? [] : mount.pluginDirs, plugins, mounted: kept, skipped: allSkipped, blocked,
+      ...(agentNames ? { rel: skillsRelFor(U.find((e) => e !== 'claude')), names: agentNames } : {}),
     };
     const record = {
       base: mount.base, plugins,
@@ -4714,7 +4959,7 @@ export class RunHarness extends EventEmitter {
     // consented — say nothing); a resumed run does not repeat what this run root already reported.
     const lines = blocked ? [`skills from sets not loaded: ${skillLayerText(blocked, engine)}`] : [];
     for (const p of plugins) {
-      if (blocked || onEngine || !p.renamedPlugin) continue;
+      if (blocked || !onClaude || !p.renamedPlugin) continue;
       const slug = mounted.find((m) => m.setId === p.setId)?.setSlug || 'general';
       lines.push(`set ${p.setName} loads as \`${p.pluginName}:\` here — a Claude Code plugin named ${slug} is installed`);
     }
@@ -4816,7 +5061,7 @@ export class RunHarness extends EventEmitter {
     }
     try { await this._mountMemoryUnguarded({ resume }); }
     catch (err) {
-      this.memory = null; this.memoryBlock = ''; this.state.memoryMount = null; this.state.memoryRules = null;
+      this.memory = null; this.memoryBlock = ''; this._memoryBlocks = null; this.state.memoryMount = null; this.state.memoryRules = null;
       if (existsSync(this._memoryLedgerPath())) await this._writeMemoryLedger({ neutralised: true });
       const why = String(err?.message || err).split('\n')[0];
       // A defragment run IS its mount (B8): rethrow, and run()'s setup failure policy parks the run
@@ -4921,12 +5166,13 @@ export class RunHarness extends EventEmitter {
     const loadDirs = loadFilteredDirs(dirs, plans);
     // The WRITABLE copy: a copy of the mounted scopes (agents edit existing files in place;
     // syncBack diffs it against this baseline). Outside git — no sentinel.
-    const m = await mountMemory({ root, mount, dirs: loadDirs, onError });
+    const ownSource = this._memorySource();   // a sandbox run reads back its own held writes (memory-store isHeldSource)
+    const m = await mountMemory({ root, mount, dirs: loadDirs, onError, ownSource });
     // The READ-ONLY rules copy: the same files where the CLI discovers them. Its baseline is
     // irrelevant (nothing syncs back from it). `<rules>/.gitignore` = `*` keeps it out of an agent's
     // own `git add -A`, a staging pre-commit hook, snapshotWorktreePatch's bare `git add -A` and the
     // reviewer's `git status`; the §8.8 `:(exclude)` pathspec stays as defence in depth.
-    await mountMemory({ root, mount: rules, dirs: loadDirs, onError, gitIgnore: true });
+    await mountMemory({ root, mount: rules, dirs: loadDirs, onError, gitIgnore: true, ownSource });
     // …then the team folder(s) of the READ-ONLY copy only (decision D2): an agent changes a team note by writing a
     // same-named local note, which shadows it here and is shared on sync. A defragment run works on local notes only.
     const team = this.memoryScope ? [] : (await this._mountTeamDirs(rules, dirs, plans)) ?? [];
@@ -4991,10 +5237,17 @@ export class RunHarness extends EventEmitter {
     return { mode: 'frozen', set: m.manifest.set, files: m.entries.filter((e) => !e.roles.length).length, ...(roleNotes.length ? { roleNotes } : {}) };
   }
 
-  /** The memory text one agent's system prompt carries: the pointer block, then the notes kept for its role. */
-  _memoryBlockFor(role) {
+  /** The memory text one agent's system prompt carries: the pointer block worded for the step's harness (`engine`, the
+   *  run's by default; another harness's is rendered once and cached until the mount changes), then its role's notes. */
+  _memoryBlockFor(role, engine = this.claude.engine || 'claude') {
+    let block = this.memoryBlock || '';
+    if (engine !== (this.claude.engine || 'claude') && this.memory) {
+      const cache = (this._memoryBlocks ||= new Map());
+      if (!cache.has(engine)) cache.set(engine, this._renderMemoryBlock(engine));
+      block = cache.get(engine);
+    }
     const notes = this.memory?.entries ? renderRoleNotes(this.memory.entries, role) : '';
-    return notes ? `${this.memoryBlock}\n${notes}` : (this.memoryBlock || '');
+    return notes ? `${block}\n${notes}` : block;
   }
 
   /**
@@ -5028,7 +5281,8 @@ export class RunHarness extends EventEmitter {
   async _registerEngineConfig() {
     const cwd = this.runCwd || null;
     if (!cwd || (cwd === this.projectDir && this.workMode !== 'none')) return;   // P3: a no-project run's cwd IS its projectDir (work/)
-    const own = ENGINE_PROJECT_FILES[this.claude.engine || 'claude'] || [];
+    // Every harness the run's steps use writes its own files (a Cursor step on a Claude Code run included).
+    const own = [...new Set(this._harnessPlan().engines.flatMap((e) => ENGINE_PROJECT_FILES[e] || []))];
     const paths = [...own, ...ALL_PROJECT_FILES.filter((p) => !own.includes(p) && existsSync(join(cwd, p)) && worcaOwnsProjectFile(cwd, p))];
     if (!paths.length) return;
     const scope = (this.runRoot && cwd === this.runRoot) ? 'runRoot'
@@ -5099,9 +5353,15 @@ export class RunHarness extends EventEmitter {
   /** The `## Worca memory` pointer block: heading, one-line intro, one `Label — /abs/dir:` line per
    *  mounted scope. Depends on dirs + mount only (never on file contents), so one render per mount. */
   _refreshMemoryBlock() {
+    this._memoryBlocks = null;
     if (!this.memory) { this.memoryBlock = ''; return; }
+    this.memoryBlock = this._renderMemoryBlock(this.claude.engine);
+  }
+
+  /** The pointer block of the mounted memory, worded for `engine`. */
+  _renderMemoryBlock(engine) {
     const teamDir = this.memory.rules && (this.memory.team || []).some((t) => t.count > 0) ? join(this.memory.rules, 'team') : null;
-    this.memoryBlock = renderMemoryBlock(this.memory.dirs.map((d) => ({ label: d.label, dir: join(this.memory.mount, d.rel) })), { engine: this.claude.engine, teamDir, direct: !!this.memoryScope });
+    return renderMemoryBlock(this.memory.dirs.map((d) => ({ label: d.label, dir: join(this.memory.mount, d.rel) })), { engine, teamDir, direct: !!this.memoryScope });
   }
 
   /** The `onError` every memory listing gets. A junk NAME is not an I/O failure — phrasing it
@@ -5190,6 +5450,13 @@ export class RunHarness extends EventEmitter {
     }
   }
 
+  /** The provenance this run's memory writes carry. A remote run's agents ran in a sandbox, so what they wrote is
+   *  held for review (`sandbox:`, memory-store isHeldSource; security evaluation 2026-10-21, E5). */
+  _memorySource() {
+    if (this.execEnvKind !== 'local') return `${SANDBOX_SOURCE_PREFIX}${this.pipeline.id}`;
+    return `${this.memoryScope ? 'defrag' : 'run'}:${this.pipeline.id}`;
+  }
+
   /** An ordinary run's sync (#943): what the execution wrote becomes proposals a person approves, and the writable copy
    *  goes back to the frozen set. Nothing reaches the store, so nothing is shared with the team either. */
   async _proposeMemoryWith({ mount, dirs, baseline, nodeId, executionId, agentKey, label, failed = [] }) {
@@ -5220,8 +5487,9 @@ export class RunHarness extends EventEmitter {
     if (!this.memoryScope) return this._proposeMemoryWith(o);
     const { mount, dirs, baseline, nodeId, executionId, agentKey, label, failed = [] } = o;
     const now = new Date().toISOString();
+    const source = this._memorySource();
     const res = await syncBack({
-      root: memoryRoot(), mount, dirs, baseline, source: `${this.memoryScope ? 'defrag' : 'run'}:${this.pipeline.id}`, now,
+      root: memoryRoot(), mount, dirs, baseline, source, now,
       caps: memoryCaps(this._settingsScope()), onWarn: (w) => this._log('memory', 'warn', w),
       onError: (p, err) => this._memoryReadWarn(p, err),
       // Team memory (phase 1a): a note's `team:` marker is worca's, never the writable copy's line from mount time (D10).
@@ -5238,17 +5506,19 @@ export class RunHarness extends EventEmitter {
       });
       const head = `Memory: +${res.added.length} ~${res.modified.length} -${res.deleted.length}` +
         `${res.rejected.length ? ` (${res.rejected.length} rejected)` : ''}${failed.length ? ` (${failed.length} failed)` : ''} by ${label}`;
+      const held = isHeldSource(source) && (res.added.length || res.modified.length)
+        ? ' — held for review: written in a sandbox, so no other run or chat loads it until you approve it in Memory' : '';
       const name = (r) => `${r.scope ? `${r.scope}/` : ''}${r.name}.md`;
       const details = [
         ...res.added.map((r) => `added ${name(r)}`), ...res.modified.map((r) => `updated ${name(r)}`),
         ...res.deleted.map((r) => `deleted ${name(r)}`), ...res.rejected.map((r) => `rejected ${name(r)} — ${r.reason}`),
         ...failed.map((r) => `failed ${name(r)} — ${r.reason}`),
       ];
-      this._log('memory', 'info', `${head}: ${details.join('; ')}`, { nodeId, executionId });
+      this._log('memory', 'info', `${head}: ${details.join('; ')}${held}`, { nodeId, executionId });
       // A failed write is the one memory outcome nobody asked for: warn, per file, so it is visible in
       // the run log without opening the 300 KB transcript.
       for (const r of failed) this._log('memory', 'warn', `memory: ${name(r)} written by ${label} never reached the store — ${r.reason}`, { nodeId, executionId });
-      await appendAudit(this.pipeline.dir, `${head}: ${details.join('; ')}`).catch(() => {});
+      await appendAudit(this.pipeline.dir, `${head}: ${details.join('; ')}${held}`).catch(() => {});
       await this._recordFailedWrites(failed, now);
     }
     // Never a defragment run's result (D15). Queued FIRST: a note on its way to the team loads in a project whose team
@@ -5264,7 +5534,7 @@ export class RunHarness extends EventEmitter {
       try {
         // the rules copy lives in the cwd: a Folder copy swapped for a link is never written through
         if (this.workMode === 'folder' && !(await this._folderCopyIntact())) throw new Error(`the run's copy is not the run's own folder: ${this.runCwd}`);
-        const { failed: stale } = await withStoreLock(memoryRoot(), () => refreshMount({ root: memoryRoot(), mount: this.memory.rules, dirs: loadFilteredDirs(dirs, plans), onError: (p, err) => this._memoryReadWarn(p, err) }));
+        const { failed: stale } = await withStoreLock(memoryRoot(), () => refreshMount({ root: memoryRoot(), mount: this.memory.rules, dirs: loadFilteredDirs(dirs, plans), ownSource: source, onError: (p, err) => this._memoryReadWarn(p, err) }));
         if (stale.length) this._log('memory', 'warn', `memory: the rules copy could not be refreshed for ${stale.join(', ')} — the next agent loads the previous text`);
       } catch (err) {
         this._log('memory', 'warn', `memory: the rules copy could not be refreshed: ${err?.message || err}`);
@@ -5485,9 +5755,9 @@ export class RunHarness extends EventEmitter {
       });
       return;
     }
-    // The probe asks the `claude` binary: a run on another engine spawns no claude (and this.claude.bin is that
-    // engine's binary), so its MCP config is never dropped on what claude says.
-    if ((this.claude.engine || 'claude') !== 'claude') {
+    // The probe asks the `claude` binary: a run none of whose steps is on Claude Code spawns no claude (and
+    // this.claude.bin is another engine's binary), so its MCP config is never dropped on what claude says.
+    if (!this._harnessPlan().engines.includes('claude')) {
       await updateRunManifest(this.runRoot, {
         capabilities: { mcpGrants: MCP_GRANT_MODE, mcpConfig: null, version: null, probed: false, engine: this.claude.engine },
       });
@@ -5580,6 +5850,12 @@ export class RunHarness extends EventEmitter {
       this._log('graph', 'debug', 'No worktree (workDir===projectDir); skipping in-worktree graph build.');
       return; // building "in the worktree" would write into main
     }
+    if (this._execBackend) {
+      // A remote run's agents work in the sandbox's clone: _buildSandboxGraph builds the graph there, once it starts.
+      this.toolInstruction = '';
+      this._log('graph', 'info', 'the graphify graph is built in the sandbox once it starts');
+      return;
+    }
     if (this.state.tools?.kind !== 'cli') {
       this.toolInstruction = '';
       this._log('graph', 'info', 'graphify CLI not on PATH; skipping in-worktree graph build');
@@ -5593,6 +5869,26 @@ export class RunHarness extends EventEmitter {
     this.toolInstruction = '';   // until the build finishes: the detect-time text promises a graph that is not there yet
     this._log('graph', 'info', 'Building graphify graph in worktree in the background (AST-only, no LLM); agents started after it finishes get it.');
     this._startGraphBuild([{ key: null, dir: this.workDir }]);
+  }
+
+  /**
+   * A remote run's graph (docs/e2b.md "How a run works"): built in its sandbox after the code is in, so the host
+   * builds nothing and uploads no graphify-out/. Same guards and fail-safe as _buildWorktreeGraph; a reconnected
+   * sandbox keeps its graph and the resume point's instruction, so only a fresh sandbox calls this.
+   */
+  async _buildSandboxGraph() {
+    if (this.claude.mock || !this.execEnv?.buildCodeGraph) return;
+    if (this._skipCodeGraph()) { this.toolInstruction = ''; return; }
+    if (this.workDir === this.projectDir) return;
+    const res = await this.execEnv.buildCodeGraph({ timeoutMs: this.graphBuildTimeoutMs });
+    if (res.ok) {
+      this.toolInstruction = worktreeGraphInstruction();
+      this._log('graph', 'info', `graphify graph built in the sandbox in ${(res.ms / 1000).toFixed(1)} s.`);
+      await appendAudit(this.pipeline.dir, 'Preflight: built graphify graph in the sandbox worktree (AST-only).').catch(() => {});
+    } else {
+      this.toolInstruction = '';
+      this._log('graph', 'warn', `graphify build in the sandbox failed (${res.error}); proceeding without graph grounding`);
+    }
   }
 
   /** The run's workflow opted out of the code graph (`codeGraph: false` on the template, frozen
@@ -5890,6 +6186,8 @@ export class RunHarness extends EventEmitter {
     // still streaming after a failure) must not recreate the removed root.
     this._mcpClosed = true;
     await this._mcpTail;
+    // G22: first, so no later step that fails or keeps the run root leaves the MCP config's secrets behind.
+    if (this.runRoot) await removeRunMcpConfig(this.runRoot).catch(() => {});
     if (this.runRootMode !== 'detached') {
       if (this.isWorkspace) await this._teardownWorktreeAll();
       else await this._teardownWorktree();
@@ -6410,12 +6708,16 @@ export class RunHarness extends EventEmitter {
     // Plain commit first (uses the repo's configured identity); fall back to a
     // local identity so a repo with no user.name/email still commits — mirrors
     // _ensureGitCheckpoint's belt-and-braces.
-    // The one place worca runs the project's own commit hooks (git-guard.mjs: never under agent isolation).
-    let commit = await this._gitIndexWrite(['commit', '-m', msg], { ...gitOpts, hooks: true });
+    // The one place worca runs the project's own commit hooks (git-guard.mjs: never under agent isolation). A sandbox
+    // run's code came from an untrusted machine: no repo hook runs on this one for it, with the server's keys in its
+    // environment (the sync also refuses hook changes, remote-env.mjs). Local runs keep their hooks.
+    const hooks = !this._execBackend;
+    if (!hooks) this._log('git', 'info', `committing without git hooks: this run's code came from the ${this._execBackend.label}`);
+    let commit = await this._gitIndexWrite(['commit', '-m', msg], { ...gitOpts, hooks });
     if (!commit.ok) {
       commit = await this._git(
         ['-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator', 'commit', '-m', msg],
-        { ...gitOpts, hooks: true },
+        { ...gitOpts, hooks },
       );
     }
     if (!commit.ok && this.runRootMode === 'detached') {
@@ -7002,6 +7304,7 @@ export class RunHarness extends EventEmitter {
     this._metricsIv.questions += 1;
 
     let parked = false;   // this ask stopped the run clock (a person must answer); released in the finally
+    let execWaiting = null;   // the remote env this ask parked (remote mode), paired in the finally
     try {
       // A night-eligible --yes run hands the ask to night mode: it is answered through the
       // same pendingQuestion + answer() path below (delay 0), so it is attributed and audited.
@@ -7064,8 +7367,13 @@ export class RunHarness extends EventEmitter {
         if (kind !== PLAN_ASK_KIND || !this.auto) {
           try { this._nightArm(nq); } catch (err) { this._nightFailed(nq, `Away mode could not get ready for ${kind} ${id}: ${err?.message || err}`); }
         }
+        // remote: an idle sandbox parks while the ask waits. Counted, so the `false` below pairs with this
+        // `true` on the same env (the --yes branch above never gets here).
+        execWaiting = this.execEnv;
+        execWaiting?.setWaiting(true, this._execEnvMaxWaitMs());
       });
     } finally {
+      execWaiting?.setWaiting(false);
       this._nightDisarm();
       this._nightCancel(id);
       this._nightPublish();
@@ -7120,6 +7428,18 @@ export class RunHarness extends EventEmitter {
     try {
       const { config } = effectiveNightConfig(this.projectDir);
       return this._nightStateNow(config).active;
+    } catch { return false; }
+  }
+
+  /** May Away mode decide ask `q` right now, without its grace timer (a workflow answering a stop the moment it opens)?
+   *  True only off --yes, with Away active, `q.kind` not on neverDecide and no limit reached. Asking is not deciding: a
+   *  spent limit says false and pauses nothing. Never throws (false on error). */
+  nightMayDecideNow(q) {
+    try {
+      if (this.auto || !this._night) return false;
+      const { config } = effectiveNightConfig(this.projectDir);
+      if (!this._nightStateNow(config).active || nightNeverDecides(config, q)) return false;
+      return this._nightGuardrail(config) === null;
     } catch { return false; }
   }
 
@@ -7788,6 +8108,11 @@ export class RunHarness extends EventEmitter {
    */
   async _buildResults({ stage = false } = {}) {
     if (!this.pipeline) return;
+    // remote: the final sync, so the diff, results.json and the memory sync see the last changes (every finished
+    // spawn already synced; this catches a spawn the stop interrupted mid-sync).
+    if (this.execEnv && !this.execEnv.fatalError()) {
+      await this.execEnv.syncBack().catch((err) => this._execLog('error', `final sync failed: ${err?.message || err}`));
+    }
     try {
       // stage: the non-done terminal paths never reached the review loop's staging
       // (:2204, :2311), so `git add -A -N` has not run and the `git diff <checkpoint>`
@@ -8543,6 +8868,7 @@ export class RunHarness extends EventEmitter {
       case 'retry': this._onRetryEvent(role, e, attr); return;
       case 'usage': this._onUsageEvent(e, attr); return;
       case 'limit': recordClaudeLimit(e); return;   // the usage rings' reading: nothing rendered, nothing logged
+      case 'relayCost': this._onRelayCostEvent(e, attr); return;
       default: return;
     }
   }
@@ -8675,11 +9001,10 @@ export class RunHarness extends EventEmitter {
     // id it does not know at $0, and a pinned price is only an estimate of it.
     // Read before _recordBridgeCalls forgets the tag.
     const upstreamCost = attr?.executionId ? bridgeCostFor(attr.executionId) : null;
+    const cliCost = costCfg ? resolveModelCost(attr.model, rawCost, e.usage, costCfg) : rawCost;
     const cost = upstreamCost
       ? upstreamCost.costUsd
-      : costCfg
-        ? resolveModelCost(attr.model, rawCost, e.usage, costCfg)
-        : rawCost;
+      : e.relay ? this._relayedCost(e.relay, cliCost, attr) : cliCost;
     this._openTurns?.delete(attr?.stepKey);        // the result prices every turn it closes
     this._recordBridgeCalls(attr?.stepKey, attr?.executionId);
     // Booked here, so never again at _closeOpenTurns' flush: _recordBridgeCalls keeps a tag under which
@@ -8688,7 +9013,7 @@ export class RunHarness extends EventEmitter {
     if (Number.isFinite(cost)) this._recordCost(cost, attr?.stepKey);
     // An engine that reports no cost (Copilot, Cursor) would warn on every step; the run start says it once (_engineGate).
     // A per-Mtok model still warns on any engine: the user priced it, and a result with no usage goes unaccounted.
-    else if (!this.claude.mock && (costCfg?.perMtok || getEngine(this.claude.engine || 'claude').capabilities.cost !== false)) {
+    else if (!this.claude.mock && (costCfg?.perMtok || getEngine(attr?.engine || this.claude.engine || 'claude').capabilities.cost !== false)) {
       // A {perMtok} model prices from tokens alone, so a result with no usage is
       // unpriceable (NaN) — say so plainly rather than blaming a missing cost field.
       this._log('orchestrator', 'warn', costCfg?.perMtok
@@ -8697,7 +9022,7 @@ export class RunHarness extends EventEmitter {
     }
     if (!this.claude.mock && attr?.model) {
       try {
-        const verdict = observeModelCost(attr.model, Number.isFinite(cost) ? cost : null, e.usage, costCfg);
+        const verdict = observeModelCost(attr.model, Number.isFinite(cost) ? cost : null, e.relay ? relayUsageTotal(e.relay) : e.usage, costCfg);
         if (verdict === 'flagged' && !(this._costUnreliableWarned ||= new Set()).has(attr.model)) {
           this._costUnreliableWarned.add(attr.model);
           this._log('orchestrator', 'warn',
@@ -8718,6 +9043,36 @@ export class RunHarness extends EventEmitter {
         this._mcpChain(() => this._recordRunWarning(`${MCP_NAME_WARNING} — Test the servers in ${sets} (${untested.map((c) => c.name).join(', ')})`));
       }
     }
+  }
+
+  /** The cost a REMOTE result books (security evaluation 2026-10-21, E4): the sandbox writes the CLI's result frames,
+   *  so its figure is a claim, and `relay` is what worca's own relay measured upstream since the previous result. The
+   *  measure is booked, and a sandbox figure far from it is named in the run log. A model worca has no price for is
+   *  booked at the fallback rate (relay-usage.mjs priceRelayUsage, audit 2.8), never at the sandbox's figure. */
+  _relayedCost(relay, cliCost, attr) {
+    let measured;
+    try { measured = priceRelayUsage(relay, attr?.model || null); } catch { return cliCost; }
+    if (measured.unpriced.length) { this._warnUnpriced(relay.messages, measured.unpriced, attr); return measured.costUsd; }
+    const gap = Number.isFinite(cliCost) ? Math.abs(cliCost - measured.costUsd) : 0;
+    if (gap > Math.max(0.01, 0.25 * Math.max(cliCost, measured.costUsd))) {
+      this._log('orchestrator', 'warn', `the sandbox reported $${cliCost.toFixed(4)} for this call, the model relay measured $${measured.costUsd.toFixed(4)}` +
+        ` (${relay.messages} model ${relay.messages === 1 ? 'reply' : 'replies'}); worca books the relay's figure`, attr);
+    }
+    return measured.costUsd;
+  }
+
+  /** A remote spawn ended with model calls no result covered (stopped mid-turn, or its sandbox printed no result):
+   *  the relay measured them, so they are booked like a result's, and the step's open turns are not counted apart. */
+  _onRelayCostEvent(e, attr) {
+    let measured;
+    try { measured = priceRelayUsage(e, attr?.model || null); } catch { return; }
+    if (attr?.stepKey) this._openTurns?.delete(attr.stepKey);
+    if (measured.unpriced.length) this._warnUnpriced(e.messages, measured.unpriced, attr);
+    if (measured.costUsd > 0) this._recordCost(measured.costUsd, attr?.stepKey);
+  }
+
+  _warnUnpriced(messages, models, attr) {
+    this._log('orchestrator', 'warn', `model relay: ${messages} model ${messages === 1 ? 'reply' : 'replies'} include a model worca has no price for (${models.join(', ')}); booked at the highest list rate. Give the model a price to book it exactly`, attr);
   }
 
   /** What a result's CLI cost adds to the step. A `cumulativeCost` figure (Claude Code) is the
@@ -9341,7 +9696,8 @@ export class RunHarness extends EventEmitter {
    * @returns {{ deltaUsd, memberUsd, hostOverheadUsd, costSource, hostPriced, overridden, carried: {usd, parts}|null, reconcile }}
    */
   _bookSessionTurn(b) {
-    const engineCost = engineReportsCost(this.claude.engine);
+    // A session off the run's harness books on its own (SessionHost stamps `engine` only then).
+    const engineCost = engineReportsCost(b.engine || this.claude.engine);
     const booking = (over) => ({ deltaUsd: null, memberUsd: null, hostOverheadUsd: null, costSource: 'none', hostPriced: false, overridden: false,
       carried: null, reconcile: { ok: true, checks: [] }, ...over });
     if (Number.isFinite(b.cutEstimateUsd)) {                       // C9: a cut the harness will never restore
@@ -9712,6 +10068,279 @@ export class RunHarness extends EventEmitter {
     this._log('orchestrator', 'warn', `control: unknown command action "${cmd.action}" — consumed, ignored`);
   }
 
+  // ── Execution environment (plans/e2b-execution-design.md §17–§18) ─────────────────
+  // Local is the ABSENCE of all of this: `this.execEnv` stays null, and every method below returns
+  // at once on a local run, so a local run's options, state, outcome and resume point gain no key.
+  // A remote run asks the registry for its backend; nothing here names a provider.
+
+  /** The backend of a remote run; null on local runs. */
+  get _execBackend() { return this.execEnvKind === 'local' ? null : getExecBackend(this.execEnvKind); }
+  _execLog(level, msg) { this._log(this.execEnvKind, level, msg); }
+
+  /** The run's state names every harness its steps use (`runEngines`, U sorted) when there is more than one; a
+   *  one-harness run's state has no such key (and a resume that moved every step to one harness drops it). */
+  _noteRunEngines() {
+    const { engines } = this._harnessPlan();
+    if (engines.length > 1) this.state.runEngines = engines;
+    else delete this.state.runEngines;
+  }
+
+  /** The steps on a harness other than the default one, as [{ step, engine }] (_harnessPlan over the nodes the latest
+   *  gate judged): a remote run runs every step on one harness. */
+  _execEnvElsewhere() {
+    const dflt = this.claude.engine || 'claude';
+    const plan = this._harnessPlan();
+    return Object.entries(plan.steps).filter(([e]) => e !== dflt).flatMap(([engine, steps]) => steps.map((step) => ({ step, engine })));
+  }
+
+  /** A remote environment that is only the saved default does not apply to a run whose steps use more than one
+   *  harness: the run runs locally, and its log says why (opts.execEnvFallback). Idempotent; a resume keeps its run's. */
+  _execEnvDefaultFallback() {
+    const b = this._execBackend;
+    if (!b || !this._execEnvDefault || this.resumeOpts) return;
+    if (!this._execEnvElsewhere().length) return;
+    // _execBackend is a getter over execEnvKind: setting the kind alone makes it null.
+    this.execEnvKind = 'local';
+    delete this.state.execEnv;
+    this.opts.execEnvFallback = `the saved ${b.title} default does not apply to a run whose steps use more than one harness; it runs locally`;
+  }
+
+  /** Sync: the server's 409 path and the run-start gate. null on local runs. */
+  execEnvStartRefusal() {
+    const b = this._execBackend;
+    if (!b) return null;
+    const { errors } = this._execEnvPreflight();
+    return errors.length ? `${b.title} execution cannot start: ${errors.join(' ')}` : null;
+  }
+  /** The generic remote-run checks (policy.mjs) + the backend's own, de-duplicated in order: for e2b, whose
+   *  preflight also runs remotePreflight, the result is exactly today's list. */
+  _execEnvPreflight() {
+    const b = this._execBackend;
+    const ctx = { engine: this.claude.engine, isWorkspace: this.isWorkspace, workMode: this.workMode,
+      mock: mockEnabled({ mock: this.claude.mock }), brokerOn: brokerEnabled(),
+      // this.runRootMode is set only at _setupRunRoot, after the gate; until then the setting decides.
+      runRootMode: this.runRootMode || runRootMode(),
+      // Set by the gate's async half (_engineChecks), which every start and resume path runs first; until then
+      // (undefined) the backend asks for the sign-in.
+      needsSignIn: this._codexSignIn };
+    const own = b.preflight(ctx);
+    // An explicit remote pick on a run whose steps use more than one harness (a saved default steps aside instead).
+    const harness = this._execEnvDefault ? null : remoteHarnessRefusal(b.title, this.claude.engine || 'claude', this._execEnvElsewhere());
+    return { errors: [...new Set([...remotePreflight({ title: b.title, ...ctx }), ...own.errors, ...(harness ? [harness] : [])])], warnings: own.warnings };
+  }
+  /** maxConcurrent | maxWaitMin: the backend's user setting, else its capability default. 0 on a local run. */
+  _execEnvLimit(which) { return this._execBackend ? execEnvLimit(this._execBackend, which) : 0; }
+  _execEnvMaxWaitMs() { return this._execEnvLimit('maxWaitMin') * 60_000; }
+  _openExecClient() { return this._execBackend.open({ mock: mockEnabled({ mock: this.claude.mock }) }); }
+
+  /** After setup (worktree, context, memory, engine config): one sandbox for this run. */
+  async _startExecEnv() {
+    const b = this._execBackend;
+    if (!b) return;
+    for (const w of this._execEnvPreflight().warnings) this._execLog('warn', w);
+    const maxWait = this._execEnvLimit('maxWaitMin');
+    const grace = effectiveNightConfig(this.projectDir)?.config?.graceMinutes;
+    if (Number.isFinite(grace) && grace >= maxWait) {
+      this._execLog('warn', `Away mode answers after ${grace} min, but ${withArticle(b.label)} waits at most ${maxWait} min for an answer; lower the Away grace or raise "Max wait for an answer".`);
+    }
+    const client = await this._openExecClient();
+    // Which environment (template) the sandbox starts from, and whether its build is stale: never blocks.
+    const target = resolveRunEnvironment(b, this.members[0].projectKey);
+    for (const n of target.notes) this._execLog(n.level, n.text);
+    const signal = AbortSignal.any([this.abort.signal, this.pauseAbort.signal]);
+    try {
+      this._execEnvRelease = await acquireSandboxSlot({
+        pool: b.name, cap: this._execEnvLimit('maxConcurrent'), signal,
+        countRunning: client.countRunning ? () => client.countRunning() : null,
+        onWait: ({ cap }) => {
+          this.state.execEnvWaiting = true;
+          this._execLog('info', `waiting for ${withArticle(b.label)} slot (${cap} of ${cap} in use)`);
+          this._emit('state', this.getState());
+        },
+      });
+    } finally {
+      // Also on a stop/pause while queued: a stopped or paused run must not keep showing "waiting".
+      if (this.state.execEnvWaiting) { delete this.state.execEnvWaiting; this._emit('state', this.getState()); }
+    }
+    const env = new RemoteExecEnv(this._execEnvOpts(client, target));
+    try { await env.start(); }
+    catch (err) {
+      await env.close('start failed').catch(() => {});
+      this._releaseExecEnvSlot();
+      throw markTerminal(err instanceof ExecEnvLostError ? err : new Error(`${b.label} setup failed: ${err?.message || err}`, { cause: err }));
+    }
+    this.execEnv = env;
+    this.state.execEnvSandbox = env.sandboxId;
+    this._execLog('info', `agents and scripts run in ${b.label} ${env.sandboxId} (${b.environmentNoun} ${target.name} from ${target.from}${client.describe ? `, ${client.describe()}` : ''})`);
+    await this._buildSandboxGraph();
+    await this._persist(); this._emit('state', this.getState());
+  }
+  /** `target`: resolveRunEnvironment's { name, buildId, rebuild }; a reconnect starts nothing, so it has no name or build. */
+  _execEnvOpts(client, target) {
+    const m = this.members[0];
+    const paths = artifactPaths(this.projectDir, this.workspaceKey);
+    const entries = this.injectedPaths?.[m.projectKey] || [];
+    return { backend: this._execBackend, client, environment: target?.name ?? null, environmentBuild: target?.buildId ?? null,
+      rebuildHint: target?.rebuild,
+      worktreeDir: this.workDirs.get(m.projectKey), pipelineDir: this.pipeline.dir,
+      storeRoots: [paths.plans, paths.reviews], mcpConfigPath: this.mcpConfigPath,
+      // §8.8 injected paths (memory mount, skills); the code graph is built in the sandbox instead. Engine config files
+      // (Cursor's .cursor/*.json) are not overlaid at start: the adapter mirrors them per spawn (syncEngineFiles), which
+      // also removes the ones it no longer writes and hides them from the sandbox clone's git.
+      injected: entries.filter((e) => e.kind !== 'engineConfig').map((e) => e.path).filter(Boolean),
+      // Re-uploaded when the host changes them mid-run: the memory rules mount (refreshMount), self-ignoring.
+      refreshPaths: entries.filter((e) => e.kind === MEMORY_INJECTED_ENTRY.kind).map((e) => e.path),
+      // Kept out of the sync tree: the same entries _excludePathspecs keeps out of the host's staging. Not Cursor's
+      // engine files: syncEngineFiles' info/exclude line keeps worca's own out of the patch, and a .cursor file the
+      // project tracks (registered on every Cursor run) must still bring the agent's edits home.
+      syncExcludes: entries.filter((e) => e?.path && e.kind !== 'claudeMdSection' && e.kind !== 'engineConfig').map((e) => e.path),
+      // The run-root CLAUDE.md sits above the worktree; Claude Code loads it from a parent dir.
+      supportFiles: [...SCRIPT_SUPPORT_FILES, ...(this.runRoot ? [join(this.runRoot, 'CLAUDE.md')] : [])],
+      metadata: { worca: '1', worcaInstance: instanceTag(worcaHome()), worcaRunId: this.pipeline.id, worcaProject: m.projectKey },
+      // Untracked and changed files matching these stay on this machine (secret-paths.mjs); the project adds its own.
+      secretPaths: secretPathsFor({ secretPaths: resolveSetting('secretPaths', { projectDir: this.projectDir, projectKey: m.projectKey }).value }),
+      // The sandbox's outbound network: null (open) unless the project's E2B egress setting is `allow`.
+      network: target?.network ?? null,
+      scratchDir: this._execEnvScratchDir(),
+      // The `.mcp.json` approvals a Claude spawn applies (orchestrator mcpjsonProjectDir); a workspace uses the worktree.
+      mcpjsonProjectDir: this.isWorkspace ? null : this.projectDir,
+      log: (level, msg) => this._execLog(level, msg),
+      // Files from the sandbox that only a person runs later (npm scripts, VS Code tasks): the run page lists them.
+      onReview: (items) => {
+        const have = Array.isArray(this.state.execEnvReview) ? this.state.execEnvReview : [];
+        const add = items.filter((i) => !have.some((h) => h.path === i.path)).map(({ path, why }) => ({ path, why }));
+        if (!add.length) return;
+        this.state.execEnvReview = [...have, ...add];
+        this._emit('state', this.getState());
+      },
+      onMaxWait: () => this._execEnvMaxWaitReached(),
+      // A first-use image build while the sandbox starts (backends/docker.mjs): the run page's "building the sandbox image".
+      onPhase: (phase) => {
+        if (phase) this.state.execEnvPreparing = phase;
+        else if (!Object.hasOwn(this.state, 'execEnvPreparing')) return;
+        else delete this.state.execEnvPreparing;
+        this._emit('state', this.getState());
+      },
+      // The run page's "answer by" line: when the parked sandbox is released if the question stays open.
+      onPark: (until) => {
+        if (until) this.state.execEnvWaitUntil = new Date(until).toISOString();
+        else if (!Object.hasOwn(this.state, 'execEnvWaitUntil')) return;
+        else delete this.state.execEnvWaitUntil;
+        this._emit('state', this.getState());
+      } };
+  }
+  _execEnvScratchDir() { return join(worcaHome(), 'tmp', this.execEnvKind, this.pipeline.id); }
+  _releaseExecEnvSlot() { const r = this._execEnvRelease; this._execEnvRelease = null; r?.(); }
+
+  /** done / stopped / error, from the finally: free the sandbox and the slot (the files and code
+   *  came home after every spawn and in _buildResults). */
+  async _finishExecEnv() {
+    const ee = this.execEnv;
+    // A resumed run that ended before (or while) reconnecting still owns its parked sandbox.
+    if (!ee) { await this._dropSavedSandbox(); this._releaseExecEnvSlot(); return; }
+    try { if (!ee.lost && !ee.syncFailure) await ee.syncBack(); }
+    catch (err) { this._execLog('error', `final sync failed: ${err?.message || err}`); }
+    finally { await ee.close('run ended').catch(() => {}); this._releaseExecEnvSlot(); }
+  }
+
+  /** The parked sandbox of a resume point this run never reconnected to (stop from paused, a resume
+   *  that failed): killed, and its host scratch dir removed. */
+  async _dropSavedSandbox() {
+    const id = this._savedExecEnv?.sandboxId;
+    if (!id || this.execEnv) return;
+    // The saved record names its own backend.
+    let b = null; try { b = getExecBackend(this._savedExecEnv.kind || this.execEnvKind); } catch { return; }
+    const client = await Promise.resolve().then(() => b.open({ mock: mockEnabled({ mock: this.claude.mock }) })).catch(() => null);
+    await client?.remove(id).catch(() => {});
+    if (this.pipeline?.id) await rm(this._execEnvScratchDir(), { recursive: true, force: true }).catch(() => {});
+  }
+
+  /** paused / drain: sync, then let the provider keep it for the backend's max wait (clarify: long-wait-policy). */
+  async _parkExecEnv() {
+    const ee = this.execEnv;
+    if (!ee || ee.lost) { this._releaseExecEnvSlot(); return; }
+    if (this._execEnvReleaseOnPark) {
+      // The max wait ran out (_execEnvMaxWaitReached): bring the last files home, release the sandbox, and leave a
+      // resume point without a sandbox id, so the resume starts a fresh one.
+      this._execEnvReleaseOnPark = false;
+      try { await ee.syncBack(); }
+      catch (err) { this._execLog('warn', `syncing the sandbox before releasing it failed: ${err?.message || err}`); }
+      await ee.close('max wait reached').catch(() => {});
+      if (this.state.resumePoint) this.state.resumePoint.execEnv = { kind: this.execEnvKind };
+      this._releaseExecEnvSlot();
+      return;
+    }
+    // Park whatever the sync did: an unparked sandbox's heartbeat would renew it for as long as the
+    // server runs. A patch that did not apply is kept in the pipeline dir; the resume fails on it.
+    try { await ee.syncBack(); }
+    catch (err) { this._execLog('error', `syncing the sandbox before the pause failed: ${err?.message || err}`); }
+    try { await ee.park(this._execEnvMaxWaitMs()); }
+    catch (err) { this._execLog('warn', `parking the sandbox failed: ${err?.message || err}`); }
+    if (this.state.resumePoint) this.state.resumePoint.execEnv = ee.resumeRecord();   // syncedTree moved
+    this._releaseExecEnvSlot();        // the in-process count; the provider's running count still sees it
+  }
+
+  /** Resume: reconnect to the parked sandbox, or fail cleanly (clarify: sandbox-loss). The
+   *  preflight refusal already ran before the row was claimed. */
+  async _resumeExecEnv() {
+    const b = this._execBackend;
+    if (!b) return;
+    const record = this._savedExecEnv;
+    if (!record?.sandboxId) { await this._startExecEnv(); return; }   // paused before the sandbox existed
+    const client = await this._openExecClient();
+    this._execEnvRelease = await acquireSandboxSlot({ pool: b.name, cap: this._execEnvLimit('maxConcurrent'), force: true });
+    const { rebuild } = resolveRunEnvironment(b, this.members[0].projectKey);
+    try { this.execEnv = await RemoteExecEnv.reconnect(record, this._execEnvOpts(client, { name: null, rebuild })); }
+    catch (err) {
+      this._releaseExecEnvSlot();
+      if (err?.sandboxGone) {
+        // The parked sandbox ended (its max wait, a provider restart): every finished step is already home, so
+        // continue in a fresh one. A step whose agent session lived in the old sandbox re-runs fresh.
+        this._execLog('warn', `sandbox ${record.sandboxId} is gone (${firstLine(err.message)}); starting a fresh ${b.label} from the work so far`);
+        await appendAudit(this.pipeline.dir, `Resume: the ${b.label} ${record.sandboxId} was gone; continued in a fresh one.`).catch(() => {});
+        await this._startExecEnv();
+        return;
+      }
+      throw markTerminal(err instanceof ExecEnvLostError || err instanceof ExecEnvSyncError ? err
+        : new ExecEnvLostError(`The run's ${b.label} could not be resumed (${err?.message || err}); it may have outlived the ${this._execEnvLimit('maxWaitMin')}-minute wait. ${LOST_HINT}`, { cause: err }));
+    }
+    // The project's environment was built or changed while the run was paused: the reconnect brought the work
+    // home, so continue in a fresh sandbox from the new one. A record without `environment` predates this check.
+    const target = record.environment ? resolveRunEnvironment(b, this.members[0].projectKey) : null;
+    const was = (name, build) => `${name}${build ? ` (build ${build})` : ''}`;
+    if (target && (target.name !== record.environment || (target.buildId || null) !== (record.environmentBuild || null))) {
+      const change = `${was(record.environment, record.environmentBuild)} → ${was(target.name, target.buildId)}`;
+      this._execLog('info', `the run's ${b.environmentNoun} changed while it was paused (${change}); replacing sandbox ${record.sandboxId} with a fresh ${b.label}`);
+      await appendAudit(this.pipeline.dir, `Resume: the ${b.environmentNoun} changed (${change}); continued in a fresh ${b.label}.`).catch(() => {});
+      const old = this.execEnv; this.execEnv = null;
+      await old.close('environment changed').catch(() => {});
+      this._releaseExecEnvSlot();
+      await this._startExecEnv();
+      return;
+    }
+    this.state.execEnvSandbox = this.execEnv.sandboxId;
+  }
+
+  /** The ask outlived the backend's max wait while the sandbox was parked (the provider ends it at the same time).
+   *  The run PAUSES instead of failing: a parked sandbox runs nothing, every finished step is already home, and a
+   *  resume starts a fresh sandbox from that work (a step whose agent session was in the old sandbox re-runs fresh).
+   *  The sandbox is released by _parkExecEnv once the pause has unwound, so no in-flight catch sees it lost. */
+  _execEnvMaxWaitReached() {
+    const ee = this.execEnv; const pq = this.pendingQuestion;
+    const ms = this._execEnvMaxWaitMs();
+    const label = this._execBackend.label;
+    if (!pq) {
+      // Nothing waits any more (answered as the timer fired): release it the old way.
+      if (ee && !ee.lost) ee.lost = new ExecEnvLostError(`No answer within ${Math.round(ms / 60_000)} min: the run's ${label} was released. ${LOST_HINT}`);
+      ee?.close('max wait reached').catch(() => {});
+      return;
+    }
+    const detail = `No answer within ${Math.round(ms / 60_000)} min: the run's ${label} was released to free its slot. Resume continues in a fresh ${label} from the work so far.`;
+    this._execEnvReleaseOnPark = true;
+    this._pauseFor(REASON.ERROR, new Error(detail), { detail });
+    this.pause();
+  }
+
   /** Terminal bookkeeping for a pause: persist the resume point + paused status.
    *  An ERROR-pause additionally keeps what the retired error path produced — the
    *  diff artifact and the task-source write-back (eventForStatus('paused') ->
@@ -9775,6 +10404,7 @@ export class RunHarness extends EventEmitter {
       this._pauseToken ||= randomUUID();
     }
     this._setStatus('paused');
+    await this._parkExecEnv();   // remote: sync, then the sandbox waits (held) for a resume
     const persisted = await this._persist();
     // From here a resume may build a new harness on this row: a late write from this one (the run
     // title outlives a pause) checks the row is still its own first (_rowHandedOff). Only once the
@@ -10297,6 +10927,16 @@ export class RunHarness extends EventEmitter {
     } catch (err) { this._log('worktree', 'warn', `${onAnswer ? 'after an answer' : 'resume'}: could not take in the latest finished work: ${err?.message || err}`); }
   }
 
+  /** The resume's take-in (the one call in _resume()). When a stop's answer would take in first (_takesInBeforeAnswerNow,
+   *  the flag read live), the same take-in, recorded `onResume`; its wait or refusal is logged and the run goes on.
+   *  Else dev's latest-finished merge with the live flag. Never rejects. */
+  async _takeInOnResume(deps = {}) {
+    try {
+      if (this._takesInBeforeAnswerNow()) await this.takeInBeforeAnswer(deps, { onResume: true });
+      else await this._takeInLatestFinished({ smallRuns: shaperSmallRunsOn() });
+    } catch (err) { this._log('worktree', 'warn', `resume: could not take in the finished work: ${err?.message || err}`); }
+  }
+
   /** Shaper s5 (D14): merge the feature's base into this run's fresh branch when it moved; move the diff base to the
    *  merge commit, so the base's commits never count as this run's changes.
    *  Shaper small runs (D8): `{base, onResume}` merges `base` (the latest finished run's branch) into a resumed run's
@@ -10319,6 +10959,179 @@ export class RunHarness extends EventEmitter {
     }
   }
 
+  /** A slice run's fresh branch, before the first agent: first the work of every run it builds on (small runs), so the
+   *  re-check sees the tree the fire-time gate checked; then the feature's moved base (s5 D14) onto that combined tip,
+   *  which leaves a clash with the base to its audit line as before. */
+  async _startFromFeature(m, info, sl, freshStart) {
+    if (combinesDependencies({ slice: sl, freshStart, isWorkspace: this.isWorkspace,
+      smallRuns: !!sl && shaperSmallRunsOn() && smallRunsOfFeature(sl.feature) })) await this._combineDependencies(m, info, sl);
+    if (mergesFeatureBase({ slice: sl, freshStart, isWorkspace: this.isWorkspace })) await this._mergeFeatureBase(m, info, sl);
+  }
+
+  /** Shaper small runs (slice 2, D3, D10): merge every run this slice builds on that its fresh branch lacks, from local
+   *  SHAs, before the first agent; move the diff base to the result, so their commits never count as this run's
+   *  changes. A pending dependency, a clash or a failed merge throws a terminal setup error: the run never goes on
+   *  from a partial combine. */
+  async _combineDependencies(m, info, sl) {
+    const key = m.projectKey;
+    const rec = this.state.branches[key];
+    let r;
+    try {
+      r = await combineDependencies(resolve(m.projectDir), { featureId: sl.feature, index: sl.index, branch: info.branch, source: rec?.source });
+    } catch (err) { throw markTerminal(err); }
+    if (!r) return;
+    // Slice 4 (D4): what the combine merged, so Ship can tell those runs' work ships in this run's PR.
+    const combined = [...(this.state.branches[key]?.combined || []), ...r.merged.map((d) => ({ index: d.index, branch: d.branch }))];
+    this.state.branches[key] = { ...this.state.branches[key], baseSha: r.tip, diffBase: r.tip, startHead: r.tip, combined };
+    this.checkpointRefs[key] = r.tip;               // the dependencies' commits are never this run's changes
+    await appendAudit(this.pipeline.dir, combinedAudit(r.merged, info.branch)).catch(() => {});
+    this._log('worktree', 'info', `${key}: combined the work of ${r.merged.map((d) => d.branch).join(', ')} into ${info.branch}`);
+  }
+
+  /** The checkout's uncommitted tracked work, committed before a merge into it (as teardown would).
+   *  worca's CLAUDE.md fence lives in a tracked file: an exclude pathspec would commit that file's deletion
+   *  (_commitWork unstages excluded paths), and teardown strips the fence only at the end. A checkout whose fence file
+   *  is dirty is left uncommitted ('fence'), so a merge reads it as dirty. → 'committed' | 'clean' | 'fence' */
+  async _commitWipForMerge(key, info) {
+    const gitOpts = { cwd: info.worktreeDir, ignoreAbort: true };
+    const st = await this._git(['status', '--porcelain', '--untracked-files=no'], gitOpts);
+    const fence = new Set((this.injectedPaths?.[key] ?? []).filter((e) => e && e.kind === 'claudeMdSection' && e.path).map((e) => e.path));
+    const dirty = st.ok ? st.stdout.split('\n').filter(Boolean).map((l) => l.slice(3)) : [];
+    if (!dirty.length) return 'clean';
+    if (dirty.some((p) => fence.has(p))) return 'fence';
+    const ec = await this._engineConfigState(info.worktreeDir, { ignoreAbort: true });
+    const r = await this._commitWork(info, this.state.branch,
+      { excludePathspecs: this._excludePathspecs(key), forcePaths: ec.forced, unstagePaths: ec.owned });
+    return r && r.committed ? 'committed' : 'clean';
+  }
+
+  /**
+   * Shaper small runs, slice 3 (D3, D7, D8, D9): before a stop's answer goes on, merge every finished run of the
+   * feature whose work its branch lacks, whatever its base (takeInVerdict), from the SHAs the last combine
+   * check read. A sibling still merging back is a wait; a clash, a failed check or merge, or a pause refuses, and the
+   * branch, the index and the uncommitted files are put back as they were. Flag off, an unmarked feature, a workspace
+   * or a source-branch run: no git call. The promise is kept on `_takeInFlight` until it settles (the unwind awaits
+   * it). `deps` = takeInVerdict's seams plus `mergeBaseInto`. `onResume` (_takeInOnResume, a resume's take-in) records
+   * `baseMerged.onResume` in place of `onAnswer`. Never rejects.
+   * → {ok:true, merged, skipped?} | {ok:false, wait:true, after} | {ok:false, refused:true, reason}
+   */
+  takeInBeforeAnswer(deps = {}, { onResume = false } = {}) {
+    const p = this._takeInNow(deps, { onResume }).catch((err) => {
+      const reason = err && err.message ? err.message : String(err);
+      this._log('worktree', 'warn', `could not take in the finished work: ${reason}`);
+      return { ok: false, refused: true, reason };
+    });
+    this._takeInFlight = p;
+    p.then(() => { if (this._takeInFlight === p) this._takeInFlight = null; });
+    return p;
+  }
+
+  /** Slice 3: whether a stop's answer now takes in the finished work first (takesInBeforeAnswer on this run,
+   *  the flag read live). Then dev's after-answer take-in (_afterStopAnswer) is skipped: it would merge the latest
+   *  finished run on any base. */
+  _takesInBeforeAnswerNow() {
+    const sl = this.runShape && this.runShape.slice;
+    const key = this.members && this.members[0] && this.members[0].projectKey;
+    const rec = (key && this.state.branches && this.state.branches[key]) || this.state.branch;
+    const smallRuns = !!(sl && sl.feature && shaperSmallRunsOn() && smallRunsOfFeature(sl.feature));
+    return takesInBeforeAnswer({ slice: sl, isWorkspace: this.isWorkspace, smallRuns,
+      sameAsSource: rec?.sameAsSource === true || this.state.branch?.sameAsSource === true });
+  }
+
+  async _takeInNow(deps, { onResume = false } = {}) {
+    const sl = this.runShape && this.runShape.slice;
+    const m = this.members && this.members[0];
+    const key = m && m.projectKey;
+    const info = this.branchInfo;
+    if (!m || !this._takesInBeforeAnswerNow() || !info?.worktreeDir) return { ok: true, merged: [], skipped: true };
+    const dir = resolve(m.projectDir);
+    const wt = info.worktreeDir;
+    const gitOpts = { cwd: wt, ignoreAbort: true };
+    const ask = { featureId: sl.feature, pipelineId: this.pipeline?.id || null, branch: info.branch };
+    const refuse = async (reason, clash = null) => {
+      const line = takeInClashAudit(clash, info.branch);
+      if (line) await appendAudit(this.pipeline.dir, line).catch(() => {});
+      this._log('worktree', 'warn', `did not take in the finished work: ${reason}`);
+      return { ok: false, refused: true, reason };
+    };
+    const stopping = () => this.pauseRequested === true || this.state.status === 'stopped';
+    const pausing = `run ${sl.index} is pausing`;
+    const waiting = (after) => {
+      this._log('worktree', 'info', `waiting for run ${after} to finish merging its work back before taking it in`);
+      return { ok: false, wait: true, after };
+    };
+
+    let v = await takeInVerdict(dir, ask, deps);
+    if (v.status === 'none') return { ok: true, merged: [] };
+    if (v.status === 'wait') return waiting(v.after);
+    if (v.status !== 'clean') return refuse(v.status === 'clash' ? v.reason : v.error, v.status === 'clash' ? v : null);
+    if (stopping()) return refuse(pausing);
+
+    // D7: the uncommitted work is committed first, and a refusal after that puts it back as uncommitted files.
+    const pre = await commitOf(wt, 'HEAD');
+    const wip = await this._commitWipForMerge(key, info);
+    if (wip === 'fence') return refuse(`run ${sl.index}'s checkout has uncommitted changes in worca's CLAUDE.md section`);
+    const wipAt = wip === 'committed' ? await commitOf(wt, 'HEAD') : null;
+    const undo = async () => {
+      const now = await commitOf(wt, 'HEAD');
+      if (wipAt) {
+        if (now !== wipAt) await this._git(['reset', '-q', '--hard', wipAt], gitOpts);
+        await this._git(['reset', '-q', pre], gitOpts);
+      } else if (pre && now !== pre) {
+        await this._git(['reset', '-q', '--hard', pre], gitOpts);
+      }
+    };
+    if (wipAt) {
+      v = await takeInVerdict(dir, ask, deps);
+      if (v.status !== 'clean') {
+        await undo();
+        if (v.status === 'none') return { ok: true, merged: [] };
+        if (v.status === 'wait') return waiting(v.after);
+        return refuse(v.status === 'clash' ? v.reason : v.error, v.status === 'clash' ? v : null);
+      }
+    }
+
+    // D7: merge each missing branch from the last check's SHAs, each onto the previous merge's result.
+    const { check, missing } = v;
+    const behind = [];
+    for (const [i, d] of missing.entries()) {
+      const n = await this._git(['rev-list', '--count', `${check.heads[0]}..${check.heads[i + 1]}`], gitOpts);
+      behind.push(n.ok ? Number.parseInt(n.stdout.trim(), 10) || 0 : 0);
+    }
+    const merge = deps.mergeBaseInto || mergeBaseInto;
+    let tip = check.heads[0];
+    for (const [i, d] of missing.entries()) {
+      if (stopping()) { await undo(); return refuse(pausing); }
+      const r = await merge(dir, { feature: info.branch, baseSha: check.heads[i + 1], headSha: tip, baseRef: d.branch, runIdentity: true });
+      if (!r || !r.ok) {
+        await undo();
+        return refuse(`could not take in the work of run ${d.index} (${d.branch}): ${(r && r.kind) || 'failed'}`);
+      }
+      tip = r.to;
+    }
+
+    // D9: the recorded base names the branch this run now builds on; its start never moves.
+    const last = missing.at(-1);
+    const took = missing.map((d, i) => ({ index: d.index, branch: d.branch, pipelineId: d.pipelineId, sha: check.heads[i + 1] }));
+    const patch = (r) => {
+      if (!r) return r;
+      const old = r.source;
+      const oldSha = (r.baseRefs && r.baseRefs[old]) || r.baseSha || null;
+      return { ...r, source: last.branch, sourceFrom: r.sourceFrom || old, tookIn: [...(Array.isArray(r.tookIn) ? r.tookIn : []), ...took],
+        baseRefs: { ...(r.baseRefs || {}), ...(old && oldSha ? { [old]: oldSha } : {}), ...Object.fromEntries(took.map((t) => [t.branch, t.sha])) },
+        baseMerged: { base: last.branch, behind: behind.at(-1), merged: true, ...(onResume ? { onResume: true } : { onAnswer: true }) } };
+    };
+    if (this.state.branch) this.state.branch = patch(this.state.branch);
+    if (this.state.branches?.[key]) this.state.branches[key] = patch(this.state.branches[key]);
+    await this._refreshMergeBases();
+    await this._persist();
+    for (const [i, d] of missing.entries()) {
+      await appendAudit(this.pipeline.dir, baseMovedAudit(d.branch, info.branch, { merged: true, behind: behind[i] })).catch(() => {});
+    }
+    this._log('worktree', 'info', `took in the work of ${missing.map((d) => d.branch).join(', ')} before going on`);
+    return { ok: true, merged: missing.map((d) => ({ index: d.index, branch: d.branch })) };
+  }
+
   async _mergeLatestOnResume(m, info, base, { onAnswer = false } = {}) {
     if (!base || base === info.branch || !info.worktreeDir) return;
     const key = m.projectKey;
@@ -10326,18 +11139,7 @@ export class RunHarness extends EventEmitter {
     const NOTHING = new Set(['up-to-date', 'no-branch']);
     const pre = await checkBaseMerge(resolve(m.projectDir), { base, feature: info.branch }).catch(() => null);
     if (pre && NOTHING.has(pre.status)) return;
-    const gitOpts = { cwd: info.worktreeDir, ignoreAbort: true };
-    const st = await this._git(['status', '--porcelain', '--untracked-files=no'], gitOpts);
-    // worca's CLAUDE.md fence lives in a tracked file: an exclude pathspec would commit that file's deletion
-    // (_commitWork unstages excluded paths), and teardown strips the fence only at the end. A checkout whose fence file
-    // is dirty is left uncommitted, so the merge below reads it as dirty and the resume is recorded, not merged.
-    const fence = new Set((this.injectedPaths?.[key] ?? []).filter((e) => e && e.kind === 'claudeMdSection' && e.path).map((e) => e.path));
-    const dirty = st.ok ? st.stdout.split('\n').filter(Boolean).map((l) => l.slice(3)) : [];
-    if (dirty.length && !dirty.some((p) => fence.has(p))) {
-      const ec = await this._engineConfigState(info.worktreeDir, { ignoreAbort: true });
-      await this._commitWork(info, this.state.branch,
-        { excludePathspecs: this._excludePathspecs(key), forcePaths: ec.forced, unstagePaths: ec.owned });
-    }
+    await this._commitWipForMerge(key, info);
     const r = await mergeBaseBeforeRun(resolve(m.projectDir), { base, feature: info.branch })
       .catch((err) => ({ merged: false, status: 'error', behind: 0, files: [], error: err?.message }));
     if (NOTHING.has(r.status)) return;

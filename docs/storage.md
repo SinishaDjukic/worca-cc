@@ -12,6 +12,9 @@ project's working tree, so nothing is ever committed to your repo.
 <worcaHome>/                            default ~/.worca-cc
   settings.json                         global settings, including the bootstrap `root` that locates the DB;
                                         always ~/.worca-cc/settings.json, never moved (see Resolution rules)
+                                        owner-only (0600) on macOS and Linux, tightened at each start (a warning
+                                        "could not make settings.json owner-only" means: run chmod 600 on it or fix
+                                        its owner); Windows relies on the user profile's permissions
   worca-cc.db  (+ -wal, -shm)           ALL structured state (SQLite, WAL mode)
                                         (the Requirements Feature chat: req_helper_messages (v78), one row per
                                         message, kept until Clear chat; its spend is in req_cost_ledger with
@@ -175,7 +178,10 @@ project's working tree, so nothing is ever committed to your repo.
                                          retired set ids, Team set state per policy home (servers and
                                          skills, with consent), project assignments
     secrets.json                         set secrets — the only place a registry secret value is stored;
-                                         runs and chats get them as spawn env, never in a file
+                                         runs and chats get them as spawn env, never in a file. With the
+                                         secretVault flag on (Labs) a typed secret is a worca:vault:v1:…
+                                         reference instead, its value in the vault; deleting the set, the
+                                         server or the secret removes its vault entry
     tests.json                           the last Test per set and server (tools, stale fingerprint)
   skills/                               the skill library (docs/skills.md): imported skills, never
                                         written to ~/.claude or a repository; written under
@@ -190,6 +196,11 @@ project's working tree, so nothing is ever committed to your repo.
   plugins/                              installed plugin checkouts
     .cache/<slug>.tree/<sha>/            without git: a GitHub commit's plugin folders and marketplace file
                                          (the newest three and every installed pin kept; <sha>.meta.json beside it)
+    <name>/data/secrets.json             the plugin's secret settings per profile (0600); with the secretVault flag on
+                                         (Labs) a typed secret is a worca:vault:v1:… reference, its value in the vault.
+                                         Dropped with its profile; kept by uninstall with its vault entries (a reinstall
+                                         of the same name reads them; purge removes the plugin's saved secrets); removed
+                                         with its vault entries by purge and by the purge of a removed plugin's data
     <name>/data/ticket-updates.json      Ticket updates (Labs): per profile and task source, the projects you work on
                                          and the rules for a finished run; dropped with its profile, kept by uninstall,
                                          removed by purge
@@ -206,9 +217,25 @@ project's working tree, so nothing is ever committed to your repo.
                                         folder too, after a confirm that names it; Git projects, projects added
                                         from elsewhere and a custom projects root are only unregistered
   projects.json                         registered project index
+  proxy-login.json                      the saved corporate proxy login (domain, user, NT hash; 0600); with the
+                                        secretVault flag on (Labs) the NT hash is a worca:vault:v1:… reference, and
+                                        logout removes its vault entry
+  worca-vault.enc                       the encrypted secret vault (secretVault flag; AES-256-GCM, 0600); its key is
+                                        in the OS key store
+  worca-vault.key                       WSL2 without a Secret Service: the vault key, wrapped by Windows DPAPI (0600)
+  worca-vault.lock                      the cross-process vault lock (transient)
+  worca-vault.migrate.lock              the lock of the one-time move into the vault and of export (transient)
+  worca-vault.enc.unreadable-…          an unreadable vault `worca secrets reset` moved aside; never read again,
+                                        delete it by hand
+  secrets-notice.json                   the pending message about secrets moved into the vault: key names, the
+                                        backend and counts, never a value (0600); `worca secrets ack` deletes it
   workspaces.json                       workspace index
   chat-context.json                     chat context cache
 ```
+
+`worca secrets export` writes every vaulted secret back into its own file (`settings.json`, the MCP
+and plugin `secrets.json`, `proxy-login.json`, each 0600), then deletes `worca-vault.enc` and the OS key item (or
+`worca-vault.key`) and `secrets-notice.json`. Moved-aside copies stay. See [Secrets and the vault](secrets.md).
 
 Everything that used to be a per-run `.json`/`.md` control file —
 `clarify.json`, `clarify-answers.json`, `*-review-cycleN.json`, `state.json`,

@@ -6,6 +6,10 @@ import { bootShell, fixture, loopFixture } from './helpers/workflows-shell.mjs';
 const items = (doc) => [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].map((b) => b.querySelector('.wfv-menu-l').textContent);
 const click = (el) => el.dispatchEvent(new el.ownerDocument.defaultView.MouseEvent('click', { bubbles: true }));
 const keydown = (el, key, extra = {}) => el.dispatchEvent(new el.ownerDocument.defaultView.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra }));
+const pop = (doc) => doc.querySelector('.mdl-cols-pop');
+const opt = (doc, col, key) => [...pop(doc).querySelectorAll(`[data-col="${col}"] [role="option"]`)].find((b) => b.dataset.key === key);
+const GPT = { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex', efforts: ['minimal', 'low', 'medium', 'high'] };
+const TWO = { models: [{ id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ['medium', 'high'] }, GPT], efforts: ['medium', 'high', 'xhigh', 'max'], subagentModels: [], defaultEngine: 'claude' };
 
 test('"Workflows ▾": New canvas, Open…, Import…, Export… (live on an unsaved canvas too), Pin to Chat home', async () => {
   const s = await bootShell({ template: { ...fixture(), id: '' } });
@@ -96,9 +100,15 @@ test('agent toolbar: Model ▾ / Effort ▾ / Await all inputs / Delete / More; 
   assert.equal(s.c.template().nodes.find((n) => n.id === a.id).config.awaitAll, true);
   assert.equal(s.c.undoDepth(), depth + 1);
   assert.equal(s.doc.querySelector('.wfv-tb [data-tb="awaitAll"]').getAttribute('aria-pressed'), 'true');
-  click(s.doc.querySelector('.wfv-tb [data-tb="model"]'));
-  assert.deepEqual(items(s.doc), ['inherit', 'Sonnet 5', 'Haiku 4.5']);
-  click([...s.doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.startsWith('Sonnet 5')));
+  const model = s.doc.querySelector('.wfv-tb [data-tb="model"]');
+  assert.equal(model.getAttribute('aria-haspopup'), 'dialog');
+  click(model);
+  assert.equal(pop(s.doc).querySelector('.mdl-cols-hint').textContent, 'follows the run');
+  assert.deepEqual([...pop(s.doc).querySelectorAll('[data-col="model"] [role="option"]')].map((b) => b.dataset.key), ['claude-sonnet-5', 'claude-haiku-4-5']);
+  const d = s.c.undoDepth();
+  click(opt(s.doc, 'model', 'claude-sonnet-5'));
+  const cfg = s.c.template().nodes.find((n) => n.id === a.id).config;
+  assert.deepEqual([cfg.model, cfg.engine, s.c.undoDepth()], ['claude-sonnet-5', 'claude', d + 1]);
   assert.equal(s.c.template().nodes.find((n) => n.id === a.id).config.model, 'claude-sonnet-5');
   click(s.doc.querySelector('.wfv-tb [data-tb="more"]'));
   assert.ok(s.doc.querySelector('.wfv-pop .ins-panel'), 'More shows the full inspector');
@@ -352,8 +362,7 @@ test('a toolbar Model pick keeps the focus on the rebuilt Model button; the next
   s.c.select({ kind: 'node', id: a.id });
   const model = s.doc.querySelector('.wfv-tb [data-tb="model"]');
   model.focus();
-  click(model);
-  click([...s.doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.startsWith('Sonnet 5')));
+  click(model); click(opt(s.doc, 'model', 'claude-sonnet-5'));
   assert.equal(s.c.template().nodes.find((n) => n.id === a.id).config.model, 'claude-sonnet-5');
   assert.equal(model.isConnected, false, 'precondition: the commit rebuilt the toolbar');
   assert.equal(s.doc.activeElement, s.doc.querySelector('.wfv-tb [data-tb="model"]'));
@@ -466,4 +475,69 @@ test('a file dragged over the view never reaches the browser (it would open in t
   s.shell.destroy();
   assert.equal(fire(canvas, 'drop', { types: ['Files'], files: [] }).defaultPrevented, false, 'destroy() removes the guard');
   s.c.destroy();
+});
+
+test('a pick on another harness writes model and engine in one commit; the button shows the harness; Effort ▾ offers its efforts; Undo takes both back', async () => {
+  const s = await bootShell({ config: TWO });
+  const a = s.c.template().nodes.find((n) => n.kind === 'agent');
+  s.c.select({ kind: 'node', id: a.id });
+  const d = s.c.undoDepth();
+  click(s.doc.querySelector('.wfv-tb [data-tb="model"]'));
+  click(opt(s.doc, 'harness', 'codex')); click(opt(s.doc, 'model', 'gpt-5.5'));
+  const cfg = () => s.c.template().nodes.find((n) => n.id === a.id).config;
+  assert.deepEqual([cfg().model, cfg().engine, s.c.undoDepth()], ['gpt-5.5', 'codex', d + 1]);
+  const btn = s.doc.querySelector('.wfv-tb [data-tb="model"]');
+  assert.deepEqual([btn.querySelector('.mdl-mark.sm img').getAttribute('alt'), btn.textContent.includes('GPT-5.5')], ['OpenAI Codex', true]);
+  click(s.doc.querySelector('.wfv-tb [data-tb="effort"]'));
+  assert.deepEqual([items(s.doc)[0], items(s.doc).slice(1).sort()], ['default', ['high', 'low', 'medium', 'minimal']]);
+  s.c.undo();
+  assert.deepEqual([cfg().model, cfg().engine], [undefined, undefined]);
+});
+test('the inspector\'s Model field opens the same picker; a pick commits once and the focus is on the new field', async () => {
+  const s = await bootShell({ config: TWO });
+  const a = s.c.template().nodes.find((n) => n.kind === 'agent');
+  s.c.select({ kind: 'node', id: a.id });
+  click(s.doc.querySelector('.wfv-tb [data-tb="more"]'));
+  const d = s.c.undoDepth();
+  click(s.doc.querySelector('.wfv-pop button[data-field="model"]'));
+  click(opt(s.doc, 'harness', 'codex')); click(opt(s.doc, 'model', 'gpt-5.5'));
+  assert.deepEqual([s.c.template().nodes.find((n) => n.id === a.id).config.engine, s.c.undoDepth(), pop(s.doc)], ['codex', d + 1, null]);
+  assert.equal(s.doc.activeElement, s.doc.querySelector('.wfv-pop button[data-field="model"]'));
+});
+test('no key pressed in the picker reaches the canvas, and its Escape closes only the picker', async () => {
+  const s = await bootShell();
+  const a = s.c.template().nodes.find((n) => n.kind === 'agent');
+  s.c.select({ kind: 'node', id: a.id });
+  click(s.doc.querySelector('.wfv-tb [data-tb="more"]'));
+  const at = [a.x, a.y]; const depth = s.c.undoDepth();
+  click(s.doc.querySelector('.wfv-pop button[data-field="model"]'));
+  for (const k of ['ArrowDown', 'ArrowLeft', 'ArrowUp', 'Delete', 'Backspace', ' ', 'ArrowRight', 'ArrowLeft']) keydown(s.doc.activeElement, k);
+  const n = s.c.template().nodes.find((x) => x.id === a.id);
+  assert.ok(n, 'the card is still there');
+  assert.deepEqual([n.x, n.y, s.c.undoDepth()], [...at, depth]);
+  keydown(s.doc.activeElement, 'Escape');
+  assert.deepEqual([pop(s.doc), !!s.doc.querySelector('.wfv-pop'), s.c.selection().id], [null, true, a.id]);
+  assert.equal(s.doc.activeElement, s.doc.querySelector('.wfv-pop button[data-field="model"]'));
+});
+test('on a run that defaults to Codex an inherit step offers Codex\'s efforts in Effort ▾ and the inspector, and the picker marks Codex and reads the engines action', async () => {
+  const s = await bootShell({ config: { ...TWO, defaultEngine: 'codex' },
+    actions: { engines: () => [{ name: 'codex', label: 'Codex', ready: false, reason: 'not signed in' }] } });
+  const a = s.c.template().nodes.find((n) => n.kind === 'agent');
+  s.c.select({ kind: 'node', id: a.id });
+  click(s.doc.querySelector('.wfv-tb [data-tb="effort"]'));
+  assert.deepEqual([items(s.doc)[0], items(s.doc).slice(1).sort()], ['default', ['high', 'low', 'medium', 'minimal']]);
+  click(s.doc.querySelector('.wfv-tb [data-tb="more"]'));
+  assert.deepEqual([...s.doc.querySelector('.wfv-pop [data-field="effort"]').options].map((o) => o.value).sort(), ['', 'high', 'low', 'medium', 'minimal']);
+  click(s.doc.querySelector('.wfv-pop button[data-field="model"]'));
+  assert.deepEqual([opt(s.doc, 'harness', 'codex').querySelector('.badge')?.textContent, opt(s.doc, 'harness', 'claude').querySelector('.badge')], ['Default', null]);
+  assert.deepEqual([...pop(s.doc).querySelectorAll('.mdl-st')].map((e) => [e.textContent, e.title]), [['Not ready', 'not signed in']]);
+});
+test('Add model under a harness with no models hands that harness to the addModel action', async () => {
+  const added = [];
+  const s = await bootShell({ actions: { addModel: (e) => added.push(e) } });
+  s.c.select({ kind: 'node', id: s.c.template().nodes.find((n) => n.kind === 'agent').id });
+  click(s.doc.querySelector('.wfv-tb [data-tb="model"]'));
+  click(opt(s.doc, 'harness', 'cursor'));
+  click(pop(s.doc).querySelector('.mdl-cols-add'));
+  assert.deepEqual([added, pop(s.doc)], [['cursor'], null]);
 });

@@ -12,6 +12,7 @@ import { classifyLoops } from './loops.mjs';
 import { sessionsOf, consecutiveIssue } from './sessions.mjs';
 import { roleReviewOf, roleReviewIssues } from './role-review-step.mjs';
 import { lintShell } from '../shell-lint.mjs';
+import { MODEL_ENGINE_NAMES } from '../engine-switch.mjs';
 import { paramValueError, effectiveScriptParams, mockErrors, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, pythonMissingSentence, wirableParams, WIRABLE_PARAM_TYPES } from './script-meta.mjs';
 
 const ARITY_SET = new Set(['and', 'or', 'combine']);
@@ -23,7 +24,7 @@ const AWAIT_PORT_ID = 'await';
  *  would warn on the task node and an agent-only `awaitAll` would pass silently
  *  on a flow card. Unknown keys are PRESERVED and ignored, never stripped. */
 const KNOWN_CONFIG = {
-  agent: new Set(['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel', 'subagentEffort',
+  agent: new Set(['model', 'effort', 'engine', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel', 'subagentEffort',
     'approve', 'maxQuestions', 'promptHints', 'roleReview', 'timeLimitMinutes', 'idleLimitMinutes', 'verdictOptional', 'session', 'extraInputs']),
   script: new Set(['params', 'ports', 'timeoutMs', 'awaitAll', 'mock', 'paramsPort']),
   task: new Set(['planStoreSeed']),
@@ -38,7 +39,7 @@ const KNOWN_WIRE_CONFIG = new Set(['maxCycles', 'onExhausted']);
  *  source for every writer that splits tunables from topology keys
  *  (workflows.mjs#setWorkflowNodeDefaults, ui/server.mjs template save). A
  *  strict subset of KNOWN_CONFIG.agent: awaitAll is TOPOLOGY, not a tunable. */
-export const AGENT_TUNABLES = ['model', 'effort', 'fanOut', 'askQuestions', 'subagentModel'];
+export const AGENT_TUNABLES = ['model', 'effort', 'fanOut', 'askQuestions', 'subagentModel', 'engine'];
 /** The per-node SCRIPT tunables (P2's per-project overlays); unused by v1 writers. */
 export const SCRIPT_TUNABLES = ['params', 'timeoutMs'];
 
@@ -823,6 +824,16 @@ export const RULES = [
       for (const d of commands) if (typeof values[d.id] === 'string') count += countOf(values[d.id]);
       const issue = shellWarningIssue(n.id, count);
       if (issue) add(issue.message, { nodeId: n.id, count });
+    }
+  } },
+
+  // A pinned harness (config.engine beside config.model): the check that needs no catalog. The save checks that the
+  // model runs there (workflow-share.mjs nodeDefaultsError).
+  { code: 'V34', level: 'E', check({ nodes }, add) {
+    for (const n of nodes) {
+      if (n.kind !== 'agent' || !isObject(n.config) || n.config.engine === undefined) continue;
+      if (!MODEL_ENGINE_NAMES.includes(n.config.engine)) add(`node '${n.id}' config.engine must be one of ${MODEL_ENGINE_NAMES.join(', ')}`, { nodeId: n.id });
+      else if (!(typeof n.config.model === 'string' && n.config.model.trim())) add(`node '${n.id}' config.engine needs config.model beside it`, { nodeId: n.id });
     }
   } },
 ];

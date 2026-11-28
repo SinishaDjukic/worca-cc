@@ -58,7 +58,8 @@ function moreButton(doc, { extra = null, send, confirm }) {
 /**
  * Draws the step's moment into `panel`. `pq.prototype` is the ask's body (moment plus the step's view); `deps` is the
  * step deps (`doc`, `title`, `chip`, `submit`, `confirm`, `register`: 'plain' names no requirement id, `subscribe` and
- * `reduced` for the live build, `readOnly`: the run side panel, which draws the moment with no control to answer it).
+ * `reduced` for the live build, `readOnly`: the run side panel, which draws the moment with no control to answer it;
+ * `answerHref`: with readOnly, the feature page of a feature with no chat, linked as where to answer it).
  * @returns {{setErrors: (errors: object[]) => void, destroy: () => void}}
  */
 export function renderPrototypeBody(panel, pq, deps = {}) {
@@ -143,6 +144,12 @@ export function renderPrototypeBody(panel, pq, deps = {}) {
     } else {
       body.append(well({ reviewing: moment === 'reviewing' }));
     }
+  }
+  // Shaper slice 7 (D12): a feature with no chat answers this step on its feature page; the read-only panel says where.
+  if (readOnly && typeof deps.answerHref === 'string' && deps.answerHref) {
+    const go = h('a', 'link', 'Answer it on the feature page');
+    go.setAttribute('href', deps.answerHref);
+    body.append(go);
   }
   body.append(live, err);
   if (foot.childNodes.length) body.append(foot);

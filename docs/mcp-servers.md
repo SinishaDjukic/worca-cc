@@ -6,6 +6,22 @@ on the **Connectors** page (Advanced; its **Sets**, **Servers** and **Skills** v
 under `~/.worca-cc/mcp/` ([storage.md](storage.md)). A set holds skills as well as servers: see
 [skills.md](skills.md).
 
+## The Connectors page
+
+The page opens on **Sets**. A list of your sets sits on the left, with **General** (marked **Built-in**) first
+and a **Find a set** box above it; team sets, when a team policy defines any, follow under **Team sets**.
+Each set shows how many servers and skills it holds and which projects use it. Click a set to see its servers
+and skills on the right, where you can **Duplicate** it, and **Rename** one of your own sets.
+
+Each server in a set is one row with a short status word instead of a sentence: `Needs token`, `Needs a value`,
+`Not tested`, `Token rejected`, `Test failed`, `Test again`, `Off` or `Problem`, or a tool count and test age
+once it works. The full sentence is on the word's tooltip and in the row's details. A server that still lacks
+a token has a **Set token** button next to **Test**.
+
+The **Servers** and **Skills** views are lists with a search box, filter chips and a **Source** menu. Servers
+have **All**, **In a set**, **Not in a set** and **Needs setup**; skills have **All**, **Imported**, **From
+plugins** and **Needs attention**. Each chip shows how many rows it matches.
+
 ## Catalog and sets
 
 - The **catalog** (the **Servers** view) is what is installed: servers shipped by plugins
@@ -261,7 +277,7 @@ one as an error that names the line, never the content.
 `propose_mcp_change` kind `import` takes up to 10 of those ids and returns one card (**Import**). A
 secret, which is a `${VAR}`, `${env:VAR}`, `${input:…}` or `$VAR` reference, a value under a
 secret-looking name, or a token-shaped value, becomes an empty secret field. Its value is never copied:
-the user pastes it, or picks an `MCP_` variable, on Connectors › MCP servers. A server with a secret in an
+the user pastes it, or picks an `MCP_` variable, on Connectors › Servers. A server with a secret in an
 argument or in its URL, `${…}` inside a longer value, or a transport worca lacks (`ws`) is not imported,
 and the card says why. Applying adds the definitions as Manual servers in no set.
 
@@ -280,9 +296,10 @@ stripped before parsing.
 
 #### From the Servers view
 
-A person can do the same import without the chat. On Connectors › MCP servers, the Servers view has
-**Import from other tools**:
+A person can do the same import without the chat. On Connectors › Servers, **Import from other tools**
+opens a dialog:
 
+- **Into set** picks the set that takes the imported servers. It starts on **General**. Team sets are not offered.
 - The dialog lists what the files above hold, with the same masking, flags and per-file errors. It scans this
   machine's user-level files and, if you pick one, a registered project's files. On a container or hosted worca
   the user-level files are not read, and the dialog says so: pick a project to scan its files.
@@ -291,7 +308,8 @@ A person can do the same import without the chat. On Connectors › MCP servers,
   ticked.
 - **Review** shows the import card the chat would show: the definition rows, the empty secret fields, the
   variable notes, the skipped servers and the ones already in worca. Nothing is written yet.
-- **Import** adds the definitions as Manual servers in no set. Turn them on in a set to use them. They are
+- **Import** adds the definitions as Manual servers and puts them in the set you picked (**General** by default),
+  with no values yet; a server with a secret shows **Needs token** until you set it. They are
   written together: if another tab or the chat took one of the names meanwhile, none of them is added.
 - If the files or worca's servers changed since the review, Import answers that they changed and offers
   **Review again**. The import writes only what you reviewed.

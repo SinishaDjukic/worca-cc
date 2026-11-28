@@ -234,12 +234,14 @@ export function groupHead({ state, prs, unmarked = 0, ship = null }) {
   const ready = state === 'ready';
   const label = ship ? createPrLabel(ship.n) : CREATE_PR_LABEL;
   const lock = ship ? (ship.blocked ? ship.reason || '' : '') : unmarked > 0 ? `Mark every requirement before you create the PR · ${unmarked} left` : '';
-  if (!prs.length) return { ...NONE, key: 'group', cta: ready ? { state: 'create', ...(ship ? { label } : {}), ...(lock ? { disabled: true, quiet: true, title: lock } : {}) } : null };
+  // Shaper slice 7 (D8): a small-runs lock travels as `tip` (a styled tip, drawn above the button), never a native title.
+  const how = ship ? 'tip' : 'title';
+  if (!prs.length) return { ...NONE, key: 'group', cta: ready ? { state: 'create', ...(ship ? { label } : {}), ...(lock ? { disabled: true, quiet: true, [how]: lock } : {}) } : null };
   const cta = prs.length === 1
     ? { state: prs[0].merged ? 'merged' : 'view', href: prs[0].url, menu: true }
     : { state: 'view', label: VIEW_PRS_LABEL, menu: true, ws: true };
   return { ...NONE, key: 'group', cta,
-    after: ready ? [btn('ship', label, lock ? { disabled: true, title: lock, icon: 'pr-create' } : { primary: true, icon: 'pr-create' })] : [] };
+    after: ready ? [btn('ship', label, lock ? { disabled: true, [how]: lock, icon: 'pr-create' } : { primary: true, icon: 'pr-create' })] : [] };
 }
 
 /** The route's Watch words (D16): status only; the ▾ menu edits Watch. */
@@ -632,6 +634,25 @@ function routePart(doc, p, h, at = 0) {
  *  runs a button's flow. Rebuilt only when the buttons change; a rebuilt button that had focus gets it back, else the
  *  first item of its `group` (the Try it step changes id as it moves on), else the head's first control. Items: a button; `href` an http(s) link in a
  *  new tab (the model checked it); `busy` an aria-disabled button that keeps the focus and runs nothing; `note` text. */
+let tipSeq = 0;
+/** Shaper slice 7 (D8a): the styled tip of a locked control: `span.rd-tip[role=tooltip]` describes it. A disabled
+ *  button takes no focus, so the tip shows on hover (running-detail-bar.css); the same fact is on the status line. With
+ *  `host` (the PR slot) the tip is appended there beside the control; else both go in a `span.rd-tip-host`. */
+export function withTip(el, text, host = null) {
+  const doc = el.ownerDocument;
+  const tip = doc.createElement('span');
+  tip.className = 'rd-tip';
+  tip.id = `rd-tip-${++tipSeq}`;
+  tip.setAttribute('role', 'tooltip');
+  tip.textContent = text;
+  el.setAttribute('aria-describedby', tip.id);
+  if (host) { host.append(tip); return el; }
+  const wrap = doc.createElement('span');
+  wrap.className = 'rd-tip-host';
+  wrap.append(el, tip);
+  return wrap;
+}
+
 export function renderHeadButtons(host, head, slot, h = {}) {
   if (!host) return;
   const doc = host.ownerDocument;
@@ -665,7 +686,7 @@ export function renderHeadButtons(host, head, slot, h = {}) {
     if (b.disabled) el.disabled = true;
     if (b.busy) el.setAttribute('aria-disabled', 'true');
     if (!b.href) el.addEventListener('click', () => { if (!el.disabled && !b.busy && h.onHead) h.onHead(b.id, el); });
-    return el;
+    return b.tip ? withTip(el, b.tip) : el;
   };
   if (slot && slot.parentNode === host) {
     // The slot stays in place (an open View PR ▾ menu inside it keeps its focus): only its siblings are swapped.

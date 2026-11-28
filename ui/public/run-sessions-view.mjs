@@ -420,7 +420,8 @@ export function paintSessions(sec, report, { labelOf = (id) => id, engine = null
   const trayOf = trays || (state && manifestSessions(state.stepper).length ? decorFromState(state, { live, now: Date.now() }).sessions : {});
   const list = el(doc, 'div', 'rs-list');
   for (const s of sessions) {
-    list.appendChild(renderSessionCard(s, { doc, labelOf, engineCost, runStatus, live, logLevel, runEngine: engine, membersUsd: membersUsdOf(state, s),
+    // A session on its own harness (its members' pin) is priced by that harness.
+    list.appendChild(renderSessionCard(s, { doc, labelOf, engineCost: s && s.engine ? engineReportsCost(s.engine) : engineCost, runStatus, live, logLevel, runEngine: engine, membersUsd: membersUsdOf(state, s),
       outsideUsd: outsideUsdOf(state, s, live), tray: trayOf[s.sid] || null }));
   }
   if (!sessions.length) list.appendChild(el(doc, 'p', 'empty-line', live ? 'No session has started in this run yet.' : 'No session of this run left a trace.'));

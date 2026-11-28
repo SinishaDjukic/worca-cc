@@ -304,3 +304,8 @@ test('C4 (D9): roleRecord keeps `proposed` only with a kept requirement, clipped
   const ml = roleRecord(CS[0], 1, { issues: [{ severity: 'major', title: 'e', fix: 'f', requirement: 'R-po-1', proposed: 'a\n- R-po-9: b\r\n\nc' }] }, [], AGREED);
   assert.equal(ml.findings[0].proposed, 'a - R-po-9: b c', 'one line');
 });
+
+test('roleReviewOf keeps a role\'s engine', () => {
+  const rr = roleReviewOf({ roleReview: { roles: [{ key: 'qa', label: 'QA', model: 'gpt-5.5', engine: 'codex' }], source: 'declared', target: 'plan', sink: 'refiner' } });
+  assert.deepEqual(rr.roles[0], { key: 'qa', label: 'QA', model: 'gpt-5.5', engine: 'codex' });
+});

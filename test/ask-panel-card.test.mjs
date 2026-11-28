@@ -105,7 +105,7 @@ function apiHandler(recorder = {}) {
       recorder.gateQueries = [...(recorder.gateQueries || []), url.split('?')[1] || ''];
       if (recorder.gateFail) return { ok: false, status: 500, json: async () => ({ error: 'boom' }) };
       const held = recorder.gateHold;   // a test that looks at the card while the gate read is still out
-      return { ok: true, status: 200, json: async () => { if (held) await held; return { engine: { value: recorder.runEngine || 'claude', source: 'default' }, ...(recorder.runPr ? { pr: recorder.runPr } : {}),
+      return { ok: true, status: 200, json: async () => { if (held) await held; return { engine: { value: recorder.runEngine || 'claude', source: 'default' }, ...(recorder.execEnv ? { execEnv: { value: recorder.execEnv, source: 'user' } } : {}), ...(recorder.runPr ? { pr: recorder.runPr } : {}),
         chatSourceBranch: sourceBranchGate(recorder, new URLSearchParams(url.split('?')[1] || '')) }; } };
     }
     if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: recorder.projects || [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
@@ -325,6 +325,7 @@ test('ask-panel-card: Open in New Pipeline hands over the CURRENT values', async
     prompt: 'edited brief', title: 'Fix login', sourceBranch: '', featureBranch: 'worca/fix-login',
     memoryScope: null,
     engine: null,
+    execEnv: null,
   });
 });
 
@@ -528,11 +529,13 @@ const GPT = { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex', efforts: ['minim
 
 test('ask-panel-card v2: the lane follows the run engine — Codex models only on a Codex run, none on a Claude run', async () => {
   await checkRows([
-    { name: 'on a Codex run the agent rows offer Codex models only, heal a Claude pick and hide sub-agents', run: async () => {
+    { name: 'on a Codex run the picker opens on OpenAI Codex, marked Default; the workflow\'s Claude pick heals; no Sub-agents', run: async () => {
       const ctx = await openWithCard(PROJECT_CARD, { runEngine: 'codex', extraModels: [GPT] });
       const lane = await laneOf(ctx);
       const plan = lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model');
-      assert.deepEqual([...plan.options].map((o) => o.value), ['', 'gpt-5.5']);
+      plan.click();
+      assert.deepEqual([pop(ctx).querySelector('[data-col="harness"] [aria-selected="true"]').dataset.key, optOf(ctx, 'harness', 'codex').querySelector('.badge').textContent, colKeys(ctx, 'model')],
+        ['codex', 'Default', ['gpt-5.5']]);
       assert.equal(lane.querySelector('.ask-rp-tile[data-node-id="n_impl"] .ask-rp-model').value, '', 'the workflow\'s Claude pick is skipped on Codex');
       assert.equal(lane.querySelector('.ask-rp-subagent'), null);
       assert.deepEqual([...lane.querySelectorAll('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-effbtn')].map((b) => b.textContent), ['minimal', 'low', 'medium', 'high']);
@@ -543,10 +546,13 @@ test('ask-panel-card v2: the lane follows the run engine — Codex models only o
       assert.ok(lane.querySelector('.ask-rp-tile'));
       assert.equal(lane.querySelector('.ask-rp-eff'), null, 'an empty group would leave its "inherits workflow" label overflowing the tile');
     } },
-    { name: 'on a Claude run a Codex model is not offered', run: async () => {
+    { name: 'on a Claude run a Codex model sits under OpenAI Codex, not Claude Code', run: async () => {
       const ctx = await openWithCard(PROJECT_CARD, { extraModels: [GPT] });
       const lane = await laneOf(ctx);
-      assert.equal([...lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model').options].some((o) => o.value === 'gpt-5.5'), false);
+      trigger(lane, 'n_plan').click();
+      assert.deepEqual(colKeys(ctx, 'model'), ['claude-opus-5-5', 'claude-fable-5-1', 'claude-haiku-4-5']);
+      optOf(ctx, 'harness', 'codex').click();
+      assert.deepEqual(colKeys(ctx, 'model'), ['gpt-5.5']);
       assert.ok(lane.querySelector('.ask-rp-subagent'));
     } },
     { name: 'on a Codex run, saving another tunable re-sends the project\'s Claude pick instead of erasing it', run: async () => {
@@ -1439,6 +1445,65 @@ test('ask-panel-card: the Pull request field — Use the setting sends none; a p
   ]);
 });
 
+// Execution environment (docs/e2b.md): like the engine, "Default" sends none (/api/run resolves run.execEnv) and names
+// what the run would get; a proposal that names one preselects it, and Start and Open in New Pipeline both carry it.
+test('ask-panel-card: the Runs in field — Default sends none, a proposed environment rides Start and the New Pipeline handoff', async () => {
+  await checkRows([
+    { name: 'Default names the saved environment and Start sends none', run: async () => {
+      const rec = { execEnv: 'e2b' };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      for (let i = 0; i < 10; i++) await ctx.tick();
+      const sel = ctx.doc.querySelector('.ask-card-exec-env');
+      assert.equal(sel.value, '');
+      assert.equal(sel.options[0].textContent, 'E2B sandbox (default)');
+      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'local'], 'E2B is listed once, as the default');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies.length, 1);
+      assert.equal('execEnv' in rec.runBodies[0], false);
+    } },
+    { name: 'a saved E2B default on codex reads as E2B sandbox (default)', run: async () => {
+      const rec = { execEnv: 'e2b', runEngine: 'codex' };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      for (let i = 0; i < 10; i++) await ctx.tick();
+      assert.equal(ctx.doc.querySelector('.ask-card-exec-env').options[0].textContent, 'E2B sandbox (default)');
+    } },
+    { name: 'a proposed environment is preselected, stays visible at every mode and is sent', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, execEnv: 'e2b' }, rec);
+      const sel = ctx.doc.querySelector('.ask-card-exec-env');
+      assert.equal(sel.value, 'e2b');
+      const field = sel.closest('.ask-rp-field');
+      assert.equal(field.dataset.minLevel, 'advanced');
+      assert.equal(field.dataset.levelKeep, '1');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies[0].execEnv, 'e2b');
+    } },
+    { name: 'Default on a card that proposed an environment sends an empty one, so the server keeps the default', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, execEnv: 'e2b' }, rec);
+      const sel = ctx.doc.querySelector('.ask-card-exec-env');
+      sel.value = '';
+      sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies[0].execEnv, '');
+    } },
+    { name: 'a picked environment is handed to New Pipeline', run: async () => {
+      const handed = [];
+      const ctx = await openWithCard(PROJECT_CARD, {}, { openNewPipeline: (p) => handed.push(p) });
+      const sel = ctx.doc.querySelector('.ask-card-exec-env');
+      assert.equal(sel.closest('.ask-rp-field').dataset.levelKeep, undefined, 'no proposed environment: Advanced and up only');
+      sel.value = 'e2b';
+      sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      ctx.doc.querySelector('[data-ask-card-open-np]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(handed[0].execEnv, 'e2b');
+    } },
+  ]);
+});
+
 // Shape it first on the run card (spec §3.2): a shaped card (card.shape) starts its shaped run; a nudged card
 // (card.nudge) offers "Shape it first" next to "Run anyway".
 const NUDGE = { reason: 'decisions', size: 'large', openDecisions: ['Storage engine'], perspectives: ['architect'],
@@ -1453,14 +1518,15 @@ const shapeListed = (rec) => { const base = apiHandler(rec); return (url, opts) 
 const startLabel = (el) => [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('');
 // A thread whose snapshot already holds the card: a hello's resync re-renders the chat from it.
 const settleCard = async (ctx) => { for (let i = 0; i < 8; i++) await ctx.tick(); ctx.flush(); };
-async function openFromSnapshot(block, rec = {}) {
-  const base = apiHandler(rec);
+async function openFromSnapshot(block, rec = {}, { userText = 'hi', flags = '', fetchHandler } = {}) {
+  const base = fetchHandler || apiHandler(rec);
   const snap = { thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
-    messages: [{ id: 'askm_u0000001', threadId: TID, seq: 1, role: 'user', text: 'hi', blocks: [], status: null, createdAt: 't' },
+    messages: [{ id: 'askm_u0000001', threadId: TID, seq: 1, role: 'user', text: userText, blocks: [], status: null, createdAt: 't' },
       { id: MID, threadId: TID, seq: 2, role: 'assistant', text: 'ok', blocks: [block], status: 'done', createdAt: 't' }],
     attachments: [], runLinks: [], inFlight: null };
   const ctx = makePanel({ fetchHandler: (url, opts) => (url === `/api/ask/threads/${TID}` && (opts.method || 'GET').toUpperCase() === 'GET'
     ? { ok: true, status: 200, json: async () => snap } : base(url, opts)) });
+  if (flags) ctx.doc.documentElement.dataset.flags = flags;
   ctx.storage.setItem('worca-cc.ask.thread', TID);
   ctx.panel.open();
   await settleCard(ctx);
@@ -2651,6 +2717,19 @@ test('ask-panel-card: a Folder member is listed but gets no per-member source in
   ]);
 });
 
+test('ask-panel-card: a big Windows workspace names its first members by folder name and counts the rest', async () => {
+  const names = ['Api', 'Billing', 'Docs', 'Infra', 'Web'];
+  const row = { id: 'wks-team-00000001', name: 'team', projectPaths: names.map((n) => `c:\\Users\\me\\ws\\${n}`),
+    projectKeys: names.map((n, i) => `${n.toLowerCase()}-0000000${i}`), vcs: names.map(() => 'git') };
+  const ctx = await openWithCard(WS_CARD, { workspaces: [row] });
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  const line = cardEl.querySelector('.ask-card-members');
+  assert.equal(line.textContent, 'Api, Billing, Docs and 2 more');
+  assert.equal(line.title, names.join(', '), 'every member in the tooltip');
+  const labels = [...cardEl.querySelectorAll('.ask-card-member-src')].map((i) => i.closest('.ask-rp-field').querySelector('.ask-rp-label').textContent);
+  assert.deepEqual(labels, names, 'per-member fields are labelled by folder name, not the full path');
+});
+
 test('s2: a proposal for project acme lists the project\'s default cost tags plus required keys', async () => {
   const rec = { tagRules: { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [],
     autofill: { tags: ['team:web'], from: 'defaults' } } };
@@ -2744,6 +2823,10 @@ const shapeLane = (rec) => {
 };
 const roleTile = (lane, key) => lane.querySelector(`.ask-rp-role[data-node-id="n_roles"][data-role="${key}"]`);
 const pickModel = (ctx, sel, id) => { sel.value = id; sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true })); };
+const pop = (ctx) => ctx.doc.querySelector('.mdl-cols-pop');
+const colKeys = (ctx, col) => [...pop(ctx).querySelectorAll(`[data-col="${col}"] [role="option"]`)].map((b) => b.dataset.key);
+const optOf = (ctx, col, key) => [...pop(ctx).querySelectorAll(`[data-col="${col}"] [role="option"]`)].find((b) => b.dataset.key === key);
+const trigger = (lane, id) => lane.querySelector(`.ask-rp-tile[data-node-id="${id}"] .ask-rp-model`);
 const start = async (ctx) => { ctx.doc.querySelector('[data-ask-card-start]').click(); for (let i = 0; i < 6; i++) await ctx.tick(); };
 
 test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
@@ -2757,12 +2840,12 @@ test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
       assert.deepEqual(rows.map((r) => r.querySelector('.ask-rp-name b').textContent), [...PERSPECTIVES.map((p) => `Plan Review · ${p.label}`),
         'Review Implementation · Correctness', 'Review Implementation · Security', 'Review Implementation · Project fit']);
       for (const r of rows) {
-        assert.equal(r.querySelectorAll('select').length, 1, r.dataset.role);
+        assert.deepEqual([r.querySelectorAll('select').length, r.querySelectorAll('button.ask-rp-model').length], [0, 1], r.dataset.role);
         assert.equal(r.querySelectorAll('[role=radiogroup]').length, 1, r.dataset.role);
         assert.equal(r.querySelectorAll('input[type=checkbox], [role=switch], .ask-rp-tile-l2, button.ask-rp-mini').length, 0, 'no switch, no reset, no line 2');
       }
       const arch = roleTile(lane, 'architect');
-      assert.equal(arch.querySelector('.ask-rp-model').options[0].textContent, "Node's model");
+      arch.querySelector('.ask-rp-model').click(); assert.equal(pop(ctx).querySelector('.mdl-cols-hint').textContent, "Node's model"); pop(ctx).querySelector('.mdl-cols-inherit').click();
       assert.equal(arch.querySelector('.ask-rp-model').value, '');
       // The built-in Shaper pins no model (its Plan Review and Second-opinion reviewer models are Worca's factory defaults
       // on the Models page), so the card has no template pick to show: every role reads the node's setting.
@@ -2779,6 +2862,15 @@ test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
       pickModel(ctx, roleTile(lane, 'security').querySelector('.ask-rp-model'), 'claude-haiku-4-5');
       await start(ctx);
       assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_roles: { roles: { security: { model: 'claude-haiku-4-5', effort: 'high' } } } } });
+    }),
+    shapeRow('a role pick from the panel rides with its harness in overlay.nodes.n_roles.roles', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
+      const lane = await laneOf(ctx);
+      roleTile(lane, 'security').querySelector('.ask-rp-model').click();
+      optOf(ctx, 'model', 'claude-haiku-4-5').click();
+      await start(ctx);
+      assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_roles: { roles: { security: { model: 'claude-haiku-4-5', effort: 'high', engine: 'claude' } } } } });
     }),
     shapeRow('an untouched shaped card posts no roles', async () => {
       const rec = {};
@@ -2807,6 +2899,59 @@ test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
       assert.equal(lane.querySelectorAll('.ask-rp-role').length, 0);
       await start(ctx);
       assert.equal(JSON.stringify(rec.runBodies[0].overlay || {}).includes('roles'), false);
+    }),
+  ]);
+});
+
+// A role row's harness (spec 2026-11-26 "The surfaces"): a soft role runs on its node's harness, "Node's model" names
+// the node's pick with its harness, a role re-pinned to its own model's harness rides, and a Default harness change keeps
+// a pinned role.
+const shapeOn = (rec, nRoles) => {
+  const h = shapeLane(rec);
+  Object.assign(rec, { extraModels: [SONNET, GPT], configWorkflows: { wf_shape: { nodes: { n_roles: nRoles }, feedbacks: {} } } });
+  return h;
+};
+const pillsOf = (tile) => [...tile.querySelectorAll('.ask-rp-effbtn')].map((b) => b.textContent);
+test('ask-panel-card: a role row follows its node\'s harness', async () => {
+  await checkRows([
+    shapeRow('on a node pinned to Codex, a role naming no model shows Codex\'s efforts and its picker marks Codex as the default', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeOn(rec, { model: 'gpt-5.5', effort: 'low', engine: 'codex' }) });
+      const lane = await laneOf(ctx);
+      assert.deepEqual(pillsOf(roleTile(lane, 'security')), ['minimal', 'low', 'medium', 'high']);
+      roleTile(lane, 'security').querySelector('.ask-rp-model').click();
+      assert.deepEqual([optOf(ctx, 'harness', 'codex').querySelector('.badge')?.textContent, optOf(ctx, 'harness', 'claude').querySelector('.badge')], ['Default', null]);
+    }),
+    shapeRow('"Node\'s model" over a role\'s own pick names the node\'s model with its harness', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeOn(rec, { model: 'gpt-5.5', effort: 'low', engine: 'codex',
+        roles: { security: { model: 'claude-haiku-4-5', effort: 'high' } } }) });
+      const lane = await laneOf(ctx);
+      roleTile(lane, 'security').querySelector('.ask-rp-model').click();
+      pop(ctx).querySelector('.mdl-cols-inherit').click();
+      await start(ctx);
+      assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_roles: { roles: { security: { model: 'gpt-5.5', effort: 'low', engine: 'codex' } } } } });
+    }),
+    shapeRow('a soft role pick re-picked on its harness rides pinned, though model and effort are unchanged', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeOn(rec, { roles: { security: { model: 'claude-haiku-4-5', effort: 'high' } } }) });
+      const lane = await laneOf(ctx);
+      roleTile(lane, 'security').querySelector('.ask-rp-model').click();
+      optOf(ctx, 'harness', 'claude').click(); optOf(ctx, 'model', 'claude-haiku-4-5').click();
+      await start(ctx);
+      assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_roles: { roles: { security: { model: 'claude-haiku-4-5', effort: 'high', engine: 'claude' } } } } });
+    }),
+    shapeRow('a Default harness change keeps a role pinned to a harness', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeOn(rec, {}) });
+      let lane = await laneOf(ctx);
+      roleTile(lane, 'security').querySelector('.ask-rp-model').click();
+      optOf(ctx, 'harness', 'claude').click(); optOf(ctx, 'model', 'claude-haiku-4-5').click();
+      const sel = ctx.doc.querySelector('.ask-card-engine');
+      sel.value = 'codex'; sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      lane = await laneOf(ctx);
+      const t = roleTile(lane, 'security').querySelector('.ask-rp-model');
+      assert.deepEqual([t.value, t.dataset.engine], ['claude-haiku-4-5', 'claude']);
     }),
   ]);
 });
@@ -3073,6 +3218,104 @@ test('ask-panel-card: direct card, flag on, small or no size', async () => {
 
 // ── Chat runs: source branch (plan steps 8–9): the card's gate comes from GET /api/run-defaults' chatSourceBranch ──
 const PICK_HINT = 'Pick a source branch to start this run. Set in Settings › Runs › Chat runs: source branch.';
+// Shaper ask screens, slice 2 (flag shaperSmallRuns): the card reads the role sent with the message it answers, or
+// offers the picker as its first fact row; Shape requirements never waits for a role and reads no profile at start.
+const sentMessage = (role) => ['Shape this task first: propose a run with `shape`.', ...(role ? [`Asking as: ${role}.`] : []), 'Add export'].join('\n\n');
+/** A proposed card under the flag, answering `role`'s message (null: no role line). `rec.answerer` records every
+ *  /api/answerer request, through the panel's fetch and through the page's own. `run(ctx, cardEl)` is the test body. */
+async function withSentCard({ card, role = null, lead = null, flags = 'shaperSmallRuns' }, run) {
+  _resetAnswerer();
+  const rec = { answerer: [] };
+  const stubbed = answererApi(rec, { lead });
+  const fetchHandler = (url, opts) => {
+    if (url === '/api/answerer') rec.answerer.push((opts.method || 'GET').toUpperCase());
+    return stubbed(url, opts);
+  };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => fetchHandler(String(url), opts);
+  try {
+    const ctx = await openFromSnapshot({ kind: 'card', id: CARD_ID, state: 'proposed', card: { ...PROJECT_CARD, ...card } }, rec,
+      { userText: sentMessage(role), flags, fetchHandler });
+    await settle(ctx);
+    ctx.flush();
+    await run({ ctx, rec, card: () => ctx.doc.querySelector('.ask-card') });
+  } finally { globalThis.fetch = realFetch; }
+}
+const roleRow = (cardEl) => cardEl.querySelector('.shape-card .rd-kv-row');
+const CARDS_UNDER_FLAG = [['a nudged card', { nudge: REQ_NUDGE }], ['a direct card', { shape: DIRECT_SHAPE }]];
+
+test('ask-panel-card: Compliance sent, the profile cleared: the card reads Compliance and Shape requirements starts a Compliance-led run (R-qa-8, R-arch-5)', async () => {
+  await checkRows(CARDS_UNDER_FLAG.map(([name, card]) => shapeRow(name, () => withSentCard({ card, role: 'compliance', lead: null }, async ({ ctx, rec, card: cardEl }) => {
+    const first = roleRow(cardEl());
+    assert.equal(first?.querySelector('.rd-kv-k').textContent, 'Your role', 'the first fact row');
+    assert.equal(first.querySelector('.rd-kv-v').textContent, 'Compliance');
+    assert.equal(cardEl().querySelector('.shape-lead-line'), null, 'no "You lead as" sentence');
+    const shapeBtn = cardEl().querySelector('[data-ask-card-shape]');
+    assert.equal(shapeBtn.textContent, 'Shape requirements');
+    assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+    ctx.panel.onHello([]);                                  // the hello's resync re-renders the chat: the card keeps its role
+    await settleCard(ctx);
+    assert.equal(roleRow(cardEl()).querySelector('.rd-kv-v').textContent, 'Compliance');
+    cardEl().querySelector('[data-ask-card-shape]').click();
+    await settle(ctx);
+    assert.equal(rec.runBodies?.length, 1);
+    assert.equal(rec.runBodies[0].workflowId, 'wf_shape');
+    assert.equal(rec.runBodies[0].shape.lead, 'compliance');
+    assert.ok(rec.runBodies[0].shape.perspectives.includes('compliance'));
+    assert.deepEqual(rec.answerer, [], 'no /api/answerer request at all, at build or at start');
+  }))));
+});
+
+test('ask-panel-card: no role sent: the picker is the first fact row, Shape requirements is enabled and starts with no lead, so the server fills the saved lead, else Product (R-po-6, R-qa-9)', async () => {
+  await checkRows(CARDS_UNDER_FLAG.map(([name, card]) => shapeRow(name, () => withSentCard({ card, role: null, lead: null }, async ({ ctx, rec, card: cardEl }) => {
+    const first = roleRow(cardEl());
+    assert.equal(first?.querySelector('.rd-kv-k').textContent, 'Your role');
+    assert.equal(first.querySelector('.rd-kv-v .shape-lead-pick')?.textContent, 'pick a role');
+    assert.equal(cardEl().querySelector('.shape-lead-line'), null);
+    const shapeBtn = cardEl().querySelector('[data-ask-card-shape]');
+    assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+    assert.equal(shapeBtn.hasAttribute('aria-describedby'), false);
+    const before = rec.answerer.length;
+    shapeBtn.click();
+    await settle(ctx);
+    assert.equal(rec.runBodies?.length, 1, 'it still works');
+    assert.equal(rec.runBodies[0].workflowId, 'wf_shape');
+    assert.ok(rec.runBodies[0].shape, 'a shaped start');
+    assert.equal('lead' in rec.runBodies[0].shape, false);
+    assert.deepEqual(rec.answerer.slice(before), [], 'R-arch-5: no profile read or write at start');
+  }))));
+});
+
+test('ask-panel-card: no role sent, a QA pick on the card: the click reads no profile, saves the pick once and starts with it (R-arch-8)', async () => {
+  await withSentCard({ card: { nudge: REQ_NUDGE }, role: null, lead: 'architect' }, async ({ ctx, rec, card: cardEl }) => {
+    const pickBtn = roleRow(cardEl())?.querySelector('.shape-lead-pick');
+    assert.equal(pickBtn?.textContent, 'Engineering', 'the saved lead presets the first fact row');
+    pickBtn.click();
+    [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')]
+      .find((i) => i.querySelector('.wfv-menu-l').textContent === 'QA').click();
+    assert.equal(rec.puts, undefined, 'a pick alone does not save');
+    const before = rec.answerer.length;
+    cardEl().querySelector('[data-ask-card-shape]').click();
+    await settle(ctx);
+    assert.deepEqual(rec.answerer.slice(before), ['PUT'], '0 GET, 1 PUT from the click on');
+    assert.deepEqual(rec.puts, [{ lead: 'qa' }]);
+    assert.equal(rec.runBodies[0].shape.lead, 'qa');
+  });
+});
+
+test('ask-panel-card: flag off, a message that carries a role line changes nothing: the sentence, and blocked until a lead (R-arch-1)', async () => {
+  await withSentCard({ card: { nudge: REQ_NUDGE }, role: 'compliance', lead: null, flags: '' }, async ({ ctx, rec, card: cardEl }) => {
+    assert.equal(cardEl().querySelector('.shape-lead-facts'), null);
+    assert.match(cardEl().querySelector('.shape-lead-line').textContent, /^You lead as pick a role, supported by /);
+    const shapeBtn = cardEl().querySelector('[data-ask-card-shape]');
+    assert.equal(shapeBtn.getAttribute('aria-disabled'), 'true');
+    shapeBtn.click();
+    await settle(ctx);
+    assert.equal(rec.runBodies, undefined);
+    assert.deepEqual(rec.answerer, ['GET'], 'today\'s one read at build');
+  });
+});
+
 const srcSelOf = (cardEl) => cardEl.querySelector('.ask-card-source');
 const srcFieldOf = (cardEl) => srcSelOf(cardEl).closest('.ask-rp-field');
 const branchHint = (cardEl) => cardEl.querySelector('.ask-rp-field p.hint');

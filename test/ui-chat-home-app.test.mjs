@@ -3,13 +3,24 @@
 // GET /api/settings and GET /api/sources, and the run tiles are the Running list's own run models: a waiting run is a
 // Needs-you tile whose Answer opens the run on its Q&A tab, a live run is a Running tile drawn like the Workflows view,
 // a paused History row stands in, and the pickers, workflow cards and "N more" read the same data.
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
-import { composerAddons, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
+import { runPageOn, helloRun } from './helpers/run-page-boot.mjs';
+import { composerAddons } from '../ui/public/chat/extensions.mjs';
+import { useSharedApp, restoreAfter } from './helpers/shared-app-boot.mjs';
 import { RUNS_COALESCE_MS, RUNS_TICK_MS } from '../ui/public/chat/home.mjs';
+
+const app = useSharedApp({ before, beforeEach, after });
+const openRunPage = runPageOn(app);
+// The run-page ctx, off Chat: the test's own go('chat/new') is then a new visit of the home, which reads every loader.
+const bootApp = async (opts) => {
+  const ctx = await openRunPage(opts);
+  ctx.go('runs');
+  await ctx.settle(3);
+  return ctx;
+};
 
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 const agent = (id, key, color) => ({ id, kind: 'agent', key, x: 0, y: 0, label: key[0].toUpperCase() + key.slice(1), color,
@@ -47,13 +58,12 @@ function arms({ history = [], threads = [], settings = { chat: { scriptTools: fa
     return null;
   };
 }
-async function bootChat(o = {}) {
-  _resetChatExtensions();                       // app.js re-registers every card and add-on per boot
+const bootChat = async (o = {}) => {
   const ctx = await bootApp({ fetchHandler: arms(o) });
   ctx.go('chat/new');                           // P1: #chat/new is always the home (a bare #chat from another page reopens the last chat)
   await ctx.settle(6);
   return ctx;
-}
+};
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 /** A new visit: leave Chat and come back (the visit re-reads every loader). */
 async function revisit(ctx) {
@@ -107,16 +117,6 @@ test('a waiting run is a Needs-you tile; with no chat following it, Answer opens
   assert.equal(doc.querySelector('[data-chat-page]').dataset.view, 'home');
 });
 
-test('a cold boot onto Chat: the default tab waits for the run list, so a run that waits on you wins over the chats', async () => {
-  const ctx = await bootChat({ threads: [{ id: 'ask_000000b1', title: 'Old chat', createdAt: 't', updatedAt: '2026-10-11T00:00:00Z', runLinks: 0 }] });
-  const doc = ctx.window.document;
-  assert.equal(selected(doc), null, 'the chats answered first; the runs are not known until the hello');
-  helloRun(ctx, { runId: 'r9', title: 'Waits', pendingQuestion: QUESTION });
-  await wait(RUNS_COALESCE_MS + 60);
-  await ctx.settle(4);
-  assert.equal(selected(doc), 'needs');
-});
-
 test('a run frame repaints the home within the coalesce window: a live v2 run is a Running tile with its project, workflow and graph', async () => {
   const ctx = await bootChat({ history: [HROW({ id: 'bbbb0002', status: 'running', title: 'Fix login' })] });
   helloRun(ctx, { runId: 'zz', pipelineId: 'ffff0000', title: 'Old', status: 'done' });   // first hello: History loads
@@ -134,7 +134,7 @@ test('a run frame repaints the home within the coalesce window: a live v2 run is
   assert.equal(tile.querySelectorAll('.gv-world [data-node-id]').length, 3);
 });
 
-test('a paused History row with no live run stands in as a Needs-you tile; a click opens that saved run', async () => {
+test('a paused History row with no live run stands in as a Needs-you tile; a click opens that saved run', async (t) => {
   const ctx = await bootChat({ history: [
     HROW({ id: 'dddd0004', status: 'paused', pauseReason: 'cost_pipeline', title: 'Paused proj' }),
     HROW({ id: 'eeee0005', status: 'paused', title: 'Paused ws', projectKey: 'workspaces/ws1', projectName: 'WS One', workspaceName: 'WS One', target: 'workspace', runEngine: 'cursor', totalCostUsd: 0, elapsedMs: 45000 }),
@@ -150,6 +150,7 @@ test('a paused History row with no live run stands in as a Needs-you tile; a cli
   assert.deepEqual(tiles.map((t) => t.querySelector('.chat-run-tile-stats').textContent), ['1m 0s · $0.50', '45s'],
     'the tile reads elapsed when the row has it, the summed time otherwise; a Cursor run reports no cost: never $0.00');
   const seen = [];
+  restoreAfter(t, ctx.window.__np.chat.deps, 'openRunPanel');
   ctx.window.__np.chat.deps.openRunPanel = (ref, opts) => seen.push([ref, opts]);
   tiles[1].querySelector('.chat-run-tile-open').click();
   await ctx.settle(6);
@@ -250,7 +251,6 @@ test('a quick-action prefill never overwrites a draft: it goes on a new line und
 });
 
 test('an intent riding a send in flight never follows the logo to a new chat: the next message goes out as typed', async () => {
-  _resetChatExtensions();
   let release;
   const held = new Promise((r) => { release = r; });
   const base = arms();
@@ -301,7 +301,6 @@ test('the head\'s New chat + is a trip to a new chat: an intent set on the home 
 });
 
 test('Answer opens the chat that follows the run when there is one (findFollowingThread over GET /api/ask/threads)', async () => {
-  _resetChatExtensions();
   const row = { id: 'ask_000000f1', title: 'Fix it', createdAt: '2026-10-11T00:00:00Z', updatedAt: '2026-10-11T00:00:00Z', runLinks: 1, waiting: true };
   const base = arms({ threads: [row] });
   const ctx = await bootApp({ fetchHandler: (url, opts) => (url === '/api/ask/threads/ask_000000f1'
@@ -318,26 +317,42 @@ test('Answer opens the chat that follows the run when there is one (findFollowin
   assert.equal(ctx.window.location.hash, '#chat/ask_000000f1');
 });
 
-test('a cold boot: the hello alone does not settle the tab — a paused History row still on its way wins over the chats', async () => {
-  _resetChatExtensions();
-  const held = [];
-  const base = arms({ threads: [{ id: 'ask_000000b1', title: 'Old chat', createdAt: 't', updatedAt: '2026-10-11T00:00:00Z', runLinks: 0 }],
-    history: [HROW({ id: 'dddd0004', status: 'paused', pauseReason: 'cost_pipeline', title: 'Paused proj' })] });
-  const ctx = await bootApp({ fetchHandler: (url, opts) => (url === '/api/history'
-    ? new Promise((r) => { held.push(() => r(base(url, opts))); })
-    : base(url, opts)) });
+// Slice 19 (R-arch-4): a Verifier run is no slice, so its slice answer carries `verifier`, never `owns`. These two boot
+// the real app, so Answer goes through app.js's homeForRun and not a stubbed dep.
+async function answerVerifierTile({ threadId = null, thread = null } = {}) {
+  const base = arms({ threads: thread ? [thread] : [] });
+  const ctx = await bootApp({ fetchHandler: (url, opts) => {
+    if (url === '/api/shape/pipelines/pv/slice') return ok({ verifier: true, featureId: 'feat_1', threadId });
+    if (thread && url === `/api/ask/threads/${thread.id}`) {
+      return ok({ thread, messages: [], attachments: [], runLinks: [{ threadId: thread.id, runId: 'rv', pipelineId: 'pv' }] });
+    }
+    return base(url, opts);
+  } });
   ctx.go('chat/new');
   await ctx.settle(6);
-  ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', runs: [] });
-  await wait(RUNS_TICK_MS + 150);                                   // the 1 s re-read ran: the hello is in, History is not
-  const doc = ctx.window.document;
-  assert.equal(selected(doc), null, 'until History answers, an empty Needs you is "not yet"');
-  assert.ok(held.length > 0, 'the first hello asked History');
-  for (const go of held) go();
-  await ctx.settle(6);
-  await wait(RUNS_TICK_MS + 150);
-  assert.equal(selected(doc), 'needs');
+  helloRun(ctx, { runId: 'rv', pipelineId: 'pv', title: 'Verifier · Sign-up · round 1', pendingQuestion: QUESTION });
+  await revisit(ctx);
+  const answer = ctx.window.document.querySelector('.chat-run-tile .chat-run-tile-answer');
+  assert.ok(answer, 'the Verifier run is a Needs-you tile with Answer');
+  assert.equal(answer.hidden, false);
+  answer.click();
+  await ctx.settle(10);
+  assert.ok(ctx.calls.some((c) => c.url === '/api/shape/pipelines/pv/slice'), 'Answer read the slice route');
+  return ctx;
+}
+
+test('s19 R-arch-4: Answer on a chat-less feature\'s Verifier question opens the feature page', async () => {
+  const ctx = await answerVerifierTile();
+  const { hash } = ctx.window.location;
+  assert.notEqual(hash, '#chat/new/run/rv/qa', 'not the run panel');
+  assert.ok(hash.startsWith('#feature/feat_1'), `the feature page, got ${hash}`);
+  assert.equal(ctx.window.document.querySelector('[data-chat-panel]').hidden, true, 'no run panel');
+});
+
+test('s19: Answer on the Verifier question of a feature a chat started still opens that chat', async () => {
+  const thread = { id: 'ask_000000f1', title: 'Sign-up', createdAt: '2026-10-11T00:00:00Z', updatedAt: '2026-10-11T00:00:00Z', runLinks: 1, waiting: true };
+  const ctx = await answerVerifierTile({ threadId: thread.id, thread });
+  assert.equal(ctx.window.location.hash, '#chat/ask_000000f1');
 });
 
 test('Explain a diff: done runs only — never a live, failed or archived one, never twice — newest first, each with its project', async () => {

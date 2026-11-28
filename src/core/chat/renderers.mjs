@@ -13,9 +13,10 @@ import { pauseConsequences, describePauseReason, giveUpOption } from '../failure
 import { projectForm } from '../../shared/forms/project.mjs';
 import { CHAT_PROJECTION_MAX } from '../ask-projection.mjs';
 import { awayAnswersSummary } from '../../shared/away-mode/labels.mjs';
-import { usageLimitSwitches, engineLabel, engineReportsCost, runCostLabel } from '../../shared/engine-switch.mjs';
+import { usageLimitSwitches, engineLabel, engineReportsCost, runCostLabel, runCostKnown } from '../../shared/engine-switch.mjs';
 import { readyEnginesCached } from '../engines/ready-cache.mjs';
 import { runHeadlineMs } from '../../shared/run-elapsed.mjs';
+import { GAP_KIND_WORDS, ANSWERED_BY_WORDS, GAP_REPLY_WORDS, gapKindOf, gapAnswerWords } from '../../shared/shape/verifier.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 
@@ -32,9 +33,10 @@ export function fmtUsd(usd) {
   return `$${Number(usd).toFixed(2)}`;
 }
 
-/** A run's cost: fmtUsd (null when unset), or "cost unknown" on an engine that reports no cost — never $0.00. */
-export function fmtRunCost(engine, usd) {
-  return engineReportsCost(engine) ? fmtUsd(usd) : runCostLabel(engine, usd, fmtUsd);
+/** A run's cost: fmtUsd (null when unset), or "cost unknown" on an engine that reports no cost — never $0.00; "cost
+ *  partly unknown" on a run whose steps (`engines`) used such a harness beside one that reports a cost. */
+export function fmtRunCost(engine, usd, engines = null) {
+  return runCostKnown(engine, engines) === 'all' ? fmtUsd(usd) : runCostLabel(engine, usd, fmtUsd, engines);
 }
 
 function mdMsg(text, severity) {
@@ -103,7 +105,7 @@ export function renderDone(meta, payload = {}) {
   parts.push('   **Status:** completed');
   const dur = fmtMs(runHeadlineMs(meta));
   if (dur) parts.push(`   **Duration:** ${dur}`);
-  const cost = fmtRunCost(meta.runEngine, meta.totalCostUsd);
+  const cost = fmtRunCost(meta.runEngine, meta.totalCostUsd, meta.runEngines);
   if (cost) parts.push(`   **Cost:** ${cost}`);
   pushPending(parts, meta);
   pushAway(parts, meta);
@@ -153,6 +155,27 @@ export function renderQuestion(meta, payload = {}) {
   const ref = runRef(meta.runId);
   const kind = payload.kind || 'questions';
   const parts = head('❓', meta);
+
+  // Shaper small runs slice 10 (D11): the Verifier's gap stop lists its gaps and says the one chat reply (/retry fixes
+  // every gap); shipping with a gap or changing a requirement needs text, so it is answered on the feature card, or the
+  // feature page when no chat follows the feature (slice 18: `meta.hasChat === false`). The Verifier's notes are never
+  // listed here.
+  if (payload.stop?.form === 'gaps') {
+    const stop = payload.stop;
+    const clip120 = (t) => { const x = String(t || '').trim(); return x.length > 120 ? `${x.slice(0, 120)}…` : x; };
+    const capped = (list, line) => {
+      for (const x of list.slice(0, 5)) parts.push(`   • ${line(x)}`);
+      if (list.length > 5) parts.push(`   • …and ${list.length - 5} more`);
+    };
+    parts.push(`   **Status:** ${String(stop.head || 'Verifier · gaps found')}, waiting for an answer per gap`);
+    capped(Array.isArray(stop.gaps) ? stop.gaps : [], (g) => {
+      const k = gapKindOf(g?.kind);
+      return `${g?.id}: ${clip120(g?.why)}${k === 'plain' ? '' : ` (${GAP_KIND_WORDS[k].chip})`}`;
+    });
+    capped(Array.isArray(stop.decided) ? stop.decided : [], (a) => `${a?.id} → fix · ${ANSWERED_BY_WORDS.away}`);
+    parts.push(`   Reply: \`/retry ${ref}\` — ${GAP_REPLY_WORDS.retry} · ${gapAnswerWords(meta.hasChat)}`);
+    return mdMsg(parts.join('\n'), 'warning');
+  }
 
   if (kind === 'gate' || kind === 'recovery') {
     parts.push(`   **Status:** waiting for ${kind === 'gate' ? 'approval' : 'a recovery decision'}${payload.agent ? ` (${payload.agent})` : ''}`);

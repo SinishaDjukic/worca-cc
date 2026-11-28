@@ -32,7 +32,8 @@ import { readPluginsLock } from './plugins-lock.mjs';                 // a DISAB
 import { validateGraph, formatIssue, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { KEYED_KINDS } from '../shared/graph/constants.mjs';
-import { pickOrDrop, cleanPick, resolveRolePicks } from '../shared/graph/role-slots.mjs';
+import { pickOrDrop, cleanPick, resolveRolePicks, overPick, pickEngine } from '../shared/graph/role-slots.mjs';
+import { MODEL_ENGINE_NAMES } from '../shared/engine-switch.mjs';
 import { roleReviewOf } from '../shared/graph/role-review-step.mjs';
 import { selfReviewViolations } from '../shared/graph/self-review.mjs';
 import { pickTemplateExtras } from '../shared/graph/template.mjs';
@@ -132,6 +133,12 @@ export function sanitizeNodeDefaults(raw, nodeId = '?') {
   if (out.effort && !out.model) {
     warn('effort', 'no model to interpret it');
     delete out.effort;
+  }
+  // A pinned harness lives only beside a kept model (it travels with it).
+  if (raw.engine !== undefined && raw.engine !== null && raw.engine !== '') {
+    if (!MODEL_ENGINE_NAMES.includes(raw.engine)) warn('engine', 'not a harness name');
+    else if (!out.model) warn('engine', 'no model to run on it');
+    else out.engine = raw.engine;
   }
   for (const field of ['fanOut', 'askQuestions']) {
     if (raw[field] === undefined) continue;
@@ -533,10 +540,15 @@ export async function setWorkflowNodeDefaults(id, map) {
   if (tpl.version === 2) {
     const nodes = tpl.nodes.map((node) => {
       if (!Object.prototype.hasOwnProperty.call(patch, node.id)) return node;
-      const clean = sanitizeNodeDefaults(patch[node.id], node.id) || {};
+      const stored = node.config || {};
+      const raw = patch[node.id];
+      const clean = sanitizeNodeDefaults(raw, node.id) || {};
+      // The absent rule: a patch naming the stored model and no engine of its own keeps the stored engine.
+      if (raw && typeof raw === 'object' && !Object.hasOwn(raw, 'engine') && clean.model && clean.model === stored.model
+        && MODEL_ENGINE_NAMES.includes(stored.engine)) clean.engine = stored.engine;
       // Only the AGENT_TUNABLES are defaults; awaitAll/arity/planStoreSeed are
       // TOPOLOGY and must survive a defaults patch untouched.
-      const kept = Object.fromEntries(Object.entries(node.config || {}).filter(([k]) => !AGENT_TUNABLES.includes(k)));
+      const kept = Object.fromEntries(Object.entries(stored).filter(([k]) => !AGENT_TUNABLES.includes(k)));
       return { ...node, config: { ...kept, ...clean } };
     });
     const now = new Date().toISOString();
@@ -645,8 +657,13 @@ export function workspaceVariants(registry) {
  * `nodes`/`wires` to buildGraphManifest as `overlays`.
  * @throws {Error} unknown workflow, a v1 row, an unknown/un-ported/unplaceable agent
  */
-function ownedPair(sel, engine, projectDir) {
-  return pickOrDrop(sel, engine, { runs: engineRuns(engine, projectDir), efforts: effortsForEngine(engine), effortOn });
+function ownedPair(sel, engine, projectDir, pins = true) {
+  return pickOrDrop(sel, engine, { ...harnessEnv(engine, projectDir), ...(pins ? { envOf: (h) => harnessEnv(h, projectDir) } : { dropPins: true }) });
+}
+
+/** What judges a pick on one harness: the catalog's membership, that harness's efforts and the effort mapping. */
+function harnessEnv(engine, projectDir) {
+  return { runs: engineRuns(engine, projectDir), efforts: effortsForEngine(engine), effortOn };
 }
 
 const NO_PICK = Object.freeze({ pick: Object.freeze({}), dropped: null });
@@ -724,7 +741,8 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   const mergeMaps = (base, extra) => {
     const out = { ...base };
     for (const [id, sel] of Object.entries(extra && typeof extra === 'object' ? extra : {})) {
-      if (sel && typeof sel === 'object') out[id] = { ...(out[id] || {}), ...sel };
+      // overPick: per key, except that an engine travels with its model (a layer naming another model leaves none).
+      if (sel && typeof sel === 'object') out[id] = overPick(out[id], sel);
     }
     return out;
   };
@@ -738,7 +756,9 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   const firstDefined = (...vals) => vals.find((v) => v !== undefined);
   const engine = MODEL_ENGINES.includes(opts.engine) ? opts.engine : 'claude';
   const slotDefaults = ignore ? {} : stepSlotDefaults(engine, { projectDir: projectDir || null, workspace: isWorkspace });
-  const owned = (selection) => ownedPair(selection, engine, projectDir);
+  // A pick that names a harness (`engine`) is judged on that harness; an Auto run (`ignore`) uses one harness and
+  // drops a pin to another one (its record keeps the pin as `wanted`).
+  const owned = (selection) => ownedPair(selection, engine, projectDir, !ignore);
   // Model roles (D3, D4): the last layer, for a node no other layer names. A run started with its own model keeps it
   // for every unset step (D3's per-run pick); an Auto run owns its tuning and skips it, like the user step slots.
   const runModel = typeof opts.runModel === 'string' && opts.runModel.trim() ? opts.runModel.trim() : null;
@@ -790,8 +810,8 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   // resolve, so an unresolvable env key warns once.
   const signInNeeds = new Map();
   const ownAuth = (m) => { try { return !!claudeAuthFromEnv(resolveModelEnv(m) || {}); } catch { return false; } };
-  const needsSignIn = (id) => {
-    if (engine !== 'claude') return false;
+  const needsSignIn = (id, harness = engine) => {
+    if (harness !== 'claude') return false;
     if (!signInNeeds.has(id)) {
       signInNeeds.set(id, needsClaudeSignIn(id, {
         connection: (m) => modelConnection(m, { projectDir: projectDir || null }), routed: (m) => modelHasBaseUrlRouting(m) || ownAuth(m),
@@ -799,16 +819,16 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     }
     return signInNeeds.get(id);
   };
-  const signedOutFor = async (id) => needsSignIn(id) && (await authState()) === 'signed-out';
+  const signedOutFor = async (id, harness = engine) => needsSignIn(id, harness) && (await authState()) === 'signed-out';
   // A factory default on a reserved workflow rides exactly where its template pin did (source `template`); on a saved
   // workflow it is nobody's pick (source `default`, never warned).
   const factorySource = isReservedWorkflowId(stored.id) ? 'template' : 'default';
   const secondOpinionSlot = ignore ? null : cleanPick(utilityModelFor(engine, 'secondOpinion', { projectDir: projectDir || null }));
   let catalogRows = null;
-  const effortsOf = async (model) => {
+  const effortsOf = async (model, harness = engine) => {
     catalogRows ||= await listModels(projectDir || '');
     const row = model ? catalogRows.find((m) => m.id === model) : null;
-    return Array.isArray(row?.efforts) && row.efforts.length ? row.efforts : effortsForEngine(engine);
+    return Array.isArray(row?.efforts) && row.efforts.length ? row.efforts : effortsForEngine(harness);
   };
   const named = (v) => typeof v === 'string' && v.trim() !== '';
   const factoryNotes = [];
@@ -869,14 +889,16 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     const legacyO = owned(legacy);
     const selP = selO.pick;
     const legacyP = legacyO.pick;
-    const teamSkipped = !!(selP.model || selP.effort || legacyP.model || legacyP.effort);
+    // A workflow pick that pins a harness counts as set (spec rule 6): a Settings step slot and Care's fill skip it.
+    const cfgPinned = !ignore && !!pickEngine(cfg);
+    const teamSkipped = !!(selP.model || selP.effort || legacyP.model || legacyP.effort) || cfgPinned;
     const teamO = teamSkipped ? NO_PICK : owned(slotDefaults[authored]);
     const team = teamO.pick;
     // The factory default at the template's position, when the authored config names neither model nor effort.
     const rr = roleReviewOf(cfg);
     const fac = factoryNodePick(authored, rr);
     const setModel = !!(selP.model || legacyP.model || team.model) || named(sel.model) || (engine === 'claude' && named(legacy.model))
-      || (!teamSkipped && named(slotDefaults[authored]?.model));
+      || (!teamSkipped && named(slotDefaults[authored]?.model)) || cfgPinned;
     let fillP = null;
     let fillDropped = null;
     const fillRole = fillOn && !setModel ? roleFill.roles[roleOf(`steps.${authored}`, { name: meta?.displayName || '' })] : undefined;
@@ -943,13 +965,20 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     const nodeModel = pair ? pair.model : (roleP.model ?? baseModel);
     // An effort-only layer's effort rides the role's model when that model offers it, else the role's own effort.
     const layerEffortOnRole = roleP.model && baseEffort !== undefined ? owned({ model: roleP.model, effort: baseEffort }).pick.effort : undefined;
-    const explicitEffort = pair ? pair.effort : (roleP.model ? (layerEffortOnRole ?? roleP.effort) : baseEffort);
+    let explicitEffort = pair ? pair.effort : (roleP.model ? (layerEffortOnRole ?? roleP.effort) : baseEffort);
+    // The node's harness: the winning layer's (baseModel's order) when it pinned one, else the run's. A pinned pair and a
+    // role's model run on the run's harness.
+    const won = fillCli ? null : [selP, legacyP, team, fillP, cfgP].find((p) => p && p.model !== undefined) || null;
+    const nodeEngine = pair || roleP.model ? engine : (won?.engine || engine);
+    const pinned = !pair && !roleP.model && !!won?.engine;
+    // An effort-only layer in the default harness's vocabulary riding a pinned model: that harness's nearest one.
+    if (nodeEngine !== engine) explicitEffort = effortOn(explicitEffort, nodeEngine) || undefined;
     // Effort intents (effort-intents.mjs): a run start (fillIntents) fills an unset effort from the step's intent for its
-    // model's family, clamped to that model's efforts. A named effort always wins; a pinned pair carries its own effort.
-    // The catalog is read only for a mapped family.
+    // model's family on the node's harness, clamped to that model's efforts. A named effort always wins; a pinned pair
+    // carries its own effort. The catalog is read only for a mapped family.
     const nodeEffort = explicitEffort !== undefined || pair || opts.fillIntents !== true ? explicitEffort
-      : ((await intentEffortFor({ agentKey: authored, name: meta?.displayName || '', model: nodeModel ?? runModel, engine,
-        efforts: () => effortsOf(nodeModel ?? runModel) })) ?? undefined);
+      : ((await intentEffortFor({ agentKey: authored, name: meta?.displayName || '', model: nodeModel ?? runModel, engine: nodeEngine,
+        efforts: () => effortsOf(nodeModel ?? runModel, nodeEngine) })) ?? undefined);
     if (nodeDefaultWanted) factoryNotes.at(-1).used = { model: nodeModel ?? runModel, effort: nodeEffort ?? null };
     if (fillDropped) fillDropped.used = { model: nodeModel ?? runModel, effort: nodeEffort ?? null };
     // A role-review node's per-role picks (run overlay > project > helper job > template); a pinned agentPair runs every
@@ -966,7 +995,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       if (!named(authoredRole.model) && !named(authoredRole.effort)) {
         const byKey = (map) => (map && typeof map === 'object' && Object.hasOwn(map, fr.roleKey) ? cleanPick(map[fr.roleKey]) : null);
         const higher = !!(byKey(overRoles) || byKey(projectRoles) || secondOpinionSlot);
-        if (!higher && await signedOutFor(fr.pick.model)) roleDropped = true;
+        if (!higher && await signedOutFor(fr.pick.model, nodeEngine)) roleDropped = true;
         else {
           specRoles = spec.roles.map((r) => (r.key === fr.roleKey ? { ...r, ...fr.pick } : r));
           factoryRole = fr.roleKey;
@@ -976,7 +1005,8 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     const rolePicks = spec ? resolveRolePicks({
       roles: specRoles, overlay: overRoles, project: projectRoles,
       slot: fr && secondOpinionSlot ? { [fr.roleKey]: secondOpinionSlot } : undefined,
-      engine, runs: engineRuns(engine, projectDir), efforts: effortsForEngine(engine), effortOn,
+      engine: nodeEngine, ...harnessEnv(nodeEngine, projectDir),
+      ...(ignore ? { dropPins: true } : { envOf: (h) => harnessEnv(h, projectDir) }),
     }) : null;
     // On a saved workflow the second opinion's factory default is nobody's pick: never warned when an engine drops it.
     if (factoryRole && factorySource === 'default' && rolePicks[factoryRole]?.source === 'template') rolePicks[factoryRole].source = 'default';
@@ -1016,6 +1046,9 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       config: { ...cfg },
       model: nodeModel,
       effort: nodeEffort,
+      // The harness the step runs on; `pinned` when the winning pick named it (the run setup snapshot keeps it).
+      engine: nodeEngine,
+      ...(pinned ? { pinned: true } : {}),
       // #1450: who chose the model — the premium guard's "nobody chose" (model-guard.mjs) and the UI's captions.
       modelSource: sourceOf[node.id].model,
       // workspaceFanOut forces fan-out on a workspace run (the generic
@@ -1068,19 +1101,20 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   }
   // The models a person (or team, project, run) set that need the Claude Code sign-in, while it is signed out: the engine
   // gate refuses the start naming each. A factory default that survived is never listed (its drop rule ran above).
+  // Each candidate is judged on its own harness: a node's on its `engine`, a role's on its own or its node's.
   const signInBlocked = [];
-  if (engine === 'claude') {
+  {
     const candidates = [];
     for (const nc of Object.values(nodes)) {
       if (nc.kind !== 'agent') continue;
       const src = sourceOf[nc.nodeId] || {};
       const node = nc.meta?.displayName || nc.key;
-      if (nc.model && src.model !== 'factory' && !src.fill && needsSignIn(nc.model)) {
+      if (nc.model && src.model !== 'factory' && !src.fill && needsSignIn(nc.model, nc.engine)) {
         candidates.push({ nodeId: nc.nodeId, node, model: nc.model, source: src.model, ...(src.modelRole ? { modelRole: src.modelRole } : {}) });
       }
       const spec = nc.roles ? roleReviewOf(nc.config) : null;
       for (const [key, rec] of Object.entries(nc.roles || {})) {
-        if (!rec.model || (key === src.factoryRole && (rec.source === 'template' || rec.source === 'default')) || !needsSignIn(rec.model)) continue;
+        if (!rec.model || (key === src.factoryRole && (rec.source === 'template' || rec.source === 'default')) || !needsSignIn(rec.model, rec.engine || nc.engine)) continue;
         const label = spec?.roles.find((r) => r.key === key)?.label || key;
         candidates.push({ nodeId: nc.nodeId, node, role: label, model: rec.model, source: rec.source });
       }

@@ -38,7 +38,7 @@ const toolName = (engine) => (engine === 'codex' ? 'Codex' : engineLabel(engine)
 // On Claude Code four more keep their own fallback: the Auto classifier (Sonnet 5, auto/model.mjs), Run naming and
 // Command summaries (the cheapest ready model) and the Requirements interview (its Opus default).
 const NO_WORCA_DEFAULT_RE = /\.(title|memoryDefrag|workspaceScan)$/;
-const NO_WORCA_DEFAULT_CLAUDE_RE = /^models\.claude\.(utility\.(classifier|naming|commandSummary)|requirementsInterview)$/;
+const NO_WORCA_DEFAULT_CLAUDE_RE = /^models\.claude\.(utility\.(classifier|naming|commandSummary|guide)|requirementsInterview)$/;
 
 /** What is stored, by setting id; an id with nothing stored is absent. Values { model?, effort? } with null/'' keys
  *  dropped (a string setting becomes { model }; '' / null / { model: null, effort: null } are absent).
@@ -114,9 +114,9 @@ export function jobDefaultText(id, { engine, settings, catalog } = {}) {
   if (job === 'memoryDefrag' || job === 'secondOpinion') {
     const p = own(own(own(s.factoryModels, 'claude'), 'helpers'), job);
     if (p && str(p.model)) return pairText(p, catalog);
-  } else if (job === 'commandSummary') {
+  } else if (job === 'commandSummary' || job === 'guide') {
     // Unset, it runs on the cheapest ready Claude model: today's empty option names that model, never an effort.
-    const c = plain(s.commandSummaryModelEffective);
+    const c = plain(job === 'guide' ? s.guideModelEffective : s.commandSummaryModelEffective);
     if (c.source === 'auto' && str(c.model)) return words(`${labelOf(c.model, catalog)} (default)`);
   } else if (job === 'requirementsInterview') {
     const p = plain(s.requirementsInterviewDefault);
@@ -128,7 +128,7 @@ export function jobDefaultText(id, { engine, settings, catalog } = {}) {
 const countText = (n, one, many) => (n === 1 ? one : `${n} ${many}`);
 
 /** data = { settings, steps: [{ key, label }], catalog, engines: [{ name, label, ready, reason }] | null,
- *    locks: [{ name, reason }], flags: { requirements, design, smartRunNaming, commandSummaries } (resolved booleans;
+ *    locks: [{ name, reason }], flags: { requirements, design, smartRunNaming, commandSummaries, shaperSmallRuns } (resolved booleans;
  *    a missing flag is off), testable: Set<string> }
  *  view = { engine, showAll: { steps: false, helpers: false }, revealed: Set<string> }
  *  → { engine, engineLabel, defaultEngine, isDefault, canDefault, defaultTitle, reason,
@@ -261,9 +261,15 @@ export function buildJobs(data, draft, view) {
   // warning says nothing.
   const ready = (Array.isArray(d.engines) ? d.engines : []).find((x) => x && x.name === engine) || null;
   const label = (ready && str(ready.label)) || engineLabel(engine);
-  const reason = !ready ? ''
+  const local = !ready ? ''
     : !ready.ready ? `${label} can't start runs yet: ${String(ready.reason || 'its check did not answer').replace(/\.$/, '')}.`
       : ready.reason ? `${label} can start runs: its CLI is installed and signed in. Note: ${String(ready.reason).replace(/\.$/, '')}.` : '';
+  // A configured remote backend (GET /api/engines `sandbox`): whether Worca can sign this harness's model calls from a
+  // sandbox (the credential stays on the server; the sandbox reaches the model through Worca's relay).
+  const box = ready && ready.sandbox && Array.isArray(ready.sandbox.titles)
+    ? `Remote sandbox (${ready.sandbox.titles.join(', ')}): ${ready.sandbox.ready ? 'Worca can sign its model calls from the sandbox.'
+      : `${String(ready.sandbox.reason || 'Worca cannot sign its model calls').replace(/\.$/, '')}.`}` : '';
+  const reason = [local, box].filter(Boolean).join(' ');
   const lock = (Array.isArray(d.locks) ? d.locks : []).find((l) => l && l.name === engine) || null;
   const isDefault = defaultEngine === engine;
   const dirty = jobsDirty(draft, saved).length;

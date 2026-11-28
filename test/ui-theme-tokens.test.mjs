@@ -92,6 +92,8 @@ const PAIRS = [
   ['--blue-ink-strong', '--blue-bg', 4.5], ['--violet-ink', '--violet-bg', 4.5],   // the PR state colours (.rd-pr-fill.pr-view / .pr-merged, .hd-pr-link)
   ['--amber-ink-strong', '--field', 4.5], ['--red-ink-strong', '--field', 4.5],   // the -strong amber and red inks on a --field ground
   ['--amber-ink-strong', '--panel', 4.5], ['--red-ink-strong', '--panel', 4.5],   // the account menu's spend card tones, flat on the --panel sheet
+  // Shaper slice 16 (R-qa-5): the run row words "waiting for you" and "failed" read on the page ground.
+  ['--amber-ink-strong', '--bg', 4.5], ['--red-ink-strong', '--bg', 4.5],
   ['--side-ink', '--side-bg', 4.5], ['--side-sel-ink', '--side-sel-bg', 4.5],   // the sidebar rows and group labels (.nav button, .nav-sect) and the open page
   ['--on-signal', '--amber', 4.5], ['--on-signal', '--red', 4.5],   // the status dot's '?' / '!' glyph (ui/public/status-dot.mjs)
   ['--violet-ink-strong', '--violet-bg', 4.5], ['--lime-ink-strong', '--lime-bg', 4.5], ['--slate-ink-strong', '--slate-bg', 4.5],
@@ -133,4 +135,13 @@ test('theme: no colour literal outside the token blocks (spec §4.2; Task 2 code
     if (m) offenders.push(`${m.join(' ')}  ←  ${b.slice(0, 110).replace(/\s+/g, ' ')}`);
   }
   assert.deepEqual(offenders, []);
+});
+
+// Shaper slice 16 (R-qa-5's example): a row on the page ground reads "failed" in --red-ink-strong at 5.08:1.
+test('s16 R-qa-5 example: on the light page the "failed" row word is --red-ink-strong, 5.08:1 on --bg ("waiting for you": --amber-ink-strong, 5.38:1)', () => {
+  for (const [mark, token, ratio] of [['failed', '--red-ink-strong', '5.08'], ['ask', '--amber-ink-strong', '5.38']]) {
+    const word = ruleBody(`.chat-rc-members .run-member[data-mark="${mark}"] .run-member-state`);
+    assert.equal(word?.match(/(?:^|;)\s*color:\s*([^;]+)/)?.[1].trim(), `var(${token})`, mark);
+    assert.equal(contrast(arm(token, 'light'), arm('--bg', 'light')).toFixed(2), ratio, token);
+  }
 });

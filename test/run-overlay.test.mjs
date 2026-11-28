@@ -70,7 +70,7 @@ test('an entry with more keys than an overlay entry can name is one short error 
   const r = parseRunOverlay({ nodes: { n_plan: sel } });
   assert.ok(r.error, 'refused');
   assert.ok(r.error.length < 300, `bounded: ${r.error.length} chars`);
-  assert.match(r.error, /^overlay\.nodes\.n_plan takes only model, effort, fanOut, askQuestions, subagentModel$/);
+  assert.match(r.error, /^overlay\.nodes\.n_plan takes only model, effort, fanOut, askQuestions, subagentModel, engine$/);
   // every legal key, once — still fine; one unknown among a few keys keeps its precise message
   assert.equal(parseRunOverlay({ nodes: { n_plan: { model: 'm', effort: 'high', fanOut: true, askQuestions: false, subagentModel: 'auto' } } }).error, undefined);
   assert.match(parseRunOverlay({ nodes: { n_plan: { model: 'm', reason: 'x' } } }).error, /^overlay\.nodes\.n_plan: unknown key "reason"$/);
@@ -162,4 +162,17 @@ test('checkRunOverlay: roles only on a role-review node, only for its declared r
   ]);
   assert.deepEqual(checkRunOverlay({ n_rev: { roles: { security: { model: 'gpt-5.5' } } } }, { workflow: ROLE_WF, models: MODELS, engine: 'claude' }).errors,
     ['node "n_rev.roles.security": gpt-5.5 runs on OpenAI Codex, not on Claude Code — pick a model this run\'s engine runs']);
+});
+
+test('parseRunOverlay takes a harness beside a model; checkRunOverlay judges a pinned pick on its own harness', () => {
+  assert.deepEqual(parseRunOverlay({ nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex' } } }), { overlay: { nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex' } } } });
+  assert.deepEqual(parseRunOverlay({ nodes: { n_plan: { model: 'gpt-5.5', engine: '' } } }), { overlay: { nodes: { n_plan: { model: 'gpt-5.5' } } } });
+  assert.equal(parseRunOverlay({ nodes: { n_plan: { model: 'gpt-5.5', engine: 'codx' } } }).error, 'node "n_plan": unknown harness "codx"');
+  assert.equal(parseRunOverlay({ nodes: { n_plan: { model: 'gpt-5.5', engine: 7 } } }).error, 'node "n_plan": engine must be a string naming a harness');
+  assert.equal(parseRunOverlay({ nodes: { n_rev: { roles: { security: { model: 'gpt-5.5', engine: 'codx' } } } } }).error, 'overlay.nodes.n_rev.roles.security: unknown harness "codx"');
+  const at = (sel, engine = 'claude') => checkRunOverlay({ n_plan: sel }, { workflow: WF, models: MODELS, engine });
+  assert.deepEqual(at({ model: 'gpt-5.5', engine: 'codex', effort: 'high' }), { nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex', effort: 'high' } }, wires: {}, errors: [] });
+  assert.deepEqual(at({ model: 'claude-opus-5-5', engine: 'codex' }).errors, ['node "n_plan": claude-opus-5-5 runs on Claude Code, not on OpenAI Codex — pick a model that harness runs']);
+  assert.deepEqual(at({ engine: 'codex' }).errors, ['node "n_plan": engine needs a model beside it']);
+  assert.deepEqual(at({ model: 'gpt-5.5' }).errors, ['node "n_plan": gpt-5.5 runs on OpenAI Codex, not on Claude Code — pick a model this run\'s engine runs'], 'a soft pick: as today');
 });

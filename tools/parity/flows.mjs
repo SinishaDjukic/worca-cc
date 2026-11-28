@@ -80,7 +80,7 @@ export const PAGES = [
   { name: 'new-run', view: 'new', hash: () => '#new' },
   { name: 'runs', view: 'runs', hash: () => '#runs' },
   { name: 'live-run', view: 'runs', hash: (s) => `#running/${s.heldRunId}` },
-  { name: 'history', view: 'runs', sub: '.run-status-word', hash: (s) => `#history/${s.projectKey}/${s.pipelineId}` },
+  { name: 'history', view: 'runs', sub: '.run-state-word', hash: (s) => `#history/${s.projectKey}/${s.pipelineId}` },
   { name: 'settings', view: 'settings', hash: () => '#settings' },
   { name: 'labs', view: 'settings', sub: '[data-flag-switch="flagsDemo"]', hash: () => '#settings/experimental' },
   { name: 'stats', view: 'stats', hash: () => '#stats' },
@@ -127,7 +127,7 @@ export const FLOWS = [
     const st = await finishRun(t, runId);   // answers the clarify stop through the API (D21)
     if (state) state.finished = { runId, pipelineId: st.pipelineId };   // history-open opens this run
     await page.waitForFunction(() => /^#history\//.test(location.hash), null, { timeout: 60_000 });  // the live page's own hand-off
-    const word = (await page.locator('.run-status-word:visible').first().textContent()).trim();
+    const word = (await page.locator('.run-state-word:visible').first().textContent()).trim();
     if (!DONE_WORDS.includes(word)) throw new FlowError('History status word is not a done word');
   } },
   { name: 'history-open', async run({ page, state }) {
@@ -136,15 +136,15 @@ export const FLOWS = [
     if (!/^[\w-]+$/.test(pid)) throw new FlowError('unexpected pipeline id');   // it goes into a selector below
     const row = `a.runs-row[data-pipeline-id="${pid}"]:visible`;                 // the Chats column renders a.runs-row too
     const done = async () => {
-      const word = (await page.locator('.run-status-word:visible').first().textContent()).trim();
+      const word = (await page.locator('.run-state-word:visible').first().textContent()).trim();
       if (!DONE_WORDS.includes(word)) throw new FlowError('History status word is not a done word');
     };
     await go(page, '#runs', 'runs', row);                                       // from the Runs list…
     await page.locator(row).first().click();
     await page.waitForFunction((p) => location.hash.startsWith('#history/') && decodeURIComponent(location.hash.split('/').at(-1)) === p, pid, { timeout: 30_000 });
-    await page.locator('.run-status-word:visible').first().waitFor();
+    await page.locator('.run-state-word:visible').first().waitFor();
     await done();
-    await go(page, await page.evaluate(() => location.hash), 'runs', '.run-status-word');   // …and by a cold deep link
+    await go(page, await page.evaluate(() => location.hash), 'runs', '.run-state-word');   // …and by a cold deep link
     await done();
     if (page.parityErrors.length || page.parityPageErrors) throw new FlowError(`${page.parityErrors.length} API 5xx, ${page.parityPageErrors} page errors`);
   } },

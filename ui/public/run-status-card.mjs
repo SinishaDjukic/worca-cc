@@ -2,7 +2,7 @@
 // page (live and finished) and the group page draw the dot or symbol, the status line, the group bar, the current
 // run's bar, the kind chip, the actions and the member rows from runModel / groupModel through this module. Pure DOM
 // over the host's ownerDocument; app.js and chat/run-card.mjs bind the handlers.
-import { paintStatusDot } from './status-dot.mjs';
+import { paintStatusDot, markDot, staleLive } from './status-dot.mjs';
 import { paintProgressBar, paintChainBar } from './run-progress-bar.mjs';
 import { prChip } from './runs-list.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
@@ -56,6 +56,66 @@ export function statusText(m, { stageBar = false } = {}) {
   return { word, line, text, head, detail: rest.join(SEP) };
 }
 
+// Shaper small runs s5 (D8): the dev state words a run page head detail drops beside the shared word.
+const DEV_STATE_WORDS = new Set(['needs you', 'paused', 'waiting', 'working', 'failed', 'stopped', 'running']);
+const dropDevState = (line) => (line == null ? line : String(line).split(SEP)
+  .filter((x) => { const t = x.trim().toLowerCase(); return t && !DEV_STATE_WORDS.has(t) && !t.startsWith('starts '); }).join(SEP));
+
+/** Shaper small runs s5 (D8, D9): the run page head of a marked feature's run, from runStatus's `{word, mark}` (`st`).
+ *  Null status, a null mark and `done` return `m` itself (a done run keeps its ship line and PR dot). A null word keeps
+ *  dev's word and line, only the dot changes. Otherwise the head reads the shared word and the detail keeps the step or
+ *  reason, with every dev state segment and dev's "starts after run N" dropped; '' gives an empty head and no detail.
+ *  Pure: a new object only when something changes. */
+export function sliceHeadModel(m, st) {
+  if (!m || !st || !st.mark || st.mark === 'done' || staleLive(st, m)) return m;
+  if (st.word == null) return markDot(m, st.mark, m.word);
+  const empty = st.word === '';
+  return { ...markDot(m, st.mark, st.word), word: st.word, lineSaysState: false,
+    line: empty ? '' : dropDevState(m.line), barLine: empty ? null : dropDevState(m.barLine) };
+}
+
+/** The run's own bar shows (a group draws the current member's instead). A run in Needs you only through its PR has
+ *  finished its pipeline, so it has no bar (an empty one read as 0%). */
+const barShows = (cur) => !!(cur && cur.progress && BAR_STATES.has(cur.state) && !cur.prNeeds);
+/** statusText's `stageBar` for a status block painted from `m`. */
+export const stageBarOf = (m) => !!m && !isGroup(m) && barShows(m);
+
+/** The run page's split of statusText: the header's state line says `head · step`, the card only `rest` (reason,
+ *  timing, verdict), never the head or the step again. */
+export function statusSplit(m, { stageBar = false } = {}) {
+  const st = statusText(m, { stageBar });
+  const segs = st.detail ? st.detail.split(SEP) : [];
+  const stage = m && m.progress && m.progress.mode === 'stages' ? String(m.progress.label || '') : '';
+  const working = !!m && m.state === 'working';
+  const step = working ? String(m.barLine || stage || segs[0] || '') : stage && segs[0] === stage ? stage : '';
+  const drop = new Set(working ? [step, stage] : [step]);
+  return { head: st.head, step, rest: segs.filter((s) => s && !drop.has(s)).join(SEP) };
+}
+
+/** Paint the run page's state line into `host` (idempotent): the dot or symbol, the state word and the step. Its nodes
+ *  are built once, so a live repaint never takes the focus off a line that links to the questions. */
+export function paintStateLine(host, m, { stageBar = false } = {}) {
+  if (!host || !m) return;
+  const doc = host.ownerDocument;
+  if (!host.__sl) {
+    const dot = doc.createElement('span');
+    const word = textEl(doc, 'span', 'run-state-word', '');
+    const step = textEl(doc, 'span', 'run-state-step', '');
+    host.replaceChildren(dot, word, step);
+    host.__sl = { dot, word, step };
+  }
+  const { dot, word, step } = host.__sl;
+  const sp = statusSplit(m, { stageBar });
+  paintStatusDot(dot, m);
+  const said = sp.step ? `${SEP}${sp.step}` : '';
+  if (word.textContent !== sp.head) word.textContent = sp.head;
+  if (step.textContent !== said) step.textContent = said;
+  step.hidden = !said;
+  host.dataset.state = m.state;
+  host.dataset.text = sp.head + said;
+  host.title = sp.head + said;                        // the line ellipsizes: the whole text on hover
+}
+
 /** The kind word of a feature (Shaper): kindLabel's `Feature · N runs` and, B1, the one card's chip. */
 export const FEATURE_KIND = 'Feature';
 
@@ -68,8 +128,10 @@ export function kindLabel(row) {
 }
 
 /** Paint the status block into `host` (idempotent): dot or symbol, status text, group bar, current run bar.
- *  `hold` (the group page, slice 3): a live group's member between runs keeps the last bar, edge still. */
-export function paintRunStatus(host, m, { hold = false } = {}) {
+ *  `hold` (the group page, slice 3): a live group's member between runs keeps the last bar, edge still.
+ *  `lead: false` (the run pages): the state line under the title already shows the dot, the word and the step, so the
+ *  block shows only statusSplit's `rest`, and no head at all when nothing is left. The data-* facts stay whole. */
+export function paintRunStatus(host, m, { hold = false, lead = true, detailHref } = {}) {
   if (!host || !m) return;
   const doc = host.ownerDocument;
   if (!host.__rs) {
@@ -87,23 +149,41 @@ export function paintRunStatus(host, m, { hold = false } = {}) {
     const roles = textEl(doc, 'div', 'run-status-roles', '');
     roles.hidden = true;
     host.append(head, roles, group, bar);
-    host.__rs = { dot, word, detail, group, bar, roles };
+    host.__rs = { head, dot, word, detail, group, bar, roles };
   }
-  const { dot, word, detail, group, bar } = host.__rs;
+  const { head, dot, word, detail, group, bar } = host.__rs;
   host.dataset.state = m.state;
   host.dataset.word = m.word;
   host.dataset.line = m.line;
   const g = isGroup(m);
   const cur = g ? m.current : m;
-  // A run in Needs you only through its PR has finished its pipeline, so it has no bar (an empty one read as 0%).
-  const show = !!(cur && cur.progress && BAR_STATES.has(cur.state) && !cur.prNeeds);
+  const show = barShows(cur);
   paintStatusDot(dot, m);
   const st = statusText(m, { stageBar: !g && show });
   host.dataset.text = st.text;                       // the one-line "State · detail" (lists and tests read this form)
   if (word.textContent !== st.head) word.textContent = st.head;
-  detail.textContent = st.detail;
-  detail.title = st.detail;                           // clamped at 2 lines: the full text on hover
-  detail.hidden = !st.detail;
+  const said = lead ? st.detail : statusSplit(m, { stageBar: !g && show }).rest;
+  if (typeof detailHref === 'string') {
+    // Slice 7 (D7): the status is one link (the hold's reason, to the Ship card); no title opens over it.
+    let link = host.__rs.link;
+    if (!link || link.parentElement !== detail) {
+      link = host.__rs.link = textEl(doc, 'a', 'run-status-link', '');
+      detail.replaceChildren(link);
+    }
+    if (link.getAttribute('href') !== detailHref) link.setAttribute('href', detailHref);
+    if (link.textContent !== (st.line || st.text)) link.textContent = st.line || st.text;
+    detail.removeAttribute('title');
+    detail.hidden = false;
+    word.hidden = true;
+  } else {
+    if (host.__rs.link) { host.__rs.link = null; detail.hidden = true; }   // the checkpoint's attribute order again
+    detail.textContent = said;
+    detail.title = said;                              // clamped at 2 lines: the full text on hover
+    detail.hidden = !said;
+    word.hidden = !lead;
+  }
+  dot.hidden = !lead;
+  head.hidden = !lead && !said;
   if (groupBarShows(m)) {
     paintChainBar(group, { total: m.progress.total, fraction: m.progress.fraction, text: `${m.count.done} done` });
   } else group.hidden = true;
@@ -223,7 +303,7 @@ export function memberStatusText(m) {
  *  over the row. `checks` (the chat card's feature) maps a member's key to its Requirements check: that row gets the
  *  check's fold under its status line. `oneLine` (Shaper's one card): the status sits right of the title on the same
  *  line, as a short state (`.run-member-state`), with no second line under the title. */
-export function renderMemberRows(doc, row, { checks, oneLine = false, shortState = null } = {}) {
+export function renderMemberRows(doc, row, { checks, oneLine = false, shortState = null, status = null, buildsOn = null } = {}) {
   const ol = doc.createElement('ol');
   ol.className = oneLine ? 'run-members is-table is-one-line' : 'run-members is-table';
   const items = [...(row.planning && row.planning.model ? [{ ...row.planning, isPlanning: true }] : []), ...(row.members || [])];
@@ -234,15 +314,24 @@ export function renderMemberRows(doc, row, { checks, oneLine = false, shortState
     li.dataset.state = m.state;
     li.dataset.key = mb.isPlanning ? 'planning' : String(mb.pipelineId || mb.ticketId || mb.position || '');
     const unnumbered = mb.isPlanning || mb.adhoc || row.groupKind === 'user';
+    // Shaper small runs s4 (D9, D12): `status(mb)` gives runStatus's {word, mark}; never asked for the planning row.
+    const st = typeof status === 'function' && !mb.isPlanning ? status(mb) : null;
+    const mark = st && st.mark ? st.mark : null;
     const dot = doc.createElement('span');
-    paintStatusDot(dot, m);
     const name = mb.isPlanning ? 'Planning' : (mb.title || '(untitled)');
     const title = textEl(doc, 'a', 'run-member-title', name);
     title.setAttribute('href', mb.href || '#runs');
     title.title = name;
     // Small runs C2 (D13): a marked card's `shortState(mb)` names a member's state in one short word; null keeps dev's.
-    const said = typeof shortState === 'function' && !mb.isPlanning ? shortState(mb) : null;
-    const line = textEl(doc, 'span', oneLine ? 'run-member-state' : 'run-member-line', typeof said === 'string' ? said : memberStatusText(m));
+    const said = st && typeof st.word === 'string' ? st.word
+      : typeof shortState === 'function' && !mb.isPlanning ? shortState(mb) : null;
+    const shown = typeof said === 'string' ? said : memberStatusText(m);
+    paintStatusDot(dot, mark ? markDot(m, mark, shown) : m);
+    if (mark) li.dataset.mark = mark;
+    // Shaper small runs s8 (D3): with `status`, a numbered row whose `buildsOn(mb)` is a list is a link row (run-links.mjs).
+    const links = typeof status === 'function' && !unnumbered && typeof buildsOn === 'function' ? buildsOn(mb) : null;
+    if (Array.isArray(links)) { li.dataset.run = String(mb.position); li.dataset.buildsOn = links.join(' '); li.tabIndex = 0; }
+    const line = textEl(doc, 'span', oneLine ? 'run-member-state' : 'run-member-line', shown);
     const pr = textEl(doc, 'span', 'run-member-pr', '');
     if (mb.adhoc) pr.append(textEl(doc, 'span', 'runs-indep', 'Independent'));
     if (m.pr && !m.pr.pending) pr.append(prChip(doc, m.pr, { link: true }));
@@ -261,16 +350,18 @@ export function renderMemberRows(doc, row, { checks, oneLine = false, shortState
   return ol;
 }
 
-/** D17: the group page's one ship line (a feature, or a chain in the one ship flow). `stackedOnly`: a small-runs
- *  feature ships a PR per run (One answers 409 STACKED_ONLY), so the line never offers One. */
-export function groupShipLine(row, { stackedOnly = false } = {}) {
+/** D17: the group page's one ship line (a feature, or a chain in the one ship flow). One is offered unless
+ *  `stackedOnly`: a small-runs feature with the Shaper small runs flag off ships a PR per run (One answers 409
+ *  STACKED_ONLY), so the line never offers One. */
+export function groupShipLine(row, { stackedOnly = false, hasChat } = {}) {
   if (!row || !['feature', 'chain', 'user'].includes(row.groupKind) || !row.model) return '';
   const { done, total } = row.model.count;
   const native = (row.members || []).filter((mb) => !mb.adhoc);
   const order = native.map((mb) => mb.position).join(' → ');
   const indep = (row.members || []).filter((mb) => mb.adhoc).map((mb) => mb.position);
   if (done < total) {
-    return row.groupKind === 'feature' ? `Ship card comes when all ${total} runs are done, here and in the chat.`
+    // Slice 7 (D10): a feature with no chat (hasChat false) gets its Ship card only on its page.
+    return row.groupKind === 'feature' ? `Ship card comes when all ${total} runs are done, ${hasChat === false ? 'on this page.' : 'here and in the chat.'}`
       : `${CREATE_PR_LABEL} comes when all ${total} runs are done.`;
   }
   // A run that already has its own PR disables One in the dialog (groupShipChoice), so the line stops offering it.

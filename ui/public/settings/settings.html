@@ -320,6 +320,26 @@
                    target="_blank" rel="noopener noreferrer">Suggest an improvement</a>
               </div>
             </section>
+
+            <!-- Security (docs/security-overview.md): the posture GET /api/security/posture reports, painted by
+                 security-status-view.mjs. Read-only. -->
+            <section class="card settings-card" id="security-card" data-min-level="advanced">
+              <div class="card-head"><div class="label-row"><h2>Security</h2>
+                <button type="button" class="info-tip" aria-label="About the security status">i<span class="tip-content hidden">
+                  What this Worca protects, as its own server can tell. Checks that need the host (the box's networks, its mounts) show as Unknown here: run worca container status on the host for those.
+                </span></button></div></div>
+              <div id="securityStatusBody"><p class="hint">Checking…</p></div>
+            </section>
+
+            <!-- Secret vault (docs/secrets.md, the secretVault flag): state, key store, counts by kind, last check and the
+                 actions, painted by settings/secret-vault-card.mjs. Hidden with the flag off (data-flag). -->
+            <section class="card settings-card" id="secret-vault-card" data-min-level="simple" data-flag="secretVault" hidden>
+              <div class="card-head"><div class="label-row"><h2>Secret vault</h2>
+                <button type="button" class="info-tip" aria-label="About the secret vault">i<span class="tip-content hidden">
+                  Encrypts the keys and tokens Worca saves, with a key the OS key store holds. It protects copies of Worca's files. It is not a sandbox: an agent that runs as you can still reach the key store.
+                </span></button></div></div>
+              <div id="secretVaultBody"><p class="hint">Checking…</p></div>
+            </section>
           </section>
           <!-- /pane general -->
 
@@ -433,7 +453,7 @@
               </div>
               <label class="field drow switch-drow" for="budgetLimitResume">
                 <span class="drow-label">Resume runs automatically when a usage limit resets
-                  <button type="button" class="info-tip" aria-label="About resuming after a usage limit">i<span class="tip-content hidden">When a run pauses on a plan's session or weekly limit, Worca schedules its resume for 5 minutes after the reset, on the same engine, at most 3 times in a row. Cost caps still pause for you.</span></button>
+                  <button type="button" class="info-tip" aria-label="About resuming after a usage limit">i<span class="tip-content hidden">When a run pauses on a usage limit whose reset time is known, Worca schedules its resume for 5 minutes after the reset, on the same engine, at most 3 times in a row. Cost caps still pause for you.</span></button>
                 </span>
                 <span class="drow-control"><input id="budgetLimitResume" data-setting="resumeAfterUsageLimit" class="sw-input" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></span>
               </label>
@@ -869,6 +889,41 @@
               </div>
               <div id="networkProxyBody"></div>
             </section>
+            <!-- Execution environment (docs/local-sandbox.md, docs/e2b.md): the user default of run.execEnv and the selected
+                 backend's limits. Rows carry data-exec-backend: only the selected backend's show (exec-env-settings-card.mjs),
+                 and Save sends every backend's fields, so switching the select loses nothing. -->
+            <section class="card settings-card" id="e2b-settings-card" data-min-level="expert">
+              <div class="card-head"><div class="label-row"><h2>Execution environment</h2>
+                <span class="exec-env-status" id="e2b-status-chip" role="status" hidden></span></div></div>
+              <p class="hint" id="exec-env-card-hint">Where a run's agents and scripts execute. Commits, pushes and PRs always stay here.</p>
+              <p class="hint exec-env-card-links" id="exec-env-card-links"></p>
+              <p class="hint exec-env-status-server" id="e2b-status-server" hidden></p>
+              <div class="drows">
+              <div class="field drow"><label class="drow-label" for="e2b-exec-env">Default execution environment</label>
+                <div class="drow-control"><div class="select-wrap"><select id="e2b-exec-env" class="select" data-setting="execEnv">
+                  <option value="local">Local</option><option value="e2b">E2B sandbox</option></select></div></div></div>
+              <div class="field drow" data-exec-backend="e2b"><label class="drow-label" for="e2b-max-sandboxes">Sandboxes at once</label>
+                <div class="drow-control"><input id="e2b-max-sandboxes" class="input" type="number" min="1" max="64" step="1" placeholder="4" data-setting="e2bMaxSandboxes"></div></div>
+              <div class="field drow" data-exec-backend="e2b"><label class="drow-label" for="e2b-max-wait">Max wait for an answer (min)</label>
+                <div class="drow-control"><input id="e2b-max-wait" class="input" type="number" min="5" max="1440" step="1" placeholder="240" data-setting="e2bMaxWaitMin"></div></div>
+              <div class="field drow" data-exec-backend="docker" hidden><label class="drow-label" for="docker-max-sandboxes">Sandboxes at once</label>
+                <div class="drow-control"><input id="docker-max-sandboxes" class="input" type="number" min="1" max="64" step="1" placeholder="2" data-setting="dockerMaxSandboxes"></div></div>
+              <div class="field drow" data-exec-backend="docker" hidden><label class="drow-label" for="docker-max-wait">Max wait for an answer (min)</label>
+                <div class="drow-control"><input id="docker-max-wait" class="input" type="number" min="5" max="1440" step="1" placeholder="240" data-setting="dockerMaxWaitMin"></div></div>
+              <div class="field drow" data-exec-backend="docker" hidden><label class="drow-label" for="docker-memory">Memory per sandbox</label>
+                <small class="hint drow-help">A size such as 4g, at least 512m.</small>
+                <div class="drow-control"><input id="docker-memory" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="4g" data-setting="dockerSandbox.memory"></div></div>
+              <div class="field drow" data-exec-backend="docker" hidden><label class="drow-label" for="docker-cpus">CPUs per sandbox</label>
+                <div class="drow-control"><input id="docker-cpus" class="input" type="number" min="0.5" max="256" step="0.5" placeholder="2" data-setting="dockerSandbox.cpus"></div></div>
+              <div class="field drow" data-exec-backend="docker" hidden><label class="drow-label" for="docker-pids">Processes per sandbox</label>
+                <div class="drow-control"><input id="docker-pids" class="input" type="number" min="64" max="65536" step="1" placeholder="2048" data-setting="dockerSandbox.pids"></div></div>
+              <div class="field drow" data-exec-backend="docker" hidden><label class="drow-label" for="docker-runtime">Container runtime</label>
+                <small class="hint drow-help">Optional: a stricter runtime Docker knows, such as runsc (gVisor). Empty uses Docker's default.</small>
+                <div class="drow-control"><input id="docker-runtime" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="Docker's default" data-setting="dockerSandbox.runtime"></div></div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px"><small class="hint" id="e2b-settings-msg"></small>
+                <button type="button" class="btn btn-primary btn-sm" id="e2b-settings-save">Save</button></div>
+            </section>
           </section>
           <!-- /pane runs -->
 
@@ -915,6 +970,20 @@
                 <span class="drow-label" id="chatLinksInPanelLabel">Open chat links in the panel</span>
                 <small class="hint drow-help">File paths and web links in the chat's answers open in a tab of the tool panel beside the chat. Off: web links open a new browser tab and file paths stay text.</small>
                 <span class="drow-control" id="chatLinksInPanelHost"></span>
+              </div>
+              </div>
+            </section>
+            <!-- Shaper ask screens: who is asking, one row as on the Worca root folder card: the label with its Labs chip
+                 and info tip, and in the control the composer role picker's own menu (the button is painted by
+                 mountRoleSetting under the flag only; saves on pick). -->
+            <section class="card settings-card" id="chat-role-card" data-min-level="simple" data-flag="shaperSmallRuns">
+              <div class="drows">
+              <div class="field drow">
+                <div class="label-row drow-label">
+                  <label for="chatRolePick" data-flag-chip="shaperSmallRuns">Your role</label>
+                  <button type="button" class="info-tip" aria-label="About your role">i<span class="tip-content hidden">Who is asking in the Shaper. Worca words its questions for you.</span></button>
+                </div>
+                <span class="drow-control" id="chatRoleHost"></span>
               </div>
               </div>
             </section>

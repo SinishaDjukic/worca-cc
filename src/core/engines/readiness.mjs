@@ -3,13 +3,17 @@
 // (engines/ready-cache.mjs) so a page or a pause asking twice spawns nothing new. Only the UI server's GET /api/engines
 // calls this; the text surfaces read the cache and never spawn a preflight.
 import { listEngines } from './index.mjs';
-import { engineLabel } from '../../shared/engine-switch.mjs';
+import { engineLabel, CHAT_ENGINE_NAMES } from '../../shared/engine-switch.mjs';
+import { chatEngineBin, chatEngineNotInstalled } from './chat.mjs';
 import { envFlag } from '../model-env.mjs';
 import { cachedReadiness, storeReadiness } from './ready-cache.mjs';
 import { probeClaudeAuth } from '../preflight.mjs';
 import { configuredClaudeBin, explainUnspawnableCli } from '../cli-resolve.mjs';
 import { CLAUDE_CLI } from './cli-specs.mjs';
 import { brokerEngineRefusal } from '../broker-client.mjs';
+import { listExecBackends } from '../exec-env/registry.mjs';
+import { engineCredential } from '../exec-env/policy.mjs';
+import { REMOTE_ENGINES } from '../../shared/exec-env.mjs';
 
 /** Claude's readiness: its sign-in (claude auth status, cached; env keys and the broker count as signed in). Only a
  *  definite signed-out refuses — an unknown answer (an older CLI) reads as ready, as the run-start check treats it. */
@@ -22,6 +26,16 @@ async function claudeSignIn() {
   return a.state === 'signed-out' ? { refusal: 'Claude Code is not signed in — run claude, then /login' } : {};
 }
 
+/** Whether worca's model relay can sign `name`'s calls in a remote sandbox (the credential in the server env: no spawn),
+ *  for each configured backend; null when no backend is configured or the engine runs locally only. */
+function sandboxSignIn(name, { backends, env }) {
+  if (!REMOTE_ENGINES.includes(name)) return null;
+  const titles = backends().filter((b) => { try { return b.configured(env); } catch { return false; } }).map((b) => b.title);
+  if (!titles.length) return null;
+  const cred = engineCredential(name, env);
+  return { titles, ready: !cred.problem, reason: cred.problem || null };
+}
+
 /**
  * Claude has no adapter preflight: its readiness is its sign-in (claudeSignIn), so a usage-limit pause never offers a
  * signed-out Claude.
@@ -29,9 +43,12 @@ async function claudeSignIn() {
  * "not ready"; the resume menu still lists Codex and the run-start gate decides.
  * `mock` defaults to the server's own rule (WORCA_MOCK, else ORCH_MOCK; '0'/'false' off): `!!WORCA_MOCK` would call
  * WORCA_MOCK=0 a mock and miss ORCH_MOCK=1.
- * @param {{force?:boolean, now?:number, mock?:boolean, preflights?:Record<string,()=>Promise<object>>}} [o]
+ * @param {{force?:boolean, now?:number, mock?:boolean, preflights?:Record<string,()=>Promise<object>>,
+ *   backends?:()=>object[], env?:object}} [o]
  *   preflights: a test seam replacing adapters' preflight by name. mock: every engine ready, nothing spawned.
- * @returns {Promise<Array<{name:string, label:string, ready:boolean, reason:string|null, broker?:true}>>}
+ *   backends, env: test seams for the sandbox sign-in (the registered remote backends, the server env).
+ * @returns {Promise<Array<{name:string, label:string, ready:boolean, reason:string|null, broker?:true,
+ *   sandbox?:{titles:string[], ready:boolean, reason:string|null}}>>}
  */
 /** The engines this instance never starts, whatever their sign-in (the credential broker is on): no preflight, nothing
  *  spawned, so a page can ask on every load (GET /api/engine-locks). */
@@ -41,7 +58,8 @@ export function engineLocks(env = process.env) {
     .filter((e) => e.reason).map((e) => ({ ...e, broker: true }));
 }
 
-export async function engineReadiness({ force = false, now = Date.now(), mock = envFlag('WORCA_MOCK', 'ORCH_MOCK'), preflights = {} } = {}) {
+export async function engineReadiness({ force = false, now = Date.now(), mock = envFlag('WORCA_MOCK', 'ORCH_MOCK'), preflights = {},
+  backends = listExecBackends, env = process.env } = {}) {
   const hit = force ? null : cachedReadiness(now);
   if (hit) return hit;
   const list = await Promise.all(listEngines().filter((e) => e.name !== 'mock').map(async (e) => {
@@ -53,8 +71,29 @@ export async function engineReadiness({ force = false, now = Date.now(), mock = 
     if (mock || typeof check !== 'function') return { name: e.name, label: engineLabel(e.name), ready: true, reason: null };
     let r;
     try { r = await check({}); } catch (err) { r = { warning: String(err?.message || err) }; }
-    return { name: e.name, label: engineLabel(e.name), ready: !r?.refusal, reason: r?.refusal || r?.warning || null };
+    const sandbox = sandboxSignIn(e.name, { backends, env });
+    return { name: e.name, label: engineLabel(e.name), ready: !r?.refusal, reason: r?.refusal || r?.warning || null, ...(sandbox ? { sandbox } : {}) };
   }));
   storeReadiness(list, now);
   return list;
+}
+
+/**
+ * What the setup dialog (Connect <engine>, ui/public/engine-setup.mjs) says of a chat engine: whether its CLI is installed
+ * here (a few stat()s: engines/chat.mjs chatEngineNotInstalled, the model picker's own check) and, once it is, the
+ * engine's readiness as GET /api/engines reports it (`force`: the dialog's Check again asks anew, skipping the cache).
+ * A missing CLI skips the readiness check, which would only find the same.
+ * @param {string} name
+ * @param {{force?:boolean, notInstalled?:(e:string)=>string|null, binOf?:(e:string)=>string|null,
+ *   readiness?:typeof engineReadiness}} [o]  test seams beside `force`
+ * @returns {Promise<null|{name:string, bin:string|null, installed:boolean, missing:string|null, ready:boolean|null,
+ *   reason:string|null, broker?:true}>}  null: not a chat engine. `ready` null: readiness had no row for it
+ */
+export async function engineSetupStatus(name, { force = false, notInstalled = chatEngineNotInstalled, binOf = chatEngineBin, readiness = engineReadiness } = {}) {
+  if (!CHAT_ENGINE_NAMES.includes(name)) return null;
+  const bin = binOf(name);
+  const missing = notInstalled(name);
+  if (missing) return { name, bin, installed: false, missing, ready: false, reason: null };
+  const row = (await readiness({ force })).find((e) => e.name === name) || null;
+  return { name, bin, installed: true, missing: null, ready: row ? row.ready === true : null, reason: row?.reason || null, ...(row?.broker ? { broker: true } : {}) };
 }

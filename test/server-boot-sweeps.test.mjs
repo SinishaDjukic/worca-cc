@@ -25,6 +25,7 @@ import { getDb } from '../src/core/db.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { templateRepo } from './helpers/git-dir.mjs';
+import { readServerSource } from '../src/core/read-server-source.mjs';
 
 useTempHome(after);
 
@@ -275,4 +276,38 @@ test('boot: a file left reading fails INTERRUPTED; old read folders and temp bod
   assert.deepEqual([res.attachmentReadFolders.removed, res.attachmentTempBodies.removed], [[oldRead], [oldTemp]]);
   assert.deepEqual([existsSync(oldRead), existsSync(freshRead), existsSync(oldTemp), existsSync(freshTemp)], [false, true, false, true]);
   assert.equal((await bootMaintenance({ log: () => {} })).recoveredAttachmentReads, 0, 'idempotent');
+});
+
+// Slice 5 (R-arch-1, D6): the boot marks the runs it is about to resume as soon as the reconcile has named them,
+// before bootMaintenance's first await, so they hold their turn before the scheduler's first tick.
+test('bootMaintenance reports the reconciled ids before its first await', async () => {
+  seedPipelineRow({ id: 'bootmk01', status: 'running', heartbeatAt: '2000-01-01T00:00:00.000Z' });
+  let seen = null;
+  const pending = bootMaintenance({ log: () => {}, onReconciled: (ids) => { seen = ids; } });
+  const beforeAwait = seen;
+  const res = await pending;
+  assert.ok(Array.isArray(beforeAwait), 'onReconciled is called synchronously');
+  assert.ok(beforeAwait.includes('bootmk01'));
+  assert.deepEqual(beforeAwait, res.reconciledIds);
+});
+
+test('bootMaintenance: a throwing onReconciled does not stop maintenance', async () => {
+  seedPipelineRow({ id: 'bootmk02', status: 'running', heartbeatAt: '2000-01-01T00:00:00.000Z' });
+  let calls = 0;
+  const res = await bootMaintenance({ log: () => {}, onReconciled: () => { calls += 1; throw new Error('boom'); } });
+  assert.equal(calls, 1);
+  assert.ok(res.reconciledIds.includes('bootmk02'));
+  assert.ok(res.legacy, 'the later sweeps still ran');
+});
+
+test('boot wiring: the boot bootMaintenance call passes onReconciled, and its rejection handler clears the marks', () => {
+  const src = readServerSource(undefined, { routes: false });
+  const main = src.slice(src.indexOf('if (isMain) {'));
+  const from = main.indexOf('bootMaintenance({');
+  assert.ok(from > 0, 'the boot call passes options');
+  const boot = main.slice(from, main.indexOf("server.on('error'"));
+  assert.match(boot, /^bootMaintenance\(\{\s*onReconciled\b[\s\S]*?markBootResumes\(\s*bootResumePicks\(/);
+  const rejected = boot.slice(boot.lastIndexOf('}, (err) => {'));
+  assert.ok(rejected.includes('bootMaintenanceFailed = true'), 'the rejection handler of the boot call');
+  assert.ok(rejected.includes('bootResuming.clear()'));
 });

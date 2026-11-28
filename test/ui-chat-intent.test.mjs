@@ -330,3 +330,98 @@ test('a workflow on any intent but run is ignored', () => {
   assert.equal(s.doc.querySelector('.chat-intent-l').textContent, 'Write a script');
   assert.equal(s.ctl.workflow(), null);
 });
+
+// The role picker's two hooks: the bubble drops the role line, and the controller tells a subscriber about the pin.
+test('splitIntentLead: the role paragraph after the Shaper lead leaves the bubble and comes back as `role`', () => {
+  const lead = INTENTS.shape.lead;
+  assert.deepEqual(splitIntentLead(`${lead}\n\nAsking as: compliance.\n\nUploads fail`), { intent: 'shape', role: 'compliance', text: 'Uploads fail' });
+  assert.deepEqual(splitIntentLead(`${lead}\n\nAsking as: qa.`), { intent: 'shape', role: 'qa', text: '' });
+  assert.deepEqual(splitIntentLead(`${lead}\n\nAsking as: ux.\n\n> From plan.md:\n> x\n\nWhy?`),
+    { intent: 'shape', role: 'ux', text: '> From plan.md:\n> x\n\nWhy?' });
+});
+
+test('splitIntentLead: no role key without a real role line right after the Shaper lead', () => {
+  const lead = INTENTS.shape.lead;
+  assert.deepEqual(splitIntentLead(`${lead}\n\nAsking as: boss.\n\nx`), { intent: 'shape', text: 'Asking as: boss.\n\nx' });
+  assert.deepEqual(splitIntentLead(`${lead}\n\nx\n\nAsking as: qa.`), { intent: 'shape', text: 'x\n\nAsking as: qa.' });
+  assert.deepEqual(splitIntentLead('Asking as: qa.\n\nx'), { intent: null, text: 'Asking as: qa.\n\nx' });
+  assert.deepEqual(splitIntentLead(`${INTENTS.run.lead}\n\nAsking as: qa.`), { intent: null, text: `${INTENTS.run.lead}\n\nAsking as: qa.` });
+});
+
+test('onChange fires once per set and clear, after the chip is repainted, and stops once unsubscribed', () => {
+  const s = setup();
+  const seen = [];
+  const off = s.ctl.onChange(() => seen.push([s.ctl.current(), s.chip()?.dataset.intent ?? null]));
+  assert.equal(typeof off, 'function');
+  assert.deepEqual(seen, [], 'subscribing alone fires nothing');
+  s.ctl.set('shape');
+  assert.deepEqual(seen, [['shape', 'shape']]);
+  s.ctl.set('run', { focus: false });
+  assert.deepEqual(seen.at(-1), ['run', 'run']);
+  s.ctl.clear();
+  assert.deepEqual(seen.at(-1), [null, null]);
+  assert.equal(seen.length, 3);
+  s.ctl.clear();
+  s.ctl.set('nope');
+  assert.equal(seen.length, 3, 'nothing changed: nothing fired');
+  off();
+  s.ctl.set('shape');
+  assert.equal(seen.length, 3);
+});
+
+test('onChange also fires when the pin goes by itself: ✕, Backspace, leave(), and the message landing', () => {
+  const s = setup();
+  const seen = [];
+  s.ctl.onChange(() => seen.push(s.ctl.current()));
+  s.ctl.set('shape');
+  s.chip().querySelector('.chat-intent-x').click();
+  s.ctl.set('shape');
+  key(s.doc, s.input, 'Backspace');
+  s.ctl.set('shape');
+  s.ctl.leave();
+  s.ctl.set('shape');
+  s.handle.transformSend('x');
+  s.handle.update({ id: 'ask_00000001', messages: [{ role: 'user' }] });
+  assert.deepEqual(seen, ['shape', null, 'shape', null, 'shape', null, 'shape', null]);
+});
+
+// Guide's "never on send": the controller tells a subscriber about every Ask send, with the sending composer's field.
+test('onSend subscribers: each is called once per send with that mount\'s field, after the onSend option; an unsubscribed one is not; a throw blocks nothing', () => {
+  const order = [];
+  const s = setup({ onSend: () => order.push('option') });
+  assert.equal(typeof s.ctl.onSend, 'function', 'the controller\'s subscription');
+  const gone = [];
+  const got = [];
+  const off = s.ctl.onSend((e) => gone.push(e));
+  s.ctl.onSend(() => { order.push('boom'); throw new Error('boom'); });
+  s.ctl.onSend((e) => { order.push('kept'); got.push(e); });
+  assert.equal(typeof off, 'function');
+  off();
+  assert.deepEqual(order, [], 'subscribing alone calls nothing');
+  s.ctl.set('shape');
+  assert.equal(s.handle.transformSend('Uploads fail on large files'), `${INTENTS.shape.lead}\n\nUploads fail on large files`);
+  assert.deepEqual(order, ['option', 'boom', 'kept'], 'the option once, then each subscriber once');
+  assert.equal(got.length, 1);
+  assert.equal(got[0].field, s.input);
+  assert.equal(gone.length, 0);
+  s.ctl.clear();
+  assert.equal(s.handle.transformSend('plain'), 'plain');
+  assert.equal(got.length, 2, 'every Ask send, with or without an intent');
+});
+
+test('onSend subscribers: a second composer\'s send carries its own field', () => {
+  const s = setup();
+  assert.equal(typeof s.ctl.onSend, 'function', 'the controller\'s subscription');
+  const fields = [];
+  s.ctl.onSend((e) => fields.push(e.field));
+  const other = s.doc.createElement('div');
+  other.className = 'ask-composer';
+  other.innerHTML = '<div class="ask-composer-box"><div class="chat-composer-lead"></div><textarea class="ask-input"></textarea></div>';
+  s.doc.body.appendChild(other);
+  const second = s.ctl.addon.mount(other.querySelector('.chat-composer-lead'), { doc: s.doc });
+  second.transformSend('x');
+  s.handle.transformSend('y');
+  assert.equal(fields.length, 2);
+  assert.equal(fields[0], other.querySelector('.ask-input'));
+  assert.equal(fields[1], s.input);
+});

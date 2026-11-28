@@ -1,7 +1,7 @@
 // test/ask-engine-ui.test.mjs — the panel's engine helpers (cascading-settings-design.md §6 Ask, D12, D16).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { engineOfEntry, chatEngineOf, chatSpawnsAgents, pickerGroups, moreHarnesses, attachRefusal, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from '../ui/public/ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, chatSpawnsAgents, pickerGroups, engineNotReady, needsHarness, SET_UP_HARNESS, moreHarnesses, notInstalledHarnesses, attachRefusal, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from '../ui/public/ask-engine.mjs';
 import { chatSwitchChanges } from '../src/shared/engine-switch.mjs';
 
 const CAT = { models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }, { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex' }] };
@@ -30,6 +30,37 @@ test('moreHarnesses: the sign-in chat engines with no model, in picker order; no
   const all = [...some, { id: 'g', engine: 'goose' }, { id: 'q', engine: 'qwen' }];
   assert.deepEqual(moreHarnesses(all), []);
   assert.deepEqual(moreHarnesses(null).map((h) => h.engine), ['gemini', 'goose', 'opencode', 'qwen'], 'an engine with built-ins (Claude Code, Codex, Copilot) is never one');
+  assert.deepEqual(moreHarnesses(CAT.models, { gemini: 'Gemini CLI is not installed', qwen: 'Qwen Code is not installed' }).map((h) => h.engine),
+    ['goose', 'opencode'], 'an engine not installed here is left out');
+});
+
+test('needsHarness: nothing a new chat can take for want of an installed engine; a chat on a missing engine keeps its own', () => {
+  const none = { ...CAT, notReady: { claude: 'Claude Code is not installed.', codex: 'OpenAI Codex is not installed.' } };
+  assert.equal(SET_UP_HARNESS, 'Set up a harness');
+  assert.equal(needsHarness(none, none.models), true);
+  assert.equal(needsHarness(none, none.models, { active: 'claude', current: 'claude-opus-5-5' }), false, 'a chat already on Claude keeps its section');
+  const some = { ...CAT, notReady: { claude: 'Claude Code is not installed.' } };
+  assert.equal(needsHarness(some, some.models), false, 'Codex is installed');
+  assert.deepEqual(pickerGroups(some.models, { notReady: some.notReady }).map((g) => g.engine), ['codex'], 'Claude is left out like any missing engine');
+  assert.deepEqual(notInstalledHarnesses(some).map((h) => h.engine), ['claude'], 'and listed among the harnesses to set up');
+  assert.equal(needsHarness({ models: [] }, []), false, 'an empty catalog with every engine installed is not one');
+  assert.equal(needsHarness(null, []), false);
+});
+
+test('notInstalledHarnesses: the engines the catalog says are missing, in picker order, with their setup docs; a shown one is left out', () => {
+  const catalog = {
+    ...CAT,
+    notReady: { qwen: 'Qwen Code is not installed.', codex: 'OpenAI Codex is not installed.' },
+    setupDocs: { qwen: 'https://docs.example.test/qwen', codex: 'https://docs.example.test/codex' },
+  };
+  assert.deepEqual(notInstalledHarnesses(catalog), [
+    { engine: 'codex', label: 'OpenAI Codex (beta)', reason: 'OpenAI Codex is not installed.', docsUrl: 'https://docs.example.test/codex' },
+    { engine: 'qwen', label: 'Qwen Code (beta)', reason: 'Qwen Code is not installed.', docsUrl: 'https://docs.example.test/qwen' },
+  ], 'an engine with models (Codex) is listed too: the picker has no section for it');
+  assert.deepEqual(notInstalledHarnesses(catalog, ['claude', 'codex']).map((h) => h.engine), ['qwen'], 'a chat already on Codex has its section');
+  assert.equal(notInstalledHarnesses({ notReady: { goose: 'Goose is not installed.' } })[0].docsUrl, null, 'no setup docs: no link');
+  assert.deepEqual(notInstalledHarnesses(CAT), [], 'every engine installed');
+  assert.deepEqual(notInstalledHarnesses(null), []);
 });
 
 test('attachRefusal: a Codex chat refuses PDFs and names the chats that view them', () => {
@@ -104,10 +135,33 @@ test('engineSwitchConfirm: always says what can differ, and the context window w
   assert.match(flat.message, /with GLM-4\.7\. This chat keeps/, 'a model without effort names none');
 });
 
+test('pickerGroups notReady: an engine not installed here is left out, unless the chat is on it (then only its model)', () => {
+  const many = [...CAT.models, { id: 'gpt-5.4', label: 'GPT-5.4', engine: 'codex' }];
+  const notReady = { codex: 'not installed' };
+  assert.deepEqual(pickerGroups(many, { notReady }).map((g) => g.engine), ['claude']);
+  assert.deepEqual(pickerGroups(many, { notReady, active: 'claude' }).map((g) => g.engine), ['claude']);
+  const own = pickerGroups(many, { notReady, active: 'codex', current: 'gpt-5.4' });
+  assert.deepEqual(own.map((g) => [g.engine, g.models.map((m) => m.id), g.notReady || null]), [['claude', ['claude-opus-5-5'], null], ['codex', ['gpt-5.4'], 'not installed']]);
+  assert.deepEqual(pickerGroups(many, { notReady, lock: 'codex', active: 'codex', current: 'gpt-5.5' }).map((g) => g.models.map((m) => m.id)), [['gpt-5.5']]);
+  assert.deepEqual(pickerGroups(many, { notReady: {}, active: 'codex' }).map((g) => g.models.length), [1, 2], 'an empty map hides nothing');
+  // A model both harnesses reach stays in the Claude section.
+  const both = [{ id: 'resp-1', engine: 'claude', harnesses: ['claude', 'codex'] }];
+  assert.deepEqual(pickerGroups(both, { notReady }).map((g) => g.engine), ['claude']);
+});
+
+test('engineNotReady: the catalog\'s reason for an engine, else null', () => {
+  assert.equal(engineNotReady({ notReady: { codex: 'why' } }, 'codex'), 'why');
+  assert.equal(engineNotReady({ notReady: { codex: 'why' } }, 'claude'), null);
+  assert.equal(engineNotReady({}, 'codex'), null);
+  assert.equal(engineNotReady(null, 'codex'), null);
+});
+
 test('pickerEngineName: the button names the engine whenever the catalog offers more than one (#943)', () => {
   assert.equal(pickerEngineName(CAT.models, 'codex'), 'OpenAI Codex');
   assert.equal(pickerEngineName(CAT.models, 'claude'), 'Claude Code');
   assert.equal(pickerEngineName([CAT.models[0]], 'claude'), '', 'one engine: nothing to tell apart');
+  assert.equal(pickerEngineName(CAT.models, 'claude', { notReady: { codex: 'x' } }), '', 'an engine the picker leaves out is not counted');
+  assert.equal(pickerEngineName(CAT.models, 'codex', { notReady: { codex: 'x' }, active: 'codex', current: 'gpt-5.5' }), 'OpenAI Codex', 'a chat on it still counts it');
 });
 
 test('engineLead: a hidden model or one that needs a sign-in never leads; the default does (#943)', () => {

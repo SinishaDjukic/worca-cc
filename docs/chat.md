@@ -1,13 +1,24 @@
 # Chat
 
 Chat (Ask Worca) is Worca's home page. It answers from Worca's own records, and any change it suggests comes as a
-card you confirm. To drive runs from Telegram, Slack, Discord or Teams, see [Plugins](plugins.md).
+card you confirm. To drive runs from Telegram, Slack, Discord or Teams, see [Plugins](plugins.md). For the small things in the composer and the chats list, see [Chat basics](chat-basics.md).
 
 ## Which engine answers
 
 A chat runs on the model you pick. The composer's model button lists each engine that has models. An engine with
-none yet (Gemini CLI, Goose, OpenCode, Qwen Code) sits under **More harnesses**: pick one to open `Add model` on it in
-[Models > Catalogue](models.md#the-catalogue-tab). Once it has a model it gets its own row and a chat can move to it.
+none yet (Gemini CLI, Goose, OpenCode, Qwen Code) sits under **More harnesses** when it is installed on this machine:
+pick one to open `Add model` on it in [Models > Catalogue](models.md#the-catalogue-tab). Once it has a model it gets its
+own row and a chat can move to it. An engine that is not installed is listed at the foot of **More harnesses**, dimmed
+and marked *not installed*, so a machine with one engine still has a way to add another. Its row opens that engine's
+setup dialog (**Connect OpenAI Codex**, **Connect Goose**, … and **Connect Claude Code**, the same dialog for every
+engine): the install command, the `WORCA_<ENGINE>_BIN` variable for a binary elsewhere, the sign-in step, a link to the
+engine's section in [Models](models.md#chat), and **Check again**, which asks the server whether the engine is now
+installed and ready. When no engine is installed, the model button says **Set up a harness**, and its menu is that list.
+The browser extension has no dialog: its rows open the engine's setup section in a new tab.
+
+The composer is a compact bar of icons: the **+** button (attach files), the project button, **Requirements** (when the requirements flag is on in Labs) and **Sets** (the layers icon, Advanced, shown once a set in play has a member), then
+the context ring, the model button (Advanced), which carries the mark of the engine the chat runs on, and one voice control. In a design's chat, the
+**Models and Build fast** gear sits beside the model button ([Design](design.md#in-the-chat)).
 
 ## A chat that is the home page
 
@@ -18,8 +29,12 @@ Chat answers from Worca's own records: runs with their diffs, progress and clari
 schedules, team metrics and policy, models, Actions, and tasks from installed trackers.
 
 It reads code in read-only, detached worktrees, with an allowlisted `git` (`log`, `diff`, `blame`, `grep`…). You can
-attach text files, images and PDFs. Chat has no file-editing tools of its own. In agent mode (below) it changes
+attach files of any type. Chat has no file-editing tools of its own. In agent mode (below) it changes
 files only through commands you ask for.
+
+Installed command-line tools, such as `gh`, `az` and `jira`, work in a chat once you are signed in to them. Ask for an
+issue, a comment or a label and Chat checks the tool's login first, then runs it. It acts on a code host or tracker
+only for what you asked, and asks first when the target is unclear or the action deletes or merges.
 
 Settings › **Chat** (Advanced) sets:
 
@@ -57,6 +72,10 @@ new agents and scripts.
 Other changes are cards too: model and provider, workspace, Actions, team-metrics, team-policy and Away mode
 changes, creating, adding or cloning a project, and reading a new website.
 
+In Telegram, Slack, Discord and Teams, a chat app can also hold a freeform chat in a thread, once you turn on
+**Freeform chat** for that plugin. A run proposal there is a card with a **Start run** button. Setup is in
+[Plugins](plugins.md).
+
 ### Following a run from the chat
 
 A started run becomes a live card. It shows the status, elapsed time, cost, the agents and the workflow graph, with
@@ -68,6 +87,79 @@ instead of a message to the chat. The chat still posts when the run waits for an
 
 A pull request opened from a chat card keeps reporting there. The card shows its Watch PR status. Each fix run that
 Watch PR or Resolve starts on it appears in the chat as a live run card, with what started it and how it ended.
+
+## Security and sandboxes
+
+Chat knows how this Worca is set up. Every message carries one `security:` line. It names the setup (native,
+container, hardened box or hosted), the credential broker, agent users, the outbound network, where the proxy login
+lives and the default execution environment.
+
+Ask it "is this run sandboxed?", "why can't I use Docker?" or "what does the hardened box protect?". It reads:
+
+- **the security posture**: the same rows as Settings › General › Security.
+- **the execution environments**: Local, Local sandbox (Docker) and E2B sandbox. Each says ready or why not, the slots
+  in use and the cap, and the wait limit.
+- **a project's sandbox environment**: its network (open or allow), its template or image, its environment spec and
+  its builds, current or stale.
+- **the secret vault** (Labs flag `secretVault`): its state, the OS key store's name and how many saved secrets of each
+  kind are in it or still in files. Never a value, a name or a key. The `security:` line then carries `vault=`. Chat
+  changes nothing here: see [Secrets and the vault](secrets.md).
+- **a sandbox run**: waiting for a slot, building the image, the answer-by time and the files held for review.
+
+It states the claim exactly: no model key, no git token and no proxy login in an agent's reach. It never says "no
+secrets". MCP registry secrets stay in reach of the runs that use them. A Local run on a native install is not
+sandboxed.
+
+A run card that asks for a sandbox runs the run start's checks first. When Docker is not running or E2B is not set
+up, Chat says so and offers Local.
+
+Chat changes a project's sandbox with cards you apply:
+
+- **the environment spec**: pinned tools and apt packages. Set or clear it.
+- **a build** of the project's template or image from its spec. It runs on the Worca server.
+- **the sandbox settings**: the network (open or allow) and the template or image.
+
+Chat can also change the Docker and E2B limits in Settings › Runs, with a receipt and Revert.
+
+Chat never changes the credential broker, agent users, the allow-list or the box's base image. Whoever runs Worca
+sets those. In the hardened box, Chat adds a project by cloning it only. Chat's own file tools never read the proxy
+login file, `/run/secrets` or the egress sidecar's data.
+
+### Known limits of the command guard
+
+In agent mode, a check runs before each of Chat's own commands. It refuses a command that names the proxy login,
+Docker secrets or the egress sidecar's data, however the path is spelled.
+
+The check is a guard on Chat's own commands, on an install where Chat runs as you. It is not the security boundary.
+The boundary is file permissions, agent users and the egress sidecar. On a native install, an agent or a chat that
+runs as your OS user can reach every file you can read.
+
+When a command holds something the check cannot work out, it treats the whole command as unsure. That includes a
+variable set at run time, `$(…)`, `eval`, `read` or a `cd` to such a folder. An unsure command is refused when any
+word names `secrets`, `egress` or the proxy login file. It is also refused when it runs a reader that walks folders
+(`find`, `grep -r`, `rg`, `tar`, `cp -r`, and a few more) without plain paths. The refusal says how to rephrase it.
+Put a `cd` to a written-out path first, then give plain paths.
+
+What the check does not catch:
+
+- A program that builds a path when it runs: a script, `python -c`, `node -e`.
+- A symlink made earlier that points into a protected folder.
+- A tool that reads a folder it is not told about, such as a config file that names one.
+- Any other way of spelling a path. Each new one goes on this list, not into the check.
+
+For the secret vault the check refuses the OS key store tools (`security`, `secret-tool`, keyring modules) and
+`worca secrets export`, `reset` and `ack`. It matches them after removing quotes and backslashes. It also refuses an
+unsure command that names those tools or Worca's own CLI, or that holds a `$'…'` string with a backslash escape.
+
+The check reads text, so it is defence in depth. That is why `worca secrets export`, `reset` and `ack` run only in a
+person's own terminal, after they type a word the command shows. No variable or option lifts that. On a native
+install, anything that runs as your OS user can reach the OS key store. The secret vault is at-rest encryption, not a
+sandbox.
+
+See [Security overview](security-overview.md) and [Secrets and the vault](secrets.md).
+
+More: [Choose a setup](choose-a-setup.md), [Security overview](security-overview.md),
+[Environment spec](environment-spec.md), [Network proxy](network-proxy.md).
 
 ## Agent mode with a shared terminal
 
@@ -85,13 +177,17 @@ Select text in a chat answer, a markdown artifact or the Diff tab. You can then 
 
 ## Per-agent models for one run
 
-On a run card for a saved workflow, Chat can pick a model and effort for each agent step from the catalog.
+On a run card for a saved workflow, Chat can pick a model and effort for each agent step from the models the run's
+default harness runs. A step the workflow or the project sets to another harness keeps it.
 Judgement steps get the top price tier, and mechanical steps the cheapest capable model, Anthropic first, then
 OpenAI. It picks a premium-tier model such as Fable 5.1 only when you name it.
 
 Each pick sits beside the project's own setting, with its reason on hover. Change or reset any of them before
-**Start run**. The picks apply to that run only. To keep them, turn on **Save as project defaults**. More in
-[Models](models.md#per-agent-models-for-one-run).
+**Start run**: a row's model opens the harness › provider › model picker, so a step can run on another harness than the
+run's (**inherit** keeps the workflow default). **Default harness**, under Advanced, is where every step set to inherit
+runs; changing it keeps the steps you pinned to a harness. When a step's harness cannot hold the guardrail rules, Start
+asks before it runs without them. The picks apply to that run only. To keep them, turn on **Save as project defaults**.
+More in [Models](models.md#per-agent-models-for-one-run).
 
 ## Files in the chat
 
@@ -103,11 +199,14 @@ file came from.
 Files are copied into the chat. Credential files, and anything outside the chat's folders, are refused. See
 [Files in the chat](show-files.md).
 
+File paths and web links in answers, and the assistant's own tab tools, open in the tool panel
+([Terminal](terminal.md#the-tool-panel)). This needs **Tool panel** in Settings › **Labs**, which is off by default.
+
 ## Memory
 
 Say "remember …" or state a lasting preference, and Ask saves it to Worca's memory. Global memory is for how you
 work. Project memory is for facts about one repository. Pipeline agents load the same memory. You can view, edit,
-delete or restore it on Settings › **Memory** and on a project's **Memory** tab.
+delete or restore it on Settings › **Memory** and on a project's **Memory** tab. More in [Memory](memory.md).
 
 - A run loads memory as it was when the run started, and a resume loads that same set. Each step records which set
   it loaded (a sha256 in the step record; the files are in the run's `memory.json`).

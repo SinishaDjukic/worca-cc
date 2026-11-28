@@ -331,3 +331,10 @@ test('I-1: readConnectorCalls applies the redactors still held for a try log tha
     assert.equal(e.arguments.text, 'key [redacted]');
   } finally { tryLogTesting.reset(); }
 });
+
+test('stepEngines: a step pinned to another harness adds it', () => {
+  const graph = { nodes: [{ id: 'a', kind: 'agent', config: {} }, { id: 'b', kind: 'agent', config: { model: 'gpt-5.5', engine: 'codex' } },
+    { id: 'c', kind: 'agent', config: { roleReview: { roles: [{ key: 'qa', label: 'QA', model: 'claude-opus-5-5', engine: 'claude' }], source: 'declared', target: 'plan', sink: 'refiner' } } }] };
+  assert.deepEqual(stepEngines(graph, { runEngine: 'cursor' }), ['claude', 'codex', 'cursor']);
+  assert.deepEqual(stepEngines({ nodes: [{ id: 'b', kind: 'agent', config: { engine: 'codex' } }] }, { runEngine: 'claude' }), ['claude'], 'an engine with no model is no pin');
+});

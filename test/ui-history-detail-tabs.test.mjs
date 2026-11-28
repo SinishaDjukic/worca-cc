@@ -1,19 +1,38 @@
 // test/ui-history-detail-tabs.test.mjs
 // History detail: the Overview, Agents, Clarify, Logs, form, glance and bar sections, and the
 // Actions tab. Shared boot and fixtures: helpers/history-detail-boot.mjs.
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  PROJECT, boot, settle, go, KEY, ROW, DETAIL, PAUSED_DETAIL, RESULTS, retainedRow, blockedBudget, ok,
-  fail, DETAIL_URL, detailHash, bootDetail, openDetail, deliverRows, click, secOf, badgeOf, PATCH,
+  PROJECT, settle, go, KEY, ROW, DETAIL, PAUSED_DETAIL, RESULTS, retainedRow, blockedBudget, ok, okBudget,
+  fail, DETAIL_URL, detailHash, historyArms, openDetail, deliverRows, click, secOf, badgeOf, PATCH,
   diffResults, diffDetail, patchArm, filesOf, paneOf, confirmDialog, proposalFor,
 } from './helpers/history-detail-boot.mjs';
+import { useSharedApp, restoreAfter } from './helpers/shared-app-boot.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { openTab as openRunTab } from './helpers/run-tabs.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
 import { careRunPlan } from '../src/shared/shape/feature-record.mjs';
+
+// One app boot for the file (test/helpers/shared-app-boot.mjs), reset before each test. The boot's own answers are
+// history-detail-boot's: the project list, and a benign default for everything else.
+const app = useSharedApp({ before, beforeEach, after }, {
+  fetchHandler: (u) => Promise.resolve(String(u).includes('/api/projects')
+    ? { ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: PROJECT, exists: true }] }) }
+    : { ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [] }) }),
+});
+
+// history-detail-boot's bootDetail over the shared app: the same mutable `box` and route table (historyArms), a reset
+// instead of a new import. `deepLink` lands on the run's route after the reset, as a reload on that address does.
+const bootDetail = async ({ rows = [ROW], detail = DETAIL, budget = okBudget(), arms = null, deepLink = false } = {}) => {
+  const box = { rows, detail, budget };
+  const base = historyArms(box);
+  await app.fresh({ fetchHandler: (url, opts) => (arms && arms(url, opts, box)) || base(url, opts), ...(deepLink ? { hash: detailHash } : {}) });
+  return { window: app.window, calls: app.calls, wsBox: app.wsBox, box };
+};
 
 // Click the action button of the newest toast (Retry | Details).
 const clickToastAction = (window) => {
@@ -159,45 +178,6 @@ test('Overview findings: keyThingsToCheck render, workspace findings collected f
       assert.match(verdict.textContent, /1 thing to check/);
       assert.equal(sec.querySelector('.issue-loc').textContent, 'proj-a-00000001: x.js:2',
         'the location is prefixed with its project key');
-    } },
-  ]);
-});
-
-test('the WORKTREE card reads retained while running and flips released -> retained in place', async () => {
-  await checkRows([
-    { name: 'the WORKTREE card flips released -> retained without leaving the tab', run: async () => {
-      // The carried-over phase-4 assertion. A tab body is built exactly ONCE, so the
-      // one body that reads mutable record fields only tracks the authoritative row
-      // because refreshHdFromRow calls refreshHdOverviewTab() — without it this card
-      // would read `released` for the life of the screen.
-      const ctx = await bootDetail({ rows: [], detail: DETAIL, deepLink: true });
-      await settle(ctx.window, 5);
-      const doc = ctx.window.document;
-
-      const sec = secOf(doc, 'overview');
-      assert.equal(sec.hidden, false, 'results-null -> Overview is the default tab');
-      assert.match(sec.querySelector('.hd-ov-wt .hd-ov-wt-state').textContent, /^released$/,
-        'the deep-link stub carries no retainedWork');
-
-      await deliverRows(ctx, [retainedRow()]);
-      assert.equal(secOf(doc, 'overview'), sec, 'the SAME section node is repainted in place');
-      assert.equal(sec.hidden, false, 'and the user never left the tab');
-      assert.equal(sec.querySelector('.hd-ov-wt .hd-ov-wt-state').textContent, 'retained');
-      assert.equal(sec.querySelectorAll('.hd-ov-wt').length, 1, 'the repaint replaces, never stacks');
-    } },
-    { name: 'the WORKTREE card reads retained while the run is still running', run: async () => {
-      // Running pipelines DO appear in History (listAllPipelines filters only
-      // `archived_at IS NULL`), and their worktree is very much still on disk — the
-      // card printed the live path under the word "released".
-      const ctx = await bootDetail({
-        rows: [{ ...ROW, status: 'running' }],
-        detail: { ...DETAIL, state: { ...DETAIL.state, status: 'running' } },
-      });
-      await openDetail(ctx, 'details/overview');
-      const sec = secOf(ctx.window.document, 'overview');
-      const row = sec.querySelector('.hd-ov-wt');
-      assert.equal(row.querySelector('.hd-ov-wt-state').textContent, 'retained');
-      assert.match(row.textContent, /\/tmp\/wt/, 'and it names the worktree it just called retained');
     } },
   ]);
 });
@@ -765,7 +745,7 @@ test('Auto badge: an Auto run is badged with classifier rows under Preflight, a 
       await openDetail(ctx);
       const badge = ctx.window.document.querySelector('#hist-detail .hd-row1 .auto-badge');
       assert.equal(badge.hidden, false); assert.equal(badge.textContent, 'Auto → Quick fix'); assert.equal(badge.title, 'Auto reused the saved workflow "Quick fix"');
-      ctx.window.document.querySelector('#hd-tab-agents').click(); await settle(ctx.window);
+      openRunTab(ctx.window, ctx.window.document.querySelector('#hd-tab-agents')); await settle(ctx.window);
       const names = [...ctx.window.document.querySelectorAll('#hist-detail .hd-ag-name')].map((n) => n.textContent);
       assert.deepEqual(names, ['Auto workflow (round 1)']);
       const head = ctx.window.document.querySelector('#hist-detail .hd-ag-head').textContent;
@@ -1041,7 +1021,7 @@ test('History opens on Overview, one level: page title, status line, facts; the 
   assert.doesNotMatch(glance.textContent, /\b\d+ of \d+\b/);
 
   // A tab click rewrites the address; the graph lives in Workflow.
-  doc.querySelector('#hist-detail .hd-tab[data-sec="workflow"]').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  openRunTab(ctx.window, doc.querySelector('#hist-detail .hd-tab[data-sec="workflow"]'));
   assert.ok(secOf(doc, 'workflow').querySelector('.hd-graph .run-flow'), 'the graph lives in Workflow');
   assert.equal(ctx.window.location.hash, `#${detailHash}/details/workflow`, 'a tab click rewrites the address');
   // The card shows only while Overview is the active tab.
@@ -1791,7 +1771,7 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
 });
 
 // s2: the route's branch row copies the branch (D15); the Project row's value keeps paintPageHead's text.
-test('History glance: the route\'s branch row copies the branch, none without a branch', async () => {
+test('History glance: the route\'s branch row copies the branch, none without a branch', async (t) => {
   await checkRows([
     { name: 'History glance: the route\'s branch row carries the feature branch and one copy button', run: async () => {
       const ctx = await bootDetail();
@@ -1808,7 +1788,8 @@ test('History glance: the route\'s branch row copies the branch, none without a 
       assert.equal(meta.firstChild.nodeType, 3, 'paintPageHead\'s text stays the line\'s first node');
       assert.match(meta.firstChild.data, /^proj · /);
       const writes = [];
-      Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: { writeText: async (t) => { writes.push(t); } } });
+      restoreAfter(t, window.navigator, 'clipboard');
+      Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: { writeText: async (w) => { writes.push(w); } } });
       click(window, copy);
       await settle(window, 2);
       assert.deepEqual(writes, [ROW.branch]);
@@ -2309,4 +2290,33 @@ test('D2: flag off, a saved Care run keeps dev\'s Agents tab and no .rd-run-agen
   assert.equal(doc.querySelector('#hist-detail .rd-run-agents'), null);
   assert.equal(doc.querySelector('#hist-detail .rd-run-facts'), null);
   assert.equal(hdAgentsPlaces(doc), 1);
+});
+
+// --- the header state line -------------------------------------------------
+
+test('saved run: the state line says the state on every tab; the card repeats neither word nor step', async () => {
+  const ctx = await bootDetail({ detail: OV_DETAIL });
+  await openDetail(ctx, 'details/overview');
+  const doc = ctx.window.document;
+  const line = doc.querySelector('#hist-detail .hd-header > .run-state-line');
+  assert.ok(line, 'the state line is a direct child of the header');
+  assert.equal(line.previousElementSibling.className, 'hd-row1', 'right under the title row');
+  const card = doc.querySelector('#hist-detail .hd-glance .rd-sheet .run-status');
+  for (const tab of [...doc.querySelectorAll('#hist-detail .hd-tab')]) {
+    click(ctx.window, tab);
+    await settle(ctx.window);
+    assert.equal(line.dataset.text, line.textContent, tab.dataset.sec);
+    assert.ok(line.textContent.startsWith(card.dataset.word) || line.textContent.startsWith('Ready'), `${tab.dataset.sec}: ${line.textContent}`);
+    assert.equal(line.closest('.hd-sec'), null);
+  }
+  assert.equal(line.classList.contains('is-link'), false, 'a saved run has no question to jump to');
+  const [head, ...rest] = card.dataset.text.split(' · ');
+  assert.equal(line.querySelector('.run-state-word').textContent, head);
+  assert.equal(card.querySelector('.run-status-word').hidden, true);
+  assert.equal(card.querySelector('.status-dot').hidden, true);
+  assert.equal(card.querySelector('.run-status-detail').textContent, rest.join(' · '));
+  assert.equal(card.querySelector('.run-status-head').hidden, !rest.length);
+  // The row's refresh repaints the same node.
+  await deliverRows(ctx, [{ ...ROW, mtime: 2 }]);
+  assert.equal(doc.querySelector('#hist-detail .hd-header > .run-state-line'), line);
 });

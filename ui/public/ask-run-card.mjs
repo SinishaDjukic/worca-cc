@@ -7,7 +7,7 @@
 import { decorFromState, applyDecor, manifestTemplate, manifestPortsFn, manifestAgents, isGraphManifest, fmtDur, fmtUsd } from './graph/run-decor.mjs';
 import { mountStaticGraph } from './graph/view.mjs';
 import { FLOW_SCALE } from './graph/model.mjs';
-import { engineReportsCost } from '../../src/shared/engine-switch.mjs';
+import { runCostKnown } from '../../src/shared/engine-switch.mjs';
 import { runProgress } from '../../src/shared/run-progress.mjs';
 import { runHeadlineMs } from '../../src/shared/run-elapsed.mjs';
 import { workModeOf } from './run-kind.mjs';
@@ -69,7 +69,7 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
     terminal: TERMINAL_RUN_STATUS.has(status),
     startedAt: state.startedAt || null,
     elapsedMs: runHeadlineMs(state) || 0,
-    costUsd: engineReportsCost(state.runEngine) ? (Number(state.totalCostUsd) || 0) : null,   // null: cost unknown (Cursor), never $0.00
+    costUsd: runCostKnown(state.runEngine, state.runEngines) !== 'none' ? (Number(state.totalCostUsd) || 0) : null,   // null: cost unknown (Cursor), never $0.00; a mixed run: the known part
     progress: decor ? decor.progress : null,
     stageProgress: graph ? runProgress(state) : null,   // a frozen state is final: no memo
     active: decor ? activeAgents(decor, state.stepper) : [],   // a v1 row names no agent even when state.active is set

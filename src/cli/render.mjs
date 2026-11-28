@@ -94,7 +94,8 @@ export function formatExecLine(ev, manifest, { color = (n, s) => s, engine = nul
     ? (ev.exitCode != null ? ` · exit ${ev.exitCode}` : '')
     // An engine that reports no cost shows none rather than $0.00 (engine-switch.mjs runCostLabel); a cost worca
     // knows anyway (a priced model) still shows.
-    : (ev.costUsd != null && (engineReportsCost(engine) || ev.costUsd > 0) ? ` · ${usd(ev.costUsd)}` : '');
+    // Judged by the step's own harness (a step pinned to another one), else the run's.
+    : (ev.costUsd != null && (engineReportsCost(node?.engine || engine) || ev.costUsd > 0) ? ` · ${usd(ev.costUsd)}` : '');
   const verdict = ev.verdict ? (ev.verdict.missing ? ' — no verdict written (treated as clean)' : ev.verdict.hasBlocking ? ' — blocking' : ' — clean') : '';
   return `${color('green', '✓')} ${label}${ord}${dur}${cost}${verdict}`;
 }
@@ -138,9 +139,10 @@ export function formatResumeHints(result, pipelineId, { color = (n, s) => s } = 
   return lines;
 }
 
-/** `9 executions · 12m00s active · $1.23` (`cost unknown` on an engine that reports no cost, never $0.00). */
-export function formatTotals({ executions = 0, activeMs = 0, costUsd = 0, engine = 'claude' } = {}) {
-  return `${executions} execution${executions === 1 ? '' : 's'} · ${fmtDur(activeMs)} active · ${runCostLabel(engine, costUsd, usd)}`;
+/** `9 executions · 12m00s active · $1.23` (`cost unknown` on an engine that reports no cost, never $0.00; `engines`: every
+ *  harness a mixed run used, for "cost partly unknown"). */
+export function formatTotals({ executions = 0, activeMs = 0, costUsd = 0, engine = 'claude', engines = null } = {}) {
+  return `${executions} execution${executions === 1 ? '' : 's'} · ${fmtDur(activeMs)} active · ${runCostLabel(engine, costUsd, usd, engines)}`;
 }
 
 /** `(id) => label` over a run manifest (pipelines.stepper): the node's label, else its id. */
@@ -307,6 +309,7 @@ export function formatRunSummary(state) {
     activeMs: rows.reduce((a, s) => a + (Number(s.activeMs) || 0), 0),
     costUsd: st.totalCostUsd,
     engine: st.runEngine,
+    engines: st.runEngines,
   }));
   if (Array.isArray(st.directions?.pending) && st.directions.pending.length) {
     lines.push(`${st.directions.pending.length} direction(s) never applied: ${st.directions.pending.map((d) => `${d.id} "${d.text}"`).join('; ')}`);

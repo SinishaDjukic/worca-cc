@@ -6,14 +6,14 @@
 // model, a node without a model on a signed-out install) plus connections.mjs runsOn (the run's engine must run it).
 // Pure: the caller hands in the workflow row, the catalog and the engine. Nothing here writes project config.
 import { checkShapeModels } from './auto/classify.mjs';
-import { runsOn, harnessesLabel } from '../shared/connections.mjs';
-import { engineLabel } from '../shared/engine-switch.mjs';
+import { runsOn, harnessesLabel, pickEffortsOn } from '../shared/connections.mjs';
+import { engineLabel, MODEL_ENGINE_NAMES } from '../shared/engine-switch.mjs';
 import { subagentModelIssue } from './model-env.mjs';
 import { roleReviewOf, ROLE_KEY_RE } from '../shared/graph/role-review-step.mjs';
 import { cleanPick } from '../shared/graph/role-slots.mjs';
 
 /** The keys a run overlay's node entry may carry (resolveGraph reads exactly these from it). */
-export const OVERLAY_KEYS = Object.freeze(['model', 'effort', 'fanOut', 'askQuestions', 'subagentModel']);
+export const OVERLAY_KEYS = Object.freeze(['model', 'effort', 'fanOut', 'askQuestions', 'subagentModel', 'engine']);
 /** More nodes than any workflow has: a bound on what one body may make the checks walk. */
 export const OVERLAY_MAX_NODES = 64;
 // No server path caps maxCycles today (setWireCycles in src/core/config.mjs only floors at 1, resolveGraph does
@@ -40,6 +40,11 @@ export const OVERLAY_ERRORS = Object.freeze({
   reason: (id) => `node ${idText(id)}: reason must be a string`,
   notAgent: (id, wfId) => `node ${idText(id)} is not an agent node of workflow ${wfId}`,
   foreign: (id, m, engine) => `node ${idText(id)}: ${m.id} runs on ${harnessesLabel(m)}, not on ${engineLabel(engine)} — pick a model this run's engine runs`,
+  engineType: (id) => `node ${idText(id)}: engine must be a string naming a harness`,
+  unknownEngine: (id, e) => `node ${idText(id)}: unknown harness ${JSON.stringify(String(e).slice(0, 32))}`,
+  engineAlone: (id) => `node ${idText(id)}: engine needs a model beside it`,
+  foreignPin: (id, m, engine) => `node ${idText(id)}: ${m.id} runs on ${harnessesLabel(m)}, not on ${engineLabel(engine)} — pick a model that harness runs`,
+  roleEngine: (what, id, k, e) => `${what}.${idPath(id)}.roles.${idPath(k)}: unknown harness ${JSON.stringify(String(e).slice(0, 32))}`,
   auto: 'overlay needs a saved workflow — Auto picks its agents and their models when the run starts',
   scan: 'the workspace scan picks its own models — it takes no overlay',
   wires: 'overlay.wires must be an object keyed by wire id',
@@ -60,7 +65,7 @@ export const OVERLAY_ERRORS = Object.freeze({
 
 function fail(errors) { return { error: errors.join('; '), errors }; }
 
-/** One node's `roles` map: `{ key: { model?, effort? } }` trimmed (blank picks dropped), or null; errors pushed. */
+/** One node's `roles` map: `{ key: { model?, effort?, engine? } }` trimmed (blank picks dropped), or null; errors pushed. */
 function parseRolePicks(raw, what, id, errors) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { errors.push(OVERLAY_ERRORS.roles(what, id)); return null; }
   const keys = Object.keys(raw);
@@ -70,7 +75,7 @@ function parseRolePicks(raw, what, id, errors) {
     if (!ROLE_KEY_RE.test(k)) { errors.push(OVERLAY_ERRORS.roleKey(what, id, k)); continue; }
     const sel = raw[k];
     if (!sel || typeof sel !== 'object' || Array.isArray(sel)) { errors.push(OVERLAY_ERRORS.roleEntry(what, id, k)); continue; }
-    const extra = Object.keys(sel).filter((f) => f !== 'model' && f !== 'effort');
+    const extra = Object.keys(sel).filter((f) => f !== 'model' && f !== 'effort' && f !== 'engine');
     if (extra.length) { errors.push(OVERLAY_ERRORS.roleField(what, id, k, extra[0])); continue; }
     if (sel.model !== undefined) {
       if (typeof sel.model !== 'string' || sel.model.length > 200) { errors.push(OVERLAY_ERRORS.roleModel(what, id, k)); continue; }
@@ -78,6 +83,7 @@ function parseRolePicks(raw, what, id, errors) {
     if (sel.effort !== undefined) {
       if (typeof sel.effort !== 'string' || sel.effort.length > 32) { errors.push(OVERLAY_ERRORS.roleEffort(what, id, k)); continue; }
     }
+    if (sel.engine !== undefined && sel.engine !== '' && !MODEL_ENGINE_NAMES.includes(sel.engine)) { errors.push(OVERLAY_ERRORS.roleEngine(what, id, k, sel.engine)); continue; }
     const pick = cleanPick(sel);
     if (pick) out.set(k, pick);
   }
@@ -122,6 +128,11 @@ export function parseOverlayNodes(raw, { what = 'overlay.nodes', keys = OVERLAY_
         // The issue quotes the value: a long one is cut (no sub-agent value is that long, so the cut one is refused too).
         else if (subagentModelIssue(v)) errors.push(OVERLAY_ERRORS.subagent(id, subagentModelIssue(v.length > 64 ? `${v.slice(0, 64)}…` : v)));
         else if (v) entry.subagentModel = v;
+      } else if (k === 'engine') {
+        // A harness the pick runs on: a name of MODEL_ENGINE_NAMES, '' absent. Valid only beside a model (checkRunOverlay).
+        if (typeof v !== 'string') errors.push(OVERLAY_ERRORS.engineType(id));
+        else if (v && !MODEL_ENGINE_NAMES.includes(v)) errors.push(OVERLAY_ERRORS.unknownEngine(id, v));
+        else if (v) entry.engine = v;
       } else if (k === 'reason') {
         if (typeof v !== 'string') errors.push(OVERLAY_ERRORS.reason(id)); else entry.reason = v;
       }
@@ -194,7 +205,9 @@ export function overlayStepModels(manifest) {
 }
 
 /**
- * Check parsed overlay nodes (and loop wires) against the workflow and the catalog the run's engine runs.
+ * Check parsed overlay nodes (and loop wires) against the workflow and the catalog the run's engine runs. A pick that
+ * pins a harness (`engine`) is judged on that harness instead (its model must run there; its efforts are
+ * pickEffortsOn's) and keeps its `engine`; `engine` without a model is refused.
  * @returns {{nodes: object, wires: object, errors: string[]}} canonical nodes (catalog casing; a model always carries `effort`,
  *   '' = the model's default, so a stored effort never rides under it — resolveGraph merges per key) + errors.
  */
@@ -222,27 +235,50 @@ export function checkRunOverlay(nodes, { workflow = null, models = [], engine = 
     if (tunables.model !== undefined && typeof tunables.model !== 'string') { errors.push(OVERLAY_ERRORS.model(id)); continue; }
     if (tunables.effort !== undefined && typeof tunables.effort !== 'string') { errors.push(OVERLAY_ERRORS.effort(id)); continue; }
     if (tunables.effort === '') delete tunables.effort;
+    if (tunables.engine !== undefined && tunables.model === undefined) { errors.push(OVERLAY_ERRORS.engineAlone(id)); continue; }
     out.set(id, tunables);
     stages.push({ id, tunables });
   }
   // Signed out (auto/runnable.mjs): the install has no default model, so EVERY agent node must name one.
   if (requireModel) for (const id of agentIds) if (!out.has(id)) stages.push({ id, tunables: {} });
   const catalog = Array.isArray(models) ? models.filter((m) => m && typeof m.id === 'string') : [];
-  for (const issue of checkShapeModels({ stages }, catalog, { requireModel })) errors.push(issue.message.replace(/^stage /, 'node '));
+  // The soft stages against the catalog as today; each pinned harness's stages against the catalog with that harness's
+  // efforts (pickEffortsOn).
+  const byHarness = (list) => {
+    const groups = new Map([['', []]]);
+    for (const st of list) {
+      const h = st.tunables.engine || '';
+      if (!groups.has(h)) groups.set(h, []);
+      groups.get(h).push(st);
+    }
+    return groups;
+  };
+  const shapeIssues = (list, opts = {}) => {
+    for (const [h, group] of byHarness(list)) {
+      if (h && !group.length) continue;
+      const cat = h ? catalog.map((m) => ({ ...m, efforts: pickEffortsOn(m, h) })) : catalog;
+      for (const issue of checkShapeModels({ stages: group }, cat, h ? {} : opts)) errors.push(issue.message.replace(/^stage /, 'node '));
+    }
+  };
+  shapeIssues(stages, { requireModel });
   // Each role pick through the node pick's catalog and effort checks.
   const roleStages = rolePicks.map((p) => ({ id: `${p.id}.roles.${p.key}`, tunables: p.tunables }));
-  for (const issue of checkShapeModels({ stages: roleStages }, catalog)) errors.push(issue.message.replace(/^stage /, 'node '));
+  shapeIssues(roleStages);
   const byId = new Map(catalog.map((m) => [m.id.toLowerCase(), m]));
   const run = engine || 'claude';
+  const runsHere = (id, m, t) => {
+    if (!m) return;
+    if (t.engine) { if (!runsOn(m, t.engine)) errors.push(OVERLAY_ERRORS.foreignPin(id, m, t.engine)); }
+    else if (!runsOn(m, run)) errors.push(OVERLAY_ERRORS.foreign(id, m, run));
+  };
   for (const [id, t] of out) {
     if (t.model === undefined) continue;
-    const m = byId.get(t.model.toLowerCase());
-    if (m && !runsOn(m, run)) errors.push(OVERLAY_ERRORS.foreign(id, m, run));
+    runsHere(id, byId.get(t.model.toLowerCase()), t);
     if (t.effort === undefined) t.effort = '';
   }
   for (const p of rolePicks) {
     const m = p.tunables.model === undefined ? null : byId.get(p.tunables.model.toLowerCase());
-    if (m && !runsOn(m, run)) errors.push(OVERLAY_ERRORS.foreign(`${p.id}.roles.${p.key}`, m, run));
+    runsHere(`${p.id}.roles.${p.key}`, m, p.tunables);
     if (!out.has(p.id)) out.set(p.id, {});
     const t = out.get(p.id);
     t.roles = { ...(t.roles || {}), [p.key]: p.tunables };

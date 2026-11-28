@@ -8,7 +8,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  connectionOf, harnessesOf, runsOn, effortOn, effortsOn, connectionLabel, connectionKey, suggestModelHandle, runsOnText, codexReaches,
+  connectionOf, harnessesOf, runsOn, effortOn, effortsOn, connectionLabel, connectionKey, suggestModelHandle, runsOnText, codexReaches, pickEffortsOn,
 } from '../src/shared/connections.mjs';
 import { listModels, enginesOfModel, engineOfModel, modelRunsOn, modelForEngine, foreignRunModel, catalogHasModel, modelConnection } from '../src/core/config.mjs';
 import { addGlobalModel } from '../src/core/settings.mjs';
@@ -146,4 +146,10 @@ test('a Copilot provider row on a GHE.com tenant names the tenant in its connect
   const { askCatalog } = await import('../src/core/ask/models.mjs');
   const ask = (await askCatalog()).models.find((r) => r.id === 'copilot-claude-sonnet-5.5');
   assert.equal(ask.bridgedHost, 'acme.ghe.com', 'the chat catalog (GET /api/ask/models) carries it');
+});
+
+test('pickEffortsOn: the model\'s own efforts, then the ones the harness maps them to', () => {
+  assert.deepEqual(pickEffortsOn({ efforts: ['minimal', 'low'] }, 'claude'), ['minimal', 'low', 'medium']);
+  assert.deepEqual(pickEffortsOn({ efforts: ['medium', 'high', 'xhigh', 'max'] }, 'codex'), ['medium', 'high', 'xhigh', 'max']);
+  assert.deepEqual(pickEffortsOn({ efforts: ['high'] }, 'cursor'), ['high'], 'a harness with no efforts adds none');
 });

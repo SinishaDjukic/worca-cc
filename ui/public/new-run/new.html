@@ -129,14 +129,16 @@
                     <small class="hint" id="needsRepoNote" hidden>Some steps expect a code repository.</small>
                   </div>
 
-                  <!-- Engine (harness bridge §10.4): who runs the pipeline's agent nodes. Claude is
-                       the default and adds nothing to the run body; on Codex the run's titles, classifier,
-                       overview and PR description run on Codex too. Per run, never remembered. Advanced and up;
-                       Simple still shows it while the run is on another engine (a default, an Ask handoff). -->
+                  <!-- Default harness (harness bridge §10.4): who runs the pipeline's agent nodes that inherit
+                       or hold a soft pick; a step pinned to its own harness in Advanced › Agents runs there
+                       whatever this says. Claude is the default and adds nothing to the run body; on Codex the
+                       run's titles, classifier, overview and PR description run on Codex too. Per run, never
+                       remembered. Advanced and up; Simple still shows it while the run is on another engine
+                       (a default, an Ask handoff). -->
                   <div class="field field-compact" id="engine-row" data-min-level="advanced">
-                    <label for="engineSelect">Engine</label>
+                    <label for="engineSelect">Default harness</label>
                     <div class="select-wrap">
-                      <select id="engineSelect" class="select" aria-label="Engine">
+                      <select id="engineSelect" class="select" aria-label="Default harness" title="Steps set to inherit run here">
                         <option value="claude" selected>Claude</option>
                         <option value="codex">Codex</option>
                         <option value="copilot">Copilot</option>
@@ -149,11 +151,31 @@
                     </div>
                   </div>
 
+                  <!-- Execution environment (docs/e2b.md): where the run's agent and script steps execute. Local
+                       is the default and adds nothing to the run body; E2B runs them in one sandbox per run while
+                       commits, pushes and PRs stay here. Per run; same level as the engine. -->
+                  <div class="field field-compact" id="exec-env-row" data-min-level="advanced">
+                    <label for="execEnvSelect">Runs in</label>
+                    <!-- The chosen backend's live status (exec-env-status.mjs), hidden on Local. -->
+                    <div class="exec-env-pick">
+                      <div class="select-wrap">
+                        <select id="execEnvSelect" class="select" aria-label="Execution environment">
+                          <option value="local" selected>Local</option>
+                          <option value="e2b">E2B sandbox</option>
+                        </select>
+                      </div>
+                      <span class="exec-env-status" id="exec-env-status" role="status" hidden></span>
+                    </div>
+                  </div>
+
                   <!-- The engine's hints span the row: a 40% cell would wrap them into a tall column. -->
                   <div class="wf-engine-hints">
                     <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Its models: Models › Jobs</small>
                     <small class="hint" id="engine-default-hint" hidden></small>
                     <small class="hint warn" id="engine-mcpjson-hint" hidden></small>
+                    <small class="hint" id="exec-env-hint" hidden>Runs locally: the saved E2B default does not apply to this run.</small>
+                    <!-- A Local run on a native install (run-sandbox-note.mjs): it is not sandboxed. Same level as "Runs in". -->
+                    <small class="hint" id="exec-env-local-note" data-min-level="advanced" hidden></small>
                   </div>
                   <!-- Session groups (Task 62): how each session of the chosen workflow runs on this engine, one line per
                        session (app.js#paintSessionNotes). Advanced and up, beside the Engine dropdown it depends on. -->

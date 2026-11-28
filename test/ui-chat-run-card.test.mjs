@@ -1148,7 +1148,9 @@ test('chat run card CSS: an answer label wider than the whole row wraps inside i
 
 test('step card CSS: inside a question panel the head title wraps (375 px) and never overflows the card', () => {
   const css = readStyleCss();
-  const rule = (sel) => { const m = css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`)); return m ? m[1] : ''; };
+  // The rule whose selector is exactly `sel` (it starts its line): a longer selector ending in it, like the stop
+  // host's `.chat-rc-stop-q .qpanel .step-head`, is another rule.
+  const rule = (sel) => { const m = css.match(new RegExp(`(?<![^}\\n])${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`)); return m ? m[1] : ''; };
   assert.match(rule('.qpanel .step-head .ask-mcard-title'), /white-space:normal/);
   assert.match(rule('.qpanel .step-head .ask-mcard-title'), /min-width:0/);
   assert.match(rule('.qpanel .step-head'), /flex-wrap:wrap/);
@@ -2471,6 +2473,113 @@ test('B1 one card: in S8, the frame before groupOf knows the feature\'s row read
   assert.equal($('.chat-rc-members').hidden, true, 'the members come on the next frame');
 });
 
+// ── Shaper small runs slice 11 (R-ux-2): the one card's footer Resume says which run it would wait for ───────────
+// The Verifier's state: runs 1–3 done, run 4 paused, run 5 not started, run 6 working. The group's current member, so
+// the run the footer acts on, is run 4.
+function s11Card({ three = 'done', controls = {} } = {}) {
+  const run = (state) => RUN_STATE_ROWS.find((r) => r.state === state).run;
+  const row = featureRow([DONE_RUN, DONE_RUN, three === 'done' ? DONE_RUN : { status: three }, run('paused'), WAITING, run('working')]);
+  row.members.forEach((mb, i) => { if (i !== 4) mb.pipelineId = i ? `beef000${i + 1}` : 'abcd1234'; });
+  assert.equal(row.model.current, row.members[3].model, 'the fixture: run 4 is the current member');
+  /** A snapshot whose feature view holds `four` on run 4 and `over` on the view. */
+  const snap = (four = {}, over = {}) => {
+    const v = oneView(['done', 'done', three, 'paused', 'planned', 'running'], { total: 6, ...over });
+    Object.assign(v.slices[3], four);
+    return shaped(oneCard(v), {}, ...DONE_OWN);
+  };
+  const f = mk({ controls: { paintQuestion: () => null, releaseQuestion() {}, memoFor: () => ({}), groupOf: () => row, modelOpts: () => ({ now: NOW }), ...controls } });
+  const resumes = () => f.$$('.chat-rc-foot button').filter((b) => shownIn(b) && /^Resume\b/.test(b.textContent));
+  return { ...f, snap, resumes };
+}
+const S11_HALTED = { halted: { index: 4, state: 'paused', waiting: [] } };
+
+test('s11 (R-ux-2): the one card\'s footer shows 1 Resume reading "Resume after run 6" for paused run 4, and it still resumes run 4', () => {
+  const acted = [];
+  const { card, snap, resumes } = s11Card({ controls: { act: (t, id) => { acted.push([t.pipelineId, id]); return Promise.resolve(true); } } });
+  card.update(snap({ resumeAfter: 6 }, S11_HALTED));
+  assert.deepEqual(resumes().map((b) => [b.dataset.modelAction, b.textContent]), [['resume', 'Resume after run 6']]);
+  resumes()[0].click();
+  assert.deepEqual(acted, [['beef0004', 'resume']]);
+});
+
+/** The footer's Resume controls, found by their model action (a held one no longer reads "Resume"). */
+const resumeActs = (f) => f.$$('.chat-rc-foot [data-model-action="resume"]').filter((b) => shownIn(b));
+const resumeFacts = (f) => resumeActs(f).map((b) => [b.textContent, b.disabled, b.title]);
+
+test('s11 (R-ux-2), s16 (R-qa-4): the one card\'s footer Resume goes back to plain "Resume" without resumeAfter, and reads "Waiting for its turn" once held', () => {
+  const f = s11Card();
+  const { card, snap } = f;
+  card.update(snap({ resumeAfter: 6 }, S11_HALTED));
+  assert.deepEqual(resumeFacts(f), [['Resume after run 6', false, '']]);
+  card.update(snap({}, S11_HALTED));
+  assert.deepEqual(resumeFacts(f), [['Resume', false, '']], 'no resumeAfter');
+  card.update(snap({ resumeAfter: 6 }, S11_HALTED));
+  assert.deepEqual(resumeFacts(f), [['Resume after run 6', false, '']], 'the preview is back');
+  card.update(snap({ heldResume: { after: 6 } }, S11_HALTED));
+  assert.deepEqual(resumeFacts(f), [['Waiting for its turn', true, 'Goes on after run 6']], 'held');
+});
+
+// ── Slice 16 (R-qa-4): the chat run card while run 4 waits for run 3, and after a refusal ─────────────────────────
+test('s16: run 4 held after run 3: the footer Resume reads "Waiting for its turn", disabled with "Goes on after run 3"; Stop stays; it comes back when the hold ends', () => {
+  const acted = [];
+  const f = s11Card({ controls: { act: (t, id) => { acted.push([t.pipelineId, id]); return Promise.resolve(true); } } });
+  const { card, snap } = f;
+  card.update(snap({ heldResume: { after: 3 } }, S11_HALTED));
+  assert.deepEqual(resumeFacts(f), [['Waiting for its turn', true, 'Goes on after run 3']]);
+  assert.equal(f.$$('.chat-rc-foot button').filter((b) => shownIn(b) && /^(Resume|Waiting for its turn)\b/.test(b.textContent)).length, 1, 'one Resume control on the card');
+  resumeActs(f)[0].click();
+  assert.deepEqual(acted, [], 'a held Resume is not pressed again');
+  const stop = f.$$('.chat-rc-foot [data-model-action="stop"]').filter((b) => shownIn(b));
+  assert.deepEqual(stop.map((b) => [b.textContent, b.disabled]), [['Stop', false]], 'Stop is still offered');
+  card.update(snap({}, S11_HALTED));
+  assert.deepEqual(resumeFacts(f), [['Resume', false, '']], 'the hold ended');
+  resumeActs(f)[0].click();
+  assert.deepEqual(acted, [['beef0004', 'resume']]);
+});
+
+test('s16: while a stop is open on run 6, the ⋯ lists held run 4\'s moved Resume as "Waiting for its turn", disabled with "Goes on after run 3"', () => {
+  const stop = { id: 'gate-s16-6', kind: 'gate', heading: 'Run 6 · Code review objects', step: 'Code review', stop: true };
+  const { card, doc, $, snap } = s11Card({ controls: questionStub(stop, '<div class="qpanel-foot"><button type="button" class="btn btn-primary">Go on</button></div>') });
+  const ask = { ask: { index: 6, kind: 'gate', id: stop.id, pipelineId: 'beef0006', runId: null } };
+  card.update(snap({ heldResume: { after: 3 } }, ask));
+  $('[data-act="feature-more"]').click();
+  const items = [...doc.querySelectorAll('.wfv-menu-item')].filter((i) => /Resume|Waiting for its turn/.test(i.textContent));
+  assert.deepEqual(items.map((i) => [i.textContent.trim(), i.disabled, i.title]), [['Waiting for its turn', true, 'Goes on after run 3']]);
+  $('[data-act="feature-more"]').click();
+});
+
+test('s16 D4: with the flag on, a run whose held resume was refused reads "not resumed: the cost limit is reached" on its row', () => {
+  const f = s11Card();
+  applyFlags({ shaperSmallRuns: true }, f.doc);
+  f.card.update(f.snap({ resumeRefused: { code: null, error: 'pipeline cost limit reached' } }, S11_HALTED));
+  const state = f.$('.chat-rc-members .run-member[data-key="beef0004"] .run-member-state');
+  assert.equal(state.textContent, 'not resumed: the cost limit is reached');
+});
+
+test('s11 (R-ux-2): the one card takes the label from the run its Resume acts on, not from the run the view halts at', () => {
+  // Run 3 stopped halts the view; the footer's Resume acts on paused run 4.
+  const { card, snap, resumes } = s11Card({ three: 'stopped' });
+  card.update(snap({ resumeAfter: 6 }, { halted: { index: 3, state: 'stopped', waiting: [] } }));
+  assert.deepEqual(resumes().map((b) => b.textContent), ['Resume after run 6']);
+});
+
+test('s11 (R-ux-2): while a stop is open on run 6, the ⋯ lists the moved Resume as "Resume after run 6", and "Resume" without it', () => {
+  const stop = { id: 'gate-s11-6', kind: 'gate', heading: 'Run 6 · Code review objects', step: 'Code review', stop: true };
+  const { card, doc, $, snap, resumes } = s11Card({ controls: questionStub(stop, '<div class="qpanel-foot"><button type="button" class="btn btn-primary">Go on</button></div>') });
+  const ask = { ask: { index: 6, kind: 'gate', id: stop.id, pipelineId: 'beef0006', runId: null } };   // no view.halted
+  const listed = () => {
+    $('[data-act="feature-more"]').click();                          // the ⋯ toggles: open, read, close
+    const items = [...doc.querySelectorAll('.wfv-menu-item')].map((i) => i.textContent.trim()).filter((t) => /^Resume\b/.test(t));
+    $('[data-act="feature-more"]').click();
+    return items;
+  };
+  card.update(snap({ resumeAfter: 6 }, ask));
+  assert.deepEqual(resumes().map((b) => b.textContent), [], 'the fixture: the stop moved the footer\'s Resume into the ⋯');
+  assert.deepEqual(listed(), ['Resume after run 6']);
+  card.update(snap({}, ask));
+  assert.deepEqual(listed(), ['Resume']);
+});
+
 test('B1 one card: with two askers paintQuestion runs for the one chosen question id, and one .qpanel is visible', () => {
   const asked = [];
   const pqTwo = { id: 'plan-n_refine-2', kind: 'plan', plan: {} };
@@ -2503,7 +2612,13 @@ test('B1 one card: the log reads "Requirements agreed" and "Runs approved"; the 
   const { $$ } = paintOne('S8');
   assert.deepEqual($$('.chat-rc-log-text').map((n) => n.textContent), ['Clarify · 2 answers', 'Requirements agreed', 'Runs approved']);
   const src = readFileSync(new URL('../ui/public/chat/run-card.mjs', import.meta.url), 'utf8');
-  assert.equal(/flagOn\('shaperSmallRuns'/.test(src), false, 'the marker, never the live flag, picks the card');
+  // s4 D7: the flag gates only the rows' run status marks (the sliceMap line) and, slice 6, the stop list (the stopLines
+  // line), and, slice 12, run 1's own snapshot in snapOf (the card's own pipeline); the marker alone picks the card.
+  const reads = src.split('\n').filter((l) => /flagOn\('shaperSmallRuns'/.test(l));
+  assert.equal(reads.length, 3, 'the marker, never the live flag, picks the card');
+  assert.match(reads[0], /p === s\.pipelineId && flagOn\('shaperSmallRuns', doc\) \? s : null/);
+  assert.match(reads[1], /stopLines = one && flagOn\('shaperSmallRuns', doc\)/);
+  assert.match(reads[2], /const sliceMap = one && flagOn\('shaperSmallRuns', doc\)/);
 });
 
 test('B1 one card: a finished marked feature builds no hidden Ask for changes field (it lived in the result block)', () => {
@@ -2588,7 +2703,8 @@ test('B1 one card: one primary button per card in S1, S3, S5, S6 (the step card\
 import { verifyStop as vfStop, VERIFY_WORDS as VF_WORDS } from '../src/shared/shape/verifier.mjs';
 const VF_PID = 'beef0009';
 const VF_GAPS = [{ id: 'R-po-2', why: 'sign-up never calls the email service', run: 4 }, { id: 'R-po-3', why: 'the export skips empty charts', run: 5 }];
-const VF_PQ = { id: 'verify-3-x', kind: 'gate', nodeId: 'n_verify', issues: [], stop: vfStop({ gaps: VF_GAPS, round: 3, fixCycles: 2 }) };
+const VF_PQ = { id: 'verify-3-x', kind: 'gate', nodeId: 'n_verify', issues: [],
+  stop: vfStop({ gaps: VF_GAPS, round: 3, fixCycles: 2, texts: { 'R-po-2': 'Sign-up sends mail', 'R-po-3': 'Charts export' } }) };
 function vfCard(state, { gaps = state === 'gaps' ? VF_GAPS : [], ask = null } = {}) {
   const states = state === 'gaps' ? ['done', 'done', 'done', 'planned', 'planned'] : ['done', 'done', 'done'];
   const v = oneView(states, { status: state === 'gaps' || state === 'halted' ? 'active' : 'done', total: states.length, log: [ONE_CL, ONE_L('Runs approved')], ask,
@@ -2607,17 +2723,15 @@ function paintVf(state, opts = {}, stub = { paintQuestion: () => null, releaseQu
   return f;
 }
 
-test('C5 one card: a Verifier stop is one question with its gap list, Worca\'s pick preselected, one primary and no foot Answer', () => {
+test('C5 one card: a Verifier stop is one gap question, a fix run preset per gap, one primary and no foot Answer', () => {
   try {
     const f = paintVf('asking', { ask: { index: null, runId: 'run-v', pipelineId: VF_PID, id: VF_PQ.id, kind: 'gate' } }, stepStub(VF_PQ, renderGateCard));
     assert.equal(f.$$('.chat-rc-q .qpanel[data-qid]').filter((p) => shownIn(p)).length, 1, 'one question');
-    assert.equal(f.$('.qopt[data-preset]')?.textContent.includes('Add a run for the gap'), true);
-    assert.equal(f.$$('.btn-primary').filter((b) => shownIn(b)).length, 1, 'one primary');
+    assert.deepEqual(f.$$('.qopt[data-preset]').map((t) => [t.dataset.value, t.textContent.includes('Add a fix run')]), [['fix', true], ['fix', true]]);
+    assert.deepEqual(f.$$('.btn-primary').filter((b) => shownIn(b)).map((b) => b.textContent), ['Send answers'], 'one primary');
     assert.equal(f.$$('button').filter((b) => shownIn(b) && /^Answer/.test(b.textContent)).length, 0, 'no foot Answer');
-    const lists = f.$$('.verify-gaps').filter((l) => shownIn(l));
-    assert.equal(lists.length, 1, "one gap list: the question's");
-    assert.ok(lists[0].closest('.qpanel'));
-    assert.equal(lists[0].querySelectorAll('.plan-check-row').length, 2);
+    assert.equal(f.$$('.qpanel[data-kind="gaps"] .qblock').filter((b) => shownIn(b)).length, 2, 'one question per gap');
+    assert.equal(f.$$('.verify-gaps').filter((l) => shownIn(l)).length, 0, 'no second list of the same gaps');
     assert.equal(f.$('.chat-rc-status .run-status-word').textContent, 'Needs you');
     assert.equal(stepChip(VF_PQ, {}), '', 'the head names the Verifier: no chip repeats it');
     assert.equal(f.$$('.qpanel .ask-mcard-kind').length, 0);
@@ -2786,4 +2900,64 @@ test('chat run card: a feature run links its feature title to the feature page; 
       assert.equal(t.$('.ask-rc-sub img'), null);
     } },
   ]);
+});
+
+test('a marked feature shipped as one PR: the chat card\'s Ship card shows one PR row and repaints when the ship mode changes', () => {
+  const order = [1, 2, 3].map((i) => ({ index: i, pipelineId: i === 1 ? 'abcd1234' : `beef000${i}`, title: `Part ${i}`,
+    pr: { number: 40, url: 'https://x/pull/40' }, onto: null }));
+  const smallRuns = { confirmed: [], owned: [], waiting: [], blocked: false, reason: null, met: { met: 0, total: 0 }, unmet: [],
+    care: { choice: "Balanced · Worca's pick", outcome: null, line: '' }, base: 'main', order };
+  const view = (mode) => oneView(['done', 'done', 'done'], { status: 'done', ship: { ready: false, mode, smallRuns }, log: [ONE_CL, ONE_L('Runs approved')] });
+  const row = featureRow([DONE_RUN, DONE_RUN, DONE_RUN]);
+  const f = mk({ controls: { paintQuestion: () => null, releaseQuestion() {}, memoFor: () => ({}), groupOf: () => row } });
+  const rows = () => f.$$('.chat-rc-ship .ask-shipcard-prs .plan-check-row');
+  f.card.update(shaped(oneCard(view('stacked')), {}, ...DONE_OWN));
+  assert.equal(rows().length, 3, 'stacked counts as today');
+  f.card.update(shaped(oneCard(view('one')), {}, ...DONE_OWN));
+  assert.equal(rows().length, 1, 'the same ledger shipped as One repaints');
+  assert.equal(f.$('.chat-rc-ship .ask-shipcard-stats').textContent, 'one PR holding every run');
+  assert.equal(f.$('.chat-rc-status .run-status-detail').textContent, '1 PR open');
+});
+
+// Shaper small runs slice 7 (R-arch-6, D7): the state line and the need count are worded in one place only.
+test('s7 T15: the run card and the group page word no state line or need count of their own; the card\'s chip is made by paintNeed', () => {
+  const read = (rel) => readFileSync(new URL(`../ui/public/${rel}`, import.meta.url), 'utf8');
+  const card = read('chat/run-card.mjs');
+  const page = read('group-page.mjs');
+  for (const [name, src] of [['chat/run-card.mjs', card], ['group-page.mjs', page]]) {
+    assert.doesNotMatch(src, /need you|next: run/, `${name}: the words come from feature-card.mjs`);
+    assert.match(src, /needYouText/, `${name}: it words the count with needYouText`);
+  }
+  assert.match(card, /paintNeed/, 'the head count has its own painter');
+  const head = card.slice(card.indexOf("const head = h('div', 'ask-rc-head')"), card.indexOf('head.append('));
+  assert.ok(head.length > 0, 'the head builder is found');
+  assert.doesNotMatch(head, /data-need|dataset\.need/, 'never built into the head: created when the count turns non-zero');
+});
+
+// Shaper small runs slice 9 (R-po-4, D14): the Chat card's Ship step posts a note's acknowledgement.
+test("s9: Acknowledge on the chat card's Ship step posts the note and the check to /acknowledge", async () => {
+  const checkAt = '2026-11-27T10:00:00.000Z';
+  const smallRuns = { confirmed: [], owned: [], waiting: [], blocked: true, reason: "Acknowledge the Verifier's note to ship", met: { met: 0, total: 0 }, unmet: [],
+    care: { choice: "Balanced · Worca's pick", outcome: null, line: '' }, base: 'main', order: [{ index: 1, pipelineId: 'abcd1234', title: 'Part 1', pr: null, onto: null }],
+    findings: { items: [{ id: 'note-1', text: 'the import test takes 40 s', ack: null }], checkAt, open: 1 } };
+  const view = oneView(['done', 'done', 'done'], { status: 'done', ship: { ready: true, mode: null, smallRuns }, log: [ONE_CL, ONE_L('Runs approved')] });
+  const row = featureRow([DONE_RUN, DONE_RUN, DONE_RUN]);
+  const f = mk({ controls: { paintQuestion: () => null, releaseQuestion() {}, memoFor: () => ({}), groupOf: () => row } });
+  f.card.update(shaped(oneCard(view), {}, ...DONE_OWN));
+  assert.ok(f.$('.chat-rc-ship [data-ship-card="ready"]'), 'the ready Ship card');
+  const button = f.$('.chat-rc-ship [data-act="ship-ack-note-1"]');
+  assert.ok(button, 'the Acknowledge button on the chat card');
+  const sent = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    sent.push([url, init?.method, init?.body ? JSON.parse(init.body) : null]);
+    return { ok: true, json: async () => ({ smallRuns: { ...smallRuns, blocked: false, reason: null,
+      findings: { items: [{ ...smallRuns.findings.items[0], ack: { by: 'ann', at: '2026-11-27T14:02:00.000Z' } }], checkAt, open: 0 } } }) };
+  };
+  try {
+    button.click();
+    await settle(); await settle();
+  } finally { globalThis.fetch = real; }
+  assert.deepEqual(sent, [['/api/shape/features/feat-1/acknowledge', 'POST', { checkAt, note: 'note-1' }]]);
+  assert.equal(f.$('.chat-rc-ship [data-act="ship-create"]').disabled, false);
 });

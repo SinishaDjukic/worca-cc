@@ -82,6 +82,8 @@ export function applyCanvasOps(tpl, ops, { portsFn = null, maxOps = MAX_OPS } = 
     if (!isObj(patch)) throw new OpError('config must be an object');
     const allowed = NODE_CONFIG[n.kind] || {};
     const meta = metaOf(n);
+    // A harness travels with its model (Chat never sets one): a patch that sets or clears the model drops the pin.
+    if (n.kind === 'agent' && Object.hasOwn(patch, 'model') && isObj(n.config)) delete n.config.engine;
     for (const [k, v] of Object.entries(patch)) {
       if (!Object.prototype.hasOwnProperty.call(allowed, k)) throw new OpError(`'${k}' is not ${n.kind === 'agent' ? 'an' : 'a'} ${n.kind} setting`);
       if (n.kind === 'agent' && k === 'fanOut' && v !== null && meta && !meta.fanOut) throw new OpError('this agent has no research fan-out');

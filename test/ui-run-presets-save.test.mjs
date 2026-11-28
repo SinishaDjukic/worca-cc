@@ -1,9 +1,13 @@
 // test/ui-run-presets-save.test.mjs — Save setup as preset on a run's page (ui/public/run-presets-save.mjs + app.js):
 // the scope options, the request body, and the button shown only with a stored setup.
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { runPresetScopeOptions, runPresetRequest, runPresetErrorText } from '../ui/public/run-presets-save.mjs';
-import { bootApp } from './helpers/run-page-boot.mjs';
+import { runPageOn } from './helpers/run-page-boot.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
+
+const app = useSharedApp({ before, beforeEach, after });
+const bootApp = runPageOn(app);
 
 test('scope options: the run\'s own target first (the default), then Any project', () => {
   assert.deepEqual(runPresetScopeOptions({ projectKey: 'api-1' }, { 'project:api-1': 'api' }),
@@ -30,18 +34,21 @@ test('error text: duplicate and no-setup have their own words; anything else is 
 const ok = (body, status = 200) => Promise.resolve({ ok: status < 400, status, json: async () => body });
 const DETAIL = (id) => ({ state: { id, title: 'Fix login', status: 'done', projectKey: 'k1', projectDir: '/tmp/p', startedAt: '2026-10-10T10:00:00.000Z', steps: [], subAgents: [], tags: [] }, artifacts: [] });
 
+// Each run its own id: the app keeps what it fetched for a run across the tests of the one shared app.
+let runs = 0;
 async function openRun({ setup }) {
+  const id = `aaaa${String(++runs).padStart(4, '0')}`;
   const posted = [];
   const ctx = await bootApp({ fetchHandler: (url, opts = {}) => {
-    if (url === '/api/history/k1/aaaa0001' || url.startsWith('/api/history/k1/aaaa0001?')) return ok(DETAIL('aaaa0001'));
-    if (url === '/api/pipelines/aaaa0001/setup') return ok({ setup, target: { kind: 'project', ref: 'k1' } });
-    if (url === '/api/pipelines/aaaa0001/preset') { posted.push(JSON.parse(opts.body)); return ok({ preset: { id: 'rp_aaaaaaaaaaaa', name: 'From run', scope: { kind: 'project', ref: 'k1' }, setup } }, 201); }
+    if (url === `/api/history/k1/${id}` || url.startsWith(`/api/history/k1/${id}?`)) return ok(DETAIL(id));
+    if (url === `/api/pipelines/${id}/setup`) return ok({ setup, target: { kind: 'project', ref: 'k1' } });
+    if (url === `/api/pipelines/${id}/preset`) { posted.push(JSON.parse(opts.body)); return ok({ preset: { id: 'rp_aaaaaaaaaaaa', name: 'From run', scope: { kind: 'project', ref: 'k1' }, setup } }, 201); }
     if (url === '/api/presets') return ok({ presets: [] });
     if (url === '/api/projects') return ok({ projects: [{ name: 'p', key: 'k1', path: '/tmp/p', exists: true }] });
     return null;
   } });
   const doc = ctx.window.document;
-  ctx.go('history/k1/aaaa0001');
+  ctx.go(`history/k1/${id}`);
   await ctx.settle(8);
   return { ctx, doc, posted, btn: () => doc.querySelector('.hd-save-preset') };
 }

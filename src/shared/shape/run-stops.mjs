@@ -8,9 +8,11 @@ import { roleSummaries } from './role-review.mjs';
 import { concernFeedbackSection } from '../review/plan-concern.mjs';
 import { BLOCKING, normalizeSeverity } from '../graph/verdict.mjs';
 import { requirementChangedFeedback, oneLineText } from './req-change.mjs';
+import { noteTitle, noteClause } from './outline-note.mjs';
+import { verifyGateAnswer } from './verifier.mjs';
 
 export const STOP_REASONS = Object.freeze(['check', 'objection', 'requirement']);
-// Small runs C5: the Verifier's bound stop is a `check` stop of the same shape.
+// Small runs C5: the Verifier's gate stop is a `check` stop of the same shape (slice 8: `form: 'gaps'`).
 export { verifyStop } from './verifier.mjs';
 
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
@@ -88,9 +90,11 @@ function changeOf(concern) {
 function requirementStop({ run, concern = null, outlineChange = null, node = null }) {
   const ids = concern && Array.isArray(concern.requirements) ? concern.requirements : [];
   const head = ids.length ? `Run ${run} · ${ids.join(', ')} would have to change` : `Run ${run} · the outline would have to change`;
+  // An outline change asks with its reason only; the card draws the rest of the note under the question.
+  const title = noteTitle(outlineChange);
   const text = concern
     ? `A reviewer wants ${ids.length ? ids.join(', ') : 'an agreed requirement'} changed: ${concern.title}.`
-    : `The Planner says this run cannot be built as outlined: ${String(outlineChange || '').trim()}`;
+    : `The Planner says this run cannot be built as outlined${title ? `: ${noteClause(title)}` : '.'}`;
   const change = changeOf(concern);
   return { reason: 'requirement', run, node, pick: 'keep', head, text, findingsLine: concern ? concern.title : 'The outline no longer fits',
     ...(change ? { change, landsAs: concern.proposals.find((p) => p.landsAs)?.landsAs || 'none' } : {}), options: keepChange(change) };
@@ -160,8 +164,11 @@ export function stopOptionOf(stop, payload) {
   return (d ? optionsOf(stop).find((o) => o.payload.decision === d) : null) || null;
 }
 
-/** Membership only: the payload is exactly one of the stop's options (what the card sends). */
-export const stopAnswerOk = (stop, payload) => optionsOf(stop).some((o) => same(o.payload, payload));
+/** Membership: the payload is exactly one of the stop's options (what the card sends). Slice 8 (D4): a Verifier gap
+ *  stop (`form: 'gaps'`) takes only a complete answer, as verifyGateAnswer decides. */
+export const stopAnswerOk = (stop, payload) => (stop && stop.form === 'gaps'
+  ? verifyGateAnswer(stop, payload).ok
+  : optionsOf(stop).some((o) => same(o.payload, payload)));
 
 /** The one answered line: `Run 8: another cycle · decided by you`. */
 export function stopDoneText(stop, payload) {
@@ -183,6 +190,8 @@ export const settledLine = (kind, n = 0) => (SETTLED[kind] ? SETTLED[kind](n) : 
 
 /** A second answer while one is held. */
 export const heldRefusal = (after) => `this stop is already answered: it goes on after run ${after}`;
+/** Slice 3 (D11): a second answer while the first is being taken in. */
+export const sendingRefusal = () => 'this stop is already answered: its answer is being sent';
 /** An answer to a stop this run has already taken. */
 export const answeredRefusal = () => 'this stop is already answered';
 
@@ -201,7 +210,9 @@ export function runStopWord({ snap = null, slice = null } = {}) {
   if (st && st.held && Number.isInteger(st.after)) return `after run ${st.after}`;
   if ((st && !st.held) || (snap && snap.pendingQuestion && snap.pendingQuestion.stop && !st)) return 'waiting for you';
   if (slice && Number.isInteger(slice.waitsFor)) return waitsForRunWord(slice.waitsFor);
+  // Slice 2 (D10): with the flag on, the runs the gate holds it on, unreduced (slice 3 phrases them).
+  if (slice && Array.isArray(slice.waitsFor) && slice.waitsFor.length) return waitsForRunWord(slice.waitsFor.join(', '));
   // Small runs C4 (D18): a change run that is due takes the next turn.
-  if (slice && slice.kind === 'change' && slice.state === 'planned') return 'next · small change run';
+  if (slice && slice.kind === 'change' && slice.state === 'planned' && !slice.cannotStart) return 'next · small change run';
   return null;
 }

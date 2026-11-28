@@ -21,6 +21,7 @@ import { projectKey, projectStorePath } from './store.mjs';
 import {
   listArtifacts, readPipelineByKey, persistPrState, retainedWorkFor, checkoutRecordsFor, branchRecordsOf,
   recordArtifact, appendAudit, appendAuditById, findRunDir, readMemberPrStates, persistMemberPrState, folderApplyRetainFor, projectDirOfRow,
+  execEnvOfRow,
 } from './artifacts.mjs';
 import { TRY_STAYS_IN_COPY_TEXT } from '../shared/workflow-tests/project-text.mjs';
 import { workspaceMembers } from './workspace-prs.mjs';
@@ -682,7 +683,9 @@ async function applyRetainedUnderLock({ storeKey, id, projectDir, by }) {
     // Teardown excludes the memory mount only when the run mounted it, and the mount is refused on a checkout
     // that tracks the path: there, `rm --cached` of the exclude would commit the deletion of the project's own files.
     const exclude = (await indexTracks(t.worktreeDir, MEMORY_RULES_REL)) === false ? [MEMORY_RULES_REL] : [];
-    const c = await commitStagedWork(t.worktreeDir, { message, exclude, bypassHooks: modeOf(br) === 'detached', branch: t.branch });
+    // A sandbox run's retained work came from an untrusted machine: commit it with no repo hook, as teardown does.
+    const remote = !!execEnvOfRow(row) && execEnvOfRow(row) !== 'local';
+    const c = await commitStagedWork(t.worktreeDir, { message, exclude, bypassHooks: modeOf(br) === 'detached', hooksOff: remote, branch: t.branch });
     if (!c.ok) {
       report.failed.push({ projectKey: t.projectKey, branch: t.branch, step: c.step, message: c.message });
       continue;

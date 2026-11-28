@@ -19,6 +19,8 @@
 //   ID_TAKEN (+ .id) | NOT_FOUND | UNSUPPORTED | SCRIPTS_UNCONFIRMED (+ .scriptNodes)
 
 import { listModels } from './config.mjs';
+import { runsOn, pickEffortsOn } from '../shared/connections.mjs';
+import { MODEL_ENGINE_NAMES, engineLabel } from '../shared/engine-switch.mjs';
 import { EFFORTS, ALL_EFFORTS, subagentModelIssue } from './model-env.mjs';
 import { loadAgentRegistry, DEFAULT_AGENTS_DIR } from './agent-registry.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
@@ -102,10 +104,18 @@ export function nodeDefaultsError(raw, models, where) {
   // shared helper so a typo is a 400 with the same message every writer uses.
   const subIssue = subagentModelIssue(raw.subagentModel);
   if (subIssue) return subIssue;
+  const engine = raw.engine === undefined || raw.engine === null || raw.engine === '' ? null : raw.engine;
+  if (engine !== null) {
+    if (typeof engine !== 'string') return 'engine must be a string';
+    if (!MODEL_ENGINE_NAMES.includes(engine)) return `unknown harness "${engine.slice(0, 32)}"`;
+    if (!model) return 'select a model before choosing a harness';
+    if (!runsOn(entry, engine)) return `model "${model}" does not run on ${engineLabel(engine)}`;
+  }
   if (!effort) return '';
   if (!ALL_EFFORTS.includes(effort)) return `unknown effort "${effort}"`;
   if (!entry) return 'select a model before choosing an effort';
-  if (!entry.efforts.includes(effort)) return `model "${model}" does not support effort "${effort}"`;
+  const efforts = engine ? pickEffortsOn(entry, engine) : entry.efforts;
+  if (!efforts.includes(effort)) return `model "${model}" does not support effort "${effort}"`;
   return '';
 }
 

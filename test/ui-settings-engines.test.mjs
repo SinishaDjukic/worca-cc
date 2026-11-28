@@ -123,6 +123,13 @@ test('enginePatchToSettingsBody: Command summaries saves onto commandSummaryMode
   assert.deepEqual(enginePatchToSettingsBody({ 'models.codex.utility.commandSummary': { model: 'gpt-5.5' } }), {});
 });
 
+test('enginePatchToSettingsBody: Guide saves onto guideModel (Claude only)', () => {
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.utility.guide': { model: 'claude-opus-5-5', effort: 'high' } }),
+    { guideModel: { model: 'claude-opus-5-5', effort: 'high' } });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.utility.guide': null }), { guideModel: null });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.codex.utility.guide': { model: 'gpt-5.5' } }), {});
+});
+
 // Scale: one engine card at a time (the default engine's first), and each card lists only the slots set at this
 // level; the rest are summed up in one line, "+ Override a step…" reveals one, Show all reveals every slot.
 test('renderEngineSection: one card at a time, only the changed steps, one-line summary, override and show all', () => {

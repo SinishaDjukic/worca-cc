@@ -21,7 +21,7 @@ const roleLabel = (key) => (Object.hasOwn(ROLE_LABELS, key) ? ROLE_LABELS[key] :
 // Claude's helper jobs keep their picks in top-level keys: a bare id, or a { model, effort } pair.
 const CLAUDE_ID_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel' });
 const CLAUDE_PAIR_KEYS = Object.freeze({
-  agentGen: 'agentGenModel', naming: 'namingModel', commandSummary: 'commandSummaryModel',
+  agentGen: 'agentGenModel', naming: 'namingModel', commandSummary: 'commandSummaryModel', guide: 'guideModel',
   secondOpinion: 'secondOpinionModel', requirementsInterview: 'requirementsInterview',
 });
 

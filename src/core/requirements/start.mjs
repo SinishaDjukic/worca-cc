@@ -36,6 +36,11 @@ function refusal(res) {
   const message = given || `the run could not start (HTTP ${Number.isFinite(status) ? status : '?'})`;
   if (status === 403) return new RequirementsError('BUDGET', message);
   if (status === 400) return new RequirementsError('BAD_REQUEST', message);
+  // An engine refusal keeps its code, whether the consent lifts it and the harnesses it is about (the UI asks and resends).
+  if (status === 409 && res.body?.code === 'engine-refused') {
+    return new RequirementsError('CONFLICT', message, { code: 'engine-refused', overridable: res.body.overridable === true,
+      ...(Array.isArray(res.body.engines) ? { engines: res.body.engines } : {}) });
+  }
   if (status > 400 && status < 500) return new RequirementsError('CONFLICT', message);
   return new Error(message);
 }
@@ -92,14 +97,14 @@ export async function liveRunId(seq, runSummary) {
  * already has a live run is refused (CONFLICT, data { code: 'RUN_IN_PROGRESS', runId }) unless `confirmRunning` is true. The feature is
  * read again after that check, so a spec edited or an archive done meanwhile is what the start sees.
  * @param {{ reason?:string, workflowId?:string, sourceBranch?:string, reportBack?:boolean, overlay?:object|null,
- *   note?:string, noteOverrides?:boolean, confirmRunning?:boolean }} input
+ *   note?:string, noteOverrides?:boolean, confirmRunning?:boolean, allowUnguardedEngine?:boolean }} input
  * @param {{ by?:string|null }} who
  * @param {{ startRun:(body:object, opts:{runId:string, startedBy:string|null,
  *     extrasFiles?:Array<{id:string, name:string, path:string, sha256:string}>, reportTo?:object})=>Promise<{status:number, body:any}>,
  *   target:{ ok:boolean, label?:string, hint?:string, name?:string, path?:string }, newRunId?:()=>string }} deps
  * @returns {Promise<{ runId:string, version:number }>}
  */
-export async function startFeature(seq, { reason, workflowId, sourceBranch, reportBack, overlay, note, noteOverrides, confirmRunning } = {}, { by = null } = {}, deps = {}) {
+export async function startFeature(seq, { reason, workflowId, sourceBranch, reportBack, overlay, note, noteOverrides, confirmRunning, allowUnguardedEngine } = {}, { by = null } = {}, deps = {}) {
   const { startRun, target = { ok: false }, newRunId = randomUUID, runSummary = () => null } = deps;
   if (typeof startRun !== 'function') throw new Error('starting runs is not available');
   const f0 = requireFeature(seq);
@@ -111,6 +116,7 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch, repo
   const runNote = noteOf(note);
   const overrides = optionalBoolean(noteOverrides, 'noteOverrides');
   const confirmed = optionalBoolean(confirmRunning, 'confirmRunning');
+  const unguarded = optionalBoolean(allowUnguardedEngine, 'allowUnguardedEngine');
   markStarting(f0.seq);   // before the first await: two starts at once cannot both pass
   try {
     if (confirmed !== true) {
@@ -147,6 +153,7 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch, repo
       guardrailsId: 'normal',
       ...(runOverlay ? { overlay: runOverlay } : {}),
       ...(branch ? { sourceBranch: branch } : {}),
+      ...(unguarded ? { allowUnguardedEngine: true } : {}),
     };
     const sent = runFiles(f);   // A8 D14
     const bad = unsendableRunFile(sent);

@@ -496,3 +496,11 @@ test('E9: scope notices fold into decor.scope by step; legacy "outside its check
     } },
   ]);
 });
+
+test('a step on a harness that reports no cost shows no $0.00, on a run whose default harness reports one', () => {
+  const steps = [impl(1, { activeMs: 63000, costUsd: 0.6 }), impl(2, { costUsd: 0 })];
+  const stepper = { ...MANIFEST, graph: { ...MANIFEST.graph, nodes: MANIFEST.graph.nodes.map((n) => (n.id === 'n_impl' ? { ...n, engine: 'cursor' } : n)) } };
+  const d = decorFromState(S({ steps, runEngine: 'claude', runEngines: ['claude', 'cursor'], stepper }));
+  assert.deepEqual(d.footers.n_impl.rows.map((r) => r.cost), ['', '']);
+  assert.equal(d.totals.n_impl.cost, '');
+});

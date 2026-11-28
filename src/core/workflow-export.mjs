@@ -414,14 +414,16 @@ async function buildExportSet({ workflowId, destination, projectDir, slug, inclu
   const manifest = buildGraphManifest(graph.template, graph.agentsByKey,
     { overlays: { nodes: graph.nodes, wires: graph.wires } });
   const tnodeById = new Map((graph.template.nodes || []).map((n) => [n.id, n]));
+  const offClaude = (rn) => typeof rn.engine === 'string' && rn.engine !== 'claude';
   const enrich = (cell) => {
     const rn = graph.nodes[cell.id] || {};
     const io = deriveNodeIo(graph, tnodeById.get(cell.id), rn.key, { channelDefs });
     return {
       nodeId: cell.id, key: rn.key, uiPhase: cell.uiPhase,
       tools: Array.isArray(rn.tools) ? rn.tools : [],
-      // Worca's fallback model is nobody's choice: export no model (and so no effort) for it.
-      model: rn.modelSource === 'worca-default' ? null : (rn.model || null), effort: rn.effort || null,
+      // Worca's fallback model is nobody's choice: export no model (and so no effort) for it. A step pinned to another
+      // harness exports none either: Claude Code cannot run it.
+      model: rn.modelSource === 'worca-default' || offClaude(rn) ? null : (rn.model || null), effort: offClaude(rn) ? null : (rn.effort || null),
       fanOut: !!rn.fanOut, askQuestions: !!rn.askQuestions,
       reads: io.reads, writes: io.writes,
     };

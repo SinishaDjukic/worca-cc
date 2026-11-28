@@ -2,7 +2,7 @@
 
 The web UI walks a new install through the first nine things to do with Worca:
 a one-time **welcome** dialog, a **Getting started** page (its own view, reached
-from the sidebar pill under *New pipeline* or from Settings) holding the
+from the pill at the top of the sidebar or from Settings) holding the
 checklist, and **spotlight guides** that ring the real control for each step. Every
 tick is derived from product state, never stored. A guide is an ordered walk of
 real controls: most hops advance when the user performs the real action; a hop
@@ -25,10 +25,10 @@ then "Runner · n of 7" until Runner, then "Getting started" with its count.
 |---|---|---|---|
 | 1 | Connect Claude Code | the configured `claude` binary resolves on the server's `PATH` (`WORCA_CLAUDE_BIN` honoured; the Windows npm-shim case uses the shared CLI resolver, `src/core/cli-resolve.mjs`, the same one every engine's run start and spawn use) and `claude auth status` does not report it signed out (preflight `probeClaudeAuth`: remembered 60 s; mock mode and auth env vars skip it, and `ANTHROPIC_BASE_URL` alone is not one; an unknown answer never un-ticks) | a dialog with the install command, the `/login` step, and **Check again** (a fresh sign-in check) |
 | 2 | Add your first project | one project is registered | sidebar › **Projects** → **Add project** (the dialog opens on **New**) → the **name** → **Create project** → the new row (Done); to register a folder you already have, the **Folder** tab: the **path** (**Choose folder…**) → the **name** → **Add project** |
-| 3 | Watch a run end to end | any pipeline reached `done` | (no project: the Add project walk of 2, then on) → sidebar › **New pipeline** → project select (none while New run's **Target** is **No project**) → prompt → **Mock mode** → **Start run** → sidebar › **Runs** (skipped when the app already routed there) → the run's **page** (Done) |
+| 3 | Watch a run end to end | any pipeline reached `done` | (no project: the Add project walk of 2, then on) → sidebar › **Runs** → **New run** (the button at the top of the Runs page) → project select (none while New run's **Target** is **No project**) → prompt → **Mock mode** → **Start run** → sidebar › **Runs** (skipped when the app already routed there) → the run's **page** (Done) |
 | 4 | Ask about a run in Chat | one Chat answer has landed (a turn that failed does not count) | sidebar › **Chat** → the input box (suggests a question) → **Send** → the transcript, where the answer lands (Done) |
 | 5 | Run a real pipeline | any pipeline with spend above zero | as 3, but after the project: the **Workflow** picker ("choose a built-in workflow"; Auto is the one state it asks to change), then prompt → Mock (only ringed when it is on) → **Start run** → Runs → the run's page (Done) |
-| 6 | Explore the built-in workflows | a project has a persisted picker choice (`project_config.active_workflow_id`, Auto included) | sidebar › **Workflows** → the **Library** toggle (only when the Library is closed) → the selector's **Workflows** tab (only when another section is selected; the Library opens on Workflows) → each still-folded folder holding **Default**, expanded in place (**Built-in**, then its domain when the built-ins span more than one; while a search is open, the header's close button first, which closes the search) → the **Default** row (opens a new unsaved copy on the canvas) → the **canvas** (the cards and the wires; Next) → the **chat** (what it can change; Next) → **Back** (leaves the editor) → the top bar's **New run** → the project select (the pick is saved per project; none while New run's **Target** is **No project**, so the tile waits for a pick on a project) → the **Workflow** picker (the user's own pick, a `change`, never the value a project loads) → prompt → **Start run** (Mock is mentioned, not rung) → Running → the run's card (Done) |
+| 6 | Explore the built-in workflows | a project has a persisted picker choice (`project_config.active_workflow_id`, Auto included) | sidebar › **Workflows** → the **Library** toggle (only when the Library is closed) → the selector's **Workflows** tab (only when another section is selected; the Library opens on Workflows) → each still-folded folder holding **Default**, expanded in place (**Built-in**, then its domain when the built-ins span more than one; while a search is open, the header's close button first, which closes the search) → the **Default** row (opens a new unsaved copy on the canvas) → the **canvas** (the cards and the wires; Next) → the **chat** (what it can change; Next) → **Back** (leaves the editor) → **Runs** → the **New run** button → the project select (the pick is saved per project; none while New run's **Target** is **No project**, so the tile waits for a pick on a project) → the **Workflow** picker (the user's own pick, a `change`, never the value a project loads) → prompt → **Start run** (Mock is mentioned, not rung) → Running → the run's card (Done) |
 | 7 | Group projects into a workspace | one workspace exists | (fewer than two projects: the Add project walk) → sidebar › **Workspaces** → **Create workspace** → in the wizard: **name** → two to 40 **projects** (a note warns past 10, a stronger one past 20) → (the **Models** column: scan agent and project agents, default Sonnet · medium) → **Scan interconnections** — the scan runs as a pipeline you can follow under **Runs**; the workspace appears when it finishes, its relations on the **Map** tab |
 | 8 | Turn on team metrics | any project or workspace records (`listScopes().anyEnabled`) | (no project: the Add project walk) → sidebar › **Projects** → a project row → its **Team** tab → **Set up metrics…** → the dialog's **Create and enable** (a project with no origin remote gets its Team metrics block ringed with the reason and Done instead; one already on gets its block explained, with Done) |
 | 9 | Set a team policy | any project or workspace resolves a policy (`listPolicyScopes().anyEnabled`: its own home, or one it follows) | (no project: the Add project walk) → sidebar › **Projects** → a project row → its **Team** tab → **Set up policy…** → the dialog's **Create and enable** → the new home's Team policy page, on **Edit policy** (Done). A project pointed at another home stays on its page: its Team policy block is ringed with what happened (Done). No origin remote, or already on: the block ringed with the reason (Done) |
@@ -67,9 +67,17 @@ it → know the workflows → real work → scale.
 ## First start
 
 On a fresh install (the welcome not seen, no project and no run: `fresh` in `GET /api/onboarding`, derived and
-never stored), the setup assistant (`docs/setup-assistant.md`) opens before the welcome. **Set up later** closes
-it at once and goes straight to the welcome; finishing it ends on the welcome's three doors too. Settings ›
+never stored), the setup assistant (`docs/setup-assistant.md`) opens before the welcome. **Skip all** closes
+it at once and goes straight to the welcome; finishing it ends on its ready screen instead: the welcome is marked seen and does not open, and **Start your
+first run** goes to the New run page. A re-run that applied something ends on the welcome's three doors. Settings ›
 General › Setup assistant › **Run setup** reopens it later with the saved values.
+
+**Signed out.** When Claude Code is installed but not signed in, a run that has nothing else to run on does not
+start. The **Connect Claude Code** dialog opens instead (the same one step 1 opens). It also opens from a **Sign in…**
+link where a start is refused for this reason, and from the Run a real pipeline tour once per page. It shows the `/login`
+step and a status line saying whether the CLI was found. Opening it quietly asks again, so a sign-in you just finished is
+picked up without a click. **Check again** asks afresh and leaves a line under the status each time: **Checked just now:
+signed in.**, **Checked just now: still not signed in.** or **Checked just now: still not found.** A fresh open starts with no such line.
 
 ## Surfaces
 
@@ -81,12 +89,12 @@ General › Setup assistant › **Run setup** reopens it later with the saved va
   drawn and still, its mark filled with ink, its label struck. Done tiles stay
   clickable so any guide can be replayed. The page itself is always available
   (Hide only removes the pill; Settings › General › Getting started reopens it).
-- **Sidebar pill** under *New pipeline* (mounted by app.js, not shipped in the
+- **Sidebar pill** at the top of the sidebar, above its rows (mounted by app.js, not shipped in the
   shell): `Getting started · 3/9`, in the guide's violet with a pulsing halo
   (still under reduced motion); it routes to the page and reads as the current
   view while it is open. Gone once the checklist is hidden or complete.
-- **Welcome** (`#welcome-modal`): shown once, on the first visit to New
-  pipeline, with three doors (add a project / watch a mock run / run a real
+- **Welcome** (`#welcome-modal`): shown once, on the first visit to Chat or
+  New run, with three doors (add a project / watch a mock run / run a real
   pipeline) and Skip. An install that has already done everything never sees
   it (it is marked seen silently).
 - **Settings › General › Getting started**: **Show again** undoes Hide and

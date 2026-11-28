@@ -5,6 +5,7 @@
 // endpoint calls, the modal shell, and mounting; node:test drives these via jsdom.
 
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
+import { addVaultNote } from './settings/secret-vault-note.mjs';
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
   if (cls) n.className = cls;
@@ -263,6 +264,7 @@ export function renderConfigForm(sections, { doc = globalThis.document } = {}) {
         input.type = 'password';
         input.value = '';
         if (val && val.set === true) { input.placeholder = '(set)'; input.dataset.set = '1'; }
+        addVaultNote(input);
       } else {
         input = h(doc, 'input', 'input');
         input.type = 'text';

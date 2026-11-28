@@ -55,7 +55,7 @@ before(async () => {
   installFixture(PLUGIN, MANIFEST);
   // writePluginConfig(name, configSchema, values) — schema SECOND, values THIRD
   // (src/core/plugin-config.mjs:198). Seed ds-token only; ds-other stays unset.
-  writePluginConfig(PLUGIN, modelSecretsSchema(PLUGIN), { 'ds-token': 'sk-live' });
+  await writePluginConfig(PLUGIN, modelSecretsSchema(PLUGIN), { 'ds-token': 'sk-live' });
 });
 
 after(async () => {

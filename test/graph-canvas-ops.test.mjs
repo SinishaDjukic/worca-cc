@@ -249,3 +249,13 @@ test('add_node: a config-ported script starts with the sidecar defaultPorts (as 
     wires: [{ from: { node: 'task', port: 'task' }, to: { node: 'sh', port: 'in' } }, { from: { node: 'sh', port: 'pass' }, to: { node: 'end', port: 'result' } }] }, { portsFn: pf });
   assert.equal(b.ok, true, b.error);
 });
+
+test('set_node: a model clears the node\'s engine; a patch naming no model keeps it', () => {
+  const t = base();
+  t.nodes.push({ id: 'n_pin00001', kind: 'agent', key: 'planner', x: 0, y: 0, config: { model: 'gpt-5.5', engine: 'codex' } });
+  const at = (r) => r.tpl.nodes.find((n) => n.id === 'n_pin00001').config;
+  assert.deepEqual(at(applyCanvasOps(t, [{ op: 'set_node', node: 'n_pin00001', config: { model: 'claude-sonnet-5' } }], { portsFn })), { model: 'claude-sonnet-5' });
+  assert.deepEqual(at(applyCanvasOps(t, [{ op: 'set_node', node: 'n_pin00001', config: { model: null } }], { portsFn })), {});
+  assert.equal(at(applyCanvasOps(t, [{ op: 'set_node', node: 'n_pin00001', config: { awaitAll: true } }], { portsFn })).engine, 'codex');
+  assert.match(applyCanvasOps(t, [{ op: 'set_node', node: 'n_pin00001', config: { engine: 'claude' } }], { portsFn }).error, /'engine' is not an agent setting/);
+});

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGraphManifest, manifestPortsFn, manifestTemplate } from '../src/shared/graph/manifest.mjs';
+import { buildGraphManifest, manifestPortsFn, manifestTemplate, manifestEngines, manifestWithoutEngines } from '../src/shared/graph/manifest.mjs';
 import { validateGraph } from '../src/shared/graph/validate.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -290,4 +290,24 @@ test('an agent cell carries modelSource when the resolver set it (null included)
   assert.equal('modelSource' in bare, false);
   assert.equal(JSON.stringify(build({ overlays: { nodes: { n_plan: { modelSource: undefined } } } })), JSON.stringify(build({ overlays: { nodes: { n_plan: {} } } })),
     'a pre-change cell is byte-equal');
+});
+
+test('a cell carries engine only off the default harness; role entries keep their own', () => {
+  const m = build({ engine: 'claude', overlays: { nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex', roles: { security: { model: 'claude-opus-5-5', engine: 'claude', source: 'run' } } }, n_rev: { model: 'claude-opus-5-5', engine: 'claude' } } } });
+  const cell = (id) => m.graph.nodes.find((n) => n.id === id);
+  assert.equal(cell('n_plan').engine, 'codex');
+  assert.equal('engine' in cell('n_rev'), false);
+  assert.deepEqual(cell('n_plan').roles.security, { model: 'claude-opus-5-5', engine: 'claude', source: 'run' });
+  const onCodex = build({ engine: 'codex', overlays: { nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex' } } } });
+  assert.equal('engine' in onCodex.graph.nodes.find((n) => n.id === 'n_plan'), false, 'the default harness is never written');
+});
+
+test('manifestEngines lists every pinned harness; manifestWithoutEngines is a copy with none', () => {
+  const m = build({ engine: 'claude', overlays: { nodes: { n_plan: { model: 'gpt-5.5', engine: 'codex', roles: { qa: { model: 'claude-haiku-4-5', engine: 'cursor', source: 'run' } } } } } });
+  assert.deepEqual(manifestEngines(m), ['codex', 'cursor']);
+  const bare = manifestWithoutEngines(m);
+  assert.deepEqual(manifestEngines(bare), []);
+  assert.deepEqual(manifestEngines(m), ['codex', 'cursor'], 'the input is not changed');
+  assert.deepEqual(bare.graph.nodes.find((n) => n.id === 'n_plan').roles.qa, { model: 'claude-haiku-4-5', source: 'run' });
+  assert.deepEqual(manifestEngines(null), []);
 });

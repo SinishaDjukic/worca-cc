@@ -19,6 +19,9 @@ import { applyProjectChange } from '../../../src/core/ask/project-deps.mjs';
 import { projectEventPrompt, projectNoticeText } from '../../../src/core/ask/project-proposal.mjs';
 import { checkQuestionAnswer, questionEventPrompt, questionNoticeText } from '../../../src/core/ask/question-card.mjs';
 import { applyProxyChange } from '../../../src/core/ask/proxy-deps.mjs';
+import { applyEnvironmentChange } from '../../../src/core/ask/env-proposal.mjs';
+import { startEnvironmentBuild, publicBuildJob } from '../../../src/core/exec-env/build.mjs';
+import { mockEnabled } from '../../../src/core/claude-runner.mjs';
 import { chatScopeOf, scopeEventPrompt, scopeNoticeText } from '../../../src/core/ask/scope.mjs';
 import { applyScriptCard } from '../../../src/core/ask/script-approval.mjs';
 import { defaultScriptDeps as askScriptDeps } from '../../../src/core/ask/script-deps.mjs';
@@ -34,6 +37,7 @@ import { actorOf } from '../../../src/core/identity.mjs';
 import { displayPath, listProjects, normalizeProjectPath } from '../../../src/core/projects.mjs';
 import { PROXY_AGENT_TEXT } from '../../../src/core/proxy-host.mjs';
 import { isInContainer } from '../../../src/core/remote-access.mjs';
+import { HARDENED_CLONE_ONLY_TEXT, isHardenedBox } from '../../../src/core/security-posture.mjs';
 import { addAskWebHost } from '../../../src/core/settings.mjs';
 import { applyChanges, applyRoute, applyRequirementCard } from '../../../src/core/shape/changes.mjs';
 import { addFeatureNote, appendFeatureRun, currentFeatureId } from '../../../src/core/shape/features.mjs';
@@ -45,7 +49,7 @@ import { readWorkflow, writeGraphWorkflow } from '../../../src/core/workflows.mj
 import { RESCAN_CHOICES, memoGitProbe, readWorkspace, removeWorkspaceMember } from '../../../src/core/workspaces.mjs';
 import { formatInstant } from '../../../src/shared/schedule/recurrence.mjs';
 import { changesCardVerb, routeCardVerb } from '../../../src/shared/shape/route.mjs';
-import { AGENTS_DIR, ASK_DEFERRED_REPLIES_MAX, afterMembersChanged, afterProjectRegistered, agentMayBeCaller, askChatActions, askDeferred, askDeferredReplies, askEventPick, askIdParam, askInFlight, askTabBridges, askTabsEnabled, askViewer, askWebAccessFor, badRequest, broadcast, broadcastFeature, chatLinkRoots, chatLinks, designApi, designChatActions, emitChanged, failedEventTurn, flipCard, followCloneCard, fsAllowedRoots, fsLimitedHere, pinUiLevel, postAskSystemNotice, proxyHost, prunedNote, refuseAgentCaller, removeRecommendation, reqChanges, runs, scheduleVerb, schedulerTick, shipFeatureNow, soundCards, startAskTurn, startCloneJob, startMetricsEventTurn, startRunAs, startScopeEventTurn, tabFailure, tabTools, terminalCallerOk, toolPanelOn, workspaceMembersBusy } from '../../server.mjs';
+import { AGENTS_DIR, ASK_DEFERRED_REPLIES_MAX, afterMembersChanged, afterProjectRegistered, agentMayBeCaller, askChatActions, askDeferred, askDeferredReplies, askEventPick, askIdParam, askInFlight, askTabBridges, askTabsEnabled, askViewer, askWebAccessFor, badRequest, broadcast, broadcastFeature, chatLinkRoots, chatLinks, designApi, designChatActions, emitChanged, failedEventTurn, flipCard, followCloneCard, fsAllowedRoots, fsLimitedHere, pinUiLevel, postAskSystemNotice, proxyHost, prunedNote, refuseAgentCaller, removeRecommendation, reqChanges, runs, scheduleVerb, schedulerTick, shipFeatureNow, soundCards, startAskTurn, startCloneJob, startMetricsEventTurn, startRunAs, startScopeEventTurn, tabFailure, tabTools, terminalCallerOk, terminalSameOrigin, toolPanelOn, workspaceMembersBusy } from '../../server.mjs';
 import { FILE_PATH_MAX, FILE_REFS_MAX } from '../../../src/shared/file-refs.mjs';
 
 /** The cards route's handler, set by register(): the chat bridge applies a chat channel's card actions through it
@@ -776,6 +780,34 @@ async function askCardHandler(req, res) {
       const turn = await startMetricsEventTurn(id, block);
       return res.json({ block, turn });
     }
+    if (found.block.card && found.block.card.type === 'environment') {
+      // Environment card (docs/environment-spec.md "From Chat"): proposed → applied | failed | declined. Apply goes
+      // through the code the project page's routes call (put / delete …/exec-env/spec, PATCH …/exec-env/config, POST
+      // …/exec-env/build), behind their guards: an isolated agent and a page served by another origin are refused (the
+      // spec decides what every later sandbox holds, a build spends the server's backend credit).
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (body.state === 'applied' && agentMayBeCaller(req)) return res.status(403).json({ error: 'Sandbox environments cannot be changed or built from inside the container while agent isolation is on. Open Worca through its published address.', code: 'EXEC_ENV_AGENT_BLOCKED' });
+      if (body.state === 'applied' && !terminalSameOrigin(req)) return res.status(403).json({ error: 'Sandbox environments can only be changed from pages served by this Worca.', code: 'EXEC_ENV_CROSS_ORIGIN' });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        return res.json({ block, turn: await startMetricsEventTurn(id, block) });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      try {
+        let result;
+        try {
+          result = await applyEnvironmentChange(found.block.card, { startBuild: ({ projectKey, backend }) => startEnvironmentBuild({ projectKey, backend, mock: mockEnabled(),
+            onState: (j) => broadcast({ type: 'exec-env-build-changed', job: publicBuildJob(j) }) }) });
+        } catch (err) { result = { ok: false, error: err && err.message ? err.message : String(err), code: (err && err.code) || 'ERROR' }; }
+        block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      return res.json({ block, turn: await startMetricsEventTurn(id, block) });
+    }
     if (found.block.card && found.block.card.type === 'clone') {
       // Clone card (docs/deploy-railway.md "First project"): proposed → cloning → applied | failed, or declined.
       // The clone happens HERE, behind the click, as the same job the Projects view starts (startCloneJob);
@@ -823,6 +855,7 @@ async function askCardHandler(req, res) {
       try {
         try {
           const card = found.block.card; const ch = card.change || {};
+          if (ch.kind === 'add' && isHardenedBox()) throw Object.assign(new Error(HARDENED_CLONE_ONLY_TEXT), { code: 'HARDENED_CLONE_ONLY' });
           if (ch.kind === 'add' && fsLimitedHere(req)) {
             const p = normalizeProjectPath(ch.path);
             if (!p || !(await checkInside(p, await fsAllowedRoots())).inside) {

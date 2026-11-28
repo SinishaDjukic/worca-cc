@@ -72,6 +72,10 @@
 .status-dot.is-grey{color:var(--slate);}
 .status-dot.is-dark-grey{color:var(--ink-2);}
 .status-dot.is-grey-ring{color:var(--slate);background:none;box-shadow:inset 0 0 0 2px currentColor;}
+/* Shaper small runs s4: the run with the turn (`next`) is a ring in ink; a held stop answer (`after run N`) a 12px
+   dashed ring in --ink-3, its dashes cut by a mask, with no glyph (status-dot.mjs markDot). */
+.status-dot.is-ink-ring{color:var(--ink);background:none;box-shadow:inset 0 0 0 2px currentColor;}
+.status-dot.is-dashed-ring{width:12px;height:12px;color:var(--ink-3);background:currentColor;-webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5.2' fill='none' stroke='black' stroke-width='1.5' stroke-dasharray='2.4 1.7'/></svg>") center/100% 100% no-repeat;mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5.2' fill='none' stroke='black' stroke-width='1.5' stroke-dasharray='2.4 1.7'/></svg>") center/100% 100% no-repeat;}
 .status-dot.has-sym{width:12px;height:12px;background:none;}
 .status-dot.has-sym > svg{display:block;}
 .status-dot.has-ic{width:14px;height:14px;background:none;color:var(--ink-2);}
@@ -102,6 +106,20 @@
 .rd-sheet-head > .run-status{grid-area:1 / 1 / 2 / -1;grid-template-columns:subgrid;column-gap:0;}
 .rd-sheet-head > .run-status > *{grid-column:1 / -1;}
 .rd-sheet-head > .run-status > .run-status-head{grid-column:1;}
+/* The run pages' card says only what the header's state line does not (paintRunStatus lead:false): a detail line with
+   no dot column, on the word's line box beside the head buttons. With nothing to say the head is gone: the head buttons
+   take a row of their own and the card starts at its progress bar. */
+.run-status-head:has(> .run-status-word[hidden]){column-gap:0;}
+.run-status-head:has(> .run-status-word[hidden]) > .run-status-detail{margin-top:0;line-height:var(--rd-word-line);}
+.run-status-head:has(> .run-status-detail > .run-status-link){column-gap:8px;}   /* Shaper slice 7: the linked status beside its dot */
+.rd-sheet-head:has(> .run-status > .run-status-head[hidden]) > .run-status{grid-area:2 / 1 / 3 / -1;}
+.rd-sheet-head:has(> .run-status > .run-status-head[hidden]) > .rd-head-acts:not([hidden]){grid-area:1 / 1 / 2 / 4;justify-self:end;margin:0;}
+.rd-sheet-head:has(> .run-status > .run-status-head[hidden]) > .hd-publish:not([hidden]){margin:0 0 0 8px;}
+.rd-sheet-head:has(> .run-status > .run-status-head[hidden]):has(> :is(.rd-head-acts,.hd-publish):not([hidden])) > .run-status:has(> :not([hidden])){margin-top:12px;}
+@container rd-head (max-width:420px){.rd-sheet-head:has(> .run-status > .run-status-head[hidden]) > .rd-head-acts:not([hidden]){justify-self:start;}
+  .rd-sheet-head:has(> .run-status > .run-status-head[hidden]) > .hd-publish:not([hidden]){margin:8px 0 0;}}
+/* Nothing at all for the head (no line, no bar, no button): no empty row at the card's top. */
+.rd-sheet-head:has(> .run-status > .run-status-head[hidden]):not(:has(> .run-status > :not([hidden]),> :is(.rd-head-acts,.hd-publish):not([hidden]))){display:none;}
 /* Slice 3: centred on the state word's line (the detail may add lines under it): the buttons (32px, 40px on touch screens) overhang
    that line each way, so the head is the status block's height with or without them, and the PR control's fade-out moves
    nothing. A narrow card wraps them under the status. */
@@ -303,6 +321,15 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-pr-slot:is(.is-pending,.is-morph,.is-out){overflow:hidden;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);}
 .rd-pr-slot > [data-rd-cta]{position:relative;max-width:100%;}   /* above the colour layer */
 .rd-pr-slot > [data-rd-cta] > span:not(.ic){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* Lock tip (Shaper slice 7): why a small-runs feature's Create N PRs is off, drawn above the button so it never covers
+   the status line (a native title opens below the pointer, on top of it). The Composer bar tip's look, tokens only, no
+   motion, no box at rest. A disabled button takes no focus: the same reason is the linked status line, and the button's
+   aria-describedby names this tip. .rd-pr-slot is already positioned; a head button gets .rd-tip-host. */
+.rd-tip-host{position:relative;display:inline-flex;}
+.rd-tip{display:none;position:absolute;z-index:9;bottom:calc(100% + 8px);right:0;width:max-content;max-width:min(320px, calc(100vw - 32px));padding:5px 8px;border-radius:var(--r-sm);background:var(--ink);color:var(--on-ink);font:500 11px/1.3 var(--sans);white-space:normal;pointer-events:none;}
+.rd-pr-slot:hover > .rd-tip,.rd-tip-host:hover > .rd-tip{display:block;}
+/* A narrow head puts the buttons on their own row under the status line, left-aligned: the tip opens below them. */
+@container rd-head (max-width:420px){.rd-head-acts .rd-tip{top:calc(100% + 8px);bottom:auto;left:0;right:auto;}}
 .rd-pr-wait{display:flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;height:32px;padding:0 12px;
   font:500 13px var(--sans);color:var(--ink-2);cursor:default;}
 .rd-pr-wait > *{opacity:0;}

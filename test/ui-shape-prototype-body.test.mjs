@@ -16,12 +16,12 @@ const SCREENS = [{ section: 'editor', name: 'Template editor', ids: ['R-ux-1'], 
 const OFFER = { build: { primary: 'build', menu: 'skip', review: false }, lean: { primary: 'skip', menu: 'build', review: false } };
 const pq = (prototype) => ({ id: 'proto-1', kind: 'prototype', prototype });
 
-function setup(prototype, { register, submit, readOnly } = {}) {
+function setup(prototype, { register, submit, readOnly, answerHref } = {}) {
   const panel = doc.createElement('div');
   panel.className = 'qpanel';
   doc.body.replaceChildren(panel);
   const calls = { submit: [] };
-  const deps = { doc, register, readOnly, title: prototypeTitle(prototype), chip: 'Prototype', confirm: async () => true,
+  const deps = { doc, register, readOnly, answerHref, title: prototypeTitle(prototype), chip: 'Prototype', confirm: async () => true,
     submit: async (p) => { calls.submit.push(p); return submit ? submit(p) : true; } };
   const body = renderPrototypeBody(panel, pq(prototype), deps);
   return { panel, calls, body, $: (s) => panel.querySelector(s), $$: (s) => [...panel.querySelectorAll(s)] };
@@ -197,4 +197,16 @@ test('the run side panel (readOnly): every moment draws its rows and live line b
   assert.equal(built.$('.proto-open').getAttribute('href'), '#design/d_1', 'Open prototype is a link, not a step button');
   const failed = setup(moments[4], { readOnly: true });
   assert.equal(count(failed.panel.textContent, "Design's lead planned no screen"), 1);
+});
+
+// Slice 7 (D12, R-arch-4): a feature with no chat answers on its feature page, so the read-only panel says where.
+test('s7: the read-only step with answerHref links "Answer it on the feature page"; without it there is no link', () => {
+  const offered = { moment: 'offered', offer: OFFER.build, requirements: REQS };
+  const s = setup(offered, { readOnly: true, answerHref: '#feature/feat_1' });
+  const links = s.$$('a.link');
+  assert.equal(links.length, 1);
+  assert.equal(links[0].getAttribute('href'), '#feature/feat_1');
+  assert.equal(links[0].textContent, 'Answer it on the feature page');
+  assert.equal(s.$$('button, input, textarea').filter((b) => !b.classList.contains('plan-fold')).length, 0, 'still answers nothing');
+  assert.equal(setup(offered, { readOnly: true }).$$('a.link').length, 0);
 });

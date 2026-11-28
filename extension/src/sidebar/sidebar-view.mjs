@@ -4,7 +4,7 @@
 // The composer is Ask's (ask-panel.mjs buildComposer) minus voice and Sets, plus the area-capture button.
 import { parseQuotedMessage } from '../../../ui/public/pinpoint-model.mjs';
 import { ctxPercent, ctxLevel, fmtCtx, fmtUsd, fmtWindow, ctxBreakdown, fmtShare, kTok, CTX_COST_HINT } from '../../../ui/public/ask-meter.mjs';
-import { pickerGroups } from '../../../ui/public/ask-engine.mjs';
+import { pickerGroups, needsHarness } from '../../../ui/public/ask-engine.mjs';
 import { modelGroups } from '../../../src/shared/connections.mjs';
 import { icon } from '../../../ui/public/icons.mjs';
 
@@ -345,7 +345,13 @@ export function fillModelPopover(doc, panel, { catalog, pick, lock, pane = 'main
   }
   // #943: inside a chat only its engine, under its name; moving the chat to another engine happens in Chat (the
   // switch route refuses extension callers).
-  const sections = pickerGroups(models, { lock, active: lock });
+  const sections = pickerGroups(models, { lock, active: lock, notReady: catalog && catalog.notReady, current: pick ? pick.model : null });
+  // No engine has a model a chat can take (the button says "Set up a harness"): setting one up happens in Chat, whose
+  // picker lists them.
+  if (needsHarness(catalog, models, { lock, active: lock, current: pick ? pick.model : null })) {
+    panel.appendChild(make(doc, 'div', 'ask-pop-empty', 'No harness on this machine can run a chat yet. Set one up from the model picker in Chat in the Worca app.'));
+    return;
+  }
   for (const g of sections) {
     if (sections.length > 1 || lock) panel.appendChild(make(doc, 'div', 'ask-pop-group', g.label));
     const conns = modelGroups(g.models, { engine: g.engine });
@@ -358,6 +364,7 @@ export function fillModelPopover(doc, panel, { catalog, pick, lock, pane = 'main
           it.appendChild(tag(doc, 'secret not set', 'is-err', `${m.secretsMissing.join(', ')} is not set — configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
         }
         if (m.needsSignIn) it.appendChild(tag(doc, 'needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet — Models › Providers.'));
+        if (g.notReady) it.appendChild(tag(doc, 'not installed', 'is-warn', g.notReady));
         if (pick && m.id === pick.model) it.appendChild(checkMark(doc));
         panel.appendChild(it);
       }

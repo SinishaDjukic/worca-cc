@@ -16,6 +16,9 @@
 import { runProgress, groupProgress, askWhat } from './run-progress.mjs';
 import { liveRoleRows } from './shape/role-review.mjs';
 import { parseAzurePrUrl } from './azure-remote.mjs';
+import { isNeedsYouHold, isConfirmHold } from './shape/ship-ledger.mjs';
+import { checkGroupLine } from './shape/verifier.mjs';
+import { HELD_TURN_WORD } from './shape/run-status.mjs';
 import { parseBitbucketPrUrl } from './bitbucket-remote.mjs';
 
 export const RUN_STATES = Object.freeze({
@@ -349,7 +352,11 @@ const asPart = (m) => ({ state: doneLike(m) ? 'done' : m.state === 'failed' ? 'f
  */
 export function groupModel(group, opts = {}) {
   const g = group || {};
-  const members = (g.members || []).map((m) => runModel(m, { ...opts, memo: m.memo || null }));
+  // Slice 16 (D7): a member held for its turn (groupModelOf's `heldTurn`) keeps the mark, so the line can say it waits.
+  const members = (g.members || []).map((m) => {
+    const x = runModel(m, { ...opts, memo: m.memo || null });
+    return m.heldTurn === true ? { ...x, heldTurn: true } : x;
+  });
   const planning = g.planning ? runModel(g.planning, { ...opts, memo: g.planning.memo || null }) : null;
   const all = planning ? [planning, ...members] : members;
   const total = members.length;
@@ -379,8 +386,8 @@ export function groupModel(group, opts = {}) {
         const what = rd && rd.by === 'watch' && rd.request ? rd.request : (current.progress && current.progress.label) || 'working';
         return rd ? `${where} · round ${rd.n} · ${what}` : `${where} · ${what}`;
       }
-      case 'needs-you': return `${where} · needs you`;
-      case 'paused': return `${where} · paused`;
+      case 'needs-you': return current.heldTurn ? `${where} · ${HELD_TURN_WORD}` : `${where} · needs you`;
+      case 'paused': return current.heldTurn ? `${where} · ${HELD_TURN_WORD}` : `${where} · paused`;
       case 'failed': return `${where} · failed`;
       // D18: a held run's predecessor is done, so "waiting for run N" would be stale; the feature's row says why.
       case 'waiting': return current.held ? `${where} · waiting` : idx > 0 ?`${where} · waiting for run ${idx}` : join(where, current.line.replace(/^Waiting · /, '').replace(/^Waiting$/, 'waiting'));
@@ -389,13 +396,20 @@ export function groupModel(group, opts = {}) {
       case 'in-review': {
         // Distinct PRs: a chain shipped as One records the same PR on every run.
         const urls = new Set(members.filter((m) => m.pr && m.pr.id !== 'merged' && m.pr.id !== 'closed').map((m) => m.pr.url || `#${m.pr.number}`));
-        return `In review · ${plural(pr ? 1 : urls.size, 'PR')}`;
+        return hold || `In review · ${plural(pr ? 1 : urls.size, 'PR')}`;
       }
       default: return 'Merged';
     }
   };
-  const hold = state === 'ready' && g.hold ? String(g.hold) : null;
-  const meta = RUN_STATES[hold ? 'waiting' : state];
+  // Slice 11 (D7): the newest Verifier round holds a group whose members alone read ready; a passed or answered one does not.
+  // Slice 18 (D10): a feature already In review is taken only by a failed newest round, or held by an open confirmation.
+  const reviewing = state === 'in-review' && g.kind === 'feature';
+  const newest = (state === 'ready' || reviewing) && Array.isArray(g.checks) && g.checks.length ? checkGroupLine(g.checks.at(-1)) : null;
+  const verifier = newest && (state === 'ready' || newest.state === 'failed') ? newest : null;
+  if (verifier) state = verifier.state;
+  const hold = g.hold && (state === 'ready' || (reviewing && state === 'in-review' && isConfirmHold(g.hold))) ? String(g.hold) : null;
+  // Slice 7 (D3): a confirmation that is still open needs you (slice 9: so do the Verifier's notes) (amber, no "?": no run asks); any other hold waits.
+  const meta = isNeedsYouHold(hold) ? { ...RUN_STATES['needs-you'], symbol: null } : RUN_STATES[hold ? 'waiting' : state];
   const progress = groupProgress(members.map(asPart), { planning: planning ? asPart(planning) : null, memo: g.memo || null });
   // A group whose current member needs you only through its PR has no question to answer and nothing running there,
   // so it offers that PR, not Answer / Stop; `prNeeds` marks a group whose every member is finished. A PR- or
@@ -415,9 +429,11 @@ export function groupModel(group, opts = {}) {
     if (!seen.has(k)) { seen.add(k); prCount += 1; }
   }
   const prUrl = prCount === 1 ? prList[0].url || null : null;
-  return { kind: g.kind || 'chain', title: g.title || '', state, ...meta, symbol, line: tail(), actions: prNeedsCurrent ? [...current.actions]
+  return { kind: g.kind || 'chain', title: g.title || '', state, ...meta, symbol, line: verifier ? verifier.line : tail(), actions: verifier ? []
+      : prNeedsCurrent ? [...current.actions]
       // D18: a held current run's start is the feature's one Start now: the group row offers none either.
-      : current && current.held ? ACTIONS[state].filter((a) => a !== 'start-now') : hold ? [] : [...ACTIONS[state]],
+      : current && current.held ? ACTIONS[state].filter((a) => a !== 'start-now') : hold && state !== 'in-review' ? [] : [...ACTIONS[state]],
     prNeeds: prNeedsCurrent && all.every(doneLike), pr, prCount, prUrl, count: { done, total, text: `${done}/${total}` }, progress, current, members, planning,
-    ...(hold ? { hold } : {}) };
+    ...(hold ? { hold } : {}),
+    ...(verifier ? { check: (({ round, state: st, gaps }) => ({ round, state: st, gaps }))(g.checks.at(-1)) } : {}) };
 }

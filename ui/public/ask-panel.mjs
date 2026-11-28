@@ -20,18 +20,19 @@ import { createCommandCard, createCommandGroup, COMMAND_CARD_TYPE } from './ask-
 import { commandRuns } from './ask-command-group.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, buildRoleRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
-import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import { PR_OPEN, PR_OPEN_LABELS, prSourceText } from '../../src/shared/pr-auto.mjs';
 import { SOURCE_BRANCH_TEXT, currentBranchLabel } from '../../src/shared/chat-source-branch.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
-import { runsOn, modelGroups, connectionOf, connectionLabel } from '../../src/shared/connections.mjs';
-import { appendModelGroups, modelOptionText } from './model-options.mjs';
+import { execEnvList, execEnvLabel, execEnvKnown } from './exec-envs.mjs';
+import { remoteRefusesDefault } from '../../src/shared/exec-env.mjs';
+import { runsOn, modelGroups, connectionOf, connectionLabel, effortsOn, HARNESS_EFFORTS } from '../../src/shared/connections.mjs';
+import { modelTrigger, columnsValue } from './models/model-columns.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
-import { engineOfEntry, chatEngineOf, chatSpawnsAgents, pickerGroups, moreHarnesses, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from './ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, chatSpawnsAgents, pickerGroups, engineNotReady, SET_UP_HARNESS, needsHarness, moreHarnesses, notInstalledHarnesses, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName, pickerEngineLabel } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
@@ -62,7 +63,7 @@ import { icon, ICONS as ICON_NAMES } from './icons.mjs';
 import { withoutChips } from './ask-page-chips.mjs';
 import { sideSuggestions } from './ask-side-suggest.mjs';
 import { makeSwitch } from './switch.mjs';
-import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
+import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary, sentShapeRole } from './shape/proposal.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
 import { cardKit, scriptApprovalCardView } from './workflows/card-views.mjs';
 import { applyPresetStart } from '../../src/shared/run-presets.mjs';
@@ -197,7 +198,7 @@ const THREADS_REFRESH_MS = 250;
 const HISTORY_KEY = 'worca-cc.chat.history';
 const HISTORY_OVERLAY_BELOW = 1100;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, openAddModel = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null, onToolScope = () => {}, onChatsClosed = () => {}, designChat = null }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openEngineSetup = null, openAddModel = null, engineRows = () => null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null, onToolScope = () => {}, onChatsClosed = () => {}, designChat = null }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -308,6 +309,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     queueEdit: null,          // {id, item, li, ta}: the queued card whose text is being edited in place (one at a time)
     stopBy: null,             // who asked the live turn to stop: 'button' pauses the queue, 'voice' (barge-in) lets it send
     stopAfterSend: false,     // voice asked to stop while the send POST was out: stop that turn as soon as the 202 lands
+    echo: null,               // the composer's send while its POST is out: {sendId, quoted, requirements, cleared}; its echo clears the composer
     hist: { idx: -1, draft: '' },   // ArrowUp history walk: idx into historyEntries(), -1 = not walking; the draft it replaced
     basePlaceholder: INPUT_PLACEHOLDER,   // the add-ons' placeholder (addonCtx.setPlaceholder); a suggestion shows only over the default
     suggestion: null,         // the suggestion on screen ({messageId, text}) — what Tab accepts
@@ -1110,8 +1112,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         route(id, { replace: true });          // #chat → #chat/<id>, swapped: Back never lands on an empty new chat
       }
       const sentOff = st.mcp.off;
+      // The composer's own send is tagged: the server's echo of the user row carries the tag, and the composer clears
+      // as the bubble appears (pushServerFrame). The 202 comes only after the prompt is assembled, seconds later on
+      // Windows. A drained queue item is not tagged: it never touches the composer.
+      const sendId = queued ? null : `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
       const payload = {
         text,
+        ...(sendId ? { sendId } : {}),
         model: st.picker.model,
         effort: st.picker.effort,
         // The browser's zone rides along: "tomorrow 02:00" is read in it (docs/scheduled-runs.md "Chat").
@@ -1129,6 +1136,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         ...(requirementsOn() && draft.requirements && draft.requirements.length ? { requirements: draft.requirements } : {}),
       };
       const model = st.model;
+      if (sendId) st.echo = { sendId, quoted, requirements: payload.requirements, cleared: false };
       let res = null;
       let refusedBody = null;
       try {
@@ -1192,17 +1200,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       st.askedIn.add(id);                            // its replies may light the Chat row's dot, even after a switch
       // No provisional title from the prompt: the header keeps "New chat" until
       // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
-      // A drained queue item leaves the composer alone: it holds whatever the user is typing now.
-      if (!queued) {
-        el.input.value = '';
-        fitInput();                                    // a programmatic clear fires no input event
-        st.pendingFiles = [];
-        if (st.quote === quoted) st.quote = null;
-        renderChips();
-        st.hist = { idx: -1, draft: '' };
-        dropAttached(payload.requirements);            // only after the 202: a refusal keeps text and features
-        if (el.hash) el.hash.close();
-      }
+      // A drained queue item leaves the composer alone: it holds whatever the user is typing now. So does a send whose
+      // echo already cleared it: the composer may hold the next message by now.
+      if (!queued && !(st.echo && st.echo.cleared)) clearSentDraft(quoted, payload.requirements);
       subscribe(id);
       st.pinned = true;
       scheduleFlush();
@@ -1210,8 +1210,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     } finally {
       st.sending = false;
       st.stopAfterSend = false;
+      st.echo = null;
       updateSendStop();
     }
+  }
+
+  /** The composer after its message is in (the echo or the 202, whichever lands first): text, files, its quote and the
+   *  features it carried go. Only once the server has the row: a refusal keeps text and features. */
+  function clearSentDraft(quoted, requirements) {
+    el.input.value = '';
+    fitInput();                                    // a programmatic clear fires no input event
+    st.pendingFiles = [];
+    if (st.quote === quoted) st.quote = null;
+    renderChips();
+    st.hist = { idx: -1, draft: '' };
+    dropAttached(requirements);
+    if (el.hash) el.hash.close();
   }
 
   // ---- the composer's extension (docs/design.md "In the chat") ----------------------------------------------------
@@ -2417,16 +2431,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (inline) { if (el.designSlot.parentNode !== el.transcript) el.transcript.appendChild(el.designSlot); }
     else if (el.designSlot.previousSibling !== el.transcript) el.transcript.after(el.designSlot);
   }
-  /** A new design chat (#chat/new/design, the sidebar's Design): the design start in the slot. Its Send creates the
-   *  design and its chat, and opens it (app.js). → false where there is no design start (the flag off). */
-  function startDesign() {
+  /** A new design chat (#chat/new/design, the sidebar's Design; #chat/new/design/all, `#design`): the design start in
+   *  the slot, with the designs under it (`all`: every one shown). Its Send creates the design and its chat, and opens it
+   *  (app.js). → false where there is no design start (the flag off). */
+  function startDesign({ all = false } = {}) {
     if (!designChat || typeof designChat.mountStart !== 'function' || st.destroyed) return false;
     newThread({ focus: false });
     st.designStart = true;
     el.designSlot.hidden = false;
     el.designSlot.removeAttribute('data-inline');
     placeDesignSlot(false);
-    try { designChat.mountStart(el.designSlot, { setComposer: (ext) => (st.designStart ? setComposerExt(ext) : null) }); } catch (e) { console.warn('[worca] the design start failed to open', e); }
+    try { designChat.mountStart(el.designSlot, { setComposer: (ext) => (st.designStart ? setComposerExt(ext) : null), all }); } catch (e) { console.warn('[worca] the design start failed to open', e); }
     paintTitle('New design');
     syncView();
     return true;
@@ -2965,13 +2980,37 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   /** The engine the next message will run on: the chat's, else the picked model's. */
   function pickerEngine() { return activeEngine() || engineOfEntry(catalogEntry(st.picker.model)); }
+  /** pickerGroups' options now: an engine whose CLI is not installed here is shown only to the chat already on it. */
+  function groupOpts() { return { active: activeEngine(), notReady: st.catalog && st.catalog.notReady, current: st.picker.model }; }
 
   function updatePickerButton() {
     if (!el.modelBtnLabel) return;
+    const btn = el.modelBtnLabel.parentNode;
+    // No engine in the picker has a model a chat can take, some not being installed here: the button asks for a harness
+    // to be set up, and its menu lists them. No model, effort or mark: none of them would run.
+    if (needsHarness(st.catalog, st.catalog && st.catalog.models, groupOpts())) {
+      el.modelBtnLabel.textContent = SET_UP_HARNESS;
+      el.modelBtnEffort.textContent = '';
+      el.modelBtnEffort.hidden = true;
+      el.modelBtnEngine.textContent = '';
+      el.modelBtnEngine.hidden = true;
+      if (el.modelBtnMark) { el.modelBtnMark.remove(); el.modelBtnMark = null; }
+      if (btn) {
+        delete btn.dataset.engine;
+        btn.dataset.setup = '';
+        const name = `${SET_UP_HARNESS}: no harness on this machine can run a chat yet`;
+        btn.setAttribute('aria-label', name);
+        setTip(btn, name);
+      }
+      if (el.fitBar) el.fitBar();
+      return;
+    }
     const entry = catalogEntry(st.picker.model);
+    // A chat on an engine whose CLI is not installed here keeps its model, flagged: its next turn says why it cannot run.
+    const notReady = engineNotReady(st.catalog, pickerEngine());
     // Same '⚠' marker the run-graph node label uses (ui/public/app.js:998).
-    const flagged = !!entry && (entry.costUnreliable === true
-      || (Array.isArray(entry.secretsMissing) && entry.secretsMissing.length > 0));
+    const flagged = !!notReady || (!!entry && (entry.costUnreliable === true
+      || (Array.isArray(entry.secretsMissing) && entry.secretsMissing.length > 0)));
     el.modelBtnLabel.textContent = (entry ? entry.label : st.picker.model) + (flagged ? ' ⚠' : '');
     // A model that takes no reasoning effort shows none (the bridge leaves it out).
     el.modelBtnEffort.textContent = entry && entry.noEffort ? '' : st.picker.effort;
@@ -2980,7 +3019,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // engine word (R2, L1); an engine with no mark, or whose mark file failed to load, keeps today's word, shown
     // whenever the catalog offers more than one engine (the extension's button says the same).
     const eng = pickerEngine();
-    const btn = el.modelBtnLabel.parentNode;
     const hasMark = Object.hasOwn(HARNESS_MARKS, eng) && !st.markFailed.has(eng);
     if (el.modelBtnMark && (!hasMark || el.modelBtnMarkEngine !== eng)) { el.modelBtnMark.remove(); el.modelBtnMark = null; }
     if (hasMark && !el.modelBtnMark && btn) {
@@ -2995,7 +3033,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       el.modelBtnMark = mark;
       el.modelBtnMarkEngine = eng;
     }
-    const engName = hasMark ? '' : pickerEngineName(st.catalog ? st.catalog.models : [], eng);
+    const engName = hasMark ? '' : pickerEngineName(st.catalog ? st.catalog.models : [], eng, groupOpts());
     el.modelBtnEngine.textContent = engName;
     el.modelBtnEngine.hidden = !engName;
     // One accessible name, which is also the tip. It names the connection too: the same model can come from the
@@ -3004,7 +3042,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const via = entry && connectionOf(entry).kind === 'provider' ? ` · ${connectionLabel(entry)}` : '';
     if (btn) {
       btn.dataset.engine = eng;
-      const name = `${pickerEngineLabel(eng)} · ${el.modelBtnLabel.textContent}${effort}${via}`;
+      delete btn.dataset.setup;
+      const name = `${pickerEngineLabel(eng)} · ${el.modelBtnLabel.textContent}${effort}${via}${notReady ? ` · ${notReady}` : ''}`;
       btn.setAttribute('aria-label', name);
       setTip(btn, name);
     }
@@ -3036,7 +3075,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // A thread's pick claims both slots.
     // D12/D17: a new chat starts on the user's Ask engine; a stored pick of the OTHER engine does not override it.
     const askEngine = st.catalog && ASK_CHAT_ENGINES.includes(st.catalog.askEngine) ? st.catalog.askEngine : 'claude';
-    const storeFits = st.pickerFromStore && (st.pickerExplicit || !catalogEntry(st.picker.model) || engineOfEntry(catalogEntry(st.picker.model)) === askEngine);
+    // A stored pick on an engine whose CLI is not installed here does not fit either: the catalog leaves that engine out.
+    const storeFits = st.pickerFromStore && (st.pickerExplicit || !catalogEntry(st.picker.model) || engineOfEntry(catalogEntry(st.picker.model)) === askEngine)
+      && !engineNotReady(st.catalog, engineOfEntry(catalogEntry(st.picker.model)));
     if (st.pickerFromStore && !storeFits && !st.pickerFromThread) {
       // The stored pick is the other engine's: this chat claims neither its model nor its effort (the Ask slot's pair
       // applies), and nothing short of an explicit model choice writes over it (storeModel).
@@ -3052,7 +3093,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!wantedEntry && list.length) st.pickerExplicit = false;   // the picked model left the catalog: the fallback below is not a user pick
     // Unknown stored/default id -> the backend default -> the first model we do
     // have that is not a hidden built-in (#422; a hidden id is still a valid pick).
-    const entry = wantedEntry || catalogEntry(fallback.model) || list.find((m) => m && !m.hidden && !m.needsSignIn) || list[0] || null;
+    const entry = wantedEntry || catalogEntry(fallback.model) || list.find((m) => m && !m.hidden && !m.needsSignIn && !engineNotReady(st.catalog, engineOfEntry(m))) || list[0] || null;
     if (!entry) { updatePickerButton(); return; }  // empty catalog: keep what we have
     const effort = wantedEntry ? wanted.effort : fallback.effort;
     const next = { model: entry.id, effort: coerceEffort(entry, effort) };
@@ -3262,6 +3303,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (title) t.title = title;
       return t;
     };
+    // The harness mark the model button leads with, before an engine's name in the menu (its heading, its row in
+    // another engine's list, its More harnesses row). An engine with no mark, or whose mark file failed to load, keeps
+    // its name alone: never a broken image box.
+    const withMark = (node, engine) => {
+      if (!Object.hasOwn(HARNESS_MARKS, engine) || st.markFailed.has(engine)) return node;
+      const mark = markTile(doc, { kind: 'harness', key: engine, size: 'sm' });
+      mark.querySelector('img').addEventListener('error', () => { st.markFailed.add(engine); mark.remove(); });
+      node.prepend(mark);
+      return node;
+    };
     const modelItem = (m, engine) => {
       const active = activeEngine();
       const moves = !!active && !!engine && engine !== active;   // #943: this row moves the chat to another engine
@@ -3286,6 +3337,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (m.needsSignIn) {
         item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See Models › Providers.'));
       }
+      const notReady = engineNotReady(st.catalog, engine || engineOfEntry(m));
+      if (notReady) item.appendChild(tag('not installed', 'is-warn', notReady));   // amber: a warning, as ⚠cost
       if (moves && (readEnginePicks(storage)[engine] || {}).model === m.id) item.appendChild(tag('last used', null, 'The model you last used on this engine.'));
       // Credential broker: whether the signed-in person has the key this model spends from.
       const cb = credentialBadge(m.id);
@@ -3309,7 +3362,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const lead = active && g.engine !== active ? engineLead(g.models, readEnginePicks(storage)[g.engine], ((st.catalog && st.catalog.defaults) || {})[g.engine]) : null;
       return splitCatalog(lead ? [lead, ...g.models.filter((x) => x !== lead)] : g.models);
     };
-    const sectionsNow = () => pickerGroups(st.catalog ? st.catalog.models : [], { active: activeEngine() });
+    const sectionsNow = () => pickerGroups(st.catalog ? st.catalog.models : [], groupOpts());
     // The engine the main pane lists: the chat's, else the picked model's, else the first with models.
     const shownEngine = () => {
       const sections = sectionsNow();
@@ -3323,9 +3376,56 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       moreRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
       return moreRow;
     };
+    // A harness not installed here opens its setup dialog (Connect <engine>: how to install it and sign it in, and Check
+    // again), the same for every engine; a host with no dialog (the extension, a bare panel) opens its setup docs in a new
+    // tab; with neither, a disabled row with the reason. The reason is the row's tip, and a quiet "not installed" sits
+    // where a row's value goes. `lead`: the row that leads that engine's own section (only a chat already on it has one),
+    // not dimmed, its "not installed" amber as the chat's own model row.
+    const setupRow = (h, { lead = false } = {}) => {
+      const dialog = typeof openEngineSetup === 'function';
+      const open = dialog ? () => { closePopover(); openEngineSetup(h.engine); }
+        : h.docsUrl ? () => { closePopover(); try { win.open(h.docsUrl, '_blank', 'noopener'); } catch { /* blocked */ } } : null;
+      const row = menuItem(lead ? 'ask-harness-row ask-setup-lead' : 'ask-harness-row is-missing', open);
+      row.setAttribute('data-ask-harness', h.engine);
+      row.setAttribute(lead ? 'data-ask-setup-lead' : 'data-ask-harness-missing', '');
+      if (!open) row.disabled = true;
+      row.title = !open ? h.reason : `${h.reason} ${dialog ? `Opens Connect ${pickerEngineLabel(h.engine)}.` : 'Opens its setup docs.'}`;
+      row.appendChild(make('span', null, lead ? `Set up ${pickerEngineLabel(h.engine)}` : h.label));
+      if (!lead) withMark(row, h.engine);
+      row.appendChild(make('span', 'ask-pop-row-value', 'not installed'));
+      if (open) row.appendChild(make('span', 'ask-pop-row-chev', dialog ? '›' : '↗'));   // › a dialog here, ↗ a new tab
+      return row;
+    };
+    const leadWithSetup = (g) => {
+      const h = g.notReady ? notInstalledHarnesses(st.catalog).find((x) => x.engine === g.engine) : null;
+      if (!h) return;
+      panel.appendChild(setupRow(h, { lead: true }));
+      panel.appendChild(make('div', 'ask-pop-divider'));
+    };
     // The chat engines with no model yet sit behind one row, so the menu grows by one line however many there are.
-    // Without a host that can open Add model (the extension, a bare panel) there is nowhere to lead, so no row.
-    const harnessesNow = () => (typeof openAddModel === 'function' ? moreHarnesses(st.catalog ? st.catalog.models : []) : []);
+    // Without a host that can open Add model (the extension, a bare panel) there is nowhere to lead, so no row. An engine
+    // not installed here is not one (catalog.notReady): those are listed below them, each opening its setup, so a
+    // machine with no other engine installed still has a way on. One a chat is already on has its own section instead.
+    const harnessesNow = () => (typeof openAddModel === 'function' ? moreHarnesses(st.catalog ? st.catalog.models : [], st.catalog && st.catalog.notReady) : []);
+    const missingNow = () => notInstalledHarnesses(st.catalog, sectionsNow().map((g) => g.engine));
+    const anyHarnessNow = () => harnessesNow().length > 0 || missingNow().length > 0;
+    // Each installed engine with no model yet leaves the chat for Models › Add model with that harness picked; below them,
+    // the ones not installed here.
+    const appendHarnessRows = () => {
+      const installed = harnessesNow();
+      for (const h of installed) {
+        const row = menuItem('ask-harness-row', () => { closePopover(); openAddModel(h.engine); });
+        row.setAttribute('data-ask-harness', h.engine);
+        row.title = `Set up ${h.label} in Models`;
+        row.appendChild(make('span', null, h.label));
+        withMark(row, h.engine);
+        row.appendChild(make('span', 'ask-pop-row-chev', '›'));
+        panel.appendChild(row);
+      }
+      const missing = missingNow();
+      if (installed.length && missing.length) panel.appendChild(make('div', 'ask-pop-divider'));
+      for (const h of missing) panel.appendChild(setupRow(h));
+    };
     let shownPane = 'main';
     let effortPaneKey = '';   // the model + effort list the effort pane was painted from
     const effortKeyNow = () => { const e = catalogEntry(st.picker.model); return `${st.picker.model}:${e && Array.isArray(e.efforts) ? e.efforts.join() : ''}`; };
@@ -3353,14 +3453,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         back.appendChild(make('span', null, '‹ More harnesses'));
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
-        for (const h of harnessesNow()) {
-          const row = menuItem('ask-harness-row', () => { closePopover(); openAddModel(h.engine); });
-          row.setAttribute('data-ask-harness', h.engine);
-          row.title = `Set up ${h.label} in Models`;
-          row.appendChild(make('span', null, h.label));
-          row.appendChild(make('span', 'ask-pop-row-chev', '›'));
-          panel.appendChild(row);
-        }
+        appendHarnessRows();
       } else if (pane.startsWith('more:') || pane.startsWith('engine:')) {
         // 'engine:<name>': another engine's main list, led by the model last used there (else its default), so a pick
         // moves the chat after a confirm; 'more:<name>': that engine's more models, back to the list it came from.
@@ -3374,6 +3467,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
         if (g) {
+          if (!more) leadWithSetup(g);
           const split = sectionSplit(g, activeEngine());
           appendByConnection(more ? split.rest : split.primary, g.engine);
           if (!more && split.rest.length) {
@@ -3381,6 +3475,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
             panel.appendChild(moreModelsRow(engine));
           }
         }
+      } else if (needsHarness(st.catalog, st.catalog && st.catalog.models, groupOpts())) {
+        // No engine has a model a chat can take (the model button says "Set up a harness"): the harnesses to set up are
+        // the whole menu.
+        appendHarnessRows();
+        if (!panel.childElementCount) panel.appendChild(make('div', 'ask-pop-empty', 'No harness on this machine can run a chat yet.'));
       } else {
         // D12 / #943: the shown engine's models under its name (the chat's own is marked); every other engine is one
         // row that opens its own list, so the menu stays short however many engines have models.
@@ -3389,21 +3488,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const g = sections.find((x) => x.engine === shown);
         let hasMore = false;
         if (g) {
-          if (sections.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
+          if (sections.length > 1) panel.appendChild(withMark(make('div', 'ask-pop-group', g.label), g.engine));
+          leadWithSetup(g);
           const split = sectionSplit(g, activeEngine());
           appendByConnection(split.primary, g.engine);
           hasMore = split.rest.length > 0;
         }
         const others = sections.filter((x) => x !== g);
-        if (others.length || harnessesNow().length) panel.appendChild(make('div', 'ask-pop-divider'));
+        if (others.length || anyHarnessNow()) panel.appendChild(make('div', 'ask-pop-divider'));
         for (const o of others) {
           const engineRow = menuItem('ask-engine-row', () => renderPane(`engine:${o.engine}`));
           engineRow.setAttribute('data-ask-engine-group', o.engine);
           engineRow.appendChild(make('span', null, o.label));
+          withMark(engineRow, o.engine);
           engineRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
           panel.appendChild(engineRow);
         }
-        if (harnessesNow().length) {
+        if (anyHarnessNow()) {
           const harnessRow = menuItem('ask-more-harnesses', () => renderPane('harnesses'));
           harnessRow.setAttribute('data-ask-more-harnesses', '');
           harnessRow.appendChild(make('span', null, 'More harnesses'));
@@ -4139,6 +4240,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       a.setAttribute('href', b.href);
       n.appendChild(a);
     }
+    if (b.claudeSetup && typeof openEngineSetup === 'function') {
+      // Claude Code is not on this machine: Connect Claude Code says where to get it and checks again.
+      n.appendChild(doc.createTextNode(' '));
+      const a = make('a', 'ask-notice-link', 'Set up…');
+      a.href = '#';
+      a.setAttribute('data-ask-claude-setup', '');
+      a.addEventListener('click', (e) => { e.preventDefault(); openEngineSetup('claude'); });
+      n.appendChild(a);
+    }
     if (b.mcp) {
       // MCP registry §9.1 (D17): the worktree join notice's "Sets" opens the per-chat picker (skills registry §6.8).
       n.appendChild(doc.createTextNode(' · '));
@@ -4256,7 +4366,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       });
   }
 
-  function wsBasename(p) { return String(p || '').replace(/\/+$/, '').split('/').pop() || String(p || ''); }
+  // Both separators: a Windows workspace sends c:\…\name paths.
+  function wsBasename(p) { return String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(p || ''); }
+  // The line under the Workspace select: the first few member names, the rest as a count; every name in the tooltip.
+  const WS_MEMBERS_SHOWN = 3;
+  function wsMembersLine(names) {
+    const rest = names.length - WS_MEMBERS_SHOWN;
+    return rest > 0 ? `${names.slice(0, WS_MEMBERS_SHOWN).join(', ')} and ${rest} more` : names.join(', ');
+  }
 
   // ---- Run proposal card v2 (spec 2026-09-06-ask-run-card-v2 §7.3) --------------------------------------------------
   const RP_ACC = new Set(['violet', 'blue', 'green', 'peach', 'red', 'amber']);
@@ -4316,7 +4433,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const config = (cfg.config && typeof cfg.config === 'object') ? cfg.config : { steps: {}, customModels: [] };
     const runConfig = (config.workflows && config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
     const allModels = Array.isArray(cfg.models) ? cfg.models : [];
-    const models = allModels.filter((m) => m && runsOn(m, engine));
     // `models` + `engine`: the rows are built exactly as New pipeline builds them (app.js buildNodeConfigRows) — a pick
     // of the other engine shows as inherit (D10: it is skipped at run time) and rides the row as `enginePair`, so a
     // save that leaves it untouched re-sends it (pruneNodeSelection) instead of erasing it. `slotDefaults`: the
@@ -4328,24 +4444,43 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // them as its defaults ("Save as project defaults", saveLaneEdits). `explicit`: a workspace card's rows are the
     // built-in defaults, not the run's baseline (laneOverlay names its picks outright). `proposal` / `proposed` /
     // `warnings`: Ask Worca's per-agent picks (card.nodes) once applyProposal lays them in as the lane's baseline.
+    // The saved run.execEnv default, raw: the card names what it gives THIS run (cardExecEnvDefault).
+    const savedExecEnv = defaults && defaults.execEnv && typeof defaults.execEnv.value === 'string' ? defaults.execEnv.value : 'local';
     // `reviewRoleRows`: a role-review node's declared roles (node-tunables buildRoleRows); their edits live apart from
     // the node rows' in `reviewRoleEdits[nodeId][roleKey]` (`row.role` already names Default's legacy step role).
     return { wf, registry, runConfig, rows, edits: {}, reviewRoleRows: buildRoleRows(wf, rows, runConfig), reviewRoleEdits: {},
-      editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
+      editable: true, explicit: !projectDir, engine, defaultEngine, savedExecEnv, allModels, proposal: {}, proposed: {}, warnings: [],
       prDefault: defaults && defaults.pr && defaults.pr.scope === 'project' ? defaults.pr : null,
-      models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
+      // A row's harness decides its models and efforts (the picker lists every harness), so the lane keeps the whole
+      // catalog (`allModels`) and Claude Code's efforts as /api/config gives them; other harnesses' come from HARNESS_EFFORTS.
+      claudeEfforts: Array.isArray(cfg.efforts) ? cfg.efforts : [],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
   const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
+  /** The harness a row runs on: its pick's own (`engine`, a pinned pick), else the run's default harness. */
+  const rowHarness = (lane, row) => laneEffective(lane, row).engine || lane.engine;
+  /** The pills a harness shows: Claude Code's from /api/config (as before), every other harness's own list. */
+  const harnessEfforts = (lane, h) => (h === 'claude' ? (lane.claudeEfforts.length ? lane.claudeEfforts : [...HARNESS_EFFORTS.claude]) : [...(HARNESS_EFFORTS[h] || [])]);
+  const modelEntry = (lane, id) => (id ? lane.allModels.find((m) => m && m.id === id) || null : null);
+  /** Where the card's run executes with "Default" picked: the saved run.execEnv, except a saved remote default on a run
+   *  no remote backend takes (an engine no sandbox runs, a workspace run), which the server runs locally (resolveRunExecEnv). */
+  function cardExecEnvDefault(lane, local) {
+    const saved = lane && execEnvKnown(lane.savedExecEnv) ? lane.savedExecEnv : 'local';
+    if (saved === 'local') return 'local';
+    return remoteRefusesDefault({ engine: local.engine() || lane.defaultEngine, workspace: local.target === 'workspace',
+      workMode: local.target === 'none' ? 'none' : 'git' }) ? 'local' : saved;
+  }
   const laneCaps = (row) => ({ asksQuestions: row.askQuestions !== null, questionsLocked: row.questionsLocked });
   const laneReviewRoleEdit = (lane, rr) => (lane.reviewRoleEdits[rr.nodeId] || {})[rr.roleKey] || null;
   const laneReviewRoleEffective = (lane, rr) => ({ ...rr, ...(laneReviewRoleEdit(lane, rr) || {}) });
-  const laneReviewRoleChanged = (lane, rr) => { const c = laneReviewRoleEffective(lane, rr); return (c.model || '') !== (rr.def.model || '') || (c.effort || '') !== (rr.def.effort || ''); };
+  const laneReviewRoleChanged = (lane, rr) => { const c = laneReviewRoleEffective(lane, rr); return (c.model || '') !== (rr.def.model || '') || (c.effort || '') !== (rr.def.effort || '') || (c.engine || '') !== (rr.def.engine || ''); };
+  /** A role row's harness: its own pick's, else its node row's. */
+  const roleHarness = (lane, rr) => { const node = lane.rows.find((r) => r.nodeId === rr.nodeId); return laneReviewRoleEffective(lane, rr).engine || (node ? rowHarness(lane, node) : lane.engine); };
   const laneReviewRoleEdited = (lane) => (lane.reviewRoleRows || []).filter((rr) => laneReviewRoleEdit(lane, rr));
   const laneEditedRows = (lane) => lane.rows.filter((r) => lane.edits[r.nodeId] || laneReviewRoleEdited(lane).some((rr) => rr.nodeId === r.nodeId));
   const laneOverrideCount = (lane) => lane.rows.filter((r) => modifiedFieldsOf(laneEffective(lane, r), r.def, laneCaps(r)).length).length
     + (lane.reviewRoleRows || []).filter((rr) => laneReviewRoleChanged(lane, rr)).length;
-  const modelLabel = (lane, id) => { const m = lane.models.find((x) => x.id === id); return m ? (m.label || m.id).replace(' (1M)', '') : id; };
+  const modelLabel = (lane, id) => { const m = modelEntry(lane, id); return m ? (m.label || m.id).replace(' (1M)', '') : id; };
   function laneSummary(lane) {
     const counts = new Map();
     let fan = 0;
@@ -4360,25 +4495,28 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   function laneSet(lane, row, patch) {
     const next = { ...(lane.edits[row.nodeId] || {}), ...patch };
-    for (const k of Object.keys(next)) if (next[k] === row[k]) delete next[k];   // back to the proposal = no edit
+    // Back to the proposal = no edit. Rows carry `engine` only when set, so an absent key and '' are equal.
+    for (const k of Object.keys(next)) if ((next[k] ?? '') === (row[k] ?? '')) delete next[k];
     if (Object.keys(next).length) lane.edits[row.nodeId] = next; else delete lane.edits[row.nodeId];
   }
   /** laneSet for a review-role row: the same "back to the row = no edit" rule, keyed by node and role. */
   function laneReviewRoleSet(lane, rr, patch) {
     const byRole = { ...(lane.reviewRoleEdits[rr.nodeId] || {}) };
     const next = { ...(byRole[rr.roleKey] || {}), ...patch };
-    for (const k of Object.keys(next)) if (next[k] === rr[k]) delete next[k];
+    for (const k of Object.keys(next)) if ((next[k] ?? '') === (rr[k] ?? '')) delete next[k];
     if (Object.keys(next).length) byRole[rr.roleKey] = next; else delete byRole[rr.roleKey];
     if (Object.keys(byRole).length) lane.reviewRoleEdits[rr.nodeId] = byRole; else delete lane.reviewRoleEdits[rr.nodeId];
   }
-  /** What a review-role row runs as a pick `{ model?, effort? }`, or null for "the node's setting". "Node's model" over
-   *  a template or project pick names the node's own model, since a pick cannot be cleared by naming nothing. */
+  /** What a review-role row runs as a pick `{ model?, effort?, engine? }`, or null for "the node's setting". "Node's model"
+   *  over a template or project pick names the node's own model (and its harness), since a pick cannot be cleared by
+   *  naming nothing. */
   function laneReviewRolePick(lane, rr) {
     const c = laneReviewRoleEffective(lane, rr);
     const node = lane.rows.find((r) => r.nodeId === rr.nodeId);
     const n = node ? laneEffective(lane, node) : {};
-    const pair = c.model ? { model: c.model, effort: c.effort } : (rr.def.model && n.model ? { model: n.model, effort: c.effort || n.effort } : { effort: c.effort });
-    const out = { ...(pair.model ? { model: pair.model } : {}), ...(pair.effort ? { effort: pair.effort } : {}) };
+    const pair = c.model ? { model: c.model, effort: c.effort, engine: c.engine }
+      : (rr.def.model && n.model ? { model: n.model, effort: c.effort || n.effort, engine: n.engine } : { effort: c.effort });
+    const out = { ...(pair.model ? { model: pair.model } : {}), ...(pair.effort ? { effort: pair.effort } : {}), ...(pair.model && pair.engine ? { engine: pair.engine } : {}) };
     return Object.keys(out).length ? out : null;
   }
   // Ask Worca's per-agent picks (card.nodes) are the lane's BASELINE edits: "changed" means the user moved a row off
@@ -4396,14 +4534,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!Object.hasOwn(lane.proposed, row.nodeId) || laneDropped(lane, row)) return null;
     const p = lane.proposed[row.nodeId];
     const c = laneEffective(lane, row);
-    return (c.model || '') === p.model && (c.effort || '') === p.effort ? p : null;
+    // Chat's picks are soft: a row pinned to a harness is no longer its pick.
+    return (c.model || '') === p.model && (c.effort || '') === p.effort && (c.engine || '') === '' ? p : null;
   };
   const laneProposedCount = (lane) => lane.rows.filter((r) => proposedPick(lane, r)).length;
   /** The project's own setting for a row, as the lane shows it: "Opus 5.5 · high", "inherit". */
   const projectPick = (lane, row) => `${row.model ? modelLabel(lane, row.model) : 'inherit'}${row.model && row.effort ? ` · ${row.effort}` : ''}`;
   /** Lay Ask Worca's picks in as the lane's baseline: each healed to the run's engine first (healForEngine — another
    *  engine's model is dropped and the row keeps the project's setting) and dropped when this catalog lacks it; a row
-   *  Settings › Memory pins keeps its pin. `lane.proposal` is what "Reset to proposal" restores. */
+   *  Settings › Memory pins keeps its pin. A pick is soft (`engine: ''`): laid over a project pick pinned to a harness,
+   *  it runs on the run's. `lane.proposal` is what "Reset to proposal" restores. */
   function applyProposal(lane, nodes) {
     lane.edits = {};
     lane.proposed = {};
@@ -4416,9 +4556,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const healed = healForEngine({ def: { model: row.model, effort: row.effort }, override: { model: p.model, effort }, model: p.model, effort },
         { models: lane.allModels, engine: lane.engine });
       if (healed.enginePair) continue;                       // a model this run's engine cannot run
-      const hit = lane.models.find((m) => typeof m.id === 'string' && m.id.toLowerCase() === p.model.toLowerCase());
+      const hit = lane.allModels.find((m) => m && typeof m.id === 'string' && runsOn(m, lane.engine) && m.id.toLowerCase() === p.model.toLowerCase());
       if (!hit) continue;                                    // left the catalog since the proposal
-      const patch = { model: hit.id, effort: (hit.efforts || []).includes(effort) ? effort : '' };
+      const patch = { model: hit.id, effort: (hit.efforts || []).includes(effort) ? effort : '', engine: '' };
       if (lane.engine === 'claude' && typeof p.subagentModel === 'string' && lane.subagentModels.includes(p.subagentModel)) patch.subagentModel = p.subagentModel;
       laneSet(lane, row, patch);
       lane.proposed[row.nodeId] = { model: patch.model, effort: patch.effort, reason: typeof p.reason === 'string' ? p.reason : '', facts: typeof p.facts === 'string' ? p.facts : '' };
@@ -4443,8 +4583,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const named = !!lane.explicit && ((!!pp && (c.model || '') === pp.model) || (!!ed && ('model' in ed || 'effort' in ed)));
       if (!ed && !named) continue;
       const e = {};
-      if (named || (c.model || '') !== (row.model || '') || (c.effort || '') !== (row.effort || '')) {
-        const pair = c.model ? { model: c.model, effort: c.effort || '' } : (row.def.model ? { model: row.def.model, effort: row.def.effort || '' } : null);
+      if (named || (c.model || '') !== (row.model || '') || (c.effort || '') !== (row.effort || '') || (c.engine || '') !== (row.engine || '')) {
+        // The pair carries the harness its pick names (the edit's, or the workflow default's for an inherit).
+        const pair = c.model ? { model: c.model, effort: c.effort || '', ...(c.engine ? { engine: c.engine } : {}) }
+          : (row.def.model ? { model: row.def.model, effort: row.def.effort || '', ...(row.def.engine ? { engine: row.def.engine } : {}) } : null);
         if (!pair && !lane.explicit) return { error: `${row.label}: "inherit" over this project's own model only works as a project default. Turn on "Save as project defaults", or pick a model` };
         if (pair) Object.assign(e, pair);
       }
@@ -4516,6 +4658,36 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return null;
   }
   const lanePending = (local) => !!(local.lane && local.lane.editable && laneEditedRows(local.lane).length);
+  /** The edits of every row and role whose effective pick (laneEffective / laneReviewRoleEffective) names a harness, each
+   *  as { ...edit, engine: <that harness> } (an edit equal to its row's engine holds no `engine` key of its own), as
+   *  { nodes: { [nodeId]: edit }, roles: { [nodeId]: { [roleKey]: edit } } }, or null with no lane. */
+  function pinnedEdits(lane) {
+    if (!lane) return null;
+    const nodes = {};
+    const roles = {};
+    for (const row of lane.rows) {
+      const c = laneEffective(lane, row);
+      if (c.engine) nodes[row.nodeId] = { ...(lane.edits[row.nodeId] || {}), engine: c.engine };
+    }
+    for (const rr of lane.reviewRoleRows || []) {
+      const c = laneReviewRoleEffective(lane, rr);
+      if (c.engine) roles[rr.nodeId] = { ...(roles[rr.nodeId] || {}), [rr.roleKey]: { ...(laneReviewRoleEdit(lane, rr) || {}), engine: c.engine } };
+    }
+    return { nodes, roles };
+  }
+  /** Lays `kept` back over a reloaded lane, through laneSet / laneReviewRoleSet, for rows still in it. */
+  function layPinned(lane, kept) {
+    for (const [nodeId, edit] of Object.entries((kept && kept.nodes) || {})) {
+      const row = lane.rows.find((r) => r.nodeId === nodeId);
+      if (row) laneSet(lane, row, edit);
+    }
+    for (const [nodeId, byRole] of Object.entries((kept && kept.roles) || {})) {
+      for (const [roleKey, edit] of Object.entries(byRole || {})) {
+        const rr = (lane.reviewRoleRows || []).find((r) => r.nodeId === nodeId && r.roleKey === roleKey);
+        if (rr) laneReviewRoleSet(lane, rr, edit);
+      }
+    }
+  }
   // D3: as much as one message may carry; /api/run's JSON window (ui/server.mjs) is sized for it at base64's 4/3
   const RP_EXTRAS_MAX_BYTES = ATTACH_MAX_MESSAGE_BYTES;
   /** The pills as /api/run extras. {extras} or {error}. */
@@ -4542,6 +4714,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     input.addEventListener('change', () => onChange(input.checked));
     return row;
   }
+  /** A lane row's model: the columns picker's trigger (models/model-columns.mjs). It keeps the select's contract (`value`,
+   *  `disabled`, a bubbling `change` is the row's one write path) and adds `data-engine`, the harness a pick names ('' =
+   *  soft). `soft`: the harness the row's inherit and soft picks run on; `find()` looks the same row's trigger up again
+   *  after a repaint. A pick sets value and data-engine and fires `change`. */
+  function laneModelTrigger(lane, c, label, { soft, inheritHint, disabled, title = '', find }) {
+    return modelTrigger({ doc, win, value: columnsValue(c), catalog: lane.allModels, label: `Model for ${label}`, cls: 'ask-rp-model',
+      defaultEngine: soft, engines: engineRows, inheritHint, onAddModel: openAddModel ? (e) => openAddModel(e) : null, refocus: find,
+      disabled, title });
+  }
+  /** The trigger of the lane tile for `nodeId` (and `roleKey`, a role row), by data attributes, never a built selector. */
+  const tileTrigger = (laneSec, nodeId, roleKey = '') => {
+    const tile = [...laneSec.querySelectorAll('.ask-rp-tile')].find((t) => t.dataset.nodeId === nodeId && (t.dataset.role || '') === roleKey);
+    return tile ? tile.querySelector('button.ask-rp-model') : null;
+  };
+  /** A model change kept by today's rule: the effort stays when the model on its harness offers it, else its second. */
+  const keptEffort = (lane, model, harness, effort) => {
+    const list = effortsOn(modelEntry(lane, model), harness);
+    return list.includes(effort) ? effort : (list[1] || list[0] || '');
+  };
   /** Paint the lane section: header (sub-line + Reset), tiles, footer. Re-run on every edit.
    *  `lc` = { summary: <span>, workflowId(): string }. lane === null → the unusable state. */
   function renderLane(laneSec, lane, lc, loadingText = null) {
@@ -4620,31 +4811,31 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       } else small.textContent = `step ${i + 1} · ${row.pinned ? 'model from Settings › Memory' : row.modified ? 'project override' : 'workflow default'}`;
       name.appendChild(small);
       l1.appendChild(name);
-      // model
-      const sel = rpSelect('ask-rp-model', `Model for ${row.label}`);
-      sel.appendChild(opt('', 'inherit (workflow default)'));
-      appendModelGroups(sel, lane.models.filter((m) => (!m.hidden && !m.needsSignIn) || m.id === c.model), {
-        engine: lane.engine, text: (m) => modelOptionText(m) + (m.needsSignIn ? ' (needs sign-in)' : '') });
-      sel.value = c.model || '';
+      // model: the columns picker's trigger; the row's harness is its pick's own, else the run's.
+      const harness = rowHarness(lane, row);
+      const find = () => tileTrigger(laneSec, row.nodeId);
       // Settings › Memory pins a defragment run's pair (node-tunables.mjs `pinned`): shown, locked.
-      sel.disabled = !lane.editable || !!row.pinned;
-      if (row.pinned) sel.title = 'Set in Settings › Memory';
+      const sel = laneModelTrigger(lane, c, row.label, { soft: lane.engine, inheritHint: 'workflow default', find,
+        disabled: !lane.editable || !!row.pinned, title: row.pinned ? 'Set in Settings › Memory' : '' });
       sel.addEventListener('change', () => {
         const mid = sel.value;
-        const list = (lane.models.find((m) => m.id === mid) || {}).efforts || [];
-        const keep = list.includes(c.effort) ? c.effort : (list[1] || list[0] || '');   // the qpanel's rule (app.js buildTunablesTable)
-        laneSet(lane, row, { model: mid, effort: mid ? keep : '' });
+        const engine = sel.dataset.engine || '';
+        const keep = keptEffort(lane, mid, engine || lane.engine, c.effort);   // the qpanel's rule (app.js buildTunablesTable)
+        laneSet(lane, row, { model: mid, effort: mid ? keep : '', engine });
         renderLane(laneSec, lane, lc);
+        const now = find();
+        if (now) now.focus();
       });
       l1.appendChild(sel);
-      // effort pills — none for an engine without effort levels (Copilot, Cursor…): an empty group would leave only
-      // its "inherits workflow" label, overflowing the tile.
-      if (lane.efforts.length) {
+      // effort pills, the row's harness's — none for a harness without effort levels (Cursor…): an empty group would
+      // leave only its "inherits workflow" label, overflowing the tile.
+      const pills = harnessEfforts(lane, harness);
+      if (pills.length) {
         const eff = make('div', `ask-rp-eff${c.model ? '' : ' unset'}`);
         eff.setAttribute('role', 'radiogroup');
         eff.setAttribute('aria-label', `Effort for ${row.label}`);
-        const offered = (lane.models.find((m) => m.id === c.model) || {}).efforts || [];
-        for (const e of lane.efforts) {
+        const offered = c.model ? effortsOn(modelEntry(lane, c.model), harness) : [];
+        for (const e of pills) {
           const b = make('button', `ask-rp-effbtn${e === c.effort ? ' on' : ''}`, e);
           b.type = 'button';
           b.setAttribute('role', 'radio');
@@ -4675,7 +4866,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       subSel.title = 'Model for the sub-agents this node spawns (needs fan-out)';
       subSel.addEventListener('change', () => { laneSet(lane, row, { subagentModel: subSel.value }); renderLane(laneSec, lane, lc); });
       subWrap.appendChild(subSel);
-      if (lane.engine === 'claude') l2.appendChild(subWrap);   // §6: sub-agents are Claude only; a Codex or Cursor run has none
+      if (harness === 'claude') l2.appendChild(subWrap);   // §6: sub-agents are Claude Code only; a step on Codex or Cursor has none
       if (row.askQuestions !== null) {
         l2.appendChild(rpSwitch('questions', 'Questions', c.askQuestions, row.questionsLocked, (v) => { laneSet(lane, row, { askQuestions: v }); renderLane(laneSec, lane, lc); }, lane.editable));
       }
@@ -4707,28 +4898,30 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const name = make('div', 'ask-rp-name');
       name.appendChild(make('b', null, rr.label));
       l1.appendChild(name);
-      const sel = rpSelect('ask-rp-model', `Model for ${rr.label}`);
-      sel.appendChild(opt('', "Node's model"));
-      appendModelGroups(sel, lane.models.filter((m) => (!m.hidden && !m.needsSignIn) || m.id === c.model), {
-        engine: lane.engine, text: (m) => modelOptionText(m) + (m.needsSignIn ? ' (needs sign-in)' : '') });
-      sel.value = c.model || '';
-      sel.disabled = !lane.editable;
+      // A soft role pick runs on its node's harness; a pinned one on its own.
+      const nodeHarness = node ? rowHarness(lane, node) : lane.engine;
+      const harness = roleHarness(lane, rr);
+      const find = () => tileTrigger(laneSec, rr.nodeId, rr.roleKey);
+      const sel = laneModelTrigger(lane, c, rr.label, { soft: nodeHarness, inheritHint: "Node's model", find, disabled: !lane.editable });
       sel.addEventListener('change', () => {
         const mid = sel.value;
-        const list = (lane.models.find((m) => m.id === mid) || {}).efforts || [];
-        const keep = list.includes(c.effort) ? c.effort : (list[1] || list[0] || '');
-        laneReviewRoleSet(lane, rr, { model: mid, effort: mid ? keep : '' });
+        const engine = sel.dataset.engine || '';
+        const keep = keptEffort(lane, mid, engine || nodeHarness, c.effort);
+        laneReviewRoleSet(lane, rr, { model: mid, effort: mid ? keep : '', engine });
         renderLane(laneSec, lane, lc);
+        const now = find();
+        if (now) now.focus();
       });
       l1.appendChild(sel);
-      if (lane.efforts.length) {
+      const pills = harnessEfforts(lane, harness);
+      if (pills.length) {
         // A role naming no model runs on the node's: its pills follow the node tile's model.
         const runsOnModel = c.model || (node ? laneEffective(lane, node).model : '');
         const eff = make('div', `ask-rp-eff${c.model ? '' : ' unset'}`);
         eff.setAttribute('role', 'radiogroup');
         eff.setAttribute('aria-label', `Effort for ${rr.label}`);
-        const offered = (lane.models.find((m) => m.id === runsOnModel) || {}).efforts || [];
-        for (const e of lane.efforts) {
+        const offered = runsOnModel ? effortsOn(modelEntry(lane, runsOnModel), harness) : [];
+        for (const e of pills) {
           const b = make('button', `ask-rp-effbtn${e === c.effort ? ' on' : ''}`, e);
           b.type = 'button';
           b.setAttribute('role', 'radio');
@@ -5925,7 +6118,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(tagRow);
     if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
     // A shaped card follows card.shape; the nudge is advisory.
-    const shapeUi = card.shape || card.nudge ? shapeCardExtras(doc, card, { fetch }) : null;
+    const shapeUi = card.shape || card.nudge
+      ? shapeCardExtras(doc, card, { fetch, sentRole: sentShapeRole(st.model ? st.model.messages() : [], block.id) }) : null;
     local.shapeUi = shapeUi;
     // A direct Shaper card on the requirements workflow: Shape requirements is its only start button.
     const direct = !!(card.shape && shapeUi && shapeUi.requirements);
@@ -5969,14 +6163,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     wfDesc.setAttribute('data-for', 'workflow');
     const wfField = rpField('Workflow', workflowSel);
     wfField.appendChild(wfDesc);
-    // Engine: "Default" sends none, so /api/run resolves the user's / project's engine (the label names it once the
-    // lane has read it); a proposal that names an engine preselects it. Beta engines say so.
-    const engineSel = rpSelect('ask-card-engine', 'Engine');
+    // Default harness: where every step set to inherit (or to a soft pick) runs; a step pinned to a harness keeps its
+    // own. "Default" sends none, so /api/run resolves the user's / project's engine (the label names it once the lane
+    // has read it); a proposal that names an engine preselects it. Beta engines say so.
+    const engineSel = rpSelect('ask-card-engine', 'Default harness');
     fillSelect(engineSel, [{ value: '', label: 'Default' }, ...ENGINE_NAMES.map((e) => ({ value: e, label: `${engineLabel(e)}${isBetaEngine(e) ? ' (Beta)' : ''}` }))], card.engine || '');
     // An engine this instance never starts (the credential broker is on) is greyed out; a proposal naming one falls back to Default.
     if (lockEngineOptions(engineSel)) engineSel.value = '';
-    const engineField = rpField('Engine', engineSel);
+    const engineField = rpField('Default harness', engineSel, 'Steps set to inherit run here');
     local.engine = () => engineSel.value;
+    // Runs in (docs/e2b.md): "Default" sends none, so /api/run resolves run.execEnv (named once the lane has read it);
+    // a proposal that names an environment preselects it.
+    const execEnvSel = rpSelect('ask-card-exec-env', 'Runs in');
+    fillSelect(execEnvSel, [{ value: '', label: 'Default' }, ...execEnvList().map((e) => ({ value: e.name, label: e.label }))], card.execEnv || '');
+    const execEnvField = rpField('Runs in', execEnvSel);
     const guardSel = rpSelect('ask-card-guardrails', 'Guardrails');
     const guardDesc = make('span', 'ask-rp-wfdesc', 'Applies to every agent in this run');
     guardDesc.setAttribute('data-for', 'guardrails');
@@ -5988,7 +6188,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     lvTag(guardField, 'advanced', !!card.guardrailsId && card.guardrailsId !== 'permissive');
     lvTag(seg, 'advanced', card.target === 'workspace' || card.target === 'none');
     lvTag(engineField, 'advanced', !!card.engine && card.engine !== 'claude');
-    wfRow.append(wfField, engineField, guardField);
+    lvTag(execEnvField, 'advanced', !!card.execEnv && card.execEnv !== 'local');
+    wfRow.append(wfField, engineField, execEnvField, guardField);
     targetSec.appendChild(wfRow);
     // Pull request when the run finishes: "Use the setting" sends nothing (the project's or workspace's value, with its source, once the lane has read it); a pick is this run's own choice.
     const prSel = rpSelect('ask-card-pr', 'Pull request when done');
@@ -5999,7 +6200,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     targetSec.appendChild(prRow);
     if (shapeUi) rootEl.appendChild(shapeUi.el);
     rootEl.appendChild(targetSec);
-    engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
+    // the rows heal to the new harness; pinned ones stay. A change while a reload is loading (local.lane null) carries
+    // that reload's keep, so arrowing through the select does not drop the pins.
+    engineSel.addEventListener('change', () => reloadLane({ keep: pinnedEdits(local.lane) ?? local.pendingKeep }));
     workflowSel.addEventListener('change', () => {
       if (local.workflowUnavailable) { local.workflowUnavailable = false; err.textContent = ''; refreshStartGate(); }
       paintNeedsRepo();
@@ -6534,7 +6737,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const list = row && Array.isArray(row.projectKeys)
           ? row.projectKeys.map((k, i) => ({ projectKey: k, name: wsBasename(row.projectPaths && row.projectPaths[i]), folder: Array.isArray(row.vcs) && row.vcs[i] === 'none' }))
           : Array.isArray(card.members) ? card.members.map((m) => ({ projectKey: m.projectKey, name: m.projectName, folder: m.workMode === 'folder' })) : [];
-        members.textContent = list.map((m) => m.name).join(', ');
+        const names = list.map((m) => m.name);
+        members.textContent = wsMembersLine(names);
+        members.title = names.length > WS_MEMBERS_SHOWN ? names.join(', ') : '';
         for (const m of list) {
           if (m.folder) continue;   // listed above, but no per-member source input: never in sourceBranchByKey
           const inp = doc.createElement('input');
@@ -6583,17 +6788,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
 
     // A reload (workflow / project / target change) rebuilds the lane from scratch:
-    // `edits` are per workflow-and-project and are DISCARDED, silently.
+    // `edits` are per workflow-and-project and are DISCARDED, silently. A Default harness change keeps the rows pinned
+    // to a harness (`keep`, pinnedEdits): they do not run on the default, so the change leaves them as they were.
     // `saveDefaults`: the card's "Save as project defaults" switch (off by default), kept across lane reloads.
     const laneCtx = { summary, workflowId: () => local.workflowId(), projectDir: () => local.projectDir(),
       saveDefaults: () => !!local.saveDefaults, setSaveDefaults: (v) => { local.saveDefaults = !!v; },
       onPaint: (lane) => paintAdvanced(lane) };
     let laneSeq = 0;
-    function reloadLane() {
+    function reloadLane({ keep = null } = {}) {
       const seq = ++laneSeq;
       const workflowId = local.workflowId();
       const projectDir = local.projectDir();
       local.lane = null;
+      local.pendingKeep = keep;   // until this reload lands (or a later one replaces it)
       if (workflowId === 'wf_auto') {
         // No graph yet: the run classifies its task and picks the agents when it starts.
         renderLane(laneSec, null, laneCtx, 'Auto picks the agents when the run starts.');
@@ -6605,6 +6812,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       local.lanePending = loadLane(workflowId, projectDir, local.engine()).then((lane) => {
         if (st.destroyed || seq !== laneSeq) return;            // a later reload won
         local.lane = lane;
+        local.pendingKeep = null;
         // A workspace run fans out every workspaceFanOut agent (fanForced): the lane locks that switch there.
         if (lane) lane.workspace = local.target === 'workspace';
         // Ask Worca's per-agent picks are for the workflow it proposed: laid in again on every reload of it (another
@@ -6615,10 +6823,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           const proposedTarget = local.target === (card.target === 'workspace' ? 'workspace' : 'project') && projectDir === (card.projectDir || '');
           lane.warnings = proposedTarget && Array.isArray(card.warnings) ? card.warnings.filter((w) => typeof w === 'string') : [];
         }
+        if (lane && keep) layPinned(lane, keep);
         if (lane) {
           engineSel.options[0].textContent = `${engineLabel(lane.defaultEngine)} (default)`;
           prSel.options[0].textContent = lane.prDefault && local.target === 'project' ? `Use the setting: ${PR_OPEN_LABELS[lane.prDefault.open.value]} (${prSourceText(lane.prDefault.open.source)})` : 'Use the setting';
           for (const o of engineSel.options) o.hidden = o.value !== '' && o.value === lane.defaultEngine && engineSel.value !== o.value;   // listed once
+          const envDefault = cardExecEnvDefault(lane, local);
+          execEnvSel.options[0].textContent = `${execEnvLabel(envDefault)} (default)`;
+          for (const o of execEnvSel.options) o.hidden = o.value !== '' && o.value === envDefault && execEnvSel.value !== o.value;   // listed once
         }
         wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
         renderLane(laneSec, lane, laneCtx);
@@ -6713,6 +6925,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const prOpen = (rootEl.querySelector('.ask-card-pr') || {}).value;
     const pr = { ...(prOpen ? { open: prOpen } : {}), ...(card.pr && card.pr.slices && local.target === 'project' ? { slices: card.pr.slices } : {}) };
     if (local.target !== 'none' && Object.keys(pr).length) body.pr = pr;
+    const execEnv = (rootEl.querySelector('.ask-card-exec-env') || {}).value;
+    if (execEnv) body.execEnv = execEnv;                    // none: the run.execEnv default
+    // Default on a card that proposed an environment: '' says so, or /api/run would take the card's own pick.
+    else if (card.execEnv) body.execEnv = '';
     // A tracker task: the reference, never a prompt (POST /api/run takes source OR prompt).
     if (card.source) {
       delete body.prompt;
@@ -6758,7 +6974,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  repoints the lane (reloadLane nulls local.lane) while saveLaneEdits still holds the old
    *  one, so the config written and the body posted would describe different runs. */
   function freezeTargetInputs(rootEl, on) {
-    for (const sel of ['.ask-card-workflow', '.ask-card-engine', '.ask-card-project-select', '.ask-card-workspace-select', '[data-ask-card-seg]']) {
+    for (const sel of ['.ask-card-workflow', '.ask-card-engine', '.ask-card-exec-env', '.ask-card-project-select', '.ask-card-workspace-select', '[data-ask-card-seg]']) {
       for (const node of rootEl.querySelectorAll(sel)) node.disabled = on;
     }
   }
@@ -6804,8 +7020,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (ex.extras.length) body.extras = ex.extras;
       if (block.card && block.card.preset) applyPresetStart(body, block.card.preset);
       let res = null;
+      // Every resend is built from the last body sent, so a later one keeps an earlier one's choices.
+      let sent = body;
       try {
-        res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sent) });
       } catch { err.textContent = 'network error'; return; }
       if (!res.ok) {
         let b = null;
@@ -6815,8 +7033,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (b && (b.code === 'sync-diverged' || b.code === 'sync-fetch-failed')) {
           const choice = await chooseSyncRefusal(b);
           if (!choice) { err.textContent = 'Start cancelled.'; return; }
+          sent = { ...sent, syncPolicy: choice };
           try {
-            res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, syncPolicy: choice }) });
+            res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sent) });
           } catch { err.textContent = 'network error'; return; }
           b = null;
           if (!res.ok) { try { b = await res.json(); } catch { /* keep */ } }
@@ -6828,8 +7047,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
             text: b.error || 'An attached feature already has a run in progress. Start another run anyway?',
           });
           if (!again) { err.textContent = 'Start cancelled.'; return; }
+          sent = { ...sent, confirmAttachedRunning: true };
           try {
-            res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, confirmAttachedRunning: true }) });
+            res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sent) });
+          } catch { err.textContent = 'network error'; return; }
+          b = null;
+          if (!res.ok) { try { b = await res.json(); } catch { /* keep */ } }
+        }
+        // A step's harness (or a card moved to Normal) cannot enforce the guardrail rules: ask once, resend with the
+        // consent. A refusal the consent cannot lift (overridable false) keeps the server's error line.
+        if (!res.ok && res.status === 409 && b && ((b.code === 'engine-refused' && b.overridable === true) || b.code === 'GUARDRAILS_CARD_ENGINE')) {
+          const allow = await askTwoChoice({ title: 'Start without some guardrails?', text: b.error || '', action: 'Allow unguarded' });
+          if (!allow) { err.textContent = 'Start cancelled.'; return; }
+          sent = { ...sent, allowUnguardedEngine: true };
+          try {
+            res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sent) });
           } catch { err.textContent = 'network error'; return; }
           b = null;
           if (!res.ok) { try { b = await res.json(); } catch { /* keep */ } }
@@ -6905,6 +7137,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // otherwise start with the row's default `global` and restructure the wrong scope (B17).
       memoryScope: card.memoryScope || null,
       engine: (rootEl.querySelector('.ask-card-engine') || {}).value || null,
+      execEnv: (rootEl.querySelector('.ask-card-exec-env') || {}).value || null,
     };
     if ((rootEl.querySelector('.ask-card-same-source') || {}).checked) p.sameAsSource = true;
     const tags = rootEl.__rp?.tagInput ? rootEl.__rp.tagInput.get() : (card.tags || []);
@@ -7969,12 +8202,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           else if (b.kind === 'card' && !Number.isFinite(b.textAt)) wrap.appendChild(buildCard(b, cur));
         }
         if (cur.status === 'error') {
-          if (cur.errorCode === 'claude-signed-out' && typeof openClaudeSetup === 'function') {
+          if (cur.errorCode === 'claude-signed-out' && typeof openEngineSetup === 'function') {
             // The CLI's raw "Not logged in" → one line whose link opens Connect Claude Code.
             const line = make('div', 'ask-error-line', "Claude Code isn't signed in. ");
             const link = make('a', '', 'Sign in…');
             link.href = '#';
-            link.addEventListener('click', (e) => { e.preventDefault(); openClaudeSetup(); });
+            link.addEventListener('click', (e) => { e.preventDefault(); openEngineSetup('claude'); });
             line.appendChild(link);
             wrap.appendChild(line);
           } else {
@@ -8340,6 +8573,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     // Defence-in-depth: the model's own threadId filter is the real router — this early return only saves an apply() call and cannot be observed from tests (the model would drop the frame identically).
     if (!st.model || frame.threadId !== st.threadId) return;
+    // The echo of the composer's own send: the message is in, so it leaves the composer as its bubble appears.
+    if (frame.type === 'ask-message' && frame.sendId && st.echo && frame.sendId === st.echo.sendId && !st.echo.cleared) {
+      st.echo.cleared = true;
+      clearSentDraft(st.echo.quoted, st.echo.requirements);
+      updateSendStop();
+    }
     const r = st.model.apply(frame);
     if (r && r.gap) { resync(); return; }
     if (!r || !r.ok) return;

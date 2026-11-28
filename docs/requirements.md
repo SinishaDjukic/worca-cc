@@ -20,7 +20,8 @@ turn on **Requirements** in Settings › Labs (the `requirements` flag), or star
 4. **The spec** fills in as you answer: goal, actors, main flow, edge cases, business rules, out of scope,
    acceptance criteria (`R-po-1`, `R-po-2`, …), assumptions (`A-1`, …) and open questions. Edit any section:
    Worca keeps your text (**Let Worca rewrite this** hands it back). Add or remove criteria: a criterion
-   you removed never comes back. Confirm or reject each assumption.
+   you removed never comes back. Confirm or reject each assumption. Each item (the goal, the success measure,
+   a criterion or any other line) can be up to 10,000 characters; Worca refuses a longer one rather than cutting it.
 5. **Export ▾** → **Save to specs/** writes `specs/FEAT-<n>-<title>.md` into the project's folder without committing.
    **Copy Markdown** and **Download .md** work for workspaces too.
 
@@ -326,11 +327,12 @@ and the next time you start the feature the box opens with it. A run that starts
   card says so and Auto is used.
 - With any other workflow, **Start in Worca** first opens **Set up this run**: the workflow (fixed here; cancel
   and change it on the card to use another), a **Preset** menu with the run presets saved for that workflow, and
-  each agent's model and effort and each loop's cycle budget. Applying a preset fills in its agent and loop
-  settings only. What you change applies to this run alone: the project's settings and your presets are never
-  written. **Start run** starts it and opens the run page; **Cancel** (or Escape) starts nothing. The overlay
-  opens after the reason when you start before Ready. If the server refuses the picks, the reason is shown in
-  the overlay and you can fix it and try again.
+  each agent's model (the harness › provider › model picker, so a step can run on another harness than the
+  run's) and effort and each loop's cycle budget. Applying a preset fills in its agent and loop settings only.
+  What you change applies to this run alone: the project's settings and your presets are never written.
+  **Start run** starts it and opens the run page; **Cancel** (or Escape) starts nothing. The overlay opens after
+  the reason when you start before Ready. If the server refuses the picks, the reason is shown in the overlay
+  and you can fix it and try again.
 - The files and brief documents whose Send switch is on go with it as attached files ([Files](#files)).
 - Only runs started from Requirements are checked this way. **New run**, **Ask**, schedules and the CLI
   work as before and do not look at Requirements.
@@ -385,7 +387,7 @@ confirm before it starts yours.
 
 **In the chat.** A sent message shows each feature as a card. Click it to read the requirements it carried in place; that text is a
 snapshot from the moment you sent, and does not change when the feature does. If the feature has since been archived or deleted, the card
-says *This feature is no longer available.* A chat proposal card started with **Run** or **Shape it first** carries the features of the
+says *This feature is no longer available.* A chat proposal card started with **Run** or **Shaper** carries the features of the
 message it answers.
 
 Both entries are behind the `requirements` flag, like the page: with it off the button and `#` are gone, a card says **Requirements
@@ -492,7 +494,8 @@ Worca. Exporting costs nothing: no model is called.
 A Shaper run started with the `shaperSmallRuns` flag on keeps its agreed requirements on the feature, not on this page.
 Each requirement is owned by one run, which builds it and has it checked, or confirmed by a person in a named role
 (Product, Engineering, Design, DevOps, Security, Compliance or QA). A person marks a confirmed requirement Met, Not met
-or Dropped; Not met and Dropped need a one-line reason. Ship is stacked, one PR per run, and is refused with
+or Dropped; Not met and Dropped need a one-line reason. Ship is one PR or stacked, one PR per run (stacked only with the
+flag off), and is refused with
 `ACCEPTANCE_INCOMPLETE` until each confirmed requirement is marked. With the flag on, it waits for a clean
 Verifier check on record for the exact head it would ship ([Ship](shape-it-first.md#ship)). The feature shows in four places: the Runs list
 group row, the run panel, the Expert run page and the feature page. Its requirements are listed in the run panel, the run

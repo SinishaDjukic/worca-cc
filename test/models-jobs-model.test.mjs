@@ -176,6 +176,29 @@ test('6. helper jobs follow flags and today\'s default words', () => {
   assert.equal(rowOf(codex, 'Run overview').text, 'GPT-6.1 Sol');
 });
 
+test('6b. R-qa-13: Guide is a helper job only with shaperSmallRuns, names its default model and saves guideModel', () => {
+  const id = 'models.claude.utility.guide';
+  const guideOf = (settings, flags, { draft = {}, engine = 'claude' } = {}) =>
+    rowOf(sectionOf(build(settings, engine, { flags, draft, view: showAll(engine, 'helpers') }), 'helpers'), 'Guide');
+  assert.equal(guideOf(SETTINGS, {}), undefined, 'flag off: no row');
+  assert.equal(guideOf(SETTINGS, { shaperSmallRuns: false, commandSummaries: true }), undefined);
+  assert.equal(guideOf(SETTINGS, { shaperSmallRuns: true }, { engine: 'codex' }), undefined, 'Claude only');
+  const auto = { ...SETTINGS, guideModel: { model: null, effort: null },
+    guideModelEffective: { model: 'claude-haiku-4-5', effort: 'medium', source: 'auto' } };
+  const row = guideOf(auto, { shaperSmallRuns: true });
+  assert.ok(row, 'flag on: the Guide row');
+  assert.deepEqual([row.id, row.text, row.effort], [id, 'Haiku 4.5 (default)', '']);
+  const named = { ...SETTINGS, guideModelEffective: { model: 'claude-haiku-4-5', effort: 'medium', source: 'settings' } };
+  assert.equal(guideOf(named, { shaperSmallRuns: true }).text, 'The default model');
+  assert.doesNotMatch(rowOf(sectionOf(buildJobs({ ...DATA(BASE55), catalog: CAT55, flags: { shaperSmallRuns: true } }, {},
+    showAll('claude', 'helpers')), 'helpers'), 'Guide').text, /Worca default/, 'unset, it runs on the cheapest ready model');
+  // The pick: stored under guideModel, posted under guideModel.
+  const saved = { 'models.claude.utility.guide': { model: 'claude-opus-5-5' } };
+  assert.deepEqual(jobsSaved({ guideModel: { model: 'claude-opus-5-5', effort: null } }), saved);
+  assert.deepEqual(jobsSaveBody({ [id]: { model: 'claude-opus-5-5' } }, {}), { guideModel: { model: 'claude-opus-5-5', effort: '' } });
+  assert.deepEqual(jobsSaveBody({ [id]: null }, saved), { guideModel: null });
+});
+
 test('7. Requirements interview keeps today\'s words', () => {
   const settings = { ...SETTINGS, modelRoles: { claude: { deep: { model: 'claude-opus-5-5', effort: 'xhigh' }, everyday: { model: 'claude-haiku-4-5' } } },
     requirementsInterviewDefault: { model: 'claude-opus-5-5', effort: 'medium' } };
@@ -254,6 +277,13 @@ test('11. default harness and readiness', () => {
   assert.equal(gemini.reason, 'Gemini CLI can start runs: its CLI is installed and signed in. Note: its quota is low.');
   assert.equal(buildJobs({ ...DATA(SETTINGS), engines: null }, {}, VIEW('codex')).reason, '');
   assert.equal(build(SETTINGS, 'claude').reason, '');
+  // A configured remote backend adds whether Worca signs the harness's model calls inside its sandbox (#826).
+  const boxed = (engines, engine) => buildJobs({ ...DATA(SETTINGS), engines }, {}, VIEW(engine)).reason;
+  assert.equal(boxed([{ name: 'copilot', label: 'Copilot', ready: true, reason: null, sandbox: { titles: ['E2B'], ready: false, reason: 'COPILOT_GITHUB_TOKEN is not set' } }], 'copilot'),
+    'Remote sandbox (E2B): COPILOT_GITHUB_TOKEN is not set.');
+  assert.equal(boxed([{ name: 'cursor', label: 'Cursor', ready: false, reason: 'cursor-agent is not signed in', sandbox: { titles: ['E2B'], ready: true, reason: null } }], 'cursor'),
+    "Cursor can't start runs yet: cursor-agent is not signed in. Remote sandbox (E2B): Worca can sign its model calls from the sandbox.");
+  assert.equal(boxed([{ name: 'codex', label: 'Codex', ready: true, reason: null }], 'codex'), '', 'no sandbox entry: the line stays as it was');
   const claude = build(SETTINGS, 'claude');
   assert.deepEqual([claude.isDefault, claude.canDefault], [true, false]);
   // The default harness is settings.runEngine when it names one.

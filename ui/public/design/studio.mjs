@@ -10,6 +10,7 @@ import { LIVE_BUILD, pinLabel } from './stage-model.mjs';
 import { createStage } from './stage.mjs';
 import { createPlanList } from './plan-list.mjs';
 import { createKindRow, designMoreMenu, keepStart, kindWord, makeDesign, startModelsUrl, takeStart, titleFromBrief } from './library.mjs';
+import { createDesignsGrid } from './designs-grid.mjs';
 import { createComposerSettings, createPicturesRow } from './composer-settings.mjs';
 import { createModelPills } from './model-pills.mjs';
 import { makeSwitch } from '../switch.mjs';
@@ -22,6 +23,8 @@ import { iconSvg } from '../icons.mjs';
 const OPEN_BUILD = Object.freeze([...LIVE_BUILD, 'paused']);
 const isObject = (v) => typeof v === 'object' && v !== null;
 const enc = encodeURIComponent;
+/** The server's Build fast caps (P8, M6): `{fast, calm}`. */
+const LIMITS_URL = '/api/design/limits';
 
 /**
  * @param {{doc: Document, win: Window, host: HTMLElement, designId: string, fetch: Function, sendWs?: Function,
@@ -121,7 +124,7 @@ export function createDesignStudio({ doc, win, host, designId, fetch: fetchFn, s
       unpin: (pinId, path) => st.stage?.unpin(pinId, path),
       // An empty stage says the chat is reading the request, instead of showing a blank page.
       onBusy: (on) => { st.busy = !!on; st.stage?.setChatBusy(on); },
-      // The Library's first message goes through the dock's own send, once.
+      // The design start's first message goes through the dock's own send, once.
       initial: takeStart(designId),
       pictures,
       // The Chat page draws the chat and sends (setComposer): the dock keeps the plan, the build, its live line and note.
@@ -236,25 +239,24 @@ export function createDesignStudio({ doc, win, host, designId, fetch: fetchFn, s
  * `setComposer` lends the design's controls (ask-panel setComposerExt): the kind as a pill beside the project (the
  * chat's scope pill), the gear with the Lead and Builders models, Build fast and Pictures, and the send, which makes
  * the design (makeDesign: the engine gate's dialog included), keeps the message for its chat (keepStart) and opens it
- * through `navigate('#design/<id>')`. All designs goes to the Library.
+ * through `navigate('#design/<id>')`. Under the kinds sit the designs (designs-grid.mjs): the newest nine, Show all
+ * designs and a search; there is no All designs button. `all` starts with every design shown (`#design`), and
+ * `onAll(all)` hears Show all designs and Show fewer. The Build fast label reads the server's cap.
  * @param {{doc: Document, win: Window, host: HTMLElement, fetch: Function, navigate: (hash: string) => void,
- *   setComposer?: (ext: object) => object|null}} deps
+ *   setComposer?: (ext: object) => object|null, all?: boolean, onAll?: (all: boolean) => void}} deps
  */
-export function createDesignStartPage({ doc, win, host, fetch: fetchFn, navigate, setComposer = null }) {
+export function createDesignStartPage({ doc, win, host, fetch: fetchFn, navigate, setComposer = null, all = false, onAll = () => {} }) {
   const make = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
-  const btn = (cls, text, attrs) => { const b = make('button', cls, text); b.type = 'button'; for (const [k, v] of Object.entries(attrs)) b.setAttribute(k, v); return b; };
   // The chat home's own layout (chat-shell.css .chat-home, .chat-hero-slot), so a new design starts as a new chat does.
   const root = make('div', 'chat-home dz-start-in-chat');
   const hero = make('div', 'chat-hero-slot dz-start-hero');
   const slot = make('div', 'dz-start-composer');
-  const all = btn('btn btn-sm', 'All designs', { 'data-dz-all': '' });   // a bordered button: seen without a hover
-  all.addEventListener('click', () => navigate('#design'));
-  const foot = make('div', 'dz-start-foot');
-  foot.append(all);
   // The kind: the Design page's own row of buttons, under the composer (picked before the first send).
   const kindRow = createKindRow(doc, { value: 'web', onPick: (k) => { kind = k; } });
-  hero.append(make('h1', 'chat-home-title', 'What should we design?'), slot, kindRow.el, foot);
-  root.append(hero);
+  hero.append(make('h1', 'chat-home-title', 'What should we design?'), slot, kindRow.el);
+  // The designs under the hero: what is below it cannot move the heading (.chat-home is a top-aligned column).
+  const grid = createDesignsGrid({ doc, win, fetch: fetchFn, navigate, all, onAll });
+  root.append(hero, grid.el);
   host.replaceChildren(root);
 
   let destroyed = false;
@@ -274,6 +276,22 @@ export function createDesignStartPage({ doc, win, host, fetch: fetchFn, navigate
   settings.fill(pills.el, settings.divider(), sw.row, pics.el);
   void pills.load();
   void pics.load();
+  void grid.open();
+
+  /** P8 (M6): the crew Build fast allows on this server, asked once per start. An answer without whole `fast` and
+   *  `calm` numbers, or none, leaves DESIGN_FAST_LABEL. */
+  async function loadLimits() {
+    let body = null;
+    try {
+      const res = await fetchFn(LIMITS_URL);
+      body = res.ok ? await res.json() : null;
+    } catch {
+      body = null;
+    }
+    if (destroyed || !isObject(body) || !Number.isInteger(body.fast) || !Number.isInteger(body.calm)) return;
+    capEl.textContent = `up to ${body.fast}`;
+  }
+  void loadLimits();
 
   const composer = setComposer ? setComposer({
     composerSlot: slot,
@@ -299,11 +317,17 @@ export function createDesignStartPage({ doc, win, host, fetch: fetchFn, navigate
   }) : null;
   void composer;
   return {
-    pushFrame() {}, pushAskFrame() {}, repaintChat() {}, onHello() {},
+    /** A design-* frame: the designs' tiles take it (a status or a picture in place, a round's end loads them again). */
+    pushFrame(f) { grid.pushFrame(f); },
+    pushAskFrame() {}, repaintChat() {},
+    /** A hello (the socket came back): the designs load again. */
+    onHello() { void grid.open(); },
     attachStage() { return Promise.resolve(); }, detachStage() {}, hasStage: () => false, stage: () => null,
     destroy() {
+      if (destroyed) return;
       destroyed = true;
       gate?.close();
+      grid.destroy();
       pills.destroy();
       settings.destroy();
       root.remove();

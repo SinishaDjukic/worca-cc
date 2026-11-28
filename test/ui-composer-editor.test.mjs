@@ -1403,3 +1403,22 @@ test('required-blank stays: a whitespace Command deletes the key, flags the fiel
   assert.equal(pip(s), null);
   s.c.destroy();
 });
+
+test('a Model field change writes model and engine in one commit, drops an effort the harness lacks, and Undo puts both back', async () => {
+  const s = await open({ allLevels: true });
+  s.c.setModels({ models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'] }, { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex', efforts: ['minimal', 'low', 'medium', 'high'] }],
+    efforts: ['medium', 'high', 'xhigh', 'max'], subagentModels: [], defaultEngine: 'claude' });
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  const cfg = () => s.c.template().nodes.find((n) => n.id === 'n_agent').config;
+  const fire = (el) => el.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+  const eff = s.el.insBody.querySelector('[data-field="effort"]'); eff.value = 'xhigh'; fire(eff);
+  const before = structuredClone(cfg()); const depth = s.c.undoDepth();
+  const field = s.el.insBody.querySelector('[data-field="model"]');
+  field.value = 'gpt-5.5'; field.dataset.engine = 'codex'; fire(field);
+  assert.deepEqual([cfg().model, cfg().engine, 'effort' in cfg(), s.c.undoDepth()], ['gpt-5.5', 'codex', false, depth + 1]);
+  const now = s.el.insBody.querySelector('[data-field="model"]');
+  assert.deepEqual([now.value, now.dataset.engine], ['gpt-5.5', 'codex']);
+  assert.deepEqual([...s.el.insBody.querySelector('[data-field="effort"]').options].map((o) => o.value).sort(), ['', 'high', 'low', 'medium', 'minimal']);
+  s.c.undo();
+  assert.deepEqual(cfg(), before);
+});

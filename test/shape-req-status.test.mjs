@@ -62,7 +62,7 @@ test('an owner-less entry (status unowned) reads owned by no run, whatever the r
   assert.deepEqual(r, { owner: 'no run', role: null, word: 'confirmed by no person', text: 'owned by no run · confirmed by no person', mark: 'x' });
 });
 
-test('confirmed entries built by `shipLedger` read `confirmed by a person · Compliance` / confirmed by / Marked Not met by you · reason / Marked Dropped by you · reason / needs-reason', () => {
+test('confirmed entries built by `shipLedger` read waiting for you to confirm / confirmed by you / Marked Not met by you · reason / Marked Dropped by you · reason / needs-reason', () => {
   const agreed = ['R-comp-1', 'R-comp-2', 'R-comp-3', 'R-comp-4', 'R-comp-5'].map((id) => ({ id, text: `${id} text` }));
   const kinds = agreed.map((a) => ({ id: a.id, kind: 'confirmed', role: 'compliance' }));
   const acceptance = [{ id: 'R-comp-2', mark: 'met', at: '2026-11-22T16:55:00Z' }, { id: 'R-comp-3', mark: 'not-met', reason: 'no signed\ncopy' },
@@ -71,13 +71,34 @@ test('confirmed entries built by `shipLedger` read `confirmed by a person · Com
   const got = confirmed.map((c) => requirementStatus(c, { runs: [], reruns: [] }));
   const role = 'Compliance';
   const owner = 'confirmed by a person';
-  assert.deepEqual(got, [
-    { owner, role, word: 'Compliance', text: 'confirmed by a person · Compliance', mark: 'wait' },
-    { owner, role, word: 'confirmed by Compliance', text: 'confirmed by Compliance', mark: 'check' },
+  assert.deepEqual(got[0], { owner, role, word: 'waiting for you to confirm', text: 'waiting for you to confirm · Compliance', mark: 'wait' });
+  // The met row's `word` may or may not carry the role: its whole note (`text`) is the contract.
+  const { word: metWord, ...met } = got[1];
+  assert.deepEqual(met, { owner, role, text: 'confirmed by you · Compliance', mark: 'check' });
+  assert.match(metWord, /^confirmed by you/);
+  assert.deepEqual(got.slice(2), [
     { owner, role, word: 'Marked Not met by you', text: 'Marked Not met by you · no signed copy', mark: 'x' },
     { owner, role, word: 'Marked Dropped by you', text: 'Marked Dropped by you · out of scope', mark: 'none' },
     { owner, role, word: 'Marked Dropped by you', text: 'Marked Dropped by you', mark: 'x' },
   ]);
+});
+
+// Slice 7 (R-ux-2): the person using the app confirms; the role is only a detail.
+test('s7 R-ux-2: a waiting confirmation names you', () => {
+  const agreed = [{ id: 'R-ux-2', text: 'The words say who confirms' }];
+  const kinds = [{ id: 'R-ux-2', kind: 'confirmed', role: 'design' }];
+  const l = shipLedger({ agreed, kinds, acceptance: [], runs: [{ index: 1, state: 'done' }] });
+  assert.equal(l.confirmed[0].shown.text, 'waiting for you to confirm · Design');
+  assert.equal(l.confirmed[0].shown.word, 'waiting for you to confirm');
+  assert.equal(l.confirmed[0].shown.role, 'Design');
+  assert.equal(l.confirmed[0].shown.mark, 'wait');
+  const met = shipLedger({ agreed, kinds, acceptance: [{ id: 'R-ux-2', mark: 'met' }], runs: [] });
+  assert.equal(met.confirmed[0].shown.text, 'confirmed by you · Design');
+  for (const label of ['Product', 'Design', 'Engineering', 'QA', 'Security', 'Compliance']) {
+    const row = requirementStatus({ id: 'R-x-1', roleLabel: label, state: 'waiting', mark: null, reason: null });
+    assert.equal(row.text, `waiting for you to confirm · ${label}`);
+    assert.doesNotMatch(`${row.word} · ${row.text}`, /confirmed by a person/, `${label}: a waiting row never reads as done`);
+  }
 });
 
 test('rerunsOf merges changes and every check\'s gap runs by `at`, lands a finished change on `added`, skips case none', () => {

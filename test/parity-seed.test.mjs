@@ -6,13 +6,14 @@ import { seed, finishRun, SEED_PROMPT, SEED_CHAT_TEXT, PLAN_ASK_KIND } from '../
 import { PLAN_ASK_KIND as SRC_PLAN_ASK_KIND } from '../src/core/shape/run.mjs';
 
 function fakeServer() {
-  const calls = []; const runs = new Map();
+  const calls = []; const bodies = {}; const runs = new Map();
   let n = 0;
   const json = (b, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
   const fetchImpl = async (url, init = {}) => {
     const path = new URL(url).pathname; const method = init.method || 'GET';
     const body = init.body ? JSON.parse(init.body) : undefined;
     calls.push(`${method} ${path}`);
+    bodies[`${method} ${path}`] ??= body;
     if (path === '/api/projects') return json({ projects: [{ key: 'other', name: 'x', path: '/x' }, { key: 'k1', name: 'sandbox', path: '/private/p' }] });
     if (path === '/api/ask/threads') return json({ thread: { id: 't1' } }, 201);
     if (path === '/api/ask/models') return json({ models: [{ id: 'm1', efforts: ['medium', 'high'] }] });
@@ -29,7 +30,7 @@ function fakeServer() {
     return json({ ok: true });
   };
   const helloImpl = async () => [...runs].map(([runId, r]) => ({ runId, status: r.status, pendingQuestion: r.pq }));
-  return { calls, fetchImpl, helloImpl, runs };
+  return { calls, bodies, fetchImpl, helloImpl, runs };
 }
 
 test('seed: settings, onboarding, project, thread, one finished run and one run held at clarify', async () => {
@@ -41,6 +42,18 @@ test('seed: settings, onboarding, project, thread, one finished run and one run 
   assert.equal(f.runs.get('r2').status, 'running');
   assert.equal(f.runs.get('r2').pq.kind, 'questions');
   assert.equal(typeof SEED_PROMPT, 'string');
+});
+
+// The first browser load shows the one-time role-defaults toast and records it seen; the shots reload the page, so
+// whether the toast is on the first shot depended on that POST beating the reload (chat-home/light: 72,592 px).
+test('seed: one-time onboarding notices are seen before any browser loads, the way the app records them', async () => {
+  const f = fakeServer();
+  await seed({ base: 'http://x', projectPath: '/p' }, { fetchImpl: f.fetchImpl, helloImpl: f.helloImpl, pollMs: 1 });
+  assert.deepEqual(f.bodies['POST /api/onboarding'], { welcomeSeen: true, roleDefaultsNoticeSeen: true });
+  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  for (const flag of Object.keys(f.bodies['POST /api/onboarding'])) {
+    assert.ok(app.includes(`setOnboardingPrefs({ ${flag}: true })`), `app.js records ${flag} when it shows its notice`);
+  }
 });
 
 test('finishRun answers a planner clarify ask (kind clarify) like a questions ask', async () => {

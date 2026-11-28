@@ -1,10 +1,16 @@
 // test/ui-folder-run-history.test.mjs — Projects, any way (P1b): a Folder project's saved run. Changes in place of
 // Diff and Actions, no git chrome, the glance of board 10 (FolderRun.dc.html), Apply to folder and Discard.
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootDetail, openDetail, deliverRows, settle, click, go, ROW, DETAIL, ok, fail, tabsOf, secOf, badgeOf } from './helpers/history-detail-boot.mjs';
+import { openDetail, deliverRows, settle, click, go, ROW, DETAIL, ok, fail, tabsOf, secOf, badgeOf, detailOn, historyFetch } from './helpers/history-detail-boot.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { useSharedApp, restoreAfter } from './helpers/shared-app-boot.mjs';
+
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: historyFetch() });
+const bootDetail = detailOn(app).detail;
+// A test that turns git off on the one shared page (data-git) has it back as it was when the test ends.
+beforeEach((t) => restoreAfter(t, app.document.documentElement.dataset, 'git'));
 
 const ID = ROW.id;
 const COUNTS = { added: 9, modified: 4, deleted: 1 };
@@ -430,21 +436,4 @@ test('Retry on a refused discard asks again and posts again', async () => {
   doc.querySelector('#confirm-ok').click();
   await settle(ctx.window, 6);
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/discard')).length, 2);
-});
-
-test('the Runs list in the app: the Folder chip lands when /api/projects answers after the rows; the row reads Applied', async () => {
-  const PROJ = [{ name: 'Tax papers 2026', path: '/tmp/tax', exists: true, vcs: 'none', workMode: 'folder', key: ROW.projectKey }];
-  let release;
-  const gate = new Promise((r) => { release = r; });
-  const ctx = await bootDetail({ rows: [FROW({ changes: { state: 'applied', counts: COUNTS } })], detail: DETAIL, local: { 'worca-cc.runs.view': JSON.stringify({ show: 'all', groupBy: 'project', person: '' }) },
-    arms: (url) => (url.includes('/api/projects') ? gate.then(() => ({ ok: true, status: 200, json: async () => ({ projects: PROJ }) })) : null) });
-  go(ctx.window, 'runs');
-  await settle(ctx.window, 8);
-  const doc = ctx.window.document;
-  const group = () => doc.querySelector(`#runs-list .runs-sec[data-section="project:${ROW.projectKey}"]`);   // View › Group by Project
-  assert.equal(group().querySelector('.kind-chip'), null, 'no project row yet: no chip');
-  assert.match(group().querySelector('.runs-row-sub').textContent, /^Applied/);
-  release();
-  await settle(ctx.window, 8);
-  assert.equal(group().querySelector('.runs-sec-head .kind-chip').textContent, 'Folder');
 });

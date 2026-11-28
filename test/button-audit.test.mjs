@@ -234,6 +234,14 @@ test('the Jobs tab\'s harness tiles, role tiles and model pickers are controls, 
   assert.deepEqual(auditStray(doc.getElementById('v'), STRAY_SPEC, { rect: () => ({ width: 10, height: 10 }) }), []);
 });
 
+test('the model picker\'s inherit row is a control; its rows are options and Add model a quiet button', () => {
+  assert.ok(BUTTON_SPEC.controls.includes('button.mdl-cols-inherit') && STRAY_SPEC.allow.includes('button.mdl-cols-inherit'));
+  const doc = new JSDOM('<div id="v"><button class="menu-item mdl-cols-inherit">inherit</button><button class="menu-item mdl-cols-row" role="option">Opus 5.5</button><button class="btn btn-sm btn-quiet mdl-cols-add">Add model</button></div>').window.document;
+  const controls = BUTTON_SPEC.controls.join(',');
+  assert.deepEqual([...doc.querySelectorAll('button')].filter((b) => !b.classList.contains('btn') && !b.closest(controls)).map((b) => b.className), []);
+  assert.deepEqual(auditStray(doc.getElementById('v'), STRAY_SPEC, { rect: () => ({ width: 10, height: 10 }) }), []);
+});
+
 test('the Update review card\'s commits row is a disclosure control, not a §1.2 button (marketplace P6)', () => {
   assert.ok(BUTTON_SPEC.controls.includes('.mk-upd > button.mk-disc') && STRAY_SPEC.allow.includes('.mk-upd > button.mk-disc'));
   const doc = new JSDOM('<section class="mk-upd"><button type="button" class="mk-disc" aria-expanded="false">2 commits 2441b36 → 735b354</button></section>').window.document;

@@ -47,7 +47,7 @@ export function attachRunFollower(orch, {
     const parts = [`Run finished — "${name}" · ${status}`];
     const dur = fmtMs(runHeadlineMs(state));
     if (dur) parts.push(dur);
-    const cost = fmtRunCost(state.runEngine, state.totalCostUsd);
+    const cost = fmtRunCost(state.runEngine, state.totalCostUsd, state.runEngines);
     if (cost) parts.push(cost);
     return parts.join(' · ');
   };

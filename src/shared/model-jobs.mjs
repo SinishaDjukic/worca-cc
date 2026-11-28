@@ -26,6 +26,7 @@ export const HELPER_JOBS = Object.freeze({
     helper('claude', 'agentGen', 'Agent generation', 'everyday'),
     helper('claude', 'naming', 'Run naming', 'quick', { flag: 'smartRunNaming' }),
     helper('claude', 'commandSummary', 'Command summaries', 'quick', { flag: 'commandSummaries' }),
+    helper('claude', 'guide', 'Guide', 'quick', { flag: 'shaperSmallRuns' }),
     helper('claude', 'secondOpinion', 'Second-opinion reviewer', null),
     helper('claude', 'requirementsInterview', 'Requirements interview', 'everyday', { flag: 'requirements' }),
   ]),

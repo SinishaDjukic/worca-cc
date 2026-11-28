@@ -277,5 +277,8 @@ test('auxTextCall: forwards the prompts, books a priced result, rethrows a spawn
   assert.deepEqual(seen[0].tools, []);
   assert.equal(costs.length, 1);
   assert.equal(costs[0].model, 'claude-haiku-4-5');
+  assert.equal(seen[0].noSessionPersistence, undefined, 'not asked for: not passed');
+  await auxTextCall({ systemPrompt: 'SYS', prompt: 'P', model: 'claude-haiku-4-5' }, { ...offline, run, cwd: '/tmp', noSessionPersistence: true });
+  assert.equal(seen[1].noSessionPersistence, true, 'asked for: the runner gets it');
   await assert.rejects(auxTextCall({ systemPrompt: 'S', prompt: 'P', model: 'm' }, { ...offline, run: async () => { throw new Error('boom'); } }), /boom/);
 });

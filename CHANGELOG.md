@@ -20,6 +20,12 @@
 - The built-in plugin marketplace moves with the repo. Plugins installed from it keep their update notices.
 - To check an image signature, accept both repositories: see [Verify](docs/docker.md).
 
+### Set up any chat engine from Chat
+
+- **Every chat engine has its own setup dialog now**, not only Claude Code. In Chat's model picker, the row of an engine that is not installed here (under **More harnesses**, or the whole menu when the button says **Set up a harness**) opens that engine's setup dialog: **Connect OpenAI Codex**, **Connect GitHub Copilot CLI**, **Connect Gemini CLI**, **Connect Goose**, **Connect OpenCode**, **Connect Qwen Code**, and **Connect Claude Code** as before. It used to open that engine's section of the docs in a new tab.
+- **One dialog for all of them**: the install command, the `WORCA_<ENGINE>_BIN` variable for a binary elsewhere, the sign-in step, a link to the engine's section in [Models](docs/models.md#chat), and **Check again**. The words and commands are the ones docs/models.md gives each engine, which now spells out the install command for Codex (`npm install -g @openai/codex`) and OpenCode (`npm install -g @opencode/cli`).
+- **Check again asks the server** whether the engine's program is installed (the picker's own look, never a start) and, once it is, whether the engine is ready, as Models › Jobs reports it: `GET /api/engines/<engine>/setup`, with `?recheck=1` to skip the 60-second readiness cache. Claude Code's dialog still checks Getting started's status. The browser extension has no dialog, so its rows still open the docs.
+
 ### No silent Claude Code default model (#1450)
 
 - **An empty role now runs Worca's default**, not the CLI's own: Opus 5.5 / Sonnet 5.5 / Haiku 5.5 on Claude Code, and models derived by tier on Codex. No settings are migrated. A new per-role choice, **Let Claude Code decide** (Codex: **Let Codex decide**), keeps the old behaviour. On the other harnesses (and Claude Code signed out) Models › Jobs, the run card and the run log say the tool decides. See [When a role is empty](docs/models.md#when-a-role-is-empty).

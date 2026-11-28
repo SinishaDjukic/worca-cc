@@ -20,9 +20,11 @@ import { pauseConsequences } from '../failure-policy.mjs';
  * @param {{channelHost: object, getPrefs: () => {notify:object, channels:object},
  *          chatContext: {isMuted(k):boolean, incrementMuted(k):void},
  *          logger?: (level:string, msg:string) => void,
- *          ratePerMin?: number}} deps
+ *          ratePerMin?: number,
+ *          whereToAnswer?: (runId: string) => ({hasChat: boolean} | null)}} deps
+ * `whereToAnswer` (slice 18) says whether a chat follows the run's feature; the default, unknown, keeps today's words.
  */
-export function createNotifier({ channelHost, getPrefs, chatContext, logger = () => {}, ratePerMin = 20 }) {
+export function createNotifier({ channelHost, getPrefs, chatContext, logger = () => {}, ratePerMin = 20, whereToAnswer = () => null }) {
   const limiters = new Map(); // "plugin/channelId" -> rate limiter
 
   const limiterFor = (key) => {
@@ -71,6 +73,7 @@ export function createNotifier({ channelHost, getPrefs, chatContext, logger = ()
         title: entry?.title || orch?.state?.title || '',
         totalCostUsd: orch?.state?.totalCostUsd,
         runEngine: orch?.state?.runEngine,
+        runEngines: orch?.state?.runEngines,
         totalActiveMs: orch?.state?.totalActiveMs,
         elapsedMs: orch?.state?.elapsedMs,
         // renderDone reports directions the run never applied. Omitting this made
@@ -88,7 +91,11 @@ export function createNotifier({ channelHost, getPrefs, chatContext, logger = ()
 
       orch.on('question', guard((payload) => {
         if (getPrefsSafe().notify.question === false) return;
-        deliver(renderQuestion(meta(), payload || {}));
+        const p = payload || {};
+        // Slice 18 (D6): only a gap stop asks where it is answered; a throw or a non-boolean keeps the card words.
+        let hasChat;
+        if (p.stop?.form === 'gaps') { try { hasChat = whereToAnswer(runId)?.hasChat; } catch { hasChat = undefined; } }
+        deliver(renderQuestion(typeof hasChat === 'boolean' ? { ...meta(), hasChat } : meta(), p));
       }));
 
       orch.on('error', guard((payload) => {

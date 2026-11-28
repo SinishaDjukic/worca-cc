@@ -16,6 +16,7 @@ import { readPipelineForResume } from '../src/core/artifacts.mjs';
 import { readRunManifest } from '../src/core/run-manifest.mjs';
 import { readPolicyState } from '../src/core/policy/state.mjs';
 import { writeGuardrailSet } from '../src/core/guardrail-store.mjs';
+import { gateRules } from '../src/core/guardrails.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { addManualServer, createSet, putMember, setProjectAssignment, putPolicyServer } from '../src/core/mcp/store.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
@@ -102,10 +103,11 @@ test('a run gets its target\'s registry copies; a deny rule reaches them and cou
   const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(seen), guardrailsId: gr.id });
   assert.equal((await orch.run()).status, 'done');
   assert.deepEqual(serversOf(seen[0]), [`pg_${set.slug}`, `sentry_${set.slug}`]);
-  assert.deepEqual(orch.guardrailPermissionRules.deny, ['mcp__pg__query', `mcp__pg_${set.slug}__query`]);
+  // gateRules: the set's own rules, without the secret-file floor every set with rules also carries.
+  assert.deepEqual(gateRules(orch.guardrailPermissionRules).deny, ['mcp__pg__query', `mcp__pg_${set.slug}__query`]);
   assert.equal('mcpOptOut' in orch._buildResumePoint(null), false, 'no opt-out (propose_run, chains, CLI): none rides the resume point');
   const manifest = await readRunManifest(join(orch.getState().pipelineDir));
-  assert.equal(manifest.guardrails.denyCount, 2, 'the added rule is counted');
+  assert.equal(manifest.guardrails.denyCount, 2 + 84, 'the added rule is counted (plus the 84-rule secret-file floor: 4 Read/Edit, 80 keychain, secrets-command, WORCA_HOST_PID and env -i denies)');
   const persisted = JSON.stringify(manifest) + JSON.stringify(readPipelineForResume(orch.state.id).row)
     + await readFile(join(orch.getState().pipelineDir, 'live-log.ndjson'), 'utf8');
   for (const s of [PG_SECRET, SENTRY_SECRET]) {
@@ -210,6 +212,25 @@ test('the capability path that drops --mcp-config drops the registry layer too',
   await orch._recordCapabilities();
   assert.equal(orch.mcpConfigPath, null);
   assert.equal(orch.mcpLayer, null);
+});
+
+test('the capability probe runs when any step is on Claude Code, and asks Claude Code\'s binary, never the run\'s other-harness bin', async () => {
+  const { DEFAULT_BIN } = await import('../src/core/engines/claude.mjs');
+  const probe = async (engines) => {
+    const orch = createOrchestrator({ projectDir: gitDir('mcp-cap-u'), claude: { engine: 'codex', bin: '/opt/codex' } });
+    orch.runRoot = mkdtempSync(join(tmpdir(), 'worca-cc-mcp-cap-u-'));
+    orch._harnessPlan = () => ({ engines, steps: new Map() });
+    let asked = 0;
+    orch._claudeCaps = async () => { asked += 1; return { version: '2.1.300', mcpConfig: true }; };
+    await orch._recordCapabilities();
+    return { asked, caps: (await readRunManifest(orch.runRoot)).capabilities };
+  };
+  const mixed = await probe(['claude', 'codex']);
+  assert.deepEqual([mixed.asked, mixed.caps.probed, mixed.caps.version], [1, true, '2.1.300'], 'a Codex run with a step on Claude Code probes claude');
+  const codexOnly = await probe(['codex']);
+  assert.deepEqual([codexOnly.asked, codexOnly.caps.probed, codexOnly.caps.engine], [0, false, 'codex']);
+  assert.equal(createOrchestrator({ projectDir: gitDir('mcp-cap-bin'), claude: { engine: 'codex', bin: '/opt/codex' } })._claudeBin(), DEFAULT_BIN, 'Codex\'s bin is never asked for claude\'s capabilities');
+  assert.equal(createOrchestrator({ projectDir: gitDir('mcp-cap-bin2'), claude: { bin: '/opt/claude' } })._claudeBin(), '/opt/claude');
 });
 
 test('_resolveMcp: a translated model anywhere in the run sets the 64 limit, so untested copies are skipped `untested`', async () => {

@@ -1,8 +1,12 @@
 // test/ui-run-checklists.test.mjs — the run page Overview's "Perspective checklists" group (spec D7), from the saved
 // review rows: a finished run shows it, a live run that is not shaping never fetches for it.
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { bootApp } from './helpers/run-page-boot.mjs';
+import { runPageOn } from './helpers/run-page-boot.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
+
+const app = useSharedApp({ before, beforeEach, after });
+const bootApp = runPageOn(app);
 
 const REVIEWS = [
   { kind: 'impl', cycle: 1, issues: [], summary: '', checklist: [{ id: 'R-qa-1', perspective: 'qa', text: 't', status: 'unmet', evidence: 'x' }] },

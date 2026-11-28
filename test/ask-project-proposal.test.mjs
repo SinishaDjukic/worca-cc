@@ -77,7 +77,7 @@ test('tool: propose_project_change validates in the child and is absent without 
   const def = t.list().find((d) => d.name === 'propose_project_change');
   assert.ok(def);
   assert.deepEqual(def.inputSchema.required, ['kind']);
-  assert.deepEqual(Object.keys(def.inputSchema.properties), ['kind', 'name', 'path', 'useGit', 'note']);
+  assert.deepEqual(Object.keys(def.inputSchema.properties), ['kind', 'name', 'path', 'useGit', 'projectKey', 'backend', 'network', 'template', 'image', 'note']);
   assert.deepEqual(await t.call('propose_project_change', { kind: 'create', name: 'site' }), { ok: true, card: { type: 'project' } });
   assert.deepEqual(seen, [{ kind: 'create', name: 'site' }]);
   assert.equal(createAskTools({ limits: ASK_LIMITS }).list().some((d) => d.name === 'propose_project_change'), false);

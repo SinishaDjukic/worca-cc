@@ -1,51 +1,77 @@
-// test/run-page-flag-off-golden.test.mjs — Shaper small runs D2 (D17): with the flag off, or for a run without the
-// small-runs marker, the run page (live and saved), the Runs-list group row and the /slice and /api/run-groups keys
-// are exactly dev's at checkpoint 3d1a51e17. The fixture holds each case's normalized outerHTML (only `data-sig`
-// values are stripped) and the key lists. The fixtures below are written here (not imported from other test files),
-// so this file runs on its own inside the checkpoint archive.
-//
-// The fixture was generated ONCE, from a `git archive` of the checkpoint, never from this tree:
-//   D=$(mktemp -d "$TMPDIR/golden.XXXXXX"); git archive 3d1a51e17 | tar -x -C "$D"
-//   ln -s "$PWD/node_modules" "$D/node_modules"; cp test/run-page-flag-off-golden.test.mjs "$D/test/"
-//   (cd "$D" && UPDATE_RUN_PAGE_GOLDEN=1 node tools/test.mjs test/run-page-flag-off-golden.test.mjs)
-//   cp "$D/test/fixtures/shaper/run-page-flag-off-golden.json" test/fixtures/shaper/
-// Do NOT regenerate it on a later tree: it is the proof that flag-off output never moved.
-import { test, before, after } from 'node:test';
+// test/run-page-flag-off-golden.test.mjs — Shaper small runs D2 (D17), R-arch-1: "flag off changes nothing" for the run
+// page, proved from the SAME tree, never from a frozen fixture.
+// - Equality: the flag-off render of a marked run (live page and saved page) equals the flag-on render of its unmarked
+//   twin, the same run with every small-runs marker removed (no `stepper.careRun`, a feature with no
+//   `shape_stats.smallRuns`, so `/slice` carries no `owns` / `startsFrom`).
+// - Sensitivity: the flag-on render of the marked run differs from that twin, and the test names the Shaper part that
+//   makes the difference, so the equality cannot pass vacuously.
+// - One carve-out: the live page paints its Care rows (`.rd-run-agents`) from `stepper.careRun` without reading the flag,
+//   by design (the registry: "a feature started with it on keeps … Care"). The live Care pair removes them from both
+//   sides (`withoutCareRows`); the live owns-only pair is the live overview's full-equality case.
+// Every `/slice` answer a page stub serves is the real `ui/server.mjs` answer, fetched in `before()` under the same flag
+// state as the page it feeds. A run-page change that has nothing to do with the flag (a new badge) moves both sides
+// alike and needs no regeneration.
+import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
-import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
-import { bootDetail, openDetail, settle as hdSettle, DETAIL, ROW, ok } from './helpers/history-detail-boot.mjs';
+import { runPageOn, helloRun } from './helpers/run-page-boot.mjs';
+import { openDetail, settle as hdSettle, DETAIL, ok, detailOn, historyFetch } from './helpers/history-detail-boot.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createSliceFeature } from '../src/core/shape/features.mjs';
 import { careRunPlan } from '../src/shared/shape/feature-record.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
 import { buildRunsModel, renderRunsList } from '../ui/public/runs-list.mjs';
+import { useSharedApp } from './helpers/shared-app-boot.mjs';
 
-const FIXTURE = new URL('./fixtures/shaper/run-page-flag-off-golden.json', import.meta.url);
-const CAPTURED_AT = '3d1a51e17';
-const UPDATE = process.env.UPDATE_RUN_PAGE_GOLDEN === '1';
-const golden = UPDATE ? { capturedAt: CAPTURED_AT, cases: {} } : JSON.parse(readFileSync(FIXTURE, 'utf8'));
-const nodeFetch = globalThis.fetch;   // the jsdom boots below replace the global fetch
-const normalize = (html) => html.replace(/ data-sig="[^"]*"/g, ' data-sig=""');
-// `gv-moving` is a transient animation class the graph drops on a timer: whether a snapshot holds it depends on load,
-// not on the DOM shape. It is stripped from both sides at compare time, so the checkpoint fixture stays untouched.
-const transient = (v) => (typeof v === 'string' ? v.replace(/ gv-moving(?=[" ])/g, '')
-  : Array.isArray(v) ? v.map(transient) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, transient(x)])) : v);
-const check = (name, value) => {
-  if (UPDATE) { golden.cases[name] = value; return; }
-  assert.ok(name in golden.cases, `${name} is in the golden`);
-  assert.deepEqual(transient(value), transient(golden.cases[name]), name);
-};
+const nodeFetch = globalThis.fetch;   // captured before any jsdom boot replaces the global fetch
+
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: historyFetch() });
+const bootApp = runPageOn(app);
+const bootDetail = detailOn(app).detail;
 
 useTempHome(after, 'worca-run-page-golden-');
 
-// ── The three runs: a marked Care run, an unmarked feature run, a dev run ──────────────────────────────────────────
+// ── canon: the only text normaliser, applied to both sides of every comparison ─────────────────────────────────────
+// Each rule is named. No other text is rewritten.
+const CANON_RULES = {
+  // `data-sig` values are paint signatures, not DOM shape.
+  sig: [/ data-sig="[^"]*"/g, ' data-sig=""'],
+  // Durations and clocks are wall-clock (an elapsed live run).
+  duration: [/\d+(\.\d+)?\s?(ms|s|m|h|d)\b/g, 'T'],
+  clock: [/\d{1,2}:\d{2}(:\d{2})?/g, 'T'],
+  // `gv-moving` is a transient animation class the graph drops on a timer.
+  moving: [/ gv-moving(?=[" ])/g, ''],
+  // The route label counter is module-level in ui/public/run-head.mjs and shared across app.js boots.
+  routeLabel: [/rd-route-label-\d+/g, 'rd-route-label-N'],
+  // Each live page gets its own pipeline id (app.js caches a pipeline's /slice answer for the life of the shared app).
+  pipelineId: [/\bp-g\d+\b/g, 'p-g'],
+};
+const canonText = (html) => Object.values(CANON_RULES).reduce((s, [re, to]) => s.replace(re, to), html);
+// The Runs-list row only: the feature ids, the pipeline ids and the titles derived from them, and the ticket ids.
+// They are rewritten BEFORE the text rules, whose duration rule would otherwise eat digits inside an id.
+const canonRow = (html, fids) => canonText(fids.reduce((s, fid) => s.replaceAll(fid, 'FEATURE'), html)
+  .replace(/golden-(marked|plain)/g, 'PIPELINE')
+  .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, 'TICKET'));
+const canon = (v) => (typeof v === 'string' ? canonText(v)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, canon(x)])) : v);
+
+/** The single structural removal: the live page's Care rows, on both sides of the live Care pair only (D5). */
+function withoutCareRows(html) {
+  const doc = new JSDOM(`<!doctype html><body>${html}</body>`).window.document;
+  doc.querySelectorAll('.rd-run-agents').forEach((e) => e.remove());
+  return doc.body.innerHTML;
+}
+
+const same = (a, b, label) => assert.deepEqual(canon(a), canon(b), `equality · ${label}`);
+const differs = (a, b, label) => assert.notDeepEqual(canon(a), canon(b), `sensitivity · ${label}`);
+
+// ── The three features and their real server answers ─────────────────────────────────────────────────────────────
 const slice = (n) => ({ id: `s${n}`, title: `Slice ${n}`, goal: `Goal ${n}`, inScope: [], outOfScope: [], acceptance: [`ok ${n}`], dependsOn: [], estimate: 'M' });
 const OUTLINE = { why: 'because', slices: [1, 2, 3].map(slice), agreed: [{ id: 'R-po-1', text: 'People see it' }], leftOut: [] };
 OUTLINE.slices[0].requirements = ['R-po-1'];
@@ -63,6 +89,17 @@ const feature = async (id, marked) => {
 };
 
 let srv, base;
+const get = async (p) => { const r = await nodeFetch(`${base}${p}`); return { status: r.status, body: await r.json() }; };
+/** The real `/slice` answer of a pipeline under a flag state (a 404 stays a 404). */
+const sliceAnswer = (pipelineId, on) => withFlag(on, () => get(`/api/shape/pipelines/${pipelineId}/slice`));
+const groupOf = (fid, on) => withFlag(on, async () => (await get('/api/run-groups')).body.groups.find((x) => x.id === fid) || null);
+
+const FEATURES = {};   // marked / plain → feature id
+const API = {};        // the answers test 1 reads
+// careRun (null: none) and the `/slice` answer for each flag state.
+const CARE = careRunPlan('balanced', { runRoles: ['product', 'architect'] });
+const RUNS = {};
+
 before(async () => {
   const mod = await import('../ui/server.mjs');
   srv = mod.server;
@@ -70,27 +107,43 @@ before(async () => {
   base = `http://127.0.0.1:${srv.address().port}`;
   project = mkdtempSync(join(tmpdir(), 'worca-run-page-golden-proj-'));
   getDb();
+  FEATURES.marked = await feature('golden-marked', true);
+  FEATURES.plain = await feature('golden-plain', false);
+  seedPipelineRow({ id: 'golden-dev', projectKey: projectKey(project), status: 'done', title: 'golden-dev' });
+  const marked = { true: await sliceAnswer('golden-marked', true), false: await sliceAnswer('golden-marked', false) };
+  const plain = { true: await sliceAnswer('golden-plain', true), false: await sliceAnswer('golden-plain', false) };
+  const dev = { true: await sliceAnswer('golden-dev', true), false: await sliceAnswer('golden-dev', false) };
+  Object.assign(API, { marked, plain, dev,
+    groups: { markedOff: await groupOf(FEATURES.marked, false), markedOn: await groupOf(FEATURES.marked, true), plainOn: await groupOf(FEATURES.plain, true) } });
+  Object.assign(RUNS, {
+    care: { careRun: CARE, slice: marked },
+    owns: { careRun: null, slice: marked },
+    twin: { careRun: null, slice: plain },
+    dev: { careRun: null, slice: dev },
+  });
 });
 after(async () => {
   if (srv) await Promise.race([new Promise((r) => { srv.close(r); srv.closeAllConnections?.(); }), new Promise((r) => setTimeout(r, 500).unref?.())]);
   if (project) rmSync(project, { recursive: true, force: true });
-  if (UPDATE) writeFileSync(FIXTURE, `${JSON.stringify(golden, null, 2)}\n`);
 });
 
-// The API is checked first: the jsdom boots of the next test replace the global fetch.
-test('D2 golden: /slice and /api/run-groups keep dev\'s keys (marked + flag off, unmarked + flag on, dev run + flag on)', async () => {
-  const marked = await feature('golden-marked', true);
-  const plain = await feature('golden-plain', false);
-  seedPipelineRow({ id: 'golden-dev', projectKey: projectKey(project), status: 'done', title: 'golden-dev' });
-  const get = async (p) => { const r = await nodeFetch(`${base}${p}`); return { status: r.status, body: await r.json() }; };
-  const sliceKeys = async (pid) => { const r = await get(`/api/shape/pipelines/${pid}/slice`); return { status: r.status, keys: Object.keys(r.body) }; };
-  const groupKeys = async (fid) => {
-    const g = (await get('/api/run-groups')).body.groups.find((x) => x.id === fid);
-    return g ? { keys: Object.keys(g), member: Object.keys(g.members[0]) } : null;
-  };
-  check('api: marked, flag off', await withFlag(false, async () => ({ slice: await sliceKeys('golden-marked'), group: await groupKeys(marked) })));
-  check('api: unmarked, flag on', await withFlag(true, async () => ({ slice: await sliceKeys('golden-plain'), group: await groupKeys(plain) })));
-  check('api: dev run, flag on', await withFlag(true, async () => ({ slice: await sliceKeys('golden-dev') })));
+// ── Test 1: the API keys ────────────────────────────────────────────────────────────────────────────────────────────
+const keysOf = (a) => ({ status: a.status, keys: Object.keys(a.body).sort() });
+const groupKeys = (g) => (g ? { keys: Object.keys(g).sort(), member: Object.keys(g.members[0]).sort() } : null);
+
+test('/slice and /api/run-groups: flag off for a marked feature equals flag on for an unmarked one, and flag on for the marked one differs', () => {
+  // Sensitivity first: the flag-on marked answers carry the Shaper parts.
+  assert.equal(API.marked.true.status, 200, 'sensitivity · /slice · marked, flag on answers');
+  assert.ok('owns' in API.marked.true.body, 'sensitivity · /slice · marked, flag on carries owns');
+  assert.ok('startsFrom' in API.marked.true.body, 'sensitivity · /slice · marked, flag on carries startsFrom');
+  differs(keysOf(API.marked.true), keysOf(API.plain.true), '/slice · marked on vs unmarked on');
+  assert.ok(API.groups.markedOn && API.groups.markedOn.smallRuns, 'sensitivity · /api/run-groups · marked, flag on carries smallRuns');
+  differs(groupKeys(API.groups.markedOn), groupKeys(API.groups.plainOn), '/api/run-groups · marked on vs unmarked on');
+  // Equality.
+  same(keysOf(API.marked.false), keysOf(API.plain.true), '/slice · marked off = unmarked on');
+  same(groupKeys(API.groups.markedOff), groupKeys(API.groups.plainOn), '/api/run-groups · marked off = unmarked on');
+  assert.equal(API.dev.true.status, 404, '/slice · dev run, flag on is no slice');
+  same(keysOf(API.dev.false), keysOf(API.dev.true), '/slice · dev run off = on');
 });
 
 // ── The run page DOM ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -99,75 +152,101 @@ const manifest = (careRun) => ({ version: 2, template: { id: 'wf_shape_slice_req
   graph: { nodes: [['n_clarify', 'clarify'], ['n_plan', 'planner'], ['n_refine', 'refiner'], ['n_impl', 'implementer'], ['n_review', 'reviewer'],
     ['n_roles', 'planReviewer'], ['n_tests', 'testWriter']].map(([id, key]) => agent(id, key)), wires: [] }, ...(careRun ? { careRun } : {}) });
 const row = (nodeId, status = 'done') => ({ key: `x:${nodeId}:1`, executionId: `x:${nodeId}:1`, nodeId, ordinal: 1, cycle: 1, status, startedAt: '2026-11-21T10:00:00Z' });
-const CARE = careRunPlan('balanced', { runRoles: ['product', 'architect'] });
 const STEPS = ['n_clarify', 'n_plan', 'n_roles', 'n_refine'].map((id) => row(id));
 const SUBS = [{ id: 'a1', label: 'Explore repo', nodeId: 'n_plan', cycle: 1, status: 'finished', durationMs: 124000, costUsd: 0.04 }];
-const DEV_SLICE = { featureId: 'feat_g', title: 'Charts', index: 2, total: 3, sliceTitle: 'Export', state: 'running', next: null, threadId: null };
-/** name → { flag (UI), careRun, slice answer (null: 404, not a slice) } */
-const RUNS = {
-  'marked care, flag off': { flag: false, careRun: CARE, slice: DEV_SLICE },
-  'unmarked feature, flag on': { flag: true, careRun: null, slice: DEV_SLICE },
-  'dev run, flag on': { flag: true, careRun: null, slice: null },
+/** The page's `/slice` stub: the real answer `before()` fetched for this run and this flag state. */
+const sliceArm = (answer) => (url) => (/\/api\/shape\/pipelines\/[^/]+\/slice$/.test(url)
+  ? (answer.status === 200 ? ok(answer.body) : Promise.resolve({ ok: false, status: answer.status, json: async () => answer.body })) : null);
+const required = (d, sel) => {
+  const e = d.querySelector(sel);
+  if (!e) throw new TypeError(`missing ${sel}`);
+  return e;
 };
-const sliceArm = (c) => (url) => (/\/api\/shape\/pipelines\/[^/]+\/slice$/.test(url)
-  ? (c.slice ? ok(c.slice) : Promise.resolve({ ok: false, status: 404, json: async () => ({ error: 'not a slice' }) })) : null);
-// Times are wall-clock (an elapsed live run): the digits of a duration or clock text are not the run page's DOM shape.
-const stable = (html) => normalize(html).replace(/\d+(\.\d+)?\s?(ms|s|m|h|d)\b/g, 'T').replace(/\d{1,2}:\d{2}(:\d{2})?/g, 'T');
 
-async function livePage(c) {
-  const ctx = await bootApp({ fetchHandler: (u) => sliceArm(c)(u) || (u.endsWith('/api/history') ? ok({ pipelines: [], ghAvailable: false }) : null) });
-  applyFlags({ shaperSmallRuns: c.flag }, ctx.window.document);
-  helloRun(ctx, { runId: 'r-g', pipelineId: 'p-g', stepper: manifest(c.careRun), steps: [...STEPS, row('n_tests', 'start')],
+async function livePage(run, on) {
+  const arm = sliceArm(run.slice[on]);
+  const ctx = await bootApp({ fetchHandler: (u) => arm(u) || (u.endsWith('/api/history') ? ok({ pipelines: [], ghAvailable: false }) : null) });
+  applyFlags({ shaperSmallRuns: on }, ctx.window.document);
+  // its own pipeline id: the app keeps what it fetched for a pipeline across the tests of the one shared app
+  helloRun(ctx, { runId: 'r-g', pipelineId: app.uid('p-g'), stepper: manifest(run.careRun), steps: [...STEPS, row('n_tests', 'start')],
     active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }], subAgents: SUBS, startedAt: '2026-01-01T00:00:00Z' });
   ctx.go('running/r-g');
   await ctx.settle(8);
   const d = ctx.window.document;
-  const overview = d.querySelector('#run-detail .rd-sec[data-sec="overview"]').outerHTML;
-  const tabs = d.querySelector('#run-detail .rd-tabs').outerHTML;
-  const btn = d.querySelector('#run-detail .rd-tab[data-sec="agents"]');
-  btn.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  const overview = required(d, '#run-detail .rd-sec[data-sec="overview"]').outerHTML;
+  const tabs = required(d, '#run-detail .rd-tabs').outerHTML;
+  const facts = d.querySelector('#run-detail .rd-run-facts')?.outerHTML ?? null;
+  required(d, '#run-detail .rd-tab[data-sec="agents"]').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await ctx.settle(4);
-  return { overview: stable(overview), tabs: stable(tabs), agents: stable(d.querySelector('#run-detail .rd-sec[data-sec="agents"]').outerHTML) };
+  return { overview, tabs, agents: required(d, '#run-detail .rd-sec[data-sec="agents"]').outerHTML, facts };
 }
 
-async function savedPage(c) {
-  const detail = { ...DETAIL, state: { ...DETAIL.state, stepper: manifest(c.careRun), steps: [...STEPS, row('n_tests'), row('n_impl')], subAgents: SUBS } };
-  const ctx = await bootDetail({ detail, arms: sliceArm(c) });
-  applyFlags({ shaperSmallRuns: c.flag }, ctx.window.document);
+async function savedPage(run, on) {
+  const detail = { ...DETAIL, state: { ...DETAIL.state, stepper: manifest(run.careRun), steps: [...STEPS, row('n_tests'), row('n_impl')], subAgents: SUBS } };
+  const ctx = await bootDetail({ detail, arms: sliceArm(run.slice[on]) });
+  applyFlags({ shaperSmallRuns: on }, ctx.window.document);
+  // Every saved page shares DETAIL's pipeline id, and the shared app keeps a pipeline's /slice answer across resets:
+  // a schedules-changed frame clears that cache, so this page asks for (and paints) its own run's answer.
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'schedules-changed' }) });
+  await hdSettle(ctx.window, 4);
+  const asked = ctx.calls.length;
   await openDetail(ctx, 'details/overview');
   await hdSettle(ctx.window, 8);
+  // flag off, the saved page reads no /slice at all (hdRunPlaces returns first)
+  if (on) assert.ok(ctx.calls.slice(asked).some((c) => /\/api\/shape\/pipelines\/[^/]+\/slice$/.test(c.url)),
+    'the saved page fetched its own /slice answer');
   const d = ctx.window.document;
-  return { overview: stable(d.querySelector(`#hist-detail .hd-sec[data-sec="overview"]`).outerHTML), tabs: stable(d.querySelector('#hist-detail .hd-tabs').outerHTML) };
+  return { overview: required(d, '#hist-detail .hd-sec[data-sec="overview"]').outerHTML, tabs: required(d, '#hist-detail .hd-tabs').outerHTML };
 }
 
-test('D2 golden: the live and saved run page are dev\'s for a marked Care run (flag off), an unmarked feature run and a dev run (flag on)', async () => {
-  assert.ok(ROW.id);
-  for (const [name, c] of Object.entries(RUNS)) {
-    check(`live: ${name}`, await livePage(c));
-    check(`saved: ${name}`, await savedPage(c));
-  }
+// The twin's flag-on renders are shared by the pairs below (one boot each).
+let liveTwinOn, savedTwinOn;
+const liveTwin = async () => (liveTwinOn ||= await livePage(RUNS.twin, true));
+const savedTwin = async () => (savedTwinOn ||= await savedPage(RUNS.twin, true));
+
+test('live run page: flag off equals flag on of the unmarked twin (Care run, owns-only run, dev run)', async () => {
+  const twin = await liveTwin();
+  const careOff = await livePage(RUNS.care, false);
+  same({ ...careOff, overview: withoutCareRows(careOff.overview) }, { ...twin, overview: withoutCareRows(twin.overview) }, 'live · care off = twin on');
+  same(await livePage(RUNS.owns, false), twin, 'live · owns off = twin on');
+  same(await livePage(RUNS.dev, false), await livePage(RUNS.dev, true), 'live · dev off = dev on');
+});
+
+test('saved run page: flag off equals flag on of the unmarked twin (Care run, dev run)', async () => {
+  same(await savedPage(RUNS.care, false), await savedTwin(), 'saved · care off = twin on');
+  same(await savedPage(RUNS.dev, false), await savedPage(RUNS.dev, true), 'saved · dev off = dev on');
+});
+
+test('sensitivity: flag on for a marked run differs from the unmarked twin, live and saved', async () => {
+  const twin = await liveTwin();
+  const careOn = await livePage(RUNS.care, true);
+  differs(careOn, twin, 'live · care on vs twin on');
+  const agentsTab = new JSDOM(careOn.tabs).window.document.querySelector('.rd-tab[data-sec="agents"]');
+  assert.ok(agentsTab && agentsTab.hidden, 'sensitivity · live · care on: the Agents tab is hidden (merged into the Overview\'s Care rows)');
+  const ownsOn = await livePage(RUNS.owns, true);
+  assert.notEqual(ownsOn.facts, null, 'sensitivity · live · owns on: the .rd-run-facts box is painted');
+  differs(ownsOn.facts, twin.facts, 'live · owns on vs twin on (.rd-run-facts)');
+  const savedCareOn = await savedPage(RUNS.care, true);
+  differs(savedCareOn, await savedTwin(), 'saved · care on vs twin on');
+  assert.match(savedCareOn.overview, /class="rd-run-agents"/, 'sensitivity · saved · care on: the Overview holds .rd-run-agents');
 });
 
 // ── The Runs-list group row ─────────────────────────────────────────────────────────────────────────────────────────
-test('D2 golden: the Runs-list group row of an unmarked feature (flag on) and a marked feature (flag off) is dev\'s', async () => {
+test('Runs-list group row: flag off for the marked feature equals flag on for the unmarked one; flag on for the marked one differs', async () => {
   const doc = new JSDOM('<!doctype html><body></body>').window.document;
   const NOW = Date.parse('2026-10-18T12:00:00Z');
-  const draw = async (on, fid) => withFlag(on, async () => {
-    const r = await nodeFetch(`${base}/api/run-groups`);
-    const g = (await r.json()).groups.find((x) => x.id === fid);
+  const fids = [FEATURES.marked, FEATURES.plain];
+  const draw = async (on, fid) => {
+    const g = await groupOf(fid, on);
     const group = { id: g.id, groupKind: g.kind, title: g.title, cost: g.cost, ...(g.smallRuns ? { smallRuns: g.smallRuns } : {}),
       members: g.members.map((m) => ({ position: m.position, title: m.title, pipelineId: m.pipelineId, ticketId: m.ticketId,
         kind: m.pipelineId ? 'hist' : 'sched', run: m.pipelineId ? { status: m.status } : { ticket: m.ticket } })) };
     const history = g.members.filter((m) => m.pipelineId).map((m) => ({ id: m.pipelineId, projectKey: 'k', title: m.pipelineId, status: 'done', run: { status: 'done' } }));
     const host = doc.createElement('div');
     host.append(...renderRunsList(doc, buildRunsModel({ history, groups: [group], toggled: new Map([[`chain:${fid}`, true]]), now: NOW })));
-    return normalize(host.querySelector(`.runs-item[data-row-key="chain:${fid}"]`).outerHTML)
-      .replace(new RegExp(fid, 'g'), 'FEATURE').replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, 'TICKET');
-  });
-  const ids = getDb().prepare("SELECT id, origin_pipeline_id FROM shape_features WHERE origin_pipeline_id IN ('golden-marked', 'golden-plain')").all();
-  const fidOf = (o) => ids.find((x) => x.origin_pipeline_id === o).id;
-  check('runs list: unmarked, flag on', await draw(true, fidOf('golden-plain')));
-  check('runs list: marked, flag off', await draw(false, fidOf('golden-marked')));
-  if (!UPDATE) assert.equal(golden.capturedAt, CAPTURED_AT);
-  assert.ok(UPDATE || existsSync(FIXTURE));
+    return canonRow(required(host, `.runs-item[data-row-key="chain:${fid}"]`).outerHTML, fids);
+  };
+  const plainOn = await draw(true, FEATURES.plain);
+  assert.equal(await draw(false, FEATURES.marked), plainOn, 'equality · runs list · marked off = unmarked on');
+  assert.notEqual(await draw(true, FEATURES.marked), plainOn, 'sensitivity · runs list · marked on vs unmarked on');
 });

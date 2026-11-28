@@ -1,6 +1,6 @@
 // test/ui-one-model.test.mjs — spec §5.3: the same recorded run state gives the same dot, symbol, word, status line
 // and actions on the Runs list row, the chat run card and the run page. Fails if Needs you / Failed is a plain dot.
-import { test, afterEach } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
@@ -8,14 +8,18 @@ import { checkRows } from './helpers/rows.mjs';
 import { runModel, groupModel, MENU_ACTIONS, HEAD_ACTIONS } from '../src/shared/run-model.mjs';
 import { buildRunsModel, renderRunsList, memberPrsOf } from '../ui/public/runs-list.mjs';
 import { createChatRunCard } from '../ui/public/chat/run-card.mjs';
-import { paintRunStatus, syncActions, statusText, memberStatusText } from '../ui/public/run-status-card.mjs';
+import { paintRunStatus, paintStateLine, syncActions, statusText, statusSplit, stageBarOf, memberStatusText } from '../ui/public/run-status-card.mjs';
 import { buildGroupPage, paintGroupPage } from '../ui/public/group-page.mjs';
 import { createAlerts, ALERT_KEYS } from '../ui/public/alerts.mjs';
 import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
-import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
+import { runPageOn, helloRun } from './helpers/run-page-boot.mjs';
 import * as hd from './helpers/history-detail-boot.mjs';
+import { useSharedApp, restoreAfter } from './helpers/shared-app-boot.mjs';
 
-const trackDom = useDomRelease(afterEach);
+const trackDom = useDomRelease(after);   // this file's own windows, released at its end: never the shared app's per test
+const app = useSharedApp({ before, beforeEach, after }, { fetchHandler: hd.historyFetch() });
+const bootApp = runPageOn(app);
+const bootDetail = hd.detailOn(app).detail;
 const FINISHED = new Set(['failed', 'stopped', 'ready', 'in-review', 'merged']);
 
 function listFacts(doc, run, state) {
@@ -207,9 +211,10 @@ test('§5.3 boot: #running/r1 paints the one status block and the model actions 
   } })));
 });
 
-test('§5.3 boot: an interrupted run gets a made Resume (never the "Pause" button), which reaches chatRunControls.resume', async () => {
+test('§5.3 boot: an interrupted run gets a made Resume (never the "Pause" button), which reaches chatRunControls.resume', async (t) => {
   const { ctx, bar } = await runPage([frameOf(workingFrame, { status: 'interrupted', active: [] })]);
   const resumed = [];
+  restoreAfter(t, ctx.window.__np.chatRunControls, 'resume');
   ctx.window.__np.chatRunControls.resume = (ref) => { resumed.push(ref.runId); return Promise.resolve(); };
   assert.equal(bar.querySelector('.rd-pause').hidden, true, 'it still reads "Pause": not owned');
   const made = [...bar.querySelectorAll('[data-model-action="resume"]')].filter((b) => !b.hidden);
@@ -253,9 +258,11 @@ const menuLabel = (b) => b.querySelector('.wfv-menu-l').textContent;
 
 async function finishedPage({ row, detail, ghAvailable = false, more = () => null } = {}) {
   const arms = (url) => (url.endsWith('/api/history') ? hd.ok({ pipelines: [row], ghAvailable }) : more(url));
-  const ctx = await hd.bootDetail({ rows: [row], detail, arms });
+  const ctx = await bootDetail({ rows: [row], detail, arms });
   ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [] }) });
   await hd.settle(ctx.window, 4);
+  hd.go(ctx.window, 'history');   // close the saved run an earlier page left open: the same run reopens from scratch
+  await hd.settle(ctx.window);
   await hd.openDetail(ctx, '');
   await hd.settle(ctx.window, 6);
   return { ctx, end: ctx.window.document.querySelector('#hist-detail .hd-row1 > .rd-bar-end'), doc: ctx.window.document };
@@ -365,40 +372,147 @@ test('slice 2: the run pages\' bars never make Archive or Report (stopped, merge
 
 // Needle (a), slice 3: the bar keeps only Run after and the live run controls. No ship, View PR, archive, retry, report
 // or Ask for changes button in .rd-actions, for every finished state, on both pages, at Simple and Expert.
-test('needle (a): the run pages\' bars make no ship, PR, archive, retry, report or ask-for-changes button', async (t) => {
-  const url = 'https://github.com/acme/app/pull/866';
-  const open = { state: 'OPEN', url, number: 866, isDraft: false, mergeable: 'MERGEABLE' };
-  // `state`: the painted status block's state on both pages, so each case is proven to be the state it names.
-  const CASES = {
-    stopped: { status: 'stopped', state: 'stopped' },
-    merged: { status: 'done', pr: { ...open, state: 'MERGED' }, state: 'merged' },
-    failed: { status: 'error', state: 'failed' },
-    ready: { status: 'done', pr: null, state: 'ready' },
-    'in review': { status: 'done', pr: open, state: 'in-review' },
-    conflicts: { status: 'done', pr: { ...open, mergeable: 'CONFLICTING' }, state: 'needs-you' },
-    'watch stopped': { status: 'done', pr: open, watch: { watching: true, status: 'needs-person', fixRuns: 3, reason: 'cap' }, state: 'needs-you' },
-  };
-  const SEL = ['ship', 'open-pr', 'archive', 'retry', 'report', 'ask-changes'].map((id) => `.rd-actions [data-model-action="${id}"]`).join(', ');
-  for (const [name, c] of Object.entries(CASES)) {
-    const over = { status: c.status, active: [] };
-    const histRow = { ...hd.ROW, id: 'p1', live: true, status: c.status, pr: c.pr, ...(c.watch ? { watch: c.watch } : {}) };
-    for (const level of ['simple', 'expert']) {
-      await t.test(`needle (a) live · ${name} · ${level}`, async () => {
-        const live = await runPage([frameOf(workingFrame, over)], { row: histRow });
-        live.doc.documentElement.dataset.level = level;
-        live.ctx.dispatch(frameOf(workingFrame, over));
-        await live.ctx.settle(4);
-        assert.equal(live.doc.querySelector('#run-detail .rd-sheet .run-status').dataset.state, c.state);
-        assert.equal(live.doc.querySelector('#run-detail').querySelector(SEL), null);
-      });
-      await t.test(`needle (a) saved · ${name} · ${level}`, async () => {
-        const row = { ...hd.ROW, status: c.status, pr: c.pr, ...(c.watch ? { watch: c.watch } : {}) };
-        const saved = await finishedPage({ row, detail: { ...hd.DETAIL, state: { ...hd.DETAIL.state, status: c.status } }, ghAvailable: true });
-        saved.doc.documentElement.dataset.level = level;
-        await hd.settle(saved.ctx.window, 2);
-        assert.equal(saved.doc.querySelector('#hist-detail .hd-glance .rd-sheet .run-status').dataset.state, c.state);
-        assert.equal(saved.doc.querySelector('#hist-detail').querySelector(SEL), null);
-      });
-    }
-  }
+const NEEDLE_URL = 'https://github.com/acme/app/pull/866';
+const NEEDLE_OPEN = { state: 'OPEN', url: NEEDLE_URL, number: 866, isDraft: false, mergeable: 'MERGEABLE' };
+// `state`: the painted status block's state on both pages, so each case is proven to be the state it names.
+const NEEDLE_CASES = {
+  stopped: { status: 'stopped', state: 'stopped' },
+  merged: { status: 'done', pr: { ...NEEDLE_OPEN, state: 'MERGED' }, state: 'merged' },
+  failed: { status: 'error', state: 'failed' },
+  ready: { status: 'done', pr: null, state: 'ready' },
+  'in review': { status: 'done', pr: NEEDLE_OPEN, state: 'in-review' },
+  conflicts: { status: 'done', pr: { ...NEEDLE_OPEN, mergeable: 'CONFLICTING' }, state: 'needs-you' },
+  'watch stopped': { status: 'done', pr: NEEDLE_OPEN, watch: { watching: true, status: 'needs-person', fixRuns: 3, reason: 'cap' }, state: 'needs-you' },
+};
+const NEEDLE_SEL = ['ship', 'open-pr', 'archive', 'retry', 'report', 'ask-changes'].map((id) => `.rd-actions [data-model-action="${id}"]`).join(', ');
+
+async function needleLive(name, level) {
+  const c = NEEDLE_CASES[name];
+  const over = { status: c.status, active: [] };
+  const histRow = { ...hd.ROW, id: 'p1', live: true, status: c.status, pr: c.pr, ...(c.watch ? { watch: c.watch } : {}) };
+  const live = await runPage([frameOf(workingFrame, over)], { row: histRow });
+  live.doc.documentElement.dataset.level = level;
+  live.ctx.dispatch(frameOf(workingFrame, over));
+  await live.ctx.settle(4);
+  assert.equal(live.doc.querySelector('#run-detail .rd-sheet .run-status').dataset.state, c.state);
+  assert.equal(live.doc.querySelector('#run-detail').querySelector(NEEDLE_SEL), null);
+}
+
+async function needleSaved(name, level) {
+  const c = NEEDLE_CASES[name];
+  const row = { ...hd.ROW, status: c.status, pr: c.pr, ...(c.watch ? { watch: c.watch } : {}) };
+  const saved = await finishedPage({ row, detail: { ...hd.DETAIL, state: { ...hd.DETAIL.state, status: c.status } }, ghAvailable: true });
+  saved.doc.documentElement.dataset.level = level;
+  await hd.settle(saved.ctx.window, 2);
+  assert.equal(saved.doc.querySelector('#hist-detail .hd-glance .rd-sheet .run-status').dataset.state, c.state);
+  assert.equal(saved.doc.querySelector('#hist-detail').querySelector(NEEDLE_SEL), null);
+}
+
+test('needle (a) live · stopped · simple', () => needleLive('stopped', 'simple'));
+test('needle (a) saved · stopped · simple', () => needleSaved('stopped', 'simple'));
+test('needle (a) live · stopped · expert', () => needleLive('stopped', 'expert'));
+test('needle (a) saved · stopped · expert', () => needleSaved('stopped', 'expert'));
+test('needle (a) live · merged · simple', () => needleLive('merged', 'simple'));
+test('needle (a) saved · merged · simple', () => needleSaved('merged', 'simple'));
+test('needle (a) live · merged · expert', () => needleLive('merged', 'expert'));
+test('needle (a) saved · merged · expert', () => needleSaved('merged', 'expert'));
+test('needle (a) live · failed · simple', () => needleLive('failed', 'simple'));
+test('needle (a) saved · failed · simple', () => needleSaved('failed', 'simple'));
+test('needle (a) live · failed · expert', () => needleLive('failed', 'expert'));
+test('needle (a) saved · failed · expert', () => needleSaved('failed', 'expert'));
+test('needle (a) live · ready · simple', () => needleLive('ready', 'simple'));
+test('needle (a) saved · ready · simple', () => needleSaved('ready', 'simple'));
+test('needle (a) live · ready · expert', () => needleLive('ready', 'expert'));
+test('needle (a) saved · ready · expert', () => needleSaved('ready', 'expert'));
+test('needle (a) live · in review · simple', () => needleLive('in review', 'simple'));
+test('needle (a) saved · in review · simple', () => needleSaved('in review', 'simple'));
+test('needle (a) live · in review · expert', () => needleLive('in review', 'expert'));
+test('needle (a) saved · in review · expert', () => needleSaved('in review', 'expert'));
+test('needle (a) live · conflicts · simple', () => needleLive('conflicts', 'simple'));
+test('needle (a) saved · conflicts · simple', () => needleSaved('conflicts', 'simple'));
+test('needle (a) live · conflicts · expert', () => needleLive('conflicts', 'expert'));
+test('needle (a) saved · conflicts · expert', () => needleSaved('conflicts', 'expert'));
+test('needle (a) live · watch stopped · simple', () => needleLive('watch stopped', 'simple'));
+test('needle (a) saved · watch stopped · simple', () => needleSaved('watch stopped', 'simple'));
+test('needle (a) live · watch stopped · expert', () => needleLive('watch stopped', 'expert'));
+test('needle (a) saved · watch stopped · expert', () => needleSaved('watch stopped', 'expert'));
+// Run page header: the state line says `head · step`, the card keeps only `rest` (never the word or the step).
+const stages = (label) => ({ mode: 'stages', label, fraction: 0.5, stages: [{ id: label.toLowerCase(), label, state: 'current', agents: [] }] });
+const SPLIT_ROWS = [
+  ['working beside a stage bar: the step', { state: 'working', word: 'Working', line: 'Build · Implementation', barLine: 'Implementation', progress: stages('Build') }, true, 'Working', 'Implementation', ''],
+  ['working where the step is the stage', { state: 'working', word: 'Working', line: 'Build', barLine: '', progress: stages('Build') }, true, 'Working', 'Build', ''],
+  ['working with no stage bar: the first segment', { state: 'working', word: 'Working', line: 'Implementation', barLine: null, progress: { mode: 'nodes', step: 'x' } }, false, 'Working', 'Implementation', ''],
+  ['paused', { state: 'paused', word: 'Paused', line: 'Build · paused · cost limit', progress: stages('Build') }, true, 'Paused', 'Build', 'cost limit'],
+  ['waiting', { state: 'waiting', word: 'Waiting', line: 'Waiting · starts after run 2', progress: null }, false, 'Waiting', '', 'starts after run 2'],
+  ['needs you on a question', { state: 'needs-you', word: 'Needs you', line: 'Build · needs you · 2 questions', progress: stages('Build') }, true, 'Needs you', 'Build', '2 questions'],
+  ['failed', { state: 'failed', word: 'Failed', line: 'Build · failed · Implementation', progress: stages('Build') }, false, 'Failed', 'Build', 'Implementation'],
+  ['stopped', { state: 'stopped', word: 'Stopped', line: 'Stopped at Implementation', progress: stages('Build') }, false, 'Stopped at Implementation', '', ''],
+  ['a round', { state: 'working', word: 'Working', line: 'Running · Round 2 · Build', lineSaysState: true, barLine: null, progress: stages('Build') }, true, 'Running', 'Build', 'Round 2'],
+  // headModel's overrides, merged as paintRunHead merges them.
+  ['ready, not landed (head override)', { state: 'ready', word: 'Ready', line: 'Ready to ship · not in main yet', lineSaysState: false, progress: stages('Ready') }, false, 'Ready to ship', '', 'not in main yet'],
+  ['needs you through its PR (head override)', { state: 'needs-you', word: 'Needs you', line: 'Needs you · Checks failing', prNeeds: true, progress: stages('Ready') }, false, 'Needs you', '', 'Checks failing'],
+  ['nothing known', { state: 'starting', word: 'Starting', line: '' }, false, 'Starting', '', ''],
+];
+
+test('statusSplit: the header gets the head and the step, the card the rest', async () => {
+  await checkRows(SPLIT_ROWS.map(([name, m, stageBar, head, step, rest]) => ({ name, run: () => {
+    assert.deepEqual(statusSplit(m, { stageBar }), { head, step, rest });
+  } })));
+});
+
+test('paintRunStatus lead:false hides the word and the dot, shows only the rest, and hides an empty head', async () => {
+  await checkRows(SPLIT_ROWS.map(([name, m, , head, step, rest]) => ({ name, run: () => {
+    const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+    const host = doc.createElement('div');
+    paintRunStatus(host, { ...m, dot: 'blue' }, { lead: false });
+    const q = (s) => host.querySelector(s);
+    assert.equal(q('.run-status-word').hidden, true);
+    assert.equal(q('.run-status-head > .status-dot').hidden, true);
+    assert.equal(q('.run-status-detail').textContent, rest);
+    assert.equal(q('.run-status-detail').hidden, !rest);
+    assert.equal(q('.run-status-detail').title, rest);
+    assert.equal(q('.run-status-head').hidden, !rest);
+    assert.equal(host.dataset.state, m.state);
+    assert.equal(host.dataset.word, m.word);
+    assert.equal(host.dataset.line, m.line);
+    assert.equal(host.dataset.text, statusText(m, { stageBar: stageBarOf(m) }).text, 'data-text keeps the whole line');
+    // The header and the card split one model: the line's head and step never come back in the card.
+    const line = doc.createElement('div');
+    paintStateLine(line, { ...m, dot: 'blue' }, { stageBar: stageBarOf(m) });
+    assert.equal(line.textContent, step ? `${head} · ${step}` : head);
+  } })));
+});
+
+test('paintRunStatus lead default unchanged: dot, word and the whole detail show', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const host = doc.createElement('div');
+  const m = { state: 'paused', dot: 'amber', word: 'Paused', line: 'Build · paused · cost limit', progress: stages('Build') };
+  paintRunStatus(host, m, { lead: false });
+  paintRunStatus(host, m);                                    // and back: nothing stays hidden
+  for (const s of ['.run-status-head', '.run-status-head > .status-dot', '.run-status-word', '.run-status-detail']) assert.equal(host.querySelector(s).hidden, false, s);
+  assert.equal(host.querySelector('.run-status-word').textContent, 'Paused');
+  assert.equal(host.querySelector('.run-status-detail').textContent, 'Build · cost limit');
+});
+
+test('paintStateLine is idempotent: the same nodes after two paints, the text and dot following the model', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const host = doc.createElement('div');
+  host.className = 'run-state-line is-link';
+  const m = { state: 'working', dot: 'amber', pulse: true, word: 'Working', line: 'Build · Implementation', barLine: 'Implementation', progress: stages('Build') };
+  paintStateLine(host, m, { stageBar: true });
+  const nodes = [...host.children];
+  assert.equal(nodes.length, 3);
+  assert.ok(nodes[0].classList.contains('status-dot') && nodes[0].classList.contains('is-amber'));
+  assert.equal(nodes[1].className, 'run-state-word');
+  assert.equal(nodes[2].className, 'run-state-step');
+  assert.equal(host.dataset.state, 'working');
+  assert.equal(host.dataset.text, 'Working · Implementation');
+  paintStateLine(host, { state: 'stopped', dot: 'grey', word: 'Stopped', line: 'Stopped at Implementation' });
+  assert.deepEqual([...host.children], nodes, 'never rebuilt');
+  assert.equal(host.textContent, 'Stopped at Implementation');
+  assert.equal(nodes[2].hidden, true);
+  assert.equal(host.dataset.text, 'Stopped at Implementation');
+  assert.ok(nodes[0].classList.contains('is-grey'));
+  assert.ok(host.classList.contains('is-link'), 'the host keeps the classes its page toggles');
+  assert.doesNotThrow(() => { paintStateLine(null, m); paintStateLine(host, null); });
 });

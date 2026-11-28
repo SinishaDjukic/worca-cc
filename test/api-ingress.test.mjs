@@ -39,7 +39,7 @@ before(async () => {
   writePluginsLock({
     [NAME]: { repoUrl: 'https://example.test/t.git', subdir: '', pinnedSha: 'b'.repeat(40), version: null, enabled: true, installedAt: '2026-08-12T00:00:00.000Z' },
   });
-  writePluginConfig(NAME, SCHEMA, { appId: 'app-1', ingressToken: TOKEN });
+  await writePluginConfig(NAME, SCHEMA, { appId: 'app-1', ingressToken: TOKEN });
 
   const server = await import('../ui/server.mjs');
   ({ channelHost } = server._testing);

@@ -2,9 +2,10 @@
 // the body of register() was moved verbatim from ui/server.mjs. Edit it here from now on.
 import { releaseVersionHint } from '../../../src/core/draft-release.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
-import { cancelRest, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, setFeatureAcceptance, shaperCard, sliceOfPipeline, storedAgentFacts } from '../../../src/core/shape/features.mjs';
+import { cancelRest, clashHoldOf, clashRefusalOf, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, setFeatureAcceptance, shaperCard, sliceOfPipeline, storedAgentFacts } from '../../../src/core/shape/features.mjs';
 import { shaperSmallRunsOn } from '../../../src/core/shape/small-runs.mjs';
-import { verifyCheckOfPipeline } from '../../../src/core/shape/verifier.mjs';
+import { getTicket } from '../../../src/core/scheduler.mjs';
+import { verifyCheckOfPipeline, acknowledgeFinding } from '../../../src/core/shape/verifier.mjs';
 import { normalizeAcceptance } from '../../../src/shared/shape/acceptance.mjs';
 import { CONFIRM_REASON_MAX, MARK_WORDS, confirmMarkOf, reasonLine } from '../../../src/shared/shape/ship-ledger.mjs';
 import { recordFeatureFigures } from '../../../src/core/shape/measure.mjs';
@@ -87,18 +88,24 @@ app.post('/api/shape/features/:id/cancel', (req, res) => {
 
 app.post('/api/shape/features/:id/resume', async (req, res) => {
   try {
+    // Slice 6 (D13): a stop line's Resume names its run; anything but a run number is refused before anything runs.
+    const index = req.body && req.body.index !== undefined ? req.body.index : null;
+    if (index !== null && !(Number.isInteger(index) && index >= 1)) return res.status(400).json({ error: 'index must be a run number' });
     if (shipLocked(req.params.id)) return res.status(409).json(SHIP_LOCK);
     const by = actorOf(req);
-    const out = resumeFeature(req.params.id, { live: liveSliceOf, finishing: isFinishingRun, by });
+    const out = resumeFeature(req.params.id, { live: liveSliceOf, finishing: isFinishingRun, by, ...(index !== null ? { index } : {}) });
+    if (out && out.code === 'NOT_HALTED') return res.status(409).json({ code: out.code, error: out.error });
     if (shapeRefused(res, out)) return;
     if (out.action === 'none') {
       const verify = featureView(req.params.id, { live: liveSliceOf, finishing: isFinishingRun }).verify;
-      return res.status(409).json(verify ? { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: the Verifier is not stopped, a run or round is not over, or Shaper small runs is off' } : { error: 'no slice is stopped' });
+      return res.status(409).json(verify ? { code: 'NOTHING_TO_RESUME', error: 'nothing to resume now: the Verifier is not stopped, a run or round is not over, or the Shaper Labs switch is off' } : { error: 'no slice is stopped' });
     }
     let runId = null;
+    let held = null;
     if (out.action === 'resume') {
       const r = await resumeRun(out.pipelineId, { by, mock: out.mock === true });
       runId = r && r.runId ? r.runId : null;
+      if (r && r.held) held = { held: true, after: r.after };   // small runs slice 7 (D14): it goes on at its turn
       rechainWaiting(req.params.id, out.index, { by });     // F30: an interrupted slice already missed its successor
       emitChanged('schedules-changed', 'updated');
     } else {
@@ -106,7 +113,7 @@ app.post('/api/shape/features/:id/resume', async (req, res) => {
       await schedulerTick();                                  // best effort: null while a tick is busy
     }
     broadcastFeature(req.params.id);
-    res.json({ ok: true, ...out, ...(runId ? { runId } : {}) });
+    res.json({ ok: true, ...out, ...(runId ? { runId } : {}), ...(held || {}) });
   } catch (err) { shapeRouteError(res, err); }
 });
 
@@ -131,8 +138,13 @@ app.post('/api/shape/features/:id/start', async (req, res) => {
     if (!view) return res.status(404).json({ error: 'unknown feature' });
     if (view.status !== 'active') return res.status(409).json({ error: `this feature is ${view.status}` });
     if (!view.held) return res.status(409).json({ error: 'no run is waiting for you to start' });
+    const requestAt = Date.now();
     const r = await scheduleVerb('run-now', view.held.ticketId, {}, { by: actorOf(req) });
     broadcastFeature(req.params.id);
+    // Small runs (D9): the runs it builds on still clash, so the tick's hold arm put it back: nothing started.
+    const ticketId = view.held.ticketId;
+    const clash = clashRefusalOf({ ticket: getTicket(ticketId), hold: clashHoldOf(ticketId), requestAt });
+    if (clash) return res.status(409).json({ error: clash, code: 'DEPENDENCY_CLASH' });
     res.status(r.status).json(r.body);
   } catch (err) { shapeRouteError(res, err); }
 });
@@ -253,6 +265,33 @@ app.post('/api/shape/features/:id/confirm', (req, res) => {
     const after = featureView(id, { live: liveSliceOf });
     res.json({ acceptance: after.ship.acceptance || null, smallRuns: after.ship.smallRuns });
   } catch (err) { shapeRouteError(res, err); }
+});
+
+// Slice 9 (R-po-4, D10): a person acknowledges one of the Verifier's notes on the check they read. The only caller of
+// acknowledgeFinding: Away mode, --yes, the PR auto-finisher and the settle hooks never acknowledge. A refusal writes nothing.
+app.post('/api/shape/features/:id/acknowledge', (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const view = featureView(id, { live: liveSliceOf });
+    if (!view) return res.status(404).json({ error: 'unknown feature' });
+    if (!view.ship.smallRuns) return res.status(409).json({ code: 'NOT_SMALL_RUNS', error: 'this feature has no confirmed requirements' });
+    if (view.ship.mode) return res.status(409).json({ error: 'the feature already shipped' });
+    if (featureShipping(id)) return res.status(409).json({ error: 'this feature is already shipping' });
+    const { checkAt, note } = req.body || {};
+    const named = (v) => typeof v === 'string' && v.trim() !== '';
+    if (!named(checkAt) || !named(note)) return res.status(400).json({ code: 'ACK_INVALID', error: 'name the note and the check you read' });
+    const r = acknowledgeFinding(id, { checkAt, note, by: actorOf(req) });
+    if (!r.ok) return res.status(r.status).json(r.code ? { code: r.code, error: r.error } : { error: r.error });
+    if (r.fresh) {
+      broadcastFeature(id);
+      void prAutoFinisher()?.onAcceptanceChanged(id);   // a feature whose one PR waited for this note opens it now
+    }
+    res.json({ smallRuns: featureView(id, { live: liveSliceOf }).ship.smallRuns });
+  } catch (err) {
+    // A Ship that started after the gate above: the writer's lock refusal (409 SHIPPING).
+    if (err && err.code === SHIP_LOCK.code && !res.headersSent) return res.status(409).json({ code: SHIP_LOCK.code, error: SHIP_LOCK.error });
+    shapeRouteError(res, err);
+  }
 });
 
 /** A plan row's state when its run is not live: the pipelines row first, then the link row (follow.mjs). */

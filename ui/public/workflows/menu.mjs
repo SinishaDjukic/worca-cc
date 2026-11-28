@@ -12,7 +12,7 @@ let segSeq = 0;
 /**
  * @param {object} o
  * @param {Document} o.doc
- * @param {HTMLElement} o.anchor  the trigger: aria-expanded tracks the menu; Escape and a pick return focus to it
+ * @param {HTMLElement} o.anchor  the trigger: aria-expanded tracks the menu; Escape and a pick return focus to it (unless returnFocus is given)
  * @param {Array<{label:string, icon?:string, danger?:boolean, hint?:string, chip?:Node, checked?:boolean, disabled?:boolean, title?:string, onSelect?:Function}
  *   |{sep:true}|{header:string}>} o.items
  * @param {'start'|'end'} [o.align]  the edge shared with the anchor
@@ -21,6 +21,8 @@ let segSeq = 0;
  * @param {HTMLElement} [o.host]  append the menu inside it (a split button's .btn-split.mini) and let its CSS place it;
  *   else <body>, fixed
  * @param {string} [o.className]  extra classes on the menu
+ * @param {HTMLElement} [o.returnFocus]  where a pick and Escape put the focus (the composer's prompt field), when it is
+ *   connected; else the anchor
  * An item `{ switch: true, label, help, checked, onToggle(button) }` is a menuitemcheckbox switch row whose toggle keeps
  * the menu open (the account menu's rule); onToggle owns aria-checked.
  * An item `{ segmented: true, label, options: [{ id, label, title? }], value, onSelect(id) }` is a `.menu-h` header and
@@ -28,8 +30,9 @@ let segSeq = 0;
  * menu open (the View menus' Sort by / Group by).
  * @returns {{el:HTMLElement, close:() => void}}
  */
-export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom', label = '', host = null, className = '' }) {
+export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom', label = '', host = null, className = '', returnFocus = null }) {
   closeMenus();
+  const back = () => (returnFocus && returnFocus.isConnected ? returnFocus : anchor);
   const win = doc.defaultView || globalThis;
   const el = doc.createElement('div');
   el.className = ['menu wfv-menu', className].filter(Boolean).join(' ');
@@ -106,12 +109,13 @@ export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom',
     if (it.hint) { const h = doc.createElement('span'); h.className = it.hint === '0' ? 'wfv-menu-hint is-zero' : 'wfv-menu-hint'; h.textContent = it.hint; b.appendChild(h); }
     if (it.disabled) { b.disabled = true; b.setAttribute('aria-disabled', 'true'); }
     if (it.title) b.title = it.title;
-    // The pick removes the item that holds the focus: hand it back to the trigger first (the menu-button pattern),
+    // The pick removes the item that holds the focus: hand it back to the trigger (or `returnFocus`) first (the menu-button pattern),
     // never <body>, where the canvas takes Delete and the arrows. onSelect may still move it on (the scope menu does).
     b.addEventListener('click', () => {
       if (b.disabled) return;
       close();
-      if (anchor.isConnected) anchor.focus({ preventScroll: true });
+      const to = back();
+      if (to.isConnected) to.focus({ preventScroll: true });
       if (typeof it.onSelect === 'function') it.onSelect();
     });
     el.appendChild(b);
@@ -148,7 +152,7 @@ export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom',
     const a = doc.activeElement;
     const seg = a && a.closest ? a.closest('.wfv-seg') : null;
     const i = enabled().indexOf(seg || a);
-    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); close(); anchor.focus(); return; }
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); close(); back().focus(); return; }
     if (ev.key === 'Tab') { close(); return; }
     if (ev.key === 'ArrowDown') { ev.preventDefault(); focusAt(i + 1); }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); focusAt(i < 0 ? -1 : i - 1); }

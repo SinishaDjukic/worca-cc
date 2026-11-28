@@ -1,6 +1,7 @@
-// test/ui-newpipeline-engine-models.test.mjs — New pipeline's agent rows offer the run engine's
-// models (cascading-settings-design.md §6, D10), re-filter on an engine switch, hide the
-// sub-agent model on Codex, and keep a hidden pick through a save (Review Focus 4).
+// test/ui-newpipeline-engine-models.test.mjs — New pipeline's agent rows: each row's picker opens on the run's default
+// harness and offers the others (cascading-settings-design.md §6, D10), a pinned pick keeps its harness through a
+// default-harness switch, the sub-agent model hides off Claude, a hidden pick survives a save (Review Focus 4), and
+// Add model under an empty Model column opens the Models page on that harness.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -93,23 +94,37 @@ async function openWf(window) {
   w.value = WF.id; w.dispatchEvent(new window.Event('change', { bubbles: true }));
   await waitFor(() => doc.querySelector('.step-model[data-node-id="n1"]'));
 }
-const ids = (doc, node) => [...doc.querySelectorAll(`.step-model[data-node-id="${node}"] option`)].map((o) => o.value);
 const pick = (doc, engine) => { const s = doc.getElementById('engineSelect'); s.value = engine; s.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true })); };
-const CLAUDE_IDS = ['', 'claude-opus-4-8', 'claude-haiku-4-5', '__add__'];   // catalog order inside the Claude sign-in group
+const openRow = (doc, node) => { doc.querySelector(`.step-model[data-node-id="${node}"]`).click(); return doc.querySelector('.mdl-cols-pop'); };
+const modelKeys = (pop) => [...pop.querySelectorAll('[data-col="model"] [role="option"]')].map((b) => b.dataset.key);
+const shownHarness = (pop) => pop.querySelector('[data-col="harness"] [aria-selected="true"]');
+const subHidden = (doc, node) => doc.querySelector(`.step-subagent[data-node-id="${node}"]`).closest('.select-wrap').hidden;
 
-test('the agent rows offer the run engine\'s models and re-filter on an engine switch', async () => {
+test('a row\'s picker opens on the run\'s default harness and offers the others', async () => {
   const { window } = await boot(apiFetch());
   await openWf(window);
   const doc = window.document;
-  assert.deepEqual(ids(doc, 'n1'), CLAUDE_IDS);
+  const eng = doc.getElementById('engineSelect');
+  assert.deepEqual([doc.querySelector('label[for="engineSelect"]').textContent, eng.getAttribute('aria-label'), eng.title], ['Default harness', 'Default harness', 'Steps set to inherit run here']);
+  let pop = openRow(doc, 'n1');
+  assert.deepEqual([shownHarness(pop).dataset.key, shownHarness(pop).querySelector('.badge').textContent, modelKeys(pop)], ['claude', 'Default', ['claude-opus-4-8', 'claude-haiku-4-5']]);
+  assert.ok(pop.querySelector('[data-col="harness"] [data-key="codex"]'));
   pick(doc, 'codex');
-  await waitFor(() => ids(doc, 'n1').includes('gpt-5.5'));
-  assert.deepEqual(ids(doc, 'n1'), ['', 'gpt-5.5', '__add__']);
-  assert.equal(doc.querySelector('.step-subagent[data-node-id="n1"]').closest('.select-wrap').hidden, true, 'no sub-agents on codex');
+  await waitFor(() => subHidden(doc, 'n1'));
+  pop = openRow(doc, 'n1');
+  assert.deepEqual([shownHarness(pop).dataset.key, modelKeys(pop)], ['codex', ['gpt-5.5']]);
   pick(doc, 'claude');
-  await waitFor(() => !ids(doc, 'n1').includes('gpt-5.5'));
-  assert.deepEqual(ids(doc, 'n1'), CLAUDE_IDS);
-  assert.equal(doc.querySelector('.step-subagent[data-node-id="n1"]').closest('.select-wrap').hidden, false);
+  await waitFor(() => !subHidden(doc, 'n1'));
+});
+test('Review Focus 3: a pinned pick keeps its model, harness and Sub-agents when the default harness changes', async () => {
+  const config = { workflows: { wf_t: { nodes: { n0: { model: 'claude-haiku-4-5', engine: 'claude' } }, feedbacks: {} } } };
+  const { window } = await boot(apiFetch({ config }));
+  await openWf(window);
+  const doc = window.document;
+  pick(doc, 'codex');
+  await waitFor(() => subHidden(doc, 'n1'));
+  const m = doc.querySelector('.step-model[data-node-id="n0"]');
+  assert.deepEqual([m.value, m.dataset.engine, subHidden(doc, 'n0'), m.closest('.agent-row').querySelector('.agent-kept-pick')], ['claude-haiku-4-5', 'claude', false, null]);
 });
 
 test('switching to Codex heals a Claude pick, and saving another tunable keeps it (Review Focus 4)', async () => {
@@ -120,7 +135,7 @@ test('switching to Codex heals a Claude pick, and saving another tunable keeps i
   const doc = window.document;
   assert.equal(doc.querySelector('.step-model[data-node-id="n0"]').value, 'claude-haiku-4-5');
   pick(doc, 'codex');
-  await waitFor(() => ids(doc, 'n0').includes('gpt-5.5'));
+  await waitFor(() => subHidden(doc, 'n1'));
   assert.equal(doc.querySelector('.step-model[data-node-id="n0"]').value, '');
   const fan = doc.querySelector('.step-fanout[data-node-id="n0"]');
   fan.checked = !fan.checked;
@@ -142,33 +157,16 @@ test('a row healed for the run says which pick of the other engine it keeps (rev
   assert.equal(kept().textContent, 'Your Claude Code pick Haiku 4.5 is kept for Claude Code runs. Choose a model here to replace it.');
 });
 
-test('"+ Add model…" in an agent row opens the Models page with the model editor', async () => {
+test('Add model under an empty Model column opens the Models page with that harness picked', async () => {
   const { window } = await boot(apiFetch());
   await openWf(window);
   const doc = window.document;
-  const sel = doc.querySelector('.step-model[data-node-id="n1"]');
-  sel.value = '__add__';
-  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  const pop = openRow(doc, 'n1');
+  pop.querySelector('[data-col="harness"] [data-key="cursor"]').click();
+  pop.querySelector('.mdl-cols-add').click();
   await waitFor(() => !doc.getElementById('model-editor-modal').classList.contains('hidden'));
   assert.equal(window.location.hash, '#models');
-  assert.equal(doc.querySelector('.view[data-view="models"]').classList.contains('hidden'), false);
-});
-
-test('"Add model…" in a picker on a Codex run lands on step 1 with a sign-in and the Codex harness picked', async () => {
-  const { window } = await boot(apiFetch());
-  await openWf(window);
-  const doc = window.document;
-  pick(doc, 'codex');
-  await waitFor(() => ids(doc, 'n1').includes('gpt-5.5'));
-  const sel = doc.querySelector('.step-model[data-node-id="n1"]');
-  sel.value = '__add__';
-  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
-  await waitFor(() => !doc.getElementById('model-editor-modal').classList.contains('hidden'));
-  assert.equal(window.location.hash, '#models');
-  const step = doc.querySelector('#mv-editor-host .mdl-add[data-step="1"]');
-  assert.ok(step, 'step 1 of Add model');
-  assert.equal(step.querySelector('.mdl-opt[data-where="signin"]').getAttribute('aria-checked'), 'true', '"A sign-in" checked');
-  assert.ok(step.querySelector('.mdl-hx-t[data-engine="codex"][aria-pressed="true"]'), 'the Codex tile pressed');
+  assert.ok(doc.querySelector('#mv-editor-host .mdl-add[data-step="1"] .mdl-hx-t[data-engine="cursor"][aria-pressed="true"]'), 'the Cursor tile pressed');
 });
 
 // #1450: what "default" resolves to on the run card, and the tool-decides warning in the engine hint.

@@ -13,7 +13,9 @@ import { icon } from '../icons.mjs';
 import { segmented } from '../ask/widgets-input.mjs';
 import { buildFacts, factRow, setFactText, syncFacts } from '../run-page-head.mjs';
 import { fold, buildCheckFold } from './check-row.mjs';
+import { splitIntentLead } from '../chat/intent.mjs';
 import { stepHead, stepSender, errLine, ownButton } from './step-card.mjs';
+import { careRunCount } from '../../../src/shared/shape/slices.mjs';
 import { CARE_LABELS, CARE_POSITIONS, CARE_TABLE, careCell, careGivesUp, careGivesUpSentence } from '../../../src/shared/shape/feature-record.mjs';
 
 /** The facts line: `Large task · ≈ $31 · ~84 min` (the shaped choice's estimate), or `no estimate yet`. */
@@ -35,7 +37,7 @@ const noop = () => {};
  *  "You lead as [lead ▾], supported by [supporters ▾]." — quiet ▾ buttons, each opening the menu (toggleMenu).
  *  Otherwise the facts line and today's chips, `chipsEl` for a host that places them apart. `blocked()` is
  *  true until a lead is picked; `commit()` saves a lead the profile does not hold. */
-function requirementsCard(doc, card, h, fetchFn) {
+function requirementsCard(doc, card, h, fetchFn, sentRole) {
   const n = card.shape || card.nudge;
   const el = h('div', 'shape-card');
   el.appendChild(h('div', 'shape-nudge-head shape-facts', factsLine(n)));
@@ -51,6 +53,7 @@ function requirementsCard(doc, card, h, fetchFn) {
 
   const offered = perspectivesFor({ smallRuns }).filter((p) => !hidden.includes(p.key)).map((p) => p.key);
   const supporters = new Set(picked.filter((k) => k !== 'product' && offered.includes(k)));
+  if (smallRuns) return roleFactsCard(doc, card, h, fetchFn, { el, offered, supporters, sentRole });
   let lead = null;          // the pick
   let saved = null;         // the profile's lead
   let saving = null;        // the lead whose PUT is in flight
@@ -119,11 +122,116 @@ function requirementsCard(doc, card, h, fetchFn) {
   };
 }
 
-/** `opts.fetch`: the host's fetch for the answerer profile (default: the page's). */
-export function shapeCardExtras(doc, card, { fetch: fetchFn } = {}) {
+/** Under shaperSmallRuns, a requirements card shows two fact rows: "Your role" (the role sent with the message as
+ *  plain text, else the lead picker) and "Supported by" (the supporters picker). It never blocks; the body names the
+ *  lead the card shows (sent, else picked, else the saved preset); with none shown yet the server fills the saved lead,
+ *  else Product. A sent
+ *  role reads no profile and is never written back; `commit()` saves only a card pick the profile does not hold. */
+function roleFactsCard(doc, card, h, fetchFn, { el, offered, supporters, sentRole }) {
+  const sent = typeof sentRole === 'string' && sentRole ? sentRole : null;
+  let picked = null;        // a lead chosen on the card's menu
+  let saved = null;         // the profile's lead (the preset, "you, last time")
+  let saving = null;        // the lead whose PUT is in flight
+  let leadBtn = null;
+  let suppBtn = null;
+  const labelId = `shape-lead-label-${++leadSeq}`;
+  const shown = () => sent ?? picked ?? saved;
+  const emit = () => el.dispatchEvent(new doc.defaultView.CustomEvent('shape-lead-change'));
+  const setText = (btn, text) => { btn.firstChild.textContent = text; };
+  const supportersText = () => {
+    const names = offered.filter((k) => supporters.has(k) && k !== shown()).map(leadLabel);
+    if (!names.length) return 'no one else';
+    return names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  };
+  const picker = (id, text, tip) => {
+    const b = h('button', 'btn btn-sm btn-quiet shape-lead-pick', text);
+    b.type = 'button';
+    b.title = tip;
+    b.dataset.menu = id;
+    b.dataset.key = `pick:${id}`;
+    b.setAttribute('aria-haspopup', 'menu');
+    b.setAttribute('aria-expanded', 'false');
+    b.appendChild(icon(doc, 'chevron-down', 12));
+    return b;
+  };
+  const paint = () => {
+    if (leadBtn) setText(leadBtn, shown() ? leadLabel(shown()) : 'pick a role');
+    setText(suppBtn, supportersText());
+  };
+
+  const kv = buildFacts(doc, [['role', 'Your role'], ['support', 'Supported by']]);
+  kv.classList.add('shape-lead-facts');
+  const roleRow = factRow(kv, 'role');
+  roleRow.querySelector('.rd-kv-k').id = labelId;
+  const roleValue = roleRow.querySelector('.rd-kv-v');
+  if (sent) {
+    roleValue.textContent = leadLabel(sent);
+    roleValue.title = 'Sent with your message';
+  } else {
+    leadBtn = picker('shape-lead', 'pick a role', 'The role that leads the requirements');
+    leadBtn.addEventListener('click', () => toggleMenu({ doc, anchor: leadBtn, label: 'Your role', items: answererLeadKeys({ smallRuns: true }).map((k) => ({
+      label: leadLabel(k), checked: k === shown(), ...(k === saved ? { hint: 'you, last time' } : {}),
+      onSelect: () => { picked = k; paint(); emit(); },
+    })) }));
+    roleValue.appendChild(leadBtn);
+  }
+  suppBtn = picker('shape-supporters', 'no one else', 'The roles that support the lead');
+  suppBtn.addEventListener('click', () => toggleMenu({ doc, anchor: suppBtn, label: 'Supported by', items: offered
+    .filter((k) => k !== 'product' && k !== shown()).map((k) => ({
+      switch: true, label: leadLabel(k), checked: supporters.has(k),
+      onToggle: (b) => {
+        if (supporters.has(k)) supporters.delete(k); else supporters.add(k);
+        b.setAttribute('aria-checked', String(supporters.has(k)));
+        paint();
+      },
+    })) }));
+  factRow(kv, 'support').querySelector('.rd-kv-v').appendChild(suppBtn);
+  paint();
+  syncFacts(kv);
+  el.appendChild(kv);
+  emit();
+  if (!sent) loadAnswerer(fetchFn).then((p) => { saved = p.lead; paint(); emit(); }, noop);
+
+  return {
+    el, requirements: true, labelId,
+    blocked: () => false,
+    commit() {
+      if (!picked || sent || picked === saved || picked === saving) return;
+      const chosen = picked;
+      saving = chosen;
+      const settle = () => { if (saving === chosen) saving = null; };
+      saveAnswerer(chosen, fetchFn).then(() => { settle(); saved = chosen; },
+        () => { settle(); notify({ tone: 'err', title: 'Could not save your lead role. It is used for this run only.' }, { doc }); });
+    },
+    body: () => {
+      const l = shown();
+      return bodyOf(card, offered.filter((k) => k === 'product' || k === l || (supporters.has(k) && k !== l)), l ? { lead: l } : {});
+    },
+  };
+}
+
+/** The Shaper role sent with the user message a card answers (`Asking as: compliance.` after the Shaper lead): the
+ *  nearest earlier `role:'user'` row that is not a synthetic notice, before the row holding card `blockId`. null when
+ *  the card, its user row or the role paragraph is missing. */
+export function sentShapeRole(rows, blockId) {
+  const list = Array.isArray(rows) ? rows : [];
+  const at = list.findIndex((r) => Array.isArray(r?.blocks) && r.blocks.some((b) => b && b.kind === 'card' && b.id === blockId));
+  if (at < 0) return null;
+  for (let i = at - 1; i >= 0; i -= 1) {
+    const r = list[i];
+    if (!r || r.role !== 'user') continue;
+    if (Array.isArray(r.blocks) && r.blocks.some((b) => b && b.kind === 'notice' && b.synthetic)) continue;
+    return splitIntentLead(r.text).role || null;
+  }
+  return null;
+}
+
+/** `opts.fetch`: the host's fetch for the answerer profile (default: the page's). `opts.sentRole`: the role sent with
+ *  the message the card answers (`sentShapeRole`), used only under shaperSmallRuns. */
+export function shapeCardExtras(doc, card, { fetch: fetchFn, sentRole = null } = {}) {
   if (!card || (!card.shape && !card.nudge)) return null;
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-  return requirementsCard(doc, card, h, fetchFn);
+  return requirementsCard(doc, card, h, fetchFn, sentRole);
 }
 
 /** The shaped card's one line on what happens next (D20). `likelySlices` is filled from slice 4 (#730) on. */
@@ -158,7 +266,9 @@ let careSeq = 0;
 /**
  * The Start step (B2): the size, the Care dial preselected on Worca's pick with its reason, what the selected position
  * does, the estimates, what it gives up below the pick (one sentence, the full list in a fold), the History per
- * position, the models a person set, the "What … does" fold and one "Start requirements". `deps` = the step card's (`title`, `chip`, `submit`) plus `onPick`.
+ * position, the models a person set, the "What … does" fold and one "Start requirements". With shaperSmallRuns the Size
+ * row adds the runs at Worca's pick (`careRunCount`) and the reason drops its "about N requirements" clause.
+ * `deps` = the step card's (`title`, `chip`, `submit`) plus `onPick`.
  * @returns {{el: HTMLElement, render: (panel: HTMLElement) => void, collect: () => object, setErrors: (errors: object[]) => void}}
  */
 export function renderCareStart(doc, pq, deps = {}) {
@@ -177,14 +287,20 @@ export function renderCareStart(doc, pq, deps = {}) {
   careKey.id = `care-k-${++careSeq}`;
 
   const facts = start.facts || {};
+  // shaperSmallRuns (ask screens slice 9): the Size row is the one place with a number of runs, at Worca's pick, so the
+  // reason leaves the requirement count to it. Set once: the count does not follow the selection.
+  const smallRuns = flagOn('shaperSmallRuns', doc);
+  const runs = smallRuns ? careRunCount(facts.requirements, pick) : null;
+  const runsPart = runs === null ? '' : runs === 1 ? ' · one run' : ` · about ${runs} runs`;
   value('size').textContent = start.size
-    ? `${start.size[0].toUpperCase()}${start.size.slice(1)} · about ${facts.requirements} requirements` : 'Size not known yet';
+    ? `${start.size[0].toUpperCase()}${start.size.slice(1)} · about ${facts.requirements} requirements${runsPart}` : 'Size not known yet';
+  const reason = start.pick && start.pick.reason ? start.pick.reason : '';
 
   const err = errLine(doc);
   const seg = segmented({ doc, readonly: false }, CARE_POSITIONS.map((p) => ({ value: p, label: CARE_LABELS[p] })), pick,
     (p) => { sel = p; paint(); if (deps.onPick) deps.onPick(p); }, { idBase: `${careKey.id}-seg`, labelledBy: careKey.id });
   const pickBtn = seg.children[CARE_POSITIONS.indexOf(pick)];
-  value('care').append(stackOf(doc, [seg, capOf(doc, start.pick && start.pick.reason ? start.pick.reason : ''), err]));
+  value('care').append(stackOf(doc, [seg, capOf(doc, smallRuns ? reason.replace(/, about \d+ requirements\b|\babout \d+ requirements(?:, | )/, '') : reason), err]));
 
   const foldBtn = doc.createElement('button');
   foldBtn.type = 'button';
